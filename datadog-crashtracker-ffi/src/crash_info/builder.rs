@@ -4,6 +4,7 @@
 use super::{Metadata, OsInfo, ProcInfo, SigInfo, Span, ThreadData};
 use ::function_name::named;
 use datadog_crashtracker::{CrashInfo, CrashInfoBuilder, ErrorKind, StackTrace};
+use libdd_common::Endpoint;
 use libdd_common_ffi::{
     slice::AsBytes, wrap_with_ffi_result, wrap_with_void_ffi_result, CharSlice, Error, Handle,
     Slice, Timespec, ToInner, VoidResult,
@@ -446,5 +447,32 @@ pub unsafe extern "C" fn ddog_crasht_CrashInfoBuilder_with_message(
             .try_to_string_option()?
             .context("message cannot be empty string")?;
         builder.to_inner_mut()?.with_message(message)?;
+    })
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+//                                            Crash Ping                                          //
+////////////////////////////////////////////////////////////////////////////////////////////////////
+
+/// # Safety
+/// The `builder` can be null, but if non-null it must point to a Builder made by this module,
+/// which has not previously been dropped.
+/// All arguments must be valid.
+#[no_mangle]
+#[must_use]
+#[named]
+pub unsafe extern "C" fn ddog_crasht_CrashInfoBuilder_upload_ping_to_endpoint(
+    mut builder: *mut Handle<CrashInfoBuilder>,
+    endpoint: Option<&Endpoint>,
+) -> VoidResult {
+    wrap_with_void_ffi_result!({
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()?;
+
+        rt.block_on(async {
+            let crash_ping = builder.to_inner_mut()?.build_crash_ping()?;
+            crash_ping.upload_to_endpoint(&endpoint.cloned()).await
+        })?;
     })
 }

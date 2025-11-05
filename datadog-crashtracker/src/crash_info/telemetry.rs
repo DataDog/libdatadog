@@ -122,7 +122,7 @@ impl CrashPing {
     /// Sends this crash ping telemetry event to indicate that crash processing has started.
     /// We no-op on file endpoints because unlike production environments, we know if
     /// a crash report failed to send when file debugging.
-    pub async fn send_to_url(&self, endpoint: &Option<Endpoint>) -> anyhow::Result<()> {
+    pub async fn upload_to_endpoint(&self, endpoint: &Option<Endpoint>) -> anyhow::Result<()> {
         let is_file_endpoint = endpoint
             .as_ref()
             .map(|e| e.url.scheme_str() == Some("file"))
@@ -222,10 +222,7 @@ impl TelemetryCrashUploader {
         Ok(s)
     }
 
-    pub async fn upload_crash_ping(
-        &self,
-        crash_ping: &CrashPing,
-    ) -> anyhow::Result<()> {
+    pub async fn upload_crash_ping(&self, crash_ping: &CrashPing) -> anyhow::Result<()> {
         let tags = self.build_crash_ping_tags(crash_ping.crash_uuid(), crash_ping.siginfo());
         let tracer_time = SystemTime::now()
             .duration_since(SystemTime::UNIX_EPOCH)
@@ -650,9 +647,9 @@ mod tests {
             .build()?;
 
         let endpoint = Some(Endpoint::from_slice(&format!(
-                "file://{}",
-                output_filename.to_str().unwrap()
-            )));
+            "file://{}",
+            output_filename.to_str().unwrap()
+        )));
 
         // Test getters
         assert_eq!(crash_ping.crash_uuid(), crash_uuid);

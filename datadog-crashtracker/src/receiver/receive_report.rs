@@ -244,7 +244,7 @@ pub(crate) async fn receive_report_from_stream(
                     .build()?;
 
                 tokio::task::spawn(async move {
-                    if let Err(e) = crash_ping.send_to_url(&config_clone.endpoint()).await {
+                    if let Err(e) = crash_ping.upload_to_endpoint(config_clone.endpoint()).await {
                         eprintln!("Failed to send crash ping: {e}");
                     }
                 });

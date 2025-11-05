@@ -367,4 +367,17 @@ impl CrashInfoBuilder {
     pub fn with_uuid_random(&mut self) -> anyhow::Result<&mut Self> {
         self.with_uuid(Uuid::new_v4().to_string())
     }
+
+    pub fn build_crash_ping(&self) -> anyhow::Result<CrashPing> {
+        let uuid = self.uuid.clone().context("uuid is required")?;
+        let sig_info = self.sig_info.clone().context("sig_info is required")?;
+        let metadata = self.metadata.clone().context("metadata is required")?;
+
+        let builder = CrashPingBuilder::new()
+            .with_crash_uuid(uuid)
+            .with_sig_info(sig_info)
+            .with_metadata(metadata);
+        let crash_ping = builder.build()?;
+        Ok(crash_ping)
+    }
 }
