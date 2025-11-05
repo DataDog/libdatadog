@@ -18,7 +18,7 @@ use tracing::{debug, error, warn};
 pub(super) struct TransportClient<'a> {
     metadata: &'a TracerMetadata,
     health_metrics_enabled: bool,
-    dogstatsd: Option<&'a dogstatsd_client::Client>,
+    dogstatsd: Option<&'a libdd_dogstatsd_client::Client>,
     common_stats_tags: &'a [Tag],
 }
 
@@ -27,7 +27,7 @@ impl<'a> TransportClient<'a> {
     pub(super) fn new(
         metadata: &'a TracerMetadata,
         health_metrics_enabled: bool,
-        dogstatsd: Option<&'a dogstatsd_client::Client>,
+        dogstatsd: Option<&'a libdd_dogstatsd_client::Client>,
         common_stats_tags: &'a [Tag],
     ) -> Self {
         Self {
