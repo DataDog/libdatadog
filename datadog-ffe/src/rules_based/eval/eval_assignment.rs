@@ -221,7 +221,7 @@ mod tests {
     struct TestCase {
         flag: String,
         variation_type: VariationType,
-        default_value: serde_json::Value,
+        default_value: Arc<serde_json::value::RawValue>,
         targeting_key: Str,
         attributes: Arc<HashMap<Str, Attribute>>,
         result: TestResult,
@@ -229,7 +229,7 @@ mod tests {
 
     #[derive(Debug, Serialize, Deserialize)]
     struct TestResult {
-        value: serde_json::Value,
+        value: Arc<serde_json::value::RawValue>,
     }
 
     #[test]

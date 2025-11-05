@@ -311,6 +311,28 @@ impl AssignmentValue {
     }
 }
 
+impl PartialEq<AssignmentValue> for AssignmentValue {
+    fn eq(&self, other: &AssignmentValue) -> bool {
+        match (self, other) {
+            (Self::String(l0), Self::String(r0)) => l0 == r0,
+            (Self::Integer(l0), Self::Integer(r0)) => l0 == r0,
+            (Self::Float(l0), Self::Float(r0)) => l0 == r0,
+            (Self::Boolean(l0), Self::Boolean(r0)) => l0 == r0,
+            (
+                Self::Json {
+                    value: l_value,
+                    raw: _,
+                },
+                Self::Json {
+                    value: r_value,
+                    raw: _,
+                },
+            ) => l_value == r_value,
+            _ => false,
+        }
+    }
+}
+
 #[cfg(feature = "pyo3")]
 mod pyo3_impl {
 
