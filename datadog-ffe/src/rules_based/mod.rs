@@ -12,7 +12,7 @@ mod ufc;
 
 pub use attributes::Attribute;
 pub use configuration::Configuration;
-pub use error::{Error, EvaluationError, Result};
+pub use error::EvaluationError;
 pub use eval::{get_assignment, EvaluationContext};
 pub use str::Str;
 pub use timestamp::{now, Timestamp};
