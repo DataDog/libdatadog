@@ -33,7 +33,7 @@ pub use ddsketch_ffi::*;
 
 // re-export library-config ffi
 #[cfg(feature = "datadog-library-config-ffi")]
-pub use datadog_library_config_ffi::*;
+pub use libdd_library_config_ffi::*;
 
 // re-export log ffi
 #[cfg(feature = "datadog-log-ffi")]

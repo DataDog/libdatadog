@@ -27,7 +27,7 @@ crashtracker-collector = ["crashtracker-ffi", "datadog-crashtracker-ffi/collecto
 # Enables the use of this library to receiver crash-info from a suitable collector
 crashtracker-receiver = ["crashtracker-ffi", "datadog-crashtracker-ffi/receiver"]
 demangler = ["crashtracker-ffi", "datadog-crashtracker-ffi/demangler"]
-datadog-library-config-ffi = ["dep:datadog-library-config-ffi"]
+datadog-library-config-ffi = ["dep:libdd-library-config-ffi"]
 ddcommon-ffi = ["dep:ddcommon-ffi"]
 ddsketch-ffi = ["dep:ddsketch-ffi"]
 
@@ -38,7 +38,7 @@ build_common = { path = "../build-common" }
 anyhow = "1.0"
 data-pipeline-ffi = { path = "../data-pipeline-ffi", default-features = false, optional = true }
 datadog-crashtracker-ffi = { path = "../datadog-crashtracker-ffi", default-features = false, optional = true}
-datadog-library-config-ffi = {  path = "../datadog-library-config-ffi", default-features = false, optional = true }
+libdd-library-config-ffi = {  path = "../libdd-library-config-ffi", default-features = false, optional = true }
 datadog-profiling = { path = "../datadog-profiling" }
 ddcommon = { path = "../ddcommon" }
 ddcommon-ffi = { path = "../ddcommon-ffi", default-features = false, optional = true }

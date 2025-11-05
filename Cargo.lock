@@ -1467,33 +1467,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "datadog-library-config"
-version = "0.0.2"
-dependencies = [
- "anyhow",
- "memfd",
- "rand 0.8.5",
- "rmp",
- "rmp-serde",
- "serde",
- "serde_yaml",
- "tempfile",
-]
-
-[[package]]
-name = "datadog-library-config-ffi"
-version = "0.0.2"
-dependencies = [
- "anyhow",
- "build_common",
- "constcat",
- "datadog-library-config",
- "ddcommon",
- "ddcommon-ffi",
- "tempfile",
-]
-
-[[package]]
 name = "datadog-live-debugger"
 version = "0.0.1"
 dependencies = [
@@ -1569,7 +1542,6 @@ dependencies = [
  "build_common",
  "data-pipeline-ffi",
  "datadog-crashtracker-ffi",
- "datadog-library-config-ffi",
  "datadog-profiling",
  "ddcommon",
  "ddcommon-ffi",
@@ -1580,6 +1552,7 @@ dependencies = [
  "http-body-util",
  "hyper",
  "libc",
+ "libdd-library-config-ffi",
  "libdd-log-ffi",
  "serde_json",
  "symbolizer-ffi",
@@ -3115,6 +3088,33 @@ dependencies = [
  "bolero",
  "libc",
  "windows-sys 0.52.0",
+]
+
+[[package]]
+name = "libdd-library-config"
+version = "1.0.0"
+dependencies = [
+ "anyhow",
+ "memfd",
+ "rand 0.8.5",
+ "rmp",
+ "rmp-serde",
+ "serde",
+ "serde_yaml",
+ "tempfile",
+]
+
+[[package]]
+name = "libdd-library-config-ffi"
+version = "0.0.2"
+dependencies = [
+ "anyhow",
+ "build_common",
+ "constcat",
+ "ddcommon",
+ "ddcommon-ffi",
+ "libdd-library-config",
+ "tempfile",
 ]
 
 [[package]]
