@@ -1,0 +1,11 @@
+version: "3.9"
+
+services:
+  datarace-example:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: datarace-example
+    volumes:
+      - .:/app
+    command: /app/target/release/datarace-example

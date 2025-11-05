@@ -1,0 +1,9 @@
+[package]
+name = "ordering-bug"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+antithesis_sdk = "0.2.6"
+
+[workspace]

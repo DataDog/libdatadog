@@ -1,0 +1,16 @@
+[package]
+name = "dangling-ref-example"
+version = "0.1.0"
+edition = "2024"
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+debug = false
+
+[dependencies]
+antithesis_sdk = "0.2.6"
+rand = "0.8.5"
+
+[workspace]
