@@ -1,3 +1,6 @@
+// Copyright 2025-Present Datadog, Inc. https://www.datadoghq.com/
+// SPDX-License-Identifier: Apache-2.0
+
 /// An opaque handle for a resource. The inner fields must not be dereferenced.
 ///
 /// This is similar to `ddcommon_ffi::Handle` but only allows shared access to internal resource, so
