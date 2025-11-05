@@ -1300,7 +1300,6 @@ dependencies = [
  "bytes",
  "clap",
  "criterion",
- "datadog-ddsketch",
  "datadog-trace-protobuf",
  "datadog-trace-stats",
  "datadog-trace-utils",
@@ -1313,6 +1312,7 @@ dependencies = [
  "httpmock",
  "hyper",
  "hyper-util",
+ "libdd-ddsketch",
  "libdd-log",
  "libdd-tinybytes",
  "rand 0.8.5",
@@ -1393,15 +1393,6 @@ dependencies = [
  "symbolic-demangle",
  "tempfile",
  "windows 0.59.0",
-]
-
-[[package]]
-name = "datadog-ddsketch"
-version = "23.0.0"
-dependencies = [
- "prost",
- "prost-build",
- "protoc-bin-vendored",
 ]
 
 [[package]]
@@ -1545,13 +1536,13 @@ dependencies = [
  "datadog-profiling",
  "ddcommon",
  "ddcommon-ffi",
- "ddsketch-ffi",
  "ddtelemetry-ffi",
  "function_name",
  "futures",
  "http-body-util",
  "hyper",
  "libc",
+ "libdd-ddsketch-ffi",
  "libdd-library-config-ffi",
  "libdd-log-ffi",
  "serde_json",
@@ -1743,10 +1734,10 @@ name = "datadog-trace-stats"
 version = "23.0.0"
 dependencies = [
  "criterion",
- "datadog-ddsketch",
  "datadog-trace-protobuf",
  "datadog-trace-utils",
  "hashbrown 0.15.1",
+ "libdd-ddsketch",
  "rand 0.8.5",
 ]
 
@@ -1850,21 +1841,11 @@ dependencies = [
 ]
 
 [[package]]
-name = "ddsketch-ffi"
-version = "23.0.0"
-dependencies = [
- "build_common",
- "datadog-ddsketch",
- "ddcommon-ffi",
-]
-
-[[package]]
 name = "ddtelemetry"
 version = "23.0.0"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
- "datadog-ddsketch",
  "ddcommon",
  "futures",
  "hashbrown 0.15.1",
@@ -1873,6 +1854,7 @@ dependencies = [
  "hyper",
  "hyper-util",
  "libc",
+ "libdd-ddsketch",
  "serde",
  "serde_json",
  "sys-info",
@@ -3088,6 +3070,24 @@ dependencies = [
  "bolero",
  "libc",
  "windows-sys 0.52.0",
+]
+
+[[package]]
+name = "libdd-ddsketch"
+version = "1.0.0"
+dependencies = [
+ "prost",
+ "prost-build",
+ "protoc-bin-vendored",
+]
+
+[[package]]
+name = "libdd-ddsketch-ffi"
+version = "23.0.0"
+dependencies = [
+ "build_common",
+ "ddcommon-ffi",
+ "libdd-ddsketch",
 ]
 
 [[package]]
