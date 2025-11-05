@@ -3,10 +3,10 @@
 
 use crate::handles::{HandlesTransport, TransferHandles};
 use crate::platform::{mmap_handle, munmap_handle, OwnedFileHandle, PlatformHandle};
+#[cfg(feature = "tiny-bytes")]
+use libdd_tinybytes::UnderlyingBytes;
 use serde::{Deserialize, Serialize};
 use std::{ffi::CString, io, ptr::NonNull};
-#[cfg(feature = "tiny-bytes")]
-use tinybytes::UnderlyingBytes;
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct ShmHandle {

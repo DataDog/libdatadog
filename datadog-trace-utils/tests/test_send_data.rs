@@ -15,13 +15,13 @@ mod tracing_integration_tests {
     use http_body_util::BodyExt;
     #[cfg(target_os = "linux")]
     use hyper::Uri;
+    use libdd_tinybytes::{Bytes, BytesString};
     use serde_json::json;
     use std::collections::HashMap;
     #[cfg(target_os = "linux")]
     use std::fs::Permissions;
     #[cfg(target_os = "linux")]
     use std::os::unix::fs::PermissionsExt;
-    use tinybytes::{Bytes, BytesString};
 
     fn get_v04_trace_snapshot_test_payload(name_prefix: &str) -> Bytes {
         let mut span_1 = create_test_json_span(1234, 12342, 12341, 1, false);
@@ -77,7 +77,7 @@ mod tracing_integration_tests {
 
         let encoded_data = rmp_serde::to_vec_named(&vec![vec![span_1, span_2, root_span]]).unwrap();
 
-        tinybytes::Bytes::from(encoded_data)
+        Bytes::from(encoded_data)
     }
 
     #[cfg_attr(miri, ignore)]
@@ -196,7 +196,7 @@ mod tracing_integration_tests {
 
         let encoded_data = rmp_serde::to_vec_named(&vec![vec![root_span]]).unwrap();
 
-        let data = tinybytes::Bytes::from(encoded_data);
+        let data = Bytes::from(encoded_data);
 
         let (payload_collection, _) = decode_to_trace_chunks(data, TraceEncoding::V04)
             .expect("unable to convert TracerPayloadParams to TracerPayloadCollection");
@@ -236,7 +236,7 @@ mod tracing_integration_tests {
             Endpoint::from_url(test_agent.get_uri_for_endpoint("v0.4/traces", None).await);
 
         let empty_data = vec![0x90];
-        let data = tinybytes::Bytes::from(empty_data);
+        let data = Bytes::from(empty_data);
 
         let (payload_collection, _) = decode_to_trace_chunks(data, TraceEncoding::V04)
             .expect("unable to convert TracerPayloadParams to TracerPayloadCollection");
