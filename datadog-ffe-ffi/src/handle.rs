@@ -12,7 +12,9 @@ pub struct Handle<T> {
     inner: *mut T,
 }
 
+// SAFETY: the box pointer is safe to move across threads as long as the underlying type is Send.
 unsafe impl<T: Send> Send for Handle<T> {}
+// SAFETY: we only hand off shared refences, so it's Sync as long as underlying type is Sync.
 unsafe impl<T: Sync> Sync for Handle<T> {}
 
 impl<T> Handle<T> {
@@ -34,8 +36,10 @@ impl<T> Handle<T> {
     ///
     /// # Safety
     /// - `self` must be a valid handle for `T`.
+    #[allow(clippy::expect_used)]
     pub(crate) unsafe fn as_ref(&self) -> &T {
-        unsafe { self.inner.as_ref().expect("detected use after free") }
+        // SAFETY: the caller must ensure that self is valid
+        unsafe { self.inner.as_ref() }.expect("detected use after free")
     }
 
     /// Free this handle. This and all other copies of the handle become invalid after freeing.
@@ -47,7 +51,8 @@ impl<T> Handle<T> {
             return;
         }
 
-        let ptr = std::mem::take(&mut (unsafe { &mut *this }).inner);
+        // SAFETY: the caller must ensure that the pointer is valid.
+        let ptr = std::mem::replace(&mut (unsafe { &mut *this }).inner, std::ptr::null_mut());
         if ptr.is_null() {
             // We try to detect double-free but it's not fool-proof. The C side might have copied
             // the handle.
@@ -55,6 +60,7 @@ impl<T> Handle<T> {
             return;
         }
 
+        // SAFETY: the original value was created by Box::into_raw().
         let value = unsafe { Box::from_raw(ptr) };
 
         drop(value);

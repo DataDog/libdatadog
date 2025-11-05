@@ -1,22 +1,85 @@
 // Copyright 2025-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use std::{
-    ffi::{c_char, c_uchar, CStr},
-    marker::PhantomData,
-};
+use std::ffi::{c_char, CStr};
 
 use datadog_ffe::rules_based::{
-    now, Assignment, AssignmentValue, Configuration, EvaluationContext, EvaluationError, Str,
-    VariationType,
+    now, Assignment, AssignmentReason, AssignmentValue, Configuration, EvaluationContext,
+    EvaluationError, Str, VariationType,
 };
-use ddcommon_ffi::CharSlice;
 
 use crate::Handle;
 
 /// Opaque type representing a result of evaluation.
-#[allow(unused)]
-pub struct ResolutionDetails(Result<Assignment, EvaluationError>);
+pub struct ResolutionDetails {
+    inner: Result<Assignment, EvaluationError>,
+    // memoizing some fields, so we can hand off references to them:
+    error_message: Option<String>,
+    extra_logging: Vec<KeyValue<BorrowedStr, BorrowedStr>>,
+    flag_metadata: Vec<KeyValue<BorrowedStr, BorrowedStr>>,
+}
+impl ResolutionDetails {
+    fn new(value: Result<Assignment, EvaluationError>) -> ResolutionDetails {
+        let error_message = value.as_ref().err().map(|err| err.to_string());
+
+        let extra_logging = value
+            .as_ref()
+            .iter()
+            .flat_map(|it| it.extra_logging.iter())
+            .map(|(k, v)| {
+                KeyValue {
+                    // SAFETY: the borrow is valid as long as string allocation is
+                    // alive. ResolutionDetails will get moved into heap but this does not
+                    // invalidate the string.
+                    key: unsafe { BorrowedStr::borrow_from_str(k.as_str()) },
+                    // SAFETY: the borrow is valid as long as string allocation is
+                    // alive. ResolutionDetails will get moved into heap but this does not
+                    // innvalidate the string.
+                    value: unsafe { BorrowedStr::borrow_from_str(v.as_str()) },
+                }
+            })
+            .collect();
+
+        let flag_metadata = match value.as_ref() {
+            Ok(a) => {
+                vec![KeyValue {
+                    // SAFETY: borrowing from static is safe as it lives long enough.
+                    key: unsafe { BorrowedStr::borrow_from_str("allocation_key") },
+                    // SAFETY: allocation_key is alive until ResolutionDetails is dropped.
+                    value: unsafe { BorrowedStr::borrow_from_str(a.allocation_key.as_str()) },
+                }]
+            }
+            Err(_) => Vec::new(),
+        };
+
+        ResolutionDetails {
+            inner: value,
+            error_message,
+            extra_logging,
+            flag_metadata,
+        }
+    }
+}
+impl From<Assignment> for ResolutionDetails {
+    fn from(value: Assignment) -> Self {
+        ResolutionDetails::new(Ok(value))
+    }
+}
+impl From<EvaluationError> for ResolutionDetails {
+    fn from(value: EvaluationError) -> Self {
+        ResolutionDetails::new(Err(value))
+    }
+}
+impl From<Result<Assignment, EvaluationError>> for ResolutionDetails {
+    fn from(value: Result<Assignment, EvaluationError>) -> Self {
+        ResolutionDetails::new(value)
+    }
+}
+impl AsRef<Result<Assignment, EvaluationError>> for ResolutionDetails {
+    fn as_ref(&self) -> &Result<Assignment, EvaluationError> {
+        &self.inner
+    }
+}
 
 #[repr(C)]
 pub enum FlagType {
@@ -26,6 +89,18 @@ pub enum FlagType {
     Float,
     Boolean,
     Object,
+}
+impl From<FlagType> for Option<VariationType> {
+    fn from(value: FlagType) -> Self {
+        match value {
+            FlagType::Unknown => None,
+            FlagType::String => Some(VariationType::String),
+            FlagType::Integer => Some(VariationType::Integer),
+            FlagType::Float => Some(VariationType::Numeric),
+            FlagType::Boolean => Some(VariationType::Boolean),
+            FlagType::Object => Some(VariationType::Json),
+        }
+    }
 }
 
 impl From<VariationType> for FlagType {
@@ -40,6 +115,7 @@ impl From<VariationType> for FlagType {
     }
 }
 
+#[derive(Debug, PartialEq)]
 #[repr(C)]
 pub enum ErrorCode {
     Ok,
@@ -69,6 +145,7 @@ pub enum Reason {
 /// The caller must call `ddog_ffe_assignment_drop` on the returned value to free resources.
 ///
 /// # Safety
+///
 /// - `config` must be a valid `Configuration` handle
 /// - `flag_key` must be a valid C string
 /// - `context` must be a valid `EvaluationContext` handle
@@ -76,31 +153,36 @@ pub enum Reason {
 pub unsafe extern "C" fn ddog_ffe_get_assignment(
     config: Handle<Configuration>,
     flag_key: *const c_char,
-    _expected_type: FlagType,
+    expected_type: FlagType,
     context: Handle<EvaluationContext>,
 ) -> Handle<ResolutionDetails> {
     if flag_key.is_null() {
-        return Handle::from(ResolutionDetails(Err(EvaluationError::Internal(
-            Str::from_static_str("ddog_ffe_get_assignment: flag_key must not be NULL"),
-        ))));
+        return Handle::new(
+            EvaluationError::Internal(Str::from_static_str(
+                "ddog_ffe_get_assignment: flag_key must not be NULL",
+            ))
+            .into(),
+        );
     }
 
+    // SAFETY: the caller must ensure that configuration handle is valid
     let config = unsafe { config.as_ref() };
+    // SAFETY: the caller must ensure that context handle is valid
     let context = unsafe { context.as_ref() };
 
-    let Ok(flag_key) = unsafe {
-        // SAFETY: we checked that flag_key is not NULL
-        CStr::from_ptr(flag_key)
-    }
-    .to_str() else {
-        return Handle::from(ResolutionDetails(Err(EvaluationError::Internal(
-            Str::from_static_str("ddog_ffe_get_assignment: flag_key is not a valid UTF-8 string"),
-        ))));
+    // SAFETY: we checked that flag_key is not NULL.
+    let Ok(flag_key) = unsafe { CStr::from_ptr(flag_key) }.to_str() else {
+        return Handle::new(
+            EvaluationError::Internal(Str::from_static_str(
+                "ddog_ffe_get_assignment: flag_key is not a valid UTF-8 string",
+            ))
+            .into(),
+        );
     };
 
-    let assignment_result = config.eval_flag(flag_key, context, None, now());
+    let assignment_result = config.eval_flag(flag_key, context, expected_type.into(), now());
 
-    Handle::from(ResolutionDetails(assignment_result))
+    Handle::new(assignment_result.into())
 }
 
 #[repr(C)]
@@ -132,8 +214,36 @@ pub struct BorrowedStr {
     pub ptr: *const u8,
     pub len: usize,
 }
+impl BorrowedStr {
+    #[inline]
+    pub(crate) unsafe fn as_bytes(&self) -> &[u8] {
+        // SAFETY: the caller must ensure that ptr and len are valid.
+        unsafe { std::slice::from_raw_parts(self.ptr, self.len) }
+    }
+}
 
-impl<'a> BorrowedStr {
+#[repr(C)]
+pub struct KeyValue<K, V> {
+    pub key: K,
+    pub value: V,
+}
+#[repr(C)]
+pub struct ArrayMap<K, V> {
+    pub elements: *const KeyValue<K, V>,
+    pub count: usize,
+}
+impl<K, V> ArrayMap<K, V> {
+    /// # Safety
+    /// - The returned value must not outlive `slice`.
+    unsafe fn borrow_from_slice(slice: &[KeyValue<K, V>]) -> ArrayMap<K, V> {
+        ArrayMap {
+            elements: slice.as_ptr(),
+            count: slice.len(),
+        }
+    }
+}
+
+impl BorrowedStr {
     /// Borrow string from `s`.
     ///
     /// # Safety
@@ -141,7 +251,7 @@ impl<'a> BorrowedStr {
     /// - The returned value must non outlive `s`.
     /// - `s` must not be modified while `BorrowedStr` is alive.
     #[inline]
-    unsafe fn new(s: &str) -> BorrowedStr {
+    unsafe fn borrow_from_str(s: &str) -> BorrowedStr {
         BorrowedStr {
             ptr: s.as_ptr(),
             len: s.len(),
@@ -163,28 +273,28 @@ impl<'a> BorrowedStr {
 ///
 /// The returned `VariantValue` borrows from `assignment`. It must not be used after `assignment` is
 /// freed.
+///
+/// # Safety
+/// `assignment` must be a valid handle.
 #[no_mangle]
-pub unsafe extern "C" fn ddog_ffe_assignment_get_value<'a>(
+pub unsafe extern "C" fn ddog_ffe_assignment_get_value(
     assignment: Handle<ResolutionDetails>,
 ) -> VariantValue {
-    match unsafe { assignment.as_ref() } {
-        ResolutionDetails(Ok(assignment)) => match &assignment.value {
+    // SAFETY: the caller must ensure that assignment is valid.
+    match unsafe { assignment.as_ref() }.as_ref() {
+        Ok(assignment) => match &assignment.value {
             AssignmentValue::String(s) => {
-                VariantValue::String(unsafe {
-                    // SAFETY: caller is required to not use return value after freeing
-                    // `assignment`.
-                    BorrowedStr::new(s.as_str())
-                })
+                // SAFETY: caller is required to not use return value after freeing
+                // `assignment`.
+                VariantValue::String(unsafe { BorrowedStr::borrow_from_str(s.as_str()) })
             }
             AssignmentValue::Integer(v) => VariantValue::Integer(*v),
             AssignmentValue::Float(v) => VariantValue::Float(*v),
             AssignmentValue::Boolean(v) => VariantValue::Boolean(*v),
             AssignmentValue::Json { value: _, raw } => {
-                VariantValue::Object(unsafe {
-                    // SAFETY: caller is required to not use return value after freeing
-                    // `assignment`.
-                    BorrowedStr::new(raw.get())
-                })
+                // SAFETY: caller is required to not use return value after freeing
+                // `assignment`.
+                VariantValue::Object(unsafe { BorrowedStr::borrow_from_str(raw.get()) })
             }
         },
         _ => VariantValue::None,
@@ -197,16 +307,18 @@ pub unsafe extern "C" fn ddog_ffe_assignment_get_value<'a>(
 ///
 /// The returned string borrows from `assignment`. It must not be used after `assignment` is
 /// freed.
+///
+/// # Safety
+/// `assignment` must be a valid handle.
 #[no_mangle]
 pub unsafe extern "C" fn ddog_ffe_assignment_get_variant(
     assignment: Handle<ResolutionDetails>,
 ) -> BorrowedStr {
-    match unsafe { assignment.as_ref() } {
-        ResolutionDetails(Ok(assignment)) => unsafe {
-            // SAFETY: caller is required to not use return value after freeing
-            // `assignment`.
-            BorrowedStr::new(&assignment.variation_key)
-        },
+    // SAFETY: the caller must ensure that assignment is valid.
+    match unsafe { assignment.as_ref() }.as_ref() {
+        Ok(assignment) =>
+        // SAFETY: caller is required to not use return value after freeing `assignment`.
+        unsafe { BorrowedStr::borrow_from_str(&assignment.variation_key) },
         _ => BorrowedStr::empty(),
     }
 }
@@ -218,21 +330,136 @@ pub unsafe extern "C" fn ddog_ffe_assignment_get_variant(
 ///
 /// The returned string borrows from `assignment`. It must not be used after `assignment` is
 /// freed.
+///
+/// # Safety
+/// `assignment` must be a valid handle.
 #[no_mangle]
 pub unsafe extern "C" fn ddog_ffe_assignment_get_allocation_key(
     assignment: Handle<ResolutionDetails>,
 ) -> BorrowedStr {
-    match unsafe { assignment.as_ref() } {
-        ResolutionDetails(Ok(assignment)) => unsafe {
-            // SAFETY: caller is required to not use return value after freeing
-            // `assignment`.
-            BorrowedStr::new(assignment.allocation_key.as_str())
+    // SAFETY: the caller must ensure that assignment is valid.
+    match unsafe { assignment.as_ref() }.as_ref() {
+        // SAFETY: caller is required to not use return value after freeing
+        // `assignment`.
+        Ok(assignment) => unsafe {
+            BorrowedStr::borrow_from_str(assignment.allocation_key.as_str())
         },
         _ => BorrowedStr::empty(),
     }
 }
 
-// TODO: add accessors for various data inside ResolutionDetails.
+/// # Safety
+/// `assignment` must be a valid handle.
+#[no_mangle]
+pub unsafe extern "C" fn ddog_ffe_assignment_get_reason(
+    assignment: Handle<ResolutionDetails>,
+) -> Reason {
+    // SAFETY: the caller must ensure that assignment is valid
+    Reason::from(unsafe { assignment.as_ref() })
+}
+impl From<&ResolutionDetails> for Reason {
+    fn from(value: &ResolutionDetails) -> Self {
+        match value.as_ref() {
+            Ok(assignment) => assignment.reason.into(),
+            Err(EvaluationError::FlagDisabled) => Reason::Disabled,
+            Err(EvaluationError::DefaultAllocationNull) => Reason::Default,
+            Err(_) => Reason::Error,
+        }
+    }
+}
+impl From<AssignmentReason> for Reason {
+    fn from(value: AssignmentReason) -> Self {
+        match value {
+            AssignmentReason::TargetingMatch => Reason::TargetingMatch,
+            AssignmentReason::Split => Reason::Split,
+            AssignmentReason::Static => Reason::Static,
+        }
+    }
+}
+
+/// # Safety
+/// `assignment` must be a valid handle.
+#[no_mangle]
+pub unsafe extern "C" fn ddog_ffe_assignment_get_error_code(
+    assignment: Handle<ResolutionDetails>,
+) -> ErrorCode {
+    // SAFETY: the caller must ensure that assignment is valid
+    ErrorCode::from(unsafe { assignment.as_ref() })
+}
+impl From<&ResolutionDetails> for ErrorCode {
+    fn from(value: &ResolutionDetails) -> Self {
+        match value.as_ref() {
+            Ok(_) => ErrorCode::Ok,
+            Err(err) => ErrorCode::from(err),
+        }
+    }
+}
+impl From<&EvaluationError> for ErrorCode {
+    fn from(value: &EvaluationError) -> Self {
+        match value {
+            EvaluationError::TypeMismatch { .. } => ErrorCode::TypeMismatch,
+            EvaluationError::ConfigurationParseError => ErrorCode::ParseError,
+            EvaluationError::ConfigurationMissing => ErrorCode::ProviderNotReady,
+            EvaluationError::FlagUnrecognizedOrDisabled => ErrorCode::FlagNotFound,
+            EvaluationError::FlagDisabled => ErrorCode::Ok,
+            EvaluationError::DefaultAllocationNull => ErrorCode::Ok,
+            EvaluationError::Internal(_) => ErrorCode::General,
+            _ => ErrorCode::General,
+        }
+    }
+}
+
+/// # Safety
+/// `assignment` must be a valid handle.
+#[no_mangle]
+pub unsafe extern "C" fn ddog_ffe_assignment_get_error_message(
+    assignment: Handle<ResolutionDetails>,
+) -> BorrowedStr {
+    // SAFETY: the caller must ensure that assignment is valid
+    let assignment = unsafe { assignment.as_ref() };
+    match assignment.error_message.as_ref() {
+        // SAFETY: the caller must not use returned value after assignment is freed.
+        Some(s) => unsafe { BorrowedStr::borrow_from_str(s.as_str()) },
+        None => BorrowedStr::empty(),
+    }
+}
+
+/// # Safety
+/// `assignment` must be a valid handle.
+#[no_mangle]
+pub unsafe extern "C" fn ddog_ffe_assignment_get_do_log(
+    assignment: Handle<ResolutionDetails>,
+) -> bool {
+    // SAFETY: the caller must ensure that assignment handle is valid.
+    match unsafe { assignment.as_ref() }.as_ref() {
+        Ok(a) => a.do_log,
+        Err(_) => false,
+    }
+}
+
+/// # Safety
+/// `assignment` must be a valid handle.
+#[no_mangle]
+pub unsafe extern "C" fn ddog_ffe_assignnment_get_flag_metadata(
+    assignment: Handle<ResolutionDetails>,
+) -> ArrayMap<BorrowedStr, BorrowedStr> {
+    // SAFETY: the caller must ensure that assignment is valid
+    let a = unsafe { assignment.as_ref() };
+    // SAFETY: the caller must ensure that returned value is not used after `assignment` is freed.
+    unsafe { ArrayMap::borrow_from_slice(&a.flag_metadata) }
+}
+
+/// # Safety
+/// `assignment` must be a valid handle.
+#[no_mangle]
+pub unsafe extern "C" fn ddog_ffe_assignnment_get_extra_logging(
+    assignment: Handle<ResolutionDetails>,
+) -> ArrayMap<BorrowedStr, BorrowedStr> {
+    // SAFETY: the caller must ensure that assignment is valid
+    let a = unsafe { assignment.as_ref() };
+    // SAFETY: the caller must ensure that returned value is not used after `assignment` is freed.
+    unsafe { ArrayMap::borrow_from_slice(&a.extra_logging) }
+}
 
 /// Frees an Assignment handle.
 ///
@@ -240,5 +467,6 @@ pub unsafe extern "C" fn ddog_ffe_assignment_get_allocation_key(
 /// - `assignment` must be a valid Assignment handle
 #[no_mangle]
 pub unsafe extern "C" fn ddog_ffe_assignment_drop(assignment: *mut Handle<ResolutionDetails>) {
+    // SAFETY: the caller must ensure that assignment is valid
     unsafe { Handle::free(assignment) }
 }

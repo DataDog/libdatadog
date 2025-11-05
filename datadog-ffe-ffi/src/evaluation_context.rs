@@ -47,7 +47,8 @@ pub unsafe extern "C" fn ddog_ffe_evaluation_context_new(
     let targeting_key = if targeting_key.is_null() {
         Str::from_static_str("")
     } else {
-        match unsafe { CStr::from_ptr(targeting_key).to_str() } {
+        // SAFETY: the caller must ensure that it's a valid C string
+        match unsafe { CStr::from_ptr(targeting_key) }.to_str() {
             Ok(s) => Str::from(s),
             Err(_) => Str::from_static_str(""),
         }
@@ -56,16 +57,20 @@ pub unsafe extern "C" fn ddog_ffe_evaluation_context_new(
     let attributes = if attributes.is_null() {
         HashMap::new()
     } else {
+        // SAFETY: the caller must ensure that `attributes` is a valid pointer and
+        // `attributes_count` accurately represent the number of elements.
         unsafe { std::slice::from_raw_parts(attributes, attributes_count) }
-            .into_iter()
+            .iter()
             .filter_map(|attr_pair| {
                 if attr_pair.name.is_null() {
                     return None; // Skip invalid pairs
                 }
 
+                // SAFETY: the caller must ensure that it's a valid C string
                 let name_str = unsafe { CStr::from_ptr(attr_pair.name) }.to_str().ok()?;
 
                 let attribute: Attribute = match attr_pair.value {
+                    // SAFETY: the caller must ensure that it's a valid C string.
                     AttributeValue::String(s) => unsafe { CStr::from_ptr(s) }.to_str().ok()?.into(),
                     AttributeValue::Number(v) => v.into(),
                     AttributeValue::Boolean(v) => v.into(),
@@ -85,5 +90,6 @@ pub unsafe extern "C" fn ddog_ffe_evaluation_context_new(
 /// `context` must be a valid EvaluationContext handle created by `ddog_ffe_evaluation_context_new`
 #[no_mangle]
 pub unsafe extern "C" fn ddog_ffe_evaluation_context_drop(context: *mut Handle<EvaluationContext>) {
+    // SAFETY: the caller must ensure that context is a valid handle.
     unsafe { Handle::free(context) };
 }
