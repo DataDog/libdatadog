@@ -1063,12 +1063,7 @@ fn test_crash_tracking_bin(
     let crash_telemetry = fs::read(&fixtures.crash_telemetry_path)
         .context("reading crashtracker telemetry payload")
         .unwrap();
-    let payloads = crash_telemetry.split(|&b| b == b'\n').collect::<Vec<_>>();
-    for payload in payloads {
-        if String::from_utf8_lossy(payload).contains("is_crash:true") {
-            assert_telemetry_message(payload, crash_typ);
-        }
-    }
+    assert_telemetry_message(&crash_telemetry, crash_typ);
 
     // Crashtracking signal handler chaining tests, as well as other tests, might only be able to
     // influence system state after the main application has crashed, and has therefore lost the
@@ -1166,8 +1161,12 @@ fn assert_siginfo_message(sig_info: &Value, crash_typ: &str) {
     }
 }
 
+// Takes bytes of telemetry and deserializes it into a Value.
+// The kind parameter determines which part of the telemetry to deserialize.
+// - CrashReport: deserializes the first JSON payload (crash report)
+// - Whole: deserializes the whole telemetry payload
+// TODO (gyuheon): Refactor test helpers to have shared functionality for testing crash pings
 fn assert_telemetry_message(crash_telemetry: &[u8], crash_typ: &str) {
-    // Split by newline and take the first line
     let telemetry_payload: Value = serde_json::from_slice::<Value>(crash_telemetry)
         .context("deserializing whole telemetry payload to JSON")
         .unwrap();
@@ -1361,13 +1360,13 @@ fn crash_tracking_empty_endpoint() {
         .iter()
         .find(|(_, body)| body.contains("api_version") && body.contains("request_type"))
         .expect("Should have telemetry crash ping");
-    validate_crash_ping_telemetry(telemetry_crash_ping.1);
+    assert_crash_ping_message(telemetry_crash_ping.1);
 
     let telemetry_crash_report = crash_reports
         .iter()
         .find(|(_, body)| body.contains("api_version") && body.contains("request_type"))
         .expect("Should have telemetry crash report");
-    assert_telemetry_message(telemetry_crash_report.1.as_bytes(), "null_deref", TelemetryKind::Whole);
+    assert_telemetry_message(telemetry_crash_report.1.as_bytes(), "null_deref");
 }
 
 fn read_http_request_body(stream: &mut impl Read) -> String {
@@ -1551,7 +1550,7 @@ fn test_crash_tracking_bin_with_errors_intake(
     let crash_telemetry = fs::read(&fixtures.crash_telemetry_path)
         .context("reading crashtracker telemetry payload")
         .unwrap();
-    assert_telemetry_message(&crash_telemetry, crash_typ, TelemetryKind::CrashReport);
+    assert_telemetry_message(&crash_telemetry, crash_typ);
 }
 
 fn test_crash_tracking_errors_intake_dual_upload(
@@ -1609,7 +1608,7 @@ fn test_crash_tracking_errors_intake_dual_upload(
     let crash_telemetry = fs::read(&fixtures.crash_telemetry_path)
         .context("reading crashtracker telemetry payload")
         .unwrap();
-    assert_telemetry_message(&crash_telemetry, crash_typ, TelemetryKind::CrashReport);
+    assert_telemetry_message(&crash_telemetry, crash_typ);
 }
 
 #[cfg(unix)]
@@ -1730,7 +1729,7 @@ fn test_crash_tracking_bin_with_errors_intake_uds(
         .iter()
         .find(|(_, body)| body.contains("api_version") && body.contains("request_type"))
         .expect("Should have telemetry crash ping");
-    validate_crash_ping_telemetry(telemetry_crash_ping.1);
+    assert_crash_ping_message(telemetry_crash_ping.1);
 
     let telemetry_crash_report = crash_reports
         .iter()

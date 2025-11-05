@@ -5,11 +5,11 @@ use std::time::SystemTime;
 
 use crate::SigInfo;
 
-use super::{build_crash_ping_message, CrashInfo, Metadata, StackTrace};
+use super::{build_crash_ping_message, CrashInfo, Experimental, Metadata, StackTrace};
 use anyhow::Context;
 use chrono::{DateTime, Utc};
-use libdd_common::{config::parse_env, parse_uri, Endpoint};
 use http::{uri::PathAndQuery, Uri};
+use libdd_common::{config::parse_env, parse_uri, Endpoint};
 use serde::{Deserialize, Serialize};
 use std::{borrow::Cow, time::Duration};
 
@@ -246,6 +246,8 @@ pub struct ErrorObject {
     pub fingerprint: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub source_type: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub experimental: Option<Experimental>,
 }
 
 #[derive(serde::Serialize, Debug)]
@@ -414,6 +416,7 @@ impl ErrorsIntakePayload {
                 is_crash: Some(true),
                 fingerprint: crash_info.fingerprint.clone(),
                 source_type: Some("Crashtracking".to_string()),
+                experimental: crash_info.experimental.clone(),
             },
             trace_id: None,
         })
@@ -455,6 +458,7 @@ impl ErrorsIntakePayload {
                 is_crash: Some(false),
                 fingerprint: None,
                 source_type: Some("Crashtracking".to_string()),
+                experimental: None,
             },
             trace_id: None,
         })
@@ -838,7 +842,7 @@ mod tests {
 
         assert_eq!(endpoint.url.scheme_str(), Some("unix"));
         // The original socket path is preserved in authority for unix:// URLs (URL encoded)
-        let decoded_path = ddcommon::decode_uri_path_in_authority(&endpoint.url).unwrap();
+        let decoded_path = libdd_common::decode_uri_path_in_authority(&endpoint.url).unwrap();
         assert_eq!(
             decoded_path.to_string_lossy(),
             "/var/run/datadog/apm.socket"
@@ -864,7 +868,7 @@ mod tests {
 
         assert_eq!(endpoint.url.scheme_str(), Some("windows"));
         // For windows: scheme, the pipe name is URL-encoded in the authority
-        let decoded_path = ddcommon::decode_uri_path_in_authority(&endpoint.url).unwrap();
+        let decoded_path = libdd_common::decode_uri_path_in_authority(&endpoint.url).unwrap();
         assert_eq!(decoded_path.to_string_lossy(), "my_custom_pipe");
 
         // Should use agent proxy path
@@ -885,7 +889,7 @@ mod tests {
         let endpoint = cfg.endpoint().unwrap();
 
         assert_eq!(endpoint.url.scheme_str(), Some("unix"));
-        let decoded_path = ddcommon::decode_uri_path_in_authority(&endpoint.url).unwrap();
+        let decoded_path = libdd_common::decode_uri_path_in_authority(&endpoint.url).unwrap();
         assert_eq!(decoded_path.to_string_lossy(), "/tmp/custom.socket");
 
         // Should use agent proxy path
@@ -995,7 +999,7 @@ mod tests {
 
         // Should use UDS socket, not host/port
         assert_eq!(endpoint.url.scheme_str(), Some("unix"));
-        let decoded_path = ddcommon::decode_uri_path_in_authority(&endpoint.url).unwrap();
+        let decoded_path = libdd_common::decode_uri_path_in_authority(&endpoint.url).unwrap();
         assert_eq!(
             decoded_path.to_string_lossy(),
             "/var/run/datadog/apm.socket"
