@@ -18,7 +18,7 @@ bench = false
 default = ["ddcommon-ffi"]
 cbindgen = ["build_common/cbindgen", "ddcommon-ffi/cbindgen"]
 ddtelemetry-ffi = ["dep:ddtelemetry-ffi"]
-datadog-log-ffi = ["dep:datadog-log-ffi"]
+datadog-log-ffi = ["dep:libdd-log-ffi"]
 symbolizer = ["symbolizer-ffi"]
 data-pipeline-ffi = ["dep:data-pipeline-ffi"]
 crashtracker-ffi = ["dep:datadog-crashtracker-ffi"]
@@ -27,9 +27,9 @@ crashtracker-collector = ["crashtracker-ffi", "datadog-crashtracker-ffi/collecto
 # Enables the use of this library to receiver crash-info from a suitable collector
 crashtracker-receiver = ["crashtracker-ffi", "datadog-crashtracker-ffi/receiver"]
 demangler = ["crashtracker-ffi", "datadog-crashtracker-ffi/demangler"]
-datadog-library-config-ffi = ["dep:datadog-library-config-ffi"]
+datadog-library-config-ffi = ["dep:libdd-library-config-ffi"]
 ddcommon-ffi = ["dep:ddcommon-ffi"]
-ddsketch-ffi = ["dep:ddsketch-ffi"]
+ddsketch-ffi = ["dep:libdd-ddsketch-ffi"]
 
 [build-dependencies]
 build_common = { path = "../build-common" }
@@ -38,13 +38,13 @@ build_common = { path = "../build-common" }
 anyhow = "1.0"
 data-pipeline-ffi = { path = "../data-pipeline-ffi", default-features = false, optional = true }
 datadog-crashtracker-ffi = { path = "../datadog-crashtracker-ffi", default-features = false, optional = true}
-datadog-library-config-ffi = {  path = "../datadog-library-config-ffi", default-features = false, optional = true }
+libdd-library-config-ffi = {  path = "../libdd-library-config-ffi", default-features = false, optional = true }
 datadog-profiling = { path = "../datadog-profiling" }
 ddcommon = { path = "../ddcommon" }
 ddcommon-ffi = { path = "../ddcommon-ffi", default-features = false, optional = true }
 ddtelemetry-ffi = { path = "../ddtelemetry-ffi", default-features = false, optional = true, features = ["expanded_builder_macros"] }
-datadog-log-ffi = { path = "../datadog-log-ffi", default-features = false, optional = true }
-ddsketch-ffi = { path = "../ddsketch-ffi", default-features = false, optional = true }
+libdd-ddsketch-ffi = { path = "../libdd-ddsketch-ffi", default-features = false, optional = true }
+libdd-log-ffi = { path = "../libdd-log-ffi", default-features = false, optional = true }
 function_name = "0.3.0"
 futures = { version = "0.3", default-features = false }
 http-body-util = "0.1"

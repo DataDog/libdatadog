@@ -1300,8 +1300,6 @@ dependencies = [
  "bytes",
  "clap",
  "criterion",
- "datadog-ddsketch",
- "datadog-log",
  "datadog-trace-protobuf",
  "datadog-trace-stats",
  "datadog-trace-utils",
@@ -1313,7 +1311,10 @@ dependencies = [
  "httpmock",
  "hyper",
  "hyper-util",
+ "libdd-ddsketch",
  "libdd-dogstatsd-client",
+ "libdd-log",
+ "libdd-tinybytes",
  "rand 0.8.5",
  "regex",
  "rmp-serde",
@@ -1321,7 +1322,6 @@ dependencies = [
  "serde_json",
  "sha2",
  "tempfile",
- "tinybytes",
  "tokio",
  "tokio-util",
  "tracing",
@@ -1337,19 +1337,9 @@ dependencies = [
  "datadog-trace-utils",
  "ddcommon-ffi",
  "httpmock",
+ "libdd-tinybytes",
  "rmp-serde",
- "tinybytes",
  "tracing",
-]
-
-[[package]]
-name = "datadog-alloc"
-version = "23.0.0"
-dependencies = [
- "allocator-api2",
- "bolero",
- "libc",
- "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -1406,15 +1396,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "datadog-ddsketch"
-version = "23.0.0"
-dependencies = [
- "prost",
- "prost-build",
- "protoc-bin-vendored",
-]
-
-[[package]]
 name = "datadog-ffe"
 version = "0.1.0"
 dependencies = [
@@ -1425,6 +1406,7 @@ dependencies = [
  "faststr",
  "log",
  "md5",
+ "pyo3",
  "regex",
  "serde",
  "serde-bool",
@@ -1447,6 +1429,7 @@ dependencies = [
  "glibc_version",
  "io-lifetimes",
  "libc",
+ "libdd-tinybytes",
  "memfd",
  "nix",
  "page_size",
@@ -1457,7 +1440,6 @@ dependencies = [
  "spawn_worker",
  "tarpc",
  "tempfile",
- "tinybytes",
  "tokio",
  "tokio-serde",
  "tokio-util",
@@ -1473,33 +1455,6 @@ version = "0.0.1"
 dependencies = [
  "quote",
  "syn 2.0.87",
-]
-
-[[package]]
-name = "datadog-library-config"
-version = "0.0.2"
-dependencies = [
- "anyhow",
- "memfd",
- "rand 0.8.5",
- "rmp",
- "rmp-serde",
- "serde",
- "serde_yaml",
- "tempfile",
-]
-
-[[package]]
-name = "datadog-library-config-ffi"
-version = "0.0.2"
-dependencies = [
- "anyhow",
- "build_common",
- "constcat",
- "datadog-library-config",
- "ddcommon",
- "ddcommon-ffi",
- "tempfile",
 ]
 
 [[package]]
@@ -1539,26 +1494,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "datadog-log"
-version = "23.0.0"
-dependencies = [
- "chrono",
- "tempfile",
- "tracing",
- "tracing-appender",
- "tracing-subscriber",
-]
-
-[[package]]
-name = "datadog-log-ffi"
-version = "23.0.0"
-dependencies = [
- "build_common",
- "datadog-log",
- "ddcommon-ffi",
-]
-
-[[package]]
 name = "datadog-profiling"
 version = "23.0.0"
 dependencies = [
@@ -1569,8 +1504,6 @@ dependencies = [
  "bytes",
  "chrono",
  "criterion",
- "datadog-alloc",
- "datadog-profiling-protobuf",
  "ddcommon",
  "futures",
  "http",
@@ -1578,6 +1511,8 @@ dependencies = [
  "hyper",
  "hyper-multipart-rfc7578",
  "indexmap 2.6.0",
+ "libdd-alloc",
+ "libdd-profiling-protobuf",
  "lz4_flex",
  "mime",
  "prost",
@@ -1598,30 +1533,21 @@ dependencies = [
  "build_common",
  "data-pipeline-ffi",
  "datadog-crashtracker-ffi",
- "datadog-library-config-ffi",
- "datadog-log-ffi",
  "datadog-profiling",
  "ddcommon",
  "ddcommon-ffi",
- "ddsketch-ffi",
  "ddtelemetry-ffi",
  "function_name",
  "futures",
  "http-body-util",
  "hyper",
  "libc",
+ "libdd-ddsketch-ffi",
+ "libdd-library-config-ffi",
+ "libdd-log-ffi",
  "serde_json",
  "symbolizer-ffi",
  "tokio-util",
-]
-
-[[package]]
-name = "datadog-profiling-protobuf"
-version = "23.0.0"
-dependencies = [
- "bolero",
- "datadog-profiling-protobuf",
- "prost",
 ]
 
 [[package]]
@@ -1631,7 +1557,7 @@ dependencies = [
  "anyhow",
  "clap",
  "datadog-profiling",
- "datadog-profiling-protobuf",
+ "libdd-profiling-protobuf",
  "prost",
  "sysinfo",
 ]
@@ -1693,6 +1619,7 @@ dependencies = [
  "hyper",
  "libc",
  "libdd-dogstatsd-client",
+ "libdd-tinybytes",
  "manual_future",
  "memory-stats",
  "microseh",
@@ -1708,7 +1635,6 @@ dependencies = [
  "simd-json",
  "spawn_worker",
  "tempfile",
- "tinybytes",
  "tokio",
  "tokio-util",
  "tracing",
@@ -1737,10 +1663,10 @@ dependencies = [
  "http",
  "libc",
  "libdd-dogstatsd-client",
+ "libdd-tinybytes",
  "paste",
  "rmp-serde",
  "tempfile",
- "tinybytes",
  "tracing",
 ]
 
@@ -1799,10 +1725,10 @@ name = "datadog-trace-stats"
 version = "23.0.0"
 dependencies = [
  "criterion",
- "datadog-ddsketch",
  "datadog-trace-protobuf",
  "datadog-trace-utils",
  "hashbrown 0.15.1",
+ "libdd-ddsketch",
  "rand 0.8.5",
 ]
 
@@ -1825,6 +1751,7 @@ dependencies = [
  "http-body-util",
  "httpmock",
  "hyper",
+ "libdd-tinybytes",
  "prost",
  "rand 0.8.5",
  "rmp",
@@ -1833,7 +1760,6 @@ dependencies = [
  "serde",
  "serde_json",
  "tempfile",
- "tinybytes",
  "tokio",
  "tracing",
  "urlencoding",
@@ -1906,21 +1832,11 @@ dependencies = [
 ]
 
 [[package]]
-name = "ddsketch-ffi"
-version = "23.0.0"
-dependencies = [
- "build_common",
- "datadog-ddsketch",
- "ddcommon-ffi",
-]
-
-[[package]]
 name = "ddtelemetry"
 version = "23.0.0"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
- "datadog-ddsketch",
  "ddcommon",
  "futures",
  "hashbrown 0.15.1",
@@ -1929,6 +1845,7 @@ dependencies = [
  "hyper",
  "hyper-util",
  "libc",
+ "libdd-ddsketch",
  "serde",
  "serde_json",
  "sys-info",
@@ -2992,6 +2909,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "indoc"
+version = "2.0.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "79cf5c93f93228cf8efb3ba362535fb11199ac548a09ce117c9b1adc3030d706"
+dependencies = [
+ "rustversion",
+]
+
+[[package]]
 name = "inout"
 version = "0.1.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3115,6 +3041,34 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "58f929b4d672ea937a23a1ab494143d968337a5f47e56d0815df1e0890ddf174"
 
 [[package]]
+name = "libdd-alloc"
+version = "1.0.0"
+dependencies = [
+ "allocator-api2",
+ "bolero",
+ "libc",
+ "windows-sys 0.52.0",
+]
+
+[[package]]
+name = "libdd-ddsketch"
+version = "1.0.0"
+dependencies = [
+ "prost",
+ "prost-build",
+ "protoc-bin-vendored",
+]
+
+[[package]]
+name = "libdd-ddsketch-ffi"
+version = "23.0.0"
+dependencies = [
+ "build_common",
+ "ddcommon-ffi",
+ "libdd-ddsketch",
+]
+
+[[package]]
 name = "libdd-dogstatsd-client"
 version = "1.0.0"
 dependencies = [
@@ -3125,6 +3079,76 @@ dependencies = [
  "serde",
  "tokio",
  "tracing",
+]
+
+[[package]]
+name = "libdd-library-config"
+version = "1.0.0"
+dependencies = [
+ "anyhow",
+ "memfd",
+ "rand 0.8.5",
+ "rmp",
+ "rmp-serde",
+ "serde",
+ "serde_yaml",
+ "tempfile",
+]
+
+[[package]]
+name = "libdd-library-config-ffi"
+version = "0.0.2"
+dependencies = [
+ "anyhow",
+ "build_common",
+ "constcat",
+ "ddcommon",
+ "ddcommon-ffi",
+ "libdd-library-config",
+ "tempfile",
+]
+
+[[package]]
+name = "libdd-log"
+version = "1.0.0"
+dependencies = [
+ "chrono",
+ "tempfile",
+ "tracing",
+ "tracing-appender",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "libdd-log-ffi"
+version = "23.0.0"
+dependencies = [
+ "build_common",
+ "ddcommon-ffi",
+ "libdd-log",
+]
+
+[[package]]
+name = "libdd-profiling-protobuf"
+version = "1.0.0"
+dependencies = [
+ "bolero",
+ "libdd-profiling-protobuf",
+ "prost",
+]
+
+[[package]]
+name = "libdd-tinybytes"
+version = "1.0.0"
+dependencies = [
+ "libdd-tinybytes",
+ "once_cell",
+ "pretty_assertions",
+ "proptest",
+ "rmp-serde",
+ "serde",
+ "serde_json",
+ "test-case",
 ]
 
 [[package]]
@@ -3993,6 +4017,68 @@ name = "protoc-bin-vendored-win32"
 version = "3.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7dc55d7dec32ecaf61e0bd90b3d2392d721a28b95cfd23c3e176eccefbeab2f2"
+
+[[package]]
+name = "pyo3"
+version = "0.25.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8970a78afe0628a3e3430376fc5fd76b6b45c4d43360ffd6cdd40bdde72b682a"
+dependencies = [
+ "indoc",
+ "libc",
+ "memoffset",
+ "once_cell",
+ "portable-atomic",
+ "pyo3-build-config",
+ "pyo3-ffi",
+ "pyo3-macros",
+ "unindent",
+]
+
+[[package]]
+name = "pyo3-build-config"
+version = "0.25.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "458eb0c55e7ece017adeba38f2248ff3ac615e53660d7c71a238d7d2a01c7598"
+dependencies = [
+ "once_cell",
+ "target-lexicon",
+]
+
+[[package]]
+name = "pyo3-ffi"
+version = "0.25.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7114fe5457c61b276ab77c5055f206295b812608083644a5c5b2640c3102565c"
+dependencies = [
+ "libc",
+ "pyo3-build-config",
+]
+
+[[package]]
+name = "pyo3-macros"
+version = "0.25.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a8725c0a622b374d6cb051d11a0983786448f7785336139c3c94f5aa6bef7e50"
+dependencies = [
+ "proc-macro2",
+ "pyo3-macros-backend",
+ "quote",
+ "syn 2.0.87",
+]
+
+[[package]]
+name = "pyo3-macros-backend"
+version = "0.25.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4109984c22491085343c05b0dbc54ddc405c3cf7b4374fc533f5c3313a572ccc"
+dependencies = [
+ "heck 0.5.0",
+ "proc-macro2",
+ "pyo3-build-config",
+ "quote",
+ "syn 2.0.87",
+]
 
 [[package]]
 name = "quote"
@@ -4955,6 +5041,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "target-lexicon"
+version = "0.13.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "df7f62577c25e07834649fc3b39fafdc597c0a3527dc1c60129201ccfcbaa50c"
+
+[[package]]
 name = "target-triple"
 version = "0.1.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5161,20 +5253,6 @@ checksum = "3526739392ec93fd8b359c8e98514cb3e8e021beb4e5f597b00a0221f8ed8a49"
 dependencies = [
  "num-conv",
  "time-core",
-]
-
-[[package]]
-name = "tinybytes"
-version = "23.0.0"
-dependencies = [
- "once_cell",
- "pretty_assertions",
- "proptest",
- "rmp-serde",
- "serde",
- "serde_json",
- "test-case",
- "tinybytes",
 ]
 
 [[package]]
@@ -5588,6 +5666,12 @@ name = "unicode-xid"
 version = "0.2.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ebc1c04c71510c7f702b52b7c350734c9ff1295c464a03335b00bb84fc54f853"
+
+[[package]]
+name = "unindent"
+version = "0.2.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7264e107f553ccae879d21fbea1d6724ac785e8c3bfc762137959b5802826ef3"
 
 [[package]]
 name = "unsafe-libyaml"

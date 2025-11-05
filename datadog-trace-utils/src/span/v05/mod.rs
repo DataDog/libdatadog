@@ -64,7 +64,7 @@ pub fn from_span<T: SpanText>(
 mod tests {
     use super::*;
     use crate::span::SpanBytes;
-    use tinybytes::BytesString;
+    use libdd_tinybytes::BytesString;
 
     #[test]
     fn from_span_bytes_test() {

@@ -8,6 +8,7 @@ use crate::msgpack_decoder::decode::{
     string::{handle_null_marker, read_string_ref},
 };
 use crate::span::{SpanBytes, SpanSlice};
+use libdd_tinybytes as tinybytes;
 use std::collections::HashMap;
 
 const PAYLOAD_LEN: u32 = 2;
@@ -36,9 +37,9 @@ const SPAN_ELEM_COUNT: u32 = 12;
 ///
 /// ```
 /// use datadog_trace_utils::msgpack_decoder::v05::from_bytes;
+/// use libdd_tinybytes as tinybytes;
 /// use rmp_serde::to_vec;
 /// use std::collections::HashMap;
-/// use tinybytes;
 ///
 /// let data = (
 ///     vec!["".to_string()],
@@ -107,9 +108,9 @@ pub fn from_bytes(data: tinybytes::Bytes) -> Result<(Vec<Vec<SpanBytes>>, usize)
 ///
 /// ```
 /// use datadog_trace_utils::msgpack_decoder::v05::from_slice;
+/// use libdd_tinybytes as tinybytes;
 /// use rmp_serde::to_vec;
 /// use std::collections::HashMap;
-/// use tinybytes;
 ///
 /// let data = (
 ///     vec!["".to_string()],
