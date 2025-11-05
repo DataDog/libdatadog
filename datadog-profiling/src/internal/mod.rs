@@ -15,11 +15,11 @@ mod stack_trace;
 mod timestamp;
 mod upscaling;
 
-pub use datadog_profiling_protobuf::ValueType;
 pub use endpoint_stats::*;
 pub use endpoints::*;
 pub use function::*;
 pub use label::*;
+pub use libdd_profiling_protobuf::ValueType;
 pub use location::*;
 pub use mapping::*;
 pub use observation::*;

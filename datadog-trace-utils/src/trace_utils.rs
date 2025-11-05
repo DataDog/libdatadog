@@ -712,8 +712,8 @@ mod tests {
     use crate::test_utils::{create_test_no_alloc_span, create_test_span};
     use ddcommon::Endpoint;
     use hyper::Request;
+    use libdd_tinybytes::BytesString;
     use serde_json::json;
-    use tinybytes::BytesString;
 
     fn find_index_in_dict(dict: &[BytesString], value: &str) -> Option<u32> {
         let idx = dict.iter().position(|e| e.as_str() == value);

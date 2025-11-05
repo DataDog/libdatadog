@@ -1,0 +1,37 @@
+# Copyright 2025-Present Datadog, Inc. https://www.datadoghq.com/
+# SPDX-License-Identifier: Apache-2.0
+
+language = "C"
+cpp_compat = true
+tab_width = 2
+header = """// Copyright 2025-Present Datadog, Inc. https://www.datadoghq.com/
+// SPDX-License-Identifier: Apache-2.0
+"""
+include_guard = "DDOG_DDSKETCH_H"
+style = "both"
+pragma_once = true
+no_includes = true
+sys_includes = ["stdbool.h", "stddef.h", "stdint.h"]
+includes = ["common.h"]
+
+[parse]
+parse_deps = true
+include = ["ddcommon-ffi", "libdd-ddsketch"]
+
+[export]
+include = ["ddsketch-ffi"]
+prefix = "ddsketch_"
+renaming_overrides_prefixing = true
+
+[export.rename]
+"VoidResult" = "ddog_VoidResult"
+"Error" = "ddog_Error"
+"Vec_u8" = "ddog_Vec_U8"
+
+
+[fn]
+must_use = "DDOG_CHECK_RETURN"
+
+[enum]
+prefix_with_name = true
+rename_variants = "ScreamingSnakeCase"

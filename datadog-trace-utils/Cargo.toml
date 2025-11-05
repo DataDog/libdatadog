@@ -33,7 +33,7 @@ rmp = { version = "0.8.14", default-features = false }
 ddcommon = { path = "../ddcommon", default-features = false }
 libdd-trace-protobuf = { version = "1.0.0", path = "../libdd-trace-protobuf" }
 datadog-trace-normalization = { path = "../datadog-trace-normalization" }
-tinybytes = { path = "../tinybytes", features = [
+libdd-tinybytes = { path = "../libdd-tinybytes", features = [
     "bytes_string",
     "serialization",
 ] }

@@ -6,6 +6,7 @@ pub(crate) mod span;
 use self::span::decode_span;
 use crate::msgpack_decoder::decode::error::DecodeError;
 use crate::span::{SpanBytes, SpanSlice};
+use libdd_tinybytes as tinybytes;
 
 /// Decodes a Bytes buffer into a `Vec<Vec<SpanBytes>>` object, also represented as a vector of
 /// `TracerPayloadV04` objects.
@@ -31,9 +32,13 @@ use crate::span::{SpanBytes, SpanSlice};
 ///
 /// ```
 /// use datadog_trace_utils::msgpack_decoder::v04::from_bytes;
+<<<<<<< HEAD
 /// use libdd_trace_protobuf::pb::Span;
+||||||| e112efa9
+=======
+/// use libdd_tinybytes as tinybytes;
+>>>>>>> main
 /// use rmp_serde::to_vec_named;
-/// use tinybytes;
 ///
 /// let span = Span {
 ///     name: "test-span".to_owned(),
@@ -90,9 +95,9 @@ pub fn from_bytes(data: tinybytes::Bytes) -> Result<(Vec<Vec<SpanBytes>>, usize)
 ///
 /// ```
 /// use datadog_trace_utils::msgpack_decoder::v04::from_slice;
+/// use libdd_tinybytes as tinybytes;
 /// use libdd_trace_protobuf::pb::Span;
 /// use rmp_serde::to_vec_named;
-/// use tinybytes;
 ///
 /// let span = Span {
 ///     name: "test-span".to_owned(),
@@ -155,11 +160,11 @@ mod tests {
     use super::*;
     use crate::test_utils::{create_test_json_span, create_test_no_alloc_span};
     use bolero::check;
+    use libdd_tinybytes::{Bytes, BytesString};
     use rmp_serde;
     use rmp_serde::to_vec_named;
     use serde_json::json;
     use std::collections::HashMap;
-    use tinybytes::{Bytes, BytesString};
 
     #[test]
     fn test_empty_array() {
@@ -180,7 +185,7 @@ mod tests {
         let expected_size = encoded_data.len() - 1; // rmp_serde adds additional 0 byte
         encoded_data.extend_from_slice(&[0, 0, 0, 0]); // some garbage, to be ignored
         let (_decoded_traces, decoded_size) =
-            from_bytes(tinybytes::Bytes::from(encoded_data)).expect("Decoding failed");
+            from_bytes(Bytes::from(encoded_data)).expect("Decoding failed");
 
         assert_eq!(expected_size, decoded_size);
     }
@@ -194,8 +199,7 @@ mod tests {
         };
         let mut encoded_data = rmp_serde::to_vec_named(&vec![vec![span]]).unwrap();
         encoded_data.extend_from_slice(&[0, 0, 0, 0]); // some garbage, to be ignored
-        let (decoded_traces, _) =
-            from_bytes(tinybytes::Bytes::from(encoded_data)).expect("Decoding failed");
+        let (decoded_traces, _) = from_bytes(Bytes::from(encoded_data)).expect("Decoding failed");
 
         assert_eq!(1, decoded_traces.len());
         assert_eq!(1, decoded_traces[0].len());
@@ -209,8 +213,7 @@ mod tests {
         span["name"] = json!(null);
         let mut encoded_data = rmp_serde::to_vec_named(&vec![vec![span]]).unwrap();
         encoded_data.extend_from_slice(&[0, 0, 0, 0]); // some garbage, to be ignored
-        let (decoded_traces, _) =
-            from_bytes(tinybytes::Bytes::from(encoded_data)).expect("Decoding failed");
+        let (decoded_traces, _) = from_bytes(Bytes::from(encoded_data)).expect("Decoding failed");
 
         assert_eq!(1, decoded_traces.len());
         assert_eq!(1, decoded_traces[0].len());
@@ -223,8 +226,7 @@ mod tests {
         let span = create_test_json_span(1, 2, 0, 0, false);
         let mut encoded_data = rmp_serde::to_vec_named(&vec![vec![span]]).unwrap();
         encoded_data.extend_from_slice(&[0, 0, 0, 0]); // some garbage, to be ignored
-        let (decoded_traces, _) =
-            from_bytes(tinybytes::Bytes::from(encoded_data)).expect("Decoding failed");
+        let (decoded_traces, _) = from_bytes(Bytes::from(encoded_data)).expect("Decoding failed");
 
         assert_eq!(1, decoded_traces.len());
         assert_eq!(1, decoded_traces[0].len());
@@ -238,8 +240,7 @@ mod tests {
         span["trace_id"] = json!(null);
         let mut encoded_data = rmp_serde::to_vec_named(&vec![vec![span]]).unwrap();
         encoded_data.extend_from_slice(&[0, 0, 0, 0]); // some garbage, to be ignored
-        let (decoded_traces, _) =
-            from_bytes(tinybytes::Bytes::from(encoded_data)).expect("Decoding failed");
+        let (decoded_traces, _) = from_bytes(Bytes::from(encoded_data)).expect("Decoding failed");
 
         assert_eq!(1, decoded_traces.len());
         assert_eq!(1, decoded_traces[0].len());
@@ -253,8 +254,7 @@ mod tests {
         span["meta_struct"] = json!(null);
 
         let encoded_data = rmp_serde::to_vec_named(&vec![vec![span]]).unwrap();
-        let (decoded_traces, _) =
-            from_bytes(tinybytes::Bytes::from(encoded_data)).expect("Decoding failed");
+        let (decoded_traces, _) = from_bytes(Bytes::from(encoded_data)).expect("Decoding failed");
 
         assert_eq!(1, decoded_traces.len());
         assert_eq!(1, decoded_traces[0].len());
@@ -271,8 +271,7 @@ mod tests {
             HashMap::from([(BytesString::from("meta_key"), Bytes::from(data.clone()))]);
 
         let encoded_data = rmp_serde::to_vec_named(&vec![vec![span]]).unwrap();
-        let (decoded_traces, _) =
-            from_bytes(tinybytes::Bytes::from(encoded_data)).expect("Decoding failed");
+        let (decoded_traces, _) = from_bytes(Bytes::from(encoded_data)).expect("Decoding failed");
 
         assert_eq!(1, decoded_traces.len());
         assert_eq!(1, decoded_traces[0].len());
@@ -295,8 +294,7 @@ mod tests {
         span["meta"] = json!(expected_meta.clone());
 
         let encoded_data = rmp_serde::to_vec_named(&vec![vec![span]]).unwrap();
-        let (decoded_traces, _) =
-            from_bytes(tinybytes::Bytes::from(encoded_data)).expect("Decoding failed");
+        let (decoded_traces, _) = from_bytes(Bytes::from(encoded_data)).expect("Decoding failed");
 
         assert_eq!(1, decoded_traces.len());
         assert_eq!(1, decoded_traces[0].len());
@@ -316,8 +314,7 @@ mod tests {
         span["meta"] = json!(null);
 
         let encoded_data = rmp_serde::to_vec_named(&vec![vec![span]]).unwrap();
-        let (decoded_traces, _) =
-            from_bytes(tinybytes::Bytes::from(encoded_data)).expect("Decoding failed");
+        let (decoded_traces, _) = from_bytes(Bytes::from(encoded_data)).expect("Decoding failed");
 
         assert_eq!(1, decoded_traces.len());
         assert_eq!(1, decoded_traces[0].len());
@@ -341,8 +338,7 @@ mod tests {
         span["meta"] = json!(expected_meta.clone());
 
         let encoded_data = rmp_serde::to_vec_named(&vec![vec![span]]).unwrap();
-        let (decoded_traces, _) =
-            from_bytes(tinybytes::Bytes::from(encoded_data)).expect("Decoding failed");
+        let (decoded_traces, _) = from_bytes(Bytes::from(encoded_data)).expect("Decoding failed");
 
         assert_eq!(1, decoded_traces.len());
         assert_eq!(1, decoded_traces[0].len());
@@ -363,8 +359,7 @@ mod tests {
         let mut span = create_test_json_span(1, 2, 0, 0, false);
         span["metrics"] = json!(expected_metrics.clone());
         let encoded_data = rmp_serde::to_vec_named(&vec![vec![span]]).unwrap();
-        let (decoded_traces, _) =
-            from_bytes(tinybytes::Bytes::from(encoded_data)).expect("Decoding failed");
+        let (decoded_traces, _) = from_bytes(Bytes::from(encoded_data)).expect("Decoding failed");
 
         assert_eq!(1, decoded_traces.len());
         assert_eq!(1, decoded_traces[0].len());
@@ -386,8 +381,7 @@ mod tests {
         let mut span = create_test_json_span(1, 2, 0, 0, false);
         span["metrics"] = json!(expected_metrics.clone());
         let encoded_data = rmp_serde::to_vec_named(&vec![vec![span]]).unwrap();
-        let (decoded_traces, _) =
-            from_bytes(tinybytes::Bytes::from(encoded_data)).expect("Decoding failed");
+        let (decoded_traces, _) = from_bytes(Bytes::from(encoded_data)).expect("Decoding failed");
 
         assert_eq!(1, decoded_traces.len());
         assert_eq!(1, decoded_traces[0].len());
@@ -406,8 +400,7 @@ mod tests {
         let mut span = create_test_json_span(1, 2, 0, 0, false);
         span["metrics"] = json!(null);
         let encoded_data = rmp_serde::to_vec_named(&vec![vec![span]]).unwrap();
-        let (decoded_traces, _) =
-            from_bytes(tinybytes::Bytes::from(encoded_data)).expect("Decoding failed");
+        let (decoded_traces, _) = from_bytes(Bytes::from(encoded_data)).expect("Decoding failed");
 
         assert_eq!(1, decoded_traces.len());
         assert_eq!(1, decoded_traces[0].len());
@@ -433,8 +426,7 @@ mod tests {
         span["span_links"] = json!([expected_span_link]);
 
         let encoded_data = rmp_serde::to_vec_named(&vec![vec![span]]).unwrap();
-        let (decoded_traces, _) =
-            from_bytes(tinybytes::Bytes::from(encoded_data)).expect("Decoding failed");
+        let (decoded_traces, _) = from_bytes(Bytes::from(encoded_data)).expect("Decoding failed");
 
         assert_eq!(1, decoded_traces.len());
         assert_eq!(1, decoded_traces[0].len());
@@ -480,8 +472,7 @@ mod tests {
         span["span_links"] = json!(null);
 
         let encoded_data = rmp_serde::to_vec_named(&vec![vec![span]]).unwrap();
-        let (decoded_traces, _) =
-            from_bytes(tinybytes::Bytes::from(encoded_data)).expect("Decoding failed");
+        let (decoded_traces, _) = from_bytes(Bytes::from(encoded_data)).expect("Decoding failed");
 
         assert_eq!(1, decoded_traces.len());
         assert_eq!(1, decoded_traces[0].len());
@@ -514,7 +505,7 @@ mod tests {
     fn test_decoder_read_string_utf8_error() {
         let invalid_seq = vec![0, 159, 146, 150];
         let invalid_str = unsafe { String::from_utf8_unchecked(invalid_seq) };
-        let invalid_str_as_bytes = tinybytes::Bytes::from(invalid_str);
+        let invalid_str_as_bytes = Bytes::from(invalid_str);
         let span = SpanBytes {
             name: unsafe { BytesString::from_bytes_unchecked(invalid_str_as_bytes) },
             ..Default::default()
@@ -639,7 +630,7 @@ mod tests {
                         ..Default::default()
                     };
                     let encoded_data = to_vec_named(&vec![vec![span]]).unwrap();
-                    let result = from_bytes(tinybytes::Bytes::from(encoded_data));
+                    let result = from_bytes(Bytes::from(encoded_data));
 
                     assert!(result.is_ok());
                 },

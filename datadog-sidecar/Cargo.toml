@@ -26,7 +26,7 @@ datadog-remote-config = { path = "../datadog-remote-config" , features = ["live-
 datadog-live-debugger = { path = "../datadog-live-debugger" }
 datadog-crashtracker = { path = "../datadog-crashtracker" }
 dogstatsd-client = { path = "../dogstatsd-client" }
-tinybytes = { path = "../tinybytes" }
+libdd-tinybytes = { path = "../libdd-tinybytes" }
 
 futures = { version = "0.3", default-features = false }
 manual_future = "0.1.1"
