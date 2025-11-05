@@ -120,7 +120,7 @@ mod tests {
         APPLICATION_MSGPACK_STR, DATADOG_SEND_REAL_HTTP_STATUS_STR, DATADOG_TRACE_COUNT_STR,
     };
     use hyper::header::CONTENT_TYPE;
-    use tinybytes::BytesString;
+    use libdd_tinybytes::BytesString;
 
     fn create_test_span() -> SpanBytes {
         SpanBytes {

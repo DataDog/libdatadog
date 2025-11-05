@@ -112,7 +112,7 @@ COPY "datadog-ipc/plugins/Cargo.toml" "datadog-ipc/plugins/"
 COPY "data-pipeline/Cargo.toml" "data-pipeline/"
 COPY "data-pipeline-ffi/Cargo.toml" "data-pipeline-ffi/"
 COPY "bin_tests/Cargo.toml"  "bin_tests/"
-COPY "tinybytes/Cargo.toml" "tinybytes/"
+COPY "libdd-tinybytes/Cargo.toml" "libdd-tinybytes/"
 COPY "builder/Cargo.toml"  "builder/"
 COPY "datadog-ffe/Cargo.toml" "datadog-ffe/"
 RUN find -name "Cargo.toml" | sed -e s#Cargo.toml#src/lib.rs#g | xargs -n 1 sh -c 'mkdir -p $(dirname $1); touch $1; echo $1' create_stubs

@@ -49,3 +49,60 @@ impl EvaluationContext {
         None
     }
 }
+
+#[cfg(feature = "pyo3")]
+mod pyo3_impl {
+    use super::*;
+
+    use pyo3::{intern, prelude::*, types::PyDict};
+
+    /// Accepts either a dict with `"targeting_key"` and `"attributes"` items, or any object with
+    /// `targeting_key` and `attributes` attributes.
+    ///
+    /// # Examples
+    ///
+    /// ```python
+    /// {"targeting_key": "user1", "attributes": {"attr1": 42}}
+    /// ```
+    ///
+    /// ```python
+    /// @dataclass
+    /// class EvaluationContext:
+    ///     targeting_key: Optional[str]
+    ///     attributes: dict[str, Any]
+    ///
+    /// EvaluationContext(targeting_key="user1", attributes={"attr1": 42})
+    /// ```
+    impl<'py> FromPyObject<'py> for EvaluationContext {
+        #[inline]
+        fn extract_bound(value: &Bound<'py, PyAny>) -> PyResult<Self> {
+            let py = value.py();
+
+            let (targeting_key, attributes) = if let Ok(dict) = value.downcast::<PyDict>() {
+                (
+                    dict.get_item(intern!(py, "targeting_key"))?,
+                    dict.get_item(intern!(py, "attributes"))?,
+                )
+            } else {
+                (
+                    value.getattr_opt(intern!(py, "targeting_key"))?,
+                    value.getattr_opt(intern!(py, "attributes"))?,
+                )
+            };
+
+            let context = EvaluationContext {
+                targeting_key: targeting_key
+                    .map(|it| it.extract())
+                    .transpose()?
+                    .unwrap_or_else(|| Str::from_static_str("").into()),
+                attributes: attributes
+                    .map(|it| it.extract())
+                    .transpose()?
+                    .map(Arc::new)
+                    .unwrap_or_default(),
+            };
+
+            Ok(context)
+        }
+    }
+}

@@ -5,9 +5,10 @@ use crate::span::{v05, Span, SpanBytes, SpanText};
 use crate::trace_utils::collect_trace_chunks;
 use crate::{msgpack_decoder, trace_utils::cmp_send_data_payloads};
 use datadog_trace_protobuf::pb;
+use libdd_tinybytes as tinybytes;
 use std::cmp::Ordering;
 use std::iter::Iterator;
-use tinybytes::{self, BytesString};
+use tinybytes::BytesString;
 
 pub type TracerPayloadV04 = Vec<SpanBytes>;
 pub type TracerPayloadV05 = Vec<v05::Span>;
@@ -206,8 +207,8 @@ impl TraceChunkProcessor for DefaultTraceChunkProcessor {
 /// use datadog_trace_protobuf::pb;
 /// use datadog_trace_utils::trace_utils::TracerHeaderTags;
 /// use datadog_trace_utils::tracer_payload::{decode_to_trace_chunks, TraceEncoding};
+/// use libdd_tinybytes as tinybytes;
 /// use std::convert::TryInto;
-/// use tinybytes;
 /// // This will likely be a &[u8] slice in practice.
 /// let data: Vec<u8> = Vec::new();
 /// let data_as_bytes = tinybytes::Bytes::from(data);
