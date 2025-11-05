@@ -25,7 +25,6 @@ struct TelemetryMetadata {
 pub struct CrashPingBuilder {
     crash_uuid: Option<String>,
     sig_info: Option<SigInfo>,
-    endpoint: Option<Endpoint>,
     custom_message: Option<String>,
     metadata: Option<Metadata>,
 }
@@ -35,7 +34,6 @@ impl CrashPingBuilder {
         Self {
             crash_uuid: None,
             sig_info: None,
-            endpoint: None,
             custom_message: None,
             metadata: None,
         }
@@ -48,11 +46,6 @@ impl CrashPingBuilder {
 
     pub fn with_sig_info(mut self, sig_info: SigInfo) -> Self {
         self.sig_info = Some(sig_info);
-        self
-    }
-
-    pub fn with_endpoint(mut self, endpoint: Option<Endpoint>) -> Self {
-        self.endpoint = endpoint;
         self
     }
 
@@ -85,7 +78,6 @@ impl CrashPingBuilder {
             message,
             version: CrashPing::current_schema_version(),
             kind: "Crash ping".to_string(),
-            endpoint: self.endpoint,
         })
     }
 }
@@ -104,8 +96,6 @@ pub struct CrashPing {
     version: String,
     kind: String,
     metadata: Metadata,
-    #[serde(skip)]
-    endpoint: Option<Endpoint>,
 }
 
 impl CrashPing {
@@ -117,8 +107,8 @@ impl CrashPing {
         &self.message
     }
 
-    pub fn endpoint(&self) -> &Option<Endpoint> {
-        &self.endpoint
+    pub fn metadata(&self) -> &Metadata {
+        &self.metadata
     }
 
     pub fn siginfo(&self) -> &SigInfo {
@@ -129,9 +119,21 @@ impl CrashPing {
         "1.0".to_string()
     }
 
-    pub async fn upload_to_endpoint(&self, metadata: &Metadata, endpoint: &Option<Endpoint>) -> anyhow::Result<()> {
-        let uploader = TelemetryCrashUploader::new(metadata, endpoint)?;
-        uploader.upload_crash_ping(self).await
+    /// Sends this crash ping telemetry event to indicate that crash processing has started.
+    /// We no-op on file endpoints because unlike production environments, we know if
+    /// a crash report failed to send when file debugging.
+    pub async fn send_to_url(&self, endpoint: &Option<Endpoint>) -> anyhow::Result<()> {
+        let is_file_endpoint = endpoint
+            .as_ref()
+            .map(|e| e.url.scheme_str() == Some("file"))
+            .unwrap_or(false);
+
+        if is_file_endpoint {
+            return Ok(());
+        }
+
+        let telemetry_uploader = crate::TelemetryCrashUploader::new(self.metadata(), endpoint)?;
+        telemetry_uploader.upload_crash_ping(self).await
     }
 }
 
@@ -516,6 +518,7 @@ mod tests {
         let crash_ping = CrashPingBuilder::new()
             .with_crash_uuid(crash_uuid.to_string())
             .with_sig_info(sig_info.clone())
+            .with_metadata(Metadata::test_instance(1))
             .build()
             .unwrap();
         t.upload_crash_ping(&crash_ping).await.unwrap();
@@ -580,6 +583,7 @@ mod tests {
         let crash_ping = CrashPingBuilder::new()
             .with_crash_uuid(crash_uuid.to_string())
             .with_sig_info(sig_info.clone())
+            .with_metadata(Metadata::test_instance(1))
             .build()
             .unwrap();
         t.upload_crash_ping(&crash_ping).await.unwrap();
@@ -642,18 +646,21 @@ mod tests {
         let crash_ping = CrashPingBuilder::new()
             .with_crash_uuid(crash_uuid.to_string())
             .with_sig_info(sig_info.clone())
-            .with_endpoint(Some(Endpoint::from_slice(&format!(
+            .with_metadata(metadata.clone())
+            .build()?;
+
+        let endpoint = Some(Endpoint::from_slice(&format!(
                 "file://{}",
                 output_filename.to_str().unwrap()
-            ))))
-            .build()?;
+            )));
 
         // Test getters
         assert_eq!(crash_ping.crash_uuid(), crash_uuid);
         assert!(crash_ping.message().contains("crash processing started"));
+        assert_eq!(crash_ping.metadata(), &metadata);
 
         // Use TelemetryCrashUploader to upload the crash ping
-        let mut uploader = TelemetryCrashUploader::new(&metadata, crash_ping.endpoint())?;
+        let mut uploader = TelemetryCrashUploader::new(&metadata, &endpoint)?;
         uploader
             .cfg
             .set_host_from_url(&format!(
@@ -665,6 +672,7 @@ mod tests {
         let crash_ping = CrashPingBuilder::new()
             .with_crash_uuid(crash_uuid.to_string())
             .with_sig_info(sig_info.clone())
+            .with_metadata(metadata.clone())
             .build()?;
         uploader.upload_crash_ping(&crash_ping).await?;
 
@@ -714,6 +722,7 @@ mod tests {
         let result = CrashPingBuilder::new()
             .with_crash_uuid("test".to_string())
             .with_sig_info(crate::SigInfo::test_instance(1))
+            .with_metadata(Metadata::test_instance(1))
             .build();
         assert!(result.is_ok());
     }

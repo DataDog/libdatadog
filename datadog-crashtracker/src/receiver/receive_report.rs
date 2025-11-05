@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::{
-    crash_info::{CrashInfo, CrashInfoBuilder, ErrorKind, Metadata, SigInfo, Span},
+    crash_info::{CrashInfo, CrashInfoBuilder, ErrorKind, SigInfo, Span},
     shared::constants::*,
     CrashtrackerConfiguration,
 };
@@ -10,35 +10,6 @@ use anyhow::Context;
 use std::time::{Duration, Instant};
 use tokio::io::AsyncBufReadExt;
 use uuid::Uuid;
-
-/// Sends a crash ping telemetry event to indicate that crash processing has started.
-/// We no-op on file endpoints because unlike production environments, we know if
-/// a crash report failed to send when file debugging.
-async fn send_crash_ping_to_url(
-    config: &CrashtrackerConfiguration,
-    crash_uuid: &str,
-    metadata: &Metadata,
-    sig_info: &SigInfo,
-) -> anyhow::Result<()> {
-    let is_file_endpoint = config
-        .endpoint()
-        .as_ref()
-        .map(|e| e.url.scheme_str() == Some("file"))
-        .unwrap_or(false);
-
-    if is_file_endpoint {
-        return Ok(());
-    }
-
-    let crash_ping = crate::CrashPingBuilder::new()
-        .with_crash_uuid(crash_uuid.to_string())
-        .with_sig_info(sig_info.clone())
-        .with_endpoint(config.endpoint().clone())
-        .build()?;
-
-    let uploader = crate::TelemetryCrashUploader::new(metadata, config.endpoint())?;
-    uploader.upload_crash_ping(&crash_ping).await
-}
 
 /// The crashtracker collector sends data in blocks.
 /// This enum tracks which block we're currently in, and, for multi-line blocks,
@@ -265,15 +236,15 @@ pub(crate) async fn receive_report_from_stream(
                 let metadata_clone = metadata.clone();
                 let crash_uuid_clone = crash_uuid.clone();
                 let sig_info_clone = sig_info.clone();
+
+                let crash_ping = crate::CrashPingBuilder::new()
+                    .with_crash_uuid(crash_uuid_clone.to_string())
+                    .with_sig_info(sig_info_clone)
+                    .with_metadata(metadata_clone)
+                    .build()?;
+
                 tokio::task::spawn(async move {
-                    if let Err(e) = send_crash_ping_to_url(
-                        &config_clone,
-                        &crash_uuid_clone,
-                        &metadata_clone,
-                        &sig_info_clone,
-                    )
-                    .await
-                    {
+                    if let Err(e) = crash_ping.send_to_url(&config_clone.endpoint()).await {
                         eprintln!("Failed to send crash ping: {e}");
                     }
                 });
