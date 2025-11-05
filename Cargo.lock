@@ -1504,7 +1504,6 @@ dependencies = [
  "bytes",
  "chrono",
  "criterion",
- "datadog-profiling-protobuf",
  "ddcommon",
  "futures",
  "http",
@@ -1513,6 +1512,7 @@ dependencies = [
  "hyper-multipart-rfc7578",
  "indexmap 2.6.0",
  "libdd-alloc",
+ "libdd-profiling-protobuf",
  "lz4_flex",
  "mime",
  "prost",
@@ -1551,22 +1551,13 @@ dependencies = [
 ]
 
 [[package]]
-name = "datadog-profiling-protobuf"
-version = "23.0.0"
-dependencies = [
- "bolero",
- "datadog-profiling-protobuf",
- "prost",
-]
-
-[[package]]
 name = "datadog-profiling-replayer"
 version = "23.0.0"
 dependencies = [
  "anyhow",
  "clap",
  "datadog-profiling",
- "datadog-profiling-protobuf",
+ "libdd-profiling-protobuf",
  "prost",
  "sysinfo",
 ]
@@ -3135,6 +3126,15 @@ dependencies = [
  "build_common",
  "ddcommon-ffi",
  "libdd-log",
+]
+
+[[package]]
+name = "libdd-profiling-protobuf"
+version = "1.0.0"
+dependencies = [
+ "bolero",
+ "libdd-profiling-protobuf",
+ "prost",
 ]
 
 [[package]]
