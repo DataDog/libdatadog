@@ -22,7 +22,7 @@ members = [
   "datadog-sidecar",
   "datadog-sidecar-ffi",
   "datadog-sidecar-macros",
-  "datadog-trace-normalization",
+  "libdd-trace-normalization",
   "datadog-trace-obfuscation",
   "libdd-trace-protobuf",
   "datadog-trace-utils",
