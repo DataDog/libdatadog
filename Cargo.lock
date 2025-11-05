@@ -709,7 +709,7 @@ dependencies = [
 
 [[package]]
 name = "build_common"
-version = "22.1.0"
+version = "23.0.0"
 dependencies = [
  "cbindgen",
  "serde",
@@ -718,7 +718,7 @@ dependencies = [
 
 [[package]]
 name = "builder"
-version = "22.1.0"
+version = "23.0.0"
 dependencies = [
  "anyhow",
  "build_common",
@@ -845,6 +845,14 @@ dependencies = [
  "jobserver",
  "libc",
  "shlex",
+]
+
+[[package]]
+name = "cc_utils"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "cc",
 ]
 
 [[package]]
@@ -1285,7 +1293,7 @@ dependencies = [
 
 [[package]]
 name = "data-pipeline"
-version = "22.1.0"
+version = "23.0.0"
 dependencies = [
  "anyhow",
  "arc-swap",
@@ -1293,7 +1301,6 @@ dependencies = [
  "clap",
  "criterion",
  "datadog-ddsketch",
- "datadog-log",
  "datadog-trace-protobuf",
  "datadog-trace-stats",
  "datadog-trace-utils",
@@ -1306,6 +1313,7 @@ dependencies = [
  "httpmock",
  "hyper",
  "hyper-util",
+ "libdd-log",
  "rand 0.8.5",
  "regex",
  "rmp-serde",
@@ -1322,7 +1330,7 @@ dependencies = [
 
 [[package]]
 name = "data-pipeline-ffi"
-version = "22.1.0"
+version = "23.0.0"
 dependencies = [
  "build_common",
  "data-pipeline",
@@ -1335,18 +1343,8 @@ dependencies = [
 ]
 
 [[package]]
-name = "datadog-alloc"
-version = "22.1.0"
-dependencies = [
- "allocator-api2",
- "bolero",
- "libc",
- "windows-sys 0.52.0",
-]
-
-[[package]]
 name = "datadog-crashtracker"
-version = "22.1.0"
+version = "23.0.0"
 dependencies = [
  "anyhow",
  "backtrace",
@@ -1380,7 +1378,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-crashtracker-ffi"
-version = "22.1.0"
+version = "23.0.0"
 dependencies = [
  "anyhow",
  "build_common",
@@ -1399,7 +1397,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-ddsketch"
-version = "22.1.0"
+version = "23.0.0"
 dependencies = [
  "prost",
  "prost-build",
@@ -1543,28 +1541,8 @@ dependencies = [
 ]
 
 [[package]]
-name = "datadog-log"
-version = "22.1.0"
-dependencies = [
- "chrono",
- "tempfile",
- "tracing",
- "tracing-appender",
- "tracing-subscriber",
-]
-
-[[package]]
-name = "datadog-log-ffi"
-version = "22.1.0"
-dependencies = [
- "build_common",
- "datadog-log",
- "ddcommon-ffi",
-]
-
-[[package]]
 name = "datadog-profiling"
-version = "22.1.0"
+version = "23.0.0"
 dependencies = [
  "anyhow",
  "bitmaps",
@@ -1573,7 +1551,6 @@ dependencies = [
  "bytes",
  "chrono",
  "criterion",
- "datadog-alloc",
  "datadog-profiling-protobuf",
  "ddcommon",
  "futures",
@@ -1582,6 +1559,7 @@ dependencies = [
  "hyper",
  "hyper-multipart-rfc7578",
  "indexmap 2.6.0",
+ "libdd-alloc",
  "lz4_flex",
  "mime",
  "prost",
@@ -1596,14 +1574,13 @@ dependencies = [
 
 [[package]]
 name = "datadog-profiling-ffi"
-version = "22.1.0"
+version = "23.0.0"
 dependencies = [
  "anyhow",
  "build_common",
  "data-pipeline-ffi",
  "datadog-crashtracker-ffi",
  "datadog-library-config-ffi",
- "datadog-log-ffi",
  "datadog-profiling",
  "ddcommon",
  "ddcommon-ffi",
@@ -1614,6 +1591,7 @@ dependencies = [
  "http-body-util",
  "hyper",
  "libc",
+ "libdd-log-ffi",
  "serde_json",
  "symbolizer-ffi",
  "tokio-util",
@@ -1621,7 +1599,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-profiling-protobuf"
-version = "22.1.0"
+version = "23.0.0"
 dependencies = [
  "bolero",
  "datadog-profiling-protobuf",
@@ -1630,7 +1608,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-profiling-replayer"
-version = "22.1.0"
+version = "23.0.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -1758,7 +1736,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-trace-normalization"
-version = "22.1.0"
+version = "23.0.0"
 dependencies = [
  "anyhow",
  "criterion",
@@ -1769,7 +1747,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-trace-obfuscation"
-version = "22.1.0"
+version = "23.0.0"
 dependencies = [
  "anyhow",
  "criterion",
@@ -1787,7 +1765,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-trace-protobuf"
-version = "22.1.0"
+version = "23.0.0"
 dependencies = [
  "prost",
  "prost-build",
@@ -1800,7 +1778,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-trace-stats"
-version = "22.1.0"
+version = "23.0.0"
 dependencies = [
  "criterion",
  "datadog-ddsketch",
@@ -1812,7 +1790,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-trace-utils"
-version = "22.1.0"
+version = "23.0.0"
 dependencies = [
  "anyhow",
  "bolero",
@@ -1846,7 +1824,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-tracer-flare"
-version = "22.1.0"
+version = "23.0.0"
 dependencies = [
  "anyhow",
  "datadog-remote-config",
@@ -1862,7 +1840,7 @@ dependencies = [
 
 [[package]]
 name = "ddcommon"
-version = "22.1.0"
+version = "23.0.0"
 dependencies = [
  "anyhow",
  "cc",
@@ -1897,7 +1875,7 @@ dependencies = [
 
 [[package]]
 name = "ddcommon-ffi"
-version = "22.1.0"
+version = "23.0.0"
 dependencies = [
  "anyhow",
  "bolero",
@@ -1911,7 +1889,7 @@ dependencies = [
 
 [[package]]
 name = "ddsketch-ffi"
-version = "22.1.0"
+version = "23.0.0"
 dependencies = [
  "build_common",
  "datadog-ddsketch",
@@ -1920,7 +1898,7 @@ dependencies = [
 
 [[package]]
 name = "ddtelemetry"
-version = "22.1.0"
+version = "23.0.0"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -1946,7 +1924,7 @@ dependencies = [
 
 [[package]]
 name = "ddtelemetry-ffi"
-version = "22.1.0"
+version = "23.0.0"
 dependencies = [
  "build_common",
  "ddcommon",
@@ -2044,7 +2022,7 @@ dependencies = [
 
 [[package]]
 name = "dogstatsd-client"
-version = "22.1.0"
+version = "23.0.0"
 dependencies = [
  "anyhow",
  "cadence",
@@ -3139,6 +3117,36 @@ name = "libc"
 version = "0.2.176"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "58f929b4d672ea937a23a1ab494143d968337a5f47e56d0815df1e0890ddf174"
+
+[[package]]
+name = "libdd-alloc"
+version = "1.0.0"
+dependencies = [
+ "allocator-api2",
+ "bolero",
+ "libc",
+ "windows-sys 0.52.0",
+]
+
+[[package]]
+name = "libdd-log"
+version = "1.0.0"
+dependencies = [
+ "chrono",
+ "tempfile",
+ "tracing",
+ "tracing-appender",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "libdd-log-ffi"
+version = "23.0.0"
+dependencies = [
+ "build_common",
+ "ddcommon-ffi",
+ "libdd-log",
+]
 
 [[package]]
 name = "libloading"
@@ -4771,8 +4779,7 @@ name = "spawn_worker"
 version = "0.0.1"
 dependencies = [
  "anyhow",
- "cc",
- "ddcommon",
+ "cc_utils",
  "fastrand",
  "io-lifetimes",
  "kernel32-sys",
@@ -4941,7 +4948,7 @@ dependencies = [
 
 [[package]]
 name = "symbolizer-ffi"
-version = "22.1.0"
+version = "23.0.0"
 dependencies = [
  "blazesym-c",
  "build_common",
@@ -5247,7 +5254,7 @@ dependencies = [
 
 [[package]]
 name = "tinybytes"
-version = "22.1.0"
+version = "23.0.0"
 dependencies = [
  "once_cell",
  "pretty_assertions",
@@ -5447,7 +5454,7 @@ dependencies = [
 
 [[package]]
 name = "tools"
-version = "22.1.0"
+version = "23.0.0"
 dependencies = [
  "regex",
 ]

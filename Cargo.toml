@@ -4,7 +4,7 @@
 [workspace]
 members = [
   "builder",
-  "datadog-alloc",
+  "libdd-alloc",
   "datadog-crashtracker",
   "datadog-crashtracker-ffi",
   "datadog-ffe",
@@ -34,6 +34,7 @@ members = [
   "ddtelemetry",
   "ddtelemetry-ffi",
   "tools",
+  "tools/cc_utils",
   "tools/sidecar_mockgen",
   "spawn_worker",
   "tests/spawn_from_lib",
@@ -44,8 +45,8 @@ members = [
   "ddsketch-ffi",
   "tinybytes",
   "dogstatsd-client",
-  "datadog-log",
-  "datadog-log-ffi",
+  "libdd-log",
+  "libdd-log-ffi",
 ]
 
 # https://doc.rust-lang.org/cargo/reference/resolver.html
@@ -64,7 +65,7 @@ resolver = "2"
 [workspace.package]
 rust-version = "1.84.1"
 edition = "2021"
-version = "22.1.0"
+version = "23.0.0"
 license = "Apache-2.0"
 
 [workspace.dependencies]
