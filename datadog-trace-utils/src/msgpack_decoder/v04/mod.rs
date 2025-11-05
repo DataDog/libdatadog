@@ -32,12 +32,8 @@ use libdd_tinybytes as tinybytes;
 ///
 /// ```
 /// use datadog_trace_utils::msgpack_decoder::v04::from_bytes;
-<<<<<<< HEAD
-/// use libdd_trace_protobuf::pb::Span;
-||||||| e112efa9
-=======
 /// use libdd_tinybytes as tinybytes;
->>>>>>> main
+/// use libdd_trace_protobuf::pb::Span;
 /// use rmp_serde::to_vec_named;
 ///
 /// let span = Span {

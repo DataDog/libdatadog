@@ -4,14 +4,8 @@
 use crate::span::{v05, Span, SpanBytes, SpanText};
 use crate::trace_utils::collect_trace_chunks;
 use crate::{msgpack_decoder, trace_utils::cmp_send_data_payloads};
-<<<<<<< HEAD
-use libdd_trace_protobuf::pb;
-||||||| e112efa9
-use datadog_trace_protobuf::pb;
-=======
-use datadog_trace_protobuf::pb;
 use libdd_tinybytes as tinybytes;
->>>>>>> main
+use libdd_trace_protobuf::pb;
 use std::cmp::Ordering;
 use std::iter::Iterator;
 use tinybytes::BytesString;
