@@ -27,6 +27,7 @@ pub struct CrashPingBuilder {
     sig_info: Option<SigInfo>,
     endpoint: Option<Endpoint>,
     custom_message: Option<String>,
+    metadata: Option<Metadata>,
 }
 
 impl CrashPingBuilder {
@@ -36,6 +37,7 @@ impl CrashPingBuilder {
             sig_info: None,
             endpoint: None,
             custom_message: None,
+            metadata: None,
         }
     }
 
@@ -59,9 +61,15 @@ impl CrashPingBuilder {
         self
     }
 
+    pub fn with_metadata(mut self, metadata: Metadata) -> Self {
+        self.metadata = Some(metadata);
+        self
+    }
+
     pub fn build(self) -> anyhow::Result<CrashPing> {
         let crash_uuid = self.crash_uuid.context("crash_uuid is required")?;
         let sig_info = self.sig_info.context("sig_info is required")?;
+        let metadata = self.metadata.context("metadata is required")?;
 
         let message = self.custom_message.unwrap_or_else(|| {
             format!(
@@ -73,6 +81,7 @@ impl CrashPingBuilder {
         Ok(CrashPing {
             crash_uuid,
             siginfo: sig_info,
+            metadata,
             message,
             version: CrashPing::current_schema_version(),
             kind: "Crash ping".to_string(),
@@ -94,6 +103,7 @@ pub struct CrashPing {
     message: String,
     version: String,
     kind: String,
+    metadata: Metadata,
     #[serde(skip)]
     endpoint: Option<Endpoint>,
 }
@@ -111,8 +121,17 @@ impl CrashPing {
         &self.endpoint
     }
 
+    pub fn siginfo(&self) -> &SigInfo {
+        &self.siginfo
+    }
+
     fn current_schema_version() -> String {
         "1.0".to_string()
+    }
+
+    pub async fn upload_to_endpoint(&self, metadata: &Metadata, endpoint: &Option<Endpoint>) -> anyhow::Result<()> {
+        let uploader = TelemetryCrashUploader::new(metadata, endpoint)?;
+        uploader.upload_crash_ping(self).await
     }
 }
 
@@ -201,18 +220,11 @@ impl TelemetryCrashUploader {
         Ok(s)
     }
 
-    pub async fn upload_crash_ping(&self, crash_ping: &CrashPing) -> anyhow::Result<()> {
-        self.upload_crash_ping_internal(crash_ping, &crash_ping.crash_uuid, &crash_ping.siginfo)
-            .await
-    }
-
-    async fn upload_crash_ping_internal(
+    pub async fn upload_crash_ping(
         &self,
         crash_ping: &CrashPing,
-        crash_uuid: &str,
-        sig_info: &SigInfo,
     ) -> anyhow::Result<()> {
-        let tags = self.build_crash_ping_tags(crash_uuid, sig_info);
+        let tags = self.build_crash_ping_tags(crash_ping.crash_uuid(), crash_ping.siginfo());
         let tracer_time = SystemTime::now()
             .duration_since(SystemTime::UNIX_EPOCH)
             .map(|d| d.as_secs())
