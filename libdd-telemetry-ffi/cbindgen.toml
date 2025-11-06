@@ -1,0 +1,37 @@
+# Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
+# SPDX-License-Identifier: Apache-2.0
+
+language = "C"
+tab_width = 2
+header = """// Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
+// SPDX-License-Identifier: Apache-2.0
+"""
+include_guard = "DDOG_TELEMETRY_H"
+style = "both"
+
+no_includes = true
+sys_includes = ["stdbool.h", "stddef.h", "stdint.h", "stdio.h"]
+includes = ["common.h"]
+
+[export]
+prefix = "ddog_"
+renaming_overrides_prefixing = true
+
+[export.mangle]
+rename_types = "PascalCase"
+
+[export.rename]
+"ParseTagsResult" = "ddog_Vec_Tag_ParseResult"
+"PushTagResult" = "ddog_Vec_Tag_PushResult"
+"FILE" = "FILE"
+
+[enum]
+prefix_with_name = true
+rename_variants = "ScreamingSnakeCase"
+
+[fn]
+must_use = "DDOG_CHECK_RETURN"
+
+[parse]
+parse_deps = true
+include = ["libdd-common", "libdd-telemetry", "libdd-common-ffi", "libdd-ipc"]

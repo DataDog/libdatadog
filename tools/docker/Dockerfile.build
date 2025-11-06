@@ -74,8 +74,8 @@ COPY "datadog-crashtracker/Cargo.toml" "datadog-crashtracker/"
 COPY "datadog-crashtracker-ffi/Cargo.toml" "datadog-crashtracker-ffi/"
 COPY "ddcommon/Cargo.toml" "ddcommon/"
 COPY "ddcommon-ffi/Cargo.toml" "ddcommon-ffi/"
-COPY "ddtelemetry/Cargo.toml" "ddtelemetry/"
-COPY "ddtelemetry-ffi/Cargo.toml" "ddtelemetry-ffi/"
+COPY "libdd-telemetry/Cargo.toml" "libdd-telemetry/"
+COPY "libdd-telemetry-ffi/Cargo.toml" "libdd-telemetry-ffi/"
 COPY "libdd-ddsketch/Cargo.toml" "libdd-ddsketch/"
 COPY "libdd-ddsketch-ffi/Cargo.toml" "libdd-ddsketch-ffi/"
 COPY "libdd-log/Cargo.toml" "libdd-log/"
@@ -123,7 +123,7 @@ RUN echo \
     bin_tests/src/bin/crashtracker_unix_socket_receiver.rs \
     bin_tests/src/bin/test_the_tests.rs \
     builder/src/bin/release.rs \
-    ddtelemetry/examples/tm-worker-test.rs \
+    libdd-telemetry/examples/tm-worker-test.rs \
     datadog-ipc/benches/ipc.rs \
     datadog-ipc/tarpc/examples/compression.rs \
     datadog-ipc/tarpc/examples/custom_transport.rs \

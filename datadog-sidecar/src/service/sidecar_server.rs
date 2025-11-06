@@ -18,9 +18,9 @@ use datadog_trace_utils::trace_utils::SendData;
 use datadog_trace_utils::tracer_payload::decode_to_trace_chunks;
 use datadog_trace_utils::tracer_payload::TraceEncoding;
 use ddcommon::{Endpoint, MutexExt};
-use ddtelemetry::worker::{LifecycleAction, TelemetryActions, TelemetryWorkerStats};
 use futures::future;
 use futures::future::Ready;
+use libdd_telemetry::worker::{LifecycleAction, TelemetryActions, TelemetryWorkerStats};
 use manual_future::ManualFutureCompleter;
 use std::borrow::Cow;
 use std::collections::hash_map::Entry;
@@ -49,8 +49,8 @@ use datadog_live_debugger::sender::DebuggerType;
 use datadog_remote_config::fetch::{ConfigInvariants, MultiTargetStats};
 use datadog_trace_utils::tracer_header_tags::TracerHeaderTags;
 use ddcommon::tag::Tag;
-use ddtelemetry::config::Config;
 use libdd_dogstatsd_client::{new, DogStatsDActionOwned};
+use libdd_telemetry::config::Config;
 use libdd_tinybytes as tinybytes;
 
 type NoResponse = Ready<()>;
@@ -103,7 +103,7 @@ pub struct SidecarServer {
     pub(crate) telemetry_clients: TelemetryCachedClientSet,
     /// A `Mutex` guarded optional `ManualFutureCompleter` for telemetry configuration.
     pub self_telemetry_config:
-        Arc<Mutex<Option<ManualFutureCompleter<ddtelemetry::config::Config>>>>,
+        Arc<Mutex<Option<ManualFutureCompleter<libdd_telemetry::config::Config>>>>,
     /// Keeps track of the number of submitted payloads.
     pub(crate) submitted_payloads: Arc<AtomicU64>,
     /// All tracked agent infos per endpoint
@@ -543,8 +543,10 @@ impl SidecarInterface for SidecarServer {
         *session.remote_config_enabled.lock_or_panic() = config.remote_config_enabled;
         session.modify_telemetry_config(|cfg| {
             cfg.telemetry_heartbeat_interval = config.telemetry_heartbeat_interval;
-            let endpoint =
-                get_product_endpoint(ddtelemetry::config::PROD_INTAKE_SUBDOMAIN, &config.endpoint);
+            let endpoint = get_product_endpoint(
+                libdd_telemetry::config::PROD_INTAKE_SUBDOMAIN,
+                &config.endpoint,
+            );
             cfg.set_endpoint(endpoint).ok();
             cfg.telemetry_heartbeat_interval = config.telemetry_heartbeat_interval;
         });

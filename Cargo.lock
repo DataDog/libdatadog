@@ -1303,7 +1303,6 @@ dependencies = [
  "datadog-trace-stats",
  "datadog-trace-utils",
  "ddcommon",
- "ddtelemetry",
  "either",
  "http",
  "http-body-util",
@@ -1313,6 +1312,7 @@ dependencies = [
  "libdd-ddsketch",
  "libdd-dogstatsd-client",
  "libdd-log",
+ "libdd-telemetry",
  "libdd-tinybytes",
  "libdd-trace-protobuf",
  "rand 0.8.5",
@@ -1353,10 +1353,10 @@ dependencies = [
  "chrono",
  "criterion",
  "ddcommon",
- "ddtelemetry",
  "goblin",
  "http",
  "libc",
+ "libdd-telemetry",
  "nix",
  "num-derive",
  "num-traits",
@@ -1536,7 +1536,6 @@ dependencies = [
  "datadog-profiling",
  "ddcommon",
  "ddcommon-ffi",
- "ddtelemetry-ffi",
  "function_name",
  "futures",
  "http-body-util",
@@ -1545,6 +1544,7 @@ dependencies = [
  "libdd-ddsketch-ffi",
  "libdd-library-config-ffi",
  "libdd-log-ffi",
+ "libdd-telemetry-ffi",
  "serde_json",
  "symbolizer-ffi",
  "tokio-util",
@@ -1611,7 +1611,6 @@ dependencies = [
  "datadog-trace-utils",
  "ddcommon",
  "ddcommon-ffi",
- "ddtelemetry",
  "futures",
  "http",
  "http-body-util",
@@ -1619,6 +1618,7 @@ dependencies = [
  "hyper",
  "libc",
  "libdd-dogstatsd-client",
+ "libdd-telemetry",
  "libdd-tinybytes",
  "manual_future",
  "memory-stats",
@@ -1658,11 +1658,11 @@ dependencies = [
  "datadog-trace-utils",
  "ddcommon",
  "ddcommon-ffi",
- "ddtelemetry",
- "ddtelemetry-ffi",
  "http",
  "libc",
  "libdd-dogstatsd-client",
+ "libdd-telemetry",
+ "libdd-telemetry-ffi",
  "libdd-tinybytes",
  "paste",
  "rmp-serde",
@@ -1805,46 +1805,6 @@ dependencies = [
  "ddcommon",
  "hyper",
  "serde",
-]
-
-[[package]]
-name = "ddtelemetry"
-version = "23.0.0"
-dependencies = [
- "anyhow",
- "base64 0.22.1",
- "ddcommon",
- "futures",
- "hashbrown 0.15.1",
- "http",
- "http-body-util",
- "hyper",
- "hyper-util",
- "libc",
- "libdd-ddsketch",
- "serde",
- "serde_json",
- "sys-info",
- "tokio",
- "tokio-util",
- "tracing",
- "tracing-subscriber",
- "uuid",
- "winver",
-]
-
-[[package]]
-name = "ddtelemetry-ffi"
-version = "23.0.0"
-dependencies = [
- "build_common",
- "ddcommon",
- "ddcommon-ffi",
- "ddtelemetry",
- "function_name",
- "libc",
- "paste",
- "tempfile",
 ]
 
 [[package]]
@@ -3111,6 +3071,46 @@ dependencies = [
  "bolero",
  "libdd-profiling-protobuf",
  "prost",
+]
+
+[[package]]
+name = "libdd-telemetry"
+version = "1.0.0"
+dependencies = [
+ "anyhow",
+ "base64 0.22.1",
+ "ddcommon",
+ "futures",
+ "hashbrown 0.15.1",
+ "http",
+ "http-body-util",
+ "hyper",
+ "hyper-util",
+ "libc",
+ "libdd-ddsketch",
+ "serde",
+ "serde_json",
+ "sys-info",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "tracing-subscriber",
+ "uuid",
+ "winver",
+]
+
+[[package]]
+name = "libdd-telemetry-ffi"
+version = "23.0.0"
+dependencies = [
+ "build_common",
+ "ddcommon",
+ "ddcommon-ffi",
+ "function_name",
+ "libc",
+ "libdd-telemetry",
+ "paste",
+ "tempfile",
 ]
 
 [[package]]

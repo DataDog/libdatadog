@@ -691,7 +691,7 @@ fn setup_crashtracking_crates(
         triple_target: None,
     };
     let crashtracker_receiver = ArtifactsBuild {
-        name: "crashtracker_receiver".to_owned(),
+        name: "test_crashtracker_receiver".to_owned(),
         build_profile: crash_tracking_receiver_profile,
         artifact_type: ArtifactType::Bin,
         triple_target: None,

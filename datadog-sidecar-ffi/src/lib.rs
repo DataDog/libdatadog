@@ -37,13 +37,13 @@ use ddcommon::tag::Tag;
 use ddcommon::Endpoint;
 use ddcommon_ffi::slice::{AsBytes, CharSlice};
 use ddcommon_ffi::{self as ffi, MaybeError};
-use ddtelemetry::{
+use libc::c_char;
+use libdd_dogstatsd_client::DogStatsDActionOwned;
+use libdd_telemetry::{
     data::{self, Dependency, Integration},
     worker::{LifecycleAction, LogIdentifier, TelemetryActions},
 };
-use ddtelemetry_ffi::try_c;
-use libc::c_char;
-use libdd_dogstatsd_client::DogStatsDActionOwned;
+use libdd_telemetry_ffi::try_c;
 use std::ffi::{c_void, CStr, CString};
 use std::fs::File;
 use std::hash::{DefaultHasher, Hash, Hasher};
@@ -662,7 +662,7 @@ pub unsafe extern "C" fn ddog_sidecar_enqueue_telemetry_log(
     service_name_ffi: CharSlice,
     env_name_ffi: CharSlice,
     identifier_ffi: CharSlice,
-    level: ddtelemetry::data::LogLevel,
+    level: libdd_telemetry::data::LogLevel,
     message_ffi: CharSlice,
     stack_trace_ffi: Option<NonNull<CharSlice>>,
     tags_ffi: Option<NonNull<CharSlice>>,
@@ -697,7 +697,7 @@ fn ddog_sidecar_enqueue_telemetry_log_impl(
     service_name_ffi: CharSlice,
     env_name_ffi: CharSlice,
     identifier_ffi: CharSlice,
-    level: ddtelemetry::data::LogLevel,
+    level: libdd_telemetry::data::LogLevel,
     message_ffi: CharSlice,
     stack_trace_ffi: Option<NonNull<CharSlice>>,
     tags_ffi: Option<NonNull<CharSlice>>,
@@ -742,7 +742,7 @@ fn ddog_sidecar_enqueue_telemetry_log_impl(
         identifier: hasher.finish(),
     };
 
-    let log_data = ddtelemetry::data::Log {
+    let log_data = libdd_telemetry::data::Log {
         message,
         level,
         stack_trace,
