@@ -402,11 +402,6 @@ where
                 }
             }
             Entry::Vacant(e) => {
-                let runtime_id = if synthetic_id {
-                    Self::generate_synthetic_id()
-                } else {
-                    runtime_id.into()
-                };
                 self.start_fetcher(
                     e.insert(KnownTarget {
                         refcount: 1,
@@ -435,7 +430,11 @@ where
                         },
                         fetcher: Arc::new(SharedFetcher::new(
                             target,
-                            runtime_id,
+                            if synthetic_id {
+                                Self::generate_synthetic_id()
+                            } else {
+                                runtime_id.into()
+                            },
                             ConfigProductCapabilities::new(
                                 product_capabilities.products,
                                 product_capabilities.capabilities,
