@@ -31,7 +31,7 @@ pub(crate) struct SessionInfo {
     pub(crate) session_config: Arc<Mutex<Option<ddtelemetry::config::Config>>>,
     debugger_config: Arc<Mutex<datadog_live_debugger::sender::Config>>,
     tracer_config: Arc<Mutex<tracer::Config>>,
-    dogstatsd: Arc<Mutex<Option<dogstatsd_client::Client>>>,
+    dogstatsd: Arc<Mutex<Option<libdd_dogstatsd_client::Client>>>,
     remote_config_invariants: Arc<Mutex<Option<ConfigInvariants>>>,
     pub(crate) agent_infos: Arc<Mutex<Option<AgentInfoGuard>>>,
     pub(crate) remote_config_interval: Arc<Mutex<Duration>>,
@@ -180,13 +180,13 @@ impl SessionInfo {
         f(&mut self.get_trace_config());
     }
 
-    pub(crate) fn get_dogstatsd(&self) -> MutexGuard<'_, Option<dogstatsd_client::Client>> {
+    pub(crate) fn get_dogstatsd(&self) -> MutexGuard<'_, Option<libdd_dogstatsd_client::Client>> {
         self.dogstatsd.lock_or_panic()
     }
 
     pub(crate) fn configure_dogstatsd<F>(&self, f: F)
     where
-        F: FnOnce(&mut Option<dogstatsd_client::Client>),
+        F: FnOnce(&mut Option<libdd_dogstatsd_client::Client>),
     {
         f(&mut self.get_dogstatsd());
     }

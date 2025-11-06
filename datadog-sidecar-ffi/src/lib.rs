@@ -42,8 +42,8 @@ use ddtelemetry::{
     worker::{LifecycleAction, LogIdentifier, TelemetryActions},
 };
 use ddtelemetry_ffi::try_c;
-use dogstatsd_client::DogStatsDActionOwned;
 use libc::c_char;
+use libdd_dogstatsd_client::DogStatsDActionOwned;
 use std::ffi::{c_void, CStr, CString};
 use std::fs::File;
 use std::hash::{DefaultHasher, Hash, Hasher};

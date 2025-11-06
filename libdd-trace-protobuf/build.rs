@@ -168,8 +168,14 @@ fn generate_protobuf() {
     config.field_attribute("ClientGroupedStats.peer_tags", "#[serde(default)]");
     config.field_attribute("ClientGroupedStats.is_trace_root", "#[serde(default)]");
     config.field_attribute("ClientGroupedStats.GRPC_status_code", "#[serde(default)]");
-    config.field_attribute("ClientGroupedStats.HTTP_method", "#[serde(default)]");
-    config.field_attribute("ClientGroupedStats.HTTP_endpoint", "#[serde(default)]");
+    config.field_attribute(
+        "ClientGroupedStats.HTTP_method",
+        "#[serde(default)] #[serde(rename = \"HTTPMethod\")]",
+    );
+    config.field_attribute(
+        "ClientGroupedStats.HTTP_endpoint",
+        "#[serde(default)] #[serde(rename = \"HTTPEndpoint\")]",
+    );
 
     config.field_attribute(
         "ClientGroupedStats.okSummary",

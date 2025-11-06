@@ -16,8 +16,8 @@ use crate::collections::string_table::{self, StringTable};
 use crate::iter::{IntoLendingIterator, LendingIterator};
 use crate::profiles::{Compressor, DefaultProfileCodec};
 use anyhow::Context;
-use datadog_profiling_protobuf::{self as protobuf, Record, Value, NO_OPT_ZERO, OPT_ZERO};
 use interning_api::Generation;
+use libdd_profiling_protobuf::{self as protobuf, Record, Value, NO_OPT_ZERO, OPT_ZERO};
 use std::borrow::Cow;
 use std::collections::HashMap;
 use std::io;
@@ -930,7 +930,7 @@ impl Profile {
 mod api_tests {
     use super::*;
     use crate::pprof::test_utils::{roundtrip_to_pprof, sorted_samples, string_table_fetch};
-    use datadog_profiling_protobuf::prost_impls;
+    use libdd_profiling_protobuf::prost_impls;
 
     #[test]
     fn interning() {

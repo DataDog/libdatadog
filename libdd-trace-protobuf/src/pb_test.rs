@@ -70,8 +70,8 @@ mod tests {
                                 0,
                                 0
                             ],
-                            "HttpMethod": "GET",
-                            "HttpEndpoint": "/test",
+                            "HTTPMethod": "GET",
+                            "HTTPEndpoint": "/test",
                             "GrpcStatusCode": "0"
                         }
                     ]
