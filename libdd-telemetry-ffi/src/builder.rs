@@ -1,9 +1,9 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use ddcommon::Endpoint;
-use ddcommon_ffi as ffi;
 use ffi::slice::AsBytes;
+use libdd_common::Endpoint;
+use libdd_common_ffi as ffi;
 use libdd_telemetry::{
     data,
     worker::{TelemetryWorkerBuilder, TelemetryWorkerFlavor, TelemetryWorkerHandle},

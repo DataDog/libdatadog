@@ -9,7 +9,7 @@
 #![cfg_attr(not(test), deny(clippy::todo))]
 #![cfg_attr(not(test), deny(clippy::unimplemented))]
 
-use ddcommon::entity_id;
+use libdd_common::entity_id;
 use tracing::debug;
 
 pub mod config;

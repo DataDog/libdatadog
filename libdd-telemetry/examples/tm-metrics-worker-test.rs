@@ -3,7 +3,7 @@
 
 use std::{error::Error, time::Duration, time::Instant};
 
-use ddcommon::tag;
+use libdd_common::tag;
 use libdd_telemetry::{data, worker};
 
 macro_rules! timeit {
@@ -36,7 +36,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     builder.config.telemetry_debug_logging_enabled = true;
     builder
         .config
-        .set_endpoint(ddcommon::Endpoint::from_slice(
+        .set_endpoint(libdd_common::Endpoint::from_slice(
             "file://./tm-metrics-worker-test.output",
         ))
         .unwrap();

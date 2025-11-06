@@ -24,7 +24,7 @@ impl Module for Common {
             .args([
                 "build",
                 "-p",
-                "ddcommon-ffi",
+                "libdd-common-ffi",
                 "--features",
                 "cbindgen",
                 "--target",

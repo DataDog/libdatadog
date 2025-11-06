@@ -8,13 +8,13 @@ mod tracing_integration_tests {
     use datadog_trace_utils::test_utils::{create_test_json_span, create_test_no_alloc_span};
     use datadog_trace_utils::trace_utils::TracerHeaderTags;
     use datadog_trace_utils::tracer_payload::{decode_to_trace_chunks, TraceEncoding};
-    #[cfg(target_os = "linux")]
-    use ddcommon::connector::uds::socket_path_to_uri;
-    use ddcommon::hyper_migration::new_default_client;
-    use ddcommon::{hyper_migration, Endpoint};
     use http_body_util::BodyExt;
     #[cfg(target_os = "linux")]
     use hyper::Uri;
+    #[cfg(target_os = "linux")]
+    use libdd_common::connector::uds::socket_path_to_uri;
+    use libdd_common::hyper_migration::new_default_client;
+    use libdd_common::{hyper_migration, Endpoint};
     use libdd_tinybytes::{Bytes, BytesString};
     use serde_json::json;
     use std::collections::HashMap;

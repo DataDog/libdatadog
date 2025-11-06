@@ -5,8 +5,8 @@ use datadog_sidecar_ffi::*;
 macro_rules! assert_maybe_no_error {
     ($maybe_erroring:expr) => {
         match $maybe_erroring {
-            ddcommon_ffi::Option::Some(err) => panic!("{}", err.to_string()),
-            ddcommon_ffi::Option::None => {}
+            libdd_common_ffi::Option::Some(err) => panic!("{}", err.to_string()),
+            libdd_common_ffi::Option::None => {}
         }
     };
 }

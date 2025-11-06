@@ -1,8 +1,8 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use ddcommon::{hyper_migration, HttpRequestBuilder};
 use http_body_util::BodyExt;
+use libdd_common::{hyper_migration, HttpRequestBuilder};
 use std::{
     fs::OpenOptions,
     future::Future,
@@ -67,7 +67,7 @@ pub fn from_config(c: &Config) -> Box<dyn HttpClient + Sync + Send> {
     match &c.endpoint {
         Some(e) if e.url.scheme_str() == Some("file") => {
             #[allow(clippy::expect_used)]
-            let file_path = ddcommon::decode_uri_path_in_authority(&e.url)
+            let file_path = libdd_common::decode_uri_path_in_authority(&e.url)
                 .expect("file urls should always have been encoded in authority");
             debug!(
                 file.path = ?file_path,
@@ -104,7 +104,7 @@ pub fn from_config(c: &Config) -> Box<dyn HttpClient + Sync + Send> {
 }
 
 pub struct HyperClient {
-    inner: ddcommon::HttpClient,
+    inner: libdd_common::HttpClient,
 }
 
 impl HttpClient for HyperClient {
@@ -159,7 +159,7 @@ impl HttpClient for MockClient {
 
 #[cfg(test)]
 mod tests {
-    use ddcommon::HttpRequestBuilder;
+    use libdd_common::HttpRequestBuilder;
 
     use super::*;
 

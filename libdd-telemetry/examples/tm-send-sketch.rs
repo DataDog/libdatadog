@@ -9,8 +9,8 @@ use std::{
     time::SystemTime,
 };
 
-use ddcommon::Endpoint;
 use http::{header::CONTENT_TYPE, Uri};
+use libdd_common::Endpoint;
 use libdd_telemetry::{
     build_host,
     config::Config,
@@ -44,7 +44,7 @@ pub async fn push_telemetry(config: &Config, telemetry: &Telemetry<'_>) -> anyho
     let client = libdd_telemetry::worker::http_client::from_config(config);
     let req = request_builder(config)?
         .method(http::Method::POST)
-        .header(CONTENT_TYPE, ddcommon::header::APPLICATION_JSON)
+        .header(CONTENT_TYPE, libdd_common::header::APPLICATION_JSON)
         .body(serde_json::to_string(telemetry)?.into())?;
 
     let resp = client.request(req).await?;

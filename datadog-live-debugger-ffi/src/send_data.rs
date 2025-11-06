@@ -1,7 +1,7 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use ddcommon_ffi::CharSlice;
+use libdd_common_ffi::CharSlice;
 use std::borrow::Cow;
 use std::collections::hash_map;
 use std::mem::transmute;
@@ -16,7 +16,7 @@ use datadog_live_debugger::sender::generate_new_id;
 use datadog_live_debugger::{
     add_redacted_name, add_redacted_type, is_redacted_name, is_redacted_type,
 };
-use ddcommon_ffi::slice::AsBytes;
+use libdd_common_ffi::slice::AsBytes;
 
 #[repr(C)]
 pub enum FieldType {

@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use datadog_remote_config::config::agent_task::AgentTaskFile;
-use ddcommon::{hyper_migration, Endpoint};
 use hyper::{body::Bytes, Method};
+use libdd_common::{hyper_migration, Endpoint};
 use std::{
     collections::HashMap,
     fs::File,

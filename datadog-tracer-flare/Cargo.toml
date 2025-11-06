@@ -8,7 +8,7 @@ autobenches = false
 
 [dependencies]
 anyhow = "1.0"
-ddcommon = { path = "../ddcommon" }
+libdd-common = { path = "../libdd-common" }
 datadog-remote-config = { path = "../datadog-remote-config" }
 datadog-trace-utils = { path = "../datadog-trace-utils" }
 hyper = { workspace = true}

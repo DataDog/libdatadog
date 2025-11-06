@@ -4,7 +4,7 @@
 use datadog_trace_utils::span::{
     AttributeAnyValueBytes, AttributeArrayValueBytes, SpanBytes, SpanEventBytes, SpanLinkBytes,
 };
-use ddcommon_ffi::slice::{AsBytes, CharSlice};
+use libdd_common_ffi::slice::{AsBytes, CharSlice};
 use libdd_tinybytes::{Bytes, BytesString};
 use std::borrow::Cow;
 use std::collections::HashMap;

@@ -9,17 +9,17 @@ use crate::trace_utils::TracerHeaderTags;
 use crate::tracer_payload::TracerPayloadCollection;
 use anyhow::{anyhow, Context};
 use datadog_trace_protobuf::pb::{AgentPayload, TracerPayload};
-use ddcommon::HttpClient;
-use ddcommon::{
+use futures::stream::FuturesUnordered;
+use futures::StreamExt;
+use hyper::header::CONTENT_TYPE;
+use libdd_common::HttpClient;
+use libdd_common::{
     header::{
         APPLICATION_MSGPACK_STR, APPLICATION_PROTOBUF_STR, DATADOG_SEND_REAL_HTTP_STATUS_STR,
         DATADOG_TRACE_COUNT_STR,
     },
     Endpoint,
 };
-use futures::stream::FuturesUnordered;
-use futures::StreamExt;
-use hyper::header::CONTENT_TYPE;
 use send_data_result::SendDataResult;
 use std::collections::HashMap;
 #[cfg(feature = "compression")]
@@ -42,8 +42,8 @@ use zstd::stream::write::Encoder;
 /// use datadog_trace_utils::send_with_retry::{RetryBackoffType, RetryStrategy};
 /// use datadog_trace_utils::trace_utils::TracerHeaderTags;
 /// use datadog_trace_utils::tracer_payload::TracerPayloadCollection;
-/// use ddcommon::Endpoint;
-/// use ddcommon::hyper_migration::new_default_client;
+/// use libdd_common::Endpoint;
+/// use libdd_common::hyper_migration::new_default_client;
 ///
 /// #[cfg_attr(miri, ignore)]
 /// async fn update_send_results_example() {
@@ -429,9 +429,9 @@ mod tests {
     use crate::trace_utils::{construct_trace_chunk, construct_tracer_payload, RootSpanTags};
     use crate::tracer_header_tags::TracerHeaderTags;
     use datadog_trace_protobuf::pb::Span;
-    use ddcommon::Endpoint;
     use httpmock::prelude::*;
     use httpmock::MockServer;
+    use libdd_common::Endpoint;
     use std::collections::HashMap;
     use std::time::Duration;
 
@@ -586,7 +586,7 @@ mod tests {
         );
 
         let data_payload_len = compute_payload_len(&data.tracer_payloads);
-        let client = ddcommon::hyper_migration::new_default_client();
+        let client = libdd_common::hyper_migration::new_default_client();
         let res = data.send(&client).await;
 
         mock.assert_async().await;
@@ -632,7 +632,7 @@ mod tests {
         );
 
         let data_payload_len = compute_payload_len(&data.tracer_payloads);
-        let client = ddcommon::hyper_migration::new_default_client();
+        let client = libdd_common::hyper_migration::new_default_client();
         let res = data.send(&client).await;
 
         mock.assert_async().await;
@@ -692,7 +692,7 @@ mod tests {
         );
 
         let data_payload_len = rmp_compute_payload_len(&data.tracer_payloads);
-        let client = ddcommon::hyper_migration::new_default_client();
+        let client = libdd_common::hyper_migration::new_default_client();
         let res = data.send(&client).await;
 
         mock.assert_async().await;
@@ -751,7 +751,7 @@ mod tests {
         );
 
         let data_payload_len = rmp_compute_payload_len(&data.tracer_payloads);
-        let client = ddcommon::hyper_migration::new_default_client();
+        let client = libdd_common::hyper_migration::new_default_client();
         let res = data.send(&client).await;
 
         mock.assert_async().await;
@@ -796,7 +796,7 @@ mod tests {
         );
 
         let data_payload_len = rmp_compute_payload_len(&data.tracer_payloads);
-        let client = ddcommon::hyper_migration::new_default_client();
+        let client = libdd_common::hyper_migration::new_default_client();
         let res = data.send(&client).await;
 
         mock.assert_calls_async(2).await;
@@ -838,7 +838,7 @@ mod tests {
             },
         );
 
-        let client = ddcommon::hyper_migration::new_default_client();
+        let client = libdd_common::hyper_migration::new_default_client();
         let res = data.send(&client).await;
 
         mock.assert_calls_async(5).await;
@@ -871,7 +871,7 @@ mod tests {
             },
         );
 
-        let client = ddcommon::hyper_migration::new_default_client();
+        let client = libdd_common::hyper_migration::new_default_client();
         let res = data.send(&client).await;
 
         assert!(res.last_result.is_err());
@@ -939,7 +939,7 @@ mod tests {
             },
         );
 
-        let client = ddcommon::hyper_migration::new_default_client();
+        let client = libdd_common::hyper_migration::new_default_client();
         let res = data.send(&client).await;
 
         mock.assert_calls_async(5).await;
@@ -982,7 +982,7 @@ mod tests {
             },
         );
 
-        let client = ddcommon::hyper_migration::new_default_client();
+        let client = libdd_common::hyper_migration::new_default_client();
         let res = data.send(&client).await;
 
         mock.assert_calls_async(10).await;

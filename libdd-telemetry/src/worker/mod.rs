@@ -10,8 +10,8 @@ use crate::{
     data::{self, Application, Dependency, Host, Integration, Log, Payload, Telemetry},
     metrics::{ContextKey, MetricBuckets, MetricContexts},
 };
-use ddcommon::Endpoint;
-use ddcommon::{hyper_migration, tag::Tag, worker::Worker};
+use libdd_common::Endpoint;
+use libdd_common::{hyper_migration, tag::Tag, worker::Worker};
 
 use std::fmt::Debug;
 use std::iter::Sum;
@@ -257,7 +257,7 @@ mod serialize {
     use crate::data;
     use http::HeaderValue;
     #[allow(clippy::declare_interior_mutable_const)]
-    pub const CONTENT_TYPE_VALUE: HeaderValue = ddcommon::header::APPLICATION_JSON;
+    pub const CONTENT_TYPE_VALUE: HeaderValue = libdd_common::header::APPLICATION_JSON;
     pub fn serialize(telemetry: &data::Telemetry) -> anyhow::Result<Vec<u8>> {
         Ok(serde_json::to_vec(telemetry)?)
     }

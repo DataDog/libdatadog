@@ -15,7 +15,7 @@ bench = false
 
 [features]
 default = ["cbindgen", "expanded_builder_macros"]
-cbindgen = ["build_common/cbindgen", "ddcommon-ffi/cbindgen", "expanded_builder_macros"]
+cbindgen = ["build_common/cbindgen", "libdd-common-ffi/cbindgen", "expanded_builder_macros"]
 expanded_builder_macros = []
 
 [build-dependencies]
@@ -23,8 +23,8 @@ build_common = { path = "../build-common" }
 
 [dependencies]
 libdd-telemetry = { path = "../libdd-telemetry" }
-ddcommon = { path = "../ddcommon" }
-ddcommon-ffi = { path = "../ddcommon-ffi", default-features = false }
+libdd-common = { path = "../libdd-common" }
+libdd-common-ffi = { path = "../libdd-common-ffi", default-features = false }
 function_name = "0.3"
 libc = "0.2"
 paste = "1"

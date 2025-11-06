@@ -8,8 +8,8 @@ profiling:
 common:
 - changed-files:
   - any-glob-to-any-file: [
-      'ddcommon/**/*',
-      'ddcommon-ffi/**/*',
+      'libdd-common/**/*',
+      'libdd-common-ffi/**/*',
     ]
 
 ci-build:

@@ -3,7 +3,7 @@
 
 use datadog_sidecar_ffi::span::*;
 use datadog_trace_utils::span::*;
-use ddcommon_ffi::slice::*;
+use libdd_common_ffi::slice::*;
 use libdd_tinybytes::*;
 use std::collections::HashMap;
 

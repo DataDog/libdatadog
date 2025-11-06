@@ -35,9 +35,9 @@ use datadog_sidecar::shm_remote_config::{path_for_remote_config, RemoteConfigRea
 use datadog_trace_utils::msgpack_encoder;
 use ddcommon::tag::Tag;
 use ddcommon::Endpoint;
-use ddcommon_ffi::slice::{AsBytes, CharSlice};
-use ddcommon_ffi::{self as ffi, MaybeError};
 use libc::c_char;
+use libdd_common_ffi::slice::{AsBytes, CharSlice};
+use libdd_common_ffi::{self as ffi, MaybeError};
 use libdd_dogstatsd_client::DogStatsDActionOwned;
 use libdd_telemetry::{
     data::{self, Dependency, Integration},
@@ -238,7 +238,7 @@ pub unsafe extern "C" fn ddog_remote_config_reader_for_endpoint<'a>(
     service_name: ffi::CharSlice,
     env_name: ffi::CharSlice,
     app_version: ffi::CharSlice,
-    tags: &ddcommon_ffi::Vec<Tag>,
+    tags: &libdd_common_ffi::Vec<Tag>,
     remote_config_products: *const RemoteConfigProduct,
     remote_config_products_count: usize,
     remote_config_capabilities: *const RemoteConfigCapabilities,
@@ -873,7 +873,7 @@ pub unsafe extern "C" fn ddog_sidecar_set_universal_service_tags(
     service_name: ffi::CharSlice,
     env_name: ffi::CharSlice,
     app_version: ffi::CharSlice,
-    global_tags: &ddcommon_ffi::Vec<Tag>,
+    global_tags: &libdd_common_ffi::Vec<Tag>,
 ) -> MaybeError {
     try_c!(blocking::set_universal_service_tags(
         transport,
@@ -930,7 +930,7 @@ pub unsafe extern "C" fn ddog_sidecar_dogstatsd_count(
     instance_id: &InstanceId,
     metric: ffi::CharSlice,
     value: i64,
-    tags: Option<&ddcommon_ffi::Vec<Tag>>,
+    tags: Option<&libdd_common_ffi::Vec<Tag>>,
 ) -> MaybeError {
     try_c!(blocking::send_dogstatsd_actions(
         transport,
@@ -954,7 +954,7 @@ pub unsafe extern "C" fn ddog_sidecar_dogstatsd_distribution(
     instance_id: &InstanceId,
     metric: ffi::CharSlice,
     value: f64,
-    tags: Option<&ddcommon_ffi::Vec<Tag>>,
+    tags: Option<&libdd_common_ffi::Vec<Tag>>,
 ) -> MaybeError {
     try_c!(blocking::send_dogstatsd_actions(
         transport,
@@ -978,7 +978,7 @@ pub unsafe extern "C" fn ddog_sidecar_dogstatsd_gauge(
     instance_id: &InstanceId,
     metric: ffi::CharSlice,
     value: f64,
-    tags: Option<&ddcommon_ffi::Vec<Tag>>,
+    tags: Option<&libdd_common_ffi::Vec<Tag>>,
 ) -> MaybeError {
     try_c!(blocking::send_dogstatsd_actions(
         transport,
@@ -1002,7 +1002,7 @@ pub unsafe extern "C" fn ddog_sidecar_dogstatsd_histogram(
     instance_id: &InstanceId,
     metric: ffi::CharSlice,
     value: f64,
-    tags: Option<&ddcommon_ffi::Vec<Tag>>,
+    tags: Option<&libdd_common_ffi::Vec<Tag>>,
 ) -> MaybeError {
     try_c!(blocking::send_dogstatsd_actions(
         transport,
@@ -1026,7 +1026,7 @@ pub unsafe extern "C" fn ddog_sidecar_dogstatsd_set(
     instance_id: &InstanceId,
     metric: ffi::CharSlice,
     value: i64,
-    tags: Option<&ddcommon_ffi::Vec<Tag>>,
+    tags: Option<&libdd_common_ffi::Vec<Tag>>,
 ) -> MaybeError {
     try_c!(blocking::send_dogstatsd_actions(
         transport,

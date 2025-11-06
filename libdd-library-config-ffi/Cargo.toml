@@ -12,15 +12,15 @@ crate-type = ["staticlib", "cdylib", "lib"]
 bench = false
 
 [dependencies]
-ddcommon = { path = "../ddcommon" }
-ddcommon-ffi = { path = "../ddcommon-ffi", default-features = false }
+libdd-common = { path = "../libdd-common" }
+libdd-common-ffi = { path = "../libdd-common-ffi", default-features = false }
 libdd-library-config = { path = "../libdd-library-config" }
 anyhow = "1.0"
 constcat = "0.4.1"
 
 [features]
 default = ["cbindgen", "catch_panic"]
-cbindgen = ["build_common/cbindgen", "ddcommon-ffi/cbindgen"]
+cbindgen = ["build_common/cbindgen", "libdd-common-ffi/cbindgen"]
 catch_panic = []
 
 [build-dependencies]

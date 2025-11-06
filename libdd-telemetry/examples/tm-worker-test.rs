@@ -6,7 +6,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use ddcommon::tag;
+use libdd_common::tag;
 use libdd_telemetry::{data, worker};
 
 macro_rules! timeit {
@@ -39,8 +39,8 @@ fn main() -> Result<(), Box<dyn Error>> {
     builder.config = libdd_telemetry::config::Config::from_env();
     builder
         .config
-        .set_endpoint(ddcommon::Endpoint {
-            url: ddcommon::parse_uri("file://./tm-worker-test.output").unwrap(),
+        .set_endpoint(libdd_common::Endpoint {
+            url: libdd_common::parse_uri("file://./tm-worker-test.output").unwrap(),
             ..Default::default()
         })
         .unwrap();
