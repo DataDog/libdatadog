@@ -3,7 +3,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::rules_based::{ufc::VariationType, Str};
+use crate::rules_based::{ExpectedFlagType, FlagType, Str};
 
 /// Enum representing all possible reasons that could result in evaluation returning an error or
 /// default assignment.
@@ -18,9 +18,9 @@ pub enum EvaluationError {
     #[error("invalid flag type (expected: {expected:?}, found: {found:?})")]
     TypeMismatch {
         /// Expected type of the flag.
-        expected: VariationType,
+        expected: ExpectedFlagType,
         /// Actual type of the flag.
-        found: VariationType,
+        found: FlagType,
     },
 
     /// Failed to parse configuration. This should normally never happen and is likely a signal

@@ -6,9 +6,7 @@ use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 
-use crate::rules_based::Str;
-
-use super::VariationType;
+use crate::rules_based::{ufc::VariationType, FlagType, Str};
 
 /// Reason for assignment evaluation result.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -278,18 +276,17 @@ impl AssignmentValue {
     ///
     /// # Examples
     /// ```
-    /// # use datadog_ffe::rules_based::AssignmentValue;
-    /// # use datadog_ffe::rules_based::VariationType;
+    /// # use datadog_ffe::rules_based::{AssignmentValue, FlagType};
     /// let value = AssignmentValue::String("example".into());
-    /// assert_eq!(value.variation_type(), VariationType::String);
+    /// assert_eq!(value.variation_type(), FlagType::String);
     /// ```
-    pub fn variation_type(&self) -> VariationType {
+    pub fn variation_type(&self) -> FlagType {
         match self {
-            AssignmentValue::String(_) => VariationType::String,
-            AssignmentValue::Integer(_) => VariationType::Integer,
-            AssignmentValue::Float(_) => VariationType::Numeric,
-            AssignmentValue::Boolean(_) => VariationType::Boolean,
-            AssignmentValue::Json { .. } => VariationType::Json,
+            AssignmentValue::String(_) => FlagType::String,
+            AssignmentValue::Integer(_) => FlagType::Integer,
+            AssignmentValue::Float(_) => FlagType::Float,
+            AssignmentValue::Boolean(_) => FlagType::Boolean,
+            AssignmentValue::Json { .. } => FlagType::Object,
         }
     }
 

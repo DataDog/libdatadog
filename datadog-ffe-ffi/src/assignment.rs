@@ -3,9 +3,10 @@
 
 use std::ffi::{c_char, CStr};
 
+use datadog_ffe::rules_based as ffe;
 use datadog_ffe::rules_based::{
     now, Assignment, AssignmentReason, AssignmentValue, Configuration, EvaluationContext,
-    EvaluationError, Str, VariationType,
+    EvaluationError, Str,
 };
 
 use crate::Handle;
@@ -82,6 +83,30 @@ impl AsRef<Result<Assignment, EvaluationError>> for ResolutionDetails {
 }
 
 #[repr(C)]
+pub enum ExpectedFlagType {
+    String,
+    Integer,
+    Float,
+    Boolean,
+    Object,
+    Number,
+    Any,
+}
+impl From<ExpectedFlagType> for ffe::ExpectedFlagType {
+    fn from(value: ExpectedFlagType) -> ffe::ExpectedFlagType {
+        match value {
+            ExpectedFlagType::String => ffe::ExpectedFlagType::String,
+            ExpectedFlagType::Integer => ffe::ExpectedFlagType::Integer,
+            ExpectedFlagType::Float => ffe::ExpectedFlagType::Float,
+            ExpectedFlagType::Boolean => ffe::ExpectedFlagType::Boolean,
+            ExpectedFlagType::Object => ffe::ExpectedFlagType::Object,
+            ExpectedFlagType::Number => ffe::ExpectedFlagType::Number,
+            ExpectedFlagType::Any => ffe::ExpectedFlagType::Any,
+        }
+    }
+}
+
+#[repr(C)]
 pub enum FlagType {
     Unknown,
     String,
@@ -90,27 +115,15 @@ pub enum FlagType {
     Boolean,
     Object,
 }
-impl From<FlagType> for Option<VariationType> {
-    fn from(value: FlagType) -> Self {
-        match value {
-            FlagType::Unknown => None,
-            FlagType::String => Some(VariationType::String),
-            FlagType::Integer => Some(VariationType::Integer),
-            FlagType::Float => Some(VariationType::Numeric),
-            FlagType::Boolean => Some(VariationType::Boolean),
-            FlagType::Object => Some(VariationType::Json),
-        }
-    }
-}
 
-impl From<VariationType> for FlagType {
-    fn from(value: VariationType) -> Self {
+impl From<ffe::FlagType> for FlagType {
+    fn from(value: ffe::FlagType) -> Self {
         match value {
-            VariationType::String => FlagType::String,
-            VariationType::Integer => FlagType::Integer,
-            VariationType::Numeric => FlagType::Float,
-            VariationType::Boolean => FlagType::Boolean,
-            VariationType::Json => FlagType::Object,
+            ffe::FlagType::String => FlagType::String,
+            ffe::FlagType::Integer => FlagType::Integer,
+            ffe::FlagType::Float => FlagType::Float,
+            ffe::FlagType::Boolean => FlagType::Boolean,
+            ffe::FlagType::Object => FlagType::Object,
         }
     }
 }
@@ -153,7 +166,7 @@ pub enum Reason {
 pub unsafe extern "C" fn ddog_ffe_get_assignment(
     config: Handle<Configuration>,
     flag_key: *const c_char,
-    expected_type: FlagType,
+    expected_type: ExpectedFlagType,
     context: Handle<EvaluationContext>,
 ) -> Handle<ResolutionDetails> {
     if flag_key.is_null() {

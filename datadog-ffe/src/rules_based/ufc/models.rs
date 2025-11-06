@@ -6,7 +6,7 @@ use std::{collections::HashMap, sync::Arc};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 
-use crate::rules_based::{EvaluationError, Str, Timestamp};
+use crate::rules_based::{EvaluationError, FlagType, Str, Timestamp};
 
 /// Universal Flag Configuration attributes. This contains the actual flag configuration data.
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -89,6 +89,30 @@ pub enum VariationType {
     Numeric,
     Boolean,
     Json,
+}
+
+impl From<VariationType> for FlagType {
+    fn from(value: VariationType) -> FlagType {
+        match value {
+            VariationType::String => FlagType::String,
+            VariationType::Integer => FlagType::Integer,
+            VariationType::Numeric => FlagType::Float,
+            VariationType::Boolean => FlagType::Boolean,
+            VariationType::Json => FlagType::Object,
+        }
+    }
+}
+
+impl From<FlagType> for VariationType {
+    fn from(value: FlagType) -> VariationType {
+        match value {
+            FlagType::String => VariationType::String,
+            FlagType::Integer => VariationType::Integer,
+            FlagType::Float => VariationType::Numeric,
+            FlagType::Boolean => VariationType::Boolean,
+            FlagType::Object => VariationType::Json,
+        }
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
