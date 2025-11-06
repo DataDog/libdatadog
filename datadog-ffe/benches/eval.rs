@@ -6,7 +6,8 @@ use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, fs, sync::Arc};
 
 use datadog_ffe::rules_based::{
-    get_assignment, Attribute, Configuration, EvaluationContext, Str, UniversalFlagConfig,
+    get_assignment, Attribute, Configuration, EvaluationContext, ExpectedFlagType, FlagType, Str,
+    UniversalFlagConfig,
 };
 
 fn load_configuration_bytes() -> Vec<u8> {
@@ -17,7 +18,7 @@ fn load_configuration_bytes() -> Vec<u8> {
 #[serde(rename_all = "camelCase")]
 struct TestCase {
     flag: String,
-    variation_type: String,
+    variation_type: FlagType,
     default_value: serde_json::Value,
     targeting_key: Str,
     attributes: HashMap<Str, Attribute>,
@@ -72,7 +73,13 @@ fn bench_sdk_test_data_rules_based(b: &mut Bencher) {
     b.iter(|| {
         for (flag_key, context) in black_box(&test_cases) {
             // Evaluate assignment
-            let _assignment = get_assignment(Some(&configuration), flag_key, context, None, now);
+            let _assignment = get_assignment(
+                Some(&configuration),
+                flag_key,
+                context,
+                ExpectedFlagType::Any,
+                now,
+            );
 
             let _ = black_box(_assignment);
         }
@@ -105,7 +112,7 @@ fn bench_single_flag_rules_based(b: &mut Bencher) {
             black_box(Some(&configuration)),
             black_box("kill-switch"),
             black_box(&context),
-            None,
+            ExpectedFlagType::Any,
             now,
         );
         let _ = black_box(_assignment);
