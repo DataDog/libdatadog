@@ -2,16 +2,15 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::rules_based::{
-    ufc::{ComparisonOperator, Condition, ConditionCheck, RuleWire, TryParse},
+    ufc::{ComparisonOperator, Condition, ConditionCheck, RuleWire},
     Attribute, EvaluationContext,
 };
 
 impl RuleWire {
     pub(super) fn eval(&self, subject: &EvaluationContext) -> bool {
-        self.conditions.iter().all(|condition| match condition {
-            TryParse::Parsed(condition) => condition.eval(subject),
-            TryParse::ParseFailed(_) => false,
-        })
+        self.conditions
+            .iter()
+            .all(|condition| condition.eval(subject))
     }
 }
 
@@ -227,8 +226,7 @@ mod tests {
                     operator: ComparisonOperator::Gt,
                     comparand: 10.0,
                 },
-            }
-            .into()],
+            }],
         };
         assert!(rule.eval(&EvaluationContext::new(
             "key".into(),
@@ -246,16 +244,14 @@ mod tests {
                         operator: ComparisonOperator::Gt,
                         comparand: 18.0,
                     },
-                }
-                .into(),
+                },
                 Condition {
                     attribute: "age".into(),
                     check: ConditionCheck::Comparison {
                         operator: ComparisonOperator::Lt,
                         comparand: 100.0,
                     },
-                }
-                .into(),
+                },
             ],
         };
         assert!(rule.eval(&EvaluationContext::new(
@@ -281,8 +277,7 @@ mod tests {
                     operator: ComparisonOperator::Gt,
                     comparand: 10.0,
                 },
-            }
-            .into()],
+            }],
         };
         assert!(!rule.eval(&EvaluationContext::new(
             "key".into(),
