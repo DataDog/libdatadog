@@ -1,7 +1,7 @@
 // Copyright 2023-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use datadog_trace_protobuf::pb;
+use libdd_trace_protobuf::pb;
 use regex::Regex;
 use serde::Deserialize;
 
@@ -168,8 +168,8 @@ fn replace_all(
 mod tests {
 
     use crate::replacer;
-    use datadog_trace_protobuf::pb;
     use duplicate::duplicate_item;
+    use libdd_trace_protobuf::pb;
     use std::collections::HashMap;
 
     fn new_test_span_with_tags(tags: HashMap<&str, &str>) -> pb::Span {

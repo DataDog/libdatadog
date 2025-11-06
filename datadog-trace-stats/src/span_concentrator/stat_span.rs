@@ -4,9 +4,9 @@
 //! This module implements a common interface for spans used to compute stats. It is used to
 //! support both trace-utils' Span and pb::Span.
 
-use datadog_trace_protobuf::pb;
 use datadog_trace_utils::span::{trace_utils, Span, SpanText};
 use datadog_trace_utils::trace_utils as pb_utils;
+use libdd_trace_protobuf::pb;
 
 /// Common interface for spans used in stats computation
 pub trait StatSpan<'a> {

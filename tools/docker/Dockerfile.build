@@ -94,9 +94,9 @@ COPY "datadog-sidecar/Cargo.toml" "datadog-sidecar/"
 COPY "datadog-sidecar-macros/Cargo.toml" "datadog-sidecar-macros/"
 COPY "datadog-sidecar-ffi/Cargo.toml" "datadog-sidecar-ffi/"
 COPY "symbolizer-ffi/Cargo.toml" "symbolizer-ffi/"
-COPY "datadog-trace-normalization/Cargo.toml" "datadog-trace-normalization/"
+COPY "libdd-trace-normalization/Cargo.toml" "libdd-trace-normalization/"
 COPY "datadog-trace-obfuscation/Cargo.toml" "datadog-trace-obfuscation/"
-COPY "datadog-trace-protobuf/Cargo.toml" "datadog-trace-protobuf/"
+COPY "libdd-trace-protobuf/Cargo.toml" "libdd-trace-protobuf/"
 COPY "datadog-trace-utils/Cargo.toml" "datadog-trace-utils/"
 COPY "datadog-trace-stats/Cargo.toml" "datadog-trace-stats/"
 COPY "datadog-tracer-flare/Cargo.toml" "datadog-tracer-flare/"
@@ -138,7 +138,7 @@ RUN echo \
     datadog-profiling/benches/main.rs \
     tools/sidecar_mockgen/src/bin/sidecar_mockgen.rs \
     tools/src/bin/dedup_headers.rs \
-    datadog-trace-normalization/benches/normalization_utils.rs \
+    libdd-trace-normalization/benches/normalization_utils.rs \
     datadog-trace-obfuscation/benches/trace_obfuscation.rs \
     datadog-trace-utils/benches/deserialization.rs \
     datadog-trace-utils/benches/main.rs \

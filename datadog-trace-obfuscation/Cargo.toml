@@ -15,7 +15,7 @@ serde_json = "1.0"
 url = "2.4.0"
 percent-encoding = "2.1"
 log = "0.4"
-datadog-trace-protobuf = { path = "../datadog-trace-protobuf" }
+libdd-trace-protobuf = { path = "../libdd-trace-protobuf" }
 datadog-trace-utils = { path = "../datadog-trace-utils" }
 ddcommon = { path = "../ddcommon" }
 
