@@ -1,3 +1,4 @@
+use std::hint::black_box;
 use std::thread;
 
 use antithesis_sdk::{antithesis_init, assert_always};
@@ -19,7 +20,7 @@ fn main() {
             for _ in 0..INCREMENTS_PER_WORKER {
                 unsafe {
                     // A realistic mistake: read-modify-write on shared data with no synchronization
-                    HITS = HITS.wrapping_add(1);
+                    HITS = black_box(HITS.wrapping_add(1));
                 }
             }
         });
