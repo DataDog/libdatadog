@@ -157,7 +157,11 @@ impl CrashInfoBuilder {
     pub fn new() -> Self {
         let mut builder = Self::default();
         let uuid = Uuid::new_v4().to_string();
-        builder.with_uuid(uuid).unwrap();
+
+        builder
+            .with_uuid(uuid)
+            .expect("Setting UUID should never fail");
+
         builder
     }
 
@@ -379,5 +383,31 @@ impl CrashInfoBuilder {
             .with_metadata(metadata);
         let crash_ping = builder.build()?;
         Ok(crash_ping)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::crash_info::test_utils::TestInstance;
+
+    #[test]
+    fn test_crash_info_builder_to_crash_ping() {
+        let uuid = "test-builder-uuid-12345";
+        let sig_info = SigInfo::test_instance(42);
+        let metadata = Metadata::test_instance(1);
+
+        let mut crash_info_builder = CrashInfoBuilder::new();
+        crash_info_builder.with_uuid(uuid.to_string()).unwrap();
+        crash_info_builder.with_sig_info(sig_info.clone()).unwrap();
+        crash_info_builder.with_metadata(metadata.clone()).unwrap();
+        crash_info_builder.with_kind(ErrorKind::Panic).unwrap();
+
+        let crash_ping = crash_info_builder.build_crash_ping().unwrap();
+
+        assert_eq!(crash_ping.crash_uuid(), uuid);
+        assert_eq!(crash_ping.siginfo(), &sig_info);
+        assert_eq!(crash_ping.metadata(), &metadata);
+        assert!(crash_ping.message().contains("crash processing started"));
     }
 }

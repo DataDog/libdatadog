@@ -556,7 +556,17 @@ mod tests {
         assert_eq!(message_json["version"], "1.0");
         assert_eq!(message_json["kind"], "Crash ping");
 
-        // Customer application and runtime information tags
+        let metadata_in_message = &message_json["metadata"];
+        assert!(
+            metadata_in_message.is_object(),
+            "metadata should be an object"
+        );
+        let expected_metadata = serde_json::to_value(Metadata::test_instance(1))?;
+        assert_eq!(
+            metadata_in_message, &expected_metadata,
+            "metadata field should match expected structure"
+        );
+
         let tags = log_entry["tags"].as_str().unwrap();
         assert!(tags.contains(&format!("uuid:{crash_uuid}")));
         assert!(tags.contains("is_crash_ping:true"));
@@ -624,6 +634,27 @@ mod tests {
                 sig_info.si_code_human_readable, sig_info.si_signo_human_readable
             )
         );
+
+        let metadata_in_message = &message_json["metadata"];
+        assert!(
+            metadata_in_message.is_object(),
+            "metadata should be an object"
+        );
+        let expected_metadata = serde_json::to_value(Metadata::test_instance(1))?;
+        assert_eq!(
+            metadata_in_message, &expected_metadata,
+            "metadata field should match expected structure"
+        );
+
+        let siginfo_in_message = &message_json["siginfo"];
+        let expected_siginfo = serde_json::to_value(&sig_info)?;
+        assert_eq!(
+            siginfo_in_message, &expected_siginfo,
+            "siginfo field should match expected structure"
+        );
+
+        assert_eq!(message_json["version"], "1.0");
+        assert_eq!(message_json["kind"], "Crash ping");
 
         // Customer application and runtime information tags
         let tags = log_entry["tags"].as_str().unwrap();
@@ -741,5 +772,104 @@ mod tests {
         let builder = CrashPingBuilder::default();
         let result = builder.build();
         assert!(result.is_err());
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_crash_ping_all_fields_present() {
+        let crash_uuid = "test-uuid-all-fields";
+        let sig_info = crate::SigInfo::test_instance(99);
+        let metadata = Metadata::test_instance(2);
+        let custom_message = "Custom crash message for testing";
+
+        let crash_ping = CrashPingBuilder::new()
+            .with_crash_uuid(crash_uuid.to_string())
+            .with_sig_info(sig_info.clone())
+            .with_metadata(metadata.clone())
+            .with_custom_message(custom_message.to_string())
+            .build()
+            .unwrap();
+
+        assert_eq!(crash_ping.crash_uuid(), crash_uuid);
+        assert_eq!(crash_ping.message(), custom_message);
+        assert_eq!(crash_ping.metadata(), &metadata);
+        assert_eq!(crash_ping.siginfo(), &sig_info);
+    }
+
+    #[tokio::test]
+    #[cfg_attr(miri, ignore)]
+    async fn test_crash_ping_telemetry_upload_all_fields() -> anyhow::Result<()> {
+        // Test that when crash ping is uploaded via telemetry, all fields are preserved
+        let tmp = tempfile::tempdir().unwrap();
+        let output_filename = {
+            let mut p = tmp.into_path();
+            p.push("crash_ping_all_fields_upload");
+            p
+        };
+        let seed = 3;
+        let mut uploader = new_test_uploader(seed);
+
+        uploader
+            .cfg
+            .set_host_from_url(&format!("file://{}", output_filename.to_str().unwrap()))
+            .unwrap();
+
+        let crash_uuid = "telemetry-test-uuid-all-fields";
+        let sig_info = crate::SigInfo::test_instance(150);
+        let metadata = Metadata::test_instance(3);
+
+        let crash_ping = CrashPingBuilder::new()
+            .with_crash_uuid(crash_uuid.to_string())
+            .with_sig_info(sig_info.clone())
+            .with_metadata(metadata.clone())
+            .build()
+            .unwrap();
+
+        uploader.upload_crash_ping(&crash_ping).await?;
+
+        let payload: serde_json::value::Value =
+            serde_json::de::from_str(&fs::read_to_string(&output_filename).unwrap())?;
+
+        // Verify telemetry structure
+        assert_eq!(payload["api_version"], "v2");
+        assert_eq!(payload["request_type"], "logs");
+        assert_eq!(payload["origin"], "Crashtracker");
+
+        let log_entry = &payload["payload"][0];
+        assert_eq!(log_entry["level"], "DEBUG");
+        assert_eq!(log_entry["is_sensitive"], false);
+        assert_eq!(log_entry["is_crash"], false);
+
+        let message_json: serde_json::Value =
+            serde_json::from_str(log_entry["message"].as_str().unwrap())?;
+
+        assert_eq!(message_json["crash_uuid"], crash_uuid);
+        assert_eq!(message_json["version"], "1.0");
+        assert_eq!(message_json["kind"], "Crash ping");
+
+        let uploaded_siginfo = &message_json["siginfo"];
+        assert_eq!(uploaded_siginfo["si_signo"], sig_info.si_signo);
+        assert_eq!(uploaded_siginfo["si_code"], sig_info.si_code);
+        assert_eq!(
+            uploaded_siginfo["si_code_human_readable"],
+            serde_json::to_value(&sig_info.si_code_human_readable)?
+        );
+        assert_eq!(
+            uploaded_siginfo["si_signo_human_readable"],
+            serde_json::to_value(&sig_info.si_signo_human_readable)?
+        );
+
+        let uploaded_metadata = &message_json["metadata"];
+        assert!(uploaded_metadata.is_object());
+
+        let expected_metadata_json = serde_json::to_value(&metadata)?;
+        assert_eq!(uploaded_metadata, &expected_metadata_json);
+
+        assert!(message_json["message"].is_string());
+        assert!(message_json["message"]
+            .as_str()
+            .unwrap()
+            .contains("crash processing started"));
+        Ok(())
     }
 }
