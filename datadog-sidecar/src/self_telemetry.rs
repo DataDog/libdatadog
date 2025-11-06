@@ -5,9 +5,9 @@ use crate::log;
 use crate::service::SidecarServer;
 use crate::watchdog::WatchdogHandle;
 use ddcommon::{tag, tag::Tag, MutexExt};
-use ddtelemetry::data::metrics::{MetricNamespace, MetricType};
-use ddtelemetry::metrics::ContextKey;
-use ddtelemetry::worker::{
+use libdd_telemetry::data::metrics::{MetricNamespace, MetricType};
+use libdd_telemetry::metrics::ContextKey;
+use libdd_telemetry::worker::{
     LifecycleAction, TelemetryActions, TelemetryWorkerBuilder, TelemetryWorkerHandle,
 };
 use manual_future::ManualFuture;
@@ -173,7 +173,7 @@ pub fn self_telemetry(server: SidecarServer, watchdog_handle: WatchdogHandle) ->
 pub struct SelfTelemetry {
     pub submission_interval: tokio::time::Interval,
     pub watchdog_handle: WatchdogHandle,
-    pub config: ddtelemetry::config::Config,
+    pub config: libdd_telemetry::config::Config,
     pub server: SidecarServer,
 }
 

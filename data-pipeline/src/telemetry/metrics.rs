@@ -3,9 +3,9 @@
 
 //! Provides an abstraction layer to hold metrics that comes from 'SendDataResult'.
 use ddcommon::tag;
-use ddtelemetry::data::metrics::{MetricNamespace, MetricType};
-use ddtelemetry::metrics::ContextKey;
-use ddtelemetry::worker::TelemetryWorkerHandle;
+use libdd_telemetry::data::metrics::{MetricNamespace, MetricType};
+use libdd_telemetry::metrics::ContextKey;
+use libdd_telemetry::worker::TelemetryWorkerHandle;
 use std::ops::Index;
 
 /// Used as identifier to match the different metrics.
@@ -144,7 +144,7 @@ impl Metrics {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ddtelemetry::worker::TelemetryWorkerBuilder;
+    use libdd_telemetry::worker::TelemetryWorkerBuilder;
 
     #[cfg_attr(miri, ignore)]
     #[tokio::test]
