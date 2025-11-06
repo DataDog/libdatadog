@@ -119,10 +119,21 @@ impl CrashPing {
         "1.0".to_string()
     }
 
+    pub fn upload_to_endpoint(&self, endpoint: &Option<Endpoint>) -> anyhow::Result<()> {
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()?;
+
+        rt.block_on(async { self.upload_to_endpoint_async(endpoint).await })
+    }
+
     /// Sends this crash ping telemetry event to indicate that crash processing has started.
     /// We no-op on file endpoints because unlike production environments, we know if
     /// a crash report failed to send when file debugging.
-    pub async fn upload_to_endpoint(&self, endpoint: &Option<Endpoint>) -> anyhow::Result<()> {
+    pub async fn upload_to_endpoint_async(
+        &self,
+        endpoint: &Option<Endpoint>,
+    ) -> anyhow::Result<()> {
         let is_file_endpoint = endpoint
             .as_ref()
             .map(|e| e.url.scheme_str() == Some("file"))

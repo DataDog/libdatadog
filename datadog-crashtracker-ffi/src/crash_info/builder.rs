@@ -398,40 +398,6 @@ pub unsafe extern "C" fn ddog_crasht_CrashInfoBuilder_with_trace_id(
 }
 
 /// # Safety
-/// The `builder` can be null, but if non-null it must point to a Builder made by this module,
-/// which has not previously been dropped.
-/// The CharSlice must be valid.
-#[no_mangle]
-#[must_use]
-#[named]
-pub unsafe extern "C" fn ddog_crasht_CrashInfoBuilder_with_uuid(
-    mut builder: *mut Handle<CrashInfoBuilder>,
-    uuid: CharSlice,
-) -> VoidResult {
-    wrap_with_void_ffi_result!({
-        let uuid = uuid
-            .try_to_string_option()?
-            .context("UUID cannot be empty string")?;
-        builder.to_inner_mut()?.with_uuid(uuid)?;
-    })
-}
-
-/// # Safety
-/// The `builder` can be null, but if non-null it must point to a Builder made by this module,
-/// which has not previously been dropped.
-/// The CharSlice must be valid.
-#[no_mangle]
-#[must_use]
-#[named]
-pub unsafe extern "C" fn ddog_crasht_CrashInfoBuilder_with_uuid_random(
-    mut builder: *mut Handle<CrashInfoBuilder>,
-) -> VoidResult {
-    wrap_with_void_ffi_result!({
-        builder.to_inner_mut()?.with_uuid_random()?;
-    })
-}
-
-/// # Safety
 /// The `crash_info` can be null, but if non-null it must point to a Builder made by this module,
 /// which has not previously been dropped.
 /// The CharSlice must be valid.
@@ -458,6 +424,7 @@ pub unsafe extern "C" fn ddog_crasht_CrashInfoBuilder_with_message(
 /// The `builder` can be null, but if non-null it must point to a Builder made by this module,
 /// which has not previously been dropped.
 /// All arguments must be valid.
+/// This method requires that the builder has a UUID, siginfo, and metadata set
 #[no_mangle]
 #[must_use]
 #[named]
@@ -466,13 +433,7 @@ pub unsafe extern "C" fn ddog_crasht_CrashInfoBuilder_upload_ping_to_endpoint(
     endpoint: Option<&Endpoint>,
 ) -> VoidResult {
     wrap_with_void_ffi_result!({
-        let rt = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()?;
-
-        rt.block_on(async {
-            let crash_ping = builder.to_inner_mut()?.build_crash_ping()?;
-            crash_ping.upload_to_endpoint(&endpoint.cloned()).await
-        })?;
+        let crash_ping = builder.to_inner_mut()?.build_crash_ping()?;
+        crash_ping.upload_to_endpoint(&endpoint.cloned())?
     })
 }

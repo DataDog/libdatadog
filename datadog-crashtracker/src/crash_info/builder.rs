@@ -155,7 +155,10 @@ impl CrashInfoBuilder {
     }
 
     pub fn new() -> Self {
-        Self::default()
+        let mut builder = Self::default();
+        let uuid = Uuid::new_v4().to_string();
+        builder.with_uuid(uuid).unwrap();
+        builder
     }
 
     /// Inserts the given counter to the current set of counters in the builder.
@@ -364,10 +367,7 @@ impl CrashInfoBuilder {
         Ok(self)
     }
 
-    pub fn with_uuid_random(&mut self) -> anyhow::Result<&mut Self> {
-        self.with_uuid(Uuid::new_v4().to_string())
-    }
-
+    /// This method requires that the builder has a UUID, siginfo, and metadata set
     pub fn build_crash_ping(&self) -> anyhow::Result<CrashPing> {
         let uuid = self.uuid.clone().context("uuid is required")?;
         let sig_info = self.sig_info.clone().context("sig_info is required")?;

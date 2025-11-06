@@ -3,7 +3,6 @@
 
 mod api;
 mod builder;
-mod crash_ping;
 mod metadata;
 mod os_info;
 mod proc_info;
@@ -15,7 +14,6 @@ mod thread_data;
 
 pub use api::*;
 pub use builder::*;
-pub use crash_ping::*;
 pub use metadata::*;
 pub use os_info::*;
 pub use proc_info::*;
