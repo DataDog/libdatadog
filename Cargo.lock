@@ -1467,8 +1467,8 @@ dependencies = [
  "http-body-util",
  "hyper",
  "percent-encoding",
- "regex",
  "regex-automata 0.4.8",
+ "regex-lite",
  "serde",
  "serde_json",
  "smallvec",
@@ -1701,7 +1701,7 @@ dependencies = [
  "duplicate",
  "log",
  "percent-encoding",
- "regex",
+ "regex-lite",
  "serde",
  "serde_json",
  "url",
@@ -1804,7 +1804,7 @@ dependencies = [
  "maplit",
  "nix",
  "pin-project",
- "regex",
+ "regex-lite",
  "rustls",
  "rustls-native-certs",
  "serde",
@@ -4255,6 +4255,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "regex-lite"
+version = "0.1.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "943f41321c63ef1c92fd763bfe054d2668f7f225a5c29f0105903dc2fc04ba30"
+
+[[package]]
 name = "regex-syntax"
 version = "0.6.29"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5445,7 +5451,7 @@ dependencies = [
 name = "tools"
 version = "23.0.0"
 dependencies = [
- "regex",
+ "regex-lite",
 ]
 
 [[package]]
