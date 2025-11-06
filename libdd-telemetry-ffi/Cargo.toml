@@ -1,0 +1,33 @@
+# Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
+# SPDX-License-Identifier: Apache-2.0
+
+[package]
+name = "libdd-telemetry-ffi"
+edition.workspace = true
+version.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[lib]
+crate-type = ["lib", "staticlib", "cdylib"]
+bench = false
+
+[features]
+default = ["cbindgen", "expanded_builder_macros"]
+cbindgen = ["build_common/cbindgen", "ddcommon-ffi/cbindgen", "expanded_builder_macros"]
+expanded_builder_macros = []
+
+[build-dependencies]
+build_common = { path = "../build-common" }
+
+[dependencies]
+libdd-telemetry = { path = "../libdd-telemetry" }
+ddcommon = { path = "../ddcommon" }
+ddcommon-ffi = { path = "../ddcommon-ffi", default-features = false }
+function_name = "0.3"
+libc = "0.2"
+paste = "1"
+
+[dev-dependencies]
+tempfile = {version = "3.3"}

@@ -19,7 +19,7 @@ priority-queue = "2.1.1"
 ddcommon = { path = "../ddcommon" }
 datadog-sidecar-macros = { path = "../datadog-sidecar-macros" }
 
-ddtelemetry = { path = "../ddtelemetry", features = ["tracing"] }
+libdd-telemetry = { path = "../libdd-telemetry", features = ["tracing"] }
 data-pipeline = { path = "../data-pipeline" }
 datadog-trace-utils = { path = "../datadog-trace-utils" }
 datadog-remote-config = { path = "../datadog-remote-config" , features = ["live-debugger"]}

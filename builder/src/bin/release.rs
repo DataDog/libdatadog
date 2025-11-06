@@ -59,7 +59,7 @@ pub fn main() {
         #[allow(unused_mut)]
         let mut f: Vec<String> = vec![];
         #[cfg(feature = "telemetry")]
-        f.push("ddtelemetry-ffi".to_string());
+        f.push("libdd-telemetry-ffi".to_string());
         #[cfg(feature = "data-pipeline")]
         f.push("data-pipeline-ffi".to_string());
         #[cfg(feature = "crashtracker")]

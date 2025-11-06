@@ -17,7 +17,7 @@ bench = false
 [features]
 default = ["ddcommon-ffi"]
 cbindgen = ["build_common/cbindgen", "ddcommon-ffi/cbindgen"]
-ddtelemetry-ffi = ["dep:ddtelemetry-ffi"]
+ddtelemetry-ffi = ["dep:libdd-telemetry-ffi"]
 datadog-log-ffi = ["dep:libdd-log-ffi"]
 symbolizer = ["symbolizer-ffi"]
 data-pipeline-ffi = ["dep:data-pipeline-ffi"]
@@ -42,7 +42,7 @@ libdd-library-config-ffi = {  path = "../libdd-library-config-ffi", default-feat
 datadog-profiling = { path = "../datadog-profiling" }
 ddcommon = { path = "../ddcommon" }
 ddcommon-ffi = { path = "../ddcommon-ffi", default-features = false, optional = true }
-ddtelemetry-ffi = { path = "../ddtelemetry-ffi", default-features = false, optional = true, features = ["expanded_builder_macros"] }
+libdd-telemetry-ffi = { path = "../libdd-telemetry-ffi", default-features = false, optional = true, features = ["expanded_builder_macros"] }
 libdd-ddsketch-ffi = { path = "../libdd-ddsketch-ffi", default-features = false, optional = true }
 libdd-log-ffi = { path = "../libdd-log-ffi", default-features = false, optional = true }
 function_name = "0.3.0"
