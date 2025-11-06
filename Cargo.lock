@@ -1679,17 +1679,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "datadog-trace-normalization"
-version = "23.0.0"
-dependencies = [
- "anyhow",
- "criterion",
- "duplicate",
- "libdd-trace-protobuf",
- "rand 0.8.5",
-]
-
-[[package]]
 name = "datadog-trace-obfuscation"
 version = "23.0.0"
 dependencies = [
@@ -1729,7 +1718,6 @@ dependencies = [
  "cargo-platform",
  "cargo_metadata",
  "criterion",
- "datadog-trace-normalization",
  "datadog-trace-utils",
  "ddcommon",
  "flate2",
@@ -1738,6 +1726,7 @@ dependencies = [
  "httpmock",
  "hyper",
  "libdd-tinybytes",
+ "libdd-trace-normalization",
  "libdd-trace-protobuf",
  "prost",
  "rand 0.8.5",
@@ -3136,6 +3125,17 @@ dependencies = [
  "serde",
  "serde_json",
  "test-case",
+]
+
+[[package]]
+name = "libdd-trace-normalization"
+version = "1.0.0"
+dependencies = [
+ "anyhow",
+ "criterion",
+ "duplicate",
+ "libdd-trace-protobuf",
+ "rand 0.8.5",
 ]
 
 [[package]]
