@@ -37,8 +37,8 @@ fn multipart(
 mod tests {
     use crate::multipart;
     use datadog_profiling::exporter::*;
-    use ddcommon::tag;
     use http_body_util::BodyExt;
+    use libdd_common::tag;
     use serde_json::json;
 
     fn default_tags() -> Vec<Tag> {

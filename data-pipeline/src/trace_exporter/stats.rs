@@ -11,7 +11,7 @@ use crate::agent_info::schema::AgentInfo;
 use crate::stats_exporter;
 use arc_swap::ArcSwap;
 use datadog_trace_stats::span_concentrator::SpanConcentrator;
-use ddcommon::{Endpoint, HttpClient, MutexExt};
+use libdd_common::{Endpoint, HttpClient, MutexExt};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::runtime::Runtime;

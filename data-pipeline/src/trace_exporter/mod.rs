@@ -36,12 +36,12 @@ use datadog_trace_utils::send_with_retry::{
 };
 use datadog_trace_utils::span::{Span, SpanText};
 use datadog_trace_utils::trace_utils::TracerHeaderTags;
-use ddcommon::{hyper_migration, Endpoint};
-use ddcommon::{tag, tag::Tag};
-use ddcommon::{HttpClient, MutexExt};
 use http_body_util::BodyExt;
 use hyper::http::uri::PathAndQuery;
 use hyper::Uri;
+use libdd_common::{hyper_migration, Endpoint};
+use libdd_common::{tag, tag::Tag};
+use libdd_common::{HttpClient, MutexExt};
 use libdd_dogstatsd_client::Client;
 use libdd_telemetry::worker::TelemetryWorker;
 use std::io;

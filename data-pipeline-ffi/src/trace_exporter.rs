@@ -6,7 +6,7 @@ use crate::response::ExporterResponse;
 use data_pipeline::trace_exporter::{
     TelemetryConfig, TraceExporter, TraceExporterInputFormat, TraceExporterOutputFormat,
 };
-use ddcommon_ffi::{
+use libdd_common_ffi::{
     CharSlice,
     {slice::AsBytes, slice::ByteSlice},
 };

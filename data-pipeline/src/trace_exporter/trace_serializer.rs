@@ -11,10 +11,10 @@ use datadog_trace_utils::msgpack_encoder;
 use datadog_trace_utils::span::{Span, SpanText};
 use datadog_trace_utils::trace_utils::{self, TracerHeaderTags};
 use datadog_trace_utils::tracer_payload;
-use ddcommon::header::{
+use hyper::header::CONTENT_TYPE;
+use libdd_common::header::{
     APPLICATION_MSGPACK_STR, DATADOG_SEND_REAL_HTTP_STATUS_STR, DATADOG_TRACE_COUNT_STR,
 };
-use hyper::header::CONTENT_TYPE;
 use std::collections::HashMap;
 
 /// Prepared traces payload ready for sending to the agent
@@ -116,10 +116,10 @@ mod tests {
     use crate::trace_exporter::agent_response::AgentResponsePayloadVersion;
     use datadog_trace_utils::span::SpanBytes;
     use datadog_trace_utils::trace_utils::TracerHeaderTags;
-    use ddcommon::header::{
+    use hyper::header::CONTENT_TYPE;
+    use libdd_common::header::{
         APPLICATION_MSGPACK_STR, DATADOG_SEND_REAL_HTTP_STATUS_STR, DATADOG_TRACE_COUNT_STR,
     };
-    use hyper::header::CONTENT_TYPE;
     use libdd_tinybytes::BytesString;
 
     fn create_test_span() -> SpanBytes {

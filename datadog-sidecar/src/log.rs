@@ -3,7 +3,7 @@
 
 use crate::config;
 use chrono::{DateTime, Utc};
-use ddcommon::MutexExt;
+use libdd_common::MutexExt;
 use priority_queue::PriorityQueue;
 use serde::{Deserialize, Serialize};
 use std::cmp::max;

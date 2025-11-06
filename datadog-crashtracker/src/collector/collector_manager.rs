@@ -3,12 +3,12 @@
 
 use super::process_handle::ProcessHandle;
 use super::receiver_manager::Receiver;
-use ddcommon::timeout::TimeoutManager;
+use libdd_common::timeout::TimeoutManager;
 
 use super::emitters::emit_crashreport;
 use crate::shared::configuration::CrashtrackerConfiguration;
-use ddcommon::unix_utils::{alt_fork, terminate};
 use libc::{siginfo_t, ucontext_t};
+use libdd_common::unix_utils::{alt_fork, terminate};
 use nix::sys::signal::{self, SaFlags, SigAction, SigHandler, SigSet};
 use std::os::unix::io::RawFd;
 use std::os::unix::{io::FromRawFd, net::UnixStream};

@@ -15,7 +15,7 @@ libdd-telemetry = { path = "../libdd-telemetry" }
 datadog-sidecar = { path = "../datadog-sidecar" }
 datadog-trace-utils = { path = "../datadog-trace-utils" }
 datadog-ipc = { path = "../datadog-ipc" }
-ddcommon = { path = "../libdd-common", package = "libdd-common" }
+libdd-common = { path = "../libdd-common" }
 libdd-common-ffi = { path = "../libdd-common-ffi", default-features = false }
 libdd-telemetry-ffi = { path = "../libdd-telemetry-ffi", default-features = false }
 datadog-remote-config = { path = "../datadog-remote-config" }

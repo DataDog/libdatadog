@@ -15,8 +15,8 @@ use crate::trace_exporter::TracerMetadata;
 use datadog_trace_protobuf::pb;
 use datadog_trace_stats::span_concentrator::SpanConcentrator;
 use datadog_trace_utils::send_with_retry::{send_with_retry, RetryStrategy};
-use ddcommon::{worker::Worker, Endpoint, HttpClient};
 use hyper;
+use libdd_common::{worker::Worker, Endpoint, HttpClient};
 use tokio::select;
 use tokio_util::sync::CancellationToken;
 use tracing::error;
@@ -89,7 +89,7 @@ impl StatsExporter {
 
         headers.insert(
             hyper::header::CONTENT_TYPE.as_str(),
-            ddcommon::header::APPLICATION_MSGPACK_STR.to_string(),
+            libdd_common::header::APPLICATION_MSGPACK_STR.to_string(),
         );
 
         let result = send_with_retry(
@@ -194,9 +194,9 @@ mod tests {
     use super::*;
     use datadog_trace_utils::span::{trace_utils, SpanSlice};
     use datadog_trace_utils::test_utils::poll_for_mock_hit;
-    use ddcommon::hyper_migration::new_default_client;
     use httpmock::prelude::*;
     use httpmock::MockServer;
+    use libdd_common::hyper_migration::new_default_client;
     use time::Duration;
     use time::SystemTime;
 

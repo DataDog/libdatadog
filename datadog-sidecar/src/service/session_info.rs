@@ -14,7 +14,7 @@ use crate::log::{MultiEnvFilterGuard, MultiWriterGuard};
 use crate::{spawn_map_err, tracer};
 use datadog_live_debugger::sender::{DebuggerType, PayloadSender};
 use datadog_remote_config::fetch::ConfigInvariants;
-use ddcommon::MutexExt;
+use libdd_common::MutexExt;
 use tracing::log::warn;
 use tracing::{debug, error, info, trace};
 

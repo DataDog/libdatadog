@@ -33,9 +33,9 @@ use datadog_sidecar::service::{
 use datadog_sidecar::service::{get_telemetry_action_sender, InternalTelemetryActions};
 use datadog_sidecar::shm_remote_config::{path_for_remote_config, RemoteConfigReader};
 use datadog_trace_utils::msgpack_encoder;
-use ddcommon::tag::Tag;
-use ddcommon::Endpoint;
 use libc::c_char;
+use libdd_common::tag::Tag;
+use libdd_common::Endpoint;
 use libdd_common_ffi::slice::{AsBytes, CharSlice};
 use libdd_common_ffi::{self as ffi, MaybeError};
 use libdd_dogstatsd_client::DogStatsDActionOwned;

@@ -7,10 +7,10 @@ use crate::trace_exporter::error::{RequestError, TraceExporterError};
 use crate::trace_exporter::metrics::MetricsEmitter;
 use crate::trace_exporter::TracerMetadata;
 use bytes::Bytes;
-use ddcommon::hyper_migration;
-use ddcommon::{tag, tag::Tag};
 use http_body_util::BodyExt;
 use hyper::{Method, Uri};
+use libdd_common::hyper_migration;
+use libdd_common::{tag, tag::Tag};
 use std::collections::HashMap;
 use tracing::{debug, error, warn};
 
@@ -236,8 +236,8 @@ mod tests {
     use super::*;
     use crate::trace_exporter::TracerMetadata;
     use bytes::Bytes;
-    use ddcommon::tag;
     use hyper::{Response, StatusCode};
+    use libdd_common::tag;
 
     fn create_test_metadata() -> TracerMetadata {
         TracerMetadata {

@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! Provides an abstraction layer to hold metrics that comes from 'SendDataResult'.
-use ddcommon::tag;
+use libdd_common::tag;
 use libdd_telemetry::data::metrics::{MetricNamespace, MetricType};
 use libdd_telemetry::metrics::ContextKey;
 use libdd_telemetry::worker::TelemetryWorkerHandle;
@@ -43,7 +43,7 @@ struct Metric {
     name: &'static str,
     metric_type: MetricType,
     namespace: MetricNamespace,
-    tags: &'static [ddcommon::tag::Tag],
+    tags: &'static [libdd_common::tag::Tag],
 }
 
 const METRICS: &[Metric] = &[

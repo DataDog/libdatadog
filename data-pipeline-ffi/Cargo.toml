@@ -17,7 +17,7 @@ bench = false
 [features]
 default = ["cbindgen", "catch_panic"]
 catch_panic = []
-cbindgen = ["build_common/cbindgen", "ddcommon-ffi/cbindgen"]
+cbindgen = ["build_common/cbindgen", "libdd-common-ffi/cbindgen"]
 
 [build-dependencies]
 build_common = { path = "../build-common" }
@@ -29,6 +29,6 @@ datadog-trace-utils = { path = "../datadog-trace-utils" }
 
 [dependencies]
 data-pipeline = { path = "../data-pipeline" }
-ddcommon-ffi = { path = "../libdd-common-ffi", package = "libdd-common-ffi", default-features = false }
+libdd-common-ffi = { path = "../libdd-common-ffi", default-features = false }
 libdd-tinybytes = { path = "../libdd-tinybytes" }
 tracing = { version = "0.1", default-features = false }

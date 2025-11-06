@@ -1,8 +1,8 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use ddcommon::Endpoint;
 use http::uri::{PathAndQuery, Scheme};
+use libdd_common::Endpoint;
 use serde::{Deserialize, Serialize};
 use spawn_worker::LibDependency;
 use std::sync::LazyLock;
