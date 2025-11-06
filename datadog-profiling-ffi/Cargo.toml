@@ -18,6 +18,7 @@ bench = false
 default = ["ddcommon-ffi"]
 cbindgen = ["build_common/cbindgen", "ddcommon-ffi/cbindgen"]
 ddtelemetry-ffi = ["dep:libdd-telemetry-ffi"]
+libdd-telemetry-ffi = ["dep:libdd-telemetry-ffi"] # package_ffi_on_windows needs it
 datadog-log-ffi = ["dep:libdd-log-ffi"]
 symbolizer = ["symbolizer-ffi"]
 data-pipeline-ffi = ["dep:data-pipeline-ffi"]
