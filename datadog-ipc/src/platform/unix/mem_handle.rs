@@ -20,6 +20,14 @@ use std::os::fd::AsFd;
 use std::os::unix::fs::MetadataExt;
 use std::sync::atomic::{AtomicI32, Ordering};
 
+fn fallback_path<P: ?Sized + NixPath>(name: &P) -> nix::Result<CString> {
+    name.with_nix_path(|cstr| {
+        let mut path = "/tmp/libdatadog".to_string().into_bytes();
+        path.extend_from_slice(cstr.to_bytes_with_nul());
+        unsafe { CString::from_vec_with_nul_unchecked(path) }
+    })
+}
+
 fn shm_open<P: ?Sized + NixPath>(
     name: &P,
     flag: OFlag,
@@ -27,13 +35,9 @@ fn shm_open<P: ?Sized + NixPath>(
 ) -> nix::Result<std::os::unix::io::OwnedFd> {
     mman::shm_open(name, flag, mode).or_else(|e| {
         // This can happen on AWS lambda
-        if e == Errno::ENOSYS || e == Errno::ENOTSUP {
+        if e == Errno::ENOSYS || e == Errno::ENOTSUP || e == Errno::ENOENT {
             // The path has a leading slash
-            let path = name.with_nix_path(|cstr| {
-                let mut path = "/tmp/libdatadog".to_string().into_bytes();
-                path.extend_from_slice(cstr.to_bytes_with_nul());
-                unsafe { CString::from_vec_with_nul_unchecked(path) }
-            })?;
+            let path = fallback_path(name)?;
             open(path.as_c_str(), flag, mode)
                 .or_else(|e| {
                     if (flag & OFlag::O_CREAT) == OFlag::O_CREAT && e == Errno::ENOENT {
@@ -55,8 +59,9 @@ fn shm_open<P: ?Sized + NixPath>(
 
 pub fn shm_unlink<P: ?Sized + NixPath>(name: &P) -> nix::Result<()> {
     mman::shm_unlink(name).or_else(|e| {
-        if e == Errno::ENOSYS || e == Errno::ENOTSUP {
-            unlink(name)
+        if e == Errno::ENOSYS || e == Errno::ENOTSUP || e == Errno::ENOENT {
+            let path = fallback_path(name)?;
+            unlink(path.as_c_str())
         } else {
             Err(e)
         }
