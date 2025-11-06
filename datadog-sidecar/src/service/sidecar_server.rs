@@ -50,8 +50,8 @@ use datadog_remote_config::fetch::{ConfigInvariants, MultiTargetStats};
 use datadog_trace_utils::tracer_header_tags::TracerHeaderTags;
 use ddcommon::tag::Tag;
 use ddtelemetry::config::Config;
-use dogstatsd_client::{new, DogStatsDActionOwned};
-use tinybytes;
+use libdd_dogstatsd_client::{new, DogStatsDActionOwned};
+use libdd_tinybytes as tinybytes;
 
 type NoResponse = Ready<()>;
 

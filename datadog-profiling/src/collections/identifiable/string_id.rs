@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use super::*;
-use datadog_profiling_protobuf::StringOffset;
+use libdd_profiling_protobuf::StringOffset;
 
 pub type StringId = StringOffset;
 

@@ -192,8 +192,8 @@ pub(super) struct GroupedStats {
     errors: u64,
     duration: u64,
     top_level_hits: u64,
-    ok_summary: datadog_ddsketch::DDSketch,
-    error_summary: datadog_ddsketch::DDSketch,
+    ok_summary: libdd_ddsketch::DDSketch,
+    error_summary: libdd_ddsketch::DDSketch,
 }
 
 impl GroupedStats {

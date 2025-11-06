@@ -637,10 +637,12 @@ pub struct ClientGroupedStats {
     /// HTTP method of the request
     #[prost(string, tag = "19")]
     #[serde(default)]
+    #[serde(rename = "HTTPMethod")]
     pub http_method: ::prost::alloc::string::String,
     /// Http route or quantized/simplified URL path
     #[prost(string, tag = "20")]
     #[serde(default)]
+    #[serde(rename = "HTTPEndpoint")]
     pub http_endpoint: ::prost::alloc::string::String,
 }
 /// Trilean is an expanded boolean type that is meant to differentiate between being unset and false.

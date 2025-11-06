@@ -4,6 +4,7 @@
 pub mod trace_utils;
 pub mod v05;
 
+use libdd_tinybytes::{Bytes, BytesString};
 use serde::ser::SerializeStruct;
 use serde::Serialize;
 use std::borrow::Borrow;
@@ -11,7 +12,6 @@ use std::collections::HashMap;
 use std::fmt;
 use std::hash::Hash;
 use std::str::FromStr;
-use tinybytes::{Bytes, BytesString};
 use v05::dict::SharedDict;
 
 use crate::tracer_payload::TraceChunks;

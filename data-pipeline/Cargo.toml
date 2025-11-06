@@ -36,9 +36,9 @@ ddtelemetry = { path = "../ddtelemetry", default-features = false }
 datadog-trace-protobuf = { path = "../datadog-trace-protobuf" }
 datadog-trace-stats = { path = "../datadog-trace-stats"}
 datadog-trace-utils = { path = "../datadog-trace-utils", default-features = false }
-datadog-ddsketch = { path = "../ddsketch" }
-dogstatsd-client = { path = "../dogstatsd-client", default-features = false }
-tinybytes = { path = "../tinybytes", features = [
+libdd-ddsketch = { version = "1.0.0", path = "../libdd-ddsketch" }
+libdd-dogstatsd-client = { version = "1.0.0", path = "../libdd-dogstatsd-client", default-features = false }
+libdd-tinybytes = { version = "1.0.0", path = "../libdd-tinybytes", features = [
     "bytes_string",
     "serialization",
 ] }
@@ -69,6 +69,6 @@ https = [
     "ddcommon/https",
     "ddtelemetry/https",
     "datadog-trace-utils/https",
-    "dogstatsd-client/https",
+    "libdd-dogstatsd-client/https",
 ]
 test-utils = []
