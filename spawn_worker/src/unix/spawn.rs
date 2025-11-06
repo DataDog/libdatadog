@@ -415,7 +415,7 @@ impl SpawnWorker {
                         if let Ok(memfd) = linux::write_memfd("trampoline_dependencies.so", bin) {
                             let basefds = if fd_to_pass.is_some() { 4 } else { 3 };
                             argv.push(CString::new(format!(
-                                "/proc/self/fd/{}",
+                                "/dev/fd/{}",
                                 temp_memfds.len() + basefds
                             ))?);
                             temp_memfds.push(memfd);

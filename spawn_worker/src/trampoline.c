@@ -83,16 +83,16 @@ int main(int argc, char *argv[]) {
       bool already_loaded = false;
 #ifndef _WIN32
       char buf[30];
-      // Redirect the symlinked /proc/self/X to the actual /proc/<pid>/X - as otherwise debugging tooling may try to read it
+      // Redirect the symlinked /dev/fd/X to the actual /proc/<pid>/X - as otherwise debugging tooling may try to read it
       // And reading /proc/self from the debugging tooling will usually lead to it reading from itself, which may be flatly wrong
       // E.g. gdb will just hang up for e.g. /proc/self/fd/4, which is an open pipe...
-      if (strncmp(lib_path, "/proc/self/", strlen("/proc/self/")) == 0 && strlen(lib_path) < 20) {
-        sprintf(buf, "/proc/%d/%s", getpid(), lib_path + strlen("/proc/self/"));
+      if (strncmp(lib_path, "/dev/fd/", strlen("/dev/fd/")) == 0 && strlen(lib_path) < 20) {
+        sprintf(buf, "/proc/%d/fd/%s", getpid(), lib_path + strlen("/dev/fd/"));
         if ((handles[additional_shared_libraries_count] = dlopen(buf, RTLD_LAZY | RTLD_GLOBAL))) {
           already_loaded = true;
         } else {
           // We may have to retry this (via already_loaded = false) in environments where procfs updates have some delay
-          // Like observed on google cloud run platforms: /proc/self/ exists, but /proc/<pid>/ does not yet.
+          // Like observed on google cloud run platforms: /dev/fd/ exists, but /proc/<pid>/ does not yet.
           // clear any previous errors
           (void)dlerror();
         }
