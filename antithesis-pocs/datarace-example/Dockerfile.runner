@@ -20,5 +20,9 @@ FROM debian:bookworm-slim
 WORKDIR /app
 COPY --from=builder /app/target/release/datarace-example .
 COPY --from=builder /usr/lib/libvoidstar.so /usr/lib/libvoidstar.so
+COPY sleep.sh .
 
 COPY ./ressources/driver.sh /opt/antithesis/test/v1/main/serial_driver_datarace-v0
+
+CMD [ "/app/sleep.sh" ]
+ENTRYPOINT [ "/usr/bin/env", "bash" ]
