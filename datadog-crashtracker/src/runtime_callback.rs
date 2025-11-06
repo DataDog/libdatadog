@@ -14,7 +14,7 @@ use std::ffi::c_char;
 #[cfg(unix)]
 use std::{
     ptr,
-    sync::atomic::{AtomicPtr, AtomicUsize, Ordering},
+    sync::atomic::{AtomicPtr, Ordering},
 };
 use thiserror::Error;
 
@@ -216,8 +216,7 @@ pub unsafe fn clear_runtime_callback() {
 pub(crate) unsafe fn invoke_runtime_callback_with_writer<W: std::io::Write>(
     writer: &mut W,
 ) -> Result<(), std::io::Error> {
-    static CURRENT_WRITER_DATA_ADDR: AtomicUsize = AtomicUsize::new(0);
-    static CURRENT_WRITER_VTABLE_ADDR: AtomicUsize = AtomicUsize::new(0);
+    static mut CURRENT_WRITER: Option<&'static mut dyn std::io::Write> = None;
 
     let callback_ptr = RUNTIME_CALLBACK.load(Ordering::SeqCst);
     if callback_ptr.is_null() {
@@ -225,31 +224,16 @@ pub(crate) unsafe fn invoke_runtime_callback_with_writer<W: std::io::Write>(
     }
     let callback_data = &*callback_ptr;
 
-    let writer_trait_obj: *mut dyn std::io::Write = writer;
-    let (data_ptr, vtable_ptr): (*mut (), *const ()) =
-        std::mem::transmute::<*mut dyn std::io::Write, (*mut (), *const ())>(writer_trait_obj);
-
-    CURRENT_WRITER_DATA_ADDR.store(data_ptr as usize, Ordering::SeqCst);
-    CURRENT_WRITER_VTABLE_ADDR.store(vtable_ptr as usize, Ordering::SeqCst);
+    CURRENT_WRITER = Some(std::mem::transmute::<
+        &mut dyn std::io::Write,
+        &'static mut dyn std::io::Write,
+    >(writer));
 
     unsafe extern "C" fn emit_frame_collector(frame: &RuntimeStackFrame) {
-        let data_addr = CURRENT_WRITER_DATA_ADDR.load(Ordering::SeqCst);
-        if data_addr == 0 {
-            return;
+        if let Some(ref mut writer) = CURRENT_WRITER {
+            let _ = emit_frame_as_json(writer, frame);
+            let _ = writer.flush();
         }
-        let vtable_addr = CURRENT_WRITER_VTABLE_ADDR.load(Ordering::SeqCst);
-
-        // Rebuild the raw parts from exposed addresses
-        let data = ptr::without_provenance_mut::<()>(data_addr);
-        let vtable = ptr::without_provenance::<()>(vtable_addr);
-
-        // Recreate the fat pointer
-        let writer_trait_obj =
-            std::mem::transmute::<(*mut (), *const ()), *mut dyn std::io::Write>((data, vtable));
-
-        let writer = &mut *writer_trait_obj;
-        let _ = emit_frame_as_json(writer, frame);
-        let _ = writer.flush();
     }
 
     unsafe extern "C" fn emit_stacktrace_string_collector(stacktrace_string: *const c_char) {
@@ -257,25 +241,14 @@ pub(crate) unsafe fn invoke_runtime_callback_with_writer<W: std::io::Write>(
             return;
         }
 
-        let data_addr = CURRENT_WRITER_DATA_ADDR.load(Ordering::SeqCst);
-        if data_addr == 0 {
-            return;
+        if let Some(ref mut writer) = CURRENT_WRITER {
+            // SAFETY: the runtime guarantees a valid, null-terminated C string.
+            let cstr = std::ffi::CStr::from_ptr(stacktrace_string);
+            let bytes = cstr.to_bytes();
+            let _ = writer.write_all(bytes);
+            let _ = writeln!(writer);
+            let _ = writer.flush();
         }
-        let vtable_addr = CURRENT_WRITER_VTABLE_ADDR.load(Ordering::SeqCst);
-
-        let data = ptr::without_provenance_mut::<()>(data_addr);
-        let vtable = ptr::without_provenance::<()>(vtable_addr);
-
-        let writer_trait_obj =
-            std::mem::transmute::<(*mut (), *const ()), *mut dyn std::io::Write>((data, vtable));
-        let writer = &mut *writer_trait_obj;
-
-        // SAFETY: the runtime guarantees a valid, null-terminated C string.
-        let cstr = std::ffi::CStr::from_ptr(stacktrace_string);
-        let bytes = cstr.to_bytes();
-        let _ = writer.write_all(bytes);
-        let _ = writeln!(writer);
-        let _ = writer.flush();
     }
 
     match callback_data {
@@ -283,9 +256,7 @@ pub(crate) unsafe fn invoke_runtime_callback_with_writer<W: std::io::Write>(
         CallbackData::StacktraceString(cb) => cb(emit_stacktrace_string_collector),
     }
 
-    // Clean up
-    CURRENT_WRITER_DATA_ADDR.store(0, Ordering::SeqCst);
-    CURRENT_WRITER_VTABLE_ADDR.store(0, Ordering::SeqCst);
+    CURRENT_WRITER = None;
 
     Ok(())
 }

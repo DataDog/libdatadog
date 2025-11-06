@@ -13,7 +13,7 @@ use std::time::{Duration, Instant};
 use tokio::io::AsyncBufReadExt;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-struct DebugStackFrameByteSequence {
+struct RuntimeStackFrame {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     line: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -26,8 +26,8 @@ struct DebugStackFrameByteSequence {
     file: Vec<u8>,
 }
 
-impl From<DebugStackFrameByteSequence> for StackFrame {
-    fn from(value: DebugStackFrameByteSequence) -> Self {
+impl From<RuntimeStackFrame> for StackFrame {
+    fn from(value: RuntimeStackFrame) -> Self {
         let mut stack_frame = StackFrame::new();
         stack_frame.function = if value.function.is_empty() {
             None
@@ -161,7 +161,7 @@ fn process_line(
             StdinState::Waiting
         }
         StdinState::RuntimeStackFrame(mut frames) => {
-            let frame_json: DebugStackFrameByteSequence = serde_json::from_str(line)?;
+            let frame_json: RuntimeStackFrame = serde_json::from_str(line)?;
             frames.push(frame_json.into());
             StdinState::RuntimeStackFrame(frames)
         }

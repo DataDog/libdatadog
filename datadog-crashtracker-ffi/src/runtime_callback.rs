@@ -9,10 +9,10 @@
 use datadog_crashtracker::{
     get_registered_callback_type_ptr, is_runtime_callback_registered,
     register_runtime_frame_callback, register_runtime_stacktrace_string_callback, CallbackError,
-    RuntimeStackFrame, RuntimeStacktraceStringCallback,
+    RuntimeStackFrame as CoreRuntimeStackFrame, RuntimeStacktraceStringCallback,
 };
 
-use ddcommon_ffi::CharSlice;
+use libdd_common_ffi::CharSlice;
 
 /// Result type for runtime callback registration
 #[cfg(unix)]
@@ -32,7 +32,7 @@ impl From<CallbackError> for CallbackResult {
 
 #[repr(C)]
 #[derive(Debug, Clone)]
-pub struct RuntimeStackFrameFFI {
+pub struct RuntimeStackFrame {
     /// Line number in source file (0 if unknown)
     pub line: u32,
     /// Column number in source file (0 if unknown)
@@ -46,7 +46,7 @@ pub struct RuntimeStackFrameFFI {
 }
 
 pub type RuntimeStackFrameCallback =
-    unsafe extern "C" fn(emit_frame: unsafe extern "C" fn(*const RuntimeStackFrameFFI));
+    unsafe extern "C" fn(emit_frame: unsafe extern "C" fn(*const RuntimeStackFrame));
 
 /// Global storage for the FFI callback
 #[cfg(unix)]
@@ -54,13 +54,13 @@ static mut STORED_FFI_CALLBACK: Option<RuntimeStackFrameCallback> = None;
 
 /// Global storage for the core emit function
 #[cfg(unix)]
-static mut STORED_CORE_EMIT: Option<unsafe extern "C" fn(&RuntimeStackFrame)> = None;
+static mut STORED_CORE_EMIT: Option<unsafe extern "C" fn(&CoreRuntimeStackFrame)> = None;
 
 #[cfg(unix)]
-fn convert_ffi_to_core_frame(ffi_frame: &RuntimeStackFrameFFI) -> RuntimeStackFrame<'_> {
-    use ddcommon_ffi::slice::AsBytes;
+fn convert_ffi_to_core_frame(ffi_frame: &RuntimeStackFrame) -> CoreRuntimeStackFrame<'_> {
+    use libdd_common_ffi::slice::AsBytes;
 
-    RuntimeStackFrame {
+    CoreRuntimeStackFrame {
         line: ffi_frame.line,
         column: ffi_frame.column,
         function: ffi_frame.function.as_bytes(),
@@ -70,7 +70,7 @@ fn convert_ffi_to_core_frame(ffi_frame: &RuntimeStackFrameFFI) -> RuntimeStackFr
 }
 
 #[cfg(unix)]
-unsafe extern "C" fn emit_ffi_frame(ffi_frame_ptr: *const RuntimeStackFrameFFI) {
+unsafe extern "C" fn emit_ffi_frame(ffi_frame_ptr: *const RuntimeStackFrame) {
     if ffi_frame_ptr.is_null() {
         return;
     }
@@ -85,7 +85,7 @@ unsafe extern "C" fn emit_ffi_frame(ffi_frame_ptr: *const RuntimeStackFrameFFI) 
 /// Wrapper function that bridges FFI callback to core callback
 #[cfg(unix)]
 unsafe extern "C" fn ffi_callback_wrapper(
-    emit_core_frame: unsafe extern "C" fn(&RuntimeStackFrame),
+    emit_core_frame: unsafe extern "C" fn(&CoreRuntimeStackFrame),
 ) {
     if let Some(ffi_callback) = STORED_FFI_CALLBACK {
         STORED_CORE_EMIT = Some(emit_core_frame);
@@ -121,7 +121,7 @@ unsafe extern "C" fn ffi_callback_wrapper(
 ///     const char* file_name = "script.rb";
 ///     ddog_CharSlice type_name = DDOG_CHARSLICE_FROM_CSTR("MyModule.MyClass");
 ///     ddog_crasht_RuntimeStackFrameFFI frame = {
-///         .type_name = &type_name,
+///         .type_name = type_name,
 ///         .function = DDOG_CHARSLICE_FROM_CSTR(function_name),
 ///         .file = DDOG_CHARSLICE_FROM_CSTR(file_name),
 ///         .line = 42,
@@ -199,12 +199,12 @@ mod tests {
     static TEST_MUTEX: Mutex<()> = Mutex::new(());
 
     unsafe extern "C" fn test_frame_callback(
-        emit_frame: unsafe extern "C" fn(*const RuntimeStackFrameFFI),
+        emit_frame: unsafe extern "C" fn(*const RuntimeStackFrame),
     ) {
         let function_name = "TestModule.TestClass.test_function";
         let file_name = "test.rb";
 
-        let frame = RuntimeStackFrameFFI {
+        let frame = RuntimeStackFrame {
             type_name: CharSlice::from("TestModule.TestClass"),
             function: CharSlice::from(function_name),
             file: CharSlice::from(file_name),
@@ -233,7 +233,7 @@ mod tests {
             assert_eq!(result, CallbackResult::Ok);
 
             // Test that the wrapper can be invoked successfully
-            unsafe extern "C" fn mock_emit_core_frame(_frame: &RuntimeStackFrame) {
+            unsafe extern "C" fn mock_emit_core_frame(_frame: &CoreRuntimeStackFrame) {
                 // Callback invoked successfully
             }
 
