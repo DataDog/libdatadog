@@ -3,12 +3,11 @@ FROM rust:1.91-slim AS builder
 WORKDIR /app
 COPY . .
 
-RUN cargo build --release
+RUN cargo build
 
 FROM debian:bookworm-slim
 
 WORKDIR /app
-COPY --from=builder /app/target/release/datarace-example .
+COPY --from=builder /app/target/debug/datarace-example .
 
-CMD ["./datarace-example"]
-
+CMD [ "./datarace-example" ]
