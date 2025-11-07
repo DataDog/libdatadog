@@ -93,7 +93,7 @@ impl ErrorDataBuilder {
     }
 }
 
-#[derive(Debug, Default, PartialEq)]
+#[derive(Debug, PartialEq)]
 pub struct CrashInfoBuilder {
     pub counters: Option<HashMap<String, i64>>,
     pub error: ErrorDataBuilder,
@@ -110,6 +110,29 @@ pub struct CrashInfoBuilder {
     pub timestamp: Option<DateTime<Utc>>,
     pub trace_ids: Option<Vec<Span>>,
     pub uuid: Option<String>,
+}
+
+impl Default for CrashInfoBuilder {
+    fn default() -> Self {
+        Self {
+            counters: None,
+            error: ErrorDataBuilder::default(),
+            experimental: None,
+            files: None,
+            fingerprint: None,
+            incomplete: None,
+            log_messages: None,
+            metadata: None,
+            os_info: None,
+            proc_info: None,
+            sig_info: None,
+            span_ids: None,
+            timestamp: None,
+            trace_ids: None,
+            // Random UUID each time
+            uuid: Some(Uuid::new_v4().to_string()),
+        }
+    }
 }
 
 impl CrashInfoBuilder {
@@ -155,14 +178,7 @@ impl CrashInfoBuilder {
     }
 
     pub fn new() -> Self {
-        let mut builder = Self::default();
-        let uuid = Uuid::new_v4().to_string();
-
-        builder
-            .with_uuid(uuid)
-            .expect("Setting UUID should never fail");
-
-        builder
+        Self::default()
     }
 
     /// Inserts the given counter to the current set of counters in the builder.
