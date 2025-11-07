@@ -14,7 +14,7 @@ use std::process::Command;
 use std::rc::Rc;
 use tools::headers::dedup_headers;
 
-const CRATE_FOLDER: &str = "datadog-profiling-ffi";
+const CRATE_FOLDER: &str = "libdd-profiling-ffi";
 
 #[derive(Deserialize)]
 struct CargoFile {
