@@ -714,7 +714,6 @@ mod tests {
         span::SharedDictBytes,
         test_utils::{create_test_no_alloc_span, create_test_span},
     };
-    use ddcommon::Endpoint;
     use hyper::Request;
     use libdd_common::Endpoint;
     use serde_json::json;
