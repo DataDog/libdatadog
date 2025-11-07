@@ -39,11 +39,11 @@ use datadog_trace_utils::trace_utils::TracerHeaderTags;
 use ddcommon::{hyper_migration, Endpoint};
 use ddcommon::{tag, tag::Tag};
 use ddcommon::{HttpClient, MutexExt};
-use ddtelemetry::worker::TelemetryWorker;
-use dogstatsd_client::Client;
 use http_body_util::BodyExt;
 use hyper::http::uri::PathAndQuery;
 use hyper::Uri;
+use libdd_dogstatsd_client::Client;
+use libdd_telemetry::worker::TelemetryWorker;
 use std::io;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -314,7 +314,15 @@ impl TraceExporter {
                 };
             });
         }
-        // Drop runtime to shutdown all threads
+        // When the info fetcher is paused, the trigger channel keeps a reference to the runtime's
+        // IoStack as a waker. This prevents the IoStack from being dropped when shutting
+        // down runtime. By manually sending a message to the trigger channel we trigger the
+        // waker releasing the reference to the IoStack. Finally we drain the channel to
+        // avoid triggering a fetch when the info fetcher is restarted.
+        if let PausableWorker::Paused { worker } = &mut self.workers.lock_or_panic().info {
+            self.info_response_observer.manual_trigger();
+            worker.drain();
+        }
         drop(runtime);
     }
 
@@ -462,7 +470,7 @@ impl TraceExporter {
     /// 2) It's not guaranteed to not block forever, since the /info endpoint might not be
     ///    available.
     ///
-    /// The `send`` function will check agent_info when running, which will only be available if the
+    /// The `send` function will check agent_info when running, which will only be available if the
     /// fetcher had time to reach to the agent.
     /// Since agent_info can enable CSS computation, waiting for this during testing can make
     /// snapshots non-deterministic.
@@ -989,10 +997,10 @@ mod tests {
     use datadog_trace_utils::span::SpanBytes;
     use httpmock::prelude::*;
     use httpmock::MockServer;
+    use libdd_tinybytes::{Bytes, BytesString};
     use std::collections::HashMap;
     use std::net;
     use std::time::Duration;
-    use tinybytes::BytesString;
     use tokio::time::sleep;
 
     // v05 messagepack empty payload -> [[""], []]
@@ -1720,7 +1728,7 @@ mod tests {
                     }"#;
         let traces_endpoint = server.mock(|when, then| {
             when.method(POST).path("/v0.5/traces").is_true(|req| {
-                let bytes = tinybytes::Bytes::copy_from_slice(req.body_ref());
+                let bytes = Bytes::copy_from_slice(req.body_ref());
                 bytes.to_vec() == V5_EMPTY
             });
             then.status(200)

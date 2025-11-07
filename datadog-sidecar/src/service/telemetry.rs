@@ -24,16 +24,16 @@ use tokio::task::JoinHandle;
 use zwohash::ZwoHasher;
 
 use ddcommon::tag::Tag;
-use ddtelemetry::worker::TelemetryWorkerBuilder;
+use libdd_telemetry::worker::TelemetryWorkerBuilder;
 use serde::Deserialize;
 use std::ops::Sub;
 use std::sync::LazyLock;
 use std::time::SystemTime;
 
-use ddtelemetry::config::Config;
-use ddtelemetry::data::{self, Integration};
-use ddtelemetry::metrics::{ContextKey, MetricContext};
-use ddtelemetry::worker::{LifecycleAction, TelemetryActions, TelemetryWorkerHandle};
+use libdd_telemetry::config::Config;
+use libdd_telemetry::data::{self, Integration};
+use libdd_telemetry::metrics::{ContextKey, MetricContext};
+use libdd_telemetry::worker::{LifecycleAction, TelemetryActions, TelemetryWorkerHandle};
 use manual_future::ManualFuture;
 use serde_with::{serde_as, VecSkipError};
 use tokio::time::sleep;
@@ -75,7 +75,7 @@ impl TelemetryCachedClient {
         env: &str,
         instance_id: &InstanceId,
         runtime_meta: &RuntimeMetadata,
-        get_config: impl FnOnce() -> ddtelemetry::config::Config,
+        get_config: impl FnOnce() -> libdd_telemetry::config::Config,
     ) -> Self {
         let mut builder = TelemetryWorkerBuilder::new_fetch_host(
             service.to_string(),
@@ -291,7 +291,7 @@ impl TelemetryCachedClientSet {
         get_config: F,
     ) -> Arc<Mutex<TelemetryCachedClient>>
     where
-        F: FnOnce() -> ddtelemetry::config::Config,
+        F: FnOnce() -> libdd_telemetry::config::Config,
     {
         let key = (service.to_string(), env.to_string());
 

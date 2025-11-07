@@ -5,10 +5,11 @@ use crate::span::v05::dict::SharedDict;
 use crate::span::{v05, SharedDictBytes, Span, SpanBytes, SpanText};
 use crate::trace_utils::collect_trace_chunks;
 use crate::{msgpack_decoder, trace_utils::cmp_send_data_payloads};
-use datadog_trace_protobuf::pb;
+use libdd_tinybytes as tinybytes;
+use libdd_trace_protobuf::pb;
 use std::cmp::Ordering;
 use std::iter::Iterator;
-use tinybytes::{self, BytesString};
+use tinybytes::BytesString;
 
 pub type TracerPayloadV04 = Vec<SpanBytes>;
 pub type TracerPayloadV05 = Vec<v05::Span>;
@@ -70,8 +71,8 @@ impl TracerPayloadCollection {
     /// # Examples:
     ///
     /// ```rust
-    /// use datadog_trace_protobuf::pb::TracerPayload;
     /// use datadog_trace_utils::tracer_payload::TracerPayloadCollection;
+    /// use libdd_trace_protobuf::pb::TracerPayload;
     /// let mut col1 = TracerPayloadCollection::V07(vec![TracerPayload::default()]);
     /// let mut col2 = TracerPayloadCollection::V07(vec![TracerPayload::default()]);
     /// col1.append(&mut col2);
@@ -99,8 +100,8 @@ impl TracerPayloadCollection {
     /// # Examples:
     ///
     /// ```rust
-    /// use datadog_trace_protobuf::pb::TracerPayload;
     /// use datadog_trace_utils::tracer_payload::TracerPayloadCollection;
+    /// use libdd_trace_protobuf::pb::TracerPayload;
     /// let mut col1 =
     ///     TracerPayloadCollection::V07(vec![TracerPayload::default(), TracerPayload::default()]);
     /// col1.merge();
@@ -128,8 +129,8 @@ impl TracerPayloadCollection {
     /// # Examples:
     ///
     /// ```rust
-    /// use datadog_trace_protobuf::pb::TracerPayload;
     /// use datadog_trace_utils::tracer_payload::TracerPayloadCollection;
+    /// use libdd_trace_protobuf::pb::TracerPayload;
     /// let col1 = TracerPayloadCollection::V07(vec![TracerPayload::default()]);
     /// col1.size();
     /// ```
@@ -155,8 +156,8 @@ impl TracerPayloadCollection {
 /// Implementing `TraceChunkProcessor` to add a custom tag to each span in a chunk:
 ///
 /// ```rust
-/// use datadog_trace_protobuf::pb::{Span, TraceChunk};
 /// use datadog_trace_utils::tracer_payload::TraceChunkProcessor;
+/// use libdd_trace_protobuf::pb::{Span, TraceChunk};
 /// use std::collections::HashMap;
 ///
 /// struct CustomTagProcessor {
@@ -204,11 +205,11 @@ impl TraceChunkProcessor for DefaultTraceChunkProcessor {
 /// # Examples
 ///
 /// ```rust
-/// use datadog_trace_protobuf::pb;
 /// use datadog_trace_utils::trace_utils::TracerHeaderTags;
 /// use datadog_trace_utils::tracer_payload::{decode_to_trace_chunks, TraceEncoding};
+/// use libdd_tinybytes as tinybytes;
+/// use libdd_trace_protobuf::pb;
 /// use std::convert::TryInto;
-/// use tinybytes;
 /// // This will likely be a &[u8] slice in practice.
 /// let data: Vec<u8> = Vec::new();
 /// let data_as_bytes = tinybytes::Bytes::from(data);
@@ -241,7 +242,7 @@ mod tests {
     use super::*;
     use crate::span::SpanBytes;
     use crate::test_utils::create_test_no_alloc_span;
-    use datadog_trace_protobuf::pb;
+    use libdd_trace_protobuf::pb;
     use serde_json::json;
     use std::collections::HashMap;
     use tinybytes::BytesString;

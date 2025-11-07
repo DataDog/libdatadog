@@ -5,10 +5,10 @@ use datadog_trace_utils::span::{
     AttributeAnyValueBytes, AttributeArrayValueBytes, SpanBytes, SpanEventBytes, SpanLinkBytes,
 };
 use ddcommon_ffi::slice::{AsBytes, CharSlice};
+use libdd_tinybytes::{Bytes, BytesString};
 use std::borrow::Cow;
 use std::collections::HashMap;
 use std::ffi::{c_char, CString};
-use tinybytes::{Bytes, BytesString};
 
 fn convert_char_slice_to_bytes_string(slice: CharSlice) -> BytesString {
     // TODO: Strip the invalid bytes in the tracer instead

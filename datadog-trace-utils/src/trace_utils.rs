@@ -10,11 +10,11 @@ use crate::tracer_payload::TracerPayloadCollection;
 use crate::tracer_payload::{self, TraceChunks};
 use anyhow::anyhow;
 use bytes::buf::Reader;
-use datadog_trace_normalization::normalizer;
-use datadog_trace_protobuf::pb;
 use ddcommon::{azure_app_services, hyper_migration};
 use http_body_util::BodyExt;
 use hyper::body::Buf;
+use libdd_trace_normalization::normalizer;
+use libdd_trace_protobuf::pb;
 use rmp::decode::read_array_len;
 use rmpv::decode::read_value;
 use rmpv::{Integer, Value};
@@ -716,6 +716,7 @@ mod tests {
     };
     use ddcommon::Endpoint;
     use hyper::Request;
+    use libdd_tinybytes::BytesString;
     use serde_json::json;
 
     fn find_index_in_dict(dict: &SharedDictBytes, value: &str) -> Option<u32> {

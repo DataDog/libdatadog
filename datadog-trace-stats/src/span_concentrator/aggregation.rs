@@ -5,9 +5,9 @@
 //! This includes the aggregation key to group spans together and the computation of stats from a
 //! span.
 
-use datadog_trace_protobuf::pb;
 use datadog_trace_utils::span::SpanText;
 use hashbrown::HashMap;
+use libdd_trace_protobuf::pb;
 
 use crate::span_concentrator::StatSpan;
 
@@ -192,8 +192,8 @@ pub(super) struct GroupedStats {
     errors: u64,
     duration: u64,
     top_level_hits: u64,
-    ok_summary: datadog_ddsketch::DDSketch,
-    error_summary: datadog_ddsketch::DDSketch,
+    ok_summary: libdd_ddsketch::DDSketch,
+    error_summary: libdd_ddsketch::DDSketch,
 }
 
 impl GroupedStats {

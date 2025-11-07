@@ -11,7 +11,7 @@ use datadog_live_debugger::debugger_defs::DebuggerPayload;
 use datadog_live_debugger::sender::DebuggerType;
 use ddcommon::tag::Tag;
 use ddcommon::MutexExt;
-use dogstatsd_client::DogStatsDActionOwned;
+use libdd_dogstatsd_client::DogStatsDActionOwned;
 use serde::Serialize;
 use std::sync::{Mutex, MutexGuard};
 use std::{

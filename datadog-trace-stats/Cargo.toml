@@ -8,8 +8,8 @@ license.workspace = true
 autobenches = false
 
 [dependencies]
-datadog-ddsketch = { path = "../ddsketch" }
-datadog-trace-protobuf = { path = "../datadog-trace-protobuf" }
+libdd-ddsketch = { version = "1.0.0", path = "../libdd-ddsketch" }
+libdd-trace-protobuf = { version = "1.0.0", path = "../libdd-trace-protobuf" }
 datadog-trace-utils = { path = "../datadog-trace-utils", default-features = false }
 hashbrown = { version = "0.15" }
 

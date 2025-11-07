@@ -6,12 +6,10 @@ use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 
-use crate::rules_based::Str;
-
-use super::VariationType;
+use crate::rules_based::{ufc::VariationType, FlagType, Str};
 
 /// Reason for assignment evaluation result.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum AssignmentReason {
     /// Assignment was made based on targeting rules or time bounds.
@@ -267,18 +265,17 @@ impl AssignmentValue {
     ///
     /// # Examples
     /// ```
-    /// # use datadog_ffe::rules_based::AssignmentValue;
-    /// # use datadog_ffe::rules_based::VariationType;
+    /// # use datadog_ffe::rules_based::{AssignmentValue, FlagType};
     /// let value = AssignmentValue::String("example".into());
-    /// assert_eq!(value.variation_type(), VariationType::String);
+    /// assert_eq!(value.variation_type(), FlagType::String);
     /// ```
-    pub fn variation_type(&self) -> VariationType {
+    pub fn variation_type(&self) -> FlagType {
         match self {
-            AssignmentValue::String(_) => VariationType::String,
-            AssignmentValue::Integer(_) => VariationType::Integer,
-            AssignmentValue::Float(_) => VariationType::Numeric,
-            AssignmentValue::Boolean(_) => VariationType::Boolean,
-            AssignmentValue::Json(_) => VariationType::Json,
+            AssignmentValue::String(_) => FlagType::String,
+            AssignmentValue::Integer(_) => FlagType::Integer,
+            AssignmentValue::Float(_) => FlagType::Float,
+            AssignmentValue::Boolean(_) => FlagType::Boolean,
+            AssignmentValue::Json(_) => FlagType::Object,
         }
     }
 
@@ -297,5 +294,75 @@ impl AssignmentValue {
             AssignmentValue::Boolean(b) => Value::Bool(*b),
             AssignmentValue::Json(value) => value.as_ref().clone(),
         }
+    }
+}
+
+#[cfg(feature = "pyo3")]
+mod pyo3_impl {
+
+    use super::*;
+
+    use pyo3::{
+        exceptions::PyValueError,
+        prelude::*,
+        types::{PyDict, PyList},
+    };
+
+    impl<'py> IntoPyObject<'py> for &AssignmentValue {
+        type Target = PyAny;
+        type Output = Bound<'py, PyAny>;
+        type Error = PyErr;
+
+        #[inline]
+        fn into_pyobject(self, py: Python<'py>) -> Result<Self::Output, Self::Error> {
+            let obj = match self {
+                AssignmentValue::String(v) => v.into_pyobject(py)?.into_any(),
+                AssignmentValue::Integer(v) => v.into_pyobject(py)?.into_any(),
+                AssignmentValue::Float(v) => v.into_pyobject(py)?.into_any(),
+                AssignmentValue::Boolean(v) => v.into_pyobject(py)?.to_owned().into_any(),
+                AssignmentValue::Json(v) => json_to_pyobject(v, py)?,
+            };
+            Ok(obj)
+        }
+    }
+
+    fn json_to_pyobject<'py>(
+        value: &serde_json::Value,
+        py: Python<'py>,
+    ) -> Result<Bound<'py, PyAny>, PyErr> {
+        use serde_json::Value;
+        let v = match value {
+            Value::Null => py.None().into_bound(py),
+            Value::Bool(v) => v.into_pyobject(py)?.to_owned().into_any(),
+            Value::Number(number) => {
+                if let Some(v) = number.as_u128() {
+                    v.into_pyobject(py)?.into_any()
+                } else if let Some(v) = number.as_i128() {
+                    v.into_pyobject(py)?.into_any()
+                } else if let Some(v) = number.as_f64() {
+                    v.into_pyobject(py)?.into_any()
+                } else {
+                    // NOTE: this can only happen if serde_json is compiled with arbitrary-precision
+                    // and it failed to parse the number / the number is larger than f64::MAX.
+                    return Err(PyValueError::new_err("unable to convert number to python"));
+                }
+            }
+            Value::String(s) => s.into_pyobject(py)?.into_any(),
+            Value::Array(values) => {
+                let vals = values
+                    .iter()
+                    .map(|it| json_to_pyobject(it, py))
+                    .collect::<Result<Vec<_>, _>>()?;
+                PyList::new(py, vals)?.into_any()
+            }
+            Value::Object(map) => {
+                let dict = PyDict::new(py);
+                for (key, value) in map {
+                    dict.set_item(key, json_to_pyobject(value, py)?)?;
+                }
+                dict.into_any()
+            }
+        };
+        Ok(v)
     }
 }

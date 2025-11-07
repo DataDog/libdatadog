@@ -19,14 +19,14 @@ priority-queue = "2.1.1"
 ddcommon = { path = "../ddcommon" }
 datadog-sidecar-macros = { path = "../datadog-sidecar-macros" }
 
-ddtelemetry = { path = "../ddtelemetry", features = ["tracing"] }
+libdd-telemetry = { path = "../libdd-telemetry", features = ["tracing"] }
 data-pipeline = { path = "../data-pipeline" }
 datadog-trace-utils = { path = "../datadog-trace-utils" }
 datadog-remote-config = { path = "../datadog-remote-config" , features = ["live-debugger"]}
 datadog-live-debugger = { path = "../datadog-live-debugger" }
 datadog-crashtracker = { path = "../datadog-crashtracker" }
-dogstatsd-client = { path = "../dogstatsd-client" }
-tinybytes = { path = "../tinybytes" }
+libdd-dogstatsd-client = { path = "../libdd-dogstatsd-client" }
+libdd-tinybytes = { path = "../libdd-tinybytes" }
 
 futures = { version = "0.3", default-features = false }
 manual_future = "0.1.1"

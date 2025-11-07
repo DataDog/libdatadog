@@ -23,8 +23,8 @@ bitmaps = "3.2.0"
 byteorder = { version = "1.5", features = ["std"] }
 bytes = "1.1"
 chrono = {version = "0.4", default-features = false, features = ["std", "clock"]}
-datadog-alloc = { path = "../datadog-alloc" }
-datadog-profiling-protobuf = { path = "../datadog-profiling-protobuf", features = ["prost_impls"] }
+libdd-alloc = { version = "1.0.0", path = "../libdd-alloc" }
+libdd-profiling-protobuf = { version = "1.0.0", path = "../libdd-profiling-protobuf", features = ["prost_impls"] }
 ddcommon = {path = "../ddcommon" }
 futures = { version = "0.3", default-features = false }
 http = "1.0"
@@ -41,7 +41,9 @@ serde_json = {version = "1.0"}
 target-triple = "0.1.4"
 tokio = {version = "1.23", features = ["rt", "macros"]}
 tokio-util = "0.7.1"
+zstd = { version = "0.13", default-features = false }
 
 [dev-dependencies]
 bolero = "0.13"
 criterion = "0.5.1"
+lz4_flex = { version = "0.9", default-features = false, features = ["std", "frame"] }

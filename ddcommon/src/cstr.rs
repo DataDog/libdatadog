@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #[doc(hidden)]
+#[allow(clippy::panic)]
 pub const fn validate_cstr_contents(bytes: &[u8]) {
     // `str_len` is the length excluding the null terminator.
     let str_len = bytes.len() - 1usize;

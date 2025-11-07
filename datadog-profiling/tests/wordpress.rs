@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use datadog_profiling::api;
-use datadog_profiling_protobuf::prost_impls;
+use libdd_profiling_protobuf::prost_impls;
 use lz4_flex::frame::FrameDecoder;
 use prost::Message;
 use std::fs::File;

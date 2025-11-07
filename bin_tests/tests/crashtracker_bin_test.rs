@@ -145,6 +145,9 @@ fn test_crasht_tracking_validate_callstack() {
     test_crash_tracking_callstack()
 }
 
+#[test]
+#[cfg(not(any(all(target_arch = "x86_64", target_env = "musl"), target_os = "macos")))]
+#[cfg_attr(miri, ignore)]
 fn test_crash_tracking_callstack() {
     let (_, crashtracker_receiver) = setup_crashtracking_crates(BuildProfile::Release);
 
@@ -688,7 +691,7 @@ fn setup_crashtracking_crates(
         triple_target: None,
     };
     let crashtracker_receiver = ArtifactsBuild {
-        name: "crashtracker_receiver".to_owned(),
+        name: "test_crashtracker_receiver".to_owned(),
         build_profile: crash_tracking_receiver_profile,
         artifact_type: ArtifactType::Bin,
         triple_target: None,

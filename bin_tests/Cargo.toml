@@ -33,7 +33,8 @@ name = "test_the_tests"
 bench = false
 
 [[bin]]
-name = "crashtracker_receiver"
+name = "test_crashtracker_receiver"
+path = "src/bin/crashtracker_receiver.rs"
 bench = false
 
 [[bin]]
