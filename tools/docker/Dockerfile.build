@@ -85,8 +85,8 @@ COPY "libdd-library-config-ffi/Cargo.toml" "libdd-library-config-ffi/"
 COPY "libdd-library-config/Cargo.toml" "libdd-library-config/"
 COPY "datadog-live-debugger/Cargo.toml" "datadog-live-debugger/"
 COPY "datadog-live-debugger-ffi/Cargo.toml" "datadog-live-debugger-ffi/"
-COPY "datadog-profiling/Cargo.toml" "datadog-profiling/"
-COPY "datadog-profiling-ffi/Cargo.toml" "datadog-profiling-ffi/"
+COPY "libdd-profiling/Cargo.toml" "libdd-profiling/"
+COPY "libdd-profiling-ffi/Cargo.toml" "libdd-profiling-ffi/"
 COPY "libdd-profiling-protobuf/Cargo.toml" "libdd-profiling-protobuf/"
 COPY "datadog-profiling-replayer/Cargo.toml" "datadog-profiling-replayer/"
 COPY "datadog-remote-config/Cargo.toml" "datadog-remote-config/"
@@ -134,8 +134,8 @@ RUN echo \
     datadog-ipc/tarpc/tests/dataservice.rs \
     datadog-ipc/tarpc/tests/service_functional.rs \
     datadog-profiling-replayer/src/main.rs \
-    datadog-profiling/benches/interning_strings.rs \
-    datadog-profiling/benches/main.rs \
+    libdd-profiling/benches/interning_strings.rs \
+    libdd-profiling/benches/main.rs \
     tools/sidecar_mockgen/src/bin/sidecar_mockgen.rs \
     tools/src/bin/dedup_headers.rs \
     libdd-trace-normalization/benches/normalization_utils.rs \
