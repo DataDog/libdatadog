@@ -1,0 +1,11 @@
+FROM docker.io/ubuntu:latest 
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+  pip \
+  python3 \
+  python3-etcd \
+  && rm -rf /var/lib/apt/lists/*
+
+RUN pip install antithesis cffi --break-system-packages
+
+COPY ./ressources/entrypoint.py /entrypoint.py
