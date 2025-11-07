@@ -7,7 +7,7 @@ use datadog_ipc::platform::{
     named_pipe_name_from_raw_handle, FileBackedHandle, MappedMem, NamedShmHandle,
 };
 
-use datadog_crashtracker_ffi::{ddog_crasht_init_windows, Metadata};
+use libdd_crashtracker_ffi::{ddog_crasht_init_windows, Metadata};
 use futures::FutureExt;
 use libdd_common::Endpoint;
 use libdd_common::MutexExt;

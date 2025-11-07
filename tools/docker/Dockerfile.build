@@ -70,8 +70,8 @@ RUN cargo search nothing --limit 1
 COPY [ "Cargo.lock", "Cargo.toml", "./"]
 COPY "libdd-alloc/Cargo.toml" "libdd-alloc/"
 COPY "build-common/Cargo.toml" "build-common/"
-COPY "datadog-crashtracker/Cargo.toml" "datadog-crashtracker/"
-COPY "datadog-crashtracker-ffi/Cargo.toml" "datadog-crashtracker-ffi/"
+COPY "libdd-crashtracker/Cargo.toml" "libdd-crashtracker/"
+COPY "libdd-crashtracker-ffi/Cargo.toml" "libdd-crashtracker-ffi/"
 COPY "libdd-common/Cargo.toml" "libdd-common/"
 COPY "libdd-common-ffi/Cargo.toml" "libdd-common-ffi/"
 COPY "libdd-telemetry/Cargo.toml" "libdd-telemetry/"

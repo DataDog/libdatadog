@@ -152,7 +152,7 @@ int main(int argc, char **argv) {
 "/Users/daniel.schwartznarbonne/.cargo/registry/src/index.crates.io-6f17d22bba15001f/backtrace-0.3.71/src/backtrace/mod.rs",
           "lineno": 66,
           "name":
-"trace_unsynchronized<datadog_crashtracker::collectors::emit_backtrace_by_frames::{closure_env#0}<std::process::ChildStdin>>"
+"trace_unsynchronized<libdd_crashtracker::collectors::emit_backtrace_by_frames::{closure_env#0}<std::process::ChildStdin>>"
         },
         {
           "colno": 5,

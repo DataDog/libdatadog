@@ -22,7 +22,7 @@ pushd "${PROJECT_DIR}" > /dev/null
 
 # Run benchmarks
 message "Running benchmarks"
-cargo bench --workspace --features datadog-crashtracker/benchmarking -- --warm-up-time 1 --measurement-time 5 --sample-size=200
+cargo bench --workspace --features libdd-crashtracker/benchmarking -- --warm-up-time 1 --measurement-time 5 --sample-size=200
 message "Finished running benchmarks"
 
 # Copy the benchmark results to the output directory

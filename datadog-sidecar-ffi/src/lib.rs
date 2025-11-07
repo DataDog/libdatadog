@@ -11,7 +11,7 @@ pub mod span;
 
 use crate::span::TracesBytes;
 #[cfg(windows)]
-use datadog_crashtracker_ffi::Metadata;
+use libdd_crashtracker_ffi::Metadata;
 use datadog_ipc::platform::{
     FileBackedHandle, MappedMem, NamedShmHandle, PlatformHandle, ShmHandle,
 };

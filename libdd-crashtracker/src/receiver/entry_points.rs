@@ -92,7 +92,7 @@ pub fn get_receiver_unix_socket(socket_path: impl AsRef<str>) -> anyhow::Result<
 /// signal handler is dangerous, so we fork a sidecar to do the stuff we aren't
 /// allowed to do in the handler.
 ///
-/// See comments in [datadog-crashtracker/lib.rs] for a full architecture
+/// See comments in [libdd-crashtracker/lib.rs] for a full architecture
 /// description.
 pub(crate) async fn receiver_entry_point(
     timeout: Duration,
