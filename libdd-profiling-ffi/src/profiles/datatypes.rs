@@ -3,12 +3,12 @@
 
 use crate::string_storage::{get_inner_string_storage, ManagedStringStorage};
 use anyhow::Context;
+use function_name::named;
+use libdd_common_ffi::slice::{AsBytes, ByteSlice, CharSlice, Slice};
+use libdd_common_ffi::{wrap_with_ffi_result, Error, Handle, Timespec, ToInner};
 use libdd_profiling::api;
 use libdd_profiling::api::ManagedStringId;
 use libdd_profiling::internal;
-use libdd_common_ffi::slice::{AsBytes, ByteSlice, CharSlice, Slice};
-use libdd_common_ffi::{wrap_with_ffi_result, Error, Handle, Timespec, ToInner};
-use function_name::named;
 use std::num::NonZeroI64;
 use std::str::Utf8Error;
 use std::time::SystemTime;

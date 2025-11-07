@@ -4,15 +4,15 @@
 #![allow(renamed_and_removed_lints)]
 #![allow(clippy::box_vec)]
 
-use libdd_profiling::exporter;
-use libdd_profiling::exporter::{ProfileExporter, Request};
-use libdd_profiling::internal::EncodedProfile;
+use function_name::named;
 use libdd_common::tag::Tag;
 use libdd_common_ffi::slice::{AsBytes, ByteSlice, CharSlice, Slice};
 use libdd_common_ffi::{
     wrap_with_ffi_result, wrap_with_void_ffi_result, Handle, Result, ToInner, VoidResult,
 };
-use function_name::named;
+use libdd_profiling::exporter;
+use libdd_profiling::exporter::{ProfileExporter, Request};
+use libdd_profiling::internal::EncodedProfile;
 use std::borrow::Cow;
 use std::str::FromStr;
 
@@ -86,7 +86,9 @@ unsafe fn try_to_url(slice: CharSlice) -> anyhow::Result<hyper::Uri> {
     Ok(hyper::Uri::from_str(str)?)
 }
 
-pub unsafe fn try_to_endpoint(endpoint: ProfilingEndpoint) -> anyhow::Result<libdd_common::Endpoint> {
+pub unsafe fn try_to_endpoint(
+    endpoint: ProfilingEndpoint,
+) -> anyhow::Result<libdd_common::Endpoint> {
     // convert to utf8 losslessly -- URLs and API keys should all be ASCII, so
     // a failed result is likely to be an error.
     match endpoint {
@@ -378,9 +380,9 @@ pub unsafe extern "C" fn ddog_CancellationToken_drop(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use http_body_util::BodyExt;
     use libdd_common::tag;
     use libdd_common_ffi::Slice;
-    use http_body_util::BodyExt;
     use serde_json::json;
 
     fn profiling_library_name() -> CharSlice<'static> {

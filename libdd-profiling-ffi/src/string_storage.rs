@@ -2,11 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use anyhow::Context;
-use libdd_profiling::api::ManagedStringId;
-use libdd_profiling::collections::string_storage::ManagedStringStorage as InternalManagedStringStorage;
+use libc::c_void;
 use libdd_common_ffi::slice::AsBytes;
 use libdd_common_ffi::{CharSlice, Error, MaybeError, Slice, StringWrapperResult};
-use libc::c_void;
+use libdd_profiling::api::ManagedStringId;
+use libdd_profiling::collections::string_storage::ManagedStringStorage as InternalManagedStringStorage;
 use std::mem::MaybeUninit;
 use std::num::NonZeroU32;
 use std::sync::Arc;
