@@ -4,7 +4,7 @@
 use crate::span_concentrator::aggregation::OwnedAggregationKey;
 
 use super::*;
-use datadog_trace_utils::span::{trace_utils::compute_top_level_span, SpanSlice};
+use libdd_trace_utils::span::{trace_utils::compute_top_level_span, SpanSlice};
 use rand::{thread_rng, Rng};
 
 const BUCKET_SIZE: u64 = Duration::from_secs(2).as_nanos() as u64;
@@ -1133,7 +1133,7 @@ fn test_pb_span() {
         },
     ];
 
-    datadog_trace_utils::trace_utils::compute_top_level_span(pb_spans.as_mut_slice());
+    libdd_trace_utils::trace_utils::compute_top_level_span(pb_spans.as_mut_slice());
 
     // Add spans to concentrator
     for span in &pb_spans {

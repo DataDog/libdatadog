@@ -10,7 +10,7 @@ autobenches = false
 anyhow = "1.0"
 libdd-common = { path = "../libdd-common" }
 datadog-remote-config = { path = "../datadog-remote-config" }
-datadog-trace-utils = { path = "../datadog-trace-utils" }
+libdd-trace-utils = { path = "../libdd-trace-utils" }
 hyper = { workspace = true}
 tokio = { version = "1.36.0", features = ["time"] }
 serde_json = "1.0"

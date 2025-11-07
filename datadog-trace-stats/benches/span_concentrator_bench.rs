@@ -7,7 +7,7 @@ use std::{
 
 use criterion::{criterion_group, Criterion};
 use datadog_trace_stats::span_concentrator::SpanConcentrator;
-use datadog_trace_utils::span::SpanBytes;
+use libdd_trace_utils::span::SpanBytes;
 
 fn get_bucket_start(now: SystemTime, n: u64) -> i64 {
     let start = now.duration_since(time::UNIX_EPOCH).unwrap() + Duration::from_secs(10 * n);

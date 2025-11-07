@@ -1301,7 +1301,6 @@ dependencies = [
  "clap",
  "criterion",
  "datadog-trace-stats",
- "datadog-trace-utils",
  "either",
  "http",
  "http-body-util",
@@ -1315,6 +1314,7 @@ dependencies = [
  "libdd-telemetry",
  "libdd-tinybytes",
  "libdd-trace-protobuf",
+ "libdd-trace-utils",
  "rand 0.8.5",
  "regex",
  "rmp-serde",
@@ -1334,10 +1334,10 @@ version = "23.0.0"
 dependencies = [
  "build_common",
  "data-pipeline",
- "datadog-trace-utils",
  "httpmock",
  "libdd-common-ffi",
  "libdd-tinybytes",
+ "libdd-trace-utils",
  "rmp-serde",
  "tracing",
 ]
@@ -1608,7 +1608,6 @@ dependencies = [
  "datadog-live-debugger",
  "datadog-remote-config",
  "datadog-sidecar-macros",
- "datadog-trace-utils",
  "futures",
  "http",
  "http-body-util",
@@ -1620,6 +1619,7 @@ dependencies = [
  "libdd-dogstatsd-client",
  "libdd-telemetry",
  "libdd-tinybytes",
+ "libdd-trace-utils",
  "manual_future",
  "memory-stats",
  "microseh",
@@ -1655,7 +1655,6 @@ dependencies = [
  "datadog-live-debugger",
  "datadog-remote-config",
  "datadog-sidecar",
- "datadog-trace-utils",
  "http",
  "libc",
  "libdd-common",
@@ -1664,6 +1663,7 @@ dependencies = [
  "libdd-telemetry",
  "libdd-telemetry-ffi",
  "libdd-tinybytes",
+ "libdd-trace-utils",
  "paste",
  "rmp-serde",
  "tempfile",
@@ -1684,10 +1684,10 @@ version = "23.0.0"
 dependencies = [
  "anyhow",
  "criterion",
- "datadog-trace-utils",
  "duplicate",
  "libdd-common",
  "libdd-trace-protobuf",
+ "libdd-trace-utils",
  "log",
  "percent-encoding",
  "regex",
@@ -1701,46 +1701,11 @@ name = "datadog-trace-stats"
 version = "23.0.0"
 dependencies = [
  "criterion",
- "datadog-trace-utils",
  "hashbrown 0.15.1",
  "libdd-ddsketch",
  "libdd-trace-protobuf",
+ "libdd-trace-utils",
  "rand 0.8.5",
-]
-
-[[package]]
-name = "datadog-trace-utils"
-version = "23.0.0"
-dependencies = [
- "anyhow",
- "bolero",
- "bytes",
- "cargo-platform",
- "cargo_metadata",
- "criterion",
- "datadog-trace-utils",
- "flate2",
- "futures",
- "http-body-util",
- "httpmock",
- "hyper",
- "indexmap 2.11.4",
- "libdd-common",
- "libdd-tinybytes",
- "libdd-trace-normalization",
- "libdd-trace-protobuf",
- "prost",
- "rand 0.8.5",
- "rmp",
- "rmp-serde",
- "rmpv",
- "serde",
- "serde_json",
- "tempfile",
- "tokio",
- "tracing",
- "urlencoding",
- "zstd",
 ]
 
 [[package]]
@@ -1749,9 +1714,9 @@ version = "23.0.0"
 dependencies = [
  "anyhow",
  "datadog-remote-config",
- "datadog-trace-utils",
  "hyper",
  "libdd-common",
+ "libdd-trace-utils",
  "serde_json",
  "tempfile",
  "tokio",
@@ -3151,6 +3116,41 @@ dependencies = [
  "serde_bytes",
  "serde_json",
  "tokio",
+]
+
+[[package]]
+name = "libdd-trace-utils"
+version = "1.0.0"
+dependencies = [
+ "anyhow",
+ "bolero",
+ "bytes",
+ "cargo-platform",
+ "cargo_metadata",
+ "criterion",
+ "flate2",
+ "futures",
+ "http-body-util",
+ "httpmock",
+ "hyper",
+ "indexmap 2.11.4",
+ "libdd-common",
+ "libdd-tinybytes",
+ "libdd-trace-normalization",
+ "libdd-trace-protobuf",
+ "libdd-trace-utils",
+ "prost",
+ "rand 0.8.5",
+ "rmp",
+ "rmp-serde",
+ "rmpv",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "tracing",
+ "urlencoding",
+ "zstd",
 ]
 
 [[package]]
