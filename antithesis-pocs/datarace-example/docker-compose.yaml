@@ -1,11 +1,11 @@
 services:
 
   runner:
-    image: "us-central1-docker.pkg.dev/molten-verve-216720/datadog-repository/apm_ffi/runner:v01"
+    image: "us-central1-docker.pkg.dev/molten-verve-216720/datadog-repository/apm_ffi/runner:vlatest"
     container_name: runner
 
   starter:
-    image: "us-central1-docker.pkg.dev/molten-verve-216720/datadog-repository/apm_ffi/starter:v01"
+    image: "us-central1-docker.pkg.dev/molten-verve-216720/datadog-repository/apm_ffi/starter:vlatest"
     container_name: starter
     entrypoint: [ "/entrypoint.py" ]
-    depends_on: runner
+    depends_on: [ "runner" ]
