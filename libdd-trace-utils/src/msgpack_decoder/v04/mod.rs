@@ -30,10 +30,10 @@ use crate::span::{SpanBytes, SpanSlice};
 /// # Examples
 ///
 /// ```
+/// use libdd_tinybytes;
 /// use libdd_trace_protobuf::pb::Span;
 /// use libdd_trace_utils::msgpack_decoder::v04::from_bytes;
 /// use rmp_serde::to_vec_named;
-/// use tinybytes;
 ///
 /// let span = Span {
 ///     name: "test-span".to_owned(),
@@ -91,10 +91,10 @@ pub fn from_bytes(
 /// # Examples
 ///
 /// ```
+/// use libdd_tinybytes;
 /// use libdd_trace_protobuf::pb::Span;
 /// use libdd_trace_utils::msgpack_decoder::v04::from_slice;
 /// use rmp_serde::to_vec_named;
-/// use tinybytes;
 ///
 /// let span = Span {
 ///     name: "test-span".to_owned(),

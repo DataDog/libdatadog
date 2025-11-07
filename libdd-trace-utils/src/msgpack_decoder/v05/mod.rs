@@ -108,10 +108,10 @@ pub fn from_bytes(
 /// # Examples
 ///
 /// ```
+/// use libdd_tinybytes;
 /// use libdd_trace_utils::msgpack_decoder::v05::from_slice;
 /// use rmp_serde::to_vec;
 /// use std::collections::HashMap;
-/// use tinybytes;
 ///
 /// let data = (
 ///     vec!["".to_string()],

@@ -203,11 +203,11 @@ impl TraceChunkProcessor for DefaultTraceChunkProcessor {
 /// # Examples
 ///
 /// ```rust
+/// use liddd_tinybytes;
 /// use libdd_trace_protobuf::pb;
 /// use libdd_trace_utils::trace_utils::TracerHeaderTags;
 /// use libdd_trace_utils::tracer_payload::{decode_to_trace_chunks, TraceEncoding};
 /// use std::convert::TryInto;
-/// use tinybytes;
 /// // This will likely be a &[u8] slice in practice.
 /// let data: Vec<u8> = Vec::new();
 /// let data_as_bytes = tinybytes::Bytes::from(data);
