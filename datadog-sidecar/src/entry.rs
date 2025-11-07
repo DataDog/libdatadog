@@ -75,9 +75,8 @@ where
     #[cfg(unix)]
     tokio::spawn(async move {
         let socket_path = crashtracker_unix_socket_path();
-        match libdd_crashtracker::get_receiver_unix_socket(
-            socket_path.to_str().unwrap_or_default(),
-        ) {
+        match libdd_crashtracker::get_receiver_unix_socket(socket_path.to_str().unwrap_or_default())
+        {
             Ok(listener) => loop {
                 if let Err(e) =
                     libdd_crashtracker::async_receiver_entry_point_unix_listener(&listener).await

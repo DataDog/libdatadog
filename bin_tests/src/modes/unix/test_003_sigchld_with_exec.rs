@@ -6,8 +6,8 @@ use crate::modes::behavior::{
     removeat_permissive, set_atomic,
 };
 
-use libdd_crashtracker::CrashtrackerConfiguration;
 use libc;
+use libdd_crashtracker::CrashtrackerConfiguration;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::atomic::AtomicPtr;

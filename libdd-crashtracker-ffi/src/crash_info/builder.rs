@@ -3,11 +3,11 @@
 
 use super::{Metadata, OsInfo, ProcInfo, SigInfo, Span, ThreadData};
 use ::function_name::named;
-use libdd_crashtracker::{CrashInfo, CrashInfoBuilder, ErrorKind, StackTrace};
 use libdd_common_ffi::{
     slice::AsBytes, wrap_with_ffi_result, wrap_with_void_ffi_result, CharSlice, Error, Handle,
     Slice, Timespec, ToInner, VoidResult,
 };
+use libdd_crashtracker::{CrashInfo, CrashInfoBuilder, ErrorKind, StackTrace};
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 //                                              FFI API                                           //

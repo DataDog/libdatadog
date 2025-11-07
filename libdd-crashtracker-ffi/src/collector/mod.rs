@@ -8,10 +8,10 @@ mod spans;
 use super::crash_info::Metadata;
 pub use additional_tags::*;
 pub use counters::*;
-use libdd_crashtracker::{CrashtrackerReceiverConfig, DEFAULT_SYMBOLS};
 pub use datatypes::*;
-use libdd_common_ffi::{wrap_with_void_ffi_result, Slice, VoidResult};
 use function_name::named;
+use libdd_common_ffi::{wrap_with_void_ffi_result, Slice, VoidResult};
+use libdd_crashtracker::{CrashtrackerReceiverConfig, DEFAULT_SYMBOLS};
 pub use spans::*;
 
 #[no_mangle]

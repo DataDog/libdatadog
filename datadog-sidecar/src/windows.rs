@@ -7,11 +7,11 @@ use datadog_ipc::platform::{
     named_pipe_name_from_raw_handle, FileBackedHandle, MappedMem, NamedShmHandle,
 };
 
-use libdd_crashtracker_ffi::{ddog_crasht_init_windows, Metadata};
 use futures::FutureExt;
 use libdd_common::Endpoint;
 use libdd_common::MutexExt;
 use libdd_common_ffi::CharSlice;
+use libdd_crashtracker_ffi::{ddog_crasht_init_windows, Metadata};
 use manual_future::ManualFuture;
 use spawn_worker::{write_crashtracking_trampoline, SpawnWorker, Stdio, TrampolineData};
 use std::ffi::CStr;

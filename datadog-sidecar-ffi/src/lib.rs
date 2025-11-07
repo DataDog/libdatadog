@@ -10,8 +10,6 @@
 pub mod span;
 
 use crate::span::TracesBytes;
-#[cfg(windows)]
-use libdd_crashtracker_ffi::Metadata;
 use datadog_ipc::platform::{
     FileBackedHandle, MappedMem, NamedShmHandle, PlatformHandle, ShmHandle,
 };
@@ -38,6 +36,8 @@ use libdd_common::tag::Tag;
 use libdd_common::Endpoint;
 use libdd_common_ffi::slice::{AsBytes, CharSlice};
 use libdd_common_ffi::{self as ffi, MaybeError};
+#[cfg(windows)]
+use libdd_crashtracker_ffi::Metadata;
 use libdd_dogstatsd_client::DogStatsDActionOwned;
 use libdd_telemetry::{
     data::{self, Dependency, Integration},
