@@ -4,7 +4,7 @@
 use std::collections::HashMap;
 use std::time::{self, Duration, SystemTime};
 
-use datadog_trace_protobuf::pb;
+use libdd_trace_protobuf::pb;
 
 use aggregation::{BorrowedAggregationKey, StatsBucket};
 use stat_span::StatSpan;

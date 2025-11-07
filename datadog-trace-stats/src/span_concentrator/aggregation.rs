@@ -5,9 +5,9 @@
 //! This includes the aggregation key to group spans together and the computation of stats from a
 //! span.
 
-use datadog_trace_protobuf::pb;
 use datadog_trace_utils::span::SpanText;
 use hashbrown::HashMap;
+use libdd_trace_protobuf::pb;
 
 use crate::span_concentrator::StatSpan;
 

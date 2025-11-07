@@ -7,15 +7,15 @@ use crate::{
     RemoteConfigProduct, Target,
 };
 use base64::Engine;
-use datadog_trace_protobuf::remoteconfig::{
-    ClientGetConfigsRequest, ClientGetConfigsResponse, ClientState, ClientTracer, ConfigState,
-    TargetFileHash, TargetFileMeta,
-};
 use http::uri::Scheme;
 use http_body_util::BodyExt;
 use hyper::http::uri::PathAndQuery;
 use hyper::StatusCode;
 use libdd_common::{hyper_migration, Endpoint, MutexExt};
+use libdd_trace_protobuf::remoteconfig::{
+    ClientGetConfigsRequest, ClientGetConfigsResponse, ClientState, ClientTracer, ConfigState,
+    TargetFileHash, TargetFileMeta,
+};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256, Sha512};
 use std::collections::{HashMap, HashSet};
@@ -276,7 +276,7 @@ impl<S: FileStorage> ConfigFetcher<S> {
         }
 
         let config_req = ClientGetConfigsRequest {
-            client: Some(datadog_trace_protobuf::remoteconfig::Client {
+            client: Some(libdd_trace_protobuf::remoteconfig::Client {
                 state: Some(ClientState {
                     root_version: opaque_state.root_version,
                     targets_version: opaque_state.targets_version,

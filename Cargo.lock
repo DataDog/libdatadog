@@ -1300,7 +1300,6 @@ dependencies = [
  "bytes",
  "clap",
  "criterion",
- "datadog-trace-protobuf",
  "datadog-trace-stats",
  "datadog-trace-utils",
  "either",
@@ -1315,6 +1314,7 @@ dependencies = [
  "libdd-log",
  "libdd-telemetry",
  "libdd-tinybytes",
+ "libdd-trace-protobuf",
  "rand 0.8.5",
  "regex",
  "rmp-serde",
@@ -1570,7 +1570,6 @@ dependencies = [
  "base64 0.22.1",
  "datadog-live-debugger",
  "datadog-remote-config",
- "datadog-trace-protobuf",
  "futures",
  "futures-util",
  "http",
@@ -1578,6 +1577,7 @@ dependencies = [
  "hyper",
  "hyper-util",
  "libdd-common",
+ "libdd-trace-protobuf",
  "manual_future",
  "serde",
  "serde_json",
@@ -1679,26 +1679,15 @@ dependencies = [
 ]
 
 [[package]]
-name = "datadog-trace-normalization"
-version = "23.0.0"
-dependencies = [
- "anyhow",
- "criterion",
- "datadog-trace-protobuf",
- "duplicate",
- "rand 0.8.5",
-]
-
-[[package]]
 name = "datadog-trace-obfuscation"
 version = "23.0.0"
 dependencies = [
  "anyhow",
  "criterion",
- "datadog-trace-protobuf",
  "datadog-trace-utils",
  "duplicate",
  "libdd-common",
+ "libdd-trace-protobuf",
  "log",
  "percent-encoding",
  "regex",
@@ -1708,27 +1697,14 @@ dependencies = [
 ]
 
 [[package]]
-name = "datadog-trace-protobuf"
-version = "23.0.0"
-dependencies = [
- "prost",
- "prost-build",
- "protoc-bin-vendored",
- "serde",
- "serde_bytes",
- "serde_json",
- "tokio",
-]
-
-[[package]]
 name = "datadog-trace-stats"
 version = "23.0.0"
 dependencies = [
  "criterion",
- "datadog-trace-protobuf",
  "datadog-trace-utils",
  "hashbrown 0.15.1",
  "libdd-ddsketch",
+ "libdd-trace-protobuf",
  "rand 0.8.5",
 ]
 
@@ -1742,8 +1718,6 @@ dependencies = [
  "cargo-platform",
  "cargo_metadata",
  "criterion",
- "datadog-trace-normalization",
- "datadog-trace-protobuf",
  "datadog-trace-utils",
  "flate2",
  "futures",
@@ -1752,6 +1726,8 @@ dependencies = [
  "hyper",
  "libdd-common",
  "libdd-tinybytes",
+ "libdd-trace-normalization",
+ "libdd-trace-protobuf",
  "prost",
  "rand 0.8.5",
  "rmp",
@@ -3149,6 +3125,30 @@ dependencies = [
  "serde",
  "serde_json",
  "test-case",
+]
+
+[[package]]
+name = "libdd-trace-normalization"
+version = "1.0.0"
+dependencies = [
+ "anyhow",
+ "criterion",
+ "duplicate",
+ "libdd-trace-protobuf",
+ "rand 0.8.5",
+]
+
+[[package]]
+name = "libdd-trace-protobuf"
+version = "1.0.0"
+dependencies = [
+ "prost",
+ "prost-build",
+ "protoc-bin-vendored",
+ "serde",
+ "serde_bytes",
+ "serde_json",
+ "tokio",
 ]
 
 [[package]]

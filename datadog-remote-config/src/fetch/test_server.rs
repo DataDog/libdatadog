@@ -15,13 +15,11 @@ use crate::fetch::ConfigInvariants;
 use crate::targets::{TargetData, TargetsCustom, TargetsData, TargetsList};
 use crate::{RemoteConfigCapabilities, RemoteConfigPath, RemoteConfigProduct, Target};
 use base64::Engine;
-use datadog_trace_protobuf::remoteconfig::{
-    ClientGetConfigsRequest, ClientGetConfigsResponse, File,
-};
 use http::Response;
 use http_body_util::BodyExt;
 use hyper::service::service_fn;
 use libdd_common::{hyper_migration, Endpoint};
+use libdd_trace_protobuf::remoteconfig::{ClientGetConfigsRequest, ClientGetConfigsResponse, File};
 use serde_json::value::to_raw_value;
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
