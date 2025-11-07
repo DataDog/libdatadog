@@ -508,10 +508,10 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "current_platform",
- "datadog-profiling",
  "libc",
  "libdd-common",
  "libdd-crashtracker",
+ "libdd-profiling",
  "nix",
  "once_cell",
  "serde_json",
@@ -1441,69 +1441,12 @@ dependencies = [
 ]
 
 [[package]]
-name = "datadog-profiling"
-version = "23.0.0"
-dependencies = [
- "anyhow",
- "bitmaps",
- "bolero",
- "byteorder",
- "bytes",
- "chrono",
- "criterion",
- "futures",
- "http",
- "http-body-util",
- "hyper",
- "hyper-multipart-rfc7578",
- "indexmap 2.6.0",
- "libdd-alloc",
- "libdd-common",
- "libdd-profiling-protobuf",
- "lz4_flex",
- "mime",
- "prost",
- "rustc-hash",
- "serde",
- "serde_json",
- "target-triple",
- "tokio",
- "tokio-util",
- "zstd",
-]
-
-[[package]]
-name = "datadog-profiling-ffi"
-version = "23.0.0"
-dependencies = [
- "anyhow",
- "build_common",
- "data-pipeline-ffi",
- "datadog-profiling",
- "function_name",
- "futures",
- "http-body-util",
- "hyper",
- "libc",
- "libdd-common",
- "libdd-common-ffi",
- "libdd-crashtracker-ffi",
- "libdd-ddsketch-ffi",
- "libdd-library-config-ffi",
- "libdd-log-ffi",
- "libdd-telemetry-ffi",
- "serde_json",
- "symbolizer-ffi",
- "tokio-util",
-]
-
-[[package]]
 name = "datadog-profiling-replayer"
 version = "23.0.0"
 dependencies = [
  "anyhow",
  "clap",
- "datadog-profiling",
+ "libdd-profiling",
  "libdd-profiling-protobuf",
  "prost",
  "sysinfo",
@@ -3062,6 +3005,63 @@ dependencies = [
  "build_common",
  "libdd-common-ffi",
  "libdd-log",
+]
+
+[[package]]
+name = "libdd-profiling"
+version = "1.0.0"
+dependencies = [
+ "anyhow",
+ "bitmaps",
+ "bolero",
+ "byteorder",
+ "bytes",
+ "chrono",
+ "criterion",
+ "futures",
+ "http",
+ "http-body-util",
+ "hyper",
+ "hyper-multipart-rfc7578",
+ "indexmap 2.6.0",
+ "libdd-alloc",
+ "libdd-common",
+ "libdd-profiling-protobuf",
+ "lz4_flex",
+ "mime",
+ "prost",
+ "rustc-hash",
+ "serde",
+ "serde_json",
+ "target-triple",
+ "tokio",
+ "tokio-util",
+ "zstd",
+]
+
+[[package]]
+name = "libdd-profiling-ffi"
+version = "23.0.0"
+dependencies = [
+ "anyhow",
+ "build_common",
+ "data-pipeline-ffi",
+ "function_name",
+ "futures",
+ "http-body-util",
+ "hyper",
+ "libc",
+ "libdd-common",
+ "libdd-common-ffi",
+ "libdd-crashtracker-ffi",
+ "libdd-ddsketch-ffi",
+ "libdd-library-config-ffi",
+ "libdd-log-ffi",
+ "libdd-profiling",
+ "libdd-telemetry-ffi",
+ "serde_json",
+ "symbolizer-ffi",
+ "tokio-util",
 ]
 
 [[package]]

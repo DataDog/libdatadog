@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::profile_index::ProfileIndex;
-use datadog_profiling::api;
-use datadog_profiling::internal::Timestamp;
+use libdd_profiling::api;
+use libdd_profiling::internal::Timestamp;
 use libdd_profiling_protobuf::prost_impls;
 use std::ops::{Add, Sub};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
