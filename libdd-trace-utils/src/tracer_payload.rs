@@ -210,7 +210,7 @@ impl TraceChunkProcessor for DefaultTraceChunkProcessor {
 /// use std::convert::TryInto;
 /// // This will likely be a &[u8] slice in practice.
 /// let data: Vec<u8> = Vec::new();
-/// let data_as_bytes = tinybytes::Bytes::from(data);
+/// let data_as_bytes = libdd_tinybytes::Bytes::from(data);
 /// let result = decode_to_trace_chunks(data_as_bytes, TraceEncoding::V04)
 ///     .map(|(chunks, _size)| chunks.into_tracer_payload_collection());
 ///
