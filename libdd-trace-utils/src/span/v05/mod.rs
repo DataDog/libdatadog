@@ -29,34 +29,36 @@ pub struct Span {
 }
 
 pub fn from_span<T: SpanText>(
-    span: &crate::span::Span<T>,
+    span: crate::span::Span<T>,
     dict: &mut SharedDict<T>,
 ) -> Result<Span> {
+    let meta_len = span.meta.len();
+    let metrics_len = span.metrics.len();
     Ok(Span {
-        service: dict.get_or_insert(&span.service)?,
-        name: dict.get_or_insert(&span.name)?,
-        resource: dict.get_or_insert(&span.resource)?,
-        trace_id: span.trace_id,
+        service: dict.get_or_insert(span.service)?,
+        name: dict.get_or_insert(span.name)?,
+        resource: dict.get_or_insert(span.resource)?,
+        trace_id: span.trace_id as u64,
         span_id: span.span_id,
         parent_id: span.parent_id,
         start: span.start,
         duration: span.duration,
         error: span.error,
-        meta: span.meta.iter().try_fold(
-            HashMap::with_capacity(span.meta.len()),
+        meta: span.meta.into_iter().try_fold(
+            HashMap::with_capacity(meta_len),
             |mut meta, (k, v)| -> anyhow::Result<HashMap<u32, u32>> {
                 meta.insert(dict.get_or_insert(k)?, dict.get_or_insert(v)?);
                 Ok(meta)
             },
         )?,
-        metrics: span.metrics.iter().try_fold(
-            HashMap::with_capacity(span.metrics.len()),
+        metrics: span.metrics.into_iter().try_fold(
+            HashMap::with_capacity(metrics_len),
             |mut metrics, (k, v)| -> anyhow::Result<HashMap<u32, f64>> {
-                metrics.insert(dict.get_or_insert(k)?, *v);
+                metrics.insert(dict.get_or_insert(k)?, v);
                 Ok(metrics)
             },
         )?,
-        r#type: dict.get_or_insert(&span.r#type)?,
+        r#type: dict.get_or_insert(span.r#type)?,
     })
 }
 
@@ -90,9 +92,7 @@ mod tests {
         };
 
         let mut dict = SharedDict::default();
-        let v05_span = from_span(&span, &mut dict).unwrap();
-
-        let dict = dict.dict();
+        let v05_span = from_span(span, &mut dict).unwrap();
 
         let get_index_from_str = |str: &str| -> u32 {
             dict.iter()

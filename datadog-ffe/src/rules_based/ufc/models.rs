@@ -6,7 +6,7 @@ use std::{collections::HashMap, sync::Arc};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 
-use crate::rules_based::{EvaluationError, Str, Timestamp};
+use crate::rules_based::{EvaluationError, FlagType, Str, Timestamp};
 
 /// Universal Flag Configuration attributes. This contains the actual flag configuration data.
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -36,16 +36,19 @@ pub struct Environment {
 /// This can be helpful to isolate errors in a subtree. e.g., if configuration for one flag parses,
 /// the rest of the flags are still usable.
 #[derive(Debug, Serialize, Deserialize, Clone)]
-#[serde(untagged)]
+#[serde(untagged, from = "&serde_json::value::RawValue")]
 pub enum TryParse<T> {
     /// Successfully parsed.
     Parsed(T),
     /// Parsing failed.
-    ParseFailed(serde_json::Value),
+    ParseFailed(Box<serde_json::value::RawValue>),
 }
-impl<T> From<T> for TryParse<T> {
-    fn from(value: T) -> TryParse<T> {
-        TryParse::Parsed(value)
+impl<'de, T: Deserialize<'de>> From<&'de serde_json::value::RawValue> for TryParse<T> {
+    fn from(raw_value: &'de serde_json::value::RawValue) -> Self {
+        match serde_json::from_str(raw_value.get()) {
+            Ok(value) => TryParse::Parsed(value),
+            Err(_) => TryParse::ParseFailed(raw_value.to_owned()),
+        }
     }
 }
 impl<T> From<TryParse<T>> for Option<T> {
@@ -88,12 +91,36 @@ pub enum VariationType {
     Json,
 }
 
+impl From<VariationType> for FlagType {
+    fn from(value: VariationType) -> FlagType {
+        match value {
+            VariationType::String => FlagType::String,
+            VariationType::Integer => FlagType::Integer,
+            VariationType::Numeric => FlagType::Float,
+            VariationType::Boolean => FlagType::Boolean,
+            VariationType::Json => FlagType::Object,
+        }
+    }
+}
+
+impl From<FlagType> for VariationType {
+    fn from(value: FlagType) -> VariationType {
+        match value {
+            FlagType::String => VariationType::String,
+            FlagType::Integer => VariationType::Integer,
+            FlagType::Float => VariationType::Numeric,
+            FlagType::Boolean => VariationType::Boolean,
+            FlagType::Object => VariationType::Json,
+        }
+    }
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 #[allow(missing_docs)]
 pub(crate) struct VariationWire {
     pub key: Str,
-    pub value: serde_json::Value,
+    pub value: Arc<serde_json::value::RawValue>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -120,7 +147,7 @@ fn default_do_log() -> bool {
 #[serde(rename_all = "camelCase")]
 #[allow(missing_docs)]
 pub(crate) struct RuleWire {
-    pub conditions: Vec<TryParse<Condition>>,
+    pub conditions: Vec<Condition>,
 }
 
 /// `Condition` is a check that given user `attribute` matches the condition `value` under the given
@@ -450,7 +477,18 @@ mod tests {
     #[cfg_attr(miri, ignore)] // this test is way too slow on miri
     fn parse_flags_v1() {
         let json_content = std::fs::read_to_string("tests/data/flags-v1.json").unwrap();
-        let _ufc: UniversalFlagConfigWire = serde_json::from_str(&json_content).unwrap();
+        let ufc: UniversalFlagConfigWire = serde_json::from_str(&json_content).unwrap();
+
+        let failures = ufc
+            .flags
+            .values()
+            .filter(|it| matches!(it, TryParse::ParseFailed(_)))
+            .count();
+        assert!(
+            failures == 0,
+            "failed to parse {failures}/{} flags",
+            ufc.flags.len()
+        );
     }
 
     #[test]
