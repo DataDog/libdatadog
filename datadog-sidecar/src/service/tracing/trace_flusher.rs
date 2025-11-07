@@ -4,13 +4,13 @@
 use super::TraceSendData;
 use crate::agent_remote_config::AgentRemoteConfigWriter;
 use datadog_ipc::platform::NamedShmHandle;
-use datadog_trace_utils::trace_utils;
-use datadog_trace_utils::trace_utils::SendData;
-use datadog_trace_utils::trace_utils::SendDataResult;
 use futures::future::join_all;
 use http_body_util::BodyExt;
 use libdd_common::hyper_migration::new_default_client;
 use libdd_common::{Endpoint, HttpClient, MutexExt};
+use libdd_trace_utils::trace_utils;
+use libdd_trace_utils::trace_utils::SendData;
+use libdd_trace_utils::trace_utils::SendDataResult;
 use manual_future::{ManualFuture, ManualFutureCompleter};
 use serde::{Deserialize, Serialize};
 use std::collections::hash_map::Entry;
@@ -317,8 +317,8 @@ impl TraceFlusher {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use datadog_trace_utils::test_utils::{create_send_data, poll_for_mock_hit};
     use httpmock::MockServer;
+    use libdd_trace_utils::test_utils::{create_send_data, poll_for_mock_hit};
     use std::sync::Arc;
 
     #[cfg_attr(miri, ignore)]

@@ -13,7 +13,7 @@ bench = false
 [dependencies]
 libdd-telemetry = { path = "../libdd-telemetry" }
 datadog-sidecar = { path = "../datadog-sidecar" }
-datadog-trace-utils = { path = "../datadog-trace-utils" }
+libdd-trace-utils = { path = "../libdd-trace-utils" }
 datadog-ipc = { path = "../datadog-ipc" }
 libdd-common = { path = "../libdd-common" }
 libdd-common-ffi = { path = "../libdd-common-ffi", default-features = false }

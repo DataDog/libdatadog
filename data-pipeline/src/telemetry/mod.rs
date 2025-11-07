@@ -6,14 +6,14 @@ pub mod error;
 pub mod metrics;
 use crate::telemetry::error::TelemetryError;
 use crate::telemetry::metrics::Metrics;
-use datadog_trace_utils::{
-    send_with_retry::{SendWithRetryError, SendWithRetryResult},
-    trace_utils::SendDataResult,
-};
 use libdd_common::tag::Tag;
 use libdd_telemetry::worker::{
     LifecycleAction, TelemetryActions, TelemetryWorker, TelemetryWorkerBuilder,
     TelemetryWorkerFlavor, TelemetryWorkerHandle,
+};
+use libdd_trace_utils::{
+    send_with_retry::{SendWithRetryError, SendWithRetryResult},
+    trace_utils::SendDataResult,
 };
 use std::{collections::HashMap, time::Duration};
 use tokio::runtime::Handle;

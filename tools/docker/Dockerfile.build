@@ -97,7 +97,7 @@ COPY "symbolizer-ffi/Cargo.toml" "symbolizer-ffi/"
 COPY "libdd-trace-normalization/Cargo.toml" "libdd-trace-normalization/"
 COPY "datadog-trace-obfuscation/Cargo.toml" "datadog-trace-obfuscation/"
 COPY "libdd-trace-protobuf/Cargo.toml" "libdd-trace-protobuf/"
-COPY "datadog-trace-utils/Cargo.toml" "datadog-trace-utils/"
+COPY "libdd-trace-utils/Cargo.toml" "libdd-trace-utils/"
 COPY "datadog-trace-stats/Cargo.toml" "datadog-trace-stats/"
 COPY "datadog-tracer-flare/Cargo.toml" "datadog-tracer-flare/"
 COPY "tools/Cargo.toml" "tools/"
@@ -140,8 +140,8 @@ RUN echo \
     tools/src/bin/dedup_headers.rs \
     libdd-trace-normalization/benches/normalization_utils.rs \
     datadog-trace-obfuscation/benches/trace_obfuscation.rs \
-    datadog-trace-utils/benches/deserialization.rs \
-    datadog-trace-utils/benches/main.rs \
+    libdd-trace-utils/benches/deserialization.rs \
+    libdd-trace-utils/benches/main.rs \
     | xargs -n 1 sh -c 'mkdir -p $(dirname $1); touch $1; echo $1' create_stubs
 
 # cache dependencies

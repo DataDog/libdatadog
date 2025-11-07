@@ -206,9 +206,9 @@ pub(crate) fn handle_stats_enabled(
 /// Add all spans from the given iterator into the stats concentrator
 /// # Panic
 /// Will panic if another thread panicked will holding the lock on `stats_concentrator`
-fn add_spans_to_stats<T: datadog_trace_utils::span::SpanText>(
+fn add_spans_to_stats<T: libdd_trace_utils::span::SpanText>(
     stats_concentrator: &Mutex<SpanConcentrator>,
-    traces: &[Vec<datadog_trace_utils::span::Span<T>>],
+    traces: &[Vec<libdd_trace_utils::span::Span<T>>],
 ) {
     let mut stats_concentrator = stats_concentrator.lock_or_panic();
 
@@ -219,9 +219,9 @@ fn add_spans_to_stats<T: datadog_trace_utils::span::SpanText>(
 }
 
 /// Process traces for stats computation and update header tags accordingly
-pub(crate) fn process_traces_for_stats<T: datadog_trace_utils::span::SpanText>(
-    traces: &mut Vec<Vec<datadog_trace_utils::span::Span<T>>>,
-    header_tags: &mut datadog_trace_utils::trace_utils::TracerHeaderTags,
+pub(crate) fn process_traces_for_stats<T: libdd_trace_utils::span::SpanText>(
+    traces: &mut Vec<Vec<libdd_trace_utils::span::Span<T>>>,
+    header_tags: &mut libdd_trace_utils::trace_utils::TracerHeaderTags,
     client_side_stats: &ArcSwap<StatsComputationStatus>,
     client_computed_top_level: bool,
 ) {
@@ -231,16 +231,16 @@ pub(crate) fn process_traces_for_stats<T: datadog_trace_utils::span::SpanText>(
     {
         if !client_computed_top_level {
             for chunk in traces.iter_mut() {
-                datadog_trace_utils::span::trace_utils::compute_top_level_span(chunk);
+                libdd_trace_utils::span::trace_utils::compute_top_level_span(chunk);
             }
         }
         add_spans_to_stats(stats_concentrator, traces);
         // Once stats have been computed we can drop all chunks that are not going to be
         // sampled by the agent
-        let datadog_trace_utils::span::trace_utils::DroppedP0Stats {
+        let libdd_trace_utils::span::trace_utils::DroppedP0Stats {
             dropped_p0_traces,
             dropped_p0_spans,
-        } = datadog_trace_utils::span::trace_utils::drop_chunks(traces);
+        } = libdd_trace_utils::span::trace_utils::drop_chunks(traces);
 
         // Update the headers to indicate that stats have been computed and forward dropped
         // traces counts
