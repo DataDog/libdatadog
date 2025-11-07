@@ -252,12 +252,12 @@ pub extern "C" fn ddog_get_span_type(span: &mut SpanBytes) -> CharSlice<'static>
 
 #[no_mangle]
 pub extern "C" fn ddog_set_span_trace_id(span: &mut SpanBytes, value: u64) {
-    span.trace_id = value;
+    span.trace_id = value as u128;
 }
 
 #[no_mangle]
 pub extern "C" fn ddog_get_span_trace_id(span: &mut SpanBytes) -> u64 {
-    span.trace_id
+    span.trace_id as u64
 }
 
 #[no_mangle]

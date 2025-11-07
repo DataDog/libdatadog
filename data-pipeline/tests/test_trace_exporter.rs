@@ -94,7 +94,7 @@ mod tracing_integration_tests {
             Some(vec![("_top_level".to_string(), 1.0)]),
         );
 
-        let traces = (dict.dict(), vec![vec![span_1, span_2, root_span]]);
+        let traces = (dict, vec![vec![span_1, span_2, root_span]]);
 
         rmp_serde::to_vec(&traces).unwrap()
     }
