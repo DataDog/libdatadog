@@ -716,7 +716,6 @@ mod tests {
     };
     use ddcommon::Endpoint;
     use hyper::Request;
-    use libdd_tinybytes::BytesString;
     use serde_json::json;
 
     fn find_index_in_dict(dict: &SharedDictBytes, value: &str) -> Option<u32> {

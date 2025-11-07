@@ -47,7 +47,7 @@ pub extern "C" fn ddog_daemon_entry_point(trampoline_data: &TrampolineData) {
 
     #[cfg(target_os = "linux")]
     if let Err(e) = init_crashtracker(trampoline_data.dependency_paths) {
-        tracing::warn!("Failed to initialize crashtracker: {e}");
+        warn!("Failed to initialize crashtracker: {e}");
     }
 
     let now = Instant::now();
