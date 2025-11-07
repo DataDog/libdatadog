@@ -3,7 +3,7 @@
 
 use crate::send_with_retry::{SendWithRetryError, SendWithRetryResult};
 use anyhow::anyhow;
-use ddcommon::hyper_migration;
+use libdd_common::hyper_migration;
 use std::collections::HashMap;
 
 #[derive(Debug)]

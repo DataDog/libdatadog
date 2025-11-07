@@ -1099,7 +1099,7 @@ mod tests {
                 input_format: TraceExporterInputFormat::V04,
                 output_format: TraceExporterOutputFormat::V04,
                 telemetry_cfg: Some(TelemetryConfig {
-                    heartbeat: 50,
+                    heartbeat: 10000,
                     runtime_id: Some("foo".to_string()),
                     debug_enabled: true,
                 }),

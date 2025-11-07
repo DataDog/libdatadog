@@ -3,10 +3,10 @@
 
 use anyhow::Context;
 use cargo_metadata::MetadataCommand;
-use ddcommon::hyper_migration::{self, Body};
 use http_body_util::BodyExt;
 use hyper::body::Incoming;
 use hyper::{Request, Response, Uri};
+use libdd_common::hyper_migration::{self, Body};
 use std::collections::HashMap;
 use std::path::Path;
 use std::str::FromStr;
@@ -192,8 +192,8 @@ impl DatadogAgentContainerBuilder {
 /// Basic usage:
 ///
 /// ```no_run
-/// use ddcommon::hyper_migration::new_default_client;
-/// use ddcommon::Endpoint;
+/// use libdd_common::hyper_migration::new_default_client;
+/// use libdd_common::Endpoint;
 /// use libdd_trace_utils::send_data::SendData;
 /// use libdd_trace_utils::test_utils::datadog_test_agent::DatadogTestAgent;
 /// use libdd_trace_utils::trace_utils::TracerHeaderTags;

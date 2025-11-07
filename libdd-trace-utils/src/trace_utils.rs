@@ -10,11 +10,11 @@ use crate::tracer_payload::TracerPayloadCollection;
 use crate::tracer_payload::{self, TraceChunks};
 use anyhow::anyhow;
 use bytes::buf::Reader;
-use datadog_trace_protobuf::pb;
-use ddcommon::{azure_app_services, hyper_migration};
 use http_body_util::BodyExt;
 use hyper::body::Buf;
+use libdd_common::{azure_app_services, hyper_migration};
 use libdd_trace_normalization::normalizer;
+use libdd_trace_protobuf::pb;
 use rmp::decode::read_array_len;
 use rmpv::decode::read_value;
 use rmpv::{Integer, Value};
@@ -710,10 +710,10 @@ pub fn is_partial_snapshot(span: &pb::Span) -> bool {
 mod tests {
     use super::*;
     use crate::test_utils::{create_test_no_alloc_span, create_test_span};
-    use ddcommon::Endpoint;
     use hyper::Request;
+    use libdd_common::Endpoint;
+    use libdd_tinybytes::BytesString;
     use serde_json::json;
-    use tinybytes::BytesString;
 
     fn find_index_in_dict(dict: &[BytesString], value: &str) -> Option<u32> {
         let idx = dict.iter().position(|e| e.as_str() == value);
