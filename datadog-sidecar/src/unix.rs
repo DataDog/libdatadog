@@ -112,7 +112,28 @@ pub fn shutdown_master_listener_unix() -> io::Result<()> {
 
     if let Some((handle, fd)) = listener_data {
         stop_listening(fd);
-        handle.join();
+
+        // Try to join with a timeout to avoid hanging the shutdown
+        // We spawn a helper thread to do the join so we can implement a timeout
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let result = handle.join();
+            let _ = tx.send(result);
+        });
+
+        // Wait up to 2 seconds for clean shutdown (including time for tokio runtime shutdown)
+        match rx.recv_timeout(Duration::from_millis(2000)) {
+            Ok(Ok(())) => {
+                // Clean shutdown
+            }
+            Ok(Err(_)) => {
+                error!("Listener thread panicked during shutdown");
+            }
+            Err(_) => {
+                // Timeout - thread didn't exit in time
+                // This is acceptable as the OS will clean up when the process exits
+            }
+        }
     }
 
     Ok(())
