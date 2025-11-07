@@ -31,6 +31,15 @@ use datadog_sidecar::service::{
 };
 use datadog_sidecar::service::{get_telemetry_action_sender, InternalTelemetryActions};
 use datadog_sidecar::shm_remote_config::{path_for_remote_config, RemoteConfigReader};
+#[cfg(unix)]
+use datadog_sidecar::{
+    connect_worker_unix, shutdown_master_listener_unix, start_master_listener_unix,
+};
+#[cfg(windows)]
+use datadog_sidecar::{
+    connect_worker_windows, shutdown_master_listener_windows, start_master_listener_windows,
+    transport_from_owned_handle,
+};
 use libc::c_char;
 use libdd_common::tag::Tag;
 use libdd_common::Endpoint;
@@ -40,18 +49,6 @@ use libdd_common_ffi::{self as ffi, MaybeError};
 use libdd_crashtracker_ffi::Metadata;
 use libdd_dogstatsd_client::DogStatsDActionOwned;
 use libdd_telemetry::{
-#[cfg(unix)]
-use datadog_sidecar::{connect_worker_unix, start_master_listener_unix};
-#[cfg(windows)]
-use datadog_sidecar::{
-    connect_worker_windows, start_master_listener_windows, transport_from_owned_handle,
-};
-use datadog_trace_utils::msgpack_encoder;
-use ddcommon::tag::Tag;
-use ddcommon::Endpoint;
-use ddcommon_ffi::slice::{AsBytes, CharSlice};
-use ddcommon_ffi::{self as ffi, MaybeError};
-use ddtelemetry::{
     data::{self, Dependency, Integration},
     worker::{LifecycleAction, LogIdentifier, TelemetryActions},
 };
@@ -345,6 +342,19 @@ pub extern "C" fn ddog_sidecar_connect_worker(
         let handle = try_c!(connect_worker_windows(master_pid));
         let transport = Box::new(try_c!(transport_from_owned_handle(handle)));
         *connection = Box::into_raw(transport);
+    }
+    MaybeError::None
+}
+
+#[no_mangle]
+pub extern "C" fn ddog_sidecar_shutdown_master_listener() -> MaybeError {
+    #[cfg(unix)]
+    {
+        try_c!(shutdown_master_listener_unix());
+    }
+    #[cfg(windows)]
+    {
+        try_c!(shutdown_master_listener_windows());
     }
     MaybeError::None
 }

@@ -15,11 +15,10 @@ use nix::sys::socket::{shutdown, Shutdown};
 use std::io;
 use std::os::fd::RawFd;
 use std::os::unix::prelude::{AsRawFd, FromRawFd, IntoRawFd, OwnedFd};
+use std::sync::Mutex;
 use std::thread;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 use tokio::net::{UnixListener, UnixStream};
-use tokio::select;
-use tokio::signal::unix::{signal, SignalKind};
 use tracing::{error, info};
 
 #[cfg(target_os = "linux")]
@@ -35,16 +34,21 @@ use std::ffi::CStr;
 #[cfg(target_os = "linux")]
 use tracing::warn;
 
+static MASTER_LISTENER: Mutex<Option<(thread::JoinHandle<()>, RawFd)>> = Mutex::new(None);
+
 pub fn start_master_listener_unix(master_pid: i32) -> io::Result<()> {
     let liaison = DefaultLiaison::for_master_pid(master_pid as u32);
 
-    // Try to acquire the listening endpoint via the liaison
     let std_listener = match liaison.attempt_listen()? {
         Some(l) => l,
-        None => return Ok(()),
+        None => {
+            return Ok(());
+        }
     };
 
-    let _ = thread::Builder::new()
+    let listener_fd = std_listener.as_raw_fd();
+
+    let handle = thread::Builder::new()
         .name("dd-sidecar".into())
         .spawn(move || {
             let acquire_listener = move || -> io::Result<_> {
@@ -57,17 +61,61 @@ pub fn start_master_listener_unix(master_pid: i32) -> io::Result<()> {
                 Ok((move |handler| accept_socket_loop(listener, handler), cancel))
             };
 
-            let _ = enter_listener_loop(acquire_listener);
+            let _ = enter_listener_loop(acquire_listener).map_err(|e| {
+                error!("enter_listener_loop failed: {}", e);
+                e
+            });
         })
         .map_err(io::Error::other)?;
+
+    match MASTER_LISTENER.lock() {
+        Ok(mut guard) => *guard = Some((handle, listener_fd)),
+        Err(e) => {
+            error!("Failed to acquire lock for storing master listener: {}", e);
+            return Err(io::Error::other("Mutex poisoned"));
+        }
+    }
 
     Ok(())
 }
 
 pub fn connect_worker_unix(master_pid: i32) -> io::Result<SidecarTransport> {
     let liaison = DefaultLiaison::for_master_pid(master_pid as u32);
-    let channel = liaison.connect_to_server()?;
-    Ok(channel.into())
+
+    let mut last_error = None;
+    for _ in 0..10 {
+        match liaison.connect_to_server() {
+            Ok(channel) => {
+                return Ok(channel.into());
+            }
+            Err(e) => {
+                last_error = Some(e);
+                std::thread::sleep(Duration::from_millis(10));
+            }
+        }
+    }
+
+    Err(last_error.unwrap_or_else(|| io::Error::other("Connection failed")))
+}
+
+pub fn shutdown_master_listener_unix() -> io::Result<()> {
+    let listener_data = match MASTER_LISTENER.lock() {
+        Ok(mut guard) => guard.take(),
+        Err(e) => {
+            error!(
+                "Failed to acquire lock for shutting down master listener: {}",
+                e
+            );
+            return Err(io::Error::other("Mutex poisoned"));
+        }
+    };
+
+    if let Some((handle, fd)) = listener_data {
+        stop_listening(fd);
+        handle.join();
+    }
+
+    Ok(())
 }
 
 #[no_mangle]
@@ -127,32 +175,19 @@ pub extern "C" fn ddog_daemon_entry_point(trampoline_data: &TrampolineData) {
 fn stop_listening(listener_fd: RawFd) {
     // We need to drop O_NONBLOCK, as accept() on a shutdown socket will just give
     // EAGAIN instead of EINVAL
-    #[allow(clippy::unwrap_used)]
-    let flags = OFlag::from_bits_truncate(fcntl(listener_fd, F_GETFL).ok().unwrap());
-    _ = fcntl(listener_fd, F_SETFL(flags & !OFlag::O_NONBLOCK));
-    _ = shutdown(listener_fd, Shutdown::Both);
+    if let Ok(flags_raw) = fcntl(listener_fd, F_GETFL) {
+        let flags = OFlag::from_bits_truncate(flags_raw);
+        _ = fcntl(listener_fd, F_SETFL(flags & !OFlag::O_NONBLOCK));
+        _ = shutdown(listener_fd, Shutdown::Both);
+    }
 }
 
 async fn accept_socket_loop(
     listener: UnixListener,
     handler: Box<dyn Fn(UnixStream)>,
 ) -> io::Result<()> {
-    #[allow(clippy::unwrap_used)]
-    let mut termsig = signal(SignalKind::terminate()).unwrap();
-    loop {
-        select! {
-            _ = termsig.recv() => {
-                stop_listening(listener.as_raw_fd());
-                break;
-            }
-            accept = listener.accept() => {
-                if let Ok((socket, _)) = accept {
-                    handler(socket);
-                } else {
-                    break;
-                }
-            }
-        }
+    while let Ok((socket, _)) = listener.accept().await {
+        handler(socket);
     }
     Ok(())
 }

@@ -28,6 +28,9 @@ use std::sync::LazyLock;
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
+
+static MASTER_LISTENER: Mutex<Option<(thread::JoinHandle<()>, Arc<OwnedHandle>)>> =
+    Mutex::new(None);
 use tokio::net::windows::named_pipe::{NamedPipeServer, ServerOptions};
 use tokio::select;
 use tracing::{error, info, warn};
@@ -103,7 +106,6 @@ fn bind_named_pipe_listener(name: &str) -> io::Result<OwnedHandle> {
     }
 }
 
-// Connect to an existing Windows named pipe as a client
 fn connect_named_pipe_client(name: &str) -> io::Result<RawHandle> {
     let c_name = CString::new(name).map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))?;
 
@@ -137,7 +139,6 @@ fn connect_named_pipe_client(name: &str) -> io::Result<RawHandle> {
     }
 }
 
-// Accept loop for incoming named pipe connections
 async fn accept_pipe_loop(
     pipe_listener: Arc<OwnedHandle>,
     handler: Box<dyn Fn(NamedPipeServer)>,
@@ -145,10 +146,8 @@ async fn accept_pipe_loop(
     let name = named_pipe_name_from_raw_handle(pipe_listener.as_raw_handle())
         .ok_or_else(|| io::Error::from(io::ErrorKind::InvalidInput))?;
 
-    // We need to duplicate the handle to avoid consuming the Arc's inner handle
     let raw_handle = pipe_listener.as_raw_handle();
     let mut pipe = unsafe {
-        // Create the first pipe server from the raw handle
         NamedPipeServer::from_raw_handle(raw_handle)
     }?;
 
@@ -156,7 +155,6 @@ async fn accept_pipe_loop(
         match pipe.connect().await {
             Ok(_) => {
                 let connected_pipe = pipe;
-                // Create a new pipe instance for the next connection
                 pipe = ServerOptions::new().create(&name)?;
                 handler(connected_pipe);
             }
@@ -170,7 +168,6 @@ async fn accept_pipe_loop(
     Ok(())
 }
 
-// Stop listening on a named pipe handle
 fn stop_listening_on_handle(raw: RawHandle) {
     unsafe {
         CloseHandle(raw as HANDLE);
@@ -223,13 +220,13 @@ pub fn start_master_listener_windows(master_pid: i32) -> io::Result<()> {
     };
 
     let pipe_listener = Arc::new(pipe_listener);
+    let pipe_listener_for_shutdown = pipe_listener.clone();
 
-    thread::Builder::new()
+    let handle = thread::Builder::new()
         .name("dd-sidecar".into())
         .spawn(move || {
             let pipe_listener_clone = pipe_listener.clone();
             let acquire_listener = move || -> io::Result<_> {
-                // Convert RawHandle to isize for thread safety (Send + Sync)
                 let raw = pipe_listener.as_raw_handle() as isize;
                 let cancel = move || stop_listening_on_handle(raw as RawHandle);
                 Ok((
@@ -242,13 +239,72 @@ pub fn start_master_listener_windows(master_pid: i32) -> io::Result<()> {
         })
         .map_err(io::Error::other)?;
 
+    match MASTER_LISTENER.lock() {
+        Ok(mut guard) => *guard = Some((handle, pipe_listener_for_shutdown)),
+        Err(e) => {
+            error!("Failed to acquire lock for storing master listener: {}", e);
+            return Err(io::Error::other("Mutex poisoned"));
+        }
+    }
+
     Ok(())
 }
 
 pub fn connect_worker_windows(master_pid: i32) -> io::Result<OwnedHandle> {
     let name = endpoint_name_for_master(master_pid);
-    let raw = connect_named_pipe_client(&name)?;
-    Ok(unsafe { OwnedHandle::from_raw_handle(raw) })
+
+    let mut last_error = None;
+    for _ in 0..10 {
+        match connect_named_pipe_client(&name) {
+            Ok(raw) => {
+                return Ok(unsafe { OwnedHandle::from_raw_handle(raw) });
+            }
+            Err(e) => {
+                last_error = Some(e);
+                std::thread::sleep(Duration::from_millis(10));
+            }
+        }
+    }
+
+    error!("Failed to connect to master listener");
+    Err(last_error.unwrap_or_else(|| io::Error::new(io::ErrorKind::Other, "Connection failed")))
+}
+
+pub fn shutdown_master_listener_windows() -> io::Result<()> {
+    let listener_data = match MASTER_LISTENER.lock() {
+        Ok(mut guard) => guard.take(),
+        Err(e) => {
+            error!(
+                "Failed to acquire lock for shutting down master listener: {}",
+                e
+            );
+            return Err(io::Error::other("Mutex poisoned"));
+        }
+    };
+
+    if let Some((handle, pipe_listener)) = listener_data {
+        let raw = pipe_listener.as_raw_handle();
+        stop_listening_on_handle(raw);
+
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let result = handle.join();
+            let _ = tx.send(result);
+        });
+
+        // Wait up to 500ms for proper shutdown
+        match rx.recv_timeout(Duration::from_millis(500)) {
+            Ok(Ok(())) => { }
+            Ok(Err(_)) => {
+                error!("Listener thread panicked during shutdown");
+            }
+            Err(err) => {
+                error!("Timeout waiting for listener thread to shut down: {}", err);
+            }
+        }
+    }
+
+    Ok(())
 }
 
 /// cbindgen:ignore

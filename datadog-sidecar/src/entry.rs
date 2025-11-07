@@ -64,13 +64,13 @@ where
         }
     });
 
-    tokio::spawn(async move {
-        if let Err(err) = tokio::signal::ctrl_c().await {
-            tracing::error!("Error setting up signal handler {}", err);
-        }
-        tracing::info!("Received Ctrl-C Signal, shutting down");
-        cancel();
-    });
+    // tokio::spawn(async move {
+    //     if let Err(err) = tokio::signal::ctrl_c().await {
+    //         tracing::error!("Error setting up signal handler {}", err);
+    //     }
+    //     tracing::info!("Received Ctrl-C Signal, shutting down");
+    //     cancel();
+    // });
 
     #[cfg(unix)]
     tokio::spawn(async move {
@@ -153,9 +153,14 @@ where
 
     let (listener, cancel) = acquire_listener()?;
 
-    runtime
+    let result = runtime
         .block_on(main_loop(listener, Arc::new(cancel)))
-        .map_err(|e| e.into())
+        .map_err(|e| e.into());
+
+    // Wait 1 second to shut down properly
+    runtime.shutdown_timeout(std::time::Duration::from_secs(1));
+
+    result
 }
 
 pub fn daemonize(listener: IpcServer, mut cfg: Config) -> anyhow::Result<()> {
