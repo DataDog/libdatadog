@@ -203,7 +203,7 @@ impl TraceChunkProcessor for DefaultTraceChunkProcessor {
 /// # Examples
 ///
 /// ```rust
-/// use liddd_tinybytes;
+/// use libdd_tinybytes;
 /// use libdd_trace_protobuf::pb;
 /// use libdd_trace_utils::trace_utils::TracerHeaderTags;
 /// use libdd_trace_utils::tracer_payload::{decode_to_trace_chunks, TraceEncoding};
