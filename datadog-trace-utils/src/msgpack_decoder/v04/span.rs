@@ -52,7 +52,7 @@ fn fill_span<'a>(span: &mut SpanSlice<'a>, buf: &mut &'a [u8]) -> Result<(), Dec
         SpanKey::Service => span.service = read_nullable_string(buf)?,
         SpanKey::Name => span.name = read_nullable_string(buf)?,
         SpanKey::Resource => span.resource = read_nullable_string(buf)?,
-        SpanKey::TraceId => span.trace_id = read_nullable_number_slice(buf)?,
+        SpanKey::TraceId => span.trace_id = read_nullable_number_slice::<u64>(buf)? as u128,
         SpanKey::SpanId => span.span_id = read_nullable_number_slice(buf)?,
         SpanKey::ParentId => span.parent_id = read_nullable_number_slice(buf)?,
         SpanKey::Start => span.start = read_nullable_number_slice(buf)?,

@@ -1,7 +1,8 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::span::{v05, Span, SpanBytes, SpanText};
+use crate::span::v05::dict::SharedDict;
+use crate::span::{v05, SharedDictBytes, Span, SpanBytes, SpanText};
 use crate::trace_utils::collect_trace_chunks;
 use crate::{msgpack_decoder, trace_utils::cmp_send_data_payloads};
 use libdd_tinybytes as tinybytes;
@@ -27,7 +28,7 @@ pub enum TraceChunks<T: SpanText> {
     /// Collection of TraceChunkSpan.
     V04(Vec<Vec<Span<T>>>),
     /// Collection of TraceChunkSpan with de-duplicated strings.
-    V05((Vec<T>, Vec<Vec<v05::Span>>)),
+    V05((SharedDict<T>, Vec<Vec<v05::Span>>)),
 }
 
 impl TraceChunks<BytesString> {
@@ -57,7 +58,7 @@ pub enum TracerPayloadCollection {
     /// Collection of TraceChunkSpan.
     V04(Vec<Vec<SpanBytes>>),
     /// Collection of TraceChunkSpan with de-duplicated strings.
-    V05((Vec<tinybytes::BytesString>, Vec<Vec<v05::Span>>)),
+    V05((SharedDictBytes, Vec<Vec<v05::Span>>)),
 }
 
 impl TracerPayloadCollection {

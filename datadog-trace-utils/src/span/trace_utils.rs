@@ -34,26 +34,26 @@ pub fn compute_top_level_span<T>(trace: &mut [Span<T>])
 where
     T: SpanText,
 {
-    let mut span_id_to_service: HashMap<u64, T> = HashMap::new();
-    for span in trace.iter() {
-        span_id_to_service.insert(span.span_id, span.service.clone());
+    let mut span_id_idx: HashMap<u64, usize> = HashMap::new();
+    for (i, span) in trace.iter().enumerate() {
+        span_id_idx.insert(span.span_id, i);
     }
-    for span in trace.iter_mut() {
-        let parent_id = span.parent_id;
+    for span_idx in 0..trace.len() {
+        let parent_id = trace[span_idx].parent_id;
         if parent_id == 0 {
-            set_top_level_span(span, true);
+            set_top_level_span(&mut trace[span_idx], true);
             continue;
         }
-        match span_id_to_service.get(&parent_id) {
+        match span_id_idx.get(&parent_id).map(|i| &trace[*i].service) {
             Some(parent_span_service) => {
-                if !parent_span_service.eq(&span.service) {
+                if !(parent_span_service == &trace[span_idx].service) {
                     // parent is not in the same service
-                    set_top_level_span(span, true)
+                    set_top_level_span(&mut trace[span_idx], true)
                 }
             }
             None => {
                 // span has no parent in chunk
-                set_top_level_span(span, true)
+                set_top_level_span(&mut trace[span_idx], true)
             }
         }
     }
@@ -173,7 +173,7 @@ mod tests {
         is_top_level: bool,
     ) -> SpanBytes {
         let mut span = SpanBytes {
-            trace_id,
+            trace_id: trace_id as u128,
             span_id,
             service: "test-service".into(),
             name: "test_name".into(),
