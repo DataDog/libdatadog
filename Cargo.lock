@@ -1300,11 +1300,9 @@ dependencies = [
  "bytes",
  "clap",
  "criterion",
- "datadog-trace-protobuf",
  "datadog-trace-stats",
  "datadog-trace-utils",
  "ddcommon",
- "ddtelemetry",
  "either",
  "http",
  "http-body-util",
@@ -1314,7 +1312,9 @@ dependencies = [
  "libdd-ddsketch",
  "libdd-dogstatsd-client",
  "libdd-log",
+ "libdd-telemetry",
  "libdd-tinybytes",
+ "libdd-trace-protobuf",
  "rand 0.8.5",
  "regex",
  "rmp-serde",
@@ -1353,10 +1353,10 @@ dependencies = [
  "chrono",
  "criterion",
  "ddcommon",
- "ddtelemetry",
  "goblin",
  "http",
  "libc",
+ "libdd-telemetry",
  "nix",
  "num-derive",
  "num-traits",
@@ -1547,7 +1547,6 @@ dependencies = [
  "datadog-profiling",
  "ddcommon",
  "ddcommon-ffi",
- "ddtelemetry-ffi",
  "function_name",
  "futures",
  "http-body-util",
@@ -1556,6 +1555,7 @@ dependencies = [
  "libdd-ddsketch-ffi",
  "libdd-library-config-ffi",
  "libdd-log-ffi",
+ "libdd-telemetry-ffi",
  "serde_json",
  "symbolizer-ffi",
  "tokio-util",
@@ -1581,7 +1581,6 @@ dependencies = [
  "base64 0.22.1",
  "datadog-live-debugger",
  "datadog-remote-config",
- "datadog-trace-protobuf",
  "ddcommon",
  "futures",
  "futures-util",
@@ -1589,6 +1588,7 @@ dependencies = [
  "http-body-util",
  "hyper",
  "hyper-util",
+ "libdd-trace-protobuf",
  "manual_future",
  "serde",
  "serde_json",
@@ -1622,7 +1622,6 @@ dependencies = [
  "datadog-trace-utils",
  "ddcommon",
  "ddcommon-ffi",
- "ddtelemetry",
  "futures",
  "http",
  "http-body-util",
@@ -1630,6 +1629,7 @@ dependencies = [
  "hyper",
  "libc",
  "libdd-dogstatsd-client",
+ "libdd-telemetry",
  "libdd-tinybytes",
  "manual_future",
  "memory-stats",
@@ -1669,11 +1669,11 @@ dependencies = [
  "datadog-trace-utils",
  "ddcommon",
  "ddcommon-ffi",
- "ddtelemetry",
- "ddtelemetry-ffi",
  "http",
  "libc",
  "libdd-dogstatsd-client",
+ "libdd-telemetry",
+ "libdd-telemetry-ffi",
  "libdd-tinybytes",
  "paste",
  "rmp-serde",
@@ -1690,26 +1690,15 @@ dependencies = [
 ]
 
 [[package]]
-name = "datadog-trace-normalization"
-version = "23.0.0"
-dependencies = [
- "anyhow",
- "criterion",
- "datadog-trace-protobuf",
- "duplicate",
- "rand 0.8.5",
-]
-
-[[package]]
 name = "datadog-trace-obfuscation"
 version = "23.0.0"
 dependencies = [
  "anyhow",
  "criterion",
- "datadog-trace-protobuf",
  "datadog-trace-utils",
  "ddcommon",
  "duplicate",
+ "libdd-trace-protobuf",
  "log",
  "percent-encoding",
  "regex",
@@ -1719,27 +1708,14 @@ dependencies = [
 ]
 
 [[package]]
-name = "datadog-trace-protobuf"
-version = "23.0.0"
-dependencies = [
- "prost",
- "prost-build",
- "protoc-bin-vendored",
- "serde",
- "serde_bytes",
- "serde_json",
- "tokio",
-]
-
-[[package]]
 name = "datadog-trace-stats"
 version = "23.0.0"
 dependencies = [
  "criterion",
- "datadog-trace-protobuf",
  "datadog-trace-utils",
  "hashbrown 0.15.1",
  "libdd-ddsketch",
+ "libdd-trace-protobuf",
  "rand 0.8.5",
 ]
 
@@ -1753,8 +1729,6 @@ dependencies = [
  "cargo-platform",
  "cargo_metadata",
  "criterion",
- "datadog-trace-normalization",
- "datadog-trace-protobuf",
  "datadog-trace-utils",
  "ddcommon",
  "flate2",
@@ -1763,6 +1737,8 @@ dependencies = [
  "httpmock",
  "hyper",
  "libdd-tinybytes",
+ "libdd-trace-normalization",
+ "libdd-trace-protobuf",
  "prost",
  "rand 0.8.5",
  "rmp",
@@ -1840,46 +1816,6 @@ dependencies = [
  "ddcommon",
  "hyper",
  "serde",
-]
-
-[[package]]
-name = "ddtelemetry"
-version = "23.0.0"
-dependencies = [
- "anyhow",
- "base64 0.22.1",
- "ddcommon",
- "futures",
- "hashbrown 0.15.1",
- "http",
- "http-body-util",
- "hyper",
- "hyper-util",
- "libc",
- "libdd-ddsketch",
- "serde",
- "serde_json",
- "sys-info",
- "tokio",
- "tokio-util",
- "tracing",
- "tracing-subscriber",
- "uuid",
- "winver",
-]
-
-[[package]]
-name = "ddtelemetry-ffi"
-version = "23.0.0"
-dependencies = [
- "build_common",
- "ddcommon",
- "ddcommon-ffi",
- "ddtelemetry",
- "function_name",
- "libc",
- "paste",
- "tempfile",
 ]
 
 [[package]]
@@ -3149,6 +3085,46 @@ dependencies = [
 ]
 
 [[package]]
+name = "libdd-telemetry"
+version = "1.0.0"
+dependencies = [
+ "anyhow",
+ "base64 0.22.1",
+ "ddcommon",
+ "futures",
+ "hashbrown 0.15.1",
+ "http",
+ "http-body-util",
+ "hyper",
+ "hyper-util",
+ "libc",
+ "libdd-ddsketch",
+ "serde",
+ "serde_json",
+ "sys-info",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "tracing-subscriber",
+ "uuid",
+ "winver",
+]
+
+[[package]]
+name = "libdd-telemetry-ffi"
+version = "23.0.0"
+dependencies = [
+ "build_common",
+ "ddcommon",
+ "ddcommon-ffi",
+ "function_name",
+ "libc",
+ "libdd-telemetry",
+ "paste",
+ "tempfile",
+]
+
+[[package]]
 name = "libdd-tinybytes"
 version = "1.0.0"
 dependencies = [
@@ -3160,6 +3136,30 @@ dependencies = [
  "serde",
  "serde_json",
  "test-case",
+]
+
+[[package]]
+name = "libdd-trace-normalization"
+version = "1.0.0"
+dependencies = [
+ "anyhow",
+ "criterion",
+ "duplicate",
+ "libdd-trace-protobuf",
+ "rand 0.8.5",
+]
+
+[[package]]
+name = "libdd-trace-protobuf"
+version = "1.0.0"
+dependencies = [
+ "prost",
+ "prost-build",
+ "protoc-bin-vendored",
+ "serde",
+ "serde_bytes",
+ "serde_json",
+ "tokio",
 ]
 
 [[package]]

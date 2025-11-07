@@ -28,7 +28,7 @@ use crate::service::{InstanceId, QueueId, RuntimeInfo};
 #[derive(Default)]
 pub(crate) struct SessionInfo {
     runtimes: Arc<Mutex<HashMap<String, RuntimeInfo>>>,
-    pub(crate) session_config: Arc<Mutex<Option<ddtelemetry::config::Config>>>,
+    pub(crate) session_config: Arc<Mutex<Option<libdd_telemetry::config::Config>>>,
     debugger_config: Arc<Mutex<datadog_live_debugger::sender::Config>>,
     tracer_config: Arc<Mutex<tracer::Config>>,
     dogstatsd: Arc<Mutex<Option<libdd_dogstatsd_client::Client>>>,
@@ -150,11 +150,11 @@ impl SessionInfo {
 
     pub(crate) fn get_telemetry_config(
         &self,
-    ) -> MutexGuard<'_, Option<ddtelemetry::config::Config>> {
+    ) -> MutexGuard<'_, Option<libdd_telemetry::config::Config>> {
         let mut cfg = self.session_config.lock_or_panic();
 
         if (*cfg).is_none() {
-            *cfg = Some(ddtelemetry::config::Config::from_env())
+            *cfg = Some(libdd_telemetry::config::Config::from_env())
         }
 
         cfg
@@ -162,7 +162,7 @@ impl SessionInfo {
 
     pub(crate) fn modify_telemetry_config<F>(&self, f: F)
     where
-        F: FnOnce(&mut ddtelemetry::config::Config),
+        F: FnOnce(&mut libdd_telemetry::config::Config),
     {
         if let Some(cfg) = &mut *self.get_telemetry_config() {
             f(cfg)

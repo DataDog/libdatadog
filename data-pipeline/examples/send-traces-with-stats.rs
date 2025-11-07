@@ -5,10 +5,10 @@ use clap::Parser;
 use data_pipeline::trace_exporter::{
     TelemetryConfig, TraceExporter, TraceExporterInputFormat, TraceExporterOutputFormat,
 };
-use datadog_trace_protobuf::pb;
 use libdd_log::logger::{
     logger_configure_std, logger_set_log_level, LogEventLevel, StdConfig, StdTarget,
 };
+use libdd_trace_protobuf::pb;
 use std::{
     collections::HashMap,
     time::{Duration, UNIX_EPOCH},

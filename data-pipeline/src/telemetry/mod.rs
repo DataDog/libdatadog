@@ -11,7 +11,7 @@ use datadog_trace_utils::{
     trace_utils::SendDataResult,
 };
 use ddcommon::tag::Tag;
-use ddtelemetry::worker::{
+use libdd_telemetry::worker::{
     LifecycleAction, TelemetryActions, TelemetryWorker, TelemetryWorkerBuilder,
     TelemetryWorkerFlavor, TelemetryWorkerHandle,
 };
@@ -30,7 +30,7 @@ pub struct TelemetryClientBuilder {
     language: Option<String>,
     language_version: Option<String>,
     tracer_version: Option<String>,
-    config: ddtelemetry::config::Config,
+    config: libdd_telemetry::config::Config,
     runtime_id: Option<String>,
 }
 

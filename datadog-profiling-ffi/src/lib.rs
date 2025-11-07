@@ -20,7 +20,7 @@ pub use datadog_crashtracker_ffi::*;
 
 // re-export telemetry ffi
 #[cfg(feature = "ddtelemetry-ffi")]
-pub use ddtelemetry_ffi::*;
+pub use libdd_telemetry_ffi::*;
 
 #[cfg(feature = "data-pipeline-ffi")]
 #[allow(unused_imports)]

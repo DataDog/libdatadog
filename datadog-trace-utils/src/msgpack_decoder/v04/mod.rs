@@ -31,9 +31,9 @@ use libdd_tinybytes as tinybytes;
 /// # Examples
 ///
 /// ```
-/// use datadog_trace_protobuf::pb::Span;
 /// use datadog_trace_utils::msgpack_decoder::v04::from_bytes;
 /// use libdd_tinybytes as tinybytes;
+/// use libdd_trace_protobuf::pb::Span;
 /// use rmp_serde::to_vec_named;
 ///
 /// let span = Span {
@@ -90,9 +90,9 @@ pub fn from_bytes(data: tinybytes::Bytes) -> Result<(Vec<Vec<SpanBytes>>, usize)
 /// # Examples
 ///
 /// ```
-/// use datadog_trace_protobuf::pb::Span;
 /// use datadog_trace_utils::msgpack_decoder::v04::from_slice;
 /// use libdd_tinybytes as tinybytes;
+/// use libdd_trace_protobuf::pb::Span;
 /// use rmp_serde::to_vec_named;
 ///
 /// let span = Span {

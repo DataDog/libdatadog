@@ -32,8 +32,8 @@ mini-agent:
 telemetry:
 - changed-files:
   - any-glob-to-any-file: [
-      'ddtelemetry/**/*',
-      'ddtelemetry-ffi/**/*',
+      'libdd-telemetry/**/*',
+      'libdd-telemetry-ffi/**/*',
     ]
 
 dogstatsd:

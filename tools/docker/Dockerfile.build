@@ -74,8 +74,8 @@ COPY "datadog-crashtracker/Cargo.toml" "datadog-crashtracker/"
 COPY "datadog-crashtracker-ffi/Cargo.toml" "datadog-crashtracker-ffi/"
 COPY "ddcommon/Cargo.toml" "ddcommon/"
 COPY "ddcommon-ffi/Cargo.toml" "ddcommon-ffi/"
-COPY "ddtelemetry/Cargo.toml" "ddtelemetry/"
-COPY "ddtelemetry-ffi/Cargo.toml" "ddtelemetry-ffi/"
+COPY "libdd-telemetry/Cargo.toml" "libdd-telemetry/"
+COPY "libdd-telemetry-ffi/Cargo.toml" "libdd-telemetry-ffi/"
 COPY "libdd-ddsketch/Cargo.toml" "libdd-ddsketch/"
 COPY "libdd-ddsketch-ffi/Cargo.toml" "libdd-ddsketch-ffi/"
 COPY "libdd-log/Cargo.toml" "libdd-log/"
@@ -94,9 +94,9 @@ COPY "datadog-sidecar/Cargo.toml" "datadog-sidecar/"
 COPY "datadog-sidecar-macros/Cargo.toml" "datadog-sidecar-macros/"
 COPY "datadog-sidecar-ffi/Cargo.toml" "datadog-sidecar-ffi/"
 COPY "symbolizer-ffi/Cargo.toml" "symbolizer-ffi/"
-COPY "datadog-trace-normalization/Cargo.toml" "datadog-trace-normalization/"
+COPY "libdd-trace-normalization/Cargo.toml" "libdd-trace-normalization/"
 COPY "datadog-trace-obfuscation/Cargo.toml" "datadog-trace-obfuscation/"
-COPY "datadog-trace-protobuf/Cargo.toml" "datadog-trace-protobuf/"
+COPY "libdd-trace-protobuf/Cargo.toml" "libdd-trace-protobuf/"
 COPY "datadog-trace-utils/Cargo.toml" "datadog-trace-utils/"
 COPY "datadog-trace-stats/Cargo.toml" "datadog-trace-stats/"
 COPY "datadog-tracer-flare/Cargo.toml" "datadog-tracer-flare/"
@@ -124,7 +124,7 @@ RUN echo \
     bin_tests/src/bin/crashtracker_unix_socket_receiver.rs \
     bin_tests/src/bin/test_the_tests.rs \
     builder/src/bin/release.rs \
-    ddtelemetry/examples/tm-worker-test.rs \
+    libdd-telemetry/examples/tm-worker-test.rs \
     datadog-ipc/benches/ipc.rs \
     datadog-ipc/tarpc/examples/compression.rs \
     datadog-ipc/tarpc/examples/custom_transport.rs \
@@ -139,7 +139,7 @@ RUN echo \
     datadog-profiling/benches/main.rs \
     tools/sidecar_mockgen/src/bin/sidecar_mockgen.rs \
     tools/src/bin/dedup_headers.rs \
-    datadog-trace-normalization/benches/normalization_utils.rs \
+    libdd-trace-normalization/benches/normalization_utils.rs \
     datadog-trace-obfuscation/benches/trace_obfuscation.rs \
     datadog-trace-utils/benches/deserialization.rs \
     datadog-trace-utils/benches/main.rs \
