@@ -453,7 +453,7 @@ pub async fn poll_for_mock_hit(
 /// # Examples
 ///
 /// ```
-/// use ddcommon::Endpoint;
+/// use libdd_common::Endpoint;
 /// use libdd_trace_utils::test_utils::create_send_data;
 ///
 /// let size = 512;
