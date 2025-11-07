@@ -43,11 +43,6 @@ impl CrashPingBuilder {
         }
     }
 
-    pub fn with_crash_uuid(mut self, uuid: Uuid) -> Self {
-        self.crash_uuid = uuid;
-        self
-    }
-
     pub fn with_sig_info(mut self, sig_info: SigInfo) -> Self {
         self.sig_info = Some(sig_info);
         self
@@ -118,11 +113,6 @@ impl CrashPing {
     }
 
     pub fn upload_to_endpoint(&self, endpoint: &Option<Endpoint>) -> anyhow::Result<()> {
-        // Check early to avoid creating a tokio runtime if we're not going to use it
-        if endpoint.as_ref().is_some_and(|e| e.is_file_endpoint()) {
-            return Ok(());
-        }
-
         let rt = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()?;
@@ -137,11 +127,9 @@ impl CrashPing {
         &self,
         endpoint: &Option<Endpoint>,
     ) -> anyhow::Result<()> {
-        if endpoint.as_ref().is_some_and(|e| e.is_file_endpoint()) {
-            return Ok(());
-        }
-        let telemetry_uploader = crate::TelemetryCrashUploader::new(self.metadata(), endpoint)?;
-        telemetry_uploader.upload_crash_ping(self).await
+        crate::TelemetryCrashUploader::new(self.metadata(), endpoint)?
+            .upload_crash_ping(self)
+            .await
     }
 }
 
@@ -408,8 +396,8 @@ fn extract_crash_info_tags(crash_info: &CrashInfo) -> anyhow::Result<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{CrashPingBuilder, TelemetryCrashUploader};
-    use crate::crash_info::{test_utils::TestInstance, CrashInfo, Metadata};
+    use super::TelemetryCrashUploader;
+    use crate::crash_info::{test_utils::TestInstance, CrashInfo, CrashInfoBuilder, Metadata};
     use libdd_common::Endpoint;
     use std::{collections::HashSet, fs};
     use uuid::Uuid;
@@ -517,15 +505,13 @@ mod tests {
             .set_host_from_url(&format!("file://{}", output_filename.to_str().unwrap()))
             .unwrap();
 
-        let crash_uuid = "19ea82a5-2118-4fb0-b0dd-6c067a3026c6";
         let sig_info = crate::SigInfo::test_instance(42);
+        let metadata = Metadata::test_instance(1);
 
-        // Build crash ping and upload using the new pattern
-        let crash_ping = CrashPingBuilder::new(Uuid::parse_str(crash_uuid).unwrap())
-            .with_sig_info(sig_info.clone())
-            .with_metadata(Metadata::test_instance(1))
-            .build()
-            .unwrap();
+        let mut crash_info_builder = CrashInfoBuilder::new();
+        crash_info_builder.with_sig_info(sig_info.clone()).unwrap();
+        crash_info_builder.with_metadata(metadata.clone()).unwrap();
+        let crash_ping = crash_info_builder.build_crash_ping().unwrap();
         t.upload_crash_ping(&crash_ping).await.unwrap();
 
         let payload: serde_json::value::Value =
@@ -548,7 +534,8 @@ mod tests {
         let message_json: serde_json::Value =
             serde_json::from_str(log_entry["message"].as_str().unwrap())?;
         assert_eq!(message_json["siginfo"], serde_json::to_value(sig_info)?);
-        assert_eq!(message_json["crash_uuid"], crash_uuid);
+        assert!(message_json["crash_uuid"].is_string());
+        assert!(Uuid::parse_str(message_json["crash_uuid"].as_str().unwrap()).is_ok());
 
         assert_eq!(message_json["version"], "1.0");
         assert_eq!(message_json["kind"], "Crash ping");
@@ -565,7 +552,8 @@ mod tests {
         );
 
         let tags = log_entry["tags"].as_str().unwrap();
-        assert!(tags.contains(&format!("uuid:{crash_uuid}")));
+        let uuid_str = message_json["crash_uuid"].as_str().unwrap();
+        assert!(tags.contains(&format!("uuid:{uuid_str}")));
         assert!(tags.contains("is_crash_ping:true"));
         assert!(tags.contains("service:foo"));
         assert!(tags.contains("language_name:native"));
@@ -592,14 +580,13 @@ mod tests {
             .set_host_from_url(&format!("file://{}", output_filename.to_str().unwrap()))
             .unwrap();
 
-        let crash_uuid = "19ea82a5-2118-4fb0-b0dd-6c067a3026c6";
         let sig_info = crate::SigInfo::test_instance(123);
+        let metadata = Metadata::test_instance(1);
 
-        let crash_ping = CrashPingBuilder::new(Uuid::parse_str(crash_uuid).unwrap())
-            .with_sig_info(sig_info.clone())
-            .with_metadata(Metadata::test_instance(1))
-            .build()
-            .unwrap();
+        let mut crash_info_builder = CrashInfoBuilder::new();
+        crash_info_builder.with_sig_info(sig_info.clone()).unwrap();
+        crash_info_builder.with_metadata(metadata.clone()).unwrap();
+        let crash_ping = crash_info_builder.build_crash_ping().unwrap();
         t.upload_crash_ping(&crash_ping).await.unwrap();
 
         let payload: serde_json::value::Value =
@@ -622,7 +609,8 @@ mod tests {
         // Structured message format
         let message_json: serde_json::Value =
             serde_json::from_str(log_entry["message"].as_str().unwrap())?;
-        assert_eq!(message_json["crash_uuid"], crash_uuid);
+        assert!(message_json["crash_uuid"].is_string());
+        assert!(Uuid::parse_str(message_json["crash_uuid"].as_str().unwrap()).is_ok());
         assert_eq!(
             message_json["message"],
             format!(
@@ -652,9 +640,9 @@ mod tests {
         assert_eq!(message_json["version"], "1.0");
         assert_eq!(message_json["kind"], "Crash ping");
 
-        // Customer application and runtime information tags
         let tags = log_entry["tags"].as_str().unwrap();
-        assert!(tags.contains(&format!("uuid:{crash_uuid}")));
+        let uuid_str = message_json["crash_uuid"].as_str().unwrap();
+        assert!(tags.contains(&format!("uuid:{uuid_str}")));
         assert!(tags.contains("is_crash_ping:true"));
         assert!(tags.contains("service:foo"));
         assert!(tags.contains("language_name:native"));
@@ -674,22 +662,22 @@ mod tests {
             p
         };
 
-        let crash_uuid = "19ea82a5-2118-4fb0-b0dd-6c067a3026c6";
         let sig_info = crate::SigInfo::test_instance(42);
         let metadata = Metadata::test_instance(1);
 
-        let crash_ping = CrashPingBuilder::new(Uuid::parse_str(crash_uuid).unwrap())
-            .with_sig_info(sig_info.clone())
-            .with_metadata(metadata.clone())
-            .build()?;
+        // Build crash ping through CrashInfoBuilder
+        let mut crash_info_builder = CrashInfoBuilder::new();
+        crash_info_builder.with_sig_info(sig_info.clone()).unwrap();
+        crash_info_builder.with_metadata(metadata.clone()).unwrap();
+        let crash_ping = crash_info_builder.build_crash_ping()?;
 
         let endpoint = Some(Endpoint::from_slice(&format!(
             "file://{}",
             output_filename.to_str().unwrap()
         )));
 
-        // Test getters
-        assert_eq!(crash_ping.crash_uuid(), crash_uuid);
+        assert!(!crash_ping.crash_uuid().is_empty());
+        assert!(Uuid::parse_str(crash_ping.crash_uuid()).is_ok());
         assert!(crash_ping.message().contains("crash processing started"));
         assert_eq!(crash_ping.metadata(), &metadata);
 
@@ -703,10 +691,6 @@ mod tests {
             ))
             .unwrap();
 
-        let crash_ping = CrashPingBuilder::new(Uuid::parse_str(crash_uuid).unwrap())
-            .with_sig_info(sig_info.clone())
-            .with_metadata(metadata.clone())
-            .build()?;
         uploader.upload_crash_ping(&crash_ping).await?;
 
         // Verify the .telemetry file was created with correct content
@@ -725,7 +709,8 @@ mod tests {
 
         let message_json: serde_json::Value =
             serde_json::from_str(log_entry["message"].as_str().unwrap())?;
-        assert_eq!(message_json["crash_uuid"], crash_uuid);
+        assert!(message_json["crash_uuid"].is_string());
+        assert!(Uuid::parse_str(message_json["crash_uuid"].as_str().unwrap()).is_ok());
         assert_eq!(message_json["version"], "1.0");
         assert_eq!(message_json["kind"], "Crash ping");
 
@@ -735,39 +720,55 @@ mod tests {
     #[test]
     #[cfg_attr(miri, ignore)]
     fn test_crash_ping_builder_validation() {
-        let crash_uuid = Uuid::parse_str("19ea82a5-2118-4fb0-b0dd-6c067a3026c6").unwrap();
-        // Test missing required fields
-        let result = CrashPingBuilder::new(crash_uuid).build();
+        let mut crash_info_builder = CrashInfoBuilder::new();
+        crash_info_builder
+            .with_metadata(Metadata::test_instance(1))
+            .unwrap();
+        let result = crash_info_builder.build_crash_ping();
         assert!(result.is_err());
         assert!(result
             .unwrap_err()
             .to_string()
             .contains("sig_info is required"));
 
-        let result = CrashPingBuilder::new(crash_uuid)
+        let mut crash_info_builder = CrashInfoBuilder::new();
+        crash_info_builder
             .with_sig_info(crate::SigInfo::test_instance(1))
+            .unwrap();
+        let result = crash_info_builder.build_crash_ping();
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("metadata is required"));
+
+        // Test successful build with both required fields
+        let mut crash_info_builder = CrashInfoBuilder::new();
+        crash_info_builder
+            .with_sig_info(crate::SigInfo::test_instance(1))
+            .unwrap();
+        crash_info_builder
             .with_metadata(Metadata::test_instance(1))
-            .build();
+            .unwrap();
+        let result = crash_info_builder.build_crash_ping();
         assert!(result.is_ok());
     }
 
     #[test]
     #[cfg_attr(miri, ignore)]
     fn test_crash_ping_all_fields_present() {
-        let crash_uuid = "19ea82a5-2118-4fb0-b0dd-6c067a3026c6";
         let sig_info = crate::SigInfo::test_instance(99);
         let metadata = Metadata::test_instance(2);
-        let custom_message = "Custom crash message for testing";
 
-        let crash_ping = CrashPingBuilder::new(Uuid::parse_str(crash_uuid).unwrap())
-            .with_sig_info(sig_info.clone())
-            .with_metadata(metadata.clone())
-            .with_custom_message(custom_message.to_string())
-            .build()
-            .unwrap();
+        // Build crash ping through CrashInfoBuilder
+        let mut crash_info_builder = CrashInfoBuilder::new();
+        crash_info_builder.with_sig_info(sig_info.clone()).unwrap();
+        crash_info_builder.with_metadata(metadata.clone()).unwrap();
+        let crash_ping = crash_info_builder.build_crash_ping().unwrap();
 
-        assert_eq!(crash_ping.crash_uuid(), crash_uuid);
-        assert_eq!(crash_ping.message(), custom_message);
+        assert!(!crash_ping.crash_uuid().is_empty());
+        assert!(Uuid::parse_str(crash_ping.crash_uuid()).is_ok());
+        assert!(crash_ping.message().contains("crash processing started"));
         assert_eq!(crash_ping.metadata(), &metadata);
         assert_eq!(crash_ping.siginfo(), &sig_info);
     }
@@ -790,15 +791,14 @@ mod tests {
             .set_host_from_url(&format!("file://{}", output_filename.to_str().unwrap()))
             .unwrap();
 
-        let crash_uuid = "19ea82a5-2118-4fb0-b0dd-6c067a3026c6";
         let sig_info = crate::SigInfo::test_instance(150);
         let metadata = Metadata::test_instance(3);
 
-        let crash_ping = CrashPingBuilder::new(Uuid::parse_str(crash_uuid).unwrap())
-            .with_sig_info(sig_info.clone())
-            .with_metadata(metadata.clone())
-            .build()
-            .unwrap();
+        // Build crash ping through CrashInfoBuilder
+        let mut crash_info_builder = CrashInfoBuilder::new();
+        crash_info_builder.with_sig_info(sig_info.clone()).unwrap();
+        crash_info_builder.with_metadata(metadata.clone()).unwrap();
+        let crash_ping = crash_info_builder.build_crash_ping().unwrap();
 
         uploader.upload_crash_ping(&crash_ping).await?;
 
@@ -818,7 +818,8 @@ mod tests {
         let message_json: serde_json::Value =
             serde_json::from_str(log_entry["message"].as_str().unwrap())?;
 
-        assert_eq!(message_json["crash_uuid"], crash_uuid);
+        assert!(message_json["crash_uuid"].is_string());
+        assert!(Uuid::parse_str(message_json["crash_uuid"].as_str().unwrap()).is_ok());
         assert_eq!(message_json["version"], "1.0");
         assert_eq!(message_json["kind"], "Crash ping");
 

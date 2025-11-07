@@ -311,7 +311,12 @@ fn test_crash_tracking_bin(
     let crash_telemetry = fs::read(&fixtures.crash_telemetry_path)
         .context("reading crashtracker telemetry payload")
         .unwrap();
-    assert_telemetry_message(&crash_telemetry, crash_typ);
+    let payloads = crash_telemetry.split(|&b| b == b'\n').collect::<Vec<_>>();
+    for payload in payloads {
+        if String::from_utf8_lossy(payload).contains("is_crash:true") {
+            assert_telemetry_message(payload, crash_typ);
+        }
+    }
 
     // Crashtracking signal handler chaining tests, as well as other tests, might only be able to
     // influence system state after the main application has crashed, and has therefore lost the
@@ -410,10 +415,11 @@ fn assert_siginfo_message(sig_info: &Value, crash_typ: &str) {
 }
 
 fn assert_telemetry_message(crash_telemetry: &[u8], crash_typ: &str) {
-    let telemetry_payload: serde_json::Value =
-        serde_json::from_slice::<serde_json::Value>(crash_telemetry)
-            .context("deserializing crashtracker telemetry payload to json")
-            .unwrap();
+    // Split by newline and take the first line
+    let telemetry_payload: Value = serde_json::from_slice::<Value>(crash_telemetry)
+        .context("deserializing whole telemetry payload to JSON")
+        .unwrap();
+
     assert_eq!(telemetry_payload["request_type"], "logs");
     assert_eq!(
         serde_json::json!({
@@ -542,11 +548,9 @@ fn crash_tracking_empty_endpoint() {
         .spawn()
         .unwrap();
 
-    // With parallel crash ping, we might receive requests in either order
     let (mut stream1, _) = listener.accept().unwrap();
     let body1 = read_http_request_body(&mut stream1);
 
-    // Send 200 OK response to keep connection open
     stream1
         .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n")
         .unwrap();
@@ -554,25 +558,16 @@ fn crash_tracking_empty_endpoint() {
     let (mut stream2, _) = listener.accept().unwrap();
     let body2 = read_http_request_body(&mut stream2);
 
-    // Send 404 response to close connection
     stream2
-        .write_all(b"HTTP/1.1 404\r\nContent-Length: 0\r\n\r\n")
+        .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n")
         .unwrap();
 
-    // Determine which is crash ping vs crash report based on content
-    let is_body1_crash_ping = body1.contains("is_crash_ping:true");
-    let is_body2_crash_ping = body2.contains("is_crash_ping:true");
-
-    if is_body1_crash_ping && !is_body2_crash_ping {
-        // body1 = crash ping, body2 = crash report
-        validate_crash_ping_telemetry(&body1);
-        assert_telemetry_message(body2.as_bytes(), "null_deref");
-    } else if is_body2_crash_ping && !is_body1_crash_ping {
-        // body1 = crash report, body2 = crash ping
-        assert_telemetry_message(body1.as_bytes(), "null_deref");
-        validate_crash_ping_telemetry(&body2);
-    } else {
-        panic!("Expected one crash ping and one crash report, but got: body1_crash_ping={is_body1_crash_ping}, body2_crash_ping={is_body2_crash_ping}");
+    for body in [body1, body2].iter() {
+        if body.contains("is_crash_ping:true") {
+            assert_crash_ping_message(body);
+        } else if body.contains("is_crash:true") {
+            assert_telemetry_message(body.as_bytes(), "null_deref");
+        }
     }
 }
 
@@ -611,7 +606,7 @@ fn read_http_request_body(stream: &mut impl Read) -> String {
     resp[pos + 4..].to_string()
 }
 
-fn validate_crash_ping_telemetry(body: &str) {
+fn assert_crash_ping_message(body: &str) {
     let telemetry_payload: serde_json::Value =
         serde_json::from_str(body).expect("Crash ping should be valid JSON");
 

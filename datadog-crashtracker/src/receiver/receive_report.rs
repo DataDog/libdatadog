@@ -238,6 +238,8 @@ pub(crate) async fn receive_report_from_stream(
                         eprintln!("Failed to send crash ping: {e}");
                     }
                 });
+            } else {
+                eprintln!("No config found, skipping crash ping");
             }
         }
         let next_line = tokio::time::timeout(remaining_timeout, lines.next_line()).await;

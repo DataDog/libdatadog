@@ -381,21 +381,15 @@ impl CrashInfoBuilder {
         Ok(self)
     }
 
-    pub fn with_uuid(&mut self, uuid: Uuid) -> anyhow::Result<&mut Self> {
-        self.uuid = uuid;
-        Ok(self)
-    }
-
     /// This method requires that the builder has a UUID, siginfo, and metadata set
     pub fn build_crash_ping(&self) -> anyhow::Result<CrashPing> {
         let sig_info = self.sig_info.clone().context("sig_info is required")?;
         let metadata = self.metadata.clone().context("metadata is required")?;
 
-        let builder = CrashPingBuilder::new(self.uuid)
+        CrashPingBuilder::new(self.uuid)
             .with_sig_info(sig_info)
-            .with_metadata(metadata);
-        let crash_ping = builder.build()?;
-        Ok(crash_ping)
+            .with_metadata(metadata)
+            .build()
     }
 
     pub fn is_ping_ready(&self) -> bool {
@@ -410,19 +404,18 @@ mod tests {
 
     #[test]
     fn test_crash_info_builder_to_crash_ping() {
-        let uuid = Uuid::parse_str("19ea82a5-2118-4fb0-b0dd-6c067a3026c6").unwrap();
         let sig_info = SigInfo::test_instance(42);
         let metadata = Metadata::test_instance(1);
 
         let mut crash_info_builder = CrashInfoBuilder::new();
-        crash_info_builder.with_uuid(uuid).unwrap();
         crash_info_builder.with_sig_info(sig_info.clone()).unwrap();
         crash_info_builder.with_metadata(metadata.clone()).unwrap();
         crash_info_builder.with_kind(ErrorKind::Panic).unwrap();
 
         let crash_ping = crash_info_builder.build_crash_ping().unwrap();
 
-        assert_eq!(crash_ping.crash_uuid(), uuid.to_string());
+        assert!(!crash_ping.crash_uuid().is_empty());
+        assert!(Uuid::parse_str(crash_ping.crash_uuid()).is_ok());
         assert_eq!(crash_ping.siginfo(), &sig_info);
         assert_eq!(crash_ping.metadata(), &metadata);
         assert!(crash_ping.message().contains("crash processing started"));
