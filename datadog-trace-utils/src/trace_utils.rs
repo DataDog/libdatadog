@@ -606,8 +606,9 @@ pub fn collect_trace_chunks<T: SpanText>(
         let mut shared_dict = SharedDict::default();
         let mut v05_traces: Vec<Vec<v05::Span>> = Vec::with_capacity(traces.len());
         for trace in traces {
-            let v05_trace = trace.iter().try_fold(
-                Vec::with_capacity(trace.len()),
+            let trace_len = trace.len();
+            let v05_trace = trace.into_iter().try_fold(
+                Vec::with_capacity(trace_len),
                 |mut acc, span| -> anyhow::Result<Vec<v05::Span>> {
                     acc.push(v05::from_span(span, &mut shared_dict)?);
                     Ok(acc)
@@ -616,7 +617,7 @@ pub fn collect_trace_chunks<T: SpanText>(
 
             v05_traces.push(v05_trace);
         }
-        Ok(TraceChunks::V05((shared_dict.dict(), v05_traces)))
+        Ok(TraceChunks::V05((shared_dict, v05_traces)))
     } else {
         Ok(TraceChunks::V04(traces))
     }
@@ -709,13 +710,15 @@ pub fn is_partial_snapshot(span: &pb::Span) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_utils::{create_test_no_alloc_span, create_test_span};
+    use crate::{
+        span::SharedDictBytes,
+        test_utils::{create_test_no_alloc_span, create_test_span},
+    };
     use ddcommon::Endpoint;
     use hyper::Request;
-    use libdd_tinybytes::BytesString;
     use serde_json::json;
 
-    fn find_index_in_dict(dict: &[BytesString], value: &str) -> Option<u32> {
+    fn find_index_in_dict(dict: &SharedDictBytes, value: &str) -> Option<u32> {
         let idx = dict.iter().position(|e| e.as_str() == value);
         idx.map(|idx| idx.try_into().unwrap())
     }
