@@ -1,7 +1,7 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use ddcommon_ffi::{wrap_with_ffi_result, wrap_with_void_ffi_result, Result, VoidResult};
+use libdd_common_ffi::{wrap_with_ffi_result, wrap_with_void_ffi_result, Result, VoidResult};
 use function_name::named;
 /// Resets all stored spans to 0.
 /// Expected to be used after a fork, to reset the spans on the child
@@ -15,7 +15,7 @@ use function_name::named;
 #[must_use]
 #[named]
 pub unsafe extern "C" fn ddog_crasht_clear_span_ids() -> VoidResult {
-    wrap_with_void_ffi_result!({ datadog_crashtracker::clear_spans()? })
+    wrap_with_void_ffi_result!({ libdd_crashtracker::clear_spans()? })
 }
 
 /// Resets all stored traces to 0.
@@ -30,7 +30,7 @@ pub unsafe extern "C" fn ddog_crasht_clear_span_ids() -> VoidResult {
 #[must_use]
 #[named]
 pub unsafe extern "C" fn ddog_crasht_clear_trace_ids() -> VoidResult {
-    wrap_with_void_ffi_result!({ datadog_crashtracker::clear_traces()? })
+    wrap_with_void_ffi_result!({ libdd_crashtracker::clear_traces()? })
 }
 
 #[no_mangle]
@@ -58,7 +58,7 @@ pub unsafe extern "C" fn ddog_crasht_clear_trace_ids() -> VoidResult {
 pub unsafe extern "C" fn ddog_crasht_insert_trace_id(id_high: u64, id_low: u64) -> Result<usize> {
     wrap_with_ffi_result!({
         let id: u128 = ((id_high as u128) << 64) | (id_low as u128);
-        datadog_crashtracker::insert_trace(id)
+        libdd_crashtracker::insert_trace(id)
     })
 }
 
@@ -87,7 +87,7 @@ pub unsafe extern "C" fn ddog_crasht_insert_trace_id(id_high: u64, id_low: u64) 
 pub unsafe extern "C" fn ddog_crasht_insert_span_id(id_high: u64, id_low: u64) -> Result<usize> {
     wrap_with_ffi_result!({
         let id: u128 = ((id_high as u128) << 64) | (id_low as u128);
-        datadog_crashtracker::insert_span(id)
+        libdd_crashtracker::insert_span(id)
     })
 }
 
@@ -121,7 +121,7 @@ pub unsafe extern "C" fn ddog_crasht_remove_span_id(
 ) -> VoidResult {
     wrap_with_void_ffi_result!({
         let id: u128 = ((id_high as u128) << 64) | (id_low as u128);
-        datadog_crashtracker::remove_span(id, idx)?
+        libdd_crashtracker::remove_span(id, idx)?
     })
 }
 
@@ -155,6 +155,6 @@ pub unsafe extern "C" fn ddog_crasht_remove_trace_id(
 ) -> VoidResult {
     wrap_with_void_ffi_result!({
         let id: u128 = ((id_high as u128) << 64) | (id_low as u128);
-        datadog_crashtracker::remove_trace(id, idx)?
+        libdd_crashtracker::remove_trace(id, idx)?
     })
 }

@@ -6,7 +6,7 @@ pub struct ProcInfo {
     pid: u32,
 }
 
-impl TryFrom<ProcInfo> for datadog_crashtracker::ProcInfo {
+impl TryFrom<ProcInfo> for libdd_crashtracker::ProcInfo {
     type Error = anyhow::Error;
     fn try_from(value: ProcInfo) -> anyhow::Result<Self> {
         Ok(Self { pid: value.pid })

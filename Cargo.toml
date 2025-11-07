@@ -5,8 +5,8 @@
 members = [
   "builder",
   "libdd-alloc",
-  "datadog-crashtracker",
-  "datadog-crashtracker-ffi",
+  "libdd-crashtracker",
+  "libdd-crashtracker-ffi",
   "datadog-ffe",
   "datadog-ipc",
   "datadog-ipc-macros",

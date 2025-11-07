@@ -1,8 +1,8 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use ddcommon::tag::Tag;
-use ddcommon_ffi::{slice::AsBytes, CharSlice};
+use libdd_common::tag::Tag;
+use libdd_common_ffi::{slice::AsBytes, CharSlice};
 
 #[repr(C)]
 pub struct Metadata<'a> {
@@ -10,10 +10,10 @@ pub struct Metadata<'a> {
     pub library_version: CharSlice<'a>,
     pub family: CharSlice<'a>,
     /// Should include "service", "environment", etc
-    pub tags: Option<&'a ddcommon_ffi::Vec<Tag>>,
+    pub tags: Option<&'a libdd_common_ffi::Vec<Tag>>,
 }
 
-impl<'a> TryFrom<Metadata<'a>> for datadog_crashtracker::Metadata {
+impl<'a> TryFrom<Metadata<'a>> for libdd_crashtracker::Metadata {
     type Error = anyhow::Error;
     fn try_from(value: Metadata<'a>) -> anyhow::Result<Self> {
         let library_name = value.library_name.try_to_string()?;

@@ -1,10 +1,10 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-pub use datadog_crashtracker::{OpTypes, StacktraceCollection};
-use ddcommon::Endpoint;
-use ddcommon_ffi::slice::{AsBytes, CharSlice};
-use ddcommon_ffi::{Error, Slice};
+pub use libdd_crashtracker::{OpTypes, StacktraceCollection};
+use libdd_common::Endpoint;
+use libdd_common_ffi::slice::{AsBytes, CharSlice};
+use libdd_common_ffi::{Error, Slice};
 use std::time::Duration;
 
 #[repr(C)]
@@ -24,7 +24,7 @@ pub struct ReceiverConfig<'a> {
     pub optional_stdout_filename: CharSlice<'a>,
 }
 
-impl<'a> TryFrom<ReceiverConfig<'a>> for datadog_crashtracker::CrashtrackerReceiverConfig {
+impl<'a> TryFrom<ReceiverConfig<'a>> for libdd_crashtracker::CrashtrackerReceiverConfig {
     type Error = anyhow::Error;
     fn try_from(value: ReceiverConfig<'a>) -> anyhow::Result<Self> {
         let args = {
@@ -70,7 +70,7 @@ pub struct Config<'a> {
     pub signals: Slice<'a, i32>,
     /// Timeout in milliseconds before the signal handler starts tearing things down to return.
     /// If 0, uses the default timeout as specified in
-    /// `datadog_crashtracker::shared::constants::DD_CRASHTRACK_DEFAULT_TIMEOUT`. Otherwise, uses
+    /// `libdd_crashtracker::shared::constants::DD_CRASHTRACK_DEFAULT_TIMEOUT`. Otherwise, uses
     /// the specified timeout value.
     /// This is given as a uint32_t, but the actual timeout needs to fit inside of an i32 (max
     /// 2^31-1). This is a limitation of the various interfaces used to guarantee the timeout.
@@ -78,7 +78,7 @@ pub struct Config<'a> {
     pub use_alt_stack: bool,
 }
 
-impl<'a> TryFrom<Config<'a>> for datadog_crashtracker::CrashtrackerConfiguration {
+impl<'a> TryFrom<Config<'a>> for libdd_crashtracker::CrashtrackerConfiguration {
     type Error = anyhow::Error;
     fn try_from(value: Config<'a>) -> anyhow::Result<Self> {
         let additional_files = {

@@ -3,9 +3,9 @@
 
 use crate::Metadata;
 use anyhow::Result;
-use ddcommon::Endpoint;
-use ddcommon_ffi::slice::AsBytes;
-use ddcommon_ffi::CharSlice;
+use libdd_common::Endpoint;
+use libdd_common_ffi::slice::AsBytes;
+use libdd_common_ffi::CharSlice;
 use std::ffi::c_void;
 use windows::core::{HRESULT, HSTRING};
 use windows::Win32::Foundation::{BOOL, E_FAIL, S_OK};
@@ -31,7 +31,7 @@ pub extern "C" fn ddog_crasht_init_windows(
     metadata: Metadata,
 ) -> bool {
     let result: Result<(), _> = (|| {
-        datadog_crashtracker::init_crashtracking_windows(
+        libdd_crashtracker::init_crashtracking_windows(
             module.try_to_string()?,
             endpoint,
             metadata.try_into()?,
@@ -102,7 +102,7 @@ pub extern "C" fn OutOfProcessExceptionEventCallback(
         let process_handle = unsafe { (*exception_information).hProcess };
         let thread_handle = unsafe { (*exception_information).hThread };
 
-        datadog_crashtracker::exception_event_callback(
+        libdd_crashtracker::exception_event_callback(
             context as usize,
             process_handle,
             thread_handle,

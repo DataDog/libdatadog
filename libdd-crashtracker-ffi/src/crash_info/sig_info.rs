@@ -1,8 +1,8 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use datadog_crashtracker::{SiCodes, SignalNames};
-use ddcommon_ffi::{slice::AsBytes, CharSlice};
+use libdd_crashtracker::{SiCodes, SignalNames};
+use libdd_common_ffi::{slice::AsBytes, CharSlice};
 
 #[repr(C)]
 pub struct SigInfo<'a> {
@@ -13,7 +13,7 @@ pub struct SigInfo<'a> {
     pub signo_human_readable: SignalNames,
 }
 
-impl<'a> TryFrom<SigInfo<'a>> for datadog_crashtracker::SigInfo {
+impl<'a> TryFrom<SigInfo<'a>> for libdd_crashtracker::SigInfo {
     type Error = anyhow::Error;
     fn try_from(value: SigInfo<'a>) -> anyhow::Result<Self> {
         Ok(Self {

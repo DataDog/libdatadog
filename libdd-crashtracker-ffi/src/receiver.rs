@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use ::function_name::named;
-use ddcommon_ffi::{slice::AsBytes, wrap_with_void_ffi_result, CharSlice, VoidResult};
+use libdd_common_ffi::{slice::AsBytes, wrap_with_void_ffi_result, CharSlice, VoidResult};
 #[no_mangle]
 #[must_use]
 #[named]
@@ -17,7 +17,7 @@ use ddcommon_ffi::{slice::AsBytes, wrap_with_void_ffi_result, CharSlice, VoidRes
 /// # Safety
 /// No safety concerns
 pub unsafe extern "C" fn ddog_crasht_receiver_entry_point_stdin() -> VoidResult {
-    wrap_with_void_ffi_result!({ datadog_crashtracker::receiver_entry_point_stdin()? })
+    wrap_with_void_ffi_result!({ libdd_crashtracker::receiver_entry_point_stdin()? })
 }
 
 #[no_mangle]
@@ -38,6 +38,6 @@ pub unsafe extern "C" fn ddog_crasht_receiver_entry_point_unix_socket(
     socket_path: CharSlice,
 ) -> VoidResult {
     wrap_with_void_ffi_result!({
-        datadog_crashtracker::receiver_entry_point_unix_socket(socket_path.try_to_utf8()?)?
+        libdd_crashtracker::receiver_entry_point_unix_socket(socket_path.try_to_utf8()?)?
     })
 }

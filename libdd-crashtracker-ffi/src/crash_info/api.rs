@@ -1,9 +1,9 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use datadog_crashtracker::CrashInfo;
-use ddcommon::Endpoint;
-use ddcommon_ffi::{wrap_with_void_ffi_result, Handle, ToInner, VoidResult};
+use libdd_crashtracker::CrashInfo;
+use libdd_common::Endpoint;
+use libdd_common_ffi::{wrap_with_void_ffi_result, Handle, ToInner, VoidResult};
 use function_name::named;
 
 /// # Safety

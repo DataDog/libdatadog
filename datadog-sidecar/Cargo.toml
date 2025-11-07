@@ -24,7 +24,7 @@ data-pipeline = { path = "../data-pipeline" }
 datadog-trace-utils = { path = "../datadog-trace-utils" }
 datadog-remote-config = { path = "../datadog-remote-config" , features = ["live-debugger"]}
 datadog-live-debugger = { path = "../datadog-live-debugger" }
-datadog-crashtracker = { path = "../datadog-crashtracker" }
+libdd-crashtracker = { path = "../libdd-crashtracker" }
 libdd-dogstatsd-client = { path = "../libdd-dogstatsd-client" }
 libdd-tinybytes = { path = "../libdd-tinybytes" }
 
@@ -89,7 +89,7 @@ sendfd = { version = "0.4", features = ["tokio"] }
 
 [target.'cfg(windows)'.dependencies]
 libdd-common-ffi = { path = "../libdd-common-ffi", default-features = false }
-datadog-crashtracker-ffi = { path = "../datadog-crashtracker-ffi", default-features = false, features = ["collector", "collector_windows"] }
+libdd-crashtracker-ffi = { path = "../libdd-crashtracker-ffi", default-features = false, features = ["collector", "collector_windows"] }
 winapi = { version = "0.3.9", features = ["securitybaseapi", "sddl"] }
 windows-sys = { version = "0.52.0", features = ["Win32_System_SystemInformation"] }
 

@@ -8,9 +8,9 @@ mod spans;
 use super::crash_info::Metadata;
 pub use additional_tags::*;
 pub use counters::*;
-use datadog_crashtracker::{CrashtrackerReceiverConfig, DEFAULT_SYMBOLS};
+use libdd_crashtracker::{CrashtrackerReceiverConfig, DEFAULT_SYMBOLS};
 pub use datatypes::*;
-use ddcommon_ffi::{wrap_with_void_ffi_result, Slice, VoidResult};
+use libdd_common_ffi::{wrap_with_void_ffi_result, Slice, VoidResult};
 use function_name::named;
 pub use spans::*;
 
@@ -28,7 +28,7 @@ pub use spans::*;
 /// # Atomicity
 ///   This function is atomic and idempotent.  Calling it multiple times is allowed.
 pub unsafe extern "C" fn ddog_crasht_disable() -> VoidResult {
-    datadog_crashtracker::disable();
+    libdd_crashtracker::disable();
     VoidResult::Ok
 }
 
@@ -44,7 +44,7 @@ pub unsafe extern "C" fn ddog_crasht_disable() -> VoidResult {
 /// # Atomicity
 ///   This function is atomic and idempotent.  Calling it multiple times is allowed.
 pub unsafe extern "C" fn ddog_crasht_enable() -> VoidResult {
-    datadog_crashtracker::enable();
+    libdd_crashtracker::enable();
     VoidResult::Ok
 }
 
@@ -74,7 +74,7 @@ pub unsafe extern "C" fn ddog_crasht_update_on_fork(
     metadata: Metadata,
 ) -> VoidResult {
     wrap_with_void_ffi_result!({
-        datadog_crashtracker::on_fork(
+        libdd_crashtracker::on_fork(
             config.try_into()?,
             receiver_config.try_into()?,
             metadata.try_into()?,
@@ -101,7 +101,7 @@ pub unsafe extern "C" fn ddog_crasht_init(
     metadata: Metadata,
 ) -> VoidResult {
     wrap_with_void_ffi_result!({
-        datadog_crashtracker::init(
+        libdd_crashtracker::init(
             config.try_into()?,
             receiver_config.try_into()?,
             metadata.try_into()?,
@@ -129,7 +129,7 @@ pub unsafe extern "C" fn ddog_crasht_reconfigure(
     metadata: Metadata,
 ) -> VoidResult {
     wrap_with_void_ffi_result!({
-        datadog_crashtracker::reconfigure(
+        libdd_crashtracker::reconfigure(
             config.try_into()?,
             receiver_config.try_into()?,
             metadata.try_into()?,
@@ -164,7 +164,7 @@ pub unsafe extern "C" fn ddog_crasht_init_without_receiver(
         );
 
         // No receiver, use an empty receiver config
-        datadog_crashtracker::init(
+        libdd_crashtracker::init(
             config.try_into()?,
             CrashtrackerReceiverConfig::default(),
             metadata.try_into()?,

@@ -3,7 +3,7 @@
 
 use super::datatypes::OpTypes;
 use ::function_name::named;
-use ddcommon_ffi::{wrap_with_void_ffi_result, VoidResult};
+use libdd_common_ffi::{wrap_with_void_ffi_result, VoidResult};
 
 /// Resets all counters to 0.
 /// Expected to be used after a fork, to reset the counters on the child
@@ -17,7 +17,7 @@ use ddcommon_ffi::{wrap_with_void_ffi_result, VoidResult};
 #[must_use]
 #[named]
 pub unsafe extern "C" fn ddog_crasht_reset_counters() -> VoidResult {
-    wrap_with_void_ffi_result!({ datadog_crashtracker::reset_counters()? })
+    wrap_with_void_ffi_result!({ libdd_crashtracker::reset_counters()? })
 }
 
 #[no_mangle]
@@ -29,7 +29,7 @@ pub unsafe extern "C" fn ddog_crasht_reset_counters() -> VoidResult {
 /// # Safety
 /// No safety concerns.
 pub unsafe extern "C" fn ddog_crasht_begin_op(op: OpTypes) -> VoidResult {
-    wrap_with_void_ffi_result!({ datadog_crashtracker::begin_op(op)? })
+    wrap_with_void_ffi_result!({ libdd_crashtracker::begin_op(op)? })
 }
 
 #[no_mangle]
@@ -41,5 +41,5 @@ pub unsafe extern "C" fn ddog_crasht_begin_op(op: OpTypes) -> VoidResult {
 /// # Safety
 /// No safety concerns.
 pub unsafe extern "C" fn ddog_crasht_end_op(op: OpTypes) -> VoidResult {
-    wrap_with_void_ffi_result!({ datadog_crashtracker::end_op(op)? })
+    wrap_with_void_ffi_result!({ libdd_crashtracker::end_op(op)? })
 }

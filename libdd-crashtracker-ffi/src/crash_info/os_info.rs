@@ -1,7 +1,7 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use ddcommon_ffi::{slice::AsBytes, CharSlice};
+use libdd_common_ffi::{slice::AsBytes, CharSlice};
 
 #[repr(C)]
 pub struct OsInfo<'a> {
@@ -11,7 +11,7 @@ pub struct OsInfo<'a> {
     pub version: CharSlice<'a>,
 }
 
-impl<'a> TryFrom<OsInfo<'a>> for datadog_crashtracker::OsInfo {
+impl<'a> TryFrom<OsInfo<'a>> for libdd_crashtracker::OsInfo {
     type Error = anyhow::Error;
     fn try_from(value: OsInfo<'a>) -> anyhow::Result<Self> {
         let unknown = || "unknown".to_string();

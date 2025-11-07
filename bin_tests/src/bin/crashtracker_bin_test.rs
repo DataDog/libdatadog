@@ -21,7 +21,7 @@ mod unix {
     use std::path::Path;
     use std::time::Duration;
 
-    use datadog_crashtracker::{
+    use libdd_crashtracker::{
         self as crashtracker, CrashtrackerConfiguration, CrashtrackerReceiverConfig, Metadata,
     };
     use libdd_common::{tag, Endpoint};

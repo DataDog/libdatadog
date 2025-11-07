@@ -9,7 +9,7 @@
 // - Parent waits for the child to exit, then calls _exit
 // - If the crashtracking data was received, then yay it worked!
 use crate::modes::behavior::Behavior;
-use datadog_crashtracker::{self as crashtracker, CrashtrackerConfiguration};
+use libdd_crashtracker::{self as crashtracker, CrashtrackerConfiguration};
 use nix::sys::wait::{waitpid, WaitStatus};
 use nix::unistd::Pid;
 use std::path::Path;

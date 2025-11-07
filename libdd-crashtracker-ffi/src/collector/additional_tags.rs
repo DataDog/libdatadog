@@ -1,7 +1,7 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use ddcommon_ffi::{
+use libdd_common_ffi::{
     wrap_with_ffi_result, wrap_with_void_ffi_result, CharSlice, Result, VoidResult,
 };
 use function_name::named;
@@ -17,7 +17,7 @@ use function_name::named;
 #[must_use]
 #[named]
 pub unsafe extern "C" fn ddog_crasht_clear_additional_tags() -> VoidResult {
-    wrap_with_void_ffi_result!({ datadog_crashtracker::clear_additional_tags()? })
+    wrap_with_void_ffi_result!({ libdd_crashtracker::clear_additional_tags()? })
 }
 
 #[no_mangle]
@@ -34,7 +34,7 @@ pub unsafe extern "C" fn ddog_crasht_clear_additional_tags() -> VoidResult {
 /// # Safety
 /// The string argument must be valid.
 pub unsafe extern "C" fn ddog_crasht_insert_additional_tag(s: CharSlice) -> Result<usize> {
-    wrap_with_ffi_result!({ datadog_crashtracker::insert_additional_tag(s.to_string()) })
+    wrap_with_ffi_result!({ libdd_crashtracker::insert_additional_tag(s.to_string()) })
 }
 
 #[no_mangle]
@@ -52,6 +52,6 @@ pub unsafe extern "C" fn ddog_crasht_insert_additional_tag(s: CharSlice) -> Resu
 /// No safety concerns.
 pub unsafe extern "C" fn ddog_crasht_remove_additional_tag(idx: usize) -> VoidResult {
     wrap_with_void_ffi_result!({
-        datadog_crashtracker::remove_additional_tag(idx)?;
+        libdd_crashtracker::remove_additional_tag(idx)?;
     })
 }

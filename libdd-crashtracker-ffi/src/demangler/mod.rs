@@ -4,7 +4,7 @@ mod datatypes;
 pub use datatypes::*;
 
 use ::function_name::named;
-use ddcommon_ffi::{slice::AsBytes, wrap_with_ffi_result, CharSlice, StringWrapperResult};
+use libdd_common_ffi::{slice::AsBytes, wrap_with_ffi_result, CharSlice, StringWrapperResult};
 use symbolic_common::Name;
 use symbolic_demangle::Demangle;
 

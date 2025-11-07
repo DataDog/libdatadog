@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use ::function_name::named;
-use datadog_crashtracker::{StackFrame, StackTrace};
-use ddcommon_ffi::{wrap_with_void_ffi_result, Error, Handle, ToInner, VoidResult};
+use libdd_crashtracker::{StackFrame, StackTrace};
+use libdd_common_ffi::{wrap_with_void_ffi_result, Error, Handle, ToInner, VoidResult};
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 //                                              FFI API                                           //

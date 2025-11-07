@@ -2,14 +2,14 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use anyhow::Context;
-use ddcommon_ffi::{slice::AsBytes, CharSlice};
+use libdd_common_ffi::{slice::AsBytes, CharSlice};
 #[repr(C)]
 pub struct Span<'a> {
     pub id: CharSlice<'a>,
     pub thread_name: CharSlice<'a>,
 }
 
-impl<'a> TryFrom<Span<'a>> for datadog_crashtracker::Span {
+impl<'a> TryFrom<Span<'a>> for libdd_crashtracker::Span {
     type Error = anyhow::Error;
     fn try_from(value: Span<'a>) -> anyhow::Result<Self> {
         Ok(Self {

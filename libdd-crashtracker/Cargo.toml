@@ -1,6 +1,5 @@
 [package]
 name = "libdd-crashtracker"
-authors = ["Daniel Schwartz-Narbonne <dsn@datadoghq.com>"]
 description = "Detects program crashes and reports them to datadog backend."
 homepage = "https://github.com/DataDog/libdatadog/tree/main/libdd-crashtracker"
 repository = "https://github.com/DataDog/libdatadog/tree/main/libdd-crashtracker"

@@ -18,7 +18,7 @@ use crate::modes::behavior::{
     set_atomic,
 };
 
-use datadog_crashtracker::CrashtrackerConfiguration;
+use libdd_crashtracker::CrashtrackerConfiguration;
 use libc;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicPtr;
