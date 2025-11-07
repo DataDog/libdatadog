@@ -8,8 +8,8 @@ mod retry_strategy;
 pub use retry_strategy::{RetryBackoffType, RetryStrategy};
 
 use bytes::Bytes;
-use ddcommon::{hyper_migration, Endpoint, HttpClient, HttpRequestBuilder};
 use hyper::Method;
+use libdd_common::{hyper_migration, Endpoint, HttpClient, HttpRequestBuilder};
 use std::{collections::HashMap, time::Duration};
 use tracing::{debug, error};
 
@@ -95,10 +95,10 @@ impl std::error::Error for RequestError {}
 /// # Example
 ///
 /// ```rust, no_run
-/// # use ddcommon::Endpoint;
-/// # use ddcommon::hyper_migration::new_default_client;
-/// # use std::collections::HashMap;
+/// # use libdd_common::Endpoint;
+/// # use libdd_common::hyper_migration::new_default_client;
 /// # use libdd_trace_utils::send_with_retry::*;
+/// # use std::collections::HashMap;
 /// # async fn run() -> SendWithRetryResult {
 /// let payload: Vec<u8> = vec![0, 1, 2, 3];
 /// let target = Endpoint {
@@ -280,7 +280,7 @@ mod tests {
 
         let strategy = RetryStrategy::new(0, 2, RetryBackoffType::Constant, None);
 
-        let client = ddcommon::hyper_migration::new_default_client();
+        let client = libdd_common::hyper_migration::new_default_client();
         tokio::spawn(async move {
             let result = send_with_retry(
                 &client,
@@ -329,7 +329,7 @@ mod tests {
 
         let strategy = RetryStrategy::new(2, 250, RetryBackoffType::Constant, None);
 
-        let client = ddcommon::hyper_migration::new_default_client();
+        let client = libdd_common::hyper_migration::new_default_client();
         tokio::spawn(async move {
             let result = send_with_retry(
                 &client,
@@ -378,7 +378,7 @@ mod tests {
             None,
         );
 
-        let client = ddcommon::hyper_migration::new_default_client();
+        let client = libdd_common::hyper_migration::new_default_client();
         tokio::spawn(async move {
             let result = send_with_retry(
                 &client,
@@ -427,7 +427,7 @@ mod tests {
 
         let strategy = RetryStrategy::new(2, 10, RetryBackoffType::Constant, None);
 
-        let client = ddcommon::hyper_migration::new_default_client();
+        let client = libdd_common::hyper_migration::new_default_client();
         tokio::spawn(async move {
             let result = send_with_retry(
                 &client,

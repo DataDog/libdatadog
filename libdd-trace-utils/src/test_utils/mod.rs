@@ -19,11 +19,11 @@ use crate::span::SpanBytes;
 use crate::span::{v05, SharedDictBytes};
 use crate::trace_utils::TracerHeaderTags;
 use crate::tracer_payload::TracerPayloadCollection;
-use datadog_trace_protobuf::pb;
-use ddcommon::Endpoint;
 use httpmock::Mock;
+use libdd_common::Endpoint;
+use libdd_tinybytes::BytesString;
+use libdd_trace_protobuf::pb;
 use serde_json::json;
-use tinybytes::BytesString;
 use tokio::time::sleep;
 
 pub fn create_test_no_alloc_span(
@@ -453,7 +453,7 @@ pub async fn poll_for_mock_hit(
 /// # Examples
 ///
 /// ```
-/// use ddcommon::Endpoint;
+/// use libdd_common::Endpoint;
 /// use libdd_trace_utils::test_utils::create_send_data;
 ///
 /// let size = 512;

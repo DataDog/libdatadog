@@ -3,13 +3,14 @@
 
 #[cfg(test)]
 mod tracing_integration_tests {
-    #[cfg(target_os = "linux")]
-    use ddcommon::connector::uds::socket_path_to_uri;
-    use ddcommon::hyper_migration::new_default_client;
-    use ddcommon::{hyper_migration, Endpoint};
     use http_body_util::BodyExt;
     #[cfg(target_os = "linux")]
     use hyper::Uri;
+    #[cfg(target_os = "linux")]
+    use libdd_common::connector::uds::socket_path_to_uri;
+    use libdd_common::hyper_migration::new_default_client;
+    use libdd_common::{hyper_migration, Endpoint};
+    use libdd_tinybytes::{Bytes, BytesString};
     use libdd_trace_utils::send_data::SendData;
     use libdd_trace_utils::test_utils::datadog_test_agent::DatadogTestAgent;
     use libdd_trace_utils::test_utils::{create_test_json_span, create_test_no_alloc_span};
@@ -21,7 +22,6 @@ mod tracing_integration_tests {
     use std::fs::Permissions;
     #[cfg(target_os = "linux")]
     use std::os::unix::fs::PermissionsExt;
-    use tinybytes::{Bytes, BytesString};
 
     fn get_v04_trace_snapshot_test_payload(name_prefix: &str) -> Bytes {
         let mut span_1 = create_test_json_span(1234, 12342, 12341, 1, false);
@@ -77,7 +77,7 @@ mod tracing_integration_tests {
 
         let encoded_data = rmp_serde::to_vec_named(&vec![vec![span_1, span_2, root_span]]).unwrap();
 
-        tinybytes::Bytes::from(encoded_data)
+        libdd_tinybytes::Bytes::from(encoded_data)
     }
 
     #[cfg_attr(miri, ignore)]
@@ -196,7 +196,7 @@ mod tracing_integration_tests {
 
         let encoded_data = rmp_serde::to_vec_named(&vec![vec![root_span]]).unwrap();
 
-        let data = tinybytes::Bytes::from(encoded_data);
+        let data = libdd_tinybytes::Bytes::from(encoded_data);
 
         let (payload_collection, _) = decode_to_trace_chunks(data, TraceEncoding::V04)
             .expect("unable to convert TracerPayloadParams to TracerPayloadCollection");
@@ -236,7 +236,7 @@ mod tracing_integration_tests {
             Endpoint::from_url(test_agent.get_uri_for_endpoint("v0.4/traces", None).await);
 
         let empty_data = vec![0x90];
-        let data = tinybytes::Bytes::from(empty_data);
+        let data = libdd_tinybytes::Bytes::from(empty_data);
 
         let (payload_collection, _) = decode_to_trace_chunks(data, TraceEncoding::V04)
             .expect("unable to convert TracerPayloadParams to TracerPayloadCollection");
