@@ -26,13 +26,6 @@ The crashtracker uses a two-process architecture:
 
 This ensures crash reports are sent even if the main process is corrupted.
 
-## Modules
-
-- `crash_info`: Crash information structures
-- `collector`: In-process crash detection and collection
-- `receiver`: Out-of-process crash reporting
-- `telemetry`: Telemetry integration for crash ping
-
 ## Features Flags
 
 - `collector` (default): Enable in-process crash collection
