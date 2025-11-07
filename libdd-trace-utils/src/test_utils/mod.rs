@@ -34,7 +34,7 @@ pub fn create_test_no_alloc_span(
     is_top_level: bool,
 ) -> SpanBytes {
     let mut span = SpanBytes {
-        trace_id,
+        trace_id: trace_id as u128,
         span_id,
         service: BytesString::from_slice("test-service".as_ref()).unwrap(),
         name: BytesString::from_slice("test_name".as_ref()).unwrap(),
@@ -234,18 +234,17 @@ pub fn create_test_v05_span(
 ) -> v05::Span {
     let mut meta = HashMap::from([
         (
-            dict.get_or_insert(&BytesString::from("service")).unwrap(),
-            dict.get_or_insert(&BytesString::from("test-service"))
+            dict.get_or_insert(BytesString::from("service")).unwrap(),
+            dict.get_or_insert(BytesString::from("test-service"))
                 .unwrap(),
         ),
         (
-            dict.get_or_insert(&BytesString::from("env")).unwrap(),
-            dict.get_or_insert(&BytesString::from("test-env")).unwrap(),
+            dict.get_or_insert(BytesString::from("env")).unwrap(),
+            dict.get_or_insert(BytesString::from("test-env")).unwrap(),
         ),
         (
-            dict.get_or_insert(&BytesString::from("runtime-id"))
-                .unwrap(),
-            dict.get_or_insert(&BytesString::from("test-runtime-id-value"))
+            dict.get_or_insert(BytesString::from("runtime-id")).unwrap(),
+            dict.get_or_insert(BytesString::from("test-runtime-id-value"))
                 .unwrap(),
         ),
     ]);
@@ -253,31 +252,30 @@ pub fn create_test_v05_span(
     if is_top_level {
         meta.extend([
             (
-                dict.get_or_insert(&BytesString::from("functionname"))
+                dict.get_or_insert(BytesString::from("functionname"))
                     .unwrap(),
-                dict.get_or_insert(&BytesString::from("dummy_function_name"))
-                    .unwrap(),
-            ),
-            (
-                dict.get_or_insert(&BytesString::from("_dd.origin"))
-                    .unwrap(),
-                dict.get_or_insert(&BytesString::from("cloudfunction"))
+                dict.get_or_insert(BytesString::from("dummy_function_name"))
                     .unwrap(),
             ),
             (
-                dict.get_or_insert(&BytesString::from("origin")).unwrap(),
-                dict.get_or_insert(&BytesString::from("cloudfunction"))
+                dict.get_or_insert(BytesString::from("_dd.origin")).unwrap(),
+                dict.get_or_insert(BytesString::from("cloudfunction"))
+                    .unwrap(),
+            ),
+            (
+                dict.get_or_insert(BytesString::from("origin")).unwrap(),
+                dict.get_or_insert(BytesString::from("cloudfunction"))
                     .unwrap(),
             ),
         ]);
     }
     v05::Span {
         service: dict
-            .get_or_insert(&BytesString::from("test-service"))
+            .get_or_insert(BytesString::from("test-service"))
             .unwrap(),
-        name: dict.get_or_insert(&BytesString::from("test_name")).unwrap(),
+        name: dict.get_or_insert(BytesString::from("test_name")).unwrap(),
         resource: dict
-            .get_or_insert(&BytesString::from("test-resource"))
+            .get_or_insert(BytesString::from("test-resource"))
             .unwrap(),
         trace_id,
         span_id,
@@ -289,15 +287,15 @@ pub fn create_test_v05_span(
         metrics: if let Some(metrics) = metrics {
             metrics
                 .into_iter()
-                .map(|(k, v)| (dict.get_or_insert(&BytesString::from(k)).unwrap(), v))
+                .map(|(k, v)| (dict.get_or_insert(BytesString::from(k)).unwrap(), v))
                 .collect()
         } else {
             HashMap::new()
         },
         r#type: if is_top_level {
-            dict.get_or_insert(&BytesString::from("web")).unwrap()
+            dict.get_or_insert(BytesString::from("web")).unwrap()
         } else {
-            dict.get_or_insert(&BytesString::from("")).unwrap()
+            dict.get_or_insert(BytesString::from("")).unwrap()
         },
     }
 }

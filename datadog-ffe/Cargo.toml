@@ -12,7 +12,7 @@ bench = false
 [dependencies]
 faststr = { version = "0.2.23", default-features = false, features = ["serde"] }
 serde = { version = "1.0", default-features = false, features = ["derive", "rc"] }
-serde_json = { version = "1.0", default-features = false, features = ["std"] }
+serde_json = { version = "1.0", default-features = false, features = ["std", "raw_value"] }
 chrono = { version = "0.4.38", default-features = false, features = ["now", "serde"] }
 derive_more = { version = "2.0.0", default-features = false, features = ["from", "into"] }
 log = { version = "0.4.21", default-features = false, features = ["kv", "kv_serde"] }
