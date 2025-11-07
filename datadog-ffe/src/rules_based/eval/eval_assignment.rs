@@ -5,11 +5,8 @@ use chrono::{DateTime, Utc};
 
 use crate::rules_based::{
     error::EvaluationError,
-    ufc::{
-        Allocation, Assignment, AssignmentReason, CompiledFlagsConfig, Flag, Shard, Split,
-        VariationType,
-    },
-    Configuration, EvaluationContext, Timestamp,
+    ufc::{Allocation, Assignment, AssignmentReason, CompiledFlagsConfig, Flag, Shard, Split},
+    Configuration, EvaluationContext, ExpectedFlagType, Timestamp,
 };
 
 /// Evaluate the specified feature flag for the given subject and return assigned variation and
@@ -18,7 +15,7 @@ pub fn get_assignment(
     configuration: Option<&Configuration>,
     flag_key: &str,
     subject: &EvaluationContext,
-    expected_type: Option<VariationType>,
+    expected_type: ExpectedFlagType,
     now: DateTime<Utc>,
 ) -> Result<Assignment, EvaluationError> {
     let Some(config) = configuration else {
@@ -37,7 +34,7 @@ impl Configuration {
         &self,
         flag_key: &str,
         context: &EvaluationContext,
-        expected_type: Option<VariationType>,
+        expected_type: ExpectedFlagType,
         now: DateTime<Utc>,
     ) -> Result<Assignment, EvaluationError> {
         let result = self
@@ -72,16 +69,10 @@ impl CompiledFlagsConfig {
         &self,
         flag_key: &str,
         subject: &EvaluationContext,
-        expected_type: Option<VariationType>,
+        expected_type: ExpectedFlagType,
         now: DateTime<Utc>,
     ) -> Result<Assignment, EvaluationError> {
-        let flag = self.get_flag(flag_key)?;
-
-        if let Some(ty) = expected_type {
-            flag.verify_type(ty)?;
-        }
-
-        flag.eval(subject, now)
+        self.get_flag(flag_key)?.eval(subject, expected_type, now)
     }
 
     fn get_flag(&self, flag_key: &str) -> Result<&Flag, EvaluationError> {
@@ -94,22 +85,19 @@ impl CompiledFlagsConfig {
 }
 
 impl Flag {
-    fn verify_type(&self, ty: VariationType) -> Result<(), EvaluationError> {
-        if self.variation_type == ty {
-            Ok(())
-        } else {
-            Err(EvaluationError::TypeMismatch {
-                expected: ty,
-                found: self.variation_type,
-            })
-        }
-    }
-
     fn eval(
         &self,
         subject: &EvaluationContext,
+        expected_type: ExpectedFlagType,
         now: DateTime<Utc>,
     ) -> Result<Assignment, EvaluationError> {
+        if !expected_type.is_compatible(self.variation_type.into()) {
+            return Err(EvaluationError::TypeMismatch {
+                expected: expected_type,
+                found: self.variation_type.into(),
+            });
+        }
+
         let Some((allocation, (split, reason))) = self.allocations.iter().find_map(|allocation| {
             let result = allocation.get_matching_split(subject, now);
             result
@@ -212,15 +200,15 @@ mod tests {
 
     use crate::rules_based::{
         eval::get_assignment,
-        ufc::{AssignmentValue, UniversalFlagConfig, VariationType},
-        Attribute, Configuration, EvaluationContext, Str,
+        ufc::{AssignmentValue, UniversalFlagConfig},
+        Attribute, Configuration, EvaluationContext, FlagType, Str,
     };
 
     #[derive(Debug, Serialize, Deserialize)]
     #[serde(rename_all = "camelCase")]
     struct TestCase {
         flag: String,
-        variation_type: VariationType,
+        variation_type: FlagType,
         default_value: serde_json::Value,
         targeting_key: Str,
         attributes: Arc<HashMap<Str, Attribute>>,
@@ -251,9 +239,11 @@ mod tests {
             let test_cases: Vec<TestCase> = serde_json::from_reader(f).unwrap();
 
             for test_case in test_cases {
-                let default_assignment =
-                    AssignmentValue::from_wire(test_case.variation_type, test_case.default_value)
-                        .unwrap();
+                let default_assignment = AssignmentValue::from_wire(
+                    test_case.variation_type.into(),
+                    test_case.default_value,
+                )
+                .unwrap();
 
                 print!("test subject {:?} ... ", test_case.targeting_key);
                 let subject = EvaluationContext::new(test_case.targeting_key, test_case.attributes);
@@ -261,7 +251,7 @@ mod tests {
                     Some(&config),
                     &test_case.flag,
                     &subject,
-                    Some(test_case.variation_type),
+                    test_case.variation_type.into(),
                     now,
                 );
 
@@ -269,9 +259,11 @@ mod tests {
                     .as_ref()
                     .map(|assignment| &assignment.value)
                     .unwrap_or(&default_assignment);
-                let expected_assignment =
-                    AssignmentValue::from_wire(test_case.variation_type, test_case.result.value)
-                        .unwrap();
+                let expected_assignment = AssignmentValue::from_wire(
+                    test_case.variation_type.into(),
+                    test_case.result.value,
+                )
+                .unwrap();
 
                 assert_eq!(result_assingment, &expected_assignment);
                 println!("ok");
