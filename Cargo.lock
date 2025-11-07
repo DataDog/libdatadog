@@ -1300,7 +1300,6 @@ dependencies = [
  "bytes",
  "clap",
  "criterion",
- "datadog-trace-stats",
  "either",
  "http",
  "http-body-util",
@@ -1314,6 +1313,7 @@ dependencies = [
  "libdd-telemetry",
  "libdd-tinybytes",
  "libdd-trace-protobuf",
+ "libdd-trace-stats",
  "libdd-trace-utils",
  "rand 0.8.5",
  "regex",
@@ -1694,18 +1694,6 @@ dependencies = [
  "serde",
  "serde_json",
  "url",
-]
-
-[[package]]
-name = "datadog-trace-stats"
-version = "23.0.0"
-dependencies = [
- "criterion",
- "hashbrown 0.15.1",
- "libdd-ddsketch",
- "libdd-trace-protobuf",
- "libdd-trace-utils",
- "rand 0.8.5",
 ]
 
 [[package]]
@@ -3115,6 +3103,18 @@ dependencies = [
  "serde_bytes",
  "serde_json",
  "tokio",
+]
+
+[[package]]
+name = "libdd-trace-stats"
+version = "1.0.0"
+dependencies = [
+ "criterion",
+ "hashbrown 0.15.1",
+ "libdd-ddsketch",
+ "libdd-trace-protobuf",
+ "libdd-trace-utils",
+ "rand 0.8.5",
 ]
 
 [[package]]
