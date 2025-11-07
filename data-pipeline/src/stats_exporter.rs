@@ -12,10 +12,10 @@ use std::{
 };
 
 use crate::trace_exporter::TracerMetadata;
-use datadog_trace_stats::span_concentrator::SpanConcentrator;
 use hyper;
 use libdd_common::{worker::Worker, Endpoint, HttpClient};
 use libdd_trace_protobuf::pb;
+use libdd_trace_stats::span_concentrator::SpanConcentrator;
 use libdd_trace_utils::send_with_retry::{send_with_retry, RetryStrategy};
 use tokio::select;
 use tokio_util::sync::CancellationToken;

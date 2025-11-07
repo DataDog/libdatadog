@@ -26,7 +26,7 @@ members = [
   "datadog-trace-obfuscation",
   "libdd-trace-protobuf",
   "libdd-trace-utils",
-  "datadog-trace-stats",
+  "libdd-trace-stats",
   "datadog-tracer-flare",
   "libdd-common",
   "libdd-common-ffi",
