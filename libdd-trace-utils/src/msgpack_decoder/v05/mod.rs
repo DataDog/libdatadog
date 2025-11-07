@@ -35,10 +35,10 @@ const SPAN_ELEM_COUNT: u32 = 12;
 /// # Examples
 ///
 /// ```
+/// use libdd_tinybytes;
 /// use libdd_trace_utils::msgpack_decoder::v05::from_bytes;
 /// use rmp_serde::to_vec;
 /// use std::collections::HashMap;
-/// use tinybytes;
 ///
 /// let data = (
 ///     vec!["".to_string()],
@@ -58,7 +58,7 @@ const SPAN_ELEM_COUNT: u32 = 12;
 ///     )]],
 /// );
 /// let encoded_data = to_vec(&data).unwrap();
-/// let encoded_data_as_tinybytes = tinybytes::Bytes::from(encoded_data);
+/// let encoded_data_as_tinybytes = libdd_tinybytes::Bytes::from(encoded_data);
 /// let (decoded_traces, _payload_size) =
 ///     from_bytes(encoded_data_as_tinybytes).expect("Decoding failed");
 ///
@@ -67,7 +67,9 @@ const SPAN_ELEM_COUNT: u32 = 12;
 /// let decoded_span = &decoded_traces[0][0];
 /// assert_eq!("", decoded_span.name.as_str());
 /// ```
-pub fn from_bytes(data: tinybytes::Bytes) -> Result<(Vec<Vec<SpanBytes>>, usize), DecodeError> {
+pub fn from_bytes(
+    data: libdd_tinybytes::Bytes,
+) -> Result<(Vec<Vec<SpanBytes>>, usize), DecodeError> {
     let (traces_ref, size) = from_slice(data.as_ref())?;
 
     #[allow(clippy::unwrap_used)]
@@ -129,7 +131,7 @@ pub fn from_bytes(data: tinybytes::Bytes) -> Result<(Vec<Vec<SpanBytes>>, usize)
 ///     )]],
 /// );
 /// let encoded_data = to_vec(&data).unwrap();
-/// let encoded_data_as_tinybytes = tinybytes::Bytes::from(encoded_data);
+/// let encoded_data_as_tinybytes = libdd_tinybytes::Bytes::from(encoded_data);
 /// let (decoded_traces, _payload_size) =
 ///     from_slice(&encoded_data_as_tinybytes).expect("Decoding failed");
 ///
@@ -306,7 +308,7 @@ mod tests {
         // 3 empty array.
         let empty_three: [u8; 3] = [0x93, 0x90, 0x90];
         let payload = unsafe { std::mem::transmute::<&'_ [u8], &'static [u8]>(&empty_three) };
-        let bytes = tinybytes::Bytes::from_static(payload);
+        let bytes = libdd_tinybytes::Bytes::from_static(payload);
         let result = from_bytes(bytes);
 
         assert!(result.is_err());
@@ -315,7 +317,7 @@ mod tests {
         // 1 empty array
         let empty_one: [u8; 2] = [0x91, 0x90];
         let payload = unsafe { std::mem::transmute::<&'_ [u8], &'static [u8]>(&empty_one) };
-        let bytes = tinybytes::Bytes::from_static(payload);
+        let bytes = libdd_tinybytes::Bytes::from_static(payload);
         let result = from_bytes(bytes);
 
         assert!(result.is_err());
@@ -354,7 +356,7 @@ mod tests {
             )]],
         );
         let msgpack = rmp_serde::to_vec(&data).unwrap();
-        let (traces, _) = from_bytes(tinybytes::Bytes::from(msgpack)).unwrap();
+        let (traces, _) = from_bytes(libdd_tinybytes::Bytes::from(msgpack)).unwrap();
 
         let span = &traces[0][0];
         assert_eq!(span.service.as_str(), "my-service");
@@ -413,7 +415,7 @@ mod tests {
         );
         let payload = rmp_serde::to_vec(&data).unwrap();
         let payload = unsafe { std::mem::transmute::<&'_ [u8], &'static [u8]>(&payload) };
-        let result = from_bytes(tinybytes::Bytes::from_static(payload));
+        let result = from_bytes(libdd_tinybytes::Bytes::from_static(payload));
 
         assert!(result.is_err());
 
@@ -453,7 +455,7 @@ mod tests {
 
         let payload = rmp_serde::to_vec(&data).unwrap();
         let payload = unsafe { std::mem::transmute::<&'_ [u8], &'static [u8]>(&payload) };
-        let result = from_bytes(tinybytes::Bytes::from_static(payload));
+        let result = from_bytes(libdd_tinybytes::Bytes::from_static(payload));
 
         assert!(result.is_err());
 

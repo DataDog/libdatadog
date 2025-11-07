@@ -4,10 +4,10 @@
 use crate::span::{v05, Span, SpanBytes, SpanText};
 use crate::trace_utils::collect_trace_chunks;
 use crate::{msgpack_decoder, trace_utils::cmp_send_data_payloads};
-use datadog_trace_protobuf::pb;
+use libdd_tinybytes::{self, BytesString};
+use libdd_trace_protobuf::pb;
 use std::cmp::Ordering;
 use std::iter::Iterator;
-use tinybytes::{self, BytesString};
 
 pub type TracerPayloadV04 = Vec<SpanBytes>;
 pub type TracerPayloadV05 = Vec<v05::Span>;
@@ -56,7 +56,7 @@ pub enum TracerPayloadCollection {
     /// Collection of TraceChunkSpan.
     V04(Vec<Vec<SpanBytes>>),
     /// Collection of TraceChunkSpan with de-duplicated strings.
-    V05((Vec<tinybytes::BytesString>, Vec<Vec<v05::Span>>)),
+    V05((Vec<libdd_tinybytes::BytesString>, Vec<Vec<v05::Span>>)),
 }
 
 impl TracerPayloadCollection {
@@ -69,7 +69,7 @@ impl TracerPayloadCollection {
     /// # Examples:
     ///
     /// ```rust
-    /// use datadog_trace_protobuf::pb::TracerPayload;
+    /// use libdd_trace_protobuf::pb::TracerPayload;
     /// use libdd_trace_utils::tracer_payload::TracerPayloadCollection;
     /// let mut col1 = TracerPayloadCollection::V07(vec![TracerPayload::default()]);
     /// let mut col2 = TracerPayloadCollection::V07(vec![TracerPayload::default()]);
@@ -98,7 +98,7 @@ impl TracerPayloadCollection {
     /// # Examples:
     ///
     /// ```rust
-    /// use datadog_trace_protobuf::pb::TracerPayload;
+    /// use libdd_trace_protobuf::pb::TracerPayload;
     /// use libdd_trace_utils::tracer_payload::TracerPayloadCollection;
     /// let mut col1 =
     ///     TracerPayloadCollection::V07(vec![TracerPayload::default(), TracerPayload::default()]);
@@ -127,7 +127,7 @@ impl TracerPayloadCollection {
     /// # Examples:
     ///
     /// ```rust
-    /// use datadog_trace_protobuf::pb::TracerPayload;
+    /// use libdd_trace_protobuf::pb::TracerPayload;
     /// use libdd_trace_utils::tracer_payload::TracerPayloadCollection;
     /// let col1 = TracerPayloadCollection::V07(vec![TracerPayload::default()]);
     /// col1.size();
@@ -154,7 +154,7 @@ impl TracerPayloadCollection {
 /// Implementing `TraceChunkProcessor` to add a custom tag to each span in a chunk:
 ///
 /// ```rust
-/// use datadog_trace_protobuf::pb::{Span, TraceChunk};
+/// use libdd_trace_protobuf::pb::{Span, TraceChunk};
 /// use libdd_trace_utils::tracer_payload::TraceChunkProcessor;
 /// use std::collections::HashMap;
 ///
@@ -203,7 +203,7 @@ impl TraceChunkProcessor for DefaultTraceChunkProcessor {
 /// # Examples
 ///
 /// ```rust
-/// use datadog_trace_protobuf::pb;
+/// use libdd_trace_protobuf::pb;
 /// use libdd_trace_utils::trace_utils::TracerHeaderTags;
 /// use libdd_trace_utils::tracer_payload::{decode_to_trace_chunks, TraceEncoding};
 /// use std::convert::TryInto;
@@ -220,7 +220,7 @@ impl TraceChunkProcessor for DefaultTraceChunkProcessor {
 /// }
 /// ```
 pub fn decode_to_trace_chunks(
-    data: tinybytes::Bytes,
+    data: libdd_tinybytes::Bytes,
     encoding_type: TraceEncoding,
 ) -> Result<(TraceChunks<BytesString>, usize), anyhow::Error> {
     let (data, size) = match encoding_type {
@@ -240,10 +240,10 @@ mod tests {
     use super::*;
     use crate::span::SpanBytes;
     use crate::test_utils::create_test_no_alloc_span;
-    use datadog_trace_protobuf::pb;
+    use libdd_tinybytes::BytesString;
+    use libdd_trace_protobuf::pb;
     use serde_json::json;
     use std::collections::HashMap;
-    use tinybytes::BytesString;
 
     fn create_dummy_collection_v07() -> TracerPayloadCollection {
         TracerPayloadCollection::V07(vec![pb::TracerPayload {
@@ -394,7 +394,7 @@ mod tests {
 
         let data = rmp_serde::to_vec(&vec![span_data1, span_data2])
             .expect("Failed to serialize test span.");
-        let data = tinybytes::Bytes::from(data);
+        let data = libdd_tinybytes::Bytes::from(data);
 
         let result = decode_to_trace_chunks(data, TraceEncoding::V04);
 
@@ -415,7 +415,7 @@ mod tests {
     #[test]
     fn test_try_into_empty() {
         let empty_data = vec![0x90];
-        let data = tinybytes::Bytes::from(empty_data);
+        let data = libdd_tinybytes::Bytes::from(empty_data);
 
         let result = decode_to_trace_chunks(data, TraceEncoding::V04);
 
@@ -430,7 +430,7 @@ mod tests {
         let dummy_trace = create_trace();
         let expected = vec![dummy_trace.clone()];
         let payload = rmp_serde::to_vec_named(&expected).unwrap();
-        let payload = tinybytes::Bytes::from(payload);
+        let payload = libdd_tinybytes::Bytes::from(payload);
 
         let result = decode_to_trace_chunks(payload, TraceEncoding::V04);
 

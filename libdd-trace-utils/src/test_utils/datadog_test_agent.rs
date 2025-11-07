@@ -3,10 +3,10 @@
 
 use anyhow::Context;
 use cargo_metadata::MetadataCommand;
-use ddcommon::hyper_migration::{self, Body};
 use http_body_util::BodyExt;
 use hyper::body::Incoming;
 use hyper::{Request, Response, Uri};
+use libdd_common::hyper_migration::{self, Body};
 use std::collections::HashMap;
 use std::path::Path;
 use std::str::FromStr;
