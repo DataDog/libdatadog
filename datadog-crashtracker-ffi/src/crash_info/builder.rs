@@ -398,7 +398,7 @@ pub unsafe extern "C" fn ddog_crasht_CrashInfoBuilder_with_trace_id(
 }
 
 /// # Safety
-/// The `crash_info` can be null, but if non-null it must point to a Builder made by this module,
+/// The `builder` can be null, but if non-null it must point to a Builder made by this module,
 /// which has not previously been dropped.
 /// The CharSlice must be valid.
 #[no_mangle]

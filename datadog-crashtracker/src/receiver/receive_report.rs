@@ -223,15 +223,11 @@ pub(crate) async fn receive_report_from_stream(
     loop {
         // We need to wait until at least we receive config, metadata, and siginfo before sending
         // the crash ping
-        if !crash_ping_sent {
-            if let (Some(config), Some(_metadata), Some(_sig_info)) = (
-                config.as_ref(),
-                builder.metadata.as_ref(),
-                builder.sig_info.as_ref(),
-            ) {
+        if !crash_ping_sent && builder.is_ping_ready() {
+            if let Some(ref config_ref) = config {
+                let config_clone = config_ref.clone();
                 crash_ping_sent = true;
                 // Spawn crash ping sending in a separate task
-                let config_clone = config.clone();
                 let crash_ping = builder.build_crash_ping()?;
 
                 tokio::task::spawn(async move {

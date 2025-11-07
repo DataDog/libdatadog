@@ -61,14 +61,6 @@ pub struct CrashInfo {
 }
 
 impl CrashInfo {
-    pub fn to_crash_ping(&self) -> anyhow::Result<CrashPing> {
-        CrashPingBuilder::new()
-            .with_crash_uuid(self.uuid.clone())
-            .with_sig_info(self.sig_info.clone().context("sig_info is required")?)
-            .with_metadata(self.metadata.clone())
-            .build()
-    }
-
     pub fn current_schema_version() -> String {
         "1.4".to_string()
     }

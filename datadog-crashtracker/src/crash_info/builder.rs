@@ -109,7 +109,7 @@ pub struct CrashInfoBuilder {
     pub span_ids: Option<Vec<Span>>,
     pub timestamp: Option<DateTime<Utc>>,
     pub trace_ids: Option<Vec<Span>>,
-    pub uuid: Option<String>,
+    pub uuid: Uuid,
 }
 
 impl Default for CrashInfoBuilder {
@@ -129,8 +129,7 @@ impl Default for CrashInfoBuilder {
             span_ids: None,
             timestamp: None,
             trace_ids: None,
-            // Random UUID each time
-            uuid: Some(Uuid::new_v4().to_string()),
+            uuid: Uuid::new_v4(),
         }
     }
 }
@@ -152,7 +151,7 @@ impl CrashInfoBuilder {
         let span_ids = self.span_ids.unwrap_or_default();
         let timestamp = self.timestamp.unwrap_or_else(Utc::now).to_string();
         let trace_ids = self.trace_ids.unwrap_or_default();
-        let uuid = self.uuid.unwrap_or_else(|| Uuid::new_v4().to_string());
+        let uuid = self.uuid;
         Ok(CrashInfo {
             counters,
             data_schema_version,
@@ -169,7 +168,7 @@ impl CrashInfoBuilder {
             span_ids,
             timestamp,
             trace_ids,
-            uuid,
+            uuid: uuid.to_string(),
         })
     }
 
@@ -382,23 +381,25 @@ impl CrashInfoBuilder {
         Ok(self)
     }
 
-    pub fn with_uuid(&mut self, uuid: String) -> anyhow::Result<&mut Self> {
-        self.uuid = Some(uuid);
+    pub fn with_uuid(&mut self, uuid: Uuid) -> anyhow::Result<&mut Self> {
+        self.uuid = uuid;
         Ok(self)
     }
 
     /// This method requires that the builder has a UUID, siginfo, and metadata set
     pub fn build_crash_ping(&self) -> anyhow::Result<CrashPing> {
-        let uuid = self.uuid.clone().context("uuid is required")?;
         let sig_info = self.sig_info.clone().context("sig_info is required")?;
         let metadata = self.metadata.clone().context("metadata is required")?;
 
-        let builder = CrashPingBuilder::new()
-            .with_crash_uuid(uuid)
+        let builder = CrashPingBuilder::new(self.uuid)
             .with_sig_info(sig_info)
             .with_metadata(metadata);
         let crash_ping = builder.build()?;
         Ok(crash_ping)
+    }
+
+    pub fn is_ping_ready(&self) -> bool {
+        self.sig_info.is_some() && self.metadata.is_some()
     }
 }
 
@@ -409,19 +410,19 @@ mod tests {
 
     #[test]
     fn test_crash_info_builder_to_crash_ping() {
-        let uuid = "test-builder-uuid-12345";
+        let uuid = Uuid::parse_str("19ea82a5-2118-4fb0-b0dd-6c067a3026c6").unwrap();
         let sig_info = SigInfo::test_instance(42);
         let metadata = Metadata::test_instance(1);
 
         let mut crash_info_builder = CrashInfoBuilder::new();
-        crash_info_builder.with_uuid(uuid.to_string()).unwrap();
+        crash_info_builder.with_uuid(uuid).unwrap();
         crash_info_builder.with_sig_info(sig_info.clone()).unwrap();
         crash_info_builder.with_metadata(metadata.clone()).unwrap();
         crash_info_builder.with_kind(ErrorKind::Panic).unwrap();
 
         let crash_ping = crash_info_builder.build_crash_ping().unwrap();
 
-        assert_eq!(crash_ping.crash_uuid(), uuid);
+        assert_eq!(crash_ping.crash_uuid(), uuid.to_string());
         assert_eq!(crash_ping.siginfo(), &sig_info);
         assert_eq!(crash_ping.metadata(), &metadata);
         assert!(crash_ping.message().contains("crash processing started"));
