@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::health_metrics::HealthMetric;
-use ddcommon::tag::Tag;
 use either::Either;
+use libdd_common::tag::Tag;
 use libdd_dogstatsd_client::{Client, DogStatsDAction};
 use tracing::debug;
 
@@ -68,7 +68,7 @@ impl<'a> MetricsEmitter<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ddcommon::tag;
+    use libdd_common::tag;
 
     #[test]
     fn test_metrics_emitter_new() {

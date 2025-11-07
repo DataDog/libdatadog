@@ -4,8 +4,8 @@
 // imports for structs defined in this file
 use crate::config;
 use datadog_remote_config::{RemoteConfigCapabilities, RemoteConfigProduct};
-use ddcommon::tag::Tag;
-use ddcommon::Endpoint;
+use libdd_common::tag::Tag;
+use libdd_common::Endpoint;
 use libdd_telemetry::metrics::MetricContext;
 use libdd_telemetry::worker::TelemetryActions;
 use serde::{Deserialize, Serialize};

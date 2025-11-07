@@ -4,9 +4,9 @@
 use anyhow::Context;
 use bytes::Bytes;
 pub use chrono::{DateTime, Utc};
-pub use ddcommon::tag::Tag;
 pub use hyper::Uri;
 use hyper_multipart_rfc7578::client::multipart;
+pub use libdd_common::tag::Tag;
 use serde_json::json;
 use std::borrow::Cow;
 use std::fmt::Debug;
@@ -15,7 +15,7 @@ use std::{future, iter};
 use tokio::runtime::Runtime;
 use tokio_util::sync::CancellationToken;
 
-use ddcommon::{
+use libdd_common::{
     azure_app_services, connector, hyper_migration, tag, Endpoint, HttpClient, HttpResponse,
 };
 

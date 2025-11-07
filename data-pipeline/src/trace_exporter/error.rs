@@ -3,9 +3,9 @@
 
 use crate::telemetry::error::TelemetryError;
 use crate::trace_exporter::msgpack_decoder::decode::error::DecodeError;
-use ddcommon::hyper_migration;
 use hyper::http::StatusCode;
 use hyper::Error as HyperError;
+use libdd_common::hyper_migration;
 use rmp_serde::encode::Error as EncodeError;
 use std::error::Error;
 use std::fmt::{Debug, Display};

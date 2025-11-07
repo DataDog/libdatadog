@@ -1,11 +1,11 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use ddcommon::tag::Tag;
-use ddcommon_ffi as ffi;
 use ffi::slice::AsBytes;
 use ffi::MaybeError;
 use function_name::named;
+use libdd_common::tag::Tag;
+use libdd_common_ffi as ffi;
 use libdd_telemetry::{
     data::metrics::{MetricNamespace, MetricType},
     metrics::ContextKey,

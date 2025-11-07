@@ -3,7 +3,7 @@
 
 //! Defines a pausable worker to be able to stop background processes before forks
 
-use ddcommon::worker::Worker;
+use libdd_common::worker::Worker;
 use std::fmt::Display;
 use tokio::{
     runtime::Runtime,
@@ -14,9 +14,9 @@ use tokio_util::sync::CancellationToken;
 
 /// A pausable worker which can be paused and restarted on forks.
 ///
-/// Used to allow a [`ddcommon::worker::Worker`] to be paused while saving its state when dropping
-/// a tokio runtime to be able to restart with the same state on a new runtime. This is used to
-/// stop all threads before a fork to avoid deadlocks in child.
+/// Used to allow a [`libdd_common::worker::Worker`] to be paused while saving its state when
+/// dropping a tokio runtime to be able to restart with the same state on a new runtime. This is
+/// used to stop all threads before a fork to avoid deadlocks in child.
 ///
 /// # Time-to-pause
 /// This loop should yield regularly to reduce time-to-pause. See [`tokio::task::yield_now`].

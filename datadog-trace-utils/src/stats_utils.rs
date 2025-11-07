@@ -6,10 +6,10 @@ pub use mini_agent::*;
 
 #[cfg(feature = "mini_agent")]
 mod mini_agent {
-    use ddcommon::hyper_migration;
-    use ddcommon::Endpoint;
     use http_body_util::BodyExt;
     use hyper::{body::Buf, Method, Request, StatusCode};
+    use libdd_common::hyper_migration;
+    use libdd_common::Endpoint;
     use libdd_trace_protobuf::pb;
     use std::io::Write;
     use tracing::debug;
@@ -86,8 +86,8 @@ mod mini_agent {
 #[cfg(feature = "mini_agent")]
 mod mini_agent_tests {
     use crate::stats_utils;
-    use ddcommon::hyper_migration;
     use hyper::Request;
+    use libdd_common::hyper_migration;
     use libdd_trace_protobuf::pb::{
         ClientGroupedStats, ClientStatsBucket, ClientStatsPayload, Trilean::NotSet,
     };

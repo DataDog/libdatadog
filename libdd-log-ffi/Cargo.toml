@@ -12,7 +12,7 @@ bench = false
 
 [features]
 default = ["cbindgen", "expanded_builder_macros"]
-cbindgen = ["build_common/cbindgen", "ddcommon-ffi/cbindgen", "expanded_builder_macros"]
+cbindgen = ["build_common/cbindgen", "libdd-common-ffi/cbindgen", "expanded_builder_macros"]
 expanded_builder_macros = []
 
 [build-dependencies]
@@ -20,4 +20,4 @@ build_common = { path = "../build-common" }
 
 [dependencies]
 libdd-log = { path = "../libdd-log" }
-ddcommon-ffi = { path = "../ddcommon-ffi" }
+libdd-common-ffi = { path = "../libdd-common-ffi" }

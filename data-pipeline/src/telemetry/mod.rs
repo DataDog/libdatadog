@@ -10,7 +10,7 @@ use datadog_trace_utils::{
     send_with_retry::{SendWithRetryError, SendWithRetryResult},
     trace_utils::SendDataResult,
 };
-use ddcommon::tag::Tag;
+use libdd_common::tag::Tag;
 use libdd_telemetry::worker::{
     LifecycleAction, TelemetryActions, TelemetryWorker, TelemetryWorkerBuilder,
     TelemetryWorkerFlavor, TelemetryWorkerHandle,
@@ -75,7 +75,7 @@ impl TelemetryClientBuilder {
     pub fn set_url(mut self, url: &str) -> Self {
         let _ = self
             .config
-            .set_endpoint(ddcommon::Endpoint::from_slice(url));
+            .set_endpoint(libdd_common::Endpoint::from_slice(url));
         self
     }
 
@@ -277,10 +277,10 @@ impl TelemetryClient {
 
 #[cfg(test)]
 mod tests {
-    use ddcommon::{hyper_migration, worker::Worker};
     use httpmock::Method::POST;
     use httpmock::MockServer;
     use hyper::{Response, StatusCode};
+    use libdd_common::{hyper_migration, worker::Worker};
     use regex::Regex;
     use tokio::time::sleep;
 

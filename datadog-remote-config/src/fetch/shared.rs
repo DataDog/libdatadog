@@ -6,7 +6,7 @@ use crate::fetch::{
     ConfigFetcherStateStats, ConfigInvariants, FileStorage,
 };
 use crate::{RemoteConfigPath, Target};
-use ddcommon::MutexExt;
+use libdd_common::MutexExt;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::ops::Add;

@@ -4,9 +4,9 @@
 use anyhow::Context;
 use datadog_profiling::api::ManagedStringId;
 use datadog_profiling::collections::string_storage::ManagedStringStorage as InternalManagedStringStorage;
-use ddcommon_ffi::slice::AsBytes;
-use ddcommon_ffi::{CharSlice, Error, MaybeError, Slice, StringWrapperResult};
 use libc::c_void;
+use libdd_common_ffi::slice::AsBytes;
+use libdd_common_ffi::{CharSlice, Error, MaybeError, Slice, StringWrapperResult};
 use std::mem::MaybeUninit;
 use std::num::NonZeroU32;
 use std::sync::Arc;

@@ -3,7 +3,7 @@
 use datadog_live_debugger::debugger_defs::{
     DebuggerData, DebuggerPayload, Diagnostics, ProbeStatus,
 };
-use ddcommon::MutexExt;
+use libdd_common::MutexExt;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};

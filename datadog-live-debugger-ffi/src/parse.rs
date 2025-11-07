@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::data::LiveDebuggingData;
-use ddcommon_ffi::slice::AsBytes;
-use ddcommon_ffi::CharSlice;
+use libdd_common_ffi::slice::AsBytes;
+use libdd_common_ffi::CharSlice;
 
 #[repr(C)]
 pub struct LiveDebuggingParseResult {

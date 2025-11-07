@@ -3,7 +3,7 @@
 
 pub mod tracer_metadata;
 
-use ddcommon_ffi::{self as ffi, slice::AsBytes, CString, CharSlice, Error};
+use libdd_common_ffi::{self as ffi, slice::AsBytes, CString, CharSlice, Error};
 use libdd_library_config::{self as lib_config, LibraryConfigSource};
 
 #[cfg(all(feature = "catch_panic", panic = "unwind"))]
@@ -224,8 +224,8 @@ pub extern "C" fn ddog_library_config_source_to_string(
     name: LibraryConfigSource,
 ) -> ffi::CStr<'static> {
     ffi::CStr::from_std(match name {
-        LibraryConfigSource::LocalStableConfig => ddcommon::cstr!("local_stable_config"),
-        LibraryConfigSource::FleetStableConfig => ddcommon::cstr!("fleet_stable_config"),
+        LibraryConfigSource::LocalStableConfig => libdd_common::cstr!("local_stable_config"),
+        LibraryConfigSource::FleetStableConfig => libdd_common::cstr!("fleet_stable_config"),
     })
 }
 
@@ -261,7 +261,7 @@ pub extern "C" fn ddog_library_config_drop(mut config_result: LibraryConfigLogge
         LibraryConfigLoggedResult::Ok(_) => {}
         LibraryConfigLoggedResult::Err(err) => {
             // Use the internal error clearing function for defensive cleanup
-            ddcommon_ffi::clear_error(err);
+            libdd_common_ffi::clear_error(err);
         }
     }
 }

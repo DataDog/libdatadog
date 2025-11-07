@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::platform::{FileBackedHandle, MappedMem, MemoryHandle, NamedShmHandle};
-use ddcommon::rate_limiter::{Limiter, LocalLimiter};
+use libdd_common::rate_limiter::{Limiter, LocalLimiter};
 use std::cell::UnsafeCell;
 use std::ffi::CString;
 use std::fmt::{Debug, Formatter};
@@ -324,7 +324,7 @@ impl Limiter for AnyLimiter {
 #[cfg(test)]
 mod tests {
     use crate::rate_limiter::{ShmLimiterData, ShmLimiterMemory};
-    use ddcommon::rate_limiter::Limiter;
+    use libdd_common::rate_limiter::Limiter;
     use std::ffi::CString;
     use std::thread::sleep;
     use std::time::Duration;

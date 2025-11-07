@@ -23,7 +23,7 @@ use {
         file_storage::{ParsedFileStorage, RawFileStorage},
         RemoteConfigProduct, Target,
     },
-    ddcommon::Endpoint,
+    libdd_common::Endpoint,
     std::str::FromStr,
 };
 

@@ -54,7 +54,7 @@ Invoke-Call -ScriptBlock { cargo build --release }
 Set-Location ..
 
 Write-Host "Generating headers" -ForegroundColor Magenta
-Invoke-Call -ScriptBlock { cbindgen --crate ddcommon-ffi --config ddcommon-ffi/cbindgen.toml --output $output_dir\common.h }
+Invoke-Call -ScriptBlock { cbindgen --crate libdd-common-ffi --config libdd-common-ffi/cbindgen.toml --output $output_dir\common.h }
 Invoke-Call -ScriptBlock { cbindgen --crate datadog-profiling-ffi --config datadog-profiling-ffi/cbindgen.toml --output $output_dir\profiling.h }
 Invoke-Call -ScriptBlock { cbindgen --crate libdd-telemetry-ffi --config libdd-telemetry-ffi/cbindgen.toml --output $output_dir\telemetry.h }
 Invoke-Call -ScriptBlock { cbindgen --crate data-pipeline-ffi --config data-pipeline-ffi/cbindgen.toml --output $output_dir"\data-pipeline.h" }

@@ -4,7 +4,7 @@ use crate::config::Config;
 use crate::log;
 use crate::service::SidecarServer;
 use crate::watchdog::WatchdogHandle;
-use ddcommon::{tag, tag::Tag, MutexExt};
+use libdd_common::{tag, tag::Tag, MutexExt};
 use libdd_telemetry::data::metrics::{MetricNamespace, MetricType};
 use libdd_telemetry::metrics::ContextKey;
 use libdd_telemetry::worker::{

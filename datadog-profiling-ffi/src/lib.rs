@@ -40,5 +40,5 @@ pub use libdd_library_config_ffi::*;
 pub use libdd_log_ffi::*;
 
 // re-export tracer metadata functions
-#[cfg(feature = "ddcommon-ffi")]
-pub use ddcommon_ffi::*;
+#[cfg(feature = "libdd-common-ffi")]
+pub use libdd_common_ffi::*;

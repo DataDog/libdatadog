@@ -31,9 +31,9 @@ tokio = { version = "1.23", features = [
 uuid = { version = "1.10.0", features = ["v4"] }
 tokio-util = "0.7.11"
 
-ddcommon = { path = "../ddcommon", default-features = false }
-libdd-trace-protobuf = { version = "1.0.0", path = "../libdd-trace-protobuf" }
+libdd-common = { version = "1.0.0", path = "../libdd-common", default-features = false }
 libdd-telemetry = { version = "1.0.0", path = "../libdd-telemetry", default-features = false }
+libdd-trace-protobuf = { version = "1.0.0", path = "../libdd-trace-protobuf" }
 datadog-trace-stats = { path = "../datadog-trace-stats"}
 datadog-trace-utils = { path = "../datadog-trace-utils", default-features = false }
 libdd-ddsketch = { version = "1.0.0", path = "../libdd-ddsketch" }
@@ -66,7 +66,7 @@ tokio = { version = "1.23", features = [
 [features]
 default = ["https"]
 https = [
-    "ddcommon/https",
+    "libdd-common/https",
     "libdd-telemetry/https",
     "datadog-trace-utils/https",
     "libdd-dogstatsd-client/https",

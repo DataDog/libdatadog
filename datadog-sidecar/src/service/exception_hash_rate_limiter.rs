@@ -3,7 +3,7 @@
 
 use crate::primary_sidecar_identifier;
 use datadog_ipc::rate_limiter::{ShmLimiter, ShmLimiterMemory};
-use ddcommon::{rate_limiter::Limiter, MutexExt};
+use libdd_common::{rate_limiter::Limiter, MutexExt};
 use std::ffi::CString;
 use std::io;
 use std::sync::atomic::{AtomicU64, Ordering};

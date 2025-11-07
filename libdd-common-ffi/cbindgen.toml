@@ -1,0 +1,73 @@
+# Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
+# SPDX-License-Identifier: Apache-2.0
+
+language = "C"
+cpp_compat = true
+tab_width = 2
+header = """// Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
+// SPDX-License-Identifier: Apache-2.0
+"""
+include_guard = "DDOG_COMMON_H"
+style = "both"
+pragma_once = true
+
+no_includes = true
+sys_includes = ["stdbool.h", "stddef.h", "stdint.h"]
+
+after_includes = """
+
+#define DDOG_CHARSLICE_C(string) \\
+/* NOTE: Compilation fails if you pass in a char* instead of a literal */ ((ddog_CharSlice){ .ptr = "" string, .len = sizeof(string) - 1 })
+
+#define DDOG_CHARSLICE_C_BARE(string) \\
+/* NOTE: Compilation fails if you pass in a char* instead of a literal */ { .ptr = "" string, .len = sizeof(string) - 1 }
+
+#if defined __GNUC__
+#  define DDOG_GNUC_VERSION(major) __GNUC__ >= major
+#else
+#  define DDOG_GNUC_VERSION(major) (0)
+#endif
+
+#if defined __has_attribute
+#  define DDOG_HAS_ATTRIBUTE(attribute, major) __has_attribute(attribute)
+#else
+#  define DDOG_HAS_ATTRIBUTE(attribute, major) DDOG_GNUC_VERSION(major)
+#endif
+
+#if defined(__cplusplus) && (__cplusplus >= 201703L)
+#  define DDOG_CHECK_RETURN [[nodiscard]]
+#elif defined(_Check_return_) /* SAL */
+#  define DDOG_CHECK_RETURN _Check_return_
+#elif DDOG_HAS_ATTRIBUTE(warn_unused_result, 4)
+#  define DDOG_CHECK_RETURN __attribute__((__warn_unused_result__))
+#else
+#  define DDOG_CHECK_RETURN
+#endif"""
+
+[export]
+prefix = "ddog_"
+renaming_overrides_prefixing = true
+
+[export.mangle]
+rename_types = "PascalCase"
+
+[export.rename]
+"ParseTagsResult" = "ddog_Vec_Tag_ParseResult"
+"PushTagResult" = "ddog_Vec_Tag_PushResult"
+"ArrayQueueNewResult" = "ddog_ArrayQueue_NewResult"
+"ArrayQueuePushResult" = "ddog_ArrayQueue_PushResult"
+"ArrayQueuePopResult" = "ddog_ArrayQueue_PopResult"
+"ArrayQueueBoolResult" = "ddog_ArrayQueue_BoolResult"
+"ArrayQueueUsizeResult" = "ddog_ArrayQueue_UsizeResult"
+
+
+[enum]
+prefix_with_name = true
+rename_variants = "ScreamingSnakeCase"
+
+[fn]
+must_use = "DDOG_CHECK_RETURN"
+
+[parse]
+parse_deps = true
+include = ["libdd-common"]

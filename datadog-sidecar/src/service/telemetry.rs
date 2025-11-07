@@ -3,7 +3,7 @@
 
 use crate::service::{InstanceId, RuntimeMetadata, SidecarAction, SidecarServer};
 use anyhow::{anyhow, Result};
-use ddcommon::MutexExt;
+use libdd_common::MutexExt;
 use std::sync::OnceLock;
 use tokio::sync::mpsc;
 use tracing::{debug, info, warn};
@@ -23,7 +23,7 @@ use std::time::{Duration, Instant};
 use tokio::task::JoinHandle;
 use zwohash::ZwoHasher;
 
-use ddcommon::tag::Tag;
+use libdd_common::tag::Tag;
 use libdd_telemetry::worker::TelemetryWorkerBuilder;
 use serde::Deserialize;
 use std::ops::Sub;

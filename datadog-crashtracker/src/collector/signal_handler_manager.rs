@@ -3,11 +3,11 @@
 use super::crash_handler::handle_posix_sigaction;
 use crate::shared::configuration::CrashtrackerConfiguration;
 use crate::signal_from_signum;
-use ddcommon::unix_utils::terminate;
 use libc::{
     c_void, mmap, sigaltstack, siginfo_t, MAP_ANON, MAP_FAILED, MAP_PRIVATE, PROT_NONE, PROT_READ,
     PROT_WRITE, SIGSTKSZ,
 };
+use libdd_common::unix_utils::terminate;
 use nix::sys::signal::{self, SaFlags, SigAction, SigHandler};
 use std::ptr;
 use std::sync::atomic::AtomicBool;
