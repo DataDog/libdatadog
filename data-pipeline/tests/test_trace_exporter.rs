@@ -6,9 +6,9 @@ mod tracing_integration_tests {
     use data_pipeline::trace_exporter::{
         TraceExporter, TraceExporterInputFormat, TraceExporterOutputFormat,
     };
-    use datadog_trace_utils::span::v05::dict::SharedDict;
-    use datadog_trace_utils::test_utils::datadog_test_agent::DatadogTestAgent;
-    use datadog_trace_utils::test_utils::{create_test_json_span, create_test_v05_span};
+    use libdd_trace_utils::span::v05::dict::SharedDict;
+    use libdd_trace_utils::test_utils::datadog_test_agent::DatadogTestAgent;
+    use libdd_trace_utils::test_utils::{create_test_json_span, create_test_v05_span};
     use serde_json::json;
     use tokio::task;
 
@@ -94,7 +94,7 @@ mod tracing_integration_tests {
             Some(vec![("_top_level".to_string(), 1.0)]),
         );
 
-        let traces = (dict.dict(), vec![vec![span_1, span_2, root_span]]);
+        let traces = (dict, vec![vec![span_1, span_2, root_span]]);
 
         rmp_serde::to_vec(&traces).unwrap()
     }

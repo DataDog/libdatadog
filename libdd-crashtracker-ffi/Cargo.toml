@@ -29,8 +29,8 @@ demangler = ["dep:symbolic-demangle", "dep:symbolic-common"]
 # Enables the use of this library to receiver crash-info from a suitable collector
 receiver = []
 
-# [target.'cfg(windows)'.features]
-# default = ["collector_windows"]
+[target.'cfg(windows)'.features]
+default = ["collector_windows"]
 
 [build-dependencies]
 build_common = { path = "../build-common" }

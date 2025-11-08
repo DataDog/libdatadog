@@ -16,4 +16,6 @@ pub use error::EvaluationError;
 pub use eval::{get_assignment, EvaluationContext};
 pub use str::Str;
 pub use timestamp::{now, Timestamp};
-pub use ufc::{Assignment, AssignmentReason, AssignmentValue, UniversalFlagConfig, VariationType};
+pub use ufc::{Assignment, AssignmentReason, AssignmentValue, UniversalFlagConfig};
+
+pub use crate::{ExpectedFlagType, FlagType};

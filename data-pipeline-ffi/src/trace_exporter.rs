@@ -544,9 +544,9 @@ pub unsafe extern "C" fn ddog_trace_exporter_send(
 mod tests {
     use super::*;
     use crate::error::ddog_trace_exporter_error_free;
-    use datadog_trace_utils::span::SpanSlice;
     use httpmock::prelude::*;
     use httpmock::MockServer;
+    use libdd_trace_utils::span::SpanSlice;
     use std::{borrow::Borrow, mem::MaybeUninit};
 
     #[test]
@@ -1099,7 +1099,7 @@ mod tests {
                 input_format: TraceExporterInputFormat::V04,
                 output_format: TraceExporterOutputFormat::V04,
                 telemetry_cfg: Some(TelemetryConfig {
-                    heartbeat: 50,
+                    heartbeat: 10000,
                     runtime_id: Some("foo".to_string()),
                     debug_enabled: true,
                 }),

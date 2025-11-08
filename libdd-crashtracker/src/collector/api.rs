@@ -99,8 +99,8 @@ mod tests {
     use super::*;
     use crate::{begin_op, insert_span, insert_trace, StacktraceCollection};
     use chrono::Utc;
-    use ddcommon::tag;
-    use ddcommon::Endpoint;
+    use libdd_common::tag;
+    use libdd_common::Endpoint;
     use std::time::Duration;
     // We can't run this in the main test runner because it (deliberately) crashes,
     // and would make all following tests unrunable.

@@ -34,8 +34,8 @@ tokio-util = "0.7.11"
 libdd-common = { version = "1.0.0", path = "../libdd-common", default-features = false }
 libdd-telemetry = { version = "1.0.0", path = "../libdd-telemetry", default-features = false }
 libdd-trace-protobuf = { version = "1.0.0", path = "../libdd-trace-protobuf" }
-datadog-trace-stats = { path = "../datadog-trace-stats"}
-datadog-trace-utils = { path = "../datadog-trace-utils", default-features = false }
+libdd-trace-stats = { path = "../libdd-trace-stats"}
+libdd-trace-utils = { path = "../libdd-trace-utils", default-features = false }
 libdd-ddsketch = { version = "1.0.0", path = "../libdd-ddsketch" }
 libdd-dogstatsd-client = { version = "1.0.0", path = "../libdd-dogstatsd-client", default-features = false }
 libdd-tinybytes = { version = "1.0.0", path = "../libdd-tinybytes", features = [
@@ -50,7 +50,7 @@ bench = false
 libdd-log = { path = "../libdd-log" }
 clap = { version = "4.0", features = ["derive"] }
 criterion = "0.5.1"
-datadog-trace-utils = { path = "../datadog-trace-utils", features = [
+libdd-trace-utils = { path = "../libdd-trace-utils", features = [
     "test-utils",
 ] }
 httpmock = "0.8.0-alpha.1"
@@ -68,7 +68,7 @@ default = ["https"]
 https = [
     "libdd-common/https",
     "libdd-telemetry/https",
-    "datadog-trace-utils/https",
+    "libdd-trace-utils/https",
     "libdd-dogstatsd-client/https",
 ]
 test-utils = []

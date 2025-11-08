@@ -12,11 +12,11 @@ use std::{
 };
 
 use crate::trace_exporter::TracerMetadata;
-use datadog_trace_stats::span_concentrator::SpanConcentrator;
-use datadog_trace_utils::send_with_retry::{send_with_retry, RetryStrategy};
 use hyper;
 use libdd_common::{worker::Worker, Endpoint, HttpClient};
 use libdd_trace_protobuf::pb;
+use libdd_trace_stats::span_concentrator::SpanConcentrator;
+use libdd_trace_utils::send_with_retry::{send_with_retry, RetryStrategy};
 use tokio::select;
 use tokio_util::sync::CancellationToken;
 use tracing::error;
@@ -192,11 +192,11 @@ pub fn stats_url_from_agent_url(agent_url: &str) -> anyhow::Result<hyper::Uri> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use datadog_trace_utils::span::{trace_utils, SpanSlice};
-    use datadog_trace_utils::test_utils::poll_for_mock_hit;
     use httpmock::prelude::*;
     use httpmock::MockServer;
     use libdd_common::hyper_migration::new_default_client;
+    use libdd_trace_utils::span::{trace_utils, SpanSlice};
+    use libdd_trace_utils::test_utils::poll_for_mock_hit;
     use time::Duration;
     use time::SystemTime;
 

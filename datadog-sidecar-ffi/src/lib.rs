@@ -30,7 +30,6 @@ use datadog_sidecar::service::{
 };
 use datadog_sidecar::service::{get_telemetry_action_sender, InternalTelemetryActions};
 use datadog_sidecar::shm_remote_config::{path_for_remote_config, RemoteConfigReader};
-use datadog_trace_utils::msgpack_encoder;
 use libc::c_char;
 use libdd_common::tag::Tag;
 use libdd_common::Endpoint;
@@ -44,6 +43,7 @@ use libdd_telemetry::{
     worker::{LifecycleAction, LogIdentifier, TelemetryActions},
 };
 use libdd_telemetry_ffi::try_c;
+use libdd_trace_utils::msgpack_encoder;
 use std::ffi::{c_void, CStr, CString};
 use std::fs::File;
 use std::hash::{DefaultHasher, Hash, Hasher};
@@ -629,7 +629,7 @@ impl<'a> TryInto<SerializedTracerHeaderTags> for &'a TracerHeaderTags<'a> {
     type Error = std::io::Error;
 
     fn try_into(self) -> Result<SerializedTracerHeaderTags, Self::Error> {
-        let tags = datadog_trace_utils::trace_utils::TracerHeaderTags {
+        let tags = libdd_trace_utils::trace_utils::TracerHeaderTags {
             lang: &self.lang.to_utf8_lossy(),
             lang_version: &self.lang_version.to_utf8_lossy(),
             lang_interpreter: &self.lang_interpreter.to_utf8_lossy(),

@@ -30,12 +30,6 @@ use crate::{
     health_metrics::HealthMetric,
 };
 use arc_swap::{ArcSwap, ArcSwapOption};
-use datadog_trace_utils::msgpack_decoder;
-use datadog_trace_utils::send_with_retry::{
-    send_with_retry, RetryStrategy, SendWithRetryError, SendWithRetryResult,
-};
-use datadog_trace_utils::span::{Span, SpanText};
-use datadog_trace_utils::trace_utils::TracerHeaderTags;
 use http_body_util::BodyExt;
 use hyper::http::uri::PathAndQuery;
 use hyper::Uri;
@@ -44,6 +38,12 @@ use libdd_common::{tag, tag::Tag};
 use libdd_common::{HttpClient, MutexExt};
 use libdd_dogstatsd_client::Client;
 use libdd_telemetry::worker::TelemetryWorker;
+use libdd_trace_utils::msgpack_decoder;
+use libdd_trace_utils::send_with_retry::{
+    send_with_retry, RetryStrategy, SendWithRetryError, SendWithRetryResult,
+};
+use libdd_trace_utils::span::{Span, SpanText};
+use libdd_trace_utils::trace_utils::TracerHeaderTags;
 use std::io;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -992,12 +992,12 @@ pub trait ResponseCallback {
 mod tests {
     use self::error::AgentErrorKind;
     use super::*;
-    use datadog_trace_utils::msgpack_encoder;
-    use datadog_trace_utils::span::v05;
-    use datadog_trace_utils::span::SpanBytes;
     use httpmock::prelude::*;
     use httpmock::MockServer;
     use libdd_tinybytes::{Bytes, BytesString};
+    use libdd_trace_utils::msgpack_encoder;
+    use libdd_trace_utils::span::v05;
+    use libdd_trace_utils::span::SpanBytes;
     use std::collections::HashMap;
     use std::net;
     use std::time::Duration;
@@ -2003,9 +2003,9 @@ mod tests {
 mod single_threaded_tests {
     use super::*;
     use crate::agent_info;
-    use datadog_trace_utils::msgpack_encoder;
-    use datadog_trace_utils::span::SpanBytes;
     use httpmock::prelude::*;
+    use libdd_trace_utils::msgpack_encoder;
+    use libdd_trace_utils::span::SpanBytes;
     use std::time::Duration;
     use tokio::time::sleep;
 

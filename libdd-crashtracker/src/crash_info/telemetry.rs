@@ -7,8 +7,8 @@ use crate::SigInfo;
 use super::{CrashInfo, Metadata};
 use anyhow::{Context, Ok};
 use chrono::{DateTime, Utc};
-use ddcommon::Endpoint;
-use ddtelemetry::{
+use libdd_common::Endpoint;
+use libdd_telemetry::{
     build_host,
     data::{self, Application, LogLevel},
     worker::http_client::request_builder,
@@ -17,8 +17,8 @@ use serde::Serialize;
 
 #[derive(Debug)]
 struct TelemetryMetadata {
-    application: ddtelemetry::data::Application,
-    host: ddtelemetry::data::Host,
+    application: libdd_telemetry::data::Application,
+    host: libdd_telemetry::data::Host,
     runtime_id: String,
 }
 
@@ -137,7 +137,7 @@ macro_rules! parse_tags {
 
 pub struct TelemetryCrashUploader {
     metadata: TelemetryMetadata,
-    cfg: ddtelemetry::config::Config,
+    cfg: libdd_telemetry::config::Config,
 }
 
 impl TelemetryCrashUploader {
@@ -145,7 +145,7 @@ impl TelemetryCrashUploader {
         crashtracker_metadata: &Metadata,
         endpoint: &Option<Endpoint>,
     ) -> anyhow::Result<Self> {
-        let mut cfg = ddtelemetry::config::Config::from_env();
+        let mut cfg = libdd_telemetry::config::Config::from_env();
         if let Some(endpoint) = endpoint {
             // TODO: This changes the path part of the query to target the agent.
             // What about if the crashtracker is sending directly to the intake?
@@ -155,7 +155,7 @@ impl TelemetryCrashUploader {
 
             // ignore result because what are we going to do?
             let _ = if endpoint.url.scheme_str() == Some("file") {
-                let path = ddcommon::decode_uri_path_in_authority(&endpoint.url)
+                let path = libdd_common::decode_uri_path_in_authority(&endpoint.url)
                     .context("file path is not valid")?;
                 cfg.set_host_from_url(&format!("file://{}.telemetry", path.display()))
             } else {
@@ -296,7 +296,7 @@ impl TelemetryCrashUploader {
     ) -> anyhow::Result<()> {
         let payload = data::Telemetry {
             tracer_time,
-            api_version: ddtelemetry::data::ApiVersion::V2,
+            api_version: libdd_telemetry::data::ApiVersion::V2,
             runtime_id: &self.metadata.runtime_id,
             seq_id: 1,
             application: &self.metadata.application,
@@ -317,19 +317,19 @@ impl TelemetryCrashUploader {
     }
 
     async fn send_telemetry_payload(&self, payload: &data::Telemetry<'_>) -> anyhow::Result<()> {
-        let client = ddtelemetry::worker::http_client::from_config(&self.cfg);
+        let client = libdd_telemetry::worker::http_client::from_config(&self.cfg);
         let req = request_builder(&self.cfg)?
             .method(http::Method::POST)
             .header(
                 http::header::CONTENT_TYPE,
-                ddcommon::header::APPLICATION_JSON,
+                libdd_common::header::APPLICATION_JSON,
             )
             .header(
-                ddtelemetry::worker::http_client::header::API_VERSION,
-                ddtelemetry::data::ApiVersion::V2.to_str(),
+                libdd_telemetry::worker::http_client::header::API_VERSION,
+                libdd_telemetry::data::ApiVersion::V2.to_str(),
             )
             .header(
-                ddtelemetry::worker::http_client::header::REQUEST_TYPE,
+                libdd_telemetry::worker::http_client::header::REQUEST_TYPE,
                 "logs",
             )
             .body(serde_json::to_string(&payload)?.into())?;
@@ -391,7 +391,7 @@ fn extract_crash_info_tags(crash_info: &CrashInfo) -> anyhow::Result<String> {
 mod tests {
     use super::{CrashPingBuilder, TelemetryCrashUploader};
     use crate::crash_info::{test_utils::TestInstance, CrashInfo, Metadata};
-    use ddcommon::Endpoint;
+    use libdd_common::Endpoint;
     use std::{collections::HashSet, fs};
 
     fn new_test_uploader(seed: u64) -> TelemetryCrashUploader {

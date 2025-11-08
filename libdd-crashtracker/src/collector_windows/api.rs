@@ -9,7 +9,7 @@ use crate::{
 };
 use anyhow::{anyhow, Context, Result};
 use core::mem::size_of;
-use ddcommon::Endpoint;
+use libdd_common::Endpoint;
 use serde::{Deserialize, Serialize};
 use std::ffi::{c_void, OsString};
 use std::fmt;

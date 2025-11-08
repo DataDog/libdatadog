@@ -6,15 +6,15 @@ use crate::trace_exporter::agent_response::{
 };
 use crate::trace_exporter::error::TraceExporterError;
 use crate::trace_exporter::TraceExporterOutputFormat;
-use datadog_trace_utils::msgpack_decoder::decode::error::DecodeError;
-use datadog_trace_utils::msgpack_encoder;
-use datadog_trace_utils::span::{Span, SpanText};
-use datadog_trace_utils::trace_utils::{self, TracerHeaderTags};
-use datadog_trace_utils::tracer_payload;
 use hyper::header::CONTENT_TYPE;
 use libdd_common::header::{
     APPLICATION_MSGPACK_STR, DATADOG_SEND_REAL_HTTP_STATUS_STR, DATADOG_TRACE_COUNT_STR,
 };
+use libdd_trace_utils::msgpack_decoder::decode::error::DecodeError;
+use libdd_trace_utils::msgpack_encoder;
+use libdd_trace_utils::span::{Span, SpanText};
+use libdd_trace_utils::trace_utils::{self, TracerHeaderTags};
+use libdd_trace_utils::tracer_payload;
 use std::collections::HashMap;
 
 /// Prepared traces payload ready for sending to the agent
@@ -114,13 +114,13 @@ impl<'a> TraceSerializer<'a> {
 mod tests {
     use super::*;
     use crate::trace_exporter::agent_response::AgentResponsePayloadVersion;
-    use datadog_trace_utils::span::SpanBytes;
-    use datadog_trace_utils::trace_utils::TracerHeaderTags;
     use hyper::header::CONTENT_TYPE;
     use libdd_common::header::{
         APPLICATION_MSGPACK_STR, DATADOG_SEND_REAL_HTTP_STATUS_STR, DATADOG_TRACE_COUNT_STR,
     };
     use libdd_tinybytes::BytesString;
+    use libdd_trace_utils::span::SpanBytes;
+    use libdd_trace_utils::trace_utils::TracerHeaderTags;
 
     fn create_test_span() -> SpanBytes {
         SpanBytes {
@@ -274,7 +274,7 @@ mod tests {
 
         // Verify we can deserialize it back and data integrity is preserved
         let (deserialized_traces, _) =
-            datadog_trace_utils::msgpack_decoder::v04::from_slice(&serialized).unwrap();
+            libdd_trace_utils::msgpack_decoder::v04::from_slice(&serialized).unwrap();
         assert_eq!(deserialized_traces.len(), 1);
         assert_eq!(deserialized_traces[0].len(), 1);
 
@@ -309,7 +309,7 @@ mod tests {
 
         // Verify we can deserialize it back and data integrity is preserved
         let (deserialized_traces, _) =
-            datadog_trace_utils::msgpack_decoder::v05::from_slice(&serialized).unwrap();
+            libdd_trace_utils::msgpack_decoder::v05::from_slice(&serialized).unwrap();
         assert_eq!(deserialized_traces.len(), 1);
         assert_eq!(deserialized_traces[0].len(), 1);
 
