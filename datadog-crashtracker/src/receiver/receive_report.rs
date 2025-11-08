@@ -2,13 +2,53 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::{
-    crash_info::{CrashInfo, CrashInfoBuilder, ErrorKind, SigInfo, Span},
+    crash_info::{CrashInfo, CrashInfoBuilder, ErrorKind, SigInfo, Span, StackFrame},
+    runtime_callback::RuntimeStack,
     shared::constants::*,
     CrashtrackerConfiguration,
 };
 use anyhow::Context;
+use serde::{Deserialize, Serialize};
 use std::time::{Duration, Instant};
 use tokio::io::AsyncBufReadExt;
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+struct RuntimeStackFrame {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    line: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    column: Option<u32>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    function: Vec<u8>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    type_name: Vec<u8>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    file: Vec<u8>,
+}
+
+impl From<RuntimeStackFrame> for StackFrame {
+    fn from(value: RuntimeStackFrame) -> Self {
+        let mut stack_frame = StackFrame::new();
+        stack_frame.function = if value.function.is_empty() {
+            None
+        } else {
+            Some(String::from_utf8_lossy(&value.function).to_string())
+        };
+        stack_frame.type_name = if value.type_name.is_empty() {
+            None
+        } else {
+            Some(String::from_utf8_lossy(&value.type_name).to_string())
+        };
+        stack_frame.file = if value.file.is_empty() {
+            None
+        } else {
+            Some(String::from_utf8_lossy(&value.file).to_string())
+        };
+        stack_frame.line = value.line;
+        stack_frame.column = value.column;
+        stack_frame
+    }
+}
 
 /// The crashtracker collector sends data in blocks.
 /// This enum tracks which block we're currently in, and, for multi-line blocks,
@@ -29,6 +69,10 @@ pub(crate) enum StdinState {
     TraceIds,
     Ucontext,
     Waiting,
+    // StackFrame is always emitted as one stream of all the frames but StackString
+    // may have lines that we need to accumulate depending on runtime (e.g. Python)
+    RuntimeStackFrame(Vec<StackFrame>),
+    RuntimeStackString(Vec<String>),
 }
 
 /// A state machine that processes data from the crash-tracker collector line by
@@ -105,7 +149,37 @@ fn process_line(
             builder.with_proc_info(proc_info)?;
             StdinState::ProcInfo
         }
-
+        StdinState::RuntimeStackFrame(frames)
+            if line.starts_with(DD_CRASHTRACK_END_RUNTIME_STACK_FRAME) =>
+        {
+            let runtime_stack = RuntimeStack {
+                format: "Datadog Runtime Callback 1.0".to_string(),
+                frames,
+                stacktrace_string: None,
+            };
+            builder.with_experimental_runtime_stack(runtime_stack)?;
+            StdinState::Waiting
+        }
+        StdinState::RuntimeStackFrame(mut frames) => {
+            let frame_json: RuntimeStackFrame = serde_json::from_str(line)?;
+            frames.push(frame_json.into());
+            StdinState::RuntimeStackFrame(frames)
+        }
+        StdinState::RuntimeStackString(lines)
+            if line.starts_with(DD_CRASHTRACK_END_RUNTIME_STACK_STRING) =>
+        {
+            let runtime_stack = RuntimeStack {
+                format: "Datadog Runtime Callback 1.0".to_string(),
+                frames: vec![],
+                stacktrace_string: Some(lines.join("\n")),
+            };
+            builder.with_experimental_runtime_stack(runtime_stack)?;
+            StdinState::Waiting
+        }
+        StdinState::RuntimeStackString(mut lines) => {
+            lines.push(line.to_string());
+            StdinState::RuntimeStackString(lines)
+        }
         StdinState::SigInfo if line.starts_with(DD_CRASHTRACK_END_SIGINFO) => StdinState::Waiting,
         StdinState::SigInfo => {
             let sig_info: SigInfo = serde_json::from_str(line)?;
@@ -177,6 +251,12 @@ fn process_line(
         }
         StdinState::Waiting if line.starts_with(DD_CRASHTRACK_BEGIN_STACKTRACE) => {
             StdinState::StackTrace
+        }
+        StdinState::Waiting if line.starts_with(DD_CRASHTRACK_BEGIN_RUNTIME_STACK_STRING) => {
+            StdinState::RuntimeStackString(vec![])
+        }
+        StdinState::Waiting if line.starts_with(DD_CRASHTRACK_BEGIN_RUNTIME_STACK_FRAME) => {
+            StdinState::RuntimeStackFrame(vec![])
         }
         StdinState::Waiting if line.starts_with(DD_CRASHTRACK_BEGIN_TRACE_IDS) => {
             StdinState::TraceIds
