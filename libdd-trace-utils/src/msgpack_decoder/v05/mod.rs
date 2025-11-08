@@ -198,7 +198,7 @@ fn deserialize_span<'a>(data: &mut &[u8], dict: &[&'a str]) -> Result<SpanSlice<
     span.service = get_from_dict(data, dict)?;
     span.name = get_from_dict(data, dict)?;
     span.resource = get_from_dict(data, dict)?;
-    span.trace_id = read_number_slice(data)?;
+    span.trace_id = read_number_slice::<u64>(data)? as u128;
     span.span_id = read_number_slice(data)?;
     span.parent_id = read_number_slice(data)?;
     span.start = read_number_slice(data)?;

@@ -61,4 +61,3 @@ let mut concentrator = SpanConcentrator::new(
 // Flush statistics
 // let stats = concentrator.flush(false);
 ```
-

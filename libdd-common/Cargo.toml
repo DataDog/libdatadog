@@ -61,7 +61,7 @@ hyper-rustls = { version = "0.27", default-features = false, features = [
 ], optional = true }
 
 [dev-dependencies]
-indexmap = "2.2"
+indexmap = "2.11"
 maplit = "1.0"
 tempfile = "3.8"
 
