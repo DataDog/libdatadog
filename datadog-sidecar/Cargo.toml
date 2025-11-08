@@ -20,7 +20,7 @@ libdd-common = { path = "../libdd-common" }
 datadog-sidecar-macros = { path = "../datadog-sidecar-macros" }
 
 libdd-telemetry = { path = "../libdd-telemetry", features = ["tracing"] }
-data-pipeline = { path = "../data-pipeline" }
+libdd-data-pipeline = { path = "../libdd-data-pipeline" }
 libdd-trace-utils = { path = "../libdd-trace-utils" }
 datadog-remote-config = { path = "../datadog-remote-config" , features = ["live-debugger"]}
 datadog-live-debugger = { path = "../datadog-live-debugger" }

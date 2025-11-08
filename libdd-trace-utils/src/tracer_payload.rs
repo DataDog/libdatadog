@@ -5,7 +5,7 @@ use crate::span::v05::dict::SharedDict;
 use crate::span::{v05, SharedDictBytes, Span, SpanBytes, SpanText};
 use crate::trace_utils::collect_trace_chunks;
 use crate::{msgpack_decoder, trace_utils::cmp_send_data_payloads};
-use libdd_tinybytes::{self, BytesString};
+use libdd_tinybytes::BytesString;
 use libdd_trace_protobuf::pb;
 use std::cmp::Ordering;
 use std::iter::Iterator;

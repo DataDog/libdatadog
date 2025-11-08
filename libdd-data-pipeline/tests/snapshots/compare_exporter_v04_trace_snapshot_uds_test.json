@@ -1,0 +1,96 @@
+[
+  [
+    {
+      "service": "test-service",
+      "name": "test_exporter_v04_snapshot_uds_01",
+      "resource": "test-resource",
+      "trace_id": 1234,
+      "span_id": 12342,
+      "parent_id": 12341,
+      "start": 1,
+      "duration": 5,
+      "meta": {
+        "env": "test-env",
+        "service": "test-service",
+        "runtime-id": "test-runtime-id-value"
+      },
+      "metrics": {
+        "_dd_metric1": 1.0,
+        "_dd_metric2": 2.0
+      },
+      "span_events": [
+        {
+          "name": "test_span",
+          "time_unix_nano": 1727211691770715042
+        },
+        {
+          "name": "exception",
+          "time_unix_nano": 1727211691770716000,
+          "attributes": {
+            "exception.message": {"type": 0, "string_value": "Cannot divide by zero"},
+            "exception.version": {"type": 3, "double_value": 4.2},
+            "exception.escaped": {"type": 1, "bool_value": true},
+            "exception.count": {"type": 2, "int_value": 1},
+            "exception.lines": {"type": 4, "array_value": {
+              "values": [
+                {"type": 0, "string_value": "  File \"<string>\", line 1, in <module>"},
+                {"type": 0, "string_value": "  File \"<string>\", line 1, in divide"}
+              ]
+            }}
+          }
+        }
+      ]
+    },
+    {
+      "service": "test-service",
+      "name": "test_exporter_v04_snapshot_uds_02",
+      "resource": "test-resource",
+      "trace_id": 1234,
+      "span_id": 12343,
+      "parent_id": 12341,
+      "start": 1,
+      "duration": 5,
+      "meta": {
+        "env": "test-env",
+        "runtime-id": "test-runtime-id-value",
+        "service": "test-service"
+      },
+      "span_links": [
+        {
+          "trace_id": 13930160852258120406,
+          "span_id": 11788048577503494824,
+          "attributes": {
+            "link.name":"Job #123"
+          }
+        },
+        {
+          "trace_id": 12184699170068370717,
+          "trace_id_high": 5943849730528564606,
+          "span_id": 13874630024467741450
+        }
+      ]
+    },
+    {
+      "service": "test-service",
+      "name": "test_exporter_v04_snapshot_uds_03",
+      "resource": "test-resource",
+      "trace_id": 1234,
+      "span_id": 12341,
+      "parent_id": 0,
+      "start": 0,
+      "duration": 5,
+      "meta": {
+        "_dd.origin": "cloudfunction",
+        "env": "test-env",
+        "service": "test-service",
+        "runtime-id": "test-runtime-id-value",
+        "origin": "cloudfunction",
+        "functionname": "dummy_function_name"
+      },
+      "metrics": {
+        "_top_level": 1.0
+      },
+      "type": "web"
+    }
+  ]
+]

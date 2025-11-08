@@ -52,8 +52,8 @@ sidecar:
 data-pipeline:
 - changed-files:
   - any-glob-to-any-file: [
-      'data-pipeline/**/*',
-      'data-pipeline-ffi/**/*',
+      'libdd-data-pipeline/**/*',
+      'libdd-data-pipeline-ffi/**/*',
     ]
 
 crashtracker:
