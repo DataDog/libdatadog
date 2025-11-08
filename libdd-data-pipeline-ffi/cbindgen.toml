@@ -1,0 +1,39 @@
+# Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
+# SPDX-License-Identifier: Apache-2.0
+
+language = "C"
+cpp_compat = true
+tab_width = 2
+header = """// Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
+// SPDX-License-Identifier: Apache-2.0
+"""
+include_guard = "DDOG_DATA_PIPELINE_H"
+includes = ["common.h"]
+
+[export]
+prefix = "ddog_"
+renaming_overrides_prefixing = true
+
+[export.rename]
+"ByteSlice" = "ddog_ByteSlice"
+"CharSlice" = "ddog_CharSlice"
+"Slice_U8" = "ddog_Slice_U8"
+"Slice_CChar" = "ddog_Slice_CChar"
+"Error" = "ddog_Error"
+"ExporterResponse" = "ddog_TraceExporterResponse"
+"ExporterErrorCode" = "ddog_TraceExporterErrorCode"
+"ExporterError" = "ddog_TraceExporterError"
+
+[export.mangle]
+rename_types = "PascalCase"
+
+[enum]
+prefix_with_name = true
+rename_variants = "ScreamingSnakeCase"
+
+[fn]
+must_use = "DDOG_CHECK_RETURN"
+
+[parse]
+parse_deps = true
+include = ["libdd-common", "libdd-common-ffi", "libdd-data-pipeline"]
