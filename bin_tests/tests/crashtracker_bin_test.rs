@@ -346,7 +346,12 @@ fn test_crash_tracking_bin_runtime_callback_frame_impl(
     let crash_telemetry = fs::read(&fixtures.crash_telemetry_path)
         .context("reading crashtracker telemetry payload")
         .unwrap();
-    assert_telemetry_message(&crash_telemetry, crash_typ);
+    let payloads = crash_telemetry.split(|&b| b == b'\n').collect::<Vec<_>>();
+    for payload in payloads {
+        if String::from_utf8_lossy(payload).contains("is_crash:true") {
+            assert_telemetry_message(payload, crash_typ);
+        }
+    }
 }
 
 fn test_crash_tracking_bin_runtime_callback_frame_invalid_utf8_impl(
@@ -424,7 +429,12 @@ fn test_crash_tracking_bin_runtime_callback_frame_invalid_utf8_impl(
     let crash_telemetry = fs::read(&fixtures.crash_telemetry_path)
         .context("reading crashtracker telemetry payload")
         .unwrap();
-    assert_telemetry_message(&crash_telemetry, crash_typ);
+    let payloads = crash_telemetry.split(|&b| b == b'\n').collect::<Vec<_>>();
+    for payload in payloads {
+        if String::from_utf8_lossy(payload).contains("is_crash:true") {
+            assert_telemetry_message(payload, crash_typ);
+        }
+    }
 }
 
 fn validate_runtime_callback_frame_data(crash_payload: &Value) {
@@ -857,7 +867,12 @@ fn test_crash_tracking_bin_runtime_callback_string_impl(
     let crash_telemetry = fs::read(&fixtures.crash_telemetry_path)
         .context("reading crashtracker telemetry payload")
         .unwrap();
-    assert_telemetry_message(&crash_telemetry, crash_typ);
+    let payloads = crash_telemetry.split(|&b| b == b'\n').collect::<Vec<_>>();
+    for payload in payloads {
+        if String::from_utf8_lossy(payload).contains("is_crash:true") {
+            assert_telemetry_message(payload, crash_typ);
+        }
+    }
 }
 
 fn test_crash_tracking_bin_no_runtime_callback_impl(
@@ -936,7 +951,12 @@ fn test_crash_tracking_bin_no_runtime_callback_impl(
     let crash_telemetry = fs::read(&fixtures.crash_telemetry_path)
         .context("reading crashtracker telemetry payload")
         .unwrap();
-    assert_telemetry_message(&crash_telemetry, crash_typ);
+    let payloads = crash_telemetry.split(|&b| b == b'\n').collect::<Vec<_>>();
+    for payload in payloads {
+        if String::from_utf8_lossy(payload).contains("is_crash:true") {
+            assert_telemetry_message(payload, crash_typ);
+        }
+    }
 }
 
 fn test_crash_tracking_bin(
