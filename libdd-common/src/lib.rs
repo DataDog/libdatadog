@@ -290,4 +290,8 @@ impl Endpoint {
             ..Default::default()
         }
     }
+
+    pub fn is_file_endpoint(&self) -> bool {
+        self.url.scheme_str() == Some("file")
+    }
 }
