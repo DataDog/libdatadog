@@ -1,7 +1,7 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use datadog_trace_utils::trace_utils::TracerHeaderTags;
+use libdd_trace_utils::trace_utils::TracerHeaderTags;
 use serde::{Deserialize, Serialize};
 use std::io;
 
@@ -22,7 +22,7 @@ pub struct SerializedTracerHeaderTags {
 /// ```
 /// use bincode;
 /// use datadog_sidecar::service::SerializedTracerHeaderTags;
-/// use datadog_trace_utils::trace_utils::TracerHeaderTags;
+/// use libdd_trace_utils::trace_utils::TracerHeaderTags;
 /// use std::convert::TryInto;
 ///
 /// let tracer_header_tags = TracerHeaderTags {
@@ -62,7 +62,7 @@ impl<'a> TryFrom<&'a SerializedTracerHeaderTags> for TracerHeaderTags<'a> {
 ///
 /// ```
 /// use datadog_sidecar::service::SerializedTracerHeaderTags;
-/// use datadog_trace_utils::trace_utils::TracerHeaderTags;
+/// use libdd_trace_utils::trace_utils::TracerHeaderTags;
 /// use std::convert::TryInto;
 ///
 /// let tracer_header_tags = TracerHeaderTags {

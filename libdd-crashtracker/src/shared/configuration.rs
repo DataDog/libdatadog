@@ -1,7 +1,7 @@
 // Copyright 2023-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 use crate::{default_signals, shared::constants, signal_from_signum};
-use ddcommon::Endpoint;
+use libdd_common::Endpoint;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 

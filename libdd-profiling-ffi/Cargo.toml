@@ -22,7 +22,7 @@ cbindgen = ["build_common/cbindgen", "libdd-common-ffi/cbindgen"]
 ddtelemetry-ffi = ["dep:libdd-telemetry-ffi"]
 datadog-log-ffi = ["dep:libdd-log-ffi"]
 symbolizer = ["symbolizer-ffi"]
-data-pipeline-ffi = ["dep:data-pipeline-ffi"]
+data-pipeline-ffi = ["dep:libdd-data-pipeline-ffi"]
 crashtracker-ffi = ["dep:libdd-crashtracker-ffi"]
 # Enables the in-process collection of crash-info
 crashtracker-collector = ["crashtracker-ffi", "libdd-crashtracker-ffi/collector"]
@@ -38,7 +38,7 @@ build_common = { path = "../build-common" }
 
 [dependencies]
 anyhow = "1.0"
-data-pipeline-ffi = { path = "../data-pipeline-ffi", default-features = false, optional = true }
+libdd-data-pipeline-ffi = { path = "../libdd-data-pipeline-ffi", default-features = false, optional = true }
 libdd-crashtracker-ffi = { path = "../libdd-crashtracker-ffi", default-features = false, optional = true}
 libdd-library-config-ffi = {  path = "../libdd-library-config-ffi", default-features = false, optional = true }
 libdd-profiling = { path = "../libdd-profiling" }

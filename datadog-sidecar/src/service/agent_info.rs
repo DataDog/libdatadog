@@ -12,13 +12,13 @@ use crate::one_way_shared_memory::{open_named_shm, OneWayShmReader, OneWayShmWri
 use crate::primary_sidecar_identifier;
 use base64::prelude::BASE64_URL_SAFE_NO_PAD;
 use base64::Engine;
-use data_pipeline::agent_info::schema::AgentInfoStruct;
-use data_pipeline::agent_info::{fetch_info_with_state, FetchInfoStatus};
 use datadog_ipc::platform::NamedShmHandle;
 use futures::future::Shared;
 use futures::FutureExt;
 use http::uri::PathAndQuery;
 use libdd_common::{Endpoint, MutexExt};
+use libdd_data_pipeline::agent_info::schema::AgentInfoStruct;
+use libdd_data_pipeline::agent_info::{fetch_info_with_state, FetchInfoStatus};
 use manual_future::ManualFuture;
 use std::ffi::CString;
 use std::hash::{Hash, Hasher};

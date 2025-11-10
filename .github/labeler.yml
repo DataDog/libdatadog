@@ -26,7 +26,7 @@ mini-agent:
   - any-glob-to-any-file: [
       'datadog-trace-normalization/**/*',
       'datadog-trace-obfuscation/**/*',
-      'datadog-trace-utils/**/*',
+      'libdd-trace-utils/**/*',
     ]
 
 telemetry:
@@ -52,8 +52,8 @@ sidecar:
 data-pipeline:
 - changed-files:
   - any-glob-to-any-file: [
-      'data-pipeline/**/*',
-      'data-pipeline-ffi/**/*',
+      'libdd-data-pipeline/**/*',
+      'libdd-data-pipeline-ffi/**/*',
     ]
 
 crashtracker:

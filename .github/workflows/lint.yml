@@ -111,7 +111,7 @@ jobs:
           if ! diff /tmp/CI_normalized.yaml /tmp/LICENSE-3rdparty_normalized.yml; then
             echo "Differences detected (see above). You probably need to manually update the license files. To do so:"
             echo "cargo install cargo-bundle-licenses"
-            echo "CARGO_HOME=/tmp/dd-cargo cargo bundle-licenses --format yaml --output LICENSE-3rdparty.yml"
+            echo "./scripts/update_license_3rdparty.sh"
             echo "...and push a commit with the result. Also, bonus points if someone automates this, wink wink nudge nudge."
             exit 1
           fi
