@@ -10,8 +10,8 @@ pub use additional_tags::*;
 pub use counters::*;
 use datadog_crashtracker::{CrashtrackerReceiverConfig, DEFAULT_SYMBOLS};
 pub use datatypes::*;
-use ddcommon_ffi::{wrap_with_void_ffi_result, Slice, VoidResult};
 use function_name::named;
+use libdd_common_ffi::{wrap_with_void_ffi_result, Slice, VoidResult};
 pub use spans::*;
 
 #[no_mangle]

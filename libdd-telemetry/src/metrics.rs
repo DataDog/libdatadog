@@ -7,7 +7,7 @@ use std::{
     time,
 };
 
-use ddcommon::tag::Tag;
+use libdd_common::tag::Tag;
 use libdd_ddsketch::DDSketch;
 use serde::{Deserialize, Serialize};
 
@@ -228,7 +228,7 @@ impl MetricContexts {
 
 #[cfg(test)]
 mod tests {
-    use ddcommon::tag;
+    use libdd_common::tag;
     use std::fmt::Debug;
 
     use super::*;

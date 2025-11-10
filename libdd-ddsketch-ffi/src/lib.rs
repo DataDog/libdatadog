@@ -7,8 +7,8 @@
 #![cfg_attr(not(test), deny(clippy::todo))]
 #![cfg_attr(not(test), deny(clippy::unimplemented))]
 
-use ddcommon_ffi as ffi;
-use ddcommon_ffi::{Error, Handle, ToInner, VoidResult};
+use libdd_common_ffi as ffi;
+use libdd_common_ffi::{Error, Handle, ToInner, VoidResult};
 use libdd_ddsketch::DDSketch;
 use std::mem::MaybeUninit;
 

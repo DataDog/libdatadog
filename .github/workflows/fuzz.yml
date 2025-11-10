@@ -7,7 +7,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        directory: [libdd-alloc, datadog-profiling, ddcommon-ffi, datadog-trace-utils]
+        directory: [libdd-alloc, datadog-profiling, libdd-common-ffi, libdd-trace-utils]
     env:
       CARGO_TERM_COLOR: always
     steps:

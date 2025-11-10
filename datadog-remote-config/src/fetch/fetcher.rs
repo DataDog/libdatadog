@@ -7,11 +7,11 @@ use crate::{
     RemoteConfigProduct, Target,
 };
 use base64::Engine;
-use ddcommon::{hyper_migration, Endpoint, MutexExt};
 use http::uri::Scheme;
 use http_body_util::BodyExt;
 use hyper::http::uri::PathAndQuery;
 use hyper::StatusCode;
+use libdd_common::{hyper_migration, Endpoint, MutexExt};
 use libdd_trace_protobuf::remoteconfig::{
     ClientGetConfigsRequest, ClientGetConfigsResponse, ClientState, ClientTracer, ConfigState,
     TargetFileHash, TargetFileMeta,
@@ -321,7 +321,7 @@ impl<S: FileStorage> ConfigFetcher<S> {
             .method(http::Method::POST)
             .header(
                 http::header::CONTENT_TYPE,
-                ddcommon::header::APPLICATION_JSON,
+                libdd_common::header::APPLICATION_JSON,
             )
             .body(hyper_migration::Body::from(serde_json::to_string(
                 &config_req,

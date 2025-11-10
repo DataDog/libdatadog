@@ -24,7 +24,7 @@ mod unix {
     use datadog_crashtracker::{
         self as crashtracker, CrashtrackerConfiguration, CrashtrackerReceiverConfig, Metadata,
     };
-    use ddcommon::{tag, Endpoint};
+    use libdd_common::{tag, Endpoint};
 
     const TEST_COLLECTOR_TIMEOUT: Duration = Duration::from_secs(10);
 

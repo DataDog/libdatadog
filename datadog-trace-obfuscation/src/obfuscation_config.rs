@@ -4,7 +4,7 @@
 use log::{debug, error};
 use std::env;
 
-use ddcommon::config::parse_env;
+use libdd_common::config::parse_env;
 
 use crate::replacer::{self, ReplaceRule};
 

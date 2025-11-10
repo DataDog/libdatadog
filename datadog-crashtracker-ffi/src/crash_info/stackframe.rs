@@ -3,7 +3,7 @@
 
 use ::function_name::named;
 use datadog_crashtracker::{BuildIdType, FileType, StackFrame};
-use ddcommon_ffi::{
+use libdd_common_ffi::{
     slice::AsBytes, utils::ToHexStr, wrap_with_void_ffi_result, CharSlice, Error, Handle, ToInner,
     VoidResult,
 };

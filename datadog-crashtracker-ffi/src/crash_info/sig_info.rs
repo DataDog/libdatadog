@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use datadog_crashtracker::{SiCodes, SignalNames};
-use ddcommon_ffi::{slice::AsBytes, CharSlice};
+use libdd_common_ffi::{slice::AsBytes, CharSlice};
 
 #[repr(C)]
 pub struct SigInfo<'a> {

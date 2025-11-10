@@ -2,9 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 pub use datadog_crashtracker::{OpTypes, StacktraceCollection};
-use ddcommon::Endpoint;
-use ddcommon_ffi::slice::{AsBytes, CharSlice};
-use ddcommon_ffi::{Error, Slice};
+use libdd_common::Endpoint;
+use libdd_common_ffi::slice::{AsBytes, CharSlice};
+use libdd_common_ffi::{Error, Slice};
 use std::time::Duration;
 
 #[repr(C)]

@@ -6,8 +6,8 @@ use datadog_remote_config::file_change_tracker::{Change, FilePath};
 use datadog_remote_config::file_storage::ParsedFileStorage;
 use datadog_remote_config::RemoteConfigProduct::ApmTracing;
 use datadog_remote_config::{RemoteConfigData, Target};
-use ddcommon::tag::Tag;
-use ddcommon::Endpoint;
+use libdd_common::tag::Tag;
+use libdd_common::Endpoint;
 use std::time::Duration;
 use tokio::time::sleep;
 

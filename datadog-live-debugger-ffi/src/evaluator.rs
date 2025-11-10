@@ -3,8 +3,8 @@
 
 use datadog_live_debugger::debugger_defs::SnapshotEvaluationError;
 use datadog_live_debugger::{DslString, ProbeCondition, ProbeValue, ResultError, ResultValue};
-use ddcommon_ffi::slice::AsBytes;
-use ddcommon_ffi::CharSlice;
+use libdd_common_ffi::slice::AsBytes;
+use libdd_common_ffi::CharSlice;
 use std::borrow::Cow;
 use std::ffi::c_void;
 

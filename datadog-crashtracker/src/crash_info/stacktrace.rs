@@ -165,6 +165,8 @@ pub struct StackFrame {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub line: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub type_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mangled_name: Option<String>,
 
     // Additional Info
@@ -307,7 +309,7 @@ impl super::test_utils::TestInstance for StackFrame {
         let function = Some(format!("Bar::baz{seed}"));
         let mangled_name = Some(format!("_ZN3Bar3baz{seed}E"));
         let line = Some((2 * seed + 1) as u32);
-
+        let type_name = Some("Bar".to_string());
         let comments = vec![format!("This is a comment on frame {seed}")];
         Self {
             ip,
@@ -325,6 +327,7 @@ impl super::test_utils::TestInstance for StackFrame {
             mangled_name,
             line,
             comments,
+            type_name,
         }
     }
 }

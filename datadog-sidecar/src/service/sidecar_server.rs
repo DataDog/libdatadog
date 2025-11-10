@@ -14,13 +14,13 @@ use datadog_ipc::platform::{AsyncChannel, ShmHandle};
 use datadog_ipc::tarpc;
 use datadog_ipc::tarpc::context::Context;
 use datadog_ipc::transport::Transport;
-use datadog_trace_utils::trace_utils::SendData;
-use datadog_trace_utils::tracer_payload::decode_to_trace_chunks;
-use datadog_trace_utils::tracer_payload::TraceEncoding;
-use ddcommon::{Endpoint, MutexExt};
 use futures::future;
 use futures::future::Ready;
+use libdd_common::{Endpoint, MutexExt};
 use libdd_telemetry::worker::{LifecycleAction, TelemetryActions, TelemetryWorkerStats};
+use libdd_trace_utils::trace_utils::SendData;
+use libdd_trace_utils::tracer_payload::decode_to_trace_chunks;
+use libdd_trace_utils::tracer_payload::TraceEncoding;
 use manual_future::ManualFutureCompleter;
 use std::borrow::Cow;
 use std::collections::hash_map::Entry;
@@ -47,11 +47,11 @@ use datadog_ipc::platform::FileBackedHandle;
 use datadog_ipc::tarpc::server::{Channel, InFlightRequest};
 use datadog_live_debugger::sender::DebuggerType;
 use datadog_remote_config::fetch::{ConfigInvariants, MultiTargetStats};
-use datadog_trace_utils::tracer_header_tags::TracerHeaderTags;
-use ddcommon::tag::Tag;
+use libdd_common::tag::Tag;
 use libdd_dogstatsd_client::{new, DogStatsDActionOwned};
 use libdd_telemetry::config::Config;
 use libdd_tinybytes as tinybytes;
+use libdd_trace_utils::tracer_header_tags::TracerHeaderTags;
 
 type NoResponse = Ready<()>;
 
@@ -552,7 +552,7 @@ impl SidecarInterface for SidecarServer {
         });
         session.modify_trace_config(|cfg| {
             let endpoint = get_product_endpoint(
-                datadog_trace_utils::config_utils::PROD_INTAKE_SUBDOMAIN,
+                libdd_trace_utils::config_utils::PROD_INTAKE_SUBDOMAIN,
                 &config.endpoint,
             );
             cfg.set_endpoint(endpoint).ok();

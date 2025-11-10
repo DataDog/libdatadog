@@ -25,7 +25,7 @@ bytes = "1.1"
 chrono = {version = "0.4", default-features = false, features = ["std", "clock"]}
 libdd-alloc = { version = "1.0.0", path = "../libdd-alloc" }
 libdd-profiling-protobuf = { version = "1.0.0", path = "../libdd-profiling-protobuf", features = ["prost_impls"] }
-ddcommon = {path = "../ddcommon" }
+libdd-common = { version = "1.0.0", path = "../libdd-common" }
 futures = { version = "0.3", default-features = false }
 http = "1.0"
 hyper = { workspace = true}

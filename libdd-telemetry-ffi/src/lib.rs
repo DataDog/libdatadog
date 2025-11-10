@@ -95,7 +95,7 @@ macro_rules! try_c {
     ($failable:expr) => {
         match $failable {
             Ok(o) => o,
-            Err(e) => return ffi::MaybeError::Some(ddcommon_ffi::Error::from(format!("{e:?}"))),
+            Err(e) => return ffi::MaybeError::Some(libdd_common_ffi::Error::from(format!("{e:?}"))),
         }
     };
 }
@@ -106,10 +106,10 @@ pub(crate) use c_setters;
 #[cfg(test)]
 mod tests {
     use crate::{builder::*, worker_handle::*};
-    use ddcommon::Endpoint;
-    use ddcommon_ffi as ffi;
     use ffi::tags::{ddog_Vec_Tag_new, ddog_Vec_Tag_push, PushTagResult};
     use ffi::MaybeError;
+    use libdd_common::Endpoint;
+    use libdd_common_ffi as ffi;
     use libdd_telemetry::{
         data::metrics::{MetricNamespace, MetricType},
         worker::{TelemetryWorkerBuilder, TelemetryWorkerHandle},

@@ -38,4 +38,4 @@ must_use = "DDOG_CHECK_RETURN"
 
 [parse]
 parse_deps = true
-include = ["ddcommon-ffi", "datadog-ffe"]
+include = ["libdd-common-ffi", "datadog-ffe"]

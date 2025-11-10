@@ -14,7 +14,7 @@ bench = false
 
 [features]
 default = ["cbindgen"]
-cbindgen = ["build_common/cbindgen", "ddcommon-ffi/cbindgen"]
+cbindgen = ["build_common/cbindgen", "libdd-common-ffi/cbindgen"]
 
 [build-dependencies]
 build_common = { path = "../build-common" }
@@ -22,7 +22,7 @@ build_common = { path = "../build-common" }
 [dependencies]
 anyhow = "1.0.93"
 datadog-ffe = { path = "../datadog-ffe", version = "=0.1.0" }
-ddcommon-ffi = { path = "../ddcommon-ffi", default-features = false }
+libdd-common-ffi = { path = "../libdd-common-ffi", default-features = false }
 function_name = "0.3.0"
 
 [dev-dependencies]

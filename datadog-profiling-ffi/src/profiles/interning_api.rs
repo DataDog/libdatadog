@@ -13,11 +13,11 @@ use datadog_profiling::{
         FunctionId, LabelId, LabelSetId, LocationId, MappingId, StackTraceId,
     },
 };
-use ddcommon_ffi::{
+use function_name::named;
+use libdd_common_ffi::{
     slice::AsBytes, wrap_with_ffi_result, wrap_with_void_ffi_result, CharSlice, MutSlice, Result,
     Slice, VoidResult,
 };
-use function_name::named;
 
 // Cbindgen was putting invalid C types on the static, this workaround seems to fix it.
 type CbindgenIsDumbStringId = GenerationalId<StringId>;

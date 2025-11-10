@@ -5,13 +5,13 @@ use datadog_sidecar_ffi::*;
 macro_rules! assert_maybe_no_error {
     ($maybe_erroring:expr) => {
         match $maybe_erroring {
-            ddcommon_ffi::Option::Some(err) => panic!("{}", err.to_string()),
-            ddcommon_ffi::Option::None => {}
+            libdd_common_ffi::Option::Some(err) => panic!("{}", err.to_string()),
+            libdd_common_ffi::Option::None => {}
         }
     };
 }
 
-use ddcommon::Endpoint;
+use libdd_common::Endpoint;
 use std::ptr::{null, null_mut};
 use std::time::Duration;
 #[cfg(unix)]

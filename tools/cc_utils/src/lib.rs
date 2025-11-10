@@ -1,1 +1,1 @@
-../../../ddcommon/src/cc_utils.rs
+../../../libdd-common/src/cc_utils.rs

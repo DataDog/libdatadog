@@ -50,7 +50,7 @@ pub fn obfuscate_span(span: &mut pb::Span, config: &ObfuscationConfig) {
 
 #[cfg(test)]
 mod tests {
-    use datadog_trace_utils::test_utils;
+    use libdd_trace_utils::test_utils;
 
     use crate::{obfuscation_config, replacer};
 

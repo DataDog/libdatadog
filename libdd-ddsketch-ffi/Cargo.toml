@@ -14,13 +14,13 @@ bench = false
 
 [features]
 default = ["cbindgen"]
-cbindgen = ["build_common/cbindgen", "ddcommon-ffi/cbindgen"]
+cbindgen = ["build_common/cbindgen", "libdd-common-ffi/cbindgen"]
 
 [build-dependencies]
 build_common = { path = "../build-common" }
 
 [dependencies]
-libdd-ddsketch = { version = "1.0.0", path = "../libdd-ddsketch" }
-ddcommon-ffi = { path = "../ddcommon-ffi", default-features = false }
+libdd-ddsketch = { path = "../libdd-ddsketch" }
+libdd-common-ffi = { path = "../libdd-common-ffi", default-features = false }
 
 [dev-dependencies]

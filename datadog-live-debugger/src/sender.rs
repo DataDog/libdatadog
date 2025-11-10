@@ -3,13 +3,13 @@
 
 use crate::debugger_defs::{DebuggerData, DebuggerPayload};
 use constcat::concat;
-use ddcommon::hyper_migration;
-use ddcommon::tag::Tag;
-use ddcommon::Endpoint;
 use http_body_util::BodyExt;
 use hyper::body::Bytes;
 use hyper::http::uri::PathAndQuery;
 use hyper::{Method, Uri};
+use libdd_common::hyper_migration;
+use libdd_common::tag::Tag;
+use libdd_common::Endpoint;
 use percent_encoding::{percent_encode, CONTROLS};
 use serde::{Deserialize, Serialize};
 use std::fmt::Display;

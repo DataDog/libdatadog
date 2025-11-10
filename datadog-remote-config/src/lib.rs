@@ -15,7 +15,7 @@ mod parse;
 mod path;
 mod targets;
 
-use ddcommon::tag::Tag;
+use libdd_common::tag::Tag;
 pub use parse::*;
 pub use path::*;
 use serde::{Deserialize, Serialize};

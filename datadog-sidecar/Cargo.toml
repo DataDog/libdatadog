@@ -16,12 +16,12 @@ tokio-console = ["tokio/full", "tokio/tracing", "console-subscriber"]
 anyhow = { version = "1.0" }
 arrayref = "0.3.7"
 priority-queue = "2.1.1"
-ddcommon = { path = "../ddcommon" }
+libdd-common = { path = "../libdd-common" }
 datadog-sidecar-macros = { path = "../datadog-sidecar-macros" }
 
 libdd-telemetry = { path = "../libdd-telemetry", features = ["tracing"] }
-data-pipeline = { path = "../data-pipeline" }
-datadog-trace-utils = { path = "../datadog-trace-utils" }
+libdd-data-pipeline = { path = "../libdd-data-pipeline" }
+libdd-trace-utils = { path = "../libdd-trace-utils" }
 datadog-remote-config = { path = "../datadog-remote-config" , features = ["live-debugger"]}
 datadog-live-debugger = { path = "../datadog-live-debugger" }
 datadog-crashtracker = { path = "../datadog-crashtracker" }
@@ -88,7 +88,7 @@ nix = { version = "0.29", features = ["socket", "mman"] }
 sendfd = { version = "0.4", features = ["tokio"] }
 
 [target.'cfg(windows)'.dependencies]
-ddcommon-ffi = { path = "../ddcommon-ffi", default-features = false }
+libdd-common-ffi = { path = "../libdd-common-ffi", default-features = false }
 datadog-crashtracker-ffi = { path = "../datadog-crashtracker-ffi", default-features = false, features = ["collector", "collector_windows"] }
 winapi = { version = "0.3.9", features = ["securitybaseapi", "sddl"] }
 windows-sys = { version = "0.52.0", features = ["Win32_System_SystemInformation"] }
@@ -101,7 +101,7 @@ libc = { version = "0.2" }
 tempfile = { version = "3.3" }
 httpmock = "0.8.0-alpha.1"
 datadog-remote-config = { path = "../datadog-remote-config", features = ["test"] }
-datadog-trace-utils = { path = "../datadog-trace-utils", features = ["test-utils"] }
+libdd-trace-utils = { path = "../libdd-trace-utils", features = ["test-utils"] }
 
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = [

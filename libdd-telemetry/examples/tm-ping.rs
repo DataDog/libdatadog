@@ -47,7 +47,7 @@ pub async fn push_telemetry(telemetry: &Telemetry<'_>) -> anyhow::Result<()> {
     let client = libdd_telemetry::worker::http_client::from_config(&config);
     let req = request_builder(&config)?
         .method(http::Method::POST)
-        .header(CONTENT_TYPE, ddcommon::header::APPLICATION_JSON)
+        .header(CONTENT_TYPE, libdd_common::header::APPLICATION_JSON)
         .body(serde_json::to_string(telemetry)?.into())?;
 
     let resp = client.request(req).await?;

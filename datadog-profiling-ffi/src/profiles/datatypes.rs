@@ -6,9 +6,9 @@ use anyhow::Context;
 use datadog_profiling::api;
 use datadog_profiling::api::ManagedStringId;
 use datadog_profiling::internal;
-use ddcommon_ffi::slice::{AsBytes, ByteSlice, CharSlice, Slice};
-use ddcommon_ffi::{wrap_with_ffi_result, Error, Handle, Timespec, ToInner};
 use function_name::named;
+use libdd_common_ffi::slice::{AsBytes, ByteSlice, CharSlice, Slice};
+use libdd_common_ffi::{wrap_with_ffi_result, Error, Handle, Timespec, ToInner};
 use std::num::NonZeroI64;
 use std::str::Utf8Error;
 use std::time::SystemTime;
@@ -720,7 +720,7 @@ pub unsafe extern "C" fn ddog_prof_EncodedProfile_drop(
 #[named]
 pub unsafe extern "C" fn ddog_prof_EncodedProfile_bytes<'a>(
     mut encoded_profile: *mut Handle<internal::EncodedProfile>,
-) -> ddcommon_ffi::Result<ByteSlice<'a>> {
+) -> libdd_common_ffi::Result<ByteSlice<'a>> {
     wrap_with_ffi_result!({
         let slice = encoded_profile.to_inner_mut()?.buffer.as_slice();
         // Rountdtrip through raw pointers to avoid Rust complaining about lifetimes.
@@ -769,7 +769,7 @@ pub unsafe extern "C" fn ddog_prof_Profile_serialize(
 
 #[must_use]
 #[no_mangle]
-pub unsafe extern "C" fn ddog_Vec_U8_as_slice(vec: &ddcommon_ffi::Vec<u8>) -> Slice<'_, u8> {
+pub unsafe extern "C" fn ddog_Vec_U8_as_slice(vec: &libdd_common_ffi::Vec<u8>) -> Slice<'_, u8> {
     vec.as_slice()
 }
 

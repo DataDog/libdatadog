@@ -10,8 +10,8 @@
 //! dogstatsd-client implements a client to emit metrics to a dogstatsd server.
 //! This is made use of in at least the data-pipeline and sidecar crates.
 
-use ddcommon::tag::Tag;
-use ddcommon::Endpoint;
+use libdd_common::tag::Tag;
+use libdd_common::Endpoint;
 use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
 use tracing::error;
@@ -22,7 +22,7 @@ use cadence::prelude::*;
 use cadence::UnixMetricSink;
 use cadence::{Metric, MetricBuilder, QueuingMetricSink, StatsdClient, UdpMetricSink};
 #[cfg(unix)]
-use ddcommon::connector::uds::socket_path_from_uri;
+use libdd_common::connector::uds::socket_path_from_uri;
 use std::net::{ToSocketAddrs, UdpSocket};
 #[cfg(unix)]
 use std::os::unix::net::UnixDatagram;
@@ -257,10 +257,10 @@ mod test {
     use crate::DogStatsDAction::{Count, Distribution, Gauge, Histogram, Set};
     use crate::{create_client, new, DogStatsDActionOwned};
     #[cfg(unix)]
-    use ddcommon::connector::uds::socket_path_to_uri;
-    use ddcommon::{tag, Endpoint};
-    #[cfg(unix)]
     use http::Uri;
+    #[cfg(unix)]
+    use libdd_common::connector::uds::socket_path_to_uri;
+    use libdd_common::{tag, Endpoint};
     use std::net;
     use std::sync::Arc;
     use std::time::Duration;

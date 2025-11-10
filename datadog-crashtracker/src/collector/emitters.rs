@@ -4,6 +4,10 @@
 use crate::collector::additional_tags::consume_and_emit_additional_tags;
 use crate::collector::counters::emit_counters;
 use crate::collector::spans::{emit_spans, emit_traces};
+use crate::runtime_callback::{
+    get_registered_callback, invoke_runtime_callback_with_writer, is_runtime_callback_registered,
+    CallbackData,
+};
 use crate::shared::constants::*;
 use crate::{translate_si_code, CrashtrackerConfiguration, SignalNames, StacktraceCollection};
 use backtrace::Frame;
@@ -160,6 +164,11 @@ pub(crate) fn emit_crashreport(
         let fault_ip = extract_ip(ucontext);
         unsafe { emit_backtrace_by_frames(pipe, config.resolve_frames(), fault_ip)? };
     }
+
+    if is_runtime_callback_registered() {
+        emit_runtime_stack(pipe)?;
+    }
+
     writeln!(pipe, "{DD_CRASHTRACK_DONE}")?;
     pipe.flush()?;
 
@@ -207,6 +216,51 @@ fn emit_ucontext(w: &mut impl Write, ucontext: *const ucontext_t) -> Result<(), 
     // SAFETY: the pointer is given to us by the signal handler, and is non-null.
     writeln!(w, "{:?}", unsafe { *ucontext })?;
     writeln!(w, "{DD_CRASHTRACK_END_UCONTEXT}")?;
+    w.flush()?;
+    Ok(())
+}
+
+/// Emit runtime stack frames collected from registered runtime callback
+///
+/// This function invokes any registered runtime callback to collect runtime-specific
+/// stack traces
+///
+/// If runtime stacks are being emitted frame by frame, this function writes structured JSON.
+/// If not, it writes a single line with the stacktrace string.
+///
+/// SAFETY:
+///     Crash-tracking functions are not reentrant.
+///     No other crash-handler functions should be called concurrently.
+/// SIGNAL SAFETY:
+///     This function attempts to be signal safe by only invoking user-registered
+///     callbacks and writing to the provided stream. The runtime callback itself
+///     must be signal safe.
+fn emit_runtime_stack(w: &mut impl Write) -> Result<(), EmitterError> {
+    let callback = unsafe { get_registered_callback() };
+
+    let callback = match callback {
+        Some(callback) => callback,
+        None => return Ok(()),
+    };
+
+    match callback {
+        CallbackData::Frame(_) => emit_runtime_stack_by_frames(w),
+        CallbackData::StacktraceString(_) => emit_runtime_stack_by_stacktrace_string(w),
+    }
+}
+
+fn emit_runtime_stack_by_frames(w: &mut impl Write) -> Result<(), EmitterError> {
+    writeln!(w, "{DD_CRASHTRACK_BEGIN_RUNTIME_STACK_FRAME}")?;
+    unsafe { invoke_runtime_callback_with_writer(w)? };
+    writeln!(w, "{DD_CRASHTRACK_END_RUNTIME_STACK_FRAME}")?;
+    w.flush()?;
+    Ok(())
+}
+
+fn emit_runtime_stack_by_stacktrace_string(w: &mut impl Write) -> Result<(), EmitterError> {
+    writeln!(w, "{DD_CRASHTRACK_BEGIN_RUNTIME_STACK_STRING}")?;
+    unsafe { invoke_runtime_callback_with_writer(w)? };
+    writeln!(w, "{DD_CRASHTRACK_END_RUNTIME_STACK_STRING}")?;
     w.flush()?;
     Ok(())
 }

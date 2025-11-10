@@ -1,8 +1,8 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use ddcommon::{config::parse_env, parse_uri, Endpoint};
 use http::{uri::PathAndQuery, Uri};
+use libdd_common::{config::parse_env, parse_uri, Endpoint};
 use std::{borrow::Cow, time::Duration};
 use tracing::debug;
 
@@ -292,9 +292,9 @@ mod tests {
     use std::path::Path;
 
     #[cfg(unix)]
-    use ddcommon::connector::uds;
+    use libdd_common::connector::uds;
 
-    use ddcommon::connector::named_pipe;
+    use libdd_common::connector::named_pipe;
 
     use super::{Config, Settings};
 
@@ -434,7 +434,7 @@ mod tests {
             );
             assert_eq!(
                 Path::new(expected),
-                ddcommon::decode_uri_path_in_authority(&cfg.endpoint.unwrap().url).unwrap(),
+                libdd_common::decode_uri_path_in_authority(&cfg.endpoint.unwrap().url).unwrap(),
             );
         }
     }

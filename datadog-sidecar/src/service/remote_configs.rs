@@ -3,7 +3,7 @@
 
 use crate::shm_remote_config::{ShmRemoteConfigs, ShmRemoteConfigsGuard};
 use datadog_remote_config::fetch::{ConfigInvariants, MultiTargetStats, NotifyTarget};
-use ddcommon::{tag::Tag, MutexExt};
+use libdd_common::{tag::Tag, MutexExt};
 use std::collections::hash_map::Entry;
 use std::fmt::Debug;
 use std::sync::{Arc, Mutex};

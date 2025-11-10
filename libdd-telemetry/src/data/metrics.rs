@@ -1,7 +1,7 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use ddcommon::tag::Tag;
+use libdd_common::tag::Tag;
 use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Debug)]

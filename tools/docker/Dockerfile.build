@@ -72,8 +72,8 @@ COPY "libdd-alloc/Cargo.toml" "libdd-alloc/"
 COPY "build-common/Cargo.toml" "build-common/"
 COPY "datadog-crashtracker/Cargo.toml" "datadog-crashtracker/"
 COPY "datadog-crashtracker-ffi/Cargo.toml" "datadog-crashtracker-ffi/"
-COPY "ddcommon/Cargo.toml" "ddcommon/"
-COPY "ddcommon-ffi/Cargo.toml" "ddcommon-ffi/"
+COPY "libdd-common/Cargo.toml" "libdd-common/"
+COPY "libdd-common-ffi/Cargo.toml" "libdd-common-ffi/"
 COPY "libdd-telemetry/Cargo.toml" "libdd-telemetry/"
 COPY "libdd-telemetry-ffi/Cargo.toml" "libdd-telemetry-ffi/"
 COPY "libdd-ddsketch/Cargo.toml" "libdd-ddsketch/"
@@ -97,8 +97,8 @@ COPY "symbolizer-ffi/Cargo.toml" "symbolizer-ffi/"
 COPY "libdd-trace-normalization/Cargo.toml" "libdd-trace-normalization/"
 COPY "datadog-trace-obfuscation/Cargo.toml" "datadog-trace-obfuscation/"
 COPY "libdd-trace-protobuf/Cargo.toml" "libdd-trace-protobuf/"
-COPY "datadog-trace-utils/Cargo.toml" "datadog-trace-utils/"
-COPY "datadog-trace-stats/Cargo.toml" "datadog-trace-stats/"
+COPY "libdd-trace-utils/Cargo.toml" "libdd-trace-utils/"
+COPY "libdd-trace-stats/Cargo.toml" "libdd-trace-stats/"
 COPY "datadog-tracer-flare/Cargo.toml" "datadog-tracer-flare/"
 COPY "tools/Cargo.toml" "tools/"
 COPY "tools/cc_utils/Cargo.toml" "tools/cc_utils/"
@@ -109,8 +109,8 @@ COPY "datadog-ipc/Cargo.toml" "datadog-ipc/"
 COPY "datadog-ipc-macros/Cargo.toml" "datadog-ipc-macros/"
 COPY "datadog-ipc/tarpc/Cargo.toml" "datadog-ipc/tarpc/"
 COPY "datadog-ipc/plugins/Cargo.toml" "datadog-ipc/plugins/"
-COPY "data-pipeline/Cargo.toml" "data-pipeline/"
-COPY "data-pipeline-ffi/Cargo.toml" "data-pipeline-ffi/"
+COPY "libdd-data-pipeline/Cargo.toml" "libdd-data-pipeline/"
+COPY "libdd-data-pipeline-ffi/Cargo.toml" "libdd-data-pipeline-ffi/"
 COPY "bin_tests/Cargo.toml"  "bin_tests/"
 COPY "libdd-tinybytes/Cargo.toml" "libdd-tinybytes/"
 COPY "builder/Cargo.toml"  "builder/"
@@ -141,8 +141,8 @@ RUN echo \
     tools/src/bin/dedup_headers.rs \
     libdd-trace-normalization/benches/normalization_utils.rs \
     datadog-trace-obfuscation/benches/trace_obfuscation.rs \
-    datadog-trace-utils/benches/deserialization.rs \
-    datadog-trace-utils/benches/main.rs \
+    libdd-trace-utils/benches/deserialization.rs \
+    libdd-trace-utils/benches/main.rs \
     | xargs -n 1 sh -c 'mkdir -p $(dirname $1); touch $1; echo $1' create_stubs
 
 # cache dependencies
