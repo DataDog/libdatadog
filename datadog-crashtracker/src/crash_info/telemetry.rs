@@ -60,14 +60,18 @@ impl CrashPingBuilder {
 
     pub fn build(self) -> anyhow::Result<CrashPing> {
         let crash_uuid = self.crash_uuid;
-        let sig_info = self.sig_info.context("sig_info is required")?;
+        let sig_info = self.sig_info;
         let metadata = self.metadata.context("metadata is required")?;
 
         let message = self.custom_message.unwrap_or_else(|| {
-            format!(
-                "Crashtracker crash ping: crash processing started - Process terminated with {:?} ({:?})",
-                sig_info.si_code_human_readable, sig_info.si_signo_human_readable
-            )
+            if let Some(ref sig_info) = sig_info {
+                format!(
+                    "Crashtracker crash ping: crash processing started - Process terminated with {:?} ({:?})",
+                    sig_info.si_code_human_readable, sig_info.si_signo_human_readable
+                )
+            } else {
+                "Crashtracker crash ping: crash processing started - Process terminated".to_string()
+            }
         });
 
         Ok(CrashPing {
@@ -84,7 +88,8 @@ impl CrashPingBuilder {
 #[derive(Debug, Serialize)]
 pub struct CrashPing {
     crash_uuid: String,
-    siginfo: SigInfo,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    siginfo: Option<SigInfo>,
     message: String,
     version: String,
     kind: String,
@@ -104,8 +109,8 @@ impl CrashPing {
         &self.metadata
     }
 
-    pub fn siginfo(&self) -> &SigInfo {
-        &self.siginfo
+    pub fn siginfo(&self) -> Option<&SigInfo> {
+        self.siginfo.as_ref()
     }
 
     fn current_schema_version() -> String {
@@ -237,19 +242,25 @@ impl TelemetryCrashUploader {
         .await
     }
 
-    fn build_crash_ping_tags(&self, crash_uuid: &str, sig_info: &SigInfo) -> String {
+    fn build_crash_ping_tags(&self, crash_uuid: &str, sig_info: Option<&SigInfo>) -> String {
         let metadata = &self.metadata;
         let mut tags = format!(
-            "uuid:{},is_crash_ping:true,service:{},language_name:{},language_version:{},tracer_version:{},si_code_human_readable:{:?},si_signo:{},si_signo_human_readable:{:?}",
+            "uuid:{},is_crash_ping:true,service:{},language_name:{},language_version:{},tracer_version:{}",
             crash_uuid,
             metadata.application.service_name,
             metadata.application.language_name,
             metadata.application.language_version,
-            metadata.application.tracer_version,
-            sig_info.si_code_human_readable,
-            sig_info.si_signo,
-            sig_info.si_signo_human_readable
+            metadata.application.tracer_version
         );
+
+        if let Some(sig_info) = sig_info {
+            tags.push_str(&format!(
+                ",si_code_human_readable:{:?},si_signo:{},si_signo_human_readable:{:?}",
+                sig_info.si_code_human_readable,
+                sig_info.si_signo,
+                sig_info.si_signo_human_readable
+            ));
+        }
 
         self.append_optional_tags(&mut tags);
         tags
@@ -533,7 +544,7 @@ mod tests {
         // Structured message format
         let message_json: serde_json::Value =
             serde_json::from_str(log_entry["message"].as_str().unwrap())?;
-        assert_eq!(message_json["siginfo"], serde_json::to_value(sig_info)?);
+        assert_eq!(message_json["siginfo"], serde_json::to_value(&sig_info)?);
         assert!(message_json["crash_uuid"].is_string());
         assert!(Uuid::parse_str(message_json["crash_uuid"].as_str().unwrap()).is_ok());
 
@@ -720,17 +731,20 @@ mod tests {
     #[test]
     #[cfg_attr(miri, ignore)]
     fn test_crash_ping_builder_validation() {
+        // Test that crash ping can be built with only metadata (no sig_info)
         let mut crash_info_builder = CrashInfoBuilder::new();
         crash_info_builder
             .with_metadata(Metadata::test_instance(1))
             .unwrap();
         let result = crash_info_builder.build_crash_ping();
-        assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("sig_info is required"));
+        assert!(result.is_ok());
+        let crash_ping = result.unwrap();
+        assert!(crash_ping.siginfo().is_none());
+        assert!(crash_ping
+            .message()
+            .contains("Crashtracker crash ping: crash processing started - Process terminated"));
 
+        // Test that crash ping fails without metadata
         let mut crash_info_builder = CrashInfoBuilder::new();
         crash_info_builder
             .with_sig_info(crate::SigInfo::test_instance(1))
@@ -742,7 +756,7 @@ mod tests {
             .to_string()
             .contains("metadata is required"));
 
-        // Test successful build with both required fields
+        // Test successful build with both fields
         let mut crash_info_builder = CrashInfoBuilder::new();
         crash_info_builder
             .with_sig_info(crate::SigInfo::test_instance(1))
@@ -752,6 +766,8 @@ mod tests {
             .unwrap();
         let result = crash_info_builder.build_crash_ping();
         assert!(result.is_ok());
+        let crash_ping = result.unwrap();
+        assert!(crash_ping.siginfo().is_some());
     }
 
     #[test]
@@ -770,7 +786,7 @@ mod tests {
         assert!(Uuid::parse_str(crash_ping.crash_uuid()).is_ok());
         assert!(crash_ping.message().contains("crash processing started"));
         assert_eq!(crash_ping.metadata(), &metadata);
-        assert_eq!(crash_ping.siginfo(), &sig_info);
+        assert_eq!(crash_ping.siginfo(), Some(&sig_info));
     }
 
     #[tokio::test]

@@ -301,8 +301,8 @@ pub(crate) async fn receive_report_from_stream(
 
     //TODO: This assumes that the input is valid UTF-8.
     loop {
-        // We need to wait until at least we receive config, metadata, and siginfo before sending
-        // the crash ping
+        // We need to wait until at least we receive config, metadata, and siginfo (on non-Windows
+        // platforms) before sending the crash ping
         if !crash_ping_sent && builder.is_ping_ready() {
             if let Some(ref config_ref) = config {
                 let config_clone = config_ref.clone();

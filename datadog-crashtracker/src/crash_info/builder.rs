@@ -395,19 +395,30 @@ impl CrashInfoBuilder {
         Ok(self)
     }
 
-    /// This method requires that the builder has a UUID, siginfo, and metadata set
+    /// This method requires that the builder has a UUID and metadata set.
+    /// Siginfo is optional for platforms that don't support it (like Windows)
     pub fn build_crash_ping(&self) -> anyhow::Result<CrashPing> {
-        let sig_info = self.sig_info.clone().context("sig_info is required")?;
+        let sig_info = self.sig_info.clone();
         let metadata = self.metadata.clone().context("metadata is required")?;
 
-        CrashPingBuilder::new(self.uuid)
-            .with_sig_info(sig_info)
-            .with_metadata(metadata)
-            .build()
+        let mut builder = CrashPingBuilder::new(self.uuid).with_metadata(metadata);
+        if let Some(sig_info) = sig_info {
+            builder = builder.with_sig_info(sig_info);
+        }
+        builder.build()
     }
 
     pub fn is_ping_ready(&self) -> bool {
-        self.sig_info.is_some() && self.metadata.is_some()
+        // On Unix platforms, wait for both metadata and siginfo
+        // On Windows, siginfo is not available, so only wait for metadata
+        #[cfg(unix)]
+        {
+            self.metadata.is_some() && self.sig_info.is_some()
+        }
+        #[cfg(windows)]
+        {
+            self.metadata.is_some()
+        }
     }
 }
 
@@ -430,7 +441,7 @@ mod tests {
 
         assert!(!crash_ping.crash_uuid().is_empty());
         assert!(Uuid::parse_str(crash_ping.crash_uuid()).is_ok());
-        assert_eq!(crash_ping.siginfo(), &sig_info);
+        assert_eq!(crash_ping.siginfo(), Some(&sig_info));
         assert_eq!(crash_ping.metadata(), &metadata);
         assert!(crash_ping.message().contains("crash processing started"));
     }
