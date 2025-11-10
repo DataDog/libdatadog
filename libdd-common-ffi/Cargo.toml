@@ -1,0 +1,31 @@
+# Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
+# SPDX-License-Identifier: Apache-2.0
+
+[package]
+name = "libdd-common-ffi"
+edition.workspace = true
+version.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[lib]
+bench =false
+
+[features]
+default = ["cbindgen"]
+cbindgen = ["build_common/cbindgen"]
+
+[build-dependencies]
+build_common = { path = "../build-common" }
+
+[dependencies]
+anyhow = "1.0"
+chrono = { version = "0.4.38", features = ["std"] }
+crossbeam-queue = "0.3.11"
+libdd-common = { version = "1.0.0", path = "../libdd-common" }
+hyper = { workspace = true}
+serde = "1.0"
+
+[dev-dependencies]
+bolero = "0.13"

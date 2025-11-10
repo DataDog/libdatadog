@@ -32,4 +32,4 @@ must_use = "DDOG_CHECK_RETURN"
 
 [parse]
 parse_deps = true
-include = ["datadog-live-debugger", "ddcommon-ffi"]
+include = ["datadog-live-debugger", "libdd-common-ffi"]

@@ -10,7 +10,7 @@ mod unix_imports {
 #[cfg(unix)]
 use unix_imports::*;
 
-pub use cc_utils::cc;
+pub use libdd_common::cc_utils::cc;
 
 #[cfg(unix)]
 fn build_shared_libs() {
@@ -37,7 +37,7 @@ fn build_c_file() {
         .expect("Failed to convert dst file path to str");
 
     println!("cargo:rerun-if-changed={}", &dst_file);
-    cc_utils::ImprovedBuild::new()
+    libdd_common::cc_utils::ImprovedBuild::new()
         .file(&src)
         .link_dynamically("dl")
         // this is needed for the cross compile (cargo cross)
@@ -81,7 +81,7 @@ fn build_cpp_file() {
         .expect("Failed to convert dst file path to str");
 
     println!("cargo:rerun-if-changed={}", &dst_file);
-    cc_utils::ImprovedBuild::new()
+    libdd_common::cc_utils::ImprovedBuild::new()
         .cpp(true)
         .file(&src)
         .link_dynamically("dl")

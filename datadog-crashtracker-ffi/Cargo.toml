@@ -37,8 +37,8 @@ build_common = { path = "../build-common" }
 [dependencies]
 anyhow = "1.0"
 datadog-crashtracker = { path = "../datadog-crashtracker" }
-ddcommon = { path = "../ddcommon" }
-ddcommon-ffi = { path = "../ddcommon-ffi", default-features = false }
+libdd-common = { path = "../libdd-common" }
+libdd-common-ffi = { path = "../libdd-common-ffi", default-features = false }
 symbolic-demangle = { version = "12.8.0", default-features = false, features = ["rust", "cpp", "msvc"], optional = true }
 symbolic-common = { version = "12.8.0", default-features = false, optional = true }
 function_name = "0.3.0"

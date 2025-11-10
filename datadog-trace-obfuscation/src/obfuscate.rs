@@ -1,7 +1,7 @@
 // Copyright 2023-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use datadog_trace_protobuf::pb;
+use libdd_trace_protobuf::pb;
 
 use crate::{
     http::obfuscate_url_string,
@@ -50,7 +50,7 @@ pub fn obfuscate_span(span: &mut pb::Span, config: &ObfuscationConfig) {
 
 #[cfg(test)]
 mod tests {
-    use datadog_trace_utils::test_utils;
+    use libdd_trace_utils::test_utils;
 
     use crate::{obfuscation_config, replacer};
 

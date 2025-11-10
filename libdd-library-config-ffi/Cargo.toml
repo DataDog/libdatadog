@@ -1,0 +1,30 @@
+# Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
+# This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
+
+[package]
+name = "libdd-library-config-ffi"
+version = "0.0.2"
+edition = "2021"
+publish = false
+
+[lib]
+crate-type = ["staticlib", "cdylib", "lib"]
+bench = false
+
+[dependencies]
+libdd-common = { path = "../libdd-common" }
+libdd-common-ffi = { path = "../libdd-common-ffi", default-features = false }
+libdd-library-config = { path = "../libdd-library-config" }
+anyhow = "1.0"
+constcat = "0.4.1"
+
+[features]
+default = ["cbindgen", "catch_panic"]
+cbindgen = ["build_common/cbindgen", "libdd-common-ffi/cbindgen"]
+catch_panic = []
+
+[build-dependencies]
+build_common = { path = "../build-common" }
+
+[dev-dependencies]
+tempfile = { version = "3.3" }

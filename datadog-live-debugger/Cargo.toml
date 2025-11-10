@@ -6,7 +6,7 @@ version = "0.0.1"
 
 [dependencies]
 anyhow = "1.0"
-ddcommon = { path = "../ddcommon" }
+libdd-common = { path = "../libdd-common" }
 hyper = { workspace = true}
 http-body-util = "0.1"
 

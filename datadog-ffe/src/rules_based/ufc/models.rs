@@ -6,57 +6,14 @@ use std::{collections::HashMap, sync::Arc};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 
-use crate::rules_based::{Error, EvaluationError, Str};
-
-#[allow(missing_docs)]
-pub type Timestamp = crate::rules_based::timestamp::Timestamp;
-
-// Temporary workaround till we figure out one proper format
-#[derive(Debug, Serialize, Deserialize, Clone)]
-#[serde(untagged)]
-pub enum WireTimestamp {
-    Iso8601(Timestamp),
-    UnixMs(i64),
-}
-
-impl From<WireTimestamp> for Timestamp {
-    fn from(value: WireTimestamp) -> Self {
-        match value {
-            WireTimestamp::Iso8601(ts) => ts,
-            WireTimestamp::UnixMs(unix) => {
-                Timestamp::from_timestamp_millis(unix).expect("timestamp should be in range")
-            }
-        }
-    }
-}
-
-/// JSON API wrapper for Universal Flag Configuration.
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub(crate) struct UniversalFlagConfigWire {
-    /// JSON API data envelope.
-    pub data: UniversalFlagConfigData,
-}
-
-/// JSON API data structure for Universal Flag Configuration.
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub(crate) struct UniversalFlagConfigData {
-    /// JSON API type field.
-    #[serde(rename = "type")]
-    pub data_type: String,
-    /// JSON API id field.
-    pub id: String,
-    /// JSON API attributes containing the actual UFC data.
-    pub attributes: UniversalFlagConfigAttributes,
-}
+use crate::rules_based::{EvaluationError, FlagType, Str, Timestamp};
 
 /// Universal Flag Configuration attributes. This contains the actual flag configuration data.
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
-pub(crate) struct UniversalFlagConfigAttributes {
+pub(crate) struct UniversalFlagConfigWire {
     /// When configuration was last updated.
-    pub created_at: WireTimestamp,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub format: Option<ConfigurationFormat>,
+    pub created_at: Timestamp,
     /// Environment this configuration belongs to.
     pub environment: Environment,
     /// Flags configuration.
@@ -64,14 +21,6 @@ pub(crate) struct UniversalFlagConfigAttributes {
     /// Value is wrapped in `TryParse` so that if we fail to parse one flag (e.g., new server
     /// format), we can still serve other flags.
     pub flags: HashMap<Str, TryParse<FlagWire>>,
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
-#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
-pub enum ConfigurationFormat {
-    Client,
-    Server,
-    Precomputed,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -87,16 +36,19 @@ pub struct Environment {
 /// This can be helpful to isolate errors in a subtree. e.g., if configuration for one flag parses,
 /// the rest of the flags are still usable.
 #[derive(Debug, Serialize, Deserialize, Clone)]
-#[serde(untagged)]
+#[serde(untagged, from = "&serde_json::value::RawValue")]
 pub enum TryParse<T> {
     /// Successfully parsed.
     Parsed(T),
     /// Parsing failed.
-    ParseFailed(serde_json::Value),
+    ParseFailed(Box<serde_json::value::RawValue>),
 }
-impl<T> From<T> for TryParse<T> {
-    fn from(value: T) -> TryParse<T> {
-        TryParse::Parsed(value)
+impl<'de, T: Deserialize<'de>> From<&'de serde_json::value::RawValue> for TryParse<T> {
+    fn from(raw_value: &'de serde_json::value::RawValue) -> Self {
+        match serde_json::from_str(raw_value.get()) {
+            Ok(value) => TryParse::Parsed(value),
+            Err(_) => TryParse::ParseFailed(raw_value.to_owned()),
+        }
     }
 }
 impl<T> From<TryParse<T>> for Option<T> {
@@ -139,12 +91,36 @@ pub enum VariationType {
     Json,
 }
 
+impl From<VariationType> for FlagType {
+    fn from(value: VariationType) -> FlagType {
+        match value {
+            VariationType::String => FlagType::String,
+            VariationType::Integer => FlagType::Integer,
+            VariationType::Numeric => FlagType::Float,
+            VariationType::Boolean => FlagType::Boolean,
+            VariationType::Json => FlagType::Object,
+        }
+    }
+}
+
+impl From<FlagType> for VariationType {
+    fn from(value: FlagType) -> VariationType {
+        match value {
+            FlagType::String => VariationType::String,
+            FlagType::Integer => VariationType::Integer,
+            FlagType::Float => VariationType::Numeric,
+            FlagType::Boolean => VariationType::Boolean,
+            FlagType::Object => VariationType::Json,
+        }
+    }
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 #[allow(missing_docs)]
 pub(crate) struct VariationWire {
     pub key: Str,
-    pub value: serde_json::Value,
+    pub value: Arc<serde_json::value::RawValue>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -171,7 +147,7 @@ fn default_do_log() -> bool {
 #[serde(rename_all = "camelCase")]
 #[allow(missing_docs)]
 pub(crate) struct RuleWire {
-    pub conditions: Vec<TryParse<Condition>>,
+    pub conditions: Vec<Condition>,
 }
 
 /// `Condition` is a check that given user `attribute` matches the condition `value` under the given
@@ -281,7 +257,7 @@ impl From<ConditionWire> for Option<Condition> {
 }
 
 impl TryFrom<ConditionWire> for Condition {
-    type Error = Error;
+    type Error = EvaluationError;
 
     fn try_from(condition: ConditionWire) -> Result<Self, Self::Error> {
         let attribute = condition.attribute;
@@ -296,9 +272,7 @@ impl TryFrom<ConditionWire> for Condition {
                             "failed to parse condition: {:?} condition with non-string condition value",
                             condition.operator
                         );
-                        return Err(Error::EvaluationError(
-                            EvaluationError::UnexpectedConfigurationError,
-                        ));
+                        return Err(EvaluationError::ConfigurationParseError);
                     }
                 };
                 let regex = match Regex::new(&regex_string) {
@@ -307,9 +281,7 @@ impl TryFrom<ConditionWire> for Condition {
                         log::warn!(
                             "failed to parse condition: failed to compile regex {regex_string:?}: {err:?}"
                         );
-                        return Err(Error::EvaluationError(
-                            EvaluationError::UnexpectedConfigurationError,
-                        ));
+                        return Err(EvaluationError::ConfigurationParseError);
                     }
                 };
 
@@ -337,9 +309,7 @@ impl TryFrom<ConditionWire> for Condition {
                         "failed to parse condition: comparison value is not a number: {:?}",
                         condition.value
                     );
-                    return Err(Error::EvaluationError(
-                        EvaluationError::UnexpectedConfigurationError,
-                    ));
+                    return Err(EvaluationError::ConfigurationParseError);
                 };
                 ConditionCheck::Comparison {
                     operator,
@@ -355,9 +325,7 @@ impl TryFrom<ConditionWire> for Condition {
                             "failed to parse condition: membership condition with non-array value: {:?}",
                             condition.value
                         );
-                        return Err(Error::EvaluationError(
-                            EvaluationError::UnexpectedConfigurationError,
-                        ));
+                        return Err(EvaluationError::ConfigurationParseError);
                     }
                 };
                 ConditionCheck::Membership {
@@ -371,9 +339,7 @@ impl TryFrom<ConditionWire> for Condition {
                     log::warn!(
                         "failed to parse condition: IS_NULL condition with non-boolean condition value"
                     );
-                    return Err(Error::EvaluationError(
-                        EvaluationError::UnexpectedConfigurationError,
-                    ));
+                    return Err(EvaluationError::ConfigurationParseError);
                 };
                 ConditionCheck::Null { expected_null }
             }
@@ -508,16 +474,21 @@ mod tests {
     use super::{TryParse, UniversalFlagConfigWire};
 
     #[test]
+    #[cfg_attr(miri, ignore)] // this test is way too slow on miri
     fn parse_flags_v1() {
-        let json_content = {
-            let path = if std::path::Path::new("tests/data/flags-v1.json").exists() {
-                "tests/data/flags-v1.json"
-            } else {
-                "domains/ffe/libs/flagging/rust/evaluation/tests/data/flags-v1.json"
-            };
-            std::fs::read_to_string(path).unwrap()
-        };
-        let _ufc: UniversalFlagConfigWire = serde_json::from_str(&json_content).unwrap();
+        let json_content = std::fs::read_to_string("tests/data/flags-v1.json").unwrap();
+        let ufc: UniversalFlagConfigWire = serde_json::from_str(&json_content).unwrap();
+
+        let failures = ufc
+            .flags
+            .values()
+            .filter(|it| matches!(it, TryParse::ParseFailed(_)))
+            .count();
+        assert!(
+            failures == 0,
+            "failed to parse {failures}/{} flags",
+            ufc.flags.len()
+        );
     }
 
     #[test]
@@ -525,29 +496,26 @@ mod tests {
         let ufc: UniversalFlagConfigWire = serde_json::from_str(
             r#"
               {
-                "data": {
-                  "type": "universal-flag-configuration",
-                  "id": "1",
-                  "attributes": {
-                    "createdAt": "2024-07-18T00:00:00Z",
-                    "format": "SERVER",
-                    "environment": {"name": "test"},
-                    "flags": {
-                      "success": {
-                        "key": "success",
-                        "enabled": true,
-                        "variationType": "BOOLEAN",
-                        "variations": {},
-                        "allocations": []
-                      },
-                      "fail_parsing": {
-                        "key": "fail_parsing",
-                        "enabled": true,
-                        "variationType": "NEW_TYPE",
-                        "variations": {},
-                        "allocations": []
-                      }
-                    }
+                "id": "1",
+                "createdAt": "2024-07-18T00:00:00Z",
+                "format": "SERVER",
+                "environment": {
+                  "name": "test"
+                },
+                "flags": {
+                  "success": {
+                    "key": "success",
+                    "enabled": true,
+                    "variationType": "BOOLEAN",
+                    "variations": {},
+                    "allocations": []
+                  },
+                  "fail_parsing": {
+                    "key": "fail_parsing",
+                    "enabled": true,
+                    "variationType": "NEW_TYPE",
+                    "variations": {},
+                    "allocations": []
                   }
                 }
               }
@@ -555,20 +523,17 @@ mod tests {
         )
         .unwrap();
         assert!(
-            matches!(
-                ufc.data.attributes.flags.get("success").unwrap(),
-                TryParse::Parsed(_)
-            ),
+            matches!(ufc.flags.get("success").unwrap(), TryParse::Parsed(_)),
             "{:?} should match TryParse::Parsed(_)",
-            ufc.data.attributes.flags.get("success").unwrap()
+            ufc.flags.get("success").unwrap()
         );
         assert!(
             matches!(
-                ufc.data.attributes.flags.get("fail_parsing").unwrap(),
+                ufc.flags.get("fail_parsing").unwrap(),
                 TryParse::ParseFailed(_)
             ),
             "{:?} should match TryParse::ParseFailed(_)",
-            ufc.data.attributes.flags.get("fail_parsing").unwrap()
+            ufc.flags.get("fail_parsing").unwrap()
         );
     }
 }

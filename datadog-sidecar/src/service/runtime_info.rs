@@ -3,7 +3,7 @@
 
 use crate::service::{remote_configs::RemoteConfigsGuard, InstanceId, QueueId};
 use datadog_live_debugger::sender::{generate_tags, PayloadSender};
-use ddcommon::{tag::Tag, MutexExt};
+use libdd_common::{tag::Tag, MutexExt};
 use simd_json::prelude::ArrayTrait;
 use std::collections::HashMap;
 use std::fmt::Display;

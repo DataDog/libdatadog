@@ -7,12 +7,12 @@
 use datadog_profiling::exporter;
 use datadog_profiling::exporter::{ProfileExporter, Request};
 use datadog_profiling::internal::EncodedProfile;
-use ddcommon::tag::Tag;
-use ddcommon_ffi::slice::{AsBytes, ByteSlice, CharSlice, Slice};
-use ddcommon_ffi::{
+use function_name::named;
+use libdd_common::tag::Tag;
+use libdd_common_ffi::slice::{AsBytes, ByteSlice, CharSlice, Slice};
+use libdd_common_ffi::{
     wrap_with_ffi_result, wrap_with_void_ffi_result, Handle, Result, ToInner, VoidResult,
 };
-use function_name::named;
 use std::borrow::Cow;
 use std::str::FromStr;
 
@@ -86,7 +86,9 @@ unsafe fn try_to_url(slice: CharSlice) -> anyhow::Result<hyper::Uri> {
     Ok(hyper::Uri::from_str(str)?)
 }
 
-pub unsafe fn try_to_endpoint(endpoint: ProfilingEndpoint) -> anyhow::Result<ddcommon::Endpoint> {
+pub unsafe fn try_to_endpoint(
+    endpoint: ProfilingEndpoint,
+) -> anyhow::Result<libdd_common::Endpoint> {
     // convert to utf8 losslessly -- URLs and API keys should all be ASCII, so
     // a failed result is likely to be an error.
     match endpoint {
@@ -131,7 +133,7 @@ pub unsafe extern "C" fn ddog_prof_Exporter_new(
     profiling_library_name: CharSlice,
     profiling_library_version: CharSlice,
     family: CharSlice,
-    tags: Option<&ddcommon_ffi::Vec<Tag>>,
+    tags: Option<&libdd_common_ffi::Vec<Tag>>,
     endpoint: ProfilingEndpoint,
 ) -> Result<Handle<ProfileExporter>> {
     wrap_with_ffi_result!({
@@ -217,7 +219,7 @@ pub unsafe extern "C" fn ddog_prof_Exporter_Request_build(
     mut profile: *mut Handle<EncodedProfile>,
     files_to_compress_and_export: Slice<File>,
     files_to_export_unmodified: Slice<File>,
-    optional_additional_tags: Option<&ddcommon_ffi::Vec<Tag>>,
+    optional_additional_tags: Option<&libdd_common_ffi::Vec<Tag>>,
     optional_internal_metadata_json: Option<&CharSlice>,
     optional_info_json: Option<&CharSlice>,
 ) -> Result<Handle<Request>> {
@@ -378,9 +380,9 @@ pub unsafe extern "C" fn ddog_CancellationToken_drop(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ddcommon::tag;
-    use ddcommon_ffi::Slice;
     use http_body_util::BodyExt;
+    use libdd_common::tag;
+    use libdd_common_ffi::Slice;
     use serde_json::json;
 
     fn profiling_library_name() -> CharSlice<'static> {
@@ -403,7 +405,7 @@ mod tests {
         CharSlice::from(base_url())
     }
 
-    fn parsed_event_json(request: ddcommon_ffi::Result<Handle<Request>>) -> serde_json::Value {
+    fn parsed_event_json(request: libdd_common_ffi::Result<Handle<Request>>) -> serde_json::Value {
         // Safety: This is a test
         let request = unsafe { request.unwrap().take().unwrap() };
         // Really hacky way of getting the event.json file contents, because I didn't want to

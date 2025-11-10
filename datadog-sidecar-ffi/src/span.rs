@@ -1,14 +1,14 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use datadog_trace_utils::span::{
+use libdd_common_ffi::slice::{AsBytes, CharSlice};
+use libdd_tinybytes::{Bytes, BytesString};
+use libdd_trace_utils::span::{
     AttributeAnyValueBytes, AttributeArrayValueBytes, SpanBytes, SpanEventBytes, SpanLinkBytes,
 };
-use ddcommon_ffi::slice::{AsBytes, CharSlice};
 use std::borrow::Cow;
 use std::collections::HashMap;
 use std::ffi::{c_char, CString};
-use tinybytes::{Bytes, BytesString};
 
 fn convert_char_slice_to_bytes_string(slice: CharSlice) -> BytesString {
     // TODO: Strip the invalid bytes in the tracer instead
@@ -252,12 +252,12 @@ pub extern "C" fn ddog_get_span_type(span: &mut SpanBytes) -> CharSlice<'static>
 
 #[no_mangle]
 pub extern "C" fn ddog_set_span_trace_id(span: &mut SpanBytes, value: u64) {
-    span.trace_id = value;
+    span.trace_id = value as u128;
 }
 
 #[no_mangle]
 pub extern "C" fn ddog_get_span_trace_id(span: &mut SpanBytes) -> u64 {
-    span.trace_id
+    span.trace_id as u64
 }
 
 #[no_mangle]

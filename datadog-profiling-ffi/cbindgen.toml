@@ -118,5 +118,5 @@ must_use = "DDOG_CHECK_RETURN"
 
 [parse]
 parse_deps = true
-include = ["ddcommon", "ddcommon-ffi", "datadog-profiling", "datadog-profiling-protobuf", "datadog-crashtracker"]
+include = ["libdd-common", "libdd-common-ffi", "datadog-profiling", "libdd-profiling-protobuf", "datadog-crashtracker"]
 

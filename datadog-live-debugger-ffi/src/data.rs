@@ -6,8 +6,8 @@ use datadog_live_debugger::{
     CaptureConfiguration, DslString, EvaluateAt, InBodyLocation, MetricKind, ProbeCondition,
     ProbeValue, SpanProbeTarget,
 };
-use ddcommon_ffi::slice::AsBytes;
-use ddcommon_ffi::{CharSlice, Option};
+use libdd_common_ffi::slice::AsBytes;
+use libdd_common_ffi::{CharSlice, Option};
 use std::borrow::Cow;
 
 #[repr(C)]

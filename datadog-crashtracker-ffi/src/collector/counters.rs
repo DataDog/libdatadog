@@ -3,7 +3,7 @@
 
 use super::datatypes::OpTypes;
 use ::function_name::named;
-use ddcommon_ffi::{wrap_with_void_ffi_result, VoidResult};
+use libdd_common_ffi::{wrap_with_void_ffi_result, VoidResult};
 
 /// Resets all counters to 0.
 /// Expected to be used after a fork, to reset the counters on the child

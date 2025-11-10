@@ -159,12 +159,12 @@ fn main() -> anyhow::Result<()> {
         std::fs::read(input)?
     };
 
-    let pprof = datadog_profiling_protobuf::prost_impls::Profile::decode(&mut Cursor::new(source))?;
+    let pprof = libdd_profiling_protobuf::prost_impls::Profile::decode(&mut Cursor::new(source))?;
 
     let mut replayer = Replayer::try_from(&pprof)?;
 
     let mut outprof =
-        datadog_profiling::internal::Profile::new(&replayer.sample_types, replayer.period)
+        datadog_profiling::internal::Profile::try_new(&replayer.sample_types, replayer.period)?
             .with_start_time(replayer.start_time)?;
 
     // Before benchmarking, let's calculate some statistics.

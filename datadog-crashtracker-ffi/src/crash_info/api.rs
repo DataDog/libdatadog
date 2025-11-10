@@ -2,9 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use datadog_crashtracker::CrashInfo;
-use ddcommon::Endpoint;
-use ddcommon_ffi::{wrap_with_void_ffi_result, Handle, ToInner, VoidResult};
 use function_name::named;
+use libdd_common::Endpoint;
+use libdd_common_ffi::{wrap_with_void_ffi_result, Handle, ToInner, VoidResult};
 
 /// # Safety
 /// The `crash_info` can be null, but if non-null it must point to a Builder made by this module,

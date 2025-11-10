@@ -12,8 +12,8 @@ bench = false
 
 [dependencies]
 datadog-live-debugger = { path = "../datadog-live-debugger" }
-ddcommon = { path = "../ddcommon" }
-ddcommon-ffi = { path = "../ddcommon-ffi", default-features = false }
+libdd-common = { path = "../libdd-common" }
+libdd-common-ffi = { path = "../libdd-common-ffi", default-features = false }
 percent-encoding = "2.1"
 uuid = { version = "1.7.0", features = ["v4"] }
 serde_json = "1.0"
@@ -23,7 +23,7 @@ log = "0.4.21"
 
 [features]
 default = ["cbindgen"]
-cbindgen = ["build_common/cbindgen", "ddcommon-ffi/cbindgen"]
+cbindgen = ["build_common/cbindgen", "libdd-common-ffi/cbindgen"]
 
 [build-dependencies]
 build_common = { path = "../build-common" }

@@ -15,7 +15,7 @@ use datadog_remote_config::fetch::{
     MultiTargetStats, NotifyTarget, RefcountedFile,
 };
 use datadog_remote_config::{RemoteConfigPath, RemoteConfigProduct, RemoteConfigValue, Target};
-use ddcommon::{tag::Tag, MutexExt};
+use libdd_common::{tag::Tag, MutexExt};
 use priority_queue::PriorityQueue;
 use sha2::{Digest, Sha224};
 use std::cmp::Reverse;

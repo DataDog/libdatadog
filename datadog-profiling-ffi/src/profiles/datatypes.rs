@@ -6,9 +6,9 @@ use anyhow::Context;
 use datadog_profiling::api;
 use datadog_profiling::api::ManagedStringId;
 use datadog_profiling::internal;
-use ddcommon_ffi::slice::{AsBytes, ByteSlice, CharSlice, Slice};
-use ddcommon_ffi::{wrap_with_ffi_result, Error, Handle, Timespec, ToInner};
 use function_name::named;
+use libdd_common_ffi::slice::{AsBytes, ByteSlice, CharSlice, Slice};
+use libdd_common_ffi::{wrap_with_ffi_result, Error, Handle, Timespec, ToInner};
 use std::num::NonZeroI64;
 use std::str::Utf8Error;
 use std::time::SystemTime;
@@ -421,18 +421,25 @@ unsafe fn profile_new(
     let types: Vec<api::ValueType> = sample_types.into_slice().iter().map(Into::into).collect();
     let period = period.map(Into::into);
 
-    let internal_profile = match string_storage {
-        None => internal::Profile::new(&types, period),
+    let result = match string_storage {
+        None => internal::Profile::try_new(&types, period)
+            .context("failed to initialize a profile without managed string storage"),
         Some(s) => {
             let string_storage = match get_inner_string_storage(s, true) {
                 Ok(string_storage) => string_storage,
                 Err(err) => return ProfileNewResult::Err(err.into()),
             };
-            internal::Profile::with_string_storage(&types, period, string_storage)
+            internal::Profile::try_with_string_storage(&types, period, string_storage)
+                .context("failed to initialize a profile with managed string storage")
         }
     };
-    let ffi_profile = Profile::new(internal_profile);
-    ProfileNewResult::Ok(ffi_profile)
+    match result {
+        Ok(internal_profile) => {
+            let ffi_profile = Profile::new(internal_profile);
+            ProfileNewResult::Ok(ffi_profile)
+        }
+        Err(err) => ProfileNewResult::Err(err.into()),
+    }
 }
 
 /// # Safety
@@ -713,7 +720,7 @@ pub unsafe extern "C" fn ddog_prof_EncodedProfile_drop(
 #[named]
 pub unsafe extern "C" fn ddog_prof_EncodedProfile_bytes<'a>(
     mut encoded_profile: *mut Handle<internal::EncodedProfile>,
-) -> ddcommon_ffi::Result<ByteSlice<'a>> {
+) -> libdd_common_ffi::Result<ByteSlice<'a>> {
     wrap_with_ffi_result!({
         let slice = encoded_profile.to_inner_mut()?.buffer.as_slice();
         // Rountdtrip through raw pointers to avoid Rust complaining about lifetimes.
@@ -762,7 +769,7 @@ pub unsafe extern "C" fn ddog_prof_Profile_serialize(
 
 #[must_use]
 #[no_mangle]
-pub unsafe extern "C" fn ddog_Vec_U8_as_slice(vec: &ddcommon_ffi::Vec<u8>) -> Slice<'_, u8> {
+pub unsafe extern "C" fn ddog_Vec_U8_as_slice(vec: &libdd_common_ffi::Vec<u8>) -> Slice<'_, u8> {
     vec.as_slice()
 }
 

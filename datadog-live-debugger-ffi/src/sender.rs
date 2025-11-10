@@ -5,10 +5,10 @@ use crate::send_data::serialize_debugger_payload;
 use datadog_live_debugger::debugger_defs::DebuggerPayload;
 use datadog_live_debugger::sender;
 use datadog_live_debugger::sender::{generate_tags, Config, DebuggerType};
-use ddcommon::tag::Tag;
-use ddcommon::Endpoint;
-use ddcommon_ffi::slice::AsBytes;
-use ddcommon_ffi::{CharSlice, MaybeError};
+use libdd_common::tag::Tag;
+use libdd_common::Endpoint;
+use libdd_common_ffi::slice::AsBytes;
+use libdd_common_ffi::{CharSlice, MaybeError};
 use log::{debug, warn};
 use percent_encoding::{percent_encode, CONTROLS};
 use std::sync::Arc;
@@ -20,7 +20,7 @@ macro_rules! try_c {
     ($failable:expr) => {
         match $failable {
             Ok(o) => o,
-            Err(e) => return MaybeError::Some(ddcommon_ffi::Error::from(format!("{:?}", e))),
+            Err(e) => return MaybeError::Some(libdd_common_ffi::Error::from(format!("{:?}", e))),
         }
     };
 }
@@ -86,7 +86,7 @@ pub extern "C" fn ddog_live_debugger_build_tags(
     env: CharSlice,
     version: CharSlice,
     runtime_id: CharSlice,
-    global_tags: ddcommon_ffi::Vec<Tag>,
+    global_tags: libdd_common_ffi::Vec<Tag>,
 ) -> Box<String> {
     Box::new(generate_tags(
         &debugger_version.to_utf8_lossy(),

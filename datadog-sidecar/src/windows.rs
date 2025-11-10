@@ -8,10 +8,10 @@ use datadog_ipc::platform::{
 };
 
 use datadog_crashtracker_ffi::{ddog_crasht_init_windows, Metadata};
-use ddcommon::Endpoint;
-use ddcommon::MutexExt;
-use ddcommon_ffi::CharSlice;
 use futures::FutureExt;
+use libdd_common::Endpoint;
+use libdd_common::MutexExt;
+use libdd_common_ffi::CharSlice;
 use manual_future::ManualFuture;
 use spawn_worker::{write_crashtracking_trampoline, SpawnWorker, Stdio, TrampolineData};
 use std::ffi::CStr;

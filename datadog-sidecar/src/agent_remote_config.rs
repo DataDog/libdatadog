@@ -6,7 +6,7 @@ use crate::one_way_shared_memory::{
 };
 use crate::primary_sidecar_identifier;
 use datadog_ipc::platform::{FileBackedHandle, MappedMem, NamedShmHandle, ShmHandle};
-use ddcommon::Endpoint;
+use libdd_common::Endpoint;
 use std::ffi::CString;
 use std::hash::{Hash, Hasher};
 use std::io;

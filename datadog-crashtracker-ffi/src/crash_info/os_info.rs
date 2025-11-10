@@ -1,7 +1,7 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use ddcommon_ffi::{slice::AsBytes, CharSlice};
+use libdd_common_ffi::{slice::AsBytes, CharSlice};
 
 #[repr(C)]
 pub struct OsInfo<'a> {

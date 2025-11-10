@@ -1,0 +1,26 @@
+# Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
+# This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
+
+[package]
+name = "libdd-library-config"
+version = "1.0.0"
+edition = "2021"
+
+[lib]
+crate-type = ["lib"]
+bench = false
+
+[dependencies]
+serde = { version = "1.0", features = ["derive"] }
+serde_yaml = "0.9.34"
+anyhow = "1.0"
+
+rand = "0.8.3"
+rmp = "0.8.14"
+rmp-serde = "1.3.0"
+
+[dev-dependencies]
+tempfile = { version = "3.3" }
+
+[target.'cfg(unix)'.dependencies]
+memfd = { version = "0.6" }

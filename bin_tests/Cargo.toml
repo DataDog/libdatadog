@@ -14,7 +14,7 @@ anyhow = "1.0"
 current_platform = "0.2.0"
 datadog-profiling = { path = "../datadog-profiling" }
 datadog-crashtracker = { path = "../datadog-crashtracker" }
-ddcommon = { path = "../ddcommon" }
+libdd-common = { path = "../libdd-common" }
 tempfile = "3.3"
 serde_json = { version = "1.0" }
 strum = { version = "0.26.2", features = ["derive"] }
@@ -33,7 +33,8 @@ name = "test_the_tests"
 bench = false
 
 [[bin]]
-name = "crashtracker_receiver"
+name = "test_crashtracker_receiver"
+path = "src/bin/crashtracker_receiver.rs"
 bench = false
 
 [[bin]]

@@ -14,7 +14,7 @@ use crate::log::{MultiEnvFilterGuard, MultiWriterGuard};
 use crate::{spawn_map_err, tracer};
 use datadog_live_debugger::sender::{DebuggerType, PayloadSender};
 use datadog_remote_config::fetch::ConfigInvariants;
-use ddcommon::MutexExt;
+use libdd_common::MutexExt;
 use tracing::log::warn;
 use tracing::{debug, error, info, trace};
 
@@ -28,10 +28,10 @@ use crate::service::{InstanceId, QueueId, RuntimeInfo};
 #[derive(Default)]
 pub(crate) struct SessionInfo {
     runtimes: Arc<Mutex<HashMap<String, RuntimeInfo>>>,
-    pub(crate) session_config: Arc<Mutex<Option<ddtelemetry::config::Config>>>,
+    pub(crate) session_config: Arc<Mutex<Option<libdd_telemetry::config::Config>>>,
     debugger_config: Arc<Mutex<datadog_live_debugger::sender::Config>>,
     tracer_config: Arc<Mutex<tracer::Config>>,
-    dogstatsd: Arc<Mutex<Option<dogstatsd_client::Client>>>,
+    dogstatsd: Arc<Mutex<Option<libdd_dogstatsd_client::Client>>>,
     remote_config_invariants: Arc<Mutex<Option<ConfigInvariants>>>,
     pub(crate) agent_infos: Arc<Mutex<Option<AgentInfoGuard>>>,
     pub(crate) remote_config_interval: Arc<Mutex<Duration>>,
@@ -150,11 +150,11 @@ impl SessionInfo {
 
     pub(crate) fn get_telemetry_config(
         &self,
-    ) -> MutexGuard<'_, Option<ddtelemetry::config::Config>> {
+    ) -> MutexGuard<'_, Option<libdd_telemetry::config::Config>> {
         let mut cfg = self.session_config.lock_or_panic();
 
         if (*cfg).is_none() {
-            *cfg = Some(ddtelemetry::config::Config::from_env())
+            *cfg = Some(libdd_telemetry::config::Config::from_env())
         }
 
         cfg
@@ -162,7 +162,7 @@ impl SessionInfo {
 
     pub(crate) fn modify_telemetry_config<F>(&self, f: F)
     where
-        F: FnOnce(&mut ddtelemetry::config::Config),
+        F: FnOnce(&mut libdd_telemetry::config::Config),
     {
         if let Some(cfg) = &mut *self.get_telemetry_config() {
             f(cfg)
@@ -180,13 +180,13 @@ impl SessionInfo {
         f(&mut self.get_trace_config());
     }
 
-    pub(crate) fn get_dogstatsd(&self) -> MutexGuard<'_, Option<dogstatsd_client::Client>> {
+    pub(crate) fn get_dogstatsd(&self) -> MutexGuard<'_, Option<libdd_dogstatsd_client::Client>> {
         self.dogstatsd.lock_or_panic()
     }
 
     pub(crate) fn configure_dogstatsd<F>(&self, f: F)
     where
-        F: FnOnce(&mut Option<dogstatsd_client::Client>),
+        F: FnOnce(&mut Option<libdd_dogstatsd_client::Client>),
     {
         f(&mut self.get_dogstatsd());
     }

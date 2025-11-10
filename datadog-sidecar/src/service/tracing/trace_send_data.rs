@@ -1,9 +1,9 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use datadog_trace_utils::trace_utils::SendData;
 use futures::future::Map;
 use futures::FutureExt;
+use libdd_trace_utils::trace_utils::SendData;
 use manual_future::ManualFutureCompleter;
 use tokio::sync::mpsc::Sender;
 use tokio::task::{JoinError, JoinHandle};

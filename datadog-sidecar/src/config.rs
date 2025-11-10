@@ -1,8 +1,8 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use ddcommon::Endpoint;
 use http::uri::{PathAndQuery, Scheme};
+use libdd_common::Endpoint;
 use serde::{Deserialize, Serialize};
 use spawn_worker::LibDependency;
 use std::sync::LazyLock;
@@ -36,16 +36,11 @@ const ENV_SIDECAR_APPSEC_LOCK_FILE_PATH: &str = "_DD_SIDECAR_APPSEC_LOCK_FILE_PA
 const ENV_SIDECAR_APPSEC_LOG_FILE_PATH: &str = "_DD_SIDECAR_APPSEC_LOG_FILE_PATH";
 const ENV_SIDECAR_APPSEC_LOG_LEVEL: &str = "_DD_SIDECAR_APPSEC_LOG_LEVEL";
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, Default)]
 pub enum IpcMode {
+    #[default]
     Shared,
     InstancePerProcess,
-}
-
-impl Default for IpcMode {
-    fn default() -> Self {
-        Self::Shared
-    }
 }
 
 impl std::fmt::Display for IpcMode {
@@ -57,18 +52,13 @@ impl std::fmt::Display for IpcMode {
     }
 }
 
-#[derive(Debug, Clone, Eq, PartialEq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Eq, PartialEq, Hash, Serialize, Deserialize, Default)]
 pub enum LogMethod {
     Stdout,
     Stderr,
     File(PathBuf),
+    #[default]
     Disabled,
-}
-
-impl Default for LogMethod {
-    fn default() -> Self {
-        Self::Disabled
-    }
 }
 
 impl std::fmt::Display for LogMethod {

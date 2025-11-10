@@ -106,7 +106,7 @@ void add_random_frames(ddog_crasht_Handle_StackTrace* stacktrace) {
     check_result(ddog_crasht_StackTrace_push_frame(stacktrace, new_frame.release(), true),
                  "failed to add stack frame");
   }
-  
+
 }
 
 void add_windows_style_frame(ddog_crasht_Handle_StackTrace* stacktrace) {
@@ -251,6 +251,11 @@ int main(void) {
 
   check_result(ddog_crasht_CrashInfoBuilder_with_sig_info(builder.get(), sigInfo),
                "failed to add signal info");
+
+  auto ping_endpoint = ddog_endpoint_from_filename(to_slice_c_char("/tmp/crash_ping_test"));
+  check_result(ddog_crasht_CrashInfoBuilder_upload_ping_to_endpoint(builder.get(), ping_endpoint),
+               "Failed to upload crash ping");
+  ddog_endpoint_drop(ping_endpoint);
 
   auto crashinfo = extract_result(ddog_crasht_CrashInfoBuilder_build(builder.release()),
                                   "failed to build CrashInfo");

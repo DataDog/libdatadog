@@ -2,11 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #[cfg(unix)]
-use ddcommon::connector::uds;
-use ddcommon::Endpoint;
+use libdd_common::connector::uds;
+use libdd_common::Endpoint;
 
 #[cfg(windows)]
-use ddcommon::connector::named_pipe;
+use libdd_common::connector::named_pipe;
 
 use http::Uri;
 use std::borrow::Cow;

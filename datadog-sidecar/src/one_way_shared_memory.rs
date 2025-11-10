@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use datadog_ipc::platform::{FileBackedHandle, MappedMem, NamedShmHandle, ShmHandle};
-use ddcommon::MutexExt;
+use libdd_common::MutexExt;
 use std::ffi::{CStr, CString};
 use std::io;
 use std::sync::atomic::{fence, AtomicU64, Ordering};

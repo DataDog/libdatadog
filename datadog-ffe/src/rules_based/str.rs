@@ -111,3 +111,31 @@ impl log::kv::ToValue for Str {
         log::kv::Value::from_display(self)
     }
 }
+
+#[cfg(feature = "pyo3")]
+mod pyo3_impl {
+    use std::convert::Infallible;
+
+    use super::*;
+
+    use pyo3::{prelude::*, types::PyString};
+
+    impl<'py> FromPyObject<'py> for Str {
+        #[inline]
+        fn extract_bound(value: &Bound<'py, PyAny>) -> PyResult<Self> {
+            let s = value.downcast::<PyString>()?;
+            Ok(Str::from(s.to_cow()?))
+        }
+    }
+
+    impl<'py> IntoPyObject<'py> for &Str {
+        type Target = PyString;
+        type Output = Bound<'py, PyString>;
+        type Error = Infallible;
+
+        #[inline]
+        fn into_pyobject(self, py: Python<'py>) -> Result<Self::Output, Self::Error> {
+            Ok(PyString::new(py, self.as_str()))
+        }
+    }
+}

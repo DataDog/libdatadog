@@ -6,9 +6,9 @@ use crate::fetch::{
     RefcountingStorage, RefcountingStorageStats, SharedFetcher,
 };
 use crate::Target;
-use ddcommon::MutexExt;
 use futures_util::future::Shared;
 use futures_util::FutureExt;
+use libdd_common::MutexExt;
 use manual_future::ManualFuture;
 use serde::{Deserialize, Serialize};
 use std::collections::hash_map::Entry;

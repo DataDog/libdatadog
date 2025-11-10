@@ -11,8 +11,8 @@ use anyhow::Result;
 use datadog_ipc::platform::ShmHandle;
 use datadog_ipc::tarpc;
 use datadog_live_debugger::sender::DebuggerType;
-use ddcommon::tag::Tag;
-use dogstatsd_client::DogStatsDActionOwned;
+use libdd_common::tag::Tag;
+use libdd_dogstatsd_client::DogStatsDActionOwned;
 use std::time::Duration;
 
 // This is a bit weird, but depending on the OS we're interested in different things...

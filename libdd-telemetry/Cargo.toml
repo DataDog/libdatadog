@@ -1,0 +1,47 @@
+[package]
+name = "libdd-telemetry"
+version= "1.0.0"
+description = "Telemetry client allowing to send data as described in https://docs.datadoghq.com/tracing/configure_data_security/?tab=net#telemetry-collection"
+homepage = "https://github.com/DataDog/libdatadog/tree/main/libdd-telemetry"
+repository = "https://github.com/DataDog/libdatadog/tree/main/libdd-telemetry"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[lib]
+bench = false
+
+[features]
+default = ["tracing"]
+tracing = ["tracing/std"]
+https = ["libdd-common/https"]
+
+[dependencies]
+anyhow = { version = "1.0" }
+base64 = "0.22"
+futures = { version = "0.3", default-features = false }
+hyper = { workspace = true }
+hyper-util = { workspace = true }
+http-body-util = "0.1"
+http = "1.0"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = { version = "1.0" }
+sys-info = { version = "0.9.0" }
+tokio = { version = "1.23", features = ["sync", "io-util"] }
+tokio-util = { version = "0.7", features = ["codec"] }
+tracing = { version = "0.1", default-features = false }
+uuid = { version = "1.3", features = ["v4"] }
+hashbrown = "0.15"
+
+libdd-common = { version = "1.0.0", path = "../libdd-common", default-features = false }
+libdd-ddsketch = { version = "1.0.0", path = "../libdd-ddsketch" }
+
+[target."cfg(unix)".dependencies]
+libc = "0.2.176"
+
+[target."cfg(windows)".dependencies]
+winver = "1.0.0"
+
+[dev-dependencies]
+tracing-subscriber = "0.3.18"
+tokio = { version = "1.23", features = ["sync", "io-util", "rt-multi-thread"] }

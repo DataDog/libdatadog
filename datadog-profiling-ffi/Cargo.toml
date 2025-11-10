@@ -15,36 +15,37 @@ crate-type = ["lib", "staticlib", "cdylib"]
 bench = false
 
 [features]
-default = ["ddcommon-ffi"]
-cbindgen = ["build_common/cbindgen", "ddcommon-ffi/cbindgen"]
-ddtelemetry-ffi = ["dep:ddtelemetry-ffi"]
-datadog-log-ffi = ["dep:datadog-log-ffi"]
+default = ["dep:libdd-common-ffi"]
+cbindgen = ["build_common/cbindgen", "libdd-common-ffi/cbindgen"]
+ddtelemetry-ffi = ["dep:libdd-telemetry-ffi"]
+libdd-telemetry-ffi = ["dep:libdd-telemetry-ffi"] # package_ffi_on_windows needs it
+datadog-log-ffi = ["dep:libdd-log-ffi"]
 symbolizer = ["symbolizer-ffi"]
-data-pipeline-ffi = ["dep:data-pipeline-ffi"]
+data-pipeline-ffi = ["dep:libdd-data-pipeline-ffi"]
 crashtracker-ffi = ["dep:datadog-crashtracker-ffi"]
 # Enables the in-process collection of crash-info
 crashtracker-collector = ["crashtracker-ffi", "datadog-crashtracker-ffi/collector"]
 # Enables the use of this library to receiver crash-info from a suitable collector
 crashtracker-receiver = ["crashtracker-ffi", "datadog-crashtracker-ffi/receiver"]
 demangler = ["crashtracker-ffi", "datadog-crashtracker-ffi/demangler"]
-datadog-library-config-ffi = ["dep:datadog-library-config-ffi"]
-ddcommon-ffi = ["dep:ddcommon-ffi"]
-ddsketch-ffi = ["dep:ddsketch-ffi"]
+datadog-library-config-ffi = ["dep:libdd-library-config-ffi"]
+libdd-common-ffi = ["dep:libdd-common-ffi"]
+ddsketch-ffi = ["dep:libdd-ddsketch-ffi"]
 
 [build-dependencies]
 build_common = { path = "../build-common" }
 
 [dependencies]
 anyhow = "1.0"
-data-pipeline-ffi = { path = "../data-pipeline-ffi", default-features = false, optional = true }
+libdd-data-pipeline-ffi = { path = "../libdd-data-pipeline-ffi", default-features = false, optional = true }
 datadog-crashtracker-ffi = { path = "../datadog-crashtracker-ffi", default-features = false, optional = true}
-datadog-library-config-ffi = {  path = "../datadog-library-config-ffi", default-features = false, optional = true }
+libdd-library-config-ffi = {  path = "../libdd-library-config-ffi", default-features = false, optional = true }
 datadog-profiling = { path = "../datadog-profiling" }
-ddcommon = { path = "../ddcommon" }
-ddcommon-ffi = { path = "../ddcommon-ffi", default-features = false, optional = true }
-ddtelemetry-ffi = { path = "../ddtelemetry-ffi", default-features = false, optional = true, features = ["expanded_builder_macros"] }
-datadog-log-ffi = { path = "../datadog-log-ffi", default-features = false, optional = true }
-ddsketch-ffi = { path = "../ddsketch-ffi", default-features = false, optional = true }
+libdd-common = { path = "../libdd-common" }
+libdd-common-ffi = { path = "../libdd-common-ffi", default-features = false, optional = true }
+libdd-telemetry-ffi = { path = "../libdd-telemetry-ffi", default-features = false, optional = true, features = ["expanded_builder_macros"] }
+libdd-ddsketch-ffi = { path = "../libdd-ddsketch-ffi", default-features = false, optional = true }
+libdd-log-ffi = { path = "../libdd-log-ffi", default-features = false, optional = true }
 function_name = "0.3.0"
 futures = { version = "0.3", default-features = false }
 http-body-util = "0.1"
