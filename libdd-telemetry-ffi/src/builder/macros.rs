@@ -12,7 +12,7 @@
 //    >> $EXPANDED && cargo +nightly fmt
 // ```
 
-use ddcommon_ffi as ffi;
+use libdd_common_ffi as ffi;
 use ffi::slice::AsBytes;
 use libdd_telemetry::worker::TelemetryWorkerBuilder;
 
