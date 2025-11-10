@@ -3,14 +3,14 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::rules_based::{ExpectedFlagType, FlagType};
+use crate::rules_based::{ExpectedFlagType, FlagType, Str};
 
 /// Enum representing all possible reasons that could result in evaluation returning an error or
 /// default assignment.
 ///
 /// Not all of these are technically "errors"—some can be expected to occur frequently (e.g.,
 /// `FlagDisabled` or `DefaultAllocation`).
-#[derive(thiserror::Error, Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(thiserror::Error, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 #[non_exhaustive]
 pub enum EvaluationError {
@@ -44,4 +44,7 @@ pub enum EvaluationError {
     /// being assigned.
     #[error("default allocation is matched and is serving NULL")]
     DefaultAllocationNull,
+
+    #[error("internal error: {0}")]
+    Internal(Str),
 }

@@ -1366,6 +1366,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "datadog-ffe-ffi"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "build_common",
+ "datadog-ffe",
+ "function_name",
+ "libdd-common-ffi",
+]
+
+[[package]]
 name = "datadog-ipc"
 version = "0.1.0"
 dependencies = [
