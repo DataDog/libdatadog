@@ -35,7 +35,7 @@ pub enum AttributeValue {
 /// `ddog_ffe_evaluation_context_drop` must be called on the result value to free resources.
 ///
 /// # Safety
-/// - `targeting_key` must be a valid C string.
+/// - `targeting_key` must be a valid C string or NULL.
 /// - `attributes` must point to a valid array of valid `AttributePair` structs (can be null if
 ///   `attributes_count` is 0)
 #[no_mangle]
@@ -45,13 +45,13 @@ pub unsafe extern "C" fn ddog_ffe_evaluation_context_new(
     attributes_count: usize,
 ) -> Handle<EvaluationContext> {
     let targeting_key = if targeting_key.is_null() {
-        Str::from_static_str("")
+        None
     } else {
         // SAFETY: the caller must ensure that it's a valid C string
-        match unsafe { CStr::from_ptr(targeting_key) }.to_str() {
-            Ok(s) => Str::from(s),
-            Err(_) => Str::from_static_str(""),
-        }
+        unsafe { CStr::from_ptr(targeting_key) }
+            .to_str()
+            .ok()
+            .map(Str::from)
     };
 
     let attributes = if attributes.is_null() {

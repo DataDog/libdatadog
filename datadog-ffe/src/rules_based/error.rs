@@ -23,6 +23,10 @@ pub enum EvaluationError {
         found: FlagType,
     },
 
+    /// Targeting key is required for evaluation but is missing.
+    #[error("targeting key is missing")]
+    TargetingKeyMissing,
+
     /// Failed to parse configuration. This should normally never happen and is likely a signal
     /// that you should update SDK.
     #[error("failed to parse configuration")]
