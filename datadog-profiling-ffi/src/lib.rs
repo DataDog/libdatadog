@@ -22,7 +22,7 @@ pub use libdd_crashtracker_ffi::*;
 #[cfg(feature = "ddtelemetry-ffi")]
 pub use libdd_telemetry_ffi::*;
 
-#[cfg(feature = "libdd-data-pipeline-ffi")]
+#[cfg(feature = "data-pipeline-ffi")]
 #[allow(unused_imports)]
 pub use libdd_data_pipeline_ffi::*;
 
