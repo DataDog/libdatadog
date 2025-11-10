@@ -1,0 +1,28 @@
+# Copyright 2025-Present Datadog, Inc. https://www.datadoghq.com/
+# SPDX-License-Identifier: Apache-2.0
+
+[package]
+name = "datadog-ffe-ffi"
+edition.workspace = true
+version = "0.1.0"
+rust-version.workspace = true
+license.workspace = true
+
+[lib]
+crate-type = ["lib", "staticlib", "cdylib"]
+bench = false
+
+[features]
+default = ["cbindgen"]
+cbindgen = ["build_common/cbindgen", "libdd-common-ffi/cbindgen"]
+
+[build-dependencies]
+build_common = { path = "../build-common" }
+
+[dependencies]
+anyhow = "1.0.93"
+datadog-ffe = { path = "../datadog-ffe", version = "=0.1.0" }
+libdd-common-ffi = { path = "../libdd-common-ffi", default-features = false }
+function_name = "0.3.0"
+
+[dev-dependencies]
