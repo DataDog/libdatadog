@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use anyhow::Context;
-use datadog_profiling_protobuf::prost_impls::{Profile, Sample};
+use libdd_profiling_protobuf::prost_impls::{Profile, Sample};
 use std::io::Cursor;
 
 fn deserialize_compressed_pprof(encoded: &[u8]) -> anyhow::Result<Profile> {

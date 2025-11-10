@@ -26,9 +26,9 @@ bitmaps = "3.2.0"
 byteorder = { version = "1.5", features = ["std"] }
 bytes = "1.1"
 chrono = {version = "0.4", default-features = false, features = ["std", "clock"]}
-datadog-alloc = { version = "1.0.0", path = "../libdd-alloc", package = "libdd-alloc" }
-datadog-profiling-protobuf = { version = "1.0.0", path = "../libdd-profiling-protobuf", package = "libdd-profiling-protobuf", features = ["prost_impls"] }
-ddcommon = { version = "1.0.0", path = "../libdd-common", package = "libdd-common" }
+libdd-alloc = { version = "1.0.0", path = "../libdd-alloc" }
+libdd-profiling-protobuf = { version = "1.0.0", path = "../libdd-profiling-protobuf", features = ["prost_impls"] }
+libdd-common = { version = "1.0.0", path = "../libdd-common" }
 futures = { version = "0.3", default-features = false }
 http = "1.0"
 hyper = { workspace = true}

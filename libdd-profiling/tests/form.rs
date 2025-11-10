@@ -36,8 +36,8 @@ fn multipart(
 #[cfg(test)]
 mod tests {
     use crate::multipart;
-    use ddcommon::tag;
     use http_body_util::BodyExt;
+    use libdd_common::tag;
     use libdd_profiling::exporter::*;
     use serde_json::json;
 
