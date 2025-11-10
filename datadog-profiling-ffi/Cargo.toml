@@ -21,7 +21,7 @@ ddtelemetry-ffi = ["dep:libdd-telemetry-ffi"]
 libdd-telemetry-ffi = ["dep:libdd-telemetry-ffi"] # package_ffi_on_windows needs it
 datadog-log-ffi = ["dep:libdd-log-ffi"]
 symbolizer = ["symbolizer-ffi"]
-libdd-data-pipeline-ffi = ["dep:libdd-data-pipeline-ffi"]
+data-pipeline-ffi = ["dep:libdd-data-pipeline-ffi"]
 crashtracker-ffi = ["dep:libdd-crashtracker-ffi"]
 # Enables the in-process collection of crash-info
 crashtracker-collector = ["crashtracker-ffi", "libdd-crashtracker-ffi/collector"]
