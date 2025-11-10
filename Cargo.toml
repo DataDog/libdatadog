@@ -8,6 +8,7 @@ members = [
   "libdd-crashtracker",
   "libdd-crashtracker-ffi",
   "datadog-ffe",
+  "datadog-ffe-ffi",
   "datadog-ipc",
   "datadog-ipc-macros",
   "libdd-library-config",
