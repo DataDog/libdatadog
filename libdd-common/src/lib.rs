@@ -108,7 +108,8 @@ pub mod header {
         HeaderName::from_static("x-datadog-test-session-token");
 }
 
-pub type HttpClient = hyper_migration::HttpClient;
+pub type HttpClient = hyper_migration::GenericHttpClient<connector::Connector>;
+pub type GenericHttpClient<C> = hyper_migration::GenericHttpClient<C>;
 pub type HttpResponse = hyper_migration::HttpResponse;
 pub type HttpRequestBuilder = hyper::http::request::Builder;
 

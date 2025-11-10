@@ -17,7 +17,7 @@ use hyper::Request as HyperRequest;
 /// every second connection because of low keep alive in the agent.
 ///
 /// This is on general not a problem if we use the client once every tens of seconds.
-pub fn new_client_periodic() -> HttpClient {
+pub fn new_client_periodic() -> GenericHttpClient<Connector> {
     hyper_util::client::legacy::Client::builder(hyper_util::rt::TokioExecutor::default())
         .pool_max_idle_per_host(0)
         .build(Connector::default())
@@ -26,7 +26,7 @@ pub fn new_client_periodic() -> HttpClient {
 /// Create a new default configuration hyper client.
 ///
 /// It will keep connections open for a longer time and reuse them.
-pub fn new_default_client() -> HttpClient {
+pub fn new_default_client() -> GenericHttpClient<Connector> {
     hyper_util::client::legacy::Client::builder(hyper_util::rt::TokioExecutor::default())
         .build(Connector::default())
 }
@@ -209,7 +209,7 @@ impl hyper::body::Body for Body {
     }
 }
 
-pub type HttpClient = hyper_util::client::legacy::Client<connector::Connector, Body>;
+pub type GenericHttpClient<C> = hyper_util::client::legacy::Client<C, Body>;
 
 pub fn client_builder() -> hyper_util::client::legacy::Builder {
     hyper_util::client::legacy::Client::builder(hyper_util::rt::TokioExecutor::default())

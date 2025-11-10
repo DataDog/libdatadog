@@ -11,7 +11,7 @@ use anyhow::{anyhow, Context};
 use futures::stream::FuturesUnordered;
 use futures::StreamExt;
 use hyper::header::CONTENT_TYPE;
-use libdd_common::HttpClient;
+use libdd_common::GenericHttpClient;
 use libdd_common::{
     header::{
         APPLICATION_MSGPACK_STR, APPLICATION_PROTOBUF_STR, DATADOG_SEND_REAL_HTTP_STATUS_STR,
@@ -237,11 +237,11 @@ impl SendData {
     /// # Returns
     ///
     /// A `SendDataResult` instance containing the result of the operation.
-    pub async fn send(&self, http_client: &HttpClient) -> SendDataResult {
+    pub async fn send<C>(&self, http_client: &GenericHttpClient<C>) -> SendDataResult {
         self.send_internal(http_client).await
     }
 
-    async fn send_internal(&self, http_client: &HttpClient) -> SendDataResult {
+    async fn send_internal<C>(&self, http_client: &GenericHttpClient<C>) -> SendDataResult {
         if self.use_protobuf() {
             self.send_with_protobuf(http_client).await
         } else {
@@ -298,7 +298,7 @@ impl SendData {
         }
     }
 
-    async fn send_with_protobuf(&self, http_client: &HttpClient) -> SendDataResult {
+    async fn send_with_protobuf<C>(&self, http_client: &GenericHttpClient<C>) -> SendDataResult {
         let mut result = SendDataResult::default();
 
         #[allow(clippy::unwrap_used)]
@@ -336,7 +336,7 @@ impl SendData {
         }
     }
 
-    async fn send_with_msgpack(&self, http_client: &HttpClient) -> SendDataResult {
+    async fn send_with_msgpack<C>(&self, http_client: &GenericHttpClient<C>) -> SendDataResult {
         let mut result = SendDataResult::default();
         let mut futures = FuturesUnordered::new();
 
