@@ -205,8 +205,8 @@ fn generate_payload(
 }
 
 impl TracerFlareManager {
-    /// Creates a zip archive containing the specified files and directories, obfuscates sensitive
-    /// data, and sends the flare to the agent.
+    /// Creates a zip archive containing the specified files and directories, ~~obfuscates sensitive
+    /// data~~, and sends the flare to the agent.
     ///
     /// # Arguments
     ///
@@ -217,7 +217,7 @@ impl TracerFlareManager {
     ///
     /// # Returns
     ///
-    /// * `Ok(())` - If the zip archive was created, obfuscated, and sent successfully.
+    /// * `Ok(())` - If the zip archive was created, ~~obfuscated~~, and sent successfully.
     /// * `Err(FlareError)` - An error if any step of the process fails.
     ///
     /// # Errors
@@ -296,7 +296,7 @@ impl TracerFlareManager {
     ///
     /// * `zip` - A file handle to the zip archive to be sent
     /// * `log_level` - Log level of the tracer
-    /// * `agent_task` - Agent
+    /// * `agent_task` - Agent Task containing necessary information to send the flare
     ///
     /// # Returns
     ///
