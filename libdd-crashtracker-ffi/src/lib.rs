@@ -16,6 +16,7 @@ mod crash_info;
 mod demangler;
 #[cfg(all(unix, feature = "receiver"))]
 mod receiver;
+mod runtime_callback;
 #[cfg(all(unix, feature = "collector"))]
 pub use collector::*;
 #[cfg(all(windows, feature = "collector_windows"))]
@@ -25,3 +26,4 @@ pub use crash_info::*;
 pub use demangler::*;
 #[cfg(all(unix, feature = "receiver"))]
 pub use receiver::*;
+pub use runtime_callback::*;

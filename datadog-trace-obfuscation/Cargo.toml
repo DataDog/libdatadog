@@ -16,8 +16,8 @@ url = "2.4.0"
 percent-encoding = "2.1"
 log = "0.4"
 libdd-trace-protobuf = { path = "../libdd-trace-protobuf" }
-libdd-common = { path = "../libdd-common" }
 libdd-trace-utils = { path = "../libdd-trace-utils" }
+libdd-common = { path = "../libdd-common" }
 
 [dev-dependencies]
 duplicate = "0.4.1"

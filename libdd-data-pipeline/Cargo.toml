@@ -36,8 +36,8 @@ tokio-util = "0.7.11"
 libdd-common = { version = "1.0.0", path = "../libdd-common", default-features = false }
 libdd-telemetry = { version = "1.0.0", path = "../libdd-telemetry", default-features = false }
 libdd-trace-protobuf = { version = "1.0.0", path = "../libdd-trace-protobuf" }
-libdd-trace-stats = { path = "../libdd-trace-stats"}
-libdd-trace-utils = { path = "../libdd-trace-utils", default-features = false }
+libdd-trace-stats = { version = "1.0.0", path = "../libdd-trace-stats"}
+libdd-trace-utils = { version = "1.0.0", path = "../libdd-trace-utils", default-features = false }
 libdd-ddsketch = { version = "1.0.0", path = "../libdd-ddsketch" }
 libdd-dogstatsd-client = { version = "1.0.0", path = "../libdd-dogstatsd-client", default-features = false }
 libdd-tinybytes = { version = "1.0.0", path = "../libdd-tinybytes", features = [
