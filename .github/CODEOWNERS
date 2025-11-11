@@ -1,11 +1,12 @@
 .github/CODEOWNERS
 
 libdd-alloc/                @Datadog/libdatadog-profiling
-libdd-crashtracking*/       @Datadog/libdatadog-profiling
+libdd-crashtracker*/       @Datadog/libdatadog-profiling
 libdd-profiling*/           @Datadog/libdatadog-profiling
 libdd-telemetry*/           @Datadog/apm-common-components-core
 ruby/                       @Datadog/libdatadog-ruby
 Cargo.*                     @Datadog/libdatadog
+.github/                    @Datadog/apm-common-components-core
 .gitignore                  @Datadog/libdatadog
 .gitlab-ci.yml              @Datadog/libdatadog
 LICENSE*                    @Datadog/libdatadog
