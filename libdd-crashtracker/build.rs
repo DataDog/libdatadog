@@ -21,7 +21,7 @@ fn build_shared_libs() {
 #[cfg(unix)]
 fn get_data_folder_path() -> PathBuf {
     Path::new(&env!("CARGO_MANIFEST_DIR"))
-        .join("data")
+        .join("tests")
         .canonicalize()
         .expect("Failed to canonicalize base path for libtest")
 }

@@ -22,4 +22,5 @@ __fuzz__
 .env
 Cargo.lock # this is ignored so you don't update by accident, but is committed.
 docker-sync.yml
-
+libtest.so
+libtest_cpp.so
