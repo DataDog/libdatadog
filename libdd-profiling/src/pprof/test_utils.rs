@@ -1,13 +1,10 @@
 // Copyright 2023-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use anyhow::Context;
 use libdd_profiling_protobuf::prost_impls::{Profile, Sample};
-use std::io::Cursor;
 
 fn deserialize_compressed_pprof(encoded: &[u8]) -> anyhow::Result<Profile> {
     use prost::Message;
-    use std::io::Read;
 
     // The zstd bindings use FFI so they don't work under miri. This means the
     // buffer isn't compressed, so simply convert to a vec.
@@ -15,6 +12,8 @@ fn deserialize_compressed_pprof(encoded: &[u8]) -> anyhow::Result<Profile> {
     let buf = encoded.to_vec();
     #[cfg(not(miri))]
     let buf = {
+        use anyhow::Context;
+        use std::io::{Cursor, Read};
         let mut decoder =
             zstd::Decoder::new(Cursor::new(encoded)).context("failed to create zstd decoder")?;
         let mut out = Vec::new();
