@@ -116,6 +116,7 @@ impl<T> Vec<T> {
         unsafe { Slice::from_raw_parts(self.ptr, self.len) }
     }
 
+    /// Note: Like the regular rust `Vec`, this doesn't allocate memory when capacity is zero.
     pub const fn new() -> Self {
         Vec {
             ptr: NonNull::dangling().as_ptr(),

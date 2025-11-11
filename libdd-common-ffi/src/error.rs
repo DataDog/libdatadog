@@ -7,6 +7,8 @@ use std::fmt::{Debug, Display, Formatter};
 
 /// You probably don't want to use this directly. This constant is used by `handle_panic_error` to
 /// signal that something went wrong, but avoid needing any allocations to represent it.
+///
+/// Note: This vec is 0-sized and thus does not allocate any memory (or need to be dropped).
 pub(crate) const CANNOT_ALLOCATE_ERROR: Error = Error {
     message: Vec::new(),
 };
