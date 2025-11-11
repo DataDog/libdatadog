@@ -584,7 +584,7 @@ mod tests {
         assert_eq!(internal["execution_trace_enabled"], "false");
         assert_eq!(internal["extra object"], json!({"key": [1, 2, true]}));
         assert!(internal["libdatadog_version"].is_string());
-        assert!(!internal["libdatadog_version"].as_str().unwrap().is_empty());
+        assert_eq!(internal["libdatadog_version"], env!("CARGO_PKG_VERSION"));
     }
 
     #[test]
