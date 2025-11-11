@@ -1,0 +1,57 @@
+# Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
+# SPDX-License-Identifier: Apache-2.0
+
+[package]
+name = "libdd-profiling-ffi"
+edition.workspace = true
+version = "1.0.0"
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[lib]
+# LTO is ignored if "lib" is added as crate type
+# cf. https://github.com/rust-lang/rust/issues/51009
+crate-type = ["lib", "staticlib", "cdylib"]
+bench = false
+name = "datadog_profiling_ffi"
+
+[features]
+default = ["ddcommon-ffi"]
+cbindgen = ["build_common/cbindgen", "libdd-common-ffi/cbindgen"]
+ddtelemetry-ffi = ["dep:libdd-telemetry-ffi"]
+datadog-log-ffi = ["dep:libdd-log-ffi"]
+symbolizer = ["symbolizer-ffi"]
+data-pipeline-ffi = ["dep:libdd-data-pipeline-ffi"]
+crashtracker-ffi = ["dep:libdd-crashtracker-ffi"]
+# Enables the in-process collection of crash-info
+crashtracker-collector = ["crashtracker-ffi", "libdd-crashtracker-ffi/collector"]
+# Enables the use of this library to receiver crash-info from a suitable collector
+crashtracker-receiver = ["crashtracker-ffi", "libdd-crashtracker-ffi/receiver"]
+demangler = ["crashtracker-ffi", "libdd-crashtracker-ffi/demangler"]
+datadog-library-config-ffi = ["dep:libdd-library-config-ffi"]
+ddcommon-ffi = ["dep:libdd-common-ffi"]
+ddsketch-ffi = ["dep:libdd-ddsketch-ffi"]
+
+[build-dependencies]
+build_common = { path = "../build-common" }
+
+[dependencies]
+anyhow = "1.0"
+libdd-data-pipeline-ffi = { path = "../libdd-data-pipeline-ffi", default-features = false, optional = true }
+libdd-crashtracker-ffi = { path = "../libdd-crashtracker-ffi", default-features = false, optional = true}
+libdd-library-config-ffi = {  path = "../libdd-library-config-ffi", default-features = false, optional = true }
+libdd-profiling = { path = "../libdd-profiling" }
+libdd-common = { path = "../libdd-common" }
+libdd-common-ffi = { path = "../libdd-common-ffi", default-features = false, optional = true }
+libdd-telemetry-ffi = { path = "../libdd-telemetry-ffi", default-features = false, optional = true, features = ["expanded_builder_macros"] }
+libdd-ddsketch-ffi = { path = "../libdd-ddsketch-ffi", default-features = false, optional = true }
+libdd-log-ffi = { path = "../libdd-log-ffi", default-features = false, optional = true }
+function_name = "0.3.0"
+futures = { version = "0.3", default-features = false }
+http-body-util = "0.1"
+hyper = { workspace = true}
+libc = "0.2"
+serde_json = { version = "1.0" }
+symbolizer-ffi = { path = "../symbolizer-ffi", optional = true, default-features = false }
+tokio-util = "0.7.1"
