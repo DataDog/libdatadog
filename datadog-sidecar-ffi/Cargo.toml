@@ -29,7 +29,7 @@ rmp-serde = "1.1.1"
 
 
 [target.'cfg(windows)'.dependencies]
-datadog-crashtracker-ffi = { path = "../datadog-crashtracker-ffi", features = ["collector", "collector_windows"] }
+libdd-crashtracker-ffi = { path = "../libdd-crashtracker-ffi", features = ["collector", "collector_windows"] }
 
 [dev-dependencies]
 http = "1.0"

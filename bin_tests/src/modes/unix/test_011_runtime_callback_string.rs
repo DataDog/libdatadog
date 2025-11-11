@@ -8,7 +8,7 @@
 // This test uses stacktrace string callback to emit structured runtime stack data.
 
 use crate::modes::behavior::Behavior;
-use datadog_crashtracker::{
+use libdd_crashtracker::{
     clear_runtime_callback, register_runtime_stacktrace_string_callback, CrashtrackerConfiguration,
 };
 use std::ffi::c_char;
@@ -51,7 +51,7 @@ unsafe extern "C" fn test_runtime_callback_string(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use datadog_crashtracker::{clear_runtime_callback, is_runtime_callback_registered};
+    use libdd_crashtracker::{clear_runtime_callback, is_runtime_callback_registered};
 
     #[test]
     fn test_runtime_callback_string_registration() {

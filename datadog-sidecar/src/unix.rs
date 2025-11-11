@@ -22,7 +22,7 @@ use tracing::{error, info};
 #[cfg(target_os = "linux")]
 use crate::config::LogMethod;
 #[cfg(target_os = "linux")]
-use datadog_crashtracker::{
+use libdd_crashtracker::{
     CrashtrackerConfiguration, CrashtrackerReceiverConfig, Metadata, StacktraceCollection,
 };
 #[cfg(target_os = "linux")]
@@ -220,7 +220,7 @@ fn init_crashtracker(dependency_paths: *const *const libc::c_char) -> anyhow::Re
         LogMethod::Disabled => None,
     };
 
-    datadog_crashtracker::init(
+    libdd_crashtracker::init(
         CrashtrackerConfiguration::new(
             vec![],
             true,
@@ -256,7 +256,7 @@ fn init_crashtracker(dependency_paths: *const *const libc::c_char) -> anyhow::Re
 #[no_mangle]
 pub extern "C" fn ddog_crashtracker_entry_point(_trampoline_data: &TrampolineData) {
     unsafe {
-        if let Err(e) = datadog_crashtracker::receiver_entry_point_stdin() {
+        if let Err(e) = libdd_crashtracker::receiver_entry_point_stdin() {
             eprintln!("{e}");
             libc::exit(1)
         }

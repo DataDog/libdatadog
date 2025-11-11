@@ -37,7 +37,7 @@
           "symbol_address": "0x100c52a24",
           "column": 5,
           "file": "/Users/daniel.schwartznarbonne/go/src/github.com/DataDog/libdatadog/crashtracker/src/collector/emitters.rs",
-          "function": "datadog_crashtracker::collector::emitters::emit_backtrace_by_frames::hffe0893f890cf311",
+          "function": "libdd_crashtracker::collector::emitters::emit_backtrace_by_frames::hffe0893f890cf311",
           "line": 34
         },
         {
@@ -46,7 +46,7 @@
           "symbol_address": "0x100c53f50",
           "column": 18,
           "file": "/Users/daniel.schwartznarbonne/go/src/github.com/DataDog/libdatadog/crashtracker/src/collector/emitters.rs",
-          "function": "datadog_crashtracker::collector::emitters::emit_crashreport::h072d9dec8eb6d587",
+          "function": "libdd_crashtracker::collector::emitters::emit_crashreport::h072d9dec8eb6d587",
           "line": 128
         },
         {
@@ -55,7 +55,7 @@
           "symbol_address": "0x100d00120",
           "column": 15,
           "file": "/Users/daniel.schwartznarbonne/go/src/github.com/DataDog/libdatadog/crashtracker/src/collector/crash_handler.rs",
-          "function": "datadog_crashtracker::collector::crash_handler::handle_posix_signal_impl::ha45884607fab00ab",
+          "function": "libdd_crashtracker::collector::crash_handler::handle_posix_signal_impl::ha45884607fab00ab",
           "line": 507
         },
         {
@@ -64,7 +64,7 @@
           "symbol_address": "0x100cff9d0",
           "column": 13,
           "file": "/Users/daniel.schwartznarbonne/go/src/github.com/DataDog/libdatadog/crashtracker/src/collector/crash_handler.rs",
-          "function": "datadog_crashtracker::collector::crash_handler::handle_posix_sigaction::hfda5a5ec0bcfec82",
+          "function": "libdd_crashtracker::collector::crash_handler::handle_posix_sigaction::hfda5a5ec0bcfec82",
           "line": 388
         },
         {
@@ -79,7 +79,7 @@
           "symbol_address": "0x100cdfa4c",
           "column": 5,
           "file": "/Users/daniel.schwartznarbonne/go/src/github.com/DataDog/libdatadog/crashtracker/src/collector/api.rs",
-          "function": "datadog_crashtracker::collector::api::test_crash::h0310ac857cf5687f",
+          "function": "libdd_crashtracker::collector::api::test_crash::h0310ac857cf5687f",
           "line": 157
         },
         {
@@ -88,7 +88,7 @@
           "symbol_address": "0x100c81484",
           "column": 20,
           "file": "/Users/daniel.schwartznarbonne/go/src/github.com/DataDog/libdatadog/crashtracker/src/collector/api.rs",
-          "function": "datadog_crashtracker::collector::api::test_crash::{{closure}}::h0b9b36ed20d8a85a",
+          "function": "libdd_crashtracker::collector::api::test_crash::{{closure}}::h0b9b36ed20d8a85a",
           "line": 99
         },
         {

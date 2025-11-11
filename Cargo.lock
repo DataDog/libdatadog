@@ -508,10 +508,10 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "current_platform",
- "datadog-crashtracker",
  "datadog-profiling",
  "libc",
  "libdd-common",
+ "libdd-crashtracker",
  "nix",
  "once_cell",
  "serde_json",
@@ -1292,59 +1292,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "datadog-crashtracker"
-version = "23.0.0"
-dependencies = [
- "anyhow",
- "backtrace",
- "blazesym",
- "cc",
- "chrono",
- "criterion",
- "goblin",
- "http",
- "libc",
- "libdd-common",
- "libdd-telemetry",
- "nix",
- "num-derive",
- "num-traits",
- "os_info",
- "page_size",
- "portable-atomic",
- "rand 0.8.5",
- "schemars",
- "serde",
- "serde_json",
- "symbolic-common",
- "symbolic-demangle",
- "tempfile",
- "thiserror 1.0.68",
- "tokio",
- "uuid",
- "windows 0.59.0",
-]
-
-[[package]]
-name = "datadog-crashtracker-ffi"
-version = "23.0.0"
-dependencies = [
- "anyhow",
- "build_common",
- "datadog-crashtracker",
- "function_name",
- "libc",
- "libdd-common",
- "libdd-common-ffi",
- "serde",
- "serde_json",
- "symbolic-common",
- "symbolic-demangle",
- "tempfile",
- "windows 0.59.0",
-]
-
-[[package]]
 name = "datadog-ffe"
 version = "0.1.0"
 dependencies = [
@@ -1491,7 +1438,6 @@ version = "23.0.0"
 dependencies = [
  "anyhow",
  "build_common",
- "datadog-crashtracker-ffi",
  "datadog-profiling",
  "function_name",
  "futures",
@@ -1500,6 +1446,7 @@ dependencies = [
  "libc",
  "libdd-common",
  "libdd-common-ffi",
+ "libdd-crashtracker-ffi",
  "libdd-data-pipeline-ffi",
  "libdd-ddsketch-ffi",
  "libdd-library-config-ffi",
@@ -1560,8 +1507,6 @@ dependencies = [
  "bincode",
  "chrono",
  "console-subscriber",
- "datadog-crashtracker",
- "datadog-crashtracker-ffi",
  "datadog-ipc",
  "datadog-ipc-macros",
  "datadog-live-debugger",
@@ -1575,6 +1520,8 @@ dependencies = [
  "libc",
  "libdd-common",
  "libdd-common-ffi",
+ "libdd-crashtracker",
+ "libdd-crashtracker-ffi",
  "libdd-data-pipeline",
  "libdd-dogstatsd-client",
  "libdd-telemetry",
@@ -1610,7 +1557,6 @@ dependencies = [
 name = "datadog-sidecar-ffi"
 version = "0.0.1"
 dependencies = [
- "datadog-crashtracker-ffi",
  "datadog-ipc",
  "datadog-live-debugger",
  "datadog-remote-config",
@@ -1619,6 +1565,7 @@ dependencies = [
  "libc",
  "libdd-common",
  "libdd-common-ffi",
+ "libdd-crashtracker-ffi",
  "libdd-dogstatsd-client",
  "libdd-telemetry",
  "libdd-telemetry-ffi",
@@ -2899,6 +2846,59 @@ dependencies = [
  "hyper",
  "libdd-common",
  "serde",
+]
+
+[[package]]
+name = "libdd-crashtracker"
+version = "1.0.0"
+dependencies = [
+ "anyhow",
+ "backtrace",
+ "blazesym",
+ "cc",
+ "chrono",
+ "criterion",
+ "goblin",
+ "http",
+ "libc",
+ "libdd-common",
+ "libdd-telemetry",
+ "nix",
+ "num-derive",
+ "num-traits",
+ "os_info",
+ "page_size",
+ "portable-atomic",
+ "rand 0.8.5",
+ "schemars",
+ "serde",
+ "serde_json",
+ "symbolic-common",
+ "symbolic-demangle",
+ "tempfile",
+ "thiserror 1.0.68",
+ "tokio",
+ "uuid",
+ "windows 0.59.0",
+]
+
+[[package]]
+name = "libdd-crashtracker-ffi"
+version = "23.0.0"
+dependencies = [
+ "anyhow",
+ "build_common",
+ "function_name",
+ "libc",
+ "libdd-common",
+ "libdd-common-ffi",
+ "libdd-crashtracker",
+ "serde",
+ "serde_json",
+ "symbolic-common",
+ "symbolic-demangle",
+ "tempfile",
+ "windows 0.59.0",
 ]
 
 [[package]]

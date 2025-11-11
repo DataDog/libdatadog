@@ -8,7 +8,7 @@
 // This test uses frame-by-frame callback to emit structured runtime stack data.
 
 use crate::modes::behavior::Behavior;
-use datadog_crashtracker::{
+use libdd_crashtracker::{
     clear_runtime_callback, register_runtime_frame_callback, CrashtrackerConfiguration,
     RuntimeStackFrame,
 };
@@ -84,7 +84,7 @@ unsafe extern "C" fn test_runtime_callback_frame(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use datadog_crashtracker::{clear_runtime_callback, is_runtime_callback_registered};
+    use libdd_crashtracker::{clear_runtime_callback, is_runtime_callback_registered};
 
     #[test]
     fn test_runtime_callback_frame_registration() {

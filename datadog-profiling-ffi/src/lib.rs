@@ -16,7 +16,7 @@ mod string_storage;
 
 // re-export crashtracker ffi
 #[cfg(feature = "crashtracker-ffi")]
-pub use datadog_crashtracker_ffi::*;
+pub use libdd_crashtracker_ffi::*;
 
 // re-export telemetry ffi
 #[cfg(feature = "ddtelemetry-ffi")]

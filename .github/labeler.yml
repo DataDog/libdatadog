@@ -59,6 +59,6 @@ data-pipeline:
 crashtracker:
 - changed-files:
   - any-glob-to-any-file: [
-    'datadog-crashtracker/**/*',
-    'datadog-crashtracker-ffi/**/*',
+    'libdd-crashtracker/**/*',
+    'libdd-crashtracker-ffi/**/*',
   ]
