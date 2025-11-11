@@ -100,4 +100,4 @@ pub use shared::configuration::{
 pub use receiver::benchmark;
 
 #[cfg(unix)]
-pub use common::{get_data_folder_path, SharedLibrary};
+pub use common::{get_tests_folder_path, SharedLibrary};

@@ -398,12 +398,12 @@ mod tests {
 #[cfg(test)]
 mod unix_test {
     use super::*;
-    use crate::{get_data_folder_path, SharedLibrary};
+    use crate::{get_tests_folder_path, SharedLibrary};
 
     #[test]
     #[cfg_attr(miri, ignore)]
     fn test_normalize_ip() {
-        let test_so = get_data_folder_path()
+        let test_so = get_tests_folder_path()
             .expect("Failed to get the data folder path")
             .join("libtest.so")
             .canonicalize()
@@ -438,7 +438,7 @@ mod unix_test {
     #[test]
     #[cfg_attr(miri, ignore)]
     fn test_normalize_ip_cpp() {
-        let test_so = get_data_folder_path()
+        let test_so = get_tests_folder_path()
             .expect("Failed to get the data folder path")
             .join("libtest_cpp.so")
             .canonicalize()
@@ -473,7 +473,7 @@ mod unix_test {
     #[test]
     #[cfg_attr(miri, ignore)]
     fn test_symbolization() {
-        let test_so = get_data_folder_path()
+        let test_so = get_tests_folder_path()
             .expect("Failed to get the data folder path")
             .join("libtest.so")
             .canonicalize()
@@ -500,7 +500,7 @@ mod unix_test {
     #[test]
     #[cfg_attr(miri, ignore)]
     fn test_symbolization_cpp() {
-        let test_so = get_data_folder_path()
+        let test_so = get_tests_folder_path()
             .expect("Failed to get the data folder path")
             .join("libtest_cpp.so")
             .canonicalize()
