@@ -241,6 +241,12 @@ int main(void) {
   check_result(ddog_crasht_CrashInfoBuilder_with_os_info_this_machine(builder.get()),
                "Failed to set os_info");
 
+  // Test uploading a crash ping without siginfo
+  auto ping_endpoint = ddog_endpoint_from_filename(to_slice_c_char("/tmp/crash_ping_test"));
+  check_result(ddog_crasht_CrashInfoBuilder_upload_ping_to_endpoint(builder.get(), ping_endpoint),
+               "Failed to upload crash ping");
+  ddog_endpoint_drop(ping_endpoint);
+
   auto sigInfo = ddog_crasht_SigInfo {
     .addr = "0xBABEF00D",
     .code = 16,
@@ -252,10 +258,10 @@ int main(void) {
   check_result(ddog_crasht_CrashInfoBuilder_with_sig_info(builder.get(), sigInfo),
                "failed to add signal info");
 
-  auto ping_endpoint = ddog_endpoint_from_filename(to_slice_c_char("/tmp/crash_ping_test"));
-  check_result(ddog_crasht_CrashInfoBuilder_upload_ping_to_endpoint(builder.get(), ping_endpoint),
+  auto ping_endpoint2 = ddog_endpoint_from_filename(to_slice_c_char("/tmp/crash_ping_test"));
+  check_result(ddog_crasht_CrashInfoBuilder_upload_ping_to_endpoint(builder.get(), ping_endpoint2),
                "Failed to upload crash ping");
-  ddog_endpoint_drop(ping_endpoint);
+  ddog_endpoint_drop(ping_endpoint2);
 
   auto crashinfo = extract_result(ddog_crasht_CrashInfoBuilder_build(builder.release()),
                                   "failed to build CrashInfo");

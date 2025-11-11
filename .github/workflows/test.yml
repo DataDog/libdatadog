@@ -214,8 +214,8 @@ jobs:
           android: true
           dotnet: true
           haskell: true
-          large-packages: false
-          docker-images: false
+          large-packages: true
+          docker-images: true
           swap-storage: true
       - name: Checkout
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # 4.2.2
