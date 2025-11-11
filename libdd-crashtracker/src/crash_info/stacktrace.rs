@@ -404,7 +404,7 @@ mod unix_test {
     #[cfg_attr(miri, ignore)]
     fn test_normalize_ip() {
         let test_so = get_tests_folder_path()
-            .expect("Failed to get the data folder path")
+            .expect("Failed to get the tests folder path")
             .join("libtest.so")
             .canonicalize()
             .unwrap();
@@ -439,7 +439,7 @@ mod unix_test {
     #[cfg_attr(miri, ignore)]
     fn test_normalize_ip_cpp() {
         let test_so = get_tests_folder_path()
-            .expect("Failed to get the data folder path")
+            .expect("Failed to get the tests folder path")
             .join("libtest_cpp.so")
             .canonicalize()
             .unwrap();
@@ -474,7 +474,7 @@ mod unix_test {
     #[cfg_attr(miri, ignore)]
     fn test_symbolization() {
         let test_so = get_tests_folder_path()
-            .expect("Failed to get the data folder path")
+            .expect("Failed to get the tests folder path")
             .join("libtest.so")
             .canonicalize()
             .unwrap();
@@ -501,7 +501,7 @@ mod unix_test {
     #[cfg_attr(miri, ignore)]
     fn test_symbolization_cpp() {
         let test_so = get_tests_folder_path()
-            .expect("Failed to get the data folder path")
+            .expect("Failed to get the tests folder path")
             .join("libtest_cpp.so")
             .canonicalize()
             .unwrap();
