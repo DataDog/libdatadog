@@ -89,8 +89,8 @@ publish_crates:
   script:
     - echo "=== Setting up environment for publication ==="
     - |
-      # Install build-essential and curl
-      apt-get update && apt-get install -y build-essential curl jq git
+      # Install build-essential and curl jq, etc
+      apt-get update && apt-get install -y build-essential curl jq git golang-go cmake
 
       # Install rustup and set it to stable
       curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
