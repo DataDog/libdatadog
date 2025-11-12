@@ -88,7 +88,7 @@ impl Config {
     }
 
     pub fn without_dedicated_snapshots_endpoint(&mut self) {
-        self.snapshots_endpoint = self.logs_endpoint.clone();
+        self.snapshots_endpoint = self.diagnostics_endpoint.clone();
     }
 }
 
