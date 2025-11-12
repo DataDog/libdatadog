@@ -1,10 +1,10 @@
 // Copyright 2025-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+use super::SetError;
 use super::SetHasher as Hasher;
-use super::{SetError, ShardedSetOps};
 use core::hint::unreachable_unchecked;
-use core::{any::TypeId, fmt, mem, ptr};
+use core::{fmt, mem, ptr};
 use hashbrown::HashTable;
 use libdd_alloc::{Allocator, ChainAllocator, VirtualAllocator};
 use std::ffi::c_void;
@@ -96,6 +96,7 @@ impl<T: Eq + Hash + 'static> Set<T> {
     pub fn len(&self) -> usize {
         self.table.len()
     }
+
     pub fn is_empty(&self) -> bool {
         self.table.is_empty()
     }
@@ -143,15 +144,7 @@ impl<T: Hash + Eq + 'static> Drop for Set<T> {
     }
 }
 
-unsafe impl<T: Hash + Eq + 'static> ShardedSetOps for Set<T> {
-    type Lookup<'a> = &'a T;
-    type Owned<'a> = T;
-    type Id = SetId<T>;
-
-    fn type_id(&self) -> TypeId {
-        TypeId::of::<T>()
-    }
-
+impl<T: Hash + Eq + 'static> Set<T> {
     fn try_with_capacity(capacity: usize) -> Result<Self, SetError> {
         let arena = ChainAllocator::new_in(Self::SIZE_HINT, VirtualAllocator {});
         let mut table = HashTable::new();
@@ -161,11 +154,7 @@ unsafe impl<T: Hash + Eq + 'static> ShardedSetOps for Set<T> {
         Ok(Self { arena, table })
     }
 
-    fn len(&self) -> usize {
-        self.len()
-    }
-
-    unsafe fn find_with_hash(&self, hash: u64, key: Self::Lookup<'_>) -> Option<Self::Id> {
+    unsafe fn find_with_hash(&self, hash: u64, key: &T) -> Option<SetId<T>> {
         let found = self
             .table
             // SAFETY: NonNull<T> inside table points to live, properly aligned Ts.
@@ -176,8 +165,8 @@ unsafe impl<T: Hash + Eq + 'static> ShardedSetOps for Set<T> {
     unsafe fn insert_unique_uncontended_with_hash(
         &mut self,
         hash: u64,
-        value: Self::Owned<'_>,
-    ) -> Result<Self::Id, SetError> {
+        value: T,
+    ) -> Result<SetId<T>, SetError> {
         // Reserve table space BEFORE allocating the new value so we don't
         // need to drop it on reserve failure.
         // SAFETY: NonNull<T> entries are valid; closure only hashes existing entries.

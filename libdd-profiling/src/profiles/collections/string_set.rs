@@ -60,11 +60,7 @@ impl StringRef {
     pub const SPAN_ID: StringRef = StringRef(ThinStr::span_id());
 }
 
-/// Holds unique strings and provides [`StringRef`]s to fetch them later.
-/// This is a newtype around SliceSet<u8> to enforce UTF-8 invariants.
-pub struct UnsyncStringSet(SliceSet<u8>);
-
-pub const WELL_KNOWN_STRING_IDS: [StringRef; 5] = [
+pub const WELL_KNOWN_STRING_REFS: [StringRef; 5] = [
     StringRef::EMPTY,
     StringRef::END_TIMESTAMP_NS,
     StringRef::LOCAL_ROOT_SPAN_ID,
@@ -72,11 +68,15 @@ pub const WELL_KNOWN_STRING_IDS: [StringRef; 5] = [
     StringRef::SPAN_ID,
 ];
 
+/// Holds unique strings and provides [`StringRef`]s to fetch them later.
+/// This is a newtype around SliceSet<u8> to enforce UTF-8 invariants.
+pub struct UnsyncStringSet(SliceSet<u8>);
+
 impl UnsyncStringSet {
     pub fn try_with_capacity(capacity: usize) -> Result<Self, SetError> {
         let mut set = Self(SliceSet::try_with_capacity(capacity)?);
         let strings = &mut set.0.slices;
-        for id in WELL_KNOWN_STRING_IDS {
+        for id in WELL_KNOWN_STRING_REFS {
             let hash = Hasher::default().hash_one(id.0.deref().as_bytes());
             strings.insert_unique(hash, id.0.into(), |t| Hasher::default().hash_one(t.deref()));
         }
@@ -86,7 +86,7 @@ impl UnsyncStringSet {
 
     /// Creates a new string set, which initially holds the empty string and
     /// other well-known strings. The well-known strings are always
-    /// available and can be fetched using the [`WELL_KNOWN_STRING_IDS`].
+    /// available and can be fetched using the [`WELL_KNOWN_STRING_REFS`].
     pub fn try_new() -> Result<Self, SetError> {
         Self::try_with_capacity(28)
     }

@@ -1,18 +1,16 @@
 // Copyright 2025-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use super::{SetError, ShardedSetOps, ThinSlice};
-use core::any::TypeId;
-use core::hash;
+use super::{SetError, ThinSlice};
+use core::hash::{BuildHasher, Hash};
+use core::hint::unreachable_unchecked;
 use hashbrown::HashTable;
 use libdd_alloc::{ChainAllocator, VirtualAllocator};
-use std::hash::{BuildHasher, Hash};
-use std::hint::unreachable_unchecked;
 
 use super::SetHasher as Hasher;
 
 /// Holds unique slices and provides handles to fetch them later.
-pub struct SliceSet<T: Copy + hash::Hash + Eq + 'static> {
+pub struct SliceSet<T: Copy + Hash + Eq + 'static> {
     /// The bytes of each slice stored in `slices` are allocated here.
     pub(crate) arena: ChainAllocator<VirtualAllocator>,
 
@@ -24,7 +22,7 @@ pub struct SliceSet<T: Copy + hash::Hash + Eq + 'static> {
     pub(crate) slices: HashTable<ThinSlice<'static, T>>,
 }
 
-impl<T: Copy + hash::Hash + Eq + 'static> SliceSet<T> {
+impl<T: Copy + Hash + Eq + 'static> SliceSet<T> {
     const SIZE_HINT: usize = 1024 * 1024;
 
     pub fn try_with_capacity(capacity: usize) -> Result<Self, SetError> {
@@ -79,7 +77,7 @@ impl<T: Copy + hash::Hash + Eq + 'static> SliceSet<T> {
     /// returns a handle to the slice that can be used to retrieve it later.
     pub fn try_insert(&mut self, slice: &[T]) -> Result<ThinSlice<'static, T>, SetError>
     where
-        T: hash::Hash,
+        T: Hash,
     {
         let hash = Hasher::default().hash_one(slice);
 
@@ -129,35 +127,5 @@ impl<T: Copy + hash::Hash + Eq + 'static> SliceSet<T> {
     /// Returns the capacity of the hash table.
     pub fn capacity(&self) -> usize {
         self.slices.capacity()
-    }
-}
-
-unsafe impl<T: Copy + Hash + Eq + 'static> ShardedSetOps for SliceSet<T> {
-    type Lookup<'a> = &'a [T];
-    type Owned<'a> = &'a [T];
-    type Id = ThinSlice<'static, T>;
-
-    fn try_with_capacity(capacity: usize) -> Result<Self, SetError> {
-        SliceSet::try_with_capacity(capacity)
-    }
-
-    fn len(&self) -> usize {
-        self.len()
-    }
-
-    fn type_id(&self) -> TypeId {
-        TypeId::of::<T>()
-    }
-
-    unsafe fn find_with_hash(&self, hash: u64, key: Self::Lookup<'_>) -> Option<Self::Id> {
-        unsafe { self.find_with_hash(hash, key) }
-    }
-
-    unsafe fn insert_unique_uncontended_with_hash(
-        &mut self,
-        hash: u64,
-        key: Self::Owned<'_>,
-    ) -> Result<Self::Id, SetError> {
-        unsafe { self.insert_unique_uncontended_with_hash(hash, key) }
     }
 }

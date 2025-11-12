@@ -528,15 +528,6 @@ static LOCAL_ROOT_SPAN_ID: ConstString<18> = ConstString::new("local root span i
 static TRACE_ENDPOINT: ConstString<14> = ConstString::new("trace endpoint");
 static SPAN_ID: ConstString<7> = ConstString::new("span id");
 
-#[no_mangle]
-pub static DDOG_PROF_WELL_KNOWN_STRINGS: [ThinStr; 5] = [
-    ThinStr::new(),
-    ThinStr::end_timestamp_ns(),
-    ThinStr::local_root_span_id(),
-    ThinStr::trace_endpoint(),
-    ThinStr::span_id(),
-];
-
 #[cfg(test)]
 mod tests {
     use super::*;
