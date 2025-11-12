@@ -424,7 +424,7 @@ impl ErrorsIntakePayload {
 
     pub fn from_crash_ping(
         crash_uuid: &str,
-        sig_info: &SigInfo,
+        sig_info: Option<&SigInfo>,
         metadata: &Metadata,
     ) -> anyhow::Result<Self> {
         let timestamp = SystemTime::now()
@@ -445,15 +445,32 @@ impl ErrorsIntakePayload {
             ddtags.push_str(&format!(",version:{version}"));
         }
 
-        append_signal_tags(&mut ddtags, sig_info);
+        if let Some(sig_info) = sig_info {
+            append_signal_tags(&mut ddtags, sig_info);
+        }
+
+        let (error_type, message) = if let Some(sig_info) = sig_info {
+            (
+                Some(format!("{:?}", sig_info.si_signo_human_readable)),
+                Some(build_crash_ping_message(sig_info)),
+            )
+        } else {
+            (
+                Some("Unknown".to_string()),
+                Some(
+                    "Crashtracker crash ping: crash processing started - Process terminated"
+                        .to_string(),
+                ),
+            )
+        };
 
         Ok(Self {
             timestamp,
             ddsource: "crashtracker".to_string(),
             ddtags,
             error: ErrorObject {
-                error_type: Some(format!("{:?}", sig_info.si_signo_human_readable)),
-                message: Some(build_crash_ping_message(sig_info)),
+                error_type,
+                message,
                 stack: None,
                 is_crash: Some(false),
                 fingerprint: None,
@@ -486,7 +503,7 @@ impl ErrorsIntakeUploader {
     pub async fn upload_crash_ping(
         &self,
         crash_uuid: &str,
-        sig_info: &SigInfo,
+        sig_info: Option<&SigInfo>,
         metadata: &Metadata,
     ) -> anyhow::Result<()> {
         let payload = ErrorsIntakePayload::from_crash_ping(crash_uuid, sig_info, metadata)?;
@@ -619,7 +636,7 @@ mod tests {
         let crash_uuid = "test-uuid-123";
 
         let payload =
-            ErrorsIntakePayload::from_crash_ping(crash_uuid, &sig_info, &metadata).unwrap();
+            ErrorsIntakePayload::from_crash_ping(crash_uuid, Some(&sig_info), &metadata).unwrap();
 
         assert_eq!(payload.ddsource, "crashtracker");
         assert_eq!(payload.error.source_type, Some("Crashtracking".to_string()));
@@ -682,7 +699,7 @@ mod tests {
         let crash_uuid = "test-crash-ping-uuid";
 
         let payload =
-            ErrorsIntakePayload::from_crash_ping(crash_uuid, &sig_info, &metadata).unwrap();
+            ErrorsIntakePayload::from_crash_ping(crash_uuid, Some(&sig_info), &metadata).unwrap();
 
         // This test ensures we have all the tags that telemetry crash ping produces
         let expected_tags = [

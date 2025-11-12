@@ -138,7 +138,7 @@ impl CrashPing {
         if errors_intake_uploader.is_enabled() {
             let errors_intake_future = errors_intake_uploader.upload_crash_ping(
                 &self.crash_uuid,
-                self.siginfo(),
+                self.siginfo.as_ref(),
                 self.metadata(),
             );
             let (_telemetry_result, _errors_intake_result) =
