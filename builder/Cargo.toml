@@ -16,6 +16,7 @@ symbolizer = []
 library-config = []
 log = []
 ddsketch = []
+ffe = []
 
 [lib]
 bench = false

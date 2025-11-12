@@ -28,6 +28,7 @@ $features = @(
     "ddtelemetry-ffi",
     "demangler",
     "datadog-library-config-ffi",
+    "datadog-ffe-ffi",
     "datadog-log-ffi"
 ) -join ","
 

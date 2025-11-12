@@ -6,6 +6,8 @@ use build_common::generate_and_configure_header;
 
 fn main() {
     println!("cargo:rerun-if-changed=src/*");
-    let header_name = "datadog_ffe.h";
+    println!("cargo:rerun-if-changed=cbindgen.toml");
+    println!("cargo:rerun-if-changed=build.rs");
+    let header_name = "ffe.h";
     generate_and_configure_header(header_name);
 }

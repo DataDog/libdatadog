@@ -163,6 +163,7 @@ pub enum Reason {
 /// - `flag_key` must be a valid C string
 /// - `context` must be a valid `EvaluationContext` handle
 #[no_mangle]
+#[must_use]
 pub unsafe extern "C" fn ddog_ffe_get_assignment(
     config: Handle<Configuration>,
     flag_key: *const c_char,
