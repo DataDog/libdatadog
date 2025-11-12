@@ -2,10 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::fetch::{
-    ConfigApplyState, ConfigFetcherState, ConfigInvariants, FileStorage, RefcountedFile,
-    RefcountingStorage, RefcountingStorageStats, SharedFetcher,
+    ConfigApplyState, ConfigFetcherState, ConfigInvariants, ConfigProductCapabilities, FileStorage,
+    RefcountedFile, RefcountingStorage, RefcountingStorageStats, SharedFetcher,
 };
-use crate::Target;
+use crate::{RemoteConfigCapabilities, RemoteConfigProduct, Target};
 use futures_util::future::Shared;
 use futures_util::FutureExt;
 use libdd_common::MutexExt;
@@ -36,19 +36,17 @@ use tracing::{debug, error, trace};
 pub struct MultiTargetFetcher<N: NotifyTarget, S: FileStorage + Clone + Sync + Send>
 where
     S::StoredFile: RefcountedFile + Sync + Send,
-    S: MultiTargetHandlers<S::StoredFile>,
+    S: MultiTargetHandlers<N, S>,
 {
-    /// All runtime ids belonging to a specific target
-    /// WARNING: do NOT lock runtimes while holding a lock to target_runtimes!
-    target_runtimes: Mutex<HashMap<Arc<Target>, HashSet<String>>>,
     /// Keyed by runtime_id
     runtimes: Mutex<HashMap<String, RuntimeInfo<N>>>,
     /// Refetch interval in nanoseconds.
     pub remote_config_interval: AtomicU64,
     /// All services by target in use
+    /// WARNING: do NOT lock runtimes while holding a lock to services!
     services: Mutex<HashMap<Arc<Target>, KnownTarget>>,
     pending_async_insertions: AtomicU32,
-    storage: RefcountingStorage<S>,
+    pub storage: RefcountingStorage<S>,
     /// Limit on how many fetchers can be active at once.
     /// This functionality is mostly targeted at CLI programs which generally have their file name
     /// as the service name. E.g. a phpt testsuite will generate one service for every single file.
@@ -88,12 +86,57 @@ enum KnownTargetStatus {
     Removing(Shared<ManualFuture<()>>),
 }
 
+pub struct ProductCapabilities {
+    pub products: Vec<RemoteConfigProduct>,
+    pub capabilities: Vec<RemoteConfigCapabilities>,
+}
+
 struct KnownTarget {
     refcount: u32,
     status: Arc<Mutex<KnownTargetStatus>>,
     synthetic_id: bool,
-    runtimes: HashSet<String>,
+    /// All runtime ids belonging to a specific target, with their capabilities
+    runtimes: HashMap<String, ProductCapabilities>,
     fetcher: Arc<SharedFetcher>,
+    active_products: HashMap<RemoteConfigProduct, u32>,
+    active_capabilities: HashMap<RemoteConfigCapabilities, u32>,
+}
+
+fn addref_hashmap<K: Hash + Eq>(map: &mut HashMap<K, u32>, key: K) -> bool {
+    match map.entry(key) {
+        Entry::Occupied(mut e) => {
+            *e.get_mut() += 1;
+            false
+        }
+        Entry::Vacant(e) => {
+            e.insert(1);
+            true
+        }
+    }
+}
+
+fn decref_hashmap<K: Hash + Eq>(map: &mut HashMap<K, u32>, key: K) -> bool {
+    if let Some(entry) = map.get_mut(&key) {
+        if *entry == 1 {
+            map.remove(&key);
+            return true;
+        } else {
+            *entry -= 1;
+        }
+    }
+    false
+}
+
+impl KnownTarget {
+    fn update_product_capabilities(&mut self) {
+        if self.refcount > 0 {
+            *self.fetcher.product_capabilities.lock_or_panic() =
+                Arc::new(ConfigProductCapabilities::new(
+                    self.active_products.keys().cloned().collect(),
+                    self.active_capabilities.keys().cloned().collect(),
+                ));
+        }
+    }
 }
 
 impl Drop for KnownTarget {
@@ -106,8 +149,19 @@ pub trait NotifyTarget: Sync + Send + Sized + Hash + Eq + Clone + Debug {
     fn notify(&self);
 }
 
-pub trait MultiTargetHandlers<S> {
-    fn fetched(&self, runtime_id: &Arc<String>, target: &Arc<Target>, files: &[Arc<S>]) -> bool;
+pub trait MultiTargetHandlers<
+    N: NotifyTarget,
+    S: FileStorage + Clone + Sync + Send + MultiTargetHandlers<N, S>,
+> where
+    S::StoredFile: RefcountedFile + Sync + Send,
+{
+    fn fetched(
+        &self,
+        fetcher: &Arc<MultiTargetFetcher<N, S>>,
+        runtime_id: &Arc<String>,
+        target: &Arc<Target>,
+        files: &[Arc<S::StoredFile>],
+    ) -> bool;
 
     fn expired(&self, target: &Arc<Target>);
 
@@ -123,29 +177,17 @@ struct RuntimeInfo<N: NotifyTarget> {
     targets: HashMap<Arc<Target>, u32>,
 }
 
-type InProcNotifyFn = extern "C" fn(*const ConfigInvariants, *const Arc<Target>);
-static mut IN_PROC_NOTIFY_FUN: Option<InProcNotifyFn> = None;
-
-/// # Safety
-/// This function modifies a global without synchronization.
-/// It is designed to be called by the main thread before other threads are spawned.
-#[no_mangle]
-pub unsafe extern "C" fn ddog_set_rc_notify_fn(notify_fn: Option<InProcNotifyFn>) {
-    IN_PROC_NOTIFY_FUN = notify_fn;
-}
-
 impl<N: NotifyTarget + 'static, S: FileStorage + Clone + Sync + Send + 'static>
     MultiTargetFetcher<N, S>
 where
     S::StoredFile: RefcountedFile + Sync + Send,
-    S: MultiTargetHandlers<S::StoredFile>,
+    S: MultiTargetHandlers<N, S>,
 {
     pub const DEFAULT_CLIENTS_LIMIT: u32 = 100;
 
     pub fn new(storage: S, invariants: ConfigInvariants) -> Arc<Self> {
         Arc::new(MultiTargetFetcher {
             storage: RefcountingStorage::new(storage, ConfigFetcherState::new(invariants)),
-            target_runtimes: Mutex::new(Default::default()),
             runtimes: Mutex::new(Default::default()),
             remote_config_interval: AtomicU64::new(5_000_000_000),
             services: Mutex::new(Default::default()),
@@ -223,20 +265,41 @@ where
                             0
                         }
                         _ => {
-                            if *known_service.fetcher.runtime_id.lock_or_panic() == runtime_id {
+                            if let Some(product_data) = known_service.runtimes.remove(runtime_id) {
+                                let mut update_product_data = false;
+                                for product in product_data.products {
+                                    update_product_data =
+                                        decref_hashmap(&mut known_service.active_products, product)
+                                            || update_product_data;
+                                }
+                                for capability in product_data.capabilities {
+                                    update_product_data = decref_hashmap(
+                                        &mut known_service.active_capabilities,
+                                        capability,
+                                    ) || update_product_data;
+                                }
+                                if update_product_data {
+                                    known_service.update_product_capabilities();
+                                }
+                            } else {
+                                return;
+                            }
+                            if known_service.fetcher.runtime_id.lock_or_panic().as_str()
+                                == runtime_id
+                            {
                                 'changed_rt_id: {
                                     for (id, runtime) in runtimes.iter() {
                                         if runtime.targets.len() == 1
                                             && runtime.targets.contains_key(target)
                                         {
                                             *known_service.fetcher.runtime_id.lock_or_panic() =
-                                                id.to_string();
+                                                Arc::new(id.to_string());
                                             break 'changed_rt_id;
                                         }
                                     }
                                     known_service.synthetic_id = true;
                                     *known_service.fetcher.runtime_id.lock_or_panic() =
-                                        Self::generate_synthetic_id();
+                                        Arc::new(Self::generate_synthetic_id());
                                 }
                             }
                             known_service.refcount - 1
@@ -248,27 +311,15 @@ where
             trace!("Remove {target:?} from services map while in pending state");
             services.remove(target);
         }
-
-        let mut target_runtimes = self.target_runtimes.lock_or_panic();
-        if if let Some(target_runtime) = target_runtimes.get_mut(target) {
-            target_runtime.remove(runtime_id);
-            target_runtime.is_empty()
-        } else {
-            false
-        } {
-            target_runtimes.remove(target);
-        }
     }
 
-    fn add_target(self: &Arc<Self>, synthetic_id: bool, runtime_id: &str, target: Arc<Target>) {
-        let mut target_runtimes = self.target_runtimes.lock_or_panic();
-        match target_runtimes.entry(target.clone()) {
-            Entry::Occupied(e) => e.into_mut(),
-            Entry::Vacant(e) => e.insert(HashSet::new()),
-        }
-        .insert(runtime_id.to_string());
-        drop(target_runtimes); // unlock
-
+    fn add_target(
+        self: &Arc<Self>,
+        synthetic_id: bool,
+        runtime_id: &str,
+        target: Arc<Target>,
+        product_capabilities: ProductCapabilities,
+    ) {
         let mut services = self.services.lock_or_panic();
         match services.entry(target.clone()) {
             Entry::Occupied(mut e) => {
@@ -282,9 +333,18 @@ where
                             if synthetic_id && !known_target.synthetic_id {
                                 known_target.synthetic_id = true;
                                 *known_target.fetcher.runtime_id.lock_or_panic() =
-                                    Self::generate_synthetic_id();
+                                    Arc::new(Self::generate_synthetic_id());
                             }
-                            known_target.runtimes.insert(runtime_id.to_string());
+                            known_target.active_products = product_capabilities
+                                .products
+                                .iter()
+                                .map(|p| (*p, 1))
+                                .collect();
+                            known_target.active_capabilities = product_capabilities
+                                .capabilities
+                                .iter()
+                                .map(|c| (*c, 1))
+                                .collect();
                         }
                         KnownTargetStatus::Removing(ref future) => {
                             let future = future.clone();
@@ -294,7 +354,12 @@ where
                             let this = self.clone();
                             tokio::spawn(async move {
                                 future.await;
-                                this.add_target(synthetic_id, runtime_id.as_str(), target);
+                                this.add_target(
+                                    synthetic_id,
+                                    runtime_id.as_str(),
+                                    target,
+                                    product_capabilities,
+                                );
                                 this.pending_async_insertions.fetch_sub(1, Ordering::AcqRel);
                             });
                             return;
@@ -303,29 +368,80 @@ where
                     }
                 } else {
                     known_target.refcount += 1;
+                    let mut update_product_data = false;
+                    for product in product_capabilities.products.iter() {
+                        known_target
+                            .active_products
+                            .entry(*product)
+                            .and_modify(|count| *count += 1)
+                            .or_insert_with(|| {
+                                update_product_data = true;
+                                1
+                            });
+                    }
+                    for capability in product_capabilities.capabilities.iter() {
+                        known_target
+                            .active_capabilities
+                            .entry(*capability)
+                            .and_modify(|count| *count += 1)
+                            .or_insert_with(|| {
+                                update_product_data = true;
+                                1
+                            });
+                    }
+                    if update_product_data {
+                        known_target.update_product_capabilities();
+                    }
                 }
+                known_target
+                    .runtimes
+                    .insert(runtime_id.to_string(), product_capabilities);
                 if !synthetic_id && known_target.synthetic_id {
                     known_target.synthetic_id = false;
-                    *known_target.fetcher.runtime_id.lock_or_panic() = runtime_id.into();
+                    *known_target.fetcher.runtime_id.lock_or_panic() = Arc::new(runtime_id.into());
                 }
             }
             Entry::Vacant(e) => {
-                let runtime_id = if synthetic_id {
-                    Self::generate_synthetic_id()
-                } else {
-                    runtime_id.into()
-                };
-                self.start_fetcher(e.insert(KnownTarget {
-                    refcount: 1,
-                    status: Arc::new(Mutex::new(KnownTargetStatus::Pending)),
-                    synthetic_id,
-                    runtimes: {
-                        let mut set = HashSet::default();
-                        set.insert(runtime_id.to_string());
-                        set
-                    },
-                    fetcher: Arc::new(SharedFetcher::new(target, runtime_id)),
-                }));
+                self.start_fetcher(
+                    e.insert(KnownTarget {
+                        refcount: 1,
+                        status: Arc::new(Mutex::new(KnownTargetStatus::Pending)),
+                        active_products: product_capabilities
+                            .products
+                            .iter()
+                            .map(|p| (*p, 1))
+                            .collect(),
+                        active_capabilities: product_capabilities
+                            .capabilities
+                            .iter()
+                            .map(|c| (*c, 1))
+                            .collect(),
+                        synthetic_id,
+                        runtimes: {
+                            let mut set = HashMap::default();
+                            set.insert(
+                                runtime_id.to_string(),
+                                ProductCapabilities {
+                                    products: product_capabilities.products.clone(),
+                                    capabilities: product_capabilities.capabilities.clone(),
+                                },
+                            );
+                            set
+                        },
+                        fetcher: Arc::new(SharedFetcher::new(
+                            target,
+                            if synthetic_id {
+                                Self::generate_synthetic_id()
+                            } else {
+                                runtime_id.into()
+                            },
+                            ConfigProductCapabilities::new(
+                                product_capabilities.products,
+                                product_capabilities.capabilities,
+                            ),
+                        )),
+                    }),
+                );
             }
         }
     }
@@ -335,6 +451,7 @@ where
         runtime_id: String,
         notify_target: N,
         target: &Arc<Target>,
+        product_capabilities: ProductCapabilities,
     ) {
         trace!("Adding remote config runtime: {target:?} with runtime id {runtime_id}");
         match self.runtimes.lock_or_panic().entry(runtime_id) {
@@ -355,12 +472,17 @@ where
                                 if !known_target.synthetic_id {
                                     known_target.synthetic_id = true;
                                     *known_target.fetcher.runtime_id.lock_or_panic() =
-                                        Self::generate_synthetic_id();
+                                        Arc::new(Self::generate_synthetic_id());
                                 }
                             }
                         }
                         e.insert(1);
-                        self.add_target(true, runtime_entry.key(), target.clone());
+                        self.add_target(
+                            true,
+                            runtime_entry.key(),
+                            target.clone(),
+                            product_capabilities,
+                        );
                     }
                 }
             }
@@ -378,7 +500,7 @@ where
                         notify_target,
                         targets: HashMap::from([(target.clone(), 1)]),
                     };
-                    self.add_target(false, e.key(), target.clone());
+                    self.add_target(false, e.key(), target.clone(), product_capabilities);
                     e.insert(info);
                 }
             }
@@ -442,7 +564,6 @@ where
             let (remove_future, remove_completer) = ManualFuture::new();
             let shared_future = remove_future.shared();
 
-            let invariants = this.storage.invariants().clone();
             let inner_fetcher = fetcher.clone();
             let inner_this = this.clone();
             let fetcher_fut = fetcher
@@ -451,6 +572,7 @@ where
                     Box::new(move |files| {
                         let runtime_id = Arc::new(inner_fetcher.runtime_id.lock_or_panic().clone());
                         let notify = inner_this.storage.storage.fetched(
+                            &inner_this,
                             &runtime_id,
                             &inner_fetcher.target,
                             files,
@@ -462,14 +584,14 @@ where
                             let mut notify_targets = HashSet::new();
                             {
                                 // Block to make sure the lock is released
-                                // Ensure runtimes lock is held before locking target_runtimes
+                                // Ensure runtimes lock is held before locking services
                                 let all_runtimes = inner_this.runtimes.lock_or_panic();
-                                if let Some(runtimes) = inner_this
-                                    .target_runtimes
+                                if let Some(known_target) = inner_this
+                                    .services
                                     .lock_or_panic()
                                     .get(&inner_fetcher.target)
                                 {
-                                    for runtime_id in runtimes {
+                                    for runtime_id in known_target.runtimes.keys() {
                                         if let Some(runtime) = all_runtimes.get(runtime_id) {
                                             notify_targets.insert(runtime.notify_target.clone());
                                         }
@@ -480,13 +602,6 @@ where
                             debug!("Notify {:?} about remote config changes", notify_targets);
                             for notify_target in notify_targets {
                                 notify_target.notify();
-                            }
-
-                            if let Some(in_proc_notify) = unsafe { IN_PROC_NOTIFY_FUN } {
-                                in_proc_notify(
-                                    &invariants as *const ConfigInvariants,
-                                    &inner_fetcher.target as *const Arc<Target>,
-                                );
                             }
                         }
                     }),
@@ -565,6 +680,38 @@ where
         self.storage.invariants()
     }
 
+    pub fn force_product(&self, target: &Target, product: RemoteConfigProduct) {
+        if let Some(known_target) = self.services.lock_or_panic().get_mut(target) {
+            if addref_hashmap(&mut known_target.active_products, product) {
+                known_target.update_product_capabilities();
+            }
+        }
+    }
+
+    pub fn force_capabilities(&self, target: &Target, capabilities: RemoteConfigCapabilities) {
+        if let Some(known_target) = self.services.lock_or_panic().get_mut(target) {
+            if addref_hashmap(&mut known_target.active_capabilities, capabilities) {
+                known_target.update_product_capabilities();
+            }
+        }
+    }
+
+    pub fn unforce_product(&self, target: &Target, product: RemoteConfigProduct) {
+        if let Some(known_target) = self.services.lock_or_panic().get_mut(target) {
+            if decref_hashmap(&mut known_target.active_products, product) {
+                known_target.update_product_capabilities();
+            }
+        }
+    }
+
+    pub fn unforce_capabilities(&self, target: &Target, capabilities: RemoteConfigCapabilities) {
+        if let Some(known_target) = self.services.lock_or_panic().get_mut(target) {
+            if decref_hashmap(&mut known_target.active_capabilities, capabilities) {
+                known_target.update_product_capabilities();
+            }
+        }
+    }
+
     pub fn stats(&self) -> MultiTargetStats {
         let (starting_fetchers, active_fetchers, inactive_fetchers, removing_fetchers) = {
             let services = self.services.lock_or_panic();
@@ -636,9 +783,10 @@ mod tests {
         }
     }
 
-    impl MultiTargetHandlers<RcPathStore> for MultiFileStorage {
+    impl MultiTargetHandlers<Notifier, MultiFileStorage> for MultiFileStorage {
         fn fetched(
             &self,
+            _fetcher: &Arc<MultiTargetFetcher<Notifier, MultiFileStorage>>,
             _runtime_id: &Arc<String>,
             target: &Arc<Target>,
             files: &[Arc<RcPathStore>],
@@ -782,7 +930,7 @@ mod tests {
 
         let fetcher = MultiTargetFetcher::<Notifier, MultiFileStorage>::new(
             storage.clone(),
-            server.dummy_invariants(),
+            server.dummy_options().invariants,
         );
         fetcher.remote_config_interval.store(1000, Ordering::SeqCst);
 
@@ -793,9 +941,13 @@ mod tests {
                 state: state.clone(),
             },
             &OTHER_TARGET,
+            ProductCapabilities {
+                products: server.dummy_options().products,
+                capabilities: server.dummy_options().capabilities,
+            },
         );
         assert_eq!(
-            *fetcher
+            fetcher
                 .services
                 .lock()
                 .unwrap()
@@ -804,7 +956,8 @@ mod tests {
                 .fetcher
                 .runtime_id
                 .lock()
-                .unwrap(),
+                .unwrap()
+                .as_str(),
             RT_ID_1
         );
 
@@ -815,6 +968,10 @@ mod tests {
                 state: state.clone(),
             },
             &DUMMY_TARGET,
+            ProductCapabilities {
+                products: server.dummy_options().products,
+                capabilities: server.dummy_options().capabilities,
+            },
         );
         fetcher.add_runtime(
             RT_ID_2.to_string(),
@@ -823,10 +980,14 @@ mod tests {
                 state: state.clone(),
             },
             &DUMMY_TARGET,
+            ProductCapabilities {
+                products: server.dummy_options().products,
+                capabilities: server.dummy_options().capabilities,
+            },
         );
 
         assert_eq!(
-            *fetcher
+            fetcher
                 .services
                 .lock()
                 .unwrap()
@@ -835,11 +996,12 @@ mod tests {
                 .fetcher
                 .runtime_id
                 .lock()
-                .unwrap(),
+                .unwrap()
+                .as_str(),
             RT_ID_2
         );
         assert_ne!(
-            *fetcher
+            fetcher
                 .services
                 .lock()
                 .unwrap()
@@ -848,12 +1010,13 @@ mod tests {
                 .fetcher
                 .runtime_id
                 .lock()
-                .unwrap(),
+                .unwrap()
+                .as_str(),
             RT_ID_1
         );
 
         assert_eq!(fetcher.runtimes.lock().unwrap().len(), 2); // two runtimes
-        assert_eq!(fetcher.target_runtimes.lock().unwrap().len(), 2); // two fetchers
+        assert_eq!(fetcher.services.lock().unwrap().len(), 2); // two fetchers
 
         fetcher.add_runtime(
             RT_ID_3.to_string(),
@@ -862,6 +1025,10 @@ mod tests {
                 state: state.clone(),
             },
             &OTHER_TARGET,
+            ProductCapabilities {
+                products: server.dummy_options().products,
+                capabilities: server.dummy_options().capabilities,
+            },
         );
 
         fut.await;

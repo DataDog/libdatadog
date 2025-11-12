@@ -1,8 +1,11 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+use crate::service::DynamicInstrumentationConfigState;
 use crate::shm_remote_config::{ShmRemoteConfigs, ShmRemoteConfigsGuard};
-use datadog_remote_config::fetch::{ConfigInvariants, MultiTargetStats, NotifyTarget};
+use datadog_remote_config::fetch::{
+    ConfigInvariants, ConfigOptions, MultiTargetStats, NotifyTarget, ProductCapabilities,
+};
 use libdd_common::{tag::Tag, MutexExt};
 use std::collections::hash_map::Entry;
 use std::fmt::Debug;
@@ -98,7 +101,7 @@ impl RemoteConfigs {
     #[allow(clippy::too_many_arguments)]
     pub fn add_runtime(
         &self,
-        invariants: ConfigInvariants,
+        options: ConfigOptions,
         poll_interval: Duration,
         runtime_id: String,
         notify_target: RemoteConfigNotifyTarget,
@@ -106,8 +109,9 @@ impl RemoteConfigs {
         service: String,
         app_version: String,
         tags: Vec<Tag>,
+        dynamic_instrumentation_state: DynamicInstrumentationConfigState,
     ) -> RemoteConfigsGuard {
-        match self.0.lock_or_panic().entry(invariants) {
+        match self.0.lock_or_panic().entry(options.invariants) {
             Entry::Occupied(e) => e.into_mut(),
             Entry::Vacant(e) => {
                 let this = self.0.clone();
@@ -132,7 +136,19 @@ impl RemoteConfigs {
                 ))
             }
         }
-        .add_runtime(runtime_id, notify_target, env, service, app_version, tags)
+        .add_runtime(
+            runtime_id,
+            notify_target,
+            env,
+            service,
+            app_version,
+            tags,
+            ProductCapabilities {
+                products: options.products,
+                capabilities: options.capabilities,
+            },
+            dynamic_instrumentation_state,
+        )
     }
 
     pub fn shutdown(&self) {

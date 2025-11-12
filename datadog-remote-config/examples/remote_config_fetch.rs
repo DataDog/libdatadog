@@ -1,7 +1,7 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use datadog_remote_config::fetch::{ConfigInvariants, SingleChangesFetcher};
+use datadog_remote_config::fetch::{ConfigInvariants, ConfigOptions, SingleChangesFetcher};
 use datadog_remote_config::file_change_tracker::{Change, FilePath};
 use datadog_remote_config::file_storage::ParsedFileStorage;
 use datadog_remote_config::RemoteConfigProduct::ApmTracing;
@@ -35,14 +35,16 @@ async fn main() {
             tags: vec![Tag::new("test", "value").unwrap()],
         },
         RUNTIME_ID.to_string(),
-        ConfigInvariants {
-            language: "awesomelang".to_string(),
-            tracer_version: "99.10.5".to_string(),
-            endpoint: Endpoint {
-                url: hyper::Uri::from_static("http://localhost:8126"),
-                api_key: None,
-                timeout_ms: 5000, // custom timeout, defaults to 3 seconds
-                test_token: None,
+        ConfigOptions {
+            invariants: ConfigInvariants {
+                language: "awesomelang".to_string(),
+                tracer_version: "99.10.5".to_string(),
+                endpoint: Endpoint {
+                    url: hyper::Uri::from_static("http://localhost:8126"),
+                    api_key: None,
+                    timeout_ms: 5000, // custom timeout, defaults to 3 seconds
+                    test_token: None,
+                },
             },
             products: vec![ApmTracing],
             capabilities: vec![],

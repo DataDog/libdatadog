@@ -1,7 +1,11 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::service::{remote_configs::RemoteConfigsGuard, InstanceId, QueueId};
+use crate::service::remote_configs::{RemoteConfigNotifyTarget, RemoteConfigs};
+use crate::service::session_info::SessionInfo;
+use crate::service::{
+    remote_configs::RemoteConfigsGuard, DynamicInstrumentationConfigState, InstanceId, QueueId,
+};
 use datadog_live_debugger::sender::{generate_tags, PayloadSender};
 use libdd_common::{tag::Tag, MutexExt};
 use simd_json::prelude::ArrayTrait;
@@ -121,6 +125,41 @@ impl ActiveApplication {
         let tags = Arc::new(format!("debugger_version:{debugger_version}"));
         self.live_debugger_tag_cache = Some(tags.clone());
         (tags, true)
+    }
+
+    #[allow(clippy::expect_used)]
+    pub fn update_remote_config(
+        &mut self,
+        remote_configs: &RemoteConfigs,
+        session: &SessionInfo,
+        instance_id: InstanceId,
+        notify_target: RemoteConfigNotifyTarget,
+        dynamic_instrumentation_state: DynamicInstrumentationConfigState,
+    ) {
+        let options = session
+            .get_remote_config_options()
+            .as_ref()
+            .expect("Expecting remote config invariants to be set early")
+            .clone();
+        if *session.remote_config_enabled.lock_or_panic() {
+            self.remote_config_guard = Some(
+                remote_configs.add_runtime(
+                    options,
+                    *session.remote_config_interval.lock_or_panic(),
+                    instance_id.runtime_id,
+                    notify_target,
+                    self.env.clone().expect("set_metadata was called before"),
+                    self.service_name
+                        .clone()
+                        .expect("set_metadata was called before"),
+                    self.app_version
+                        .clone()
+                        .expect("set_metadata was called before"),
+                    self.global_tags.clone(),
+                    dynamic_instrumentation_state,
+                ),
+            );
+        }
     }
 }
 

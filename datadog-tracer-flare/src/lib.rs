@@ -21,6 +21,8 @@ use datadog_remote_config::{
     config::agent_task::AgentTaskFile, file_storage::RawFile, RemoteConfigData,
 };
 
+use crate::error::FlareError;
+use datadog_remote_config::fetch::ConfigOptions;
 #[cfg(feature = "listener")]
 use {
     datadog_remote_config::{
@@ -32,8 +34,6 @@ use {
     libdd_common::Endpoint,
     std::str::FromStr,
 };
-
-use crate::error::FlareError;
 
 /// Manager for tracer flare functionality with optional remote configuration support.
 ///
@@ -152,10 +152,12 @@ impl TracerFlareManager {
             url: agent_url,
             ..Default::default()
         };
-        let config_to_fetch = ConfigInvariants {
-            language,
-            tracer_version,
-            endpoint: remote_config_endpoint,
+        let config_to_fetch = ConfigOptions {
+            invariants: ConfigInvariants {
+                language,
+                tracer_version,
+                endpoint: remote_config_endpoint,
+            },
             products: vec![
                 RemoteConfigProduct::AgentConfig,
                 RemoteConfigProduct::AgentTask,
