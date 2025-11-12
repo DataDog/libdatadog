@@ -14,6 +14,10 @@ stages:
   - test
 
 trigger_internal_build:
+  rules:
+    - if: '$CI_COMMIT_TAG'  # do not run internal build on tags
+      when: never
+    - when: on_success
   variables:
     LIBDATADOG_COMMIT_BRANCH: $CI_COMMIT_BRANCH
     LIBDATADOG_COMMIT_SHA: $CI_COMMIT_SHA
@@ -34,6 +38,7 @@ report_failure:
   when: on_failure
   needs:
     - job: trigger_internal_build
+      optional: true
     - job: benchmarks
       optional: true
   # allow_failure: true prevents the job from showing up in github statuses (because it's filtered by gitsync)
