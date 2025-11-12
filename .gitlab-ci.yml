@@ -7,6 +7,11 @@ variables:
 
 include:
   - local: .gitlab/benchmarks.yml
+  - local: .gitlab/publish.yml
+
+stages:
+  - publish
+  - test
 
 trigger_internal_build:
   variables:
@@ -27,7 +32,10 @@ trigger_internal_build:
 report_failure:
   tags: ["arch:amd64"]
   when: on_failure
-  needs: [trigger_internal_build, benchmarks]
+  needs:
+    - job: trigger_internal_build
+    - job: benchmarks
+      optional: true
   # allow_failure: true prevents the job from showing up in github statuses (because it's filtered by gitsync)
   allow_failure: true
   script:

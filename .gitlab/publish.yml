@@ -1,0 +1,102 @@
+variables:
+  # Configurable branch where tags should trigger this workflow
+  TARGET_BRANCH:
+    value: "main"
+    description: "Only tags on this branch will trigger the release workflow"
+
+# Detect all tags on this commit
+detect_tags:
+  tags: ["arch:amd64"]
+  image: registry.ddbuild.io/images/base/ubuntu_2204:latest
+  stage: publish
+  # Ensure only one pipeline runs at a time for this commit because it handles multiple tags
+  resource_group: publish-${CI_COMMIT_SHA}
+  rules:
+    # - if: '$CI_COMMIT_TAG && $CI_COMMIT_BRANCH == $TARGET_BRANCH'
+    - if: '$CI_COMMIT_TAG'
+      when: on_success
+  script:
+    - echo "=== Detecting tags on commit $CI_COMMIT_SHA ==="
+    - |
+      # Install git
+      apt-get update && apt-get install -y git
+
+      # Get all tags pointing to this commit
+      TAGS=$(git tag --points-at HEAD)
+      
+      if [ -z "$TAGS" ]; then
+        echo "No tags found on this commit"
+        exit 1
+      fi
+      
+      echo "Found tags:"
+      echo "$TAGS"
+      echo ""
+      
+      # Save tags for next stages
+      echo "$TAGS" > tags.txt
+      echo "DETECTED_TAGS=$TAGS" >> tags.env
+  artifacts:
+    reports:
+      dotenv: tags.env
+    paths:
+      - tags.txt
+    expire_in: 1 day
+
+# Manual confirmation step - review tags before publishing
+confirm_publication:
+  tags: ["arch:amd64"]
+  image: registry.ddbuild.io/images/base/ubuntu_2204:latest
+  stage: publish
+  resource_group: publish-${CI_COMMIT_SHA}
+  needs:
+    - detect_tags
+  rules:
+    - if: '$CI_COMMIT_TAG'
+      when: manual
+  script:
+    - echo "=== Manual Confirmation Required ==="
+    - echo "The publish script will validate and sort the following tags:"
+    - cat tags.txt
+    - echo ""
+    - echo "✓ Manual approval granted - proceeding with publication"
+  artifacts:
+    reports:
+      dotenv: tags.env
+    paths:
+      - tags.txt
+    expire_in: 1 day
+  allow_failure: false
+
+# Publish crates sequentially using the publish script
+publish_crates:
+  tags: ["arch:amd64"]
+  image: registry.ddbuild.io/images/base/ubuntu_2204:latest
+  resource_group: publish-${CI_COMMIT_SHA}
+  needs:
+    - confirm_publication
+  stage: publish
+  rules:
+    # - if: '$CI_COMMIT_TAG && $CI_COMMIT_BRANCH == $TARGET_BRANCH'
+    - if: '$CI_COMMIT_TAG'
+      when: on_success
+  script:
+    - echo "=== Setting up environment for publication ==="
+    - |
+      # Install build-essential and curl
+      apt-get update && apt-get install -y build-essential curl jq git
+
+      # Install rustup and set it to stable
+      curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+      source $HOME/.cargo/env
+      rustup install stable
+      rustup default stable
+      
+      echo ""
+      echo "=== Running publication script ==="
+      
+      # Read tags and call the publish script
+      TAGS=$(cat tags.txt)
+      
+      # For now, use --dry-run. Remove it to actually publish
+      ./scripts/publish-crates.sh --dry-run --token "${CARGO_REGISTRY_TOKEN:-test}" $TAGS
