@@ -3,6 +3,14 @@ variables:
   TARGET_BRANCH:
     value: "main"
     description: "Only tags on this branch will trigger the release workflow"
+  
+  # Whether to perform a dry-run or actual publication
+  DRY_RUN:
+    value: "true"
+    description: "Perform dry-run only (true) or actually publish to crates.io (false)"
+    options:
+      - "true"
+      - "false"
 
 # Detect all tags on this commit
 detect_tags:
@@ -61,16 +69,32 @@ confirm_publication:
     - if: '$CI_COMMIT_TAG'
       when: manual
   script:
-    - echo "=== Manual Confirmation Required ==="
-    - echo "The publish script will validate and sort the following tags:"
+    - echo "=========================================="
+    - echo "⚠️  PUBLICATION CONFIRMATION REQUIRED"
+    - echo "=========================================="
+    - echo ""
+    - echo "The following tags will be published:"
     - cat tags.txt
     - echo ""
+    - |
+      if [ "$DRY_RUN" = "true" ]; then
+        echo "🔵 MODE: DRY-RUN (no actual publication)"
+        echo "   Crates will be validated but NOT published to crates.io"
+      else
+        echo "🔴 MODE: ACTUAL PUBLICATION"
+        echo "   Crates WILL be published to crates.io"
+      fi
+    - echo ""
     - echo "✓ Manual approval granted - proceeding with publication"
+    - |
+      # Save DRY_RUN setting to dotenv for next job
+      echo "DRY_RUN=$DRY_RUN" >> publish.env
   artifacts:
     reports:
-      dotenv: tags.env
+      dotenv: publish.env
     paths:
       - tags.txt
+      - publish.env
     expire_in: 1 day
   allow_failure: false
 
@@ -101,8 +125,14 @@ publish_crates:
       echo ""
       echo "=== Running publication script ==="
       
-      # Read tags and call the publish script
+      # Read tags
       TAGS=$(cat tags.txt)
       
-      # For now, use --dry-run. Remove it to actually publish
-      ./scripts/publish-crates.sh --dry-run --token "${CARGO_REGISTRY_TOKEN:-test}" $TAGS
+      # Build command based on DRY_RUN setting
+      if [ "$DRY_RUN" = "true" ]; then
+        echo "🔵 Running in DRY-RUN mode"
+        ./scripts/publish-crates.sh --dry-run --token "${CARGO_REGISTRY_TOKEN:-test}" $TAGS
+      else
+        echo "🔴 Running in ACTUAL PUBLICATION mode"
+        ./scripts/publish-crates.sh --token "$CARGO_REGISTRY_TOKEN" $TAGS
+      fi
