@@ -7,6 +7,9 @@ use std::collections::HashMap;
 use std::str::FromStr;
 use time::OffsetDateTime;
 
+// Note that this file has some #[allow(dead_code)] annotations, which cover fields which are not
+// actually used, but needed for proper serialization / alignment with the remote config spec.
+
 #[derive(Deserialize)]
 #[cfg_attr(any(test, feature = "test"), derive(serde::Serialize))]
 #[allow(dead_code)]
