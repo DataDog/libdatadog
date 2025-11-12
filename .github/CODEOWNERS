@@ -1,7 +1,7 @@
 .github/CODEOWNERS
 
 libdd-alloc/                @Datadog/libdatadog-profiling
-libdd-crashtracker*/       @Datadog/libdatadog-profiling
+libdd-crashtracker*/        @Datadog/libdatadog-profiling
 libdd-profiling*/           @Datadog/libdatadog-profiling
 libdd-telemetry*/           @Datadog/apm-common-components-core
 ruby/                       @Datadog/libdatadog-ruby
@@ -38,6 +38,10 @@ repository.datadog.yml      @Datadog/apm-common-components-core
 .devcontainer               @Datadog/apm-common-components-core
 datadog-sidecar-macros      @Datadog/libdatadog-php
 datadog-ipc                 @Datadog/libdatadog-php
+datadog-profiling-replayer  @Datadog/libdatadog-profiling
+symbolizer-ffi              @Datadog/libdatadog-profiling
+tools/sidecar_mockgen       @Datadog/libdatadog-php
+
 
 # Most of the bin_tests are owned by the profiling team, but some are owned by the core team
 bin_tests/                          @Datadog/libdatadog-profiling
