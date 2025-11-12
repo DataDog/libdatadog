@@ -290,6 +290,7 @@ impl SessionInfo {
                 };
                 let sender = match debugger_type {
                     DebuggerType::Diagnostics => app.debugger_diagnostics_payload_sender.clone(),
+                    DebuggerType::Snapshots => app.debugger_snapshots_payload_sender.clone(),
                     DebuggerType::Logs => app.debugger_logs_payload_sender.clone(),
                 };
                 let config = self.debugger_config.clone();

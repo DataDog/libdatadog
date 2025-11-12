@@ -38,6 +38,7 @@ pub(crate) struct ActiveApplication {
     pub global_tags: Vec<Tag>,
     pub live_debugger_tag_cache: Option<Arc<String>>,
     pub debugger_logs_payload_sender: Arc<tokio::sync::Mutex<Option<PayloadSender>>>,
+    pub debugger_snapshots_payload_sender: Arc<tokio::sync::Mutex<Option<PayloadSender>>>,
     pub debugger_diagnostics_payload_sender: Arc<tokio::sync::Mutex<Option<PayloadSender>>>,
 }
 
