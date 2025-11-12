@@ -237,11 +237,17 @@ impl SendData {
     /// # Returns
     ///
     /// A `SendDataResult` instance containing the result of the operation.
-    pub async fn send<C>(&self, http_client: &GenericHttpClient<C>) -> SendDataResult {
+    pub async fn send<C: ddcommon::Connect>(
+        &self,
+        http_client: &GenericHttpClient<C>,
+    ) -> SendDataResult {
         self.send_internal(http_client).await
     }
 
-    async fn send_internal<C>(&self, http_client: &GenericHttpClient<C>) -> SendDataResult {
+    async fn send_internal<C: ddcommon::Connect>(
+        &self,
+        http_client: &GenericHttpClient<C>,
+    ) -> SendDataResult {
         if self.use_protobuf() {
             self.send_with_protobuf(http_client).await
         } else {
@@ -249,12 +255,12 @@ impl SendData {
         }
     }
 
-    async fn send_payload(
+    async fn send_payload<C: ddcommon::Connect>(
         &self,
         chunks: u64,
         payload: Vec<u8>,
         headers: HashMap<&'static str, String>,
-        http_client: &HttpClient,
+        http_client: &GenericHttpClient<C>,
     ) -> (SendWithRetryResult, u64, u64) {
         #[allow(clippy::unwrap_used)]
         let payload_len = u64::try_from(payload.len()).unwrap();
@@ -298,7 +304,10 @@ impl SendData {
         }
     }
 
-    async fn send_with_protobuf<C>(&self, http_client: &GenericHttpClient<C>) -> SendDataResult {
+    async fn send_with_protobuf<C: ddcommon::Connect>(
+        &self,
+        http_client: &GenericHttpClient<C>,
+    ) -> SendDataResult {
         let mut result = SendDataResult::default();
 
         #[allow(clippy::unwrap_used)]
@@ -336,7 +345,10 @@ impl SendData {
         }
     }
 
-    async fn send_with_msgpack<C>(&self, http_client: &GenericHttpClient<C>) -> SendDataResult {
+    async fn send_with_msgpack<C: ddcommon::Connect>(
+        &self,
+        http_client: &GenericHttpClient<C>,
+    ) -> SendDataResult {
         let mut result = SendDataResult::default();
         let mut futures = FuturesUnordered::new();
 

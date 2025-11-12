@@ -4,7 +4,7 @@
 use core::fmt;
 use std::{convert::Infallible, task::Poll};
 
-use crate::connector::{self, Connector};
+use crate::connector::Connector;
 use http_body_util::BodyExt;
 use hyper::body::Incoming;
 use pin_project::pin_project;

@@ -111,7 +111,7 @@ impl std::error::Error for RequestError {}
 /// send_with_retry(&client, &target, payload, &headers, &retry_strategy).await
 /// # }
 /// ```
-pub async fn send_with_retry<C>(
+pub async fn send_with_retry<C: ddcommon::Connect>(
     client: &GenericHttpClient<C>,
     target: &Endpoint,
     payload: Vec<u8>,
@@ -222,7 +222,7 @@ pub async fn send_with_retry<C>(
     }
 }
 
-async fn send_request<C>(
+async fn send_request<C: ddcommon::Connect>(
     client: &GenericHttpClient<C>,
     timeout: Duration,
     req: HttpRequestBuilder,
