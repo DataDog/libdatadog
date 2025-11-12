@@ -10,6 +10,7 @@ use hyper::{Method, Uri};
 use libdd_common::hyper_migration;
 use libdd_common::tag::Tag;
 use libdd_common::Endpoint;
+use libdd_data_pipeline::agent_info::schema::AgentInfoStruct;
 use percent_encoding::{percent_encode, CONTROLS};
 use serde::{Deserialize, Serialize};
 use std::fmt::Display;
@@ -17,7 +18,6 @@ use std::hash::Hash;
 use std::str::FromStr;
 use tokio::task::JoinHandle;
 use uuid::Uuid;
-use libdd_data_pipeline::agent_info::schema::AgentInfoStruct;
 
 pub const PROD_LOGS_INTAKE_SUBDOMAIN: &str = "http-intake.logs";
 pub const PROD_DIAGNOSTICS_INTAKE_SUBDOMAIN: &str = "debugger-intake";
@@ -93,7 +93,14 @@ impl Config {
 }
 
 pub fn agent_info_supports_dedicated_snapshots_endpoint(info: &AgentInfoStruct) -> bool {
-    info.endpoints.as_ref().map(|endpoints| endpoints.iter().any(|endpoint| endpoint == AGENT_DEBUGGER_SNAPSHOTS_URL_PATH)).unwrap_or(false)
+    info.endpoints
+        .as_ref()
+        .map(|endpoints| {
+            endpoints
+                .iter()
+                .any(|endpoint| endpoint == AGENT_DEBUGGER_SNAPSHOTS_URL_PATH)
+        })
+        .unwrap_or(false)
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -113,7 +120,7 @@ impl DebuggerType {
                 } else {
                     DebuggerType::Logs
                 }
-            },
+            }
             DebuggerData::Diagnostics(_) => DebuggerType::Diagnostics,
         }
     }
