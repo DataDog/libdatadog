@@ -87,7 +87,7 @@ impl CompiledFlagsConfig {
 impl Flag {
     fn eval(
         &self,
-        subject: &EvaluationContext,
+        context: &EvaluationContext,
         expected_type: ExpectedFlagType,
         now: DateTime<Utc>,
     ) -> Result<Assignment, EvaluationError> {
@@ -98,19 +98,10 @@ impl Flag {
             });
         }
 
-        let Some((allocation, (split, reason))) = self.allocations.iter().find_map(|allocation| {
-            let result = allocation.get_matching_split(subject, now);
-            result
-                .ok()
-                .map(|(split, reason)| (allocation, (split, reason)))
-        }) else {
-            return Err(EvaluationError::DefaultAllocationNull);
-        };
-
-        let value = split.value.clone();
+        let (allocation, split, reason) = self.find_allocation(context, now)?;
 
         Ok(Assignment {
-            value,
+            value: split.value.clone(),
             variation_key: split.variation_key.clone(),
             allocation_key: allocation.key.clone(),
             extra_logging: split.extra_logging.clone(),
@@ -118,43 +109,44 @@ impl Flag {
             do_log: allocation.do_log,
         })
     }
-}
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub(super) enum AllocationNonMatchReason {
-    BeforeStartDate,
-    AfterEndDate,
-    FailingRule,
-    TrafficExposureMiss,
+    fn find_allocation(
+        &self,
+        context: &EvaluationContext,
+        now: DateTime<Utc>,
+    ) -> Result<(&Allocation, &Split, AssignmentReason), EvaluationError> {
+        for allocation in &self.allocations {
+            if let Some((split, reason)) = allocation.get_matching_split(context, now)? {
+                return Ok((allocation, split, reason));
+            }
+        }
+
+        Err(EvaluationError::DefaultAllocationNull)
+    }
 }
 
 impl Allocation {
     fn get_matching_split(
         &self,
-        subject: &EvaluationContext,
+        context: &EvaluationContext,
         now: Timestamp,
-    ) -> Result<(&Split, AssignmentReason), AllocationNonMatchReason> {
+    ) -> Result<Option<(&Split, AssignmentReason)>, EvaluationError> {
         if self.start_at.is_some_and(|t| now < t) {
-            return Err(AllocationNonMatchReason::BeforeStartDate);
+            return Ok(None);
         }
         if self.end_at.is_some_and(|t| now > t) {
-            return Err(AllocationNonMatchReason::AfterEndDate);
+            return Ok(None);
         }
 
         let is_allowed_by_rules =
-            self.rules.is_empty() || self.rules.iter().any(|rule| rule.eval(subject));
+            self.rules.is_empty() || self.rules.iter().any(|rule| rule.eval(context));
         if !is_allowed_by_rules {
-            return Err(AllocationNonMatchReason::FailingRule);
+            return Ok(None);
         }
 
-        let split = self
-            .splits
-            .iter()
-            .find(|split| {
-                let matches = split.matches(subject.targeting_key());
-                matches
-            })
-            .ok_or(AllocationNonMatchReason::TrafficExposureMiss)?;
+        let Some(split) = self.find_split(context)? else {
+            return Ok(None);
+        };
 
         // Determine the reason for assignment
         let reason = if !self.rules.is_empty() || self.start_at.is_some() || self.end_at.is_some() {
@@ -165,7 +157,19 @@ impl Allocation {
             AssignmentReason::Split
         };
 
-        Ok((split, reason))
+        Ok(Some((split, reason)))
+    }
+
+    fn find_split(&self, subject: &EvaluationContext) -> Result<Option<&Split>, EvaluationError> {
+        let targeting_key = subject.targeting_key().map(|it| it.as_str());
+
+        for split in &self.splits {
+            if split.matches(targeting_key)? {
+                return Ok(Some(split));
+            }
+        }
+
+        Ok(None)
     }
 }
 
@@ -173,8 +177,16 @@ impl Split {
     /// Return `true` if `targeting_key` matches the given split.
     ///
     /// To match a split, subject must match all underlying shards.
-    fn matches(&self, targeting_key: &str) -> bool {
-        self.shards.iter().all(|shard| shard.matches(targeting_key))
+    fn matches(&self, targeting_key: Option<&str>) -> Result<bool, EvaluationError> {
+        if self.shards.is_empty() {
+            return Ok(true);
+        }
+
+        let Some(targeting_key) = targeting_key else {
+            return Err(EvaluationError::TargetingKeyMissing);
+        };
+
+        Ok(self.shards.iter().all(|shard| shard.matches(targeting_key)))
     }
 }
 
@@ -210,7 +222,7 @@ mod tests {
         flag: String,
         variation_type: FlagType,
         default_value: Arc<serde_json::value::RawValue>,
-        targeting_key: Str,
+        targeting_key: Option<Str>,
         attributes: Arc<HashMap<Str, Attribute>>,
         result: TestResult,
     }

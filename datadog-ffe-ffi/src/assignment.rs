@@ -411,6 +411,7 @@ impl From<&EvaluationError> for ErrorCode {
     fn from(value: &EvaluationError) -> Self {
         match value {
             EvaluationError::TypeMismatch { .. } => ErrorCode::TypeMismatch,
+            EvaluationError::TargetingKeyMissing => ErrorCode::TargetingKeyMissing,
             EvaluationError::ConfigurationParseError => ErrorCode::ParseError,
             EvaluationError::ConfigurationMissing => ErrorCode::ProviderNotReady,
             EvaluationError::FlagUnrecognizedOrDisabled => ErrorCode::FlagNotFound,

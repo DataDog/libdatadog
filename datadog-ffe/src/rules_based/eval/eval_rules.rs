@@ -214,7 +214,10 @@ mod tests {
     #[test]
     fn empty_rule() {
         let rule = RuleWire { conditions: vec![] };
-        assert!(rule.eval(&EvaluationContext::new("key".into(), Default::default())));
+        assert!(rule.eval(&EvaluationContext::new(
+            Some("key".into()),
+            Default::default()
+        )));
     }
 
     #[test]
@@ -229,7 +232,7 @@ mod tests {
             }],
         };
         assert!(rule.eval(&EvaluationContext::new(
-            "key".into(),
+            Some("key".into()),
             Arc::new(HashMap::from([("age".into(), 11.0.into())]))
         )));
     }
@@ -255,15 +258,15 @@ mod tests {
             ],
         };
         assert!(rule.eval(&EvaluationContext::new(
-            "key".into(),
+            Some("key".into()),
             Arc::new(HashMap::from([("age".into(), 20.0.into())]))
         )));
         assert!(!rule.eval(&EvaluationContext::new(
-            "key".into(),
+            Some("key".into()),
             Arc::new(HashMap::from([("age".into(), 17.0.into())]))
         )));
         assert!(!rule.eval(&EvaluationContext::new(
-            "key".into(),
+            Some("key".into()),
             Arc::new(HashMap::from([("age".into(), 110.0.into())]))
         )));
     }
@@ -280,7 +283,7 @@ mod tests {
             }],
         };
         assert!(!rule.eval(&EvaluationContext::new(
-            "key".into(),
+            Some("key".into()),
             Arc::new(HashMap::from([("name".into(), "alice".into())]))
         )));
     }

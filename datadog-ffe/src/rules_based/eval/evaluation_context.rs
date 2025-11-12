@@ -13,23 +13,20 @@ use crate::rules_based::Attribute;
 pub struct EvaluationContext {
     /// Subject key encoded as attribute value. Known to be `AttributeValue::String`. This is
     /// done to allow returning subject key as an attribute when rule references "id".
-    targeting_key: Attribute,
+    targeting_key: Option<Attribute>,
     attributes: Arc<HashMap<Str, Attribute>>,
 }
 
 impl EvaluationContext {
-    pub fn new(key: Str, attributes: Arc<HashMap<Str, Attribute>>) -> EvaluationContext {
+    pub fn new(key: Option<Str>, attributes: Arc<HashMap<Str, Attribute>>) -> EvaluationContext {
         EvaluationContext {
-            targeting_key: Attribute::from(key),
+            targeting_key: key.map(Attribute::from),
             attributes,
         }
     }
 
-    pub fn targeting_key(&self) -> &Str {
-        let Some(s) = self.targeting_key.as_str() else {
-            unreachable!("Subject::key is always encoded as string attribute");
-        };
-        s
+    pub fn targeting_key(&self) -> Option<&Str> {
+        self.targeting_key.as_ref().and_then(|it| it.as_str())
     }
 
     /// Get subject attribute.
@@ -43,7 +40,7 @@ impl EvaluationContext {
         }
 
         if name == "id" {
-            return Some(&self.targeting_key);
+            return self.targeting_key.as_ref();
         }
 
         None
@@ -90,17 +87,17 @@ mod pyo3_impl {
                 )
             };
 
-            let context = EvaluationContext {
-                targeting_key: targeting_key
+            let context = EvaluationContext::new(
+                targeting_key
                     .map(|it| it.extract())
                     .transpose()?
-                    .unwrap_or_else(|| Str::from_static_str("").into()),
-                attributes: attributes
+                    .unwrap_or(None),
+                attributes
                     .map(|it| it.extract())
                     .transpose()?
                     .map(Arc::new)
                     .unwrap_or_default(),
-            };
+            );
 
             Ok(context)
         }
