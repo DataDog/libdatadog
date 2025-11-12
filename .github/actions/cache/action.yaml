@@ -21,9 +21,9 @@ runs:
           ~/.cargo/registry/cache/
           ~/.cargo/bin/
           target/
-        key: v2-${{ runner.os }}-cargo-${{ inputs.rust_version }}-${{ hashFiles('**/Cargo.toml', '**/Cargo.lock', '**/.cargo/config.toml') }}-${{ inputs.build_profile }}
+        key: v3-${{ runner.os }}-${{ runner.arch }}-cargo-${{ inputs.rust_version }}-${{ hashFiles('**/Cargo.toml', '**/Cargo.lock', '**/.cargo/config.toml') }}-${{ inputs.build_profile }}
         restore-keys: |
-          v2-${{ runner.os }}-cargo-${{ inputs.rust_version }}-${{ hashFiles('**/Cargo.toml', '**/Cargo.lock', '**/.cargo/config.toml') }}-
+          v3-${{ runner.os }}-${{ runner.arch }}-cargo-${{ inputs.rust_version }}-${{ hashFiles('**/Cargo.toml', '**/Cargo.lock', '**/.cargo/config.toml') }}-
 # Cache will restore cargo and target data  if cache with matching OS and Rust Version as well as matching Cargo.toml files will be found.
 # previously we also restored cache for specific os and Rust Version but the target/ directory had only been growing over time - and we've reached the limits of GitHub Runners
 #
