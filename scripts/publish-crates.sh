@@ -242,6 +242,30 @@ publish_crate() {
     fi
     echo "" >&2
     
+    # Run tests with different feature configurations
+    echo "--- Running tests before publication ---" >&2
+    
+    # Test with no default features
+    echo "Testing with --no-default-features..." >&2
+    if cargo test --package "$crate_name" --no-default-features --quiet; then
+        echo -e "${GREEN}✓ Tests passed with --no-default-features${NC}" >&2
+    else
+        echo -e "${YELLOW}⚠️  Warning: Tests with --no-default-features failed${NC}" >&2
+        echo "   (This is non-blocking - continuing with publication)" >&2
+    fi
+    echo "" >&2
+    
+    # Test with all features
+    echo "Testing with --all-features..." >&2
+    if cargo test --package "$crate_name" --all-features --quiet; then
+        echo -e "${GREEN}✓ Tests passed with --all-features${NC}" >&2
+    else
+        echo -e "${RED}❌ ERROR: Tests failed with --all-features${NC}" >&2
+        echo "   Cannot publish a crate that fails tests with --all-features" >&2
+        return 1
+    fi
+    echo "" >&2
+    
     # Publish to crates.io
     echo "--- Publishing $crate_name v$crate_version to crates.io ---" >&2
     
@@ -250,7 +274,7 @@ publish_crate() {
         return 1
     fi
     
-    local publish_cmd="cargo publish --package $crate_name --token $token"
+    local publish_cmd="cargo publish --package $crate_name --token $token --all-features"
     
     if [ "$dry_run" = "true" ]; then
         publish_cmd="$publish_cmd --dry-run"

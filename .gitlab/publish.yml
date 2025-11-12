@@ -18,46 +18,8 @@ detect_tags:
   script:
     - echo "=== Detecting tags on commit $CI_COMMIT_SHA ==="
     - |
-      # Install git and curl
-      apt-get update && apt-get install -y git curl jq
-
-      # Check if there's already another pipeline for this commit (excluding canceled/failed)
-      echo "Checking for other pipelines on this commit..."
-      
-      RESPONSE=$(curl -s --header "JOB-TOKEN: $CI_JOB_TOKEN" \
-        "$CI_API_V4_URL/projects/$CI_PROJECT_ID/pipelines?sha=$CI_COMMIT_SHA")
-      
-      # Verify we got a valid JSON array response
-      if ! echo "$RESPONSE" | jq -e 'type == "array"' > /dev/null 2>&1; then
-        echo "Warning: Could not fetch pipelines from API (may not have permissions)"
-        echo "Proceeding with tag detection..."
-      else
-        ALL_PIPELINES=$(echo "$RESPONSE" | jq -r '[.[] | select(.status != "canceled" and .status != "failed")] | .[].id' 2>/dev/null || echo "")
-        
-        if [ -z "$ALL_PIPELINES" ]; then
-          PIPELINE_COUNT=0
-        else
-          PIPELINE_COUNT=$(echo "$ALL_PIPELINES" | wc -l)
-        fi
-        
-        echo "Found $PIPELINE_COUNT active pipeline(s) for this commit"
-        
-        # If there are multiple pipelines and ours is not the first one, exit
-        if [ "$PIPELINE_COUNT" -gt 1 ]; then
-          FIRST_PIPELINE=$(echo "$ALL_PIPELINES" | head -1)
-          if [ "$CI_PIPELINE_ID" != "$FIRST_PIPELINE" ]; then
-            echo "Pipeline $FIRST_PIPELINE is already handling tags for this commit."
-            echo "This pipeline ($CI_PIPELINE_ID) is redundant. Exiting gracefully..."
-            
-            # Create empty artifacts so downstream jobs don't fail
-            echo "" > tags.txt
-            echo "DETECTED_TAGS=" > tags.env
-            exit 0
-          fi
-        fi
-        
-        echo "This pipeline will handle all tags for commit $CI_COMMIT_SHA"
-      fi
+      # Install git
+      apt-get update && apt-get install -y git
 
       # Fetch all tags from remote (GitLab CI uses shallow clones)
       git fetch --tags
@@ -99,18 +61,11 @@ confirm_publication:
     - if: '$CI_COMMIT_TAG'
       when: manual
   script:
-    - |
-      # Check if this is a redundant pipeline
-      if [ ! -s tags.txt ]; then
-        echo "No tags to publish - this pipeline was skipped (redundant)"
-        exit 0
-      fi
-      
-      echo "=== Manual Confirmation Required ==="
-      echo "The publish script will validate and sort the following tags:"
-      cat tags.txt
-      echo ""
-      echo "✓ Manual approval granted - proceeding with publication"
+    - echo "=== Manual Confirmation Required ==="
+    - echo "The publish script will validate and sort the following tags:"
+    - cat tags.txt
+    - echo ""
+    - echo "✓ Manual approval granted - proceeding with publication"
   artifacts:
     reports:
       dotenv: tags.env
@@ -132,15 +87,8 @@ publish_crates:
     - if: '$CI_COMMIT_TAG'
       when: on_success
   script:
+    - echo "=== Setting up environment for publication ==="
     - |
-      # Check if this is a redundant pipeline
-      if [ ! -s tags.txt ]; then
-        echo "No tags to publish - this pipeline was skipped (redundant)"
-        exit 0
-      fi
-      
-      echo "=== Setting up environment for publication ==="
-      
       # Install build-essential and curl
       apt-get update && apt-get install -y build-essential curl jq git
 
