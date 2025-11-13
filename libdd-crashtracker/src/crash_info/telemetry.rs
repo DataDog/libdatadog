@@ -5,7 +5,7 @@ use std::{fmt::Write, time::SystemTime};
 use crate::SigInfo;
 
 use super::{CrashInfo, Metadata};
-use anyhow::{Context, Ok};
+use anyhow::Context;
 use chrono::{DateTime, Utc};
 use libdd_common::Endpoint;
 use libdd_telemetry::{
@@ -113,10 +113,6 @@ impl CrashPing {
         self.siginfo.as_ref()
     }
 
-    fn current_schema_version() -> String {
-        "1.0".to_string()
-    }
-
     pub fn upload_to_endpoint(&self, endpoint: &Option<Endpoint>) -> anyhow::Result<()> {
         let rt = tokio::runtime::Builder::new_current_thread()
             .enable_all()
@@ -132,9 +128,26 @@ impl CrashPing {
         &self,
         endpoint: &Option<Endpoint>,
     ) -> anyhow::Result<()> {
-        crate::TelemetryCrashUploader::new(self.metadata(), endpoint)?
-            .upload_crash_ping(self)
-            .await
+        let telemetry_uploader = crate::TelemetryCrashUploader::new(self.metadata(), endpoint)?;
+        let errors_intake_uploader = crate::ErrorsIntakeUploader::new(endpoint)?;
+        let telemetry_future = telemetry_uploader.upload_crash_ping(self);
+
+        if errors_intake_uploader.is_enabled() {
+            let errors_intake_future = errors_intake_uploader.upload_crash_ping(
+                &self.crash_uuid,
+                self.siginfo.as_ref(),
+                self.metadata(),
+            );
+            let (_telemetry_result, _errors_intake_result) =
+                tokio::join!(telemetry_future, errors_intake_future);
+        } else {
+            let _telemetry_result = telemetry_future.await;
+        }
+        Ok(())
+    }
+
+    fn current_schema_version() -> String {
+        "1.0".to_string()
     }
 }
 

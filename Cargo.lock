@@ -508,6 +508,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "current_platform",
+ "hex",
  "libc",
  "libdd-common",
  "libdd-crashtracker",
