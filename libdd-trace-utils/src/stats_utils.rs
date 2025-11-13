@@ -85,7 +85,7 @@ mod mini_agent {
                     proxy.parse().unwrap(),
                 );
                 let proxy_connector = hyper_http_proxy::ProxyConnector::from_proxy(
-                    ddcommon::connector::Connector::default(),
+                    libdd_common::connector::Connector::default(),
                     proxy,
                 )
                 .unwrap();
