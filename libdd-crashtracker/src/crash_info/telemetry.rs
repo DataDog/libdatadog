@@ -457,7 +457,7 @@ mod tests {
         // This keeps alive for scope
         let tmp = tempfile::tempdir().unwrap();
         let output_filename = {
-            let mut p = tmp.into_path();
+            let mut p = tmp.keep();
             p.push("crash_info");
             p
         };
@@ -518,7 +518,7 @@ mod tests {
         // This keeps alive for scope
         let tmp = tempfile::tempdir().unwrap();
         let output_filename = {
-            let mut p = tmp.into_path();
+            let mut p = tmp.keep();
             p.push("crash_ping_info");
             p
         };
@@ -593,7 +593,7 @@ mod tests {
         // This keeps alive for scope
         let tmp = tempfile::tempdir().unwrap();
         let output_filename = {
-            let mut p = tmp.into_path();
+            let mut p = tmp.keep();
             p.push("enhanced_crash_ping_info");
             p
         };
@@ -681,7 +681,7 @@ mod tests {
     async fn test_crash_ping_builder_basic() -> anyhow::Result<()> {
         let tmp = tempfile::tempdir().unwrap();
         let output_filename = {
-            let mut p = tmp.into_path();
+            let mut p = tmp.keep();
             p.push("crash_ping_builder_test");
             p
         };
@@ -808,7 +808,7 @@ mod tests {
         // Test that when crash ping is uploaded via telemetry, all fields are preserved
         let tmp = tempfile::tempdir().unwrap();
         let output_filename = {
-            let mut p = tmp.into_path();
+            let mut p = tmp.keep();
             p.push("crash_ping_all_fields_upload");
             p
         };
