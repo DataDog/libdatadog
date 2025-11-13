@@ -57,7 +57,7 @@ detect_tags:
       - tags.txt
     expire_in: 1 day
 
-# Check if crates are already published
+# Check if crates are already published (exit 0 = needs publishing, exit 1 = all published)
 check_if_published:
   tags: ["arch:amd64"]
   image: registry.ddbuild.io/images/base/ubuntu_2204:latest
@@ -78,25 +78,20 @@ check_if_published:
       TAGS=$(cat tags.txt)
       
       # Check publication status
+      # Exit 0 if needs publishing (continue pipeline)
+      # Exit 1 if all published (stop pipeline gracefully)
       if ./scripts/publish-crates.sh --check-published $TAGS; then
         echo ""
         echo "✅ All crates are already published on crates.io"
         echo "No publication needed - pipeline will end here"
-        echo "NEEDS_PUBLISHING=false" > publish_status.env
+        exit 1  # Exit with error to stop downstream jobs
       else
         echo ""
         echo "⚠️  Some crates are not published yet"
         echo "Continuing to confirmation step..."
-        echo "NEEDS_PUBLISHING=true" > publish_status.env
+        exit 0  # Exit success to continue pipeline
       fi
-  artifacts:
-    reports:
-      dotenv: publish_status.env
-    paths:
-      - tags.txt
-      - publish_status.env
-    expire_in: 1 day
-  allow_failure: false
+  allow_failure: true  # Don't mark pipeline as failed when all published
 
 # Manual confirmation step - review tags before publishing
 confirm_publication:
@@ -106,9 +101,9 @@ confirm_publication:
   resource_group: publish-${CI_COMMIT_SHA}
   needs:
     - detect_tags
-    - check_if_published
+    - check_if_published  # Only runs if this succeeded (not allowed to fail)
   rules:
-    - if: '$CI_COMMIT_TAG && $NEEDS_PUBLISHING == "true"'
+    - if: '$CI_COMMIT_TAG'
       when: manual
   script:
     - echo "=========================================="
@@ -150,7 +145,7 @@ publish_crates:
   stage: publish
   rules:
     # - if: '$CI_COMMIT_TAG && $CI_COMMIT_BRANCH == $TARGET_BRANCH'
-    - if: '$CI_COMMIT_TAG && $NEEDS_PUBLISHING == "true"'
+    - if: '$CI_COMMIT_TAG'
       when: on_success
   script:
     - echo "=== Setting up environment for publication ==="
