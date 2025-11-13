@@ -176,7 +176,8 @@ impl UnsyncStringSet {
     /// The caller must ensure that the `StringId` was obtained from this set
     /// (or is a well-known id) and that the set outlives the returned `&str`.
     pub unsafe fn get_string(&self, id: StringRef) -> &str {
-        // SAFETY: safe as long as caller respects this function's safety.
+        // SAFETY: the lifetime extension is safe as long as caller respects
+        // this function's safety.
         unsafe { core::mem::transmute::<&str, &str>(id.0.deref()) }
     }
 }
