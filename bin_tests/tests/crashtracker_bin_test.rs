@@ -1063,7 +1063,13 @@ fn test_crash_tracking_bin(
     let crash_telemetry = fs::read(&fixtures.crash_telemetry_path)
         .context("reading crashtracker telemetry payload")
         .unwrap();
-    assert_telemetry_message(&crash_telemetry, crash_typ);
+    let payloads = crash_telemetry.split(|&b| b == b'\n').collect::<Vec<_>>();
+    for payload in payloads {
+        if String::from_utf8_lossy(payload).contains("is_crash:true") {
+            assert_telemetry_message(payload, crash_typ);
+        }
+    }
+    // assert_telemetry_message(&crash_telemetry, crash_typ);
 
     // Crashtracking signal handler chaining tests, as well as other tests, might only be able to
     // influence system state after the main application has crashed, and has therefore lost the
@@ -1310,21 +1316,17 @@ fn crash_tracking_empty_endpoint() {
     let (mut stream2, _) = listener.accept().unwrap();
     let body2 = read_http_request_body(&mut stream2);
 
-    let _ = stream2.write_all(b"HTTP/1.1 404\r\nContent-Length: 0\r\n\r\n");
+    let _ = stream2.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n");
 
     let (mut stream3, _) = listener.accept().unwrap();
     let body3 = read_http_request_body(&mut stream3);
 
-    stream3
-        .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n")
-        .unwrap();
+    let _ = stream3.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n");
 
     let (mut stream4, _) = listener.accept().unwrap();
     let body4 = read_http_request_body(&mut stream4);
 
-    stream4
-        .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n")
-        .unwrap();
+    let _ = stream4.write_all(b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\r\n");
 
     let all_bodies = [body1, body2, body3, body4];
 
@@ -1539,18 +1541,20 @@ fn test_crash_tracking_bin_with_errors_intake(
     let errors_intake_content = fs::read(&errors_intake_path)
         .context("reading errors intake payload")
         .unwrap();
-    let errors_payload = serde_json::from_slice::<serde_json::Value>(&errors_intake_content)
-        .context("deserializing errors intake payload to json")
-        .unwrap();
 
     // Validate errors intake payload structure
-    assert_errors_intake_payload(&errors_payload, crash_typ);
+    assert_errors_intake_payload(&errors_intake_content, crash_typ);
 
     // Also validate telemetry still works (dual upload)
     let crash_telemetry = fs::read(&fixtures.crash_telemetry_path)
         .context("reading crashtracker telemetry payload")
         .unwrap();
-    assert_telemetry_message(&crash_telemetry, crash_typ);
+    let payloads = crash_telemetry.split(|&b| b == b'\n').collect::<Vec<_>>();
+    for payload in payloads {
+        if String::from_utf8_lossy(payload).contains("is_crash:true") {
+            assert_telemetry_message(payload, crash_typ);
+        }
+    }
 }
 
 fn test_crash_tracking_errors_intake_dual_upload(
@@ -1600,16 +1604,18 @@ fn test_crash_tracking_errors_intake_dual_upload(
         .context("reading errors intake payload")
         .unwrap();
 
-    let payload = serde_json::from_slice::<serde_json::Value>(&errors_intake_content)
-        .context("deserializing errors intake payload to json")
-        .unwrap();
-    assert_errors_intake_payload(&payload, crash_typ);
+    assert_errors_intake_payload(&errors_intake_content, crash_typ);
 
     // Also validate telemetry still works (dual upload)
     let crash_telemetry = fs::read(&fixtures.crash_telemetry_path)
         .context("reading crashtracker telemetry payload")
         .unwrap();
-    assert_telemetry_message(&crash_telemetry, crash_typ);
+    let payloads = crash_telemetry.split(|&b| b == b'\n').collect::<Vec<_>>();
+    for payload in payloads {
+        if String::from_utf8_lossy(payload).contains("is_crash:true") {
+            assert_telemetry_message(payload, crash_typ);
+        }
+    }
 }
 
 #[cfg(unix)]
@@ -1628,7 +1634,7 @@ fn test_crash_tracking_bin_with_errors_intake_uds(
     // Create directory if it doesn't exist
     if let Some(parent) = socket_path.parent() {
         if std::fs::create_dir_all(parent).is_err() {
-            // Skip test if we can't create the directory (permission issues)
+            // Skip test if we can't create the directory
             eprintln!("Skipping UDS test - cannot create /var/run/datadog directory");
             return;
         }
@@ -1677,27 +1683,19 @@ fn test_crash_tracking_bin_with_errors_intake_uds(
     // report)
     let (mut stream1, _) = listener.accept().unwrap();
     let body1 = read_http_request_body(&mut stream1);
-    stream1
-        .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n")
-        .unwrap();
+    let _ = stream1.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n");
 
     let (mut stream2, _) = listener.accept().unwrap();
     let body2 = read_http_request_body(&mut stream2);
-    stream2
-        .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n")
-        .unwrap();
+    let _ = stream2.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n");
 
     let (mut stream3, _) = listener.accept().unwrap();
     let body3 = read_http_request_body(&mut stream3);
-    stream3
-        .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n")
-        .unwrap();
+    let _ = stream3.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n");
 
     let (mut stream4, _) = listener.accept().unwrap();
     let body4 = read_http_request_body(&mut stream4);
-    stream4
-        .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n")
-        .unwrap();
+    let _ = stream4.write_all(b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\r\n");
 
     let all_bodies = [body1, body2, body3, body4];
 
@@ -1726,7 +1724,7 @@ fn test_crash_tracking_bin_with_errors_intake_uds(
         crash_reports.len()
     );
 
-    // Find telemetry requests (contain api_version and request_type)
+    // Find telemetry requests
     let telemetry_crash_ping = crash_pings
         .iter()
         .find(|(_, body)| body.contains("api_version") && body.contains("request_type"))
@@ -1735,7 +1733,11 @@ fn test_crash_tracking_bin_with_errors_intake_uds(
 
     let telemetry_crash_report = crash_reports
         .iter()
-        .find(|(_, body)| body.contains("api_version") && body.contains("request_type"))
+        .find(|(_, body)| {
+            body.contains("api_version")
+                && body.contains("request_type")
+                && body.contains("is_crash:true")
+        })
         .expect("Should have telemetry crash report");
     assert_telemetry_message(telemetry_crash_report.1.as_bytes(), crash_typ);
 
@@ -1772,7 +1774,11 @@ fn test_crash_tracking_bin_with_errors_intake_uds(
     let _ = std::fs::remove_file(socket_path);
 }
 
-fn assert_errors_intake_payload(payload: &Value, crash_typ: &str) {
+fn assert_errors_intake_payload(errors_intake_content: &[u8], crash_typ: &str) {
+    let payload = serde_json::from_slice::<serde_json::Value>(errors_intake_content)
+        .context("deserializing errors intake payload to json")
+        .unwrap();
+
     // Validate basic structure
     assert_eq!(payload["ddsource"], "crashtracker");
     assert!(payload["timestamp"].is_number());

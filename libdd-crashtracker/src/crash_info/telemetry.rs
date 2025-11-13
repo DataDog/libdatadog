@@ -128,9 +128,6 @@ impl CrashPing {
         &self,
         endpoint: &Option<Endpoint>,
     ) -> anyhow::Result<()> {
-        if endpoint.as_ref().is_some_and(|e| e.is_file_endpoint()) {
-            return Ok(());
-        }
         let telemetry_uploader = crate::TelemetryCrashUploader::new(self.metadata(), endpoint)?;
         let errors_intake_uploader = crate::ErrorsIntakeUploader::new(endpoint)?;
         let telemetry_future = telemetry_uploader.upload_crash_ping(self);
