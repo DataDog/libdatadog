@@ -12,13 +12,31 @@ variables:
       - "true"
       - "false"
 
+# Acquire exclusive lock for this commit's publication
+# This ensures only one pipeline processes this commit at a time
+acquire_publish_lock:
+  tags: ["arch:amd64"]
+  image: registry.ddbuild.io/images/base/ubuntu_2204:latest
+  stage: .pre
+  resource_group: publish-${CI_COMMIT_SHA}
+  rules:
+    - if: '$CI_COMMIT_TAG'
+      when: on_success
+  script:
+    - echo "🔒 Acquired publish lock for commit $CI_COMMIT_SHA"
+    - echo "Pipeline $CI_PIPELINE_ID is now processing this commit"
+    - echo "Any other pipelines for this commit will wait"
+  after_script:
+    - echo "🔓 Will release lock when pipeline completes"
+
 # Detect all tags on this commit
 detect_tags:
   tags: ["arch:amd64"]
   image: registry.ddbuild.io/images/base/ubuntu_2204:latest
   stage: publish
-  # Ensure only one pipeline runs at a time for this commit because it handles multiple tags
   resource_group: publish-${CI_COMMIT_SHA}
+  needs:
+    - acquire_publish_lock
   rules:
     # - if: '$CI_COMMIT_TAG && $CI_COMMIT_BRANCH == $TARGET_BRANCH'
     - if: '$CI_COMMIT_TAG'
@@ -64,6 +82,7 @@ check_if_published:
   stage: publish
   resource_group: publish-${CI_COMMIT_SHA}
   needs:
+    - acquire_publish_lock
     - detect_tags
   rules:
     - if: '$CI_COMMIT_TAG'
@@ -93,21 +112,23 @@ check_if_published:
       fi
   allow_failure: true  # Don't mark pipeline as failed when all published
 
-# Manual confirmation step - review tags before publishing
-confirm_publication:
+# Publish crates sequentially using the publish script
+publish_crates:
   tags: ["arch:amd64"]
   image: registry.ddbuild.io/images/base/ubuntu_2204:latest
-  stage: publish
-  resource_group: publish-${CI_COMMIT_SHA}
+  # Note: resource_group on manual jobs doesn't hold while waiting for approval
+  # The lock is enforced by acquire_publish_lock and release_publish_lock
   needs:
     - detect_tags
-    - check_if_published  # Only runs if this succeeded (not allowed to fail)
+    - check_if_published  # Only runs if this succeeded (some crates need publishing)
+  stage: publish
   rules:
+    # - if: '$CI_COMMIT_TAG && $CI_COMMIT_BRANCH == $TARGET_BRANCH'
     - if: '$CI_COMMIT_TAG'
       when: manual
   script:
     - echo "=========================================="
-    - echo "⚠️  PUBLICATION CONFIRMATION REQUIRED"
+    - echo "⚠️  PUBLICATION CONFIRMATION"
     - echo "=========================================="
     - echo ""
     - echo "The following tags will be published:"
@@ -122,32 +143,8 @@ confirm_publication:
         echo "   Crates WILL be published to crates.io"
       fi
     - echo ""
-    - echo "✓ Manual approval granted - proceeding with publication"
-    - |
-      # Save DRY_RUN setting to dotenv for next job
-      echo "DRY_RUN=$DRY_RUN" >> publish.env
-  artifacts:
-    reports:
-      dotenv: publish.env
-    paths:
-      - tags.txt
-      - publish.env
-    expire_in: 1 day
-  allow_failure: false
-
-# Publish crates sequentially using the publish script
-publish_crates:
-  tags: ["arch:amd64"]
-  image: registry.ddbuild.io/images/base/ubuntu_2204:latest
-  resource_group: publish-${CI_COMMIT_SHA}
-  needs:
-    - confirm_publication
-  stage: publish
-  rules:
-    # - if: '$CI_COMMIT_TAG && $CI_COMMIT_BRANCH == $TARGET_BRANCH'
-    - if: '$CI_COMMIT_TAG'
-      when: on_success
-  script:
+    - echo "✓ Proceeding with publication..."
+    - echo ""
     - echo "=== Setting up environment for publication ==="
     - |
       # Install build-essential and curl jq, etc
@@ -173,3 +170,20 @@ publish_crates:
         echo "🔴 Running in ACTUAL PUBLICATION mode"
         ./scripts/publish-crates.sh --token "$CARGO_REGISTRY_TOKEN" $TAGS
       fi
+
+# Release lock after pipeline completion
+# This ensures the lock is held throughout the entire pipeline
+release_publish_lock:
+  tags: ["arch:amd64"]
+  image: registry.ddbuild.io/images/base/ubuntu_2204:latest
+  stage: .post
+  resource_group: publish-${CI_COMMIT_SHA}
+  needs:
+    - job: publish_crates
+      optional: true  # Runs even if publish_crates is skipped
+  rules:
+    - if: '$CI_COMMIT_TAG'
+      when: always
+  script:
+    - echo "🔓 Releasing publish lock for commit $CI_COMMIT_SHA"
+    - echo "Pipeline $CI_PIPELINE_ID has completed processing"
