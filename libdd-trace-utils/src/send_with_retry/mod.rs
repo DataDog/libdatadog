@@ -9,7 +9,7 @@ pub use retry_strategy::{RetryBackoffType, RetryStrategy};
 
 use bytes::Bytes;
 use hyper::Method;
-use libdd_common::{hyper_migration, Endpoint, GenericHttpClient, HttpRequestBuilder};
+use libdd_common::{hyper_migration, Connect, Endpoint, GenericHttpClient, HttpRequestBuilder};
 use std::{collections::HashMap, time::Duration};
 use tracing::{debug, error};
 
@@ -111,7 +111,7 @@ impl std::error::Error for RequestError {}
 /// send_with_retry(&client, &target, payload, &headers, &retry_strategy).await
 /// # }
 /// ```
-pub async fn send_with_retry<C: ddcommon::Connect>(
+pub async fn send_with_retry<C: Connect>(
     client: &GenericHttpClient<C>,
     target: &Endpoint,
     payload: Vec<u8>,
@@ -222,7 +222,7 @@ pub async fn send_with_retry<C: ddcommon::Connect>(
     }
 }
 
-async fn send_request<C: ddcommon::Connect>(
+async fn send_request<C: Connect>(
     client: &GenericHttpClient<C>,
     timeout: Duration,
     req: HttpRequestBuilder,

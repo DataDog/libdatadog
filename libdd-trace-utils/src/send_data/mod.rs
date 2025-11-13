@@ -11,13 +11,12 @@ use anyhow::{anyhow, Context};
 use futures::stream::FuturesUnordered;
 use futures::StreamExt;
 use hyper::header::CONTENT_TYPE;
-use libdd_common::GenericHttpClient;
 use libdd_common::{
     header::{
         APPLICATION_MSGPACK_STR, APPLICATION_PROTOBUF_STR, DATADOG_SEND_REAL_HTTP_STATUS_STR,
         DATADOG_TRACE_COUNT_STR,
     },
-    Endpoint,
+    Connect, Endpoint, GenericHttpClient,
 };
 use libdd_trace_protobuf::pb::{AgentPayload, TracerPayload};
 use send_data_result::SendDataResult;
@@ -237,14 +236,11 @@ impl SendData {
     /// # Returns
     ///
     /// A `SendDataResult` instance containing the result of the operation.
-    pub async fn send<C: ddcommon::Connect>(
-        &self,
-        http_client: &GenericHttpClient<C>,
-    ) -> SendDataResult {
+    pub async fn send<C: Connect>(&self, http_client: &GenericHttpClient<C>) -> SendDataResult {
         self.send_internal(http_client).await
     }
 
-    async fn send_internal<C: ddcommon::Connect>(
+    async fn send_internal<C: Connect>(
         &self,
         http_client: &GenericHttpClient<C>,
     ) -> SendDataResult {
@@ -255,7 +251,7 @@ impl SendData {
         }
     }
 
-    async fn send_payload<C: ddcommon::Connect>(
+    async fn send_payload<C: Connect>(
         &self,
         chunks: u64,
         payload: Vec<u8>,
@@ -304,7 +300,7 @@ impl SendData {
         }
     }
 
-    async fn send_with_protobuf<C: ddcommon::Connect>(
+    async fn send_with_protobuf<C: Connect>(
         &self,
         http_client: &GenericHttpClient<C>,
     ) -> SendDataResult {
@@ -345,7 +341,7 @@ impl SendData {
         }
     }
 
-    async fn send_with_msgpack<C: ddcommon::Connect>(
+    async fn send_with_msgpack<C: Connect>(
         &self,
         http_client: &GenericHttpClient<C>,
     ) -> SendDataResult {
