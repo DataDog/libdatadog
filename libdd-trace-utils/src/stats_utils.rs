@@ -10,6 +10,8 @@ mod mini_agent {
     use hyper::{body::Buf, Method, Request, StatusCode};
     use libdd_common::hyper_migration;
     use libdd_common::Endpoint;
+    use libdd_common::GenericHttpClient;
+    use libdd_common::Connect;
     use libdd_trace_protobuf::pb;
     use std::io::Write;
     use tracing::debug;
@@ -59,10 +61,10 @@ mod mini_agent {
         target: &Endpoint,
         api_key: &str,
     ) -> anyhow::Result<()> {
-        send_stats_payload_with_client(data, target, api_key, None).await
+        send_stats_payload_with_client::<libdd_common::connector::Connector>(data, target, api_key, None).await
     }
 
-    pub async fn send_stats_payload_with_client(
+    pub async fn send_stats_payload_with_client<C: Connect>(
         data: Vec<u8>,
         target: &Endpoint,
         api_key: &str,
@@ -76,9 +78,14 @@ mod mini_agent {
             .header("DD-API-KEY", api_key)
             .body(hyper_migration::Body::from(data.clone()))?;
 
-        let client = client.unwrap_or(hyper_migration::new_default_client());
+        let response = if let Some(client) = client {
+            client.request(req).await
+        } else {
+            let default_client = hyper_migration::new_default_client();
+            default_client.request(req).await
+        };
 
-        match client.request(req).await {
+        match response {
             Ok(response) => {
                 if response.status() != StatusCode::ACCEPTED {
                     let body_bytes = response.into_body().collect().await?.to_bytes();
