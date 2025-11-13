@@ -43,10 +43,11 @@ Arguments:
                         Example: libdd-common-v1.0.0
 
 Options:
-    -h, --help          Show this help message
-    -d, --dry-run       Perform a dry run without actually publishing
-    -t, --token TOKEN   Cargo registry token (defaults to CARGO_REGISTRY_TOKEN env var)
-    -v, --verbose       Enable verbose output
+    -h, --help              Show this help message
+    -d, --dry-run           Perform a dry run without actually publishing
+    -c, --check-published   Only check if crates are already published (no build/test/publish)
+    -t, --token TOKEN       Cargo registry token (defaults to CARGO_REGISTRY_TOKEN env var)
+    -v, --verbose           Enable verbose output
 
 Environment Variables:
     CARGO_REGISTRY_TOKEN    Token for publishing to crates.io (required unless --token provided)
@@ -54,6 +55,7 @@ Environment Variables:
 Examples:
     $(basename "$0") libdd-common-v1.0.0 libdd-telemetry-v2.0.0
     $(basename "$0") --dry-run libdd-common-v1.0.0
+    $(basename "$0") --check-published libdd-common-v1.0.0 libdd-telemetry-v2.0.0
     $(basename "$0") --token "my-token" libdd-common-v1.0.0
 
 EOF
@@ -291,8 +293,94 @@ publish_crate() {
     fi
 }
 
+check_crate_only() {
+    local tag=$1
+    
+    echo "Processing tag: $tag" >&2
+    
+    # Extract crate name and version
+    if [[ "$tag" =~ ^(.+)-v([0-9]+\.[0-9]+\.[0-9]+)$ ]]; then
+        local crate_name="${BASH_REMATCH[1]}"
+        local crate_version="${BASH_REMATCH[2]}"
+        echo "Crate: $crate_name" >&2
+        echo "Version: $crate_version" >&2
+    else
+        echo -e "${YELLOW}⚠️  WARNING: Tag $tag does not match expected format - skipping${NC}" >&2
+        return 1
+    fi
+    
+    # Validate crate is in allowed list
+    local found=0
+    for allowed in "${ALLOWED_CRATES[@]}"; do
+        if [ "$crate_name" = "$allowed" ]; then
+            found=1
+            break
+        fi
+    done
+    
+    if [ $found -eq 0 ]; then
+        echo -e "${YELLOW}⚠️  WARNING: Crate '$crate_name' is not in the allowed list${NC}" >&2
+        return 1
+    fi
+    
+    echo "" >&2
+    
+    # Check if already published
+    if check_already_published "$crate_name" "$crate_version"; then
+        echo -e "${GREEN}✓ Crate is published on crates.io${NC}" >&2
+        echo "" >&2
+        return 0
+    else
+        echo -e "${YELLOW}⚠️  Crate is NOT published on crates.io${NC}" >&2
+        echo "" >&2
+        return 1
+    fi
+}
+
+check_publication_status() {
+    local -a sorted_tags=("$@")
+    
+    echo "=== Checking publication status ===" >&2
+    echo "" >&2
+    
+    local published=0
+    local not_published=0
+    local failed=0
+    
+    for tag in "${sorted_tags[@]}"; do
+        if check_crate_only "$tag"; then
+            ((published++))
+        else
+            if [[ "$tag" =~ ^(.+)-v([0-9]+\.[0-9]+\.[0-9]+)$ ]]; then
+                ((not_published++))
+            else
+                ((failed++))
+            fi
+        fi
+    done
+    
+    echo "=========================================" >&2
+    echo "=== Publication Check Summary ===" >&2
+    echo "=========================================" >&2
+    echo "Total tags: ${#sorted_tags[@]}" >&2
+    echo -e "${GREEN}Published: $published${NC}" >&2
+    echo -e "${YELLOW}Not published: $not_published${NC}" >&2
+    if [ $failed -gt 0 ]; then
+        echo -e "${RED}Invalid: $failed${NC}" >&2
+    fi
+    echo "" >&2
+    
+    if [ $not_published -gt 0 ]; then
+        exit 1
+    else
+        echo -e "${GREEN}✓ All crates are published on crates.io!${NC}" >&2
+        exit 0
+    fi
+}
+
 main() {
     local dry_run=false
+    local check_only=false
     local token="${CARGO_REGISTRY_TOKEN:-}"
     local verbose=false
     local -a tags=()
@@ -305,6 +393,10 @@ main() {
                 ;;
             -d|--dry-run)
                 dry_run=true
+                shift
+                ;;
+            -c|--check-published)
+                check_only=true
                 shift
                 ;;
             -t|--token)
@@ -342,6 +434,12 @@ main() {
     
     echo "" >&2
     
+    # Check-only mode: just check publication status
+    if [ "$check_only" = true ]; then
+        check_publication_status "${sorted_tags[@]}"
+    fi
+    
+    # Normal publication mode
     local failed=0
     for tag in "${sorted_tags[@]}"; do
         if ! publish_crate "$tag" "$dry_run" "$token"; then
