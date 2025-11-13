@@ -11,13 +11,12 @@ use anyhow::{anyhow, Context};
 use futures::stream::FuturesUnordered;
 use futures::StreamExt;
 use hyper::header::CONTENT_TYPE;
-use libdd_common::HttpClient;
 use libdd_common::{
     header::{
         APPLICATION_MSGPACK_STR, APPLICATION_PROTOBUF_STR, DATADOG_SEND_REAL_HTTP_STATUS_STR,
         DATADOG_TRACE_COUNT_STR,
     },
-    Endpoint,
+    Connect, Endpoint, GenericHttpClient,
 };
 use libdd_trace_protobuf::pb::{AgentPayload, TracerPayload};
 use send_data_result::SendDataResult;
@@ -237,11 +236,14 @@ impl SendData {
     /// # Returns
     ///
     /// A `SendDataResult` instance containing the result of the operation.
-    pub async fn send(&self, http_client: &HttpClient) -> SendDataResult {
+    pub async fn send<C: Connect>(&self, http_client: &GenericHttpClient<C>) -> SendDataResult {
         self.send_internal(http_client).await
     }
 
-    async fn send_internal(&self, http_client: &HttpClient) -> SendDataResult {
+    async fn send_internal<C: Connect>(
+        &self,
+        http_client: &GenericHttpClient<C>,
+    ) -> SendDataResult {
         if self.use_protobuf() {
             self.send_with_protobuf(http_client).await
         } else {
@@ -249,12 +251,12 @@ impl SendData {
         }
     }
 
-    async fn send_payload(
+    async fn send_payload<C: Connect>(
         &self,
         chunks: u64,
         payload: Vec<u8>,
         headers: HashMap<&'static str, String>,
-        http_client: &HttpClient,
+        http_client: &GenericHttpClient<C>,
     ) -> (SendWithRetryResult, u64, u64) {
         #[allow(clippy::unwrap_used)]
         let payload_len = u64::try_from(payload.len()).unwrap();
@@ -298,7 +300,10 @@ impl SendData {
         }
     }
 
-    async fn send_with_protobuf(&self, http_client: &HttpClient) -> SendDataResult {
+    async fn send_with_protobuf<C: Connect>(
+        &self,
+        http_client: &GenericHttpClient<C>,
+    ) -> SendDataResult {
         let mut result = SendDataResult::default();
 
         #[allow(clippy::unwrap_used)]
@@ -336,7 +341,10 @@ impl SendData {
         }
     }
 
-    async fn send_with_msgpack(&self, http_client: &HttpClient) -> SendDataResult {
+    async fn send_with_msgpack<C: Connect>(
+        &self,
+        http_client: &GenericHttpClient<C>,
+    ) -> SendDataResult {
         let mut result = SendDataResult::default();
         let mut futures = FuturesUnordered::new();
 
