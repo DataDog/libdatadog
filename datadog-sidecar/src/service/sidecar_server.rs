@@ -6,9 +6,10 @@ use crate::service::{
     sidecar_interface::ServeSidecarInterface,
     telemetry::{TelemetryCachedClient, TelemetryCachedClientSet},
     tracing::TraceFlusher,
-    InstanceId, QueueId, RequestIdentification, RequestIdentifier, RuntimeInfo, RuntimeMetadata,
-    SerializedTracerHeaderTags, SessionConfig, SessionInfo, SidecarAction, SidecarInterface,
-    SidecarInterfaceRequest, SidecarInterfaceResponse,
+    DynamicInstrumentationConfigState, InstanceId, QueueId, RequestIdentification,
+    RequestIdentifier, RuntimeInfo, RuntimeMetadata, SerializedTracerHeaderTags, SessionConfig,
+    SessionInfo, SidecarAction, SidecarInterface, SidecarInterfaceRequest,
+    SidecarInterfaceResponse,
 };
 use datadog_ipc::platform::{AsyncChannel, ShmHandle};
 use datadog_ipc::tarpc;
@@ -43,10 +44,13 @@ use crate::service::debugger_diagnostics_bookkeeper::{
 use crate::service::exception_hash_rate_limiter::EXCEPTION_HASH_LIMITER;
 use crate::service::remote_configs::{RemoteConfigNotifyTarget, RemoteConfigs};
 use crate::service::tracing::trace_flusher::TraceFlusherStats;
+use crate::tokio_util::run_or_spawn_shared;
 use datadog_ipc::platform::FileBackedHandle;
 use datadog_ipc::tarpc::server::{Channel, InFlightRequest};
-use datadog_live_debugger::sender::DebuggerType;
-use datadog_remote_config::fetch::{ConfigInvariants, MultiTargetStats};
+use datadog_live_debugger::sender::{
+    agent_info_supports_dedicated_snapshots_endpoint, DebuggerType,
+};
+use datadog_remote_config::fetch::{ConfigInvariants, ConfigOptions, MultiTargetStats};
 use libdd_common::tag::Tag;
 use libdd_dogstatsd_client::{new, DogStatsDActionOwned};
 use libdd_telemetry::config::Config;
@@ -289,6 +293,21 @@ impl SidecarServer {
                 )
             }
         }
+    }
+
+    #[cfg(windows)]
+    #[allow(clippy::unwrap_used)]
+    fn get_notify_target(&self, session: &SessionInfo) -> Option<RemoteConfigNotifyTarget> {
+        self.process_handle.map(|handle| RemoteConfigNotifyTarget {
+            process_handle: handle,
+            notify_function: *session.remote_config_notify_function.lock().unwrap(),
+        })
+    }
+    #[cfg(unix)]
+    fn get_notify_target(&self, session: &SessionInfo) -> Option<RemoteConfigNotifyTarget> {
+        Some(RemoteConfigNotifyTarget {
+            pid: session.pid.load(Ordering::Relaxed),
+        })
     }
 
     pub async fn compute_stats(&self) -> SidecarStats {
@@ -577,13 +596,23 @@ impl SidecarInterface for SidecarServer {
         });
         if config.endpoint.api_key.is_none() {
             // no agent info if agentless
-            *session.agent_infos.lock_or_panic() =
-                Some(self.agent_infos.query_for(config.endpoint.clone()));
+            let agent_info = self.agent_infos.query_for(config.endpoint.clone());
+            let session_info = session.clone();
+            run_or_spawn_shared(agent_info.get(), move |info| {
+                if !agent_info_supports_dedicated_snapshots_endpoint(info) {
+                    session_info.modify_debugger_config(|cfg| {
+                        cfg.without_dedicated_snapshots_endpoint();
+                    });
+                }
+            });
+            *session.agent_infos.lock_or_panic() = Some(agent_info);
         }
-        session.set_remote_config_invariants(ConfigInvariants {
-            language: config.language,
-            tracer_version: config.tracer_version,
-            endpoint: config.endpoint,
+        session.set_remote_config_invariants(ConfigOptions {
+            invariants: ConfigInvariants {
+                language: config.language,
+                tracer_version: config.tracer_version,
+                endpoint: config.endpoint,
+            },
             products: config.remote_config_products,
             capabilities: config.remote_config_capabilities,
         });
@@ -783,46 +812,52 @@ impl SidecarInterface for SidecarServer {
         env_name: String,
         app_version: String,
         global_tags: Vec<Tag>,
+        dynamic_instrumentation_state: DynamicInstrumentationConfigState,
     ) -> Self::SetUniversalServiceTagsFut {
         debug!("Registered remote config metadata: instance {instance_id:?}, queue_id: {queue_id:?}, service: {service_name}, env: {env_name}, version: {app_version}");
 
         let session = self.get_session(&instance_id.session_id);
-        #[cfg(windows)]
-        #[allow(clippy::unwrap_used)]
-        let notify_target = if let Some(handle) = self.process_handle {
-            RemoteConfigNotifyTarget {
-                process_handle: handle,
-                notify_function: *session.remote_config_notify_function.lock().unwrap(),
-            }
-        } else {
-            return no_response();
-        };
-        #[cfg(unix)]
-        let notify_target = RemoteConfigNotifyTarget {
-            pid: session.pid.load(Ordering::Relaxed),
-        };
-        #[allow(clippy::expect_used)]
-        let invariants = session
-            .get_remote_config_invariants()
-            .as_ref()
-            .expect("Expecting remote config invariants to be set early")
-            .clone();
         let runtime_info = session.get_runtime(&instance_id.runtime_id);
         let mut applications = runtime_info.lock_applications();
         let app = applications.entry(queue_id).or_default();
-        if *session.remote_config_enabled.lock_or_panic() {
-            app.remote_config_guard = Some(self.remote_configs.add_runtime(
-                invariants,
-                *session.remote_config_interval.lock_or_panic(),
-                instance_id.runtime_id,
-                notify_target,
-                env_name.clone(),
-                service_name.clone(),
-                app_version.clone(),
-                global_tags.clone(),
-            ));
-        }
         app.set_metadata(env_name, app_version, service_name, global_tags);
+        let Some(notify_target) = self.get_notify_target(&session) else {
+            return no_response();
+        };
+        app.update_remote_config(
+            &self.remote_configs,
+            &session,
+            instance_id,
+            notify_target,
+            dynamic_instrumentation_state,
+        );
+
+        no_response()
+    }
+
+    type SetRequestConfigFut = NoResponse;
+
+    fn set_request_config(
+        self,
+        _: Context,
+        instance_id: InstanceId,
+        queue_id: QueueId,
+        dynamic_instrumentation_state: DynamicInstrumentationConfigState,
+    ) -> Self::SetRequestConfigFut {
+        let session = self.get_session(&instance_id.session_id);
+        let runtime_info = session.get_runtime(&instance_id.runtime_id);
+        let mut applications = runtime_info.lock_applications();
+        let app = applications.entry(queue_id).or_default();
+        let Some(notify_target) = self.get_notify_target(&session) else {
+            return no_response();
+        };
+        app.update_remote_config(
+            &self.remote_configs,
+            &session,
+            instance_id,
+            notify_target,
+            dynamic_instrumentation_state,
+        );
 
         no_response()
     }

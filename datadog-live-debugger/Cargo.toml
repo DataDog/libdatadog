@@ -7,6 +7,7 @@ version = "0.0.1"
 [dependencies]
 anyhow = "1.0"
 libdd-common = { path = "../libdd-common" }
+libdd-data-pipeline = { path = "../libdd-data-pipeline" }
 hyper = { workspace = true}
 http-body-util = "0.1"
 

@@ -508,6 +508,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "current_platform",
+ "hex",
  "libc",
  "libdd-common",
  "libdd-crashtracker",
@@ -724,7 +725,7 @@ dependencies = [
 
 [[package]]
 name = "build_common"
-version = "23.0.0"
+version = "24.0.0"
 dependencies = [
  "cbindgen",
  "serde",
@@ -733,7 +734,7 @@ dependencies = [
 
 [[package]]
 name = "builder"
-version = "23.0.0"
+version = "24.0.0"
 dependencies = [
  "anyhow",
  "build_common",
@@ -1308,7 +1309,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-ffe"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "chrono",
  "criterion",
@@ -1329,7 +1330,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-ffe-ffi"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "build_common",
@@ -1388,6 +1389,7 @@ dependencies = [
  "http-body-util",
  "hyper",
  "libdd-common",
+ "libdd-data-pipeline",
  "percent-encoding",
  "regex",
  "regex-automata 0.4.8",
@@ -1417,7 +1419,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-profiling-replayer"
-version = "23.0.0"
+version = "24.0.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -1545,7 +1547,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-trace-obfuscation"
-version = "23.0.0"
+version = "24.0.0"
 dependencies = [
  "anyhow",
  "criterion",
@@ -1563,7 +1565,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-tracer-flare"
-version = "23.0.0"
+version = "24.0.0"
 dependencies = [
  "anyhow",
  "datadog-remote-config",
@@ -2800,7 +2802,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-common-ffi"
-version = "23.0.0"
+version = "24.0.0"
 dependencies = [
  "anyhow",
  "bolero",
@@ -2848,7 +2850,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-crashtracker-ffi"
-version = "23.0.0"
+version = "24.0.0"
 dependencies = [
  "anyhow",
  "build_common",
@@ -2904,7 +2906,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-data-pipeline-ffi"
-version = "23.0.0"
+version = "24.0.0"
 dependencies = [
  "build_common",
  "httpmock",
@@ -2927,7 +2929,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-ddsketch-ffi"
-version = "23.0.0"
+version = "24.0.0"
 dependencies = [
  "build_common",
  "libdd-common-ffi",
@@ -2987,7 +2989,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-log-ffi"
-version = "23.0.0"
+version = "24.0.0"
 dependencies = [
  "build_common",
  "libdd-common-ffi",
@@ -3092,7 +3094,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-telemetry-ffi"
-version = "23.0.0"
+version = "24.0.0"
 dependencies = [
  "build_common",
  "function_name",
@@ -5011,7 +5013,7 @@ dependencies = [
 
 [[package]]
 name = "symbolizer-ffi"
-version = "23.0.0"
+version = "24.0.0"
 dependencies = [
  "blazesym-c",
  "build_common",
@@ -5503,7 +5505,7 @@ dependencies = [
 
 [[package]]
 name = "tools"
-version = "23.0.0"
+version = "24.0.0"
 dependencies = [
  "regex",
 ]

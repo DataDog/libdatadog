@@ -13,7 +13,7 @@ use futures::future;
 use crate::log::{MultiEnvFilterGuard, MultiWriterGuard};
 use crate::{spawn_map_err, tracer};
 use datadog_live_debugger::sender::{DebuggerType, PayloadSender};
-use datadog_remote_config::fetch::ConfigInvariants;
+use datadog_remote_config::fetch::ConfigOptions;
 use libdd_common::MutexExt;
 use tracing::log::warn;
 use tracing::{debug, error, info, trace};
@@ -32,7 +32,7 @@ pub(crate) struct SessionInfo {
     debugger_config: Arc<Mutex<datadog_live_debugger::sender::Config>>,
     tracer_config: Arc<Mutex<tracer::Config>>,
     dogstatsd: Arc<Mutex<Option<libdd_dogstatsd_client::Client>>>,
-    remote_config_invariants: Arc<Mutex<Option<ConfigInvariants>>>,
+    remote_config_options: Arc<Mutex<Option<ConfigOptions>>>,
     pub(crate) agent_infos: Arc<Mutex<Option<AgentInfoGuard>>>,
     pub(crate) remote_config_interval: Arc<Mutex<Duration>>,
     #[cfg(windows)]
@@ -53,7 +53,7 @@ impl Clone for SessionInfo {
             debugger_config: self.debugger_config.clone(),
             tracer_config: self.tracer_config.clone(),
             dogstatsd: self.dogstatsd.clone(),
-            remote_config_invariants: self.remote_config_invariants.clone(),
+            remote_config_options: self.remote_config_options.clone(),
             agent_infos: self.agent_infos.clone(),
             remote_config_interval: self.remote_config_interval.clone(),
             #[cfg(windows)]
@@ -202,12 +202,12 @@ impl SessionInfo {
         f(&mut self.get_debugger_config());
     }
 
-    pub fn set_remote_config_invariants(&self, invariants: ConfigInvariants) {
-        *self.remote_config_invariants.lock_or_panic() = Some(invariants);
+    pub fn set_remote_config_invariants(&self, options: ConfigOptions) {
+        *self.remote_config_options.lock_or_panic() = Some(options);
     }
 
-    pub fn get_remote_config_invariants(&self) -> MutexGuard<'_, Option<ConfigInvariants>> {
-        self.remote_config_invariants.lock_or_panic()
+    pub fn get_remote_config_options(&self) -> MutexGuard<'_, Option<ConfigOptions>> {
+        self.remote_config_options.lock_or_panic()
     }
 
     pub fn send_debugger_data<R: AsRef<[u8]> + Sync + Send + 'static>(
@@ -281,15 +281,16 @@ impl SessionInfo {
         if let Some(runtime) = self.lock_runtimes().get(runtime_id) {
             if let Some(app) = runtime.lock_applications().get_mut(&queue_id) {
                 let (tags, new_tags) = {
-                    let invariants = self.get_remote_config_invariants();
+                    let invariants = self.get_remote_config_options();
                     let version = invariants
                         .as_ref()
-                        .map(|i| i.tracer_version.as_str())
+                        .map(|i| i.invariants.tracer_version.as_str())
                         .unwrap_or("0.0.0");
                     app.get_debugger_tags(&version, runtime_id)
                 };
                 let sender = match debugger_type {
                     DebuggerType::Diagnostics => app.debugger_diagnostics_payload_sender.clone(),
+                    DebuggerType::Snapshots => app.debugger_snapshots_payload_sender.clone(),
                     DebuggerType::Logs => app.debugger_logs_payload_sender.clone(),
                 };
                 let config = self.debugger_config.clone();

@@ -13,6 +13,7 @@ use datadog_ipc::tarpc;
 use datadog_live_debugger::sender::DebuggerType;
 use libdd_common::tag::Tag;
 use libdd_dogstatsd_client::DogStatsDActionOwned;
+use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
 // This is a bit weird, but depending on the OS we're interested in different things...
@@ -22,6 +23,14 @@ use std::time::Duration;
 type RemoteConfigNotifyTarget = libc::pid_t;
 #[cfg(windows)]
 type RemoteConfigNotifyTarget = crate::service::remote_configs::RemoteConfigNotifyFunction;
+
+#[repr(C)]
+#[derive(Debug, Eq, PartialEq, Copy, Clone, Serialize, Deserialize)]
+pub enum DynamicInstrumentationConfigState {
+    Enabled,
+    Disabled,
+    NotSet,
+}
 
 /// The `SidecarInterface` trait defines the necessary methods for the sidecar service.
 ///
@@ -146,6 +155,8 @@ pub trait SidecarInterface {
     /// * `env_name` - The name of the environment.
     /// * `app_version` - The application version.
     /// * `global_tags` - Global tags which need to be propagated.
+    /// * `dynamic_instrumentation_state` - Whether dynamic instrumentation is enabled, disabled or
+    ///   not set.
     async fn set_universal_service_tags(
         instance_id: InstanceId,
         queue_id: QueueId,
@@ -153,6 +164,20 @@ pub trait SidecarInterface {
         env_name: String,
         app_version: String,
         global_tags: Vec<Tag>,
+        dynamic_instrumentation_state: DynamicInstrumentationConfigState,
+    );
+
+    /// Sets request state which does not directly affect the RC connection.
+    ///
+    /// # Arguments
+    /// * `instance_id` - The ID of the instance.
+    /// * `queue_id` - The unique identifier for the trace context.
+    /// * `dynamic_instrumentation_state` - Whether dynamic instrumentation is enabled, disabled or
+    ///   not set.
+    async fn set_request_config(
+        instance_id: InstanceId,
+        queue_id: QueueId,
+        dynamic_instrumentation_state: DynamicInstrumentationConfigState,
     );
 
     /// Sends DogStatsD actions.
