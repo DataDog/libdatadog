@@ -1,91 +1,33 @@
-variables:
-  # Configurable branch where tags should trigger this workflow
-  TARGET_BRANCH:
-    value: "main"
-    description: "Only tags on this branch will trigger the release workflow"
-  
-  # Whether to perform a dry-run or actual publication
-  DRY_RUN:
-    value: "true"
-    description: "Perform dry-run only (true) or actually publish to crates.io (false)"
-    options:
-      - "true"
-      - "false"
-
-# Detect tag that triggered this pipeline
-detect_tags:
-  tags: ["arch:amd64"]
-  image: registry.ddbuild.io/images/base/ubuntu_2204:latest
-  stage: publish
-  resource_group: publish-${CI_COMMIT_TAG}
-  rules:
-    - if: '$CI_COMMIT_TAG'
-      when: on_success
-  script:
-    - echo "=== Processing tag $CI_COMMIT_TAG ==="
-    - |
-      # Install curl and jq for crates.io API check
-      apt-get update && apt-get install -y curl jq
-      
-      # Save tag for next stages
-      echo "$CI_COMMIT_TAG" > tags.txt
-      
-      # Save tag as env variable
-      echo "DETECTED_TAGS=$CI_COMMIT_TAG" > tags.env
-      
-      echo "=== Checking if crate is already published ==="
-      
-      # Check publication status
-      # Exit 1 if already published (stop pipeline gracefully)
-      # Exit 0 if needs publishing (continue pipeline)
-      if ./scripts/publish-crates.sh --check-published "$CI_COMMIT_TAG"; then
-        echo ""
-        echo "✅ Crate is already published on crates.io"
-        echo "No publication needed - pipeline will end here"
-        exit 1  # Exit with error to stop downstream jobs
-      else
-        echo ""
-        echo "⚠️  Crate is not published yet"
-        echo "Continuing to publication step..."
-        exit 0  # Exit success to continue pipeline
-      fi
-  artifacts:
-    reports:
-      dotenv: tags.env
-    paths:
-      - tags.txt
-    expire_in: 1 day
-  allow_failure: true  # Don't mark pipeline as failed when all published
-
-# Publish crates sequentially using the publish script
+# Publish crate to crates.io
 publish_crates:
   tags: ["arch:amd64"]
   image: registry.ddbuild.io/images/base/ubuntu_2204:latest
-  # resource_group ensures the same tag can't be published concurrently
-  # Note: lock is NOT held while waiting for manual approval
   resource_group: publish-${CI_COMMIT_TAG}
-  needs:
-    - detect_tags  # Only runs if this succeeded (some crates need publishing)
   stage: publish
   rules:
-    # - if: '$CI_COMMIT_TAG && $CI_COMMIT_BRANCH == $TARGET_BRANCH'
     - if: '$CI_COMMIT_TAG'
       when: manual
+  variables:
+    DRY_RUN:
+      value: "true"
+      description: "Perform dry-run only (true) or actually publish to crates.io (false)"
+      options:
+        - "true"
+        - "false"
   script:
     - echo "=========================================="
     - echo "⚠️  PUBLICATION CONFIRMATION"
     - echo "=========================================="
     - echo ""
-    - echo "The following tag will be published:"
-    - cat tags.txt
+    - echo "Tag to publish: $CI_COMMIT_TAG"
     - echo ""
     - |
       if [ "$DRY_RUN" = "true" ]; then
         echo "🔵 MODE: DRY-RUN (no actual publication)"
-        echo "   Crates will be validated but NOT published to crates.io"
+        echo "   Crate will be validated but NOT published to crates.io"
       else
         echo "🔴 MODE: ACTUAL PUBLICATION"
-        echo "   Crates WILL be published to crates.io"
+        echo "   Crate WILL be published to crates.io"
       fi
     - echo ""
     - echo "✓ Proceeding with publication..."
@@ -104,14 +46,11 @@ publish_crates:
       echo ""
       echo "=== Running publication script ==="
       
-      # Read tags
-      TAGS=$(cat tags.txt)
-      
       # Build command based on DRY_RUN setting
       if [ "$DRY_RUN" = "true" ]; then
         echo "🔵 Running in DRY-RUN mode"
-        ./scripts/publish-crates.sh --dry-run --token "${CARGO_REGISTRY_TOKEN:-test}" $TAGS
+        ./scripts/publish-crates.sh --dry-run --token "${CARGO_REGISTRY_TOKEN:-test}" "$CI_COMMIT_TAG"
       else
         echo "🔴 Running in ACTUAL PUBLICATION mode"
-        ./scripts/publish-crates.sh --token "$CARGO_REGISTRY_TOKEN" $TAGS
+        ./scripts/publish-crates.sh --token "$CARGO_REGISTRY_TOKEN" "$CI_COMMIT_TAG"
       fi
