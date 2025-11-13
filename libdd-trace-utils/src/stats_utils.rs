@@ -9,9 +9,9 @@ mod mini_agent {
     use http_body_util::BodyExt;
     use hyper::{body::Buf, Method, Request, StatusCode};
     use libdd_common::hyper_migration;
+    use libdd_common::Connect;
     use libdd_common::Endpoint;
     use libdd_common::GenericHttpClient;
-    use libdd_common::Connect;
     use libdd_trace_protobuf::pb;
     use std::io::Write;
     use tracing::debug;
@@ -61,7 +61,10 @@ mod mini_agent {
         target: &Endpoint,
         api_key: &str,
     ) -> anyhow::Result<()> {
-        send_stats_payload_with_client::<libdd_common::connector::Connector>(data, target, api_key, None).await
+        send_stats_payload_with_client::<libdd_common::connector::Connector>(
+            data, target, api_key, None,
+        )
+        .await
     }
 
     pub async fn send_stats_payload_with_client<C: Connect>(
