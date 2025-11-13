@@ -70,7 +70,15 @@ check_command() {
 }
 
 check_dependencies() {
-    local required_commands=("curl" "jq" "cargo" "git")
+    local check_only=${1:-false}
+    local -a required_commands
+    
+    if [ "$check_only" = true ]; then
+        required_commands=("curl" "jq")
+    else
+        required_commands=("curl" "jq" "cargo" "git")
+    fi
+    
     local missing_commands=()
     
     for cmd in "${required_commands[@]}"; do
@@ -427,7 +435,7 @@ main() {
         exit 1
     fi
     
-    check_dependencies
+    check_dependencies "$check_only"
     
     local sorted_tags
     sorted_tags=($(sort_tags "${tags[@]}"))
