@@ -62,11 +62,11 @@ mod mini_agent {
         send_stats_payload_proxy(data, target, api_key, None).await
     }
 
-    pub async fn send_stats_payload_proxy(
+    pub async fn send_stats_payload_with_client(
         data: Vec<u8>,
         target: &Endpoint,
         api_key: &str,
-        http_proxy: Option<&str>,
+        client: Option<&GenericHttpClient<C>>,
     ) -> anyhow::Result<()> {
         let req = Request::builder()
             .method(Method::POST)
@@ -76,30 +76,7 @@ mod mini_agent {
             .header("DD-API-KEY", api_key)
             .body(hyper_migration::Body::from(data.clone()))?;
 
-        #[cfg(feature = "proxy")]
-        #[allow(clippy::unwrap_used)]
-        let client = {
-            if let Some(proxy) = http_proxy {
-                let proxy = hyper_http_proxy::Proxy::new(
-                    hyper_http_proxy::Intercept::Https,
-                    proxy.parse().unwrap(),
-                );
-                let proxy_connector = hyper_http_proxy::ProxyConnector::from_proxy(
-                    libdd_common::connector::Connector::default(),
-                    proxy,
-                )
-                .unwrap();
-                hyper_migration::client_builder().build(proxy_connector)
-            } else {
-                hyper_migration::new_default_client()
-            }
-        };
-
-        #[cfg(not(feature = "proxy"))]
-        let client = {
-            let _ = http_proxy;
-            hyper_migration::new_default_client()
-        };
+        let client = client.unwrap_or(hyper_migration::new_default_client());
 
         match client.request(req).await {
             Ok(response) => {
