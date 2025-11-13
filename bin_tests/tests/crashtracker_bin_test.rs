@@ -1263,7 +1263,7 @@ fn crash_tracking_empty_endpoint() {
     let socket_path = extend_path(fixtures.tmpdir.path(), "trace_agent.socket");
     let listener = UnixListener::bind(&socket_path).unwrap();
 
-    process::Command::new(&fixtures.artifacts[&crashtracker_bin])
+    let mut child = process::Command::new(&fixtures.artifacts[&crashtracker_bin])
         // empty url, endpoint will be set to none
         .arg("")
         .arg(fixtures.artifacts[&crashtracker_receiver].as_os_str())
@@ -1280,16 +1280,12 @@ fn crash_tracking_empty_endpoint() {
     let (mut stream1, _) = listener.accept().unwrap();
     let body1 = read_http_request_body(&mut stream1);
 
-    stream1
-        .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n")
-        .unwrap();
+    let _ = stream1.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n");
 
     let (mut stream2, _) = listener.accept().unwrap();
     let body2 = read_http_request_body(&mut stream2);
 
-    stream2
-        .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n")
-        .unwrap();
+    let _ = stream2.write_all(b"HTTP/1.1 404\r\nContent-Length: 0\r\n\r\n");
 
     for body in [body1, body2].iter() {
         if body.contains("is_crash_ping:true") {
@@ -1298,6 +1294,8 @@ fn crash_tracking_empty_endpoint() {
             assert_telemetry_message(body.as_bytes(), "null_deref");
         }
     }
+
+    let _ = child.wait();
 }
 
 fn read_http_request_body(stream: &mut impl Read) -> String {
