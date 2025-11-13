@@ -21,8 +21,10 @@ detect_tags:
   resource_group: publish-${CI_COMMIT_SHA}
   rules:
     # - if: '$CI_COMMIT_TAG && $CI_COMMIT_BRANCH == $TARGET_BRANCH'
-    - if: '$CI_COMMIT_TAG'
-      when: on_success
+    - if: '$CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_TAG'
+      when: never # Prevents separate runs for each tag
+    - if: '$CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_TAG && $CI_PIPELINE_ID == $CI_MERGE_REQUEST_ID' # Check to allow running once
+      when: always
   script:
     - echo "=== Detecting tags on commit $CI_COMMIT_SHA ==="
     - |
@@ -66,7 +68,7 @@ confirm_publication:
   needs:
     - detect_tags
   rules:
-    - if: '$CI_COMMIT_TAG'
+    - if: '$CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_TAG && $CI_PIPELINE_ID == $CI_MERGE_REQUEST_ID'
       when: manual
   script:
     - echo "=========================================="
@@ -108,7 +110,7 @@ publish_crates:
   stage: publish
   rules:
     # - if: '$CI_COMMIT_TAG && $CI_COMMIT_BRANCH == $TARGET_BRANCH'
-    - if: '$CI_COMMIT_TAG'
+    - if: '$CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_TAG && $CI_PIPELINE_ID == $CI_MERGE_REQUEST_ID'
       when: on_success
   script:
     - echo "=== Setting up environment for publication ==="
