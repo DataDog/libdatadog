@@ -59,7 +59,7 @@ mod mini_agent {
         target: &Endpoint,
         api_key: &str,
     ) -> anyhow::Result<()> {
-        send_stats_payload_proxy(data, target, api_key, None).await
+        send_stats_payload_with_client(data, target, api_key, None).await
     }
 
     pub async fn send_stats_payload_with_client(
