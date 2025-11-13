@@ -169,9 +169,10 @@ impl Client {
 
     fn get_or_init_client(&self) -> anyhow::Result<Arc<Option<StatsdClient>>> {
         if let Some(endpoint) = &self.endpoint {
-            let mut client_guard = self.client.lock().map_err(|e| {
-                anyhow!("Failed to acquire dogstatsd client lock: {e}")
-            })?;
+            let mut client_guard = self
+                .client
+                .lock()
+                .map_err(|e| anyhow!("Failed to acquire dogstatsd client lock: {e}"))?;
             return if client_guard.is_some() {
                 Ok(client_guard.clone())
             } else {
