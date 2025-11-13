@@ -12,57 +12,40 @@ variables:
       - "true"
       - "false"
 
-# Detect all tags on this commit
+# Detect tag that triggered this pipeline
 detect_tags:
   tags: ["arch:amd64"]
   image: registry.ddbuild.io/images/base/ubuntu_2204:latest
   stage: publish
-  resource_group: publish-${CI_COMMIT_SHA}
+  resource_group: publish-${CI_COMMIT_TAG}
   rules:
-    # - if: '$CI_COMMIT_TAG && $CI_COMMIT_BRANCH == $TARGET_BRANCH'
     - if: '$CI_COMMIT_TAG'
       when: on_success
   script:
-    - echo "=== Detecting tags on commit $CI_COMMIT_SHA ==="
+    - echo "=== Processing tag $CI_COMMIT_TAG ==="
     - |
-      # Install git, curl, and jq
-      apt-get update && apt-get install -y git curl jq
-
-      # Fetch all tags from remote (GitLab CI uses shallow clones)
-      git fetch --tags
+      # Install curl and jq for crates.io API check
+      apt-get update && apt-get install -y curl jq
       
-      # Get all tags pointing to this commit
-      TAGS=$(git tag --points-at HEAD)
+      # Save tag for next stages
+      echo "$CI_COMMIT_TAG" > tags.txt
       
-      if [ -z "$TAGS" ]; then
-        echo "No tags found on this commit"
-        exit 1
-      fi
+      # Save tag as env variable
+      echo "DETECTED_TAGS=$CI_COMMIT_TAG" > tags.env
       
-      echo "Found tags:"
-      echo "$TAGS"
-      echo ""
-      
-      # Save tags for next stages
-      echo "$TAGS" > tags.txt
-      
-      # Save tags as space-separated for env variable (dotenv format requires single line)
-      TAGS_SPACE_SEPARATED=$(echo "$TAGS" | tr '\n' ' ' | sed 's/ $//')
-      echo "DETECTED_TAGS=$TAGS_SPACE_SEPARATED" > tags.env
-      
-      echo "=== Checking if crates are already published ==="
+      echo "=== Checking if crate is already published ==="
       
       # Check publication status
-      # Exit 1 if all published (stop pipeline gracefully)
+      # Exit 1 if already published (stop pipeline gracefully)
       # Exit 0 if needs publishing (continue pipeline)
-      if ./scripts/publish-crates.sh --check-published $TAGS_SPACE_SEPARATED; then
+      if ./scripts/publish-crates.sh --check-published "$CI_COMMIT_TAG"; then
         echo ""
-        echo "✅ All crates are already published on crates.io"
+        echo "✅ Crate is already published on crates.io"
         echo "No publication needed - pipeline will end here"
         exit 1  # Exit with error to stop downstream jobs
       else
         echo ""
-        echo "⚠️  Some crates are not published yet"
+        echo "⚠️  Crate is not published yet"
         echo "Continuing to publication step..."
         exit 0  # Exit success to continue pipeline
       fi
@@ -78,9 +61,9 @@ detect_tags:
 publish_crates:
   tags: ["arch:amd64"]
   image: registry.ddbuild.io/images/base/ubuntu_2204:latest
-  # resource_group ensures actual publishing is serialized
+  # resource_group ensures the same tag can't be published concurrently
   # Note: lock is NOT held while waiting for manual approval
-  resource_group: publish-${CI_COMMIT_SHA}
+  resource_group: publish-${CI_COMMIT_TAG}
   needs:
     - detect_tags  # Only runs if this succeeded (some crates need publishing)
   stage: publish
@@ -93,7 +76,7 @@ publish_crates:
     - echo "⚠️  PUBLICATION CONFIRMATION"
     - echo "=========================================="
     - echo ""
-    - echo "The following tags will be published:"
+    - echo "The following tag will be published:"
     - cat tags.txt
     - echo ""
     - |
