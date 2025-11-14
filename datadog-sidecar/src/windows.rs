@@ -147,9 +147,7 @@ async fn accept_pipe_loop(
         .ok_or_else(|| io::Error::from(io::ErrorKind::InvalidInput))?;
 
     let raw_handle = pipe_listener.as_raw_handle();
-    let mut pipe = unsafe {
-        NamedPipeServer::from_raw_handle(raw_handle)
-    }?;
+    let mut pipe = unsafe { NamedPipeServer::from_raw_handle(raw_handle) }?;
 
     loop {
         match pipe.connect().await {
@@ -287,20 +285,25 @@ pub fn shutdown_master_listener_windows() -> io::Result<()> {
         stop_listening_on_handle(raw);
 
         let (tx, rx) = std::sync::mpsc::channel();
-        std::thread::spawn(move || {
+        let helper_handle = std::thread::spawn(move || {
             let result = handle.join();
             let _ = tx.send(result);
         });
 
         // Wait up to 500ms for proper shutdown
         match rx.recv_timeout(Duration::from_millis(500)) {
-            Ok(Ok(())) => { }
+            Ok(Ok(())) => {}
             Ok(Err(_)) => {
                 error!("Listener thread panicked during shutdown");
             }
             Err(err) => {
                 error!("Timeout waiting for listener thread to shut down: {}", err);
             }
+        }
+
+        // Join the helper thread to clean up its TLS
+        if let Err(_) = helper_handle.join() {
+            error!("Helper thread panicked");
         }
     }
 

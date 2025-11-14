@@ -1,7 +1,10 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use std::sync::LazyLock;
+use std::sync::{
+    atomic::{AtomicU16, Ordering},
+    LazyLock,
+};
 use std::{
     env, fs, io,
     os::unix::{
@@ -83,7 +86,10 @@ impl Liaison for SharedDirLiaison {
     }
 
     fn ipc_per_process() -> Self {
-        static PROCESS_RANDOM_ID: LazyLock<u16> = LazyLock::new(rand::random);
+        // Use atomic counter instead of rand::random to avoid TLS allocation
+        static PROCESS_ID_COUNTER: AtomicU16 = AtomicU16::new(1);
+        static PROCESS_RANDOM_ID: LazyLock<u16> =
+            LazyLock::new(|| PROCESS_ID_COUNTER.fetch_add(1, Ordering::Relaxed));
 
         let pid = std::process::id();
         let liason_path = env::temp_dir().join(format!("libdatadog.{}.{pid}", *PROCESS_RANDOM_ID));
