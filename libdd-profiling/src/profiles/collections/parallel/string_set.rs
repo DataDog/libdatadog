@@ -87,7 +87,7 @@ impl ParallelStringSet {
     }
 
     /// # Safety
-    /// The caller must ensure that the StringId is valid for this set.
+    /// The caller must ensure that the StringRef is valid for this set.
     pub unsafe fn get(&self, id: StringRef) -> &str {
         // SAFETY: safe as long as caller respects this function's safety.
         unsafe { core::mem::transmute::<&str, &str>(id.0.deref()) }
