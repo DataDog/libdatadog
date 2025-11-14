@@ -3,26 +3,41 @@
 
 use crate::fetch::{
     ConfigApplyState, ConfigClientState, ConfigFetcher, ConfigFetcherState, ConfigInvariants,
-    FileStorage,
+    ConfigProductCapabilities, FileStorage,
 };
 use crate::file_change_tracker::{Change, ChangeTracker, FilePath, UpdatedFiles};
-use crate::{RemoteConfigPath, Target};
+use crate::{RemoteConfigCapabilities, RemoteConfigPath, RemoteConfigProduct, Target};
 use std::sync::Arc;
 
 /// Simple implementation
 pub struct SingleFetcher<S: FileStorage> {
     fetcher: ConfigFetcher<S>,
     target: Arc<Target>,
+    product_capabilities: ConfigProductCapabilities,
     runtime_id: String,
     client_id: String,
     opaque_state: ConfigClientState,
 }
 
+#[derive(Clone, Debug)]
+pub struct ConfigOptions {
+    pub invariants: ConfigInvariants,
+    pub products: Vec<RemoteConfigProduct>,
+    pub capabilities: Vec<RemoteConfigCapabilities>,
+}
+
 impl<S: FileStorage> SingleFetcher<S> {
-    pub fn new(sink: S, target: Target, runtime_id: String, invariants: ConfigInvariants) -> Self {
+    pub fn new(sink: S, target: Target, runtime_id: String, options: ConfigOptions) -> Self {
         SingleFetcher {
-            fetcher: ConfigFetcher::new(sink, Arc::new(ConfigFetcherState::new(invariants))),
+            fetcher: ConfigFetcher::new(
+                sink,
+                Arc::new(ConfigFetcherState::new(options.invariants)),
+            ),
             target: Arc::new(target),
+            product_capabilities: ConfigProductCapabilities::new(
+                options.products,
+                options.capabilities,
+            ),
             runtime_id,
             client_id: uuid::Uuid::new_v4().to_string(),
             opaque_state: ConfigClientState::default(),
@@ -40,6 +55,7 @@ impl<S: FileStorage> SingleFetcher<S> {
             .fetch_once(
                 self.runtime_id.as_str(),
                 self.target.clone(),
+                &self.product_capabilities,
                 self.client_id.as_str(),
                 &mut self.opaque_state,
             )
@@ -68,10 +84,10 @@ impl<S: FileStorage> SingleChangesFetcher<S>
 where
     S::StoredFile: FilePath,
 {
-    pub fn new(sink: S, target: Target, runtime_id: String, invariants: ConfigInvariants) -> Self {
+    pub fn new(sink: S, target: Target, runtime_id: String, options: ConfigOptions) -> Self {
         SingleChangesFetcher {
             changes: ChangeTracker::default(),
-            fetcher: SingleFetcher::new(sink, target, runtime_id, invariants),
+            fetcher: SingleFetcher::new(sink, target, runtime_id, options),
         }
     }
 

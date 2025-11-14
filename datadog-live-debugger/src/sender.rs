@@ -10,6 +10,7 @@ use hyper::{Method, Uri};
 use libdd_common::hyper_migration;
 use libdd_common::tag::Tag;
 use libdd_common::Endpoint;
+use libdd_data_pipeline::agent_info::schema::AgentInfoStruct;
 use percent_encoding::{percent_encode, CONTROLS};
 use serde::{Deserialize, Serialize};
 use std::fmt::Display;
@@ -24,11 +25,13 @@ pub const PROD_DIAGNOSTICS_INTAKE_SUBDOMAIN: &str = "debugger-intake";
 const DIRECT_DEBUGGER_LOGS_URL_PATH: &str = "/api/v2/logs";
 const DIRECT_DEBUGGER_DIAGNOSTICS_URL_PATH: &str = "/api/v2/debugger";
 const AGENT_DEBUGGER_LOGS_URL_PATH: &str = "/debugger/v1/input";
+const AGENT_DEBUGGER_SNAPSHOTS_URL_PATH: &str = "/debugger/v2/input";
 const AGENT_DEBUGGER_DIAGNOSTICS_URL_PATH: &str = "/debugger/v1/diagnostics";
 
 #[derive(Clone, Default)]
 pub struct Config {
     pub logs_endpoint: Option<Endpoint>,
+    pub snapshots_endpoint: Option<Endpoint>,
     pub diagnostics_endpoint: Option<Endpoint>,
 }
 
@@ -38,7 +41,14 @@ impl Config {
         mut logs_endpoint: Endpoint,
         mut diagnostics_endpoint: Endpoint,
     ) -> anyhow::Result<()> {
+        let mut snapshots_endpoint = if diagnostics_endpoint.api_key.is_some() {
+            diagnostics_endpoint.clone()
+        } else {
+            logs_endpoint.clone()
+        };
+
         let mut logs_uri_parts = logs_endpoint.url.into_parts();
+        let mut snapshots_uri_parts = snapshots_endpoint.url.into_parts();
         let mut diagnostics_uri_parts = diagnostics_endpoint.url.into_parts();
 
         #[allow(clippy::unwrap_used)]
@@ -52,6 +62,13 @@ impl Config {
                     AGENT_DEBUGGER_LOGS_URL_PATH
                 },
             ));
+            snapshots_uri_parts.path_and_query = Some(PathAndQuery::from_static(
+                if snapshots_endpoint.api_key.is_some() {
+                    DIRECT_DEBUGGER_DIAGNOSTICS_URL_PATH
+                } else {
+                    AGENT_DEBUGGER_SNAPSHOTS_URL_PATH
+                },
+            ));
             diagnostics_uri_parts.path_and_query = Some(PathAndQuery::from_static(
                 if diagnostics_endpoint.api_key.is_some() {
                     DIRECT_DEBUGGER_DIAGNOSTICS_URL_PATH
@@ -62,24 +79,48 @@ impl Config {
         }
 
         logs_endpoint.url = Uri::from_parts(logs_uri_parts)?;
+        snapshots_endpoint.url = Uri::from_parts(snapshots_uri_parts)?;
         diagnostics_endpoint.url = Uri::from_parts(diagnostics_uri_parts)?;
         self.logs_endpoint = Some(logs_endpoint);
+        self.snapshots_endpoint = Some(snapshots_endpoint);
         self.diagnostics_endpoint = Some(diagnostics_endpoint);
         Ok(())
     }
+
+    pub fn without_dedicated_snapshots_endpoint(&mut self) {
+        self.snapshots_endpoint = self.diagnostics_endpoint.clone();
+    }
+}
+
+pub fn agent_info_supports_dedicated_snapshots_endpoint(info: &AgentInfoStruct) -> bool {
+    info.endpoints
+        .as_ref()
+        .map(|endpoints| {
+            endpoints
+                .iter()
+                .any(|endpoint| endpoint == AGENT_DEBUGGER_SNAPSHOTS_URL_PATH)
+        })
+        .unwrap_or(false)
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[repr(C)]
 pub enum DebuggerType {
     Diagnostics,
+    Snapshots,
     Logs,
 }
 
 impl DebuggerType {
     pub fn of_payload(payload: &DebuggerPayload) -> DebuggerType {
         match payload.debugger {
-            DebuggerData::Snapshot(_) => DebuggerType::Logs,
+            DebuggerData::Snapshot(ref snapshot) => {
+                if snapshot.captures.is_some() {
+                    DebuggerType::Snapshots
+                } else {
+                    DebuggerType::Logs
+                }
+            }
             DebuggerData::Diagnostics(_) => DebuggerType::Diagnostics,
         }
     }
@@ -138,6 +179,7 @@ impl PayloadSender {
         #[allow(clippy::unwrap_used)]
         let endpoint = match debugger_type {
             DebuggerType::Diagnostics => &config.diagnostics_endpoint,
+            DebuggerType::Snapshots => &config.snapshots_endpoint,
             DebuggerType::Logs => &config.logs_endpoint,
         }
         .as_ref()

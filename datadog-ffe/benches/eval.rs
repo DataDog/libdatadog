@@ -20,7 +20,7 @@ struct TestCase {
     flag: String,
     variation_type: FlagType,
     default_value: serde_json::Value,
-    targeting_key: Str,
+    targeting_key: Option<Str>,
     attributes: HashMap<Str, Attribute>,
     result: TestResult,
 }
@@ -96,7 +96,7 @@ fn bench_single_flag_rules_based(b: &mut Bencher) {
     let configuration = Configuration::from_server_response(config);
 
     let context = EvaluationContext::new(
-        "french_user".into(),
+        Some("french_user".into()),
         Arc::new(
             [
                 ("country".into(), "France".into()),

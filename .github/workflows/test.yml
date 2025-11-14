@@ -10,7 +10,7 @@ jobs:
     runs-on: ${{ matrix.platform }}
     strategy:
       matrix:
-        platform: [windows-latest, ubuntu-latest, macos-13]
+        platform: [windows-latest, ubuntu-latest, macos-15]
         rust_version: [""]
         include:
           - platform: "ubuntu-latest"
@@ -92,14 +92,14 @@ jobs:
     runs-on: ${{ matrix.platform }}
     strategy:
       matrix:
-        platform: [windows-latest, ubuntu-latest, macos-13]
+        platform: [windows-latest, ubuntu-latest, macos-15]
         rust_version: [""]
         include:
           - platform: "ubuntu-latest"
             rust_version: "${RUST_VERSION}"
           - platform: "ubuntu-latest"
             flags: "-C relocation-model=pic"
-          - platform: "macos-13"
+          - platform: "macos-15"
             flags: "-C relocation-model=pic"
           - platform: "windows-latest"
             flags: "-C target-feature=+crt-static"

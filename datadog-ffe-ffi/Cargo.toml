@@ -4,7 +4,7 @@
 [package]
 name = "datadog-ffe-ffi"
 edition.workspace = true
-version = "0.1.0"
+version = "1.0.0"
 rust-version.workspace = true
 license.workspace = true
 
@@ -21,7 +21,7 @@ build_common = { path = "../build-common" }
 
 [dependencies]
 anyhow = "1.0.93"
-datadog-ffe = { path = "../datadog-ffe", version = "=0.1.0" }
+datadog-ffe = { path = "../datadog-ffe", version = "=1.0.0" }
 libdd-common-ffi = { path = "../libdd-common-ffi", default-features = false }
 function_name = "0.3.0"
 

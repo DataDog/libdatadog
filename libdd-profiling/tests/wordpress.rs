@@ -1,7 +1,7 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use datadog_profiling::api;
+use libdd_profiling::api;
 use libdd_profiling_protobuf::prost_impls;
 use lz4_flex::frame::FrameDecoder;
 use prost::Message;

@@ -2,12 +2,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use criterion::*;
-use datadog_profiling::collections::string_table::wordpress_test_data::WORDPRESS_STRINGS;
+use libdd_profiling::collections::string_table::wordpress_test_data::WORDPRESS_STRINGS;
 
 /// This version is the one we used before having datadog-alloc.
 #[allow(unused)]
 mod old_version {
-    use datadog_profiling::collections::identifiable::{FxIndexSet, Id, StringId};
+    use libdd_profiling::collections::identifiable::{FxIndexSet, Id, StringId};
     pub struct StringTable {
         strings: FxIndexSet<Box<str>>,
     }
@@ -43,7 +43,7 @@ mod old_version {
 }
 
 // To benchmark a different implementation, import a different one.
-use datadog_profiling::collections::string_table::StringTable;
+use libdd_profiling::collections::string_table::StringTable;
 // use old_version::StringTable;
 
 pub fn small_wordpress_profile(c: &mut Criterion) {

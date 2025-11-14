@@ -4,7 +4,12 @@
 use std::num::NonZeroI64;
 
 use super::datatypes::{profile_ptr_to_inner, Profile};
-use datadog_profiling::{
+use function_name::named;
+use libdd_common_ffi::{
+    slice::AsBytes, wrap_with_ffi_result, wrap_with_void_ffi_result, CharSlice, MutSlice, Result,
+    Slice, VoidResult,
+};
+use libdd_profiling::{
     api::ManagedStringId,
     collections::identifiable::StringId,
     internal::{
@@ -12,11 +17,6 @@ use datadog_profiling::{
         interning_api::{Generation, GenerationalId},
         FunctionId, LabelId, LabelSetId, LocationId, MappingId, StackTraceId,
     },
-};
-use function_name::named;
-use libdd_common_ffi::{
-    slice::AsBytes, wrap_with_ffi_result, wrap_with_void_ffi_result, CharSlice, MutSlice, Result,
-    Slice, VoidResult,
 };
 
 // Cbindgen was putting invalid C types on the static, this workaround seems to fix it.

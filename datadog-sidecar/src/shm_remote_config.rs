@@ -5,14 +5,16 @@ use crate::one_way_shared_memory::{
     open_named_shm, OneWayShmReader, OneWayShmWriter, ReaderOpener,
 };
 use crate::primary_sidecar_identifier;
+use crate::service::DynamicInstrumentationConfigState;
 use crate::tracer::SHM_LIMITER;
 use base64::prelude::BASE64_URL_SAFE_NO_PAD;
 use base64::Engine;
 use datadog_ipc::platform::{FileBackedHandle, MappedMem, NamedShmHandle};
 use datadog_ipc::rate_limiter::ShmLimiter;
+use datadog_remote_config::config::dynamic::{parse_json, Configs};
 use datadog_remote_config::fetch::{
     ConfigInvariants, FileRefcountData, FileStorage, MultiTargetFetcher, MultiTargetHandlers,
-    MultiTargetStats, NotifyTarget, RefcountedFile,
+    MultiTargetStats, NotifyTarget, ProductCapabilities, RefcountedFile,
 };
 use datadog_remote_config::{RemoteConfigPath, RemoteConfigProduct, RemoteConfigValue, Target};
 use libdd_common::{tag::Tag, MutexExt};
@@ -27,6 +29,7 @@ use std::hash::{Hash, Hasher};
 use std::io;
 #[cfg(windows)]
 use std::io::Write;
+use std::marker::PhantomData;
 use std::str::FromStr;
 use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
@@ -35,7 +38,17 @@ use tokio::time::Instant;
 use tracing::{debug, error, trace, warn};
 use zwohash::ZwoHasher;
 
-pub struct RemoteConfigWriter(OneWayShmWriter<NamedShmHandle>);
+pub struct RemoteConfigWriter {
+    writer: OneWayShmWriter<NamedShmHandle>,
+    /// The state of dynamic instrumentation as per apm_config.
+    /// We have to do some config merging with the actual config on the extension side here, as we
+    /// may not do so on the extension side, due to the lifetime mismatch of both sides. (PHP
+    /// request times may be in millisecond range, far too short for the extension to react and
+    /// propagate information about the config.) We also make use of the fact that the multitarget
+    /// fetcher only applies changes to the fetched config when any runtime is active, avoiding
+    /// unnecessary flips of the products.
+    dynamic_instrumentation: Option<bool>,
+}
 pub struct RemoteConfigReader(OneWayShmReader<NamedShmHandle, CString>);
 
 /// Function to dump the invariants and target, and the corresponding path.
@@ -56,6 +69,17 @@ pub unsafe extern "C" fn debug_dump_inv_tar(
         "Shared memory path: {:?}",
         path_for_remote_config(id, target)
     );
+}
+
+type InProcNotifyFn = extern "C" fn(*const ConfigInvariants, *const Arc<Target>);
+static mut IN_PROC_NOTIFY_FUN: Option<InProcNotifyFn> = None;
+
+/// # Safety
+/// This function modifies a global without synchronization.
+/// It is designed to be called by the main thread before other threads are spawned.
+#[no_mangle]
+pub unsafe extern "C" fn ddog_set_rc_notify_fn(notify_fn: Option<InProcNotifyFn>) {
+    IN_PROC_NOTIFY_FUN = notify_fn;
 }
 
 pub fn path_for_remote_config(id: &ConfigInvariants, target: &Arc<Target>) -> CString {
@@ -100,13 +124,14 @@ impl RemoteConfigReader {
 
 impl RemoteConfigWriter {
     pub fn new(id: &ConfigInvariants, target: &Arc<Target>) -> io::Result<RemoteConfigWriter> {
-        Ok(RemoteConfigWriter(OneWayShmWriter::<NamedShmHandle>::new(
-            path_for_remote_config(id, target),
-        )?))
+        Ok(RemoteConfigWriter {
+            writer: OneWayShmWriter::<NamedShmHandle>::new(path_for_remote_config(id, target))?,
+            dynamic_instrumentation: None,
+        })
     }
 
     pub fn write(&self, contents: &[u8]) {
-        self.0.write(contents)
+        self.writer.write(contents)
     }
 }
 
@@ -116,17 +141,25 @@ impl ReaderOpener<NamedShmHandle> for OneWayShmReader<NamedShmHandle, CString> {
     }
 }
 
+#[derive(Default)]
+struct TargetInfo {
+    preferred_dynamic_instrumentation: u32,
+    allowed_dynamic_instrumentation: u32,
+}
+
 #[derive(Clone)]
-struct ConfigFileStorage {
+struct ConfigFileStorage<N: NotifyTarget + 'static> {
     invariants: ConfigInvariants,
     /// All writers
     writers: Arc<Mutex<HashMap<Arc<Target>, RemoteConfigWriter>>>,
+    targets: Arc<Mutex<HashMap<Arc<Target>, TargetInfo>>>,
     #[allow(clippy::type_complexity)]
     on_dead: Arc<Mutex<Option<Box<dyn Fn() + Sync + Send>>>>,
+    _phantom: PhantomData<N>,
 }
 
 struct StoredShmFile {
-    handle: Mutex<NamedShmHandle>,
+    handle: Mutex<Option<NamedShmHandle>>, // just an option to use the handle under lock
     limiter: Option<ShmLimiter<()>>,
     refcount: FileRefcountData,
 }
@@ -137,7 +170,7 @@ impl RefcountedFile for StoredShmFile {
     }
 }
 
-impl FileStorage for ConfigFileStorage {
+impl<N: NotifyTarget + 'static> FileStorage for ConfigFileStorage<N> {
     type StoredFile = StoredShmFile;
 
     fn store(
@@ -147,7 +180,7 @@ impl FileStorage for ConfigFileStorage {
         file: Vec<u8>,
     ) -> anyhow::Result<Arc<StoredShmFile>> {
         Ok(Arc::new(StoredShmFile {
-            handle: Mutex::new(store_shm(version, &path, file)?),
+            handle: Mutex::new(Some(store_shm(version, &path, file)?)),
             limiter: if path.product == RemoteConfigProduct::LiveDebugger {
                 Some(SHM_LIMITER.lock_or_panic().alloc())
             } else {
@@ -163,7 +196,7 @@ impl FileStorage for ConfigFileStorage {
         version: u64,
         contents: Vec<u8>,
     ) -> anyhow::Result<()> {
-        *file.handle.lock_or_panic() = store_shm(version, &file.refcount.path, contents)?;
+        *file.handle.lock_or_panic() = Some(store_shm(version, &file.refcount.path, contents)?);
         Ok(())
     }
 }
@@ -197,9 +230,20 @@ fn store_shm(
     Ok(handle.into())
 }
 
-impl MultiTargetHandlers<StoredShmFile> for ConfigFileStorage {
+fn dynamic_instrumentation_is_enabled(apm_config: Option<bool>, info: &TargetInfo) -> bool {
+    match apm_config {
+        Some(true) => {
+            info.allowed_dynamic_instrumentation > 0 || info.preferred_dynamic_instrumentation > 0
+        }
+        None => info.preferred_dynamic_instrumentation > 0,
+        Some(false) => false,
+    }
+}
+
+impl<N: NotifyTarget + 'static> MultiTargetHandlers<N, Self> for ConfigFileStorage<N> {
     fn fetched(
         &self,
+        fetcher: &Arc<MultiTargetFetcher<N, Self>>,
         runtime_id: &Arc<String>,
         target: &Arc<Target>,
         files: &[Arc<StoredShmFile>],
@@ -217,11 +261,14 @@ impl MultiTargetHandlers<StoredShmFile> for ConfigFileStorage {
             }),
         };
 
+        let old_dynamic_instrumentation = writer.dynamic_instrumentation.take();
+
         let mut serialized = vec![];
         serialized.extend_from_slice(runtime_id.as_bytes());
         serialized.push(b'\n');
         for file in files.iter() {
-            serialized.extend_from_slice(file.handle.lock_or_panic().get_path());
+            #[allow(clippy::unwrap_used)]
+            serialized.extend_from_slice(file.handle.lock_or_panic().as_ref().unwrap().get_path());
             serialized.push(b':');
             if let Some(ref limiter) = file.limiter {
                 serialized.extend_from_slice(limiter.index().to_string().as_bytes());
@@ -235,15 +282,54 @@ impl MultiTargetHandlers<StoredShmFile> for ConfigFileStorage {
                     .as_bytes(),
             );
             serialized.push(b'\n');
+
+            if file.refcount.path.product == RemoteConfigProduct::ApmTracing {
+                let mut handle = file.handle.lock_or_panic();
+                #[allow(clippy::unwrap_used)]
+                let shm = handle.take().unwrap();
+                #[allow(clippy::unwrap_used)]
+                // if mapping our own memory fails, it's already broken
+                let mapped = shm.map().unwrap();
+                if let Ok(config) = parse_json(mapped.as_slice()) {
+                    let configs: Vec<Configs> = config.lib_config.into();
+                    for config in configs {
+                        if let Configs::DynamicInstrumentationEnabled(enabled) = config {
+                            writer.dynamic_instrumentation = Some(enabled);
+                        }
+                    }
+                }
+                *handle = Some(mapped.into());
+            }
         }
 
-        if writer.0.as_slice() != serialized {
+        if old_dynamic_instrumentation != writer.dynamic_instrumentation {
+            if let Some(info) = self.targets.lock_or_panic().get(target) {
+                let was_enabled =
+                    dynamic_instrumentation_is_enabled(old_dynamic_instrumentation, info);
+                let now_enabled =
+                    dynamic_instrumentation_is_enabled(writer.dynamic_instrumentation, info);
+                if was_enabled && !now_enabled {
+                    fetcher.unforce_product(target, RemoteConfigProduct::LiveDebugger);
+                } else if !was_enabled && now_enabled {
+                    fetcher.force_product(target, RemoteConfigProduct::LiveDebugger);
+                }
+            }
+        }
+
+        if writer.writer.as_slice() != serialized {
             writer.write(&serialized);
 
             debug!(
                 "Active configuration files are: {}",
                 String::from_utf8_lossy(&serialized)
             );
+
+            if let Some(in_proc_notify) = unsafe { IN_PROC_NOTIFY_FUN } {
+                in_proc_notify(
+                    &self.invariants as *const ConfigInvariants,
+                    target as *const Arc<Target>,
+                );
+            }
 
             true
         } else {
@@ -272,30 +358,62 @@ pub struct ShmRemoteConfigsGuard<N: NotifyTarget + 'static> {
     target: Arc<Target>,
     runtime_id: String,
     remote_configs: ShmRemoteConfigs<N>,
+    dynamic_instrumentation_state: DynamicInstrumentationConfigState,
 }
 
 impl<N: NotifyTarget + 'static> Drop for ShmRemoteConfigsGuard<N> {
     fn drop(&mut self) {
-        self.remote_configs
-            .0
-            .delete_runtime(&self.runtime_id, &self.target);
-        if self
-            .remote_configs
-            .0
-            .invariants()
-            .endpoint
-            .test_token
-            .is_some()
-            && self.remote_configs.0.active_runtimes() == 0
-        {
+        let fetcher = &self.remote_configs.0;
+        fetcher.delete_runtime(&self.runtime_id, &self.target);
+        if fetcher.invariants().endpoint.test_token.is_some() && fetcher.active_runtimes() == 0 {
             self.remote_configs.shutdown()
+        }
+
+        if self.dynamic_instrumentation_state != DynamicInstrumentationConfigState::Disabled {
+            let writers = fetcher.storage.storage.writers.lock_or_panic();
+            if let Entry::Occupied(mut entry) = fetcher
+                .storage
+                .storage
+                .targets
+                .lock_or_panic()
+                .entry(self.target.clone())
+            {
+                let remove = {
+                    let info = entry.get_mut();
+                    let apm_config_dynamic_instrumentation = writers
+                        .get(&self.target)
+                        .and_then(|c| c.dynamic_instrumentation);
+                    let mut freshly_disabled = false;
+                    if self.dynamic_instrumentation_state
+                        == DynamicInstrumentationConfigState::Enabled
+                    {
+                        info.preferred_dynamic_instrumentation -= 1;
+                        freshly_disabled = apm_config_dynamic_instrumentation.is_none()
+                            && info.preferred_dynamic_instrumentation == 0;
+                    } else {
+                        info.allowed_dynamic_instrumentation -= 1;
+                    }
+                    let remove = info.preferred_dynamic_instrumentation == 0
+                        && info.allowed_dynamic_instrumentation == 0;
+                    if remove && apm_config_dynamic_instrumentation.is_some() {
+                        freshly_disabled = true;
+                    }
+                    if Some(false) != apm_config_dynamic_instrumentation && freshly_disabled {
+                        fetcher.unforce_product(&self.target, RemoteConfigProduct::LiveDebugger);
+                    }
+                    remove
+                };
+                if remove {
+                    entry.remove();
+                }
+            }
         }
     }
 }
 
 #[derive(Clone)]
 pub struct ShmRemoteConfigs<N: NotifyTarget + 'static>(
-    Arc<MultiTargetFetcher<N, ConfigFileStorage>>,
+    Arc<MultiTargetFetcher<N, ConfigFileStorage<N>>>,
 );
 
 // we collect services per env, so that we always query, for each runtime + env, all the services
@@ -317,7 +435,9 @@ impl<N: NotifyTarget + 'static> ShmRemoteConfigs<N> {
         let storage = ConfigFileStorage {
             invariants: invariants.clone(),
             writers: Default::default(),
+            targets: Arc::new(Mutex::new(Default::default())),
             on_dead: Arc::new(Mutex::new(Some(on_dead))),
+            _phantom: Default::default(),
         };
         let fetcher = MultiTargetFetcher::new(storage, invariants);
         fetcher
@@ -330,6 +450,7 @@ impl<N: NotifyTarget + 'static> ShmRemoteConfigs<N> {
         self.0.is_dead()
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn add_runtime(
         &self,
         runtime_id: String,
@@ -338,6 +459,8 @@ impl<N: NotifyTarget + 'static> ShmRemoteConfigs<N> {
         service: String,
         app_version: String,
         tags: Vec<Tag>,
+        product_capabilities: ProductCapabilities,
+        dynamic_instrumentation_state: DynamicInstrumentationConfigState,
     ) -> ShmRemoteConfigsGuard<N> {
         let target = Arc::new(Target {
             service,
@@ -345,12 +468,47 @@ impl<N: NotifyTarget + 'static> ShmRemoteConfigs<N> {
             app_version,
             tags,
         });
-        self.0
-            .add_runtime(runtime_id.clone(), notify_target, &target);
+        self.0.add_runtime(
+            runtime_id.clone(),
+            notify_target,
+            &target,
+            product_capabilities,
+        );
+
+        let writers = self.0.storage.storage.writers.lock_or_panic();
+        if dynamic_instrumentation_state != DynamicInstrumentationConfigState::Disabled {
+            let mut targets = self.0.storage.storage.targets.lock_or_panic();
+            let info = targets
+                .entry(target.clone())
+                .or_insert(TargetInfo::default());
+            if dynamic_instrumentation_state == DynamicInstrumentationConfigState::Enabled {
+                info.preferred_dynamic_instrumentation += 1;
+            } else {
+                info.allowed_dynamic_instrumentation += 1;
+            }
+            let apm_config_dynamic_instrumentation =
+                writers.get(&target).and_then(|c| c.dynamic_instrumentation);
+            if Some(false) != apm_config_dynamic_instrumentation {
+                let freshly_enabled = if apm_config_dynamic_instrumentation.is_none() {
+                    info.preferred_dynamic_instrumentation == 1
+                } else {
+                    (info.preferred_dynamic_instrumentation == 0
+                        && info.allowed_dynamic_instrumentation == 1)
+                        || (info.preferred_dynamic_instrumentation == 1
+                            && info.allowed_dynamic_instrumentation == 0)
+                };
+                if freshly_enabled {
+                    self.0
+                        .force_product(&target, RemoteConfigProduct::LiveDebugger);
+                }
+            }
+        }
+
         ShmRemoteConfigsGuard {
             target,
             runtime_id,
             remote_configs: self.clone(),
+            dynamic_instrumentation_state,
         }
     }
 
@@ -653,7 +811,7 @@ mod tests {
         let (on_dead, on_dead_completer) = ManualFuture::new();
         let on_dead_completer = Arc::new(Mutex::new(Some(on_dead_completer)));
         let shm = ShmRemoteConfigs::new(
-            server.dummy_invariants(),
+            server.dummy_options().invariants,
             Box::new(move || {
                 if let Some(completer) = on_dead_completer.lock().unwrap().take() {
                     tokio::spawn(completer.complete(()));
@@ -662,7 +820,7 @@ mod tests {
             Duration::from_millis(10),
         );
 
-        let mut manager = RemoteConfigManager::new(server.dummy_invariants());
+        let mut manager = RemoteConfigManager::new(server.dummy_options().invariants);
 
         server.files.lock().unwrap().insert(
             PATH_FIRST.clone(),
@@ -689,6 +847,11 @@ mod tests {
             DUMMY_TARGET.service.to_string(),
             DUMMY_TARGET.app_version.to_string(),
             DUMMY_TARGET.tags.clone(),
+            ProductCapabilities {
+                products: server.dummy_options().products,
+                capabilities: server.dummy_options().capabilities,
+            },
+            DynamicInstrumentationConfigState::Disabled,
         );
 
         receiver.recv().await;

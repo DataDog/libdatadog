@@ -12,4 +12,4 @@ pub mod exporter;
 pub mod internal;
 pub mod iter;
 pub mod pprof;
-mod profiles;
+pub mod profiles;

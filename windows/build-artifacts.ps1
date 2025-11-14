@@ -23,17 +23,17 @@ Write-Host "Building project into $($output_dir)" -ForegroundColor Magenta
 # build inside the crate to use the config.toml file
 $features = @(
     "data-pipeline-ffi",
-    "datadog-profiling-ffi/crashtracker-collector",
-    "datadog-profiling-ffi/crashtracker-receiver",
-    "datadog-profiling-ffi/libdd-telemetry-ffi",
-    "datadog-profiling-ffi/demangler",
+    "crashtracker-collector",
+    "crashtracker-receiver",
+    "ddtelemetry-ffi",
+    "demangler",
     "datadog-library-config-ffi",
     "datadog-log-ffi"
 ) -join ","
 
 Write-Host "Building for features: $features" -ForegroundColor Magenta
 
-pushd datadog-profiling-ffi
+pushd libdd-profiling-ffi
 #i686 Release
 Invoke-Call -ScriptBlock { cargo rustc --features $features --target i686-pc-windows-msvc --release --target-dir $output_dir --crate-type cdylib }
 Invoke-Call -ScriptBlock { cargo rustc --features $features --target i686-pc-windows-msvc --release --target-dir $output_dir --crate-type staticlib }
@@ -55,7 +55,7 @@ Set-Location ..
 
 Write-Host "Generating headers" -ForegroundColor Magenta
 Invoke-Call -ScriptBlock { cbindgen --crate libdd-common-ffi --config libdd-common-ffi/cbindgen.toml --output $output_dir\common.h }
-Invoke-Call -ScriptBlock { cbindgen --crate datadog-profiling-ffi --config datadog-profiling-ffi/cbindgen.toml --output $output_dir\profiling.h }
+Invoke-Call -ScriptBlock { cbindgen --crate libdd-profiling-ffi --config libdd-profiling-ffi/cbindgen.toml --output $output_dir\profiling.h }
 Invoke-Call -ScriptBlock { cbindgen --crate libdd-telemetry-ffi --config libdd-telemetry-ffi/cbindgen.toml --output $output_dir\telemetry.h }
 Invoke-Call -ScriptBlock { cbindgen --crate libdd-data-pipeline-ffi --config libdd-data-pipeline-ffi/cbindgen.toml --output $output_dir"\data-pipeline.h" }
 Invoke-Call -ScriptBlock { cbindgen --crate libdd-crashtracker-ffi --config libdd-crashtracker-ffi/cbindgen.toml --output $output_dir"\crashtracker.h" }
