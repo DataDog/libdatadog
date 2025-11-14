@@ -229,4 +229,109 @@ mod tests {
         require_send::<super::ParallelStringSet>();
         require_sync::<super::ParallelStringSet>();
     }
+
+    #[test]
+    fn test_thread_safety() {
+        use std::sync::{Arc, Barrier};
+        use std::thread;
+
+        // Create set and add some strings before sharing across threads
+        let set = ParallelStringSet::try_new().unwrap();
+        let pre_inserted_strings = vec![
+            "pre_inserted_1",
+            "pre_inserted_2",
+            "pre_inserted_3",
+            "pre_inserted_4",
+        ];
+        let mut pre_inserted_ids = Vec::new();
+        for s in &pre_inserted_strings {
+            let id = set.try_insert(s).unwrap();
+            pre_inserted_ids.push((s.to_string(), id));
+        }
+
+        // Share the set across threads using try_clone (which clones the internal Arc)
+        let num_threads = 4;
+        let operations_per_thread = 50;
+
+        // Keep a clone of the original set for final verification
+        let original_set = set.try_clone().unwrap();
+
+        // Create a barrier to ensure all threads start work simultaneously
+        let barrier = Arc::new(Barrier::new(num_threads));
+
+        // Spawn threads that will both read pre-existing strings and insert new ones
+        let handles: Vec<_> = (0..num_threads)
+            .map(|thread_id| {
+                let set = original_set.try_clone().unwrap();
+                let pre_ids = pre_inserted_ids.clone();
+                let barrier = Arc::clone(&barrier);
+                thread::spawn(move || {
+                    // Wait for all threads to be spawned before starting work
+                    barrier.wait();
+
+                    // Read pre-existing strings (should be safe to read concurrently)
+                    for (expected_str, id) in &pre_ids {
+                        unsafe {
+                            let actual_str = set.get(*id);
+                            assert_eq!(
+                                actual_str,
+                                expected_str.as_str(),
+                                "Pre-inserted string should be readable"
+                            );
+                        }
+                    }
+
+                    // Concurrently insert new strings
+                    for i in 0..operations_per_thread {
+                        let new_str = format!("thread_{}_string_{}", thread_id, i);
+                        let id = set.try_insert(&new_str).unwrap();
+                        unsafe {
+                            let retrieved = set.get(id);
+                            assert_eq!(retrieved, new_str, "Inserted string should be retrievable");
+                        }
+                    }
+
+                    // Try inserting strings that other threads might have inserted
+                    for i in 0..operations_per_thread {
+                        let shared_str = format!("shared_string_{}", i);
+                        let id1 = set.try_insert(&shared_str).unwrap();
+                        let id2 = set.try_insert(&shared_str).unwrap();
+                        // Both should return the same ID (deduplication)
+                        assert_eq!(&*id1.0, &*id2.0, "Duplicate inserts should return same ID");
+                        unsafe {
+                            assert_eq!(set.get(id1), shared_str);
+                        }
+                    }
+                })
+            })
+            .collect();
+
+        // Wait for all threads to complete
+        for handle in handles {
+            handle.join().expect("Thread should not panic");
+        }
+
+        // Verify final state: all pre-inserted strings should still be readable
+        for (expected_str, id) in &pre_inserted_ids {
+            unsafe {
+                let actual_str = original_set.get(*id);
+                assert_eq!(
+                    actual_str,
+                    expected_str.as_str(),
+                    "Pre-inserted strings should remain readable after concurrent operations"
+                );
+            }
+        }
+
+        // Verify that shared strings inserted by multiple threads are deduplicated
+        for i in 0..operations_per_thread {
+            let shared_str = format!("shared_string_{}", i);
+            let id1 = original_set.try_insert(&shared_str).unwrap();
+            let id2 = original_set.try_insert(&shared_str).unwrap();
+            assert_eq!(
+                &*id1.0, &*id2.0,
+                "Shared strings should be deduplicated correctly"
+            );
+        }
+    }
 }
