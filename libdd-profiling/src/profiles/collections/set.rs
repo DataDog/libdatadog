@@ -61,7 +61,7 @@ pub struct Set<T: Hash + Eq + 'static> {
 }
 
 impl<T: Eq + Hash + 'static> Set<T> {
-    const SIZE_HINT: usize = 1024 * 1024;
+    pub const SIZE_HINT: usize = 1024 * 1024;
 
     pub fn try_new() -> Result<Self, SetError> {
         Self::try_with_capacity(SET_MIN_CAPACITY)
@@ -145,7 +145,7 @@ impl<T: Hash + Eq + 'static> Drop for Set<T> {
 }
 
 impl<T: Hash + Eq + 'static> Set<T> {
-    fn try_with_capacity(capacity: usize) -> Result<Self, SetError> {
+    pub(crate) fn try_with_capacity(capacity: usize) -> Result<Self, SetError> {
         let arena = ChainAllocator::new_in(Self::SIZE_HINT, VirtualAllocator {});
         let mut table = HashTable::new();
 
@@ -154,7 +154,7 @@ impl<T: Hash + Eq + 'static> Set<T> {
         Ok(Self { arena, table })
     }
 
-    unsafe fn find_with_hash(&self, hash: u64, key: &T) -> Option<SetId<T>> {
+    pub(crate) unsafe fn find_with_hash(&self, hash: u64, key: &T) -> Option<SetId<T>> {
         let found = self
             .table
             // SAFETY: NonNull<T> inside table points to live, properly aligned Ts.
@@ -162,7 +162,7 @@ impl<T: Hash + Eq + 'static> Set<T> {
         Some(SetId(*found))
     }
 
-    unsafe fn insert_unique_uncontended_with_hash(
+    pub(crate) unsafe fn insert_unique_uncontended_with_hash(
         &mut self,
         hash: u64,
         value: T,

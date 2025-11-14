@@ -8,6 +8,8 @@ pub enum SetError {
     InvalidArgument,
     #[error("set error: out of memory")]
     OutOfMemory,
+    #[error("set error: reference count overflow")]
+    ReferenceCountOverflow,
 }
 
 impl From<libdd_alloc::AllocError> for SetError {
