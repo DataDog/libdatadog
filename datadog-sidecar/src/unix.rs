@@ -15,7 +15,8 @@ use nix::sys::socket::{shutdown, Shutdown};
 use std::io;
 use std::os::fd::RawFd;
 use std::os::unix::prelude::{AsRawFd, FromRawFd, IntoRawFd, OwnedFd};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
 use std::time::{Duration, Instant};
 use tokio::net::{UnixListener, UnixStream};
@@ -51,20 +52,140 @@ pub fn start_master_listener_unix(master_pid: i32) -> io::Result<()> {
     let handle = thread::Builder::new()
         .name("dd-sidecar".into())
         .spawn(move || {
-            let acquire_listener = move || -> io::Result<_> {
-                std_listener.set_nonblocking(true)?;
-                let listener = UnixListener::from_std(std_listener.try_clone()?)?;
-                let cancel = {
-                    let fd = listener.as_raw_fd();
-                    move || stop_listening(fd)
-                };
-                Ok((move |handler| accept_socket_loop(listener, handler), cancel))
+            // Use blocking I/O - no shared tokio Runtime needed
+            // This makes the code fork-safe
+            use crate::service::sidecar_server::SidecarServer;
+            let runtime = match tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+            {
+                Ok(rt) => rt,
+                Err(e) => {
+                    error!("Failed to create runtime for server initialization: {}", e);
+                    return;
+                }
             };
 
-            let _ = enter_listener_loop(acquire_listener).map_err(|e| {
-                error!("enter_listener_loop failed: {}", e);
-                e
-            });
+            let server = runtime.block_on(async { SidecarServer::default() });
+
+            // Shutdown flag to signal connection threads to stop
+            let shutdown_flag = Arc::new(AtomicBool::new(false));
+
+            // Track connection threads and stream fds for forceful shutdown
+            let mut handler_threads: Vec<thread::JoinHandle<()>> = Vec::new();
+            let active_fds: Arc<Mutex<Vec<RawFd>>> = Arc::new(Mutex::new(Vec::new()));
+
+            loop {
+                // Clean up finished threads to avoid accumulating handles
+                handler_threads.retain(|h| !h.is_finished());
+
+                match std_listener.accept() {
+                    Ok((stream, _addr)) => {
+                        // Store the raw fd so we can shutdown the connection later
+                        let stream_fd = stream.as_raw_fd();
+                        if let Ok(mut fds) = active_fds.lock() {
+                            fds.push(stream_fd);
+                        }
+
+                        let server = server.clone();
+                        let shutdown = shutdown_flag.clone();
+                        let fds_cleanup = active_fds.clone();
+
+                        // Spawn a thread for each connection
+                        match thread::Builder::new().name("dd-conn-handler".into()).spawn(
+                            move || {
+                                // Create a minimal single-threaded runtime for this connection only
+                                // This runtime will be dropped when the connection closes
+                                let runtime = match tokio::runtime::Builder::new_current_thread()
+                                    .enable_all()
+                                    .build()
+                                {
+                                    Ok(rt) => rt,
+                                    Err(e) => {
+                                        error!("Failed to create runtime for connection: {}", e);
+                                        return;
+                                    }
+                                };
+
+                                runtime.block_on(async move {
+                                    // Check shutdown flag
+                                    if shutdown.load(Ordering::Relaxed) {
+                                        return;
+                                    }
+
+                                    // Convert std UnixStream to tokio UnixStream
+                                    if let Err(e) = stream.set_nonblocking(true) {
+                                        error!("Failed to set nonblocking: {}", e);
+                                        return;
+                                    }
+
+                                    let tokio_stream = match UnixStream::from_std(stream) {
+                                        Ok(s) => s,
+                                        Err(e) => {
+                                            error!("Failed to convert stream: {}", e);
+                                            return;
+                                        }
+                                    };
+
+                                    // Handle the connection using existing async infrastructure
+                                    use datadog_ipc::platform::AsyncChannel;
+
+                                    // Use the cloned shared server
+                                    server
+                                        .accept_connection(AsyncChannel::from(tokio_stream))
+                                        .await;
+
+                                    // Remove this fd from active list when done
+                                    if let Ok(mut fds) = fds_cleanup.lock() {
+                                        fds.retain(|&fd| fd != stream_fd);
+                                    }
+                                });
+                            },
+                        ) {
+                            Ok(handle) => handler_threads.push(handle),
+                            Err(e) => error!("Failed to spawn handler thread: {}", e),
+                        }
+                    }
+                    Err(e) => {
+                        match e.kind() {
+                            io::ErrorKind::Interrupted => continue,
+                            io::ErrorKind::InvalidInput => break, // Socket shut down
+                            _ => {
+                                error!("Accept error: {}", e);
+                                thread::sleep(Duration::from_millis(100));
+                            }
+                        }
+                    }
+                }
+            }
+
+            info!("Master listener stopped accepting connections");
+
+            // Signal all connection threads to stop
+            shutdown_flag.store(true, Ordering::Relaxed);
+
+            // Forcefully shutdown all active connection streams
+            // This will cause accept_connection().await to complete immediately
+            if let Ok(fds) = active_fds.lock() {
+                info!("Forcefully closing {} active connections", fds.len());
+                for &fd in fds.iter() {
+                    // Shutdown both directions to force connection close
+                    let _ = shutdown(fd, Shutdown::Both);
+                }
+            }
+
+            // Shutdown the server
+            server.shutdown();
+
+            // Now join all connection threads - they should exit immediately
+            // because all connections were forcefully closed
+            info!("Waiting for {} connection threads to finish", handler_threads.len());
+            for (i, handle) in handler_threads.into_iter().enumerate() {
+                if let Err(e) = handle.join() {
+                    error!("Connection thread {} panicked: {:?}", i, e);
+                }
+            }
+            info!("All connection threads finished");
         })
         .map_err(io::Error::other)?;
 
@@ -95,6 +216,7 @@ pub fn connect_worker_unix(master_pid: i32) -> io::Result<SidecarTransport> {
         }
     }
 
+    error!("Worker failed to connect after 10 attempts");
     Err(last_error.unwrap_or_else(|| io::Error::other("Connection failed")))
 }
 
@@ -112,27 +234,34 @@ pub fn shutdown_master_listener_unix() -> io::Result<()> {
 
     if let Some((handle, fd)) = listener_data {
         stop_listening(fd);
+        let _ = handle.join();
+    }
 
-        // Try to join with a timeout to avoid hanging the shutdown
-        // We spawn a helper thread to do the join so we can implement a timeout
-        let (tx, rx) = std::sync::mpsc::channel();
-        std::thread::spawn(move || {
-            let result = handle.join();
-            let _ = tx.send(result);
-        });
+    Ok(())
+}
 
-        // Wait up to 2 seconds for clean shutdown (including time for tokio runtime shutdown)
-        match rx.recv_timeout(Duration::from_millis(2000)) {
-            Ok(Ok(())) => {
-                // Clean shutdown
+/// Clears inherited resources in child processes after fork().
+/// With the new blocking I/O approach, we only need to forget the listener thread handle.
+/// Each connection creates its own short-lived runtime, so there's no global runtime to inherit.
+pub fn clear_inherited_listener_unix() -> io::Result<()> {
+    info!("Child process clearing inherited listener state");
+    match MASTER_LISTENER.lock() {
+        Ok(mut guard) => {
+            if let Some((handle, _fd)) = guard.take() {
+                info!("Child forgetting inherited listener thread handle");
+                // Forget the handle without joining - parent owns the thread
+                std::mem::forget(handle);
+                info!("Child successfully forgot listener handle");
+            } else {
+                info!("Child found no listener to clear");
             }
-            Ok(Err(_)) => {
-                error!("Listener thread panicked during shutdown");
-            }
-            Err(_) => {
-                // Timeout - thread didn't exit in time
-                // This is acceptable as the OS will clean up when the process exits
-            }
+        }
+        Err(e) => {
+            error!(
+                "Failed to acquire lock for clearing inherited listener: {}",
+                e
+            );
+            return Err(io::Error::other("Mutex poisoned"));
         }
     }
 

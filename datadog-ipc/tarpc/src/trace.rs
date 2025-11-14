@@ -22,9 +22,13 @@ use rand::Rng;
 use std::{
     fmt::{self, Formatter},
     num::{NonZeroU128, NonZeroU64},
+    sync::atomic::{AtomicU64, Ordering},
 };
 #[cfg(feature = "opentelemetry")]
 use tracing_opentelemetry::OpenTelemetrySpanExt;
+
+/// Global atomic counter for generating unique span IDs
+static SPAN_ID_COUNTER: AtomicU64 = AtomicU64::new(1);
 
 /// A context for tracing the execution of processes, distributed or otherwise.
 ///
@@ -80,9 +84,11 @@ pub enum SamplingDecision {
 impl Context {
     /// Constructs a new context with the trace ID and sampling decision inherited from the parent.
     pub(crate) fn new_child(&self) -> Self {
+        // Use atomic counter instead of rand to avoid TLS allocation
+        let span_id_value = SPAN_ID_COUNTER.fetch_add(1, Ordering::Relaxed);
         Self {
             trace_id: self.trace_id,
-            span_id: SpanId::random(&mut rand::thread_rng()),
+            span_id: SpanId(span_id_value),
             sampling_decision: self.sampling_decision,
         }
     }

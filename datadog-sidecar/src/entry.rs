@@ -129,10 +129,12 @@ where
     // Shutdown final sender so the receiver can complete
     drop(shutdown_complete_tx);
 
-    // Await everything else to completion
-    _ = telemetry_handle.await;
+    // Await everything else to completion with timeouts to ensure we don't hang
+    let shutdown_timeout = Duration::from_millis(500);
+
+    _ = tokio::time::timeout(shutdown_timeout, telemetry_handle).await;
     server.shutdown();
-    _ = server.trace_flusher.join().await;
+    _ = tokio::time::timeout(shutdown_timeout, server.trace_flusher.join()).await;
 
     Ok(())
 }
@@ -153,14 +155,9 @@ where
 
     let (listener, cancel) = acquire_listener()?;
 
-    let result = runtime
+    runtime
         .block_on(main_loop(listener, Arc::new(cancel)))
-        .map_err(|e| e.into());
-
-    // Wait 1 second to shut down properly
-    runtime.shutdown_timeout(std::time::Duration::from_secs(1));
-
-    result
+        .map_err(|e| e.into())
 }
 
 pub fn daemonize(listener: IpcServer, mut cfg: Config) -> anyhow::Result<()> {

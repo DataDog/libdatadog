@@ -33,7 +33,8 @@ use datadog_sidecar::service::{get_telemetry_action_sender, InternalTelemetryAct
 use datadog_sidecar::shm_remote_config::{path_for_remote_config, RemoteConfigReader};
 #[cfg(unix)]
 use datadog_sidecar::{
-    connect_worker_unix, shutdown_master_listener_unix, start_master_listener_unix,
+    clear_inherited_listener_unix, connect_worker_unix, shutdown_master_listener_unix,
+    start_master_listener_unix,
 };
 #[cfg(windows)]
 use datadog_sidecar::{
@@ -355,6 +356,19 @@ pub extern "C" fn ddog_sidecar_shutdown_master_listener() -> MaybeError {
     #[cfg(windows)]
     {
         try_c!(shutdown_master_listener_windows());
+    }
+    MaybeError::None
+}
+
+#[no_mangle]
+pub extern "C" fn ddog_sidecar_clear_inherited_listener() -> MaybeError {
+    #[cfg(unix)]
+    {
+        try_c!(clear_inherited_listener_unix());
+    }
+    #[cfg(windows)]
+    {
+        // Windows doesn't use fork, so no inherited state to clear
     }
     MaybeError::None
 }
