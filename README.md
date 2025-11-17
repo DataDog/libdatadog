@@ -31,13 +31,12 @@ Build `libdatadog` as usual with `cargo build`.
 #### Builder crate
 
 You can generate a release using the builder crate. This will trigger all the necessary steps to create the libraries, binaries, headers and package config files needed to use a pre-built libdatadog binary in a (non-rust) project.
-The default build does not include any capability so you'll need to list all features you want to include. You can see a full, up-to-date list of features in the `builder/Cargo.toml` file.
 
 Here's one example of using the builder crate:
 
 ```bash
 mkdir output-folder
-cargo run --bin release --features profiling,telemetry,data-pipeline,symbolizer,crashtracker,library-config,log,ddsketch -- --out output-folder
+cargo run --bin release -- --out output-folder
 ```
 
 #### Build dependencies
