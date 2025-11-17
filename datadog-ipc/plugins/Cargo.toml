@@ -12,6 +12,7 @@ keywords = ["rpc", "network", "server", "api", "microservices"]
 categories = ["asynchronous", "network-programming"]
 readme = "../README.md"
 description = "Proc macros for tarpc."
+publish = false
 
 [features]
 serde1 = []

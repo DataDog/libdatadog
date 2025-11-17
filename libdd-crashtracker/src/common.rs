@@ -6,9 +6,9 @@ use std::ffi::CString;
 use std::path::Path;
 use std::path::PathBuf;
 
-pub fn get_data_folder_path() -> std::io::Result<PathBuf> {
+pub fn get_tests_folder_path() -> std::io::Result<PathBuf> {
     Path::new(&env!("CARGO_MANIFEST_DIR"))
-        .join("data")
+        .join("tests")
         .canonicalize()
 }
 

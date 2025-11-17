@@ -3,6 +3,7 @@ edition = "2021"
 license = "Apache 2.0"
 name = "datadog-live-debugger"
 version = "0.0.1"
+publish = false
 
 [dependencies]
 anyhow = "1.0"

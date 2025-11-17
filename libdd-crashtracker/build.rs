@@ -19,16 +19,16 @@ fn build_shared_libs() {
 }
 
 #[cfg(unix)]
-fn get_data_folder_path() -> PathBuf {
+fn get_tests_folder_path() -> PathBuf {
     Path::new(&env!("CARGO_MANIFEST_DIR"))
-        .join("data")
+        .join("tests")
         .canonicalize()
         .expect("Failed to canonicalize base path for libtest")
 }
 
 #[cfg(unix)]
 fn build_c_file() {
-    let base_path = get_data_folder_path();
+    let base_path = get_tests_folder_path();
 
     let src = base_path.join("libtest.c");
     let dst = base_path.join("libtest.so");
@@ -72,7 +72,7 @@ fn build_c_file() {
 
 #[cfg(unix)]
 fn build_cpp_file() {
-    let base_path = get_data_folder_path();
+    let base_path = get_tests_folder_path();
 
     let src = base_path.join("libtest_cpp.cpp");
     let dst = base_path.join("libtest_cpp.so");

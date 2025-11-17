@@ -74,4 +74,4 @@ tempfile = { version = "3.23" }
 [build-dependencies]
 # If we use a newer version of cc, CI fails on alpine.
 cc = "1.1.31"
-libdd-common = { path = "../libdd-common" }
+libdd-common = { version = "1.0.0", path = "../libdd-common" }

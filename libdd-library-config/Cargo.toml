@@ -4,7 +4,11 @@
 [package]
 name = "libdd-library-config"
 version = "1.0.0"
+description = "Configuration management library for Datadog products."
+homepage = "https://github.com/DataDog/libdatadog/tree/main/libdd-library-config"
+repository = "https://github.com/DataDog/libdatadog/tree/main/libdd-library-config"
 edition = "2021"
+license.workspace = true
 
 [lib]
 crate-type = ["lib"]
