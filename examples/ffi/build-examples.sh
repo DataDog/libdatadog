@@ -22,6 +22,7 @@ FEATURES=(
     "library-config"
     "log"
     "ddsketch"
+    "ffe"
 )
 
 FEATURE_LIST=$(IFS=,; echo "${FEATURES[*]}")
