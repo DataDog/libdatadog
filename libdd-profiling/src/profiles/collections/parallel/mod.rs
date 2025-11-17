@@ -1,20 +1,12 @@
 // Copyright 2025-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-mod arc;
-mod error;
-mod parallel;
 mod set;
+mod sharded;
 mod slice_set;
 mod string_set;
-mod thin_str;
 
-pub type SetHasher = core::hash::BuildHasherDefault<rustc_hash::FxHasher>;
-
-pub use arc::*;
-pub use error::*;
-pub use parallel::*;
 pub use set::*;
+pub use sharded::*;
 pub use slice_set::*;
 pub use string_set::*;
-pub use thin_str::*;
