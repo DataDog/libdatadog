@@ -5,27 +5,38 @@
 mod fuzz_tests;
 
 pub mod interning_api;
+mod profiles_dictionary_translator;
+
+pub use profiles_dictionary_translator::*;
 
 use self::api::UpscalingInfo;
 use super::*;
-use crate::api;
 use crate::api::ManagedStringId;
+use crate::api2::{Period2, ValueType2};
 use crate::collections::identifiable::*;
 use crate::collections::string_storage::{CachedProfileId, ManagedStringStorage};
 use crate::collections::string_table::{self, StringTable};
+use crate::internal::owned_types;
 use crate::iter::{IntoLendingIterator, LendingIterator};
+use crate::profiles::collections::ArcOverflow;
+use crate::profiles::datatypes::ProfilesDictionary;
 use crate::profiles::{Compressor, DefaultProfileCodec};
+use crate::{api, api2};
 use anyhow::Context;
 use interning_api::Generation;
 use libdd_profiling_protobuf::{self as protobuf, Record, Value, NO_OPT_ZERO, OPT_ZERO};
 use std::borrow::Cow;
 use std::collections::HashMap;
 use std::io;
+use std::ops::Deref;
 use std::sync::atomic::AtomicU64;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime};
 
 pub struct Profile {
+    /// Translates from the new Id2 APIs to the older internal APIs. Long-term,
+    /// this should probably use the dictionary directly.
+    profiles_dictionary_translator: Option<ProfilesDictionaryTranslator>,
     /// When profiles are reset, the sample-types need to be preserved. This
     /// maintains them in a way that does not depend on the string table. The
     /// Option part is this is taken from the old profile and moved to the new
@@ -162,6 +173,88 @@ impl Profile {
         self.try_add_sample_internal(sample.values, labels, locations, timestamp)
     }
 
+    /// Tries to add a sample using `api2` structures.
+    pub fn try_add_sample2<'a, L: ExactSizeIterator<Item = anyhow::Result<api2::Label<'a>>>>(
+        &mut self,
+        locations: &[api2::Location2],
+        values: &[i64],
+        labels: L,
+        timestamp: Option<Timestamp>,
+    ) -> anyhow::Result<()> {
+        let Some(translator) = &mut self.profiles_dictionary_translator else {
+            anyhow::bail!("profiles dictionary not set");
+        };
+
+        // In debug builds, we iterate over the labels twice. That's not
+        // something the trait bounds support, so we collect into a vector.
+        // Since this is debug-only, the performance is fine.
+        #[cfg(debug_assertions)]
+        let labels = labels.collect::<Vec<_>>();
+        #[cfg(debug_assertions)]
+        {
+            Self::validate_sample_labels2(labels.as_slice())?;
+        }
+
+        let string_table = &mut self.strings;
+        let functions = &mut self.functions;
+        let mappings = &mut self.mappings;
+        let locations_set = &mut self.locations;
+        let labels_set = &mut self.labels;
+
+        let labels = {
+            let mut lbls = Vec::new();
+            lbls.try_reserve_exact(labels.len())?;
+            for label in labels {
+                let label = label.context("profile label failed to convert")?;
+                let key = translator.translate_string(string_table, label.key)?;
+                let internal_label = if !label.str.is_empty() {
+                    let str = string_table.try_intern(label.str)?;
+                    Label::str(key, str)
+                } else {
+                    let num = label.num;
+                    let num_unit = string_table.try_intern(label.num_unit)?;
+                    Label::num(key, num, num_unit)
+                };
+
+                let id = labels_set.try_dedup(internal_label)?;
+                lbls.push(id);
+            }
+            lbls.into_boxed_slice()
+        };
+
+        let mut internal_locations = Vec::new();
+        internal_locations
+            .try_reserve_exact(locations.len())
+            .context("failed to reserve memory for sample locations")?;
+        for location in locations {
+            let l = Location {
+                mapping_id: translator.translate_mapping(
+                    mappings,
+                    string_table,
+                    location.mapping,
+                )?,
+                function_id: translator.translate_function(
+                    functions,
+                    string_table,
+                    location.function,
+                )?,
+                address: location.address,
+                line: location.line,
+            };
+            let location_id = locations_set.checked_dedup(l)?;
+            internal_locations.push(location_id);
+        }
+
+        self.try_add_sample_internal(values, labels, internal_locations, timestamp)
+    }
+
+    /// Gets the profiles dictionary, needed for `api2` operations.
+    pub fn get_profiles_dictionary(&self) -> Option<&ProfilesDictionary> {
+        self.profiles_dictionary_translator
+            .as_ref()
+            .map(|p| p.profiles_dictionary.deref())
+    }
+
     pub fn add_string_id_sample(
         &mut self,
         sample: api::StringIdSample,
@@ -283,12 +376,15 @@ impl Profile {
     }
 
     /// Tries to create a profile with the given `period`.
-    /// Initializes the string table to hold:
+    /// Initializes the string table to hold common strings such as:
     ///  - "" (the empty string)
     ///  - "local root span id"
     ///  - "trace endpoint"
+    /// - "end_timestamp_ns"
     ///
     /// All other fields are default.
+    ///
+    /// It's recommended to use [`Profile::try_new2`] instead.
     pub fn try_new(
         sample_types: &[api::ValueType],
         period: Option<api::Period>,
@@ -297,6 +393,29 @@ impl Profile {
             Self::backup_period(period),
             Self::backup_sample_types(sample_types),
             None,
+            None,
+        )
+    }
+
+    /// Tries to create a profile with the given period and sample types. The
+    /// [`StringId2`]s should belong to the provided [`ProfilesDictionary`].
+    #[inline(never)]
+    #[cold]
+    pub fn try_new2(
+        profiles_dictionary: crate::profiles::collections::Arc<ProfilesDictionary>,
+        sample_types: &[ValueType2],
+        period: Option<Period2>,
+    ) -> io::Result<Self> {
+        let mut owned_sample_types = Vec::new();
+        // Using try_reserve_exact because it will be converted to a Box<[]>,
+        // so excess capacity would just make that conversion more expensive.
+        owned_sample_types.try_reserve_exact(sample_types.len())?;
+        owned_sample_types.extend(sample_types.iter().map(owned_types::ValueType::from));
+        Self::try_new_internal(
+            period.map(owned_types::Period::from),
+            Some(owned_sample_types.into_boxed_slice()),
+            None,
+            Some(ProfilesDictionaryTranslator::new(profiles_dictionary)),
         )
     }
 
@@ -310,6 +429,7 @@ impl Profile {
             Self::backup_period(period),
             Self::backup_sample_types(sample_types),
             Some(string_storage),
+            None,
         )
     }
 
@@ -323,10 +443,20 @@ impl Profile {
             "Can't rotate the profile, there are still active samples. Drain them and try again."
         );
 
+        let profiles_dictionary_translator = self
+            .profiles_dictionary_translator
+            .as_ref()
+            .map(|t| -> Result<_, ArcOverflow> {
+                let dict = t.profiles_dictionary.try_clone()?;
+                Ok(ProfilesDictionaryTranslator::new(dict))
+            })
+            .transpose()?;
+
         let mut profile = Profile::try_new_internal(
             self.owned_period.take(),
             self.owned_sample_types.take(),
             self.string_storage.clone(),
+            profiles_dictionary_translator,
         )
         .context("failed to initialize new profile")?;
 
@@ -785,9 +915,11 @@ impl Profile {
         owned_period: Option<owned_types::Period>,
         owned_sample_types: Option<Box<[owned_types::ValueType]>>,
         string_storage: Option<Arc<Mutex<ManagedStringStorage>>>,
+        profiles_dictionary_translator: Option<ProfilesDictionaryTranslator>,
     ) -> io::Result<Self> {
         let start_time = SystemTime::now();
         let mut profile = Self {
+            profiles_dictionary_translator,
             owned_period,
             owned_sample_types,
             active_samples: Default::default(),
@@ -901,6 +1033,35 @@ impl Profile {
                 key_id != self.timestamp_key,
                 "Timestamp should not be passed as a label {:?}",
                 label
+            );
+        }
+        Ok(())
+    }
+
+    #[cfg(debug_assertions)]
+    fn validate_sample_labels2(labels: &[anyhow::Result<api2::Label>]) -> anyhow::Result<()> {
+        use crate::profiles::collections::StringRef;
+        let mut seen: HashMap<StringRef, &api2::Label> = HashMap::with_capacity(labels.len());
+
+        for label in labels.iter() {
+            let Ok(label) = label.as_ref() else {
+                anyhow::bail!("profiling FFI label string failed to convert")
+            };
+            let key = StringRef::from(label.key);
+            if let Some(duplicate) = seen.insert(key, label) {
+                anyhow::bail!("Duplicate label on sample: {duplicate:?} {label:?}");
+            }
+
+            if key == StringRef::LOCAL_ROOT_SPAN_ID {
+                anyhow::ensure!(
+                    label.str.is_empty() && label.num != 0,
+                    "Invalid \"local root span id\" label: {label:?}"
+                );
+            }
+
+            anyhow::ensure!(
+                key != StringRef::END_TIMESTAMP_NS,
+                "Timestamp should not be passed as a label {label:?}"
             );
         }
         Ok(())

@@ -7,6 +7,7 @@
 #![cfg_attr(not(test), deny(clippy::unimplemented))]
 
 pub mod api;
+pub mod api2;
 pub mod collections;
 pub mod exporter;
 pub mod internal;
