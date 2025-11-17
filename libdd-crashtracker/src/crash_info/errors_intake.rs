@@ -3,7 +3,7 @@
 
 use std::time::SystemTime;
 
-use crate::SigInfo;
+use crate::{OsInfo, SigInfo};
 
 use super::{build_crash_ping_message, CrashInfo, Experimental, Metadata, StackTrace};
 use anyhow::Context;
@@ -259,6 +259,9 @@ pub struct ErrorsIntakePayload {
     pub error: ErrorObject,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub trace_id: Option<String>,
+    pub os_info: OsInfo,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sig_info: Option<SigInfo>,
 }
 
 #[derive(Debug, Default)]
@@ -404,6 +407,8 @@ impl ErrorsIntakePayload {
             None
         };
 
+        let sig_info = crash_info.sig_info.clone();
+
         Ok(Self {
             timestamp,
             ddsource: "crashtracker".to_string(),
@@ -418,6 +423,8 @@ impl ErrorsIntakePayload {
                 experimental: crash_info.experimental.clone(),
             },
             trace_id: None,
+            os_info: ::os_info::get().into(),
+            sig_info,
         })
     }
 
@@ -476,7 +483,11 @@ impl ErrorsIntakePayload {
                 source_type: Some("Crashtracking".to_string()),
                 experimental: None,
             },
+            sig_info: sig_info.cloned(),
             trace_id: None,
+            // Crash ping does not include os_info, but we can recalculate it here
+            // so that errors intake crash pings include this information
+            os_info: ::os_info::get().into(),
         })
     }
 }
@@ -598,6 +609,7 @@ mod tests {
         std::env::remove_var("_DD_ERRORS_INTAKE_ENABLED");
     }
 
+    #[cfg_attr(miri, ignore)]
     #[test]
     fn test_errors_payload_from_crash_info() {
         let crash_info = CrashInfo::test_instance(1);
@@ -628,6 +640,7 @@ mod tests {
         assert!(ddtags.contains("si_signo_human_readable:SIGSEGV"));
     }
 
+    #[cfg_attr(miri, ignore)]
     #[test]
     fn test_errors_payload_from_crash_ping() {
         let metadata = Metadata::test_instance(1);
@@ -657,6 +670,7 @@ mod tests {
         assert!(ddtags.contains("si_signo_human_readable:SIGSEGV"));
     }
 
+    #[cfg_attr(miri, ignore)]
     #[test]
     fn test_errors_intake_has_all_telemetry_tags() {
         let crash_info = CrashInfo::test_instance(1);
@@ -691,6 +705,7 @@ mod tests {
         }
     }
 
+    #[cfg_attr(miri, ignore)]
     #[test]
     fn test_crash_ping_has_all_telemetry_tags() {
         let metadata = Metadata::test_instance(1);
