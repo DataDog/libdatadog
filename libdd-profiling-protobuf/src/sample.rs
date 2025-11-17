@@ -1,7 +1,11 @@
 // Copyright 2025-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::{prost_impls, Label, Record, Value, WireType, NO_OPT_ZERO};
+use crate::{Label, Record, Value, WireType, NO_OPT_ZERO};
+
+#[cfg(feature = "prost_impls")]
+use crate::prost_impls;
+
 use std::io::{self, Write};
 
 /// Each Sample records values encountered in some program context. The
