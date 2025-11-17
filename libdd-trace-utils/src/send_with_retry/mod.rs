@@ -36,7 +36,21 @@ impl std::fmt::Display for SendWithRetryError {
         match self {
             SendWithRetryError::Http(_, _) => write!(f, "Http error code received"),
             SendWithRetryError::Timeout(_) => write!(f, "Request timed out"),
-            SendWithRetryError::Network(error, _) => write!(f, "Network error: {error}"),
+            SendWithRetryError::Network(error, _) => {
+                write!(f, "Network error: {error}")?;
+                
+                // Include the source error if available
+                if let Some(source) = std::error::Error::source(error) {
+                    write!(f, ", source: {source}")?;
+                }
+                
+                // Include the connect_info if available
+                if let Some(connect_info) = error.connect_info() {
+                    write!(f, ", connect_info: {connect_info:?}")?;
+                }
+                
+                Ok(())
+            }
             SendWithRetryError::Build(_) => {
                 write!(f, "Failed to build request due to invalid property")
             }
