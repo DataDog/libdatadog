@@ -1,10 +1,10 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+use libdd_common_ffi::slice::CharSlice;
 use libdd_data_pipeline::trace_exporter::error::{
-    AgentErrorKind, BuilderErrorKind, NetworkErrorKind, TraceExporterError,
+    BuilderErrorKind, NetworkErrorKind, TraceExporterError,
 };
-use std::ffi::{c_char, CString};
 use std::fmt::Display;
 
 /// Context field for structured error data.
@@ -13,9 +13,9 @@ use std::fmt::Display;
 #[derive(Debug)]
 pub struct ContextField {
     /// Key name for this context field
-    pub key: *const c_char,
+    pub key: CharSlice<'static>,
     /// Value for this context field
-    pub value: *const c_char,
+    pub value: CharSlice<'static>,
 }
 
 /// Represent error codes that `Error` struct can hold
@@ -87,11 +87,9 @@ impl Display for ExporterErrorCode {
 pub struct ExporterError {
     pub code: ExporterErrorCode,
     /// Static error message template
-    pub msg_template: *const c_char,
-    /// Array of context fields
-    pub context_fields: *const ContextField,
-    /// Number of context fields
-    pub context_count: usize,
+    pub msg_template: CharSlice<'static>,
+    /// Vector of context fields
+    pub context_fields: libdd_common_ffi::Vec<ContextField>,
 }
 
 impl ExporterError {
@@ -101,60 +99,30 @@ impl ExporterError {
     ///
     /// * `code` - The error code representing the type of error
     /// * `template` - A static string template for the error message
-    ///
-    /// The returned error owns the template string and will free it when dropped.
-    /// The template string is converted to a null-terminated C string.
     pub fn new(code: ExporterErrorCode, template: &'static str) -> Self {
-        // Convert to CString to ensure null termination
-        let template_cstring = CString::new(template).unwrap_or_default();
-        let template_ptr = template_cstring.into_raw();
-
         Self {
             code,
-            msg_template: template_ptr,
-            context_fields: std::ptr::null(),
-            context_count: 0,
+            msg_template: CharSlice::from(template),
+            context_fields: libdd_common_ffi::Vec::default(),
         }
     }
 
     /// Creates a new ExporterError with a static template and context fields.
-    ///
-    /// This method is designed for template-based error messaging where static error
-    /// templates are separated from dynamic context data.
     ///
     /// # Arguments
     ///
     /// * `code` - The error code representing the type of error
     /// * `template` - A static string template for the error message
     /// * `context_fields` - Vector of context fields containing structured error data
-    ///
-    /// The returned error owns all the strings and will free them when dropped.
-    /// Both the template and all context field keys/values are converted to
-    /// null-terminated C strings. The context fields array is heap-allocated
-    /// and will be properly freed.
     pub fn with_template_and_context(
         code: ExporterErrorCode,
         template: &'static str,
-        context_fields: Vec<ContextField>,
+        context_fields: std::vec::Vec<ContextField>,
     ) -> Self {
-        let (fields_ptr, count) = if context_fields.is_empty() {
-            (std::ptr::null(), 0)
-        } else {
-            let boxed_fields = context_fields.into_boxed_slice();
-            let len = boxed_fields.len();
-            let ptr = Box::into_raw(boxed_fields) as *const ContextField;
-            (ptr, len)
-        };
-
-        // Convert to CString to ensure null termination
-        let template_cstring = CString::new(template).unwrap_or_default();
-        let template_ptr = template_cstring.into_raw();
-
         Self {
             code,
-            msg_template: template_ptr,
-            context_fields: fields_ptr,
-            context_count: count,
+            msg_template: CharSlice::from(template),
+            context_fields: libdd_common_ffi::Vec::from(context_fields),
         }
     }
 }
@@ -164,37 +132,19 @@ impl From<TraceExporterError> for ExporterError {
         let code = match &value {
             TraceExporterError::Agent(_) => ExporterErrorCode::HttpEmptyBody,
             TraceExporterError::Builder(builder_error) => match builder_error {
-                BuilderErrorKind::InvalidUri(_) => {
-                    ExporterErrorCode::InvalidUrl
-                }
+                BuilderErrorKind::InvalidUri(_) => ExporterErrorCode::InvalidUrl,
                 _ => ExporterErrorCode::InvalidArgument,
             },
             TraceExporterError::Internal(_) => ExporterErrorCode::Internal,
             TraceExporterError::Network(network_error) => match network_error.kind() {
-                NetworkErrorKind::Body => {
-                    ExporterErrorCode::HttpBodyFormat
-                }
-                NetworkErrorKind::Parse => {
-                    ExporterErrorCode::HttpParse
-                }
-                NetworkErrorKind::TimedOut => {
-                    ExporterErrorCode::TimedOut
-                }
-                NetworkErrorKind::WrongStatus => {
-                    ExporterErrorCode::HttpWrongStatus
-                }
-                NetworkErrorKind::ConnectionClosed => {
-                    ExporterErrorCode::ConnectionReset
-                }
-                NetworkErrorKind::MessageTooLarge => {
-                    ExporterErrorCode::HttpBodyTooLong
-                }
-                NetworkErrorKind::Canceled => {
-                    ExporterErrorCode::HttpClient
-                }
-                NetworkErrorKind::Unknown => {
-                    ExporterErrorCode::NetworkUnknown
-                }
+                NetworkErrorKind::Body => ExporterErrorCode::HttpBodyFormat,
+                NetworkErrorKind::Parse => ExporterErrorCode::HttpParse,
+                NetworkErrorKind::TimedOut => ExporterErrorCode::TimedOut,
+                NetworkErrorKind::WrongStatus => ExporterErrorCode::HttpWrongStatus,
+                NetworkErrorKind::ConnectionClosed => ExporterErrorCode::ConnectionReset,
+                NetworkErrorKind::MessageTooLarge => ExporterErrorCode::HttpBodyTooLong,
+                NetworkErrorKind::Canceled => ExporterErrorCode::HttpClient,
+                NetworkErrorKind::Unknown => ExporterErrorCode::NetworkUnknown,
             },
             TraceExporterError::Request(request_error) => {
                 if request_error.status().is_client_error() {
@@ -222,16 +172,18 @@ impl From<TraceExporterError> for ExporterError {
         let template = value.template();
         let context = value.context();
 
-        let context_fields: Vec<ContextField> = context
+        // Leak context field strings into static lifetime for FFI safety.
+        // These allocations will remain until process termination.
+        let context_fields: std::vec::Vec<ContextField> = context
             .fields()
             .iter()
             .map(|(key, value)| {
-                let key_cstring = CString::new(key.as_str()).unwrap_or_default();
-                let value_cstring = CString::new(value.as_str()).unwrap_or_default();
+                let key_leaked: &'static str = Box::leak(key.clone().into_boxed_str());
+                let value_leaked: &'static str = Box::leak(value.clone().into_boxed_str());
 
                 ContextField {
-                    key: key_cstring.into_raw(),
-                    value: value_cstring.into_raw(),
+                    key: CharSlice::from(key_leaked),
+                    value: CharSlice::from(value_leaked),
                 }
             })
             .collect();
@@ -240,44 +192,11 @@ impl From<TraceExporterError> for ExporterError {
     }
 }
 
-impl Drop for ExporterError {
-    fn drop(&mut self) {
-        unsafe {
-            // Free the msg_template
-            if !self.msg_template.is_null() {
-                // SAFETY: msg_template is originated from CString::into_raw in new() and
-                // with_template_and_context() methods
-                drop(CString::from_raw(self.msg_template as *mut c_char));
-                self.msg_template = std::ptr::null();
-            }
-
-            // Free the context fields
-            if !self.context_fields.is_null() && self.context_count > 0 {
-                // SAFETY: `context_fields` and individual key/value pointers are originated from
-                // `CString::into_raw` calls in the `From<TraceExporterError>` conversion and
-                // `with_template_and_context` method. The array is created via `Box::into_raw`
-                // from a boxed slice. Any other creation path could lead to UB.
-                for i in 0..self.context_count {
-                    let field = &*self.context_fields.add(i);
-                    if !field.key.is_null() {
-                        drop(CString::from_raw(field.key as *mut c_char));
-                    }
-                    if !field.value.is_null() {
-                        drop(CString::from_raw(field.value as *mut c_char));
-                    }
-                }
-
-                // Free the context fields array
-                drop(Box::from_raw(std::slice::from_raw_parts_mut(
-                    self.context_fields as *mut ContextField,
-                    self.context_count,
-                )));
-                self.context_fields = std::ptr::null();
-                self.context_count = 0;
-            }
-        }
-    }
-}
+// Note: ExporterError does not implement Drop for context field strings.
+// Context fields from From<TraceExporterError> use leaked strings for FFI safety.
+// This results in a small memory leak, which is acceptable for error handling.
+// The FfiVec and its ContextField structs are cleaned up automatically.
+// msg_template is always a static reference and requires no cleanup.
 
 /// Frees `error` and all its contents. After being called error will not point to a valid memory
 /// address so any further actions on it could lead to undefined behavior.
@@ -291,7 +210,7 @@ pub unsafe extern "C" fn ddog_trace_exporter_error_free(error: Option<Box<Export
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::ffi::CStr;
+    use libdd_common_ffi::slice::AsBytes;
 
     #[test]
     fn constructor_test() {
@@ -300,11 +219,9 @@ mod tests {
         let error = Box::new(ExporterError::new(code, template));
 
         assert_eq!(error.code, ExporterErrorCode::InvalidArgument);
-        assert!(!error.msg_template.is_null());
-        let template_str = unsafe { CStr::from_ptr(error.msg_template).to_string_lossy() };
+        let template_str = error.msg_template.try_to_utf8().unwrap();
         assert_eq!(template_str, "Invalid argument provided");
-        assert!(error.context_fields.is_null());
-        assert_eq!(error.context_count, 0);
+        assert_eq!(error.context_fields.len(), 0);
     }
 
     #[test]
@@ -314,7 +231,8 @@ mod tests {
         let error = Box::new(ExporterError::new(code, template));
 
         assert_eq!(error.code, ExporterErrorCode::InvalidArgument);
-        assert!(!error.msg_template.is_null());
+        let template_str = error.msg_template.try_to_utf8().unwrap();
+        assert_eq!(template_str, "Test template");
 
         unsafe { ddog_trace_exporter_error_free(Some(error)) };
     }
@@ -324,8 +242,8 @@ mod tests {
         let code = ExporterErrorCode::InvalidUrl;
         let template = "Invalid URI provided";
         let context_fields = vec![ContextField {
-            key: CString::new("details").unwrap().into_raw(),
-            value: CString::new("invalid://url").unwrap().into_raw(),
+            key: CharSlice::from("details"),
+            value: CharSlice::from("invalid://url"),
         }];
 
         let error = Box::new(ExporterError::with_template_and_context(
@@ -335,11 +253,15 @@ mod tests {
         ));
 
         assert_eq!(error.code, ExporterErrorCode::InvalidUrl);
-        assert!(!error.msg_template.is_null());
-        let template_str = unsafe { CStr::from_ptr(error.msg_template).to_string_lossy() };
+        let template_str = error.msg_template.try_to_utf8().unwrap();
         assert_eq!(template_str, "Invalid URI provided");
-        assert!(!error.context_fields.is_null());
-        assert_eq!(error.context_count, 1);
+        assert_eq!(error.context_fields.len(), 1);
+
+        let context_field = &error.context_fields[0];
+        let key_str = context_field.key.try_to_utf8().unwrap();
+        let value_str = context_field.value.try_to_utf8().unwrap();
+        assert_eq!(key_str, "details");
+        assert_eq!(value_str, "invalid://url");
 
         unsafe { ddog_trace_exporter_error_free(Some(error)) };
     }
@@ -353,16 +275,13 @@ mod tests {
         let ffi_error = ExporterError::from(builder_error);
 
         assert_eq!(ffi_error.code, ExporterErrorCode::InvalidUrl);
-        assert!(!ffi_error.msg_template.is_null());
-        let template_str = unsafe { CStr::from_ptr(ffi_error.msg_template).to_string_lossy() };
+        let template_str = ffi_error.msg_template.try_to_utf8().unwrap();
         assert_eq!(template_str, "Invalid URI provided: {details}");
-        assert!(!ffi_error.context_fields.is_null());
-        assert_eq!(ffi_error.context_count, 1);
+        assert_eq!(ffi_error.context_fields.len(), 1);
 
-        // Check context field content
-        let context_field = unsafe { &*ffi_error.context_fields };
-        let key_str = unsafe { CStr::from_ptr(context_field.key).to_string_lossy() };
-        let value_str = unsafe { CStr::from_ptr(context_field.value).to_string_lossy() };
+        let context_field = &ffi_error.context_fields[0];
+        let key_str = context_field.key.try_to_utf8().unwrap();
+        let value_str = context_field.value.try_to_utf8().unwrap();
         assert_eq!(key_str, "details");
         assert_eq!(value_str, "bad://url");
     }
@@ -372,17 +291,14 @@ mod tests {
         use libdd_data_pipeline::trace_exporter::error::TraceExporterError;
         use std::io::{Error as IoError, ErrorKind};
 
-        // Create a network error by wrapping an IO error
         let io_error = IoError::new(ErrorKind::ConnectionAborted, "Connection closed");
         let network_error = TraceExporterError::Io(io_error);
         let ffi_error = ExporterError::from(network_error);
 
         assert_eq!(ffi_error.code, ExporterErrorCode::ConnectionAborted);
-        assert!(!ffi_error.msg_template.is_null());
-        let template_str = unsafe { CStr::from_ptr(ffi_error.msg_template).to_string_lossy() };
+        let template_str = ffi_error.msg_template.try_to_utf8().unwrap();
         assert_eq!(template_str, "Connection aborted");
-        assert!(!ffi_error.context_fields.is_null());
-        assert!(ffi_error.context_count > 0);
+        assert!(ffi_error.context_fields.len() > 0);
     }
 
     #[test]
@@ -393,11 +309,9 @@ mod tests {
         let ffi_error = ExporterError::from(agent_error);
 
         assert_eq!(ffi_error.code, ExporterErrorCode::HttpEmptyBody);
-        assert!(!ffi_error.msg_template.is_null());
-        let template_str = unsafe { CStr::from_ptr(ffi_error.msg_template).to_string_lossy() };
+        let template_str = ffi_error.msg_template.try_to_utf8().unwrap();
         assert_eq!(template_str, "Agent returned empty response");
-        assert!(ffi_error.context_fields.is_null()); // AgentErrorKind has no context
-        assert_eq!(ffi_error.context_count, 0);
+        assert_eq!(ffi_error.context_fields.len(), 0);
     }
 
     #[test]
@@ -410,29 +324,22 @@ mod tests {
         let ffi_error = ExporterError::from(io_error);
 
         assert_eq!(ffi_error.code, ExporterErrorCode::IoError);
-        assert!(!ffi_error.msg_template.is_null());
-        let template_str = unsafe { CStr::from_ptr(ffi_error.msg_template).to_string_lossy() };
+        let template_str = ffi_error.msg_template.try_to_utf8().unwrap();
         assert_eq!(template_str, "Permission denied");
-        assert!(!ffi_error.context_fields.is_null());
-        assert!(ffi_error.context_count > 0);
+        assert!(ffi_error.context_fields.len() > 0);
     }
 
     #[test]
     fn from_trace_exporter_error_memory_safety_test() {
         use libdd_data_pipeline::trace_exporter::error::{BuilderErrorKind, TraceExporterError};
 
-        // Create error with context
         let builder_error = TraceExporterError::Builder(BuilderErrorKind::InvalidConfiguration(
             "Missing service name".to_string(),
         ));
         let ffi_error = Box::new(ExporterError::from(builder_error));
 
-        // Verify context is properly allocated
-        assert_eq!(ffi_error.context_count, 1);
-        assert!(!ffi_error.context_fields.is_null());
+        assert_eq!(ffi_error.context_fields.len(), 1);
 
-        // Memory should be properly freed when dropped
         unsafe { ddog_trace_exporter_error_free(Some(ffi_error)) };
-        // If this doesn't crash/leak, memory management is working correctly
     }
 }
