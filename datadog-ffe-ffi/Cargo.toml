@@ -4,7 +4,7 @@
 [package]
 name = "datadog-ffe-ffi"
 edition.workspace = true
-version = "1.0.0"
+version = "1.0.1"
 rust-version.workspace = true
 license.workspace = true
 publish = false

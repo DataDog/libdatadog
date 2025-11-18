@@ -21,6 +21,7 @@ use crate::{BorrowedStr, Handle};
 /// - `json_bytes` must point to valid memory.
 #[no_mangle]
 #[named]
+#[must_use]
 pub unsafe extern "C" fn ddog_ffe_configuration_new(
     json_bytes: BorrowedStr,
 ) -> Result<Handle<Configuration>> {
