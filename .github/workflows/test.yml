@@ -148,7 +148,7 @@ jobs:
         env:
           RUSTFLAGS: "${{ matrix.flags }}"
         run: |
-          cargo run --bin release --features profiling,telemetry,data-pipeline,symbolizer,crashtracker,library-config,log,ddsketch --release -- --out $LIBDD_OUTPUT_FOLDER
+          cargo run --bin release --release -- --out $LIBDD_OUTPUT_FOLDER
 
       - name: 'Publish libdatadog'
         uses: actions/upload-artifact@4cec3d8aa04e39d1a68397de0c4cd6fb9dce8ec1 # 4.6.1

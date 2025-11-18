@@ -78,3 +78,7 @@ set_vcruntime_link_type(library_config ${VCRUNTIME_LINK_TYPE})
 add_executable(ddsketch ddsketch.c)
 target_link_libraries(ddsketch PRIVATE Datadog::Profiling)
 set_vcruntime_link_type(ddsketch ${VCRUNTIME_LINK_TYPE})
+
+add_executable(ffe ffe.c)
+target_link_libraries(ffe PRIVATE Datadog::Profiling)
+set_vcruntime_link_type(ffe ${VCRUNTIME_LINK_TYPE})
