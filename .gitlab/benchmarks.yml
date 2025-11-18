@@ -8,7 +8,10 @@ benchmarks:
   needs: []
   image:
     name: $BASE_CI_IMAGE
-  interruptible: true
+  rules:
+    - if: $CI_COMMIT_BRANCH == "main"
+      interruptible: false
+    - interruptible: true
   timeout: 1h
   script:
     - export ARTIFACTS_DIR="$(pwd)/reports" && (mkdir "${ARTIFACTS_DIR}" || :)
