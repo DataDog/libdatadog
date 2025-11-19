@@ -9,6 +9,13 @@ use crate::profiles::datatypes::{
 pub type FunctionSet = ParallelSet<Function, 4>;
 pub type MappingSet = ParallelSet<Mapping, 2>;
 
+/// `ProfilesDictionary` contains data which are common to multiple profiles,
+/// whether that's multiple profiles simultaneously or multiple profiles
+/// through time.
+///
+/// The current implementation is thread-safe, though there has been some
+/// discussion about making that optional, as some libraries will call these
+/// APIs in places where a mutex is already employed.
 pub struct ProfilesDictionary {
     functions: FunctionSet,
     mappings: MappingSet,
