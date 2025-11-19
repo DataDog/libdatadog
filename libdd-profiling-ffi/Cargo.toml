@@ -32,6 +32,7 @@ demangler = ["crashtracker-ffi", "libdd-crashtracker-ffi/demangler"]
 datadog-library-config-ffi = ["dep:libdd-library-config-ffi"]
 ddcommon-ffi = ["dep:libdd-common-ffi"]
 ddsketch-ffi = ["dep:libdd-ddsketch-ffi"]
+datadog-ffe-ffi = ["dep:datadog-ffe-ffi"]
 
 [build-dependencies]
 build_common = { path = "../build-common" }
@@ -55,3 +56,4 @@ libc = "0.2"
 serde_json = { version = "1.0" }
 symbolizer-ffi = { path = "../symbolizer-ffi", optional = true, default-features = false }
 tokio-util = "0.7.1"
+datadog-ffe-ffi = { path = "../datadog-ffe-ffi", default-features = false, optional = true }

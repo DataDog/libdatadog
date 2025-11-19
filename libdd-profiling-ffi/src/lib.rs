@@ -39,6 +39,10 @@ pub use libdd_library_config_ffi::*;
 #[cfg(feature = "datadog-log-ffi")]
 pub use libdd_log_ffi::*;
 
+// re-export ffe ffi
+#[cfg(feature = "datadog-ffe-ffi")]
+pub use datadog_ffe_ffi;
+
 // re-export tracer metadata functions
 #[cfg(feature = "ddcommon-ffi")]
 pub use libdd_common_ffi::*;

@@ -1783,10 +1783,38 @@ fn assert_errors_intake_payload(errors_intake_content: &[u8], crash_typ: &str) {
     assert_eq!(payload["ddsource"], "crashtracker");
     assert!(payload["timestamp"].is_number());
     assert!(payload["ddtags"].is_string());
+    assert!(
+        payload["os_info"].is_object(),
+        "os_info missing: {:?}",
+        payload
+    );
 
     let ddtags = payload["ddtags"].as_str().unwrap();
     assert!(ddtags.contains("service:foo"));
     assert!(ddtags.contains("uuid:"));
+
+    let os_info_val = &payload["os_info"];
+    let expected_os_info = ::os_info::get();
+    assert_eq!(
+        os_info_val["architecture"].as_str().unwrap_or(""),
+        expected_os_info.architecture().unwrap_or("unknown"),
+        "mismatched architecture in os_info"
+    );
+    assert_eq!(
+        os_info_val["bitness"].as_str().unwrap_or(""),
+        expected_os_info.bitness().to_string(),
+        "mismatched bitness in os_info"
+    );
+    assert_eq!(
+        os_info_val["os_type"].as_str().unwrap_or(""),
+        expected_os_info.os_type().to_string(),
+        "mismatched os_type in os_info"
+    );
+    assert_eq!(
+        os_info_val["version"].as_str().unwrap_or(""),
+        expected_os_info.version().to_string(),
+        "mismatched version in os_info"
+    );
 
     let error = &payload["error"];
     assert_eq!(error["source_type"], "Crashtracking");
@@ -1799,6 +1827,26 @@ fn assert_errors_intake_payload(errors_intake_content: &[u8], crash_typ: &str) {
         assert!(error["stack"].is_null());
     } else {
         assert_eq!(error["is_crash"], true);
+    }
+
+    // Validate sig_info when present
+    if payload.get("sig_info").is_some() && payload["sig_info"].is_object() {
+        let sig = &payload["sig_info"];
+        let expected = match crash_typ {
+            "null_deref" | "kill_sigsegv" | "raise_sigsegv" => ("SIGSEGV", libc::SIGSEGV),
+            "kill_sigabrt" | "raise_sigabrt" => ("SIGABRT", libc::SIGABRT),
+            "kill_sigill" | "raise_sigill" => ("SIGILL", libc::SIGILL),
+            "kill_sigbus" | "raise_sigbus" => ("SIGBUS", libc::SIGBUS),
+            other => panic!("Unexpected crash_typ: {other}"),
+        };
+        assert_eq!(
+            sig["si_signo"].as_i64().unwrap_or_default(),
+            expected.1 as i64
+        );
+        assert_eq!(
+            sig["si_signo_human_readable"].as_str().unwrap_or(""),
+            expected.0
+        );
     }
 
     // Check signal-specific values

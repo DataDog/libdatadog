@@ -2,11 +2,11 @@ name: 'Verify trace-protobuf'
 on:
   pull_request:
     types: [ opened, synchronize, reopened ]
-
 env:
   DATADOG_AGENT_TAG: "7f6d07c93ba087f23f80a3f0c2da4b1f3dc664d7"
   rust_version: "1.84.1"
-
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
 jobs:
   verify-proto-files:
     name: "Verify trace-protobuf .proto files are in sync with datadog-agent"
@@ -45,12 +45,13 @@ jobs:
         working-directory: libdd-trace-protobuf/src/pb
         run: |
           ../../../.github/workflows/diff-proto-files.sh --file idx/span.proto --tag ${{ env.DATADOG_AGENT_TAG }}
-      - name: Cache
-        uses: ./.github/actions/cache
-        with:
-          rust_version: ${{ env.rust_version }}
       - name: Install ${{ env.rust_version }} toolchain
         run: rustup install ${{ env.rust_version }} && rustup default ${{ env.rust_version }}
+      - name: Cache [rust]
+        uses: Swatinem/rust-cache@f13886b937689c021905a6b90929199931d60db1 # 2.8.1
+        with:
+          cache-targets: true # cache build artifacts
+          cache-bin: true # cache the ~/.cargo/bin directory
       - name: diff pb.rs
         working-directory: libdd-trace-protobuf
         run: |

@@ -39,6 +39,7 @@ pub enum AttributeValue {
 /// - `attributes` must point to a valid array of valid `AttributePair` structs (can be null if
 ///   `attributes_count` is 0)
 #[no_mangle]
+#[must_use]
 pub unsafe extern "C" fn ddog_ffe_evaluation_context_new(
     targeting_key: *const c_char,
     attributes: *const AttributePair,

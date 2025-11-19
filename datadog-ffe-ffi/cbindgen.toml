@@ -8,8 +8,7 @@ header = """// Copyright 2025-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 """
 include_guard = "DDOG_FFE_H"
-style = "tag"
-usize_is_size_t = true
+style = "both"
 pragma_once = true
 
 no_includes = true
@@ -22,9 +21,10 @@ prefix = "ddog_ffe_"
 renaming_overrides_prefixing = true
 
 [export.rename]
-"VoidResult" = "ddog_VoidResult"
 "Error" = "ddog_Error"
-"Vec_u8" = "ddog_Vec_U8"
+"Vec_U8" = "ddog_Vec_U8"
+"ArrayMap_BorrowedStr__BorrowedStr" = "ddog_ffe_ArrayMap_BorrowedStr"
+"KeyValue_BorrowedStr__BorrowedStr" = "ddog_ffe_KeyValue_BorrowedStr"
 
 [export.mangle]
 rename_types = "PascalCase"
