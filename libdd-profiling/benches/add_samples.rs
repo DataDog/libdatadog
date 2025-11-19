@@ -149,10 +149,10 @@ pub fn bench_add_sample_vs_add2(c: &mut Criterion) {
 
     c.bench_function("profile_add_sample2_frames_x1000", |b| {
         b.iter(|| {
-            let mut profile = profiling::internal::Profile::try_new2(
-                dict.try_clone().unwrap(),
+            let mut profile = profiling::internal::Profile::try_new_with_dictionary(
                 &sample_types2,
                 None,
+                dict.try_clone().unwrap(),
             )
             .unwrap();
             let (locations, values) = make_stack_api2(frames2.as_slice());

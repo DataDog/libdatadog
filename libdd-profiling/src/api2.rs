@@ -1,7 +1,7 @@
 // Copyright 2025-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::profiles::datatypes::{self, FunctionId2, MappingId2, StringId2};
+use crate::profiles::datatypes::{FunctionId2, MappingId2, StringId2};
 
 #[derive(Copy, Clone, Debug, Default)]
 #[repr(C)]
@@ -54,25 +54,4 @@ impl<'a> Label<'a> {
             num_unit,
         }
     }
-}
-#[repr(C)]
-#[derive(Clone, Copy, Debug)]
-pub struct ValueType2 {
-    pub type_id: StringId2,
-    pub unit_id: StringId2,
-}
-
-impl From<ValueType2> for datatypes::ValueType {
-    fn from(value: ValueType2) -> datatypes::ValueType {
-        datatypes::ValueType {
-            type_id: value.type_id.into(),
-            unit_id: value.unit_id.into(),
-        }
-    }
-}
-
-#[derive(Copy, Clone, Debug)]
-pub struct Period2 {
-    pub r#type: ValueType2,
-    pub value: i64,
 }

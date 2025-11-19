@@ -12,7 +12,6 @@ pub use profiles_dictionary_translator::*;
 use self::api::UpscalingInfo;
 use super::*;
 use crate::api::ManagedStringId;
-use crate::api2::{Period2, ValueType2};
 use crate::collections::identifiable::*;
 use crate::collections::string_storage::{CachedProfileId, ManagedStringStorage};
 use crate::collections::string_table::{self, StringTable};
@@ -384,7 +383,7 @@ impl Profile {
     ///
     /// All other fields are default.
     ///
-    /// It's recommended to use [`Profile::try_new2`] instead.
+    /// It's recommended to use [`Profile::try_new_with_dictionary`] instead.
     pub fn try_new(
         sample_types: &[api::ValueType],
         period: Option<api::Period>,
@@ -397,14 +396,13 @@ impl Profile {
         )
     }
 
-    /// Tries to create a profile with the given period and sample types. The
-    /// [`StringId2`]s should belong to the provided [`ProfilesDictionary`].
+    /// Tries to create a profile with the given period and sample types.
     #[inline(never)]
     #[cold]
-    pub fn try_new2(
+    pub fn try_new_with_dictionary(
+        sample_types: &[api::ValueType],
+        period: Option<api::Period>,
         profiles_dictionary: crate::profiles::collections::Arc<ProfilesDictionary>,
-        sample_types: &[ValueType2],
-        period: Option<Period2>,
     ) -> io::Result<Self> {
         let mut owned_sample_types = Vec::new();
         // Using try_reserve_exact because it will be converted to a Box<[]>,
@@ -2707,7 +2705,7 @@ mod api_tests {
 
     #[test]
     #[cfg_attr(miri, ignore)]
-    fn test_try_new2_and_try_add_sample2() {
+    fn test_try_new_with_dictionary_and_try_add_sample2() {
         struct Frame {
             file_name: &'static str,
             line_number: u32,
@@ -2716,14 +2714,7 @@ mod api_tests {
 
         // Create a ProfilesDictionary with realistic data from Ruby app
         let dict = crate::profiles::datatypes::ProfilesDictionary::try_new().unwrap();
-
-        // Create sample types
-        let samples_type = dict.try_insert_str2("samples").unwrap();
-        let count_unit = dict.try_insert_str2("count").unwrap();
-        let sample_types = vec![ValueType2 {
-            type_id: samples_type,
-            unit_id: count_unit,
-        }];
+        let sample_types = vec![api::ValueType::new("samples", "count")];
 
         // Ruby stack trace (leaf-to-root order)
         // Taken from a Ruby app, everything here is source-available
@@ -2784,7 +2775,8 @@ mod api_tests {
 
         // Create profile with dictionary
         let mut profile =
-            Profile::try_new2(dict.try_clone().unwrap(), &sample_types, None).unwrap();
+            Profile::try_new_with_dictionary(&sample_types, None, dict.try_clone().unwrap())
+                .unwrap();
 
         assert_eq!(profile.only_for_testing_num_aggregated_samples(), 0);
 
