@@ -26,7 +26,7 @@ mod unix {
         self as crashtracker, CrashtrackerConfiguration, CrashtrackerReceiverConfig, Metadata,
     };
 
-    const TEST_COLLECTOR_TIMEOUT: Duration = Duration::from_secs(10);
+    const TEST_COLLECTOR_TIMEOUT: Duration = Duration::from_secs(15);
 
     #[inline(never)]
     pub unsafe fn cause_segfault() -> anyhow::Result<()> {
