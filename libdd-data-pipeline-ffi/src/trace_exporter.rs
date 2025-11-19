@@ -478,7 +478,7 @@ pub unsafe extern "C" fn ddog_trace_exporter_new(
                 builder.enable_health_metrics();
             }
 
-            match builder.build() {
+            match builder.build_tokio() {
                 Ok(exporter) => {
                     out_handle.as_ptr().write(Box::new(exporter));
                     None

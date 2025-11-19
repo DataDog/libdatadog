@@ -10,11 +10,11 @@
 use crate::agent_info::schema::AgentInfo;
 use crate::stats_exporter;
 use arc_swap::ArcSwap;
-use libdd_common::{Endpoint, HttpClient, MutexExt};
+use libdd_common::runtime::Runtime;
+use libdd_common::{Endpoint, MutexExt};
 use libdd_trace_stats::span_concentrator::SpanConcentrator;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
-use tokio::runtime::Runtime;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error};
 
@@ -25,10 +25,10 @@ pub(crate) const DEFAULT_STATS_ELIGIBLE_SPAN_KINDS: [&str; 4] =
 pub(crate) const STATS_ENDPOINT: &str = "/v0.6/stats";
 
 /// Context struct that groups immutable parameters used by stats functions
-pub(crate) struct StatsContext<'a> {
+pub(crate) struct StatsContext<'a, R: Runtime> {
     pub metadata: &'a super::TracerMetadata,
-    pub endpoint_url: &'a hyper::Uri,
-    pub runtime: &'a Arc<Mutex<Option<Arc<Runtime>>>>,
+    pub endpoint_url: &'a http::Uri,
+    pub runtime: &'a Arc<Mutex<Option<Arc<R>>>>,
 }
 
 #[derive(Debug)]
@@ -58,13 +58,13 @@ fn get_span_kinds_for_stats(agent_info: &Arc<AgentInfo>) -> Vec<String> {
 /// Start the stats exporter and enable stats computation
 ///
 /// Should only be used if the agent enabled stats computation
-pub(crate) fn start_stats_computation(
-    ctx: &StatsContext,
+pub(crate) fn start_stats_computation<R: Runtime>(
+    ctx: &StatsContext<R>,
     client_side_stats: &ArcSwap<StatsComputationStatus>,
-    workers: &Arc<Mutex<super::TraceExporterWorkers>>,
+    workers: &Arc<Mutex<super::TraceExporterWorkers<R>>>,
     span_kinds: Vec<String>,
     peer_tags: Vec<String>,
-    client: HttpClient,
+    client: R::HttpClient,
 ) -> anyhow::Result<()> {
     if let StatsComputationStatus::DisabledByAgent { bucket_size } = **client_side_stats.load() {
         let stats_concentrator = Arc::new(Mutex::new(SpanConcentrator::new(
@@ -88,14 +88,14 @@ pub(crate) fn start_stats_computation(
 }
 
 /// Create stats exporter and worker, start the worker, and update the state
-fn create_and_start_stats_worker(
-    ctx: &StatsContext,
+fn create_and_start_stats_worker<R: Runtime>(
+    ctx: &StatsContext<R>,
     bucket_size: Duration,
     stats_concentrator: &Arc<Mutex<SpanConcentrator>>,
     cancellation_token: &CancellationToken,
-    workers: &Arc<Mutex<super::TraceExporterWorkers>>,
+    workers: &Arc<Mutex<super::TraceExporterWorkers<R>>>,
     client_side_stats: &ArcSwap<StatsComputationStatus>,
-    client: HttpClient,
+    client: R::HttpClient,
 ) -> anyhow::Result<()> {
     let stats_exporter = stats_exporter::StatsExporter::new(
         bucket_size,
@@ -110,7 +110,7 @@ fn create_and_start_stats_worker(
     // Get runtime guard
     let runtime_guard = ctx.runtime.lock_or_panic();
     if let Some(rt) = runtime_guard.as_ref() {
-        stats_worker.start(rt).map_err(|e| {
+        stats_worker.start(rt.as_ref()).map_err(|e| {
             super::error::TraceExporterError::Internal(
                 super::error::InternalErrorKind::InvalidWorkerState(e.to_string()),
             )
@@ -132,10 +132,11 @@ fn create_and_start_stats_worker(
 /// Stops the stats exporter and disable stats computation
 ///
 /// Used when client-side stats is disabled by the agent
-pub(crate) fn stop_stats_computation(
-    ctx: &StatsContext,
+/// Generic version that doesn't use block_on (not implemented)
+pub(crate) fn stop_stats_computation<R: Runtime>(
+    ctx: &StatsContext<R>,
     client_side_stats: &ArcSwap<StatsComputationStatus>,
-    workers: &Arc<Mutex<super::TraceExporterWorkers>>,
+    workers: &Arc<Mutex<super::TraceExporterWorkers<R>>>,
 ) {
     if let StatsComputationStatus::Enabled {
         stats_concentrator,
@@ -144,10 +145,8 @@ pub(crate) fn stop_stats_computation(
     {
         // If there's no runtime there's no exporter to stop
         let runtime_guard = ctx.runtime.lock_or_panic();
-        if let Some(rt) = runtime_guard.as_ref() {
-            rt.block_on(async {
-                cancellation_token.cancel();
-            });
+        if let Some(_rt) = runtime_guard.as_ref() {
+            cancellation_token.cancel();
             workers.lock_or_panic().stats = None;
             let bucket_size = stats_concentrator.lock_or_panic().get_bucket_size();
 
@@ -159,12 +158,12 @@ pub(crate) fn stop_stats_computation(
 }
 
 /// Handle stats computation when agent changes from disabled to enabled
-pub(crate) fn handle_stats_disabled_by_agent(
-    ctx: &StatsContext,
+pub(crate) fn handle_stats_disabled_by_agent<R: Runtime>(
+    ctx: &StatsContext<R>,
     agent_info: &Arc<AgentInfo>,
     client_side_stats: &ArcSwap<StatsComputationStatus>,
-    workers: &Arc<Mutex<super::TraceExporterWorkers>>,
-    client: HttpClient,
+    workers: &Arc<Mutex<super::TraceExporterWorkers<R>>>,
+    client: R::HttpClient,
 ) {
     if agent_info.info.client_drop_p0s.is_some_and(|v| v) {
         // Client-side stats is supported by the agent
@@ -185,13 +184,13 @@ pub(crate) fn handle_stats_disabled_by_agent(
     }
 }
 
-/// Handle stats computation when it's already enabled
-pub(crate) fn handle_stats_enabled(
-    ctx: &StatsContext,
+/// Handle stats computation when it's already enabled (generic - not implemented)
+pub(crate) fn handle_stats_enabled<R: Runtime>(
+    ctx: &StatsContext<R>,
     agent_info: &Arc<AgentInfo>,
     stats_concentrator: &Mutex<SpanConcentrator>,
     client_side_stats: &ArcSwap<StatsComputationStatus>,
-    workers: &Arc<Mutex<super::TraceExporterWorkers>>,
+    workers: &Arc<Mutex<super::TraceExporterWorkers<R>>>,
 ) {
     if agent_info.info.client_drop_p0s.is_some_and(|v| v) {
         let mut concentrator = stats_concentrator.lock_or_panic();
@@ -253,9 +252,9 @@ pub(crate) fn process_traces_for_stats<T: libdd_trace_utils::span::SpanText>(
 
 #[cfg(test)]
 /// Test only function to check if the stats computation is active and the worker is running
-pub(crate) fn is_stats_worker_active(
+pub(crate) fn is_stats_worker_active<R: Runtime>(
     client_side_stats: &ArcSwap<StatsComputationStatus>,
-    workers: &Arc<Mutex<super::TraceExporterWorkers>>,
+    workers: &Arc<Mutex<super::TraceExporterWorkers<R>>>,
 ) -> bool {
     if !matches!(
         **client_side_stats.load(),

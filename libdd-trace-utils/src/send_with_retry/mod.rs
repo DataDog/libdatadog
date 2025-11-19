@@ -5,11 +5,16 @@
 //! request fails.
 
 mod retry_strategy;
+use futures::{io, pin_mut};
 pub use retry_strategy::{RetryBackoffType, RetryStrategy};
 
 use bytes::Bytes;
 use hyper::Method;
-use libdd_common::{hyper_migration, Connect, Endpoint, GenericHttpClient, HttpRequestBuilder};
+use libdd_common::{
+    hyper_migration,
+    runtime::{HttpClient, Runtime},
+    Endpoint, HttpRequestBuilder,
+};
 use std::{collections::HashMap, time::Duration};
 use tracing::{debug, error};
 
@@ -26,7 +31,7 @@ pub enum SendWithRetryError {
     /// Treats timeout errors originated in the transport layer.
     Timeout(Attempts),
     /// Treats errors coming from networking.
-    Network(hyper_migration::ClientError, Attempts),
+    Network(io::Error, Attempts),
     /// Treats errors coming from building the request
     Build(Attempts),
 }
@@ -59,7 +64,7 @@ impl SendWithRetryError {
 #[derive(Debug)]
 enum RequestError {
     Build,
-    Network(hyper_migration::ClientError),
+    Network(io::Error),
     TimeoutApi,
 }
 
@@ -111,8 +116,8 @@ impl std::error::Error for RequestError {}
 /// send_with_retry(&client, &target, payload, &headers, &retry_strategy).await
 /// # }
 /// ```
-pub async fn send_with_retry<C: Connect>(
-    client: &GenericHttpClient<C>,
+pub async fn send_with_retry<R: Runtime, C: HttpClient>(
+    client: &C,
     target: &Endpoint,
     payload: Vec<u8>,
     headers: &HashMap<&'static str, String>,
@@ -146,7 +151,7 @@ pub async fn send_with_retry<C: Connect>(
             req = req.header(*key, value.clone());
         }
 
-        match send_request(
+        match send_request::<R, C>(
             client,
             Duration::from_millis(target.timeout_ms),
             req,
@@ -174,7 +179,7 @@ pub async fn send_with_retry<C: Connect>(
                             remaining_retries = retry_strategy.max_retries() - request_attempt,
                             "Retrying after error status code"
                         );
-                        retry_strategy.delay(request_attempt).await;
+                        retry_strategy.delay::<R>(request_attempt).await;
                         continue;
                     } else {
                         error!(
@@ -207,7 +212,7 @@ pub async fn send_with_retry<C: Connect>(
                         remaining_retries = retry_strategy.max_retries() - request_attempt,
                         "Retrying after request error"
                     );
-                    retry_strategy.delay(request_attempt).await;
+                    retry_strategy.delay::<R>(request_attempt).await;
                     continue;
                 } else {
                     error!(
@@ -222,8 +227,8 @@ pub async fn send_with_retry<C: Connect>(
     }
 }
 
-async fn send_request<C: Connect>(
-    client: &GenericHttpClient<C>,
+async fn send_request<R: Runtime, C: HttpClient>(
+    client: &C,
     timeout: Duration,
     req: HttpRequestBuilder,
     payload: Bytes,
@@ -232,14 +237,17 @@ async fn send_request<C: Connect>(
         .body(hyper_migration::Body::from_bytes(payload))
         .or(Err(RequestError::Build))?;
 
-    let req_future = { client.request(req) };
+    let req_future = client.request(req);
+    let sleep = R::sleep(timeout);
+    pin_mut!(req_future);
+    pin_mut!(sleep);
 
-    match tokio::time::timeout(timeout, req_future).await {
-        Ok(resp) => match resp {
-            Ok(body) => Ok(hyper_migration::into_response(body)),
+    match futures::future::select(sleep, req_future).await {
+        futures::future::Either::Left(_) => Err(RequestError::TimeoutApi),
+        futures::future::Either::Right((resp, _)) => match resp {
+            Ok(body) => Ok(body),
             Err(e) => Err(RequestError::Network(e)),
         },
-        Err(_) => Err(RequestError::TimeoutApi),
     }
 }
 
@@ -248,6 +256,8 @@ mod tests {
     use super::*;
     use crate::test_utils::poll_for_mock_hit;
     use httpmock::MockServer;
+    use libdd_common::HttpClient;
+    use tokio::runtime::Runtime as TokioRt;
 
     #[cfg_attr(miri, ignore)]
     #[tokio::test]
@@ -282,7 +292,7 @@ mod tests {
 
         let client = libdd_common::hyper_migration::new_default_client();
         tokio::spawn(async move {
-            let result = send_with_retry(
+            let result = send_with_retry::<TokioRt, HttpClient>(
                 &client,
                 &target_endpoint,
                 vec![0, 1, 2, 3],
@@ -331,7 +341,7 @@ mod tests {
 
         let client = libdd_common::hyper_migration::new_default_client();
         tokio::spawn(async move {
-            let result = send_with_retry(
+            let result = send_with_retry::<TokioRt, HttpClient>(
                 &client,
                 &target_endpoint,
                 vec![0, 1, 2, 3],
@@ -380,7 +390,7 @@ mod tests {
 
         let client = libdd_common::hyper_migration::new_default_client();
         tokio::spawn(async move {
-            let result = send_with_retry(
+            let result = send_with_retry::<TokioRt, HttpClient>(
                 &client,
                 &target_endpoint,
                 vec![0, 1, 2, 3],
@@ -429,7 +439,7 @@ mod tests {
 
         let client = libdd_common::hyper_migration::new_default_client();
         tokio::spawn(async move {
-            let result = send_with_retry(
+            let result = send_with_retry::<TokioRt, HttpClient>(
                 &client,
                 &target_endpoint,
                 vec![0, 1, 2, 3],

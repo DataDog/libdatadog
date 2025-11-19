@@ -7,8 +7,8 @@ use crate::trace_exporter::error::{RequestError, TraceExporterError};
 use crate::trace_exporter::metrics::MetricsEmitter;
 use crate::trace_exporter::TracerMetadata;
 use bytes::Bytes;
+use http::{Method, Uri};
 use http_body_util::BodyExt;
-use hyper::{Method, Uri};
 use libdd_common::hyper_migration;
 use libdd_common::{tag, tag::Tag};
 use std::collections::HashMap;
@@ -44,7 +44,7 @@ impl<'a> TransportClient<'a> {
         data: &[u8],
         trace_count: usize,
         uri: Uri,
-    ) -> hyper::Request<hyper_migration::Body> {
+    ) -> http::Request<hyper_migration::Body> {
         let mut req_builder = self.create_base_request_builder(uri);
         req_builder = self.add_metadata_headers(req_builder);
         req_builder = self.add_trace_headers(req_builder, trace_count);
@@ -54,7 +54,7 @@ impl<'a> TransportClient<'a> {
     /// Handle HTTP error response and emit appropriate metrics
     pub(super) async fn handle_http_error_response(
         &self,
-        response: hyper::Response<hyper_migration::Body>,
+        response: http::Response<hyper_migration::Body>,
         payload_size: usize,
         trace_count: usize,
     ) -> Result<AgentResponse, TraceExporterError> {
@@ -70,7 +70,7 @@ impl<'a> TransportClient<'a> {
     /// Handle successful HTTP response
     pub(super) async fn handle_http_success_response(
         &self,
-        response: hyper::Response<hyper_migration::Body>,
+        response: http::Response<hyper_migration::Body>,
         trace_count: usize,
     ) -> Result<AgentResponse, TraceExporterError> {
         match response.into_body().collect().await {
@@ -105,7 +105,7 @@ impl<'a> TransportClient<'a> {
     /// Process HTTP response based on status code
     pub(super) async fn process_http_response(
         &self,
-        response: hyper::Response<hyper_migration::Body>,
+        response: http::Response<hyper_migration::Body>,
         trace_count: usize,
         payload_size: usize,
     ) -> Result<AgentResponse, TraceExporterError> {
@@ -119,11 +119,11 @@ impl<'a> TransportClient<'a> {
     }
 
     /// Create base HTTP request builder with URI, user agent, and method
-    fn create_base_request_builder(&self, uri: Uri) -> hyper::http::request::Builder {
-        hyper::Request::builder()
+    fn create_base_request_builder(&self, uri: Uri) -> http::request::Builder {
+        http::Request::builder()
             .uri(uri)
             .header(
-                hyper::header::USER_AGENT,
+                http::header::USER_AGENT,
                 concat!("Tracer/", env!("CARGO_PKG_VERSION")),
             )
             .method(Method::POST)
@@ -132,8 +132,8 @@ impl<'a> TransportClient<'a> {
     /// Add metadata headers to the request builder
     fn add_metadata_headers(
         &self,
-        mut req_builder: hyper::http::request::Builder,
-    ) -> hyper::http::request::Builder {
+        mut req_builder: http::request::Builder,
+    ) -> http::request::Builder {
         let headers: HashMap<&'static str, String> = self.metadata.into();
         for (key, value) in &headers {
             req_builder = req_builder.header(*key, value);
@@ -144,9 +144,9 @@ impl<'a> TransportClient<'a> {
     /// Add trace-specific headers to the request builder
     fn add_trace_headers(
         &self,
-        req_builder: hyper::http::request::Builder,
+        req_builder: http::request::Builder,
         trace_count: usize,
-    ) -> hyper::http::request::Builder {
+    ) -> http::request::Builder {
         req_builder
             .header("Content-type", "application/msgpack")
             .header("X-Datadog-Trace-Count", trace_count.to_string().as_str())
@@ -155,9 +155,9 @@ impl<'a> TransportClient<'a> {
     /// Build the final request with body
     fn build_request_with_body(
         &self,
-        req_builder: hyper::http::request::Builder,
+        req_builder: http::request::Builder,
         data: &[u8],
-    ) -> hyper::Request<hyper_migration::Body> {
+    ) -> http::Request<hyper_migration::Body> {
         #[allow(clippy::unwrap_used)]
         req_builder
             .body(hyper_migration::Body::from_bytes(Bytes::copy_from_slice(
@@ -170,7 +170,7 @@ impl<'a> TransportClient<'a> {
     /// Extract response body from HTTP response
     async fn extract_response_body(
         &self,
-        response: hyper::Response<hyper_migration::Body>,
+        response: http::Response<hyper_migration::Body>,
     ) -> String {
         // TODO: Properly handle non-OK states to prevent possible panics
         // (APMSP-18190).
@@ -182,7 +182,7 @@ impl<'a> TransportClient<'a> {
     /// Log error and emit metrics for HTTP error response
     fn log_and_emit_error_metrics(
         &self,
-        response_status: hyper::StatusCode,
+        response_status: http::StatusCode,
         payload_size: usize,
         trace_count: usize,
     ) {
@@ -236,7 +236,7 @@ mod tests {
     use super::*;
     use crate::trace_exporter::TracerMetadata;
     use bytes::Bytes;
-    use hyper::{Response, StatusCode};
+    use http::{Response, StatusCode};
     use libdd_common::tag;
 
     fn create_test_metadata() -> TracerMetadata {
@@ -280,7 +280,7 @@ mod tests {
 
         let request = client.build_trace_request(data, trace_count, uri);
 
-        assert_eq!(request.method(), hyper::Method::POST);
+        assert_eq!(request.method(), http::Method::POST);
         assert_eq!(request.uri().path(), "/v0.4/traces");
 
         let headers = request.headers();

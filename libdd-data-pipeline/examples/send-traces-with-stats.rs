@@ -69,7 +69,7 @@ fn main() {
         .set_output_format(TraceExporterOutputFormat::V04)
         .enable_telemetry(telemetry_cfg)
         .enable_stats(Duration::from_secs(10));
-    let exporter = builder.build().expect("Failed to build TraceExporter");
+    let exporter = builder.build_tokio().expect("Failed to build TraceExporter");
     let now = UNIX_EPOCH
         .elapsed()
         .expect("Failed to get time since UNIX_EPOCH")

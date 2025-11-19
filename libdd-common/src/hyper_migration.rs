@@ -9,7 +9,7 @@ use http_body_util::BodyExt;
 use hyper::body::Incoming;
 use pin_project::pin_project;
 // Need aliases because cbindgen is not smart enough to figure type aliases
-use hyper::Request as HyperRequest;
+use http::Request as HyperRequest;
 
 /// Create a new default configuration hyper client for fixed interval sending.
 ///

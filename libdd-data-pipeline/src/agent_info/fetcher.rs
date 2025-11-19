@@ -3,12 +3,15 @@
 //! Provides utilities to fetch the agent /info endpoint and an automatic fetcher to keep info
 //! up-to-date
 
+use libdd_common::runtime::{HttpClient, Runtime};
+
 use super::{schema::AgentInfo, AGENT_INFO_CACHE};
-use anyhow::{anyhow, Result};
+use anyhow::Result;
+use http::{self, header::HeaderName};
 use http_body_util::BodyExt;
-use hyper::{self, header::HeaderName};
 use libdd_common::{hyper_migration, worker::Worker, Endpoint};
 use sha2::{Digest, Sha256};
+use std::marker;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::mpsc;
@@ -26,16 +29,33 @@ pub enum FetchInfoStatus {
     NewState(Box<AgentInfo>),
 }
 
+/// Wraps `fetch_info_with_state` to run in a tokio runtime
+pub async fn fetch_info_with_state_tokio(
+    info_endpoint: &Endpoint,
+    current_state_hash: Option<&str>,
+) -> Result<FetchInfoStatus> {
+    fetch_info_with_state::<tokio::runtime::Runtime>(info_endpoint, current_state_hash).await
+}
+
 /// Fetch info from the given info_endpoint and compare its state to the current state hash.
 ///
 /// If the state hash is different from the current one:
 /// - Return a `FetchInfoStatus::NewState` of the info struct
 /// - Else return `FetchInfoStatus::SameState`
-pub async fn fetch_info_with_state(
+pub async fn fetch_info_with_state<R: Runtime>(
     info_endpoint: &Endpoint,
     current_state_hash: Option<&str>,
 ) -> Result<FetchInfoStatus> {
-    let (new_state_hash, body_data) = fetch_and_hash_response(info_endpoint).await?;
+    let req = info_endpoint
+        .to_request_builder(concat!("Libdatadog/", env!("CARGO_PKG_VERSION")))?
+        .method(http::Method::GET)
+        .body(hyper_migration::Body::empty());
+    let client = R::http_client();
+    let res = client.request(req?).await?;
+
+    let body_bytes = res.into_body().collect().await?;
+    let body_data = body_bytes.to_bytes();
+    let new_state_hash = format!("{:x}", Sha256::digest(&body_data));
 
     if current_state_hash.is_some_and(|state| state == new_state_hash) {
         return Ok(FetchInfoStatus::SameState);
@@ -46,53 +66,6 @@ pub async fn fetch_info_with_state(
         info: serde_json::from_slice(&body_data)?,
     });
     Ok(FetchInfoStatus::NewState(info))
-}
-
-/// Fetch the info endpoint once and return the info.
-///
-/// Can be used for one-time access to the agent's info. If you need to access the info several
-/// times use `AgentInfoFetcher` to keep the info up-to-date.
-///
-/// # Example
-/// ```no_run
-/// # use anyhow::Result;
-/// # #[tokio::main]
-/// # async fn main() -> Result<()> {
-/// // Define the endpoint
-/// let endpoint = libdd_common::Endpoint::from_url("http://localhost:8126/info".parse().unwrap());
-/// // Fetch the info
-/// let agent_info = libdd_data_pipeline::agent_info::fetch_info(&endpoint)
-///     .await
-///     .unwrap();
-/// println!("Agent version is {}", agent_info.info.version.unwrap());
-/// # Ok(())
-/// # }
-/// ```
-pub async fn fetch_info(info_endpoint: &Endpoint) -> Result<Box<AgentInfo>> {
-    match fetch_info_with_state(info_endpoint, None).await? {
-        FetchInfoStatus::NewState(info) => Ok(info),
-        // Should never be reached since there is no previous state.
-        FetchInfoStatus::SameState => Err(anyhow!("Invalid state header")),
-    }
-}
-
-/// Fetch and hash the response from the agent info endpoint.
-///
-/// Returns a tuple of (state_hash, response_body_bytes).
-/// The hash is calculated using SHA256 to match the agent's calculation method.
-async fn fetch_and_hash_response(info_endpoint: &Endpoint) -> Result<(String, bytes::Bytes)> {
-    let req = info_endpoint
-        .to_request_builder(concat!("Libdatadog/", env!("CARGO_PKG_VERSION")))?
-        .method(hyper::Method::GET)
-        .body(hyper_migration::Body::empty());
-    let client = hyper_migration::new_default_client();
-    let res = client.request(req?).await?;
-
-    let body_bytes = res.into_body().collect().await?;
-    let body_data = body_bytes.to_bytes();
-    let hash = format!("{:x}", Sha256::digest(&body_data));
-
-    Ok((hash, body_data))
 }
 
 /// Fetch the info endpoint and update an ArcSwap keeping it up-to-date.
@@ -139,13 +112,17 @@ async fn fetch_and_hash_response(info_endpoint: &Endpoint) -> Result<(String, by
 /// # }
 /// ```
 #[derive(Debug)]
-pub struct AgentInfoFetcher {
+pub struct AgentInfoFetcher<R: Runtime> {
     info_endpoint: Endpoint,
     refresh_interval: Duration,
     trigger_rx: Option<mpsc::Receiver<()>>,
+    _runtime: marker::PhantomData<R>,
 }
 
-impl AgentInfoFetcher {
+/// The AgentInfoFetcher running on a tokio runtime
+pub type TokioAgentInfoFetcher = AgentInfoFetcher<tokio::runtime::Runtime>;
+
+impl<R: Runtime> AgentInfoFetcher<R> {
     /// Return a new `AgentInfoFetcher` fetching the `info_endpoint` on each `refresh_interval`
     /// and updating the stored info.
     ///
@@ -160,6 +137,7 @@ impl AgentInfoFetcher {
             info_endpoint,
             refresh_interval,
             trigger_rx: Some(trigger_rx),
+            _runtime: marker::PhantomData,
         };
 
         let response_observer = ResponseObserver::new(trigger_tx);
@@ -176,7 +154,7 @@ impl AgentInfoFetcher {
     }
 }
 
-impl Worker for AgentInfoFetcher {
+impl<R: Runtime> Worker for AgentInfoFetcher<R> {
     /// Start fetching the info endpoint with the given interval.
     ///
     /// # Warning
@@ -219,12 +197,12 @@ impl Worker for AgentInfoFetcher {
     }
 }
 
-impl AgentInfoFetcher {
+impl<R: Runtime> AgentInfoFetcher<R> {
     /// Fetch agent info and update cache if needed
     async fn fetch_and_update(&self) {
         let current_info = AGENT_INFO_CACHE.load();
         let current_hash = current_info.as_ref().map(|info| info.state_hash.as_str());
-        let res = fetch_info_with_state(&self.info_endpoint, current_hash).await;
+        let res = fetch_info_with_state::<R>(&self.info_endpoint, current_hash).await;
         match res {
             Ok(FetchInfoStatus::NewState(new_info)) => {
                 debug!("New /info state received");
@@ -260,7 +238,7 @@ impl ResponseObserver {
     /// This method examines the `Datadog-Agent-State` header in the response and compares
     /// it with the previously seen state. If the state has changed, it sends a trigger
     /// message to the agent info fetcher.
-    pub fn check_response<T>(&self, response: &hyper::Response<T>) {
+    pub fn check_response<T>(&self, response: &http::Response<T>) {
         if let Some(agent_state) = response.headers().get(DATADOG_AGENT_STATE) {
             if let Ok(state_str) = agent_state.to_str() {
                 let current_state = AGENT_INFO_CACHE.load();
@@ -363,7 +341,7 @@ mod single_threaded_tests {
             .await;
         let endpoint = Endpoint::from_url(server.url("/info").parse().unwrap());
 
-        let info_status = fetch_info_with_state(&endpoint, None).await.unwrap();
+        let info_status = fetch_info_with_state_tokio(&endpoint, None).await.unwrap();
         mock.assert();
         assert!(
             matches!(info_status, FetchInfoStatus::NewState(info) if *info == AgentInfo {
@@ -388,10 +366,10 @@ mod single_threaded_tests {
             .await;
         let endpoint = Endpoint::from_url(server.url("/info").parse().unwrap());
 
-        let new_state_info_status = fetch_info_with_state(&endpoint, Some("state"))
+        let new_state_info_status = fetch_info_with_state_tokio(&endpoint, Some("state"))
             .await
             .unwrap();
-        let same_state_info_status = fetch_info_with_state(&endpoint, Some(TEST_INFO_HASH))
+        let same_state_info_status = fetch_info_with_state_tokio(&endpoint, Some(TEST_INFO_HASH))
             .await
             .unwrap();
 
@@ -408,31 +386,6 @@ mod single_threaded_tests {
 
     #[cfg_attr(miri, ignore)]
     #[tokio::test]
-    async fn test_fetch_info() {
-        let server = MockServer::start();
-        let mock = server
-            .mock_async(|when, then| {
-                when.path("/info");
-                then.status(200)
-                    .header("content-type", "application/json")
-                    .body(TEST_INFO);
-            })
-            .await;
-        let endpoint = Endpoint::from_url(server.url("/info").parse().unwrap());
-
-        let agent_info = fetch_info(&endpoint).await.unwrap();
-        mock.assert();
-        assert_eq!(
-            *agent_info,
-            AgentInfo {
-                state_hash: TEST_INFO_HASH.to_string(),
-                info: serde_json::from_str(TEST_INFO).unwrap(),
-            }
-        );
-    }
-
-    #[cfg_attr(miri, ignore)]
-    #[tokio::test]
     async fn test_agent_info_fetcher_run() {
         AGENT_INFO_CACHE.store(None);
         let server = MockServer::start();
@@ -445,8 +398,10 @@ mod single_threaded_tests {
             })
             .await;
         let endpoint = Endpoint::from_url(server.url("/info").parse().unwrap());
-        let (mut fetcher, _response_observer) =
-            AgentInfoFetcher::new(endpoint.clone(), Duration::from_millis(100));
+        let (mut fetcher, _response_observer) = AgentInfoFetcher::<tokio::runtime::Runtime>::new(
+            endpoint.clone(),
+            Duration::from_millis(100),
+        );
         assert!(agent_info::get_agent_info().is_none());
         tokio::spawn(async move {
             fetcher.run().await;
@@ -525,14 +480,14 @@ mod single_threaded_tests {
         let endpoint = Endpoint::from_url(server.url("/info").parse().unwrap());
         let (mut fetcher, response_observer) =
             // Interval is too long to fetch during the test
-            AgentInfoFetcher::new(endpoint, Duration::from_secs(3600));
+            AgentInfoFetcher::<tokio::runtime::Runtime>::new(endpoint, Duration::from_secs(3600));
 
         tokio::spawn(async move {
             fetcher.run().await;
         });
 
         // Create a mock HTTP response with the new agent state
-        let response = hyper::Response::builder()
+        let response = http::Response::builder()
             .status(200)
             .header("datadog-agent-state", "new_state")
             .body(())
@@ -609,14 +564,14 @@ mod single_threaded_tests {
 
         let endpoint = Endpoint::from_url(server.url("/info").parse().unwrap());
         let (mut fetcher, response_observer) =
-            AgentInfoFetcher::new(endpoint, Duration::from_secs(3600)); // Very long interval
+            AgentInfoFetcher::<tokio::runtime::Runtime>::new(endpoint, Duration::from_secs(3600)); // Very long interval
 
         tokio::spawn(async move {
             fetcher.run().await;
         });
 
         // Create a mock HTTP response with the same agent state
-        let response = hyper::Response::builder()
+        let response = http::Response::builder()
             .status(200)
             .header("datadog-agent-state", &same_hash)
             .body(())

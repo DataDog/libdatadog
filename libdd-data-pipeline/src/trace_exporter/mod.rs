@@ -10,6 +10,7 @@ mod transport;
 
 // Re-export the builder
 pub use builder::TraceExporterBuilder;
+use libdd_common::runtime::Runtime;
 
 use self::agent_response::AgentResponse;
 use self::metrics::MetricsEmitter;
@@ -30,12 +31,9 @@ use crate::{
     health_metrics::HealthMetric,
 };
 use arc_swap::{ArcSwap, ArcSwapOption};
+use http::{uri::PathAndQuery, Uri};
 use http_body_util::BodyExt;
-use hyper::http::uri::PathAndQuery;
-use hyper::Uri;
-use libdd_common::{hyper_migration, Endpoint};
-use libdd_common::{tag, tag::Tag};
-use libdd_common::{HttpClient, MutexExt};
+use libdd_common::{hyper_migration, tag, tag::Tag, Endpoint, MutexExt};
 use libdd_dogstatsd_client::Client;
 use libdd_telemetry::worker::TelemetryWorker;
 use libdd_trace_utils::msgpack_decoder;
@@ -48,7 +46,6 @@ use std::io;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use std::{borrow::Borrow, collections::HashMap, str::FromStr};
-use tokio::runtime::Runtime;
 use tracing::{debug, error, warn};
 
 const INFO_ENDPOINT: &str = "/info";
@@ -159,10 +156,10 @@ impl<'a> From<&'a TracerMetadata> for HashMap<&'static str, String> {
 }
 
 #[derive(Debug)]
-pub(crate) struct TraceExporterWorkers {
-    pub info: PausableWorker<AgentInfoFetcher>,
-    pub stats: Option<PausableWorker<StatsExporter>>,
-    pub telemetry: Option<PausableWorker<TelemetryWorker>>,
+pub(crate) struct TraceExporterWorkers<R: Runtime> {
+    pub info: PausableWorker<R, AgentInfoFetcher<R>>,
+    pub stats: Option<PausableWorker<R, StatsExporter<R>>>,
+    pub telemetry: Option<PausableWorker<R, TelemetryWorker>>,
 }
 
 /// The TraceExporter ingest traces from the tracers serialized as messagepack and forward them to
@@ -189,14 +186,16 @@ enum DeserInputFormat {
     V05,
 }
 
+pub type TraceExporter = GenericTraceExporter<tokio::runtime::Runtime>;
+
 #[derive(Debug)]
-pub struct TraceExporter {
+pub struct GenericTraceExporter<R: Runtime> {
     endpoint: Endpoint,
     metadata: TracerMetadata,
     input_format: TraceExporterInputFormat,
     output_format: TraceExporterOutputFormat,
     // TODO - do something with the response callback - https://datadoghq.atlassian.net/browse/APMSP-1019
-    runtime: Arc<Mutex<Option<Arc<Runtime>>>>,
+    runtime: Arc<Mutex<Option<Arc<R>>>>,
     /// None if dogstatsd is disabled
     dogstatsd: Option<Client>,
     common_stats_tags: Vec<Tag>,
@@ -206,19 +205,19 @@ pub struct TraceExporter {
     info_response_observer: ResponseObserver,
     telemetry: Option<TelemetryClient>,
     health_metrics_enabled: bool,
-    workers: Arc<Mutex<TraceExporterWorkers>>,
+    workers: Arc<Mutex<TraceExporterWorkers<R>>>,
     agent_payload_response_version: Option<AgentResponsePayloadVersion>,
-    http_client: HttpClient,
+    http_client: R::HttpClient,
 }
 
-impl TraceExporter {
+impl<R: Runtime> GenericTraceExporter<R> {
     #[allow(missing_docs)]
     pub fn builder() -> TraceExporterBuilder {
         TraceExporterBuilder::default()
     }
 
     /// Return the existing runtime or create a new one and start all workers
-    fn runtime(&self) -> Result<Arc<Runtime>, TraceExporterError> {
+    fn runtime(&self) -> Result<Arc<R>, TraceExporterError> {
         let mut runtime_guard = self.runtime.lock_or_panic();
         match runtime_guard.as_ref() {
             Some(runtime) => {
@@ -227,12 +226,7 @@ impl TraceExporter {
             }
             None => {
                 // Create a new current thread runtime with all features enabled
-                let runtime = Arc::new(
-                    tokio::runtime::Builder::new_multi_thread()
-                        .worker_threads(1)
-                        .enable_all()
-                        .build()?,
-                );
+                let runtime = Arc::new(R::new()?);
                 *runtime_guard = Some(runtime.clone());
                 self.start_all_workers(&runtime)?;
                 Ok(runtime)
@@ -247,12 +241,12 @@ impl TraceExporter {
     }
 
     /// Start all workers with the given runtime
-    fn start_all_workers(&self, runtime: &Arc<Runtime>) -> Result<(), TraceExporterError> {
+    fn start_all_workers(&self, runtime: &Arc<R>) -> Result<(), TraceExporterError> {
         let mut workers = self.workers.lock_or_panic();
 
         self.start_info_worker(&mut workers, runtime)?;
         self.start_stats_worker(&mut workers, runtime)?;
-        self.start_telemetry_worker(&mut workers, runtime)?;
+        // self.start_telemetry_worker(&mut workers, runtime)?;
 
         Ok(())
     }
@@ -260,8 +254,8 @@ impl TraceExporter {
     /// Start the info worker
     fn start_info_worker(
         &self,
-        workers: &mut TraceExporterWorkers,
-        runtime: &Arc<Runtime>,
+        workers: &mut TraceExporterWorkers<R>,
+        runtime: &Arc<R>,
     ) -> Result<(), TraceExporterError> {
         workers.info.start(runtime).map_err(|e| {
             TraceExporterError::Internal(InternalErrorKind::InvalidWorkerState(e.to_string()))
@@ -271,8 +265,8 @@ impl TraceExporter {
     /// Start the stats worker if present
     fn start_stats_worker(
         &self,
-        workers: &mut TraceExporterWorkers,
-        runtime: &Arc<Runtime>,
+        workers: &mut TraceExporterWorkers<R>,
+        runtime: &Arc<R>,
     ) -> Result<(), TraceExporterError> {
         if let Some(stats_worker) = &mut workers.stats {
             stats_worker.start(runtime).map_err(|e| {
@@ -280,82 +274,6 @@ impl TraceExporter {
             })?;
         }
         Ok(())
-    }
-
-    /// Start the telemetry worker if present
-    fn start_telemetry_worker(
-        &self,
-        workers: &mut TraceExporterWorkers,
-        runtime: &Arc<Runtime>,
-    ) -> Result<(), TraceExporterError> {
-        if let Some(telemetry_worker) = &mut workers.telemetry {
-            telemetry_worker.start(runtime).map_err(|e| {
-                TraceExporterError::Internal(InternalErrorKind::InvalidWorkerState(e.to_string()))
-            })?;
-            if let Some(client) = &self.telemetry {
-                runtime.block_on(client.start());
-            }
-        }
-        Ok(())
-    }
-
-    pub fn stop_worker(&self) {
-        let runtime = self.runtime.lock_or_panic().take();
-        if let Some(ref rt) = runtime {
-            // Stop workers to save their state
-            let mut workers = self.workers.lock_or_panic();
-            rt.block_on(async {
-                let _ = workers.info.pause().await;
-                if let Some(stats_worker) = &mut workers.stats {
-                    let _ = stats_worker.pause().await;
-                };
-                if let Some(telemetry_worker) = &mut workers.telemetry {
-                    let _ = telemetry_worker.pause().await;
-                };
-            });
-        }
-        // When the info fetcher is paused, the trigger channel keeps a reference to the runtime's
-        // IoStack as a waker. This prevents the IoStack from being dropped when shutting
-        // down runtime. By manually sending a message to the trigger channel we trigger the
-        // waker releasing the reference to the IoStack. Finally we drain the channel to
-        // avoid triggering a fetch when the info fetcher is restarted.
-        if let PausableWorker::Paused { worker } = &mut self.workers.lock_or_panic().info {
-            self.info_response_observer.manual_trigger();
-            worker.drain();
-        }
-        drop(runtime);
-    }
-
-    /// Send msgpack serialized traces to the agent
-    ///
-    /// # Arguments
-    ///
-    /// * data: A slice containing the serialized traces. This slice should be encoded following the
-    ///   input_format passed to the TraceExporter on creating.
-    /// * trace_count: The number of traces in the data
-    ///
-    /// # Returns
-    /// * Ok(AgentResponse): The response from the agent
-    /// * Err(TraceExporterError): An error detailing what went wrong in the process
-    pub fn send(
-        &self,
-        data: &[u8],
-        trace_count: usize,
-    ) -> Result<AgentResponse, TraceExporterError> {
-        self.check_agent_info();
-
-        let res = match self.input_format {
-            TraceExporterInputFormat::Proxy => self.send_proxy(data.as_ref(), trace_count),
-            TraceExporterInputFormat::V04 => self.send_deser(data, DeserInputFormat::V04),
-            TraceExporterInputFormat::V05 => self.send_deser(data, DeserInputFormat::V05),
-        }?;
-        if matches!(&res, AgentResponse::Changed { body } if body.is_empty()) {
-            return Err(TraceExporterError::Agent(
-                error::AgentErrorKind::EmptyResponse,
-            ));
-        }
-
-        Ok(res)
     }
 
     /// Safely shutdown the TraceExporter and all related tasks
@@ -488,30 +406,6 @@ impl TraceExporter {
         }
     }
 
-    fn send_proxy(
-        &self,
-        data: &[u8],
-        trace_count: usize,
-    ) -> Result<AgentResponse, TraceExporterError> {
-        self.send_data_to_url(
-            data,
-            trace_count,
-            self.output_format.add_path(&self.endpoint.url),
-        )
-    }
-
-    fn send_data_to_url(
-        &self,
-        data: &[u8],
-        trace_count: usize,
-        uri: Uri,
-    ) -> Result<AgentResponse, TraceExporterError> {
-        self.runtime()?.block_on(async {
-            self.send_request_and_handle_response(data, trace_count, uri)
-                .await
-        })
-    }
-
     /// Send HTTP request and handle the response
     async fn send_request_and_handle_response(
         &self,
@@ -579,52 +473,6 @@ impl TraceExporter {
         }
     }
 
-    /// Send a list of trace chunks to the agent
-    ///
-    /// # Arguments
-    /// * trace_chunks: A list of trace chunks. Each trace chunk is a list of spans.
-    ///
-    /// # Returns
-    /// * Ok(String): The response from the agent
-    /// * Err(TraceExporterError): An error detailing what went wrong in the process
-    pub fn send_trace_chunks<T: SpanText>(
-        &self,
-        trace_chunks: Vec<Vec<Span<T>>>,
-    ) -> Result<AgentResponse, TraceExporterError> {
-        self.check_agent_info();
-        self.send_trace_chunks_inner(trace_chunks)
-    }
-
-    /// Deserializes, processes and sends trace chunks to the agent
-    fn send_deser(
-        &self,
-        data: &[u8],
-        format: DeserInputFormat,
-    ) -> Result<AgentResponse, TraceExporterError> {
-        let (traces, _) = match format {
-            DeserInputFormat::V04 => msgpack_decoder::v04::from_slice(data),
-            DeserInputFormat::V05 => msgpack_decoder::v05::from_slice(data),
-        }
-        .map_err(|e| {
-            error!("Error deserializing trace from request body: {e}");
-            self.emit_metric(
-                HealthMetric::Count(health_metrics::DESERIALIZE_TRACES_ERRORS, 1),
-                None,
-            );
-            TraceExporterError::Deserialization(e)
-        })?;
-        debug!(
-            trace_count = traces.len(),
-            "Trace deserialization completed successfully"
-        );
-        self.emit_metric(
-            HealthMetric::Count(health_metrics::DESERIALIZE_TRACES, traces.len() as i64),
-            None,
-        );
-
-        self.send_trace_chunks_inner(traces)
-    }
-
     /// Send traces payload to agent with retry and telemetry reporting
     async fn send_traces_with_telemetry(
         &self,
@@ -637,8 +485,14 @@ impl TraceExporter {
         let payload_len = mp_payload.len();
 
         // Send traces to the agent
-        let result =
-            send_with_retry(&self.http_client, endpoint, mp_payload, &headers, &strategy).await;
+        let result = send_with_retry::<R, R::HttpClient>(
+            &self.http_client,
+            endpoint,
+            mp_payload,
+            &headers,
+            &strategy,
+        )
+        .await;
 
         // Emit http.requests health metric based on number of attempts
         let requests_count = match &result {
@@ -669,41 +523,7 @@ impl TraceExporter {
         self.handle_send_result(result, chunks, payload_len).await
     }
 
-    fn send_trace_chunks_inner<T: SpanText>(
-        &self,
-        mut traces: Vec<Vec<Span<T>>>,
-    ) -> Result<AgentResponse, TraceExporterError> {
-        let mut header_tags: TracerHeaderTags = self.metadata.borrow().into();
-
-        // Process stats computation
-        stats::process_traces_for_stats(
-            &mut traces,
-            &mut header_tags,
-            &self.client_side_stats,
-            self.client_computed_top_level,
-        );
-
-        let serializer = TraceSerializer::new(
-            self.output_format,
-            self.agent_payload_response_version.as_ref(),
-        );
-        let prepared = serializer.prepare_traces_payload(traces, header_tags)?;
-
-        let endpoint = Endpoint {
-            url: self.get_agent_url(),
-            ..self.endpoint.clone()
-        };
-
-        self.runtime()?.block_on(async {
-            self.send_traces_with_telemetry(
-                &endpoint,
-                prepared.data,
-                prepared.headers,
-                prepared.chunk_count,
-            )
-            .await
-        })
-    }
+    // Note: send_trace_chunks_inner is implemented in the specialized tokio implementation
 
     /// Handle the result of sending traces to the agent
     async fn handle_send_result(
@@ -787,7 +607,7 @@ impl TraceExporter {
     /// Handle HTTP error responses from send with retry
     async fn handle_http_send_error(
         &self,
-        response: hyper::Response<hyper_migration::Body>,
+        response: http::Response<hyper_migration::Body>,
         payload_len: usize,
         chunks: usize,
     ) -> Result<AgentResponse, TraceExporterError> {
@@ -829,7 +649,7 @@ impl TraceExporter {
     /// Read response body from error response
     async fn read_error_response_body(
         &self,
-        response: hyper::Response<hyper_migration::Body>,
+        response: http::Response<hyper_migration::Body>,
     ) -> Result<bytes::Bytes, TraceExporterError> {
         match response.into_body().collect().await {
             Ok(body) => Ok(body.to_bytes()),
@@ -843,7 +663,7 @@ impl TraceExporter {
     /// Check if the agent's payload version has changed based on response headers
     fn check_payload_version_changed(
         &self,
-        response: &hyper::Response<hyper_migration::Body>,
+        response: &http::Response<hyper_migration::Body>,
     ) -> bool {
         let status = response.status();
         match (
@@ -874,7 +694,7 @@ impl TraceExporter {
     /// Read response body and handle potential errors
     async fn read_response_body(
         &self,
-        response: hyper::Response<hyper_migration::Body>,
+        response: http::Response<hyper_migration::Body>,
     ) -> Result<String, TraceExporterError> {
         match response.into_body().collect().await {
             Ok(body) => Ok(String::from_utf8_lossy(&body.to_bytes()).to_string()),
@@ -894,7 +714,7 @@ impl TraceExporter {
     fn handle_successful_trace_response(
         &self,
         chunks: usize,
-        status: hyper::StatusCode,
+        status: http::StatusCode,
         body: String,
         payload_version_changed: bool,
     ) -> Result<AgentResponse, TraceExporterError> {
@@ -918,7 +738,7 @@ impl TraceExporter {
     async fn handle_agent_response(
         &self,
         chunks: usize,
-        response: hyper::Response<hyper_migration::Body>,
+        response: http::Response<hyper_migration::Body>,
         payload_len: usize,
     ) -> Result<AgentResponse, TraceExporterError> {
         // Check if the agent state has changed
@@ -972,6 +792,189 @@ impl TraceExporter {
     /// Test only function to check if the stats computation is active and the worker is running
     pub fn is_stats_worker_active(&self) -> bool {
         stats::is_stats_worker_active(&self.client_side_stats, &self.workers)
+    }
+}
+
+impl GenericTraceExporter<tokio::runtime::Runtime> {
+    fn start_telemetry_worker(
+        &self,
+        workers: &mut TraceExporterWorkers<tokio::runtime::Runtime>,
+        runtime: &Arc<tokio::runtime::Runtime>,
+    ) -> Result<(), TraceExporterError> {
+        if let Some(telemetry_worker) = &mut workers.telemetry {
+            telemetry_worker.start(runtime).map_err(|e| {
+                TraceExporterError::Internal(InternalErrorKind::InvalidWorkerState(e.to_string()))
+            })?;
+            if let Some(client) = &self.telemetry {
+                runtime.block_on(client.start());
+            }
+        }
+        Ok(())
+    }
+
+    pub fn stop_worker(&self) {
+        let runtime = self.runtime.lock_or_panic().take();
+        if let Some(ref rt) = runtime {
+            // Stop workers to save their state
+            let mut workers = self.workers.lock_or_panic();
+            rt.block_on(async {
+                let _ = workers.info.pause().await;
+                if let Some(stats_worker) = &mut workers.stats {
+                    let _ = stats_worker.pause().await;
+                };
+                if let Some(telemetry_worker) = &mut workers.telemetry {
+                    let _ = telemetry_worker.pause().await;
+                };
+            });
+        }
+        // When the info fetcher is paused, the trigger channel keeps a reference to the runtime's
+        // IoStack as a waker. This prevents the IoStack from being dropped when shutting
+        // down runtime. By manually sending a message to the trigger channel we trigger the
+        // waker releasing the reference to the IoStack. Finally we drain the channel to
+        // avoid triggering a fetch when the info fetcher is restarted.
+        if let PausableWorker::Paused { worker } = &mut self.workers.lock_or_panic().info {
+            self.info_response_observer.manual_trigger();
+            worker.drain();
+        }
+        drop(runtime);
+    }
+
+    /// Send msgpack serialized traces to the agent
+    ///
+    /// # Arguments
+    ///
+    /// * data: A slice containing the serialized traces. This slice should be encoded following the
+    ///   input_format passed to the TraceExporter on creating.
+    /// * trace_count: The number of traces in the data
+    ///
+    /// # Returns
+    /// * Ok(AgentResponse): The response from the agent
+    /// * Err(TraceExporterError): An error detailing what went wrong in the process
+    pub fn send(
+        &self,
+        data: &[u8],
+        trace_count: usize,
+    ) -> Result<AgentResponse, TraceExporterError> {
+        self.check_agent_info();
+
+        let res = match self.input_format {
+            TraceExporterInputFormat::Proxy => self.send_proxy(data.as_ref(), trace_count),
+            TraceExporterInputFormat::V04 => self.send_deser(data, DeserInputFormat::V04),
+            TraceExporterInputFormat::V05 => self.send_deser(data, DeserInputFormat::V05),
+        }?;
+        if matches!(&res, AgentResponse::Changed { body } if body.is_empty()) {
+            return Err(TraceExporterError::Agent(
+                error::AgentErrorKind::EmptyResponse,
+            ));
+        }
+
+        Ok(res)
+    }
+
+    fn send_proxy(
+        &self,
+        data: &[u8],
+        trace_count: usize,
+    ) -> Result<AgentResponse, TraceExporterError> {
+        self.send_data_to_url(
+            data,
+            trace_count,
+            self.output_format.add_path(&self.endpoint.url),
+        )
+    }
+
+    /// Send a list of trace chunks to the agent
+    ///
+    /// # Arguments
+    /// * trace_chunks: A list of trace chunks. Each trace chunk is a list of spans.
+    ///
+    /// # Returns
+    /// * Ok(String): The response from the agent
+    /// * Err(TraceExporterError): An error detailing what went wrong in the process
+    pub fn send_trace_chunks<T: SpanText>(
+        &self,
+        trace_chunks: Vec<Vec<Span<T>>>,
+    ) -> Result<AgentResponse, TraceExporterError> {
+        self.check_agent_info();
+        self.send_trace_chunks_inner(trace_chunks)
+    }
+
+    /// Deserializes, processes and sends trace chunks to the agent
+    fn send_deser(
+        &self,
+        data: &[u8],
+        format: DeserInputFormat,
+    ) -> Result<AgentResponse, TraceExporterError> {
+        let (traces, _) = match format {
+            DeserInputFormat::V04 => msgpack_decoder::v04::from_slice(data),
+            DeserInputFormat::V05 => msgpack_decoder::v05::from_slice(data),
+        }
+        .map_err(|e| {
+            error!("Error deserializing trace from request body: {e}");
+            self.emit_metric(
+                HealthMetric::Count(health_metrics::DESERIALIZE_TRACES_ERRORS, 1),
+                None,
+            );
+            TraceExporterError::Deserialization(e)
+        })?;
+        debug!(
+            trace_count = traces.len(),
+            "Trace deserialization completed successfully"
+        );
+        self.emit_metric(
+            HealthMetric::Count(health_metrics::DESERIALIZE_TRACES, traces.len() as i64),
+            None,
+        );
+
+        self.send_trace_chunks_inner(traces)
+    }
+
+    fn send_data_to_url(
+        &self,
+        data: &[u8],
+        trace_count: usize,
+        uri: Uri,
+    ) -> Result<AgentResponse, TraceExporterError> {
+        self.runtime()?.block_on(async {
+            self.send_request_and_handle_response(data, trace_count, uri)
+                .await
+        })
+    }
+
+    fn send_trace_chunks_inner<T: SpanText>(
+        &self,
+        mut traces: Vec<Vec<Span<T>>>,
+    ) -> Result<AgentResponse, TraceExporterError> {
+        let mut header_tags: TracerHeaderTags = self.metadata.borrow().into();
+
+        // Process stats computation
+        stats::process_traces_for_stats(
+            &mut traces,
+            &mut header_tags,
+            &self.client_side_stats,
+            self.client_computed_top_level,
+        );
+
+        let serializer = TraceSerializer::new(
+            self.output_format,
+            self.agent_payload_response_version.as_ref(),
+        );
+        let prepared = serializer.prepare_traces_payload(traces, header_tags)?;
+
+        let endpoint = Endpoint {
+            url: self.get_agent_url(),
+            ..self.endpoint.clone()
+        };
+
+        self.runtime()?.block_on(async {
+            self.send_traces_with_telemetry(
+                &endpoint,
+                prepared.data,
+                prepared.headers,
+                prepared.chunk_count,
+            )
+            .await
+        })
     }
 }
 
@@ -1069,7 +1072,7 @@ mod tests {
         output: TraceExporterOutputFormat,
         enable_telemetry: bool,
         enable_health_metrics: bool,
-    ) -> TraceExporter {
+    ) -> GenericTraceExporter<tokio::runtime::Runtime> {
         let mut builder = TraceExporterBuilder::default();
         builder
             .set_url(&url)
@@ -1097,7 +1100,7 @@ mod tests {
             });
         }
 
-        builder.build().unwrap()
+        builder.build_tokio().unwrap()
     }
 
     #[test]
@@ -1499,7 +1502,7 @@ mod tests {
             .set_language("nodejs")
             .set_language_version("1.0")
             .set_language_interpreter("v8");
-        let exporter = builder.build().unwrap();
+        let exporter = builder.build_tokio().unwrap();
 
         let traces: Vec<Vec<SpanBytes>> = vec![vec![SpanBytes {
             name: BytesString::from_slice(b"test").unwrap(),
@@ -1541,7 +1544,7 @@ mod tests {
             .set_language("nodejs")
             .set_language_version("1.0")
             .set_language_interpreter("v8");
-        let exporter = builder.build().unwrap();
+        let exporter = builder.build_tokio().unwrap();
 
         let traces: Vec<Vec<SpanBytes>> = vec![vec![SpanBytes {
             name: BytesString::from_slice(b"test").unwrap(),
@@ -1576,7 +1579,7 @@ mod tests {
             .set_language("nodejs")
             .set_language_version("1.0")
             .set_language_interpreter("v8");
-        let exporter = builder.build().unwrap();
+        let exporter = builder.build_tokio().unwrap();
 
         let traces: Vec<Vec<SpanBytes>> = vec![vec![SpanBytes {
             name: BytesString::from_slice(b"test").unwrap(),
@@ -1634,7 +1637,7 @@ mod tests {
                 heartbeat: 100,
                 ..Default::default()
             });
-        let exporter = builder.build().unwrap();
+        let exporter = builder.build_tokio().unwrap();
 
         let traces = vec![0x90];
         let result = exporter.send(traces.as_ref(), 1).unwrap();
@@ -1761,7 +1764,7 @@ mod tests {
             .set_input_format(TraceExporterInputFormat::V04)
             .set_output_format(TraceExporterOutputFormat::V05);
 
-        let exporter = builder.build().unwrap();
+        let exporter = builder.build_tokio().unwrap();
 
         let traces = vec![0x90];
         let result = exporter.send(traces.as_ref(), 1).unwrap();
@@ -1807,7 +1810,7 @@ mod tests {
 
         let mut builder = TraceExporterBuilder::default();
         builder.set_url(&server.url("/"));
-        let exporter = builder.build().unwrap();
+        let exporter = builder.build_tokio().unwrap();
         let traces = vec![0x90];
         for _ in 0..2 {
             let result = exporter.send(traces.as_ref(), 1).unwrap();
@@ -1844,7 +1847,7 @@ mod tests {
         builder
             .set_url(&server.url("/"))
             .enable_agent_rates_payload_version();
-        let exporter = builder.build().unwrap();
+        let exporter = builder.build_tokio().unwrap();
         let traces = vec![0x90];
         let result = exporter.send(traces.as_ref(), 1).unwrap();
         let AgentResponse::Changed { body } = result else {
@@ -1944,7 +1947,7 @@ mod tests {
             .set_input_format(TraceExporterInputFormat::V04)
             .set_output_format(TraceExporterOutputFormat::V04)
             .enable_stats(Duration::from_secs(10));
-        let exporter = builder.build().unwrap();
+        let exporter = builder.build_tokio().unwrap();
 
         let trace_chunk = vec![SpanBytes {
             duration: 10,
@@ -1976,7 +1979,7 @@ mod tests {
     #[test]
     #[cfg_attr(miri, ignore)]
     fn test_connection_timeout() {
-        let exporter = TraceExporterBuilder::default().build().unwrap();
+        let exporter = TraceExporterBuilder::default().build_tokio().unwrap();
 
         assert_eq!(exporter.endpoint.timeout_ms, Endpoint::default().timeout_ms);
 
@@ -1984,7 +1987,7 @@ mod tests {
         let mut builder = TraceExporterBuilder::default();
         builder.set_connection_timeout(timeout);
 
-        let exporter = builder.build().unwrap();
+        let exporter = builder.build_tokio().unwrap();
 
         assert_eq!(exporter.endpoint.timeout_ms, 42);
     }
@@ -1993,7 +1996,7 @@ mod tests {
     #[cfg_attr(miri, ignore)]
     fn stop_and_start_runtime() {
         let builder = TraceExporterBuilder::default();
-        let exporter = builder.build().unwrap();
+        let exporter = builder.build_tokio().unwrap();
         exporter.stop_worker();
         exporter.run_worker().unwrap();
     }
@@ -2051,7 +2054,7 @@ mod single_threaded_tests {
             .set_input_format(TraceExporterInputFormat::V04)
             .set_output_format(TraceExporterOutputFormat::V04)
             .enable_stats(Duration::from_secs(10));
-        let exporter = builder.build().unwrap();
+        let exporter = builder.build_tokio().unwrap();
 
         let trace_chunk = vec![SpanBytes {
             duration: 10,
@@ -2151,7 +2154,7 @@ mod single_threaded_tests {
             .set_input_format(TraceExporterInputFormat::V04)
             .set_output_format(TraceExporterOutputFormat::V04)
             .enable_stats(Duration::from_secs(10));
-        let exporter = builder.build().unwrap();
+        let exporter = builder.build_tokio().unwrap();
 
         let trace_chunk = vec![SpanBytes {
             service: "test".into(),

@@ -4,6 +4,7 @@
 use std::{
     borrow::Borrow,
     collections::HashMap,
+    marker::PhantomData,
     sync::{
         atomic::{AtomicU64, Ordering},
         Arc, Mutex,
@@ -12,8 +13,7 @@ use std::{
 };
 
 use crate::trace_exporter::TracerMetadata;
-use hyper;
-use libdd_common::{worker::Worker, Endpoint, HttpClient};
+use libdd_common::{Endpoint, runtime::Runtime, worker::Worker};
 use libdd_trace_protobuf::pb;
 use libdd_trace_stats::span_concentrator::SpanConcentrator;
 use libdd_trace_utils::send_with_retry::{send_with_retry, RetryStrategy};
@@ -25,17 +25,18 @@ const STATS_ENDPOINT_PATH: &str = "/v0.6/stats";
 
 /// An exporter that concentrates and sends stats to the agent
 #[derive(Debug)]
-pub struct StatsExporter {
+pub struct StatsExporter<R: Runtime> {
     flush_interval: time::Duration,
     concentrator: Arc<Mutex<SpanConcentrator>>,
     endpoint: Endpoint,
     meta: TracerMetadata,
     sequence_id: AtomicU64,
     cancellation_token: CancellationToken,
-    client: HttpClient,
+    client: R::HttpClient,
+    _runtime: PhantomData<R>,
 }
 
-impl StatsExporter {
+impl<R: Runtime> StatsExporter<R> {
     /// Return a new StatsExporter
     ///
     /// - `flush_interval` the interval on which the concentrator is flushed
@@ -50,7 +51,7 @@ impl StatsExporter {
         meta: TracerMetadata,
         endpoint: Endpoint,
         cancellation_token: CancellationToken,
-        client: HttpClient,
+        client: R::HttpClient,
     ) -> Self {
         Self {
             flush_interval,
@@ -60,6 +61,7 @@ impl StatsExporter {
             sequence_id: AtomicU64::new(0),
             cancellation_token,
             client,
+            _runtime: PhantomData,
         }
     }
 
@@ -88,11 +90,11 @@ impl StatsExporter {
         let mut headers: HashMap<&'static str, String> = self.meta.borrow().into();
 
         headers.insert(
-            hyper::header::CONTENT_TYPE.as_str(),
+            http::header::CONTENT_TYPE.as_str(),
             libdd_common::header::APPLICATION_MSGPACK_STR.to_string(),
         );
 
-        let result = send_with_retry(
+        let result = send_with_retry::<R, R::HttpClient>(
             &self.client,
             &self.endpoint,
             body,
@@ -133,7 +135,7 @@ impl StatsExporter {
     }
 }
 
-impl Worker for StatsExporter {
+impl<R: Runtime> Worker for StatsExporter<R> {
     /// Run loop of the stats exporter
     ///
     /// Once started, the stats exporter will flush and send stats on every `self.flush_interval`.
@@ -146,7 +148,7 @@ impl Worker for StatsExporter {
                     let _ = self.send(true).await;
                     break;
                 },
-                _ = tokio::time::sleep(self.flush_interval) => {
+                _ = R::sleep(self.flush_interval) => {
                         let _ = self.send(false).await;
                 },
             };
@@ -181,16 +183,18 @@ fn encode_stats_payload(
 }
 
 /// Return the stats endpoint url to send stats to the agent at `agent_url`
-pub fn stats_url_from_agent_url(agent_url: &str) -> anyhow::Result<hyper::Uri> {
-    let mut parts = agent_url.parse::<hyper::Uri>()?.into_parts();
-    parts.path_and_query = Some(hyper::http::uri::PathAndQuery::from_static(
+pub fn stats_url_from_agent_url(agent_url: &str) -> anyhow::Result<http::Uri> {
+    let mut parts = agent_url.parse::<http::Uri>()?.into_parts();
+    parts.path_and_query = Some(http::uri::PathAndQuery::from_static(
         STATS_ENDPOINT_PATH,
     ));
-    Ok(hyper::Uri::from_parts(parts)?)
+    Ok(http::Uri::from_parts(parts)?)
 }
 
 #[cfg(test)]
 mod tests {
+    type TokioStatsExporter = StatsExporter<tokio::runtime::Runtime>;
+
     use super::*;
     use httpmock::prelude::*;
     use httpmock::MockServer;
@@ -208,8 +212,8 @@ mod tests {
     /// Fails to compile if stats exporter is not Send and Sync
     #[test]
     fn test_stats_exporter_sync_send() {
-        let _ = is_send::<StatsExporter>;
-        let _ = is_sync::<StatsExporter>;
+        let _ = is_send::<TokioStatsExporter>;
+        let _ = is_sync::<TokioStatsExporter>;
     }
 
     fn get_test_metadata() -> TracerMetadata {
@@ -265,7 +269,7 @@ mod tests {
             })
             .await;
 
-        let stats_exporter = StatsExporter::new(
+        let stats_exporter = TokioStatsExporter::new(
             BUCKETS_DURATION,
             Arc::new(Mutex::new(get_test_concentrator())),
             get_test_metadata(),
@@ -293,7 +297,7 @@ mod tests {
             })
             .await;
 
-        let stats_exporter = StatsExporter::new(
+        let stats_exporter = TokioStatsExporter::new(
             BUCKETS_DURATION,
             Arc::new(Mutex::new(get_test_concentrator())),
             get_test_metadata(),
@@ -326,7 +330,7 @@ mod tests {
             })
             .await;
 
-        let mut stats_exporter = StatsExporter::new(
+        let mut stats_exporter = TokioStatsExporter::new(
             BUCKETS_DURATION,
             Arc::new(Mutex::new(get_test_concentrator())),
             get_test_metadata(),
@@ -367,7 +371,7 @@ mod tests {
         let buckets_duration = Duration::from_secs(10);
         let cancellation_token = CancellationToken::new();
 
-        let mut stats_exporter = StatsExporter::new(
+        let mut stats_exporter = TokioStatsExporter::new(
             buckets_duration,
             Arc::new(Mutex::new(get_test_concentrator())),
             get_test_metadata(),
