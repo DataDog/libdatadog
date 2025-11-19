@@ -5,7 +5,7 @@ use criterion::{black_box, criterion_group, BenchmarkId, Criterion};
 use libdd_crashtracker::benchmark::receiver_entry_point;
 use libdd_crashtracker::shared::constants::*;
 use libdd_crashtracker::{
-    default_signals, get_data_folder_path, CrashtrackerConfiguration, SharedLibrary,
+    default_signals, get_tests_folder_path, CrashtrackerConfiguration, SharedLibrary,
     StacktraceCollection,
 };
 use std::fmt::Write;
@@ -150,14 +150,14 @@ async fn bench_receiver_entry_point_from_str(data: &str) {
 }
 
 fn load_test_libraries() -> (SharedLibrary, SharedLibrary) {
-    let sofile_c_path = get_data_folder_path()
-        .expect("Failed to get the data folder path")
+    let sofile_c_path = get_tests_folder_path()
+        .expect("Failed to get the tests folder path")
         .join("libtest.so")
         .canonicalize()
         .unwrap();
 
-    let sofile_cpp_path = get_data_folder_path()
-        .expect("Failed to get the data folder path")
+    let sofile_cpp_path = get_tests_folder_path()
+        .expect("Failed to get the tests folder path")
         .join("libtest_cpp.so")
         .canonicalize()
         .unwrap();

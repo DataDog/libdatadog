@@ -4,11 +4,24 @@
 use crate::profiles::collections::StringRef;
 
 /// An FFI-safe string ID where a null StringId2 maps to `StringRef::EMPTY`.
+/// The representation is ensured to be a  pointer for ABI stability, but
+/// callers should not generally dereference this pointer. When using the id,
+/// the caller needs to be sure that the `ProfilesDictionary` or string set it
+/// refers to is the same one that the operations are performed on; it is not
+/// generally guaranteed that ids from one dictionary/set can be used in
+/// another, even if it happens to work by implementation detail. There is an
+/// exception is for well-known strings, which are considered present in every
+/// string set.
 #[repr(transparent)]
 #[derive(Clone, Copy, Debug)]
 pub struct StringId2(*mut StringHeader);
 
-/// Represents a pointer to a string's header. Its definition is intentionally obscured.
+/// Represents what StringIds point to. Its definition is intentionally
+/// obscured; the actual layout is being hidden. This is here so that
+/// cbindgen will generate a unique type as opposed to relying on `void *` or
+/// similar. We want StringId2, FunctionId2, and MappingId2 to all point to
+/// unique so that compilers will distinguish between them and provide some
+/// type safety.
 #[derive(Clone, Copy, Debug)]
 #[repr(C)]
 pub struct StringHeader(u8);

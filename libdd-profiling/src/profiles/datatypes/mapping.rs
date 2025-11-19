@@ -7,6 +7,9 @@ use crate::profiles::datatypes::StringId2;
 /// A representation of a mapping that is an intersection of the Otel and Pprof
 /// representations. Omits boolean attributes because Datadog doesn't use them
 /// in any way.
+///
+/// This representation is used internally by the `ProfilesDictionary`, and
+/// utilizes the fact that `StringRef`s don't have null values.
 #[repr(C)]
 #[derive(Copy, Clone, Debug, Default, Eq, PartialEq, Hash)]
 pub struct Mapping {
@@ -17,7 +20,7 @@ pub struct Mapping {
     pub build_id: StringRef, // missing in Otel, is it made into an attribute?
 }
 
-/// An FFI-safe version of the Mapping.
+/// An FFI-safe version of the Mapping which allows null.
 #[repr(C)]
 #[derive(Copy, Clone, Debug, Default)]
 pub struct Mapping2 {
@@ -52,6 +55,14 @@ impl From<Mapping> for Mapping2 {
     }
 }
 
+/// An FFI-safe representation of a "handle" to a mapping which has been
+/// stored in the `ProfilesDictionary`. The representation is ensured to be a
+/// pointer for ABI stability, but callers should not generally dereference
+/// this pointer. When using the id, the caller needs to be sure that the
+/// `ProfilesDictionary` it refers to is the same one that the operations are
+/// performed on; it is not generally guaranteed that ids from one dictionary
+/// can be used in another dictionary, even if it happens to work by
+/// implementation detail.
 #[derive(Clone, Copy, Debug)]
 #[repr(transparent)]
 pub struct MappingId2(pub(crate) *mut Mapping2);

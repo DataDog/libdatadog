@@ -5,9 +5,21 @@ rust-version.workspace = true
 edition.workspace = true
 version.workspace = true
 license.workspace = true
+publish = false
 
 [features]
-default = []
+# Default features to release
+default = [
+  "crashtracker",
+  "profiling",
+  "telemetry",
+  "data-pipeline",
+  "symbolizer",
+  "library-config",
+  "log",
+  "ddsketch",
+  "ffe",
+]
 crashtracker = []
 profiling = []
 telemetry = []
@@ -16,6 +28,7 @@ symbolizer = []
 library-config = []
 log = []
 ddsketch = []
+ffe = []
 
 [lib]
 bench = false

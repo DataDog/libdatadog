@@ -608,7 +608,6 @@ mod tests {
     #[cfg_attr(miri, ignore)]
     #[cfg(target_os = "linux")]
     #[test]
-    #[ignore]
     fn test_waitall_nohang() {
         // This test checks whether the crashtracking implementation can cause malformed `waitall()`
         // idioms to hang.

@@ -2,6 +2,7 @@
 edition = "2021"
 name = "test_spawn_from_lib"
 version = "0.0.1"
+publish = false
 
 [lib]
 # needs to by dylib for the trampoline tests to work correctly

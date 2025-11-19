@@ -15,6 +15,7 @@ keywords = ["rpc", "network", "server", "api", "microservices"]
 categories = ["asynchronous", "network-programming"]
 readme = "README.md"
 description = "An RPC framework for Rust with a focus on ease of use."
+publish = false
 
 [lib]
 bench = false
