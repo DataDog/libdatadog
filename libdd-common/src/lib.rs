@@ -25,11 +25,11 @@ pub mod config;
 pub mod error;
 pub mod hyper_migration;
 pub mod rate_limiter;
+pub mod runtime;
 pub mod tag;
 pub mod timeout;
 pub mod unix_utils;
 pub mod worker;
-pub mod runtime;
 
 /// Extension trait for `Mutex` to provide a method that acquires a lock, panicking if the lock is
 /// poisoned.

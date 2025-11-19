@@ -6,6 +6,7 @@ use crate::trace_exporter::agent_response::{
 };
 use crate::trace_exporter::error::TraceExporterError;
 use crate::trace_exporter::TraceExporterOutputFormat;
+use http::header::CONTENT_TYPE;
 use libdd_common::header::{
     APPLICATION_MSGPACK_STR, DATADOG_SEND_REAL_HTTP_STATUS_STR, DATADOG_TRACE_COUNT_STR,
 };
@@ -14,7 +15,6 @@ use libdd_trace_utils::msgpack_encoder;
 use libdd_trace_utils::span::{Span, SpanText};
 use libdd_trace_utils::trace_utils::{self, TracerHeaderTags};
 use libdd_trace_utils::tracer_payload;
-use http::header::CONTENT_TYPE;
 use std::collections::HashMap;
 
 /// Prepared traces payload ready for sending to the agent
@@ -114,10 +114,10 @@ impl<'a> TraceSerializer<'a> {
 mod tests {
     use super::*;
     use crate::trace_exporter::agent_response::AgentResponsePayloadVersion;
+    use http::header::CONTENT_TYPE;
     use libdd_common::header::{
         APPLICATION_MSGPACK_STR, DATADOG_SEND_REAL_HTTP_STATUS_STR, DATADOG_TRACE_COUNT_STR,
     };
-    use http::header::CONTENT_TYPE;
     use libdd_tinybytes::BytesString;
     use libdd_trace_utils::span::SpanBytes;
     use libdd_trace_utils::trace_utils::TracerHeaderTags;

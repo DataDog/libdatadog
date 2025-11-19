@@ -100,10 +100,11 @@ impl std::error::Error for RequestError {}
 /// # Example
 ///
 /// ```rust, no_run
-/// # use libdd_common::Endpoint;
-/// # use libdd_common::hyper_migration::new_default_client;
+/// # use libdd_common::{Endpoint, HttpClient};
+/// # use libdd_common::hyper_migration::{new_default_client};
 /// # use libdd_trace_utils::send_with_retry::*;
 /// # use std::collections::HashMap;
+/// # use tokio::runtime::Runtime;
 /// # async fn run() -> SendWithRetryResult {
 /// let payload: Vec<u8> = vec![0, 1, 2, 3];
 /// let target = Endpoint {
@@ -113,7 +114,8 @@ impl std::error::Error for RequestError {}
 /// let headers = HashMap::from([("Content-type", "application/msgpack".to_string())]);
 /// let retry_strategy = RetryStrategy::new(3, 10, RetryBackoffType::Exponential, Some(5));
 /// let client = new_default_client();
-/// send_with_retry(&client, &target, payload, &headers, &retry_strategy).await
+/// send_with_retry::<Runtime, HttpClient>(&client, &target, payload, &headers, &retry_strategy)
+///     .await
 /// # }
 /// ```
 pub async fn send_with_retry<R: Runtime, C: HttpClient>(

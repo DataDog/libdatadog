@@ -31,12 +31,12 @@ pub fn new_default_client() -> GenericHttpClient<Connector> {
         .build(Connector::default())
 }
 
-pub type HttpResponse = hyper::Response<Body>;
+pub type HttpResponse = http::Response<Body>;
 pub type HttpRequest = HyperRequest<Body>;
 pub type ClientError = hyper_util::client::legacy::Error;
 pub type ResponseFuture = hyper_util::client::legacy::ResponseFuture;
 
-pub fn into_response(response: hyper::Response<Incoming>) -> HttpResponse {
+pub fn into_response(response: http::Response<Incoming>) -> HttpResponse {
     response.map(Body::Incoming)
 }
 
@@ -81,7 +81,7 @@ impl std::error::Error for Error {}
 
 pub fn mock_response(
     builder: http::response::Builder,
-    body: hyper::body::Bytes,
+    body: bytes::Bytes,
 ) -> anyhow::Result<HttpResponse> {
     Ok(builder.body(Body::from_bytes(body))?)
 }
@@ -163,8 +163,8 @@ impl From<String> for Body {
     }
 }
 
-impl hyper::body::Body for Body {
-    type Data = hyper::body::Bytes;
+impl http_body::Body for Body {
+    type Data = bytes::Bytes;
 
     type Error = Error;
 
@@ -182,7 +182,7 @@ impl hyper::body::Body for Body {
                     Poll::Ready(None) => return Poll::Ready(None),
                     Poll::Pending => return Poll::Pending,
                 };
-                Poll::Ready(Some(Ok(hyper::body::Frame::data(data))))
+                Poll::Ready(Some(Ok(http_body::Frame::data(data))))
             }
             BodyProj::Incoming(pin) => pin.poll_frame(cx).map_err(Error::Hyper),
         }

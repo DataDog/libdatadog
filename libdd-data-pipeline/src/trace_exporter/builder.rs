@@ -7,7 +7,7 @@ use crate::telemetry::TelemetryClientBuilder;
 use crate::trace_exporter::agent_response::AgentResponsePayloadVersion;
 use crate::trace_exporter::error::BuilderErrorKind;
 use crate::trace_exporter::{
-    add_path, StatsComputationStatus, TelemetryConfig, GenericTraceExporter, TraceExporterError,
+    add_path, GenericTraceExporter, StatsComputationStatus, TelemetryConfig, TraceExporterError,
     TraceExporterInputFormat, TraceExporterOutputFormat, TraceExporterWorkers, TracerMetadata,
     INFO_ENDPOINT,
 };
@@ -17,6 +17,7 @@ use libdd_common::{parse_uri, tag, Endpoint};
 use libdd_dogstatsd_client::new;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
+use tokio::runtime::Runtime as TokioRt;
 
 const DEFAULT_AGENT_URL: &str = "http://127.0.0.1:8126";
 
@@ -218,7 +219,7 @@ impl TraceExporterBuilder {
     }
 
     #[allow(missing_docs)]
-    pub fn build_tokio(self) -> Result<GenericTraceExporter<tokio::runtime::Runtime>, TraceExporterError> {
+    pub fn build_tokio(self) -> Result<GenericTraceExporter<TokioRt>, TraceExporterError> {
         if !Self::is_inputs_outputs_formats_compatible(self.input_format, self.output_format) {
             return Err(TraceExporterError::Builder(
                 BuilderErrorKind::InvalidConfiguration(

@@ -83,15 +83,17 @@ pub async fn fetch_info_with_state<R: Runtime>(
 /// ```no_run
 /// # use anyhow::Result;
 /// # use libdd_common::worker::Worker;
+/// # use tokio::runtime::Runtime;
 /// # #[tokio::main]
 /// # async fn main() -> Result<()> {
 /// // Define the endpoint
 /// use libdd_data_pipeline::agent_info;
 /// let endpoint = libdd_common::Endpoint::from_url("http://localhost:8126/info".parse().unwrap());
 /// // Create the fetcher
-/// let (mut fetcher, _response_observer) = libdd_data_pipeline::agent_info::AgentInfoFetcher::new(
-///     endpoint,
-///     std::time::Duration::from_secs(5 * 60),
+/// let (mut fetcher, _response_observer) = libdd_data_pipeline::agent_info::AgentInfoFetcher::<
+///     Runtime,
+/// >::new(
+///     endpoint, std::time::Duration::from_secs(5 * 60)
 /// );
 /// // Start the runner
 /// tokio::spawn(async move {

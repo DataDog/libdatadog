@@ -13,7 +13,7 @@ use std::{
 };
 
 use crate::trace_exporter::TracerMetadata;
-use libdd_common::{Endpoint, runtime::Runtime, worker::Worker};
+use libdd_common::{runtime::Runtime, worker::Worker, Endpoint};
 use libdd_trace_protobuf::pb;
 use libdd_trace_stats::span_concentrator::SpanConcentrator;
 use libdd_trace_utils::send_with_retry::{send_with_retry, RetryStrategy};
@@ -185,9 +185,7 @@ fn encode_stats_payload(
 /// Return the stats endpoint url to send stats to the agent at `agent_url`
 pub fn stats_url_from_agent_url(agent_url: &str) -> anyhow::Result<http::Uri> {
     let mut parts = agent_url.parse::<http::Uri>()?.into_parts();
-    parts.path_and_query = Some(http::uri::PathAndQuery::from_static(
-        STATS_ENDPOINT_PATH,
-    ));
+    parts.path_and_query = Some(http::uri::PathAndQuery::from_static(STATS_ENDPOINT_PATH));
     Ok(http::Uri::from_parts(parts)?)
 }
 

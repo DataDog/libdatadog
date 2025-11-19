@@ -38,7 +38,7 @@ impl<C: Connect + Send + Sync + Clone + 'static> HttpClient for crate::GenericHt
         let res = self.request(req);
         async {
             res.await
-                .map_err(|e| io::Error::new(io::ErrorKind::Other, e))
+                .map_err(io::Error::other)
                 .map(|b| b.map(crate::hyper_migration::Body::incoming))
         }
     }

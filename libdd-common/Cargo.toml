@@ -26,6 +26,7 @@ hyper-util = { workspace = true }
 http = "1.0"
 http-body = "1.0"
 http-body-util = "0.1"
+bytes = "1.6"
 tower-service = "0.3"
 cc = "1.1.31"
 pin-project = "1"
