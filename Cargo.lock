@@ -360,6 +360,7 @@ dependencies = [
  "libdd-profiling",
  "nix 0.29.0",
  "once_cell",
+ "os_info",
  "serde_json",
  "strum",
  "tempfile",
