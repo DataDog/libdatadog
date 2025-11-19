@@ -1092,6 +1092,7 @@ mod api_tests {
     use super::*;
     use crate::pprof::test_utils::{roundtrip_to_pprof, sorted_samples, string_table_fetch};
     use libdd_profiling_protobuf::prost_impls;
+    use std::collections::HashSet;
 
     #[test]
     fn interning() {
@@ -2879,16 +2880,16 @@ mod api_tests {
         );
 
         // Verify the label keys and values we added are present in string table
-        let expected_label_strings: std::collections::HashSet<&str> =
-            ["thread_id", "thread_id_num", "worker-1"]
-                .into_iter()
-                .collect();
+        let expected_label_strings = ["thread_id", "thread_id_num", "worker-1"]
+            .into_iter()
+            .collect::<HashSet<&str>>();
+        let diff = expected_label_strings
+            .difference(&string_table_set)
+            .collect::<Vec<_>>();
         assert!(
-            expected_label_strings.is_subset(&string_table_set),
+            diff.is_empty(),
             "Missing label strings from string table: {:?}",
-            expected_label_strings
-                .difference(&string_table_set)
-                .collect::<Vec<_>>()
+            diff
         );
 
         // Verify sample values
