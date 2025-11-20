@@ -18,10 +18,7 @@ pub(crate) const CANNOT_ALLOCATE_ERROR: Error = Error {
 const CANNOT_ALLOCATE: &std::ffi::CStr =
     c"libdatadog failed: (panic) Cannot allocate error message";
 const CANNOT_ALLOCATE_CHAR_SLICE: CharSlice = unsafe {
-    crate::Slice::from_raw_parts(
-        CANNOT_ALLOCATE.as_ptr(),
-        CANNOT_ALLOCATE.to_bytes().len(),
-    )
+    crate::Slice::from_raw_parts(CANNOT_ALLOCATE.as_ptr(), CANNOT_ALLOCATE.to_bytes().len())
 };
 
 /// Please treat this as opaque; do not reach into it, and especially don't
@@ -125,8 +122,8 @@ pub unsafe extern "C" fn ddog_Error_message(error: Option<&Error>) -> CharSlice<
         None => CharSlice::empty(),
         // When the error is empty (CANNOT_ALLOCATE_ERROR) we assume we failed to allocate an actual
         // error and return this placeholder message instead.
-        // In particular this means we'll use the CANNOT_ALLOCATE_CHAR_SLICE error message for **every** empty error,
-        // and no other kinds of errors are expected to be empty.
+        // In particular this means we'll use the CANNOT_ALLOCATE_CHAR_SLICE error message for
+        // **every** empty error, and no other kinds of errors are expected to be empty.
         Some(err) => {
             if *err == CANNOT_ALLOCATE_ERROR {
                 CANNOT_ALLOCATE_CHAR_SLICE
