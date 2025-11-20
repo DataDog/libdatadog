@@ -33,6 +33,13 @@ pub struct Period {
     pub value: i64,
 }
 
+impl<'a> From<api::Period<'a>> for Period {
+    #[inline]
+    fn from(period: api::Period<'a>) -> Self {
+        Period::from(&period)
+    }
+}
+
 impl<'a> From<&'a api::Period<'a>> for Period {
     #[inline]
     fn from(period: &'a api::Period<'a>) -> Self {
