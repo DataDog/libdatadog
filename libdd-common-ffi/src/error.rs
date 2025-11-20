@@ -20,7 +20,7 @@ const CANNOT_ALLOCATE: &std::ffi::CStr =
 const CANNOT_ALLOCATE_CHAR_SLICE: CharSlice = unsafe {
     crate::Slice::from_raw_parts(
         CANNOT_ALLOCATE.as_ptr(),
-        CANNOT_ALLOCATE.to_bytes_with_nul().len(),
+        CANNOT_ALLOCATE.to_bytes().len(),
     )
 };
 
