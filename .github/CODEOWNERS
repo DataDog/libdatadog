@@ -3,7 +3,7 @@ libdd-alloc/                @Datadog/libdatadog-profiling
 libdd-crashtracking*/       @Datadog/libdatadog-profiling
 libdd-profiling*/           @Datadog/libdatadog-profiling
 libdd-telemetry*/           @Datadog/libdatadog-telemetry
-ruby/                       @Datadog/libdatadog-ruby
+ruby/                       @Datadog/ruby-guild
 Cargo.*                     @Datadog/libdatadog
 .gitignore                  @Datadog/libdatadog
 .gitlab-ci.yaml             @Datadog/libdatadog
