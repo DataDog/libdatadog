@@ -75,19 +75,7 @@ struct Frame2 {
 
 pub fn bench_add_sample_vs_add2(c: &mut Criterion) {
     let sample_types = make_sample_types();
-
-    // Create dictionary for both sample types and frames
     let dict = profiling::profiles::datatypes::ProfilesDictionary::try_new().unwrap();
-
-    // Convert sample_types to ValueType2 by inserting strings into dictionary
-    let sample_types2: Vec<_> = sample_types
-        .iter()
-        .map(|st| {
-            let type_id = dict.try_insert_str2(st.r#type).unwrap();
-            let unit_id = dict.try_insert_str2(st.unit).unwrap();
-            api2::ValueType2 { type_id, unit_id }
-        })
-        .collect();
 
     // This is root-to-leaf, instead of leaf-to-root. We'll reverse it below.
     // Taken from a Ruby app, everything here is source-available.
@@ -150,7 +138,7 @@ pub fn bench_add_sample_vs_add2(c: &mut Criterion) {
     c.bench_function("profile_add_sample2_frames_x1000", |b| {
         b.iter(|| {
             let mut profile = profiling::internal::Profile::try_new_with_dictionary(
-                &sample_types2,
+                &sample_types,
                 None,
                 dict.try_clone().unwrap(),
             )
