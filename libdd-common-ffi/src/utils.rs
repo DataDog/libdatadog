@@ -89,7 +89,6 @@ pub fn handle_panic_error(
         if let Some(s) = error.downcast_ref::<String>() {
             anyhow::anyhow!("{} failed: (panic) {}", function_name, s)
         } else if let Some(s) = error.downcast_ref::<&str>() {
-            // panic!("double panic");
             anyhow::anyhow!("{} failed: (panic) {}", function_name, s)
         } else {
             anyhow::anyhow!(
