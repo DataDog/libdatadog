@@ -7,9 +7,9 @@ use crate::telemetry::TelemetryClientBuilder;
 use crate::trace_exporter::agent_response::AgentResponsePayloadVersion;
 use crate::trace_exporter::error::BuilderErrorKind;
 use crate::trace_exporter::{
-    add_path, StatsComputationStatus, TelemetryConfig, TraceExporter, TraceExporterError,
-    TraceExporterInputFormat, TraceExporterOutputFormat, TraceExporterWorkers, TracerMetadata,
-    INFO_ENDPOINT,
+    add_path, GenericTraceExporter, StatsComputationStatus, TelemetryConfig, TraceExporter,
+    TraceExporterError, TraceExporterInputFormat, TraceExporterOutputFormat, TraceExporterWorkers,
+    TracerMetadata, INFO_ENDPOINT,
 };
 use arc_swap::ArcSwap;
 use libdd_common::hyper_migration::new_default_client;
@@ -218,7 +218,7 @@ impl TraceExporterBuilder {
     }
 
     #[allow(missing_docs)]
-    pub fn build(self) -> Result<TraceExporter, TraceExporterError> {
+    pub fn build_tokio(self) -> Result<TraceExporter, TraceExporterError> {
         if !Self::is_inputs_outputs_formats_compatible(self.input_format, self.output_format) {
             return Err(TraceExporterError::Builder(
                 BuilderErrorKind::InvalidConfiguration(
@@ -227,12 +227,7 @@ impl TraceExporterBuilder {
             ));
         }
 
-        let runtime = Arc::new(
-            tokio::runtime::Builder::new_multi_thread()
-                .worker_threads(1)
-                .enable_all()
-                .build()?,
-        );
+        let runtime = Arc::new(<tokio::runtime::Runtime as libdd_common::runtime::Runtime>::new()?);
 
         let dogstatsd = self.dogstatsd_url.and_then(|u| {
             new(Endpoint::from_slice(&u)).ok() // If we couldn't set the endpoint return
@@ -241,7 +236,7 @@ impl TraceExporterBuilder {
 
         let base_url = self.url.as_deref().unwrap_or(DEFAULT_AGENT_URL);
 
-        let agent_url: hyper::Uri = parse_uri(base_url).map_err(|e: anyhow::Error| {
+        let agent_url: http::Uri = parse_uri(base_url).map_err(|e: anyhow::Error| {
             TraceExporterError::Builder(BuilderErrorKind::InvalidUri(e.to_string()))
         })?;
 
@@ -252,7 +247,7 @@ impl TraceExporterBuilder {
         let (info_fetcher, info_response_observer) =
             AgentInfoFetcher::new(info_endpoint.clone(), Duration::from_secs(5 * 60));
         let mut info_fetcher_worker = PausableWorker::new(info_fetcher);
-        info_fetcher_worker.start(&runtime).map_err(|e| {
+        info_fetcher_worker.start(runtime.as_ref()).map_err(|e| {
             TraceExporterError::Builder(BuilderErrorKind::InvalidConfiguration(e.to_string()))
         })?;
 
@@ -285,7 +280,7 @@ impl TraceExporterBuilder {
         let (telemetry_client, telemetry_worker) = match telemetry {
             Some((client, worker)) => {
                 let mut telemetry_worker = PausableWorker::new(worker);
-                telemetry_worker.start(&runtime).map_err(|e| {
+                telemetry_worker.start(runtime.as_ref()).map_err(|e| {
                     TraceExporterError::Builder(BuilderErrorKind::InvalidConfiguration(
                         e.to_string(),
                     ))
@@ -296,7 +291,7 @@ impl TraceExporterBuilder {
             None => (None, None),
         };
 
-        Ok(TraceExporter {
+        Ok(GenericTraceExporter {
             endpoint: Endpoint {
                 url: agent_url,
                 test_token: self.test_session_token.map(|token| token.into()),
@@ -384,7 +379,7 @@ mod tests {
                 runtime_id: None,
                 debug_enabled: false,
             });
-        let exporter = builder.build().unwrap();
+        let exporter = builder.build_tokio().unwrap();
 
         assert_eq!(
             exporter
@@ -408,7 +403,7 @@ mod tests {
     #[test]
     fn test_new_defaults() {
         let builder = TraceExporterBuilder::default();
-        let exporter = builder.build().unwrap();
+        let exporter = builder.build_tokio().unwrap();
 
         assert_eq!(
             exporter
@@ -439,7 +434,7 @@ mod tests {
             .set_language_version("1.0")
             .set_language_interpreter("v8");
 
-        let exporter = builder.build();
+        let exporter = builder.build_tokio();
 
         assert!(exporter.is_err());
 
