@@ -53,6 +53,16 @@ impl<T: Eq> Eq for Vec<T> {}
 
 impl<T> Drop for Vec<T> {
     fn drop(&mut self) {
+        // A Rust Vec of size 0 [has no allocated memory](https://doc.rust-lang.org/std/vec/struct.Vec.html#guarantees):
+        // "In particular, if you construct a Vec with capacity 0 via Vec::new, vec![],
+        // Vec::with_capacity(0), or by calling shrink_to_fit on an empty Vec, it will not allocate
+        // memory." And as per https://doc.rust-lang.org/nomicon/vec/vec-dealloc.html:
+        // "We must not call alloc::dealloc when self.cap == 0, as in this case we haven't actually
+        // allocated any memory."
+        if self.capacity == 0 {
+            return;
+        }
+
         let vec =
             unsafe { alloc::vec::Vec::from_raw_parts(self.ptr as *mut T, self.len, self.capacity) };
         drop(vec)
@@ -106,6 +116,7 @@ impl<T> Vec<T> {
         unsafe { Slice::from_raw_parts(self.ptr, self.len) }
     }
 
+    /// Note: Like the regular rust `Vec`, this doesn't allocate memory when capacity is zero.
     pub const fn new() -> Self {
         Vec {
             ptr: NonNull::dangling().as_ptr(),

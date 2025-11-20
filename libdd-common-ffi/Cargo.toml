@@ -29,3 +29,5 @@ serde = "1.0"
 
 [dev-dependencies]
 bolero = "0.13"
+assert_no_alloc = "1.1.2"
+function_name = "0.3.0"
