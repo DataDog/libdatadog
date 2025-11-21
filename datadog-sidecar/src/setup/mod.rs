@@ -23,4 +23,5 @@ pub trait Liaison: Sized {
     fn attempt_listen(&self) -> io::Result<Option<IpcServer>>;
     fn ipc_shared() -> Self;
     fn ipc_per_process() -> Self;
+    fn for_master_pid(master_pid: u32) -> Self;
 }
