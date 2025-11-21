@@ -1158,7 +1158,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-ffe-ffi"
-version = "1.0.1"
+version = "1.0.2"
 dependencies = [
  "anyhow",
  "build_common",
