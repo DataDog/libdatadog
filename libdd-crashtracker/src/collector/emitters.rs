@@ -132,15 +132,18 @@ unsafe fn emit_backtrace_by_frames(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn emit_crashreport(
     pipe: &mut impl Write,
     config: &CrashtrackerConfiguration,
     config_str: &str,
     metadata_string: &str,
+    message_ptr: *mut String,
     sig_info: *const siginfo_t,
     ucontext: *const ucontext_t,
     ppid: i32,
 ) -> Result<(), EmitterError> {
+    emit_message(pipe, message_ptr)?;
     emit_metadata(pipe, metadata_string)?;
     emit_config(pipe, config_str)?;
     emit_siginfo(pipe, sig_info)?;
@@ -188,6 +191,17 @@ fn emit_metadata(w: &mut impl Write, metadata_str: &str) -> Result<(), EmitterEr
     writeln!(w, "{metadata_str}")?;
     writeln!(w, "{DD_CRASHTRACK_END_METADATA}")?;
     w.flush()?;
+    Ok(())
+}
+
+fn emit_message(w: &mut impl Write, message_ptr: *mut String) -> Result<(), EmitterError> {
+    if !message_ptr.is_null() {
+        let message = unsafe { &*message_ptr };
+        writeln!(w, "{DD_CRASHTRACK_BEGIN_MESSAGE}")?;
+        writeln!(w, "{message}")?;
+        writeln!(w, "{DD_CRASHTRACK_END_MESSAGE}")?;
+        w.flush()?;
+    }
     Ok(())
 }
 
