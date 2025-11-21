@@ -30,6 +30,7 @@ impl Collector {
         config: &CrashtrackerConfiguration,
         config_str: &str,
         metadata_str: &str,
+        message_ptr: *mut String,
         sig_info: *const siginfo_t,
         ucontext: *const ucontext_t,
     ) -> Result<Self, CollectorSpawnError> {
@@ -45,6 +46,7 @@ impl Collector {
                     config,
                     config_str,
                     metadata_str,
+                    message_ptr,
                     sig_info,
                     ucontext,
                     receiver.handle.uds_fd,
@@ -66,10 +68,12 @@ impl Collector {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn run_collector_child(
     config: &CrashtrackerConfiguration,
     config_str: &str,
     metadata_str: &str,
+    message_ptr: *mut String,
     sig_info: *const siginfo_t,
     ucontext: *const ucontext_t,
     uds_fd: RawFd,
@@ -96,6 +100,7 @@ pub(crate) fn run_collector_child(
         config,
         config_str,
         metadata_str,
+        message_ptr,
         sig_info,
         ucontext,
         ppid,
