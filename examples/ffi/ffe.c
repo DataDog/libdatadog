@@ -154,6 +154,20 @@ void evaluate_and_print_flag(
     bool do_log = ddog_ffe_assignment_get_do_log(assignment);
     printf("  Do Log: %s\n", do_log ? "true" : "false");
 
+    // Get and print flag metadata
+    struct ddog_ffe_ArrayMap_BorrowedStr metadata = ddog_ffe_assignnment_get_flag_metadata(assignment);
+    if (metadata.count > 0) {
+        printf("  Flag Metadata (%zu entries):\n", metadata.count);
+        for (size_t i = 0; i < metadata.count; i++) {
+            struct ddog_ffe_KeyValue_BorrowedStr kv = metadata.elements[i];
+            printf("    - %.*s: %.*s\n",
+                   (int)kv.key.len, (const char*)kv.key.ptr,
+                   (int)kv.value.len, (const char*)kv.value.ptr);
+        }
+    } else {
+        printf("  Flag Metadata: (empty)\n");
+    }
+
     // Clean up
     ddog_ffe_assignment_drop(&assignment);
 }
