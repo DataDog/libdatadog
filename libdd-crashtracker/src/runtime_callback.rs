@@ -326,7 +326,6 @@ unsafe fn emit_frame_as_json(
 #[cfg(all(test, unix))]
 mod tests {
     use super::*;
-    use std::ffi::CString;
     use std::sync::Mutex;
 
     // So we don't have race conditions with global static variable
@@ -350,10 +349,11 @@ mod tests {
         emit_frame(&frame);
     }
 
+    #[cfg(feature = "collector")]
     unsafe extern "C" fn test_emit_stacktrace_string_callback(
         emit_stacktrace_string: unsafe extern "C" fn(*const c_char),
     ) {
-        let stacktrace_string = CString::new("test_stacktrace_string").unwrap();
+        let stacktrace_string = std::ffi::CString::new("test_stacktrace_string").unwrap();
 
         emit_stacktrace_string(stacktrace_string.as_ptr());
     }
@@ -383,6 +383,7 @@ mod tests {
 
     #[test]
     #[cfg_attr(miri, ignore)]
+    #[cfg(feature = "collector")]
     fn test_frame_collection() {
         let _guard = TEST_MUTEX.lock().unwrap();
         ensure_callback_cleared();
@@ -438,6 +439,7 @@ mod tests {
 
     #[test]
     #[cfg_attr(miri, ignore)]
+    #[cfg(feature = "collector")]
     fn test_stacktrace_string_collection() {
         let _guard = TEST_MUTEX.lock().unwrap();
         ensure_callback_cleared();
@@ -462,6 +464,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "collector")]
     fn test_no_callback_registered() {
         let _guard = TEST_MUTEX.lock().unwrap();
         ensure_callback_cleared();
@@ -484,6 +487,7 @@ mod tests {
 
     #[test]
     #[cfg_attr(miri, ignore)]
+    #[cfg(feature = "collector")]
     fn test_direct_pipe_writing() {
         let _guard = TEST_MUTEX.lock().unwrap();
         ensure_callback_cleared();
