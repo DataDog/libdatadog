@@ -10,6 +10,8 @@ use crate::crash_info::Metadata;
 use crate::shared::configuration::CrashtrackerConfiguration;
 use libc::{c_void, siginfo_t, ucontext_t};
 use libdd_common::timeout::TimeoutManager;
+use std::panic;
+use std::panic::PanicHookInfo;
 use std::ptr;
 use std::sync::atomic::Ordering::SeqCst;
 use std::sync::atomic::{AtomicBool, AtomicPtr, AtomicU64};
@@ -35,6 +37,10 @@ use std::sync::atomic::{AtomicBool, AtomicPtr, AtomicU64};
 // `Box::from_raw` to recreate the box, then dropping it.
 static METADATA: AtomicPtr<(Metadata, String)> = AtomicPtr::new(ptr::null_mut());
 static CONFIG: AtomicPtr<(CrashtrackerConfiguration, String)> = AtomicPtr::new(ptr::null_mut());
+static PANIC_MESSAGE: AtomicPtr<String> = AtomicPtr::new(ptr::null_mut());
+
+type PanicHook = Box<dyn Fn(&PanicHookInfo<'_>) + Send + Sync>;
+static PREVIOUS_PANIC_HOOK: AtomicPtr<PanicHook> = AtomicPtr::new(ptr::null_mut());
 
 #[derive(Debug, thiserror::Error)]
 pub enum CrashHandlerError {
@@ -70,6 +76,73 @@ pub fn update_metadata(metadata: Metadata) -> anyhow::Result<()> {
         }
     }
     Ok(())
+}
+
+/// Register the panic hook.
+///
+/// This function is used to register the panic hook and store the previous hook.
+/// PRECONDITIONS:
+///     None
+/// SAFETY:
+///     Crash-tracking functions are not guaranteed to be reentrant.
+///     No other crash-handler functions should be called concurrently.
+/// ATOMICITY:
+///     This function uses a swap on an atomic pointer.
+pub fn register_panic_hook() -> anyhow::Result<()> {
+    // register only once, if it is already registered, do nothing
+    if !PREVIOUS_PANIC_HOOK.load(SeqCst).is_null() {
+        return Ok(());
+    }
+
+    let old_hook = panic::take_hook();
+    let old_hook_ptr = Box::into_raw(Box::new(old_hook));
+    PREVIOUS_PANIC_HOOK.swap(old_hook_ptr, SeqCst);
+    panic::set_hook(Box::new(panic_hook));
+    Ok(())
+}
+
+/// The panic hook function.
+///
+/// This function is used to update the metadata with the panic message
+/// and call the previous hook.
+/// PRECONDITIONS:
+///     None
+/// SAFETY:
+///     Crash-tracking functions are not guaranteed to be reentrant.
+///     No other crash-handler functions should be called concurrently.
+/// ATOMICITY:
+///     This function uses a load on an atomic pointer.
+fn panic_hook(panic_info: &PanicHookInfo<'_>) {
+    if let Some(s) = panic_info.payload().downcast_ref::<&str>() {
+        let message_ptr = PANIC_MESSAGE.swap(Box::into_raw(Box::new(s.to_string())), SeqCst);
+        // message_ptr should be null, but just in case.
+        if !message_ptr.is_null() {
+            unsafe {
+                std::mem::drop(Box::from_raw(message_ptr));
+            }
+        }
+    }
+    call_previous_panic_hook(panic_info);
+}
+
+/// Call the previous panic hook.
+///
+/// This function is used to call the previous panic hook.
+/// PRECONDITIONS:
+///     None
+/// SAFETY:
+///     Crash-tracking functions are not guaranteed to be reentrant.
+///     No other crash-handler functions should be called concurrently.
+fn call_previous_panic_hook(panic_info: &PanicHookInfo<'_>) {
+    let old_hook_ptr = PREVIOUS_PANIC_HOOK.load(SeqCst);
+    if !old_hook_ptr.is_null() {
+        // Safety: This pointer can only come from Box::into_raw above in register_panic_hook.
+        // We borrow it here without taking ownership so it remains valid for future calls.
+        unsafe {
+            let old_hook = &*old_hook_ptr;
+            old_hook(panic_info);
+        }
+    }
 }
 
 /// Updates the crashtracker config for this process
@@ -172,6 +245,11 @@ fn handle_posix_signal_impl(
     }
     let (_metadata, metadata_string) = unsafe { &*metadata_ptr };
 
+    // Get the panic message pointer but don't dereference or deallocate in signal handler.
+    // The collector child process will handle converting this to a String after forking.
+    // Leak of the message pointer is ok here.
+    let message_ptr = PANIC_MESSAGE.swap(ptr::null_mut(), SeqCst);
+
     let timeout_manager = TimeoutManager::new(config.timeout());
 
     // Optionally, create the receiver.  This all hinges on whether or not the configuration has a
@@ -190,6 +268,7 @@ fn handle_posix_signal_impl(
         config,
         config_str,
         metadata_string,
+        message_ptr,
         sig_info,
         ucontext,
     )?;

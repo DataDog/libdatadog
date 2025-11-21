@@ -116,6 +116,7 @@ pub(crate) enum StdinState {
     // may have lines that we need to accumulate depending on runtime (e.g. Python)
     RuntimeStackFrame(Vec<StackFrame>),
     RuntimeStackString(Vec<String>),
+    Message,
 }
 
 /// A state machine that processes data from the crash-tracker collector line by
@@ -227,17 +228,25 @@ fn process_line(
         StdinState::SigInfo if line.starts_with(DD_CRASHTRACK_END_SIGINFO) => StdinState::Waiting,
         StdinState::SigInfo => {
             let sig_info: SigInfo = serde_json::from_str(line)?;
-            // By convention, siginfo is the first thing sent.
-            let message = format!(
-                "Process terminated with {:?} ({:?})",
-                sig_info.si_code_human_readable, sig_info.si_signo_human_readable
-            );
+            if !builder.has_message() {
+                let message = format!(
+                    "Process terminated with {:?} ({:?})",
+                    sig_info.si_code_human_readable, sig_info.si_signo_human_readable
+                );
+                builder.with_message(message)?;
+            }
 
-            builder.with_timestamp_now()?;
-            builder.with_sig_info(sig_info)?;
-            builder.with_incomplete(true)?;
-            builder.with_message(message)?;
+            builder
+                .with_timestamp_now()?
+                .with_sig_info(sig_info)?
+                .with_incomplete(true)?;
             StdinState::SigInfo
+        }
+
+        StdinState::Message if line.starts_with(DD_CRASHTRACK_END_MESSAGE) => StdinState::Waiting,
+        StdinState::Message => {
+            builder.with_message(line.to_string())?;
+            StdinState::Message
         }
 
         StdinState::SpanIds if line.starts_with(DD_CRASHTRACK_END_SPAN_IDS) => StdinState::Waiting,
@@ -289,6 +298,7 @@ fn process_line(
             StdinState::ProcInfo
         }
         StdinState::Waiting if line.starts_with(DD_CRASHTRACK_BEGIN_SIGINFO) => StdinState::SigInfo,
+        StdinState::Waiting if line.starts_with(DD_CRASHTRACK_BEGIN_MESSAGE) => StdinState::Message,
         StdinState::Waiting if line.starts_with(DD_CRASHTRACK_BEGIN_SPAN_IDS) => {
             StdinState::SpanIds
         }
