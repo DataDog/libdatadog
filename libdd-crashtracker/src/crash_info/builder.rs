@@ -420,6 +420,10 @@ impl CrashInfoBuilder {
             self.metadata.is_some()
         }
     }
+
+    pub fn has_message(&self) -> bool {
+        self.error.message.is_some()
+    }
 }
 
 #[cfg(test)]
