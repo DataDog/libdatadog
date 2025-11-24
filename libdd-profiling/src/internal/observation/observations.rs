@@ -196,6 +196,8 @@ impl Drop for AggregatedObservations {
     }
 }
 
+/// This iterator does only exist to make the drop work as in: consume the rest of the iterator on
+/// drop to clean up and not leak memory
 struct AggregatedObservationsIter {
     iter: std::collections::hash_map::IntoIter<Sample, TrimmedObservation>,
     obs_len: ObservationLength,
