@@ -23,8 +23,24 @@ mod unix {
 
     const TEST_COLLECTOR_TIMEOUT: Duration = Duration::from_secs(10);
 
-    #[inline(never)]
-    unsafe fn fn3() {
+    enum CrashType {
+        Segfault,
+        Panic,
+    }
+
+    impl std::str::FromStr for CrashType {
+        type Err = anyhow::Error;
+        fn from_str(s: &str) -> Result<Self, Self::Err> {
+            match s {
+                "segfault" => Ok(CrashType::Segfault),
+                "panic" => Ok(CrashType::Panic),
+                _ => anyhow::bail!("Invalid crash type: {s}"),
+            }
+        }
+    }
+
+    #[inline(always)]
+    unsafe fn cause_segfault() {
         #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
         {
             std::arch::asm!("mov eax, [0]", options(nostack));
@@ -37,13 +53,25 @@ mod unix {
     }
 
     #[inline(never)]
-    fn fn2() {
-        unsafe { fn3() }
+    fn fn3(crash_type: CrashType) {
+        match crash_type {
+            CrashType::Segfault => {
+                unsafe { cause_segfault() };
+            }
+            CrashType::Panic => {
+                panic!("program panicked");
+            }
+        }
     }
 
     #[inline(never)]
-    fn fn1() {
-        fn2()
+    fn fn2(crash_type: CrashType) {
+        fn3(crash_type);
+    }
+
+    #[inline(never)]
+    fn fn1(crash_type: CrashType) {
+        fn2(crash_type);
     }
 
     #[inline(never)]
@@ -53,6 +81,7 @@ mod unix {
         let output_url = args.next().context("Unexpected number of arguments 1")?;
         let receiver_binary = args.next().context("Unexpected number of arguments 2")?;
         let output_dir = args.next().context("Unexpected number of arguments 3")?;
+        let crash_type = args.next().context("Unexpected number of arguments 4")?;
         anyhow::ensure!(args.next().is_none(), "unexpected extra arguments");
 
         let stderr_filename = format!("{output_dir}/out.stderr");
@@ -100,7 +129,7 @@ mod unix {
             metadata,
         )?;
 
-        fn1();
+        fn1(crash_type.parse().context("Invalid crash type")?);
         Ok(())
     }
 }
