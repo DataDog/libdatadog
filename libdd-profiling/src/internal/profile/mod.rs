@@ -424,7 +424,7 @@ impl Profile {
                 .map(Id::to_raw_id)
                 .collect();
             self.check_location_ids_are_valid(&location_ids, self.locations.len())?;
-            self.upscaling_rules.upscale_values(&mut values, labels)?;
+            self.upscaling_rules.upscale_values(&mut values, labels);
 
             // Use the extra slot in the labels vector to store the timestamp without any reallocs.
             if let Some(ts) = timestamp {
@@ -2604,5 +2604,62 @@ mod api_tests {
             .string_table
             .iter()
             .any(|s| s == "world"));
+    }
+
+    #[test]
+    fn reproduce_crash_with_anyhow_bailout() {
+        let sample_types = [api::ValueType::new("samples", "count")];
+        let mapping = api::Mapping {
+            filename: "test.php",
+            ..Default::default()
+        };
+
+        let mut profile = Profile::new(&sample_types, None);
+
+        let locations = vec![api::Location {
+            mapping,
+            function: api::Function {
+                name: "test_function",
+                system_name: "test_function",
+                filename: "test.php",
+            },
+            line: 0,
+            ..Default::default()
+        }];
+
+        let sample = api::Sample {
+            locations,
+            values: &[1],
+            labels: vec![api::Label {
+                key: "iteration",
+                num: 1,
+                ..Default::default()
+            }],
+        };
+
+        profile
+            .try_add_sample(sample, None) // No timestamp = aggregated
+            .expect("profile to not be full");
+
+        // We want to trigger an error inside the loop over observations.
+        // By clearing the locations, the location IDs referenced by the samples/stacktraces
+        // will become invalid (checking against len=0), causing check_location_ids_are_valid to
+        // fail.
+        profile.locations.clear();
+
+        let result = profile.serialize_into_compressed_pprof(None, None);
+
+        match result {
+            Ok(_) => panic!(
+                "Expected serialization to fail due to invalid location IDs, but it succeeded"
+            ),
+            Err(err) => {
+                assert!(
+                    err.to_string().contains("invalid location id"),
+                    "Expected error about invalid location id, got: {}",
+                    err
+                );
+            }
+        }
     }
 }
