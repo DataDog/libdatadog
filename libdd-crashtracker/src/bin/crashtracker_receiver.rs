@@ -5,6 +5,7 @@
 fn main() {}
 
 #[cfg(unix)]
+#[cfg(feature = "receiver")]
 fn main() -> anyhow::Result<()> {
     libdd_crashtracker::receiver_entry_point_stdin()
 }

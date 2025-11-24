@@ -394,7 +394,7 @@ mod tests {
 }
 
 // Tests are disabled on macos because we cannot generate the libs
-#[cfg(all(unix, not(target_os = "macos")))]
+#[cfg(all(unix, not(target_os = "macos"), feature = "generate-unit-test-files"))]
 #[cfg(test)]
 mod unix_test {
     use super::*;
