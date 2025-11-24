@@ -46,6 +46,7 @@ pub struct ArtifactsBuild {
     pub artifact_type: ArtifactType,
     pub build_profile: BuildProfile,
     pub triple_target: Option<String>,
+    pub panic_abort: Option<bool>,
 }
 
 fn inner_build_artifact(c: &ArtifactsBuild) -> anyhow::Result<PathBuf> {
@@ -58,6 +59,13 @@ fn inner_build_artifact(c: &ArtifactsBuild) -> anyhow::Result<PathBuf> {
         ArtifactType::ExecutablePackage | ArtifactType::CDylib => build_cmd.arg("-p"),
         ArtifactType::Bin => build_cmd.arg("--bin"),
     };
+
+    if let Some(panic_abort) = c.panic_abort {
+        if panic_abort {
+            build_cmd.env("RUSTFLAGS", "-C panic=abort");
+        }
+    }
+
     build_cmd.arg(&c.name);
 
     let output = build_cmd.output().unwrap();
