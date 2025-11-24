@@ -1298,7 +1298,7 @@ fn crash_tracking_empty_endpoint() {
         .arg(&fixtures.output_dir)
         .arg("donothing")
         .arg("null_deref")
-        .env("_DD_ERRORS_INTAKE_ENABLED", "true")
+        .env("DD_CRASHTRACKING_ERRORS_INTAKE_ENABLED", "true")
         .env(
             "DD_TRACE_AGENT_URL",
             format!("unix://{}", socket_path.display()),
@@ -1510,7 +1510,7 @@ fn test_crash_tracking_bin_with_errors_intake(
         .arg(&fixtures.output_dir)
         .arg(mode)
         .arg(crash_typ)
-        .env("_DD_ERRORS_INTAKE_ENABLED", "true")
+        .env("DD_CRASHTRACKING_ERRORS_INTAKE_ENABLED", "true")
         .spawn()
         .unwrap();
 
@@ -1572,7 +1572,7 @@ fn test_crash_tracking_errors_intake_dual_upload(
         .arg(&fixtures.output_dir)
         .arg(mode)
         .arg(crash_typ)
-        .env("_DD_ERRORS_INTAKE_ENABLED", "true")
+        .env("DD_CRASHTRACKING_ERRORS_INTAKE_ENABLED", "true")
         .spawn()
         .unwrap();
 
@@ -1658,7 +1658,7 @@ fn test_crash_tracking_bin_with_errors_intake_uds(
         .arg(&fixtures.output_dir)
         .arg(mode)
         .arg(crash_typ)
-        .env("_DD_ERRORS_INTAKE_ENABLED", "true")
+        .env("DD_CRASHTRACKING_ERRORS_INTAKE_ENABLED", "true")
         // Don't set DD_TRACE_AGENT_URL - let it auto-detect the UDS socket
         .spawn()
         .unwrap();

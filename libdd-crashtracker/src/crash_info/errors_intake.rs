@@ -89,7 +89,8 @@ impl ErrorsIntakeSettings {
     const _DD_SHARED_LIB_DEBUG: &'static str = "_DD_SHARED_LIB_DEBUG";
 
     // Feature flags
-    const _DD_ERRORS_INTAKE_ENABLED: &'static str = "_DD_ERRORS_INTAKE_ENABLED";
+    const DD_CRASHTRACKING_ERRORS_INTAKE_ENABLED: &'static str =
+        "DD_CRASHTRACKING_ERRORS_INTAKE_ENABLED";
 
     pub fn from_env() -> Self {
         let default = Self::default();
@@ -106,7 +107,7 @@ impl ErrorsIntakeSettings {
             site: parse_env::str_not_empty(Self::DD_SITE),
             errors_intake_dd_url: parse_env::str_not_empty(Self::DD_ERRORS_INTAKE_DD_URL),
             shared_lib_debug: parse_env::bool(Self::_DD_SHARED_LIB_DEBUG).unwrap_or(false),
-            errors_intake_enabled: parse_env::bool(Self::_DD_ERRORS_INTAKE_ENABLED)
+            errors_intake_enabled: parse_env::bool(Self::DD_CRASHTRACKING_ERRORS_INTAKE_ENABLED)
                 .unwrap_or(false),
 
             agent_uds_socket_found: (|| {
@@ -606,7 +607,7 @@ mod tests {
         std::env::remove_var("DD_SITE");
         std::env::remove_var("DD_ERRORS_INTAKE_DD_URL");
         std::env::remove_var("_DD_SHARED_LIB_DEBUG");
-        std::env::remove_var("_DD_ERRORS_INTAKE_ENABLED");
+        std::env::remove_var("DD_CRASHTRACKING_ERRORS_INTAKE_ENABLED");
     }
 
     #[cfg_attr(miri, ignore)]
@@ -837,12 +838,12 @@ mod tests {
         assert!(!cfg.is_errors_intake_enabled());
 
         // Test explicitly enabled
-        std::env::set_var("_DD_ERRORS_INTAKE_ENABLED", "true");
+        std::env::set_var("DD_CRASHTRACKING_ERRORS_INTAKE_ENABLED", "true");
         let cfg = ErrorsIntakeConfig::from_env();
         assert!(cfg.is_errors_intake_enabled());
 
         // Test explicitly disabled
-        std::env::set_var("_DD_ERRORS_INTAKE_ENABLED", "false");
+        std::env::set_var("DD_CRASHTRACKING_ERRORS_INTAKE_ENABLED", "false");
         let cfg = ErrorsIntakeConfig::from_env();
         assert!(!cfg.is_errors_intake_enabled());
 
@@ -850,7 +851,7 @@ mod tests {
         let uploader = ErrorsIntakeUploader::new(&None).unwrap();
         assert!(!uploader.is_enabled());
 
-        std::env::set_var("_DD_ERRORS_INTAKE_ENABLED", "true");
+        std::env::set_var("DD_CRASHTRACKING_ERRORS_INTAKE_ENABLED", "true");
         let uploader = ErrorsIntakeUploader::new(&None).unwrap();
         assert!(uploader.is_enabled());
     }
