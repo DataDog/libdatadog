@@ -115,9 +115,10 @@ impl Observations {
                     .try_into_iter()?
                     .map(|(s, t, o)| (s, Some(t), o));
 
-                let agg_it = std::mem::take(&mut aggregated_data.data)
-                    .into_iter()
-                    .map(move |(s, o)| (s, None, unsafe { o.into_vec(obs_len) }));
+                let agg_it = AggregatedObservationsIter {
+                    iter: std::mem::take(&mut aggregated_data.data).into_iter(),
+                    obs_len,
+                };
 
                 Ok(ObservationsIntoIter {
                     it: Box::new(ts_it.chain(agg_it)),
@@ -192,6 +193,35 @@ impl Drop for AggregatedObservations {
             // [Self::add], which already checked that the length was correct.
             unsafe { v.consume(o) };
         });
+    }
+}
+
+/// This iterator does only exist to make the drop work as in: consume the rest of the iterator on
+/// drop to clean up and not leak memory
+struct AggregatedObservationsIter {
+    iter: std::collections::hash_map::IntoIter<Sample, TrimmedObservation>,
+    obs_len: ObservationLength,
+}
+
+impl Iterator for AggregatedObservationsIter {
+    type Item = (Sample, Option<Timestamp>, Vec<i64>);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let (sample, observation) = self.iter.next()?;
+        // SAFETY: The only way to build one of these is through
+        // [Observations::add], which already checked that the length was correct.
+        let vec = unsafe { observation.into_vec(self.obs_len) };
+        Some((sample, None, vec))
+    }
+}
+
+impl Drop for AggregatedObservationsIter {
+    fn drop(&mut self) {
+        for (_, observation) in &mut self.iter {
+            // SAFETY: The only way to build one of these is through
+            // [Observations::add], which already checked that the length was correct.
+            unsafe { observation.consume(self.obs_len) };
+        }
     }
 }
 

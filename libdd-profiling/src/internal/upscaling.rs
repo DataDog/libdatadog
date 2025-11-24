@@ -165,37 +165,36 @@ impl UpscalingRules {
         self.rules.is_empty()
     }
 
-    pub fn upscale_values(&self, values: &mut [i64], labels: &[Label]) -> anyhow::Result<()> {
-        if !self.is_empty() {
-            // get bylabel rules first (if any)
-            let mut group_of_rules = labels
-                .iter()
-                .filter_map(|label| {
-                    self.get(&(
-                        label.get_key(),
-                        match label.get_value() {
-                            LabelValue::Str(str) => *str,
-                            LabelValue::Num { .. } => StringId::ZERO,
-                        },
-                    ))
-                })
-                .collect::<Vec<&Vec<UpscalingRule>>>();
+    pub fn upscale_values(&self, values: &mut [i64], labels: &[Label]) {
+        if self.is_empty() {
+            return;
+        }
+        // get bylabel rules first (if any)
+        let mut group_of_rules = labels
+            .iter()
+            .filter_map(|label| {
+                self.get(&(
+                    label.get_key(),
+                    match label.get_value() {
+                        LabelValue::Str(str) => *str,
+                        LabelValue::Num { .. } => StringId::ZERO,
+                    },
+                ))
+            })
+            .collect::<Vec<&Vec<UpscalingRule>>>();
 
-            // get byvalue rules if any
-            if let Some(byvalue_rules) = self.get(&(StringId::ZERO, StringId::ZERO)) {
-                group_of_rules.push(byvalue_rules);
-            }
-
-            group_of_rules.iter().for_each(|rules| {
-                rules.iter().for_each(|rule| {
-                    let scale = rule.compute_scale(values);
-                    rule.values_offset.iter().for_each(|offset| {
-                        values[*offset] = (values[*offset] as f64 * scale).round() as i64
-                    })
-                })
-            });
+        // get byvalue rules if any
+        if let Some(byvalue_rules) = self.get(&(StringId::ZERO, StringId::ZERO)) {
+            group_of_rules.push(byvalue_rules);
         }
 
-        Ok(())
+        group_of_rules.iter().for_each(|rules| {
+            rules.iter().for_each(|rule| {
+                let scale = rule.compute_scale(values);
+                rule.values_offset.iter().for_each(|offset| {
+                    values[*offset] = (values[*offset] as f64 * scale).round() as i64
+                })
+            })
+        });
     }
 }
