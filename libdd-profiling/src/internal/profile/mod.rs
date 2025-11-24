@@ -424,7 +424,7 @@ impl Profile {
                 .map(Id::to_raw_id)
                 .collect();
             self.check_location_ids_are_valid(&location_ids, self.locations.len())?;
-            self.upscaling_rules.upscale_values(&mut values, labels)?;
+            self.upscaling_rules.upscale_values(&mut values, labels);
 
             // Use the extra slot in the labels vector to store the timestamp without any reallocs.
             if let Some(ts) = timestamp {
