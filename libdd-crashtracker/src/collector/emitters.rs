@@ -143,10 +143,13 @@ pub(crate) fn emit_crashreport(
     ucontext: *const ucontext_t,
     ppid: i32,
 ) -> Result<(), EmitterError> {
-    emit_message(pipe, message_ptr)?;
-    emit_metadata(pipe, metadata_string)?;
     emit_config(pipe, config_str)?;
+    emit_message(pipe, message_ptr)?;
     emit_siginfo(pipe, sig_info)?;
+    // send metadata after the config (needed to send the ping/report)
+    // after the message
+    // after the siginfo (if the message is not set, we use the siginfo to generate the message)
+    emit_metadata(pipe, metadata_string)?;
     emit_ucontext(pipe, ucontext)?;
     emit_procinfo(pipe, ppid)?;
     emit_counters(pipe)?;
@@ -468,5 +471,28 @@ mod tests {
             !out.contains("backtrace::backtrace"),
             "crashtracker itself must be filtered away, found 'backtrace::backtrace'"
         );
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_emit_message_nullptr() {
+        let mut buf = Vec::new();
+        emit_message(&mut buf, std::ptr::null_mut()).expect("to work ;-)");
+        assert!(buf.is_empty());
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_emit_message() {
+        let message = "test message";
+        let message_ptr = Box::into_raw(Box::new(message.to_string()));
+        let mut buf = Vec::new();
+        emit_message(&mut buf, message_ptr).expect("to work ;-)");
+        let out = str::from_utf8(&buf).expect("to be valid UTF8");
+        assert!(out.contains("BEGIN_MESSAGE"));
+        assert!(out.contains("END_MESSAGE"));
+        assert!(out.contains(message));
+        // Clean up the allocated String
+        unsafe { drop(Box::from_raw(message_ptr)) };
     }
 }

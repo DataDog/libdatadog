@@ -383,12 +383,16 @@ impl CrashInfoBuilder {
     /// This method requires that the builder has a UUID and metadata set.
     /// Siginfo is optional for platforms that don't support it (like Windows)
     pub fn build_crash_ping(&self) -> anyhow::Result<CrashPing> {
+        let message = self.error.message.clone();
         let sig_info = self.sig_info.clone();
         let metadata = self.metadata.clone().context("metadata is required")?;
 
         let mut builder = CrashPingBuilder::new(self.uuid).with_metadata(metadata);
         if let Some(sig_info) = sig_info {
             builder = builder.with_sig_info(sig_info);
+        }
+        if let Some(message) = message {
+            builder = builder.with_custom_message(message);
         }
         builder.build()
     }

@@ -97,32 +97,19 @@ pub fn register_panic_hook() -> anyhow::Result<()> {
     let old_hook = panic::take_hook();
     let old_hook_ptr = Box::into_raw(Box::new(old_hook));
     PREVIOUS_PANIC_HOOK.swap(old_hook_ptr, SeqCst);
-    panic::set_hook(Box::new(panic_hook));
-    Ok(())
-}
-
-/// The panic hook function.
-///
-/// This function is used to update the metadata with the panic message
-/// and call the previous hook.
-/// PRECONDITIONS:
-///     None
-/// SAFETY:
-///     Crash-tracking functions are not guaranteed to be reentrant.
-///     No other crash-handler functions should be called concurrently.
-/// ATOMICITY:
-///     This function uses a load on an atomic pointer.
-fn panic_hook(panic_info: &PanicHookInfo<'_>) {
-    if let Some(s) = panic_info.payload().downcast_ref::<&str>() {
-        let message_ptr = PANIC_MESSAGE.swap(Box::into_raw(Box::new(s.to_string())), SeqCst);
-        // message_ptr should be null, but just in case.
-        if !message_ptr.is_null() {
-            unsafe {
-                std::mem::drop(Box::from_raw(message_ptr));
+    panic::set_hook(Box::new(|panic_info| {
+        if let Some(s) = panic_info.payload().downcast_ref::<&str>() {
+            let message_ptr = PANIC_MESSAGE.swap(Box::into_raw(Box::new(s.to_string())), SeqCst);
+            // message_ptr should be null, but just in case.
+            if !message_ptr.is_null() {
+                unsafe {
+                    std::mem::drop(Box::from_raw(message_ptr));
+                }
             }
         }
-    }
-    call_previous_panic_hook(panic_info);
+        call_previous_panic_hook(panic_info);
+    }));
+    Ok(())
 }
 
 /// Call the previous panic hook.
