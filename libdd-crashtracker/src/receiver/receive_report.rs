@@ -236,10 +236,9 @@ fn process_line(
                 builder.with_message(message)?;
             }
 
-            builder
-                .with_timestamp_now()?
-                .with_sig_info(sig_info)?
-                .with_incomplete(true)?;
+            builder.with_timestamp_now()?;
+            builder.with_sig_info(sig_info)?;
+            builder.with_incomplete(true)?;
             StdinState::SigInfo
         }
 

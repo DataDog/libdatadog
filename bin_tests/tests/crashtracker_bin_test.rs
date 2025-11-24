@@ -291,6 +291,79 @@ fn test_crash_tracking_errors_intake_uds_socket() {
     );
 }
 
+#[test]
+#[cfg_attr(miri, ignore)]
+fn test_crash_tracking_bin_panic() {
+    test_crash_tracking_app("panic");
+}
+
+#[test]
+#[cfg_attr(miri, ignore)]
+fn test_crash_tracking_bin_segfault() {
+    test_crash_tracking_app("segfault");
+}
+
+fn test_crash_tracking_app(crash_type: &str) {
+    use bin_tests::test_runner::run_custom_crash_test;
+
+    // Set up custom artifacts: receiver + crashing_test_app with panic_abort
+    let crashtracker_receiver = ArtifactsBuild {
+        name: "test_crashtracker_receiver".to_owned(),
+        build_profile: BuildProfile::Release,
+        artifact_type: ArtifactType::Bin,
+        triple_target: None,
+        ..Default::default()
+    };
+
+    let crashing_app = ArtifactsBuild {
+        name: "crashing_test_app".to_owned(),
+        build_profile: BuildProfile::Debug,
+        artifact_type: ArtifactType::Bin,
+        triple_target: None,
+        panic_abort: Some(true),
+        ..Default::default()
+    };
+
+    let artifacts_map = build_artifacts(&[&crashtracker_receiver, &crashing_app]).unwrap();
+
+    // Create validator based on crash type
+    let crash_type_owned = crash_type.to_owned();
+    let validator: ValidatorFn = Box::new(move |payload, _fixtures| {
+        let sig_info = &payload["sig_info"];
+        let error = &payload["error"];
+
+        match crash_type_owned.as_str() {
+            "panic" => {
+                let expected_message = "program panicked";
+                assert_eq!(
+                    error["message"].as_str().unwrap(),
+                    expected_message,
+                    "Expected panic message for panic crash type"
+                );
+            }
+            "segfault" => {
+                assert_error_message(&error["message"], sig_info);
+            }
+            _ => unreachable!("Invalid crash type: {}", crash_type_owned),
+        }
+
+        Ok(())
+    });
+
+    run_custom_crash_test(
+        &artifacts_map[&crashing_app],
+        |cmd, fixtures| {
+            cmd.arg(format!("file://{}", fixtures.crash_profile_path.display()))
+                .arg(&artifacts_map[&crashtracker_receiver])
+                .arg(&fixtures.output_dir)
+                .arg(crash_type);
+        },
+        false, // expect crash (not success)
+        validator,
+    )
+    .unwrap();
+}
+
 // ====================================================================================
 // CALLSTACK VALIDATION TESTS - MIGRATED TO CUSTOM TEST RUNNER
 // ====================================================================================

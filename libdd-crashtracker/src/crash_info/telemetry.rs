@@ -63,16 +63,16 @@ impl CrashPingBuilder {
         let sig_info = self.sig_info;
         let metadata = self.metadata.context("metadata is required")?;
 
-        let message = self.custom_message.unwrap_or_else(|| {
-            if let Some(ref sig_info) = sig_info {
-                format!(
-                    "Crashtracker crash ping: crash processing started - Process terminated with {:?} ({:?})",
-                    sig_info.si_code_human_readable, sig_info.si_signo_human_readable
-                )
-            } else {
-                "Crashtracker crash ping: crash processing started - Process terminated".to_string()
-            }
-        });
+        let message = if let Some(custom_message) = self.custom_message {
+            format!("Crashtracker crash ping: crash processing started - {custom_message}")
+        } else if let Some(ref sig_info) = sig_info {
+            format!(
+                "Crashtracker crash ping: crash processing started - Process terminated with {:?} ({:?})",
+                sig_info.si_code_human_readable, sig_info.si_signo_human_readable
+            )
+        } else {
+            "Crashtracker crash ping: crash processing started - Process terminated".to_string()
+        };
 
         Ok(CrashPing {
             crash_uuid: crash_uuid.to_string(),
@@ -820,6 +820,52 @@ mod tests {
         assert!(!crash_ping.crash_uuid().is_empty());
         assert!(Uuid::parse_str(crash_ping.crash_uuid()).is_ok());
         assert!(crash_ping.message().contains("crash processing started"));
+        assert_eq!(crash_ping.metadata(), &metadata);
+        assert_eq!(crash_ping.siginfo(), Some(&sig_info));
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_crash_ping_with_message_generated_from_sig_info() {
+        let sig_info = crate::SigInfo::test_instance(99);
+        let metadata = Metadata::test_instance(2);
+
+        // Build crash ping through CrashInfoBuilder
+        let mut crash_info_builder = CrashInfoBuilder::new();
+        crash_info_builder.with_sig_info(sig_info.clone()).unwrap();
+        crash_info_builder.with_metadata(metadata.clone()).unwrap();
+        let crash_ping = crash_info_builder.build_crash_ping().unwrap();
+
+        assert!(!crash_ping.crash_uuid().is_empty());
+        assert!(Uuid::parse_str(crash_ping.crash_uuid()).is_ok());
+        assert_eq!(crash_ping.message(), format!(
+            "Crashtracker crash ping: crash processing started - Process terminated with {:?} ({:?})",
+            sig_info.si_code_human_readable, sig_info.si_signo_human_readable
+        ));
+        assert_eq!(crash_ping.metadata(), &metadata);
+        assert_eq!(crash_ping.siginfo(), Some(&sig_info));
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_crash_ping_with_custom_message() {
+        let sig_info = crate::SigInfo::test_instance(99);
+        let metadata = Metadata::test_instance(2);
+
+        // Build crash ping through CrashInfoBuilder
+        let mut crash_info_builder = CrashInfoBuilder::new();
+        crash_info_builder.with_sig_info(sig_info.clone()).unwrap();
+        crash_info_builder.with_metadata(metadata.clone()).unwrap();
+        crash_info_builder
+            .with_message("my process panicked".to_string())
+            .unwrap();
+        let crash_ping = crash_info_builder.build_crash_ping().unwrap();
+
+        assert!(!crash_ping.crash_uuid().is_empty());
+        assert!(Uuid::parse_str(crash_ping.crash_uuid()).is_ok());
+        assert!(crash_ping
+            .message()
+            .contains("crash processing started - my process panicked"));
         assert_eq!(crash_ping.metadata(), &metadata);
         assert_eq!(crash_ping.siginfo(), Some(&sig_info));
     }
