@@ -287,6 +287,65 @@ fn test_crash_tracking_app(crash_type: &str) {
     }
 }
 
+#[test]
+#[cfg_attr(miri, ignore)]
+#[cfg(not(target_os = "macos"))] // Same restriction as other panic tests
+fn test_crash_tracking_bin_panic_hook_after_fork() {
+    let (_, crashtracker_receiver) = setup_crashtracking_crates(BuildProfile::Release);
+
+    let crashtracker_bin_test = ArtifactsBuild {
+        name: "crashtracker_bin_test".to_owned(),
+        build_profile: BuildProfile::Debug,
+        artifact_type: ArtifactType::Bin,
+        triple_target: None,
+        ..Default::default()
+    };
+
+    let fixtures = setup_test_fixtures(&[&crashtracker_receiver, &crashtracker_bin_test]);
+
+    let mut p = process::Command::new(&fixtures.artifacts[&crashtracker_bin_test])
+        .arg(format!("file://{}", fixtures.crash_profile_path.display()))
+        .arg(fixtures.artifacts[&crashtracker_receiver].as_os_str())
+        .arg(&fixtures.output_dir)
+        .arg("panic_hook_after_fork") // mode
+        .arg("donothing") // crash method (not used in this mode)
+        .spawn()
+        .unwrap();
+
+    let exit_status = bin_tests::timeit!("exit after panic in child", {
+        eprintln!("Waiting for child to panic and parent to exit");
+        p.wait().unwrap()
+    });
+
+    // Parent exits with error code 1 as expected
+    assert!(!exit_status.success());
+
+    // Verify crash report was generated
+    let crash_profile = fs::read(&fixtures.crash_profile_path)
+        .context("reading crashtracker profiling payload")
+        .unwrap();
+    let crash_payload = serde_json::from_slice::<serde_json::Value>(&crash_profile)
+        .context("deserializing crashtracker profiling payload to json")
+        .unwrap();
+
+    // Verify the panic message is captured
+    let error = &crash_payload["error"];
+    let message = error["message"].as_str().unwrap();
+    assert!(
+        message.contains("child panicked after fork"),
+        "Expected panic message to contain 'child panicked after fork', got: {}",
+        message
+    );
+
+    // Verify it's marked as a panic
+    let kind = error["kind"].as_str().unwrap();
+    assert_eq!(
+        kind, "Panic",
+        "Expected error kind to be Panic, got: {}",
+        kind
+    );
+}
+
 // This test is disabled for now on x86_64 musl and macos
 // It seems that on aarch64 musl, libc has CFI which allows
 // unwinding passed the signal frame.
