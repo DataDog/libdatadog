@@ -314,22 +314,8 @@ fn test_crash_tracking_app(crash_type: &str) {
     use bin_tests::test_runner::run_custom_crash_test;
 
     // Set up custom artifacts: receiver + crashing_test_app with panic_abort
-    let crashtracker_receiver = ArtifactsBuild {
-        name: "test_crashtracker_receiver".to_owned(),
-        build_profile: BuildProfile::Release,
-        artifact_type: ArtifactType::Bin,
-        triple_target: None,
-        ..Default::default()
-    };
-
-    let crashing_app = ArtifactsBuild {
-        name: "crashing_test_app".to_owned(),
-        build_profile: BuildProfile::Debug,
-        artifact_type: ArtifactType::Bin,
-        triple_target: None,
-        panic_abort: Some(true),
-        ..Default::default()
-    };
+    let crashtracker_receiver = create_crashtracker_receiver(BuildProfile::Release);
+    let crashing_app = create_crashing_app(BuildProfile::Debug, true);
 
     let artifacts_map = build_artifacts(&[&crashtracker_receiver, &crashing_app]).unwrap();
 
@@ -371,6 +357,54 @@ fn test_crash_tracking_app(crash_type: &str) {
     .unwrap();
 }
 
+#[test]
+#[cfg_attr(miri, ignore)]
+#[cfg(not(target_os = "macos"))] // Same restriction as other panic tests
+fn test_crash_tracking_bin_panic_hook_after_fork() {
+    use bin_tests::test_runner::run_custom_crash_test;
+
+    // Set up custom artifacts: receiver + crashtracker_bin_test
+    let crashtracker_receiver = create_crashtracker_receiver(BuildProfile::Release);
+    let crashtracker_bin_test = create_crashtracker_bin_test(BuildProfile::Debug);
+
+    let artifacts_map = build_artifacts(&[&crashtracker_receiver, &crashtracker_bin_test]).unwrap();
+
+    let validator: ValidatorFn = Box::new(|payload, _fixtures| {
+        // Verify the panic message is captured
+        let error = &payload["error"];
+        let message = error["message"].as_str().unwrap();
+        assert!(
+            message.contains("child panicked after fork"),
+            "Expected panic message to contain 'child panicked after fork', got: {}",
+            message
+        );
+
+        // Verify it's marked as a panic
+        let kind = error["kind"].as_str().unwrap();
+        assert_eq!(
+            kind, "Panic",
+            "Expected error kind to be Panic, got: {}",
+            kind
+        );
+
+        Ok(())
+    });
+
+    run_custom_crash_test(
+        &artifacts_map[&crashtracker_bin_test],
+        |cmd, fixtures| {
+            cmd.arg(format!("file://{}", fixtures.crash_profile_path.display()))
+                .arg(&artifacts_map[&crashtracker_receiver])
+                .arg(&fixtures.output_dir)
+                .arg("panic_hook_after_fork") // mode
+                .arg("donothing"); // crash method (not used in this mode)
+        },
+        false, // expect crash (not success)
+        validator,
+    )
+    .unwrap();
+}
+
 // ====================================================================================
 // CALLSTACK VALIDATION TESTS - MIGRATED TO CUSTOM TEST RUNNER
 // ====================================================================================
@@ -390,22 +424,9 @@ fn test_crash_tracking_callstack() {
     use bin_tests::test_runner::run_custom_crash_test;
 
     // Set up custom artifacts: receiver + crashing_test_app (in Debug mode)
-    let crashtracker_receiver = ArtifactsBuild {
-        name: "test_crashtracker_receiver".to_owned(),
-        build_profile: BuildProfile::Release,
-        artifact_type: ArtifactType::Bin,
-        triple_target: None,
-        ..Default::default()
-    };
-
-    let crashing_app = ArtifactsBuild {
-        name: "crashing_test_app".to_owned(),
-        // compile in debug so we avoid inlining and can check the callchain
-        build_profile: BuildProfile::Debug,
-        artifact_type: ArtifactType::Bin,
-        triple_target: None,
-        ..Default::default()
-    };
+    let crashtracker_receiver = create_crashtracker_receiver(BuildProfile::Release);
+    // compile in debug so we avoid inlining and can check the callchain
+    let crashing_app = create_crashing_app(BuildProfile::Debug, false);
 
     let artifacts_map = build_artifacts(&[&crashtracker_receiver, &crashing_app]).unwrap();
 
@@ -1261,6 +1282,39 @@ fn setup_crashtracking_crates(
         ..Default::default()
     };
     (crashtracker_bin, crashtracker_receiver)
+}
+
+// Helper functions for creating common artifact configurations
+
+fn create_crashtracker_receiver(profile: BuildProfile) -> ArtifactsBuild {
+    ArtifactsBuild {
+        name: "test_crashtracker_receiver".to_owned(),
+        build_profile: profile,
+        artifact_type: ArtifactType::Bin,
+        triple_target: None,
+        ..Default::default()
+    }
+}
+
+fn create_crashing_app(profile: BuildProfile, panic_abort: bool) -> ArtifactsBuild {
+    ArtifactsBuild {
+        name: "crashing_test_app".to_owned(),
+        build_profile: profile,
+        artifact_type: ArtifactType::Bin,
+        triple_target: None,
+        panic_abort: if panic_abort { Some(true) } else { None },
+        ..Default::default()
+    }
+}
+
+fn create_crashtracker_bin_test(profile: BuildProfile) -> ArtifactsBuild {
+    ArtifactsBuild {
+        name: "crashtracker_bin_test".to_owned(),
+        build_profile: profile,
+        artifact_type: ArtifactType::Bin,
+        triple_target: None,
+        ..Default::default()
+    }
 }
 
 #[cfg(unix)]
