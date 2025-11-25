@@ -10,187 +10,277 @@ use std::process;
 use std::{fs, path::PathBuf};
 
 use anyhow::Context;
-use bin_tests::{build_artifacts, ArtifactType, ArtifactsBuild, BuildProfile};
+use bin_tests::{
+    build_artifacts,
+    test_runner::{run_crash_test_with_artifacts, CrashTestConfig, StandardArtifacts, ValidatorFn},
+    test_types::{CrashType, TestMode},
+    validation::{read_and_parse_crash_payload, validate_std_outputs, PayloadValidator},
+    ArtifactType, ArtifactsBuild, BuildProfile,
+};
 use serde_json::Value;
 
-#[test]
-#[cfg_attr(miri, ignore)]
-fn test_crash_tracking_bin_debug() {
-    test_crash_tracking_bin(BuildProfile::Debug, "donothing", "null_deref");
+// ====================================================================================
+// REFACTORED TESTS USING NEW INFRASTRUCTURE
+// ====================================================================================
+
+/// Macro to generate simple crash tracking tests using the new infrastructure.
+/// This replaces 16+ nearly identical test functions with a single declaration.
+macro_rules! crash_tracking_tests {
+    ($(($test_name:ident, $profile:expr, $mode:expr, $crash_type:expr)),* $(,)?) => {
+        $(
+            #[test]
+            #[cfg_attr(miri, ignore)]
+            fn $test_name() {
+                run_standard_crash_test_refactored($profile, $mode, $crash_type);
+            }
+        )*
+    };
 }
 
-#[test]
-#[cfg_attr(miri, ignore)]
-fn test_crash_tracking_bin_sigpipe() {
-    test_crash_tracking_bin(BuildProfile::Debug, "sigpipe", "null_deref");
+// Generate all simple crash tracking tests using the macro
+crash_tracking_tests! {
+    (test_crash_tracking_bin_debug, BuildProfile::Debug, TestMode::DoNothing, CrashType::NullDeref),
+    (test_crash_tracking_bin_sigpipe, BuildProfile::Debug, TestMode::SigPipe, CrashType::NullDeref),
+    (test_crash_tracking_bin_sigchld, BuildProfile::Debug, TestMode::SigChld, CrashType::NullDeref),
+    (test_crash_tracking_bin_sigchld_exec, BuildProfile::Debug, TestMode::SigChldExec, CrashType::NullDeref),
+    (test_crash_tracking_bin_sigstack, BuildProfile::Release, TestMode::DoNothingSigStack, CrashType::NullDeref),
+    (test_crash_tracking_bin_sigpipe_sigstack, BuildProfile::Release, TestMode::SigPipeSigStack, CrashType::NullDeref),
+    (test_crash_tracking_bin_sigchld_sigstack, BuildProfile::Release, TestMode::SigChldSigStack, CrashType::NullDeref),
+    (test_crash_tracking_bin_chained, BuildProfile::Release, TestMode::Chained, CrashType::NullDeref),
+    (test_crash_tracking_bin_fork, BuildProfile::Release, TestMode::Fork, CrashType::NullDeref),
+    (test_crash_tracking_bin_kill_sigabrt, BuildProfile::Release, TestMode::DoNothing, CrashType::KillSigAbrt),
+    (test_crash_tracking_bin_kill_sigill, BuildProfile::Release, TestMode::DoNothing, CrashType::KillSigIll),
+    (test_crash_tracking_bin_kill_sigbus, BuildProfile::Release, TestMode::DoNothing, CrashType::KillSigBus),
+    (test_crash_tracking_bin_kill_sigsegv, BuildProfile::Release, TestMode::DoNothing, CrashType::KillSigSegv),
+    (test_crash_tracking_bin_raise_sigabrt, BuildProfile::Release, TestMode::DoNothing, CrashType::RaiseSigAbrt),
+    (test_crash_tracking_bin_raise_sigill, BuildProfile::Release, TestMode::DoNothing, CrashType::RaiseSigIll),
+    (test_crash_tracking_bin_raise_sigbus, BuildProfile::Release, TestMode::DoNothing, CrashType::RaiseSigBus),
+    (test_crash_tracking_bin_raise_sigsegv, BuildProfile::Release, TestMode::DoNothing, CrashType::RaiseSigSegv),
+    (test_crash_tracking_bin_prechain_sigabrt, BuildProfile::Release, TestMode::PrechainAbort, CrashType::NullDeref),
 }
 
-#[test]
-#[cfg_attr(miri, ignore)]
-fn test_crash_tracking_bin_sigchld() {
-    test_crash_tracking_bin(BuildProfile::Debug, "sigchld", "null_deref");
+/// Standard crash test runner using the new refactored infrastructure.
+/// This eliminates the need for the old `test_crash_tracking_bin` function.
+fn run_standard_crash_test_refactored(profile: BuildProfile, mode: TestMode, crash_type: CrashType) {
+    let config = CrashTestConfig::new(profile, mode, crash_type);
+    let artifacts = StandardArtifacts::new(config.profile);
+    let artifacts_map = build_artifacts(&artifacts.as_slice()).unwrap();
+
+    let crash_type_str = crash_type.as_str();
+    let validator: ValidatorFn = Box::new(move |payload, fixtures| {
+        // Standard validations using the fluent API
+        PayloadValidator::new(payload).validate_counters()?;
+
+        // Validate siginfo and error message
+        let sig_info = &payload["sig_info"];
+        assert_siginfo_message(sig_info, crash_type_str);
+
+        let error = &payload["error"];
+        assert_error_message(&error["message"], sig_info);
+
+        // Validate telemetry
+        validate_telemetry(&fixtures.crash_telemetry_path, crash_type_str)?;
+
+        Ok(())
+    });
+
+    run_crash_test_with_artifacts(&config, &artifacts_map, &artifacts, validator).unwrap();
 }
 
-#[test]
-#[cfg_attr(miri, ignore)]
-fn test_crash_tracking_bin_sigchld_exec() {
-    test_crash_tracking_bin(BuildProfile::Debug, "sigchld_exec", "null_deref");
-}
-
-#[test]
-#[cfg_attr(miri, ignore)]
-fn test_crash_tracking_bin_sigstack() {
-    test_crash_tracking_bin(BuildProfile::Release, "donothing_sigstack", "null_deref");
-}
-
-#[test]
-#[cfg_attr(miri, ignore)]
-fn test_crash_tracking_bin_sigpipe_sigstack() {
-    test_crash_tracking_bin(BuildProfile::Release, "sigpipe_sigstack", "null_deref");
-}
-
-#[test]
-#[cfg_attr(miri, ignore)]
-fn test_crash_tracking_bin_sigchld_sigstack() {
-    test_crash_tracking_bin(BuildProfile::Release, "sigchld_sigstack", "null_deref");
-}
-
-#[test]
-#[cfg_attr(miri, ignore)]
-fn test_crash_tracking_bin_chained() {
-    test_crash_tracking_bin(BuildProfile::Release, "chained", "null_deref");
-}
-
-#[test]
-#[cfg_attr(miri, ignore)]
-fn test_crash_tracking_bin_fork() {
-    test_crash_tracking_bin(BuildProfile::Release, "fork", "null_deref");
-}
-
-#[test]
-#[cfg_attr(miri, ignore)]
-fn test_crash_tracking_bin_kill_sigabrt() {
-    // For now, do the base test (donothing).  For future we should probably also test chaining.
-    test_crash_tracking_bin(BuildProfile::Release, "donothing", "kill_sigabrt");
-}
-
-#[test]
-#[cfg_attr(miri, ignore)]
-fn test_crash_tracking_bin_kill_sigill() {
-    // For now, do the base test (donothing).  For future we should probably also test chaining.
-    test_crash_tracking_bin(BuildProfile::Release, "donothing", "kill_sigill");
-}
-
-#[test]
-#[cfg_attr(miri, ignore)]
-fn test_crash_tracking_bin_kill_sigbus() {
-    // For now, do the base test (donothing).  For future we should probably also test chaining.
-    test_crash_tracking_bin(BuildProfile::Release, "donothing", "kill_sigbus");
-}
-
-#[test]
-#[cfg_attr(miri, ignore)]
-fn test_crash_tracking_bin_kill_sigsegv() {
-    // For now, do the base test (donothing).  For future we should probably also test chaining.
-    test_crash_tracking_bin(BuildProfile::Release, "donothing", "kill_sigsegv");
-}
-
-#[test]
-#[cfg_attr(miri, ignore)]
-fn test_crash_tracking_bin_raise_sigabrt() {
-    // For now, do the base test (donothing).  For future we should probably also test chaining.
-    test_crash_tracking_bin(BuildProfile::Release, "donothing", "raise_sigabrt");
-}
-
-#[test]
-#[cfg_attr(miri, ignore)]
-fn test_crash_tracking_bin_raise_sigill() {
-    // For now, do the base test (donothing).  For future we should probably also test chaining.
-    test_crash_tracking_bin(BuildProfile::Release, "donothing", "raise_sigill");
-}
-
-#[test]
-#[cfg_attr(miri, ignore)]
-fn test_crash_tracking_bin_raise_sigbus() {
-    // For now, do the base test (donothing).  For future we should probably also test chaining.
-    test_crash_tracking_bin(BuildProfile::Release, "donothing", "raise_sigbus");
-}
-
-#[test]
-#[cfg_attr(miri, ignore)]
-fn test_crash_tracking_bin_raise_sigsegv() {
-    // For now, do the base test (donothing).  For future we should probably also test chaining.
-    test_crash_tracking_bin(BuildProfile::Release, "donothing", "raise_sigsegv");
-}
-
-#[test]
-#[cfg_attr(miri, ignore)]
-fn test_crash_tracking_bin_prechain_sigabrt() {
-    test_crash_tracking_bin(BuildProfile::Release, "prechain_abort", "null_deref");
-}
+// ====================================================================================
+// REMAINING TESTS (KEPT FOR NOW - CAN BE MIGRATED LATER)
+// ====================================================================================
 
 #[test]
 #[cfg_attr(miri, ignore)]
 fn test_crash_tracking_bin_runtime_callback_frame() {
-    test_crash_tracking_bin_runtime_callback_frame_impl(
+    let config = CrashTestConfig::new(
         BuildProfile::Release,
-        "runtime_callback_frame",
-        "null_deref",
+        TestMode::RuntimeCallbackFrame,
+        CrashType::NullDeref,
     );
+    let artifacts = StandardArtifacts::new(config.profile);
+    let artifacts_map = build_artifacts(&artifacts.as_slice()).unwrap();
+
+    let validator: ValidatorFn = Box::new(|payload, fixtures| {
+        PayloadValidator::new(payload).validate_counters()?;
+
+        let sig_info = &payload["sig_info"];
+        assert_siginfo_message(sig_info, "null_deref");
+
+        let error = &payload["error"];
+        assert_error_message(&error["message"], sig_info);
+
+        validate_runtime_callback_frame_data(payload);
+        validate_telemetry(&fixtures.crash_telemetry_path, "null_deref")?;
+
+        Ok(())
+    });
+
+    run_crash_test_with_artifacts(&config, &artifacts_map, &artifacts, validator).unwrap();
 }
 
 #[test]
 #[cfg_attr(miri, ignore)]
 fn test_crash_tracking_bin_runtime_callback_string() {
-    test_crash_tracking_bin_runtime_callback_string_impl(
+    let config = CrashTestConfig::new(
         BuildProfile::Release,
-        "runtime_callback_string",
-        "null_deref",
+        TestMode::RuntimeCallbackString,
+        CrashType::NullDeref,
     );
+    let artifacts = StandardArtifacts::new(config.profile);
+    let artifacts_map = build_artifacts(&artifacts.as_slice()).unwrap();
+
+    let validator: ValidatorFn = Box::new(|payload, fixtures| {
+        PayloadValidator::new(payload).validate_counters()?;
+
+        let sig_info = &payload["sig_info"];
+        assert_siginfo_message(sig_info, "null_deref");
+
+        let error = &payload["error"];
+        assert_error_message(&error["message"], sig_info);
+
+        validate_runtime_callback_string_data(payload);
+        validate_telemetry(&fixtures.crash_telemetry_path, "null_deref")?;
+
+        Ok(())
+    });
+
+    run_crash_test_with_artifacts(&config, &artifacts_map, &artifacts, validator).unwrap();
 }
 
 #[test]
 #[cfg_attr(miri, ignore)]
 fn test_crash_tracking_bin_no_runtime_callback() {
-    test_crash_tracking_bin_no_runtime_callback_impl(
+    let config = CrashTestConfig::new(
         BuildProfile::Release,
-        "donothing",
-        "null_deref",
+        TestMode::DoNothing,
+        CrashType::NullDeref,
     );
+    let artifacts = StandardArtifacts::new(config.profile);
+    let artifacts_map = build_artifacts(&artifacts.as_slice()).unwrap();
+
+    let validator: ValidatorFn = Box::new(|payload, fixtures| {
+        PayloadValidator::new(payload).validate_counters()?;
+
+        let sig_info = &payload["sig_info"];
+        assert_siginfo_message(sig_info, "null_deref");
+
+        let error = &payload["error"];
+        assert_error_message(&error["message"], sig_info);
+
+        validate_no_runtime_callback_data(payload);
+        validate_telemetry(&fixtures.crash_telemetry_path, "null_deref")?;
+
+        Ok(())
+    });
+
+    run_crash_test_with_artifacts(&config, &artifacts_map, &artifacts, validator).unwrap();
 }
 
 #[test]
 #[cfg_attr(miri, ignore)]
 fn test_crash_tracking_bin_runtime_callback_frame_invalid_utf8() {
-    test_crash_tracking_bin_runtime_callback_frame_invalid_utf8_impl(
+    let config = CrashTestConfig::new(
         BuildProfile::Release,
-        "runtime_callback_frame_invalid_utf8",
-        "null_deref",
+        TestMode::RuntimeCallbackFrameInvalidUtf8,
+        CrashType::NullDeref,
     );
+    let artifacts = StandardArtifacts::new(config.profile);
+    let artifacts_map = build_artifacts(&artifacts.as_slice()).unwrap();
+
+    let validator: ValidatorFn = Box::new(|payload, fixtures| {
+        PayloadValidator::new(payload).validate_counters()?;
+
+        let sig_info = &payload["sig_info"];
+        assert_siginfo_message(sig_info, "null_deref");
+
+        let error = &payload["error"];
+        assert_error_message(&error["message"], sig_info);
+
+        validate_runtime_callback_frame_invalid_utf8_data(payload);
+        validate_telemetry(&fixtures.crash_telemetry_path, "null_deref")?;
+
+        Ok(())
+    });
+
+    run_crash_test_with_artifacts(&config, &artifacts_map, &artifacts, validator).unwrap();
 }
 
 #[test]
 #[cfg_attr(miri, ignore)]
 fn test_crash_ping_timing_and_content() {
-    test_crash_tracking_bin(BuildProfile::Release, "donothing", "null_deref");
+    // This test is identical to the simple donothing test
+    run_standard_crash_test_refactored(BuildProfile::Release, TestMode::DoNothing, CrashType::NullDeref);
 }
 
 #[test]
 #[cfg_attr(miri, ignore)]
 fn test_crash_tracking_errors_intake_upload() {
-    test_crash_tracking_bin_with_errors_intake(BuildProfile::Release, "donothing", "null_deref");
+    let config = CrashTestConfig::new(
+        BuildProfile::Release,
+        TestMode::DoNothing,
+        CrashType::NullDeref,
+    )
+    .with_env("DD_CRASHTRACKING_ERRORS_INTAKE_ENABLED", "true");
+
+    let artifacts = StandardArtifacts::new(config.profile);
+    let artifacts_map = build_artifacts(&artifacts.as_slice()).unwrap();
+
+    let validator: ValidatorFn = Box::new(|_payload, fixtures| {
+        let errors_intake_path = fixtures.crash_profile_path.with_extension("errors");
+        assert!(
+            errors_intake_path.exists(),
+            "Errors intake file should be created at {}",
+            errors_intake_path.display()
+        );
+
+        let errors_intake_content = fs::read(&errors_intake_path)
+            .context("reading errors intake payload")?;
+
+        assert_errors_intake_payload(&errors_intake_content, "null_deref");
+        validate_telemetry(&fixtures.crash_telemetry_path, "null_deref")?;
+
+        Ok(())
+    });
+
+    run_crash_test_with_artifacts(&config, &artifacts_map, &artifacts, validator).unwrap();
 }
 
 #[test]
 #[cfg_attr(miri, ignore)]
 fn test_crash_tracking_errors_intake_crash_ping() {
-    test_crash_tracking_errors_intake_dual_upload(BuildProfile::Release, "donothing", "null_deref");
+    let config = CrashTestConfig::new(
+        BuildProfile::Release,
+        TestMode::DoNothing,
+        CrashType::NullDeref,
+    )
+    .with_env("DD_CRASHTRACKING_ERRORS_INTAKE_ENABLED", "true");
+
+    let artifacts = StandardArtifacts::new(config.profile);
+    let artifacts_map = build_artifacts(&artifacts.as_slice()).unwrap();
+
+    let validator: ValidatorFn = Box::new(|_payload, fixtures| {
+        let errors_intake_path = fixtures.crash_profile_path.with_extension("errors");
+        assert!(errors_intake_path.exists());
+
+        let errors_intake_content = fs::read(&errors_intake_path)
+            .context("reading errors intake payload")?;
+
+        assert_errors_intake_payload(&errors_intake_content, "null_deref");
+        validate_telemetry(&fixtures.crash_telemetry_path, "null_deref")?;
+
+        Ok(())
+    });
+
+    run_crash_test_with_artifacts(&config, &artifacts_map, &artifacts, validator).unwrap();
 }
 
 #[test]
 #[cfg_attr(miri, ignore)]
 #[cfg(unix)]
 fn test_crash_tracking_errors_intake_uds_socket() {
+    // This test requires special UDS socket setup, keeping the old implementation
     test_crash_tracking_bin_with_errors_intake_uds(
         BuildProfile::Release,
         "donothing",
@@ -1172,6 +1262,20 @@ fn assert_siginfo_message(sig_info: &Value, crash_typ: &str) {
 // - CrashReport: deserializes the first JSON payload (crash report)
 // - Whole: deserializes the whole telemetry payload
 // TODO (gyuheon): Refactor test helpers to have shared functionality for testing crash pings
+/// Helper function to validate telemetry file (used by refactored tests)
+fn validate_telemetry(telemetry_path: &Path, crash_type_str: &str) -> anyhow::Result<()> {
+    let crash_telemetry = fs::read(telemetry_path)
+        .with_context(|| format!("reading crashtracker telemetry payload at {:?}", telemetry_path))?;
+    
+    let payloads = crash_telemetry.split(|&b| b == b'\n').collect::<Vec<_>>();
+    for payload in payloads {
+        if String::from_utf8_lossy(payload).contains("is_crash:true") {
+            assert_telemetry_message(payload, crash_type_str);
+        }
+    }
+    Ok(())
+}
+
 fn assert_telemetry_message(crash_telemetry: &[u8], crash_typ: &str) {
     let telemetry_payload: Value = serde_json::from_slice::<Value>(crash_telemetry)
         .context("deserializing whole telemetry payload to JSON")
