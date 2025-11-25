@@ -18,6 +18,32 @@ use libdd_trace_utils::{
 use std::{collections::HashMap, time::Duration};
 use tokio::runtime::Handle;
 
+/// Reasons for dropping trace chunks, used for telemetry tagging.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ChunksDroppedReason {
+    /// P0 traces dropped due to sampling decision
+    P0Drop,
+    /// Serialization error when preparing the trace payload
+    SerializationError,
+    /// Send failure due to network, timeout, or HTTP status code errors
+    SendFailure,
+}
+
+impl ChunksDroppedReason {
+    const P0_DROP_VALUE: &'static str = "p0_drop";
+    const SERIALIZATION_ERROR_VALUE: &'static str = "serialization_error";
+    const SEND_FAILURE_VALUE: &'static str = "send_failure";
+
+    /// Returns the string value used for the reason tag
+    pub fn as_tag_value(&self) -> &'static str {
+        match self {
+            ChunksDroppedReason::P0Drop => Self::P0_DROP_VALUE,
+            ChunksDroppedReason::SerializationError => Self::SERIALIZATION_ERROR_VALUE,
+            ChunksDroppedReason::SendFailure => Self::SEND_FAILURE_VALUE,
+        }
+    }
+}
+
 /// Structure to build a Telemetry client.
 ///
 /// Holds partial data until the `build` method is called which results in a new
@@ -147,7 +173,9 @@ pub struct SendPayloadTelemetry {
     errors_status_code: u64,
     bytes_sent: u64,
     chunks_sent: u64,
-    chunks_dropped: u64,
+    chunks_dropped_p0: u64,
+    chunks_dropped_serialization_error: u64,
+    chunks_dropped_send_failure: u64,
     responses_count_per_code: HashMap<u16, u64>,
 }
 
@@ -160,8 +188,9 @@ impl From<&SendDataResult> for SendPayloadTelemetry {
             errors_status_code: value.errors_status_code,
             bytes_sent: value.bytes_sent,
             chunks_sent: value.chunks_sent,
-            chunks_dropped: value.chunks_dropped,
+            chunks_dropped_send_failure: value.chunks_dropped,
             responses_count_per_code: value.responses_count_per_code.clone(),
+            ..Default::default()
         }
     }
 }
@@ -180,9 +209,9 @@ impl SendPayloadTelemetry {
                 telemetry.requests_count = *attempts as u64;
             }
             Err(err) => {
-                telemetry.chunks_dropped = chunks;
                 match err {
                     SendWithRetryError::Http(response, attempts) => {
+                        telemetry.chunks_dropped_send_failure = chunks;
                         telemetry.errors_status_code = 1;
                         telemetry
                             .responses_count_per_code
@@ -190,14 +219,17 @@ impl SendPayloadTelemetry {
                         telemetry.requests_count = *attempts as u64;
                     }
                     SendWithRetryError::Timeout(attempts) => {
+                        telemetry.chunks_dropped_send_failure = chunks;
                         telemetry.errors_timeout = 1;
                         telemetry.requests_count = *attempts as u64;
                     }
                     SendWithRetryError::Network(_, attempts) => {
+                        telemetry.chunks_dropped_send_failure = chunks;
                         telemetry.errors_network = 1;
                         telemetry.requests_count = *attempts as u64;
                     }
                     SendWithRetryError::Build(attempts) => {
+                        telemetry.chunks_dropped_serialization_error = chunks;
                         telemetry.requests_count = *attempts as u64;
                     }
                 }
@@ -243,10 +275,24 @@ impl TelemetryClient {
             self.worker
                 .add_point(data.chunks_sent as f64, key, vec![])?;
         }
-        if data.chunks_dropped > 0 {
-            let key = self.metrics.get(metrics::MetricKind::ChunksDropped);
+        if data.chunks_dropped_p0 > 0 {
+            let key = self.metrics.get(metrics::MetricKind::ChunksDroppedP0);
             self.worker
-                .add_point(data.chunks_dropped as f64, key, vec![])?;
+                .add_point(data.chunks_dropped_p0 as f64, key, vec![])?;
+        }
+        if data.chunks_dropped_serialization_error > 0 {
+            let key = self
+                .metrics
+                .get(metrics::MetricKind::ChunksDroppedSerializationError);
+            self.worker
+                .add_point(data.chunks_dropped_serialization_error as f64, key, vec![])?;
+        }
+        if data.chunks_dropped_send_failure > 0 {
+            let key = self
+                .metrics
+                .get(metrics::MetricKind::ChunksDroppedSendFailure);
+            self.worker
+                .add_point(data.chunks_dropped_send_failure as f64, key, vec![])?;
         }
         if !data.responses_count_per_code.is_empty() {
             let key = self.metrics.get(metrics::MetricKind::ApiResponses);
@@ -550,8 +596,8 @@ mod tests {
 
     #[cfg_attr(miri, ignore)]
     #[tokio::test]
-    async fn chunks_dropped_test() {
-        let payload = Regex::new(r#""metric":"trace_chunks_dropped","points":\[\[\d+,1\.0\]\],"tags":\["src_library:libdatadog"\],"common":true,"type":"count"#).unwrap();
+    async fn chunks_dropped_send_failure_test() {
+        let payload = Regex::new(r#""metric":"trace_chunks_dropped","points":\[\[\d+,1\.0\]\],"tags":\["src_library:libdatadog","reason:send_failure"\],"common":true,"type":"count"#).unwrap();
         let server = MockServer::start_async().await;
 
         let telemetry_srv = server
@@ -562,7 +608,7 @@ mod tests {
             .await;
 
         let data = SendPayloadTelemetry {
-            chunks_dropped: 1,
+            chunks_dropped_send_failure: 1,
             ..Default::default()
         };
 
@@ -602,7 +648,7 @@ mod tests {
         assert_eq!(
             telemetry,
             SendPayloadTelemetry {
-                chunks_dropped: 2,
+                chunks_dropped_send_failure: 2,
                 requests_count: 5,
                 errors_status_code: 1,
                 responses_count_per_code: HashMap::from([(400, 1)]),
@@ -625,7 +671,7 @@ mod tests {
         assert_eq!(
             telemetry,
             SendPayloadTelemetry {
-                chunks_dropped: 2,
+                chunks_dropped_send_failure: 2,
                 requests_count: 5,
                 errors_network: 1,
                 ..Default::default()
@@ -640,7 +686,7 @@ mod tests {
         assert_eq!(
             telemetry,
             SendPayloadTelemetry {
-                chunks_dropped: 2,
+                chunks_dropped_send_failure: 2,
                 requests_count: 5,
                 errors_timeout: 1,
                 ..Default::default()
@@ -656,7 +702,7 @@ mod tests {
         assert_eq!(
             telemetry,
             SendPayloadTelemetry {
-                chunks_dropped: 2,
+                chunks_dropped_serialization_error: 2,
                 requests_count: 5,
                 ..Default::default()
             }
@@ -684,8 +730,9 @@ mod tests {
             errors_status_code: 3,
             bytes_sent: 4,
             chunks_sent: 5,
-            chunks_dropped: 6,
+            chunks_dropped_send_failure: 6,
             responses_count_per_code: HashMap::from([(200, 3)]),
+            ..Default::default()
         };
 
         assert_eq!(SendPayloadTelemetry::from(&result), expected_telemetry)

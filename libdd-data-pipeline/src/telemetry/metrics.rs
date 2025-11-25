@@ -25,8 +25,12 @@ pub enum MetricKind {
     ApiResponses,
     /// trace_chunks_sent metric
     ChunksSent,
-    /// trace_chunks_dropped metric
-    ChunksDropped,
+    /// trace_chunks_dropped metric (reason: p0_drop)
+    ChunksDroppedP0,
+    /// trace_chunks_dropped metric (reason: serialization_error)
+    ChunksDroppedSerializationError,
+    /// trace_chunks_dropped metric (reason: send_failure)
+    ChunksDroppedSendFailure,
 }
 
 /// Constants for metric names
@@ -96,13 +100,25 @@ const METRICS: &[Metric] = &[
         name: CHUNKS_DROPPED_STR,
         metric_type: MetricType::Count,
         namespace: MetricNamespace::Tracers,
-        tags: &[tag!["src_library", "libdatadog"]],
+        tags: &[tag!["src_library", "libdatadog"], tag!["reason", "p0_drop"]],
     },
     Metric {
         name: CHUNKS_DROPPED_STR,
         metric_type: MetricType::Count,
         namespace: MetricNamespace::Tracers,
-        tags: &[tag!["src_library", "libdatadog"]],
+        tags: &[
+            tag!["src_library", "libdatadog"],
+            tag!["reason", "serialization_error"],
+        ],
+    },
+    Metric {
+        name: CHUNKS_DROPPED_STR,
+        metric_type: MetricType::Count,
+        namespace: MetricNamespace::Tracers,
+        tags: &[
+            tag!["src_library", "libdatadog"],
+            tag!["reason", "send_failure"],
+        ],
     },
 ];
 

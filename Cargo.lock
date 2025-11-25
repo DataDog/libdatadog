@@ -2943,7 +2943,6 @@ dependencies = [
  "http-body-util",
  "httpmock",
  "hyper",
- "hyper-http-proxy",
  "indexmap 2.12.0",
  "libdd-common",
  "libdd-tinybytes",
