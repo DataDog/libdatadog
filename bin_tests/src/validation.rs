@@ -217,6 +217,40 @@ impl<'a> PayloadValidator<'a> {
         Ok(self)
     }
 
+    /// Validates that the callstack contains the expected functions in order.
+    /// This is useful for tests that verify specific call chains are preserved.
+    pub fn validate_callstack_functions(self, expected_functions: &[&str]) -> Result<Self> {
+        let crashing_callstack = &self.payload["error"]["stack"]["frames"];
+        let frames = crashing_callstack
+            .as_array()
+            .context("error.stack.frames should be an array")?;
+
+        anyhow::ensure!(
+            frames.len() >= expected_functions.len(),
+            "Crashing thread callstack has fewer frames than expected. Current: {}, Expected: {}",
+            frames.len(),
+            expected_functions.len()
+        );
+
+        let function_names: Vec<&str> = frames
+            .iter()
+            .filter_map(|f| f["function"].as_str())
+            .collect();
+
+        for (i, expected) in expected_functions.iter().enumerate() {
+            let actual = function_names.get(i).copied().unwrap_or("");
+            anyhow::ensure!(
+                actual == *expected,
+                "Callstack mismatch at position {}: expected '{}', got '{}'",
+                i,
+                expected,
+                actual
+            );
+        }
+
+        Ok(self)
+    }
+
     /// Returns the underlying payload reference.
     pub fn payload(&self) -> &'a Value {
         self.payload

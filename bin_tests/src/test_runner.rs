@@ -186,6 +186,93 @@ where
     Ok(())
 }
 
+/// Run a crash test with custom artifacts and command builder.
+/// This is more flexible than `run_crash_test_with_artifacts` and allows for:
+/// - Custom binary selection (e.g., crashing_test_app instead of crashtracker_bin_test)
+/// - Custom command arguments
+/// - Custom exit status expectations
+///
+/// # Example
+/// ```no_run
+/// use bin_tests::test_runner::run_custom_crash_test;
+/// use bin_tests::{build_artifacts, ArtifactType, ArtifactsBuild, BuildProfile};
+///
+/// # fn main() -> anyhow::Result<()> {
+/// let receiver = ArtifactsBuild {
+///     name: "test_crashtracker_receiver".to_owned(),
+///     build_profile: BuildProfile::Release,
+///     artifact_type: ArtifactType::Bin,
+///     triple_target: None,
+///     ..Default::default()
+/// };
+///
+/// let crashing_app = ArtifactsBuild {
+///     name: "crashing_test_app".to_owned(),
+///     build_profile: BuildProfile::Debug,
+///     artifact_type: ArtifactType::Bin,
+///     triple_target: None,
+///     ..Default::default()
+/// };
+///
+/// let artifacts_map = build_artifacts(&[&receiver, &crashing_app])?;
+///
+/// run_custom_crash_test(
+///     &artifacts_map[&crashing_app],
+///     |cmd, fixtures| {
+///         cmd.arg(format!("file://{}", fixtures.crash_profile_path.display()))
+///             .arg(&artifacts_map[&receiver])
+///             .arg(&fixtures.output_dir);
+///     },
+///     false, // expect crash (not success)
+///     |payload, _fixtures| {
+///         // Custom validation
+///         Ok(())
+///     },
+/// )?;
+/// # Ok(())
+/// # }
+/// ```
+pub fn run_custom_crash_test<CB, V>(
+    binary_path: &std::path::Path,
+    command_builder: CB,
+    expect_success: bool,
+    validator: V,
+) -> Result<()>
+where
+    CB: FnOnce(&mut process::Command, &TestFixtures),
+    V: FnOnce(&Value, &TestFixtures) -> Result<()>,
+{
+    let fixtures = TestFixtures::new()?;
+
+    let mut cmd = process::Command::new(binary_path);
+    command_builder(&mut cmd, &fixtures);
+
+    let mut p = cmd.spawn().context("Failed to spawn test process")?;
+
+    let exit_status = crate::timeit!("exit after signal", { p.wait()? });
+
+    // Validate exit status
+    let actual_success = exit_status.success();
+    anyhow::ensure!(
+        expect_success == actual_success,
+        "Exit status mismatch: expected success={}, got success={} (exit code: {:?})",
+        expect_success,
+        actual_success,
+        exit_status.code()
+    );
+
+    // Validate standard outputs
+    validate_std_outputs(&fixtures.output_dir)?;
+
+    // Read and parse crash payload
+    let crash_payload = read_and_parse_crash_payload(&fixtures.crash_profile_path)?;
+
+    // Run custom validator
+    validator(&crash_payload, &fixtures)?;
+
+    Ok(())
+}
+
 /// Validates the process exit status matches expectations for the crash type.
 fn assert_exit_status(exit_status: process::ExitStatus, crash_type: CrashType) -> Result<()> {
     let expected_success = crash_type.expects_success();
