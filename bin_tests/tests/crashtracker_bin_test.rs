@@ -14,22 +14,15 @@ use bin_tests::{
     build_artifacts,
     test_runner::{run_crash_test_with_artifacts, CrashTestConfig, StandardArtifacts, ValidatorFn},
     test_types::{CrashType, TestMode},
-<<<<<<< HEAD
-    validation::PayloadValidator,
-=======
     validation::{read_and_parse_crash_payload, validate_std_outputs, PayloadValidator},
->>>>>>> 66774ab1 (Use new infrastructure)
     ArtifactType, ArtifactsBuild, BuildProfile,
 };
 use serde_json::Value;
 
-<<<<<<< HEAD
-=======
 // ====================================================================================
 // REFACTORED TESTS USING NEW INFRASTRUCTURE
 // ====================================================================================
 
->>>>>>> 66774ab1 (Use new infrastructure)
 /// Macro to generate simple crash tracking tests using the new infrastructure.
 /// This replaces 16+ nearly identical test functions with a single declaration.
 macro_rules! crash_tracking_tests {
@@ -68,15 +61,7 @@ crash_tracking_tests! {
 
 /// Standard crash test runner using the new refactored infrastructure.
 /// This eliminates the need for the old `test_crash_tracking_bin` function.
-<<<<<<< HEAD
-fn run_standard_crash_test_refactored(
-    profile: BuildProfile,
-    mode: TestMode,
-    crash_type: CrashType,
-) {
-=======
 fn run_standard_crash_test_refactored(profile: BuildProfile, mode: TestMode, crash_type: CrashType) {
->>>>>>> 66774ab1 (Use new infrastructure)
     let config = CrashTestConfig::new(profile, mode, crash_type);
     let artifacts = StandardArtifacts::new(config.profile);
     let artifacts_map = build_artifacts(&artifacts.as_slice()).unwrap();
@@ -102,14 +87,9 @@ fn run_standard_crash_test_refactored(profile: BuildProfile, mode: TestMode, cra
     run_crash_test_with_artifacts(&config, &artifacts_map, &artifacts, validator).unwrap();
 }
 
-<<<<<<< HEAD
-// These tests below use the new infrastructure but require custom validation logic
-// that doesn't fit the simple macro-generated pattern.
-=======
 // ====================================================================================
 // REMAINING TESTS (KEPT FOR NOW - CAN BE MIGRATED LATER)
 // ====================================================================================
->>>>>>> 66774ab1 (Use new infrastructure)
 
 #[test]
 #[cfg_attr(miri, ignore)]
@@ -231,15 +211,7 @@ fn test_crash_tracking_bin_runtime_callback_frame_invalid_utf8() {
 #[cfg_attr(miri, ignore)]
 fn test_crash_ping_timing_and_content() {
     // This test is identical to the simple donothing test
-<<<<<<< HEAD
-    run_standard_crash_test_refactored(
-        BuildProfile::Release,
-        TestMode::DoNothing,
-        CrashType::NullDeref,
-    );
-=======
     run_standard_crash_test_refactored(BuildProfile::Release, TestMode::DoNothing, CrashType::NullDeref);
->>>>>>> 66774ab1 (Use new infrastructure)
 }
 
 #[test]
@@ -263,13 +235,8 @@ fn test_crash_tracking_errors_intake_upload() {
             errors_intake_path.display()
         );
 
-<<<<<<< HEAD
-        let errors_intake_content =
-            fs::read(&errors_intake_path).context("reading errors intake payload")?;
-=======
         let errors_intake_content = fs::read(&errors_intake_path)
             .context("reading errors intake payload")?;
->>>>>>> 66774ab1 (Use new infrastructure)
 
         assert_errors_intake_payload(&errors_intake_content, "null_deref");
         validate_telemetry(&fixtures.crash_telemetry_path, "null_deref")?;
@@ -829,19 +796,9 @@ fn assert_siginfo_message(sig_info: &Value, crash_typ: &str) {
 // TODO (gyuheon): Refactor test helpers to have shared functionality for testing crash pings
 /// Helper function to validate telemetry file (used by refactored tests)
 fn validate_telemetry(telemetry_path: &Path, crash_type_str: &str) -> anyhow::Result<()> {
-<<<<<<< HEAD
-    let crash_telemetry = fs::read(telemetry_path).with_context(|| {
-        format!(
-            "reading crashtracker telemetry payload at {:?}",
-            telemetry_path
-        )
-    })?;
-
-=======
     let crash_telemetry = fs::read(telemetry_path)
         .with_context(|| format!("reading crashtracker telemetry payload at {:?}", telemetry_path))?;
     
->>>>>>> 66774ab1 (Use new infrastructure)
     let payloads = crash_telemetry.split(|&b| b == b'\n').collect::<Vec<_>>();
     for payload in payloads {
         if String::from_utf8_lossy(payload).contains("is_crash:true") {
