@@ -14,6 +14,8 @@ mod unix {
     use anyhow::ensure;
     use anyhow::Context;
     use std::env;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Arc;
     use std::time::Duration;
 
     use libdd_common::{tag, Endpoint};
@@ -23,6 +25,7 @@ mod unix {
 
     const TEST_COLLECTOR_TIMEOUT: Duration = Duration::from_secs(10);
 
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     enum CrashType {
         Segfault,
         Panic,
@@ -117,6 +120,17 @@ mod unix {
             .collect(),
         };
 
+        let crash_type = crash_type.parse().context("Invalid crash type")?;
+        let is_panic_mode = matches!(crash_type, CrashType::Panic);
+
+        let called_panic_hook = Arc::new(AtomicBool::new(false));
+        if is_panic_mode {
+            let called_panic_hook_clone = Arc::clone(&called_panic_hook);
+            std::panic::set_hook(Box::new(move |_| {
+                called_panic_hook_clone.store(true, Ordering::SeqCst);
+            }));
+        }
+
         crashtracker::init(
             config,
             CrashtrackerReceiverConfig::new(
@@ -129,7 +143,13 @@ mod unix {
             metadata,
         )?;
 
-        fn1(crash_type.parse().context("Invalid crash type")?);
+        fn1(crash_type);
+
+        // If the panic hook was chained, it should have been called.
+        anyhow::ensure!(
+            !is_panic_mode || called_panic_hook.load(Ordering::SeqCst),
+            "panic hook was not called"
+        );
         Ok(())
     }
 }
