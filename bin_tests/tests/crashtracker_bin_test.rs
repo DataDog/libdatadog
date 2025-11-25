@@ -293,8 +293,9 @@ fn test_crash_tracking_errors_intake_uds_socket() {
 
 /// For some reason, the next two tests fail on MacOS, because the callstack cannot be collected.
 /// We get this error:
-/// thread 'test_crash_tracking_bin_segfault' (88268) panicked at bin_tests/tests/crashtracker_bin_test.rs:250:5:
-/// got Ok("Unable to process line: DD_CRASHTRACK_END_STACKTRACE. Error: Can't set non-existant stack complete\n")
+/// thread 'test_crash_tracking_bin_segfault' (88268) panicked at
+/// bin_tests/tests/crashtracker_bin_test.rs:250:5: got Ok("Unable to process line:
+/// DD_CRASHTRACK_END_STACKTRACE. Error: Can't set non-existant stack complete\n")
 #[test]
 #[cfg_attr(miri, ignore)]
 #[cfg(not(target_os = "macos"))]
