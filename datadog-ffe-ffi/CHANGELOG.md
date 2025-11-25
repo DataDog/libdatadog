@@ -4,6 +4,7 @@
 
 ### Patch changes
 - Fixed memory safety bug in `ResolutionDetails` where borrowed pointers in `flag_metadata` and `extra_logging` were becoming dangling after the source data was moved.
+- Removed unstable flag metadata keys.
 
 ## 1.0.1
 
