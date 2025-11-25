@@ -143,13 +143,16 @@ pub(crate) fn emit_crashreport(
     ucontext: *const ucontext_t,
     ppid: i32,
 ) -> Result<(), EmitterError> {
+    // The following order is important in order to emit the crash ping:
+    // - receiver expects the config
+    // - then message if any
+    // - then siginfo (if the message is not set, we use the siginfo to generate the message)
+    // - then metadata
     emit_config(pipe, config_str)?;
     emit_message(pipe, message_ptr)?;
     emit_siginfo(pipe, sig_info)?;
-    // send metadata after the config (needed to send the ping/report)
-    // after the message
-    // after the siginfo (if the message is not set, we use the siginfo to generate the message)
     emit_metadata(pipe, metadata_string)?;
+    // after the metadata the ping should have been sent
     emit_ucontext(pipe, ucontext)?;
     emit_procinfo(pipe, ppid)?;
     emit_counters(pipe)?;
