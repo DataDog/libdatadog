@@ -62,7 +62,13 @@ fn inner_build_artifact(c: &ArtifactsBuild) -> anyhow::Result<PathBuf> {
 
     if let Some(panic_abort) = c.panic_abort {
         if panic_abort {
-            build_cmd.env("RUSTFLAGS", "-C panic=abort");
+            let existing_rustflags = std::env::var("RUSTFLAGS").unwrap_or_default();
+            let new_rustflags = if existing_rustflags.is_empty() {
+                "-C panic=abort".to_string()
+            } else {
+                format!("{} -C panic=abort", existing_rustflags)
+            };
+            build_cmd.env("RUSTFLAGS", new_rustflags);
         }
     }
 
