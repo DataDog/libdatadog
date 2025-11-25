@@ -266,3 +266,98 @@ fn handle_posix_signal_impl(
 
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_register_panic_hook() {
+        assert!(PREVIOUS_PANIC_HOOK.load(SeqCst).is_null());
+
+        let result = register_panic_hook();
+        assert!(result.is_ok());
+
+        assert!(!PREVIOUS_PANIC_HOOK.load(SeqCst).is_null());
+    }
+
+    #[test]
+    fn test_panic_message_storage_and_retrieval() {
+        // Test that panic messages can be stored and retrieved via atomic pointer
+        let test_message = "test panic message".to_string();
+        let message_ptr = Box::into_raw(Box::new(test_message.clone()));
+
+        // Store the message
+        let old_ptr = PANIC_MESSAGE.swap(message_ptr, SeqCst);
+        assert!(old_ptr.is_null()); // Should be null initially
+
+        // Retrieve and verify
+        let retrieved_ptr = PANIC_MESSAGE.swap(ptr::null_mut(), SeqCst);
+        assert!(!retrieved_ptr.is_null());
+
+        unsafe {
+            let retrieved_message = *Box::from_raw(retrieved_ptr);
+            assert_eq!(retrieved_message, test_message);
+        }
+    }
+
+    #[test]
+    fn test_panic_message_null_handling() {
+        // Test that null message pointers are handled correctly
+        PANIC_MESSAGE.store(ptr::null_mut(), SeqCst);
+
+        let message_ptr = PANIC_MESSAGE.load(SeqCst);
+        assert!(message_ptr.is_null());
+
+        // Swapping null with null should be safe
+        let old_ptr = PANIC_MESSAGE.swap(ptr::null_mut(), SeqCst);
+        assert!(old_ptr.is_null());
+    }
+
+    #[test]
+    fn test_panic_message_replacement() {
+        // Test that replacing an existing message cleans up the old one
+        let message1 = "first message".to_string();
+        let message2 = "second message".to_string();
+
+        let ptr1 = Box::into_raw(Box::new(message1));
+        let ptr2 = Box::into_raw(Box::new(message2.clone()));
+
+        PANIC_MESSAGE.store(ptr1, SeqCst);
+        let old_ptr = PANIC_MESSAGE.swap(ptr2, SeqCst);
+
+        // Old pointer should be the first one
+        assert_eq!(old_ptr, ptr1);
+
+        // Clean up both
+        unsafe {
+            drop(Box::from_raw(old_ptr));
+            let final_ptr = PANIC_MESSAGE.swap(ptr::null_mut(), SeqCst);
+            let final_message = *Box::from_raw(final_ptr);
+            assert_eq!(final_message, message2);
+        }
+    }
+
+    #[test]
+    fn test_metadata_update_atomic() {
+        // Test that metadata updates are atomic
+        let metadata = Metadata {
+            library_name: "test".to_string(),
+            library_version: "1.0.0".to_string(),
+            family: "test_family".to_string(),
+            tags: vec![],
+        };
+
+        let result = update_metadata(metadata.clone());
+        assert!(result.is_ok());
+
+        // Verify metadata was stored
+        let metadata_ptr = METADATA.load(SeqCst);
+        assert!(!metadata_ptr.is_null());
+
+        unsafe {
+            let (stored_metadata, _) = &*metadata_ptr;
+            assert_eq!(stored_metadata.library_name, "test");
+        }
+    }
+}
