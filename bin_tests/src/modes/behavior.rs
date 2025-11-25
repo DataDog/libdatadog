@@ -134,6 +134,7 @@ pub fn get_behavior(mode_str: &str) -> Box<dyn Behavior> {
         "runtime_callback_frame_invalid_utf8" => {
             Box::new(test_012_runtime_callback_frame_invalid_utf8::Test)
         }
+        "panic_hook_after_fork" => Box::new(test_013_panic_hook_after_fork::Test),
         _ => panic!("Unknown mode: {mode_str}"),
     }
 }
