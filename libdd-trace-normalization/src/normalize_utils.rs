@@ -291,6 +291,15 @@ mod tests {
         let mut start = i64::MIN;
         let mut duration = 1;
         normalize_span_start_duration(&mut start, &mut duration);
+        assert_eq!(duration, 1);
+        assert!(start > YEAR_2000_NANOSEC_TS);
+    }
+
+    #[test]
+    fn test_normalize_span_start_duration_handles_max_start() {
+        let mut start = i64::MAX;
+        let mut duration = 1;
+        normalize_span_start_duration(&mut start, &mut duration);
         assert_eq!(duration, 0);
     }
 
