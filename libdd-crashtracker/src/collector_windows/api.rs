@@ -204,11 +204,6 @@ pub fn exception_event_callback(
 ) -> Result<()> {
     unsafe { SymInitializeW(process_handle, PCWSTR::null(), true)? };
 
-    let pid = unsafe { GetProcessId(process_handle) };
-    let crash_tid = unsafe { GetThreadId(thread_handle) };
-    let threads = list_threads(pid).context("Failed to list threads")?;
-    let modules = list_modules(process_handle).unwrap_or_default();
-
     let wer_context = read_wer_context(process_handle, context)?;
 
     anyhow::ensure!(
@@ -225,6 +220,11 @@ pub fn exception_event_callback(
     let error_context: ErrorContext = serde_json::from_str(error_context_str)?;
 
     let mut builder = CrashInfoBuilder::new();
+
+    let pid = unsafe { GetProcessId(process_handle) };
+    let crash_tid = unsafe { GetThreadId(thread_handle) };
+    let threads = list_threads(pid).context("Failed to list threads")?;
+    let modules = list_modules(process_handle).unwrap_or_default();
 
     for thread in threads {
         let stack_result = walk_thread_stack(process_handle, thread, &modules);
