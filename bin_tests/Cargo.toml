@@ -24,10 +24,18 @@ nix = { version = "0.29", features = ["signal", "socket"] }
 hex = "0.4"
 os_info = "3.7.0"
 
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.59.0", features = [
+    "Win32_Foundation",
+    "Win32_System_Diagnostics_Debug",
+] }
+
 [dev-dependencies]
 serial_test = "3.2"
 
 [lib]
+name = "bin_tests"  # Used for both rlib (Rust code) and DLL (WER handler)
+crate-type = ["rlib", "cdylib"]
 bench = false
 
 [[bin]]
@@ -45,4 +53,8 @@ bench = false
 
 [[bin]]
 name = "crashing_test_app"
+bench = false
+
+[[bin]]
+name = "crashtracker_bin_test_windows"
 bench = false

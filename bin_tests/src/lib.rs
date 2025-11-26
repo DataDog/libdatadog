@@ -6,6 +6,16 @@ pub mod test_runner;
 pub mod test_types;
 pub mod validation;
 
+// Windows-specific modules
+#[cfg(windows)]
+pub mod test_runner_windows;
+#[cfg(windows)]
+pub mod test_types_windows;
+#[cfg(windows)]
+pub mod validation_windows;
+#[cfg(windows)]
+pub mod wer_handler;
+
 use std::{collections::HashMap, env, ops::DerefMut, path::PathBuf, process, sync::Mutex};
 
 use once_cell::sync::OnceCell;
@@ -102,16 +112,25 @@ fn inner_build_artifact(c: &ArtifactsBuild) -> anyhow::Result<PathBuf> {
     match c.artifact_type {
         ArtifactType::ExecutablePackage | ArtifactType::Bin => artifact_path.push(&c.name),
         ArtifactType::CDylib => {
-            let name = "lib".to_owned()
-                + c.lib_name_override
+            let extension = shared_lib_extension(
+                c.triple_target
                     .as_deref()
-                    .unwrap_or(&c.name.replace('-', "_"))
-                + "."
-                + shared_lib_extension(
-                    c.triple_target
-                        .as_deref()
-                        .unwrap_or(current_platform::CURRENT_PLATFORM),
-                )?;
+                    .unwrap_or(current_platform::CURRENT_PLATFORM),
+            )?;
+
+            // Create a owned string for the replaced name to avoid borrow issues
+            let replaced_name = c.name.replace('-', "_");
+            let base_name = c.lib_name_override.as_deref().unwrap_or(&replaced_name);
+
+            // On Windows, DLLs don't have "lib" prefix; on Unix they do
+            let name = if extension == "dll" {
+                // Windows: just the name + .dll
+                format!("{}.{}", base_name, extension)
+            } else {
+                // Unix: lib + name + extension
+                format!("lib{}.{}", base_name, extension)
+            };
+
             println!("NAME: {}", name);
             artifact_path.push(name);
         }
