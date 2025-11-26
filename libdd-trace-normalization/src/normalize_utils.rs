@@ -56,7 +56,7 @@ pub fn normalize_span_start_duration(start: &mut i64, duration: &mut i64) {
     if *duration < 0 {
         *duration = 0;
     }
-    if *duration > i64::MAX - *start {
+    if (*start).checked_add(*duration).is_none() {
         *duration = 0;
     }
 
@@ -285,6 +285,14 @@ mod tests {
 
     use super::*;
     use duplicate::duplicate_item;
+
+    #[test]
+    fn test_normalize_span_start_duration_handles_min_start() {
+        let mut start = i64::MIN;
+        let mut duration = 1;
+        normalize_span_start_duration(&mut start, &mut duration);
+        assert_eq!(duration, 0);
+    }
 
     #[duplicate_item(
         test_name                       input                               expected;
