@@ -33,15 +33,31 @@ pub extern "system" fn OutOfProcessExceptionEventCallback(
     thread_handle: HANDLE,
     _reserved: usize,
 ) -> u32 {
+    // Write to a debug file to confirm WER handler is loaded
+    let _ = std::fs::write(
+        "C:\\Windows\\Temp\\wer_handler_called.txt",
+        format!(
+            "WER callback invoked\nContext: {:#x}\nProcess: {:?}\nThread: {:?}\n",
+            context, process_handle, thread_handle
+        ),
+    );
+
     // Call into libdd-crashtracker's exception handler
+    eprintln!("OutOfProcessExceptionEventCallback called");
     match libdd_crashtracker::exception_event_callback(context, process_handle, thread_handle) {
         Ok(_) => {
             // Successfully processed crash
+            eprintln!("WER callback succeeded");
+            let _ = std::fs::write("C:\\Windows\\Temp\\wer_handler_success.txt", "SUCCESS");
             0
         }
         Err(e) => {
             // Log error (WER may capture stderr)
             eprintln!("WER callback error: {:?}", e);
+            let _ = std::fs::write(
+                "C:\\Windows\\Temp\\wer_handler_error.txt",
+                format!("{:?}", e),
+            );
             1
         }
     }

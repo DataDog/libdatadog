@@ -70,6 +70,42 @@ fn inner_build_artifact(c: &ArtifactsBuild) -> anyhow::Result<PathBuf> {
     };
     build_cmd.arg(&c.name);
 
+    // For Windows crash test binaries, force panic=abort via RUSTFLAGS
+    // This ensures WER is triggered instead of Rust panic unwinding
+    #[cfg(windows)]
+    if c.name == "crashtracker_bin_test_windows" {
+        // Force clean the ENTIRE bin_tests package to avoid using ANY cached artifacts
+        // This is necessary because dependencies also need to be rebuilt with panic=abort
+        eprintln!("[DEBUG] Cleaning bin_tests package to force complete rebuild with panic=abort");
+
+        // Clean both debug and release to be thorough
+        let mut clean_cmd = process::Command::new(env!("CARGO"));
+        clean_cmd.arg("clean").arg("-p").arg("bin_tests");
+
+        // Add --release if we're building release
+        if let BuildProfile::Release = c.build_profile {
+            clean_cmd.arg("--release");
+        }
+
+        let clean_result = clean_cmd.output();
+        if let Err(e) = clean_result {
+            eprintln!("[DEBUG] Clean failed (may be ok): {:?}", e);
+        }
+
+        // Set RUSTFLAGS to force panic=abort for this build
+        let rustflags = match env::var("RUSTFLAGS") {
+            Ok(existing) if !existing.contains("panic=abort") => {
+                format!("{} -C panic=abort", existing)
+            }
+            Ok(existing) => existing, // Already has panic=abort
+            Err(_) => "-C panic=abort".to_string(),
+        };
+        
+        eprintln!("[DEBUG] Building {} with RUSTFLAGS={}", c.name, rustflags);
+        eprintln!("[DEBUG] This will force rebuild of all bin_tests dependencies");
+        build_cmd.env("RUSTFLAGS", rustflags);
+    }
+
     let output = build_cmd.output().unwrap();
     if !output.status.success() {
         anyhow::bail!(

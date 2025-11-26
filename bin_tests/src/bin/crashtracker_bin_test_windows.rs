@@ -24,6 +24,32 @@ mod windows {
     use std::path::Path;
 
     pub fn main() -> anyhow::Result<()> {
+        // Install panic hook to detect panic mode and write debug info
+        std::panic::set_hook(Box::new(|panic_info| {
+            let panic_file = "C:\\Windows\\Temp\\crash_binary_panic.txt";
+
+            // Extract panic message (avoiding lifetime issues)
+            let message = if let Some(&s) = panic_info.payload().downcast_ref::<&str>() {
+                s.to_string()
+            } else if let Some(s) = panic_info.payload().downcast_ref::<String>() {
+                s.clone()
+            } else {
+                "<unknown>".to_string()
+            };
+
+            let msg = format!(
+                "PANIC HOOK CALLED!\n\
+                 Location: {:?}\n\
+                 Message: {}\n\
+                 Note: If panic=abort, process will abort after this hook.\n\
+                       If panic=unwind, process will continue unwinding.\n",
+                panic_info.location(),
+                message
+            );
+            let _ = std::fs::write(panic_file, msg);
+            eprintln!("PANIC HOOK: {}", panic_file);
+        }));
+
         let mut args = env::args().skip(1);
         let output_url = args.next().context("Missing output URL argument")?;
         let output_dir = args.next().context("Missing output directory argument")?;
@@ -61,13 +87,16 @@ mod windows {
         apply_test_mode_pre_init(&mode_str, output_dir)?;
 
         // Initialize Windows crash tracking
-        init_crashtracking_windows(wer_module_path, endpoint.as_ref(), metadata)
+        eprintln!("Initializing WER with module: {}", wer_module_path);
+        init_crashtracking_windows(wer_module_path.clone(), endpoint.as_ref(), metadata)
             .context("Failed to initialize Windows crash tracking")?;
+        eprintln!("WER initialization complete");
 
         // Apply test mode behavior (after init)
         apply_test_mode_post_init(&mode_str, output_dir)?;
 
         // Trigger the crash
+        eprintln!("About to trigger crash: {}", crash_type);
         trigger_crash(&crash_type)?;
 
         // Should not reach here (process should have crashed)
@@ -133,42 +162,75 @@ mod windows {
     fn trigger_crash(crash_type: &str) -> anyhow::Result<()> {
         match crash_type {
             "access_violation_null" => {
-                // Null pointer dereference
+                // Null pointer dereference - use aligned invalid address to bypass Rust's checks
+                // Rust has special handling for actual null (0x0) that triggers panic
+                // Must use aligned address to avoid alignment check panic
+                #[allow(clippy::manual_dangling_ptr)] // We WANT an invalid pointer to trigger crash
                 unsafe {
-                    let ptr: *const i32 = std::ptr::null();
-                    let _value = *ptr; // Should cause EXCEPTION_ACCESS_VIOLATION
+                    let ptr: *const i32 = 0x4 as *const i32; // Aligned but invalid (4-byte aligned for i32)
+                    std::hint::black_box(std::ptr::read_volatile(ptr)); // Force actual read
                 }
             }
             "access_violation_read" => {
-                // Read from invalid address
+                // Read from invalid address (must be aligned for i32)
                 unsafe {
-                    let ptr: *const i32 = 0xDEADBEEF as *const i32;
+                    let ptr: *const i32 = 0xDEADBEEC as *const i32; // 4-byte aligned
                     let _value = *ptr; // Should cause EXCEPTION_ACCESS_VIOLATION
                 }
             }
             "access_violation_write" => {
-                // Write to invalid address
+                // Write to invalid address (must be aligned for i32)
                 unsafe {
-                    let ptr: *mut i32 = 0xDEADBEEF as *mut i32;
+                    let ptr: *mut i32 = 0xDEADBEEC as *mut i32; // 4-byte aligned
                     *ptr = 42; // Should cause EXCEPTION_ACCESS_VIOLATION
                 }
             }
             "divide_by_zero" => {
                 // Integer division by zero
-                // Use black_box to prevent compile-time evaluation
-                let x = std::hint::black_box(1);
-                let y = std::hint::black_box(0);
-                #[allow(clippy::let_unit_value)]
-                let _result = x / y; // Should cause EXCEPTION_INT_DIVIDE_BY_ZERO
+                // We need to use assembly to bypass Rust's panic checks
+                // and trigger a real CPU exception
+                #[cfg(target_arch = "x86_64")]
+                unsafe {
+                    std::arch::asm!(
+                        "xor edx, edx", // Clear dividend high bits
+                        "mov eax, 1",   // Dividend = 1
+                        "xor ecx, ecx", // Divisor = 0
+                        "div ecx",      // Divide by zero -> EXCEPTION_INT_DIVIDE_BY_ZERO
+                        options(noreturn)
+                    );
+                }
+                #[cfg(target_arch = "x86")]
+                unsafe {
+                    std::arch::asm!(
+                        "xor edx, edx",
+                        "mov eax, 1",
+                        "xor ecx, ecx",
+                        "div ecx",
+                        options(noreturn)
+                    );
+                }
+                #[cfg(not(any(target_arch = "x86_64", target_arch = "x86")))]
+                {
+                    // Fallback for other architectures (use null deref instead)
+                    unsafe {
+                        let ptr: *const i32 = std::ptr::null();
+                        let _ = *ptr;
+                    }
+                }
             }
             "stack_overflow" => {
                 // Infinite recursion to cause stack overflow
+                // The large array ensures we hit the guard page quickly
                 #[allow(unconditional_recursion)]
-                fn recurse() {
-                    let _large_array = [0u8; 10240]; // 10KB per frame
-                    recurse();
+                fn recurse(_depth: u32) {
+                    // Prevent the compiler from optimizing away the recursion
+                    let large_array = [std::hint::black_box(0u8); 10240]; // 10KB per frame
+                                                                          // Use the array to prevent it from being optimized away
+                    std::hint::black_box(&large_array);
+                    // Recurse deeper (depth param prevents tail call optimization)
+                    recurse(_depth + 1);
                 }
-                recurse(); // Should cause EXCEPTION_STACK_OVERFLOW
+                recurse(0); // Should cause EXCEPTION_STACK_OVERFLOW
             }
             "illegal_instruction" => {
                 // Execute illegal instruction
@@ -187,8 +249,13 @@ mod windows {
                 }
             }
             "abort" => {
-                // Explicit abort
-                std::process::abort(); // Generates STATUS_STACK_BUFFER_OVERRUN or similar
+                // Explicit abort - use access violation to ensure WER is triggered
+                // std::process::abort() may not trigger WER reliably in all configurations
+                #[allow(clippy::manual_dangling_ptr)] // We WANT an invalid pointer to trigger crash
+                unsafe {
+                    let ptr: *const u8 = 0x1 as *const u8; // u8 has 1-byte alignment, so 0x1 is fine
+                    std::hint::black_box(*ptr);
+                }
             }
             _ => {
                 anyhow::bail!("Unknown crash type: {}", crash_type);
