@@ -158,6 +158,57 @@ where
         "Expected process to crash (non-zero exit), but it succeeded"
     );
 
+    // Check if WER is enabled on the system
+    eprintln!("[DEBUG] Checking if WER is enabled globally...");
+    let wer_enabled = check_wer_enabled();
+    match wer_enabled {
+        Ok(true) => eprintln!("[DEBUG] ✅ WER is enabled"),
+        Ok(false) => eprintln!("[DEBUG] ❌ WER is DISABLED on this system!"),
+        Err(e) => eprintln!("[DEBUG] ⚠️ Could not check WER status: {:?}", e),
+    }
+
+    // Verify DLL exports the WER callback
+    eprintln!("[DEBUG] Checking if DLL exports OutOfProcessExceptionEventCallback...");
+    let dll_exports_check = check_dll_export(wer_dll_path);
+    match dll_exports_check {
+        Ok(true) => eprintln!("[DEBUG] ✅ DLL exports OutOfProcessExceptionEventCallback"),
+        Ok(false) => eprintln!("[DEBUG] ❌ DLL does NOT export OutOfProcessExceptionEventCallback!"),
+        Err(e) => eprintln!("[DEBUG] ⚠️ Could not check DLL exports: {:?}", e),
+    }
+
+    // Check registry key before waiting for crash
+    eprintln!("[DEBUG] Checking WER registry key...");
+    let registry_check = check_wer_registry_entry(wer_dll_path);
+    match registry_check {
+        Ok(true) => eprintln!("[DEBUG] ✅ Registry key exists with correct DLL path"),
+        Ok(false) => eprintln!("[DEBUG] ❌ Registry key NOT found or DLL path mismatch!"),
+        Err(e) => eprintln!("[DEBUG] ⚠️ Could not check registry: {:?}", e),
+    }
+
+    // Check if crash binary panic hook was triggered
+    eprintln!("[DEBUG] Checking if crash binary panic hook was triggered...");
+    if std::path::Path::new("C:\\Windows\\Temp\\crash_binary_panic.txt").exists() {
+        eprintln!("[DEBUG] ⚠️ PANIC HOOK WAS CALLED (should NOT happen with real crashes!)");
+        if let Ok(content) = std::fs::read_to_string("C:\\Windows\\Temp\\crash_binary_panic.txt") {
+            eprintln!("[DEBUG] Panic info:\n{}", content);
+        }
+    } else {
+        eprintln!("[DEBUG] ✅ No panic hook triggered (good - real crash occurred)");
+    }
+
+    // Check if WER handler was called (debug files)
+    eprintln!("[DEBUG] Checking for WER handler debug files...");
+    std::thread::sleep(Duration::from_millis(500)); // Give WER time to write debug files
+
+    if std::path::Path::new("C:\\Windows\\Temp\\wer_handler_called.txt").exists() {
+        eprintln!("[DEBUG] ✅ WER handler was called!");
+        if let Ok(content) = std::fs::read_to_string("C:\\Windows\\Temp\\wer_handler_called.txt") {
+            eprintln!("[DEBUG] WER handler content:\n{}", content);
+        }
+    } else {
+        eprintln!("[DEBUG] ❌ WER handler was NOT called!");
+    }
+
     // Wait for WER callback to complete and write output
     // WER processing is asynchronous, so we need to poll for the file
     wait_for_crash_output(&fixtures.crash_payload_path, Duration::from_secs(10))
@@ -172,6 +223,12 @@ where
 
     // Cleanup registry key
     cleanup_registry_key(&fixtures.registry_key).context("Failed to cleanup registry key")?;
+
+    // Cleanup debug files
+    let _ = std::fs::remove_file("C:\\Windows\\Temp\\crash_binary_panic.txt");
+    let _ = std::fs::remove_file("C:\\Windows\\Temp\\wer_handler_called.txt");
+    let _ = std::fs::remove_file("C:\\Windows\\Temp\\wer_handler_success.txt");
+    let _ = std::fs::remove_file("C:\\Windows\\Temp\\wer_handler_error.txt");
 
     Ok(())
 }
@@ -251,6 +308,92 @@ pub fn registry_key_exists(key: &str) -> Result<bool> {
         .context("Failed to run reg.exe")?;
 
     Ok(output.status.success())
+}
+
+/// Checks if WER is enabled globally on the system
+fn check_wer_enabled() -> Result<bool> {
+    use std::process::Command;
+
+    // Check both HKLM (system-wide) and HKCU (user-specific)
+    let hklm_check = Command::new("reg.exe")
+        .args(["query", "HKLM\\SOFTWARE\\Microsoft\\Windows\\Windows Error Reporting", "/v", "Disabled"])
+        .output();
+
+    let hkcu_check = Command::new("reg.exe")
+        .args(["query", "HKCU\\SOFTWARE\\Microsoft\\Windows\\Windows Error Reporting", "/v", "Disabled"])
+        .output();
+
+    // Check HKLM (system-wide setting)
+    if let Ok(output) = hklm_check {
+        let output_str = String::from_utf8_lossy(&output.stdout);
+        if output_str.contains("Disabled") && output_str.contains("0x1") {
+            eprintln!("[DEBUG] WER is disabled in HKLM (system-wide)");
+            return Ok(false);
+        }
+    }
+
+    // Check HKCU (user-specific setting)
+    if let Ok(output) = hkcu_check {
+        let output_str = String::from_utf8_lossy(&output.stdout);
+        if output_str.contains("Disabled") && output_str.contains("0x1") {
+            eprintln!("[DEBUG] WER is disabled in HKCU (user-specific)");
+            return Ok(false);
+        }
+    }
+
+    // If neither key exists or value is 0, WER is enabled
+    Ok(true)
+}
+
+/// Checks if the DLL exports OutOfProcessExceptionEventCallback
+fn check_dll_export(dll_path: &Path) -> Result<bool> {
+    use std::process::Command;
+
+    // Use dumpbin if available, otherwise try manual DLL loading
+    let output = Command::new("dumpbin")
+        .args(["/EXPORTS", dll_path.to_str().unwrap()])
+        .output();
+
+    match output {
+        Ok(out) if out.status.success() => {
+            let output_str = String::from_utf8_lossy(&out.stdout);
+            eprintln!("[DEBUG] DLL exports check via dumpbin");
+            Ok(output_str.contains("OutOfProcessExceptionEventCallback"))
+        }
+        _ => {
+            // dumpbin not available or failed, try loading DLL directly
+            eprintln!("[DEBUG] dumpbin not available, checking DLL is loadable");
+            Ok(dll_path.exists())
+        }
+    }
+}
+
+/// Checks if the WER registry entry exists and points to the correct DLL.
+fn check_wer_registry_entry(dll_path: &Path) -> Result<bool> {
+    use std::process::Command;
+
+    let subkey =
+        r"SOFTWARE\Microsoft\Windows\Windows Error Reporting\RuntimeExceptionHelperModules";
+
+    let dll_path_str = dll_path.to_string_lossy();
+
+    eprintln!("[DEBUG] Looking for registry value: {}", dll_path_str);
+
+    let output = Command::new("reg.exe")
+        .args(["query", &format!("HKCU\\{}", subkey)])
+        .output()
+        .context("Failed to run reg.exe query")?;
+
+    if !output.status.success() {
+        eprintln!("[DEBUG] Registry query failed: {}", String::from_utf8_lossy(&output.stderr));
+        return Ok(false);
+    }
+
+    let output_str = String::from_utf8_lossy(&output.stdout);
+    eprintln!("[DEBUG] Registry output:\n{}", output_str);
+
+    // Check if our DLL path appears in the output
+    Ok(output_str.contains(&dll_path_str as &str))
 }
 
 #[cfg(test)]

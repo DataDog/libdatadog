@@ -25,10 +25,7 @@ hex = "0.4"
 os_info = "3.7.0"
 
 [target.'cfg(windows)'.dependencies]
-windows = { version = "0.59.0", features = [
-    "Win32_Foundation",
-    "Win32_System_Diagnostics_Debug",
-] }
+windows = { version = "0.59.0", features = ["Win32_Foundation"] }
 
 [dev-dependencies]
 serial_test = "3.2"
@@ -58,3 +55,6 @@ bench = false
 [[bin]]
 name = "crashtracker_bin_test_windows"
 bench = false
+
+# Note: panic = "abort" is set via RUSTFLAGS at build time (see src/lib.rs)
+# This avoids workspace profile conflicts and ensures clean builds

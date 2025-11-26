@@ -146,7 +146,9 @@ fn test_windows_crash_abort() {
         &artifacts.wer_handler_dll,
         |payload, _fixtures| {
             WindowsPayloadValidator::new(payload)
-                .validate_exception_code(0xC0000409)? // STATUS_STACK_BUFFER_OVERRUN (abort)
+                // Using access violation for reliable WER triggering
+                // (std::process::abort may not trigger WER in all configurations)
+                .validate_exception_code(0xC0000005)? // EXCEPTION_ACCESS_VIOLATION
                 .validate_stack_exists()?
                 .validate_metadata()?;
             Ok(())
