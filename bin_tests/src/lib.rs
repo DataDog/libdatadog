@@ -195,3 +195,43 @@ macro_rules! timeit {
         res
     }};
 }
+
+/// Propagates coverage environment variables to spawned processes.
+///
+/// This function enables coverage collection from integration tests that spawn separate
+/// processes (like bin_tests spawning crashtracker_bin_test). It propagates the
+/// `LLVM_PROFILE_FILE` environment variable which contains patterns like `%p` (process ID)
+/// that the LLVM profiling runtime expands at runtime, ensuring each process writes to a
+/// unique coverage file.
+///
+/// # How It Works
+///
+/// 1. Parent propagates the pattern: `LLVM_PROFILE_FILE="path/cargo-test-%p-%m.profraw"`
+/// 2. Each process expands at runtime: Parent PID 1000 → `cargo-test-1000-abc.profraw`
+/// 3. Coverage report merges all `.profraw` files
+///
+/// # Platform Support
+///
+/// - **Unix/Linux**: Fully supported, used in CI coverage collection
+/// - **Windows**: Fully supported, enables Windows bin_tests coverage
+///
+/// # Arguments
+/// * `cmd` - The Command to add environment variables to (before spawning)
+///
+/// # Example
+/// ```no_run
+/// use bin_tests::propagate_coverage_env;
+/// use std::process::Command;
+///
+/// let mut cmd = Command::new("path/to/test_binary");
+/// propagate_coverage_env(&mut cmd);
+/// let child = cmd.spawn().expect("Failed to spawn");
+/// ```
+pub fn propagate_coverage_env(cmd: &mut process::Command) {
+    // LLVM_PROFILE_FILE tells the instrumented binary where to write coverage data.
+    // The LLVM profiling runtime expands patterns like %p (PID) and %m (module signature)
+    // at runtime to ensure each spawned process writes to a unique file.
+    if let Ok(profile_file) = env::var("LLVM_PROFILE_FILE") {
+        cmd.env("LLVM_PROFILE_FILE", profile_file);
+    }
+}
