@@ -36,6 +36,8 @@ generate-unit-test-files = []
 benchmarking = ["generate-unit-test-files"]
 # Enables C++ bindings via cxx
 cxx = ["dep:cxx", "dep:cxx-build"]
+# Exposes internal testing utilities (for bin_tests only)
+test-utils = ["collector_windows"]
 
 [target.'cfg(unix)'.dependencies]
 # Should be kept in sync with the libdatadog symbolizer crate (also using blasesym)

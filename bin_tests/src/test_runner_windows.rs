@@ -5,9 +5,7 @@
 //! Provides configuration and execution framework for Windows crash tests.
 
 use crate::{
-    test_types_windows::{WindowsCrashType, WindowsTestMode},
-    validation::read_and_parse_crash_payload,
-    BuildProfile,
+    test_types_windows::WindowsCrashType, validation::read_and_parse_crash_payload, BuildProfile,
 };
 use anyhow::{Context, Result};
 use serde_json::Value;
@@ -17,33 +15,164 @@ use std::{
     time::Duration,
 };
 
+use windows::Win32::Foundation::{CloseHandle, HANDLE};
+use windows::Win32::System::Threading::{
+    CreateEventW, OpenProcess, TerminateProcess, WaitForSingleObject, PROCESS_TERMINATE,
+};
+
 /// Type alias for validator functions used in Windows test runners.
 pub type WindowsValidatorFn = Box<dyn FnOnce(&Value, &WindowsTestFixtures) -> Result<()>>;
+
+/// Helper to create a named event
+fn create_event(name: &str) -> Result<HANDLE> {
+    unsafe {
+        CreateEventW(
+            None,
+            true,  // Manual reset
+            false, // Initially non-signaled
+            &windows::core::HSTRING::from(name),
+        )
+        .context(format!("Failed to create event: {}", name))
+    }
+}
+
+/// Helper to wait for an event with timeout and proper error handling
+fn wait_for_event(handle: HANDLE, timeout_ms: u32, description: &str) -> Result<()> {
+    let wait_result = unsafe { WaitForSingleObject(handle, timeout_ms) };
+
+    if wait_result.0 != 0 {
+        // 0 = WAIT_OBJECT_0 (success)
+        anyhow::bail!(
+            "Timeout waiting for {} (wait result: {}, timeout: {}ms)",
+            description,
+            wait_result.0,
+            timeout_ms
+        );
+    }
+
+    Ok(())
+}
+
+/// RAII guard for event handles - ensures cleanup on drop
+struct EventHandles {
+    crash_ready: HANDLE,
+    simulator_ready: HANDLE,
+    crash_event: HANDLE,
+    done_event: HANDLE,
+}
+
+impl EventHandles {
+    /// Create all events with proper error handling
+    fn new(
+        crash_ready_name: &str,
+        simulator_ready_name: &str,
+        crash_event_name: &str,
+        done_event_name: &str,
+    ) -> Result<Self> {
+        Ok(Self {
+            crash_ready: create_event(crash_ready_name)?,
+            simulator_ready: create_event(simulator_ready_name)?,
+            crash_event: create_event(crash_event_name)?,
+            done_event: create_event(done_event_name)?,
+        })
+    }
+}
+
+impl Drop for EventHandles {
+    fn drop(&mut self) {
+        unsafe {
+            let _ = CloseHandle(self.crash_ready);
+            let _ = CloseHandle(self.simulator_ready);
+            let _ = CloseHandle(self.crash_event);
+            let _ = CloseHandle(self.done_event);
+        }
+    }
+}
+
+/// Wait for a process to complete with timeout, killing it if it exceeds the timeout.
+///
+/// # Arguments
+/// * `process` - The child process to wait for
+/// * `timeout` - Maximum time to wait before killing the process
+/// * `process_name` - Name of the process (for logging)
+///
+/// # Returns
+/// * `Ok(ExitStatus)` - Process exited within timeout
+/// * `Err` - Process timed out or wait failed
+fn wait_for_process_with_timeout(
+    mut process: process::Child,
+    timeout: Duration,
+    process_name: &str,
+) -> Result<std::process::ExitStatus> {
+    let pid = process.id();
+    let (tx, rx) = std::sync::mpsc::channel();
+
+    std::thread::spawn(move || {
+        let result = process.wait();
+        let _ = tx.send(result);
+    });
+
+    match rx.recv_timeout(timeout) {
+        Ok(Ok(status)) => {
+            eprintln!(
+                "[TEST_RUNNER] {} exited with status: {:?}",
+                process_name, status
+            );
+            Ok(status)
+        }
+        Ok(Err(e)) => {
+            eprintln!(
+                "[TEST_RUNNER] ⚠️ Failed to wait for {}: {}",
+                process_name, e
+            );
+            Err(e).context(format!("Failed to wait for {}", process_name))
+        }
+        Err(_) => {
+            eprintln!(
+                "[TEST_RUNNER] ⚠️ {} did not complete within {}s, killing it...",
+                process_name,
+                timeout.as_secs()
+            );
+
+            // Kill the process
+            unsafe {
+                if let Ok(handle) = OpenProcess(PROCESS_TERMINATE, false, pid) {
+                    let _ = TerminateProcess(handle, 1);
+                    eprintln!("[TEST_RUNNER] {} (PID: {}) terminated", process_name, pid);
+                } else {
+                    eprintln!(
+                        "[TEST_RUNNER] Failed to open {} for termination",
+                        process_name
+                    );
+                }
+            }
+
+            anyhow::bail!("{} timeout after {}s", process_name, timeout.as_secs())
+        }
+    }
+}
 
 /// Configuration for a Windows crash tracking test.
 #[derive(Debug, Clone)]
 pub struct WindowsCrashTestConfig {
     /// Build profile for the test binaries
     pub profile: BuildProfile,
-    /// Test mode (behavior)
-    pub mode: WindowsTestMode,
     /// Type of crash to trigger
     pub crash_type: WindowsCrashType,
     /// Whether to expect successful upload
     pub expect_upload: bool,
-    /// Optional custom registry key (for isolation)
-    pub registry_key_override: Option<String>,
+    /// Optional timeout for WER simulator (milliseconds)
+    pub simulator_timeout_ms: Option<u32>,
 }
 
 impl WindowsCrashTestConfig {
     /// Creates a new Windows test configuration.
-    pub fn new(profile: BuildProfile, mode: WindowsTestMode, crash_type: WindowsCrashType) -> Self {
+    pub fn new(profile: BuildProfile, crash_type: WindowsCrashType) -> Self {
         Self {
             profile,
-            mode,
             crash_type,
             expect_upload: true,
-            registry_key_override: None,
+            simulator_timeout_ms: None, // Use default (5000ms)
         }
     }
 
@@ -53,9 +182,9 @@ impl WindowsCrashTestConfig {
         self
     }
 
-    /// Sets a custom registry key for test isolation.
-    pub fn with_registry_key(mut self, key: String) -> Self {
-        self.registry_key_override = Some(key);
+    /// Sets the WER simulator timeout in milliseconds.
+    pub fn with_simulator_timeout(mut self, timeout_ms: u32) -> Self {
+        self.simulator_timeout_ms = Some(timeout_ms);
         self
     }
 }
@@ -66,8 +195,6 @@ pub struct WindowsTestFixtures {
     pub crash_payload_path: PathBuf,
     /// Output directory for test artifacts
     pub output_dir: PathBuf,
-    /// Registry key used for this test (for cleanup)
-    pub registry_key: String,
     /// Temporary directory (kept alive for test duration)
     #[allow(dead_code)]
     tmpdir: tempfile::TempDir,
@@ -76,30 +203,14 @@ pub struct WindowsTestFixtures {
 impl WindowsTestFixtures {
     /// Creates new test fixtures with temporary directory.
     pub fn new() -> Result<Self> {
-        Self::new_with_registry_key(Self::generate_registry_key())
-    }
-
-    /// Creates new test fixtures with specific registry key.
-    pub fn new_with_registry_key(registry_key: String) -> Result<Self> {
         let tmpdir = tempfile::TempDir::new().context("Failed to create temporary directory")?;
         let dirpath = tmpdir.path();
 
         Ok(Self {
             crash_payload_path: extend_path(dirpath, "crash.json"),
             output_dir: dirpath.to_path_buf(),
-            registry_key,
             tmpdir,
         })
-    }
-
-    /// Generates a unique registry key for test isolation.
-    fn generate_registry_key() -> String {
-        use std::time::{SystemTime, UNIX_EPOCH};
-        let timestamp = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_millis();
-        format!("DatadogCrashTrackerTest_{}", timestamp)
     }
 }
 
@@ -114,42 +225,151 @@ fn extend_path(dir: &Path, file: &str) -> PathBuf {
 /// # Arguments
 /// * `config` - Test configuration
 /// * `binary_path` - Path to the test binary
-/// * `wer_dll_path` - Path to the WER handler DLL
+/// * `simulator_path` - Path to the WER simulator binary
 /// * `validator` - Custom validation function
 pub fn run_windows_crash_test<F>(
     config: &WindowsCrashTestConfig,
     binary_path: &Path,
-    wer_dll_path: &Path,
+    simulator_path: &Path,
     validator: F,
 ) -> Result<()>
 where
     F: FnOnce(&Value, &WindowsTestFixtures) -> Result<()>,
 {
-    let fixtures = if let Some(ref key) = config.registry_key_override {
-        WindowsTestFixtures::new_with_registry_key(key.clone())?
-    } else {
-        WindowsTestFixtures::new()?
-    };
+    let fixtures = WindowsTestFixtures::new()?;
 
-    // Build command
+    // Create unique event names and info file for this test run
+    let test_id = std::process::id();
+    let crash_event_name = format!("CrashEvent_{}", test_id);
+    let done_event_name = format!("DoneEvent_{}", test_id);
+    let crash_ready_event_name = format!("CrashReady_{}", test_id);
+    let simulator_ready_event_name = format!("SimulatorReady_{}", test_id);
+    let info_file = fixtures.output_dir.join("crash_info.txt");
+
+    eprintln!("[TEST_RUNNER] Starting Windows crash test...");
+    eprintln!(
+        "[TEST_RUNNER] Event names: crash={}, done={}, crash_ready={}, sim_ready={}",
+        crash_event_name, done_event_name, crash_ready_event_name, simulator_ready_event_name
+    );
+    eprintln!("[TEST_RUNNER] Info file: {}", info_file.display());
+
+    // Create all synchronization events (test runner owns all sync primitives)
+    // EventHandles guard ensures cleanup on drop (even on error)
+    eprintln!("[TEST_RUNNER] Creating synchronization events...");
+
+    let _event_handles = EventHandles::new(
+        &crash_ready_event_name,
+        &simulator_ready_event_name,
+        &crash_event_name,
+        &done_event_name,
+    )?;
+
+    // Build command for crash binary
     let mut cmd = process::Command::new(binary_path);
     cmd.arg(format!("file://{}", fixtures.crash_payload_path.display()))
         .arg(&fixtures.output_dir)
-        .arg(config.mode.as_str())
-        .arg(config.crash_type.as_str());
+        .arg(config.crash_type.as_str())
+        .arg(config.simulator_timeout_ms.unwrap_or(5000).to_string())
+        .arg(&crash_event_name)
+        .arg(&done_event_name)
+        .arg(&crash_ready_event_name)
+        .arg(&info_file);
 
-    // Set environment variables
-    cmd.env("WER_MODULE_PATH", wer_dll_path)
-        .env("REGISTRY_KEY", &fixtures.registry_key)
-        .env("CRASH_OUTPUT_DIR", &fixtures.output_dir);
+    eprintln!(
+        "[TEST_RUNNER] Spawning crash binary: {}",
+        binary_path.display()
+    );
 
-    // Spawn test process
-    let mut p = cmd
+    // Spawn crash binary (it will initialize and signal when ready)
+    let crash_process = cmd
         .spawn()
         .context("Failed to spawn Windows test process")?;
 
-    // Wait for process to crash
-    let exit_status = p.wait().context("Failed to wait for test process")?;
+    eprintln!(
+        "[TEST_RUNNER] Crash binary spawned (PID: {})",
+        crash_process.id()
+    );
+
+    // Wait for crash binary to signal it's ready (blocking, no polling!)
+    eprintln!("[TEST_RUNNER] Waiting for crash binary to initialize...");
+    wait_for_event(
+        _event_handles.crash_ready,
+        30000,
+        "crash binary to initialize",
+    )?;
+    eprintln!("[TEST_RUNNER] ✅ Crash binary ready!");
+
+    // Read crash info (PID, TID, context_addr, exception_code_addr) from file
+    eprintln!("[TEST_RUNNER] Reading crash info from file...");
+    let crash_info =
+        std::fs::read_to_string(&info_file).context("Failed to read crash info file")?;
+    let parts: Vec<&str> = crash_info.trim().split('|').collect();
+    anyhow::ensure!(
+        parts.len() == 4,
+        "Invalid crash info format: {}",
+        crash_info
+    );
+
+    let parent_pid: u32 = parts[0].parse().context("Invalid PID")?;
+    let parent_tid: u32 = parts[1].parse().context("Invalid TID")?;
+    let context_addr = parts[2]; // Address in crash binary's address space
+    let exception_code_addr = parts[3]; // Address of EXCEPTION_CODE in crash binary's address space
+
+    eprintln!(
+        "[TEST_RUNNER] Crash info: PID={}, TID={}, context_addr={}, exception_code_addr={}",
+        parent_pid, parent_tid, context_addr, exception_code_addr
+    );
+    eprintln!("[TEST_RUNNER] Note: context_addr and exception_code_addr are in crash binary's address space (will be read via ReadProcessMemory)");
+
+    // Spawn WER simulator
+    eprintln!(
+        "[TEST_RUNNER] Spawning WER simulator: {}",
+        simulator_path.display()
+    );
+    eprintln!(
+        "[TEST_RUNNER] Simulator args: pid={}, tid={}, context_addr={}, exception_code_addr={}, events={}/{}/{}, output={}",
+        parent_pid,
+        parent_tid,
+        context_addr,
+        exception_code_addr,
+        crash_event_name,
+        done_event_name,
+        simulator_ready_event_name,
+        fixtures.output_dir.display()
+    );
+    let mut simulator_cmd = process::Command::new(simulator_path);
+    simulator_cmd
+        .arg(parent_pid.to_string())
+        .arg(parent_tid.to_string())
+        .arg(context_addr)
+        .arg(exception_code_addr)
+        .arg(&crash_event_name)
+        .arg(&done_event_name)
+        .arg(&simulator_ready_event_name)
+        .arg(&fixtures.output_dir); // Pass output directory for debug files
+
+    let simulator_process = simulator_cmd
+        .spawn()
+        .context("Failed to spawn WER simulator")?;
+
+    eprintln!(
+        "[TEST_RUNNER] WER simulator spawned (PID: {})",
+        simulator_process.id()
+    );
+
+    // Wait for simulator to signal it's ready (blocking, no polling!)
+    eprintln!("[TEST_RUNNER] Waiting for WER simulator to initialize...");
+    wait_for_event(
+        _event_handles.simulator_ready,
+        30000,
+        "WER simulator to initialize",
+    )?;
+    eprintln!("[TEST_RUNNER] ✅ WER simulator ready!");
+    eprintln!("[TEST_RUNNER] Waiting for crash binary to crash...");
+
+    // Wait for crash process to exit with timeout
+    let exit_status =
+        wait_for_process_with_timeout(crash_process, Duration::from_secs(30), "Crash binary")?;
 
     // On Windows, crashes typically result in non-zero exit
     // (Unlike Unix where some signals can result in "success")
@@ -158,242 +378,56 @@ where
         "Expected process to crash (non-zero exit), but it succeeded"
     );
 
-    // Check if WER is enabled on the system
-    eprintln!("[DEBUG] Checking if WER is enabled globally...");
-    let wer_enabled = check_wer_enabled();
-    match wer_enabled {
-        Ok(true) => eprintln!("[DEBUG] ✅ WER is enabled"),
-        Ok(false) => eprintln!("[DEBUG] ❌ WER is DISABLED on this system!"),
-        Err(e) => eprintln!("[DEBUG] ⚠️ Could not check WER status: {:?}", e),
-    }
+    eprintln!("[TEST_RUNNER] Waiting for WER simulator to complete...");
 
-    // Verify DLL exports the WER callback
-    eprintln!("[DEBUG] Checking if DLL exports OutOfProcessExceptionEventCallback...");
-    let dll_exports_check = check_dll_export(wer_dll_path);
-    match dll_exports_check {
-        Ok(true) => eprintln!("[DEBUG] ✅ DLL exports OutOfProcessExceptionEventCallback"),
-        Ok(false) => eprintln!("[DEBUG] ❌ DLL does NOT export OutOfProcessExceptionEventCallback!"),
-        Err(e) => eprintln!("[DEBUG] ⚠️ Could not check DLL exports: {:?}", e),
-    }
+    // Wait for simulator to complete with timeout
+    wait_for_process_with_timeout(simulator_process, Duration::from_secs(30), "WER simulator")?;
 
-    // Check registry key before waiting for crash
-    eprintln!("[DEBUG] Checking WER registry key...");
-    let registry_check = check_wer_registry_entry(wer_dll_path);
-    match registry_check {
-        Ok(true) => eprintln!("[DEBUG] ✅ Registry key exists with correct DLL path"),
-        Ok(false) => eprintln!("[DEBUG] ❌ Registry key NOT found or DLL path mismatch!"),
-        Err(e) => eprintln!("[DEBUG] ⚠️ Could not check registry: {:?}", e),
-    }
+    // Check if WER simulator was called (debug files in test-specific output_dir)
+    eprintln!("[TEST_RUNNER] Checking for WER simulator debug files...");
 
-    // Check if crash binary panic hook was triggered
-    eprintln!("[DEBUG] Checking if crash binary panic hook was triggered...");
-    if std::path::Path::new("C:\\Windows\\Temp\\crash_binary_panic.txt").exists() {
-        eprintln!("[DEBUG] ⚠️ PANIC HOOK WAS CALLED (should NOT happen with real crashes!)");
-        if let Ok(content) = std::fs::read_to_string("C:\\Windows\\Temp\\crash_binary_panic.txt") {
-            eprintln!("[DEBUG] Panic info:\n{}", content);
+    let success_file = fixtures.output_dir.join("wer_simulator_success.txt");
+    let error_file = fixtures.output_dir.join("wer_simulator_error.txt");
+
+    if success_file.exists() {
+        eprintln!("[TEST_RUNNER] ✅ WER simulator processed crash successfully!");
+        if let Ok(content) = std::fs::read_to_string(&success_file) {
+            eprintln!("[TEST_RUNNER] Simulator success content:\n{}", content);
+        }
+    } else if error_file.exists() {
+        eprintln!("[TEST_RUNNER] ⚠️ WER simulator encountered an error");
+        if let Ok(content) = std::fs::read_to_string(&error_file) {
+            eprintln!("[TEST_RUNNER] Simulator error:\n{}", content);
         }
     } else {
-        eprintln!("[DEBUG] ✅ No panic hook triggered (good - real crash occurred)");
+        eprintln!("[TEST_RUNNER] ❌ WER simulator was NOT called!");
     }
 
-    // Check if WER handler was called (debug files)
-    eprintln!("[DEBUG] Checking for WER handler debug files...");
-    std::thread::sleep(Duration::from_millis(500)); // Give WER time to write debug files
-
-    if std::path::Path::new("C:\\Windows\\Temp\\wer_handler_called.txt").exists() {
-        eprintln!("[DEBUG] ✅ WER handler was called!");
-        if let Ok(content) = std::fs::read_to_string("C:\\Windows\\Temp\\wer_handler_called.txt") {
-            eprintln!("[DEBUG] WER handler content:\n{}", content);
-        }
-    } else {
-        eprintln!("[DEBUG] ❌ WER handler was NOT called!");
-    }
-
-    // Wait for WER callback to complete and write output
-    // WER processing is asynchronous, so we need to poll for the file
-    wait_for_crash_output(&fixtures.crash_payload_path, Duration::from_secs(10))
-        .context("Timeout waiting for crash output file")?;
+    // Crash output file should already exist (simulator writes it before exiting)
+    eprintln!("[TEST_RUNNER] Reading crash output file...");
+    anyhow::ensure!(
+        fixtures.crash_payload_path.exists(),
+        "Crash output file not found at {:?} (simulator should have created it before exiting)",
+        fixtures.crash_payload_path
+    );
 
     // Read and parse crash payload
     let crash_payload = read_and_parse_crash_payload(&fixtures.crash_payload_path)
         .context("Failed to read or parse crash payload")?;
 
+    eprintln!("[TEST_RUNNER] Running validator...");
+
     // Run custom validator
     validator(&crash_payload, &fixtures)?;
 
-    // Cleanup registry key
-    cleanup_registry_key(&fixtures.registry_key).context("Failed to cleanup registry key")?;
+    eprintln!("[TEST_RUNNER] Test passed! Cleaning up...");
 
-    // Cleanup debug files
-    let _ = std::fs::remove_file("C:\\Windows\\Temp\\crash_binary_panic.txt");
-    let _ = std::fs::remove_file("C:\\Windows\\Temp\\wer_handler_called.txt");
-    let _ = std::fs::remove_file("C:\\Windows\\Temp\\wer_handler_success.txt");
-    let _ = std::fs::remove_file("C:\\Windows\\Temp\\wer_handler_error.txt");
+    // Event handles cleaned up automatically by _event_handles Drop
+    // Output directory (fixtures.output_dir) cleaned up when fixtures.tmpdir is dropped
+
+    eprintln!("[TEST_RUNNER] Cleanup complete");
 
     Ok(())
-}
-
-/// Waits for crash output file to be created by WER callback.
-fn wait_for_crash_output(path: &Path, timeout: Duration) -> Result<()> {
-    let start = std::time::Instant::now();
-    let poll_interval = Duration::from_millis(100);
-
-    loop {
-        if path.exists() {
-            // File exists, but wait a bit more to ensure it's fully written
-            std::thread::sleep(Duration::from_millis(200));
-            return Ok(());
-        }
-
-        if start.elapsed() > timeout {
-            anyhow::bail!(
-                "Timeout waiting for crash output at {:?} (waited {:?})",
-                path,
-                timeout
-            );
-        }
-
-        std::thread::sleep(poll_interval);
-    }
-}
-
-/// Cleans up the Windows registry key created for crash tracking.
-pub fn cleanup_registry_key(key: &str) -> Result<()> {
-    use std::process::Command;
-
-    // Use reg.exe to delete the key
-    // HKEY_CURRENT_USER\SOFTWARE\Microsoft\Windows\Windows Error
-    // Reporting\RuntimeExceptionHelperModules
-    let subkey =
-        r"SOFTWARE\Microsoft\Windows\Windows Error Reporting\RuntimeExceptionHelperModules";
-
-    let output = Command::new("reg.exe")
-        .args(["delete", "HKCU\\", "/v", key, "/f"])
-        .arg(subkey)
-        .output();
-
-    // It's okay if deletion fails (key might not exist)
-    match output {
-        Ok(out) => {
-            if !out.status.success() {
-                eprintln!(
-                    "Warning: Failed to delete registry key '{}': {}",
-                    key,
-                    String::from_utf8_lossy(&out.stderr)
-                );
-            }
-        }
-        Err(e) => {
-            eprintln!(
-                "Warning: Failed to run reg.exe to cleanup key '{}': {}",
-                key, e
-            );
-        }
-    }
-
-    Ok(())
-}
-
-/// Checks if a Windows registry key exists.
-#[allow(dead_code)]
-pub fn registry_key_exists(key: &str) -> Result<bool> {
-    use std::process::Command;
-
-    let subkey =
-        r"SOFTWARE\Microsoft\Windows\Windows Error Reporting\RuntimeExceptionHelperModules";
-
-    let output = Command::new("reg.exe")
-        .args(["query", &format!("HKCU\\{}", subkey), "/v", key])
-        .output()
-        .context("Failed to run reg.exe")?;
-
-    Ok(output.status.success())
-}
-
-/// Checks if WER is enabled globally on the system
-fn check_wer_enabled() -> Result<bool> {
-    use std::process::Command;
-
-    // Check both HKLM (system-wide) and HKCU (user-specific)
-    let hklm_check = Command::new("reg.exe")
-        .args(["query", "HKLM\\SOFTWARE\\Microsoft\\Windows\\Windows Error Reporting", "/v", "Disabled"])
-        .output();
-
-    let hkcu_check = Command::new("reg.exe")
-        .args(["query", "HKCU\\SOFTWARE\\Microsoft\\Windows\\Windows Error Reporting", "/v", "Disabled"])
-        .output();
-
-    // Check HKLM (system-wide setting)
-    if let Ok(output) = hklm_check {
-        let output_str = String::from_utf8_lossy(&output.stdout);
-        if output_str.contains("Disabled") && output_str.contains("0x1") {
-            eprintln!("[DEBUG] WER is disabled in HKLM (system-wide)");
-            return Ok(false);
-        }
-    }
-
-    // Check HKCU (user-specific setting)
-    if let Ok(output) = hkcu_check {
-        let output_str = String::from_utf8_lossy(&output.stdout);
-        if output_str.contains("Disabled") && output_str.contains("0x1") {
-            eprintln!("[DEBUG] WER is disabled in HKCU (user-specific)");
-            return Ok(false);
-        }
-    }
-
-    // If neither key exists or value is 0, WER is enabled
-    Ok(true)
-}
-
-/// Checks if the DLL exports OutOfProcessExceptionEventCallback
-fn check_dll_export(dll_path: &Path) -> Result<bool> {
-    use std::process::Command;
-
-    // Use dumpbin if available, otherwise try manual DLL loading
-    let output = Command::new("dumpbin")
-        .args(["/EXPORTS", dll_path.to_str().unwrap()])
-        .output();
-
-    match output {
-        Ok(out) if out.status.success() => {
-            let output_str = String::from_utf8_lossy(&out.stdout);
-            eprintln!("[DEBUG] DLL exports check via dumpbin");
-            Ok(output_str.contains("OutOfProcessExceptionEventCallback"))
-        }
-        _ => {
-            // dumpbin not available or failed, try loading DLL directly
-            eprintln!("[DEBUG] dumpbin not available, checking DLL is loadable");
-            Ok(dll_path.exists())
-        }
-    }
-}
-
-/// Checks if the WER registry entry exists and points to the correct DLL.
-fn check_wer_registry_entry(dll_path: &Path) -> Result<bool> {
-    use std::process::Command;
-
-    let subkey =
-        r"SOFTWARE\Microsoft\Windows\Windows Error Reporting\RuntimeExceptionHelperModules";
-
-    let dll_path_str = dll_path.to_string_lossy();
-
-    eprintln!("[DEBUG] Looking for registry value: {}", dll_path_str);
-
-    let output = Command::new("reg.exe")
-        .args(["query", &format!("HKCU\\{}", subkey)])
-        .output()
-        .context("Failed to run reg.exe query")?;
-
-    if !output.status.success() {
-        eprintln!("[DEBUG] Registry query failed: {}", String::from_utf8_lossy(&output.stderr));
-        return Ok(false);
-    }
-
-    let output_str = String::from_utf8_lossy(&output.stdout);
-    eprintln!("[DEBUG] Registry output:\n{}", output_str);
-
-    // Check if our DLL path appears in the output
-    Ok(output_str.contains(&dll_path_str as &str))
 }
 
 #[cfg(test)]
@@ -402,32 +436,22 @@ mod tests {
 
     #[test]
     fn test_config_creation() {
-        let config = WindowsCrashTestConfig::new(
-            BuildProfile::Debug,
-            WindowsTestMode::Basic,
-            WindowsCrashType::AccessViolationNull,
-        );
+        let config =
+            WindowsCrashTestConfig::new(BuildProfile::Debug, WindowsCrashType::AccessViolationNull);
 
         assert_eq!(config.profile, BuildProfile::Debug);
-        assert_eq!(config.mode, WindowsTestMode::Basic);
         assert_eq!(config.crash_type, WindowsCrashType::AccessViolationNull);
         assert!(config.expect_upload);
-        assert!(config.registry_key_override.is_none());
+        assert_eq!(config.simulator_timeout_ms, None);
     }
 
     #[test]
-    fn test_config_with_registry_key() {
-        let config = WindowsCrashTestConfig::new(
-            BuildProfile::Release,
-            WindowsTestMode::Basic,
-            WindowsCrashType::DivideByZero,
-        )
-        .with_registry_key("test_key_123".to_string());
+    fn test_config_with_timeout() {
+        let config =
+            WindowsCrashTestConfig::new(BuildProfile::Debug, WindowsCrashType::AccessViolationNull)
+                .with_simulator_timeout(10000);
 
-        assert_eq!(
-            config.registry_key_override,
-            Some("test_key_123".to_string())
-        );
+        assert_eq!(config.simulator_timeout_ms, Some(10000));
     }
 
     #[test]
@@ -436,16 +460,5 @@ mod tests {
 
         assert!(fixtures.crash_payload_path.exists() || !fixtures.crash_payload_path.exists());
         assert!(fixtures.output_dir.exists());
-        assert!(!fixtures.registry_key.is_empty());
-    }
-
-    #[test]
-    fn test_registry_key_generation() {
-        let key1 = WindowsTestFixtures::generate_registry_key();
-        std::thread::sleep(Duration::from_millis(10));
-        let key2 = WindowsTestFixtures::generate_registry_key();
-
-        assert_ne!(key1, key2, "Registry keys should be unique");
-        assert!(key1.starts_with("DatadogCrashTrackerTest_"));
     }
 }

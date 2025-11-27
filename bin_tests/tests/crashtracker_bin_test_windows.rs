@@ -6,13 +6,78 @@
 
 #![cfg(windows)]
 
+use anyhow::Context;
 use bin_tests::{
     build_artifacts,
     test_runner_windows::{run_windows_crash_test, WindowsCrashTestConfig},
-    test_types_windows::{WindowsCrashType, WindowsTestMode},
+    test_types_windows::WindowsCrashType,
     validation_windows::WindowsPayloadValidator,
     ArtifactType, ArtifactsBuild, BuildProfile,
 };
+use libdd_crashtracker::ExceptionCode;
+
+/// Macro to generate Windows crash tracking tests.
+/// This replaces repetitive test functions with a single declaration.
+/// All tests are compiled in Release mode for consistency.
+macro_rules! windows_crash_tests {
+    ($(($test_name:ident, $crash_type:expr, $exception_code:expr)),* $(,)?) => {
+        $(
+            #[test]
+            #[cfg_attr(miri, ignore)]
+            fn $test_name() {
+                run_standard_windows_crash_test($crash_type, $exception_code);
+            }
+        )*
+    };
+}
+
+// Generate all standard Windows crash tracking tests (Release mode)
+windows_crash_tests! {
+    (test_windows_crash_null_deref, WindowsCrashType::AccessViolationNull, ExceptionCode::AccessViolation),
+    (test_windows_crash_divide_by_zero, WindowsCrashType::DivideByZero, ExceptionCode::IntDivideByZero),
+    (test_windows_crash_abort, WindowsCrashType::Abort, ExceptionCode::AccessViolation),
+    (test_windows_crash_stack_overflow, WindowsCrashType::StackOverflow, ExceptionCode::StackOverflow),
+}
+
+/// Standard Windows crash test runner using the refactored infrastructure.
+/// This eliminates repetitive test code by providing a common validation pipeline.
+/// All tests are compiled in Release mode for consistency and performance.
+fn run_standard_windows_crash_test(crash_type: WindowsCrashType, exception_code: ExceptionCode) {
+    let config = WindowsCrashTestConfig::new(BuildProfile::Release, crash_type);
+    let artifacts = build_windows_artifacts(config.profile).unwrap();
+
+    run_windows_crash_test(
+        &config,
+        &artifacts.crashtracker_bin,
+        &artifacts.wer_simulator,
+        move |payload, _fixtures| {
+            // Standard comprehensive validation chain
+            WindowsPayloadValidator::new(payload)
+                .and_then(|v| v.validate_uuid_present())
+                .and_then(|v| v.validate_data_schema_version())
+                .and_then(|v| v.validate_is_crash_report())
+                .and_then(|v| v.validate_error_kind_is_panic())
+                .and_then(|v| v.validate_source_type())
+                .and_then(|v| v.validate_report_is_complete())
+                .and_then(|v| v.validate_incomplete_stack(false))
+                .and_then(|v| v.validate_error_message(exception_code))
+                .and_then(|v| v.validate_error_stack_exists())
+                .and_then(|v| v.validate_threads())
+                .and_then(|v| v.validate_os_info())
+                .and_then(|v| v.validate_metadata())
+                .and_then(|v| v.validate_timestamp())
+                .with_context(|| {
+                    format!(
+                        "Validation failed. Full payload:\n{}",
+                        serde_json::to_string_pretty(payload)
+                            .unwrap_or_else(|_| "Unable to serialize payload".to_string())
+                    )
+                })?;
+            Ok(())
+        },
+    )
+    .unwrap();
+}
 
 /// Helper function to build Windows crash tracking artifacts.
 fn build_windows_artifacts(profile: BuildProfile) -> anyhow::Result<WindowsArtifacts> {
@@ -23,192 +88,35 @@ fn build_windows_artifacts(profile: BuildProfile) -> anyhow::Result<WindowsArtif
         ..Default::default()
     };
 
-    // Build the WER handler DLL from bin_tests (src/wer_handler.rs)
-    // When bin_tests builds as cdylib, it includes the wer_handler module
-    let wer_handler_dll = ArtifactsBuild {
-        name: "bin_tests".to_owned(),
+    // Build the WER simulator binary (out-of-process crash handler)
+    let wer_simulator = ArtifactsBuild {
+        name: "wer_simulator".to_owned(),
         build_profile: profile,
-        artifact_type: ArtifactType::CDylib,
+        artifact_type: ArtifactType::Bin,
         ..Default::default()
     };
 
-    let artifacts_map = build_artifacts(&[&crashtracker_bin, &wer_handler_dll])?;
+    let artifacts_map = build_artifacts(&[&crashtracker_bin, &wer_simulator])?;
 
     Ok(WindowsArtifacts {
         crashtracker_bin: artifacts_map[&crashtracker_bin].clone(),
-        wer_handler_dll: artifacts_map[&wer_handler_dll].clone(),
+        wer_simulator: artifacts_map[&wer_simulator].clone(),
     })
 }
 
 struct WindowsArtifacts {
     crashtracker_bin: std::path::PathBuf,
-    wer_handler_dll: std::path::PathBuf,
+    wer_simulator: std::path::PathBuf,
 }
 
-/// MVP Test 1: Basic null pointer access violation
-#[test]
-#[cfg_attr(miri, ignore)]
-fn test_windows_crash_null_deref() {
-    let config = WindowsCrashTestConfig::new(
-        BuildProfile::Debug,
-        WindowsTestMode::Basic,
-        WindowsCrashType::AccessViolationNull,
-    );
-
-    let artifacts = build_windows_artifacts(config.profile).unwrap();
-
-    run_windows_crash_test(
-        &config,
-        &artifacts.crashtracker_bin,
-        &artifacts.wer_handler_dll,
-        |payload, _fixtures| {
-            WindowsPayloadValidator::new(payload)
-                .validate_exception_code(0xC0000005)? // EXCEPTION_ACCESS_VIOLATION
-                .validate_stack_exists()?
-                .validate_thread_info()?
-                .validate_os_info()?
-                .validate_metadata()?;
-            Ok(())
-        },
-    )
-    .unwrap();
-}
-
-/// MVP Test 2: Division by zero
-#[test]
-#[cfg_attr(miri, ignore)]
-fn test_windows_crash_divide_by_zero() {
-    let config = WindowsCrashTestConfig::new(
-        BuildProfile::Release,
-        WindowsTestMode::Basic,
-        WindowsCrashType::DivideByZero,
-    );
-
-    let artifacts = build_windows_artifacts(config.profile).unwrap();
-
-    run_windows_crash_test(
-        &config,
-        &artifacts.crashtracker_bin,
-        &artifacts.wer_handler_dll,
-        |payload, _fixtures| {
-            WindowsPayloadValidator::new(payload)
-                .validate_exception_code(0xC0000094)? // EXCEPTION_INT_DIVIDE_BY_ZERO
-                .validate_stack_exists()?
-                .validate_os_info()?;
-            Ok(())
-        },
-    )
-    .unwrap();
-}
-
-/// MVP Test 3: Stack overflow
-#[test]
-#[cfg_attr(miri, ignore)]
-fn test_windows_crash_stack_overflow() {
-    let config = WindowsCrashTestConfig::new(
-        BuildProfile::Release,
-        WindowsTestMode::Basic,
-        WindowsCrashType::StackOverflow,
-    );
-
-    let artifacts = build_windows_artifacts(config.profile).unwrap();
-
-    run_windows_crash_test(
-        &config,
-        &artifacts.crashtracker_bin,
-        &artifacts.wer_handler_dll,
-        |payload, _fixtures| {
-            WindowsPayloadValidator::new(payload)
-                .validate_exception_code(0xC00000FD)? // EXCEPTION_STACK_OVERFLOW
-                .validate_stack_exists()?
-                .allow_incomplete_stack()?; // Stack overflow often has incomplete stacks
-            Ok(())
-        },
-    )
-    .unwrap();
-}
-
-/// MVP Test 4: Abort/panic
-#[test]
-#[cfg_attr(miri, ignore)]
-fn test_windows_crash_abort() {
-    let config = WindowsCrashTestConfig::new(
-        BuildProfile::Debug,
-        WindowsTestMode::Basic,
-        WindowsCrashType::Abort,
-    );
-
-    let artifacts = build_windows_artifacts(config.profile).unwrap();
-
-    run_windows_crash_test(
-        &config,
-        &artifacts.crashtracker_bin,
-        &artifacts.wer_handler_dll,
-        |payload, _fixtures| {
-            WindowsPayloadValidator::new(payload)
-                // Using access violation for reliable WER triggering
-                // (std::process::abort may not trigger WER in all configurations)
-                .validate_exception_code(0xC0000005)? // EXCEPTION_ACCESS_VIOLATION
-                .validate_stack_exists()?
-                .validate_metadata()?;
-            Ok(())
-        },
-    )
-    .unwrap();
-}
-
-/// MVP Test 5: Registry key management
-#[test]
-#[cfg_attr(miri, ignore)]
-fn test_windows_registry_management() {
-    use bin_tests::test_runner_windows::registry_key_exists;
-
-    // Generate unique registry key for this test
-    let registry_key = format!(
-        "DatadogTest_{}",
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_millis()
-    );
-
-    let config = WindowsCrashTestConfig::new(
-        BuildProfile::Debug,
-        WindowsTestMode::RegistryTest,
-        WindowsCrashType::AccessViolationNull,
-    )
-    .with_registry_key(registry_key.clone());
-
-    let artifacts = build_windows_artifacts(config.profile).unwrap();
-
-    // Registry key should not exist before test
-    let exists_before = registry_key_exists(&registry_key).unwrap_or(false);
-    assert!(!exists_before, "Registry key should not exist before test");
-
-    run_windows_crash_test(
-        &config,
-        &artifacts.crashtracker_bin,
-        &artifacts.wer_handler_dll,
-        |payload, _fixtures| {
-            WindowsPayloadValidator::new(payload)
-                .validate_exception_code(0xC0000005)?
-                .validate_stack_exists()?;
-            Ok(())
-        },
-    )
-    .unwrap();
-
-    // Registry key should be cleaned up after test
-    let exists_after = registry_key_exists(&registry_key).unwrap_or(true);
-    assert!(
-        !exists_after,
-        "Registry key should be cleaned up after test"
-    );
-}
-
-// Additional tests can be added as the implementation matures:
-// - test_windows_crash_illegal_instruction
-// - test_windows_multithreaded_crash
-// - test_windows_deep_stack
-// - test_windows_wer_context_validation
-// - test_windows_payload_compatibility (cross-platform validation)
+// ====================================================================================
+// FUTURE TESTS (CAN BE ADDED AS IMPLEMENTATION MATURES)
+// ====================================================================================
+// Additional tests that can be easily added using the macro:
+//
+// windows_crash_tests! {
+//     (test_windows_crash_illegal_instruction, WindowsCrashType::IllegalInstruction,
+// ExceptionCode::IllegalInstruction),     (test_windows_multithreaded_crash,
+// WindowsCrashType::MultithreadedCrash, ExceptionCode::AccessViolation),
+//     (test_windows_deep_stack, WindowsCrashType::DeepStack, ExceptionCode::AccessViolation),
+// }

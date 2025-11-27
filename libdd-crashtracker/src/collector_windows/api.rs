@@ -18,7 +18,7 @@ use std::os::windows::ffi::OsStringExt;
 use std::ptr::{addr_of, read_unaligned};
 use std::sync::Mutex;
 use windows::core::{w, HSTRING, PCWSTR};
-use windows::Win32::Foundation::{ERROR_SUCCESS, HANDLE, HMODULE, TRUE};
+use windows::Win32::Foundation::{ERROR_SUCCESS, HANDLE, HMODULE, NTSTATUS, TRUE};
 #[cfg(target_arch = "x86_64")]
 use windows::Win32::System::Diagnostics::Debug::CONTEXT_FULL_AMD64;
 #[cfg(target_arch = "x86")]
@@ -155,7 +155,12 @@ fn create_registry_key(path: &str) -> Result<()> {
     Ok(())
 }
 
-fn set_error_context(message: &str) -> Result<()> {
+/// Sets the error context in the global WER context.
+/// This must be called before spawning the WER simulator.
+///
+/// This function is public for use by the WER simulator in testing environments.
+/// For production, use `init_crashtracking_windows` which calls this internally.
+pub fn set_error_context(message: &str) -> Result<()> {
     let bytes = message.as_bytes();
     let boxed_slice = bytes.to_vec().into_boxed_slice();
     let static_slice = Box::leak(boxed_slice);
@@ -170,10 +175,39 @@ fn set_error_context(message: &str) -> Result<()> {
     }
 }
 
+/// Returns the address of the global WER context.
+/// This is needed by the WER simulator to read the context from the crashed process.
+///
+/// This function is public for use by the WER simulator in testing environments.
+pub fn get_wer_context_address() -> usize {
+    // IMPORTANT: We need to return the address of the WerContext DATA inside the Mutex,
+    // not the address of the Mutex itself. The Mutex wrapper has metadata that would
+    // break the prefix/suffix validation when read from another process.
+    //
+    // We lock the mutex to get a reference to the data, then cast it to get its address.
+    // This is safe because WERCONTEXT is a static - its address never changes.
+    match WERCONTEXT.lock() {
+        Ok(guard) => &*guard as *const WerContext as usize,
+        Err(poisoned) => {
+            // Even if poisoned, we can still get the data address
+            let guard = poisoned.into_inner();
+            &*guard as *const WerContext as usize
+        }
+    }
+}
+
 #[derive(Serialize, Deserialize)]
 pub struct ErrorContext {
     endpoint: Option<Endpoint>,
     metadata: Metadata,
+}
+
+impl ErrorContext {
+    /// Creates a new ErrorContext.
+    /// This is primarily for use by the WER simulator in testing environments.
+    pub fn new(endpoint: Option<Endpoint>, metadata: Metadata) -> Self {
+        Self { endpoint, metadata }
+    }
 }
 
 static WERCONTEXT: Mutex<WerContext> = Mutex::new(WerContext {
@@ -196,11 +230,223 @@ pub struct WerContext {
     suffix: u64,
 }
 
+// Windows NTSTATUS exception code constants
+const CODE_ACCESS_VIOLATION: i32 = 0xC0000005u32 as i32;
+const CODE_ILLEGAL_INSTRUCTION: i32 = 0xC000001Du32 as i32;
+const CODE_INT_DIVIDE_BY_ZERO: i32 = 0xC0000094u32 as i32;
+const CODE_INVALID_DISPOSITION: i32 = 0xC0000026u32 as i32;
+const CODE_STACK_OVERFLOW: i32 = 0xC00000FDu32 as i32;
+const CODE_NONCONTINUABLE_EXCEPTION: i32 = 0xC0000025u32 as i32;
+const CODE_BREAKPOINT: i32 = 0x80000003u32 as i32;
+const CODE_SINGLE_STEP: i32 = 0x80000004u32 as i32;
+const CODE_FLT_DIVIDE_BY_ZERO: i32 = 0xC000008Eu32 as i32;
+const CODE_FLT_DENORMAL_OPERAND: i32 = 0xC000008Du32 as i32;
+const CODE_FLT_INEXACT_RESULT: i32 = 0xC000008Cu32 as i32;
+const CODE_FLT_INVALID_OPERATION: i32 = 0xC000008Bu32 as i32;
+const CODE_FLT_OVERFLOW: i32 = 0xC000008Au32 as i32;
+const CODE_FLT_STACK_CHECK: i32 = 0xC0000089u32 as i32;
+const CODE_FLT_UNDERFLOW: i32 = 0xC0000088u32 as i32;
+const CODE_INT_OVERFLOW: i32 = 0xC0000091u32 as i32;
+const CODE_IN_PAGE_ERROR: i32 = 0xC0000006u32 as i32;
+const CODE_PRIV_INSTRUCTION: i32 = 0xC0000096u32 as i32;
+const CODE_FLT_MULTIPLE_FAULTS: i32 = 0xC000008Fu32 as i32;
+const CODE_FLT_MULTIPLE_TRAPS: i32 = 0xC0000090u32 as i32;
+const CODE_INVALID_PARAMETER: i32 = 0xC0000092u32 as i32;
+const CODE_UNWIND: i32 = 0xC0000093u32 as i32;
+const CODE_ARRAY_BOUNDS_EXCEEDED: i32 = 0xC0000095u32 as i32;
+const CODE_STACK_BUFFER_OVERRUN: i32 = 0xC0000409u32 as i32;
+const CODE_FATAL_USER_CALLBACK_EXCEPTION: i32 = 0xC000041Du32 as i32;
+const CODE_CLR_EXCEPTION: i32 = 0xE0434352u32 as i32;
+const CODE_CPP_EXCEPTION: i32 = 0xE06D7363u32 as i32;
+
+/// Windows exception codes (NTSTATUS values).
+///
+/// This enum represents the known Windows exception codes that can occur during crashes.
+/// The `Display` trait implementation provides human-readable names.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum ExceptionCode {
+    /// Access violation (0xC0000005) - attempting to read/write invalid memory
+    AccessViolation,
+    /// Illegal instruction (0xC000001D) - invalid CPU instruction
+    IllegalInstruction,
+    /// Integer division by zero (0xC0000094)
+    IntDivideByZero,
+    /// Invalid disposition (0xC0000026)
+    InvalidDisposition,
+    /// Stack overflow (0xC00000FD)
+    StackOverflow,
+    /// Noncontinuable exception (0xC0000025)
+    NoncontinuableException,
+    /// Breakpoint (0x80000003)
+    Breakpoint,
+    /// Single step (0x80000004)
+    SingleStep,
+    /// Floating-point division by zero (0xC000008E)
+    FltDivideByZero,
+    /// Floating-point denormal operand (0xC000008D)
+    FltDenormalOperand,
+    /// Floating-point inexact result (0xC000008C)
+    FltInexactResult,
+    /// Floating-point invalid operation (0xC000008B)
+    FltInvalidOperation,
+    /// Floating-point overflow (0xC000008A)
+    FltOverflow,
+    /// Floating-point stack check (0xC0000089)
+    FltStackCheck,
+    /// Floating-point underflow (0xC0000088)
+    FltUnderflow,
+    /// Integer overflow (0xC0000091)
+    IntOverflow,
+    /// In-page error (0xC0000006)
+    InPageError,
+    /// Privileged instruction (0xC0000096)
+    PrivInstruction,
+    /// Floating-point multiple faults (0xC000008F)
+    FltMultipleFaults,
+    /// Floating-point multiple traps (0xC0000090)
+    FltMultipleTraps,
+    /// Invalid parameter (0xC0000092)
+    InvalidParameter,
+    /// Unwind (0xC0000093)
+    Unwind,
+    /// Array bounds exceeded (0xC0000095)
+    ArrayBoundsExceeded,
+    /// Stack buffer overrun (0xC0000409)
+    StackBufferOverrun,
+    /// Fatal user callback exception (0xC000041D)
+    FatalUserCallbackException,
+    /// CLR (.NET) exception (0xE0434352)
+    ClrException,
+    /// C++ exception (0xE06D7363)
+    CppException,
+    /// Unknown or custom exception code
+    Unknown(i32),
+}
+
+impl ExceptionCode {
+    /// Returns the NTSTATUS code as an i32.
+    pub const fn code(&self) -> i32 {
+        match self {
+            Self::AccessViolation => CODE_ACCESS_VIOLATION,
+            Self::IllegalInstruction => CODE_ILLEGAL_INSTRUCTION,
+            Self::IntDivideByZero => CODE_INT_DIVIDE_BY_ZERO,
+            Self::InvalidDisposition => CODE_INVALID_DISPOSITION,
+            Self::StackOverflow => CODE_STACK_OVERFLOW,
+            Self::NoncontinuableException => CODE_NONCONTINUABLE_EXCEPTION,
+            Self::Breakpoint => CODE_BREAKPOINT,
+            Self::SingleStep => CODE_SINGLE_STEP,
+            Self::FltDivideByZero => CODE_FLT_DIVIDE_BY_ZERO,
+            Self::FltDenormalOperand => CODE_FLT_DENORMAL_OPERAND,
+            Self::FltInexactResult => CODE_FLT_INEXACT_RESULT,
+            Self::FltInvalidOperation => CODE_FLT_INVALID_OPERATION,
+            Self::FltOverflow => CODE_FLT_OVERFLOW,
+            Self::FltStackCheck => CODE_FLT_STACK_CHECK,
+            Self::FltUnderflow => CODE_FLT_UNDERFLOW,
+            Self::IntOverflow => CODE_INT_OVERFLOW,
+            Self::InPageError => CODE_IN_PAGE_ERROR,
+            Self::PrivInstruction => CODE_PRIV_INSTRUCTION,
+            Self::FltMultipleFaults => CODE_FLT_MULTIPLE_FAULTS,
+            Self::FltMultipleTraps => CODE_FLT_MULTIPLE_TRAPS,
+            Self::InvalidParameter => CODE_INVALID_PARAMETER,
+            Self::Unwind => CODE_UNWIND,
+            Self::ArrayBoundsExceeded => CODE_ARRAY_BOUNDS_EXCEEDED,
+            Self::StackBufferOverrun => CODE_STACK_BUFFER_OVERRUN,
+            Self::FatalUserCallbackException => CODE_FATAL_USER_CALLBACK_EXCEPTION,
+            Self::ClrException => CODE_CLR_EXCEPTION,
+            Self::CppException => CODE_CPP_EXCEPTION,
+            Self::Unknown(code) => *code,
+        }
+    }
+
+    /// Returns the human-readable name of the exception.
+    pub const fn name(&self) -> &'static str {
+        match self {
+            Self::AccessViolation => "EXCEPTION_ACCESS_VIOLATION",
+            Self::IllegalInstruction => "EXCEPTION_ILLEGAL_INSTRUCTION",
+            Self::IntDivideByZero => "EXCEPTION_INT_DIVIDE_BY_ZERO",
+            Self::InvalidDisposition => "EXCEPTION_INVALID_DISPOSITION",
+            Self::StackOverflow => "EXCEPTION_STACK_OVERFLOW",
+            Self::NoncontinuableException => "EXCEPTION_NONCONTINUABLE_EXCEPTION",
+            Self::Breakpoint => "EXCEPTION_BREAKPOINT",
+            Self::SingleStep => "EXCEPTION_SINGLE_STEP",
+            Self::FltDivideByZero => "EXCEPTION_FLT_DIVIDE_BY_ZERO",
+            Self::FltDenormalOperand => "EXCEPTION_FLT_DENORMAL_OPERAND",
+            Self::FltInexactResult => "EXCEPTION_FLT_INEXACT_RESULT",
+            Self::FltInvalidOperation => "EXCEPTION_FLT_INVALID_OPERATION",
+            Self::FltOverflow => "EXCEPTION_FLT_OVERFLOW",
+            Self::FltStackCheck => "EXCEPTION_FLT_STACK_CHECK",
+            Self::FltUnderflow => "EXCEPTION_FLT_UNDERFLOW",
+            Self::IntOverflow => "EXCEPTION_INT_OVERFLOW",
+            Self::InPageError => "EXCEPTION_IN_PAGE_ERROR",
+            Self::PrivInstruction => "EXCEPTION_PRIV_INSTRUCTION",
+            Self::FltMultipleFaults => "EXCEPTION_FLT_MULTIPLE_FAULTS",
+            Self::FltMultipleTraps => "EXCEPTION_FLT_MULTIPLE_TRAPS",
+            Self::InvalidParameter => "EXCEPTION_INVALID_PARAMETER",
+            Self::Unwind => "EXCEPTION_UNWIND",
+            Self::ArrayBoundsExceeded => "EXCEPTION_ARRAY_BOUNDS_EXCEEDED",
+            Self::StackBufferOverrun => "EXCEPTION_STACK_BUFFER_OVERRUN",
+            Self::FatalUserCallbackException => "EXCEPTION_FATAL_USER_CALLBACK_EXCEPTION",
+            Self::ClrException => "CLR_EXCEPTION",
+            Self::CppException => "CPP_EXCEPTION",
+            Self::Unknown(_) => "UNKNOWN_EXCEPTION",
+        }
+    }
+}
+
+impl fmt::Display for ExceptionCode {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.name())
+    }
+}
+
+impl From<NTSTATUS> for ExceptionCode {
+    fn from(status: NTSTATUS) -> Self {
+        match status.0 {
+            CODE_ACCESS_VIOLATION => Self::AccessViolation,
+            CODE_ILLEGAL_INSTRUCTION => Self::IllegalInstruction,
+            CODE_INT_DIVIDE_BY_ZERO => Self::IntDivideByZero,
+            CODE_INVALID_DISPOSITION => Self::InvalidDisposition,
+            CODE_STACK_OVERFLOW => Self::StackOverflow,
+            CODE_NONCONTINUABLE_EXCEPTION => Self::NoncontinuableException,
+            CODE_BREAKPOINT => Self::Breakpoint,
+            CODE_SINGLE_STEP => Self::SingleStep,
+            CODE_FLT_DIVIDE_BY_ZERO => Self::FltDivideByZero,
+            CODE_FLT_DENORMAL_OPERAND => Self::FltDenormalOperand,
+            CODE_FLT_INEXACT_RESULT => Self::FltInexactResult,
+            CODE_FLT_INVALID_OPERATION => Self::FltInvalidOperation,
+            CODE_FLT_OVERFLOW => Self::FltOverflow,
+            CODE_FLT_STACK_CHECK => Self::FltStackCheck,
+            CODE_FLT_UNDERFLOW => Self::FltUnderflow,
+            CODE_INT_OVERFLOW => Self::IntOverflow,
+            CODE_IN_PAGE_ERROR => Self::InPageError,
+            CODE_PRIV_INSTRUCTION => Self::PrivInstruction,
+            CODE_FLT_MULTIPLE_FAULTS => Self::FltMultipleFaults,
+            CODE_FLT_MULTIPLE_TRAPS => Self::FltMultipleTraps,
+            CODE_INVALID_PARAMETER => Self::InvalidParameter,
+            CODE_UNWIND => Self::Unwind,
+            CODE_ARRAY_BOUNDS_EXCEEDED => Self::ArrayBoundsExceeded,
+            CODE_STACK_BUFFER_OVERRUN => Self::StackBufferOverrun,
+            CODE_FATAL_USER_CALLBACK_EXCEPTION => Self::FatalUserCallbackException,
+            CODE_CLR_EXCEPTION => Self::ClrException,
+            CODE_CPP_EXCEPTION => Self::CppException,
+            code => Self::Unknown(code),
+        }
+    }
+}
+
+impl From<ExceptionCode> for NTSTATUS {
+    fn from(exception: ExceptionCode) -> Self {
+        NTSTATUS(exception.code())
+    }
+}
+
 #[cfg(target_os = "windows")]
 pub fn exception_event_callback(
     context: usize,
     process_handle: HANDLE,
     thread_handle: HANDLE,
+    exception_code: NTSTATUS,
 ) -> Result<()> {
     unsafe { SymInitializeW(process_handle, PCWSTR::null(), true)? };
 
@@ -247,6 +493,14 @@ pub fn exception_event_callback(
             .with_thread(thread_data)
             .context("Failed to add thread info")?;
     }
+    let exception: ExceptionCode = exception_code.into();
+    builder
+        .with_message(format!(
+            "Process was terminated due to an unhandled exception '{}' (0x{:X})",
+            exception.name(),
+            exception.code() as u32
+        ))
+        .context("Failed to add error message")?;
     builder
         .with_kind(ErrorKind::Panic)
         .context("Failed to add error kind")?;

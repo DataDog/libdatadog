@@ -101,11 +101,13 @@ pub extern "C" fn OutOfProcessExceptionEventCallback(
 
         let process_handle = unsafe { (*exception_information).hProcess };
         let thread_handle = unsafe { (*exception_information).hThread };
+        let exception_code = unsafe { (*exception_information).exceptionRecord.ExceptionCode };
 
         libdd_crashtracker::exception_event_callback(
             context as usize,
             process_handle,
             thread_handle,
+            exception_code,
         )
     })();
 
