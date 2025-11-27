@@ -18,12 +18,22 @@ fail-fast = true
 filter = 'test(::single_threaded_tests::)'
 test-group = 'single-threaded'
 
+[[profile.default.overrides]]
+# Run bin_tests sequentially on Windows to avoid WER/crash handler conflicts
+filter = 'package(bin_tests)'
+test-group = 'single-threaded'
+
 [profile.ci]
 # Print out output for failing tests as soon as they fail, and also at the end
 # of the run (for easy scrollability).
 failure-output = "immediate-final"
 # Do not cancel the test run on the first failure.
 fail-fast = false
+
+[[profile.ci.overrides]]
+# Run bin_tests sequentially on Windows to avoid WER/crash handler conflicts
+filter = 'package(bin_tests)'
+test-group = 'single-threaded'
 
 [profile.ci.junit]
 # Output a JUnit report into the given file inside 'store.dir/<profile-name>'.
