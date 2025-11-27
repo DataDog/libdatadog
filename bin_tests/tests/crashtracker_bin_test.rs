@@ -14,7 +14,7 @@ use bin_tests::{
     build_artifacts,
     test_runner::{run_crash_test_with_artifacts, CrashTestConfig, StandardArtifacts, ValidatorFn},
     test_types::{CrashType, TestMode},
-    validation::{read_and_parse_crash_payload, validate_std_outputs, PayloadValidator},
+    validation::PayloadValidator,
     ArtifactType, ArtifactsBuild, BuildProfile,
 };
 use serde_json::Value;
@@ -61,7 +61,11 @@ crash_tracking_tests! {
 
 /// Standard crash test runner using the new refactored infrastructure.
 /// This eliminates the need for the old `test_crash_tracking_bin` function.
-fn run_standard_crash_test_refactored(profile: BuildProfile, mode: TestMode, crash_type: CrashType) {
+fn run_standard_crash_test_refactored(
+    profile: BuildProfile,
+    mode: TestMode,
+    crash_type: CrashType,
+) {
     let config = CrashTestConfig::new(profile, mode, crash_type);
     let artifacts = StandardArtifacts::new(config.profile);
     let artifacts_map = build_artifacts(&artifacts.as_slice()).unwrap();
@@ -211,7 +215,11 @@ fn test_crash_tracking_bin_runtime_callback_frame_invalid_utf8() {
 #[cfg_attr(miri, ignore)]
 fn test_crash_ping_timing_and_content() {
     // This test is identical to the simple donothing test
-    run_standard_crash_test_refactored(BuildProfile::Release, TestMode::DoNothing, CrashType::NullDeref);
+    run_standard_crash_test_refactored(
+        BuildProfile::Release,
+        TestMode::DoNothing,
+        CrashType::NullDeref,
+    );
 }
 
 #[test]
@@ -235,8 +243,8 @@ fn test_crash_tracking_errors_intake_upload() {
             errors_intake_path.display()
         );
 
-        let errors_intake_content = fs::read(&errors_intake_path)
-            .context("reading errors intake payload")?;
+        let errors_intake_content =
+            fs::read(&errors_intake_path).context("reading errors intake payload")?;
 
         assert_errors_intake_payload(&errors_intake_content, "null_deref");
         validate_telemetry(&fixtures.crash_telemetry_path, "null_deref")?;
@@ -796,9 +804,13 @@ fn assert_siginfo_message(sig_info: &Value, crash_typ: &str) {
 // TODO (gyuheon): Refactor test helpers to have shared functionality for testing crash pings
 /// Helper function to validate telemetry file (used by refactored tests)
 fn validate_telemetry(telemetry_path: &Path, crash_type_str: &str) -> anyhow::Result<()> {
-    let crash_telemetry = fs::read(telemetry_path)
-        .with_context(|| format!("reading crashtracker telemetry payload at {:?}", telemetry_path))?;
-    
+    let crash_telemetry = fs::read(telemetry_path).with_context(|| {
+        format!(
+            "reading crashtracker telemetry payload at {:?}",
+            telemetry_path
+        )
+    })?;
+
     let payloads = crash_telemetry.split(|&b| b == b'\n').collect::<Vec<_>>();
     for payload in payloads {
         if String::from_utf8_lossy(payload).contains("is_crash:true") {
