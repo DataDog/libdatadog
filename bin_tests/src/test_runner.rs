@@ -163,6 +163,9 @@ where
         .arg(config.mode.as_str())
         .arg(config.crash_type.as_str());
 
+    // Pass coverage-related environment variables to spawned processes
+    crate::propagate_coverage_env(&mut cmd);
+
     for (key, val) in &config.env_vars {
         cmd.env(key, val);
     }
@@ -245,6 +248,10 @@ where
     let fixtures = TestFixtures::new()?;
 
     let mut cmd = process::Command::new(binary_path);
+
+    // Pass coverage-related environment variables to spawned processes
+    crate::propagate_coverage_env(&mut cmd);
+
     command_builder(&mut cmd, &fixtures);
 
     let mut p = cmd.spawn().context("Failed to spawn test process")?;
