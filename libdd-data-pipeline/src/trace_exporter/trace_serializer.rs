@@ -6,7 +6,7 @@ use crate::trace_exporter::agent_response::{
 };
 use crate::trace_exporter::error::TraceExporterError;
 use crate::trace_exporter::TraceExporterOutputFormat;
-use hyper::header::CONTENT_TYPE;
+use http::header::CONTENT_TYPE;
 use libdd_common::header::{
     APPLICATION_MSGPACK_STR, DATADOG_SEND_REAL_HTTP_STATUS_STR, DATADOG_TRACE_COUNT_STR,
 };
@@ -114,7 +114,7 @@ impl<'a> TraceSerializer<'a> {
 mod tests {
     use super::*;
     use crate::trace_exporter::agent_response::AgentResponsePayloadVersion;
-    use hyper::header::CONTENT_TYPE;
+    use http::header::CONTENT_TYPE;
     use libdd_common::header::{
         APPLICATION_MSGPACK_STR, DATADOG_SEND_REAL_HTTP_STATUS_STR, DATADOG_TRACE_COUNT_STR,
     };
