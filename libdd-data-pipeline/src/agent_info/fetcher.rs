@@ -4,16 +4,24 @@
 //! up-to-date
 
 use super::{schema::AgentInfo, AGENT_INFO_CACHE};
+use antithesis_sdk::{antithesis_init, assert_reachable, assert_unreachable};
 use anyhow::{anyhow, Result};
 use http_body_util::BodyExt;
 use hyper::{self, header::HeaderName};
 use libdd_common::{hyper_migration, worker::Worker, Endpoint};
 use sha2::{Digest, Sha256};
-use std::sync::Arc;
+use std::sync::{Arc, Once};
 use std::time::Duration;
 use tokio::sync::mpsc;
 use tokio::time::sleep;
 use tracing::{debug, warn};
+
+static INIT: Once = Once::new();
+fn init_antithesis() {
+    INIT.call_once(|| {
+        antithesis_init();
+    })
+}
 
 /// HTTP header containing the agent state hash.
 const DATADOG_AGENT_STATE: HeaderName = HeaderName::from_static("datadog-agent-state");
@@ -35,6 +43,7 @@ pub async fn fetch_info_with_state(
     info_endpoint: &Endpoint,
     current_state_hash: Option<&str>,
 ) -> Result<FetchInfoStatus> {
+    init_antithesis();
     let (new_state_hash, body_data) = fetch_and_hash_response(info_endpoint).await?;
 
     if current_state_hash.is_some_and(|state| state == new_state_hash) {
@@ -69,10 +78,14 @@ pub async fn fetch_info_with_state(
 /// # }
 /// ```
 pub async fn fetch_info(info_endpoint: &Endpoint) -> Result<Box<AgentInfo>> {
+    init_antithesis();
     match fetch_info_with_state(info_endpoint, None).await? {
         FetchInfoStatus::NewState(info) => Ok(info),
         // Should never be reached since there is no previous state.
-        FetchInfoStatus::SameState => Err(anyhow!("Invalid state header")),
+        FetchInfoStatus::SameState => {
+            assert_unreachable!("Should never be reached since there is no previous state");
+            Err(anyhow!("Invalid state header"))
+        }
     }
 }
 
@@ -153,6 +166,7 @@ impl AgentInfoFetcher {
     /// - `fetcher`: The AgentInfoFetcher to be run in a background task
     /// - `response_observer`: The ResponseObserver component for checking HTTP responses
     pub fn new(info_endpoint: Endpoint, refresh_interval: Duration) -> (Self, ResponseObserver) {
+        init_antithesis();
         // The trigger channel stores a single message to avoid multiple triggers.
         let (trigger_tx, trigger_rx) = mpsc::channel(1);
 
@@ -231,6 +245,7 @@ impl AgentInfoFetcher {
                 AGENT_INFO_CACHE.store(Some(Arc::new(*new_info)));
             }
             Ok(FetchInfoStatus::SameState) => {
+                assert_reachable!("We can't always not be up to date");
                 debug!("Agent info is up-to-date")
             }
             Err(err) => {
