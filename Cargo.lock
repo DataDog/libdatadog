@@ -364,6 +364,7 @@ dependencies = [
  "serde_json",
  "strum",
  "tempfile",
+ "uuid",
  "windows 0.59.0",
 ]
 
