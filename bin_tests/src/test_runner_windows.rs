@@ -239,7 +239,8 @@ where
     let fixtures = WindowsTestFixtures::new()?;
 
     // Create unique event names and info file for this test run
-    let test_id = std::process::id();
+    // Using UUID to ensure uniqueness across parallel tests
+    let test_id = uuid::Uuid::new_v4().to_string();
     let crash_event_name = format!("CrashEvent_{}", test_id);
     let done_event_name = format!("DoneEvent_{}", test_id);
     let crash_ready_event_name = format!("CrashReady_{}", test_id);

@@ -68,6 +68,14 @@ fn inner_build_artifact(c: &ArtifactsBuild) -> anyhow::Result<PathBuf> {
     };
     build_cmd.arg(&c.name);
 
+    // Explicitly pass RUSTFLAGS if present to ensure instrumentation
+    // This is important for coverage collection when tests spawn separate binaries.
+    // When cargo-llvm-cov runs, it sets RUSTFLAGS with instrumentation flags,
+    // and we need to propagate those to spawned cargo build commands.
+    if let Ok(rustflags) = env::var("RUSTFLAGS") {
+        build_cmd.env("RUSTFLAGS", rustflags);
+    }
+
     let output = build_cmd.output().unwrap();
     if !output.status.success() {
         anyhow::bail!(

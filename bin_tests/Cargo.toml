@@ -31,6 +31,7 @@ windows = { version = "0.59.0", features = [
     "Win32_System_Threading",
     "Win32_Security",
 ] }
+uuid = { version = "1.11", features = ["v4"] }
 
 [lib]
 name = "bin_tests"  # Used for both rlib (Rust code) and DLL (WER handler)
