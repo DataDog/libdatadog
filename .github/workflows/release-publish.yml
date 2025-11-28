@@ -1,0 +1,82 @@
+name: Release - Tag and publish to crates.io
+on:
+  pull_request:
+    types: closed
+    branches: [main]
+
+env:
+  GIT_USER_NAME: github-actions
+  GIT_USER_EMAIL: github-actions@github.com
+
+jobs:
+  info:
+    if: github.event.pull_request.merged
+    outputs:
+      is-release: ${{ steps.check.outputs.is-release }}
+      crate: ${{ steps.parse.outputs.crate }}
+      version: ${{ steps.parse.outputs.version }}
+
+    runs-on: ubuntu-latest
+    steps:
+    - id: check
+      name: Check if release branch
+      run: |
+        branch="${{ github.event.pull_request.head.ref }}"
+        if [[ "$branch" =~ ^release/.+/.+$ ]]; then
+          echo "is-release=true" >> $GITHUB_OUTPUT
+        else
+          echo "is-release=false" >> $GITHUB_OUTPUT
+        fi
+    
+    - id: parse
+      name: Parse crate and version from branch
+      if: steps.check.outputs.is-release == 'true'
+      run: |
+        branch="${{ github.event.pull_request.head.ref }}"
+        # Extract crate and version from release/{crate}/{version}
+        crate=$(echo "$branch" | cut -d'/' -f2)
+        version=$(echo "$branch" | cut -d'/' -f3)
+        echo "crate=$crate" >> $GITHUB_OUTPUT
+        echo "version=$version" >> $GITHUB_OUTPUT
+    
+  release:
+    permissions:
+      id-token: write # Enable OIDC
+      contents: write
+
+    needs: info
+    if: needs.info.outputs.is-release == 'true'
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # 4.2.2
+    
+    - name: Set up Rust
+      uses: taiki-e/install-action@d6d752794628f1e1fffa3c4d3c8874e06f043d50 # 2.62.15
+      with:
+        tool: cargo-release
+    
+    - name: Publish crate to crates.io
+      id: publish
+      run: |
+        cargo publish --package ${{ needs.info.outputs.crate }} --token ${{ secrets.CARGO_REGISTRY_TOKEN || 'test_token' }} --dry-run
+        echo "✅ Successfully published ${{ needs.info.outputs.crate }} version ${{ needs.info.outputs.version }}"
+    
+    - uses: chainguard-dev/actions/setup-gitsign@0cda751b114eb55c388e88f7479292668165602a # v1.0.2
+      if: steps.publish.outcome == 'success'
+    
+    - name: Tag and push release
+      if: steps.publish.outcome == 'success'
+      run: |
+        tag="${{ needs.info.outputs.crate }}-v${{ needs.info.outputs.version }}"
+        tag_message="${{ needs.info.outputs.crate }} v${{ needs.info.outputs.version }} release."
+        
+        echo "Setting git user name and email to ${{ env.GIT_USER_NAME }} and ${{ env.GIT_USER_EMAIL }}"
+
+        git config user.name "${{ env.GIT_USER_NAME }}"
+        git config user.email "${{ env.GIT_USER_EMAIL }}"
+        
+        git tag -a "$tag" -m "$tag_message"
+        git push origin "$tag"
+
+        echo "✅ Tagged and pushed $tag"

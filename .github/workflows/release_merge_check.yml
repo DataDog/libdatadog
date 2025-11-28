@@ -1,0 +1,30 @@
+name: Release - Merge Check
+
+on:
+  pull_request:
+    types: [closed]
+
+jobs:
+  check-for-changes:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v2
+
+      - name: Fetch latest main branch
+        run: git fetch origin main
+
+      - name: Check if main has changed since PR was opened
+        id: check_changes
+        run: |
+          if [ $(git rev-list --count HEAD ^origin/main) -ne 0 ]; then
+            echo "Main branch has changed since the PR was opened."
+            echo "has_changes=true" >> $GITHUB_ENV
+          else
+            echo "No changes in main since the PR was opened."
+            echo "has_changes=true" >> $GITHUB_ENV
+          fi
+
+      - name: Block Merge if Changes Detected
+        if: env.has_changes == 'true'
+        run: exit 1  # This exits with an error code, which blocks the merge.

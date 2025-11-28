@@ -1,0 +1,63 @@
+name: Release - Open a release PR
+on:
+  workflow_dispatch:
+    inputs:
+      crate:
+        description: Crate to release
+        required: true
+        type: choice
+        options:
+          - libdd-common
+          - libdd-telemetry
+          - libdd-ddsketch
+          - libdd-library-config
+          - libdd-crashtracker
+          - libdd-data-pipeline
+          - libdd-trace-protobuf
+          - libdd-trace-normalization
+          - libdd-trace-utils
+          - libdd-dogstatsd-client
+          - libdd-tinybytes
+          - libdd-log
+      version:
+        description: Version to release
+        required: true
+        type: string
+
+jobs:
+  make-release-pr:
+    permissions:
+      id-token: write # Enable OIDC
+      pull-requests: write
+      contents: write
+    runs-on: ubuntu-latest
+    steps:
+      - name: Display release information
+        run: |
+          echo "### Release Information :rocket:" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- **Crate:** \`${{ inputs.crate }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **Version:** \`${{ inputs.version }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Creating release PR..." >> $GITHUB_STEP_SUMMARY
+      
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # 4.2.2
+      - uses: chainguard-dev/actions/setup-gitsign@0cda751b114eb55c388e88f7479292668165602a # v1.0.2
+      - name: Install cargo-release
+        uses: taiki-e/install-action@d6d752794628f1e1fffa3c4d3c8874e06f043d50 # 2.62.15
+        with:
+          tool: cargo-release
+
+      - name: Extract release notes
+        id: extract-release-notes
+        run: |
+          notes=$(./scripts/extract_changelog_vnext.sh ${{ inputs.crate }}/CHANGELOG.md)
+          echo "release-notes=$notes" >> $GITHUB_OUTPUT
+      
+      # TODO: add release notes to the PR description ${{ steps.extract-release-notes.outputs.release-notes }}
+      - uses: cargo-bins/release-pr@0c019c0e5a6b9f722578d231d43ba900cacc5ffa # 2.1.3
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          version: ${{ inputs.version }}
+          crate-name: ${{ inputs.crate }}
+          # check-semver: "true"
