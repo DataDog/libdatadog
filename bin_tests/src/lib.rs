@@ -6,6 +6,14 @@ pub mod test_runner;
 pub mod test_types;
 pub mod validation;
 
+// Windows-specific modules
+#[cfg(windows)]
+pub mod test_runner_windows;
+#[cfg(windows)]
+pub mod test_types_windows;
+#[cfg(windows)]
+pub mod validation_windows;
+
 use std::{collections::HashMap, env, ops::DerefMut, path::PathBuf, process, sync::Mutex};
 
 use once_cell::sync::OnceCell;
@@ -60,6 +68,14 @@ fn inner_build_artifact(c: &ArtifactsBuild) -> anyhow::Result<PathBuf> {
     };
     build_cmd.arg(&c.name);
 
+    // Explicitly pass RUSTFLAGS if present to ensure instrumentation
+    // This is important for coverage collection when tests spawn separate binaries.
+    // When cargo-llvm-cov runs, it sets RUSTFLAGS with instrumentation flags,
+    // and we need to propagate those to spawned cargo build commands.
+    if let Ok(rustflags) = env::var("RUSTFLAGS") {
+        build_cmd.env("RUSTFLAGS", rustflags);
+    }
+
     let output = build_cmd.output().unwrap();
     if !output.status.success() {
         anyhow::bail!(
@@ -102,16 +118,25 @@ fn inner_build_artifact(c: &ArtifactsBuild) -> anyhow::Result<PathBuf> {
     match c.artifact_type {
         ArtifactType::ExecutablePackage | ArtifactType::Bin => artifact_path.push(&c.name),
         ArtifactType::CDylib => {
-            let name = "lib".to_owned()
-                + c.lib_name_override
+            let extension = shared_lib_extension(
+                c.triple_target
                     .as_deref()
-                    .unwrap_or(&c.name.replace('-', "_"))
-                + "."
-                + shared_lib_extension(
-                    c.triple_target
-                        .as_deref()
-                        .unwrap_or(current_platform::CURRENT_PLATFORM),
-                )?;
+                    .unwrap_or(current_platform::CURRENT_PLATFORM),
+            )?;
+
+            // Create a owned string for the replaced name to avoid borrow issues
+            let replaced_name = c.name.replace('-', "_");
+            let base_name = c.lib_name_override.as_deref().unwrap_or(&replaced_name);
+
+            // On Windows, DLLs don't have "lib" prefix; on Unix they do
+            let name = if extension == "dll" {
+                // Windows: just the name + .dll
+                format!("{}.{}", base_name, extension)
+            } else {
+                // Unix: lib + name + extension
+                format!("lib{}.{}", base_name, extension)
+            };
+
             println!("NAME: {}", name);
             artifact_path.push(name);
         }
@@ -177,4 +202,44 @@ macro_rules! timeit {
         );
         res
     }};
+}
+
+/// Propagates coverage environment variables to spawned processes.
+///
+/// This function enables coverage collection from integration tests that spawn separate
+/// processes (like bin_tests spawning crashtracker_bin_test). It propagates the
+/// `LLVM_PROFILE_FILE` environment variable which contains patterns like `%p` (process ID)
+/// that the LLVM profiling runtime expands at runtime, ensuring each process writes to a
+/// unique coverage file.
+///
+/// # How It Works
+///
+/// 1. Parent propagates the pattern: `LLVM_PROFILE_FILE="path/cargo-test-%p-%m.profraw"`
+/// 2. Each process expands at runtime: Parent PID 1000 → `cargo-test-1000-abc.profraw`
+/// 3. Coverage report merges all `.profraw` files
+///
+/// # Platform Support
+///
+/// - **Unix/Linux**: Fully supported, used in CI coverage collection
+/// - **Windows**: Fully supported, enables Windows bin_tests coverage
+///
+/// # Arguments
+/// * `cmd` - The Command to add environment variables to (before spawning)
+///
+/// # Example
+/// ```no_run
+/// use bin_tests::propagate_coverage_env;
+/// use std::process::Command;
+///
+/// let mut cmd = Command::new("path/to/test_binary");
+/// propagate_coverage_env(&mut cmd);
+/// let child = cmd.spawn().expect("Failed to spawn");
+/// ```
+pub fn propagate_coverage_env(cmd: &mut process::Command) {
+    // LLVM_PROFILE_FILE tells the instrumented binary where to write coverage data.
+    // The LLVM profiling runtime expands patterns like %p (PID) and %m (module signature)
+    // at runtime to ensure each spawned process writes to a unique file.
+    if let Ok(profile_file) = env::var("LLVM_PROFILE_FILE") {
+        cmd.env("LLVM_PROFILE_FILE", profile_file);
+    }
 }

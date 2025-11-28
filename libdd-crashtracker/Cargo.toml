@@ -34,6 +34,8 @@ collector_windows = []
 generate-unit-test-files = []
 # Enables benchmark functionality
 benchmarking = ["generate-unit-test-files"]
+# Exposes internal testing utilities (for bin_tests only)
+test-utils = ["collector_windows"]
 
 [target.'cfg(unix)'.dependencies]
 # Should be kept in sync with the libdatadog symbolizer crate (also using blasesym)
