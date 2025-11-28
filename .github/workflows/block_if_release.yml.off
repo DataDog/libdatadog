@@ -1,0 +1,25 @@
+name: Block if there is an ongoing release
+env:
+  RELEASE_BRANCH_PREFIX: release-v
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+jobs:
+  ongoing-release:
+    runs-on: ubuntu-latest
+    permissions:
+      checks: read
+      contents: read
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # 4.2.2
+      - name: Fail if release branch exists
+        run: |
+          if git ls-remote --heads origin | grep -q "refs/heads/${RELEASE_BRANCH_PREFIX}"; then
+            echo "A release branch with prefix '${RELEASE_BRANCH_PREFIX}' exists. Failing workflow."
+            exit 1
+          else
+            echo "No release branch found with prefix '${RELEASE_BRANCH_PREFIX}'. Continuing."
+          fi

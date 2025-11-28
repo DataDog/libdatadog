@@ -1,0 +1,85 @@
+name: Cargo.toml version and CHANGELOG changes
+
+on:
+  # pull_request:
+  #   types: [synchronize]  # Triggered when new commits are pushed
+  workflow_dispatch:
+
+jobs:
+  version-and-changelog-checks:
+    if: github.event.pull_request.state == 'open'
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+      contents: read
+    
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # 4.2.2
+        with:
+          fetch-depth: 0
+      
+      - name: Check if CHANGELOG.md was changed and extract crate info
+        id: check
+        run: |
+          # Get the changed files in the latest commit
+          changed_files=$(git diff --name-only ${{ github.event.before }} ${{ github.event.after }})
+          
+          # Find CHANGELOG.md files that were changed
+          changed_changelogs=$(echo "$changed_files" | grep "CHANGELOG.md" || true)
+          
+          if [ -z "$changed_changelogs" ]; then
+            echo "changelog-changed=false" >> $GITHUB_OUTPUT
+            echo "crate-name=" >> $GITHUB_OUTPUT
+            echo "crate-version=" >> $GITHUB_OUTPUT
+            echo "No CHANGELOG.md was modified"
+          else
+            echo "changelog-changed=true" >> $GITHUB_OUTPUT
+            
+            # Get the first changed CHANGELOG.md
+            changelog_path=$(echo "$changed_changelogs" | head -n 1)
+            echo "CHANGELOG.md was modified: $changelog_path"
+            
+            # Get the directory containing the CHANGELOG
+            crate_dir=$(dirname "$changelog_path")
+            cargo_toml="$crate_dir/Cargo.toml"
+            
+            if [ -f "$cargo_toml" ]; then
+              # Extract name and version from Cargo.toml using grep and sed
+              crate_name=$(grep '^name = ' "$cargo_toml" | head -n 1 | sed 's/name = "\(.*\)"/\1/')
+              crate_version=$(cargo metadata --format-version=1 --no-deps | jq -e -r '.packages[] | select(.name == "'"$crate_name"'") | .version')
+              # crate_version=$(grep '^version' "$cargo_toml" | head -n 1 | sed 's/version.*= "\(.*\)"/\1/')
+            
+              echo "crate-name=$crate_name" >> $GITHUB_OUTPUT
+              echo "crate-version=$crate_version" >> $GITHUB_OUTPUT
+              echo "Detected crate: $crate_name version $crate_version"
+            else
+              echo "crate-name=" >> $GITHUB_OUTPUT
+              echo "crate-version=" >> $GITHUB_OUTPUT
+              echo "Warning: No Cargo.toml found in $crate_dir"
+            fi
+          fi
+      
+      - name: Dismiss reviews if CHANGELOG changed
+        if: steps.check.outputs.changelog-changed == 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const reviews = await github.rest.pulls.listReviews({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: context.issue.number
+            });
+            
+            // Dismiss all approvals
+            for (const review of reviews.data) {
+              if (review.state === 'APPROVED') {
+                await github.rest.pulls.dismissReview({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  pull_number: context.issue.number,
+                  review_id: review.id,
+                  message: '⚠️ Approval dismissed: CHANGELOG.md was modified after approval. Please review the changes.'
+                });
+                console.log(`Dismissed review ${review.id} by ${review.user.login}`);
+              }
+            }

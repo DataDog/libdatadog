@@ -1,0 +1,65 @@
+name: Rerun block_if_release when creating or deleting a release branch
+env:
+  RELEASE_BRANCH_PREFIX: release-v
+
+on: [create, delete]
+
+permissions:
+  actions: write
+  contents: read
+
+jobs:
+  rerun-block-if-release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check if ref is release branch
+        id: check_release_branch
+        run: |
+          echo "Event: name: ${{ github.event_name }}, ref: ${{ github.event.ref }}"
+          echo "Ref: ${{ github.ref }}"
+          echo "Ref type: ${{ github.event.ref_type }}"  # branch or tag
+          if [[ "${{ github.event.ref_type }}" == "branch" && "${{ github.event.ref }}" == "${RELEASE_BRANCH_PREFIX}"* ]]; then
+            echo "is_release_branch=true" >> $GITHUB_OUTPUT
+          else
+            echo "is_release_branch=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Trigger block_if_release on open PRs
+        id: trigger
+        if: steps.check_release_branch.outputs.is_release_branch == 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            // TODO: filter out inactive PRs checking last update (if possible)
+            const prs = await github.rest.pulls.list({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: 'open'
+            });
+            for (const pr of prs.data) {
+              console.log('Checking PR: ', pr.url)
+
+              // Get workflow runs for the PR's branch
+              const runs = await github.rest.actions.listWorkflowRunsForRepo({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                branch: pr.head.ref,
+                event: "pull_request"
+              });
+              
+              // Find the latest run for the desired workflow
+              const run = runs.data.workflow_runs.find(
+                r => r.name === "Block if there is an ongoing release" || r.path.endsWith('block_if_release.yml')
+              );
+              if (run) {
+                console.log('Rerunning: ', run.id, run.html_url)
+
+                await github.rest.actions.reRunWorkflow({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  run_id: run.id
+                });
+              } else {
+                console.log('There is no run')
+              }
+            }
