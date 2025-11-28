@@ -102,10 +102,18 @@ fn main() {
     cc::Build::new()
         .file("src/crash_info/emit_sicodes.c")
         .compile("emit_sicodes");
+
+    // Don't build test libraries during `cargo publish` verification.
+    // During verification, the package is unpacked to target/package/ and built there.
+    let is_packaging = std::env::var("CARGO_MANIFEST_DIR")
+        .unwrap_or_default()
+        .contains("/target/package/");
+
     if cfg!(all(
         feature = "generate-unit-test-files",
         not(target_os = "macos")
-    )) {
+    )) && !is_packaging
+    {
         build_shared_libs();
     }
 }
