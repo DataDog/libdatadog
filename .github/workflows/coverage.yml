@@ -71,7 +71,8 @@ jobs:
         shell: bash
         run: |
           # Run only bin_tests to avoid blocked/failing workspace tests on Windows
-          cargo llvm-cov --all-features --package bin_tests --no-report nextest -- --test-threads=1
+          # --jobs=1 forces sequential execution (temporary until UUID approach is verified)
+          cargo llvm-cov --all-features --package bin_tests --no-report nextest -- --jobs=1
           cargo llvm-cov report --package bin_tests --lcov --output-path lcov-windows.info
       - name: Upload Windows coverage to Codecov
         uses: codecov/codecov-action@5a1091511ad55cbe89839c7260b706298ca349f7 # 5.5.1

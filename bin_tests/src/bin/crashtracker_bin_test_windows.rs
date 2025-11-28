@@ -267,6 +267,16 @@ mod windows {
         trigger_crash(crash_type)?;
 
         // Should not reach here (process should have crashed)
+        eprintln!("\n\n");
+        eprintln!("╔═══════════════════════════════════════════════════════════╗");
+        eprintln!("║  ⚠️  CRITICAL ERROR: PROCESS DID NOT CRASH AS EXPECTED  ⚠️  ║");
+        eprintln!("╠═══════════════════════════════════════════════════════════╣");
+        eprintln!("║  Crash type: {:43} ║", crash_type);
+        eprintln!("║  The trigger_crash() function returned without crashing  ║");
+        eprintln!("║  This likely means the crash trigger was optimized away  ║");
+        eprintln!("║  or the crash mechanism is not working correctly.        ║");
+        eprintln!("╚═══════════════════════════════════════════════════════════╝");
+        eprintln!("\n");
         anyhow::bail!("Process did not crash as expected")
     }
 
