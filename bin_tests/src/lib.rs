@@ -66,6 +66,13 @@ fn inner_build_artifact(c: &ArtifactsBuild) -> anyhow::Result<PathBuf> {
         build_cmd.env("RUSTFLAGS", rustflags);
     }
 
+    // Pass CARGO_TARGET_DIR to ensure we build in the same target directory
+    // that cargo-llvm-cov is using (e.g., target/llvm-cov-target/)
+    // Without this, cargo build would use target/debug/ and miss instrumentation
+    if let Ok(target_dir) = env::var("CARGO_TARGET_DIR") {
+        build_cmd.env("CARGO_TARGET_DIR", target_dir);
+    }
+
     let output = build_cmd.output().unwrap();
     if !output.status.success() {
         anyhow::bail!(
