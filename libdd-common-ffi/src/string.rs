@@ -104,3 +104,9 @@ impl From<String> for StringWrapperResult {
         Self::Ok(value.into())
     }
 }
+
+impl From<Error> for StringWrapperResult {
+    fn from(value: Error) -> Self {
+        Self::Err(value)
+    }
+}
