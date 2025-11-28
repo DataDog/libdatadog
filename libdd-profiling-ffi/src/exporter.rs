@@ -14,9 +14,6 @@ use libdd_profiling::exporter;
 use libdd_profiling::exporter::{ProfileExporter, Request};
 use libdd_profiling::internal::EncodedProfile;
 use std::borrow::Cow;
-use std::str::FromStr;
-
-type TokioCancellationToken = tokio_util::sync::CancellationToken;
 
 #[allow(dead_code)]
 #[repr(C)]
@@ -73,7 +70,7 @@ pub extern "C" fn ddog_prof_Endpoint_agentless<'a>(
 pub extern "C" fn endpoint_file(filename: CharSlice) -> ProfilingEndpoint {
     ProfilingEndpoint::File(filename)
 }
-unsafe fn try_to_url(slice: CharSlice) -> anyhow::Result<hyper::Uri> {
+unsafe fn try_to_url(slice: CharSlice) -> anyhow::Result<http::Uri> {
     let str: &str = slice.try_to_utf8()?;
     #[cfg(unix)]
     if let Some(path) = str.strip_prefix("unix://") {
@@ -83,7 +80,7 @@ unsafe fn try_to_url(slice: CharSlice) -> anyhow::Result<hyper::Uri> {
     if let Some(path) = str.strip_prefix("windows:") {
         return Ok(exporter::named_pipe_path_to_uri(path.as_ref())?);
     }
-    Ok(hyper::Uri::from_str(str)?)
+    Ok(str.parse()?)
 }
 
 pub unsafe fn try_to_endpoint(
@@ -293,94 +290,19 @@ pub unsafe extern "C" fn ddog_prof_Exporter_Request_drop(mut request: *mut Handl
 pub unsafe extern "C" fn ddog_prof_Exporter_send(
     mut exporter: *mut Handle<ProfileExporter>,
     mut request: *mut Handle<Request>,
-    mut cancel: *mut Handle<TokioCancellationToken>,
 ) -> Result<HttpStatus> {
     wrap_with_ffi_result!({
         let request = *request.take().context("request")?;
         let exporter = exporter.to_inner_mut()?;
-        let cancel = cancel.to_inner_mut().ok();
-        let response = exporter.send(request, cancel.as_deref())?;
+        let response = exporter.send(request)?;
 
         anyhow::Ok(HttpStatus(response.status().as_u16()))
     })
 }
 
-/// Can be passed as an argument to send and then be used to asynchronously cancel it from a
-/// different thread.
-#[no_mangle]
-#[must_use]
-pub extern "C" fn ddog_CancellationToken_new() -> Handle<TokioCancellationToken> {
-    TokioCancellationToken::new().into()
-}
-
-/// A cloned TokioCancellationToken is connected to the TokioCancellationToken it was created from.
-/// Either the cloned or the original token can be used to cancel or provided as arguments to send.
-/// The useful part is that they have independent lifetimes and can be dropped separately.
-///
-/// Thus, it's possible to do something like:
-/// ```c
-/// cancel_t1 = ddog_CancellationToken_new();
-/// cancel_t2 = ddog_CancellationToken_clone(cancel_t1);
-///
-/// // On thread t1:
-///     ddog_prof_Exporter_send(..., cancel_t1);
-///     ddog_CancellationToken_drop(cancel_t1);
-///
-/// // On thread t2:
-///     ddog_CancellationToken_cancel(cancel_t2);
-///     ddog_CancellationToken_drop(cancel_t2);
-/// ```
-///
-/// Without clone, both t1 and t2 would need to synchronize to make sure neither was using the
-/// cancel before it could be dropped. With clone, there is no need for such synchronization, both
-/// threads have their own cancel and should drop that cancel after they are done with it.
-///
-/// # Safety
-/// If the `token` is non-null, it must point to a valid object.
-#[no_mangle]
-#[must_use]
-pub unsafe extern "C" fn ddog_CancellationToken_clone(
-    mut token: *mut Handle<TokioCancellationToken>,
-) -> Handle<TokioCancellationToken> {
-    if let Ok(token) = token.to_inner_mut() {
-        token.clone().into()
-    } else {
-        Handle::empty()
-    }
-}
-
-/// Cancel send that is being called in another thread with the given token.
-/// Note that cancellation is a terminal state; cancelling a token more than once does nothing.
-/// Returns `true` if token was successfully cancelled.
-#[no_mangle]
-pub unsafe extern "C" fn ddog_CancellationToken_cancel(
-    mut cancel: *mut Handle<TokioCancellationToken>,
-) -> bool {
-    if let Ok(token) = cancel.to_inner_mut() {
-        let will_cancel = !token.is_cancelled();
-        if will_cancel {
-            token.cancel();
-        }
-        will_cancel
-    } else {
-        false
-    }
-}
-
-/// # Safety
-/// The `token` can be null, but non-null values must be created by the Rust
-/// Global allocator and must have not been dropped already.
-#[no_mangle]
-pub unsafe extern "C" fn ddog_CancellationToken_drop(
-    mut token: *mut Handle<TokioCancellationToken>,
-) {
-    drop(token.take())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use http_body_util::BodyExt;
     use libdd_common::tag;
     use libdd_common_ffi::Slice;
     use serde_json::json;
@@ -408,50 +330,7 @@ mod tests {
     fn parsed_event_json(request: libdd_common_ffi::Result<Handle<Request>>) -> serde_json::Value {
         // Safety: This is a test
         let request = unsafe { request.unwrap().take().unwrap() };
-        // Really hacky way of getting the event.json file contents, because I didn't want to
-        // implement a full multipart parser and didn't find a particularly good
-        // alternative. If you do figure out a better way, there's another copy of this code
-        // in the profiling tests, please update there too :)
-        let body = request.body();
-        let body_bytes: String = String::from_utf8_lossy(
-            &futures::executor::block_on(body.collect())
-                .unwrap()
-                .to_bytes(),
-        )
-        .to_string();
-        let event_json = body_bytes
-            .lines()
-            .skip_while(|line| !line.contains(r#"filename="event.json""#))
-            .nth(2)
-            .unwrap();
-
-        serde_json::from_str(event_json).unwrap()
-    }
-
-    #[test]
-    // This test invokes an external function SecTrustSettingsCopyCertificates
-    // which Miri cannot evaluate.
-    #[cfg_attr(miri, ignore)]
-    fn profile_exporter_new_and_delete() {
-        let tags = vec![tag!("host", "localhost")].into();
-
-        let result = unsafe {
-            ddog_prof_Exporter_new(
-                profiling_library_name(),
-                profiling_library_version(),
-                family(),
-                Some(&tags),
-                ddog_prof_Endpoint_agent(endpoint()),
-            )
-        };
-
-        match result {
-            Result::Ok(mut exporter) => unsafe { ddog_prof_Exporter_drop(&mut exporter) },
-            Result::Err(message) => {
-                drop(message);
-                panic!("Should not occur!")
-            }
-        }
+        serde_json::from_str(request.event_json()).unwrap()
     }
 
     #[test]
@@ -774,6 +653,30 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
+    fn profile_exporter_new_and_delete() {
+        let tags = vec![tag!("host", "localhost")].into();
+
+        let result = unsafe {
+            ddog_prof_Exporter_new(
+                profiling_library_name(),
+                profiling_library_version(),
+                family(),
+                Some(&tags),
+                ddog_prof_Endpoint_agent(endpoint()),
+            )
+        };
+
+        match result {
+            Result::Ok(mut exporter) => unsafe { ddog_prof_Exporter_drop(&mut exporter) },
+            Result::Err(message) => {
+                drop(message);
+                panic!("Should not occur!")
+            }
+        }
+    }
+
+    #[test]
     fn test_build_failure() {
         let profile = &mut EncodedProfile::test_instance().unwrap().into();
         let exporter = &mut Handle::empty();
@@ -796,9 +699,8 @@ mod tests {
     fn send_fails_with_null() {
         let exporter = &mut Handle::empty();
         let request = &mut Handle::empty();
-        let cancel = &mut Handle::empty();
         unsafe {
-            let error = ddog_prof_Exporter_send(exporter, request, cancel)
+            let error = ddog_prof_Exporter_send(exporter, request)
                 .unwrap_err()
                 .to_string();
             assert_eq!(

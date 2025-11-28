@@ -36,7 +36,6 @@ fn multipart(
 #[cfg(test)]
 mod tests {
     use crate::multipart;
-    use http_body_util::BodyExt;
     use libdd_common::tag;
     use libdd_profiling::exporter::*;
     use serde_json::json;
@@ -46,24 +45,7 @@ mod tests {
     }
 
     fn parsed_event_json(request: Request) -> serde_json::Value {
-        // Really hacky way of getting the event.json file contents, because I didn't want to
-        // implement a full multipart parser and didn't find a particularly good
-        // alternative. If you do figure out a better way, there's another copy of this code
-        // in the profiling-ffi tests, please update there too :)
-        let body = request.body();
-        let body_bytes: String = String::from_utf8_lossy(
-            &futures::executor::block_on(body.collect())
-                .unwrap()
-                .to_bytes(),
-        )
-        .to_string();
-        let event_json = body_bytes
-            .lines()
-            .skip_while(|line| !line.contains(r#"filename="event.json""#))
-            .nth(2)
-            .unwrap();
-
-        serde_json::from_str(event_json).unwrap()
+        serde_json::from_str(request.event_json()).unwrap()
     }
 
     #[test]

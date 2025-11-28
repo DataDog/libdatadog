@@ -31,24 +31,19 @@ crossbeam-utils = { version = "0.8.21" }
 libdd-alloc = { version = "1.0.0", path = "../libdd-alloc" }
 libdd-profiling-protobuf = { version = "1.0.0", path = "../libdd-profiling-protobuf", features = ["prost_impls"] }
 libdd-common = { version = "1.0.0", path = "../libdd-common" }
-futures = { version = "0.3", default-features = false }
 hashbrown = { version = "0.16", default-features = false }
 http = "1.0"
-hyper = { workspace = true}
-http-body-util = "0.1"
-hyper-multipart-rfc7578 = "0.9.0"
 indexmap = "2.11"
 lz4_flex = { version = "0.9", default-features = false, features = ["std", "safe-encode", "frame"] }
 mime = "0.3.16"
 parking_lot = { version = "0.12", default-features = false }
 prost = "0.13.5"
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "multipart", "rustls-tls", "json"] }
 rustc-hash = { version = "1.1", default-features = false }
 serde = {version = "1.0", features = ["derive"]}
 serde_json = {version = "1.0"}
 target-triple = "0.1.4"
 thiserror = "2"
-tokio = {version = "1.23", features = ["rt", "macros"]}
-tokio-util = "0.7.1"
 zstd = { version = "0.13", default-features = false }
 
 [dev-dependencies]
