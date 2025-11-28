@@ -37,6 +37,9 @@ windows_crash_tests! {
     (test_windows_crash_divide_by_zero, WindowsCrashType::DivideByZero, ExceptionCode::IntDivideByZero),
     (test_windows_crash_abort, WindowsCrashType::Abort, ExceptionCode::AccessViolation),
     (test_windows_crash_stack_overflow, WindowsCrashType::StackOverflow, ExceptionCode::StackOverflow),
+    (test_windows_crash_illegal_instruction, WindowsCrashType::IllegalInstruction, ExceptionCode::IllegalInstruction),
+    (test_windows_crash_read_violation, WindowsCrashType::AccessViolationRead, ExceptionCode::AccessViolation),
+    (test_windows_crash_write_violation, WindowsCrashType::AccessViolationWrite, ExceptionCode::AccessViolation),
 }
 
 /// Standard Windows crash test runner using the refactored infrastructure.
@@ -108,15 +111,3 @@ struct WindowsArtifacts {
     crashtracker_bin: std::path::PathBuf,
     wer_simulator: std::path::PathBuf,
 }
-
-// ====================================================================================
-// FUTURE TESTS (CAN BE ADDED AS IMPLEMENTATION MATURES)
-// ====================================================================================
-// Additional tests that can be easily added using the macro:
-//
-// windows_crash_tests! {
-//     (test_windows_crash_illegal_instruction, WindowsCrashType::IllegalInstruction,
-// ExceptionCode::IllegalInstruction),     (test_windows_multithreaded_crash,
-// WindowsCrashType::MultithreadedCrash, ExceptionCode::AccessViolation),
-//     (test_windows_deep_stack, WindowsCrashType::DeepStack, ExceptionCode::AccessViolation),
-// }
