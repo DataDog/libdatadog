@@ -2905,6 +2905,7 @@ name = "libdd-trace-normalization"
 version = "1.0.0"
 dependencies = [
  "anyhow",
+ "arbitrary",
  "criterion",
  "duplicate",
  "libdd-trace-protobuf",
@@ -2951,7 +2952,6 @@ dependencies = [
  "http-body-util",
  "httpmock",
  "hyper",
- "hyper-http-proxy",
  "indexmap 2.12.0",
  "libdd-common",
  "libdd-tinybytes",
