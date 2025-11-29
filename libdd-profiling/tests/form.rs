@@ -23,6 +23,7 @@ fn multipart(
             files_to_compress_and_export,
             files_to_export_unmodified,
             None,
+            None,
             internal_metadata,
             info,
         )

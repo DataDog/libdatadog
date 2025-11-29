@@ -140,7 +140,7 @@ int main(int argc, char *argv[]) {
   }
 
   auto build_result = ddog_prof_Exporter_Request_build(
-      exporter, encoded_profile, files_to_compress_and_export, files_to_export_unmodified, nullptr,
+      exporter, encoded_profile, files_to_compress_and_export, files_to_export_unmodified, nullptr, nullptr,
       &internal_metadata_example, &info_example);
   ddog_prof_EncodedProfile_drop(encoded_profile);
 

@@ -220,6 +220,7 @@ pub unsafe extern "C" fn ddog_prof_Exporter_Request_build(
     files_to_compress_and_export: Slice<File>,
     files_to_export_unmodified: Slice<File>,
     optional_additional_tags: Option<&libdd_common_ffi::Vec<Tag>>,
+    optional_process_tags: Option<&libdd_common_ffi::Vec<Tag>>,
     optional_internal_metadata_json: Option<&CharSlice>,
     optional_info_json: Option<&CharSlice>,
 ) -> Result<Handle<Request>> {
@@ -229,7 +230,7 @@ pub unsafe extern "C" fn ddog_prof_Exporter_Request_build(
         let files_to_compress_and_export = into_vec_files(files_to_compress_and_export);
         let files_to_export_unmodified = into_vec_files(files_to_export_unmodified);
         let tags = optional_additional_tags.map(|tags| tags.iter().cloned().collect());
-
+        let process_tags = optional_process_tags.map(|tags| tags.iter().cloned().collect());
         let internal_metadata = parse_json("internal_metadata", optional_internal_metadata_json)?;
         let info = parse_json("info", optional_info_json)?;
 
@@ -238,6 +239,7 @@ pub unsafe extern "C" fn ddog_prof_Exporter_Request_build(
             files_to_compress_and_export.as_slice(),
             files_to_export_unmodified.as_slice(),
             tags.as_ref(),
+            process_tags.as_ref(),
             internal_metadata,
             info,
         )?;
@@ -486,6 +488,7 @@ mod tests {
                 None,
                 None,
                 None,
+                None,
             )
         };
 
@@ -571,6 +574,7 @@ mod tests {
                 Slice::empty(),
                 Slice::empty(),
                 None,
+                None,
                 Some(&raw_internal_metadata),
                 None,
             )
@@ -619,6 +623,7 @@ mod tests {
                 profile,
                 Slice::empty(),
                 Slice::empty(),
+                None,
                 None,
                 Some(&raw_internal_metadata),
                 None,
@@ -693,6 +698,7 @@ mod tests {
                 Slice::empty(),
                 None,
                 None,
+                None,
                 Some(&raw_info),
             )
         };
@@ -763,6 +769,7 @@ mod tests {
                 Slice::empty(),
                 None,
                 None,
+                None,
                 Some(&raw_info),
             )
         };
@@ -783,6 +790,7 @@ mod tests {
                 profile,
                 Slice::empty(),
                 Slice::empty(),
+                None,
                 None,
                 None,
                 None,
