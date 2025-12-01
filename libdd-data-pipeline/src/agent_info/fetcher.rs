@@ -94,6 +94,7 @@ pub async fn fetch_info(info_endpoint: &Endpoint) -> Result<Box<AgentInfo>> {
 /// Returns a tuple of (state_hash, response_body_bytes).
 /// The hash is calculated using SHA256 to match the agent's calculation method.
 async fn fetch_and_hash_response(info_endpoint: &Endpoint) -> Result<(String, bytes::Bytes)> {
+    init_antithesis();
     let req = info_endpoint
         .to_request_builder(concat!("Libdatadog/", env!("CARGO_PKG_VERSION")))?
         .method(hyper::Method::GET)
@@ -183,6 +184,7 @@ impl AgentInfoFetcher {
 
     /// Drain message from the trigger channel.
     pub fn drain(&mut self) {
+        init_antithesis();
         // We read only once as the channel has a capacity of 1
         if let Some(rx) = &mut self.trigger_rx {
             let _ = rx.try_recv();
@@ -196,6 +198,7 @@ impl Worker for AgentInfoFetcher {
     /// # Warning
     /// This method does not return and should be called within a dedicated task.
     async fn run(&mut self) {
+        init_antithesis();
         // Skip the first fetch if some info is present to avoid calling the /info endpoint
         // at fork for heavy-forking environment.
         if AGENT_INFO_CACHE.load().is_none() {
@@ -236,6 +239,7 @@ impl Worker for AgentInfoFetcher {
 impl AgentInfoFetcher {
     /// Fetch agent info and update cache if needed
     async fn fetch_and_update(&self) {
+        init_antithesis();
         let current_info = AGENT_INFO_CACHE.load();
         let current_hash = current_info.as_ref().map(|info| info.state_hash.as_str());
         let res = fetch_info_with_state(&self.info_endpoint, current_hash).await;
@@ -267,6 +271,7 @@ pub struct ResponseObserver {
 impl ResponseObserver {
     /// Create a new ResponseObserver with the given channel sender.
     pub fn new(trigger_tx: mpsc::Sender<()>) -> Self {
+        init_antithesis();
         Self { trigger_tx }
     }
 
@@ -276,6 +281,7 @@ impl ResponseObserver {
     /// it with the previously seen state. If the state has changed, it sends a trigger
     /// message to the agent info fetcher.
     pub fn check_response<T>(&self, response: &hyper::Response<T>) {
+        init_antithesis();
         if let Some(agent_state) = response.headers().get(DATADOG_AGENT_STATE) {
             if let Ok(state_str) = agent_state.to_str() {
                 let current_state = AGENT_INFO_CACHE.load();
@@ -298,6 +304,7 @@ impl ResponseObserver {
 
     /// Manually send a message to the trigger channel.
     pub fn manual_trigger(&self) {
+        init_antithesis();
         let _ = self.trigger_tx.try_send(());
     }
 }
@@ -359,6 +366,7 @@ mod single_threaded_tests {
     }"#;
 
     fn calculate_hash(json: &str) -> String {
+        init_antithesis();
         format!("{:x}", Sha256::digest(json.as_bytes()))
     }
 
