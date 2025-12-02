@@ -93,3 +93,37 @@ impl MappingId2 {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::mem::offset_of;
+    #[test]
+    fn v1_and_v2_have_compatible_representations() {
+        // Begin with basic size and alignment.
+        assert_eq!(size_of::<Mapping>(), size_of::<Mapping2>());
+        assert_eq!(align_of::<Mapping>(), align_of::<Mapping2>());
+
+        // Then check members.
+        assert_eq!(
+            offset_of!(Mapping, memory_start),
+            offset_of!(Mapping2, memory_start)
+        );
+        assert_eq!(
+            offset_of!(Mapping, memory_limit),
+            offset_of!(Mapping2, memory_limit)
+        );
+        assert_eq!(
+            offset_of!(Mapping, file_offset),
+            offset_of!(Mapping2, file_offset)
+        );
+        assert_eq!(
+            offset_of!(Mapping, filename),
+            offset_of!(Mapping2, filename)
+        );
+        assert_eq!(
+            offset_of!(Mapping, build_id),
+            offset_of!(Mapping2, build_id)
+        );
+    }
+}

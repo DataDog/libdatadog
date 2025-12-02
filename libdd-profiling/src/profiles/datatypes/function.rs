@@ -85,3 +85,27 @@ impl FunctionId2 {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::mem::offset_of;
+
+    #[test]
+    fn v1_and_v2_have_compatible_representations() {
+        // Begin with basic size and alignment.
+        assert_eq!(size_of::<Function>(), size_of::<Function2>());
+        assert_eq!(align_of::<Function>(), align_of::<Function2>());
+
+        // Then check members.
+        assert_eq!(offset_of!(Function, name), offset_of!(Function2, name));
+        assert_eq!(
+            offset_of!(Function, system_name),
+            offset_of!(Function2, system_name)
+        );
+        assert_eq!(
+            offset_of!(Function, file_name),
+            offset_of!(Function2, file_name)
+        );
+    }
+}
