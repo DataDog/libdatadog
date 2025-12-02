@@ -8,17 +8,23 @@
 #![cfg_attr(not(test), deny(clippy::unimplemented))]
 
 pub mod config;
+#[cfg(feature = "client")]
 pub mod fetch;
+#[cfg(feature = "client")]
 pub mod file_change_tracker;
+#[cfg(feature = "client")]
 pub mod file_storage;
 mod parse;
 mod path;
+#[cfg(feature = "client")]
 mod targets;
 
-use libdd_common::tag::Tag;
 pub use parse::*;
 pub use path::*;
-use serde::{Deserialize, Serialize};
+use {
+    libdd_common::tag::Tag,
+    serde::{Deserialize, Serialize},
+};
 
 #[derive(Debug, Deserialize, Serialize, Clone, Hash, Ord, PartialOrd, Eq, PartialEq)]
 pub struct Target {
