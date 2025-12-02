@@ -1,7 +1,7 @@
 // Copyright 2025-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::profiles::collections::StringRef;
+use crate::profiles::collections::{SetId, StringRef};
 use crate::profiles::datatypes::StringId2;
 
 /// A representation of a function that is an intersection of the Otel and
@@ -83,5 +83,38 @@ impl FunctionId2 {
         } else {
             Some(self.0.read())
         }
+    }
+}
+
+impl From<SetId<Function>> for FunctionId2 {
+    fn from(id: SetId<Function>) -> FunctionId2 {
+        // SAFETY: the function that SetId points to is layout compatible with
+        // the one that FunctionId2 points to. The reverse is not true for the
+        // null StringId cases.
+        unsafe { core::mem::transmute::<SetId<Function>, FunctionId2>(id) }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::mem::offset_of;
+
+    #[test]
+    fn v1_and_v2_have_compatible_representations() {
+        // Begin with basic size and alignment.
+        assert_eq!(size_of::<Function>(), size_of::<Function2>());
+        assert_eq!(align_of::<Function>(), align_of::<Function2>());
+
+        // Then check members.
+        assert_eq!(offset_of!(Function, name), offset_of!(Function2, name));
+        assert_eq!(
+            offset_of!(Function, system_name),
+            offset_of!(Function2, system_name)
+        );
+        assert_eq!(
+            offset_of!(Function, file_name),
+            offset_of!(Function2, file_name)
+        );
     }
 }
