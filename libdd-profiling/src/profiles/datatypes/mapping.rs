@@ -1,7 +1,7 @@
 // Copyright 2025-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::profiles::collections::StringRef;
+use crate::profiles::collections::{SetId, StringRef};
 use crate::profiles::datatypes::StringId2;
 
 /// A representation of a mapping that is an intersection of the Otel and Pprof
@@ -91,6 +91,15 @@ impl MappingId2 {
         } else {
             Some(self.0.read())
         }
+    }
+}
+
+impl From<SetId<Mapping>> for MappingId2 {
+    fn from(id: SetId<Mapping>) -> MappingId2 {
+        // SAFETY: the mapping that SetId points to is layout compatible with
+        // the one that MappingId2 points to. The reverse is not true for the
+        // null StringId cases.
+        unsafe { core::mem::transmute::<SetId<Mapping>, MappingId2>(id) }
     }
 }
 
