@@ -46,12 +46,7 @@ impl ProfilesDictionary {
             file_name: function.file_name.into(),
         };
         let set_id = self.functions.try_insert(function)?;
-
-        // SAFETY: the function that SetId points to is layout compatible with
-        // the one that FunctionId2 points to. The reverse is not true for the
-        // null StringId cases.
-        let function_id = unsafe { core::mem::transmute::<SetId<Function>, FunctionId2>(set_id) };
-        Ok(function_id)
+        Ok(FunctionId2::from(set_id))
     }
 
     /// Adds the mapping to the mapping set in the dictionary, and returns a
@@ -66,12 +61,7 @@ impl ProfilesDictionary {
             build_id: mapping.build_id.into(),
         };
         let set_id = self.mappings.try_insert(mapping)?;
-
-        // SAFETY: the mapping that SetId points to is layout compatible with
-        // the one that MappingId2 points to. The reverse is not true for the
-        // null StringId cases.
-        let mapping_id = unsafe { core::mem::transmute::<SetId<Mapping>, MappingId2>(set_id) };
-        Ok(mapping_id)
+        Ok(MappingId2::from(set_id))
     }
 
     /// Adds the string to the string set in the dictionary, and returns a
