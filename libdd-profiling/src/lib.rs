@@ -8,6 +8,8 @@
 
 pub mod api;
 pub mod collections;
+#[cfg(feature = "cxx")]
+pub mod cxx;
 pub mod exporter;
 pub mod internal;
 pub mod iter;
