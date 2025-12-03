@@ -19,7 +19,7 @@ fn make_stack_api(frames: &[Frame]) -> (Vec<api::Location<'static>>, Vec<i64>) {
             mapping,
             function: api::Function {
                 name: frame.function_name,
-                filename: frame.function_name,
+                filename: frame.file_name,
                 ..Default::default()
             },
             line: frame.line_number as i64,
@@ -52,6 +52,7 @@ struct Frame {
     line_number: u32,
     function_name: &'static str,
 }
+
 impl Frame {
     pub const fn new(
         file_name: &'static str,
