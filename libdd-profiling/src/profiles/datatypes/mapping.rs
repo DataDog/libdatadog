@@ -9,7 +9,10 @@ use crate::profiles::datatypes::StringId2;
 /// in any way.
 ///
 /// This representation is used internally by the `ProfilesDictionary`, and
-/// utilizes the fact that `StringRef`s don't have null values.
+/// utilizes the fact that `StringRef`s don't have null values. It is also
+/// repr(C) to be layout-compatible with [`Mapping2`]. Every pointer to a
+/// Mapping is a valid Mapping2 (but the reverse is not true for the null case
+/// of null StringId2).
 #[repr(C)]
 #[derive(Copy, Clone, Debug, Default, Eq, PartialEq, Hash)]
 pub struct Mapping {
@@ -20,7 +23,8 @@ pub struct Mapping {
     pub build_id: StringRef, // missing in Otel, is it made into an attribute?
 }
 
-/// An FFI-safe version of the Mapping which allows null.
+/// An FFI-safe version of the Mapping which allows null. Be sure to maintain
+/// layout-compatibility with it, except that StringId2 may be null.
 #[repr(C)]
 #[derive(Copy, Clone, Debug, Default)]
 pub struct Mapping2 {
