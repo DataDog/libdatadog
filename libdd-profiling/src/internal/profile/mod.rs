@@ -205,7 +205,7 @@ impl Profile {
             lbls.try_reserve_exact(labels.len())?;
             for label in labels {
                 let label = label.context("profile label failed to convert")?;
-                let key = translator.translate_string(string_table, label.key)?;
+                let key = translator.translate_string(string_table, label.key.into())?;
                 let internal_label = if !label.str.is_empty() {
                     let str = string_table.try_intern(label.str)?;
                     Label::str(key, str)

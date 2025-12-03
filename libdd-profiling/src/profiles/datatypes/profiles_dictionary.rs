@@ -1,7 +1,7 @@
 // Copyright 2025-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::profiles::collections::{ParallelSet, ParallelStringSet, SetError, SetId};
+use crate::profiles::collections::{ParallelSet, ParallelStringSet, SetError};
 use crate::profiles::datatypes::{
     Function, Function2, FunctionId2, Mapping, Mapping2, MappingId2, StringId2,
 };
@@ -167,7 +167,7 @@ mod tests {
                 build_id: build_id_id,
             };
 
-            // Test insert and read back (exercises unsafe transmute)
+            // Test insert and read back.
             let id1 = dict.try_insert_mapping2(mapping2).unwrap();
             prop_assert!(!id1.is_empty());
 

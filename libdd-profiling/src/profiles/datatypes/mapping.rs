@@ -107,6 +107,7 @@ impl From<SetId<Mapping>> for MappingId2 {
 mod tests {
     use super::*;
     use std::mem::offset_of;
+
     #[test]
     fn v1_and_v2_have_compatible_representations() {
         // Begin with basic size and alignment.
