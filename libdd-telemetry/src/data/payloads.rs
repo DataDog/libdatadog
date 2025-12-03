@@ -40,6 +40,7 @@ pub enum ConfigurationOrigin {
     Default,
     LocalStableConfig,
     FleetStableConfig,
+    Calculated,
 }
 
 #[derive(Serialize, Debug)]
