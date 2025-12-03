@@ -64,14 +64,7 @@ impl ProfilesDictionaryTranslator {
         let (set_id, function) = match NonNull::new(id2.0) {
             // Since the internal model treats functions as required, we
             // translate the null FunctionId2 to the default function.
-            None => {
-                let function = Function {
-                    name: StringId::ZERO,
-                    system_name: StringId::ZERO,
-                    filename: StringId::ZERO,
-                };
-                (None, function)
-            }
+            None => (None, Function::default()),
             Some(nn) => {
                 let set_id = SetId(nn.cast::<dt::Function>());
                 if let Some(internal) = self.functions.get(&Some(set_id)) {
