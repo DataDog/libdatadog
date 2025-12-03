@@ -103,6 +103,16 @@ fn main() {
         .file("src/crash_info/emit_sicodes.c")
         .compile("emit_sicodes");
 
+    // Build CXX bridge if feature is enabled
+    #[cfg(feature = "cxx")]
+    {
+        cxx_build::bridge("src/crash_info/cxx.rs")
+            .flag_if_supported("-std=c++14")
+            .compile("libdd-crashtracker-cxx");
+
+        println!("cargo:rerun-if-changed=src/crash_info/cxx.rs");
+    }
+
     // Don't build test libraries during `cargo publish` verification.
     // During verification, the package is unpacked to target/package/ and built there.
     let is_packaging = std::env::var("CARGO_MANIFEST_DIR")

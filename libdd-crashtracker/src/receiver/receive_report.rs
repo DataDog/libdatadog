@@ -189,11 +189,10 @@ fn process_line(
                 sig_info.si_code_human_readable, sig_info.si_signo_human_readable
             );
 
-            builder
-                .with_timestamp_now()?
-                .with_sig_info(sig_info)?
-                .with_incomplete(true)?
-                .with_message(message)?;
+            builder.with_timestamp_now()?;
+            builder.with_sig_info(sig_info)?;
+            builder.with_incomplete(true)?;
+            builder.with_message(message)?;
             StdinState::SigInfo
         }
 
