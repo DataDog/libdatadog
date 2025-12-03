@@ -81,14 +81,50 @@ jobs:
           include_passed: true
       - name: Upload test results to Datadog
         if: success() || failure()
-        uses: datadog/junit-upload-github-action@762867566348d59ac9bcf479ebb4ec040db8940a
-        with:
-          api_key: ${{ secrets.DATADOG_API_KEY }}
-          env: ci
-          service: libdatadog
-          files: target/nextest/ci/junit.xml
-          logs: true
-          tags: rustc:${{ matrix.rust_version }},arch:${{ runner.arch }},os:${{ runner.os }},platform:${{ matrix.platform }}
+        shell: bash
+        run: |
+          # Download datadog-ci binary
+          if [ "${{ runner.os }}" == "Linux" ]; then
+            URL="https://github.com/DataDog/datadog-ci/releases/download/v4.2.2/datadog-ci_linux-x64"
+            OUTPUT="datadog-ci"
+            CHECKSUM_CMD="sha256sum"
+            EXPECTED_CHECKSUM="3e1e9649d15d3feacced89ec90de66151046a58c7844217e4112362ad8dbf8d1"
+          elif [ "${{ runner.os }}" == "Windows" ]; then
+            URL="https://github.com/DataDog/datadog-ci/releases/download/v4.2.2/datadog-ci_win-x64"
+            OUTPUT="datadog-ci.exe"
+            CHECKSUM_CMD="sha256sum"
+            EXPECTED_CHECKSUM="13313279cb884fe098e2f80ca21d23e67b78a090a12e891e8e35be653ee2bbd0"
+          elif [ "${{ runner.os }}" == "macOS" ]; then
+            URL="https://github.com/DataDog/datadog-ci/releases/download/v4.2.2/datadog-ci_darwin-x64"
+            OUTPUT="datadog-ci"
+            CHECKSUM_CMD="shasum -a 256"
+            EXPECTED_CHECKSUM="071a6140b17438b3f9dd6c65da48b48ea03fc310034fa624ce874fdb6c325da4"
+          fi
+                    
+          echo "Downloading datadog-ci from $URL"
+          curl -L --fail --retry 3 -o "$OUTPUT" "$URL"
+          chmod +x "$OUTPUT"
+          
+          # Verify checksum
+          ACTUAL_CHECKSUM=$($CHECKSUM_CMD "$OUTPUT" | cut -d' ' -f1)
+          echo "Expected checksum: $EXPECTED_CHECKSUM"
+          echo "Actual checksum: $ACTUAL_CHECKSUM"
+          
+          if [ "$ACTUAL_CHECKSUM" != "$EXPECTED_CHECKSUM" ]; then
+            echo "Checksum verification failed!"
+            exit 1
+          fi
+          echo "Checksum verification passed"
+          
+          # Upload test results
+          ./"$OUTPUT" junit upload \
+            --service libdatadog \
+            --env ci \
+            --logs \
+            --tags rustc:${{ matrix.rust_version }},arch:${{ runner.arch }},os:${{ runner.os }},platform:${{ matrix.platform }} \
+            target/nextest/ci/junit.xml
+        env:
+          DATADOG_API_KEY: ${{ secrets.DATADOG_API_KEY }}
 
   ffi:
     name: "FFI #${{ matrix.platform }} ${{ matrix.rust_version }}"

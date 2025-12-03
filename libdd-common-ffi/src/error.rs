@@ -5,6 +5,22 @@ use crate::slice::{AsBytes, CharSlice};
 use crate::vec::Vec;
 use std::fmt::{Debug, Display, Formatter};
 
+/// You probably don't want to use this directly. This constant is used by `handle_panic_error` to
+/// signal that something went wrong, but avoid needing any allocations to represent it.
+///
+/// Note: This vec is 0-sized and thus does not allocate any memory (or need to be dropped).
+pub(crate) const CANNOT_ALLOCATE_ERROR: Error = Error {
+    message: Vec::new(),
+};
+
+// This error message is used as a placeholder for errors without message -- corresponding to an
+// error where we couldn't even _allocate_ the message (or some other even weirder error).
+const CANNOT_ALLOCATE: &std::ffi::CStr =
+    c"libdatadog failed: (panic) Cannot allocate error message";
+const CANNOT_ALLOCATE_CHAR_SLICE: CharSlice = unsafe {
+    crate::Slice::from_raw_parts(CANNOT_ALLOCATE.as_ptr(), CANNOT_ALLOCATE.to_bytes().len())
+};
+
 /// Please treat this as opaque; do not reach into it, and especially don't
 /// write into it! The most relevant APIs are:
 /// * `ddog_Error_message`, to get the message as a slice.
@@ -104,7 +120,17 @@ pub unsafe extern "C" fn ddog_Error_drop(error: Option<&mut Error>) {
 pub unsafe extern "C" fn ddog_Error_message(error: Option<&Error>) -> CharSlice<'_> {
     match error {
         None => CharSlice::empty(),
-        Some(err) => CharSlice::from(err.as_ref()),
+        // When the error is empty (CANNOT_ALLOCATE_ERROR) we assume we failed to allocate an actual
+        // error and return this placeholder message instead.
+        // In particular this means we'll use the CANNOT_ALLOCATE_CHAR_SLICE error message for
+        // **every** empty error, and no other kinds of errors are expected to be empty.
+        Some(err) => {
+            if *err == CANNOT_ALLOCATE_ERROR {
+                CANNOT_ALLOCATE_CHAR_SLICE
+            } else {
+                CharSlice::from(err.as_ref())
+            }
+        }
     }
 }
 

@@ -18,28 +18,28 @@ jobs:
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # 4.2.2
 
       - name: diff agent_payload.proto
-        working-directory: trace-protobuf/src/pb
+        working-directory: libdd-trace-protobuf/src/pb
         id: agent_payload_proto
         if: always()
         run: |
           ../../../.github/workflows/diff-proto-files.sh --file agent_payload.proto --tag ${{ env.DATADOG_AGENT_TAG }}
 
       - name: diff tracer_payload.proto
-        working-directory: trace-protobuf/src/pb
+        working-directory: libdd-trace-protobuf/src/pb
         id: tracer_payload_proto
         if: always()
         run: |
           ../../../.github/workflows/diff-proto-files.sh --file tracer_payload.proto --tag ${{ env.DATADOG_AGENT_TAG }}
 
       - name: diff stats.proto
-        working-directory: trace-protobuf/src/pb
+        working-directory: libdd-trace-protobuf/src/pb
         id: stats_proto
         if: always()
         run: |
           ../../../.github/workflows/diff-proto-files.sh --file stats.proto --tag ${{ env.DATADOG_AGENT_TAG }}
 
       - name: diff span.proto
-        working-directory: trace-protobuf/src/pb
+        working-directory: libdd-trace-protobuf/src/pb
         id: span_proto
         if: always()
         run: |

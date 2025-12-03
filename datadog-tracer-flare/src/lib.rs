@@ -17,18 +17,15 @@ use std::{
     },
 };
 
-use datadog_remote_config::{
-    config::agent_task::AgentTaskFile, file_storage::RawFile, RemoteConfigData,
-};
+use datadog_remote_config::{config::agent_task::AgentTaskFile, RemoteConfigData};
 
 use crate::error::FlareError;
-use datadog_remote_config::fetch::ConfigOptions;
 #[cfg(feature = "listener")]
 use {
     datadog_remote_config::{
-        fetch::{ConfigInvariants, SingleChangesFetcher},
+        fetch::{ConfigInvariants, ConfigOptions, SingleChangesFetcher},
         file_change_tracker::Change,
-        file_storage::{ParsedFileStorage, RawFileStorage},
+        file_storage::{ParsedFileStorage, RawFile, RawFileStorage},
         RemoteConfigProduct, Target,
     },
     libdd_common::Endpoint,
@@ -223,6 +220,7 @@ impl TracerFlareManager {
     ///
     /// * `Ok(ReturnAction)` - If successful.
     /// * `FlareError(msg)` - If something fail.
+    #[cfg(feature = "listener")]
     pub fn handle_remote_config_file(
         &self,
         file: RemoteConfigFile,
@@ -270,6 +268,7 @@ pub enum ReturnAction {
     None,
 }
 
+#[cfg(feature = "listener")]
 impl ReturnAction {
     /// A priority is used to know which action to handle when receiving multiple RemoteConfigFile
     /// at the same time. Here is the specific order implemented :
@@ -336,10 +335,12 @@ impl TryFrom<&str> for LogLevel {
     }
 }
 
+#[cfg(feature = "listener")]
 pub type RemoteConfigFile = std::sync::Arc<RawFile<Result<RemoteConfigData, anyhow::Error>>>;
 #[cfg(feature = "listener")]
 pub type Listener = SingleChangesFetcher<RawFileStorage<Result<RemoteConfigData, anyhow::Error>>>;
 
+#[cfg(feature = "listener")]
 impl TryFrom<RemoteConfigFile> for ReturnAction {
     type Error = FlareError;
 
@@ -501,7 +502,10 @@ pub async fn run_remote_config_listener(
 
 #[cfg(test)]
 mod tests {
-    use crate::{FlareError, LogLevel, ReturnAction};
+    #[cfg(feature = "listener")]
+    use crate::ReturnAction;
+    use crate::{FlareError, LogLevel};
+    #[cfg(feature = "listener")]
     use datadog_remote_config::{
         config::{
             agent_config::{AgentConfig, AgentConfigFile},
@@ -511,6 +515,7 @@ mod tests {
         file_storage::ParsedFileStorage,
         RemoteConfigPath, RemoteConfigProduct, RemoteConfigSource,
     };
+    #[cfg(feature = "listener")]
     use std::{
         num::NonZeroU64,
         sync::{atomic::Ordering, Arc},
@@ -544,6 +549,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "listener")]
     fn test_priority_in_return_action() {
         // Test that when two Set actions are compared, the one with lower log level wins
         let send_action = ReturnAction::Send(AgentTaskFile {
@@ -598,6 +604,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "listener")]
     fn test_remote_config_with_valid_log_level() {
         let storage = ParsedFileStorage::default();
         let path = Arc::new(RemoteConfigPath {
@@ -623,6 +630,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "listener")]
     fn test_remote_config_with_send_task() {
         let storage = ParsedFileStorage::default();
         let path = Arc::new(RemoteConfigPath {
@@ -651,6 +659,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "listener")]
     fn test_remote_config_with_invalid_config() {
         let storage = ParsedFileStorage::default();
         let path = Arc::new(RemoteConfigPath {
@@ -674,6 +683,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "listener")]
     fn test_handle_remote_config_file() {
         use crate::TracerFlareManager;
         let tracer_flare = TracerFlareManager::new("http://localhost:8126", "rust");
@@ -732,6 +742,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "listener")]
     fn test_check_remote_config_file_with_parsing_error() {
         let storage = ParsedFileStorage::default();
         let path = Arc::new(RemoteConfigPath {
