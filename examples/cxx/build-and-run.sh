@@ -44,6 +44,13 @@ echo "📚 Crashtracker library: $CRASHTRACKER_LIB"
 echo "📚 CXX bridge library: $CXX_BRIDGE_LIB"
 
 echo "🔨 Compiling C++ example..."
+# Platform-specific linker flags
+if [[ "$OSTYPE" == "darwin"* ]]; then
+    PLATFORM_LIBS="-framework Security -framework CoreFoundation"
+else
+    PLATFORM_LIBS=""
+fi
+
 c++ -std=c++14 \
     -I"$CXX_BRIDGE_INCLUDE" \
     -I"$CXX_BRIDGE_CRATE" \
@@ -52,7 +59,7 @@ c++ -std=c++14 \
     examples/cxx/crashinfo.cpp \
     "$CRASHTRACKER_LIB" \
     "$CXX_BRIDGE_LIB" \
-    -lpthread -ldl -framework Security -framework CoreFoundation \
+    -lpthread -ldl $PLATFORM_LIBS \
     -o examples/cxx/crashinfo
 
 echo "🚀 Running example..."
