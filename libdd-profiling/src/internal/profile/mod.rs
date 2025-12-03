@@ -143,6 +143,8 @@ impl Profile {
 
         let labels = {
             let mut lbls = Vec::new();
+            // Using try_reserve_exact because it will be converted to Box<[]>,
+            // so excess capacity would make that conversion more expensive.
             lbls.try_reserve_exact(sample.labels.len())?;
             for label in &sample.labels {
                 let key = self.try_intern(label.key)?;
@@ -210,6 +212,8 @@ impl Profile {
 
         let labels = {
             let mut lbls = Vec::new();
+            // Using try_reserve_exact because it will be converted to Box<[]>,
+            // so excess capacity would make that conversion more expensive.
             lbls.try_reserve_exact(labels.len())?;
             for label in labels {
                 let label = label.context("profile label failed to convert")?;
@@ -413,8 +417,8 @@ impl Profile {
         profiles_dictionary: crate::profiles::collections::Arc<ProfilesDictionary>,
     ) -> io::Result<Self> {
         let mut owned_sample_types = Vec::new();
-        // Using try_reserve_exact because it will be converted to a Box<[]>,
-        // so excess capacity would just make that conversion more expensive.
+        // Using try_reserve_exact because it will be converted to Box<[]>,
+        // so excess capacity would make that conversion more expensive.
         owned_sample_types.try_reserve_exact(sample_types.len())?;
         owned_sample_types.extend(sample_types.iter().map(owned_types::ValueType::from));
         Self::try_new_internal(
