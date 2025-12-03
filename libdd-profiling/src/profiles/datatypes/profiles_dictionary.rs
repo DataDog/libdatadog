@@ -1,7 +1,7 @@
 // Copyright 2025-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::profiles::collections::{ParallelSet, ParallelStringSet, SetError, SetId};
+use crate::profiles::collections::{ParallelSet, ParallelStringSet, SetError};
 use crate::profiles::datatypes::{
     Function, Function2, FunctionId2, Mapping, Mapping2, MappingId2, StringId2,
 };
