@@ -3,7 +3,7 @@
 
 use std::time::SystemTime;
 
-use crate::SigInfo;
+use crate::{OsInfo, SigInfo};
 
 use super::{build_crash_ping_message, CrashInfo, Experimental, Metadata, StackTrace};
 use anyhow::Context;
@@ -89,7 +89,8 @@ impl ErrorsIntakeSettings {
     const _DD_SHARED_LIB_DEBUG: &'static str = "_DD_SHARED_LIB_DEBUG";
 
     // Feature flags
-    const _DD_ERRORS_INTAKE_ENABLED: &'static str = "_DD_ERRORS_INTAKE_ENABLED";
+    const DD_CRASHTRACKING_ERRORS_INTAKE_ENABLED: &'static str =
+        "DD_CRASHTRACKING_ERRORS_INTAKE_ENABLED";
 
     pub fn from_env() -> Self {
         let default = Self::default();
@@ -106,7 +107,8 @@ impl ErrorsIntakeSettings {
             site: parse_env::str_not_empty(Self::DD_SITE),
             errors_intake_dd_url: parse_env::str_not_empty(Self::DD_ERRORS_INTAKE_DD_URL),
             shared_lib_debug: parse_env::bool(Self::_DD_SHARED_LIB_DEBUG).unwrap_or(false),
-            errors_intake_enabled: parse_env::bool(Self::_DD_ERRORS_INTAKE_ENABLED).unwrap_or(true),
+            errors_intake_enabled: parse_env::bool(Self::DD_CRASHTRACKING_ERRORS_INTAKE_ENABLED)
+                .unwrap_or(false),
 
             agent_uds_socket_found: (|| {
                 #[cfg(unix)]
@@ -258,6 +260,9 @@ pub struct ErrorsIntakePayload {
     pub error: ErrorObject,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub trace_id: Option<String>,
+    pub os_info: OsInfo,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sig_info: Option<SigInfo>,
 }
 
 #[derive(Debug, Default)]
@@ -346,12 +351,10 @@ fn build_crash_info_tags(crash_info: &CrashInfo) -> String {
     tags.push_str(&format!(",is_crash:{}", crash_info.error.is_crash));
     tags.push_str(&format!(",uuid:{}", crash_info.uuid));
 
-    // Add all counters
     for (counter, value) in &crash_info.counters {
         tags.push_str(&format!(",{counter}:{value}"));
     }
 
-    // Add signal information
     if let Some(siginfo) = &crash_info.sig_info {
         if let Some(si_addr) = &siginfo.si_addr {
             tags.push_str(&format!(",si_addr:{si_addr}"));
@@ -405,6 +408,8 @@ impl ErrorsIntakePayload {
             None
         };
 
+        let sig_info = crash_info.sig_info.clone();
+
         Ok(Self {
             timestamp,
             ddsource: "crashtracker".to_string(),
@@ -419,6 +424,8 @@ impl ErrorsIntakePayload {
                 experimental: crash_info.experimental.clone(),
             },
             trace_id: None,
+            os_info: ::os_info::get().into(),
+            sig_info,
         })
     }
 
@@ -477,7 +484,11 @@ impl ErrorsIntakePayload {
                 source_type: Some("Crashtracking".to_string()),
                 experimental: None,
             },
+            sig_info: sig_info.cloned(),
             trace_id: None,
+            // Crash ping does not include os_info, but we can recalculate it here
+            // so that errors intake crash pings include this information
+            os_info: ::os_info::get().into(),
         })
     }
 }
@@ -596,9 +607,10 @@ mod tests {
         std::env::remove_var("DD_SITE");
         std::env::remove_var("DD_ERRORS_INTAKE_DD_URL");
         std::env::remove_var("_DD_SHARED_LIB_DEBUG");
-        std::env::remove_var("_DD_ERRORS_INTAKE_ENABLED");
+        std::env::remove_var("DD_CRASHTRACKING_ERRORS_INTAKE_ENABLED");
     }
 
+    #[cfg_attr(miri, ignore)]
     #[test]
     fn test_errors_payload_from_crash_info() {
         let crash_info = CrashInfo::test_instance(1);
@@ -629,6 +641,7 @@ mod tests {
         assert!(ddtags.contains("si_signo_human_readable:SIGSEGV"));
     }
 
+    #[cfg_attr(miri, ignore)]
     #[test]
     fn test_errors_payload_from_crash_ping() {
         let metadata = Metadata::test_instance(1);
@@ -658,6 +671,7 @@ mod tests {
         assert!(ddtags.contains("si_signo_human_readable:SIGSEGV"));
     }
 
+    #[cfg_attr(miri, ignore)]
     #[test]
     fn test_errors_intake_has_all_telemetry_tags() {
         let crash_info = CrashInfo::test_instance(1);
@@ -692,6 +706,7 @@ mod tests {
         }
     }
 
+    #[cfg_attr(miri, ignore)]
     #[test]
     fn test_crash_ping_has_all_telemetry_tags() {
         let metadata = Metadata::test_instance(1);
@@ -820,15 +835,15 @@ mod tests {
         // Test default behavior (should be enabled)
         clear_errors_intake_env();
         let cfg = ErrorsIntakeConfig::from_env();
-        assert!(cfg.is_errors_intake_enabled());
+        assert!(!cfg.is_errors_intake_enabled());
 
         // Test explicitly enabled
-        std::env::set_var("_DD_ERRORS_INTAKE_ENABLED", "true");
+        std::env::set_var("DD_CRASHTRACKING_ERRORS_INTAKE_ENABLED", "true");
         let cfg = ErrorsIntakeConfig::from_env();
         assert!(cfg.is_errors_intake_enabled());
 
         // Test explicitly disabled
-        std::env::set_var("_DD_ERRORS_INTAKE_ENABLED", "false");
+        std::env::set_var("DD_CRASHTRACKING_ERRORS_INTAKE_ENABLED", "false");
         let cfg = ErrorsIntakeConfig::from_env();
         assert!(!cfg.is_errors_intake_enabled());
 
@@ -836,7 +851,7 @@ mod tests {
         let uploader = ErrorsIntakeUploader::new(&None).unwrap();
         assert!(!uploader.is_enabled());
 
-        std::env::set_var("_DD_ERRORS_INTAKE_ENABLED", "true");
+        std::env::set_var("DD_CRASHTRACKING_ERRORS_INTAKE_ENABLED", "true");
         let uploader = ErrorsIntakeUploader::new(&None).unwrap();
         assert!(uploader.is_enabled());
     }

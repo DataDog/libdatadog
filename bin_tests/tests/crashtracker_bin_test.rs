@@ -1499,6 +1499,9 @@ fn test_crash_tracking_bin_with_errors_intake(
     mode: &str,
     crash_typ: &str,
 ) {
+    // set env var for DD_CRASHTRACKING_ERRORS_INTAKE_ENABLED
+    std::env::set_var("DD_CRASHTRACKING_ERRORS_INTAKE_ENABLED", "true");
+
     let (crashtracker_bin, crashtracker_receiver) =
         setup_crashtracking_crates(crash_tracking_receiver_profile);
     let fixtures = setup_test_fixtures(&[&crashtracker_receiver, &crashtracker_bin]);
