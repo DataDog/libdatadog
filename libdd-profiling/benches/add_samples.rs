@@ -113,7 +113,7 @@ pub fn bench_add_sample_vs_add2(c: &mut Criterion) {
             })
             .unwrap();
         Frame2 {
-            function: unsafe { core::mem::transmute::<SetId<Function>, FunctionId2>(set_id) },
+            function: FunctionId2::from(set_id),
             line_number: f.line_number,
         }
     });
@@ -147,7 +147,11 @@ pub fn bench_add_sample_vs_add2(c: &mut Criterion) {
             for _ in 0..1000 {
                 // Provide an empty iterator for labels conversion path
                 let labels_iter = std::iter::empty::<anyhow::Result<api2::Label>>();
-                black_box(profile.try_add_sample2(&locations, &values, labels_iter, None)).unwrap();
+                // SAFETY: all ids come from the profile's dictionary.
+                black_box(unsafe {
+                    profile.try_add_sample2(&locations, &values, labels_iter, None)
+                })
+                .unwrap();
             }
             black_box(profile.only_for_testing_num_aggregated_samples())
         })

@@ -10,6 +10,14 @@ use anyhow::Context;
 use indexmap::map::Entry;
 use std::ptr::NonNull;
 
+/// Translates IDs from a [`ProfilesDictionary`] into the IDs used by the
+/// current Profile's internal collections.
+///
+/// # Safety
+///
+/// All IDs passed to the translate methods (translate_function,
+/// translate_mapping, translate_string) MUST have been created by the same
+/// ProfilesDictionary that this translator wraps.
 pub struct ProfilesDictionaryTranslator {
     pub profiles_dictionary: crate::profiles::collections::Arc<ProfilesDictionary>,
     pub mappings: FxIndexMap<SetId<dt::Mapping>, MappingId>,
@@ -17,7 +25,15 @@ pub struct ProfilesDictionaryTranslator {
     pub strings: FxIndexMap<StringRef, StringId>,
 }
 
-// SAFETY: the profiles_dictionary keeps the storage for Ids alive.
+// SAFETY: ProfilesDictionaryTranslator is Send because:
+// 1. The profiles_dictionary Arc ensures the underlying storage remains alive and valid for the
+//    lifetime of this translator, and Arc<T> is Send when T is Send + Sync. ProfilesDictionary is
+//    Send + Sync.
+// 2. SetId<T> and StringRef are non-owning handles (thin pointers) to immutable data in the
+//    ProfilesDictionary's concurrent collections, which use arena allocation with stable addresses.
+//    The Arc protects this data, making the pointers safe to send across threads.
+// 3. FxIndexMap<K, V> is Send when K and V are Send. The keys (SetId, StringRef) and values
+//    (MappingId, FunctionId, StringId) are all Copy types that are Send.
 unsafe impl Send for ProfilesDictionaryTranslator {}
 
 impl ProfilesDictionaryTranslator {
@@ -32,7 +48,14 @@ impl ProfilesDictionaryTranslator {
         }
     }
 
-    pub fn translate_function(
+    /// Translates a FunctionId2 from the ProfilesDictionary into a FunctionId
+    /// for this profile's StringTable.
+    ///
+    /// # Safety
+    ///
+    /// The `id2` must have been created by `self.profiles_dictionary`, and
+    /// the strings must also live in the same dictionary.
+    pub unsafe fn translate_function(
         &mut self,
         functions: &mut impl Dedup<Function>,
         string_table: &mut StringTable,
@@ -55,12 +78,19 @@ impl ProfilesDictionaryTranslator {
                     return Ok(*internal);
                 }
 
-                // SAFETY: todo
+                // SAFETY: This is safe if `id2` (the FunctionId2) was created by
+                // `self.profiles_dictionary`, which is a precondition of calling
+                // this method.
                 let function = unsafe { *self.profiles_dictionary.functions().get(set_id) };
-                let function = Function {
-                    name: self.translate_string(string_table, function.name)?,
-                    system_name: self.translate_string(string_table, function.system_name)?,
-                    filename: self.translate_string(string_table, function.file_name)?,
+                // SAFETY: safe if the strings were made by
+                // `self.profiles_dictionary`, which is a precondition of
+                // calling this method.
+                let function = unsafe {
+                    Function {
+                        name: self.translate_string(string_table, function.name)?,
+                        system_name: self.translate_string(string_table, function.system_name)?,
+                        filename: self.translate_string(string_table, function.file_name)?,
+                    }
                 };
                 (Some(set_id), function)
             }
@@ -76,7 +106,14 @@ impl ProfilesDictionaryTranslator {
         Ok(internal_id)
     }
 
-    pub fn translate_mapping(
+    /// Translates a MappingId2 from the ProfilesDictionary into a MappingId
+    /// for this profile's internal collections.
+    ///
+    /// # Safety
+    ///
+    /// The `id2` must have been created by `self.profiles_dictionary`, and
+    /// the strings must also live in the same dictionary.
+    pub unsafe fn translate_mapping(
         &mut self,
         mappings: &mut impl Dedup<Mapping>,
         string_table: &mut StringTable,
@@ -93,7 +130,9 @@ impl ProfilesDictionaryTranslator {
             return Ok(Some(*internal));
         }
 
-        // SAFETY: todo
+        // SAFETY: This is safe if `id2` (the MappingId2) was created by
+        // `self.profiles_dictionary`, which is a precondition of calling
+        // this method.
         let mapping = unsafe { *self.profiles_dictionary.mappings().get(set_id) };
         let internal = Mapping {
             memory_start: mapping.memory_start,
@@ -112,7 +151,14 @@ impl ProfilesDictionaryTranslator {
         Ok(Some(internal_id))
     }
 
-    pub fn translate_string(
+    /// Translates a StringRef from the ProfilesDictionary into a StringId
+    /// for this profile's internal string table.
+    ///
+    /// # Safety
+    ///
+    /// The `str_ref` must have been created by `self.profiles_dictionary`.
+    /// Violating this precondition results in undefined behavior.
+    pub unsafe fn translate_string(
         &mut self,
         string_table: &mut StringTable,
         str_ref: StringRef,
@@ -121,12 +167,11 @@ impl ProfilesDictionaryTranslator {
         match self.strings.entry(str_ref) {
             Entry::Occupied(o) => Ok(*o.get()),
             Entry::Vacant(v) => {
+                // SAFETY: This is safe if `str_ref` was created by
+                // `self.profiles_dictionary`, which is a precondition of calling
+                // this method.
                 let str = unsafe { self.profiles_dictionary.strings().get(str_ref) };
-                // SAFETY: we're keeping these lifetimes in sync. I think.
-                // TODO: BUT longer-term we want to avoid copying them
-                //       entirely, so this should go away.
-                let decouple_str = unsafe { core::mem::transmute::<&str, &str>(str) };
-                let internal_id = string_table.try_intern(decouple_str)?;
+                let internal_id = string_table.try_intern(str)?;
                 v.insert(internal_id);
                 Ok(internal_id)
             }

@@ -173,7 +173,15 @@ impl Profile {
     }
 
     /// Tries to add a sample using `api2` structures.
-    pub fn try_add_sample2<'a, L: ExactSizeIterator<Item = anyhow::Result<api2::Label<'a>>>>(
+    ///
+    /// # Safety
+    ///
+    /// All MappingId2, FunctionId2, and StringId2 values should be coming
+    /// from the same profiles dictionary used by this profile internally.
+    pub unsafe fn try_add_sample2<
+        'a,
+        L: ExactSizeIterator<Item = anyhow::Result<api2::Label<'a>>>,
+    >(
         &mut self,
         locations: &[api2::Location2],
         values: &[i64],
@@ -2784,17 +2792,23 @@ mod api_tests {
 
         // Add sample without labels
         let labels_iter = std::iter::empty::<anyhow::Result<api2::Label>>();
-        profile
-            .try_add_sample2(&locations, &values, labels_iter, None)
-            .expect("add to succeed");
+        // SAFETY: adding ids from the correct ProfilesDictionary.
+        unsafe {
+            profile
+                .try_add_sample2(&locations, &values, labels_iter, None)
+                .expect("add to succeed");
+        }
 
         assert_eq!(profile.only_for_testing_num_aggregated_samples(), 1);
 
         // Add same sample again - should aggregate
         let labels_iter = std::iter::empty::<anyhow::Result<api2::Label>>();
-        profile
-            .try_add_sample2(&locations, &values, labels_iter, None)
-            .expect("add to succeed");
+        // SAFETY: adding ids from the correct ProfilesDictionary.
+        unsafe {
+            profile
+                .try_add_sample2(&locations, &values, labels_iter, None)
+                .expect("add to succeed");
+        }
 
         // Still 1 sample because it aggregated
         assert_eq!(profile.only_for_testing_num_aggregated_samples(), 1);
@@ -2804,9 +2818,12 @@ mod api_tests {
         let label_value = "worker-1";
 
         let labels_iter = std::iter::once(Ok(api2::Label::str(label_key, label_value)));
-        profile
-            .try_add_sample2(&locations, &values, labels_iter, None)
-            .expect("add with label to succeed");
+        // SAFETY: adding ids from the correct ProfilesDictionary.
+        unsafe {
+            profile
+                .try_add_sample2(&locations, &values, labels_iter, None)
+                .expect("add with label to succeed");
+        }
 
         // Should be 2 samples now (different label set)
         assert_eq!(profile.only_for_testing_num_aggregated_samples(), 2);
@@ -2814,9 +2831,12 @@ mod api_tests {
         // Test with numeric label
         let thread_id_key = dict.try_insert_str2("thread_id_num").unwrap();
         let labels_iter = std::iter::once(Ok(api2::Label::num(thread_id_key, 42, "")));
-        profile
-            .try_add_sample2(&locations, &values, labels_iter, None)
-            .expect("add with numeric label to succeed");
+        // SAFETY: adding ids from the correct ProfilesDictionary.
+        unsafe {
+            profile
+                .try_add_sample2(&locations, &values, labels_iter, None)
+                .expect("add with numeric label to succeed");
+        }
 
         // Should be 3 samples now
         assert_eq!(profile.only_for_testing_num_aggregated_samples(), 3);
