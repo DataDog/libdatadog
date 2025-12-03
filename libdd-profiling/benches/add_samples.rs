@@ -3,7 +3,6 @@
 
 use criterion::*;
 use libdd_profiling::api2::Location2;
-use libdd_profiling::profiles::collections::SetId;
 use libdd_profiling::profiles::datatypes::{Function, FunctionId2, MappingId2};
 use libdd_profiling::{self as profiling, api, api2};
 
