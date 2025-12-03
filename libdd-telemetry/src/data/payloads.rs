@@ -26,6 +26,7 @@ pub struct Configuration {
     pub value: String,
     pub origin: ConfigurationOrigin,
     pub config_id: Option<String>,
+    pub seq_id: Option<u64>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Hash, PartialEq, Eq, Clone)]
