@@ -10,7 +10,7 @@ int main() {
         
         auto builder = CrashInfoBuilder::create();
         
-        builder->set_kind(ErrorKind::Panic);
+        builder->set_kind(CxxErrorKind::Panic);
         builder->with_message("Example crash message");
         builder->with_counter("my_counter", 42);
         builder->with_log_message("This is a log message", true);
@@ -57,8 +57,8 @@ int main() {
         win_frame->with_ip(0xDEADBEEF);
         win_frame->with_module_base_address(0xABBABABA);
         win_frame->with_build_id("abcdef123456");
-        win_frame->build_id_type(BuildIdType::PDB);
-        win_frame->file_type(FileType::PE);
+        win_frame->build_id_type(CxxBuildIdType::PDB);
+        win_frame->file_type(CxxFileType::PE);
         win_frame->with_path("C:/Program Files/example.exe");
         win_frame->with_relative_address(0xBABEF00D);
         stacktrace->add_frame(std::move(win_frame), true);
@@ -67,8 +67,8 @@ int main() {
         auto elf_frame = StackFrame::create();
         elf_frame->with_ip(0xCAFEBABE);
         elf_frame->with_build_id("fedcba987654321");
-        elf_frame->build_id_type(BuildIdType::GNU);
-        elf_frame->file_type(FileType::ELF);
+        elf_frame->build_id_type(CxxBuildIdType::GNU);
+        elf_frame->file_type(CxxFileType::ELF);
         elf_frame->with_path("/usr/lib/libexample.so");
         elf_frame->with_relative_address(0xF00DFACE);
         stacktrace->add_frame(std::move(elf_frame), true);

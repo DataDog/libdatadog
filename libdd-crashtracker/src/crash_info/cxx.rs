@@ -14,22 +14,22 @@ use crate::{BuildIdType, FileType, Metadata};
 
 #[cxx::bridge(namespace = "datadog::crashtracker")]
 pub mod ffi {
-    // Shared enums
+    // Shared enums (renamed to avoid cbindgen conflicts)
     #[repr(u32)]
-    enum ErrorKind {
+    enum CxxErrorKind {
         Panic = 0,
         UnhandledException = 1,
         UnixSignal = 2,
     }
 
-    enum BuildIdType {
+    enum CxxBuildIdType {
         GNU,
         GO,
         PDB,
         SHA1,
     }
 
-    enum FileType {
+    enum CxxFileType {
         APK,
         ELF,
         PE,
@@ -72,7 +72,7 @@ pub mod ffi {
         fn create() -> Box<StackTrace>;
 
         // CrashInfoBuilder methods - need wrappers for type conversion
-        fn set_kind(self: &mut CrashInfoBuilder, kind: ErrorKind) -> Result<()>;
+        fn set_kind(self: &mut CrashInfoBuilder, kind: CxxErrorKind) -> Result<()>;
         fn set_metadata(self: &mut CrashInfoBuilder, metadata: Metadata) -> Result<()>;
         fn set_proc_info(self: &mut CrashInfoBuilder, proc_info: ProcInfo) -> Result<()>;
         fn set_os_info(self: &mut CrashInfoBuilder, os_info: OsInfo) -> Result<()>;
@@ -102,8 +102,8 @@ pub mod ffi {
         fn crashinfo_build(builder: Box<CrashInfoBuilder>) -> Result<Box<CrashInfo>>;
 
         // StackFrame methods - wrappers for FFI type conversion
-        fn build_id_type(self: &mut StackFrame, build_id_type: BuildIdType);
-        fn file_type(self: &mut StackFrame, file_type: FileType);
+        fn build_id_type(self: &mut StackFrame, build_id_type: CxxBuildIdType);
+        fn file_type(self: &mut StackFrame, file_type: CxxFileType);
 
         // StackFrame methods - exposed directly
         fn with_ip(self: &mut StackFrame, ip: usize);
@@ -156,11 +156,11 @@ impl StackTrace {
 // ============================================================================
 
 impl CrashInfoBuilder {
-    pub fn set_kind(&mut self, kind: ffi::ErrorKind) -> anyhow::Result<()> {
+    pub fn set_kind(&mut self, kind: ffi::CxxErrorKind) -> anyhow::Result<()> {
         let internal_kind = match kind {
-            ffi::ErrorKind::Panic => crate::ErrorKind::Panic,
-            ffi::ErrorKind::UnhandledException => crate::ErrorKind::UnhandledException,
-            ffi::ErrorKind::UnixSignal => crate::ErrorKind::UnixSignal,
+            ffi::CxxErrorKind::Panic => crate::ErrorKind::Panic,
+            ffi::CxxErrorKind::UnhandledException => crate::ErrorKind::UnhandledException,
+            ffi::CxxErrorKind::UnixSignal => crate::ErrorKind::UnixSignal,
             _ => anyhow::bail!("Unknown error kind"),
         };
         self.with_kind(internal_kind)
@@ -215,22 +215,22 @@ pub fn crashinfo_build(builder: Box<CrashInfoBuilder>) -> anyhow::Result<Box<Cra
 // ============================================================================
 
 impl StackFrame {
-    pub fn build_id_type(&mut self, build_id_type: ffi::BuildIdType) {
+    pub fn build_id_type(&mut self, build_id_type: ffi::CxxBuildIdType) {
         let internal_type = match build_id_type {
-            ffi::BuildIdType::GNU => BuildIdType::GNU,
-            ffi::BuildIdType::GO => BuildIdType::GO,
-            ffi::BuildIdType::PDB => BuildIdType::PDB,
-            ffi::BuildIdType::SHA1 => BuildIdType::SHA1,
+            ffi::CxxBuildIdType::GNU => BuildIdType::GNU,
+            ffi::CxxBuildIdType::GO => BuildIdType::GO,
+            ffi::CxxBuildIdType::PDB => BuildIdType::PDB,
+            ffi::CxxBuildIdType::SHA1 => BuildIdType::SHA1,
             _ => return,
         };
         self.set_build_id_type(internal_type);
     }
 
-    pub fn file_type(&mut self, file_type: ffi::FileType) {
+    pub fn file_type(&mut self, file_type: ffi::CxxFileType) {
         let internal_type = match file_type {
-            ffi::FileType::APK => FileType::APK,
-            ffi::FileType::ELF => FileType::ELF,
-            ffi::FileType::PE => FileType::PE,
+            ffi::CxxFileType::APK => FileType::APK,
+            ffi::CxxFileType::ELF => FileType::ELF,
+            ffi::CxxFileType::PE => FileType::PE,
             _ => return,
         };
         self.set_file_type(internal_type);
