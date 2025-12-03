@@ -34,6 +34,12 @@ impl From<anyhow::Result<()>> for VoidResult {
     }
 }
 
+impl From<Error> for VoidResult {
+    fn from(value: Error) -> Self {
+        Self::Err(value)
+    }
+}
+
 /// A generic result type for when an operation may fail,
 /// or may return <T> in case of success.
 #[repr(C)]
@@ -66,5 +72,11 @@ impl<T> From<anyhow::Result<T>> for Result<T> {
             Ok(v) => Self::Ok(v),
             Err(err) => Self::Err(err.into()),
         }
+    }
+}
+
+impl<T> From<Error> for Result<T> {
+    fn from(value: Error) -> Self {
+        Self::Err(value)
     }
 }

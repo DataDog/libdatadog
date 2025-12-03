@@ -10,193 +10,291 @@ use std::process;
 use std::{fs, path::PathBuf};
 
 use anyhow::Context;
-use bin_tests::{build_artifacts, ArtifactType, ArtifactsBuild, BuildProfile};
+use bin_tests::{
+    build_artifacts,
+    test_runner::{run_crash_test_with_artifacts, CrashTestConfig, StandardArtifacts, ValidatorFn},
+    test_types::{CrashType, TestMode},
+    validation::PayloadValidator,
+    ArtifactType, ArtifactsBuild, BuildProfile,
+};
 use serde_json::Value;
 
-#[test]
-#[cfg_attr(miri, ignore)]
-fn test_crash_tracking_bin_debug() {
-    test_crash_tracking_bin(BuildProfile::Debug, "donothing", "null_deref");
+/// Macro to generate simple crash tracking tests using the new infrastructure.
+/// This replaces 16+ nearly identical test functions with a single declaration.
+macro_rules! crash_tracking_tests {
+    ($(($test_name:ident, $profile:expr, $mode:expr, $crash_type:expr)),* $(,)?) => {
+        $(
+            #[test]
+            #[cfg_attr(miri, ignore)]
+            fn $test_name() {
+                run_standard_crash_test_refactored($profile, $mode, $crash_type);
+            }
+        )*
+    };
 }
 
-#[test]
-#[cfg_attr(miri, ignore)]
-fn test_crash_tracking_bin_sigpipe() {
-    test_crash_tracking_bin(BuildProfile::Debug, "sigpipe", "null_deref");
+// Generate all simple crash tracking tests using the macro
+crash_tracking_tests! {
+    (test_crash_tracking_bin_debug, BuildProfile::Debug, TestMode::DoNothing, CrashType::NullDeref),
+    (test_crash_tracking_bin_sigpipe, BuildProfile::Debug, TestMode::SigPipe, CrashType::NullDeref),
+    (test_crash_tracking_bin_sigchld, BuildProfile::Debug, TestMode::SigChld, CrashType::NullDeref),
+    (test_crash_tracking_bin_sigchld_exec, BuildProfile::Debug, TestMode::SigChldExec, CrashType::NullDeref),
+    (test_crash_tracking_bin_sigstack, BuildProfile::Release, TestMode::DoNothingSigStack, CrashType::NullDeref),
+    (test_crash_tracking_bin_sigpipe_sigstack, BuildProfile::Release, TestMode::SigPipeSigStack, CrashType::NullDeref),
+    (test_crash_tracking_bin_sigchld_sigstack, BuildProfile::Release, TestMode::SigChldSigStack, CrashType::NullDeref),
+    (test_crash_tracking_bin_chained, BuildProfile::Release, TestMode::Chained, CrashType::NullDeref),
+    (test_crash_tracking_bin_fork, BuildProfile::Release, TestMode::Fork, CrashType::NullDeref),
+    (test_crash_tracking_bin_kill_sigabrt, BuildProfile::Release, TestMode::DoNothing, CrashType::KillSigAbrt),
+    (test_crash_tracking_bin_kill_sigill, BuildProfile::Release, TestMode::DoNothing, CrashType::KillSigIll),
+    (test_crash_tracking_bin_kill_sigbus, BuildProfile::Release, TestMode::DoNothing, CrashType::KillSigBus),
+    (test_crash_tracking_bin_kill_sigsegv, BuildProfile::Release, TestMode::DoNothing, CrashType::KillSigSegv),
+    (test_crash_tracking_bin_raise_sigabrt, BuildProfile::Release, TestMode::DoNothing, CrashType::RaiseSigAbrt),
+    (test_crash_tracking_bin_raise_sigill, BuildProfile::Release, TestMode::DoNothing, CrashType::RaiseSigIll),
+    (test_crash_tracking_bin_raise_sigbus, BuildProfile::Release, TestMode::DoNothing, CrashType::RaiseSigBus),
+    (test_crash_tracking_bin_raise_sigsegv, BuildProfile::Release, TestMode::DoNothing, CrashType::RaiseSigSegv),
+    (test_crash_tracking_bin_prechain_sigabrt, BuildProfile::Release, TestMode::PrechainAbort, CrashType::NullDeref),
 }
 
-#[test]
-#[cfg_attr(miri, ignore)]
-fn test_crash_tracking_bin_sigchld() {
-    test_crash_tracking_bin(BuildProfile::Debug, "sigchld", "null_deref");
+/// Standard crash test runner using the new refactored infrastructure.
+/// This eliminates the need for the old `test_crash_tracking_bin` function.
+fn run_standard_crash_test_refactored(
+    profile: BuildProfile,
+    mode: TestMode,
+    crash_type: CrashType,
+) {
+    let config = CrashTestConfig::new(profile, mode, crash_type);
+    let artifacts = StandardArtifacts::new(config.profile);
+    let artifacts_map = build_artifacts(&artifacts.as_slice()).unwrap();
+
+    let crash_type_str = crash_type.as_str();
+    let validator: ValidatorFn = Box::new(move |payload, fixtures| {
+        // Standard validations using the fluent API
+        PayloadValidator::new(payload).validate_counters()?;
+
+        // Validate siginfo and error message
+        let sig_info = &payload["sig_info"];
+        assert_siginfo_message(sig_info, crash_type_str);
+
+        let error = &payload["error"];
+        assert_error_message(&error["message"], sig_info);
+
+        // Validate telemetry
+        validate_telemetry(&fixtures.crash_telemetry_path, crash_type_str)?;
+
+        Ok(())
+    });
+
+    run_crash_test_with_artifacts(&config, &artifacts_map, &artifacts, validator).unwrap();
 }
 
-#[test]
-#[cfg_attr(miri, ignore)]
-fn test_crash_tracking_bin_sigchld_exec() {
-    test_crash_tracking_bin(BuildProfile::Debug, "sigchld_exec", "null_deref");
-}
-
-#[test]
-#[cfg_attr(miri, ignore)]
-fn test_crash_tracking_bin_sigstack() {
-    test_crash_tracking_bin(BuildProfile::Release, "donothing_sigstack", "null_deref");
-}
-
-#[test]
-#[cfg_attr(miri, ignore)]
-fn test_crash_tracking_bin_sigpipe_sigstack() {
-    test_crash_tracking_bin(BuildProfile::Release, "sigpipe_sigstack", "null_deref");
-}
-
-#[test]
-#[cfg_attr(miri, ignore)]
-fn test_crash_tracking_bin_sigchld_sigstack() {
-    test_crash_tracking_bin(BuildProfile::Release, "sigchld_sigstack", "null_deref");
-}
-
-#[test]
-#[cfg_attr(miri, ignore)]
-fn test_crash_tracking_bin_chained() {
-    test_crash_tracking_bin(BuildProfile::Release, "chained", "null_deref");
-}
-
-#[test]
-#[cfg_attr(miri, ignore)]
-fn test_crash_tracking_bin_fork() {
-    test_crash_tracking_bin(BuildProfile::Release, "fork", "null_deref");
-}
-
-#[test]
-#[cfg_attr(miri, ignore)]
-fn test_crash_tracking_bin_kill_sigabrt() {
-    // For now, do the base test (donothing).  For future we should probably also test chaining.
-    test_crash_tracking_bin(BuildProfile::Release, "donothing", "kill_sigabrt");
-}
-
-#[test]
-#[cfg_attr(miri, ignore)]
-fn test_crash_tracking_bin_kill_sigill() {
-    // For now, do the base test (donothing).  For future we should probably also test chaining.
-    test_crash_tracking_bin(BuildProfile::Release, "donothing", "kill_sigill");
-}
-
-#[test]
-#[cfg_attr(miri, ignore)]
-fn test_crash_tracking_bin_kill_sigbus() {
-    // For now, do the base test (donothing).  For future we should probably also test chaining.
-    test_crash_tracking_bin(BuildProfile::Release, "donothing", "kill_sigbus");
-}
-
-#[test]
-#[cfg_attr(miri, ignore)]
-fn test_crash_tracking_bin_kill_sigsegv() {
-    // For now, do the base test (donothing).  For future we should probably also test chaining.
-    test_crash_tracking_bin(BuildProfile::Release, "donothing", "kill_sigsegv");
-}
-
-#[test]
-#[cfg_attr(miri, ignore)]
-fn test_crash_tracking_bin_raise_sigabrt() {
-    // For now, do the base test (donothing).  For future we should probably also test chaining.
-    test_crash_tracking_bin(BuildProfile::Release, "donothing", "raise_sigabrt");
-}
-
-#[test]
-#[cfg_attr(miri, ignore)]
-fn test_crash_tracking_bin_raise_sigill() {
-    // For now, do the base test (donothing).  For future we should probably also test chaining.
-    test_crash_tracking_bin(BuildProfile::Release, "donothing", "raise_sigill");
-}
-
-#[test]
-#[cfg_attr(miri, ignore)]
-fn test_crash_tracking_bin_raise_sigbus() {
-    // For now, do the base test (donothing).  For future we should probably also test chaining.
-    test_crash_tracking_bin(BuildProfile::Release, "donothing", "raise_sigbus");
-}
-
-#[test]
-#[cfg_attr(miri, ignore)]
-fn test_crash_tracking_bin_raise_sigsegv() {
-    // For now, do the base test (donothing).  For future we should probably also test chaining.
-    test_crash_tracking_bin(BuildProfile::Release, "donothing", "raise_sigsegv");
-}
-
-#[test]
-#[cfg_attr(miri, ignore)]
-fn test_crash_tracking_bin_prechain_sigabrt() {
-    test_crash_tracking_bin(BuildProfile::Release, "prechain_abort", "null_deref");
-}
+// These tests below use the new infrastructure but require custom validation logic
+// that doesn't fit the simple macro-generated pattern.
 
 #[test]
 #[cfg_attr(miri, ignore)]
 fn test_crash_tracking_bin_runtime_callback_frame() {
-    test_crash_tracking_bin_runtime_callback_frame_impl(
+    let config = CrashTestConfig::new(
         BuildProfile::Release,
-        "runtime_callback_frame",
-        "null_deref",
+        TestMode::RuntimeCallbackFrame,
+        CrashType::NullDeref,
     );
+    let artifacts = StandardArtifacts::new(config.profile);
+    let artifacts_map = build_artifacts(&artifacts.as_slice()).unwrap();
+
+    let validator: ValidatorFn = Box::new(|payload, fixtures| {
+        PayloadValidator::new(payload).validate_counters()?;
+
+        let sig_info = &payload["sig_info"];
+        assert_siginfo_message(sig_info, "null_deref");
+
+        let error = &payload["error"];
+        assert_error_message(&error["message"], sig_info);
+
+        validate_runtime_callback_frame_data(payload);
+        validate_telemetry(&fixtures.crash_telemetry_path, "null_deref")?;
+
+        Ok(())
+    });
+
+    run_crash_test_with_artifacts(&config, &artifacts_map, &artifacts, validator).unwrap();
 }
 
 #[test]
 #[cfg_attr(miri, ignore)]
 fn test_crash_tracking_bin_runtime_callback_string() {
-    test_crash_tracking_bin_runtime_callback_string_impl(
+    let config = CrashTestConfig::new(
         BuildProfile::Release,
-        "runtime_callback_string",
-        "null_deref",
+        TestMode::RuntimeCallbackString,
+        CrashType::NullDeref,
     );
+    let artifacts = StandardArtifacts::new(config.profile);
+    let artifacts_map = build_artifacts(&artifacts.as_slice()).unwrap();
+
+    let validator: ValidatorFn = Box::new(|payload, fixtures| {
+        PayloadValidator::new(payload).validate_counters()?;
+
+        let sig_info = &payload["sig_info"];
+        assert_siginfo_message(sig_info, "null_deref");
+
+        let error = &payload["error"];
+        assert_error_message(&error["message"], sig_info);
+
+        validate_runtime_callback_string_data(payload);
+        validate_telemetry(&fixtures.crash_telemetry_path, "null_deref")?;
+
+        Ok(())
+    });
+
+    run_crash_test_with_artifacts(&config, &artifacts_map, &artifacts, validator).unwrap();
 }
 
 #[test]
 #[cfg_attr(miri, ignore)]
 fn test_crash_tracking_bin_no_runtime_callback() {
-    test_crash_tracking_bin_no_runtime_callback_impl(
+    let config = CrashTestConfig::new(
         BuildProfile::Release,
-        "donothing",
-        "null_deref",
+        TestMode::DoNothing,
+        CrashType::NullDeref,
     );
+    let artifacts = StandardArtifacts::new(config.profile);
+    let artifacts_map = build_artifacts(&artifacts.as_slice()).unwrap();
+
+    let validator: ValidatorFn = Box::new(|payload, fixtures| {
+        PayloadValidator::new(payload).validate_counters()?;
+
+        let sig_info = &payload["sig_info"];
+        assert_siginfo_message(sig_info, "null_deref");
+
+        let error = &payload["error"];
+        assert_error_message(&error["message"], sig_info);
+
+        validate_no_runtime_callback_data(payload);
+        validate_telemetry(&fixtures.crash_telemetry_path, "null_deref")?;
+
+        Ok(())
+    });
+
+    run_crash_test_with_artifacts(&config, &artifacts_map, &artifacts, validator).unwrap();
 }
 
 #[test]
 #[cfg_attr(miri, ignore)]
 fn test_crash_tracking_bin_runtime_callback_frame_invalid_utf8() {
-    test_crash_tracking_bin_runtime_callback_frame_invalid_utf8_impl(
+    let config = CrashTestConfig::new(
         BuildProfile::Release,
-        "runtime_callback_frame_invalid_utf8",
-        "null_deref",
+        TestMode::RuntimeCallbackFrameInvalidUtf8,
+        CrashType::NullDeref,
     );
+    let artifacts = StandardArtifacts::new(config.profile);
+    let artifacts_map = build_artifacts(&artifacts.as_slice()).unwrap();
+
+    let validator: ValidatorFn = Box::new(|payload, fixtures| {
+        PayloadValidator::new(payload).validate_counters()?;
+
+        let sig_info = &payload["sig_info"];
+        assert_siginfo_message(sig_info, "null_deref");
+
+        let error = &payload["error"];
+        assert_error_message(&error["message"], sig_info);
+
+        validate_runtime_callback_frame_invalid_utf8_data(payload);
+        validate_telemetry(&fixtures.crash_telemetry_path, "null_deref")?;
+
+        Ok(())
+    });
+
+    run_crash_test_with_artifacts(&config, &artifacts_map, &artifacts, validator).unwrap();
 }
 
 #[test]
 #[cfg_attr(miri, ignore)]
 fn test_crash_ping_timing_and_content() {
-    test_crash_tracking_bin(BuildProfile::Release, "donothing", "null_deref");
+    // This test is identical to the simple donothing test
+    run_standard_crash_test_refactored(
+        BuildProfile::Release,
+        TestMode::DoNothing,
+        CrashType::NullDeref,
+    );
 }
 
 #[test]
 #[cfg_attr(miri, ignore)]
 fn test_crash_tracking_errors_intake_upload() {
-    test_crash_tracking_bin_with_errors_intake(BuildProfile::Release, "donothing", "null_deref");
+    let config = CrashTestConfig::new(
+        BuildProfile::Release,
+        TestMode::DoNothing,
+        CrashType::NullDeref,
+    )
+    .with_env("DD_CRASHTRACKING_ERRORS_INTAKE_ENABLED", "true");
+
+    let artifacts = StandardArtifacts::new(config.profile);
+    let artifacts_map = build_artifacts(&artifacts.as_slice()).unwrap();
+
+    let validator: ValidatorFn = Box::new(|_payload, fixtures| {
+        let errors_intake_path = fixtures.crash_profile_path.with_extension("errors");
+        assert!(
+            errors_intake_path.exists(),
+            "Errors intake file should be created at {}",
+            errors_intake_path.display()
+        );
+
+        let errors_intake_content =
+            fs::read(&errors_intake_path).context("reading errors intake payload")?;
+
+        assert_errors_intake_payload(&errors_intake_content, "null_deref");
+        validate_telemetry(&fixtures.crash_telemetry_path, "null_deref")?;
+
+        Ok(())
+    });
+
+    run_crash_test_with_artifacts(&config, &artifacts_map, &artifacts, validator).unwrap();
 }
 
 #[test]
 #[cfg_attr(miri, ignore)]
 fn test_crash_tracking_errors_intake_crash_ping() {
-    test_crash_tracking_errors_intake_dual_upload(BuildProfile::Release, "donothing", "null_deref");
+    let config = CrashTestConfig::new(
+        BuildProfile::Release,
+        TestMode::DoNothing,
+        CrashType::NullDeref,
+    )
+    .with_env("DD_CRASHTRACKING_ERRORS_INTAKE_ENABLED", "true");
+
+    let artifacts = StandardArtifacts::new(config.profile);
+    let artifacts_map = build_artifacts(&artifacts.as_slice()).unwrap();
+
+    let validator: ValidatorFn = Box::new(|_payload, fixtures| {
+        let errors_intake_path = fixtures.crash_profile_path.with_extension("errors");
+        assert!(errors_intake_path.exists());
+
+        let errors_intake_content =
+            fs::read(&errors_intake_path).context("reading errors intake payload")?;
+
+        assert_errors_intake_payload(&errors_intake_content, "null_deref");
+        validate_telemetry(&fixtures.crash_telemetry_path, "null_deref")?;
+
+        Ok(())
+    });
+
+    run_crash_test_with_artifacts(&config, &artifacts_map, &artifacts, validator).unwrap();
 }
 
 #[test]
 #[cfg_attr(miri, ignore)]
 #[cfg(unix)]
 fn test_crash_tracking_errors_intake_uds_socket() {
+    // This test requires special UDS socket setup, keeping the old implementation
     test_crash_tracking_bin_with_errors_intake_uds(
         BuildProfile::Release,
         "donothing",
         "null_deref",
     );
 }
+
+// ====================================================================================
+// CALLSTACK VALIDATION TESTS - MIGRATED TO CUSTOM TEST RUNNER
+// ====================================================================================
+// These tests use `run_custom_crash_test` with the crashing_test_app artifact.
 
 // This test is disabled for now on x86_64 musl and macos
 // It seems that on aarch64 musl, libc has CFI which allows
@@ -208,62 +306,28 @@ fn test_crasht_tracking_validate_callstack() {
     test_crash_tracking_callstack()
 }
 
-#[test]
-#[cfg(not(any(all(target_arch = "x86_64", target_env = "musl"), target_os = "macos")))]
-#[cfg_attr(miri, ignore)]
 fn test_crash_tracking_callstack() {
-    let (_, crashtracker_receiver) = setup_crashtracking_crates(BuildProfile::Release);
+    use bin_tests::test_runner::run_custom_crash_test;
+
+    // Set up custom artifacts: receiver + crashing_test_app (in Debug mode)
+    let crashtracker_receiver = ArtifactsBuild {
+        name: "test_crashtracker_receiver".to_owned(),
+        build_profile: BuildProfile::Release,
+        artifact_type: ArtifactType::Bin,
+        triple_target: None,
+        ..Default::default()
+    };
 
     let crashing_app = ArtifactsBuild {
         name: "crashing_test_app".to_owned(),
-        // compile in debug so we avoid inlining
-        // and can check the callchain
+        // compile in debug so we avoid inlining and can check the callchain
         build_profile: BuildProfile::Debug,
         artifact_type: ArtifactType::Bin,
         triple_target: None,
         ..Default::default()
     };
 
-    let fixtures = setup_test_fixtures(&[&crashtracker_receiver, &crashing_app]);
-
-    let mut p = process::Command::new(&fixtures.artifacts[&crashing_app])
-        .arg(format!("file://{}", fixtures.crash_profile_path.display()))
-        .arg(fixtures.artifacts[&crashtracker_receiver].as_os_str())
-        .arg(&fixtures.output_dir)
-        .spawn()
-        .unwrap();
-
-    let exit_status = bin_tests::timeit!("exit after signal", {
-        eprintln!("Waiting for exit");
-        p.wait().unwrap()
-    });
-    assert!(!exit_status.success());
-
-    let stderr_path = format!("{0}/out.stderr", fixtures.output_dir.display());
-    let stderr = fs::read(stderr_path)
-        .context("reading crashtracker stderr")
-        .unwrap();
-    let stdout_path = format!("{0}/out.stdout", fixtures.output_dir.display());
-    let stdout = fs::read(stdout_path)
-        .context("reading crashtracker stdout")
-        .unwrap();
-    let s = String::from_utf8(stderr);
-    assert!(
-        matches!(
-            s.as_deref(),
-            Ok("") | Ok("Failed to fully receive crash.  Exit state was: StackTrace([])\n")
-            | Ok("Failed to fully receive crash.  Exit state was: InternalError(\"{\\\"ip\\\": \\\"\")\n"),
-        ),
-        "got {s:?}"
-    );
-    assert_eq!(Ok(""), String::from_utf8(stdout).as_deref());
-
-    let crash_profile = fs::read(fixtures.crash_profile_path)
-        .context("reading crashtracker profiling payload")
-        .unwrap();
-    let crash_payload = serde_json::from_slice::<serde_json::Value>(&crash_profile)
-        .context("deserializing crashtracker profiling payload to json")
-        .unwrap();
+    let artifacts_map = build_artifacts(&[&crashtracker_receiver, &crashing_app]).unwrap();
 
     // Note: in Release, we do not have the crate and module name prepended to the function name
     // Here we compile the crashing app in Debug.
@@ -275,190 +339,21 @@ fn test_crash_tracking_callstack() {
         "crashing_test_app::main",
     ];
 
-    let crashing_callstack = &crash_payload["error"]["stack"]["frames"];
-    assert!(
-        crashing_callstack.as_array().unwrap().len() >= expected_functions.len(),
-        "crashing thread callstacks does have less frames than expected. Current: {}, Expected: {}",
-        crashing_callstack.as_array().unwrap().len(),
-        expected_functions.len()
-    );
-
-    let function_names: Vec<&str> = crashing_callstack
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|f| f["function"].as_str().unwrap_or(""))
-        .collect();
-
-    for (expected, actual) in expected_functions.iter().zip(function_names.iter()) {
-        assert_eq!(expected, actual);
-    }
-}
-
-fn test_crash_tracking_bin_runtime_callback_frame_impl(
-    crash_tracking_receiver_profile: BuildProfile,
-    mode: &str,
-    crash_typ: &str,
-) {
-    let (crashtracker_bin, crashtracker_receiver) =
-        setup_crashtracking_crates(crash_tracking_receiver_profile);
-    let fixtures = setup_test_fixtures(&[&crashtracker_receiver, &crashtracker_bin]);
-
-    let mut p = process::Command::new(&fixtures.artifacts[&crashtracker_bin])
-        .arg(format!("file://{}", fixtures.crash_profile_path.display()))
-        .arg(fixtures.artifacts[&crashtracker_receiver].as_os_str())
-        .arg(&fixtures.output_dir)
-        .arg(mode)
-        .arg(crash_typ)
-        .spawn()
-        .unwrap();
-
-    let exit_status = bin_tests::timeit!("exit after signal", {
-        eprintln!("Waiting for exit");
-        p.wait().unwrap()
-    });
-
-    assert!(!exit_status.success());
-
-    let stderr_path = format!("{0}/out.stderr", fixtures.output_dir.display());
-    let stderr = fs::read(stderr_path)
-        .context("reading crashtracker stderr")
-        .unwrap();
-    let stdout_path = format!("{0}/out.stdout", fixtures.output_dir.display());
-    let stdout = fs::read(stdout_path)
-        .context("reading crashtracker stdout")
-        .unwrap();
-    let s = String::from_utf8(stderr);
-    assert!(
-        matches!(
-            s.as_deref(),
-            Ok("") | Ok("Failed to fully receive crash.  Exit state was: StackTrace([])\n")
-            | Ok("Failed to fully receive crash.  Exit state was: InternalError(\"{\\\"ip\\\": \\\"\")\n"),
-        ),
-        "got {s:?}"
-    );
-    assert_eq!(Ok(""), String::from_utf8(stdout).as_deref());
-
-    // Check the crash data
-    let crash_profile = fs::read(&fixtures.crash_profile_path)
-        .context("reading crashtracker profiling payload")
-        .unwrap();
-    let crash_payload = serde_json::from_slice::<serde_json::Value>(&crash_profile)
-        .context("deserializing crashtracker profiling payload to json")
-        .unwrap();
-
-    // Validate normal crash data first
-    assert_eq!(
-        serde_json::json!({
-          "profiler_collecting_sample": 1,
-          "profiler_inactive": 0,
-          "profiler_serializing": 0,
-          "profiler_unwinding": 0
-        }),
-        crash_payload["counters"],
-    );
-
-    let sig_info = &crash_payload["sig_info"];
-    assert_siginfo_message(sig_info, crash_typ);
-
-    let error = &crash_payload["error"];
-    assert_error_message(&error["message"], sig_info);
-
-    // Validate runtime callback frame data
-    validate_runtime_callback_frame_data(&crash_payload);
-
-    let crash_telemetry = fs::read(&fixtures.crash_telemetry_path)
-        .context("reading crashtracker telemetry payload")
-        .unwrap();
-    let payloads = crash_telemetry.split(|&b| b == b'\n').collect::<Vec<_>>();
-    for payload in payloads {
-        if String::from_utf8_lossy(payload).contains("is_crash:true") {
-            assert_telemetry_message(payload, crash_typ);
-        }
-    }
-}
-
-fn test_crash_tracking_bin_runtime_callback_frame_invalid_utf8_impl(
-    crash_tracking_receiver_profile: BuildProfile,
-    mode: &str,
-    crash_typ: &str,
-) {
-    let (crashtracker_bin, crashtracker_receiver) =
-        setup_crashtracking_crates(crash_tracking_receiver_profile);
-    let fixtures = setup_test_fixtures(&[&crashtracker_receiver, &crashtracker_bin]);
-
-    let mut p = process::Command::new(&fixtures.artifacts[&crashtracker_bin])
-        .arg(format!("file://{}", fixtures.crash_profile_path.display()))
-        .arg(fixtures.artifacts[&crashtracker_receiver].as_os_str())
-        .arg(&fixtures.output_dir)
-        .arg(mode)
-        .arg(crash_typ)
-        .spawn()
-        .unwrap();
-
-    let exit_status = bin_tests::timeit!("exit after signal", {
-        eprintln!("Waiting for exit");
-        p.wait().unwrap()
-    });
-
-    assert!(!exit_status.success());
-
-    let stderr_path = format!("{0}/out.stderr", fixtures.output_dir.display());
-    let stderr = fs::read(stderr_path)
-        .context("reading crashtracker stderr")
-        .unwrap();
-    let stdout_path = format!("{0}/out.stdout", fixtures.output_dir.display());
-    let stdout = fs::read(stdout_path)
-        .context("reading crashtracker stdout")
-        .unwrap();
-    let s = String::from_utf8(stderr);
-    assert!(
-        matches!(
-            s.as_deref(),
-            Ok("") | Ok("Failed to fully receive crash.  Exit state was: StackTrace([])\n")
-            | Ok("Failed to fully receive crash.  Exit state was: InternalError(\"{\\\"ip\\\": \\\"\")\n"),
-        ),
-        "got {s:?}"
-    );
-    assert_eq!(Ok(""), String::from_utf8(stdout).as_deref());
-
-    // Check the crash data
-    let crash_profile = fs::read(&fixtures.crash_profile_path)
-        .context("reading crashtracker profiling payload")
-        .unwrap();
-    let crash_payload = serde_json::from_slice::<serde_json::Value>(&crash_profile)
-        .context("deserializing crashtracker profiling payload to json")
-        .unwrap();
-
-    // Validate normal crash data first
-    assert_eq!(
-        serde_json::json!({
-          "profiler_collecting_sample": 1,
-          "profiler_inactive": 0,
-          "profiler_serializing": 0,
-          "profiler_unwinding": 0
-        }),
-        crash_payload["counters"],
-    );
-
-    let sig_info = &crash_payload["sig_info"];
-    assert_siginfo_message(sig_info, crash_typ);
-
-    let error = &crash_payload["error"];
-    assert_error_message(&error["message"], sig_info);
-
-    // Validate runtime callback frame data with invalid UTF-8
-    validate_runtime_callback_frame_invalid_utf8_data(&crash_payload);
-
-    let crash_telemetry = fs::read(&fixtures.crash_telemetry_path)
-        .context("reading crashtracker telemetry payload")
-        .unwrap();
-    let payloads = crash_telemetry.split(|&b| b == b'\n').collect::<Vec<_>>();
-    for payload in payloads {
-        if String::from_utf8_lossy(payload).contains("is_crash:true") {
-            assert_telemetry_message(payload, crash_typ);
-        }
-    }
+    run_custom_crash_test(
+        &artifacts_map[&crashing_app],
+        |cmd, fixtures| {
+            cmd.arg(format!("file://{}", fixtures.crash_profile_path.display()))
+                .arg(&artifacts_map[&crashtracker_receiver])
+                .arg(&fixtures.output_dir);
+        },
+        false, // expect crash (not success)
+        |payload, _fixtures| {
+            // Use the new callstack validator
+            PayloadValidator::new(payload).validate_callstack_functions(&expected_functions)?;
+            Ok(())
+        },
+    )
+    .unwrap();
 }
 
 fn validate_runtime_callback_frame_data(crash_payload: &Value) {
@@ -815,276 +710,6 @@ fn validate_no_runtime_callback_data(crash_payload: &Value) {
     // it means no experimental features were added to the crash report
 }
 
-fn test_crash_tracking_bin_runtime_callback_string_impl(
-    crash_tracking_receiver_profile: BuildProfile,
-    mode: &str,
-    crash_typ: &str,
-) {
-    let (crashtracker_bin, crashtracker_receiver) =
-        setup_crashtracking_crates(crash_tracking_receiver_profile);
-    let fixtures = setup_test_fixtures(&[&crashtracker_receiver, &crashtracker_bin]);
-
-    let mut p = process::Command::new(&fixtures.artifacts[&crashtracker_bin])
-        .arg(format!("file://{}", fixtures.crash_profile_path.display()))
-        .arg(fixtures.artifacts[&crashtracker_receiver].as_os_str())
-        .arg(&fixtures.output_dir)
-        .arg(mode)
-        .arg(crash_typ)
-        .spawn()
-        .unwrap();
-
-    let exit_status = bin_tests::timeit!("exit after signal", {
-        eprintln!("Waiting for exit");
-        p.wait().unwrap()
-    });
-
-    // Runtime callback tests should crash like normal tests
-    assert!(!exit_status.success());
-
-    let stderr_path = format!("{0}/out.stderr", fixtures.output_dir.display());
-    let stderr = fs::read(stderr_path)
-        .context("reading crashtracker stderr")
-        .unwrap();
-    let stdout_path = format!("{0}/out.stdout", fixtures.output_dir.display());
-    let stdout = fs::read(stdout_path)
-        .context("reading crashtracker stdout")
-        .unwrap();
-    let s = String::from_utf8(stderr);
-    assert!(
-        matches!(
-            s.as_deref(),
-            Ok("") | Ok("Failed to fully receive crash.  Exit state was: StackTrace([])\n")
-            | Ok("Failed to fully receive crash.  Exit state was: InternalError(\"{\\\"ip\\\": \\\"\")\n"),
-        ),
-        "got {s:?}"
-    );
-    assert_eq!(Ok(""), String::from_utf8(stdout).as_deref());
-
-    // Check the crash data
-    let crash_profile = fs::read(&fixtures.crash_profile_path)
-        .context("reading crashtracker profiling payload")
-        .unwrap();
-    let crash_payload = serde_json::from_slice::<serde_json::Value>(&crash_profile)
-        .context("deserializing crashtracker profiling payload to json")
-        .unwrap();
-
-    // Validate normal crash data first
-    assert_eq!(
-        serde_json::json!({
-          "profiler_collecting_sample": 1,
-          "profiler_inactive": 0,
-          "profiler_serializing": 0,
-          "profiler_unwinding": 0
-        }),
-        crash_payload["counters"],
-    );
-
-    let sig_info = &crash_payload["sig_info"];
-    assert_siginfo_message(sig_info, crash_typ);
-
-    let error = &crash_payload["error"];
-    assert_error_message(&error["message"], sig_info);
-
-    // Validate runtime callback string data
-    validate_runtime_callback_string_data(&crash_payload);
-
-    let crash_telemetry = fs::read(&fixtures.crash_telemetry_path)
-        .context("reading crashtracker telemetry payload")
-        .unwrap();
-    let payloads = crash_telemetry.split(|&b| b == b'\n').collect::<Vec<_>>();
-    for payload in payloads {
-        if String::from_utf8_lossy(payload).contains("is_crash:true") {
-            assert_telemetry_message(payload, crash_typ);
-        }
-    }
-}
-
-fn test_crash_tracking_bin_no_runtime_callback_impl(
-    crash_tracking_receiver_profile: BuildProfile,
-    mode: &str,
-    crash_typ: &str,
-) {
-    let (crashtracker_bin, crashtracker_receiver) =
-        setup_crashtracking_crates(crash_tracking_receiver_profile);
-    let fixtures = setup_test_fixtures(&[&crashtracker_receiver, &crashtracker_bin]);
-
-    let mut p = process::Command::new(&fixtures.artifacts[&crashtracker_bin])
-        .arg(format!("file://{}", fixtures.crash_profile_path.display()))
-        .arg(fixtures.artifacts[&crashtracker_receiver].as_os_str())
-        .arg(&fixtures.output_dir)
-        .arg(mode)
-        .arg(crash_typ)
-        .spawn()
-        .unwrap();
-
-    let exit_status = bin_tests::timeit!("exit after signal", {
-        eprintln!("Waiting for exit");
-        p.wait().unwrap()
-    });
-
-    // Should crash like normal tests
-    assert!(!exit_status.success());
-
-    let stderr_path = format!("{0}/out.stderr", fixtures.output_dir.display());
-    let stderr = fs::read(stderr_path)
-        .context("reading crashtracker stderr")
-        .unwrap();
-    let stdout_path = format!("{0}/out.stdout", fixtures.output_dir.display());
-    let stdout = fs::read(stdout_path)
-        .context("reading crashtracker stdout")
-        .unwrap();
-    let s = String::from_utf8(stderr);
-    assert!(
-        matches!(
-            s.as_deref(),
-            Ok("") | Ok("Failed to fully receive crash.  Exit state was: StackTrace([])\n")
-            | Ok("Failed to fully receive crash.  Exit state was: InternalError(\"{\\\"ip\\\": \\\"\")\n"),
-        ),
-        "got {s:?}"
-    );
-    assert_eq!(Ok(""), String::from_utf8(stdout).as_deref());
-
-    // Check the crash data
-    let crash_profile = fs::read(&fixtures.crash_profile_path)
-        .context("reading crashtracker profiling payload")
-        .unwrap();
-    let crash_payload = serde_json::from_slice::<serde_json::Value>(&crash_profile)
-        .context("deserializing crashtracker profiling payload to json")
-        .unwrap();
-
-    // Validate normal crash data first
-    assert_eq!(
-        serde_json::json!({
-          "profiler_collecting_sample": 1,
-          "profiler_inactive": 0,
-          "profiler_serializing": 0,
-          "profiler_unwinding": 0
-        }),
-        crash_payload["counters"],
-    );
-
-    let sig_info = &crash_payload["sig_info"];
-    assert_siginfo_message(sig_info, crash_typ);
-
-    let error = &crash_payload["error"];
-    assert_error_message(&error["message"], sig_info);
-
-    // Validate no runtime callback data is present
-    validate_no_runtime_callback_data(&crash_payload);
-
-    let crash_telemetry = fs::read(&fixtures.crash_telemetry_path)
-        .context("reading crashtracker telemetry payload")
-        .unwrap();
-    let payloads = crash_telemetry.split(|&b| b == b'\n').collect::<Vec<_>>();
-    for payload in payloads {
-        if String::from_utf8_lossy(payload).contains("is_crash:true") {
-            assert_telemetry_message(payload, crash_typ);
-        }
-    }
-}
-
-fn test_crash_tracking_bin(
-    crash_tracking_receiver_profile: BuildProfile,
-    mode: &str,
-    crash_typ: &str,
-) {
-    let (crashtracker_bin, crashtracker_receiver) =
-        setup_crashtracking_crates(crash_tracking_receiver_profile);
-    let fixtures = setup_test_fixtures(&[&crashtracker_receiver, &crashtracker_bin]);
-
-    let mut p = process::Command::new(&fixtures.artifacts[&crashtracker_bin])
-        .arg(format!("file://{}", fixtures.crash_profile_path.display()))
-        .arg(fixtures.artifacts[&crashtracker_receiver].as_os_str())
-        .arg(&fixtures.output_dir)
-        .arg(mode)
-        .arg(crash_typ)
-        .spawn()
-        .unwrap();
-    let exit_status = bin_tests::timeit!("exit after signal", {
-        eprintln!("Waiting for exit");
-        p.wait().unwrap()
-    });
-
-    // When we raise SIGSEGV/SIGBUS, the chained handler doesn't kill the program
-    // Presumably because continuing after raise is allowed.
-    // Not sure why sigill behaves differently??
-    // TODO: figure that out.
-    match crash_typ {
-        "kill_sigabrt" | "kill_sigill" | "null_deref" | "raise_sigabrt" | "raise_sigill" => {
-            assert!(!exit_status.success())
-        }
-        "kill_sigbus" | "kill_sigsegv" | "raise_sigbus" | "raise_sigsegv" => {
-            assert!(exit_status.success())
-        }
-        _ => unreachable!("{crash_typ} shouldn't happen"),
-    }
-
-    let stderr_path = format!("{0}/out.stderr", fixtures.output_dir.display());
-    let stderr = fs::read(stderr_path)
-        .context("reading crashtracker stderr")
-        .unwrap();
-    let stdout_path = format!("{0}/out.stdout", fixtures.output_dir.display());
-    let stdout = fs::read(stdout_path)
-        .context("reading crashtracker stdout")
-        .unwrap();
-    let s = String::from_utf8(stderr);
-    assert!(
-        matches!(
-            s.as_deref(),
-            Ok("") | Ok("Failed to fully receive crash.  Exit state was: StackTrace([])\n")
-            | Ok("Failed to fully receive crash.  Exit state was: InternalError(\"{\\\"ip\\\": \\\"\")\n"),
-        ),
-        "got {s:?}"
-    );
-    assert_eq!(Ok(""), String::from_utf8(stdout).as_deref());
-
-    // Check the crash data
-    let crash_profile = fs::read(&fixtures.crash_profile_path)
-        .context("reading crashtracker profiling payload")
-        .unwrap();
-    let crash_payload = serde_json::from_slice::<serde_json::Value>(&crash_profile)
-        .context("deserializing crashtracker profiling payload to json")
-        .unwrap();
-    assert_eq!(
-        serde_json::json!({
-          "profiler_collecting_sample": 1,
-          "profiler_inactive": 0,
-          "profiler_serializing": 0,
-          "profiler_unwinding": 0
-        }),
-        crash_payload["counters"],
-    );
-    let sig_info = &crash_payload["sig_info"];
-    assert_siginfo_message(sig_info, crash_typ);
-
-    let error = &crash_payload["error"];
-    assert_error_message(&error["message"], sig_info);
-
-    let crash_telemetry = fs::read(&fixtures.crash_telemetry_path)
-        .context("reading crashtracker telemetry payload")
-        .unwrap();
-    let payloads = crash_telemetry.split(|&b| b == b'\n').collect::<Vec<_>>();
-    for payload in payloads {
-        if String::from_utf8_lossy(payload).contains("is_crash:true") {
-            assert_telemetry_message(payload, crash_typ);
-        }
-    }
-    // assert_telemetry_message(&crash_telemetry, crash_typ);
-
-    // Crashtracking signal handler chaining tests, as well as other tests, might only be able to
-    // influence system state after the main application has crashed, and has therefore lost the
-    // ability to influence the outcome of the test.  Those tests should create an "INVALID" file
-    // in the output directory.
-    // - If the file exists and contains only a single 'O' character, the test passes
-    // - Likewise, if the file does not exist, the test passes
-    // - Tests are free to output additional information in the file in case of a failure; it'll be
-    //   read here
-    let invalid_path = format!("{0}/INVALID", fixtures.output_dir.display());
-    if let Ok(invalid) = fs::read(invalid_path) {
-        assert_eq!(invalid, b"O");
-    }
-}
-
 fn assert_error_message(message: &Value, sig_info: &Value) {
     let expected_message = format!(
         "Process terminated with {} ({})",
@@ -1172,6 +797,24 @@ fn assert_siginfo_message(sig_info: &Value, crash_typ: &str) {
 // - CrashReport: deserializes the first JSON payload (crash report)
 // - Whole: deserializes the whole telemetry payload
 // TODO (gyuheon): Refactor test helpers to have shared functionality for testing crash pings
+/// Helper function to validate telemetry file (used by refactored tests)
+fn validate_telemetry(telemetry_path: &Path, crash_type_str: &str) -> anyhow::Result<()> {
+    let crash_telemetry = fs::read(telemetry_path).with_context(|| {
+        format!(
+            "reading crashtracker telemetry payload at {:?}",
+            telemetry_path
+        )
+    })?;
+
+    let payloads = crash_telemetry.split(|&b| b == b'\n').collect::<Vec<_>>();
+    for payload in payloads {
+        if String::from_utf8_lossy(payload).contains("is_crash:true") {
+            assert_telemetry_message(payload, crash_type_str);
+        }
+    }
+    Ok(())
+}
+
 fn assert_telemetry_message(crash_telemetry: &[u8], crash_typ: &str) {
     let telemetry_payload: Value = serde_json::from_slice::<Value>(crash_telemetry)
         .context("deserializing whole telemetry payload to JSON")
@@ -1298,7 +941,7 @@ fn crash_tracking_empty_endpoint() {
         .arg(&fixtures.output_dir)
         .arg("donothing")
         .arg("null_deref")
-        .env("_DD_ERRORS_INTAKE_ENABLED", "true")
+        .env("DD_CRASHTRACKING_ERRORS_INTAKE_ENABLED", "true")
         .env(
             "DD_TRACE_AGENT_URL",
             format!("unix://{}", socket_path.display()),
@@ -1451,6 +1094,8 @@ fn assert_crash_ping_message(body: &str) {
     assert_eq!(message_json["kind"].as_str(), Some("Crash ping"));
 }
 
+// Old TestFixtures struct kept for UDS socket tests that weren't migrated
+#[allow(dead_code)]
 struct TestFixtures<'a> {
     tmpdir: tempfile::TempDir,
     crash_profile_path: PathBuf,
@@ -1495,129 +1140,6 @@ fn setup_crashtracking_crates(
     (crashtracker_bin, crashtracker_receiver)
 }
 
-fn test_crash_tracking_bin_with_errors_intake(
-    crash_tracking_receiver_profile: BuildProfile,
-    mode: &str,
-    crash_typ: &str,
-) {
-    let (crashtracker_bin, crashtracker_receiver) =
-        setup_crashtracking_crates(crash_tracking_receiver_profile);
-    let fixtures = setup_test_fixtures(&[&crashtracker_receiver, &crashtracker_bin]);
-
-    let mut p = process::Command::new(&fixtures.artifacts[&crashtracker_bin])
-        .arg(format!("file://{}", fixtures.crash_profile_path.display()))
-        .arg(fixtures.artifacts[&crashtracker_receiver].as_os_str())
-        .arg(&fixtures.output_dir)
-        .arg(mode)
-        .arg(crash_typ)
-        .env("_DD_ERRORS_INTAKE_ENABLED", "true")
-        .spawn()
-        .unwrap();
-
-    let exit_status = bin_tests::timeit!("exit after signal", {
-        eprintln!("Waiting for exit");
-        p.wait().unwrap()
-    });
-
-    match crash_typ {
-        "kill_sigabrt" | "kill_sigill" | "null_deref" | "raise_sigabrt" | "raise_sigill" => {
-            assert!(!exit_status.success())
-        }
-        "kill_sigbus" | "kill_sigsegv" | "raise_sigbus" | "raise_sigsegv" => {
-            assert!(exit_status.success())
-        }
-        _ => unreachable!("{crash_typ} shouldn't happen"),
-    }
-
-    // Check that errors intake file was created
-    let errors_intake_path = fixtures.crash_profile_path.with_extension("errors");
-    assert!(
-        errors_intake_path.exists(),
-        "Errors intake file should be created at {}",
-        errors_intake_path.display()
-    );
-
-    // Read and validate errors intake payload
-    let errors_intake_content = fs::read(&errors_intake_path)
-        .context("reading errors intake payload")
-        .unwrap();
-
-    // Validate errors intake payload structure
-    assert_errors_intake_payload(&errors_intake_content, crash_typ);
-
-    // Also validate telemetry still works (dual upload)
-    let crash_telemetry = fs::read(&fixtures.crash_telemetry_path)
-        .context("reading crashtracker telemetry payload")
-        .unwrap();
-    let payloads = crash_telemetry.split(|&b| b == b'\n').collect::<Vec<_>>();
-    for payload in payloads {
-        if String::from_utf8_lossy(payload).contains("is_crash:true") {
-            assert_telemetry_message(payload, crash_typ);
-        }
-    }
-}
-
-fn test_crash_tracking_errors_intake_dual_upload(
-    crash_tracking_receiver_profile: BuildProfile,
-    mode: &str,
-    crash_typ: &str,
-) {
-    let (crashtracker_bin, crashtracker_receiver) =
-        setup_crashtracking_crates(crash_tracking_receiver_profile);
-    let fixtures = setup_test_fixtures(&[&crashtracker_receiver, &crashtracker_bin]);
-
-    let mut p = process::Command::new(&fixtures.artifacts[&crashtracker_bin])
-        .arg(format!("file://{}", fixtures.crash_profile_path.display()))
-        .arg(fixtures.artifacts[&crashtracker_receiver].as_os_str())
-        .arg(&fixtures.output_dir)
-        .arg(mode)
-        .arg(crash_typ)
-        .env("_DD_ERRORS_INTAKE_ENABLED", "true")
-        .spawn()
-        .unwrap();
-
-    let exit_status = bin_tests::timeit!("exit after signal", {
-        eprintln!("Waiting for exit");
-        p.wait().unwrap()
-    });
-
-    match crash_typ {
-        "kill_sigabrt" | "kill_sigill" | "null_deref" | "raise_sigabrt" | "raise_sigill" => {
-            assert!(!exit_status.success())
-        }
-        "kill_sigbus" | "kill_sigsegv" | "raise_sigbus" | "raise_sigsegv" => {
-            assert!(exit_status.success())
-        }
-        _ => unreachable!("{crash_typ} shouldn't happen"),
-    }
-
-    // Check that errors intake file was created
-    let errors_intake_path = fixtures.crash_profile_path.with_extension("errors");
-    assert!(
-        errors_intake_path.exists(),
-        "Errors intake file should be created at {}",
-        errors_intake_path.display()
-    );
-
-    // Read and validate errors intake payload
-    let errors_intake_content = fs::read(&errors_intake_path)
-        .context("reading errors intake payload")
-        .unwrap();
-
-    assert_errors_intake_payload(&errors_intake_content, crash_typ);
-
-    // Also validate telemetry still works (dual upload)
-    let crash_telemetry = fs::read(&fixtures.crash_telemetry_path)
-        .context("reading crashtracker telemetry payload")
-        .unwrap();
-    let payloads = crash_telemetry.split(|&b| b == b'\n').collect::<Vec<_>>();
-    for payload in payloads {
-        if String::from_utf8_lossy(payload).contains("is_crash:true") {
-            assert_telemetry_message(payload, crash_typ);
-        }
-    }
-}
-
 #[cfg(unix)]
 fn test_crash_tracking_bin_with_errors_intake_uds(
     crash_tracking_receiver_profile: BuildProfile,
@@ -1658,7 +1180,7 @@ fn test_crash_tracking_bin_with_errors_intake_uds(
         .arg(&fixtures.output_dir)
         .arg(mode)
         .arg(crash_typ)
-        .env("_DD_ERRORS_INTAKE_ENABLED", "true")
+        .env("DD_CRASHTRACKING_ERRORS_INTAKE_ENABLED", "true")
         // Don't set DD_TRACE_AGENT_URL - let it auto-detect the UDS socket
         .spawn()
         .unwrap();

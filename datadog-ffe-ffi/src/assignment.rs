@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use std::ffi::{c_char, CStr};
+use std::pin::Pin;
 
 use datadog_ffe::rules_based as ffe;
 use datadog_ffe::rules_based::{
@@ -13,7 +14,9 @@ use crate::Handle;
 
 /// Opaque type representing a result of evaluation.
 pub struct ResolutionDetails {
-    inner: Result<Assignment, EvaluationError>,
+    // Pin the inner result to ensure the memory address remains stable,
+    // allowing us to safely store borrowed pointers to its contents.
+    inner: Pin<Box<Result<Assignment, EvaluationError>>>,
     // memoizing some fields, so we can hand off references to them:
     error_message: Option<String>,
     extra_logging: Vec<KeyValue<BorrowedStr, BorrowedStr>>,
@@ -21,40 +24,35 @@ pub struct ResolutionDetails {
 }
 impl ResolutionDetails {
     fn new(value: Result<Assignment, EvaluationError>) -> ResolutionDetails {
-        let error_message = value.as_ref().err().map(|err| err.to_string());
+        // Pin the value to the heap to ensure its memory address remains stable
+        let inner = Box::pin(value);
 
-        let extra_logging = value
+        let error_message = (*inner).as_ref().err().map(|err| err.to_string());
+
+        let extra_logging = (*inner)
             .as_ref()
             .iter()
             .flat_map(|it| it.extra_logging.iter())
             .map(|(k, v)| {
                 KeyValue {
-                    // SAFETY: the borrow is valid as long as string allocation is
-                    // alive. ResolutionDetails will get moved into heap but this does not
-                    // invalidate the string.
+                    // SAFETY: The returned BorrowedStr does not outlive the source string k. The
+                    // source string k lives in the pinned Assignment inside `inner`, which is owned
+                    // by ResolutionDetails and will not move (guaranteed by Pin) or be modified (we
+                    // only hold shared references).
                     key: unsafe { BorrowedStr::borrow_from_str(k.as_str()) },
-                    // SAFETY: the borrow is valid as long as string allocation is
-                    // alive. ResolutionDetails will get moved into heap but this does not
-                    // innvalidate the string.
+                    // SAFETY: The returned BorrowedStr does not outlive the source string v. The
+                    // source string v lives in the pinned Assignment inside `inner`, which is owned
+                    // by ResolutionDetails and will not move (guaranteed by Pin) or be modified (we
+                    // only hold shared references).
                     value: unsafe { BorrowedStr::borrow_from_str(v.as_str()) },
                 }
             })
             .collect();
 
-        let flag_metadata = match value.as_ref() {
-            Ok(a) => {
-                vec![KeyValue {
-                    // SAFETY: borrowing from static is safe as it lives long enough.
-                    key: unsafe { BorrowedStr::borrow_from_str("allocation_key") },
-                    // SAFETY: allocation_key is alive until ResolutionDetails is dropped.
-                    value: unsafe { BorrowedStr::borrow_from_str(a.allocation_key.as_str()) },
-                }]
-            }
-            Err(_) => Vec::new(),
-        };
+        let flag_metadata = Vec::new();
 
         ResolutionDetails {
-            inner: value,
+            inner,
             error_message,
             extra_logging,
             flag_metadata,

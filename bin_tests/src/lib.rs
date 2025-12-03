@@ -2,6 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 pub mod modes;
+pub mod test_runner;
+pub mod test_types;
+pub mod validation;
 
 use std::{collections::HashMap, env, ops::DerefMut, path::PathBuf, process, sync::Mutex};
 

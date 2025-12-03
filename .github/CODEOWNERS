@@ -1,30 +1,72 @@
-*                           @Datadog/libdatadog-core
-libdd-alloc/                @Datadog/libdatadog-profiling
-libdd-crashtracking*/       @Datadog/libdatadog-profiling
-libdd-profiling*/           @Datadog/libdatadog-profiling
-libdd-telemetry*/           @Datadog/libdatadog-telemetry
-ruby/                       @Datadog/libdatadog-ruby
-Cargo.*                     @Datadog/libdatadog
-.gitignore                  @Datadog/libdatadog
-.gitlab-ci.yaml             @Datadog/libdatadog
-LICENSE*                    @Datadog/libdatadog
-NOTICE                      @Datadog/libdatadog
-rustfmt.toml                @Datadog/libdatadog
-README.md                   @Datadog/libdatadog
-libdd-trace-normalization   @Datadog/serverless @Datadog/libdatadog-apm
-datadog-trace-obfuscation   @Datadog/serverless @Datadog/libdatadog-apm
-libdd-trace-protobuf        @Datadog/serverless @Datadog/libdatadog-apm
-libdd-trace-utils           @Datadog/serverless @Datadog/libdatadog-apm
-datadog-remote-config       @Datadog/libdatadog-php @Datadog/libdatadog-apm @Datadog/remote-config
-datadog-sidecar             @Datadog/libdatadog-php @Datadog/libdatadog-apm
-datadog-sidecar-ffi         @Datadog/libdatadog-php @Datadog/libdatadog-apm
-libdd-data-pipeline*/       @Datadog/libdatadog-apm
-datadog-tracer-flare        @Datadog/libdatadog-apm
-libdd-ddsketch*/            @Datadog/libdatadog-apm @Datadog/libdatadog-telemetry
-datadog-ffe                 @Datadog/feature-flagging-and-experimentation-sdk
-datadog-ffe-ffi             @Datadog/feature-flagging-and-experimentation-sdk
+# CODEOWNERS
+# Rules are evaluated in order. Later matches override earlier ones.
+# More specific patterns at the bottom override general patterns above.
 
-# Most of the bin_tests are owned by the profiling team, but some are owned by the core team
-bin_tests/                  @Datadog/libdatadog-profiling
-bin_tests/tests/test_the_tests.rs   @Datadog/libdatadog-core
-bin_tests/src/bin/test_the_tests.rs @Datadog/libdatadog-core
+.clang-format                        @Datadog/libdatadog
+.codecov.yml                         @Datadog/apm-common-components-core
+.config/nextest.toml                 @Datadog/apm-common-components-core
+.devcontainer                        @Datadog/apm-common-components-core
+.dockerignore                        @Datadog/libdatadog-core
+.github/                             @Datadog/apm-common-components-core
+.gitignore                           @Datadog/libdatadog
+.gitlab-ci.yml                       @Datadog/apm-common-components-core
+.gitlab/benchmarks.yml               @Datadog/apm-common-components-core
+benchmark/                           @Datadog/apm-common-components-core
+bin_tests/                           @Datadog/libdatadog-profiling
+build-common/                        @Datadog/apm-common-components-core
+builder                              @Datadog/apm-common-components-core
+Cargo.*                              @Datadog/libdatadog
+cmake/                               @Datadog/apm-common-components-core
+CONTRIBUTING.md                      @Datadog/libdatadog-core
+Cross.toml                           @Datadog/apm-common-components-core
+datadog-ffe                          @Datadog/feature-flagging-and-experimentation-sdk
+datadog-ffe-ffi                      @Datadog/feature-flagging-and-experimentation-sdk
+datadog-ipc*/                        @Datadog/libdatadog-php
+datadog-live-debugger*/              @Datadog/libdatadog-php @Datadog/libdatadog-apm
+datadog-profiling-replayer           @Datadog/libdatadog-profiling
+datadog-remote-config                @Datadog/libdatadog-php @Datadog/libdatadog-apm @Datadog/remote-config
+datadog-sidecar                      @Datadog/libdatadog-php @Datadog/libdatadog-apm
+datadog-sidecar-ffi                  @Datadog/libdatadog-php @Datadog/libdatadog-apm
+datadog-sidecar-macros               @Datadog/libdatadog-php
+datadog-trace-obfuscation            @Datadog/serverless @Datadog/libdatadog-apm
+datadog-tracer-flare                 @Datadog/libdatadog-apm
+docker-bake.hcl                      @Datadog/apm-common-components-core
+docs                                 @Datadog/libdatadog
+examples                             @Datadog/libdatadog
+libdd-alloc/                         @Datadog/libdatadog-profiling
+libdd-common*/                       @Datadog/libdatadog
+libdd-crashtracker*/                 @Datadog/libdatadog-profiling
+libdd-data-pipeline*/                @Datadog/libdatadog-apm
+libdd-ddsketch*/                     @Datadog/libdatadog-apm @Datadog/apm-common-components-core
+libdd-dogstatsd-client               @Datadog/apm-common-components-core
+libdd-library-config*/               @Datadog/apm-sdk-capabilities
+libdd-log*/                          @Datadog/apm-common-components-core
+libdd-profiling*/                    @Datadog/libdatadog-profiling
+libdd-telemetry*/                    @Datadog/apm-common-components-core
+libdd-tinybytes                      @Datadog/apm-common-components-core
+libdd-trace-normalization            @Datadog/serverless @Datadog/libdatadog-apm
+libdd-trace-protobuf                 @Datadog/serverless @Datadog/libdatadog-apm
+libdd-trace-stats                    @Datadog/apm-common-components-core
+libdd-trace-utils                    @Datadog/serverless @Datadog/libdatadog-apm
+LICENSE*                             @Datadog/libdatadog
+local-linux.Dockerfile               @Datadog/libdatadog
+NOTICE                               @Datadog/libdatadog
+README.md                            @Datadog/libdatadog
+repository.datadog.yml               @Datadog/apm-common-components-core
+ruby/                                @Datadog/ruby-guild
+rustfmt.toml                         @Datadog/libdatadog-core
+scripts/reformat_copyright.sh        @Datadog/libdatadog-core
+scripts/update_license_3rdparty.sh   @Datadog/libdatadog-core
+spawn_worker/                        @Datadog/libdatadog-php @Datadog/libdatadog-apm
+symbolizer-ffi                       @Datadog/libdatadog-profiling
+tests/run-package-tests.ps1          @Datadog/apm-common-components-core
+tests/spawn_from_lib/                @Datadog/libdatadog-php @Datadog/libdatadog-apm
+tests/windows_package/               @Datadog/apm-common-components-core
+tools/                               @Datadog/apm-common-components-core
+windows/                             @Datadog/libdatadog-core
+
+# Specific overrides (must come after their general patterns above)
+bin_tests/tests/test_the_tests.rs    @Datadog/libdatadog-core
+bin_tests/src/bin/test_the_tests.rs  @Datadog/libdatadog-core
+tools/cc_utils/                      @Datadog/libdatadog-php
+tools/sidecar_mockgen/               @Datadog/libdatadog-php
