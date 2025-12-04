@@ -241,6 +241,9 @@ jobs:
           set -e
           cd examples/cxx
           ./build-and-run-crashinfo.sh
+      - name: "Setup MSVC (Windows)"
+        if: matrix.platform == 'windows-latest'
+        uses: ilammy/msvc-dev-cmd@v1
       - name: "Test building CXX bindings (Windows)"
         shell: pwsh
         if: matrix.platform == 'windows-latest'
