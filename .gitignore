@@ -25,3 +25,4 @@ docker-sync.yml
 libtest.so
 libtest_cpp.so
 examples/cxx/crashinfo
+examples/cxx/owned_sample

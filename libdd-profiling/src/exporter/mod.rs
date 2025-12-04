@@ -21,6 +21,7 @@ use libdd_common::{
 
 pub mod config;
 mod errors;
+pub mod reqwest_exporter;
 
 #[cfg(unix)]
 pub use connector::uds::{socket_path_from_uri, socket_path_to_uri};
@@ -235,11 +236,11 @@ impl ProfileExporter {
         // between them.
         tags_profiler.push_str(self.runtime_platform_tag().as_ref());
 
-        let attachments: Vec<String> = files_to_compress_and_export
+        let attachments: Vec<&str> = files_to_compress_and_export
             .iter()
-            .chain(files_to_export_unmodified.iter())
-            .map(|file| file.name.to_owned())
-            .chain(iter::once("profile.pprof".to_string()))
+            .map(|file| file.name)
+            .chain(files_to_export_unmodified.iter().map(|file| file.name))
+            .chain(iter::once("profile.pprof"))
             .collect();
 
         let endpoint_counts = if profile.endpoints_stats.is_empty() {
@@ -260,14 +261,13 @@ impl ProfileExporter {
             "endpoint_counts" : endpoint_counts,
             "internal": internal,
             "info": info.unwrap_or_else(|| json!({})),
-        })
-        .to_string();
+        });
 
         form.add_reader_file_with_mime(
             // Intake does not look for filename=event.json, it looks for name=event.
             "event",
             // this one shouldn't be compressed
-            Cursor::new(event),
+            Cursor::new(serde_json::to_vec(&event)?),
             "event.json",
             mime::APPLICATION_JSON,
         );
@@ -281,7 +281,7 @@ impl ProfileExporter {
             let max_capacity = 10 * 1024 * 1024;
             // We haven't yet tested compression for attachments other than
             // profiles, which are compressed already before this point. We're
-            // re-using the  same level here for now.
+            // re-using the same level here for now.
             let compression_level = Profile::COMPRESSION_LEVEL;
             let mut encoder = Compressor::<DefaultProfileCodec>::try_new(
                 capacity,
@@ -298,15 +298,13 @@ impl ProfileExporter {
              */
             form.add_reader_file(file.name, Cursor::new(encoded), file.name);
         }
-
         for file in files_to_export_unmodified {
-            let encoded = file.bytes.to_vec();
             /* The Datadog RFC examples strip off the file extension, but the exact behavior
              * isn't specified. This does the simple thing of using the filename
              * without modification for the form name because intake does not care
              * about these name of the form field for these attachments.
              */
-            form.add_reader_file(file.name, Cursor::new(encoded), file.name)
+            form.add_reader_file(file.name, Cursor::new(file.bytes.to_vec()), file.name);
         }
         // Add the actual pprof
         form.add_reader_file(

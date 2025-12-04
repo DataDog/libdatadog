@@ -50,9 +50,11 @@ thiserror = "2"
 tokio = {version = "1.23", features = ["rt", "macros"]}
 tokio-util = "0.7.1"
 zstd = { version = "0.13", default-features = false }
+reqwest = { version = "0.12.23", features = ["multipart", "rustls-tls"], default-features = false }
 
 [dev-dependencies]
 bolero = "0.13"
 criterion = "0.5.1"
 lz4_flex = { version = "0.9", default-features = false, features = ["std", "frame"] }
 proptest = "1"
+wiremock = "0.5"
