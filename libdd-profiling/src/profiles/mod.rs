@@ -3,5 +3,6 @@
 
 pub mod collections;
 mod compressor;
+pub mod datatypes;
 
 pub use compressor::*;
