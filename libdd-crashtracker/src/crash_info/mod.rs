@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 mod builder;
+#[cfg(feature = "cxx")]
+pub mod cxx;
 mod error_data;
 mod errors_intake;
 mod experimental;
