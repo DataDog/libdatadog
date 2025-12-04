@@ -1,0 +1,381 @@
+// Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
+// SPDX-License-Identifier: Apache-2.0
+
+mod common;
+
+#[cfg(test)]
+mod tests {
+    use crate::common;
+    use libdd_profiling::exporter::config;
+    use libdd_profiling::exporter::reqwest_exporter::*;
+    use libdd_profiling::internal::EncodedProfile;
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    fn default_tags() -> Vec<libdd_profiling::exporter::Tag> {
+        common::default_tags()
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_new_exporter() {
+        let base_url = "http://localhost:8126".parse().expect("url to parse");
+        let endpoint = config::agent(base_url).expect("endpoint to construct");
+        let exporter =
+            ProfileExporter::new("dd-trace-foo", "1.2.3", "php", default_tags(), endpoint);
+        assert!(exporter.is_ok());
+    }
+
+    #[tokio::test]
+    #[cfg_attr(miri, ignore)]
+    async fn test_send_to_mock_server() {
+        let mock_server = common::setup_basic_mock().await;
+
+        let base_url = mock_server.uri().parse().unwrap();
+        let endpoint = config::agent(base_url).expect("endpoint to construct");
+        let exporter =
+            ProfileExporter::new("dd-trace-foo", "1.2.3", "php", default_tags(), endpoint)
+                .expect("exporter to construct");
+
+        let profile = EncodedProfile::test_instance().expect("To get a profile");
+        let status = exporter
+            .send(profile, &[], &[], None, None, None)
+            .await
+            .expect("send to succeed");
+        assert_eq!(status, 200);
+    }
+
+    #[tokio::test]
+    #[cfg_attr(miri, ignore)]
+    async fn test_send_with_body_inspection() {
+        let (mock_server, received_body) = common::setup_body_capture_mock().await;
+
+        let base_url = mock_server.uri().parse().unwrap();
+        let endpoint = config::agent(base_url).expect("endpoint to construct");
+        let exporter =
+            ProfileExporter::new("dd-trace-foo", "1.2.3", "ruby", default_tags(), endpoint)
+                .expect("exporter to construct");
+
+        let profile = EncodedProfile::test_instance().expect("To get a profile");
+        let (internal_metadata, info) = common::test_metadata();
+
+        let status = exporter
+            .send(profile, &[], &[], Some(internal_metadata), Some(info), None)
+            .await
+            .expect("send to succeed");
+        assert_eq!(status, 200);
+
+        let body = received_body.lock().unwrap();
+        let event_json = common::extract_event_json_from_multipart(&body);
+        common::verify_event_json(&event_json, "ruby");
+    }
+
+    #[tokio::test]
+    #[cfg_attr(miri, ignore)]
+    async fn test_agentless_with_api_key() {
+        let (mock_server, received_headers) = common::setup_header_capture_mock().await;
+
+        let api_key = "test_api_key_12345678901234";
+        let mock_url = format!("{}/api/v2/profile", mock_server.uri())
+            .parse()
+            .unwrap();
+        let endpoint = libdd_common::Endpoint {
+            url: mock_url,
+            api_key: Some(api_key.into()),
+            timeout_ms: 10_000,
+            test_token: None,
+        };
+
+        let exporter = ProfileExporter::new("dd-trace-test", "2.0.0", "python", vec![], endpoint)
+            .expect("exporter to construct");
+
+        let profile = EncodedProfile::test_instance().expect("To get a profile");
+        let status = exporter
+            .send(profile, &[], &[], None, None, None)
+            .await
+            .expect("send to succeed");
+        assert_eq!(status, 200);
+
+        let headers = received_headers.lock().unwrap();
+        let headers_map = headers.as_ref().unwrap();
+
+        let api_key_header = headers_map
+            .get("dd-api-key")
+            .or_else(|| headers_map.get("DD-API-KEY"))
+            .expect("API key header should be present");
+        assert_eq!(api_key_header[0], api_key);
+    }
+
+    #[tokio::test]
+    #[cfg_attr(miri, ignore)]
+    async fn test_custom_timeout() {
+        let mock_server = common::setup_basic_mock().await;
+
+        let base_url = mock_server.uri().parse().unwrap();
+        let mut endpoint = config::agent(base_url).expect("endpoint to construct");
+        endpoint.timeout_ms = 5000; // Set timeout on endpoint before creating exporter
+
+        let exporter = ProfileExporter::new("dd-trace-test", "1.0.0", "go", vec![], endpoint)
+            .expect("exporter to construct");
+
+        let profile = EncodedProfile::test_instance().expect("To get a profile");
+        let status = exporter
+            .send(profile, &[], &[], None, None, None)
+            .await
+            .expect("send to succeed");
+        assert_eq!(status, 200);
+    }
+
+    #[tokio::test]
+    #[cfg_attr(miri, ignore)]
+    async fn test_timeout_actually_fires() {
+        use std::time::Duration;
+
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/profiling/v1/input"))
+            .respond_with(ResponseTemplate::new(200).set_delay(Duration::from_secs(10)))
+            .expect(1)
+            .mount(&mock_server)
+            .await;
+
+        let base_url = mock_server.uri().parse().unwrap();
+        let mut endpoint = config::agent(base_url).expect("endpoint to construct");
+        endpoint.timeout_ms = 100; // Set very short timeout on endpoint
+
+        let exporter = ProfileExporter::new("dd-trace-test", "1.0.0", "go", vec![], endpoint)
+            .expect("exporter to construct");
+
+        let profile = EncodedProfile::test_instance().expect("To get a profile");
+        let result = exporter.send(profile, &[], &[], None, None, None).await;
+
+        assert!(result.is_err(), "Expected request to timeout and fail");
+
+        match result {
+            Err(e) => {
+                let error_msg = e.to_string();
+                assert!(
+                    error_msg.contains("error sending request")
+                        || error_msg.to_lowercase().contains("timeout")
+                        || error_msg.to_lowercase().contains("timed out"),
+                    "Error should be a request/timeout error, got: {}",
+                    error_msg
+                );
+            }
+            Ok(_) => panic!("Expected error but got Ok"),
+        }
+    }
+
+    #[tokio::test]
+    #[cfg_attr(miri, ignore)]
+    async fn test_with_additional_tags() {
+        let mock_server = common::setup_basic_mock().await;
+
+        let base_url = mock_server.uri().parse().unwrap();
+        let endpoint = config::agent(base_url).expect("endpoint to construct");
+        let exporter = ProfileExporter::new(
+            "dd-trace-test",
+            "1.0.0",
+            "python",
+            vec![libdd_common::tag!("env", "test")],
+            endpoint,
+        )
+        .expect("exporter to construct");
+
+        let profile = EncodedProfile::test_instance().expect("To get a profile");
+        let additional_tags = vec![
+            libdd_common::tag!("version", "1.0.0"),
+            libdd_common::tag!("region", "us-east-1"),
+        ];
+
+        let status = exporter
+            .send(profile, &[], &additional_tags, None, None, None)
+            .await
+            .expect("send to succeed");
+        assert_eq!(status, 200);
+    }
+
+    #[tokio::test]
+    #[cfg_attr(miri, ignore)]
+    async fn test_with_compressed_files() {
+        let mock_server = common::setup_basic_mock().await;
+
+        let base_url = mock_server.uri().parse().unwrap();
+        let endpoint = config::agent(base_url).expect("endpoint to construct");
+        let exporter = ProfileExporter::new("dd-trace-test", "1.0.0", "java", vec![], endpoint)
+            .expect("exporter to construct");
+
+        let profile = EncodedProfile::test_instance().expect("To get a profile");
+        let test_data = b"test file content";
+        let files_to_compress = &[libdd_profiling::exporter::reqwest_exporter::File {
+            name: "test.txt",
+            bytes: test_data,
+        }];
+
+        let status = exporter
+            .send(profile, files_to_compress, &[], None, None, None)
+            .await
+            .expect("send to succeed");
+        assert_eq!(status, 200);
+    }
+
+    #[tokio::test]
+    #[cfg_attr(miri, ignore)]
+    async fn test_cancellation() {
+        use std::time::Duration;
+        use tokio_util::sync::CancellationToken;
+
+        let mock_server = MockServer::start().await;
+
+        // Set up a mock that responds slowly
+        Mock::given(method("POST"))
+            .and(path("/profiling/v1/input"))
+            .respond_with(ResponseTemplate::new(200).set_delay(Duration::from_secs(5)))
+            .expect(1)
+            .mount(&mock_server)
+            .await;
+
+        let base_url = mock_server.uri().parse().unwrap();
+        let endpoint = config::agent(base_url).expect("endpoint to construct");
+        let exporter = ProfileExporter::new("dd-trace-test", "1.0.0", "go", vec![], endpoint)
+            .expect("exporter to construct");
+
+        let cancel_token = CancellationToken::new();
+        let cancel_token_clone = cancel_token.clone();
+
+        // Cancel after 100ms
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(100)).await;
+            cancel_token_clone.cancel();
+        });
+
+        let profile = EncodedProfile::test_instance().expect("To get a profile");
+        let result = exporter
+            .send(profile, &[], &[], None, None, Some(&cancel_token))
+            .await;
+
+        assert!(result.is_err(), "Expected request to be cancelled");
+
+        match result {
+            Err(e) => {
+                let error_msg = e.to_string();
+                assert!(
+                    error_msg.to_lowercase().contains("cancel"),
+                    "Error should mention cancellation, got: {}",
+                    error_msg
+                );
+            }
+            Ok(_) => panic!("Expected error but got Ok"),
+        }
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    #[cfg_attr(miri, ignore)]
+    async fn test_unix_domain_socket() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        use tokio::net::UnixListener;
+
+        // Create a temporary socket path
+        let socket_path = std::env::temp_dir().join(format!("test-{}.sock", std::process::id()));
+
+        // Clean up any existing socket
+        let _ = std::fs::remove_file(&socket_path);
+
+        // Create a Unix socket server
+        let listener = UnixListener::bind(&socket_path).expect("Failed to bind Unix socket");
+
+        // Spawn a simple HTTP server on the Unix socket
+        let server_handle = tokio::spawn(async move {
+            if let Ok((mut stream, _)) = listener.accept().await {
+                // Read the HTTP request (just consume it)
+                let mut buffer = vec![0u8; 4096];
+                let _ = stream.read(&mut buffer).await;
+
+                // Send a minimal HTTP response
+                let response = "HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n";
+                let _ = stream.write_all(response.as_bytes()).await;
+            }
+        });
+
+        // Give the server time to start
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+        // Create an endpoint using Unix socket URI
+        let unix_uri = libdd_common::connector::uds::socket_path_to_uri(&socket_path)
+            .expect("Failed to create Unix URI");
+
+        let endpoint = libdd_common::Endpoint {
+            url: unix_uri,
+            api_key: None,
+            timeout_ms: 5_000,
+            test_token: None,
+        };
+
+        let exporter = ProfileExporter::new("dd-trace-test", "1.0.0", "rust", vec![], endpoint)
+            .expect("exporter to construct");
+
+        let profile = EncodedProfile::test_instance().expect("To get a profile");
+        let result = exporter.send(profile, &[], &[], None, None, None).await;
+
+        // Wait for server to finish
+        let _ = tokio::time::timeout(std::time::Duration::from_secs(1), server_handle).await;
+
+        // Clean up socket
+        let _ = std::fs::remove_file(&socket_path);
+
+        assert!(
+            result.is_ok(),
+            "Unix socket request should succeed: {:?}",
+            result
+        );
+        assert_eq!(result.unwrap(), 200);
+    }
+
+    #[tokio::test]
+    #[cfg_attr(miri, ignore)]
+    async fn test_profile_convenience_method() {
+        use libdd_profiling::internal::Profile;
+
+        let mock_server = common::setup_basic_mock().await;
+
+        let base_url = mock_server.uri().parse().unwrap();
+        let endpoint = config::agent(base_url).expect("endpoint to construct");
+        let exporter = ProfileExporter::new("dd-trace-test", "1.0.0", "rust", vec![], endpoint)
+            .expect("exporter to construct");
+
+        // Create a simple profile
+        let profile = Profile::try_new(
+            &[libdd_profiling::api::ValueType {
+                r#type: "samples",
+                unit: "count",
+            }],
+            Some(libdd_profiling::api::Period {
+                r#type: libdd_profiling::api::ValueType {
+                    r#type: "cpu",
+                    unit: "nanoseconds",
+                },
+                value: 1000000,
+            }),
+        )
+        .expect("Failed to create profile");
+
+        // Use the convenience method to export
+        let status = profile
+            .export_to_endpoint(
+                &exporter,
+                &[],  // additional_files
+                &[],  // additional_tags
+                None, // internal_metadata
+                None, // info
+                None, // end_time (defaults to now)
+                None, // duration (calculated from end - start)
+                None, // cancel
+            )
+            .await
+            .expect("export should succeed");
+
+        assert_eq!(status, 200);
+    }
+}
