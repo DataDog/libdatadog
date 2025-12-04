@@ -20,37 +20,48 @@ The CXX bindings provide access to:
 - `BuildIdType` - Build ID format (GNU, GO, PDB, SHA1)
 - `FileType` - Binary file format (APK, ELF, PE)
 
-### Key Functions
+### Key API
 
-**Builder Creation:**
-- `crashinfo_builder_new()` - Create a new builder
-- `stackframe_new()` - Create a new stack frame
-- `stacktrace_new()` - Create a new stack trace
+**Object Creation:**
+```cpp
+auto builder = CrashInfoBuilder::create();
+auto frame = StackFrame::create();
+auto stacktrace = StackTrace::create();
+```
 
-**Builder Methods:**
-- `crashinfo_with_kind()` - Set error type
-- `crashinfo_with_message()` - Set error message
-- `crashinfo_with_metadata()` - Set library metadata
-- `crashinfo_with_proc_info()` - Set process info
-- `crashinfo_with_os_info()` - Set OS info
-- `crashinfo_with_counter()` - Add a named counter
-- `crashinfo_with_file()` - Add a file to the report
-- `crashinfo_with_stack()` - Set the stack trace
-- `crashinfo_with_timestamp_now()` - Set current timestamp
-- `crashinfo_build()` - Build the final CrashInfo
+**CrashInfoBuilder Methods:**
+- `set_kind(CxxErrorKind)` - Set error type (Panic, UnhandledException, UnixSignal)
+- `with_message(String)` - Set error message
+- `with_counter(String, i64)` - Add a named counter
+- `with_log_message(String, bool)` - Add a log message
+- `with_fingerprint(String)` - Set crash fingerprint
+- `with_incomplete(bool)` - Mark as incomplete
+- `set_metadata(Metadata)` - Set library metadata
+- `set_proc_info(ProcInfo)` - Set process information
+- `set_os_info(OsInfo)` - Set OS information
+- `add_stack(Box<StackTrace>)` - Add a stack trace
+- `with_timestamp_now()` - Set current timestamp
+- `with_file(String)` - Add a file to the report
 
 **StackFrame Methods:**
-- `stackframe_with_function()`, `stackframe_with_file()`, `stackframe_with_line()`, `stackframe_with_column()` - Set debug info
-- `stackframe_with_ip()`, `stackframe_with_sp()` - Set absolute addresses
-- `stackframe_with_build_id()`, `stackframe_with_path()` - Set binary info
-- `stackframe_with_relative_address()` - Set relative address
+- `with_function(String)`, `with_file(String)`, `with_line(u32)`, `with_column(u32)` - Set debug info
+- `with_ip(usize)`, `with_sp(usize)` - Set instruction/stack pointers
+- `with_module_base_address(usize)`, `with_symbol_address(usize)` - Set base addresses
+- `with_build_id(String)` - Set build ID
+- `build_id_type(CxxBuildIdType)` - Set build ID format (GNU, GO, PDB, SHA1)
+- `file_type(CxxFileType)` - Set binary format (APK, ELF, PE)
+- `with_path(String)` - Set module path
+- `with_relative_address(usize)` - Set relative address
 
 **StackTrace Methods:**
-- `stacktrace_push_frame()` - Add a frame to the trace
-- `stacktrace_set_complete()` - Mark trace as complete
+- `add_frame(Box<StackFrame>, bool)` - Add a frame (bool = incomplete)
+- `mark_complete()` - Mark trace as complete
 
-**Output:**
-- `crashinfo_to_json()` - Convert CrashInfo to JSON string
+**Building & Output:**
+```cpp
+auto crash_info = crashinfo_build(std::move(builder));
+auto json = crash_info->to_json();
+```
 
 ## Building and Running
 
