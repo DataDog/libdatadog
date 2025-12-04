@@ -240,13 +240,13 @@ jobs:
         run: |
           set -e
           cd examples/cxx
-          ./build-and-run.sh
+          ./build-and-run-crashinfo.sh
       - name: "Test building CXX bindings (Windows)"
         shell: pwsh
         if: matrix.platform == 'windows-latest'
         run: |
           cd examples/cxx
-          .\build-and-run.ps1
+          .\build-and-run-crashinfo.ps1
 
   cross-centos7:
     name: build and test using cross - on centos7

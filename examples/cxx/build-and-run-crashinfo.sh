@@ -51,7 +51,7 @@ else
     PLATFORM_LIBS=""
 fi
 
-c++ -std=c++14 \
+c++ -std=c++20 \
     -I"$CXX_BRIDGE_INCLUDE" \
     -I"$CXX_BRIDGE_CRATE" \
     -I"$RUST_CXX_INCLUDE" \

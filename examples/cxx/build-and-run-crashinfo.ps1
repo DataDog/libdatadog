@@ -53,7 +53,7 @@ if ($MSVC) {
     Write-Host "Using MSVC compiler" -ForegroundColor Yellow
     
     # MSVC compilation
-    cl.exe /std:c++14 /EHsc `
+    cl.exe /std:c++20 /EHsc `
         /I"$CXX_BRIDGE_INCLUDE" `
         /I"$CXX_BRIDGE_CRATE" `
         /I"$RUST_CXX_INCLUDE" `
@@ -73,7 +73,7 @@ if ($MSVC) {
     Write-Host "Using $COMPILER compiler" -ForegroundColor Yellow
     
     # MinGW/Clang compilation
-    & $COMPILER -std=c++14 `
+    & $COMPILER -std=c++20 `
         -I"$CXX_BRIDGE_INCLUDE" `
         -I"$CXX_BRIDGE_CRATE" `
         -I"$RUST_CXX_INCLUDE" `

@@ -17,27 +17,21 @@ int main() {
         builder->with_fingerprint("test-fingerprint-123");
         builder->with_incomplete(false);
         
-        // Set metadata
-        Metadata metadata;
-        metadata.library_name = "libdatadog";
-        metadata.library_version = "1.0.0";
-        metadata.family = "rust";
-        metadata.tags.push_back("service:example");
-        metadata.tags.push_back("env:dev");
-        builder->set_metadata(metadata);
+        builder->set_metadata(Metadata{
+            .library_name = "libdatadog",
+            .library_version = "1.0.0",
+            .family = "rust",
+            .tags = {"service:example", "env:dev"}
+        });
         
-        // Set process info
-        ProcInfo proc_info;
-        proc_info.pid = 12345;
-        builder->set_proc_info(proc_info);
+        builder->set_proc_info(ProcInfo{.pid = 12345});
         
-        // Set OS info
-        OsInfo os_info;
-        os_info.architecture = "x86_64";
-        os_info.bitness = "64";
-        os_info.os_type = "Linux";
-        os_info.version = "5.15.0";
-        builder->set_os_info(os_info);
+        builder->set_os_info(OsInfo{
+            .architecture = "x86_64",
+            .bitness = "64",
+            .os_type = "Linux",
+            .version = "5.15.0"
+        });
         
         // Create a stack trace
         auto stacktrace = StackTrace::create();

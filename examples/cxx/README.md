@@ -56,18 +56,18 @@ The CXX bindings provide access to:
 
 ### Unix (Linux/macOS)
 
-The `build-and-run.sh` script handles the entire build process:
+The `build-and-run-crashinfo.sh` script handles the entire build process:
 
 ```bash
-./examples/cxx/build-and-run.sh
+./examples/cxx/build-and-run-crashinfo.sh
 ```
 
 ### Windows
 
-The `build-and-run.ps1` PowerShell script handles the build process on Windows:
+The `build-and-run-crashinfo.ps1` PowerShell script handles the build process on Windows:
 
 ```powershell
-.\examples\cxx\build-and-run.ps1
+.\examples\cxx\build-and-run-crashinfo.ps1
 ```
 
 **Prerequisites for Windows:**
@@ -112,7 +112,7 @@ The CXX bindings provide several advantages over the traditional C FFI:
 
 ## Requirements
 
-- C++14 or later
+- C++20 or later
 - Rust toolchain
 - Platform: macOS, Linux, or Windows
   - Windows: Requires MSVC (via Visual Studio) or MinGW/LLVM

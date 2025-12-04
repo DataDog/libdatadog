@@ -16,7 +16,7 @@ pub use libdd_common::cc_utils::cc;
 #[cfg(feature = "cxx")]
 fn build_cxx_bridge() {
     cxx_build::bridge("src/crash_info/cxx.rs")
-        .flag_if_supported("-std=c++14")
+        .flag_if_supported("-std=c++20")
         .compile("libdd-crashtracker-cxx");
 
     println!("cargo:rerun-if-changed=src/crash_info/cxx.rs");
