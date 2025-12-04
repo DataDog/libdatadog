@@ -26,42 +26,75 @@ Write-Host "📁 CXX crate: $CXX_BRIDGE_CRATE" -ForegroundColor Green
 Write-Host "📁 Rust CXX: $RUST_CXX_INCLUDE" -ForegroundColor Green
 
 # Check if we have MSVC (cl.exe) or MinGW (g++/clang++)
+# Note: Prefer MSVC on Windows as it's the default Rust toolchain
 $MSVC = Get-Command cl.exe -ErrorAction SilentlyContinue
 $GPP = Get-Command g++.exe -ErrorAction SilentlyContinue
 $CLANGPP = Get-Command clang++.exe -ErrorAction SilentlyContinue
 
-# Determine library extension based on compiler
-if ($MSVC) {
-    $LIB_EXT = ".lib"
-    $LIB_PREFIX = ""
+# Auto-detect which toolchain Rust used by checking which library exists
+$HAS_MSVC_LIB = Test-Path (Join-Path $PROJECT_ROOT "target\release\dd_crashtracker.lib")
+$HAS_GNU_LIB = (Test-Path (Join-Path $PROJECT_ROOT "target\release\libdd_crashtracker.a")) -or `
+               (Test-Path (Join-Path $PROJECT_ROOT "target\release\liblibdd_crashtracker.a"))
+
+if ($HAS_MSVC_LIB -and $MSVC) {
+    $USE_MSVC = $true
+    Write-Host "Detected MSVC Rust toolchain" -ForegroundColor Cyan
+} elseif ($HAS_GNU_LIB -and ($GPP -or $CLANGPP)) {
+    $USE_MSVC = $false
+    Write-Host "Detected GNU Rust toolchain" -ForegroundColor Cyan
+} elseif ($MSVC) {
+    $USE_MSVC = $true
+    Write-Host "Defaulting to MSVC (library not found yet, will check after)" -ForegroundColor Yellow
 } elseif ($GPP -or $CLANGPP) {
-    $LIB_EXT = ".a"
-    $LIB_PREFIX = "lib"
+    $USE_MSVC = $false
+    Write-Host "Defaulting to GNU toolchain (library not found yet, will check after)" -ForegroundColor Yellow
 } else {
     Write-Host "❌ Error: No C++ compiler found. Please install MSVC (via Visual Studio) or MinGW/LLVM" -ForegroundColor Red
     exit 1
 }
 
 Write-Host "🔨 Finding libraries..." -ForegroundColor Cyan
-# Note: Rust always prefixes with 'lib' in the source, but Windows MSVC strips it
-if ($MSVC) {
+# Note: Rust library naming varies by platform and toolchain
+if ($USE_MSVC) {
+    # MSVC: dd_crashtracker.lib (no lib prefix)
     $CRASHTRACKER_LIB = Join-Path $PROJECT_ROOT "target\release\dd_crashtracker.lib"
     $CXX_BRIDGE_LIB = Get-ChildItem -Path "target\release\build\libdd-crashtracker-*\out" -Filter "libdd-crashtracker-cxx.lib" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty FullName
 } else {
-    $CRASHTRACKER_LIB = Join-Path $PROJECT_ROOT "target\release\liblibdd_crashtracker.a"
-    $CXX_BRIDGE_LIB = Get-ChildItem -Path "target\release\build\libdd-crashtracker-*\out" -Filter "liblibdd-crashtracker-cxx.a" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty FullName
+    # MinGW: Try both possible naming patterns
+    $CRASHTRACKER_LIB_1 = Join-Path $PROJECT_ROOT "target\release\libdd_crashtracker.a"
+    $CRASHTRACKER_LIB_2 = Join-Path $PROJECT_ROOT "target\release\liblibdd_crashtracker.a"
+    
+    if (Test-Path $CRASHTRACKER_LIB_1) {
+        $CRASHTRACKER_LIB = $CRASHTRACKER_LIB_1
+    } elseif (Test-Path $CRASHTRACKER_LIB_2) {
+        $CRASHTRACKER_LIB = $CRASHTRACKER_LIB_2
+    } else {
+        $CRASHTRACKER_LIB = $CRASHTRACKER_LIB_1  # Use this for error message
+    }
+    
+    # Try both naming patterns for CXX bridge
+    $CXX_BRIDGE_LIB = Get-ChildItem -Path "target\release\build\libdd-crashtracker-*\out" -Filter "libdd-crashtracker-cxx.a" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty FullName
+    if (-not $CXX_BRIDGE_LIB) {
+        $CXX_BRIDGE_LIB = Get-ChildItem -Path "target\release\build\libdd-crashtracker-*\out" -Filter "liblibdd-crashtracker-cxx.a" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty FullName
+    }
 }
 
 if (-not (Test-Path $CRASHTRACKER_LIB)) {
     Write-Host "❌ Error: Could not find libdd-crashtracker library at $CRASHTRACKER_LIB" -ForegroundColor Red
+    if (-not $MSVC) {
+        Write-Host "Searched for: libdd_crashtracker.a and liblibdd_crashtracker.a" -ForegroundColor Yellow
+        Write-Host "Files in target/release/:" -ForegroundColor Yellow
+        Get-ChildItem -Path "target\release" -Filter "*crashtracker*" | Select-Object -First 10 | ForEach-Object { Write-Host "  $_" -ForegroundColor Gray }
+    }
     exit 1
 }
 
 if (-not $CXX_BRIDGE_LIB) {
-    if ($MSVC) {
+    if ($USE_MSVC) {
         Write-Host "❌ Error: Could not find CXX bridge library (looking for libdd-crashtracker-cxx.lib)" -ForegroundColor Red
     } else {
-        Write-Host "❌ Error: Could not find CXX bridge library (looking for liblibdd-crashtracker-cxx.a)" -ForegroundColor Red
+        Write-Host "❌ Error: Could not find CXX bridge library" -ForegroundColor Red
+        Write-Host "Searched for: libdd-crashtracker-cxx.a and liblibdd-crashtracker-cxx.a" -ForegroundColor Yellow
     }
     exit 1
 }
@@ -71,7 +104,7 @@ Write-Host "📚 CXX bridge library: $CXX_BRIDGE_LIB" -ForegroundColor Green
 
 Write-Host "🔨 Compiling C++ example..." -ForegroundColor Cyan
 
-if ($MSVC) {
+if ($USE_MSVC) {
     Write-Host "Using MSVC compiler" -ForegroundColor Yellow
     
     # MSVC compilation
