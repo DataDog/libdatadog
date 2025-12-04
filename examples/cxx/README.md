@@ -54,16 +54,31 @@ The CXX bindings provide access to:
 
 ## Building and Running
 
+### Unix (Linux/macOS)
+
 The `build-and-run.sh` script handles the entire build process:
 
 ```bash
 ./examples/cxx/build-and-run.sh
 ```
 
-This will:
+### Windows
+
+The `build-and-run.ps1` PowerShell script handles the build process on Windows:
+
+```powershell
+.\examples\cxx\build-and-run.ps1
+```
+
+**Prerequisites for Windows:**
+- Either MSVC (via Visual Studio) or MinGW/LLVM with C++ compiler
+- PowerShell 5.0 or later (comes with Windows 10+)
+- Rust toolchain
+
+The build script will:
 1. Build libdd-crashtracker with the `cxx` feature enabled
 2. Find the CXX bridge headers and libraries
-3. Compile the C++ example
+3. Compile the C++ example (automatically detects MSVC or MinGW/Clang)
 4. Run the example and display the output
 
 ## Example Output
@@ -99,4 +114,5 @@ The CXX bindings provide several advantages over the traditional C FFI:
 
 - C++14 or later
 - Rust toolchain
-- macOS (this example) or Linux
+- Platform: macOS, Linux, or Windows
+  - Windows: Requires MSVC (via Visual Studio) or MinGW/LLVM
