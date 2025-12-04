@@ -32,7 +32,8 @@ $GPP = Get-Command g++.exe -ErrorAction SilentlyContinue
 $CLANGPP = Get-Command clang++.exe -ErrorAction SilentlyContinue
 
 # Auto-detect which toolchain Rust used by checking which library exists
-$HAS_MSVC_LIB = Test-Path (Join-Path $PROJECT_ROOT "target\release\dd_crashtracker.lib")
+# Note: On Windows, Rust still uses 'lib' prefix even for MSVC .lib files
+$HAS_MSVC_LIB = Test-Path (Join-Path $PROJECT_ROOT "target\release\libdd_crashtracker.lib")
 $HAS_GNU_LIB = (Test-Path (Join-Path $PROJECT_ROOT "target\release\libdd_crashtracker.a")) -or `
                (Test-Path (Join-Path $PROJECT_ROOT "target\release\liblibdd_crashtracker.a"))
 
@@ -56,8 +57,8 @@ if ($HAS_MSVC_LIB -and $MSVC) {
 Write-Host "🔨 Finding libraries..." -ForegroundColor Cyan
 # Note: Rust library naming varies by platform and toolchain
 if ($USE_MSVC) {
-    # MSVC: dd_crashtracker.lib (no lib prefix)
-    $CRASHTRACKER_LIB = Join-Path $PROJECT_ROOT "target\release\dd_crashtracker.lib"
+    # MSVC: libdd_crashtracker.lib (Rust keeps the lib prefix even on Windows)
+    $CRASHTRACKER_LIB = Join-Path $PROJECT_ROOT "target\release\libdd_crashtracker.lib"
     $CXX_BRIDGE_LIB = Get-ChildItem -Path "target\release\build\libdd-crashtracker-*\out" -Filter "libdd-crashtracker-cxx.lib" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty FullName
 } else {
     # MinGW: Try both possible naming patterns
