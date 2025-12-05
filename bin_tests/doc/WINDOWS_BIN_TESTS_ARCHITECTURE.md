@@ -22,13 +22,7 @@ Following WER's architecture, crash handling occurs in a separate process. This 
 - Ability to use full system APIs in the handler
 - Realistic testing of production crash handling flow
 
-**3. Coverage Collection Support**
-The architecture is designed from the ground up to support code coverage collection through:
-- Environment variable propagation to spawned processes
-- Multiple process profraw file generation
-- Integration with cargo-llvm-cov workflow
-
-**4. Platform Parity with Unix Tests**
+**3. Platform Parity with Unix Tests**
 While implementation differs fundamentally, the testing API mirrors the Unix bin_tests structure to maintain consistency across platforms.
 
 ## Architectural Components
@@ -124,29 +118,6 @@ This approach mimics real WER behavior where the out-of-process handler reads cr
 - Support timeouts for fault tolerance
 - Atomic signaling with no race conditions
 
-### 5. Coverage Collection Architecture
-
-**Challenge**: Coverage from spawned processes must contribute to overall coverage report.
-
-**Solution Strategy**:
-
-**Build-Time Instrumentation**:
-When `cargo llvm-cov` builds test binaries, it sets `RUSTFLAGS` with `-C instrument-coverage`. The build system propagates these flags to spawned `cargo build` commands to ensure all test binaries are instrumented.
-
-**Runtime Coverage Propagation**:
-The `LLVM_PROFILE_FILE` environment variable contains patterns like `%p` (process ID) that are expanded by each process at runtime:
-- Main test process: `cargo-test-1000-abc.profraw`
-- Spawned crash binary: `cargo-test-1001-def.profraw`
-- WER simulator: `cargo-test-1002-ghi.profraw`
-
-**Workflow Integration**:
-Separate Windows coverage job runs in parallel with Linux:
-- Both upload coverage to Codecov
-- Codecov merges reports based on commit SHA
-- Flags allow filtering by platform
-
-**Design Rationale**: This approach requires no code changes in test binaries—coverage "just works" when environment variables are propagated correctly.
-
 ## Testing Workflow
 
 ### Standard Windows Test Flow
@@ -191,31 +162,6 @@ Separate Windows coverage job runs in parallel with Linux:
 - Close event handles
 - Remove temporary files
 - Clean up registry keys (if applicable)
-
-### Parallel Coverage Collection Flow
-
-**Coverage CI Workflow**:
-```
-coverage-linux (ubuntu-latest)
-  ├─ Build with instrumentation
-  ├─ Run Unix bin_tests
-  ├─ Spawned processes write profraw files
-  ├─ Generate lcov.info
-  └─ Upload to Codecov (flag: linux)
-
-coverage-windows (windows-latest)
-  ├─ Build with instrumentation
-  ├─ Run Windows bin_tests
-  ├─ Spawned processes write profraw files
-  ├─ WER simulator writes profraw file
-  ├─ Generate lcov-windows.info
-  └─ Upload to Codecov (flag: windows)
-
-Codecov Server:
-  ├─ Receives both uploads (same commit SHA)
-  ├─ Merges line-by-line coverage
-  └─ Presents unified report
-```
 
 ## Design Trade-offs
 
@@ -308,10 +254,6 @@ Codecov Server:
 **Test Complexity**:
 - Unix: Simpler synchronization, immediate results
 - Windows: Complex synchronization, asynchronous validation
-
-**Coverage Collection**:
-- Unix: Main process + receiver process profraw files
-- Windows: Main process + crash binary + WER simulator profraw files
 
 ### Implications for Test Design
 
@@ -451,23 +393,12 @@ When tests fail, they should:
 
 **Implementation**: Rich error types, verbose logging, debug files written to temp directories.
 
-### Coverage as First-Class Concern
-
-Test infrastructure considers coverage collection from the start:
-- Environment variable propagation built-in
-- Multiple process profraw files expected
-- CI workflow includes coverage verification
-- Documentation explains coverage architecture
-
-**Rationale**: Without coverage, we can't know what the tests actually exercise.
-
 ## Conclusion
 
 The Windows bin_tests architecture balances several competing concerns:
 - **Realism**: Match production WER behavior as closely as possible
 - **Testability**: Enable testing without WER service in CI
 - **Safety**: Handle crashes in separate process like real WER
-- **Observability**: Collect coverage from all spawned processes
 - **Maintainability**: Clear abstractions and extension points
 
 The result is a comprehensive testing framework that validates Windows crash tracking in realistic scenarios while supporting both local development and CI environments. The architecture's flexibility allows future extension while maintaining strong type safety and clear separation of concerns.
