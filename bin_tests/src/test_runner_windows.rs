@@ -275,9 +275,6 @@ where
         .arg(&crash_ready_event_name)
         .arg(&info_file);
 
-    // Pass coverage-related environment variables to spawned processes
-    crate::propagate_coverage_env(&mut cmd);
-
     eprintln!(
         "[TEST_RUNNER] Spawning crash binary: {}",
         binary_path.display()
@@ -350,9 +347,6 @@ where
         .arg(&done_event_name)
         .arg(&simulator_ready_event_name)
         .arg(&fixtures.output_dir); // Pass output directory for debug files
-
-    // Pass coverage-related environment variables to spawned WER simulator
-    crate::propagate_coverage_env(&mut simulator_cmd);
 
     let simulator_process = simulator_cmd
         .spawn()
