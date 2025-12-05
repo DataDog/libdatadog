@@ -9,7 +9,10 @@ use crate::profiles::datatypes::StringId2;
 /// doesn't use this in any way.
 ///
 /// This representation is used internally by the `ProfilesDictionary`, and
-/// utilizes the fact that `StringRef`s don't have null values.
+/// utilizes the fact that `StringRef`s don't have null values. It is also
+/// repr(C) to be layout-compatible with [`Function2`]. Every pointer to a
+/// Function is a valid Function2 (but the reverse is not true for the null
+/// case of null StringId2).
 #[derive(Copy, Clone, Debug, Default, Eq, PartialEq, Hash)]
 #[repr(C)]
 pub struct Function {
@@ -18,7 +21,8 @@ pub struct Function {
     pub file_name: StringRef,
 }
 
-/// An FFI-safe version of the Function which allows null.
+/// An FFI-safe version of the Function which allows null. Be sure to maintain
+/// layout-compatibility with it, except that StringId2 may be null.
 #[repr(C)]
 #[derive(Copy, Clone, Debug, Default)]
 pub struct Function2 {

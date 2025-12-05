@@ -167,7 +167,7 @@ mod tests {
                 build_id: build_id_id,
             };
 
-            // Test insert and read back (exercises unsafe transmute)
+            // Test insert and read back.
             let id1 = dict.try_insert_mapping2(mapping2).unwrap();
             prop_assert!(!id1.is_empty());
 

@@ -3,6 +3,7 @@
 
 use criterion::criterion_main;
 
+mod add_samples;
 mod interning_strings;
 
-criterion_main!(interning_strings::benches);
+criterion_main!(interning_strings::benches, add_samples::benches);

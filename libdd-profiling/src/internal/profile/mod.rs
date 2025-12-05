@@ -5,27 +5,37 @@
 mod fuzz_tests;
 
 pub mod interning_api;
+mod profiles_dictionary_translator;
+
+pub use profiles_dictionary_translator::*;
 
 use self::api::UpscalingInfo;
 use super::*;
-use crate::api;
 use crate::api::ManagedStringId;
 use crate::collections::identifiable::*;
 use crate::collections::string_storage::{CachedProfileId, ManagedStringStorage};
 use crate::collections::string_table::{self, StringTable};
+use crate::internal::owned_types;
 use crate::iter::{IntoLendingIterator, LendingIterator};
+use crate::profiles::collections::ArcOverflow;
+use crate::profiles::datatypes::ProfilesDictionary;
 use crate::profiles::{Compressor, DefaultProfileCodec};
+use crate::{api, api2};
 use anyhow::Context;
 use interning_api::Generation;
 use libdd_profiling_protobuf::{self as protobuf, Record, Value, NO_OPT_ZERO, OPT_ZERO};
 use std::borrow::Cow;
 use std::collections::HashMap;
 use std::io;
+use std::ops::Deref;
 use std::sync::atomic::AtomicU64;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime};
 
 pub struct Profile {
+    /// Translates from the new Id2 APIs to the older internal APIs. Long-term,
+    /// this should probably use the dictionary directly.
+    profiles_dictionary_translator: Option<ProfilesDictionaryTranslator>,
     /// When profiles are reset, the sample-types need to be preserved. This
     /// maintains them in a way that does not depend on the string table. The
     /// Option part is this is taken from the old profile and moved to the new
@@ -133,6 +143,8 @@ impl Profile {
 
         let labels = {
             let mut lbls = Vec::new();
+            // Using try_reserve_exact because it will be converted to Box<[]>,
+            // so excess capacity would make that conversion more expensive.
             lbls.try_reserve_exact(sample.labels.len())?;
             for label in &sample.labels {
                 let key = self.try_intern(label.key)?;
@@ -160,6 +172,98 @@ impl Profile {
         }
 
         self.try_add_sample_internal(sample.values, labels, locations, timestamp)
+    }
+
+    /// Tries to add a sample using `api2` structures.
+    ///
+    /// # Safety
+    ///
+    /// All MappingId2, FunctionId2, and StringId2 values should be coming
+    /// from the same profiles dictionary used by this profile internally.
+    pub unsafe fn try_add_sample2<
+        'a,
+        L: ExactSizeIterator<Item = anyhow::Result<api2::Label<'a>>>,
+    >(
+        &mut self,
+        locations: &[api2::Location2],
+        values: &[i64],
+        labels: L,
+        timestamp: Option<Timestamp>,
+    ) -> anyhow::Result<()> {
+        let Some(translator) = &mut self.profiles_dictionary_translator else {
+            anyhow::bail!("profiles dictionary not set");
+        };
+
+        // In debug builds, we iterate over the labels twice. That's not
+        // something the trait bounds support, so we collect into a vector.
+        // Since this is debug-only, the performance is fine.
+        #[cfg(debug_assertions)]
+        let labels = labels.collect::<Vec<_>>();
+        #[cfg(debug_assertions)]
+        {
+            Self::validate_sample_labels2(labels.as_slice())?;
+        }
+
+        let string_table = &mut self.strings;
+        let functions = &mut self.functions;
+        let mappings = &mut self.mappings;
+        let locations_set = &mut self.locations;
+        let labels_set = &mut self.labels;
+
+        let labels = {
+            let mut lbls = Vec::new();
+            // Using try_reserve_exact because it will be converted to Box<[]>,
+            // so excess capacity would make that conversion more expensive.
+            lbls.try_reserve_exact(labels.len())?;
+            for label in labels {
+                let label = label.context("profile label failed to convert")?;
+                let key = translator.translate_string(string_table, label.key.into())?;
+                let internal_label = if !label.str.is_empty() {
+                    let str = string_table.try_intern(label.str)?;
+                    Label::str(key, str)
+                } else {
+                    let num = label.num;
+                    let num_unit = string_table.try_intern(label.num_unit)?;
+                    Label::num(key, num, num_unit)
+                };
+
+                let id = labels_set.try_dedup(internal_label)?;
+                lbls.push(id);
+            }
+            lbls.into_boxed_slice()
+        };
+
+        let mut internal_locations = Vec::new();
+        internal_locations
+            .try_reserve_exact(locations.len())
+            .context("failed to reserve memory for sample locations")?;
+        for location in locations {
+            let l = Location {
+                mapping_id: translator.translate_mapping(
+                    mappings,
+                    string_table,
+                    location.mapping,
+                )?,
+                function_id: translator.translate_function(
+                    functions,
+                    string_table,
+                    location.function,
+                )?,
+                address: location.address,
+                line: location.line,
+            };
+            let location_id = locations_set.checked_dedup(l)?;
+            internal_locations.push(location_id);
+        }
+
+        self.try_add_sample_internal(values, labels, internal_locations, timestamp)
+    }
+
+    /// Gets the profiles dictionary, needed for `api2` operations.
+    pub fn get_profiles_dictionary(&self) -> Option<&ProfilesDictionary> {
+        self.profiles_dictionary_translator
+            .as_ref()
+            .map(|p| p.profiles_dictionary.deref())
     }
 
     pub fn add_string_id_sample(
@@ -283,12 +387,15 @@ impl Profile {
     }
 
     /// Tries to create a profile with the given `period`.
-    /// Initializes the string table to hold:
+    /// Initializes the string table to hold common strings such as:
     ///  - "" (the empty string)
     ///  - "local root span id"
     ///  - "trace endpoint"
+    /// - "end_timestamp_ns"
     ///
     /// All other fields are default.
+    ///
+    /// It's recommended to use [`Profile::try_new_with_dictionary`] instead.
     pub fn try_new(
         sample_types: &[api::ValueType],
         period: Option<api::Period>,
@@ -297,6 +404,28 @@ impl Profile {
             Self::backup_period(period),
             Self::backup_sample_types(sample_types),
             None,
+            None,
+        )
+    }
+
+    /// Tries to create a profile with the given period and sample types.
+    #[inline(never)]
+    #[cold]
+    pub fn try_new_with_dictionary(
+        sample_types: &[api::ValueType],
+        period: Option<api::Period>,
+        profiles_dictionary: crate::profiles::collections::Arc<ProfilesDictionary>,
+    ) -> io::Result<Self> {
+        let mut owned_sample_types = Vec::new();
+        // Using try_reserve_exact because it will be converted to Box<[]>,
+        // so excess capacity would make that conversion more expensive.
+        owned_sample_types.try_reserve_exact(sample_types.len())?;
+        owned_sample_types.extend(sample_types.iter().map(owned_types::ValueType::from));
+        Self::try_new_internal(
+            period.map(owned_types::Period::from),
+            Some(owned_sample_types.into_boxed_slice()),
+            None,
+            Some(ProfilesDictionaryTranslator::new(profiles_dictionary)),
         )
     }
 
@@ -310,6 +439,7 @@ impl Profile {
             Self::backup_period(period),
             Self::backup_sample_types(sample_types),
             Some(string_storage),
+            None,
         )
     }
 
@@ -323,10 +453,20 @@ impl Profile {
             "Can't rotate the profile, there are still active samples. Drain them and try again."
         );
 
+        let profiles_dictionary_translator = self
+            .profiles_dictionary_translator
+            .as_ref()
+            .map(|t| -> Result<_, ArcOverflow> {
+                let dict = t.profiles_dictionary.try_clone()?;
+                Ok(ProfilesDictionaryTranslator::new(dict))
+            })
+            .transpose()?;
+
         let mut profile = Profile::try_new_internal(
             self.owned_period.take(),
             self.owned_sample_types.take(),
             self.string_storage.clone(),
+            profiles_dictionary_translator,
         )
         .context("failed to initialize new profile")?;
 
@@ -785,9 +925,11 @@ impl Profile {
         owned_period: Option<owned_types::Period>,
         owned_sample_types: Option<Box<[owned_types::ValueType]>>,
         string_storage: Option<Arc<Mutex<ManagedStringStorage>>>,
+        profiles_dictionary_translator: Option<ProfilesDictionaryTranslator>,
     ) -> io::Result<Self> {
         let start_time = SystemTime::now();
         let mut profile = Self {
+            profiles_dictionary_translator,
             owned_period,
             owned_sample_types,
             active_samples: Default::default(),
@@ -905,6 +1047,35 @@ impl Profile {
         }
         Ok(())
     }
+
+    #[cfg(debug_assertions)]
+    fn validate_sample_labels2(labels: &[anyhow::Result<api2::Label>]) -> anyhow::Result<()> {
+        use crate::profiles::collections::StringRef;
+        let mut seen: HashMap<StringRef, &api2::Label> = HashMap::with_capacity(labels.len());
+
+        for label in labels.iter() {
+            let Ok(label) = label.as_ref() else {
+                anyhow::bail!("profiling FFI label string failed to convert")
+            };
+            let key = StringRef::from(label.key);
+            if let Some(duplicate) = seen.insert(key, label) {
+                anyhow::bail!("Duplicate label on sample: {duplicate:?} {label:?}");
+            }
+
+            if key == StringRef::LOCAL_ROOT_SPAN_ID {
+                anyhow::ensure!(
+                    label.str.is_empty() && label.num != 0,
+                    "Invalid \"local root span id\" label: {label:?}"
+                );
+            }
+
+            anyhow::ensure!(
+                key != StringRef::END_TIMESTAMP_NS,
+                "Timestamp should not be passed as a label {label:?}"
+            );
+        }
+        Ok(())
+    }
 }
 
 /// For testing and debugging purposes
@@ -931,6 +1102,7 @@ mod api_tests {
     use super::*;
     use crate::pprof::test_utils::{roundtrip_to_pprof, sorted_samples, string_table_fetch};
     use libdd_profiling_protobuf::prost_impls;
+    use std::collections::HashSet;
 
     #[test]
     fn interning() {
@@ -2541,6 +2713,207 @@ mod api_tests {
             assert_eq!(sample.labels, labels);
         }
         Ok(())
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_try_new_with_dictionary_and_try_add_sample2() {
+        struct Frame {
+            file_name: &'static str,
+            line_number: u32,
+            function_name: &'static str,
+        }
+
+        // Create a ProfilesDictionary with realistic data from Ruby app
+        let dict = crate::profiles::datatypes::ProfilesDictionary::try_new().unwrap();
+        let sample_types = vec![api::ValueType::new("samples", "count")];
+
+        // Ruby stack trace (leaf-to-root order)
+        // Taken from a Ruby app, everything here is source-available
+        let frames = [
+            Frame { file_name: "/usr/local/bundle/gems/datadog-2.18.0/lib/datadog/appsec/instrumentation/gateway/middleware.rb", line_number: 18, function_name: "call" },
+            Frame { file_name: "/usr/local/bundle/gems/datadog-2.18.0/lib/datadog/appsec/instrumentation/gateway.rb", line_number: 37, function_name: "push" },
+            Frame { file_name: "/usr/local/bundle/gems/datadog-2.18.0/lib/datadog/appsec/instrumentation/gateway.rb", line_number: 41, function_name: "push" },
+            Frame { file_name: "/usr/local/bundle/gems/datadog-2.18.0/lib/datadog/appsec/contrib/rack/request_middleware.rb", line_number: 85, function_name: "catch" },
+            Frame { file_name: "/usr/local/lib/libruby.so.3.3", line_number: 0, function_name: "catch" },
+            Frame { file_name: "/usr/local/bundle/gems/datadog-2.18.0/lib/datadog/appsec/contrib/rack/request_middleware.rb", line_number: 82, function_name: "call" },
+            Frame { file_name: "/usr/local/bundle/gems/datadog-2.18.0/lib/datadog/tracing/contrib/rack/middlewares.rb", line_number: 70, function_name: "call" },
+            Frame { file_name: "/usr/local/bundle/gems/datadog-2.18.0/lib/datadog/tracing/contrib/rack/trace_proxy_middleware.rb", line_number: 17, function_name: "call" },
+            Frame { file_name: "/usr/local/bundle/gems/datadog-2.18.0/lib/datadog/tracing/contrib/rack/middlewares.rb", line_number: 474, function_name: "call" },
+            Frame { file_name: "/usr/local/bundle/gems/railties-7.0.8.7/lib/rails/engine.rb", line_number: 530, function_name: "call" },
+            Frame { file_name: "/usr/local/bundle/gems/puma-6.4.3/lib/puma/configuration.rb", line_number: 272, function_name: "call" },
+            Frame { file_name: "/usr/local/bundle/gems/puma-6.4.3/lib/puma/request.rb", line_number: 100, function_name: "handle_request" },
+            Frame { file_name: "/usr/local/bundle/gems/puma-6.4.3/lib/puma/thread_pool.rb", line_number: 378, function_name: "with_force_shutdown" },
+            Frame { file_name: "/usr/local/bundle/gems/puma-6.4.3/lib/puma/request.rb", line_number: 99, function_name: "handle_request" },
+            Frame { file_name: "/usr/local/bundle/gems/puma-6.4.3/lib/puma/server.rb", line_number: 464, function_name: "process_client" },
+            Frame { file_name: "/usr/local/bundle/gems/puma-6.4.3/lib/puma/server.rb", line_number: 245, function_name: "run" },
+            Frame { file_name: "/usr/local/bundle/gems/puma-6.4.3/lib/puma/thread_pool.rb", line_number: 155, function_name: "spawn_thread" },
+            Frame { file_name: "/usr/local/bundle/gems/logging-2.4.0/lib/logging/diagnostic_context.rb", line_number: 474, function_name: "create_with_logging_context" },
+        ];
+
+        // Create a fake mapping to exercise the code path (Ruby doesn't currently use mappings)
+        let fake_mapping_filename = dict.try_insert_str2("/usr/lib/ruby.so").unwrap();
+        let fake_mapping = crate::profiles::datatypes::Mapping2 {
+            memory_start: 0x7f0000000000,
+            memory_limit: 0x7f0000100000,
+            file_offset: 0,
+            filename: fake_mapping_filename,
+            build_id: crate::profiles::datatypes::StringId2::default(),
+        };
+        let mapping_id = dict.try_insert_mapping2(fake_mapping).unwrap();
+
+        // Create locations from frames
+        let mut locations = Vec::new();
+        for frame in &frames {
+            let function_name_id = dict.try_insert_str2(frame.function_name).unwrap();
+            let filename_id = dict.try_insert_str2(frame.file_name).unwrap();
+            let function = crate::profiles::datatypes::Function2 {
+                name: function_name_id,
+                system_name: crate::profiles::datatypes::StringId2::default(),
+                file_name: filename_id,
+            };
+            let function_id = dict.try_insert_function2(function).unwrap();
+
+            locations.push(api2::Location2 {
+                mapping: mapping_id,
+                function: function_id,
+                address: 0,
+                line: frame.line_number as i64,
+            });
+        }
+
+        // Wrap in Arc
+        let dict = crate::profiles::collections::Arc::try_new(dict).unwrap();
+
+        // Create profile with dictionary
+        let mut profile =
+            Profile::try_new_with_dictionary(&sample_types, None, dict.try_clone().unwrap())
+                .unwrap();
+
+        assert_eq!(profile.only_for_testing_num_aggregated_samples(), 0);
+
+        let values = vec![1i64];
+
+        // Add sample without labels
+        let labels_iter = std::iter::empty::<anyhow::Result<api2::Label>>();
+        // SAFETY: adding ids from the correct ProfilesDictionary.
+        unsafe {
+            profile
+                .try_add_sample2(&locations, &values, labels_iter, None)
+                .expect("add to succeed");
+        }
+
+        assert_eq!(profile.only_for_testing_num_aggregated_samples(), 1);
+
+        // Add same sample again - should aggregate
+        let labels_iter = std::iter::empty::<anyhow::Result<api2::Label>>();
+        // SAFETY: adding ids from the correct ProfilesDictionary.
+        unsafe {
+            profile
+                .try_add_sample2(&locations, &values, labels_iter, None)
+                .expect("add to succeed");
+        }
+
+        // Still 1 sample because it aggregated
+        assert_eq!(profile.only_for_testing_num_aggregated_samples(), 1);
+
+        // Test with labels
+        let label_key = dict.try_insert_str2("thread_id").unwrap();
+        let label_value = "worker-1";
+
+        let labels_iter = std::iter::once(Ok(api2::Label::str(label_key, label_value)));
+        // SAFETY: adding ids from the correct ProfilesDictionary.
+        unsafe {
+            profile
+                .try_add_sample2(&locations, &values, labels_iter, None)
+                .expect("add with label to succeed");
+        }
+
+        // Should be 2 samples now (different label set)
+        assert_eq!(profile.only_for_testing_num_aggregated_samples(), 2);
+
+        // Test with numeric label
+        let thread_id_key = dict.try_insert_str2("thread_id_num").unwrap();
+        let labels_iter = std::iter::once(Ok(api2::Label::num(thread_id_key, 42, "")));
+        // SAFETY: adding ids from the correct ProfilesDictionary.
+        unsafe {
+            profile
+                .try_add_sample2(&locations, &values, labels_iter, None)
+                .expect("add with numeric label to succeed");
+        }
+
+        // Should be 3 samples now
+        assert_eq!(profile.only_for_testing_num_aggregated_samples(), 3);
+
+        // Verify the profile roundtrips correctly through pprof serialization
+        let pprof = roundtrip_to_pprof(profile).unwrap();
+        assert_eq!(pprof.samples.len(), 3);
+
+        // Verify we have the expected sample type
+        assert_eq!(pprof.sample_types.len(), 1);
+        let sample_type = &pprof.sample_types[0];
+        let type_str = &pprof.string_table[sample_type.r#type as usize];
+        let unit_str = &pprof.string_table[sample_type.unit as usize];
+        assert_eq!(type_str, "samples");
+        assert_eq!(unit_str, "count");
+
+        // Verify the mapping is present and has the correct filename
+        assert_eq!(pprof.mappings.len(), 1);
+        let mapping = &pprof.mappings[0];
+        let mapping_filename = &pprof.string_table[mapping.filename as usize];
+        assert_eq!(mapping_filename, "/usr/lib/ruby.so");
+
+        // Verify all 18 locations are present in each sample (same stack)
+        assert_eq!(pprof.samples[0].location_ids.len(), 18);
+        assert_eq!(pprof.samples[1].location_ids.len(), 18);
+        assert_eq!(pprof.samples[2].location_ids.len(), 18);
+
+        // Verify all filenames and function names from our frames are present
+        let mut expected_files = std::collections::HashSet::new();
+        let mut expected_functions = std::collections::HashSet::new();
+        for frame in &frames {
+            expected_files.insert(frame.file_name);
+            expected_functions.insert(frame.function_name);
+        }
+
+        let string_table_set: std::collections::HashSet<&str> =
+            pprof.string_table.iter().map(|s| s.as_str()).collect();
+
+        assert!(
+            expected_files.is_subset(&string_table_set),
+            "Missing files from string table: {:?}",
+            expected_files
+                .difference(&string_table_set)
+                .collect::<Vec<_>>()
+        );
+
+        assert!(
+            expected_functions.is_subset(&string_table_set),
+            "Missing functions from string table: {:?}",
+            expected_functions
+                .difference(&string_table_set)
+                .collect::<Vec<_>>()
+        );
+
+        // Verify the label keys and values we added are present in string table
+        let expected_label_strings = ["thread_id", "thread_id_num", "worker-1"]
+            .into_iter()
+            .collect::<HashSet<&str>>();
+        let diff = expected_label_strings
+            .difference(&string_table_set)
+            .collect::<Vec<_>>();
+        assert!(
+            diff.is_empty(),
+            "Missing label strings from string table: {:?}",
+            diff
+        );
+
+        // Verify sample values
+        // We have 3 samples: one with value 2 (aggregated), two with value 1
+        // Samples may be reordered, so collect and sort the values
+        let mut values: Vec<i64> = pprof.samples.iter().map(|s| s.values[0]).collect();
+        values.sort_unstable();
+        assert_eq!(values, vec![1, 1, 2]);
     }
 
     #[test]

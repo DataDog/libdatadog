@@ -5,8 +5,10 @@ mod function;
 mod mapping;
 mod profiles_dictionary;
 mod string;
+mod value_type;
 
 pub use function::*;
 pub use mapping::*;
 pub use profiles_dictionary::*;
 pub use string::*;
+pub use value_type::*;

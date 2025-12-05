@@ -6,7 +6,7 @@ use super::*;
 /// Represents a [pprof::Function] with some space-saving changes:
 ///  - The id is not stored on the struct. It's stored in the container that holds the struct.
 ///  - ids for linked objects use 32-bit numbers instead of 64 bit ones.
-#[derive(Copy, Clone, Debug, Eq, PartialEq, Hash, PartialOrd, Ord)]
+#[derive(Copy, Clone, Debug, Default, Eq, PartialEq, Hash, PartialOrd, Ord)]
 pub struct Function {
     pub name: StringId,
     pub system_name: StringId,
