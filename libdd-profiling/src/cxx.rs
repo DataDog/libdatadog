@@ -59,20 +59,39 @@ pub mod ffi {
         labels: Vec<Label<'a>>,
     }
 
+    // Enums
+    #[derive(Debug)]
+    #[repr(u32)]
+    enum SampleType {
+        Cpu = 0,
+        Wall = 1,
+        Exception = 2,
+        LockAcquire = 3,
+        LockRelease = 4,
+        Allocation = 5,
+        Heap = 6,
+        GpuTime = 7,
+        GpuMemory = 8,
+        GpuFlops = 9,
+    }
+
     // Opaque Rust types
     extern "Rust" {
         type Profile;
+        type OwnedSample;
+        type SamplePool;
 
-        // Static factory methods
+        // Profile static factory
         #[Self = "Profile"]
         fn create(sample_types: Vec<ValueType>, period: &Period) -> Result<Box<Profile>>;
 
         // Profile methods
         fn add_sample(self: &mut Profile, sample: &Sample) -> Result<()>;
+        fn add_owned_sample(self: &mut Profile, sample: &OwnedSample) -> Result<()>;
         fn add_endpoint(self: &mut Profile, local_root_span_id: u64, endpoint: &str) -> Result<()>;
         fn add_endpoint_count(self: &mut Profile, endpoint: &str, value: i64) -> Result<()>;
 
-        // Upscaling rule methods (one for each variant)
+        // Upscaling rule methods
         fn add_upscaling_rule_poisson(
             self: &mut Profile,
             offset_values: &[usize],
@@ -103,6 +122,27 @@ pub mod ffi {
 
         fn reset(self: &mut Profile) -> Result<()>;
         fn serialize_to_vec(self: &mut Profile) -> Result<Vec<u8>>;
+
+        // OwnedSample methods
+        #[Self = "OwnedSample"]
+        fn create(sample_types: Vec<SampleType>) -> Result<Box<OwnedSample>>;
+        
+        fn set_value(self: &mut OwnedSample, sample_type: SampleType, value: i64) -> Result<()>;
+        fn get_value(self: &OwnedSample, sample_type: SampleType) -> Result<i64>;
+        fn add_location(self: &mut OwnedSample, location: &Location);
+        fn add_label(self: &mut OwnedSample, label: &Label);
+        fn num_locations(self: &OwnedSample) -> usize;
+        fn num_labels(self: &OwnedSample) -> usize;
+        fn reset_sample(self: &mut OwnedSample);
+
+        // SamplePool methods
+        #[Self = "SamplePool"]
+        fn create(sample_types: Vec<SampleType>, capacity: usize) -> Result<Box<SamplePool>>;
+        
+        fn get_sample(self: &mut SamplePool) -> Box<OwnedSample>;
+        fn return_sample(self: &mut SamplePool, sample: Box<OwnedSample>);
+        fn pool_len(self: &SamplePool) -> usize;
+        fn pool_capacity(self: &SamplePool) -> usize;
     }
 }
 
@@ -204,6 +244,15 @@ impl Profile {
         Ok(())
     }
 
+    pub fn add_owned_sample(&mut self, sample: &OwnedSample) -> anyhow::Result<()> {
+        // Convert OwnedSample to API Sample
+        let api_sample = sample.inner.as_sample();
+        
+        // Profile interns the strings
+        self.inner.try_add_sample(api_sample, None)?;
+        Ok(())
+    }
+
     pub fn add_endpoint(&mut self, local_root_span_id: u64, endpoint: &str) -> anyhow::Result<()> {
         self.inner
             .add_endpoint(local_root_span_id, std::borrow::Cow::Borrowed(endpoint))
@@ -274,5 +323,143 @@ impl Profile {
         let end_time = Some(std::time::SystemTime::now());
         let encoded = old_profile.serialize_into_compressed_pprof(end_time, None)?;
         Ok(encoded.buffer)
+    }
+}
+
+// ============================================================================
+// OwnedSample - Wrapper around owned_sample::OwnedSample
+// ============================================================================
+
+use crate::owned_sample;
+use std::sync::Arc;
+
+pub struct OwnedSample {
+    inner: owned_sample::OwnedSample,
+}
+
+impl OwnedSample {
+    pub fn create(sample_types: Vec<ffi::SampleType>) -> anyhow::Result<Box<OwnedSample>> {
+        // Convert CXX SampleType to owned_sample::SampleType
+        let types: Vec<owned_sample::SampleType> = sample_types
+            .into_iter()
+            .map(ffi_sample_type_to_owned)
+            .collect::<anyhow::Result<Vec<_>>>()?;
+
+        // Create indices internally
+        let indices = Arc::new(owned_sample::SampleTypeIndices::new(types)?);
+        let inner = owned_sample::OwnedSample::new(indices);
+        Ok(Box::new(OwnedSample { inner }))
+    }
+
+    pub fn set_value(&mut self, sample_type: ffi::SampleType, value: i64) -> anyhow::Result<()> {
+        let st = ffi_sample_type_to_owned(sample_type)?;
+        self.inner.set_value(st, value)
+    }
+
+    pub fn get_value(&self, sample_type: ffi::SampleType) -> anyhow::Result<i64> {
+        let st = ffi_sample_type_to_owned(sample_type)?;
+        self.inner.get_value(st)
+    }
+
+    pub fn add_location(&mut self, location: &ffi::Location) {
+        let api_location: api::Location = location.into();
+        self.inner.add_location(api_location);
+    }
+
+    pub fn add_label(&mut self, label: &ffi::Label) {
+        let api_label: api::Label = label.into();
+        self.inner.add_label(api_label);
+    }
+
+    pub fn num_locations(&self) -> usize {
+        self.inner.num_locations()
+    }
+
+    pub fn num_labels(&self) -> usize {
+        self.inner.num_labels()
+    }
+
+    pub fn reset_sample(&mut self) {
+        self.inner.reset();
+    }
+}
+
+// ============================================================================
+// SamplePool - Wrapper around owned_sample::SamplePool
+// ============================================================================
+
+pub struct SamplePool {
+    inner: owned_sample::SamplePool,
+}
+
+impl SamplePool {
+    pub fn create(sample_types: Vec<ffi::SampleType>, capacity: usize) -> anyhow::Result<Box<SamplePool>> {
+        // Convert CXX SampleType to owned_sample::SampleType
+        let types: Vec<owned_sample::SampleType> = sample_types
+            .into_iter()
+            .map(ffi_sample_type_to_owned)
+            .collect::<anyhow::Result<Vec<_>>>()?;
+
+        // Create indices internally
+        let indices = Arc::new(owned_sample::SampleTypeIndices::new(types)?);
+        let inner = owned_sample::SamplePool::new(indices, capacity);
+        Ok(Box::new(SamplePool { inner }))
+    }
+
+    pub fn get_sample(&mut self) -> Box<OwnedSample> {
+        let inner = self.inner.get();
+        Box::new(OwnedSample { inner: *inner })
+    }
+
+    #[allow(clippy::boxed_local)]
+    pub fn return_sample(&mut self, sample: Box<OwnedSample>) {
+        self.inner.put(Box::new(sample.inner));
+    }
+
+    pub fn pool_len(&self) -> usize {
+        self.inner.len()
+    }
+
+    pub fn pool_capacity(&self) -> usize {
+        self.inner.capacity()
+    }
+}
+
+// Note: We must redeclare SampleType in the CXX bridge because CXX doesn't support
+// using external Rust enums. This conversion function maps between the two.
+fn ffi_sample_type_to_owned(st: ffi::SampleType) -> anyhow::Result<owned_sample::SampleType> {
+    match st {
+        ffi::SampleType::Cpu => Ok(owned_sample::SampleType::Cpu),
+        ffi::SampleType::Wall => Ok(owned_sample::SampleType::Wall),
+        ffi::SampleType::Exception => Ok(owned_sample::SampleType::Exception),
+        ffi::SampleType::LockAcquire => Ok(owned_sample::SampleType::LockAcquire),
+        ffi::SampleType::LockRelease => Ok(owned_sample::SampleType::LockRelease),
+        ffi::SampleType::Allocation => Ok(owned_sample::SampleType::Allocation),
+        ffi::SampleType::Heap => Ok(owned_sample::SampleType::Heap),
+        ffi::SampleType::GpuTime => Ok(owned_sample::SampleType::GpuTime),
+        ffi::SampleType::GpuMemory => Ok(owned_sample::SampleType::GpuMemory),
+        ffi::SampleType::GpuFlops => Ok(owned_sample::SampleType::GpuFlops),
+        _ => anyhow::bail!("Unknown SampleType variant: {:?}", st),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_sample_type_enum_sync() {
+        // Ensure ffi::SampleType and owned_sample::SampleType stay in sync
+        // This will fail to compile if variants don't match
+        assert_eq!(ffi_sample_type_to_owned(ffi::SampleType::Cpu).unwrap() as usize, owned_sample::SampleType::Cpu as usize);
+        assert_eq!(ffi_sample_type_to_owned(ffi::SampleType::Wall).unwrap() as usize, owned_sample::SampleType::Wall as usize);
+        assert_eq!(ffi_sample_type_to_owned(ffi::SampleType::Exception).unwrap() as usize, owned_sample::SampleType::Exception as usize);
+        assert_eq!(ffi_sample_type_to_owned(ffi::SampleType::LockAcquire).unwrap() as usize, owned_sample::SampleType::LockAcquire as usize);
+        assert_eq!(ffi_sample_type_to_owned(ffi::SampleType::LockRelease).unwrap() as usize, owned_sample::SampleType::LockRelease as usize);
+        assert_eq!(ffi_sample_type_to_owned(ffi::SampleType::Allocation).unwrap() as usize, owned_sample::SampleType::Allocation as usize);
+        assert_eq!(ffi_sample_type_to_owned(ffi::SampleType::Heap).unwrap() as usize, owned_sample::SampleType::Heap as usize);
+        assert_eq!(ffi_sample_type_to_owned(ffi::SampleType::GpuTime).unwrap() as usize, owned_sample::SampleType::GpuTime as usize);
+        assert_eq!(ffi_sample_type_to_owned(ffi::SampleType::GpuMemory).unwrap() as usize, owned_sample::SampleType::GpuMemory as usize);
+        assert_eq!(ffi_sample_type_to_owned(ffi::SampleType::GpuFlops).unwrap() as usize, owned_sample::SampleType::GpuFlops as usize);
     }
 }

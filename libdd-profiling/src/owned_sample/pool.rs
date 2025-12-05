@@ -38,6 +38,7 @@ pub struct SamplePool {
     /// Maximum number of samples to keep in the pool
     capacity: usize,
     /// Stack of available samples
+    #[allow(clippy::vec_box)]
     samples: Vec<Box<OwnedSample>>,
 }
 
