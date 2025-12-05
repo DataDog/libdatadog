@@ -365,6 +365,7 @@ pub(crate) async fn receive_report_from_stream(
 
     // For now, we only support Signal based crash detection in the receiver.
     builder.with_kind(ErrorKind::UnixSignal)?;
+    builder.with_os_info_this_machine()?;
 
     // Without a config, we don't even know the endpoint to transmit to.  Not much to do to recover.
     let config = config.context("Missing crashtracker configuration")?;
