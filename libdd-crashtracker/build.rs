@@ -12,6 +12,16 @@ use unix_imports::*;
 
 pub use libdd_common::cc_utils::cc;
 
+// Build CXX bridge - cross-platform function
+#[cfg(feature = "cxx")]
+fn build_cxx_bridge() {
+    cxx_build::bridge("src/crash_info/cxx.rs")
+        .flag_if_supported("-std=c++20")
+        .compile("libdd-crashtracker-cxx");
+
+    println!("cargo:rerun-if-changed=src/crash_info/cxx.rs");
+}
+
 #[cfg(unix)]
 fn build_shared_libs() {
     build_c_file();
@@ -103,6 +113,10 @@ fn main() {
         .file("src/crash_info/emit_sicodes.c")
         .compile("emit_sicodes");
 
+    // Build CXX bridge if feature is enabled
+    #[cfg(feature = "cxx")]
+    build_cxx_bridge();
+
     // Don't build test libraries during `cargo publish` verification.
     // During verification, the package is unpacked to target/package/ and built there.
     let is_packaging = std::env::var("CARGO_MANIFEST_DIR")
@@ -119,4 +133,8 @@ fn main() {
 }
 
 #[cfg(not(unix))]
-fn main() {}
+fn main() {
+    // Build CXX bridge if feature is enabled
+    #[cfg(feature = "cxx")]
+    build_cxx_bridge();
+}
