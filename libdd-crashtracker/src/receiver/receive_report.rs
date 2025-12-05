@@ -86,6 +86,20 @@ fn process_line(
     state: StdinState,
 ) -> anyhow::Result<StdinState> {
     let next = match state {
+        StdinState::File(filename, contents) if line.starts_with(DD_CRASHTRACK_END_FILE) => {
+            let mut data = Vec::new();
+            for entry in contents {
+                data.extend_from_slice(entry.as_bytes());
+                data.push(b'\n');
+            }
+            builder.with_file_bytes(filename, data)?;
+            StdinState::Waiting
+        }
+        StdinState::File(name, mut contents) => {
+            contents.push(line.to_string());
+            StdinState::File(name, contents)
+        }
+
         StdinState::AdditionalTags if line.starts_with(DD_CRASHTRACK_END_ADDITIONAL_TAGS) => {
             StdinState::Waiting
         }
@@ -125,15 +139,6 @@ fn process_line(
                 true,
             )?;
             StdinState::Done
-        }
-
-        StdinState::File(filename, lines) if line.starts_with(DD_CRASHTRACK_END_FILE) => {
-            builder.with_file_and_contents(filename, lines)?;
-            StdinState::Waiting
-        }
-        StdinState::File(name, mut contents) => {
-            contents.push(line.to_string());
-            StdinState::File(name, contents)
         }
 
         StdinState::Metadata if line.starts_with(DD_CRASHTRACK_END_METADATA) => StdinState::Waiting,
@@ -330,7 +335,9 @@ pub(crate) async fn receive_report_from_stream(
             builder.with_log_message(format!("IO Error: {next_line:?}"), true)?;
             break;
         };
-        let Some(next_line) = next_line else { break };
+        let Some(next_line) = next_line else {
+            break;
+        };
 
         match process_line(&mut builder, &mut config, &next_line, stdin_state) {
             Ok(next_state) => {
