@@ -43,6 +43,36 @@ pub fn build_crash_ping_message(sig_info: &SigInfo) -> String {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum FileEncoding {
+    Zstd,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct CrashFile {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub encoding: Option<FileEncoding>,
+    #[serde(default)]
+    pub data: Vec<u8>,
+}
+
+impl CrashFile {
+    pub fn new(data: Vec<u8>) -> Self {
+        Self {
+            encoding: None,
+            data,
+        }
+    }
+
+    pub fn with_encoding(data: Vec<u8>, encoding: FileEncoding) -> Self {
+        Self {
+            encoding: Some(encoding),
+            data,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct CrashInfo {
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub counters: HashMap<String, i64>,
@@ -51,7 +81,9 @@ pub struct CrashInfo {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub experimental: Option<Experimental>,
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
-    pub files: HashMap<String, Vec<String>>,
+    /// Supplemental files attached to the crash report. Each entry stores the raw
+    /// bytes plus optional encoding metadata (e.g. `/proc/self/maps` is zstd-compressed).
+    pub files: HashMap<String, CrashFile>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fingerprint: Option<String>,
     pub incomplete: bool,

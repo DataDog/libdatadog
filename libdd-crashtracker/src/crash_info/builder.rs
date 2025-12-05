@@ -6,11 +6,15 @@ use crate::runtime_callback::RuntimeStack;
 use chrono::{DateTime, Utc};
 use error_data::ThreadData;
 use stacktrace::StackTrace;
-use std::io::{BufRead, BufReader};
+use std::fs;
 use unknown_value::UnknownValue;
 use uuid::Uuid;
+use zstd::bulk;
 
 use super::*;
+
+const PROC_SELF_MAPS_PATH: &str = "/proc/self/maps";
+const PROC_SELF_MAPS_ZSTD_LEVEL: i32 = 3;
 
 #[derive(Debug, Default, PartialEq)]
 pub struct ErrorDataBuilder {
@@ -96,7 +100,7 @@ pub struct CrashInfoBuilder {
     pub counters: Option<HashMap<String, i64>>,
     pub error: ErrorDataBuilder,
     pub experimental: Option<Experimental>,
-    pub files: Option<HashMap<String, Vec<String>>>,
+    pub files: Option<HashMap<String, CrashFile>>,
     pub fingerprint: Option<String>,
     pub incomplete: Option<bool>,
     pub log_messages: Option<Vec<String>>,
@@ -232,10 +236,8 @@ impl CrashInfoBuilder {
     }
 
     pub fn with_file(&mut self, filename: String) -> anyhow::Result<()> {
-        let file = File::open(&filename).with_context(|| format!("filename: {filename}"))?;
-        let lines: std::io::Result<Vec<_>> = BufReader::new(file).lines().collect();
-        self.with_file_and_contents(filename, lines?)?;
-        Ok(())
+        let data = fs::read(&filename).with_context(|| format!("filename: {filename}"))?;
+        self.with_file_bytes(filename, data)
     }
 
     /// Appends the given file to the current set of files in the builder.
@@ -244,17 +246,33 @@ impl CrashInfoBuilder {
         filename: String,
         contents: Vec<String>,
     ) -> anyhow::Result<()> {
-        if let Some(ref mut files) = &mut self.files {
-            files.insert(filename, contents);
-        } else {
-            self.files = Some(HashMap::from([(filename, contents)]));
+        let mut data = Vec::new();
+        for line in contents {
+            data.extend_from_slice(line.as_bytes());
+            data.push(b'\n');
         }
-        Ok(())
+        self.with_file_bytes(filename, data)
     }
 
     /// Sets the current set of files in the builder.
-    pub fn with_files(&mut self, files: HashMap<String, Vec<String>>) -> anyhow::Result<()> {
+    pub fn with_files(&mut self, files: HashMap<String, CrashFile>) -> anyhow::Result<()> {
         self.files = Some(files);
+        Ok(())
+    }
+
+    pub fn with_file_bytes(&mut self, filename: String, contents: Vec<u8>) -> anyhow::Result<()> {
+        let file = if filename == PROC_SELF_MAPS_PATH {
+            let compressed = bulk::compress(&contents, PROC_SELF_MAPS_ZSTD_LEVEL)
+                .context("unable to zstd encode /proc/self/maps")?;
+            CrashFile::with_encoding(compressed, FileEncoding::Zstd)
+        } else {
+            CrashFile::new(contents)
+        };
+        if let Some(ref mut files) = &mut self.files {
+            files.insert(filename, file);
+        } else {
+            self.files = Some(HashMap::from([(filename, file)]));
+        }
         Ok(())
     }
 
