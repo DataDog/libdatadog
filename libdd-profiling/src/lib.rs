@@ -13,5 +13,6 @@ pub mod cxx;
 pub mod exporter;
 pub mod internal;
 pub mod iter;
+pub mod owned_sample;
 pub mod pprof;
 pub mod profiles;

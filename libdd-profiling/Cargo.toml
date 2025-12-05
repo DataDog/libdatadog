@@ -28,6 +28,9 @@ harness = false
 allocator-api2 = { version = "0.2", default-features = false, features = ["alloc"] }
 anyhow = "1.0"
 bitmaps = "3.2.0"
+bumpalo = { version = "3.16", features = ["collections"] }
+enum-map = "2.7"
+ouroboros = "0.18"
 byteorder = { version = "1.5", features = ["std"] }
 bytes = "1.1"
 chrono = {version = "0.4", default-features = false, features = ["std", "clock"]}
