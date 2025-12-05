@@ -290,14 +290,14 @@ mod windows {
                 // Read from invalid address (must be aligned for i32)
                 unsafe {
                     let ptr: *const i32 = 0xDEADBEEC as *const i32; // 4-byte aligned
-                    let _value = *ptr; // Should cause EXCEPTION_ACCESS_VIOLATION
+                    std::hint::black_box(std::ptr::read_volatile(ptr)); // Force actual read
                 }
             }
             WindowsCrashType::AccessViolationWrite => {
                 // Write to invalid address (must be aligned for i32)
                 unsafe {
                     let ptr: *mut i32 = 0xDEADBEEC as *mut i32; // 4-byte aligned
-                    *ptr = 42; // Should cause EXCEPTION_ACCESS_VIOLATION
+                    std::ptr::write_volatile(ptr, std::hint::black_box(42)); // Force actual write
                 }
             }
             WindowsCrashType::DivideByZero => {
@@ -351,11 +351,11 @@ mod windows {
                 // Execute illegal instruction
                 #[cfg(target_arch = "x86_64")]
                 unsafe {
-                    std::arch::asm!("ud2"); // Undefined instruction
+                    std::arch::asm!("ud2", options(noreturn)); // Undefined instruction
                 }
                 #[cfg(target_arch = "x86")]
                 unsafe {
-                    std::arch::asm!("ud2"); // Undefined instruction
+                    std::arch::asm!("ud2", options(noreturn)); // Undefined instruction
                 }
                 #[cfg(not(any(target_arch = "x86_64", target_arch = "x86")))]
                 {
