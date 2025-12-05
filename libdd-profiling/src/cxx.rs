@@ -129,6 +129,19 @@ pub mod ffi {
         
         fn set_value(self: &mut OwnedSample, sample_type: SampleType, value: i64) -> Result<()>;
         fn get_value(self: &OwnedSample, sample_type: SampleType) -> Result<i64>;
+        
+        #[Self = "OwnedSample"]
+        fn is_timeline_enabled() -> bool;
+        #[Self = "OwnedSample"]
+        fn set_timeline_enabled(enabled: bool);
+        
+        fn set_endtime_ns(self: &mut OwnedSample, endtime_ns: i64) -> i64;
+        fn set_endtime_ns_now(self: &mut OwnedSample) -> Result<i64>;
+        fn endtime_ns(self: &OwnedSample) -> i64;
+        
+        #[cfg(unix)]
+        fn set_endtime_from_monotonic_ns(self: &mut OwnedSample, monotonic_ns: i64) -> Result<i64>;
+        
         fn add_location(self: &mut OwnedSample, location: &Location);
         fn add_label(self: &mut OwnedSample, label: &Label);
         fn num_locations(self: &OwnedSample) -> usize;
@@ -359,6 +372,33 @@ impl OwnedSample {
     pub fn get_value(&self, sample_type: ffi::SampleType) -> anyhow::Result<i64> {
         let st = ffi_sample_type_to_owned(sample_type)?;
         self.inner.get_value(st)
+    }
+
+    pub fn is_timeline_enabled() -> bool {
+        owned_sample::OwnedSample::is_timeline_enabled()
+    }
+
+    pub fn set_timeline_enabled(enabled: bool) {
+        owned_sample::OwnedSample::set_timeline_enabled(enabled);
+    }
+
+    pub fn set_endtime_ns(&mut self, endtime_ns: i64) -> i64 {
+        self.inner.set_endtime_ns(endtime_ns)
+    }
+
+    pub fn set_endtime_ns_now(&mut self) -> anyhow::Result<i64> {
+        self.inner.set_endtime_ns_now()
+    }
+
+    pub fn endtime_ns(&self) -> i64 {
+        self.inner.endtime_ns()
+            .map(|nz| nz.get())
+            .unwrap_or(0)
+    }
+
+    #[cfg(unix)]
+    pub fn set_endtime_from_monotonic_ns(&mut self, monotonic_ns: i64) -> anyhow::Result<i64> {
+        self.inner.set_endtime_from_monotonic_ns(monotonic_ns)
     }
 
     pub fn add_location(&mut self, location: &ffi::Location) {

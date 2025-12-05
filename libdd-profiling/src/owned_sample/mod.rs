@@ -48,7 +48,9 @@
 
 use bumpalo::Bump;
 use enum_map::{Enum, EnumMap};
+use std::num::NonZeroI64;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 use anyhow::{self, Context};
 use crate::api::{Function, Label, Location, Mapping, Sample};
 
@@ -58,6 +60,56 @@ mod pool;
 mod tests;
 
 pub use pool::SamplePool;
+
+/// Global flag to enable/disable timeline for all samples.
+/// When disabled, time-setting methods become no-ops.
+static TIMELINE_ENABLED: AtomicBool = AtomicBool::new(true);
+
+/// Computes the offset between monotonic time (CLOCK_MONOTONIC) and epoch time.
+/// This is computed once and cached in an atomic.
+///
+/// The offset allows converting monotonic timestamps (which start at system boot)
+/// to epoch timestamps (which start at 1970-01-01).
+///
+/// # Errors
+///
+/// Returns an error if:
+/// - System time is before UNIX_EPOCH
+/// - `clock_gettime(CLOCK_MONOTONIC)` fails
+#[cfg(unix)]
+fn monotonic_to_epoch_offset() -> anyhow::Result<i64> {
+    static OFFSET: AtomicI64 = AtomicI64::new(0);
+    
+    // Fast path: offset already computed
+    let offset = OFFSET.load(Ordering::Relaxed);
+    if offset != 0 {
+        return Ok(offset);
+    }
+    
+    // Slow path: compute the offset
+    use std::time::SystemTime;
+    
+    // Get the current epoch time in nanoseconds
+    let epoch_ns = SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .context("system time is before UNIX_EPOCH")?
+        .as_nanos() as i64;
+    
+    // Get the current monotonic time using clock_gettime (safe wrapper from nix crate)
+    let ts = nix::time::clock_gettime(nix::time::ClockId::CLOCK_MONOTONIC)
+        .context("failed to get monotonic time from CLOCK_MONOTONIC")?;
+    
+    let monotonic_ns = ts.tv_sec() * 1_000_000_000 + ts.tv_nsec();
+    
+    // Compute the difference (epoch_ns will be larger since we're after 1970)
+    let computed_offset = epoch_ns - monotonic_ns;
+    
+    // Store it atomically (if another thread raced and stored it, that's fine)
+    OFFSET.store(computed_offset, Ordering::Relaxed);
+    
+    Ok(computed_offset)
+}
+
 
 /// Types of profiling samples that can be collected.
 ///
@@ -205,6 +257,7 @@ pub struct OwnedSample {
     inner: SampleInner,
     values: Vec<i64>,
     indices: Arc<SampleTypeIndices>,
+    endtime_ns: Option<NonZeroI64>,
 }
 
 impl OwnedSample {
@@ -233,6 +286,7 @@ impl OwnedSample {
             }.build(),
             values: vec![0; num_values],
             indices,
+            endtime_ns: None,
         }
     }
 
@@ -273,6 +327,100 @@ impl OwnedSample {
     /// Returns a reference to the sample type indices.
     pub fn indices(&self) -> &Arc<SampleTypeIndices> {
         &self.indices
+    }
+
+    /// Returns whether timeline is enabled globally for all samples.
+    pub fn is_timeline_enabled() -> bool {
+        TIMELINE_ENABLED.load(Ordering::Relaxed)
+    }
+
+    /// Sets whether timeline is enabled globally for all samples.
+    /// 
+    /// When timeline is disabled, time-setting methods become no-ops.
+    pub fn set_timeline_enabled(enabled: bool) {
+        TIMELINE_ENABLED.store(enabled, Ordering::Relaxed);
+    }
+
+    /// Sets the end time of the sample in nanoseconds.
+    /// 
+    /// If `endtime_ns` is 0, the end time will be cleared (set to None).
+    /// 
+    /// Returns the timestamp that was passed in. If timeline is disabled,
+    /// the value is not stored but is still returned.
+    pub fn set_endtime_ns(&mut self, endtime_ns: i64) -> i64 {
+        if Self::is_timeline_enabled() {
+            self.endtime_ns = NonZeroI64::new(endtime_ns);
+        }
+        endtime_ns
+    }
+
+    /// Sets the end time of the sample to the current time (now).
+    ///
+    /// On Unix platforms, this uses `CLOCK_MONOTONIC` for accurate timing and converts
+    /// to epoch time. On other platforms, it uses the system clock directly.
+    ///
+    /// Returns the calculated timestamp. If timeline is disabled, the timestamp
+    /// is calculated and returned but not stored in the sample.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - On Unix: system time is before UNIX_EPOCH or `clock_gettime(CLOCK_MONOTONIC)` fails
+    /// - On non-Unix: system time is before UNIX_EPOCH
+    #[cfg(unix)]
+    pub fn set_endtime_ns_now(&mut self) -> anyhow::Result<i64> {
+        // Get current monotonic time
+        let ts = nix::time::clock_gettime(nix::time::ClockId::CLOCK_MONOTONIC)
+            .context("failed to get current monotonic time")?;
+        
+        let monotonic_ns = ts.tv_sec() * 1_000_000_000 + ts.tv_nsec();
+        
+        // Convert to epoch time and set (set_endtime_from_monotonic_ns handles timeline check)
+        self.set_endtime_from_monotonic_ns(monotonic_ns)
+    }
+
+    #[cfg(not(unix))]
+    pub fn set_endtime_ns_now(&mut self) -> anyhow::Result<i64> {
+        use std::time::SystemTime;
+        
+        let now_ns = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .context("system time is before UNIX_EPOCH")?
+            .as_nanos() as i64;
+        
+        // set_endtime_ns returns the timestamp and handles timeline check
+        Ok(self.set_endtime_ns(now_ns))
+    }
+
+    /// Returns the end time of the sample in nanoseconds, or None if not set.
+    pub fn endtime_ns(&self) -> Option<NonZeroI64> {
+        self.endtime_ns
+    }
+
+    /// Converts a monotonic timestamp (CLOCK_MONOTONIC) to epoch time and sets it as endtime_ns.
+    ///
+    /// Monotonic times have their epoch at system start, so they need an adjustment
+    /// to the standard epoch. This function computes the offset once (on first call)
+    /// and reuses it for all subsequent conversions.
+    ///
+    /// This uses `clock_gettime(CLOCK_MONOTONIC)` to determine the offset.
+    ///
+    /// Returns the converted epoch timestamp. If timeline is disabled, the timestamp
+    /// is calculated and returned but not stored.
+    ///
+    /// # Arguments
+    /// * `monotonic_ns` - Monotonic timestamp in nanoseconds since system boot
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - System time is before UNIX_EPOCH
+    /// - `clock_gettime(CLOCK_MONOTONIC)` fails
+    #[cfg(unix)]
+    pub fn set_endtime_from_monotonic_ns(&mut self, monotonic_ns: i64) -> anyhow::Result<i64> {
+        let offset = monotonic_to_epoch_offset()?;
+        let endtime = monotonic_ns + offset;
+        Ok(self.set_endtime_ns(endtime))
     }
 
     /// Add a location to the sample.
@@ -397,6 +545,9 @@ impl OwnedSample {
         
         // Zero out all values but keep the vector length and capacity
         self.values.fill(0);
+        
+        // Reset endtime_ns
+        self.endtime_ns = None;
         
         // Rebuild with the reset arena
         self.inner = SampleInnerBuilder {

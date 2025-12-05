@@ -2909,6 +2909,7 @@ dependencies = [
  "libdd-profiling-protobuf",
  "lz4_flex",
  "mime",
+ "nix 0.29.0",
  "ouroboros",
  "parking_lot",
  "proptest",

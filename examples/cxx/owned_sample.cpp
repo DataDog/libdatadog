@@ -7,6 +7,9 @@
 #include <fstream>
 #include <format>
 #include <vector>
+#ifdef __unix__
+#include <time.h>
+#endif
 #include "libdd-profiling/src/cxx.rs.h"
 
 using namespace datadog::profiling;
@@ -65,6 +68,23 @@ int main() {
             // Set the wall time value
             auto wall_time_value = 1000000 + (i % 1000) * 1000;
             owned_sample->set_value(SampleType::Wall, wall_time_value);
+            
+            // Set the end time to the current time
+            // This is the simplest way to set the endtime
+            try {
+                owned_sample->set_endtime_ns_now();
+            } catch (const rust::Error& e) {
+                std::cerr << "Failed to set endtime to now: " << e.what() << std::endl;
+            }
+            
+            // Alternative: set endtime using monotonic time (Unix only)
+            // This is useful if you already have a monotonic timestamp
+            #ifdef __unix__
+            // timespec ts;
+            // clock_gettime(CLOCK_MONOTONIC, &ts);
+            // auto monotonic_ns = static_cast<int64_t>(ts.tv_sec) * 1'000'000'000LL + ts.tv_nsec;
+            // owned_sample->set_endtime_from_monotonic_ns(monotonic_ns);
+            #endif
             
             Mapping mapping{
                 .memory_start = 0x10000000,

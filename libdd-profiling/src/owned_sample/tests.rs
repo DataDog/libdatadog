@@ -276,3 +276,161 @@ fn test_add_multiple() {
     assert_eq!(label1.num, 123);
 }
 
+#[test]
+fn test_endtime_ns() {
+    use std::num::NonZeroI64;
+    
+    let indices = Arc::new(SampleTypeIndices::new(vec![SampleType::Cpu]).unwrap());
+    let mut sample = OwnedSample::new(indices);
+    
+    // Initially, endtime_ns should be None
+    assert_eq!(sample.endtime_ns(), None);
+    
+    // Set a non-zero endtime
+    sample.set_endtime_ns(123456789);
+    assert_eq!(sample.endtime_ns(), NonZeroI64::new(123456789));
+    
+    // Setting to 0 should clear it
+    sample.set_endtime_ns(0);
+    assert_eq!(sample.endtime_ns(), None);
+    
+    // Set another value
+    sample.set_endtime_ns(987654321);
+    assert_eq!(sample.endtime_ns(), NonZeroI64::new(987654321));
+    
+    // Reset should clear endtime_ns
+    sample.reset();
+    assert_eq!(sample.endtime_ns(), None);
+}
+
+#[test]
+fn test_set_endtime_ns_now() {
+    use std::time::SystemTime;
+    
+    let indices = Arc::new(SampleTypeIndices::new(vec![SampleType::Cpu]).unwrap());
+    let mut sample = OwnedSample::new(indices);
+    
+    // Initially, endtime_ns should be None
+    assert_eq!(sample.endtime_ns(), None);
+    
+    // Get approximate current time
+    let approx_now_ns = SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos() as i64;
+    
+    // Set endtime to now and get the returned timestamp
+    let returned_time = sample.set_endtime_ns_now().unwrap();
+    
+    // The endtime should be set to a reasonable value
+    let endtime = sample.endtime_ns().unwrap().get();
+    
+    // The returned time should match what was set
+    assert_eq!(returned_time, endtime);
+    
+    // Allow for a 1 second difference due to monotonic vs realtime clock differences
+    // and the time taken to compute the offset
+    let second_ns = 1_000_000_000i64;
+    assert!(
+        (endtime - approx_now_ns).abs() < second_ns,
+        "endtime {} should be within 1 second of approx_now {}",
+        endtime,
+        approx_now_ns
+    );
+    
+    // Test that calling it twice gives increasing values
+    let first_endtime = sample.endtime_ns().unwrap().get();
+    std::thread::sleep(std::time::Duration::from_millis(1));
+    sample.set_endtime_ns_now().unwrap();
+    let second_endtime = sample.endtime_ns().unwrap().get();
+    assert!(
+        second_endtime >= first_endtime,
+        "second endtime {} should be >= first endtime {}",
+        second_endtime,
+        first_endtime
+    );
+    
+    // Reset should clear it
+    sample.reset();
+    assert_eq!(sample.endtime_ns(), None);
+}
+
+#[test]
+fn test_timeline_enabled() {
+    let indices = Arc::new(SampleTypeIndices::new(vec![SampleType::Cpu]).unwrap());
+    let mut sample = OwnedSample::new(indices);
+    
+    // Timeline should be enabled by default
+    assert!(OwnedSample::is_timeline_enabled());
+    
+    // Set endtime should work when timeline is enabled
+    sample.set_endtime_ns(123456789);
+    assert_eq!(sample.endtime_ns().unwrap().get(), 123456789);
+    
+    // Disable timeline
+    OwnedSample::set_timeline_enabled(false);
+    assert!(!OwnedSample::is_timeline_enabled());
+    
+    // Set endtime should be a no-op when timeline is disabled
+    sample.set_endtime_ns(987654321);
+    assert_eq!(sample.endtime_ns().unwrap().get(), 123456789); // unchanged
+    
+    // set_endtime_ns_now should still calculate and return time when disabled, but not set it
+    let returned_time = sample.set_endtime_ns_now().unwrap();
+    assert_ne!(returned_time, 0); // still returns the calculated timestamp
+    assert_eq!(sample.endtime_ns().unwrap().get(), 123456789); // but doesn't set it (unchanged)
+    
+    // Re-enable timeline
+    OwnedSample::set_timeline_enabled(true);
+    assert!(OwnedSample::is_timeline_enabled());
+    
+    // Now set_endtime_ns should work again
+    sample.set_endtime_ns(999888777);
+    assert_eq!(sample.endtime_ns().unwrap().get(), 999888777);
+    
+    // set_endtime_ns_now should return the timestamp it sets when enabled
+    let returned_time = sample.set_endtime_ns_now().unwrap();
+    assert_ne!(returned_time, 0); // should not be 0 when timeline is enabled
+    assert_eq!(sample.endtime_ns().unwrap().get(), returned_time); // should match
+}
+
+#[test]
+#[cfg(unix)]
+fn test_set_endtime_from_monotonic_ns() {
+    let indices = Arc::new(SampleTypeIndices::new(vec![SampleType::Cpu]).unwrap());
+    let mut sample = OwnedSample::new(indices);
+    
+    // Set endtime from a monotonic time
+    let monotonic_ns = 123456789000; // Some monotonic time
+    sample.set_endtime_from_monotonic_ns(monotonic_ns).unwrap();
+    
+    // The endtime should be set (monotonic + offset)
+    let endtime = sample.endtime_ns();
+    assert!(endtime.is_some());
+    
+    // The endtime should be much larger than the monotonic time
+    // (because it includes the offset from system boot to epoch)
+    let endtime_val = endtime.unwrap().get();
+    
+    // Get current epoch time to verify the conversion is reasonable
+    use std::time::SystemTime;
+    let now_epoch_ns = SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos() as i64;
+    
+    // The converted time should be somewhere near the current time
+    // (within a reasonable range, e.g., the last year and next minute)
+    let year_ns = 365 * 24 * 60 * 60 * 1_000_000_000i64;
+    let minute_ns = 60 * 1_000_000_000i64;
+    assert!(endtime_val > now_epoch_ns - year_ns, "endtime too far in the past");
+    assert!(endtime_val < now_epoch_ns + minute_ns, "endtime too far in the future");
+    
+    // Set endtime from another monotonic time
+    let monotonic_ns2 = monotonic_ns + 1_000_000; // 1ms later
+    sample.set_endtime_from_monotonic_ns(monotonic_ns2).unwrap();
+    
+    let endtime2 = sample.endtime_ns().unwrap().get();
+    // The difference should match (1ms)
+    assert_eq!(endtime2 - endtime_val, 1_000_000);
+}
