@@ -3,7 +3,7 @@
 
 use crate::telemetry::error::TelemetryError;
 use crate::trace_exporter::msgpack_decoder::decode::error::DecodeError;
-use hyper::http::StatusCode;
+use http::StatusCode;
 use hyper::Error as HyperError;
 use libdd_common::hyper_migration;
 use rmp_serde::encode::Error as EncodeError;
@@ -230,8 +230,8 @@ impl From<EncodeError> for TraceExporterError {
     }
 }
 
-impl From<hyper::http::uri::InvalidUri> for TraceExporterError {
-    fn from(value: hyper::http::uri::InvalidUri) -> Self {
+impl From<http::uri::InvalidUri> for TraceExporterError {
+    fn from(value: http::uri::InvalidUri) -> Self {
         TraceExporterError::Builder(BuilderErrorKind::InvalidUri(value.to_string()))
     }
 }
