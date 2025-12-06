@@ -34,6 +34,7 @@ ouroboros = "0.18"
 byteorder = { version = "1.5", features = ["std"] }
 bytes = "1.1"
 chrono = {version = "0.4", default-features = false, features = ["std", "clock"]}
+crossbeam-queue = "0.3.11"
 crossbeam-utils = { version = "0.8.21" }
 libdd-alloc = { version = "1.0.0", path = "../libdd-alloc" }
 libdd-profiling-protobuf = { version = "1.0.0", path = "../libdd-profiling-protobuf", features = ["prost_impls"] }

@@ -4,6 +4,7 @@
 //! Pool for reusing `OwnedSample` instances to reduce allocation overhead.
 
 use super::{OwnedSample, SampleTypeIndices};
+use crossbeam_queue::ArrayQueue;
 use std::sync::Arc;
 
 /// A bounded pool of `OwnedSample` instances for efficient reuse.
@@ -12,6 +13,9 @@ use std::sync::Arc;
 /// across multiple profiling operations. When a sample is requested,
 /// it's either taken from the pool or freshly allocated. When returned,
 /// it's reset and added back to the pool if there's space, otherwise dropped.
+///
+/// This pool is **thread-safe** and uses a lock-free `ArrayQueue` internally,
+/// allowing concurrent access from multiple threads without locks.
 ///
 /// # Example
 /// ```no_run
@@ -22,24 +26,23 @@ use std::sync::Arc;
 ///     SampleType::Wall,
 /// ]).unwrap());
 ///
-/// let mut pool = SamplePool::new(indices, 10);
+/// let pool = SamplePool::new(indices, 10);
 ///
-/// // Get a sample from the pool
+/// // Get a sample from the pool (thread-safe)
 /// let mut sample = pool.get();
 /// sample.set_value(SampleType::Cpu, 100).unwrap();
 /// // ... use sample ...
 ///
-/// // Return it to the pool for reuse
+/// // Return it to the pool for reuse (thread-safe)
 /// pool.put(sample);
 /// ```
 pub struct SamplePool {
     /// The sample type indices configuration shared by all samples
     indices: Arc<SampleTypeIndices>,
-    /// Maximum number of samples to keep in the pool
-    capacity: usize,
-    /// Stack of available samples
-    #[allow(clippy::vec_box)]
-    samples: Vec<Box<OwnedSample>>,
+    /// Lock-free bounded queue of available samples.
+    /// Uses `ArrayQueue` for lock-free concurrent access via atomic operations,
+    /// enabling efficient multi-threaded usage without mutex contention.
+    samples: ArrayQueue<Box<OwnedSample>>,
 }
 
 impl SamplePool {
@@ -59,8 +62,7 @@ impl SamplePool {
     pub fn new(indices: Arc<SampleTypeIndices>, capacity: usize) -> Self {
         Self {
             indices,
-            capacity,
-            samples: Vec::with_capacity(capacity),
+            samples: ArrayQueue::new(capacity),
         }
     }
 
@@ -68,16 +70,18 @@ impl SamplePool {
     ///
     /// The returned sample is guaranteed to be reset and ready to use.
     ///
+    /// This method is **thread-safe** and can be called concurrently from multiple threads.
+    ///
     /// # Example
     /// ```no_run
     /// # use libdd_profiling::owned_sample::{SamplePool, SampleTypeIndices, SampleType};
     /// # use std::sync::Arc;
     /// # let indices = Arc::new(SampleTypeIndices::new(vec![SampleType::Cpu]).unwrap());
-    /// # let mut pool = SamplePool::new(indices, 10);
+    /// # let pool = SamplePool::new(indices, 10);
     /// let sample = pool.get();
     /// assert_eq!(sample.num_locations(), 0);
     /// ```
-    pub fn get(&mut self) -> Box<OwnedSample> {
+    pub fn get(&self) -> Box<OwnedSample> {
         self.samples.pop().unwrap_or_else(|| {
             Box::new(OwnedSample::new(self.indices.clone()))
         })
@@ -88,22 +92,25 @@ impl SamplePool {
     /// The sample is reset before being added to the pool. If the pool is at capacity,
     /// the sample is dropped instead.
     ///
+    /// This method is **thread-safe** and can be called concurrently from multiple threads.
+    ///
     /// # Example
     /// ```no_run
     /// # use libdd_profiling::owned_sample::{SamplePool, SampleTypeIndices, SampleType};
     /// # use std::sync::Arc;
     /// # let indices = Arc::new(SampleTypeIndices::new(vec![SampleType::Cpu]).unwrap());
-    /// # let mut pool = SamplePool::new(indices, 10);
+    /// # let pool = SamplePool::new(indices, 10);
     /// let mut sample = pool.get();
     /// sample.set_value(SampleType::Cpu, 100).unwrap();
     /// pool.put(sample);  // Resets and returns to pool
     /// ```
-    pub fn put(&mut self, mut sample: Box<OwnedSample>) {
-        if self.samples.len() < self.capacity {
-            sample.reset();
-            self.samples.push(sample);
-        }
-        // Otherwise, sample is dropped when it goes out of scope
+    pub fn put(&self, mut sample: Box<OwnedSample>) {
+        // Reset the sample to clean state
+        sample.reset();
+        
+        // Try to add back to pool (lock-free operation)
+        // If full, push() returns Err(sample), which we just drop
+        let _ = self.samples.push(sample);
     }
 
     /// Returns the current number of samples in the pool.
@@ -118,9 +125,13 @@ impl SamplePool {
 
     /// Returns the maximum capacity of the pool.
     pub fn capacity(&self) -> usize {
-        self.capacity
+        self.samples.capacity()
     }
 }
+
+// SAFETY: SamplePool uses ArrayQueue which is Send + Sync, and Arc<SampleTypeIndices> which is also Send + Sync
+unsafe impl Send for SamplePool {}
+unsafe impl Sync for SamplePool {}
 
 #[cfg(test)]
 mod tests {
@@ -130,7 +141,7 @@ mod tests {
     #[test]
     fn test_pool_basic() {
         let indices = Arc::new(SampleTypeIndices::new(vec![SampleType::Cpu]).unwrap());
-        let mut pool = SamplePool::new(indices, 5);
+        let pool = SamplePool::new(indices, 5);
 
         assert_eq!(pool.len(), 0);
         assert!(pool.is_empty());
@@ -156,7 +167,7 @@ mod tests {
     #[test]
     fn test_pool_capacity_limit() {
         let indices = Arc::new(SampleTypeIndices::new(vec![SampleType::Cpu]).unwrap());
-        let mut pool = SamplePool::new(indices, 2);
+        let pool = SamplePool::new(indices, 2);
 
         // Fill the pool
         let sample1 = pool.get();
@@ -178,7 +189,7 @@ mod tests {
             SampleType::Cpu,
             SampleType::Wall,
         ]).unwrap());
-        let mut pool = SamplePool::new(indices, 5);
+        let pool = SamplePool::new(indices, 5);
 
         // Get a sample and modify it
         let mut sample = pool.get();
@@ -194,6 +205,46 @@ mod tests {
         assert_eq!(sample.get_value(SampleType::Wall).unwrap(), 0);
         assert_eq!(sample.num_locations(), 0);
         assert_eq!(sample.num_labels(), 0);
+    }
+
+    #[test]
+    fn test_pool_thread_safety() {
+        use std::thread;
+
+        let indices = Arc::new(SampleTypeIndices::new(vec![
+            SampleType::Cpu,
+            SampleType::Wall,
+        ]).unwrap());
+        let pool = Arc::new(SamplePool::new(indices, 20));
+
+        // Spawn multiple threads that all use the pool concurrently
+        let handles: Vec<_> = (0..4)
+            .map(|thread_id| {
+                let pool = Arc::clone(&pool);
+                thread::spawn(move || {
+                    for i in 0..100 {
+                        // Get a sample from the pool
+                        let mut sample = pool.get();
+                        
+                        // Use it
+                        sample.set_value(SampleType::Cpu, (thread_id * 1000 + i) as i64).unwrap();
+                        sample.set_value(SampleType::Wall, (thread_id * 2000 + i) as i64).unwrap();
+                        
+                        // Return it to the pool
+                        pool.put(sample);
+                    }
+                })
+            })
+            .collect();
+
+        // Wait for all threads to complete
+        for handle in handles {
+            handle.join().unwrap();
+        }
+
+        // Pool should have accumulated samples (up to its capacity)
+        assert!(pool.len() <= pool.capacity());
+        assert!(pool.len() > 0); // Should have at least some samples
     }
 }
 

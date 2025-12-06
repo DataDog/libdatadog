@@ -2893,6 +2893,7 @@ dependencies = [
  "bytes",
  "chrono",
  "criterion",
+ "crossbeam-queue",
  "crossbeam-utils",
  "cxx",
  "cxx-build",
