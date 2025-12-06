@@ -258,6 +258,7 @@ pub struct OwnedSample {
     values: Vec<i64>,
     indices: Arc<SampleTypeIndices>,
     endtime_ns: Option<NonZeroI64>,
+    reverse_locations: bool,
 }
 
 impl OwnedSample {
@@ -287,6 +288,7 @@ impl OwnedSample {
             values: vec![0; num_values],
             indices,
             endtime_ns: None,
+            reverse_locations: false,
         }
     }
 
@@ -339,6 +341,18 @@ impl OwnedSample {
     /// When timeline is disabled, time-setting methods become no-ops.
     pub fn set_timeline_enabled(enabled: bool) {
         TIMELINE_ENABLED.store(enabled, Ordering::Relaxed);
+    }
+
+    /// Returns whether locations should be reversed when converting to a Sample.
+    pub fn is_reverse_locations(&self) -> bool {
+        self.reverse_locations
+    }
+
+    /// Sets whether locations should be reversed when converting to a Sample.
+    /// 
+    /// When enabled, `as_sample()` will return locations in reverse order.
+    pub fn set_reverse_locations(&mut self, reverse: bool) {
+        self.reverse_locations = reverse;
     }
 
     /// Sets the end time of the sample in nanoseconds.
@@ -546,8 +560,8 @@ impl OwnedSample {
         // Zero out all values but keep the vector length and capacity
         self.values.fill(0);
         
-        // Reset endtime_ns
         self.endtime_ns = None;
+        self.reverse_locations = false;
         
         // Rebuild with the reset arena
         self.inner = SampleInnerBuilder {
@@ -589,8 +603,15 @@ impl OwnedSample {
     /// let borrowed = sample.as_sample();
     /// ```
     pub fn as_sample(&self) -> Sample<'_> {
+        let mut locations = self.inner.borrow_locations().clone();
+        
+        // Reverse locations if the flag is set
+        if self.reverse_locations {
+            locations.reverse();
+        }
+        
         Sample {
-            locations: self.inner.borrow_locations().clone(),
+            locations,
             values: &self.values,
             labels: self.inner.borrow_labels().clone(),
         }

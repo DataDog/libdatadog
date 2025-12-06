@@ -434,3 +434,65 @@ fn test_set_endtime_from_monotonic_ns() {
     // The difference should match (1ms)
     assert_eq!(endtime2 - endtime_val, 1_000_000);
 }
+
+#[test]
+fn test_reverse_locations() {
+    let indices = Arc::new(SampleTypeIndices::new(vec![SampleType::Cpu]).unwrap());
+    let mut sample = OwnedSample::new(indices);
+    
+    // Initially, reverse_locations should be false
+    assert!(!sample.is_reverse_locations());
+    
+    // Add three locations
+    sample.add_location(Location {
+        mapping: Mapping { memory_start: 0x1000, memory_limit: 0x2000, file_offset: 0, filename: "lib1.so", build_id: "" },
+        function: Function { name: "func1", system_name: "", filename: "" },
+        address: 0x1001,
+        line: 10,
+    });
+    sample.add_location(Location {
+        mapping: Mapping { memory_start: 0x2000, memory_limit: 0x3000, file_offset: 0, filename: "lib2.so", build_id: "" },
+        function: Function { name: "func2", system_name: "", filename: "" },
+        address: 0x2002,
+        line: 20,
+    });
+    sample.add_location(Location {
+        mapping: Mapping { memory_start: 0x3000, memory_limit: 0x4000, file_offset: 0, filename: "lib3.so", build_id: "" },
+        function: Function { name: "func3", system_name: "", filename: "" },
+        address: 0x3003,
+        line: 30,
+    });
+    
+    // Get sample with normal order
+    let normal_sample = sample.as_sample();
+    assert_eq!(normal_sample.locations.len(), 3);
+    assert_eq!(normal_sample.locations[0].function.name, "func1");
+    assert_eq!(normal_sample.locations[1].function.name, "func2");
+    assert_eq!(normal_sample.locations[2].function.name, "func3");
+    
+    // Enable reverse locations
+    sample.set_reverse_locations(true);
+    assert!(sample.is_reverse_locations());
+    
+    // Get sample with reversed order
+    let reversed_sample = sample.as_sample();
+    assert_eq!(reversed_sample.locations.len(), 3);
+    assert_eq!(reversed_sample.locations[0].function.name, "func3");
+    assert_eq!(reversed_sample.locations[1].function.name, "func2");
+    assert_eq!(reversed_sample.locations[2].function.name, "func1");
+    
+    // Disable reverse locations
+    sample.set_reverse_locations(false);
+    assert!(!sample.is_reverse_locations());
+    
+    // Should be back to normal order
+    let normal_again = sample.as_sample();
+    assert_eq!(normal_again.locations[0].function.name, "func1");
+    assert_eq!(normal_again.locations[1].function.name, "func2");
+    assert_eq!(normal_again.locations[2].function.name, "func3");
+    
+    // Reset should clear the flag
+    sample.set_reverse_locations(true);
+    sample.reset();
+    assert!(!sample.is_reverse_locations());
+}

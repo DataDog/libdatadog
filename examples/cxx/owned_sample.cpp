@@ -143,6 +143,12 @@ int main() {
                 });
             }
             
+            // Demonstrate reverse_locations feature - reverse the stack trace for some samples
+            // In profiling, you might want leaf-first (normal) or root-first (reversed) order
+            if (i % 13 == 0) {
+                owned_sample->set_reverse_locations(true);
+            }
+            
             // Add labels
             owned_sample->add_label(Label{
                 .key = "thread_id",

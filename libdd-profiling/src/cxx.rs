@@ -135,6 +135,9 @@ pub mod ffi {
         #[Self = "OwnedSample"]
         fn set_timeline_enabled(enabled: bool);
         
+        fn is_reverse_locations(self: &OwnedSample) -> bool;
+        fn set_reverse_locations(self: &mut OwnedSample, reverse: bool);
+        
         fn set_endtime_ns(self: &mut OwnedSample, endtime_ns: i64) -> i64;
         fn set_endtime_ns_now(self: &mut OwnedSample) -> Result<i64>;
         fn endtime_ns(self: &OwnedSample) -> i64;
@@ -380,6 +383,14 @@ impl OwnedSample {
 
     pub fn set_timeline_enabled(enabled: bool) {
         owned_sample::OwnedSample::set_timeline_enabled(enabled);
+    }
+
+    pub fn is_reverse_locations(&self) -> bool {
+        self.inner.is_reverse_locations()
+    }
+
+    pub fn set_reverse_locations(&mut self, reverse: bool) {
+        self.inner.set_reverse_locations(reverse);
     }
 
     pub fn set_endtime_ns(&mut self, endtime_ns: i64) -> i64 {
