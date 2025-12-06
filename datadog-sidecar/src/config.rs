@@ -36,6 +36,8 @@ const ENV_SIDECAR_APPSEC_LOCK_FILE_PATH: &str = "_DD_SIDECAR_APPSEC_LOCK_FILE_PA
 const ENV_SIDECAR_APPSEC_LOG_FILE_PATH: &str = "_DD_SIDECAR_APPSEC_LOG_FILE_PATH";
 const ENV_SIDECAR_APPSEC_LOG_LEVEL: &str = "_DD_SIDECAR_APPSEC_LOG_LEVEL";
 
+const ENV_SIDECAR_CONNECT_TO_MASTER_PID: &str = "_DD_SIDECAR_CONNECT_TO_MASTER_PID";
+
 #[derive(Debug, Copy, Clone, Default)]
 pub enum IpcMode {
     #[default]
@@ -84,6 +86,7 @@ pub struct Config {
     pub crashtracker_endpoint: Option<Endpoint>,
     pub appsec_config: Option<AppSecConfig>,
     pub max_memory: usize,
+    pub connect_to_master_pid: i32,
 }
 
 #[derive(Debug, Clone)]
@@ -126,6 +129,12 @@ impl Config {
             res.insert(
                 ENV_SIDECAR_WATCHDOG_MAX_MEMORY,
                 format!("{}", self.max_memory).into(),
+            );
+        }
+        if self.connect_to_master_pid != 0 {
+            res.insert(
+                ENV_SIDECAR_CONNECT_TO_MASTER_PID,
+                format!("{}", self.connect_to_master_pid).into(),
             );
         }
         res
@@ -241,7 +250,15 @@ impl FromEnv {
             crashtracker_endpoint: Self::crashtracker_endpoint(),
             appsec_config: Self::appsec_config(),
             max_memory: Self::max_memory(),
+            connect_to_master_pid: Self::connect_to_master_pid(),
         }
+    }
+
+    fn connect_to_master_pid() -> i32 {
+        std::env::var(ENV_SIDECAR_CONNECT_TO_MASTER_PID)
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(0)
     }
 
     fn appsec_config() -> Option<AppSecConfig> {

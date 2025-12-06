@@ -31,6 +31,16 @@ use datadog_sidecar::service::{
 };
 use datadog_sidecar::service::{get_telemetry_action_sender, InternalTelemetryActions};
 use datadog_sidecar::shm_remote_config::{path_for_remote_config, RemoteConfigReader};
+#[cfg(unix)]
+use datadog_sidecar::{
+    clear_inherited_listener_unix, connect_worker_unix, shutdown_master_listener_unix,
+    start_master_listener_unix,
+};
+#[cfg(windows)]
+use datadog_sidecar::{
+    connect_worker_windows, shutdown_master_listener_windows, start_master_listener_windows,
+    transport_from_owned_handle,
+};
 use libc::c_char;
 use libdd_common::tag::Tag;
 use libdd_common::Endpoint;
@@ -295,8 +305,6 @@ pub extern "C" fn ddog_remote_config_reader_drop(_: Box<RemoteConfigReader>) {}
 #[no_mangle]
 pub extern "C" fn ddog_sidecar_transport_drop(_: Box<SidecarTransport>) {}
 
-/// # Safety
-/// Caller must ensure the process is safe to fork, at the time when this method is called
 #[no_mangle]
 pub extern "C" fn ddog_sidecar_connect(connection: &mut *mut SidecarTransport) -> MaybeError {
     let cfg = datadog_sidecar::config::FromEnv::config();
@@ -304,6 +312,64 @@ pub extern "C" fn ddog_sidecar_connect(connection: &mut *mut SidecarTransport) -
     let stream = Box::new(try_c!(datadog_sidecar::start_or_connect_to_sidecar(cfg)));
     *connection = Box::into_raw(stream);
 
+    MaybeError::None
+}
+
+#[no_mangle]
+pub extern "C" fn ddog_sidecar_connect_master(master_pid: i32) -> MaybeError {
+    #[cfg(unix)]
+    {
+        try_c!(start_master_listener_unix(master_pid));
+    }
+    #[cfg(windows)]
+    {
+        try_c!(start_master_listener_windows(master_pid));
+    }
+    MaybeError::None
+}
+
+#[no_mangle]
+pub extern "C" fn ddog_sidecar_connect_worker(
+    master_pid: i32,
+    connection: &mut *mut SidecarTransport,
+) -> MaybeError {
+    #[cfg(unix)]
+    {
+        let transport = Box::new(try_c!(connect_worker_unix(master_pid)));
+        *connection = Box::into_raw(transport);
+    }
+    #[cfg(windows)]
+    {
+        let handle = try_c!(connect_worker_windows(master_pid));
+        let transport = Box::new(try_c!(transport_from_owned_handle(handle)));
+        *connection = Box::into_raw(transport);
+    }
+    MaybeError::None
+}
+
+#[no_mangle]
+pub extern "C" fn ddog_sidecar_shutdown_master_listener() -> MaybeError {
+    #[cfg(unix)]
+    {
+        try_c!(shutdown_master_listener_unix());
+    }
+    #[cfg(windows)]
+    {
+        try_c!(shutdown_master_listener_windows());
+    }
+    MaybeError::None
+}
+
+#[no_mangle]
+pub extern "C" fn ddog_sidecar_clear_inherited_listener() -> MaybeError {
+    #[cfg(unix)]
+    {
+        try_c!(clear_inherited_listener_unix());
+    }
+    #[cfg(windows)]
+    {
+        // Windows doesn't use fork, so no inherited state to clear
+    }
     MaybeError::None
 }
 
