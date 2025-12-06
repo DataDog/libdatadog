@@ -94,8 +94,13 @@ pub mod ffi {
     // Opaque Rust types
     extern "Rust" {
         type Profile;
+        type Metadata;
         type OwnedSample;
         type SamplePool;
+
+        // Metadata static factory
+        #[Self = "Metadata"]
+        fn create(sample_types: Vec<SampleType>, max_frames: usize, timeline_enabled: bool) -> Result<Box<Metadata>>;
 
         // Profile static factory
         #[Self = "Profile"]
@@ -141,15 +146,10 @@ pub mod ffi {
 
         // OwnedSample methods
         #[Self = "OwnedSample"]
-        fn create(sample_types: Vec<SampleType>) -> Result<Box<OwnedSample>>;
+        fn create(metadata: &Metadata) -> Result<Box<OwnedSample>>;
         
         fn set_value(self: &mut OwnedSample, sample_type: SampleType, value: i64) -> Result<()>;
         fn get_value(self: &OwnedSample, sample_type: SampleType) -> Result<i64>;
-        
-        #[Self = "OwnedSample"]
-        fn is_timeline_enabled() -> bool;
-        #[Self = "OwnedSample"]
-        fn set_timeline_enabled(enabled: bool);
         
         fn is_reverse_locations(self: &OwnedSample) -> bool;
         fn set_reverse_locations(self: &mut OwnedSample, reverse: bool);
@@ -171,7 +171,7 @@ pub mod ffi {
 
         // SamplePool methods
         #[Self = "SamplePool"]
-        fn create(sample_types: Vec<SampleType>, capacity: usize) -> Result<Box<SamplePool>>;
+        fn create(metadata: &Metadata, capacity: usize) -> Result<Box<SamplePool>>;
         
         fn get_sample(self: &mut SamplePool) -> Box<OwnedSample>;
         fn return_sample(self: &mut SamplePool, sample: Box<OwnedSample>);
@@ -281,7 +281,7 @@ impl Profile {
     pub fn add_owned_sample(&mut self, sample: &OwnedSample) -> anyhow::Result<()> {
         // Convert OwnedSample to API Sample
         let api_sample = sample.inner.as_sample();
-        
+
         // Profile interns the strings
         self.inner.try_add_sample(api_sample, None)?;
         Ok(())
@@ -367,21 +367,32 @@ impl Profile {
 use crate::owned_sample;
 use std::sync::Arc;
 
-pub struct OwnedSample {
-    inner: owned_sample::OwnedSample,
+pub struct Metadata {
+    inner: Arc<owned_sample::Metadata>,
 }
 
-impl OwnedSample {
-    pub fn create(sample_types: Vec<ffi::SampleType>) -> anyhow::Result<Box<OwnedSample>> {
+impl Metadata {
+    pub fn create(sample_types: Vec<ffi::SampleType>, max_frames: usize, timeline_enabled: bool) -> anyhow::Result<Box<Metadata>> {
         // Convert CXX SampleType to owned_sample::SampleType
         let types: Vec<owned_sample::SampleType> = sample_types
             .into_iter()
             .map(ffi_sample_type_to_owned)
             .collect::<anyhow::Result<Vec<_>>>()?;
 
-        // Create indices internally
-        let indices = Arc::new(owned_sample::SampleTypeIndices::new(types)?);
-        let inner = owned_sample::OwnedSample::new(indices);
+        // Create metadata with specified configuration
+        let inner = Arc::new(owned_sample::Metadata::new(types, max_frames, timeline_enabled)?);
+        Ok(Box::new(Metadata { inner }))
+    }
+}
+
+pub struct OwnedSample {
+    inner: owned_sample::OwnedSample,
+}
+
+impl OwnedSample {
+    pub fn create(metadata: &Metadata) -> anyhow::Result<Box<OwnedSample>> {
+        // Use the provided metadata (clone the Arc for shared ownership)
+        let inner = owned_sample::OwnedSample::new(Arc::clone(&metadata.inner));
         Ok(Box::new(OwnedSample { inner }))
     }
 
@@ -393,14 +404,6 @@ impl OwnedSample {
     pub fn get_value(&self, sample_type: ffi::SampleType) -> anyhow::Result<i64> {
         let st = ffi_sample_type_to_owned(sample_type)?;
         self.inner.get_value(st)
-    }
-
-    pub fn is_timeline_enabled() -> bool {
-        owned_sample::OwnedSample::is_timeline_enabled()
-    }
-
-    pub fn set_timeline_enabled(enabled: bool) {
-        owned_sample::OwnedSample::set_timeline_enabled(enabled);
     }
 
     pub fn is_reverse_locations(&self) -> bool {
@@ -472,16 +475,9 @@ pub struct SamplePool {
 }
 
 impl SamplePool {
-    pub fn create(sample_types: Vec<ffi::SampleType>, capacity: usize) -> anyhow::Result<Box<SamplePool>> {
-        // Convert CXX SampleType to owned_sample::SampleType
-        let types: Vec<owned_sample::SampleType> = sample_types
-            .into_iter()
-            .map(ffi_sample_type_to_owned)
-            .collect::<anyhow::Result<Vec<_>>>()?;
-
-        // Create indices internally
-        let indices = Arc::new(owned_sample::SampleTypeIndices::new(types)?);
-        let inner = owned_sample::SamplePool::new(indices, capacity);
+    pub fn create(metadata: &Metadata, capacity: usize) -> anyhow::Result<Box<SamplePool>> {
+        // Use the provided metadata (clone the Arc for shared ownership)
+        let inner = owned_sample::SamplePool::new(Arc::clone(&metadata.inner), capacity);
         Ok(Box::new(SamplePool { inner }))
     }
 

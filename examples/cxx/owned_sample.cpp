@@ -54,10 +54,15 @@ int main() {
         
         std::cout << "✅ Added upscaling rules" << std::endl;
         
-        std::cout << "Creating SamplePool for efficient sample reuse..." << std::endl;
+        std::cout << "Creating Metadata and SamplePool for efficient sample reuse..." << std::endl;
         
-        // Create a pool of reusable samples for Wall time
-        auto pool = SamplePool::create({SampleType::Wall}, 10);
+        // Create metadata (configuration shared by all samples in the pool)
+        // Parameters: sample_types, max_frames, timeline_enabled
+        auto metadata = Metadata::create({SampleType::Wall}, 64, true);
+        
+        // Create a pool of reusable samples using the metadata
+        // Parameters: metadata, capacity
+        auto pool = SamplePool::create(*metadata, 10);
         std::cout << "✅ Created SamplePool with capacity " << pool->pool_capacity() << std::endl;
         
         std::cout << "Adding samples..." << std::endl;

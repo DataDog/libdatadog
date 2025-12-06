@@ -6,11 +6,11 @@ use crate::api::{Function, Label, Location, Mapping};
 
 #[test]
 fn test_owned_sample_basic() {
-    let indices = Arc::new(SampleTypeIndices::new(vec![
+    let metadata = Arc::new(Metadata::new(vec![
         SampleType::Cpu,
         SampleType::Wall,
-    ]).unwrap());
-    let mut sample = OwnedSample::new(indices.clone());
+    ], 64, true).unwrap());
+    let mut sample = OwnedSample::new(metadata.clone());
     
     sample.set_value(SampleType::Cpu, 100).unwrap();
     sample.set_value(SampleType::Wall, 200).unwrap();
@@ -53,11 +53,11 @@ fn test_owned_sample_basic() {
 
 #[test]
 fn test_as_sample() {
-    let indices = Arc::new(SampleTypeIndices::new(vec![
+    let metadata = Arc::new(Metadata::new(vec![
         SampleType::Cpu,
         SampleType::Wall,
-    ]).unwrap());
-    let mut owned = OwnedSample::new(indices.clone());
+    ], 64, true).unwrap());
+    let mut owned = OwnedSample::new(metadata.clone());
     owned.set_value(SampleType::Cpu, 100).unwrap();
     owned.set_value(SampleType::Wall, 200).unwrap();
     owned.add_location(Location {
@@ -88,8 +88,8 @@ fn test_as_sample() {
 
 #[test]
 fn test_set_value_error() {
-    let indices = Arc::new(SampleTypeIndices::new(vec![SampleType::Cpu]).unwrap());
-    let mut sample = OwnedSample::new(indices);
+    let metadata = Arc::new(Metadata::new(vec![SampleType::Cpu], 64, true).unwrap());
+    let mut sample = OwnedSample::new(metadata);
     
     // Should work for configured type
     assert!(sample.set_value(SampleType::Cpu, 100).is_ok());
@@ -102,34 +102,34 @@ fn test_set_value_error() {
 
 #[test]
 fn test_sample_type_indices_basic() {
-    let indices = SampleTypeIndices::new(vec![
+    let metadata = Metadata::new(vec![
         SampleType::Cpu,
         SampleType::Wall,
         SampleType::Allocation,
-    ]).unwrap();
+    ], 64, true).unwrap();
 
-    assert_eq!(indices.len(), 3);
-    assert!(!indices.is_empty());
+    assert_eq!(metadata.len(), 3);
+    assert!(!metadata.is_empty());
 
-    assert_eq!(indices.get_index(&SampleType::Cpu), Some(0));
-    assert_eq!(indices.get_index(&SampleType::Wall), Some(1));
-    assert_eq!(indices.get_index(&SampleType::Allocation), Some(2));
-    assert_eq!(indices.get_index(&SampleType::Heap), None);
+    assert_eq!(metadata.get_index(&SampleType::Cpu), Some(0));
+    assert_eq!(metadata.get_index(&SampleType::Wall), Some(1));
+    assert_eq!(metadata.get_index(&SampleType::Allocation), Some(2));
+    assert_eq!(metadata.get_index(&SampleType::Heap), None);
 
-    assert_eq!(indices.get_type(0), Some(SampleType::Cpu));
-    assert_eq!(indices.get_type(1), Some(SampleType::Wall));
-    assert_eq!(indices.get_type(2), Some(SampleType::Allocation));
-    assert_eq!(indices.get_type(3), None);
+    assert_eq!(metadata.get_type(0), Some(SampleType::Cpu));
+    assert_eq!(metadata.get_type(1), Some(SampleType::Wall));
+    assert_eq!(metadata.get_type(2), Some(SampleType::Allocation));
+    assert_eq!(metadata.get_type(3), None);
 }
 
 #[test]
 fn test_sample_type_indices_duplicate_error() {
-    let result = SampleTypeIndices::new(vec![
+    let result = Metadata::new(vec![
         SampleType::Cpu,
         SampleType::Wall,
         SampleType::Cpu, // Duplicate
         SampleType::Allocation,
-    ]);
+    ], 64, true);
 
     assert!(result.is_err());
     let err = result.unwrap_err();
@@ -138,7 +138,7 @@ fn test_sample_type_indices_duplicate_error() {
 
 #[test]
 fn test_sample_type_indices_empty_error() {
-    let result = SampleTypeIndices::new(vec![]);
+    let result = Metadata::new(vec![], 64, true);
     assert!(result.is_err());
     let err = result.unwrap_err();
     assert!(err.to_string().contains("empty"));
@@ -146,13 +146,13 @@ fn test_sample_type_indices_empty_error() {
 
 #[test]
 fn test_sample_type_indices_iter() {
-    let indices = SampleTypeIndices::new(vec![
+    let metadata = Metadata::new(vec![
         SampleType::Cpu,
         SampleType::Wall,
         SampleType::Allocation,
-    ]).unwrap();
+    ], 64, true).unwrap();
 
-    let types: Vec<_> = indices.iter().copied().collect();
+    let types: Vec<_> = metadata.iter().copied().collect();
     assert_eq!(types, vec![
         SampleType::Cpu,
         SampleType::Wall,
@@ -162,12 +162,12 @@ fn test_sample_type_indices_iter() {
 
 #[test]
 fn test_reset() {
-    let indices = Arc::new(SampleTypeIndices::new(vec![
+    let metadata = Arc::new(Metadata::new(vec![
         SampleType::Cpu,
         SampleType::Wall,
         SampleType::Allocation,
-    ]).unwrap());
-    let mut sample = OwnedSample::new(indices);
+    ], 64, true).unwrap());
+    let mut sample = OwnedSample::new(metadata);
     sample.set_value(SampleType::Cpu, 100).unwrap();
     sample.set_value(SampleType::Wall, 200).unwrap();
     sample.set_value(SampleType::Allocation, 300).unwrap();
@@ -229,8 +229,8 @@ fn test_reset() {
 
 #[test]
 fn test_add_multiple() {
-    let indices = Arc::new(SampleTypeIndices::new(vec![SampleType::Cpu]).unwrap());
-    let mut sample = OwnedSample::new(indices);
+    let metadata = Arc::new(Metadata::new(vec![SampleType::Cpu], 64, true).unwrap());
+    let mut sample = OwnedSample::new(metadata);
     
     // Add multiple locations at once
     let locations = &[
@@ -280,8 +280,8 @@ fn test_add_multiple() {
 fn test_endtime_ns() {
     use std::num::NonZeroI64;
     
-    let indices = Arc::new(SampleTypeIndices::new(vec![SampleType::Cpu]).unwrap());
-    let mut sample = OwnedSample::new(indices);
+    let metadata = Arc::new(Metadata::new(vec![SampleType::Cpu], 64, true).unwrap());
+    let mut sample = OwnedSample::new(metadata);
     
     // Initially, endtime_ns should be None
     assert_eq!(sample.endtime_ns(), None);
@@ -307,8 +307,8 @@ fn test_endtime_ns() {
 fn test_set_endtime_ns_now() {
     use std::time::SystemTime;
     
-    let indices = Arc::new(SampleTypeIndices::new(vec![SampleType::Cpu]).unwrap());
-    let mut sample = OwnedSample::new(indices);
+    let metadata = Arc::new(Metadata::new(vec![SampleType::Cpu], 64, true).unwrap());
+    let mut sample = OwnedSample::new(metadata);
     
     // Initially, endtime_ns should be None
     assert_eq!(sample.endtime_ns(), None);
@@ -357,48 +357,40 @@ fn test_set_endtime_ns_now() {
 
 #[test]
 fn test_timeline_enabled() {
-    let indices = Arc::new(SampleTypeIndices::new(vec![SampleType::Cpu]).unwrap());
-    let mut sample = OwnedSample::new(indices);
-    
-    // Timeline should be enabled by default
-    assert!(OwnedSample::is_timeline_enabled());
+    // Test with timeline enabled
+    let metadata_enabled = Arc::new(Metadata::new(vec![SampleType::Cpu], 64, true).unwrap());
+    assert!(metadata_enabled.is_timeline_enabled());
+    let mut sample_enabled = OwnedSample::new(metadata_enabled);
     
     // Set endtime should work when timeline is enabled
-    sample.set_endtime_ns(123456789);
-    assert_eq!(sample.endtime_ns().unwrap().get(), 123456789);
-    
-    // Disable timeline
-    OwnedSample::set_timeline_enabled(false);
-    assert!(!OwnedSample::is_timeline_enabled());
-    
-    // Set endtime should be a no-op when timeline is disabled
-    sample.set_endtime_ns(987654321);
-    assert_eq!(sample.endtime_ns().unwrap().get(), 123456789); // unchanged
-    
-    // set_endtime_ns_now should still calculate and return time when disabled, but not set it
-    let returned_time = sample.set_endtime_ns_now().unwrap();
-    assert_ne!(returned_time, 0); // still returns the calculated timestamp
-    assert_eq!(sample.endtime_ns().unwrap().get(), 123456789); // but doesn't set it (unchanged)
-    
-    // Re-enable timeline
-    OwnedSample::set_timeline_enabled(true);
-    assert!(OwnedSample::is_timeline_enabled());
-    
-    // Now set_endtime_ns should work again
-    sample.set_endtime_ns(999888777);
-    assert_eq!(sample.endtime_ns().unwrap().get(), 999888777);
+    sample_enabled.set_endtime_ns(123456789);
+    assert_eq!(sample_enabled.endtime_ns().unwrap().get(), 123456789);
     
     // set_endtime_ns_now should return the timestamp it sets when enabled
-    let returned_time = sample.set_endtime_ns_now().unwrap();
+    let returned_time = sample_enabled.set_endtime_ns_now().unwrap();
     assert_ne!(returned_time, 0); // should not be 0 when timeline is enabled
-    assert_eq!(sample.endtime_ns().unwrap().get(), returned_time); // should match
+    assert_eq!(sample_enabled.endtime_ns().unwrap().get(), returned_time); // should match
+    
+    // Test with timeline disabled
+    let metadata_disabled = Arc::new(Metadata::new(vec![SampleType::Cpu], 64, false).unwrap());
+    assert!(!metadata_disabled.is_timeline_enabled());
+    let mut sample_disabled = OwnedSample::new(metadata_disabled);
+    
+    // Set endtime should be a no-op when timeline is disabled
+    sample_disabled.set_endtime_ns(987654321);
+    assert_eq!(sample_disabled.endtime_ns(), None); // not set
+    
+    // set_endtime_ns_now should still calculate and return time when disabled, but not set it
+    let returned_time = sample_disabled.set_endtime_ns_now().unwrap();
+    assert_ne!(returned_time, 0); // still returns the calculated timestamp
+    assert_eq!(sample_disabled.endtime_ns(), None); // but doesn't set it
 }
 
 #[test]
 #[cfg(unix)]
 fn test_set_endtime_from_monotonic_ns() {
-    let indices = Arc::new(SampleTypeIndices::new(vec![SampleType::Cpu]).unwrap());
-    let mut sample = OwnedSample::new(indices);
+    let metadata = Arc::new(Metadata::new(vec![SampleType::Cpu], 64, true).unwrap());
+    let mut sample = OwnedSample::new(metadata);
     
     // Set endtime from a monotonic time
     let monotonic_ns = 123456789000; // Some monotonic time
@@ -437,8 +429,8 @@ fn test_set_endtime_from_monotonic_ns() {
 
 #[test]
 fn test_reverse_locations() {
-    let indices = Arc::new(SampleTypeIndices::new(vec![SampleType::Cpu]).unwrap());
-    let mut sample = OwnedSample::new(indices);
+    let metadata = Arc::new(Metadata::new(vec![SampleType::Cpu], 64, true).unwrap());
+    let mut sample = OwnedSample::new(metadata);
     
     // Initially, reverse_locations should be false
     assert!(!sample.is_reverse_locations());
@@ -521,8 +513,8 @@ fn test_label_key() {
     assert_eq!(format!("{}", LabelKey::ThreadName), "thread name");
     
     // Test that it can be used as a label key
-    let indices = Arc::new(SampleTypeIndices::new(vec![SampleType::Cpu]).unwrap());
-    let mut sample = OwnedSample::new(indices);
+    let metadata = Arc::new(Metadata::new(vec![SampleType::Cpu], 64, true).unwrap());
+    let mut sample = OwnedSample::new(metadata);
     
     sample.add_label(Label {
         key: LabelKey::ThreadId.as_str(),
@@ -543,8 +535,8 @@ fn test_label_key() {
 
 #[test]
 fn test_add_string_label() {
-    let indices = Arc::new(SampleTypeIndices::new(vec![SampleType::Cpu]).unwrap());
-    let mut sample = OwnedSample::new(indices);
+    let metadata = Arc::new(Metadata::new(vec![SampleType::Cpu], 64, true).unwrap());
+    let mut sample = OwnedSample::new(metadata);
     
     // Add string labels using the convenience method
     sample.add_string_label(LabelKey::ThreadName, "worker-1");
@@ -570,8 +562,8 @@ fn test_add_string_label() {
 
 #[test]
 fn test_add_num_label() {
-    let indices = Arc::new(SampleTypeIndices::new(vec![SampleType::Cpu]).unwrap());
-    let mut sample = OwnedSample::new(indices);
+    let metadata = Arc::new(Metadata::new(vec![SampleType::Cpu], 64, true).unwrap());
+    let mut sample = OwnedSample::new(metadata);
     
     // Add numeric labels using the convenience method
     sample.add_num_label(LabelKey::ThreadId, 42);
@@ -600,8 +592,8 @@ fn test_add_num_label() {
 
 #[test]
 fn test_mixed_label_types() {
-    let indices = Arc::new(SampleTypeIndices::new(vec![SampleType::Cpu]).unwrap());
-    let mut sample = OwnedSample::new(indices);
+    let metadata = Arc::new(Metadata::new(vec![SampleType::Cpu], 64, true).unwrap());
+    let mut sample = OwnedSample::new(metadata);
     
     // Mix string and numeric labels
     sample.add_string_label(LabelKey::ThreadName, "worker-1");

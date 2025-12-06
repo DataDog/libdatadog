@@ -9,15 +9,15 @@
 //! # Example
 //!
 //! ```no_run
-//! use libdd_profiling::owned_sample::{OwnedSample, SampleTypeIndices, SampleType};
+//! use libdd_profiling::owned_sample::{OwnedSample, Metadata, SampleType};
 //! use std::sync::Arc;
 //!
-//! let indices = Arc::new(SampleTypeIndices::new(vec![
+//! let metadata = Arc::new(Metadata::new(vec![
 //!     SampleType::Cpu,
 //!     SampleType::Wall,
-//! ]).unwrap());
+//! ], 64, true).unwrap());
 //!
-//! let mut sample = OwnedSample::new(indices);
+//! let mut sample = OwnedSample::new(metadata);
 //!
 //! // Set values by type
 //! sample.set_value(SampleType::Cpu, 1000).unwrap();
@@ -47,18 +47,19 @@
 //! ```
 
 use bumpalo::Bump;
-use enum_map::{Enum, EnumMap};
+use enum_map::Enum;
 use std::num::NonZeroI64;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 use anyhow::{self, Context};
 use crate::api::{Function, Label, Location, Mapping, Sample};
 
+mod metadata;
 mod pool;
 
 #[cfg(test)]
 mod tests;
 
+pub use metadata::Metadata;
 pub use pool::SamplePool;
 
 /// Well-known label keys used in profiling.
@@ -121,56 +122,6 @@ impl std::fmt::Display for LabelKey {
     }
 }
 
-/// Global flag to enable/disable timeline for all samples.
-/// When disabled, time-setting methods become no-ops.
-static TIMELINE_ENABLED: AtomicBool = AtomicBool::new(true);
-
-/// Computes the offset between monotonic time (CLOCK_MONOTONIC) and epoch time.
-/// This is computed once and cached in an atomic.
-///
-/// The offset allows converting monotonic timestamps (which start at system boot)
-/// to epoch timestamps (which start at 1970-01-01).
-///
-/// # Errors
-///
-/// Returns an error if:
-/// - System time is before UNIX_EPOCH
-/// - `clock_gettime(CLOCK_MONOTONIC)` fails
-#[cfg(unix)]
-fn monotonic_to_epoch_offset() -> anyhow::Result<i64> {
-    static OFFSET: AtomicI64 = AtomicI64::new(0);
-    
-    // Fast path: offset already computed
-    let offset = OFFSET.load(Ordering::Relaxed);
-    if offset != 0 {
-        return Ok(offset);
-    }
-    
-    // Slow path: compute the offset
-    use std::time::SystemTime;
-    
-    // Get the current epoch time in nanoseconds
-    let epoch_ns = SystemTime::now()
-        .duration_since(SystemTime::UNIX_EPOCH)
-        .context("system time is before UNIX_EPOCH")?
-        .as_nanos() as i64;
-    
-    // Get the current monotonic time using clock_gettime (safe wrapper from nix crate)
-    let ts = nix::time::clock_gettime(nix::time::ClockId::CLOCK_MONOTONIC)
-        .context("failed to get monotonic time from CLOCK_MONOTONIC")?;
-    
-    let monotonic_ns = ts.tv_sec() * 1_000_000_000 + ts.tv_nsec();
-    
-    // Compute the difference (epoch_ns will be larger since we're after 1970)
-    let computed_offset = epoch_ns - monotonic_ns;
-    
-    // Store it atomically (if another thread raced and stored it, that's fine)
-    OFFSET.store(computed_offset, Ordering::Relaxed);
-    
-    Ok(computed_offset)
-}
-
-
 /// Types of profiling samples that can be collected.
 ///
 /// Based on the sample types from [dd-trace-py](https://github.com/DataDog/dd-trace-py/blob/d239f91be2c4ca1ec2ded88263ed132e28fe031b/ddtrace/internal/datadog/profiling/dd_wrapper/include/types.hpp#L4).
@@ -196,98 +147,6 @@ pub enum SampleType {
     GpuMemory,
     /// GPU floating point operations profiling
     GpuFlops,
-}
-
-/// Maps sample types to their indices in a values array.
-///
-/// Each sample has a values array, and this struct tracks which index corresponds to
-/// which sample type. This allows efficient O(1) indexing into the values array using
-/// an `EnumMap` for lookups.
-///
-/// # Example
-/// ```no_run
-/// # use libdd_profiling::owned_sample::{SampleTypeIndices, SampleType};
-/// let indices = SampleTypeIndices::new(vec![
-///     SampleType::Cpu,
-///     SampleType::Wall,
-///     SampleType::Allocation,
-/// ]).unwrap();
-///
-/// assert_eq!(indices.get_index(&SampleType::Cpu), Some(0));
-/// assert_eq!(indices.get_index(&SampleType::Wall), Some(1));
-/// assert_eq!(indices.get_index(&SampleType::Allocation), Some(2));
-/// assert_eq!(indices.get_index(&SampleType::Heap), None);
-/// assert_eq!(indices.len(), 3);
-/// ```
-#[derive(Clone, Debug)]
-pub struct SampleTypeIndices {
-    /// Ordered list of sample types
-    sample_types: Vec<SampleType>,
-    /// O(1) lookup map: sample type -> values array index
-    /// None means the sample type is not configured
-    type_to_index: EnumMap<SampleType, Option<usize>>,
-}
-
-impl SampleTypeIndices {
-    /// Creates a new SampleTypeIndices with the given sample types.
-    ///
-    /// The order of sample types in the vector determines their index in the values array.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if:
-    /// - The sample types vector is empty
-    /// - The same sample type appears more than once
-    pub fn new(sample_types: Vec<SampleType>) -> anyhow::Result<Self> {
-        anyhow::ensure!(!sample_types.is_empty(), "sample types cannot be empty");
-
-        let mut type_to_index: EnumMap<SampleType, Option<usize>> = EnumMap::default();
-
-        for (index, &sample_type) in sample_types.iter().enumerate() {
-            anyhow::ensure!(
-                type_to_index[sample_type].is_none(),
-                "duplicate sample type: {:?}",
-                sample_type
-            );
-            
-            type_to_index[sample_type] = Some(index);
-        }
-
-        Ok(Self {
-            sample_types,
-            type_to_index,
-        })
-    }
-
-    /// Returns the index for the given sample type, or None if not configured.
-    pub fn get_index(&self, sample_type: &SampleType) -> Option<usize> {
-        self.type_to_index[*sample_type]
-    }
-
-    /// Returns the sample type at the given index, or None if out of bounds.
-    pub fn get_type(&self, index: usize) -> Option<SampleType> {
-        self.sample_types.get(index).copied()
-    }
-
-    /// Returns the number of configured sample types.
-    pub fn len(&self) -> usize {
-        self.sample_types.len()
-    }
-
-    /// Returns true if no sample types are configured.
-    pub fn is_empty(&self) -> bool {
-        self.sample_types.is_empty()
-    }
-
-    /// Returns an iterator over the sample types in order.
-    pub fn iter(&self) -> impl Iterator<Item = &SampleType> {
-        self.sample_types.iter()
-    }
-
-    /// Returns a slice of all configured sample types in order.
-    pub fn types(&self) -> &[SampleType] {
-        &self.sample_types
-    }
 }
 
 /// Internal data structure that holds the arena and references into it.
@@ -316,7 +175,7 @@ struct SampleInner {
 pub struct OwnedSample {
     inner: SampleInner,
     values: Vec<i64>,
-    indices: Arc<SampleTypeIndices>,
+    metadata: Arc<Metadata>,
     endtime_ns: Option<NonZeroI64>,
     reverse_locations: bool,
 }
@@ -329,7 +188,7 @@ impl OwnedSample {
     ///
     /// # Example
     /// ```no_run
-    /// # use libdd_profiling::owned_sample::{OwnedSample, SampleTypeIndices, SampleType};
+    /// # use libdd_profiling::owned_sample::{OwnedSample, Metadata, SampleType};
     /// # use std::sync::Arc;
     /// let indices = Arc::new(SampleTypeIndices::new(vec![
     ///     SampleType::Cpu,
@@ -337,8 +196,8 @@ impl OwnedSample {
     /// ]).unwrap());
     /// let sample = OwnedSample::new(indices);
     /// ```
-    pub fn new(indices: Arc<SampleTypeIndices>) -> Self {
-        let num_values = indices.len();
+    pub fn new(metadata: Arc<Metadata>) -> Self {
+        let num_values = metadata.len();
         Self {
             inner: SampleInnerBuilder {
                 arena: Bump::new(),
@@ -346,7 +205,7 @@ impl OwnedSample {
                 labels_builder: |_| Vec::new(),
             }.build(),
             values: vec![0; num_values],
-            indices,
+            metadata,
             endtime_ns: None,
             reverse_locations: false,
         }
@@ -360,14 +219,14 @@ impl OwnedSample {
     ///
     /// # Example
     /// ```no_run
-    /// # use libdd_profiling::owned_sample::{OwnedSample, SampleTypeIndices, SampleType};
+    /// # use libdd_profiling::owned_sample::{OwnedSample, Metadata, SampleType};
     /// # use std::sync::Arc;
-    /// # let indices = Arc::new(SampleTypeIndices::new(vec![SampleType::Cpu]).unwrap());
+    /// # let indices = Arc::new(Metadata::new(vec![SampleType::Cpu], 64).unwrap());
     /// let mut sample = OwnedSample::new(indices);
     /// sample.set_value(SampleType::Cpu, 1000).unwrap();
     /// ```
     pub fn set_value(&mut self, sample_type: SampleType, value: i64) -> anyhow::Result<()> {
-        let index = self.indices.get_index(&sample_type)
+        let index = self.metadata.get_index(&sample_type)
             .with_context(|| format!("sample type {:?} not configured", sample_type))?;
         
         self.values[index] = value;
@@ -381,26 +240,14 @@ impl OwnedSample {
     ///
     /// Returns an error if the sample type is not configured.
     pub fn get_value(&self, sample_type: SampleType) -> anyhow::Result<i64> {
-        let index = self.indices.get_index(&sample_type)
+        let index = self.metadata.get_index(&sample_type)
             .with_context(|| format!("sample type {:?} not configured", sample_type))?;
         Ok(self.values[index])
     }
 
-    /// Returns a reference to the sample type indices.
-    pub fn indices(&self) -> &Arc<SampleTypeIndices> {
-        &self.indices
-    }
-
-    /// Returns whether timeline is enabled globally for all samples.
-    pub fn is_timeline_enabled() -> bool {
-        TIMELINE_ENABLED.load(Ordering::Relaxed)
-    }
-
-    /// Sets whether timeline is enabled globally for all samples.
-    /// 
-    /// When timeline is disabled, time-setting methods become no-ops.
-    pub fn set_timeline_enabled(enabled: bool) {
-        TIMELINE_ENABLED.store(enabled, Ordering::Relaxed);
+    /// Returns a reference to the sample metadata.
+    pub fn metadata(&self) -> &Arc<Metadata> {
+        &self.metadata
     }
 
     /// Returns whether locations should be reversed when converting to a Sample.
@@ -422,7 +269,7 @@ impl OwnedSample {
     /// Returns the timestamp that was passed in. If timeline is disabled,
     /// the value is not stored but is still returned.
     pub fn set_endtime_ns(&mut self, endtime_ns: i64) -> i64 {
-        if Self::is_timeline_enabled() {
+        if self.metadata.is_timeline_enabled() {
             self.endtime_ns = NonZeroI64::new(endtime_ns);
         }
         endtime_ns
@@ -492,7 +339,7 @@ impl OwnedSample {
     /// - `clock_gettime(CLOCK_MONOTONIC)` fails
     #[cfg(unix)]
     pub fn set_endtime_from_monotonic_ns(&mut self, monotonic_ns: i64) -> anyhow::Result<i64> {
-        let offset = monotonic_to_epoch_offset()?;
+        let offset = self.metadata.monotonic_to_epoch_offset();
         let endtime = monotonic_ns + offset;
         Ok(self.set_endtime_ns(endtime))
     }
@@ -576,10 +423,10 @@ impl OwnedSample {
     ///
     /// # Example
     /// ```no_run
-    /// # use libdd_profiling::owned_sample::{OwnedSample, SampleTypeIndices, SampleType, LabelKey};
+    /// # use libdd_profiling::owned_sample::{OwnedSample, Metadata, SampleType, LabelKey};
     /// # use std::sync::Arc;
-    /// # let indices = Arc::new(SampleTypeIndices::new(vec![SampleType::Cpu]).unwrap());
-    /// # let mut sample = OwnedSample::new(indices);
+    /// # let metadata = Arc::new(Metadata::new(vec![SampleType::Cpu], 64, true).unwrap());
+    /// # let mut sample = OwnedSample::new(metadata);
     /// sample.add_string_label(LabelKey::ThreadName, "worker-1");
     /// sample.add_string_label(LabelKey::ExceptionType, "ValueError");
     /// ```
@@ -598,10 +445,10 @@ impl OwnedSample {
     ///
     /// # Example
     /// ```no_run
-    /// # use libdd_profiling::owned_sample::{OwnedSample, SampleTypeIndices, SampleType, LabelKey};
+    /// # use libdd_profiling::owned_sample::{OwnedSample, Metadata, SampleType, LabelKey};
     /// # use std::sync::Arc;
-    /// # let indices = Arc::new(SampleTypeIndices::new(vec![SampleType::Cpu]).unwrap());
-    /// # let mut sample = OwnedSample::new(indices);
+    /// # let metadata = Arc::new(Metadata::new(vec![SampleType::Cpu], 64, true).unwrap());
+    /// # let mut sample = OwnedSample::new(metadata);
     /// sample.add_num_label(LabelKey::ThreadId, 42);
     /// sample.add_num_label(LabelKey::SpanId, 12345);
     /// ```
@@ -629,11 +476,11 @@ impl OwnedSample {
     ///
     /// # Example
     /// ```no_run
-    /// # use libdd_profiling::owned_sample::{OwnedSample, SampleTypeIndices, SampleType};
+    /// # use libdd_profiling::owned_sample::{OwnedSample, Metadata, SampleType};
     /// # use libdd_profiling::api::{Location, Mapping, Function, Label};
     /// # use std::sync::Arc;
-    /// # let indices = Arc::new(SampleTypeIndices::new(vec![SampleType::Cpu, SampleType::Wall]).unwrap());
-    /// let mut sample = OwnedSample::new(indices);
+    /// # let metadata = Arc::new(Metadata::new(vec![SampleType::Cpu, SampleType::Wall], 64, true).unwrap());
+    /// let mut sample = OwnedSample::new(metadata);
     /// sample.add_location(Location {
     ///     mapping: Mapping { memory_start: 0, memory_limit: 0, file_offset: 0, filename: "foo", build_id: "" },
     ///     function: Function { name: "bar", system_name: "", filename: "" },
@@ -701,9 +548,9 @@ impl OwnedSample {
     ///
     /// # Example
     /// ```no_run
-    /// # use libdd_profiling::owned_sample::{OwnedSample, SampleTypeIndices, SampleType};
+    /// # use libdd_profiling::owned_sample::{OwnedSample, Metadata, SampleType};
     /// # use std::sync::Arc;
-    /// # let indices = Arc::new(SampleTypeIndices::new(vec![SampleType::Cpu]).unwrap());
+    /// # let indices = Arc::new(Metadata::new(vec![SampleType::Cpu], 64).unwrap());
     /// let sample = OwnedSample::new(indices);
     /// let borrowed = sample.as_sample();
     /// ```
@@ -736,7 +583,7 @@ impl OwnedSample {
 impl std::fmt::Debug for OwnedSample {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("OwnedSample")
-            .field("sample_types", &self.indices.types())
+            .field("sample_types", &self.metadata.types())
             .field("num_locations", &self.num_locations())
             .field("num_labels", &self.num_labels())
             .field("values", &self.values())
@@ -746,8 +593,8 @@ impl std::fmt::Debug for OwnedSample {
 
 impl PartialEq for OwnedSample {
     fn eq(&self, other: &Self) -> bool {
-        // Compare indices configuration (pointer equality is fine since they're Arc)
-        Arc::ptr_eq(&self.indices, &other.indices)
+        // Compare metadata configuration (pointer equality is fine since they're Arc)
+        Arc::ptr_eq(&self.metadata, &other.metadata)
             && self.values() == other.values()
             && self.num_locations() == other.num_locations()
             && self.num_labels() == other.num_labels()

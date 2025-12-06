@@ -3,7 +3,7 @@
 
 //! Pool for reusing `OwnedSample` instances to reduce allocation overhead.
 
-use super::{OwnedSample, SampleTypeIndices};
+use super::{Metadata, OwnedSample};
 use crossbeam_queue::ArrayQueue;
 use std::sync::Arc;
 
@@ -19,14 +19,14 @@ use std::sync::Arc;
 ///
 /// # Example
 /// ```no_run
-/// # use libdd_profiling::owned_sample::{SamplePool, SampleTypeIndices, SampleType};
+/// # use libdd_profiling::owned_sample::{SamplePool, Metadata, SampleType};
 /// # use std::sync::Arc;
-/// let indices = Arc::new(SampleTypeIndices::new(vec![
+/// let metadata = Arc::new(Metadata::new(vec![
 ///     SampleType::Cpu,
 ///     SampleType::Wall,
-/// ]).unwrap());
+/// ], 64, true).unwrap());
 ///
-/// let pool = SamplePool::new(indices, 10);
+/// let pool = SamplePool::new(metadata, 10);
 ///
 /// // Get a sample from the pool (thread-safe)
 /// let mut sample = pool.get();
@@ -37,8 +37,8 @@ use std::sync::Arc;
 /// pool.put(sample);
 /// ```
 pub struct SamplePool {
-    /// The sample type indices configuration shared by all samples
-    indices: Arc<SampleTypeIndices>,
+    /// The sample type metadata configuration shared by all samples
+    metadata: Arc<Metadata>,
     /// Lock-free bounded queue of available samples.
     /// Uses `ArrayQueue` for lock-free concurrent access via atomic operations,
     /// enabling efficient multi-threaded usage without mutex contention.
@@ -54,14 +54,14 @@ impl SamplePool {
     ///
     /// # Example
     /// ```no_run
-    /// # use libdd_profiling::owned_sample::{SamplePool, SampleTypeIndices, SampleType};
+    /// # use libdd_profiling::owned_sample::{SamplePool, Metadata, SampleType};
     /// # use std::sync::Arc;
-    /// # let indices = Arc::new(SampleTypeIndices::new(vec![SampleType::Cpu]).unwrap());
-    /// let pool = SamplePool::new(indices, 100);
+    /// # let metadata = Arc::new(Metadata::new(vec![SampleType::Cpu], 64, true).unwrap());
+    /// let pool = SamplePool::new(metadata, 100);
     /// ```
-    pub fn new(indices: Arc<SampleTypeIndices>, capacity: usize) -> Self {
+    pub fn new(metadata: Arc<Metadata>, capacity: usize) -> Self {
         Self {
-            indices,
+            metadata,
             samples: ArrayQueue::new(capacity),
         }
     }
@@ -74,16 +74,16 @@ impl SamplePool {
     ///
     /// # Example
     /// ```no_run
-    /// # use libdd_profiling::owned_sample::{SamplePool, SampleTypeIndices, SampleType};
+    /// # use libdd_profiling::owned_sample::{SamplePool, Metadata, SampleType};
     /// # use std::sync::Arc;
-    /// # let indices = Arc::new(SampleTypeIndices::new(vec![SampleType::Cpu]).unwrap());
-    /// # let pool = SamplePool::new(indices, 10);
+    /// # let metadata = Arc::new(Metadata::new(vec![SampleType::Cpu], 64, true).unwrap());
+    /// # let pool = SamplePool::new(metadata, 10);
     /// let sample = pool.get();
     /// assert_eq!(sample.num_locations(), 0);
     /// ```
     pub fn get(&self) -> Box<OwnedSample> {
         self.samples.pop().unwrap_or_else(|| {
-            Box::new(OwnedSample::new(self.indices.clone()))
+            Box::new(OwnedSample::new(self.metadata.clone()))
         })
     }
 
@@ -96,17 +96,17 @@ impl SamplePool {
     ///
     /// # Example
     /// ```no_run
-    /// # use libdd_profiling::owned_sample::{SamplePool, SampleTypeIndices, SampleType};
+    /// # use libdd_profiling::owned_sample::{SamplePool, Metadata, SampleType};
     /// # use std::sync::Arc;
-    /// # let indices = Arc::new(SampleTypeIndices::new(vec![SampleType::Cpu]).unwrap());
-    /// # let pool = SamplePool::new(indices, 10);
+    /// # let metadata = Arc::new(Metadata::new(vec![SampleType::Cpu], 64, true).unwrap());
+    /// # let pool = SamplePool::new(metadata, 10);
     /// let mut sample = pool.get();
     /// sample.set_value(SampleType::Cpu, 100).unwrap();
     /// pool.put(sample);  // Resets and returns to pool
     /// ```
     pub fn put(&self, mut sample: Box<OwnedSample>) {
         // Reset the sample to clean state
-        sample.reset();
+            sample.reset();
         
         // Try to add back to pool (lock-free operation)
         // If full, push() returns Err(sample), which we just drop
@@ -129,7 +129,7 @@ impl SamplePool {
     }
 }
 
-// SAFETY: SamplePool uses ArrayQueue which is Send + Sync, and Arc<SampleTypeIndices> which is also Send + Sync
+// SAFETY: SamplePool uses ArrayQueue which is Send + Sync, and Arc<Metadata> which is also Send + Sync
 unsafe impl Send for SamplePool {}
 unsafe impl Sync for SamplePool {}
 
@@ -140,8 +140,8 @@ mod tests {
 
     #[test]
     fn test_pool_basic() {
-        let indices = Arc::new(SampleTypeIndices::new(vec![SampleType::Cpu]).unwrap());
-        let pool = SamplePool::new(indices, 5);
+        let metadata = Arc::new(Metadata::new(vec![SampleType::Cpu], 64, true).unwrap());
+        let pool = SamplePool::new(metadata, 5);
 
         assert_eq!(pool.len(), 0);
         assert!(pool.is_empty());
@@ -166,8 +166,8 @@ mod tests {
 
     #[test]
     fn test_pool_capacity_limit() {
-        let indices = Arc::new(SampleTypeIndices::new(vec![SampleType::Cpu]).unwrap());
-        let pool = SamplePool::new(indices, 2);
+        let metadata = Arc::new(Metadata::new(vec![SampleType::Cpu], 64, true).unwrap());
+        let pool = SamplePool::new(metadata, 2);
 
         // Fill the pool
         let sample1 = pool.get();
@@ -185,11 +185,11 @@ mod tests {
 
     #[test]
     fn test_pool_reset() {
-        let indices = Arc::new(SampleTypeIndices::new(vec![
+        let metadata = Arc::new(Metadata::new(vec![
             SampleType::Cpu,
             SampleType::Wall,
-        ]).unwrap());
-        let pool = SamplePool::new(indices, 5);
+        ], 64, true).unwrap());
+        let pool = SamplePool::new(metadata, 5);
 
         // Get a sample and modify it
         let mut sample = pool.get();
@@ -211,11 +211,11 @@ mod tests {
     fn test_pool_thread_safety() {
         use std::thread;
 
-        let indices = Arc::new(SampleTypeIndices::new(vec![
+        let metadata = Arc::new(Metadata::new(vec![
             SampleType::Cpu,
             SampleType::Wall,
-        ]).unwrap());
-        let pool = Arc::new(SamplePool::new(indices, 20));
+        ], 64, true).unwrap());
+        let pool = Arc::new(SamplePool::new(metadata, 20));
 
         // Spawn multiple threads that all use the pool concurrently
         let handles: Vec<_> = (0..4)
