@@ -25,3 +25,7 @@ docker-sync.yml
 libtest.so
 libtest_cpp.so
 examples/cxx/crashinfo
+examples/cxx/crashinfo.exe
+examples/cxx/profiling
+examples/cxx/profiling.exe
+profile.pprof
