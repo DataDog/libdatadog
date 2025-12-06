@@ -73,7 +73,7 @@ int main() {
             // This is the simplest way to set the endtime
             try {
                 owned_sample->set_endtime_ns_now();
-            } catch (const rust::Error& e) {
+            } catch (const std::exception& e) {
                 std::cerr << "Failed to set endtime to now: " << e.what() << std::endl;
             }
             
@@ -149,14 +149,12 @@ int main() {
                 owned_sample->set_reverse_locations(true);
             }
             
-            // Add labels
-            owned_sample->add_label(Label{
-                .key = "thread_id",
-                .str = "",
-                .num = int64_t(i % 4),
-                .num_unit = ""
-            });
+            // Add labels using convenience methods with well-known label keys
+            // This is simpler and more type-safe than using raw strings
+            owned_sample->add_num_label(LabelKey::ThreadId, i % 4);
+            owned_sample->add_string_label(LabelKey::ThreadName, i % 2 == 0 ? "worker-even" : "worker-odd");
             
+            // Can also add labels the traditional way
             owned_sample->add_label(Label{
                 .key = "sample_id",
                 .str = "",

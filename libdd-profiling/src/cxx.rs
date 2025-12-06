@@ -75,6 +75,22 @@ pub mod ffi {
         GpuFlops = 9,
     }
 
+    #[derive(Debug)]
+    enum LabelKey {
+        ExceptionType,
+        ThreadId,
+        ThreadNativeId,
+        ThreadName,
+        TaskId,
+        TaskName,
+        SpanId,
+        LocalRootSpanId,
+        TraceType,
+        ClassName,
+        LockName,
+        GpuDeviceName,
+    }
+
     // Opaque Rust types
     extern "Rust" {
         type Profile;
@@ -147,6 +163,8 @@ pub mod ffi {
         
         fn add_location(self: &mut OwnedSample, location: &Location);
         fn add_label(self: &mut OwnedSample, label: &Label);
+        fn add_string_label(self: &mut OwnedSample, key: LabelKey, value: &str);
+        fn add_num_label(self: &mut OwnedSample, key: LabelKey, value: i64);
         fn num_locations(self: &OwnedSample) -> usize;
         fn num_labels(self: &OwnedSample) -> usize;
         fn reset_sample(self: &mut OwnedSample);
@@ -422,6 +440,16 @@ impl OwnedSample {
         self.inner.add_label(api_label);
     }
 
+    pub fn add_string_label(&mut self, key: ffi::LabelKey, value: &str) {
+        let rust_key = ffi_label_key_to_owned(key);
+        self.inner.add_string_label(rust_key, value);
+    }
+
+    pub fn add_num_label(&mut self, key: ffi::LabelKey, value: i64) {
+        let rust_key = ffi_label_key_to_owned(key);
+        self.inner.add_num_label(rust_key, value);
+    }
+
     pub fn num_locations(&self) -> usize {
         self.inner.num_locations()
     }
@@ -491,6 +519,24 @@ fn ffi_sample_type_to_owned(st: ffi::SampleType) -> anyhow::Result<owned_sample:
         ffi::SampleType::GpuMemory => Ok(owned_sample::SampleType::GpuMemory),
         ffi::SampleType::GpuFlops => Ok(owned_sample::SampleType::GpuFlops),
         _ => anyhow::bail!("Unknown SampleType variant: {:?}", st),
+    }
+}
+
+fn ffi_label_key_to_owned(key: ffi::LabelKey) -> owned_sample::LabelKey {
+    match key {
+        ffi::LabelKey::ExceptionType => owned_sample::LabelKey::ExceptionType,
+        ffi::LabelKey::ThreadId => owned_sample::LabelKey::ThreadId,
+        ffi::LabelKey::ThreadNativeId => owned_sample::LabelKey::ThreadNativeId,
+        ffi::LabelKey::ThreadName => owned_sample::LabelKey::ThreadName,
+        ffi::LabelKey::TaskId => owned_sample::LabelKey::TaskId,
+        ffi::LabelKey::TaskName => owned_sample::LabelKey::TaskName,
+        ffi::LabelKey::SpanId => owned_sample::LabelKey::SpanId,
+        ffi::LabelKey::LocalRootSpanId => owned_sample::LabelKey::LocalRootSpanId,
+        ffi::LabelKey::TraceType => owned_sample::LabelKey::TraceType,
+        ffi::LabelKey::ClassName => owned_sample::LabelKey::ClassName,
+        ffi::LabelKey::LockName => owned_sample::LabelKey::LockName,
+        ffi::LabelKey::GpuDeviceName => owned_sample::LabelKey::GpuDeviceName,
+        _ => owned_sample::LabelKey::ThreadId, // Default case, should not happen
     }
 }
 

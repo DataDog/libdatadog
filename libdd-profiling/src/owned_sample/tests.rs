@@ -496,3 +496,128 @@ fn test_reverse_locations() {
     sample.reset();
     assert!(!sample.is_reverse_locations());
 }
+
+#[test]
+fn test_label_key() {
+    // Test as_str()
+    assert_eq!(LabelKey::ExceptionType.as_str(), "exception type");
+    assert_eq!(LabelKey::ThreadId.as_str(), "thread id");
+    assert_eq!(LabelKey::ThreadNativeId.as_str(), "thread native id");
+    assert_eq!(LabelKey::ThreadName.as_str(), "thread name");
+    assert_eq!(LabelKey::TaskId.as_str(), "task id");
+    assert_eq!(LabelKey::TaskName.as_str(), "task name");
+    assert_eq!(LabelKey::SpanId.as_str(), "span id");
+    assert_eq!(LabelKey::LocalRootSpanId.as_str(), "local root span id");
+    assert_eq!(LabelKey::TraceType.as_str(), "trace type");
+    assert_eq!(LabelKey::ClassName.as_str(), "class name");
+    assert_eq!(LabelKey::LockName.as_str(), "lock name");
+    assert_eq!(LabelKey::GpuDeviceName.as_str(), "gpu device name");
+    
+    // Test AsRef<str>
+    let key: &str = LabelKey::ThreadId.as_ref();
+    assert_eq!(key, "thread id");
+    
+    // Test Display
+    assert_eq!(format!("{}", LabelKey::ThreadName), "thread name");
+    
+    // Test that it can be used as a label key
+    let indices = Arc::new(SampleTypeIndices::new(vec![SampleType::Cpu]).unwrap());
+    let mut sample = OwnedSample::new(indices);
+    
+    sample.add_label(Label {
+        key: LabelKey::ThreadId.as_str(),
+        str: "",
+        num: 42,
+        num_unit: "",
+    });
+    
+    sample.add_label(Label {
+        key: LabelKey::ThreadName.as_str(),
+        str: "worker-1",
+        num: 0,
+        num_unit: "",
+    });
+    
+    assert_eq!(sample.num_labels(), 2);
+}
+
+#[test]
+fn test_add_string_label() {
+    let indices = Arc::new(SampleTypeIndices::new(vec![SampleType::Cpu]).unwrap());
+    let mut sample = OwnedSample::new(indices);
+    
+    // Add string labels using the convenience method
+    sample.add_string_label(LabelKey::ThreadName, "worker-1");
+    sample.add_string_label(LabelKey::ExceptionType, "ValueError");
+    sample.add_string_label(LabelKey::ClassName, "MyClass");
+    
+    assert_eq!(sample.num_labels(), 3);
+    
+    // Verify the labels were added correctly
+    let api_sample = sample.as_sample();
+    assert_eq!(api_sample.labels.len(), 3);
+    
+    // Check first label
+    assert_eq!(api_sample.labels[0].key, "thread name");
+    assert_eq!(api_sample.labels[0].str, "worker-1");
+    assert_eq!(api_sample.labels[0].num, 0);
+    
+    // Check second label
+    assert_eq!(api_sample.labels[1].key, "exception type");
+    assert_eq!(api_sample.labels[1].str, "ValueError");
+    assert_eq!(api_sample.labels[1].num, 0);
+}
+
+#[test]
+fn test_add_num_label() {
+    let indices = Arc::new(SampleTypeIndices::new(vec![SampleType::Cpu]).unwrap());
+    let mut sample = OwnedSample::new(indices);
+    
+    // Add numeric labels using the convenience method
+    sample.add_num_label(LabelKey::ThreadId, 42);
+    sample.add_num_label(LabelKey::ThreadNativeId, 12345);
+    sample.add_num_label(LabelKey::SpanId, 98765);
+    
+    assert_eq!(sample.num_labels(), 3);
+    
+    // Verify the labels were added correctly
+    let api_sample = sample.as_sample();
+    assert_eq!(api_sample.labels.len(), 3);
+    
+    // Check first label
+    assert_eq!(api_sample.labels[0].key, "thread id");
+    assert_eq!(api_sample.labels[0].str, "");
+    assert_eq!(api_sample.labels[0].num, 42);
+    
+    // Check second label
+    assert_eq!(api_sample.labels[1].key, "thread native id");
+    assert_eq!(api_sample.labels[1].num, 12345);
+    
+    // Check third label
+    assert_eq!(api_sample.labels[2].key, "span id");
+    assert_eq!(api_sample.labels[2].num, 98765);
+}
+
+#[test]
+fn test_mixed_label_types() {
+    let indices = Arc::new(SampleTypeIndices::new(vec![SampleType::Cpu]).unwrap());
+    let mut sample = OwnedSample::new(indices);
+    
+    // Mix string and numeric labels
+    sample.add_string_label(LabelKey::ThreadName, "worker-1");
+    sample.add_num_label(LabelKey::ThreadId, 42);
+    sample.add_string_label(LabelKey::ExceptionType, "RuntimeError");
+    sample.add_num_label(LabelKey::SpanId, 12345);
+    
+    assert_eq!(sample.num_labels(), 4);
+    
+    let api_sample = sample.as_sample();
+    assert_eq!(api_sample.labels[0].key, "thread name");
+    assert_eq!(api_sample.labels[0].str, "worker-1");
+    assert_eq!(api_sample.labels[1].key, "thread id");
+    assert_eq!(api_sample.labels[1].num, 42);
+    assert_eq!(api_sample.labels[2].key, "exception type");
+    assert_eq!(api_sample.labels[2].str, "RuntimeError");
+    assert_eq!(api_sample.labels[3].key, "span id");
+    assert_eq!(api_sample.labels[3].num, 12345);
+}

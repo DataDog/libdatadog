@@ -28,4 +28,7 @@ examples/cxx/crashinfo
 examples/cxx/crashinfo.exe
 examples/cxx/profiling
 examples/cxx/profiling.exe
+examples/cxx/owned_sample
+examples/cxx/owned_sample.exe
 profile.pprof
+profile_owned_sample.pprof
