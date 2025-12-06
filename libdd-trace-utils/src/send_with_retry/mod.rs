@@ -42,11 +42,15 @@ impl std::fmt::Display for SendWithRetryError {
                 // Include the source error if available
                 if let Some(source) = std::error::Error::source(error) {
                     write!(f, ", source: {source}")?;
+                } else {
+                    write!(f, ", source: unknown")?;
                 }
 
                 // Include the connect_info if available
                 if let Some(connect_info) = error.connect_info() {
                     write!(f, ", connect_info: {connect_info:?}")?;
+                } else {
+                    write!(f, ", connect_info: unknown")?;
                 }
 
                 Ok(())
@@ -248,10 +252,15 @@ async fn send_request<C: Connect>(
 
     let req_future = { client.request(req) };
 
+    debug!("libdd-trace-utils | send_request | client connect info: {client:?}");
+
     match tokio::time::timeout(timeout, req_future).await {
         Ok(resp) => match resp {
             Ok(body) => Ok(hyper_migration::into_response(body)),
-            Err(e) => Err(RequestError::Network(e)),
+            Err(e) => {
+                debug!("libdd-trace-utils | send_request | error: {e:?}");
+                Err(RequestError::Network(e))
+            }
         },
         Err(_) => Err(RequestError::TimeoutApi),
     }
