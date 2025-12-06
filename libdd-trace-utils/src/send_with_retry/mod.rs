@@ -252,17 +252,21 @@ async fn send_request<C: Connect>(
 
     let req_future = { client.request(req) };
 
-    debug!("libdd-trace-utils | send_request | client connect info: {client:?}");
-
     match tokio::time::timeout(timeout, req_future).await {
         Ok(resp) => match resp {
-            Ok(body) => Ok(hyper_migration::into_response(body)),
+            Ok(body) => {
+                debug!("libdd-trace-utils | send_request | success response: {body:?}");
+                Ok(hyper_migration::into_response(body))
+            },
             Err(e) => {
                 debug!("libdd-trace-utils | send_request | error: {e:?}");
                 Err(RequestError::Network(e))
             }
         },
-        Err(_) => Err(RequestError::TimeoutApi),
+        Err(_) => {
+            debug!("libdd-trace-utils | send_request | timeout");
+            Err(RequestError::TimeoutApi)
+        }
     }
 }
 
