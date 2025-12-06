@@ -49,11 +49,8 @@ libdd-telemetry-ffi = { path = "../libdd-telemetry-ffi", default-features = fals
 libdd-ddsketch-ffi = { path = "../libdd-ddsketch-ffi", default-features = false, optional = true }
 libdd-log-ffi = { path = "../libdd-log-ffi", default-features = false, optional = true }
 function_name = "0.3.0"
-futures = { version = "0.3", default-features = false }
-http-body-util = "0.1"
-hyper = { workspace = true}
+http = "1.0"
 libc = "0.2"
 serde_json = { version = "1.0" }
 symbolizer-ffi = { path = "../symbolizer-ffi", optional = true, default-features = false }
-tokio-util = "0.7.1"
 datadog-ffe-ffi = { path = "../datadog-ffe-ffi", default-features = false, optional = true }
