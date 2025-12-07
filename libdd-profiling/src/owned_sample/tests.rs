@@ -2,7 +2,46 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use super::*;
-use crate::api::{Function, Label, Location, Mapping};
+use crate::api::{Function, Label, Location, Mapping, Sample};
+
+/// Test helper to build a `Sample` from an `OwnedSample` for inspection.
+/// 
+/// Note: The pseudo-frame message string (if any) is leaked via `Box::leak` 
+/// to obtain a `'static` lifetime, but this is only used in tests so it's acceptable.
+fn as_sample(owned: &OwnedSample) -> Sample<'_> {
+    let mut locations = owned.inner.borrow_locations().clone();
+    
+    // Reverse locations if the flag is set
+    if owned.reverse_locations {
+        locations.reverse();
+    }
+    
+    // If frames were dropped, add a pseudo-frame indicating how many
+    if owned.dropped_frames > 0 {
+        let frame_word = if owned.dropped_frames == 1 { "frame" } else { "frames" };
+        let name = format!("<{} {} omitted>", owned.dropped_frames, frame_word);
+        
+        // Leak the string only in tests - this is acceptable for test code
+        let name_static: &'static str = Box::leak(name.into_boxed_str());
+        
+        // Create a pseudo-location for the dropped frames indicator
+        let pseudo_location = Location {
+            function: Function {
+                name: name_static,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        
+        locations.push(pseudo_location);
+    }
+    
+    Sample {
+        locations,
+        values: &owned.values,
+        labels: owned.inner.borrow_labels().clone(),
+    }
+}
 
 #[test]
 fn test_owned_sample_basic() {
@@ -78,7 +117,7 @@ fn test_as_sample() {
     });
     owned.add_label(Label { key: "key", str: "value", num: 0, num_unit: "" });
 
-    let borrowed = owned.as_sample();
+    let borrowed = as_sample(&owned);
     assert_eq!(borrowed.values, &[100, 200]);
     assert_eq!(borrowed.locations.len(), 1);
     assert_eq!(borrowed.labels.len(), 1);
@@ -456,7 +495,7 @@ fn test_reverse_locations() {
     });
     
     // Get sample with normal order
-    let normal_sample = sample.as_sample();
+    let normal_sample = as_sample(&sample);
     assert_eq!(normal_sample.locations.len(), 3);
     assert_eq!(normal_sample.locations[0].function.name, "func1");
     assert_eq!(normal_sample.locations[1].function.name, "func2");
@@ -467,7 +506,7 @@ fn test_reverse_locations() {
     assert!(sample.is_reverse_locations());
     
     // Get sample with reversed order
-    let reversed_sample = sample.as_sample();
+    let reversed_sample = as_sample(&sample);
     assert_eq!(reversed_sample.locations.len(), 3);
     assert_eq!(reversed_sample.locations[0].function.name, "func3");
     assert_eq!(reversed_sample.locations[1].function.name, "func2");
@@ -478,7 +517,7 @@ fn test_reverse_locations() {
     assert!(!sample.is_reverse_locations());
     
     // Should be back to normal order
-    let normal_again = sample.as_sample();
+    let normal_again = as_sample(&sample);
     assert_eq!(normal_again.locations[0].function.name, "func1");
     assert_eq!(normal_again.locations[1].function.name, "func2");
     assert_eq!(normal_again.locations[2].function.name, "func3");
@@ -546,7 +585,7 @@ fn test_add_string_label() {
     assert_eq!(sample.num_labels(), 3);
     
     // Verify the labels were added correctly
-    let api_sample = sample.as_sample();
+    let api_sample = as_sample(&sample);
     assert_eq!(api_sample.labels.len(), 3);
     
     // Check first label
@@ -573,7 +612,7 @@ fn test_add_num_label() {
     assert_eq!(sample.num_labels(), 3);
     
     // Verify the labels were added correctly
-    let api_sample = sample.as_sample();
+    let api_sample = as_sample(&sample);
     assert_eq!(api_sample.labels.len(), 3);
     
     // Check first label
@@ -603,7 +642,7 @@ fn test_mixed_label_types() {
     
     assert_eq!(sample.num_labels(), 4);
     
-    let api_sample = sample.as_sample();
+    let api_sample = as_sample(&sample);
     assert_eq!(api_sample.labels[0].key, "thread name");
     assert_eq!(api_sample.labels[0].str, "worker-1");
     assert_eq!(api_sample.labels[1].key, "thread id");
@@ -612,4 +651,112 @@ fn test_mixed_label_types() {
     assert_eq!(api_sample.labels[2].str, "RuntimeError");
     assert_eq!(api_sample.labels[3].key, "span id");
     assert_eq!(api_sample.labels[3].num, 12345);
+}
+
+#[test]
+fn test_dropped_frames() {
+    // Create metadata with a small max_frames limit
+    let metadata = Arc::new(Metadata::new(vec![SampleType::Cpu], 3, true).unwrap());
+    let mut sample = OwnedSample::new(metadata);
+    
+    // Add 3 locations (at the limit)
+    for i in 0..3 {
+        sample.add_location(Location {
+            mapping: Mapping {
+                memory_start: 0x1000 + i * 0x100,
+                memory_limit: 0x2000 + i * 0x100,
+                file_offset: 0,
+                filename: "test.so",
+                build_id: "abc",
+            },
+            function: Function {
+                name: "function",
+                system_name: "function",
+                filename: "test.c",
+            },
+            address: 0x1234 + i,
+            line: 10 + i as i64,
+        });
+    }
+    
+    assert_eq!(sample.num_locations(), 3);
+    assert_eq!(sample.dropped_frames(), 0);
+    
+    // Try to add 2 more locations (should be dropped)
+    for i in 3..5 {
+        sample.add_location(Location {
+            mapping: Mapping {
+                memory_start: 0x1000 + i * 0x100,
+                memory_limit: 0x2000 + i * 0x100,
+                file_offset: 0,
+                filename: "test.so",
+                build_id: "abc",
+            },
+            function: Function {
+                name: "dropped_function",
+                system_name: "dropped_function",
+                filename: "test.c",
+            },
+            address: 0x1234 + i,
+            line: 10 + i as i64,
+        });
+    }
+    
+    // Should still have 3 locations, but 2 dropped
+    assert_eq!(sample.num_locations(), 3);
+    assert_eq!(sample.dropped_frames(), 2);
+    
+    // Convert to API sample and verify pseudo-frame was added
+    let api_sample = as_sample(&sample);
+    
+    // Should have 4 locations now: 3 real + 1 pseudo-frame
+    assert_eq!(api_sample.locations.len(), 4);
+    
+    // The last location should be the pseudo-frame
+    let pseudo_frame = &api_sample.locations[3];
+    assert_eq!(pseudo_frame.function.name, "<2 frames omitted>");
+    assert_eq!(pseudo_frame.address, 0);
+    assert_eq!(pseudo_frame.line, 0);
+    
+    // Test with a single dropped frame (singular "frame")
+    sample.reset();
+    for i in 0..3 {
+        sample.add_location(Location {
+            mapping: Mapping {
+                memory_start: 0x1000 + i * 0x100,
+                memory_limit: 0x2000 + i * 0x100,
+                file_offset: 0,
+                filename: "test.so",
+                build_id: "abc",
+            },
+            function: Function {
+                name: "function",
+                system_name: "function",
+                filename: "test.c",
+            },
+            address: 0x1234 + i,
+            line: 10 + i as i64,
+        });
+    }
+    sample.add_location(Location {
+        mapping: Mapping {
+            memory_start: 0x4000,
+            memory_limit: 0x5000,
+            file_offset: 0,
+            filename: "test.so",
+            build_id: "abc",
+        },
+        function: Function {
+            name: "dropped",
+            system_name: "dropped",
+            filename: "test.c",
+        },
+        address: 0x4444,
+        line: 100,
+    });
+    
+    assert_eq!(sample.dropped_frames(), 1);
+    let api_sample = as_sample(&sample);
+    assert_eq!(api_sample.locations.len(), 4);
+    assert_eq!(api_sample.locations[3].function.name, "<1 frame omitted>");
 }

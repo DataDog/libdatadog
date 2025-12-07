@@ -178,6 +178,7 @@ pub struct OwnedSample {
     metadata: Arc<Metadata>,
     endtime_ns: Option<NonZeroI64>,
     reverse_locations: bool,
+    dropped_frames: usize,
 }
 
 impl OwnedSample {
@@ -208,6 +209,7 @@ impl OwnedSample {
             metadata,
             endtime_ns: None,
             reverse_locations: false,
+            dropped_frames: 0,
         }
     }
 
@@ -347,7 +349,17 @@ impl OwnedSample {
     /// Add a location to the sample.
     ///
     /// The location's strings will be copied into the internal arena.
+    /// If the number of locations has reached `max_frames`, the frame will be dropped
+    /// and the dropped frame count will be incremented instead.
     pub fn add_location(&mut self, location: Location<'_>) {
+        // Check if we've reached the max_frames limit
+        let current_count = self.inner.borrow_locations().len();
+        if current_count >= self.metadata.max_frames() {
+            // Drop this frame and increment the counter
+            self.dropped_frames += 1;
+            return;
+        }
+        
         self.inner.with_mut(|fields| {
             // Allocate strings in the arena
             let filename_ref = fields.arena.alloc_str(location.mapping.filename);
@@ -514,6 +526,7 @@ impl OwnedSample {
         
         self.endtime_ns = None;
         self.reverse_locations = false;
+        self.dropped_frames = 0;
         
         // Rebuild with the reset arena
         self.inner = SampleInnerBuilder {
@@ -533,6 +546,11 @@ impl OwnedSample {
         self.inner.borrow_labels().len()
     }
 
+    /// Get the number of frames that were dropped due to exceeding max_frames.
+    pub fn dropped_frames(&self) -> usize {
+        self.dropped_frames
+    }
+
     /// Get a location by index.
     pub fn get_location(&self, index: usize) -> Option<Location<'_>> {
         self.inner.borrow_locations().get(index).copied()
@@ -543,18 +561,23 @@ impl OwnedSample {
         self.inner.borrow_labels().get(index).copied()
     }
 
-    /// Get a borrowed `Sample` view of this owned sample.
-    /// The returned sample borrows from this OwnedSample.
+    /// Add this sample to a profile.
+    ///
+    /// If frames were dropped (exceeding `max_frames`), a pseudo-frame will be appended
+    /// indicating how many frames were omitted. The profile will intern all strings, so
+    /// no memory is leaked.
     ///
     /// # Example
     /// ```no_run
     /// # use libdd_profiling::owned_sample::{OwnedSample, Metadata, SampleType};
+    /// # use libdd_profiling::internal::Profile;
     /// # use std::sync::Arc;
-    /// # let indices = Arc::new(Metadata::new(vec![SampleType::Cpu], 64).unwrap());
-    /// let sample = OwnedSample::new(indices);
-    /// let borrowed = sample.as_sample();
+    /// # let metadata = Arc::new(Metadata::new(vec![SampleType::Cpu], 64, true).unwrap());
+    /// # let mut profile = Profile::try_new(vec![], None).unwrap();
+    /// let sample = OwnedSample::new(metadata);
+    /// sample.add_to_profile(&mut profile).unwrap();
     /// ```
-    pub fn as_sample(&self) -> Sample<'_> {
+    pub fn add_to_profile(&self, profile: &mut crate::internal::Profile) -> anyhow::Result<()> {
         let mut locations = self.inner.borrow_locations().clone();
         
         // Reverse locations if the flag is set
@@ -562,11 +585,32 @@ impl OwnedSample {
             locations.reverse();
         }
         
-        Sample {
+        // If frames were dropped, add a pseudo-frame indicating how many
+        let temp_name;
+        if self.dropped_frames > 0 {
+            let frame_word = if self.dropped_frames == 1 { "frame" } else { "frames" };
+            temp_name = format!("<{} {} omitted>", self.dropped_frames, frame_word);
+            
+            // Create a pseudo-location for the dropped frames indicator
+            let pseudo_location = Location {
+                function: Function {
+                    name: &temp_name,
+                    ..Default::default()
+                },
+                ..Default::default()
+            };
+            
+            locations.push(pseudo_location);
+        }
+        
+        let sample = Sample {
             locations,
             values: &self.values,
             labels: self.inner.borrow_labels().clone(),
-        }
+        };
+        
+        // Profile will intern the strings, including the temp_name if it was created
+        profile.try_add_sample(sample, None)
     }
 
     /// Iterate over all locations.

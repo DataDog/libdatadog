@@ -108,7 +108,6 @@ pub mod ffi {
 
         // Profile methods
         fn add_sample(self: &mut Profile, sample: &Sample) -> Result<()>;
-        fn add_owned_sample(self: &mut Profile, sample: &OwnedSample) -> Result<()>;
         fn add_endpoint(self: &mut Profile, local_root_span_id: u64, endpoint: &str) -> Result<()>;
         fn add_endpoint_count(self: &mut Profile, endpoint: &str, value: i64) -> Result<()>;
 
@@ -168,6 +167,7 @@ pub mod ffi {
         fn num_locations(self: &OwnedSample) -> usize;
         fn num_labels(self: &OwnedSample) -> usize;
         fn reset_sample(self: &mut OwnedSample);
+        fn add_to_profile(self: &OwnedSample, profile: &mut Profile) -> Result<()>;
 
         // SamplePool methods
         #[Self = "SamplePool"]
@@ -278,14 +278,6 @@ impl Profile {
         Ok(())
     }
 
-    pub fn add_owned_sample(&mut self, sample: &OwnedSample) -> anyhow::Result<()> {
-        // Convert OwnedSample to API Sample
-        let api_sample = sample.inner.as_sample();
-
-        // Profile interns the strings
-        self.inner.try_add_sample(api_sample, None)?;
-        Ok(())
-    }
 
     pub fn add_endpoint(&mut self, local_root_span_id: u64, endpoint: &str) -> anyhow::Result<()> {
         self.inner
@@ -463,6 +455,10 @@ impl OwnedSample {
 
     pub fn reset_sample(&mut self) {
         self.inner.reset();
+    }
+
+    pub fn add_to_profile(&self, profile: &mut Profile) -> anyhow::Result<()> {
+        self.inner.add_to_profile(&mut profile.inner)
     }
 }
 

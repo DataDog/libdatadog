@@ -168,7 +168,7 @@ int main() {
             });
             
             // Add OwnedSample directly to profile
-            profile->add_owned_sample(*owned_sample);
+            owned_sample->add_to_profile(*profile);
             
             // Return sample to pool for reuse (automatically resets it)
             pool->return_sample(std::move(owned_sample));
