@@ -106,9 +106,13 @@ pub mod ffi {
         type OwnedSample;
         type SamplePool;
 
+        // Helper function to get the sentinel value for no arena allocation limit
+        fn no_allocation_limit() -> i64;
+
         // Metadata static factory
+        // arena_allocation_limit: maximum bytes for arena allocator, or use no_allocation_limit()
         #[Self = "Metadata"]
-        fn create(sample_types: Vec<SampleType>, max_frames: usize, timeline_enabled: bool) -> Result<Box<Metadata>>;
+        fn create(sample_types: Vec<SampleType>, max_frames: usize, arena_allocation_limit: i64, timeline_enabled: bool) -> Result<Box<Metadata>>;
 
         // Profile static factory
         #[Self = "Profile"]
@@ -169,11 +173,12 @@ pub mod ffi {
         fn set_endtime_from_monotonic_ns(self: &mut OwnedSample, monotonic_ns: i64) -> Result<i64>;
         
         fn add_location(self: &mut OwnedSample, location: &Location);
-        fn add_label(self: &mut OwnedSample, label: &Label);
-        fn add_string_label(self: &mut OwnedSample, key: LabelKey, value: &str);
-        fn add_num_label(self: &mut OwnedSample, key: LabelKey, value: i64);
+        fn add_label(self: &mut OwnedSample, label: &Label) -> Result<()>;
+        fn add_string_label(self: &mut OwnedSample, key: LabelKey, value: &str) -> Result<()>;
+        fn add_num_label(self: &mut OwnedSample, key: LabelKey, value: i64) -> Result<()>;
         fn num_locations(self: &OwnedSample) -> usize;
         fn num_labels(self: &OwnedSample) -> usize;
+        fn allocated_bytes(self: &OwnedSample) -> usize;
         fn reset_sample(self: &mut OwnedSample);
         fn add_to_profile(self: &OwnedSample, profile: &mut Profile) -> Result<()>;
 
@@ -367,20 +372,33 @@ impl Profile {
 use crate::owned_sample;
 use std::sync::Arc;
 
+/// Returns the sentinel value indicating no arena allocation limit.
+/// Use this for the arena_allocation_limit parameter in Metadata::create().
+pub fn no_allocation_limit() -> i64 {
+    -1
+}
+
 pub struct Metadata {
     inner: Arc<owned_sample::Metadata>,
 }
 
 impl Metadata {
-    pub fn create(sample_types: Vec<ffi::SampleType>, max_frames: usize, timeline_enabled: bool) -> anyhow::Result<Box<Metadata>> {
+    pub fn create(sample_types: Vec<ffi::SampleType>, max_frames: usize, arena_allocation_limit: i64, timeline_enabled: bool) -> anyhow::Result<Box<Metadata>> {
         // Convert CXX SampleType to owned_sample::SampleType
         let types: Vec<owned_sample::SampleType> = sample_types
             .into_iter()
             .map(ffi_sample_type_to_owned)
             .collect::<anyhow::Result<Vec<_>>>()?;
 
+        // Convert arena_allocation_limit (use NO_ALLOCATION_LIMIT or any value <= 0 for no limit)
+        let arena_allocation_limit = if arena_allocation_limit > 0 {
+            Some(arena_allocation_limit as usize)
+        } else {
+            None
+        };
+
         // Create metadata with specified configuration
-        let inner = Arc::new(owned_sample::Metadata::new(types, max_frames, timeline_enabled)?);
+        let inner = Arc::new(owned_sample::Metadata::new(types, max_frames, arena_allocation_limit, timeline_enabled)?);
         Ok(Box::new(Metadata { inner }))
     }
 }
@@ -438,19 +456,22 @@ impl OwnedSample {
         self.inner.add_location(api_location);
     }
 
-    pub fn add_label(&mut self, label: &ffi::Label) {
+    pub fn add_label(&mut self, label: &ffi::Label) -> anyhow::Result<()> {
         let api_label: api::Label = label.into();
-        self.inner.add_label(api_label);
+        self.inner.add_label(api_label)?;
+        Ok(())
     }
 
-    pub fn add_string_label(&mut self, key: ffi::LabelKey, value: &str) {
+    pub fn add_string_label(&mut self, key: ffi::LabelKey, value: &str) -> anyhow::Result<()> {
         let rust_key = ffi_label_key_to_owned(key);
-        self.inner.add_string_label(rust_key, value);
+        self.inner.add_string_label(rust_key, value)?;
+        Ok(())
     }
 
-    pub fn add_num_label(&mut self, key: ffi::LabelKey, value: i64) {
+    pub fn add_num_label(&mut self, key: ffi::LabelKey, value: i64) -> anyhow::Result<()> {
         let rust_key = ffi_label_key_to_owned(key);
-        self.inner.add_num_label(rust_key, value);
+        self.inner.add_num_label(rust_key, value)?;
+        Ok(())
     }
 
     pub fn num_locations(&self) -> usize {
@@ -459,6 +480,10 @@ impl OwnedSample {
 
     pub fn num_labels(&self) -> usize {
         self.inner.num_labels()
+    }
+
+    pub fn allocated_bytes(&self) -> usize {
+        self.inner.allocated_bytes()
     }
 
     pub fn reset_sample(&mut self) {

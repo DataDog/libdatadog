@@ -57,8 +57,8 @@ int main() {
         std::cout << "Creating Metadata and SamplePool for efficient sample reuse..." << std::endl;
         
         // Create metadata (configuration shared by all samples in the pool)
-        // Parameters: sample_types, max_frames, timeline_enabled
-        auto metadata = Metadata::create({SampleType::WallTime}, 64, true);
+        // Parameters: sample_types, max_frames, arena_allocation_limit (no_allocation_limit() or bytes), timeline_enabled
+        auto metadata = Metadata::create({SampleType::WallTime}, 64, no_allocation_limit(), true);
         
         // Create a pool of reusable samples using the metadata
         // Parameters: metadata, capacity
@@ -166,6 +166,12 @@ int main() {
                 .num = int64_t(i),
                 .num_unit = ""
             });
+            
+            // Track memory usage (print for first sample only)
+            if (i == 0) {
+                auto bytes = owned_sample->allocated_bytes();
+                std::cout << "   First sample allocated " << bytes << " bytes for strings" << std::endl;
+            }
             
             // Add OwnedSample directly to profile
             owned_sample->add_to_profile(*profile);

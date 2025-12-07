@@ -10,12 +10,13 @@
 //!
 //! ```no_run
 //! use libdd_profiling::owned_sample::{OwnedSample, Metadata, SampleType};
+//! use libdd_profiling::api::{Location, Mapping, Function, Label};
 //! use std::sync::Arc;
 //!
 //! let metadata = Arc::new(Metadata::new(vec![
 //!     SampleType::CpuTime,
 //!     SampleType::WallTime,
-//! ], 64, true).unwrap());
+//! ], 64, None, true).unwrap());
 //!
 //! let mut sample = OwnedSample::new(metadata);
 //!
@@ -42,8 +43,8 @@
 //! });
 //!
 //! // Add labels
-//! sample.add_label(Label { key: "thread_name", str: "worker-1", num: 0, num_unit: "" });
-//! sample.add_label(Label { key: "thread_id", str: "", num: 123, num_unit: "" });
+//! sample.add_label(Label { key: "thread_name", str: "worker-1", num: 0, num_unit: "" }).unwrap();
+//! sample.add_label(Label { key: "thread_id", str: "", num: 123, num_unit: "" }).unwrap();
 //! ```
 
 use bumpalo::Bump;
@@ -64,6 +65,42 @@ pub use label_key::LabelKey;
 pub use metadata::Metadata;
 pub use sample_type::SampleType;
 pub use pool::SamplePool;
+
+/// Wrapper around bumpalo::AllocErr that implements std::error::Error
+#[derive(Debug)]
+pub struct AllocError(bumpalo::AllocErr);
+
+impl std::fmt::Display for AllocError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "arena allocation failed")
+    }
+}
+
+impl std::error::Error for AllocError {}
+
+impl From<bumpalo::AllocErr> for AllocError {
+    fn from(err: bumpalo::AllocErr) -> Self {
+        AllocError(err)
+    }
+}
+
+/// Errors that can occur during owned sample operations.
+#[derive(Debug, thiserror::Error)]
+pub enum OwnedSampleError {
+    /// Arena allocation failed (out of memory)
+    #[error(transparent)]
+    AllocationFailed(#[from] AllocError),
+    
+    /// Invalid sample type index
+    #[error("invalid sample type index: {0}")]
+    InvalidIndex(usize),
+}
+
+impl From<bumpalo::AllocErr> for OwnedSampleError {
+    fn from(err: bumpalo::AllocErr) -> Self {
+        OwnedSampleError::AllocationFailed(AllocError(err))
+    }
+}
 
 /// Internal data structure that holds the arena and references into it.
 /// This is a self-referential structure created using the ouroboros crate.
@@ -107,17 +144,19 @@ impl OwnedSample {
     /// ```no_run
     /// # use libdd_profiling::owned_sample::{OwnedSample, Metadata, SampleType};
     /// # use std::sync::Arc;
-    /// let indices = Arc::new(SampleTypeIndices::new(vec![
-    ///     SampleType::Cpu,
-    ///     SampleType::Wall,
-    /// ]).unwrap());
-    /// let sample = OwnedSample::new(indices);
+    /// let metadata = Arc::new(Metadata::new(vec![
+    ///     SampleType::CpuTime,
+    ///     SampleType::WallTime,
+    /// ], 64, None, true).unwrap());
+    /// let sample = OwnedSample::new(metadata);
     /// ```
     pub fn new(metadata: Arc<Metadata>) -> Self {
         let num_values = metadata.len();
+        let arena = Bump::new();
+        arena.set_allocation_limit(metadata.arena_allocation_limit());
         Self {
             inner: SampleInnerBuilder {
-                arena: Bump::new(),
+                arena,
                 locations_builder: |_| Vec::new(),
                 labels_builder: |_| Vec::new(),
             }.build(),
@@ -139,7 +178,7 @@ impl OwnedSample {
     /// ```no_run
     /// # use libdd_profiling::owned_sample::{OwnedSample, Metadata, SampleType};
     /// # use std::sync::Arc;
-    /// # let indices = Arc::new(Metadata::new(vec![SampleType::CpuTime], 64, true).unwrap());
+    /// # let indices = Arc::new(Metadata::new(vec![SampleType::CpuTime], 64, None, true).unwrap());
     /// let mut sample = OwnedSample::new(indices);
     /// sample.set_value(SampleType::CpuTime, 1000).unwrap();
     /// ```
@@ -265,8 +304,9 @@ impl OwnedSample {
     /// Add a location to the sample.
     ///
     /// The location's strings will be copied into the internal arena.
-    /// If the number of locations has reached `max_frames`, the frame will be dropped
-    /// and the dropped frame count will be incremented instead.
+    /// If the number of locations has reached `max_frames` or arena allocation fails
+    /// (e.g., allocation limit reached), the frame will be dropped and the dropped
+    /// frame count will be incremented instead.
     pub fn add_location(&mut self, location: Location<'_>) {
         // Check if we've reached the max_frames limit
         let current_count = self.inner.borrow_locations().len();
@@ -276,13 +316,14 @@ impl OwnedSample {
             return;
         }
         
-        self.inner.with_mut(|fields| {
+        // Try to add the location, but if allocation fails, just drop the frame
+        let result: Result<(), OwnedSampleError> = self.inner.with_mut(|fields| {
             // Allocate strings in the arena
-            let filename_ref = fields.arena.alloc_str(location.mapping.filename);
-            let build_id_ref = fields.arena.alloc_str(location.mapping.build_id);
-            let name_ref = fields.arena.alloc_str(location.function.name);
-            let system_name_ref = fields.arena.alloc_str(location.function.system_name);
-            let func_filename_ref = fields.arena.alloc_str(location.function.filename);
+            let filename_ref = fields.arena.try_alloc_str(location.mapping.filename)?;
+            let build_id_ref = fields.arena.try_alloc_str(location.mapping.build_id)?;
+            let name_ref = fields.arena.try_alloc_str(location.function.name)?;
+            let system_name_ref = fields.arena.try_alloc_str(location.function.system_name)?;
+            let func_filename_ref = fields.arena.try_alloc_str(location.function.filename)?;
 
             // Create location with references to arena strings
             let owned_location = Location {
@@ -303,12 +344,19 @@ impl OwnedSample {
             };
 
             fields.locations.push(owned_location);
+            Ok(())
         });
+        
+        // If allocation failed, drop the frame
+        if result.is_err() {
+            self.dropped_frames += 1;
+        }
     }
 
     /// Add multiple locations to the sample.
     ///
     /// The locations' strings will be copied into the internal arena.
+    /// Frames that exceed `max_frames` or cause allocation failures will be dropped.
     pub fn add_locations(&mut self, locations: &[Location<'_>]) {
         for location in locations {
             self.add_location(*location);
@@ -318,11 +366,15 @@ impl OwnedSample {
     /// Add a label to the sample.
     ///
     /// The label's strings will be copied into the internal arena.
-    pub fn add_label(&mut self, label: Label<'_>) {
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if arena allocation fails (out of memory).
+    pub fn add_label(&mut self, label: Label<'_>) -> Result<(), OwnedSampleError> {
         self.inner.with_mut(|fields| {
-            let key_ref = fields.arena.alloc_str(label.key);
-            let str_ref = fields.arena.alloc_str(label.str);
-            let num_unit_ref = fields.arena.alloc_str(label.num_unit);
+            let key_ref = fields.arena.try_alloc_str(label.key)?;
+            let str_ref = fields.arena.try_alloc_str(label.str)?;
+            let num_unit_ref = fields.arena.try_alloc_str(label.num_unit)?;
 
             let owned_label = Label {
                 key: key_ref,
@@ -332,16 +384,22 @@ impl OwnedSample {
             };
 
             fields.labels.push(owned_label);
-        });
+            Ok(())
+        })
     }
 
     /// Add multiple labels to the sample.
     ///
     /// The labels' strings will be copied into the internal arena.
-    pub fn add_labels(&mut self, labels: &[Label<'_>]) {
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if arena allocation fails (out of memory).
+    pub fn add_labels(&mut self, labels: &[Label<'_>]) -> Result<(), OwnedSampleError> {
         for label in labels {
-            self.add_label(*label);
+            self.add_label(*label)?;
         }
+        Ok(())
     }
 
     /// Add a string label to the sample using a well-known label key.
@@ -353,18 +411,19 @@ impl OwnedSample {
     /// ```no_run
     /// # use libdd_profiling::owned_sample::{OwnedSample, Metadata, SampleType, LabelKey};
     /// # use std::sync::Arc;
-    /// # let metadata = Arc::new(Metadata::new(vec![SampleType::CpuTime], 64, true).unwrap());
+    /// # let metadata = Arc::new(Metadata::new(vec![SampleType::CpuTime], 64, None, true).unwrap());
     /// # let mut sample = OwnedSample::new(metadata);
-    /// sample.add_string_label(LabelKey::ThreadName, "worker-1");
-    /// sample.add_string_label(LabelKey::ExceptionType, "ValueError");
+    /// sample.add_string_label(LabelKey::ThreadName, "worker-1")?;
+    /// sample.add_string_label(LabelKey::ExceptionType, "ValueError")?;
+    /// # Ok::<(), libdd_profiling::owned_sample::OwnedSampleError>(())
     /// ```
-    pub fn add_string_label(&mut self, key: LabelKey, value: &str) {
+    pub fn add_string_label(&mut self, key: LabelKey, value: &str) -> Result<(), OwnedSampleError> {
         self.add_label(Label {
             key: key.as_str(),
             str: value,
             num: 0,
             num_unit: "",
-        });
+        })
     }
 
     /// Add a numeric label to the sample using a well-known label key.
@@ -375,18 +434,19 @@ impl OwnedSample {
     /// ```no_run
     /// # use libdd_profiling::owned_sample::{OwnedSample, Metadata, SampleType, LabelKey};
     /// # use std::sync::Arc;
-    /// # let metadata = Arc::new(Metadata::new(vec![SampleType::CpuTime], 64, true).unwrap());
+    /// # let metadata = Arc::new(Metadata::new(vec![SampleType::CpuTime], 64, None, true).unwrap());
     /// # let mut sample = OwnedSample::new(metadata);
-    /// sample.add_num_label(LabelKey::ThreadId, 42);
-    /// sample.add_num_label(LabelKey::SpanId, 12345);
+    /// sample.add_num_label(LabelKey::ThreadId, 42)?;
+    /// sample.add_num_label(LabelKey::SpanId, 12345)?;
+    /// # Ok::<(), libdd_profiling::owned_sample::OwnedSampleError>(())
     /// ```
-    pub fn add_num_label(&mut self, key: LabelKey, value: i64) {
+    pub fn add_num_label(&mut self, key: LabelKey, value: i64) -> Result<(), OwnedSampleError> {
         self.add_label(Label {
             key: key.as_str(),
             str: "",
             num: value,
             num_unit: "",
-        });
+        })
     }
 
     /// Get the sample values.
@@ -407,7 +467,7 @@ impl OwnedSample {
     /// # use libdd_profiling::owned_sample::{OwnedSample, Metadata, SampleType};
     /// # use libdd_profiling::api::{Location, Mapping, Function, Label};
     /// # use std::sync::Arc;
-    /// # let metadata = Arc::new(Metadata::new(vec![SampleType::CpuTime, SampleType::WallTime], 64, true).unwrap());
+    /// # let metadata = Arc::new(Metadata::new(vec![SampleType::CpuTime, SampleType::WallTime], 64, None, true).unwrap());
     /// let mut sample = OwnedSample::new(metadata);
     /// sample.add_location(Location {
     ///     mapping: Mapping { memory_start: 0, memory_limit: 0, file_offset: 0, filename: "foo", build_id: "" },
@@ -436,6 +496,9 @@ impl OwnedSample {
         
         // Reset the arena - this reuses the allocation!
         heads.arena.reset();
+        
+        // Re-apply the allocation limit after reset
+        heads.arena.set_allocation_limit(self.metadata.arena_allocation_limit());
         
         // Zero out all values but keep the vector length and capacity
         self.values.fill(0);
@@ -467,6 +530,16 @@ impl OwnedSample {
         self.dropped_frames
     }
 
+    /// Get the number of bytes allocated in the internal arena.
+    ///
+    /// This includes all memory allocated for strings (location names, label keys, etc.)
+    /// stored in this sample. Useful for tracking memory usage and pool optimization.
+    pub fn allocated_bytes(&self) -> usize {
+        self.inner.with(|fields| {
+            fields.arena.allocated_bytes()
+        })
+    }
+
     /// Get a location by index.
     pub fn get_location(&self, index: usize) -> Option<Location<'_>> {
         self.inner.borrow_locations().get(index).copied()
@@ -488,8 +561,8 @@ impl OwnedSample {
     /// # use libdd_profiling::owned_sample::{OwnedSample, Metadata, SampleType};
     /// # use libdd_profiling::internal::Profile;
     /// # use std::sync::Arc;
-    /// # let metadata = Arc::new(Metadata::new(vec![SampleType::CpuTime], 64, true).unwrap());
-    /// # let mut profile = Profile::try_new(vec![], None).unwrap();
+    /// # let metadata = Arc::new(Metadata::new(vec![SampleType::CpuTime], 64, None, true).unwrap());
+    /// # let mut profile = Profile::try_new(&[], None).unwrap();
     /// let sample = OwnedSample::new(metadata);
     /// sample.add_to_profile(&mut profile).unwrap();
     /// ```

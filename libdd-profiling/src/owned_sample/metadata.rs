@@ -20,12 +20,12 @@ use enum_map::EnumMap;
 ///     SampleType::CpuTime,
 ///     SampleType::WallTime,
 ///     SampleType::AllocSpace,
-/// ], 256, true).unwrap();
+/// ], 256, None, true).unwrap();
 ///
 /// assert_eq!(metadata.get_index(&SampleType::CpuTime), Some(0));
-/// assert_eq!(metadata.get_index(&SampleType::Wall), Some(1));
-/// assert_eq!(metadata.get_index(&SampleType::Allocation), Some(2));
-/// assert_eq!(metadata.get_index(&SampleType::Heap), None);
+/// assert_eq!(metadata.get_index(&SampleType::WallTime), Some(1));
+/// assert_eq!(metadata.get_index(&SampleType::AllocSpace), Some(2));
+/// assert_eq!(metadata.get_index(&SampleType::HeapSpace), None);
 /// assert_eq!(metadata.len(), 3);
 /// assert_eq!(metadata.max_frames(), 256);
 /// ```
@@ -38,6 +38,8 @@ pub struct Metadata {
     type_to_index: EnumMap<SampleType, Option<usize>>,
     /// Maximum number of stack frames to collect per sample
     max_frames: usize,
+    /// Optional allocation limit in bytes for the arena allocator
+    arena_allocation_limit: Option<usize>,
     /// Whether timeline is enabled for samples using this metadata.
     /// When disabled, time-setting methods become no-ops.
     timeline_enabled: bool,
@@ -59,6 +61,7 @@ impl Metadata {
     ///
     /// * `sample_types` - The sample types to configure
     /// * `max_frames` - Maximum number of stack frames to collect per sample
+    /// * `arena_allocation_limit` - Optional allocation limit in bytes for the arena allocator
     /// * `timeline_enabled` - Whether timeline should be enabled for samples using this metadata
     ///
     /// # Errors
@@ -68,7 +71,7 @@ impl Metadata {
     /// - The same sample type appears more than once
     /// - (Unix only) System time is before UNIX_EPOCH
     /// - (Unix only) `clock_gettime(CLOCK_MONOTONIC)` fails
-    pub fn new(sample_types: Vec<SampleType>, max_frames: usize, timeline_enabled: bool) -> anyhow::Result<Self> {
+    pub fn new(sample_types: Vec<SampleType>, max_frames: usize, arena_allocation_limit: Option<usize>, timeline_enabled: bool) -> anyhow::Result<Self> {
         anyhow::ensure!(!sample_types.is_empty(), "sample types cannot be empty");
 
         let mut type_to_index: EnumMap<SampleType, Option<usize>> = EnumMap::default();
@@ -108,6 +111,7 @@ impl Metadata {
             sample_types,
             type_to_index,
             max_frames,
+            arena_allocation_limit,
             timeline_enabled,
             #[cfg(unix)]
             monotonic_to_epoch_offset,
@@ -147,6 +151,11 @@ impl Metadata {
     /// Returns the maximum number of stack frames to collect per sample.
     pub fn max_frames(&self) -> usize {
         self.max_frames
+    }
+
+    /// Returns the optional arena allocation limit in bytes.
+    pub fn arena_allocation_limit(&self) -> Option<usize> {
+        self.arena_allocation_limit
     }
 
     /// Returns whether timeline is enabled for samples using this metadata.

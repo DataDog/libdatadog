@@ -24,7 +24,7 @@ use std::sync::Arc;
 /// let metadata = Arc::new(Metadata::new(vec![
 ///     SampleType::CpuTime,
 ///     SampleType::WallTime,
-/// ], 64, true).unwrap());
+/// ], 64, None, true).unwrap());
 ///
 /// let pool = SamplePool::new(metadata, 10);
 ///
@@ -56,7 +56,7 @@ impl SamplePool {
     /// ```no_run
     /// # use libdd_profiling::owned_sample::{SamplePool, Metadata, SampleType};
     /// # use std::sync::Arc;
-    /// # let metadata = Arc::new(Metadata::new(vec![SampleType::CpuTime], 64, true).unwrap());
+    /// # let metadata = Arc::new(Metadata::new(vec![SampleType::CpuTime], 64, None, true).unwrap());
     /// let pool = SamplePool::new(metadata, 100);
     /// ```
     pub fn new(metadata: Arc<Metadata>, capacity: usize) -> Self {
@@ -76,7 +76,7 @@ impl SamplePool {
     /// ```no_run
     /// # use libdd_profiling::owned_sample::{SamplePool, Metadata, SampleType};
     /// # use std::sync::Arc;
-    /// # let metadata = Arc::new(Metadata::new(vec![SampleType::CpuTime], 64, true).unwrap());
+    /// # let metadata = Arc::new(Metadata::new(vec![SampleType::CpuTime], 64, None, true).unwrap());
     /// # let pool = SamplePool::new(metadata, 10);
     /// let sample = pool.get();
     /// assert_eq!(sample.num_locations(), 0);
@@ -98,7 +98,7 @@ impl SamplePool {
     /// ```no_run
     /// # use libdd_profiling::owned_sample::{SamplePool, Metadata, SampleType};
     /// # use std::sync::Arc;
-    /// # let metadata = Arc::new(Metadata::new(vec![SampleType::CpuTime], 64, true).unwrap());
+    /// # let metadata = Arc::new(Metadata::new(vec![SampleType::CpuTime], 64, None, true).unwrap());
     /// # let pool = SamplePool::new(metadata, 10);
     /// let mut sample = pool.get();
     /// sample.set_value(SampleType::CpuTime, 100).unwrap();
@@ -140,7 +140,7 @@ mod tests {
 
     #[test]
     fn test_pool_basic() {
-        let metadata = Arc::new(Metadata::new(vec![SampleType::CpuTime], 64, true).unwrap());
+        let metadata = Arc::new(Metadata::new(vec![SampleType::CpuTime], 64, None, true).unwrap());
         let pool = SamplePool::new(metadata, 5);
 
         assert_eq!(pool.len(), 0);
@@ -166,7 +166,7 @@ mod tests {
 
     #[test]
     fn test_pool_capacity_limit() {
-        let metadata = Arc::new(Metadata::new(vec![SampleType::CpuTime], 64, true).unwrap());
+        let metadata = Arc::new(Metadata::new(vec![SampleType::CpuTime], 64, None, true).unwrap());
         let pool = SamplePool::new(metadata, 2);
 
         // Fill the pool
@@ -188,7 +188,7 @@ mod tests {
         let metadata = Arc::new(Metadata::new(vec![
             SampleType::CpuTime,
             SampleType::WallTime,
-        ], 64, true).unwrap());
+        ], 64, None, true).unwrap());
         let pool = SamplePool::new(metadata, 5);
 
         // Get a sample and modify it
@@ -214,7 +214,7 @@ mod tests {
         let metadata = Arc::new(Metadata::new(vec![
             SampleType::CpuTime,
             SampleType::WallTime,
-        ], 64, true).unwrap());
+        ], 64, None, true).unwrap());
         let pool = Arc::new(SamplePool::new(metadata, 20));
 
         // Spawn multiple threads that all use the pool concurrently
