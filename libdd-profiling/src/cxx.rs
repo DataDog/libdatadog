@@ -176,8 +176,6 @@ pub mod ffi {
         fn add_label(self: &mut OwnedSample, label: &Label) -> Result<()>;
         fn add_string_label(self: &mut OwnedSample, key: LabelKey, value: &str) -> Result<()>;
         fn add_num_label(self: &mut OwnedSample, key: LabelKey, value: i64) -> Result<()>;
-        fn num_locations(self: &OwnedSample) -> usize;
-        fn num_labels(self: &OwnedSample) -> usize;
         fn allocated_bytes(self: &OwnedSample) -> usize;
         fn reset_sample(self: &mut OwnedSample);
         fn add_to_profile(self: &OwnedSample, profile: &mut Profile) -> Result<()>;
@@ -474,13 +472,6 @@ impl OwnedSample {
         Ok(())
     }
 
-    pub fn num_locations(&self) -> usize {
-        self.inner.num_locations()
-    }
-
-    pub fn num_labels(&self) -> usize {
-        self.inner.num_labels()
-    }
 
     pub fn allocated_bytes(&self) -> usize {
         self.inner.allocated_bytes()

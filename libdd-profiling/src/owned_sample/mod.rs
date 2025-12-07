@@ -105,6 +105,7 @@ impl From<bumpalo::AllocErr> for OwnedSampleError {
 /// Internal data structure that holds the arena and references into it.
 /// This is a self-referential structure created using the ouroboros crate.
 #[ouroboros::self_referencing]
+#[derive(Debug)]
 struct SampleInner {
     /// Bump arena where all strings are allocated
     arena: Bump,
@@ -125,6 +126,7 @@ struct SampleInner {
 /// All strings (in mappings, functions, labels) are stored in an internal bumpalo arena,
 /// providing efficient memory usage and cache locality. The sample can be passed around
 /// freely without lifetime constraints.
+#[derive(Debug)]
 pub struct OwnedSample {
     inner: SampleInner,
     values: Vec<i64>,
@@ -478,8 +480,8 @@ impl OwnedSample {
     /// sample.add_label(Label { key: "thread", str: "main", num: 0, num_unit: "" });
     /// 
     /// sample.reset();
-    /// assert_eq!(sample.num_locations(), 0);
-    /// assert_eq!(sample.num_labels(), 0);
+    /// assert_eq!(sample.locations().len(), 0);
+    /// assert_eq!(sample.labels().len(), 0);
     /// assert_eq!(sample.values(), &[0, 0]);  // Values are zeroed, not cleared
     /// ```
     pub fn reset(&mut self) {
@@ -515,16 +517,6 @@ impl OwnedSample {
         }.build();
     }
 
-    /// Get the number of locations in this sample.
-    pub fn num_locations(&self) -> usize {
-        self.inner.borrow_locations().len()
-    }
-
-    /// Get the number of labels in this sample.
-    pub fn num_labels(&self) -> usize {
-        self.inner.borrow_labels().len()
-    }
-
     /// Get the number of frames that were dropped due to exceeding max_frames.
     pub fn dropped_frames(&self) -> usize {
         self.dropped_frames
@@ -538,16 +530,6 @@ impl OwnedSample {
         self.inner.with(|fields| {
             fields.arena.allocated_bytes()
         })
-    }
-
-    /// Get a location by index.
-    pub fn get_location(&self, index: usize) -> Option<Location<'_>> {
-        self.inner.borrow_locations().get(index).copied()
-    }
-
-    /// Get a label by index.
-    pub fn get_label(&self, index: usize) -> Option<Label<'_>> {
-        self.inner.borrow_labels().get(index).copied()
     }
 
     /// Add this sample to a profile.
@@ -602,39 +584,13 @@ impl OwnedSample {
         profile.try_add_sample(sample, None)
     }
 
-    /// Iterate over all locations.
-    pub fn locations(&self) -> impl Iterator<Item = Location<'_>> + '_ {
-        self.inner.borrow_locations().iter().copied()
+    /// Get a slice of all locations.
+    pub fn locations(&self) -> &[Location<'_>] {
+        self.inner.borrow_locations()
     }
 
-    /// Iterate over all labels.
-    pub fn labels(&self) -> impl Iterator<Item = Label<'_>> + '_ {
-        self.inner.borrow_labels().iter().copied()
-    }
-}
-
-impl std::fmt::Debug for OwnedSample {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("OwnedSample")
-            .field("sample_types", &self.metadata.types())
-            .field("num_locations", &self.num_locations())
-            .field("num_labels", &self.num_labels())
-            .field("values", &self.values())
-            .finish()
+    /// Get a slice of all labels.
+    pub fn labels(&self) -> &[Label<'_>] {
+        self.inner.borrow_labels()
     }
 }
-
-impl PartialEq for OwnedSample {
-    fn eq(&self, other: &Self) -> bool {
-        // Compare metadata configuration (pointer equality is fine since they're Arc)
-        Arc::ptr_eq(&self.metadata, &other.metadata)
-            && self.values() == other.values()
-            && self.num_locations() == other.num_locations()
-            && self.num_labels() == other.num_labels()
-            && self.locations().zip(other.locations()).all(|(a, b)| a == b)
-            && self.labels().zip(other.labels()).all(|(a, b)| a == b)
-    }
-}
-
-impl Eq for OwnedSample {}
-

@@ -71,20 +71,20 @@ fn test_owned_sample_basic() {
         line: 42,
     });
 
-    sample.add_label(Label { key: "thread_name", str: "worker-1", num: 0, num_unit: "" });
-    sample.add_label(Label { key: "thread_id", str: "", num: 123, num_unit: "" });
+    sample.add_label(Label { key: "thread_name", str: "worker-1", num: 0, num_unit: "" }).unwrap();
+    sample.add_label(Label { key: "thread_id", str: "", num: 123, num_unit: "" }).unwrap();
 
-    assert_eq!(sample.num_locations(), 1);
-    assert_eq!(sample.num_labels(), 2);
+    assert_eq!(sample.locations().len(), 1);
+    assert_eq!(sample.labels().len(), 2);
     assert_eq!(sample.get_value(SampleType::CpuTime).unwrap(), 100);
     assert_eq!(sample.get_value(SampleType::WallTime).unwrap(), 200);
 
-    let location = sample.get_location(0).unwrap();
+    let location = sample.locations()[0];
     assert_eq!(location.mapping.filename, "libfoo.so");
     assert_eq!(location.function.name, "my_function");
     assert_eq!(location.address, 0x1234);
 
-    let label = sample.get_label(0).unwrap();
+    let label = sample.labels()[0];
     assert_eq!(label.key, "thread_name");
     assert_eq!(label.str, "worker-1");
 }
@@ -115,7 +115,7 @@ fn test_as_sample() {
         address: 0x1234,
         line: 42,
     });
-    owned.add_label(Label { key: "key", str: "value", num: 0, num_unit: "" });
+    owned.add_label(Label { key: "key", str: "value", num: 0, num_unit: "" }).unwrap();
 
     let borrowed = as_sample(&owned);
     assert_eq!(borrowed.values, &[100, 200]);
@@ -227,10 +227,10 @@ fn test_reset() {
         address: 0x1234,
         line: 42,
     });
-    sample.add_label(Label { key: "key", str: "value", num: 0, num_unit: "" });
+    sample.add_label(Label { key: "key", str: "value", num: 0, num_unit: "" }).unwrap();
     
-    assert_eq!(sample.num_locations(), 1);
-    assert_eq!(sample.num_labels(), 1);
+    assert_eq!(sample.locations().len(), 1);
+    assert_eq!(sample.labels().len(), 1);
     assert_eq!(sample.get_value(SampleType::CpuTime).unwrap(), 100);
     assert_eq!(sample.get_value(SampleType::WallTime).unwrap(), 200);
     assert_eq!(sample.get_value(SampleType::AllocSpace).unwrap(), 300);
@@ -238,8 +238,8 @@ fn test_reset() {
     // Reset clears locations/labels and zeros values
     sample.reset();
     
-    assert_eq!(sample.num_locations(), 0);
-    assert_eq!(sample.num_labels(), 0);
+    assert_eq!(sample.locations().len(), 0);
+    assert_eq!(sample.labels().len(), 0);
     assert_eq!(sample.get_value(SampleType::CpuTime).unwrap(), 0);
     assert_eq!(sample.get_value(SampleType::WallTime).unwrap(), 0);
     assert_eq!(sample.get_value(SampleType::AllocSpace).unwrap(), 0);
@@ -261,8 +261,8 @@ fn test_reset() {
         address: 0,
         line: 1,
     });
-    assert_eq!(sample.num_locations(), 1);
-    let loc = sample.get_location(0).unwrap();
+    assert_eq!(sample.locations().len(), 1);
+    let loc = sample.locations()[0];
     assert_eq!(loc.mapping.filename, "new.so");
 }
 
@@ -293,24 +293,24 @@ fn test_add_multiple() {
         Label { key: "thread", str: "main", num: 0, num_unit: "" },
         Label { key: "thread_id", str: "", num: 123, num_unit: "" },
     ];
-    sample.add_labels(labels);
+    sample.add_labels(labels).unwrap();
     
-    assert_eq!(sample.num_locations(), 2);
-    assert_eq!(sample.num_labels(), 2);
+    assert_eq!(sample.locations().len(), 2);
+    assert_eq!(sample.labels().len(), 2);
     
-    let loc0 = sample.get_location(0).unwrap();
+    let loc0 = sample.locations()[0];
     assert_eq!(loc0.mapping.filename, "lib1.so");
     assert_eq!(loc0.function.name, "func1");
     
-    let loc1 = sample.get_location(1).unwrap();
+    let loc1 = sample.locations()[1];
     assert_eq!(loc1.mapping.filename, "lib2.so");
     assert_eq!(loc1.function.name, "func2");
     
-    let label0 = sample.get_label(0).unwrap();
+    let label0 = sample.labels()[0];
     assert_eq!(label0.key, "thread");
     assert_eq!(label0.str, "main");
     
-    let label1 = sample.get_label(1).unwrap();
+    let label1 = sample.labels()[1];
     assert_eq!(label1.key, "thread_id");
     assert_eq!(label1.num, 123);
 }
@@ -560,16 +560,16 @@ fn test_label_key() {
         str: "",
         num: 42,
         num_unit: "",
-    });
+    }).unwrap();
     
     sample.add_label(Label {
         key: LabelKey::ThreadName.as_str(),
         str: "worker-1",
         num: 0,
         num_unit: "",
-    });
+    }).unwrap();
     
-    assert_eq!(sample.num_labels(), 2);
+    assert_eq!(sample.labels().len(), 2);
 }
 
 #[test]
@@ -578,11 +578,11 @@ fn test_add_string_label() {
     let mut sample = OwnedSample::new(metadata);
     
     // Add string labels using the convenience method
-    sample.add_string_label(LabelKey::ThreadName, "worker-1");
-    sample.add_string_label(LabelKey::ExceptionType, "ValueError");
-    sample.add_string_label(LabelKey::ClassName, "MyClass");
+    sample.add_string_label(LabelKey::ThreadName, "worker-1").unwrap();
+    sample.add_string_label(LabelKey::ExceptionType, "ValueError").unwrap();
+    sample.add_string_label(LabelKey::ClassName, "MyClass").unwrap();
     
-    assert_eq!(sample.num_labels(), 3);
+    assert_eq!(sample.labels().len(), 3);
     
     // Verify the labels were added correctly
     let api_sample = as_sample(&sample);
@@ -605,11 +605,11 @@ fn test_add_num_label() {
     let mut sample = OwnedSample::new(metadata);
     
     // Add numeric labels using the convenience method
-    sample.add_num_label(LabelKey::ThreadId, 42);
-    sample.add_num_label(LabelKey::ThreadNativeId, 12345);
-    sample.add_num_label(LabelKey::SpanId, 98765);
+    sample.add_num_label(LabelKey::ThreadId, 42).unwrap();
+    sample.add_num_label(LabelKey::ThreadNativeId, 12345).unwrap();
+    sample.add_num_label(LabelKey::SpanId, 98765).unwrap();
     
-    assert_eq!(sample.num_labels(), 3);
+    assert_eq!(sample.labels().len(), 3);
     
     // Verify the labels were added correctly
     let api_sample = as_sample(&sample);
@@ -635,12 +635,12 @@ fn test_mixed_label_types() {
     let mut sample = OwnedSample::new(metadata);
     
     // Mix string and numeric labels
-    sample.add_string_label(LabelKey::ThreadName, "worker-1");
-    sample.add_num_label(LabelKey::ThreadId, 42);
-    sample.add_string_label(LabelKey::ExceptionType, "RuntimeError");
-    sample.add_num_label(LabelKey::SpanId, 12345);
+    sample.add_string_label(LabelKey::ThreadName, "worker-1").unwrap();
+    sample.add_num_label(LabelKey::ThreadId, 42).unwrap();
+    sample.add_string_label(LabelKey::ExceptionType, "RuntimeError").unwrap();
+    sample.add_num_label(LabelKey::SpanId, 12345).unwrap();
     
-    assert_eq!(sample.num_labels(), 4);
+    assert_eq!(sample.labels().len(), 4);
     
     let api_sample = as_sample(&sample);
     assert_eq!(api_sample.labels[0].key, "thread name");
@@ -679,7 +679,7 @@ fn test_dropped_frames() {
         });
     }
     
-    assert_eq!(sample.num_locations(), 3);
+    assert_eq!(sample.locations().len(), 3);
     assert_eq!(sample.dropped_frames(), 0);
     
     // Try to add 2 more locations (should be dropped)
@@ -703,7 +703,7 @@ fn test_dropped_frames() {
     }
     
     // Should still have 3 locations, but 2 dropped
-    assert_eq!(sample.num_locations(), 3);
+    assert_eq!(sample.locations().len(), 3);
     assert_eq!(sample.dropped_frames(), 2);
     
     // Convert to API sample and verify pseudo-frame was added
@@ -797,7 +797,7 @@ fn test_allocated_bytes() {
         str: "worker-thread-12345",
         num: 0,
         num_unit: "",
-    });
+    }).unwrap();
     
     // Should have allocated at least as many bytes (may be more if arena grew)
     let after_label = sample.allocated_bytes();

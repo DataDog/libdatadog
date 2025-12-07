@@ -79,7 +79,7 @@ impl SamplePool {
     /// # let metadata = Arc::new(Metadata::new(vec![SampleType::CpuTime], 64, None, true).unwrap());
     /// # let pool = SamplePool::new(metadata, 10);
     /// let sample = pool.get();
-    /// assert_eq!(sample.num_locations(), 0);
+    /// assert_eq!(sample.locations().len(), 0);
     /// ```
     pub fn get(&self) -> Box<OwnedSample> {
         self.samples.pop().unwrap_or_else(|| {
@@ -203,8 +203,8 @@ mod tests {
         let sample = pool.get();
         assert_eq!(sample.get_value(SampleType::CpuTime).unwrap(), 0);
         assert_eq!(sample.get_value(SampleType::WallTime).unwrap(), 0);
-        assert_eq!(sample.num_locations(), 0);
-        assert_eq!(sample.num_labels(), 0);
+        assert_eq!(sample.locations().len(), 0);
+        assert_eq!(sample.labels().len(), 0);
     }
 
     #[test]
@@ -244,7 +244,7 @@ mod tests {
 
         // Pool should have accumulated samples (up to its capacity)
         assert!(pool.len() <= pool.capacity());
-        assert!(pool.len() > 0); // Should have at least some samples
+        assert!(!pool.is_empty()); // Should have at least some samples
     }
 }
 
