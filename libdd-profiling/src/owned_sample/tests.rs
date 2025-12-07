@@ -46,13 +46,13 @@ fn as_sample(owned: &OwnedSample) -> Sample<'_> {
 #[test]
 fn test_owned_sample_basic() {
     let metadata = Arc::new(Metadata::new(vec![
-        SampleType::Cpu,
-        SampleType::Wall,
+        SampleType::CpuTime,
+        SampleType::WallTime,
     ], 64, true).unwrap());
     let mut sample = OwnedSample::new(metadata.clone());
     
-    sample.set_value(SampleType::Cpu, 100).unwrap();
-    sample.set_value(SampleType::Wall, 200).unwrap();
+    sample.set_value(SampleType::CpuTime, 100).unwrap();
+    sample.set_value(SampleType::WallTime, 200).unwrap();
 
     sample.add_location(Location {
         mapping: Mapping {
@@ -76,8 +76,8 @@ fn test_owned_sample_basic() {
 
     assert_eq!(sample.num_locations(), 1);
     assert_eq!(sample.num_labels(), 2);
-    assert_eq!(sample.get_value(SampleType::Cpu).unwrap(), 100);
-    assert_eq!(sample.get_value(SampleType::Wall).unwrap(), 200);
+    assert_eq!(sample.get_value(SampleType::CpuTime).unwrap(), 100);
+    assert_eq!(sample.get_value(SampleType::WallTime).unwrap(), 200);
 
     let location = sample.get_location(0).unwrap();
     assert_eq!(location.mapping.filename, "libfoo.so");
@@ -93,12 +93,12 @@ fn test_owned_sample_basic() {
 #[test]
 fn test_as_sample() {
     let metadata = Arc::new(Metadata::new(vec![
-        SampleType::Cpu,
-        SampleType::Wall,
+        SampleType::CpuTime,
+        SampleType::WallTime,
     ], 64, true).unwrap());
     let mut owned = OwnedSample::new(metadata.clone());
-    owned.set_value(SampleType::Cpu, 100).unwrap();
-    owned.set_value(SampleType::Wall, 200).unwrap();
+    owned.set_value(SampleType::CpuTime, 100).unwrap();
+    owned.set_value(SampleType::WallTime, 200).unwrap();
     owned.add_location(Location {
         mapping: Mapping {
             memory_start: 0x1000,
@@ -127,47 +127,47 @@ fn test_as_sample() {
 
 #[test]
 fn test_set_value_error() {
-    let metadata = Arc::new(Metadata::new(vec![SampleType::Cpu], 64, true).unwrap());
+    let metadata = Arc::new(Metadata::new(vec![SampleType::CpuTime], 64, true).unwrap());
     let mut sample = OwnedSample::new(metadata);
     
     // Should work for configured type
-    assert!(sample.set_value(SampleType::Cpu, 100).is_ok());
-    assert_eq!(sample.get_value(SampleType::Cpu).unwrap(), 100);
+    assert!(sample.set_value(SampleType::CpuTime, 100).is_ok());
+    assert_eq!(sample.get_value(SampleType::CpuTime).unwrap(), 100);
     
     // Should fail for unconfigured type
-    assert!(sample.set_value(SampleType::Wall, 200).is_err());
-    assert!(sample.get_value(SampleType::Wall).is_err());
+    assert!(sample.set_value(SampleType::WallTime, 200).is_err());
+    assert!(sample.get_value(SampleType::WallTime).is_err());
 }
 
 #[test]
 fn test_sample_type_indices_basic() {
     let metadata = Metadata::new(vec![
-        SampleType::Cpu,
-        SampleType::Wall,
-        SampleType::Allocation,
+        SampleType::CpuTime,
+        SampleType::WallTime,
+        SampleType::AllocSpace,
     ], 64, true).unwrap();
 
     assert_eq!(metadata.len(), 3);
     assert!(!metadata.is_empty());
 
-    assert_eq!(metadata.get_index(&SampleType::Cpu), Some(0));
-    assert_eq!(metadata.get_index(&SampleType::Wall), Some(1));
-    assert_eq!(metadata.get_index(&SampleType::Allocation), Some(2));
-    assert_eq!(metadata.get_index(&SampleType::Heap), None);
+    assert_eq!(metadata.get_index(&SampleType::CpuTime), Some(0));
+    assert_eq!(metadata.get_index(&SampleType::WallTime), Some(1));
+    assert_eq!(metadata.get_index(&SampleType::AllocSpace), Some(2));
+    assert_eq!(metadata.get_index(&SampleType::HeapSpace), None);
 
-    assert_eq!(metadata.get_type(0), Some(SampleType::Cpu));
-    assert_eq!(metadata.get_type(1), Some(SampleType::Wall));
-    assert_eq!(metadata.get_type(2), Some(SampleType::Allocation));
+    assert_eq!(metadata.get_type(0), Some(SampleType::CpuTime));
+    assert_eq!(metadata.get_type(1), Some(SampleType::WallTime));
+    assert_eq!(metadata.get_type(2), Some(SampleType::AllocSpace));
     assert_eq!(metadata.get_type(3), None);
 }
 
 #[test]
 fn test_sample_type_indices_duplicate_error() {
     let result = Metadata::new(vec![
-        SampleType::Cpu,
-        SampleType::Wall,
-        SampleType::Cpu, // Duplicate
-        SampleType::Allocation,
+        SampleType::CpuTime,
+        SampleType::WallTime,
+        SampleType::CpuTime, // Duplicate
+        SampleType::AllocSpace,
     ], 64, true);
 
     assert!(result.is_err());
@@ -186,30 +186,30 @@ fn test_sample_type_indices_empty_error() {
 #[test]
 fn test_sample_type_indices_iter() {
     let metadata = Metadata::new(vec![
-        SampleType::Cpu,
-        SampleType::Wall,
-        SampleType::Allocation,
+        SampleType::CpuTime,
+        SampleType::WallTime,
+        SampleType::AllocSpace,
     ], 64, true).unwrap();
 
     let types: Vec<_> = metadata.iter().copied().collect();
     assert_eq!(types, vec![
-        SampleType::Cpu,
-        SampleType::Wall,
-        SampleType::Allocation,
+        SampleType::CpuTime,
+        SampleType::WallTime,
+        SampleType::AllocSpace,
     ]);
 }
 
 #[test]
 fn test_reset() {
     let metadata = Arc::new(Metadata::new(vec![
-        SampleType::Cpu,
-        SampleType::Wall,
-        SampleType::Allocation,
+        SampleType::CpuTime,
+        SampleType::WallTime,
+        SampleType::AllocSpace,
     ], 64, true).unwrap());
     let mut sample = OwnedSample::new(metadata);
-    sample.set_value(SampleType::Cpu, 100).unwrap();
-    sample.set_value(SampleType::Wall, 200).unwrap();
-    sample.set_value(SampleType::Allocation, 300).unwrap();
+    sample.set_value(SampleType::CpuTime, 100).unwrap();
+    sample.set_value(SampleType::WallTime, 200).unwrap();
+    sample.set_value(SampleType::AllocSpace, 300).unwrap();
     
     sample.add_location(Location {
         mapping: Mapping {
@@ -231,18 +231,18 @@ fn test_reset() {
     
     assert_eq!(sample.num_locations(), 1);
     assert_eq!(sample.num_labels(), 1);
-    assert_eq!(sample.get_value(SampleType::Cpu).unwrap(), 100);
-    assert_eq!(sample.get_value(SampleType::Wall).unwrap(), 200);
-    assert_eq!(sample.get_value(SampleType::Allocation).unwrap(), 300);
+    assert_eq!(sample.get_value(SampleType::CpuTime).unwrap(), 100);
+    assert_eq!(sample.get_value(SampleType::WallTime).unwrap(), 200);
+    assert_eq!(sample.get_value(SampleType::AllocSpace).unwrap(), 300);
 
     // Reset clears locations/labels and zeros values
     sample.reset();
     
     assert_eq!(sample.num_locations(), 0);
     assert_eq!(sample.num_labels(), 0);
-    assert_eq!(sample.get_value(SampleType::Cpu).unwrap(), 0);
-    assert_eq!(sample.get_value(SampleType::Wall).unwrap(), 0);
-    assert_eq!(sample.get_value(SampleType::Allocation).unwrap(), 0);
+    assert_eq!(sample.get_value(SampleType::CpuTime).unwrap(), 0);
+    assert_eq!(sample.get_value(SampleType::WallTime).unwrap(), 0);
+    assert_eq!(sample.get_value(SampleType::AllocSpace).unwrap(), 0);
 
     // Can add new data after reset
     sample.add_location(Location {
@@ -268,7 +268,7 @@ fn test_reset() {
 
 #[test]
 fn test_add_multiple() {
-    let metadata = Arc::new(Metadata::new(vec![SampleType::Cpu], 64, true).unwrap());
+    let metadata = Arc::new(Metadata::new(vec![SampleType::CpuTime], 64, true).unwrap());
     let mut sample = OwnedSample::new(metadata);
     
     // Add multiple locations at once
@@ -319,7 +319,7 @@ fn test_add_multiple() {
 fn test_endtime_ns() {
     use std::num::NonZeroI64;
     
-    let metadata = Arc::new(Metadata::new(vec![SampleType::Cpu], 64, true).unwrap());
+    let metadata = Arc::new(Metadata::new(vec![SampleType::CpuTime], 64, true).unwrap());
     let mut sample = OwnedSample::new(metadata);
     
     // Initially, endtime_ns should be None
@@ -346,7 +346,7 @@ fn test_endtime_ns() {
 fn test_set_endtime_ns_now() {
     use std::time::SystemTime;
     
-    let metadata = Arc::new(Metadata::new(vec![SampleType::Cpu], 64, true).unwrap());
+    let metadata = Arc::new(Metadata::new(vec![SampleType::CpuTime], 64, true).unwrap());
     let mut sample = OwnedSample::new(metadata);
     
     // Initially, endtime_ns should be None
@@ -397,7 +397,7 @@ fn test_set_endtime_ns_now() {
 #[test]
 fn test_timeline_enabled() {
     // Test with timeline enabled
-    let metadata_enabled = Arc::new(Metadata::new(vec![SampleType::Cpu], 64, true).unwrap());
+    let metadata_enabled = Arc::new(Metadata::new(vec![SampleType::CpuTime], 64, true).unwrap());
     assert!(metadata_enabled.is_timeline_enabled());
     let mut sample_enabled = OwnedSample::new(metadata_enabled);
     
@@ -411,7 +411,7 @@ fn test_timeline_enabled() {
     assert_eq!(sample_enabled.endtime_ns().unwrap().get(), returned_time); // should match
     
     // Test with timeline disabled
-    let metadata_disabled = Arc::new(Metadata::new(vec![SampleType::Cpu], 64, false).unwrap());
+    let metadata_disabled = Arc::new(Metadata::new(vec![SampleType::CpuTime], 64, false).unwrap());
     assert!(!metadata_disabled.is_timeline_enabled());
     let mut sample_disabled = OwnedSample::new(metadata_disabled);
     
@@ -428,7 +428,7 @@ fn test_timeline_enabled() {
 #[test]
 #[cfg(unix)]
 fn test_set_endtime_from_monotonic_ns() {
-    let metadata = Arc::new(Metadata::new(vec![SampleType::Cpu], 64, true).unwrap());
+    let metadata = Arc::new(Metadata::new(vec![SampleType::CpuTime], 64, true).unwrap());
     let mut sample = OwnedSample::new(metadata);
     
     // Set endtime from a monotonic time
@@ -468,7 +468,7 @@ fn test_set_endtime_from_monotonic_ns() {
 
 #[test]
 fn test_reverse_locations() {
-    let metadata = Arc::new(Metadata::new(vec![SampleType::Cpu], 64, true).unwrap());
+    let metadata = Arc::new(Metadata::new(vec![SampleType::CpuTime], 64, true).unwrap());
     let mut sample = OwnedSample::new(metadata);
     
     // Initially, reverse_locations should be false
@@ -552,7 +552,7 @@ fn test_label_key() {
     assert_eq!(format!("{}", LabelKey::ThreadName), "thread name");
     
     // Test that it can be used as a label key
-    let metadata = Arc::new(Metadata::new(vec![SampleType::Cpu], 64, true).unwrap());
+    let metadata = Arc::new(Metadata::new(vec![SampleType::CpuTime], 64, true).unwrap());
     let mut sample = OwnedSample::new(metadata);
     
     sample.add_label(Label {
@@ -574,7 +574,7 @@ fn test_label_key() {
 
 #[test]
 fn test_add_string_label() {
-    let metadata = Arc::new(Metadata::new(vec![SampleType::Cpu], 64, true).unwrap());
+    let metadata = Arc::new(Metadata::new(vec![SampleType::CpuTime], 64, true).unwrap());
     let mut sample = OwnedSample::new(metadata);
     
     // Add string labels using the convenience method
@@ -601,7 +601,7 @@ fn test_add_string_label() {
 
 #[test]
 fn test_add_num_label() {
-    let metadata = Arc::new(Metadata::new(vec![SampleType::Cpu], 64, true).unwrap());
+    let metadata = Arc::new(Metadata::new(vec![SampleType::CpuTime], 64, true).unwrap());
     let mut sample = OwnedSample::new(metadata);
     
     // Add numeric labels using the convenience method
@@ -631,7 +631,7 @@ fn test_add_num_label() {
 
 #[test]
 fn test_mixed_label_types() {
-    let metadata = Arc::new(Metadata::new(vec![SampleType::Cpu], 64, true).unwrap());
+    let metadata = Arc::new(Metadata::new(vec![SampleType::CpuTime], 64, true).unwrap());
     let mut sample = OwnedSample::new(metadata);
     
     // Mix string and numeric labels
@@ -656,7 +656,7 @@ fn test_mixed_label_types() {
 #[test]
 fn test_dropped_frames() {
     // Create metadata with a small max_frames limit
-    let metadata = Arc::new(Metadata::new(vec![SampleType::Cpu], 3, true).unwrap());
+    let metadata = Arc::new(Metadata::new(vec![SampleType::CpuTime], 3, true).unwrap());
     let mut sample = OwnedSample::new(metadata);
     
     // Add 3 locations (at the limit)

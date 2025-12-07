@@ -63,16 +63,24 @@ pub mod ffi {
     #[derive(Debug)]
     #[repr(u32)]
     enum SampleType {
-        Cpu = 0,
-        Wall = 1,
-        Exception = 2,
-        LockAcquire = 3,
-        LockRelease = 4,
-        Allocation = 5,
-        Heap = 6,
-        GpuTime = 7,
-        GpuMemory = 8,
-        GpuFlops = 9,
+        CpuTime = 0,
+        CpuCount = 1,
+        WallTime = 2,
+        WallCount = 3,
+        ExceptionCount = 4,
+        LockAcquireTime = 5,
+        LockAcquireCount = 6,
+        LockReleaseTime = 7,
+        LockReleaseCount = 8,
+        AllocSpace = 9,
+        AllocCount = 10,
+        HeapSpace = 11,
+        GpuTime = 12,
+        GpuCount = 13,
+        GpuAllocSpace = 14,
+        GpuAllocCount = 15,
+        GpuFlops = 16,
+        GpuFlopsSamples = 17,
     }
 
     #[derive(Debug)]
@@ -500,16 +508,24 @@ impl SamplePool {
 // using external Rust enums. This conversion function maps between the two.
 fn ffi_sample_type_to_owned(st: ffi::SampleType) -> anyhow::Result<owned_sample::SampleType> {
     match st {
-        ffi::SampleType::Cpu => Ok(owned_sample::SampleType::Cpu),
-        ffi::SampleType::Wall => Ok(owned_sample::SampleType::Wall),
-        ffi::SampleType::Exception => Ok(owned_sample::SampleType::Exception),
-        ffi::SampleType::LockAcquire => Ok(owned_sample::SampleType::LockAcquire),
-        ffi::SampleType::LockRelease => Ok(owned_sample::SampleType::LockRelease),
-        ffi::SampleType::Allocation => Ok(owned_sample::SampleType::Allocation),
-        ffi::SampleType::Heap => Ok(owned_sample::SampleType::Heap),
+        ffi::SampleType::CpuTime => Ok(owned_sample::SampleType::CpuTime),
+        ffi::SampleType::CpuCount => Ok(owned_sample::SampleType::CpuCount),
+        ffi::SampleType::WallTime => Ok(owned_sample::SampleType::WallTime),
+        ffi::SampleType::WallCount => Ok(owned_sample::SampleType::WallCount),
+        ffi::SampleType::ExceptionCount => Ok(owned_sample::SampleType::ExceptionCount),
+        ffi::SampleType::LockAcquireTime => Ok(owned_sample::SampleType::LockAcquireTime),
+        ffi::SampleType::LockAcquireCount => Ok(owned_sample::SampleType::LockAcquireCount),
+        ffi::SampleType::LockReleaseTime => Ok(owned_sample::SampleType::LockReleaseTime),
+        ffi::SampleType::LockReleaseCount => Ok(owned_sample::SampleType::LockReleaseCount),
+        ffi::SampleType::AllocSpace => Ok(owned_sample::SampleType::AllocSpace),
+        ffi::SampleType::AllocCount => Ok(owned_sample::SampleType::AllocCount),
+        ffi::SampleType::HeapSpace => Ok(owned_sample::SampleType::HeapSpace),
         ffi::SampleType::GpuTime => Ok(owned_sample::SampleType::GpuTime),
-        ffi::SampleType::GpuMemory => Ok(owned_sample::SampleType::GpuMemory),
+        ffi::SampleType::GpuCount => Ok(owned_sample::SampleType::GpuCount),
+        ffi::SampleType::GpuAllocSpace => Ok(owned_sample::SampleType::GpuAllocSpace),
+        ffi::SampleType::GpuAllocCount => Ok(owned_sample::SampleType::GpuAllocCount),
         ffi::SampleType::GpuFlops => Ok(owned_sample::SampleType::GpuFlops),
+        ffi::SampleType::GpuFlopsSamples => Ok(owned_sample::SampleType::GpuFlopsSamples),
         _ => anyhow::bail!("Unknown SampleType variant: {:?}", st),
     }
 }
@@ -540,15 +556,23 @@ mod tests {
     fn test_sample_type_enum_sync() {
         // Ensure ffi::SampleType and owned_sample::SampleType stay in sync
         // This will fail to compile if variants don't match
-        assert_eq!(ffi_sample_type_to_owned(ffi::SampleType::Cpu).unwrap() as usize, owned_sample::SampleType::Cpu as usize);
-        assert_eq!(ffi_sample_type_to_owned(ffi::SampleType::Wall).unwrap() as usize, owned_sample::SampleType::Wall as usize);
-        assert_eq!(ffi_sample_type_to_owned(ffi::SampleType::Exception).unwrap() as usize, owned_sample::SampleType::Exception as usize);
-        assert_eq!(ffi_sample_type_to_owned(ffi::SampleType::LockAcquire).unwrap() as usize, owned_sample::SampleType::LockAcquire as usize);
-        assert_eq!(ffi_sample_type_to_owned(ffi::SampleType::LockRelease).unwrap() as usize, owned_sample::SampleType::LockRelease as usize);
-        assert_eq!(ffi_sample_type_to_owned(ffi::SampleType::Allocation).unwrap() as usize, owned_sample::SampleType::Allocation as usize);
-        assert_eq!(ffi_sample_type_to_owned(ffi::SampleType::Heap).unwrap() as usize, owned_sample::SampleType::Heap as usize);
+        assert_eq!(ffi_sample_type_to_owned(ffi::SampleType::CpuTime).unwrap() as usize, owned_sample::SampleType::CpuTime as usize);
+        assert_eq!(ffi_sample_type_to_owned(ffi::SampleType::CpuCount).unwrap() as usize, owned_sample::SampleType::CpuCount as usize);
+        assert_eq!(ffi_sample_type_to_owned(ffi::SampleType::WallTime).unwrap() as usize, owned_sample::SampleType::WallTime as usize);
+        assert_eq!(ffi_sample_type_to_owned(ffi::SampleType::WallCount).unwrap() as usize, owned_sample::SampleType::WallCount as usize);
+        assert_eq!(ffi_sample_type_to_owned(ffi::SampleType::ExceptionCount).unwrap() as usize, owned_sample::SampleType::ExceptionCount as usize);
+        assert_eq!(ffi_sample_type_to_owned(ffi::SampleType::LockAcquireTime).unwrap() as usize, owned_sample::SampleType::LockAcquireTime as usize);
+        assert_eq!(ffi_sample_type_to_owned(ffi::SampleType::LockAcquireCount).unwrap() as usize, owned_sample::SampleType::LockAcquireCount as usize);
+        assert_eq!(ffi_sample_type_to_owned(ffi::SampleType::LockReleaseTime).unwrap() as usize, owned_sample::SampleType::LockReleaseTime as usize);
+        assert_eq!(ffi_sample_type_to_owned(ffi::SampleType::LockReleaseCount).unwrap() as usize, owned_sample::SampleType::LockReleaseCount as usize);
+        assert_eq!(ffi_sample_type_to_owned(ffi::SampleType::AllocSpace).unwrap() as usize, owned_sample::SampleType::AllocSpace as usize);
+        assert_eq!(ffi_sample_type_to_owned(ffi::SampleType::AllocCount).unwrap() as usize, owned_sample::SampleType::AllocCount as usize);
+        assert_eq!(ffi_sample_type_to_owned(ffi::SampleType::HeapSpace).unwrap() as usize, owned_sample::SampleType::HeapSpace as usize);
         assert_eq!(ffi_sample_type_to_owned(ffi::SampleType::GpuTime).unwrap() as usize, owned_sample::SampleType::GpuTime as usize);
-        assert_eq!(ffi_sample_type_to_owned(ffi::SampleType::GpuMemory).unwrap() as usize, owned_sample::SampleType::GpuMemory as usize);
+        assert_eq!(ffi_sample_type_to_owned(ffi::SampleType::GpuCount).unwrap() as usize, owned_sample::SampleType::GpuCount as usize);
+        assert_eq!(ffi_sample_type_to_owned(ffi::SampleType::GpuAllocSpace).unwrap() as usize, owned_sample::SampleType::GpuAllocSpace as usize);
+        assert_eq!(ffi_sample_type_to_owned(ffi::SampleType::GpuAllocCount).unwrap() as usize, owned_sample::SampleType::GpuAllocCount as usize);
         assert_eq!(ffi_sample_type_to_owned(ffi::SampleType::GpuFlops).unwrap() as usize, owned_sample::SampleType::GpuFlops as usize);
+        assert_eq!(ffi_sample_type_to_owned(ffi::SampleType::GpuFlopsSamples).unwrap() as usize, owned_sample::SampleType::GpuFlopsSamples as usize);
     }
 }

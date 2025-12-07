@@ -13,15 +13,15 @@
 //! use std::sync::Arc;
 //!
 //! let metadata = Arc::new(Metadata::new(vec![
-//!     SampleType::Cpu,
-//!     SampleType::Wall,
+//!     SampleType::CpuTime,
+//!     SampleType::WallTime,
 //! ], 64, true).unwrap());
 //!
 //! let mut sample = OwnedSample::new(metadata);
 //!
 //! // Set values by type
-//! sample.set_value(SampleType::Cpu, 1000).unwrap();
-//! sample.set_value(SampleType::Wall, 2000).unwrap();
+//! sample.set_value(SampleType::CpuTime, 1000).unwrap();
+//! sample.set_value(SampleType::WallTime, 2000).unwrap();
 //!
 //! // Add a location
 //! sample.add_location(Location {
@@ -47,107 +47,23 @@
 //! ```
 
 use bumpalo::Bump;
-use enum_map::Enum;
 use std::num::NonZeroI64;
 use std::sync::Arc;
 use anyhow::{self, Context};
 use crate::api::{Function, Label, Location, Mapping, Sample};
 
+mod label_key;
 mod metadata;
 mod pool;
+mod sample_type;
 
 #[cfg(test)]
 mod tests;
 
+pub use label_key::LabelKey;
 pub use metadata::Metadata;
+pub use sample_type::SampleType;
 pub use pool::SamplePool;
-
-/// Well-known label keys used in profiling.
-/// 
-/// These correspond to standard labels that profilers commonly attach to samples,
-/// such as thread information, exception details, and tracing context.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-#[non_exhaustive]
-pub enum LabelKey {
-    ExceptionType,
-    ThreadId,
-    ThreadNativeId,
-    ThreadName,
-    TaskId,
-    TaskName,
-    SpanId,
-    LocalRootSpanId,
-    TraceType,
-    ClassName,
-    LockName,
-    GpuDeviceName,
-}
-
-impl LabelKey {
-    /// Returns the string representation of this label key.
-    /// 
-    /// # Example
-    /// ```
-    /// # use libdd_profiling::owned_sample::LabelKey;
-    /// assert_eq!(LabelKey::ThreadId.as_str(), "thread id");
-    /// assert_eq!(LabelKey::ExceptionType.as_str(), "exception type");
-    /// ```
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            LabelKey::ExceptionType => "exception type",
-            LabelKey::ThreadId => "thread id",
-            LabelKey::ThreadNativeId => "thread native id",
-            LabelKey::ThreadName => "thread name",
-            LabelKey::TaskId => "task id",
-            LabelKey::TaskName => "task name",
-            LabelKey::SpanId => "span id",
-            LabelKey::LocalRootSpanId => "local root span id",
-            LabelKey::TraceType => "trace type",
-            LabelKey::ClassName => "class name",
-            LabelKey::LockName => "lock name",
-            LabelKey::GpuDeviceName => "gpu device name",
-        }
-    }
-}
-
-impl AsRef<str> for LabelKey {
-    fn as_ref(&self) -> &str {
-        self.as_str()
-    }
-}
-
-impl std::fmt::Display for LabelKey {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(self.as_str())
-    }
-}
-
-/// Types of profiling samples that can be collected.
-///
-/// Based on the sample types from [dd-trace-py](https://github.com/DataDog/dd-trace-py/blob/d239f91be2c4ca1ec2ded88263ed132e28fe031b/ddtrace/internal/datadog/profiling/dd_wrapper/include/types.hpp#L4).
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Enum)]
-pub enum SampleType {
-    /// CPU time profiling
-    Cpu,
-    /// Wall clock time profiling
-    Wall,
-    /// Exception tracking
-    Exception,
-    /// Lock acquisition profiling
-    LockAcquire,
-    /// Lock release profiling
-    LockRelease,
-    /// Memory allocation profiling
-    Allocation,
-    /// Heap profiling
-    Heap,
-    /// GPU time profiling
-    GpuTime,
-    /// GPU memory profiling
-    GpuMemory,
-    /// GPU floating point operations profiling
-    GpuFlops,
-}
 
 /// Internal data structure that holds the arena and references into it.
 /// This is a self-referential structure created using the ouroboros crate.
@@ -223,9 +139,9 @@ impl OwnedSample {
     /// ```no_run
     /// # use libdd_profiling::owned_sample::{OwnedSample, Metadata, SampleType};
     /// # use std::sync::Arc;
-    /// # let indices = Arc::new(Metadata::new(vec![SampleType::Cpu], 64).unwrap());
+    /// # let indices = Arc::new(Metadata::new(vec![SampleType::CpuTime], 64, true).unwrap());
     /// let mut sample = OwnedSample::new(indices);
-    /// sample.set_value(SampleType::Cpu, 1000).unwrap();
+    /// sample.set_value(SampleType::CpuTime, 1000).unwrap();
     /// ```
     pub fn set_value(&mut self, sample_type: SampleType, value: i64) -> anyhow::Result<()> {
         let index = self.metadata.get_index(&sample_type)
@@ -437,7 +353,7 @@ impl OwnedSample {
     /// ```no_run
     /// # use libdd_profiling::owned_sample::{OwnedSample, Metadata, SampleType, LabelKey};
     /// # use std::sync::Arc;
-    /// # let metadata = Arc::new(Metadata::new(vec![SampleType::Cpu], 64, true).unwrap());
+    /// # let metadata = Arc::new(Metadata::new(vec![SampleType::CpuTime], 64, true).unwrap());
     /// # let mut sample = OwnedSample::new(metadata);
     /// sample.add_string_label(LabelKey::ThreadName, "worker-1");
     /// sample.add_string_label(LabelKey::ExceptionType, "ValueError");
@@ -459,7 +375,7 @@ impl OwnedSample {
     /// ```no_run
     /// # use libdd_profiling::owned_sample::{OwnedSample, Metadata, SampleType, LabelKey};
     /// # use std::sync::Arc;
-    /// # let metadata = Arc::new(Metadata::new(vec![SampleType::Cpu], 64, true).unwrap());
+    /// # let metadata = Arc::new(Metadata::new(vec![SampleType::CpuTime], 64, true).unwrap());
     /// # let mut sample = OwnedSample::new(metadata);
     /// sample.add_num_label(LabelKey::ThreadId, 42);
     /// sample.add_num_label(LabelKey::SpanId, 12345);
@@ -491,7 +407,7 @@ impl OwnedSample {
     /// # use libdd_profiling::owned_sample::{OwnedSample, Metadata, SampleType};
     /// # use libdd_profiling::api::{Location, Mapping, Function, Label};
     /// # use std::sync::Arc;
-    /// # let metadata = Arc::new(Metadata::new(vec![SampleType::Cpu, SampleType::Wall], 64, true).unwrap());
+    /// # let metadata = Arc::new(Metadata::new(vec![SampleType::CpuTime, SampleType::WallTime], 64, true).unwrap());
     /// let mut sample = OwnedSample::new(metadata);
     /// sample.add_location(Location {
     ///     mapping: Mapping { memory_start: 0, memory_limit: 0, file_offset: 0, filename: "foo", build_id: "" },
@@ -572,7 +488,7 @@ impl OwnedSample {
     /// # use libdd_profiling::owned_sample::{OwnedSample, Metadata, SampleType};
     /// # use libdd_profiling::internal::Profile;
     /// # use std::sync::Arc;
-    /// # let metadata = Arc::new(Metadata::new(vec![SampleType::Cpu], 64, true).unwrap());
+    /// # let metadata = Arc::new(Metadata::new(vec![SampleType::CpuTime], 64, true).unwrap());
     /// # let mut profile = Profile::try_new(vec![], None).unwrap();
     /// let sample = OwnedSample::new(metadata);
     /// sample.add_to_profile(&mut profile).unwrap();

@@ -58,7 +58,7 @@ int main() {
         
         // Create metadata (configuration shared by all samples in the pool)
         // Parameters: sample_types, max_frames, timeline_enabled
-        auto metadata = Metadata::create({SampleType::Wall}, 64, true);
+        auto metadata = Metadata::create({SampleType::WallTime}, 64, true);
         
         // Create a pool of reusable samples using the metadata
         // Parameters: metadata, capacity
@@ -72,7 +72,7 @@ int main() {
             
             // Set the wall time value
             auto wall_time_value = 1000000 + (i % 1000) * 1000;
-            owned_sample->set_value(SampleType::Wall, wall_time_value);
+            owned_sample->set_value(SampleType::WallTime, wall_time_value);
             
             // Set the end time to the current time
             // This is the simplest way to set the endtime

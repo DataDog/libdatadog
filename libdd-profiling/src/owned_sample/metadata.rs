@@ -17,12 +17,12 @@ use enum_map::EnumMap;
 /// ```no_run
 /// # use libdd_profiling::owned_sample::{Metadata, SampleType};
 /// let metadata = Metadata::new(vec![
-///     SampleType::Cpu,
-///     SampleType::Wall,
-///     SampleType::Allocation,
+///     SampleType::CpuTime,
+///     SampleType::WallTime,
+///     SampleType::AllocSpace,
 /// ], 256, true).unwrap();
 ///
-/// assert_eq!(metadata.get_index(&SampleType::Cpu), Some(0));
+/// assert_eq!(metadata.get_index(&SampleType::CpuTime), Some(0));
 /// assert_eq!(metadata.get_index(&SampleType::Wall), Some(1));
 /// assert_eq!(metadata.get_index(&SampleType::Allocation), Some(2));
 /// assert_eq!(metadata.get_index(&SampleType::Heap), None);
