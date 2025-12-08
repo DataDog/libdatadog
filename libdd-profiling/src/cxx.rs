@@ -1,0 +1,594 @@
+// Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
+// SPDX-License-Identifier: Apache-2.0
+
+//! CXX bindings for profiling module - provides a safe and idiomatic C++ API
+
+#![allow(clippy::needless_lifetimes)]
+
+use crate::api;
+use crate::internal;
+
+// ============================================================================
+// CXX Bridge - C++ Bindings
+// ============================================================================
+
+#[cxx::bridge(namespace = "datadog::profiling")]
+pub mod ffi {
+    // Shared structs - CXX-friendly types
+    struct ValueType<'a> {
+        type_: &'a str,
+        unit: &'a str,
+    }
+
+    struct Period<'a> {
+        value_type: ValueType<'a>,
+        value: i64,
+    }
+
+    struct Mapping<'a> {
+        memory_start: u64,
+        memory_limit: u64,
+        file_offset: u64,
+        filename: &'a str,
+        build_id: &'a str,
+    }
+
+    struct Function<'a> {
+        name: &'a str,
+        system_name: &'a str,
+        filename: &'a str,
+    }
+
+    struct Location<'a> {
+        mapping: Mapping<'a>,
+        function: Function<'a>,
+        address: u64,
+        line: i64,
+    }
+
+    struct Label<'a> {
+        key: &'a str,
+        str: &'a str,
+        num: i64,
+        num_unit: &'a str,
+    }
+
+    struct Sample<'a> {
+        locations: Vec<Location<'a>>,
+        values: Vec<i64>,
+        labels: Vec<Label<'a>>,
+    }
+
+    // Enums
+    #[derive(Debug)]
+    #[repr(u32)]
+    enum SampleType {
+        CpuTime = 0,
+        CpuCount = 1,
+        WallTime = 2,
+        WallCount = 3,
+        ExceptionCount = 4,
+        LockAcquireTime = 5,
+        LockAcquireCount = 6,
+        LockReleaseTime = 7,
+        LockReleaseCount = 8,
+        AllocSpace = 9,
+        AllocCount = 10,
+        HeapSpace = 11,
+        GpuTime = 12,
+        GpuCount = 13,
+        GpuAllocSpace = 14,
+        GpuAllocCount = 15,
+        GpuFlops = 16,
+        GpuFlopsSamples = 17,
+    }
+
+    #[derive(Debug)]
+    enum LabelKey {
+        ExceptionType,
+        ThreadId,
+        ThreadNativeId,
+        ThreadName,
+        TaskId,
+        TaskName,
+        SpanId,
+        LocalRootSpanId,
+        TraceType,
+        ClassName,
+        LockName,
+        GpuDeviceName,
+    }
+
+    // Opaque Rust types
+    extern "Rust" {
+        type Profile;
+        type Metadata;
+        type OwnedSample;
+        type SamplePool;
+
+        // Helper function to get the sentinel value for no arena allocation limit
+        fn no_allocation_limit() -> i64;
+
+        // Metadata static factory
+        // arena_allocation_limit: maximum bytes for arena allocator, or use no_allocation_limit()
+        #[Self = "Metadata"]
+        fn create(sample_types: Vec<SampleType>, max_frames: usize, arena_allocation_limit: i64, timeline_enabled: bool) -> Result<Box<Metadata>>;
+
+        // Profile static factory
+        #[Self = "Profile"]
+        fn create(sample_types: Vec<ValueType>, period: &Period) -> Result<Box<Profile>>;
+
+        // Profile methods
+        fn add_sample(self: &mut Profile, sample: &Sample) -> Result<()>;
+        fn add_endpoint(self: &mut Profile, local_root_span_id: u64, endpoint: &str) -> Result<()>;
+        fn add_endpoint_count(self: &mut Profile, endpoint: &str, value: i64) -> Result<()>;
+
+        // Upscaling rule methods
+        fn add_upscaling_rule_poisson(
+            self: &mut Profile,
+            offset_values: &[usize],
+            label_name: &str,
+            label_value: &str,
+            sum_value_offset: usize,
+            count_value_offset: usize,
+            sampling_distance: u64,
+        ) -> Result<()>;
+
+        fn add_upscaling_rule_poisson_non_sample_type_count(
+            self: &mut Profile,
+            offset_values: &[usize],
+            label_name: &str,
+            label_value: &str,
+            sum_value_offset: usize,
+            count_value: u64,
+            sampling_distance: u64,
+        ) -> Result<()>;
+
+        fn add_upscaling_rule_proportional(
+            self: &mut Profile,
+            offset_values: &[usize],
+            label_name: &str,
+            label_value: &str,
+            scale: f64,
+        ) -> Result<()>;
+
+        fn reset(self: &mut Profile) -> Result<()>;
+        fn serialize_to_vec(self: &mut Profile) -> Result<Vec<u8>>;
+
+        // OwnedSample methods
+        #[Self = "OwnedSample"]
+        fn create(metadata: &Metadata) -> Result<Box<OwnedSample>>;
+        
+        fn set_value(self: &mut OwnedSample, sample_type: SampleType, value: i64) -> Result<()>;
+        fn get_value(self: &OwnedSample, sample_type: SampleType) -> Result<i64>;
+        
+        fn is_reverse_locations(self: &OwnedSample) -> bool;
+        fn set_reverse_locations(self: &mut OwnedSample, reverse: bool);
+        
+        fn set_endtime_ns(self: &mut OwnedSample, endtime_ns: i64) -> i64;
+        fn set_endtime_ns_now(self: &mut OwnedSample) -> Result<i64>;
+        fn endtime_ns(self: &OwnedSample) -> i64;
+        
+        #[cfg(unix)]
+        fn set_endtime_from_monotonic_ns(self: &mut OwnedSample, monotonic_ns: i64) -> Result<i64>;
+        
+        fn add_location(self: &mut OwnedSample, location: &Location);
+        fn add_label(self: &mut OwnedSample, label: &Label) -> Result<()>;
+        fn add_string_label(self: &mut OwnedSample, key: LabelKey, value: &str) -> Result<()>;
+        fn add_num_label(self: &mut OwnedSample, key: LabelKey, value: i64) -> Result<()>;
+        fn allocated_bytes(self: &OwnedSample) -> usize;
+        fn reset_sample(self: &mut OwnedSample);
+        fn add_to_profile(self: &OwnedSample, profile: &mut Profile) -> Result<()>;
+
+        // SamplePool methods
+        #[Self = "SamplePool"]
+        fn create(metadata: &Metadata, capacity: usize) -> Result<Box<SamplePool>>;
+        
+        fn get_sample(self: &mut SamplePool) -> Box<OwnedSample>;
+        fn return_sample(self: &mut SamplePool, sample: Box<OwnedSample>);
+        fn pool_len(self: &SamplePool) -> usize;
+        fn pool_capacity(self: &SamplePool) -> usize;
+    }
+}
+
+// ============================================================================
+// From Implementations - Convert CXX types to API types
+// ============================================================================
+
+impl<'a> From<&ffi::ValueType<'a>> for api::ValueType<'a> {
+    fn from(vt: &ffi::ValueType<'a>) -> Self {
+        api::ValueType::new(vt.type_, vt.unit)
+    }
+}
+
+impl<'a> From<&ffi::Period<'a>> for api::Period<'a> {
+    fn from(period: &ffi::Period<'a>) -> Self {
+        api::Period {
+            r#type: (&period.value_type).into(),
+            value: period.value,
+        }
+    }
+}
+
+impl<'a> From<&ffi::Mapping<'a>> for api::Mapping<'a> {
+    fn from(mapping: &ffi::Mapping<'a>) -> Self {
+        api::Mapping {
+            memory_start: mapping.memory_start,
+            memory_limit: mapping.memory_limit,
+            file_offset: mapping.file_offset,
+            filename: mapping.filename,
+            build_id: mapping.build_id,
+        }
+    }
+}
+
+impl<'a> From<&ffi::Function<'a>> for api::Function<'a> {
+    fn from(func: &ffi::Function<'a>) -> Self {
+        api::Function {
+            name: func.name,
+            system_name: func.system_name,
+            filename: func.filename,
+        }
+    }
+}
+
+impl<'a> From<&ffi::Location<'a>> for api::Location<'a> {
+    fn from(loc: &ffi::Location<'a>) -> Self {
+        api::Location {
+            mapping: (&loc.mapping).into(),
+            function: (&loc.function).into(),
+            address: loc.address,
+            line: loc.line,
+        }
+    }
+}
+
+impl<'a> From<&ffi::Label<'a>> for api::Label<'a> {
+    fn from(label: &ffi::Label<'a>) -> Self {
+        api::Label {
+            key: label.key,
+            str: label.str,
+            num: label.num,
+            num_unit: label.num_unit,
+        }
+    }
+}
+
+// ============================================================================
+// Profile - Wrapper around internal::Profile
+// ============================================================================
+
+pub struct Profile {
+    inner: internal::Profile,
+}
+
+impl Profile {
+    pub fn create(
+        sample_types: Vec<ffi::ValueType>,
+        period: &ffi::Period,
+    ) -> anyhow::Result<Box<Profile>> {
+        // Convert using From trait
+        let types: Vec<api::ValueType> = sample_types.iter().map(Into::into).collect();
+        let period_value: api::Period = period.into();
+
+        // Profile::try_new interns the strings
+        let inner = internal::Profile::try_new(&types, Some(period_value))?;
+
+        Ok(Box::new(Profile { inner }))
+    }
+
+    pub fn add_sample(&mut self, sample: &ffi::Sample) -> anyhow::Result<()> {
+        let api_sample = api::Sample {
+            locations: sample.locations.iter().map(Into::into).collect(),
+            values: &sample.values,
+            labels: sample.labels.iter().map(Into::into).collect(),
+        };
+
+        // Profile interns the strings
+        self.inner.try_add_sample(api_sample, None)?;
+        Ok(())
+    }
+
+
+    pub fn add_endpoint(&mut self, local_root_span_id: u64, endpoint: &str) -> anyhow::Result<()> {
+        self.inner
+            .add_endpoint(local_root_span_id, std::borrow::Cow::Borrowed(endpoint))
+    }
+
+    pub fn add_endpoint_count(&mut self, endpoint: &str, value: i64) -> anyhow::Result<()> {
+        self.inner
+            .add_endpoint_count(std::borrow::Cow::Borrowed(endpoint), value)
+    }
+
+    pub fn add_upscaling_rule_poisson(
+        &mut self,
+        offset_values: &[usize],
+        label_name: &str,
+        label_value: &str,
+        sum_value_offset: usize,
+        count_value_offset: usize,
+        sampling_distance: u64,
+    ) -> anyhow::Result<()> {
+        let upscaling_info = api::UpscalingInfo::Poisson {
+            sum_value_offset,
+            count_value_offset,
+            sampling_distance,
+        };
+        self.inner
+            .add_upscaling_rule(offset_values, label_name, label_value, upscaling_info)
+    }
+
+    pub fn add_upscaling_rule_poisson_non_sample_type_count(
+        &mut self,
+        offset_values: &[usize],
+        label_name: &str,
+        label_value: &str,
+        sum_value_offset: usize,
+        count_value: u64,
+        sampling_distance: u64,
+    ) -> anyhow::Result<()> {
+        let upscaling_info = api::UpscalingInfo::PoissonNonSampleTypeCount {
+            sum_value_offset,
+            count_value,
+            sampling_distance,
+        };
+        self.inner
+            .add_upscaling_rule(offset_values, label_name, label_value, upscaling_info)
+    }
+
+    pub fn add_upscaling_rule_proportional(
+        &mut self,
+        offset_values: &[usize],
+        label_name: &str,
+        label_value: &str,
+        scale: f64,
+    ) -> anyhow::Result<()> {
+        let upscaling_info = api::UpscalingInfo::Proportional { scale };
+        self.inner
+            .add_upscaling_rule(offset_values, label_name, label_value, upscaling_info)
+    }
+
+    pub fn reset(&mut self) -> anyhow::Result<()> {
+        // Reset and discard the old profile
+        self.inner.reset_and_return_previous()?;
+        Ok(())
+    }
+
+    pub fn serialize_to_vec(&mut self) -> anyhow::Result<Vec<u8>> {
+        // Reset the profile and get the old one to serialize
+        let old_profile = self.inner.reset_and_return_previous()?;
+        let end_time = Some(std::time::SystemTime::now());
+        let encoded = old_profile.serialize_into_compressed_pprof(end_time, None)?;
+        Ok(encoded.buffer)
+    }
+}
+
+// ============================================================================
+// OwnedSample - Wrapper around owned_sample::OwnedSample
+// ============================================================================
+
+use crate::owned_sample;
+use std::sync::Arc;
+
+/// Returns the sentinel value indicating no arena allocation limit.
+/// Use this for the arena_allocation_limit parameter in Metadata::create().
+pub fn no_allocation_limit() -> i64 {
+    -1
+}
+
+pub struct Metadata {
+    inner: Arc<owned_sample::Metadata>,
+}
+
+impl Metadata {
+    pub fn create(sample_types: Vec<ffi::SampleType>, max_frames: usize, arena_allocation_limit: i64, timeline_enabled: bool) -> anyhow::Result<Box<Metadata>> {
+        // Convert CXX SampleType to owned_sample::SampleType
+        let types: Vec<owned_sample::SampleType> = sample_types
+            .into_iter()
+            .map(ffi_sample_type_to_owned)
+            .collect::<anyhow::Result<Vec<_>>>()?;
+
+        // Convert arena_allocation_limit (use NO_ALLOCATION_LIMIT or any value <= 0 for no limit)
+        let arena_allocation_limit = if arena_allocation_limit > 0 {
+            Some(arena_allocation_limit as usize)
+        } else {
+            None
+        };
+
+        // Create metadata with specified configuration
+        let inner = Arc::new(owned_sample::Metadata::new(types, max_frames, arena_allocation_limit, timeline_enabled)?);
+        Ok(Box::new(Metadata { inner }))
+    }
+}
+
+pub struct OwnedSample {
+    inner: owned_sample::OwnedSample,
+}
+
+impl OwnedSample {
+    pub fn create(metadata: &Metadata) -> anyhow::Result<Box<OwnedSample>> {
+        // Use the provided metadata (clone the Arc for shared ownership)
+        let inner = owned_sample::OwnedSample::new(Arc::clone(&metadata.inner));
+        Ok(Box::new(OwnedSample { inner }))
+    }
+
+    pub fn set_value(&mut self, sample_type: ffi::SampleType, value: i64) -> anyhow::Result<()> {
+        let st = ffi_sample_type_to_owned(sample_type)?;
+        self.inner.set_value(st, value)
+    }
+
+    pub fn get_value(&self, sample_type: ffi::SampleType) -> anyhow::Result<i64> {
+        let st = ffi_sample_type_to_owned(sample_type)?;
+        self.inner.get_value(st)
+    }
+
+    pub fn is_reverse_locations(&self) -> bool {
+        self.inner.is_reverse_locations()
+    }
+
+    pub fn set_reverse_locations(&mut self, reverse: bool) {
+        self.inner.set_reverse_locations(reverse);
+    }
+
+    pub fn set_endtime_ns(&mut self, endtime_ns: i64) -> i64 {
+        self.inner.set_endtime_ns(endtime_ns)
+    }
+
+    pub fn set_endtime_ns_now(&mut self) -> anyhow::Result<i64> {
+        self.inner.set_endtime_ns_now()
+    }
+
+    pub fn endtime_ns(&self) -> i64 {
+        self.inner.endtime_ns()
+            .map(|nz| nz.get())
+            .unwrap_or(0)
+    }
+
+    #[cfg(unix)]
+    pub fn set_endtime_from_monotonic_ns(&mut self, monotonic_ns: i64) -> anyhow::Result<i64> {
+        self.inner.set_endtime_from_monotonic_ns(monotonic_ns)
+    }
+
+    pub fn add_location(&mut self, location: &ffi::Location) {
+        let api_location: api::Location = location.into();
+        self.inner.add_location(api_location);
+    }
+
+    pub fn add_label(&mut self, label: &ffi::Label) -> anyhow::Result<()> {
+        let api_label: api::Label = label.into();
+        self.inner.add_label(api_label)?;
+        Ok(())
+    }
+
+    pub fn add_string_label(&mut self, key: ffi::LabelKey, value: &str) -> anyhow::Result<()> {
+        let rust_key = ffi_label_key_to_owned(key);
+        self.inner.add_string_label(rust_key, value)?;
+        Ok(())
+    }
+
+    pub fn add_num_label(&mut self, key: ffi::LabelKey, value: i64) -> anyhow::Result<()> {
+        let rust_key = ffi_label_key_to_owned(key);
+        self.inner.add_num_label(rust_key, value)?;
+        Ok(())
+    }
+
+
+    pub fn allocated_bytes(&self) -> usize {
+        self.inner.allocated_bytes()
+    }
+
+    pub fn reset_sample(&mut self) {
+        self.inner.reset();
+    }
+
+    pub fn add_to_profile(&self, profile: &mut Profile) -> anyhow::Result<()> {
+        self.inner.add_to_profile(&mut profile.inner)
+    }
+}
+
+// ============================================================================
+// SamplePool - Wrapper around owned_sample::SamplePool
+// ============================================================================
+
+pub struct SamplePool {
+    inner: owned_sample::SamplePool,
+}
+
+impl SamplePool {
+    pub fn create(metadata: &Metadata, capacity: usize) -> anyhow::Result<Box<SamplePool>> {
+        // Use the provided metadata (clone the Arc for shared ownership)
+        let inner = owned_sample::SamplePool::new(Arc::clone(&metadata.inner), capacity);
+        Ok(Box::new(SamplePool { inner }))
+    }
+
+    pub fn get_sample(&mut self) -> Box<OwnedSample> {
+        let inner = self.inner.get();
+        Box::new(OwnedSample { inner: *inner })
+    }
+
+    #[allow(clippy::boxed_local)]
+    pub fn return_sample(&mut self, sample: Box<OwnedSample>) {
+        self.inner.put(Box::new(sample.inner));
+    }
+
+    pub fn pool_len(&self) -> usize {
+        self.inner.len()
+    }
+
+    pub fn pool_capacity(&self) -> usize {
+        self.inner.capacity()
+    }
+}
+
+// Note: We must redeclare SampleType in the CXX bridge because CXX doesn't support
+// using external Rust enums. This conversion function maps between the two.
+fn ffi_sample_type_to_owned(st: ffi::SampleType) -> anyhow::Result<owned_sample::SampleType> {
+    match st {
+        ffi::SampleType::CpuTime => Ok(owned_sample::SampleType::CpuTime),
+        ffi::SampleType::CpuCount => Ok(owned_sample::SampleType::CpuCount),
+        ffi::SampleType::WallTime => Ok(owned_sample::SampleType::WallTime),
+        ffi::SampleType::WallCount => Ok(owned_sample::SampleType::WallCount),
+        ffi::SampleType::ExceptionCount => Ok(owned_sample::SampleType::ExceptionCount),
+        ffi::SampleType::LockAcquireTime => Ok(owned_sample::SampleType::LockAcquireTime),
+        ffi::SampleType::LockAcquireCount => Ok(owned_sample::SampleType::LockAcquireCount),
+        ffi::SampleType::LockReleaseTime => Ok(owned_sample::SampleType::LockReleaseTime),
+        ffi::SampleType::LockReleaseCount => Ok(owned_sample::SampleType::LockReleaseCount),
+        ffi::SampleType::AllocSpace => Ok(owned_sample::SampleType::AllocSpace),
+        ffi::SampleType::AllocCount => Ok(owned_sample::SampleType::AllocCount),
+        ffi::SampleType::HeapSpace => Ok(owned_sample::SampleType::HeapSpace),
+        ffi::SampleType::GpuTime => Ok(owned_sample::SampleType::GpuTime),
+        ffi::SampleType::GpuCount => Ok(owned_sample::SampleType::GpuCount),
+        ffi::SampleType::GpuAllocSpace => Ok(owned_sample::SampleType::GpuAllocSpace),
+        ffi::SampleType::GpuAllocCount => Ok(owned_sample::SampleType::GpuAllocCount),
+        ffi::SampleType::GpuFlops => Ok(owned_sample::SampleType::GpuFlops),
+        ffi::SampleType::GpuFlopsSamples => Ok(owned_sample::SampleType::GpuFlopsSamples),
+        _ => anyhow::bail!("Unknown SampleType variant: {:?}", st),
+    }
+}
+
+fn ffi_label_key_to_owned(key: ffi::LabelKey) -> owned_sample::LabelKey {
+    match key {
+        ffi::LabelKey::ExceptionType => owned_sample::LabelKey::ExceptionType,
+        ffi::LabelKey::ThreadId => owned_sample::LabelKey::ThreadId,
+        ffi::LabelKey::ThreadNativeId => owned_sample::LabelKey::ThreadNativeId,
+        ffi::LabelKey::ThreadName => owned_sample::LabelKey::ThreadName,
+        ffi::LabelKey::TaskId => owned_sample::LabelKey::TaskId,
+        ffi::LabelKey::TaskName => owned_sample::LabelKey::TaskName,
+        ffi::LabelKey::SpanId => owned_sample::LabelKey::SpanId,
+        ffi::LabelKey::LocalRootSpanId => owned_sample::LabelKey::LocalRootSpanId,
+        ffi::LabelKey::TraceType => owned_sample::LabelKey::TraceType,
+        ffi::LabelKey::ClassName => owned_sample::LabelKey::ClassName,
+        ffi::LabelKey::LockName => owned_sample::LabelKey::LockName,
+        ffi::LabelKey::GpuDeviceName => owned_sample::LabelKey::GpuDeviceName,
+        _ => owned_sample::LabelKey::ThreadId, // Default case, should not happen
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_sample_type_enum_sync() {
+        // Ensure ffi::SampleType and owned_sample::SampleType stay in sync
+        // This will fail to compile if variants don't match
+        assert_eq!(ffi_sample_type_to_owned(ffi::SampleType::CpuTime).unwrap() as usize, owned_sample::SampleType::CpuTime as usize);
+        assert_eq!(ffi_sample_type_to_owned(ffi::SampleType::CpuCount).unwrap() as usize, owned_sample::SampleType::CpuCount as usize);
+        assert_eq!(ffi_sample_type_to_owned(ffi::SampleType::WallTime).unwrap() as usize, owned_sample::SampleType::WallTime as usize);
+        assert_eq!(ffi_sample_type_to_owned(ffi::SampleType::WallCount).unwrap() as usize, owned_sample::SampleType::WallCount as usize);
+        assert_eq!(ffi_sample_type_to_owned(ffi::SampleType::ExceptionCount).unwrap() as usize, owned_sample::SampleType::ExceptionCount as usize);
+        assert_eq!(ffi_sample_type_to_owned(ffi::SampleType::LockAcquireTime).unwrap() as usize, owned_sample::SampleType::LockAcquireTime as usize);
+        assert_eq!(ffi_sample_type_to_owned(ffi::SampleType::LockAcquireCount).unwrap() as usize, owned_sample::SampleType::LockAcquireCount as usize);
+        assert_eq!(ffi_sample_type_to_owned(ffi::SampleType::LockReleaseTime).unwrap() as usize, owned_sample::SampleType::LockReleaseTime as usize);
+        assert_eq!(ffi_sample_type_to_owned(ffi::SampleType::LockReleaseCount).unwrap() as usize, owned_sample::SampleType::LockReleaseCount as usize);
+        assert_eq!(ffi_sample_type_to_owned(ffi::SampleType::AllocSpace).unwrap() as usize, owned_sample::SampleType::AllocSpace as usize);
+        assert_eq!(ffi_sample_type_to_owned(ffi::SampleType::AllocCount).unwrap() as usize, owned_sample::SampleType::AllocCount as usize);
+        assert_eq!(ffi_sample_type_to_owned(ffi::SampleType::HeapSpace).unwrap() as usize, owned_sample::SampleType::HeapSpace as usize);
+        assert_eq!(ffi_sample_type_to_owned(ffi::SampleType::GpuTime).unwrap() as usize, owned_sample::SampleType::GpuTime as usize);
+        assert_eq!(ffi_sample_type_to_owned(ffi::SampleType::GpuCount).unwrap() as usize, owned_sample::SampleType::GpuCount as usize);
+        assert_eq!(ffi_sample_type_to_owned(ffi::SampleType::GpuAllocSpace).unwrap() as usize, owned_sample::SampleType::GpuAllocSpace as usize);
+        assert_eq!(ffi_sample_type_to_owned(ffi::SampleType::GpuAllocCount).unwrap() as usize, owned_sample::SampleType::GpuAllocCount as usize);
+        assert_eq!(ffi_sample_type_to_owned(ffi::SampleType::GpuFlops).unwrap() as usize, owned_sample::SampleType::GpuFlops as usize);
+        assert_eq!(ffi_sample_type_to_owned(ffi::SampleType::GpuFlopsSamples).unwrap() as usize, owned_sample::SampleType::GpuFlopsSamples as usize);
+    }
+}

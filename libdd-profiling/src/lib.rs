@@ -9,8 +9,11 @@
 pub mod api;
 pub mod api2;
 pub mod collections;
+#[cfg(feature = "cxx")]
+pub mod cxx;
 pub mod exporter;
 pub mod internal;
 pub mod iter;
+pub mod owned_sample;
 pub mod pprof;
 pub mod profiles;
