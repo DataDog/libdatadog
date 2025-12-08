@@ -1,13 +1,14 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use libdd_profiling::exporter::{ProfileExporter, Request};
+use libdd_profiling::exporter::{ProfileExporter, Request, Tag};
 use libdd_profiling::internal::EncodedProfile;
 
 fn multipart(
     exporter: &mut ProfileExporter,
     internal_metadata: Option<serde_json::Value>,
     info: Option<serde_json::Value>,
+    process_tags: Option<serde_json::Value>,
 ) -> Request {
     let profile = EncodedProfile::test_instance().expect("To get a profile");
 
@@ -17,13 +18,25 @@ fn multipart(
     let timeout: u64 = 10_000;
     exporter.set_timeout(timeout);
 
+    // Convert process_tags from Option<serde_json::Value> to Option<Vec<Tag>>
+    let process_tags_vec = process_tags.as_ref().and_then(|json| {
+        json.as_object().map(|obj| {
+            obj.iter()
+                .filter_map(|(k, v)| {
+                    let value = v.as_str().unwrap_or("");
+                    Tag::new(k.as_str(), value).ok()
+                })
+                .collect::<Vec<Tag>>()
+        })
+    });
+
     let request = exporter
         .build(
             profile,
             files_to_compress_and_export,
             files_to_export_unmodified,
             None,
-            None,
+            process_tags_vec.as_ref(),
             internal_metadata,
             info,
         )
@@ -85,7 +98,7 @@ mod tests {
         )
         .expect("exporter to construct");
 
-        let request = multipart(&mut exporter, None, None);
+        let request = multipart(&mut exporter, None, None, None);
 
         assert_eq!(
             request.uri().to_string(),
@@ -155,10 +168,52 @@ mod tests {
             "extra object": {"key": [1, 2, true]},
             "libdatadog_version": env!("CARGO_PKG_VERSION"),
         });
-        let request = multipart(&mut exporter, Some(internal_metadata.clone()), None);
+        let request = multipart(&mut exporter, Some(internal_metadata.clone()), None, None);
         let parsed_event_json = parsed_event_json(request);
 
         assert_eq!(parsed_event_json["internal"], internal_metadata);
+    }
+
+    #[test]
+    // This test invokes an external function SecTrustSettingsCopyCertificates
+    // which Miri cannot evaluate.
+    #[cfg_attr(miri, ignore)]
+    fn including_process_tags() {
+        let profiling_library_name = "dd-trace-foo";
+        let profiling_library_version = "1.2.3";
+        let base_url = "http://localhost:8126".parse().expect("url to parse");
+        let endpoint = config::agent(base_url).expect("endpoint to construct");
+        let mut exporter = ProfileExporter::new(
+            profiling_library_name,
+            profiling_library_version,
+            "php",
+            Some(default_tags()),
+            endpoint,
+        )
+        .expect("exporter to construct");
+
+        let process_tags = json!({
+            "entrypoint.basedir": "net10.0",
+            "entrypoint.name": "buggybits.program",
+            "entrypoint.workdir": "this_folder",
+            "runtime_platform": "x86_64-pc-windows-msvc",
+        });
+        let request = multipart(&mut exporter, None, None, Some(process_tags.clone()));
+        let parsed_event_json = parsed_event_json(request);
+
+        // process_tags are now converted to a comma-separated tag string format
+        let process_tags_str = parsed_event_json["process_tags"].as_str().unwrap();
+        let mut tags: Vec<&str> = process_tags_str.split(',').collect();
+        tags.sort(); // Sort to ensure consistent comparison order
+        
+        let expected_tags = vec![
+            "entrypoint.basedir:net10.0",
+            "entrypoint.name:buggybits.program",
+            "entrypoint.workdir:this_folder",
+            "runtime_platform:x86_64-pc-windows-msvc",
+        ];
+        
+        assert_eq!(tags, expected_tags);
     }
 
     #[test]
@@ -195,7 +250,7 @@ mod tests {
                 "settings": {}
             }
         });
-        let request = multipart(&mut exporter, None, Some(info.clone()));
+        let request = multipart(&mut exporter, None, Some(info.clone()), None);
         let parsed_event_json = parsed_event_json(request);
 
         assert_eq!(parsed_event_json["info"], info);
@@ -219,7 +274,7 @@ mod tests {
         )
         .expect("exporter to construct");
 
-        let request = multipart(&mut exporter, None, None);
+        let request = multipart(&mut exporter, None, None, None);
 
         assert_eq!(
             request.uri().to_string(),
