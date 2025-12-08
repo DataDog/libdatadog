@@ -205,14 +205,14 @@ mod tests {
         let process_tags_str = parsed_event_json["process_tags"].as_str().unwrap();
         let mut tags: Vec<&str> = process_tags_str.split(',').collect();
         tags.sort(); // Sort to ensure consistent comparison order
-        
+
         let expected_tags = vec![
             "entrypoint.basedir:net10.0",
             "entrypoint.name:buggybits.program",
             "entrypoint.workdir:this_folder",
             "runtime_platform:x86_64-pc-windows-msvc",
         ];
-        
+
         assert_eq!(tags, expected_tags);
     }
 

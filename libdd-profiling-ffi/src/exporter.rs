@@ -595,6 +595,68 @@ mod tests {
     // This test invokes an external function SecTrustSettingsCopyCertificates
     // which Miri cannot evaluate.
     #[cfg_attr(miri, ignore)]
+    fn test_build_with_process_tags() {
+        let exporter_result = unsafe {
+            ddog_prof_Exporter_new(
+                profiling_library_name(),
+                profiling_library_version(),
+                family(),
+                None,
+                ddog_prof_Endpoint_agent(endpoint()),
+            )
+        };
+
+        let mut exporter = exporter_result.unwrap();
+
+        let profile = &mut EncodedProfile::test_instance().unwrap().into();
+        let timeout_milliseconds = 90;
+        unsafe {
+            ddog_prof_Exporter_set_timeout(&mut exporter, timeout_milliseconds).unwrap();
+        }
+
+        // Create process_tags as Vec<Tag> instead of JSON
+        let process_tags = vec![
+            tag!("entrypoint.basedir", "net10.0"),
+            tag!("entrypoint.name", "buggybits.program"),
+            tag!("entrypoint.workdir", "this_folder"),
+            tag!("runtime_platform", "x86_64-pc-windows-msvc"),
+        ]
+        .into();
+
+        let build_result = unsafe {
+            ddog_prof_Exporter_Request_build(
+                &mut exporter,
+                profile,
+                Slice::empty(),
+                Slice::empty(),
+                None,
+                Some(&process_tags),
+                None,
+                None,
+            )
+        };
+
+        let parsed_event_json = parsed_event_json(build_result);
+
+        // process_tags are now converted to a comma-separated tag string format
+        let process_tags_str = parsed_event_json["process_tags"].as_str().unwrap();
+        let mut tags: Vec<&str> = process_tags_str.split(',').collect();
+        tags.sort(); // Sort to ensure consistent comparison order
+
+        let expected_tags = vec![
+            "entrypoint.basedir:net10.0",
+            "entrypoint.name:buggybits.program",
+            "entrypoint.workdir:this_folder",
+            "runtime_platform:x86_64-pc-windows-msvc",
+        ];
+
+        assert_eq!(tags, expected_tags);
+    }
+
+    #[test]
+    // This test invokes an external function SecTrustSettingsCopyCertificates
+    // which Miri cannot evaluate.
+    #[cfg_attr(miri, ignore)]
     fn test_build_with_invalid_internal_metadata() {
         let exporter_result = unsafe {
             ddog_prof_Exporter_new(
