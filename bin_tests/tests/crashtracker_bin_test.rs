@@ -833,9 +833,11 @@ fn assert_telemetry_message(crash_telemetry: &[u8], crash_typ: &str) {
     );
     assert_eq!(telemetry_payload["payload"].as_array().unwrap().len(), 1);
 
-    let tags = telemetry_payload["payload"][0]["tags"]
-        .as_str()
-        .unwrap()
+    let log_entry = &telemetry_payload["payload"][0];
+    let tags_raw = log_entry["tags"].as_str().unwrap();
+    let is_crash_ping = tags_raw.contains("is_crash_ping:true");
+
+    let tags = tags_raw
         .split(',')
         .filter(|t| !t.starts_with("uuid:"))
         .collect::<std::collections::HashSet<_>>();
@@ -918,7 +920,48 @@ fn assert_telemetry_message(crash_telemetry: &[u8], crash_typ: &str) {
         _ => panic!("{crash_typ}"),
     }
 
-    assert_eq!(telemetry_payload["payload"][0]["is_sensitive"], true);
+    assert_eq!(log_entry["is_sensitive"], true);
+
+    if !is_crash_ping {
+        let message_str = log_entry["message"]
+            .as_str()
+            .expect("Crash report telemetry should have a JSON message body");
+        let crash_report_json: Value = serde_json::from_str(message_str)
+            .expect("Crash report telemetry message should be valid JSON");
+
+        assert_os_info_matches(
+            &crash_report_json["os_info"],
+            "telemetry crash report message",
+        );
+    }
+}
+
+fn assert_os_info_matches(os_info_val: &Value, context: &str) {
+    assert!(
+        os_info_val.is_object(),
+        "os_info missing in {context}: {os_info_val:?}"
+    );
+    let expected_os_info = ::os_info::get();
+    assert_eq!(
+        os_info_val["architecture"].as_str().unwrap_or(""),
+        expected_os_info.architecture().unwrap_or("unknown"),
+        "mismatched architecture in os_info for {context}"
+    );
+    assert_eq!(
+        os_info_val["bitness"].as_str().unwrap_or(""),
+        expected_os_info.bitness().to_string(),
+        "mismatched bitness in os_info for {context}"
+    );
+    assert_eq!(
+        os_info_val["os_type"].as_str().unwrap_or(""),
+        expected_os_info.os_type().to_string(),
+        "mismatched os_type in os_info for {context}"
+    );
+    assert_eq!(
+        os_info_val["version"].as_str().unwrap_or(""),
+        expected_os_info.version().to_string(),
+        "mismatched version in os_info for {context}"
+    );
 }
 
 #[test]
@@ -1305,38 +1348,11 @@ fn assert_errors_intake_payload(errors_intake_content: &[u8], crash_typ: &str) {
     assert_eq!(payload["ddsource"], "crashtracker");
     assert!(payload["timestamp"].is_number());
     assert!(payload["ddtags"].is_string());
-    assert!(
-        payload["os_info"].is_object(),
-        "os_info missing: {:?}",
-        payload
-    );
+    assert_os_info_matches(&payload["os_info"], "errors intake payload");
 
     let ddtags = payload["ddtags"].as_str().unwrap();
     assert!(ddtags.contains("service:foo"));
     assert!(ddtags.contains("uuid:"));
-
-    let os_info_val = &payload["os_info"];
-    let expected_os_info = ::os_info::get();
-    assert_eq!(
-        os_info_val["architecture"].as_str().unwrap_or(""),
-        expected_os_info.architecture().unwrap_or("unknown"),
-        "mismatched architecture in os_info"
-    );
-    assert_eq!(
-        os_info_val["bitness"].as_str().unwrap_or(""),
-        expected_os_info.bitness().to_string(),
-        "mismatched bitness in os_info"
-    );
-    assert_eq!(
-        os_info_val["os_type"].as_str().unwrap_or(""),
-        expected_os_info.os_type().to_string(),
-        "mismatched os_type in os_info"
-    );
-    assert_eq!(
-        os_info_val["version"].as_str().unwrap_or(""),
-        expected_os_info.version().to_string(),
-        "mismatched version in os_info"
-    );
 
     let error = &payload["error"];
     assert_eq!(error["source_type"], "Crashtracking");
