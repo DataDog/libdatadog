@@ -187,7 +187,7 @@ impl ProfileExporter {
         files_to_compress_and_export: &[File],
         files_to_export_unmodified: &[File],
         additional_tags: Option<&Vec<Tag>>,
-        process_tags: Option<&Vec<Tag>>,
+        process_tags: Option<&str>,
         internal_metadata: Option<serde_json::Value>,
         info: Option<serde_json::Value>,
     ) -> anyhow::Result<Request> {
@@ -201,15 +201,7 @@ impl ProfileExporter {
             tags_profiler.push(',');
         }
 
-        let tags_process = if let Some(process_tags) = process_tags {
-            process_tags
-                .iter()
-                .map(|tag| tag.as_ref())
-                .collect::<Vec<_>>()
-                .join(",")
-        } else {
-            String::new()
-        };
+        let tags_process = process_tags.unwrap_or("");
 
         if let Some(aas_metadata) = &*azure_app_services::AAS_METADATA {
             let aas_tags = [

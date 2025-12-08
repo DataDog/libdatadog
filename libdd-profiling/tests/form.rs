@@ -1,14 +1,14 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use libdd_profiling::exporter::{ProfileExporter, Request, Tag};
+use libdd_profiling::exporter::{ProfileExporter, Request};
 use libdd_profiling::internal::EncodedProfile;
 
 fn multipart(
     exporter: &mut ProfileExporter,
     internal_metadata: Option<serde_json::Value>,
     info: Option<serde_json::Value>,
-    process_tags: Option<serde_json::Value>,
+    process_tags: Option<&str>,
 ) -> Request {
     let profile = EncodedProfile::test_instance().expect("To get a profile");
 
@@ -18,25 +18,13 @@ fn multipart(
     let timeout: u64 = 10_000;
     exporter.set_timeout(timeout);
 
-    // Convert process_tags from Option<serde_json::Value> to Option<Vec<Tag>>
-    let process_tags_vec = process_tags.as_ref().and_then(|json| {
-        json.as_object().map(|obj| {
-            obj.iter()
-                .filter_map(|(k, v)| {
-                    let value = v.as_str().unwrap_or("");
-                    Tag::new(k.as_str(), value).ok()
-                })
-                .collect::<Vec<Tag>>()
-        })
-    });
-
     let request = exporter
         .build(
             profile,
             files_to_compress_and_export,
             files_to_export_unmodified,
             None,
-            process_tags_vec.as_ref(),
+            process_tags,
             internal_metadata,
             info,
         )
@@ -192,28 +180,11 @@ mod tests {
         )
         .expect("exporter to construct");
 
-        let process_tags = json!({
-            "entrypoint.basedir": "net10.0",
-            "entrypoint.name": "buggybits.program",
-            "entrypoint.workdir": "this_folder",
-            "runtime_platform": "x86_64-pc-windows-msvc",
-        });
-        let request = multipart(&mut exporter, None, None, Some(process_tags.clone()));
+        let expected_process_tags = "entrypoint.basedir:net10.0,entrypoint.name:buggybits.program,entrypoint.workdir:this_folder,runtime_platform:x86_64-pc-windows-msvc";
+        let request = multipart(&mut exporter, None, None, Some(expected_process_tags));
         let parsed_event_json = parsed_event_json(request);
 
-        // process_tags are now converted to a comma-separated tag string format
-        let process_tags_str = parsed_event_json["process_tags"].as_str().unwrap();
-        let mut tags: Vec<&str> = process_tags_str.split(',').collect();
-        tags.sort(); // Sort to ensure consistent comparison order
-
-        let expected_tags = vec![
-            "entrypoint.basedir:net10.0",
-            "entrypoint.name:buggybits.program",
-            "entrypoint.workdir:this_folder",
-            "runtime_platform:x86_64-pc-windows-msvc",
-        ];
-
-        assert_eq!(tags, expected_tags);
+        assert_eq!(parsed_event_json["process_tags"], expected_process_tags);
     }
 
     #[test]

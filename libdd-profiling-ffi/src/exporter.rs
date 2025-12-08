@@ -220,7 +220,7 @@ pub unsafe extern "C" fn ddog_prof_Exporter_Request_build(
     files_to_compress_and_export: Slice<File>,
     files_to_export_unmodified: Slice<File>,
     optional_additional_tags: Option<&libdd_common_ffi::Vec<Tag>>,
-    optional_process_tags: Option<&libdd_common_ffi::Vec<Tag>>,
+    optional_process_tags: Option<&CharSlice>,
     optional_internal_metadata_json: Option<&CharSlice>,
     optional_info_json: Option<&CharSlice>,
 ) -> Result<Handle<Request>> {
@@ -230,7 +230,10 @@ pub unsafe extern "C" fn ddog_prof_Exporter_Request_build(
         let files_to_compress_and_export = into_vec_files(files_to_compress_and_export);
         let files_to_export_unmodified = into_vec_files(files_to_export_unmodified);
         let tags = optional_additional_tags.map(|tags| tags.iter().cloned().collect());
-        let process_tags = optional_process_tags.map(|tags| tags.iter().cloned().collect());
+        // Convert CharSlice to &str without copying
+        let process_tags_str = optional_process_tags
+            .map(|cs| cs.try_to_utf8())
+            .transpose()?;
         let internal_metadata = parse_json("internal_metadata", optional_internal_metadata_json)?;
         let info = parse_json("info", optional_info_json)?;
 
@@ -239,7 +242,7 @@ pub unsafe extern "C" fn ddog_prof_Exporter_Request_build(
             files_to_compress_and_export.as_slice(),
             files_to_export_unmodified.as_slice(),
             tags.as_ref(),
-            process_tags.as_ref(),
+            process_tags_str,
             internal_metadata,
             info,
         )?;
@@ -614,14 +617,9 @@ mod tests {
             ddog_prof_Exporter_set_timeout(&mut exporter, timeout_milliseconds).unwrap();
         }
 
-        // Create process_tags as Vec<Tag> instead of JSON
-        let process_tags = vec![
-            tag!("entrypoint.basedir", "net10.0"),
-            tag!("entrypoint.name", "buggybits.program"),
-            tag!("entrypoint.workdir", "this_folder"),
-            tag!("runtime_platform", "x86_64-pc-windows-msvc"),
-        ]
-        .into();
+        // Create process_tags as CharSlice
+        let expected_process_tags_str = "entrypoint.basedir:net10.0,entrypoint.name:buggybits.program,entrypoint.workdir:this_folder,runtime_platform:x86_64-pc-windows-msvc";
+        let expected_process_tags = CharSlice::from(expected_process_tags_str);
 
         let build_result = unsafe {
             ddog_prof_Exporter_Request_build(
@@ -630,7 +628,7 @@ mod tests {
                 Slice::empty(),
                 Slice::empty(),
                 None,
-                Some(&process_tags),
+                Some(&expected_process_tags),
                 None,
                 None,
             )
@@ -638,19 +636,7 @@ mod tests {
 
         let parsed_event_json = parsed_event_json(build_result);
 
-        // process_tags are now converted to a comma-separated tag string format
-        let process_tags_str = parsed_event_json["process_tags"].as_str().unwrap();
-        let mut tags: Vec<&str> = process_tags_str.split(',').collect();
-        tags.sort(); // Sort to ensure consistent comparison order
-
-        let expected_tags = vec![
-            "entrypoint.basedir:net10.0",
-            "entrypoint.name:buggybits.program",
-            "entrypoint.workdir:this_folder",
-            "runtime_platform:x86_64-pc-windows-msvc",
-        ];
-
-        assert_eq!(tags, expected_tags);
+        assert_eq!(parsed_event_json["process_tags"], expected_process_tags_str);
     }
 
     #[test]
