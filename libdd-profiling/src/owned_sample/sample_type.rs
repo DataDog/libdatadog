@@ -16,39 +16,39 @@ pub enum SampleType {
     CpuTime,
     /// Number of CPU samples
     CpuCount,
-    
+
     // Wall clock profiling - 2 values
     /// Wall clock time spent
     WallTime,
     /// Number of wall clock samples
     WallCount,
-    
+
     // Exception tracking - 1 value
     /// Number of exceptions
     ExceptionCount,
-    
+
     // Lock acquisition profiling - 2 values
     /// Time spent acquiring locks
     LockAcquireTime,
     /// Number of lock acquisitions
     LockAcquireCount,
-    
+
     // Lock release profiling - 2 values
     /// Time spent releasing locks
     LockReleaseTime,
     /// Number of lock releases
     LockReleaseCount,
-    
+
     // Memory allocation profiling - 2 values
     /// Allocated space in bytes
     AllocSpace,
     /// Number of allocations
     AllocCount,
-    
+
     // Heap profiling - 1 value
     /// Heap space in bytes
     HeapSpace,
-    
+
     // GPU profiling - 6 values
     /// GPU time spent
     GpuTime,
@@ -63,4 +63,3 @@ pub enum SampleType {
     /// Number of GPU FLOPS samples
     GpuFlopsSamples,
 }
-

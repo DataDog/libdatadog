@@ -9,14 +9,19 @@
 //! # Example
 //!
 //! ```no_run
-//! use libdd_profiling::owned_sample::{OwnedSample, Metadata, SampleType};
-//! use libdd_profiling::api::{Location, Mapping, Function, Label};
+//! use libdd_profiling::api::{Function, Label, Location, Mapping};
+//! use libdd_profiling::owned_sample::{Metadata, OwnedSample, SampleType};
 //! use std::sync::Arc;
 //!
-//! let metadata = Arc::new(Metadata::new(vec![
-//!     SampleType::CpuTime,
-//!     SampleType::WallTime,
-//! ], 64, None, true).unwrap());
+//! let metadata = Arc::new(
+//!     Metadata::new(
+//!         vec![SampleType::CpuTime, SampleType::WallTime],
+//!         64,
+//!         None,
+//!         true,
+//!     )
+//!     .unwrap(),
+//! );
 //!
 //! let mut sample = OwnedSample::new(metadata);
 //!
@@ -43,15 +48,29 @@
 //! });
 //!
 //! // Add labels
-//! sample.add_label(Label { key: "thread_name", str: "worker-1", num: 0, num_unit: "" }).unwrap();
-//! sample.add_label(Label { key: "thread_id", str: "", num: 123, num_unit: "" }).unwrap();
+//! sample
+//!     .add_label(Label {
+//!         key: "thread_name",
+//!         str: "worker-1",
+//!         num: 0,
+//!         num_unit: "",
+//!     })
+//!     .unwrap();
+//! sample
+//!     .add_label(Label {
+//!         key: "thread_id",
+//!         str: "",
+//!         num: 123,
+//!         num_unit: "",
+//!     })
+//!     .unwrap();
 //! ```
 
+use crate::api::{Function, Label, Location, Mapping, Sample};
+use anyhow::{self, Context};
 use bumpalo::Bump;
 use std::num::NonZeroI64;
 use std::sync::Arc;
-use anyhow::{self, Context};
-use crate::api::{Function, Label, Location, Mapping, Sample};
 
 mod label_key;
 mod metadata;
@@ -63,8 +82,8 @@ mod tests;
 
 pub use label_key::LabelKey;
 pub use metadata::Metadata;
-pub use sample_type::SampleType;
 pub use pool::SamplePool;
+pub use sample_type::SampleType;
 
 /// Wrapper around bumpalo::AllocErr that implements std::error::Error
 #[derive(Debug)]
@@ -90,7 +109,7 @@ pub enum OwnedSampleError {
     /// Arena allocation failed (out of memory)
     #[error(transparent)]
     AllocationFailed(#[from] AllocError),
-    
+
     /// Invalid sample type index
     #[error("invalid sample type index: {0}")]
     InvalidIndex(usize),
@@ -109,12 +128,12 @@ impl From<bumpalo::AllocErr> for OwnedSampleError {
 struct SampleInner {
     /// Bump arena where all strings are allocated
     arena: Bump,
-    
+
     /// Locations with string references into the arena
     #[borrows(arena)]
     #[covariant]
     locations: Vec<Location<'this>>,
-    
+
     /// Labels with string references into the arena
     #[borrows(arena)]
     #[covariant]
@@ -146,10 +165,15 @@ impl OwnedSample {
     /// ```no_run
     /// # use libdd_profiling::owned_sample::{OwnedSample, Metadata, SampleType};
     /// # use std::sync::Arc;
-    /// let metadata = Arc::new(Metadata::new(vec![
-    ///     SampleType::CpuTime,
-    ///     SampleType::WallTime,
-    /// ], 64, None, true).unwrap());
+    /// let metadata = Arc::new(
+    ///     Metadata::new(
+    ///         vec![SampleType::CpuTime, SampleType::WallTime],
+    ///         64,
+    ///         None,
+    ///         true,
+    ///     )
+    ///     .unwrap(),
+    /// );
     /// let sample = OwnedSample::new(metadata);
     /// ```
     pub fn new(metadata: Arc<Metadata>) -> Self {
@@ -161,7 +185,8 @@ impl OwnedSample {
                 arena,
                 locations_builder: |_| Vec::new(),
                 labels_builder: |_| Vec::new(),
-            }.build(),
+            }
+            .build(),
             values: vec![0; num_values],
             metadata,
             endtime_ns: None,
@@ -185,11 +210,13 @@ impl OwnedSample {
     /// sample.set_value(SampleType::CpuTime, 1000).unwrap();
     /// ```
     pub fn set_value(&mut self, sample_type: SampleType, value: i64) -> anyhow::Result<()> {
-        let index = self.metadata.get_index(&sample_type)
+        let index = self
+            .metadata
+            .get_index(&sample_type)
             .with_context(|| format!("sample type {:?} not configured", sample_type))?;
-        
+
         self.values[index] = value;
-        
+
         Ok(())
     }
 
@@ -199,7 +226,9 @@ impl OwnedSample {
     ///
     /// Returns an error if the sample type is not configured.
     pub fn get_value(&self, sample_type: SampleType) -> anyhow::Result<i64> {
-        let index = self.metadata.get_index(&sample_type)
+        let index = self
+            .metadata
+            .get_index(&sample_type)
             .with_context(|| format!("sample type {:?} not configured", sample_type))?;
         Ok(self.values[index])
     }
@@ -215,16 +244,16 @@ impl OwnedSample {
     }
 
     /// Sets whether locations should be reversed when converting to a Sample.
-    /// 
+    ///
     /// When enabled, `as_sample()` will return locations in reverse order.
     pub fn set_reverse_locations(&mut self, reverse: bool) {
         self.reverse_locations = reverse;
     }
 
     /// Sets the end time of the sample in nanoseconds.
-    /// 
+    ///
     /// If `endtime_ns` is 0, the end time will be cleared (set to None).
-    /// 
+    ///
     /// Returns the timestamp that was passed in. If timeline is disabled,
     /// the value is not stored but is still returned.
     pub fn set_endtime_ns(&mut self, endtime_ns: i64) -> i64 {
@@ -252,9 +281,9 @@ impl OwnedSample {
         // Get current monotonic time
         let ts = nix::time::clock_gettime(nix::time::ClockId::CLOCK_MONOTONIC)
             .context("failed to get current monotonic time")?;
-        
+
         let monotonic_ns = ts.tv_sec() * 1_000_000_000 + ts.tv_nsec();
-        
+
         // Convert to epoch time and set (set_endtime_from_monotonic_ns handles timeline check)
         self.set_endtime_from_monotonic_ns(monotonic_ns)
     }
@@ -262,12 +291,12 @@ impl OwnedSample {
     #[cfg(not(unix))]
     pub fn set_endtime_ns_now(&mut self) -> anyhow::Result<i64> {
         use std::time::SystemTime;
-        
+
         let now_ns = SystemTime::now()
             .duration_since(SystemTime::UNIX_EPOCH)
             .context("system time is before UNIX_EPOCH")?
             .as_nanos() as i64;
-        
+
         // set_endtime_ns returns the timestamp and handles timeline check
         Ok(self.set_endtime_ns(now_ns))
     }
@@ -317,7 +346,7 @@ impl OwnedSample {
             self.dropped_frames += 1;
             return;
         }
-        
+
         // Try to add the location, but if allocation fails, just drop the frame
         let result: Result<(), OwnedSampleError> = self.inner.with_mut(|fields| {
             // Allocate strings in the arena
@@ -348,7 +377,7 @@ impl OwnedSample {
             fields.locations.push(owned_location);
             Ok(())
         });
-        
+
         // If allocation failed, drop the frame
         if result.is_err() {
             self.dropped_frames += 1;
@@ -478,7 +507,7 @@ impl OwnedSample {
     ///     line: 0,
     /// });
     /// sample.add_label(Label { key: "thread", str: "main", num: 0, num_unit: "" });
-    /// 
+    ///
     /// sample.reset();
     /// assert_eq!(sample.locations().len(), 0);
     /// assert_eq!(sample.labels().len(), 0);
@@ -490,31 +519,35 @@ impl OwnedSample {
             arena: Bump::new(),
             locations_builder: |_| Vec::new(),
             labels_builder: |_| Vec::new(),
-        }.build();
-        
+        }
+        .build();
+
         // Replace self.inner with temp and extract the heads from the old one
         let old_inner = std::mem::replace(&mut self.inner, temp_inner);
         let mut heads = old_inner.into_heads();
-        
+
         // Reset the arena - this reuses the allocation!
         heads.arena.reset();
-        
+
         // Re-apply the allocation limit after reset
-        heads.arena.set_allocation_limit(self.metadata.arena_allocation_limit());
-        
+        heads
+            .arena
+            .set_allocation_limit(self.metadata.arena_allocation_limit());
+
         // Zero out all values but keep the vector length and capacity
         self.values.fill(0);
-        
+
         self.endtime_ns = None;
         self.reverse_locations = false;
         self.dropped_frames = 0;
-        
+
         // Rebuild with the reset arena
         self.inner = SampleInnerBuilder {
             arena: heads.arena,
             locations_builder: |_| Vec::new(),
             labels_builder: |_| Vec::new(),
-        }.build();
+        }
+        .build();
     }
 
     /// Get the number of frames that were dropped due to exceeding max_frames.
@@ -527,9 +560,7 @@ impl OwnedSample {
     /// This includes all memory allocated for strings (location names, label keys, etc.)
     /// stored in this sample. Useful for tracking memory usage and pool optimization.
     pub fn allocated_bytes(&self) -> usize {
-        self.inner.with(|fields| {
-            fields.arena.allocated_bytes()
-        })
+        self.inner.with(|fields| fields.arena.allocated_bytes())
     }
 
     /// Add this sample to a profile.
@@ -550,18 +581,22 @@ impl OwnedSample {
     /// ```
     pub fn add_to_profile(&self, profile: &mut crate::internal::Profile) -> anyhow::Result<()> {
         let mut locations = self.inner.borrow_locations().clone();
-        
+
         // Reverse locations if the flag is set
         if self.reverse_locations {
             locations.reverse();
         }
-        
+
         // If frames were dropped, add a pseudo-frame indicating how many
         let temp_name;
         if self.dropped_frames > 0 {
-            let frame_word = if self.dropped_frames == 1 { "frame" } else { "frames" };
+            let frame_word = if self.dropped_frames == 1 {
+                "frame"
+            } else {
+                "frames"
+            };
             temp_name = format!("<{} {} omitted>", self.dropped_frames, frame_word);
-            
+
             // Create a pseudo-location for the dropped frames indicator
             let pseudo_location = Location {
                 function: Function {
@@ -570,16 +605,16 @@ impl OwnedSample {
                 },
                 ..Default::default()
             };
-            
+
             locations.push(pseudo_location);
         }
-        
+
         let sample = Sample {
             locations,
             values: &self.values,
             labels: self.inner.borrow_labels().clone(),
         };
-        
+
         // Profile will intern the strings, including the temp_name if it was created
         profile.try_add_sample(sample, None)
     }

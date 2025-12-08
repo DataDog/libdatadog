@@ -112,7 +112,12 @@ pub mod ffi {
         // Metadata static factory
         // arena_allocation_limit: maximum bytes for arena allocator, or use no_allocation_limit()
         #[Self = "Metadata"]
-        fn create(sample_types: Vec<SampleType>, max_frames: usize, arena_allocation_limit: i64, timeline_enabled: bool) -> Result<Box<Metadata>>;
+        fn create(
+            sample_types: Vec<SampleType>,
+            max_frames: usize,
+            arena_allocation_limit: i64,
+            timeline_enabled: bool,
+        ) -> Result<Box<Metadata>>;
 
         // Profile static factory
         #[Self = "Profile"]
@@ -158,20 +163,20 @@ pub mod ffi {
         // OwnedSample methods
         #[Self = "OwnedSample"]
         fn create(metadata: &Metadata) -> Result<Box<OwnedSample>>;
-        
+
         fn set_value(self: &mut OwnedSample, sample_type: SampleType, value: i64) -> Result<()>;
         fn get_value(self: &OwnedSample, sample_type: SampleType) -> Result<i64>;
-        
+
         fn is_reverse_locations(self: &OwnedSample) -> bool;
         fn set_reverse_locations(self: &mut OwnedSample, reverse: bool);
-        
+
         fn set_endtime_ns(self: &mut OwnedSample, endtime_ns: i64) -> i64;
         fn set_endtime_ns_now(self: &mut OwnedSample) -> Result<i64>;
         fn endtime_ns(self: &OwnedSample) -> i64;
-        
+
         #[cfg(unix)]
         fn set_endtime_from_monotonic_ns(self: &mut OwnedSample, monotonic_ns: i64) -> Result<i64>;
-        
+
         fn add_location(self: &mut OwnedSample, location: &Location);
         fn add_label(self: &mut OwnedSample, label: &Label) -> Result<()>;
         fn add_string_label(self: &mut OwnedSample, key: LabelKey, value: &str) -> Result<()>;
@@ -183,7 +188,7 @@ pub mod ffi {
         // SamplePool methods
         #[Self = "SamplePool"]
         fn create(metadata: &Metadata, capacity: usize) -> Result<Box<SamplePool>>;
-        
+
         fn get_sample(self: &mut SamplePool) -> Box<OwnedSample>;
         fn return_sample(self: &mut SamplePool, sample: Box<OwnedSample>);
         fn pool_len(self: &SamplePool) -> usize;
@@ -289,7 +294,6 @@ impl Profile {
         Ok(())
     }
 
-
     pub fn add_endpoint(&mut self, local_root_span_id: u64, endpoint: &str) -> anyhow::Result<()> {
         self.inner
             .add_endpoint(local_root_span_id, std::borrow::Cow::Borrowed(endpoint))
@@ -381,7 +385,12 @@ pub struct Metadata {
 }
 
 impl Metadata {
-    pub fn create(sample_types: Vec<ffi::SampleType>, max_frames: usize, arena_allocation_limit: i64, timeline_enabled: bool) -> anyhow::Result<Box<Metadata>> {
+    pub fn create(
+        sample_types: Vec<ffi::SampleType>,
+        max_frames: usize,
+        arena_allocation_limit: i64,
+        timeline_enabled: bool,
+    ) -> anyhow::Result<Box<Metadata>> {
         // Convert CXX SampleType to owned_sample::SampleType
         let types: Vec<owned_sample::SampleType> = sample_types
             .into_iter()
@@ -396,7 +405,12 @@ impl Metadata {
         };
 
         // Create metadata with specified configuration
-        let inner = Arc::new(owned_sample::Metadata::new(types, max_frames, arena_allocation_limit, timeline_enabled)?);
+        let inner = Arc::new(owned_sample::Metadata::new(
+            types,
+            max_frames,
+            arena_allocation_limit,
+            timeline_enabled,
+        )?);
         Ok(Box::new(Metadata { inner }))
     }
 }
@@ -439,9 +453,7 @@ impl OwnedSample {
     }
 
     pub fn endtime_ns(&self) -> i64 {
-        self.inner.endtime_ns()
-            .map(|nz| nz.get())
-            .unwrap_or(0)
+        self.inner.endtime_ns().map(|nz| nz.get()).unwrap_or(0)
     }
 
     #[cfg(unix)]
@@ -471,7 +483,6 @@ impl OwnedSample {
         self.inner.add_num_label(rust_key, value)?;
         Ok(())
     }
-
 
     pub fn allocated_bytes(&self) -> usize {
         self.inner.allocated_bytes()
@@ -572,23 +583,77 @@ mod tests {
     fn test_sample_type_enum_sync() {
         // Ensure ffi::SampleType and owned_sample::SampleType stay in sync
         // This will fail to compile if variants don't match
-        assert_eq!(ffi_sample_type_to_owned(ffi::SampleType::CpuTime).unwrap() as usize, owned_sample::SampleType::CpuTime as usize);
-        assert_eq!(ffi_sample_type_to_owned(ffi::SampleType::CpuCount).unwrap() as usize, owned_sample::SampleType::CpuCount as usize);
-        assert_eq!(ffi_sample_type_to_owned(ffi::SampleType::WallTime).unwrap() as usize, owned_sample::SampleType::WallTime as usize);
-        assert_eq!(ffi_sample_type_to_owned(ffi::SampleType::WallCount).unwrap() as usize, owned_sample::SampleType::WallCount as usize);
-        assert_eq!(ffi_sample_type_to_owned(ffi::SampleType::ExceptionCount).unwrap() as usize, owned_sample::SampleType::ExceptionCount as usize);
-        assert_eq!(ffi_sample_type_to_owned(ffi::SampleType::LockAcquireTime).unwrap() as usize, owned_sample::SampleType::LockAcquireTime as usize);
-        assert_eq!(ffi_sample_type_to_owned(ffi::SampleType::LockAcquireCount).unwrap() as usize, owned_sample::SampleType::LockAcquireCount as usize);
-        assert_eq!(ffi_sample_type_to_owned(ffi::SampleType::LockReleaseTime).unwrap() as usize, owned_sample::SampleType::LockReleaseTime as usize);
-        assert_eq!(ffi_sample_type_to_owned(ffi::SampleType::LockReleaseCount).unwrap() as usize, owned_sample::SampleType::LockReleaseCount as usize);
-        assert_eq!(ffi_sample_type_to_owned(ffi::SampleType::AllocSpace).unwrap() as usize, owned_sample::SampleType::AllocSpace as usize);
-        assert_eq!(ffi_sample_type_to_owned(ffi::SampleType::AllocCount).unwrap() as usize, owned_sample::SampleType::AllocCount as usize);
-        assert_eq!(ffi_sample_type_to_owned(ffi::SampleType::HeapSpace).unwrap() as usize, owned_sample::SampleType::HeapSpace as usize);
-        assert_eq!(ffi_sample_type_to_owned(ffi::SampleType::GpuTime).unwrap() as usize, owned_sample::SampleType::GpuTime as usize);
-        assert_eq!(ffi_sample_type_to_owned(ffi::SampleType::GpuCount).unwrap() as usize, owned_sample::SampleType::GpuCount as usize);
-        assert_eq!(ffi_sample_type_to_owned(ffi::SampleType::GpuAllocSpace).unwrap() as usize, owned_sample::SampleType::GpuAllocSpace as usize);
-        assert_eq!(ffi_sample_type_to_owned(ffi::SampleType::GpuAllocCount).unwrap() as usize, owned_sample::SampleType::GpuAllocCount as usize);
-        assert_eq!(ffi_sample_type_to_owned(ffi::SampleType::GpuFlops).unwrap() as usize, owned_sample::SampleType::GpuFlops as usize);
-        assert_eq!(ffi_sample_type_to_owned(ffi::SampleType::GpuFlopsSamples).unwrap() as usize, owned_sample::SampleType::GpuFlopsSamples as usize);
+        assert_eq!(
+            ffi_sample_type_to_owned(ffi::SampleType::CpuTime).unwrap() as usize,
+            owned_sample::SampleType::CpuTime as usize
+        );
+        assert_eq!(
+            ffi_sample_type_to_owned(ffi::SampleType::CpuCount).unwrap() as usize,
+            owned_sample::SampleType::CpuCount as usize
+        );
+        assert_eq!(
+            ffi_sample_type_to_owned(ffi::SampleType::WallTime).unwrap() as usize,
+            owned_sample::SampleType::WallTime as usize
+        );
+        assert_eq!(
+            ffi_sample_type_to_owned(ffi::SampleType::WallCount).unwrap() as usize,
+            owned_sample::SampleType::WallCount as usize
+        );
+        assert_eq!(
+            ffi_sample_type_to_owned(ffi::SampleType::ExceptionCount).unwrap() as usize,
+            owned_sample::SampleType::ExceptionCount as usize
+        );
+        assert_eq!(
+            ffi_sample_type_to_owned(ffi::SampleType::LockAcquireTime).unwrap() as usize,
+            owned_sample::SampleType::LockAcquireTime as usize
+        );
+        assert_eq!(
+            ffi_sample_type_to_owned(ffi::SampleType::LockAcquireCount).unwrap() as usize,
+            owned_sample::SampleType::LockAcquireCount as usize
+        );
+        assert_eq!(
+            ffi_sample_type_to_owned(ffi::SampleType::LockReleaseTime).unwrap() as usize,
+            owned_sample::SampleType::LockReleaseTime as usize
+        );
+        assert_eq!(
+            ffi_sample_type_to_owned(ffi::SampleType::LockReleaseCount).unwrap() as usize,
+            owned_sample::SampleType::LockReleaseCount as usize
+        );
+        assert_eq!(
+            ffi_sample_type_to_owned(ffi::SampleType::AllocSpace).unwrap() as usize,
+            owned_sample::SampleType::AllocSpace as usize
+        );
+        assert_eq!(
+            ffi_sample_type_to_owned(ffi::SampleType::AllocCount).unwrap() as usize,
+            owned_sample::SampleType::AllocCount as usize
+        );
+        assert_eq!(
+            ffi_sample_type_to_owned(ffi::SampleType::HeapSpace).unwrap() as usize,
+            owned_sample::SampleType::HeapSpace as usize
+        );
+        assert_eq!(
+            ffi_sample_type_to_owned(ffi::SampleType::GpuTime).unwrap() as usize,
+            owned_sample::SampleType::GpuTime as usize
+        );
+        assert_eq!(
+            ffi_sample_type_to_owned(ffi::SampleType::GpuCount).unwrap() as usize,
+            owned_sample::SampleType::GpuCount as usize
+        );
+        assert_eq!(
+            ffi_sample_type_to_owned(ffi::SampleType::GpuAllocSpace).unwrap() as usize,
+            owned_sample::SampleType::GpuAllocSpace as usize
+        );
+        assert_eq!(
+            ffi_sample_type_to_owned(ffi::SampleType::GpuAllocCount).unwrap() as usize,
+            owned_sample::SampleType::GpuAllocCount as usize
+        );
+        assert_eq!(
+            ffi_sample_type_to_owned(ffi::SampleType::GpuFlops).unwrap() as usize,
+            owned_sample::SampleType::GpuFlops as usize
+        );
+        assert_eq!(
+            ffi_sample_type_to_owned(ffi::SampleType::GpuFlopsSamples).unwrap() as usize,
+            owned_sample::SampleType::GpuFlopsSamples as usize
+        );
     }
 }

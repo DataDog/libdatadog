@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /// Well-known label keys used in profiling.
-/// 
+///
 /// These correspond to standard labels that profilers commonly attach to samples,
 /// such as thread information, exception details, and tracing context.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -24,7 +24,7 @@ pub enum LabelKey {
 
 impl LabelKey {
     /// Returns the string representation of this label key.
-    /// 
+    ///
     /// # Example
     /// ```
     /// # use libdd_profiling::owned_sample::LabelKey;
@@ -60,4 +60,3 @@ impl std::fmt::Display for LabelKey {
         f.write_str(self.as_str())
     }
 }
-

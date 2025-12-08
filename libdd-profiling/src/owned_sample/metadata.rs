@@ -16,11 +16,17 @@ use enum_map::EnumMap;
 /// # Example
 /// ```no_run
 /// # use libdd_profiling::owned_sample::{Metadata, SampleType};
-/// let metadata = Metadata::new(vec![
-///     SampleType::CpuTime,
-///     SampleType::WallTime,
-///     SampleType::AllocSpace,
-/// ], 256, None, true).unwrap();
+/// let metadata = Metadata::new(
+///     vec![
+///         SampleType::CpuTime,
+///         SampleType::WallTime,
+///         SampleType::AllocSpace,
+///     ],
+///     256,
+///     None,
+///     true,
+/// )
+/// .unwrap();
 ///
 /// assert_eq!(metadata.get_index(&SampleType::CpuTime), Some(0));
 /// assert_eq!(metadata.get_index(&SampleType::WallTime), Some(1));
@@ -71,7 +77,12 @@ impl Metadata {
     /// - The same sample type appears more than once
     /// - (Unix only) System time is before UNIX_EPOCH
     /// - (Unix only) `clock_gettime(CLOCK_MONOTONIC)` fails
-    pub fn new(sample_types: Vec<SampleType>, max_frames: usize, arena_allocation_limit: Option<usize>, timeline_enabled: bool) -> anyhow::Result<Self> {
+    pub fn new(
+        sample_types: Vec<SampleType>,
+        max_frames: usize,
+        arena_allocation_limit: Option<usize>,
+        timeline_enabled: bool,
+    ) -> anyhow::Result<Self> {
         anyhow::ensure!(!sample_types.is_empty(), "sample types cannot be empty");
 
         let mut type_to_index: EnumMap<SampleType, Option<usize>> = EnumMap::default();
@@ -82,7 +93,7 @@ impl Metadata {
                 "duplicate sample type: {:?}",
                 sample_type
             );
-            
+
             type_to_index[sample_type] = Some(index);
         }
 
@@ -90,19 +101,19 @@ impl Metadata {
         #[cfg(unix)]
         let monotonic_to_epoch_offset = {
             use std::time::SystemTime;
-            
+
             // Get the current epoch time in nanoseconds
             let epoch_ns = SystemTime::now()
                 .duration_since(SystemTime::UNIX_EPOCH)
                 .context("system time is before UNIX_EPOCH")?
                 .as_nanos() as i64;
-            
+
             // Get the current monotonic time using clock_gettime (safe wrapper from nix crate)
             let ts = nix::time::clock_gettime(nix::time::ClockId::CLOCK_MONOTONIC)
                 .context("failed to get monotonic time from CLOCK_MONOTONIC")?;
-            
+
             let monotonic_ns = ts.tv_sec() * 1_000_000_000 + ts.tv_nsec();
-            
+
             // Compute the offset (epoch_ns will be larger since we're after 1970)
             epoch_ns - monotonic_ns
         };
@@ -172,4 +183,3 @@ impl Metadata {
         self.monotonic_to_epoch_offset
     }
 }
-

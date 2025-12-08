@@ -21,10 +21,15 @@ use std::sync::Arc;
 /// ```no_run
 /// # use libdd_profiling::owned_sample::{SamplePool, Metadata, SampleType};
 /// # use std::sync::Arc;
-/// let metadata = Arc::new(Metadata::new(vec![
-///     SampleType::CpuTime,
-///     SampleType::WallTime,
-/// ], 64, None, true).unwrap());
+/// let metadata = Arc::new(
+///     Metadata::new(
+///         vec![SampleType::CpuTime, SampleType::WallTime],
+///         64,
+///         None,
+///         true,
+///     )
+///     .unwrap(),
+/// );
 ///
 /// let pool = SamplePool::new(metadata, 10);
 ///
@@ -82,9 +87,9 @@ impl SamplePool {
     /// assert_eq!(sample.locations().len(), 0);
     /// ```
     pub fn get(&self) -> Box<OwnedSample> {
-        self.samples.pop().unwrap_or_else(|| {
-            Box::new(OwnedSample::new(self.metadata.clone()))
-        })
+        self.samples
+            .pop()
+            .unwrap_or_else(|| Box::new(OwnedSample::new(self.metadata.clone())))
     }
 
     /// Returns a sample to the pool for reuse.
@@ -106,8 +111,8 @@ impl SamplePool {
     /// ```
     pub fn put(&self, mut sample: Box<OwnedSample>) {
         // Reset the sample to clean state
-            sample.reset();
-        
+        sample.reset();
+
         // Try to add back to pool (lock-free operation)
         // If full, push() returns Err(sample), which we just drop
         let _ = self.samples.push(sample);
@@ -129,7 +134,8 @@ impl SamplePool {
     }
 }
 
-// SAFETY: SamplePool uses ArrayQueue which is Send + Sync, and Arc<Metadata> which is also Send + Sync
+// SAFETY: SamplePool uses ArrayQueue which is Send + Sync, and Arc<Metadata> which is also Send +
+// Sync
 unsafe impl Send for SamplePool {}
 unsafe impl Sync for SamplePool {}
 
@@ -185,10 +191,15 @@ mod tests {
 
     #[test]
     fn test_pool_reset() {
-        let metadata = Arc::new(Metadata::new(vec![
-            SampleType::CpuTime,
-            SampleType::WallTime,
-        ], 64, None, true).unwrap());
+        let metadata = Arc::new(
+            Metadata::new(
+                vec![SampleType::CpuTime, SampleType::WallTime],
+                64,
+                None,
+                true,
+            )
+            .unwrap(),
+        );
         let pool = SamplePool::new(metadata, 5);
 
         // Get a sample and modify it
@@ -211,10 +222,15 @@ mod tests {
     fn test_pool_thread_safety() {
         use std::thread;
 
-        let metadata = Arc::new(Metadata::new(vec![
-            SampleType::CpuTime,
-            SampleType::WallTime,
-        ], 64, None, true).unwrap());
+        let metadata = Arc::new(
+            Metadata::new(
+                vec![SampleType::CpuTime, SampleType::WallTime],
+                64,
+                None,
+                true,
+            )
+            .unwrap(),
+        );
         let pool = Arc::new(SamplePool::new(metadata, 20));
 
         // Spawn multiple threads that all use the pool concurrently
@@ -225,11 +241,15 @@ mod tests {
                     for i in 0..100 {
                         // Get a sample from the pool
                         let mut sample = pool.get();
-                        
+
                         // Use it
-                        sample.set_value(SampleType::CpuTime, (thread_id * 1000 + i) as i64).unwrap();
-                        sample.set_value(SampleType::WallTime, (thread_id * 2000 + i) as i64).unwrap();
-                        
+                        sample
+                            .set_value(SampleType::CpuTime, (thread_id * 1000 + i) as i64)
+                            .unwrap();
+                        sample
+                            .set_value(SampleType::WallTime, (thread_id * 2000 + i) as i64)
+                            .unwrap();
+
                         // Return it to the pool
                         pool.put(sample);
                     }
@@ -247,4 +267,3 @@ mod tests {
         assert!(!pool.is_empty()); // Should have at least some samples
     }
 }
-
