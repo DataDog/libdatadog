@@ -44,7 +44,7 @@ libdd-tinybytes = { version = "1.0.0", path = "../libdd-tinybytes", features = [
     "bytes_string",
     "serialization",
 ] }
-antithesis_sdk = "0.2.6"
+antithesis_sdk.workspace = true
 
 [lib]
 bench = false
