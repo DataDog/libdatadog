@@ -15,9 +15,14 @@ pub use libdd_common::cc_utils::cc;
 // Build CXX bridge - cross-platform function
 #[cfg(feature = "cxx")]
 fn build_cxx_bridge() {
-    cxx_build::bridge("src/crash_info/cxx.rs")
-        .flag_if_supported("-std=c++20")
-        .compile("libdd-crashtracker-cxx");
+    let mut build = cxx_build::bridge("src/crash_info/cxx.rs");
+    build.flag_if_supported("-std=c++20");
+
+    // On Windows, use dynamic CRT (/MD) to match the default Rust build
+    #[cfg(target_os = "windows")]
+    build.static_crt(false);
+
+    build.compile("libdd-crashtracker-cxx");
 
     println!("cargo:rerun-if-changed=src/crash_info/cxx.rs");
 }
