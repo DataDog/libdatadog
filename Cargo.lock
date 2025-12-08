@@ -2867,6 +2867,8 @@ dependencies = [
  "chrono",
  "criterion",
  "crossbeam-utils",
+ "cxx",
+ "cxx-build",
  "futures",
  "hashbrown 0.16.0",
  "http",
