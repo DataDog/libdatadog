@@ -26,6 +26,11 @@ jobs:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # 4.2.2
       - name: Install Rust
         run: rustup install nightly-2024-12-16 && rustup default nightly-2024-12-16
+      - name: Cache
+        uses: Swatinem/rust-cache@f13886b937689c021905a6b90929199931d60db1 # 2.8.1
+        with:
+          cache-targets: true # cache build artifacts
+          cache-bin: true # cache the ~/.cargo/bin directory
       - name: Install cargo-llvm-cov
         uses: taiki-e/install-action@2c41309d51ede152b6f2ee6bf3b71e6dc9a8b7df # 2.49.27
         with:
@@ -37,13 +42,20 @@ jobs:
           cache-bin: true # cache the ~/.cargo/bin directory
       - name: Generate code coverage (including doc tests)
         run: |
-          cargo llvm-cov --all-features --workspace --no-report nextest
+          cargo llvm-cov --all-features --workspace --no-report nextest --exclude bin_tests
           cargo llvm-cov --all-features --workspace --no-report --doc
           cargo llvm-cov report --doctests --lcov --output-path lcov.info
-          cargo clean
+      - name: Generate Codecov components configuration
+        run: |
+          cat .codecov_header.yml >| .codecov.yml
+          find . -name Cargo.toml | cut -c 3- | grep -v "^Cargo.toml\$" | xargs -n 1 dirname | grep -v / | grep -v "^bin_tests$"| sort | \
+          while read -r name; do echo -e "    - component-id: ${name}\n      name: ${name}\n      paths:\n        - ${name}/**" >> .codecov.yml ; done
+          echo "----- .codecov.yml -----"
+          cat .codecov.yml
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@5a1091511ad55cbe89839c7260b706298ca349f7 # 5.5.1
+        env:
+          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
         with:
-          token: ${{ secrets.CODECOV_TOKEN }}
           files: lcov.info
           fail_ci_if_error: true
