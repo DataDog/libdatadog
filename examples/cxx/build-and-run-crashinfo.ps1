@@ -109,7 +109,8 @@ if ($USE_MSVC) {
     Write-Host "Using MSVC compiler" -ForegroundColor Yellow
     
     # MSVC compilation
-    cl.exe /std:c++20 /EHsc `
+    # Use /MD (dynamic CRT) to match the default Rust build
+    cl.exe /std:c++20 /EHsc /MD `
         /I"$CXX_BRIDGE_INCLUDE" `
         /I"$CXX_BRIDGE_CRATE" `
         /I"$RUST_CXX_INCLUDE" `
@@ -118,6 +119,7 @@ if ($USE_MSVC) {
         "$CRASHTRACKER_LIB" `
         "$CXX_BRIDGE_LIB" `
         ws2_32.lib advapi32.lib userenv.lib ntdll.lib bcrypt.lib `
+        dbghelp.lib psapi.lib ole32.lib powrprof.lib `
         /Fe:examples\cxx\crashinfo.exe
     
     if ($LASTEXITCODE -ne 0) {
@@ -137,7 +139,9 @@ if ($USE_MSVC) {
         examples/cxx/crashinfo.cpp `
         "$CXX_BRIDGE_LIB" `
         "$CRASHTRACKER_LIB" `
-        -lws2_32 -ladvapi32 -luserenv -lntdll -lbcrypt -lgcc_eh -lpthread `
+        -lws2_32 -ladvapi32 -luserenv -lntdll -lbcrypt `
+        -ldbghelp -lpsapi -lole32 -lpowrprof `
+        -lgcc_eh -lpthread `
         -o examples/cxx/crashinfo.exe
     
     if ($LASTEXITCODE -ne 0) {
