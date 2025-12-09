@@ -10,12 +10,9 @@ use crate::modes::behavior::Behavior;
 use libdd_crashtracker::{self as crashtracker, CrashtrackerConfiguration};
 use nix::sys::wait::{waitpid, WaitStatus};
 use nix::unistd::Pid;
+use std::fs;
 use std::path::Path;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
-
-// Shared state to track if the custom panic hook was called
-static PANIC_HOOK_CALLED: AtomicBool = AtomicBool::new(false);
 
 pub struct Test;
 
@@ -28,24 +25,26 @@ impl Behavior for Test {
         Ok(())
     }
 
-    fn pre(&self, _output_dir: &Path) -> anyhow::Result<()> {
-        pre()
+    fn pre(&self, output_dir: &Path) -> anyhow::Result<()> {
+        pre(output_dir)
     }
 
-    fn post(&self, _output_dir: &Path) -> anyhow::Result<()> {
-        post()
+    fn post(&self, output_dir: &Path) -> anyhow::Result<()> {
+        post(output_dir)
     }
 }
 
-fn pre() -> anyhow::Result<()> {
-    // Reset the flag in case the test runs multiple times
-    PANIC_HOOK_CALLED.store(false, Ordering::SeqCst);
-
+fn pre(output_dir: &Path) -> anyhow::Result<()> {
     let old_hook = std::panic::take_hook();
+    let output_dir = output_dir.to_path_buf();
+
     // Set up a panic hook BEFORE crashtracker::init to verify the hook chain works
     std::panic::set_hook(Box::new(move |panic_info| {
-        // Mark that our custom hook was called
-        PANIC_HOOK_CALLED.store(true, Ordering::SeqCst);
+        // Mark that our custom hook was called by writing a marker file
+        // This works across fork() because it's persistent storage
+        let marker_path = output_dir.join("panic_hook_called.marker");
+        let _ = fs::write(marker_path, "hook was called");
+
         // Call the previous hook (usually the default panic hook)
         old_hook(panic_info);
     }));
@@ -53,7 +52,7 @@ fn pre() -> anyhow::Result<()> {
     Ok(())
 }
 
-fn post() -> anyhow::Result<()> {
+fn post(output_dir: &Path) -> anyhow::Result<()> {
     match unsafe { libc::fork() } {
         -1 => {
             anyhow::bail!("Failed to fork");
@@ -98,11 +97,17 @@ fn post() -> anyhow::Result<()> {
                 }
             }
 
-            // Verify that our custom panic hook was called
+            // Verify that our custom panic hook was called by checking for the marker file
             // This proves that the hook chain works correctly:
             // crashtracker's hook -> our custom hook -> default hook
-            if !PANIC_HOOK_CALLED.load(Ordering::SeqCst) {
-                anyhow::bail!("Custom panic hook was not called - hook chaining failed!");
+            let marker_path = output_dir.join("panic_hook_called.marker");
+
+            if !marker_path.exists() {
+                anyhow::bail!(
+                    "Custom panic hook was not called - hook chaining failed! \
+                    Expected marker file at: {}",
+                    marker_path.display()
+                );
             }
 
             // Parent exits with error code to indicate test completion
