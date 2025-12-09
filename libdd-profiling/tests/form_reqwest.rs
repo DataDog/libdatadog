@@ -37,29 +37,33 @@ mod tests {
 
     #[tokio::test]
     #[cfg_attr(miri, ignore)]
-    async fn test_send_to_mock_server() {
-        let mock_server = common::setup_basic_mock().await;
-        let exporter = create_exporter(&mock_server, "php", common::default_tags());
-
-        let profile = EncodedProfile::test_instance().expect("To get a profile");
-        let status = exporter
-            .send(profile, &[], &[], None, None, None)
-            .await
-            .expect("send to succeed");
-        assert_eq!(status, 200);
-    }
-
-    #[tokio::test]
-    #[cfg_attr(miri, ignore)]
-    async fn test_send_with_body_inspection() {
+    async fn test_send_with_all_features() {
         let (mock_server, received_body) = common::setup_body_capture_mock().await;
         let exporter = create_exporter(&mock_server, "ruby", common::default_tags());
 
         let profile = EncodedProfile::test_instance().expect("To get a profile");
         let (internal_metadata, info) = common::test_metadata();
+        
+        let test_file_data = b"additional file content";
+        let files = &[File {
+            name: "test.txt",
+            bytes: test_file_data,
+        }];
+        
+        let additional_tags = vec![
+            libdd_common::tag!("version", "1.0.0"),
+            libdd_common::tag!("region", "us-east-1"),
+        ];
 
         let status = exporter
-            .send(profile, &[], &[], Some(internal_metadata), Some(info), None)
+            .send(
+                profile,
+                files,
+                &additional_tags,
+                Some(internal_metadata),
+                Some(info),
+                None,
+            )
             .await
             .expect("send to succeed");
         assert_eq!(status, 200);
@@ -67,6 +71,13 @@ mod tests {
         let body = received_body.lock().unwrap();
         let event_json = common::extract_event_json_from_multipart(&body);
         common::verify_event_json(&event_json, "ruby");
+        
+        // Verify the file content matches what we sent (files are zstd-compressed)
+        let extracted_file = common::extract_file_from_multipart(&body, "test.txt")
+            .expect("test.txt should be in multipart body");
+        let decompressed = common::decompress_zstd(&extracted_file)
+            .expect("should decompress file");
+        assert_eq!(decompressed, test_file_data);
     }
 
     #[tokio::test]
@@ -166,48 +177,6 @@ mod tests {
         }
     }
 
-    #[tokio::test]
-    #[cfg_attr(miri, ignore)]
-    async fn test_with_additional_tags() {
-        let mock_server = common::setup_basic_mock().await;
-        let exporter = create_exporter(
-            &mock_server,
-            "python",
-            vec![libdd_common::tag!("env", "test")],
-        );
-
-        let profile = EncodedProfile::test_instance().expect("To get a profile");
-        let additional_tags = vec![
-            libdd_common::tag!("version", "1.0.0"),
-            libdd_common::tag!("region", "us-east-1"),
-        ];
-
-        let status = exporter
-            .send(profile, &[], &additional_tags, None, None, None)
-            .await
-            .expect("send to succeed");
-        assert_eq!(status, 200);
-    }
-
-    #[tokio::test]
-    #[cfg_attr(miri, ignore)]
-    async fn test_with_compressed_files() {
-        let mock_server = common::setup_basic_mock().await;
-        let exporter = create_exporter(&mock_server, "java", vec![]);
-
-        let profile = EncodedProfile::test_instance().expect("To get a profile");
-        let test_data = b"test file content";
-        let files_to_compress = &[File {
-            name: "test.txt",
-            bytes: test_data,
-        }];
-
-        let status = exporter
-            .send(profile, files_to_compress, &[], None, None, None)
-            .await
-            .expect("send to succeed");
-        assert_eq!(status, 200);
-    }
 
     #[tokio::test]
     #[cfg_attr(miri, ignore)]
