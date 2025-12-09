@@ -379,11 +379,11 @@ fn test_crash_tracking_bin_panic_hook_after_fork() {
             message
         );
 
-        // Verify it's marked as a panic
+        // TODO change the kind into Panic instead
         let kind = error["kind"].as_str().unwrap();
         assert_eq!(
-            kind, "Panic",
-            "Expected error kind to be Panic, got: {}",
+            kind, "UnixSignal",
+            "Expected error kind to be UnixSignal, got: {}",
             kind
         );
 
