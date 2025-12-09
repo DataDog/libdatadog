@@ -42,13 +42,14 @@ pub fn extract_event_json_from_multipart(body: &[u8]) -> serde_json::Value {
 }
 
 /// Extract a file's content from multipart body by filename
+#[allow(dead_code)]
 pub fn extract_file_from_multipart(body: &[u8], filename: &str) -> Option<Vec<u8>> {
     // Find the filename in the multipart body
     let filename_marker = format!(r#"filename="{}""#, filename);
     let filename_pos = body
         .windows(filename_marker.len())
         .position(|window| window == filename_marker.as_bytes())?;
-    
+
     // Find the start of content (after headers, marked by \r\n\r\n or \n\n)
     let search_start = filename_pos + filename_marker.len();
     let content_start = body[search_start..]
@@ -61,11 +62,13 @@ pub fn extract_file_from_multipart(body: &[u8], filename: &str) -> Option<Vec<u8
                 .position(|window| window == b"\n\n")
                 .map(|pos| search_start + pos + 2)
         })?;
-    
+
     // Find the next boundary marker (starts with --)
     let content_end = body[content_start..]
         .windows(4)
-        .position(|window| window[0] == b'\r' && window[1] == b'\n' && window[2] == b'-' && window[3] == b'-')
+        .position(|window| {
+            window[0] == b'\r' && window[1] == b'\n' && window[2] == b'-' && window[3] == b'-'
+        })
         .map(|pos| content_start + pos)
         .or_else(|| {
             body[content_start..]
@@ -74,11 +77,12 @@ pub fn extract_file_from_multipart(body: &[u8], filename: &str) -> Option<Vec<u8
                 .map(|pos| content_start + pos)
         })
         .unwrap_or(body.len());
-    
+
     Some(body[content_start..content_end].to_vec())
 }
 
 /// Decompress zstd-compressed data
+#[allow(dead_code)]
 pub fn decompress_zstd(data: &[u8]) -> std::io::Result<Vec<u8>> {
     let mut decoder = zstd::Decoder::new(data)?;
     let mut decompressed = Vec::new();

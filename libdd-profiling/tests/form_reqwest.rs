@@ -14,11 +14,7 @@ mod tests {
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
     /// Helper to create an exporter from a mock server
-    fn create_exporter(
-        mock_server: &MockServer,
-        family: &str,
-        tags: Vec<Tag>,
-    ) -> ProfileExporter {
+    fn create_exporter(mock_server: &MockServer, family: &str, tags: Vec<Tag>) -> ProfileExporter {
         let base_url = mock_server.uri().parse().unwrap();
         let endpoint = config::agent(base_url).expect("endpoint to construct");
         ProfileExporter::new("dd-trace-test", "1.0.0", family, tags, endpoint)
@@ -33,13 +29,13 @@ mod tests {
 
         let profile = EncodedProfile::test_instance().expect("To get a profile");
         let (internal_metadata, info) = common::test_metadata();
-        
+
         let test_file_data = b"additional file content";
         let files = &[File {
             name: "test.txt",
             bytes: test_file_data,
         }];
-        
+
         let additional_tags = vec![
             libdd_common::tag!("version", "1.0.0"),
             libdd_common::tag!("region", "us-east-1"),
@@ -61,12 +57,12 @@ mod tests {
         let body = received_body.lock().unwrap();
         let event_json = common::extract_event_json_from_multipart(&body);
         common::verify_event_json(&event_json, "ruby");
-        
+
         // Verify the file content matches what we sent (files are zstd-compressed)
         let extracted_file = common::extract_file_from_multipart(&body, "test.txt")
             .expect("test.txt should be in multipart body");
-        let decompressed = common::decompress_zstd(&extracted_file)
-            .expect("should decompress file");
+        let decompressed =
+            common::decompress_zstd(&extracted_file).expect("should decompress file");
         assert_eq!(decompressed, test_file_data);
     }
 
@@ -146,7 +142,6 @@ mod tests {
             Ok(_) => panic!("Expected error but got Ok"),
         }
     }
-
 
     #[tokio::test]
     #[cfg_attr(miri, ignore)]
