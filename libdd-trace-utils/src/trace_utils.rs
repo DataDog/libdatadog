@@ -550,6 +550,10 @@ pub fn enrich_span_with_google_cloud_function_metadata(
 }
 
 pub fn enrich_span_with_azure_function_metadata(span: &mut pb::Span) {
+    if span.name == "azure.apim" {
+        return;
+    }
+
     if let Some(aas_metadata) = &*azure_app_services::AAS_METADATA_FUNCTION {
         let aas_tags = [
             ("aas.resource.id", aas_metadata.get_resource_id()),
