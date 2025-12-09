@@ -42,7 +42,7 @@ pub extern "C" fn ddog_prof_Exporter_Slice_File_empty() -> Slice<'static, File<'
 #[derive(Debug)]
 #[repr(C)]
 /// cbindgen:field-names=[code]
-pub struct HttpStatus(u16);
+pub struct HttpStatus(pub u16);
 
 /// Creates an endpoint that uses the agent.
 /// # Arguments
@@ -182,7 +182,7 @@ pub unsafe extern "C" fn ddog_prof_Exporter_drop(mut exporter: *mut Handle<Profi
     drop(exporter.take())
 }
 
-unsafe fn into_vec_files<'a>(slice: Slice<'a, File>) -> Vec<exporter::File<'a>> {
+pub(crate) unsafe fn into_vec_files<'a>(slice: Slice<'a, File>) -> Vec<exporter::File<'a>> {
     slice
         .into_slice()
         .iter()

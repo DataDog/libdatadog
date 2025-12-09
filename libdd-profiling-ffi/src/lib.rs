@@ -8,6 +8,7 @@
 #![cfg_attr(not(test), deny(clippy::unimplemented))]
 
 mod exporter;
+mod reqwest_exporter;
 mod profiles;
 mod string_storage;
 
