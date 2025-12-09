@@ -1,0 +1,35 @@
+[package]
+name = "libdd-trace-obfuscation"
+version = "1.0.0"
+description = "A duplicate of trace obfuscator implemented in the agent and documented in https://docs.datadoghq.com/tracing/configure_data_security/?tab=net#trace-obfuscation"
+homepage = "https://github.com/DataDog/libdatadog/tree/main/libdd-trace-obfuscation"
+repository = "https://github.com/DataDog/libdatadog/tree/main/libdd-trace-obfuscation"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+anyhow = "1.0"
+regex = "1"
+serde = { version = "1.0.145", features = ["derive"] }
+serde_json = "1.0"
+url = "2.4.0"
+percent-encoding = "2.1"
+log = "0.4"
+libdd-trace-protobuf = { version = "1.0.0", path = "../libdd-trace-protobuf" }
+libdd-trace-utils = { version = "1.0.0", path = "../libdd-trace-utils" }
+libdd-common = { version = "1.0.0", path = "../libdd-common" }
+
+[dev-dependencies]
+duplicate = "0.4.1"
+criterion = { version = "0.5", features = [ "csv_output"] }
+libdd-trace-utils = { path = "../libdd-trace-utils", features = ["test-utils"] }
+
+[lib]
+bench = false
+
+[[bench]]
+name = "trace_obfuscation"
+harness = false
+path = "benches/trace_obfuscation.rs"
