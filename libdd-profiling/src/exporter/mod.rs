@@ -187,6 +187,7 @@ impl ProfileExporter {
         files_to_compress_and_export: &[File],
         files_to_export_unmodified: &[File],
         additional_tags: Option<&Vec<Tag>>,
+        process_tags: Option<&str>,
         internal_metadata: Option<serde_json::Value>,
         info: Option<serde_json::Value>,
     ) -> anyhow::Result<Request> {
@@ -199,6 +200,8 @@ impl ProfileExporter {
             tags_profiler.push_str(tag.as_ref());
             tags_profiler.push(',');
         }
+
+        let tags_process = process_tags.unwrap_or("");
 
         if let Some(aas_metadata) = &*azure_app_services::AAS_METADATA {
             let aas_tags = [
@@ -253,6 +256,7 @@ impl ProfileExporter {
         let event = json!({
             "attachments": attachments,
             "tags_profiler": tags_profiler,
+            "process_tags": tags_process,
             "start": DateTime::<Utc>::from(profile.start).format("%Y-%m-%dT%H:%M:%S%.9fZ").to_string(),
             "end": DateTime::<Utc>::from(profile.end).format("%Y-%m-%dT%H:%M:%S%.9fZ").to_string(),
             "family": self.family.as_ref(),

@@ -220,6 +220,7 @@ pub unsafe extern "C" fn ddog_prof_Exporter_Request_build(
     files_to_compress_and_export: Slice<File>,
     files_to_export_unmodified: Slice<File>,
     optional_additional_tags: Option<&libdd_common_ffi::Vec<Tag>>,
+    optional_process_tags: Option<&CharSlice>,
     optional_internal_metadata_json: Option<&CharSlice>,
     optional_info_json: Option<&CharSlice>,
 ) -> Result<Handle<Request>> {
@@ -229,7 +230,10 @@ pub unsafe extern "C" fn ddog_prof_Exporter_Request_build(
         let files_to_compress_and_export = into_vec_files(files_to_compress_and_export);
         let files_to_export_unmodified = into_vec_files(files_to_export_unmodified);
         let tags = optional_additional_tags.map(|tags| tags.iter().cloned().collect());
-
+        // Convert CharSlice to &str without copying
+        let process_tags_str = optional_process_tags
+            .map(|cs| cs.try_to_utf8())
+            .transpose()?;
         let internal_metadata = parse_json("internal_metadata", optional_internal_metadata_json)?;
         let info = parse_json("info", optional_info_json)?;
 
@@ -238,6 +242,7 @@ pub unsafe extern "C" fn ddog_prof_Exporter_Request_build(
             files_to_compress_and_export.as_slice(),
             files_to_export_unmodified.as_slice(),
             tags.as_ref(),
+            process_tags_str,
             internal_metadata,
             info,
         )?;
@@ -486,6 +491,7 @@ mod tests {
                 None,
                 None,
                 None,
+                None,
             )
         };
 
@@ -571,6 +577,7 @@ mod tests {
                 Slice::empty(),
                 Slice::empty(),
                 None,
+                None,
                 Some(&raw_internal_metadata),
                 None,
             )
@@ -585,6 +592,51 @@ mod tests {
         assert_eq!(internal["extra object"], json!({"key": [1, 2, true]}));
         assert!(internal["libdatadog_version"].is_string());
         assert_eq!(internal["libdatadog_version"], env!("CARGO_PKG_VERSION"));
+    }
+
+    #[test]
+    // This test invokes an external function SecTrustSettingsCopyCertificates
+    // which Miri cannot evaluate.
+    #[cfg_attr(miri, ignore)]
+    fn test_build_with_process_tags() {
+        let exporter_result = unsafe {
+            ddog_prof_Exporter_new(
+                profiling_library_name(),
+                profiling_library_version(),
+                family(),
+                None,
+                ddog_prof_Endpoint_agent(endpoint()),
+            )
+        };
+
+        let mut exporter = exporter_result.unwrap();
+
+        let profile = &mut EncodedProfile::test_instance().unwrap().into();
+        let timeout_milliseconds = 90;
+        unsafe {
+            ddog_prof_Exporter_set_timeout(&mut exporter, timeout_milliseconds).unwrap();
+        }
+
+        // Create process_tags as CharSlice
+        let expected_process_tags_str = "entrypoint.basedir:net10.0,entrypoint.name:buggybits.program,entrypoint.workdir:this_folder,runtime_platform:x86_64-pc-windows-msvc";
+        let expected_process_tags = CharSlice::from(expected_process_tags_str);
+
+        let build_result = unsafe {
+            ddog_prof_Exporter_Request_build(
+                &mut exporter,
+                profile,
+                Slice::empty(),
+                Slice::empty(),
+                None,
+                Some(&expected_process_tags),
+                None,
+                None,
+            )
+        };
+
+        let parsed_event_json = parsed_event_json(build_result);
+
+        assert_eq!(parsed_event_json["process_tags"], expected_process_tags_str);
     }
 
     #[test]
@@ -619,6 +671,7 @@ mod tests {
                 profile,
                 Slice::empty(),
                 Slice::empty(),
+                None,
                 None,
                 Some(&raw_internal_metadata),
                 None,
@@ -693,6 +746,7 @@ mod tests {
                 Slice::empty(),
                 None,
                 None,
+                None,
                 Some(&raw_info),
             )
         };
@@ -763,6 +817,7 @@ mod tests {
                 Slice::empty(),
                 None,
                 None,
+                None,
                 Some(&raw_info),
             )
         };
@@ -783,6 +838,7 @@ mod tests {
                 profile,
                 Slice::empty(),
                 Slice::empty(),
+                None,
                 None,
                 None,
                 None,
