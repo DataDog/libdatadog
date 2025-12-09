@@ -20,6 +20,8 @@ use libdd_common::{
 };
 
 pub mod config;
+#[cfg(feature = "cxx")]
+pub mod cxx;
 mod errors;
 pub mod reqwest_exporter;
 
