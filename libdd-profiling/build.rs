@@ -16,4 +16,3 @@ fn main() {
     #[cfg(feature = "cxx")]
     build_cxx_bridge();
 }
-

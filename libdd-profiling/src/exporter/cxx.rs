@@ -6,6 +6,7 @@
 use super::config;
 use super::reqwest_exporter::ProfileExporter;
 use crate::internal::EncodedProfile;
+use anyhow::Context as _;
 use libdd_common::Endpoint;
 use tokio_util::sync::CancellationToken as TokioCancellationToken;
 
@@ -40,7 +41,7 @@ pub mod ffi {
         // CancellationToken methods
         #[Self = "CancellationToken"]
         fn create() -> Box<CancellationToken>;
-        
+
         fn cancel(self: &CancellationToken);
         fn is_cancelled(self: &CancellationToken) -> bool;
         fn clone_token(self: &CancellationToken) -> Box<CancellationToken>;
@@ -100,6 +101,20 @@ pub mod ffi {
 }
 
 // ============================================================================
+// Helper Functions
+// ============================================================================
+
+/// Parse a vector of tag strings into Tag objects
+fn parse_tag_vec(tags: &[String]) -> anyhow::Result<Vec<libdd_common::tag::Tag>> {
+    let tags_str = tags.join(",");
+    let (tag_vec, parse_error) = libdd_common::tag::parse_tags(&tags_str);
+    if let Some(err) = parse_error {
+        anyhow::bail!("Tag parsing error: {}", err);
+    }
+    Ok(tag_vec)
+}
+
+// ============================================================================
 // Static Factory Methods
 // ============================================================================
 
@@ -107,7 +122,10 @@ impl ProfileExporter {
     pub fn create(config: ffi::ExporterConfig) -> anyhow::Result<Box<ProfileExporter>> {
         // Parse the endpoint URL
         let endpoint = if config.endpoint_url.starts_with("file://") {
-            let path = config.endpoint_url.strip_prefix("file://").unwrap();
+            let path = config
+                .endpoint_url
+                .strip_prefix("file://")
+                .context("Failed to strip file:// prefix from endpoint URL")?;
             config::file(path)?
         } else {
             let url = config.endpoint_url.parse()?;
@@ -124,11 +142,7 @@ impl ProfileExporter {
         };
 
         // Parse tags using parse_tags function
-        let tags_str = config.tags.join(",");
-        let (tags, parse_error) = libdd_common::tag::parse_tags(&tags_str);
-        if let Some(err) = parse_error {
-            anyhow::bail!("Tag parsing error: {}", err);
-        }
+        let tags = parse_tag_vec(&config.tags)?;
 
         let exporter = ProfileExporter::new(
             &config.profiling_library_name,
@@ -151,11 +165,7 @@ impl ProfileExporter {
         let url = agent_url.parse()?;
         let endpoint = config::agent(url)?;
 
-        let tags_str = tags.join(",");
-        let (tag_vec, parse_error) = libdd_common::tag::parse_tags(&tags_str);
-        if let Some(err) = parse_error {
-            anyhow::bail!("Tag parsing error: {}", err);
-        }
+        let tag_vec = parse_tag_vec(&tags)?;
 
         let exporter = ProfileExporter::new(
             &profiling_library_name,
@@ -178,11 +188,7 @@ impl ProfileExporter {
     ) -> anyhow::Result<Box<ProfileExporter>> {
         let endpoint = config::agentless(site, api_key)?;
 
-        let tags_str = tags.join(",");
-        let (tag_vec, parse_error) = libdd_common::tag::parse_tags(&tags_str);
-        if let Some(err) = parse_error {
-            anyhow::bail!("Tag parsing error: {}", err);
-        }
+        let tag_vec = parse_tag_vec(&tags)?;
 
         let exporter = ProfileExporter::new(
             &profiling_library_name,
@@ -204,11 +210,7 @@ impl ProfileExporter {
     ) -> anyhow::Result<Box<ProfileExporter>> {
         let endpoint = config::file(file_path)?;
 
-        let tags_str = tags.join(",");
-        let (tag_vec, parse_error) = libdd_common::tag::parse_tags(&tags_str);
-        if let Some(err) = parse_error {
-            anyhow::bail!("Tag parsing error: {}", err);
-        }
+        let tag_vec = parse_tag_vec(&tags)?;
 
         let exporter = ProfileExporter::new(
             &profiling_library_name,
@@ -239,11 +241,7 @@ impl ProfileExporter {
             .collect();
 
         // Convert tags
-        let tags_str = additional_tags.join(",");
-        let (tags, parse_error) = libdd_common::tag::parse_tags(&tags_str);
-        if let Some(err) = parse_error {
-            anyhow::bail!("Tag parsing error: {}", err);
-        }
+        let tags = parse_tag_vec(&additional_tags)?;
 
         // Create a tokio runtime for this blocking call
         let rt = tokio::runtime::Builder::new_current_thread()
@@ -252,7 +250,8 @@ impl ProfileExporter {
 
         // Block on the async send
         let status = rt.block_on(async {
-            self.send(*profile, &files, &tags, None, None, cancel_token).await
+            self.send(*profile, &files, &tags, None, None, cancel_token)
+                .await
         })?;
 
         Ok(status.as_u16())
@@ -276,7 +275,12 @@ impl ProfileExporter {
         additional_tags: Vec<String>,
         cancel_token: &CancellationToken,
     ) -> anyhow::Result<u16> {
-        self.send_blocking_impl(profile, additional_files, additional_tags, Some(&cancel_token.0))
+        self.send_blocking_impl(
+            profile,
+            additional_files,
+            additional_tags,
+            Some(&cancel_token.0),
+        )
     }
 }
 
@@ -310,4 +314,3 @@ impl CancellationToken {
 pub fn create_test_profile() -> anyhow::Result<Box<EncodedProfile>> {
     Ok(Box::new(EncodedProfile::test_instance()?))
 }
-

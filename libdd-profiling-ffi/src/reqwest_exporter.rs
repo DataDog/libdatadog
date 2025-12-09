@@ -52,8 +52,10 @@ pub unsafe extern "C" fn ddog_prof_ReqwestExporter_new(
         let library_version = profiling_library_version.to_utf8_lossy().into_owned();
         let family = family.to_utf8_lossy().into_owned();
         let converted_endpoint = unsafe { super::exporter::try_to_endpoint(endpoint)? };
-        let tags = tags.map(|tags| tags.iter().cloned().collect()).unwrap_or_default();
-        
+        let tags = tags
+            .map(|tags| tags.iter().cloned().collect())
+            .unwrap_or_default();
+
         anyhow::Ok(
             ProfileExporter::new(
                 &library_name,
@@ -78,38 +80,14 @@ pub unsafe extern "C" fn ddog_prof_ReqwestExporter_drop(
     drop(exporter.take())
 }
 
-unsafe fn into_vec_files_reqwest<'a>(slice: Slice<'a, File>) -> Vec<libdd_profiling::exporter::reqwest_exporter::File<'a>> {
+unsafe fn into_vec_files_reqwest<'a>(
+    slice: Slice<'a, File>,
+) -> Vec<libdd_profiling::exporter::reqwest_exporter::File<'a>> {
     // Convert the FFI File slice using the shared conversion function from exporter module
-    let hyper_files = super::exporter::into_vec_files(slice);
-    // Convert from hyper exporter::File to reqwest exporter::File
-    hyper_files
+    super::exporter::into_vec_files(slice)
         .into_iter()
-        .map(|file| libdd_profiling::exporter::reqwest_exporter::File {
-            name: file.name,
-            bytes: file.bytes,
-        })
+        .map(Into::into)
         .collect()
-}
-
-unsafe fn parse_json(
-    string_id: &str,
-    json_string: Option<&CharSlice>,
-) -> anyhow::Result<Option<serde_json::Value>> {
-    match json_string {
-        None => Ok(None),
-        Some(json_string) => {
-            let json = json_string.try_to_utf8()?;
-            match serde_json::from_str(json) {
-                Ok(parsed) => Ok(Some(parsed)),
-                Err(error) => Err(anyhow::anyhow!(
-                    "Failed to parse contents of {} json string (`{}`): {}.",
-                    string_id,
-                    json,
-                    error
-                )),
-            }
-        }
-    }
 }
 
 /// Sends a profile asynchronously, returning the HTTP status code.
@@ -152,9 +130,10 @@ pub unsafe extern "C" fn ddog_prof_ReqwestExporter_send(
         let tags: Vec<Tag> = optional_additional_tags
             .map(|tags| tags.iter().cloned().collect())
             .unwrap_or_default();
-        
-        let internal_metadata = parse_json("internal_metadata", optional_internal_metadata_json)?;
-        let info = parse_json("info", optional_info_json)?;
+
+        let internal_metadata =
+            super::exporter::parse_json("internal_metadata", optional_internal_metadata_json)?;
+        let info = super::exporter::parse_json("info", optional_info_json)?;
         let cancel_token = cancel.to_inner_mut().ok();
 
         // Create a tokio runtime for the async operation
@@ -183,7 +162,6 @@ pub unsafe extern "C" fn ddog_prof_ReqwestExporter_send(
 mod tests {
     use super::*;
     use libdd_common::tag;
-    use libdd_common_ffi::Slice;
 
     fn profiling_library_name() -> CharSlice<'static> {
         CharSlice::from("dd-trace-foo")
@@ -252,4 +230,3 @@ mod tests {
         }
     }
 }
-

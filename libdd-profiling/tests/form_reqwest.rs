@@ -397,7 +397,11 @@ mod tests {
         let profile = EncodedProfile::test_instance().expect("To get a profile");
         let result = exporter.send(profile, &[], &[], None, None, None).await;
 
-        assert!(result.is_ok(), "File dump request should succeed: {:?}", result);
+        assert!(
+            result.is_ok(),
+            "File dump request should succeed: {:?}",
+            result
+        );
         assert_eq!(result.unwrap(), 200);
 
         // Give the server task time to write the file
@@ -406,7 +410,7 @@ mod tests {
         // Check that a file was created (with timestamp suffix)
         let parent_dir = dump_file.parent().unwrap();
         let file_stem = dump_file.file_stem().unwrap().to_string_lossy();
-        
+
         // Find files matching the pattern
         let mut found_dump = false;
         if let Ok(entries) = std::fs::read_dir(parent_dir) {
@@ -415,22 +419,25 @@ mod tests {
                 let filename_str = filename.to_string_lossy();
                 if filename_str.starts_with(&*file_stem) && filename_str.ends_with(".http") {
                     // Verify the file has content (binary data is OK)
-                    let content = std::fs::read(entry.path())
-                        .expect("Failed to read dump file");
-                    
+                    let content = std::fs::read(entry.path()).expect("Failed to read dump file");
+
                     // Verify it looks like an HTTP request (check the beginning as text)
                     // The content may contain binary data, so only check the start
                     if content.len() > 100 {
                         let header_part = String::from_utf8_lossy(&content[..100]);
                         assert!(header_part.starts_with("POST "), "Should be a POST request");
-                        
+
                         // Check if multipart/form-data appears somewhere in headers
-                        let searchable = String::from_utf8_lossy(&content[..content.len().min(2000)]);
-                        assert!(searchable.contains("multipart/form-data"), "Should contain multipart form data");
+                        let searchable =
+                            String::from_utf8_lossy(&content[..content.len().min(2000)]);
+                        assert!(
+                            searchable.contains("multipart/form-data"),
+                            "Should contain multipart form data"
+                        );
                     }
-                    
+
                     found_dump = true;
-                    
+
                     // Clean up
                     let _ = std::fs::remove_file(entry.path());
                     break;

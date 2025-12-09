@@ -245,7 +245,7 @@ pub unsafe extern "C" fn ddog_prof_Exporter_Request_build(
     })
 }
 
-unsafe fn parse_json(
+pub(crate) unsafe fn parse_json(
     string_id: &str,
     json_string: Option<&CharSlice>,
 ) -> anyhow::Result<Option<serde_json::Value>> {

@@ -50,6 +50,15 @@ pub struct File<'a> {
     pub bytes: &'a [u8],
 }
 
+impl<'a> From<super::File<'a>> for File<'a> {
+    fn from(file: super::File<'a>) -> Self {
+        Self {
+            name: file.name,
+            bytes: file.bytes,
+        }
+    }
+}
+
 impl ProfileExporter {
     /// Creates a new exporter to be used to report profiling data.
     ///
@@ -61,7 +70,7 @@ impl ProfileExporter {
         profiling_library_name: &str,
         profiling_library_version: &str,
         family: &str,
-        tags: Vec<Tag>,
+        mut tags: Vec<Tag>,
         endpoint: Endpoint,
     ) -> anyhow::Result<Self> {
         let mut builder = reqwest::Client::builder()
@@ -90,13 +99,18 @@ impl ProfileExporter {
         }
 
         #[cfg(not(unix))]
-        if endpoint.url.scheme_str() == Some("unix") {
-            use libdd_common::connector::uds::socket_path_from_uri;
-            let socket_path = socket_path_from_uri(&endpoint.url)?;
-            builder = builder.unix_socket(socket_path);
-            request_url = format!("http://localhost{}", endpoint.url.path());
-        } else {
-            request_url = endpoint.url.to_string();
+        match endpoint.url.scheme_str() {
+            Some("file") => {
+                anyhow::bail!(
+                    "file:// endpoints are only supported on Unix platforms (requires Unix domain sockets)"
+                );
+            }
+            Some("unix") => {
+                anyhow::bail!("unix:// endpoints are only supported on Unix platforms");
+            }
+            _ => {
+                request_url = endpoint.url.to_string();
+            }
         }
 
         // Pre-build all static headers
@@ -115,57 +129,53 @@ impl ProfileExporter {
             "DD-EVP-ORIGIN-VERSION",
             reqwest::header::HeaderValue::from_str(profiling_library_version)?,
         );
-
-        let user_agent = format!("DDProf/{}", env!("CARGO_PKG_VERSION"));
         headers.insert(
             "User-Agent",
-            reqwest::header::HeaderValue::from_str(&user_agent)?,
+            reqwest::header::HeaderValue::from_str(&format!(
+                "DDProf/{}",
+                env!("CARGO_PKG_VERSION")
+            ))?,
         );
 
         // Optional headers (API key, test token)
-        // These can fail if they contain invalid characters, but we treat that as non-fatal
-        // since they're provided by the user's configuration
         if let Some(api_key) = &endpoint.api_key {
-            if let Ok(value) = reqwest::header::HeaderValue::from_str(api_key) {
-                headers.insert("DD-API-KEY", value);
-            }
+            headers.insert(
+                "DD-API-KEY",
+                reqwest::header::HeaderValue::from_str(api_key)?,
+            );
         }
         if let Some(test_token) = &endpoint.test_token {
-            if let Ok(value) = reqwest::header::HeaderValue::from_str(test_token) {
-                headers.insert("X-Datadog-Test-Session-Token", value);
-            }
-        }
-
-        // Precompute the base tags string (includes configured tags + Azure App Services tags)
-        let mut base_tags_string = String::new();
-        for tag in &tags {
-            base_tags_string.push_str(tag.as_ref());
-            base_tags_string.push(',');
+            headers.insert(
+                "X-Datadog-Test-Session-Token",
+                reqwest::header::HeaderValue::from_str(test_token)?,
+            );
         }
 
         // Add Azure App Services tags if available
         if let Some(aas) = &*azure_app_services::AAS_METADATA {
-            for (name, value) in [
-                ("aas.resource.id", aas.get_resource_id()),
-                (
-                    "aas.environment.extension_version",
-                    aas.get_extension_version(),
-                ),
-                ("aas.environment.instance_id", aas.get_instance_id()),
-                ("aas.environment.instance_name", aas.get_instance_name()),
-                ("aas.environment.os", aas.get_operating_system()),
-                ("aas.resource.group", aas.get_resource_group()),
-                ("aas.site.name", aas.get_site_name()),
-                ("aas.site.kind", aas.get_site_kind()),
-                ("aas.site.type", aas.get_site_type()),
-                ("aas.subscription.id", aas.get_subscription_id()),
-            ] {
-                if let Ok(tag) = Tag::new(name, value) {
-                    base_tags_string.push_str(tag.as_ref());
-                    base_tags_string.push(',');
-                }
-            }
+            tags.extend(
+                [
+                    ("aas.resource.id", aas.get_resource_id()),
+                    (
+                        "aas.environment.extension_version",
+                        aas.get_extension_version(),
+                    ),
+                    ("aas.environment.instance_id", aas.get_instance_id()),
+                    ("aas.environment.instance_name", aas.get_instance_name()),
+                    ("aas.environment.os", aas.get_operating_system()),
+                    ("aas.resource.group", aas.get_resource_group()),
+                    ("aas.site.name", aas.get_site_name()),
+                    ("aas.site.kind", aas.get_site_kind()),
+                    ("aas.site.type", aas.get_site_type()),
+                    ("aas.subscription.id", aas.get_subscription_id()),
+                ]
+                .into_iter()
+                .filter_map(|(name, value)| Tag::new(name, value).ok()),
+            );
         }
+
+        // Precompute the base tags string (includes configured tags + Azure App Services tags)
+        let base_tags_string: String = tags.iter().flat_map(|tag| [tag.as_ref(), ","]).collect();
 
         Ok(Self {
             client: builder.build()?,
@@ -318,10 +328,8 @@ impl ProfileExporter {
         use tokio::net::UnixListener;
 
         // Create a temporary socket path
-        let socket_path = std::env::temp_dir().join(format!(
-            "libdatadog_dump_{}.sock",
-            std::process::id()
-        ));
+        let socket_path =
+            std::env::temp_dir().join(format!("libdatadog_dump_{}.sock", std::process::id()));
 
         // Remove socket file if it already exists
         let _ = std::fs::remove_file(&socket_path);
@@ -337,32 +345,42 @@ impl ProfileExporter {
                 match listener.accept().await {
                     Ok((mut stream, _)) => {
                         let output_path = output_path.clone();
-                        
+
                         tokio::spawn(async move {
                             // Read the HTTP request in chunks
                             let mut request_data = Vec::new();
                             let mut buffer = [0u8; 8192];
                             let mut content_length: Option<usize> = None;
                             let mut headers_end_pos: Option<usize> = None;
-                            
+
                             // Read headers first
                             loop {
                                 match stream.read(&mut buffer).await {
                                     Ok(0) => break, // Connection closed
                                     Ok(n) => {
                                         request_data.extend_from_slice(&buffer[..n]);
-                                        
+
                                         // Look for end of headers if we haven't found it yet
                                         if headers_end_pos.is_none() {
-                                            if let Some(pos) = find_subsequence(&request_data, b"\r\n\r\n") {
+                                            if let Some(pos) =
+                                                find_subsequence(&request_data, b"\r\n\r\n")
+                                            {
                                                 headers_end_pos = Some(pos + 4);
-                                                
+
                                                 // Parse Content-Length from headers
-                                                if let Ok(headers_str) = std::str::from_utf8(&request_data[..pos]) {
+                                                if let Ok(headers_str) =
+                                                    std::str::from_utf8(&request_data[..pos])
+                                                {
                                                     for line in headers_str.lines() {
-                                                        if line.to_lowercase().starts_with("content-length:") {
-                                                            if let Some(len_str) = line.split(':').nth(1) {
-                                                                content_length = len_str.trim().parse().ok();
+                                                        if line
+                                                            .to_lowercase()
+                                                            .starts_with("content-length:")
+                                                        {
+                                                            if let Some(len_str) =
+                                                                line.split(':').nth(1)
+                                                            {
+                                                                content_length =
+                                                                    len_str.trim().parse().ok();
                                                             }
                                                             break;
                                                         }
@@ -370,7 +388,7 @@ impl ProfileExporter {
                                                 }
                                             }
                                         }
-                                        
+
                                         // Check if we have the complete request
                                         if let Some(headers_end) = headers_end_pos {
                                             if let Some(expected_len) = content_length {
@@ -387,34 +405,43 @@ impl ProfileExporter {
                                     }
                                 }
                             }
-                            
+
                             if !request_data.is_empty() {
                                 // Generate filename with timestamp
                                 let timestamp = chrono::Utc::now().format("%Y%m%d_%H%M%S_%3f");
                                 let final_path = if let Some(ext) = output_path.extension() {
                                     // Has extension, add timestamp before extension
-                                    let stem = output_path.file_stem()
+                                    let stem = output_path
+                                        .file_stem()
                                         .and_then(|s| s.to_str())
                                         .unwrap_or("dump");
-                                    let parent = output_path.parent()
+                                    let parent = output_path
+                                        .parent()
                                         .unwrap_or_else(|| std::path::Path::new("."));
-                                    parent.join(format!("{}_{}.{}", 
+                                    parent.join(format!(
+                                        "{}_{}.{}",
                                         stem,
                                         timestamp,
-                                        ext.to_string_lossy()))
+                                        ext.to_string_lossy()
+                                    ))
                                 } else {
                                     // No extension, append timestamp
-                                    let filename = output_path.file_name()
+                                    let filename = output_path
+                                        .file_name()
                                         .and_then(|s| s.to_str())
                                         .unwrap_or("dump");
-                                    let parent = output_path.parent()
+                                    let parent = output_path
+                                        .parent()
                                         .unwrap_or_else(|| std::path::Path::new("."));
                                     parent.join(format!("{}_{}", filename, timestamp))
                                 };
 
                                 // Write the request to file
                                 if let Err(e) = std::fs::write(&final_path, &request_data) {
-                                    eprintln!("Failed to write request dump to {:?}: {}", final_path, e);
+                                    eprintln!(
+                                        "Failed to write request dump to {:?}: {}",
+                                        final_path, e
+                                    );
                                 } else {
                                     println!("HTTP request dumped to: {:?}", final_path);
                                 }
