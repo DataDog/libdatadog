@@ -351,7 +351,6 @@ fn test_crash_tracking_app(crash_type: &str) {
                 .arg(&fixtures.output_dir)
                 .arg(crash_type);
         },
-        false, // expect crash (not success)
         validator,
     )
     .unwrap();
@@ -399,7 +398,6 @@ fn test_crash_tracking_bin_panic_hook_after_fork() {
                 .arg("panic_hook_after_fork") // mode
                 .arg("donothing"); // crash method (not used in this mode)
         },
-        false, // expect crash (not success)
         validator,
     )
     .unwrap();
@@ -445,9 +443,9 @@ fn test_crash_tracking_callstack() {
         |cmd, fixtures| {
             cmd.arg(format!("file://{}", fixtures.crash_profile_path.display()))
                 .arg(&artifacts_map[&crashtracker_receiver])
-                .arg(&fixtures.output_dir);
+                .arg(&fixtures.output_dir)
+                .arg("segfault");
         },
-        false, // expect crash (not success)
         |payload, _fixtures| {
             // Use the new callstack validator
             PayloadValidator::new(payload).validate_callstack_functions(&expected_functions)?;
