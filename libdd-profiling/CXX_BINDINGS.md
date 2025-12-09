@@ -24,126 +24,42 @@ Add the `cxx` feature when building:
 cargo build -p libdd-profiling --features cxx
 ```
 
-## API Overview
+## Usage Example
 
-### Creating an Exporter
+See [`examples/cxx/profiling_exporter.cpp`](../../examples/cxx/profiling_exporter.cpp) for a complete working example demonstrating:
 
-#### Option 1: Agent-based Exporter (Most Common)
+- Creating exporters with different endpoint types (agent, agentless, file-based)
+- Sending profiles with `send_blocking()`
+- Adding additional files and tags
+- Using cancellation tokens with `send_blocking_with_cancel()`
+- C++20 designated initializers for clean configuration
 
-```cpp
-auto exporter = ProfileExporter::create_agent(
-    "dd-trace-cpp",           // library name
-    "1.0.0",                  // library version
-    "cpp",                    // language family
-    {                         // tags
-        "env:production",
-        "service:my-service",
-        "version:2.1.0"
-    },
-    "http://localhost:8126"   // agent URL
-);
+To build and run the example:
+```bash
+cd examples/cxx
+./build-and-run-profiling.sh    # Unix
+./build-and-run-profiling.ps1   # Windows
 ```
 
-#### Option 2: Agentless (Direct to Intake)
+## Quick Reference
 
-```cpp
-auto exporter = ProfileExporter::create_agentless(
-    "dd-trace-cpp",           // library name
-    "1.0.0",                  // library version
-    "cpp",                    // language family
-    {"env:staging"},          // tags
-    "datadoghq.com",         // site
-    "YOUR_API_KEY"           // Datadog API key
-);
-```
+### Creating Exporters
 
-#### Option 3: File-based (Debugging)
+The library provides four ways to create an exporter:
 
-```cpp
-auto exporter = ProfileExporter::create_file(
-    "dd-trace-cpp",           // library name
-    "1.0.0",                  // library version
-    "cpp",                    // language family
-    {"env:development"},      // tags
-    "/tmp/profile_dump.http"  // output file path
-);
-```
-
-The file-based exporter captures the raw HTTP request that would be sent to Datadog, including all headers and multipart form data. Each request is saved with a timestamp suffix (e.g., `profile_dump_20231209_123456_789.http`).
-
-#### Option 4: Custom Configuration
-
-```cpp
-ExporterConfig config;
-config.profiling_library_name = "dd-trace-cpp";
-config.profiling_library_version = "2.0.0";
-config.family = "cpp";
-config.tags = {"env:test", "region:us-east-1"};
-config.endpoint_url = "http://localhost:8126";
-config.api_key = "";           // optional
-config.timeout_ms = 10000;     // 10 seconds
-
-auto exporter = ProfileExporter::create(config);
-```
+1. **`ProfileExporter::create_agent(...)`** - Connect to local Datadog agent (most common)
+2. **`ProfileExporter::create_agentless(...)`** - Direct to Datadog intake with API key
+3. **`ProfileExporter::create_file(...)`** - Save HTTP request to file for debugging
+4. **`ProfileExporter::create(...)`** - Custom configuration via `ExporterConfig` struct
 
 ### Sending Profiles
 
-#### Basic Send
+- **`send_blocking(profile, files, tags)`** - Send profile and wait for result
+- **`send_blocking_with_cancel(profile, files, tags, token)`** - Send with cancellation support
 
-```cpp
-// Get a profile (in real usage, this comes from your profiling code)
-auto profile = create_test_profile();
+### Creating Test Data
 
-// Prepare additional files (optional)
-std::vector<ExporterFile> files;
-files.push_back(ExporterFile{
-    .name = "metadata.json",
-    .bytes = {/* ... your data ... */}
-});
-
-// Prepare profile-specific tags (optional)
-std::vector<std::string> additional_tags = {
-    "profile_type:cpu",
-    "duration_seconds:60"
-};
-
-// Send the profile (blocking call)
-auto status_code = exporter->send_blocking(
-    std::move(profile),
-    files,
-    additional_tags
-);
-
-std::cout << "Profile sent! HTTP status: " << status_code << std::endl;
-```
-
-#### Send with Cancellation Support
-
-```cpp
-// Create a cancellation token
-auto cancel_token = CancellationToken::create();
-
-// In another thread, you might cancel the operation:
-std::thread([&cancel_token]() {
-    std::this_thread::sleep_for(std::chrono::seconds(5));
-    cancel_token->cancel();
-}).detach();
-
-// Send with cancellation support
-try {
-    auto status_code = exporter->send_blocking_with_cancel(
-        std::move(profile),
-        files,
-        additional_tags,
-        *cancel_token
-    );
-    std::cout << "Profile sent! HTTP status: " << status_code << std::endl;
-} catch (const rust::Error& e) {
-    if (cancel_token->is_cancelled()) {
-        std::cout << "Operation was cancelled" << std::endl;
-    }
-}
-```
+- **`EncodedProfile::create_test_profile()`** - Generate a test profile for examples/testing
 
 ## Types
 
@@ -174,25 +90,6 @@ struct ExporterFile {
 };
 ```
 
-## Example
-
-See `examples/cxx/profiling_exporter.cpp` for a complete working example that demonstrates:
-
-- Creating exporters with different endpoint types
-- Sending test profiles
-- Adding custom tags
-- Attaching additional files
-- Error handling
-
-## Building the Example
-
-```bash
-# From the libdatadog root directory
-cargo build -p libdd-profiling --features cxx
-cd examples/cxx
-# Build instructions TBD (requires CXX build setup)
-```
-
 ## Tag Format
 
 Tags follow the Datadog tagging convention:
@@ -202,16 +99,7 @@ Tags follow the Datadog tagging convention:
 
 ## Error Handling
 
-All factory methods and `send_blocking` return `rust::Result<T>` which can throw `rust::Error` exceptions:
-
-```cpp
-try {
-    auto exporter = ProfileExporter::create_agent(/* ... */);
-    auto status = exporter->send_blocking(/* ... */);
-} catch (const rust::Error& e) {
-    std::cerr << "Error: " << e.what() << std::endl;
-}
-```
+All factory methods and `send_blocking` methods return `rust::Result<T>`. On error, they throw `rust::Error` exceptions. See the example code for error handling patterns.
 
 ## Threading Model
 
@@ -221,37 +109,20 @@ try {
 
 ## Debugging with File Export
 
-The file-based exporter is particularly useful for:
-- Inspecting the exact HTTP request format
+The file-based exporter (`create_file()`) captures the raw HTTP request to a file, useful for:
+- Inspecting exact request format and headers
 - Debugging multipart form encoding
-- Verifying profile contents before sending to Datadog
-- Integration testing without needing a running agent
+- Verifying profile contents
+- Testing without a running agent
 
-Example output file structure:
-```
-POST /v1/input HTTP/1.1
-connection: close
-dd-evp-origin: dd-trace-cpp
-dd-evp-origin-version: 1.0.0
-content-type: multipart/form-data; boundary=...
+Files are saved with a timestamp suffix (e.g., `profile_dump_20231209_123456_789.http`) and contain the complete HTTP request including all headers and multipart form data.
 
---boundary
-Content-Disposition: form-data; name="event"; filename="event.json"
+## Requirements & Limitations
 
-{"attachments":["profile.pprof"],"tags_profiler":"..."}
---boundary
-Content-Disposition: form-data; name="profile.pprof"; filename="profile.pprof"
-
-[binary pprof data]
---boundary--
-```
-
-## Limitations
-
+- **C++20** or later (for designated initializers; C++11+ works with explicit member initialization)
+- **Rust toolchain** and CXX code generation
 - Currently only supports the reqwest-based exporter (not the legacy hyper exporter)
-- Requires Rust toolchain and CXX code generation
-- C++11 or later required
-- Unix platforms only for file:// debug export (uses Unix domain sockets)
+- Unix platforms only for `file://` debug export (uses Unix domain sockets)
 
 ## Implementation Details
 

@@ -69,7 +69,7 @@ int main() {
         
         // Example 5: Send a test profile
         std::cout << "\n5. Sending a test profile..." << std::endl;
-        auto profile = create_test_profile();
+        auto profile = EncodedProfile::create_test_profile();
         
         // Prepare additional files (empty for this example)
         std::vector<ExporterFile> additional_files;
@@ -92,7 +92,7 @@ int main() {
         
         // Example 6: Sending with custom files
         std::cout << "\n6. Sending profile with additional files..." << std::endl;
-        auto profile2 = create_test_profile();
+        auto profile2 = EncodedProfile::create_test_profile();
         
         additional_files.push_back(ExporterFile{
             .name = "metadata.json",
@@ -109,7 +109,7 @@ int main() {
         
         // Example 7: Sending with cancellation token
         std::cout << "\n7. Demonstrating cancellation support..." << std::endl;
-        auto profile3 = create_test_profile();
+        auto profile3 = EncodedProfile::create_test_profile();
         auto cancel_token = CancellationToken::create();
         
         // In a real application, you might cancel from another thread:

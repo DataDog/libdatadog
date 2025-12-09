@@ -95,7 +95,8 @@ pub mod ffi {
             cancel_token: &CancellationToken,
         ) -> Result<u16>;
 
-        // EncodedProfile factory (separate function to avoid name collision)
+        // EncodedProfile static factory method
+        #[Self = "EncodedProfile"]
         fn create_test_profile() -> Result<Box<EncodedProfile>>;
     }
 }
@@ -310,7 +311,9 @@ impl CancellationToken {
     }
 }
 
-// Free function for creating test profile to avoid name collision
-pub fn create_test_profile() -> anyhow::Result<Box<EncodedProfile>> {
-    Ok(Box::new(EncodedProfile::test_instance()?))
+// EncodedProfile factory method
+impl EncodedProfile {
+    pub fn create_test_profile() -> anyhow::Result<Box<EncodedProfile>> {
+        Ok(Box::new(EncodedProfile::test_instance()?))
+    }
 }
