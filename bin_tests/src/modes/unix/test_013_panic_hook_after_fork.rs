@@ -12,8 +12,10 @@ use nix::sys::wait::{waitpid, WaitStatus};
 use nix::unistd::Pid;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
 use std::time::{Duration, Instant};
+
+// Shared state to track if the custom panic hook was called
+static PANIC_HOOK_CALLED: AtomicBool = AtomicBool::new(false);
 
 pub struct Test;
 
@@ -27,7 +29,7 @@ impl Behavior for Test {
     }
 
     fn pre(&self, _output_dir: &Path) -> anyhow::Result<()> {
-        Ok(())
+        pre()
     }
 
     fn post(&self, _output_dir: &Path) -> anyhow::Result<()> {
@@ -35,15 +37,23 @@ impl Behavior for Test {
     }
 }
 
-fn post() -> anyhow::Result<()> {
-    // Set up a panic hook to verify it gets called
-    let panic_hook_called = Arc::new(AtomicBool::new(false));
-    let panic_hook_called_clone = Arc::clone(&panic_hook_called);
+fn pre() -> anyhow::Result<()> {
+    // Reset the flag in case the test runs multiple times
+    PANIC_HOOK_CALLED.store(false, Ordering::SeqCst);
 
-    std::panic::set_hook(Box::new(move |_panic_info| {
-        panic_hook_called_clone.store(true, Ordering::SeqCst);
+    let old_hook = std::panic::take_hook();
+    // Set up a panic hook BEFORE crashtracker::init to verify the hook chain works
+    std::panic::set_hook(Box::new(move |panic_info| {
+        // Mark that our custom hook was called
+        PANIC_HOOK_CALLED.store(true, Ordering::SeqCst);
+        // Call the previous hook (usually the default panic hook)
+        old_hook(panic_info);
     }));
 
+    Ok(())
+}
+
+fn post() -> anyhow::Result<()> {
     match unsafe { libc::fork() } {
         -1 => {
             anyhow::bail!("Failed to fork");
@@ -86,6 +96,13 @@ fn post() -> anyhow::Result<()> {
                         // Other status - continue waiting
                     }
                 }
+            }
+
+            // Verify that our custom panic hook was called
+            // This proves that the hook chain works correctly:
+            // crashtracker's hook -> our custom hook -> default hook
+            if !PANIC_HOOK_CALLED.load(Ordering::SeqCst) {
+                anyhow::bail!("Custom panic hook was not called - hook chaining failed!");
             }
 
             // Parent exits with error code to indicate test completion
