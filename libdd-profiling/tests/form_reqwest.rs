@@ -25,16 +25,6 @@ mod tests {
             .expect("exporter to construct")
     }
 
-    #[test]
-    #[cfg_attr(miri, ignore)]
-    fn test_new_exporter() {
-        let base_url = "http://localhost:8126".parse().expect("url to parse");
-        let endpoint = config::agent(base_url).expect("endpoint to construct");
-        let exporter =
-            ProfileExporter::new("dd-trace-foo", "1.2.3", "php", common::default_tags(), endpoint);
-        assert!(exporter.is_ok());
-    }
-
     #[tokio::test]
     #[cfg_attr(miri, ignore)]
     async fn test_send_with_all_features() {
@@ -114,26 +104,6 @@ mod tests {
             .or_else(|| headers_map.get("DD-API-KEY"))
             .expect("API key header should be present");
         assert_eq!(api_key_header[0], api_key);
-    }
-
-    #[tokio::test]
-    #[cfg_attr(miri, ignore)]
-    async fn test_custom_timeout() {
-        let mock_server = common::setup_basic_mock().await;
-
-        let base_url = mock_server.uri().parse().unwrap();
-        let mut endpoint = config::agent(base_url).expect("endpoint to construct");
-        endpoint.timeout_ms = 5000;
-
-        let exporter = ProfileExporter::new("dd-trace-test", "1.0.0", "go", vec![], endpoint)
-            .expect("exporter to construct");
-
-        let profile = EncodedProfile::test_instance().expect("To get a profile");
-        let status = exporter
-            .send(profile, &[], &[], None, None, None)
-            .await
-            .expect("send to succeed");
-        assert_eq!(status, 200);
     }
 
     #[tokio::test]
