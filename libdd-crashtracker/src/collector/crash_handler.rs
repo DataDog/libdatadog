@@ -78,6 +78,30 @@ pub fn update_metadata(metadata: Metadata) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Format a panic message with optional location information.
+fn format_panic_message(
+    category: &str,
+    description: &str,
+    location: Option<&panic::Location>,
+) -> String {
+    let base = match location {
+        Some(loc) => format!(
+            "Process panicked with {} ({}:{}:{})",
+            category,
+            loc.file(),
+            loc.line(),
+            loc.column()
+        ),
+        None => format!("Process panicked with {}", category),
+    };
+
+    if description.is_empty() {
+        base
+    } else {
+        format!("{}: {}", base, description)
+    }
+}
+
 /// Register the panic hook.
 ///
 /// This function is used to register the panic hook and store the previous hook.
@@ -98,15 +122,25 @@ pub fn register_panic_hook() -> anyhow::Result<()> {
     let old_hook_ptr = Box::into_raw(Box::new(old_hook));
     PREVIOUS_PANIC_HOOK.swap(old_hook_ptr, SeqCst);
     panic::set_hook(Box::new(|panic_info| {
-        if let Some(s) = panic_info.payload().downcast_ref::<&str>() {
-            let message_ptr = PANIC_MESSAGE.swap(Box::into_raw(Box::new(s.to_string())), SeqCst);
-            // message_ptr should be null, but just in case.
-            if !message_ptr.is_null() {
-                unsafe {
-                    std::mem::drop(Box::from_raw(message_ptr));
-                }
+        // Extract panic message from payload (supports &str and String)
+        let message = if let Some(&s) = panic_info.payload().downcast_ref::<&str>() {
+            format_panic_message("message", s, panic_info.location())
+        } else if let Some(s) = panic_info.payload().downcast_ref::<String>() {
+            format_panic_message("message", s.as_str(), panic_info.location())
+        } else {
+            // For non-string types, use a generic message
+            format_panic_message("unknown type", "", panic_info.location())
+        };
+
+        // Store the message, cleaning up any old message
+        let message_ptr = PANIC_MESSAGE.swap(Box::into_raw(Box::new(message)), SeqCst);
+        // message_ptr should be null, but just in case.
+        if !message_ptr.is_null() {
+            unsafe {
+                std::mem::drop(Box::from_raw(message_ptr));
             }
         }
+
         call_previous_panic_hook(panic_info);
     }));
     Ok(())

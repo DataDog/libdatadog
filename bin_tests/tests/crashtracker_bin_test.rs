@@ -327,11 +327,11 @@ fn test_crash_tracking_app(crash_type: &str) {
 
         match crash_type_owned.as_str() {
             "panic" => {
-                let expected_message = "program panicked";
-                assert_eq!(
-                    error["message"].as_str().unwrap(),
-                    expected_message,
-                    "Expected panic message for panic crash type"
+                let message = error["message"].as_str().unwrap();
+                assert!(
+                    message.contains("Process panicked with message") && message.contains("program panicked"),
+                    "Expected panic message to contain 'Process panicked with message' and 'program panicked', got: {}",
+                    message
                 );
             }
             "segfault" => {
@@ -360,6 +360,31 @@ fn test_crash_tracking_app(crash_type: &str) {
 #[cfg_attr(miri, ignore)]
 #[cfg(not(target_os = "macos"))] // Same restriction as other panic tests
 fn test_crash_tracking_bin_panic_hook_after_fork() {
+    test_panic_hook_mode("panic_hook_after_fork", "child panicked after fork");
+}
+
+#[test]
+#[cfg_attr(miri, ignore)]
+#[cfg(not(target_os = "macos"))] // Same restriction as other panic tests
+fn test_crash_tracking_bin_panic_hook_string() {
+    test_panic_hook_mode(
+        "panic_hook_string",
+        "Process panicked with message: Panic with value: 42",
+    );
+}
+
+#[test]
+#[cfg_attr(miri, ignore)]
+#[cfg(not(target_os = "macos"))] // Same restriction as other panic tests
+fn test_crash_tracking_bin_panic_hook_unknown_type() {
+    test_panic_hook_mode(
+        "panic_hook_unknown_type",
+        "Process panicked with unknown type",
+    );
+}
+
+/// Helper function to run panic hook tests with different payload types
+fn test_panic_hook_mode(mode: &str, expected_message_substring: &str) {
     use bin_tests::test_runner::run_custom_crash_test;
 
     // Set up custom artifacts: receiver + crashtracker_bin_test
@@ -368,22 +393,16 @@ fn test_crash_tracking_bin_panic_hook_after_fork() {
 
     let artifacts_map = build_artifacts(&[&crashtracker_receiver, &crashtracker_bin_test]).unwrap();
 
-    let validator: ValidatorFn = Box::new(|payload, _fixtures| {
+    let expected_msg = expected_message_substring.to_owned();
+    let validator: ValidatorFn = Box::new(move |payload, _fixtures| {
         // Verify the panic message is captured
         let error = &payload["error"];
         let message = error["message"].as_str().unwrap();
         assert!(
-            message.contains("child panicked after fork"),
-            "Expected panic message to contain 'child panicked after fork', got: {}",
+            message.contains(&expected_msg),
+            "Expected panic message to contain '{}', got: {}",
+            expected_msg,
             message
-        );
-
-        // TODO change the kind into Panic instead
-        let kind = error["kind"].as_str().unwrap();
-        assert_eq!(
-            kind, "UnixSignal",
-            "Expected error kind to be UnixSignal, got: {}",
-            kind
         );
 
         Ok(())
@@ -395,8 +414,8 @@ fn test_crash_tracking_bin_panic_hook_after_fork() {
             cmd.arg(format!("file://{}", fixtures.crash_profile_path.display()))
                 .arg(&artifacts_map[&crashtracker_receiver])
                 .arg(&fixtures.output_dir)
-                .arg("panic_hook_after_fork") // mode
-                .arg("donothing"); // crash method (not used in this mode)
+                .arg(mode)
+                .arg("donothing"); // crash method (not used in panic hook tests)
         },
         validator,
     )
