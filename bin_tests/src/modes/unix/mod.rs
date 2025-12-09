@@ -14,3 +14,5 @@ pub mod test_010_runtime_callback_frame;
 pub mod test_011_runtime_callback_string;
 pub mod test_012_runtime_callback_frame_invalid_utf8;
 pub mod test_013_panic_hook_after_fork;
+pub mod test_014_panic_hook_string;
+pub mod test_015_panic_hook_unknown_type;
