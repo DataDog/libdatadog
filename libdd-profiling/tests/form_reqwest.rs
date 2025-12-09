@@ -378,4 +378,66 @@ mod tests {
 
         assert_eq!(status, 200);
     }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    #[cfg_attr(miri, ignore)]
+    async fn test_file_dump_endpoint() {
+        // Create a temporary directory for the dump
+        let temp_dir = std::env::temp_dir();
+        let dump_file = temp_dir.join(format!("profile_dump_{}.http", std::process::id()));
+
+        // Create a file:// endpoint using the config helper
+        let endpoint = config::file(dump_file.to_string_lossy().as_ref())
+            .expect("Failed to create file endpoint");
+
+        let exporter = ProfileExporter::new("dd-trace-test", "1.0.0", "rust", vec![], endpoint)
+            .expect("exporter to construct");
+
+        let profile = EncodedProfile::test_instance().expect("To get a profile");
+        let result = exporter.send(profile, &[], &[], None, None, None).await;
+
+        assert!(result.is_ok(), "File dump request should succeed: {:?}", result);
+        assert_eq!(result.unwrap(), 200);
+
+        // Give the server task time to write the file
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+
+        // Check that a file was created (with timestamp suffix)
+        let parent_dir = dump_file.parent().unwrap();
+        let file_stem = dump_file.file_stem().unwrap().to_string_lossy();
+        
+        // Find files matching the pattern
+        let mut found_dump = false;
+        if let Ok(entries) = std::fs::read_dir(parent_dir) {
+            for entry in entries.flatten() {
+                let filename = entry.file_name();
+                let filename_str = filename.to_string_lossy();
+                if filename_str.starts_with(&*file_stem) && filename_str.ends_with(".http") {
+                    // Verify the file has content (binary data is OK)
+                    let content = std::fs::read(entry.path())
+                        .expect("Failed to read dump file");
+                    
+                    // Verify it looks like an HTTP request (check the beginning as text)
+                    // The content may contain binary data, so only check the start
+                    if content.len() > 100 {
+                        let header_part = String::from_utf8_lossy(&content[..100]);
+                        assert!(header_part.starts_with("POST "), "Should be a POST request");
+                        
+                        // Check if multipart/form-data appears somewhere in headers
+                        let searchable = String::from_utf8_lossy(&content[..content.len().min(2000)]);
+                        assert!(searchable.contains("multipart/form-data"), "Should contain multipart form data");
+                    }
+                    
+                    found_dump = true;
+                    
+                    // Clean up
+                    let _ = std::fs::remove_file(entry.path());
+                    break;
+                }
+            }
+        }
+
+        assert!(found_dump, "Should have found a dump file matching pattern");
+    }
 }

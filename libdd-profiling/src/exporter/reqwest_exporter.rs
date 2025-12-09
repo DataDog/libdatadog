@@ -4,6 +4,25 @@
 //! Reqwest-based profiling exporter
 //!
 //! This is a simplified async implementation using reqwest.
+//!
+//! ## Debugging with File Dumps
+//!
+//! For debugging and testing purposes, you can configure the exporter to dump
+//! the raw HTTP requests to a file by using a `file://` URL:
+//!
+//! ```no_run
+//! use libdd_profiling::exporter::{config, reqwest_exporter::ProfileExporter};
+//!
+//! # fn main() -> anyhow::Result<()> {
+//! let endpoint = config::file("/tmp/profile_dump.http")?;
+//! let exporter = ProfileExporter::new("dd-trace-test", "1.0.0", "rust", vec![], endpoint)?;
+//! // Each request will be saved to /tmp/profile_dump_TIMESTAMP.http
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! The dumped files contain the complete HTTP request including headers and body,
+//! which can be useful for debugging or replaying requests.
 
 use anyhow::Context;
 use libdd_common::tag::Tag;
@@ -14,6 +33,9 @@ use tokio_util::sync::CancellationToken;
 
 use crate::internal::{EncodedProfile, Profile};
 use crate::profiles::{Compressor, DefaultProfileCodec};
+
+#[cfg(unix)]
+use std::path::PathBuf;
 
 pub struct ProfileExporter {
     client: reqwest::Client,
@@ -46,21 +68,36 @@ impl ProfileExporter {
             .use_rustls_tls()
             .timeout(std::time::Duration::from_millis(endpoint.timeout_ms));
 
-        // Check if this is a Unix Domain Socket
+        let request_url;
+
+        // Check if this is a file dump endpoint (for debugging)
         #[cfg(unix)]
+        if endpoint.url.scheme_str() == Some("file") {
+            // Extract the file path from the file:// URL
+            // The path is hex-encoded in the authority section
+            let output_path = libdd_common::decode_uri_path_in_authority(&endpoint.url)
+                .context("Failed to decode file path from URI")?;
+            let socket_path = Self::spawn_dump_server(output_path)?;
+            builder = builder.unix_socket(socket_path);
+            request_url = "http://localhost/v1/input".to_string();
+        } else if endpoint.url.scheme_str() == Some("unix") {
+            use libdd_common::connector::uds::socket_path_from_uri;
+            let socket_path = socket_path_from_uri(&endpoint.url)?;
+            builder = builder.unix_socket(socket_path);
+            request_url = format!("http://localhost{}", endpoint.url.path());
+        } else {
+            request_url = endpoint.url.to_string();
+        }
+
+        #[cfg(not(unix))]
         if endpoint.url.scheme_str() == Some("unix") {
             use libdd_common::connector::uds::socket_path_from_uri;
             let socket_path = socket_path_from_uri(&endpoint.url)?;
             builder = builder.unix_socket(socket_path);
-        }
-
-        // For Unix Domain Sockets, we need to use http://localhost as the URL
-        // The socket path is configured on the client, so we convert the URL here
-        let request_url = if endpoint.url.scheme_str() == Some("unix") {
-            format!("http://localhost{}", endpoint.url.path())
+            request_url = format!("http://localhost{}", endpoint.url.path());
         } else {
-            endpoint.url.to_string()
-        };
+            request_url = endpoint.url.to_string();
+        }
 
         // Pre-build all static headers
         let mut headers = reqwest::header::HeaderMap::new();
@@ -272,4 +309,138 @@ impl ProfileExporter {
             reqwest::multipart::Part::bytes(profile.buffer).file_name("profile.pprof"),
         ))
     }
+
+    /// Spawns a HTTP dump server that saves incoming requests to a file
+    /// Returns the Unix socket path that the server is listening on
+    #[cfg(unix)]
+    fn spawn_dump_server(output_path: PathBuf) -> anyhow::Result<PathBuf> {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        use tokio::net::UnixListener;
+
+        // Create a temporary socket path
+        let socket_path = std::env::temp_dir().join(format!(
+            "libdatadog_dump_{}.sock",
+            std::process::id()
+        ));
+
+        // Remove socket file if it already exists
+        let _ = std::fs::remove_file(&socket_path);
+
+        let listener = UnixListener::bind(&socket_path)
+            .context("Failed to bind Unix socket for dump server")?;
+
+        let socket_path_clone = socket_path.clone();
+
+        // Spawn the server task
+        tokio::spawn(async move {
+            loop {
+                match listener.accept().await {
+                    Ok((mut stream, _)) => {
+                        let output_path = output_path.clone();
+                        
+                        tokio::spawn(async move {
+                            // Read the HTTP request in chunks
+                            let mut request_data = Vec::new();
+                            let mut buffer = [0u8; 8192];
+                            let mut content_length: Option<usize> = None;
+                            let mut headers_end_pos: Option<usize> = None;
+                            
+                            // Read headers first
+                            loop {
+                                match stream.read(&mut buffer).await {
+                                    Ok(0) => break, // Connection closed
+                                    Ok(n) => {
+                                        request_data.extend_from_slice(&buffer[..n]);
+                                        
+                                        // Look for end of headers if we haven't found it yet
+                                        if headers_end_pos.is_none() {
+                                            if let Some(pos) = find_subsequence(&request_data, b"\r\n\r\n") {
+                                                headers_end_pos = Some(pos + 4);
+                                                
+                                                // Parse Content-Length from headers
+                                                if let Ok(headers_str) = std::str::from_utf8(&request_data[..pos]) {
+                                                    for line in headers_str.lines() {
+                                                        if line.to_lowercase().starts_with("content-length:") {
+                                                            if let Some(len_str) = line.split(':').nth(1) {
+                                                                content_length = len_str.trim().parse().ok();
+                                                            }
+                                                            break;
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                        
+                                        // Check if we have the complete request
+                                        if let Some(headers_end) = headers_end_pos {
+                                            if let Some(expected_len) = content_length {
+                                                let body_len = request_data.len() - headers_end;
+                                                if body_len >= expected_len {
+                                                    break; // Complete request received
+                                                }
+                                            }
+                                        }
+                                    }
+                                    Err(e) => {
+                                        eprintln!("Failed to read from dump server socket: {}", e);
+                                        break;
+                                    }
+                                }
+                            }
+                            
+                            if !request_data.is_empty() {
+                                // Generate filename with timestamp
+                                let timestamp = chrono::Utc::now().format("%Y%m%d_%H%M%S_%3f");
+                                let final_path = if let Some(ext) = output_path.extension() {
+                                    // Has extension, add timestamp before extension
+                                    let stem = output_path.file_stem()
+                                        .and_then(|s| s.to_str())
+                                        .unwrap_or("dump");
+                                    let parent = output_path.parent()
+                                        .unwrap_or_else(|| std::path::Path::new("."));
+                                    parent.join(format!("{}_{}.{}", 
+                                        stem,
+                                        timestamp,
+                                        ext.to_string_lossy()))
+                                } else {
+                                    // No extension, append timestamp
+                                    let filename = output_path.file_name()
+                                        .and_then(|s| s.to_str())
+                                        .unwrap_or("dump");
+                                    let parent = output_path.parent()
+                                        .unwrap_or_else(|| std::path::Path::new("."));
+                                    parent.join(format!("{}_{}", filename, timestamp))
+                                };
+
+                                // Write the request to file
+                                if let Err(e) = std::fs::write(&final_path, &request_data) {
+                                    eprintln!("Failed to write request dump to {:?}: {}", final_path, e);
+                                } else {
+                                    println!("HTTP request dumped to: {:?}", final_path);
+                                }
+                            }
+
+                            // Send a simple HTTP 200 response
+                            let response = b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n";
+                            let _ = stream.write_all(response).await;
+                        });
+                    }
+                    Err(e) => {
+                        eprintln!("Failed to accept connection on dump server: {}", e);
+                        break;
+                    }
+                }
+            }
+        });
+
+        Ok(socket_path_clone)
+    }
+}
+
+/// Helper function to find a subsequence in a byte slice
+#[cfg(unix)]
+fn find_subsequence(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+    haystack
+        .windows(needle.len())
+        .position(|window| window == needle)
 }
