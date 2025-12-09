@@ -8,12 +8,21 @@ mod tests {
     use crate::common;
     use libdd_profiling::exporter::config;
     use libdd_profiling::exporter::reqwest_exporter::*;
+    use libdd_profiling::exporter::Tag;
     use libdd_profiling::internal::EncodedProfile;
     use wiremock::matchers::{method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
-    fn default_tags() -> Vec<libdd_profiling::exporter::Tag> {
-        common::default_tags()
+    /// Helper to create an exporter from a mock server
+    fn create_exporter(
+        mock_server: &MockServer,
+        family: &str,
+        tags: Vec<Tag>,
+    ) -> ProfileExporter {
+        let base_url = mock_server.uri().parse().unwrap();
+        let endpoint = config::agent(base_url).expect("endpoint to construct");
+        ProfileExporter::new("dd-trace-test", "1.0.0", family, tags, endpoint)
+            .expect("exporter to construct")
     }
 
     #[test]
@@ -22,7 +31,7 @@ mod tests {
         let base_url = "http://localhost:8126".parse().expect("url to parse");
         let endpoint = config::agent(base_url).expect("endpoint to construct");
         let exporter =
-            ProfileExporter::new("dd-trace-foo", "1.2.3", "php", default_tags(), endpoint);
+            ProfileExporter::new("dd-trace-foo", "1.2.3", "php", common::default_tags(), endpoint);
         assert!(exporter.is_ok());
     }
 
@@ -30,12 +39,7 @@ mod tests {
     #[cfg_attr(miri, ignore)]
     async fn test_send_to_mock_server() {
         let mock_server = common::setup_basic_mock().await;
-
-        let base_url = mock_server.uri().parse().unwrap();
-        let endpoint = config::agent(base_url).expect("endpoint to construct");
-        let exporter =
-            ProfileExporter::new("dd-trace-foo", "1.2.3", "php", default_tags(), endpoint)
-                .expect("exporter to construct");
+        let exporter = create_exporter(&mock_server, "php", common::default_tags());
 
         let profile = EncodedProfile::test_instance().expect("To get a profile");
         let status = exporter
@@ -49,12 +53,7 @@ mod tests {
     #[cfg_attr(miri, ignore)]
     async fn test_send_with_body_inspection() {
         let (mock_server, received_body) = common::setup_body_capture_mock().await;
-
-        let base_url = mock_server.uri().parse().unwrap();
-        let endpoint = config::agent(base_url).expect("endpoint to construct");
-        let exporter =
-            ProfileExporter::new("dd-trace-foo", "1.2.3", "ruby", default_tags(), endpoint)
-                .expect("exporter to construct");
+        let exporter = create_exporter(&mock_server, "ruby", common::default_tags());
 
         let profile = EncodedProfile::test_instance().expect("To get a profile");
         let (internal_metadata, info) = common::test_metadata();
@@ -113,7 +112,7 @@ mod tests {
 
         let base_url = mock_server.uri().parse().unwrap();
         let mut endpoint = config::agent(base_url).expect("endpoint to construct");
-        endpoint.timeout_ms = 5000; // Set timeout on endpoint before creating exporter
+        endpoint.timeout_ms = 5000;
 
         let exporter = ProfileExporter::new("dd-trace-test", "1.0.0", "go", vec![], endpoint)
             .expect("exporter to construct");
@@ -171,17 +170,11 @@ mod tests {
     #[cfg_attr(miri, ignore)]
     async fn test_with_additional_tags() {
         let mock_server = common::setup_basic_mock().await;
-
-        let base_url = mock_server.uri().parse().unwrap();
-        let endpoint = config::agent(base_url).expect("endpoint to construct");
-        let exporter = ProfileExporter::new(
-            "dd-trace-test",
-            "1.0.0",
+        let exporter = create_exporter(
+            &mock_server,
             "python",
             vec![libdd_common::tag!("env", "test")],
-            endpoint,
-        )
-        .expect("exporter to construct");
+        );
 
         let profile = EncodedProfile::test_instance().expect("To get a profile");
         let additional_tags = vec![
@@ -200,15 +193,11 @@ mod tests {
     #[cfg_attr(miri, ignore)]
     async fn test_with_compressed_files() {
         let mock_server = common::setup_basic_mock().await;
-
-        let base_url = mock_server.uri().parse().unwrap();
-        let endpoint = config::agent(base_url).expect("endpoint to construct");
-        let exporter = ProfileExporter::new("dd-trace-test", "1.0.0", "java", vec![], endpoint)
-            .expect("exporter to construct");
+        let exporter = create_exporter(&mock_server, "java", vec![]);
 
         let profile = EncodedProfile::test_instance().expect("To get a profile");
         let test_data = b"test file content";
-        let files_to_compress = &[libdd_profiling::exporter::reqwest_exporter::File {
+        let files_to_compress = &[File {
             name: "test.txt",
             bytes: test_data,
         }];
@@ -339,11 +328,7 @@ mod tests {
         use libdd_profiling::internal::Profile;
 
         let mock_server = common::setup_basic_mock().await;
-
-        let base_url = mock_server.uri().parse().unwrap();
-        let endpoint = config::agent(base_url).expect("endpoint to construct");
-        let exporter = ProfileExporter::new("dd-trace-test", "1.0.0", "rust", vec![], endpoint)
-            .expect("exporter to construct");
+        let exporter = create_exporter(&mock_server, "rust", vec![]);
 
         // Create a simple profile
         let profile = Profile::try_new(
@@ -363,16 +348,7 @@ mod tests {
 
         // Use the convenience method to export
         let status = profile
-            .export_to_endpoint(
-                &exporter,
-                &[],  // additional_files
-                &[],  // additional_tags
-                None, // internal_metadata
-                None, // info
-                None, // end_time (defaults to now)
-                None, // duration (calculated from end - start)
-                None, // cancel
-            )
+            .export_to_endpoint(&exporter, &[], &[], None, None, None, None, None)
             .await
             .expect("export should succeed");
 
