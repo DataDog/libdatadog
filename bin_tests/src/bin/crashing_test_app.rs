@@ -124,10 +124,12 @@ mod unix {
         let is_panic_mode = matches!(crash_type, CrashType::Panic);
 
         let called_panic_hook = Arc::new(AtomicBool::new(false));
+        let old_hook = std::panic::take_hook();
         if is_panic_mode {
             let called_panic_hook_clone = Arc::clone(&called_panic_hook);
-            std::panic::set_hook(Box::new(move |_| {
+            std::panic::set_hook(Box::new(move |panic_info| {
                 called_panic_hook_clone.store(true, Ordering::SeqCst);
+                old_hook(panic_info);
             }));
         }
 
