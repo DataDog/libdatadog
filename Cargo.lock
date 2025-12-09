@@ -1453,24 +1453,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "datadog-trace-obfuscation"
-version = "24.0.1"
-dependencies = [
- "anyhow",
- "criterion",
- "duplicate",
- "libdd-common",
- "libdd-trace-protobuf",
- "libdd-trace-utils",
- "log",
- "percent-encoding",
- "regex",
- "serde",
- "serde_json",
- "url",
-]
-
-[[package]]
 name = "datadog-tracer-flare"
 version = "24.0.1"
 dependencies = [
@@ -2990,6 +2972,24 @@ dependencies = [
  "duplicate",
  "libdd-trace-protobuf",
  "rand 0.8.5",
+]
+
+[[package]]
+name = "libdd-trace-obfuscation"
+version = "1.0.0"
+dependencies = [
+ "anyhow",
+ "criterion",
+ "duplicate",
+ "libdd-common",
+ "libdd-trace-protobuf",
+ "libdd-trace-utils",
+ "log",
+ "percent-encoding",
+ "regex",
+ "serde",
+ "serde_json",
+ "url",
 ]
 
 [[package]]
