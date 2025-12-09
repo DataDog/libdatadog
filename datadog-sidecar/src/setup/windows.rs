@@ -166,6 +166,11 @@ impl Liaison for NamedPipeLiaison {
     fn ipc_per_process() -> Self {
         Self::new(format!("libdatadog_{}_", unsafe { getpid() }))
     }
+
+    fn for_master_pid(master_pid: u32) -> Self {
+        let path = env::temp_dir().join(format!("libdatadog.{}", master_pid));
+        Self::new(path.to_string_lossy().as_ref())
+    }
 }
 
 impl NamedPipeLiaison {
@@ -197,7 +202,7 @@ impl Default for NamedPipeLiaison {
     }
 }
 
-pub type DefaultLiason = NamedPipeLiaison;
+pub type DefaultLiaison = NamedPipeLiaison;
 
 #[cfg(test)]
 mod tests {
