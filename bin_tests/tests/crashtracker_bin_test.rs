@@ -365,7 +365,7 @@ fn test_crash_tracking_bin_panic_hook_after_fork() {
 
     // Set up custom artifacts: receiver + crashtracker_bin_test
     let crashtracker_receiver = create_crashtracker_receiver(BuildProfile::Release);
-    let crashtracker_bin_test = create_crashtracker_bin_test(BuildProfile::Debug);
+    let crashtracker_bin_test = create_crashtracker_bin_test(BuildProfile::Debug, true);
 
     let artifacts_map = build_artifacts(&[&crashtracker_receiver, &crashtracker_bin_test]).unwrap();
 
@@ -1267,20 +1267,8 @@ fn setup_test_fixtures<'a>(crates: &[&'a ArtifactsBuild]) -> TestFixtures<'a> {
 fn setup_crashtracking_crates(
     crash_tracking_receiver_profile: BuildProfile,
 ) -> (ArtifactsBuild, ArtifactsBuild) {
-    let crashtracker_bin = ArtifactsBuild {
-        name: "crashtracker_bin_test".to_owned(),
-        build_profile: crash_tracking_receiver_profile,
-        artifact_type: ArtifactType::Bin,
-        triple_target: None,
-        ..Default::default()
-    };
-    let crashtracker_receiver = ArtifactsBuild {
-        name: "test_crashtracker_receiver".to_owned(),
-        build_profile: crash_tracking_receiver_profile,
-        artifact_type: ArtifactType::Bin,
-        triple_target: None,
-        ..Default::default()
-    };
+    let crashtracker_bin = create_crashtracker_bin_test(crash_tracking_receiver_profile, false);
+    let crashtracker_receiver = create_crashtracker_receiver(crash_tracking_receiver_profile);
     (crashtracker_bin, crashtracker_receiver)
 }
 
@@ -1307,12 +1295,13 @@ fn create_crashing_app(profile: BuildProfile, panic_abort: bool) -> ArtifactsBui
     }
 }
 
-fn create_crashtracker_bin_test(profile: BuildProfile) -> ArtifactsBuild {
+fn create_crashtracker_bin_test(profile: BuildProfile, panic_abort: bool) -> ArtifactsBuild {
     ArtifactsBuild {
         name: "crashtracker_bin_test".to_owned(),
         build_profile: profile,
         artifact_type: ArtifactType::Bin,
         triple_target: None,
+        panic_abort: if panic_abort { Some(true) } else { None },
         ..Default::default()
     }
 }
