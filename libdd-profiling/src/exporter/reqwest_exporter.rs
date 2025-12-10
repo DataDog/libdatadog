@@ -321,8 +321,8 @@ impl ProfileExporter {
     /// Returns the Unix socket path that the server is listening on
     #[cfg(unix)]
     fn spawn_dump_server(output_path: PathBuf) -> anyhow::Result<PathBuf> {
-        use tokio::io::{AsyncReadExt, AsyncWriteExt};
-        use tokio::net::UnixListener;
+        use std::io::{Read, Write};
+        use std::os::unix::net::UnixListener;
 
         // Create a temporary socket path
         let socket_path =
@@ -336,14 +336,14 @@ impl ProfileExporter {
 
         let socket_path_clone = socket_path.clone();
 
-        // Spawn the server task
-        tokio::spawn(async move {
+        // Spawn the server thread
+        std::thread::spawn(move || {
             loop {
-                match listener.accept().await {
+                match listener.accept() {
                     Ok((mut stream, _)) => {
                         let output_path = output_path.clone();
 
-                        tokio::spawn(async move {
+                        std::thread::spawn(move || {
                             // Read the HTTP request in chunks
                             let mut request_data = Vec::new();
                             let mut buffer = [0u8; 8192];
@@ -352,7 +352,7 @@ impl ProfileExporter {
 
                             // Read headers first
                             loop {
-                                match stream.read(&mut buffer).await {
+                                match stream.read(&mut buffer) {
                                     Ok(0) => break, // Connection closed
                                     Ok(n) => {
                                         request_data.extend_from_slice(&buffer[..n]);
@@ -446,7 +446,7 @@ impl ProfileExporter {
 
                             // Send a simple HTTP 200 response
                             let response = b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n";
-                            let _ = stream.write_all(response).await;
+                            let _ = stream.write_all(response);
                         });
                     }
                     Err(e) => {
