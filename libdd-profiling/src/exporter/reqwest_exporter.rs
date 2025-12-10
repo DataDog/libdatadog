@@ -73,45 +73,42 @@ impl ProfileExporter {
         mut tags: Vec<Tag>,
         endpoint: Endpoint,
     ) -> anyhow::Result<Self> {
+        #[cfg_attr(not(unix), allow(unused_mut))]
         let mut builder = reqwest::Client::builder()
             .use_rustls_tls()
             .timeout(std::time::Duration::from_millis(endpoint.timeout_ms));
 
-        let request_url;
-
         // Check if this is a file dump endpoint (for debugging)
         #[cfg(unix)]
-        if endpoint.url.scheme_str() == Some("file") {
+        let request_url = if endpoint.url.scheme_str() == Some("file") {
             // Extract the file path from the file:// URL
             // The path is hex-encoded in the authority section
             let output_path = libdd_common::decode_uri_path_in_authority(&endpoint.url)
                 .context("Failed to decode file path from URI")?;
             let socket_path = Self::spawn_dump_server(output_path)?;
             builder = builder.unix_socket(socket_path);
-            request_url = "http://localhost/v1/input".to_string();
+            "http://localhost/v1/input".to_string()
         } else if endpoint.url.scheme_str() == Some("unix") {
             use libdd_common::connector::uds::socket_path_from_uri;
             let socket_path = socket_path_from_uri(&endpoint.url)?;
             builder = builder.unix_socket(socket_path);
-            request_url = format!("http://localhost{}", endpoint.url.path());
+            format!("http://localhost{}", endpoint.url.path())
         } else {
-            request_url = endpoint.url.to_string();
-        }
+            endpoint.url.to_string()
+        };
 
         #[cfg(not(unix))]
-        match endpoint.url.scheme_str() {
+        let request_url = match endpoint.url.scheme_str() {
             Some("file") => {
                 anyhow::bail!(
                     "file:// endpoints are only supported on Unix platforms (requires Unix domain sockets)"
-                );
+                )
             }
             Some("unix") => {
-                anyhow::bail!("unix:// endpoints are only supported on Unix platforms");
+                anyhow::bail!("unix:// endpoints are only supported on Unix platforms")
             }
-            _ => {
-                request_url = endpoint.url.to_string();
-            }
-        }
+            _ => endpoint.url.to_string(),
+        };
 
         // Pre-build all static headers
         let mut headers = reqwest::header::HeaderMap::new();
