@@ -299,6 +299,7 @@ pub(crate) async fn receive_report_from_stream(
     let mut remaining_timeout = Duration::MAX;
 
     //TODO: This assumes that the input is valid UTF-8.
+    // TODO: We need to log issues here to datadog
     loop {
         // We need to wait until at least we receive config, metadata, and siginfo (on non-Windows
         // platforms) before sending the crash ping
