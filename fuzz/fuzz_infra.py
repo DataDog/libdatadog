@@ -47,10 +47,6 @@ def upload_fuzz(
     git_sha,
     fuzz_test,
     team="apm-sdk-rust",
-    core_count=2,
-    duration=3600,
-    proc_count=2,
-    fuzz_memory=4,
 ):
     """
     This builds and uploads fuzz targets to the internal fuzzing infrastructure.
@@ -118,13 +114,9 @@ def upload_fuzz(
         "app": pkgname,
         "debug": False,
         "version": git_sha,
-        "core_count": core_count,
-        "duration": duration,
         "type": "cargo-fuzz",
         "binary": fuzz_test,
         "team": team,
-        "process_count": proc_count,
-        "memory": fuzz_memory,
         "repository_url": "https://github.com/DataDog/libdatadog",
         "slack_channel": DEFAULT_FUZZING_SLACK_CHANNEL,
     }
