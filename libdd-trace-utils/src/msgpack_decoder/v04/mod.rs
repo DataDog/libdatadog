@@ -514,10 +514,8 @@ mod tests {
             decoded_span.meta[&BytesString::from_slice("key1".as_ref()).unwrap()].as_str()
         );
         assert!(
-            decoded_span
-                .meta
-                .get(&BytesString::from_slice("key2".as_ref()).unwrap())
-                .is_none(),
+            !decoded_span
+                .meta.contains_key(&BytesString::from_slice("key2".as_ref()).unwrap()),
             "Null value should be skipped, but key was present"
         );
         assert_eq!(
