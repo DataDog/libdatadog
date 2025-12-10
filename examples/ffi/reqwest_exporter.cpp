@@ -105,7 +105,7 @@ int main(int argc, char *argv[]) {
   auto *encoded_profile = &serialize_result.ok;
 
   // Create endpoint based on mode
-  ddog_prof_ProfilingEndpoint endpoint;
+  ddog_prof_Endpoint endpoint;
   if (use_file) {
     endpoint = ddog_Endpoint_file(to_slice_c_char(output_file));
     printf("Using file endpoint: %s\n", output_file);
