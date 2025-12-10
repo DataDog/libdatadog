@@ -8,5 +8,7 @@ pub(crate) mod configuration;
 #[cfg(not(feature = "benchmarking"))]
 pub(crate) mod constants;
 
+pub(crate) mod log;
+
 #[cfg(feature = "benchmarking")]
 pub mod constants;

@@ -236,6 +236,22 @@ impl TelemetryCrashUploader {
         Ok(s)
     }
 
+    /// Send a general log message to the telemetry log intake.
+    pub async fn send_log_payload(
+        &self,
+        message: String,
+        tags: String,
+        level: LogLevel,
+    ) -> anyhow::Result<()> {
+        let tracer_time = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+
+        self.send_crash_log_payload(message, tags, tracer_time, level, false, false)
+            .await
+    }
+
     pub async fn upload_crash_ping(&self, crash_ping: &CrashPing) -> anyhow::Result<()> {
         let tags = self.build_crash_ping_tags(crash_ping.crash_uuid(), crash_ping.siginfo());
         let tracer_time = SystemTime::now()
@@ -244,7 +260,7 @@ impl TelemetryCrashUploader {
             .unwrap_or(0);
         let message = serde_json::to_string(crash_ping)?;
 
-        self.send_log_payload(
+        self.send_crash_log_payload(
             message,
             tags,
             tracer_time,
@@ -305,7 +321,7 @@ impl TelemetryCrashUploader {
             |ts| ts.timestamp() as u64,
         );
 
-        self.send_log_payload(
+        self.send_crash_log_payload(
             message,
             tags,
             tracer_time,
@@ -316,7 +332,7 @@ impl TelemetryCrashUploader {
         .await
     }
 
-    async fn send_log_payload(
+    async fn send_crash_log_payload(
         &self,
         message: String,
         tags: String,
