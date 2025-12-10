@@ -79,26 +79,20 @@ pub fn update_metadata(metadata: Metadata) -> anyhow::Result<()> {
 }
 
 /// Format a panic message with optional location information.
-fn format_panic_message(
+fn format_message(
     category: &str,
-    description: &str,
+    panic_message: &str,
     location: Option<&panic::Location>,
 ) -> String {
-    let base = match location {
-        Some(loc) => format!(
-            "Process panicked with {} ({}:{}:{})",
-            category,
-            loc.file(),
-            loc.line(),
-            loc.column()
-        ),
-        None => format!("Process panicked with {}", category),
+    let base = if panic_message.is_empty() {
+        format!("Process panicked with {}", category)
+    } else {
+        format!("Process panicked with {} \"{}\"", category, panic_message)
     };
 
-    if description.is_empty() {
-        base
-    } else {
-        format!("{}: {}", base, description)
+    match location {
+        Some(loc) => format!("{} ({}:{}:{})", base, loc.file(), loc.line(), loc.column()),
+        None => base,
     }
 }
 
@@ -124,12 +118,12 @@ pub fn register_panic_hook() -> anyhow::Result<()> {
     panic::set_hook(Box::new(|panic_info| {
         // Extract panic message from payload (supports &str and String)
         let message = if let Some(&s) = panic_info.payload().downcast_ref::<&str>() {
-            format_panic_message("message", s, panic_info.location())
+            format_message("message", s, panic_info.location())
         } else if let Some(s) = panic_info.payload().downcast_ref::<String>() {
-            format_panic_message("message", s.as_str(), panic_info.location())
+            format_message("message", s.as_str(), panic_info.location())
         } else {
             // For non-string types, use a generic message
-            format_panic_message("unknown type", "", panic_info.location())
+            format_message("unknown type", "", panic_info.location())
         };
 
         // Store the message, cleaning up any old message
@@ -393,5 +387,59 @@ mod tests {
             let (stored_metadata, _) = &*metadata_ptr;
             assert_eq!(stored_metadata.library_name, "test");
         }
+    }
+
+    #[test]
+    fn test_format_message_with_message_and_location() {
+        let location = panic::Location::caller();
+        let result = format_message("message", "test panic", Some(location));
+
+        assert!(result.starts_with("Process panicked with message \"test panic\" ("));
+        assert!(result.contains(&format!("{}:", location.file())));
+        assert!(result.contains(&format!(":{}", location.line())));
+        assert!(result.ends_with(&format!("{})", location.column())));
+    }
+
+    #[test]
+    fn test_format_message_with_message_no_location() {
+        let result = format_message("message", "test panic", None);
+        assert_eq!(result, "Process panicked with message \"test panic\"");
+    }
+
+    #[test]
+    fn test_format_message_empty_message_with_location() {
+        let location = panic::Location::caller();
+        let result = format_message("unknown type", "", Some(location));
+
+        assert!(result.starts_with("Process panicked with unknown type ("));
+        assert!(result.contains(&format!("{}:", location.file())));
+        assert!(result.ends_with(&format!("{})", location.column())));
+    }
+
+    #[test]
+    fn test_format_message_empty_message_no_location() {
+        let result = format_message("unknown type", "", None);
+        assert_eq!(result, "Process panicked with unknown type");
+    }
+
+    #[test]
+    fn test_format_message_different_categories() {
+        let result1 = format_message("message", "test", None);
+        assert_eq!(result1, "Process panicked with message \"test\"");
+
+        let result2 = format_message("unknown type", "", None);
+        assert_eq!(result2, "Process panicked with unknown type");
+
+        let result3 = format_message("custom category", "content", None);
+        assert_eq!(result3, "Process panicked with custom category \"content\"");
+    }
+
+    #[test]
+    fn test_format_message_with_special_characters() {
+        let result = format_message("message", "test \"quoted\" 'text'", None);
+        assert_eq!(
+            result,
+            "Process panicked with message \"test \"quoted\" 'text'\""
+        );
     }
 }
