@@ -367,6 +367,7 @@ dependencies = [
  "nix 0.29.0",
  "once_cell",
  "os_info",
+ "regex",
  "serde_json",
  "serial_test",
  "strum",
