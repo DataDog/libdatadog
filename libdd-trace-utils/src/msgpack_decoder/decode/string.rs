@@ -56,7 +56,7 @@ pub fn read_nullable_string<'a>(buf: &mut &'a [u8]) -> Result<&'a str, DecodeErr
 /// # Errors
 /// Fails if the buffer does not contain a valid map length prefix,
 /// or if any key or value is not a valid utf8 msgpack string.
-/// Null values are converted to empty strings.
+/// Null values are skipped (key not inserted into map).
 #[inline]
 pub fn read_str_map_to_strings<'a>(
     buf: &mut &'a [u8],
@@ -68,8 +68,11 @@ pub fn read_str_map_to_strings<'a>(
     let mut map = HashMap::with_capacity(len.try_into().expect("Unable to cast map len to usize"));
     for _ in 0..len {
         let key = read_string_ref(buf)?;
-        let value = read_nullable_string(buf)?;
-        map.insert(key, value);
+        // Skip null values - only insert if value is not null
+        if !handle_null_marker(buf) {
+            let value = read_string_ref(buf)?;
+            map.insert(key, value);
+        }
     }
     Ok(map)
 }

@@ -1246,7 +1246,7 @@ mod tests {
         );
         // Assert that the null value was filtered out (key not present in map)
         assert!(
-            decoded_span.meta.get("problematic_key").is_none(),
+            !decoded_span.meta.contains_key("problematic_key"),
             "Null value should be skipped, but key was present"
         );
     }

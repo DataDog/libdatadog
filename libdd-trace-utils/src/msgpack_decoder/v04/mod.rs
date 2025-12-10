@@ -492,13 +492,12 @@ mod tests {
         assert!(decoded_span.span_links.is_empty());
     }
 
-
     #[test]
     fn test_decoder_meta_with_null_values() {
         let mut span = create_test_json_span(1, 2, 0, 0, false);
         span["meta"] = json!({
             "key1": "value1",
-            "key2": null,  // This null value causes the error
+            "key2": null,  // This null value should be skipped
             "key3": "value3"
         });
 
@@ -514,9 +513,12 @@ mod tests {
             "value1",
             decoded_span.meta[&BytesString::from_slice("key1".as_ref()).unwrap()].as_str()
         );
-        assert_eq!(
-            "",
-            decoded_span.meta[&BytesString::from_slice("key2".as_ref()).unwrap()].as_str()
+        assert!(
+            decoded_span
+                .meta
+                .get(&BytesString::from_slice("key2".as_ref()).unwrap())
+                .is_none(),
+            "Null value should be skipped, but key was present"
         );
         assert_eq!(
             "value3",
