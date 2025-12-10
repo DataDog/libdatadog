@@ -208,6 +208,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(unix)]
     #[cfg_attr(miri, ignore)]
     fn test_file_endpoint() {
         let file_path = CharSlice::from("/tmp/test_profile.http");
