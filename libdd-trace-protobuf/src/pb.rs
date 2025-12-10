@@ -301,7 +301,7 @@ pub struct Span {
     /// @gotags: json:"meta,omitempty" msg:"meta,omitempty"
     #[prost(map = "string, string", tag = "10")]
     #[serde(default)]
-    #[serde(deserialize_with = "crate::deserializers::deserialize_null_into_default")]
+    #[serde(deserialize_with = "crate::deserializers::deserialize_map_with_nullable_values")]
     pub meta: ::std::collections::HashMap<
         ::prost::alloc::string::String,
         ::prost::alloc::string::String,

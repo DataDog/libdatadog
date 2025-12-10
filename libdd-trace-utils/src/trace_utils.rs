@@ -1200,13 +1200,6 @@ mod tests {
 
     #[test]
     fn test_rmp_serde_deserialize_meta_with_null_values() {
-        // SLES-2528: Test that reproduces the customer's exact error path
-        // When Java tracer sends null values in meta HashMap, rmp-serde deserialization fails
-        // with "invalid type: unit value, expected a string"
-        //
-        // This test uses the same deserialization path as the customer:
-        // get_traces_from_request_body() -> rmp_serde::from_read() -> Vec<Vec<pb::Span>>
-
         use serde_json::json;
 
         // Create a JSON representation with null value in meta
@@ -1224,7 +1217,7 @@ mod tests {
                 "service": "test-service",
                 "env": "test-env",
                 "runtime-id": "test-runtime-id-value",
-                "problematic_key": null  // This null value causes the error
+                "problematic_key": null  // Ensure this null value does not cause an error
             },
             "metrics": {},
             "type": "",
@@ -1234,13 +1227,7 @@ mod tests {
         });
 
         let traces_json = vec![vec![span_json]];
-
-        // Serialize to MessagePack - this will include the null value
         let encoded_data = rmp_serde::to_vec(&traces_json).unwrap();
-
-        // Deserialize using rmp_serde::from_read with pb::Span target type
-        // Before fix: This fails with "invalid type: unit value, expected a string"
-        // After fix: This should succeed and convert null to empty string or skip the entry
         let traces: Vec<Vec<pb::Span>> = rmp_serde::from_read(&encoded_data[..])
             .expect("Failed to deserialize traces with null values in meta");
 
@@ -1248,27 +1235,19 @@ mod tests {
         assert_eq!(1, traces[0].len());
         let decoded_span = &traces[0][0];
 
-        // Verify basic fields
         assert_eq!("test-service", decoded_span.service);
         assert_eq!("test_name", decoded_span.name);
         assert_eq!("test-resource", decoded_span.resource);
-
-        // After the fix, null values should either be:
-        // 1. Converted to empty strings, or
-        // 2. Filtered out (key not present in map)
         assert_eq!("test-service", decoded_span.meta.get("service").unwrap());
         assert_eq!("test-env", decoded_span.meta.get("env").unwrap());
         assert_eq!(
             "test-runtime-id-value",
             decoded_span.meta.get("runtime-id").unwrap()
         );
-
-        // The problematic_key should either be empty string or not present
-        match decoded_span.meta.get("problematic_key") {
-            Some(value) => assert_eq!("", value, "Null value should be converted to empty string"),
-            None => {
-                // Key was filtered out - also acceptable
-            }
-        }
+        // Assert that the null value was filtered out (key not present in map)
+        assert!(
+            decoded_span.meta.get("problematic_key").is_none(),
+            "Null value should be skipped, but key was present"
+        );
     }
 }

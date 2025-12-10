@@ -495,8 +495,6 @@ mod tests {
 
     #[test]
     fn test_decoder_meta_with_null_values() {
-        // SLES-2528: Test that meta HashMap can handle null values
-        // This reproduces the issue where Java tracer sends null values in meta tags
         let mut span = create_test_json_span(1, 2, 0, 0, false);
         span["meta"] = json!({
             "key1": "value1",
@@ -512,7 +510,6 @@ mod tests {
         assert_eq!(1, decoded_traces[0].len());
         let decoded_span = &decoded_traces[0][0];
 
-        // After the fix, null values should be converted to empty strings
         assert_eq!(
             "value1",
             decoded_span.meta[&BytesString::from_slice("key1".as_ref()).unwrap()].as_str()
