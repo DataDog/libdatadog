@@ -68,7 +68,7 @@ pub fn read_str_map_to_strings<'a>(
     let mut map = HashMap::with_capacity(len.try_into().expect("Unable to cast map len to usize"));
     for _ in 0..len {
         let key = read_string_ref(buf)?;
-        // Skip null values - only insert if value is not null
+        // Only insert if value is not null
         if !handle_null_marker(buf) {
             let value = read_string_ref(buf)?;
             map.insert(key, value);

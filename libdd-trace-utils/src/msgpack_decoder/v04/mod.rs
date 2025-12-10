@@ -503,7 +503,7 @@ mod tests {
 
         let encoded_data = rmp_serde::to_vec_named(&vec![vec![span]]).unwrap();
         let (decoded_traces, _) =
-            from_bytes(tinybytes::Bytes::from(encoded_data)).expect("Decoding failed");
+            from_bytes(libdd_tinybytes::Bytes::from(encoded_data)).expect("Decoding failed");
 
         assert_eq!(1, decoded_traces.len());
         assert_eq!(1, decoded_traces[0].len());

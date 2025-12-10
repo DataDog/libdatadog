@@ -1200,8 +1200,6 @@ mod tests {
 
     #[test]
     fn test_rmp_serde_deserialize_meta_with_null_values() {
-        use serde_json::json;
-
         // Create a JSON representation with null value in meta
         let span_json = json!({
             "service": "test-service",
