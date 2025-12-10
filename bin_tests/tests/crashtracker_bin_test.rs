@@ -360,17 +360,18 @@ fn test_crash_tracking_app(crash_type: &str) {
 #[cfg_attr(miri, ignore)]
 #[cfg(not(target_os = "macos"))] // Same restriction as other panic tests
 fn test_crash_tracking_bin_panic_hook_after_fork() {
-    test_panic_hook_mode("panic_hook_after_fork", "child panicked after fork");
+    test_panic_hook_mode(
+        "panic_hook_after_fork",
+        "message",
+        Some("child panicked after fork"),
+    );
 }
 
 #[test]
 #[cfg_attr(miri, ignore)]
 #[cfg(not(target_os = "macos"))] // Same restriction as other panic tests
 fn test_crash_tracking_bin_panic_hook_string() {
-    test_panic_hook_mode(
-        "panic_hook_string",
-        "Process panicked with message: Panic with value: 42",
-    );
+    test_panic_hook_mode("panic_hook_string", "message", Some("Panic with value: 42"));
 }
 
 #[test]
@@ -379,12 +380,14 @@ fn test_crash_tracking_bin_panic_hook_string() {
 fn test_crash_tracking_bin_panic_hook_unknown_type() {
     test_panic_hook_mode(
         "panic_hook_unknown_type",
-        "Process panicked with unknown type",
+        "unknown type",
+        None, // no panic message for unknown type
     );
 }
 
-/// Helper function to run panic hook tests with different payload types
-fn test_panic_hook_mode(mode: &str, expected_message_substring: &str) {
+/// Helper function to run panic hook tests with different payload types.
+/// Note: Since tests are built with Debug profile, location is always expected.
+fn test_panic_hook_mode(mode: &str, expected_category: &str, expected_panic_message: Option<&str>) {
     use bin_tests::test_runner::run_custom_crash_test;
 
     // Set up custom artifacts: receiver + crashtracker_bin_test
@@ -393,15 +396,38 @@ fn test_panic_hook_mode(mode: &str, expected_message_substring: &str) {
 
     let artifacts_map = build_artifacts(&[&crashtracker_receiver, &crashtracker_bin_test]).unwrap();
 
-    let expected_msg = expected_message_substring.to_owned();
+    let expected_category = expected_category.to_owned();
+    let expected_panic_message = expected_panic_message.map(|s| s.to_owned());
     let validator: ValidatorFn = Box::new(move |payload, _fixtures| {
         // Verify the panic message is captured
         let error = &payload["error"];
         let message = error["message"].as_str().unwrap();
+
+        // Check the message starts with "Process panicked with <category>"
+        let expected_prefix = format!("Process panicked with {}", expected_category);
         assert!(
-            message.contains(&expected_msg),
-            "Expected panic message to contain '{}', got: {}",
-            expected_msg,
+            message.starts_with(&expected_prefix),
+            "Expected panic message to start with '{}', got: {}",
+            expected_prefix,
+            message
+        );
+
+        // Check the panic message if expected (the message passed to panic! macro)
+        if let Some(ref panic_msg) = expected_panic_message {
+            assert!(
+                message.contains(panic_msg),
+                "Expected panic message to contain '{}', got: {}",
+                panic_msg,
+                message
+            );
+        }
+
+        // Check for location format (file:line:column) - always present in Debug builds
+        // Location should end with pattern like " (path/file.rs:123:45)"
+        let location_regex = regex::Regex::new(r" \(.+?:\d+:\d+\)$").unwrap();
+        assert!(
+            location_regex.is_match(message),
+            "Expected panic message to end with location ' (file:line:column)', got: {}",
             message
         );
 
