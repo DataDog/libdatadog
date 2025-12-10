@@ -100,20 +100,6 @@ mod https {
         static INIT_CRYPTO_PROVIDER: Once = Once::new();
 
         INIT_CRYPTO_PROVIDER.call_once(|| {
-            // We could validate the current CryptoProvider with arbitrary
-            // checks, but it is not a good practice. Unless we have specific
-            // needs, this seems to be generally unadvised.
-            //
-            // For example:
-            // ```
-            // if let Err(installed_provider) =
-            //     rustls::crypto::aws_lc_rs::default_provider().install_default()
-            // let default = rustls::crypto::aws_lc_rs::default_provider();
-            // assert!(default
-            //     .cipher_suites
-            //     .iter()
-            //     .all(|x| installed_provider.cipher_suites.contains(x)));
-            // ```
             #[cfg(unix)]
             let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
         });
