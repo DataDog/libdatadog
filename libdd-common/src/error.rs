@@ -8,7 +8,7 @@
 ///  2. It must be valid UTF-8.
 ///  3. It must not allocate to achieve the static bounds.
 ///
-/// Using a c-str literal in Rust achieves all these requirements:
+/// Using a c-str literal in Rust generally achieves all these requirements:
 ///
 /// ```
 /// c"this string is compatible with FfiSafeErrorMessage";
