@@ -12,6 +12,7 @@ use std::sync::{Arc, Mutex};
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
+#[allow(dead_code)]
 pub fn default_tags() -> Vec<Tag> {
     vec![tag!("service", "php"), tag!("host", "bits")]
 }
@@ -91,6 +92,7 @@ pub fn decompress_zstd(data: &[u8]) -> std::io::Result<Vec<u8>> {
 }
 
 /// Verify event JSON contains expected fields
+#[allow(dead_code)]
 pub fn verify_event_json(event_json: &serde_json::Value, expected_family: &str) {
     assert_eq!(event_json["family"], expected_family);
     assert_eq!(event_json["version"], "4");
@@ -115,6 +117,7 @@ pub fn verify_event_json(event_json: &serde_json::Value, expected_family: &str) 
 }
 
 /// Create test metadata
+#[allow(dead_code)]
 pub fn test_metadata() -> (serde_json::Value, serde_json::Value) {
     let internal_metadata = json!({
         "test_key": "test_value",
@@ -130,6 +133,7 @@ pub fn test_metadata() -> (serde_json::Value, serde_json::Value) {
 }
 
 /// Setup a mock server for basic POST endpoint
+#[allow(dead_code)]
 pub async fn setup_basic_mock() -> MockServer {
     let mock_server = MockServer::start().await;
     Mock::given(method("POST"))
@@ -161,6 +165,7 @@ pub async fn setup_body_capture_mock() -> (MockServer, Arc<Mutex<Vec<u8>>>) {
 }
 
 /// Setup a mock server with header capture for agentless testing
+#[allow(dead_code)]
 pub async fn setup_header_capture_mock(
 ) -> (MockServer, Arc<Mutex<Option<HashMap<String, Vec<String>>>>>) {
     let mock_server = MockServer::start().await;

@@ -24,6 +24,7 @@ pub mod config;
 pub mod cxx;
 mod errors;
 pub mod reqwest_exporter;
+pub mod unified;
 
 #[cfg(unix)]
 pub use connector::uds::{socket_path_from_uri, socket_path_to_uri};
@@ -46,7 +47,9 @@ pub struct Fields {
     pub end: DateTime<Utc>,
 }
 
-pub struct ProfileExporter {
+// Hyper-based exporter (original implementation)
+/// cbindgen:ignore
+pub struct HyperProfileExporter {
     exporter: Exporter,
     endpoint: Endpoint,
     family: Cow<'static, str>,
@@ -60,19 +63,21 @@ pub struct File<'a> {
     pub bytes: &'a [u8],
 }
 
+// Hyper-based request (original implementation)
+/// cbindgen:ignore
 #[derive(Debug)]
-pub struct Request {
+pub struct HyperRequest {
     timeout: Option<std::time::Duration>,
     req: hyper_migration::HttpRequest,
 }
 
-impl From<hyper_migration::HttpRequest> for Request {
+impl From<hyper_migration::HttpRequest> for HyperRequest {
     fn from(req: hyper_migration::HttpRequest) -> Self {
         Self { req, timeout: None }
     }
 }
 
-impl Request {
+impl HyperRequest {
     fn with_timeout(mut self, timeout: std::time::Duration) -> Self {
         self.timeout = if timeout != DURATION_ZERO {
             Some(timeout)
@@ -125,7 +130,7 @@ impl Request {
     }
 }
 
-impl ProfileExporter {
+impl HyperProfileExporter {
     /// Creates a new exporter to be used to report profiling data.
     /// # Arguments
     /// * `profiling_library_name` - Profiling library name, usually dd-trace-something, e.g. "dd-trace-rb". See
@@ -143,7 +148,7 @@ impl ProfileExporter {
         family: F,
         tags: Option<Vec<Tag>>,
         endpoint: Endpoint,
-    ) -> anyhow::Result<ProfileExporter>
+    ) -> anyhow::Result<HyperProfileExporter>
     where
         F: Into<Cow<'static, str>>,
         N: Into<Cow<'static, str>>,
@@ -169,10 +174,9 @@ impl ProfileExporter {
 
     #[inline]
     fn runtime_platform_tag(&self) -> Tag {
-        tag!("runtime_platform", ProfileExporter::TARGET_TRIPLE)
+        tag!("runtime_platform", HyperProfileExporter::TARGET_TRIPLE)
     }
 
-    #[allow(clippy::too_many_arguments)]
     /// Build a Request object representing the profile information provided.
     ///
     /// Consumes the `EncodedProfile`, which is unavailable for use after.
@@ -188,11 +192,10 @@ impl ProfileExporter {
         &self,
         profile: EncodedProfile,
         files_to_compress_and_export: &[File],
-        files_to_export_unmodified: &[File],
         additional_tags: Option<&Vec<Tag>>,
         internal_metadata: Option<serde_json::Value>,
         info: Option<serde_json::Value>,
-    ) -> anyhow::Result<Request> {
+    ) -> anyhow::Result<HyperRequest> {
         let mut form = multipart::Form::default();
 
         // combine tags and additional_tags
@@ -241,7 +244,6 @@ impl ProfileExporter {
         let attachments: Vec<&str> = files_to_compress_and_export
             .iter()
             .map(|file| file.name)
-            .chain(files_to_export_unmodified.iter().map(|file| file.name))
             .chain(iter::once("profile.pprof"))
             .collect();
 
@@ -300,14 +302,6 @@ impl ProfileExporter {
              */
             form.add_reader_file(file.name, Cursor::new(encoded), file.name);
         }
-        for file in files_to_export_unmodified {
-            /* The Datadog RFC examples strip off the file extension, but the exact behavior
-             * isn't specified. This does the simple thing of using the filename
-             * without modification for the form name because intake does not care
-             * about these name of the form field for these attachments.
-             */
-            form.add_reader_file(file.name, Cursor::new(file.bytes.to_vec()), file.name);
-        }
         // Add the actual pprof
         form.add_reader_file(
             "profile.pprof",
@@ -326,7 +320,7 @@ impl ProfileExporter {
                 self.profiling_library_version.as_ref(),
             );
 
-        Ok(Request::from(
+        Ok(HyperRequest::from(
             form.set_body::<multipart::Body>(builder)?
                 .map(hyper_migration::Body::boxed),
         )
@@ -335,7 +329,7 @@ impl ProfileExporter {
 
     pub fn send(
         &self,
-        request: Request,
+        request: HyperRequest,
         cancel: Option<&CancellationToken>,
     ) -> anyhow::Result<HttpResponse> {
         self.exporter
@@ -376,8 +370,11 @@ impl Exporter {
                 )))?;
             std::mem::swap(request.headers_mut(), &mut headers);
 
-            let request: Request = request.into();
+            let request: HyperRequest = request.into();
             request.with_timeout(timeout).send(&self.client, None).await
         })
     }
 }
+
+// Re-export unified types for convenience
+pub use unified::{BackendType, ProfileExporter, Request};

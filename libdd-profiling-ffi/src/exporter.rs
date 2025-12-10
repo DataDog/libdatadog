@@ -11,12 +11,31 @@ use libdd_common_ffi::{
     wrap_with_ffi_result, wrap_with_void_ffi_result, Handle, Result, ToInner, VoidResult,
 };
 use libdd_profiling::exporter;
-use libdd_profiling::exporter::{ProfileExporter, Request};
+use libdd_profiling::exporter::{BackendType, ProfileExporter, Request};
 use libdd_profiling::internal::EncodedProfile;
 use std::borrow::Cow;
 use std::str::FromStr;
 
 type TokioCancellationToken = tokio_util::sync::CancellationToken;
+
+/// Backend implementation to use for the exporter
+#[repr(C)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub enum ExporterBackend {
+    /// Use the hyper-based backend (original implementation)
+    Hyper = 0,
+    /// Use the reqwest-based backend (new implementation)
+    Reqwest = 1,
+}
+
+impl From<ExporterBackend> for BackendType {
+    fn from(backend: ExporterBackend) -> Self {
+        match backend {
+            ExporterBackend::Hyper => BackendType::Hyper,
+            ExporterBackend::Reqwest => BackendType::Reqwest,
+        }
+    }
+}
 
 #[allow(dead_code)]
 #[repr(C)]
@@ -111,7 +130,7 @@ pub unsafe fn try_to_endpoint(
     }
 }
 
-/// Creates a new exporter to be used to report profiling data.
+/// Creates a new exporter to be used to report profiling data using the hyper backend (default).
 /// # Arguments
 /// * `profiling_library_name` - Profiling library name, usually dd-trace-something, e.g.
 ///   "dd-trace-rb". See
@@ -128,13 +147,43 @@ pub unsafe fn try_to_endpoint(
 /// All pointers must refer to valid objects of the correct types.
 #[no_mangle]
 #[must_use]
-#[named]
 pub unsafe extern "C" fn ddog_prof_Exporter_new(
     profiling_library_name: CharSlice,
     profiling_library_version: CharSlice,
     family: CharSlice,
     tags: Option<&libdd_common_ffi::Vec<Tag>>,
     endpoint: ProfilingEndpoint,
+) -> Result<Handle<ProfileExporter>> {
+    ddog_prof_Exporter_new_with_backend(
+        profiling_library_name,
+        profiling_library_version,
+        family,
+        tags,
+        endpoint,
+        ExporterBackend::Hyper,
+    )
+}
+
+/// Creates a new exporter with a specified backend implementation.
+/// # Arguments
+/// * `profiling_library_name` - Profiling library name
+/// * `profiling_library_version` - Version of the profiling library
+/// * `family` - Profile family, e.g. "ruby"
+/// * `tags` - Tags to include with every profile
+/// * `endpoint` - Configuration for reporting data
+/// * `backend` - Backend implementation to use (Hyper or Reqwest)
+/// # Safety
+/// All pointers must refer to valid objects of the correct types.
+#[no_mangle]
+#[must_use]
+#[named]
+pub unsafe extern "C" fn ddog_prof_Exporter_new_with_backend(
+    profiling_library_name: CharSlice,
+    profiling_library_version: CharSlice,
+    family: CharSlice,
+    tags: Option<&libdd_common_ffi::Vec<Tag>>,
+    endpoint: ProfilingEndpoint,
+    backend: ExporterBackend,
 ) -> Result<Handle<ProfileExporter>> {
     wrap_with_ffi_result!({
         let library_name = profiling_library_name.to_utf8_lossy().into_owned();
@@ -149,6 +198,7 @@ pub unsafe extern "C" fn ddog_prof_Exporter_new(
                 family,
                 tags,
                 converted_endpoint,
+                backend.into(),
             )?
             .into(),
         )
@@ -217,8 +267,7 @@ pub(crate) unsafe fn into_vec_files<'a>(slice: Slice<'a, File>) -> Vec<exporter:
 pub unsafe extern "C" fn ddog_prof_Exporter_Request_build(
     mut exporter: *mut Handle<ProfileExporter>,
     mut profile: *mut Handle<EncodedProfile>,
-    files_to_compress_and_export: Slice<File>,
-    files_to_export_unmodified: Slice<File>,
+    files: Slice<File>,
     optional_additional_tags: Option<&libdd_common_ffi::Vec<Tag>>,
     optional_internal_metadata_json: Option<&CharSlice>,
     optional_info_json: Option<&CharSlice>,
@@ -226,8 +275,7 @@ pub unsafe extern "C" fn ddog_prof_Exporter_Request_build(
     wrap_with_ffi_result!({
         let exporter = exporter.to_inner_mut()?;
         let profile = *profile.take()?;
-        let files_to_compress_and_export = into_vec_files(files_to_compress_and_export);
-        let files_to_export_unmodified = into_vec_files(files_to_export_unmodified);
+        let files = into_vec_files(files);
         let tags = optional_additional_tags.map(|tags| tags.iter().cloned().collect());
 
         let internal_metadata = parse_json("internal_metadata", optional_internal_metadata_json)?;
@@ -235,8 +283,7 @@ pub unsafe extern "C" fn ddog_prof_Exporter_Request_build(
 
         let request = exporter.build(
             profile,
-            files_to_compress_and_export.as_slice(),
-            files_to_export_unmodified.as_slice(),
+            &files,
             tags.as_ref(),
             internal_metadata,
             info,
@@ -407,12 +454,19 @@ mod tests {
 
     fn parsed_event_json(request: libdd_common_ffi::Result<Handle<Request>>) -> serde_json::Value {
         // Safety: This is a test
-        let request = unsafe { request.unwrap().take().unwrap() };
+        let unified_request = unsafe { request.unwrap().take().unwrap() };
+        
+        // Extract the hyper request for testing (tests currently use hyper backend)
+        let hyper_request = match *unified_request {
+            Request::Hyper(req) => req,
+            Request::Reqwest(_) => panic!("Test expected hyper backend"),
+        };
+        
         // Really hacky way of getting the event.json file contents, because I didn't want to
         // implement a full multipart parser and didn't find a particularly good
         // alternative. If you do figure out a better way, there's another copy of this code
         // in the profiling tests, please update there too :)
-        let body = request.body();
+        let body = hyper_request.body();
         let body_bytes: String = String::from_utf8_lossy(
             &futures::executor::block_on(body.collect())
                 .unwrap()
@@ -481,7 +535,6 @@ mod tests {
             ddog_prof_Exporter_Request_build(
                 &mut exporter,
                 profile,
-                Slice::empty(),
                 Slice::empty(),
                 None,
                 None,
@@ -569,7 +622,6 @@ mod tests {
                 &mut exporter,
                 profile,
                 Slice::empty(),
-                Slice::empty(),
                 None,
                 Some(&raw_internal_metadata),
                 None,
@@ -617,7 +669,6 @@ mod tests {
             ddog_prof_Exporter_Request_build(
                 &mut exporter,
                 profile,
-                Slice::empty(),
                 Slice::empty(),
                 None,
                 Some(&raw_internal_metadata),
@@ -690,7 +741,6 @@ mod tests {
                 &mut exporter,
                 profile,
                 Slice::empty(),
-                Slice::empty(),
                 None,
                 None,
                 Some(&raw_info),
@@ -760,7 +810,6 @@ mod tests {
                 exporter,
                 profile,
                 Slice::empty(),
-                Slice::empty(),
                 None,
                 None,
                 Some(&raw_info),
@@ -781,7 +830,6 @@ mod tests {
             ddog_prof_Exporter_Request_build(
                 exporter, // No exporter, will fail
                 profile,
-                Slice::empty(),
                 Slice::empty(),
                 None,
                 None,

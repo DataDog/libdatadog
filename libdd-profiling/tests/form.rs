@@ -22,7 +22,6 @@ fn multipart(
         .build(
             profile,
             additional_files,
-            &[],
             None,
             internal_metadata,
             info,
@@ -82,6 +81,7 @@ mod tests {
             "php",
             Some(default_tags()),
             endpoint,
+            BackendType::Hyper,
         )
         .expect("exporter to construct");
 
@@ -146,6 +146,7 @@ mod tests {
             "php",
             Some(default_tags()),
             endpoint,
+            BackendType::Hyper,
         )
         .expect("exporter to construct");
 
@@ -176,6 +177,7 @@ mod tests {
             "php",
             Some(default_tags()),
             endpoint,
+            BackendType::Hyper,
         )
         .expect("exporter to construct");
 
@@ -216,6 +218,7 @@ mod tests {
             "php",
             Some(default_tags()),
             endpoint,
+            BackendType::Hyper,
         )
         .expect("exporter to construct");
 
@@ -261,13 +264,14 @@ mod tests {
                 "php",
                 Some(default_tags()),
                 endpoint,
+                BackendType::Hyper,
             )
             .expect("exporter to construct");
 
             // Build request
             let profile = EncodedProfile::test_instance().expect("To get a profile");
             let request = exporter
-                .build(profile, &[], &[], None, None, None)
+                .build(profile, &[], None, None, None)
                 .expect("request to be built");
 
             // Send request
@@ -298,6 +302,7 @@ mod tests {
                 "ruby",
                 Some(default_tags()),
                 endpoint,
+                BackendType::Hyper,
             )
             .expect("exporter to construct");
 
@@ -308,7 +313,6 @@ mod tests {
             let request = exporter
                 .build(
                     profile,
-                    &[],
                     &[],
                     None,
                     Some(internal_metadata.clone()),
@@ -350,12 +354,12 @@ mod tests {
                 test_token: None,
             };
 
-            let exporter = ProfileExporter::new("dd-trace-test", "2.0.0", "python", None, endpoint)
+            let exporter = ProfileExporter::new("dd-trace-test", "2.0.0", "python", None, endpoint, BackendType::Hyper)
                 .expect("exporter to construct");
 
             let profile = EncodedProfile::test_instance().expect("To get a profile");
             let request = exporter
-                .build(profile, &[], &[], None, None, None)
+                .build(profile, &[], None, None, None)
                 .expect("request to be built");
 
             exporter.send(request, None).expect("send to succeed")
@@ -385,7 +389,7 @@ mod tests {
         let handle = tokio::task::spawn_blocking(move || {
             let base_url = mock_uri.parse().unwrap();
             let endpoint = config::agent(base_url).expect("endpoint to construct");
-            let mut exporter = ProfileExporter::new("dd-trace-test", "1.0.0", "go", None, endpoint)
+            let mut exporter = ProfileExporter::new("dd-trace-test", "1.0.0", "go", None, endpoint, BackendType::Hyper)
                 .expect("exporter to construct");
 
             // Set custom timeout
@@ -393,7 +397,7 @@ mod tests {
 
             let profile = EncodedProfile::test_instance().expect("To get a profile");
             let request = exporter
-                .build(profile, &[], &[], None, None, None)
+                .build(profile, &[], None, None, None)
                 .expect("request to be built");
 
             // Verify timeout is set correctly (state check)
@@ -431,7 +435,7 @@ mod tests {
         let handle = tokio::task::spawn_blocking(move || {
             let base_url = mock_uri.parse().unwrap();
             let endpoint = config::agent(base_url).expect("endpoint to construct");
-            let mut exporter = ProfileExporter::new("dd-trace-test", "1.0.0", "go", None, endpoint)
+            let mut exporter = ProfileExporter::new("dd-trace-test", "1.0.0", "go", None, endpoint, BackendType::Hyper)
                 .expect("exporter to construct");
 
             // Set a very short timeout - 100ms
@@ -439,7 +443,7 @@ mod tests {
 
             let profile = EncodedProfile::test_instance().expect("To get a profile");
             let request = exporter
-                .build(profile, &[], &[], None, None, None)
+                .build(profile, &[], None, None, None)
                 .expect("request to be built");
 
             // This should timeout because the server delays for 10 seconds

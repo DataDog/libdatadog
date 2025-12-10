@@ -306,6 +306,7 @@ fn test_crasht_tracking_validate_callstack() {
     test_crash_tracking_callstack()
 }
 
+#[allow(dead_code)]
 fn test_crash_tracking_callstack() {
     use bin_tests::test_runner::run_custom_crash_test;
 

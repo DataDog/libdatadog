@@ -9,7 +9,6 @@
 
 mod exporter;
 mod profiles;
-mod reqwest_exporter;
 mod string_storage;
 
 #[cfg(all(feature = "symbolizer", not(target_os = "windows")))]

@@ -25,12 +25,6 @@ target_compile_features(exporter PRIVATE cxx_std_20)
 target_link_libraries(exporter PRIVATE Datadog::Profiling)
 set_vcruntime_link_type(exporter ${VCRUNTIME_LINK_TYPE})
 
-add_executable(reqwest_exporter reqwest_exporter.cpp)
-# needed for designated initializers
-target_compile_features(reqwest_exporter PRIVATE cxx_std_20)
-target_link_libraries(reqwest_exporter PRIVATE Datadog::Profiling)
-set_vcruntime_link_type(reqwest_exporter ${VCRUNTIME_LINK_TYPE})
-
 add_executable(crashinfo crashinfo.cpp)
 # needed for designated initializers
 target_compile_features(crashinfo PRIVATE cxx_std_20)
