@@ -532,21 +532,20 @@ pub fn enrich_span_with_google_cloud_function_metadata(
         todo!()
     };
 
-    #[allow(clippy::unwrap_used)]
-    if function.is_some() && !region.is_empty() && !project.is_empty() {
-        let resource_name = format!(
-            "projects/{}/locations/{}/functions/{}",
-            project,
-            region,
-            function.unwrap()
-        );
+    if let Some(function) = function {
+        if !region.is_empty() && !project.is_empty() {
+            let resource_name = format!(
+                "projects/{}/locations/{}/functions/{}",
+                project, region, function
+            );
 
-        span.meta
-            .insert("gcrfx.location".to_string(), region.to_string());
-        span.meta
-            .insert("gcrfx.project_id".to_string(), project.to_string());
-        span.meta
-            .insert("gcrfx.resource_name".to_string(), resource_name.to_string());
+            span.meta
+                .insert("gcrfx.location".to_string(), region.to_string());
+            span.meta
+                .insert("gcrfx.project_id".to_string(), project.to_string());
+            span.meta
+                .insert("gcrfx.resource_name".to_string(), resource_name.to_string());
+        }
     }
 }
 
