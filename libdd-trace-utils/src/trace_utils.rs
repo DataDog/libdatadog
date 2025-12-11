@@ -1197,4 +1197,55 @@ mod tests {
             1.0
         );
     }
+
+    #[test]
+    fn test_rmp_serde_deserialize_meta_with_null_values() {
+        // Create a JSON representation with null value in meta
+        let span_json = json!({
+            "service": "test-service",
+            "name": "test_name",
+            "resource": "test-resource",
+            "trace_id": 1_u64,
+            "span_id": 2_u64,
+            "parent_id": 0_u64,
+            "start": 0_i64,
+            "duration": 5_i64,
+            "error": 0_i32,
+            "meta": {
+                "service": "test-service",
+                "env": "test-env",
+                "runtime-id": "test-runtime-id-value",
+                "problematic_key": null  // Ensure this null value does not cause an error
+            },
+            "metrics": {},
+            "type": "",
+            "meta_struct": {},
+            "span_links": [],
+            "span_events": []
+        });
+
+        let traces_json = vec![vec![span_json]];
+        let encoded_data = rmp_serde::to_vec(&traces_json).unwrap();
+        let traces: Vec<Vec<pb::Span>> = rmp_serde::from_read(&encoded_data[..])
+            .expect("Failed to deserialize traces with null values in meta");
+
+        assert_eq!(1, traces.len());
+        assert_eq!(1, traces[0].len());
+        let decoded_span = &traces[0][0];
+
+        assert_eq!("test-service", decoded_span.service);
+        assert_eq!("test_name", decoded_span.name);
+        assert_eq!("test-resource", decoded_span.resource);
+        assert_eq!("test-service", decoded_span.meta.get("service").unwrap());
+        assert_eq!("test-env", decoded_span.meta.get("env").unwrap());
+        assert_eq!(
+            "test-runtime-id-value",
+            decoded_span.meta.get("runtime-id").unwrap()
+        );
+        // Assert that the null value was filtered out (key not present in map)
+        assert!(
+            !decoded_span.meta.contains_key("problematic_key"),
+            "Null value should be skipped, but key was present"
+        );
+    }
 }
