@@ -82,6 +82,7 @@ pub fn read_str_map_to_strings<'a>(
 /// # Errors
 /// Fails if the buffer does not contain a valid map length prefix,
 /// or if any key or value is not a valid utf8 msgpack string.
+/// Null values are skipped (key not inserted into map).
 #[inline]
 pub fn read_nullable_str_map_to_strings<'a>(
     buf: &mut &'a [u8],
