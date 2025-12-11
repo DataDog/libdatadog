@@ -248,7 +248,7 @@ impl TelemetryCrashUploader {
             .map(|d| d.as_secs())
             .unwrap_or(0);
 
-        self.send_crash_log_payload(message, tags, tracer_time, level, false, false)
+        self.send_log_payload(message, tags, tracer_time, level, false, false)
             .await
     }
 
@@ -261,7 +261,7 @@ impl TelemetryCrashUploader {
             .unwrap_or(0);
         let message = serde_json::to_string(crash_ping)?;
 
-        self.send_crash_log_payload(
+        self.send_log_payload(
             message,
             tags,
             tracer_time,
@@ -286,7 +286,7 @@ impl TelemetryCrashUploader {
             |ts| ts.timestamp() as u64,
         );
 
-        self.send_crash_log_payload(
+        self.send_log_payload(
             message,
             tags,
             tracer_time,
@@ -299,7 +299,7 @@ impl TelemetryCrashUploader {
 
     /// Shared helper that builds `data::Telemetry` payload and calls `send_telemetry_payload`
     /// to send the payload to the telemetry log intake.
-    async fn send_crash_log_payload(
+    async fn send_log_payload(
         &self,
         message: String,
         tags: String,
@@ -925,8 +925,8 @@ mod tests {
 
         let payload: serde_json::value::Value =
             serde_json::de::from_str(&fs::read_to_string(&output_filename).unwrap())?;
-
         println!("payload: {:?}", payload.to_string());
+
         assert_eq!(payload["api_version"], "v2");
         assert_eq!(payload["request_type"], "logs");
         assert_eq!(payload["origin"], "Crashtracker");

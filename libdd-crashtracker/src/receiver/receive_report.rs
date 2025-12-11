@@ -13,6 +13,7 @@ use crate::{
 use anyhow::Context;
 use libdd_telemetry::data::LogLevel;
 use serde::{Deserialize, Serialize};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::io::AsyncBufReadExt;
 
@@ -23,6 +24,7 @@ enum ReceiverIssue {
     ProcessLine,
     AttachAdditionalFile,
     IncompleteStacktrace,
+    UnexpectedLine,
 }
 
 impl ReceiverIssue {
@@ -33,7 +35,23 @@ impl ReceiverIssue {
             ReceiverIssue::ProcessLine => "receiver_issue:process_line_error",
             ReceiverIssue::AttachAdditionalFile => "receiver_issue:attach_additional_file_error",
             ReceiverIssue::IncompleteStacktrace => "receiver_issue:incomplete_stacktrace",
+            ReceiverIssue::UnexpectedLine => "receiver_issue:unexpected_line",
         }
+    }
+}
+
+fn emit_debug_log(
+    logger: &Option<Arc<TelemetryCrashUploader>>,
+    issue: ReceiverIssue,
+    crash_uuid: &str,
+    message: String,
+    level: LogLevel,
+) {
+    if let Some(logger) = logger.as_ref().map(Arc::clone) {
+        let tags = format!("{},crash_uuid:{}", issue.tag(), crash_uuid);
+        tokio::spawn(async move {
+            let _ = logger.upload_general_log(message, tags, level).await;
+        });
     }
 }
 
@@ -109,6 +127,7 @@ fn process_line(
     config: &mut Option<CrashtrackerConfiguration>,
     line: &str,
     state: StdinState,
+    telemetry_logger: &Option<Arc<TelemetryCrashUploader>>,
 ) -> anyhow::Result<StdinState> {
     let next = match state {
         StdinState::AdditionalTags if line.starts_with(DD_CRASHTRACK_END_ADDITIONAL_TAGS) => {
@@ -293,10 +312,15 @@ fn process_line(
             StdinState::Done
         }
         StdinState::Waiting => {
-            builder.with_log_message(
-                format!("Unexpected line while receiving crashreport: {line}"),
-                true,
-            )?;
+            let msg = format!("Unexpected line while receiving crashreport: {line}");
+            builder.with_log_message(msg.clone(), true)?;
+            emit_debug_log(
+                telemetry_logger,
+                ReceiverIssue::UnexpectedLine,
+                &builder.uuid.to_string(),
+                msg,
+                LogLevel::Warn,
+            );
             StdinState::Waiting
         }
     };
@@ -315,7 +339,7 @@ pub(crate) async fn receive_report_from_stream(
     let mut builder = CrashInfoBuilder::new();
     let mut stdin_state = StdinState::Waiting;
     let mut config: Option<CrashtrackerConfiguration> = None;
-    let mut telemetry_logger: Option<TelemetryCrashUploader> = None;
+    let mut telemetry_logger: Option<Arc<TelemetryCrashUploader>> = None;
 
     let mut crash_ping_sent = false;
 
@@ -330,7 +354,7 @@ pub(crate) async fn receive_report_from_stream(
         if telemetry_logger.is_none() {
             if let (Some(cfg), Some(md)) = (&config, builder.metadata.clone()) {
                 if let Ok(logger) = TelemetryCrashUploader::new(&md, cfg.endpoint()) {
-                    telemetry_logger = Some(logger);
+                    telemetry_logger = Some(Arc::new(logger));
                 }
             }
         }
@@ -359,19 +383,13 @@ pub(crate) async fn receive_report_from_stream(
         let next_line = tokio::time::timeout(remaining_timeout, lines.next_line()).await;
         let Ok(next_line) = next_line else {
             builder.with_log_message(format!("Timeout: {next_line:?}"), true)?;
-            if let Some(logger) = telemetry_logger.as_ref() {
-                let _ = logger
-                    .upload_general_log(
-                        format!("Timeout while waiting for crash report input: {next_line:?}"),
-                        format!(
-                            "{},crash_uuid:{}",
-                            ReceiverIssue::Timeout.tag(),
-                            builder.uuid
-                        ),
-                        LogLevel::Warn,
-                    )
-                    .await;
-            }
+            emit_debug_log(
+                &telemetry_logger,
+                ReceiverIssue::Timeout,
+                &builder.uuid.to_string(),
+                format!("Timeout while waiting for crash report input: {next_line:?}"),
+                LogLevel::Warn,
+            );
             break;
         };
         let Ok(next_line) = next_line else {
@@ -379,24 +397,24 @@ pub(crate) async fn receive_report_from_stream(
             // We ignore error from uploading the log to telemetry, because what are we going to do?
             // If upload is failing, its not worth the effort to retry the request so we should just
             // continue on. At least we will get the log message in the crash info
-            if let Some(logger) = telemetry_logger.as_ref() {
-                let _ = logger
-                    .upload_general_log(
-                        format!("IO error while reading crash report input: {next_line:?}"),
-                        format!(
-                            "{},crash_uuid:{}",
-                            ReceiverIssue::IoError.tag(),
-                            builder.uuid
-                        ),
-                        LogLevel::Warn,
-                    )
-                    .await;
-            }
+            emit_debug_log(
+                &telemetry_logger,
+                ReceiverIssue::IoError,
+                &builder.uuid.to_string(),
+                format!("IO error while reading crash report input: {next_line:?}"),
+                LogLevel::Warn,
+            );
             break;
         };
         let Some(next_line) = next_line else { break };
 
-        match process_line(&mut builder, &mut config, &next_line, stdin_state) {
+        match process_line(
+            &mut builder,
+            &mut config,
+            &next_line,
+            stdin_state,
+            &telemetry_logger,
+        ) {
             Ok(next_state) => {
                 stdin_state = next_state;
                 if matches!(stdin_state, StdinState::Done) {
@@ -409,19 +427,13 @@ pub(crate) async fn receive_report_from_stream(
                     format!("Unable to process line: {next_line}. Error: {e}"),
                     true,
                 )?;
-                if let Some(logger) = telemetry_logger.as_ref() {
-                    let _ = logger
-                        .upload_general_log(
-                            format!("Unable to process line: {next_line}. Error: {e}"),
-                            format!(
-                                "{},crash_uuid:{}",
-                                ReceiverIssue::ProcessLine.tag(),
-                                builder.uuid
-                            ),
-                            LogLevel::Warn,
-                        )
-                        .await;
-                }
+                emit_debug_log(
+                    &telemetry_logger,
+                    ReceiverIssue::ProcessLine,
+                    &builder.uuid.to_string(),
+                    format!("Unable to process line: {next_line}. Error: {e}"),
+                    LogLevel::Warn,
+                );
                 break;
             }
         }
@@ -446,41 +458,30 @@ pub(crate) async fn receive_report_from_stream(
 
     // Without a config, we don't even know the endpoint to transmit to.  Not much to do to recover.
     let config = config.context("Missing crashtracker configuration")?;
+
     for filename in config.additional_files() {
         if let Err(e) = builder.with_file(filename.clone()) {
             builder.with_log_message(e.to_string(), true)?;
-            if let Some(logger) = telemetry_logger.as_ref() {
-                let _ = logger
-                    .upload_general_log(
-                        format!("Unable to attach additional file {filename:?}: {e}"),
-                        format!(
-                            "{},crash_uuid:{}",
-                            ReceiverIssue::AttachAdditionalFile.tag(),
-                            builder.uuid
-                        ),
-                        LogLevel::Warn,
-                    )
-                    .await;
-            }
+            emit_debug_log(
+                &telemetry_logger,
+                ReceiverIssue::AttachAdditionalFile,
+                &builder.uuid.to_string(),
+                format!("Unable to attach additional file {filename:?}: {e}"),
+                LogLevel::Warn,
+            );
         }
     }
 
     let crash_info = builder.build()?;
 
     if crash_info.incomplete {
-        if let Some(logger) = telemetry_logger.as_ref() {
-            let _ = logger
-                .upload_general_log(
-                    "CrashInfo stacktrace incomplete".to_string(),
-                    format!(
-                        "{},crash_uuid:{}",
-                        ReceiverIssue::IncompleteStacktrace.tag(),
-                        crash_info.uuid
-                    ),
-                    LogLevel::Warn,
-                )
-                .await;
-        }
+        emit_debug_log(
+            &telemetry_logger,
+            ReceiverIssue::IncompleteStacktrace,
+            &crash_info.uuid,
+            "CrashInfo stacktrace incomplete".to_string(),
+            LogLevel::Warn,
+        );
     }
 
     Ok(Some((config, crash_info)))
