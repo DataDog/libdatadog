@@ -8,7 +8,6 @@ fn multipart(
     exporter: &mut ProfileExporter,
     internal_metadata: Option<serde_json::Value>,
     info: Option<serde_json::Value>,
-    process_tags: Option<&str>,
 ) -> Request {
     let profile = EncodedProfile::test_instance().expect("To get a profile");
 
@@ -24,7 +23,6 @@ fn multipart(
             files_to_compress_and_export,
             files_to_export_unmodified,
             None,
-            process_tags,
             internal_metadata,
             info,
         )
@@ -86,7 +84,7 @@ mod tests {
         )
         .expect("exporter to construct");
 
-        let request = multipart(&mut exporter, None, None, None);
+        let request = multipart(&mut exporter, None, None);
 
         assert_eq!(
             request.uri().to_string(),
@@ -156,35 +154,10 @@ mod tests {
             "extra object": {"key": [1, 2, true]},
             "libdatadog_version": env!("CARGO_PKG_VERSION"),
         });
-        let request = multipart(&mut exporter, Some(internal_metadata.clone()), None, None);
+        let request = multipart(&mut exporter, Some(internal_metadata.clone()), None);
         let parsed_event_json = parsed_event_json(request);
 
         assert_eq!(parsed_event_json["internal"], internal_metadata);
-    }
-
-    #[test]
-    // This test invokes an external function SecTrustSettingsCopyCertificates
-    // which Miri cannot evaluate.
-    #[cfg_attr(miri, ignore)]
-    fn including_process_tags() {
-        let profiling_library_name = "dd-trace-foo";
-        let profiling_library_version = "1.2.3";
-        let base_url = "http://localhost:8126".parse().expect("url to parse");
-        let endpoint = config::agent(base_url).expect("endpoint to construct");
-        let mut exporter = ProfileExporter::new(
-            profiling_library_name,
-            profiling_library_version,
-            "php",
-            Some(default_tags()),
-            endpoint,
-        )
-        .expect("exporter to construct");
-
-        let expected_process_tags = "entrypoint.basedir:net10.0,entrypoint.name:buggybits.program,entrypoint.workdir:this_folder,runtime_platform:x86_64-pc-windows-msvc";
-        let request = multipart(&mut exporter, None, None, Some(expected_process_tags));
-        let parsed_event_json = parsed_event_json(request);
-
-        assert_eq!(parsed_event_json["process_tags"], expected_process_tags);
     }
 
     #[test]
@@ -221,7 +194,7 @@ mod tests {
                 "settings": {}
             }
         });
-        let request = multipart(&mut exporter, None, Some(info.clone()), None);
+        let request = multipart(&mut exporter, None, Some(info.clone()));
         let parsed_event_json = parsed_event_json(request);
 
         assert_eq!(parsed_event_json["info"], info);
@@ -245,7 +218,7 @@ mod tests {
         )
         .expect("exporter to construct");
 
-        let request = multipart(&mut exporter, None, None, None);
+        let request = multipart(&mut exporter, None, None);
 
         assert_eq!(
             request.uri().to_string(),
