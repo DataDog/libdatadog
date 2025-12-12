@@ -3038,7 +3038,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-tracer-flare"
-version = "24.0.1"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "datadog-remote-config",
