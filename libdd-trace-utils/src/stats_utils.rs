@@ -82,11 +82,21 @@ mod mini_agent {
             .body(hyper_migration::Body::from(data.clone()))?;
 
         let response = if let Some(client) = client {
+            debug!(
+                "send_stats_payload_with_client() | using custom client"
+            );
             client.request(req).await
         } else {
             let default_client = hyper_migration::new_default_client();
+            debug!(
+                "send_stats_payload_with_client() | using default client"
+            );
             default_client.request(req).await
         };
+
+        debug!(
+            "send_stats_payload_with_client() | response: {response:?}"
+        );
 
         match response {
             Ok(response) => {

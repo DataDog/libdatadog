@@ -63,7 +63,7 @@ libdd-trace-utils = { path = ".", features = ["test-utils"] }
 tempfile = "3.3.0"
 
 [features]
-default = ["https"]
+default = ["https", "mini_agent"]
 https = ["libdd-common/https"]
 mini_agent = ["compression", "libdd-common/use_webpki_roots"]
 test-utils = [
