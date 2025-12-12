@@ -28,7 +28,6 @@ datadog-remote-config                @Datadog/libdatadog-php @Datadog/libdatadog
 datadog-sidecar                      @Datadog/libdatadog-php @Datadog/libdatadog-apm
 datadog-sidecar-ffi                  @Datadog/libdatadog-php @Datadog/libdatadog-apm
 datadog-sidecar-macros               @Datadog/libdatadog-php
-datadog-tracer-flare                 @Datadog/libdatadog-apm
 docker-bake.hcl                      @Datadog/apm-common-components-core
 docs                                 @Datadog/libdatadog
 examples                             @Datadog/libdatadog
@@ -48,6 +47,7 @@ libdd-trace-obfuscation              @Datadog/serverless @Datadog/libdatadog-apm
 libdd-trace-protobuf                 @Datadog/serverless @Datadog/libdatadog-apm
 libdd-trace-stats                    @Datadog/apm-common-components-core
 libdd-trace-utils                    @Datadog/serverless @Datadog/libdatadog-apm
+libdd-tracer-flare                   @Datadog/libdatadog-apm
 LICENSE*                             @Datadog/libdatadog
 local-linux.Dockerfile               @Datadog/libdatadog
 NOTICE                               @Datadog/libdatadog
