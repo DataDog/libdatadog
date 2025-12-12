@@ -365,11 +365,18 @@ pub fn path_for_telemetry(service: &str, env: &str) -> CString {
 }
 
 #[derive(Debug)]
+pub enum InternalTelemetryAction {
+    TelemetryAction(TelemetryActions),
+    RegisterTelemetryMetric(MetricContext),
+    AddMetricPoint((f64, String, Vec<Tag>)),
+}
+
+#[derive(Debug)]
 pub struct InternalTelemetryActions {
     pub instance_id: InstanceId,
     pub service_name: String,
     pub env_name: String,
-    pub actions: Vec<TelemetryActions>,
+    pub actions: Vec<InternalTelemetryAction>,
 }
 
 pub fn get_telemetry_action_sender() -> Result<mpsc::Sender<InternalTelemetryActions>> {
@@ -398,14 +405,33 @@ pub(crate) async fn telemetry_action_receiver_task(sidecar: SidecarServer) {
         );
         let client = telemetry_client.lock_or_panic().worker.clone();
 
-        for action in actions.actions {
-            let action_str = format!("{action:?}");
-            match client.send_msg(action).await {
-                Ok(_) => {
-                    debug!("Sent telemetry action to TelemetryWorker: {action_str}");
+        for it_action in actions.actions {
+            match it_action {
+                InternalTelemetryAction::TelemetryAction(action) => {
+                    let action_str = format!("{action:?}");
+                    match client.send_msg(action).await {
+                        Ok(_) => {
+                            debug!("Sent telemetry action to TelemetryWorker: {action_str}");
+                        }
+                        Err(e) => {
+                            warn!("Failed to send telemetry action {action_str} to TelemetryWorker: {e}");
+                        }
+                    }
                 }
-                Err(e) => {
-                    warn!("Failed to send telemetry action {action_str} to TelemetryWorker: {e}");
+                InternalTelemetryAction::RegisterTelemetryMetric(metric) => {
+                    debug!("Registered telemetry metric: {metric:?}");
+                    telemetry_client.lock_or_panic().register_metric(metric);
+                }
+                InternalTelemetryAction::AddMetricPoint((value, name, tags)) => {
+                    let actions_point = telemetry_client
+                        .lock_or_panic()
+                        .to_telemetry_point((name, value, tags));
+                    match client.send_msg(actions_point).await {
+                        Ok(_) => {}
+                        Err(e) => {
+                            warn!("Failed to send telemetry point to TelemetryWorker: {e}");
+                        }
+                    }
                 }
             }
         }
