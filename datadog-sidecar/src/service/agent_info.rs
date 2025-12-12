@@ -18,7 +18,7 @@ use futures::FutureExt;
 use http::uri::PathAndQuery;
 use libdd_common::{Endpoint, MutexExt};
 use libdd_data_pipeline::agent_info::schema::AgentInfoStruct;
-use libdd_data_pipeline::agent_info::{fetch_info_with_state, FetchInfoStatus};
+use libdd_data_pipeline::agent_info::{fetch_info_with_state_tokio, FetchInfoStatus};
 use manual_future::ManualFuture;
 use std::ffi::CString;
 use std::hash::{Hash, Hasher};
@@ -101,7 +101,7 @@ impl AgentInfoFetcher {
             parts.path_and_query = Some(PathAndQuery::from_static("/info"));
             fetch_endpoint.url = hyper::Uri::from_parts(parts).unwrap();
             loop {
-                let fetched = fetch_info_with_state(&fetch_endpoint, state.as_deref()).await;
+                let fetched = fetch_info_with_state_tokio(&fetch_endpoint, state.as_deref()).await;
                 let mut complete_fut = None;
                 {
                     let mut infos_guard = agent_infos.0.lock_or_panic();

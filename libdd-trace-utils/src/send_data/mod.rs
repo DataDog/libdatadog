@@ -261,7 +261,7 @@ impl SendData {
         #[allow(clippy::unwrap_used)]
         let payload_len = u64::try_from(payload.len()).unwrap();
         (
-            send_with_retry(
+            send_with_retry::<tokio::runtime::Runtime, GenericHttpClient<C>>(
                 http_client,
                 &self.target,
                 payload,
