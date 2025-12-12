@@ -6,6 +6,7 @@
 #![allow(clippy::needless_lifetimes)]
 
 use crate::api;
+use crate::exporter;
 use crate::internal;
 
 // ============================================================================
@@ -59,11 +60,22 @@ pub mod ffi {
         labels: Vec<Label<'a>>,
     }
 
+    struct Tag<'a> {
+        key: &'a str,
+        value: &'a str,
+    }
+
+    struct AttachmentFile<'a> {
+        name: &'a str,
+        data: &'a [u8],
+    }
+
     // Opaque Rust types
     extern "Rust" {
         type Profile;
+        type ProfileExporter;
 
-        // Static factory methods
+        // Static factory methods for Profile
         #[Self = "Profile"]
         fn create(sample_types: Vec<ValueType>, period: &Period) -> Result<Box<Profile>>;
 
@@ -103,6 +115,50 @@ pub mod ffi {
 
         fn reset(self: &mut Profile) -> Result<()>;
         fn serialize_to_vec(self: &mut Profile) -> Result<Vec<u8>>;
+
+        // Static factory methods for ProfileExporter
+        #[Self = "ProfileExporter"]
+        fn create_agent_exporter(
+            profiling_library_name: &str,
+            profiling_library_version: &str,
+            family: &str,
+            tags: Vec<Tag>,
+            agent_url: &str,
+            timeout_ms: u64,
+        ) -> Result<Box<ProfileExporter>>;
+
+        #[Self = "ProfileExporter"]
+        fn create_agentless_exporter(
+            profiling_library_name: &str,
+            profiling_library_version: &str,
+            family: &str,
+            tags: Vec<Tag>,
+            site: &str,
+            api_key: &str,
+            timeout_ms: u64,
+        ) -> Result<Box<ProfileExporter>>;
+
+        // ProfileExporter methods
+        /// Sends a profile to Datadog.
+        ///
+        /// # Arguments
+        /// * `profile` - Profile to send (will be reset after sending)
+        /// * `files_to_compress` - Additional files to compress and attach (e.g., heap dumps)
+        /// * `additional_tags` - Per-profile tags (in addition to exporter-level tags)
+        /// * `internal_metadata` - Internal metadata as JSON string (e.g., `{"key": "value"}`)
+        ///   See Datadog-internal "RFC: Attaching internal metadata to pprof profiles"
+        ///   Pass empty string "" if not needed
+        /// * `info` - System/environment info as JSON string (e.g., `{"os": "linux", "arch": "x86_64"}`)
+        ///   See Datadog-internal "RFC: Pprof System Info Support"
+        ///   Pass empty string "" if not needed
+        fn send_profile(
+            self: &ProfileExporter,
+            profile: &mut Profile,
+            files_to_compress: Vec<AttachmentFile>,
+            additional_tags: Vec<Tag>,
+            internal_metadata: &str,
+            info: &str,
+        ) -> Result<()>;
     }
 }
 
@@ -166,6 +222,23 @@ impl<'a> From<&ffi::Label<'a>> for api::Label<'a> {
             num: label.num,
             num_unit: label.num_unit,
         }
+    }
+}
+
+impl<'a> From<&ffi::AttachmentFile<'a>> for exporter::File<'a> {
+    fn from(file: &ffi::AttachmentFile<'a>) -> Self {
+        exporter::File {
+            name: file.name,
+            bytes: file.data,
+        }
+    }
+}
+
+impl<'a> TryFrom<&ffi::Tag<'a>> for exporter::Tag {
+    type Error = anyhow::Error;
+
+    fn try_from(tag: &ffi::Tag<'a>) -> Result<Self, Self::Error> {
+        exporter::Tag::new(tag.key, tag.value)
     }
 }
 
@@ -274,5 +347,164 @@ impl Profile {
         let end_time = Some(std::time::SystemTime::now());
         let encoded = old_profile.serialize_into_compressed_pprof(end_time, None)?;
         Ok(encoded.buffer)
+    }
+}
+
+// ============================================================================
+// ProfileExporter - Wrapper around exporter::ProfileExporter
+// ============================================================================
+
+pub struct ProfileExporter {
+    inner: exporter::ProfileExporter,
+}
+
+impl ProfileExporter {
+    pub fn create_agent_exporter(
+        profiling_library_name: &str,
+        profiling_library_version: &str,
+        family: &str,
+        tags: Vec<ffi::Tag>,
+        agent_url: &str,
+        timeout_ms: u64,
+    ) -> anyhow::Result<Box<ProfileExporter>> {
+        let mut endpoint = exporter::config::agent(agent_url.parse()?)?;
+        
+        // Set timeout if non-zero (0 means use default)
+        if timeout_ms > 0 {
+            endpoint.timeout_ms = timeout_ms;
+        }
+        
+        let tags_vec: Vec<exporter::Tag> = tags
+            .iter()
+            .map(TryInto::try_into)
+            .collect::<Result<Vec<_>, _>>()?;
+        
+        let tags_option = if tags_vec.is_empty() {
+            None
+        } else {
+            Some(tags_vec)
+        };
+        
+        let inner = exporter::ProfileExporter::new(
+            profiling_library_name.to_string(),
+            profiling_library_version.to_string(),
+            family.to_string(),
+            tags_option,
+            endpoint,
+        )?;
+        
+        Ok(Box::new(ProfileExporter { inner }))
+    }
+
+    pub fn create_agentless_exporter(
+        profiling_library_name: &str,
+        profiling_library_version: &str,
+        family: &str,
+        tags: Vec<ffi::Tag>,
+        site: &str,
+        api_key: &str,
+        timeout_ms: u64,
+    ) -> anyhow::Result<Box<ProfileExporter>> {
+        let mut endpoint = exporter::config::agentless(site, api_key.to_string())?;
+        
+        // Set timeout if non-zero (0 means use default)
+        if timeout_ms > 0 {
+            endpoint.timeout_ms = timeout_ms;
+        }
+        
+        let tags_vec: Vec<exporter::Tag> = tags
+            .iter()
+            .map(TryInto::try_into)
+            .collect::<Result<Vec<_>, _>>()?;
+        
+        let tags_option = if tags_vec.is_empty() {
+            None
+        } else {
+            Some(tags_vec)
+        };
+        
+        let inner = exporter::ProfileExporter::new(
+            profiling_library_name.to_string(),
+            profiling_library_version.to_string(),
+            family.to_string(),
+            tags_option,
+            endpoint,
+        )?;
+        
+        Ok(Box::new(ProfileExporter { inner }))
+    }
+
+    /// Sends a profile to Datadog.
+    ///
+    /// # Arguments
+    /// * `profile` - Profile to send (will be reset after sending)
+    /// * `files_to_compress` - Additional files to compress and attach
+    /// * `additional_tags` - Per-profile tags (in addition to exporter-level tags)
+    /// * `internal_metadata` - Internal metadata as JSON string. Empty string if not needed.
+    ///   Example: `{"custom_field": "value", "version": "1.0"}`
+    /// * `info` - System/environment info as JSON string. Empty string if not needed.
+    ///   Example: `{"os": "linux", "arch": "x86_64", "kernel": "5.15.0"}`
+    pub fn send_profile(
+        &self,
+        profile: &mut Profile,
+        files_to_compress: Vec<ffi::AttachmentFile>,
+        additional_tags: Vec<ffi::Tag>,
+        internal_metadata: &str,
+        info: &str,
+    ) -> anyhow::Result<()> {
+        // Reset the profile and get the old one to export
+        let old_profile = profile.inner.reset_and_return_previous()?;
+        let end_time = Some(std::time::SystemTime::now());
+        let encoded = old_profile.serialize_into_compressed_pprof(end_time, None)?;
+        
+        // Convert attachment files to exporter::File
+        let files_to_compress_vec: Vec<exporter::File> =
+            files_to_compress.iter().map(Into::into).collect();
+        
+        // Convert additional tags
+        let additional_tags_vec: Option<Vec<exporter::Tag>> = if additional_tags.is_empty() {
+            None
+        } else {
+            Some(
+                additional_tags
+                    .iter()
+                    .map(TryInto::try_into)
+                    .collect::<Result<Vec<_>, _>>()?,
+            )
+        };
+        
+        // Parse JSON strings if provided
+        let internal_metadata_json = if internal_metadata.is_empty() {
+            None
+        } else {
+            Some(serde_json::from_str(internal_metadata)?)
+        };
+        
+        let info_json = if info.is_empty() {
+            None
+        } else {
+            Some(serde_json::from_str(info)?)
+        };
+        
+        // Build and send the request
+        let request = self.inner.build(
+            encoded,
+            &files_to_compress_vec,
+            &[],  // files_to_export_unmodified - empty
+            additional_tags_vec.as_ref(),
+            internal_metadata_json,
+            info_json,
+        )?;
+        let response = self.inner.send(request, None)?;
+        
+        // Check response status
+        if !response.status().is_success() {
+            anyhow::bail!(
+                "Failed to export profile: HTTP {}",
+                response.status()
+            );
+        }
+        
+        Ok(())
     }
 }

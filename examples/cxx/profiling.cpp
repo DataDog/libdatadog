@@ -6,13 +6,15 @@
 #include <fstream>
 #include <format>
 #include <vector>
+#include <cstdlib>
 #include "libdd-profiling/src/cxx.rs.h"
 
 using namespace datadog::profiling;
 
 int main() {
     try {
-        std::cout << "Creating Profile using CXX bindings..." << std::endl;
+        std::cout << "=== Datadog Profiling CXX Bindings Example ===" << std::endl;
+        std::cout << "\nCreating Profile..." << std::endl;
         
         ValueType wall_time{
             .type_ = "wall-time",
@@ -32,7 +34,7 @@ int main() {
         // Poisson upscaling for sampled data
         std::vector<size_t> value_offsets = {0};
         profile->add_upscaling_rule_poisson(
-            rust::Slice<const size_t>(value_offsets.data(), value_offsets.size()),
+            {value_offsets.data(), value_offsets.size()},
             "thread_id",
             "0",
             0,
@@ -42,7 +44,7 @@ int main() {
         
         // Proportional upscaling (scale by factor)
         profile->add_upscaling_rule_proportional(
-            rust::Slice<const size_t>(value_offsets.data(), value_offsets.size()),
+            {value_offsets.data(), value_offsets.size()},
             "thread_id",
             "1",
             100.0
@@ -174,18 +176,131 @@ int main() {
         profile->add_endpoint_count("/api/products", 200);
         std::cout << "✅ Added endpoint mappings and counts" << std::endl;
         
-        std::cout << "Serializing profile..." << std::endl;
-        auto serialized = profile->serialize_to_vec();
-        std::cout << "✅ Profile serialized to " << serialized.size() << " bytes" << std::endl;
+        // Check if we should export to Datadog or save to file
+        const char* agent_url = std::getenv("DD_AGENT_URL");
+        const char* api_key = std::getenv("DD_API_KEY");
         
-        std::ofstream out("profile.pprof", std::ios::binary);
-        out.write(reinterpret_cast<const char*>(serialized.data()), serialized.size());
-        out.close();
-        std::cout << "✅ Profile written to profile.pprof" << std::endl;
-        
-        std::cout << "Resetting profile..." << std::endl;
-        profile->reset();
-        std::cout << "✅ Profile reset" << std::endl;
+        if (agent_url || api_key) {
+            // Export to Datadog
+            std::cout << "\n=== Exporting to Datadog ===" << std::endl;
+            
+            try {
+                // Example: Create an additional file to attach (e.g., application metadata)
+                std::string app_metadata = R"({
+    "app_version": "1.2.3",
+    "build_id": "abc123",
+    "profiling_mode": "continuous",
+    "sample_count": 100
+})";
+                std::vector<uint8_t> metadata_bytes(app_metadata.begin(), app_metadata.end());
+                
+                if (api_key) {
+                    // Agentless mode - send directly to Datadog intake
+                    const char* site = std::getenv("DD_SITE");
+                    std::string dd_site = site ? site : "datadoghq.com";
+                    
+                    std::cout << "Creating agentless exporter (site: " << dd_site << ")..." << std::endl;
+                    auto exporter = ProfileExporter::create_agentless_exporter(
+                        "dd-trace-cpp",
+                        "1.0.0",
+                        "native",
+                        {
+                            Tag{.key = "service", .value = "profiling-example"},
+                            Tag{.key = "env", .value = "dev"},
+                            Tag{.key = "example", .value = "cxx"}
+                        },
+                        dd_site.c_str(),
+                        api_key,
+                        10000  // 10 second timeout (0 = use default)
+                    );
+                    std::cout << "✅ Exporter created" << std::endl;
+                    
+                    std::cout << "Exporting profile to Datadog with additional metadata..." << std::endl;
+                    
+                    exporter->send_profile(
+                        *profile,
+                        // Files to compress and attach
+                        {AttachmentFile{
+                            .name = "app_metadata.json",
+                            .data = {metadata_bytes.data(), metadata_bytes.size()}
+                        }},
+                        // Additional per-profile tags
+                        {
+                            Tag{.key = "export_id", .value = "12345"},
+                            Tag{.key = "host", .value = "example-host"}
+                        },
+                        // Internal metadata (JSON string)
+                        R"({"profiler_version": "1.0", "custom_field": "demo"})",
+                        // System info (JSON string)
+                        R"({"os": "macos", "arch": "arm64", "cores": 8})"
+                    );
+                    std::cout << "✅ Profile exported successfully!" << std::endl;
+                } else {
+                    // Agent mode - send to local Datadog agent
+                    std::cout << "Creating agent exporter (url: " << agent_url << ")..." << std::endl;
+                    auto exporter = ProfileExporter::create_agent_exporter(
+                        "dd-trace-cpp",
+                        "1.0.0",
+                        "native",
+                        {
+                            Tag{.key = "service", .value = "profiling-example"},
+                            Tag{.key = "env", .value = "dev"},
+                            Tag{.key = "example", .value = "cxx"}
+                        },
+                        agent_url,
+                        10000  // 10 second timeout (0 = use default)
+                    );
+                    std::cout << "✅ Exporter created" << std::endl;
+                    
+                    std::cout << "Exporting profile to Datadog with additional metadata..." << std::endl;
+                    
+                    exporter->send_profile(
+                        *profile,
+                        // Files to compress and attach
+                        {AttachmentFile{
+                            .name = "app_metadata.json",
+                            .data = {metadata_bytes.data(), metadata_bytes.size()}
+                        }},
+                        // Additional per-profile tags
+                        {
+                            Tag{.key = "export_id", .value = "12345"},
+                            Tag{.key = "host", .value = "example-host"}
+                        },
+                        // Internal metadata (JSON string)
+                        R"({"profiler_version": "1.0", "custom_field": "demo"})",
+                        // System info (JSON string)
+                        R"({"os": "macos", "arch": "arm64", "cores": 8})"
+                    );
+                    std::cout << "✅ Profile exported successfully!" << std::endl;
+                }
+                
+            } catch (const std::exception& e) {
+                std::cerr << "⚠️  Failed to export profile: " << e.what() << std::endl;
+                std::cerr << "   Falling back to file export..." << std::endl;
+                
+                // Fall back to file export on error
+                auto serialized = profile->serialize_to_vec();
+                std::ofstream out("profile.pprof", std::ios::binary);
+                out.write(reinterpret_cast<const char*>(serialized.data()), serialized.size());
+                out.close();
+                std::cout << "✅ Profile written to profile.pprof" << std::endl;
+            }
+        } else {
+            // Save to file
+            std::cout << "\n=== Saving to File ===" << std::endl;
+            std::cout << "Serializing profile..." << std::endl;
+            auto serialized = profile->serialize_to_vec();
+            std::cout << "✅ Profile serialized to " << serialized.size() << " bytes" << std::endl;
+            
+            std::ofstream out("profile.pprof", std::ios::binary);
+            out.write(reinterpret_cast<const char*>(serialized.data()), serialized.size());
+            out.close();
+            std::cout << "✅ Profile written to profile.pprof" << std::endl;
+            
+            std::cout << "\nℹ️  To export to Datadog instead, set environment variables:" << std::endl;
+            std::cout << "   Agent mode:      DD_AGENT_URL=http://localhost:8126" << std::endl;
+            std::cout << "   Agentless mode:  DD_API_KEY=<your-api-key> [DD_SITE=datadoghq.com]" << std::endl;
+        }
         
         std::cout << "\n✅ Success!" << std::endl;
         return 0;

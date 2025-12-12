@@ -11,6 +11,7 @@ build/
 cmake-build-debug
 deliverables
 docker-linux-target
+release
 target
 tmp
 __fuzz__

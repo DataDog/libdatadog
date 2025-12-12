@@ -45,7 +45,7 @@ Windows:
 
 ### Profiling (`profiling.cpp`)
 
-Demonstrates building profiling data using the CXX bindings for `libdd-profiling`.
+Demonstrates building profiling data and exporting to Datadog using the CXX bindings for `libdd-profiling`.
 
 **Build and run:**
 
@@ -63,10 +63,44 @@ Windows:
 - Type-safe API for building profiles
 - Support for samples, locations, mappings, and labels
 - String interning for efficient memory usage
+- Upscaling rules (Poisson and Proportional)
+- Endpoint tracking for web service profiling
 - Pprof format serialization with zstd compression
+- **Export to Datadog** via agent or agentless mode
+- Support for attaching additional compressed files
+- Per-profile tags and metadata
 - Automatic memory management
 - Exception-based error handling
 - Modern C++20 syntax with designated initializers and `std::format`
+
+**Core Types:**
+- `Profile` - Profile builder for collecting samples
+- `ProfileExporter` - Exporter for sending profiles to Datadog
+- `Tag` - Key-value tags for profile metadata
+- `AttachmentFile` - Additional file to attach to profile (name + data bytes)
+
+**Export Modes:**
+
+By default, the example saves the profile to `profile.pprof`. To export to Datadog, set environment variables:
+
+1. **Agent mode**: Sends profiles to the local Datadog agent
+   ```bash
+   DD_AGENT_URL=http://localhost:8126 ./build-profiling.sh
+   ```
+
+2. **Agentless mode**: Sends profiles directly to Datadog intake
+   ```bash
+   DD_API_KEY=your-api-key DD_SITE=datadoghq.com ./build-profiling.sh
+   ```
+
+**API Example:**
+
+See [`profiling.cpp`](profiling.cpp) for a complete example showing profile creation, sample collection, and exporting to Datadog with optional attachments and metadata.
+
+**Requirements:**
+- C++20 compiler
+- For agent mode: Datadog agent running (default: localhost:8126)
+- For agentless mode: Valid Datadog API key
 
 ## Build Scripts
 
