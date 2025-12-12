@@ -28,7 +28,7 @@ members = [
   "libdd-trace-protobuf",
   "libdd-trace-utils",
   "libdd-trace-stats",
-  "datadog-tracer-flare",
+  "libdd-tracer-flare",
   "libdd-common",
   "libdd-common-ffi",
   "libdd-telemetry",
