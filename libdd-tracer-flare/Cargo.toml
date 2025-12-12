@@ -5,7 +5,6 @@ description = "Rust library for collecting and transmitting Datadog tracer diagn
 rust-version.workspace = true
 edition.workspace = true
 license.workspace = true
-version.workspace = true
 autobenches = false
 publish = false
 authors.workspace = true
