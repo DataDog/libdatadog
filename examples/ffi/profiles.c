@@ -15,24 +15,22 @@ int main(void) {
   const ddog_prof_Period period = {wall_time, 60};
 
   // Create a ProfilesDictionary for the new API
-  ddog_prof_ProfilesDictionaryHandle dict_handle = {0};
-  ddog_prof_ProfileStatus dict_status = ddog_prof_ProfilesDictionary_new(&dict_handle);
-  if (dict_status.tag != DDOG_PROF_PROFILE_STATUS_OK) {
-    ddog_CharSlice message = ddog_Error_message(&dict_status.err);
-    fprintf(stderr, "Failed to create dictionary: %.*s\n", (int)message.len, message.ptr);
-    ddog_Error_drop(&dict_status.err);
+  ddog_prof_ProfilesDictionaryHandle dict = {0};
+  ddog_prof_Status dict_status = ddog_prof_ProfilesDictionary_new(&dict);
+  if (dict_status.flags != 0) {
+    fprintf(stderr, "Failed to create dictionary: %s\n", dict_status.err);
+    ddog_prof_Status_drop(&dict_status);
     exit(EXIT_FAILURE);
   }
 
   // Create profile using the dictionary
   ddog_prof_Profile profile = {0};
-  ddog_prof_ProfileStatus profile_status =
-      ddog_prof_Profile_with_dictionary(&profile, &dict_handle, sample_types, &period);
-  if (profile_status.tag != DDOG_PROF_PROFILE_STATUS_OK) {
-    ddog_CharSlice message = ddog_Error_message(&profile_status.err);
-    fprintf(stderr, "Failed to create profile: %.*s\n", (int)message.len, message.ptr);
-    ddog_Error_drop(&profile_status.err);
-    ddog_prof_ProfilesDictionary_drop(&dict_handle);
+  ddog_prof_Status profile_status =
+      ddog_prof_Profile_with_dictionary(&profile, &dict, sample_types, &period);
+  if (profile_status.flags != 0) {
+    fprintf(stderr, "Failed to create profile: %s\n", profile_status.err);
+    ddog_prof_Status_drop(&profile_status);
+    ddog_prof_ProfilesDictionary_drop(&dict);
     exit(EXIT_FAILURE);
   }
 
@@ -73,31 +71,27 @@ int main(void) {
   ddog_prof_StringId2 function_name_id, filename_id, label_key_id;
 
   dict_status = ddog_prof_ProfilesDictionary_insert_str(
-      &function_name_id, dict_handle.inner, DDOG_CHARSLICE_C("{main}"), DDOG_UTF8_OPTION_ASSUME);
-  if (dict_status.tag != DDOG_PROF_PROFILE_STATUS_OK) {
-    ddog_CharSlice message = ddog_Error_message(&dict_status.err);
-    fprintf(stderr, "Failed to insert function name: %.*s\n", (int)message.len, message.ptr);
-    ddog_Error_drop(&dict_status.err);
+      &function_name_id, dict, DDOG_CHARSLICE_C("{main}"), DDOG_PROF_UTF8_OPTION_ASSUME);
+  if (dict_status.flags != 0) {
+    fprintf(stderr, "Failed to insert function name: %s\n", dict_status.err);
+    ddog_prof_Status_drop(&dict_status);
     goto cleanup;
   }
 
-  dict_status = ddog_prof_ProfilesDictionary_insert_str(&filename_id, dict_handle.inner,
+  dict_status = ddog_prof_ProfilesDictionary_insert_str(&filename_id, dict,
                                                         DDOG_CHARSLICE_C("/srv/example/index.php"),
-                                                        DDOG_UTF8_OPTION_ASSUME);
-  if (dict_status.tag != DDOG_PROF_PROFILE_STATUS_OK) {
-    ddog_CharSlice message = ddog_Error_message(&dict_status.err);
-    fprintf(stderr, "Failed to insert filename: %.*s\n", (int)message.len, message.ptr);
-    ddog_Error_drop(&dict_status.err);
+                                                        DDOG_PROF_UTF8_OPTION_ASSUME);
+  if (dict_status.flags != 0) {
+    fprintf(stderr, "Failed to insert filename: %s\n", dict_status.err);
+    ddog_prof_Status_drop(&dict_status);
     goto cleanup;
   }
 
-  dict_status = ddog_prof_ProfilesDictionary_insert_str(&label_key_id, dict_handle.inner,
-                                                        DDOG_CHARSLICE_C("unique_counter"),
-                                                        DDOG_UTF8_OPTION_ASSUME);
-  if (dict_status.tag != DDOG_PROF_PROFILE_STATUS_OK) {
-    ddog_CharSlice message = ddog_Error_message(&dict_status.err);
-    fprintf(stderr, "Failed to insert label key: %.*s\n", (int)message.len, message.ptr);
-    ddog_Error_drop(&dict_status.err);
+  dict_status = ddog_prof_ProfilesDictionary_insert_str(
+      &label_key_id, dict, DDOG_CHARSLICE_C("unique_counter"), DDOG_PROF_UTF8_OPTION_ASSUME);
+  if (dict_status.flags != 0) {
+    fprintf(stderr, "Failed to insert label key: %s\n", dict_status.err);
+    ddog_prof_Status_drop(&dict_status);
     goto cleanup;
   }
 
@@ -109,12 +103,10 @@ int main(void) {
       .file_name = filename_id,
   };
 
-  dict_status =
-      ddog_prof_ProfilesDictionary_insert_function(&function_id, dict_handle.inner, &function2);
-  if (dict_status.tag != DDOG_PROF_PROFILE_STATUS_OK) {
-    ddog_CharSlice message = ddog_Error_message(&dict_status.err);
-    fprintf(stderr, "Failed to insert function: %.*s\n", (int)message.len, message.ptr);
-    ddog_Error_drop(&dict_status.err);
+  dict_status = ddog_prof_ProfilesDictionary_insert_function(&function_id, dict, &function2);
+  if (dict_status.flags != 0) {
+    fprintf(stderr, "Failed to insert function: %s\n", dict_status.err);
+    ddog_prof_Status_drop(&dict_status);
     goto cleanup;
   }
 
@@ -144,11 +136,10 @@ int main(void) {
         .labels = {&label2, 1},
     };
 
-    ddog_prof_ProfileStatus add2_status = ddog_prof_Profile_add2(&profile, sample2, NULL);
-    if (add2_status.tag != DDOG_PROF_PROFILE_STATUS_OK) {
-      ddog_CharSlice message = ddog_Error_message(&add2_status.err);
-      fprintf(stderr, "add2 error: %.*s\n", (int)message.len, message.ptr);
-      ddog_Error_drop(&add2_status.err);
+    ddog_prof_Status add2_status = ddog_prof_Profile_add2(&profile, sample2, NULL);
+    if (add2_status.flags != 0) {
+      fprintf(stderr, "add2 error: %s\n", add2_status.err);
+      ddog_prof_Status_drop(&add2_status);
     }
   }
 
@@ -165,7 +156,7 @@ cleanup:
   ddog_prof_Profile_drop(&profile);
 
   // Drop the dictionary
-  ddog_prof_ProfilesDictionary_drop(&dict_handle);
+  ddog_prof_ProfilesDictionary_drop(&dict);
 
   return 0;
 }
