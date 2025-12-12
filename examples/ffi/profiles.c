@@ -136,7 +136,7 @@ int main(void) {
         .labels = {&label2, 1},
     };
 
-    ddog_prof_Status add2_status = ddog_prof_Profile_add2(&profile, sample2, NULL);
+    ddog_prof_Status add2_status = ddog_prof_Profile_add2(&profile, sample2, 0);
     if (add2_status.flags != 0) {
       fprintf(stderr, "add2 error: %s\n", add2_status.err);
       ddog_prof_Status_drop(&add2_status);
@@ -147,6 +147,7 @@ int main(void) {
   //   getchar();
 
 cleanup:
+  ; // Can't have a declaration after a label pre-C23, so use an empty statement.
   ddog_prof_Profile_Result reset_result = ddog_prof_Profile_reset(&profile);
   if (reset_result.tag != DDOG_PROF_PROFILE_RESULT_OK) {
     ddog_CharSlice message = ddog_Error_message(&reset_result.err);
