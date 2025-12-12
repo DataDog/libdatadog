@@ -236,6 +236,23 @@ impl TelemetryCrashUploader {
         Ok(s)
     }
 
+    /// Send a general (non crash report, non crash ping) log message to the telemetry log intake.
+    pub async fn upload_general_log(
+        &self,
+        message: String,
+        tags: String,
+        level: LogLevel,
+    ) -> anyhow::Result<()> {
+        let tracer_time = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+
+        self.send_log_payload(message, tags, tracer_time, level, false, false)
+            .await
+    }
+
+    /// Send a crash ping telemetry log to indicate that crash processing has started
     pub async fn upload_crash_ping(&self, crash_ping: &CrashPing) -> anyhow::Result<()> {
         let tags = self.build_crash_ping_tags(crash_ping.crash_uuid(), crash_ping.siginfo());
         let tracer_time = SystemTime::now()
@@ -253,6 +270,98 @@ impl TelemetryCrashUploader {
             false, // is_crash
         )
         .await
+    }
+
+    /// Send a crash info telemetry log to indicate that crash processing has completed
+    pub async fn upload_crash_info(&self, crash_info: &CrashInfo) -> anyhow::Result<()> {
+        let message = serde_json::to_string(crash_info)?;
+        let tags = extract_crash_info_tags(crash_info).unwrap_or_default();
+        let tracer_time = crash_info.timestamp.parse::<DateTime<Utc>>().map_or_else(
+            |_| {
+                SystemTime::now()
+                    .duration_since(SystemTime::UNIX_EPOCH)
+                    .map(|d| d.as_secs())
+                    .unwrap_or(0)
+            },
+            |ts| ts.timestamp() as u64,
+        );
+
+        self.send_log_payload(
+            message,
+            tags,
+            tracer_time,
+            LogLevel::Error,
+            true, // is_sensitive
+            true, // is_crash
+        )
+        .await
+    }
+
+    /// Shared helper that builds `data::Telemetry` payload and calls `send_telemetry_payload`
+    /// to send the payload to the telemetry log intake.
+    async fn send_log_payload(
+        &self,
+        message: String,
+        tags: String,
+        tracer_time: u64,
+        level: LogLevel,
+        is_sensitive: bool,
+        is_crash: bool,
+    ) -> anyhow::Result<()> {
+        let payload = data::Telemetry {
+            tracer_time,
+            api_version: libdd_telemetry::data::ApiVersion::V2,
+            runtime_id: &self.metadata.runtime_id,
+            seq_id: 1,
+            application: &self.metadata.application,
+            host: &self.metadata.host,
+            payload: &data::Payload::Logs(vec![data::Log {
+                message,
+                level,
+                stack_trace: None,
+                tags,
+                is_sensitive,
+                count: 1,
+                is_crash,
+            }]),
+            origin: Some("Crashtracker"),
+        };
+
+        self.send_telemetry_payload(&payload).await
+    }
+
+    /// Helper to perform actual HTTP (or file) submission via configured telemetry client
+    async fn send_telemetry_payload(&self, payload: &data::Telemetry<'_>) -> anyhow::Result<()> {
+        let client = libdd_telemetry::worker::http_client::from_config(&self.cfg);
+        let req = request_builder(&self.cfg)?
+            .method(http::Method::POST)
+            .header(
+                http::header::CONTENT_TYPE,
+                libdd_common::header::APPLICATION_JSON,
+            )
+            .header(
+                libdd_telemetry::worker::http_client::header::API_VERSION,
+                libdd_telemetry::data::ApiVersion::V2.to_str(),
+            )
+            .header(
+                libdd_telemetry::worker::http_client::header::REQUEST_TYPE,
+                "logs",
+            )
+            .body(serde_json::to_string(&payload)?.into())?;
+
+        tokio::time::timeout(
+            std::time::Duration::from_millis({
+                if let Some(endp) = self.cfg.endpoint() {
+                    endp.timeout_ms
+                } else {
+                    Endpoint::DEFAULT_TIMEOUT
+                }
+            }),
+            client.request(req),
+        )
+        .await??;
+
+        Ok(())
     }
 
     fn build_crash_ping_tags(&self, crash_uuid: &str, sig_info: Option<&SigInfo>) -> String {
@@ -290,94 +399,6 @@ impl TelemetryCrashUploader {
         if let Some(runtime_version) = &metadata.application.runtime_version {
             tags.push_str(&format!(",runtime_version:{runtime_version}"));
         }
-    }
-
-    pub async fn upload_to_telemetry(&self, crash_info: &CrashInfo) -> anyhow::Result<()> {
-        let message = serde_json::to_string(crash_info)?;
-        let tags = extract_crash_info_tags(crash_info).unwrap_or_default();
-        let tracer_time = crash_info.timestamp.parse::<DateTime<Utc>>().map_or_else(
-            |_| {
-                SystemTime::now()
-                    .duration_since(SystemTime::UNIX_EPOCH)
-                    .map(|d| d.as_secs())
-                    .unwrap_or(0)
-            },
-            |ts| ts.timestamp() as u64,
-        );
-
-        self.send_log_payload(
-            message,
-            tags,
-            tracer_time,
-            LogLevel::Error,
-            true, // is_sensitive
-            true, // is_crash
-        )
-        .await
-    }
-
-    async fn send_log_payload(
-        &self,
-        message: String,
-        tags: String,
-        tracer_time: u64,
-        level: LogLevel,
-        is_sensitive: bool,
-        is_crash: bool,
-    ) -> anyhow::Result<()> {
-        let payload = data::Telemetry {
-            tracer_time,
-            api_version: libdd_telemetry::data::ApiVersion::V2,
-            runtime_id: &self.metadata.runtime_id,
-            seq_id: 1,
-            application: &self.metadata.application,
-            host: &self.metadata.host,
-            payload: &data::Payload::Logs(vec![data::Log {
-                message,
-                level,
-                stack_trace: None,
-                tags,
-                is_sensitive,
-                count: 1,
-                is_crash,
-            }]),
-            origin: Some("Crashtracker"),
-        };
-
-        self.send_telemetry_payload(&payload).await
-    }
-
-    async fn send_telemetry_payload(&self, payload: &data::Telemetry<'_>) -> anyhow::Result<()> {
-        let client = libdd_telemetry::worker::http_client::from_config(&self.cfg);
-        let req = request_builder(&self.cfg)?
-            .method(http::Method::POST)
-            .header(
-                http::header::CONTENT_TYPE,
-                libdd_common::header::APPLICATION_JSON,
-            )
-            .header(
-                libdd_telemetry::worker::http_client::header::API_VERSION,
-                libdd_telemetry::data::ApiVersion::V2.to_str(),
-            )
-            .header(
-                libdd_telemetry::worker::http_client::header::REQUEST_TYPE,
-                "logs",
-            )
-            .body(serde_json::to_string(&payload)?.into())?;
-
-        tokio::time::timeout(
-            std::time::Duration::from_millis({
-                if let Some(endp) = self.cfg.endpoint() {
-                    endp.timeout_ms
-                } else {
-                    Endpoint::DEFAULT_TIMEOUT
-                }
-            }),
-            client.request(req),
-        )
-        .await??;
-
-        Ok(())
     }
 }
 
@@ -423,6 +444,7 @@ mod tests {
     use super::TelemetryCrashUploader;
     use crate::crash_info::{test_utils::TestInstance, CrashInfo, CrashInfoBuilder, Metadata};
     use libdd_common::Endpoint;
+    use libdd_telemetry::data::LogLevel;
     use std::{collections::HashSet, fs};
     use uuid::Uuid;
 
@@ -469,7 +491,7 @@ mod tests {
             .unwrap();
         let test_instance = super::CrashInfo::test_instance(seed);
 
-        t.upload_to_telemetry(&test_instance).await.unwrap();
+        t.upload_crash_info(&test_instance).await.unwrap();
 
         let payload: serde_json::value::Value =
             serde_json::de::from_str(&fs::read_to_string(&output_filename).unwrap()).unwrap();
@@ -875,6 +897,50 @@ mod tests {
             .as_str()
             .unwrap()
             .contains("crash processing started"));
+        Ok(())
+    }
+
+    #[tokio::test]
+    #[cfg_attr(miri, ignore)]
+    async fn test_general_log_upload() -> anyhow::Result<()> {
+        let tmp = tempfile::tempdir().unwrap();
+        let output_filename = {
+            let mut p = tmp.keep();
+            p.push("general_log_upload");
+            p
+        };
+
+        let mut uploader = new_test_uploader(7);
+        uploader
+            .cfg
+            .set_host_from_url(&format!("file://{}", output_filename.to_str().unwrap()))?;
+
+        uploader
+            .upload_general_log(
+                "hello general log".to_string(),
+                "service:foo,env:bar,crash_uuid:1234567890".to_string(),
+                LogLevel::Warn,
+            )
+            .await?;
+
+        let payload: serde_json::value::Value =
+            serde_json::de::from_str(&fs::read_to_string(&output_filename).unwrap())?;
+        println!("payload: {:?}", payload.to_string());
+
+        assert_eq!(payload["api_version"], "v2");
+        assert_eq!(payload["request_type"], "logs");
+        assert_eq!(payload["origin"], "Crashtracker");
+
+        let log_entry = &payload["payload"][0];
+        assert_eq!(log_entry["level"], "WARN");
+        assert_eq!(log_entry["is_sensitive"], false);
+        assert_eq!(log_entry["is_crash"], false);
+        assert_eq!(log_entry["message"], "hello general log");
+        let tags = log_entry["tags"].as_str().unwrap();
+        assert!(tags.contains("service:foo"));
+        assert!(tags.contains("env:bar"));
+        assert!(tags.contains("crash_uuid:1234567890"));
+
         Ok(())
     }
 }
