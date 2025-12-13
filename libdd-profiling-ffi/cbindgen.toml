@@ -103,7 +103,7 @@ renaming_overrides_prefixing = true
 "Handle_EncodedProfile" = "ddog_prof_EncodedProfile"
 "Result_HandleEncodedProfile" = "ddog_prof_EncodedProfile_Result"
 
-"CancellationToken" = "struct ddog_OpaqueCancellationToken"
+"CancellationToken" = "ddog_OpaqueCancellationToken"
 "Handle_TokioCancellationToken" = "ddog_CancellationToken"
 
 [export.mangle]

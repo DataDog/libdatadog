@@ -234,22 +234,35 @@ jobs:
             cmake -S .. -DDatadog_ROOT=$LIBDD_OUTPUT_FOLDER
             cmake --build .
           fi
-      - name: "Test building CXX bindings (Unix)"
+      - name: "Test building CXX crashinfo bindings (Unix)"
         shell: bash
         if: matrix.platform != 'windows-latest'
         run: |
           set -e
           cd examples/cxx
           ./build-and-run-crashinfo.sh
+      - name: "Test building CXX profiling bindings (Unix)"
+        shell: bash
+        if: matrix.platform != 'windows-latest'
+        run: |
+          set -e
+          cd examples/cxx
+          ./build-and-run-profiling.sh
       - name: "Setup MSVC (Windows)"
         if: matrix.platform == 'windows-latest'
         uses: ilammy/msvc-dev-cmd@v1
-      - name: "Test building CXX bindings (Windows)"
+      - name: "Test building CXX crashinfo bindings (Windows)"
         shell: pwsh
         if: matrix.platform == 'windows-latest'
         run: |
           cd examples/cxx
           .\build-and-run-crashinfo.ps1
+      - name: "Test building CXX profiling bindings (Windows)"
+        shell: pwsh
+        if: matrix.platform == 'windows-latest'
+        run: |
+          cd examples/cxx
+          .\build-and-run-profiling.ps1
 
   cross-centos7:
     name: build and test using cross - on centos7

@@ -676,6 +676,46 @@ impl Profile {
         Ok(self)
     }
 
+    /// Convenience method to serialize and export the profile to a reqwest exporter.
+    ///
+    /// # Arguments
+    /// * `exporter` - The reqwest ProfileExporter to send the profile to
+    /// * `additional_files` - Additional files to compress and attach to the profile
+    /// * `additional_tags` - Tags to add to this specific profile (in addition to the exporter's
+    ///   configured tags)
+    /// * `internal_metadata` - Internal metadata to include in the event JSON
+    /// * `info` - System info to include in the event JSON
+    /// * `end_time` - Optional end time (defaults to now)
+    /// * `duration` - Optional duration (defaults to end_time - start_time)
+    /// * `cancel` - Optional cancellation token to abort the upload
+    ///
+    /// # Returns
+    /// The HTTP status code from the upload
+    #[allow(clippy::too_many_arguments)]
+    pub async fn export_to_endpoint(
+        self,
+        exporter: &crate::exporter::reqwest_exporter::ProfileExporter,
+        additional_files: &[crate::exporter::reqwest_exporter::File<'_>],
+        additional_tags: &[libdd_common::tag::Tag],
+        internal_metadata: Option<serde_json::Value>,
+        info: Option<serde_json::Value>,
+        end_time: Option<SystemTime>,
+        duration: Option<Duration>,
+        cancel: Option<&tokio_util::sync::CancellationToken>,
+    ) -> anyhow::Result<reqwest::StatusCode> {
+        let encoded = self.serialize_into_compressed_pprof(end_time, duration)?;
+        exporter
+            .send(
+                encoded,
+                additional_files,
+                additional_tags,
+                internal_metadata,
+                info,
+                cancel,
+            )
+            .await
+    }
+
     /// In incident 35390 (JIRA PROF-11456) we observed invalid location_ids being present in
     /// emitted profiles. We're doing extra checks here so that if we see incorrect ids again,
     /// we are 100% sure they were not introduced prior to this stage.
