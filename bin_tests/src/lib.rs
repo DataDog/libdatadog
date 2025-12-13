@@ -60,6 +60,19 @@ fn inner_build_artifact(c: &ArtifactsBuild) -> anyhow::Result<PathBuf> {
     };
     build_cmd.arg(&c.name);
 
+    // Explicitly pass RUSTFLAGS if present to ensure instrumentation
+    // This is important for coverage collection when tests spawn separate binaries
+    if let Ok(rustflags) = env::var("RUSTFLAGS") {
+        build_cmd.env("RUSTFLAGS", rustflags);
+    }
+
+    // Pass CARGO_TARGET_DIR to ensure we build in the same target directory
+    // that cargo-llvm-cov is using (e.g., target/llvm-cov-target/)
+    // Without this, cargo build would use target/debug/ and miss instrumentation
+    if let Ok(target_dir) = env::var("CARGO_TARGET_DIR") {
+        build_cmd.env("CARGO_TARGET_DIR", target_dir);
+    }
+
     let output = build_cmd.output().unwrap();
     if !output.status.success() {
         anyhow::bail!(
@@ -177,4 +190,67 @@ macro_rules! timeit {
         );
         res
     }};
+}
+
+/// Propagates `LLVM_PROFILE_FILE` to a spawned process for coverage collection.
+///
+/// This function is essential for integration tests that spawn separate processes to ensure
+/// those child processes contribute their coverage data. It propagates **only** the
+/// `LLVM_PROFILE_FILE` environment variable, which contains a pattern with `%p` (process ID)
+/// that the LLVM profiling runtime expands at runtime to ensure each process writes to a
+/// unique coverage file.
+///
+/// # How It Works
+///
+/// 1. **Parent propagates the pattern string:** ```
+///    LLVM_PROFILE_FILE="target/llvm-cov-target/profraw/cargo-test-%p-%m.profraw" ``` Note: `%p`
+///    and `%m` are NOT expanded yet - they're literal characters in the string.
+///
+/// 2. **Each process expands the pattern at runtime:**
+///    - Parent (PID 1000): `%p` → `1000` → writes to `cargo-test-1000-abc.profraw`
+///    - Child  (PID 1001): `%p` → `1001` → writes to `cargo-test-1001-def.profraw`
+///    - Result: Each process writes to a unique file!
+///
+/// 3. **Report merges all files:**
+///    - `cargo llvm-cov report` finds all `.profraw` files in the target directory
+///    - Merges them into a unified coverage report
+///
+/// # Why Only `LLVM_PROFILE_FILE`?
+///
+/// Other `cargo-llvm-cov` variables like `CARGO_LLVM_COV` and `CARGO_LLVM_COV_TARGET_DIR`
+/// are for `cargo` commands during build time, not for runtime binaries. Spawned test
+/// binaries only need `LLVM_PROFILE_FILE` to write their coverage data.
+///
+/// # Arguments
+/// * `cmd` - The Command to add environment variables to (before spawning)
+///
+/// # Example
+/// ```no_run
+/// use bin_tests::propagate_coverage_env;
+/// use std::process::Command;
+///
+/// let mut cmd = Command::new("path/to/test_binary");
+/// cmd.arg("--test-arg");
+///
+/// // Propagate coverage - spawned process will write coverage if instrumented
+/// propagate_coverage_env(&mut cmd);
+///
+/// let child = cmd.spawn().expect("Failed to spawn");
+/// ```
+pub fn propagate_coverage_env(cmd: &mut process::Command) {
+    // LLVM_PROFILE_FILE tells the instrumented binary where to write coverage data.
+    //
+    // This variable contains patterns like %p (process ID) and %m (module signature).
+    // The LLVM profiling runtime inside each instrumented binary expands these patterns
+    // at runtime, ensuring each spawned process writes to a unique file:
+    //
+    // Pattern:  "cargo-test-%p-%m.profraw"
+    // PID 1000: "cargo-test-1000-abc123.profraw"
+    // PID 1001: "cargo-test-1001-def456.profraw"
+    //
+    // This is the ONLY variable needed for spawned binaries to contribute coverage.
+    // CARGO_LLVM_COV* variables are for cargo commands, not runtime binaries.
+    if let Ok(profile_file) = env::var("LLVM_PROFILE_FILE") {
+        cmd.env("LLVM_PROFILE_FILE", profile_file);
+    }
 }
