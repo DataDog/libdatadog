@@ -4,5 +4,7 @@
 pub mod collections;
 mod compressor;
 pub mod datatypes;
+mod fallible_string_writer;
 
 pub use compressor::*;
+pub use fallible_string_writer::*;
