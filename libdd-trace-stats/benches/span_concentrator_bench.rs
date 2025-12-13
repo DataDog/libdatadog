@@ -47,6 +47,7 @@ pub fn criterion_benchmark(c: &mut Criterion) {
         now,
         vec![],
         vec!["db_name".into(), "bucket_s3".into()],
+        2,
     );
     let mut spans = vec![];
     for trace_id in 1..100 {
