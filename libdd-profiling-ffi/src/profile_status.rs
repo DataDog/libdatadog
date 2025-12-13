@@ -273,3 +273,204 @@ pub unsafe extern "C" fn ddog_prof_Status_drop(status: *mut ProfileStatus) {
     let status = unsafe { core::ptr::replace(status, ProfileStatus::OK) };
     drop(Result::from(status));
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::ffi::CStr;
+
+    #[test]
+    fn test_ok_status() {
+        let status = ProfileStatus::OK;
+        assert_eq!(status.flags, 0);
+        assert!(status.err.is_null());
+
+        // Default should be OK
+        let default_status = ProfileStatus::default();
+        assert_eq!(default_status.flags, 0);
+        assert!(default_status.err.is_null());
+
+        // From () should be OK
+        let from_unit = ProfileStatus::from(());
+        assert_eq!(from_unit.flags, 0);
+        assert!(from_unit.err.is_null());
+
+        // Convert OK to Result
+        let result: Result<(), Cow<'static, CStr>> = status.into();
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_static_error() {
+        let msg = c"test error message";
+        let status = ProfileStatus::from(msg);
+
+        assert_eq!(status.flags, FLAG_STATIC);
+        assert_eq!(status.err, msg.as_ptr());
+
+        // Convert to CStr
+        let cstr: &CStr = (&status).try_into().unwrap();
+        assert_eq!(cstr, msg);
+
+        // Convert to Result
+        let result: Result<(), Cow<'static, CStr>> = status.into();
+        assert!(result.is_err());
+        match result {
+            Err(Cow::Borrowed(borrowed)) => assert_eq!(borrowed, msg),
+            _ => panic!("Expected Cow::Borrowed"),
+        }
+    }
+
+    #[test]
+    fn test_allocated_error() {
+        let msg = CString::new("allocated error").unwrap();
+        let msg_clone = msg.clone();
+        let status = ProfileStatus::from(msg);
+
+        assert_eq!(status.flags, FLAG_ALLOCATED);
+        assert!(!status.err.is_null());
+
+        // Convert to CStr
+        let cstr: &CStr = (&status).try_into().unwrap();
+        assert_eq!(cstr, msg_clone.as_c_str());
+
+        // Convert to CString
+        let recovered = CString::try_from(status).unwrap();
+        assert_eq!(recovered, msg_clone);
+    }
+
+    #[test]
+    fn test_from_anyhow_error() {
+        let err = anyhow::anyhow!("something went wrong");
+        let status = ProfileStatus::from(err);
+
+        assert!(status.flags != 0);
+        assert!(!status.err.is_null());
+
+        let cstr: &CStr = (&status).try_into().unwrap();
+        assert_eq!(cstr.to_str().unwrap(), "something went wrong");
+
+        // Clean up
+        let _result: Result<(), Cow<'static, CStr>> = status.into();
+    }
+
+    #[test]
+    fn test_from_result_ok() {
+        let result: Result<(), anyhow::Error> = Ok(());
+        let status = ProfileStatus::from(result);
+
+        assert_eq!(status.flags, 0);
+        assert!(status.err.is_null());
+    }
+
+    #[test]
+    fn test_from_result_err() {
+        let result: Result<(), anyhow::Error> = Err(anyhow::anyhow!("error from result"));
+        let status = ProfileStatus::from(result);
+
+        assert!(status.flags != 0);
+        assert!(!status.err.is_null());
+
+        let cstr: &CStr = (&status).try_into().unwrap();
+        assert_eq!(cstr.to_str().unwrap(), "error from result");
+
+        // Clean up
+        let _result: Result<(), Cow<'static, CStr>> = status.into();
+    }
+
+    #[test]
+    fn test_from_error_with_display() {
+        #[derive(Debug)]
+        struct CustomError(&'static str);
+
+        impl std::fmt::Display for CustomError {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                write!(f, "custom: {}", self.0)
+            }
+        }
+
+        let status = ProfileStatus::from_error(CustomError("test"));
+
+        assert_eq!(status.flags, FLAG_ALLOCATED);
+        assert!(!status.err.is_null());
+
+        let cstr: &CStr = (&status).try_into().unwrap();
+        assert_eq!(cstr.to_str().unwrap(), "custom: test");
+
+        // Clean up
+        let _result: Result<(), Cow<'static, CStr>> = status.into();
+    }
+
+    #[test]
+    fn test_ffi_drop_null() {
+        // Should not crash
+        unsafe { ddog_prof_Status_drop(std::ptr::null_mut()) };
+    }
+
+    #[test]
+    fn test_ffi_drop_ok() {
+        let mut status = ProfileStatus::OK;
+        unsafe { ddog_prof_Status_drop(&mut status) };
+        assert_eq!(status.flags, 0);
+        assert!(status.err.is_null());
+    }
+
+    #[test]
+    fn test_ffi_drop_static() {
+        let mut status = ProfileStatus::from(c"static message");
+        let original_ptr = status.err;
+
+        unsafe { ddog_prof_Status_drop(&mut status) };
+
+        // Should be OK now
+        assert_eq!(status.flags, 0);
+        assert!(status.err.is_null());
+
+        // Original pointer should still be valid (static)
+        let recovered = unsafe { CStr::from_ptr(original_ptr) };
+        assert_eq!(recovered, c"static message");
+    }
+
+    #[test]
+    fn test_ffi_drop_allocated() {
+        let msg = CString::new("allocated message").unwrap();
+        let mut status = ProfileStatus::from(msg);
+
+        assert_eq!(status.flags, FLAG_ALLOCATED);
+        let err_ptr = status.err;
+        assert!(!err_ptr.is_null());
+
+        unsafe { ddog_prof_Status_drop(&mut status) };
+
+        // Should be OK now
+        assert_eq!(status.flags, 0);
+        assert!(status.err.is_null());
+        // The allocated memory should have been freed (can't really test this without valgrind)
+    }
+
+    #[test]
+    fn test_try_from_cstr_on_ok_fails() {
+        let status = ProfileStatus::OK;
+        let result: Result<&CStr, usize> = (&status).try_into();
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), FLAG_OK);
+    }
+
+    #[test]
+    fn test_try_from_cstring_on_static_fails() {
+        let status = ProfileStatus::from(c"static");
+        let result = CString::try_from(status);
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), FLAG_STATIC);
+    }
+
+    #[test]
+    fn test_send_sync() {
+        // Just check that ProfileStatus implements Send and Sync
+        fn assert_send<T: Send>() {}
+        fn assert_sync<T: Sync>() {}
+
+        assert_send::<ProfileStatus>();
+        assert_sync::<ProfileStatus>();
+    }
+}
