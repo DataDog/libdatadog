@@ -34,6 +34,7 @@ fn test_the_tests_inner(profile: BuildProfile) {
             build_profile: profile,
             artifact_type: ArtifactType::CDylib,
             triple_target: None,
+            panic_abort: None,
         },
         &test_the_tests,
     ];
