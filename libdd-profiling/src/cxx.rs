@@ -508,3 +508,298 @@ impl ProfileExporter {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const TEST_LIB_NAME: &str = "dd-trace-test";
+    const TEST_LIB_VERSION: &str = "1.0.0";
+    const TEST_FAMILY: &str = "test";
+
+    fn create_test_value_type() -> ffi::ValueType<'static> {
+        ffi::ValueType {
+            type_: "wall-time",
+            unit: "nanoseconds",
+        }
+    }
+
+    fn create_test_profile() -> Box<Profile> {
+        let wall_time = create_test_value_type();
+        let period = ffi::Period {
+            value_type: wall_time,
+            value: 60,
+        };
+        Profile::create(vec![create_test_value_type()], &period).unwrap()
+    }
+
+    fn create_test_location(address: u64, line: i64) -> ffi::Location<'static> {
+        ffi::Location {
+            mapping: ffi::Mapping {
+                memory_start: address & 0xFFFF0000,
+                memory_limit: (address & 0xFFFF0000) + 0x10000000,
+                file_offset: 0,
+                filename: "/usr/lib/libtest.so",
+                build_id: "abc123",
+            },
+            function: ffi::Function {
+                name: "test_function",
+                system_name: "_Z13test_functionv",
+                filename: "/src/test.cpp",
+            },
+            address,
+            line,
+        }
+    }
+
+    fn create_test_sample() -> ffi::Sample<'static> {
+        ffi::Sample {
+            locations: vec![create_test_location(0x10003000, 100)],
+            values: vec![1000000],
+            labels: vec![],
+        }
+    }
+
+    fn create_test_exporter() -> Box<ProfileExporter> {
+        ProfileExporter::create_agent_exporter(
+            TEST_LIB_NAME,
+            TEST_LIB_VERSION,
+            TEST_FAMILY,
+            vec![ffi::Tag { key: "env", value: "test" }],
+            "http://localhost:1", // Port 1 unlikely to have server
+            100,
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn test_profile_operations() {
+        let mut profile = create_test_profile();
+        
+        // Verify profile starts empty
+        assert_eq!(
+            profile.inner.only_for_testing_num_aggregated_samples(),
+            0,
+            "Profile should start with no samples"
+        );
+        
+        // Add samples and verify they're tracked
+        let sample = create_test_sample();
+        profile.add_sample(&sample).unwrap();
+        assert_eq!(
+            profile.inner.only_for_testing_num_aggregated_samples(),
+            1,
+            "Profile should have 1 sample after adding"
+        );
+        
+        // Add another sample with different address
+        let sample2 = ffi::Sample {
+            locations: vec![create_test_location(0x20003000, 200)],
+            values: vec![2000000],
+            labels: vec![],
+        };
+        profile.add_sample(&sample2).unwrap();
+        assert_eq!(
+            profile.inner.only_for_testing_num_aggregated_samples(),
+            2,
+            "Profile should have 2 samples"
+        );
+        
+        // Test endpoints
+        profile.add_endpoint(12345, "/api/test").unwrap();
+        profile.add_endpoint(67890, "/api/other").unwrap();
+        profile.add_endpoint_count("/api/test", 100).unwrap();
+        
+        // Test upscaling rules (verify they don't error)
+        profile
+            .add_upscaling_rule_poisson(&[0], "thread_id", "0", 0, 0, 1000000)
+            .unwrap();
+        profile
+            .add_upscaling_rule_proportional(&[0], "thread_id", "1", 100.0)
+            .unwrap();
+        profile
+            .add_upscaling_rule_poisson_non_sample_type_count(&[0], "thread_id", "2", 0, 50, 1000000)
+            .unwrap();
+        
+        // Serialize and verify output
+        let serialized = profile.serialize_to_vec().unwrap();
+        assert!(serialized.len() > 100, "Serialized profile should be non-trivial");
+        
+        // Verify it's a valid pprof by checking for gzip/zstd magic bytes
+        assert!(
+            serialized.starts_with(&[0x28, 0xb5, 0x2f, 0xfd]) || // zstd magic
+            serialized.starts_with(&[0x1f, 0x8b]), // gzip magic
+            "Serialized profile should be compressed"
+        );
+        
+        // After serialization (which resets), profile should be empty
+        assert_eq!(
+            profile.inner.only_for_testing_num_aggregated_samples(),
+            0,
+            "Profile should be empty after serialize_to_vec"
+        );
+        
+        // Add sample and test explicit reset
+        profile.add_sample(&sample).unwrap();
+        assert_eq!(profile.inner.only_for_testing_num_aggregated_samples(), 1);
+        profile.reset().unwrap();
+        assert_eq!(
+            profile.inner.only_for_testing_num_aggregated_samples(),
+            0,
+            "Profile should be empty after reset"
+        );
+    }
+
+    #[test]
+    fn test_exporter_create() {
+        // Test agent exporter with default timeout
+        assert!(ProfileExporter::create_agent_exporter(
+            TEST_LIB_NAME,
+            TEST_LIB_VERSION,
+            TEST_FAMILY,
+            vec![ffi::Tag { key: "service", value: "test" }],
+            "http://localhost:8126",
+            0,
+        ).is_ok());
+        
+        // Test with multiple tags and custom timeout
+        assert!(ProfileExporter::create_agent_exporter(
+            TEST_LIB_NAME,
+            TEST_LIB_VERSION,
+            TEST_FAMILY,
+            vec![
+                ffi::Tag { key: "service", value: "my-service" },
+                ffi::Tag { key: "env", value: "prod" },
+                ffi::Tag { key: "version", value: "2.0" },
+            ],
+            "http://localhost:8126",
+            10000,
+        ).is_ok());
+        
+        // Test agentless exporters with different sites
+        assert!(ProfileExporter::create_agentless_exporter(
+            TEST_LIB_NAME,
+            TEST_LIB_VERSION,
+            TEST_FAMILY,
+            vec![],
+            "datadoghq.com",
+            "fake-api-key",
+            5000,
+        ).is_ok());
+        
+        assert!(ProfileExporter::create_agentless_exporter(
+            TEST_LIB_NAME,
+            TEST_LIB_VERSION,
+            TEST_FAMILY,
+            vec![],
+            "datadoghq.eu",
+            "fake-api-key",
+            0,
+        ).is_ok());
+        
+        // Test with no tags
+        assert!(ProfileExporter::create_agent_exporter(
+            TEST_LIB_NAME,
+            TEST_LIB_VERSION,
+            TEST_FAMILY,
+            vec![],
+            "http://localhost:8126",
+            0,
+        ).is_ok());
+    }
+
+    #[test]
+    fn test_type_conversions() {
+        // AttachmentFile conversion
+        let data = vec![1u8, 2, 3, 4, 5, 255, 128, 0];
+        let file: exporter::File = (&ffi::AttachmentFile {
+            name: "test.bin",
+            data: &data,
+        }).into();
+        assert_eq!(file.name, "test.bin");
+        assert_eq!(file.bytes, data.as_slice());
+        
+        // Tag conversion with special characters
+        let tag: exporter::Tag = (&ffi::Tag {
+            key: "test-key.with_special:chars",
+            value: "test_value/with@special#chars",
+        }).try_into().unwrap();
+        assert_eq!(tag.as_ref(), "test-key.with_special:chars:test_value/with@special#chars");
+        
+        // Tag validation - empty key should fail
+        assert!(TryInto::<exporter::Tag>::try_into(&ffi::Tag { key: "", value: "value" }).is_err());
+        
+        // ValueType conversion
+        let vt: api::ValueType = (&ffi::ValueType {
+            type_: "cpu-samples",
+            unit: "count",
+        }).into();
+        assert_eq!(vt.r#type, "cpu-samples");
+        assert_eq!(vt.unit, "count");
+        
+        // Mapping conversion
+        let mapping: api::Mapping = (&ffi::Mapping {
+            memory_start: 0x1000,
+            memory_limit: 0x2000,
+            file_offset: 0x100,
+            filename: "/lib/test.so",
+            build_id: "build123",
+        }).into();
+        assert_eq!((mapping.memory_start, mapping.memory_limit, mapping.file_offset), (0x1000, 0x2000, 0x100));
+        assert_eq!((&*mapping.filename, &*mapping.build_id), ("/lib/test.so", "build123"));
+        
+        // Function conversion
+        let function: api::Function = (&ffi::Function {
+            name: "my_func",
+            system_name: "_Z7my_funcv",
+            filename: "/src/file.cpp",
+        }).into();
+        assert_eq!((&*function.name, &*function.system_name, &*function.filename),
+                   ("my_func", "_Z7my_funcv", "/src/file.cpp"));
+        
+        // Label conversion
+        let label: api::Label = (&ffi::Label {
+            key: "thread_id",
+            str: "",
+            num: 42,
+            num_unit: "thread",
+        }).into();
+        assert_eq!((&*label.key, label.num, &*label.num_unit), ("thread_id", 42, "thread"));
+    }
+
+    #[test]
+    fn test_send_profile_with_attachments() {
+        let mut profile = create_test_profile();
+        profile.add_sample(&create_test_sample()).unwrap();
+        
+        let exporter = create_test_exporter();
+        let attachment_data = br#"{"test": "data", "number": 123}"#.to_vec();
+        
+        // Send with full parameters - should fail with connection error but build request correctly
+        let result = exporter.send_profile(
+            &mut profile,
+            vec![ffi::AttachmentFile {
+                name: "metadata.json",
+                data: &attachment_data,
+            }],
+            vec![
+                ffi::Tag { key: "profile_type", value: "cpu" },
+                ffi::Tag { key: "runtime", value: "native" },
+            ],
+            r#"{"version": "1.0", "profiler": "test"}"#,
+            r#"{"os": "linux", "arch": "x86_64", "cores": 8}"#,
+        );
+        
+        assert!(result.is_err(), "Should fail when no server available");
+        assert_eq!(
+            profile.inner.only_for_testing_num_aggregated_samples(),
+            0,
+            "Profile should be reset after send attempt"
+        );
+        
+        // Test with empty optional parameters
+        profile.add_sample(&create_test_sample()).unwrap();
+        let result2 = exporter.send_profile(&mut profile, vec![], vec![], "", "");
+        assert!(result2.is_err(), "Should fail with empty optional params too");
+    }
+}
