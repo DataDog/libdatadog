@@ -1,0 +1,31 @@
+# Fuzzing job configuration
+# This job discovers, builds, and uploads all cargo-fuzz targets to the internal fuzzing infrastructure
+# See ci/README_FUZZING.md for more information
+
+variables:
+  BASE_CI_IMAGE: registry.ddbuild.io/ci/benchmarking-platform:libdatadog-benchmarks
+
+fuzz:
+  tags: ["arch:amd64"]
+  needs: []
+  image:
+    name: $BASE_CI_IMAGE
+  rules:
+    # runs on gitlab schedule and on merge to main.
+    # Also allow manual run in branches for ease of debug / testing
+    - if: '$CI_COMMIT_BRANCH == "main" && $CI_PIPELINE_SOURCE == "schedule"'
+      allow_failure: true
+    - if: $CI_COMMIT_BRANCH == "main"
+      allow_failure: true
+    - when: manual
+      allow_failure: true
+  timeout: 1h
+  script:
+    - VAULT_VERSION=1.15.4 && curl -fsSL "https://releases.hashicorp.com/vault/${VAULT_VERSION}/vault_${VAULT_VERSION}_linux_amd64.zip" -o vault.zip && unzip vault.zip && mv vault /usr/local/bin/vault && rm vault.zip && chmod +x /usr/local/bin/vault
+    - rustup default nightly
+    - cargo install cargo-fuzz
+    - pip3 install requests toml
+    - python3 fuzz/fuzz_infra.py
+  allow_failure: true
+  variables:
+    KUBERNETES_SERVICE_ACCOUNT_OVERWRITE: libdatadog
