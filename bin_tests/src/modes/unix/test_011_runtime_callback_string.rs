@@ -55,6 +55,7 @@ mod tests {
     use serial_test::serial;
 
     #[test]
+    #[cfg_attr(miri, ignore)] // serial_test has intentional leaks that Miri flags
     #[serial(runtime_callback)]
     fn test_runtime_callback_string_registration() {
         unsafe {
