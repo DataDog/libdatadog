@@ -34,6 +34,6 @@ echo "Configuring example build..."
 cmake -S examples/ffi -B examples/ffi/build -D Datadog_ROOT=./release
 
 echo "Building examples..."
-cmake --build ./examples/ffi/build
+cmake --build ./examples/ffi/build --target profiles
 
 echo "Done! Example executables are available in examples/ffi/build/"

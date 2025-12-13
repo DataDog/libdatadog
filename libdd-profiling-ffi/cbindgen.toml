@@ -106,6 +106,9 @@ renaming_overrides_prefixing = true
 "CancellationToken" = "struct ddog_OpaqueCancellationToken"
 "Handle_TokioCancellationToken" = "ddog_CancellationToken"
 
+"ArcHandle_ProfilesDictionary" = "ddog_prof_ProfilesDictionaryHandle"
+"ProfileStatus" = "ddog_prof_Status"
+
 [export.mangle]
 rename_types = "PascalCase"
 
