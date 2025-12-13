@@ -6,6 +6,9 @@
 #include <stdio.h>
 #include <stdlib.h>
 
+// Number of samples to add with each API
+#define NUM_SAMPLES 5000000
+
 int main(void) {
   const ddog_prof_ValueType wall_time = {
       .type_ = DDOG_CHARSLICE_C("wall-time"),
@@ -55,7 +58,7 @@ int main(void) {
       .labels = {&label, 1},
   };
 
-  for (int i = 0; i < 10000000; i++) {
+  for (int i = 0; i < NUM_SAMPLES; i++) {
     label.num = i;
 
     ddog_prof_Profile_Result add_result = ddog_prof_Profile_add(&profile, sample, 0);
@@ -118,23 +121,21 @@ int main(void) {
       .line = 0,
   };
 
-  // Create a label using dictionary IDs
+  // New API sample using dictionary IDs
   ddog_prof_Label2 label2 = {
       .key = label_key_id,
       .str = DDOG_CHARSLICE_C(""),
       .num = 0,
       .num_unit = DDOG_CHARSLICE_C(""),
   };
+  const ddog_prof_Sample2 sample2 = {
+      .locations = {&location2, 1},
+      .values = {&value, 1},
+      .labels = {&label2, 1},
+  };
 
-  // Add samples using the new API
-  for (int i = 0; i < 10000000; i++) {
+  for (int i = 0; i < NUM_SAMPLES; i++) {
     label2.num = i;
-
-    ddog_prof_Sample2 sample2 = {
-        .locations = {&location2, 1},
-        .values = {&value, 1},
-        .labels = {&label2, 1},
-    };
 
     ddog_prof_Status add2_status = ddog_prof_Profile_add2(&profile, sample2, 0);
     if (add2_status.flags != 0) {
