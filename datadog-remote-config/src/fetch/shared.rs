@@ -139,7 +139,7 @@ where
     /// with a potentially incomplete configuration.
     #[allow(clippy::type_complexity)]
     inactive: Arc<Mutex<HashMap<Arc<RemoteConfigPath>, Arc<S::StoredFile>>>>,
-    /// times ConfigFetcher::<S>::fetch_once() is currently being run
+    /// times `ConfigFetcher::<S>::fetch_once`() is currently being run
     run_id: Arc<RunnersGeneration>,
 }
 

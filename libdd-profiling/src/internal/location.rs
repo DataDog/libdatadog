@@ -3,7 +3,7 @@
 
 use super::*;
 
-/// Represents a [pprof::Location] with some space-saving changes:
+/// Represents a \[pprof::Location\] with some space-saving changes:
 ///  - The id is not stored on the struct. It's stored in the container that holds the struct.
 ///  - ids for linked objects use 32-bit numbers instead of 64 bit ones.
 ///  - in libdatadog, we always use 1 Line per Location, so this is directly inlined into the

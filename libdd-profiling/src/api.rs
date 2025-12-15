@@ -53,7 +53,7 @@ pub struct Mapping<'a> {
 
     /// The object this entry is loaded from.  This can be a filename on
     /// disk for the main binary and shared libraries, or virtual
-    /// abstractions like "[vdso]".
+    /// abstractions like "\[vdso\]".
     pub filename: &'a str,
 
     /// A string that uniquely identifies a particular program version
@@ -164,7 +164,7 @@ impl Label<'_> {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Sample<'a> {
-    /// The leaf is at locations[0].
+    /// The leaf is at locations\[0\].
     pub locations: Vec<Location<'a>>,
 
     /// The type and unit of each value is defined by the corresponding
