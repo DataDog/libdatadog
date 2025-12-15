@@ -22,7 +22,7 @@ Cross.toml                           @Datadog/apm-common-components-core
 datadog-ffe                          @Datadog/feature-flagging-and-experimentation-sdk
 datadog-ffe-ffi                      @Datadog/feature-flagging-and-experimentation-sdk
 datadog-ipc*/                        @Datadog/libdatadog-php
-datadog-live-debugger*/              @Datadog/libdatadog-php @Datadog/libdatadog-apm
+libdd-live-debugger*/                @Datadog/libdatadog-php @Datadog/libdatadog-apm
 datadog-profiling-replayer           @Datadog/libdatadog-profiling
 datadog-remote-config                @Datadog/libdatadog-php @Datadog/libdatadog-apm @Datadog/remote-config
 datadog-sidecar                      @Datadog/libdatadog-php @Datadog/libdatadog-apm

@@ -8,7 +8,7 @@ use crate::{
     RemoteConfigPath, RemoteConfigProduct, RemoteConfigSource,
 };
 #[cfg(feature = "live-debugger")]
-use datadog_live_debugger::LiveDebuggingData;
+use libdd_live_debugger::LiveDebuggingData;
 
 #[derive(Debug)]
 pub enum RemoteConfigData {
@@ -37,7 +37,7 @@ impl RemoteConfigData {
             }
             #[cfg(feature = "live-debugger")]
             RemoteConfigProduct::LiveDebugger => {
-                let parsed = datadog_live_debugger::parse_json(&String::from_utf8_lossy(data))?;
+                let parsed = libdd_live_debugger::parse_json(&String::from_utf8_lossy(data))?;
                 RemoteConfigData::LiveDebugger(parsed)
             }
             _ => RemoteConfigData::Ignored(product),

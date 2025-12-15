@@ -24,7 +24,7 @@ libdd-telemetry = { path = "../libdd-telemetry", features = ["tracing"] }
 libdd-data-pipeline = { path = "../libdd-data-pipeline" }
 libdd-trace-utils = { path = "../libdd-trace-utils" }
 datadog-remote-config = { path = "../datadog-remote-config" , features = ["live-debugger"]}
-datadog-live-debugger = { path = "../datadog-live-debugger" }
+libdd-live-debugger = { path = "../libdd-live-debugger" }
 libdd-crashtracker = { path = "../libdd-crashtracker" }
 libdd-dogstatsd-client = { path = "../libdd-dogstatsd-client" }
 libdd-tinybytes = { path = "../libdd-tinybytes" }

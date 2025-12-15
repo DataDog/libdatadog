@@ -1,9 +1,12 @@
 [package]
-edition = "2021"
-license = "Apache 2.0"
-name = "datadog-live-debugger"
-version = "0.0.1"
-publish = false
+name = "libdd-live-debugger"
+version = "1.0.0"
+description = "A Rust library for dynamic runtime instrumentation that captures snapshots, metrics, and trace data via remotely-configured probes."
+repository = "https://github.com/DataDog/libdatadog/tree/main/libdd-live-debugger"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
 
 [dependencies]
 anyhow = "1.0"

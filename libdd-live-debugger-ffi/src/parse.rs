@@ -8,7 +8,7 @@ use libdd_common_ffi::CharSlice;
 #[repr(C)]
 pub struct LiveDebuggingParseResult {
     pub data: LiveDebuggingData<'static>,
-    opaque_data: Option<Box<datadog_live_debugger::LiveDebuggingData>>,
+    opaque_data: Option<Box<libdd_live_debugger::LiveDebuggingData>>,
 }
 
 /// # Safety
@@ -17,15 +17,13 @@ pub struct LiveDebuggingParseResult {
 pub unsafe extern "C" fn ddog_parse_live_debugger_json(
     json: CharSlice,
 ) -> LiveDebuggingParseResult {
-    if let Ok(parsed) = datadog_live_debugger::parse_json(unsafe { json.assume_utf8() }) {
+    if let Ok(parsed) = libdd_live_debugger::parse_json(unsafe { json.assume_utf8() }) {
         let parsed = Box::new(parsed);
         LiveDebuggingParseResult {
             // we have the box. Rust doesn't allow us to specify a self-referential struct, so
             // pretend it's 'static
             data: unsafe {
-                std::mem::transmute::<&_, &'static datadog_live_debugger::LiveDebuggingData>(
-                    &*parsed,
-                )
+                std::mem::transmute::<&_, &'static libdd_live_debugger::LiveDebuggingData>(&*parsed)
             }
             .into(),
             opaque_data: Some(parsed),
