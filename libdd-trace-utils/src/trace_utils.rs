@@ -580,7 +580,6 @@ pub fn enrich_span_with_azure_function_metadata(span: &mut pb::Span) {
             ("aas.site.name", aas_metadata.get_site_name()),
             ("aas.site.kind", aas_metadata.get_site_kind()),
             ("aas.site.type", aas_metadata.get_site_type()),
-            ("aas.environment.storms", "true"),
         ];
         aas_tags.into_iter().for_each(|(name, value)| {
             span.meta.insert(name.to_string(), value.to_string());
