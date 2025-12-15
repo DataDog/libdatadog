@@ -24,7 +24,7 @@ datadog-ffe-ffi                      @Datadog/feature-flagging-and-experimentati
 datadog-ipc*/                        @Datadog/libdatadog-php
 libdd-live-debugger*/                @Datadog/libdatadog-php @Datadog/libdatadog-apm
 datadog-profiling-replayer           @Datadog/libdatadog-profiling
-datadog-remote-config                @Datadog/libdatadog-php @Datadog/libdatadog-apm @Datadog/remote-config
+libdd-remote-config                  @Datadog/libdatadog-php @Datadog/libdatadog-apm @Datadog/remote-config
 datadog-sidecar                      @Datadog/libdatadog-php @Datadog/libdatadog-apm
 datadog-sidecar-ffi                  @Datadog/libdatadog-php @Datadog/libdatadog-apm
 datadog-sidecar-macros               @Datadog/libdatadog-php

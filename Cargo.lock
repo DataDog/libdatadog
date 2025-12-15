@@ -1300,34 +1300,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "datadog-remote-config"
-version = "0.0.1"
-dependencies = [
- "anyhow",
- "base64 0.22.1",
- "datadog-remote-config",
- "futures",
- "futures-util",
- "http",
- "http-body-util",
- "hyper",
- "hyper-util",
- "libdd-common",
- "libdd-live-debugger",
- "libdd-trace-protobuf",
- "manual_future",
- "serde",
- "serde_json",
- "serde_with",
- "sha2",
- "time",
- "tokio",
- "tokio-util",
- "tracing",
- "uuid",
-]
-
-[[package]]
 name = "datadog-sidecar"
 version = "0.0.1"
 dependencies = [
@@ -1339,7 +1311,6 @@ dependencies = [
  "console-subscriber",
  "datadog-ipc",
  "datadog-ipc-macros",
- "datadog-remote-config",
  "datadog-sidecar-macros",
  "futures",
  "http",
@@ -1354,6 +1325,7 @@ dependencies = [
  "libdd-data-pipeline",
  "libdd-dogstatsd-client",
  "libdd-live-debugger",
+ "libdd-remote-config",
  "libdd-telemetry",
  "libdd-tinybytes",
  "libdd-trace-utils",
@@ -1388,7 +1360,6 @@ name = "datadog-sidecar-ffi"
 version = "0.0.1"
 dependencies = [
  "datadog-ipc",
- "datadog-remote-config",
  "datadog-sidecar",
  "http",
  "libc",
@@ -1397,6 +1368,7 @@ dependencies = [
  "libdd-crashtracker-ffi",
  "libdd-dogstatsd-client",
  "libdd-live-debugger",
+ "libdd-remote-config",
  "libdd-telemetry",
  "libdd-telemetry-ffi",
  "libdd-tinybytes",
@@ -1420,9 +1392,9 @@ name = "datadog-tracer-flare"
 version = "24.0.1"
 dependencies = [
  "anyhow",
- "datadog-remote-config",
  "hyper",
  "libdd-common",
+ "libdd-remote-config",
  "libdd-trace-utils",
  "serde_json",
  "tempfile",
@@ -2907,6 +2879,34 @@ dependencies = [
  "bolero",
  "libdd-profiling-protobuf",
  "prost",
+]
+
+[[package]]
+name = "libdd-remote-config"
+version = "1.0.0"
+dependencies = [
+ "anyhow",
+ "base64 0.22.1",
+ "futures",
+ "futures-util",
+ "http",
+ "http-body-util",
+ "hyper",
+ "hyper-util",
+ "libdd-common",
+ "libdd-live-debugger",
+ "libdd-remote-config",
+ "libdd-trace-protobuf",
+ "manual_future",
+ "serde",
+ "serde_json",
+ "serde_with",
+ "sha2",
+ "time",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "uuid",
 ]
 
 [[package]]

@@ -19,7 +19,7 @@ datadog-ipc = { path = "../datadog-ipc" }
 libdd-common = { path = "../libdd-common" }
 libdd-common-ffi = { path = "../libdd-common-ffi", default-features = false }
 libdd-telemetry-ffi = { path = "../libdd-telemetry-ffi", default-features = false }
-datadog-remote-config = { path = "../datadog-remote-config" }
+libdd-remote-config = { path = "../libdd-remote-config" }
 libdd-live-debugger = { path = "../libdd-live-debugger" }
 libdd-dogstatsd-client = { path = "../libdd-dogstatsd-client" }
 libdd-tinybytes = { path = "../libdd-tinybytes", features = ["bytes_string"] }

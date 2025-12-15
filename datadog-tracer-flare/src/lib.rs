@@ -17,18 +17,18 @@ use std::{
     },
 };
 
-use datadog_remote_config::{config::agent_task::AgentTaskFile, RemoteConfigData};
+use libdd_remote_config::{config::agent_task::AgentTaskFile, RemoteConfigData};
 
 use crate::error::FlareError;
 #[cfg(feature = "listener")]
 use {
-    datadog_remote_config::{
+    libdd_common::Endpoint,
+    libdd_remote_config::{
         fetch::{ConfigInvariants, ConfigOptions, SingleChangesFetcher},
         file_change_tracker::Change,
         file_storage::{ParsedFileStorage, RawFile, RawFileStorage},
         RemoteConfigProduct, Target,
     },
-    libdd_common::Endpoint,
     std::str::FromStr,
 };
 
@@ -506,7 +506,7 @@ mod tests {
     use crate::ReturnAction;
     use crate::{FlareError, LogLevel};
     #[cfg(feature = "listener")]
-    use datadog_remote_config::{
+    use libdd_remote_config::{
         config::{
             agent_config::{AgentConfig, AgentConfigFile},
             agent_task::{AgentTask, AgentTaskFile},

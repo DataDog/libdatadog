@@ -13,8 +13,6 @@ use crate::span::TracesBytes;
 use datadog_ipc::platform::{
     FileBackedHandle, MappedMem, NamedShmHandle, PlatformHandle, ShmHandle,
 };
-use datadog_remote_config::fetch::ConfigInvariants;
-use datadog_remote_config::{RemoteConfigCapabilities, RemoteConfigProduct, Target};
 use datadog_sidecar::agent_remote_config::{
     new_reader, reader_from_shm, AgentRemoteConfigEndpoint, AgentRemoteConfigWriter,
 };
@@ -39,6 +37,8 @@ use libdd_common_ffi::{self as ffi, MaybeError};
 use libdd_crashtracker_ffi::Metadata;
 use libdd_dogstatsd_client::DogStatsDActionOwned;
 use libdd_live_debugger::debugger_defs::DebuggerPayload;
+use libdd_remote_config::fetch::ConfigInvariants;
+use libdd_remote_config::{RemoteConfigCapabilities, RemoteConfigProduct, Target};
 use libdd_telemetry::{
     data::{self, Dependency, Integration},
     worker::{LifecycleAction, LogIdentifier, TelemetryActions},

@@ -1,9 +1,9 @@
 // Copyright 2025-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use datadog_remote_config::config::agent_task::AgentTaskFile;
 use hyper::{body::Bytes, Method};
 use libdd_common::{hyper_migration, Endpoint, MutexExt};
+use libdd_remote_config::config::agent_task::AgentTaskFile;
 use std::{
     collections::HashMap,
     fs::File,
@@ -232,7 +232,7 @@ impl TracerFlareManager {
     ///
     /// ```rust no_run
     /// use datadog_tracer_flare::{TracerFlareManager, ReturnAction};
-    /// use datadog_remote_config::config::agent_task::{AgentTaskFile, AgentTask};
+    /// use libdd_remote_config::config::agent_task::{AgentTaskFile, AgentTask};
     /// use std::num::NonZeroU64;
     ///
     /// #[tokio::main]
