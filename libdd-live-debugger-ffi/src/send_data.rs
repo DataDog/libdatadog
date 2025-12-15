@@ -7,13 +7,13 @@ use std::collections::hash_map;
 use std::mem::transmute;
 // Alias to prevent cbindgen panic
 use crate::data::Probe;
-use datadog_live_debugger::debugger_defs::{
+use libdd_live_debugger::debugger_defs::{
     Capture as DebuggerCaptureAlias, Capture, Captures, DebuggerData, DebuggerPayload, Diagnostics,
     DiagnosticsError, Entry, Fields, ProbeMetadata, ProbeMetadataLocation, ProbeStatus, Snapshot,
     SnapshotEvaluationError, SnapshotStackFrame, Value as DebuggerValueAlias,
 };
-use datadog_live_debugger::sender::generate_new_id;
-use datadog_live_debugger::{
+use libdd_live_debugger::sender::generate_new_id;
+use libdd_live_debugger::{
     add_redacted_name, add_redacted_type, is_redacted_name, is_redacted_type,
 };
 use libdd_common_ffi::slice::AsBytes;

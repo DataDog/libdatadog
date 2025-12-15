@@ -44,4 +44,4 @@ must_use = "DDOG_CHECK_RETURN"
 
 [parse]
 parse_deps = true
-include = ["libdd-common", "libdd-telemetry", "datadog-sidecar", "libdd-telemetry-ffi", "libdd-common-ffi", "datadog-ipc", "datadog-live-debugger", "datadog-remote-config"]
+include = ["libdd-common", "libdd-telemetry", "datadog-sidecar", "libdd-telemetry-ffi", "libdd-common-ffi", "datadog-ipc", "libdd-live-debugger", "datadog-remote-config"]

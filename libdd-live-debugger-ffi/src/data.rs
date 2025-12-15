@@ -1,8 +1,8 @@
 // Unless explicitly stated otherwise all files in this repository are licensed under the Apache
 // License Version 2.0. This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
 
-use datadog_live_debugger::debugger_defs::{ProbeMetadata, ProbeMetadataLocation, ProbeStatus};
-use datadog_live_debugger::{
+use libdd_live_debugger::debugger_defs::{ProbeMetadata, ProbeMetadataLocation, ProbeStatus};
+use libdd_live_debugger::{
     CaptureConfiguration, DslString, EvaluateAt, InBodyLocation, MetricKind, ProbeCondition,
     ProbeValue, SpanProbeTarget,
 };
@@ -47,8 +47,8 @@ pub struct MetricProbe<'a> {
     pub value: &'a ProbeValue,
 }
 
-impl<'a> From<&'a datadog_live_debugger::MetricProbe> for MetricProbe<'a> {
-    fn from(from: &'a datadog_live_debugger::MetricProbe) -> Self {
+impl<'a> From<&'a libdd_live_debugger::MetricProbe> for MetricProbe<'a> {
+    fn from(from: &'a libdd_live_debugger::MetricProbe) -> Self {
         MetricProbe {
             kind: from.kind,
             name: from.name.as_str().into(),
@@ -66,8 +66,8 @@ pub struct LogProbe<'a> {
     pub sampling_snapshots_per_second: u32,
 }
 
-impl<'a> From<&'a datadog_live_debugger::LogProbe> for LogProbe<'a> {
-    fn from(from: &'a datadog_live_debugger::LogProbe) -> Self {
+impl<'a> From<&'a libdd_live_debugger::LogProbe> for LogProbe<'a> {
+    fn from(from: &'a libdd_live_debugger::LogProbe) -> Self {
         LogProbe {
             segments: &from.segments,
             when: &from.when,
@@ -98,8 +98,8 @@ pub struct SpanDecorationProbe<'a> {
     pub span_tags_num: usize,
 }
 
-impl<'a> From<&'a datadog_live_debugger::SpanDecorationProbe> for SpanDecorationProbe<'a> {
-    fn from(from: &'a datadog_live_debugger::SpanDecorationProbe) -> Self {
+impl<'a> From<&'a libdd_live_debugger::SpanDecorationProbe> for SpanDecorationProbe<'a> {
+    fn from(from: &'a libdd_live_debugger::SpanDecorationProbe) -> Self {
         let mut tags = vec![];
         let mut conditions = vec![];
         for decoration in from.decorations.iter() {
@@ -157,13 +157,13 @@ pub enum ProbeType<'a> {
     SpanDecoration(SpanDecorationProbe<'a>),
 }
 
-impl<'a> From<&'a datadog_live_debugger::ProbeType> for ProbeType<'a> {
-    fn from(from: &'a datadog_live_debugger::ProbeType) -> Self {
+impl<'a> From<&'a libdd_live_debugger::ProbeType> for ProbeType<'a> {
+    fn from(from: &'a libdd_live_debugger::ProbeType) -> Self {
         match from {
-            datadog_live_debugger::ProbeType::Metric(metric) => ProbeType::Metric(metric.into()),
-            datadog_live_debugger::ProbeType::Log(log) => ProbeType::Log(log.into()),
-            datadog_live_debugger::ProbeType::Span(_) => ProbeType::Span,
-            datadog_live_debugger::ProbeType::SpanDecoration(span_decoration) => {
+            libdd_live_debugger::ProbeType::Metric(metric) => ProbeType::Metric(metric.into()),
+            libdd_live_debugger::ProbeType::Log(log) => ProbeType::Log(log.into()),
+            libdd_live_debugger::ProbeType::Span(_) => ProbeType::Span,
+            libdd_live_debugger::ProbeType::SpanDecoration(span_decoration) => {
                 ProbeType::SpanDecoration(span_decoration.into())
             }
         }
@@ -181,8 +181,8 @@ pub struct ProbeTarget<'a> {
     pub in_body_location: InBodyLocation,
 }
 
-impl<'a> From<&'a datadog_live_debugger::ProbeTarget> for ProbeTarget<'a> {
-    fn from(from: &'a datadog_live_debugger::ProbeTarget) -> Self {
+impl<'a> From<&'a libdd_live_debugger::ProbeTarget> for ProbeTarget<'a> {
+    fn from(from: &'a libdd_live_debugger::ProbeTarget) -> Self {
         ProbeTarget {
             type_name: from
                 .type_name
@@ -220,8 +220,8 @@ pub struct Probe<'a> {
     pub status_stacktrace: CharSlice<'a>,
 }
 
-impl<'a> From<&'a datadog_live_debugger::Probe> for Probe<'a> {
-    fn from(from: &'a datadog_live_debugger::Probe) -> Self {
+impl<'a> From<&'a libdd_live_debugger::Probe> for Probe<'a> {
+    fn from(from: &'a libdd_live_debugger::Probe) -> Self {
         Probe {
             id: from.id.as_str().into(),
             version: from.version,
@@ -268,8 +268,8 @@ pub struct FilterList<'a> {
     pub classes: CharSliceVec<'a>,
 }
 
-impl<'a> From<&'a datadog_live_debugger::FilterList> for FilterList<'a> {
-    fn from(from: &'a datadog_live_debugger::FilterList) -> Self {
+impl<'a> From<&'a libdd_live_debugger::FilterList> for FilterList<'a> {
+    fn from(from: &'a libdd_live_debugger::FilterList) -> Self {
         FilterList {
             package_prefixes: (&from.package_prefixes).into(),
             classes: (&from.classes).into(),
@@ -285,8 +285,8 @@ pub struct ServiceConfiguration<'a> {
     pub sampling_snapshots_per_second: u32,
 }
 
-impl<'a> From<&'a datadog_live_debugger::ServiceConfiguration> for ServiceConfiguration<'a> {
-    fn from(from: &'a datadog_live_debugger::ServiceConfiguration) -> Self {
+impl<'a> From<&'a libdd_live_debugger::ServiceConfiguration> for ServiceConfiguration<'a> {
+    fn from(from: &'a libdd_live_debugger::ServiceConfiguration) -> Self {
         ServiceConfiguration {
             id: from.id.as_str().into(),
             allow: (&from.allow).into(),
@@ -303,13 +303,13 @@ pub enum LiveDebuggingData<'a> {
     ServiceConfiguration(ServiceConfiguration<'a>),
 }
 
-impl<'a> From<&'a datadog_live_debugger::LiveDebuggingData> for LiveDebuggingData<'a> {
-    fn from(from: &'a datadog_live_debugger::LiveDebuggingData) -> Self {
+impl<'a> From<&'a libdd_live_debugger::LiveDebuggingData> for LiveDebuggingData<'a> {
+    fn from(from: &'a libdd_live_debugger::LiveDebuggingData) -> Self {
         match from {
-            datadog_live_debugger::LiveDebuggingData::Probe(probe) => {
+            libdd_live_debugger::LiveDebuggingData::Probe(probe) => {
                 LiveDebuggingData::Probe(probe.into())
             }
-            datadog_live_debugger::LiveDebuggingData::ServiceConfiguration(config) => {
+            libdd_live_debugger::LiveDebuggingData::ServiceConfiguration(config) => {
                 LiveDebuggingData::ServiceConfiguration(config.into())
             }
         }

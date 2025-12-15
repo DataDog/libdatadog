@@ -1,8 +1,8 @@
 // Unless explicitly stated otherwise all files in this repository are licensed under the Apache
 // License Version 2.0. This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
 
-use datadog_live_debugger::debugger_defs::SnapshotEvaluationError;
-use datadog_live_debugger::{DslString, ProbeCondition, ProbeValue, ResultError, ResultValue};
+use libdd_live_debugger::debugger_defs::SnapshotEvaluationError;
+use libdd_live_debugger::{DslString, ProbeCondition, ProbeValue, ResultError, ResultValue};
 use libdd_common_ffi::slice::AsBytes;
 use libdd_common_ffi::CharSlice;
 use std::borrow::Cow;
@@ -17,16 +17,16 @@ pub enum IntermediateValue<'a> {
     Referenced(&'a c_void),
 }
 
-impl<'a> From<&'a datadog_live_debugger::IntermediateValue<'a, c_void>> for IntermediateValue<'a> {
-    fn from(value: &'a datadog_live_debugger::IntermediateValue<'a, c_void>) -> Self {
+impl<'a> From<&'a libdd_live_debugger::IntermediateValue<'a, c_void>> for IntermediateValue<'a> {
+    fn from(value: &'a libdd_live_debugger::IntermediateValue<'a, c_void>) -> Self {
         match value {
-            datadog_live_debugger::IntermediateValue::String(s) => {
+            libdd_live_debugger::IntermediateValue::String(s) => {
                 IntermediateValue::String(s.as_ref().into())
             }
-            datadog_live_debugger::IntermediateValue::Number(n) => IntermediateValue::Number(*n),
-            datadog_live_debugger::IntermediateValue::Bool(b) => IntermediateValue::Bool(*b),
-            datadog_live_debugger::IntermediateValue::Null => IntermediateValue::Null,
-            datadog_live_debugger::IntermediateValue::Referenced(value) => {
+            libdd_live_debugger::IntermediateValue::Number(n) => IntermediateValue::Number(*n),
+            libdd_live_debugger::IntermediateValue::Bool(b) => IntermediateValue::Bool(*b),
+            libdd_live_debugger::IntermediateValue::Null => IntermediateValue::Null,
+            libdd_live_debugger::IntermediateValue::Referenced(value) => {
                 IntermediateValue::Referenced(value)
             }
         }
@@ -101,27 +101,27 @@ fn to_fetch_result<'e>(value: *const c_void) -> ResultValue<&'e c_void> {
     }
 }
 
-impl<'e> datadog_live_debugger::Evaluator<'e, c_void> for EvalCtx<'e> {
+impl<'e> libdd_live_debugger::Evaluator<'e, c_void> for EvalCtx<'e> {
     fn equals(
         &mut self,
-        a: datadog_live_debugger::IntermediateValue<'e, c_void>,
-        b: datadog_live_debugger::IntermediateValue<'e, c_void>,
+        a: libdd_live_debugger::IntermediateValue<'e, c_void>,
+        b: libdd_live_debugger::IntermediateValue<'e, c_void>,
     ) -> bool {
         (self.eval.equals)(self.context, (&a).into(), (&b).into())
     }
 
     fn greater_than(
         &mut self,
-        a: datadog_live_debugger::IntermediateValue<'e, c_void>,
-        b: datadog_live_debugger::IntermediateValue<'e, c_void>,
+        a: libdd_live_debugger::IntermediateValue<'e, c_void>,
+        b: libdd_live_debugger::IntermediateValue<'e, c_void>,
     ) -> bool {
         (self.eval.greater_than)(self.context, (&a).into(), (&b).into())
     }
 
     fn greater_or_equals(
         &mut self,
-        a: datadog_live_debugger::IntermediateValue<'e, c_void>,
-        b: datadog_live_debugger::IntermediateValue<'e, c_void>,
+        a: libdd_live_debugger::IntermediateValue<'e, c_void>,
+        b: libdd_live_debugger::IntermediateValue<'e, c_void>,
     ) -> bool {
         (self.eval.greater_or_equals)(self.context, (&a).into(), (&b).into())
     }
@@ -136,7 +136,7 @@ impl<'e> datadog_live_debugger::Evaluator<'e, c_void> for EvalCtx<'e> {
     fn fetch_index(
         &mut self,
         value: &'e c_void,
-        index: datadog_live_debugger::IntermediateValue<'e, c_void>,
+        index: libdd_live_debugger::IntermediateValue<'e, c_void>,
     ) -> ResultValue<&'e c_void> {
         to_fetch_result((self.eval.fetch_index)(
             self.context,
@@ -148,7 +148,7 @@ impl<'e> datadog_live_debugger::Evaluator<'e, c_void> for EvalCtx<'e> {
     fn fetch_nested(
         &mut self,
         value: &'e c_void,
-        member: datadog_live_debugger::IntermediateValue<'e, c_void>,
+        member: libdd_live_debugger::IntermediateValue<'e, c_void>,
     ) -> ResultValue<&'e c_void> {
         to_fetch_result((self.eval.fetch_nested)(
             self.context,
@@ -225,7 +225,7 @@ pub extern "C" fn ddog_evaluate_condition(
     context: &mut c_void,
 ) -> ConditionEvaluationResult {
     let mut ctx = EvalCtx::new(context);
-    match datadog_live_debugger::eval_condition(&mut ctx, condition) {
+    match libdd_live_debugger::eval_condition(&mut ctx, condition) {
         Ok(true) => ConditionEvaluationResult::Success,
         Ok(false) => ConditionEvaluationResult::Failure,
         Err(error) => ConditionEvaluationResult::Error(Box::new(vec![error])),
@@ -238,7 +238,7 @@ pub fn ddog_evaluate_string<'a>(
     errors: &mut Option<Box<Vec<SnapshotEvaluationError>>>,
 ) -> Cow<'a, str> {
     let mut ctx = EvalCtx::new(context);
-    let (result, new_errors) = datadog_live_debugger::eval_string(&mut ctx, condition);
+    let (result, new_errors) = libdd_live_debugger::eval_string(&mut ctx, condition);
     let found_errors = if !new_errors.is_empty() {
         Some(Box::new(new_errors))
     } else {
@@ -280,7 +280,7 @@ pub extern "C" fn ddog_evaluate_unmanaged_string(
     into_void_collection_string(&ddog_evaluate_string(segments, context, errors))
 }
 
-pub struct InternalIntermediateValue<'a>(datadog_live_debugger::IntermediateValue<'a, c_void>);
+pub struct InternalIntermediateValue<'a>(libdd_live_debugger::IntermediateValue<'a, c_void>);
 
 #[repr(C)]
 pub enum ValueEvaluationResult<'a> {
@@ -294,7 +294,7 @@ pub extern "C" fn ddog_evaluate_value<'a>(
     context: &'a mut c_void,
 ) -> ValueEvaluationResult<'a> {
     let mut ctx = EvalCtx::new(context);
-    match datadog_live_debugger::eval_value(&mut ctx, value) {
+    match libdd_live_debugger::eval_value(&mut ctx, value) {
         Ok(value) => ValueEvaluationResult::Success(Box::new(InternalIntermediateValue(value))),
         Err(error) => ValueEvaluationResult::Error(Box::new(vec![error])),
     }
@@ -316,7 +316,7 @@ pub fn ddog_evaluated_value_into_string<'a>(
     context: &'a mut c_void,
 ) -> Cow<'a, str> {
     let mut ctx = EvalCtx::new(context);
-    datadog_live_debugger::eval_intermediate_to_string(&mut ctx, value.0)
+    libdd_live_debugger::eval_intermediate_to_string(&mut ctx, value.0)
 }
 
 #[no_mangle]

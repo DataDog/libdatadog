@@ -1288,43 +1288,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "datadog-live-debugger"
-version = "0.0.1"
-dependencies = [
- "anyhow",
- "constcat",
- "http-body-util",
- "hyper",
- "libdd-common",
- "libdd-data-pipeline",
- "percent-encoding",
- "regex",
- "regex-automata",
- "serde",
- "serde_json",
- "smallvec",
- "sys-info",
- "tokio",
- "uuid",
-]
-
-[[package]]
-name = "datadog-live-debugger-ffi"
-version = "0.0.1"
-dependencies = [
- "build_common",
- "datadog-live-debugger",
- "libdd-common",
- "libdd-common-ffi",
- "log",
- "percent-encoding",
- "serde_json",
- "tokio",
- "tokio-util",
- "uuid",
-]
-
-[[package]]
 name = "datadog-profiling-replayer"
 version = "24.0.1"
 dependencies = [
@@ -1342,7 +1305,6 @@ version = "0.0.1"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
- "datadog-live-debugger",
  "datadog-remote-config",
  "futures",
  "futures-util",
@@ -1351,6 +1313,7 @@ dependencies = [
  "hyper",
  "hyper-util",
  "libdd-common",
+ "libdd-live-debugger",
  "libdd-trace-protobuf",
  "manual_future",
  "serde",
@@ -1376,7 +1339,6 @@ dependencies = [
  "console-subscriber",
  "datadog-ipc",
  "datadog-ipc-macros",
- "datadog-live-debugger",
  "datadog-remote-config",
  "datadog-sidecar-macros",
  "futures",
@@ -1391,6 +1353,7 @@ dependencies = [
  "libdd-crashtracker-ffi",
  "libdd-data-pipeline",
  "libdd-dogstatsd-client",
+ "libdd-live-debugger",
  "libdd-telemetry",
  "libdd-tinybytes",
  "libdd-trace-utils",
@@ -1425,7 +1388,6 @@ name = "datadog-sidecar-ffi"
 version = "0.0.1"
 dependencies = [
  "datadog-ipc",
- "datadog-live-debugger",
  "datadog-remote-config",
  "datadog-sidecar",
  "http",
@@ -1434,6 +1396,7 @@ dependencies = [
  "libdd-common-ffi",
  "libdd-crashtracker-ffi",
  "libdd-dogstatsd-client",
+ "libdd-live-debugger",
  "libdd-telemetry",
  "libdd-telemetry-ffi",
  "libdd-tinybytes",
@@ -2814,6 +2777,43 @@ dependencies = [
  "libdd-common-ffi",
  "libdd-library-config",
  "tempfile",
+]
+
+[[package]]
+name = "libdd-live-debugger"
+version = "1.0.0"
+dependencies = [
+ "anyhow",
+ "constcat",
+ "http-body-util",
+ "hyper",
+ "libdd-common",
+ "libdd-data-pipeline",
+ "percent-encoding",
+ "regex",
+ "regex-automata",
+ "serde",
+ "serde_json",
+ "smallvec",
+ "sys-info",
+ "tokio",
+ "uuid",
+]
+
+[[package]]
+name = "libdd-live-debugger-ffi"
+version = "1.0.0"
+dependencies = [
+ "build_common",
+ "libdd-common",
+ "libdd-common-ffi",
+ "libdd-live-debugger",
+ "log",
+ "percent-encoding",
+ "serde_json",
+ "tokio",
+ "tokio-util",
+ "uuid",
 ]
 
 [[package]]
