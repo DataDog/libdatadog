@@ -1252,4 +1252,26 @@ mod tests {
             "Null value should be skipped, but key was present"
         );
     }
+
+    #[test]
+    fn test_enrich_span_with_azure_function_metadata_skips_azure_apim() {
+        let mut span = create_test_span(1234, 12342, 12341, 1, false);
+        span.name = "azure.apim".to_string();
+
+        enrich_span_with_azure_function_metadata(&mut span);
+
+        // Verify no aas.* tags were added
+        assert!(!span.meta.contains_key("aas.resource.id"));
+        assert!(!span.meta.contains_key("aas.environment.instance_id"));
+        assert!(!span.meta.contains_key("aas.environment.instance_name"));
+        assert!(!span.meta.contains_key("aas.subscription.id"));
+        assert!(!span.meta.contains_key("aas.environment.os"));
+        assert!(!span.meta.contains_key("aas.environment.runtime"));
+        assert!(!span.meta.contains_key("aas.environment.runtime_version"));
+        assert!(!span.meta.contains_key("aas.environment.function_runtime"));
+        assert!(!span.meta.contains_key("aas.resource.group"));
+        assert!(!span.meta.contains_key("aas.site.name"));
+        assert!(!span.meta.contains_key("aas.site.kind"));
+        assert!(!span.meta.contains_key("aas.site.type"));
+    }
 }
