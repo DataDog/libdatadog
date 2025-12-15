@@ -550,7 +550,7 @@ pub fn enrich_span_with_google_cloud_function_metadata(
 }
 
 pub fn enrich_span_with_azure_function_metadata(span: &mut pb::Span) {
-    if span.name == "azure.apim" {
+    if span.name.to_lowercase() == "azure.apim" {
         return;
     }
 
