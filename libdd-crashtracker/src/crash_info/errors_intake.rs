@@ -521,7 +521,7 @@ impl ErrorsIntakeUploader {
         self.send_payload(&payload).await
     }
 
-    pub async fn upload_to_errors_intake(&self, crash_info: &CrashInfo) -> anyhow::Result<()> {
+    pub async fn upload_crash_info(&self, crash_info: &CrashInfo) -> anyhow::Result<()> {
         let payload = ErrorsIntakePayload::from_crash_info(crash_info)?;
         self.send_payload(&payload).await
     }
