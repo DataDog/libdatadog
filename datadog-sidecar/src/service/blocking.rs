@@ -7,11 +7,11 @@ use super::{
 };
 use datadog_ipc::platform::{Channel, FileBackedHandle, ShmHandle};
 use datadog_ipc::transport::blocking::BlockingTransport;
-use libdd_live_debugger::debugger_defs::DebuggerPayload;
-use libdd_live_debugger::sender::DebuggerType;
 use libdd_common::tag::Tag;
 use libdd_common::MutexExt;
 use libdd_dogstatsd_client::DogStatsDActionOwned;
+use libdd_live_debugger::debugger_defs::DebuggerPayload;
+use libdd_live_debugger::sender::DebuggerType;
 use serde::Serialize;
 use std::sync::{Mutex, MutexGuard};
 use std::{

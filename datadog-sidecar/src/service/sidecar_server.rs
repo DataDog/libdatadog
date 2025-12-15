@@ -47,12 +47,10 @@ use crate::service::tracing::trace_flusher::TraceFlusherStats;
 use crate::tokio_util::run_or_spawn_shared;
 use datadog_ipc::platform::FileBackedHandle;
 use datadog_ipc::tarpc::server::{Channel, InFlightRequest};
-use libdd_live_debugger::sender::{
-    agent_info_supports_dedicated_snapshots_endpoint, DebuggerType,
-};
 use datadog_remote_config::fetch::{ConfigInvariants, ConfigOptions, MultiTargetStats};
 use libdd_common::tag::Tag;
 use libdd_dogstatsd_client::{new, DogStatsDActionOwned};
+use libdd_live_debugger::sender::{agent_info_supports_dedicated_snapshots_endpoint, DebuggerType};
 use libdd_telemetry::config::Config;
 use libdd_tinybytes as tinybytes;
 use libdd_trace_utils::tracer_header_tags::TracerHeaderTags;

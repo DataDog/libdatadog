@@ -7,6 +7,7 @@ use std::collections::hash_map;
 use std::mem::transmute;
 // Alias to prevent cbindgen panic
 use crate::data::Probe;
+use libdd_common_ffi::slice::AsBytes;
 use libdd_live_debugger::debugger_defs::{
     Capture as DebuggerCaptureAlias, Capture, Captures, DebuggerData, DebuggerPayload, Diagnostics,
     DiagnosticsError, Entry, Fields, ProbeMetadata, ProbeMetadataLocation, ProbeStatus, Snapshot,
@@ -16,7 +17,6 @@ use libdd_live_debugger::sender::generate_new_id;
 use libdd_live_debugger::{
     add_redacted_name, add_redacted_type, is_redacted_name, is_redacted_type,
 };
-use libdd_common_ffi::slice::AsBytes;
 
 #[repr(C)]
 pub enum FieldType {
