@@ -1,6 +1,6 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
-use datadog_live_debugger::debugger_defs::{
+use libdd_live_debugger::debugger_defs::{
     DebuggerData, DebuggerPayload, Diagnostics, ProbeStatus,
 };
 use libdd_common::MutexExt;
@@ -146,7 +146,7 @@ pub struct DebuggerDiagnosticsBookkeeperStats {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use datadog_live_debugger::debugger_defs::{
+    use libdd_live_debugger::debugger_defs::{
         DebuggerData, DebuggerPayload, Diagnostics, ProbeStatus,
     };
     use std::borrow::Cow;

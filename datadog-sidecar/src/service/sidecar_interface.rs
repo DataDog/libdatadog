@@ -10,7 +10,7 @@ use crate::service::{
 use anyhow::Result;
 use datadog_ipc::platform::ShmHandle;
 use datadog_ipc::tarpc;
-use datadog_live_debugger::sender::DebuggerType;
+use libdd_live_debugger::sender::DebuggerType;
 use libdd_common::tag::Tag;
 use libdd_dogstatsd_client::DogStatsDActionOwned;
 use serde::{Deserialize, Serialize};

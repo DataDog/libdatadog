@@ -13,7 +13,7 @@ use crate::span::TracesBytes;
 use datadog_ipc::platform::{
     FileBackedHandle, MappedMem, NamedShmHandle, PlatformHandle, ShmHandle,
 };
-use datadog_live_debugger::debugger_defs::DebuggerPayload;
+use libdd_live_debugger::debugger_defs::DebuggerPayload;
 use datadog_remote_config::fetch::ConfigInvariants;
 use datadog_remote_config::{RemoteConfigCapabilities, RemoteConfigProduct, Target};
 use datadog_sidecar::agent_remote_config::{
