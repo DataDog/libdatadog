@@ -11,13 +11,13 @@ use base64::prelude::BASE64_URL_SAFE_NO_PAD;
 use base64::Engine;
 use datadog_ipc::platform::{FileBackedHandle, MappedMem, NamedShmHandle};
 use datadog_ipc::rate_limiter::ShmLimiter;
-use datadog_remote_config::config::dynamic::{parse_json, Configs};
-use datadog_remote_config::fetch::{
+use libdd_common::{tag::Tag, MutexExt};
+use libdd_remote_config::config::dynamic::{parse_json, Configs};
+use libdd_remote_config::fetch::{
     ConfigInvariants, FileRefcountData, FileStorage, MultiTargetFetcher, MultiTargetHandlers,
     MultiTargetStats, NotifyTarget, ProductCapabilities, RefcountedFile,
 };
-use datadog_remote_config::{RemoteConfigPath, RemoteConfigProduct, RemoteConfigValue, Target};
-use libdd_common::{tag::Tag, MutexExt};
+use libdd_remote_config::{RemoteConfigPath, RemoteConfigProduct, RemoteConfigValue, Target};
 use priority_queue::PriorityQueue;
 use sha2::{Digest, Sha224};
 use std::cmp::Reverse;
@@ -750,9 +750,9 @@ impl RemoteConfigManager {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use datadog_remote_config::config::dynamic::{tests::dummy_dynamic_config, Configs};
-    use datadog_remote_config::fetch::test_server::RemoteConfigServer;
-    use datadog_remote_config::{RemoteConfigData, RemoteConfigProduct, RemoteConfigSource};
+    use libdd_remote_config::config::dynamic::{tests::dummy_dynamic_config, Configs};
+    use libdd_remote_config::fetch::test_server::RemoteConfigServer;
+    use libdd_remote_config::{RemoteConfigData, RemoteConfigProduct, RemoteConfigSource};
     use manual_future::ManualFuture;
     use std::sync::LazyLock;
 

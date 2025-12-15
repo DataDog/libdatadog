@@ -23,7 +23,7 @@ datadog-sidecar-macros = { path = "../datadog-sidecar-macros" }
 libdd-telemetry = { path = "../libdd-telemetry", features = ["tracing"] }
 libdd-data-pipeline = { path = "../libdd-data-pipeline" }
 libdd-trace-utils = { path = "../libdd-trace-utils" }
-datadog-remote-config = { path = "../datadog-remote-config" , features = ["live-debugger"]}
+libdd-remote-config = { path = "../libdd-remote-config" , features = ["live-debugger"]}
 libdd-live-debugger = { path = "../libdd-live-debugger" }
 libdd-crashtracker = { path = "../libdd-crashtracker" }
 libdd-dogstatsd-client = { path = "../libdd-dogstatsd-client" }
@@ -101,7 +101,7 @@ microseh = "0.1.1"
 libc = { version = "0.2" }
 tempfile = { version = "3.3" }
 httpmock = "0.8.0-alpha.1"
-datadog-remote-config = { path = "../datadog-remote-config", features = ["test"] }
+libdd-remote-config = { path = "../libdd-remote-config", features = ["test"] }
 libdd-trace-utils = { path = "../libdd-trace-utils", features = ["test-utils"] }
 
 [lints.rust]
