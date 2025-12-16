@@ -4,15 +4,14 @@
 use crate::arc_handle::ArcHandle;
 use crate::profile_status::ProfileStatus;
 use crate::profiles::utf8::Utf8Option;
-use crate::profiles::{
-    ensure_non_null_insert, ensure_non_null_out_parameter, null_profiles_dictionary,
-};
+use crate::profiles::{ensure_non_null_insert, ensure_non_null_out_parameter};
 use crate::ProfileError;
 use libdd_common_ffi::slice::CharSlice;
 use libdd_profiling::profiles::collections::StringRef;
 use libdd_profiling::profiles::datatypes::{
     Function2, FunctionId2, Mapping2, MappingId2, ProfilesDictionary, StringId2,
 };
+use std::ffi::CStr;
 
 /// A StringId that represents the empty string.
 /// This is always available in every string set and can be used without
@@ -46,6 +45,8 @@ pub static DDOG_PROF_STRINGID2_TRACE_ENDPOINT: StringId2 =
 /// needing to insert it into a string set.
 #[no_mangle]
 pub static DDOG_PROF_STRINGID2_SPAN_ID: StringId2 = StringId2::from(StringRef::SPAN_ID);
+
+const NULL_PROFILES_DICTIONARY: &CStr = c"passed a null pointer for a ProfilesDictionary";
 
 /// Allocates a new `ProfilesDictionary` and writes a handle to it in `handle`.
 ///
@@ -107,7 +108,7 @@ pub unsafe extern "C" fn ddog_prof_ProfilesDictionary_insert_function(
     ensure_non_null_out_parameter!(function_id);
     ensure_non_null_insert!(function);
     ProfileStatus::from(|| -> Result<(), ProfileError> {
-        let dict = dict.ok_or(null_profiles_dictionary())?;
+        let dict = dict.ok_or(NULL_PROFILES_DICTIONARY)?;
         let f2: Function2 = unsafe { *function };
         let id = dict.try_insert_function2(f2)?;
         unsafe { function_id.write(id) };
@@ -131,7 +132,7 @@ pub unsafe extern "C" fn ddog_prof_ProfilesDictionary_insert_mapping(
     ensure_non_null_out_parameter!(mapping_id);
     ensure_non_null_insert!(mapping);
     ProfileStatus::from(|| -> Result<(), ProfileError> {
-        let dict = dict.ok_or(null_profiles_dictionary())?;
+        let dict = dict.ok_or(NULL_PROFILES_DICTIONARY)?;
         let m2 = unsafe { *mapping };
         let id = dict.try_insert_mapping2(m2)?;
         unsafe { mapping_id.write(id) };
@@ -156,7 +157,7 @@ pub unsafe extern "C" fn ddog_prof_ProfilesDictionary_insert_str(
 ) -> ProfileStatus {
     ensure_non_null_out_parameter!(string_id);
     ProfileStatus::from(|| -> Result<(), ProfileError> {
-        let dict = dict.ok_or(null_profiles_dictionary())?;
+        let dict = dict.ok_or(NULL_PROFILES_DICTIONARY)?;
         crate::profiles::utf8::insert_str(dict.strings(), byte_slice, utf8_option)
             .map(|id| unsafe { string_id.write(id.into()) })
     }())
@@ -183,7 +184,7 @@ pub unsafe extern "C" fn ddog_prof_ProfilesDictionary_get_str(
 ) -> ProfileStatus {
     ensure_non_null_out_parameter!(result);
     let Some(dict) = dict else {
-        return ProfileStatus::from(null_profiles_dictionary());
+        return ProfileStatus::from(NULL_PROFILES_DICTIONARY);
     };
     let string_ref = StringRef::from(string_id);
     // SAFETY: It's not actually safe--as indicated in the docs

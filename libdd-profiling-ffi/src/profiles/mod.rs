@@ -6,26 +6,11 @@ mod interning_api;
 mod profiles_dictionary;
 mod utf8;
 
-use std::ffi::CStr;
-
-// Shared error message helpers and null-check macros reused by FFI modules.
-pub const fn null_out_param_err() -> &'static CStr {
-    c"null pointer used as out parameter"
-}
-
-pub const fn null_insert_err() -> &'static CStr {
-    c"tried to insert a null pointer"
-}
-
-pub const fn null_profiles_dictionary() -> &'static CStr {
-    c"passed a null pointer for a ProfilesDictionary"
-}
-
 #[macro_export]
 macro_rules! ensure_non_null_out_parameter {
     ($expr:expr) => {
         if $expr.is_null() {
-            return $crate::ProfileStatus::from($crate::profiles::null_out_param_err());
+            return $crate::ProfileStatus::from(c"null pointer used as out parameter");
         }
     };
 }
@@ -34,7 +19,7 @@ macro_rules! ensure_non_null_out_parameter {
 macro_rules! ensure_non_null_insert {
     ($expr:expr) => {
         if $expr.is_null() {
-            return $crate::ProfileStatus::from($crate::profiles::null_insert_err());
+            return $crate::ProfileStatus::from(c"tried to insert a null pointer");
         }
     };
 }
