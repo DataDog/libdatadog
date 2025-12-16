@@ -44,7 +44,25 @@ impl Default for ProfileStatus {
     }
 }
 
+// SAFETY: ProfileStatus is Send because:
+// 1. The `flags` field is a usize, which is Send.
+// 2. The `err` pointer is either:
+//    - Null (FLAG_OK), which is trivially Send
+//    - Points to static data (FLAG_STATIC), which is 'static and therefore Send
+//    - Points to heap-allocated data (FLAG_ALLOCATED) that this ProfileStatus owns exclusively.
+//      When sent to another thread, the ownership of the allocation transfers with it, and the drop
+//      implementation ensures proper cleanup on the receiving thread.
+// This is semantically equivalent to `Result<(), Cow<'static, CStr>>`, which is Send.
 unsafe impl Send for ProfileStatus {}
+
+// SAFETY: ProfileStatus is Sync because:
+// 1. All fields are immutable from a shared reference (&ProfileStatus).
+// 2. The `err` pointer points to immutable data:
+//    - Static CStr (FLAG_STATIC): &'static CStr is Sync
+//    - Heap-allocated CStr (FLAG_ALLOCATED): The CStr is never mutated after creation, so multiple
+//      threads can safely read it concurrently.
+// 3. There are no interior mutability patterns (no Cell, RefCell, etc.).
+// Multiple threads holding &ProfileStatus can safely read the same error message.
 unsafe impl Sync for ProfileStatus {}
 
 impl<E> From<Result<(), E>> for ProfileStatus
