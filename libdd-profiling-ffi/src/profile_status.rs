@@ -6,7 +6,6 @@ use libdd_profiling::profiles::FallibleStringWriter;
 use std::borrow::Cow;
 use std::ffi::{c_char, CStr, CString};
 use std::fmt::Display;
-use std::hint::unreachable_unchecked;
 use std::mem::ManuallyDrop;
 use std::ptr::{null, NonNull};
 
@@ -183,7 +182,7 @@ impl From<ProfileStatus> for Result<(), Cow<'static, CStr>> {
                 if cfg!(debug_assertions) {
                     panic!("invalid bit pattern: {flags:b}");
                 }
-                unsafe { unreachable_unchecked() }
+                Err(Cow::Borrowed(c"error: invalid ProfileStatus flags detected while converting to Result<(), Cow<'static, CStr>>"))
             }
         }
     }
