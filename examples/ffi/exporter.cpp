@@ -97,6 +97,8 @@ int main(int argc, char *argv[]) {
 
   auto *encoded_profile = &serialize_result.ok;
 
+  // Create an agentless endpoint
+  // Note: Timeout can be configured on the endpoint during construction if needed
   auto endpoint =
       ddog_prof_Endpoint_agentless(DDOG_CHARSLICE_C_BARE("datad0g.com"), to_slice_c_char(api_key));
 
@@ -123,7 +125,6 @@ int main(int argc, char *argv[]) {
   auto exporter = &exporter_new_result.ok;
 
   auto files_to_compress_and_export = ddog_prof_Exporter_Slice_File_empty();
-  auto files_to_export_unmodified = ddog_prof_Exporter_Slice_File_empty();
 
   ddog_CharSlice internal_metadata_example = DDOG_CHARSLICE_C_BARE(
       "{\"no_signals_workaround_enabled\": \"true\", \"execution_trace_enabled\": \"false\"}");
@@ -132,32 +133,15 @@ int main(int argc, char *argv[]) {
       DDOG_CHARSLICE_C_BARE("{\"application\": {\"start_time\": \"2024-01-24T11:17:22+0000\"}, "
                             "\"platform\": {\"kernel\": \"Darwin Kernel 22.5.0\"}}");
 
-  auto res = ddog_prof_Exporter_set_timeout(exporter, 30000);
-  if (res.tag == DDOG_VOID_RESULT_ERR) {
-    print_error("Failed to set the timeout", res.err);
-    ddog_Error_drop(&res.err);
-    return 1;
-  }
-
-  auto build_result = ddog_prof_Exporter_Request_build(
-      exporter, encoded_profile, files_to_compress_and_export, files_to_export_unmodified, nullptr, nullptr,
-      &internal_metadata_example, &info_example);
-  ddog_prof_EncodedProfile_drop(encoded_profile);
-
-  if (build_result.tag == DDOG_PROF_REQUEST_RESULT_ERR_HANDLE_REQUEST) {
-    print_error("Failed to build request: ", build_result.err);
-    ddog_Error_drop(&build_result.err);
-    return 1;
-  }
-
-  auto request = &build_result.ok;
+  // Process tags example (comma-separated key:value pairs)
+  ddog_CharSlice process_tags = DDOG_CHARSLICE_C_BARE("language:native,profiler_version:1.2.3");
 
   auto cancel = ddog_CancellationToken_new();
   auto cancel_for_background_thread = ddog_CancellationToken_clone(&cancel);
 
   // As an example of CancellationToken usage, here we create a background
   // thread that sleeps for some time and then cancels a request early (e.g.
-  // before the timeout in ddog_ProfileExporter_send is hit).
+  // before the timeout configured on the endpoint is hit).
   //
   // If the request is faster than the sleep time, no cancellation takes place.
   std::thread trigger_cancel_if_request_takes_too_long_thread(
@@ -174,7 +158,20 @@ int main(int argc, char *argv[]) {
   trigger_cancel_if_request_takes_too_long_thread.detach();
 
   int exit_code = 0;
-  auto send_result = ddog_prof_Exporter_send(exporter, request, &cancel);
+  // New API: Send directly with all parameters (no separate build step)
+  auto send_result = ddog_prof_Exporter_send(
+      exporter, 
+      encoded_profile,
+      files_to_compress_and_export,
+      nullptr,  // additional_tags
+      &process_tags,
+      &internal_metadata_example,
+      &info_example,
+      &cancel);
+  
+  // encoded_profile is consumed by send, but we still need to drop it
+  ddog_prof_EncodedProfile_drop(encoded_profile);
+  
   if (send_result.tag == DDOG_PROF_RESULT_HTTP_STATUS_ERR_HTTP_STATUS) {
     print_error("Failed to send profile: ", send_result.err);
     exit_code = 1;
@@ -183,7 +180,6 @@ int main(int argc, char *argv[]) {
     printf("Response code: %d\n", send_result.ok.code);
   }
 
-  ddog_prof_Exporter_Request_drop(request);
   ddog_prof_Exporter_drop(exporter);
   ddog_CancellationToken_drop(&cancel);
   return exit_code;

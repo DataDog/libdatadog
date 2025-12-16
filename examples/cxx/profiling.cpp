@@ -184,6 +184,11 @@ int main() {
             // Export to Datadog
             std::cout << "\n=== Exporting to Datadog ===" << std::endl;
             
+            // Create a cancellation token for the export
+            // In a real application, you could clone this and cancel from another thread
+            // Example: auto token_clone = cancel_token->clone_token(); token_clone->cancel();
+            auto cancel_token = new_cancellation_token();
+            
             try {
                 // Example: Create an additional file to attach (e.g., application metadata)
                 std::string app_metadata = R"({
@@ -217,7 +222,7 @@ int main() {
                     
                     std::cout << "Exporting profile to Datadog with additional metadata..." << std::endl;
                     
-                    exporter->send_profile(
+                    exporter->send_profile_with_cancellation(
                         *profile,
                         // Files to compress and attach
                         {AttachmentFile{
@@ -234,7 +239,8 @@ int main() {
                         // Internal metadata (JSON string)
                         R"({"profiler_version": "1.0", "custom_field": "demo"})",
                         // System info (JSON string)
-                        R"({"os": "macos", "arch": "arm64", "cores": 8})"
+                        R"({"os": "macos", "arch": "arm64", "cores": 8})",
+                        *cancel_token
                     );
                     std::cout << "✅ Profile exported successfully!" << std::endl;
                 } else {
@@ -256,7 +262,7 @@ int main() {
                     
                     std::cout << "Exporting profile to Datadog with additional metadata..." << std::endl;
                     
-                    exporter->send_profile(
+                    exporter->send_profile_with_cancellation(
                         *profile,
                         // Files to compress and attach
                         {AttachmentFile{
@@ -273,7 +279,8 @@ int main() {
                         // Internal metadata (JSON string)
                         R"({"profiler_version": "1.0", "custom_field": "demo"})",
                         // System info (JSON string)
-                        R"({"os": "macos", "arch": "arm64", "cores": 8})"
+                        R"({"os": "macos", "arch": "arm64", "cores": 8})",
+                        *cancel_token
                     );
                     std::cout << "✅ Profile exported successfully!" << std::endl;
                 }

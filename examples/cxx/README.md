@@ -76,6 +76,7 @@ Windows:
 **Core Types:**
 - `Profile` - Profile builder for collecting samples
 - `ProfileExporter` - Exporter for sending profiles to Datadog
+- `CancellationToken` - Token for cancelling profile export operations
 - `Tag` - Key-value tags for profile metadata
 - `AttachmentFile` - Additional file to attach to profile (name + data bytes)
 
@@ -96,6 +97,12 @@ By default, the example saves the profile to `profile.pprof`. To export to Datad
 **API Example:**
 
 See [`profiling.cpp`](profiling.cpp) for a complete example showing profile creation, sample collection, and exporting to Datadog with optional attachments and metadata.
+
+**Cancellation Token Support:**
+
+Profiling exports support cancellation tokens for thread-safe cancellation of long-running export operations. Use `send_profile()` for normal exports or `send_profile_with_cancellation()` when you need cancellation support.
+
+See the example code in [`profiling.cpp`](profiling.cpp) for how to create and use cancellation tokens with the exporter.
 
 **Requirements:**
 - C++20 compiler

@@ -32,20 +32,23 @@ byteorder = { version = "1.5", features = ["std"] }
 bytes = "1.1"
 chrono = {version = "0.4", default-features = false, features = ["std", "clock"]}
 crossbeam-utils = { version = "0.8.21" }
-libdd-alloc = { version = "1.0.0", path = "../libdd-alloc" }
-libdd-profiling-protobuf = { version = "1.0.0", path = "../libdd-profiling-protobuf", features = ["prost_impls"] }
-libdd-common = { version = "1.0.0", path = "../libdd-common" }
+cxx = { version = "1.0", optional = true }
 futures = { version = "0.3", default-features = false }
 hashbrown = { version = "0.16", default-features = false }
 http = "1.0"
-hyper = { workspace = true}
 http-body-util = "0.1"
+hyper = { workspace = true}
 hyper-multipart-rfc7578 = "0.9.0"
 indexmap = "2.11"
+libdd-alloc = { version = "1.0.0", path = "../libdd-alloc" }
+libdd-common = { version = "1.0.0", path = "../libdd-common" }
+libdd-profiling-protobuf = { version = "1.0.0", path = "../libdd-profiling-protobuf", features = ["prost_impls"] }
 lz4_flex = { version = "0.9", default-features = false, features = ["std", "safe-encode", "frame"] }
 mime = "0.3.16"
 parking_lot = { version = "0.12", default-features = false }
 prost = "0.13.5"
+rand = "0.8"
+reqwest = { git = "https://github.com/seanmonstar/reqwest", branch = "windows-named-pipes" , features = ["multipart", "rustls-tls"], default-features = false }
 rustc-hash = { version = "1.1", default-features = false }
 serde = {version = "1.0", features = ["derive"]}
 serde_json = {version = "1.0"}
@@ -54,7 +57,6 @@ thiserror = "2"
 tokio = {version = "1.23", features = ["rt", "macros"]}
 tokio-util = "0.7.1"
 zstd = { version = "0.13", default-features = false }
-cxx = { version = "1.0", optional = true }
 
 [dev-dependencies]
 bolero = "0.13"

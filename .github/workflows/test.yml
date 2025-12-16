@@ -126,6 +126,38 @@ jobs:
         env:
           DATADOG_API_KEY: ${{ secrets.DATADOG_API_KEY }}
 
+  test-cxx:
+    name: "cargo test with cxx features #${{ matrix.platform }}"
+    runs-on: ${{ matrix.platform }}
+    env:
+      CARGO_TERM_COLOR: always
+      CARGO_INCREMENTAL: 0
+    strategy:
+      matrix:
+        platform: [windows-latest, ubuntu-latest, macos-15]
+      fail-fast: false
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # 4.2.2
+      - name: Install cargo nextest
+        uses: taiki-e/install-action@2c41309d51ede152b6f2ee6bf3b71e6dc9a8b7df # 2.49.27
+        with:
+          tool: nextest@0.9.96
+      - name: Cache [rust]
+        uses: Swatinem/rust-cache@f13886b937689c021905a6b90929199931d60db1 # 2.8.1
+        with:
+          cache-targets: true # cache build artifacts
+          cache-bin: true # cache the ~/.cargo/bin directory
+          prefix-key: "cxx-tests"
+      - name: "cargo build with cxx features"
+        shell: bash
+        run: cargo build --features libdd-profiling/cxx,libdd-crashtracker/cxx --package libdd-profiling --package libdd-crashtracker --verbose
+      - name: "cargo nextest run with cxx features"
+        shell: bash
+        run: cargo nextest run --features libdd-profiling/cxx,libdd-crashtracker/cxx --package libdd-profiling --package libdd-crashtracker --verbose
+        env:
+          RUST_BACKTRACE: full
+
   ffi:
     name: "FFI #${{ matrix.platform }} ${{ matrix.rust_version }}"
     runs-on: ${{ matrix.platform }}

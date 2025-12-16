@@ -1,124 +1,134 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use libdd_profiling::exporter::{ProfileExporter, Request};
+use libdd_profiling::exporter::utils::{extract_boundary, parse_http_request, parse_multipart};
+use libdd_profiling::exporter::ProfileExporter;
 use libdd_profiling::internal::EncodedProfile;
+use std::path::PathBuf;
 
-fn multipart(
-    exporter: &mut ProfileExporter,
-    internal_metadata: Option<serde_json::Value>,
-    info: Option<serde_json::Value>,
-    process_tags: Option<&str>,
-) -> Request {
-    let profile = EncodedProfile::test_instance().expect("To get a profile");
+/// Create a file-based exporter and return the temp file path
+#[cfg(unix)]
+fn create_file_exporter(
+    profiling_library_name: &str,
+    profiling_library_version: &str,
+    family: &str,
+    tags: Vec<libdd_common::tag::Tag>,
+    api_key: Option<&str>,
+) -> anyhow::Result<(ProfileExporter, PathBuf)> {
+    use libdd_profiling::exporter::config;
 
-    let files_to_compress_and_export = &[];
-    let files_to_export_unmodified = &[];
+    // Create a unique temp file path
+    let temp_dir = std::env::temp_dir();
+    let file_path = temp_dir.join(format!(
+        "libdd_test_{}_{}.http",
+        std::process::id(),
+        chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0)
+    ));
 
-    let timeout: u64 = 10_000;
-    exporter.set_timeout(timeout);
+    let mut endpoint = config::file(file_path.to_string_lossy().as_ref())?;
+    if let Some(key) = api_key {
+        endpoint.api_key = Some(key.to_string().into());
+    }
 
-    let request = exporter
-        .build(
-            profile,
-            files_to_compress_and_export,
-            files_to_export_unmodified,
-            None,
-            process_tags,
-            internal_metadata,
-            info,
-        )
-        .expect("request to be built");
+    let exporter = ProfileExporter::new(
+        profiling_library_name,
+        profiling_library_version,
+        family,
+        tags,
+        endpoint,
+    )?;
 
-    let actual_timeout = request.timeout().expect("timeout to exist");
-    assert_eq!(actual_timeout, std::time::Duration::from_millis(timeout));
-    request
+    Ok((exporter, file_path))
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::multipart;
-    use http_body_util::BodyExt;
+    use super::*;
     use libdd_common::tag;
-    use libdd_profiling::exporter::*;
     use serde_json::json;
 
-    fn default_tags() -> Vec<Tag> {
+    fn default_tags() -> Vec<libdd_common::tag::Tag> {
         vec![tag!("service", "php"), tag!("host", "bits")]
     }
 
-    fn parsed_event_json(request: Request) -> serde_json::Value {
-        // Really hacky way of getting the event.json file contents, because I didn't want to
-        // implement a full multipart parser and didn't find a particularly good
-        // alternative. If you do figure out a better way, there's another copy of this code
-        // in the profiling-ffi tests, please update there too :)
-        let body = request.body();
-        let body_bytes: String = String::from_utf8_lossy(
-            &futures::executor::block_on(body.collect())
-                .unwrap()
-                .to_bytes(),
-        )
-        .to_string();
-        let event_json = body_bytes
-            .lines()
-            .skip_while(|line| !line.contains(r#"filename="event.json""#))
-            .nth(2)
-            .unwrap();
-
-        serde_json::from_str(event_json).unwrap()
-    }
-
     #[test]
-    // This test invokes an external function SecTrustSettingsCopyCertificates
-    // which Miri cannot evaluate.
+    #[cfg(unix)]
     #[cfg_attr(miri, ignore)]
     fn multipart_agent() {
         let profiling_library_name = "dd-trace-foo";
         let profiling_library_version = "1.2.3";
-        let base_url = "http://localhost:8126".parse().expect("url to parse");
-        let endpoint = config::agent(base_url).expect("endpoint to construct");
-        let mut exporter = ProfileExporter::new(
+
+        let (mut exporter, file_path) = create_file_exporter(
             profiling_library_name,
             profiling_library_version,
             "php",
-            Some(default_tags()),
-            endpoint,
+            default_tags(),
+            None,
         )
         .expect("exporter to construct");
 
-        let request = multipart(&mut exporter, None, None, None);
+        // Send profile
+        let profile = EncodedProfile::test_instance().expect("test profile");
+        exporter
+            .send_blocking(profile, &[], &[], None, None, None, None)
+            .expect("send to succeed");
 
-        assert_eq!(
-            request.uri().to_string(),
-            "http://localhost:8126/profiling/v1/input"
-        );
+        // Read the dump file (wait a moment for it to be written)
+        std::thread::sleep(std::time::Duration::from_millis(200));
+        let request_bytes = std::fs::read(&file_path).expect("read dump file");
 
-        let actual_headers = request.headers();
-        assert!(!actual_headers.contains_key("DD-API-KEY"));
+        // Parse HTTP request
+        let request = parse_http_request(&request_bytes).expect("parse HTTP request");
+
+        // Validate request line
+        assert_eq!(request.method, "POST");
+        assert_eq!(request.path, "/v1/input");
+
+        // Validate headers
+        assert!(!request.headers.contains_key("dd-api-key"));
         assert_eq!(
-            actual_headers.get("DD-EVP-ORIGIN").unwrap(),
+            request.headers.get("dd-evp-origin").unwrap(),
             profiling_library_name
         );
         assert_eq!(
-            actual_headers.get("DD-EVP-ORIGIN-VERSION").unwrap(),
+            request.headers.get("dd-evp-origin-version").unwrap(),
             profiling_library_version
         );
 
-        let parsed_event_json = parsed_event_json(request);
-        assert_eq!(parsed_event_json["attachments"], json!(["profile.pprof"]));
-        assert_eq!(parsed_event_json["endpoint_counts"], json!(null));
-        assert_eq!(parsed_event_json["family"], json!("php"));
+        // Parse multipart body
+        let content_type = request
+            .headers
+            .get("content-type")
+            .expect("Content-Type header");
+        let boundary = extract_boundary(content_type).expect("extract boundary");
+        let parts = parse_multipart(&request.body, &boundary).expect("parse multipart");
+
+        // Find event.json part
+        let event_part = parts
+            .iter()
+            .find(|p| p.filename.as_deref() == Some("event.json"))
+            .expect("event.json part");
+
+        let event_json: serde_json::Value =
+            serde_json::from_slice(&event_part.content).expect("parse event.json");
+
+        // Validate event.json content
+        assert_eq!(event_json["attachments"], json!(["profile.pprof"]));
+        assert_eq!(event_json["endpoint_counts"], json!(null));
+        assert_eq!(event_json["family"], json!("php"));
         assert_eq!(
-            parsed_event_json["internal"],
-            json!({"libdatadog_version": env!("CARGO_PKG_VERSION")})
+            event_json["internal"]["libdatadog_version"],
+            json!(env!("CARGO_PKG_VERSION"))
         );
-        let tags_profiler = parsed_event_json["tags_profiler"]
+
+        let tags_profiler = event_json["tags_profiler"]
             .as_str()
             .unwrap()
             .split(',')
             .collect::<Vec<_>>();
         assert!(tags_profiler.contains(&"service:php"));
         assert!(tags_profiler.contains(&"host:bits"));
+
         let runtime_platform = tags_profiler
             .iter()
             .find(|tag| tag.starts_with("runtime_platform:"))
@@ -129,24 +139,36 @@ mod tests {
             std::env::consts::ARCH,
             runtime_platform
         );
-        assert_eq!(parsed_event_json["version"], json!("4"));
+
+        assert_eq!(event_json["version"], json!("4"));
+
+        // Verify profile.pprof part exists
+        let profile_part = parts
+            .iter()
+            .find(|p| p.name == "profile.pprof")
+            .expect("profile.pprof part");
+        assert!(
+            !profile_part.content.is_empty(),
+            "profile should have content"
+        );
+
+        // Clean up
+        let _ = std::fs::remove_file(&file_path);
     }
 
     #[test]
-    // This test invokes an external function SecTrustSettingsCopyCertificates
-    // which Miri cannot evaluate.
+    #[cfg(unix)]
     #[cfg_attr(miri, ignore)]
     fn including_internal_metadata() {
         let profiling_library_name = "dd-trace-foo";
         let profiling_library_version = "1.2.3";
-        let base_url = "http://localhost:8126".parse().expect("url to parse");
-        let endpoint = config::agent(base_url).expect("endpoint to construct");
-        let mut exporter = ProfileExporter::new(
+
+        let (mut exporter, file_path) = create_file_exporter(
             profiling_library_name,
             profiling_library_version,
             "php",
-            Some(default_tags()),
-            endpoint,
+            default_tags(),
+            None,
         )
         .expect("exporter to construct");
 
@@ -156,52 +178,114 @@ mod tests {
             "extra object": {"key": [1, 2, true]},
             "libdatadog_version": env!("CARGO_PKG_VERSION"),
         });
-        let request = multipart(&mut exporter, Some(internal_metadata.clone()), None, None);
-        let parsed_event_json = parsed_event_json(request);
 
-        assert_eq!(parsed_event_json["internal"], internal_metadata);
+        // Send profile
+        let profile = EncodedProfile::test_instance().expect("test profile");
+        exporter
+            .send_blocking(
+                profile,
+                &[],
+                &[],
+                Some(internal_metadata.clone()),
+                None,
+                None,
+                None,
+            )
+            .expect("send to succeed");
+
+        // Read the dump file (wait a moment for it to be written)
+        std::thread::sleep(std::time::Duration::from_millis(200));
+        let request_bytes = std::fs::read(&file_path).expect("read dump file");
+
+        // Parse and validate
+        let request = parse_http_request(&request_bytes).expect("parse HTTP request");
+        let content_type = request.headers.get("content-type").expect("Content-Type");
+        let boundary = extract_boundary(content_type).expect("extract boundary");
+        let parts = parse_multipart(&request.body, &boundary).expect("parse multipart");
+
+        let event_part = parts
+            .iter()
+            .find(|p| p.filename.as_deref() == Some("event.json"))
+            .expect("event.json part");
+
+        let event_json: serde_json::Value =
+            serde_json::from_slice(&event_part.content).expect("parse event.json");
+
+        assert_eq!(event_json["internal"], internal_metadata);
+
+        // Clean up
+        let _ = std::fs::remove_file(&file_path);
     }
 
     #[test]
-    // This test invokes an external function SecTrustSettingsCopyCertificates
-    // which Miri cannot evaluate.
+    #[cfg(unix)]
     #[cfg_attr(miri, ignore)]
     fn including_process_tags() {
         let profiling_library_name = "dd-trace-foo";
         let profiling_library_version = "1.2.3";
-        let base_url = "http://localhost:8126".parse().expect("url to parse");
-        let endpoint = config::agent(base_url).expect("endpoint to construct");
-        let mut exporter = ProfileExporter::new(
+
+        let (mut exporter, file_path) = create_file_exporter(
             profiling_library_name,
             profiling_library_version,
             "php",
-            Some(default_tags()),
-            endpoint,
+            default_tags(),
+            None,
         )
         .expect("exporter to construct");
 
         let expected_process_tags = "entrypoint.basedir:net10.0,entrypoint.name:buggybits.program,entrypoint.workdir:this_folder,runtime_platform:x86_64-pc-windows-msvc";
-        let request = multipart(&mut exporter, None, None, Some(expected_process_tags));
-        let parsed_event_json = parsed_event_json(request);
 
-        assert_eq!(parsed_event_json["process_tags"], expected_process_tags);
+        // Send profile
+        let profile = EncodedProfile::test_instance().expect("test profile");
+        exporter
+            .send_blocking(
+                profile,
+                &[],
+                &[],
+                None,
+                None,
+                Some(expected_process_tags),
+                None,
+            )
+            .expect("send to succeed");
+
+        // Read the dump file (wait a moment for it to be written)
+        std::thread::sleep(std::time::Duration::from_millis(200));
+        let request_bytes = std::fs::read(&file_path).expect("read dump file");
+
+        // Parse and validate
+        let request = parse_http_request(&request_bytes).expect("parse HTTP request");
+        let content_type = request.headers.get("content-type").expect("Content-Type");
+        let boundary = extract_boundary(content_type).expect("extract boundary");
+        let parts = parse_multipart(&request.body, &boundary).expect("parse multipart");
+
+        let event_part = parts
+            .iter()
+            .find(|p| p.filename.as_deref() == Some("event.json"))
+            .expect("event.json part");
+
+        let event_json: serde_json::Value =
+            serde_json::from_slice(&event_part.content).expect("parse event.json");
+
+        assert_eq!(event_json["process_tags"], expected_process_tags);
+
+        // Clean up
+        let _ = std::fs::remove_file(&file_path);
     }
 
     #[test]
-    // This test invokes an external function SecTrustSettingsCopyCertificates
-    // which Miri cannot evaluate.
+    #[cfg(unix)]
     #[cfg_attr(miri, ignore)]
     fn including_info() {
         let profiling_library_name = "dd-trace-foo";
         let profiling_library_version = "1.2.3";
-        let base_url = "http://localhost:8126".parse().expect("url to parse");
-        let endpoint = config::agent(base_url).expect("endpoint to construct");
-        let mut exporter = ProfileExporter::new(
+
+        let (mut exporter, file_path) = create_file_exporter(
             profiling_library_name,
             profiling_library_version,
             "php",
-            Some(default_tags()),
-            endpoint,
+            default_tags(),
+            None,
         )
         .expect("exporter to construct");
 
@@ -221,49 +305,79 @@ mod tests {
                 "settings": {}
             }
         });
-        let request = multipart(&mut exporter, None, Some(info.clone()), None);
-        let parsed_event_json = parsed_event_json(request);
 
-        assert_eq!(parsed_event_json["info"], info);
+        // Send profile
+        let profile = EncodedProfile::test_instance().expect("test profile");
+        exporter
+            .send_blocking(profile, &[], &[], None, Some(info.clone()), None, None)
+            .expect("send to succeed");
+
+        // Read the dump file (wait a moment for it to be written)
+        std::thread::sleep(std::time::Duration::from_millis(200));
+        let request_bytes = std::fs::read(&file_path).expect("read dump file");
+
+        // Parse and validate
+        let request = parse_http_request(&request_bytes).expect("parse HTTP request");
+        let content_type = request.headers.get("content-type").expect("Content-Type");
+        let boundary = extract_boundary(content_type).expect("extract boundary");
+        let parts = parse_multipart(&request.body, &boundary).expect("parse multipart");
+
+        let event_part = parts
+            .iter()
+            .find(|p| p.filename.as_deref() == Some("event.json"))
+            .expect("event.json part");
+
+        let event_json: serde_json::Value =
+            serde_json::from_slice(&event_part.content).expect("parse event.json");
+
+        assert_eq!(event_json["info"], info);
+
+        // Clean up
+        let _ = std::fs::remove_file(&file_path);
     }
 
     #[test]
-    // This test invokes an external function SecTrustSettingsCopyCertificates
-    // which Miri cannot evaluate.
+    #[cfg(unix)]
     #[cfg_attr(miri, ignore)]
     fn multipart_agentless() {
         let profiling_library_name = "dd-trace-foo";
         let profiling_library_version = "1.2.3";
         let api_key = "1234567890123456789012";
-        let endpoint = config::agentless("datadoghq.com", api_key).expect("endpoint to construct");
-        let mut exporter = ProfileExporter::new(
+
+        let (mut exporter, file_path) = create_file_exporter(
             profiling_library_name,
             profiling_library_version,
             "php",
-            Some(default_tags()),
-            endpoint,
+            default_tags(),
+            Some(api_key),
         )
         .expect("exporter to construct");
 
-        let request = multipart(&mut exporter, None, None, None);
+        // Send profile
+        let profile = EncodedProfile::test_instance().expect("test profile");
+        exporter
+            .send_blocking(profile, &[], &[], None, None, None, None)
+            .expect("send to succeed");
 
+        // Read the dump file (wait a moment for it to be written)
+        std::thread::sleep(std::time::Duration::from_millis(200));
+        let request_bytes = std::fs::read(&file_path).expect("read dump file");
+
+        // Parse HTTP request
+        let request = parse_http_request(&request_bytes).expect("parse HTTP request");
+
+        // Validate headers - API key should be present
+        assert_eq!(request.headers.get("dd-api-key").unwrap(), api_key);
         assert_eq!(
-            request.uri().to_string(),
-            "https://intake.profile.datadoghq.com/api/v2/profile"
-        );
-
-        let actual_headers = request.headers();
-
-        assert_eq!(actual_headers.get("DD-API-KEY").unwrap(), api_key);
-
-        assert_eq!(
-            actual_headers.get("DD-EVP-ORIGIN").unwrap(),
+            request.headers.get("dd-evp-origin").unwrap(),
             profiling_library_name
         );
-
         assert_eq!(
-            actual_headers.get("DD-EVP-ORIGIN-VERSION").unwrap(),
+            request.headers.get("dd-evp-origin-version").unwrap(),
             profiling_library_version
         );
+
+        // Clean up
+        let _ = std::fs::remove_file(&file_path);
     }
 }
