@@ -136,7 +136,7 @@ impl From<std::io::Error> for ProfileError {
                 let mut writer = FallibleStringWriter::new();
                 use core::fmt::Write;
                 // Add null terminator that from_vec_with_nul expects.
-                if write!(&mut writer, "{e}\0").is_ok() {
+                if write!(&mut writer, "{e}\0").is_err() {
                     return ProfileError::from(
                         c"memory allocation failed while trying to create an error message",
                     );
