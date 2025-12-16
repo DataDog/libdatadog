@@ -2971,6 +2971,7 @@ name = "libdd-trace-normalization"
 version = "1.0.0"
 dependencies = [
  "anyhow",
+ "arbitrary",
  "criterion",
  "duplicate",
  "libdd-trace-protobuf",
