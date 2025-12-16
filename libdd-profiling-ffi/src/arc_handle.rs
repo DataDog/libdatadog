@@ -50,6 +50,8 @@ impl<T> ArcHandle<T> {
 
     #[inline]
     pub fn as_inner(&self) -> Result<&T, EmptyHandleError> {
+        // SAFETY: If non-null, self.0 was created from Arc and remains valid,
+        // at least as long as we can trust the C side to not do insane things.
         unsafe { self.0.as_ref() }.ok_or(EmptyHandleError)
     }
 
