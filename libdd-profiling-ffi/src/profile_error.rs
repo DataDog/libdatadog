@@ -22,6 +22,48 @@ pub enum ProfileError {
     Other(Cow<'static, CStr>),
 }
 
+impl ProfileError {
+    /// Creates a ProfileError by formatting a Display-able error.
+    pub fn from_display<E: fmt::Display>(err: E) -> Self {
+        use core::fmt::Write;
+
+        let mut writer = FallibleStringWriter::new();
+        if write!(writer, "{err}").is_err() {
+            return ProfileError::AllocError;
+        }
+
+        let mut string = String::from(writer);
+
+        // Check for interior null bytes using memchr
+        let pos = unsafe { libc::memchr(string.as_ptr().cast(), 0, string.len()) };
+        if !pos.is_null() {
+            return ProfileError::from(
+                c"encountered an interior null byte while formatting an error message",
+            );
+        }
+
+        // Reserve memory for the null terminator. We have to shrink later in
+        // order to turn it into a CString, so we don't want any excess capacity.
+        if string.try_reserve_exact(1).is_err() {
+            return ProfileError::AllocError;
+        }
+        string.push('\0');
+
+        // Shrink to avoid potential panic in CString::from_vec_unchecked
+        if string_try_shrink_to_fit(&mut string).is_err() {
+            return ProfileError::AllocError;
+        }
+
+        // Pop the null off because CString::from_vec_unchecked adds one.
+        _ = string.pop();
+
+        // SAFETY: We checked for interior null bytes with memchr above,
+        // and the string is valid UTF-8 because it came from formatting.
+        let cstring = unsafe { CString::from_vec_unchecked(string.into_bytes()) };
+        ProfileError::Other(Cow::Owned(cstring))
+    }
+}
+
 /// Represents an error that means the handle is empty, meaning it doesn't
 /// point to a resource.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -132,26 +174,7 @@ impl From<std::io::Error> for ProfileError {
         match err.kind() {
             ErrorKind::StorageFull => ProfileError::CapacityOverflow,
             ErrorKind::WriteZero | ErrorKind::OutOfMemory => ProfileError::AllocError,
-            e => {
-                let mut writer = FallibleStringWriter::new();
-                use core::fmt::Write;
-                // Add null terminator that from_vec_with_nul expects.
-                if write!(&mut writer, "{e}\0").is_err() {
-                    return ProfileError::from(
-                        c"memory allocation failed while trying to create an error message",
-                    );
-                }
-                let mut string = String::from(writer);
-                // We do this to avoid the potential panic case of failed
-                // allocation in CString::from_vec_with_nul.
-                if string_try_shrink_to_fit(&mut string).is_err() {
-                    return ProfileError::from(c"memory allocation failed while trying to shrink a vec to create an error message");
-                }
-                match CString::from_vec_with_nul(string.into_bytes()) {
-                    Ok(cstring) => ProfileError::Other(Cow::Owned(cstring)),
-                    Err(_) => ProfileError::from(c"encountered an interior null byte while converting a std::io::Error into a ProfileError")
-                }
-            }
+            e => ProfileError::from_display(e),
         }
     }
 }

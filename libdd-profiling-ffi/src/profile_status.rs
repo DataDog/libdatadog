@@ -1,8 +1,8 @@
 // Copyright 2025-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+use crate::ProfileError;
 use allocator_api2::alloc::{AllocError, Allocator, Global, Layout};
-use libdd_profiling::profiles::FallibleStringWriter;
 use std::borrow::Cow;
 use std::ffi::{c_char, CStr, CString};
 use std::fmt::Display;
@@ -259,16 +259,6 @@ impl ProfileStatus {
         err: null(),
     };
 
-    const OUT_OF_MEMORY: ProfileStatus = ProfileStatus {
-        flags: FLAG_STATIC,
-        err: c"out of memory while trying to display error".as_ptr(),
-    };
-    const NULL_BYTE_IN_ERROR_MESSAGE: ProfileStatus = ProfileStatus {
-        flags: FLAG_STATIC,
-        err: c"another error occured, but cannot be displayed because it has interior null bytes"
-            .as_ptr(),
-    };
-
     pub fn from_ffi_safe_error_message<E: libdd_common::error::FfiSafeErrorMessage>(
         err: E,
     ) -> Self {
@@ -276,41 +266,7 @@ impl ProfileStatus {
     }
 
     pub fn from_error<E: Display>(err: E) -> Self {
-        use core::fmt::Write;
-        let mut writer = FallibleStringWriter::new();
-        if write!(writer, "{err}").is_err() {
-            return ProfileStatus::OUT_OF_MEMORY;
-        }
-
-        let mut str = String::from(writer);
-
-        // std doesn't expose memchr even though it has it, but fortunately
-        // libc has it, and we use the libc crate already in FFI.
-        let pos = unsafe { libc::memchr(str.as_ptr().cast(), 0, str.len()) };
-        if !pos.is_null() {
-            return ProfileStatus::NULL_BYTE_IN_ERROR_MESSAGE;
-        }
-
-        // Reserve memory exactly. We have to shrink later in order to turn
-        // it into a box, so we don't want any excess capacity.
-        if str.try_reserve_exact(1).is_err() {
-            return ProfileStatus::OUT_OF_MEMORY;
-        }
-        str.push('\0');
-
-        if string_try_shrink_to_fit(&mut str).is_err() {
-            return ProfileStatus::OUT_OF_MEMORY;
-        }
-
-        // Pop the null off because CString::from_vec_unchecked adds one.
-        _ = str.pop();
-
-        // And finally, this is why we went through the pain of
-        // string_try_shrink_to_fit: this method will call shrink_to_fit, so
-        // to avoid an allocation failure here, we had to make a String with
-        // no excess capacity.
-        let cstring = unsafe { CString::from_vec_unchecked(str.into_bytes()) };
-        ProfileStatus::from(cstring)
+        ProfileStatus::from(ProfileError::from_display(err))
     }
 }
 
