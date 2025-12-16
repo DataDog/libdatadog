@@ -163,12 +163,21 @@ impl From<ProfileStatus> for Result<(), Cow<'static, CStr>> {
         if cfg!(debug_assertions) && (status.flags & MASK_UNUSED) != 0 {
             panic!("invalid bit pattern: {flags:b}");
         }
+
+        // There are 4 cases:
+        // - not-allocated, not-error -> Ok(())
+        // - not-allocated, error -> Err(Cow::Borrowed)
+        // - allocated, error -> Err(Cow::Owned)
+        // - allocated, not-error -> nonsense, panic! in debug mode
         match (is_allocated, is_error) {
             (false, false) => Ok(()),
             (false, true) => Err(Cow::Borrowed(unsafe { CStr::from_ptr(status.err) })),
             (true, true) => Err(Cow::Owned(unsafe {
                 CString::from_raw(status.err.cast_mut())
             })),
+            // This would mean there's an allocated error, but there isn't an
+            // error. That doesn't make sense, and the Rust code doesn't make
+            // them, only FFI might (but that would violate the usage docs).
             (true, false) => {
                 #[allow(clippy::panic)]
                 if cfg!(debug_assertions) {
