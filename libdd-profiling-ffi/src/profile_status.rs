@@ -18,20 +18,49 @@ const MASK_IS_ERROR: usize = 0b01;
 const MASK_IS_ALLOCATED: usize = 0b10;
 const MASK_UNUSED: usize = !(MASK_IS_ERROR | MASK_IS_ALLOCATED);
 
-/// Represents the result of an operation that either succeeds with no value,
-/// or fails with an error message. This is like `Result<(), Cow<CStr>` except
-/// its representation is smaller, and is FFI-stable.
+/// Represents the result of an operation that either succeeds with no value, or fails with an
+/// error message. This is like `Result<(), Cow<'static, CStr>` except its representation is
+/// smaller, and is FFI-stable.
 ///
 /// The OK status is guaranteed to have a representation of `{ 0, null }`.
+///
+/// # Ownership
+///
+/// A `ProfileStatus` owns its error message data. When a `ProfileStatus` with an error is
+/// created, it takes ownership of the error string (either as a static reference or heap
+/// allocation). The caller is responsible for eventually calling [`ddog_prof_Status_drop`] to
+/// free any heap-allocated memory. This is safe to call on OK as well; it does nothing.
+///
+/// # FFI Safety
+///
+/// This type is `#[repr(C)]` and safe to pass across FFI boundaries. The C side must treat
+/// this as an opaque struct and use the provided FFI functions to inspect and drop it.
 #[repr(C)]
 #[derive(Debug)]
 pub struct ProfileStatus {
-    /// 0 means okay, everything else is opaque in C.
-    /// In Rust, the bits help us know whether it is heap allocated or not.
+    /// Bitflags indicating the status and storage type.
+    /// - `FLAG_OK` (0): Success, no error. `err` must be null. From C, this is the only thing you
+    ///   should check; the other flags are internal details.
+    /// - `FLAG_STATIC`: Error message points to static data. `err` is non-null and points to a
+    ///   `&'static CStr`. Must not be freed.
+    /// - `FLAG_ALLOCATED`: Error message is heap-allocated. `err` is non-null and points to a
+    ///   heap-allocated, null-terminated string that this `ProfileStatus` owns. Must be freed via
+    ///   [`ddog_prof_Status_drop`].
     pub flags: libc::size_t,
-    /// If not null, this is a pointer to a valid null-terminated string in
-    /// UTF-8 encoding.
-    /// This is null if `flags` == 0.
+
+    /// Pointer to a null-terminated UTF-8 error message string.
+    /// - If `flags == FLAG_OK`, this **must** be null.
+    /// - If `flags & FLAG_STATIC`, this points to static data with lifetime `'static`.
+    /// - If `flags & FLAG_ALLOCATED`, this points to heap-allocated data owned by this
+    ///   `ProfileStatus`. The allocation was created by the global allocator and must be freed by
+    ///   [`ddog_prof_Status_drop`].
+    ///
+    /// # Safety Invariant
+    ///
+    /// When non-null, `err` must point to a valid, null-terminated C
+    /// string in UTF-8 encoding. The pointer remains valid for the
+    /// lifetime of this `ProfileStatus` or until [`ddog_prof_Status_drop`]
+    /// is called.
     pub err: *const c_char,
 }
 
