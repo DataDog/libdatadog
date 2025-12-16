@@ -64,40 +64,59 @@ impl ProfileExporter {
         mut tags: Vec<Tag>,
         endpoint: Endpoint,
     ) -> anyhow::Result<Self> {
-        #[cfg_attr(not(unix), allow(unused_mut))]
+        #[cfg(not(any(unix, windows)))]
+        compile_error!("ProfileExporter requires either Unix or Windows platform");
+
         let mut builder = reqwest::Client::builder()
             .use_rustls_tls()
             .timeout(std::time::Duration::from_millis(endpoint.timeout_ms));
 
-        // Check if this is a file dump endpoint (for debugging)
-        #[cfg(unix)]
-        let request_url = if endpoint.url.scheme_str() == Some("file") {
-            // Extract the file path from the file:// URL
-            // The path is hex-encoded in the authority section
-            let output_path = libdd_common::decode_uri_path_in_authority(&endpoint.url)
-                .context("Failed to decode file path from URI")?;
-            let socket_path = spawn_dump_server(output_path)?;
-            builder = builder.unix_socket(socket_path);
-            "http://localhost/v1/input".to_string()
-        } else if endpoint.url.scheme_str() == Some("unix") {
-            use libdd_common::connector::uds::socket_path_from_uri;
-            let socket_path = socket_path_from_uri(&endpoint.url)?;
-            builder = builder.unix_socket(socket_path);
-            format!("http://localhost{}", endpoint.url.path())
-        } else {
-            endpoint.url.to_string()
-        };
-
-        #[cfg(not(unix))]
         let request_url = match endpoint.url.scheme_str() {
+            // File dump endpoint (debugging)
+            #[cfg(unix)]
             Some("file") => {
-                anyhow::bail!(
-                    "file:// endpoints are only supported on Unix platforms (requires Unix domain sockets)"
-                )
+                let output_path = libdd_common::decode_uri_path_in_authority(&endpoint.url)
+                    .context("Failed to decode file path from URI")?;
+                let socket_path = spawn_dump_server(output_path)?;
+                builder = builder.unix_socket(socket_path);
+                "http://localhost/v1/input".to_string()
             }
+            #[cfg(windows)]
+            Some("file") => {
+                let output_path = libdd_common::decode_uri_path_in_authority(&endpoint.url)
+                    .context("Failed to decode file path from URI")?;
+                let pipe_path = spawn_dump_server(output_path)?;
+                builder = builder.named_pipe(pipe_path);
+                "http://localhost/v1/input".to_string()
+            }
+
+            // Unix domain sockets
+            #[cfg(unix)]
+            Some("unix") => {
+                use libdd_common::connector::uds::socket_path_from_uri;
+                let socket_path = socket_path_from_uri(&endpoint.url)?;
+                builder = builder.unix_socket(socket_path);
+                format!("http://localhost{}", endpoint.url.path())
+            }
+            #[cfg(windows)]
             Some("unix") => {
                 anyhow::bail!("unix:// endpoints are only supported on Unix platforms")
             }
+
+            // Windows named pipes
+            #[cfg(windows)]
+            Some("windows") => {
+                use libdd_common::connector::named_pipe::named_pipe_path_from_uri;
+                let pipe_path = named_pipe_path_from_uri(&endpoint.url)?;
+                builder = builder.named_pipe(pipe_path);
+                format!("http://localhost{}", endpoint.url.path())
+            }
+            #[cfg(unix)]
+            Some("windows") => {
+                anyhow::bail!("windows:// endpoints are only supported on Windows platforms")
+            }
+
+            // HTTP/HTTPS endpoints
             _ => endpoint.url.to_string(),
         };
 

@@ -37,6 +37,8 @@ enum Transport {
     Tcp,
     #[cfg(unix)]
     UnixSocket,
+    #[cfg(windows)]
+    NamedPipe,
 }
 
 /// Server info returned from spawning a test server
@@ -44,6 +46,8 @@ struct ServerInfo {
     port: Option<u16>,
     #[cfg(unix)]
     socket_path: Option<PathBuf>,
+    #[cfg(windows)]
+    pipe_path: Option<PathBuf>,
     received_requests: Arc<Mutex<Vec<ReceivedRequest>>>,
 }
 
@@ -69,6 +73,8 @@ async fn spawn_server(transport: Transport) -> anyhow::Result<ServerInfo> {
                 port: Some(port),
                 #[cfg(unix)]
                 socket_path: None,
+                #[cfg(windows)]
+                pipe_path: None,
                 received_requests,
             })
         }
@@ -90,6 +96,44 @@ async fn spawn_server(transport: Transport) -> anyhow::Result<ServerInfo> {
             Ok(ServerInfo {
                 port: None,
                 socket_path: Some(socket_path),
+                #[cfg(windows)]
+                pipe_path: None,
+                received_requests,
+            })
+        }
+
+        #[cfg(windows)]
+        Transport::NamedPipe => {
+            use tokio::net::windows::named_pipe::ServerOptions;
+
+            // Create a unique named pipe name
+            let pipe_name = format!(
+                r"\\.\pipe\dd_test_{}_{:x}",
+                std::process::id(),
+                rand::random::<u64>()
+            );
+            let pipe_path = PathBuf::from(&pipe_name);
+
+            // Create server endpoint
+            let server = ServerOptions::new()
+                .first_pipe_instance(true)
+                .create(&pipe_name)?;
+
+            tokio::spawn(async move {
+                // Wait for a client to connect
+                if server.connect().await.is_ok() {
+                    read_and_capture_request(server, requests_clone).await;
+                }
+            });
+
+            // Give the server a moment to start listening
+            tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
+
+            Ok(ServerInfo {
+                port: None,
+                #[cfg(unix)]
+                socket_path: None,
+                pipe_path: Some(pipe_path),
                 received_requests,
             })
         }
@@ -342,18 +386,22 @@ async fn test_agent_with_transport(transport: Transport) -> anyhow::Result<()> {
     let server = spawn_server(transport).await?;
 
     // Configure agent endpoint based on transport
-    let endpoint = match server.port {
-        Some(port) => {
-            let endpoint_url = format!("http://127.0.0.1:{}", port).parse()?;
-            config::agent(endpoint_url)?
-        }
+    let endpoint = if let Some(port) = server.port {
+        let endpoint_url = format!("http://127.0.0.1:{}", port).parse()?;
+        config::agent(endpoint_url)?
+    } else {
         #[cfg(unix)]
-        None => {
+        {
             let socket_path = server.socket_path.as_ref().unwrap();
             config::agent_uds(socket_path)?
         }
-        #[cfg(not(unix))]
-        None => anyhow::bail!("No port or socket path available"),
+        #[cfg(windows)]
+        {
+            let pipe_path = server.pipe_path.as_ref().unwrap();
+            config::agent_named_pipe(pipe_path)?
+        }
+        #[cfg(not(any(unix, windows)))]
+        anyhow::bail!("No port, socket path, or pipe path available")
     };
 
     // Run the full export test
@@ -376,15 +424,14 @@ async fn test_agentless_with_transport(transport: Transport) -> anyhow::Result<(
     let server = spawn_server(transport).await?;
 
     // Configure agentless endpoint based on transport
-    let endpoint = match server.port {
-        Some(port) => {
-            let endpoint_url = format!("http://127.0.0.1:{}/api/v2/profile", port).parse()?;
-            let mut endpoint = libdd_common::Endpoint::from_url(endpoint_url);
-            endpoint.api_key = Some("test-api-key-12345".into());
-            endpoint
-        }
+    let endpoint = if let Some(port) = server.port {
+        let endpoint_url = format!("http://127.0.0.1:{}/api/v2/profile", port).parse()?;
+        let mut endpoint = libdd_common::Endpoint::from_url(endpoint_url);
+        endpoint.api_key = Some("test-api-key-12345".into());
+        endpoint
+    } else {
         #[cfg(unix)]
-        None => {
+        {
             let socket_path = server.socket_path.as_ref().unwrap();
             // For Unix sockets, we need to create endpoint manually
             let endpoint_url = libdd_common::connector::uds::socket_path_to_uri(socket_path)?;
@@ -395,8 +442,20 @@ async fn test_agentless_with_transport(transport: Transport) -> anyhow::Result<(
             endpoint.api_key = Some("test-api-key-12345".into());
             endpoint
         }
-        #[cfg(not(unix))]
-        None => anyhow::bail!("No port or socket path available"),
+        #[cfg(windows)]
+        {
+            let pipe_path = server.pipe_path.as_ref().unwrap();
+            // For named pipes, we need to create endpoint manually
+            let endpoint_url = libdd_common::connector::named_pipe::named_pipe_path_to_uri(pipe_path)?;
+            let mut parts = endpoint_url.into_parts();
+            parts.path_and_query = Some("/api/v2/profile".parse()?);
+            let url = http::Uri::from_parts(parts)?;
+            let mut endpoint = libdd_common::Endpoint::from_url(url);
+            endpoint.api_key = Some("test-api-key-12345".into());
+            endpoint
+        }
+        #[cfg(not(any(unix, windows)))]
+        anyhow::bail!("No port, socket path, or pipe path available")
     };
 
     // Run the full export test
@@ -440,6 +499,18 @@ async fn test_export_agentless_tcp() -> anyhow::Result<()> {
 #[tokio::test]
 async fn test_export_agentless_uds() -> anyhow::Result<()> {
     test_agentless_with_transport(Transport::UnixSocket).await
+}
+
+#[cfg(windows)]
+#[tokio::test]
+async fn test_export_agent_named_pipe() -> anyhow::Result<()> {
+    test_agent_with_transport(Transport::NamedPipe).await
+}
+
+#[cfg(windows)]
+#[tokio::test]
+async fn test_export_agentless_named_pipe() -> anyhow::Result<()> {
+    test_agentless_with_transport(Transport::NamedPipe).await
 }
 
 #[tokio::test]
