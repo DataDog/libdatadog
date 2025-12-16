@@ -314,14 +314,15 @@ mod tests {
 
     #[test]
     fn test_from_io_error_other() {
-        let io_err = std::io::Error::new(ErrorKind::NotFound, "test message");
+        // This kind isn't specially handled and hits the Other path.
+        let kind = ErrorKind::NotFound;
+        let io_err = std::io::Error::new(kind, "test message");
         let err = ProfileError::from(io_err);
 
-        // Should convert to Other variant with some error message
+        // Should convert to Other variant with some error message.
         let cow: Cow<'static, CStr> = err.into();
         let msg = cow.to_str().unwrap();
-        // Just verify we got some non-empty message
-        assert!(!msg.is_empty(), "Error message should not be empty");
+        assert_eq!(msg, &kind.to_string());
     }
 
     #[test]
