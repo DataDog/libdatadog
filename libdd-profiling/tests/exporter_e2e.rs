@@ -147,7 +147,6 @@ async fn read_and_capture_request<S>(
 ) where
     S: tokio::io::AsyncReadExt + tokio::io::AsyncWriteExt + Unpin,
 {
-
     let mut buffer = Vec::new();
     let mut temp_buf = [0u8; 8192];
     let mut headers_complete = false;
@@ -177,9 +176,7 @@ async fn read_and_capture_request<S>(
                     }
                 }
 
-                if let (Some(headers_end), Some(expected_len)) =
-                    (headers_end_pos, content_length)
-                {
+                if let (Some(headers_end), Some(expected_len)) = (headers_end_pos, content_length) {
                     if buffer.len() - headers_end >= expected_len {
                         break;
                     }
@@ -337,10 +334,7 @@ fn validate_full_export(req: &ReceivedRequest, expected_path: &str) -> anyhow::R
     }
 
     // Verify process_tags
-    assert_eq!(
-        event_json["process_tags"],
-        "entrypoint.name:main,pid:12345"
-    );
+    assert_eq!(event_json["process_tags"], "entrypoint.name:main,pid:12345");
 
     // Verify attachments
     let attachments = event_json["attachments"]
@@ -375,7 +369,11 @@ fn validate_full_export(req: &ReceivedRequest, expected_path: &str) -> anyhow::R
             .iter()
             .find(|p| p.name == *part_name)
             .ok_or_else(|| anyhow::anyhow!("Missing part: {}", part_name))?;
-        assert!(!part.content.is_empty(), "{} should not be empty", part_name);
+        assert!(
+            !part.content.is_empty(),
+            "{} should not be empty",
+            part_name
+        );
     }
 
     Ok(())
@@ -405,7 +403,8 @@ async fn test_agent_with_transport(transport: Transport) -> anyhow::Result<()> {
     };
 
     // Run the full export test
-    let req = export_full_profile(endpoint, RequestSource::Captured(server.received_requests)).await?;
+    let req =
+        export_full_profile(endpoint, RequestSource::Captured(server.received_requests)).await?;
 
     // Validate
     validate_full_export(&req, "/profiling/v1/input")?;
@@ -446,7 +445,8 @@ async fn test_agentless_with_transport(transport: Transport) -> anyhow::Result<(
         {
             let pipe_path = server.pipe_path.as_ref().unwrap();
             // For named pipes, we need to create endpoint manually
-            let endpoint_url = libdd_common::connector::named_pipe::named_pipe_path_to_uri(pipe_path)?;
+            let endpoint_url =
+                libdd_common::connector::named_pipe::named_pipe_path_to_uri(pipe_path)?;
             let mut parts = endpoint_url.into_parts();
             parts.path_and_query = Some("/api/v2/profile".parse()?);
             let url = http::Uri::from_parts(parts)?;
@@ -459,7 +459,8 @@ async fn test_agentless_with_transport(transport: Transport) -> anyhow::Result<(
     };
 
     // Run the full export test
-    let req = export_full_profile(endpoint, RequestSource::Captured(server.received_requests)).await?;
+    let req =
+        export_full_profile(endpoint, RequestSource::Captured(server.received_requests)).await?;
 
     // Validate - agentless uses /api/v2/profile path
     validate_full_export(&req, "/api/v2/profile")?;

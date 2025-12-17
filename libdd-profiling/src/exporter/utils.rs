@@ -58,9 +58,7 @@ pub fn parse_http_request(data: &[u8]) -> anyhow::Result<HttpRequest> {
     let mut lines = header_str.lines();
 
     // Parse request line
-    let request_line = lines
-        .next()
-        .context("No request line found")?;
+    let request_line = lines.next().context("No request line found")?;
     let parts: Vec<&str> = request_line.split_whitespace().collect();
     if parts.len() < 2 {
         anyhow::bail!("Invalid request line");
@@ -174,12 +172,12 @@ pub fn parse_multipart(body: &[u8], boundary: &str) -> anyhow::Result<Vec<Multip
 
         // Move past the delimiter
         pos = part_end + delimiter_bytes.len();
-        
+
         // Check if this is the end delimiter (delimiter followed by --)
         if pos + 2 <= body.len() && &body[pos..pos + 2] == b"--" {
             break;
         }
-        
+
         // Skip CRLF after boundary
         if pos + 2 <= body.len() && &body[pos..pos + 2] == b"\r\n" {
             pos += 2;

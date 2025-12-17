@@ -1,3 +1,6 @@
+// Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
+// SPDX-License-Identifier: Apache-2.0
+
 #[cfg(any(unix, windows))]
 use std::path::PathBuf;
 
@@ -36,7 +39,7 @@ pub(crate) fn spawn_dump_server(output_path: PathBuf) -> anyhow::Result<PathBuf>
 
     let socket_path_clone = socket_path.clone();
     let (tx, rx) = std::sync::mpsc::channel();
-    
+
     std::thread::spawn(move || {
         // Top-level error handler - all errors logged here
         let result = (|| -> anyhow::Result<()> {
@@ -47,7 +50,7 @@ pub(crate) fn spawn_dump_server(output_path: PathBuf) -> anyhow::Result<PathBuf>
                 run_dump_server_unix(output_path, listener).await
             })
         })();
-        
+
         if let Err(e) = result {
             eprintln!("[dump-server] Error: {}", e);
             let _ = tx.send(Err(e));
@@ -66,7 +69,7 @@ async fn run_dump_server_windows(output_path: PathBuf, pipe_name: String) -> any
 
     loop {
         // Create server instance
-        let mut server = ServerOptions::new()
+        let server = ServerOptions::new()
             .first_pipe_instance(true)
             .create(&pipe_name)?;
 
@@ -92,7 +95,7 @@ pub(crate) fn spawn_dump_server(output_path: PathBuf) -> anyhow::Result<PathBuf>
     let pipe_path = PathBuf::from(&pipe_name);
 
     let (tx, rx) = std::sync::mpsc::channel();
-    
+
     std::thread::spawn(move || {
         // Top-level error handler - all errors logged here
         let result = (|| -> anyhow::Result<()> {
@@ -102,7 +105,7 @@ pub(crate) fn spawn_dump_server(output_path: PathBuf) -> anyhow::Result<PathBuf>
                 run_dump_server_windows(output_path, pipe_name).await
             })
         })();
-        
+
         if let Err(e) = result {
             eprintln!("[dump-server] Error: {}", e);
             let _ = tx.send(Err(e));
@@ -155,9 +158,7 @@ fn is_request_complete(
 
 /// Read complete HTTP request from an async stream
 #[cfg(any(unix, windows))]
-async fn read_http_request_async<R: tokio::io::AsyncReadExt + Unpin>(
-    stream: &mut R,
-) -> Vec<u8> {
+async fn read_http_request_async<R: tokio::io::AsyncReadExt + Unpin>(stream: &mut R) -> Vec<u8> {
     let mut request_data = Vec::new();
     let mut buffer = [0u8; 8192];
     let mut content_length: Option<usize> = None;
@@ -197,7 +198,10 @@ async fn read_http_request_async<R: tokio::io::AsyncReadExt + Unpin>(
 async fn write_request_to_file_async(output_path: &PathBuf, request_data: &[u8]) {
     if !request_data.is_empty() {
         if let Err(e) = tokio::fs::write(output_path, request_data).await {
-            eprintln!("[dump-server] Failed to write request dump to {:?}: {}", output_path, e);
+            eprintln!(
+                "[dump-server] Failed to write request dump to {:?}: {}",
+                output_path, e
+            );
         }
     }
 }
@@ -210,7 +214,7 @@ where
 {
     let request_data = read_http_request_async(&mut stream).await;
     write_request_to_file_async(&output_path, &request_data).await;
-    
+
     if let Err(e) = stream.write_all(HTTP_200_RESPONSE).await {
         eprintln!("[dump-server] Failed to send HTTP response: {}", e);
     }
