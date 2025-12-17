@@ -2901,6 +2901,7 @@ dependencies = [
  "libdd-telemetry-ffi",
  "serde_json",
  "symbolizer-ffi",
+ "thiserror 2.0.17",
  "tokio-util",
 ]
 

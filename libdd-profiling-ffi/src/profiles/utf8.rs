@@ -25,29 +25,14 @@ pub enum Utf8Option {
 }
 
 #[allow(dead_code)]
-#[derive(Debug)]
+#[derive(thiserror::Error, Debug)]
 pub enum Utf8ConversionError {
-    OutOfMemory(TryReserveError),
-    SliceConversionError(SliceConversionError),
-    Utf8Error(Utf8Error),
-}
-
-impl From<TryReserveError> for Utf8ConversionError {
-    fn from(e: TryReserveError) -> Self {
-        Self::OutOfMemory(e)
-    }
-}
-
-impl From<SliceConversionError> for Utf8ConversionError {
-    fn from(e: SliceConversionError) -> Self {
-        Self::SliceConversionError(e)
-    }
-}
-
-impl From<Utf8Error> for Utf8ConversionError {
-    fn from(e: Utf8Error) -> Self {
-        Self::Utf8Error(e)
-    }
+    #[error("out of memory: utf8 conversion failed")]
+    OutOfMemory(#[from] TryReserveError),
+    #[error(transparent)]
+    SliceConversionError(#[from] SliceConversionError),
+    #[error("invalid input: string was not utf-8")]
+    Utf8Error(#[from] Utf8Error),
 }
 
 // SAFETY: all cases are c-str literals, or delegate to the same trait.
