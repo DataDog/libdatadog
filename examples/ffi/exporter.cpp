@@ -169,8 +169,7 @@ int main(int argc, char *argv[]) {
       &info_example,
       &cancel);
   
-  // encoded_profile is consumed by send, but we still need to drop it
-  ddog_prof_EncodedProfile_drop(encoded_profile);
+  // Note: encoded_profile is consumed by send (no need to drop it)
   
   if (send_result.tag == DDOG_PROF_RESULT_HTTP_STATUS_ERR_HTTP_STATUS) {
     print_error("Failed to send profile: ", send_result.err);

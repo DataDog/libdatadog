@@ -297,16 +297,34 @@ int main() {
                 std::cout << "✅ Profile written to profile.pprof" << std::endl;
             }
         } else {
-            // Save to file
-            std::cout << "\n=== Saving to File ===" << std::endl;
-            std::cout << "Serializing profile..." << std::endl;
-            auto serialized = profile->serialize_to_vec();
-            std::cout << "✅ Profile serialized to " << serialized.size() << " bytes" << std::endl;
+            // Export to file using file exporter
+            std::cout << "\n=== Exporting to File ===" << std::endl;
+            std::cout << "Creating file exporter (profile_dump.txt)..." << std::endl;
             
-            std::ofstream out("profile.pprof", std::ios::binary);
-            out.write(reinterpret_cast<const char*>(serialized.data()), serialized.size());
-            out.close();
-            std::cout << "✅ Profile written to profile.pprof" << std::endl;
+            // The file exporter writes the raw HTTP request to a file for debugging/testing
+            auto exporter = ProfileExporter::create_file_exporter(
+                "dd-trace-cpp",
+                "1.0.0",
+                "native",
+                {
+                    Tag{.key = "service", .value = "profiling-example"},
+                    Tag{.key = "env", .value = "dev"},
+                    Tag{.key = "example", .value = "cxx"}
+                },
+                "profile_dump.txt"  // Output file path
+            );
+            std::cout << "✅ Exporter created" << std::endl;
+            
+            std::cout << "Exporting profile to file..." << std::endl;
+            exporter->send_profile(
+                *profile,
+                {},  // No additional files
+                {},  // No additional tags
+                "",  // No process tags
+                "",  // No internal metadata
+                ""   // No system info
+            );
+            std::cout << "✅ Profile exported to profile_dump.txt (raw HTTP request)" << std::endl;
             
             std::cout << "\nℹ️  To export to Datadog instead, set environment variables:" << std::endl;
             std::cout << "   Agent mode:      DD_AGENT_URL=http://localhost:8126" << std::endl;
