@@ -1,6 +1,19 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+//! File-based HTTP request dumping for testing and debugging.
+//!
+//! This module implements a workaround to intercept and dump HTTP requests made by reqwest
+//! to a local file. It works by spawning a local server (Unix domain socket on Unix,
+//! named pipe on Windows) that captures the raw HTTP bytes before writing them to disk.
+//!
+//! This is primarily used for testing to validate the exact bytes sent over the wire.
+//!
+//! # Future
+//!
+//! This module exists as a workaround and will hopefully be replaced once reqwest adds
+//! native support for file output: <https://github.com/seanmonstar/reqwest/issues/2883>
+
 #[cfg(any(unix, windows))]
 use std::path::PathBuf;
 
@@ -64,13 +77,22 @@ pub(crate) fn spawn_dump_server(output_path: PathBuf) -> anyhow::Result<PathBuf>
 
 /// Async server loop for Windows named pipes
 #[cfg(windows)]
-async fn run_dump_server_windows(output_path: PathBuf, pipe_name: String) -> anyhow::Result<()> {
+async fn run_dump_server_windows(
+    output_path: PathBuf,
+    pipe_name: String,
+    mut first_server: tokio::net::windows::named_pipe::NamedPipeServer,
+) -> anyhow::Result<()> {
     use tokio::net::windows::named_pipe::ServerOptions;
 
+    // Handle first connection
+    first_server.connect().await?;
+    handle_connection_async(first_server, output_path.clone()).await;
+
+    // Handle subsequent connections
     loop {
-        // Create server instance
+        // Create server instance (not the first one)
         let server = ServerOptions::new()
-            .first_pipe_instance(true)
+            .first_pipe_instance(false)
             .create(&pipe_name)?;
 
         // Wait for client connection
@@ -85,6 +107,8 @@ async fn run_dump_server_windows(output_path: PathBuf, pipe_name: String) -> any
 /// Returns the named pipe path that the server is listening on
 #[cfg(windows)]
 pub(crate) fn spawn_dump_server(output_path: PathBuf) -> anyhow::Result<PathBuf> {
+    use tokio::net::windows::named_pipe::ServerOptions;
+
     // Create a unique named pipe name with randomness to avoid collisions
     let random_id: u64 = rand::random();
     let pipe_name = format!(
@@ -95,17 +119,22 @@ pub(crate) fn spawn_dump_server(output_path: PathBuf) -> anyhow::Result<PathBuf>
     let pipe_path = PathBuf::from(&pipe_name);
 
     let (tx, rx) = std::sync::mpsc::channel();
-
+    
     std::thread::spawn(move || {
         // Top-level error handler - all errors logged here
         let result = (|| -> anyhow::Result<()> {
             let rt = tokio::runtime::Runtime::new()?;
             rt.block_on(async {
+                // Create the first pipe instance before signaling ready
+                let first_server = ServerOptions::new()
+                    .first_pipe_instance(true)
+                    .create(&pipe_name)?;
+                
                 tx.send(Ok(()))?;
-                run_dump_server_windows(output_path, pipe_name).await
+                run_dump_server_windows(output_path, pipe_name, first_server).await
             })
         })();
-
+        
         if let Err(e) = result {
             eprintln!("[dump-server] Error: {}", e);
             let _ = tx.send(Err(e));
