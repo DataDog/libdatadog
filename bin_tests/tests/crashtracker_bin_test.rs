@@ -180,6 +180,20 @@ fn test_crash_tracking_bin_no_runtime_callback() {
     run_crash_test_with_artifacts(&config, &artifacts_map, &artifacts, validator).unwrap();
 }
 
+// Manual/diagnostic malloc logger check. This is ignored by default to keep the
+// regular bin test suite fast and hermetic. Run with:
+// cargo test --test crashtracker_bin_test -- --ignored manual_runtime_malloc_logger
+// Log output is written to tmp/malloc_logger.log.
+#[test]
+#[ignore]
+fn manual_runtime_malloc_logger() {
+    run_standard_crash_test_refactored(
+        BuildProfile::Release,
+        TestMode::RuntimeMallocLogger,
+        CrashType::NullDeref,
+    );
+}
+
 #[test]
 #[cfg_attr(miri, ignore)]
 fn test_crash_tracking_bin_runtime_callback_frame_invalid_utf8() {
