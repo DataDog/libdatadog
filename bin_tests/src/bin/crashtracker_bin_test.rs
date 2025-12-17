@@ -19,6 +19,7 @@ mod unix {
     };
     use std::env;
     use std::path::Path;
+    use std::process;
     use std::time::Duration;
 
     use libdd_common::{tag, Endpoint};
@@ -43,13 +44,36 @@ mod unix {
     }
 
     pub fn main() -> anyhow::Result<()> {
-        let mut args = env::args().skip(1);
+        let raw_args: Vec<String> = env::args().collect();
+        let mut args = raw_args.iter().skip(1);
         let output_url = args.next().context("Unexpected number of arguments")?;
         let receiver_binary = args.next().context("Unexpected number of arguments")?;
         let output_dir = args.next().context("Unexpected number of arguments")?;
         let mode_str = args.next().context("Unexpected number of arguments")?;
         let crash_typ = args.next().context("Missing crash type")?;
         anyhow::ensure!(args.next().is_none(), "unexpected extra arguments");
+
+        // For malloc logger mode, re-exec with LD_PRELOAD but keep logging disabled
+        // until the Behavior explicitly enables it (MALLOC_LOG_ENABLED=1). This
+        // ensures the logger is loaded before any allocator calls while avoiding
+        // harness noise.
+        if mode_str == "runtime_malloc_logger"
+            && env::var_os("LD_PRELOAD").is_none()
+            && env::var_os("MALLOC_LOGGER_BOOTSTRAPPED").is_none()
+        {
+            if let Some(so_path) = option_env!("MALLOC_LOGGER_SO") {
+                let status = process::Command::new(&raw_args[0])
+                    .args(&raw_args[1..])
+                    .env("LD_PRELOAD", so_path)
+                    .env("MALLOC_LOGGER_BOOTSTRAPPED", "1")
+                    .env("MALLOC_LOG_ENABLED", "0")
+                    .status()
+                    .context("failed to re-exec with LD_PRELOAD")?;
+
+                let code = status.code().unwrap_or(1);
+                process::exit(code);
+            }
+        }
 
         let stderr_filename = format!("{output_dir}/out.stderr");
         let stdout_filename = format!("{output_dir}/out.stdout");
@@ -101,7 +125,7 @@ mod unix {
             CrashtrackerReceiverConfig::new(
                 vec![],
                 env::vars().collect(),
-                receiver_binary,
+                receiver_binary.to_string(),
                 Some(stderr_filename),
                 Some(stdout_filename),
             )?,
