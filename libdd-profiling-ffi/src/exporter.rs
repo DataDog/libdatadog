@@ -80,7 +80,8 @@ unsafe fn try_to_url(slice: CharSlice) -> anyhow::Result<hyper::Uri> {
     }
     #[cfg(windows)]
     if let Some(path) = str.strip_prefix("windows:") {
-        return Ok(exporter::named_pipe_path_to_uri(path.as_ref())?);
+        use libdd_common::connector::named_pipe::named_pipe_path_to_uri;
+        return Ok(named_pipe_path_to_uri(path.as_ref())?);
     }
     Ok(hyper::Uri::from_str(str)?)
 }
