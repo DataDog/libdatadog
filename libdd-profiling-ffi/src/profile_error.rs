@@ -353,7 +353,7 @@ mod tests {
         let err = ProfileError::AllocError;
         let status = ProfileStatus::from(err);
 
-        assert_ne!(status.flags, 0); // Should be an error
+        assert!(!status.err.is_null()); // Should be an error
         let cstr: &CStr = (&status).try_into().unwrap();
         assert!(cstr.to_str().unwrap().contains("memory allocator"));
 
