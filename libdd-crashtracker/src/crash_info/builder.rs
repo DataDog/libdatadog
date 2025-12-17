@@ -46,35 +46,31 @@ impl ErrorDataBuilder {
         Self::default()
     }
 
-    pub fn with_kind(&mut self, kind: ErrorKind) -> anyhow::Result<&mut Self> {
+    pub fn with_kind(&mut self, kind: ErrorKind) -> anyhow::Result<()> {
         self.kind = Some(kind);
-        Ok(self)
+        Ok(())
     }
 
-    pub fn with_message(&mut self, message: String) -> anyhow::Result<&mut Self> {
+    pub fn with_message(&mut self, message: String) -> anyhow::Result<()> {
         self.message = Some(message);
-        Ok(self)
+        Ok(())
     }
 
-    pub fn with_stack(&mut self, stack: StackTrace) -> anyhow::Result<&mut Self> {
+    pub fn with_stack(&mut self, stack: StackTrace) -> anyhow::Result<()> {
         self.stack = Some(stack);
-        Ok(self)
+        Ok(())
     }
 
-    pub fn with_stack_frame(
-        &mut self,
-        frame: StackFrame,
-        incomplete: bool,
-    ) -> anyhow::Result<&mut Self> {
+    pub fn with_stack_frame(&mut self, frame: StackFrame, incomplete: bool) -> anyhow::Result<()> {
         if let Some(stack) = &mut self.stack {
             stack.push_frame(frame, incomplete)?;
         } else {
             self.stack = Some(StackTrace::from_frames(vec![frame], incomplete));
         }
-        Ok(self)
+        Ok(())
     }
 
-    pub fn with_stack_set_complete(&mut self) -> anyhow::Result<&mut Self> {
+    pub fn with_stack_set_complete(&mut self) -> anyhow::Result<()> {
         if let Some(stack) = &mut self.stack {
             stack.set_complete()?;
         } else {
@@ -82,16 +78,16 @@ impl ErrorDataBuilder {
             // empty on musl based Linux (Alpine) because stack unwinding may not be able to unwind
             // passed the signal handler. This by-passing for musl is temporary and needs a fix.
             #[cfg(target_env = "musl")]
-            return Ok(self);
+            return Ok(());
             #[cfg(not(target_env = "musl"))]
             anyhow::bail!("Can't set non-existant stack complete");
         }
-        Ok(self)
+        Ok(())
     }
 
-    pub fn with_threads(&mut self, threads: Vec<ThreadData>) -> anyhow::Result<&mut Self> {
+    pub fn with_threads(&mut self, threads: Vec<ThreadData>) -> anyhow::Result<()> {
         self.threads = Some(threads);
-        Ok(self)
+        Ok(())
     }
 }
 
@@ -183,63 +179,63 @@ impl CrashInfoBuilder {
     }
 
     /// Inserts the given counter to the current set of counters in the builder.
-    pub fn with_counter(&mut self, name: String, value: i64) -> anyhow::Result<&mut Self> {
+    pub fn with_counter(&mut self, name: String, value: i64) -> anyhow::Result<()> {
         anyhow::ensure!(!name.is_empty(), "Empty counter name not allowed");
         if let Some(ref mut counters) = &mut self.counters {
             counters.insert(name, value);
         } else {
             self.counters = Some(HashMap::from([(name, value)]));
         }
-        Ok(self)
+        Ok(())
     }
 
-    pub fn with_counters(&mut self, counters: HashMap<String, i64>) -> anyhow::Result<&mut Self> {
+    pub fn with_counters(&mut self, counters: HashMap<String, i64>) -> anyhow::Result<()> {
         self.counters = Some(counters);
-        Ok(self)
+        Ok(())
     }
 
     pub fn with_experimental_additional_tags(
         &mut self,
         additional_tags: Vec<String>,
-    ) -> anyhow::Result<&mut Self> {
+    ) -> anyhow::Result<()> {
         if let Some(experimental) = &mut self.experimental {
             experimental.additional_tags = additional_tags;
         } else {
             self.experimental = Some(Experimental::new().with_additional_tags(additional_tags));
         }
-        Ok(self)
+        Ok(())
     }
 
-    pub fn with_experimental_ucontext(&mut self, ucontext: String) -> anyhow::Result<&mut Self> {
+    pub fn with_experimental_ucontext(&mut self, ucontext: String) -> anyhow::Result<()> {
         if let Some(experimental) = &mut self.experimental {
             experimental.ucontext = Some(ucontext);
         } else {
             self.experimental = Some(Experimental::new().with_ucontext(ucontext));
         }
-        Ok(self)
+        Ok(())
     }
 
     pub fn with_experimental_runtime_stack(
         &mut self,
         runtime_stack: RuntimeStack,
-    ) -> anyhow::Result<&mut Self> {
+    ) -> anyhow::Result<()> {
         if let Some(experimental) = &mut self.experimental {
             experimental.runtime_stack = Some(runtime_stack);
         } else {
             self.experimental = Some(Experimental::new().with_runtime_stack(runtime_stack));
         }
-        Ok(self)
+        Ok(())
     }
 
-    pub fn with_kind(&mut self, kind: ErrorKind) -> anyhow::Result<&mut Self> {
-        self.error.with_kind(kind)?;
-        Ok(self)
+    pub fn with_kind(&mut self, kind: ErrorKind) -> anyhow::Result<()> {
+        self.error.with_kind(kind)
     }
 
-    pub fn with_file(&mut self, filename: String) -> anyhow::Result<&mut Self> {
+    pub fn with_file(&mut self, filename: String) -> anyhow::Result<()> {
         let file = File::open(&filename).with_context(|| format!("filename: {filename}"))?;
         let lines: std::io::Result<Vec<_>> = BufReader::new(file).lines().collect();
-        self.with_file_and_contents(filename, lines?)
+        self.with_file_and_contents(filename, lines?)?;
+        Ok(())
     }
 
     /// Appends the given file to the current set of files in the builder.
@@ -247,38 +243,34 @@ impl CrashInfoBuilder {
         &mut self,
         filename: String,
         contents: Vec<String>,
-    ) -> anyhow::Result<&mut Self> {
+    ) -> anyhow::Result<()> {
         if let Some(ref mut files) = &mut self.files {
             files.insert(filename, contents);
         } else {
             self.files = Some(HashMap::from([(filename, contents)]));
         }
-        Ok(self)
+        Ok(())
     }
 
     /// Sets the current set of files in the builder.
-    pub fn with_files(&mut self, files: HashMap<String, Vec<String>>) -> anyhow::Result<&mut Self> {
+    pub fn with_files(&mut self, files: HashMap<String, Vec<String>>) -> anyhow::Result<()> {
         self.files = Some(files);
-        Ok(self)
+        Ok(())
     }
 
-    pub fn with_fingerprint(&mut self, fingerprint: String) -> anyhow::Result<&mut Self> {
+    pub fn with_fingerprint(&mut self, fingerprint: String) -> anyhow::Result<()> {
         anyhow::ensure!(!fingerprint.is_empty(), "Expect non-empty fingerprint");
         self.fingerprint = Some(fingerprint);
-        Ok(self)
+        Ok(())
     }
 
-    pub fn with_incomplete(&mut self, incomplete: bool) -> anyhow::Result<&mut Self> {
+    pub fn with_incomplete(&mut self, incomplete: bool) -> anyhow::Result<()> {
         self.incomplete = Some(incomplete);
-        Ok(self)
+        Ok(())
     }
 
     /// Appends the given message to the current set of messages in the builder.
-    pub fn with_log_message(
-        &mut self,
-        message: String,
-        also_print: bool,
-    ) -> anyhow::Result<&mut Self> {
+    pub fn with_log_message(&mut self, message: String, also_print: bool) -> anyhow::Result<()> {
         if also_print {
             eprintln!("{message}");
         }
@@ -288,111 +280,104 @@ impl CrashInfoBuilder {
         } else {
             self.log_messages = Some(vec![message]);
         }
-        Ok(self)
+        Ok(())
     }
 
-    pub fn with_log_messages(&mut self, log_messages: Vec<String>) -> anyhow::Result<&mut Self> {
+    pub fn with_log_messages(&mut self, log_messages: Vec<String>) -> anyhow::Result<()> {
         self.log_messages = Some(log_messages);
-        Ok(self)
+        Ok(())
     }
 
-    pub fn with_message(&mut self, message: String) -> anyhow::Result<&mut Self> {
-        self.error.with_message(message)?;
-        Ok(self)
+    pub fn with_message(&mut self, message: String) -> anyhow::Result<()> {
+        self.error.with_message(message)
     }
 
-    pub fn with_metadata(&mut self, metadata: Metadata) -> anyhow::Result<&mut Self> {
+    pub fn with_metadata(&mut self, metadata: Metadata) -> anyhow::Result<()> {
         self.metadata = Some(metadata);
-        Ok(self)
+        Ok(())
     }
 
-    pub fn with_os_info(&mut self, os_info: OsInfo) -> anyhow::Result<&mut Self> {
+    pub fn with_os_info(&mut self, os_info: OsInfo) -> anyhow::Result<()> {
         self.os_info = Some(os_info);
-        Ok(self)
+        Ok(())
     }
 
-    pub fn with_os_info_this_machine(&mut self) -> anyhow::Result<&mut Self> {
-        self.with_os_info(::os_info::get().into())
+    pub fn with_os_info_this_machine(&mut self) -> anyhow::Result<()> {
+        self.with_os_info(::os_info::get().into())?;
+        Ok(())
     }
 
-    pub fn with_proc_info(&mut self, proc_info: ProcInfo) -> anyhow::Result<&mut Self> {
+    pub fn with_proc_info(&mut self, proc_info: ProcInfo) -> anyhow::Result<()> {
         self.proc_info = Some(proc_info);
-        Ok(self)
+        Ok(())
     }
 
-    pub fn with_sig_info(&mut self, sig_info: SigInfo) -> anyhow::Result<&mut Self> {
+    pub fn with_sig_info(&mut self, sig_info: SigInfo) -> anyhow::Result<()> {
         self.sig_info = Some(sig_info);
-        Ok(self)
+        Ok(())
     }
 
-    pub fn with_span_id(&mut self, span_id: Span) -> anyhow::Result<&mut Self> {
+    pub fn with_span_id(&mut self, span_id: Span) -> anyhow::Result<()> {
         if let Some(ref mut span_ids) = &mut self.span_ids {
             span_ids.push(span_id);
         } else {
             self.span_ids = Some(vec![span_id]);
         }
-        Ok(self)
+        Ok(())
     }
 
-    pub fn with_span_ids(&mut self, span_ids: Vec<Span>) -> anyhow::Result<&mut Self> {
+    pub fn with_span_ids(&mut self, span_ids: Vec<Span>) -> anyhow::Result<()> {
         self.span_ids = Some(span_ids);
-        Ok(self)
+        Ok(())
     }
 
-    pub fn with_stack(&mut self, stack: StackTrace) -> anyhow::Result<&mut Self> {
-        self.error.with_stack(stack)?;
-        Ok(self)
+    pub fn with_stack(&mut self, stack: StackTrace) -> anyhow::Result<()> {
+        self.error.with_stack(stack)
     }
 
-    pub fn with_stack_frame(
-        &mut self,
-        frame: StackFrame,
-        incomplete: bool,
-    ) -> anyhow::Result<&mut Self> {
-        self.error.with_stack_frame(frame, incomplete)?;
-        Ok(self)
+    pub fn with_stack_frame(&mut self, frame: StackFrame, incomplete: bool) -> anyhow::Result<()> {
+        self.error.with_stack_frame(frame, incomplete)
     }
 
-    pub fn with_stack_set_complete(&mut self) -> anyhow::Result<&mut Self> {
-        self.error.with_stack_set_complete()?;
-        Ok(self)
+    pub fn with_stack_set_complete(&mut self) -> anyhow::Result<()> {
+        self.error.with_stack_set_complete()
     }
 
-    pub fn with_thread(&mut self, thread: ThreadData) -> anyhow::Result<&mut Self> {
+    pub fn with_thread(&mut self, thread: ThreadData) -> anyhow::Result<()> {
         if let Some(ref mut threads) = &mut self.error.threads {
             threads.push(thread);
         } else {
             self.error.threads = Some(vec![thread]);
         }
-        Ok(self)
+        Ok(())
     }
 
-    pub fn with_threads(&mut self, threads: Vec<ThreadData>) -> anyhow::Result<&mut Self> {
-        self.error.with_threads(threads)?;
-        Ok(self)
+    pub fn with_threads(&mut self, threads: Vec<ThreadData>) -> anyhow::Result<()> {
+        self.error.with_threads(threads)
     }
 
-    pub fn with_timestamp(&mut self, timestamp: DateTime<Utc>) -> anyhow::Result<&mut Self> {
+    pub fn with_timestamp(&mut self, timestamp: DateTime<Utc>) -> anyhow::Result<()> {
         self.timestamp = Some(timestamp);
-        Ok(self)
+        Ok(())
     }
 
-    pub fn with_timestamp_now(&mut self) -> anyhow::Result<&mut Self> {
-        self.with_timestamp(Utc::now())
+    pub fn with_timestamp_now(&mut self) -> anyhow::Result<()> {
+        self.with_timestamp(Utc::now())?;
+        Ok(())
     }
 
-    pub fn with_trace_id(&mut self, trace_id: Span) -> anyhow::Result<&mut Self> {
+    pub fn with_trace_id(&mut self, trace_id: Span) -> anyhow::Result<()> {
         if let Some(ref mut trace_ids) = &mut self.trace_ids {
             trace_ids.push(trace_id);
         } else {
             self.trace_ids = Some(vec![trace_id]);
         }
-        Ok(self)
+        Ok(())
     }
 
-    pub fn with_trace_ids(&mut self, trace_ids: Vec<Span>) -> anyhow::Result<&mut Self> {
+    pub fn with_trace_ids(&mut self, trace_ids: Vec<Span>) -> anyhow::Result<()> {
         self.trace_ids = Some(trace_ids);
-        Ok(self)
+        Ok(())
     }
 
     /// This method requires that the builder has a UUID and metadata set.

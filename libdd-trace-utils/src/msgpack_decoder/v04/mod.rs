@@ -493,6 +493,39 @@ mod tests {
     }
 
     #[test]
+    fn test_decoder_meta_with_null_values() {
+        let mut span = create_test_json_span(1, 2, 0, 0, false);
+        span["meta"] = json!({
+            "key1": "value1",
+            "key2": null,  // This null value should be skipped
+            "key3": "value3"
+        });
+
+        let encoded_data = rmp_serde::to_vec_named(&vec![vec![span]]).unwrap();
+        let (decoded_traces, _) =
+            from_bytes(libdd_tinybytes::Bytes::from(encoded_data)).expect("Decoding failed");
+
+        assert_eq!(1, decoded_traces.len());
+        assert_eq!(1, decoded_traces[0].len());
+        let decoded_span = &decoded_traces[0][0];
+
+        assert_eq!(
+            "value1",
+            decoded_span.meta[&BytesString::from_slice("key1".as_ref()).unwrap()].as_str()
+        );
+        assert!(
+            !decoded_span
+                .meta
+                .contains_key(&BytesString::from_slice("key2".as_ref()).unwrap()),
+            "Null value should be skipped, but key was present"
+        );
+        assert_eq!(
+            "value3",
+            decoded_span.meta[&BytesString::from_slice("key3".as_ref()).unwrap()].as_str()
+        );
+    }
+
+    #[test]
     fn test_decoder_read_string_wrong_format() {
         let span = SpanBytes {
             service: BytesString::from_slice("my_service".as_ref()).unwrap(),

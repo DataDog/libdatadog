@@ -85,8 +85,11 @@ unsafe extern "C" fn test_runtime_callback_frame(
 mod tests {
     use super::*;
     use libdd_crashtracker::{clear_runtime_callback, is_runtime_callback_registered};
+    use serial_test::serial;
 
     #[test]
+    #[cfg_attr(miri, ignore)] // serial_test has intentional leaks that Miri flags
+    #[serial(runtime_callback)]
     fn test_runtime_callback_frame_registration() {
         // Ensure clean state
         unsafe {

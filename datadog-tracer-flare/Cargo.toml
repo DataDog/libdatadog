@@ -10,7 +10,7 @@ publish = false
 [dependencies]
 anyhow = "1.0"
 libdd-common = { path = "../libdd-common" }
-datadog-remote-config = { path = "../datadog-remote-config" }
+datadog-remote-config = { path = "../datadog-remote-config", default-features = false }
 libdd-trace-utils = { path = "../libdd-trace-utils" }
 hyper = { workspace = true}
 tokio = { version = "1.36.0", features = ["time"] }
@@ -27,4 +27,4 @@ datadog-remote-config = { path = "../datadog-remote-config", features = ["test"]
 
 [features]
 default = ["listener"]
-listener = []
+listener = ["datadog-remote-config/client"]

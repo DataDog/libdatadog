@@ -93,7 +93,7 @@ fn generate_protobuf() {
     );
     config.field_attribute(
         ".pb.Span.meta",
-        "#[serde(default)] #[serde(deserialize_with = \"crate::deserializers::deserialize_null_into_default\")]",
+        "#[serde(default)] #[serde(deserialize_with = \"crate::deserializers::deserialize_map_with_nullable_values\")]",
     );
     config.field_attribute(
         ".pb.Span.metrics",

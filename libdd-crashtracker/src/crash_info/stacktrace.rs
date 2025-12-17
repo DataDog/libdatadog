@@ -249,6 +249,58 @@ impl StackFrame {
         }
         Ok(())
     }
+
+    pub fn set_build_id_type(&mut self, build_id_type: BuildIdType) {
+        self.build_id_type = Some(build_id_type);
+    }
+
+    pub fn set_file_type(&mut self, file_type: FileType) {
+        self.file_type = Some(file_type);
+    }
+
+    pub fn with_ip(&mut self, ip: usize) {
+        self.ip = Some(format!("0x{:x}", ip));
+    }
+
+    pub fn with_module_base_address(&mut self, addr: usize) {
+        self.module_base_address = Some(format!("0x{:x}", addr));
+    }
+
+    pub fn with_sp(&mut self, sp: usize) {
+        self.sp = Some(format!("0x{:x}", sp));
+    }
+
+    pub fn with_symbol_address(&mut self, addr: usize) {
+        self.symbol_address = Some(format!("0x{:x}", addr));
+    }
+
+    pub fn with_build_id(&mut self, build_id: String) {
+        self.build_id = Some(build_id);
+    }
+
+    pub fn with_path(&mut self, path: String) {
+        self.path = Some(path);
+    }
+
+    pub fn with_relative_address(&mut self, addr: usize) {
+        self.relative_address = Some(format!("0x{:x}", addr));
+    }
+
+    pub fn with_function(&mut self, function: String) {
+        self.function = Some(function);
+    }
+
+    pub fn with_file(&mut self, file: String) {
+        self.file = Some(file);
+    }
+
+    pub fn with_line(&mut self, line: u32) {
+        self.line = Some(line);
+    }
+
+    pub fn with_column(&mut self, column: u32) {
+        self.column = Some(column);
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]

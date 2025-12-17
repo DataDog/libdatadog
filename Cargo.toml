@@ -24,7 +24,7 @@ members = [
   "datadog-sidecar-ffi",
   "datadog-sidecar-macros",
   "libdd-trace-normalization",
-  "datadog-trace-obfuscation",
+  "libdd-trace-obfuscation",
   "libdd-trace-protobuf",
   "libdd-trace-utils",
   "libdd-trace-stats",
@@ -67,6 +67,7 @@ rust-version = "1.84.1"
 edition = "2021"
 version = "24.0.1"
 license = "Apache-2.0"
+authors = ["Datadog Inc. <info@datadoghq.com>"]
 
 [workspace.dependencies]
 hyper = { version = "1.6", features = [

@@ -378,17 +378,20 @@ pub unsafe extern "C" fn ddog_sidecar_telemetry_enqueueConfig(
     config_value: ffi::CharSlice,
     origin: data::ConfigurationOrigin,
     config_id: ffi::CharSlice,
+    seq_id: ffi::Option<u64>,
 ) -> MaybeError {
     let config_id = if config_id.is_empty() {
         None
     } else {
         Some(config_id.to_utf8_lossy().into_owned())
     };
+    let seq_id = seq_id.to_std();
     let config_entry = TelemetryActions::AddConfig(data::Configuration {
         name: config_key.to_utf8_lossy().into_owned(),
         value: config_value.to_utf8_lossy().into_owned(),
         origin,
         config_id,
+        seq_id,
     });
     try_c!(blocking::enqueue_actions(
         transport,

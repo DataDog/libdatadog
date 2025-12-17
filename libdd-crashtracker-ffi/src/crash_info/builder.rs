@@ -42,31 +42,18 @@ pub unsafe extern "C" fn ddog_crasht_CrashInfoBuilder_drop(builder: *mut Handle<
     }
 }
 
-#[allow(dead_code)]
-#[repr(C)]
-pub enum CrashInfoNewResult {
-    Ok(Handle<CrashInfo>),
-    Err(Error),
-}
+// Name the type so it's prettier for the consumer
+pub type CrashInfoNewResult = libdd_common_ffi::Result<Handle<CrashInfo>>;
 
 /// # Safety
 /// The `builder` can be null, but if non-null it must point to a Builder made by this module,
 /// which has not previously been dropped.
 #[no_mangle]
 #[must_use]
-pub unsafe extern "C" fn ddog_crasht_CrashInfoBuilder_build(
-    builder: *mut Handle<CrashInfoBuilder>,
-) -> CrashInfoNewResult {
-    match ddog_crasht_crash_info_builder_build_impl(builder) {
-        Ok(crash_info) => CrashInfoNewResult::Ok(crash_info),
-        Err(err) => CrashInfoNewResult::Err(err.into()),
-    }
-}
-
 #[named]
-unsafe fn ddog_crasht_crash_info_builder_build_impl(
+pub unsafe extern "C" fn ddog_crasht_CrashInfoBuilder_build(
     mut builder: *mut Handle<CrashInfoBuilder>,
-) -> anyhow::Result<Handle<CrashInfo>> {
+) -> CrashInfoNewResult {
     wrap_with_ffi_result!({ anyhow::Ok(builder.take()?.build()?.into()) })
 }
 

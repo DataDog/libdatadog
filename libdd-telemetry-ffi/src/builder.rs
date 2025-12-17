@@ -102,6 +102,7 @@ pub unsafe extern "C" fn ddog_telemetry_builder_with_config(
     value: ffi::CharSlice,
     origin: data::ConfigurationOrigin,
     config_id: ffi::CharSlice,
+    seq_id: ffi::Option<u64>,
 ) -> MaybeError {
     let name = name.to_utf8_lossy().into_owned();
     let value = value.to_utf8_lossy().into_owned();
@@ -110,11 +111,13 @@ pub unsafe extern "C" fn ddog_telemetry_builder_with_config(
     } else {
         Some(config_id.to_utf8_lossy().into_owned())
     };
+    let seq_id = seq_id.to_std();
     builder.configurations.insert(data::Configuration {
         name,
         value,
         origin,
         config_id,
+        seq_id,
     });
     MaybeError::None
 }

@@ -195,7 +195,7 @@ pub async fn send_with_retry<C: Connect>(
             }
             Err(e) => {
                 debug!(
-                    error = %e,
+                    error = ?e,
                     attempt = request_attempt,
                     max_retries = retry_strategy.max_retries(),
                     "Request failed with error"

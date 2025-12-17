@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 mod builder;
+#[cfg(feature = "cxx")]
+pub mod cxx;
 mod error_data;
 mod errors_intake;
 mod experimental;
@@ -152,14 +154,14 @@ impl CrashInfo {
 
     async fn upload_to_telemetry(&self, endpoint: &Option<Endpoint>) -> anyhow::Result<()> {
         let uploader = TelemetryCrashUploader::new(&self.metadata, endpoint)?;
-        uploader.upload_to_telemetry(self).await?;
+        uploader.upload_crash_info(self).await?;
         Ok(())
     }
 
     async fn upload_to_errors_intake(&self, endpoint: &Option<Endpoint>) -> anyhow::Result<()> {
         let uploader = ErrorsIntakeUploader::new(endpoint)?;
         if uploader.is_enabled() {
-            uploader.upload_to_errors_intake(self).await?;
+            uploader.upload_crash_info(self).await?;
         }
         Ok(())
     }

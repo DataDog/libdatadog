@@ -95,16 +95,14 @@ mod https {
     /// In fips mode we expect someone to have done this already.
     #[cfg(any(not(feature = "fips"), coverage))]
     fn ensure_crypto_provider_initialized() {
-        use std::sync::LazyLock;
-        static INIT_CRYPTO_PROVIDER: LazyLock<()> = LazyLock::new(|| {
-            #[cfg(unix)]
-            #[allow(clippy::expect_used)]
-            rustls::crypto::aws_lc_rs::default_provider()
-                .install_default()
-                .expect("Failed to install default CryptoProvider");
-        });
+        use std::sync::Once;
 
-        let _ = &*INIT_CRYPTO_PROVIDER;
+        static INIT_CRYPTO_PROVIDER: Once = Once::new();
+
+        INIT_CRYPTO_PROVIDER.call_once(|| {
+            #[cfg(unix)]
+            let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
+        });
     }
 
     // This actually needs to be done by the user somewhere in their own main. This will only

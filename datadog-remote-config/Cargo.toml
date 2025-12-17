@@ -6,27 +6,42 @@ version = "0.0.1"
 publish = false
 
 [features]
-default = []
+default = ["client"]
+client = [
+    "libdd-trace-protobuf",
+    "hyper",
+    "http-body-util",
+    "http",
+    "base64",
+    "sha2",
+    "uuid",
+    "futures-util",
+    "tokio",
+    "tokio-util",
+    "manual_future",
+    "time",
+    "tracing"
+]
 live-debugger = ["datadog-live-debugger"]
 test = ["hyper/server", "hyper-util"]
 
 [dependencies]
 anyhow = { version = "1.0" }
-libdd-common = { path = "../libdd-common" }
-libdd-trace-protobuf = { path = "../libdd-trace-protobuf" }
+libdd-common = { path = "../libdd-common"}
+libdd-trace-protobuf = { path = "../libdd-trace-protobuf", optional = true }
 datadog-live-debugger = { path = "../datadog-live-debugger", optional = true }
-hyper = { workspace = true }
-http-body-util = "0.1"
-http = "1.0"
-base64 = "0.22.1"
-sha2 = "0.10"
-uuid = { version = "1.7.0", features = ["v4"] }
-futures-util = "0.3"
-tokio = { version = "1.36.0" }
-tokio-util = "0.7.10"
-manual_future = "0.1.1"
-time = { version = "0.3", features = ["parsing", "serde", "formatting"] }
-tracing = { version = "0.1", default-features = false }
+hyper = { workspace = true, optional = true }
+http-body-util = {version = "0.1", optional = true }
+http = { version = "1.0", optional = true }
+base64 = { version = "0.22.1", optional = true }
+sha2 = { version = "0.10", optional = true }
+uuid = { version = "1.7.0", features = ["v4"], optional = true }
+futures-util = { version = "0.3", optional = true }
+tokio = { version = "1.36.0", optional = true }
+tokio-util = { version = "0.7.10",  optional = true }
+manual_future = { version = "0.1.1", optional = true }
+time = { version = "0.3", features = ["parsing", "serde", "formatting"], optional = true }
+tracing = { version = "0.1", default-features = false, optional = true }
 serde = "1.0"
 serde_json = { version = "1.0", features = ["raw_value"] }
 serde_with = "3"
