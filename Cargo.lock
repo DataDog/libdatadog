@@ -570,7 +570,7 @@ dependencies = [
 
 [[package]]
 name = "build_common"
-version = "24.1.0"
+version = "25.0.0"
 dependencies = [
  "cbindgen",
  "serde",
@@ -579,7 +579,7 @@ dependencies = [
 
 [[package]]
 name = "builder"
-version = "24.1.0"
+version = "25.0.0"
 dependencies = [
  "anyhow",
  "build_common",
@@ -1327,7 +1327,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-profiling-replayer"
-version = "24.1.0"
+version = "25.0.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -1455,7 +1455,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-tracer-flare"
-version = "24.1.0"
+version = "25.0.0"
 dependencies = [
  "anyhow",
  "datadog-remote-config",
@@ -2639,7 +2639,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-common-ffi"
-version = "24.1.0"
+version = "25.0.0"
 dependencies = [
  "anyhow",
  "assert_no_alloc",
@@ -2691,7 +2691,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-crashtracker-ffi"
-version = "24.1.0"
+version = "25.0.0"
 dependencies = [
  "anyhow",
  "build_common",
@@ -2747,7 +2747,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-data-pipeline-ffi"
-version = "24.1.0"
+version = "25.0.0"
 dependencies = [
  "build_common",
  "httpmock",
@@ -2770,7 +2770,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-ddsketch-ffi"
-version = "24.1.0"
+version = "25.0.0"
 dependencies = [
  "build_common",
  "libdd-common-ffi",
@@ -2830,7 +2830,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-log-ffi"
-version = "24.1.0"
+version = "25.0.0"
 dependencies = [
  "build_common",
  "libdd-common-ffi",
@@ -2942,7 +2942,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-telemetry-ffi"
-version = "24.1.0"
+version = "25.0.0"
 dependencies = [
  "build_common",
  "function_name",
@@ -5141,7 +5141,7 @@ dependencies = [
 
 [[package]]
 name = "symbolizer-ffi"
-version = "24.1.0"
+version = "25.0.0"
 dependencies = [
  "blazesym-c",
  "build_common",
@@ -5674,7 +5674,7 @@ dependencies = [
 
 [[package]]
 name = "tools"
-version = "24.1.0"
+version = "25.0.0"
 dependencies = [
  "regex",
 ]
