@@ -86,7 +86,7 @@ impl ProfileExporter {
                 let output_path = libdd_common::decode_uri_path_in_authority(&endpoint.url)
                     .context("Failed to decode file path from URI")?;
                 let pipe_path = spawn_dump_server(output_path)?;
-                builder = builder.windows_named_pipe(pipe_path);
+                builder = builder.windows_named_pipe(pipe_path.to_string_lossy().to_string());
                 "http://localhost/v1/input".to_string()
             }
 
@@ -108,7 +108,7 @@ impl ProfileExporter {
             Some("windows") => {
                 use libdd_common::connector::named_pipe::named_pipe_path_from_uri;
                 let pipe_path = named_pipe_path_from_uri(&endpoint.url)?;
-                builder = builder.windows_named_pipe(pipe_path);
+                builder = builder.windows_named_pipe(pipe_path.to_string_lossy().to_string());
                 format!("http://localhost{}", endpoint.url.path())
             }
             #[cfg(unix)]

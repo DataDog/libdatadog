@@ -80,7 +80,7 @@ pub(crate) fn spawn_dump_server(output_path: PathBuf) -> anyhow::Result<PathBuf>
 async fn run_dump_server_windows(
     output_path: PathBuf,
     pipe_name: String,
-    mut first_server: tokio::net::windows::named_pipe::NamedPipeServer,
+    first_server: tokio::net::windows::named_pipe::NamedPipeServer,
 ) -> anyhow::Result<()> {
     use tokio::net::windows::named_pipe::ServerOptions;
 
@@ -119,7 +119,7 @@ pub(crate) fn spawn_dump_server(output_path: PathBuf) -> anyhow::Result<PathBuf>
     let pipe_path = PathBuf::from(&pipe_name);
 
     let (tx, rx) = std::sync::mpsc::channel();
-    
+
     std::thread::spawn(move || {
         // Top-level error handler - all errors logged here
         let result = (|| -> anyhow::Result<()> {
@@ -129,12 +129,12 @@ pub(crate) fn spawn_dump_server(output_path: PathBuf) -> anyhow::Result<PathBuf>
                 let first_server = ServerOptions::new()
                     .first_pipe_instance(true)
                     .create(&pipe_name)?;
-                
+
                 tx.send(Ok(()))?;
                 run_dump_server_windows(output_path, pipe_name, first_server).await
             })
         })();
-        
+
         if let Err(e) = result {
             eprintln!("[dump-server] Error: {}", e);
             let _ = tx.send(Err(e));
