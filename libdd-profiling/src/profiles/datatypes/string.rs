@@ -43,13 +43,20 @@ impl StringId2 {
     pub fn is_empty(&self) -> bool {
         self.0.is_null()
     }
+
+    /// Creates a [`StringId2`] from the [`StringRef`]. This is an associated
+    /// method so that it can be marked const and used in const contexts such
+    /// as static initializers.
+    pub const fn from(s: StringRef) -> Self {
+        // SAFETY: every StringRef is a valid StringId2 (but not the other way
+        // because of null).
+        unsafe { core::mem::transmute::<StringRef, StringId2>(s) }
+    }
 }
 
 impl From<StringRef> for StringId2 {
     fn from(s: StringRef) -> Self {
-        // SAFETY: every StringRef is a valid StringId2 (but not the other way
-        // because of null).
-        unsafe { core::mem::transmute::<StringRef, StringId2>(s) }
+        StringId2::from(s)
     }
 }
 
