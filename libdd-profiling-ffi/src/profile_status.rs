@@ -131,7 +131,7 @@ pub enum TryFromProfileStatusError {
     #[error("failed to convert profile status because the pointer was null")]
     Null,
     #[error(
-        "failed to convert profile status because the flags were incorrect for the conversion: `0`"
+        "failed to convert profile status because the flags were incorrect for the conversion: `{0}`"
     )]
     IncorrectFlags(usize),
 }
