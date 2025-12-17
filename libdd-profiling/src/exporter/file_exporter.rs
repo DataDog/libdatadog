@@ -14,12 +14,27 @@
 //! This module exists as a workaround and will hopefully be replaced once reqwest adds
 //! native support for file output: <https://github.com/seanmonstar/reqwest/issues/2883>
 
-#[cfg(any(unix, windows))]
 use std::path::PathBuf;
 
 /// HTTP 200 OK response with no body
-#[cfg(any(unix, windows))]
 const HTTP_200_RESPONSE: &[u8] = b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n";
+
+/// Spawns a dump server and configures the ClientBuilder with the appropriate transport
+pub(crate) fn spawn_dump_server_with_builder(
+    builder: reqwest::ClientBuilder,
+    output_path: PathBuf,
+) -> anyhow::Result<reqwest::ClientBuilder> {
+    let server_path = spawn_dump_server(output_path)?;
+
+    #[cfg(unix)]
+    {
+        Ok(builder.unix_socket(server_path))
+    }
+    #[cfg(windows)]
+    {
+        Ok(builder.windows_named_pipe(server_path.to_string_lossy().to_string()))
+    }
+}
 
 /// Async server loop for Unix sockets
 #[cfg(unix)]
@@ -147,7 +162,6 @@ pub(crate) fn spawn_dump_server(output_path: PathBuf) -> anyhow::Result<PathBuf>
 }
 
 /// Helper function to find a subsequence in a byte slice
-#[cfg(any(unix, windows))]
 fn find_subsequence(haystack: &[u8], needle: &[u8]) -> Option<usize> {
     haystack
         .windows(needle.len())
@@ -155,7 +169,6 @@ fn find_subsequence(haystack: &[u8], needle: &[u8]) -> Option<usize> {
 }
 
 /// Parse Content-Length from HTTP headers
-#[cfg(any(unix, windows))]
 fn parse_content_length(headers_data: &[u8]) -> Option<usize> {
     if let Ok(headers_str) = std::str::from_utf8(headers_data) {
         for line in headers_str.lines() {
@@ -170,7 +183,6 @@ fn parse_content_length(headers_data: &[u8]) -> Option<usize> {
 }
 
 /// Check if we have received a complete HTTP request
-#[cfg(any(unix, windows))]
 fn is_request_complete(
     request_data: &[u8],
     headers_end_pos: Option<usize>,
@@ -186,7 +198,6 @@ fn is_request_complete(
 }
 
 /// Read complete HTTP request from an async stream
-#[cfg(any(unix, windows))]
 async fn read_http_request_async<R: tokio::io::AsyncReadExt + Unpin>(stream: &mut R) -> Vec<u8> {
     let mut request_data = Vec::new();
     let mut buffer = [0u8; 8192];
@@ -223,7 +234,6 @@ async fn read_http_request_async<R: tokio::io::AsyncReadExt + Unpin>(stream: &mu
 }
 
 /// Write request data to file if non-empty (async version)
-#[cfg(any(unix, windows))]
 async fn write_request_to_file_async(output_path: &PathBuf, request_data: &[u8]) {
     if !request_data.is_empty() {
         if let Err(e) = tokio::fs::write(output_path, request_data).await {
@@ -236,7 +246,6 @@ async fn write_request_to_file_async(output_path: &PathBuf, request_data: &[u8])
 }
 
 /// Handle a connection: read HTTP request, write to file, send response
-#[cfg(any(unix, windows))]
 async fn handle_connection_async<S>(mut stream: S, output_path: PathBuf)
 where
     S: tokio::io::AsyncReadExt + tokio::io::AsyncWriteExt + Unpin,

@@ -24,7 +24,7 @@
 //! The dumped files contain the complete HTTP request including headers and body,
 //! which can be useful for debugging or replaying requests.
 
-use super::file_exporter::spawn_dump_server;
+use super::file_exporter::spawn_dump_server_with_builder;
 use anyhow::Context;
 use libdd_common::tag::Tag;
 use libdd_common::{azure_app_services, tag, Endpoint};
@@ -64,29 +64,19 @@ impl ProfileExporter {
         mut tags: Vec<Tag>,
         endpoint: Endpoint,
     ) -> anyhow::Result<Self> {
-        #[cfg(not(any(unix, windows)))]
-        compile_error!("ProfileExporter requires either Unix or Windows platform");
-
         let mut builder = reqwest::Client::builder()
             .use_rustls_tls()
             .timeout(std::time::Duration::from_millis(endpoint.timeout_ms));
 
         let request_url = match endpoint.url.scheme_str() {
-            // File dump endpoint (debugging)
-            #[cfg(unix)]
+            // HTTP/HTTPS endpoints
+            Some("http") | Some("https") => endpoint.url.to_string(),
+
+            // File dump endpoint (debugging) - uses platform-specific local transport
             Some("file") => {
                 let output_path = libdd_common::decode_uri_path_in_authority(&endpoint.url)
                     .context("Failed to decode file path from URI")?;
-                let socket_path = spawn_dump_server(output_path)?;
-                builder = builder.unix_socket(socket_path);
-                "http://localhost/v1/input".to_string()
-            }
-            #[cfg(windows)]
-            Some("file") => {
-                let output_path = libdd_common::decode_uri_path_in_authority(&endpoint.url)
-                    .context("Failed to decode file path from URI")?;
-                let pipe_path = spawn_dump_server(output_path)?;
-                builder = builder.windows_named_pipe(pipe_path.to_string_lossy().to_string());
+                builder = spawn_dump_server_with_builder(builder, output_path)?;
                 "http://localhost/v1/input".to_string()
             }
 
@@ -98,10 +88,6 @@ impl ProfileExporter {
                 builder = builder.unix_socket(socket_path);
                 format!("http://localhost{}", endpoint.url.path())
             }
-            #[cfg(windows)]
-            Some("unix") => {
-                anyhow::bail!("unix:// endpoints are only supported on Unix platforms")
-            }
 
             // Windows named pipes
             #[cfg(windows)]
@@ -111,13 +97,9 @@ impl ProfileExporter {
                 builder = builder.windows_named_pipe(pipe_path.to_string_lossy().to_string());
                 format!("http://localhost{}", endpoint.url.path())
             }
-            #[cfg(unix)]
-            Some("windows") => {
-                anyhow::bail!("windows:// endpoints are only supported on Windows platforms")
-            }
 
-            // HTTP/HTTPS endpoints
-            _ => endpoint.url.to_string(),
+            // Unsupported schemes
+            scheme => anyhow::bail!("Unsupported endpoint scheme: {:?}", scheme),
         };
 
         // Pre-build all static headers
