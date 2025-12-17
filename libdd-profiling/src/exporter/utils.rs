@@ -5,6 +5,7 @@
 //!
 //! These utilities are primarily useful for testing and debugging profiling exports.
 
+use anyhow::Context as _;
 use std::collections::HashMap;
 
 /// Represents a parsed HTTP request
@@ -47,7 +48,7 @@ pub fn parse_http_request(data: &[u8]) -> anyhow::Result<HttpRequest> {
     let split_pos = data
         .windows(separator.len())
         .position(|window| window == separator)
-        .ok_or_else(|| anyhow::anyhow!("No header/body separator found"))?;
+        .context("No header/body separator found")?;
 
     let header_section = &data[..split_pos];
     let body = &data[split_pos + separator.len()..];
@@ -59,7 +60,7 @@ pub fn parse_http_request(data: &[u8]) -> anyhow::Result<HttpRequest> {
     // Parse request line
     let request_line = lines
         .next()
-        .ok_or_else(|| anyhow::anyhow!("No request line found"))?;
+        .context("No request line found")?;
     let parts: Vec<&str> = request_line.split_whitespace().collect();
     if parts.len() < 2 {
         anyhow::bail!("Invalid request line");
@@ -111,7 +112,7 @@ pub fn extract_boundary(content_type: &str) -> anyhow::Result<String> {
             part.strip_prefix(boundary_prefix)
                 .map(|s| s.trim().to_string())
         })
-        .ok_or_else(|| anyhow::anyhow!("No boundary found in Content-Type"))?;
+        .context("No boundary found in Content-Type")?;
     Ok(boundary)
 }
 
@@ -160,7 +161,7 @@ pub fn parse_multipart(body: &[u8], boundary: &str) -> anyhow::Result<Vec<Multip
 
         // Find the next boundary or end
         let next_delimiter_pos = find_subsequence(&body[pos..], delimiter_bytes)
-            .ok_or_else(|| anyhow::anyhow!("Expected delimiter not found"))?;
+            .context("Expected delimiter not found")?;
 
         // Extract this part's data (remove trailing CRLF before delimiter)
         let part_end = pos + next_delimiter_pos;
@@ -201,7 +202,7 @@ pub fn parse_multipart_part(data: &[u8]) -> anyhow::Result<MultipartPart> {
     let split_pos = data
         .windows(separator.len())
         .position(|window| window == separator)
-        .ok_or_else(|| anyhow::anyhow!("No part header/body separator"))?;
+        .context("No part header/body separator")?;
 
     let header_section = &data[..split_pos];
     let mut content = data[split_pos + separator.len()..].to_vec();

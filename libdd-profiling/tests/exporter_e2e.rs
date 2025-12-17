@@ -466,7 +466,7 @@ async fn test_agentless_with_transport(transport: Transport) -> anyhow::Result<(
 
     // Verify API key header is present
     assert!(
-        req.headers.get("dd-api-key").is_some(),
+        req.headers.contains_key("dd-api-key"),
         "DD-API-KEY header should be present for agentless"
     );
 
