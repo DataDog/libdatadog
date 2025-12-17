@@ -9,13 +9,10 @@ use std::fmt::Display;
 use std::mem::ManuallyDrop;
 use std::ptr::{null, NonNull};
 
-const FLAG_OK: usize = 0b00;
-const FLAG_STATIC: usize = 0b01;
-const FLAG_ALLOCATED: usize = 0b11;
-
-const MASK_IS_ERROR: usize = 0b01;
-const MASK_IS_ALLOCATED: usize = 0b10;
-const MASK_UNUSED: usize = !(MASK_IS_ERROR | MASK_IS_ALLOCATED);
+// ProfileStatus uses `err` being null to encode OK, so we only need
+// one bit in flags to distinguish between STATIC and ALLOCATED errors.
+const FLAG_STATIC: usize = 0;
+const FLAG_ALLOCATED: usize = 1;
 
 /// Represents the result of an operation that either succeeds with no value, or fails with an
 /// error message. This is like `Result<(), Cow<'static, CStr>` except its representation is
@@ -37,22 +34,21 @@ const MASK_UNUSED: usize = !(MASK_IS_ERROR | MASK_IS_ALLOCATED);
 #[repr(C)]
 #[derive(Debug)]
 pub struct ProfileStatus {
-    /// Bitflags indicating the status and storage type.
-    /// - `FLAG_OK` (0): Success, no error. `err` must be null. From C, this is the only thing you
-    ///   should check; the other flags are internal details.
-    /// - `FLAG_STATIC`: Error message points to static data. `err` is non-null and points to a
-    ///   `&'static CStr`. Must not be freed.
-    /// - `FLAG_ALLOCATED`: Error message is heap-allocated. `err` is non-null and points to a
-    ///   heap-allocated, null-terminated string that this `ProfileStatus` owns. Must be freed via
-    ///   [`ddog_prof_Status_drop`].
+    /// Bitflags indicating the storage type of the error message.
+    /// This is only meaningful when `err` is non-null. When `err` is
+    /// null (indicating OK), this field is ignored (but typically 0).
+    /// - `FLAG_STATIC` (0): Error message points to static data that must not be freed.
+    /// - `FLAG_ALLOCATED` (1): Error message is heap-allocated and owned by this `ProfileStatus`.
+    ///   Must be freed via [`ddog_prof_Status_drop`].
     pub flags: libc::size_t,
 
     /// Pointer to a null-terminated UTF-8 error message string.
-    /// - If `flags == FLAG_OK`, this **must** be null.
-    /// - If `flags & FLAG_STATIC`, this points to static data with lifetime `'static`.
-    /// - If `flags & FLAG_ALLOCATED`, this points to heap-allocated data owned by this
-    ///   `ProfileStatus`. The allocation was created by the global allocator and must be freed by
-    ///   [`ddog_prof_Status_drop`].
+    /// - If null: indicates OK (success). Check this from C to determine if the operation
+    ///   succeeded.
+    /// - If non-null and `flags == FLAG_STATIC`: points to static data with lifetime `'static`.
+    ///   Must not be freed.
+    /// - If non-null and `flags == FLAG_ALLOCATED`: points to heap-allocated data owned by this
+    ///   `ProfileStatus`. Must be freed by [`ddog_prof_Status_drop`].
     ///
     /// # Safety Invariant
     ///
@@ -75,7 +71,7 @@ impl Default for ProfileStatus {
 // SAFETY: ProfileStatus is Send because:
 // 1. The `flags` field is a usize, which is Send.
 // 2. The `err` pointer is either:
-//    - Null (FLAG_OK), which is trivially Send
+//    - Null (OK status), which is trivially Send
 //    - Points to static data (FLAG_STATIC), which is 'static and therefore Send
 //    - Points to heap-allocated data (FLAG_ALLOCATED) that this ProfileStatus owns exclusively.
 //      When sent to another thread, the ownership of the allocation transfers with it, and the drop
@@ -86,6 +82,7 @@ unsafe impl Send for ProfileStatus {}
 // SAFETY: ProfileStatus is Sync because:
 // 1. All fields are immutable from a shared reference (&ProfileStatus).
 // 2. The `err` pointer points to immutable data:
+//    - Null (OK status): trivially Sync
 //    - Static CStr (FLAG_STATIC): &'static CStr is Sync
 //    - Heap-allocated CStr (FLAG_ALLOCATED): The CStr is never mutated after creation, so multiple
 //      threads can safely read it concurrently.
@@ -129,61 +126,53 @@ impl From<CString> for ProfileStatus {
     }
 }
 
+#[derive(thiserror::Error, Debug)]
+pub enum TryFromProfileStatusError {
+    #[error("failed to convert profile status because the pointer was null")]
+    Null,
+    #[error(
+        "failed to convert profile status because the flags were incorrect for the conversion: `{0}`"
+    )]
+    IncorrectFlags(usize),
+}
+
 impl TryFrom<ProfileStatus> for CString {
-    type Error = usize;
+    type Error = TryFromProfileStatusError;
 
     fn try_from(status: ProfileStatus) -> Result<Self, Self::Error> {
-        if status.flags == FLAG_ALLOCATED {
+        if status.err.is_null() {
+            Err(TryFromProfileStatusError::Null)
+        } else if status.flags == FLAG_ALLOCATED {
             Ok(unsafe { CString::from_raw(status.err.cast_mut()) })
         } else {
-            Err(status.flags)
+            Err(TryFromProfileStatusError::IncorrectFlags(status.flags))
         }
     }
 }
 
 impl TryFrom<&ProfileStatus> for &CStr {
-    type Error = usize;
+    type Error = TryFromProfileStatusError;
 
     fn try_from(status: &ProfileStatus) -> Result<Self, Self::Error> {
-        if status.flags != FLAG_OK {
-            Ok(unsafe { CStr::from_ptr(status.err.cast_mut()) })
+        if status.err.is_null() {
+            Err(TryFromProfileStatusError::Null)
         } else {
-            Err(status.flags)
+            Ok(unsafe { CStr::from_ptr(status.err.cast_mut()) })
         }
     }
 }
 
 impl From<ProfileStatus> for Result<(), Cow<'static, CStr>> {
     fn from(status: ProfileStatus) -> Self {
-        let flags = status.flags;
-        let is_error = (flags & MASK_IS_ERROR) != 0;
-        let is_allocated = (flags & MASK_IS_ALLOCATED) != 0;
-        #[allow(clippy::panic)]
-        if cfg!(debug_assertions) && (status.flags & MASK_UNUSED) != 0 {
-            panic!("invalid bit pattern: {flags:b}");
-        }
-
-        // There are 4 cases:
-        // - not-allocated, not-error -> Ok(())
-        // - not-allocated, error -> Err(Cow::Borrowed)
-        // - allocated, error -> Err(Cow::Owned)
-        // - allocated, not-error -> nonsense, panic! in debug mode
-        match (is_allocated, is_error) {
-            (false, false) => Ok(()),
-            (false, true) => Err(Cow::Borrowed(unsafe { CStr::from_ptr(status.err) })),
-            (true, true) => Err(Cow::Owned(unsafe {
+        if status.err.is_null() {
+            Ok(())
+        } else if status.flags == FLAG_ALLOCATED {
+            Err(Cow::Owned(unsafe {
                 CString::from_raw(status.err.cast_mut())
-            })),
-            // This would mean there's an allocated error, but there isn't an
-            // error. That doesn't make sense, and the Rust code doesn't make
-            // them, only FFI might (but that would violate the usage docs).
-            (true, false) => {
-                #[allow(clippy::panic)]
-                if cfg!(debug_assertions) {
-                    panic!("invalid bit pattern: {flags:b}");
-                }
-                Err(Cow::Borrowed(c"error: invalid ProfileStatus flags detected while converting to Result<(), Cow<'static, CStr>>"))
-            }
+            }))
+        } else {
+            // STATIC error (flags == FLAG_STATIC)
+            Err(Cow::Borrowed(unsafe { CStr::from_ptr(status.err) }))
         }
     }
 }
@@ -255,7 +244,7 @@ pub(crate) fn string_try_shrink_to_fit(string: &mut String) -> Result<(), AllocE
 
 impl ProfileStatus {
     pub const OK: ProfileStatus = ProfileStatus {
-        flags: FLAG_OK,
+        flags: 0,
         err: null(),
     };
 
@@ -462,9 +451,12 @@ mod tests {
     #[test]
     fn test_try_from_cstr_on_ok_fails() {
         let status = ProfileStatus::OK;
-        let result: Result<&CStr, usize> = (&status).try_into();
+        let result: Result<&CStr, TryFromProfileStatusError> = (&status).try_into();
         assert!(result.is_err());
-        assert_eq!(result.unwrap_err(), FLAG_OK);
+        assert!(matches!(
+            result.unwrap_err(),
+            TryFromProfileStatusError::Null
+        ));
     }
 
     #[test]
@@ -472,7 +464,10 @@ mod tests {
         let status = ProfileStatus::from(c"static");
         let result = CString::try_from(status);
         assert!(result.is_err());
-        assert_eq!(result.unwrap_err(), FLAG_STATIC);
+        assert!(matches!(
+            result.unwrap_err(),
+            TryFromProfileStatusError::IncorrectFlags(FLAG_STATIC)
+        ));
     }
 
     #[test]

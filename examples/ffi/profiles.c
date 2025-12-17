@@ -20,7 +20,7 @@ int main(void) {
   // Create a ProfilesDictionary for the new API
   ddog_prof_ProfilesDictionaryHandle dict = {0};
   ddog_prof_Status dict_status = ddog_prof_ProfilesDictionary_new(&dict);
-  if (dict_status.flags != 0) {
+  if (dict_status.err != NULL) {
     fprintf(stderr, "Failed to create dictionary: %s\n", dict_status.err);
     ddog_prof_Status_drop(&dict_status);
     exit(EXIT_FAILURE);
@@ -30,7 +30,7 @@ int main(void) {
   ddog_prof_Profile profile = {0};
   ddog_prof_Status profile_status =
       ddog_prof_Profile_with_dictionary(&profile, &dict, sample_types, &period);
-  if (profile_status.flags != 0) {
+  if (profile_status.err != NULL) {
     fprintf(stderr, "Failed to create profile: %s\n", profile_status.err);
     ddog_prof_Status_drop(&profile_status);
     ddog_prof_ProfilesDictionary_drop(&dict);
@@ -75,7 +75,7 @@ int main(void) {
 
   dict_status = ddog_prof_ProfilesDictionary_insert_str(
       &function_name_id, dict, DDOG_CHARSLICE_C("{main}"), DDOG_PROF_UTF8_OPTION_ASSUME);
-  if (dict_status.flags != 0) {
+  if (dict_status.err != NULL) {
     fprintf(stderr, "Failed to insert function name: %s\n", dict_status.err);
     ddog_prof_Status_drop(&dict_status);
     goto cleanup;
@@ -84,7 +84,7 @@ int main(void) {
   dict_status = ddog_prof_ProfilesDictionary_insert_str(&filename_id, dict,
                                                         DDOG_CHARSLICE_C("/srv/example/index.php"),
                                                         DDOG_PROF_UTF8_OPTION_ASSUME);
-  if (dict_status.flags != 0) {
+  if (dict_status.err != NULL) {
     fprintf(stderr, "Failed to insert filename: %s\n", dict_status.err);
     ddog_prof_Status_drop(&dict_status);
     goto cleanup;
@@ -92,7 +92,7 @@ int main(void) {
 
   dict_status = ddog_prof_ProfilesDictionary_insert_str(
       &label_key_id, dict, DDOG_CHARSLICE_C("unique_counter"), DDOG_PROF_UTF8_OPTION_ASSUME);
-  if (dict_status.flags != 0) {
+  if (dict_status.err != NULL) {
     fprintf(stderr, "Failed to insert label key: %s\n", dict_status.err);
     ddog_prof_Status_drop(&dict_status);
     goto cleanup;
@@ -107,7 +107,7 @@ int main(void) {
   };
 
   dict_status = ddog_prof_ProfilesDictionary_insert_function(&function_id, dict, &function2);
-  if (dict_status.flags != 0) {
+  if (dict_status.err != NULL) {
     fprintf(stderr, "Failed to insert function: %s\n", dict_status.err);
     ddog_prof_Status_drop(&dict_status);
     goto cleanup;
@@ -138,7 +138,7 @@ int main(void) {
     label2.num = i;
 
     ddog_prof_Status add2_status = ddog_prof_Profile_add2(&profile, sample2, 0);
-    if (add2_status.flags != 0) {
+    if (add2_status.err != NULL) {
       fprintf(stderr, "add2 error: %s\n", add2_status.err);
       ddog_prof_Status_drop(&add2_status);
     }
