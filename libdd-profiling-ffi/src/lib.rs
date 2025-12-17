@@ -8,8 +8,13 @@
 #![cfg_attr(not(test), deny(clippy::unimplemented))]
 
 mod exporter;
+mod profile_error;
+mod profile_status;
 mod profiles;
 mod string_storage;
+
+pub use profile_error::*;
+pub use profile_status::*;
 
 #[cfg(all(feature = "symbolizer", not(target_os = "windows")))]
 pub use symbolizer_ffi::*;

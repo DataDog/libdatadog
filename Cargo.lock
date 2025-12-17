@@ -2881,6 +2881,7 @@ dependencies = [
 name = "libdd-profiling-ffi"
 version = "1.0.0"
 dependencies = [
+ "allocator-api2",
  "anyhow",
  "build_common",
  "datadog-ffe-ffi",
