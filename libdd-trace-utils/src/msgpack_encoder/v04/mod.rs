@@ -1,6 +1,8 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+use std::io;
+
 use crate::span::{Span, SpanText};
 use rmp::encode::{write_array_len, ByteBuf, RmpWrite, ValueWriteError};
 
@@ -13,12 +15,21 @@ fn to_writer<W: RmpWrite, T: SpanText, S: AsRef<[Span<T>]>>(
 ) -> Result<(), ValueWriteError<W::Error>> {
     write_array_len(writer, traces.len() as u32)?;
     for trace in traces {
-        write_array_len(writer, trace.as_ref().len() as u32)?;
-        for span in trace.as_ref() {
-            span::encode_span(writer, span)?;
-        }
+        write_trace(writer, trace)?;
     }
 
+    Ok(())
+}
+
+#[inline(always)]
+fn write_trace<W: RmpWrite, T: SpanText, S: AsRef<[Span<T>]>>(
+    writer: &mut W,
+    trace: &S,
+) -> Result<(), ValueWriteError<W::Error>> {
+    write_array_len(writer, trace.as_ref().len() as u32)?;
+    for span in trace.as_ref() {
+        span::encode_span(writer, span)?;
+    }
     Ok(())
 }
 
@@ -122,9 +133,135 @@ pub fn to_vec_with_capacity<T: SpanText, S: AsRef<[Span<T>]>>(
     capacity: u32,
 ) -> Vec<u8> {
     let mut buf = ByteBuf::with_capacity(capacity as usize);
-    #[allow(clippy::expect_used)]
-    to_writer(&mut buf, traces).expect("infallible: the error is std::convert::Infallible");
+    unwrap_infallible_write(to_writer(&mut buf, traces));
     buf.into_vec()
+}
+
+const ARRAY_LEN_HEADER_WIDTH: usize = 5;
+
+pub struct TraceBuffer {
+    buf: Vec<u8>,
+    trace_count: usize,
+    max_trace_size: usize,
+    max_size: usize,
+}
+
+fn mp_write_array_len_fixed_width(buf: &mut [u8], len: usize) {
+    if buf.len() < ARRAY_LEN_HEADER_WIDTH {
+        return;
+    }
+    let Ok(len) = u32::try_from(len) else { return };
+    buf[0] = 0xdd;
+    let len_encoded: [u8; 4] = len.to_be_bytes();
+    buf[1..5].copy_from_slice(&len_encoded);
+}
+
+struct LimitedTruncatingWriter<'a> {
+    w: &'a mut Vec<u8>,
+    written: usize,
+    limit: usize,
+}
+
+impl LimitedTruncatingWriter<'_> {
+    fn rollback(&mut self) {
+        self.w.truncate(self.w.len() - self.written);
+        self.written = 0;
+    }
+}
+
+impl io::Write for LimitedTruncatingWriter<'_> {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        if self.written + buf.len() > self.limit {
+            return Err(io::Error::new(
+                io::ErrorKind::OutOfMemory,
+                "no space left in the buffer",
+            ));
+        }
+        let written = self.w.write(buf)?;
+        self.written += written;
+        Ok(written)
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.w.flush()
+    }
+}
+
+impl TraceBuffer {
+    pub fn new(max_trace_size: usize, max_size: usize) -> Self {
+        Self {
+            buf: vec![0; ARRAY_LEN_HEADER_WIDTH],
+            trace_count: 0,
+            max_trace_size,
+            max_size,
+        }
+    }
+
+    fn writer(&mut self) -> LimitedTruncatingWriter<'_> {
+        let leftover = self.max_size.saturating_sub(self.buf.len());
+        LimitedTruncatingWriter {
+            w: &mut self.buf,
+            written: 0,
+            limit: self.max_trace_size.min(leftover),
+        }
+    }
+
+    pub fn write_trace<T: SpanText, S: AsRef<[Span<T>]>>(&mut self, trace: S) -> io::Result<()> {
+        let mut writer = self.writer();
+        match write_trace(&mut writer, &trace) {
+            Ok(()) => {}
+            Err(ValueWriteError::InvalidDataWrite(e) | ValueWriteError::InvalidMarkerWrite(e)) => {
+                writer.rollback();
+                return Err(e);
+            }
+        };
+        self.trace_count += 1;
+        Ok(())
+    }
+
+    fn reset(&mut self) -> Vec<u8> {
+        let buf = std::mem::take(&mut self.buf);
+        *self = Self {
+            buf: {
+                let mut v = Vec::with_capacity(buf.len());
+                v.resize(ARRAY_LEN_HEADER_WIDTH, 0);
+                v
+            },
+            trace_count: 0,
+            max_trace_size: self.max_trace_size,
+            max_size: self.max_size,
+        };
+        buf
+    }
+
+    pub fn flush(&mut self) -> Vec<u8> {
+        self.write_traces_len();
+        let buf = self.reset();
+        buf
+    }
+
+    fn write_traces_len(&mut self) {
+        mp_write_array_len_fixed_width(&mut self.buf, self.trace_count);
+    }
+}
+
+/// Serializes traces into a vector of bytes passed mutably
+pub fn to_vec_extend<T: SpanText, S: AsRef<[Span<T>]>>(traces: &[S], v: &mut Vec<u8>) {
+    let mut buf = ByteBuf::from_vec(std::mem::take(v));
+    #[allow(clippy::expect_used)]
+    unwrap_infallible_write(to_writer(&mut buf, traces));
+    *v = buf.into_vec();
+}
+
+/// Unwrap an infallible result without panics
+fn unwrap_infallible_write<T>(res: Result<T, ValueWriteError<std::convert::Infallible>>) -> T {
+    match res {
+        Ok(ok) => ok,
+        Err(e) => match match e {
+            ValueWriteError::InvalidMarkerWrite(i) => i,
+            ValueWriteError::InvalidDataWrite(i) => i,
+        } {},
+    }
 }
 
 struct CountLength(u32);
