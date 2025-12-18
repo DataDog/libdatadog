@@ -13,7 +13,7 @@ use std::str::FromStr;
 use std::time::Duration;
 
 const TEST_AGENT_IMAGE_NAME: &str = "ghcr.io/datadog/dd-apm-test-agent/ddapm-test-agent";
-const TEST_AGENT_IMAGE_TAG: &str = "v1.31.1";
+const TEST_AGENT_IMAGE_TAG: &str = "v1.39.0";
 const TEST_AGENT_READY_MSG: &str =
     "INFO:ddapm_test_agent.agent:Trace request stall seconds setting set to 0.0.";
 
