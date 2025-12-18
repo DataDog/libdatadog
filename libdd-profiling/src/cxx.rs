@@ -169,6 +169,13 @@ pub mod ffi {
         /// * `info` - System/environment info as JSON string (e.g., `{"os": "linux", "arch":
         ///   "x86_64"}`) See Datadog-internal "RFC: Pprof System Info Support" Pass empty string ""
         ///   if not needed
+        ///
+        /// # Thread Affinity
+        ///
+        /// **Important**: This method uses a cached single-threaded runtime with thread affinity.
+        /// For best results, all calls on the same exporter instance should be made from the same
+        /// thread. If you need to use the exporter from multiple threads, create a separate
+        /// exporter instance per thread.
         #[allow(clippy::too_many_arguments)]
         fn send_profile(
             self: &mut ProfileExporter,
@@ -198,6 +205,13 @@ pub mod ffi {
         ///   "x86_64"}`) See Datadog-internal "RFC: Pprof System Info Support" Pass empty string ""
         ///   if not needed
         /// * `cancel` - Cancellation token to cancel the send operation
+        ///
+        /// # Thread Affinity
+        ///
+        /// **Important**: This method uses a cached single-threaded runtime with thread affinity.
+        /// For best results, all calls on the same exporter instance should be made from the same
+        /// thread. If you need to use the exporter from multiple threads, create a separate
+        /// exporter instance per thread.
         #[allow(clippy::too_many_arguments)]
         fn send_profile_with_cancellation(
             self: &mut ProfileExporter,

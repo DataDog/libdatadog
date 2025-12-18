@@ -213,6 +213,13 @@ unsafe fn parse_json(
 /// * `optional_info_json` - System info as JSON string.
 /// * `cancel` - Optional cancellation token.
 ///
+/// # Thread Affinity
+///
+/// **Important**: This function uses a cached single-threaded runtime with thread affinity.
+/// For best results, all calls on the same exporter instance should be made from the same
+/// thread. If you need to use the exporter from multiple threads, create a separate
+/// exporter instance per thread.
+///
 /// # Safety
 /// All non-null arguments MUST have been created by APIs in this module.
 #[no_mangle]

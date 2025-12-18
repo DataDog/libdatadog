@@ -29,7 +29,7 @@ use anyhow::Context;
 use libdd_common::tag::Tag;
 use libdd_common::{azure_app_services, tag, Endpoint};
 use serde_json::json;
-use std::{future, io::Write};
+use std::io::Write;
 use tokio::runtime::Runtime;
 use tokio_util::sync::CancellationToken;
 
@@ -57,6 +57,13 @@ impl ProfileExporter {
     /// The default configuration automatically retries safe errors and low-level protocol NACKs.
     /// For custom retry policies, users can configure the reqwest client before creating the
     /// exporter.
+    ///
+    /// # Thread Safety
+    ///
+    /// The exporter can be used from any thread, but if using `send_blocking()`, the exporter
+    /// should remain on the same thread for all blocking calls. See [`send_blocking`] for details.
+    ///
+    /// [`send_blocking`]: ProfileExporter::send_blocking
     pub fn new(
         profiling_library_name: &str,
         profiling_library_version: &str,
@@ -176,6 +183,23 @@ impl ProfileExporter {
         })
     }
 
+    /// Synchronously sends a profile to the configured endpoint.
+    ///
+    /// This is a blocking wrapper around the async [`send`] method. It lazily creates and caches
+    /// a single-threaded tokio runtime on first use.
+    ///
+    /// # Thread Affinity
+    ///
+    /// **Important**: The cached runtime uses `new_current_thread()`, which has thread affinity.
+    /// For best results, all calls to `send_blocking()` on the same exporter instance should be
+    /// made from the same thread. Moving the exporter across threads between blocking calls may
+    /// cause issues.
+    ///
+    /// If you need to use the exporter from multiple threads, consider either:
+    /// - Creating a separate exporter instance per thread
+    /// - Using the async [`send`] method directly from within a tokio runtime
+    ///
+    /// [`send`]: ProfileExporter::send
     #[allow(clippy::too_many_arguments)]
     pub fn send_blocking(
         &mut self,
@@ -233,25 +257,20 @@ impl ProfileExporter {
 
         let form = self.build_multipart_form(event, profile, additional_files)?;
 
-        // Build request
-        let request = self
+        let request_builder = self
             .client
             .post(&self.request_url)
             .headers(self.headers.clone())
-            .multipart(form)
-            .build()?;
+            .multipart(form);
 
-        // Send request with cancellation support
-        tokio::select! {
-            _ = async {
-                match cancel {
-                    Some(token) => token.cancelled().await,
-                    None => future::pending().await,
-                }
-            } => Err(anyhow::anyhow!("Operation cancelled by user")),
-            result = self.client.execute(request) => {
-                Ok(result?.status())
+        // Send request with optional cancellation support
+        if let Some(token) = cancel {
+            tokio::select! {
+                _ = token.cancelled() => anyhow::bail!("Operation cancelled by user"),
+                result = request_builder.send() => Ok(result?.status()),
             }
+        } else {
+            Ok(request_builder.send().await?.status())
         }
     }
 
@@ -290,7 +309,7 @@ impl ProfileExporter {
         let mut internal = internal_metadata.unwrap_or_else(|| json!({}));
         internal["libdatadog_version"] = json!(env!("CARGO_PKG_VERSION"));
 
-        let mut event = json!({
+        json!({
             "attachments": attachments,
             "tags_profiler": tags_profiler,
             "start": chrono::DateTime::<chrono::Utc>::from(profile.start)
@@ -299,23 +318,11 @@ impl ProfileExporter {
                 .format("%Y-%m-%dT%H:%M:%S%.9fZ").to_string(),
             "family": self.family,
             "version": "4",
-            "endpoint_counts": if profile.endpoints_stats.is_empty() {
-                None
-            } else {
-                Some(&profile.endpoints_stats)
-            },
+            "endpoint_counts": (!profile.endpoints_stats.is_empty()).then_some(&profile.endpoints_stats),
+            "process_tags": process_tags.filter(|s| !s.is_empty()),
             "internal": internal,
             "info": info.unwrap_or_else(|| json!({})),
-        });
-
-        // Add process_tags if provided
-        if let Some(tags) = process_tags {
-            if !tags.is_empty() {
-                event["process_tags"] = json!(tags);
-            }
-        }
-
-        event
+        })
     }
 
     fn build_multipart_form(
