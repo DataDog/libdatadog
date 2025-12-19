@@ -354,11 +354,9 @@ mod tests {
         let status = ProfileStatus::from(err);
 
         assert!(!status.err.is_null()); // Should be an error
-        let cstr: &CStr = (&status).try_into().unwrap();
+        let result: Result<(), Cow<'static, CStr>> = status.into();
+        let cstr = result.unwrap_err();
         assert!(cstr.to_str().unwrap().contains("memory allocator"));
-
-        // Clean up
-        let _: Result<(), Cow<'static, CStr>> = status.into();
     }
 
     #[test]
