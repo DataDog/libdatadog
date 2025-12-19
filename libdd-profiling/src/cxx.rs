@@ -638,7 +638,6 @@ impl ProfileExporter {
         let request = self.inner.build(
             encoded,
             &files_to_compress_vec,
-            &[], // files_to_export_unmodified - empty
             additional_tags_vec.as_ref(),
             process_tags_opt,
             internal_metadata_json,
