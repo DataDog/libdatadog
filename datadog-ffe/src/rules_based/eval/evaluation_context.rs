@@ -77,7 +77,7 @@ mod pyo3_impl {
         fn extract(value: Borrowed<'a, 'py, PyAny>) -> PyResult<Self> {
             let py = value.py();
 
-            let (targeting_key, attributes) = if let Ok(dict) = value.downcast::<PyDict>() {
+            let (targeting_key, attributes) = if let Ok(dict) = value.cast::<PyDict>() {
                 (
                     dict.get_item(intern!(py, "targeting_key"))?,
                     dict.get_item(intern!(py, "attributes"))?,

@@ -125,7 +125,7 @@ mod pyo3_impl {
 
         #[inline]
         fn extract(value: Borrowed<'a, 'py, PyAny>) -> PyResult<Self> {
-            let s = value.downcast::<PyString>()?;
+            let s = value.cast::<PyString>()?;
             Ok(Str::from(s.to_cow()?))
         }
     }

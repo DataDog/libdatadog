@@ -87,17 +87,17 @@ mod pyo3_impl {
 
         #[inline]
         fn extract(value: Borrowed<'a, 'py, PyAny>) -> PyResult<Self> {
-            if let Ok(s) = value.downcast::<PyString>() {
+            if let Ok(s) = value.cast::<PyString>() {
                 return Ok(Attribute(AttributeImpl::String(s.to_cow()?.into())));
             }
             // In Python, Bool inherits from Int, so it must be checked first here.
-            if let Ok(s) = value.downcast::<PyBool>() {
+            if let Ok(s) = value.cast::<PyBool>() {
                 return Ok(Attribute(AttributeImpl::Boolean(s.is_true())));
             }
-            if let Ok(s) = value.downcast::<PyFloat>() {
+            if let Ok(s) = value.cast::<PyFloat>() {
                 return Ok(Attribute(AttributeImpl::Number(s.value())));
             }
-            if let Ok(s) = value.downcast::<PyInt>() {
+            if let Ok(s) = value.cast::<PyInt>() {
                 return Ok(Attribute(AttributeImpl::Number(s.extract::<f64>()?)));
             }
             if value.is_none() {
