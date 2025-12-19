@@ -90,7 +90,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       semver_level: ${{ steps.aggregate.outputs.semver_level }}
-      failed_crates: ${{ steps.aggregate.outputs.failed_crates }}
+      crates_checked: ${{ steps.aggregate.outputs.crates_checked }}
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
@@ -206,8 +206,8 @@ jobs:
       - name: Aggregate results
         id: aggregate
         run: |
-          HIGHEST_LEVEL=$(cat semver-level.txt)
-          CRATES_CHECKED=$(cat crates_checked.txt | tr '\n' ' ' || echo "")
+          HIGHEST_LEVEL=$(<semver-level.txt)
+          CRATES_CHECKED=$(tr '\n' ' ' < crates_checked.txt || echo "")
 
           echo "semver_level=$HIGHEST_LEVEL" >> "$GITHUB_OUTPUT"
           echo "crates_checked=$CRATES_CHECKED" >> "$GITHUB_OUTPUT"
