@@ -206,6 +206,14 @@ impl TraceBuffer {
         }
     }
 
+    pub fn trace_count(&self) -> usize {
+        self.trace_count
+    }
+
+    pub fn buffer_len(&self) -> usize {
+        self.buf.len()
+    }
+
     pub fn write_trace<T: SpanText, S: AsRef<[Span<T>]>>(&mut self, trace: S) -> io::Result<()> {
         let mut writer = self.writer();
         match write_trace(&mut writer, &trace) {
