@@ -8,6 +8,7 @@
 //!
 //! This is primarily used for testing to validate the exact bytes sent over the wire.
 
+use anyhow::Context;
 use std::path::PathBuf;
 
 /// HTTP 200 OK response with no body
@@ -27,27 +28,30 @@ pub(crate) fn spawn_dump_server(output_path: PathBuf) -> anyhow::Result<PathBuf>
     use tokio::net::UnixListener;
 
     // Create a temporary socket path with randomness to avoid collisions
-    let random_id: u64 = rand::random();
-    let socket_path = std::env::temp_dir().join(format!(
-        "libdatadog_dump_{}_{:x}.sock",
-        std::process::id(),
-        random_id
-    ));
+    // Retry if the path already exists (highly unlikely with 64-bit random IDs)
+    let socket_path = loop {
+        let random_id: u64 = rand::random();
+        let path = std::env::temp_dir().join(format!(
+            "libdatadog_dump_{}_{:x}.sock",
+            std::process::id(),
+            random_id
+        ));
+        if !path.exists() {
+            break path;
+        }
+    };
 
-    // Remove socket file if it already exists
-    let _ = std::fs::remove_file(&socket_path);
-
-    let socket_path_clone = socket_path.clone();
     let (tx, rx) = std::sync::mpsc::channel();
+    let socket_path_for_thread = socket_path.clone();
 
     std::thread::spawn(move || {
         // Top-level error handler - all errors logged here
-        let result = (|| -> anyhow::Result<()> {
+        let result = (|| {
             let rt = tokio::runtime::Builder::new_current_thread()
                 .enable_all()
                 .build()?;
             rt.block_on(async {
-                let listener = UnixListener::bind(&socket_path)?;
+                let listener = UnixListener::bind(&socket_path_for_thread)?;
                 tx.send(Ok(()))?;
                 run_dump_server_unix(output_path, listener).await
             })
@@ -61,7 +65,7 @@ pub(crate) fn spawn_dump_server(output_path: PathBuf) -> anyhow::Result<PathBuf>
 
     // Wait for server to be ready
     rx.recv()??;
-    Ok(socket_path_clone)
+    Ok(socket_path)
 }
 
 /// Spawns a dump server that intercepts HTTP requests and writes them to a file
@@ -75,22 +79,44 @@ pub(crate) fn spawn_dump_server(output_path: PathBuf) -> anyhow::Result<PathBuf>
 /// The path to the Windows named pipe that the server is listening on
 #[cfg(windows)]
 pub(crate) fn spawn_dump_server(output_path: PathBuf) -> anyhow::Result<PathBuf> {
+    use std::io::ErrorKind;
     use tokio::net::windows::named_pipe::ServerOptions;
 
     // Create a unique named pipe name with randomness to avoid collisions
-    let random_id: u64 = rand::random();
-    let pipe_name = format!(
-        r"\\.\pipe\libdatadog_dump_{}_{:x}",
-        std::process::id(),
-        random_id
-    );
-    let pipe_path = PathBuf::from(&pipe_name);
+    // Retry if the pipe name already exists (highly unlikely with 64-bit random IDs)
+    // Note: We can only detect name collision by attempting to create the pipe with
+    // first_pipe_instance(true), which will fail if the name is already in use
+    let (pipe_name, pipe_path) = loop {
+        let random_id: u64 = rand::random();
+        let name = format!(
+            r"\\.\pipe\libdatadog_dump_{}_{:x}",
+            std::process::id(),
+            random_id
+        );
+
+        // Try to create the pipe to check if the name is available
+        match ServerOptions::new().first_pipe_instance(true).create(&name) {
+            Ok(_test_pipe) => {
+                // Name is available, drop the test pipe and use this name
+                drop(_test_pipe);
+                break (name, PathBuf::from(&name));
+            }
+            Err(e) if e.kind() == ErrorKind::AddrInUse => {
+                // Name collision, retry with new random ID
+                continue;
+            }
+            Err(e) => {
+                // Some other error occurred
+                return Err(e.into());
+            }
+        }
+    };
 
     let (tx, rx) = std::sync::mpsc::channel();
 
     std::thread::spawn(move || {
         // Top-level error handler - all errors logged here
-        let result = (|| -> anyhow::Result<()> {
+        let result = (|| {
             let rt = tokio::runtime::Builder::new_current_thread()
                 .enable_all()
                 .build()?;
@@ -124,7 +150,9 @@ async fn run_dump_server_unix(
 ) -> anyhow::Result<()> {
     loop {
         let (stream, _) = listener.accept().await?;
-        handle_connection_async(stream, output_path.clone()).await;
+        if let Err(e) = handle_connection_async(stream, output_path.clone()).await {
+            eprintln!("[dump-server] Error handling connection: {:#}", e);
+        }
     }
 }
 
@@ -137,22 +165,24 @@ async fn run_dump_server_windows(
 ) -> anyhow::Result<()> {
     use tokio::net::windows::named_pipe::ServerOptions;
 
-    // Handle first connection
-    first_server.connect().await?;
-    handle_connection_async(first_server, output_path.clone()).await;
+    let mut server = Some(first_server);
 
-    // Handle subsequent connections
     loop {
-        // Create server instance (not the first one)
-        let server = ServerOptions::new()
-            .first_pipe_instance(false)
-            .create(&pipe_name)?;
+        // Use the first_server for the first iteration, then create new instances
+        let current_server = match server.take() {
+            Some(s) => s,
+            None => ServerOptions::new()
+                .first_pipe_instance(false)
+                .create(&pipe_name)?,
+        };
 
         // Wait for client connection
-        server.connect().await?;
+        current_server.connect().await?;
 
         // Handle connection sequentially (this is just a debugging API)
-        handle_connection_async(server, output_path.clone()).await;
+        if let Err(e) = handle_connection_async(current_server, output_path.clone()).await {
+            eprintln!("[dump-server] Error handling connection: {:#}", e);
+        }
     }
 }
 
@@ -203,39 +233,41 @@ fn is_request_complete(
 }
 
 /// Read complete HTTP request from an async stream
-async fn read_http_request_async<R: tokio::io::AsyncReadExt + Unpin>(stream: &mut R) -> Vec<u8> {
+async fn read_http_request_async<R: tokio::io::AsyncReadExt + Unpin>(
+    stream: &mut R,
+) -> anyhow::Result<Vec<u8>> {
     let mut request_data = Vec::new();
     let mut buffer = [0u8; 8192];
     let mut content_length: Option<usize> = None;
     let mut headers_end_pos: Option<usize> = None;
 
     loop {
-        match stream.read(&mut buffer).await {
-            Ok(0) => break, // Connection closed
-            Ok(n) => {
-                request_data.extend_from_slice(&buffer[..n]);
+        let n = stream
+            .read(&mut buffer)
+            .await
+            .context("Failed to read from connection")?;
 
-                // Look for end of headers if we haven't found it yet
-                if headers_end_pos.is_none() {
-                    if let Some(pos) = find_subsequence(&request_data, b"\r\n\r\n") {
-                        headers_end_pos = Some(pos + 4);
-                        content_length = parse_content_length(&request_data[..pos]);
-                    }
-                }
+        if n == 0 {
+            break; // Connection closed
+        }
 
-                // Check if we have the complete request
-                if is_request_complete(&request_data, headers_end_pos, content_length) {
-                    break;
-                }
+        request_data.extend_from_slice(&buffer[..n]);
+
+        // Look for end of headers if we haven't found it yet
+        if headers_end_pos.is_none() {
+            if let Some(pos) = find_subsequence(&request_data, b"\r\n\r\n") {
+                headers_end_pos = Some(pos + 4);
+                content_length = parse_content_length(&request_data[..pos]);
             }
-            Err(e) => {
-                eprintln!("[dump-server] Failed to read from connection: {}", e);
-                break;
-            }
+        }
+
+        // Check if we have the complete request
+        if is_request_complete(&request_data, headers_end_pos, content_length) {
+            break;
         }
     }
 
-    request_data
+    Ok(request_data)
 }
 
 /// Decode chunked transfer encoding
@@ -245,38 +277,37 @@ fn decode_chunked_body(chunked_data: &[u8]) -> Vec<u8> {
 
     while pos < chunked_data.len() {
         // Find the end of the chunk size line (\r\n)
-        if let Some(line_end) = find_subsequence(&chunked_data[pos..], b"\r\n") {
-            // Parse the chunk size (hex)
-            if let Ok(size_str) = std::str::from_utf8(&chunked_data[pos..pos + line_end]) {
-                if let Ok(chunk_size) = usize::from_str_radix(size_str.trim(), 16) {
-                    if chunk_size == 0 {
-                        // End of chunks
-                        break;
-                    }
-
-                    // Move past the size line and \r\n
-                    pos += line_end + 2;
-
-                    // Read the chunk data
-                    if pos + chunk_size <= chunked_data.len() {
-                        result.extend_from_slice(&chunked_data[pos..pos + chunk_size]);
-                        pos += chunk_size;
-
-                        // Skip the trailing \r\n after the chunk
-                        if pos + 2 <= chunked_data.len() && &chunked_data[pos..pos + 2] == b"\r\n" {
-                            pos += 2;
-                        }
-                    } else {
-                        break;
-                    }
-                } else {
-                    break;
-                }
-            } else {
-                break;
-            }
-        } else {
+        let Some(line_end) = find_subsequence(&chunked_data[pos..], b"\r\n") else {
             break;
+        };
+
+        // Parse the chunk size (hex)
+        let Ok(size_str) = std::str::from_utf8(&chunked_data[pos..pos + line_end]) else {
+            break;
+        };
+
+        let Ok(chunk_size) = usize::from_str_radix(size_str.trim(), 16) else {
+            break;
+        };
+
+        if chunk_size == 0 {
+            break; // End of chunks
+        }
+
+        // Move past the size line and \r\n
+        pos += line_end + 2;
+
+        // Read the chunk data
+        if pos + chunk_size > chunked_data.len() {
+            break;
+        }
+
+        result.extend_from_slice(&chunked_data[pos..pos + chunk_size]);
+        pos += chunk_size;
+
+        // Skip the trailing \r\n after the chunk
+        if pos + 2 <= chunked_data.len() && &chunked_data[pos..pos + 2] == b"\r\n" {
+            pos += 2;
         }
     }
 
@@ -285,9 +316,12 @@ fn decode_chunked_body(chunked_data: &[u8]) -> Vec<u8> {
 
 /// Write request data to file if non-empty (async version)
 /// Decodes chunked transfer encoding if present
-async fn write_request_to_file_async(output_path: &PathBuf, request_data: &[u8]) {
+async fn write_request_to_file_async(
+    output_path: &PathBuf,
+    request_data: &[u8],
+) -> anyhow::Result<()> {
     if request_data.is_empty() {
-        return;
+        return Ok(());
     }
 
     // Check if this is a chunked request and decode it
@@ -296,13 +330,11 @@ async fn write_request_to_file_async(output_path: &PathBuf, request_data: &[u8])
         let body = &request_data[headers_end + 4..];
 
         // Check for transfer-encoding: chunked
-        let is_chunked = if let Ok(headers_str) = std::str::from_utf8(headers) {
+        let is_chunked = std::str::from_utf8(headers).is_ok_and(|headers_str| {
             headers_str
                 .to_lowercase()
                 .contains("transfer-encoding: chunked")
-        } else {
-            false
-        };
+        });
 
         if is_chunked {
             // Decode the chunked body and reconstruct the request with Content-Length
@@ -335,23 +367,37 @@ async fn write_request_to_file_async(output_path: &PathBuf, request_data: &[u8])
         request_data.to_vec()
     };
 
-    if let Err(e) = tokio::fs::write(output_path, data_to_write).await {
-        eprintln!(
-            "[dump-server] Failed to write request dump to {:?}: {}",
-            output_path, e
-        );
-    }
+    // Write to file and explicitly sync to ensure data is on disk before responding
+    use tokio::io::AsyncWriteExt;
+
+    let mut file = tokio::fs::File::create(output_path)
+        .await
+        .context("Failed to create dump file")?;
+
+    file.write_all(&data_to_write)
+        .await
+        .context("Failed to write request dump")?;
+
+    // Sync to ensure data is persisted to disk before sending HTTP response
+    file.sync_all()
+        .await
+        .context("Failed to sync request dump to disk")?;
+
+    Ok(())
 }
 
 /// Handle a connection: read HTTP request, write to file, send response
-async fn handle_connection_async<S>(mut stream: S, output_path: PathBuf)
+async fn handle_connection_async<S>(mut stream: S, output_path: PathBuf) -> anyhow::Result<()>
 where
     S: tokio::io::AsyncReadExt + tokio::io::AsyncWriteExt + Unpin,
 {
-    let request_data = read_http_request_async(&mut stream).await;
-    write_request_to_file_async(&output_path, &request_data).await;
+    let request_data = read_http_request_async(&mut stream).await?;
+    write_request_to_file_async(&output_path, &request_data).await?;
 
-    if let Err(e) = stream.write_all(HTTP_200_RESPONSE).await {
-        eprintln!("[dump-server] Failed to send HTTP response: {}", e);
-    }
+    stream
+        .write_all(HTTP_200_RESPONSE)
+        .await
+        .context("Failed to send HTTP response")?;
+
+    Ok(())
 }

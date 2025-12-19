@@ -145,6 +145,15 @@ pub mod ffi {
             timeout_ms: u64,
         ) -> Result<Box<ProfileExporter>>;
 
+        #[Self = "ProfileExporter"]
+        fn create_file_exporter(
+            profiling_library_name: &str,
+            profiling_library_version: &str,
+            family: &str,
+            tags: Vec<Tag>,
+            output_path: &str,
+        ) -> Result<Box<ProfileExporter>>;
+
         // ProfileExporter methods
         /// Sends a profile to Datadog.
         ///
@@ -495,6 +504,37 @@ impl ProfileExporter {
         if timeout_ms > 0 {
             endpoint.timeout_ms = timeout_ms;
         }
+
+        let tags_vec: Vec<exporter::Tag> = tags
+            .iter()
+            .map(TryInto::try_into)
+            .collect::<Result<Vec<_>, _>>()?;
+
+        let tags_option = if tags_vec.is_empty() {
+            None
+        } else {
+            Some(tags_vec)
+        };
+
+        let inner = exporter::ProfileExporter::new(
+            profiling_library_name.to_string(),
+            profiling_library_version.to_string(),
+            family.to_string(),
+            tags_option,
+            endpoint,
+        )?;
+
+        Ok(Box::new(ProfileExporter { inner }))
+    }
+
+    pub fn create_file_exporter(
+        profiling_library_name: &str,
+        profiling_library_version: &str,
+        family: &str,
+        tags: Vec<ffi::Tag>,
+        output_path: &str,
+    ) -> anyhow::Result<Box<ProfileExporter>> {
+        let endpoint = exporter::config::file(output_path)?;
 
         let tags_vec: Vec<exporter::Tag> = tags
             .iter()

@@ -18,10 +18,12 @@ fn create_file_exporter(
 
     // Create a unique temp file path
     let temp_dir = std::env::temp_dir();
+    let random_id: u64 = rand::random();
     let file_path = temp_dir.join(format!(
-        "libdd_test_{}_{}.http",
+        "libdd_test_{}_{}_{:x}.http",
         std::process::id(),
-        chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0)
+        chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0),
+        random_id
     ));
 
     let mut endpoint = config::file(file_path.to_string_lossy().as_ref())?;
@@ -73,6 +75,8 @@ mod tests {
         exporter.send(request, None).expect("send to succeed");
 
         // Read the dump file (wait a moment for it to be written)
+        // The file is synced before the 200 response, but we still need a small delay
+        // to ensure the background thread's runtime has fully completed the async operation
         std::thread::sleep(std::time::Duration::from_millis(200));
         let request_bytes = std::fs::read(&file_path).expect("read dump file");
 
@@ -193,6 +197,8 @@ mod tests {
         exporter.send(request, None).expect("send to succeed");
 
         // Read the dump file (wait a moment for it to be written)
+        // The file is synced before the 200 response, but we still need a small delay
+        // to ensure the background thread's runtime has fully completed the async operation
         std::thread::sleep(std::time::Duration::from_millis(200));
         let request_bytes = std::fs::read(&file_path).expect("read dump file");
 
@@ -249,6 +255,8 @@ mod tests {
         exporter.send(request, None).expect("send to succeed");
 
         // Read the dump file (wait a moment for it to be written)
+        // The file is synced before the 200 response, but we still need a small delay
+        // to ensure the background thread's runtime has fully completed the async operation
         std::thread::sleep(std::time::Duration::from_millis(200));
         let request_bytes = std::fs::read(&file_path).expect("read dump file");
 
@@ -312,6 +320,8 @@ mod tests {
         exporter.send(request, None).expect("send to succeed");
 
         // Read the dump file (wait a moment for it to be written)
+        // The file is synced before the 200 response, but we still need a small delay
+        // to ensure the background thread's runtime has fully completed the async operation
         std::thread::sleep(std::time::Duration::from_millis(200));
         let request_bytes = std::fs::read(&file_path).expect("read dump file");
 
@@ -359,6 +369,8 @@ mod tests {
         exporter.send(request, None).expect("send to succeed");
 
         // Read the dump file (wait a moment for it to be written)
+        // The file is synced before the 200 response, but we still need a small delay
+        // to ensure the background thread's runtime has fully completed the async operation
         std::thread::sleep(std::time::Duration::from_millis(200));
         let request_bytes = std::fs::read(&file_path).expect("read dump file");
 
