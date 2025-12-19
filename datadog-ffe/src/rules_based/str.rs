@@ -118,11 +118,13 @@ mod pyo3_impl {
 
     use super::*;
 
-    use pyo3::{prelude::*, types::PyString};
+    use pyo3::{prelude::*, types::PyString, Borrowed};
 
-    impl<'py> FromPyObject<'py> for Str {
+    impl<'a, 'py> FromPyObject<'a, 'py> for Str {
+        type Error = PyErr;
+
         #[inline]
-        fn extract_bound(value: &Bound<'py, PyAny>) -> PyResult<Self> {
+        fn extract(value: Borrowed<'a, 'py, PyAny>) -> PyResult<Self> {
             let s = value.downcast::<PyString>()?;
             Ok(Str::from(s.to_cow()?))
         }

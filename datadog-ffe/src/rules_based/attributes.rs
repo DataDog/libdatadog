@@ -69,6 +69,7 @@ mod pyo3_impl {
         exceptions::PyTypeError,
         prelude::*,
         types::{PyBool, PyFloat, PyInt, PyString},
+        Borrowed,
     };
 
     /// Convert Python value to Attribute.
@@ -81,9 +82,11 @@ mod pyo3_impl {
     /// - `NoneType`
     ///
     /// Note that nesting is not currently supported and will throw an error.
-    impl<'py> FromPyObject<'py> for Attribute {
+    impl<'a, 'py> FromPyObject<'a, 'py> for Attribute {
+        type Error = PyErr;
+
         #[inline]
-        fn extract_bound(value: &Bound<'py, PyAny>) -> PyResult<Self> {
+        fn extract(value: Borrowed<'a, 'py, PyAny>) -> PyResult<Self> {
             if let Ok(s) = value.downcast::<PyString>() {
                 return Ok(Attribute(AttributeImpl::String(s.to_cow()?.into())));
             }
