@@ -11,7 +11,7 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
-  RUST_VERSION: 1.84.1
+  RUST_VERSION: stable
 
 jobs:
   detect-changes:
@@ -79,7 +79,6 @@ jobs:
             echo "No published crates changed in this PR"
           else
             echo "has_changes=true" >> "$GITHUB_OUTPUT"
-            # Create JSON array
             CRATES_JSON=$(printf '%s\n' "${CHANGED_CRATES[@]}" | jq -R . | jq -s .)
             echo "crates=$CRATES_JSON" >> "$GITHUB_OUTPUT"
             echo "Changed published crates: ${CHANGED_CRATES[*]}"
@@ -92,7 +91,6 @@ jobs:
     outputs:
       semver_level: ${{ steps.aggregate.outputs.semver_level }}
       failed_crates: ${{ steps.aggregate.outputs.failed_crates }}
-      skipped_crates: ${{ steps.aggregate.outputs.skipped_crates }}
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
@@ -109,7 +107,8 @@ jobs:
 
       - name: Install cargo-semver-checks
         run: |
-          cargo install cargo-semver-checks --locked --version 0.44.0
+          apt install libssl-dev  # cargo-public-api dependency
+          cargo install cargo-public-api --locked
 
       - name: Run semver checks on changed crates
         id: semver
@@ -129,38 +128,71 @@ jobs:
             echo "Checking semver for: $CRATE_NAME"
             echo "========================================"
 
-            # Try to run cargo-semver-checks
+            # Get the current version from Cargo.toml
+            CRATE_MANIFEST=$(find . -name Cargo.toml -exec grep -l "name = \"$CRATE_NAME\"" {} \; | head -1)
+            echo "MANIFEST: $CRATE_MANIFEST"
+            if [[ -z "$CRATE_MANIFEST" ]]; then
+              echo "Could not find Cargo.toml for $CRATE_NAME"
+              continue
+            fi
+
+            CURRENT_VERSION=$(grep "^version" "$CRATE_MANIFEST" | head -1 | sed 's/version[[:space:]]*=[[:space:]]*"\(.*\)"/\1/')
+            echo "Current version: $CURRENT_VERSION"
+
+            # Try to run cargo-public-api diff
             set +e
-            cargo semver-checks check-release --package "$CRATE_NAME" --verbose 2>&1 | tee semver-output.txt
+            cargo public-api --package "$CRATE_NAME" diff "$CURRENT_VERSION" 2>&1 | tee api-output.txt
             EXIT_CODE=$?
             set -e
 
             if [[ $EXIT_CODE -ne 0 ]]; then
-              # Check if failure is due to crate not being published
-              if grep -qE "not found in registry|baseline not found|no baseline found|could not find .* in registry" semver-output.txt; then
-                echo "$CRATE_NAME not published or no baseline available"
-                continue
-              fi
+              echo "Unexpected error for $CRATE_NAME (exit code: $EXIT_CODE)"
+              continue
+            fi
 
-              if grep -q "--- failure " semver-output.txt; then
-                if grep -qE "major change|breaking change|function_missing|struct_missing|enum_variant_missing" semver-output.txt; then
-                  HIGHEST_LEVEL="major"
-                  CRATES_CHECKED+=("$CRATE_NAME:major")
-                elif grep -qE "minor change|function_added|struct_added" semver-output.txt; then
-                  if [[ "$HIGHEST_LEVEL" != "major" ]]; then
-                    HIGHEST_LEVEL="minor"
-                  fi
-                  CRATES_CHECKED+=("$CRATE_NAME:minor")
-                else
-                  if [[ "$HIGHEST_LEVEL" == "none" ]]; then
-                    HIGHEST_LEVEL="patch"
-                  fi
-                  CRATES_CHECKED+=("$CRATE_NAME:patch")
+            # Analyze the diff output
+            LEVEL="none"
+
+            # Check for removed items (major change)
+            if grep -q "Removed items from the public API$" api-output.txt; then
+              if ! grep -A 2 "^Removed items from the public API$" api-output.txt | grep -q "^(none)$"; then
+                LEVEL="major"
+                echo "Detected removed items (major change)"
+              fi
+            fi
+
+            # Check for changed items (major change)
+            if grep -q "^Changed items in the public API$" api-output.txt; then
+              if ! grep -A 2 "^Changed items in the public API$" api-output.txt | grep -q "^(none)$"; then
+                LEVEL="major"
+                echo "Detected changed items (major change)"
+              fi
+            fi
+
+            # Check for added items (minor change) - only if not already major
+            if [[ "$LEVEL" != "major" ]]; then
+              if grep -q "Added items to the public API$" api-output.txt; then
+                if ! grep -A 2 "^Added items to the public API$" api-output.txt | grep -q "^(none)"; then
+                  LEVEL="minor"
+                  echo "Detected added items (minor change)"
                 fi
-              else
-                echo "Unexpected error for $CRATE_NAME (exit code: $EXIT_CODE)"
+              fi
+            fi
+
+            # If we detected changes, update the highest level
+            if [[ "$LEVEL" != "none" ]]; then
+              CRATES_CHECKED+=("$CRATE_NAME:$LEVEL")
+
+              # Update highest level
+              if [[ "$LEVEL" == "major" ]]; then
+                HIGHEST_LEVEL="major"
+              elif [[ "$LEVEL" == "minor" ]] && [[ "$HIGHEST_LEVEL" != "major" ]]; then
+                HIGHEST_LEVEL="minor"
+              elif [[ "$HIGHEST_LEVEL" == "none" ]]; then
+                HIGHEST_LEVEL="patch"
               fi
             else
+              # No API changes detected, assume patch level
               if [[ "$HIGHEST_LEVEL" == "none" ]]; then
                 HIGHEST_LEVEL="patch"
               fi
@@ -169,19 +201,19 @@ jobs:
 
           # Save results to file for aggregate step
           echo "$HIGHEST_LEVEL" > semver-level.txt
-          printf '%s\n' "${CRATES_CHECKED[@]}" > failed-crates.txt || true
+          printf '%s\n' "${CRATES_CHECKED[@]}" > crates_checked.txt || true
 
       - name: Aggregate results
         id: aggregate
         run: |
           HIGHEST_LEVEL=$(cat semver-level.txt)
-          CRATES_CHECKED=$(cat failed-crates.txt | tr '\n' ' ' || echo "")
+          CRATES_CHECKED=$(cat crates_checked.txt | tr '\n' ' ' || echo "")
 
           echo "semver_level=$HIGHEST_LEVEL" >> "$GITHUB_OUTPUT"
-          echo "failed_crates=$CRATES_CHECKED" >> "$GITHUB_OUTPUT"
+          echo "crates_checked=$CRATES_CHECKED" >> "$GITHUB_OUTPUT"
 
           echo "Final aggregate semver level: $HIGHEST_LEVEL"
-          echo "Failed crates: $CRATES_CHECKED"
+          echo "Crates checked: $CRATES_CHECKED"
 
   validate:
     needs: [detect-changes, semver-check]
@@ -192,19 +224,18 @@ jobs:
         env:
           PR_TITLE: ${{ github.event.pull_request.title }}
           SEMVER_LEVEL: ${{ needs.semver-check.outputs.semver_level }}
-          CRATES_CHECKED: ${{ needs.semver-check.outputs.failed_crates }}
-          SKIPPED_CRATES: ${{ needs.semver-check.outputs.skipped_crates }}
+          CRATES_CHECKED: ${{ needs.semver-check.outputs.crates_checked }}
         run: |
           set -euo pipefail
 
           echo "PR Title: $PR_TITLE"
           echo "Detected semver level: $SEMVER_LEVEL"
           echo "Crates with changes: $CRATES_CHECKED"
-          echo "Skipped crates: $SKIPPED_CRATES"
 
-          Format: type(optional-scope): description
-          Breaking changes: type!: or type(scope)!:
-          if [[ "$PR_TITLE" =~ ^([a-z]+)(\([^)]+\))?(!)?:\ .+ ]]; then
+          # Format: type(optional-scope): description
+          # Breaking changes: type!: or type(scope)!:
+          REGEX='^([a-z]+)(\([^)]+\))?(!)?: .+'
+          if [[ "$PR_TITLE" =~ $REGEX ]]; then
             TYPE="${BASH_REMATCH[1]}"
             HAS_BREAKING_MARKER="${BASH_REMATCH[3]}"
           else
@@ -221,79 +252,59 @@ jobs:
 
           # Validation rules
           case "$TYPE" in
-            fix)
-              # fix: should only have patch-level changes
-              if [[ "$SEMVER_LEVEL" == "major" ]] || [[ "$SEMVER_LEVEL" == "minor" ]]; then
-                VALIDATION_FAILED="true"
-              fi
-              ;;
+          fix)
+            if [[ "$SEMVER_LEVEL" == "major" ]] || [[ "$SEMVER_LEVEL" == "minor" ]] || [[ "$SEMVER_LEVEL" == "none" ]]; then
+              VALIDATION_FAILED="true"
+            fi
+            ;;
 
-            feat)
-              if [[ "$SEMVER_LEVEL" == "major" ]] && [[ -z "$HAS_BREAKING_MARKER" ]]; then
-                VALIDATION_FAILED="true"
-              elif [[ "$SEMVER_LEVEL" == "patch" ]]; then
-                VALIDATION_FAILED="true"
-              fi
-              ;;
+          feat)
+            if [[ "$SEMVER_LEVEL" == "major" ]] && [[ -z "$HAS_BREAKING_MARKER" ]]; then
+              VALIDATION_FAILED="true"
+            elif [[ "$SEMVER_LEVEL" == "patch" ]] || [[ "$SEMVER_LEVEL" == "none" ]]; then
+              VALIDATION_FAILED="true"
+            fi
+            ;;
 
-            chore|docs|style|test|ci|build|perf)
-              # These should not change public API
-              if [[ "$SEMVER_LEVEL" == "major" ]] || [[ "$SEMVER_LEVEL" == "minor" ]]; then
-                VALIDATION_FAILED="true"
-              fi
-              ;;
+          chore|ci|docs|style|test|build|perf)
+            # Breaking change marker shouldn't be there.
+            if [[ -z "$HAS_BREAKING_MARKER" ]]; then
+              VALIDATION_FAILED="true"
+            fi
 
-            refactor)
-              # Should we allow refactors to introduce breaking changes.
-              if [[ "$SEMVER_LEVEL" == "major" ]] && [[ -z "$HAS_BREAKING_MARKER" ]]; then
-                VALIDATION_FAILED="true"
-              fi
-              ;;
+            # These should not change public API
+            if [[ "$SEMVER_LEVEL" == "major" ]] || [[ "$SEMVER_LEVEL" == "minor" ]]; then
+              VALIDATION_FAILED="true"
+            fi
+            ;;
 
-            revert)
-              # Revert commits are allowed to have any semver level
-              echo "Revert commits are exempt from semver validation"
-              ;;
 
-            *)
-              # "refactor" type fall through this category, should we be more specific about it?.
-              echo "Commit type '$TYPE', applying lenient validation"
-              # Only fail on undeclared breaking changes
-              if [[ "$SEMVER_LEVEL" == "major" ]] && [[ -z "$HAS_BREAKING_MARKER" ]]; then
-                VALIDATION_FAILED="true"
-              fi
-              ;;
+          refactor)
+            if [[ "$SEMVER_LEVEL" == "major" ]] && [[ -z "$HAS_BREAKING_MARKER" ]]; then
+              VALIDATION_FAILED="true"
+            fi
+            ;;
+
+          revert)
+            # Revert commits are allowed to have any semver level
+            ;;
+
+          *)
+            echo "$TYPE not handled";
+            VALIDATION_FAILED="true"
+            ;;
           esac
 
-          # Check for breaking marker with non-breaking changes
-          if [[ -n "$HAS_BREAKING_MARKER" ]] && [[ "$SEMVER_LEVEL" != "major" ]]; then
-            VALIDATION_FAILED="true"
-          fi
-
-          # Final result
           if [[ "$VALIDATION_FAILED" == "true" ]]; then
             echo ""
             echo "============================================"
             echo "❌ SEMVER VALIDATION FAILED"
             echo "============================================"
             echo ""
-            echo "$ERROR_MESSAGE"
-            echo ""
             echo "Details:"
             echo "  PR Title: $PR_TITLE"
             echo "  Detected semver level: $SEMVER_LEVEL"
-            echo "  Crates with API changes: $CRATES_CHECKED"
-            echo ""
-            echo "To fix this:"
-            echo "  1. Update your PR title to match the detected changes, OR"
-            echo "  2. Adjust your code changes to match the PR title intent"
-            echo "============================================"
             exit 1
           else
-            echo ""
-            echo "============================================"
-            echo "✅ SEMVER VALIDATION PASSED"
-            echo "============================================"
-            echo "PR title type matches detected API changes"
             exit 0
           fi
