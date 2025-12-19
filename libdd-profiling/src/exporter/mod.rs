@@ -185,7 +185,6 @@ impl ProfileExporter {
         &self,
         profile: EncodedProfile,
         files_to_compress_and_export: &[File],
-        files_to_export_unmodified: &[File],
         additional_tags: Option<&Vec<Tag>>,
         process_tags: Option<&str>,
         internal_metadata: Option<serde_json::Value>,
@@ -240,7 +239,6 @@ impl ProfileExporter {
 
         let attachments: Vec<String> = files_to_compress_and_export
             .iter()
-            .chain(files_to_export_unmodified.iter())
             .map(|file| file.name.to_owned())
             .chain(iter::once("profile.pprof".to_string()))
             .collect();
@@ -303,15 +301,6 @@ impl ProfileExporter {
             form.add_reader_file(file.name, Cursor::new(encoded), file.name);
         }
 
-        for file in files_to_export_unmodified {
-            let encoded = file.bytes.to_vec();
-            /* The Datadog RFC examples strip off the file extension, but the exact behavior
-             * isn't specified. This does the simple thing of using the filename
-             * without modification for the form name because intake does not care
-             * about these name of the form field for these attachments.
-             */
-            form.add_reader_file(file.name, Cursor::new(encoded), file.name)
-        }
         // Add the actual pprof
         form.add_reader_file(
             "profile.pprof",
@@ -345,10 +334,6 @@ impl ProfileExporter {
         self.exporter
             .runtime
             .block_on(request.send(&self.exporter.client, cancel))
-    }
-
-    pub fn set_timeout(&mut self, timeout_ms: u64) {
-        self.endpoint.timeout_ms = timeout_ms;
     }
 }
 
