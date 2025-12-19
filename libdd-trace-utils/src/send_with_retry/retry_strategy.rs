@@ -7,7 +7,6 @@ use std::time::Duration;
 use tokio::time::sleep;
 
 /// Enum representing the type of backoff to use for the delay between retries.
-/// ```
 #[derive(Debug, Clone)]
 #[cfg_attr(test, derive(PartialEq))]
 pub enum RetryBackoffType {

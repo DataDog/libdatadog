@@ -71,7 +71,7 @@ pub struct NativeFile {
     pub handle: Box<PlatformHandle<File>>,
 }
 
-/// This creates Rust PlatformHandle<File> from supplied C std FILE object.
+/// This creates Rust `PlatformHandle<File>` from supplied C std FILE object.
 /// This method takes the ownership of the underlying file descriptor.
 ///
 /// # Safety

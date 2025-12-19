@@ -25,7 +25,7 @@ unsafe impl Value for &str {
 /// exceeding the protobuf 2 GiB limit.
 ///
 /// A value of 0 means "no string" or "empty string" (they are synonymous).
-/// cbindgen:field-names=[offset]
+/// cbindgen:field-names=\[offset\]
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, Eq, Hash, Ord, PartialEq, PartialOrd)]
 #[cfg_attr(feature = "bolero", derive(bolero::generator::TypeGenerator))]
