@@ -74,6 +74,7 @@ impl SpanConcentrator {
     /// - `now` the current system time, used to define the oldest bucket
     /// - `span_kinds_stats_computed` list of span kinds eligible for stats computation
     /// - `peer_tags_keys` list of keys considered as peer tags for aggregation
+    /// - `buffer_len` number of buckets to keep when flushing
     pub fn new(
         bucket_size: Duration,
         now: SystemTime,
