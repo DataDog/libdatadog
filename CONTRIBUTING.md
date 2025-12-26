@@ -78,6 +78,75 @@ We also recommend that you share in your description:
 If at any point you have a question or need assistance with your pull request, feel free to mention a project member!
 We're always happy to help contributors with their pull requests.
 
+## Commit Message Guidelines
+
+This project uses [Conventional Commits](https://www.conventionalcommits.org/) for commit messages and pull request titles.
+This format helps us automatically generate changelogs and determine semantic versioning.
+
+### Format
+
+Commit messages and PR titles should follow this structure:
+
+```
+<type>[optional scope]: <description>
+
+[optional body]
+
+[optional footer(s)]
+```
+
+### Common Types
+
+- **feat**: A new feature for the user
+- **fix**: A bug fix
+- **docs**: Documentation changes only
+- **style**: Code style changes (formatting, missing semicolons, etc.) that don't affect functionality
+- **refactor**: Code changes that neither fix a bug nor add a feature
+- **perf**: Performance improvements
+- **test**: Adding or updating tests
+- **build**: Changes to the build system or external dependencies
+- **ci**: Changes to CI configuration files and scripts
+- **chore**: Other changes that don't modify src or test files
+
+### Scope (Optional)
+
+The scope provides additional context about which part of the codebase is affected:
+
+```
+feat(crashtracker): add signal handler for SIGSEGV
+fix(profiling): correct memory leak in stack unwinding
+docs(readme): update installation instructions
+```
+
+### Breaking Changes
+
+Breaking changes should be indicated by a `!` after the type/scope:
+
+```
+feat!: remove deprecated API endpoint
+```
+
+### Examples
+
+Good commit messages:
+- `feat: add support for custom metadata tags`
+- `fix(profiling): resolve deadlock in thread sampling`
+- `docs: add examples for exception tracking`
+- `chore: update dependencies to latest versions`
+- `test(crashtracker): add integration tests for signal handling`
+
+Poor commit messages:
+- `update code` (not descriptive, missing type)
+- `Fixed bug` (missing type format, not descriptive)
+- `WIP` (not meaningful)
+
+### Pull Request Titles
+
+When your pull request is merged, all commits will be squashed into a single commit. The PR title will become the final
+commit message, so it's important that it accurately describes your changes.For that reason your pull request title must
+follow the conventional commit format described above. Our CI pipeline will automatically validate the PR title and fail
+if it doesn't comply with the format. You can update the PR title at any time to fix any validation issues.
+
 ## Final word
 
 Many thanks to all of our contributors, and looking forward to seeing you on Github! :tada:
