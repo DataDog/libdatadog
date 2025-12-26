@@ -23,7 +23,7 @@ hyper = { workspace = true}
 "http" = "1"
 http-body-util = "0.1"
 serde = { version = "1.0.145", features = ["derive"] }
-prost = "0.13.5"
+prost = "0.14.1"
 rmp-serde = "1.1.1"
 tracing = { version = "0.1", default-features = false }
 serde_json = "1.0"

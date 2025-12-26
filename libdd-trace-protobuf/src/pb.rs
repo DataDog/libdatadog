@@ -578,7 +578,7 @@ pub struct ClientStatsBucket {
 /// ClientGroupedStats aggregate stats on spans grouped by service, name, resource, status_code, type
 #[derive(Deserialize, Serialize)]
 #[serde(rename_all = "PascalCase")]
-#[derive(Clone, PartialEq, ::prost::Message)]
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct ClientGroupedStats {
     #[prost(string, tag = "1")]
     pub service: ::prost::alloc::string::String,
