@@ -1,7 +1,10 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use std::sync::LazyLock;
+use std::sync::{
+    atomic::{AtomicU16, Ordering},
+    LazyLock,
+};
 use std::{
     env, fs, io,
     os::unix::{
@@ -83,11 +86,18 @@ impl Liaison for SharedDirLiaison {
     }
 
     fn ipc_per_process() -> Self {
-        static PROCESS_RANDOM_ID: LazyLock<u16> = LazyLock::new(rand::random);
+        // Use atomic counter instead of rand::random to avoid TLS allocation
+        static PROCESS_ID_COUNTER: AtomicU16 = AtomicU16::new(1);
+        static PROCESS_RANDOM_ID: LazyLock<u16> =
+            LazyLock::new(|| PROCESS_ID_COUNTER.fetch_add(1, Ordering::Relaxed));
 
         let pid = std::process::id();
         let liason_path = env::temp_dir().join(format!("libdatadog.{}.{pid}", *PROCESS_RANDOM_ID));
         Self::new(liason_path)
+    }
+
+    fn for_master_pid(master_pid: u32) -> Self {
+        Self::new(env::temp_dir().join(format!("libdatadog.{}", master_pid)))
     }
 }
 
@@ -141,7 +151,7 @@ mod linux {
     pub struct AbstractUnixSocketLiaison {
         path: PathBuf,
     }
-    pub type DefaultLiason = AbstractUnixSocketLiaison;
+    pub type DefaultLiaison = AbstractUnixSocketLiaison;
 
     impl Liaison for AbstractUnixSocketLiaison {
         fn connect_to_server(&self) -> io::Result<Channel> {
@@ -173,6 +183,14 @@ mod linux {
             ));
             Self { path }
         }
+
+        fn for_master_pid(master_pid: u32) -> Self {
+            let path = PathBuf::from(format!(
+                concat!("libdatadog/", crate::sidecar_version!(), ".{}.sock"),
+                master_pid
+            ));
+            Self { path }
+        }
     }
 
     impl Default for AbstractUnixSocketLiaison {
@@ -193,7 +211,7 @@ mod linux {
 pub use linux::*;
 
 #[cfg(target_os = "macos")]
-pub type DefaultLiason = SharedDirLiaison;
+pub type DefaultLiaison = SharedDirLiaison;
 
 #[cfg(test)]
 mod tests {
