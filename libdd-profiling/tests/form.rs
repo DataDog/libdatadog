@@ -5,7 +5,7 @@ use libdd_profiling::exporter::{ProfileExporter, Request};
 use libdd_profiling::internal::EncodedProfile;
 
 fn multipart(
-    exporter: &mut ProfileExporter,
+    exporter: &ProfileExporter,
     internal_metadata: Option<serde_json::Value>,
     info: Option<serde_json::Value>,
     process_tags: Option<&str>,
@@ -13,16 +13,11 @@ fn multipart(
     let profile = EncodedProfile::test_instance().expect("To get a profile");
 
     let files_to_compress_and_export = &[];
-    let files_to_export_unmodified = &[];
-
-    let timeout: u64 = 10_000;
-    exporter.set_timeout(timeout);
 
     let request = exporter
         .build(
             profile,
             files_to_compress_and_export,
-            files_to_export_unmodified,
             None,
             process_tags,
             internal_metadata,
@@ -30,8 +25,13 @@ fn multipart(
         )
         .expect("request to be built");
 
+    // Verify timeout is set from endpoint
+    let expected_timeout = 10_000;
     let actual_timeout = request.timeout().expect("timeout to exist");
-    assert_eq!(actual_timeout, std::time::Duration::from_millis(timeout));
+    assert_eq!(
+        actual_timeout,
+        std::time::Duration::from_millis(expected_timeout)
+    );
     request
 }
 
@@ -76,8 +76,9 @@ mod tests {
         let profiling_library_name = "dd-trace-foo";
         let profiling_library_version = "1.2.3";
         let base_url = "http://localhost:8126".parse().expect("url to parse");
-        let endpoint = config::agent(base_url).expect("endpoint to construct");
-        let mut exporter = ProfileExporter::new(
+        let mut endpoint = config::agent(base_url).expect("endpoint to construct");
+        endpoint.timeout_ms = 10_000;
+        let exporter = ProfileExporter::new(
             profiling_library_name,
             profiling_library_version,
             "php",
@@ -86,7 +87,7 @@ mod tests {
         )
         .expect("exporter to construct");
 
-        let request = multipart(&mut exporter, None, None, None);
+        let request = multipart(&exporter, None, None, None);
 
         assert_eq!(
             request.uri().to_string(),
@@ -140,8 +141,9 @@ mod tests {
         let profiling_library_name = "dd-trace-foo";
         let profiling_library_version = "1.2.3";
         let base_url = "http://localhost:8126".parse().expect("url to parse");
-        let endpoint = config::agent(base_url).expect("endpoint to construct");
-        let mut exporter = ProfileExporter::new(
+        let mut endpoint = config::agent(base_url).expect("endpoint to construct");
+        endpoint.timeout_ms = 10_000;
+        let exporter = ProfileExporter::new(
             profiling_library_name,
             profiling_library_version,
             "php",
@@ -156,7 +158,7 @@ mod tests {
             "extra object": {"key": [1, 2, true]},
             "libdatadog_version": env!("CARGO_PKG_VERSION"),
         });
-        let request = multipart(&mut exporter, Some(internal_metadata.clone()), None, None);
+        let request = multipart(&exporter, Some(internal_metadata.clone()), None, None);
         let parsed_event_json = parsed_event_json(request);
 
         assert_eq!(parsed_event_json["internal"], internal_metadata);
@@ -170,8 +172,9 @@ mod tests {
         let profiling_library_name = "dd-trace-foo";
         let profiling_library_version = "1.2.3";
         let base_url = "http://localhost:8126".parse().expect("url to parse");
-        let endpoint = config::agent(base_url).expect("endpoint to construct");
-        let mut exporter = ProfileExporter::new(
+        let mut endpoint = config::agent(base_url).expect("endpoint to construct");
+        endpoint.timeout_ms = 10_000;
+        let exporter = ProfileExporter::new(
             profiling_library_name,
             profiling_library_version,
             "php",
@@ -181,7 +184,7 @@ mod tests {
         .expect("exporter to construct");
 
         let expected_process_tags = "entrypoint.basedir:net10.0,entrypoint.name:buggybits.program,entrypoint.workdir:this_folder,runtime_platform:x86_64-pc-windows-msvc";
-        let request = multipart(&mut exporter, None, None, Some(expected_process_tags));
+        let request = multipart(&exporter, None, None, Some(expected_process_tags));
         let parsed_event_json = parsed_event_json(request);
 
         assert_eq!(parsed_event_json["process_tags"], expected_process_tags);
@@ -195,8 +198,9 @@ mod tests {
         let profiling_library_name = "dd-trace-foo";
         let profiling_library_version = "1.2.3";
         let base_url = "http://localhost:8126".parse().expect("url to parse");
-        let endpoint = config::agent(base_url).expect("endpoint to construct");
-        let mut exporter = ProfileExporter::new(
+        let mut endpoint = config::agent(base_url).expect("endpoint to construct");
+        endpoint.timeout_ms = 10_000;
+        let exporter = ProfileExporter::new(
             profiling_library_name,
             profiling_library_version,
             "php",
@@ -221,7 +225,7 @@ mod tests {
                 "settings": {}
             }
         });
-        let request = multipart(&mut exporter, None, Some(info.clone()), None);
+        let request = multipart(&exporter, None, Some(info.clone()), None);
         let parsed_event_json = parsed_event_json(request);
 
         assert_eq!(parsed_event_json["info"], info);
@@ -235,8 +239,10 @@ mod tests {
         let profiling_library_name = "dd-trace-foo";
         let profiling_library_version = "1.2.3";
         let api_key = "1234567890123456789012";
-        let endpoint = config::agentless("datadoghq.com", api_key).expect("endpoint to construct");
-        let mut exporter = ProfileExporter::new(
+        let mut endpoint =
+            config::agentless("datadoghq.com", api_key).expect("endpoint to construct");
+        endpoint.timeout_ms = 10_000;
+        let exporter = ProfileExporter::new(
             profiling_library_name,
             profiling_library_version,
             "php",
@@ -245,7 +251,7 @@ mod tests {
         )
         .expect("exporter to construct");
 
-        let request = multipart(&mut exporter, None, None, None);
+        let request = multipart(&exporter, None, None, None);
 
         assert_eq!(
             request.uri().to_string(),
