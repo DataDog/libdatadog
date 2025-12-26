@@ -3030,6 +3030,7 @@ dependencies = [
  "criterion",
  "flate2",
  "futures",
+ "http",
  "http-body-util",
  "httpmock",
  "hyper",
