@@ -508,7 +508,7 @@ mod tests {
         let state = StdinState::Waiting;
         let line = DD_CRASHTRACK_BEGIN_MESSAGE;
 
-        let next_state = process_line(&mut builder, &mut config, line, state).unwrap();
+        let next_state = process_line(&mut builder, &mut config, line, state, &None).unwrap();
 
         assert!(matches!(next_state, StdinState::Message));
     }
@@ -522,7 +522,8 @@ mod tests {
         let state = StdinState::Message;
         let message_line = "program panicked";
 
-        let next_state = process_line(&mut builder, &mut config, message_line, state).unwrap();
+        let next_state =
+            process_line(&mut builder, &mut config, message_line, state, &None).unwrap();
 
         // Should stay in message state
         assert!(matches!(next_state, StdinState::Message));
@@ -539,7 +540,7 @@ mod tests {
         let state = StdinState::Message;
         let line = DD_CRASHTRACK_END_MESSAGE;
 
-        let next_state = process_line(&mut builder, &mut config, line, state).unwrap();
+        let next_state = process_line(&mut builder, &mut config, line, state, &None).unwrap();
 
         assert!(matches!(next_state, StdinState::Waiting));
     }
@@ -552,7 +553,7 @@ mod tests {
         let state = StdinState::Message;
         let empty_line = "";
 
-        let result = process_line(&mut builder, &mut config, empty_line, state);
+        let result = process_line(&mut builder, &mut config, empty_line, state, &None);
 
         // Should handle empty line without error
         assert!(result.is_ok());
@@ -569,6 +570,7 @@ mod tests {
             &mut config,
             "Line 1 of panic",
             StdinState::Message,
+            &None,
         )
         .unwrap();
 
@@ -593,17 +595,32 @@ mod tests {
             &mut config,
             DD_CRASHTRACK_BEGIN_MESSAGE,
             state,
+            &None,
         )
         .unwrap();
         assert!(matches!(state, StdinState::Message));
 
         // Add message content
-        state = process_line(&mut builder, &mut config, "test panic message", state).unwrap();
+        state = process_line(
+            &mut builder,
+            &mut config,
+            "test panic message",
+            state,
+            &None,
+        )
+        .unwrap();
         assert!(matches!(state, StdinState::Message));
         assert!(builder.has_message());
 
         // End message
-        state = process_line(&mut builder, &mut config, DD_CRASHTRACK_END_MESSAGE, state).unwrap();
+        state = process_line(
+            &mut builder,
+            &mut config,
+            DD_CRASHTRACK_END_MESSAGE,
+            state,
+            &None,
+        )
+        .unwrap();
         assert!(matches!(state, StdinState::Waiting));
     }
 }
