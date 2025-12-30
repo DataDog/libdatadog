@@ -803,7 +803,7 @@ impl TelemetryWorker {
                     } else {
                         libdd_common::Endpoint::DEFAULT_TIMEOUT
                     })) => {
-                Err(anyhow::anyhow!("Request timed out"))
+                Err(hyper_migration::Error::Other(anyhow::anyhow!("Request timed out")))
             },
             r = self.client.request(req) => {
                 match r {
