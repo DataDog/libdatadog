@@ -1,8 +1,8 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use rand::Rng;
 use serde::{Deserialize, Serialize};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 /// `QueueId` is a struct that represents a unique identifier for a queue.
 /// It contains a single field, `inner`, which is a 64-bit unsigned integer.
@@ -12,11 +12,15 @@ pub struct QueueId {
     pub(crate) inner: u64,
 }
 
+/// Global atomic counter for generating unique queue IDs
+static QUEUE_ID_COUNTER: AtomicU64 = AtomicU64::new(1);
+
 impl QueueId {
     /// Generates a new unique `QueueId`.
     ///
-    /// This method generates a random 64-bit unsigned integer between 1 (inclusive) and `u64::MAX`
-    /// (exclusive) and uses it as the `inner` value of the new `QueueId`.
+    /// This method uses an atomic counter to generate monotonically increasing
+    /// unique IDs. The counter starts at 1 and increments with each call.
+    /// This approach avoids TLS allocations from random number generators.
     ///
     /// # Examples
     ///
@@ -27,7 +31,7 @@ impl QueueId {
     /// ```
     pub fn new_unique() -> Self {
         Self {
-            inner: rand::thread_rng().gen_range(1u64..u64::MAX),
+            inner: QUEUE_ID_COUNTER.fetch_add(1, Ordering::Relaxed),
         }
     }
 }
