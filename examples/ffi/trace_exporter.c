@@ -15,7 +15,43 @@ enum {
 };
 
 void handle_error(ddog_TraceExporterError *err) {
-    fprintf(stderr, "Operation failed with error: %d, reason: %s\n", err->code, err->msg);
+    fprintf(stderr, "Operation failed with error: %d\n", err->code);
+
+    // Example: Use the template for external logging (safe, no sensitive data)
+    if (err->msg_template.ptr && err->msg_template.len > 0) {
+        fprintf(stderr, "Safe template message: %.*s\n",
+                (int)err->msg_template.len, err->msg_template.ptr);
+    }
+
+    // Example: Use context fields for internal debugging (may contain sensitive data)
+    if (err->context_fields.ptr && err->context_fields.len > 0) {
+        fprintf(stderr, "Debug context (%zu fields):\n", err->context_fields.len);
+        for (size_t i = 0; i < err->context_fields.len; i++) {
+            ddog_ContextField *field = &err->context_fields.ptr[i];
+            fprintf(stderr, "  %.*s: %.*s\n",
+                    (int)field->key.len, field->key.ptr,
+                    (int)field->value.len, field->value.ptr);
+        }
+    }
+
+    // Example: Consumer can combine template + context for full message if needed
+    if (err->msg_template.ptr && err->msg_template.len > 0) {
+        fprintf(stderr, "Combined message: %.*s",
+                (int)err->msg_template.len, err->msg_template.ptr);
+        if (err->context_fields.ptr && err->context_fields.len > 0) {
+            fprintf(stderr, " (");
+            for (size_t i = 0; i < err->context_fields.len; i++) {
+                ddog_ContextField *field = &err->context_fields.ptr[i];
+                if (i > 0) fprintf(stderr, ", ");
+                fprintf(stderr, "%.*s: %.*s",
+                        (int)field->key.len, field->key.ptr,
+                        (int)field->value.len, field->value.ptr);
+            }
+            fprintf(stderr, ")");
+        }
+        fprintf(stderr, "\n");
+    }
+
     ddog_trace_exporter_error_free(err);
 }
 
@@ -114,7 +150,7 @@ int main(int argc, char** argv)
 
     ret = ddog_trace_exporter_send(trace_exporter, buffer, 0, &response);
 
-    assert(ret->code == DDOG_TRACE_EXPORTER_ERROR_CODE_SERDE);
+    assert(ret->code == DDOG_TRACE_EXPORTER_ERROR_CODE_INVALID_DATA);
     if (ret) {
         error = ERROR_SEND;
         handle_error(ret);
