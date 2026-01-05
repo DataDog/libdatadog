@@ -2837,7 +2837,6 @@ dependencies = [
  "libdd-alloc",
  "libdd-common",
  "libdd-profiling-protobuf",
- "lz4_flex",
  "mime",
  "parking_lot",
  "proptest",
@@ -3010,6 +3009,7 @@ dependencies = [
  "criterion",
  "flate2",
  "futures",
+ "http",
  "http-body-util",
  "httpmock",
  "hyper",
@@ -3121,15 +3121,6 @@ checksum = "34080505efa8e45a4b816c349525ebe327ceaa8559756f0356cba97ef3bf7432"
 dependencies = [
  "serde",
  "value-bag",
-]
-
-[[package]]
-name = "lz4_flex"
-version = "0.9.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1a8cbbb2831780bc3b9c15a41f5b49222ef756b6730a95f3decfdd15903eb5a3"
-dependencies = [
- "twox-hash",
 ]
 
 [[package]]
