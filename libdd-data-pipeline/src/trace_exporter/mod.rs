@@ -1464,10 +1464,13 @@ mod tests {
             }
             Err(e)
                 if e.kind() == std::io::ErrorKind::WouldBlock
-                    || e.kind() == std::io::ErrorKind::TimedOut =>
+                    || e.kind() == std::io::ErrorKind::TimedOut
+                    || e.kind() == std::io::ErrorKind::Interrupted =>
             {
-                // This is expected - no metrics should be sent when disabled
-                // WouldBlock on Unix, TimedOut on Windows
+                // This is expected - no metrics should be sent when disabled.
+                // WouldBlock on Unix, TimedOut on Windows.
+                // Interrupted can occur when signals interrupt the blocking
+                // recvfrom() syscall before the timeout expires.
             }
             Err(e) => panic!("Unexpected error reading from socket: {e}"),
         }
