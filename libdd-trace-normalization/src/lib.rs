@@ -11,3 +11,6 @@
 pub mod normalize_utils;
 pub mod normalizer;
 pub(crate) mod utf8_helpers;
+
+#[cfg(feature = "fuzzing")]
+pub mod fuzz;

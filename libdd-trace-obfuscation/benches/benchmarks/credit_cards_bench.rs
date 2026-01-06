@@ -6,7 +6,7 @@ use std::time::Duration;
 
 use criterion::Throughput::Elements;
 use criterion::{criterion_group, BatchSize, BenchmarkId, Criterion};
-use datadog_trace_obfuscation::credit_cards::is_card_number;
+use libdd_trace_obfuscation::credit_cards::is_card_number;
 
 pub fn is_card_number_bench(c: &mut Criterion) {
     bench_is_card_number(c, "is_card_number", true);

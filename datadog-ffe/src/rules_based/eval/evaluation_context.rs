@@ -51,7 +51,7 @@ impl EvaluationContext {
 mod pyo3_impl {
     use super::*;
 
-    use pyo3::{intern, prelude::*, types::PyDict};
+    use pyo3::{intern, prelude::*, types::PyDict, Borrowed};
 
     /// Accepts either a dict with `"targeting_key"` and `"attributes"` items, or any object with
     /// `targeting_key` and `attributes` attributes.
@@ -70,12 +70,14 @@ mod pyo3_impl {
     ///
     /// EvaluationContext(targeting_key="user1", attributes={"attr1": 42})
     /// ```
-    impl<'py> FromPyObject<'py> for EvaluationContext {
+    impl<'a, 'py> FromPyObject<'a, 'py> for EvaluationContext {
+        type Error = PyErr;
+
         #[inline]
-        fn extract_bound(value: &Bound<'py, PyAny>) -> PyResult<Self> {
+        fn extract(value: Borrowed<'a, 'py, PyAny>) -> PyResult<Self> {
             let py = value.py();
 
-            let (targeting_key, attributes) = if let Ok(dict) = value.downcast::<PyDict>() {
+            let (targeting_key, attributes) = if let Ok(dict) = value.cast::<PyDict>() {
                 (
                     dict.get_item(intern!(py, "targeting_key"))?,
                     dict.get_item(intern!(py, "attributes"))?,

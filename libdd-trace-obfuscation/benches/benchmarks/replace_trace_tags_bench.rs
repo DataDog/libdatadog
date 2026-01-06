@@ -4,7 +4,7 @@
 use std::collections::HashMap;
 
 use criterion::{black_box, criterion_group, Criterion};
-use datadog_trace_obfuscation::replacer;
+use libdd_trace_obfuscation::replacer;
 use libdd_trace_protobuf::pb;
 
 fn criterion_benchmark(c: &mut Criterion) {

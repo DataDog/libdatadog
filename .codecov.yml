@@ -76,9 +76,9 @@ component_management:
       paths:
         - libdd-trace-normalization
     - component_id: trace-obfuscation  # this is an identifier that should not be changed
-      name: datadog-trace-obfuscation  # this is a display name, and can be changed freely
+      name: libdd-trace-obfuscation  # this is a display name, and can be changed freely
       paths:
-        - datadog-trace-obfuscation
+        - libdd-trace-obfuscation
     - component_id: trace-protobuf  # this is an identifier that should not be changed
       name: libdd-trace-protobuf  # this is a display name, and can be changed freely
       paths:
