@@ -35,18 +35,6 @@ static void init_logger(void) {
     real_free = dlsym(RTLD_NEXT, "free");
     real_calloc = dlsym(RTLD_NEXT, "calloc");
     real_realloc = dlsym(RTLD_NEXT, "realloc");
-
-    // No logging here; deferred until enabled.
-}
-
-__attribute__((constructor)) static void preload_ctor(void) {
-    pthread_once(&init_once, init_logger);
-}
-
-__attribute__((destructor)) static void preload_dtor(void) {
-    if (log_fd >= 0) {
-        close(log_fd);
-    }
 }
 
 static void log_line(const char *tag, size_t size, void *ptr) {
@@ -69,7 +57,7 @@ static void log_line(const char *tag, size_t size, void *ptr) {
         len = snprintf(buf, sizeof(buf), "pid=%d tid=%ld calloc size=%zu ptr=%p\n", pid, tid, size, ptr);
     } else if (strcmp(tag, "realloc") == 0) {
         len = snprintf(buf, sizeof(buf), "pid=%d tid=%ld realloc size=%zu ptr=%p\n", pid, tid, size, ptr);
-    } else { // free
+    } else if (strcmp(tag, "free") == 0) {
         len = snprintf(buf, sizeof(buf), "pid=%d tid=%ld free ptr=%p\n", pid, tid, ptr);
     }
 
