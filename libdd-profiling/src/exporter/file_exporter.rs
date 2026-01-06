@@ -79,39 +79,17 @@ pub(crate) fn spawn_dump_server(output_path: PathBuf) -> anyhow::Result<PathBuf>
 /// The path to the Windows named pipe that the server is listening on
 #[cfg(windows)]
 pub(crate) fn spawn_dump_server(output_path: PathBuf) -> anyhow::Result<PathBuf> {
-    use std::io::ErrorKind;
     use tokio::net::windows::named_pipe::ServerOptions;
 
     // Create a unique named pipe name with randomness to avoid collisions
-    // Retry if the pipe name already exists (highly unlikely with 64-bit random IDs)
-    // Note: We can only detect name collision by attempting to create the pipe with
-    // first_pipe_instance(true), which will fail if the name is already in use
-    let (pipe_name, pipe_path) = loop {
-        let random_id: u64 = rand::random();
-        let name = format!(
-            r"\\.\pipe\libdatadog_dump_{}_{:x}",
-            std::process::id(),
-            random_id
-        );
-
-        // Try to create the pipe to check if the name is available
-        match ServerOptions::new().first_pipe_instance(true).create(&name) {
-            Ok(_test_pipe) => {
-                // Name is available, drop the test pipe and use this name
-                drop(_test_pipe);
-                let pipe_path = PathBuf::from(&name);
-                break (name, pipe_path);
-            }
-            Err(e) if e.kind() == ErrorKind::AddrInUse => {
-                // Name collision, retry with new random ID
-                continue;
-            }
-            Err(e) => {
-                // Some other error occurred
-                return Err(e.into());
-            }
-        }
-    };
+    // With 64-bit random IDs, collision probability is ~1 in 18 quintillion
+    let random_id: u64 = rand::random();
+    let pipe_name = format!(
+        r"\\.\pipe\libdatadog_dump_{}_{:x}",
+        std::process::id(),
+        random_id
+    );
+    let pipe_path = PathBuf::from(&pipe_name);
 
     let (tx, rx) = std::sync::mpsc::channel();
 
