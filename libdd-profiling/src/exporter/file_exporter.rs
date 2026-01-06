@@ -99,7 +99,8 @@ pub(crate) fn spawn_dump_server(output_path: PathBuf) -> anyhow::Result<PathBuf>
             Ok(_test_pipe) => {
                 // Name is available, drop the test pipe and use this name
                 drop(_test_pipe);
-                break (name, PathBuf::from(&name));
+                let pipe_path = PathBuf::from(&name);
+                break (name, pipe_path);
             }
             Err(e) if e.kind() == ErrorKind::AddrInUse => {
                 // Name collision, retry with new random ID
