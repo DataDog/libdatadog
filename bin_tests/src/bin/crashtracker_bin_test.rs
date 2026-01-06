@@ -82,7 +82,7 @@ mod unix {
         let endpoint = if output_url.is_empty() {
             None
         } else {
-            Some(Endpoint::from_slice(&output_url))
+            Some(Endpoint::from_slice(output_url))
         };
 
         // The configuration can be modified by a Behavior (testing plan), so it is mut here.
@@ -116,7 +116,7 @@ mod unix {
         };
 
         // Set the behavior of the test, run setup, and do the pre-init test
-        let behavior = get_behavior(&mode_str);
+        let behavior = get_behavior(mode_str);
         behavior.setup(output_dir, &mut config)?;
         behavior.pre(output_dir)?;
 

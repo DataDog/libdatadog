@@ -8,7 +8,7 @@ fn main() {
     use std::process::Command;
 
     let out_dir = PathBuf::from(env::var("OUT_DIR").expect("OUT_DIR not set"));
-    let src = PathBuf::from("preload/malloc_logger.c");
+    let src = PathBuf::from("preload/preload.c");
     let so_path = out_dir.join("libmalloc_logger.so");
 
     let status = Command::new("cc")
@@ -19,7 +19,7 @@ fn main() {
         .expect("failed to spawn cc");
 
     if !status.success() {
-        panic!("compiling malloc_logger.c failed with status {status}");
+        panic!("compiling preload.c failed with status {status}");
     }
 
     // Make the built shared object path available at compile time for tests/tools.
