@@ -1,7 +1,7 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use libdd_profiling::exporter::utils::{extract_boundary, parse_http_request, parse_multipart};
+use libdd_profiling::exporter::utils::parse_http_request;
 use libdd_profiling::exporter::ProfileExporter;
 use libdd_profiling::internal::EncodedProfile;
 use std::path::PathBuf;
@@ -17,13 +17,11 @@ fn create_file_exporter(
     use libdd_profiling::exporter::config;
 
     // Create a unique temp file path
-    let temp_dir = std::env::temp_dir();
-    let random_id: u64 = rand::random();
-    let file_path = temp_dir.join(format!(
+    let file_path = std::env::temp_dir().join(format!(
         "libdd_test_{}_{}_{:x}.http",
         std::process::id(),
         chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0),
-        random_id
+        rand::random::<u64>()
     ));
 
     let mut endpoint = config::file(file_path.to_string_lossy().as_ref())?;
@@ -98,16 +96,9 @@ mod tests {
             profiling_library_version
         );
 
-        // Parse multipart body
-        let content_type = request
-            .headers
-            .get("content-type")
-            .expect("Content-Type header");
-        let boundary = extract_boundary(content_type).expect("extract boundary");
-        let parts = parse_multipart(&request.body, &boundary).expect("parse multipart");
-
-        // Find event.json part
-        let event_part = parts
+        // Get parsed multipart body and find event.json part
+        let event_part = request
+            .multipart_parts
             .iter()
             .find(|p| p.filename.as_deref() == Some("event.json"))
             .expect("event.json part");
@@ -146,7 +137,8 @@ mod tests {
         assert_eq!(event_json["version"], json!("4"));
 
         // Verify profile.pprof part exists
-        let profile_part = parts
+        let profile_part = request
+            .multipart_parts
             .iter()
             .find(|p| p.name == "profile.pprof")
             .expect("profile.pprof part");
@@ -204,11 +196,8 @@ mod tests {
 
         // Parse and validate
         let request = parse_http_request(&request_bytes).expect("parse HTTP request");
-        let content_type = request.headers.get("content-type").expect("Content-Type");
-        let boundary = extract_boundary(content_type).expect("extract boundary");
-        let parts = parse_multipart(&request.body, &boundary).expect("parse multipart");
-
-        let event_part = parts
+        let event_part = request
+            .multipart_parts
             .iter()
             .find(|p| p.filename.as_deref() == Some("event.json"))
             .expect("event.json part");
@@ -262,11 +251,8 @@ mod tests {
 
         // Parse and validate
         let request = parse_http_request(&request_bytes).expect("parse HTTP request");
-        let content_type = request.headers.get("content-type").expect("Content-Type");
-        let boundary = extract_boundary(content_type).expect("extract boundary");
-        let parts = parse_multipart(&request.body, &boundary).expect("parse multipart");
-
-        let event_part = parts
+        let event_part = request
+            .multipart_parts
             .iter()
             .find(|p| p.filename.as_deref() == Some("event.json"))
             .expect("event.json part");
@@ -327,11 +313,8 @@ mod tests {
 
         // Parse and validate
         let request = parse_http_request(&request_bytes).expect("parse HTTP request");
-        let content_type = request.headers.get("content-type").expect("Content-Type");
-        let boundary = extract_boundary(content_type).expect("extract boundary");
-        let parts = parse_multipart(&request.body, &boundary).expect("parse multipart");
-
-        let event_part = parts
+        let event_part = request
+            .multipart_parts
             .iter()
             .find(|p| p.filename.as_deref() == Some("event.json"))
             .expect("event.json part");

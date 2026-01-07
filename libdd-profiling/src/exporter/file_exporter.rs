@@ -10,6 +10,9 @@
 
 use anyhow::Context;
 use std::path::PathBuf;
+use tokio::io::AsyncReadExt;
+
+use super::utils::find_subsequence;
 
 /// HTTP 200 OK response with no body
 const HTTP_200_RESPONSE: &[u8] = b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n";
@@ -129,7 +132,7 @@ async fn run_dump_server_unix(
 ) -> anyhow::Result<()> {
     loop {
         let (stream, _) = listener.accept().await?;
-        if let Err(e) = handle_connection_async(stream, output_path.clone()).await {
+        if let Err(e) = handle_connection(stream, output_path.clone()).await {
             eprintln!("[dump-server] Error handling connection: {:#}", e);
         }
     }
@@ -159,31 +162,43 @@ async fn run_dump_server_windows(
         current_server.connect().await?;
 
         // Handle connection sequentially (this is just a debugging API)
-        if let Err(e) = handle_connection_async(current_server, output_path.clone()).await {
+        if let Err(e) = handle_connection(current_server, output_path.clone()).await {
             eprintln!("[dump-server] Error handling connection: {:#}", e);
         }
     }
 }
 
-/// Helper function to find a subsequence in a byte slice
-fn find_subsequence(haystack: &[u8], needle: &[u8]) -> Option<usize> {
-    haystack
-        .windows(needle.len())
-        .position(|window| window == needle)
+/// Check if headers indicate chunked transfer encoding
+fn is_chunked_encoding(headers: &[httparse::Header]) -> bool {
+    headers.iter().any(|h| {
+        h.name.eq_ignore_ascii_case("transfer-encoding")
+            && std::str::from_utf8(h.value).is_ok_and(|v| v.to_lowercase().contains("chunked"))
+    })
 }
 
-/// Parse Content-Length from HTTP headers
-fn parse_content_length(headers_data: &[u8]) -> Option<usize> {
-    if let Ok(headers_str) = std::str::from_utf8(headers_data) {
-        for line in headers_str.lines() {
-            if line.to_lowercase().starts_with("content-length:") {
-                if let Some(len_str) = line.split(':').nth(1) {
-                    return len_str.trim().parse().ok();
-                }
-            }
+/// Extract Content-Length from headers
+fn get_content_length(headers: &[httparse::Header]) -> Option<usize> {
+    headers
+        .iter()
+        .find(|h| h.name.eq_ignore_ascii_case("content-length"))
+        .and_then(|h| std::str::from_utf8(h.value).ok())
+        .and_then(|v| v.trim().parse().ok())
+}
+
+/// Parse HTTP request headers and extract metadata
+/// Returns (headers_end_position, content_length, is_chunked)
+fn parse_http_headers(request_data: &[u8]) -> anyhow::Result<(Option<usize>, Option<usize>, bool)> {
+    let mut headers = [httparse::EMPTY_HEADER; 64];
+    let mut req = httparse::Request::new(&mut headers);
+
+    match req.parse(request_data)? {
+        httparse::Status::Complete(headers_len) => {
+            let content_length = get_content_length(req.headers);
+            let is_chunked = is_chunked_encoding(req.headers);
+            Ok((Some(headers_len), content_length, is_chunked))
         }
+        httparse::Status::Partial => Ok((None, None, false)),
     }
-    None
 }
 
 /// Check if we have received a complete HTTP request
@@ -191,34 +206,43 @@ fn is_request_complete(
     request_data: &[u8],
     headers_end_pos: Option<usize>,
     content_length: Option<usize>,
+    is_chunked: bool,
 ) -> bool {
-    if let Some(headers_end) = headers_end_pos {
-        if let Some(expected_len) = content_length {
-            let body_len = request_data.len() - headers_end;
-            return body_len >= expected_len;
-        }
+    let Some(headers_end) = headers_end_pos else {
+        return false;
+    };
 
-        // For chunked transfer encoding, look for the end chunk marker
-        // The end of a chunked body is: 0\r\n\r\n
-        if request_data.len() >= headers_end + 5 {
-            let body = &request_data[headers_end..];
-            // Check if body ends with the chunked encoding terminator
-            if body.ends_with(b"0\r\n\r\n") {
-                return true;
-            }
-        }
+    // Check Content-Length based completion
+    if let Some(expected_len) = content_length {
+        let body_len = request_data.len() - headers_end;
+        return body_len >= expected_len;
     }
+
+    // Check chunked transfer encoding completion (ends with 0\r\n\r\n)
+    if is_chunked {
+        let body = &request_data[headers_end..];
+        return body.ends_with(b"0\r\n\r\n");
+    }
+
     false
 }
 
+/// Parsed HTTP request with raw data
+struct ParsedRequest {
+    raw_data: Vec<u8>,
+    headers_len: usize,
+    is_chunked: bool,
+}
+
 /// Read complete HTTP request from an async stream
-async fn read_http_request_async<R: tokio::io::AsyncReadExt + Unpin>(
+async fn read_http_request<R: AsyncReadExt + Unpin>(
     stream: &mut R,
-) -> anyhow::Result<Vec<u8>> {
+) -> anyhow::Result<ParsedRequest> {
     let mut request_data = Vec::new();
     let mut buffer = [0u8; 8192];
     let mut content_length: Option<usize> = None;
     let mut headers_end_pos: Option<usize> = None;
+    let mut is_chunked = false;
 
     loop {
         let n = stream
@@ -232,42 +256,40 @@ async fn read_http_request_async<R: tokio::io::AsyncReadExt + Unpin>(
 
         request_data.extend_from_slice(&buffer[..n]);
 
-        // Look for end of headers if we haven't found it yet
+        // Parse headers if we haven't completed parsing yet
         if headers_end_pos.is_none() {
-            if let Some(pos) = find_subsequence(&request_data, b"\r\n\r\n") {
-                headers_end_pos = Some(pos + 4);
-                content_length = parse_content_length(&request_data[..pos]);
-            }
+            (headers_end_pos, content_length, is_chunked) = parse_http_headers(&request_data)?;
         }
 
         // Check if we have the complete request
-        if is_request_complete(&request_data, headers_end_pos, content_length) {
+        if is_request_complete(&request_data, headers_end_pos, content_length, is_chunked) {
             break;
         }
     }
 
-    Ok(request_data)
+    Ok(ParsedRequest {
+        raw_data: request_data,
+        headers_len: headers_end_pos.unwrap_or(0),
+        is_chunked,
+    })
 }
 
 /// Decode chunked transfer encoding
-fn decode_chunked_body(chunked_data: &[u8]) -> Vec<u8> {
+fn decode_chunked_body(chunked_data: &[u8]) -> anyhow::Result<Vec<u8>> {
     let mut result = Vec::new();
     let mut pos = 0;
 
     while pos < chunked_data.len() {
         // Find the end of the chunk size line (\r\n)
-        let Some(line_end) = find_subsequence(&chunked_data[pos..], b"\r\n") else {
-            break;
-        };
+        let line_end = find_subsequence(&chunked_data[pos..], b"\r\n")
+            .with_context(|| format!("Missing CRLF after chunk size at position {}", pos))?;
 
         // Parse the chunk size (hex)
-        let Ok(size_str) = std::str::from_utf8(&chunked_data[pos..pos + line_end]) else {
-            break;
-        };
+        let size_str = std::str::from_utf8(&chunked_data[pos..pos + line_end])
+            .context("Invalid UTF-8 in chunk size")?;
 
-        let Ok(chunk_size) = usize::from_str_radix(size_str.trim(), 16) else {
-            break;
-        };
+        let chunk_size = usize::from_str_radix(size_str.trim(), 16)
+            .with_context(|| format!("Invalid hex chunk size: {:?}", size_str))?;
 
         if chunk_size == 0 {
             break; // End of chunks
@@ -277,9 +299,11 @@ fn decode_chunked_body(chunked_data: &[u8]) -> Vec<u8> {
         pos += line_end + 2;
 
         // Read the chunk data
-        if pos + chunk_size > chunked_data.len() {
-            break;
-        }
+        let remaining = chunked_data.len() - pos;
+        anyhow::ensure!(
+            chunk_size <= remaining,
+            "Incomplete chunk data: expected {chunk_size} bytes at position {pos}, only {remaining} bytes remaining"
+        );
 
         result.extend_from_slice(&chunked_data[pos..pos + chunk_size]);
         pos += chunk_size;
@@ -290,65 +314,68 @@ fn decode_chunked_body(chunked_data: &[u8]) -> Vec<u8> {
         }
     }
 
-    result
+    Ok(result)
 }
 
-/// Write request data to file if non-empty (async version)
-/// Decodes chunked transfer encoding if present
-async fn write_request_to_file_async(
-    output_path: &PathBuf,
+/// Reconstruct HTTP request with chunked encoding decoded
+fn reconstruct_with_content_length(
     request_data: &[u8],
+    headers_len: usize,
+) -> anyhow::Result<Vec<u8>> {
+    let mut headers = [httparse::EMPTY_HEADER; 64];
+    let mut req = httparse::Request::new(&mut headers);
+
+    // Parse the request
+    match req.parse(request_data)? {
+        httparse::Status::Complete(_) => {}
+        httparse::Status::Partial => anyhow::bail!("Incomplete HTTP request for reconstruction"),
+    }
+
+    let body = &request_data[headers_len..];
+    let decoded_body = decode_chunked_body(body)?;
+    let mut reconstructed = Vec::new();
+
+    // Reconstruct request line
+    if let (Some(method), Some(path), Some(version)) = (req.method, req.path, req.version) {
+        let line = format!("{} {} HTTP/1.{}\r\n", method, path, version);
+        reconstructed.extend_from_slice(line.as_bytes());
+    }
+
+    // Add all headers except Transfer-Encoding
+    for header in req.headers {
+        if !header.name.eq_ignore_ascii_case("transfer-encoding") {
+            reconstructed.extend_from_slice(header.name.as_bytes());
+            reconstructed.extend_from_slice(b": ");
+            reconstructed.extend_from_slice(header.value);
+            reconstructed.extend_from_slice(b"\r\n");
+        }
+    }
+
+    // Add Content-Length header and body
+    let cl_header = format!("Content-Length: {}\r\n\r\n", decoded_body.len());
+    reconstructed.extend_from_slice(cl_header.as_bytes());
+    reconstructed.extend_from_slice(&decoded_body);
+
+    Ok(reconstructed)
+}
+
+/// Write request data to file if non-empty
+/// Decodes chunked transfer encoding if present
+async fn write_request_to_file(
+    output_path: &PathBuf,
+    parsed_request: &ParsedRequest,
 ) -> anyhow::Result<()> {
-    if request_data.is_empty() {
+    if parsed_request.raw_data.is_empty() {
         return Ok(());
     }
 
-    // Check if this is a chunked request and decode it
-    let data_to_write = if let Some(headers_end) = find_subsequence(request_data, b"\r\n\r\n") {
-        let headers = &request_data[..headers_end];
-        let body = &request_data[headers_end + 4..];
-
-        // Check for transfer-encoding: chunked
-        let is_chunked = std::str::from_utf8(headers).is_ok_and(|headers_str| {
-            headers_str
-                .to_lowercase()
-                .contains("transfer-encoding: chunked")
-        });
-
-        if is_chunked {
-            // Decode the chunked body and reconstruct the request with Content-Length
-            let decoded_body = decode_chunked_body(body);
-            let mut reconstructed = Vec::new();
-
-            // Add headers but replace transfer-encoding with content-length
-            if let Ok(headers_str) = std::str::from_utf8(headers) {
-                for line in headers_str.lines() {
-                    if !line.to_lowercase().starts_with("transfer-encoding:") {
-                        reconstructed.extend_from_slice(line.as_bytes());
-                        reconstructed.extend_from_slice(b"\r\n");
-                    }
-                }
-                // Add content-length header
-                reconstructed.extend_from_slice(
-                    format!("Content-Length: {}\r\n", decoded_body.len()).as_bytes(),
-                );
-            }
-
-            // Add the decoded body
-            reconstructed.extend_from_slice(b"\r\n");
-            reconstructed.extend_from_slice(&decoded_body);
-
-            reconstructed
-        } else {
-            request_data.to_vec()
-        }
+    let data_to_write = if parsed_request.is_chunked && parsed_request.headers_len > 0 {
+        reconstruct_with_content_length(&parsed_request.raw_data, parsed_request.headers_len)?
     } else {
-        request_data.to_vec()
+        parsed_request.raw_data.clone()
     };
 
-    // Write to file and explicitly sync to ensure data is on disk before responding
     use tokio::io::AsyncWriteExt;
-
     let mut file = tokio::fs::File::create(output_path)
         .await
         .context("Failed to create dump file")?;
@@ -366,12 +393,12 @@ async fn write_request_to_file_async(
 }
 
 /// Handle a connection: read HTTP request, write to file, send response
-async fn handle_connection_async<S>(mut stream: S, output_path: PathBuf) -> anyhow::Result<()>
+async fn handle_connection<S>(mut stream: S, output_path: PathBuf) -> anyhow::Result<()>
 where
-    S: tokio::io::AsyncReadExt + tokio::io::AsyncWriteExt + Unpin,
+    S: AsyncReadExt + tokio::io::AsyncWriteExt + Unpin,
 {
-    let request_data = read_http_request_async(&mut stream).await?;
-    write_request_to_file_async(&output_path, &request_data).await?;
+    let parsed_request = read_http_request(&mut stream).await?;
+    write_request_to_file(&output_path, &parsed_request).await?;
 
     stream
         .write_all(HTTP_200_RESPONSE)

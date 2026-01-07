@@ -15,6 +15,7 @@ pub struct HttpRequest {
     pub path: String,
     pub headers: HashMap<String, String>,
     pub body: Vec<u8>,
+    pub multipart_parts: Vec<MultipartPart>,
 }
 
 /// Represents a parsed multipart form part
@@ -27,6 +28,9 @@ pub struct MultipartPart {
 }
 
 /// Parse an HTTP request from raw bytes
+///
+/// If the Content-Type header indicates multipart/form-data, the multipart body will be
+/// automatically parsed and available in the `multipart_parts` field.
 ///
 /// # Arguments
 /// * `data` - Raw HTTP request bytes including headers and body
@@ -43,208 +47,87 @@ pub struct MultipartPart {
 /// assert_eq!(request.method, "POST");
 /// ```
 pub fn parse_http_request(data: &[u8]) -> anyhow::Result<HttpRequest> {
-    // Split headers and body by double CRLF
-    let separator = b"\r\n\r\n";
-    let split_pos = data
-        .windows(separator.len())
-        .position(|window| window == separator)
-        .context("No header/body separator found")?;
+    let mut header_buf = [httparse::EMPTY_HEADER; 64];
+    let mut req = httparse::Request::new(&mut header_buf);
 
-    let header_section = &data[..split_pos];
-    let body = &data[split_pos + separator.len()..];
+    let headers_len = match req.parse(data)? {
+        httparse::Status::Complete(len) => len,
+        httparse::Status::Partial => anyhow::bail!("Incomplete HTTP request"),
+    };
 
-    // Parse headers
-    let header_str = std::str::from_utf8(header_section)?;
-    let mut lines = header_str.lines();
+    let method = req.method.context("No method found")?.to_string();
+    let path = req.path.context("No path found")?.to_string();
 
-    // Parse request line
-    let request_line = lines.next().context("No request line found")?;
-    let parts: Vec<&str> = request_line.split_whitespace().collect();
-    if parts.len() < 2 {
-        anyhow::bail!("Invalid request line");
-    }
-    let method = parts[0].to_string();
-    let path = parts[1].to_string();
-
-    // Parse headers
+    // Convert headers to HashMap with lowercase keys
     let mut headers = HashMap::new();
-    for line in lines {
-        if let Some(colon_pos) = line.find(':') {
-            let key = line[..colon_pos].trim().to_lowercase();
-            let value = line[colon_pos + 1..].trim().to_string();
-            headers.insert(key, value);
-        }
+    for header in req.headers {
+        let key = header.name.to_lowercase();
+        let value = std::str::from_utf8(header.value)?.to_string();
+        headers.insert(key, value);
     }
+
+    let body = data[headers_len..].to_vec();
+
+    // Auto-parse multipart if Content-Type indicates multipart/form-data
+    let multipart_parts = match headers.get("content-type") {
+        Some(ct) if ct.contains("multipart/form-data") => parse_multipart(ct, &body)?,
+        _ => Vec::new(),
+    };
 
     Ok(HttpRequest {
         method,
         path,
         headers,
-        body: body.to_vec(),
+        body,
+        multipart_parts,
     })
 }
 
-/// Extract multipart boundary from Content-Type header
+/// Parse multipart form data from Content-Type header and body (internal helper)
 ///
-/// # Arguments
-/// * `content_type` - The Content-Type header value (e.g., "multipart/form-data;
-///   boundary=----abc123")
-///
-/// # Returns
-/// The boundary string or an error if not found
-///
-/// # Example
-/// ```
-/// use libdd_profiling::exporter::utils::extract_boundary;
-///
-/// let content_type = "multipart/form-data; boundary=----WebKitFormBoundary123";
-/// let boundary = extract_boundary(content_type).unwrap();
-/// assert_eq!(boundary, "----WebKitFormBoundary123");
-/// ```
-pub fn extract_boundary(content_type: &str) -> anyhow::Result<String> {
-    let boundary_prefix = "boundary=";
-    let boundary = content_type
-        .split(';')
-        .find_map(|part| {
-            let part = part.trim();
-            part.strip_prefix(boundary_prefix)
-                .map(|s| s.trim().to_string())
-        })
-        .context("No boundary found in Content-Type")?;
-    Ok(boundary)
-}
+/// Extracts the boundary from the Content-Type header and parses the multipart body.
+/// This is called automatically by `parse_http_request` when appropriate.
+fn parse_multipart(content_type: &str, body: &[u8]) -> anyhow::Result<Vec<MultipartPart>> {
+    use multipart::server::Multipart;
+    use std::io::Cursor;
 
-/// Parse multipart form data
-///
-/// # Arguments
-/// * `body` - The raw body bytes containing multipart data
-/// * `boundary` - The multipart boundary string (without leading dashes)
-///
-/// # Returns
-/// A vector of parsed `MultipartPart` instances
-///
-/// # Example
-/// ```no_run
-/// use libdd_profiling::exporter::utils::parse_multipart;
-///
-/// let body = b"--boundary\r\nContent-Disposition: form-data; name=\"field\"\r\n\r\nvalue\r\n--boundary--";
-/// let parts = parse_multipart(body, "boundary").unwrap();
-/// assert_eq!(parts.len(), 1);
-/// ```
-pub fn parse_multipart(body: &[u8], boundary: &str) -> anyhow::Result<Vec<MultipartPart>> {
-    let delimiter = format!("--{}", boundary);
-    let delimiter_bytes = delimiter.as_bytes();
-    let end_delimiter = format!("--{}--", boundary);
-    let end_delimiter_bytes = end_delimiter.as_bytes();
+    // Extract boundary from Content-Type header
+    let mime: mime::Mime = content_type
+        .parse()
+        .context("Failed to parse Content-Type as MIME type")?;
 
+    let boundary = mime
+        .get_param(mime::BOUNDARY)
+        .context("No boundary parameter found in Content-Type")?
+        .as_str();
+
+    // Parse multipart body
+    let cursor = Cursor::new(body);
+    let mut multipart = Multipart::with_body(cursor, boundary);
     let mut parts = Vec::new();
-    let mut pos = 0;
 
-    // Skip to first boundary
-    if let Some(first_boundary) = find_subsequence(&body[pos..], delimiter_bytes) {
-        pos += first_boundary + delimiter_bytes.len();
-        // Skip CRLF after boundary
-        if pos + 2 <= body.len() && &body[pos..pos + 2] == b"\r\n" {
-            pos += 2;
-        }
-    } else {
-        anyhow::bail!("No multipart boundary found");
-    }
+    while let Some(mut field) = multipart.read_entry()? {
+        let headers = &field.headers;
+        let name = headers.name.to_string();
+        let filename = headers.filename.clone();
+        let content_type = headers.content_type.as_ref().map(|ct| ct.to_string());
 
-    loop {
-        // Check if we've reached the end delimiter
-        if body[pos..].starts_with(end_delimiter_bytes) {
-            break;
-        }
+        let mut content = Vec::new();
+        std::io::Read::read_to_end(&mut field.data, &mut content)?;
 
-        // Find the next boundary or end
-        let next_delimiter_pos = find_subsequence(&body[pos..], delimiter_bytes)
-            .context("Expected delimiter not found")?;
-
-        // Extract this part's data (remove trailing CRLF before delimiter)
-        let part_end = pos + next_delimiter_pos;
-        let part_data = &body[pos..part_end];
-
-        // Parse the part
-        if let Ok(part) = parse_multipart_part(part_data) {
-            parts.push(part);
-        }
-
-        // Move past the delimiter
-        pos = part_end + delimiter_bytes.len();
-
-        // Check if this is the end delimiter (delimiter followed by --)
-        if pos + 2 <= body.len() && &body[pos..pos + 2] == b"--" {
-            break;
-        }
-
-        // Skip CRLF after boundary
-        if pos + 2 <= body.len() && &body[pos..pos + 2] == b"\r\n" {
-            pos += 2;
-        }
+        parts.push(MultipartPart {
+            name,
+            filename,
+            content_type,
+            content,
+        });
     }
 
     Ok(parts)
 }
 
-/// Parse a single multipart part
-///
-/// # Arguments
-/// * `data` - Raw bytes for a single multipart part (including headers and content)
-///
-/// # Returns
-/// A parsed `MultipartPart` or an error if parsing fails
-pub fn parse_multipart_part(data: &[u8]) -> anyhow::Result<MultipartPart> {
-    // Find header/body separator
-    let separator = b"\r\n\r\n";
-    let split_pos = data
-        .windows(separator.len())
-        .position(|window| window == separator)
-        .context("No part header/body separator")?;
-
-    let header_section = &data[..split_pos];
-    let mut content = data[split_pos + separator.len()..].to_vec();
-
-    // Remove trailing CRLF from content if present
-    if content.ends_with(b"\r\n") {
-        content.truncate(content.len() - 2);
-    }
-
-    // Parse part headers
-    let header_str = std::str::from_utf8(header_section)?;
-    let mut name = String::new();
-    let mut filename = None;
-    let mut content_type = None;
-
-    for line in header_str.lines() {
-        let lower_line = line.to_lowercase();
-        if lower_line.starts_with("content-disposition:") {
-            // Extract name and filename
-            for part in line.split(';') {
-                let part = part.trim();
-                if let Some(name_value) = part.strip_prefix("name=") {
-                    name = name_value.trim_matches('"').to_string();
-                } else if let Some(filename_value) = part.strip_prefix("filename=") {
-                    filename = Some(filename_value.trim_matches('"').to_string());
-                }
-            }
-        } else if lower_line.starts_with("content-type:") {
-            if let Some(colon_pos) = line.find(':') {
-                content_type = Some(line[colon_pos + 1..].trim().to_string());
-            }
-        }
-    }
-
-    Ok(MultipartPart {
-        name,
-        filename,
-        content_type,
-        content,
-    })
-}
-
 /// Helper to find subsequence in bytes
-fn find_subsequence(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+pub(super) fn find_subsequence(haystack: &[u8], needle: &[u8]) -> Option<usize> {
     haystack
         .windows(needle.len())
         .position(|window| window == needle)
@@ -267,22 +150,25 @@ mod tests {
             "application/json"
         );
         assert_eq!(parsed.body, b"{\"test\":true}");
+        assert!(parsed.multipart_parts.is_empty());
     }
 
     #[test]
-    fn test_extract_boundary() {
-        let content_type = "multipart/form-data; boundary=----WebKitFormBoundary123";
-        let boundary = extract_boundary(content_type).unwrap();
-        assert_eq!(boundary, "----WebKitFormBoundary123");
-    }
-
-    #[test]
-    fn test_parse_multipart_simple() {
+    fn test_parse_http_request_with_multipart() {
+        let content_type = "multipart/form-data; boundary=----WebKitFormBoundary";
         let body = b"------WebKitFormBoundary\r\nContent-Disposition: form-data; name=\"field\"\r\n\r\nvalue\r\n------WebKitFormBoundary--";
-        let parts = parse_multipart(body, "----WebKitFormBoundary").unwrap();
+        let request = format!(
+            "POST /v1/input HTTP/1.1\r\nHost: example.com\r\nContent-Type: {}\r\n\r\n",
+            content_type
+        );
+        let mut request_bytes = request.into_bytes();
+        request_bytes.extend_from_slice(body);
 
-        assert_eq!(parts.len(), 1);
-        assert_eq!(parts[0].name, "field");
-        assert_eq!(parts[0].content, b"value");
+        let parsed = parse_http_request(&request_bytes).unwrap();
+
+        assert_eq!(parsed.method, "POST");
+        assert_eq!(parsed.multipart_parts.len(), 1);
+        assert_eq!(parsed.multipart_parts[0].name, "field");
+        assert_eq!(parsed.multipart_parts[0].content, b"value");
     }
 }
