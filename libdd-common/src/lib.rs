@@ -303,4 +303,21 @@ impl Endpoint {
     pub fn is_file_endpoint(&self) -> bool {
         self.url.scheme_str() == Some("file")
     }
+
+    /// Set a custom timeout for this endpoint.
+    /// If not called, uses the default timeout of 3000ms.
+    ///
+    /// # Arguments
+    /// * `timeout_ms` - Timeout in milliseconds. Pass 0 to use the default timeout (3000ms).
+    ///
+    /// # Returns
+    /// Self with the timeout set, allowing for method chaining
+    pub fn with_timeout(mut self, timeout_ms: u64) -> Self {
+        self.timeout_ms = if timeout_ms == 0 {
+            Self::DEFAULT_TIMEOUT
+        } else {
+            timeout_ms
+        };
+        self
+    }
 }

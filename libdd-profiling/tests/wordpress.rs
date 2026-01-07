@@ -3,10 +3,8 @@
 
 use libdd_profiling::api;
 use libdd_profiling_protobuf::prost_impls;
-use lz4_flex::frame::FrameDecoder;
 use prost::Message;
-use std::fs::File;
-use std::io::{copy, Cursor};
+use std::io::Cursor;
 use std::time::Duration;
 
 // PHP uses a restricted set of things; this helper function cuts down on a lot of typing.
@@ -27,13 +25,9 @@ fn php_location<'a>(name: &'a str, filename: &'a str, line: i64) -> api::Locatio
 // This test is too slow for miri
 #[cfg_attr(miri, ignore)]
 fn wordpress() {
-    let compressed_size = 101824_u64;
-    let uncompressed_size = 200692_u64;
-    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/wordpress.pprof.lz4");
-    let mut decoder = FrameDecoder::new(File::open(path).unwrap());
-    let mut bytes = Vec::with_capacity(compressed_size as usize);
-    let bytes_copied = copy(&mut decoder, &mut bytes).unwrap();
-    assert_eq!(uncompressed_size, bytes_copied);
+    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/wordpress.pprof");
+    let bytes = std::fs::read(path).unwrap();
+    assert_eq!(200692, bytes.len());
 
     let pprof = prost_impls::Profile::decode(&mut Cursor::new(&bytes)).unwrap();
     let api = api::Profile::try_from(&pprof).unwrap();
