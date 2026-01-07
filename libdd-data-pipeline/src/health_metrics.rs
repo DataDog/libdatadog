@@ -94,7 +94,7 @@ pub(crate) const DESERIALIZE_TRACES_ERRORS: &str = "datadog.tracer.exporter.dese
 /// **Type**: Count  
 /// **When Emitted**: When msgpack serialization fails  
 /// **Tags**: `libdatadog_version`
-#[allow(dead_code)] // Used in trace_exporter integration
+#[allow(dead_code)] // Will be used Soon:tm:
 pub(crate) const SERIALIZE_TRACES_ERRORS: &str = "datadog.tracer.exporter.serialize.errors";
 
 // =============================================================================
@@ -195,7 +195,6 @@ pub(crate) enum HealthMetric {
 
 /// Categorization of errors from different sources (direct hyper responses vs
 /// send_with_retry results) for consistent metric emission
-#[allow(dead_code)] // Used in trace_exporter integration
 #[derive(Debug, Clone, Copy)]
 #[cfg_attr(test, derive(PartialEq, Eq))]
 pub(crate) enum TransportErrorType {
@@ -211,7 +210,6 @@ pub(crate) enum TransportErrorType {
     Build,
 }
 
-#[allow(dead_code)] // Used in trace_exporter integration
 impl TransportErrorType {
     pub(crate) fn as_tag_value(&self) -> Cow<'static, str> {
         match self {
@@ -238,7 +236,6 @@ impl TransportErrorType {
 ///
 /// This structure captures all the information needed to emit the appropriate
 /// health metric for a send operation regardless whence it came
-#[allow(dead_code)] // Used in trace_exporter integration
 #[derive(Debug)]
 #[cfg_attr(test, derive(Clone, PartialEq))]
 pub(crate) struct SendResult {
@@ -252,7 +249,6 @@ pub(crate) struct SendResult {
     pub request_attempts: u32,
 }
 
-#[allow(dead_code)] // Used in trace_exporter integration
 impl SendResult {
     /// Create a new successful send result
     pub(crate) fn success(
@@ -260,10 +256,6 @@ impl SendResult {
         trace_chunks: usize,
         request_attempts: u32,
     ) -> Self {
-        debug_assert!(
-            trace_chunks > 0,
-            "SendResult::success called with zero trace chunks"
-        );
         debug_assert!(
             request_attempts > 0,
             "SendResult::success called with zero request attempts"
@@ -283,10 +275,6 @@ impl SendResult {
         trace_chunks: usize,
         request_attempts: u32,
     ) -> Self {
-        debug_assert!(
-            trace_chunks > 0,
-            "SendResult::failure called with zero trace chunks"
-        );
         debug_assert!(
             request_attempts > 0,
             "SendResult::failure called with zero request attempts"
