@@ -171,7 +171,8 @@ async fn run_dump_server_windows(
 /// Check if headers indicate chunked transfer encoding
 fn is_chunked_encoding(headers: &[httparse::Header]) -> bool {
     headers.iter().any(|h| {
-        h.name.eq_ignore_ascii_case("transfer-encoding")
+        h.name
+            .eq_ignore_ascii_case(http::header::TRANSFER_ENCODING.as_str())
             && std::str::from_utf8(h.value).is_ok_and(|v| v.to_lowercase().contains("chunked"))
     })
 }
@@ -180,7 +181,10 @@ fn is_chunked_encoding(headers: &[httparse::Header]) -> bool {
 fn get_content_length(headers: &[httparse::Header]) -> Option<usize> {
     headers
         .iter()
-        .find(|h| h.name.eq_ignore_ascii_case("content-length"))
+        .find(|h| {
+            h.name
+                .eq_ignore_ascii_case(http::header::CONTENT_LENGTH.as_str())
+        })
         .and_then(|h| std::str::from_utf8(h.value).ok())
         .and_then(|v| v.trim().parse().ok())
 }

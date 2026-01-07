@@ -169,7 +169,6 @@ mod tests {
             !profile_part.content.is_empty(),
             "profile should have content"
         );
-
     }
 
     #[test]
@@ -227,7 +226,6 @@ mod tests {
             serde_json::from_slice(&event_part.content).expect("parse event.json");
 
         assert_eq!(event_json["internal"], internal_metadata);
-
     }
 
     #[test]
@@ -280,7 +278,6 @@ mod tests {
             serde_json::from_slice(&event_part.content).expect("parse event.json");
 
         assert_eq!(event_json["process_tags"], expected_process_tags);
-
     }
 
     #[test]
@@ -340,7 +337,6 @@ mod tests {
             serde_json::from_slice(&event_part.content).expect("parse event.json");
 
         assert_eq!(event_json["info"], info);
-
     }
 
     #[test]
@@ -385,6 +381,5 @@ mod tests {
             request.headers.get("dd-evp-origin-version").unwrap(),
             profiling_library_version
         );
-
     }
 }
