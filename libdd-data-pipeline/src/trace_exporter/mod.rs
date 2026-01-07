@@ -706,7 +706,17 @@ impl TraceExporter {
             self.output_format,
             self.agent_payload_response_version.as_ref(),
         );
-        let prepared = serializer.prepare_traces_payload(traces, header_tags)?;
+        let prepared = match serializer.prepare_traces_payload(traces, header_tags) {
+            Ok(p) => p,
+            Err(e) => {
+                error!("Error serializing traces: {e}");
+                self.emit_metric(
+                    HealthMetric::Count(health_metrics::SERIALIZE_TRACES_ERRORS, 1),
+                    None,
+                );
+                return Err(e);
+            }
+        };
 
         let endpoint = Endpoint {
             url: self.get_agent_url(),

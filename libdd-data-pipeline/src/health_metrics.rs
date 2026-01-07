@@ -94,7 +94,6 @@ pub(crate) const DESERIALIZE_TRACES_ERRORS: &str = "datadog.tracer.exporter.dese
 /// **Type**: Count  
 /// **When Emitted**: When msgpack serialization fails  
 /// **Tags**: `libdatadog_version`
-#[allow(dead_code)] // Will be used Soon:tm:
 pub(crate) const SERIALIZE_TRACES_ERRORS: &str = "datadog.tracer.exporter.serialize.errors";
 
 // =============================================================================
