@@ -6,14 +6,37 @@ use libdd_profiling::exporter::ProfileExporter;
 use libdd_profiling::internal::EncodedProfile;
 use std::path::PathBuf;
 
-/// Create a file-based exporter and return the temp file path
+/// RAII guard to ensure test files are cleaned up even if the test panics
+struct TempFileGuard(PathBuf);
+
+impl Drop for TempFileGuard {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.0);
+    }
+}
+
+impl std::ops::Deref for TempFileGuard {
+    type Target = PathBuf;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl AsRef<std::path::Path> for TempFileGuard {
+    fn as_ref(&self) -> &std::path::Path {
+        self.0.as_ref()
+    }
+}
+
+/// Create a file-based exporter and return the temp file path with auto-cleanup
 fn create_file_exporter(
     profiling_library_name: &str,
     profiling_library_version: &str,
     family: &str,
     tags: Vec<libdd_common::tag::Tag>,
     api_key: Option<&str>,
-) -> anyhow::Result<(ProfileExporter, PathBuf)> {
+) -> anyhow::Result<(ProfileExporter, TempFileGuard)> {
     use libdd_profiling::exporter::config;
 
     // Create a unique temp file path
@@ -37,7 +60,7 @@ fn create_file_exporter(
         endpoint,
     )?;
 
-    Ok((exporter, file_path))
+    Ok((exporter, TempFileGuard(file_path)))
 }
 
 #[cfg(test)]
@@ -147,8 +170,6 @@ mod tests {
             "profile should have content"
         );
 
-        // Clean up
-        let _ = std::fs::remove_file(&file_path);
     }
 
     #[test]
@@ -207,8 +228,6 @@ mod tests {
 
         assert_eq!(event_json["internal"], internal_metadata);
 
-        // Clean up
-        let _ = std::fs::remove_file(&file_path);
     }
 
     #[test]
@@ -262,8 +281,6 @@ mod tests {
 
         assert_eq!(event_json["process_tags"], expected_process_tags);
 
-        // Clean up
-        let _ = std::fs::remove_file(&file_path);
     }
 
     #[test]
@@ -324,8 +341,6 @@ mod tests {
 
         assert_eq!(event_json["info"], info);
 
-        // Clean up
-        let _ = std::fs::remove_file(&file_path);
     }
 
     #[test]
@@ -371,7 +386,5 @@ mod tests {
             profiling_library_version
         );
 
-        // Clean up
-        let _ = std::fs::remove_file(&file_path);
     }
 }
