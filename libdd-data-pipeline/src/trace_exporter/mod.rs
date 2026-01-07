@@ -33,8 +33,8 @@ use arc_swap::{ArcSwap, ArcSwapOption};
 use http_body_util::BodyExt;
 use hyper::http::uri::PathAndQuery;
 use hyper::Uri;
-use libdd_common::{hyper_migration, Endpoint};
 use libdd_common::tag::Tag;
+use libdd_common::{hyper_migration, Endpoint};
 use libdd_common::{HttpClient, MutexExt};
 use libdd_dogstatsd_client::Client;
 use libdd_telemetry::worker::TelemetryWorker;
@@ -765,34 +765,22 @@ impl TraceExporter {
                     .await
             }
             SendWithRetryError::Timeout(attempts) => {
-                let send_result = SendResult::failure(
-                    TransportErrorType::Timeout,
-                    payload_len,
-                    chunks,
-                    attempts,
-                );
+                let send_result =
+                    SendResult::failure(TransportErrorType::Timeout, payload_len, chunks, attempts);
                 self.emit_send_result(&send_result);
                 Err(TraceExporterError::from(io::Error::from(
                     io::ErrorKind::TimedOut,
                 )))
             }
             SendWithRetryError::Network(err, attempts) => {
-                let send_result = SendResult::failure(
-                    TransportErrorType::Network,
-                    payload_len,
-                    chunks,
-                    attempts,
-                );
+                let send_result =
+                    SendResult::failure(TransportErrorType::Network, payload_len, chunks, attempts);
                 self.emit_send_result(&send_result);
                 Err(TraceExporterError::from(err))
             }
             SendWithRetryError::Build(attempts) => {
-                let send_result = SendResult::failure(
-                    TransportErrorType::Build,
-                    payload_len,
-                    chunks,
-                    attempts,
-                );
+                let send_result =
+                    SendResult::failure(TransportErrorType::Build, payload_len, chunks, attempts);
                 self.emit_send_result(&send_result);
                 Err(TraceExporterError::from(io::Error::from(
                     io::ErrorKind::Other,
@@ -892,10 +880,7 @@ impl TraceExporter {
         body: String,
         payload_version_changed: bool,
     ) -> Result<AgentResponse, TraceExporterError> {
-        debug!(
-            chunks = chunks,
-            "Trace chunks sent successfully to agent"
-        );
+        debug!(chunks = chunks, "Trace chunks sent successfully to agent");
         let send_result = SendResult::success(payload_len, chunks, attempts);
         self.emit_send_result(&send_result);
 
