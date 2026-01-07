@@ -21,6 +21,8 @@ use libdd_common::{
 
 pub mod config;
 mod errors;
+mod file_exporter;
+pub mod utils;
 
 #[cfg(unix)]
 pub use connector::uds::{socket_path_from_uri, socket_path_to_uri};
@@ -139,13 +141,32 @@ impl ProfileExporter {
         profiling_library_version: V,
         family: F,
         tags: Option<Vec<Tag>>,
-        endpoint: Endpoint,
+        mut endpoint: Endpoint,
     ) -> anyhow::Result<ProfileExporter>
     where
         F: Into<Cow<'static, str>>,
         N: Into<Cow<'static, str>>,
         V: Into<Cow<'static, str>>,
     {
+        // Handle file:// endpoints by spawning a local dump server
+        if endpoint.url.scheme_str() == Some("file") {
+            let output_path = libdd_common::decode_uri_path_in_authority(&endpoint.url)
+                .context("Failed to decode file path from file:// URI")?;
+
+            // Spawn the dump server and get the socket/pipe path
+            let server_path = file_exporter::spawn_dump_server(output_path)?;
+
+            // Convert the socket/pipe path to a URI - no path needed, server accepts any request
+            #[cfg(unix)]
+            {
+                endpoint.url = socket_path_to_uri(&server_path)?;
+            }
+            #[cfg(windows)]
+            {
+                endpoint.url = named_pipe_path_to_uri(&server_path)?;
+            }
+        }
+
         Ok(Self {
             exporter: Exporter::new()?,
             endpoint,
