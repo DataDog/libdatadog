@@ -555,7 +555,11 @@ impl Configurator {
                             return logged_result;
                         }
                     }
-                    Err(e) => return LoggedResult::Err(anyhow::Error::from(e).context("failed to get file metadata")),
+                    Err(e) => {
+                        return LoggedResult::Err(
+                            anyhow::Error::from(e).context("failed to get file metadata"),
+                        )
+                    }
                 }
                 match self.parse_stable_config_file(file) {
                     LoggedResult::Ok(config, logs) => {
@@ -564,7 +568,7 @@ impl Configurator {
                     }
                     LoggedResult::Err(e) => return LoggedResult::Err(e),
                 }
-            },
+            }
             Err(e) if e.kind() == io::ErrorKind::NotFound => StableConfig::default(),
             Err(e) => {
                 return LoggedResult::Err(
@@ -582,7 +586,11 @@ impl Configurator {
                             return LoggedResult::Err(test);
                         }
                     }
-                    Err(e) => return LoggedResult::Err(anyhow::Error::from(e).context("failed to get file metadata")),
+                    Err(e) => {
+                        return LoggedResult::Err(
+                            anyhow::Error::from(e).context("failed to get file metadata"),
+                        )
+                    }
                 }
                 match self.parse_stable_config_file(file) {
                     LoggedResult::Ok(config, logs) => {
@@ -591,7 +599,7 @@ impl Configurator {
                     }
                     LoggedResult::Err(e) => return LoggedResult::Err(e),
                 }
-            },
+            }
             Err(e) if e.kind() == io::ErrorKind::NotFound => StableConfig::default(),
             Err(e) => {
                 return LoggedResult::Err(
@@ -896,10 +904,7 @@ mod tests {
         let configurator = Configurator::new(true);
         let mut temp_local_file = tempfile::NamedTempFile::new().unwrap();
         let temp_fleet_file = tempfile::NamedTempFile::new().unwrap();
-        let mut large_file = Vec::new();
-        for _ in 0..(1024 * 1024 * 100 + 1) {
-            large_file.push(b'a');
-        }
+        let large_file = vec![b'a'; 1024 * 1024 * 100 + 1];
         temp_local_file.write_all(&large_file).unwrap();
         let temp_local_path = temp_local_file.into_temp_path();
         let temp_fleet_path = temp_fleet_file.into_temp_path();
@@ -915,7 +920,10 @@ mod tests {
         match result {
             LoggedResult::Ok(..) => panic!("Expected error"),
             LoggedResult::Err(e) => {
-                assert_eq!(e.to_string(), "Local file is too large (> 100mb)".to_string());
+                assert_eq!(
+                    e.to_string(),
+                    "Local file is too large (> 100mb)".to_string()
+                );
             }
         }
     }
@@ -925,10 +933,7 @@ mod tests {
         let configurator = Configurator::new(true);
         let temp_local_file = tempfile::NamedTempFile::new().unwrap();
         let mut temp_fleet_file = tempfile::NamedTempFile::new().unwrap();
-        let mut large_file = Vec::new();
-        for _ in 0..(1024 * 1024 * 100 + 1) {
-            large_file.push(b'a');
-        }
+        let large_file = vec![b'a'; 1024 * 1024 * 100 + 1];
         temp_fleet_file.write_all(&large_file).unwrap();
         let temp_local_path = temp_local_file.into_temp_path();
         let temp_fleet_path = temp_fleet_file.into_temp_path();
@@ -944,7 +949,10 @@ mod tests {
         match result {
             LoggedResult::Ok(..) => panic!("Expected error"),
             LoggedResult::Err(e) => {
-                assert_eq!(e.to_string(), "Fleet file is too large (> 100mb)".to_string());
+                assert_eq!(
+                    e.to_string(),
+                    "Fleet file is too large (> 100mb)".to_string()
+                );
             }
         }
     }
