@@ -543,13 +543,27 @@ impl Configurator {
             debug_messages.push(format!("\tlocal: {path_local:?}"));
             debug_messages.push(format!("\tfleet: {path_managed:?}"));
         }
+
         let local_config = match fs::File::open(path_local) {
-            Ok(file) => match self.parse_stable_config_file(file) {
-                LoggedResult::Ok(config, logs) => {
-                    debug_messages.extend(logs);
-                    config
+            Ok(file) => {
+                match file.metadata() {
+                    Ok(metadata) => {
+                        // Fail if the file is > 100mb
+                        if metadata.len() > 1024 * 1024 * 100 {
+                            let anyhow_error = anyhow::anyhow!("Local file is too large (> 100mb)");
+                            let logged_result = LoggedResult::Err(anyhow_error);
+                            return logged_result;
+                        }
+                    }
+                    Err(e) => return LoggedResult::Err(anyhow::Error::from(e).context("failed to get file metadata")),
                 }
-                LoggedResult::Err(e) => return LoggedResult::Err(e),
+                match self.parse_stable_config_file(file) {
+                    LoggedResult::Ok(config, logs) => {
+                        debug_messages.extend(logs);
+                        config
+                    }
+                    LoggedResult::Err(e) => return LoggedResult::Err(e),
+                }
             },
             Err(e) if e.kind() == io::ErrorKind::NotFound => StableConfig::default(),
             Err(e) => {
@@ -559,12 +573,24 @@ impl Configurator {
             }
         };
         let fleet_config = match fs::File::open(path_managed) {
-            Ok(file) => match self.parse_stable_config_file(file) {
-                LoggedResult::Ok(config, logs) => {
-                    debug_messages.extend(logs);
-                    config
+            Ok(file) => {
+                match file.metadata() {
+                    Ok(metadata) => {
+                        // Fail if the file is > 100mb
+                        if metadata.len() > 1024 * 1024 * 100 {
+                            let test = anyhow::anyhow!("Fleet file is too large (> 100mb)");
+                            return LoggedResult::Err(test);
+                        }
+                    }
+                    Err(e) => return LoggedResult::Err(anyhow::Error::from(e).context("failed to get file metadata")),
                 }
-                LoggedResult::Err(e) => return LoggedResult::Err(e),
+                match self.parse_stable_config_file(file) {
+                    LoggedResult::Ok(config, logs) => {
+                        debug_messages.extend(logs);
+                        config
+                    }
+                    LoggedResult::Err(e) => return LoggedResult::Err(e),
+                }
             },
             Err(e) if e.kind() == io::ErrorKind::NotFound => StableConfig::default(),
             Err(e) => {
@@ -862,6 +888,64 @@ mod tests {
                 );
             }
             LoggedResult::Err(_) => panic!("Expected success"),
+        }
+    }
+
+    #[test]
+    fn test_large_local_file() {
+        let configurator = Configurator::new(true);
+        let mut temp_local_file = tempfile::NamedTempFile::new().unwrap();
+        let temp_fleet_file = tempfile::NamedTempFile::new().unwrap();
+        let mut large_file = Vec::new();
+        for _ in 0..(1024 * 1024 * 100 + 1) {
+            large_file.push(b'a');
+        }
+        temp_local_file.write_all(&large_file).unwrap();
+        let temp_local_path = temp_local_file.into_temp_path();
+        let temp_fleet_path = temp_fleet_file.into_temp_path();
+        let result = configurator.get_config_from_file(
+            temp_local_path.to_str().unwrap().as_ref(),
+            temp_fleet_path.to_str().unwrap().as_ref(),
+            &ProcessInfo {
+                args: vec![b"-jar HelloWorld.jar".to_vec()],
+                envp: vec![b"ENV=VAR".to_vec()],
+                language: b"java".to_vec(),
+            },
+        );
+        match result {
+            LoggedResult::Ok(..) => panic!("Expected error"),
+            LoggedResult::Err(e) => {
+                assert_eq!(e.to_string(), "Local file is too large (> 100mb)".to_string());
+            }
+        }
+    }
+
+    #[test]
+    fn test_large_fleet_file() {
+        let configurator = Configurator::new(true);
+        let temp_local_file = tempfile::NamedTempFile::new().unwrap();
+        let mut temp_fleet_file = tempfile::NamedTempFile::new().unwrap();
+        let mut large_file = Vec::new();
+        for _ in 0..(1024 * 1024 * 100 + 1) {
+            large_file.push(b'a');
+        }
+        temp_fleet_file.write_all(&large_file).unwrap();
+        let temp_local_path = temp_local_file.into_temp_path();
+        let temp_fleet_path = temp_fleet_file.into_temp_path();
+        let result = configurator.get_config_from_file(
+            temp_local_path.to_str().unwrap().as_ref(),
+            temp_fleet_path.to_str().unwrap().as_ref(),
+            &ProcessInfo {
+                args: vec![b"-jar HelloWorld.jar".to_vec()],
+                envp: vec![b"ENV=VAR".to_vec()],
+                language: b"java".to_vec(),
+            },
+        );
+        match result {
+            LoggedResult::Ok(..) => panic!("Expected error"),
+            LoggedResult::Err(e) => {
+                assert_eq!(e.to_string(), "Fleet file is too large (> 100mb)".to_string());
+            }
         }
     }
 
