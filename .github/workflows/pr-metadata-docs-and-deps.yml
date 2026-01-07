@@ -45,25 +45,24 @@ jobs:
         CRATES='${{ needs.changed-crates.outputs.crates }}'
         
         FAILED=0
-        for crate in $(echo "$CRATES" | jq -r '.[]'); do
-          if [[ -f "$crate/Cargo.toml" ]]; then
-            echo "Checking $crate version is not changed in the PR..."
-            
-            # Get current version from Cargo.toml
-            CURRENT_VERSION=$(grep -E '^\s*version\s*=' "$crate/Cargo.toml" | head -1 | sed -E 's/.*=\s*"([^"]+)".*/\1/')
-            
-            # Get base version from Cargo.toml at base ref
-            BASE_VERSION=$(git show "$BASE_REF:$crate/Cargo.toml" 2>/dev/null | grep -E '^\s*version\s*=' | head -1 | sed -E 's/.*=\s*"([^"]+)".*/\1/' || echo "")
-            
-            if [[ -z "$BASE_VERSION" ]]; then
-              echo "  ✓ $crate is a new crate (no base version found)"
-            elif [[ "$CURRENT_VERSION" != "$BASE_VERSION" ]]; then
-              echo "  ✗ ERROR: $crate version changed from $BASE_VERSION to $CURRENT_VERSION"
-              echo "    Version changes should only happen through the release process."
-              FAILED=1
-            else
-              echo "  ✓ $crate version unchanged ($CURRENT_VERSION)"
-            fi
+        echo "$CRATES" | jq -c '.[]' | while read -r crate; do
+          NAME=$(echo "$crate" | jq -r '.name')
+          CURRENT_VERSION=$(echo "$crate" | jq -r '.version')
+          MANIFEST=$(echo "$crate" | jq -r '.manifest')
+          
+          echo "Checking $NAME version is not changed in the PR..."
+          
+          # Get base version from Cargo.toml at base ref
+          BASE_VERSION=$(git show "$BASE_REF:$MANIFEST" 2>/dev/null | grep -E '^\s*version\s*=' | head -1 | sed -E 's/.*=\s*"([^"]+)".*/\1/' || echo "")
+          
+          if [[ -z "$BASE_VERSION" ]]; then
+            echo "  ✓ $NAME is a new crate (no base version found)"
+          elif [[ "$CURRENT_VERSION" != "$BASE_VERSION" ]]; then
+            echo "  ✗ ERROR: $NAME version changed from $BASE_VERSION to $CURRENT_VERSION"
+            echo "    Version changes should only happen through the release process."
+            FAILED=1
+          else
+            echo "  ✓ $NAME version unchanged ($CURRENT_VERSION)"
           fi
         done
         
@@ -80,7 +79,7 @@ jobs:
         CRATES='${{ needs.changed-crates.outputs.crates }}'
         
         # Convert JSON array to space-separated arguments
-        CRATE_ARGS=$(echo "$CRATES" | jq -r '.[]' | tr '\n' ' ')
+        CRATE_ARGS=$(echo "$CRATES" | jq -r '.[].path' | tr '\n' ' ')
         
         if [[ -n "$CRATE_ARGS" ]]; then
           echo "Checking crates: $CRATE_ARGS"
@@ -109,7 +108,7 @@ jobs:
         OUTPUT=""
         TOTAL_WARNINGS=0
         
-        for crate in $(echo "$CRATES" | jq -r '.[]'); do
+        for crate in $(echo "$CRATES" | jq -r '.[].name'); do
           echo "Checking docs for $crate..."
           
           # Run cargo check with missing_docs warning and capture output
@@ -186,11 +185,14 @@ jobs:
         TOTAL_ISSUES=0
         TOTAL_ERRORS=0
         
-        for crate in $(echo "$CRATES" | jq -r '.[]'); do
-          echo "Running cargo-deny for $crate..."
+        echo "$CRATES" | jq -c '.[]' | while read -r crate; do
+          NAME=$(echo "$crate" | jq -r '.name')
+          MANIFEST=$(echo "$crate" | jq -r '.manifest')
           
+          echo "Running cargo-deny for $NAME..."
+
           # Run cargo-deny and capture output (always continue, results go to PR comment)
-          DENY_OUTPUT=$(cargo deny --manifest-path "$crate/Cargo.toml" --color never check advisories bans sources 2>&1 || true)
+          DENY_OUTPUT=$(cargo deny --manifest-path "$MANIFEST" --color never check advisories bans sources 2>&1 || true)
           
           echo "DENY_OUTPUT: $DENY_OUTPUT"
 
@@ -202,10 +204,10 @@ jobs:
           ISSUE_COUNT=$((ERROR_COUNT + WARNING_COUNT))
           
           if [[ "$ISSUE_COUNT" -gt 0 ]]; then
-            OUTPUT="${OUTPUT}\n### 📦 \`${crate}\` - ${ERROR_COUNT} error(s), ${WARNING_COUNT} warning(s)\n\n<details>\n<summary>Show output</summary>\n\n\`\`\`\n${DENY_OUTPUT}\n\`\`\`\n\n</details>\n"
+            OUTPUT="${OUTPUT}\n### 📦 \`${NAME}\` - ${ERROR_COUNT} error(s), ${WARNING_COUNT} warning(s)\n\n<details>\n<summary>Show output</summary>\n\n\`\`\`\n${DENY_OUTPUT}\n\`\`\`\n\n</details>\n"
             TOTAL_ISSUES=$((TOTAL_ISSUES + ISSUE_COUNT))
           else
-            OUTPUT="${OUTPUT}\n### 📦 \`${crate}\` - ✅ No issues\n"
+            OUTPUT="${OUTPUT}\n### 📦 \`${NAME}\` - ✅ No issues\n"
           fi
         done
         

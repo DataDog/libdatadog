@@ -16,7 +16,7 @@ inputs:
 
 outputs:
   crates:
-    description: 'JSON array of changed crate directory paths'
+    description: 'JSON array of changed crates with name, version, path and manifest'
     value: ${{ steps.detect.outputs.crates }}
   crates_count:
     description: 'Number of changed crates'
@@ -72,12 +72,40 @@ runs:
         done
         
         # Remove duplicates and sort
-        UNIQUE_CRATES=$(printf '%s\n' "${CRATES[@]}" | sort -u | tr '\n' ' ')
+        UNIQUE_CRATES=($(printf '%s\n' "${CRATES[@]}" | sort -u))
         
-        # Convert to JSON array for output
-        JSON_ARRAY=$(printf '%s\n' "${CRATES[@]}" | sort -u | jq -R -s -c 'split("\n") | map(select(length > 0))')
+        # Build JSON array of objects with name, version, and path
+        JSON_ARRAY="["
+        FIRST=true
+        for crate_path in "${UNIQUE_CRATES[@]}"; do
+          if [[ -z "$crate_path" ]]; then
+            continue
+          fi
+          
+          # Extract name and version from Cargo.toml
+          CARGO_TOML="$crate_path/Cargo.toml"
+          CRATE_NAME=$(grep -E '^\s*name\s*=' "$CARGO_TOML" | head -1 | sed -E 's/.*=\s*"([^"]+)".*/\1/')
+          CRATE_VERSION=$(grep -E '^\s*version\s*=' "$CARGO_TOML" | head -1 | sed -E 's/.*=\s*"([^"]+)".*/\1/')
+          
+          # Handle version.workspace = true
+          if [[ -z "$CRATE_VERSION" ]] || [[ "$CRATE_VERSION" == *"workspace"* ]]; then
+            CRATE_VERSION="workspace"
+          fi
+          
+          if [[ "$FIRST" == "true" ]]; then
+            FIRST=false
+          else
+            JSON_ARRAY+=","
+          fi
+          
+          JSON_ARRAY+="{\"name\":\"$CRATE_NAME\",\"version\":\"$CRATE_VERSION\",\"path\":\"$crate_path\",\"manifest\":\"$CARGO_TOML\"}"
+        done
+        JSON_ARRAY+="]"
         
-        echo "Changed crates: $UNIQUE_CRATES"
+        # Ensure JSON is compact (single line) for GITHUB_OUTPUT
+        JSON_ARRAY=$(echo "$JSON_ARRAY" | jq -c .)
+        
+        echo "Changed crates: $(echo "$JSON_ARRAY" | tr '\n' ' ')"
         echo "crates=$JSON_ARRAY" >> "$GITHUB_OUTPUT"
         echo "crates_count=$(echo "$JSON_ARRAY" | jq 'length')" >> "$GITHUB_OUTPUT"
 
