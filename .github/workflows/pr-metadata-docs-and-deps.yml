@@ -45,7 +45,7 @@ jobs:
         CRATES='${{ needs.changed-crates.outputs.crates }}'
         
         FAILED=0
-        echo "$CRATES" | jq -c '.[]' | while read -r crate; do
+        while read -r crate; do
           NAME=$(echo "$crate" | jq -r '.name')
           CURRENT_VERSION=$(echo "$crate" | jq -r '.version')
           MANIFEST=$(echo "$crate" | jq -r '.manifest')
@@ -64,7 +64,7 @@ jobs:
           else
             echo "  ✓ $NAME version unchanged ($CURRENT_VERSION)"
           fi
-        done
+        done < <(echo "$CRATES" | jq -c '.[]')
         
         if [[ $FAILED -eq 1 ]]; then
           echo ""
@@ -185,7 +185,7 @@ jobs:
         TOTAL_ISSUES=0
         TOTAL_ERRORS=0
         
-        echo "$CRATES" | jq -c '.[]' | while read -r crate; do
+        while read -r crate; do
           NAME=$(echo "$crate" | jq -r '.name')
           MANIFEST=$(echo "$crate" | jq -r '.manifest')
           
@@ -206,10 +206,11 @@ jobs:
           if [[ "$ISSUE_COUNT" -gt 0 ]]; then
             OUTPUT="${OUTPUT}\n### 📦 \`${NAME}\` - ${ERROR_COUNT} error(s), ${WARNING_COUNT} warning(s)\n\n<details>\n<summary>Show output</summary>\n\n\`\`\`\n${DENY_OUTPUT}\n\`\`\`\n\n</details>\n"
             TOTAL_ISSUES=$((TOTAL_ISSUES + ISSUE_COUNT))
+            TOTAL_ERRORS=$((TOTAL_ERRORS + ERROR_COUNT))
           else
             OUTPUT="${OUTPUT}\n### 📦 \`${NAME}\` - ✅ No issues\n"
           fi
-        done
+        done < <(echo "$CRATES" | jq -c '.[]')
         
         # Create the comment body
         if [[ $TOTAL_ISSUES -gt 0 ]]; then
