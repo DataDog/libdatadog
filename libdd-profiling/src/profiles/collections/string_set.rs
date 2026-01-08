@@ -69,7 +69,7 @@ pub const WELL_KNOWN_STRING_REFS: [StringRef; 5] = [
 ];
 
 /// Holds unique strings and provides [`StringRef`]s to fetch them later.
-/// This is a newtype around SliceSet<u8> to enforce UTF-8 invariants.
+/// This is a newtype around `SliceSet<u8>` to enforce UTF-8 invariants.
 pub struct UnsyncStringSet(SliceSet<u8>);
 
 impl UnsyncStringSet {
