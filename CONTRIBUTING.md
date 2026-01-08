@@ -97,11 +97,11 @@ Commit messages and PR titles should follow this structure:
 
 ### Common Types
 
-- **feat**: A new feature for the user
+- **feat**: Code that adds features to the end user
 - **fix**: A bug fix
 - **docs**: Documentation changes only
 - **style**: Code style changes (formatting, missing semicolons, etc.) that don't affect functionality
-- **refactor**: Code changes that neither fix a bug nor add a feature
+- **refactor**: Code changes that neither fix a bug nor add a feature. Removing a public interface is considered a refactor and should be marked with `!`.
 - **perf**: Performance improvements
 - **test**: Adding or updating tests
 - **build**: Changes to the build system or external dependencies
