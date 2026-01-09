@@ -1,7 +1,7 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::health_metrics::HealthMetric;
+use crate::health_metrics::{HealthMetric, SendResult};
 use either::Either;
 use libdd_common::tag::Tag;
 use libdd_dogstatsd_client::{Client, DogStatsDAction};
@@ -60,6 +60,20 @@ impl<'a> MetricsEmitter<'a> {
                 metric = ?metric,
                 "Skipping metric emission - dogstatsd client not configured"
             );
+        }
+    }
+
+    /// Emit all health metrics from a SendResult
+    ///
+    /// This method processes the SendResult and emits all appropriate metrics
+    /// based on the operation's outcome (success/failure, error type, etc.)
+    pub(crate) fn emit_send_result(&self, result: &SendResult) {
+        for (metric, type_tag_value) in result.collect_metrics() {
+            let type_tag = type_tag_value
+                .as_ref()
+                .and_then(|v| Tag::new("type", v).ok());
+            let custom_tags = type_tag.as_ref().map(|t| vec![t]);
+            self.emit(metric, custom_tags);
         }
     }
 }
