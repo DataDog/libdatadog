@@ -396,6 +396,7 @@ dependencies = [
  "serial_test",
  "strum",
  "tempfile",
+ "windows 0.59.0",
 ]
 
 [[package]]
