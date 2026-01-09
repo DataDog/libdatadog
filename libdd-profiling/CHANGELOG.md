@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Fixed
+
+- reduce OOM edges in `ProfileExporter::build`
+
 ### Changed
 - Updated `prost` dependency from 0.13.5 to 0.14.1
 

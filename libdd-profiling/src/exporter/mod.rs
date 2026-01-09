@@ -217,7 +217,9 @@ impl ProfileExporter {
         let mut tags_profiler = String::new();
         let other_tags = additional_tags.into_iter();
         for tag in self.tags.iter().chain(other_tags).flatten() {
-            tags_profiler.push_str(tag.as_ref());
+            let t = tag.as_ref();
+            tags_profiler.try_reserve(t.len() + ','.len_utf8())?;
+            tags_profiler.push_str(t);
             tags_profiler.push(',');
         }
 
@@ -245,23 +247,30 @@ impl ProfileExporter {
                 ("aas.site.type", aas_metadata.get_site_type()),
                 ("aas.subscription.id", aas_metadata.get_subscription_id()),
             ];
-            aas_tags.into_iter().for_each(|(name, value)| {
+            for (name, value) in aas_tags {
                 if let Ok(tag) = Tag::new(name, value) {
-                    tags_profiler.push_str(tag.as_ref());
+                    let t = tag.as_ref();
+                    tags_profiler.try_reserve(t.len() + ','.len_utf8())?;
+                    tags_profiler.push_str(t);
                     tags_profiler.push(',');
                 }
-            });
+            }
         }
 
         // Since this is the last tag, we add it without a comma afterward. If
         // any tags get added after this one, you'll need to add the comma
         // between them.
-        tags_profiler.push_str(self.runtime_platform_tag().as_ref());
+        {
+            let t = self.runtime_platform_tag();
+            // Using try_reserve_exact since this is the last tag.
+            tags_profiler.try_reserve_exact(t.as_ref().len())?;
+            tags_profiler.push_str(t.as_ref());
+        }
 
-        let attachments: Vec<String> = files_to_compress_and_export
+        let attachments: Vec<&str> = files_to_compress_and_export
             .iter()
-            .map(|file| file.name.to_owned())
-            .chain(iter::once("profile.pprof".to_string()))
+            .map(|file| file.name)
+            .chain(iter::once("profile.pprof"))
             .collect();
 
         let endpoint_counts = if profile.endpoints_stats.is_empty() {
