@@ -134,6 +134,7 @@ pub fn get_behavior(mode_str: &str) -> Box<dyn Behavior> {
         "runtime_callback_frame_invalid_utf8" => {
             Box::new(test_012_runtime_callback_frame_invalid_utf8::Test)
         }
+        "runtime_malloc_logger" => Box::new(test_013_runtime_malloc_logger::Test),
         _ => panic!("Unknown mode: {mode_str}"),
     }
 }
