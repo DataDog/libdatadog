@@ -6,10 +6,8 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <pthread.h>
-#include <signal.h>
 #include <stddef.h>
 #include <stdio.h>
-#include <stdlib.h>
 #include <string.h>
 #include <sys/syscall.h>
 #include <sys/types.h>
@@ -40,11 +38,7 @@ static void init_logger(void) {
         return;
     }
 
-    const char *path = getenv("PRELOAD_LOG_PATH");
-    if (path == NULL || path[0] == '\0') {
-        path = "/tmp/preload_logger.log";
-    }
-
+    const char *path = "/tmp/preload_logger.log";
     log_fd = open(path, O_CREAT | O_WRONLY | O_TRUNC, 0644);
     if (log_fd >= 0) {
         char buf[256];
