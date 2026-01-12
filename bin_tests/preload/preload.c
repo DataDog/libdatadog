@@ -23,10 +23,10 @@ static int log_fd = -1;
 static pthread_once_t init_once = PTHREAD_ONCE_INIT;
 // Per-thread flag to indicate this thread belongs to the collector; only those
 // threads should produce malloc logs.
-static __thread int dd_is_collector_thread = 0;
+static __thread int dd_is_collector = 0;
 
-// Called by the collector process to scope logging to its thread only.
-void dd_preload_logger_mark_collector_thread(void) { dd_is_collector_thread = 1; }
+// Called by the collector process to scope logging to the collector only
+void dd_preload_logger_mark_collector(void) { dd_is_collector = 1; }
 
 static void init_logger(void) {
     const char *path = getenv("PRELOAD_LOG_PATH");
@@ -42,7 +42,7 @@ static void init_logger(void) {
 }
 
 static void log_line(const char *tag, size_t size, void *ptr) {
-    if (!dd_is_collector_thread) {
+    if (!dd_is_collector) {
         return;
     }
 
