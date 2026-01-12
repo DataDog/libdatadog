@@ -550,7 +550,10 @@ impl Configurator {
                     Ok(metadata) => {
                         // Fail if the file is > 100mb
                         if metadata.len() > 1024 * 1024 * 100 {
-                            debug_messages.push("failed to read local config file: file is too large (> 100mb)".to_string());
+                            debug_messages.push(
+                                "failed to read local config file: file is too large (> 100mb)"
+                                    .to_string(),
+                            );
                             StableConfig::default()
                         } else {
                             match self.parse_stable_config_file(file) {
@@ -582,7 +585,10 @@ impl Configurator {
                     Ok(metadata) => {
                         // Fail if the file is > 100mb
                         if metadata.len() > 1024 * 1024 * 100 {
-                            debug_messages.push("failed to read fleet config file: file is too large (> 100mb)".to_string());
+                            debug_messages.push(
+                                "failed to read fleet config file: file is too large (> 100mb)"
+                                    .to_string(),
+                            );
                             StableConfig::default()
                         } else {
                             match self.parse_stable_config_file(file) {
@@ -828,7 +834,7 @@ mod utils {
 
 #[cfg(test)]
 mod tests {
-    use std::{collections::HashMap, io::Write};
+    use std::{collections::HashMap, io::Write, path::Path};
 
     use super::{Configurator, LoggedResult, ProcessInfo};
     use crate::{
@@ -919,6 +925,8 @@ mod tests {
                 language: b"java".to_vec(),
             },
         );
+        let local_path: &Path = temp_local_path.to_str().unwrap().as_ref();
+        let fleet_path: &Path = temp_fleet_path.to_str().unwrap().as_ref();
         match result {
             LoggedResult::Ok(configs, logs) => {
                 assert_eq!(configs, vec![]);
@@ -926,8 +934,8 @@ mod tests {
                     logs,
                     vec![
                         "Reading stable configuration from files:",
-                        format!("\tlocal: \"{path}\"", path = temp_local_path.to_str().unwrap()).as_str(),
-                        format!("\tfleet: \"{path}\"", path = temp_fleet_path.to_str().unwrap()).as_str(),
+                        format!("\tlocal: {local_path:?}").as_str(),
+                        format!("\tfleet: {fleet_path:?}").as_str(),
                         "failed to read local config file: file is too large (> 100mb)",
                         "failed to read fleet config file: file is too large (> 100mb)",
                         "\tProcess args:",
