@@ -17,12 +17,9 @@ static void *(*real_malloc)(size_t) = NULL;
 static void (*real_free)(void *) = NULL;
 static void *(*real_calloc)(size_t, size_t) = NULL;
 static void *(*real_realloc)(void *, size_t) = NULL;
-static int log_fd = -1;
 static pthread_once_t init_once = PTHREAD_ONCE_INIT;
-// Flag to indicate we are currently in the collector; We should only
-// log when we are in the collector.
-static int collector_marked = 0;
 
+// We should load all the real symbols on library load
 static void init_function_ptrs(void) {
     if (real_malloc == NULL) {
         real_malloc = dlsym(RTLD_NEXT, "malloc");
@@ -31,6 +28,16 @@ static void init_function_ptrs(void) {
         real_realloc = dlsym(RTLD_NEXT, "realloc");
     }
 }
+
+__attribute__((constructor)) static void preload_ctor(void) {
+    pthread_once(&init_once, init_function_ptrs);
+}
+
+static int log_fd = -1;
+// Flag to indicate we are currently in the collector; We should only
+// log when we are in the collector.
+static int collector_marked = 0;
+
 
 static void init_logger(void) {
     if (log_fd >= 0 || !collector_marked) {
@@ -64,12 +71,11 @@ void dd_preload_logger_mark_collector(void) {
 }
 
 static void log_line(const char *tag, size_t size, void *ptr) {
-
-    if (log_fd < 0 || !collector_marked) {
+    if (log_fd < 0) {
         return;
     }
 
-    char buf[200];
+    char buf[256];
     pid_t pid = getpid();
     long tid = syscall(SYS_gettid);
     int len = 0;
@@ -90,8 +96,6 @@ static void log_line(const char *tag, size_t size, void *ptr) {
 }
 
 void *malloc(size_t size) {
-    pthread_once(&init_once, init_function_ptrs);
-
     if (real_malloc == NULL) {
         errno = ENOMEM;
         return NULL;
@@ -105,8 +109,6 @@ void *malloc(size_t size) {
 }
 
 void free(void *ptr) {
-    pthread_once(&init_once, init_function_ptrs);
-
     if (real_free == NULL) {
         return;
     }
@@ -118,8 +120,6 @@ void free(void *ptr) {
 }
 
 void *calloc(size_t nmemb, size_t size) {
-    pthread_once(&init_once, init_function_ptrs);
-
     if (real_calloc == NULL) {
         errno = ENOMEM;
         return NULL;
@@ -133,8 +133,6 @@ void *calloc(size_t nmemb, size_t size) {
 }
 
 void *realloc(void *ptr, size_t size) {
-    pthread_once(&init_once, init_function_ptrs);
-
     if (real_realloc == NULL) {
         errno = ENOMEM;
         return NULL;
