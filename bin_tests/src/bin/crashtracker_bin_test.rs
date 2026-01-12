@@ -57,7 +57,7 @@ mod unix {
         // Setting LD_PRELOAD after startup has no effect on the current process,
         // so re-exec only if we weren't born with it
         if mode_str == "runtime_preload_logger" && env::var_os("LD_PRELOAD").is_none() {
-            if let Some(so_path) = option_env!("MALLOC_LOGGER_SO") {
+            if let Some(so_path) = option_env!("PRELOAD_LOGGER_SO") {
                 let status = process::Command::new(&raw_args[0])
                     .args(&raw_args[1..])
                     .env("LD_PRELOAD", so_path)
