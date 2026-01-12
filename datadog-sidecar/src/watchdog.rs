@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 use futures::{
     future::{BoxFuture, Shared},
-    FutureExt,
+    pin_mut, select, FutureExt,
 };
 use std::{
     sync::{
@@ -13,7 +13,7 @@ use std::{
 };
 
 use crate::service::SidecarServer;
-use tokio::{select, sync::mpsc::Receiver};
+use tokio::sync::mpsc::Receiver;
 use tracing::error;
 
 pub struct Watchdog {
@@ -29,8 +29,8 @@ pub struct WatchdogHandle {
 }
 
 impl WatchdogHandle {
-    pub async fn wait_for_shutdown(&self) {
-        self.handle.clone().await;
+    pub fn wait_for_shutdown(&self) -> Shared<BoxFuture<'static, Option<()>>> {
+        self.handle.clone()
     }
 }
 
@@ -83,8 +83,13 @@ impl Watchdog {
             mem_usage_bytes.store(0, Ordering::Relaxed);
 
             loop {
+                let tick_fut = self.interval.tick().fuse();
+                let shutdown_fut = self.shutdown_receiver.recv().fuse();
+
+                pin_mut!(tick_fut, shutdown_fut);
+
                 select! {
-                    _ = self.interval.tick() => {
+                    _ = tick_fut => {
                         still_alive.fetch_add(1, Ordering::Relaxed);
 
                         let current_mem_usage_bytes = memory_stats::memory_stats()
@@ -106,7 +111,7 @@ impl Watchdog {
                         }
 
                     },
-                    _ = self.shutdown_receiver.recv() => {
+                    _ = shutdown_fut => {
                         still_alive.store(SHUTDOWN, Ordering::Relaxed);
                         return
                     },

@@ -3,12 +3,12 @@
 use datadog_live_debugger::debugger_defs::{
     DebuggerData, DebuggerPayload, Diagnostics, ProbeStatus,
 };
+use futures::{pin_mut, select, FutureExt};
 use libdd_common::MutexExt;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
-use tokio::select;
 use tokio_util::sync::CancellationToken;
 
 pub struct DebuggerDiagnosticsBookkeeper {
@@ -40,8 +40,13 @@ impl DebuggerDiagnosticsBookkeeper {
         tokio::spawn(async move {
             let mut interval = tokio::time::interval(MAX_TIME_BEFORE_REMOVAL / 2);
             loop {
+                let tick_fut = interval.tick().fuse();
+                let cancel_fut = cancel.cancelled().fuse();
+
+                pin_mut!(tick_fut, cancel_fut);
+
                 select! {
-                    _ = interval.tick() => {
+                    _ = tick_fut => {
                         active.lock_or_panic().retain(|_, active| {
                             active.active_probes.retain(|_, status| {
                                 status.last_update.elapsed() < MAX_TIME_BEFORE_REMOVAL
@@ -49,7 +54,7 @@ impl DebuggerDiagnosticsBookkeeper {
                             !active.active_probes.is_empty()
                         });
                     },
-                    _ = cancel.cancelled() => {
+                    _ = cancel_fut => {
                         break;
                     },
                 }

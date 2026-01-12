@@ -1,21 +1,19 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use spawn_worker::{getpid, SpawnWorker, Stdio, TrampolineData};
-
-use std::ffi::CString;
-use std::os::unix::net::UnixListener as StdUnixListener;
-
 use crate::config::Config;
 use crate::enter_listener_loop;
+use futures::{pin_mut, select, FutureExt};
 use nix::fcntl::{fcntl, OFlag, F_GETFL, F_SETFL};
 use nix::sys::socket::{shutdown, Shutdown};
+use spawn_worker::{getpid, SpawnWorker, Stdio, TrampolineData};
+use std::ffi::CString;
 use std::io;
 use std::os::fd::RawFd;
+use std::os::unix::net::UnixListener as StdUnixListener;
 use std::os::unix::prelude::{AsRawFd, FromRawFd, IntoRawFd, OwnedFd};
 use std::time::Instant;
 use tokio::net::{UnixListener, UnixStream};
-use tokio::select;
 use tokio::signal::unix::{signal, SignalKind};
 use tracing::{error, info};
 
@@ -102,12 +100,17 @@ async fn accept_socket_loop(
     #[allow(clippy::unwrap_used)]
     let mut termsig = signal(SignalKind::terminate()).unwrap();
     loop {
+        let termsig_fut = termsig.recv().fuse();
+        let accept_fut = listener.accept().fuse();
+
+        pin_mut!(termsig_fut, accept_fut);
+
         select! {
-            _ = termsig.recv() => {
+            _ = termsig_fut => {
                 stop_listening(listener.as_raw_fd());
                 break;
             }
-            accept = listener.accept() => {
+            accept = accept_fut => {
                 if let Ok((socket, _)) = accept {
                     handler(socket);
                 } else {

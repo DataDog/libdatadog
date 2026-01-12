@@ -4,6 +4,7 @@ use crate::config::Config;
 use crate::log;
 use crate::service::SidecarServer;
 use crate::watchdog::WatchdogHandle;
+use futures::{pin_mut, select, FutureExt};
 use libdd_common::{tag, tag::Tag, MutexExt};
 use libdd_telemetry::data::metrics::{MetricNamespace, MetricType};
 use libdd_telemetry::metrics::ContextKey;
@@ -13,7 +14,6 @@ use libdd_telemetry::worker::{
 use manual_future::ManualFuture;
 use std::sync::atomic::Ordering;
 use std::time::Duration;
-use tokio::select;
 use tokio::task::JoinHandle;
 
 struct MetricData<'a> {
@@ -160,9 +160,14 @@ pub fn self_telemetry(server: SidecarServer, watchdog_handle: WatchdogHandle) ->
     tokio::spawn(async move {
         let submission_interval = tokio::time::interval(Duration::from_secs(60));
 
+        let shutdown_fut = watchdog_handle.wait_for_shutdown().fuse();
+        let config_fut = future.fuse();
+
+        pin_mut!(shutdown_fut, config_fut);
+
         select! {
-            _ = watchdog_handle.wait_for_shutdown() => { },
-            config = future => {
+            _ = shutdown_fut => { },
+            config = config_fut => {
                 let worker_cfg = SelfTelemetry { submission_interval, watchdog_handle, config, server };
                 worker_cfg.spawn_worker().await
             },
@@ -272,13 +277,18 @@ impl SelfTelemetry {
             .send_msg(TelemetryActions::Lifecycle(LifecycleAction::Start))
             .await;
         loop {
+            let tick_fut = self.submission_interval.tick().fuse();
+            let shutdown_fut = self.watchdog_handle.wait_for_shutdown().fuse();
+
+            pin_mut!(tick_fut, shutdown_fut);
+
             select! {
-                _ = self.submission_interval.tick() => {
+                _ = tick_fut => {
                     metrics.collect_and_send().await;
                     let _ = worker.send_msg(TelemetryActions::Lifecycle(LifecycleAction::FlushMetricAggr)).await;
                     let _ = worker.send_msg(TelemetryActions::Lifecycle(LifecycleAction::FlushData)).await;
                 },
-                _ = self.watchdog_handle.wait_for_shutdown() => {
+                _ = shutdown_fut => {
                     metrics.collect_and_send().await;
                     let _ = worker.send_msg(TelemetryActions::Lifecycle(LifecycleAction::Stop)).await;
                     let _ = join_handle.await;

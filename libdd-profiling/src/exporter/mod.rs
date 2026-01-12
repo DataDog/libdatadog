@@ -4,6 +4,7 @@
 use anyhow::Context;
 use bytes::Bytes;
 pub use chrono::{DateTime, Utc};
+use futures::{pin_mut, select, FutureExt};
 pub use hyper::Uri;
 use hyper_multipart_rfc7578::client::multipart;
 pub use libdd_common::tag::Tag;
@@ -100,24 +101,34 @@ impl Request {
         client: &HttpClient,
         cancel: Option<&CancellationToken>,
     ) -> anyhow::Result<HttpResponse> {
-        tokio::select! {
-            _ = async { match cancel {
-                    Some(cancellation_token) => cancellation_token.cancelled().await,
-                    // If no token is provided, future::pending() provides a no-op future that never resolves
-                    None => future::pending().await,
-                }}
-            => Err(crate::exporter::errors::Error::UserRequestedCancellation.into()),
-            result = async {
-                match self.timeout {
-                    Some(t) => {
-                        let res = tokio::time::timeout(t, client.request(self.req)).await;
-                        res
-                            .map_err(|_| anyhow::Error::from(crate::exporter::errors::Error::OperationTimedOut))
-                    },
-                    None => Ok(client.request(self.req).await),
-                }
+        let cancel_fut = async {
+            match cancel {
+                Some(cancellation_token) => cancellation_token.cancelled().await,
+                // If no token is provided, future::pending() provides a no-op future that never
+                // resolves
+                None => future::pending().await,
             }
-            => Ok(hyper_migration::into_response(result??)),
+        }
+        .fuse();
+
+        let request_fut = async {
+            match self.timeout {
+                Some(t) => {
+                    let res = tokio::time::timeout(t, client.request(self.req)).await;
+                    res.map_err(|_| {
+                        anyhow::Error::from(crate::exporter::errors::Error::OperationTimedOut)
+                    })
+                }
+                None => Ok(client.request(self.req).await),
+            }
+        }
+        .fuse();
+
+        pin_mut!(cancel_fut, request_fut);
+
+        select! {
+            _ = cancel_fut => Err(crate::exporter::errors::Error::UserRequestedCancellation.into()),
+            result = request_fut => Ok(hyper_migration::into_response(result??)),
         }
     }
 }

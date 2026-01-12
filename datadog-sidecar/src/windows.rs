@@ -7,7 +7,7 @@ use datadog_ipc::platform::{
     named_pipe_name_from_raw_handle, FileBackedHandle, MappedMem, NamedShmHandle,
 };
 
-use futures::FutureExt;
+use futures::{pin_mut, select, FutureExt};
 use libdd_common::Endpoint;
 use libdd_common::MutexExt;
 use libdd_common_ffi::CharSlice;
@@ -22,7 +22,6 @@ use std::sync::LazyLock;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 use tokio::net::windows::named_pipe::{NamedPipeServer, ServerOptions};
-use tokio::select;
 use tracing::{error, info};
 use winapi::{
     shared::{
@@ -106,11 +105,16 @@ async fn accept_socket_loop(
     let name = named_pipe_name_from_raw_handle(pipe.as_raw_handle())
         .ok_or(io::Error::from(io::ErrorKind::InvalidInput))?;
 
-    let cancellation = cancellation.shared();
+    let cancellation = cancellation.fuse();
+    pin_mut!(cancellation);
     loop {
+        let connect_fut = pipe.connect().fuse();
+
+        pin_mut!(connect_fut);
+
         select! {
-            _ = cancellation.clone() => break,
-            result = pipe.connect() => result?,
+            _ = &mut cancellation => break,
+            result = connect_fut => result?,
         }
         let connected_pipe = pipe;
         pipe = ServerOptions::new().create(&name)?;

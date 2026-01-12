@@ -31,6 +31,7 @@ use crate::metrics::MetricBucketStats;
 use futures::{
     channel::oneshot,
     future::{self},
+    pin_mut, select, FutureExt,
 };
 use http::{header, HeaderValue};
 use serde::{Deserialize, Serialize};
@@ -765,15 +766,21 @@ impl TelemetryWorker {
             "Sending HTTP request"
         );
 
-        tokio::select! {
-            _ = self.cancellation_token.cancelled() => {
+        let cancel_fut = self.cancellation_token.cancelled().fuse();
+        let timeout_fut = tokio::time::sleep(time::Duration::from_millis(timeout_ms)).fuse();
+        let request_fut = self.client.request(req).fuse();
+
+        pin_mut!(cancel_fut, timeout_fut, request_fut);
+
+        select! {
+            _ = cancel_fut => {
                 debug!(
                     worker.runtime_id = %self.runtime_id,
                     "Telemetry request cancelled"
                 );
                 Err(hyper_migration::Error::Other(anyhow::anyhow!("Request cancelled")))
             },
-            _ = tokio::time::sleep(time::Duration::from_millis(timeout_ms)) => {
+            _ = timeout_fut => {
                 debug!(
                     worker.runtime_id = %self.runtime_id,
                     http.timeout_ms = timeout_ms,
@@ -781,7 +788,7 @@ impl TelemetryWorker {
                 );
                 Err(hyper_migration::Error::Other(anyhow::anyhow!("Request timed out")))
             },
-            r = self.client.request(req) => {
+            r = request_fut => {
                 match r {
                     Ok(resp) => {
                         Ok(resp)

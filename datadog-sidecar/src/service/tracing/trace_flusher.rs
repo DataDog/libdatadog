@@ -5,6 +5,7 @@ use super::TraceSendData;
 use crate::agent_remote_config::AgentRemoteConfigWriter;
 use datadog_ipc::platform::NamedShmHandle;
 use futures::future::join_all;
+use futures::{pin_mut, select, FutureExt};
 use http_body_util::BodyExt;
 use libdd_common::hyper_migration::new_default_client;
 use libdd_common::{Endpoint, HttpClient, MutexExt};
@@ -19,7 +20,6 @@ use std::ops::DerefMut;
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
-use tokio::select;
 use tokio::sync::mpsc;
 use tokio::task::{JoinError, JoinHandle};
 use tracing::{debug, error, info};
@@ -277,11 +277,17 @@ impl TraceFlusher {
         tokio::spawn(async move {
             loop {
                 let mut flush_done_sender = None;
+                let sleep_fut = tokio::time::sleep(Duration::from_millis(
+                    self.interval_ms.load(Ordering::Relaxed),
+                ))
+                .fuse();
+                let force_flush_fut = (&mut force_flush).fuse();
+
+                pin_mut!(sleep_fut, force_flush_fut);
+
                 select! {
-                    _ = tokio::time::sleep(Duration::from_millis(
-                        self.interval_ms.load(Ordering::Relaxed),
-                    )) => {},
-                    sender = force_flush => { flush_done_sender = sender; },
+                    _ = sleep_fut => {},
+                    sender = force_flush_fut => { flush_done_sender = sender; },
                 }
 
                 debug!(

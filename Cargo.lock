@@ -2646,6 +2646,7 @@ dependencies = [
  "clap",
  "criterion",
  "either",
+ "futures",
  "http",
  "http-body-util",
  "httpmock",

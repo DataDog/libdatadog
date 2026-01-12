@@ -3,6 +3,7 @@
 
 use crate::primary_sidecar_identifier;
 use datadog_ipc::rate_limiter::{ShmLimiter, ShmLimiterMemory};
+use futures::{pin_mut, select, FutureExt};
 use libdd_common::{rate_limiter::Limiter, MutexExt};
 use std::ffi::CString;
 use std::io;
@@ -39,9 +40,13 @@ impl ManagedExceptionHashRateLimiter {
                 }
             }
 
-            tokio::select! {
-                _ = do_loop() => {}
-                _ = recv => { }
+            let loop_fut = do_loop().fuse();
+            let recv_fut = recv.fuse();
+            pin_mut!(loop_fut, recv_fut);
+
+            select! {
+                _ = loop_fut => {}
+                _ = recv_fut => {}
             }
         });
 

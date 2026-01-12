@@ -3,9 +3,10 @@
 
 //! Defines a pausable worker to be able to stop background processes before forks
 
+use futures::future::select;
+use futures::FutureExt;
 use libdd_common::{runtime::Runtime, worker::Worker};
 use std::fmt::{Debug, Display};
-use tokio::select;
 use tokio_util::sync::CancellationToken;
 
 /// A pausable worker which can be paused and restarted on forks.
@@ -94,10 +95,11 @@ impl<R: Runtime, T: Worker + Send + Sync + 'static> PausableWorker<R, T> {
             let stop_token = CancellationToken::new();
             let cloned_token = stop_token.clone();
             let handle = rt.spawn_ref(async move {
-                select! {
-                    _ = worker.run() => {worker}
-                    _ = cloned_token.cancelled() => {worker}
-                }
+                let run_fut = Box::pin(worker.run().fuse());
+                let cancel_fut = Box::pin(cloned_token.cancelled().fuse());
+
+                let _ = select(run_fut, cancel_fut).await;
+                worker
             });
 
             *self = PausableWorker::Running { handle, stop_token };

@@ -1,6 +1,12 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+use crate::trace_exporter::TracerMetadata;
+use futures::{pin_mut, select, FutureExt};
+use libdd_common::{runtime::Runtime, worker::Worker, Endpoint};
+use libdd_trace_protobuf::pb;
+use libdd_trace_stats::span_concentrator::SpanConcentrator;
+use libdd_trace_utils::send_with_retry::{send_with_retry, RetryStrategy};
 use std::{
     borrow::Borrow,
     collections::HashMap,
@@ -11,13 +17,6 @@ use std::{
     },
     time,
 };
-
-use crate::trace_exporter::TracerMetadata;
-use libdd_common::{runtime::Runtime, worker::Worker, Endpoint};
-use libdd_trace_protobuf::pb;
-use libdd_trace_stats::span_concentrator::SpanConcentrator;
-use libdd_trace_utils::send_with_retry::{send_with_retry, RetryStrategy};
-use tokio::select;
 use tokio_util::sync::CancellationToken;
 use tracing::error;
 
@@ -143,13 +142,18 @@ impl<R: Runtime> Worker for StatsExporter<R> {
     /// return.
     async fn run(&mut self) {
         loop {
+            let cancel_fut = self.cancellation_token.cancelled().fuse();
+            let sleep_fut = R::sleep(self.flush_interval).fuse();
+
+            pin_mut!(cancel_fut, sleep_fut);
+
             select! {
-                _ = self.cancellation_token.cancelled() => {
+                _ = cancel_fut => {
                     let _ = self.send(true).await;
                     break;
                 },
-                _ = R::sleep(self.flush_interval) => {
-                        let _ = self.send(false).await;
+                _ = sleep_fut => {
+                    let _ = self.send(false).await;
                 },
             };
         }

@@ -6,6 +6,7 @@ use crate::fetch::{
     ConfigFetcherStateStats, ConfigInvariants, ConfigProductCapabilities, FileStorage,
 };
 use crate::{RemoteConfigPath, Target};
+use futures_util::{pin_mut, select, FutureExt};
 use libdd_common::MutexExt;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -13,7 +14,6 @@ use std::ops::Add;
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
-use tokio::select;
 use tokio::time::sleep;
 use tokio_util::sync::CancellationToken;
 use tracing::error;
@@ -349,9 +349,15 @@ impl SharedFetcher {
                 }
             }
 
+            let cancel_fut = self.cancellation.cancelled().fuse();
+            let sleep_fut =
+                sleep(Duration::from_nanos(self.interval.load(Ordering::Relaxed))).fuse();
+
+            pin_mut!(cancel_fut, sleep_fut);
+
             select! {
-                _ = self.cancellation.cancelled() => { break; }
-                _ = sleep(Duration::from_nanos(self.interval.load(Ordering::Relaxed))) => {}
+                _ = cancel_fut => { break; }
+                _ = sleep_fut => {}
             }
         }
 

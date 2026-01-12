@@ -7,7 +7,7 @@ use crate::fetch::{
 };
 use crate::{RemoteConfigCapabilities, RemoteConfigProduct, Target};
 use futures_util::future::Shared;
-use futures_util::FutureExt;
+use futures_util::{pin_mut, select, FutureExt};
 use libdd_common::MutexExt;
 use manual_future::ManualFuture;
 use serde::{Deserialize, Serialize};
@@ -20,7 +20,6 @@ use std::ops::Add;
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
-use tokio::select;
 use tokio::sync::Semaphore;
 use tokio::time::Instant;
 use tracing::{debug, error, trace};
@@ -606,7 +605,10 @@ where
                         }
                     }),
                 )
-                .shared();
+                .shared()
+                .fuse();
+
+            pin_mut!(fetcher_fut);
 
             loop {
                 {
@@ -628,9 +630,16 @@ where
                     }
                 } // unlock mutex
 
+                let sleep_fut = tokio::time::sleep(Duration::from_nanos(
+                    fetcher.interval.load(Ordering::Relaxed),
+                ))
+                .fuse();
+
+                pin_mut!(sleep_fut);
+
                 select! {
-                    _ = tokio::time::sleep(Duration::from_nanos(fetcher.interval.load(Ordering::Relaxed))) => {},
-                    _ = fetcher_fut.clone() => {
+                    _ = sleep_fut => {},
+                    _ = &mut fetcher_fut => {
                         break;
                     }
                 }

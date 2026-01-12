@@ -7,6 +7,8 @@ use libdd_common::runtime::{HttpClient, Runtime};
 
 use super::{schema::AgentInfo, AGENT_INFO_CACHE};
 use anyhow::Result;
+use futures::future::{select, Either};
+use futures::FutureExt;
 use http::{self, header::HeaderName};
 use http_body_util::BodyExt;
 use libdd_common::{hyper_migration, worker::Worker, Endpoint};
@@ -171,29 +173,23 @@ impl<R: Runtime> Worker for AgentInfoFetcher<R> {
         // Main loop waiting for a trigger event or the end of the refresh interval to trigger the
         // fetch.
         loop {
-            match &mut self.trigger_rx {
-                Some(trigger_rx) => {
-                    tokio::select! {
-                        // Wait for manual trigger (new state from headers)
-                        trigger = trigger_rx.recv() => {
-                            if trigger.is_some() {
-                                self.fetch_and_update().await;
-                            } else {
-                                // The channel has been closed
-                                self.trigger_rx = None;
-                            }
-                        }
-                        // Regular periodic fetch timer
-                        _ = sleep(self.refresh_interval) => {
-                            self.fetch_and_update().await;
-                        }
-                    };
-                }
-                None => {
-                    // If the trigger channel is closed we only use timed fetch.
-                    sleep(self.refresh_interval).await;
+            if let Some(mut trigger_rx) = self.trigger_rx.take() {
+                let trigger_fut = Box::pin(trigger_rx.recv().fuse());
+                let sleep_fut = Box::pin(sleep(self.refresh_interval).fuse());
+
+                let channel_closed = match select(trigger_fut, sleep_fut).await {
+                    Either::Left((trigger, _)) => trigger.is_none(),
+                    Either::Right(_) => false,
+                };
+
+                if !channel_closed {
+                    self.trigger_rx = Some(trigger_rx);
                     self.fetch_and_update().await;
                 }
+            } else {
+                // No trigger channel, only use timed fetch
+                sleep(self.refresh_interval).await;
+                self.fetch_and_update().await;
             }
         }
     }

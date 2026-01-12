@@ -305,7 +305,9 @@ mod tracing_integration_tests {
                 .set_test_session_token(snapshot_name)
                 .set_service("test");
 
-            let trace_exporter = builder.build_tokio().expect("Unable to build TraceExporter");
+            let trace_exporter = builder
+                .build_tokio()
+                .expect("Unable to build TraceExporter");
 
             let data = get_v04_trace_snapshot_test_payload("test_exporter_v04_snapshot_uds");
 
