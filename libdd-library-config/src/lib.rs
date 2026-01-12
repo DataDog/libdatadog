@@ -550,9 +550,16 @@ impl Configurator {
                     Ok(metadata) => {
                         // Fail if the file is > 100mb
                         if metadata.len() > 1024 * 1024 * 100 {
-                            let anyhow_error = anyhow::anyhow!("Local file is too large (> 100mb)");
-                            let logged_result = LoggedResult::Err(anyhow_error);
-                            return logged_result;
+                            debug_messages.push("failed to read local config file: file is too large (> 100mb)".to_string());
+                            StableConfig::default()
+                        } else {
+                            match self.parse_stable_config_file(file) {
+                                LoggedResult::Ok(config, logs) => {
+                                    debug_messages.extend(logs);
+                                    config
+                                }
+                                LoggedResult::Err(e) => return LoggedResult::Err(e),
+                            }
                         }
                     }
                     Err(e) => {
@@ -560,13 +567,6 @@ impl Configurator {
                             anyhow::Error::from(e).context("failed to get file metadata"),
                         )
                     }
-                }
-                match self.parse_stable_config_file(file) {
-                    LoggedResult::Ok(config, logs) => {
-                        debug_messages.extend(logs);
-                        config
-                    }
-                    LoggedResult::Err(e) => return LoggedResult::Err(e),
                 }
             }
             Err(e) if e.kind() == io::ErrorKind::NotFound => StableConfig::default(),
@@ -582,8 +582,16 @@ impl Configurator {
                     Ok(metadata) => {
                         // Fail if the file is > 100mb
                         if metadata.len() > 1024 * 1024 * 100 {
-                            let test = anyhow::anyhow!("Fleet file is too large (> 100mb)");
-                            return LoggedResult::Err(test);
+                            debug_messages.push("failed to read fleet config file: file is too large (> 100mb)".to_string());
+                            StableConfig::default()
+                        } else {
+                            match self.parse_stable_config_file(file) {
+                                LoggedResult::Ok(config, logs) => {
+                                    debug_messages.extend(logs);
+                                    config
+                                }
+                                LoggedResult::Err(e) => return LoggedResult::Err(e),
+                            }
                         }
                     }
                     Err(e) => {
@@ -591,13 +599,6 @@ impl Configurator {
                             anyhow::Error::from(e).context("failed to get file metadata"),
                         )
                     }
-                }
-                match self.parse_stable_config_file(file) {
-                    LoggedResult::Ok(config, logs) => {
-                        debug_messages.extend(logs);
-                        config
-                    }
-                    LoggedResult::Err(e) => return LoggedResult::Err(e),
                 }
             }
             Err(e) if e.kind() == io::ErrorKind::NotFound => StableConfig::default(),
@@ -900,40 +901,12 @@ mod tests {
     }
 
     #[test]
-    fn test_large_local_file() {
+    fn test_large_files() {
         let configurator = Configurator::new(true);
         let mut temp_local_file = tempfile::NamedTempFile::new().unwrap();
-        let temp_fleet_file = tempfile::NamedTempFile::new().unwrap();
-        let large_file = vec![b'a'; 1024 * 1024 * 100 + 1];
-        temp_local_file.write_all(&large_file).unwrap();
-        let temp_local_path = temp_local_file.into_temp_path();
-        let temp_fleet_path = temp_fleet_file.into_temp_path();
-        let result = configurator.get_config_from_file(
-            temp_local_path.to_str().unwrap().as_ref(),
-            temp_fleet_path.to_str().unwrap().as_ref(),
-            &ProcessInfo {
-                args: vec![b"-jar HelloWorld.jar".to_vec()],
-                envp: vec![b"ENV=VAR".to_vec()],
-                language: b"java".to_vec(),
-            },
-        );
-        match result {
-            LoggedResult::Ok(..) => panic!("Expected error"),
-            LoggedResult::Err(e) => {
-                assert_eq!(
-                    e.to_string(),
-                    "Local file is too large (> 100mb)".to_string()
-                );
-            }
-        }
-    }
-
-    #[test]
-    fn test_large_fleet_file() {
-        let configurator = Configurator::new(true);
-        let temp_local_file = tempfile::NamedTempFile::new().unwrap();
         let mut temp_fleet_file = tempfile::NamedTempFile::new().unwrap();
         let large_file = vec![b'a'; 1024 * 1024 * 100 + 1];
+        temp_local_file.write_all(&large_file).unwrap();
         temp_fleet_file.write_all(&large_file).unwrap();
         let temp_local_path = temp_local_file.into_temp_path();
         let temp_fleet_path = temp_fleet_file.into_temp_path();
@@ -947,13 +920,31 @@ mod tests {
             },
         );
         match result {
-            LoggedResult::Ok(..) => panic!("Expected error"),
-            LoggedResult::Err(e) => {
+            LoggedResult::Ok(configs, logs) => {
+                assert_eq!(configs, vec![]);
                 assert_eq!(
-                    e.to_string(),
-                    "Fleet file is too large (> 100mb)".to_string()
+                    logs,
+                    vec![
+                        "Reading stable configuration from files:",
+                        format!("\tlocal: \"{path}\"", path = temp_local_path.to_str().unwrap()).as_str(),
+                        format!("\tfleet: \"{path}\"", path = temp_fleet_path.to_str().unwrap()).as_str(),
+                        "failed to read local config file: file is too large (> 100mb)",
+                        "failed to read fleet config file: file is too large (> 100mb)",
+                        "\tProcess args:",
+                        "\t\t\"-jar HelloWorld.jar\"",
+                        "\tProcess language: \"java\"",
+                        "No selector matched for source LocalStableConfig",
+                        "Called library_config_common_component:",
+                        "\tsource: LocalStableConfig",
+                        "\tconfigurator: Configurator { debug_logs: true }",
+                        "No selector matched for source FleetStableConfig",
+                        "Called library_config_common_component:",
+                        "\tsource: FleetStableConfig",
+                        "\tconfigurator: Configurator { debug_logs: true }"
+                    ]
                 );
             }
+            LoggedResult::Err(_) => panic!("Expected success"),
         }
     }
 
