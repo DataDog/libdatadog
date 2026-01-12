@@ -137,7 +137,7 @@ pub fn get_behavior(mode_str: &str) -> Box<dyn Behavior> {
         "panic_hook_after_fork" => Box::new(test_013_panic_hook_after_fork::Test),
         "panic_hook_string" => Box::new(test_014_panic_hook_string::Test),
         "panic_hook_unknown_type" => Box::new(test_015_panic_hook_unknown_type::Test),
-        "runtime_malloc_logger" => Box::new(test_016_runtime_malloc_logger::Test),
+        "runtime_preload_logger" => Box::new(test_016_runtime_preload_logger::Test),
         _ => panic!("Unknown mode: {mode_str}"),
     }
 }
