@@ -277,9 +277,11 @@ impl TelemetryClient {
 
 #[cfg(test)]
 mod tests {
+    use std::io;
+
+    use http::{Response, StatusCode};
     use httpmock::Method::POST;
     use httpmock::MockServer;
-    use hyper::{Response, StatusCode};
     use libdd_common::{hyper_migration, worker::Worker};
     use regex::Regex;
     use tokio::time::sleep;
@@ -614,13 +616,16 @@ mod tests {
     #[cfg_attr(miri, ignore)]
     #[tokio::test]
     async fn telemetry_from_network_error_test() {
-        // Create an hyper error by calling an undefined service
+        // Create an http error by calling an undefined service
         let hyper_error = hyper_migration::new_default_client()
-            .get(hyper::Uri::from_static("localhost:12345"))
+            .get(http::Uri::from_static("localhost:12345"))
             .await
             .unwrap_err();
 
-        let result = Err(SendWithRetryError::Network(hyper_error, 5));
+        let result = Err(SendWithRetryError::Network(
+            io::Error::other(hyper_error),
+            5,
+        ));
         let telemetry = SendPayloadTelemetry::from_retry_result(&result, 1, 2);
         assert_eq!(
             telemetry,

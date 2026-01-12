@@ -4,26 +4,9 @@
 #[cfg(test)]
 mod tracing_integration_tests {
     use libdd_common::{worker::Worker, Endpoint};
-    use libdd_data_pipeline::agent_info;
-    use libdd_data_pipeline::agent_info::{fetch_info, AgentInfoFetcher};
+    use libdd_data_pipeline::agent_info::{self, TokioAgentInfoFetcher};
     use libdd_trace_utils::test_utils::datadog_test_agent::DatadogTestAgent;
     use std::time::Duration;
-
-    #[cfg_attr(miri, ignore)]
-    #[tokio::test]
-    async fn test_fetch_info_from_test_agent() {
-        let test_agent = DatadogTestAgent::new(None, None, &[]).await;
-        let endpoint = Endpoint::from_url(test_agent.get_uri_for_endpoint("info", None).await);
-        let info = fetch_info(&endpoint)
-            .await
-            .expect("Failed to fetch agent info");
-        assert!(
-            info.info
-                .version
-                .expect("Missing version field in agent response")
-                == "test"
-        );
-    }
 
     #[cfg_attr(miri, ignore)]
     #[tokio::test]
@@ -31,7 +14,7 @@ mod tracing_integration_tests {
         let test_agent = DatadogTestAgent::new(None, None, &[]).await;
         let endpoint = Endpoint::from_url(test_agent.get_uri_for_endpoint("info", None).await);
         let (mut fetcher, _response_observer) =
-            AgentInfoFetcher::new(endpoint, Duration::from_secs(1));
+            TokioAgentInfoFetcher::new(endpoint, Duration::from_secs(1));
         tokio::spawn(async move { fetcher.run().await });
         let info_received = async {
             while agent_info::get_agent_info().is_none() {

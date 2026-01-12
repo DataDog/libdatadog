@@ -3,8 +3,8 @@
 
 //! Types used when calling [`super::send_with_retry`] to configure the retry logic.
 
+use libdd_common::runtime::Runtime;
 use std::time::Duration;
-use tokio::time::sleep;
 
 /// Enum representing the type of backoff to use for the delay between retries.
 /// ```
@@ -91,19 +91,20 @@ impl RetryStrategy {
     /// # Arguments
     ///
     /// * `attempt`: The number of the current attempt (1-indexed).
-    pub(crate) async fn delay(&self, attempt: u32) {
+    pub(crate) async fn delay<R: Runtime>(&self, attempt: u32) {
         let delay = match self.backoff_type {
             RetryBackoffType::Exponential => self.delay_ms * 2u32.pow(attempt - 1),
             RetryBackoffType::Constant => self.delay_ms,
             RetryBackoffType::Linear => self.delay_ms + (self.delay_ms * (attempt - 1)),
         };
 
-        if let Some(jitter) = self.jitter {
+        R::sleep(if let Some(jitter) = self.jitter {
             let jitter = rand::random::<u64>() % jitter.as_millis() as u64;
-            sleep(delay + Duration::from_millis(jitter)).await;
+            delay + Duration::from_millis(jitter)
         } else {
-            sleep(delay).await;
-        }
+            delay
+        })
+        .await;
     }
 
     /// Returns the maximum number of retries.
@@ -116,7 +117,7 @@ impl RetryStrategy {
 // For tests RetryStrategy tests the observed delay should be approximate.
 mod tests {
     use super::*;
-    use tokio::time::Instant;
+    use tokio::{runtime::Runtime as TokioRt, time::Instant};
 
     // This tolerance is on the higher side to account for github's runners not having consistent
     // performance. It shouldn't impact the quality of the tests since the most important aspect
@@ -134,7 +135,7 @@ mod tests {
         };
 
         let start = Instant::now();
-        retry_strategy.delay(1).await;
+        retry_strategy.delay::<TokioRt>(1).await;
         let elapsed = start.elapsed();
 
         assert!(
@@ -147,7 +148,7 @@ mod tests {
         );
 
         let start = Instant::now();
-        retry_strategy.delay(2).await;
+        retry_strategy.delay::<TokioRt>(2).await;
         let elapsed = start.elapsed();
 
         assert!(
@@ -171,7 +172,7 @@ mod tests {
         };
 
         let start = Instant::now();
-        retry_strategy.delay(1).await;
+        retry_strategy.delay::<TokioRt>(1).await;
         let elapsed = start.elapsed();
 
         assert!(
@@ -184,7 +185,7 @@ mod tests {
         );
 
         let start = Instant::now();
-        retry_strategy.delay(3).await;
+        retry_strategy.delay::<TokioRt>(3).await;
         let elapsed = start.elapsed();
 
         // For the Linear strategy, the delay for the 3rd attempt should be delay_ms + (delay_ms *
@@ -211,7 +212,7 @@ mod tests {
         };
 
         let start = Instant::now();
-        retry_strategy.delay(1).await;
+        retry_strategy.delay::<TokioRt>(1).await;
         let elapsed = start.elapsed();
 
         assert!(
@@ -224,7 +225,7 @@ mod tests {
         );
 
         let start = Instant::now();
-        retry_strategy.delay(3).await;
+        retry_strategy.delay::<TokioRt>(3).await;
         let elapsed = start.elapsed();
         // For the Exponential strategy, the delay for the 3rd attempt should be delay_ms * 2^(3-1)
         // = delay_ms * 4.
@@ -249,7 +250,7 @@ mod tests {
         };
 
         let start = Instant::now();
-        retry_strategy.delay(1).await;
+        retry_strategy.delay::<TokioRt>(1).await;
         let elapsed = start.elapsed();
 
         // The delay should be between delay_ms and delay_ms + jitter

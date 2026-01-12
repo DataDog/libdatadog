@@ -3,13 +3,9 @@
 
 //! Defines a pausable worker to be able to stop background processes before forks
 
-use libdd_common::worker::Worker;
-use std::fmt::Display;
-use tokio::{
-    runtime::Runtime,
-    select,
-    task::{JoinError, JoinHandle},
-};
+use libdd_common::{runtime::Runtime, worker::Worker};
+use std::fmt::{Debug, Display};
+use tokio::select;
 use tokio_util::sync::CancellationToken;
 
 /// A pausable worker which can be paused and restarted on forks.
@@ -26,16 +22,34 @@ use tokio_util::sync::CancellationToken;
 /// at this point will be saved and used to restart the worker. To be able to safely restart, the
 /// worker must be in a valid state on every call to `.await`.
 /// See [`tokio::select#cancellation-safety`] for more details.
-#[derive(Debug)]
-pub enum PausableWorker<T: Worker + Send + Sync + 'static> {
+pub enum PausableWorker<R: Runtime, T: Worker + Send + Sync + 'static> {
     Running {
-        handle: JoinHandle<T>,
+        handle: R::JoinHandle<T>,
         stop_token: CancellationToken,
     },
     Paused {
         worker: T,
     },
     InvalidState,
+}
+
+impl<R: Runtime, T: Worker + Send + Sync + Debug + 'static> std::fmt::Debug
+    for PausableWorker<R, T>
+{
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Running {
+                handle: _,
+                stop_token,
+            } => f
+                .debug_struct("Running")
+                .field("handle", &"Handle")
+                .field("stop_token", stop_token)
+                .finish(),
+            Self::Paused { worker } => f.debug_struct("Paused").field("worker", worker).finish(),
+            Self::InvalidState => write!(f, "InvalidState"),
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -59,7 +73,7 @@ impl Display for PausableWorkerError {
 
 impl core::error::Error for PausableWorkerError {}
 
-impl<T: Worker + Send + Sync + 'static> PausableWorker<T> {
+impl<R: Runtime, T: Worker + Send + Sync + 'static> PausableWorker<R, T> {
     /// Create a new pausable worker from the given worker.
     pub fn new(worker: T) -> Self {
         Self::Paused { worker }
@@ -71,7 +85,7 @@ impl<T: Worker + Send + Sync + 'static> PausableWorker<T> {
     ///
     /// # Errors
     /// Fails if the worker is in an invalid state.
-    pub fn start(&mut self, rt: &Runtime) -> Result<(), PausableWorkerError> {
+    pub fn start(&mut self, rt: &R) -> Result<(), PausableWorkerError> {
         if let Self::Running { .. } = self {
             Ok(())
         } else if let Self::Paused { mut worker } = std::mem::replace(self, Self::InvalidState) {
@@ -79,7 +93,7 @@ impl<T: Worker + Send + Sync + 'static> PausableWorker<T> {
             // be replaced by a valid state.
             let stop_token = CancellationToken::new();
             let cloned_token = stop_token.clone();
-            let handle = rt.spawn(async move {
+            let handle = rt.spawn_ref(async move {
                 select! {
                     _ = worker.run() => {worker}
                     _ = cloned_token.cancelled() => {worker}
@@ -116,7 +130,7 @@ impl<T: Worker + Send + Sync + 'static> PausableWorker<T> {
     }
 
     /// Wait for the run method of the worker to exit.
-    pub async fn join(self) -> Result<(), JoinError> {
+    pub async fn join(self) -> Result<(), R::JoinError> {
         if let PausableWorker::Running { handle, .. } = self {
             handle.await?;
         }
