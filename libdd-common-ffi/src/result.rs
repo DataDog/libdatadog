@@ -41,7 +41,7 @@ impl From<Error> for VoidResult {
 }
 
 /// A generic result type for when an operation may fail,
-/// or may return <T> in case of success.
+/// or may return `<T>` in case of success.
 #[repr(C)]
 pub enum Result<T> {
     Ok(T),

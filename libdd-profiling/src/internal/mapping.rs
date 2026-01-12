@@ -3,7 +3,7 @@
 
 use super::*;
 
-/// Represents a [pprof::Mapping] with some space-saving changes:
+/// Represents a \[pprof::Mapping\] with some space-saving changes:
 ///  - The id is not stored on the struct. It's stored in the container that holds the struct.
 ///  - ids for linked objects use 32-bit numbers instead of 64 bit ones.
 #[derive(Eq, PartialEq, Hash)]
@@ -17,7 +17,7 @@ pub struct Mapping {
 
     /// The object this entry is loaded from.  This can be a filename on
     /// disk for the main binary and shared libraries, or virtual
-    /// abstractions like "[vdso]".
+    /// abstractions like "\[vdso\]".
     pub filename: StringId,
 
     /// A string that uniquely identifies a particular program version

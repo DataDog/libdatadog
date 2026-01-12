@@ -17,7 +17,7 @@ pub struct SigInfo {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[allow(clippy::upper_case_acronyms, non_camel_case_types)]
 #[repr(C)]
-/// See https://man7.org/linux/man-pages/man7/signal.7.html
+/// See <https://man7.org/linux/man-pages/man7/signal.7.html>
 pub enum SignalNames {
     SIGHUP,
     SIGINT,
@@ -260,7 +260,7 @@ mod unix {
 )]
 #[allow(clippy::upper_case_acronyms, non_camel_case_types)]
 #[repr(C)]
-/// See https://man7.org/linux/man-pages/man2/sigaction.2.html
+/// See <https://man7.org/linux/man-pages/man2/sigaction.2.html>
 /// MUST REMAIN IN SYNC WITH THE ENUM IN emit_sigcodes.c
 pub enum SiCodes {
     BUS_ADRALN,

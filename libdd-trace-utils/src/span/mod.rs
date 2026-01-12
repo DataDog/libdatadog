@@ -61,7 +61,7 @@ impl FromStr for SpanKey {
 }
 
 /// Trait representing the requirements for a type to be used as a Span "string" type.
-/// Note: Borrow<str> is not required by the derived traits, but allows to access HashMap elements
+/// Note: `Borrow<str>` is not required by the derived traits, but allows to access HashMap elements
 /// from a static str and check if the string is empty.
 pub trait SpanText: Eq + Hash + Borrow<str> + Serialize + Default {
     fn from_static_str(value: &'static str) -> Self;
@@ -89,7 +89,7 @@ fn is_empty_str<T: Borrow<str>>(value: &T) -> bool {
 ///
 /// `T` is the type used to represent strings in the span, it can be either owned (e.g. BytesString)
 /// or borrowed (e.g. &str). To define a generic function taking any `Span<T>` you can use the
-/// [`SpanValue`] trait:
+/// [`SpanText`] trait:
 /// ```
 /// use libdd_trace_utils::span::{Span, SpanText};
 /// fn foo<T: SpanText>(span: Span<T>) {

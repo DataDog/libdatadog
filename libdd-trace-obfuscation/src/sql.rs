@@ -34,7 +34,7 @@ fn is_quoted(bytes: &[u8], start: usize, end: usize) -> bool {
 /// sensitive decision, contrary to the more exhaustive datadog-agent implementation.
 ///
 /// based off
-/// https://github.com/DataDog/dd-trace-java/blob/36e924eaa/internal-api/src/main/java/datadog/trace/api/normalize/SQLNormalizer.java
+/// <https://github.com/DataDog/dd-trace-java/blob/36e924eaa/internal-api/src/main/java/datadog/trace/api/normalize/SQLNormalizer.java>
 pub fn obfuscate_sql_string(s: &str) -> String {
     let bytes = s.as_bytes();
     let mut obfuscated = String::new();

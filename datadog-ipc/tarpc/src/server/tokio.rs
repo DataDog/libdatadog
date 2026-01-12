@@ -24,7 +24,7 @@ impl<T, S> TokioServerExecutor<T, S> {
 
 /// A future that drives the server by [spawning](tokio::spawn) each [response
 /// handler](super::InFlightRequest::execute) on tokio's default executor. Returned by
-/// [`Channel::execute`](crate::server::Channel::execute).
+/// [`Channel::execute`].
 #[must_use]
 #[pin_project]
 #[derive(Debug)]
