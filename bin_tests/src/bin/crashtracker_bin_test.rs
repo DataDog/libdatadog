@@ -56,17 +56,15 @@ mod unix {
         // For preload logger mode, ensure we actually start with LD_PRELOAD applied.
         // Setting LD_PRELOAD after startup has no effect on the current process,
         // so re-exec only if we weren't born with it
-        if mode_str == "runtime_preload_logger" {
-            if env::var_os("LD_PRELOAD").is_none() {
-                if let Some(so_path) = option_env!("PRELOAD_LOGGER_SO") {
-                    let status = process::Command::new(&raw_args[0])
-                        .args(&raw_args[1..])
-                        .env("LD_PRELOAD", so_path)
-                        .status()
-                        .context("failed to re-exec with LD_PRELOAD")?;
-                    let code = status.code().unwrap_or(1);
-                    process::exit(code);
-                }
+        if mode_str == "runtime_preload_logger" && env::var_os("LD_PRELOAD").is_none() {
+            if let Some(so_path) = option_env!("PRELOAD_LOGGER_SO") {
+                let status = process::Command::new(&raw_args[0])
+                    .args(&raw_args[1..])
+                    .env("LD_PRELOAD", so_path)
+                    .status()
+                    .context("failed to re-exec with LD_PRELOAD")?;
+                let code = status.code().unwrap_or(1);
+                process::exit(code);
             }
         }
 
