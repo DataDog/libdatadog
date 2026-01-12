@@ -25,7 +25,7 @@ Note: No Ruby needed to run this! It all runs in CI!
 
 1. [ ] Locate the new libdatadog release on GitHub: <https://github.com/datadog/libdatadog/releases>
 2. [ ] Update the `LIB_GITHUB_RELEASES` section of the `Rakefile` with the hashes from the new version
-3. [ ] Update the <lib/libdatadog/version.rb> file with the `LIB_VERSION` and `VERSION` to use
+3. [ ] Update the <lib/libdatadog/version.rb> file with the `LIB_VERSION` to use
 4. [ ] Commit change, open PR, get it merged
 5. [ ] Trigger the "Publish Ruby gem" workflow in <https://github.com/DataDog/libdatadog/actions/workflows/publish-ruby.yml>
 6. [ ] Verify that release shows up correctly on: <https://rubygems.org/gems/libdatadog>
