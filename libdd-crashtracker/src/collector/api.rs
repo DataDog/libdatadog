@@ -18,7 +18,7 @@ pub fn default_signals() -> Vec<libc::c_int> {
 }
 
 #[cfg(target_os = "linux")]
-fn mark_preload_logger_collector() {
+pub(super) fn mark_preload_logger_collector() {
     // This function is specific only for LD_PRELOAD testing
     // Best effort; this symbol exists only when the preload logger preload is present.
     // When found, it flips the thread local var in the collector so the preload will emit logs.
@@ -33,7 +33,7 @@ fn mark_preload_logger_collector() {
 }
 
 #[cfg(not(target_os = "linux"))]
-fn mark_preload_logger_collector() {}
+pub(super) fn mark_preload_logger_collector() {}
 
 /// Reinitialize the crash-tracking infrastructure after a fork.
 /// This should be one of the first things done after a fork, to minimize the
@@ -54,7 +54,6 @@ pub fn on_fork(
     receiver_config: CrashtrackerReceiverConfig,
     metadata: Metadata,
 ) -> anyhow::Result<()> {
-    mark_preload_logger_collector();
     clear_spans()?;
     clear_traces()?;
     reset_counters()?;
@@ -86,7 +85,6 @@ pub fn init(
     receiver_config: CrashtrackerReceiverConfig,
     metadata: Metadata,
 ) -> anyhow::Result<()> {
-    mark_preload_logger_collector();
     update_metadata(metadata)?;
     update_config(config.clone())?;
     Receiver::update_stored_config(receiver_config)?;

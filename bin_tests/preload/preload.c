@@ -21,39 +21,64 @@ static void *(*real_calloc)(size_t, size_t) = NULL;
 static void *(*real_realloc)(void *, size_t) = NULL;
 static int log_fd = -1;
 static pthread_once_t init_once = PTHREAD_ONCE_INIT;
-// Per-thread flag to indicate this thread belongs to the collector; only those
-// threads should produce malloc logs.
-static __thread int dd_is_collector = 0;
+// Flag to indicate we are currently in the collector; We should only
+// log when we are in the collector.
+static int collector_marked = 0;
 
-// Called by the collector process to scope logging to the collector only
-void dd_preload_logger_mark_collector(void) { dd_is_collector = 1; }
+static void init_function_ptrs(void) {
+    if (real_malloc == NULL) {
+        real_malloc = dlsym(RTLD_NEXT, "malloc");
+        real_free = dlsym(RTLD_NEXT, "free");
+        real_calloc = dlsym(RTLD_NEXT, "calloc");
+        real_realloc = dlsym(RTLD_NEXT, "realloc");
+    }
+}
 
 static void init_logger(void) {
+    if (log_fd >= 0 || !collector_marked) {
+        // Already initialized or not a collector
+        return;
+    }
+
     const char *path = getenv("PRELOAD_LOG_PATH");
     if (path == NULL || path[0] == '\0') {
         path = "/tmp/preload_logger.log";
     }
 
     log_fd = open(path, O_CREAT | O_WRONLY | O_TRUNC, 0644);
-    real_malloc = dlsym(RTLD_NEXT, "malloc");
-    real_free = dlsym(RTLD_NEXT, "free");
-    real_calloc = dlsym(RTLD_NEXT, "calloc");
-    real_realloc = dlsym(RTLD_NEXT, "realloc");
+    if (log_fd >= 0) {
+        char buf[256];
+        pid_t pid = getpid();
+        int len = snprintf(buf, sizeof(buf), "[DEBUG] Collector logger initialized pid=%d, fd=%d, path=%s\n",
+                          pid, log_fd, path);
+        write(log_fd, buf, len);
+    }
+}
+
+// Called by the collector process to scope logging to the collector only
+void dd_preload_logger_mark_collector(void) {
+    collector_marked = 1;
+
+    init_logger();
+
+    if (log_fd >= 0) {
+        char buf[256];
+        pid_t pid = getpid();
+        int len = snprintf(buf, sizeof(buf), "[DEBUG] Marked as collector, pid=%d, fd=%d\n", pid, log_fd);
+        write(log_fd, buf, len);
+    }
 }
 
 static void log_line(const char *tag, size_t size, void *ptr) {
-    if (!dd_is_collector) {
-        return;
-    }
 
-    if (log_fd < 0) {
+    if (log_fd < 0 || !collector_marked) {
         return;
     }
 
     char buf[200];
     pid_t pid = getpid();
     long tid = syscall(SYS_gettid);
-    int len;
+    int len = 0;
 
     if (strcmp(tag, "malloc") == 0) {
         len = snprintf(buf, sizeof(buf), "pid=%d tid=%ld malloc size=%zu ptr=%p\n", pid, tid, size, ptr);
@@ -71,7 +96,7 @@ static void log_line(const char *tag, size_t size, void *ptr) {
 }
 
 void *malloc(size_t size) {
-    pthread_once(&init_once, init_logger);
+    pthread_once(&init_once, init_function_ptrs);
 
     if (real_malloc == NULL) {
         errno = ENOMEM;
@@ -79,23 +104,27 @@ void *malloc(size_t size) {
     }
 
     void *ptr = real_malloc(size);
-    log_line("malloc", size, ptr);
+    if (collector_marked) {
+        log_line("malloc", size, ptr);
+    }
     return ptr;
 }
 
 void free(void *ptr) {
-    pthread_once(&init_once, init_logger);
+    pthread_once(&init_once, init_function_ptrs);
 
     if (real_free == NULL) {
         return;
     }
 
-    log_line("free", 0, ptr);
+    if (collector_marked) {
+        log_line("free", 0, ptr);
+    }
     real_free(ptr);
 }
 
 void *calloc(size_t nmemb, size_t size) {
-    pthread_once(&init_once, init_logger);
+    pthread_once(&init_once, init_function_ptrs);
 
     if (real_calloc == NULL) {
         errno = ENOMEM;
@@ -103,12 +132,14 @@ void *calloc(size_t nmemb, size_t size) {
     }
 
     void *ptr = real_calloc(nmemb, size);
-    log_line("calloc", nmemb * size, ptr);
+    if (collector_marked) {
+        log_line("calloc", nmemb * size, ptr);
+    }
     return ptr;
 }
 
 void *realloc(void *ptr, size_t size) {
-    pthread_once(&init_once, init_logger);
+    pthread_once(&init_once, init_function_ptrs);
 
     if (real_realloc == NULL) {
         errno = ENOMEM;
@@ -116,6 +147,8 @@ void *realloc(void *ptr, size_t size) {
     }
 
     void *new_ptr = real_realloc(ptr, size);
-    log_line("realloc", size, new_ptr);
+    if (collector_marked) {
+        log_line("realloc", size, new_ptr);
+    }
     return new_ptr;
 }
