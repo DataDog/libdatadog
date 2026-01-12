@@ -211,7 +211,7 @@ pub async fn send_with_retry<C: Connect>(
                     continue;
                 } else {
                     error!(
-                        error = %e,
+                        error = ?e,
                         attempts = request_attempt,
                         "Max retries exceeded, returning request error"
                     );
