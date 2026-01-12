@@ -21,6 +21,8 @@ use libdd_common::{
 
 pub mod config;
 mod errors;
+mod file_exporter;
+pub mod utils;
 
 #[cfg(unix)]
 pub use connector::uds::{socket_path_from_uri, socket_path_to_uri};
@@ -139,13 +141,32 @@ impl ProfileExporter {
         profiling_library_version: V,
         family: F,
         tags: Option<Vec<Tag>>,
-        endpoint: Endpoint,
+        mut endpoint: Endpoint,
     ) -> anyhow::Result<ProfileExporter>
     where
         F: Into<Cow<'static, str>>,
         N: Into<Cow<'static, str>>,
         V: Into<Cow<'static, str>>,
     {
+        // Handle file:// endpoints by spawning a local dump server
+        if endpoint.url.scheme_str() == Some("file") {
+            let output_path = libdd_common::decode_uri_path_in_authority(&endpoint.url)
+                .context("Failed to decode file path from file:// URI")?;
+
+            // Spawn the dump server and get the socket/pipe path
+            let server_path = file_exporter::spawn_dump_server(output_path)?;
+
+            // Convert the socket/pipe path to a URI - no path needed, server accepts any request
+            #[cfg(unix)]
+            {
+                endpoint.url = socket_path_to_uri(&server_path)?;
+            }
+            #[cfg(windows)]
+            {
+                endpoint.url = named_pipe_path_to_uri(&server_path)?;
+            }
+        }
+
         Ok(Self {
             exporter: Exporter::new()?,
             endpoint,
@@ -185,7 +206,6 @@ impl ProfileExporter {
         &self,
         profile: EncodedProfile,
         files_to_compress_and_export: &[File],
-        files_to_export_unmodified: &[File],
         additional_tags: Option<&Vec<Tag>>,
         process_tags: Option<&str>,
         internal_metadata: Option<serde_json::Value>,
@@ -197,7 +217,9 @@ impl ProfileExporter {
         let mut tags_profiler = String::new();
         let other_tags = additional_tags.into_iter();
         for tag in self.tags.iter().chain(other_tags).flatten() {
-            tags_profiler.push_str(tag.as_ref());
+            let t = tag.as_ref();
+            tags_profiler.try_reserve(t.len() + ','.len_utf8())?;
+            tags_profiler.push_str(t);
             tags_profiler.push(',');
         }
 
@@ -225,24 +247,30 @@ impl ProfileExporter {
                 ("aas.site.type", aas_metadata.get_site_type()),
                 ("aas.subscription.id", aas_metadata.get_subscription_id()),
             ];
-            aas_tags.into_iter().for_each(|(name, value)| {
+            for (name, value) in aas_tags {
                 if let Ok(tag) = Tag::new(name, value) {
-                    tags_profiler.push_str(tag.as_ref());
+                    let t = tag.as_ref();
+                    tags_profiler.try_reserve(t.len() + ','.len_utf8())?;
+                    tags_profiler.push_str(t);
                     tags_profiler.push(',');
                 }
-            });
+            }
         }
 
         // Since this is the last tag, we add it without a comma afterward. If
         // any tags get added after this one, you'll need to add the comma
         // between them.
-        tags_profiler.push_str(self.runtime_platform_tag().as_ref());
+        {
+            let t = self.runtime_platform_tag();
+            // Using try_reserve_exact since this is the last tag.
+            tags_profiler.try_reserve_exact(t.as_ref().len())?;
+            tags_profiler.push_str(t.as_ref());
+        }
 
-        let attachments: Vec<String> = files_to_compress_and_export
+        let attachments: Vec<&str> = files_to_compress_and_export
             .iter()
-            .chain(files_to_export_unmodified.iter())
-            .map(|file| file.name.to_owned())
-            .chain(iter::once("profile.pprof".to_string()))
+            .map(|file| file.name)
+            .chain(iter::once("profile.pprof"))
             .collect();
 
         let endpoint_counts = if profile.endpoints_stats.is_empty() {
@@ -303,15 +331,6 @@ impl ProfileExporter {
             form.add_reader_file(file.name, Cursor::new(encoded), file.name);
         }
 
-        for file in files_to_export_unmodified {
-            let encoded = file.bytes.to_vec();
-            /* The Datadog RFC examples strip off the file extension, but the exact behavior
-             * isn't specified. This does the simple thing of using the filename
-             * without modification for the form name because intake does not care
-             * about these name of the form field for these attachments.
-             */
-            form.add_reader_file(file.name, Cursor::new(encoded), file.name)
-        }
         // Add the actual pprof
         form.add_reader_file(
             "profile.pprof",
@@ -345,10 +364,6 @@ impl ProfileExporter {
         self.exporter
             .runtime
             .block_on(request.send(&self.exporter.client, cancel))
-    }
-
-    pub fn set_timeout(&mut self, timeout_ms: u64) {
-        self.endpoint.timeout_ms = timeout_ms;
     }
 }
 

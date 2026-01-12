@@ -550,6 +550,10 @@ pub fn enrich_span_with_google_cloud_function_metadata(
 }
 
 pub fn enrich_span_with_azure_function_metadata(span: &mut pb::Span) {
+    if span.name == "azure.apim" {
+        return;
+    }
+
     if let Some(aas_metadata) = &*azure_app_services::AAS_METADATA_FUNCTION {
         let aas_tags = [
             ("aas.resource.id", aas_metadata.get_resource_id()),
@@ -1247,5 +1251,53 @@ mod tests {
             !decoded_span.meta.contains_key("problematic_key"),
             "Null value should be skipped, but key was present"
         );
+    }
+
+    #[test]
+    fn test_enrich_span_with_azure_function_metadata_adds_tags_for_non_apim() {
+        let mut span = create_test_span(1234, 12342, 12341, 1, false);
+        span.name = "azure.function".to_string();
+
+        enrich_span_with_azure_function_metadata(&mut span);
+
+        // If AAS_METADATA_FUNCTION is available, verify aas.* tags were added
+        // If not available (most test environments), this is a no-op
+        // This test primarily ensures the function doesn't skip non-apim spans
+        if azure_app_services::AAS_METADATA_FUNCTION.is_some() {
+            assert!(span.meta.contains_key("aas.resource.id"));
+            assert!(span.meta.contains_key("aas.environment.instance_id"));
+            assert!(span.meta.contains_key("aas.environment.instance_name"));
+            assert!(span.meta.contains_key("aas.subscription.id"));
+            assert!(span.meta.contains_key("aas.environment.os"));
+            assert!(span.meta.contains_key("aas.environment.runtime"));
+            assert!(span.meta.contains_key("aas.environment.runtime_version"));
+            assert!(span.meta.contains_key("aas.environment.function_runtime"));
+            assert!(span.meta.contains_key("aas.resource.group"));
+            assert!(span.meta.contains_key("aas.site.name"));
+            assert!(span.meta.contains_key("aas.site.kind"));
+            assert!(span.meta.contains_key("aas.site.type"));
+        }
+    }
+
+    #[test]
+    fn test_enrich_span_with_azure_function_metadata_skips_azure_apim() {
+        let mut span = create_test_span(1234, 12342, 12341, 1, false);
+        span.name = "azure.apim".to_string();
+
+        enrich_span_with_azure_function_metadata(&mut span);
+
+        // Verify no aas.* tags were added
+        assert!(!span.meta.contains_key("aas.resource.id"));
+        assert!(!span.meta.contains_key("aas.environment.instance_id"));
+        assert!(!span.meta.contains_key("aas.environment.instance_name"));
+        assert!(!span.meta.contains_key("aas.subscription.id"));
+        assert!(!span.meta.contains_key("aas.environment.os"));
+        assert!(!span.meta.contains_key("aas.environment.runtime"));
+        assert!(!span.meta.contains_key("aas.environment.runtime_version"));
+        assert!(!span.meta.contains_key("aas.environment.function_runtime"));
+        assert!(!span.meta.contains_key("aas.resource.group"));
+        assert!(!span.meta.contains_key("aas.site.name"));
+        assert!(!span.meta.contains_key("aas.site.kind"));
+        assert!(!span.meta.contains_key("aas.site.type"));
     }
 }

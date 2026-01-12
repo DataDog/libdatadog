@@ -8,30 +8,39 @@ use hyper::body::Incoming;
 use hyper::{Request, Response, Uri};
 use libdd_common::hyper_migration::{self, Body};
 use std::collections::HashMap;
+use std::fmt::Write;
 use std::path::Path;
 use std::str::FromStr;
 use std::time::Duration;
 
 const TEST_AGENT_IMAGE_NAME: &str = "ghcr.io/datadog/dd-apm-test-agent/ddapm-test-agent";
-const TEST_AGENT_IMAGE_TAG: &str = "v1.31.1";
+const TEST_AGENT_IMAGE_TAG: &str = "v1.39.0";
 const TEST_AGENT_READY_MSG: &str =
     "INFO:ddapm_test_agent.agent:Trace request stall seconds setting set to 0.0.";
 
-const TEST_AGENT_PORT: u16 = 8126;
+const TRACE_AGENT_API_PORT: u16 = 8126;
+const OTEL_HTTP_PORT: u16 = 4318;
+const OTEL_PROTO_PORT: u16 = 4317;
+
 const SAMPLE_RATE_QUERY_PARAM_KEY: &str = "agent_sample_rate_by_service";
 const SESSION_TEST_TOKEN_QUERY_PARAM_KEY: &str = "test_session_token";
 const SESSION_START_ENDPOINT: &str = "test/session/start";
+const SESSION_ASSERT_SNAPSHOT: &str = "test/session/snapshot";
 const SET_REMOTE_CONFIG_RESPONSE_PATH_ENDPOINT: &str = "test/session/responses/config/path";
 
 struct DatadogAgentContainerBuilder {
     mounts: Vec<(String, String)>,
     env_vars: Vec<(String, String)>,
-    exposed_port: u16,
+    trace_agent_port: u16,
+    otlp_http_port: u16,
+    otlp_proto_port: u16,
 }
 
 struct DatadogTestAgentContainer {
     container_id: String,
-    container_port: u16,
+    trace_agent_port: u16,
+    otlp_http_port: u16,
+    otlp_proto_port: u16,
 }
 
 /// Run the command passed and returns an error if the return code is not
@@ -69,14 +78,14 @@ impl DatadogTestAgentContainer {
         anyhow::bail!("waiting for test container timed out")
     }
 
-    fn host_port(&self) -> anyhow::Result<String> {
+    fn host_port(&self, container_port: u16) -> anyhow::Result<String> {
         use std::process::*;
         let output = run_command(
             Command::new("docker")
                 .args(["inspect", "--format"])
                 .arg(format!(
                     r##"{{{{(index (index .NetworkSettings.Ports  "{}/tcp") 0).HostPort}}}}"##,
-                    self.container_port
+                    container_port
                 ))
                 .arg(&self.container_id),
         )
@@ -84,8 +93,11 @@ impl DatadogTestAgentContainer {
         Ok(String::from_utf8(output.stdout)?.trim().to_owned())
     }
 
-    fn base_uri(&self) -> anyhow::Result<String> {
-        Ok(format!("http://localhost:{}", self.host_port()?))
+    fn trace_agent_uri(&self) -> anyhow::Result<String> {
+        Ok(format!(
+            "http://localhost:{}",
+            self.host_port(self.trace_agent_port)?
+        ))
     }
 }
 
@@ -115,17 +127,21 @@ impl DatadogAgentContainerBuilder {
 
         let output = run_command(
             Command::new("docker")
-                .args(["run", "--rm", "-d"])
+                .args(["run", /* "--rm", */ "-d"])
                 .args(mounts)
                 .args(envs)
-                .args(["-p".to_owned(), format!("{}", self.exposed_port)])
+                .args(["-p".to_owned(), format!("{}", self.trace_agent_port)])
+                .args(["-p".to_owned(), format!("{}", self.otlp_http_port)])
+                .args(["-p".to_owned(), format!("{}", self.otlp_proto_port)])
                 .arg(format!("{TEST_AGENT_IMAGE_NAME}:{TEST_AGENT_IMAGE_TAG}",)),
         )
         .context("docker run container")?;
         let container_id = String::from_utf8(output.stdout)?.trim().to_owned();
         let container = DatadogTestAgentContainer {
             container_id,
-            container_port: self.exposed_port,
+            trace_agent_port: self.trace_agent_port,
+            otlp_http_port: self.otlp_http_port,
+            otlp_proto_port: self.otlp_proto_port,
         };
         container.wait_ready()?;
         Ok(container)
@@ -154,7 +170,9 @@ impl DatadogAgentContainerBuilder {
         DatadogAgentContainerBuilder {
             mounts,
             env_vars,
-            exposed_port: TEST_AGENT_PORT,
+            trace_agent_port: TRACE_AGENT_API_PORT,
+            otlp_http_port: OTEL_HTTP_PORT,
+            otlp_proto_port: OTEL_PROTO_PORT,
         }
     }
 
@@ -231,6 +249,7 @@ impl DatadogAgentContainerBuilder {
 /// ```
 pub struct DatadogTestAgent {
     container: DatadogTestAgentContainer,
+    socket_path: Option<String>,
 }
 
 impl DatadogTestAgent {
@@ -268,11 +287,17 @@ impl DatadogTestAgent {
             container: container
                 .start()
                 .expect("Unable to start DatadogTestAgent, is the Docker Daemon running?"),
+            socket_path: absolute_socket_path.map(|p: &str| format!("{}/apm.socket", p)),
         }
     }
 
-    async fn get_base_uri_string(&self) -> String {
-        self.container.base_uri().unwrap()
+    pub async fn get_base_uri(&self) -> http::Uri {
+        libdd_common::parse_uri(&if let Some(path) = &self.socket_path {
+            format!("unix://{path}")
+        } else {
+            self.container.trace_agent_uri().unwrap()
+        })
+        .unwrap()
     }
 
     /// Constructs the URI for a provided endpoint of the Datadog Test Agent by concatenating the
@@ -289,33 +314,35 @@ impl DatadogTestAgent {
     ///
     /// A `Uri` object representing the URI of the specified endpoint.
     pub async fn get_uri_for_endpoint(&self, endpoint: &str, snapshot_token: Option<&str>) -> Uri {
-        let base_uri_string = self.get_base_uri_string().await;
-        let uri_string = match snapshot_token {
-            Some(token) => format!("{base_uri_string}/{endpoint}?test_session_token={token}"),
-            None => format!("{base_uri_string}/{endpoint}"),
-        };
-
-        Uri::from_str(&uri_string).expect("Invalid URI")
+        self.get_uri_for_endpoint_and_params(
+            endpoint,
+            snapshot_token.map(|t| ("test_session_token", t)),
+        )
+        .await
     }
 
-    async fn get_uri_for_endpoint_and_params(
+    async fn get_uri_for_endpoint_and_params<'a, I: IntoIterator<Item = (&'a str, &'a str)>>(
         &self,
         endpoint: &str,
-        query_params: HashMap<&str, &str>,
+        query_params: I,
     ) -> Uri {
         let base_uri = self.get_base_uri().await;
         let mut parts = base_uri.into_parts();
 
-        let query_string = if !query_params.is_empty() {
-            let query = query_params
-                .iter()
-                .map(|(k, v)| format!("{}={}", urlencoding::encode(k), urlencoding::encode(v)))
-                .collect::<Vec<_>>()
-                .join("&");
-            format!("?{query}")
-        } else {
-            String::new()
-        };
+        let mut query_string = String::new();
+        for (i, (k, v)) in query_params.into_iter().enumerate() {
+            if i == 0 {
+                query_string.push('?');
+            } else {
+                query_string.push('&');
+            }
+            let _ = write!(
+                &mut query_string,
+                "{}={}",
+                urlencoding::encode(k),
+                urlencoding::encode(v)
+            );
+        }
 
         parts.path_and_query = Some(
             format!("/{}{}", endpoint.trim_start_matches('/'), query_string)
@@ -326,15 +353,36 @@ impl DatadogTestAgent {
         Uri::from_parts(parts).expect("Invalid URI")
     }
 
-    /// Returns the URI for the Datadog Test Agent's base URL and port.
-    /// The docker-image dynamically assigns what port the test-agent's 8126 port is forwarded to.
+    /// Returns the URI for the OTLP HTTP endpoint.
+    /// The docker-image dynamically assigns what port the test-agent's OTLP HTTP port is forwarded
+    /// to.
     ///
     /// # Returns
     ///
-    /// A `Uri` object representing the URI of the specified endpoint.
-    pub async fn get_base_uri(&self) -> Uri {
-        let base_uri_string = self.get_base_uri_string().await;
-        Uri::from_str(&base_uri_string).expect("Invalid URI")
+    /// A `Uri` object representing the URI of the OTLP HTTP endpoint.
+    pub async fn get_otlp_http_uri(&self) -> Uri {
+        let host_port = self
+            .container
+            .host_port(self.container.otlp_http_port)
+            .expect("Failed to get OTLP HTTP host port");
+        let uri_string = format!("http://localhost:{}", host_port);
+        Uri::from_str(&uri_string).expect("Invalid URI")
+    }
+
+    /// Returns the URI for the OTLP gRPC endpoint.
+    /// The docker-image dynamically assigns what port the test-agent's OTLP gRPC port is forwarded
+    /// to.
+    ///
+    /// # Returns
+    ///
+    /// A `Uri` object representing the URI of the OTLP gRPC endpoint.
+    pub async fn get_otlp_grpc_uri(&self) -> Uri {
+        let host_port = self
+            .container
+            .host_port(self.container.otlp_proto_port)
+            .expect("Failed to get OTLP gRPC host port");
+        let uri_string = format!("http://localhost:{}", host_port);
+        Uri::from_str(&uri_string).expect("Invalid URI")
     }
 
     /// Asserts that the snapshot for a given token matches the expected snapshot. This should be
@@ -345,7 +393,7 @@ impl DatadogTestAgent {
     /// * `snapshot_token` - A string slice that holds the snapshot token.
     pub async fn assert_snapshot(&self, snapshot_token: &str) {
         let uri = self
-            .get_uri_for_endpoint("test/session/snapshot", Some(snapshot_token))
+            .get_uri_for_endpoint(SESSION_ASSERT_SNAPSHOT, Some(snapshot_token))
             .await;
 
         let req = Request::builder()
@@ -466,9 +514,8 @@ impl DatadogTestAgent {
 
         let mut query_params_map = HashMap::new();
         query_params_map.insert(SESSION_TEST_TOKEN_QUERY_PARAM_KEY, session_token);
-        if let Some(agent_sample_rates_by_service) = agent_sample_rates_by_service {
-            query_params_map.insert(SAMPLE_RATE_QUERY_PARAM_KEY, agent_sample_rates_by_service);
-        }
+        query_params_map
+            .extend(agent_sample_rates_by_service.map(|r| (SAMPLE_RATE_QUERY_PARAM_KEY, r)));
 
         let uri = self
             .get_uri_for_endpoint_and_params(SESSION_START_ENDPOINT, query_params_map)
