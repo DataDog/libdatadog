@@ -18,7 +18,7 @@ pub enum TestMode {
     RuntimeCallbackFrame,
     RuntimeCallbackString,
     RuntimeCallbackFrameInvalidUtf8,
-    RuntimeMallocLogger,
+    RuntimePreloadLogger,
 }
 
 impl TestMode {
@@ -38,7 +38,7 @@ impl TestMode {
             Self::RuntimeCallbackFrame => "runtime_callback_frame",
             Self::RuntimeCallbackString => "runtime_callback_string",
             Self::RuntimeCallbackFrameInvalidUtf8 => "runtime_callback_frame_invalid_utf8",
-            Self::RuntimeMallocLogger => "runtime_malloc_logger",
+            Self::RuntimePreloadLogger => "runtime_preload_logger",
         }
     }
 
@@ -58,7 +58,7 @@ impl TestMode {
             Self::RuntimeCallbackFrame,
             Self::RuntimeCallbackString,
             Self::RuntimeCallbackFrameInvalidUtf8,
-            Self::RuntimeMallocLogger,
+            Self::RuntimePreloadLogger,
         ]
     }
 }
@@ -87,7 +87,7 @@ impl std::str::FromStr for TestMode {
             "runtime_callback_frame" => Ok(Self::RuntimeCallbackFrame),
             "runtime_callback_string" => Ok(Self::RuntimeCallbackString),
             "runtime_callback_frame_invalid_utf8" => Ok(Self::RuntimeCallbackFrameInvalidUtf8),
-            "runtime_malloc_logger" => Ok(Self::RuntimeMallocLogger),
+            "runtime_preload_logger" => Ok(Self::RuntimePreloadLogger),
             _ => Err(format!("Unknown test mode: {}", s)),
         }
     }

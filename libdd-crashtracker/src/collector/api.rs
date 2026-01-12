@@ -17,6 +17,24 @@ pub fn default_signals() -> Vec<libc::c_int> {
     Vec::from(DEFAULT_SYMBOLS)
 }
 
+#[cfg(target_os = "linux")]
+fn mark_malloc_logger_collector_thread() {
+    // This function is specific only for LD_PRELOAD testing
+    // Best effort; this symbol exists only when the malloc logger preload is present.
+    // When found, it flips the thread local var in the collector so the preload will emit logs.
+    const SYMBOL: &[u8] = b"dd_preload_logger_mark_collector_thread\0";
+    unsafe {
+        let sym = libc::dlsym(libc::RTLD_DEFAULT, SYMBOL.as_ptr() as *const _);
+        if !sym.is_null() {
+            let func: extern "C" fn() = std::mem::transmute(sym);
+            func();
+        }
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
+fn mark_malloc_logger_collector_thread() {}
+
 /// Reinitialize the crash-tracking infrastructure after a fork.
 /// This should be one of the first things done after a fork, to minimize the
 /// chance that a crash occurs between the fork, and this call.
@@ -36,6 +54,7 @@ pub fn on_fork(
     receiver_config: CrashtrackerReceiverConfig,
     metadata: Metadata,
 ) -> anyhow::Result<()> {
+    mark_malloc_logger_collector_thread();
     clear_spans()?;
     clear_traces()?;
     reset_counters()?;
@@ -67,6 +86,7 @@ pub fn init(
     receiver_config: CrashtrackerReceiverConfig,
     metadata: Metadata,
 ) -> anyhow::Result<()> {
+    mark_malloc_logger_collector_thread();
     update_metadata(metadata)?;
     update_config(config.clone())?;
     Receiver::update_stored_config(receiver_config)?;

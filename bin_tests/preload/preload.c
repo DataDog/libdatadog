@@ -21,16 +21,17 @@ static void *(*real_calloc)(size_t, size_t) = NULL;
 static void *(*real_realloc)(void *, size_t) = NULL;
 static int log_fd = -1;
 static pthread_once_t init_once = PTHREAD_ONCE_INIT;
+// Per-thread flag to indicate this thread belongs to the collector; only those
+// threads should produce malloc logs.
+static __thread int dd_is_collector_thread = 0;
 
-static int is_enabled(void) {
-    const char *v = getenv("MALLOC_LOG_ENABLED");
-    return v && v[0] == '1';
-}
+// Called by the collector process to scope logging to its thread only.
+void dd_preload_logger_mark_collector_thread(void) { dd_is_collector_thread = 1; }
 
 static void init_logger(void) {
-    const char *path = getenv("MALLOC_LOG_PATH");
+    const char *path = getenv("PRELOAD_LOG_PATH");
     if (path == NULL || path[0] == '\0') {
-        path = "/tmp/malloc_logger.log";
+        path = "/tmp/preload_logger.log";
     }
 
     log_fd = open(path, O_CREAT | O_WRONLY | O_TRUNC, 0644);
@@ -41,11 +42,11 @@ static void init_logger(void) {
 }
 
 static void log_line(const char *tag, size_t size, void *ptr) {
-    if (log_fd < 0) {
+    if (!dd_is_collector_thread) {
         return;
     }
 
-    if (!is_enabled()) {
+    if (log_fd < 0) {
         return;
     }
 
