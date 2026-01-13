@@ -48,7 +48,7 @@ fn emit_debug_log(
     level: LogLevel,
 ) {
     if let Some(logger) = logger.as_ref().map(Arc::clone) {
-        let tags = format!("{},crash_uuid:{}", issue.tag(), crash_uuid);
+        let tags = format!("{},crash_uuid:{},is_crash_debug:true", issue.tag(), crash_uuid);
         tokio::spawn(async move {
             let _ = logger.upload_general_log(message, tags, level).await;
         });
