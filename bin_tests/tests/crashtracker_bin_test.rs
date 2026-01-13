@@ -4,7 +4,7 @@
 #![cfg(unix)]
 
 use std::collections::HashMap;
-use std::io::{Read, Write};
+use std::io::{BufWriter, Read, Write};
 use std::path::Path;
 use std::process;
 use std::{fs, path::PathBuf};
@@ -16,6 +16,9 @@ use bin_tests::{
     test_types::{CrashType, TestMode},
     validation::PayloadValidator,
     ArtifactType, ArtifactsBuild, BuildProfile,
+};
+use libdd_crashtracker::{
+    CrashtrackerConfiguration, Metadata, SiCodes, SigInfo, SignalNames, StacktraceCollection,
 };
 use serde_json::Value;
 
@@ -1058,6 +1061,191 @@ fn crash_tracking_empty_endpoint() {
     assert_telemetry_message(telemetry_crash_report.1.as_bytes(), "null_deref");
 
     let _ = child.wait();
+}
+
+#[test]
+#[cfg_attr(miri, ignore)]
+#[cfg(unix)]
+fn test_receiver_emits_debug_logs_on_receiver_issue() -> anyhow::Result<()> {
+    let receiver = ArtifactsBuild {
+        name: "test_crashtracker_receiver".to_owned(),
+        build_profile: BuildProfile::Debug,
+        artifact_type: ArtifactType::Bin,
+        triple_target: None,
+        ..Default::default()
+    };
+    let artifacts = build_artifacts(&[&receiver])?;
+    let fixtures = bin_tests::test_runner::TestFixtures::new()?;
+
+    let missing_file = fixtures.output_dir.join("missing_additional_file.txt");
+
+    let config = CrashtrackerConfiguration::new(
+        vec![missing_file.display().to_string()],
+        true,
+        true,
+        None,
+        StacktraceCollection::WithoutSymbols,
+        libdd_crashtracker::default_signals(),
+        Some(std::time::Duration::from_millis(500)),
+        None,
+        true,
+    )?;
+
+    let metadata = Metadata {
+        library_name: "libdatadog".to_owned(),
+        library_version: "1.0.0".to_owned(),
+        family: "native".to_owned(),
+        tags: vec![
+            "service:foo".into(),
+            "service_version:bar".into(),
+            "runtime-id:xyz".into(),
+            "language:native".into(),
+        ],
+    };
+
+    let siginfo = SigInfo {
+        si_addr: None,
+        si_code: 1,
+        si_code_human_readable: SiCodes::SEGV_MAPERR,
+        si_signo: libc::SIGSEGV,
+        si_signo_human_readable: SignalNames::SIGSEGV,
+    };
+
+    let socket_path = fixtures.output_dir.join("trace_agent.socket");
+    let listener = std::os::unix::net::UnixListener::bind(&socket_path)
+        .context("binding unix socket for agent interception")?;
+    listener
+        .set_nonblocking(true)
+        .context("setting socket nonblocking")?;
+
+    let mut child = process::Command::new(&artifacts[&receiver])
+        .stdin(process::Stdio::piped())
+        .stdout(process::Stdio::null())
+        .stderr(process::Stdio::null())
+        .env(
+            "DD_TRACE_AGENT_URL",
+            format!("unix://{}", socket_path.display()),
+        )
+        .spawn()
+        .context("spawning receiver process")?;
+
+    {
+        let mut stdin = BufWriter::new(child.stdin.take().context("child stdin missing")?);
+        for line in [
+            "DD_CRASHTRACK_BEGIN_CONFIG".to_string(),
+            serde_json::to_string(&config)?,
+            "DD_CRASHTRACK_END_CONFIG".to_string(),
+            "DD_CRASHTRACK_BEGIN_METADATA".to_string(),
+            serde_json::to_string(&metadata)?,
+            "DD_CRASHTRACK_END_METADATA".to_string(),
+            "DD_CRASHTRACK_BEGIN_SIGINFO".to_string(),
+            serde_json::to_string(&siginfo)?,
+            "DD_CRASHTRACK_END_SIGINFO".to_string(),
+            "UNEXPECTED_LINE_FROM_TEST".to_string(),
+        ] {
+            writeln!(stdin, "{line}")?;
+        }
+        stdin.flush()?;
+    }
+
+    let status = child.wait()?;
+    assert!(
+        status.success(),
+        "receiver process should exit successfully"
+    );
+
+    let mut bodies = Vec::new();
+    let mut found_receiver_issue_attach = false;
+    let mut found_receiver_issue_unexpected = false;
+    let mut found_receiver_issue_incomplete = false;
+    let mut found_crash_report = false;
+
+    let start = std::time::Instant::now();
+    let timeout = std::time::Duration::from_secs(5);
+    while start.elapsed() < timeout && bodies.len() < 16 {
+        match listener.accept() {
+            Ok((mut stream, _)) => {
+                let body = read_http_request_body(&mut stream);
+                bodies.push(body.clone());
+                // Update flags immediately to decide whether we can stop
+                if body.contains("receiver_issue:attach_additional_file_error") {
+                    found_receiver_issue_attach = true;
+                }
+                if body.contains("receiver_issue:unexpected_line") {
+                    found_receiver_issue_unexpected = true;
+                }
+                if body.contains("receiver_issue:incomplete_stacktrace") {
+                    found_receiver_issue_incomplete = true;
+                }
+                if body.contains("is_crash:true") {
+                    found_crash_report = true;
+                }
+                if found_receiver_issue_attach
+                    && found_receiver_issue_unexpected
+                    && found_receiver_issue_incomplete
+                    && found_crash_report
+                {
+                    break;
+                }
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                std::thread::sleep(std::time::Duration::from_millis(50));
+            }
+            Err(e) => return Err(e.into()),
+        }
+    }
+
+    let check_warn = |body: &str, tag: &str| {
+        assert!(
+            body.contains("is_crash_debug:true"),
+            "expected crash debug tag for {tag} in body: {body}"
+        );
+        assert!(
+            body.contains("\"level\":\"WARN\""),
+            "expected WARN level for {tag} in body: {body}"
+        );
+    };
+
+    for body in &bodies {
+        if body.contains("receiver_issue:attach_additional_file_error") {
+            check_warn(body, "attach_additional_file_error");
+            found_receiver_issue_attach = true;
+        }
+        if body.contains("receiver_issue:unexpected_line") {
+            check_warn(body, "unexpected_line");
+            found_receiver_issue_unexpected = true;
+        }
+        if body.contains("receiver_issue:incomplete_stacktrace") {
+            check_warn(body, "incomplete_stacktrace");
+            found_receiver_issue_incomplete = true;
+        }
+        if body.contains("is_crash:true") {
+            found_crash_report = true;
+        }
+    }
+
+    assert!(
+        found_receiver_issue_attach,
+        "expected attach additional file debug telemetry log via agent socket; bodies: {:?}",
+        bodies
+    );
+    assert!(
+        found_receiver_issue_unexpected,
+        "expected unexpected line debug telemetry log via agent socket; bodies: {:?}",
+        bodies
+    );
+    assert!(
+        found_receiver_issue_incomplete,
+        "expected incomplete stacktrace debug telemetry log via agent socket; bodies: {:?}",
+        bodies
+    );
+    assert!(
+        found_crash_report,
+        "expected crash report telemetry to be emitted alongside debug log; bodies: {:?}",
+        bodies
+    );
+
+    Ok(())
 }
 
 fn read_http_request_body(stream: &mut impl Read) -> String {
