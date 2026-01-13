@@ -28,10 +28,9 @@ Note: No Ruby needed to run this! It all runs in CI!
 3. [ ] In the <lib/libdatadog/version.rb> file:
     - [ ] Update `LIB_VERSION` with the new version. Example: Setting "25.0.0" results in the first part of the string "25.0.0.1.0.x"
     - [ ] (OPTIONAL) Update `GEM_PRERELEASE_VERSION` with a prerelease descriptor. This is only needed if you want to do a prerelease. Example: Setting ".beta" results in "25.0.0.1.0.beta".
-5. [ ] [Optional] In the <lib/libdatadog/version.rb> file, update `LIB_VERSION` with the new version.
-6. [ ] Commit change, open PR, get it merged
-7. [ ] Trigger the "Publish Ruby gem" workflow in <https://github.com/DataDog/libdatadog/actions/workflows/publish-ruby.yml>
-8. [ ] Verify that release shows up correctly on: <https://rubygems.org/gems/libdatadog>
+4. [ ] Commit change, open PR, get it merged
+5. [ ] Trigger the "Publish Ruby gem" workflow in <https://github.com/DataDog/libdatadog/actions/workflows/publish-ruby.yml>
+6. [ ] Verify that release shows up correctly on: <https://rubygems.org/gems/libdatadog>
 
 ## Contributing
 
