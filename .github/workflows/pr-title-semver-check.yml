@@ -37,40 +37,32 @@ jobs:
           # Find all changed files
           CHANGED_FILES=$(git diff --name-only "origin/$BASE_REF"...HEAD)
 
+          # Get workspace members metadata using cargo-metadata
+          # Filter to only workspace members that are publishable (publish != false and publish != [])
+          # Extract workspace root and convert manifest paths to relative paths
+          WORKSPACE_ROOT=$(cargo metadata --format-version=1 --no-deps | jq -r '.workspace_root')
+          WORKSPACE_CRATES=$(cargo metadata --format-version=1 --no-deps | jq -c --arg root "$WORKSPACE_ROOT" '
+            .packages[] |
+            select(.source == null) |
+            select(.publish == null or (.publish | type == "array" and length > 0)) |
+            {name: .name, manifest_path: .manifest_path, relative_path: (.manifest_path | sub($root + "/"; ""))}
+          ')
+
           # Array to store changed published crates
           CHANGED_CRATES=()
 
-          # Read workspace members from Cargo.toml
-          while IFS= read -r crate_path; do
-            # Skip empty lines
-            if [[ -z "$crate_path" ]]; then
-              continue
-            fi
+          # Check each published crate for changes
+          while IFS= read -r crate_info; do
+            CRATE_NAME=$(echo "$crate_info" | jq -r '.name')
+            RELATIVE_PATH=$(echo "$crate_info" | jq -r '.relative_path')
+            CRATE_DIR=$(dirname "$RELATIVE_PATH")
 
             # Check if any files in this crate directory changed
-            if echo "$CHANGED_FILES" | grep -q "^${crate_path}/"; then
-              CRATE_MANIFEST="${crate_path}/Cargo.toml"
-
-              # Skip if Cargo.toml doesn't exist
-              if [[ ! -f "$CRATE_MANIFEST" ]]; then
-                continue
-              fi
-
-              # Check if crate has "publish = false"
-              if grep -q "^publish = false" "$CRATE_MANIFEST"; then
-                echo "Skipping unpublished crate: $crate_path"
-                continue
-              fi
-
-              # Extract crate name
-              CRATE_NAME=$(grep "^name = " "$CRATE_MANIFEST" | head -1 | sed 's/name = "\(.*\)"/\1/')
-
-              if [[ -n "$CRATE_NAME" ]]; then
-                echo "Detected change in published crate: $CRATE_NAME ($crate_path)"
-                CHANGED_CRATES+=("$CRATE_NAME")
-              fi
+            if echo "$CHANGED_FILES" | grep -q "^${CRATE_DIR}/"; then
+              echo "Detected change in published crate: $CRATE_NAME ($CRATE_DIR)"
+              CHANGED_CRATES+=("$CRATE_NAME")
             fi
-          done < <(sed -n 's/^  "\(.*\)",\?$/\1/p' Cargo.toml)
+          done < <(echo "$WORKSPACE_CRATES")
 
           # Output results
           if [[ ${#CHANGED_CRATES[@]} -eq 0 ]]; then
