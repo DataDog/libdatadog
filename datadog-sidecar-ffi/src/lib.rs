@@ -311,6 +311,59 @@ pub extern "C" fn ddog_sidecar_connect(connection: &mut *mut SidecarTransport) -
 }
 
 #[no_mangle]
+#[cfg(unix)]
+pub extern "C" fn ddog_sidecar_connect_master(pid: i32) -> MaybeError {
+    use datadog_sidecar::setup::MasterListener;
+
+    let cfg = datadog_sidecar::config::FromEnv::config();
+    try_c!(MasterListener::start(pid, cfg));
+
+    MaybeError::None
+}
+
+#[no_mangle]
+#[cfg(unix)]
+pub extern "C" fn ddog_sidecar_connect_worker(
+    pid: i32,
+    connection: &mut *mut SidecarTransport,
+) -> MaybeError {
+    use datadog_sidecar::setup::connect_to_master;
+
+    let transport = try_c!(connect_to_master(pid));
+    *connection = Box::into_raw(transport);
+
+    MaybeError::None
+}
+
+#[no_mangle]
+#[cfg(unix)]
+pub extern "C" fn ddog_sidecar_shutdown_master_listener() -> MaybeError {
+    use datadog_sidecar::setup::MasterListener;
+
+    try_c!(MasterListener::shutdown());
+
+    MaybeError::None
+}
+
+#[no_mangle]
+#[cfg(unix)]
+pub extern "C" fn ddog_sidecar_is_master_listener_active(pid: i32) -> bool {
+    use datadog_sidecar::setup::MasterListener;
+
+    MasterListener::is_active(pid)
+}
+
+#[no_mangle]
+#[cfg(unix)]
+pub extern "C" fn ddog_sidecar_clear_inherited_listener() -> MaybeError {
+    use datadog_sidecar::setup::MasterListener;
+
+    try_c!(MasterListener::clear_inherited_state());
+
+    MaybeError::None
+}
+
+#[no_mangle]
 pub extern "C" fn ddog_sidecar_ping(transport: &mut Box<SidecarTransport>) -> MaybeError {
     try_c!(blocking::ping(transport));
 
