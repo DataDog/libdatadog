@@ -25,7 +25,7 @@ use std::{
     },
     time,
 };
-use std::{fmt::Debug, time::Duration, collections::HashSet};
+use std::{collections::HashSet, fmt::Debug, time::Duration};
 
 use crate::metrics::MetricBucketStats;
 use futures::{
