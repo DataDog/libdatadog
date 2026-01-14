@@ -42,12 +42,6 @@ impl Collector {
         match fork_result {
             0 => {
                 // Child (does not exit from this function)
-                // Mark this process as a collector for the preload logger
-                #[cfg(target_os = "linux")]
-                {
-                    super::api::mark_preload_logger_collector();
-                }
-
                 run_collector_child(
                     config,
                     config_str,
