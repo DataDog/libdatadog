@@ -47,7 +47,8 @@ static int log_fd = -1;
 // detect allocations when we are in the collector.
 static int collector_marked = 0;
 // Flag to track if we've already detected and reported an allocation
-// This guards against reentrancy of the detection logic.
+// This guards against reentrancy of the detection logic when we capture
+// stack trace, since backtrace can use malloc internally
 static int allocation_detected = 0;
 
 // Called by the collector process to enable detection in the collector only

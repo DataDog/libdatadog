@@ -207,10 +207,7 @@ fn test_collector_no_allocations() {
 
             // Clean up the log file first
             let _ = fs::remove_file(&detector_log_path);
-
-            eprintln!("=== DANGEROUS ALLOCATION DETECTED IN COLLECTOR ===");
             eprintln!("{}", log_content);
-
             anyhow::bail!(
                 "Collector performed dangerous allocation! Check the log above for stacktrace."
             );
