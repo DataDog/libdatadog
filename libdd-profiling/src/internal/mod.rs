@@ -8,7 +8,6 @@ mod label;
 mod location;
 mod mapping;
 mod observation;
-mod owned_types;
 mod profile;
 mod sample;
 mod stack_trace;

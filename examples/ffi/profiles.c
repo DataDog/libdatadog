@@ -10,12 +10,13 @@
 #define NUM_SAMPLES 5000000
 
 int main(void) {
-  const ddog_prof_ValueType wall_time = {
-      .type_ = DDOG_CHARSLICE_C("wall-time"),
-      .unit = DDOG_CHARSLICE_C("nanoseconds"),
+  // Use the SampleType enum instead of ValueType struct
+  const ddog_prof_SampleType wall_time = DDOG_PROF_SAMPLE_TYPE_WALL_TIME;
+  const ddog_prof_Slice_SampleType sample_types = {&wall_time, 1};
+  const ddog_prof_Period period = {
+      .sample_type = wall_time,
+      .value = 60,
   };
-  const ddog_prof_Slice_ValueType sample_types = {&wall_time, 1};
-  const ddog_prof_Period period = {wall_time, 60};
 
   // Create a ProfilesDictionary for the new API
   ddog_prof_ProfilesDictionaryHandle dict = {0};

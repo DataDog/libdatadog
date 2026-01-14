@@ -15,7 +15,6 @@ use crate::api::ManagedStringId;
 use crate::collections::identifiable::*;
 use crate::collections::string_storage::{CachedProfileId, ManagedStringStorage};
 use crate::collections::string_table::{self, StringTable};
-use crate::internal::owned_types;
 use crate::iter::{IntoLendingIterator, LendingIterator};
 use crate::profiles::collections::ArcOverflow;
 use crate::profiles::datatypes::ProfilesDictionary;
@@ -36,14 +35,6 @@ pub struct Profile {
     /// Translates from the new Id2 APIs to the older internal APIs. Long-term,
     /// this should probably use the dictionary directly.
     profiles_dictionary_translator: Option<ProfilesDictionaryTranslator>,
-    /// When profiles are reset, the sample-types need to be preserved. This
-    /// maintains them in a way that does not depend on the string table. The
-    /// Option part is this is taken from the old profile and moved to the new
-    /// one.
-    owned_sample_types: Option<Box<[owned_types::ValueType]>>,
-    /// When profiles are reset, the period needs to be preserved. This
-    /// stores it in a way that does not depend on the string table.
-    owned_period: Option<owned_types::Period>,
     active_samples: AtomicU64,
     endpoints: Endpoints,
     functions: FxIndexSet<Function>,
@@ -53,8 +44,8 @@ pub struct Profile {
     locations: FxIndexSet<Location>,
     mappings: FxIndexSet<Mapping>,
     observations: Observations,
-    period: Option<(i64, ValueType)>,
-    sample_types: Box<[ValueType]>,
+    period: Option<api::Period>,
+    sample_types: Box<[api::SampleType]>,
     stack_traces: FxIndexSet<StackTrace>,
     start_time: SystemTime,
     strings: StringTable,
@@ -381,7 +372,7 @@ impl Profile {
 
     /// This is used heavily enough in tests to make a helper.
     #[cfg(test)]
-    pub fn new(sample_types: &[api::ValueType], period: Option<api::Period>) -> Self {
+    pub fn new(sample_types: &[api::SampleType], period: Option<api::Period>) -> Self {
         #[allow(clippy::unwrap_used)]
         Self::try_new(sample_types, period).unwrap()
     }
@@ -397,33 +388,23 @@ impl Profile {
     ///
     /// It's recommended to use [`Profile::try_new_with_dictionary`] instead.
     pub fn try_new(
-        sample_types: &[api::ValueType],
+        sample_types: &[api::SampleType],
         period: Option<api::Period>,
     ) -> io::Result<Self> {
-        Self::try_new_internal(
-            Self::backup_period(period),
-            Self::backup_sample_types(sample_types),
-            None,
-            None,
-        )
+        Self::try_new_internal(period, sample_types.to_vec().into_boxed_slice(), None, None)
     }
 
     /// Tries to create a profile with the given period and sample types.
     #[inline(never)]
     #[cold]
     pub fn try_new_with_dictionary(
-        sample_types: &[api::ValueType],
+        sample_types: &[api::SampleType],
         period: Option<api::Period>,
         profiles_dictionary: crate::profiles::collections::Arc<ProfilesDictionary>,
     ) -> io::Result<Self> {
-        let mut owned_sample_types = Vec::new();
-        // Using try_reserve_exact because it will be converted to Box<[]>,
-        // so excess capacity would make that conversion more expensive.
-        owned_sample_types.try_reserve_exact(sample_types.len())?;
-        owned_sample_types.extend(sample_types.iter().map(owned_types::ValueType::from));
         Self::try_new_internal(
-            period.map(owned_types::Period::from),
-            Some(owned_sample_types.into_boxed_slice()),
+            period,
+            sample_types.to_vec().into_boxed_slice(),
             None,
             Some(ProfilesDictionaryTranslator::new(profiles_dictionary)),
         )
@@ -431,13 +412,13 @@ impl Profile {
 
     #[inline]
     pub fn try_with_string_storage(
-        sample_types: &[api::ValueType],
+        sample_types: &[api::SampleType],
         period: Option<api::Period>,
         string_storage: Arc<Mutex<ManagedStringStorage>>,
     ) -> io::Result<Self> {
         Self::try_new_internal(
-            Self::backup_period(period),
-            Self::backup_sample_types(sample_types),
+            period,
+            sample_types.to_vec().into_boxed_slice(),
             Some(string_storage),
             None,
         )
@@ -463,8 +444,8 @@ impl Profile {
             .transpose()?;
 
         let mut profile = Profile::try_new_internal(
-            self.owned_period.take(),
-            self.owned_sample_types.take(),
+            self.period,
+            self.sample_types.clone(),
             self.string_storage.clone(),
             profiles_dictionary_translator,
         )
@@ -599,9 +580,18 @@ impl Profile {
         //
         // In this case, we use `sample_types` during upscaling of `samples`,
         // so we must serialize `Sample` before `SampleType`.
-        for sample_type in self.sample_types.iter() {
-            Record::<_, 1, NO_OPT_ZERO>::from(*sample_type).encode(writer)?;
+        // Clone to avoid holding an immutable borrow of `self.sample_types` while interning.
+        let sample_types = self.sample_types.clone();
+        for sample_type in sample_types.iter().copied() {
+            let sample_type = self.intern_sample_type(sample_type);
+            Record::<_, 1, NO_OPT_ZERO>::from(sample_type).encode(writer)?;
         }
+
+        // Period type needs string interning, which must happen before we start moving fields out
+        // of `self`. (Many fields below are consumed via `into_iter()`.)
+        let period_type_and_value: Option<(ValueType, i64)> = self
+            .period
+            .map(|period| (self.intern_sample_type(period.sample_type), period.value));
 
         for (offset, item) in self.mappings.into_iter().enumerate() {
             let mapping = protobuf::Mapping {
@@ -653,7 +643,7 @@ impl Profile {
         Record::<_, 9, OPT_ZERO>::from(time_nanos).encode(writer)?;
         Record::<_, 10, OPT_ZERO>::from(duration_nanos).encode(writer)?;
 
-        if let Some((period, period_type)) = self.period {
+        if let Some((period_type, period)) = period_type_and_value {
             Record::<_, 11, OPT_ZERO>::from(period_type).encode(writer)?;
             Record::<_, 12, OPT_ZERO>::from(period).encode(writer)?;
         };
@@ -823,14 +813,13 @@ impl Profile {
         self.stack_traces.try_dedup(StackTrace { locations })
     }
 
-    #[inline]
-    fn backup_period(src: Option<api::Period>) -> Option<owned_types::Period> {
-        src.as_ref().map(owned_types::Period::from)
-    }
-
-    #[inline]
-    fn backup_sample_types(src: &[api::ValueType]) -> Option<Box<[owned_types::ValueType]>> {
-        Some(src.iter().map(owned_types::ValueType::from).collect())
+    #[inline(always)]
+    fn intern_sample_type(&mut self, sample_type: api::SampleType) -> ValueType {
+        let vt: api::ValueType<'static> = sample_type.into();
+        ValueType {
+            r#type: Record::from(self.intern(vt.r#type)),
+            unit: Record::from(self.intern(vt.unit)),
+        }
     }
 
     /// Fetches the endpoint information for the label. There may be errors,
@@ -922,16 +911,14 @@ impl Profile {
     /// Creates a profile from the period, sample types, and start time using
     /// the owned values.
     fn try_new_internal(
-        owned_period: Option<owned_types::Period>,
-        owned_sample_types: Option<Box<[owned_types::ValueType]>>,
+        period: Option<api::Period>,
+        sample_types: Box<[api::SampleType]>,
         string_storage: Option<Arc<Mutex<ManagedStringStorage>>>,
         profiles_dictionary_translator: Option<ProfilesDictionaryTranslator>,
     ) -> io::Result<Self> {
         let start_time = SystemTime::now();
         let mut profile = Self {
             profiles_dictionary_translator,
-            owned_period,
-            owned_sample_types,
             active_samples: Default::default(),
             endpoints: Default::default(),
             functions: Default::default(),
@@ -942,8 +929,8 @@ impl Profile {
             locations: Default::default(),
             mappings: Default::default(),
             observations: Default::default(),
-            period: None,
-            sample_types: Box::new([]),
+            period,
+            sample_types,
             stack_traces: Default::default(),
             start_time,
             strings: Default::default(),
@@ -960,35 +947,6 @@ impl Profile {
         profile.endpoints.local_root_span_id_label = profile.intern("local root span id");
         profile.endpoints.endpoint_label = profile.intern("trace endpoint");
         profile.timestamp_key = profile.intern("end_timestamp_ns");
-
-        // Break "cannot borrow `*self` as mutable because it is also borrowed
-        // as immutable" by moving it out, borrowing it, and putting it back.
-        let owned_sample_types = profile.owned_sample_types.take();
-        profile.sample_types = match &owned_sample_types {
-            None => Box::new([]),
-            Some(sample_types) => sample_types
-                .iter()
-                .map(|sample_type| ValueType {
-                    r#type: Record::from(profile.intern(&sample_type.typ)),
-                    unit: Record::from(profile.intern(&sample_type.unit)),
-                })
-                .collect(),
-        };
-        profile.owned_sample_types = owned_sample_types;
-
-        // Break "cannot borrow `*self` as mutable because it is also borrowed
-        // as immutable" by moving it out, borrowing it, and putting it back.
-        let owned_period = profile.owned_period.take();
-        if let Some(owned_types::Period { value, typ }) = &owned_period {
-            profile.period = Some((
-                *value,
-                ValueType {
-                    r#type: Record::from(profile.intern(&typ.typ)),
-                    unit: Record::from(profile.intern(&typ.unit)),
-                },
-            ));
-        };
-        profile.owned_period = owned_period;
 
         profile.observations = Observations::try_new(profile.sample_types.len())?;
         Ok(profile)
@@ -1106,7 +1064,7 @@ mod api_tests {
 
     #[test]
     fn interning() {
-        let sample_types = [api::ValueType::new("samples", "count")];
+        let sample_types = [api::SampleType::CpuSamples];
         let mut profiles = Profile::new(&sample_types, None);
 
         let expected_id = StringId::from_offset(profiles.interned_strings_count());
@@ -1121,10 +1079,7 @@ mod api_tests {
 
     #[test]
     fn api() {
-        let sample_types = [
-            api::ValueType::new("samples", "count"),
-            api::ValueType::new("wall-time", "nanoseconds"),
-        ];
+        let sample_types = [api::SampleType::CpuSamples, api::SampleType::WallTime];
 
         let mapping = api::Mapping {
             filename: "php",
@@ -1172,7 +1127,7 @@ mod api_tests {
     }
 
     fn provide_distinct_locations() -> Profile {
-        let sample_types = [api::ValueType::new("samples", "count")];
+        let sample_types = [api::SampleType::CpuSamples];
 
         let mapping = api::Mapping {
             filename: "php",
@@ -1383,9 +1338,9 @@ mod api_tests {
         /* The previous test (reset) checked quite a few properties already, so
          * this one will focus only on the period.
          */
-        let sample_types = [api::ValueType::new("wall-time", "nanoseconds")];
+        let sample_types = [api::SampleType::WallTime];
         let period = api::Period {
-            r#type: sample_types[0],
+            sample_type: sample_types[0],
             value: 10_000_000,
         };
         let mut profile = Profile::new(&sample_types, Some(period));
@@ -1394,26 +1349,13 @@ mod api_tests {
             .reset_and_return_previous()
             .expect("reset to succeed");
 
-        // Resolve the string values to check that they match (their string
-        // table offsets may not match).
-        let mut strings: Vec<Box<str>> = Vec::with_capacity(profile.strings.len());
-        let mut strings_iter = profile.strings.into_lending_iter();
-        while let Some(item) = strings_iter.next() {
-            strings.push(Box::from(item));
-        }
-
-        for (value, period_type) in [profile.period.unwrap(), prev.period.unwrap()] {
-            assert_eq!(value, period.value);
-            let r#type: &str = &strings[usize::from(period_type.r#type.value)];
-            let unit: &str = &strings[usize::from(period_type.unit.value)];
-            assert_eq!(r#type, period.r#type.r#type);
-            assert_eq!(unit, period.r#type.unit);
-        }
+        assert_eq!(profile.period, Some(period));
+        assert_eq!(prev.period, Some(period));
     }
 
     #[test]
     fn adding_local_root_span_id_with_string_value_fails() {
-        let sample_types = [api::ValueType::new("wall-time", "nanoseconds")];
+        let sample_types = [api::SampleType::WallTime];
 
         let mut profile: Profile = Profile::new(&sample_types, None);
 
@@ -1435,10 +1377,7 @@ mod api_tests {
 
     #[test]
     fn lazy_endpoints() -> anyhow::Result<()> {
-        let sample_types = [
-            api::ValueType::new("samples", "count"),
-            api::ValueType::new("wall-time", "nanoseconds"),
-        ];
+        let sample_types = [api::SampleType::CpuSamples, api::SampleType::WallTime];
 
         let mut profile: Profile = Profile::new(&sample_types, None);
 
@@ -1528,10 +1467,7 @@ mod api_tests {
 
     #[test]
     fn endpoint_counts_empty_test() {
-        let sample_types = [
-            api::ValueType::new("samples", "count"),
-            api::ValueType::new("wall-time", "nanoseconds"),
-        ];
+        let sample_types = [api::SampleType::CpuSamples, api::SampleType::WallTime];
 
         let profile: Profile = Profile::new(&sample_types, None);
 
@@ -1545,10 +1481,7 @@ mod api_tests {
 
     #[test]
     fn endpoint_counts_test() -> anyhow::Result<()> {
-        let sample_types = [
-            api::ValueType::new("samples", "count"),
-            api::ValueType::new("wall-time", "nanoseconds"),
-        ];
+        let sample_types = [api::SampleType::CpuSamples, api::SampleType::WallTime];
 
         let mut profile: Profile = Profile::new(&sample_types, None);
 
@@ -1577,7 +1510,7 @@ mod api_tests {
 
     #[test]
     fn local_root_span_id_label_cannot_occur_more_than_once() {
-        let sample_types = [api::ValueType::new("wall-time", "nanoseconds")];
+        let sample_types = [api::SampleType::WallTime];
 
         let mut profile: Profile = Profile::new(&sample_types, None);
 
@@ -1607,10 +1540,7 @@ mod api_tests {
 
     #[test]
     fn test_no_upscaling_if_no_rules() {
-        let sample_types = vec![
-            api::ValueType::new("samples", "count"),
-            api::ValueType::new("wall-time", "nanoseconds"),
-        ];
+        let sample_types = vec![api::SampleType::CpuSamples, api::SampleType::WallTime];
 
         let mut profile: Profile = Profile::new(&sample_types, None);
 
@@ -1640,11 +1570,11 @@ mod api_tests {
         assert_eq!(first.values[1], 10000);
     }
 
-    fn create_samples_types() -> Vec<api::ValueType<'static>> {
+    fn create_samples_types() -> Vec<api::SampleType> {
         vec![
-            api::ValueType::new("samples", "count"),
-            api::ValueType::new("wall-time", "nanoseconds"),
-            api::ValueType::new("cpu-time", "nanoseconds"),
+            api::SampleType::CpuSamples,
+            api::SampleType::WallTime,
+            api::SampleType::CpuTime,
         ]
     }
 
@@ -2596,16 +2526,7 @@ mod api_tests {
 
     #[test]
     fn local_root_span_id_label_as_i64() -> anyhow::Result<()> {
-        let sample_types = vec![
-            api::ValueType {
-                r#type: "samples",
-                unit: "count",
-            },
-            api::ValueType {
-                r#type: "wall-time",
-                unit: "nanoseconds",
-            },
-        ];
+        let sample_types = vec![api::SampleType::CpuSamples, api::SampleType::WallTime];
 
         let mut profile = Profile::new(&sample_types, None);
 
@@ -2726,7 +2647,7 @@ mod api_tests {
 
         // Create a ProfilesDictionary with realistic data from Ruby app
         let dict = crate::profiles::datatypes::ProfilesDictionary::try_new().unwrap();
-        let sample_types = vec![api::ValueType::new("samples", "count")];
+        let sample_types = vec![api::SampleType::CpuSamples];
 
         // Ruby stack trace (leaf-to-root order)
         // Taken from a Ruby app, everything here is source-available
@@ -2854,7 +2775,7 @@ mod api_tests {
         let sample_type = &pprof.sample_types[0];
         let type_str = &pprof.string_table[sample_type.r#type as usize];
         let unit_str = &pprof.string_table[sample_type.unit as usize];
-        assert_eq!(type_str, "samples");
+        assert_eq!(type_str, "cpu-samples");
         assert_eq!(unit_str, "count");
 
         // Verify the mapping is present and has the correct filename
@@ -2928,7 +2849,7 @@ mod api_tests {
             world_id = storage_guard.intern("world").unwrap();
         }
 
-        let sample_types = [api::ValueType::new("samples", "count")];
+        let sample_types = [api::SampleType::CpuSamples];
         let mut profile =
             Profile::try_with_string_storage(&sample_types, None, storage.clone()).unwrap();
 
@@ -2981,7 +2902,7 @@ mod api_tests {
 
     #[test]
     fn reproduce_crash_with_anyhow_bailout() {
-        let sample_types = [api::ValueType::new("samples", "count")];
+        let sample_types = [api::SampleType::CpuSamples];
         let mapping = api::Mapping {
             filename: "test.php",
             ..Default::default()
