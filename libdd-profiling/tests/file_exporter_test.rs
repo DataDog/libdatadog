@@ -53,10 +53,10 @@ fn create_file_exporter(
     }
 
     let exporter = ProfileExporter::new(
-        profiling_library_name.to_string(),
-        profiling_library_version.to_string(),
-        family.to_string(),
-        Some(tags),
+        profiling_library_name,
+        profiling_library_version,
+        family,
+        tags,
         endpoint,
     )?;
 
@@ -79,7 +79,7 @@ mod tests {
         let profiling_library_name = "dd-trace-foo";
         let profiling_library_version = "1.2.3";
 
-        let (exporter, file_path) = create_file_exporter(
+        let (mut exporter, file_path) = create_file_exporter(
             profiling_library_name,
             profiling_library_version,
             "php",
@@ -90,10 +90,9 @@ mod tests {
 
         // Build and send profile
         let profile = EncodedProfile::test_instance().expect("test profile");
-        let request = exporter
-            .build(profile, &[], None, None, None, None)
-            .expect("build to succeed");
-        exporter.send(request, None).expect("send to succeed");
+        exporter
+            .send_blocking(profile, &[], &[], None, None, None, None)
+            .expect("send to succeed");
 
         // Read the dump file (wait a moment for it to be written)
         // The file is synced before the 200 response, but we still need a small delay
@@ -177,7 +176,7 @@ mod tests {
         let profiling_library_name = "dd-trace-foo";
         let profiling_library_version = "1.2.3";
 
-        let (exporter, file_path) = create_file_exporter(
+        let (mut exporter, file_path) = create_file_exporter(
             profiling_library_name,
             profiling_library_version,
             "php",
@@ -195,17 +194,17 @@ mod tests {
 
         // Build and send profile
         let profile = EncodedProfile::test_instance().expect("test profile");
-        let request = exporter
-            .build(
+        exporter
+            .send_blocking(
                 profile,
                 &[],
-                None,
-                None,
+                &[],
                 Some(internal_metadata.clone()),
                 None,
+                None,
+                None,
             )
-            .expect("build to succeed");
-        exporter.send(request, None).expect("send to succeed");
+            .expect("send to succeed");
 
         // Read the dump file (wait a moment for it to be written)
         // The file is synced before the 200 response, but we still need a small delay
@@ -233,7 +232,7 @@ mod tests {
         let profiling_library_name = "dd-trace-foo";
         let profiling_library_version = "1.2.3";
 
-        let (exporter, file_path) = create_file_exporter(
+        let (mut exporter, file_path) = create_file_exporter(
             profiling_library_name,
             profiling_library_version,
             "php",
@@ -246,10 +245,17 @@ mod tests {
 
         // Build and send profile
         let profile = EncodedProfile::test_instance().expect("test profile");
-        let request = exporter
-            .build(profile, &[], None, Some(expected_process_tags), None, None)
-            .expect("build to succeed");
-        exporter.send(request, None).expect("send to succeed");
+        exporter
+            .send_blocking(
+                profile,
+                &[],
+                &[],
+                None,
+                None,
+                Some(expected_process_tags),
+                None,
+            )
+            .expect("send to succeed");
 
         // Read the dump file (wait a moment for it to be written)
         // The file is synced before the 200 response, but we still need a small delay
@@ -277,7 +283,7 @@ mod tests {
         let profiling_library_name = "dd-trace-foo";
         let profiling_library_version = "1.2.3";
 
-        let (exporter, file_path) = create_file_exporter(
+        let (mut exporter, file_path) = create_file_exporter(
             profiling_library_name,
             profiling_library_version,
             "php",
@@ -305,10 +311,9 @@ mod tests {
 
         // Build and send profile
         let profile = EncodedProfile::test_instance().expect("test profile");
-        let request = exporter
-            .build(profile, &[], None, None, None, Some(info.clone()))
-            .expect("build to succeed");
-        exporter.send(request, None).expect("send to succeed");
+        exporter
+            .send_blocking(profile, &[], &[], None, Some(info.clone()), None, None)
+            .expect("send to succeed");
 
         // Read the dump file (wait a moment for it to be written)
         // The file is synced before the 200 response, but we still need a small delay
@@ -337,7 +342,7 @@ mod tests {
         let profiling_library_version = "1.2.3";
         let api_key = "1234567890123456789012";
 
-        let (exporter, file_path) = create_file_exporter(
+        let (mut exporter, file_path) = create_file_exporter(
             profiling_library_name,
             profiling_library_version,
             "php",
@@ -348,10 +353,9 @@ mod tests {
 
         // Build and send profile
         let profile = EncodedProfile::test_instance().expect("test profile");
-        let request = exporter
-            .build(profile, &[], None, None, None, None)
-            .expect("build to succeed");
-        exporter.send(request, None).expect("send to succeed");
+        exporter
+            .send_blocking(profile, &[], &[], None, None, None, None)
+            .expect("send to succeed");
 
         // Read the dump file (wait a moment for it to be written)
         // The file is synced before the 200 response, but we still need a small delay

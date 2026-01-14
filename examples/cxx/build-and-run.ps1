@@ -144,7 +144,11 @@ if ($USE_MSVC) {
         $ExampleCpp,
         $CRATE_LIB,
         $CXX_BRIDGE_LIB,
-        "ws2_32.lib", "advapi32.lib", "userenv.lib", "ntdll.lib", "bcrypt.lib", "ole32.lib"
+        # Note: when linking Rust staticlibs from C++, native system libraries that Rust
+        # would normally link automatically for Rust binaries must be provided here.
+        #
+        # `rustls-platform-verifier` uses the Windows certificate APIs (Cert*), which live in Crypt32.
+        "ws2_32.lib", "advapi32.lib", "userenv.lib", "ntdll.lib", "bcrypt.lib", "ole32.lib", "crypt32.lib"
     )
     
     # Add extra MSVC libraries if specified
@@ -174,7 +178,7 @@ if ($USE_MSVC) {
         $ExampleCpp,
         "`"$CXX_BRIDGE_LIB`"",
         "`"$CRATE_LIB`"",
-        "-lws2_32", "-ladvapi32", "-luserenv", "-lntdll", "-lbcrypt"
+        "-lws2_32", "-ladvapi32", "-luserenv", "-lntdll", "-lbcrypt", "-lcrypt32"
     )
     
     # Add extra GNU libraries if specified
