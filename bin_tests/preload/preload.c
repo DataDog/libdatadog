@@ -6,12 +6,21 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <pthread.h>
+#include <signal.h>
 #include <stddef.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <sys/syscall.h>
 #include <sys/types.h>
 #include <unistd.h>
+
+#ifdef __GLIBC__
+#include <execinfo.h>
+#define DD_HAVE_EXECINFO 1
+#else
+#define DD_HAVE_EXECINFO 0
+#endif
 
 static void *(*real_malloc)(size_t) = NULL;
 static void (*real_free)(void *) = NULL;
@@ -35,64 +44,70 @@ __attribute__((constructor)) static void preload_ctor(void) {
 
 static int log_fd = -1;
 // Flag to indicate we are currently in the collector; We should only
-// log when we are in the collector.
+// detect allocations when we are in the collector.
 static int collector_marked = 0;
+// Flag to track if we've already detected and reported an allocation
+// This guards against reentrancy of the detection logic.
+static int allocation_detected = 0;
 
-
-static void init_logger(void) {
+// Called by the collector process to enable detection in the collector only
+void dd_preload_logger_mark_collector(void) {
+    collector_marked = 1;
     if (log_fd >= 0 || !collector_marked) {
         // Already initialized or not a collector
         return;
     }
-
-    const char *path = "/tmp/preload_logger.log";
-    log_fd = open(path, O_CREAT | O_WRONLY | O_TRUNC, 0644);
-    if (log_fd >= 0) {
-        char buf[256];
-        pid_t pid = getpid();
-        int len = snprintf(buf, sizeof(buf), "[DEBUG] Collector logger initialized pid=%d, fd=%d, path=%s\n",
-                          pid, log_fd, path);
-        write(log_fd, buf, len);
-    }
 }
 
-// Called by the collector process to scope logging to the collector only
-void dd_preload_logger_mark_collector(void) {
-    collector_marked = 1;
+static void capture_and_report_allocation(const char *func_name) {
+    // Only report once using atomic compare-and-swap
+    if (__sync_bool_compare_and_swap(&allocation_detected, 0, 1)) {
+        const char *path = "/tmp/preload_detector.log";
+        log_fd = open(path, O_CREAT | O_WRONLY | O_TRUNC, 0644);
+        if (log_fd >= 0) {
+            char buf[4096];
+            pid_t pid = getpid();
+            long tid = syscall(SYS_gettid);
 
-    init_logger();
+            // Log the detection
+            int len = snprintf(buf, sizeof(buf),
+                "[FATAL] Dangerous allocation detected in collector!\n"
+                "  Function: %s\n"
+                "  PID: %d\n"
+                "  TID: %ld\n"
+                "  Stacktrace:\n",
+                func_name, pid, tid);
+            write(log_fd, buf, len);
 
-    if (log_fd >= 0) {
-        char buf[256];
-        pid_t pid = getpid();
-        int len = snprintf(buf, sizeof(buf), "[DEBUG] Marked as collector, pid=%d, fd=%d\n", pid, log_fd);
-        write(log_fd, buf, len);
+            // Capture and log stacktrace (glibc only; musl lacks execinfo)
+#if DD_HAVE_EXECINFO
+            void *array[100];
+            int size = backtrace(array, 100);
+            char **strings = backtrace_symbols(array, size);
+
+            if (strings != NULL) {
+                for (int i = 0; i < size; i++) {
+                    len = snprintf(buf, sizeof(buf), "    #%d %s\n", i, strings[i]);
+                    write(log_fd, buf, len);
+                }
+                // backtrace_symbols uses malloc internally, so we have a small leak
+                // but this is acceptable since this only happens once and we guard
+                // against it anyways
+            }
+#else
+            len = snprintf(buf, sizeof(buf),
+                "    [backtrace unavailable: execinfo.h not present on this platform (likely musl)]\n");
+            write(log_fd, buf, len);
+#endif
+
+            fsync(log_fd);
+            close(log_fd);
+            log_fd = -1;
+        }
     }
-}
 
-static void log_line(const char *tag, size_t size, void *ptr) {
-    if (log_fd < 0) {
-        return;
-    }
-
-    char buf[256];
-    pid_t pid = getpid();
-    long tid = syscall(SYS_gettid);
-    int len = 0;
-
-    if (strcmp(tag, "malloc") == 0) {
-        len = snprintf(buf, sizeof(buf), "pid=%d tid=%ld malloc size=%zu ptr=%p\n", pid, tid, size, ptr);
-    } else if (strcmp(tag, "calloc") == 0) {
-        len = snprintf(buf, sizeof(buf), "pid=%d tid=%ld calloc size=%zu ptr=%p\n", pid, tid, size, ptr);
-    } else if (strcmp(tag, "realloc") == 0) {
-        len = snprintf(buf, sizeof(buf), "pid=%d tid=%ld realloc size=%zu ptr=%p\n", pid, tid, size, ptr);
-    } else if (strcmp(tag, "free") == 0) {
-        len = snprintf(buf, sizeof(buf), "pid=%d tid=%ld free ptr=%p\n", pid, tid, ptr);
-    }
-
-    if (len > 0) {
-        (void)write(log_fd, buf, (size_t)len);
-    }
+    // Don't abort. let the collector continue so it can finish writing the crash report
+    // The test will check for the log file and fail if allocations were detected
 }
 
 void *malloc(size_t size) {
@@ -101,10 +116,11 @@ void *malloc(size_t size) {
         return NULL;
     }
 
-    void *ptr = real_malloc(size);
     if (collector_marked) {
-        log_line("malloc", size, ptr);
+        capture_and_report_allocation("malloc");
     }
+
+    void *ptr = real_malloc(size);
     return ptr;
 }
 
@@ -113,9 +129,7 @@ void free(void *ptr) {
         return;
     }
 
-    if (collector_marked) {
-        log_line("free", 0, ptr);
-    }
+    // free is generally safe; we'll allow free operations without failing
     real_free(ptr);
 }
 
@@ -125,10 +139,11 @@ void *calloc(size_t nmemb, size_t size) {
         return NULL;
     }
 
-    void *ptr = real_calloc(nmemb, size);
     if (collector_marked) {
-        log_line("calloc", nmemb * size, ptr);
+        capture_and_report_allocation("calloc");
     }
+
+    void *ptr = real_calloc(nmemb, size);
     return ptr;
 }
 
@@ -138,9 +153,10 @@ void *realloc(void *ptr, size_t size) {
         return NULL;
     }
 
-    void *new_ptr = real_realloc(ptr, size);
     if (collector_marked) {
-        log_line("realloc", size, new_ptr);
+        capture_and_report_allocation("realloc");
     }
+
+    void *new_ptr = real_realloc(ptr, size);
     return new_ptr;
 }

@@ -21,7 +21,6 @@ pub fn default_signals() -> Vec<libc::c_int> {
 pub(super) fn mark_preload_logger_collector() {
     // This function is specific only for LD_PRELOAD testing
     // Best effort; this symbol exists only when the preload logger preload is present.
-    // When found, it flips the thread local var in the collector so the preload will emit logs.
     const SYMBOL: &[u8] = b"dd_preload_logger_mark_collector\0";
     unsafe {
         let sym = libc::dlsym(libc::RTLD_DEFAULT, SYMBOL.as_ptr() as *const _);

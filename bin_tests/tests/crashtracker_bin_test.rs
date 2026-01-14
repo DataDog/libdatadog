@@ -180,18 +180,48 @@ fn test_crash_tracking_bin_no_runtime_callback() {
     run_crash_test_with_artifacts(&config, &artifacts_map, &artifacts, validator).unwrap();
 }
 
-// Manual/diagnostic preload logger check. This is ignored by default to keep the
-// regular bin test suite fast and hermetic. Run with:
-// cargo test --test crashtracker_bin_test -- --ignored manual_runtime_preload_logger
-// Log output is written to tmp/preload_logger.log.
+// Test that verifies the collector process doesn't perform dangerous allocations.
+// Uses LD_PRELOAD to detect malloc/calloc/realloc calls in the collector and fails
+// if any are detected, capturing a stacktrace for debugging.
 #[test]
-#[ignore]
-fn manual_runtime_preload_logger() {
-    run_standard_crash_test_refactored(
-        BuildProfile::Release,
+#[cfg_attr(miri, ignore)]
+#[cfg(target_os = "linux")] // LD_PRELOAD is Linux-specific
+fn test_collector_no_allocations() {
+    let config = CrashTestConfig::new(
+        BuildProfile::Debug,
         TestMode::RuntimePreloadLogger,
         CrashType::NullDeref,
     );
+    let artifacts = StandardArtifacts::new(config.profile);
+    let artifacts_map = build_artifacts(&artifacts.as_slice()).unwrap();
+
+    let validator: ValidatorFn = Box::new(|payload, _fixtures| {
+        // First validate that the crash report was properly generated
+        PayloadValidator::new(payload).validate_counters()?;
+
+        let detector_log_path = PathBuf::from("/tmp/preload_detector.log");
+
+        if detector_log_path.exists() {
+            let log_content = fs::read_to_string(&detector_log_path)
+                .context("Failed to read preload detector log")?;
+
+            // Clean up the log file first
+            let _ = fs::remove_file(&detector_log_path);
+
+            eprintln!("=== DANGEROUS ALLOCATION DETECTED IN COLLECTOR ===");
+            eprintln!("{}", log_content);
+
+            anyhow::bail!(
+                "Collector performed dangerous allocation! Check the log above for stacktrace."
+            );
+        }
+
+        // If we get here, no dangerous allocations were detected, we shuld pass
+        Ok(())
+    });
+
+    // Run the test - we expect it to complete normally without the collector aborting
+    run_crash_test_with_artifacts(&config, &artifacts_map, &artifacts, validator).unwrap();
 }
 
 #[test]
