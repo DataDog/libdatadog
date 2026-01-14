@@ -903,22 +903,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "common-multipart-rfc7578"
-version = "0.7.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f08d53b5e0c302c5830cfa7511ba0edc3f241c691a95c0d184dfb761e11a6cc2"
-dependencies = [
- "bytes",
- "futures-core",
- "futures-util",
- "http",
- "mime 0.3.17",
- "mime_guess 2.0.5",
- "rand 0.8.5",
- "thiserror 1.0.69",
-]
-
-[[package]]
 name = "concurrent-queue"
 version = "2.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2320,19 +2304,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "hyper-multipart-rfc7578"
-version = "0.9.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a60fb748074dd040c8d05d8a002725200fb594e0ffcfa0b83fb8f64616b50267"
-dependencies = [
- "bytes",
- "common-multipart-rfc7578",
- "futures-core",
- "http",
- "hyper 1.8.0",
-]
-
-[[package]]
 name = "hyper-rustls"
 version = "0.27.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3011,11 +2982,10 @@ dependencies = [
  "http",
  "http-body-util",
  "httparse",
- "hyper 1.8.0",
- "hyper-multipart-rfc7578",
  "indexmap 2.12.0",
  "libdd-alloc",
  "libdd-common",
+ "libdd-profiling",
  "libdd-profiling-protobuf",
  "mime 0.3.17",
  "multipart",

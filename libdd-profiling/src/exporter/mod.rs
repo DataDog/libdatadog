@@ -5,5 +5,6 @@ pub mod config;
 mod errors;
 mod file_exporter;
 mod profile_exporter;
+#[cfg(any(test, feature = "test-utils"))]
 pub mod utils;
 pub use profile_exporter::*;
