@@ -6,8 +6,8 @@ use libdd_profiling::api2::Location2;
 use libdd_profiling::profiles::datatypes::{Function, FunctionId2, MappingId2};
 use libdd_profiling::{self as profiling, api, api2};
 
-fn make_sample_types() -> Vec<api::ValueType<'static>> {
-    vec![api::ValueType::new("samples", "count")]
+fn make_sample_types() -> Vec<api::SampleType> {
+    vec![api::SampleType::CpuSamples]
 }
 
 fn make_stack_api(frames: &[Frame]) -> (Vec<api::Location<'static>>, Vec<i64>) {
