@@ -650,6 +650,7 @@ impl TraceExporter {
         mp_payload: Vec<u8>,
         headers: HashMap<&'static str, String>,
         chunks: usize,
+        chunks_dropped_p0: usize,
     ) -> Result<AgentResponse, TraceExporterError> {
         let strategy = RetryStrategy::default();
         let payload_len = mp_payload.len();
@@ -679,6 +680,7 @@ impl TraceExporter {
                 &result,
                 payload_len as u64,
                 chunks as u64,
+                chunks_dropped_p0 as u64,
             )) {
                 error!(?e, "Error sending telemetry");
             }
@@ -694,7 +696,7 @@ impl TraceExporter {
         let mut header_tags: TracerHeaderTags = self.metadata.borrow().into();
 
         // Process stats computation
-        stats::process_traces_for_stats(
+        let dropped_p0_stats = stats::process_traces_for_stats(
             &mut traces,
             &mut header_tags,
             &self.client_side_stats,
@@ -717,6 +719,7 @@ impl TraceExporter {
             prepared.data,
             prepared.headers,
             prepared.chunk_count,
+            dropped_p0_stats.dropped_p0_traces,
         )
         .await
     }

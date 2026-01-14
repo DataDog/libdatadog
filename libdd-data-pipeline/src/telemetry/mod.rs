@@ -197,8 +197,22 @@ impl From<&SendDataResult> for SendPayloadTelemetry {
 
 impl SendPayloadTelemetry {
     /// Create a [`SendPayloadTelemetry`] from a [`SendWithRetryResult`].
-    pub fn from_retry_result(value: &SendWithRetryResult, bytes_sent: u64, chunks: u64) -> Self {
-        let mut telemetry = Self::default();
+    ///
+    /// # Arguments
+    /// * `value` - The result of sending traces with retry
+    /// * `bytes_sent` - The number of bytes in the payload
+    /// * `chunks` - The number of trace chunks in the payload
+    /// * `chunks_dropped_p0` - The number of P0 trace chunks dropped due to sampling
+    pub fn from_retry_result(
+        value: &SendWithRetryResult,
+        bytes_sent: u64,
+        chunks: u64,
+        chunks_dropped_p0: u64,
+    ) -> Self {
+        let mut telemetry = Self {
+            chunks_dropped_p0,
+            ..Default::default()
+        };
         match value {
             Ok((response, attempts)) => {
                 telemetry.chunks_sent = chunks;
@@ -208,32 +222,30 @@ impl SendPayloadTelemetry {
                     .insert(response.status().into(), 1);
                 telemetry.requests_count = *attempts as u64;
             }
-            Err(err) => {
-                match err {
-                    SendWithRetryError::Http(response, attempts) => {
-                        telemetry.chunks_dropped_send_failure = chunks;
-                        telemetry.errors_status_code = 1;
-                        telemetry
-                            .responses_count_per_code
-                            .insert(response.status().into(), 1);
-                        telemetry.requests_count = *attempts as u64;
-                    }
-                    SendWithRetryError::Timeout(attempts) => {
-                        telemetry.chunks_dropped_send_failure = chunks;
-                        telemetry.errors_timeout = 1;
-                        telemetry.requests_count = *attempts as u64;
-                    }
-                    SendWithRetryError::Network(_, attempts) => {
-                        telemetry.chunks_dropped_send_failure = chunks;
-                        telemetry.errors_network = 1;
-                        telemetry.requests_count = *attempts as u64;
-                    }
-                    SendWithRetryError::Build(attempts) => {
-                        telemetry.chunks_dropped_serialization_error = chunks;
-                        telemetry.requests_count = *attempts as u64;
-                    }
+            Err(err) => match err {
+                SendWithRetryError::Http(response, attempts) => {
+                    telemetry.chunks_dropped_send_failure = chunks;
+                    telemetry.errors_status_code = 1;
+                    telemetry
+                        .responses_count_per_code
+                        .insert(response.status().into(), 1);
+                    telemetry.requests_count = *attempts as u64;
                 }
-            }
+                SendWithRetryError::Timeout(attempts) => {
+                    telemetry.chunks_dropped_send_failure = chunks;
+                    telemetry.errors_timeout = 1;
+                    telemetry.requests_count = *attempts as u64;
+                }
+                SendWithRetryError::Network(_, attempts) => {
+                    telemetry.chunks_dropped_send_failure = chunks;
+                    telemetry.errors_network = 1;
+                    telemetry.requests_count = *attempts as u64;
+                }
+                SendWithRetryError::Build(attempts) => {
+                    telemetry.chunks_dropped_serialization_error = chunks;
+                    telemetry.requests_count = *attempts as u64;
+                }
+            },
         };
         telemetry
     }
@@ -626,7 +638,7 @@ mod tests {
     #[test]
     fn telemetry_from_ok_response_test() {
         let result = Ok((Response::default(), 3));
-        let telemetry = SendPayloadTelemetry::from_retry_result(&result, 4, 5);
+        let telemetry = SendPayloadTelemetry::from_retry_result(&result, 4, 5, 0);
         assert_eq!(
             telemetry,
             SendPayloadTelemetry {
@@ -640,11 +652,28 @@ mod tests {
     }
 
     #[test]
+    fn telemetry_from_ok_response_with_p0_drops_test() {
+        let result = Ok((Response::default(), 3));
+        let telemetry = SendPayloadTelemetry::from_retry_result(&result, 4, 5, 10);
+        assert_eq!(
+            telemetry,
+            SendPayloadTelemetry {
+                bytes_sent: 4,
+                chunks_sent: 5,
+                requests_count: 3,
+                chunks_dropped_p0: 10,
+                responses_count_per_code: HashMap::from([(200, 1)]),
+                ..Default::default()
+            }
+        )
+    }
+
+    #[test]
     fn telemetry_from_request_error_test() {
         let mut error_response = Response::default();
         *error_response.status_mut() = StatusCode::BAD_REQUEST;
         let result = Err(SendWithRetryError::Http(error_response, 5));
-        let telemetry = SendPayloadTelemetry::from_retry_result(&result, 1, 2);
+        let telemetry = SendPayloadTelemetry::from_retry_result(&result, 1, 2, 0);
         assert_eq!(
             telemetry,
             SendPayloadTelemetry {
@@ -667,7 +696,7 @@ mod tests {
             .unwrap_err();
 
         let result = Err(SendWithRetryError::Network(hyper_error, 5));
-        let telemetry = SendPayloadTelemetry::from_retry_result(&result, 1, 2);
+        let telemetry = SendPayloadTelemetry::from_retry_result(&result, 1, 2, 0);
         assert_eq!(
             telemetry,
             SendPayloadTelemetry {
@@ -682,7 +711,7 @@ mod tests {
     #[test]
     fn telemetry_from_timeout_error_test() {
         let result = Err(SendWithRetryError::Timeout(5));
-        let telemetry = SendPayloadTelemetry::from_retry_result(&result, 1, 2);
+        let telemetry = SendPayloadTelemetry::from_retry_result(&result, 1, 2, 0);
         assert_eq!(
             telemetry,
             SendPayloadTelemetry {
@@ -698,7 +727,7 @@ mod tests {
     #[tokio::test]
     async fn telemetry_from_build_error_test() {
         let result = Err(SendWithRetryError::Build(5));
-        let telemetry = SendPayloadTelemetry::from_retry_result(&result, 1, 2);
+        let telemetry = SendPayloadTelemetry::from_retry_result(&result, 1, 2, 0);
         assert_eq!(
             telemetry,
             SendPayloadTelemetry {

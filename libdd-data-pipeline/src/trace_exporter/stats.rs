@@ -218,13 +218,14 @@ fn add_spans_to_stats<T: libdd_trace_utils::span::TraceData>(
     }
 }
 
-/// Process traces for stats computation and update header tags accordingly
+/// Process traces for stats computation and update header tags accordingly.
+/// Returns the number of P0 traces and spans that were dropped.
 pub(crate) fn process_traces_for_stats<T: libdd_trace_utils::span::TraceData>(
     traces: &mut Vec<Vec<libdd_trace_utils::span::v04::Span<T>>>,
     header_tags: &mut libdd_trace_utils::trace_utils::TracerHeaderTags,
     client_side_stats: &ArcSwap<StatsComputationStatus>,
     client_computed_top_level: bool,
-) {
+) -> libdd_trace_utils::span::trace_utils::DroppedP0Stats {
     if let StatsComputationStatus::Enabled {
         stats_concentrator, ..
     } = &**client_side_stats.load()
@@ -237,17 +238,21 @@ pub(crate) fn process_traces_for_stats<T: libdd_trace_utils::span::TraceData>(
         add_spans_to_stats(stats_concentrator, traces);
         // Once stats have been computed we can drop all chunks that are not going to be
         // sampled by the agent
-        let libdd_trace_utils::span::trace_utils::DroppedP0Stats {
-            dropped_p0_traces,
-            dropped_p0_spans,
-        } = libdd_trace_utils::span::trace_utils::drop_chunks(traces);
+        let dropped_p0_stats = libdd_trace_utils::span::trace_utils::drop_chunks(traces);
 
         // Update the headers to indicate that stats have been computed and forward dropped
         // traces counts
         header_tags.client_computed_top_level = true;
         header_tags.client_computed_stats = true;
-        header_tags.dropped_p0_traces = dropped_p0_traces;
-        header_tags.dropped_p0_spans = dropped_p0_spans;
+        header_tags.dropped_p0_traces = dropped_p0_stats.dropped_p0_traces;
+        header_tags.dropped_p0_spans = dropped_p0_stats.dropped_p0_spans;
+
+        dropped_p0_stats
+    } else {
+        libdd_trace_utils::span::trace_utils::DroppedP0Stats {
+            dropped_p0_traces: 0,
+            dropped_p0_spans: 0,
+        }
     }
 }
 
