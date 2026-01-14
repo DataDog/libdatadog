@@ -120,6 +120,7 @@ pub(crate) enum StdinState {
     // may have lines that we need to accumulate depending on runtime (e.g. Python)
     RuntimeStackFrame(Vec<StackFrame>),
     RuntimeStackString(Vec<String>),
+    Message,
 }
 
 /// A state machine that processes data from the crash-tracker collector line by
@@ -231,17 +232,24 @@ fn process_line(
         StdinState::SigInfo if line.starts_with(DD_CRASHTRACK_END_SIGINFO) => StdinState::Waiting,
         StdinState::SigInfo => {
             let sig_info: SigInfo = serde_json::from_str(line)?;
-            // By convention, siginfo is the first thing sent.
-            let message = format!(
-                "Process terminated with {:?} ({:?})",
-                sig_info.si_code_human_readable, sig_info.si_signo_human_readable
-            );
+            if !builder.has_message() {
+                let message = format!(
+                    "Process terminated with {:?} ({:?})",
+                    sig_info.si_code_human_readable, sig_info.si_signo_human_readable
+                );
+                builder.with_message(message)?;
+            }
 
             builder.with_timestamp_now()?;
             builder.with_sig_info(sig_info)?;
             builder.with_incomplete(true)?;
-            builder.with_message(message)?;
             StdinState::SigInfo
+        }
+
+        StdinState::Message if line.starts_with(DD_CRASHTRACK_END_MESSAGE) => StdinState::Waiting,
+        StdinState::Message => {
+            builder.with_message(line.to_string())?;
+            StdinState::Message
         }
 
         StdinState::SpanIds if line.starts_with(DD_CRASHTRACK_END_SPAN_IDS) => StdinState::Waiting,
@@ -293,6 +301,7 @@ fn process_line(
             StdinState::ProcInfo
         }
         StdinState::Waiting if line.starts_with(DD_CRASHTRACK_BEGIN_SIGINFO) => StdinState::SigInfo,
+        StdinState::Waiting if line.starts_with(DD_CRASHTRACK_BEGIN_MESSAGE) => StdinState::Message,
         StdinState::Waiting if line.starts_with(DD_CRASHTRACK_BEGIN_SPAN_IDS) => {
             StdinState::SpanIds
         }
@@ -489,4 +498,133 @@ pub(crate) async fn receive_report_from_stream(
     }
 
     Ok(Some((config, crash_info)))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_stdin_state_waiting_to_message() {
+        let mut builder = CrashInfoBuilder::new();
+        let mut config = None;
+
+        let state = StdinState::Waiting;
+        let line = DD_CRASHTRACK_BEGIN_MESSAGE;
+
+        let next_state = process_line(&mut builder, &mut config, line, state, &None).unwrap();
+
+        assert!(matches!(next_state, StdinState::Message));
+    }
+
+    #[test]
+    fn test_stdin_state_message_content() {
+        let mut builder = CrashInfoBuilder::new();
+        let mut config = None;
+
+        // Enter message state
+        let state = StdinState::Message;
+        let message_line = "program panicked";
+
+        let next_state =
+            process_line(&mut builder, &mut config, message_line, state, &None).unwrap();
+
+        // Should stay in message state
+        assert!(matches!(next_state, StdinState::Message));
+
+        // Verify message was stored
+        assert!(builder.has_message());
+    }
+
+    #[test]
+    fn test_stdin_state_message_to_waiting() {
+        let mut builder = CrashInfoBuilder::new();
+        let mut config = None;
+
+        let state = StdinState::Message;
+        let line = DD_CRASHTRACK_END_MESSAGE;
+
+        let next_state = process_line(&mut builder, &mut config, line, state, &None).unwrap();
+
+        assert!(matches!(next_state, StdinState::Waiting));
+    }
+
+    #[test]
+    fn test_message_state_with_empty_line() {
+        let mut builder = CrashInfoBuilder::new();
+        let mut config = None;
+
+        let state = StdinState::Message;
+        let empty_line = "";
+
+        let result = process_line(&mut builder, &mut config, empty_line, state, &None);
+
+        // Should handle empty line without error
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_message_state_with_multiline_content() {
+        let mut builder = CrashInfoBuilder::new();
+        let mut config = None;
+
+        // First line of message
+        let state = process_line(
+            &mut builder,
+            &mut config,
+            "Line 1 of panic",
+            StdinState::Message,
+            &None,
+        )
+        .unwrap();
+
+        // Should still be in message state
+        assert!(matches!(state, StdinState::Message));
+
+        // Note: Current implementation may only store last message
+        // This test documents current behavior
+    }
+
+    #[test]
+    fn test_message_state_full_workflow() {
+        let mut builder = CrashInfoBuilder::new();
+        let mut config = None;
+
+        // Start in waiting state
+        let mut state = StdinState::Waiting;
+
+        // Transition to message
+        state = process_line(
+            &mut builder,
+            &mut config,
+            DD_CRASHTRACK_BEGIN_MESSAGE,
+            state,
+            &None,
+        )
+        .unwrap();
+        assert!(matches!(state, StdinState::Message));
+
+        // Add message content
+        state = process_line(
+            &mut builder,
+            &mut config,
+            "test panic message",
+            state,
+            &None,
+        )
+        .unwrap();
+        assert!(matches!(state, StdinState::Message));
+        assert!(builder.has_message());
+
+        // End message
+        state = process_line(
+            &mut builder,
+            &mut config,
+            DD_CRASHTRACK_END_MESSAGE,
+            state,
+            &None,
+        )
+        .unwrap();
+        assert!(matches!(state, StdinState::Waiting));
+    }
 }
