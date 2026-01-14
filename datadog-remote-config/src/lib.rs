@@ -14,7 +14,7 @@ pub mod fetch;
 pub mod file_change_tracker;
 #[cfg(feature = "client")]
 pub mod file_storage;
-mod parse;
+pub mod parse;
 mod path;
 #[cfg(feature = "client")]
 mod targets;
