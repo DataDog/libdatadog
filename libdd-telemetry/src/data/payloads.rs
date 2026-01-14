@@ -148,10 +148,6 @@ impl std::hash::Hash for Endpoint {
 
 impl Endpoint {
     pub fn to_json_value(&self) -> serde_json::Result<serde_json::Value> {
-        let result = serde_json::to_value(self);
-        match result {
-            Ok(value) => Ok(value),
-            Err(err) => Err(err),
-        }
+        serde_json::to_value(self)
     }
 }
