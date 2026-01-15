@@ -143,6 +143,9 @@ pub(crate) fn emit_crashreport(
     ucontext: *const ucontext_t,
     ppid: i32,
 ) -> Result<(), EmitterError> {
+    let mut test_allocation = Vec::new();
+    test_allocation.push(config_str);
+    test_allocation.push(metadata_string);
     // The following order is important in order to emit the crash ping:
     // - receiver expects the config
     // - then message if any
