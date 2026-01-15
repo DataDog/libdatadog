@@ -74,6 +74,13 @@ pub mod ffi {
     extern "Rust" {
         type Profile;
         type ProfileExporter;
+        type CancellationToken;
+
+        // CancellationToken factory and methods
+        fn new_cancellation_token() -> Box<CancellationToken>;
+        fn clone_token(self: &CancellationToken) -> Box<CancellationToken>;
+        fn cancel(self: &CancellationToken);
+        fn is_cancelled(self: &CancellationToken) -> bool;
 
         // Static factory methods for Profile
         #[Self = "Profile"]
@@ -138,6 +145,15 @@ pub mod ffi {
             timeout_ms: u64,
         ) -> Result<Box<ProfileExporter>>;
 
+        #[Self = "ProfileExporter"]
+        fn create_file_exporter(
+            profiling_library_name: &str,
+            profiling_library_version: &str,
+            family: &str,
+            tags: Vec<Tag>,
+            output_path: &str,
+        ) -> Result<Box<ProfileExporter>>;
+
         // ProfileExporter methods
         /// Sends a profile to Datadog.
         ///
@@ -154,13 +170,43 @@ pub mod ffi {
         ///   "x86_64"}`) See Datadog-internal "RFC: Pprof System Info Support" Pass empty string ""
         ///   if not needed
         fn send_profile(
-            self: &ProfileExporter,
+            self: &mut ProfileExporter,
             profile: &mut Profile,
             files_to_compress: Vec<AttachmentFile>,
             additional_tags: Vec<Tag>,
             process_tags: &str,
             internal_metadata: &str,
             info: &str,
+        ) -> Result<()>;
+
+        /// Sends a profile to Datadog with cancellation support.
+        ///
+        /// This is the same as `send_profile`, but allows cancelling the operation from another
+        /// thread using a cancellation token.
+        ///
+        /// # Arguments
+        /// * `profile` - Profile to send (will be reset after sending)
+        /// * `files_to_compress` - Additional files to compress and attach (e.g., heap dumps)
+        /// * `additional_tags` - Per-profile tags (in addition to exporter-level tags)
+        /// * `process_tags` - Process-level tags as comma-separated string (e.g.,
+        ///   "runtime:native,profiler_version:1.0") Pass empty string "" if not needed
+        /// * `internal_metadata` - Internal metadata as JSON string (e.g., `{"key": "value"}`) See
+        ///   Datadog-internal "RFC: Attaching internal metadata to pprof profiles" Pass empty
+        ///   string "" if not needed
+        /// * `info` - System/environment info as JSON string (e.g., `{"os": "linux", "arch":
+        ///   "x86_64"}`) See Datadog-internal "RFC: Pprof System Info Support" Pass empty string ""
+        ///   if not needed
+        /// * `cancel` - Cancellation token to cancel the send operation
+        #[allow(clippy::too_many_arguments)]
+        fn send_profile_with_cancellation(
+            self: &mut ProfileExporter,
+            profile: &mut Profile,
+            files_to_compress: Vec<AttachmentFile>,
+            additional_tags: Vec<Tag>,
+            process_tags: &str,
+            internal_metadata: &str,
+            info: &str,
+            cancel: &CancellationToken,
         ) -> Result<()>;
     }
 }
@@ -237,11 +283,55 @@ impl<'a> From<&ffi::AttachmentFile<'a>> for exporter::File<'a> {
     }
 }
 
-impl<'a> TryFrom<&ffi::Tag<'a>> for exporter::Tag {
+impl<'a> TryFrom<&ffi::Tag<'a>> for libdd_common::tag::Tag {
     type Error = anyhow::Error;
 
     fn try_from(tag: &ffi::Tag<'a>) -> Result<Self, Self::Error> {
-        exporter::Tag::new(tag.key, tag.value)
+        libdd_common::tag::Tag::new(tag.key, tag.value)
+    }
+}
+
+// ============================================================================
+// CancellationToken - Wrapper around tokio_util::sync::CancellationToken
+// ============================================================================
+
+pub struct CancellationToken {
+    inner: tokio_util::sync::CancellationToken,
+}
+
+/// Creates a new cancellation token.
+pub fn new_cancellation_token() -> Box<CancellationToken> {
+    Box::new(CancellationToken {
+        inner: tokio_util::sync::CancellationToken::new(),
+    })
+}
+
+impl CancellationToken {
+    /// Clones the cancellation token.
+    ///
+    /// A cloned token is connected to the original token - either can be used
+    /// to cancel or check cancellation status. The useful part is that they have
+    /// independent lifetimes and can be dropped separately.
+    ///
+    /// This is useful for multi-threaded scenarios where one thread performs the
+    /// send operation while another thread can cancel it.
+    pub fn clone_token(&self) -> Box<CancellationToken> {
+        Box::new(CancellationToken {
+            inner: self.inner.clone(),
+        })
+    }
+
+    /// Cancels the token.
+    ///
+    /// Note that cancellation is a terminal state; calling cancel multiple times
+    /// has no additional effect.
+    pub fn cancel(&self) {
+        self.inner.cancel();
+    }
+
+    /// Returns true if the token has been cancelled.
+    pub fn is_cancelled(&self) -> bool {
+        self.inner.is_cancelled()
     }
 }
 
@@ -377,22 +467,16 @@ impl ProfileExporter {
             endpoint.timeout_ms = timeout_ms;
         }
 
-        let tags_vec: Vec<exporter::Tag> = tags
+        let tags_vec: Vec<libdd_common::tag::Tag> = tags
             .iter()
             .map(TryInto::try_into)
             .collect::<Result<Vec<_>, _>>()?;
 
-        let tags_option = if tags_vec.is_empty() {
-            None
-        } else {
-            Some(tags_vec)
-        };
-
         let inner = exporter::ProfileExporter::new(
-            profiling_library_name.to_string(),
-            profiling_library_version.to_string(),
-            family.to_string(),
-            tags_option,
+            profiling_library_name,
+            profiling_library_version,
+            family,
+            tags_vec,
             endpoint,
         )?;
 
@@ -415,22 +499,41 @@ impl ProfileExporter {
             endpoint.timeout_ms = timeout_ms;
         }
 
-        let tags_vec: Vec<exporter::Tag> = tags
+        let tags_vec: Vec<libdd_common::tag::Tag> = tags
             .iter()
             .map(TryInto::try_into)
             .collect::<Result<Vec<_>, _>>()?;
 
-        let tags_option = if tags_vec.is_empty() {
-            None
-        } else {
-            Some(tags_vec)
-        };
+        let inner = exporter::ProfileExporter::new(
+            profiling_library_name,
+            profiling_library_version,
+            family,
+            tags_vec,
+            endpoint,
+        )?;
+
+        Ok(Box::new(ProfileExporter { inner }))
+    }
+
+    pub fn create_file_exporter(
+        profiling_library_name: &str,
+        profiling_library_version: &str,
+        family: &str,
+        tags: Vec<ffi::Tag>,
+        output_path: &str,
+    ) -> anyhow::Result<Box<ProfileExporter>> {
+        let endpoint = exporter::config::file(output_path)?;
+
+        let tags_vec: Vec<libdd_common::tag::Tag> = tags
+            .iter()
+            .map(TryInto::try_into)
+            .collect::<Result<Vec<_>, _>>()?;
 
         let inner = exporter::ProfileExporter::new(
-            profiling_library_name.to_string(),
-            profiling_library_version.to_string(),
-            family.to_string(),
-            tags_option,
+            profiling_library_name,
+            profiling_library_version,
+            family,
+            tags_vec,
             endpoint,
         )?;
 
@@ -448,7 +551,7 @@ impl ProfileExporter {
     /// * `info` - System/environment info as JSON string. Empty string if not needed. Example:
     ///   `{"os": "linux", "arch": "x86_64", "kernel": "5.15.0"}`
     pub fn send_profile(
-        &self,
+        &mut self,
         profile: &mut Profile,
         files_to_compress: Vec<ffi::AttachmentFile>,
         additional_tags: Vec<ffi::Tag>,
@@ -456,28 +559,75 @@ impl ProfileExporter {
         internal_metadata: &str,
         info: &str,
     ) -> anyhow::Result<()> {
-        // Reset the profile and get the old one to export
+        self.send_profile_impl(
+            profile,
+            files_to_compress,
+            additional_tags,
+            process_tags,
+            internal_metadata,
+            info,
+            None,
+        )
+    }
+
+    /// Sends a profile to Datadog with cancellation support.
+    ///
+    /// # Arguments
+    /// * `profile` - Profile to send (will be reset after sending)
+    /// * `files_to_compress` - Additional files to compress and attach
+    /// * `additional_tags` - Per-profile tags (in addition to exporter-level tags)
+    /// * `process_tags` - Process-level tags as comma-separated string. Empty string if not needed.
+    /// * `internal_metadata` - Internal metadata as JSON string. Empty string if not needed.
+    ///   Example: `{"custom_field": "value", "version": "1.0"}`
+    /// * `info` - System/environment info as JSON string. Empty string if not needed. Example:
+    ///   `{"os": "linux", "arch": "x86_64", "kernel": "5.15.0"}`
+    /// * `cancel` - Cancellation token to cancel the send operation
+    #[allow(clippy::too_many_arguments)]
+    pub fn send_profile_with_cancellation(
+        &mut self,
+        profile: &mut Profile,
+        files_to_compress: Vec<ffi::AttachmentFile>,
+        additional_tags: Vec<ffi::Tag>,
+        process_tags: &str,
+        internal_metadata: &str,
+        info: &str,
+        cancel: &CancellationToken,
+    ) -> anyhow::Result<()> {
+        self.send_profile_impl(
+            profile,
+            files_to_compress,
+            additional_tags,
+            process_tags,
+            internal_metadata,
+            info,
+            Some(&cancel.inner),
+        )
+    }
+
+    /// Internal implementation shared by send_profile and send_profile_with_cancellation
+    #[allow(clippy::too_many_arguments)]
+    fn send_profile_impl(
+        &mut self,
+        profile: &mut Profile,
+        files_to_compress: Vec<ffi::AttachmentFile>,
+        additional_tags: Vec<ffi::Tag>,
+        process_tags: &str,
+        internal_metadata: &str,
+        info: &str,
+        cancel: Option<&tokio_util::sync::CancellationToken>,
+    ) -> anyhow::Result<()> {
         let old_profile = profile.inner.reset_and_return_previous()?;
         let end_time = Some(std::time::SystemTime::now());
         let encoded = old_profile.serialize_into_compressed_pprof(end_time, None)?;
 
-        // Convert attachment files to exporter::File
         let files_to_compress_vec: Vec<exporter::File> =
             files_to_compress.iter().map(Into::into).collect();
 
-        // Convert additional tags
-        let additional_tags_vec: Option<Vec<exporter::Tag>> = if additional_tags.is_empty() {
-            None
-        } else {
-            Some(
-                additional_tags
-                    .iter()
-                    .map(TryInto::try_into)
-                    .collect::<Result<Vec<_>, _>>()?,
-            )
-        };
+        let additional_tags_vec: Vec<libdd_common::tag::Tag> = additional_tags
+            .iter()
+            .map(TryInto::try_into)
+            .collect::<Result<Vec<_>, _>>()?;
 
-        // Parse JSON strings if provided
         let internal_metadata_json = if internal_metadata.is_empty() {
             None
         } else {
@@ -490,28 +640,26 @@ impl ProfileExporter {
             Some(serde_json::from_str(info)?)
         };
 
-        // Build and send the request
         let process_tags_opt = if process_tags.is_empty() {
             None
         } else {
             Some(process_tags)
         };
 
-        let request = self.inner.build(
+        let status = self.inner.send_blocking(
             encoded,
             &files_to_compress_vec,
-            &[], // files_to_export_unmodified - empty
-            additional_tags_vec.as_ref(),
-            process_tags_opt,
+            &additional_tags_vec,
             internal_metadata_json,
             info_json,
+            process_tags_opt,
+            cancel,
         )?;
-        let response = self.inner.send(request, None)?;
 
-        // Check response status
-        if !response.status().is_success() {
-            anyhow::bail!("Failed to export profile: HTTP {}", response.status());
-        }
+        anyhow::ensure!(
+            status.is_success(),
+            "Failed to export profile: HTTP {status}",
+        );
 
         Ok(())
     }
@@ -759,7 +907,7 @@ mod tests {
         assert_eq!(file.bytes, data.as_slice());
 
         // Tag conversion with special characters
-        let tag: exporter::Tag = (&ffi::Tag {
+        let tag: libdd_common::tag::Tag = (&ffi::Tag {
             key: "test-key.with_special:chars",
             value: "test_value/with@special#chars",
         })
@@ -771,7 +919,7 @@ mod tests {
         );
 
         // Tag validation - empty key should fail
-        assert!(TryInto::<exporter::Tag>::try_into(&ffi::Tag {
+        assert!(TryInto::<libdd_common::tag::Tag>::try_into(&ffi::Tag {
             key: "",
             value: "value"
         })
@@ -839,7 +987,7 @@ mod tests {
         let mut profile = create_test_profile();
         profile.add_sample(&create_test_sample()).unwrap();
 
-        let exporter = create_test_exporter();
+        let mut exporter = create_test_exporter();
         let attachment_data = br#"{"test": "data", "number": 123}"#.to_vec();
 
         // Send with full parameters - should fail with connection error but build request correctly

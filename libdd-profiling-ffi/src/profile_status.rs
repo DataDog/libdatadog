@@ -3,16 +3,16 @@
 
 use crate::ProfileError;
 use allocator_api2::alloc::{AllocError, Allocator, Global, Layout};
+use libdd_profiling::profiles::FallibleStringWriter;
 use std::borrow::Cow;
 use std::ffi::{c_char, CStr, CString};
 use std::fmt::Display;
 use std::mem::ManuallyDrop;
 use std::ptr::{null, NonNull};
 
-// ProfileStatus uses `err` being null to encode OK, so we only need
-// one bit in flags to distinguish between STATIC and ALLOCATED errors.
-const FLAG_STATIC: usize = 0;
-const FLAG_ALLOCATED: usize = 1;
+/// ProfileStatus uses `err` being null to encode OK, so we only need
+/// one bit in flags to distinguish between STATIC and ALLOCATED errors.
+const IS_ALLOCATED_MASK: usize = 1;
 
 /// Represents the result of an operation that either succeeds with no value, or fails with an
 /// error message. This is like `Result<(), Cow<'static, CStr>` except its representation is
@@ -25,37 +25,35 @@ const FLAG_ALLOCATED: usize = 1;
 /// A `ProfileStatus` owns its error message data. When a `ProfileStatus` with an error is
 /// created, it takes ownership of the error string (either as a static reference or heap
 /// allocation). The caller is responsible for eventually calling [`ddog_prof_Status_drop`] to
-/// free any heap-allocated memory. This is safe to call on OK as well; it does nothing.
+/// free any heap-allocated memory. This is safe to call on OK as well.
 ///
 /// # FFI Safety
 ///
-/// This type is `#[repr(C)]` and safe to pass across FFI boundaries. The C side must treat
-/// this as an opaque struct and use the provided FFI functions to inspect and drop it.
+/// This type is `#[repr(C)]` and safe to pass across FFI boundaries. The C side must treat the
+/// `.flags` as opaque and use API functions; the `.err` field is guaranteed to be null when the
+/// `ProfileStatus` is OK, and on Err it will be non-null pointer to a UTF8 encoded string which
+/// has a null  terminator.
 #[repr(C)]
 #[derive(Debug)]
 pub struct ProfileStatus {
     /// Bitflags indicating the storage type of the error message.
     /// This is only meaningful when `err` is non-null. When `err` is
-    /// null (indicating OK), this field is ignored (but typically 0).
-    /// - `FLAG_STATIC` (0): Error message points to static data that must not be freed.
-    /// - `FLAG_ALLOCATED` (1): Error message is heap-allocated and owned by this `ProfileStatus`.
-    ///   Must be freed via [`ddog_prof_Status_drop`].
+    /// null (indicating OK), this field SHOULD be zero. Currently, only one
+    /// bit is used `IS_ALLOCATED_MASK`, which determines whether the error
+    /// message is owned or statically borrowed.
+    /// In the future, we may store error codes in here as well.
     pub flags: libc::size_t,
 
     /// Pointer to a null-terminated UTF-8 error message string.
-    /// - If null: indicates OK (success). Check this from C to determine if the operation
-    ///   succeeded.
-    /// - If non-null and `flags == FLAG_STATIC`: points to static data with lifetime `'static`.
-    ///   Must not be freed.
-    /// - If non-null and `flags == FLAG_ALLOCATED`: points to heap-allocated data owned by this
-    ///   `ProfileStatus`. Must be freed by [`ddog_prof_Status_drop`].
+    /// - If null this indicates OK (success). This is an FFI guarantee.
+    /// - If non-null and allocated bit is clear: points to static data with `'static` lifetime.
+    /// - If non-null and allocated bit is set: points to owned heap-allocated data.
     ///
     /// # Safety Invariant
     ///
-    /// When non-null, `err` must point to a valid, null-terminated C
-    /// string in UTF-8 encoding. The pointer remains valid for the
-    /// lifetime of this `ProfileStatus` or until [`ddog_prof_Status_drop`]
-    /// is called.
+    /// When non-null, `err` must point to a valid, null-terminated C string in UTF-8 encoding.
+    /// The pointer remains valid for the lifetime of this `ProfileStatus` or until
+    /// [`ddog_prof_Status_drop`] is called.
     pub err: *const c_char,
 }
 
@@ -71,9 +69,9 @@ impl Default for ProfileStatus {
 // SAFETY: ProfileStatus is Send because:
 // 1. The `flags` field is a usize, which is Send.
 // 2. The `err` pointer is either:
-//    - Null (OK status), which is trivially Send
-//    - Points to static data (FLAG_STATIC), which is 'static and therefore Send
-//    - Points to heap-allocated data (FLAG_ALLOCATED) that this ProfileStatus owns exclusively.
+//    - Null (OK status), which is trivially Send.
+//    - Points to static data (allocated bit clear), which is 'static and therefore Send.
+//    - Points to heap-allocated data (allocated bit set) that this ProfileStatus owns exclusively.
 //      When sent to another thread, the ownership of the allocation transfers with it, and the drop
 //      implementation ensures proper cleanup on the receiving thread.
 // This is semantically equivalent to `Result<(), Cow<'static, CStr>>`, which is Send.
@@ -82,10 +80,10 @@ unsafe impl Send for ProfileStatus {}
 // SAFETY: ProfileStatus is Sync because:
 // 1. All fields are immutable from a shared reference (&ProfileStatus).
 // 2. The `err` pointer points to immutable data:
-//    - Null (OK status): trivially Sync
-//    - Static CStr (FLAG_STATIC): &'static CStr is Sync
-//    - Heap-allocated CStr (FLAG_ALLOCATED): The CStr is never mutated after creation, so multiple
-//      threads can safely read it concurrently.
+//    - Null (OK status): trivially Sync.
+//    - Static CStr (allocated bit clear): &'static CStr is Sync.
+//    - Heap-allocated CStr (allocated bit set): The CStr is never mutated after creation, so
+//      multiple threads can safely read it concurrently.
 // 3. There are no interior mutability patterns (no Cell, RefCell, etc.).
 // Multiple threads holding &ProfileStatus can safely read the same error message.
 unsafe impl Sync for ProfileStatus {}
@@ -111,7 +109,7 @@ impl From<anyhow::Error> for ProfileStatus {
 impl From<&'static CStr> for ProfileStatus {
     fn from(value: &'static CStr) -> Self {
         Self {
-            flags: FLAG_STATIC,
+            flags: 0,
             err: value.as_ptr(),
         }
     }
@@ -120,58 +118,23 @@ impl From<&'static CStr> for ProfileStatus {
 impl From<CString> for ProfileStatus {
     fn from(cstring: CString) -> Self {
         Self {
-            flags: FLAG_ALLOCATED,
+            flags: IS_ALLOCATED_MASK,
             err: cstring.into_raw(),
-        }
-    }
-}
-
-#[derive(thiserror::Error, Debug)]
-pub enum TryFromProfileStatusError {
-    #[error("failed to convert profile status because the pointer was null")]
-    Null,
-    #[error(
-        "failed to convert profile status because the flags were incorrect for the conversion: `{0}`"
-    )]
-    IncorrectFlags(usize),
-}
-
-impl TryFrom<ProfileStatus> for CString {
-    type Error = TryFromProfileStatusError;
-
-    fn try_from(status: ProfileStatus) -> Result<Self, Self::Error> {
-        if status.err.is_null() {
-            Err(TryFromProfileStatusError::Null)
-        } else if status.flags == FLAG_ALLOCATED {
-            Ok(unsafe { CString::from_raw(status.err.cast_mut()) })
-        } else {
-            Err(TryFromProfileStatusError::IncorrectFlags(status.flags))
-        }
-    }
-}
-
-impl TryFrom<&ProfileStatus> for &CStr {
-    type Error = TryFromProfileStatusError;
-
-    fn try_from(status: &ProfileStatus) -> Result<Self, Self::Error> {
-        if status.err.is_null() {
-            Err(TryFromProfileStatusError::Null)
-        } else {
-            Ok(unsafe { CStr::from_ptr(status.err.cast_mut()) })
         }
     }
 }
 
 impl From<ProfileStatus> for Result<(), Cow<'static, CStr>> {
     fn from(status: ProfileStatus) -> Self {
+        let flags = status.flags;
         if status.err.is_null() {
-            Ok(())
-        } else if status.flags == FLAG_ALLOCATED {
+            status.verify_flags()
+        } else if flags == IS_ALLOCATED_MASK {
             Err(Cow::Owned(unsafe {
                 CString::from_raw(status.err.cast_mut())
             }))
         } else {
-            // STATIC error (flags == FLAG_STATIC)
+            // Static error (allocated bit clear)
             Err(Cow::Borrowed(unsafe { CStr::from_ptr(status.err) }))
         }
     }
@@ -248,6 +211,53 @@ impl ProfileStatus {
         err: null(),
     };
 
+    /// Verifies that the flags make sense for the state of the object. With
+    /// debug assertions on, this will panic, and in production, it will return
+    /// an error instead.
+    fn verify_flags(&self) -> Result<(), Cow<'static, CStr>> {
+        let flags = self.flags;
+        if self.err.is_null() {
+            if flags == 0 {
+                Ok(())
+            } else {
+                // This is a programming error, so in debug builds we panic,
+                // but in non-debug builds, we return an error message.
+                debug_assert_eq!(
+                    flags, 0,
+                    "expected empty flag bits for ProfileStatus with no error, saw {flags:#x}"
+                );
+                use core::fmt::Write;
+                let mut writer = FallibleStringWriter::new();
+                // Include the null terminator here for the sake of allocating
+                // the correct amount of memory, but it will be removed below.
+                Err(
+                    if write!(
+                    writer,
+                    "expected empty flag bits for ProfileStatus with no error, saw {flags:#x}\0"
+                )
+                    .is_err()
+                    {
+                        // We couldn't allocate or format for some reason, so just
+                        // use a static string with less information.
+                        Cow::Borrowed(c"expected empty flag bits for ProfileStatus with no error")
+                    } else {
+                        let string = String::from(writer);
+                        let mut bytes = string.into_bytes();
+                        // Remove the null terminator because from_vec_unchecked
+                        // expects no nulls at all.
+                        bytes.pop();
+                        // SAFETY: the error message is ASCII, the only dynamic
+                        // bit (ha) is the hexadecimal repr of the flags.
+                        let err = unsafe { CString::from_vec_unchecked(bytes) };
+                        Cow::Owned(err)
+                    },
+                )
+            }
+        } else {
+            Ok(())
+        }
+    }
+
     pub fn from_ffi_safe_error_message<E: libdd_common::error::FfiSafeErrorMessage>(
         err: E,
     ) -> Self {
@@ -301,104 +311,12 @@ mod tests {
     }
 
     #[test]
-    fn test_static_error() {
-        let msg = c"test error message";
-        let status = ProfileStatus::from(msg);
-
-        assert_eq!(status.flags, FLAG_STATIC);
-        assert_eq!(status.err, msg.as_ptr());
-
-        // Convert to CStr
-        let cstr: &CStr = (&status).try_into().unwrap();
-        assert_eq!(cstr, msg);
-
-        // Convert to Result
-        let result: Result<(), Cow<'static, CStr>> = status.into();
-        assert!(result.is_err());
-        match result {
-            Err(Cow::Borrowed(borrowed)) => assert_eq!(borrowed, msg),
-            _ => panic!("Expected Cow::Borrowed"),
-        }
-    }
-
-    #[test]
-    fn test_allocated_error() {
-        let msg = CString::new("allocated error").unwrap();
-        let msg_clone = msg.clone();
-        let status = ProfileStatus::from(msg);
-
-        assert_eq!(status.flags, FLAG_ALLOCATED);
-        assert!(!status.err.is_null());
-
-        // Convert to CStr
-        let cstr: &CStr = (&status).try_into().unwrap();
-        assert_eq!(cstr, msg_clone.as_c_str());
-
-        // Convert to CString
-        let recovered = CString::try_from(status).unwrap();
-        assert_eq!(recovered, msg_clone);
-    }
-
-    #[test]
-    fn test_from_anyhow_error() {
-        let err = anyhow::anyhow!("something went wrong");
-        let status = ProfileStatus::from(err);
-
-        assert!(status.flags != 0);
-        assert!(!status.err.is_null());
-
-        let cstr: &CStr = (&status).try_into().unwrap();
-        assert_eq!(cstr.to_str().unwrap(), "something went wrong");
-
-        // Clean up
-        let _result: Result<(), Cow<'static, CStr>> = status.into();
-    }
-
-    #[test]
     fn test_from_result_ok() {
         let result: Result<(), anyhow::Error> = Ok(());
         let status = ProfileStatus::from(result);
 
         assert_eq!(status.flags, 0);
         assert!(status.err.is_null());
-    }
-
-    #[test]
-    fn test_from_result_err() {
-        let result: Result<(), anyhow::Error> = Err(anyhow::anyhow!("error from result"));
-        let status = ProfileStatus::from(result);
-
-        assert!(status.flags != 0);
-        assert!(!status.err.is_null());
-
-        let cstr: &CStr = (&status).try_into().unwrap();
-        assert_eq!(cstr.to_str().unwrap(), "error from result");
-
-        // Clean up
-        let _result: Result<(), Cow<'static, CStr>> = status.into();
-    }
-
-    #[test]
-    fn test_from_error_with_display() {
-        #[derive(Debug)]
-        struct CustomError(&'static str);
-
-        impl std::fmt::Display for CustomError {
-            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-                write!(f, "custom: {}", self.0)
-            }
-        }
-
-        let status = ProfileStatus::from_error(CustomError("test"));
-
-        assert_eq!(status.flags, FLAG_ALLOCATED);
-        assert!(!status.err.is_null());
-
-        let cstr: &CStr = (&status).try_into().unwrap();
-        assert_eq!(cstr.to_str().unwrap(), "custom: test");
-
-        // Clean up
-        let _result: Result<(), Cow<'static, CStr>> = status.into();
     }
 
     #[test]
@@ -436,7 +354,7 @@ mod tests {
         let msg = CString::new("allocated message").unwrap();
         let mut status = ProfileStatus::from(msg);
 
-        assert_eq!(status.flags, FLAG_ALLOCATED);
+        assert_eq!(status.flags, IS_ALLOCATED_MASK);
         let err_ptr = status.err;
         assert!(!err_ptr.is_null());
 
@@ -446,28 +364,6 @@ mod tests {
         assert_eq!(status.flags, 0);
         assert!(status.err.is_null());
         // The allocated memory should have been freed (can't really test this without valgrind)
-    }
-
-    #[test]
-    fn test_try_from_cstr_on_ok_fails() {
-        let status = ProfileStatus::OK;
-        let result: Result<&CStr, TryFromProfileStatusError> = (&status).try_into();
-        assert!(result.is_err());
-        assert!(matches!(
-            result.unwrap_err(),
-            TryFromProfileStatusError::Null
-        ));
-    }
-
-    #[test]
-    fn test_try_from_cstring_on_static_fails() {
-        let status = ProfileStatus::from(c"static");
-        let result = CString::try_from(status);
-        assert!(result.is_err());
-        assert!(matches!(
-            result.unwrap_err(),
-            TryFromProfileStatusError::IncorrectFlags(FLAG_STATIC)
-        ));
     }
 
     #[test]

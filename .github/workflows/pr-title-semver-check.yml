@@ -1,0 +1,302 @@
+name: semver-check
+permissions:
+  contents: read
+  pull-requests: read
+on:
+  pull_request:
+    types: ['opened', 'edited', 'reopened', 'synchronize']
+    branches-ignore:
+      - "v[0-9]+.[0-9]+.[0-9]+.[0-9]+"
+      - release
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_VERSION: stable
+
+jobs:
+  detect-changes:
+    runs-on: ubuntu-latest
+    outputs:
+      changed_crates: ${{ steps.detect.outputs.crates }}
+      has_rust_changes: ${{ steps.detect.outputs.has_changes }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Detect changed published crates
+        id: detect
+        run: |
+          set -euo pipefail
+
+          # Get the base branch
+          BASE_REF="${{ github.base_ref }}"
+          git fetch origin "$BASE_REF" --depth=50
+
+          # Find all changed files
+          CHANGED_FILES=$(git diff --name-only "origin/$BASE_REF"...HEAD)
+
+          # Get workspace members metadata using cargo-metadata
+          # Filter to only workspace members that are publishable (publish != false and publish != [])
+          # Extract workspace root and convert manifest paths to relative paths
+          WORKSPACE_ROOT=$(cargo metadata --format-version=1 --no-deps | jq -r '.workspace_root')
+          WORKSPACE_CRATES=$(cargo metadata --format-version=1 --no-deps | jq -c --arg root "$WORKSPACE_ROOT" '
+            .packages[] |
+            select(.source == null) |
+            select(.publish == null or (.publish | type == "array" and length > 0)) |
+            {name: .name, manifest_path: .manifest_path, relative_path: (.manifest_path | sub($root + "/"; ""))}
+          ')
+
+          # Array to store changed published crates
+          CHANGED_CRATES=()
+
+          # Check each published crate for changes
+          while IFS= read -r crate_info; do
+            CRATE_NAME=$(echo "$crate_info" | jq -r '.name')
+            RELATIVE_PATH=$(echo "$crate_info" | jq -r '.relative_path')
+            CRATE_DIR=$(dirname "$RELATIVE_PATH")
+
+            # Check if any files in this crate directory changed
+            if echo "$CHANGED_FILES" | grep -q "^${CRATE_DIR}/"; then
+              echo "Detected change in published crate: $CRATE_NAME ($CRATE_DIR)"
+              CHANGED_CRATES+=("$CRATE_NAME")
+            fi
+          done < <(echo "$WORKSPACE_CRATES")
+
+          # Output results
+          if [[ ${#CHANGED_CRATES[@]} -eq 0 ]]; then
+            echo "has_changes=false" >> "$GITHUB_OUTPUT"
+            echo "crates=" >> "$GITHUB_OUTPUT"
+            echo "No published crates changed in this PR"
+          else
+            echo "has_changes=true" >> "$GITHUB_OUTPUT"
+            CRATES_JSON=$(printf '%s\n' "${CHANGED_CRATES[@]}" | jq -R . | jq -s -c .)
+            echo "crates=$CRATES_JSON" >> "$GITHUB_OUTPUT"
+            echo "Changed published crates: ${CHANGED_CRATES[*]}"
+          fi
+
+  semver-check:
+    needs: detect-changes
+    if: needs.detect-changes.outputs.has_rust_changes == 'true'
+    runs-on: ubuntu-latest
+    outputs:
+      semver_level: ${{ steps.semver.outputs.semver_level }}
+      crates_checked: ${{ steps.semver.outputs.crates_checked }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install Rust ${{ env.RUST_VERSION }}
+        run: rustup install ${{ env.RUST_VERSION }} && rustup default ${{ env.RUST_VERSION }} && rustup install nightly --profile minimal
+
+      - name: Cache [rust]
+        uses: Swatinem/rust-cache@f13886b937689c021905a6b90929199931d60db1 # 2.8.1
+        with:
+          cache-targets: true
+
+      - name: Install dependencies
+        run: |
+          sudo apt update && sudo apt install -y libssl-dev  # cargo-public-api dependency
+
+      - name: Install cargo-public-api
+        uses: taiki-e/install-action@2c41309d51ede152b6f2ee6bf3b71e6dc9a8b7df # 2.49.27
+        with:
+          tool: cargo-public-api@0.50.2
+
+      - name: Run semver checks on changed crates
+        id: semver
+        run: |
+          set -euo pipefail
+
+          CHANGED_CRATES='${{ needs.detect-changes.outputs.changed_crates }}'
+
+          # Parse JSON array
+          readarray -t CRATES < <(echo "$CHANGED_CRATES" | jq -r '.[]')
+
+          HIGHEST_LEVEL="none"
+          CRATES_CHECKED=()
+
+          # Get the base branch for comparison
+          BASE_REF="${{ github.base_ref }}"
+          git fetch origin "$BASE_REF" --depth=50
+
+          for CRATE_NAME in "${CRATES[@]}"; do
+            echo "========================================"
+            echo "Checking semver for: $CRATE_NAME"
+            echo "========================================"
+
+            # Try to run cargo-public-api diff against base branch
+            set +e
+            cargo public-api --package "$CRATE_NAME" diff "origin/$BASE_REF..HEAD" 2>&1 | tee api-output.txt
+            EXIT_CODE=$?
+            set -e
+
+            if [[ $EXIT_CODE -ne 0 ]]; then
+              echo "Unexpected error for $CRATE_NAME (exit code: $EXIT_CODE)"
+              continue
+            fi
+
+            # Analyze the diff output
+            LEVEL="none"
+
+            # Check for removed items (major change)
+            if grep -q "Removed items from the public API$" api-output.txt; then
+              if ! grep -A 2 "^Removed items from the public API$" api-output.txt | grep -q "^(none)$"; then
+                LEVEL="major"
+                echo "Detected removed items (major change)"
+              fi
+            fi
+
+            # Check for changed items (major change)
+            if grep -q "^Changed items in the public API$" api-output.txt; then
+              if ! grep -A 2 "^Changed items in the public API$" api-output.txt | grep -q "^(none)$"; then
+                LEVEL="major"
+                echo "Detected changed items (major change)"
+              fi
+            fi
+
+            # Check for added items (minor change) - only if not already major
+            if [[ "$LEVEL" != "major" ]]; then
+              if grep -q "Added items to the public API$" api-output.txt; then
+                if ! grep -A 2 "^Added items to the public API$" api-output.txt | grep -q "^(none)"; then
+                  LEVEL="minor"
+                  echo "Detected added items (minor change)"
+                fi
+              fi
+            fi
+
+            # If we detected changes, update the highest level
+            if [[ "$LEVEL" != "none" ]]; then
+              CRATES_CHECKED+=("$CRATE_NAME:$LEVEL")
+
+              # Update highest level
+              if [[ "$LEVEL" == "major" ]]; then
+                HIGHEST_LEVEL="major"
+              elif [[ "$LEVEL" == "minor" ]] && [[ "$HIGHEST_LEVEL" != "major" ]]; then
+                HIGHEST_LEVEL="minor"
+              elif [[ "$HIGHEST_LEVEL" == "none" ]]; then
+                HIGHEST_LEVEL="patch"
+              fi
+            else
+              # No API changes detected, assume patch level
+              if [[ "$HIGHEST_LEVEL" == "none" ]]; then
+                HIGHEST_LEVEL="patch"
+              fi
+            fi
+          done
+
+          # Save results to file for aggregate step
+          echo "semver_level=$HIGHEST_LEVEL" >> "$GITHUB_OUTPUT"
+          echo "crates_checked=${CRATES_CHECKED[*]}" >> "$GITHUB_OUTPUT"
+
+  validate:
+    needs: [detect-changes, semver-check]
+    if: needs.detect-changes.outputs.has_rust_changes == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validate PR title against semver changes
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+          SEMVER_LEVEL: ${{ needs.semver-check.outputs.semver_level }}
+          CRATES_CHECKED: ${{ needs.semver-check.outputs.crates_checked }}
+        run: |
+          set -euo pipefail
+
+          echo "PR Title: $PR_TITLE"
+          echo "Detected semver level: $SEMVER_LEVEL"
+          echo "Crates with changes: $CRATES_CHECKED"
+
+          # Format: type(optional-scope): description
+          # Breaking changes: type!: or type(scope)!: or BREAKING CHANGE: footer in body
+          REGEX='^([a-z]+)(\([^)]+\))?(!)?: .+'
+          if [[ "$PR_TITLE" =~ $REGEX ]]; then
+            TYPE="${BASH_REMATCH[1]}"
+            HAS_BREAKING_MARKER="${BASH_REMATCH[3]}"
+          else
+            echo "ERROR: Could not parse type from: $PR_TITLE"
+            exit 1
+          fi
+
+          # Check for BREAKING CHANGE: or BREAKING-CHANGE: in PR body
+          HAS_BREAKING_FOOTER=""
+          if echo "$PR_BODY" | grep -qE '^BREAKING[- ]CHANGE:'; then
+            HAS_BREAKING_FOOTER="true"
+          fi
+
+          # Consider it a breaking change if either marker is present
+          IS_BREAKING_CHANGE=""
+          if [[ -n "$HAS_BREAKING_MARKER" ]] || [[ -n "$HAS_BREAKING_FOOTER" ]]; then
+            IS_BREAKING_CHANGE="true"
+          fi
+
+          echo ""
+          echo "Detected PR title type: $TYPE"
+          echo "Breaking marker (!) present: ${HAS_BREAKING_MARKER:-no}"
+          echo "Breaking footer present: ${HAS_BREAKING_FOOTER:-no}"
+          echo "Is breaking change: ${IS_BREAKING_CHANGE:-no}"
+          echo ""
+
+          VALIDATION_FAILED="false"
+
+          # Validation rules
+          case "$TYPE" in
+          fix)
+            if [[ "$SEMVER_LEVEL" == "major" ]] || [[ "$SEMVER_LEVEL" == "minor" ]] || [[ "$SEMVER_LEVEL" == "none" ]]; then
+              VALIDATION_FAILED="true"
+            fi
+            ;;
+
+          feat)
+            if [[ "$SEMVER_LEVEL" == "major" ]] && [[ -z "$IS_BREAKING_CHANGE" ]]; then
+              VALIDATION_FAILED="true"
+            elif [[ "$SEMVER_LEVEL" == "patch" ]] || [[ "$SEMVER_LEVEL" == "none" ]]; then
+              VALIDATION_FAILED="true"
+            fi
+            ;;
+
+          chore|ci|docs|style|test|build|perf)
+            # Breaking change marker shouldn't be there.
+            if [[ -n "$IS_BREAKING_CHANGE" ]]; then
+              VALIDATION_FAILED="true"
+            fi
+
+            # These should not change public API
+            if [[ "$SEMVER_LEVEL" == "major" ]] || [[ "$SEMVER_LEVEL" == "minor" ]]; then
+              VALIDATION_FAILED="true"
+            fi
+            ;;
+
+
+          refactor)
+            if [[ "$SEMVER_LEVEL" == "major" ]] && [[ -z "$IS_BREAKING_CHANGE" ]]; then
+              VALIDATION_FAILED="true"
+            fi
+            ;;
+
+          revert)
+            # Revert commits are allowed to have any semver level
+            ;;
+
+          *)
+            echo "$TYPE not handled";
+            VALIDATION_FAILED="true"
+            ;;
+          esac
+
+          if [[ "$VALIDATION_FAILED" == "true" ]]; then
+            echo ""
+            echo "============================================"
+            echo "❌ SEMVER VALIDATION FAILED"
+            echo "============================================"
+            echo ""
+            echo "Details:"
+            echo "  PR Title: $PR_TITLE"
+            echo "  Detected semver level: $SEMVER_LEVEL"
+            exit 1
+          else
+            exit 0
+          fi
