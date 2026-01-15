@@ -13,8 +13,8 @@ use anyhow::Context;
 use bin_tests::{
     build_artifacts,
     test_runner::{
-        run_crash_test_with_artifacts, run_crash_test_with_validator, CrashTestConfig,
-        StandardArtifacts, ValidatorFn,
+        run_crash_test_with_artifacts, run_crash_test_with_validator_no_crash_report,
+        CrashTestConfig, StandardArtifacts, ValidatorFn,
     },
     test_types::{CrashType, TestMode},
     validation::PayloadValidator,
@@ -200,9 +200,7 @@ fn test_collector_no_allocations() {
             // Clean up the log file first
             let _ = fs::remove_file(path);
             eprintln!("{}", log_content);
-            anyhow::bail!(
-                "Collector performed dangerous allocation!"
-            );
+            anyhow::bail!("Collector performed dangerous allocation!");
         }
         Ok(())
     };
@@ -217,10 +215,9 @@ fn test_collector_no_allocations() {
     );
 
     let validator_log_path = detector_log_path.clone();
-    let validator: ValidatorFn =
-        Box::new(move |_payload, _fixtures| fail_if_log_exists(&validator_log_path));
+    let validator = move || fail_if_log_exists(&validator_log_path);
 
-    run_crash_test_with_validator(&config, validator).unwrap();
+    run_crash_test_with_validator_no_crash_report(&config, validator).unwrap();
 }
 
 #[test]

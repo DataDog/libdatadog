@@ -274,14 +274,33 @@ where
 /// Convenience helper that builds the standard artifacts for the given config
 /// and runs a crash test with the provided validator. Use this when a test
 /// doesn't care about customizing artifacts and just needs to run validation
-/// on the crash payload/fixtures.
-pub fn run_crash_test_with_validator<F>(config: &CrashTestConfig, validator: F) -> Result<()>
+/// independently of the crash report.
+pub fn run_crash_test_with_validator_no_crash_report<F>(
+    config: &CrashTestConfig,
+    validator: F,
+) -> Result<()>
 where
-    F: FnOnce(&Value, &TestFixtures) -> Result<()>,
+    F: FnOnce() -> Result<()>,
 {
     let artifacts = StandardArtifacts::new(config.profile);
     let artifacts_map = build_artifacts(&artifacts.as_slice())?;
-    run_crash_test_with_artifacts(config, &artifacts_map, &artifacts, validator)
+    let fixtures = TestFixtures::new()?;
+
+    let mut cmd = process::Command::new(&artifacts_map[&artifacts.crashtracker_bin]);
+    cmd.arg(format!("file://{}", fixtures.crash_profile_path.display()))
+        .arg(&artifacts_map[&artifacts.crashtracker_receiver])
+        .arg(&fixtures.output_dir)
+        .arg(config.mode.as_str())
+        .arg(config.crash_type.as_str());
+
+    for (key, val) in &config.env_vars {
+        cmd.env(key, val);
+    }
+
+    cmd.spawn().context("Failed to spawn test process")?;
+
+    validator()?;
+    Ok(())
 }
 
 /// Validates the process exit status matches expectations for the crash type.
