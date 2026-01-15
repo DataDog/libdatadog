@@ -18,32 +18,6 @@ use libdd_trace_utils::{
 use std::{collections::HashMap, time::Duration};
 use tokio::runtime::Handle;
 
-/// Reasons for dropping trace chunks, used for telemetry tagging.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum ChunksDroppedReason {
-    /// P0 traces dropped due to sampling decision
-    P0Drop,
-    /// Serialization error when preparing the trace payload
-    SerializationError,
-    /// Send failure due to network, timeout, or HTTP status code errors
-    SendFailure,
-}
-
-impl ChunksDroppedReason {
-    const P0_DROP_VALUE: &'static str = "p0_drop";
-    const SERIALIZATION_ERROR_VALUE: &'static str = "serialization_error";
-    const SEND_FAILURE_VALUE: &'static str = "send_failure";
-
-    /// Returns the string value used for the reason tag
-    pub fn as_tag_value(&self) -> &'static str {
-        match self {
-            ChunksDroppedReason::P0Drop => Self::P0_DROP_VALUE,
-            ChunksDroppedReason::SerializationError => Self::SERIALIZATION_ERROR_VALUE,
-            ChunksDroppedReason::SendFailure => Self::SEND_FAILURE_VALUE,
-        }
-    }
-}
-
 /// Structure to build a Telemetry client.
 ///
 /// Holds partial data until the `build` method is called which results in a new
