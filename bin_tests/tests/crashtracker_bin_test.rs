@@ -183,41 +183,56 @@ fn test_crash_tracking_bin_no_runtime_callback() {
     run_crash_test_with_artifacts(&config, &artifacts_map, &artifacts, validator).unwrap();
 }
 
-// Test that verifies the collector process doesn't perform dangerous allocations.
-// Uses LD_PRELOAD to detect malloc/calloc/realloc calls in the collector and fails
-// if any are detected, capturing a stacktrace for debugging.
 #[test]
 #[cfg_attr(miri, ignore)]
-#[cfg(target_os = "linux")] // LD_PRELOAD is Linux-specific
-fn test_collector_no_allocations() {
-    let detector_log_path = PathBuf::from("/tmp/preload_detector.log");
+#[cfg(unix)]
+fn test_collector_no_allocations_stacktrace_modes() {
+    // (env_value, should_expect_log)
+    let cases = [
+        ("disabled", false),
+        ("without_symbols", false),
+        ("receiver_symbols", false),
+        ("inprocess_symbols", true),
+    ];
 
-    let fail_if_log_exists = |path: &PathBuf| -> anyhow::Result<()> {
-        if path.exists() {
-            let log_bytes = fs::read(path).context("Failed to read preload detector log")?;
-            let log_content = String::from_utf8_lossy(&log_bytes);
+    for (env_value, expect_log) in cases {
+        let detector_log_path = PathBuf::from("/tmp/preload_detector.log");
 
-            // Clean up the log file first
-            let _ = fs::remove_file(path);
-            eprintln!("{}", log_content);
-            anyhow::bail!("Collector performed dangerous allocation!");
+        // Clean up
+        let _ = fs::remove_file(&detector_log_path);
+
+        let config = CrashTestConfig::new(
+            BuildProfile::Debug,
+            TestMode::RuntimePreloadLogger,
+            CrashType::NullDeref,
+        )
+        .with_env("DD_TEST_STACKTRACE_COLLECTION", env_value);
+
+        // Validator does nothing; we inspect the log after the run.
+        let validator = || Ok(());
+
+        let result = run_crash_test_with_validator_no_crash_report(&config, validator);
+
+        let log_exists = detector_log_path.exists();
+
+        if expect_log {
+            assert!(
+                log_exists,
+                "Expected allocation detection log for mode {env_value}"
+            );
+            if log_exists {
+                if let Ok(bytes) = fs::read(&detector_log_path) {
+                    eprintln!("{}", String::from_utf8_lossy(&bytes));
+                }
+            }
+        } else {
+            result.unwrap();
+            assert!(
+                !log_exists,
+                "Did not expect allocation detection log for mode {env_value}"
+            );
         }
-        Ok(())
-    };
-
-    // Fail fast if a previous run already produced a detector log.
-    fail_if_log_exists(&detector_log_path).unwrap();
-
-    let config = CrashTestConfig::new(
-        BuildProfile::Debug,
-        TestMode::RuntimePreloadLogger,
-        CrashType::NullDeref,
-    );
-
-    let validator_log_path = detector_log_path.clone();
-    let validator = move || fail_if_log_exists(&validator_log_path);
-
-    run_crash_test_with_validator_no_crash_report(&config, validator).unwrap();
+    }
 }
 
 #[test]

@@ -81,12 +81,27 @@ mod unix {
         // The configuration can be modified by a Behavior (testing plan), so it is mut here.
         // Unlike a normal harness, in this harness tests are run in individual processes, so race
         // issues are avoided.
+        let stacktrace_collection = match env::var("DD_TEST_STACKTRACE_COLLECTION") {
+            Ok(val) => match val.as_str() {
+                "disabled" => crashtracker::StacktraceCollection::Disabled,
+                "without_symbols" => crashtracker::StacktraceCollection::WithoutSymbols,
+                "inprocess_symbols" => {
+                    crashtracker::StacktraceCollection::EnabledWithInprocessSymbols
+                }
+                "receiver_symbols" => {
+                    crashtracker::StacktraceCollection::EnabledWithSymbolsInReceiver
+                }
+                _ => crashtracker::StacktraceCollection::WithoutSymbols,
+            },
+            Err(_) => crashtracker::StacktraceCollection::WithoutSymbols,
+        };
+
         let mut config = CrashtrackerConfiguration::new(
             vec![],
             true,
             true,
             endpoint,
-            crashtracker::StacktraceCollection::WithoutSymbols,
+            stacktrace_collection,
             crashtracker::default_signals(),
             Some(TEST_COLLECTOR_TIMEOUT),
             Some("".to_string()),
