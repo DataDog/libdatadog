@@ -64,8 +64,31 @@ void dd_preload_logger_mark_collector(void) {
     }
 }
 
+static void write_int(int fd, long value) {
+    char buf[32];
+    int i = 0;
+
+    if (value == 0) {
+        write(fd, "0", 1);
+        return;
+    }
+
+    if (value < 0) {
+        write(fd, "-", 1);
+        value = -value;
+    }
+
+    while (value > 0 && i < (int)sizeof(buf)) {
+        buf[i++] = '0' + (value % 10);
+        value /= 10;
+    }
+
+    for (int j = i - 1; j >= 0; j--) {
+        write(fd, &buf[j], 1);
+    }
+}
+
 static void capture_and_report_allocation(const char *func_name) {
-    // Only report once using atomic compare-and-swap
     int expected = 0;
     if (atomic_compare_exchange_strong_explicit(
             &allocation_detected,
@@ -73,52 +96,32 @@ static void capture_and_report_allocation(const char *func_name) {
             1,
             memory_order_relaxed,
             memory_order_relaxed)) {
+
         const char *path = "/tmp/preload_detector.log";
         log_fd = open(path, O_CREAT | O_WRONLY | O_TRUNC, 0644);
         if (log_fd >= 0) {
-            char buf[4096];
             pid_t pid = getpid();
             long tid = syscall(SYS_gettid);
 
-            // Log the detection
-            int len = snprintf(buf, sizeof(buf),
-                "[FATAL] Dangerous allocation detected in collector!\n"
-                "  Function: %s\n"
-                "  PID: %d\n"
-                "  TID: %ld\n"
-                "  Stacktrace:\n",
-                func_name, pid, tid);
-            write(log_fd, buf, len);
+            write(log_fd,
+                  "[FATAL] Dangerous allocation detected in collector!\n",
+                  52);
 
-            // Capture and log stacktrace (glibc only; musl lacks execinfo)
-#if DD_HAVE_EXECINFO
-            void *array[100];
-            int size = backtrace(array, 100);
-            char **strings = backtrace_symbols(array, size);
+            write(log_fd, "  Function: ", 12);
+            write(log_fd, func_name, strlen(func_name));
 
-            if (strings != NULL) {
-                for (int i = 0; i < size; i++) {
-                    len = snprintf(buf, sizeof(buf), "    #%d %s\n", i, strings[i]);
-                    write(log_fd, buf, len);
-                }
-                // backtrace_symbols uses malloc internally, so we have a small leak
-                // but this is acceptable since this only happens once and we guard
-                // against it anyways
-            }
-#else
-            len = snprintf(buf, sizeof(buf),
-                "    [backtrace unavailable: execinfo.h not present on this platform (likely musl)]\n");
-            write(log_fd, buf, len);
-#endif
+            write(log_fd, "\n  PID: ", 8);
+            write_int(log_fd, pid);
 
-            fsync(log_fd);
+            write(log_fd, "\n  TID: ", 8);
+            write_int(log_fd, tid);
+
             close(log_fd);
             log_fd = -1;
         }
     }
 
-    // Don't abort. let the collector continue so it can finish writing the crash report
-    // The test will check for the log file and fail if allocations were detected
+    // Don't abort. Let the collector continue so it can finish writing the crash report
 }
 
 void *malloc(size_t size) {
