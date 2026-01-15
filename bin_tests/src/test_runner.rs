@@ -6,6 +6,7 @@
 //! across different test scenarios.
 
 use crate::{
+    build_artifacts,
     test_types::{CrashType, TestMode},
     validation::{read_and_parse_crash_payload, validate_std_outputs, PayloadValidator},
     ArtifactType, ArtifactsBuild, BuildProfile,
@@ -268,6 +269,19 @@ where
     validator(&crash_payload, &fixtures)?;
 
     Ok(())
+}
+
+/// Convenience helper that builds the standard artifacts for the given config
+/// and runs a crash test with the provided validator. Use this when a test
+/// doesn't care about customizing artifacts and just needs to run validation
+/// on the crash payload/fixtures.
+pub fn run_crash_test_with_validator<F>(config: &CrashTestConfig, validator: F) -> Result<()>
+where
+    F: FnOnce(&Value, &TestFixtures) -> Result<()>,
+{
+    let artifacts = StandardArtifacts::new(config.profile);
+    let artifacts_map = build_artifacts(&artifacts.as_slice())?;
+    run_crash_test_with_artifacts(config, &artifacts_map, &artifacts, validator)
 }
 
 /// Validates the process exit status matches expectations for the crash type.

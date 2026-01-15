@@ -12,7 +12,10 @@ use std::{fs, path::PathBuf};
 use anyhow::Context;
 use bin_tests::{
     build_artifacts,
-    test_runner::{run_crash_test_with_artifacts, CrashTestConfig, StandardArtifacts, ValidatorFn},
+    test_runner::{
+        run_crash_test_with_artifacts, run_crash_test_with_validator, CrashTestConfig,
+        StandardArtifacts, ValidatorFn,
+    },
     test_types::{CrashType, TestMode},
     validation::PayloadValidator,
     ArtifactType, ArtifactsBuild, BuildProfile,
@@ -187,39 +190,37 @@ fn test_crash_tracking_bin_no_runtime_callback() {
 #[cfg_attr(miri, ignore)]
 #[cfg(target_os = "linux")] // LD_PRELOAD is Linux-specific
 fn test_collector_no_allocations() {
+    let detector_log_path = PathBuf::from("/tmp/preload_detector.log");
+
+    let fail_if_log_exists = |path: &PathBuf| -> anyhow::Result<()> {
+        if path.exists() {
+            let log_bytes = fs::read(path).context("Failed to read preload detector log")?;
+            let log_content = String::from_utf8_lossy(&log_bytes);
+
+            // Clean up the log file first
+            let _ = fs::remove_file(path);
+            eprintln!("{}", log_content);
+            anyhow::bail!(
+                "Collector performed dangerous allocation!"
+            );
+        }
+        Ok(())
+    };
+
+    // Fail fast if a previous run already produced a detector log.
+    fail_if_log_exists(&detector_log_path).unwrap();
+
     let config = CrashTestConfig::new(
         BuildProfile::Debug,
         TestMode::RuntimePreloadLogger,
         CrashType::NullDeref,
     );
-    let artifacts = StandardArtifacts::new(config.profile);
-    let artifacts_map = build_artifacts(&artifacts.as_slice()).unwrap();
 
-    let validator: ValidatorFn = Box::new(|payload, _fixtures| {
-        // First validate that the crash report was properly generated
-        PayloadValidator::new(payload).validate_counters()?;
+    let validator_log_path = detector_log_path.clone();
+    let validator: ValidatorFn =
+        Box::new(move |_payload, _fixtures| fail_if_log_exists(&validator_log_path));
 
-        let detector_log_path = PathBuf::from("/tmp/preload_detector.log");
-
-        if detector_log_path.exists() {
-            let log_bytes =
-                fs::read(&detector_log_path).context("Failed to read preload detector log")?;
-            let log_content = String::from_utf8_lossy(&log_bytes);
-
-            // Clean up the log file first
-            let _ = fs::remove_file(&detector_log_path);
-            eprintln!("{}", log_content);
-            anyhow::bail!(
-                "Collector performed dangerous allocation! Check the log above for stacktrace."
-            );
-        }
-
-        // If we get here, no dangerous allocations were detected, we shuld pass
-        Ok(())
-    });
-
-    // Run the test - we expect it to complete normally without the collector aborting
-    run_crash_test_with_artifacts(&config, &artifacts_map, &artifacts, validator).unwrap();
+    run_crash_test_with_validator(&config, validator).unwrap();
 }
 
 #[test]

@@ -118,6 +118,7 @@ static void capture_and_report_allocation(const char *func_name) {
 
             close(log_fd);
             log_fd = -1;
+            abort();
         }
     }
 
