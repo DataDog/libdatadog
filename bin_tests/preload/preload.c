@@ -11,6 +11,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdatomic.h>
 #include <sys/syscall.h>
 #include <sys/types.h>
 #include <unistd.h>
@@ -43,13 +44,16 @@ __attribute__((constructor)) static void preload_ctor(void) {
 }
 
 static int log_fd = -1;
-// Flag to indicate we are currently in the collector; We should only
+// Flag to indicate we are currently in the collector; we should only
 // detect allocations when we are in the collector.
-static int collector_marked = 0;
+// Must be thread-local: the collector work runs on a single thread; other
+// threads in the process should not be considered "collector" and should
+// not trip the detector.
+static _Thread_local int collector_marked = 0;
 // Flag to track if we've already detected and reported an allocation
 // This guards against reentrancy of the detection logic when we capture
 // stack trace, since backtrace can use malloc internally
-static int allocation_detected = 0;
+static _Atomic int allocation_detected = 0;
 
 // Called by the collector process to enable detection in the collector only
 void dd_preload_logger_mark_collector(void) {
@@ -62,7 +66,13 @@ void dd_preload_logger_mark_collector(void) {
 
 static void capture_and_report_allocation(const char *func_name) {
     // Only report once using atomic compare-and-swap
-    if (__sync_bool_compare_and_swap(&allocation_detected, 0, 1)) {
+    int expected = 0;
+    if (atomic_compare_exchange_strong_explicit(
+            &allocation_detected,
+            &expected,
+            1,
+            memory_order_relaxed,
+            memory_order_relaxed)) {
         const char *path = "/tmp/preload_detector.log";
         log_fd = open(path, O_CREAT | O_WRONLY | O_TRUNC, 0644);
         if (log_fd >= 0) {
