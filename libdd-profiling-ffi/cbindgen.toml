@@ -13,9 +13,14 @@ pragma_once = true
 
 no_includes = true
 sys_includes = ["stdbool.h", "stddef.h", "stdint.h"]
-includes = ["common.h"]
 
 after_includes = """
+// Forward declarations for types used in common.h to avoid circular dependencies
+typedef struct ddog_prof_StringHeader *ddog_prof_StringId2;
+typedef struct ddog_prof_Mapping2 *ddog_prof_MappingId2;
+typedef struct ddog_prof_Function2 *ddog_prof_FunctionId2;
+
+#include "common.h"
 struct TokioCancellationToken;
 """
 
