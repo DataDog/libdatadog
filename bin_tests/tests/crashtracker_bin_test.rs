@@ -13,8 +13,8 @@ use anyhow::Context;
 use bin_tests::{
     build_artifacts,
     test_runner::{
-        run_crash_test_with_artifacts, run_crash_test_with_validator_no_crash_report,
-        CrashTestConfig, StandardArtifacts, ValidatorFn,
+        run_crash_no_op, run_crash_test_with_artifacts, CrashTestConfig, StandardArtifacts,
+        ValidatorFn,
     },
     test_types::{CrashType, TestMode},
     validation::PayloadValidator,
@@ -185,7 +185,7 @@ fn test_crash_tracking_bin_no_runtime_callback() {
 
 #[test]
 #[cfg_attr(miri, ignore)]
-#[cfg(unix)]
+#[cfg(target_os = "linux")]
 fn test_collector_no_allocations_stacktrace_modes() {
     // (env_value, should_expect_log)
     let cases = [
@@ -208,10 +208,7 @@ fn test_collector_no_allocations_stacktrace_modes() {
         )
         .with_env("DD_TEST_STACKTRACE_COLLECTION", env_value);
 
-        // Validator does nothing; we inspect the log after the run.
-        let validator = || Ok(());
-
-        let result = run_crash_test_with_validator_no_crash_report(&config, validator);
+        let result = run_crash_no_op(&config);
 
         let log_exists = detector_log_path.exists();
 

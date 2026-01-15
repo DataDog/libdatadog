@@ -11,7 +11,6 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <stdatomic.h>
 #include <sys/syscall.h>
 #include <sys/types.h>
 #include <unistd.h>
@@ -49,11 +48,7 @@ static int log_fd = -1;
 // Must be thread-local: the collector work runs on a single thread; other
 // threads in the process should not be considered "collector" and should
 // not trip the detector.
-static _Thread_local int collector_marked = 0;
-// Flag to track if we've already detected and reported an allocation
-// This guards against reentrancy of the detection logic when we capture
-// stack trace, since backtrace can use malloc internally
-static _Atomic int allocation_detected = 0;
+static __thread int collector_marked = 0;
 
 // Called by the collector process to enable detection in the collector only
 void dd_preload_logger_mark_collector(void) {
@@ -88,38 +83,30 @@ static void write_int(int fd, long value) {
     }
 }
 
+// This function MUST be async signal safe
 static void capture_and_report_allocation(const char *func_name) {
-    int expected = 0;
-    if (atomic_compare_exchange_strong_explicit(
-            &allocation_detected,
-            &expected,
-            1,
-            memory_order_relaxed,
-            memory_order_relaxed)) {
+    const char *path = "/tmp/preload_detector.log";
+    log_fd = open(path, O_CREAT | O_WRONLY | O_TRUNC, 0644);
+    if (log_fd >= 0) {
+        pid_t pid = getpid();
+        long tid = syscall(SYS_gettid);
 
-        const char *path = "/tmp/preload_detector.log";
-        log_fd = open(path, O_CREAT | O_WRONLY | O_TRUNC, 0644);
-        if (log_fd >= 0) {
-            pid_t pid = getpid();
-            long tid = syscall(SYS_gettid);
+        write(log_fd,
+              "[FATAL] Dangerous allocation detected in collector!\n",
+              52);
 
-            write(log_fd,
-                  "[FATAL] Dangerous allocation detected in collector!\n",
-                  52);
+        write(log_fd, "  Function: ", 12);
+        write(log_fd, func_name, strlen(func_name));
 
-            write(log_fd, "  Function: ", 12);
-            write(log_fd, func_name, strlen(func_name));
+        write(log_fd, "\n  PID: ", 8);
+        write_int(log_fd, pid);
 
-            write(log_fd, "\n  PID: ", 8);
-            write_int(log_fd, pid);
+        write(log_fd, "\n  TID: ", 8);
+        write_int(log_fd, tid);
 
-            write(log_fd, "\n  TID: ", 8);
-            write_int(log_fd, tid);
-
-            close(log_fd);
-            log_fd = -1;
-            abort();
-        }
+        close(log_fd);
+        log_fd = -1;
+        abort();
     }
 }
 
