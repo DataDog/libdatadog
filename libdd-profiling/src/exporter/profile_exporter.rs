@@ -24,10 +24,12 @@
 //! The dumped files contain the complete HTTP request including headers and body,
 //! which can be useful for debugging or replaying requests.
 
+use super::errors::SendError;
 use super::file_exporter::spawn_dump_server;
 use anyhow::Context;
 use libdd_common::tag::Tag;
 use libdd_common::{azure_app_services, tag, Endpoint};
+use reqwest::RequestBuilder;
 use serde_json::json;
 use std::io::Write;
 use tokio::runtime::Runtime;
@@ -236,7 +238,8 @@ impl ProfileExporter {
             );
         }
 
-        self.runtime
+        Ok(self
+            .runtime
             .as_ref()
             .context("Missing runtime")?
             .block_on(self.send(
@@ -247,7 +250,36 @@ impl ProfileExporter {
                 info,
                 process_tags,
                 cancel,
-            ))
+            ))?
+            .status())
+    }
+
+    pub(crate) fn build(
+        &self,
+        profile: EncodedProfile,
+        additional_files: &[File<'_>],
+        additional_tags: &[Tag],
+        internal_metadata: Option<serde_json::Value>,
+        info: Option<serde_json::Value>,
+        process_tags: Option<&str>,
+    ) -> anyhow::Result<RequestBuilder> {
+        let tags_profiler = self.build_tags_string(additional_tags)?;
+        let event = self.build_event_json(
+            &profile,
+            additional_files,
+            &tags_profiler,
+            internal_metadata,
+            info,
+            process_tags,
+        );
+
+        let form = self.build_multipart_form(event, profile, additional_files)?;
+
+        Ok(self
+            .client
+            .post(&self.request_url)
+            .headers(self.headers.clone())
+            .multipart(form))
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -261,33 +293,28 @@ impl ProfileExporter {
         info: Option<serde_json::Value>,
         process_tags: Option<&str>,
         cancel: Option<&CancellationToken>,
-    ) -> anyhow::Result<reqwest::StatusCode> {
-        let tags_profiler = self.build_tags_string(additional_tags)?;
-        let event = self.build_event_json(
-            &profile,
+    ) -> Result<reqwest::Response, SendError> {
+        let request_builder = self.build(
+            profile,
             additional_files,
-            &tags_profiler,
+            additional_tags,
             internal_metadata,
             info,
             process_tags,
-        );
-
-        let form = self.build_multipart_form(event, profile, additional_files)?;
-
-        let request_builder = self
-            .client
-            .post(&self.request_url)
-            .headers(self.headers.clone())
-            .multipart(form);
+        )?;
 
         // Send request with optional cancellation support
         if let Some(token) = cancel {
-            tokio::select! {
-                _ = token.cancelled() => anyhow::bail!("Operation cancelled by user"),
-                result = request_builder.send() => Ok(result?.status()),
-            }
+            token
+                .run_until_cancelled(request_builder.send())
+                .await
+                .ok_or(SendError::Cancelled)?
+                .map_err(SendError::RequestFailed)
         } else {
-            Ok(request_builder.send().await?.status())
+            request_builder
+                .send()
+                .await
+                .map_err(SendError::RequestFailed)
         }
     }
 
