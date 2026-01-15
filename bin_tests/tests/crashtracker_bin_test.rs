@@ -202,8 +202,9 @@ fn test_collector_no_allocations() {
         let detector_log_path = PathBuf::from("/tmp/preload_detector.log");
 
         if detector_log_path.exists() {
-            let log_content = fs::read_to_string(&detector_log_path)
-                .context("Failed to read preload detector log")?;
+            let log_bytes =
+                fs::read(&detector_log_path).context("Failed to read preload detector log")?;
+            let log_content = String::from_utf8_lossy(&log_bytes);
 
             // Clean up the log file first
             let _ = fs::remove_file(&detector_log_path);

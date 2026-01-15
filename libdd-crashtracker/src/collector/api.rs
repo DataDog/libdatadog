@@ -17,7 +17,6 @@ pub fn default_signals() -> Vec<libc::c_int> {
     Vec::from(DEFAULT_SYMBOLS)
 }
 
-#[cfg(target_os = "linux")]
 pub(super) fn mark_preload_logger_collector() {
     // This function is specific only for LD_PRELOAD testing
     // Best effort; this symbol exists only when the preload logger preload is present.
@@ -30,9 +29,6 @@ pub(super) fn mark_preload_logger_collector() {
         }
     }
 }
-
-#[cfg(not(target_os = "linux"))]
-pub(super) fn mark_preload_logger_collector() {}
 
 /// Reinitialize the crash-tracking infrastructure after a fork.
 /// This should be one of the first things done after a fork, to minimize the
