@@ -271,17 +271,9 @@ where
     Ok(())
 }
 
-/// Convenience helper that builds the standard artifacts for the given config
-/// and runs a crash test with the provided validator. Use this when a test
-/// doesn't care about customizing artifacts and just needs to run validation
-/// independently of the crash report.
-pub fn run_crash_test_with_validator_no_crash_report<F>(
-    config: &CrashTestConfig,
-    validator: F,
-) -> Result<()>
-where
-    F: FnOnce() -> Result<()>,
-{
+/// Minimal runner for scenarios where the process may not emit a crash report
+/// (preload allocation detector). It just runs the binary and waits.
+pub fn run_crash_no_op(config: &CrashTestConfig) -> Result<()> {
     let artifacts = StandardArtifacts::new(config.profile);
     let artifacts_map = build_artifacts(&artifacts.as_slice())?;
     let fixtures = TestFixtures::new()?;
@@ -300,7 +292,6 @@ where
     let mut child = cmd.spawn().context("Failed to spawn test process")?;
     let _ = child.wait();
 
-    validator()?;
     Ok(())
 }
 
