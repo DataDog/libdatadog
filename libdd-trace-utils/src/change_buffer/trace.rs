@@ -9,9 +9,3 @@ pub struct Trace<T> {
     pub sampling_limit_decision: Option<f64>,
     pub sampling_agent_decision: Option<f64>,
 }
-
-impl<T: Default> Trace<T> {
-    pub fn new() -> Self {
-        Default::default()
-    }
-}

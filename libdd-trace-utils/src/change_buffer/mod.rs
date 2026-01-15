@@ -22,11 +22,19 @@ impl std::ops::Deref for ChangeBuffer {
     }
 }
 
+impl Default for ChangeBuffer {
+    fn default() -> Self {
+        ChangeBuffer(std::ptr::null_mut())
+    }
+}
+
+#[derive(Default)]
 pub struct ChangeBufferState<T: SpanText + Clone> {
     change_buffer: ChangeBuffer,
     spans: HashMap<u64, Span<T>>,
     traces: HashMap<u128, Trace<T>>,
     string_table: HashMap<u32, T>,
+    trace_span_counts: HashMap<u128, usize>,
     tracer_service: T,
     tracer_language: T,
     pid: f64,
@@ -42,43 +50,68 @@ fn new_span<T: SpanText>(span_id: u64, parent_id: u64, trace_id: u128) -> Span<T
 }
 
 impl<T: SpanText + Clone> ChangeBufferState<T> {
-    pub fn new(change_buffer: ChangeBuffer, tracer_service: T, tracer_language: T, pid: f64) -> Self {
+    pub fn new(
+        change_buffer: ChangeBuffer,
+        tracer_service: T,
+        tracer_language: T,
+        pid: f64,
+    ) -> Self {
         ChangeBufferState {
             change_buffer,
-            spans: HashMap::new(),
-            traces: HashMap::new(),
-            string_table: HashMap::new(),
             tracer_service,
             tracer_language,
             pid,
+            ..Default::default()
         }
     }
 
-    pub fn flush_chunk(&mut self, span_ids: Vec<u64>, first_is_local_root:bool) -> Result<Vec<Span<T>>> {
+    pub fn flush_chunk(
+        &mut self,
+        span_ids: Vec<u64>,
+        first_is_local_root: bool,
+    ) -> Result<Vec<Span<T>>> {
         let mut chunk_trace_id: Option<u128> = None;
         let mut is_local_root = first_is_local_root;
         let mut is_chunk_root = true;
 
-        let spans_vec = span_ids.iter().map(|span_id| -> Result<Span<T>> {
-            let maybe_span = self.spans.remove(span_id);
+        let spans_vec = span_ids
+            .iter()
+            .map(|span_id| -> Result<Span<T>> {
+                let maybe_span = self.spans.remove(span_id);
 
-            let mut span = maybe_span.ok_or_else(|| anyhow!("span not found: {}", span_id))?;
-            chunk_trace_id = Some(span.trace_id);
+                let mut span = maybe_span.ok_or_else(|| anyhow!("span not found: {}", span_id))?;
+                chunk_trace_id = Some(span.trace_id);
 
-            if is_local_root {
-                self.copy_in_sampling_tags(&mut span);
-                span.metrics.insert(T::from_static_str("_dd.top_level"), 1.0);
-                is_local_root = false;
+                if is_local_root {
+                    self.copy_in_sampling_tags(&mut span);
+                    span.metrics
+                        .insert(T::from_static_str("_dd.top_level"), 1.0);
+                    is_local_root = false;
+                }
+                if is_chunk_root {
+                    self.copy_in_chunk_tags(&mut span);
+                    is_chunk_root = false;
+                }
+
+                self.process_one_span(&mut span);
+
+                Ok(span)
+            })
+            .collect::<Result<Vec<_>>>()?;
+
+        // Clean up trace if no spans remain for it
+        if let Some(trace_id) = chunk_trace_id {
+            if let Some(count) = self.trace_span_counts.get_mut(&trace_id) {
+                let len = span_ids.len();
+                if *count <= len {
+                    // All spans for this trace have been flushed
+                    self.traces.remove(&trace_id);
+                    self.trace_span_counts.remove(&trace_id);
+                } else {
+                    *count -= len;
+                }
             }
-            if is_chunk_root {
-                self.copy_in_chunk_tags(&mut span);
-                is_chunk_root = false;
-            }
-
-            self.process_one_span(&mut span);
-
-            Ok(span)
-        }).collect::<Result<Vec<_>>>()?;
+        }
 
         Ok(spans_vec)
     }
@@ -86,15 +119,16 @@ impl<T: SpanText + Clone> ChangeBufferState<T> {
     fn copy_in_sampling_tags(&self, span: &mut Span<T>) {
         if let Some(trace) = self.traces.get(&span.trace_id) {
             if let Some(rule) = trace.sampling_rule_decision {
-                span.metrics.insert(T::from_static_str("_dd.rule_psr"), rule);
+                span.metrics
+                    .insert(T::from_static_str("_dd.rule_psr"), rule);
             }
             if let Some(rule) = trace.sampling_limit_decision {
                 span.metrics.insert(T::from_static_str("_dd.;_psr"), rule);
             }
             if let Some(rule) = trace.sampling_agent_decision {
-                span.metrics.insert(T::from_static_str("_dd.agent_psr"), rule);
+                span.metrics
+                    .insert(T::from_static_str("_dd.agent_psr"), rule);
             }
-
         }
     }
 
@@ -109,7 +143,7 @@ impl<T: SpanText + Clone> ChangeBufferState<T> {
 
     fn process_one_span(&self, span: &mut Span<T>) {
         // TODO span.sample();
-        
+
         if let Some(kind) = span.meta.get("kind") {
             if kind != &T::from_static_str("internal") {
                 span.metrics.insert(T::from_static_str("_dd.measured"), 1.0);
@@ -117,7 +151,10 @@ impl<T: SpanText + Clone> ChangeBufferState<T> {
         }
 
         if span.service != self.tracer_service {
-            span.meta.insert(T::from_static_str("_dd.base_service"), self.tracer_service.clone());
+            span.meta.insert(
+                T::from_static_str("_dd.base_service"),
+                self.tracer_service.clone(),
+            );
             // TODO span.service should be added to the "extra services" used by RC, which is not
             // yet implemented here
         }
@@ -125,8 +162,10 @@ impl<T: SpanText + Clone> ChangeBufferState<T> {
         // SKIP setting single-span ingestion. They should be set when sampling is finalized for
         // the span.
 
-        span.meta.insert(T::from_static_str("language"), self.tracer_language.clone());
-        span.metrics.insert(T::from_static_str("process_id"), self.pid);
+        span.meta
+            .insert(T::from_static_str("language"), self.tracer_language.clone());
+        span.metrics
+            .insert(T::from_static_str("process_id"), self.pid);
 
         if let Some(trace) = self.traces.get(&span.trace_id) {
             if let Some(origin) = trace.origin.clone() {
@@ -140,7 +179,7 @@ impl<T: SpanText + Clone> ChangeBufferState<T> {
         // TODO Sampling priority, if we're not doing that ahead of time.
     }
 
-    pub fn flush_change_buffer (&mut self) -> Result<()>{
+    pub fn flush_change_buffer(&mut self) -> Result<()> {
         let mut index = 0;
         let buf = *self.change_buffer;
         let mut count: u64 = get_num_raw(buf, &mut index);
@@ -163,9 +202,10 @@ impl<T: SpanText + Clone> ChangeBufferState<T> {
 
     fn get_string_arg(&self, index: &mut usize) -> Result<T> {
         let num: u32 = self.get_num_arg(index);
-        self.string_table.get(&num).cloned().ok_or_else(|| {
-            anyhow!("string not found internally: {}", num)
-        })
+        self.string_table
+            .get(&num)
+            .cloned()
+            .ok_or_else(|| anyhow!("string not found internally: {}", num))
     }
 
     fn get_num_arg<U: Copy + FromBytes>(&self, index: &mut usize) -> U {
@@ -173,15 +213,15 @@ impl<T: SpanText + Clone> ChangeBufferState<T> {
     }
 
     fn get_mut_span(&mut self, id: &u64) -> Result<&mut Span<T>> {
-        self.spans.get_mut(id).ok_or_else(|| {
-            anyhow!("span not found internally: {}", id)
-        })
+        self.spans
+            .get_mut(id)
+            .ok_or_else(|| anyhow!("span not found internally: {}", id))
     }
 
     fn get_span(&self, id: &u64) -> Result<&Span<T>> {
-        self.spans.get(id).ok_or_else(|| {
-            anyhow!("span not found internally: {}", id)
-        })
+        self.spans
+            .get(id)
+            .ok_or_else(|| anyhow!("span not found internally: {}", id))
     }
 
     fn interpret_operation(&mut self, index: &mut usize, op: &BufferedOperation) -> Result<()> {
@@ -194,7 +234,7 @@ impl<T: SpanText + Clone> ChangeBufferState<T> {
                 // Ensure trace exists (creates new one if this is the first span for this trace)
                 self.traces.entry(trace_id).or_default();
 
-                // *self.trace_span_counts.entry(trace_id).or_insert(0) += 1;
+                *self.trace_span_counts.entry(trace_id).or_insert(0) += 1;
             }
             OpCode::SetMetaAttr => {
                 let name = self.get_string_arg(index)?;
