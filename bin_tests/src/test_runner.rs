@@ -297,7 +297,8 @@ where
         cmd.env(key, val);
     }
 
-    cmd.spawn().context("Failed to spawn test process")?;
+    let mut child = cmd.spawn().context("Failed to spawn test process")?;
+    let _ = child.wait();
 
     validator()?;
     Ok(())

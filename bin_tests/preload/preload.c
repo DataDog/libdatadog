@@ -121,8 +121,6 @@ static void capture_and_report_allocation(const char *func_name) {
             abort();
         }
     }
-
-    // Don't abort. Let the collector continue so it can finish writing the crash report
 }
 
 void *malloc(size_t size) {
