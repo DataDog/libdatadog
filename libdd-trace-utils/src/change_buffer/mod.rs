@@ -28,6 +28,12 @@ impl Default for ChangeBuffer {
     }
 }
 
+impl From<*const u8> for ChangeBuffer {
+    fn from(val: *const u8) -> Self {
+        Self(val)
+    }
+}
+
 #[derive(Default)]
 pub struct ChangeBufferState<T: SpanText + Clone> {
     change_buffer: ChangeBuffer,
