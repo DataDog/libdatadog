@@ -127,7 +127,7 @@ impl DatadogAgentContainerBuilder {
 
         let output = run_command(
             Command::new("docker")
-                .args(["run", /* "--rm", */ "-d"])
+                .args(["run", "--rm", "-d"])
                 .args(mounts)
                 .args(envs)
                 .args(["-p".to_owned(), format!("{}", self.trace_agent_port)])

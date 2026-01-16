@@ -47,7 +47,7 @@ base64 = "0.22.1"
 spawn_worker = { path = "../spawn_worker" }
 zwohash = "0.1.2"
 sha2 = "0.10"
-tokio = { version = "1.35.1", features = [
+tokio = { version = "1.49.0", features = [
     "fs",
     "sync",
     "io-util",
@@ -80,6 +80,11 @@ features = [
 ]
 version = "0.51.0"
 
+# unstable-only feature
+[target.'cfg(all(tokio_unstable, target_os = "linux"))'.dependencies.tokio]
+features = ["taskdump"]
+version = "1.49.0"
+
 # simd-json v0.15 uses Rust 2024 Edition, so it needs Rust 1.85+.
 [target.'cfg(not(target_arch = "x86"))'.dependencies]
 simd-json = "=0.14"
@@ -106,6 +111,6 @@ libdd-trace-utils = { path = "../libdd-trace-utils", features = ["test-utils"] }
 
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = [
-    'cfg(tokio_taskdump,windows_seh_wrapper)',
+    'cfg(tokio_unstable,windows_seh_wrapper)',
     'cfg(feature, values("logging"))',
 ] }

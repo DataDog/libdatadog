@@ -126,13 +126,6 @@ fn parse_multipart(content_type: &str, body: &[u8]) -> anyhow::Result<Vec<Multip
     Ok(parts)
 }
 
-/// Helper to find subsequence in bytes
-pub(super) fn find_subsequence(haystack: &[u8], needle: &[u8]) -> Option<usize> {
-    haystack
-        .windows(needle.len())
-        .position(|window| window == needle)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
