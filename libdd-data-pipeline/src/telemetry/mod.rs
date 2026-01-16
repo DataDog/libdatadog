@@ -638,6 +638,35 @@ mod tests {
         telemetry_srv.assert_calls_async(1).await;
     }
 
+    #[cfg_attr(miri, ignore)]
+    #[tokio::test]
+    async fn chunks_dropped_serialization_error_test() {
+        let payload = Regex::new(r#""metric":"trace_chunks_dropped","points":\[\[\d+,1\.0\]\],"tags":\["src_library:libdatadog","reason:serialization_error"\],"common":true,"type":"count"#).unwrap();
+        let server = MockServer::start_async().await;
+
+        let telemetry_srv = server
+            .mock_async(|when, then| {
+                when.method(POST).body_matches(payload);
+                then.status(200).body("");
+            })
+            .await;
+
+        let data = SendPayloadTelemetry {
+            chunks_dropped_serialization_error: 1,
+            ..Default::default()
+        };
+
+        let client = get_test_client(&server.url("/")).await;
+
+        client.start().await;
+        let _ = client.send(&data);
+        client.shutdown().await;
+        while telemetry_srv.calls_async().await == 0 {
+            sleep(Duration::from_millis(10)).await;
+        }
+        telemetry_srv.assert_calls_async(1).await;
+    }
+
     #[test]
     fn telemetry_from_ok_response_test() {
         let result = Ok((Response::default(), 3));
