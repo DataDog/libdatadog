@@ -5,12 +5,14 @@
 .clang-format                        @Datadog/libdatadog
 .codecov.yml                         @Datadog/apm-common-components-core
 .config/nextest.toml                 @Datadog/apm-common-components-core
+.config/commitlint.config.js         @Datadog/apm-common-components-core
 .devcontainer                        @Datadog/apm-common-components-core
 .dockerignore                        @Datadog/libdatadog-core
 .github/                             @Datadog/apm-common-components-core
 .gitignore                           @Datadog/libdatadog
 .gitlab-ci.yml                       @Datadog/apm-common-components-core
 .gitlab/benchmarks.yml               @Datadog/apm-common-components-core
+.gitlab/fuzz.yml                     @Datadog/chaos-platform
 benchmark/                           @Datadog/apm-common-components-core
 bin_tests/                           @Datadog/libdatadog-profiling
 build-common/                        @Datadog/apm-common-components-core
@@ -64,6 +66,7 @@ tests/spawn_from_lib/                @Datadog/libdatadog-php @Datadog/libdatadog
 tests/windows_package/               @Datadog/apm-common-components-core
 tools/                               @Datadog/apm-common-components-core
 windows/                             @Datadog/libdatadog-core
+fuzz/                                @Datadog/chaos-platform
 
 # Specific overrides (must come after their general patterns above)
 bin_tests/tests/test_the_tests.rs    @Datadog/libdatadog-core

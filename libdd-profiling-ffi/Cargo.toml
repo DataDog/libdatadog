@@ -38,6 +38,7 @@ datadog-ffe-ffi = ["dep:datadog-ffe-ffi"]
 build_common = { path = "../build-common" }
 
 [dependencies]
+allocator-api2 = { version = "0.2.21", default-features = false, features = ["alloc"]  }
 anyhow = "1.0"
 libdd-data-pipeline-ffi = { path = "../libdd-data-pipeline-ffi", default-features = false, optional = true }
 libdd-crashtracker-ffi = { path = "../libdd-crashtracker-ffi", default-features = false, optional = true}
@@ -55,5 +56,6 @@ hyper = { workspace = true}
 libc = "0.2"
 serde_json = { version = "1.0" }
 symbolizer-ffi = { path = "../symbolizer-ffi", optional = true, default-features = false }
+thiserror = "2"
 tokio-util = "0.7.1"
 datadog-ffe-ffi = { path = "../datadog-ffe-ffi", default-features = false, optional = true }

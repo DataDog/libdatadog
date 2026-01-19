@@ -10,6 +10,8 @@ use crate::crash_info::Metadata;
 use crate::shared::configuration::CrashtrackerConfiguration;
 use libc::{c_void, siginfo_t, ucontext_t};
 use libdd_common::timeout::TimeoutManager;
+use std::panic;
+use std::panic::PanicHookInfo;
 use std::ptr;
 use std::sync::atomic::Ordering::SeqCst;
 use std::sync::atomic::{AtomicBool, AtomicPtr, AtomicU64};
@@ -35,6 +37,10 @@ use std::sync::atomic::{AtomicBool, AtomicPtr, AtomicU64};
 // `Box::from_raw` to recreate the box, then dropping it.
 static METADATA: AtomicPtr<(Metadata, String)> = AtomicPtr::new(ptr::null_mut());
 static CONFIG: AtomicPtr<(CrashtrackerConfiguration, String)> = AtomicPtr::new(ptr::null_mut());
+static PANIC_MESSAGE: AtomicPtr<String> = AtomicPtr::new(ptr::null_mut());
+
+type PanicHook = Box<dyn Fn(&PanicHookInfo<'_>) + Send + Sync>;
+static PREVIOUS_PANIC_HOOK: AtomicPtr<PanicHook> = AtomicPtr::new(ptr::null_mut());
 
 #[derive(Debug, thiserror::Error)]
 pub enum CrashHandlerError {
@@ -70,6 +76,88 @@ pub fn update_metadata(metadata: Metadata) -> anyhow::Result<()> {
         }
     }
     Ok(())
+}
+
+/// Format a panic message with optional location information.
+fn format_message(
+    category: &str,
+    panic_message: &str,
+    location: Option<&panic::Location>,
+) -> String {
+    let base = if panic_message.is_empty() {
+        format!("Process panicked with {}", category)
+    } else {
+        format!("Process panicked with {} \"{}\"", category, panic_message)
+    };
+
+    match location {
+        Some(loc) => format!("{} ({}:{}:{})", base, loc.file(), loc.line(), loc.column()),
+        None => base,
+    }
+}
+
+/// Register the panic hook.
+///
+/// This function is used to register the panic hook and store the previous hook.
+/// PRECONDITIONS:
+///     None
+/// SAFETY:
+///     Crash-tracking functions are not guaranteed to be reentrant.
+///     No other crash-handler functions should be called concurrently.
+/// ATOMICITY:
+///     This function uses a swap on an atomic pointer.
+pub fn register_panic_hook() -> anyhow::Result<()> {
+    // register only once, if it is already registered, do nothing
+    if !PREVIOUS_PANIC_HOOK.load(SeqCst).is_null() {
+        return Ok(());
+    }
+
+    let old_hook = panic::take_hook();
+    let old_hook_ptr = Box::into_raw(Box::new(old_hook));
+    PREVIOUS_PANIC_HOOK.swap(old_hook_ptr, SeqCst);
+    panic::set_hook(Box::new(|panic_info| {
+        // Extract panic message from payload (supports &str and String)
+        let message = if let Some(&s) = panic_info.payload().downcast_ref::<&str>() {
+            format_message("message", s, panic_info.location())
+        } else if let Some(s) = panic_info.payload().downcast_ref::<String>() {
+            format_message("message", s.as_str(), panic_info.location())
+        } else {
+            // For non-string types, use a generic message
+            format_message("unknown type", "", panic_info.location())
+        };
+
+        // Store the message, cleaning up any old message
+        let message_ptr = PANIC_MESSAGE.swap(Box::into_raw(Box::new(message)), SeqCst);
+        // message_ptr should be null, but just in case.
+        if !message_ptr.is_null() {
+            unsafe {
+                std::mem::drop(Box::from_raw(message_ptr));
+            }
+        }
+
+        call_previous_panic_hook(panic_info);
+    }));
+    Ok(())
+}
+
+/// Call the previous panic hook.
+///
+/// This function is used to call the previous panic hook.
+/// PRECONDITIONS:
+///     None
+/// SAFETY:
+///     Crash-tracking functions are not guaranteed to be reentrant.
+///     No other crash-handler functions should be called concurrently.
+fn call_previous_panic_hook(panic_info: &PanicHookInfo<'_>) {
+    let old_hook_ptr = PREVIOUS_PANIC_HOOK.load(SeqCst);
+    if !old_hook_ptr.is_null() {
+        // Safety: This pointer can only come from Box::into_raw above in register_panic_hook.
+        // We borrow it here without taking ownership so it remains valid for future calls.
+        unsafe {
+            let old_hook = &*old_hook_ptr;
+            old_hook(panic_info);
+        }
+    }
 }
 
 /// Updates the crashtracker config for this process
@@ -172,6 +260,11 @@ fn handle_posix_signal_impl(
     }
     let (_metadata, metadata_string) = unsafe { &*metadata_ptr };
 
+    // Get the panic message pointer but don't dereference or deallocate in signal handler.
+    // The collector child process will handle converting this to a String after forking.
+    // Leak of the message pointer is ok here.
+    let message_ptr = PANIC_MESSAGE.swap(ptr::null_mut(), SeqCst);
+
     let timeout_manager = TimeoutManager::new(config.timeout());
 
     // Optionally, create the receiver.  This all hinges on whether or not the configuration has a
@@ -190,6 +283,7 @@ fn handle_posix_signal_impl(
         config,
         config_str,
         metadata_string,
+        message_ptr,
         sig_info,
         ucontext,
     )?;
@@ -199,4 +293,153 @@ fn handle_posix_signal_impl(
     receiver.finish(&timeout_manager);
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_register_panic_hook() {
+        assert!(PREVIOUS_PANIC_HOOK.load(SeqCst).is_null());
+
+        let result = register_panic_hook();
+        assert!(result.is_ok());
+
+        assert!(!PREVIOUS_PANIC_HOOK.load(SeqCst).is_null());
+    }
+
+    #[test]
+    fn test_panic_message_storage_and_retrieval() {
+        // Test that panic messages can be stored and retrieved via atomic pointer
+        let test_message = "test panic message".to_string();
+        let message_ptr = Box::into_raw(Box::new(test_message.clone()));
+
+        // Store the message
+        let old_ptr = PANIC_MESSAGE.swap(message_ptr, SeqCst);
+        assert!(old_ptr.is_null()); // Should be null initially
+
+        // Retrieve and verify
+        let retrieved_ptr = PANIC_MESSAGE.swap(ptr::null_mut(), SeqCst);
+        assert!(!retrieved_ptr.is_null());
+
+        unsafe {
+            let retrieved_message = *Box::from_raw(retrieved_ptr);
+            assert_eq!(retrieved_message, test_message);
+        }
+    }
+
+    #[test]
+    fn test_panic_message_null_handling() {
+        // Test that null message pointers are handled correctly
+        PANIC_MESSAGE.store(ptr::null_mut(), SeqCst);
+
+        let message_ptr = PANIC_MESSAGE.load(SeqCst);
+        assert!(message_ptr.is_null());
+
+        // Swapping null with null should be safe
+        let old_ptr = PANIC_MESSAGE.swap(ptr::null_mut(), SeqCst);
+        assert!(old_ptr.is_null());
+    }
+
+    #[test]
+    fn test_panic_message_replacement() {
+        // Test that replacing an existing message cleans up the old one
+        let message1 = "first message".to_string();
+        let message2 = "second message".to_string();
+
+        let ptr1 = Box::into_raw(Box::new(message1));
+        let ptr2 = Box::into_raw(Box::new(message2.clone()));
+
+        PANIC_MESSAGE.store(ptr1, SeqCst);
+        let old_ptr = PANIC_MESSAGE.swap(ptr2, SeqCst);
+
+        // Old pointer should be the first one
+        assert_eq!(old_ptr, ptr1);
+
+        // Clean up both
+        unsafe {
+            drop(Box::from_raw(old_ptr));
+            let final_ptr = PANIC_MESSAGE.swap(ptr::null_mut(), SeqCst);
+            let final_message = *Box::from_raw(final_ptr);
+            assert_eq!(final_message, message2);
+        }
+    }
+
+    #[test]
+    fn test_metadata_update_atomic() {
+        // Test that metadata updates are atomic
+        let metadata = Metadata {
+            library_name: "test".to_string(),
+            library_version: "1.0.0".to_string(),
+            family: "test_family".to_string(),
+            tags: vec![],
+        };
+
+        let result = update_metadata(metadata.clone());
+        assert!(result.is_ok());
+
+        // Verify metadata was stored
+        let metadata_ptr = METADATA.load(SeqCst);
+        assert!(!metadata_ptr.is_null());
+
+        unsafe {
+            let (stored_metadata, _) = &*metadata_ptr;
+            assert_eq!(stored_metadata.library_name, "test");
+        }
+    }
+
+    #[test]
+    fn test_format_message_with_message_and_location() {
+        let location = panic::Location::caller();
+        let result = format_message("message", "test panic", Some(location));
+
+        assert!(result.starts_with("Process panicked with message \"test panic\" ("));
+        assert!(result.contains(&format!("{}:", location.file())));
+        assert!(result.contains(&format!(":{}", location.line())));
+        assert!(result.ends_with(&format!("{})", location.column())));
+    }
+
+    #[test]
+    fn test_format_message_with_message_no_location() {
+        let result = format_message("message", "test panic", None);
+        assert_eq!(result, "Process panicked with message \"test panic\"");
+    }
+
+    #[test]
+    fn test_format_message_empty_message_with_location() {
+        let location = panic::Location::caller();
+        let result = format_message("unknown type", "", Some(location));
+
+        assert!(result.starts_with("Process panicked with unknown type ("));
+        assert!(result.contains(&format!("{}:", location.file())));
+        assert!(result.ends_with(&format!("{})", location.column())));
+    }
+
+    #[test]
+    fn test_format_message_empty_message_no_location() {
+        let result = format_message("unknown type", "", None);
+        assert_eq!(result, "Process panicked with unknown type");
+    }
+
+    #[test]
+    fn test_format_message_different_categories() {
+        let result1 = format_message("message", "test", None);
+        assert_eq!(result1, "Process panicked with message \"test\"");
+
+        let result2 = format_message("unknown type", "", None);
+        assert_eq!(result2, "Process panicked with unknown type");
+
+        let result3 = format_message("custom category", "content", None);
+        assert_eq!(result3, "Process panicked with custom category \"content\"");
+    }
+
+    #[test]
+    fn test_format_message_with_special_characters() {
+        let result = format_message("message", "test \"quoted\" 'text'", None);
+        assert_eq!(
+            result,
+            "Process panicked with message \"test \"quoted\" 'text'\""
+        );
+    }
 }

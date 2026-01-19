@@ -47,7 +47,7 @@ base64 = "0.22.1"
 spawn_worker = { path = "../spawn_worker" }
 zwohash = "0.1.2"
 sha2 = "0.10"
-tokio = { version = "1.35.1", features = [
+tokio = { version = "1.49.0", features = [
     "fs",
     "sync",
     "io-util",
@@ -65,7 +65,7 @@ tracing-subscriber = { version = "0.3", default-features = false, features = [
     "env-filter",
 ], optional = true }
 chrono = "0.4.31"
-console-subscriber = { version = "0.4", optional = true }
+console-subscriber = { version = "0.5", optional = true }
 libc = { version = "0.2" }
 
 # watchdog and self telemetry
@@ -79,6 +79,11 @@ features = [
     "Win32_System_WindowsProgramming",
 ]
 version = "0.51.0"
+
+# unstable-only feature
+[target.'cfg(all(tokio_unstable, target_os = "linux"))'.dependencies.tokio]
+features = ["taskdump"]
+version = "1.49.0"
 
 # simd-json v0.15 uses Rust 2024 Edition, so it needs Rust 1.85+.
 [target.'cfg(not(target_arch = "x86"))'.dependencies]
@@ -106,6 +111,6 @@ libdd-trace-utils = { path = "../libdd-trace-utils", features = ["test-utils"] }
 
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = [
-    'cfg(tokio_taskdump,windows_seh_wrapper)',
+    'cfg(tokio_unstable,windows_seh_wrapper)',
     'cfg(feature, values("logging"))',
 ] }
