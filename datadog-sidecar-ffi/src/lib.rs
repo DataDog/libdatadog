@@ -559,6 +559,7 @@ pub unsafe extern "C" fn ddog_sidecar_session_set_config(
     remote_config_capabilities_count: usize,
     remote_config_enabled: bool,
     is_fork: bool,
+    process_tags: ffi::CharSlice
 ) -> MaybeError {
     #[cfg(unix)]
     let remote_config_notify_target = libc::getpid();
@@ -602,8 +603,25 @@ pub unsafe extern "C" fn ddog_sidecar_session_set_config(
             .as_slice()
             .to_vec(),
             remote_config_enabled,
+            process_tags: process_tags.to_utf8_lossy().into(),
         },
         is_fork
+    ));
+
+    MaybeError::None
+}
+
+/// Updates the process_tags for an existing session.
+#[no_mangle]
+pub unsafe extern "C" fn ddog_sidecar_session_set_process_tags(
+    transport: &mut Box<SidecarTransport>,
+    session_id: ffi::CharSlice,
+    process_tags: ffi::CharSlice
+) -> MaybeError {
+    try_c!(blocking::set_session_process_tags(
+        transport,
+        session_id.to_utf8_lossy().into(),
+        process_tags.to_utf8_lossy().into(),
     ));
 
     MaybeError::None
