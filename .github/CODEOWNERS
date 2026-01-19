@@ -57,6 +57,7 @@ README.md                            @Datadog/libdatadog
 repository.datadog.yml               @Datadog/apm-common-components-core
 ruby/                                @Datadog/ruby-guild
 rustfmt.toml                         @Datadog/libdatadog-core
+scripts/semver-level.sh              @Datadog/libdatadog-core
 scripts/reformat_copyright.sh        @Datadog/libdatadog-core
 scripts/update_license_3rdparty.sh   @Datadog/libdatadog-core
 spawn_worker/                        @Datadog/libdatadog-php @Datadog/libdatadog-apm
