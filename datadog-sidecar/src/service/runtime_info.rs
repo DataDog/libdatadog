@@ -142,6 +142,13 @@ impl ActiveApplication {
             .as_ref()
             .expect("Expecting remote config invariants to be set early")
             .clone();
+
+        let process_tags = session
+            .process_tags
+            .lock_or_panic()
+            .clone()
+            .unwrap_or_default();
+
         if *session.remote_config_enabled.lock_or_panic() {
             self.remote_config_guard = Some(
                 remote_configs.add_runtime(
@@ -158,6 +165,14 @@ impl ActiveApplication {
                         .expect("set_metadata was called before"),
                     self.global_tags.clone(),
                     dynamic_instrumentation_state,
+                    process_tags
+                        .split(',')
+                        .filter_map(|s| {
+                            s.split_once(':').and_then(|(key, value)| {
+                                libdd_common::tag::Tag::new(key, value).ok()
+                            })
+                        })
+                        .collect(),
                 ),
             );
         }

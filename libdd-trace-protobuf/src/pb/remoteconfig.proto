@@ -35,6 +35,7 @@ message ClientTracer {
   string env = 5;
   string app_version = 6;
   repeated string tags = 7;
+  repeated string process_tags = 9;
 }
 
 message ClientAgent {
