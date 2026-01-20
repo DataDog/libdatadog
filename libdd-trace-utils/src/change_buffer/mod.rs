@@ -6,7 +6,7 @@ mod utils;
 use utils::*;
 
 mod trace;
-use trace::*;
+pub use trace::*;
 
 use crate::span::{Span, SpanText};
 
@@ -224,10 +224,14 @@ impl<T: SpanText + Clone> ChangeBufferState<T> {
             .ok_or_else(|| anyhow!("span not found internally: {}", id))
     }
 
-    fn get_span(&self, id: &u64) -> Result<&Span<T>> {
+    pub fn get_span(&self, id: &u64) -> Result<&Span<T>> {
         self.spans
             .get(id)
             .ok_or_else(|| anyhow!("span not found internally: {}", id))
+    }
+
+    pub fn get_trace(&self, id: &u128) -> Option<&Trace<T>> {
+        self.traces.get(id)
     }
 
     fn interpret_operation(&mut self, index: &mut usize, op: &BufferedOperation) -> Result<()> {
