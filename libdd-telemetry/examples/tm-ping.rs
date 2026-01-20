@@ -75,6 +75,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         runtime_name: None,
         runtime_version: None,
         runtime_patches: None,
+        process_tags: None,
     };
     let host = build_host();
     let payload = data::payload::Payload::AppStarted(build_app_started_payload());

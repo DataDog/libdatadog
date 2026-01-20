@@ -563,7 +563,8 @@ impl SidecarInterface for SidecarServer {
             *session.remote_config_notify_function.lock().unwrap() = remote_config_notify_function;
         }
         *session.remote_config_enabled.lock_or_panic() = config.remote_config_enabled;
-        *session.process_tags.lock_or_panic() =  (!config.process_tags.is_empty()).then_some(config.process_tags.clone());
+        *session.process_tags.lock_or_panic() =
+            (!config.process_tags.is_empty()).then_some(config.process_tags.clone());
         session.modify_telemetry_config(|cfg| {
             cfg.telemetry_heartbeat_interval = config.telemetry_heartbeat_interval;
             let endpoint = get_product_endpoint(

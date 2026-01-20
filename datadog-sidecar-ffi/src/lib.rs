@@ -559,7 +559,7 @@ pub unsafe extern "C" fn ddog_sidecar_session_set_config(
     remote_config_capabilities_count: usize,
     remote_config_enabled: bool,
     is_fork: bool,
-    process_tags: ffi::CharSlice
+    process_tags: ffi::CharSlice,
 ) -> MaybeError {
     #[cfg(unix)]
     let remote_config_notify_target = libc::getpid();
@@ -613,10 +613,11 @@ pub unsafe extern "C" fn ddog_sidecar_session_set_config(
 
 /// Updates the process_tags for an existing session.
 #[no_mangle]
+#[allow(clippy::missing_safety_doc)]
 pub unsafe extern "C" fn ddog_sidecar_session_set_process_tags(
     transport: &mut Box<SidecarTransport>,
     session_id: ffi::CharSlice,
-    process_tags: ffi::CharSlice
+    process_tags: ffi::CharSlice,
 ) -> MaybeError {
     try_c!(blocking::set_session_process_tags(
         transport,
