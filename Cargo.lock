@@ -3290,7 +3290,6 @@ dependencies = [
  "hyper-util",
  "libc",
  "libdd-common",
- "libdd-common-ffi",
  "libdd-ddsketch",
  "serde",
  "serde_json",

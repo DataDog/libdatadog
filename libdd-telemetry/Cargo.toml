@@ -35,7 +35,6 @@ hashbrown = "0.15"
 
 libdd-common = { version = "1.0.0", path = "../libdd-common", default-features = false }
 libdd-ddsketch = { version = "1.0.0", path = "../libdd-ddsketch" }
-libdd-common-ffi = { path = "../libdd-common-ffi", default-features = false }
 
 [target."cfg(unix)".dependencies]
 libc = "0.2.176"
