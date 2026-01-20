@@ -72,7 +72,7 @@ jobs:
           else
             CRATES_JSON=$(printf '%s\n' "${CHANGED_CRATES[@]}" | jq -R . | jq -s -c .)
             echo "has_changes=true" >> "$GITHUB_OUTPUT"
-            echo "changed_crates=$CRATES_JSON" >> "$GITHUB_OUTPUT"
+            echo "crates=$CRATES_JSON" >> "$GITHUB_OUTPUT"
             echo "Changed published crates: ${CHANGED_CRATES[*]}"
           fi
 
@@ -112,9 +112,37 @@ jobs:
 
           CHANGED_CRATES='${{ needs.detect-changes.outputs.changed_crates }}'
           BASELINE="origin/main"
+          CRATES_CHECKED=()
+          HIGHEST_LEVEL=""
 
-          # Run the semver-level.sh script and capture JSON output
-          RESULT_JSON=$(./scripts/semver-level.sh "$CHANGED_CRATES" "$BASELINE")
+          # Parse JSON array
+          readarray -t CRATES < <(echo "$CHANGED_CRATES" | jq -r '.[]')
+
+          CRATES_JSON="[]"
+          for CRATE_NAME in "${CRATES[@]}"; do
+            # Run the semver-level.sh script and capture the crate changes
+            CRATE=$(./scripts/semver-level.sh "$CRATE_NAME" "$BASELINE")
+            LEVEL=$(echo "$CRATE" | jq -r '.level')
+
+            if [[ "$LEVEL" == "major" ]]; then
+              HIGHEST_LEVEL="major"
+            elif [[ "$LEVEL" == "minor" && ( -z "$HIGHEST_LEVEL" || "$HIGHEST_LEVEL" == "patch" ) ]]; then
+              HIGHEST_LEVEL="minor"
+            elif [[ "$LEVEL" == "patch" && -z "$HIGHEST_LEVEL" ]]; then
+              HIGHEST_LEVEL="patch"
+            elif [[ "$LEVEL" != "major" && "$LEVEL" != "minor" && "$LEVEL" != "patch" ]]; then
+              echo "Error: unknown level ($LEVEL)"
+              exit 1
+            fi
+
+            CRATES_JSON=$(echo "$CRATES_JSON" | jq --argjson crate "$CRATE" '. += [$crate]')
+          done
+
+
+          RESULT_JSON=$(jq -n \
+          --arg highest_level "$HIGHEST_LEVEL" \
+          --argjson crates "$CRATES_JSON" \
+          '{highest_level: $highest_level, crates: $crates}')
 
           # Save JSON result to GITHUB_OUTPUT using multiline format
           echo "result_json<<EOF" >> "$GITHUB_OUTPUT"
