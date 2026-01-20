@@ -1019,7 +1019,7 @@ impl TelemetryWorkerHandle {
     }
 }
 
-/// How many dependencies/integrations/configs/endpoints we keep in memory at most
+/// How many dependencies/integrations/configs we keep in memory at most
 pub const MAX_ITEMS: usize = 5000;
 
 #[derive(Debug, Default, Clone, Copy)]

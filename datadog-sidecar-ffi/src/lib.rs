@@ -414,7 +414,6 @@ pub unsafe extern "C" fn ddog_sidecar_telemetry_addEndpoint(
     operation_name: CharSlice,
     resource_name: CharSlice,
 ) -> MaybeError {
-    #[allow(clippy::unwrap_used)]
     let endpoint = TelemetryActions::AddEndpoint(libdd_telemetry::data::Endpoint {
         method: Some(method),
         path: Some(path.to_utf8_lossy().into_owned()),
