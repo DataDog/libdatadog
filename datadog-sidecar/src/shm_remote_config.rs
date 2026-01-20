@@ -461,12 +461,14 @@ impl<N: NotifyTarget + 'static> ShmRemoteConfigs<N> {
         tags: Vec<Tag>,
         product_capabilities: ProductCapabilities,
         dynamic_instrumentation_state: DynamicInstrumentationConfigState,
+        process_tags: Vec<Tag>,
     ) -> ShmRemoteConfigsGuard<N> {
         let target = Arc::new(Target {
             service,
             env,
             app_version,
             tags,
+            process_tags,
         });
         self.0.add_runtime(
             runtime_id.clone(),
@@ -776,6 +778,7 @@ mod tests {
             env: "env".to_string(),
             app_version: "1.3.5".to_string(),
             tags: vec![],
+            process_tags: vec![],
         })
     });
 
@@ -852,6 +855,7 @@ mod tests {
                 capabilities: server.dummy_options().capabilities,
             },
             DynamicInstrumentationConfigState::Disabled,
+            DUMMY_TARGET.process_tags.clone(),
         );
 
         receiver.recv().await;
