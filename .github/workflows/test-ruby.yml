@@ -19,12 +19,6 @@ jobs:
             ruby: '2.5'
           - os: macos-latest
             ruby: '2.6'
-        include:
-          # Ruby 2.5 and 2.6 need Intel macOS runner (macos-13 is Intel-based)
-          - os: macos-13
-            ruby: '2.5'
-          - os: macos-13
-            ruby: '2.6'
     runs-on: ${{ matrix.os }}
     steps:
     - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # 4.2.2

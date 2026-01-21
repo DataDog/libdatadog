@@ -44,11 +44,6 @@ LIB_GITHUB_RELEASES = [
     file: "libdatadog-aarch64-apple-darwin.tar.gz",
     sha256: "2292639fa885a5f126e7bdf0bbdfd9b08ef54835bfa5c1c6291db15d4ed1b807",
     ruby_platform: "arm64-darwin"
-  },
-  {
-    file: "libdatadog-x86_64-apple-darwin.tar.gz",
-    sha256: "e8fa9cd5ad8ec81defa2b7eeb62fea8eaca3df37c945be36434e9a080e14c7c5",
-    ruby_platform: "x86_64-darwin"
   }
 ]
 
@@ -123,9 +118,8 @@ task package: [
   Helpers.package_for(gemspec, ruby_platform: "x86_64-linux", files: Helpers.files_for("x86_64-linux", "x86_64-linux-musl"))
   Helpers.package_for(gemspec, ruby_platform: "aarch64-linux", files: Helpers.files_for("aarch64-linux", "aarch64-linux-musl"))
 
-  # macOS packages
+  # macOS package (Apple Silicon)
   Helpers.package_for(gemspec, ruby_platform: "arm64-darwin", files: Helpers.files_for("arm64-darwin"))
-  Helpers.package_for(gemspec, ruby_platform: "x86_64-darwin", files: Helpers.files_for("x86_64-darwin"))
 end
 
 Rake::Task["package"].enhance { Rake::Task["spec_validate_permissions"].execute }
@@ -146,8 +140,7 @@ task push_to_rubygems: [
     "gem push pkg/libdatadog-#{Libdatadog::VERSION}.gem",
     "gem push pkg/libdatadog-#{Libdatadog::VERSION}-x86_64-linux.gem",
     "gem push pkg/libdatadog-#{Libdatadog::VERSION}-aarch64-linux.gem",
-    "gem push pkg/libdatadog-#{Libdatadog::VERSION}-arm64-darwin.gem",
-    "gem push pkg/libdatadog-#{Libdatadog::VERSION}-x86_64-darwin.gem"
+    "gem push pkg/libdatadog-#{Libdatadog::VERSION}-arm64-darwin.gem"
   ].each do |command|
     puts "Running: #{command}"
     abort unless system(command)
