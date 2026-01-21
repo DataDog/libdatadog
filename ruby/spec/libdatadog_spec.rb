@@ -73,7 +73,10 @@ RSpec.describe Libdatadog do
       end
 
       context "for the current platform" do
-        let(:pkgconfig_folder) { "#{temporary_directory}/#{Gem::Platform.local}/some/folder/containing/the/lib/pkgconfig" }
+        # Use Libdatadog.current_platform to get the normalized platform name
+        # (e.g., "arm64-darwin" instead of "arm64-darwin-22" on macOS)
+        let(:current_platform) { Libdatadog.current_platform }
+        let(:pkgconfig_folder) { "#{temporary_directory}/#{current_platform}/some/folder/containing/the/lib/pkgconfig" }
 
         before do
           create_dummy_pkgconfig_file(pkgconfig_folder)
@@ -128,7 +131,7 @@ RSpec.describe Libdatadog do
         describe ".path_to_crashtracking_receiver_binary" do
           it "returns the full path to the crashtracking_receiver_binary" do
             expect(Libdatadog.path_to_crashtracking_receiver_binary).to eq(
-              "#{temporary_directory}/#{Gem::Platform.local}/some/folder/containing/the/bin/libdatadog-crashtracking-receiver"
+              "#{temporary_directory}/#{current_platform}/some/folder/containing/the/bin/libdatadog-crashtracking-receiver"
             )
           end
         end
@@ -136,7 +139,7 @@ RSpec.describe Libdatadog do
         describe ".ld_library_path" do
           it "returns the full path to the libdatadog lib directory" do
             expect(Libdatadog.ld_library_path).to eq(
-              "#{temporary_directory}/#{Gem::Platform.local}/some/folder/containing/the/lib"
+              "#{temporary_directory}/#{current_platform}/some/folder/containing/the/lib"
             )
           end
         end
