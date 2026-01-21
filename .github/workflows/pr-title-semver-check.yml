@@ -112,7 +112,6 @@ jobs:
 
           CHANGED_CRATES='${{ needs.detect-changes.outputs.changed_crates }}'
           BASELINE="origin/main"
-          CRATES_CHECKED=()
           HIGHEST_LEVEL=""
 
           # Parse JSON array
@@ -145,9 +144,11 @@ jobs:
           '{highest_level: $highest_level, crates: $crates}')
 
           # Save JSON result to GITHUB_OUTPUT using multiline format
-          echo "result_json<<EOF" >> "$GITHUB_OUTPUT"
-          echo "$RESULT_JSON" >> "$GITHUB_OUTPUT"
-          echo "EOF" >> "$GITHUB_OUTPUT"
+          {
+            echo "result_json<<EOF"
+            echo "$RESULT_JSON"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
 
   validate:
     needs: [detect-changes, semver-check]
