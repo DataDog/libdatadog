@@ -1,5 +1,8 @@
 #!/bin/bash
 
+# Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
+# SPDX-License-Identifier: Apache-2.0
+
 # Accept arguments from command line
 CRATE="${1:-}"
 BASE_REF="${2:-main}"
