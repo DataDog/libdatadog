@@ -22,10 +22,16 @@ typedef struct ddog_prof_Function2 *ddog_prof_FunctionId2;
 
 #include "common.h"
 struct TokioCancellationToken;
+
+#ifdef _WIN32
+  #define LIBDATADOG_API __declspec(dllimport)
+#else
+  #define LIBDATADOG_API
+#endif
 """
 
 [export]
-prefix = "ddog_prof_"
+prefix = "LIBDATADOG_API ddog_prof_"
 renaming_overrides_prefixing = true
 
 [export.rename]
