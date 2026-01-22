@@ -118,9 +118,8 @@ impl Config {
         if let Ok(json) = serde_json::to_string(&self.crashtracker_endpoint) {
             res.insert(ENV_SIDECAR_CRASHTRACKER_ENDPOINT, json.into());
         }
-        if self.appsec_config.is_some() {
-            #[allow(clippy::unwrap_used)]
-            res.extend(self.appsec_config.as_ref().unwrap().to_env());
+        if let Some(appsec) = self.appsec_config.as_ref() {
+            res.extend(appsec.to_env());
         }
         if self.max_memory != 0 {
             res.insert(
