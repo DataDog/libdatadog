@@ -206,9 +206,9 @@ pub(crate) fn handle_stats_enabled(
 /// Add all spans from the given iterator into the stats concentrator
 /// # Panic
 /// Will panic if another thread panicked will holding the lock on `stats_concentrator`
-fn add_spans_to_stats<T: libdd_trace_utils::span::SpanText>(
+fn add_spans_to_stats<T: libdd_trace_utils::span::TraceData>(
     stats_concentrator: &Mutex<SpanConcentrator>,
-    traces: &[Vec<libdd_trace_utils::span::Span<T>>],
+    traces: &[Vec<libdd_trace_utils::span::v04::Span<T>>],
 ) {
     let mut stats_concentrator = stats_concentrator.lock_or_panic();
 
@@ -219,8 +219,8 @@ fn add_spans_to_stats<T: libdd_trace_utils::span::SpanText>(
 }
 
 /// Process traces for stats computation and update header tags accordingly
-pub(crate) fn process_traces_for_stats<T: libdd_trace_utils::span::SpanText>(
-    traces: &mut Vec<Vec<libdd_trace_utils::span::Span<T>>>,
+pub(crate) fn process_traces_for_stats<T: libdd_trace_utils::span::TraceData>(
+    traces: &mut Vec<Vec<libdd_trace_utils::span::v04::Span<T>>>,
     header_tags: &mut libdd_trace_utils::trace_utils::TracerHeaderTags,
     client_side_stats: &ArcSwap<StatsComputationStatus>,
     client_computed_top_level: bool,
