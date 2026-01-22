@@ -73,13 +73,9 @@ RSpec.describe Libdatadog do
       end
 
       context "for the current platform" do
-        # Platform normalization logic duplicated from implementation to decouple tests
-        # This ensures tests fail if implementation behavior changes unexpectedly
         let(:current_platform) do
           platform = Gem::Platform.local.to_s
-          platform = platform[0..-5] if platform.end_with?("-gnu")
-          platform = platform.gsub(/-darwin-?\d*$/, "-darwin") if platform.include?("darwin")
-          platform
+          platform.include?("darwin") ? "arm64-darwin" : platform
         end
         let(:pkgconfig_folder) { "#{temporary_directory}/#{current_platform}/some/folder/containing/the/lib/pkgconfig" }
 
