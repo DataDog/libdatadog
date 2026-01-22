@@ -300,10 +300,10 @@ impl SendResult {
     ///
     /// # Returns
     ///
-    /// A vector of `(HealthMetric, Option<String>)` tuples where:
+    /// A vector of `(HealthMetric, Option<Cow<'static, str>>)` tuples where:
     /// - The first element is the metric to emit
     /// - The second element is an optional tag value for error classification
-    pub(crate) fn collect_metrics(&self) -> Vec<(HealthMetric, Option<String>)> {
+    pub(crate) fn collect_metrics(&self) -> Vec<(HealthMetric, Option<Cow<'static, str>>)> {
         // Max capacity: 3 base + 1 outcome + 2 dropped
         let mut metrics = Vec::with_capacity(6);
 
@@ -333,7 +333,7 @@ impl SendResult {
                 // Emit failed metric with type tag
                 metrics.push((
                     HealthMetric::Count(TRANSPORT_TRACES_FAILED, 1),
-                    Some(error_type.as_tag_value().into_owned()),
+                    Some(error_type.as_tag_value()),
                 ));
 
                 if error_type.should_emit_dropped_metrics() {
@@ -528,7 +528,7 @@ mod tests {
         assert_eq!(metrics.len(), 6);
         assert!(metrics.contains(&(
             HealthMetric::Count(TRANSPORT_TRACES_FAILED, 1),
-            Some("400".to_string())
+            Some(Cow::from("400"))
         )));
         assert!(metrics.contains(&(
             HealthMetric::Distribution(TRANSPORT_DROPPED_BYTES, 2048),
@@ -548,7 +548,7 @@ mod tests {
         assert_eq!(metrics.len(), 4);
         assert!(metrics.contains(&(
             HealthMetric::Count(TRANSPORT_TRACES_FAILED, 1),
-            Some("404".to_string())
+            Some(Cow::from("404"))
         )));
         for (metric, _) in &metrics {
             if let HealthMetric::Distribution(name, _) = metric {
@@ -566,7 +566,7 @@ mod tests {
         assert_eq!(metrics.len(), 4);
         assert!(metrics.contains(&(
             HealthMetric::Count(TRANSPORT_TRACES_FAILED, 1),
-            Some("415".to_string())
+            Some(Cow::from("415"))
         )));
     }
 
@@ -578,7 +578,7 @@ mod tests {
         assert_eq!(metrics.len(), 6);
         assert!(metrics.contains(&(
             HealthMetric::Count(TRANSPORT_TRACES_FAILED, 1),
-            Some("network".to_string())
+            Some(Cow::from("network"))
         )));
         assert!(metrics.contains(&(
             HealthMetric::Distribution(TRANSPORT_DROPPED_BYTES, 512),
@@ -594,7 +594,7 @@ mod tests {
         assert_eq!(metrics.len(), 6);
         assert!(metrics.contains(&(
             HealthMetric::Count(TRANSPORT_TRACES_FAILED, 1),
-            Some("timeout".to_string())
+            Some(Cow::from("timeout"))
         )));
         assert!(metrics.contains(&(
             HealthMetric::Distribution(TRANSPORT_DROPPED_BYTES, 1024),
@@ -610,7 +610,7 @@ mod tests {
         assert_eq!(metrics.len(), 6);
         assert!(metrics.contains(&(
             HealthMetric::Count(TRANSPORT_TRACES_FAILED, 1),
-            Some("build".to_string())
+            Some(Cow::from("build"))
         )));
         assert!(metrics.contains(&(
             HealthMetric::Distribution(TRANSPORT_DROPPED_BYTES, 256),
@@ -626,7 +626,7 @@ mod tests {
         assert_eq!(metrics.len(), 6);
         assert!(metrics.contains(&(
             HealthMetric::Count(TRANSPORT_TRACES_FAILED, 1),
-            Some("response_body".to_string())
+            Some(Cow::from("response_body"))
         )));
     }
 
@@ -729,7 +729,7 @@ mod tests {
             let metrics = send_result.collect_metrics();
             assert!(metrics.contains(&(
                 HealthMetric::Count(TRANSPORT_TRACES_FAILED, 1),
-                Some("network".to_string())
+                Some(Cow::from("network"))
             )));
             assert!(metrics.contains(&(
                 HealthMetric::Distribution(TRANSPORT_DROPPED_BYTES, 256),
