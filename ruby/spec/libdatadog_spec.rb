@@ -73,9 +73,14 @@ RSpec.describe Libdatadog do
       end
 
       context "for the current platform" do
-        # Use Libdatadog.current_platform to get the normalized platform name
-        # (e.g., "arm64-darwin" instead of "arm64-darwin-22" on macOS)
-        let(:current_platform) { Libdatadog.current_platform }
+        # Platform normalization logic duplicated from implementation to decouple tests
+        # This ensures tests fail if implementation behavior changes unexpectedly
+        let(:current_platform) do
+          platform = Gem::Platform.local.to_s
+          platform = platform[0..-5] if platform.end_with?("-gnu")
+          platform = platform.gsub(/-darwin-?\d*$/, "-darwin") if platform.include?("darwin")
+          platform
+        end
         let(:pkgconfig_folder) { "#{temporary_directory}/#{current_platform}/some/folder/containing/the/lib/pkgconfig" }
 
         before do
