@@ -125,7 +125,7 @@ pub fn generate_header(crate_dir: PathBuf, header_name: &str, output_base_dir: P
         .with_config(Config::from_root_or_default(&crate_dir))
         .generate()
         .expect("Unable to generate bindings")
-        .write_to_file(output_path);
+        .write_to_file(&output_path);
 
     if env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows") {
         post_process_windows_header(&output_path);
@@ -140,10 +140,7 @@ fn post_process_windows_header(output_path: &Path) {
     let mut updated = String::with_capacity(contents.len());
 
     for line in contents.lines() {
-        let indent_len = line
-            .chars()
-            .take_while(|c| *c == ' ' || *c == '\t')
-            .count();
+        let indent_len = line.chars().take_while(|c| *c == ' ' || *c == '\t').count();
         let (indent, rest) = line.split_at(indent_len);
 
         let should_patch = rest.starts_with("extern ")
