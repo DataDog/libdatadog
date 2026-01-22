@@ -405,6 +405,35 @@ pub unsafe extern "C" fn ddog_sidecar_telemetry_enqueueConfig(
     MaybeError::None
 }
 
+/// Reports an endpoint to the telemetry.
+#[no_mangle]
+#[allow(clippy::missing_safety_doc)]
+pub unsafe extern "C" fn ddog_sidecar_telemetry_addEndpoint(
+    transport: &mut Box<SidecarTransport>,
+    instance_id: &InstanceId,
+    queue_id: &QueueId,
+    method: libdd_telemetry::data::Method,
+    path: CharSlice,
+    operation_name: CharSlice,
+    resource_name: CharSlice,
+) -> MaybeError {
+    let endpoint = TelemetryActions::AddEndpoint(libdd_telemetry::data::Endpoint {
+        method: Some(method),
+        path: Some(path.to_utf8_lossy().into_owned()),
+        operation_name: operation_name.to_utf8_lossy().into_owned(),
+        resource_name: resource_name.to_utf8_lossy().into_owned(),
+    });
+
+    try_c!(blocking::enqueue_actions(
+        transport,
+        instance_id,
+        queue_id,
+        vec![SidecarAction::Telemetry(endpoint)],
+    ));
+
+    MaybeError::None
+}
+
 /// Reports a dependency to the telemetry.
 #[no_mangle]
 #[allow(clippy::missing_safety_doc)]
