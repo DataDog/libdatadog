@@ -44,7 +44,10 @@ jobs:
                 lint(
                   title,
                   opts.rules,
-                  opts.parserPreset ? {parserOpts: opts.parserPreset.parserOpts} : {}
+                  {
+                    parserOpts: opts.parserPreset?.parserOpts,
+                    plugins: opts.plugins,
+                  }
                 ).then((report) => {
                   report.warnings.forEach((warning) => {
                     core.warning(warning.message);
