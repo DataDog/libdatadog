@@ -6,7 +6,7 @@ use crate::msgpack_decoder::decode::{
     buffer::Buffer, map::read_map_len, number::read_number, string::handle_null_marker,
 };
 use crate::span::v04::{Span, SpanBytes, SpanSlice};
-use crate::span::TraceData;
+use crate::span::DeserializableTraceData;
 use std::collections::HashMap;
 
 const PAYLOAD_LEN: u32 = 2;
@@ -131,7 +131,7 @@ pub fn from_slice(data: &[u8]) -> Result<(Vec<Vec<SpanSlice<'_>>>, usize), Decod
 }
 
 #[allow(clippy::type_complexity)]
-fn from_buffer<T: TraceData>(
+fn from_buffer<T: DeserializableTraceData>(
     data: &mut Buffer<T>,
 ) -> Result<(Vec<Vec<Span<T>>>, usize), DecodeError>
 where
@@ -168,7 +168,9 @@ where
     Ok((traces, start_len - data.len()))
 }
 
-fn deserialize_dict<T: TraceData>(data: &mut Buffer<T>) -> Result<Vec<T::Text>, DecodeError> {
+fn deserialize_dict<T: DeserializableTraceData>(
+    data: &mut Buffer<T>,
+) -> Result<Vec<T::Text>, DecodeError> {
     let dict_len = rmp::decode::read_array_len(data.as_mut_slice())
         .map_err(|_| DecodeError::InvalidFormat("Unable to read dictionary len".to_string()))?;
 
@@ -180,7 +182,7 @@ fn deserialize_dict<T: TraceData>(data: &mut Buffer<T>) -> Result<Vec<T::Text>, 
     Ok(dict)
 }
 
-fn deserialize_span<T: TraceData>(
+fn deserialize_span<T: DeserializableTraceData>(
     data: &mut Buffer<T>,
     dict: &[T::Text],
 ) -> Result<Span<T>, DecodeError>
@@ -213,7 +215,7 @@ where
     Ok(span)
 }
 
-fn get_from_dict<T: TraceData>(
+fn get_from_dict<T: DeserializableTraceData>(
     data: &mut Buffer<T>,
     dict: &[T::Text],
 ) -> Result<T::Text, DecodeError>
@@ -229,7 +231,7 @@ where
     }
 }
 
-fn read_indexed_map_to_bytes_strings<T: TraceData>(
+fn read_indexed_map_to_bytes_strings<T: DeserializableTraceData>(
     buf: &mut Buffer<T>,
     dict: &[T::Text],
 ) -> Result<HashMap<T::Text, T::Text>, DecodeError>
@@ -249,7 +251,7 @@ where
     Ok(map)
 }
 
-fn read_metrics<T: TraceData>(
+fn read_metrics<T: DeserializableTraceData>(
     buf: &mut Buffer<T>,
     dict: &[T::Text],
 ) -> Result<HashMap<T::Text, f64>, DecodeError>

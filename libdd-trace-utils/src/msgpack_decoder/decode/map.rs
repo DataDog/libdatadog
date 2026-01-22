@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::msgpack_decoder::decode::{buffer::Buffer, error::DecodeError};
-use crate::span::TraceData;
+use crate::span::DeserializableTraceData;
 use rmp::{decode, decode::RmpRead, Marker};
 use std::collections::HashMap;
 
@@ -68,7 +68,7 @@ where
 /// - The buffer does not contain a map.
 /// - There is an error reading from the buffer.
 #[inline]
-pub fn read_map_len<T: TraceData>(buf: &mut Buffer<T>) -> Result<usize, DecodeError> {
+pub fn read_map_len<T: DeserializableTraceData>(buf: &mut Buffer<T>) -> Result<usize, DecodeError> {
     let buf = buf.as_mut_slice();
     match decode::read_marker(buf)
         .map_err(|_| DecodeError::InvalidFormat("Unable to read marker for map".to_owned()))?

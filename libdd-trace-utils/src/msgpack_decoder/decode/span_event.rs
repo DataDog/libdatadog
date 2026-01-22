@@ -6,7 +6,7 @@ use crate::msgpack_decoder::decode::error::DecodeError;
 use crate::msgpack_decoder::decode::number::read_number;
 use crate::msgpack_decoder::decode::string::handle_null_marker;
 use crate::span::v04::{AttributeAnyValue, AttributeArrayValue, SpanEvent};
-use crate::span::TraceData;
+use crate::span::DeserializableTraceData;
 use std::borrow::Borrow;
 use std::collections::HashMap;
 use std::str::FromStr;
@@ -27,7 +27,7 @@ use std::str::FromStr;
 /// This function will return an error if:
 /// - The marker for the array length cannot be read.
 /// - Any `SpanEvent` cannot be decoded.
-pub(crate) fn read_span_events<T: TraceData>(
+pub(crate) fn read_span_events<T: DeserializableTraceData>(
     buf: &mut Buffer<T>,
 ) -> Result<Vec<SpanEvent<T>>, DecodeError> {
     if handle_null_marker(buf) {
@@ -66,7 +66,9 @@ impl FromStr for SpanEventKey {
     }
 }
 
-fn decode_span_event<T: TraceData>(buf: &mut Buffer<T>) -> Result<SpanEvent<T>, DecodeError> {
+fn decode_span_event<T: DeserializableTraceData>(
+    buf: &mut Buffer<T>,
+) -> Result<SpanEvent<T>, DecodeError> {
     let mut event = SpanEvent::default();
     let event_size = rmp::decode::read_map_len(buf.as_mut_slice())
         .map_err(|_| DecodeError::InvalidType("Unable to get map len for event size".to_owned()))?;
@@ -82,7 +84,7 @@ fn decode_span_event<T: TraceData>(buf: &mut Buffer<T>) -> Result<SpanEvent<T>, 
     Ok(event)
 }
 
-fn read_attributes_map<T: TraceData>(
+fn read_attributes_map<T: DeserializableTraceData>(
     buf: &mut Buffer<T>,
 ) -> Result<HashMap<T::Text, AttributeAnyValue<T>>, DecodeError> {
     let len = rmp::decode::read_map_len(buf.as_mut_slice())
@@ -124,7 +126,7 @@ impl FromStr for AttributeAnyKey {
     }
 }
 
-fn decode_attribute_any<T: TraceData>(
+fn decode_attribute_any<T: DeserializableTraceData>(
     buf: &mut Buffer<T>,
 ) -> Result<AttributeAnyValue<T>, DecodeError> {
     let mut attribute: Option<AttributeAnyValue<T>> = None;
@@ -173,7 +175,7 @@ fn decode_attribute_any<T: TraceData>(
     }
 }
 
-fn read_attributes_array<T: TraceData>(
+fn read_attributes_array<T: DeserializableTraceData>(
     buf: &mut Buffer<T>,
 ) -> Result<Vec<AttributeArrayValue<T>>, DecodeError> {
     if handle_null_marker(buf) {
@@ -243,7 +245,7 @@ impl FromStr for AttributeArrayKey {
     }
 }
 
-fn get_attribute_from_key<T: TraceData>(
+fn get_attribute_from_key<T: DeserializableTraceData>(
     buf: &mut Buffer<T>,
     key: AttributeArrayKey,
 ) -> Result<AttributeArrayValue<T>, DecodeError> {
@@ -266,7 +268,7 @@ fn get_attribute_from_key<T: TraceData>(
     }
 }
 
-fn decode_attribute_array<T: TraceData>(
+fn decode_attribute_array<T: DeserializableTraceData>(
     buf: &mut Buffer<T>,
     array_type: Option<u8>,
 ) -> Result<AttributeArrayValue<T>, DecodeError> {

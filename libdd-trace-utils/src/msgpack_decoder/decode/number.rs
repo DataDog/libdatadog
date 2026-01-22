@@ -3,7 +3,7 @@
 
 use crate::msgpack_decoder::decode::buffer::Buffer;
 use crate::msgpack_decoder::decode::error::DecodeError;
-use crate::span::TraceData;
+use crate::span::DeserializableTraceData;
 use rmp::{decode::RmpRead, Marker};
 use std::fmt;
 
@@ -196,14 +196,14 @@ fn read_num(buf: &mut &[u8], allow_null: bool) -> Result<Number, DecodeError> {
 }
 
 /// Read a msgpack encoded number from `buf`.
-pub fn read_number<T: TraceData, R: TryFrom<Number, Error = DecodeError>>(
+pub fn read_number<T: DeserializableTraceData, R: TryFrom<Number, Error = DecodeError>>(
     buf: &mut Buffer<T>,
 ) -> Result<R, DecodeError> {
     read_num(buf.as_mut_slice(), false)?.try_into()
 }
 
 /// Read a msgpack encoded number from `buf` and return 0 if null.
-pub fn read_nullable_number<T: TraceData, R: TryFrom<Number, Error = DecodeError>>(
+pub fn read_nullable_number<T: DeserializableTraceData, R: TryFrom<Number, Error = DecodeError>>(
     buf: &mut Buffer<T>,
 ) -> Result<R, DecodeError> {
     read_num(buf.as_mut_slice(), true)?.try_into()

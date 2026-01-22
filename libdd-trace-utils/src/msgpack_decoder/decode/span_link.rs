@@ -6,7 +6,7 @@ use crate::msgpack_decoder::decode::error::DecodeError;
 use crate::msgpack_decoder::decode::number::read_number;
 use crate::msgpack_decoder::decode::string::{handle_null_marker, read_str_map_to_strings};
 use crate::span::v04::SpanLink;
-use crate::span::TraceData;
+use crate::span::DeserializableTraceData;
 use std::borrow::Borrow;
 use std::str::FromStr;
 
@@ -27,7 +27,7 @@ use std::str::FromStr;
 /// - The marker for the array length cannot be read.
 /// - Any `SpanLink` cannot be decoded.
 /// ```
-pub(crate) fn read_span_links<T: TraceData>(
+pub(crate) fn read_span_links<T: DeserializableTraceData>(
     buf: &mut Buffer<T>,
 ) -> Result<Vec<SpanLink<T>>, DecodeError> {
     if handle_null_marker(buf) {
@@ -72,7 +72,9 @@ impl FromStr for SpanLinkKey {
     }
 }
 
-fn decode_span_link<T: TraceData>(buf: &mut Buffer<T>) -> Result<SpanLink<T>, DecodeError> {
+fn decode_span_link<T: DeserializableTraceData>(
+    buf: &mut Buffer<T>,
+) -> Result<SpanLink<T>, DecodeError> {
     let mut span = SpanLink::default();
     let span_size = rmp::decode::read_map_len(buf.as_mut_slice())
         .map_err(|_| DecodeError::InvalidType("Unable to get map len for span size".to_owned()))?;

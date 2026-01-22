@@ -59,7 +59,9 @@ impl SpanBytes for Bytes {
 pub trait TraceData: Default + Clone + Debug + PartialEq + Serialize {
     type Text: SpanText;
     type Bytes: SpanBytes;
+}
 
+pub trait DeserializableTraceData: TraceData {
     fn get_mut_slice(buf: &mut Self::Bytes) -> &mut &'static [u8];
 
     fn try_slice_and_advance(buf: &mut Self::Bytes, bytes: usize) -> Option<Self::Bytes>;
@@ -73,7 +75,9 @@ pub struct BytesData;
 impl TraceData for BytesData {
     type Text = BytesString;
     type Bytes = Bytes;
+}
 
+impl DeserializableTraceData for BytesData {
     #[inline]
     fn get_mut_slice(buf: &mut Bytes) -> &mut &'static [u8] {
         // SAFETY: Bytes has the same layout
@@ -119,9 +123,11 @@ pub struct SliceData<'a>(PhantomData<&'a u8>);
 impl<'a> TraceData for SliceData<'a> {
     type Text = &'a str;
     type Bytes = &'a [u8];
+}
 
+impl<'a> DeserializableTraceData for SliceData<'a> {
     #[inline]
-    fn get_mut_slice<'b>(buf: &'b mut &'a [u8]) -> &'b mut &'static [u8] {
+    fn get_mut_slice<'b>(buf: &'b mut Self::Bytes) -> &'b mut &'static [u8] {
         unsafe { std::mem::transmute::<&'b mut &[u8], &'b mut &'static [u8]>(buf) }
     }
 

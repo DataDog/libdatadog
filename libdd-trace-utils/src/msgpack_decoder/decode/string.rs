@@ -3,7 +3,7 @@
 
 use crate::msgpack_decoder::decode::buffer::Buffer;
 use crate::msgpack_decoder::decode::error::DecodeError;
-use crate::span::TraceData;
+use crate::span::DeserializableTraceData;
 use rmp::decode;
 use std::collections::HashMap;
 
@@ -15,7 +15,9 @@ const NULL_MARKER: &u8 = &0xc0;
 /// # Errors
 /// Fails if the buffer doesn't contain a valid utf8 msgpack string or a null marker.
 #[inline]
-pub fn read_nullable_string<T: TraceData>(buf: &mut Buffer<T>) -> Result<T::Text, DecodeError> {
+pub fn read_nullable_string<T: DeserializableTraceData>(
+    buf: &mut Buffer<T>,
+) -> Result<T::Text, DecodeError> {
     if handle_null_marker(buf) {
         Ok(T::Text::default())
     } else {
@@ -30,7 +32,7 @@ pub fn read_nullable_string<T: TraceData>(buf: &mut Buffer<T>) -> Result<T::Text
 /// or if any key or value is not a valid utf8 msgpack string.
 /// Null values are skipped (key not inserted into map).
 #[inline]
-pub fn read_str_map_to_strings<T: TraceData>(
+pub fn read_str_map_to_strings<T: DeserializableTraceData>(
     buf: &mut Buffer<T>,
 ) -> Result<HashMap<T::Text, T::Text>, DecodeError> {
     let len = decode::read_map_len(buf.as_mut_slice())
@@ -56,7 +58,7 @@ pub fn read_str_map_to_strings<T: TraceData>(
 /// or if any key or value is not a valid utf8 msgpack string.
 /// Null values are skipped (key not inserted into map).
 #[inline]
-pub fn read_nullable_str_map_to_strings<T: TraceData>(
+pub fn read_nullable_str_map_to_strings<T: DeserializableTraceData>(
     buf: &mut Buffer<T>,
 ) -> Result<HashMap<T::Text, T::Text>, DecodeError> {
     if handle_null_marker(buf) {
@@ -72,7 +74,7 @@ pub fn read_nullable_str_map_to_strings<T: TraceData>(
 /// # Returns
 /// A boolean indicating whether the next value is null or not.
 #[inline]
-pub fn handle_null_marker<T: TraceData>(buf: &mut Buffer<T>) -> bool {
+pub fn handle_null_marker<T: DeserializableTraceData>(buf: &mut Buffer<T>) -> bool {
     let slice = buf.as_mut_slice();
     if slice.first() == Some(NULL_MARKER) {
         *slice = &slice[1..];

@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::msgpack_decoder::decode::error::DecodeError;
-use crate::span::TraceData;
+use crate::span::DeserializableTraceData;
 use rmp::decode;
 use rmp::decode::DecodeStringError;
 
@@ -28,9 +28,9 @@ pub fn read_string_ref_nomut(buf: &[u8]) -> Result<(&str, &[u8]), DecodeError> {
 
 /// Internal Buffer used to wrap msgpack data for decoding.
 /// Provides a couple accessors to extract data from the buffer.
-pub struct Buffer<T: TraceData>(T::Bytes);
+pub struct Buffer<T: DeserializableTraceData>(T::Bytes);
 
-impl<T: TraceData> Buffer<T> {
+impl<T: DeserializableTraceData> Buffer<T> {
     pub fn new(data: T::Bytes) -> Self {
         Buffer(data)
     }
@@ -54,7 +54,7 @@ impl<T: TraceData> Buffer<T> {
     }
 }
 
-impl<T: TraceData> Deref for Buffer<T> {
+impl<T: DeserializableTraceData> Deref for Buffer<T> {
     type Target = [u8];
 
     fn deref(&self) -> &Self::Target {

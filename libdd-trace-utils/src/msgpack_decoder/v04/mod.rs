@@ -7,7 +7,7 @@ use self::span::decode_span;
 use crate::msgpack_decoder::decode::buffer::Buffer;
 use crate::msgpack_decoder::decode::error::DecodeError;
 use crate::span::v04::{Span, SpanBytes, SpanSlice};
-use crate::span::TraceData;
+use crate::span::DeserializableTraceData;
 
 /// Decodes a Bytes buffer into a `Vec<Vec<SpanBytes>>` object, also represented as a vector of
 /// `TracerPayloadV04` objects.
@@ -104,7 +104,7 @@ pub fn from_slice(data: &[u8]) -> Result<(Vec<Vec<SpanSlice<'_>>>, usize), Decod
 }
 
 #[allow(clippy::type_complexity)]
-pub fn from_buffer<T: TraceData>(
+pub fn from_buffer<T: DeserializableTraceData>(
     data: &mut Buffer<T>,
 ) -> Result<(Vec<Vec<Span<T>>>, usize), DecodeError> {
     let trace_count = rmp::decode::read_array_len(data.as_mut_slice()).map_err(|_| {

@@ -5,25 +5,27 @@ use crate::msgpack_decoder::decode::buffer::Buffer;
 use crate::msgpack_decoder::decode::error::DecodeError;
 use crate::msgpack_decoder::decode::map::{read_map, read_map_len};
 use crate::msgpack_decoder::decode::string::handle_null_marker;
-use crate::span::TraceData;
+use crate::span::DeserializableTraceData;
 use rmp::decode;
 use std::collections::HashMap;
 
-fn read_byte_array_len<T: TraceData>(buf: &mut Buffer<T>) -> Result<u32, DecodeError> {
+fn read_byte_array_len<T: DeserializableTraceData>(
+    buf: &mut Buffer<T>,
+) -> Result<u32, DecodeError> {
     decode::read_bin_len(buf.as_mut_slice()).map_err(|_| {
         DecodeError::InvalidFormat("Unable to read binary len for meta_struct".to_owned())
     })
 }
 
 #[inline]
-pub fn read_meta_struct<T: TraceData>(
+pub fn read_meta_struct<T: DeserializableTraceData>(
     buf: &mut Buffer<T>,
 ) -> Result<HashMap<T::Text, T::Bytes>, DecodeError> {
     if handle_null_marker(buf) {
         return Ok(HashMap::default());
     }
 
-    fn read_meta_struct_pair<T: TraceData>(
+    fn read_meta_struct_pair<T: DeserializableTraceData>(
         buf: &mut Buffer<T>,
     ) -> Result<(T::Text, T::Bytes), DecodeError> {
         let key = buf.read_string()?;

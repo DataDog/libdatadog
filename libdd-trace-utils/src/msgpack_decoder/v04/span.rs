@@ -10,7 +10,7 @@ use crate::msgpack_decoder::decode::string::{
     read_nullable_str_map_to_strings, read_nullable_string,
 };
 use crate::msgpack_decoder::decode::{meta_struct::read_meta_struct, metrics::read_metrics};
-use crate::span::{v04::Span, v04::SpanKey, TraceData};
+use crate::span::{v04::Span, v04::SpanKey, DeserializableTraceData};
 use std::borrow::Borrow;
 
 /// Decodes a slice of bytes into a `Span` object.
@@ -29,7 +29,9 @@ use std::borrow::Borrow;
 /// This function will return an error if:
 /// - The map length cannot be read.
 /// - Any key or value cannot be decoded.
-pub fn decode_span<T: TraceData>(buffer: &mut Buffer<T>) -> Result<Span<T>, DecodeError> {
+pub fn decode_span<T: DeserializableTraceData>(
+    buffer: &mut Buffer<T>,
+) -> Result<Span<T>, DecodeError> {
     let mut span = Span::<T>::default();
 
     let span_size = rmp::decode::read_map_len(buffer.as_mut_slice()).map_err(|_| {
@@ -45,7 +47,10 @@ pub fn decode_span<T: TraceData>(buffer: &mut Buffer<T>) -> Result<Span<T>, Deco
 
 // Safety: read_string_ref checks utf8 validity, so we don't do it again when creating the
 // BytesStrings
-fn fill_span<T: TraceData>(span: &mut Span<T>, buf: &mut Buffer<T>) -> Result<(), DecodeError> {
+fn fill_span<T: DeserializableTraceData>(
+    span: &mut Span<T>,
+    buf: &mut Buffer<T>,
+) -> Result<(), DecodeError> {
     let key = buf
         .read_string()?
         .borrow()

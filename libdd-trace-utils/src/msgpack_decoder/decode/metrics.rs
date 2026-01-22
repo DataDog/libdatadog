@@ -6,18 +6,20 @@ use crate::msgpack_decoder::decode::error::DecodeError;
 use crate::msgpack_decoder::decode::map::{read_map, read_map_len};
 use crate::msgpack_decoder::decode::number::read_number;
 use crate::msgpack_decoder::decode::string::handle_null_marker;
-use crate::span::TraceData;
+use crate::span::DeserializableTraceData;
 use std::collections::HashMap;
 
 #[inline]
-pub fn read_metric_pair<T: TraceData>(buf: &mut Buffer<T>) -> Result<(T::Text, f64), DecodeError> {
+pub fn read_metric_pair<T: DeserializableTraceData>(
+    buf: &mut Buffer<T>,
+) -> Result<(T::Text, f64), DecodeError> {
     let key = buf.read_string()?;
     let v = read_number(buf)?;
 
     Ok((key, v))
 }
 #[inline]
-pub fn read_metrics<T: TraceData>(
+pub fn read_metrics<T: DeserializableTraceData>(
     buf: &mut Buffer<T>,
 ) -> Result<HashMap<T::Text, f64>, DecodeError> {
     if handle_null_marker(buf) {
