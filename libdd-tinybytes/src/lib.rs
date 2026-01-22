@@ -246,10 +246,7 @@ impl Bytes {
         // points to ptr + start, then memory span is between ptr + start and (ptr + start) + (len -
         // start) = ptr + len
         Self {
-            data: NonNull::slice_from_raw_parts(
-                unsafe { self.ptr().add(start) },
-                end - start,
-            ),
+            data: NonNull::slice_from_raw_parts(unsafe { self.ptr().add(start) }, end - start),
             // ptr: unsafe { self.ptr.add(start) },
             // len: end - start,
             bytes: self.bytes.clone(),
