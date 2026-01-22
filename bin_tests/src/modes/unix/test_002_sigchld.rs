@@ -124,7 +124,7 @@ pub fn setup(output_dir: &Path) -> anyhow::Result<()> {
 
     // Set up the sigaction struct with sa_sigaction and sa_flags
     let sigchld_action = libc::sigaction {
-        sa_sigaction: sigchld_handler as usize,
+        sa_sigaction: sigchld_handler as *const () as usize,
         sa_mask: sigset,
         sa_flags: libc::SA_RESTART | libc::SA_SIGINFO,
         #[cfg(target_os = "linux")]
