@@ -54,9 +54,9 @@ impl SpanBytes for Bytes {
 
 /// Trait representing a tuple of (Text, Bytes) types used for different underlying data structures.
 /// Note: The functions are internal to the msgpack decoder and should not be used directly: they're
-/// only exposed here due to the inavailability of min_specialization in stable Rust.
+/// only exposed here due to the unavailability of min_specialization in stable Rust.
 /// Also note that the Clone and PartialEq bounds are only present for tests.
-pub trait TraceData: Default + Clone + Debug + PartialEq + Serialize {
+pub trait TraceData: Default + Clone + Debug + PartialEq {
     type Text: SpanText;
     type Bytes: SpanBytes;
 }

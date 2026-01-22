@@ -193,6 +193,7 @@ pub enum AttributeAnyValue<T: TraceData> {
 
 #[derive(Serialize)]
 struct ArrayValueWrapper<'a, T: TraceData> {
+    #[serde(bound(serialize = "T::Text: Serialize"))]
     values: &'a Vec<AttributeArrayValue<T>>,
 }
 
