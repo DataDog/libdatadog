@@ -125,45 +125,9 @@ pub fn generate_header(crate_dir: PathBuf, header_name: &str, output_base_dir: P
         .with_config(Config::from_root_or_default(&crate_dir))
         .generate()
         .expect("Unable to generate bindings")
-        .write_to_file(&output_path);
-
-    if env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows") {
-        post_process_windows_header(&output_path);
-    }
+        .write_to_file(output_path);
 
     println!("cargo:rerun-if-changed=cbindgen.toml");
-}
-
-fn post_process_windows_header(output_path: &Path) {
-    let contents = fs::read_to_string(output_path).expect("Failed to read generated header");
-    let mut changed = false;
-    let mut updated = String::with_capacity(contents.len());
-
-    for line in contents.lines() {
-        let indent_len = line.chars().take_while(|c| *c == ' ' || *c == '\t').count();
-        let (indent, rest) = line.split_at(indent_len);
-
-        let should_patch = rest.starts_with("extern ")
-            && rest.ends_with(';')
-            && !rest.contains('(')
-            && !rest.starts_with("extern \"C\"")
-            && !rest.contains("__declspec(dllimport)");
-
-        if should_patch {
-            let rest = rest.strip_prefix("extern ").unwrap_or(rest);
-            updated.push_str(indent);
-            updated.push_str("extern __declspec(dllimport) ");
-            updated.push_str(rest);
-            changed = true;
-        } else {
-            updated.push_str(line);
-        }
-        updated.push('\n');
-    }
-
-    if changed {
-        fs::write(output_path, updated).expect("Failed to update generated header");
-    }
 }
 
 /// Copies header files from the source directory to the destination directory.
