@@ -383,12 +383,16 @@ impl CrashInfoBuilder {
     /// This method requires that the builder has a UUID and metadata set.
     /// Siginfo is optional for platforms that don't support it (like Windows)
     pub fn build_crash_ping(&self) -> anyhow::Result<CrashPing> {
+        let message = self.error.message.clone();
         let sig_info = self.sig_info.clone();
         let metadata = self.metadata.clone().context("metadata is required")?;
 
         let mut builder = CrashPingBuilder::new(self.uuid).with_metadata(metadata);
         if let Some(sig_info) = sig_info {
             builder = builder.with_sig_info(sig_info);
+        }
+        if let Some(message) = message {
+            builder = builder.with_custom_message(message);
         }
         builder.build()
     }
@@ -404,6 +408,10 @@ impl CrashInfoBuilder {
         {
             self.metadata.is_some()
         }
+    }
+
+    pub fn has_message(&self) -> bool {
+        self.error.message.is_some()
     }
 }
 
@@ -429,5 +437,97 @@ mod tests {
         assert_eq!(crash_ping.siginfo(), Some(&sig_info));
         assert_eq!(crash_ping.metadata(), &metadata);
         assert!(crash_ping.message().contains("crash processing started"));
+    }
+
+    #[test]
+    fn test_with_message() {
+        let mut builder = CrashInfoBuilder::new();
+        let test_message = "Test error message".to_string();
+
+        let result = builder.with_message(test_message.clone());
+        assert!(result.is_ok());
+        assert!(builder.has_message());
+
+        // Build and verify message is present
+        let sig_info = SigInfo::test_instance(42);
+        builder.with_sig_info(sig_info).unwrap();
+        builder.with_metadata(Metadata::test_instance(1)).unwrap();
+
+        let crash_ping = builder.build_crash_ping().unwrap();
+        assert!(crash_ping.message().contains(&test_message));
+    }
+
+    #[test]
+    fn test_has_message_empty() {
+        let builder = CrashInfoBuilder::new();
+        assert!(!builder.has_message());
+    }
+
+    #[test]
+    fn test_has_message_after_setting() {
+        let mut builder = CrashInfoBuilder::new();
+        builder.with_message("test".to_string()).unwrap();
+        assert!(builder.has_message());
+    }
+
+    #[test]
+    fn test_message_overwrite() {
+        let mut builder = CrashInfoBuilder::new();
+
+        builder.with_message("first message".to_string()).unwrap();
+        assert!(builder.has_message());
+
+        // Overwrite with second message
+        builder.with_message("second message".to_string()).unwrap();
+        assert!(builder.has_message());
+
+        // Build and verify only second message is present
+        let sig_info = SigInfo::test_instance(42);
+        builder.with_sig_info(sig_info).unwrap();
+        builder.with_metadata(Metadata::test_instance(1)).unwrap();
+
+        let crash_ping = builder.build_crash_ping().unwrap();
+        assert!(crash_ping.message().contains("second message"));
+        assert!(!crash_ping.message().contains("first message"));
+        builder.with_kind(ErrorKind::Panic).unwrap();
+
+        let report = builder.build().unwrap();
+        assert_eq!(report.error.message.as_deref(), Some("second message"));
+    }
+
+    #[test]
+    fn test_message_with_special_characters() {
+        let mut builder = CrashInfoBuilder::new();
+        let special_message = "Error: 'panic' with \"quotes\" and\nnewlines\t\ttabs";
+
+        builder.with_message(special_message.to_string()).unwrap();
+        builder.with_sig_info(SigInfo::test_instance(42)).unwrap();
+        builder.with_metadata(Metadata::test_instance(1)).unwrap();
+
+        let crash_ping = builder.build_crash_ping().unwrap();
+        assert!(crash_ping.message().contains(special_message));
+        builder.with_kind(ErrorKind::UnixSignal).unwrap();
+
+        let report = builder.build().unwrap();
+        assert_eq!(report.error.message.as_deref(), Some(special_message));
+    }
+
+    #[test]
+    fn test_very_long_message() {
+        let mut builder = CrashInfoBuilder::new();
+        let long_message = "x".repeat(10000); // 10KB message
+
+        builder.with_message(long_message.clone()).unwrap();
+        assert!(builder.has_message());
+
+        builder.with_sig_info(SigInfo::test_instance(42)).unwrap();
+        builder.with_metadata(Metadata::test_instance(1)).unwrap();
+
+        let crash_ping = builder.build_crash_ping().unwrap();
+        assert!(crash_ping.message().len() >= 10000);
+
+        builder.with_kind(ErrorKind::UnixSignal).unwrap();
+        let report = builder.build().unwrap();
+        assert!(report.error.message.as_ref().unwrap().len() >= 10000);
     }
 }

@@ -190,7 +190,9 @@ where
 /// This is more flexible than `run_crash_test_with_artifacts` and allows for:
 /// - Custom binary selection (e.g., crashing_test_app instead of crashtracker_bin_test)
 /// - Custom command arguments
-/// - Custom exit status expectations
+///
+/// Note: This function always expects the test to crash (exit with non-success status).
+/// All current uses of this function test crash scenarios, not successful exits.
 ///
 /// # Example
 /// ```no_run
@@ -223,7 +225,6 @@ where
 ///             .arg(&artifacts_map[&receiver])
 ///             .arg(&fixtures.output_dir);
 ///     },
-///     false, // expect crash (not success)
 ///     |payload, _fixtures| {
 ///         // Custom validation
 ///         Ok(())
@@ -235,7 +236,6 @@ where
 pub fn run_custom_crash_test<CB, V>(
     binary_path: &std::path::Path,
     command_builder: CB,
-    expect_success: bool,
     validator: V,
 ) -> Result<()>
 where
@@ -251,13 +251,10 @@ where
 
     let exit_status = crate::timeit!("exit after signal", { p.wait()? });
 
-    // Validate exit status
-    let actual_success = exit_status.success();
+    // Validate exit status - custom crash tests always expect failure
     anyhow::ensure!(
-        expect_success == actual_success,
-        "Exit status mismatch: expected success={}, got success={} (exit code: {:?})",
-        expect_success,
-        actual_success,
+        !exit_status.success(),
+        "Expected test to crash (non-success exit), but it succeeded with code: {:?}",
         exit_status.code()
     );
 

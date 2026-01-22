@@ -176,141 +176,110 @@ int main() {
         profile->add_endpoint_count("/api/products", 200);
         std::cout << "✅ Added endpoint mappings and counts" << std::endl;
         
-        // Check if we should export to Datadog or save to file
+        // Create exporter based on environment variables
         const char* agent_url = std::getenv("DD_AGENT_URL");
         const char* api_key = std::getenv("DD_API_KEY");
         
-        if (agent_url || api_key) {
-            // Export to Datadog
-            std::cout << "\n=== Exporting to Datadog ===" << std::endl;
+        std::cout << "\n=== Creating Exporter ===" << std::endl;
+        
+        // Create appropriate exporter based on configuration
+        std::unique_ptr<rust::Box<ProfileExporter>> exporter;
+        try {
+            if (api_key) {
+                // Agentless mode - send directly to Datadog intake
+                const char* site = std::getenv("DD_SITE");
+                std::string dd_site = site ? site : "datadoghq.com";
+                std::cout << "Creating agentless exporter (site: " << dd_site << ")..." << std::endl;
+                exporter = std::make_unique<rust::Box<ProfileExporter>>(
+                    ProfileExporter::create_agentless_exporter(
+                        "dd-trace-cpp", "1.0.0", "native",
+                        {
+                            Tag{.key = "service", .value = "profiling-example"},
+                            Tag{.key = "env", .value = "dev"},
+                            Tag{.key = "example", .value = "cxx"}
+                        },
+                        dd_site.c_str(), api_key, 10000
+                    )
+                );
+            } else if (agent_url) {
+                // Agent mode - send to local Datadog agent
+                std::cout << "Creating agent exporter (url: " << agent_url << ")..." << std::endl;
+                exporter = std::make_unique<rust::Box<ProfileExporter>>(
+                    ProfileExporter::create_agent_exporter(
+                        "dd-trace-cpp", "1.0.0", "native",
+                        {
+                            Tag{.key = "service", .value = "profiling-example"},
+                            Tag{.key = "env", .value = "dev"},
+                            Tag{.key = "example", .value = "cxx"}
+                        },
+                        agent_url, 10000
+                    )
+                );
+            } else {
+                // File mode - dump HTTP request for debugging/testing
+                std::cout << "Creating file exporter (profile_dump.txt)..." << std::endl;
+                exporter = std::make_unique<rust::Box<ProfileExporter>>(
+                    ProfileExporter::create_file_exporter(
+                        "dd-trace-cpp", "1.0.0", "native",
+                        {
+                            Tag{.key = "service", .value = "profiling-example"},
+                            Tag{.key = "env", .value = "dev"},
+                            Tag{.key = "example", .value = "cxx"}
+                        },
+                        "profile_dump.txt"
+                    )
+                );
+            }
+            std::cout << "✅ Exporter created" << std::endl;
             
             // Create a cancellation token for the export
             // In a real application, you could clone this and cancel from another thread
             // Example: auto token_clone = cancel_token->clone_token(); token_clone->cancel();
             auto cancel_token = new_cancellation_token();
             
-            try {
-                // Example: Create an additional file to attach (e.g., application metadata)
-                std::string app_metadata = R"({
+            // Prepare metadata (same for all export modes)
+            std::string app_metadata = R"({
     "app_version": "1.2.3",
     "build_id": "abc123",
     "profiling_mode": "continuous",
     "sample_count": 100
 })";
-                std::vector<uint8_t> metadata_bytes(app_metadata.begin(), app_metadata.end());
-                
-                if (api_key) {
-                    // Agentless mode - send directly to Datadog intake
-                    const char* site = std::getenv("DD_SITE");
-                    std::string dd_site = site ? site : "datadoghq.com";
-                    
-                    std::cout << "Creating agentless exporter (site: " << dd_site << ")..." << std::endl;
-                    auto exporter = ProfileExporter::create_agentless_exporter(
-                        "dd-trace-cpp",
-                        "1.0.0",
-                        "native",
-                        {
-                            Tag{.key = "service", .value = "profiling-example"},
-                            Tag{.key = "env", .value = "dev"},
-                            Tag{.key = "example", .value = "cxx"}
-                        },
-                        dd_site.c_str(),
-                        api_key,
-                        10000  // 10 second timeout (0 = use default)
-                    );
-                    std::cout << "✅ Exporter created" << std::endl;
-                    
-                    std::cout << "Exporting profile to Datadog with additional metadata..." << std::endl;
-                    
-                    exporter->send_profile_with_cancellation(
-                        *profile,
-                        // Files to compress and attach
-                        {AttachmentFile{
-                            .name = "app_metadata.json",
-                            .data = {metadata_bytes.data(), metadata_bytes.size()}
-                        }},
-                        // Additional per-profile tags
-                        {
-                            Tag{.key = "export_id", .value = "12345"},
-                            Tag{.key = "host", .value = "example-host"}
-                        },
-                        // Process-level tags (comma-separated)
-                        "language:cpp,profiler_version:1.0,runtime:native",
-                        // Internal metadata (JSON string)
-                        R"({"profiler_version": "1.0", "custom_field": "demo"})",
-                        // System info (JSON string)
-                        R"({"os": "macos", "arch": "arm64", "cores": 8})",
-                        *cancel_token
-                    );
-                    std::cout << "✅ Profile exported successfully!" << std::endl;
-                } else {
-                    // Agent mode - send to local Datadog agent
-                    std::cout << "Creating agent exporter (url: " << agent_url << ")..." << std::endl;
-                    auto exporter = ProfileExporter::create_agent_exporter(
-                        "dd-trace-cpp",
-                        "1.0.0",
-                        "native",
-                        {
-                            Tag{.key = "service", .value = "profiling-example"},
-                            Tag{.key = "env", .value = "dev"},
-                            Tag{.key = "example", .value = "cxx"}
-                        },
-                        agent_url,
-                        10000  // 10 second timeout (0 = use default)
-                    );
-                    std::cout << "✅ Exporter created" << std::endl;
-                    
-                    std::cout << "Exporting profile to Datadog with additional metadata..." << std::endl;
-                    
-                    exporter->send_profile_with_cancellation(
-                        *profile,
-                        // Files to compress and attach
-                        {AttachmentFile{
-                            .name = "app_metadata.json",
-                            .data = {metadata_bytes.data(), metadata_bytes.size()}
-                        }},
-                        // Additional per-profile tags
-                        {
-                            Tag{.key = "export_id", .value = "12345"},
-                            Tag{.key = "host", .value = "example-host"}
-                        },
-                        // Process-level tags (comma-separated)
-                        "language:cpp,profiler_version:1.0,runtime:native",
-                        // Internal metadata (JSON string)
-                        R"({"profiler_version": "1.0", "custom_field": "demo"})",
-                        // System info (JSON string)
-                        R"({"os": "macos", "arch": "arm64", "cores": 8})",
-                        *cancel_token
-                    );
-                    std::cout << "✅ Profile exported successfully!" << std::endl;
-                }
-                
-            } catch (const std::exception& e) {
-                std::cerr << "⚠️  Failed to export profile: " << e.what() << std::endl;
-                std::cerr << "   Falling back to file export..." << std::endl;
-                
-                // Fall back to file export on error
-                auto serialized = profile->serialize_to_vec();
-                std::ofstream out("profile.pprof", std::ios::binary);
-                out.write(reinterpret_cast<const char*>(serialized.data()), serialized.size());
-                out.close();
-                std::cout << "✅ Profile written to profile.pprof" << std::endl;
+            std::vector<uint8_t> metadata_bytes(app_metadata.begin(), app_metadata.end());
+            
+            // Export the profile (unified code path)
+            std::cout << "Exporting profile with additional metadata..." << std::endl;
+            (*exporter)->send_profile_with_cancellation(
+                *profile,
+                // Files to compress and attach
+                {AttachmentFile{
+                    .name = "app_metadata.json",
+                    .data = {metadata_bytes.data(), metadata_bytes.size()}
+                }},
+                // Additional per-profile tags
+                {
+                    Tag{.key = "export_id", .value = "12345"},
+                    Tag{.key = "host", .value = "example-host"}
+                },
+                // Process-level tags (comma-separated)
+                "language:cpp,profiler_version:1.0,runtime:native",
+                // Internal metadata (JSON string)
+                R"({"profiler_version": "1.0", "custom_field": "demo"})",
+                // System info (JSON string)
+                R"({"os": "macos", "arch": "arm64", "cores": 8})",
+                *cancel_token
+            );
+            std::cout << "✅ Profile exported successfully!" << std::endl;
+            
+            // Print mode-specific info
+            if (!agent_url && !api_key) {
+                std::cout << "ℹ️  HTTP request written to profile_dump.txt" << std::endl;
+                std::cout << "ℹ️  Use the utils in libdd-profiling to parse the HTTP dump" << std::endl;
+                std::cout << "\nℹ️  To export to Datadog instead, set environment variables:" << std::endl;
+                std::cout << "   Agent mode:      DD_AGENT_URL=http://localhost:8126" << std::endl;
+                std::cout << "   Agentless mode:  DD_API_KEY=<your-api-key> [DD_SITE=datadoghq.com]" << std::endl;
             }
-        } else {
-            // Save to file
-            std::cout << "\n=== Saving to File ===" << std::endl;
-            std::cout << "Serializing profile..." << std::endl;
-            auto serialized = profile->serialize_to_vec();
-            std::cout << "✅ Profile serialized to " << serialized.size() << " bytes" << std::endl;
-            
-            std::ofstream out("profile.pprof", std::ios::binary);
-            out.write(reinterpret_cast<const char*>(serialized.data()), serialized.size());
-            out.close();
-            std::cout << "✅ Profile written to profile.pprof" << std::endl;
-            
-            std::cout << "\nℹ️  To export to Datadog instead, set environment variables:" << std::endl;
-            std::cout << "   Agent mode:      DD_AGENT_URL=http://localhost:8126" << std::endl;
-            std::cout << "   Agentless mode:  DD_API_KEY=<your-api-key> [DD_SITE=datadoghq.com]" << std::endl;
+        } catch (const std::exception& e) {
+            std::cerr << "⚠️  Failed to export profile: " << e.what() << std::endl;
         }
         
         std::cout << "\n✅ Success!" << std::endl;
