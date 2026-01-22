@@ -84,13 +84,13 @@ where
     fn get_shm_mut(&mut self) -> &mut ShmHandle;
     #[cfg(all(unix, not(target_os = "macos")))]
     fn resize(&mut self, size: usize) -> anyhow::Result<()> {
+        nix::unistd::ftruncate(
+            self.get_shm().handle.as_owned_fd()?,
+            page_aligned_size(size) as libc::off_t,
+        )?;
         unsafe {
             self.set_mapping_size(size)?;
         }
-        nix::unistd::ftruncate(
-            self.get_shm().handle.as_owned_fd()?,
-            self.get_shm().size as libc::off_t,
-        )?;
         Ok(())
     }
     /// # Safety
@@ -224,7 +224,7 @@ mod tests {
         let shm = ShmHandle::new(5).unwrap();
         let mut mapped = shm.map().unwrap();
         _ = mapped.as_slice_mut().write(&[1, 2, 3, 4, 5]).unwrap();
-        mapped.ensure_space(100000);
+        mapped.ensure_space(100000).unwrap();
         assert!(mapped.as_slice().len() >= 100000);
         let mut exp = vec![0u8; mapped.as_slice().len()];
         _ = (&mut exp[..5]).write(&[1, 2, 3, 4, 5]).unwrap();
@@ -238,7 +238,7 @@ mod tests {
         let shm = NamedShmHandle::create(path.clone(), 5).unwrap();
         let mut mapped = shm.map().unwrap();
         _ = mapped.as_slice_mut().write(&[1, 2, 3, 4, 5]).unwrap();
-        mapped.ensure_space(100000);
+        mapped.ensure_space(100000).unwrap();
         assert!(mapped.as_slice().len() >= 100000);
 
         let other = NamedShmHandle::open(&path).unwrap().map().unwrap();

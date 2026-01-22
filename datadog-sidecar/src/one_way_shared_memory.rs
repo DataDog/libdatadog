@@ -129,7 +129,8 @@ where
 
                 #[allow(clippy::unwrap_used)]
                 let handle = reader.handle.as_mut().unwrap();
-                handle.ensure_space(size);
+                #[allow(clippy::unwrap_used)]
+                handle.ensure_space(size).unwrap();
 
                 // aligned on 8 byte boundary, round up to closest 8 byte boundary
                 let mut new_mem = Vec::<u64>::with_capacity(size.div_ceil(8));
@@ -196,7 +197,10 @@ impl<T: FileBackedHandle + From<MappedMem<T>>> OneWayShmWriter<T> {
         let mut mapped = self.handle.lock_or_panic();
 
         let size = contents.len() + 1; // trailing zero byte, to keep some C code happy
-        mapped.ensure_space(std::mem::size_of::<RawMetaData>() + size);
+        #[allow(clippy::unwrap_used)]
+        mapped
+            .ensure_space(std::mem::size_of::<RawMetaData>() + size)
+            .unwrap();
 
         // Safety: ShmHandle is always big enough
         // Actually &mut mapped.as_slice_mut() as RawData seems safe, but unsized locals are

@@ -88,9 +88,13 @@ impl<Inner> ShmLimiterMemory<Inner> {
 
                 // target_next_free is the end of the current entry - but we need one more
                 #[allow(clippy::unwrap_used)]
-                self.mem.write().unwrap().ensure_space(
-                    target_next_free as usize + std::mem::size_of::<ShmLimiterData<Inner>>(),
-                );
+                self.mem
+                    .write()
+                    .unwrap()
+                    .ensure_space(
+                        target_next_free as usize + std::mem::size_of::<ShmLimiterData<Inner>>(),
+                    )
+                    .unwrap();
             }
             match self.first_free_ref().compare_exchange(
                 first_free,
@@ -131,7 +135,8 @@ impl<Inner> ShmLimiterMemory<Inner> {
             let mut mem = self.mem.write().unwrap();
             let mut cur_size = mem.mem.get_size() as u32;
             if cur_size < end {
-                mem.ensure_space(end as usize);
+                #[allow(clippy::unwrap_used)]
+                mem.ensure_space(end as usize).unwrap();
                 cur_size = mem.mem.get_size() as u32;
                 if cur_size < end {
                     return None;
