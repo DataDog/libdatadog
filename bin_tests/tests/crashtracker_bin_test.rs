@@ -4,7 +4,7 @@
 #![cfg(unix)]
 
 use std::collections::HashMap;
-use std::io::{Read, Write};
+use std::io::{BufWriter, Read, Write};
 use std::path::Path;
 use std::process;
 use std::{fs, path::PathBuf};
@@ -16,6 +16,9 @@ use bin_tests::{
     test_types::{CrashType, TestMode},
     validation::PayloadValidator,
     ArtifactType, ArtifactsBuild, BuildProfile,
+};
+use libdd_crashtracker::{
+    CrashtrackerConfiguration, Metadata, SiCodes, SigInfo, SignalNames, StacktraceCollection,
 };
 use serde_json::Value;
 
@@ -291,6 +294,163 @@ fn test_crash_tracking_errors_intake_uds_socket() {
     );
 }
 
+/// For some reason, the next two tests fail on MacOS, because the callstack cannot be collected.
+/// We get this error:
+/// thread 'test_crash_tracking_bin_segfault' (88268) panicked at
+/// bin_tests/tests/crashtracker_bin_test.rs:250:5: got Ok("Unable to process line:
+/// DD_CRASHTRACK_END_STACKTRACE. Error: Can't set non-existant stack complete\n")
+#[test]
+#[cfg_attr(miri, ignore)]
+#[cfg(not(target_os = "macos"))]
+fn test_crash_tracking_bin_panic() {
+    test_crash_tracking_app("panic");
+}
+
+#[test]
+#[cfg(not(target_os = "macos"))]
+#[cfg_attr(miri, ignore)]
+fn test_crash_tracking_bin_segfault() {
+    test_crash_tracking_app("segfault");
+}
+
+fn test_crash_tracking_app(crash_type: &str) {
+    use bin_tests::test_runner::run_custom_crash_test;
+
+    // Set up custom artifacts: receiver + crashing_test_app with panic_abort
+    let crashtracker_receiver = create_crashtracker_receiver(BuildProfile::Release);
+    let crashing_app = create_crashing_app(BuildProfile::Debug, true);
+
+    let artifacts_map = build_artifacts(&[&crashtracker_receiver, &crashing_app]).unwrap();
+
+    // Create validator based on crash type
+    let crash_type_owned = crash_type.to_owned();
+    let validator: ValidatorFn = Box::new(move |payload, _fixtures| {
+        let sig_info = &payload["sig_info"];
+        let error = &payload["error"];
+
+        match crash_type_owned.as_str() {
+            "panic" => {
+                let message = error["message"].as_str().unwrap();
+                assert!(
+                    message.contains("Process panicked with message") && message.contains("program panicked"),
+                    "Expected panic message to contain 'Process panicked with message' and 'program panicked', got: {}",
+                    message
+                );
+            }
+            "segfault" => {
+                assert_error_message(&error["message"], sig_info);
+            }
+            _ => unreachable!("Invalid crash type: {}", crash_type_owned),
+        }
+
+        Ok(())
+    });
+
+    run_custom_crash_test(
+        &artifacts_map[&crashing_app],
+        |cmd, fixtures| {
+            cmd.arg(format!("file://{}", fixtures.crash_profile_path.display()))
+                .arg(&artifacts_map[&crashtracker_receiver])
+                .arg(&fixtures.output_dir)
+                .arg(crash_type);
+        },
+        validator,
+    )
+    .unwrap();
+}
+
+#[test]
+#[cfg_attr(miri, ignore)]
+#[cfg(not(target_os = "macos"))] // Same restriction as other panic tests
+fn test_crash_tracking_bin_panic_hook_after_fork() {
+    test_panic_hook_mode(
+        "panic_hook_after_fork",
+        "message",
+        Some("child panicked after fork"),
+    );
+}
+
+#[test]
+#[cfg_attr(miri, ignore)]
+#[cfg(not(target_os = "macos"))] // Same restriction as other panic tests
+fn test_crash_tracking_bin_panic_hook_string() {
+    test_panic_hook_mode("panic_hook_string", "message", Some("Panic with value: 42"));
+}
+
+#[test]
+#[cfg_attr(miri, ignore)]
+#[cfg(not(target_os = "macos"))] // Same restriction as other panic tests
+fn test_crash_tracking_bin_panic_hook_unknown_type() {
+    test_panic_hook_mode(
+        "panic_hook_unknown_type",
+        "unknown type",
+        None, // no panic message for unknown type
+    );
+}
+
+/// Helper function to run panic hook tests with different payload types.
+/// Note: Since tests are built with Debug profile, location is always expected.
+fn test_panic_hook_mode(mode: &str, expected_category: &str, expected_panic_message: Option<&str>) {
+    use bin_tests::test_runner::run_custom_crash_test;
+
+    // Set up custom artifacts: receiver + crashtracker_bin_test
+    let crashtracker_receiver = create_crashtracker_receiver(BuildProfile::Release);
+    let crashtracker_bin_test = create_crashtracker_bin_test(BuildProfile::Debug, true);
+
+    let artifacts_map = build_artifacts(&[&crashtracker_receiver, &crashtracker_bin_test]).unwrap();
+
+    let expected_category = expected_category.to_owned();
+    let expected_panic_message = expected_panic_message.map(|s| s.to_owned());
+    let validator: ValidatorFn = Box::new(move |payload, _fixtures| {
+        // Verify the panic message is captured
+        let error = &payload["error"];
+        let message = error["message"].as_str().unwrap();
+
+        // Check the message starts with "Process panicked with <category>"
+        let expected_prefix = format!("Process panicked with {}", expected_category);
+        assert!(
+            message.starts_with(&expected_prefix),
+            "Expected panic message to start with '{}', got: {}",
+            expected_prefix,
+            message
+        );
+
+        // Check the panic message if expected (the message passed to panic! macro)
+        if let Some(ref panic_msg) = expected_panic_message {
+            assert!(
+                message.contains(panic_msg),
+                "Expected panic message to contain '{}', got: {}",
+                panic_msg,
+                message
+            );
+        }
+
+        // Check for location format (file:line:column) - always present in Debug builds
+        // Location should end with pattern like " (path/file.rs:123:45)"
+        let location_regex = regex::Regex::new(r" \(.+?:\d+:\d+\)$").unwrap();
+        assert!(
+            location_regex.is_match(message),
+            "Expected panic message to end with location ' (file:line:column)', got: {}",
+            message
+        );
+
+        Ok(())
+    });
+
+    run_custom_crash_test(
+        &artifacts_map[&crashtracker_bin_test],
+        |cmd, fixtures| {
+            cmd.arg(format!("file://{}", fixtures.crash_profile_path.display()))
+                .arg(&artifacts_map[&crashtracker_receiver])
+                .arg(&fixtures.output_dir)
+                .arg(mode)
+                .arg("donothing"); // crash method (not used in panic hook tests)
+        },
+        validator,
+    )
+    .unwrap();
+}
+
 // ====================================================================================
 // CALLSTACK VALIDATION TESTS - MIGRATED TO CUSTOM TEST RUNNER
 // ====================================================================================
@@ -314,22 +474,9 @@ fn test_crash_tracking_callstack() {
     use bin_tests::test_runner::run_custom_crash_test;
 
     // Set up custom artifacts: receiver + crashing_test_app (in Debug mode)
-    let crashtracker_receiver = ArtifactsBuild {
-        name: "test_crashtracker_receiver".to_owned(),
-        build_profile: BuildProfile::Release,
-        artifact_type: ArtifactType::Bin,
-        triple_target: None,
-        ..Default::default()
-    };
-
-    let crashing_app = ArtifactsBuild {
-        name: "crashing_test_app".to_owned(),
-        // compile in debug so we avoid inlining and can check the callchain
-        build_profile: BuildProfile::Debug,
-        artifact_type: ArtifactType::Bin,
-        triple_target: None,
-        ..Default::default()
-    };
+    let crashtracker_receiver = create_crashtracker_receiver(BuildProfile::Release);
+    // compile in debug so we avoid inlining and can check the callchain
+    let crashing_app = create_crashing_app(BuildProfile::Debug, false);
 
     let artifacts_map = build_artifacts(&[&crashtracker_receiver, &crashing_app]).unwrap();
 
@@ -348,9 +495,9 @@ fn test_crash_tracking_callstack() {
         |cmd, fixtures| {
             cmd.arg(format!("file://{}", fixtures.crash_profile_path.display()))
                 .arg(&artifacts_map[&crashtracker_receiver])
-                .arg(&fixtures.output_dir);
+                .arg(&fixtures.output_dir)
+                .arg("segfault");
         },
-        false, // expect crash (not success)
         |payload, _fixtures| {
             // Use the new callstack validator
             PayloadValidator::new(payload).validate_callstack_functions(&expected_functions)?;
@@ -1060,6 +1207,191 @@ fn crash_tracking_empty_endpoint() {
     let _ = child.wait();
 }
 
+#[test]
+#[cfg_attr(miri, ignore)]
+#[cfg(unix)]
+fn test_receiver_emits_debug_logs_on_receiver_issue() -> anyhow::Result<()> {
+    let receiver = ArtifactsBuild {
+        name: "test_crashtracker_receiver".to_owned(),
+        build_profile: BuildProfile::Debug,
+        artifact_type: ArtifactType::Bin,
+        triple_target: None,
+        ..Default::default()
+    };
+    let artifacts = build_artifacts(&[&receiver])?;
+    let fixtures = bin_tests::test_runner::TestFixtures::new()?;
+
+    let missing_file = fixtures.output_dir.join("missing_additional_file.txt");
+
+    let config = CrashtrackerConfiguration::new(
+        vec![missing_file.display().to_string()],
+        true,
+        true,
+        None,
+        StacktraceCollection::WithoutSymbols,
+        libdd_crashtracker::default_signals(),
+        Some(std::time::Duration::from_millis(500)),
+        None,
+        true,
+    )?;
+
+    let metadata = Metadata {
+        library_name: "libdatadog".to_owned(),
+        library_version: "1.0.0".to_owned(),
+        family: "native".to_owned(),
+        tags: vec![
+            "service:foo".into(),
+            "service_version:bar".into(),
+            "runtime-id:xyz".into(),
+            "language:native".into(),
+        ],
+    };
+
+    let siginfo = SigInfo {
+        si_addr: None,
+        si_code: 1,
+        si_code_human_readable: SiCodes::SEGV_MAPERR,
+        si_signo: libc::SIGSEGV,
+        si_signo_human_readable: SignalNames::SIGSEGV,
+    };
+
+    let socket_path = fixtures.output_dir.join("trace_agent.socket");
+    let listener = std::os::unix::net::UnixListener::bind(&socket_path)
+        .context("binding unix socket for agent interception")?;
+    listener
+        .set_nonblocking(true)
+        .context("setting socket nonblocking")?;
+
+    let mut child = process::Command::new(&artifacts[&receiver])
+        .stdin(process::Stdio::piped())
+        .stdout(process::Stdio::null())
+        .stderr(process::Stdio::null())
+        .env(
+            "DD_TRACE_AGENT_URL",
+            format!("unix://{}", socket_path.display()),
+        )
+        .spawn()
+        .context("spawning receiver process")?;
+
+    {
+        let mut stdin = BufWriter::new(child.stdin.take().context("child stdin missing")?);
+        for line in [
+            "DD_CRASHTRACK_BEGIN_CONFIG".to_string(),
+            serde_json::to_string(&config)?,
+            "DD_CRASHTRACK_END_CONFIG".to_string(),
+            "DD_CRASHTRACK_BEGIN_METADATA".to_string(),
+            serde_json::to_string(&metadata)?,
+            "DD_CRASHTRACK_END_METADATA".to_string(),
+            "DD_CRASHTRACK_BEGIN_SIGINFO".to_string(),
+            serde_json::to_string(&siginfo)?,
+            "DD_CRASHTRACK_END_SIGINFO".to_string(),
+            "UNEXPECTED_LINE_FROM_TEST".to_string(),
+        ] {
+            writeln!(stdin, "{line}")?;
+        }
+        stdin.flush()?;
+    }
+
+    let status = child.wait()?;
+    assert!(
+        status.success(),
+        "receiver process should exit successfully"
+    );
+
+    let mut bodies = Vec::new();
+    let mut found_receiver_issue_attach = false;
+    let mut found_receiver_issue_unexpected = false;
+    let mut found_receiver_issue_incomplete = false;
+    let mut found_crash_report = false;
+
+    let start = std::time::Instant::now();
+    let timeout = std::time::Duration::from_secs(5);
+    while start.elapsed() < timeout && bodies.len() < 16 {
+        match listener.accept() {
+            Ok((mut stream, _)) => {
+                let body = read_http_request_body(&mut stream);
+                bodies.push(body.clone());
+                // Update flags immediately to decide whether we can stop
+                if body.contains("receiver_issue:attach_additional_file_error") {
+                    found_receiver_issue_attach = true;
+                }
+                if body.contains("receiver_issue:unexpected_line") {
+                    found_receiver_issue_unexpected = true;
+                }
+                if body.contains("receiver_issue:incomplete_stacktrace") {
+                    found_receiver_issue_incomplete = true;
+                }
+                if body.contains("is_crash:true") {
+                    found_crash_report = true;
+                }
+                if found_receiver_issue_attach
+                    && found_receiver_issue_unexpected
+                    && found_receiver_issue_incomplete
+                    && found_crash_report
+                {
+                    break;
+                }
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                std::thread::sleep(std::time::Duration::from_millis(50));
+            }
+            Err(e) => return Err(e.into()),
+        }
+    }
+
+    let check_warn = |body: &str, tag: &str| {
+        assert!(
+            body.contains("is_crash_debug:true"),
+            "expected crash debug tag for {tag} in body: {body}"
+        );
+        assert!(
+            body.contains("\"level\":\"WARN\""),
+            "expected WARN level for {tag} in body: {body}"
+        );
+    };
+
+    for body in &bodies {
+        if body.contains("receiver_issue:attach_additional_file_error") {
+            check_warn(body, "attach_additional_file_error");
+            found_receiver_issue_attach = true;
+        }
+        if body.contains("receiver_issue:unexpected_line") {
+            check_warn(body, "unexpected_line");
+            found_receiver_issue_unexpected = true;
+        }
+        if body.contains("receiver_issue:incomplete_stacktrace") {
+            check_warn(body, "incomplete_stacktrace");
+            found_receiver_issue_incomplete = true;
+        }
+        if body.contains("is_crash:true") {
+            found_crash_report = true;
+        }
+    }
+
+    assert!(
+        found_receiver_issue_attach,
+        "expected attach additional file debug telemetry log via agent socket; bodies: {:?}",
+        bodies
+    );
+    assert!(
+        found_receiver_issue_unexpected,
+        "expected unexpected line debug telemetry log via agent socket; bodies: {:?}",
+        bodies
+    );
+    assert!(
+        found_receiver_issue_incomplete,
+        "expected incomplete stacktrace debug telemetry log via agent socket; bodies: {:?}",
+        bodies
+    );
+    assert!(
+        found_crash_report,
+        "expected crash report telemetry to be emitted alongside debug log; bodies: {:?}",
+        bodies
+    );
+
+    Ok(())
+}
+
 fn read_http_request_body(stream: &mut impl Read) -> String {
     // The read call is not guaranteed to collect all available data.  On OSX it appears to grab
     // data in 8192 byte chunks.  This was not an issue when the size of a crashreport was below
@@ -1170,21 +1502,43 @@ fn setup_test_fixtures<'a>(crates: &[&'a ArtifactsBuild]) -> TestFixtures<'a> {
 fn setup_crashtracking_crates(
     crash_tracking_receiver_profile: BuildProfile,
 ) -> (ArtifactsBuild, ArtifactsBuild) {
-    let crashtracker_bin = ArtifactsBuild {
-        name: "crashtracker_bin_test".to_owned(),
-        build_profile: crash_tracking_receiver_profile,
-        artifact_type: ArtifactType::Bin,
-        triple_target: None,
-        ..Default::default()
-    };
-    let crashtracker_receiver = ArtifactsBuild {
-        name: "test_crashtracker_receiver".to_owned(),
-        build_profile: crash_tracking_receiver_profile,
-        artifact_type: ArtifactType::Bin,
-        triple_target: None,
-        ..Default::default()
-    };
+    let crashtracker_bin = create_crashtracker_bin_test(crash_tracking_receiver_profile, false);
+    let crashtracker_receiver = create_crashtracker_receiver(crash_tracking_receiver_profile);
     (crashtracker_bin, crashtracker_receiver)
+}
+
+// Helper functions for creating common artifact configurations
+
+fn create_crashtracker_receiver(profile: BuildProfile) -> ArtifactsBuild {
+    ArtifactsBuild {
+        name: "test_crashtracker_receiver".to_owned(),
+        build_profile: profile,
+        artifact_type: ArtifactType::Bin,
+        triple_target: None,
+        ..Default::default()
+    }
+}
+
+fn create_crashing_app(profile: BuildProfile, panic_abort: bool) -> ArtifactsBuild {
+    ArtifactsBuild {
+        name: "crashing_test_app".to_owned(),
+        build_profile: profile,
+        artifact_type: ArtifactType::Bin,
+        triple_target: None,
+        panic_abort: if panic_abort { Some(true) } else { None },
+        ..Default::default()
+    }
+}
+
+fn create_crashtracker_bin_test(profile: BuildProfile, panic_abort: bool) -> ArtifactsBuild {
+    ArtifactsBuild {
+        name: "crashtracker_bin_test".to_owned(),
+        build_profile: profile,
+        artifact_type: ArtifactType::Bin,
+        triple_target: None,
+        panic_abort: if panic_abort { Some(true) } else { None },
+        ..Default::default()
+    }
 }
 
 #[cfg(unix)]

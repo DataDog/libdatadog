@@ -19,7 +19,7 @@ bolero = ["dep:bolero"]
 prost_impls = ["dep:prost"]
 
 [dependencies]
-prost = { version = "0.13", optional = true }
+prost = { version = "0.14", optional = true }
 bolero = { version = "0.13", default-features = false, optional = true }
 
 [dev-dependencies]

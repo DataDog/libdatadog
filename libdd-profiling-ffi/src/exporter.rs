@@ -81,11 +81,15 @@ unsafe fn try_to_url(slice: CharSlice) -> anyhow::Result<hyper::Uri> {
     let str: &str = slice.try_to_utf8()?;
     #[cfg(unix)]
     if let Some(path) = str.strip_prefix("unix://") {
-        return Ok(exporter::socket_path_to_uri(path.as_ref())?);
+        return Ok(libdd_common::connector::uds::socket_path_to_uri(
+            path.as_ref(),
+        )?);
     }
     #[cfg(windows)]
     if let Some(path) = str.strip_prefix("windows:") {
-        return Ok(exporter::named_pipe_path_to_uri(path.as_ref())?);
+        return Ok(libdd_common::connector::named_pipe::named_pipe_path_to_uri(
+            path.as_ref(),
+        )?);
     }
     Ok(hyper::Uri::from_str(str)?)
 }
@@ -142,11 +146,13 @@ pub unsafe extern "C" fn ddog_prof_Exporter_new(
     endpoint: ProfilingEndpoint,
 ) -> Result<Handle<ProfileExporter>> {
     wrap_with_ffi_result!({
-        let library_name = profiling_library_name.to_utf8_lossy().into_owned();
-        let library_version = profiling_library_version.to_utf8_lossy().into_owned();
-        let family = family.to_utf8_lossy().into_owned();
+        let library_name = profiling_library_name.try_to_utf8()?;
+        let library_version = profiling_library_version.try_to_utf8()?;
+        let family = family.try_to_utf8()?;
         let converted_endpoint = unsafe { try_to_endpoint(endpoint)? };
-        let tags = tags.map(|tags| tags.iter().cloned().collect());
+        let tags = tags
+            .map(|tags| tags.iter().cloned().collect())
+            .unwrap_or_default();
         anyhow::Ok(
             ProfileExporter::new(
                 library_name,
@@ -238,26 +244,27 @@ pub unsafe extern "C" fn ddog_prof_Exporter_send_blocking(
         let exporter = exporter.to_inner_mut()?;
         let profile = *profile.take()?;
         let files_to_compress_and_export = into_vec_files(files_to_compress_and_export);
-        let tags = optional_additional_tags.map(|tags| tags.iter().cloned().collect());
+        let tags: Vec<Tag> = optional_additional_tags
+            .map(|tags| tags.iter().cloned().collect())
+            .unwrap_or_default();
         let process_tags_str = optional_process_tags
             .map(|cs| cs.try_to_utf8())
             .transpose()?;
         let internal_metadata = parse_json("internal_metadata", optional_internal_metadata_json)?;
         let info = parse_json("info", optional_info_json)?;
 
-        let request = exporter.build(
+        let cancel = cancel.to_inner_mut().ok();
+        let status = exporter.send_blocking(
             profile,
             files_to_compress_and_export.as_slice(),
-            tags.as_ref(),
-            process_tags_str,
+            &tags,
             internal_metadata,
             info,
+            process_tags_str,
+            cancel.as_deref(),
         )?;
 
-        let cancel = cancel.to_inner_mut().ok();
-        let response = exporter.send(request, cancel.as_deref())?;
-
-        anyhow::Ok(HttpStatus(response.status().as_u16()))
+        anyhow::Ok(HttpStatus(status.as_u16()))
     })
 }
 
