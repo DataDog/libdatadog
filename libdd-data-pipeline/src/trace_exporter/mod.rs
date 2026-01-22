@@ -609,7 +609,7 @@ impl TraceExporter {
     fn emit_send_result(&self, result: &SendResult) {
         if self.health_metrics_enabled {
             let emitter = MetricsEmitter::new(self.dogstatsd.as_ref(), &self.common_stats_tags);
-            emitter.emit_send_result(result);
+            emitter.emit_from_send_result(result);
         }
     }
 

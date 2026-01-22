@@ -67,7 +67,7 @@ impl<'a> MetricsEmitter<'a> {
     ///
     /// This method processes the SendResult and emits all appropriate metrics
     /// based on the operation's outcome (success/failure, error type, etc.)
-    pub(crate) fn emit_send_result(&self, result: &SendResult) {
+    pub(crate) fn emit_from_send_result(&self, result: &SendResult) {
         for (metric, type_tag_value) in result.collect_metrics() {
             let type_tag = type_tag_value
                 .as_ref()
