@@ -7,7 +7,7 @@
 
 use libdd_profiling::exporter::config;
 use libdd_profiling::exporter::utils::parse_http_request;
-use libdd_profiling::exporter::{File, ProfileExporter};
+use libdd_profiling::exporter::{File, MimeType, ProfileExporter};
 use libdd_profiling::internal::EncodedProfile;
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -226,10 +226,12 @@ async fn export_full_profile(
         File {
             name: "jit.pprof",
             bytes: b"fake-jit-data",
+            mime: MimeType::ApplicationOctetStream,
         },
         File {
             name: "metadata.json",
             bytes: b"{\"test\": true}",
+            mime: MimeType::ApplicationJson,
         },
     ];
 

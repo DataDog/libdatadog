@@ -9,7 +9,7 @@ use libdd_common::tag::Tag;
 use libdd_common_ffi::slice::{AsBytes, ByteSlice, CharSlice, Slice};
 use libdd_common_ffi::{wrap_with_ffi_result, Handle, Result, ToInner};
 use libdd_profiling::exporter;
-use libdd_profiling::exporter::ProfileExporter;
+use libdd_profiling::exporter::{MimeType, ProfileExporter};
 use libdd_profiling::internal::EncodedProfile;
 use std::borrow::Cow;
 use std::str::FromStr;
@@ -29,6 +29,7 @@ pub enum ProfilingEndpoint<'a> {
 pub struct File<'a> {
     name: CharSlice<'a>,
     file: ByteSlice<'a>,
+    mime: MimeType,
 }
 
 #[must_use]
@@ -184,7 +185,8 @@ unsafe fn into_vec_files<'a>(slice: Slice<'a, File>) -> Vec<exporter::File<'a>> 
         .map(|file| {
             let name = file.name.try_to_utf8().unwrap_or("{invalid utf-8}");
             let bytes = file.file.as_slice();
-            exporter::File { name, bytes }
+            let mime = file.mime;
+            exporter::File { name, bytes, mime }
         })
         .collect()
 }
