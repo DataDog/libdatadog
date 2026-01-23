@@ -1386,6 +1386,7 @@ dependencies = [
  "libdd-common",
  "libdd-trace-protobuf",
  "manual_future",
+ "regex",
  "serde",
  "serde_json",
  "serde_with",
