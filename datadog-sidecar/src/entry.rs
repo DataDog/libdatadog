@@ -15,7 +15,7 @@ use std::{
     },
     time::{Duration, Instant},
 };
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, oneshot};
 
 #[cfg(unix)]
 use crate::crashtracker::crashtracker_unix_socket_path;
@@ -32,7 +32,28 @@ use crate::tracer::SHM_LIMITER;
 use crate::watchdog::Watchdog;
 use crate::{ddog_daemon_entry_point, setup_daemon_process};
 
-async fn main_loop<L, C, Fut>(listener: L, cancel: Arc<C>) -> io::Result<()>
+/// Configuration for main_loop behavior
+pub struct MainLoopConfig {
+    pub enable_ctrl_c_handler: bool,
+    pub enable_crashtracker: bool,
+    pub external_shutdown_rx: Option<oneshot::Receiver<()>>,
+}
+
+impl Default for MainLoopConfig {
+    fn default() -> Self {
+        Self {
+            enable_ctrl_c_handler: true,
+            enable_crashtracker: true,
+            external_shutdown_rx: None,
+        }
+    }
+}
+
+pub async fn main_loop<L, C, Fut>(
+    listener: L,
+    cancel: Arc<C>,
+    loop_config: MainLoopConfig,
+) -> io::Result<()>
 where
     L: FnOnce(Box<dyn Fn(IpcClient)>) -> Fut,
     Fut: Future<Output = io::Result<()>>,
@@ -64,29 +85,45 @@ where
         }
     });
 
-    tokio::spawn(async move {
-        if let Err(err) = tokio::signal::ctrl_c().await {
-            tracing::error!("Error setting up signal handler {}", err);
-        }
-        tracing::info!("Received Ctrl-C Signal, shutting down");
-        cancel();
-    });
+    if let Some(shutdown_rx) = loop_config.external_shutdown_rx {
+        let cancel = cancel.clone();
+        tokio::spawn(async move {
+            let _ = shutdown_rx.await;
+            tracing::info!("External shutdown signal received");
+            cancel();
+        });
+    }
+
+    if loop_config.enable_ctrl_c_handler {
+        let cancel = cancel.clone();
+        tokio::spawn(async move {
+            if let Err(err) = tokio::signal::ctrl_c().await {
+                tracing::error!("Error setting up signal handler {}", err);
+            }
+            tracing::info!("Received Ctrl-C Signal, shutting down");
+            cancel();
+        });
+    }
 
     #[cfg(unix)]
-    tokio::spawn(async move {
-        let socket_path = crashtracker_unix_socket_path();
-        match libdd_crashtracker::get_receiver_unix_socket(socket_path.to_str().unwrap_or_default())
-        {
-            Ok(listener) => loop {
-                if let Err(e) =
-                    libdd_crashtracker::async_receiver_entry_point_unix_listener(&listener).await
-                {
-                    tracing::warn!("Got error while receiving crash report: {e}");
-                }
-            },
-            Err(e) => tracing::error!("Failed setting up the crashtracker listener: {e}"),
-        }
-    });
+    if loop_config.enable_crashtracker {
+        tokio::spawn(async move {
+            let socket_path = crashtracker_unix_socket_path();
+            match libdd_crashtracker::get_receiver_unix_socket(
+                socket_path.to_str().unwrap_or_default(),
+            ) {
+                Ok(listener) => loop {
+                    if let Err(e) =
+                        libdd_crashtracker::async_receiver_entry_point_unix_listener(&listener)
+                            .await
+                    {
+                        tracing::warn!("Got error while receiving crash report: {e}");
+                    }
+                },
+                Err(e) => tracing::error!("Failed setting up the crashtracker listener: {e}"),
+            }
+        });
+    }
 
     // Init. Early, before we start listening.
     drop(SHM_LIMITER.lock());
@@ -149,6 +186,19 @@ where
     Fut: Future<Output = io::Result<()>>,
     C: Fn() + Sync + Send + 'static,
 {
+    enter_listener_loop_with_config(acquire_listener, MainLoopConfig::default())
+}
+
+pub fn enter_listener_loop_with_config<F, L, Fut, C>(
+    acquire_listener: F,
+    loop_config: MainLoopConfig,
+) -> anyhow::Result<()>
+where
+    F: FnOnce() -> io::Result<(L, C)>,
+    L: FnOnce(Box<dyn Fn(IpcClient)>) -> Fut,
+    Fut: Future<Output = io::Result<()>>,
+    C: Fn() + Sync + Send + 'static,
+{
     #[cfg(feature = "tokio-console")]
     console_subscriber::init();
 
@@ -159,7 +209,7 @@ where
     let (listener, cancel) = acquire_listener()?;
 
     runtime
-        .block_on(main_loop(listener, Arc::new(cancel)))
+        .block_on(main_loop(listener, Arc::new(cancel), loop_config))
         .map_err(|e| e.into())
 }
 

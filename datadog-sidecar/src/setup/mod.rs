@@ -16,7 +16,7 @@ pub use self::windows::*;
 #[cfg(unix)]
 pub mod thread_listener;
 #[cfg(unix)]
-pub use thread_listener::{MasterListener, connect_to_master};
+pub use thread_listener::{connect_to_master, MasterListener};
 
 use datadog_ipc::platform::Channel;
 use std::io;
