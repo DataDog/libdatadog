@@ -4,7 +4,7 @@
 use datadog_sidecar_ffi::span::*;
 use libdd_common_ffi::slice::*;
 use libdd_tinybytes::*;
-use libdd_trace_utils::span::*;
+use libdd_trace_utils::span::v04::*;
 use std::collections::HashMap;
 
 #[test]

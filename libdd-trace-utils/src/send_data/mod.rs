@@ -26,7 +26,7 @@ use std::io::Write;
 #[cfg(feature = "compression")]
 use zstd::stream::write::Encoder;
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 /// `SendData` is a structure that holds the data to be sent to a target endpoint.
 /// It includes the payloads to be sent, the size of the data, the target endpoint,
 /// headers for the request, and a retry strategy for sending the data.
@@ -81,7 +81,6 @@ pub enum Compression {
     None,
 }
 
-#[derive(Clone)]
 pub struct SendDataBuilder {
     pub(crate) tracer_payloads: TracerPayloadCollection,
     pub(crate) size: usize,
@@ -219,35 +218,24 @@ impl SendData {
         self.retry_strategy = retry_strategy;
     }
 
-    /// Returns a clone of the SendData with the user-defined endpoint.
-    ///
-    /// # Arguments
-    ///
-    /// * `endpoint`: The new endpoint to be used.
-    pub fn with_endpoint(&self, endpoint: Endpoint) -> SendData {
-        SendData {
-            target: endpoint,
-            ..self.clone()
-        }
-    }
-
     /// Sends the data to the target endpoint.
     ///
     /// # Returns
     ///
     /// A `SendDataResult` instance containing the result of the operation.
     pub async fn send<C: Connect>(&self, http_client: &GenericHttpClient<C>) -> SendDataResult {
-        self.send_internal(http_client).await
+        self.send_internal(http_client, None).await
     }
 
     async fn send_internal<C: Connect>(
         &self,
         http_client: &GenericHttpClient<C>,
+        endpoint: Option<Endpoint>,
     ) -> SendDataResult {
         if self.use_protobuf() {
-            self.send_with_protobuf(http_client).await
+            self.send_with_protobuf(http_client, endpoint).await
         } else {
-            self.send_with_msgpack(http_client).await
+            self.send_with_msgpack(http_client, endpoint).await
         }
     }
 
@@ -257,13 +245,14 @@ impl SendData {
         payload: Vec<u8>,
         headers: HashMap<&'static str, String>,
         http_client: &GenericHttpClient<C>,
+        endpoint: Option<&Endpoint>,
     ) -> (SendWithRetryResult, u64, u64) {
         #[allow(clippy::unwrap_used)]
         let payload_len = u64::try_from(payload.len()).unwrap();
         (
             send_with_retry(
                 http_client,
-                &self.target,
+                endpoint.unwrap_or(&self.target),
                 payload,
                 &headers,
                 &self.retry_strategy,
@@ -303,6 +292,7 @@ impl SendData {
     async fn send_with_protobuf<C: Connect>(
         &self,
         http_client: &GenericHttpClient<C>,
+        endpoint: Option<Endpoint>,
     ) -> SendDataResult {
         let mut result = SendDataResult::default();
 
@@ -330,7 +320,13 @@ impl SendData {
                 request_headers.insert(CONTENT_TYPE.as_str(), APPLICATION_PROTOBUF_STR.to_string());
 
                 let (response, bytes_sent, chunks) = self
-                    .send_payload(chunks, final_payload, request_headers, http_client)
+                    .send_payload(
+                        chunks,
+                        final_payload,
+                        request_headers,
+                        http_client,
+                        endpoint.as_ref(),
+                    )
                     .await;
 
                 result.update(response, bytes_sent, chunks);
@@ -344,6 +340,7 @@ impl SendData {
     async fn send_with_msgpack<C: Connect>(
         &self,
         http_client: &GenericHttpClient<C>,
+        endpoint: Option<Endpoint>,
     ) -> SendDataResult {
         let mut result = SendDataResult::default();
         let mut futures = FuturesUnordered::new();
@@ -362,7 +359,13 @@ impl SendData {
                         Err(e) => return result.error(anyhow!(e)),
                     };
 
-                    futures.push(self.send_payload(chunks, payload, headers, http_client));
+                    futures.push(self.send_payload(
+                        chunks,
+                        payload,
+                        headers,
+                        http_client,
+                        endpoint.as_ref(),
+                    ));
                 }
             }
             TracerPayloadCollection::V04(payload) => {
@@ -374,7 +377,13 @@ impl SendData {
 
                 let payload = msgpack_encoder::v04::to_vec(payload);
 
-                futures.push(self.send_payload(chunks, payload, headers, http_client));
+                futures.push(self.send_payload(
+                    chunks,
+                    payload,
+                    headers,
+                    http_client,
+                    endpoint.as_ref(),
+                ));
             }
             TracerPayloadCollection::V05(payload) => {
                 #[allow(clippy::unwrap_used)]
@@ -388,7 +397,13 @@ impl SendData {
                     Err(e) => return result.error(anyhow!(e)),
                 };
 
-                futures.push(self.send_payload(chunks, payload, headers, http_client));
+                futures.push(self.send_payload(
+                    chunks,
+                    payload,
+                    headers,
+                    http_client,
+                    endpoint.as_ref(),
+                ));
             }
         }
 
@@ -1002,56 +1017,6 @@ mod tests {
         assert_eq!(res.chunks_sent, 0);
         assert_eq!(res.bytes_sent, 0);
         assert_eq!(res.responses_count_per_code.len(), 0);
-    }
-
-    #[test]
-    fn test_with_endpoint() {
-        let header_tags = HEADER_TAGS;
-        let payload = setup_payload(&header_tags);
-        let original_endpoint = Endpoint {
-            api_key: Some(std::borrow::Cow::Borrowed("original-key")),
-            url: "http://originalexample.com/".parse::<hyper::Uri>().unwrap(),
-            timeout_ms: 1000,
-            ..Endpoint::default()
-        };
-
-        let original_data = SendData::new(
-            100,
-            TracerPayloadCollection::V07(vec![payload]),
-            header_tags,
-            &original_endpoint,
-        );
-
-        let new_endpoint = Endpoint {
-            api_key: Some(std::borrow::Cow::Borrowed("new-key")),
-            url: "http://newexample.com/".parse::<hyper::Uri>().unwrap(),
-            timeout_ms: 2000,
-            ..Endpoint::default()
-        };
-
-        let new_data = original_data.with_endpoint(new_endpoint.clone());
-
-        assert_eq!(new_data.target.api_key, new_endpoint.api_key);
-        assert_eq!(new_data.target.url, new_endpoint.url);
-        assert_eq!(new_data.target.timeout_ms, new_endpoint.timeout_ms);
-
-        assert_eq!(new_data.size, original_data.size);
-        assert_eq!(new_data.headers, original_data.headers);
-        assert_eq!(new_data.retry_strategy, original_data.retry_strategy);
-        assert_eq!(
-            new_data.tracer_payloads.size(),
-            original_data.tracer_payloads.size()
-        );
-
-        assert_eq!(original_data.target.api_key, original_endpoint.api_key);
-        assert_eq!(original_data.target.url, original_endpoint.url);
-        assert_eq!(
-            original_data.target.timeout_ms,
-            original_endpoint.timeout_ms
-        );
-
-        #[cfg(feature = "compression")]
-        assert!(matches!(new_data.compression, Compression::None));
     }
 
     #[test]

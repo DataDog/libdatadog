@@ -1,13 +1,14 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::span::{Span, SpanText};
+use crate::span::v04::Span;
+use crate::span::TraceData;
 use rmp::encode::{write_array_len, ByteBuf, RmpWrite, ValueWriteError};
 
 mod span;
 
 #[inline(always)]
-fn to_writer<W: RmpWrite, T: SpanText, S: AsRef<[Span<T>]>>(
+fn to_writer<W: RmpWrite, T: TraceData, S: AsRef<[Span<T>]>>(
     writer: &mut W,
     traces: &[S],
 ) -> Result<(), ValueWriteError<W::Error>> {
@@ -44,10 +45,10 @@ fn to_writer<W: RmpWrite, T: SpanText, S: AsRef<[Span<T>]>>(
 ///
 /// ```
 /// use libdd_trace_utils::msgpack_encoder::v04::write_to_slice;
-/// use libdd_trace_utils::span::Span;
+/// use libdd_trace_utils::span::v04::SpanSlice;
 ///
 /// let mut buffer = vec![0u8; 1024];
-/// let span = Span {
+/// let span = SpanSlice {
 ///     name: "test-span",
 ///     ..Default::default()
 /// };
@@ -55,7 +56,7 @@ fn to_writer<W: RmpWrite, T: SpanText, S: AsRef<[Span<T>]>>(
 ///
 /// write_to_slice(&mut &mut buffer[..], &traces).expect("Encoding failed");
 /// ```
-pub fn write_to_slice<T: SpanText, S: AsRef<[Span<T>]>>(
+pub fn write_to_slice<T: TraceData, S: AsRef<[Span<T>]>>(
     slice: &mut &mut [u8],
     traces: &[S],
 ) -> Result<(), ValueWriteError> {
@@ -76,9 +77,9 @@ pub fn write_to_slice<T: SpanText, S: AsRef<[Span<T>]>>(
 ///
 /// ```
 /// use libdd_trace_utils::msgpack_encoder::v04::to_vec;
-/// use libdd_trace_utils::span::Span;
+/// use libdd_trace_utils::span::v04::SpanSlice;
 ///
-/// let span = Span {
+/// let span = SpanSlice {
 ///     name: "test-span",
 ///     ..Default::default()
 /// };
@@ -87,7 +88,7 @@ pub fn write_to_slice<T: SpanText, S: AsRef<[Span<T>]>>(
 ///
 /// assert!(!encoded.is_empty());
 /// ```
-pub fn to_vec<T: SpanText, S: AsRef<[Span<T>]>>(traces: &[S]) -> Vec<u8> {
+pub fn to_vec<T: TraceData, S: AsRef<[Span<T>]>>(traces: &[S]) -> Vec<u8> {
     to_vec_with_capacity(traces, 0)
 }
 
@@ -106,9 +107,9 @@ pub fn to_vec<T: SpanText, S: AsRef<[Span<T>]>>(traces: &[S]) -> Vec<u8> {
 ///
 /// ```
 /// use libdd_trace_utils::msgpack_encoder::v04::to_vec_with_capacity;
-/// use libdd_trace_utils::span::Span;
+/// use libdd_trace_utils::span::v04::SpanSlice;
 ///
-/// let span = Span {
+/// let span = SpanSlice {
 ///     name: "test-span",
 ///     ..Default::default()
 /// };
@@ -117,7 +118,7 @@ pub fn to_vec<T: SpanText, S: AsRef<[Span<T>]>>(traces: &[S]) -> Vec<u8> {
 ///
 /// assert!(encoded.capacity() >= 1024);
 /// ```
-pub fn to_vec_with_capacity<T: SpanText, S: AsRef<[Span<T>]>>(
+pub fn to_vec_with_capacity<T: TraceData, S: AsRef<[Span<T>]>>(
     traces: &[S],
     capacity: u32,
 ) -> Vec<u8> {
@@ -165,9 +166,9 @@ impl std::io::Write for CountLength {
 ///
 /// ```
 /// use libdd_trace_utils::msgpack_encoder::v04::to_len;
-/// use libdd_trace_utils::span::Span;
+/// use libdd_trace_utils::span::v04::SpanSlice;
 ///
-/// let span = Span {
+/// let span = SpanSlice {
 ///     name: "test-span",
 ///     ..Default::default()
 /// };
@@ -176,7 +177,7 @@ impl std::io::Write for CountLength {
 ///
 /// assert!(encoded_len > 0);
 /// ```
-pub fn to_len<T: SpanText, S: AsRef<[Span<T>]>>(traces: &[S]) -> u32 {
+pub fn to_len<T: TraceData, S: AsRef<[Span<T>]>>(traces: &[S]) -> u32 {
     let mut counter = CountLength(0);
     #[allow(clippy::expect_used)]
     to_writer(&mut counter, traces).expect("infallible: CountLength never fails");

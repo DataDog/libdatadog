@@ -195,7 +195,7 @@ mod tests {
     use httpmock::prelude::*;
     use httpmock::MockServer;
     use libdd_common::hyper_migration::new_default_client;
-    use libdd_trace_utils::span::{trace_utils, SpanSlice};
+    use libdd_trace_utils::span::{trace_utils, v04::SpanSlice};
     use libdd_trace_utils::test_utils::poll_for_mock_hit;
     use time::Duration;
     use time::SystemTime;

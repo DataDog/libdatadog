@@ -42,7 +42,7 @@ use libdd_trace_utils::msgpack_decoder;
 use libdd_trace_utils::send_with_retry::{
     send_with_retry, RetryStrategy, SendWithRetryError, SendWithRetryResult,
 };
-use libdd_trace_utils::span::{Span, SpanText};
+use libdd_trace_utils::span::{v04::Span, TraceData};
 use libdd_trace_utils::trace_utils::TracerHeaderTags;
 use std::io;
 use std::sync::{Arc, Mutex};
@@ -587,7 +587,7 @@ impl TraceExporter {
     /// # Returns
     /// * Ok(String): The response from the agent
     /// * Err(TraceExporterError): An error detailing what went wrong in the process
-    pub fn send_trace_chunks<T: SpanText>(
+    pub fn send_trace_chunks<T: TraceData>(
         &self,
         trace_chunks: Vec<Vec<Span<T>>>,
     ) -> Result<AgentResponse, TraceExporterError> {
@@ -604,7 +604,7 @@ impl TraceExporter {
     /// # Returns
     /// * Ok(String): The response from the agent
     /// * Err(TraceExporterError): An error detailing what went wrong in the process
-    pub async fn send_trace_chunks_async<T: SpanText>(
+    pub async fn send_trace_chunks_async<T: TraceData>(
         &self,
         trace_chunks: Vec<Vec<Span<T>>>,
     ) -> Result<AgentResponse, TraceExporterError> {
@@ -650,6 +650,7 @@ impl TraceExporter {
         mp_payload: Vec<u8>,
         headers: HashMap<&'static str, String>,
         chunks: usize,
+        chunks_dropped_p0: usize,
     ) -> Result<AgentResponse, TraceExporterError> {
         let strategy = RetryStrategy::default();
         let payload_len = mp_payload.len();
@@ -679,6 +680,7 @@ impl TraceExporter {
                 &result,
                 payload_len as u64,
                 chunks as u64,
+                chunks_dropped_p0 as u64,
             )) {
                 error!(?e, "Error sending telemetry");
             }
@@ -687,14 +689,14 @@ impl TraceExporter {
         self.handle_send_result(result, chunks, payload_len).await
     }
 
-    async fn send_trace_chunks_inner<T: SpanText>(
+    async fn send_trace_chunks_inner<T: TraceData>(
         &self,
         mut traces: Vec<Vec<Span<T>>>,
     ) -> Result<AgentResponse, TraceExporterError> {
         let mut header_tags: TracerHeaderTags = self.metadata.borrow().into();
 
         // Process stats computation
-        stats::process_traces_for_stats(
+        let dropped_p0_stats = stats::process_traces_for_stats(
             &mut traces,
             &mut header_tags,
             &self.client_side_stats,
@@ -717,6 +719,7 @@ impl TraceExporter {
             prepared.data,
             prepared.headers,
             prepared.chunk_count,
+            dropped_p0_stats.dropped_p0_traces,
         )
         .await
     }
@@ -1012,8 +1015,8 @@ mod tests {
     use httpmock::MockServer;
     use libdd_tinybytes::BytesString;
     use libdd_trace_utils::msgpack_encoder;
+    use libdd_trace_utils::span::v04::SpanBytes;
     use libdd_trace_utils::span::v05;
-    use libdd_trace_utils::span::SpanBytes;
     use std::collections::HashMap;
     use std::net;
     use std::time::Duration;
@@ -2024,7 +2027,7 @@ mod single_threaded_tests {
     use crate::agent_info;
     use httpmock::prelude::*;
     use libdd_trace_utils::msgpack_encoder;
-    use libdd_trace_utils::span::SpanBytes;
+    use libdd_trace_utils::span::v04::SpanBytes;
     use std::time::Duration;
     use tokio::time::sleep;
 

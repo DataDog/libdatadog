@@ -301,7 +301,7 @@ fn encode_grouped_stats(key: OwnedAggregationKey, group: GroupedStats) -> pb::Cl
 
 #[cfg(test)]
 mod tests {
-    use libdd_trace_utils::span::{SpanBytes, SpanSlice};
+    use libdd_trace_utils::span::v04::{SpanBytes, SpanSlice};
 
     use super::*;
     use std::{collections::HashMap, hash::Hash};

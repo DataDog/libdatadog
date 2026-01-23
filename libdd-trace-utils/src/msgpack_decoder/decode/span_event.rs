@@ -1,10 +1,13 @@
 // Copyright 2025-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+use crate::msgpack_decoder::decode::buffer::Buffer;
 use crate::msgpack_decoder::decode::error::DecodeError;
-use crate::msgpack_decoder::decode::number::read_number_slice;
-use crate::msgpack_decoder::decode::string::{handle_null_marker, read_string_ref};
-use crate::span::{AttributeAnyValueSlice, AttributeArrayValueSlice, SpanEventSlice};
+use crate::msgpack_decoder::decode::number::read_number;
+use crate::msgpack_decoder::decode::string::handle_null_marker;
+use crate::span::v04::{AttributeAnyValue, AttributeArrayValue, SpanEvent};
+use crate::span::DeserializableTraceData;
+use std::borrow::Borrow;
 use std::collections::HashMap;
 use std::str::FromStr;
 
@@ -24,18 +27,18 @@ use std::str::FromStr;
 /// This function will return an error if:
 /// - The marker for the array length cannot be read.
 /// - Any `SpanEvent` cannot be decoded.
-pub(crate) fn read_span_events<'a>(
-    buf: &mut &'a [u8],
-) -> Result<Vec<SpanEventSlice<'a>>, DecodeError> {
+pub(crate) fn read_span_events<T: DeserializableTraceData>(
+    buf: &mut Buffer<T>,
+) -> Result<Vec<SpanEvent<T>>, DecodeError> {
     if handle_null_marker(buf) {
         return Ok(Vec::default());
     }
 
-    let len = rmp::decode::read_array_len(buf).map_err(|_| {
+    let len = rmp::decode::read_array_len(buf.as_mut_slice()).map_err(|_| {
         DecodeError::InvalidType("Unable to get array len for span events".to_owned())
     })?;
 
-    let mut vec: Vec<SpanEventSlice> = Vec::with_capacity(len as usize);
+    let mut vec: Vec<SpanEvent<T>> = Vec::with_capacity(len as usize);
     for _ in 0..len {
         vec.push(decode_span_event(buf)?);
     }
@@ -63,15 +66,17 @@ impl FromStr for SpanEventKey {
     }
 }
 
-fn decode_span_event<'a>(buf: &mut &'a [u8]) -> Result<SpanEventSlice<'a>, DecodeError> {
-    let mut event = SpanEventSlice::default();
-    let event_size = rmp::decode::read_map_len(buf)
+fn decode_span_event<T: DeserializableTraceData>(
+    buf: &mut Buffer<T>,
+) -> Result<SpanEvent<T>, DecodeError> {
+    let mut event = SpanEvent::default();
+    let event_size = rmp::decode::read_map_len(buf.as_mut_slice())
         .map_err(|_| DecodeError::InvalidType("Unable to get map len for event size".to_owned()))?;
 
     for _ in 0..event_size {
-        match read_string_ref(buf)?.parse::<SpanEventKey>()? {
-            SpanEventKey::TimeUnixNano => event.time_unix_nano = read_number_slice(buf)?,
-            SpanEventKey::Name => event.name = read_string_ref(buf)?,
+        match buf.read_string()?.borrow().parse::<SpanEventKey>()? {
+            SpanEventKey::TimeUnixNano => event.time_unix_nano = read_number(buf)?,
+            SpanEventKey::Name => event.name = buf.read_string()?,
             SpanEventKey::Attributes => event.attributes = read_attributes_map(buf)?,
         }
     }
@@ -79,16 +84,16 @@ fn decode_span_event<'a>(buf: &mut &'a [u8]) -> Result<SpanEventSlice<'a>, Decod
     Ok(event)
 }
 
-fn read_attributes_map<'a>(
-    buf: &mut &'a [u8],
-) -> Result<HashMap<&'a str, AttributeAnyValueSlice<'a>>, DecodeError> {
-    let len = rmp::decode::read_map_len(buf)
+fn read_attributes_map<T: DeserializableTraceData>(
+    buf: &mut Buffer<T>,
+) -> Result<HashMap<T::Text, AttributeAnyValue<T>>, DecodeError> {
+    let len = rmp::decode::read_map_len(buf.as_mut_slice())
         .map_err(|_| DecodeError::InvalidType("Unable to get map len for attributes".to_owned()))?;
 
     #[allow(clippy::expect_used)]
     let mut map = HashMap::with_capacity(len.try_into().expect("Unable to cast map len to usize"));
     for _ in 0..len {
-        let key = read_string_ref(buf)?;
+        let key = buf.read_string()?;
         let value = decode_attribute_any(buf)?;
         map.insert(key, value);
     }
@@ -121,9 +126,11 @@ impl FromStr for AttributeAnyKey {
     }
 }
 
-fn decode_attribute_any<'a>(buf: &mut &'a [u8]) -> Result<AttributeAnyValueSlice<'a>, DecodeError> {
-    let mut attribute: Option<AttributeAnyValueSlice> = None;
-    let attribute_size = rmp::decode::read_map_len(buf).map_err(|_| {
+fn decode_attribute_any<T: DeserializableTraceData>(
+    buf: &mut Buffer<T>,
+) -> Result<AttributeAnyValue<T>, DecodeError> {
+    let mut attribute: Option<AttributeAnyValue<T>> = None;
+    let attribute_size = rmp::decode::read_map_len(buf.as_mut_slice()).map_err(|_| {
         DecodeError::InvalidType("Unable to get map len for attribute size".to_owned())
     })?;
 
@@ -135,15 +142,15 @@ fn decode_attribute_any<'a>(buf: &mut &'a [u8]) -> Result<AttributeAnyValueSlice
     let mut attribute_type: Option<u8> = None;
 
     for _ in 0..attribute_size {
-        match read_string_ref(buf)?.parse::<AttributeAnyKey>()? {
-            AttributeAnyKey::Type => attribute_type = Some(read_number_slice(buf)?),
+        match buf.read_string()?.borrow().parse::<AttributeAnyKey>()? {
+            AttributeAnyKey::Type => attribute_type = Some(read_number(buf)?),
             AttributeAnyKey::SingleValue(key) => {
-                attribute = Some(AttributeAnyValueSlice::SingleValue(get_attribute_from_key(
+                attribute = Some(AttributeAnyValue::SingleValue(get_attribute_from_key(
                     buf, key,
                 )?))
             }
             AttributeAnyKey::ArrayValue => {
-                attribute = Some(AttributeAnyValueSlice::Array(read_attributes_array(buf)?))
+                attribute = Some(AttributeAnyValue::Array(read_attributes_array(buf)?))
             }
         }
     }
@@ -168,14 +175,14 @@ fn decode_attribute_any<'a>(buf: &mut &'a [u8]) -> Result<AttributeAnyValueSlice
     }
 }
 
-fn read_attributes_array<'a>(
-    buf: &mut &'a [u8],
-) -> Result<Vec<AttributeArrayValueSlice<'a>>, DecodeError> {
+fn read_attributes_array<T: DeserializableTraceData>(
+    buf: &mut Buffer<T>,
+) -> Result<Vec<AttributeArrayValue<T>>, DecodeError> {
     if handle_null_marker(buf) {
         return Ok(Vec::default());
     }
 
-    let map_len = rmp::decode::read_map_len(buf).map_err(|_| {
+    let map_len = rmp::decode::read_map_len(buf.as_mut_slice()).map_err(|_| {
         DecodeError::InvalidType(
             "Unable to get map len for event attributes array_value object".to_owned(),
         )
@@ -187,20 +194,20 @@ fn read_attributes_array<'a>(
         ));
     }
 
-    let key = read_string_ref(buf)?;
-    if key != "values" {
+    let key = buf.read_string()?;
+    if key.borrow() != "values" {
         return Err(DecodeError::InvalidFormat(
             "Expected 'values' field in event attributes array_value object".to_owned(),
         ));
     }
 
-    let len = rmp::decode::read_array_len(buf).map_err(|_| {
+    let len = rmp::decode::read_array_len(buf.as_mut_slice()).map_err(|_| {
         DecodeError::InvalidType(
             "Unable to get array len for event attributes values field".to_owned(),
         )
     })?;
 
-    let mut vec: Vec<AttributeArrayValueSlice> = Vec::with_capacity(len as usize);
+    let mut vec: Vec<AttributeArrayValue<T>> = Vec::with_capacity(len as usize);
     if len > 0 {
         let first = decode_attribute_array(buf, None)?;
         let array_type = (&first).into();
@@ -238,41 +245,35 @@ impl FromStr for AttributeArrayKey {
     }
 }
 
-fn get_attribute_from_key<'a>(
-    buf: &mut &'a [u8],
+fn get_attribute_from_key<T: DeserializableTraceData>(
+    buf: &mut Buffer<T>,
     key: AttributeArrayKey,
-) -> Result<AttributeArrayValueSlice<'a>, DecodeError> {
+) -> Result<AttributeArrayValue<T>, DecodeError> {
     match key {
-        AttributeArrayKey::StringValue => {
-            Ok(AttributeArrayValueSlice::String(read_string_ref(buf)?))
-        }
+        AttributeArrayKey::StringValue => Ok(AttributeArrayValue::String(buf.read_string()?)),
         AttributeArrayKey::BoolValue => {
-            let boolean = rmp::decode::read_bool(buf);
+            let boolean = rmp::decode::read_bool(buf.as_mut_slice());
             if let Ok(value) = boolean {
                 match value {
-                    true => Ok(AttributeArrayValueSlice::Boolean(true)),
-                    false => Ok(AttributeArrayValueSlice::Boolean(false)),
+                    true => Ok(AttributeArrayValue::Boolean(true)),
+                    false => Ok(AttributeArrayValue::Boolean(false)),
                 }
             } else {
                 Err(DecodeError::InvalidType("Invalid boolean field".to_owned()))
             }
         }
-        AttributeArrayKey::IntValue => {
-            Ok(AttributeArrayValueSlice::Integer(read_number_slice(buf)?))
-        }
-        AttributeArrayKey::DoubleValue => {
-            Ok(AttributeArrayValueSlice::Double(read_number_slice(buf)?))
-        }
+        AttributeArrayKey::IntValue => Ok(AttributeArrayValue::Integer(read_number(buf)?)),
+        AttributeArrayKey::DoubleValue => Ok(AttributeArrayValue::Double(read_number(buf)?)),
         _ => Err(DecodeError::InvalidFormat("Invalid attribute".to_owned())),
     }
 }
 
-fn decode_attribute_array<'a>(
-    buf: &mut &'a [u8],
+fn decode_attribute_array<T: DeserializableTraceData>(
+    buf: &mut Buffer<T>,
     array_type: Option<u8>,
-) -> Result<AttributeArrayValueSlice<'a>, DecodeError> {
-    let mut attribute: Option<AttributeArrayValueSlice> = None;
-    let attribute_size = rmp::decode::read_map_len(buf).map_err(|_| {
+) -> Result<AttributeArrayValue<T>, DecodeError> {
+    let mut attribute: Option<AttributeArrayValue<T>> = None;
+    let attribute_size = rmp::decode::read_map_len(buf.as_mut_slice()).map_err(|_| {
         DecodeError::InvalidType("Unable to get map len for attribute size".to_owned())
     })?;
 
@@ -284,8 +285,8 @@ fn decode_attribute_array<'a>(
     let mut attribute_type: Option<u8> = None;
 
     for _ in 0..attribute_size {
-        match read_string_ref(buf)?.parse::<AttributeArrayKey>()? {
-            AttributeArrayKey::Type => attribute_type = Some(read_number_slice(buf)?),
+        match buf.read_string()?.borrow().parse::<AttributeArrayKey>()? {
+            AttributeArrayKey::Type => attribute_type = Some(read_number(buf)?),
             key => attribute = Some(get_attribute_from_key(buf, key)?),
         }
     }
