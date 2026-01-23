@@ -554,7 +554,7 @@ mod tests {
         // Test that when two Set actions are compared, the one with lower log level wins
         let send_action = ReturnAction::Send(AgentTaskFile {
             args: AgentTask {
-                case_id: NonZeroU64::new(123).unwrap(),
+                case_id: "123".to_string(),
                 hostname: "test-host".to_string(),
                 user_handle: "test@example.com".to_string(),
             },
@@ -642,7 +642,7 @@ mod tests {
 
         let task = AgentTaskFile {
             args: AgentTask {
-                case_id: NonZeroU64::new(123).unwrap(),
+                case_id: "123".to_string(),
                 hostname: "test-host".to_string(),
                 user_handle: "test@example.com".to_string(),
             },

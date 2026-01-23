@@ -152,7 +152,7 @@ fn generate_payload(
     mut zip: File,
     language: &String,
     log_level: &LogLevel,
-    case_id: &NonZeroU64,
+    case_id: &String,
     hostname: &String,
     user_handle: &String,
     uuid: &String,
@@ -170,7 +170,7 @@ fn generate_payload(
     };
 
     add_part("source", format!("tracer_{language}").as_bytes());
-    add_part("case_id", case_id.to_string().as_bytes());
+    add_part("case_id", case_id.as_bytes());
     add_part("hostname", hostname.as_bytes());
     add_part("email", user_handle.as_bytes());
     add_part("uuid", uuid.as_bytes());
