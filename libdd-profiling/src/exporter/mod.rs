@@ -10,5 +10,5 @@ mod profile_exporter;
 pub mod utils;
 
 pub use errors::SendError;
-pub use exporter_manager::{ExporterManager, SuspendedExporterManager};
+pub use exporter_manager::ExporterManager;
 pub use profile_exporter::*;

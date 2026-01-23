@@ -8,7 +8,6 @@
 use crate::api;
 use crate::exporter;
 use crate::internal;
-use anyhow::Context;
 
 // ============================================================================
 // CXX Bridge - C++ Bindings
@@ -76,7 +75,6 @@ pub mod ffi {
         type Profile;
         type ProfileExporter;
         type ExporterManager;
-        type SuspendedExporterManager;
         type CancellationToken;
 
         // CancellationToken factory and methods
@@ -238,25 +236,21 @@ pub mod ffi {
             info: &str,
         ) -> Result<()>;
 
-        /// Abort the manager, stopping the worker thread and returning inflight requests
-        /// Note: This consumes the manager - it cannot be used after calling abort
-        fn abort(self: &mut ExporterManager) -> Result<Box<SuspendedExporterManager>>;
+        /// Abort the manager, stopping the worker thread
+        /// Transitions the manager from Active to Suspended state
+        fn abort(self: &mut ExporterManager) -> Result<()>;
 
         /// Prefork: suspend the manager before forking
-        /// Note: This consumes the manager - it cannot be used after calling prefork
-        fn prefork(self: &mut ExporterManager) -> Result<Box<SuspendedExporterManager>>;
+        /// Transitions the manager from Active to Suspended state
+        fn prefork(self: &mut ExporterManager) -> Result<()>;
 
-        // SuspendedExporterManager methods
-        /// Postfork child: create a new manager, discarding inflight requests
-        #[Self = "ExporterManager"]
-        fn postfork_child(suspended: Box<SuspendedExporterManager>)
-            -> Result<Box<ExporterManager>>;
+        /// Postfork child: reinitialize manager in child process, discarding inflight requests
+        /// Transitions the manager from Suspended to Active state
+        fn postfork_child(self: &mut ExporterManager) -> Result<()>;
 
-        /// Postfork parent: create a new manager and re-queue inflight requests
-        #[Self = "ExporterManager"]
-        fn postfork_parent(
-            suspended: Box<SuspendedExporterManager>,
-        ) -> Result<Box<ExporterManager>>;
+        /// Postfork parent: reinitialize manager in parent process and re-queue inflight requests
+        /// Transitions the manager from Suspended to Active state
+        fn postfork_parent(self: &mut ExporterManager) -> Result<()>;
     }
 }
 
@@ -773,13 +767,13 @@ impl ProfileExporter {
 // ============================================================================
 
 pub struct ExporterManager {
-    inner: Option<exporter::ExporterManager>,
+    inner: exporter::ExporterManager,
 }
 
 impl ExporterManager {
     pub fn new_manager(exporter: Box<ProfileExporter>) -> anyhow::Result<Box<ExporterManager>> {
         let inner = exporter::ExporterManager::new(exporter.inner)?;
-        Ok(Box::new(ExporterManager { inner: Some(inner) }))
+        Ok(Box::new(ExporterManager { inner }))
     }
 
     /// Queue a profile to be sent asynchronously by the background worker thread.
@@ -796,11 +790,6 @@ impl ExporterManager {
         internal_metadata: &str,
         info: &str,
     ) -> anyhow::Result<()> {
-        let manager = self
-            .inner
-            .as_ref()
-            .context("ExporterManager has been consumed (abort/prefork already called)")?;
-
         let (
             encoded,
             files_to_compress_vec,
@@ -817,7 +806,7 @@ impl ExporterManager {
             info,
         )?;
 
-        manager.queue(
+        self.inner.queue(
             encoded,
             &files_to_compress_vec,
             &additional_tags_vec,
@@ -829,47 +818,21 @@ impl ExporterManager {
         Ok(())
     }
 
-    pub fn abort(&mut self) -> anyhow::Result<Box<SuspendedExporterManager>> {
-        let manager = self
-            .inner
-            .take()
-            .context("ExporterManager has already been consumed")?;
-
-        let suspended = manager.abort()?;
-        Ok(Box::new(SuspendedExporterManager { inner: suspended }))
+    pub fn abort(&mut self) -> anyhow::Result<()> {
+        self.inner.abort()
     }
 
-    pub fn prefork(&mut self) -> anyhow::Result<Box<SuspendedExporterManager>> {
-        let manager = self
-            .inner
-            .take()
-            .context("ExporterManager has already been consumed")?;
-
-        let suspended = manager.prefork()?;
-        Ok(Box::new(SuspendedExporterManager { inner: suspended }))
+    pub fn prefork(&mut self) -> anyhow::Result<()> {
+        self.inner.prefork()
     }
 
-    pub fn postfork_child(
-        suspended: Box<SuspendedExporterManager>,
-    ) -> anyhow::Result<Box<ExporterManager>> {
-        let inner = exporter::ExporterManager::postfork_child(suspended.inner)?;
-        Ok(Box::new(ExporterManager { inner: Some(inner) }))
+    pub fn postfork_child(&mut self) -> anyhow::Result<()> {
+        self.inner.postfork_child()
     }
 
-    pub fn postfork_parent(
-        suspended: Box<SuspendedExporterManager>,
-    ) -> anyhow::Result<Box<ExporterManager>> {
-        let inner = exporter::ExporterManager::postfork_parent(suspended.inner)?;
-        Ok(Box::new(ExporterManager { inner: Some(inner) }))
+    pub fn postfork_parent(&mut self) -> anyhow::Result<()> {
+        self.inner.postfork_parent()
     }
-}
-
-// ============================================================================
-// SuspendedExporterManager - Wrapper around exporter::SuspendedExporterManager
-// ============================================================================
-
-pub struct SuspendedExporterManager {
-    inner: exporter::SuspendedExporterManager,
 }
 
 #[cfg(test)]
@@ -1240,8 +1203,8 @@ mod tests {
         let exporter = create_test_exporter();
         let mut manager = ExporterManager::new_manager(exporter).unwrap();
 
-        // Abort immediately - should return suspended manager
-        let _suspended = manager.abort().unwrap();
+        // Abort immediately
+        manager.abort().unwrap();
     }
 
     #[test]
@@ -1277,16 +1240,16 @@ mod tests {
             .unwrap();
 
         // Prefork
-        let suspended = manager.prefork().unwrap();
+        manager.prefork().unwrap();
 
         // Postfork parent - should re-queue inflight
-        let mut parent_manager = ExporterManager::postfork_parent(suspended).unwrap();
+        manager.postfork_parent().unwrap();
 
         // Give time for processing
         std::thread::sleep(std::time::Duration::from_millis(100));
 
         // Abort parent
-        let _parent_suspended = parent_manager.abort().unwrap();
+        manager.abort().unwrap();
     }
 
     #[test]
@@ -1302,20 +1265,20 @@ mod tests {
             .unwrap();
 
         // Prefork
-        let suspended = manager.prefork().unwrap();
+        manager.prefork().unwrap();
 
         // Postfork child - should discard inflight
-        let mut child_manager = ExporterManager::postfork_child(suspended).unwrap();
+        manager.postfork_child().unwrap();
 
         // Child can queue its own work
         let mut child_profile = create_test_profile();
         child_profile.add_sample(&create_test_sample()).unwrap();
-        child_manager
+        manager
             .queue_profile(&mut child_profile, vec![], vec![], "", "", "")
             .unwrap();
 
         std::thread::sleep(std::time::Duration::from_millis(100));
-        let _child_suspended = child_manager.abort().unwrap();
+        manager.abort().unwrap();
     }
 
     #[test]
@@ -1324,7 +1287,7 @@ mod tests {
         let mut manager = ExporterManager::new_manager(exporter).unwrap();
 
         // Abort the manager
-        let _suspended = manager.abort().unwrap();
+        manager.abort().unwrap();
 
         // Trying to queue after abort should fail
         let mut profile = create_test_profile();

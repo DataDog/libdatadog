@@ -120,7 +120,7 @@ int main(int argc, char *argv[]) {
         sleep(1);
 
         // Abort the manager (stops worker thread)
-        auto suspended = manager->abort();
+        manager->abort();
         std::cout << "✓ Aborted manager (worker thread stopped)" << std::endl;
 
         std::cout << std::endl;
@@ -172,7 +172,7 @@ int main(int argc, char *argv[]) {
         std::cout << "✓ Queued profile (may be inflight during fork)" << std::endl;
 
         // Call prefork before forking
-        auto suspended2 = manager2->prefork();
+        manager2->prefork();
         std::cout << "✓ Called prefork (worker thread stopped, ready to fork)" << std::endl;
 
         pid_t pid = fork();
@@ -186,9 +186,9 @@ int main(int argc, char *argv[]) {
             // Child process
             std::cout << "[CHILD] ✓ In child process (PID: " << getpid() << ")" << std::endl;
 
-            // Call postfork_child to create a new manager
-            auto child_manager = ExporterManager::postfork_child(std::move(suspended2));
-            std::cout << "[CHILD] ✓ Created new manager (inflight requests discarded)" << std::endl;
+            // Call postfork_child to restart the manager
+            manager2->postfork_child();
+            std::cout << "[CHILD] ✓ Restarted manager (inflight requests discarded)" << std::endl;
 
             // Child can now use the manager independently
             // Add another sample in the child
@@ -211,12 +211,12 @@ int main(int argc, char *argv[]) {
                 }
             });
 
-            child_manager->queue_profile(*profile2, {}, {}, "", "", "");
+            manager2->queue_profile(*profile2, {}, {}, "", "", "");
             std::cout << "[CHILD] ✓ Queued child-specific profile" << std::endl;
 
             sleep(1);
 
-            auto child_suspended = child_manager->abort();
+            manager2->abort();
             std::cout << "[CHILD] ✓ Cleaned up and exiting" << std::endl;
             
             exit(0);
@@ -225,9 +225,9 @@ int main(int argc, char *argv[]) {
             std::cout << "[PARENT] ✓ In parent process (PID: " << getpid() 
                       << ", child PID: " << pid << ")" << std::endl;
 
-            // Call postfork_parent to create a new manager with inflight requests
-            auto parent_manager = ExporterManager::postfork_parent(std::move(suspended2));
-            std::cout << "[PARENT] ✓ Created new manager (inflight requests re-queued)" << std::endl;
+            // Call postfork_parent to restart the manager with inflight requests
+            manager2->postfork_parent();
+            std::cout << "[PARENT] ✓ Restarted manager (inflight requests re-queued)" << std::endl;
 
             // Parent continues profiling
             profile2->add_sample(Sample{
@@ -249,7 +249,7 @@ int main(int argc, char *argv[]) {
                 }
             });
 
-            parent_manager->queue_profile(*profile2, {}, {}, "", "", "");
+            manager2->queue_profile(*profile2, {}, {}, "", "", "");
             std::cout << "[PARENT] ✓ Queued parent-specific profile" << std::endl;
 
             // Wait for child to finish
@@ -259,7 +259,7 @@ int main(int argc, char *argv[]) {
 
             sleep(1);
 
-            auto parent_suspended = parent_manager->abort();
+            manager2->abort();
             std::cout << "[PARENT] ✓ Cleaned up" << std::endl;
         }
 

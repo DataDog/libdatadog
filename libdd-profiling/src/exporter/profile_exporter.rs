@@ -38,6 +38,7 @@ use tokio_util::sync::CancellationToken;
 use crate::internal::{EncodedProfile, Profile};
 use crate::profiles::{Compressor, DefaultProfileCodec};
 
+#[derive(Debug)]
 pub struct ProfileExporter {
     client: reqwest::Client,
     family: String,
@@ -47,6 +48,7 @@ pub struct ProfileExporter {
     runtime: Option<Runtime>,
 }
 
+#[derive(Debug)]
 pub struct File<'a> {
     pub name: &'a str,
     pub bytes: &'a [u8],

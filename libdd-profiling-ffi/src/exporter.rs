@@ -11,7 +11,7 @@ use libdd_common_ffi::{
     wrap_with_ffi_result, wrap_with_void_ffi_result, Handle, Result, ToInner, VoidResult,
 };
 use libdd_profiling::exporter;
-use libdd_profiling::exporter::{ExporterManager, ProfileExporter, SuspendedExporterManager};
+use libdd_profiling::exporter::{ExporterManager, ProfileExporter};
 use libdd_profiling::internal::EncodedProfile;
 use std::borrow::Cow;
 use std::str::FromStr;
@@ -434,11 +434,8 @@ pub unsafe extern "C" fn ddog_prof_ExporterManager_queue(
 #[named]
 pub unsafe extern "C" fn ddog_prof_ExporterManager_abort(
     mut manager: *mut Handle<ExporterManager>,
-) -> Result<Handle<SuspendedExporterManager>> {
-    wrap_with_ffi_result!({
-        let manager = *manager.take()?;
-        anyhow::Ok(manager.abort()?.into())
-    })
+) -> VoidResult {
+    wrap_with_void_ffi_result!({ manager.to_inner_mut()?.abort()? })
 }
 
 /// Suspends the manager before forking (prefork).
@@ -455,11 +452,8 @@ pub unsafe extern "C" fn ddog_prof_ExporterManager_abort(
 #[named]
 pub unsafe extern "C" fn ddog_prof_ExporterManager_prefork(
     mut manager: *mut Handle<ExporterManager>,
-) -> Result<Handle<SuspendedExporterManager>> {
-    wrap_with_ffi_result!({
-        let manager = *manager.take()?;
-        anyhow::Ok(manager.prefork()?.into())
-    })
+) -> VoidResult {
+    wrap_with_void_ffi_result!({ manager.to_inner_mut()?.prefork()? })
 }
 
 /// Creates a new manager in the child process after forking (postfork_child).
@@ -467,20 +461,17 @@ pub unsafe extern "C" fn ddog_prof_ExporterManager_prefork(
 /// Inflight requests from the parent are discarded in the child.
 ///
 /// # Arguments
-/// * `suspended` - Takes ownership of the SuspendedExporterManager.
+/// * `suspended` - Takes ownership of the suspended ExporterManager.
 ///
 /// # Safety
-/// The `suspended` must point to a valid SuspendedExporterManager that has not been dropped.
+/// The `suspended` must point to a valid suspended ExporterManager that has not been dropped.
 #[no_mangle]
 #[must_use]
 #[named]
 pub unsafe extern "C" fn ddog_prof_ExporterManager_postfork_child(
-    mut suspended: *mut Handle<SuspendedExporterManager>,
-) -> Result<Handle<ExporterManager>> {
-    wrap_with_ffi_result!({
-        let suspended = *suspended.take()?;
-        anyhow::Ok(ExporterManager::postfork_child(suspended)?.into())
-    })
+    mut suspended: *mut Handle<ExporterManager>,
+) -> VoidResult {
+    wrap_with_void_ffi_result!({ suspended.to_inner_mut()?.postfork_child()? })
 }
 
 /// Creates a new manager in the parent process after forking (postfork_parent).
@@ -488,20 +479,17 @@ pub unsafe extern "C" fn ddog_prof_ExporterManager_postfork_child(
 /// Inflight requests from before the fork are re-queued in the new manager.
 ///
 /// # Arguments
-/// * `suspended` - Takes ownership of the SuspendedExporterManager.
+/// * `suspended` - Takes ownership of the suspended ExporterManager.
 ///
 /// # Safety
-/// The `suspended` must point to a valid SuspendedExporterManager that has not been dropped.
+/// The `suspended` must point to a valid suspended ExporterManager that has not been dropped.
 #[no_mangle]
 #[must_use]
 #[named]
 pub unsafe extern "C" fn ddog_prof_ExporterManager_postfork_parent(
-    mut suspended: *mut Handle<SuspendedExporterManager>,
-) -> Result<Handle<ExporterManager>> {
-    wrap_with_ffi_result!({
-        let suspended = *suspended.take()?;
-        anyhow::Ok(ExporterManager::postfork_parent(suspended)?.into())
-    })
+    mut suspended: *mut Handle<ExporterManager>,
+) -> VoidResult {
+    wrap_with_void_ffi_result!({ suspended.to_inner_mut()?.postfork_parent()? })
 }
 
 /// # Safety
@@ -511,17 +499,6 @@ pub unsafe extern "C" fn ddog_prof_ExporterManager_postfork_parent(
 #[no_mangle]
 pub unsafe extern "C" fn ddog_prof_ExporterManager_drop(mut manager: *mut Handle<ExporterManager>) {
     drop(manager.take())
-}
-
-/// # Safety
-/// The `suspended` may be null, but if non-null the pointer must point to a
-/// valid `SuspendedExporterManager` object made by the Rust Global allocator
-/// that has not already been dropped.
-#[no_mangle]
-pub unsafe extern "C" fn ddog_prof_SuspendedExporterManager_drop(
-    mut suspended: *mut Handle<SuspendedExporterManager>,
-) {
-    drop(suspended.take())
 }
 
 #[cfg(test)]
@@ -671,11 +648,11 @@ mod tests {
         }
         .unwrap();
 
-        // Abort the manager
-        let mut suspended = unsafe { ddog_prof_ExporterManager_abort(&mut manager) }.unwrap();
+        // Abort the manager (mutates in place to suspended state)
+        unsafe { ddog_prof_ExporterManager_abort(&mut manager) }.unwrap();
 
-        // Drop suspended manager
-        unsafe { ddog_prof_SuspendedExporterManager_drop(&mut suspended) };
+        // Drop manager
+        unsafe { ddog_prof_ExporterManager_drop(&mut manager) };
     }
 
     #[test]
@@ -696,14 +673,13 @@ mod tests {
         let mut manager = unsafe { ddog_prof_ExporterManager_new(&mut exporter) }.unwrap();
 
         // Prefork
-        let mut suspended = unsafe { ddog_prof_ExporterManager_prefork(&mut manager) }.unwrap();
+        unsafe { ddog_prof_ExporterManager_prefork(&mut manager) }.unwrap();
 
         // Postfork child
-        let mut child_manager =
-            unsafe { ddog_prof_ExporterManager_postfork_child(&mut suspended) }.unwrap();
+        unsafe { ddog_prof_ExporterManager_postfork_child(&mut manager) }.unwrap();
 
         // Drop child manager
-        unsafe { ddog_prof_ExporterManager_drop(&mut child_manager) };
+        unsafe { ddog_prof_ExporterManager_drop(&mut manager) };
     }
 
     #[test]

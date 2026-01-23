@@ -10,32 +10,22 @@ use reqwest::RequestBuilder;
 use std::thread::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
-pub struct ExporterManager {
-    cancel: CancellationToken,
-    exporter: ProfileExporter,
-    handle: JoinHandle<anyhow::Result<()>>,
-    sender: Sender<RequestBuilder>,
-    receiver: Receiver<RequestBuilder>,
-}
-
-pub struct SuspendedExporterManager {
-    exporter: ProfileExporter,
-    inflight: Vec<RequestBuilder>,
-}
-
-impl SuspendedExporterManager {
-    /// Returns the number of inflight (unprocessed) requests
-    ///
-    /// This is primarily useful for testing and observability.
-    #[cfg(test)]
-    pub fn inflight_count(&self) -> usize {
-        self.inflight.len()
-    }
-
-    /// Consumes the suspended manager and returns the inner components
-    fn into_parts(self) -> (ProfileExporter, Vec<RequestBuilder>) {
-        (self.exporter, self.inflight)
-    }
+#[derive(Debug)]
+pub enum ExporterManager {
+    Active {
+        cancel: CancellationToken,
+        exporter: ProfileExporter,
+        handle: JoinHandle<anyhow::Result<()>>,
+        sender: Sender<RequestBuilder>,
+        receiver: Receiver<RequestBuilder>,
+    },
+    Suspended {
+        exporter: ProfileExporter,
+        inflight: Vec<RequestBuilder>,
+    },
+    /// Temporary state used during transitions between Active and Suspended.
+    /// The manager should never be left in this state.
+    Transitioning,
 }
 
 impl ExporterManager {
@@ -65,7 +55,7 @@ impl ExporterManager {
             });
             Ok(())
         });
-        Ok(Self {
+        Ok(Self::Active {
             cancel,
             exporter,
             handle,
@@ -74,41 +64,79 @@ impl ExporterManager {
         })
     }
 
-    pub fn abort(self) -> anyhow::Result<SuspendedExporterManager> {
-        self.cancel.cancel();
+    pub fn abort(&mut self) -> anyhow::Result<()> {
+        let old = std::mem::replace(self, Self::Transitioning);
 
-        // Drain any pending messages from the channel before shutting down
-        let inflight: Vec<_> = self.receiver.try_iter().collect();
+        let Self::Active {
+            cancel,
+            exporter,
+            handle,
+            sender,
+            receiver,
+        } = old
+        else {
+            *self = old;
+            anyhow::bail!("Cannot abort manager in state: {:?}", self);
+        };
 
-        // Drop the sender to disconnect the channel and unblock recv() in the worker thread
-        drop(self.sender);
-        self.handle
-            .join()
-            .map_err(|_| anyhow::anyhow!("unable to join thread"))?
-            .context("worker thread returned error")?;
+        cancel.cancel();
+        let inflight: Vec<_> = receiver.try_iter().collect();
+        drop(sender);
 
-        Ok(SuspendedExporterManager {
-            exporter: self.exporter,
-            inflight,
-        })
+        match handle.join() {
+            Ok(Ok(())) => {
+                *self = Self::Suspended { exporter, inflight };
+                Ok(())
+            }
+            Ok(Err(e)) => {
+                *self = Self::Suspended { exporter, inflight };
+                Err(e).context("worker thread returned error")
+            }
+            Err(_) => {
+                *self = Self::Suspended { exporter, inflight };
+                Err(anyhow::anyhow!("unable to join thread"))
+            }
+        }
     }
 
-    pub fn prefork(self) -> anyhow::Result<SuspendedExporterManager> {
+    pub fn prefork(&mut self) -> anyhow::Result<()> {
         self.abort()
     }
 
-    pub fn postfork_child(suspended: SuspendedExporterManager) -> anyhow::Result<Self> {
-        let (exporter, _inflight) = suspended.into_parts();
-        Self::new(exporter)
+    pub fn postfork_child(&mut self) -> anyhow::Result<()> {
+        let old = std::mem::replace(self, Self::Transitioning);
+
+        let Self::Suspended { exporter, .. } = old else {
+            *self = old;
+            anyhow::bail!(
+                "postfork_child requires a suspended manager, found: {:?}",
+                self
+            );
+        };
+
+        *self = Self::new(exporter)?;
+        Ok(())
     }
 
-    pub fn postfork_parent(suspended: SuspendedExporterManager) -> anyhow::Result<Self> {
-        let (exporter, inflight) = suspended.into_parts();
-        let manager = Self::new(exporter)?;
-        for msg in inflight {
-            manager.sender.send(msg)?;
+    pub fn postfork_parent(&mut self) -> anyhow::Result<()> {
+        let old = std::mem::replace(self, Self::Transitioning);
+
+        let Self::Suspended { exporter, inflight } = old else {
+            *self = old;
+            anyhow::bail!(
+                "postfork_parent requires a suspended manager, found: {:?}",
+                self
+            );
+        };
+
+        let new_manager = Self::new(exporter)?;
+        if let Self::Active { ref sender, .. } = new_manager {
+            for msg in inflight {
+                sender.send(msg)?;
+            }
         }
-        Ok(manager)
+        *self = new_manager;
+        Ok(())
     }
 
     pub fn queue(
@@ -120,7 +148,14 @@ impl ExporterManager {
         info: Option<serde_json::Value>,
         process_tags: Option<&str>,
     ) -> anyhow::Result<()> {
-        let msg = self.exporter.build(
+        let Self::Active {
+            exporter, sender, ..
+        } = self
+        else {
+            anyhow::bail!("Cannot queue on manager in state: {:?}", self);
+        };
+
+        let msg = exporter.build(
             profile,
             additional_files,
             additional_tags,
@@ -129,8 +164,40 @@ impl ExporterManager {
             process_tags,
         )?;
         // TODO, use thiserror and get back the actual error if one.
-        self.sender.try_send(msg)?;
+        sender.try_send(msg)?;
         Ok(())
+    }
+
+    /// Returns the number of inflight (unprocessed) requests
+    ///
+    /// This is primarily useful for testing and observability.
+    #[cfg(test)]
+    pub fn inflight_count(&self) -> usize {
+        match self {
+            Self::Active { .. } => 0,
+            Self::Suspended { inflight, .. } => inflight.len(),
+            Self::Transitioning => panic!("Manager is in transitioning state"),
+        }
+    }
+
+    /// Returns whether the worker thread has finished (for testing)
+    #[cfg(test)]
+    pub fn is_finished(&self) -> bool {
+        match self {
+            Self::Active { handle, .. } => handle.is_finished(),
+            Self::Suspended { .. } => true,
+            Self::Transitioning => panic!("Manager is in transitioning state"),
+        }
+    }
+
+    /// Returns the worker thread ID (for testing)
+    #[cfg(test)]
+    pub fn thread_id(&self) -> Option<std::thread::ThreadId> {
+        match self {
+            Self::Active { handle, .. } => Some(handle.thread().id()),
+            Self::Suspended { .. } => None,
+            Self::Transitioning => panic!("Manager is in transitioning state"),
+        }
     }
 }
 
@@ -201,7 +268,7 @@ mod tests {
     #[cfg_attr(miri, ignore)]
     fn test_abort_without_queuing_unblocks_recv() {
         // This is the key fix - abort should unblock recv() by dropping the sender
-        let fixture = TestFixture::new("test_abort");
+        let mut fixture = TestFixture::new("test_abort");
         let file_path = fixture.file_path.clone();
 
         // Give the worker thread time to start and block on recv()
@@ -209,7 +276,7 @@ mod tests {
 
         // This should complete quickly by dropping sender to disconnect channel
         let start = std::time::Instant::now();
-        let suspended = fixture.manager.abort().expect("Failed to abort");
+        fixture.manager.abort().expect("Failed to abort");
         let elapsed = start.elapsed();
 
         // Should complete almost immediately (< 100ms)
@@ -227,7 +294,7 @@ mod tests {
 
         // No messages should have been in flight
         assert_eq!(
-            suspended.inflight.len(),
+            fixture.manager.inflight_count(),
             0,
             "No messages should be inflight"
         );
@@ -237,7 +304,7 @@ mod tests {
     #[cfg_attr(miri, ignore)]
     fn test_profile_actually_sent() {
         // Verify that queued profiles are actually sent by the worker thread
-        let fixture = TestFixture::new("test_sent");
+        let mut fixture = TestFixture::new("test_sent");
 
         fixture.queue_profile().expect("Failed to queue profile");
         fixture.wait_for_processing(200);
@@ -245,10 +312,10 @@ mod tests {
         // Verify the request was written
         assert!(fixture.has_request(), "Expected request to be sent");
 
-        let suspended = fixture.manager.abort().expect("Failed to abort");
+        fixture.manager.abort().expect("Failed to abort");
         // Worker thread should have processed it, so no inflight messages
         assert_eq!(
-            suspended.inflight.len(),
+            fixture.manager.inflight_count(),
             0,
             "No messages should be inflight after processing"
         );
@@ -259,7 +326,7 @@ mod tests {
     fn test_multiple_profiles_processed() {
         // Note: file dump server overwrites the file for each request,
         // so we can only verify that at least one was processed
-        let fixture = TestFixture::new("test_multiple");
+        let mut fixture = TestFixture::new("test_multiple");
 
         // Queue multiple profiles (with small delays to avoid filling the bounded channel)
         fixture
@@ -273,20 +340,20 @@ mod tests {
             "Expected at least one request to be sent"
         );
 
-        let _suspended = fixture.manager.abort().expect("Failed to abort");
+        fixture.manager.abort().expect("Failed to abort");
     }
 
     #[test]
     #[cfg_attr(miri, ignore)]
     fn test_abort_during_send_cancels_properly() {
         // Test that abort cancels in-progress sends via the cancellation token
-        let fixture = TestFixture::new("test_cancel");
+        let mut fixture = TestFixture::new("test_cancel");
 
         fixture.queue_profile().expect("Failed to queue profile");
 
         // Abort quickly (might catch during send)
         fixture.wait_for_processing(10);
-        let _suspended = fixture.manager.abort().expect("Failed to abort");
+        fixture.manager.abort().expect("Failed to abort");
 
         // Should complete without hanging
     }
@@ -295,7 +362,7 @@ mod tests {
     #[cfg_attr(miri, ignore)]
     fn test_channel_respects_bounded_size() {
         // The channel is bounded(2), verify we can queue at least 2
-        let fixture = TestFixture::new("test_bounded");
+        let mut fixture = TestFixture::new("test_bounded");
 
         // We should be able to queue at least 2 (the channel capacity)
         fixture
@@ -307,20 +374,20 @@ mod tests {
         // Verify at least one was processed
         assert!(fixture.has_request(), "At least one request should be sent");
 
-        let _suspended = fixture.manager.abort().expect("Failed to abort");
+        fixture.manager.abort().expect("Failed to abort");
     }
 
     #[test]
     #[cfg_attr(miri, ignore)]
     fn test_prefork_delegates_to_abort() {
-        let fixture = TestFixture::new("test_prefork");
+        let mut fixture = TestFixture::new("test_prefork");
         let file_path = fixture.file_path.clone();
 
         fixture.queue_profile().expect("Failed to queue profile");
         fixture.wait_for_processing(200);
 
         // Prefork should work just like abort
-        let _suspended = fixture.manager.prefork().expect("Failed to prefork");
+        fixture.manager.prefork().expect("Failed to prefork");
 
         assert!(
             file_path.exists() && std::fs::read(&file_path).unwrap().starts_with(b"POST"),
@@ -331,7 +398,7 @@ mod tests {
     #[test]
     #[cfg_attr(miri, ignore)]
     fn test_queue_with_additional_files_and_tags() {
-        let fixture = TestFixture::new("test_additional");
+        let mut fixture = TestFixture::new("test_additional");
 
         let profile = EncodedProfile::test_instance().expect("Failed to create test profile");
         let tags = vec![Tag::new("key", "value").unwrap()];
@@ -369,14 +436,14 @@ mod tests {
             "Should include custom tag"
         );
 
-        let _suspended = fixture.manager.abort().expect("Failed to abort");
+        fixture.manager.abort().expect("Failed to abort");
     }
 
     #[test]
     #[cfg_attr(miri, ignore)]
     fn test_abort_drains_unprocessed_messages() {
         // Verify that messages still in the channel are captured in inflight
-        let fixture = TestFixture::new("test_drain");
+        let mut fixture = TestFixture::new("test_drain");
 
         // Queue profiles until channel is full (bounded to 2)
         // The worker thread may or may not have started processing yet
@@ -396,19 +463,19 @@ mod tests {
         );
 
         // Abort immediately without giving time to process
-        let suspended = fixture.manager.abort().expect("Failed to abort");
+        fixture.manager.abort().expect("Failed to abort");
 
         // There should be some messages captured as inflight (worker may have processed some)
         // We queued multiple, so inflight should be > 0 unless worker was very fast
+        let inflight_count = fixture.manager.inflight_count();
         assert!(
-            suspended.inflight.len() <= queued,
+            inflight_count <= queued,
             "Inflight count should not exceed queued count"
         );
 
         eprintln!(
             "Captured {} inflight messages out of {} queued",
-            suspended.inflight.len(),
-            queued
+            inflight_count, queued
         );
     }
 
@@ -416,20 +483,20 @@ mod tests {
     #[cfg_attr(miri, ignore)]
     fn test_worker_thread_exits_on_channel_disconnect() {
         // Verify that dropping sender causes worker thread to exit cleanly
-        let fixture = TestFixture::new("test_disconnect");
-        let thread_id = fixture.manager.handle.thread().id();
+        let mut fixture = TestFixture::new("test_disconnect");
+        let thread_id = fixture.manager.thread_id().expect("Should have thread ID");
 
         fixture.wait_for_processing(50);
 
         // Verify thread is still running before we abort
         assert!(
-            !fixture.manager.handle.is_finished(),
+            !fixture.manager.is_finished(),
             "Thread should still be running before abort"
         );
 
         // Track if thread exits in reasonable time
         let start = std::time::Instant::now();
-        let _suspended = fixture.manager.abort().expect("Failed to abort");
+        fixture.manager.abort().expect("Failed to abort");
         let elapsed = start.elapsed();
 
         // Thread should exit quickly when channel disconnects
@@ -446,18 +513,18 @@ mod tests {
     #[cfg_attr(miri, ignore)]
     fn test_abort_verifies_thread_exit() {
         // Explicit test that abort() actually waits for thread to exit
-        let fixture = TestFixture::new("test_thread_exit");
+        let mut fixture = TestFixture::new("test_thread_exit");
 
         fixture.queue_profile().expect("Failed to queue profile");
 
         // Verify thread is running
         assert!(
-            !fixture.manager.handle.is_finished(),
+            !fixture.manager.is_finished(),
             "Worker thread should be running"
         );
 
         // Abort and verify thread exits
-        let _suspended = fixture.manager.abort().expect("Failed to abort");
+        fixture.manager.abort().expect("Failed to abort");
 
         // Success means thread exited cleanly with Ok(())
     }
@@ -466,7 +533,7 @@ mod tests {
     #[cfg_attr(miri, ignore)]
     fn test_postfork_child_creates_new_manager() {
         // postfork_child should create a fresh manager, discarding inflight messages
-        let fixture = TestFixture::new("test_postfork_child");
+        let mut fixture = TestFixture::new("test_postfork_child");
 
         // Queue some profiles
         fixture
@@ -474,27 +541,30 @@ mod tests {
             .expect("Failed to queue profiles");
 
         // Suspend before processing
-        let suspended = fixture.manager.abort().expect("Failed to suspend");
+        fixture.manager.abort().expect("Failed to suspend");
 
         // Create child manager - should work and start fresh
-        let child_manager =
-            ExporterManager::postfork_child(suspended).expect("Failed to create child manager");
+        fixture
+            .manager
+            .postfork_child()
+            .expect("Failed to create child manager");
 
         // Child manager should work normally
         let profile = EncodedProfile::test_instance().expect("Failed to create test profile");
-        child_manager
+        fixture
+            .manager
             .queue(profile, &[], &[], None, None, None)
             .expect("Failed to queue in child");
 
         std::thread::sleep(Duration::from_millis(200));
-        let _suspended = child_manager.abort().expect("Failed to abort child");
+        fixture.manager.abort().expect("Failed to abort child");
     }
 
     #[test]
     #[cfg_attr(miri, ignore)]
     fn test_postfork_parent_requeues_inflight() {
         // postfork_parent should create a new manager and re-queue inflight messages
-        let fixture = TestFixture::new("test_postfork_parent");
+        let mut fixture = TestFixture::new("test_postfork_parent");
         let file_path = fixture.file_path.clone();
 
         // Queue profiles with a small delay to avoid filling the channel
@@ -503,14 +573,16 @@ mod tests {
             .expect("Failed to queue profiles");
 
         // Abort immediately to maximize inflight capture
-        let suspended = fixture.manager.abort().expect("Failed to suspend");
-        let inflight_count = suspended.inflight_count();
+        fixture.manager.abort().expect("Failed to suspend");
+        let inflight_count = fixture.manager.inflight_count();
 
         eprintln!("Captured {} inflight messages for parent", inflight_count);
 
         // Create parent manager - should re-queue inflight messages
-        let parent_manager =
-            ExporterManager::postfork_parent(suspended).expect("Failed to create parent manager");
+        fixture
+            .manager
+            .postfork_parent()
+            .expect("Failed to create parent manager");
 
         // Give time for re-queued messages to process
         std::thread::sleep(Duration::from_millis(300));
@@ -523,7 +595,7 @@ mod tests {
             );
         }
 
-        let _suspended = parent_manager.abort().expect("Failed to abort parent");
+        fixture.manager.abort().expect("Failed to abort parent");
     }
 
     #[test]
@@ -534,24 +606,26 @@ mod tests {
         let child_file = temp_dir.path().join("test_fork_child.http");
 
         // Parent: create manager and queue some work
-        let fixture = TestFixture::new("test_fork_parent");
+        let mut fixture = TestFixture::new("test_fork_parent");
         fixture
             .queue_profiles(2, 0)
             .expect("Failed to queue profiles");
 
         // Prefork: suspend the manager
-        let suspended = fixture.manager.prefork().expect("Failed to prefork");
+        fixture.manager.prefork().expect("Failed to prefork");
 
         // Parent process: re-queue inflight work
-        let parent_manager = ExporterManager::postfork_parent(suspended)
+        fixture
+            .manager
+            .postfork_parent()
             .expect("Failed to create parent after fork");
 
         std::thread::sleep(Duration::from_millis(200));
-        let _parent_suspended = parent_manager.abort().expect("Failed to abort parent");
+        fixture.manager.abort().expect("Failed to abort parent");
 
         // Child process: start fresh with new exporter
         let child_exporter = TestFixture::create_exporter(&child_file);
-        let child_manager =
+        let mut child_manager =
             ExporterManager::new(child_exporter).expect("Failed to create child manager");
 
         // Child does its own work
@@ -561,7 +635,7 @@ mod tests {
             .expect("Failed to queue in child");
 
         std::thread::sleep(Duration::from_millis(200));
-        let _child_suspended = child_manager.abort().expect("Failed to abort child");
+        child_manager.abort().expect("Failed to abort child");
 
         // Verify child processed its work
         let content = std::fs::read(&child_file).ok();

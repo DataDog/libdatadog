@@ -246,14 +246,13 @@ int main(int argc, char *argv[]) {
 
     // Step 1: Call prefork before forking
     printf("Calling prefork...\n");
-    ddog_prof_Result_HandleSuspendedExporterManager prefork_result = ddog_prof_ExporterManager_prefork(&manager);
-    if (prefork_result.tag != DDOG_PROF_RESULT_HANDLE_SUSPENDED_EXPORTER_MANAGER_OK_HANDLE_SUSPENDED_EXPORTER_MANAGER) {
+    ddog_VoidResult prefork_result = ddog_prof_ExporterManager_prefork(&manager);
+    if (prefork_result.tag != DDOG_VOID_RESULT_OK) {
         print_error("Failed to call prefork", &prefork_result.err);
         ddog_Error_drop(&prefork_result.err);
         return 1;
     }
 
-    ddog_prof_Handle_SuspendedExporterManager suspended = prefork_result.ok;
     printf("prefork successful! Background thread stopped.\n");
 
     // Step 2: Fork the process
@@ -269,30 +268,28 @@ int main(int argc, char *argv[]) {
         
         // Step 3a: In child, call postfork_child
         printf("[CHILD] Calling postfork_child...\n");
-        ddog_prof_Result_HandleExporterManager child_result = ddog_prof_ExporterManager_postfork_child(&suspended);
-        if (child_result.tag != DDOG_PROF_RESULT_HANDLE_EXPORTER_MANAGER_OK_HANDLE_EXPORTER_MANAGER) {
+        ddog_VoidResult child_result = ddog_prof_ExporterManager_postfork_child(&manager);
+        if (child_result.tag != DDOG_VOID_RESULT_OK) {
             print_error("[CHILD] Failed to call postfork_child", &child_result.err);
             ddog_Error_drop(&child_result.err);
             exit(1);
         }
 
-        ddog_prof_Handle_ExporterManager child_manager = child_result.ok;
-        printf("[CHILD] postfork_child successful! New manager created.\n");
+        printf("[CHILD] postfork_child successful! Manager restarted.\n");
 
-        // Use the child manager briefly
+        // Use the manager briefly
         sleep(1);
 
-        // Clean up child manager
-        printf("[CHILD] Aborting child manager...\n");
-        ddog_prof_Result_HandleSuspendedExporterManager child_abort_result = ddog_prof_ExporterManager_abort(&child_manager);
-        if (child_abort_result.tag != DDOG_PROF_RESULT_HANDLE_SUSPENDED_EXPORTER_MANAGER_OK_HANDLE_SUSPENDED_EXPORTER_MANAGER) {
-            print_error("[CHILD] Failed to abort child manager", &child_abort_result.err);
+        // Clean up manager
+        printf("[CHILD] Aborting manager...\n");
+        ddog_VoidResult child_abort_result = ddog_prof_ExporterManager_abort(&manager);
+        if (child_abort_result.tag != DDOG_VOID_RESULT_OK) {
+            print_error("[CHILD] Failed to abort manager", &child_abort_result.err);
             ddog_Error_drop(&child_abort_result.err);
             exit(1);
         }
 
-        ddog_prof_Handle_SuspendedExporterManager child_suspended = child_abort_result.ok;
-        ddog_prof_SuspendedExporterManager_drop(&child_suspended);
+        ddog_prof_ExporterManager_drop(&manager);
 
         printf("[CHILD] Child process exiting.\n");
         exit(0);
@@ -302,35 +299,33 @@ int main(int argc, char *argv[]) {
         
         // Step 3b: In parent, call postfork_parent
         printf("[PARENT] Calling postfork_parent...\n");
-        ddog_prof_Result_HandleExporterManager parent_result = ddog_prof_ExporterManager_postfork_parent(&suspended);
-        if (parent_result.tag != DDOG_PROF_RESULT_HANDLE_EXPORTER_MANAGER_OK_HANDLE_EXPORTER_MANAGER) {
+        ddog_VoidResult parent_result = ddog_prof_ExporterManager_postfork_parent(&manager);
+        if (parent_result.tag != DDOG_VOID_RESULT_OK) {
             print_error("[PARENT] Failed to call postfork_parent", &parent_result.err);
             ddog_Error_drop(&parent_result.err);
             return 1;
         }
 
-        ddog_prof_Handle_ExporterManager parent_manager = parent_result.ok;
-        printf("[PARENT] postfork_parent successful! Manager re-created with inflight requests.\n");
+        printf("[PARENT] postfork_parent successful! Manager restarted with inflight requests.\n");
 
         // Wait for child to complete
         int status;
         waitpid(pid, &status, 0);
         printf("[PARENT] Child process finished.\n");
 
-        // Continue using parent manager
+        // Continue using manager
         sleep(1);
 
-        // Clean up parent manager
-        printf("[PARENT] Aborting parent manager...\n");
-        ddog_prof_Result_HandleSuspendedExporterManager parent_abort_result = ddog_prof_ExporterManager_abort(&parent_manager);
-        if (parent_abort_result.tag != DDOG_PROF_RESULT_HANDLE_SUSPENDED_EXPORTER_MANAGER_OK_HANDLE_SUSPENDED_EXPORTER_MANAGER) {
-            print_error("[PARENT] Failed to abort parent manager", &parent_abort_result.err);
+        // Clean up manager
+        printf("[PARENT] Aborting manager...\n");
+        ddog_VoidResult parent_abort_result = ddog_prof_ExporterManager_abort(&manager);
+        if (parent_abort_result.tag != DDOG_VOID_RESULT_OK) {
+            print_error("[PARENT] Failed to abort manager", &parent_abort_result.err);
             ddog_Error_drop(&parent_abort_result.err);
             return 1;
         }
 
-        ddog_prof_Handle_SuspendedExporterManager parent_suspended = parent_abort_result.ok;
-        ddog_prof_SuspendedExporterManager_drop(&parent_suspended);
+        ddog_prof_ExporterManager_drop(&manager);
 
         printf("[PARENT] Parent process exiting.\n");
     }
