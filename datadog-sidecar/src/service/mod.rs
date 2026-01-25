@@ -64,6 +64,7 @@ pub struct SessionConfig {
     pub remote_config_products: Vec<RemoteConfigProduct>,
     pub remote_config_capabilities: Vec<RemoteConfigCapabilities>,
     pub remote_config_enabled: bool,
+    pub process_tags: String,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
