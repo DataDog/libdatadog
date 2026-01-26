@@ -12,21 +12,16 @@ function Add-DllImportToGlobals {
     param (
         [string]$HeaderPath
     )
-    $changed = $false
-    $updated = foreach ($line in Get-Content $HeaderPath) {
-        if ($line -match '^\s*extern\s+' -and
-            $line -match ';$' -and
-            $line -notmatch '\(' -and
-            $line -notmatch 'extern "C"' -and
-            $line -notmatch '__declspec\(dllimport\)') {
-            $changed = $true
-            $line -replace '^(\s*)extern\s+', '$1extern __declspec(dllimport) '
-        } else {
-            $line
-        }
-    }
-    if ($changed) {
-        Set-Content -Path $HeaderPath -Value $updated
+    $content = [System.IO.File]::ReadAllText($HeaderPath)
+    $pattern = '(?m)^(\s*)extern\s+(?!\"C\")(?!.*__declspec\(dllimport\))(?!.*\()(.+;)$'
+    $updated = [System.Text.RegularExpressions.Regex]::Replace(
+        $content,
+        $pattern,
+        '$1extern __declspec(dllimport) $2'
+    )
+    if ($updated -ne $content) {
+        $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+        [System.IO.File]::WriteAllText($HeaderPath, $updated, $utf8NoBom)
     }
 }
 
