@@ -166,6 +166,62 @@ jobs:
         body-path: doc-check-results.md
         edit-mode: replace
 
+  changelog-check:
+    needs: changed-crates
+    if: needs.changed-crates.outputs.crates_count > 0
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # 4.2.2
+      with:
+        fetch-depth: 0  # Need full history for git diff
+    - name: Check for CHANGELOG.md changes in publishable crates
+      run: |
+        # Get the base ref for comparison
+        BASE_REF='${{ needs.changed-crates.outputs.base_ref }}'
+
+        # Get the list of changed crates
+        CRATES='${{ needs.changed-crates.outputs.crates }}'
+
+        FAILED=0
+        MODIFIED_CHANGELOGS=()
+
+        while read -r crate; do
+          NAME=$(echo "$crate" | jq -r '.name')
+          CRATE_PATH=$(echo "$crate" | jq -r '.path')
+          CHANGELOG_PATH="$CRATE_PATH/CHANGELOG.md"
+
+          # Check if CHANGELOG.md exists
+          if [[ ! -f "$CHANGELOG_PATH" ]]; then
+            # This shouldn't happen, skipping for now.
+            continue
+          fi
+
+          # Check if CHANGELOG.md has been modified in this PR
+          if git diff --name-only "$BASE_REF" HEAD | grep -q "^$CHANGELOG_PATH$"; then
+            MODIFIED_CHANGELOGS+=("$NAME ($CHANGELOG_PATH)")
+            FAILED=1
+          fi
+        done < <(echo "$CRATES" | jq -c '.[]')
+
+        if [[ $FAILED -eq 1 ]]; then
+          echo ""
+          echo "=========================================="
+          echo "ERROR: CHANGELOG.md files modified in publishable crates"
+          echo "=========================================="
+          echo ""
+          echo "The following publishable crates have CHANGELOG.md changes:"
+          for changelog in "${MODIFIED_CHANGELOGS[@]}"; do
+            echo "  - $changelog"
+          done
+          echo ""
+          echo "CHANGELOG.md files should only be updated during the release process."
+          echo "Please revert the CHANGELOG.md changes from this PR."
+          exit 1
+        fi
+
+        echo ""
+        echo "No CHANGELOG.md changes detected in publishable crates"
+
   dependency-check:
     needs: changed-crates
     if: needs.changed-crates.outputs.crates_count > 0
