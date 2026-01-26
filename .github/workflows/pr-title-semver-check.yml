@@ -11,7 +11,7 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
-  RUST_VERSION: stable
+  RUST_VERSION: 1.92.0
 
 jobs:
   detect-changes:
@@ -70,8 +70,8 @@ jobs:
             echo "crates=" >> "$GITHUB_OUTPUT"
             echo "No published crates changed in this PR"
           else
-            echo "has_changes=true" >> "$GITHUB_OUTPUT"
             CRATES_JSON=$(printf '%s\n' "${CHANGED_CRATES[@]}" | jq -R . | jq -s -c .)
+            echo "has_changes=true" >> "$GITHUB_OUTPUT"
             echo "crates=$CRATES_JSON" >> "$GITHUB_OUTPUT"
             echo "Changed published crates: ${CHANGED_CRATES[*]}"
           fi
@@ -81,8 +81,7 @@ jobs:
     if: needs.detect-changes.outputs.has_rust_changes == 'true'
     runs-on: ubuntu-latest
     outputs:
-      semver_level: ${{ steps.semver.outputs.semver_level }}
-      crates_checked: ${{ steps.semver.outputs.crates_checked }}
+      result_json: ${{ steps.semver.outputs.result_json }}
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
@@ -104,7 +103,7 @@ jobs:
       - name: Install cargo-public-api
         uses: taiki-e/install-action@2c41309d51ede152b6f2ee6bf3b71e6dc9a8b7df # 2.49.27
         with:
-          tool: cargo-public-api@0.50.2
+          tool: cargo-public-api@0.50.2, cargo-semver-checks@0.45.0
 
       - name: Run semver checks on changed crates
         id: semver
@@ -112,85 +111,44 @@ jobs:
           set -euo pipefail
 
           CHANGED_CRATES='${{ needs.detect-changes.outputs.changed_crates }}'
+          BASELINE="main"
+          HIGHEST_LEVEL=""
 
           # Parse JSON array
           readarray -t CRATES < <(echo "$CHANGED_CRATES" | jq -r '.[]')
 
-          HIGHEST_LEVEL="none"
-          CRATES_CHECKED=()
-
-          # Get the base branch for comparison
-          BASE_REF="${{ github.base_ref }}"
-          git fetch origin "$BASE_REF" --depth=50
-
+          CRATES_JSON="[]"
           for CRATE_NAME in "${CRATES[@]}"; do
-            echo "========================================"
-            echo "Checking semver for: $CRATE_NAME"
-            echo "========================================"
+            # Run the semver-level.sh script and capture the crate changes
+            CRATE=$(./scripts/semver-level.sh "$CRATE_NAME" "$BASELINE")
+            LEVEL=$(echo "$CRATE" | jq -r '.level')
 
-            # Try to run cargo-public-api diff against base branch
-            set +e
-            cargo public-api --package "$CRATE_NAME" diff "origin/$BASE_REF..HEAD" 2>&1 | tee api-output.txt
-            EXIT_CODE=$?
-            set -e
-
-            if [[ $EXIT_CODE -ne 0 ]]; then
-              echo "Unexpected error for $CRATE_NAME (exit code: $EXIT_CODE)"
-              continue
+            if [[ "$LEVEL" == "major" ]]; then
+              HIGHEST_LEVEL="major"
+            elif [[ "$LEVEL" == "minor" && ( -z "$HIGHEST_LEVEL" || "$HIGHEST_LEVEL" == "patch" ) ]]; then
+              HIGHEST_LEVEL="minor"
+            elif [[ "$LEVEL" == "patch" && -z "$HIGHEST_LEVEL" ]]; then
+              HIGHEST_LEVEL="patch"
+            elif [[ "$LEVEL" != "major" && "$LEVEL" != "minor" && "$LEVEL" != "patch" ]]; then
+              echo "Error: unknown level ($LEVEL)"
+              exit 1
             fi
 
-            # Analyze the diff output
-            LEVEL="none"
-
-            # Check for removed items (major change)
-            if grep -q "Removed items from the public API$" api-output.txt; then
-              if ! grep -A 2 "^Removed items from the public API$" api-output.txt | grep -q "^(none)$"; then
-                LEVEL="major"
-                echo "Detected removed items (major change)"
-              fi
-            fi
-
-            # Check for changed items (major change)
-            if grep -q "^Changed items in the public API$" api-output.txt; then
-              if ! grep -A 2 "^Changed items in the public API$" api-output.txt | grep -q "^(none)$"; then
-                LEVEL="major"
-                echo "Detected changed items (major change)"
-              fi
-            fi
-
-            # Check for added items (minor change) - only if not already major
-            if [[ "$LEVEL" != "major" ]]; then
-              if grep -q "Added items to the public API$" api-output.txt; then
-                if ! grep -A 2 "^Added items to the public API$" api-output.txt | grep -q "^(none)"; then
-                  LEVEL="minor"
-                  echo "Detected added items (minor change)"
-                fi
-              fi
-            fi
-
-            # If we detected changes, update the highest level
-            if [[ "$LEVEL" != "none" ]]; then
-              CRATES_CHECKED+=("$CRATE_NAME:$LEVEL")
-
-              # Update highest level
-              if [[ "$LEVEL" == "major" ]]; then
-                HIGHEST_LEVEL="major"
-              elif [[ "$LEVEL" == "minor" ]] && [[ "$HIGHEST_LEVEL" != "major" ]]; then
-                HIGHEST_LEVEL="minor"
-              elif [[ "$HIGHEST_LEVEL" == "none" ]]; then
-                HIGHEST_LEVEL="patch"
-              fi
-            else
-              # No API changes detected, assume patch level
-              if [[ "$HIGHEST_LEVEL" == "none" ]]; then
-                HIGHEST_LEVEL="patch"
-              fi
-            fi
+            CRATES_JSON=$(echo "$CRATES_JSON" | jq --argjson crate "$CRATE" '. += [$crate]')
           done
 
-          # Save results to file for aggregate step
-          echo "semver_level=$HIGHEST_LEVEL" >> "$GITHUB_OUTPUT"
-          echo "crates_checked=${CRATES_CHECKED[*]}" >> "$GITHUB_OUTPUT"
+
+          RESULT_JSON=$(jq -n \
+          --arg highest_level "$HIGHEST_LEVEL" \
+          --argjson crates "$CRATES_JSON" \
+          '{highest_level: $highest_level, crates: $crates}')
+
+          # Save JSON result to GITHUB_OUTPUT using multiline format
+          {
+            echo "result_json<<EOF"
+            echo "$RESULT_JSON"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
 
   validate:
     needs: [detect-changes, semver-check]
@@ -201,10 +159,13 @@ jobs:
         env:
           PR_TITLE: ${{ github.event.pull_request.title }}
           PR_BODY: ${{ github.event.pull_request.body }}
-          SEMVER_LEVEL: ${{ needs.semver-check.outputs.semver_level }}
-          CRATES_CHECKED: ${{ needs.semver-check.outputs.crates_checked }}
+          SEMVER_RESULT_JSON: ${{ needs.semver-check.outputs.result_json }}
         run: |
           set -euo pipefail
+
+          # Parse JSON output to extract semver level and crates
+          SEMVER_LEVEL=$(echo "$SEMVER_RESULT_JSON" | jq -r '.highest_level')
+          CRATES_CHECKED=$(echo "$SEMVER_RESULT_JSON" | jq -r '.crates | map("\(.name):\(.level)") | join(" ")')
 
           echo "PR Title: $PR_TITLE"
           echo "Detected semver level: $SEMVER_LEVEL"
@@ -269,7 +230,6 @@ jobs:
               VALIDATION_FAILED="true"
             fi
             ;;
-
 
           refactor)
             if [[ "$SEMVER_LEVEL" == "major" ]] && [[ -z "$IS_BREAKING_CHANGE" ]]; then

@@ -1,0 +1,111 @@
+# Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
+# SPDX-License-Identifier: Apache-2.0
+
+name: 'Get Changed Crates'
+description: 'Detects which Rust crates have changed files in a PR or push'
+
+inputs:
+  include-non-publishable:
+    description: 'Include crates with publish = false'
+    required: false
+    default: 'false'
+  base-ref:
+    description: 'Base ref for comparison (defaults to PR base or HEAD~1 for push)'
+    required: false
+    default: ''
+
+outputs:
+  crates:
+    description: 'JSON array of changed crates with name, version, path and manifest'
+    value: ${{ steps.detect.outputs.crates }}
+  crates_count:
+    description: 'Number of changed crates'
+    value: ${{ steps.detect.outputs.crates_count }}
+  base_ref:
+    description: 'The base ref used for comparison'
+    value: ${{ steps.detect.outputs.base_ref }}
+
+runs:
+  using: 'composite'
+  steps:
+    - id: detect
+      shell: bash
+      env:
+        INCLUDE_NON_PUBLISHABLE: ${{ inputs.include-non-publishable }}
+        INPUT_BASE_REF: ${{ inputs.base-ref }}
+        EVENT_NAME: ${{ github.event_name }}
+        PR_BASE_REF: ${{ github.base_ref }}
+      run: |
+        # Determine base ref for comparison
+        if [[ -n "$INPUT_BASE_REF" ]]; then
+          BASE_REF="$INPUT_BASE_REF"
+        elif [[ "$EVENT_NAME" == "pull_request" ]]; then
+          BASE_REF="origin/$PR_BASE_REF"
+        else
+          # For push events, compare with previous commit
+          BASE_REF="HEAD~1"
+        fi
+        
+        echo "Using base ref: $BASE_REF"
+        echo "base_ref=$BASE_REF" >> "$GITHUB_OUTPUT"
+        
+        # Get list of changed files
+        CHANGED_FILES=$(git diff --name-only "$BASE_REF" HEAD 2>/dev/null || git diff --name-only HEAD~1 HEAD)
+        
+        # Extract unique crate directories from changed files
+        CRATES=()
+        for file in $CHANGED_FILES; do
+          # Check if file is in a crate directory (has Cargo.toml)
+          dir=$(dirname "$file")
+          while [[ "$dir" != "." && "$dir" != "/" ]]; do
+            if [[ -f "$dir/Cargo.toml" ]]; then
+              # Check if this crate should be included
+              if [[ "$INCLUDE_NON_PUBLISHABLE" == "true" ]]; then
+                CRATES+=("$dir")
+              elif ! grep -qE '^\s*publish\s*=\s*false' "$dir/Cargo.toml"; then
+                CRATES+=("$dir")
+              fi
+              break
+            fi
+            dir=$(dirname "$dir")
+          done
+        done
+        
+        # Remove duplicates and sort
+        UNIQUE_CRATES=($(printf '%s\n' "${CRATES[@]}" | sort -u))
+        
+        # Build JSON array of objects with name, version, and path
+        JSON_ARRAY="["
+        FIRST=true
+        for crate_path in "${UNIQUE_CRATES[@]}"; do
+          if [[ -z "$crate_path" ]]; then
+            continue
+          fi
+          
+          # Extract name and version from Cargo.toml
+          CARGO_TOML="$crate_path/Cargo.toml"
+          CRATE_NAME=$(grep -E '^\s*name\s*=' "$CARGO_TOML" | head -1 | sed -E 's/.*=\s*"([^"]+)".*/\1/')
+          CRATE_VERSION=$(grep -E '^\s*version\s*=' "$CARGO_TOML" | head -1 | sed -E 's/.*=\s*"([^"]+)".*/\1/')
+          
+          # Handle version.workspace = true
+          if [[ -z "$CRATE_VERSION" ]] || [[ "$CRATE_VERSION" == *"workspace"* ]]; then
+            CRATE_VERSION="workspace"
+          fi
+          
+          if [[ "$FIRST" == "true" ]]; then
+            FIRST=false
+          else
+            JSON_ARRAY+=","
+          fi
+          
+          JSON_ARRAY+="{\"name\":\"$CRATE_NAME\",\"version\":\"$CRATE_VERSION\",\"path\":\"$crate_path\",\"manifest\":\"$CARGO_TOML\"}"
+        done
+        JSON_ARRAY+="]"
+        
+        # Ensure JSON is compact (single line) for GITHUB_OUTPUT
+        JSON_ARRAY=$(echo "$JSON_ARRAY" | jq -c .)
+        
+        echo "Changed crates: $(echo "$JSON_ARRAY" | tr '\n' ' ')"
+        echo "crates=$JSON_ARRAY" >> "$GITHUB_OUTPUT"
+        echo "crates_count=$(echo "$JSON_ARRAY" | jq 'length')" >> "$GITHUB_OUTPUT"
+

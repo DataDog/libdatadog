@@ -49,7 +49,6 @@ renaming_overrides_prefixing = true
 "ProfileNewResult" = "ddog_prof_Profile_NewResult"
 "ProfileResult" = "ddog_prof_Profile_Result"
 "Request" = "ddog_prof_Exporter_Request"
-"RequestBuildResult" = "ddog_prof_Exporter_Request_BuildResult"
 "SendResult" = "ddog_prof_Exporter_SendResult"
 "SerializeResult" = "ddog_prof_Profile_SerializeResult"
 "Slice_File" = "ddog_prof_Exporter_Slice_File"
