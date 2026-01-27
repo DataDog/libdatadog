@@ -213,9 +213,6 @@ unsafe fn parse_json(
 }
 
 /// Builds a request and sends it, returning the HttpStatus.
-/// This is a more efficient version of calling `ddog_prof_Exporter_Request_build`
-/// followed by `ddog_prof_Exporter_send`, as it avoids exposing the intermediate
-/// `Request` object.
 ///
 /// # Arguments
 /// * `exporter` - Borrows the exporter.
