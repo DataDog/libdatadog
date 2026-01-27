@@ -8,6 +8,9 @@ jobs:
   test:
     name: "cargo test --workspace #${{ matrix.platform }} ${{ matrix.rust_version }}"
     runs-on: ${{ matrix.platform }}
+    permissions:
+      checks: write
+      contents: read
     env:
       CARGO_TERM_COLOR: always
       CARGO_INCREMENTAL: 0
