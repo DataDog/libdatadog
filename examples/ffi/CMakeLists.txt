@@ -28,7 +28,6 @@ set_vcruntime_link_type(exporter ${VCRUNTIME_LINK_TYPE})
 if(NOT WIN32)
   add_executable(exporter_manager exporter_manager.c)
   target_link_libraries(exporter_manager PRIVATE Datadog::Profiling)
-  set_vcruntime_link_type(exporter_manager ${VCRUNTIME_LINK_TYPE})
 endif()
 
 add_executable(crashinfo crashinfo.cpp)
