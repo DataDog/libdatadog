@@ -124,7 +124,7 @@ jobs:
           WARNING_COUNT=${WARNING_COUNT:-0}
           
           if [[ "$WARNING_COUNT" -gt 0 ]]; then
-            OUTPUT="${OUTPUT}\n### 📦 \`${crate}\` - ${WARNING_COUNT} warning(s)\n\n<details>\n<summary>Show warnings</summary>\n\n\`\`\`\n${WARNINGS}\n\`\`\`\n\n</details>\n"
+            OUTPUT="${OUTPUT}\n### 📦 \`${crate}\` - ${WARNING_COUNT} warning(s)\n\n" # <details>\n<summary>Show warnings</summary>\n\n\`\`\`\n${WARNINGS}\n\`\`\`\n\n</details>\n
             TOTAL_WARNINGS=$((TOTAL_WARNINGS + WARNING_COUNT))
           else
             OUTPUT="${OUTPUT}\n### 📦 \`${crate}\` - ✅ No warnings\n"
@@ -138,7 +138,18 @@ jobs:
           HEADER="## 📚 Documentation Check Results\n\n✅ **No documentation warnings found!**\n"
         fi
         
-        COMMENT_BODY="${HEADER}${OUTPUT}\n\n---\n*Updated: $(date -u '+%Y-%m-%d %H:%M:%S UTC') | Commit: ${{ github.sha }}*"
+        # Get the specific job URL by querying the GitHub API for this job's numeric ID
+        JOB_ID=$(curl -s -H "Authorization: Bearer ${{ github.token }}" \
+          "${{ github.api_url }}/repos/${{ github.repository }}/actions/runs/${{ github.run_id }}/jobs" | \
+          jq -r '.jobs[] | select(.name == "missing-docs") | .id')
+        
+        if [ -n "$JOB_ID" ]; then
+          JOB_URL="${{ github.server_url }}/${{ github.repository }}/runs/${JOB_ID}"
+        else
+          JOB_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+        fi
+        
+        COMMENT_BODY="${HEADER}${OUTPUT}\n\n---\n*Updated: $(date -u '+%Y-%m-%d %H:%M:%S UTC') | Commit: ${{ github.sha }} | [missing-docs job results](${JOB_URL})*"
         
         # Write to file for the comment action (handle multi-line)
         echo -e "$COMMENT_BODY" > doc-check-results.md
@@ -257,7 +268,8 @@ jobs:
           echo "Running cargo-deny for $NAME..."
 
           # Run cargo-deny and capture output (always continue, results go to PR comment)
-          DENY_OUTPUT=$(cargo deny --manifest-path "$MANIFEST" --color never check advisories bans sources 2>&1 || true)
+          # TODO: disable log-level error to show all errors and warnings
+          DENY_OUTPUT=$(cargo deny --manifest-path "$MANIFEST" --color never --log-level error check advisories bans sources 2>&1 || true)
           
           echo "DENY_OUTPUT: $DENY_OUTPUT"
 
@@ -269,7 +281,7 @@ jobs:
           ISSUE_COUNT=$((ERROR_COUNT + WARNING_COUNT))
           
           if [[ "$ISSUE_COUNT" -gt 0 ]]; then
-            OUTPUT="${OUTPUT}\n### 📦 \`${NAME}\` - ${ERROR_COUNT} error(s), ${WARNING_COUNT} warning(s)\n\n<details>\n<summary>Show output</summary>\n\n\`\`\`\n${DENY_OUTPUT}\n\`\`\`\n\n</details>\n"
+            OUTPUT="${OUTPUT}\n### 📦 \`${NAME}\` - ${ERROR_COUNT} error(s)\n\n<details>\n<summary>Show output</summary>\n\n\`\`\`\n${DENY_OUTPUT}\n\`\`\`\n\n</details>\n"
             TOTAL_ISSUES=$((TOTAL_ISSUES + ISSUE_COUNT))
             TOTAL_ERRORS=$((TOTAL_ERRORS + ERROR_COUNT))
           else
@@ -279,12 +291,23 @@ jobs:
         
         # Create the comment body
         if [[ $TOTAL_ISSUES -gt 0 ]]; then
-          HEADER="## 🔒 Cargo Deny Results\n\n⚠️ **${TOTAL_ISSUES} issue(s) found** (advisories, bans, sources)\n"
+          HEADER="## 🔒 Cargo Deny Results\n\n⚠️ **${TOTAL_ISSUES} issue(s) found, showing only errors** (advisories, bans, sources)\n"
         else
           HEADER="## 🔒 Cargo Deny Results\n\n✅ **No issues found!**\n"
         fi
         
-        COMMENT_BODY="${HEADER}${OUTPUT}\n\n---\n*Updated: $(date -u '+%Y-%m-%d %H:%M:%S UTC') | Commit: ${{ github.sha }}*"
+        # Get the specific job URL by querying the GitHub API for this job's numeric ID
+        JOB_ID=$(curl -s -H "Authorization: Bearer ${{ github.token }}" \
+          "${{ github.api_url }}/repos/${{ github.repository }}/actions/runs/${{ github.run_id }}/jobs" | \
+          jq -r '.jobs[] | select(.name == "dependency-check") | .id')
+        
+        if [ -n "$JOB_ID" ]; then
+          JOB_URL="${{ github.server_url }}/${{ github.repository }}/runs/${JOB_ID}"
+        else
+          JOB_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+        fi
+        
+        COMMENT_BODY="${HEADER}${OUTPUT}\n\n---\n*Updated: $(date -u '+%Y-%m-%d %H:%M:%S UTC') | Commit: ${{ github.sha }} | [dependency-check job results](${JOB_URL})*"
         
         # Write to file for the comment action
         echo -e "$COMMENT_BODY" > cargo-deny-results.md
