@@ -96,27 +96,14 @@ impl From<anyhow::Result<internal::EncodedProfile>> for SerializeResult {
     }
 }
 
-#[repr(C)]
-#[derive(Copy, Clone)]
-pub struct ValueType<'a> {
-    pub type_: CharSlice<'a>,
-    pub unit: CharSlice<'a>,
-}
+/// Sample types supported by Datadog profilers.
+/// These correspond to the ValueType entries used in pprof profiles.
+/// Re-exported from libdd_profiling::api for FFI use.
+pub use api::SampleType;
 
-impl<'a> ValueType<'a> {
-    pub fn new(type_: &'a str, unit: &'a str) -> Self {
-        Self {
-            type_: type_.into(),
-            unit: unit.into(),
-        }
-    }
-}
-
-#[repr(C)]
-pub struct Period<'a> {
-    pub type_: ValueType<'a>,
-    pub value: i64,
-}
+/// Re-export Period from the API for consistency.
+/// The FFI Period is identical to the API Period.
+pub use api::Period;
 
 #[repr(C)]
 #[derive(Copy, Clone, Default)]
@@ -283,24 +270,6 @@ impl<'a> From<&'a Mapping<'a>> for api::StringIdMapping {
     }
 }
 
-impl<'a> From<&'a ValueType<'a>> for api::ValueType<'a> {
-    fn from(vt: &'a ValueType<'a>) -> Self {
-        Self::new(
-            vt.type_.try_to_utf8().unwrap_or(""),
-            vt.unit.try_to_utf8().unwrap_or(""),
-        )
-    }
-}
-
-impl<'a> From<&'a Period<'a>> for api::Period<'a> {
-    fn from(period: &'a Period<'a>) -> Self {
-        Self {
-            r#type: api::ValueType::from(&period.type_),
-            value: period.value,
-        }
-    }
-}
-
 impl<'a> TryFrom<&'a Function<'a>> for api::Function<'a> {
     type Error = Utf8Error;
 
@@ -423,7 +392,7 @@ impl<'a> From<Sample<'a>> for api::StringIdSample<'a> {
 /// `ddog_prof_Profile_drop` when you are done with the profile.
 ///
 /// # Arguments
-/// * `sample_types`
+/// * `sample_types` - A slice of SampleType enums
 /// * `period` - Optional period of the profile. Passing None/null translates to zero values.
 /// * `start_time` - Optional time the profile started at. Passing None/null will use the current
 ///   time.
@@ -434,7 +403,7 @@ impl<'a> From<Sample<'a>> for api::StringIdSample<'a> {
 #[no_mangle]
 #[must_use]
 pub unsafe extern "C" fn ddog_prof_Profile_new(
-    sample_types: Slice<ValueType>,
+    sample_types: Slice<SampleType>,
     period: Option<&Period>,
 ) -> ProfileNewResult {
     profile_new(sample_types, period, None)
@@ -446,7 +415,7 @@ pub unsafe extern "C" fn ddog_prof_Profile_new(
 /// # Arguments
 /// * `out` - a non-null pointer to an uninitialized Profile.
 /// * `dict`: a valid reference to a ProfilesDictionary handle.
-/// * `sample_types`
+/// * `sample_types` - A slice of SampleType enums
 /// * `period` - Optional period of the profile. Passing None/null translates to zero values.
 ///
 /// # Safety
@@ -463,7 +432,7 @@ pub unsafe extern "C" fn ddog_prof_Profile_new(
 pub unsafe extern "C" fn ddog_prof_Profile_with_dictionary(
     out: *mut Profile,
     dict: &ArcHandle<ProfilesDictionary>,
-    sample_types: Slice<ValueType>,
+    sample_types: Slice<SampleType>,
     period: Option<&Period>,
 ) -> ProfileStatus {
     ensure_non_null_out_parameter!(out);
@@ -481,18 +450,15 @@ pub unsafe extern "C" fn ddog_prof_Profile_with_dictionary(
 
 unsafe fn profile_with_dictionary(
     dict: &ArcHandle<ProfilesDictionary>,
-    sample_types: Slice<ValueType>,
+    sample_types: Slice<SampleType>,
     period: Option<&Period>,
 ) -> Result<Profile, ProfileError> {
     let sample_types = sample_types.try_as_slice()?;
     let dict = dict.try_clone_into_arc()?;
 
-    let mut types = Vec::new();
-    types.try_reserve_exact(sample_types.len())?;
-    types.extend(sample_types.iter().map(api::ValueType::from));
-    let period = period.map(Into::into);
+    let period = period.copied();
 
-    match internal::Profile::try_new_with_dictionary(&types, period, dict) {
+    match internal::Profile::try_new_with_dictionary(sample_types, period, dict) {
         Ok(ok) => Ok(Profile::new(ok)),
         Err(err) => Err(ProfileError::from(err)),
     }
@@ -503,7 +469,7 @@ unsafe fn profile_with_dictionary(
 #[must_use]
 /// TODO: @ivoanjo Should this take a `*mut ManagedStringStorage` like Profile APIs do?
 pub unsafe extern "C" fn ddog_prof_Profile_with_string_storage(
-    sample_types: Slice<ValueType>,
+    sample_types: Slice<SampleType>,
     period: Option<&Period>,
     string_storage: ManagedStringStorage,
 ) -> ProfileNewResult {
@@ -511,22 +477,22 @@ pub unsafe extern "C" fn ddog_prof_Profile_with_string_storage(
 }
 
 unsafe fn profile_new(
-    sample_types: Slice<ValueType>,
+    sample_types: Slice<SampleType>,
     period: Option<&Period>,
     string_storage: Option<ManagedStringStorage>,
 ) -> ProfileNewResult {
-    let types: Vec<api::ValueType> = sample_types.into_slice().iter().map(Into::into).collect();
-    let period = period.map(Into::into);
+    let types = sample_types.into_slice();
+    let period = period.copied();
 
     let result = match string_storage {
-        None => internal::Profile::try_new(&types, period)
+        None => internal::Profile::try_new(types, period)
             .context("failed to initialize a profile without managed string storage"),
         Some(s) => {
             let string_storage = match get_inner_string_storage(s, true) {
                 Ok(string_storage) => string_storage,
                 Err(err) => return ProfileNewResult::Err(err.into()),
             };
-            internal::Profile::try_with_string_storage(&types, period, string_storage)
+            internal::Profile::try_with_string_storage(types, period, string_storage)
                 .context("failed to initialize a profile with managed string storage")
         }
     };
@@ -937,9 +903,9 @@ mod tests {
     #[test]
     fn ctor_and_dtor() -> Result<(), Error> {
         unsafe {
-            let sample_type: *const ValueType = &ValueType::new("samples", "count");
+            let sample_type = SampleType::CpuSamples;
             let mut profile = Result::from(ddog_prof_Profile_new(
-                Slice::from_raw_parts(sample_type, 1),
+                Slice::from_raw_parts(&sample_type, 1),
                 None,
             ))?;
             ddog_prof_Profile_drop(&mut profile);
@@ -950,9 +916,9 @@ mod tests {
     #[test]
     fn add_failure() -> Result<(), Error> {
         unsafe {
-            let sample_type: *const ValueType = &ValueType::new("samples", "count");
+            let sample_type = SampleType::CpuSamples;
             let mut profile = Result::from(ddog_prof_Profile_new(
-                Slice::from_raw_parts(sample_type, 1),
+                Slice::from_raw_parts(&sample_type, 1),
                 None,
             ))?;
 
@@ -977,9 +943,9 @@ mod tests {
     #[cfg_attr(miri, ignore)]
     fn aggregate_samples() -> anyhow::Result<()> {
         unsafe {
-            let sample_type: *const ValueType = &ValueType::new("samples", "count");
+            let sample_type = SampleType::CpuSamples;
             let mut profile = Result::from(ddog_prof_Profile_new(
-                Slice::from_raw_parts(sample_type, 1),
+                Slice::from_raw_parts(&sample_type, 1),
                 None,
             ))?;
 
@@ -1039,9 +1005,9 @@ mod tests {
     }
 
     unsafe fn provide_distinct_locations_ffi() -> Profile {
-        let sample_type: *const ValueType = &ValueType::new("samples", "count");
+        let sample_type = SampleType::CpuSamples;
         let mut profile = Result::from(ddog_prof_Profile_new(
-            Slice::from_raw_parts(sample_type, 1),
+            Slice::from_raw_parts(&sample_type, 1),
             None,
         ))
         .unwrap();
