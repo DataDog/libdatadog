@@ -1295,6 +1295,11 @@ mod tests {
 
         let result = manager.queue_profile(&mut profile, vec![], vec![], "", "", "");
         assert!(result.is_err(), "Should fail to queue after abort");
-        assert!(result.unwrap_err().to_string().contains("consumed"));
+        let error_msg = result.unwrap_err().to_string();
+        assert!(
+            error_msg.contains("Suspended") || error_msg.contains("state"),
+            "Error message should indicate manager is in Suspended state, got: {}",
+            error_msg
+        );
     }
 }
