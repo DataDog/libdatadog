@@ -52,6 +52,11 @@ pub struct ArtifactsBuild {
 fn inner_build_artifact(c: &ArtifactsBuild) -> anyhow::Result<PathBuf> {
     let mut build_cmd = process::Command::new(env!("CARGO"));
     build_cmd.arg("build");
+    if let Ok(_path) = std::env::var("LLVM_PROFILE_FILE") {
+        // LLVM_PROFILE_FILE is set, running llvm-cov
+        // Add the instrument-coverage flag to the RUSTFLAGS environment variable
+        build_cmd.env("RUSTFLAGS", "-C instrument-coverage --cfg=coverage");
+    }
     if let BuildProfile::Release = c.build_profile {
         build_cmd.arg("--release");
     }
