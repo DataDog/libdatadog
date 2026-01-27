@@ -11,7 +11,7 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
-  RUST_VERSION: stable
+  RUST_VERSION: 1.92.0
 
 jobs:
   detect-changes:
@@ -111,7 +111,7 @@ jobs:
           set -euo pipefail
 
           CHANGED_CRATES='${{ needs.detect-changes.outputs.changed_crates }}'
-          BASELINE="origin/main"
+          BASELINE="main"
           HIGHEST_LEVEL=""
 
           # Parse JSON array
