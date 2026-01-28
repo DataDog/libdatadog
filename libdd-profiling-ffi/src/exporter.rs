@@ -774,8 +774,7 @@ mod tests {
         let error_msg = result.unwrap_err().to_string();
         assert!(
             error_msg.contains("Invalid MIME type"),
-            "Error message should mention invalid MIME type, got: {}",
-            error_msg
+            "Error message should mention invalid MIME type, got: {error_msg}"
         );
     }
 }
