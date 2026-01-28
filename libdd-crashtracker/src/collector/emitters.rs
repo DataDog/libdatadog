@@ -142,6 +142,7 @@ pub(crate) fn emit_crashreport(
     sig_info: *const siginfo_t,
     ucontext: *const ucontext_t,
     ppid: i32,
+    crashing_tid: libc::pid_t,
 ) -> Result<(), EmitterError> {
     // The following order is important in order to emit the crash ping:
     // - receiver expects the config
@@ -162,6 +163,8 @@ pub(crate) fn emit_crashreport(
 
     #[cfg(target_os = "linux")]
     emit_proc_self_maps(pipe)?;
+    #[cfg(target_os = "linux")]
+    emit_thread_name(pipe, ppid, crashing_tid)?;
 
     // Getting a backtrace on rust is not guaranteed to be signal safe
     // https://github.com/rust-lang/backtrace-rs/issues/414
@@ -226,6 +229,40 @@ fn emit_procinfo(w: &mut impl Write, pid: i32) -> Result<(), EmitterError> {
 /// the layout of the target process (parent), which should always be true.
 fn emit_proc_self_maps(w: &mut impl Write) -> Result<(), EmitterError> {
     emit_text_file(w, "/proc/self/maps")?;
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
+fn emit_thread_name(
+    w: &mut impl Write,
+    pid: i32,
+    crashing_tid: libc::pid_t,
+) -> Result<(), EmitterError> {
+    let path = format!("/proc/{pid}/task/{crashing_tid}/comm");
+    let mut file = match File::open(&path) {
+        Ok(f) => f,
+        Err(e) => {
+            // If the file isn't available, don't fail the entire crash report.
+            eprintln!("Failed to read thread name from {path}: {e}");
+            return Ok(());
+        }
+    };
+
+    writeln!(w, "{DD_CRASHTRACK_BEGIN_THREAD_NAME}")?;
+
+    const BUFFER_LEN: usize = 64;
+    let mut buffer = [0u8; BUFFER_LEN];
+
+    loop {
+        let read_count = file.read(&mut buffer)?;
+        w.write_all(&buffer[..read_count])?;
+        if read_count == 0 {
+            break;
+        }
+    }
+
+    writeln!(w, "{DD_CRASHTRACK_END_THREAD_NAME}")?;
+    w.flush()?;
     Ok(())
 }
 
@@ -581,6 +618,30 @@ mod tests {
         assert!(out.contains(&unicode_message));
 
         unsafe { drop(Box::from_raw(message_ptr)) };
+    }
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn test_emit_thread_name() {
+        let pid = unsafe { libc::getpid() };
+        let tid = unsafe { libc::syscall(libc::SYS_gettid) as libc::pid_t };
+        let mut buf = Vec::new();
+
+        emit_thread_name(&mut buf, pid, tid).expect("thread name to emit");
+        let out = str::from_utf8(&buf).expect("to be valid UTF8");
+        assert!(out.contains(DD_CRASHTRACK_BEGIN_THREAD_NAME));
+        assert!(out.contains(DD_CRASHTRACK_END_THREAD_NAME));
+
+        let mut comm = String::new();
+        let path = format!("/proc/{pid}/task/{tid}/comm");
+        File::open(&path)
+            .and_then(|mut f| f.read_to_string(&mut comm))
+            .expect("read comm");
+        let comm_trimmed = comm.trim_end_matches('\n');
+        assert!(
+            out.contains(comm_trimmed),
+            "output should include thread name from comm; got {out:?}"
+        );
     }
 
     #[test]
