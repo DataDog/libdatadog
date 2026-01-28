@@ -142,6 +142,11 @@ pub unsafe extern "C" fn ddog_prof_ProfilesDictionary_insert_mapping(
 
 /// Inserts a UTF-8 string into the dictionary string table.
 ///
+/// Copies the string into the internal buffer--strings are arena allocated
+/// and not individually allocated. On success, the [`StringId2`] written to
+/// the `string_id` out parameter is valid as long as this dictionary is alive.
+/// It should only be passed back to the dictionary that created it.
+///
 /// # Safety
 ///
 /// - `string_id` must be non-null and valid for writes of `StringId`.
