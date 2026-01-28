@@ -4,6 +4,7 @@
 
 .clang-format                        @Datadog/libdatadog
 .codecov.yml                         @Datadog/apm-common-components-core
+.cargo/*                             @Datadog/libdatadog-core
 .config/nextest.toml                 @Datadog/apm-common-components-core
 .config/commitlint.config.js         @Datadog/apm-common-components-core
 .devcontainer                        @Datadog/apm-common-components-core

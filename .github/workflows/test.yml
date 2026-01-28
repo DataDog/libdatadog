@@ -227,13 +227,20 @@ jobs:
           # Add BUILD_SYMBOLIZER variable only for Linux platforms
           if [[ "${{ matrix.platform }}" == "ubuntu-latest" ]]; then
             cmake -S .. -DDatadog_ROOT=$LIBDD_OUTPUT_FOLDER -DBUILD_SYMBOLIZER=true
-            cmake --build .
-            ./symbolizer
-            ./crashinfo
           else
             cmake -S .. -DDatadog_ROOT=$LIBDD_OUTPUT_FOLDER
-            cmake --build .
           fi
+          cmake --build .
+      - name: "Run FFI examples"
+        shell: bash
+        if: matrix.platform != 'windows-latest'
+        run: |
+          cargo ffi-test --skip-build
+      - name: "(Windows) Run FFI examples"
+        shell: bash
+        if: matrix.platform == 'windows-latest'
+        run: |
+          cargo ffi-test
       - name: "Test building CXX bindings - Crashinfo (Unix)"
         shell: bash
         if: matrix.platform != 'windows-latest'
