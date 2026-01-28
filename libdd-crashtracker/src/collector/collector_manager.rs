@@ -37,7 +37,9 @@ impl Collector {
         // When we spawn the child, our pid becomes the ppid.
         // SAFETY: This function has no safety requirements.
         let pid = unsafe { libc::getpid() };
-        let tid = unsafe { libc::syscall(libc::SYS_gettid) as libc::pid_t };
+
+        // Get the current tid to identify thread info
+        let tid = current_tid();
 
         let fork_result = alt_fork();
         match fork_result {
@@ -68,6 +70,24 @@ impl Collector {
     pub fn finish(self, timeout_manager: &TimeoutManager) {
         self.handle.finish(timeout_manager);
     }
+}
+
+#[cfg(target_os = "linux")]
+fn current_tid() -> libc::pid_t {
+    // Prefer the raw syscall to avoid linking against libc's gettid symbol on glibc versions
+    // where it may not be exposed.
+    unsafe { libc::syscall(libc::SYS_gettid) as libc::pid_t }
+}
+
+#[cfg(target_os = "macos")]
+fn current_tid() -> libc::pid_t {
+    // No /proc/comm on macOS; we skip thread name emission anyways so just return 0
+    0
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+fn current_tid() -> libc::pid_t {
+    0
 }
 
 #[allow(clippy::too_many_arguments)]

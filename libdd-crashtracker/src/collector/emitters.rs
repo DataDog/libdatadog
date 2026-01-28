@@ -232,21 +232,80 @@ fn emit_proc_self_maps(w: &mut impl Write) -> Result<(), EmitterError> {
     Ok(())
 }
 
+/// Assumes that the memory layout of the current process (child) is identical to
+/// the layout of the target process (parent), which should always be true.
 #[cfg(target_os = "linux")]
 fn emit_thread_name(
     w: &mut impl Write,
     pid: i32,
     crashing_tid: libc::pid_t,
 ) -> Result<(), EmitterError> {
-    let path = format!("/proc/{pid}/task/{crashing_tid}/comm");
-    let mut file = match File::open(&path) {
-        Ok(f) => f,
-        Err(e) => {
-            // If the file isn't available, don't fail the entire crash report.
-            eprintln!("Failed to read thread name from {path}: {e}");
-            return Ok(());
+    // Best effort at string formatting with no async signal un-safe calls
+    // Format: /proc/{pid}/task/{tid}/comm\0
+    fn write_decimal(buf: &mut [u8], mut val: u64) -> Option<usize> {
+        if buf.is_empty() {
+            return None;
         }
-    };
+        let mut i = 0;
+        loop {
+            if i >= buf.len() {
+                return None;
+            }
+            buf[i] = b'0' + (val % 10) as u8;
+            val /= 10;
+            i += 1;
+            if val == 0 {
+                break;
+            }
+        }
+        buf[..i].reverse();
+        Some(i)
+    }
+
+    let mut path_buf = [0u8; 64];
+    let mut idx = 0usize;
+    let parts = [
+        b"/proc/" as &[u8],
+        b"" as &[u8], // pid placeholder
+        b"/task/" as &[u8],
+        b"" as &[u8], // tid placeholder
+        b"/comm" as &[u8],
+    ];
+
+    // Copy "/proc/"
+    path_buf[idx..idx + parts[0].len()].copy_from_slice(parts[0]);
+    idx += parts[0].len();
+    // pid
+    let pid_start = idx;
+    if let Some(len) = write_decimal(&mut path_buf[pid_start..], pid as u64) {
+        idx += len;
+    } else {
+        return Ok(());
+    }
+    // "/task/"
+    path_buf[idx..idx + parts[2].len()].copy_from_slice(parts[2]);
+    idx += parts[2].len();
+    // tid
+    let tid_start = idx;
+    if let Some(len) = write_decimal(&mut path_buf[tid_start..], crashing_tid as u64) {
+        idx += len;
+    } else {
+        return Ok(());
+    }
+    // "/comm"
+    path_buf[idx..idx + parts[4].len()].copy_from_slice(parts[4]);
+    idx += parts[4].len();
+    // null-terminate
+    if idx >= path_buf.len() {
+        return Ok(());
+    }
+    path_buf[idx] = 0;
+
+    let fd = unsafe { libc::open(path_buf.as_ptr() as *const libc::c_char, libc::O_RDONLY) };
+    if fd < 0 {
+        // Missing / unreadable; skip without failing the crash report.
+        return Ok(());
+    }
 
     writeln!(w, "{DD_CRASHTRACK_BEGIN_THREAD_NAME}")?;
 
@@ -254,12 +313,16 @@ fn emit_thread_name(
     let mut buffer = [0u8; BUFFER_LEN];
 
     loop {
-        let read_count = file.read(&mut buffer)?;
-        w.write_all(&buffer[..read_count])?;
-        if read_count == 0 {
+        let read_count =
+            unsafe { libc::read(fd, buffer.as_mut_ptr() as *mut libc::c_void, BUFFER_LEN) };
+        if read_count <= 0 {
             break;
         }
+        w.write_all(&buffer[..read_count as usize])?;
     }
+
+    // Best-effort close
+    let _ = unsafe { libc::close(fd) };
 
     writeln!(w, "{DD_CRASHTRACK_END_THREAD_NAME}")?;
     w.flush()?;
@@ -622,6 +685,7 @@ mod tests {
 
     #[test]
     #[cfg(target_os = "linux")]
+    #[cfg_attr(miri, ignore)]
     fn test_emit_thread_name() {
         let pid = unsafe { libc::getpid() };
         let tid = unsafe { libc::syscall(libc::SYS_gettid) as libc::pid_t };
