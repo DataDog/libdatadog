@@ -3049,6 +3049,7 @@ dependencies = [
  "rand 0.8.5",
  "schemars",
  "serde",
+ "serde_bytes",
  "serde_json",
  "symbolic-common",
  "symbolic-demangle",
@@ -3057,6 +3058,7 @@ dependencies = [
  "tokio",
  "uuid",
  "windows 0.59.0",
+ "zstd",
 ]
 
 [[package]]
