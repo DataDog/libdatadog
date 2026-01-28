@@ -12,6 +12,18 @@ mod windows;
 #[cfg(windows)]
 pub use self::windows::*;
 
+// Thread-based listener module (Unix)
+#[cfg(unix)]
+pub mod thread_listener;
+#[cfg(unix)]
+pub use thread_listener::{connect_to_master, MasterListener};
+
+// Thread-based listener module (Windows)
+#[cfg(windows)]
+pub mod thread_listener_windows;
+#[cfg(windows)]
+pub use thread_listener_windows::{connect_to_master, MasterListener};
+
 use datadog_ipc::platform::Channel;
 use std::io;
 
