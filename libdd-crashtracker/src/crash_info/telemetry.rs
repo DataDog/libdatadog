@@ -512,7 +512,7 @@ mod tests {
         assert_eq!(
             HashSet::from_iter([
                 "collecting_sample:1",
-                "data_schema_version:1.4",
+                "data_schema_version:1.5",
                 "incomplete:true",
                 "is_crash:true",
                 "not_profiling:0",
