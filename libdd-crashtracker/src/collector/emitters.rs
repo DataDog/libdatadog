@@ -321,7 +321,6 @@ fn emit_thread_name(
         w.write_all(&buffer[..read_count as usize])?;
     }
 
-    // Best-effort close
     let _ = unsafe { libc::close(fd) };
 
     writeln!(w, "{DD_CRASHTRACK_END_THREAD_NAME}")?;
