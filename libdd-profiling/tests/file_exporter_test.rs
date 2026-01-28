@@ -214,4 +214,54 @@ mod tests {
             TEST_LIB_VERSION
         );
     }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn entity_id_headers() {
+        let (mut exporter, file_path) = create_file_exporter(
+            TEST_LIB_NAME,
+            TEST_LIB_VERSION,
+            "native",
+            default_tags(),
+            None,
+        )
+        .expect("exporter to construct");
+
+        let profile = EncodedProfile::test_instance().expect("test profile");
+        exporter
+            .send_blocking(profile, &[], &[], None, None, None, None)
+            .expect("send to succeed");
+
+        let request = read_and_parse_request(&file_path).expect("parse HTTP request");
+
+        // Check if container-id and entity-id headers are present (if available on system)
+        // On systems with containers (Docker, K8s, etc.), these should be set
+        // On systems without containers, they may be None
+        if let Some(container_id) = libdd_common::entity_id::get_container_id() {
+            assert_eq!(
+                request.headers.get("datadog-container-id").unwrap(),
+                container_id,
+                "Container ID header should match system container ID"
+            );
+        }
+
+        if let Some(entity_id) = libdd_common::entity_id::get_entity_id() {
+            assert_eq!(
+                request.headers.get("datadog-entity-id").unwrap(),
+                entity_id,
+                "Entity ID header should match system entity ID"
+            );
+        }
+
+        // If neither is present, that's also valid (non-containerized environment)
+        // But at least verify the headers are consistently present or absent
+        let has_container_id = request.headers.contains_key("datadog-container-id");
+        let has_entity_id = request.headers.contains_key("datadog-entity-id");
+
+        // Both should be present together or both absent
+        assert_eq!(
+            has_container_id, has_entity_id,
+            "Container ID and Entity ID headers should both be present or both absent"
+        );
+    }
 }

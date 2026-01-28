@@ -294,6 +294,32 @@ fn validate_full_export(req: &ReceivedRequest, expected_path: &str) -> anyhow::R
     assert_eq!(req.method, "POST");
     assert_eq!(req.path, expected_path);
 
+    // Verify container/entity ID headers if available on the system
+    // These should be consistently present or absent
+    let has_container_id = req.headers.contains_key("datadog-container-id");
+    let has_entity_id = req.headers.contains_key("datadog-entity-id");
+    assert_eq!(
+        has_container_id, has_entity_id,
+        "Container ID and Entity ID headers should both be present or both absent"
+    );
+
+    // If present, verify they match system values
+    if let Some(container_id) = libdd_common::entity_id::get_container_id() {
+        assert_eq!(
+            req.headers.get("datadog-container-id").unwrap(),
+            container_id,
+            "Container ID header should match system container ID"
+        );
+    }
+
+    if let Some(entity_id) = libdd_common::entity_id::get_entity_id() {
+        assert_eq!(
+            req.headers.get("datadog-entity-id").unwrap(),
+            entity_id,
+            "Entity ID header should match system entity ID"
+        );
+    }
+
     // Parse the request to get multipart parts
     // We need to reconstruct a minimal HTTP request to parse
     let mut http_request_bytes = Vec::new();

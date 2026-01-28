@@ -28,7 +28,7 @@ use super::errors::SendError;
 use super::file_exporter::spawn_dump_server;
 use anyhow::Context;
 use libdd_common::tag::Tag;
-use libdd_common::{azure_app_services, tag, Endpoint};
+use libdd_common::{azure_app_services, entity_id, header, tag, Endpoint};
 use reqwest::RequestBuilder;
 use serde_json::json;
 use std::io::Write;
@@ -181,6 +181,22 @@ impl ProfileExporter {
             headers.insert(
                 "X-Datadog-Test-Session-Token",
                 reqwest::header::HeaderValue::from_str(test_token)?,
+            );
+        }
+
+        // Add container ID header if available
+        if let Some(container_id) = entity_id::get_container_id() {
+            headers.insert(
+                header::DATADOG_CONTAINER_ID,
+                reqwest::header::HeaderValue::from_static(container_id),
+            );
+        }
+
+        // Add entity ID header if available
+        if let Some(entity_id_value) = entity_id::get_entity_id() {
+            headers.insert(
+                header::DATADOG_ENTITY_ID,
+                reqwest::header::HeaderValue::from_static(entity_id_value),
             );
         }
 
