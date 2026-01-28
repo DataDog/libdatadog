@@ -157,6 +157,9 @@ where
     let fixtures = TestFixtures::new()?;
 
     let mut cmd = process::Command::new(&artifacts_map[&artifacts.crashtracker_bin]);
+    if let Ok(path) = std::env::var("LLVM_PROFILE_FILE") {
+        cmd.env("LLVM_PROFILE_FILE", path);
+    }
     cmd.arg(format!("file://{}", fixtures.crash_profile_path.display()))
         .arg(&artifacts_map[&artifacts.crashtracker_receiver])
         .arg(&fixtures.output_dir)
