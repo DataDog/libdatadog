@@ -13,11 +13,11 @@ function Add-DllImportToGlobals {
         [string]$HeaderPath
     )
     $content = [System.IO.File]::ReadAllText($HeaderPath)
-    $pattern = '(?m)^(\s*)extern\s+(?!\"C\")(?!.*__declspec\(dllimport\))(?!.*\()(.+;)$'
+    $pattern = '(?m)^(\s*)extern\s+(?!\"C\")(?!.*LIBDD_DLLIMPORT)(?!.*\()(.+;)$'
     $updated = [System.Text.RegularExpressions.Regex]::Replace(
         $content,
         $pattern,
-        '$1extern __declspec(dllimport) $2'
+        '$1extern LIBDD_DLLIMPORT $2'
     )
     if ($updated -ne $content) {
         $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
