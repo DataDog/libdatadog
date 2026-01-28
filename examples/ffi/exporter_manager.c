@@ -72,12 +72,8 @@ ddog_prof_Profile *create_profile_with_sample(void) {
 }
 
 int main(int argc, char *argv[]) {
-    if (argc != 2) {
-        printf("Usage: exporter_manager SERVICE_NAME\n");
-        return 1;
-    }
-
-    const char *service = argv[1];
+    // Default service name for automated testing
+    const char *service = (argc >= 2) ? argv[1] : "libdatadog-test";
 
     // Create tags vector
     ddog_Vec_Tag tags = ddog_Vec_Tag_new();

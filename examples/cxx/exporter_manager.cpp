@@ -11,17 +11,13 @@ using namespace datadog::profiling;
 
 int main(int argc, char *argv[]) {
     try {
-        if (argc != 2) {
-            std::cerr << "Usage: exporter_manager SERVICE_NAME" << std::endl;
-            return 1;
-        }
-
         const char *api_key = std::getenv("DD_API_KEY");
         if (!api_key) {
             std::cout << "DD_API_KEY not set, using file endpoint for demonstration" << std::endl;
         }
 
-        std::string service = argv[1];
+        // Default service name for automated testing
+        std::string service = (argc >= 2) ? argv[1] : "libdatadog-test";
 
         // ============================================================================
         // Example 1: Basic ExporterManager usage
