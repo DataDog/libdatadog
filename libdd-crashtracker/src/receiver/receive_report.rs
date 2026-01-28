@@ -116,6 +116,7 @@ pub(crate) enum StdinState {
     TraceIds,
     Ucontext,
     Waiting,
+    ThreadName(Option<String>),
     // StackFrame is always emitted as one stream of all the frames but StackString
     // may have lines that we need to accumulate depending on runtime (e.g. Python)
     RuntimeStackFrame(Vec<StackFrame>),
@@ -269,6 +270,22 @@ fn process_line(
             StdinState::StackTrace
         }
 
+        StdinState::ThreadName(thread_name) if line.starts_with(DD_CRASHTRACK_END_THREAD_NAME) => {
+            if let Some(thread_name) = thread_name {
+                builder.with_thread_name(thread_name)?;
+            } else {
+                builder.with_log_message(
+                    "Thread name block ended without content".to_string(),
+                    true,
+                )?;
+            }
+            StdinState::Waiting
+        }
+        StdinState::ThreadName(_) => {
+            let name = line.trim_end_matches('\n').to_string();
+            StdinState::ThreadName(Some(name))
+        }
+
         StdinState::TraceIds if line.starts_with(DD_CRASHTRACK_END_TRACE_IDS) => {
             StdinState::Waiting
         }
@@ -316,6 +333,9 @@ fn process_line(
         }
         StdinState::Waiting if line.starts_with(DD_CRASHTRACK_BEGIN_TRACE_IDS) => {
             StdinState::TraceIds
+        }
+        StdinState::Waiting if line.starts_with(DD_CRASHTRACK_BEGIN_THREAD_NAME) => {
+            StdinState::ThreadName(None)
         }
         StdinState::Waiting if line.starts_with(DD_CRASHTRACK_BEGIN_UCONTEXT) => {
             StdinState::Ucontext

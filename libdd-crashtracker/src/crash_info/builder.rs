@@ -16,6 +16,7 @@ use super::*;
 pub struct ErrorDataBuilder {
     pub kind: Option<ErrorKind>,
     pub message: Option<String>,
+    pub thread_name: Option<String>,
     pub stack: Option<StackTrace>,
     pub threads: Option<Vec<ThreadData>>,
 }
@@ -26,6 +27,7 @@ impl ErrorDataBuilder {
         let is_crash = true;
         let kind = self.kind.context("required field 'kind' missing")?;
         let message = self.message;
+        let thread_name = self.thread_name;
         let source_type = SourceType::Crashtracking;
         let stack = self.stack.unwrap_or_else(StackTrace::missing);
         let threads = self.threads.unwrap_or_default();
@@ -34,6 +36,7 @@ impl ErrorDataBuilder {
                 is_crash,
                 kind,
                 message,
+                thread_name,
                 source_type,
                 stack,
                 threads,
@@ -53,6 +56,14 @@ impl ErrorDataBuilder {
 
     pub fn with_message(&mut self, message: String) -> anyhow::Result<()> {
         self.message = Some(message);
+        Ok(())
+    }
+
+    pub fn with_thread_name(&mut self, thread_name: String) -> anyhow::Result<()> {
+        if thread_name.trim().is_empty() {
+            return Ok(());
+        }
+        self.thread_name = Some(thread_name);
         Ok(())
     }
 
@@ -290,6 +301,10 @@ impl CrashInfoBuilder {
 
     pub fn with_message(&mut self, message: String) -> anyhow::Result<()> {
         self.error.with_message(message)
+    }
+
+    pub fn with_thread_name(&mut self, thread_name: String) -> anyhow::Result<()> {
+        self.error.with_thread_name(thread_name)
     }
 
     pub fn with_metadata(&mut self, metadata: Metadata) -> anyhow::Result<()> {

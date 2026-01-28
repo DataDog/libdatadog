@@ -37,6 +37,7 @@ impl Collector {
         // When we spawn the child, our pid becomes the ppid.
         // SAFETY: This function has no safety requirements.
         let pid = unsafe { libc::getpid() };
+        let tid = unsafe { libc::syscall(libc::SYS_gettid) as libc::pid_t };
 
         let fork_result = alt_fork();
         match fork_result {
@@ -51,6 +52,7 @@ impl Collector {
                     ucontext,
                     receiver.handle.uds_fd,
                     pid,
+                    tid,
                 );
             }
             pid if pid > 0 => Ok(Self {
@@ -78,6 +80,7 @@ pub(crate) fn run_collector_child(
     ucontext: *const ucontext_t,
     uds_fd: RawFd,
     ppid: libc::pid_t,
+    crashing_tid: libc::pid_t,
 ) -> ! {
     // Close stdio
     let _ = unsafe { libc::close(0) };
@@ -104,6 +107,7 @@ pub(crate) fn run_collector_child(
         sig_info,
         ucontext,
         ppid,
+        crashing_tid,
     );
     if let Err(e) = report {
         eprintln!("Failed to flush crash report: {e}");
