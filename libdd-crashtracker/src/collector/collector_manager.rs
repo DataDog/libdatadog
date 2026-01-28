@@ -79,13 +79,7 @@ fn current_tid() -> libc::pid_t {
     unsafe { libc::syscall(libc::SYS_gettid) as libc::pid_t }
 }
 
-#[cfg(target_os = "macos")]
-fn current_tid() -> libc::pid_t {
-    // No /proc/comm on macOS; we skip thread name emission anyways so just return 0
-    0
-}
-
-#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+#[cfg(not(target_os = "linux"))]
 fn current_tid() -> libc::pid_t {
     0
 }
