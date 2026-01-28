@@ -5,9 +5,11 @@
 //!
 //! These tests validate the full export flow across different endpoint types.
 
+mod common;
+
 use libdd_profiling::exporter::config;
 use libdd_profiling::exporter::utils::parse_http_request;
-use libdd_profiling::exporter::{File, MimeType, ProfileExporter};
+use libdd_profiling::exporter::ProfileExporter;
 use libdd_profiling::internal::EncodedProfile;
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -222,18 +224,7 @@ async fn export_full_profile(
     ];
 
     // Build additional files
-    let additional_files = vec![
-        File {
-            name: "jit.pprof",
-            bytes: b"fake-jit-data",
-            mime: MimeType::ApplicationOctetStream,
-        },
-        File {
-            name: "metadata.json",
-            bytes: b"{\"test\": true}",
-            mime: MimeType::ApplicationJson,
-        },
-    ];
+    let additional_files = common::create_test_additional_files();
 
     // Build metadata
     let internal_metadata = serde_json::json!({
@@ -383,6 +374,9 @@ fn validate_full_export(req: &ReceivedRequest, expected_path: &str) -> anyhow::R
             part_name
         );
     }
+
+    // Verify all parts have correct MIME types
+    common::assert_all_standard_mime_types(parts);
 
     Ok(())
 }

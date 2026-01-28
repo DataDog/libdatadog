@@ -48,7 +48,6 @@ pub struct ProfileExporter {
     runtime: Option<Runtime>,
 }
 
-#[repr(C)]
 #[derive(Debug, Copy, Clone)]
 pub enum MimeType {
     ApplicationJson,
@@ -413,7 +412,7 @@ impl ProfileExporter {
             "event",
             reqwest::multipart::Part::bytes(event_bytes)
                 .file_name("event.json")
-                .mime_str("application/json")?,
+                .mime_str(mime::APPLICATION_JSON.as_ref())?,
         );
 
         // Add additional files (compressed)
@@ -428,14 +427,17 @@ impl ProfileExporter {
 
             form = form.part(
                 file.name.to_string(),
-                reqwest::multipart::Part::bytes(encoder.finish()?).file_name(file.name.to_string()),
+                reqwest::multipart::Part::bytes(encoder.finish()?)
+                    .file_name(file.name.to_string())
+                    .mime_str(file.mime.as_str())?,
             );
         }
 
-        // Add profile
         Ok(form.part(
             "profile.pprof",
-            reqwest::multipart::Part::bytes(profile.buffer).file_name("profile.pprof"),
+            reqwest::multipart::Part::bytes(profile.buffer)
+                .file_name("profile.pprof")
+                .mime_str(mime::APPLICATION_OCTET_STREAM.as_ref())?,
         ))
     }
 }
