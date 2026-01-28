@@ -17,6 +17,19 @@ pub fn default_signals() -> Vec<libc::c_int> {
     Vec::from(DEFAULT_SYMBOLS)
 }
 
+pub(super) fn mark_preload_logger_collector() {
+    // This function is specific only for LD_PRELOAD testing
+    // Best effort; this symbol exists only when the preload logger preload is present.
+    const SYMBOL: &[u8] = b"dd_preload_logger_mark_collector\0";
+    unsafe {
+        let sym = libc::dlsym(libc::RTLD_DEFAULT, SYMBOL.as_ptr() as *const _);
+        if !sym.is_null() {
+            let func: extern "C" fn() = std::mem::transmute(sym);
+            func();
+        }
+    }
+}
+
 /// Reinitialize the crash-tracking infrastructure after a fork.
 /// This should be one of the first things done after a fork, to minimize the
 /// chance that a crash occurs between the fork, and this call.
