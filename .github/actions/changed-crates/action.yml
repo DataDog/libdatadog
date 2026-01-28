@@ -36,11 +36,16 @@ runs:
         EVENT_NAME: ${{ github.event_name }}
         PR_BASE_REF: ${{ github.base_ref }}
       run: |
+        set -u
+        
         # Determine base ref for comparison
         if [[ -n "$INPUT_BASE_REF" ]]; then
           BASE_REF="$INPUT_BASE_REF"
         elif [[ "$EVENT_NAME" == "pull_request" ]]; then
           BASE_REF="origin/$PR_BASE_REF"
+          # Ensure base branch is fetched
+          echo "Fetching base branch: $PR_BASE_REF"
+          git fetch --depth=1 origin "$PR_BASE_REF:refs/remotes/origin/$PR_BASE_REF" || true
         else
           # For push events, compare with previous commit
           BASE_REF="HEAD~1"
@@ -50,7 +55,10 @@ runs:
         echo "base_ref=$BASE_REF" >> "$GITHUB_OUTPUT"
         
         # Get list of changed files
-        CHANGED_FILES=$(git diff --name-only "$BASE_REF" HEAD 2>/dev/null || git diff --name-only HEAD~1 HEAD)
+        CHANGED_FILES=$(git diff --name-only "$BASE_REF" HEAD 2>&1 || {
+          echo "Warning: Failed to diff against $BASE_REF, falling back to HEAD~1"
+          git diff --name-only HEAD~1 HEAD 2>&1 || echo ""
+        })
         
         # Extract unique crate directories from changed files
         CRATES=()
@@ -72,7 +80,13 @@ runs:
         done
         
         # Remove duplicates and sort
-        UNIQUE_CRATES=($(printf '%s\n' "${CRATES[@]}" | sort -u))
+        if [[ ${#CRATES[@]} -eq 0 ]]; then
+          UNIQUE_CRATES=()
+          echo "No crates found"
+        else
+          UNIQUE_CRATES=($(printf '%s\n' "${CRATES[@]}" | sort -u))
+          echo "Unique crates: ${UNIQUE_CRATES[*]}"
+        fi
         
         # Build JSON array of objects with name, version, and path
         JSON_ARRAY="["
@@ -84,8 +98,18 @@ runs:
           
           # Extract name and version from Cargo.toml
           CARGO_TOML="$crate_path/Cargo.toml"
+          if [[ ! -f "$CARGO_TOML" ]]; then
+            echo "Warning: Cargo.toml not found at $CARGO_TOML"
+            continue
+          fi
+          
           CRATE_NAME=$(grep -E '^\s*name\s*=' "$CARGO_TOML" | head -1 | sed -E 's/.*=\s*"([^"]+)".*/\1/')
           CRATE_VERSION=$(grep -E '^\s*version\s*=' "$CARGO_TOML" | head -1 | sed -E 's/.*=\s*"([^"]+)".*/\1/')
+          
+          if [[ -z "$CRATE_NAME" ]]; then
+            echo "Warning: Could not extract name from $CARGO_TOML"
+            continue
+          fi
           
           # Handle version.workspace = true
           if [[ -z "$CRATE_VERSION" ]] || [[ "$CRATE_VERSION" == *"workspace"* ]]; then
@@ -102,10 +126,25 @@ runs:
         done
         JSON_ARRAY+="]"
         
+        echo "JSON_ARRAY: $JSON_ARRAY"
+
         # Ensure JSON is compact (single line) for GITHUB_OUTPUT
-        JSON_ARRAY=$(echo "$JSON_ARRAY" | jq -c .)
+        # Check if jq is available
+        if command -v jq &> /dev/null; then
+          JSON_ARRAY=$(echo "$JSON_ARRAY" | jq -c . 2>/dev/null || echo "$JSON_ARRAY")
+          CRATES_COUNT=$(echo "$JSON_ARRAY" | jq 'length' 2>/dev/null || echo "0")
+        else
+          echo "Warning: jq not found, using raw JSON"
+          # Count manually by counting commas + 1, or 0 if empty
+          if [[ "$JSON_ARRAY" == "[]" ]]; then
+            CRATES_COUNT=0
+          else
+            CRATES_COUNT=$(echo "$JSON_ARRAY" | grep -o '},{' | wc -l)
+            CRATES_COUNT=$((CRATES_COUNT + 1))
+          fi
+        fi
         
         echo "Changed crates: $(echo "$JSON_ARRAY" | tr '\n' ' ')"
         echo "crates=$JSON_ARRAY" >> "$GITHUB_OUTPUT"
-        echo "crates_count=$(echo "$JSON_ARRAY" | jq 'length')" >> "$GITHUB_OUTPUT"
+        echo "crates_count=$CRATES_COUNT" >> "$GITHUB_OUTPUT"
 
