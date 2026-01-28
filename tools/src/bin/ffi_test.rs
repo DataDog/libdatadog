@@ -250,7 +250,14 @@ fn copy_dir_all(src: &Path, dest: &Path) -> Result<()> {
 }
 
 fn setup_work_dir(project_root: &Path) -> Result<PathBuf> {
-    let work_dir = env::temp_dir().join(format!("ffi-test-{}", std::process::id()));
+    let work_dir = env::temp_dir().join(format!(
+        "ffi-test-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs()
+    ));
     fs::create_dir_all(&work_dir).context("creating work directory")?;
 
     // Symlink test data into work directory
@@ -544,8 +551,13 @@ fn print_summary(results: &[TestResult]) -> ExitCode {
         for result in failures {
             println!("\n--- {} ---", result.name.red());
             let output = &result.output;
-            if output.len() > 2000 {
-                println!("{}...\n[truncated]", &output[..2000]);
+            let truncate_at = output
+                .char_indices()
+                .nth(2000)
+                .map(|(idx, _)| idx)
+                .unwrap_or(output.len());
+            if truncate_at < output.len() {
+                println!("{}...\n[truncated]", &output[..truncate_at]);
             } else {
                 println!("{}", output);
             }
