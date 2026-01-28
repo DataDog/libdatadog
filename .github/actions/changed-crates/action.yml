@@ -113,11 +113,17 @@ runs:
             continue
           fi
           
-          # Extract name and version (grep may fail, so disable pipefail temporarily)
-          set +e
+          # Check if file is empty (this avoids issues with pipefail + grep on empty files)
+          if [[ ! -s "$CARGO_TOML" ]]; then
+            echo "Warning: $CARGO_TOML is empty, skipping"
+            continue
+          fi
+          
+          # Extract name and version (disable pipefail temporarily for grep)
+          set +eo pipefail
           CRATE_NAME=$(grep -E '^\s*name\s*=' "$CARGO_TOML" 2>/dev/null | head -1 | sed -E 's/.*=\s*"([^"]+)".*/\1/')
           CRATE_VERSION=$(grep -E '^\s*version\s*=' "$CARGO_TOML" 2>/dev/null | head -1 | sed -E 's/.*=\s*"([^"]+)".*/\1/')
-          set -e
+          set -eo pipefail
           
           if [[ -z "$CRATE_NAME" ]]; then
             echo "Warning: Could not extract name from $CARGO_TOML"
