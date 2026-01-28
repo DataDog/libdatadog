@@ -53,12 +53,20 @@ runs:
         
         echo "Using base ref: $BASE_REF"
         echo "base_ref=$BASE_REF" >> "$GITHUB_OUTPUT"
-        
-        # Get list of changed files
-        CHANGED_FILES=$(git diff --name-only "$BASE_REF" HEAD 2>&1 || {
-          echo "Warning: Failed to diff against $BASE_REF, falling back to HEAD~1"
-          git diff --name-only HEAD~1 HEAD 2>&1 || echo ""
-        })
+
+        # Get list of changed files with robust fallback for grafted repos
+        if ! CHANGED_FILES=$(git diff --name-only "$BASE_REF" HEAD 2>/dev/null); then
+          echo "Warning: Failed to diff against $BASE_REF, exiting"
+          exit 1
+          # If base ref fails, try HEAD~1
+          # if ! CHANGED_FILES=$(git diff --name-only HEAD~1 HEAD 2>/dev/null); then
+          #   echo "Warning: Failed to diff against HEAD~1, fetching more history"
+
+          #   # If even HEAD~1 fails (shallow clone with 1 commit), fetch more history
+          #   git fetch --depth=50 origin "$PR_BASE_REF" || git fetch --deepen=50 || true
+          #   CHANGED_FILES=$(git diff --name-only "$BASE_REF" HEAD 2>/dev/null || echo "")
+          # fi
+        fi
         
         # Extract unique crate directories from changed files
         CRATES=()
