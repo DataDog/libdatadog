@@ -87,6 +87,7 @@ pub mod ffi {
     extern "Rust" {
         type Profile;
         type ProfileExporter;
+        type ExporterManager;
         type CancellationToken;
 
         // CancellationToken factory and methods
@@ -170,8 +171,11 @@ pub mod ffi {
         // ProfileExporter methods
         /// Sends a profile to Datadog.
         ///
+        /// **Important**: This method resets the profile and sends the *previous* profile data.
+        /// After calling this, the profile will be empty and ready for new samples.
+        ///
         /// # Arguments
-        /// * `profile` - Profile to send (will be reset after sending)
+        /// * `profile` - Profile to send (will be consumed/reset, previous data is sent)
         /// * `files_to_compress` - Additional files to compress and attach (e.g., heap dumps)
         /// * `additional_tags` - Per-profile tags (in addition to exporter-level tags)
         /// * `internal_metadata` - Internal metadata as JSON string (e.g., `{"key": "value"}`) See
@@ -197,8 +201,11 @@ pub mod ffi {
         /// This is the same as `send_profile`, but allows cancelling the operation from another
         /// thread using a cancellation token.
         ///
+        /// **Important**: This method resets the profile and sends the *previous* profile data.
+        /// After calling this, the profile will be empty and ready for new samples.
+        ///
         /// # Arguments
-        /// * `profile` - Profile to send (will be reset after sending)
+        /// * `profile` - Profile to send (will be consumed/reset, previous data is sent)
         /// * `files_to_compress` - Additional files to compress and attach (e.g., heap dumps)
         /// * `additional_tags` - Per-profile tags (in addition to exporter-level tags)
         /// * `process_tags` - Process-level tags as comma-separated string (e.g.,
@@ -221,6 +228,42 @@ pub mod ffi {
             info: &str,
             cancel: &CancellationToken,
         ) -> Result<()>;
+
+        // ExporterManager methods
+        /// Creates a new ExporterManager with a background worker thread
+        #[Self = "ExporterManager"]
+        fn new_manager(exporter: Box<ProfileExporter>) -> Result<Box<ExporterManager>>;
+
+        /// Queue a profile to be sent asynchronously by the worker thread
+        ///
+        /// **Important**: This method resets the profile and queues the *previous* profile data.
+        /// After calling this, the profile will be empty and ready for new samples.
+        #[allow(clippy::too_many_arguments)]
+        fn queue_profile(
+            self: &ExporterManager,
+            profile: &mut Profile,
+            files_to_compress: Vec<AttachmentFile>,
+            additional_tags: Vec<Tag>,
+            process_tags: &str,
+            internal_metadata: &str,
+            info: &str,
+        ) -> Result<()>;
+
+        /// Abort the manager, stopping the worker thread
+        /// Transitions the manager from Active to Suspended state
+        fn abort(self: &mut ExporterManager) -> Result<()>;
+
+        /// Prefork: suspend the manager before forking
+        /// Transitions the manager from Active to Suspended state
+        fn prefork(self: &mut ExporterManager) -> Result<()>;
+
+        /// Postfork child: reinitialize manager in child process, discarding inflight requests
+        /// Transitions the manager from Suspended to Active state
+        fn postfork_child(self: &mut ExporterManager) -> Result<()>;
+
+        /// Postfork parent: reinitialize manager in parent process and re-queue inflight requests
+        /// Transitions the manager from Suspended to Active state
+        fn postfork_parent(self: &mut ExporterManager) -> Result<()>;
     }
 }
 
@@ -475,6 +518,72 @@ impl Profile {
 }
 
 // ============================================================================
+// Helper Functions
+// ============================================================================
+
+/// Helper to encode a profile and prepare arguments for sending/queuing.
+///
+/// Resets the profile and returns the encoded previous profile data along with
+/// converted arguments ready for the exporter APIs.
+#[allow(clippy::type_complexity)]
+fn prepare_profile_for_export<'a>(
+    profile: &mut Profile,
+    files_to_compress: Vec<ffi::AttachmentFile<'a>>,
+    additional_tags: Vec<ffi::Tag>,
+    process_tags: &'a str,
+    internal_metadata: &str,
+    info: &str,
+) -> anyhow::Result<(
+    internal::EncodedProfile,
+    Vec<exporter::File<'a>>,
+    Vec<libdd_common::tag::Tag>,
+    Option<&'a str>,
+    Option<serde_json::Value>,
+    Option<serde_json::Value>,
+)> {
+    let old_profile = profile.inner.reset_and_return_previous()?;
+    let end_time = Some(std::time::SystemTime::now());
+    let encoded = old_profile.serialize_into_compressed_pprof(end_time, None)?;
+
+    let files_to_compress_vec: Vec<exporter::File> = files_to_compress
+        .iter()
+        .map(TryInto::try_into)
+        .collect::<Result<Vec<_>, _>>()?;
+
+    let additional_tags_vec: Vec<libdd_common::tag::Tag> = additional_tags
+        .iter()
+        .map(TryInto::try_into)
+        .collect::<Result<Vec<_>, _>>()?;
+
+    let internal_metadata_json = if internal_metadata.is_empty() {
+        None
+    } else {
+        Some(serde_json::from_str(internal_metadata)?)
+    };
+
+    let info_json = if info.is_empty() {
+        None
+    } else {
+        Some(serde_json::from_str(info)?)
+    };
+
+    let process_tags_opt = if process_tags.is_empty() {
+        None
+    } else {
+        Some(process_tags)
+    };
+
+    Ok((
+        encoded,
+        files_to_compress_vec,
+        additional_tags_vec,
+        process_tags_opt,
+        internal_metadata_json,
+        info_json,
+    ))
+}
+
+// ============================================================================
 // ProfileExporter - Wrapper around exporter::ProfileExporter
 // ============================================================================
 
@@ -636,6 +745,10 @@ impl ProfileExporter {
     }
 
     /// Internal implementation shared by send_profile and send_profile_with_cancellation
+    ///
+    /// Resets the profile and sends the previous profile data. This allows continuous
+    /// profiling where you keep adding samples to the current profile while the previous
+    /// period's data is being sent.
     #[allow(clippy::too_many_arguments)]
     fn send_profile_impl(
         &mut self,
@@ -647,37 +760,21 @@ impl ProfileExporter {
         info: &str,
         cancel: Option<&tokio_util::sync::CancellationToken>,
     ) -> anyhow::Result<()> {
-        let old_profile = profile.inner.reset_and_return_previous()?;
-        let end_time = Some(std::time::SystemTime::now());
-        let encoded = old_profile.serialize_into_compressed_pprof(end_time, None)?;
-
-        let files_to_compress_vec: Vec<exporter::File> = files_to_compress
-            .iter()
-            .map(TryInto::try_into)
-            .collect::<Result<Vec<_>, _>>()?;
-
-        let additional_tags_vec: Vec<libdd_common::tag::Tag> = additional_tags
-            .iter()
-            .map(TryInto::try_into)
-            .collect::<Result<Vec<_>, _>>()?;
-
-        let internal_metadata_json = if internal_metadata.is_empty() {
-            None
-        } else {
-            Some(serde_json::from_str(internal_metadata)?)
-        };
-
-        let info_json = if info.is_empty() {
-            None
-        } else {
-            Some(serde_json::from_str(info)?)
-        };
-
-        let process_tags_opt = if process_tags.is_empty() {
-            None
-        } else {
-            Some(process_tags)
-        };
+        let (
+            encoded,
+            files_to_compress_vec,
+            additional_tags_vec,
+            process_tags_opt,
+            internal_metadata_json,
+            info_json,
+        ) = prepare_profile_for_export(
+            profile,
+            files_to_compress,
+            additional_tags,
+            process_tags,
+            internal_metadata,
+            info,
+        )?;
 
         let status = self.inner.send_blocking(
             encoded,
@@ -695,6 +792,79 @@ impl ProfileExporter {
         );
 
         Ok(())
+    }
+}
+
+// ============================================================================
+// ExporterManager - Wrapper around exporter::ExporterManager
+// ============================================================================
+
+pub struct ExporterManager {
+    inner: exporter::ExporterManager,
+}
+
+impl ExporterManager {
+    pub fn new_manager(exporter: Box<ProfileExporter>) -> anyhow::Result<Box<ExporterManager>> {
+        let inner = exporter::ExporterManager::new(exporter.inner)?;
+        Ok(Box::new(ExporterManager { inner }))
+    }
+
+    /// Queue a profile to be sent asynchronously by the background worker thread.
+    ///
+    /// Resets the profile and queues the previous profile data for sending. This allows
+    /// continuous profiling where you keep adding samples to the current profile while the
+    /// previous period's data is being sent asynchronously.
+    pub fn queue_profile(
+        &self,
+        profile: &mut Profile,
+        files_to_compress: Vec<ffi::AttachmentFile>,
+        additional_tags: Vec<ffi::Tag>,
+        process_tags: &str,
+        internal_metadata: &str,
+        info: &str,
+    ) -> anyhow::Result<()> {
+        let (
+            encoded,
+            files_to_compress_vec,
+            additional_tags_vec,
+            process_tags_opt,
+            internal_metadata_json,
+            info_json,
+        ) = prepare_profile_for_export(
+            profile,
+            files_to_compress,
+            additional_tags,
+            process_tags,
+            internal_metadata,
+            info,
+        )?;
+
+        self.inner.queue(
+            encoded,
+            &files_to_compress_vec,
+            &additional_tags_vec,
+            internal_metadata_json,
+            info_json,
+            process_tags_opt,
+        )?;
+
+        Ok(())
+    }
+
+    pub fn abort(&mut self) -> anyhow::Result<()> {
+        self.inner.abort()
+    }
+
+    pub fn prefork(&mut self) -> anyhow::Result<()> {
+        self.inner.prefork()
+    }
+
+    pub fn postfork_child(&mut self) -> anyhow::Result<()> {
+        self.inner.postfork_child()
+    }
+
+    pub fn postfork_parent(&mut self) -> anyhow::Result<()> {
+        self.inner.postfork_parent()
     }
 }
 
@@ -1065,6 +1235,111 @@ mod tests {
         assert!(
             result2.is_err(),
             "Should fail with empty optional params too"
+        );
+    }
+
+    #[test]
+    fn test_exporter_manager_create_and_abort() {
+        let exporter = create_test_exporter();
+        let mut manager = ExporterManager::new_manager(exporter).unwrap();
+
+        // Abort immediately
+        manager.abort().unwrap();
+    }
+
+    #[test]
+    fn test_exporter_manager_queue_and_abort() {
+        let exporter = create_test_exporter();
+        let manager = ExporterManager::new_manager(exporter).unwrap();
+
+        // Queue a profile
+        let mut profile = create_test_profile();
+        profile.add_sample(&create_test_sample()).unwrap();
+
+        manager
+            .queue_profile(&mut profile, vec![], vec![], "", "", "")
+            .unwrap();
+
+        // Give worker thread time to process
+        std::thread::sleep(std::time::Duration::from_millis(100));
+
+        // Verify profile was reset
+        assert_eq!(profile.inner.only_for_testing_num_aggregated_samples(), 0);
+    }
+
+    #[test]
+    fn test_exporter_manager_prefork_and_postfork() {
+        let exporter = create_test_exporter();
+        let mut manager = ExporterManager::new_manager(exporter).unwrap();
+
+        // Queue some work
+        let mut profile = create_test_profile();
+        profile.add_sample(&create_test_sample()).unwrap();
+        manager
+            .queue_profile(&mut profile, vec![], vec![], "", "", "")
+            .unwrap();
+
+        // Prefork
+        manager.prefork().unwrap();
+
+        // Postfork parent - should re-queue inflight
+        manager.postfork_parent().unwrap();
+
+        // Give time for processing
+        std::thread::sleep(std::time::Duration::from_millis(100));
+
+        // Abort parent
+        manager.abort().unwrap();
+    }
+
+    #[test]
+    fn test_exporter_manager_postfork_child() {
+        let exporter = create_test_exporter();
+        let mut manager = ExporterManager::new_manager(exporter).unwrap();
+
+        // Queue some work
+        let mut profile = create_test_profile();
+        profile.add_sample(&create_test_sample()).unwrap();
+        manager
+            .queue_profile(&mut profile, vec![], vec![], "", "", "")
+            .unwrap();
+
+        // Prefork
+        manager.prefork().unwrap();
+
+        // Postfork child - should discard inflight
+        manager.postfork_child().unwrap();
+
+        // Child can queue its own work
+        let mut child_profile = create_test_profile();
+        child_profile.add_sample(&create_test_sample()).unwrap();
+        manager
+            .queue_profile(&mut child_profile, vec![], vec![], "", "", "")
+            .unwrap();
+
+        std::thread::sleep(std::time::Duration::from_millis(100));
+        manager.abort().unwrap();
+    }
+
+    #[test]
+    fn test_exporter_manager_cannot_use_after_abort() {
+        let exporter = create_test_exporter();
+        let mut manager = ExporterManager::new_manager(exporter).unwrap();
+
+        // Abort the manager
+        manager.abort().unwrap();
+
+        // Trying to queue after abort should fail
+        let mut profile = create_test_profile();
+        profile.add_sample(&create_test_sample()).unwrap();
+
+        let result = manager.queue_profile(&mut profile, vec![], vec![], "", "", "");
+        assert!(result.is_err(), "Should fail to queue after abort");
+        let error_msg = result.unwrap_err().to_string();
+        assert!(
+            error_msg.contains("Suspended") || error_msg.contains("state"),
+            "Error message should indicate manager is in Suspended state, got: {}",
+            error_msg
         );
     }
 }
