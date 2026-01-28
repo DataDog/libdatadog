@@ -57,8 +57,9 @@ runs:
         echo "Using base ref: $BASE_REF"
         echo "base_ref=$BASE_REF" >> "$GITHUB_OUTPUT"
 
-        # Get list of changed files with robust fallback for grafted repos
-        if ! CHANGED_FILES=$(git diff --name-only "$BASE_REF" HEAD 2>/dev/null); then
+        # Get list of changed files (use three-dot diff to compare with merge-base)
+        # This compares against where the branch diverged, not the current tip of base
+        if ! CHANGED_FILES=$(git diff --name-only "$BASE_REF"...HEAD 2>/dev/null); then
           echo "Warning: Failed to diff against $BASE_REF, exiting"
           exit 1
         fi
