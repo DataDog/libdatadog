@@ -55,8 +55,14 @@ compute_semver_results() {
     # Fetch base commit
     git fetch origin "$baseline" --depth=50 --quiet
 
+    # Ensure baseline has origin/ prefix if it doesn't already
+    if [[ ! "$baseline" =~ ^origin/ ]]; then
+        baseline="origin/$baseline"
+    fi
+
     log_verbose "========================================" >&2
     log_verbose "Checking semver for: $crate" >&2
+    log_verbose "Using baseline ref: $baseline" >&2
     log_verbose "========================================" >&2
 
     LEVEL="none"

@@ -45,9 +45,32 @@ pub struct ProfileExporter {
     runtime: Option<Runtime>,
 }
 
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub enum MimeType {
+    ApplicationJson,
+    ApplicationOctetStream,
+    TextCsv,
+    TextPlain,
+    TextXml,
+}
+
+impl MimeType {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            MimeType::ApplicationJson => mime::APPLICATION_JSON.as_ref(),
+            MimeType::ApplicationOctetStream => mime::APPLICATION_OCTET_STREAM.as_ref(),
+            MimeType::TextCsv => mime::TEXT_CSV.as_ref(),
+            MimeType::TextPlain => mime::TEXT_PLAIN.as_ref(),
+            MimeType::TextXml => mime::TEXT_XML.as_ref(),
+        }
+    }
+}
+
 pub struct File<'a> {
     pub name: &'a str,
     pub bytes: &'a [u8],
+    pub mime: MimeType,
 }
 
 impl ProfileExporter {
