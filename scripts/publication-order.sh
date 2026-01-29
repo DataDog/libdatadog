@@ -1,4 +1,8 @@
 #!/bin/bash
+
+# Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
+# SPDX-License-Identifier: Apache-2.0
+
 # Publication Order Script
 # Determines the correct order to publish workspace crates based on their dependencies
 # Usage: ./publication-order.sh [OPTIONS] [CRATE...]

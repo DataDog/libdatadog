@@ -1,4 +1,8 @@
 #!/bin/bash
+
+# Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
+# SPDX-License-Identifier: Apache-2.0
+
 # Commits Since Release Script
 # Takes JSON from publication-order.sh and finds commits since the last release tag for each crate
 #
