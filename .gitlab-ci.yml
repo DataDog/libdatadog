@@ -8,6 +8,7 @@ variables:
 include:
   - local: .gitlab/benchmarks.yml
   - local: .gitlab/fuzz.yml
+  - local: .gitlab/crates_publish.yml
 
 trigger_internal_build:
   variables:

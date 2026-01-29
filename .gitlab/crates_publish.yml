@@ -1,0 +1,50 @@
+variables:
+  RELEASE_BRANCH:
+    value: "igor/versioning/publish-crates-from-proposal"
+    description: "release jobs are triggered on this branch"
+
+publish-crates:
+  stage: deploy
+  rules:
+    - if: $CI_COMMIT_BRANCH == $RELEASE_BRANCH
+      when: on_success
+  script:
+    - |
+      # Get list of changed Cargo.toml files
+      RANGE="$CI_COMMIT_BEFORE_SHA..$CI_COMMIT_SHA"
+      if ! CHANGED_TOML=$(git diff --name-only "$RANGE" -- '**/Cargo.toml' 2>/dev/null); then
+        echo "Warning: Failed to diff against $RANGE, exiting"
+        exit 1
+      fi
+      
+      # Extract crate names
+      CRATES=()
+      for file in $CHANGED_TOML; do
+        if ! grep -qE '^\s*publish\s*=\s*false' "$file"; then
+            # get crate name
+            CRATE_NAME=$(grep -E '^\s*name\s*=' "$file" 2>/dev/null | head -1 | sed -E 's/.*=\s*"([^"]+)".*/\1/')
+            echo "Crate name: $CRATE_NAME"
+            
+            if [[ -z "$CRATE_NAME" ]]; then
+              echo "Warning: Could not extract name from $file"
+              continue
+            fi
+            
+            CRATES+=("$CRATE_NAME")
+          fi
+        done
+      done
+
+      echo "Changed crates: $CRATES"
+
+      # Get publication order
+      PUBLICATION_ORDER=$(./scripts/publication-order.sh "${CRATES[@]}")
+      echo "Publication order: $PUBLICATION_ORDER"
+
+      # Publish crates
+      for crate in "${PUBLICATION_ORDER[@]}"; do
+        echo "Publishing crate: $crate"
+        # Do something per crate
+      done
+  tags:
+    - arch:amd64

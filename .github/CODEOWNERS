@@ -13,6 +13,7 @@
 .gitignore                           @Datadog/libdatadog
 .gitlab-ci.yml                       @Datadog/apm-common-components-core
 .gitlab/benchmarks.yml               @Datadog/apm-common-components-core
+.gitlab/crates_publish.yml           @Datadog/libdatadog-core
 .gitlab/fuzz.yml                     @Datadog/chaos-platform
 benchmark/                           @Datadog/apm-common-components-core
 bin_tests/                           @Datadog/libdatadog-profiling
