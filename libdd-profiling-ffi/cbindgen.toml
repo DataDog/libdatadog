@@ -22,12 +22,6 @@ typedef struct ddog_prof_Function2 *ddog_prof_FunctionId2;
 
 #include "common.h"
 struct TokioCancellationToken;
-
-#ifdef _WIN32
-#define LIBDD_DLLIMPORT __declspec(dllimport)
-#else
-#define LIBDD_DLLIMPORT
-#endif
 """
 
 [export]
