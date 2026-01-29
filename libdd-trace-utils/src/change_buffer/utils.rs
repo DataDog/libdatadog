@@ -26,11 +26,3 @@ impl_from_bytes!(f64, 8);
 impl_from_bytes!(i64, 8);
 impl_from_bytes!(i32, 4);
 impl_from_bytes!(u32, 4);
-
-pub fn get_num_raw<T: Copy + FromBytes>(buf: *const u8, index: &mut usize) -> T {
-    let size = std::mem::size_of::<T>();
-    let result = unsafe { std::slice::from_raw_parts(buf.add(*index), size) };
-    let result = T::from_bytes(result);
-    *index += size;
-    result
-}

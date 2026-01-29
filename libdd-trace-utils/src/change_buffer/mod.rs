@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, bail, Result};
 
 mod utils;
 use utils::*;
@@ -11,30 +11,50 @@ pub use trace::*;
 use crate::span::{Span, SpanText};
 
 #[derive(Clone, Copy)]
-pub struct ChangeBuffer(*const u8);
-unsafe impl Send for ChangeBuffer {}
-unsafe impl Sync for ChangeBuffer {}
+pub struct ChangeBuffer {                                                                                                                                                                                                       
+    ptr: *mut u8,                                                                                                                                                                                                               
+    len: usize,                                                                                                                                                                                                                 
+}
 
-impl std::ops::Deref for ChangeBuffer {
-    type Target = *const u8;
-    fn deref(&self) -> &Self::Target {
-        &self.0
+impl ChangeBuffer {                                                                                                                                                                                                                                                                                                                                                                      
+    pub unsafe fn from_raw_parts(ptr: *const u8, len: usize) -> Self {                                                                                                                                                          
+        Self { ptr: ptr as *mut u8, len }                                                                                                                                                                                       
+    }                                                                                                                                                                                                                           
+
+    fn as_slice(&self) -> &[u8] {                                                                                                                                                                                               
+        unsafe { std::slice::from_raw_parts(self.ptr, self.len) }                                                                                                                                                               
+    }                                                                                                                                                                                                                           
+
+    fn as_mut_slice(&mut self) -> &mut [u8] {                                                                                                                                                                                   
+        unsafe { std::slice::from_raw_parts_mut(self.ptr, self.len) }                                                                                                                                                           
+    }                                                                                                                                                                                                                           
+
+    pub fn read<T: Copy + FromBytes>(&self, index: &mut usize) -> Result<T> {
+        let size = std::mem::size_of::<T>();
+        let slice = self.as_slice();                                                                                                                                                                                            
+        let bytes = slice.get(*index..*index + size)                                                                                                                                                                               
+            .ok_or(anyhow!("read_u64 out of bounds: offset={}, len={}", *index, self.len))?;                                                                                                                                  
+        let array: [u8; 8] = bytes.try_into()                                                                                                                                                                                   
+            .map_err(|_| anyhow!("failed to convert slice to [u8; 8]"))?;                                                                                                                                                       
+        *index += size;
+        Ok(T::from_bytes(&array))     
+    }
+
+    pub fn write_u64(&mut self, offset: usize, value: u64) -> Result<()> {                                                                                                                                                      
+        let len = self.len;
+        let slice = self.as_mut_slice();                                                                                                                                                                                        
+        let target = slice.get_mut(offset..offset + 8)                                                                                                                                                                          
+            .ok_or(anyhow!("write_u64 out of bounds: offset={}, len={}", offset, len))?;                                                                                                                                 
+        target.copy_from_slice(&value.to_le_bytes());                                                                                                                                                                           
+        Ok(())                                                                                                                                                                                                                  
+    }                                                                                                                                                                                                                           
+
+    pub fn clear_count(&mut self) -> Result<()> {                                                                                                                                                                               
+        self.write_u64(0, 0)                                                                                                                                                                                                    
+            .map_err(|_| anyhow!("failed to clear buffer count"))                                                                                                                                                                            
     }
 }
 
-impl Default for ChangeBuffer {
-    fn default() -> Self {
-        ChangeBuffer(std::ptr::null_mut())
-    }
-}
-
-impl From<*const u8> for ChangeBuffer {
-    fn from(val: *const u8) -> Self {
-        Self(val)
-    }
-}
-
-#[derive(Default)]
 pub struct ChangeBufferState<T: SpanText + Clone> {
     change_buffer: ChangeBuffer,
     spans: HashMap<u64, Span<T>>,
@@ -64,10 +84,13 @@ impl<T: SpanText + Clone> ChangeBufferState<T> {
     ) -> Self {
         ChangeBufferState {
             change_buffer,
+            spans: Default::default(),
+            traces: Default::default(),
+            string_table: Default::default(),
+            trace_span_counts: Default::default(),
             tracer_service,
             tracer_language,
             pid,
-            ..Default::default()
         }
     }
 
@@ -129,7 +152,7 @@ impl<T: SpanText + Clone> ChangeBufferState<T> {
                     .insert(T::from_static_str("_dd.rule_psr"), rule);
             }
             if let Some(rule) = trace.sampling_limit_decision {
-                span.metrics.insert(T::from_static_str("_dd.;_psr"), rule);
+                span.metrics.insert(T::from_static_str("_dd.limit_psr"), rule);
             }
             if let Some(rule) = trace.sampling_agent_decision {
                 span.metrics
@@ -141,9 +164,13 @@ impl<T: SpanText + Clone> ChangeBufferState<T> {
     fn copy_in_chunk_tags(&self, span: &mut Span<T>) {
         if let Some(trace) = self.traces.get(&span.trace_id) {
             span.meta.reserve(trace.meta.len());
-            span.meta.extend(trace.meta.clone());
+            for (k, v) in &trace.meta {
+                span.meta.insert(k.clone(), v.clone());
+            }
             span.metrics.reserve(trace.metrics.len());
-            span.metrics.extend(trace.metrics.clone());
+            for (k, v) in &trace.metrics {
+                span.metrics.insert(k.clone(), *v);
+            }
         }
     }
 
@@ -187,35 +214,32 @@ impl<T: SpanText + Clone> ChangeBufferState<T> {
 
     pub fn flush_change_buffer(&mut self) -> Result<()> {
         let mut index = 0;
-        let buf = *self.change_buffer;
-        let mut count: u64 = get_num_raw(buf, &mut index);
+        let mut count = self.change_buffer.read::<u64>(&mut index)?;
+        index += 8;
 
         while count > 0 {
-            let op = BufferedOperation::from_buf(&self.change_buffer, &mut index);
+            let op = BufferedOperation::from_buf(&self.change_buffer, &mut index)?;
             self.interpret_operation(&mut index, &op)?;
             count -= 1;
         }
 
         // Write 0 back to the count position so the writing side of the buffer knows the queue was
         // flushed
-        let buf_mut = buf as *mut u8;
-        unsafe {
-            std::ptr::copy_nonoverlapping([0u8; 8].as_ptr(), buf_mut, 8);
-        }
+        self.change_buffer.write_u64(0, 0)?;
 
         Ok(())
     }
 
     fn get_string_arg(&self, index: &mut usize) -> Result<T> {
-        let num: u32 = self.get_num_arg(index);
+        let num: u32 = self.get_num_arg(index)?;
         self.string_table
             .get(&num)
             .cloned()
             .ok_or_else(|| anyhow!("string not found internally: {}", num))
     }
 
-    fn get_num_arg<U: Copy + FromBytes>(&self, index: &mut usize) -> U {
-        get_num_raw(*self.change_buffer, index)
+    fn get_num_arg<U: Copy + FromBytes>(&self, index: &mut usize) -> Result<U> {
+        self.change_buffer.read(index)
     }
 
     fn get_mut_span(&mut self, id: &u64) -> Result<&mut Span<T>> {
@@ -237,8 +261,8 @@ impl<T: SpanText + Clone> ChangeBufferState<T> {
     fn interpret_operation(&mut self, index: &mut usize, op: &BufferedOperation) -> Result<()> {
         match op.opcode {
             OpCode::Create => {
-                let trace_id: u128 = self.get_num_arg(index);
-                let parent_id = self.get_num_arg(index);
+                let trace_id: u128 = self.change_buffer.read(index)?;
+                let parent_id = self.get_num_arg(index)?;
                 let span = new_span(op.span_id, parent_id, trace_id);
                 self.spans.insert(op.span_id, span);
                 // Ensure trace exists (creates new one if this is the first span for this trace)
@@ -254,7 +278,7 @@ impl<T: SpanText + Clone> ChangeBufferState<T> {
             }
             OpCode::SetMetricAttr => {
                 let name = self.get_string_arg(index)?;
-                let val: f64 = self.get_num_arg(index);
+                let val: f64 = self.get_num_arg(index)?;
                 let span = self.get_mut_span(&op.span_id)?;
                 span.metrics.insert(name, val);
             }
@@ -265,13 +289,13 @@ impl<T: SpanText + Clone> ChangeBufferState<T> {
                 self.get_mut_span(&op.span_id)?.resource = self.get_string_arg(index)?;
             }
             OpCode::SetError => {
-                self.get_mut_span(&op.span_id)?.error = self.get_num_arg(index);
+                self.get_mut_span(&op.span_id)?.error = self.get_num_arg(index)?;
             }
             OpCode::SetStart => {
-                self.get_mut_span(&op.span_id)?.start = self.get_num_arg(index);
+                self.get_mut_span(&op.span_id)?.start = self.get_num_arg(index)?;
             }
             OpCode::SetDuration => {
-                self.get_mut_span(&op.span_id)?.duration = self.get_num_arg(index);
+                self.get_mut_span(&op.span_id)?.duration = self.get_num_arg(index)?;
             }
             OpCode::SetType => {
                 self.get_mut_span(&op.span_id)?.r#type = self.get_string_arg(index)?;
@@ -289,7 +313,7 @@ impl<T: SpanText + Clone> ChangeBufferState<T> {
             }
             OpCode::SetTraceMetricsAttr => {
                 let name = self.get_string_arg(index)?;
-                let val = self.get_num_arg(index);
+                let val = self.get_num_arg(index)?;
                 let trace_id = self.get_span(&op.span_id)?.trace_id;
                 if let Some(trace) = self.traces.get_mut(&trace_id) {
                     trace.metrics.insert(name, val);
@@ -315,7 +339,6 @@ impl<T: SpanText + Clone> ChangeBufferState<T> {
         self.string_table.remove(&key);
     }
 }
-
 #[repr(u64)]
 pub enum OpCode {
     Create = 0,
@@ -334,9 +357,26 @@ pub enum OpCode {
     // TODO: SpanLinks, SpanEvents, StructAttr
 }
 
-impl From<u64> for OpCode {
-    fn from(val: u64) -> Self {
-        unsafe { std::mem::transmute(val) }
+impl TryFrom<u64> for OpCode {
+    type Error = anyhow::Error;
+
+    fn try_from(val: u64) -> Result<Self> {
+        Ok(match val {
+            0 => OpCode::Create,
+            1 => OpCode::SetMetaAttr,
+            2 => OpCode::SetMetricAttr,
+            3 => OpCode::SetServiceName,
+            4 => OpCode::SetResourceName,
+            5 => OpCode::SetError,
+            6 => OpCode::SetStart,
+            7 => OpCode::SetDuration,
+            8 => OpCode::SetType,
+            9 => OpCode::SetName,
+            10 => OpCode::SetTraceMetaAttr,
+            11 => OpCode::SetTraceMetricsAttr,
+            12 => OpCode::SetTraceOrigin,
+            _ => bail!("unknown opcode")
+        })
     }
 }
 
@@ -346,10 +386,12 @@ pub struct BufferedOperation {
 }
 
 impl BufferedOperation {
-    pub fn from_buf(buf: &ChangeBuffer, index: &mut usize) -> Self {
-        BufferedOperation {
-            opcode: get_num_raw::<u64>(**buf, index).into(),
-            span_id: get_num_raw(**buf, index),
-        }
+    pub fn from_buf(buf: &ChangeBuffer, index: &mut usize) -> Result<Self> {
+        let opcode = buf.read::<u64>(index)?.try_into()?;
+        let span_id = buf.read(index)?;
+        Ok(BufferedOperation {
+            opcode,
+            span_id,
+        })
     }
 }
