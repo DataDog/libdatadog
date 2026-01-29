@@ -38,6 +38,16 @@ use tokio_util::sync::CancellationToken;
 use crate::internal::{EncodedProfile, Profile};
 use crate::profiles::{Compressor, DefaultProfileCodec};
 
+/// Helper to create Content-Encoding: zstd headers for compressed multipart parts
+fn create_zstd_headers() -> reqwest::header::HeaderMap {
+    let mut headers = reqwest::header::HeaderMap::new();
+    headers.insert(
+        reqwest::header::CONTENT_ENCODING,
+        reqwest::header::HeaderValue::from_static("zstd"),
+    );
+    headers
+}
+
 #[derive(Debug)]
 pub struct ProfileExporter {
     client: reqwest::Client,
@@ -431,7 +441,7 @@ impl ProfileExporter {
                 .mime_str(mime::APPLICATION_JSON.as_ref())?,
         );
 
-        // Add additional files (compressed)
+        // Add additional files (compressed with zstd)
         for file in additional_files {
             let mut encoder = Compressor::<DefaultProfileCodec>::try_new(
                 (file.bytes.len() >> 3).next_power_of_two(),
@@ -445,15 +455,18 @@ impl ProfileExporter {
                 file.name.to_string(),
                 reqwest::multipart::Part::bytes(encoder.finish()?)
                     .file_name(file.name.to_string())
-                    .mime_str(file.mime.as_str())?,
+                    .mime_str(file.mime.as_str())?
+                    .headers(create_zstd_headers()),
             );
         }
 
+        // Add profile (already compressed with zstd)
         Ok(form.part(
             "profile.pprof",
             reqwest::multipart::Part::bytes(profile.buffer)
                 .file_name("profile.pprof")
-                .mime_str(mime::APPLICATION_OCTET_STREAM.as_ref())?,
+                .mime_str(mime::APPLICATION_OCTET_STREAM.as_ref())?
+                .headers(create_zstd_headers()),
         ))
     }
 }

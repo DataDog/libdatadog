@@ -404,6 +404,10 @@ fn validate_full_export(req: &ReceivedRequest, expected_path: &str) -> anyhow::R
     // Verify all parts have correct MIME types
     common::assert_all_standard_mime_types(parts);
 
+    // Verify compressed parts have Content-Encoding: zstd headers (profile.pprof, jit.pprof,
+    // metadata.json)
+    common::assert_compressed_parts_have_encoding(&parsed_req, 3);
+
     Ok(())
 }
 

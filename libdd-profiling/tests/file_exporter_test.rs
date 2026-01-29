@@ -87,6 +87,10 @@ mod tests {
 
         // Verify all MIME types
         assert_all_standard_mime_types(&request.multipart_parts);
+
+        // Verify compressed parts have Content-Encoding headers (profile.pprof, jit.pprof,
+        // metadata.json)
+        assert_compressed_parts_have_encoding(&request, 3);
     }
 
     #[test]

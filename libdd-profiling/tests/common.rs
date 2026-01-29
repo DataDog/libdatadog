@@ -129,3 +129,22 @@ pub fn assert_all_standard_mime_types(parts: &[MultipartPart]) {
     assert_mime_type(parts, "jit.pprof", "application/octet-stream");
     assert_mime_type(parts, "metadata.json", "application/json");
 }
+
+/// Assert that the expected number of parts have Content-Encoding: zstd
+///
+/// Note: Due to limitations in the multipart parsing library, we verify this by
+/// checking the raw HTTP request body contains the header string.
+pub fn assert_compressed_parts_have_encoding(request: &HttpRequest, expected_count: usize) {
+    // Convert body to string to search for Content-Encoding headers
+    let body_str = String::from_utf8_lossy(&request.body);
+
+    // Verify Content-Encoding headers are present for compressed parts
+    // Each part should have this header in its headers section
+    let encoding_count = body_str.matches("content-encoding: zstd").count()
+        + body_str.matches("Content-Encoding: zstd").count();
+
+    assert_eq!(
+        encoding_count, expected_count,
+        "Expected exactly {expected_count} Content-Encoding: zstd headers in multipart body, found {encoding_count}"
+    );
+}
