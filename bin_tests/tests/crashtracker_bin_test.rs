@@ -152,6 +152,7 @@ fn test_crash_tracking_thread_name() {
             thread_name.contains("crashtracker_bi"),
             "thread_name should contain binary name: {thread_name:?}"
         );
+
         Ok(())
     });
 

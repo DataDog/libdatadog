@@ -15,6 +15,7 @@ use libdd_telemetry::data::LogLevel;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
+use std::{fs, path::PathBuf};
 use tokio::io::AsyncBufReadExt;
 
 #[derive(Debug)]
@@ -487,6 +488,7 @@ pub(crate) async fn receive_report_from_stream(
 
     // For now, we only support Signal based crash detection in the receiver.
     builder.with_kind(ErrorKind::UnixSignal)?;
+    enrich_thread_name(&mut builder)?;
     builder.with_os_info_this_machine()?;
 
     // Without a config, we don't even know the endpoint to transmit to.  Not much to do to recover.
@@ -518,6 +520,35 @@ pub(crate) async fn receive_report_from_stream(
     }
 
     Ok(Some((config, crash_info)))
+}
+
+#[cfg(target_os = "linux")]
+fn enrich_thread_name(builder: &mut CrashInfoBuilder) -> anyhow::Result<()> {
+    if builder.error.thread_name.is_some() {
+        return Ok(());
+    }
+    let Some(proc_info) = builder.proc_info.as_ref() else {
+        return Ok(());
+    };
+    let Some(tid) = proc_info.tid else {
+        return Ok(());
+    };
+    let pid = proc_info.pid;
+    let path = PathBuf::from(format!("/proc/{pid}/task/{tid}/comm"));
+    let Ok(comm) = fs::read_to_string(&path) else {
+        return Ok(());
+    };
+    let thread_name = comm.trim_end_matches('\n');
+    if thread_name.is_empty() {
+        return Ok(());
+    }
+    builder.with_thread_name(thread_name.to_string())?;
+    Ok(())
+}
+
+#[cfg(not(target_os = "linux"))]
+fn enrich_thread_name(_builder: &mut CrashInfoBuilder) -> anyhow::Result<()> {
+    Ok(())
 }
 
 #[cfg(test)]

@@ -155,7 +155,7 @@ pub(crate) fn emit_crashreport(
     emit_metadata(pipe, metadata_string)?;
     // after the metadata the ping should have been sent
     emit_ucontext(pipe, ucontext)?;
-    emit_procinfo(pipe, ppid)?;
+    emit_procinfo(pipe, ppid, crashing_tid)?;
     emit_counters(pipe)?;
     emit_spans(pipe)?;
     consume_and_emit_additional_tags(pipe)?;
@@ -163,8 +163,6 @@ pub(crate) fn emit_crashreport(
 
     #[cfg(target_os = "linux")]
     emit_proc_self_maps(pipe)?;
-    #[cfg(target_os = "linux")]
-    emit_thread_name(pipe, ppid, crashing_tid)?;
 
     // Getting a backtrace on rust is not guaranteed to be signal safe
     // https://github.com/rust-lang/backtrace-rs/issues/414
@@ -216,9 +214,9 @@ fn emit_message(w: &mut impl Write, message_ptr: *mut String) -> Result<(), Emit
     Ok(())
 }
 
-fn emit_procinfo(w: &mut impl Write, pid: i32) -> Result<(), EmitterError> {
+fn emit_procinfo(w: &mut impl Write, pid: i32, tid: libc::pid_t) -> Result<(), EmitterError> {
     writeln!(w, "{DD_CRASHTRACK_BEGIN_PROCINFO}")?;
-    writeln!(w, "{{\"pid\": {pid} }}")?;
+    writeln!(w, "{{\"pid\": {pid}, \"tid\": {tid} }}")?;
     writeln!(w, "{DD_CRASHTRACK_END_PROCINFO}")?;
     w.flush()?;
     Ok(())
@@ -229,102 +227,6 @@ fn emit_procinfo(w: &mut impl Write, pid: i32) -> Result<(), EmitterError> {
 /// the layout of the target process (parent), which should always be true.
 fn emit_proc_self_maps(w: &mut impl Write) -> Result<(), EmitterError> {
     emit_text_file(w, "/proc/self/maps")?;
-    Ok(())
-}
-
-/// Assumes that the memory layout of the current process (child) is identical to
-/// the layout of the target process (parent), which should always be true.
-#[cfg(target_os = "linux")]
-fn emit_thread_name(
-    w: &mut impl Write,
-    pid: i32,
-    crashing_tid: libc::pid_t,
-) -> Result<(), EmitterError> {
-    // Best effort at string formatting with no async signal un-safe calls
-    // Format: /proc/{pid}/task/{tid}/comm\0
-    fn write_decimal(buf: &mut [u8], mut val: u64) -> Option<usize> {
-        if buf.is_empty() {
-            return None;
-        }
-        let mut i = 0;
-        loop {
-            if i >= buf.len() {
-                return None;
-            }
-            buf[i] = b'0' + (val % 10) as u8;
-            val /= 10;
-            i += 1;
-            if val == 0 {
-                break;
-            }
-        }
-        buf[..i].reverse();
-        Some(i)
-    }
-
-    let mut path_buf = [0u8; 64];
-    let mut idx = 0usize;
-    let parts = [
-        b"/proc/" as &[u8],
-        b"" as &[u8], // pid placeholder
-        b"/task/" as &[u8],
-        b"" as &[u8], // tid placeholder
-        b"/comm" as &[u8],
-    ];
-
-    // Copy "/proc/"
-    path_buf[idx..idx + parts[0].len()].copy_from_slice(parts[0]);
-    idx += parts[0].len();
-    // pid
-    let pid_start = idx;
-    if let Some(len) = write_decimal(&mut path_buf[pid_start..], pid as u64) {
-        idx += len;
-    } else {
-        return Ok(());
-    }
-    // "/task/"
-    path_buf[idx..idx + parts[2].len()].copy_from_slice(parts[2]);
-    idx += parts[2].len();
-    // tid
-    let tid_start = idx;
-    if let Some(len) = write_decimal(&mut path_buf[tid_start..], crashing_tid as u64) {
-        idx += len;
-    } else {
-        return Ok(());
-    }
-    // "/comm"
-    path_buf[idx..idx + parts[4].len()].copy_from_slice(parts[4]);
-    idx += parts[4].len();
-    // null-terminate
-    if idx >= path_buf.len() {
-        return Ok(());
-    }
-    path_buf[idx] = 0;
-
-    let fd = unsafe { libc::open(path_buf.as_ptr() as *const libc::c_char, libc::O_RDONLY) };
-    if fd < 0 {
-        // Missing / unreadable; skip without failing the crash report.
-        return Ok(());
-    }
-
-    writeln!(w, "{DD_CRASHTRACK_BEGIN_THREAD_NAME}")?;
-
-    const BUFFER_LEN: usize = 64;
-    let mut buffer = [0u8; BUFFER_LEN];
-
-    loop {
-        let read_count =
-            unsafe { libc::read(fd, buffer.as_mut_ptr() as *mut libc::c_void, BUFFER_LEN) };
-        if read_count <= 0 {
-            break;
-        }
-        w.write_all(&buffer[..read_count as usize])?;
-    }
-
-    let _ = unsafe { libc::close(fd) };
-
-    writeln!(w, "{DD_CRASHTRACK_END_THREAD_NAME}")?;
-    w.flush()?;
     Ok(())
 }
 
@@ -685,26 +587,18 @@ mod tests {
     #[test]
     #[cfg(target_os = "linux")]
     #[cfg_attr(miri, ignore)]
-    fn test_emit_thread_name() {
+    fn test_emit_procinfo() {
         let pid = unsafe { libc::getpid() };
         let tid = unsafe { libc::syscall(libc::SYS_gettid) as libc::pid_t };
         let mut buf = Vec::new();
 
-        emit_thread_name(&mut buf, pid, tid).expect("thread name to emit");
-        let out = str::from_utf8(&buf).expect("to be valid UTF8");
-        assert!(out.contains(DD_CRASHTRACK_BEGIN_THREAD_NAME));
-        assert!(out.contains(DD_CRASHTRACK_END_THREAD_NAME));
+        emit_procinfo(&mut buf, pid, tid).expect("procinfo to emit");
+        let proc_info_block = str::from_utf8(&buf).expect("to be valid UTF8");
+        assert!(proc_info_block.contains(DD_CRASHTRACK_BEGIN_PROCINFO));
+        assert!(proc_info_block.contains(DD_CRASHTRACK_END_PROCINFO));
 
-        let mut comm = String::new();
-        let path = format!("/proc/{pid}/task/{tid}/comm");
-        File::open(&path)
-            .and_then(|mut f| f.read_to_string(&mut comm))
-            .expect("read comm");
-        let comm_trimmed = comm.trim_end_matches('\n');
-        assert!(
-            out.contains(comm_trimmed),
-            "output should include thread name from comm; got {out:?}"
-        );
+        assert!(proc_info_block.contains(&format!("\"pid\": {pid}")));
+        assert!(proc_info_block.contains(&format!("\"tid\": {tid}")));
     }
 
     #[test]
