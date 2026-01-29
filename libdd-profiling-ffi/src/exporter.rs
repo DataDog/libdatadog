@@ -11,12 +11,40 @@ use libdd_common_ffi::{
     wrap_with_ffi_result, wrap_with_void_ffi_result, Handle, Result, ToInner, VoidResult,
 };
 use libdd_profiling::exporter;
-use libdd_profiling::exporter::{ExporterManager, MimeType, ProfileExporter};
+use libdd_profiling::exporter::{ExporterManager, ProfileExporter};
 use libdd_profiling::internal::EncodedProfile;
 use std::borrow::Cow;
 use std::str::FromStr;
 
 type TokioCancellationToken = tokio_util::sync::CancellationToken;
+
+/// MIME type for file attachments
+/// Invalid (0) is the default and will cause an error if used
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub enum MimeType {
+    Invalid = 0,
+    ApplicationJson,
+    ApplicationOctetStream,
+    TextCsv,
+    TextPlain,
+    TextXml,
+}
+
+impl TryFrom<MimeType> for exporter::MimeType {
+    type Error = anyhow::Error;
+
+    fn try_from(mime: MimeType) -> std::result::Result<Self, Self::Error> {
+        match mime {
+            MimeType::Invalid => anyhow::bail!("Invalid MIME type"),
+            MimeType::ApplicationJson => Ok(exporter::MimeType::ApplicationJson),
+            MimeType::ApplicationOctetStream => Ok(exporter::MimeType::ApplicationOctetStream),
+            MimeType::TextCsv => Ok(exporter::MimeType::TextCsv),
+            MimeType::TextPlain => Ok(exporter::MimeType::TextPlain),
+            MimeType::TextXml => Ok(exporter::MimeType::TextXml),
+        }
+    }
+}
 
 #[allow(dead_code)]
 #[repr(C)]
@@ -180,15 +208,15 @@ pub unsafe extern "C" fn ddog_prof_Exporter_drop(mut exporter: *mut Handle<Profi
     drop(exporter.take())
 }
 
-unsafe fn into_vec_files<'a>(slice: Slice<'a, File>) -> Vec<exporter::File<'a>> {
+unsafe fn into_vec_files<'a>(slice: Slice<'a, File>) -> anyhow::Result<Vec<exporter::File<'a>>> {
     slice
         .into_slice()
         .iter()
         .map(|file| {
             let name = file.name.try_to_utf8().unwrap_or("{invalid utf-8}");
             let bytes = file.file.as_slice();
-            let mime = file.mime;
-            exporter::File { name, bytes, mime }
+            let mime = file.mime.try_into()?;
+            Ok(exporter::File { name, bytes, mime })
         })
         .collect()
 }
@@ -244,7 +272,7 @@ pub unsafe extern "C" fn ddog_prof_Exporter_send_blocking(
     wrap_with_ffi_result!({
         let exporter = exporter.to_inner_mut()?;
         let profile = *profile.take()?;
-        let files_to_compress_and_export = into_vec_files(files_to_compress_and_export);
+        let files_to_compress_and_export = into_vec_files(files_to_compress_and_export)?;
         let tags: Vec<Tag> = optional_additional_tags
             .map(|tags| tags.iter().cloned().collect())
             .unwrap_or_default();
@@ -398,7 +426,7 @@ pub unsafe extern "C" fn ddog_prof_ExporterManager_queue(
     wrap_with_void_ffi_result!({
         let manager = manager.to_inner_mut()?;
         let profile = *profile.take()?;
-        let files_to_compress_and_export = into_vec_files(files_to_compress_and_export);
+        let files_to_compress_and_export = into_vec_files(files_to_compress_and_export)?;
         let tags: Vec<Tag> = optional_additional_tags
             .map(|tags| tags.iter().cloned().collect())
             .unwrap_or_default();
@@ -727,5 +755,26 @@ mod tests {
                 panic!("Expected error since no server is running");
             }
         }
+    }
+
+    #[test]
+    fn test_invalid_mime_type_returns_error() {
+        // Test that Invalid MIME type (default value 0) returns an error
+        let data = b"test data";
+        let file = File {
+            name: CharSlice::from("test.bin"),
+            file: ByteSlice::from(&data[..]),
+            mime: MimeType::Invalid,
+        };
+
+        let files_slice = unsafe { Slice::from_raw_parts(&file as *const File, 1) };
+        let result = unsafe { into_vec_files(files_slice) };
+
+        assert!(result.is_err(), "Invalid MIME type should return an error");
+        let error_msg = result.unwrap_err().to_string();
+        assert!(
+            error_msg.contains("Invalid MIME type"),
+            "Error message should mention invalid MIME type, got: {error_msg}"
+        );
     }
 }

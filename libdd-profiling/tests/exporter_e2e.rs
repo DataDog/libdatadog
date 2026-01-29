@@ -5,9 +5,11 @@
 //!
 //! These tests validate the full export flow across different endpoint types.
 
+mod common;
+
 use libdd_profiling::exporter::config;
 use libdd_profiling::exporter::utils::parse_http_request;
-use libdd_profiling::exporter::{File, MimeType, ProfileExporter};
+use libdd_profiling::exporter::ProfileExporter;
 use libdd_profiling::internal::EncodedProfile;
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -222,18 +224,7 @@ async fn export_full_profile(
     ];
 
     // Build additional files
-    let additional_files = vec![
-        File {
-            name: "jit.pprof",
-            bytes: b"fake-jit-data",
-            mime: MimeType::ApplicationOctetStream,
-        },
-        File {
-            name: "metadata.json",
-            bytes: b"{\"test\": true}",
-            mime: MimeType::ApplicationJson,
-        },
-    ];
+    let additional_files = common::create_test_additional_files();
 
     // Build metadata
     let internal_metadata = serde_json::json!({
@@ -302,6 +293,32 @@ fn validate_full_export(req: &ReceivedRequest, expected_path: &str) -> anyhow::R
     // Verify request basics
     assert_eq!(req.method, "POST");
     assert_eq!(req.path, expected_path);
+
+    // Verify container/entity ID headers if available on the system
+    // These should be consistently present or absent
+    let has_container_id = req.headers.contains_key("datadog-container-id");
+    let has_entity_id = req.headers.contains_key("datadog-entity-id");
+    assert_eq!(
+        has_container_id, has_entity_id,
+        "Container ID and Entity ID headers should both be present or both absent"
+    );
+
+    // If present, verify they match system values
+    if let Some(container_id) = libdd_common::entity_id::get_container_id() {
+        assert_eq!(
+            req.headers.get("datadog-container-id").unwrap(),
+            container_id,
+            "Container ID header should match system container ID"
+        );
+    }
+
+    if let Some(entity_id) = libdd_common::entity_id::get_entity_id() {
+        assert_eq!(
+            req.headers.get("datadog-entity-id").unwrap(),
+            entity_id,
+            "Entity ID header should match system entity ID"
+        );
+    }
 
     // Parse the request to get multipart parts
     // We need to reconstruct a minimal HTTP request to parse
@@ -383,6 +400,13 @@ fn validate_full_export(req: &ReceivedRequest, expected_path: &str) -> anyhow::R
             part_name
         );
     }
+
+    // Verify all parts have correct MIME types
+    common::assert_all_standard_mime_types(parts);
+
+    // Verify compressed parts have Content-Encoding: zstd headers (profile.pprof, jit.pprof,
+    // metadata.json)
+    common::assert_compressed_parts_have_encoding(&parsed_req, 3);
 
     Ok(())
 }
