@@ -3,7 +3,7 @@
 
 use crate::arch;
 use crate::module::Module;
-use crate::utils::{file_replace, project_root};
+use crate::utils::{adjust_extern_symbols, file_replace, project_root};
 use anyhow::Result;
 use serde::Deserialize;
 use std::ffi::OsStr;
@@ -67,7 +67,8 @@ impl Profiling {
         for header in &headers {
             origin_path.set_file_name(header);
             target_path.set_file_name(header);
-            fs::copy(&origin_path, &target_path).expect("Failed to copy the header");
+            adjust_extern_symbols(&origin_path, &target_path)
+                .expect("Failed to adjust extern symbols");
 
             // Exclude blazesym header from deduplication
             if !target_path.to_str().unwrap().contains("blazesym.h") {
