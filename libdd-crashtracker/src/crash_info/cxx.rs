@@ -45,6 +45,7 @@ pub mod ffi {
 
     struct ProcInfo {
         pid: u32,
+        tid: u32,
     }
 
     struct OsInfo {
@@ -177,7 +178,15 @@ impl CrashInfoBuilder {
     }
 
     pub fn set_proc_info(&mut self, proc_info: ffi::ProcInfo) -> anyhow::Result<()> {
-        let internal_proc_info = crate::ProcInfo { pid: proc_info.pid };
+        let tid = if proc_info.tid == 0 {
+            None
+        } else {
+            Some(proc_info.tid)
+        };
+        let internal_proc_info = crate::ProcInfo {
+            pid: proc_info.pid,
+            tid,
+        };
         self.with_proc_info(internal_proc_info)
     }
 

@@ -257,6 +257,14 @@
           "type": "integer",
           "format": "uint32",
           "minimum": 0.0
+        },
+        "tid": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0.0
         }
       }
     },
