@@ -6,7 +6,6 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <pthread.h>
-#include <signal.h>
 #include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -53,10 +52,6 @@ static __thread int collector_marked = 0;
 // Called by the collector process to enable detection in the collector only
 void dd_preload_logger_mark_collector(void) {
     collector_marked = 1;
-    if (log_fd >= 0 || !collector_marked) {
-        // Already initialized or not a collector
-        return;
-    }
 }
 
 static void write_int(int fd, long value) {
