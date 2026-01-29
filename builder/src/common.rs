@@ -3,9 +3,8 @@
 
 use crate::arch;
 use crate::module::Module;
-use crate::utils::project_root;
+use crate::utils::{adjust_extern_symbols, project_root};
 use anyhow::Result;
-use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
 use std::rc::Rc;
@@ -41,7 +40,8 @@ impl Module for Common {
         let target_path: PathBuf = [self.target_include.as_ref(), "common.h"].iter().collect();
 
         let origin_path: PathBuf = [self.source_include.as_ref(), "common.h"].iter().collect();
-        fs::copy(origin_path, target_path).expect("Failed to copy common.h");
+        adjust_extern_symbols(&origin_path, &target_path).expect("Failed to adjust extern symbols");
+
         Ok(())
     }
 }

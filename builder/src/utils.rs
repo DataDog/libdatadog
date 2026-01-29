@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use anyhow::{anyhow, Result};
+use regex::Regex;
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -25,4 +26,38 @@ pub fn project_root() -> PathBuf {
         .nth(1)
         .unwrap()
         .to_path_buf()
+}
+
+pub(crate) fn adjust_extern_symbols(
+    file_in: impl AsRef<Path>,
+    file_out: impl AsRef<Path>,
+) -> Result<()> {
+    let content = fs::read_to_string(file_in)?;
+    let re = Regex::new(r#"(?m)^(\s*)extern\s+(.+;)$"#).unwrap();
+
+    // Replace function using captures
+    let new_content = re.replace_all(&content, |caps: &regex::Captures| {
+        let full_match = caps.get(0).unwrap().as_str();
+        let indent = &caps[1];
+        let declaration = &caps[2];
+
+        // Skip if it's extern "C", already has LIBDD_DLLIMPORT, or contains '(' (function)
+        if full_match.contains("extern \"C\"")
+            || full_match.contains("LIBDD_DLLIMPORT")
+            || full_match.contains('(')
+        {
+            return full_match.to_string();
+        }
+
+        // Keep indent + "extern " + "LIBDD_DLL_IMPORT " + declaration
+        format!("{}extern LIBDD_DLLIMPORT {}", indent, declaration)
+    });
+
+    let mut file = OpenOptions::new()
+        .write(true)
+        .truncate(true)
+        .create(true)
+        .open(file_out)?;
+    file.write_all(new_content.as_bytes())
+        .map_err(|err| anyhow!("failed to write file: {}", err))
 }
