@@ -22,23 +22,28 @@ end
 LIB_GITHUB_RELEASES = [
   {
     file: "libdatadog-aarch64-alpine-linux-musl.tar.gz",
-    sha256: "b5badd5d781086919596692fdeb46545bb3a7bfbc0786058ee3d38b847921a36",
+    sha256: "c90bd4959026f7fddb9012036fdc5b1e49bdf57d716cb429cdde291af6108740",
     ruby_platform: "aarch64-linux-musl"
   },
   {
     file: "libdatadog-aarch64-unknown-linux-gnu.tar.gz",
-    sha256: "6a408fab094966e6c5cd95ad00aab40885e816ed5268025365684be72cb71e5c",
+    sha256: "c67ada4359cd6a806adafcb44043bc8fb0dffd463e3aa328856496e2883142ac",
     ruby_platform: "aarch64-linux"
   },
   {
     file: "libdatadog-x86_64-alpine-linux-musl.tar.gz",
-    sha256: "d595e65f68e5e48f8d3158ac0d5494881848d03bcded2e6c4eb68cd05fd3c0a0",
+    sha256: "394b13591400b36d90755bc9851be047e6d31813347ed9d0e2638355cc9617d4",
     ruby_platform: "x86_64-linux-musl"
   },
   {
     file: "libdatadog-x86_64-unknown-linux-gnu.tar.gz",
-    sha256: "1571e52919e9c014f53a7accba003f930d1e49e51146064846b79c12110a2df2",
+    sha256: "1778bed8bb4ec5a63af792ed6d7b0acd2564e5c7633d9b65d7c715e7f8635743",
     ruby_platform: "x86_64-linux"
+  },
+  {
+    file: "libdatadog-aarch64-apple-darwin.tar.gz",
+    sha256: "1420ba4970ff9158aec4bd8a80d139abe8c19cfd71ae31c6c518f8a2ad1416b8",
+    ruby_platform: "arm64-darwin"
   }
 ]
 
@@ -106,17 +111,15 @@ task package: [
   # In a previous version of libdatadog, this package had no binaries, but that could mean that we broke customers in case (2).
   # For customers in case (1), this package is a no-op, and dd-trace-rb will correctly detect and warn that
   # there are no valid binaries for the platform.
-  Helpers.package_for(gemspec, ruby_platform: nil, files: Helpers.files_for("x86_64-linux", "x86_64-linux-musl", "aarch64-linux", "aarch64-linux-musl"))
+  Helpers.package_for(gemspec, ruby_platform: nil, files: Helpers.files_for("x86_64-linux", "x86_64-linux-musl", "aarch64-linux", "aarch64-linux-musl", "arm64-darwin"))
 
   # We include both glibc and musl variants in the same binary gem to avoid the issues
   # documented in https://github.com/rubygems/rubygems/issues/3174
   Helpers.package_for(gemspec, ruby_platform: "x86_64-linux", files: Helpers.files_for("x86_64-linux", "x86_64-linux-musl"))
   Helpers.package_for(gemspec, ruby_platform: "aarch64-linux", files: Helpers.files_for("aarch64-linux", "aarch64-linux-musl"))
 
-  # Experimental macOS package, not published to rubygems.org at the moment
-  if ENV["LIBDATADOG_PACKAGE_MACOS"] == "true"
-    Helpers.package_for(gemspec, ruby_platform: "x86_64-darwin-19", files: Helpers.files_for("x86_64-darwin-19"))
-  end
+  # macOS package (Apple Silicon)
+  Helpers.package_for(gemspec, ruby_platform: "arm64-darwin", files: Helpers.files_for("arm64-darwin"))
 end
 
 Rake::Task["package"].enhance { Rake::Task["spec_validate_permissions"].execute }
@@ -136,7 +139,8 @@ task push_to_rubygems: [
   [
     "gem push pkg/libdatadog-#{Libdatadog::VERSION}.gem",
     "gem push pkg/libdatadog-#{Libdatadog::VERSION}-x86_64-linux.gem",
-    "gem push pkg/libdatadog-#{Libdatadog::VERSION}-aarch64-linux.gem"
+    "gem push pkg/libdatadog-#{Libdatadog::VERSION}-aarch64-linux.gem",
+    "gem push pkg/libdatadog-#{Libdatadog::VERSION}-arm64-darwin.gem"
   ].each do |command|
     puts "Running: #{command}"
     abort unless system(command)
@@ -145,7 +149,8 @@ end
 
 module Helpers
   # Files that should have executable permissions (755) in the gem
-  EXECUTABLE_FILES = ["libdatadog-crashtracking-receiver", "libdatadog_profiling.so"].freeze
+  # Note: .so for Linux, .dylib for macOS
+  EXECUTABLE_FILES = ["libdatadog-crashtracking-receiver", "libdatadog_profiling.so", "libdatadog_profiling.dylib"].freeze
 
   def self.each_github_release_variant
     LIB_GITHUB_RELEASES.each do |variant|

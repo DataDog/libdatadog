@@ -253,7 +253,8 @@ int main() {
                 // Files to compress and attach
                 {AttachmentFile{
                     .name = "app_metadata.json",
-                    .data = {metadata_bytes.data(), metadata_bytes.size()}
+                    .data = {metadata_bytes.data(), metadata_bytes.size()},
+                    .mime = MimeType::ApplicationJson
                 }},
                 // Additional per-profile tags
                 {

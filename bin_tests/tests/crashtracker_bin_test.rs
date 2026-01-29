@@ -313,6 +313,7 @@ fn test_crash_tracking_bin_segfault() {
     test_crash_tracking_app("segfault");
 }
 
+#[cfg(not(target_os = "macos"))]
 fn test_crash_tracking_app(crash_type: &str) {
     use bin_tests::test_runner::run_custom_crash_test;
 
@@ -390,6 +391,7 @@ fn test_crash_tracking_bin_panic_hook_unknown_type() {
 
 /// Helper function to run panic hook tests with different payload types.
 /// Note: Since tests are built with Debug profile, location is always expected.
+#[cfg(not(target_os = "macos"))]
 fn test_panic_hook_mode(mode: &str, expected_category: &str, expected_panic_message: Option<&str>) {
     use bin_tests::test_runner::run_custom_crash_test;
 
@@ -1519,6 +1521,7 @@ fn create_crashtracker_receiver(profile: BuildProfile) -> ArtifactsBuild {
     }
 }
 
+#[cfg(not(target_os = "macos"))]
 fn create_crashing_app(profile: BuildProfile, panic_abort: bool) -> ArtifactsBuild {
     ArtifactsBuild {
         name: "crashing_test_app".to_owned(),

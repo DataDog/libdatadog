@@ -9,10 +9,16 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest]
+        os: [ubuntu-latest, macos-latest]
         # Removed the head line for now because it's throwing CI errors
         # ruby: ['2.5', '2.6', '2.7', '3.0', '3.1', '3.2', '3.3', '3.4', head]
         ruby: ['2.5', '2.6', '2.7', '3.0', '3.1', '3.2', '3.3', '3.4']
+        exclude:
+          # Ruby 2.5 and 2.6 are not available on macos-latest (ARM)
+          - os: macos-latest
+            ruby: '2.5'
+          - os: macos-latest
+            ruby: '2.6'
     runs-on: ${{ matrix.os }}
     steps:
     - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # 4.2.2

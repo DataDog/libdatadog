@@ -139,9 +139,10 @@ impl TelemetryCachedClient {
     pub fn to_telemetry_point(
         &self,
         (name, val, tags): (String, f64, Vec<Tag>),
-    ) -> TelemetryActions {
-        #[allow(clippy::unwrap_used)]
-        TelemetryActions::AddPoint((val, *self.telemetry_metrics.get(&name).unwrap(), tags))
+    ) -> Option<TelemetryActions> {
+        self.telemetry_metrics
+            .get(&name)
+            .map(|context_key| TelemetryActions::AddPoint((val, *context_key, tags)))
     }
 
     pub fn process_actions(
@@ -154,7 +155,12 @@ impl TelemetryCachedClient {
                 SidecarAction::Telemetry(t) => actions.push(t),
                 SidecarAction::RegisterTelemetryMetric(metric) => self.register_metric(metric),
                 SidecarAction::AddTelemetryMetricPoint(point) => {
-                    actions.push(self.to_telemetry_point(point));
+                    let metric_name = point.0.clone();
+                    if let Some(telemetry_action) = self.to_telemetry_point(point) {
+                        actions.push(telemetry_action);
+                    } else {
+                        warn!("Attempted to send telemetry point for unregistered metric: {metric_name}");
+                    }
                 }
                 SidecarAction::PhpComposerTelemetryFile(_) => {} // handled separately
                 SidecarAction::ClearQueueId => {}                // handled separately
@@ -389,15 +395,20 @@ pub fn get_telemetry_action_sender() -> Result<mpsc::Sender<InternalTelemetryAct
         .ok_or_else(|| anyhow!("Telemetry action sender not initialized"))
 }
 
-pub(crate) async fn telemetry_action_receiver_task(sidecar: SidecarServer) {
-    info!("Starting telemetry action receiver task...");
-
-    // create mpsc pair and set TELEMETRY_ACTION_SENDER
-    let (tx, mut rx) = mpsc::channel(1000);
+pub(crate) fn init_telemetry_sender() -> Option<mpsc::Receiver<InternalTelemetryActions>> {
+    let (tx, rx) = mpsc::channel(1000);
     if TELEMETRY_ACTION_SENDER.set(tx).is_err() {
-        warn!("Failed to set telemetry action sender");
-        return;
+        warn!("Telemetry action sender already initialized");
+        return None;
     }
+    Some(rx)
+}
+
+pub(crate) async fn telemetry_action_receiver_task(
+    sidecar: SidecarServer,
+    mut rx: mpsc::Receiver<InternalTelemetryActions>,
+) {
+    info!("Starting telemetry action receiver task...");
 
     while let Some(actions) = rx.recv().await {
         let telemetry_client = get_telemetry_client(
@@ -426,14 +437,21 @@ pub(crate) async fn telemetry_action_receiver_task(sidecar: SidecarServer) {
                     telemetry_client.lock_or_panic().register_metric(metric);
                 }
                 InternalTelemetryAction::AddMetricPoint((value, name, tags)) => {
-                    let actions_point = telemetry_client
-                        .lock_or_panic()
-                        .to_telemetry_point((name, value, tags));
-                    match client.send_msg(actions_point).await {
-                        Ok(_) => {}
-                        Err(e) => {
-                            warn!("Failed to send telemetry point to TelemetryWorker: {e}");
+                    let metric_name = name.clone();
+                    let actions_point_opt = {
+                        telemetry_client
+                            .lock_or_panic()
+                            .to_telemetry_point((name, value, tags))
+                    };
+                    if let Some(actions_point) = actions_point_opt {
+                        match client.send_msg(actions_point).await {
+                            Ok(_) => {}
+                            Err(e) => {
+                                warn!("Failed to send telemetry point to TelemetryWorker: {e}");
+                            }
                         }
+                    } else {
+                        warn!("Attempted to send telemetry point for unregistered metric: {metric_name}");
                     }
                 }
             }

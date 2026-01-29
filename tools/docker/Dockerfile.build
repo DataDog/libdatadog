@@ -139,6 +139,7 @@ RUN echo \
     libdd-profiling/benches/main.rs \
     tools/sidecar_mockgen/src/bin/sidecar_mockgen.rs \
     tools/src/bin/dedup_headers.rs \
+    tools/src/bin/ffi_test.rs \
     libdd-trace-normalization/benches/normalization_utils.rs \
     libdd-trace-obfuscation/benches/trace_obfuscation.rs \
     libdd-trace-utils/benches/deserialization.rs \
