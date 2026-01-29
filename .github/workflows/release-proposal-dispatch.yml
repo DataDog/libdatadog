@@ -258,7 +258,7 @@ jobs:
 
           # Output the results
           echo "API changes summary:"
-          cat /tmp/api-changes.json | jq .
+          jq . /tmp/api-changes.json
 
       - name: Upload release data
         uses: actions/upload-artifact@v4
