@@ -1,12 +1,12 @@
 variables:
   RELEASE_BRANCH:
-    value: "^(release|igor/versioning/publish-crates-from-proposal-testing)$"
+    value: "^(release|igor/versioning/publish-crates-from-proposal-.+)$"
     description: "release jobs are triggered on this branch"
 
 publish-crates:
   stage: test # This is a test stage to make sure the job works, replace it with deploy when ready
   rules:
-    - if: $CI_COMMIT_BRANCH =~ /^${RELEASE_BRANCH}/
+    - if: $CI_COMMIT_BRANCH =~ /${RELEASE_BRANCH}/
       when: on_success
   script:
     - |
