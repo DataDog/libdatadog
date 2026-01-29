@@ -233,6 +233,11 @@ async fn export_full_profile(
             bytes: b"{\"test\": true}",
             mime: MimeType::ApplicationJson,
         },
+        File {
+            name: "custom.dat",
+            bytes: b"custom data",
+            mime: MimeType::None,
+        },
     ];
 
     // Build metadata
@@ -348,8 +353,8 @@ fn validate_full_export(req: &ReceivedRequest, expected_path: &str) -> anyhow::R
     let attachments = event_json["attachments"]
         .as_array()
         .ok_or_else(|| anyhow::anyhow!("Missing attachments"))?;
-    assert_eq!(attachments.len(), 3);
-    for attachment in &["profile.pprof", "jit.pprof", "metadata.json"] {
+    assert_eq!(attachments.len(), 4);
+    for attachment in &["profile.pprof", "jit.pprof", "metadata.json", "custom.dat"] {
         assert!(
             attachments.contains(&serde_json::json!(attachment)),
             "Missing attachment: {}",
@@ -371,18 +376,62 @@ fn validate_full_export(req: &ReceivedRequest, expected_path: &str) -> anyhow::R
     assert_eq!(event_json["info"]["platform"]["hostname"], "test-host");
     assert_eq!(event_json["info"]["runtime"]["engine"], "rust");
 
-    // Verify parts exist (files are compressed, just check non-empty)
-    for part_name in &["profile.pprof", "jit.pprof", "metadata.json"] {
-        let part = parts
-            .iter()
-            .find(|p| p.name == *part_name)
-            .ok_or_else(|| anyhow::anyhow!("Missing part: {}", part_name))?;
-        assert!(
-            !part.content.is_empty(),
-            "{} should not be empty",
-            part_name
-        );
-    }
+    // Verify parts exist (files are compressed, just check non-empty) and mime types
+    let profile_part = parts
+        .iter()
+        .find(|p| p.name == "profile.pprof")
+        .ok_or_else(|| anyhow::anyhow!("Missing part: profile.pprof"))?;
+    assert!(
+        !profile_part.content.is_empty(),
+        "profile.pprof should not be empty"
+    );
+    assert_eq!(
+        profile_part.content_type.as_deref(),
+        Some("application/octet-stream"),
+        "profile.pprof should have application/octet-stream mime type"
+    );
+
+    let jit_part = parts
+        .iter()
+        .find(|p| p.name == "jit.pprof")
+        .ok_or_else(|| anyhow::anyhow!("Missing part: jit.pprof"))?;
+    assert!(
+        !jit_part.content.is_empty(),
+        "jit.pprof should not be empty"
+    );
+    assert_eq!(
+        jit_part.content_type.as_deref(),
+        Some("application/octet-stream"),
+        "jit.pprof should have application/octet-stream mime type"
+    );
+
+    let metadata_part = parts
+        .iter()
+        .find(|p| p.name == "metadata.json")
+        .ok_or_else(|| anyhow::anyhow!("Missing part: metadata.json"))?;
+    assert!(
+        !metadata_part.content.is_empty(),
+        "metadata.json should not be empty"
+    );
+    assert_eq!(
+        metadata_part.content_type.as_deref(),
+        Some("application/json"),
+        "metadata.json should have application/json mime type"
+    );
+
+    let custom_part = parts
+        .iter()
+        .find(|p| p.name == "custom.dat")
+        .ok_or_else(|| anyhow::anyhow!("Missing part: custom.dat"))?;
+    assert!(
+        !custom_part.content.is_empty(),
+        "custom.dat should not be empty"
+    );
+    // When MimeType::None is used, no content_type should be set
+    assert!(
+        custom_part.content_type.is_none(),
+        "custom.dat should not have a mime type (MimeType::None)"
+    );
 
     Ok(())
 }

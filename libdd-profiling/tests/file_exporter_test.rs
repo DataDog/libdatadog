@@ -168,6 +168,11 @@ mod tests {
             !profile_part.content.is_empty(),
             "profile should have content"
         );
+        assert_eq!(
+            profile_part.content_type.as_deref(),
+            Some("application/octet-stream"),
+            "profile.pprof should have application/octet-stream mime type"
+        );
     }
 
     #[test]
