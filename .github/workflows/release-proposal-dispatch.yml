@@ -170,11 +170,10 @@ jobs:
               echo "Using $RANGE as range"
 
               echo "Is the tag $TAG in the branch:"
-              git branch --contains "$TAG"
-              if [ $? -ne 0 ]; then
+              git branch --contains "$TAG" || {
                 echo "Error: Tag $TAG is not in the branch" >&2
                 exit 1
-              fi
+              }
 
               # if there is a tag more recent than $TAG, continue the loop
               LATEST_TAG=$(git tag -l "$TAG_PREFIX*" --sort=-v:refname | head -1)
