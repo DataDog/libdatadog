@@ -6,6 +6,7 @@
 //! across different test scenarios.
 
 use crate::{
+    build_artifacts,
     test_types::{CrashType, TestMode},
     validation::{read_and_parse_crash_payload, validate_std_outputs, PayloadValidator},
     ArtifactType, ArtifactsBuild, BuildProfile,
@@ -266,6 +267,30 @@ where
 
     // Run custom validator
     validator(&crash_payload, &fixtures)?;
+
+    Ok(())
+}
+
+/// Minimal runner for scenarios where the process may not emit a crash report
+/// (preload allocation detector). It just runs the binary and waits.
+pub fn run_crash_no_op(config: &CrashTestConfig) -> Result<()> {
+    let artifacts = StandardArtifacts::new(config.profile);
+    let artifacts_map = build_artifacts(&artifacts.as_slice())?;
+    let fixtures = TestFixtures::new()?;
+
+    let mut cmd = process::Command::new(&artifacts_map[&artifacts.crashtracker_bin]);
+    cmd.arg(format!("file://{}", fixtures.crash_profile_path.display()))
+        .arg(&artifacts_map[&artifacts.crashtracker_receiver])
+        .arg(&fixtures.output_dir)
+        .arg(config.mode.as_str())
+        .arg(config.crash_type.as_str());
+
+    for (key, val) in &config.env_vars {
+        cmd.env(key, val);
+    }
+
+    let mut child = cmd.spawn().context("Failed to spawn test process")?;
+    let _ = child.wait();
 
     Ok(())
 }

@@ -12,7 +12,10 @@ use std::{fs, path::PathBuf};
 use anyhow::Context;
 use bin_tests::{
     build_artifacts,
-    test_runner::{run_crash_test_with_artifacts, CrashTestConfig, StandardArtifacts, ValidatorFn},
+    test_runner::{
+        run_crash_no_op, run_crash_test_with_artifacts, CrashTestConfig, StandardArtifacts,
+        ValidatorFn,
+    },
     test_types::{CrashType, TestMode},
     validation::PayloadValidator,
     ArtifactType, ArtifactsBuild, BuildProfile,
@@ -182,6 +185,55 @@ fn test_crash_tracking_bin_no_runtime_callback() {
 
 #[test]
 #[cfg_attr(miri, ignore)]
+#[cfg(target_os = "linux")]
+fn test_collector_no_allocations_stacktrace_modes() {
+    // (env_value, should_expect_log)
+    let cases = [
+        ("disabled", false),
+        ("without_symbols", false),
+        ("receiver_symbols", false),
+        ("inprocess_symbols", true),
+    ];
+
+    for (env_value, expect_log) in cases {
+        let detector_log_path = PathBuf::from("/tmp/preload_detector.log");
+
+        // Clean up
+        let _ = fs::remove_file(&detector_log_path);
+
+        let config = CrashTestConfig::new(
+            BuildProfile::Debug,
+            TestMode::RuntimePreloadLogger,
+            CrashType::NullDeref,
+        )
+        .with_env("DD_TEST_STACKTRACE_COLLECTION", env_value);
+
+        let result = run_crash_no_op(&config);
+
+        let log_exists = detector_log_path.exists();
+
+        if expect_log {
+            assert!(
+                log_exists,
+                "Expected allocation detection log for mode {env_value}"
+            );
+            if log_exists {
+                if let Ok(bytes) = fs::read(&detector_log_path) {
+                    eprintln!("{}", String::from_utf8_lossy(&bytes));
+                }
+            }
+        } else {
+            result.unwrap();
+            assert!(
+                !log_exists,
+                "Did not expect allocation detection log for mode {env_value}"
+            );
+        }
+    }
+}
+
+#[test]
+#[cfg_attr(miri, ignore)]
 fn test_crash_tracking_bin_runtime_callback_frame_invalid_utf8() {
     let config = CrashTestConfig::new(
         BuildProfile::Release,
@@ -313,6 +365,7 @@ fn test_crash_tracking_bin_segfault() {
     test_crash_tracking_app("segfault");
 }
 
+#[cfg(not(target_os = "macos"))]
 fn test_crash_tracking_app(crash_type: &str) {
     use bin_tests::test_runner::run_custom_crash_test;
 
@@ -390,6 +443,7 @@ fn test_crash_tracking_bin_panic_hook_unknown_type() {
 
 /// Helper function to run panic hook tests with different payload types.
 /// Note: Since tests are built with Debug profile, location is always expected.
+#[cfg(not(target_os = "macos"))]
 fn test_panic_hook_mode(mode: &str, expected_category: &str, expected_panic_message: Option<&str>) {
     use bin_tests::test_runner::run_custom_crash_test;
 
@@ -1519,6 +1573,7 @@ fn create_crashtracker_receiver(profile: BuildProfile) -> ArtifactsBuild {
     }
 }
 
+#[cfg(not(target_os = "macos"))]
 fn create_crashing_app(profile: BuildProfile, panic_abort: bool) -> ArtifactsBuild {
     ArtifactsBuild {
         name: "crashing_test_app".to_owned(),

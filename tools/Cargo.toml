@@ -15,8 +15,16 @@ publish = false
 bench = false
 
 [dependencies]
+anyhow = "1.0"
+clap = { version = "4.0", features = ["derive"] }
+colored = "2"
 regex = "1"
+wait-timeout = "0.2"
 
 [[bin]]
 name = "dedup_headers"
+bench = false
+
+[[bin]]
+name = "ffi_test"
 bench = false
