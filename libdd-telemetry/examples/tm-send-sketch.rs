@@ -78,6 +78,7 @@ async fn async_main() {
         runtime_name: None,
         runtime_version: None,
         runtime_patches: None,
+        process_tags: None,
     };
     let host = build_host();
 

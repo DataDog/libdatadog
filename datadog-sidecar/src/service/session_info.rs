@@ -43,6 +43,7 @@ pub(crate) struct SessionInfo {
     pub(crate) session_id: String,
     pub(crate) pid: Arc<AtomicI32>,
     pub(crate) remote_config_enabled: Arc<Mutex<bool>>,
+    pub(crate) process_tags: Arc<Mutex<Option<String>>>,
 }
 
 impl Clone for SessionInfo {
@@ -62,6 +63,7 @@ impl Clone for SessionInfo {
             session_id: self.session_id.clone(),
             pid: self.pid.clone(),
             remote_config_enabled: self.remote_config_enabled.clone(),
+            process_tags: self.process_tags.clone(),
         }
     }
 }
