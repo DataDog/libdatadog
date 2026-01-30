@@ -1,6 +1,8 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+pub mod junit_file_attributes;
+
 pub mod headers {
     use regex::{Regex, RegexBuilder};
     use std::collections::HashSet;
