@@ -1,6 +1,8 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+mod common;
+
 use libdd_profiling::exporter::utils::parse_http_request;
 use libdd_profiling::exporter::ProfileExporter;
 use libdd_profiling::internal::EncodedProfile;
@@ -376,5 +378,8 @@ mod tests {
             request.headers.get("dd-evp-origin-version").unwrap(),
             profiling_library_version
         );
+
+        // Check for entity headers and validate their values match what libdd_common provides
+        common::assert_entity_headers_match(&request.headers);
     }
 }

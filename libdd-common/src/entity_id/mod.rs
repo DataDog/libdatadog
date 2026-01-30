@@ -99,3 +99,15 @@ pub static DD_EXTERNAL_ENV: LazyLock<Option<&'static str>> = LazyLock::new(|| {
 
     leaked
 });
+
+/// Returns an iterator of entity-related headers (container-id, entity-id, external-env)
+/// as (header_name, header_value) string tuples for any that are available.
+pub fn get_entity_headers() -> impl Iterator<Item = (&'static str, &'static str)> {
+    [
+        get_container_id().map(|v| ("datadog-container-id", v)),
+        get_entity_id().map(|v| ("datadog-entity-id", v)),
+        (*DD_EXTERNAL_ENV).map(|v| ("datadog-external-env", v)),
+    ]
+    .into_iter()
+    .flatten()
+}

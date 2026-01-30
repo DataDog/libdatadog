@@ -6,10 +6,7 @@
 #![cfg_attr(not(test), deny(clippy::todo))]
 #![cfg_attr(not(test), deny(clippy::unimplemented))]
 
-use hyper::{
-    header::HeaderValue,
-    http::uri::{self},
-};
+use hyper::http::uri::{self};
 use serde::de::Error;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::sync::{Mutex, MutexGuard};
@@ -122,7 +119,6 @@ impl<C: hyper_util::client::legacy::connect::Connect + Clone + Send + Sync + 'st
 }
 
 // Used by tag! macro
-use crate::entity_id::DD_EXTERNAL_ENV;
 pub use const_format;
 
 #[derive(Clone, PartialEq, Eq, Hash, Debug, Serialize, Deserialize)]
@@ -243,6 +239,19 @@ impl Endpoint {
     /// Default value for the timeout field in milliseconds.
     pub const DEFAULT_TIMEOUT: u64 = 3_000;
 
+    /// Returns an iterator of optional endpoint-specific headers (api-key, test-token)
+    /// as (header_name, header_value) string tuples for any that are available.
+    pub fn get_optional_headers(&self) -> impl Iterator<Item = (&'static str, &str)> {
+        [
+            self.api_key.as_ref().map(|v| ("dd-api-key", v.as_ref())),
+            self.test_token
+                .as_ref()
+                .map(|v| ("x-datadog-test-session-token", v.as_ref())),
+        ]
+        .into_iter()
+        .flatten()
+    }
+
     /// Return a request builder with the following headers:
     /// - User agent
     /// - Api key
@@ -252,32 +261,14 @@ impl Endpoint {
             .uri(self.url.clone())
             .header(hyper::header::USER_AGENT, user_agent);
 
-        // Add the Api key header if available
-        if let Some(api_key) = &self.api_key {
-            builder = builder.header(header::DATADOG_API_KEY, HeaderValue::from_str(api_key)?);
+        // Add optional endpoint headers (api-key, test-token)
+        for (name, value) in self.get_optional_headers() {
+            builder = builder.header(name, value);
         }
 
-        // Add the test session token if available
-        if let Some(token) = &self.test_token {
-            builder = builder.header(
-                header::X_DATADOG_TEST_SESSION_TOKEN,
-                HeaderValue::from_str(token)?,
-            );
-        }
-
-        // Add the Container Id header if available
-        if let Some(container_id) = entity_id::get_container_id() {
-            builder = builder.header(header::DATADOG_CONTAINER_ID, container_id);
-        }
-
-        // Add the Entity Id header if available
-        if let Some(entity_id) = entity_id::get_entity_id() {
-            builder = builder.header(header::DATADOG_ENTITY_ID, entity_id);
-        }
-
-        // Add the External Env header if available
-        if let Some(external_env) = *DD_EXTERNAL_ENV {
-            builder = builder.header(header::DATADOG_EXTERNAL_ENV, external_env);
+        // Add entity-related headers (container-id, entity-id, external-env)
+        for (name, value) in entity_id::get_entity_headers() {
+            builder = builder.header(name, value);
         }
 
         Ok(builder)
