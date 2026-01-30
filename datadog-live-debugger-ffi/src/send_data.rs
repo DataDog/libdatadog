@@ -103,6 +103,7 @@ pub extern "C" fn ddog_create_exception_snapshot<'a>(
         ddsource: Cow::Borrowed("dd_debugger"),
         timestamp,
         message: None,
+        process_tags: None,
         debugger: DebuggerData::Snapshot(Snapshot {
             captures: Some(Captures {
                 r#return: Some(Capture::default()),
@@ -161,6 +162,7 @@ pub extern "C" fn ddog_create_log_probe_snapshot<'a>(
     service: CharSlice<'a>,
     language: CharSlice<'a>,
     timestamp: u64,
+    process_tags: CharSlice<'a>,
 ) -> Box<DebuggerPayload<'a>> {
     Box::new(DebuggerPayload {
         service: service.to_utf8_lossy(),
@@ -177,6 +179,11 @@ pub extern "C" fn ddog_create_log_probe_snapshot<'a>(
             timestamp,
             ..Default::default()
         }),
+        process_tags: if process_tags.is_empty() {
+            None
+        } else {
+            Some(process_tags.to_utf8_lossy())
+        },
     })
 }
 
@@ -425,6 +432,7 @@ pub extern "C" fn ddog_evaluation_error_snapshot<'a>(
             evaluation_errors: *errors,
             ..Default::default()
         }),
+        process_tags: None,
     })
 }
 
@@ -505,6 +513,7 @@ pub fn ddog_debugger_diagnostics_create_unboxed<'a>(
             })
         }),
         debugger: DebuggerData::Diagnostics(diagnostics),
+        process_tags: None,
     }
 }
 
