@@ -25,6 +25,10 @@ use libdd_crashtracker::{
 };
 use serde_json::Value;
 
+// ====================================================================================
+// REFACTORED TESTS USING NEW INFRASTRUCTURE
+// ====================================================================================
+
 /// Macro to generate simple crash tracking tests using the new infrastructure.
 /// This replaces 16+ nearly identical test functions with a single declaration.
 macro_rules! crash_tracking_tests {
@@ -93,8 +97,9 @@ fn run_standard_crash_test_refactored(
     run_crash_test_with_artifacts(&config, &artifacts_map, &artifacts, validator).unwrap();
 }
 
-// These tests below use the new infrastructure but require custom validation logic
-// that doesn't fit the simple macro-generated pattern.
+// ====================================================================================
+// REMAINING TESTS (KEPT FOR NOW - CAN BE MIGRATED LATER)
+// ====================================================================================
 
 #[test]
 #[cfg_attr(miri, ignore)]
