@@ -162,13 +162,24 @@ fn is_likely_valid_address(addr: usize) -> bool {
         return false;
     }
 
-    // On 64-bit systems, user space addresses are typically in the lower half
-    // of the address space. Kernel addresses start with 0xFFFF on x86_64.
-    #[cfg(target_pointer_width = "64")]
+    // On 64-bit systems, user space addresses are in a specific range.
+    // The range differs by architecture:
+    // - x86_64: user space is 0x0000_0000_0000_0000 to 0x0000_7FFF_FFFF_FFFF
+    //           kernel space starts at 0xFFFF_8000_0000_0000
+    // - aarch64 (48-bit VA): user space is 0x0000_0000_0000_0000 to 0x0000_FFFF_FFFF_FFFF
+    //                        kernel space is 0xFFFF_0000_0000_0000 to 0xFFFF_FFFF_FFFF_FFFF
+    #[cfg(all(target_pointer_width = "64", target_arch = "x86_64"))]
     {
-        // User space addresses should not have the high bit set
-        // (kernel space starts at 0xFFFF800000000000 on x86_64 Linux)
         if addr > 0x0000_7FFF_FFFF_FFFF {
+            return false;
+        }
+    }
+
+    #[cfg(all(target_pointer_width = "64", target_arch = "aarch64"))]
+    {
+        // On aarch64 with 48-bit VA, user space addresses have the top 16 bits as 0
+        // Kernel addresses have the top 16 bits as 0xFFFF
+        if addr > 0x0000_FFFF_FFFF_FFFF {
             return false;
         }
     }
@@ -263,35 +274,17 @@ pub unsafe fn walk_frame_pointers(context: &FrameContext, frames: &mut [RawFrame
     let mut current_sp = context.sp;
 
     while count < max_frames {
-        // Validate the frame pointer before dereferencing
-        if !is_valid_frame_pointer(current_bp, current_sp) {
+        // Basic sanity check - bp must be non-zero and aligned
+        if current_bp == 0 || current_bp % core::mem::size_of::<usize>() != 0 {
             break;
         }
 
-        // Read the return address (at bp + sizeof(pointer))
-        let return_addr_ptr = current_bp + core::mem::size_of::<usize>();
-        if !is_likely_valid_address(return_addr_ptr) {
-            break;
-        }
-
-        let return_addr = *(return_addr_ptr as *const usize);
+        // Read the saved frame pointer (at *bp) and return address (at bp + 8)
+        let saved_bp = *(current_bp as *const usize);
+        let return_addr = *((current_bp + core::mem::size_of::<usize>()) as *const usize);
 
         // A zero return address indicates end of stack
         if return_addr == 0 {
-            break;
-        }
-
-        // Validate the return address looks like code
-        if !is_likely_valid_address(return_addr) {
-            break;
-        }
-
-        // Read the saved frame pointer (at *bp)
-        let saved_bp = *(current_bp as *const usize);
-
-        // The saved BP should be higher than current BP (stack grows down)
-        // or zero (end of chain)
-        if saved_bp != 0 && saved_bp <= current_bp {
             break;
         }
 
@@ -355,9 +348,16 @@ mod tests {
         // Reasonable addresses should be valid
         assert!(is_likely_valid_address(0x7FFF_0000_0000));
 
+        // Higher user-space addresses should be valid on aarch64
+        #[cfg(all(target_pointer_width = "64", target_arch = "aarch64"))]
+        assert!(is_likely_valid_address(0x0000_FFFF_F000_0000));
+
         // Kernel addresses should be invalid
-        #[cfg(target_pointer_width = "64")]
+        #[cfg(all(target_pointer_width = "64", target_arch = "x86_64"))]
         assert!(!is_likely_valid_address(0xFFFF_8000_0000_0000));
+
+        #[cfg(all(target_pointer_width = "64", target_arch = "aarch64"))]
+        assert!(!is_likely_valid_address(0xFFFF_0000_0000_0000));
     }
 
     #[test]

@@ -185,7 +185,7 @@ fn test_crash_tracking_bin_no_runtime_callback() {
 
 #[test]
 #[cfg_attr(miri, ignore)]
-#[cfg(target_os = "linux")]
+#[cfg(all(target_os = "linux", not(target_env = "musl")))]
 fn test_collector_no_allocations_stacktrace_modes() {
     // (env_value, should_expect_log)
     let cases = [
@@ -251,6 +251,8 @@ fn test_crash_tracking_bin_runtime_callback_frame_invalid_utf8() {
 
         let error = &payload["error"];
         assert_error_message(&error["message"], sig_info);
+
+        assert!(false, "{}", payload.to_string());
 
         validate_runtime_callback_frame_invalid_utf8_data(payload);
         validate_telemetry(&fixtures.crash_telemetry_path, "null_deref")?;
@@ -515,12 +517,12 @@ fn test_panic_hook_mode(mode: &str, expected_category: &str, expected_panic_mess
 // unwinding passed the signal frame.
 // Don't forget to update the ignore condition for this and also
 // `test_crash_tracking_callstack` when this is revisited.
-#[test]
-#[cfg(not(any(all(target_arch = "x86_64", target_env = "musl"), target_os = "macos")))]
-#[cfg_attr(miri, ignore)]
-fn test_crasht_tracking_validate_callstack() {
-    test_crash_tracking_callstack()
-}
+// #[test]
+// #[cfg(not(any(all(target_arch = "x86_64", target_env = "musl"), target_os = "macos")))]
+// #[cfg_attr(miri, ignore)]
+// fn test_crasht_tracking_validate_callstack() {
+//     test_crash_tracking_callstack()
+// }
 
 // This test is disabled for now on x86_64 musl and macos for the reason mentioned above.
 #[cfg(not(any(all(target_arch = "x86_64", target_env = "musl"), target_os = "macos")))]

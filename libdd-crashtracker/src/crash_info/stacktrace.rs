@@ -140,6 +140,9 @@ pub struct StackFrame {
     pub module_base_address: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sp: Option<String>,
+    /// Base/frame pointer - used by fallback frame pointer walking on musl
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bp: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub symbol_address: Option<String>,
 
@@ -367,6 +370,7 @@ impl super::test_utils::TestInstance for StackFrame {
             ip,
             module_base_address,
             sp,
+            bp: None,
             symbol_address,
             build_id,
             build_id_type,

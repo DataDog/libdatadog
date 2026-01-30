@@ -208,7 +208,8 @@ unsafe fn emit_backtrace_with_fallback(
     // On musl, if the backtrace is suspiciously short, try frame pointer walking
     #[cfg(target_env = "musl")]
     {
-        if frame_count < MIN_EXPECTED_FRAMES && platform::supports_frame_pointer_walking() {
+        // if frame_count < MIN_EXPECTED_FRAMES && platform::supports_frame_pointer_walking() {
+        if platform::supports_frame_pointer_walking() {
             // The primary backtrace may have failed due to missing unwind tables.
             // Try frame pointer walking as a fallback.
             let _ = emit_backtrace_fallback(w, ucontext);

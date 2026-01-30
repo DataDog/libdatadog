@@ -113,6 +113,9 @@ pub(crate) enum StdinState {
     SigInfo,
     SpanIds,
     StackTrace,
+    /// Fallback stacktrace from frame pointer walking (used on musl).
+    /// When complete, this replaces the primary stacktrace.
+    StackTraceFallback(Vec<StackFrame>),
     TraceIds,
     Ucontext,
     Waiting,
@@ -269,6 +272,21 @@ fn process_line(
             StdinState::StackTrace
         }
 
+        StdinState::StackTraceFallback(frames)
+            if line.starts_with(DD_CRASHTRACK_END_STACKTRACE_FALLBACK) =>
+        {
+            // Replace the existing stacktrace with the fallback frames
+            use crate::crash_info::StackTrace;
+            let stack = StackTrace::from_frames(frames, false);
+            builder.with_stack(stack)?;
+            StdinState::Waiting
+        }
+        StdinState::StackTraceFallback(mut frames) => {
+            let frame = serde_json::from_str(line)?;
+            frames.push(frame);
+            StdinState::StackTraceFallback(frames)
+        }
+
         StdinState::TraceIds if line.starts_with(DD_CRASHTRACK_END_TRACE_IDS) => {
             StdinState::Waiting
         }
@@ -304,6 +322,11 @@ fn process_line(
         StdinState::Waiting if line.starts_with(DD_CRASHTRACK_BEGIN_MESSAGE) => StdinState::Message,
         StdinState::Waiting if line.starts_with(DD_CRASHTRACK_BEGIN_SPAN_IDS) => {
             StdinState::SpanIds
+        }
+        // Check for fallback BEFORE regular stacktrace since DD_CRASHTRACK_BEGIN_STACKTRACE
+        // is a prefix of DD_CRASHTRACK_BEGIN_STACKTRACE_FALLBACK
+        StdinState::Waiting if line.starts_with(DD_CRASHTRACK_BEGIN_STACKTRACE_FALLBACK) => {
+            StdinState::StackTraceFallback(vec![])
         }
         StdinState::Waiting if line.starts_with(DD_CRASHTRACK_BEGIN_STACKTRACE) => {
             StdinState::StackTrace
