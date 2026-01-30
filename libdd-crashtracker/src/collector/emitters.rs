@@ -3,6 +3,10 @@
 
 use crate::collector::additional_tags::consume_and_emit_additional_tags;
 use crate::collector::counters::emit_counters;
+#[cfg(target_env = "musl")]
+use crate::collector::frame_pointer_walker::{walk_frame_pointers, FrameContext, RawFrame};
+#[cfg(target_env = "musl")]
+use crate::collector::platform::{self, MIN_EXPECTED_FRAMES};
 use crate::collector::spans::{emit_spans, emit_traces};
 use crate::runtime_callback::{
     get_registered_callback, invoke_runtime_callback_with_writer, is_runtime_callback_registered,
@@ -35,6 +39,9 @@ pub enum EmitterError {
 }
 
 /// Emit a stacktrace onto the given handle as formatted json.
+///
+/// Returns the number of frames emitted.
+///
 /// SAFETY:
 ///     Crash-tracking functions are not reentrant.
 ///     No other crash-handler functions should be called concurrently.
@@ -50,7 +57,7 @@ unsafe fn emit_backtrace_by_frames(
     w: &mut impl Write,
     resolve_frames: StacktraceCollection,
     fault_ip: usize,
-) -> Result<(), EmitterError> {
+) -> Result<usize, EmitterError> {
     // https://docs.rs/backtrace/latest/backtrace/index.html
     writeln!(w, "{DD_CRASHTRACK_BEGIN_STACKTRACE}")?;
 
@@ -66,6 +73,8 @@ unsafe fn emit_backtrace_by_frames(
     }
 
     let mut ip_found = false;
+    let mut frame_count = 0usize;
+
     loop {
         backtrace::trace_unsynchronized(|frame| {
             // Skip all stack frames until we encounter the determined crash instruction pointer
@@ -78,6 +87,7 @@ unsafe fn emit_backtrace_by_frames(
             if !ip_found {
                 return true;
             }
+            frame_count += 1;
             if resolve_frames == StacktraceCollection::EnabledWithInprocessSymbols {
                 backtrace::resolve_frame_unsynchronized(frame, |symbol| {
                     #[allow(clippy::unwrap_used)]
@@ -129,6 +139,86 @@ unsafe fn emit_backtrace_by_frames(
     }
     writeln!(w, "{DD_CRASHTRACK_END_STACKTRACE}")?;
     w.flush()?;
+    Ok(frame_count)
+}
+
+/// Emit a fallback stacktrace using frame pointer walking.
+///
+/// This is used on musl Linux where DWARF-based unwinding may fail due to
+/// missing unwind tables in libc. Frame pointer walking provides a simpler
+/// but effective alternative.
+///
+/// # Safety
+///
+/// The ucontext pointer must be valid and non-null.
+///
+/// # Signal Safety
+///
+/// This function uses a fixed-size buffer and does not allocate memory,
+/// making it suitable for use in signal handlers.
+#[cfg(target_env = "musl")]
+unsafe fn emit_backtrace_fallback(
+    w: &mut impl Write,
+    ucontext: *const ucontext_t,
+) -> Result<usize, EmitterError> {
+    let context = match FrameContext::from_ucontext(ucontext) {
+        Some(ctx) => ctx,
+        None => return Ok(0),
+    };
+
+    writeln!(w, "{DD_CRASHTRACK_BEGIN_STACKTRACE_FALLBACK}")?;
+
+    // Use a fixed-size buffer to avoid allocation in signal handler
+    const MAX_FRAMES: usize = 128;
+    let mut frames = [RawFrame::default(); MAX_FRAMES];
+
+    let frame_count = walk_frame_pointers(&context, &mut frames);
+
+    for frame in frames.iter().take(frame_count) {
+        write!(w, "{{")?;
+        write!(w, "\"ip\": \"{:#x}\"", frame.ip)?;
+        write!(w, ", \"sp\": \"{:#x}\"", frame.sp)?;
+        write!(w, ", \"bp\": \"{:#x}\"", frame.bp)?;
+        writeln!(w, "}}")?;
+        w.flush()?;
+    }
+
+    writeln!(w, "{DD_CRASHTRACK_END_STACKTRACE_FALLBACK}")?;
+    w.flush()?;
+    Ok(frame_count)
+}
+
+/// Combined backtrace emission with automatic fallback for musl.
+///
+/// On non-musl platforms, this just calls emit_backtrace_by_frames.
+/// On musl, if the primary backtrace is suspiciously short (fewer than
+/// MIN_EXPECTED_FRAMES), it also attempts frame pointer walking as a fallback.
+///
+/// # Safety
+///
+/// Same safety requirements as emit_backtrace_by_frames.
+unsafe fn emit_backtrace_with_fallback(
+    w: &mut impl Write,
+    resolve_frames: StacktraceCollection,
+    ucontext: *const ucontext_t,
+) -> Result<(), EmitterError> {
+    let fault_ip = extract_ip(ucontext);
+    let frame_count = emit_backtrace_by_frames(w, resolve_frames, fault_ip)?;
+
+    // On musl, if the backtrace is suspiciously short, try frame pointer walking
+    #[cfg(target_env = "musl")]
+    {
+        if frame_count < MIN_EXPECTED_FRAMES && platform::supports_frame_pointer_walking() {
+            // The primary backtrace may have failed due to missing unwind tables.
+            // Try frame pointer walking as a fallback.
+            let _ = emit_backtrace_fallback(w, ucontext);
+        }
+    }
+
+    // Suppress unused variable warning on non-musl platforms
+    #[cfg(not(target_env = "musl"))]
+    let _ = (frame_count, ucontext);
+
     Ok(())
 }
 
@@ -170,8 +260,9 @@ pub(crate) fn emit_crashreport(
     // https://doc.rust-lang.org/src/std/backtrace.rs.html#332
     // Do this last, so even if it crashes, we still get the other info.
     if config.resolve_frames() != StacktraceCollection::Disabled {
-        let fault_ip = extract_ip(ucontext);
-        unsafe { emit_backtrace_by_frames(pipe, config.resolve_frames(), fault_ip)? };
+        // Use emit_backtrace_with_fallback which will automatically try frame
+        // pointer walking on musl if the primary backtrace is incomplete.
+        unsafe { emit_backtrace_with_fallback(pipe, config.resolve_frames(), ucontext)? };
     }
 
     if is_runtime_callback_registered() {

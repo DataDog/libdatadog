@@ -8,6 +8,8 @@ mod collector_manager;
 mod counters;
 mod crash_handler;
 mod emitters;
+mod frame_pointer_walker;
+mod platform;
 mod process_handle;
 mod receiver_manager;
 mod signal_handler_manager;
