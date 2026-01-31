@@ -11,3 +11,6 @@ rules:
   - require: pull-request-freshness
     max_age: 10d
   - require: all-files-are-owned
+  - require: commit-signatures
+    excluded_emails:
+      - '41898282+github-actions[bot]@users.noreply.github.com' # version-bump bots
