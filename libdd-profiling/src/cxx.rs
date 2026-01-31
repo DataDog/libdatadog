@@ -20,6 +20,7 @@ pub mod ffi {
     #[derive(Debug)]
     #[repr(u8)]
     enum MimeType {
+        None = 0,
         ApplicationJson,
         ApplicationOctetStream,
         TextCsv,
@@ -335,6 +336,7 @@ impl TryFrom<ffi::MimeType> for exporter::MimeType {
 
     fn try_from(mime: ffi::MimeType) -> Result<Self, Self::Error> {
         match mime {
+            ffi::MimeType::None => Ok(exporter::MimeType::None),
             ffi::MimeType::ApplicationJson => Ok(exporter::MimeType::ApplicationJson),
             ffi::MimeType::ApplicationOctetStream => Ok(exporter::MimeType::ApplicationOctetStream),
             ffi::MimeType::TextCsv => Ok(exporter::MimeType::TextCsv),
@@ -1114,6 +1116,18 @@ mod tests {
             file.mime,
             exporter::MimeType::ApplicationOctetStream
         ));
+
+        // AttachmentFile with MimeType::None
+        let file_none: exporter::File = (&ffi::AttachmentFile {
+            name: "test.dat",
+            data: &data,
+            mime: ffi::MimeType::None,
+        })
+            .try_into()
+            .expect("Failed to convert AttachmentFile with MimeType::None");
+        assert_eq!(file_none.name, "test.dat");
+        assert_eq!(file_none.bytes, data.as_slice());
+        assert!(matches!(file_none.mime, exporter::MimeType::None));
 
         // Tag conversion with special characters
         let tag: libdd_common::tag::Tag = (&ffi::Tag {

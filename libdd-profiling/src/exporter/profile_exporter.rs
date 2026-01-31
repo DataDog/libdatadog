@@ -51,6 +51,7 @@ pub struct ProfileExporter {
 #[repr(C)]
 #[derive(Debug, Copy, Clone)]
 pub enum MimeType {
+    None = 0,
     ApplicationJson,
     ApplicationOctetStream,
     TextCsv,
@@ -61,6 +62,7 @@ pub enum MimeType {
 impl MimeType {
     pub fn as_str(&self) -> &'static str {
         match self {
+            MimeType::None => "",
             MimeType::ApplicationJson => mime::APPLICATION_JSON.as_ref(),
             MimeType::ApplicationOctetStream => mime::APPLICATION_OCTET_STREAM.as_ref(),
             MimeType::TextCsv => mime::TEXT_CSV.as_ref(),
@@ -426,16 +428,20 @@ impl ProfileExporter {
             .context("failed to create compressor")?;
             encoder.write_all(file.bytes)?;
 
-            form = form.part(
-                file.name.to_string(),
-                reqwest::multipart::Part::bytes(encoder.finish()?).file_name(file.name.to_string()),
-            );
+            let mut part =
+                reqwest::multipart::Part::bytes(encoder.finish()?).file_name(file.name.to_string());
+            if !matches!(file.mime, MimeType::None) {
+                part = part.mime_str(file.mime.as_str())?;
+            }
+            form = form.part(file.name.to_string(), part);
         }
 
         // Add profile
         Ok(form.part(
             "profile.pprof",
-            reqwest::multipart::Part::bytes(profile.buffer).file_name("profile.pprof"),
+            reqwest::multipart::Part::bytes(profile.buffer)
+                .file_name("profile.pprof")
+                .mime_str(mime::APPLICATION_OCTET_STREAM.as_ref())?,
         ))
     }
 }
