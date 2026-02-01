@@ -12,7 +12,10 @@ use std::{fs, path::PathBuf};
 use anyhow::Context;
 use bin_tests::{
     build_artifacts,
-    test_runner::{run_crash_test_with_artifacts, CrashTestConfig, StandardArtifacts, ValidatorFn},
+    test_runner::{
+        run_crash_no_op, run_crash_test_with_artifacts, CrashTestConfig, StandardArtifacts,
+        ValidatorFn,
+    },
     test_types::{CrashType, TestMode},
     validation::PayloadValidator,
     ArtifactType, ArtifactsBuild, BuildProfile,
@@ -123,6 +126,40 @@ fn test_crash_tracking_bin_runtime_callback_frame() {
 }
 
 #[test]
+#[cfg(target_os = "linux")]
+#[cfg_attr(miri, ignore)]
+fn test_crash_tracking_thread_name() {
+    let config = CrashTestConfig::new(
+        BuildProfile::Release,
+        TestMode::DoNothing,
+        CrashType::NullDeref,
+    );
+    let artifacts = StandardArtifacts::new(config.profile);
+    let artifacts_map = build_artifacts(&artifacts.as_slice()).unwrap();
+
+    let validator: ValidatorFn = Box::new(|payload, _fixtures| {
+        let error = &payload["error"];
+        let thread_name = error["thread_name"]
+            .as_str()
+            .expect("thread_name should be present");
+        assert!(
+            !thread_name.trim().is_empty(),
+            "thread_name should not be empty: {thread_name:?}"
+        );
+        assert!(
+            // Cutting `crashtracker_bin_test` to `crashtracker_bin` because linux
+            // thread name is limited to 15 characters
+            thread_name.contains("crashtracker_bi"),
+            "thread_name should contain binary name: {thread_name:?}"
+        );
+
+        Ok(())
+    });
+
+    run_crash_test_with_artifacts(&config, &artifacts_map, &artifacts, validator).unwrap();
+}
+
+#[test]
 #[cfg_attr(miri, ignore)]
 fn test_crash_tracking_bin_runtime_callback_string() {
     let config = CrashTestConfig::new(
@@ -178,6 +215,55 @@ fn test_crash_tracking_bin_no_runtime_callback() {
     });
 
     run_crash_test_with_artifacts(&config, &artifacts_map, &artifacts, validator).unwrap();
+}
+
+#[test]
+#[cfg_attr(miri, ignore)]
+#[cfg(target_os = "linux")]
+fn test_collector_no_allocations_stacktrace_modes() {
+    // (env_value, should_expect_log)
+    let cases = [
+        ("disabled", false),
+        ("without_symbols", false),
+        ("receiver_symbols", false),
+        ("inprocess_symbols", true),
+    ];
+
+    for (env_value, expect_log) in cases {
+        let detector_log_path = PathBuf::from("/tmp/preload_detector.log");
+
+        // Clean up
+        let _ = fs::remove_file(&detector_log_path);
+
+        let config = CrashTestConfig::new(
+            BuildProfile::Debug,
+            TestMode::RuntimePreloadLogger,
+            CrashType::NullDeref,
+        )
+        .with_env("DD_TEST_STACKTRACE_COLLECTION", env_value);
+
+        let result = run_crash_no_op(&config);
+
+        let log_exists = detector_log_path.exists();
+
+        if expect_log {
+            assert!(
+                log_exists,
+                "Expected allocation detection log for mode {env_value}"
+            );
+            if log_exists {
+                if let Ok(bytes) = fs::read(&detector_log_path) {
+                    eprintln!("{}", String::from_utf8_lossy(&bytes));
+                }
+            }
+        } else {
+            result.unwrap();
+            assert!(
+                !log_exists,
+                "Did not expect allocation detection log for mode {env_value}"
+            );
+        }
+    }
 }
 
 #[test]
@@ -993,17 +1079,20 @@ fn assert_telemetry_message(crash_telemetry: &[u8], crash_typ: &str) {
     let tags = tags_raw
         .split(',')
         .filter(|t| !t.starts_with("uuid:"))
+        .map(|t| t.to_string())
         .collect::<std::collections::HashSet<_>>();
 
-    let base_expected_tags: std::collections::HashSet<&str> =
+    let current_schema_version = libdd_crashtracker::CrashInfo::current_schema_version();
+
+    let base_expected_tags: std::collections::HashSet<String> =
         std::collections::HashSet::from_iter([
-            "data_schema_version:1.4",
+            format!("data_schema_version:{current_schema_version}"),
             // "incomplete:false", // TODO: re-add after fixing musl unwinding
-            "is_crash:true",
-            "profiler_collecting_sample:1",
-            "profiler_inactive:0",
-            "profiler_serializing:0",
-            "profiler_unwinding:0",
+            "is_crash:true".to_string(),
+            "profiler_collecting_sample:1".to_string(),
+            "profiler_inactive:0".to_string(),
+            "profiler_serializing:0".to_string(),
+            "profiler_unwinding:0".to_string(),
         ]);
 
     match crash_typ {
