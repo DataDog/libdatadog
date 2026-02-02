@@ -315,15 +315,17 @@ impl TelemetryCrashUploader {
             seq_id: 1,
             application: &self.metadata.application,
             host: &self.metadata.host,
-            payload: &data::Payload::Logs(vec![data::Log {
-                message,
-                level,
-                stack_trace: None,
-                tags,
-                is_sensitive,
-                count: 1,
-                is_crash,
-            }]),
+            payload: &data::Payload::Logs(data::Logs {
+                logs: vec![data::Log {
+                    message,
+                    level,
+                    stack_trace: None,
+                    tags,
+                    is_sensitive,
+                    count: 1,
+                    is_crash,
+                }],
+            }),
             origin: Some("Crashtracker"),
         };
 

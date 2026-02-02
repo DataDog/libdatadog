@@ -17,7 +17,7 @@ pub enum Payload {
     AppClosing(#[serde(skip_serializing)] ()),
     GenerateMetrics(GenerateMetrics),
     Sketches(Distributions),
-    Logs(Vec<Log>),
+    Logs(Logs),
     MessageBatch(Vec<Payload>),
     AppExtendedHeartbeat(AppStarted),
 }
