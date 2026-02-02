@@ -505,8 +505,8 @@ mod tests {
         assert_eq!(payload["tracer_time"], 1568898000);
         assert_eq!(payload["origin"], "Crashtracker");
 
-        assert_eq!(payload["payload"].as_array().unwrap().len(), 1);
-        let tags = payload["payload"][0]["tags"]
+        assert_eq!(payload["payload"]["logs"].as_array().unwrap().len(), 1);
+        let tags = payload["payload"]["logs"][0]["tags"]
             .as_str()
             .unwrap()
             .split(',')
@@ -527,12 +527,12 @@ mod tests {
             ]),
             tags
         );
-        assert_eq!(payload["payload"][0]["is_sensitive"], true);
-        assert_eq!(payload["payload"][0]["level"], "ERROR");
+        assert_eq!(payload["payload"]["logs"][0]["is_sensitive"], true);
+        assert_eq!(payload["payload"]["logs"][0]["level"], "ERROR");
         let body: CrashInfo =
-            serde_json::from_str(payload["payload"][0]["message"].as_str().unwrap())?;
+            serde_json::from_str(payload["payload"]["logs"][0]["message"].as_str().unwrap())?;
         assert_eq!(body, test_instance);
-        assert_eq!(payload["payload"][0]["is_crash"], true);
+        assert_eq!(payload["payload"]["logs"][0]["is_crash"], true);
         Ok(())
     }
 
@@ -571,8 +571,8 @@ mod tests {
         assert_eq!(payload["request_type"], "logs");
         assert_eq!(payload["origin"], "Crashtracker");
 
-        assert_eq!(payload["payload"].as_array().unwrap().len(), 1);
-        let log_entry = &payload["payload"][0];
+        assert_eq!(payload["payload"]["logs"].as_array().unwrap().len(), 1);
+        let log_entry = &payload["payload"]["logs"][0];
 
         // Crash ping properties
         assert_eq!(log_entry["is_sensitive"], false);
@@ -646,8 +646,8 @@ mod tests {
         assert_eq!(payload["request_type"], "logs");
         assert_eq!(payload["origin"], "Crashtracker");
 
-        assert_eq!(payload["payload"].as_array().unwrap().len(), 1);
-        let log_entry = &payload["payload"][0];
+        assert_eq!(payload["payload"]["logs"].as_array().unwrap().len(), 1);
+        let log_entry = &payload["payload"]["logs"][0];
 
         // Crash ping properties
         assert_eq!(log_entry["is_crash"], false);
@@ -750,7 +750,7 @@ mod tests {
         assert_eq!(payload["request_type"], "logs");
         assert_eq!(payload["origin"], "Crashtracker");
 
-        let log_entry = &payload["payload"][0];
+        let log_entry = &payload["payload"]["logs"][0];
         assert_eq!(log_entry["level"], "DEBUG");
         assert_eq!(log_entry["is_sensitive"], false);
         assert_eq!(log_entry["is_crash"], false);
@@ -909,7 +909,7 @@ mod tests {
         assert_eq!(payload["request_type"], "logs");
         assert_eq!(payload["origin"], "Crashtracker");
 
-        let log_entry = &payload["payload"][0];
+        let log_entry = &payload["payload"]["logs"][0];
         assert_eq!(log_entry["level"], "DEBUG");
         assert_eq!(log_entry["is_sensitive"], false);
         assert_eq!(log_entry["is_crash"], false);
@@ -979,7 +979,7 @@ mod tests {
         assert_eq!(payload["request_type"], "logs");
         assert_eq!(payload["origin"], "Crashtracker");
 
-        let log_entry = &payload["payload"][0];
+        let log_entry = &payload["payload"]["logs"][0];
         assert_eq!(log_entry["level"], "WARN");
         assert_eq!(log_entry["is_sensitive"], false);
         assert_eq!(log_entry["is_crash"], false);
