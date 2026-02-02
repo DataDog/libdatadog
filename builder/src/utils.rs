@@ -30,7 +30,9 @@ pub fn project_root() -> PathBuf {
 
 /// Waits for a child process to complete and panics if it fails.
 pub fn wait_for_success(mut child: Child, name: &str) {
-    let status = child.wait().expect(&format!("{name} failed to wait"));
+    let status = child
+        .wait()
+        .unwrap_or_else(|_| panic!("{name} failed to wait"));
     assert!(
         status.success(),
         "{name} failed with exit code: {:?}",
