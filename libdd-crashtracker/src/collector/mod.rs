@@ -9,6 +9,9 @@ mod counters;
 mod crash_handler;
 mod emitters;
 mod frame_pointer_walker;
+// libunwind-based unwinding for musl targets (works across library boundaries)
+#[cfg(all(target_os = "linux", target_env = "musl"))]
+mod libunwind_unwinder;
 mod platform;
 mod process_handle;
 mod receiver_manager;

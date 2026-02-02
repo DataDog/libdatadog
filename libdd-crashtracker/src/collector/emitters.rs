@@ -4,9 +4,10 @@
 use crate::collector::additional_tags::consume_and_emit_additional_tags;
 use crate::collector::counters::emit_counters;
 #[cfg(target_env = "musl")]
-use crate::collector::frame_pointer_walker::{walk_frame_pointers, FrameContext, RawFrame};
+use crate::collector::frame_pointer_walker::RawFrame;
+// Use libunwind for stack unwinding on musl (handles cross-library unwinding)
 #[cfg(target_env = "musl")]
-use crate::collector::platform::{self, MIN_EXPECTED_FRAMES};
+use crate::collector::libunwind_unwinder;
 use crate::collector::spans::{emit_spans, emit_traces};
 use crate::runtime_callback::{
     get_registered_callback, invoke_runtime_callback_with_writer, is_runtime_callback_registered,
@@ -14,6 +15,7 @@ use crate::runtime_callback::{
 };
 use crate::shared::constants::*;
 use crate::{translate_si_code, CrashtrackerConfiguration, SignalNames, StacktraceCollection};
+#[cfg(not(target_env = "musl"))]
 use backtrace::Frame;
 use libc::{siginfo_t, ucontext_t};
 use std::{
@@ -53,6 +55,7 @@ pub enum EmitterError {
 ///     https://github.com/rust-lang/backtrace-rs/issues/414
 ///     Calculating the `ip` of the frames seems safe, but resolving the frames
 ///     sometimes crashes.
+#[cfg(not(target_env = "musl"))]
 unsafe fn emit_backtrace_by_frames(
     w: &mut impl Write,
     resolve_frames: StacktraceCollection,
@@ -154,25 +157,27 @@ unsafe fn emit_backtrace_by_frames(
 ///
 /// # Signal Safety
 ///
-/// This function uses a fixed-size buffer and does not allocate memory,
-/// making it suitable for use in signal handlers.
+/// This function uses libunwind which may allocate memory. However, since we're
+/// in a crash handler and the process is about to terminate anyway, this is
+/// acceptable for getting better diagnostics.
 #[cfg(target_env = "musl")]
 unsafe fn emit_backtrace_fallback(
     w: &mut impl Write,
     ucontext: *const ucontext_t,
 ) -> Result<usize, EmitterError> {
-    let context = match FrameContext::from_ucontext(ucontext) {
-        Some(ctx) => ctx,
-        None => return Ok(0),
-    };
+    if ucontext.is_null() {
+        return Ok(0);
+    }
 
     writeln!(w, "{DD_CRASHTRACK_BEGIN_STACKTRACE_FALLBACK}")?;
 
-    // Use a fixed-size buffer to avoid allocation in signal handler
+    // Use a fixed-size buffer for frames
     const MAX_FRAMES: usize = 128;
     let mut frames = [RawFrame::default(); MAX_FRAMES];
 
-    let frame_count = walk_frame_pointers(&context, &mut frames);
+    // Use libunwind to unwind from the crash context
+    // This handles cross-library unwinding (including into musl libc)
+    let frame_count = libunwind_unwinder::unwind_from_ucontext(ucontext, &mut frames);
 
     for frame in frames.iter().take(frame_count) {
         write!(w, "{{")?;
@@ -202,23 +207,22 @@ unsafe fn emit_backtrace_with_fallback(
     resolve_frames: StacktraceCollection,
     ucontext: *const ucontext_t,
 ) -> Result<(), EmitterError> {
-    let fault_ip = extract_ip(ucontext);
-    let frame_count = emit_backtrace_by_frames(w, resolve_frames, fault_ip)?;
-
-    // On musl, if the backtrace is suspiciously short, try frame pointer walking
+    // On musl, use our direct libunwind wrapper instead of the backtrace crate
+    // The backtrace crate's libunwind integration is unreliable on musl
+    // Our wrapper properly unwinds across library boundaries (including into musl libc)
     #[cfg(target_env = "musl")]
     {
-        // if frame_count < MIN_EXPECTED_FRAMES && platform::supports_frame_pointer_walking() {
-        if platform::supports_frame_pointer_walking() {
-            // The primary backtrace may have failed due to missing unwind tables.
-            // Try frame pointer walking as a fallback.
-            let _ = emit_backtrace_fallback(w, ucontext);
-        }
+        let _ = resolve_frames; // Suppress unused warning
+        let _ = emit_backtrace_fallback(w, ucontext);
     }
 
-    // Suppress unused variable warning on non-musl platforms
+    // On non-musl platforms, use the backtrace crate as primary
     #[cfg(not(target_env = "musl"))]
-    let _ = (frame_count, ucontext);
+    {
+        let fault_ip = extract_ip(ucontext);
+        let _ = emit_backtrace_by_frames(w, resolve_frames, fault_ip)?;
+        let _ = ucontext; // Suppress unused warning
+    }
 
     Ok(())
 }
@@ -487,6 +491,7 @@ fn emit_text_file(w: &mut impl Write, path: &str) -> Result<(), EmitterError> {
     Ok(())
 }
 
+#[cfg(not(target_env = "musl"))]
 fn extract_ip(ucontext: *const ucontext_t) -> usize {
     unsafe {
         #[cfg(all(target_os = "macos", target_arch = "x86_64"))]

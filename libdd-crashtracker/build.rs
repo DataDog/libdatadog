@@ -118,6 +118,11 @@ fn main() {
         .file("src/crash_info/emit_sicodes.c")
         .compile("emit_sicodes");
 
+    // Link libunwind on musl targets for DWARF-based stack unwinding
+    // The libunwind_unwinder module uses libunwind to unwind from arbitrary ucontext
+    #[cfg(target_env = "musl")]
+    println!("cargo:rustc-link-lib=unwind");
+
     // Build CXX bridge if feature is enabled
     #[cfg(feature = "cxx")]
     build_cxx_bridge();
