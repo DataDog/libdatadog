@@ -145,23 +145,17 @@ unsafe fn emit_backtrace_by_frames(
     Ok(frame_count)
 }
 
-/// Emit a fallback stacktrace using frame pointer walking.
+/// Emit a stacktrace using libunwind (musl Linux only).
 ///
-/// This is used on musl Linux where DWARF-based unwinding may fail due to
-/// missing unwind tables in libc. Frame pointer walking provides a simpler
-/// but effective alternative.
+/// On musl Linux, the `backtrace` crate's libunwind integration is unreliable.
+/// This function uses our direct libunwind wrapper which properly unwinds
+/// across library boundaries, including into musl libc.
 ///
 /// # Safety
 ///
 /// The ucontext pointer must be valid and non-null.
-///
-/// # Signal Safety
-///
-/// This function uses libunwind which may allocate memory. However, since we're
-/// in a crash handler and the process is about to terminate anyway, this is
-/// acceptable for getting better diagnostics.
 #[cfg(target_env = "musl")]
-unsafe fn emit_backtrace_fallback(
+unsafe fn emit_backtrace_libunwind(
     w: &mut impl Write,
     ucontext: *const ucontext_t,
 ) -> Result<usize, EmitterError> {
@@ -169,14 +163,11 @@ unsafe fn emit_backtrace_fallback(
         return Ok(0);
     }
 
-    writeln!(w, "{DD_CRASHTRACK_BEGIN_STACKTRACE_FALLBACK}")?;
+    writeln!(w, "{DD_CRASHTRACK_BEGIN_STACKTRACE}")?;
 
-    // Use a fixed-size buffer for frames
     const MAX_FRAMES: usize = 128;
     let mut frames = [RawFrame::default(); MAX_FRAMES];
 
-    // Use libunwind to unwind from the crash context
-    // This handles cross-library unwinding (including into musl libc)
     let frame_count = libunwind_unwinder::unwind_from_ucontext(ucontext, &mut frames);
 
     for frame in frames.iter().take(frame_count) {
@@ -188,40 +179,34 @@ unsafe fn emit_backtrace_fallback(
         w.flush()?;
     }
 
-    writeln!(w, "{DD_CRASHTRACK_END_STACKTRACE_FALLBACK}")?;
+    writeln!(w, "{DD_CRASHTRACK_END_STACKTRACE}")?;
     w.flush()?;
     Ok(frame_count)
 }
 
-/// Combined backtrace emission with automatic fallback for musl.
+/// Emit a stacktrace using the appropriate method for the platform.
 ///
-/// On non-musl platforms, this just calls emit_backtrace_by_frames.
-/// On musl, if the primary backtrace is suspiciously short (fewer than
-/// MIN_EXPECTED_FRAMES), it also attempts frame pointer walking as a fallback.
+/// - **musl Linux**: Uses our direct libunwind wrapper for reliable unwinding
+/// - **Other platforms**: Uses the `backtrace` crate
 ///
 /// # Safety
 ///
-/// Same safety requirements as emit_backtrace_by_frames.
-unsafe fn emit_backtrace_with_fallback(
+/// The ucontext pointer must be valid.
+unsafe fn emit_backtrace(
     w: &mut impl Write,
     resolve_frames: StacktraceCollection,
     ucontext: *const ucontext_t,
 ) -> Result<(), EmitterError> {
-    // On musl, use our direct libunwind wrapper instead of the backtrace crate
-    // The backtrace crate's libunwind integration is unreliable on musl
-    // Our wrapper properly unwinds across library boundaries (including into musl libc)
     #[cfg(target_env = "musl")]
     {
-        let _ = resolve_frames; // Suppress unused warning
-        let _ = emit_backtrace_fallback(w, ucontext);
+        let _ = resolve_frames;
+        let _ = emit_backtrace_libunwind(w, ucontext);
     }
 
-    // On non-musl platforms, use the backtrace crate as primary
     #[cfg(not(target_env = "musl"))]
     {
         let fault_ip = extract_ip(ucontext);
         let _ = emit_backtrace_by_frames(w, resolve_frames, fault_ip)?;
-        let _ = ucontext; // Suppress unused warning
     }
 
     Ok(())
@@ -265,9 +250,7 @@ pub(crate) fn emit_crashreport(
     // https://doc.rust-lang.org/src/std/backtrace.rs.html#332
     // Do this last, so even if it crashes, we still get the other info.
     if config.resolve_frames() != StacktraceCollection::Disabled {
-        // Use emit_backtrace_with_fallback which will automatically try frame
-        // pointer walking on musl if the primary backtrace is incomplete.
-        unsafe { emit_backtrace_with_fallback(pipe, config.resolve_frames(), ucontext)? };
+        unsafe { emit_backtrace(pipe, config.resolve_frames(), ucontext)? };
     }
 
     if is_runtime_callback_registered() {
@@ -511,68 +494,71 @@ mod tests {
     use super::*;
     use std::str;
 
-    #[inline(never)]
-    fn inner_test_emit_backtrace_with_symbols(collection: StacktraceCollection) -> Vec<u8> {
-        let mut ip_of_test_fn = 0;
-        let mut skip = 3;
-        unsafe {
-            backtrace::trace_unsynchronized(|frame| {
-                ip_of_test_fn = frame.ip() as usize;
-                skip -= 1;
-                skip > 0
-            })
-        };
-        let mut buf = Vec::new();
-        unsafe {
-            emit_backtrace_by_frames(&mut buf, collection, ip_of_test_fn).expect("to work ;-)");
+    // Tests for backtrace crate-based emission (non-musl only)
+    #[cfg(not(target_env = "musl"))]
+    mod backtrace_tests {
+        use super::*;
+
+        #[inline(never)]
+        fn inner_test_emit_backtrace_with_symbols(collection: StacktraceCollection) -> Vec<u8> {
+            let mut ip_of_test_fn = 0;
+            let mut skip = 3;
+            unsafe {
+                backtrace::trace_unsynchronized(|frame| {
+                    ip_of_test_fn = frame.ip() as usize;
+                    skip -= 1;
+                    skip > 0
+                })
+            };
+            let mut buf = Vec::new();
+            unsafe {
+                emit_backtrace_by_frames(&mut buf, collection, ip_of_test_fn).expect("to work ;-)");
+            }
+            buf
         }
-        buf
-    }
 
-    #[test]
-    #[cfg_attr(miri, ignore)]
-    fn test_emit_backtrace_disabled() {
-        let buf = inner_test_emit_backtrace_with_symbols(StacktraceCollection::Disabled);
-        let out = str::from_utf8(&buf).expect("to be valid UTF8");
-        assert!(out.contains("BEGIN_STACKTRACE"));
-        assert!(out.contains("END_STACKTRACE"));
-        assert!(out.contains("\"ip\":"));
-        assert!(
-            !out.contains("\"column\":"),
-            "'column' key must not be emitted"
-        );
-        assert!(!out.contains("\"file\":"), "'file' key must not be emitted");
-        assert!(
-            !out.contains("\"function\":"),
-            "'function' key must not be emitted"
-        );
-        assert!(!out.contains("\"line\":"), "'line' key must not be emitted");
-    }
+        #[test]
+        #[cfg_attr(miri, ignore)]
+        fn test_emit_backtrace_disabled() {
+            let buf = inner_test_emit_backtrace_with_symbols(StacktraceCollection::Disabled);
+            let out = str::from_utf8(&buf).expect("to be valid UTF8");
+            assert!(out.contains("BEGIN_STACKTRACE"));
+            assert!(out.contains("END_STACKTRACE"));
+            assert!(out.contains("\"ip\":"));
+            assert!(
+                !out.contains("\"column\":"),
+                "'column' key must not be emitted"
+            );
+            assert!(!out.contains("\"file\":"), "'file' key must not be emitted");
+            assert!(
+                !out.contains("\"function\":"),
+                "'function' key must not be emitted"
+            );
+            assert!(!out.contains("\"line\":"), "'line' key must not be emitted");
+        }
 
-    #[test]
-    #[cfg_attr(miri, ignore)]
-    fn test_emit_backtrace_with_symbols() {
-        let buf = inner_test_emit_backtrace_with_symbols(
-            StacktraceCollection::EnabledWithInprocessSymbols,
-        );
-        // retrieve stack pointer for this function
-        let out = str::from_utf8(&buf).expect("to be valid UTF8");
-        assert!(out.contains("BEGIN_STACKTRACE"));
-        assert!(out.contains("END_STACKTRACE"));
-        // basic structure assertions
-        assert!(out.contains("\"column\":"), "'column' key missing");
-        assert!(out.contains("\"file\":"), "'file' key missing");
-        assert!(out.contains("\"function\":"), "'function' key missing");
-        assert!(out.contains("\"line\":"), "'line' key missing");
-        // filter assertions
-        assert!(
-            !out.contains("emitters::emit_backtrace_by_frames"),
-            "crashtracker itself must be filtered, found 'backtrace::backtrace::libunwind'"
-        );
-        assert!(
-            !out.contains("backtrace::backtrace"),
-            "crashtracker itself must be filtered away, found 'backtrace::backtrace'"
-        );
+        #[test]
+        #[cfg_attr(miri, ignore)]
+        fn test_emit_backtrace_with_symbols() {
+            let buf = inner_test_emit_backtrace_with_symbols(
+                StacktraceCollection::EnabledWithInprocessSymbols,
+            );
+            let out = str::from_utf8(&buf).expect("to be valid UTF8");
+            assert!(out.contains("BEGIN_STACKTRACE"));
+            assert!(out.contains("END_STACKTRACE"));
+            assert!(out.contains("\"column\":"), "'column' key missing");
+            assert!(out.contains("\"file\":"), "'file' key missing");
+            assert!(out.contains("\"function\":"), "'function' key missing");
+            assert!(out.contains("\"line\":"), "'line' key missing");
+            assert!(
+                !out.contains("emitters::emit_backtrace_by_frames"),
+                "crashtracker itself must be filtered"
+            );
+            assert!(
+                !out.contains("backtrace::backtrace"),
+                "crashtracker itself must be filtered away"
+            );
+        }
     }
 
     #[test]
