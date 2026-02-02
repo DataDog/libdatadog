@@ -4,7 +4,7 @@ subject_pattern: "project_path:DataDog/.*"
 
 claim_pattern:
   project_id: "2260"
-  ref: "refs/heads/(main|release|igor/versioning/.*)" # TODO: remove testing branch and uncomment ref_protected
+  ref: "(main|release|igor/versioning/.*)" # TODO: remove testing branch and uncomment ref_protected
   # ref_protected: "true"
 
 permissions:
