@@ -1070,9 +1070,9 @@ fn assert_telemetry_message(crash_telemetry: &[u8], crash_typ: &str) {
         }),
         telemetry_payload["application"]
     );
-    assert_eq!(telemetry_payload["payload"].as_array().unwrap().len(), 1);
+    assert_eq!(telemetry_payload["payload"]["logs"].as_array().unwrap().len(), 1);
 
-    let log_entry = &telemetry_payload["payload"][0];
+    let log_entry = &telemetry_payload["payload"]["logs"][0];
     let tags_raw = log_entry["tags"].as_str().unwrap();
     let is_crash_ping = tags_raw.contains("is_crash_ping:true");
 
@@ -1523,9 +1523,9 @@ fn assert_crash_ping_message(body: &str) {
         serde_json::from_str(body).expect("Crash ping should be valid JSON");
 
     assert_eq!(telemetry_payload["request_type"], "logs");
-    assert_eq!(telemetry_payload["payload"].as_array().unwrap().len(), 1);
+    assert_eq!(telemetry_payload["payload"]["logs"].as_array().unwrap().len(), 1);
 
-    let log_entry = &telemetry_payload["payload"][0];
+    let log_entry = &telemetry_payload["payload"]["logs"][0];
 
     let tags = log_entry["tags"].as_str().unwrap();
     assert!(
