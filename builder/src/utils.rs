@@ -5,6 +5,7 @@ use anyhow::{anyhow, Result};
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::process::Child;
 
 pub fn file_replace(file_in: &str, file_out: &str, target: &str, replace: &str) -> Result<()> {
     let content = fs::read_to_string(file_in)?;
@@ -25,4 +26,14 @@ pub fn project_root() -> PathBuf {
         .nth(1)
         .unwrap()
         .to_path_buf()
+}
+
+/// Waits for a child process to complete and panics if it fails.
+pub fn wait_for_success(mut child: Child, name: &str) {
+    let status = child.wait().expect(&format!("{name} failed to wait"));
+    assert!(
+        status.success(),
+        "{name} failed with exit code: {:?}",
+        status.code()
+    );
 }
