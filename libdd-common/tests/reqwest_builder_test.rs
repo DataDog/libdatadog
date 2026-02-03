@@ -22,6 +22,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg_attr(miri, ignore)]
     async fn test_file_dump_captures_http_request() {
         let file_path = create_temp_file_path("libdd_common_test", "http");
 
@@ -67,6 +68,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg_attr(miri, ignore)]
     async fn test_unsupported_scheme_returns_error() {
         let endpoint = Endpoint::from_slice("ftp://example.com/file");
 
