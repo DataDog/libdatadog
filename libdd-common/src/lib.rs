@@ -7,10 +7,7 @@
 #![cfg_attr(not(test), deny(clippy::unimplemented))]
 
 use anyhow::Context;
-use hyper::{
-    header::HeaderValue,
-    http::uri::{self},
-};
+use hyper::{header::HeaderValue, http::uri};
 use serde::de::Error;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::sync::{Mutex, MutexGuard};
