@@ -48,7 +48,7 @@ impl Span {
         storage.find(key.into()).and_then(|r| self.meta.get(&r)).map(|r| r.get(storage))
     }
 
-    fn set_meta<D: TraceData, K: Into<D::Text>, V: Into<D::Text>>(&mut self, key: K, storage: &mut Storage<D>, value: V) -> &mut TraceStringRef {
+    fn set_meta<D: MutableTraceData, K: Into<D::Text>, V: Into<D::Text>>(&mut self, key: K, storage: &mut Storage<D>, value: V) -> &mut TraceStringRef {
         let r = storage.add(key.into());
         let value = storage.add(value.into());
         match self.meta.entry(r) {
@@ -74,7 +74,7 @@ impl Span {
         storage.find(key).and_then(|r| self.metrics.get(&r).map(|v| *v))
     }
 
-    fn set_metric<D: TraceData, K: Into<D::Text>>(&mut self, key: K, storage: &mut Storage<D>, value: f64) -> &mut f64 {
+    fn set_metric<D: MutableTraceData, K: Into<D::Text>>(&mut self, key: K, storage: &mut Storage<D>, value: f64) -> &mut f64 {
         let r = storage.add(key);
         match self.metrics.entry(r) {
             Entry::Occupied(mut e) => {
@@ -108,7 +108,7 @@ pub struct ChunkCollection<D: TraceData + 'static> {
     // TODO: collect header data here
 }
 
-fn free_span_data<D: TraceData>(span: &mut Span, storage: &mut Storage<D>) {
+fn free_span_data<D: MutableTraceData>(span: &mut Span, storage: &mut Storage<D>) {
     span.service.reset(storage);
     span.name.reset(storage);
     span.resource.reset(storage);
@@ -122,7 +122,7 @@ fn free_span_data<D: TraceData>(span: &mut Span, storage: &mut Storage<D>) {
     }
 }
 
-fn free_chunk_data<D: TraceData>(chunk: &mut Vec<Span>, storage: &mut Storage<D>) {
+fn free_chunk_data<D: MutableTraceData>(chunk: &mut Vec<Span>, storage: &mut Storage<D>) {
     for mut span in std::mem::take(chunk).into_iter() {
         free_span_data(&mut span, storage);
     }
@@ -133,7 +133,10 @@ fn find_chunk_root_span() {
 
 }
 
-impl<D: TraceData + 'static> TraceProjector<D> for ChunkCollection<D> {
+impl<D: MutableTraceData + 'static> TraceProjector<D> for ChunkCollection<D>
+where
+    D::Text: Clone,
+{
     type Storage<'a> = Storage<D>;
     type Trace<'a> = Trace;
     type Chunk<'a> = Chunk;
@@ -483,7 +486,10 @@ impl<D: TraceData + 'static> TraceProjector<D> for ChunkCollection<D> {
     }
 }
 //note: trait bound `trace::TraceAttributes<'_, T, D, trace::AttrRef<'_, <T as trace::TraceProjector<D>>::Span>, <T as trace::TraceProjector<D>>::Span, 0>: trace::TraceAttributesOp<'_, T, D, <T as trace::TraceProjector<D>>::Span>` was not satisfied
-impl<'a, D: TraceData + 'static, const Mut: u8> TraceAttributesOp<ChunkCollection<D>, D, Span> for TraceAttributes<'a, ChunkCollection<D>, D, AttrRef<'a, Span>, Span, Mut> {
+impl<'a, D: MutableTraceData + 'static, const Mut: u8> TraceAttributesOp<ChunkCollection<D>, D, Span> for TraceAttributes<'a, ChunkCollection<D>, D, AttrRef<'a, Span>, Span, Mut>
+where
+    D::Text: Clone,
+{
     type Array = ();
     type Map = ();
 
@@ -500,7 +506,10 @@ impl<'a, D: TraceData + 'static, const Mut: u8> TraceAttributesOp<ChunkCollectio
     }
 }
 
-impl<'a, D: TraceData + 'static> TraceAttributesMutOp<ChunkCollection<D>, D, Span> for TraceAttributesMut<'a, ChunkCollection<D>, D, AttrRef<'a, Span>, Span> {
+impl<'a, D: MutableTraceData + 'static> TraceAttributesMutOp<ChunkCollection<D>, D, Span> for TraceAttributesMut<'a, ChunkCollection<D>, D, AttrRef<'a, Span>, Span>
+where
+    D::Text: Clone,
+{
     type MutString = &'a mut TraceStringRef;
     type MutBytes = ();
     type MutBoolean = &'a mut f64;
@@ -539,7 +548,10 @@ impl<'a, D: TraceData + 'static> TraceAttributesMutOp<ChunkCollection<D>, D, Spa
     }
 }
 
-impl<'a, D: TraceData + 'static> TraceAttributesString<ChunkCollection<D>, D> for &'a mut TraceStringRef {
+impl<'a, D: MutableTraceData + 'static> TraceAttributesString<ChunkCollection<D>, D> for &'a mut TraceStringRef
+where
+    D::Text: Clone,
+{
     fn get<'s>(&self, storage: &'s Storage<D>) -> &'s D::Text {
         (**self).get(storage)
     }
@@ -579,7 +591,10 @@ impl<'a> TraceAttributesDouble for &'a mut f64 {
     }
 }
 
-impl<'a, D: TraceData + 'static, const Mut: u8> TraceAttributesOp<ChunkCollection<D>, D, [(); 0]> for TraceAttributes<'a, ChunkCollection<D>, D, AttrRef<'a, Span>, Span, Mut> {
+impl<'a, D: MutableTraceData + 'static, const Mut: u8> TraceAttributesOp<ChunkCollection<D>, D, [(); 0]> for TraceAttributes<'a, ChunkCollection<D>, D, AttrRef<'a, Span>, Span, Mut>
+where
+    D::Text: Clone,
+{
     type Array = ();
     type Map = ();
 
@@ -588,7 +603,10 @@ impl<'a, D: TraceData + 'static, const Mut: u8> TraceAttributesOp<ChunkCollectio
     }
 }
 
-impl<'a, D: TraceData + 'static> TraceAttributesOp<ChunkCollection<D>, D, Trace> for TraceAttributes<'a, ChunkCollection<D>, D, AttrRef<'a, Trace>, Trace> {
+impl<'a, D: MutableTraceData + 'static> TraceAttributesOp<ChunkCollection<D>, D, Trace> for TraceAttributes<'a, ChunkCollection<D>, D, AttrRef<'a, Trace>, Trace>
+where
+    D::Text: Clone,
+{
     type Array = ();
     type Map = ();
 
@@ -597,7 +615,10 @@ impl<'a, D: TraceData + 'static> TraceAttributesOp<ChunkCollection<D>, D, Trace>
     }
 }
 
-impl<'a, D: TraceData + 'static> TraceAttributesOp<ChunkCollection<D>, D, Chunk> for TraceAttributes<'a, ChunkCollection<D>, D, AttrRef<'a, Chunk>, Chunk> {
+impl<'a, D: MutableTraceData + 'static> TraceAttributesOp<ChunkCollection<D>, D, Chunk> for TraceAttributes<'a, ChunkCollection<D>, D, AttrRef<'a, Chunk>, Chunk>
+where
+    D::Text: Clone,
+{
     type Array = ();
     type Map = ();
 

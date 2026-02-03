@@ -24,21 +24,36 @@ use std::ops::Deref;
 use std::ptr::NonNull;
 use std::{fmt, ptr};
 
+pub trait SpanDataContents: Debug + Eq + Hash + Serialize + Default {
+    type RefCopy: Self;
+
+    fn default_ref<'a>() -> &'a Self;
+
+    fn as_ref_copy(&self) -> Self::RefCopy;
+}
+
 /// Trait representing the requirements for a type to be used as a Span "string" type.
 /// Note: Borrow<str> is not required by the derived traits, but allows to access HashMap elements
 /// from a static str and check if the string is empty.
-pub trait SpanText: Debug + Eq + Hash + Borrow<str> + Serialize + Default + for<'a> From<&'a str> {
+pub trait SpanText: SpanDataContents + Borrow<str> {
     fn from_static_str(value: &'static str) -> Self;
-    fn default_ref<'a>() -> &'a Self;
 }
 
 impl SpanText for &str {
     fn from_static_str(value: &'static str) -> Self {
         value
     }
+}
+
+impl SpanDataContents for &str {
+    type RefCopy = Self;
 
     fn default_ref<'a>() -> &'a Self {
         &""
+    }
+
+    fn as_ref_copy(&self) -> Self::RefCopy {
+        *self
     }
 }
 
@@ -47,15 +62,22 @@ impl SpanText for BytesString {
     fn from_static_str(value: &'static str) -> Self {
         BytesString::from_static(value)
     }
+}
+
+impl SpanDataContents for BytesString {
+    type RefCopy = Self;
 
     fn default_ref<'a>() -> &'a Self {
         &EMPTY_BYTESSTRING
     }
+
+    fn as_ref_copy(&self) -> Self::RefCopy {
+        self.clone()
+    }
 }
 
-pub trait SpanBytes: Debug + Eq + Hash + Borrow<[u8]> + Serialize + Default {
+pub trait SpanBytes: SpanDataContents + Borrow<[u8]> {
     fn from_static_bytes(value: &'static [u8]) -> Self;
-    fn default_ref<'a>() -> &'a Self;
 }
 
 static EMPTY_SLICE: &[u8] = &[];
@@ -63,9 +85,17 @@ impl SpanBytes for &[u8] {
     fn from_static_bytes(value: &'static [u8]) -> Self {
         value
     }
+}
+
+impl SpanDataContents for &[u8] {
+    type RefCopy = Self;
 
     fn default_ref<'a>() -> &'a Self {
         &EMPTY_SLICE
+    }
+
+    fn as_ref_copy(&self) -> Self::RefCopy {
+        *self
     }
 }
 
@@ -74,9 +104,16 @@ impl SpanBytes for Bytes {
     fn from_static_bytes(value: &'static [u8]) -> Self {
         Bytes::from_static(value)
     }
+}
+impl SpanDataContents for Bytes {
+    type RefCopy = Self;
 
     fn default_ref<'a>() -> &'a Self {
         &EMPTY_BYTES
+    }
+
+    fn as_ref_copy(&self) -> Self::RefCopy {
+        self.clone()
     }
 }
 
@@ -92,13 +129,15 @@ pub trait TraceData: Default + Clone + Debug + PartialEq {
 /// TraceData that supports mutation - requires owned, cloneable types that can be constructed
 /// from standard Rust types like String and Vec<u8>. Read-only operations work with any TraceData,
 /// but mutation requires MutableTraceData.
-pub trait MutableTraceData: TraceData
+pub trait MutableTraceData: TraceData<
+    Text = Text,
+    Bytes = Bytes,
+>
 where
-    Self::Text: Clone + From<String> + for<'a> From<&'a str>,
-    Self::Bytes: Clone + From<Vec<u8>> + for<'a> From<&'a [u8]>,
+    Text: Clone + From<String> + for<'a> From<&'a str>,
+    Bytes: Clone + From<Vec<u8>>,
 {
 }
-
 pub trait DeserializableTraceData: TraceData {
     fn get_mut_slice(buf: &mut Self::Bytes) -> &mut &'static [u8];
 

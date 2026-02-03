@@ -1,7 +1,7 @@
 use std::borrow::Borrow;
 use std::collections::HashMap;
 use libdd_trace_protobuf::pb::idx::SpanKind;
-use crate::span::{BytesData, SliceData, TraceData, table::*};
+use crate::span::{BytesData, SliceData, TraceData, table::*, MutableTraceData};
 
 
 
@@ -22,12 +22,14 @@ impl<T: TraceData> TraceStaticData<T> {
         self.strings.get(r#ref)
     }
 
-    pub fn add_string(&mut self, value: T::Text) -> TraceStringRef {
-        self.strings.add(value)
-    }
-
     pub fn get_bytes(&self, r#ref: TraceBytesRef) -> &T::Bytes {
         self.bytes.get(r#ref)
+    }
+}
+
+impl<T: MutableTraceData> TraceStaticData<T> {
+    pub fn add_string(&mut self, value: T::Text) -> TraceStringRef {
+        self.strings.add(value)
     }
 
     pub fn add_bytes(&mut self, value: T::Bytes) -> TraceBytesRef {

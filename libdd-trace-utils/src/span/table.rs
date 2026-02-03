@@ -3,11 +3,12 @@ use std::collections::HashMap;
 use std::fmt::Debug;
 use std::hash::Hash;
 use std::marker::PhantomData;
+use std::ops::Deref;
 use serde::Serialize;
-use crate::span::TraceData;
+use crate::span::{MutableTraceData, SpanDataContents, TraceData};
 
 trait TraceDataType: Copy + Clone + Debug + Default + Eq + PartialEq + Hash + Serialize {
-    type Data<T: TraceData>: Debug + Eq + Hash + Default + Clone + Serialize;
+    type Data<T: TraceData>: SpanDataContents;
 }
 #[derive(Copy, Clone, Debug, Default, Eq, PartialEq, Hash, Serialize)]
 pub struct TraceDataBytes;
@@ -49,7 +50,7 @@ struct StaticDataValue<T> {
 pub struct StaticDataVec<T: TraceData, D: TraceDataType> {
     vec: Vec<StaticDataValue<D::Data<T>>>,
     // This HashMap is probably the bottleneck. However we are required to ensure every string only exists once.
-    table: HashMap<D::Data<T>, TraceDataRef<D>>,
+    table: HashMap<D::Data::<T>::RefCopy, TraceDataRef<D>>,
 }
 
 impl<T: TraceData, D: TraceDataType> Default for StaticDataVec<T, D> {
@@ -81,7 +82,7 @@ impl<T: TraceData, D: TraceDataType> StaticDataVec<T, D> {
             return *r#ref;
         }
         let index = self.vec.len() as u32;
-        self.table.insert(value.clone(), TraceDataRef::new(index));
+        self.table.insert(value.as_ref_copy(), TraceDataRef::new(index));
         self.vec.push(StaticDataValue {
             value,
             rc: 1,
@@ -89,12 +90,13 @@ impl<T: TraceData, D: TraceDataType> StaticDataVec<T, D> {
         TraceDataRef::new(index)
     }
 
-    pub fn update<V: Into<D::Data<T>>>(&mut self, r#ref: &mut TraceDataRef<D>, value: V) {
+    pub fn update<V: Into<D::Data<T>>>(&mut self, r#ref: &mut TraceDataRef<D>, value: V)
+    {
         let entry = &mut self.vec[r#ref.index as usize];
         if entry.rc == 1 {
             self.table.remove(&entry.value);
             let value = value.into();
-            self.table.insert(value.clone(), *r#ref);
+            self.table.insert(value.as_ref_copy(), *r#ref);
             entry.value = value;
         } else {
             entry.rc -= 1;
@@ -111,34 +113,6 @@ impl<T: TraceData, D: TraceDataType> StaticDataVec<T, D> {
         }
         *r#ref = TraceDataRef::default();
     }
-
-    // TODO: We don't quite need Into, only Equivalent
-    pub fn find<V: Into<D::Data<T>>>(&self, value: V) -> Option<TraceDataRef<D>> {
-        self.table.get(&value.into()).map(|v| *v)
-    }
-
-    pub fn decref(&mut self, r#ref: TraceDataRef<D>) {
-        let rc = &mut self.vec[r#ref.index as usize].rc;
-        debug_assert!(*rc >= 0);
-        *rc -= 1;
-    }
-
-    pub fn shrink(mut self) -> Shrunk<D::Data<T>> {
-        let mut offsets = Vec::with_capacity(self.vec.len());
-        let mut table = Vec::with_capacity(self.vec.len());
-        let mut i = 0;
-        for entry in self.vec.into_iter() {
-            offsets.push(i);
-            if entry.rc == 0 {
-                i += 1;
-                table.push(entry.value)
-            }
-        }
-        Shrunk {
-            table,
-            offsets,
-        }
-    }
 }
 
 // Convenience methods for more natural access
@@ -147,11 +121,13 @@ impl<D: TraceDataType> TraceDataRef<D> {
         vec.get(self)
     }
 
-    pub fn set<T: TraceData, V: Into<D::Data<T>>>(&mut self, vec: &mut StaticDataVec<T, D>, value: V) {
+    pub fn set<T: MutableTraceData, V: Into<D::Data<T>>>(&mut self, vec: &mut StaticDataVec<T, D>, value: V)
+    {
         vec.update(self, value)
     }
 
-    pub fn reset<T: TraceData>(&mut self, vec: &mut StaticDataVec<T, D>) {
+    pub fn reset<T: MutableTraceData>(&mut self, vec: &mut StaticDataVec<T, D>)
+    {
         vec.reset(self)
     }
 }
