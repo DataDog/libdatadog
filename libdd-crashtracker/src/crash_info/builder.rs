@@ -616,6 +616,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)] // os_info::get() spawns subprocess, unsupported by Miri
     fn test_with_os_info_this_machine() {
         let mut builder = CrashInfoBuilder::new();
         builder.with_kind(ErrorKind::UnixSignal).unwrap();
