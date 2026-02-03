@@ -4,10 +4,7 @@
 pub mod config;
 mod errors;
 pub mod exporter_manager;
-mod file_exporter;
 mod profile_exporter;
-#[cfg(any(test, feature = "test-utils"))]
-pub mod utils;
 
 pub use errors::SendError;
 pub use exporter_manager::ExporterManager;

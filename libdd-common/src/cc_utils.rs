@@ -1,6 +1,7 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+use anyhow::Context;
 use std::{
     env,
     ffi::{self, OsString},
@@ -122,7 +123,7 @@ impl ImprovedBuild {
     fn get_out_dir(&self) -> anyhow::Result<PathBuf> {
         env::var_os("OUT_DIR")
             .map(PathBuf::from)
-            .ok_or_else(|| anyhow::Error::msg("can't get output directory info"))
+            .context("can't get output directory info")
     }
 
     // cc::Build shadow
