@@ -24,6 +24,10 @@ on:
           - libdd-trace-stats
           - libdd-trace-utils
 
+concurrency:
+  group: release-proposal-dispatch-group
+  cancel-in-progress: false
+
 env:
   MAIN_BRANCH: main
   RELEASE_BRANCH: release
@@ -123,8 +127,8 @@ jobs:
           # Get commits since release for each crate and save to file
           ./scripts/commits-since-release.sh "$(cat /tmp/crates.json)" > /tmp/commits-by-crate.json
           
-          # Display summary
-          ./scripts/commits-since-release.sh --format=summary "$(cat /tmp/crates.json)"
+          # Display json output
+          jq . /tmp/commits-by-crate.json
 
       - name: Create a branch for the release proposal
         id: proposal-branch

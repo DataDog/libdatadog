@@ -97,7 +97,7 @@ commit_parsers = [
   { message = ".*", group = "<!-- B -->Changed" },
 ]
 # Prevent commits that are breaking from being excluded by commit parsers.
-protect_breaking_commits = false
+protect_breaking_commits = true
 # Exclude commits that are not matched by any commit parser.
 filter_commits = false
 # Order releases topologically instead of chronologically.

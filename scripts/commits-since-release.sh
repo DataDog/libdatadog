@@ -90,8 +90,11 @@ if ! echo "$INPUT_JSON" | jq empty 2>/dev/null; then
     exit 1
 fi
 
+# Get cargo metadata once and cache it
+METADATA=$(cargo metadata --format-version=1 --no-deps 2>/dev/null)
+
 # Get workspace root (for determining crate paths)
-WORKSPACE_ROOT=$(cargo metadata --format-version=1 --no-deps 2>/dev/null | jq -r '.workspace_root' || pwd)
+WORKSPACE_ROOT=$(echo "$METADATA" | jq -r '.workspace_root' || pwd)
 
 log_verbose() {
     if [ "$VERBOSE" = true ]; then
@@ -127,8 +130,8 @@ while read -r crate; do
     
     log_verbose "Processing $NAME v$VERSION (tag: $TAG)..."
     
-    # Find crate path from cargo metadata
-    CRATE_PATH=$(cargo metadata --format-version=1 --no-deps 2>/dev/null | \
+    # Find crate path from cached metadata
+    CRATE_PATH=$(echo "$METADATA" | \
         jq -r --arg name "$NAME" '.packages[] | select(.name == $name) | .manifest_path' | \
         sed 's|/Cargo.toml$||' | \
         sed "s|^$WORKSPACE_ROOT/||")
@@ -165,37 +168,33 @@ while read -r crate; do
         fi
         
         # Get commits since tag that affect this crate's directory
-        # Format: hash|subject|author|date
-        COMMITS_RAW=$(git log "$COMMIT_RANGE" --format="%H|%s|%an|%aI" -- "$CRATE_PATH" 2>/dev/null || true)
+        # Use ASCII unit separator (0x1F) as delimiter - won't appear in commit messages
+        COMMITS_JSON="["
+        COMMIT_FIRST=true
         
-        if [ -n "$COMMITS_RAW" ]; then
-            COMMITS_JSON="["
-            COMMIT_FIRST=true
-            
-            while IFS='|' read -r hash subject author date; do
-                if [ -n "$hash" ]; then
-                    # Check if commit should be excluded
-                    if should_exclude "$subject"; then
-                        log_verbose "    Excluding: $subject"
-                        continue
-                    fi
-                    
-                    if [ "$COMMIT_FIRST" = true ]; then
-                        COMMIT_FIRST=false
-                    else
-                        COMMITS_JSON+=","
-                    fi
-                    
-                    # Escape special characters in subject for JSON
-                    subject_escaped=$(echo "$subject" | jq -R .)
-                    author_escaped=$(echo "$author" | jq -R .)
-                    
-                    COMMITS_JSON+="{\"hash\":\"$hash\",\"subject\":$subject_escaped,\"author\":$author_escaped,\"date\":\"$date\"}"
+        while IFS=$'\x1F' read -r hash subject author date; do
+            if [ -n "$hash" ]; then
+                # Check if commit should be excluded
+                if should_exclude "$subject"; then
+                    log_verbose "    Excluding: $subject"
+                    continue
                 fi
-            done <<< "$COMMITS_RAW"
-            
-            COMMITS_JSON+="]"
-        fi
+                
+                if [ "$COMMIT_FIRST" = true ]; then
+                    COMMIT_FIRST=false
+                else
+                    COMMITS_JSON+=","
+                fi
+                
+                # Escape special characters in subject for JSON
+                subject_escaped=$(echo "$subject" | jq -R .)
+                author_escaped=$(echo "$author" | jq -R .)
+                
+                COMMITS_JSON+="{\"hash\":\"$hash\",\"subject\":$subject_escaped,\"author\":$author_escaped,\"date\":\"$date\"}"
+            fi
+        done < <(git log "$COMMIT_RANGE" --format="%H%x1F%s%x1F%an%x1F%aI" -- "$CRATE_PATH" 2>/dev/null || true)
+        
+        COMMITS_JSON+="]"
         
         COMMIT_COUNT=$(echo "$COMMITS_JSON" | jq 'length')
         log_verbose "  Found $COMMIT_COUNT commits since $TAG"

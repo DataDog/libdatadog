@@ -95,7 +95,6 @@ while IFS= read -r pkg_id; do
     # Get all dependencies that are workspace members (excluding dev-dependencies and self-references)
     # Also filter to only include dependencies that are publishable
     deps=$(echo "$METADATA" | jq -r --arg id "$pkg_id" --arg pkg_name "$pkg_name" \
-        --argjson publishable_ids "$(echo "$WORKSPACE_MEMBERS" | jq -R . | jq -s .)" \
         '.packages[] | select(.id == $id) | 
         .dependencies[] | 
         select(.path != null and .kind != "dev" and .name != $pkg_name) | 
@@ -152,7 +151,8 @@ if [ ${#TARGET_CRATES[@]} -gt 0 ]; then
     
     # Filter PKG_DEPS to only include the selected crates
     declare -A FILTERED_PKG_DEPS
-    for crate in "${!INCLUDED_CRATES[@]}"; do
+    # Sort for deterministic order
+    for crate in $(printf '%s\n' "${!INCLUDED_CRATES[@]}" | sort); do
         # Filter dependencies to only include other selected crates
         deps="${PKG_DEPS[$crate]}"
         filtered_deps=""
@@ -173,7 +173,8 @@ if [ ${#TARGET_CRATES[@]} -gt 0 ]; then
     # Replace PKG_DEPS with filtered version
     unset PKG_DEPS
     declare -A PKG_DEPS
-    for crate in "${!FILTERED_PKG_DEPS[@]}"; do
+    # Sort for deterministic order
+    for crate in $(printf '%s\n' "${!FILTERED_PKG_DEPS[@]}" | sort); do
         PKG_DEPS["$crate"]="${FILTERED_PKG_DEPS[$crate]}"
     done
 fi
@@ -184,7 +185,8 @@ declare -a SORTED_ORDER
 declare -a QUEUE
 
 # Calculate in-degrees (number of workspace dependencies each package has)
-for pkg_name in "${!PKG_DEPS[@]}"; do
+# Sort for consistent ordering (though order doesn't matter here)
+for pkg_name in $(printf '%s\n' "${!PKG_DEPS[@]}" | sort); do
     deps="${PKG_DEPS[$pkg_name]}"
     count=0
     if [ -n "$deps" ]; then
@@ -198,7 +200,8 @@ for pkg_name in "${!PKG_DEPS[@]}"; do
 done
 
 # Find all packages with no dependencies (in-degree = 0)
-for pkg_name in "${!IN_DEGREE[@]}"; do
+# Sort to ensure deterministic order
+for pkg_name in $(printf '%s\n' "${!IN_DEGREE[@]}" | sort); do
     if [ "${IN_DEGREE[$pkg_name]}" -eq 0 ]; then
         QUEUE+=("$pkg_name")
     fi
@@ -213,7 +216,8 @@ while [ ${#QUEUE[@]} -gt 0 ]; do
     SORTED_ORDER+=("$current")
     
     # For each package that depends on current, reduce its in-degree
-    for pkg_name in "${!PKG_DEPS[@]}"; do
+    # Sort to ensure deterministic order when multiple packages become ready
+    for pkg_name in $(printf '%s\n' "${!PKG_DEPS[@]}" | sort); do
         deps="${PKG_DEPS[$pkg_name]}"
         if [ -n "$deps" ] && echo "$deps" | grep -qx "$current"; then
             ((IN_DEGREE["$pkg_name"]--)) || true
