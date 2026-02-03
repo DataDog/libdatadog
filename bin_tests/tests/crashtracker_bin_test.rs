@@ -219,7 +219,7 @@ fn test_crash_tracking_bin_no_runtime_callback() {
 
 #[test]
 #[cfg_attr(miri, ignore)]
-#[cfg(target_os = "linux")]
+#[cfg(all(target_os = "linux", not(target_env = "musl")))]
 fn test_collector_no_allocations_stacktrace_modes() {
     // (env_value, should_expect_log)
     let cases = [
