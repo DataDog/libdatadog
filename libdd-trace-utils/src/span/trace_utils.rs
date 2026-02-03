@@ -3,7 +3,7 @@
 
 //! Trace-utils functionalities implementation for tinybytes based spans
 
-use super::{Span, SpanText, TraceData, TraceProjector, TraceAttributesOp, TraceChunkMut, TracesMut};
+use super::{Span, SpanMut, SpanText, TraceData, TraceProjector, TraceAttributesOp, TraceAttributesMutOp, TraceChunkMut, TracesMut, TraceAttributes, AttrRef, MUT};
 use std::collections::{HashMap, HashSet};
 
 /// Span metric the mini agent must set for the backend to recognize top level span
@@ -13,11 +13,14 @@ const TRACER_TOP_LEVEL_KEY: &str = "_dd.top_level";
 const MEASURED_KEY: &str = "_dd.measured";
 const PARTIAL_VERSION_KEY: &str = "_dd.partial_version";
 
-fn set_top_level_span<T: TraceProjector<D>, D: TraceData>(span: &mut Span<T, D>, is_top_level: bool) {
+fn set_top_level_span<D: TraceData, T: TraceProjector<D>>(span: &mut SpanMut<T, D>, is_top_level: bool)
+where
+    for<'a> TraceAttributes<'a, T, D, AttrRef<'a, T::Span<'a>>, T::Span<'a>, MUT>: TraceAttributesMutOp<T, D, T::Span<'a>>,
+{
     if is_top_level {
-        span.attributes().set_double(TOP_LEVEL_KEY, 1.0);
+        span.attributes_mut().set_double(TOP_LEVEL_KEY, 1.0);
     } else {
-        span.attributes().remove(TOP_LEVEL_KEY);
+        span.attributes_mut().remove(TOP_LEVEL_KEY);
     }
 }
 
@@ -27,7 +30,7 @@ fn set_top_level_span<T: TraceProjector<D>, D: TraceData>(span: &mut Span<T, D>,
 ///   - OR its parent is unknown (other part of the code, distributed trace)
 ///   - OR its parent belongs to another service (in that case it's a "local root" being the highest
 ///     ancestor of other spans belonging to this service and attached to it).
-pub fn compute_top_level_span<T: TraceProjector<D>, D: TraceData>(trace: &mut TraceChunkMut<T, D>) {
+pub fn compute_top_level_span<D: TraceData, T: TraceProjector<D>>(trace: &mut TraceChunkMut<T, D>) {
     let mut span_id_to_service: HashMap<u64, D::Text> = HashMap::new();
     for span in trace.spans() {
         span_id_to_service.insert(span.span_id(), span.service().clone());
@@ -38,7 +41,7 @@ pub fn compute_top_level_span<T: TraceProjector<D>, D: TraceData>(trace: &mut Tr
             set_top_level_span(&mut span, true);
             continue;
         }
-        match span_id_idx.get(&parent_id).map(|i| &trace[*i].service) {
+        match span_id_to_service.get(&parent_id) {
             Some(parent_span_service) => {
                 if !parent_span_service.eq(span.service()) {
                     // parent is not in the same service
@@ -54,16 +57,22 @@ pub fn compute_top_level_span<T: TraceProjector<D>, D: TraceData>(trace: &mut Tr
 }
 
 /// Return true if the span has a top level key set
-pub fn has_top_level<T: TraceProjector<D>, D: TraceData>(span: &Span<T, D>) -> bool {
+pub fn has_top_level<D: TraceData, T: TraceProjector<D>>(span: &Span<T, D>) -> bool
+where
+    for<'a> TraceAttributes<'a, T, D, AttrRef<'a, T::Span<'a>>, T::Span<'a>>: TraceAttributesOp<T, D, T::Span<'a>>,
+{
     span.attributes()
         .get_double(TRACER_TOP_LEVEL_KEY)
-        .is_some_and(|v| *v == 1.0)
-        || span.attributes().get_double(TOP_LEVEL_KEY).is_some_and(|v| *v == 1.0)
+        .is_some_and(|v| v == 1.0)
+        || span.attributes().get_double(TOP_LEVEL_KEY).is_some_and(|v| v == 1.0)
 }
 
 /// Returns true if a span should be measured (i.e., it should get trace metrics calculated).
-pub fn is_measured<T: TraceProjector<D>, D: TraceData>(span: &Span<T, D>) -> bool {
-    span.attributes().get_double(MEASURED_KEY).is_some_and(|v| *v == 1.0)
+pub fn is_measured<D: TraceData, T: TraceProjector<D>>(span: &Span<T, D>) -> bool
+where
+    for<'a> TraceAttributes<'a, T, D, AttrRef<'a, T::Span<'a>>, T::Span<'a>>: TraceAttributesOp<T, D, T::Span<'a>>,
+{
+    span.attributes().get_double(MEASURED_KEY).is_some_and(|v| v == 1.0)
 }
 
 /// Returns true if the span is a partial snapshot.
@@ -71,10 +80,13 @@ pub fn is_measured<T: TraceProjector<D>, D: TraceData>(span: &Span<T, D>) -> boo
 /// When incomplete, a partial snapshot has a metric _dd.partial_version which is a positive
 /// integer. The metric usually increases each time a new version of the same span is sent by
 /// the tracer
-pub fn is_partial_snapshot<T: TraceProjector<D>, D: TraceData>(span: &Span<T, D>) -> bool {
+pub fn is_partial_snapshot<D: TraceData, T: TraceProjector<D>>(span: &Span<T, D>) -> bool
+where
+    for<'a> TraceAttributes<'a, T, D, AttrRef<'a, T::Span<'a>>, T::Span<'a>>: TraceAttributesOp<T, D, T::Span<'a>>,
+{
     span.attributes()
         .get_double(PARTIAL_VERSION_KEY)
-        .is_some_and(|v| *v >= 0.0)
+        .is_some_and(|v| v >= 0.0)
 }
 
 pub struct DroppedP0Stats {
@@ -97,9 +109,9 @@ const SAMPLING_ANALYTICS_RATE_KEY: &str = "_dd1.sr.eausr";
 ///
 /// # Trace-level attributes
 /// Some attributes related to the whole trace are stored in the root span of the chunk.
-pub fn drop_chunks<T: TraceProjector<D>, D: TraceData>(traces: &mut TracesMut<T, D>) -> DroppedP0Stats
+pub fn drop_chunks<'a, D: TraceData, T: TraceProjector<D>>(traces: &'a mut TracesMut<'a, T, D>) -> DroppedP0Stats
 where
-    T: TraceData,
+    for<'b> TraceAttributes<'b, T, D, AttrRef<'b, T::Span<'b>>, T::Span<'b>>: TraceAttributesOp<T, D, T::Span<'b>>,
 {
     let mut dropped_p0_traces = 0;
     let mut dropped_p0_spans = 0;
@@ -124,7 +136,7 @@ where
             else if span
                 .attributes()
                 .get_double(SAMPLING_SINGLE_SPAN_MECHANISM)
-                .is_some_and(|m| *m == 8.0)
+                .is_some_and(|m| m == 8.0)
                 || span.attributes().get_double(SAMPLING_ANALYTICS_RATE_KEY).is_some()
             {
                 // We send spans sampled by single-span sampling or analyzed spans

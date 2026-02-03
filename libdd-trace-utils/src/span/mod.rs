@@ -89,6 +89,16 @@ pub trait TraceData: Default + Clone + Debug + PartialEq {
     type Bytes: SpanBytes;
 }
 
+/// TraceData that supports mutation - requires owned, cloneable types that can be constructed
+/// from standard Rust types like String and Vec<u8>. Read-only operations work with any TraceData,
+/// but mutation requires MutableTraceData.
+pub trait MutableTraceData: TraceData
+where
+    Self::Text: Clone + From<String> + for<'a> From<&'a str>,
+    Self::Bytes: Clone + From<Vec<u8>> + for<'a> From<&'a [u8]>,
+{
+}
+
 pub trait DeserializableTraceData: TraceData {
     fn get_mut_slice(buf: &mut Self::Bytes) -> &mut &'static [u8];
 
@@ -144,6 +154,8 @@ impl DeserializableTraceData for BytesData {
         Ok(string)
     }
 }
+
+impl MutableTraceData for BytesData {}
 
 /// TraceData implementation using `&str` and `&[u8]`.
 #[derive(Clone, Default, Debug, PartialEq, Serialize)]

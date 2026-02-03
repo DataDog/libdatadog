@@ -99,6 +99,7 @@ impl TracerPayloadCollection {
             // TODO: Properly handle non-OK states to prevent possible panics (APMSP-18190).
             #[allow(clippy::unimplemented)]
             TracerPayloadCollection::V05(_) => unimplemented!("Append for V05 not implemented"),
+            TracerPayloadCollection::V1(_) => todo!(),
         }
     }
 
@@ -236,6 +237,7 @@ pub fn decode_to_trace_chunks(
     let (data, size) = match encoding_type {
         TraceEncoding::V04 => msgpack_decoder::v04::from_bytes(data),
         TraceEncoding::V05 => msgpack_decoder::v05::from_bytes(data),
+        TraceEncoding::V1 => todo!(),
     }
     .map_err(|e| anyhow::format_err!("Error deserializing trace from request body: {e}"))?;
 

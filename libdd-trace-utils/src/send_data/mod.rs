@@ -405,6 +405,7 @@ impl SendData {
                     endpoint.as_ref(),
                 ));
             }
+            TracerPayloadCollection::V1(_) => todo!(),
         }
 
         loop {
