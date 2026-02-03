@@ -3,7 +3,7 @@
 
 //! Trace-utils functionalities implementation for tinybytes based spans
 
-use super::{Span, SpanMut, SpanText, MutableTraceData, TraceProjector, TraceAttributesOp, TraceAttributesMutOp, TraceChunkMut, TracesMut, TraceAttributes, AttrRef, MUT, TraceData};
+use super::{Span, SpanMut, SpanText, OwnedTraceData, TraceProjector, TraceAttributesOp, TraceAttributesMutOp, TraceChunkMut, TracesMut, TraceAttributes, AttrRef, MUT, TraceData};
 use std::collections::{HashMap, HashSet};
 
 /// Span metric the mini agent must set for the backend to recognize top level span
@@ -13,7 +13,7 @@ const TRACER_TOP_LEVEL_KEY: &str = "_dd.top_level";
 const MEASURED_KEY: &str = "_dd.measured";
 const PARTIAL_VERSION_KEY: &str = "_dd.partial_version";
 
-fn set_top_level_span<D: MutableTraceData, T: TraceProjector<D>>(span: &mut SpanMut<T, D>, is_top_level: bool)
+fn set_top_level_span<D: TraceData, T: TraceProjector<D>>(span: &mut SpanMut<T, D>, is_top_level: bool)
 where
     for<'a> TraceAttributes<'a, T, D, AttrRef<'a, T::Span<'a>>, T::Span<'a>, MUT>: TraceAttributesMutOp<T, D, T::Span<'a>>,
 {
@@ -30,7 +30,7 @@ where
 ///   - OR its parent is unknown (other part of the code, distributed trace)
 ///   - OR its parent belongs to another service (in that case it's a "local root" being the highest
 ///     ancestor of other spans belonging to this service and attached to it).
-pub fn compute_top_level_span<D: MutableTraceData, T: TraceProjector<D>>(trace: &mut TraceChunkMut<T, D>) {
+pub fn compute_top_level_span<D: TraceData, T: TraceProjector<D>>(trace: &mut TraceChunkMut<T, D>) {
     let mut span_id_to_service: HashMap<u64, D::Text> = HashMap::new();
     for span in trace.spans() {
         span_id_to_service.insert(span.span_id(), span.service().clone());

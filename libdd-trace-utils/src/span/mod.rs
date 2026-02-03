@@ -25,7 +25,7 @@ use std::ptr::NonNull;
 use std::{fmt, ptr};
 
 pub trait SpanDataContents: Debug + Eq + Hash + Serialize + Default {
-    type RefCopy: Self;
+    type RefCopy: SpanDataContents;
 
     fn default_ref<'a>() -> &'a Self;
 
@@ -129,13 +129,15 @@ pub trait TraceData: Default + Clone + Debug + PartialEq {
 /// TraceData that supports mutation - requires owned, cloneable types that can be constructed
 /// from standard Rust types like String and Vec<u8>. Read-only operations work with any TraceData,
 /// but mutation requires MutableTraceData.
-pub trait MutableTraceData: TraceData<
-    Text = Text,
-    Bytes = Bytes,
->
+pub trait Dummy<T> {
+    type Impl;
+}
+impl<T, V> Dummy<T> for V { type Impl = T; }
+
+pub trait OwnedTraceData: TraceData + Dummy<Self::Text, Impl = Self::Text> + Dummy<Self::Bytes, Impl = Self::Bytes>
 where
-    Text: Clone + From<String> + for<'a> From<&'a str>,
-    Bytes: Clone + From<Vec<u8>>,
+    Self::Text: Clone + From<String>,
+    Self::Bytes: Clone + From<Vec<u8>>,
 {
 }
 pub trait DeserializableTraceData: TraceData {
@@ -194,7 +196,7 @@ impl DeserializableTraceData for BytesData {
     }
 }
 
-impl MutableTraceData for BytesData {}
+impl OwnedTraceData for BytesData {}
 
 /// TraceData implementation using `&str` and `&[u8]`.
 #[derive(Clone, Default, Debug, PartialEq, Serialize)]

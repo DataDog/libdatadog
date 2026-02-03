@@ -1,6 +1,6 @@
 use std::marker::PhantomData;
 use libdd_trace_protobuf::pb::idx::SpanKind;
-use crate::span::{MutableTraceData, SpanBytes, SpanText, TraceData};
+use crate::span::{OwnedTraceData, SpanBytes, SpanText, SpanDataContents, TraceData};
 
 pub trait TraceProjector<D: TraceData>: Sized {
     type Storage<'a>: 'a;
@@ -1168,7 +1168,7 @@ where
 }
 
 // Simplified mutable methods
-impl<'a, T: TraceProjector<D>, D: MutableTraceData, C> TraceAttributes<'a, T, D, AttrRef<'a, C>, C, MUT>
+impl<'a, T: TraceProjector<D>, D: OwnedTraceData, C> TraceAttributes<'a, T, D, AttrRef<'a, C>, C, MUT>
 where
     D::Text: Clone + From<String> + for<'b> From<&'b str>,
     D::Bytes: Clone + From<Vec<u8>> + for<'b> From<&'b [u8]>,
@@ -1281,7 +1281,7 @@ where
     }
 }
 
-impl<'a, T: TraceProjector<D>, D: MutableTraceData, V: AttrVal<C>, C: 'a> TraceAttributes<'a, T, D, V, C>
+impl<'a, T: TraceProjector<D>, D: OwnedTraceData, V: AttrVal<C>, C: 'a> TraceAttributes<'a, T, D, V, C>
 where
     D::Text: Clone + From<String> + for<'b> From<&'b str>,
     D::Bytes: Clone + From<Vec<u8>> + for<'b> From<&'b [u8]>,
