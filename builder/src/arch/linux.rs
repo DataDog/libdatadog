@@ -1,9 +1,10 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+use std::ffi::OsStr;
 use std::process::Command;
 
-use std::ffi::OsStr;
+use crate::utils::wait_for_success;
 
 pub const NATIVE_LIBS: &str = " -ldl -lrt -lpthread -lc -lm -lrt -lpthread -lutil -ldl -lutil";
 pub const PROF_DYNAMIC_LIB: &str = "libdatadog_profiling.so";
@@ -21,50 +22,50 @@ pub const RUSTFLAGS: [&str; 4] = [
 
 pub fn fix_rpath(lib_path: &str) {
     if REMOVE_RPATH {
-        let mut patchelf = Command::new("patchelf")
+        let patchelf = Command::new("patchelf")
             .arg("--remove-rpath")
             .arg(lib_path)
             .spawn()
             .expect("failed to spawn patchelf");
 
-        patchelf.wait().expect("failed to remove rpath");
+        wait_for_success(patchelf, "patchelf");
     }
 }
 
 pub fn strip_libraries(lib_path: &str) {
-    let mut rm_section = Command::new("objcopy")
+    let rm_section = Command::new("objcopy")
         .arg("--remove-section")
         .arg(".llvmbc")
         .arg(lib_path.to_owned() + "/libdatadog_profiling.a")
         .spawn()
         .expect("failed to spawn objcopy");
 
-    rm_section.wait().expect("Failed to remove llvmbc section");
+    wait_for_success(rm_section, "objcopy (remove llvmbc section)");
 
-    let mut create_debug = Command::new("objcopy")
+    let create_debug = Command::new("objcopy")
         .arg("--only-keep-debug")
         .arg(lib_path.to_owned() + "/libdatadog_profiling.so")
         .arg(lib_path.to_owned() + "/libdatadog_profiling.debug")
         .spawn()
         .expect("Failed to spawn objcopy");
 
-    create_debug.wait().expect("Failed to extract debug info");
+    wait_for_success(create_debug, "objcopy (extract debug info)");
 
-    let mut strip = Command::new("strip")
+    let strip = Command::new("strip")
         .arg("-S")
         .arg(lib_path.to_owned() + "/libdatadog_profiling.so")
         .spawn()
         .expect("Failed to spawn strip");
 
-    strip.wait().expect("Failed to strip library");
+    wait_for_success(strip, "strip");
 
-    let mut debug = Command::new("objcopy")
+    let debug = Command::new("objcopy")
         .arg("--add-gnu-debuglink=".to_string() + lib_path + "/libdatadog_profiling.debug")
         .arg(lib_path.to_owned() + "/libdatadog_profiling.so")
         .spawn()
         .expect("Failed to spawn objcopy");
 
-    debug.wait().expect("Failed to set debuglink");
+    wait_for_success(debug, "objcopy (set debuglink)");
 }
 
 pub fn add_additional_files(_lib_path: &str, _target_path: &OsStr) {}

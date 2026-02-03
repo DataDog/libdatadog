@@ -626,7 +626,7 @@ mod tests {
         assert!(ddtags.contains("version:bar"));
         assert!(ddtags.contains("language_name:native"));
 
-        assert!(ddtags.contains("data_schema_version:1.4"));
+        assert!(ddtags.contains("data_schema_version:1.5"));
         assert!(ddtags.contains("incomplete:true"));
         assert!(ddtags.contains("is_crash:true"));
         assert!(ddtags.contains("uuid:1d6b97cb-968c-40c9-af6e-e4b4d71e8781"));
@@ -678,7 +678,7 @@ mod tests {
         let payload = ErrorsIntakePayload::from_crash_info(&crash_info).unwrap();
 
         let expected_crash_tags = [
-            "data_schema_version:1.4",
+            "data_schema_version:1.5",
             "incomplete:true",
             "is_crash:true",
             "uuid:1d6b97cb-968c-40c9-af6e-e4b4d71e8781",
