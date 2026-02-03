@@ -3014,7 +3014,7 @@ dependencies = [
  "maplit",
  "mime 0.3.17",
  "multipart",
- "nix",
+ "nix 0.29.0",
  "pin-project",
  "rand 0.8.5",
  "regex",
