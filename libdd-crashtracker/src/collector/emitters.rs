@@ -142,6 +142,7 @@ pub(crate) fn emit_crashreport(
     sig_info: *const siginfo_t,
     ucontext: *const ucontext_t,
     ppid: i32,
+    crashing_tid: libc::pid_t,
 ) -> Result<(), EmitterError> {
     // The following order is important in order to emit the crash ping:
     // - receiver expects the config
@@ -154,7 +155,7 @@ pub(crate) fn emit_crashreport(
     emit_metadata(pipe, metadata_string)?;
     // after the metadata the ping should have been sent
     emit_ucontext(pipe, ucontext)?;
-    emit_procinfo(pipe, ppid)?;
+    emit_procinfo(pipe, ppid, crashing_tid)?;
     emit_counters(pipe)?;
     emit_spans(pipe)?;
     consume_and_emit_additional_tags(pipe)?;
@@ -213,9 +214,9 @@ fn emit_message(w: &mut impl Write, message_ptr: *mut String) -> Result<(), Emit
     Ok(())
 }
 
-fn emit_procinfo(w: &mut impl Write, pid: i32) -> Result<(), EmitterError> {
+fn emit_procinfo(w: &mut impl Write, pid: i32, tid: libc::pid_t) -> Result<(), EmitterError> {
     writeln!(w, "{DD_CRASHTRACK_BEGIN_PROCINFO}")?;
-    writeln!(w, "{{\"pid\": {pid} }}")?;
+    writeln!(w, "{{\"pid\": {pid}, \"tid\": {tid} }}")?;
     writeln!(w, "{DD_CRASHTRACK_END_PROCINFO}")?;
     w.flush()?;
     Ok(())
@@ -581,6 +582,23 @@ mod tests {
         assert!(out.contains(&unicode_message));
 
         unsafe { drop(Box::from_raw(message_ptr)) };
+    }
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    #[cfg_attr(miri, ignore)]
+    fn test_emit_procinfo() {
+        let pid = unsafe { libc::getpid() };
+        let tid = unsafe { libc::syscall(libc::SYS_gettid) as libc::pid_t };
+        let mut buf = Vec::new();
+
+        emit_procinfo(&mut buf, pid, tid).expect("procinfo to emit");
+        let proc_info_block = str::from_utf8(&buf).expect("to be valid UTF8");
+        assert!(proc_info_block.contains(DD_CRASHTRACK_BEGIN_PROCINFO));
+        assert!(proc_info_block.contains(DD_CRASHTRACK_END_PROCINFO));
+
+        assert!(proc_info_block.contains(&format!("\"pid\": {pid}")));
+        assert!(proc_info_block.contains(&format!("\"tid\": {tid}")));
     }
 
     #[test]
