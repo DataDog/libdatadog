@@ -27,7 +27,7 @@ use crate::setup::{self, IpcClient, IpcServer, Liaison};
 
 use crate::config::{self, Config};
 use crate::self_telemetry::self_telemetry;
-use crate::service::telemetry_action_receiver_task;
+use crate::service::{init_telemetry_sender, telemetry_action_receiver_task};
 use crate::tracer::SHM_LIMITER;
 use crate::watchdog::Watchdog;
 use crate::{ddog_daemon_entry_point, setup_daemon_process};
@@ -93,7 +93,12 @@ where
 
     let server = SidecarServer::default();
 
-    tokio::spawn(telemetry_action_receiver_task(server.clone()));
+    // Initialize telemetry sender synchronously before spawning the receiver task
+    // This ensures the sender is available immediately, avoiding race conditions
+    // where FFI calls might try to send telemetry before the receiver task starts
+    if let Some(rx) = init_telemetry_sender() {
+        tokio::spawn(telemetry_action_receiver_task(server.clone(), rx));
+    }
 
     let (shutdown_complete_tx, shutdown_complete_rx) = mpsc::channel::<()>(1);
 
@@ -200,11 +205,10 @@ pub fn daemonize(listener: IpcServer, mut cfg: Config) -> anyhow::Result<()> {
     setup_daemon_process(listener, &mut spawn_cfg)?;
 
     let mut lib_deps = cfg.library_dependencies;
-    if cfg.appsec_config.is_some() {
-        #[allow(clippy::unwrap_used)]
-        lib_deps.push(spawn_worker::LibDependency::Path(
-            cfg.appsec_config.unwrap().shared_lib_path.into(),
-        ));
+    if let Some(appsec) = cfg.appsec_config.as_ref() {
+        lib_deps.push(spawn_worker::LibDependency::Path(std::path::PathBuf::from(
+            appsec.shared_lib_path.clone(),
+        )));
     }
 
     spawn_cfg

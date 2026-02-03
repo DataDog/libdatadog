@@ -12,7 +12,12 @@ use anyhow::Context;
 use std::path::PathBuf;
 use tokio::io::AsyncReadExt;
 
-use super::utils::find_subsequence;
+/// Helper to find subsequence in bytes
+fn find_subsequence(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+    haystack
+        .windows(needle.len())
+        .position(|window| window == needle)
+}
 
 /// HTTP 200 OK response with no body
 const HTTP_200_RESPONSE: &[u8] = b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n";
