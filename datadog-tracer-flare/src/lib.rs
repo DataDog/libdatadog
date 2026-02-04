@@ -105,6 +105,21 @@ impl TracerFlareManager {
         }
     }
 
+    /// Returns whether a flare is currently collecting.
+    pub fn is_collecting(&self) -> bool {
+        self.collecting.load(Ordering::Relaxed)
+    }
+
+    /// Setter for current log level
+    pub fn set_current_log_level(&self, log_level: &str) {
+        *self.current_log_level.lock().unwrap() = Some(log_level.try_into().unwrap());
+    }
+
+    /// Setter for original log level
+    pub fn set_original_log_level(&self, log_level: &str) {
+        *self.original_log_level.lock().unwrap() = Some(log_level.try_into().unwrap());
+    }
+
     /// Creates a new TracerFlareManager instance and initializes its RemoteConfig
     /// listener with the provided configuration parameters.
     ///
