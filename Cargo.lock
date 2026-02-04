@@ -3212,6 +3212,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "libdd-libunwind"
+version = "26.0.0"
+dependencies = [
+ "cc",
+]
+
+[[package]]
 name = "libdd-log"
 version = "1.0.0"
 dependencies = [

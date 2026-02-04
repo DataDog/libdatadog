@@ -1,0 +1,14 @@
+[package]
+name = "libdd-libunwind"
+edition.workspace = true
+version.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[lib]
+crate-type = ["lib"]
+bench = false
+
+[build-dependencies]
+cc = "1.0"
