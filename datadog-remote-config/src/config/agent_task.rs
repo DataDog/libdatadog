@@ -20,7 +20,8 @@ where
     if s.chars().all(|c| c.is_ascii_digit()) {
         return Ok(s);
     }
-    let re = Regex::new(r"^\d+-(with-debug|with-content)$").unwrap();
+    let re = Regex::new(r"^\d+-(with-debug|with-content)$")
+        .map_err(|_| de::Error::custom("Invalid case_id format"))?;
     if re.is_match(&s) {
         return Ok(s);
     }

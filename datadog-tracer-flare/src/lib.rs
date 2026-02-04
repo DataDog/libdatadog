@@ -111,13 +111,21 @@ impl TracerFlareManager {
     }
 
     /// Setter for current log level
-    pub fn set_current_log_level(&self, log_level: &str) {
-        *self.current_log_level.lock().unwrap() = Some(log_level.try_into().unwrap());
+    pub fn set_current_log_level(&self, log_level: &str) -> Result<(), FlareError> {
+        *self
+            .current_log_level
+            .lock()
+            .map_err(|_| FlareError::LockError("Failed to lock current log level".to_string()))? =
+            Some(log_level.try_into()?);
+        Ok(())
     }
 
     /// Setter for original log level
-    pub fn set_original_log_level(&self, log_level: &str) {
-        *self.original_log_level.lock().unwrap() = Some(log_level.try_into().unwrap());
+    pub fn set_original_log_level(&self, log_level: &str) -> Result<(), FlareError> {
+        *self.original_log_level.lock().map_err(|_| {
+            FlareError::LockError("Failed to lock original log level".to_string())
+        })? = Some(log_level.try_into()?);
+        Ok(())
     }
 
     /// Creates a new TracerFlareManager instance and initializes its RemoteConfig
@@ -558,6 +566,23 @@ mod tests {
         assert!(LogLevel::Warn < LogLevel::Error);
         assert!(LogLevel::Error < LogLevel::Critical);
         assert!(LogLevel::Critical < LogLevel::Off);
+    }
+
+    #[test]
+    fn test_set_log_levels_updates_state() {
+        let manager = TracerFlareManager::new("http://localhost:8126", "rust");
+
+        assert!(manager.set_current_log_level("debug").is_ok());
+        assert!(manager.set_original_log_level("info").is_ok());
+
+        assert_eq!(
+            *manager.current_log_level.lock().unwrap(),
+            Some(LogLevel::Debug)
+        );
+        assert_eq!(
+            *manager.original_log_level.lock().unwrap(),
+            Some(LogLevel::Info)
+        );
     }
 
     #[test]
