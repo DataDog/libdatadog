@@ -614,4 +614,39 @@ mod tests {
             .iter()
             .any(|msg| msg.contains("No native stack frames received")));
     }
+
+    #[test]
+    #[cfg_attr(miri, ignore)] // os_info::get() spawns subprocess, unsupported by Miri
+    fn test_with_os_info_this_machine() {
+        let mut builder = CrashInfoBuilder::new();
+        builder.with_kind(ErrorKind::UnixSignal).unwrap();
+
+        builder.with_os_info_this_machine().unwrap();
+
+        let crash_info = builder.build().unwrap();
+
+        // Verify os_info was populated with non-empty values from the current machine
+        assert!(!crash_info.os_info.architecture.is_empty());
+        assert!(!crash_info.os_info.bitness.is_empty());
+        assert!(!crash_info.os_info.os_type.is_empty());
+        assert!(!crash_info.os_info.version.is_empty());
+
+        // Verify that the os_info is not the "unknown" default values
+        assert_ne!(
+            crash_info.os_info.architecture, "unknown",
+            "architecture should not be 'unknown'"
+        );
+        assert_ne!(
+            crash_info.os_info.bitness, "unknown bitness",
+            "bitness should not be 'unknown bitness'"
+        );
+        assert_ne!(
+            crash_info.os_info.os_type, "Unknown",
+            "os_type should not be 'Unknown'"
+        );
+        assert_ne!(
+            crash_info.os_info.version, "Unknown",
+            "version should not be 'Unknown'"
+        );
+    }
 }
