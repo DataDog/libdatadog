@@ -9,6 +9,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/wait.h>
 #include <unistd.h>
 
 static ddog_CharSlice to_slice_c_char(const char *s) { return (ddog_CharSlice){.ptr = s, .len = strlen(s)}; }

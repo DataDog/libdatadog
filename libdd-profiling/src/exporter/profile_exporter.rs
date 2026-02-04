@@ -102,7 +102,6 @@ impl ProfileExporter {
         // Pre-build all static headers
         let mut headers = reqwest::header::HeaderMap::new();
 
-        // Always-present headers
         headers.insert(
             "Connection",
             reqwest::header::HeaderValue::from_static("close"),
@@ -123,18 +122,14 @@ impl ProfileExporter {
             ))?,
         );
 
-        // Optional headers (API key, test token)
-        if let Some(api_key) = &endpoint.api_key {
-            headers.insert(
-                "DD-API-KEY",
-                reqwest::header::HeaderValue::from_str(api_key)?,
-            );
+        // Add optional endpoint headers (api-key, test-token)
+        for (name, value) in endpoint.get_optional_headers() {
+            headers.insert(name, reqwest::header::HeaderValue::from_str(value)?);
         }
-        if let Some(test_token) = &endpoint.test_token {
-            headers.insert(
-                "X-Datadog-Test-Session-Token",
-                reqwest::header::HeaderValue::from_str(test_token)?,
-            );
+
+        // Add entity-related headers (container-id, entity-id, external-env)
+        for (name, value) in libdd_common::entity_id::get_entity_headers() {
+            headers.insert(name, reqwest::header::HeaderValue::from_static(value));
         }
 
         // Add Azure App Services tags if available
