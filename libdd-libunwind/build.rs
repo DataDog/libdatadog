@@ -96,7 +96,7 @@ fn main() {
     let source_include_path = libunwind_dir.join("include");
     // Generate Rust bindings from libunwind.h
     eprintln!("Generating Rust bindings...");
-    let bindings = bindgen::Builder::default()
+    let mut builder = bindgen::Builder::default()
         .header(header_path.to_str().unwrap())
         .clang_arg(format!("-I{}", include_path.display()))
         .clang_arg(format!("-I{}", source_include_path.display()))
@@ -113,9 +113,22 @@ fn main() {
         .derive_debug(true)
         .derive_default(true)
         // Parse callbacks for cargo integration
-        .parse_callbacks(Box::new(bindgen::CargoCallbacks::new()))
-        .generate()
-        .expect("Unable to generate bindings");
+        .parse_callbacks(Box::new(bindgen::CargoCallbacks::new()));
+    
+    // Help clang find system headers in CI/Docker environments
+    if let Ok(sysroot) = std::process::Command::new("gcc")
+        .arg("-print-sysroot")
+        .output()
+    {
+        if sysroot.status.success() {
+            let sysroot = String::from_utf8_lossy(&sysroot.stdout).trim().to_string();
+            if !sysroot.is_empty() {
+                builder = builder.clang_arg(format!("--sysroot={}", sysroot));
+            }
+        }
+    }
+    
+    let bindings = builder.generate().expect("Unable to generate bindings");
 
     let bindings_path = out_dir.join("bindings.rs");
     bindings
