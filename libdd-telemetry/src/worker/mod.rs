@@ -582,7 +582,7 @@ impl TelemetryWorker {
         let mut payloads = Vec::new();
 
         let logs = self.build_logs();
-        if !logs.is_empty() {
+        if !logs.logs.is_empty() {
             payloads.push(data::Payload::Logs(logs));
         }
         let metrics = self.build_metrics_series();
@@ -683,7 +683,7 @@ impl TelemetryWorker {
                 }
             }
             Logs(p) => {
-                for _ in p {
+                for _ in &p.logs {
                     self.data.logs.pop_front();
                 }
             }
@@ -692,10 +692,10 @@ impl TelemetryWorker {
         }
     }
 
-    fn build_logs(&self) -> Vec<Log> {
+    fn build_logs(&self) -> data::Logs {
         // TODO: change the data model to take a &[Log] so don't have to clone data here
         let logs = self.data.logs.iter().map(|(_, l)| l.clone()).collect();
-        logs
+        data::Logs { logs }
     }
 
     fn next_seq_id(&self) -> u64 {
