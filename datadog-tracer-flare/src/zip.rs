@@ -238,7 +238,6 @@ impl TracerFlareManager {
     /// ```rust no_run
     /// use datadog_tracer_flare::{TracerFlareManager, FlareAction};
     /// use datadog_remote_config::config::agent_task::{AgentTaskFile, AgentTask};
-    /// use std::num::NonZeroU64;
     ///
     /// #[tokio::main]
     /// async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -249,7 +248,7 @@ impl TracerFlareManager {
     ///     // Simulate receiving a Send action from remote config
     ///     let task = AgentTaskFile {
     ///         args: AgentTask {
-    ///             case_id: NonZeroU64::new(123).unwrap(),
+    ///             case_id: "123".to_string(),
     ///             hostname: "test-host".to_string(),
     ///             user_handle: "test@example.com".to_string(),
     ///         },
