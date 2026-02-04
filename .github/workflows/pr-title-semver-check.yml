@@ -206,7 +206,9 @@ jobs:
           # Validation rules
           case "$TYPE" in
           fix)
-            if [[ "$SEMVER_LEVEL" == "major" ]] || [[ "$SEMVER_LEVEL" == "minor" ]] || [[ "$SEMVER_LEVEL" == "none" ]]; then
+            if [[ "$SEMVER_LEVEL" == "major" ]] && [[ -z "$IS_BREAKING_CHANGE" ]]; then
+              VALIDATION_FAILED="true"
+            elif [[ "$SEMVER_LEVEL" == "minor" ]] || [[ "$SEMVER_LEVEL" == "none" ]]; then
               VALIDATION_FAILED="true"
             fi
             ;;
