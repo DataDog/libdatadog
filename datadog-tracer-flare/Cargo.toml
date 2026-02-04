@@ -24,6 +24,10 @@ bench = false
 
 [dev-dependencies]
 datadog-remote-config = { path = "../datadog-remote-config", features = ["test"] }
+hyper-util = { workspace = true }
+http-body-util = "0.1"
+libdd-trace-utils = { path = "../libdd-trace-utils", features = ["test-utils"] }
+tokio = { version = "1.36.0", features = ["time", "macros", "rt"] }
 
 [features]
 default = ["listener"]
