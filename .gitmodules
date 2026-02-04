@@ -1,0 +1,4 @@
+[submodule "libdd-libunwind/libunwind"]
+	path = libdd-libunwind/libunwind
+	url = https://github.com/DataDog/libunwind.git
+	branch = kevin/v1.8.1-custom-2
