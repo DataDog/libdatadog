@@ -5,10 +5,15 @@ version.workspace = true
 rust-version.workspace = true
 license.workspace = true
 publish = false
+links = "unwind"  # Tells Cargo this crate links to libunwind (prevents multiple builds)
 
 [lib]
 crate-type = ["lib"]
 bench = false
 
+[dependencies]
+paste = "1.0"
+
 [build-dependencies]
 cc = "1.0"
+bindgen = "0.70"
