@@ -16,7 +16,7 @@ use tempfile::tempfile;
 use walkdir::WalkDir;
 use zip::{write::FileOptions, ZipWriter};
 
-use crate::{error::FlareError, LogLevel, FlareAction, TracerFlareManager};
+use crate::{error::FlareError, FlareAction, LogLevel, TracerFlareManager};
 
 /// Adds a single file to the zip archive with the specified options and relative path
 fn add_file_to_zip(
@@ -322,7 +322,7 @@ impl TracerFlareManager {
             // Default log level
             .unwrap_or(LogLevel::Debug);
 
-        let (payload, headers)  = generate_payload(
+        let (payload, headers) = generate_payload(
             zip,
             &self.language,
             &log_level,
@@ -477,9 +477,16 @@ mod tests {
         let user_handle = "user@datadoghq.com".to_string();
         let uuid = "d53fc8a4-8820-47a2-aa7d-d565582feb81".to_string();
 
-        let (payload, headers) =
-            generate_payload(zip_file, &language, &log_level, &case_id, &hostname, &user_handle, &uuid)
-                .unwrap();
+        let (payload, headers) = generate_payload(
+            zip_file,
+            &language,
+            &log_level,
+            &case_id,
+            &hostname,
+            &user_handle,
+            &uuid,
+        )
+        .unwrap();
 
         let payload_str = String::from_utf8_lossy(&payload);
         assert!(payload_str.contains(&format!("--{BOUNDARY}\r\n")));
@@ -495,9 +502,7 @@ mod tests {
         assert!(payload_str.contains("d53fc8a4-8820-47a2-aa7d-d565582feb81"));
         assert!(payload_str.contains(&format!("--{BOUNDARY}--\r\n")));
 
-        let headers_str = headers
-            .get(hyper::header::CONTENT_TYPE.as_str())
-            .unwrap();
+        let headers_str = headers.get(hyper::header::CONTENT_TYPE.as_str()).unwrap();
         assert!(!payload_str.contains("DD-API-KEY"));
         assert!(!payload_str.contains("dd-api-key"));
         assert!(headers_str.contains(&format!("multipart/form-data; boundary={BOUNDARY}")));
@@ -535,9 +540,16 @@ mod tests {
         let user_handle = "user@datadoghq.com".to_string();
         let uuid = "uuid-456".to_string();
 
-        let (payload, _) =
-            generate_payload(zip_file, &language, &log_level, &case_id, &hostname, &user_handle, &uuid)
-                .unwrap();
+        let (payload, _) = generate_payload(
+            zip_file,
+            &language,
+            &log_level,
+            &case_id,
+            &hostname,
+            &user_handle,
+            &uuid,
+        )
+        .unwrap();
 
         let payload_str = String::from_utf8_lossy(&payload);
         let marker = "filename=\"";

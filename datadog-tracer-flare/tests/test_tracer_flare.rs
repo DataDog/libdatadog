@@ -262,11 +262,11 @@ async fn integration_listener_config_updates_log_level() {
         .set_remote_config_response(&config_warn, None)
         .await;
 
-    // The debug log level should be preserved since it has higher priority so the action should be None
+    // The debug log level should be preserved since it has higher priority so the action should be
+    // None
     let action = run_remote_config_listener(&mut manager).await.unwrap();
     assert!(matches!(action, FlareAction::None));
     assert!(manager.is_collecting());
-
 }
 
 #[cfg_attr(miri, ignore)]
