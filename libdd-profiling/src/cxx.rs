@@ -16,17 +16,6 @@ use crate::internal;
 /// cbindgen:ignore
 #[cxx::bridge(namespace = "datadog::profiling")]
 pub mod ffi {
-    // Shared enums
-    #[derive(Debug)]
-    #[repr(u8)]
-    enum MimeType {
-        ApplicationJson,
-        ApplicationOctetStream,
-        TextCsv,
-        TextPlain,
-        TextXml,
-    }
-
     // Shared structs - CXX-friendly types
     struct ValueType<'a> {
         type_: &'a str,
@@ -80,7 +69,6 @@ pub mod ffi {
     struct AttachmentFile<'a> {
         name: &'a str,
         data: &'a [u8],
-        mime: MimeType,
     }
 
     // Opaque Rust types
@@ -330,30 +318,12 @@ impl<'a> From<&ffi::Label<'a>> for api::Label<'a> {
     }
 }
 
-impl TryFrom<ffi::MimeType> for exporter::MimeType {
-    type Error = anyhow::Error;
-
-    fn try_from(mime: ffi::MimeType) -> Result<Self, Self::Error> {
-        match mime {
-            ffi::MimeType::ApplicationJson => Ok(exporter::MimeType::ApplicationJson),
-            ffi::MimeType::ApplicationOctetStream => Ok(exporter::MimeType::ApplicationOctetStream),
-            ffi::MimeType::TextCsv => Ok(exporter::MimeType::TextCsv),
-            ffi::MimeType::TextPlain => Ok(exporter::MimeType::TextPlain),
-            ffi::MimeType::TextXml => Ok(exporter::MimeType::TextXml),
-            _ => anyhow::bail!("Unknown MimeType variant: {:?}", mime),
-        }
-    }
-}
-
-impl<'a> TryFrom<&ffi::AttachmentFile<'a>> for exporter::File<'a> {
-    type Error = anyhow::Error;
-
-    fn try_from(file: &ffi::AttachmentFile<'a>) -> Result<Self, Self::Error> {
-        Ok(exporter::File {
+impl<'a> From<&ffi::AttachmentFile<'a>> for exporter::File<'a> {
+    fn from(file: &ffi::AttachmentFile<'a>) -> Self {
+        exporter::File {
             name: file.name,
             bytes: file.data,
-            mime: file.mime.try_into()?,
-        })
+        }
     }
 }
 
@@ -545,10 +515,8 @@ fn prepare_profile_for_export<'a>(
     let end_time = Some(std::time::SystemTime::now());
     let encoded = old_profile.serialize_into_compressed_pprof(end_time, None)?;
 
-    let files_to_compress_vec: Vec<exporter::File> = files_to_compress
-        .iter()
-        .map(TryInto::try_into)
-        .collect::<Result<Vec<_>, _>>()?;
+    let files_to_compress_vec: Vec<exporter::File> =
+        files_to_compress.iter().map(Into::into).collect();
 
     let additional_tags_vec: Vec<libdd_common::tag::Tag> = additional_tags
         .iter()
@@ -1104,16 +1072,10 @@ mod tests {
         let file: exporter::File = (&ffi::AttachmentFile {
             name: "test.bin",
             data: &data,
-            mime: ffi::MimeType::ApplicationOctetStream,
         })
-            .try_into()
-            .expect("Failed to convert AttachmentFile");
+            .into();
         assert_eq!(file.name, "test.bin");
         assert_eq!(file.bytes, data.as_slice());
-        assert!(matches!(
-            file.mime,
-            exporter::MimeType::ApplicationOctetStream
-        ));
 
         // Tag conversion with special characters
         let tag: libdd_common::tag::Tag = (&ffi::Tag {
@@ -1205,7 +1167,6 @@ mod tests {
             vec![ffi::AttachmentFile {
                 name: "metadata.json",
                 data: &attachment_data,
-                mime: ffi::MimeType::ApplicationJson,
             }],
             vec![
                 ffi::Tag {
