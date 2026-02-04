@@ -25,7 +25,6 @@
 //! which can be useful for debugging or replaying requests.
 
 use super::errors::SendError;
-use super::file_exporter::spawn_dump_server;
 use anyhow::Context;
 use libdd_common::tag::Tag;
 use libdd_common::{azure_app_services, tag, Endpoint};
@@ -98,54 +97,7 @@ impl ProfileExporter {
         mut tags: Vec<Tag>,
         endpoint: Endpoint,
     ) -> anyhow::Result<Self> {
-        let mut builder = reqwest::Client::builder()
-            .timeout(std::time::Duration::from_millis(endpoint.timeout_ms));
-
-        let request_url = match endpoint.url.scheme_str() {
-            // HTTP/HTTPS endpoints
-            Some("http") | Some("https") => endpoint.url.to_string(),
-
-            // File dump endpoint (debugging) - uses platform-specific local transport
-            Some("file") => {
-                let output_path = libdd_common::decode_uri_path_in_authority(&endpoint.url)
-                    .context("Failed to decode file path from URI")?;
-                let socket_or_pipe_path = spawn_dump_server(output_path)?;
-
-                // Configure the client to use the local socket/pipe
-                #[cfg(unix)]
-                {
-                    builder = builder.unix_socket(socket_or_pipe_path);
-                }
-                #[cfg(windows)]
-                {
-                    builder = builder
-                        .windows_named_pipe(socket_or_pipe_path.to_string_lossy().to_string());
-                }
-
-                "http://localhost/".to_string()
-            }
-
-            // Unix domain sockets
-            #[cfg(unix)]
-            Some("unix") => {
-                use libdd_common::connector::uds::socket_path_from_uri;
-                let socket_path = socket_path_from_uri(&endpoint.url)?;
-                builder = builder.unix_socket(socket_path);
-                format!("http://localhost{}", endpoint.url.path())
-            }
-
-            // Windows named pipes
-            #[cfg(windows)]
-            Some("windows") => {
-                use libdd_common::connector::named_pipe::named_pipe_path_from_uri;
-                let pipe_path = named_pipe_path_from_uri(&endpoint.url)?;
-                builder = builder.windows_named_pipe(pipe_path.to_string_lossy().to_string());
-                format!("http://localhost{}", endpoint.url.path())
-            }
-
-            // Unsupported schemes
-            scheme => anyhow::bail!("Unsupported endpoint scheme: {:?}", scheme),
-        };
+        let (builder, request_url) = endpoint.to_reqwest_client_builder()?;
 
         // Pre-build all static headers
         let mut headers = reqwest::header::HeaderMap::new();
