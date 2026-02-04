@@ -16,8 +16,10 @@ bench = false
 
 [dependencies]
 anyhow = "1.0"
+cargo_metadata = "0.18"
 clap = { version = "4.0", features = ["derive"] }
 colored = "2"
+quick-xml = "0.37"
 regex = "1"
 wait-timeout = "0.2"
 
@@ -27,4 +29,8 @@ bench = false
 
 [[bin]]
 name = "ffi_test"
+bench = false
+
+[[bin]]
+name = "add_junit_file_attributes"
 bench = false

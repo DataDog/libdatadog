@@ -3,7 +3,7 @@
 
 use crate::arch;
 use crate::module::Module;
-use crate::utils::{adjust_extern_symbols, file_replace, project_root};
+use crate::utils::{adjust_extern_symbols, file_replace, project_root, wait_for_success};
 use anyhow::Result;
 use serde::Deserialize;
 use std::ffi::OsStr;
@@ -197,14 +197,14 @@ impl Module for Profiling {
             let mut args = cargo_args.clone();
             args.append(&mut vec!["--crate-type", crate_type]);
 
-            let mut cargo = Command::new("cargo")
+            let cargo = Command::new("cargo")
                 .env("RUSTFLAGS", arch::RUSTFLAGS.join(" "))
                 .current_dir(project_root())
                 .args(args)
                 .spawn()
                 .expect("failed to spawn cargo");
 
-            cargo.wait().expect("Cargo failed");
+            wait_for_success(cargo, "Cargo");
         }
 
         Ok(())

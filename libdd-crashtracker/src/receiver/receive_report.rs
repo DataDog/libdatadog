@@ -678,4 +678,94 @@ mod tests {
         .unwrap();
         assert!(matches!(state, StdinState::Waiting));
     }
+
+    #[test]
+    fn test_stacktrace_empty_workflow() {
+        // Test that receiving BEGIN_STACKTRACE followed by END_STACKTRACE
+        // (with no frames) creates an empty but complete stack
+        let mut builder = CrashInfoBuilder::new();
+        let mut config = None;
+
+        let mut state = StdinState::Waiting;
+
+        state = process_line(
+            &mut builder,
+            &mut config,
+            DD_CRASHTRACK_BEGIN_STACKTRACE,
+            state,
+            &None,
+        )
+        .unwrap();
+        assert!(matches!(state, StdinState::StackTrace));
+
+        // End stacktrace immediately (no frames)
+        state = process_line(
+            &mut builder,
+            &mut config,
+            DD_CRASHTRACK_END_STACKTRACE,
+            state,
+            &None,
+        )
+        .unwrap();
+        assert!(matches!(state, StdinState::Waiting));
+
+        // Verify we have an empty but incomplete stack (no frames captured = stack unwinding
+        // failed)
+        let stack = builder.error.stack.as_ref().expect("Stack should exist");
+        assert!(stack.frames.is_empty());
+        assert!(
+            stack.incomplete,
+            "Stack should be marked incomplete when no frames were captured"
+        );
+
+        // Verify a log message was recorded about no frames
+        assert!(builder
+            .log_messages
+            .as_ref()
+            .map(|msgs| msgs
+                .iter()
+                .any(|msg| msg.contains("No native stack frames received")))
+            .unwrap_or(false));
+    }
+
+    #[test]
+    fn test_stacktrace_with_frames_workflow() {
+        let mut builder = CrashInfoBuilder::new();
+        let mut config = None;
+
+        let mut state = StdinState::Waiting;
+
+        // Begin stacktrace
+        state = process_line(
+            &mut builder,
+            &mut config,
+            DD_CRASHTRACK_BEGIN_STACKTRACE,
+            state,
+            &None,
+        )
+        .unwrap();
+        assert!(matches!(state, StdinState::StackTrace));
+
+        // Add a frame
+        let frame_json = r#"{"ip":"0x1234"}"#;
+        state = process_line(&mut builder, &mut config, frame_json, state, &None).unwrap();
+        assert!(matches!(state, StdinState::StackTrace));
+
+        // End stacktrace
+        state = process_line(
+            &mut builder,
+            &mut config,
+            DD_CRASHTRACK_END_STACKTRACE,
+            state,
+            &None,
+        )
+        .unwrap();
+        assert!(matches!(state, StdinState::Waiting));
+
+        // Verify we have a stack with one frame, marked complete
+        let stack = builder.error.stack.as_ref().expect("Stack should exist");
+        assert_eq!(stack.frames.len(), 1);
+        assert!(!stack.incomplete, "Stack should be marked complete");
+        assert_eq!(stack.frames[0].ip, Some("0x1234".to_string()));
+    }
 }

@@ -6,6 +6,7 @@ use regex::Regex;
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::process::Child;
 
 pub fn file_replace(file_in: &str, file_out: &str, target: &str, replace: &str) -> Result<()> {
     let content = fs::read_to_string(file_in)?;
@@ -60,4 +61,16 @@ pub(crate) fn adjust_extern_symbols(
         .open(file_out)?;
     file.write_all(new_content.as_bytes())
         .map_err(|err| anyhow!("failed to write file: {}", err))
+}
+
+/// Waits for a child process to complete and panics if it fails.
+pub fn wait_for_success(mut child: Child, name: &str) {
+    let status = child
+        .wait()
+        .unwrap_or_else(|_| panic!("{name} failed to wait"));
+    assert!(
+        status.success(),
+        "{name} failed with exit code: {:?}",
+        status.code()
+    );
 }
