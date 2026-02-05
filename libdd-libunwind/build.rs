@@ -80,7 +80,6 @@ fn main() {
 
     let lib_path = build_dir.join("src/.libs");
     let include_path = build_dir.join("include");
-    let header_path = include_path.join("libunwind.h");
     
     // Link directives for this crate
     println!("cargo:rustc-link-search=native={}", lib_path.display());
@@ -93,50 +92,7 @@ fn main() {
     println!("cargo:libdir={}", lib_path.display()); // Alternative name
     println!("cargo:root={}", build_dir.display());
     
-    let source_include_path = libunwind_dir.join("include");
-    // Generate Rust bindings from libunwind.h
-    eprintln!("Generating Rust bindings...");
-    let mut builder = bindgen::Builder::default()
-        .header(header_path.to_str().unwrap())
-        .clang_arg(format!("-I{}", include_path.display()))
-        .clang_arg(format!("-I{}", source_include_path.display()))
-        // Define UNW_LOCAL_ONLY to match how the library was compiled
-        .clang_arg("-DUNW_LOCAL_ONLY")
-        // Allow _UL* functions (with UNW_LOCAL_ONLY defined, macros should expand to these)
-        .allowlist_function("_UL.*")
-        .allowlist_function("_U.*")
-        .allowlist_type("unw_.*")
-        .allowlist_var("UNW_.*")
-        // Generate layout tests
-        .layout_tests(true)
-        // Derive traits
-        .derive_debug(true)
-        .derive_default(true)
-        // Parse callbacks for cargo integration
-        .parse_callbacks(Box::new(bindgen::CargoCallbacks::new()));
-    
-    // Help clang find system headers in CI/Docker environments
-    if let Ok(sysroot) = std::process::Command::new("gcc")
-        .arg("-print-sysroot")
-        .output()
-    {
-        if sysroot.status.success() {
-            let sysroot = String::from_utf8_lossy(&sysroot.stdout).trim().to_string();
-            if !sysroot.is_empty() {
-                builder = builder.clang_arg(format!("--sysroot={}", sysroot));
-            }
-        }
-    }
-    
-    let bindings = builder.generate().expect("Unable to generate bindings");
-
-    let bindings_path = out_dir.join("bindings.rs");
-    bindings
-        .write_to_file(&bindings_path)
-        .expect("Couldn't write bindings!");
-    
-    eprintln!("Bindings generated at {}", bindings_path.display());
-    println!("cargo:bindings={}", bindings_path.display());
+    eprintln!("libunwind library ready at {}", lib_path.display());
     
     // More specific rerun triggers
     println!("cargo:rerun-if-changed={}/src", libunwind_dir.display());

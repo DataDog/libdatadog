@@ -6,7 +6,7 @@
 //! Rust bindings to libunwind
 //! 
 //! This crate provides raw FFI bindings to libunwind for stack unwinding on Linux.
-//! The bindings are automatically generated using bindgen from libunwind.h.
+//! The bindings are manually defined to avoid bindgen dependencies.
 //! 
 //! # Usage in other crates
 //! 
@@ -38,7 +38,7 @@
 //!         
 //!         loop {
 //!             let mut ip = 0;
-//!             if unw_get_reg(&mut cursor, UNW_REG_IP as i32, &mut ip) == 0 {
+//!             if unw_get_reg(&mut cursor, UNW_REG_IP, &mut ip) == 0 {
 //!                 frames.push(ip as usize);
 //!             }
 //!             
@@ -67,9 +67,141 @@
 //! }
 //! ```
 
-// Include the automatically generated bindings
-include!(concat!(env!("OUT_DIR"), "/bindings.rs"));
+// Manual type definitions - no bindgen needed!
+// These are the essential types from libunwind headers
 
+// ============================================================================
+// Basic types
+// ============================================================================
+
+pub type unw_word_t = u64;
+pub type unw_sword_t = i64;
+
+// Architecture-specific cursor size
+#[cfg(target_arch = "x86_64")]
+pub const UNW_TDEP_CURSOR_LEN: usize = 127;
+
+#[cfg(target_arch = "aarch64")]
+pub const UNW_TDEP_CURSOR_LEN: usize = 4096;  // ARM64 cursor size
+
+#[cfg(target_arch = "x86")]
+pub const UNW_TDEP_CURSOR_LEN: usize = 127;
+
+// Opaque cursor structure
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct unw_cursor {
+    pub opaque: [unw_word_t; UNW_TDEP_CURSOR_LEN],
+}
+
+pub type unw_cursor_t = unw_cursor;
+
+impl Default for unw_cursor {
+    fn default() -> Self {
+        unsafe { std::mem::zeroed() }
+    }
+}
+
+// Context is platform ucontext_t (from libc)
+pub type unw_context_t = libc::ucontext_t;
+
+// Floating point register type
+pub type unw_fpreg_t = u128;
+
+// Address space (opaque pointer)
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct unw_addr_space {
+    _unused: [u8; 0],
+}
+
+pub type unw_addr_space_t = *mut unw_addr_space;
+
+// ============================================================================
+// Procedure info structures
+// ============================================================================
+
+#[repr(C)]
+#[derive(Debug, Default, Copy, Clone)]
+pub struct unw_tdep_proc_info_t {
+    pub unused: u8,
+}
+
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct unw_proc_info {
+    pub start_ip: unw_word_t,
+    pub end_ip: unw_word_t,
+    pub lsda: unw_word_t,
+    pub handler: unw_word_t,
+    pub gp: unw_word_t,
+    pub flags: unw_word_t,
+    pub format: ::std::os::raw::c_int,
+    pub unwind_info_size: ::std::os::raw::c_int,
+    pub unwind_info: *mut ::std::os::raw::c_void,
+    pub extra: unw_tdep_proc_info_t,
+}
+
+impl Default for unw_proc_info {
+    fn default() -> Self {
+        unsafe { std::mem::zeroed() }
+    }
+}
+
+pub type unw_proc_info_t = unw_proc_info;
+
+// Save location structure
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct unw_save_loc {
+    pub type_: ::std::os::raw::c_int,
+    pub extra: unw_word_t,
+}
+
+impl Default for unw_save_loc {
+    fn default() -> Self {
+        unsafe { std::mem::zeroed() }
+    }
+}
+
+pub type unw_save_loc_t = unw_save_loc;
+
+// ============================================================================
+// Accessors and callbacks
+// ============================================================================
+
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct unw_accessors_t {
+    _unused: [u8; 0],
+}
+
+pub type unw_reg_states_callback = ::std::option::Option<
+    unsafe extern "C" fn(
+        token: *mut ::std::os::raw::c_void,
+        reg_states_data: *mut ::std::os::raw::c_void,
+        reg_states_data_size: usize,
+        arg: *mut ::std::os::raw::c_void,
+    ) -> ::std::os::raw::c_int,
+>;
+
+pub type unw_iterate_phdr_callback_t = ::std::option::Option<
+    unsafe extern "C" fn(
+        info: *mut ::std::os::raw::c_void,
+        size: usize,
+        arg: *mut ::std::os::raw::c_void,
+    ) -> ::std::os::raw::c_int,
+>;
+
+// ============================================================================
+// Constants and enums
+// ============================================================================
+
+// Caching policy enum
+pub type unw_caching_policy_t = ::std::os::raw::c_uint;
+pub const UNW_CACHE_NONE: unw_caching_policy_t = 0;
+pub const UNW_CACHE_GLOBAL: unw_caching_policy_t = 1;
+pub const UNW_CACHE_PER_THREAD: unw_caching_policy_t = 2;
 
 // Error codes (returned as negative values)
 pub const UNW_ESUCCESS: i32 = 0;         // no error
@@ -124,11 +256,51 @@ pub fn error_string(err: i32) -> &'static str {
     }
 }
 
-// Create architecture-neutral aliases to standard unw_* names
-// Each architecture uses different prefixes for the actual symbols
+// ============================================================================
+// External function declarations and aliases
+// ============================================================================
+// 
+// libunwind uses architecture-specific function names like _ULx86_64_init_local.
+// This macro both declares the extern function AND creates a standard unw_* alias.
 
-// Architecture-specific function aliases (generated via macro)
-include!("lib_aliases.rs");
+macro_rules! unw_functions {
+    ($arch:ident) => {
+        paste::paste! {
+            extern "C" {
+                // Generic functions (no "L" prefix in arch name)
+                pub fn [<_ U $arch _getcontext>](context: *mut unw_context_t) -> ::std::os::raw::c_int;
+                pub fn [<_ U $arch _strerror>](err: ::std::os::raw::c_int) -> *const ::std::os::raw::c_char;
+                pub fn [<_ U $arch _regname>](reg: ::std::os::raw::c_int) -> *const ::std::os::raw::c_char;
+                
+                // Local unwinding functions ("L" in arch prefix)
+                pub fn [<_ UL $arch _init_local>](cursor: *mut unw_cursor_t, context: *mut unw_context_t) -> ::std::os::raw::c_int;
+                pub fn [<_ UL $arch _step>](cursor: *mut unw_cursor_t) -> ::std::os::raw::c_int;
+                pub fn [<_ UL $arch _get_reg>](cursor: *mut unw_cursor_t, reg: ::std::os::raw::c_int, valp: *mut unw_word_t) -> ::std::os::raw::c_int;
+                pub fn [<_ UL $arch _get_proc_name>](cursor: *mut unw_cursor_t, buffer: *mut ::std::os::raw::c_char, len: usize, offset: *mut unw_word_t) -> ::std::os::raw::c_int;
+                pub fn [<_ UL $arch _get_proc_info>](cursor: *mut unw_cursor_t, pip: *mut unw_proc_info_t) -> ::std::os::raw::c_int;
+            }
+            
+            // Create public aliases with standard unw_* names
+            pub use {
+                [<_ U $arch _getcontext>] as unw_getcontext,
+                [<_ U $arch _strerror>] as unw_strerror,
+                [<_ U $arch _regname>] as unw_regname,
+                [<_ UL $arch _init_local>] as unw_init_local,
+                [<_ UL $arch _step>] as unw_step,
+                [<_ UL $arch _get_reg>] as unw_get_reg,
+                [<_ UL $arch _get_proc_name>] as unw_get_proc_name,
+                [<_ UL $arch _get_proc_info>] as unw_get_proc_info,
+            };
+        }
+    };
+}
+
+// Invoke for each supported architecture
+#[cfg(target_arch = "x86_64")]
+unw_functions!(x86_64);
+
+#[cfg(target_arch = "aarch64")]
+unw_functions!(aarch64);
 
 #[cfg(test)]
 mod tests {
