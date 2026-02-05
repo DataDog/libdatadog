@@ -31,11 +31,11 @@ fn main() {
     std::fs::create_dir_all(&build_dir).unwrap();
 
     let lib_file = build_dir.join("src/.libs/libunwind.a");
-    
+
     // Only build if library doesn't exist
     if !lib_file.exists() {
         eprintln!("Building libunwind from source...");
-        
+
         // Only run autoreconf if configure doesn't exist
         let configure_script = libunwind_dir.join("configure");
         if !configure_script.exists() {
@@ -44,8 +44,10 @@ fn main() {
                 .current_dir(&libunwind_dir)
                 .args(["-c", "autoreconf -i"])
                 .status()
-                .expect("Failed to run autoreconf. Install with: apt install autoconf automake libtool");
-            
+                .expect(
+                    "Failed to run autoreconf. Install with: apt install autoconf automake libtool",
+                );
+
             if !status.success() {
                 panic!("autoreconf failed with exit code: {:?}", status.code());
             }
@@ -67,12 +69,15 @@ fn main() {
         if !status.success() {
             panic!("libunwind build failed with exit code: {:?}", status.code());
         }
-        
+
         // Verify the library was actually created
         if !lib_file.exists() {
-            panic!("libunwind.a was not created at expected location: {}", lib_file.display());
+            panic!(
+                "libunwind.a was not created at expected location: {}",
+                lib_file.display()
+            );
         }
-        
+
         eprintln!("libunwind built successfully at {}", lib_file.display());
     } else {
         eprintln!("Using cached libunwind build");
@@ -80,20 +85,20 @@ fn main() {
 
     let lib_path = build_dir.join("src/.libs");
     let include_path = build_dir.join("include");
-    
+
     // Link directives for this crate
     println!("cargo:rustc-link-search=native={}", lib_path.display());
     println!("cargo:rustc-link-lib=static=unwind");
-    
+
     // Export paths to dependent crates via DEP_UNWIND_* environment variables
     // These are automatically passed to crates that depend on us
     println!("cargo:include={}", include_path.display());
     println!("cargo:lib={}", lib_path.display());
     println!("cargo:libdir={}", lib_path.display()); // Alternative name
     println!("cargo:root={}", build_dir.display());
-    
+
     eprintln!("libunwind library ready at {}", lib_path.display());
-    
+
     // More specific rerun triggers
     println!("cargo:rerun-if-changed={}/src", libunwind_dir.display());
     println!("cargo:rerun-if-changed={}/include", libunwind_dir.display());

@@ -4,23 +4,23 @@
 #![allow(dead_code)]
 
 //! Rust bindings to libunwind
-//! 
+//!
 //! This crate provides raw FFI bindings to libunwind for stack unwinding on Linux.
 //! The bindings are manually defined to avoid bindgen dependencies.
-//! 
+//!
 //! # Usage in other crates
-//! 
+//!
 //! Add this to your Cargo.toml:
 //! ```toml
 //! [dependencies]
 //! libdd-libunwind = { path = "../libdd-libunwind" }
 //! ```
-//! 
+//!
 //! ## Using from Rust
-//! 
+//!
 //! ```rust,ignore
 //! use libdd_libunwind::*;
-//! 
+//!
 //! fn capture_backtrace() -> Vec<usize> {
 //!     let mut frames = Vec::new();
 //!     
@@ -51,9 +51,9 @@
 //!     frames
 //! }
 //! ```
-//! 
+//!
 //! ## Using from C code via build.rs
-//! 
+//!
 //! ```rust,ignore
 //! fn main() {
 //!     // Get paths exported by libdd-libunwind
@@ -82,7 +82,7 @@ pub type unw_sword_t = i64;
 pub const UNW_TDEP_CURSOR_LEN: usize = 127;
 
 #[cfg(target_arch = "aarch64")]
-pub const UNW_TDEP_CURSOR_LEN: usize = 4096;  // ARM64 cursor size
+pub const UNW_TDEP_CURSOR_LEN: usize = 4096; // ARM64 cursor size
 
 #[cfg(target_arch = "x86")]
 pub const UNW_TDEP_CURSOR_LEN: usize = 127;
@@ -204,39 +204,39 @@ pub const UNW_CACHE_GLOBAL: unw_caching_policy_t = 1;
 pub const UNW_CACHE_PER_THREAD: unw_caching_policy_t = 2;
 
 // Error codes (returned as negative values)
-pub const UNW_ESUCCESS: i32 = 0;         // no error
-pub const UNW_EUNSPEC: i32 = 1;          // unspecified (general) error
-pub const UNW_ENOMEM: i32 = 2;           // out of memory
-pub const UNW_EBADREG: i32 = 3;          // bad register number
-pub const UNW_EREADONLYREG: i32 = 4;     // attempt to write read-only register
-pub const UNW_ESTOPUNWIND: i32 = 5;      // stop unwinding
-pub const UNW_EINVALIDIP: i32 = 6;       // invalid IP
-pub const UNW_EBADFRAME: i32 = 7;        // bad frame
-pub const UNW_EINVAL: i32 = 8;           // unsupported operation or bad value
-pub const UNW_EBADVERSION: i32 = 9;      // unwind info has unsupported version
-pub const UNW_ENOINFO: i32 = 10;         // no unwind info found
+pub const UNW_ESUCCESS: i32 = 0; // no error
+pub const UNW_EUNSPEC: i32 = 1; // unspecified (general) error
+pub const UNW_ENOMEM: i32 = 2; // out of memory
+pub const UNW_EBADREG: i32 = 3; // bad register number
+pub const UNW_EREADONLYREG: i32 = 4; // attempt to write read-only register
+pub const UNW_ESTOPUNWIND: i32 = 5; // stop unwinding
+pub const UNW_EINVALIDIP: i32 = 6; // invalid IP
+pub const UNW_EBADFRAME: i32 = 7; // bad frame
+pub const UNW_EINVAL: i32 = 8; // unsupported operation or bad value
+pub const UNW_EBADVERSION: i32 = 9; // unwind info has unsupported version
+pub const UNW_ENOINFO: i32 = 10; // no unwind info found
 
 // Register numbers (architecture-specific)
 
 #[cfg(target_arch = "x86_64")]
-pub const UNW_X86_64_RIP: i32 = 16;  // Instruction pointer
+pub const UNW_X86_64_RIP: i32 = 16; // Instruction pointer
 #[cfg(target_arch = "x86_64")]
-pub const UNW_X86_64_RSP: i32 = 7;   // Stack pointer
+pub const UNW_X86_64_RSP: i32 = 7; // Stack pointer
 #[cfg(target_arch = "x86_64")]
-pub const UNW_REG_IP: i32 = UNW_X86_64_RIP;  // Alias for IP
+pub const UNW_REG_IP: i32 = UNW_X86_64_RIP; // Alias for IP
 #[cfg(target_arch = "x86_64")]
-pub const UNW_REG_SP: i32 = UNW_X86_64_RSP;  // Alias for SP
+pub const UNW_REG_SP: i32 = UNW_X86_64_RSP; // Alias for SP
 
 // Add other architectures as needed
 #[cfg(target_arch = "x86")]
-pub const UNW_REG_IP: i32 = 8;   // EIP on x86
+pub const UNW_REG_IP: i32 = 8; // EIP on x86
 #[cfg(target_arch = "x86")]
-pub const UNW_REG_SP: i32 = 4;   // ESP on x86
+pub const UNW_REG_SP: i32 = 4; // ESP on x86
 
 #[cfg(target_arch = "aarch64")]
-pub const UNW_REG_IP: i32 = 32;  // PC on ARM64
+pub const UNW_REG_IP: i32 = 32; // PC on ARM64
 #[cfg(target_arch = "aarch64")]
-pub const UNW_REG_SP: i32 = 31;  // SP on ARM64
+pub const UNW_REG_SP: i32 = 31; // SP on ARM64
 
 // Helper function to convert error code to string
 pub fn error_string(err: i32) -> &'static str {
@@ -259,7 +259,7 @@ pub fn error_string(err: i32) -> &'static str {
 // ============================================================================
 // External function declarations and aliases
 // ============================================================================
-// 
+//
 // libunwind uses architecture-specific function names like _ULx86_64_init_local.
 // This macro both declares the extern function AND creates a standard unw_* alias.
 
@@ -271,7 +271,7 @@ macro_rules! unw_functions {
                 pub fn [<_ U $arch _getcontext>](context: *mut unw_context_t) -> ::std::os::raw::c_int;
                 pub fn [<_ U $arch _strerror>](err: ::std::os::raw::c_int) -> *const ::std::os::raw::c_char;
                 pub fn [<_ U $arch _regname>](reg: ::std::os::raw::c_int) -> *const ::std::os::raw::c_char;
-                
+
                 // Local unwinding functions ("L" in arch prefix)
                 pub fn [<_ UL $arch _init_local>](cursor: *mut unw_cursor_t, context: *mut unw_context_t) -> ::std::os::raw::c_int;
                 pub fn [<_ UL $arch _init_local2>](cursor: *mut unw_cursor_t, context: *mut unw_context_t, flag: ::std::os::raw::c_int) -> ::std::os::raw::c_int;
@@ -280,7 +280,7 @@ macro_rules! unw_functions {
                 pub fn [<_ UL $arch _get_proc_name>](cursor: *mut unw_cursor_t, buffer: *mut ::std::os::raw::c_char, len: usize, offset: *mut unw_word_t) -> ::std::os::raw::c_int;
                 pub fn [<_ UL $arch _get_proc_info>](cursor: *mut unw_cursor_t, pip: *mut unw_proc_info_t) -> ::std::os::raw::c_int;
             }
-            
+
             // Create public aliases with standard unw_* names
             pub use {
                 [<_ U $arch _getcontext>] as unw_getcontext,
@@ -298,7 +298,12 @@ macro_rules! unw_functions {
 }
 
 extern "C" {
-    pub fn unw_backtrace2(frames: *mut *mut ::std::os::raw::c_void, max_frames: ::std::os::raw::c_int, context: *mut unw_context_t, inner_frame_enum: ::std::os::raw::c_int) -> ::std::os::raw::c_int;
+    pub fn unw_backtrace2(
+        frames: *mut *mut ::std::os::raw::c_void,
+        max_frames: ::std::os::raw::c_int,
+        context: *mut unw_context_t,
+        inner_frame_enum: ::std::os::raw::c_int,
+    ) -> ::std::os::raw::c_int;
 }
 
 // Invoke for each supported architecture
@@ -317,15 +322,15 @@ mod tests {
         unsafe {
             let mut context: unw_context_t = std::mem::zeroed();
             let mut cursor: unw_cursor_t = std::mem::zeroed();
-            
+
             // Get current context
             let ret = unw_getcontext(&mut context);
             assert_eq!(ret, 0, "unw_getcontext failed");
-            
+
             // Initialize cursor
             let ret = unw_init_local(&mut cursor, &mut context);
             assert_eq!(ret, 0, "unw_init_local failed");
-            
+
             // Walk the stack
             let mut frames = 0;
             loop {
@@ -334,33 +339,33 @@ mod tests {
                     break;
                 }
                 frames += 1;
-                
+
                 // Limit iterations to prevent infinite loops
                 if frames > 100 {
                     break;
                 }
             }
-            
+
             // Should have at least a few frames
             assert!(frames > 0, "Expected at least one stack frame");
         }
     }
-    
+
     #[test]
     fn test_get_register() {
         unsafe {
             let mut context: unw_context_t = std::mem::zeroed();
             let mut cursor: unw_cursor_t = std::mem::zeroed();
-            
+
             assert_eq!(unw_getcontext(&mut context), 0);
             assert_eq!(unw_init_local(&mut cursor, &mut context), 0);
-            
+
             // Get instruction pointer
             let mut ip: unw_word_t = 0;
             let ret = unw_get_reg(&mut cursor, UNW_REG_IP, &mut ip);
             assert_eq!(ret, 0, "Failed to get IP register");
             assert_ne!(ip, 0, "IP should not be zero");
-            
+
             // Get stack pointer
             let mut sp: unw_word_t = 0;
             let ret = unw_get_reg(&mut cursor, UNW_REG_SP, &mut sp);
@@ -374,17 +379,17 @@ mod tests {
         unsafe {
             let mut context: unw_context_t = std::mem::zeroed();
             assert_eq!(unw_getcontext(&mut context), 0);
-            
+
             // unw_backtrace2 expects an array of void pointers
             let mut frames: [*mut ::std::os::raw::c_void; 100] = [std::ptr::null_mut(); 100];
             let ret = unw_backtrace2(frames.as_mut_ptr(), 100, &mut context, 0);
-            
+
             // Return value should be >= 0 (number of frames captured)
             assert!(ret >= 0, "unw_backtrace2 failed with error: {}", ret);
-            
+
             let frame_count = ret as usize;
             assert!(frame_count > 0, "Expected at least one frame");
-            
+
             // Print captured frames
             for i in 0..frame_count {
                 let frame_ptr = frames[i] as usize;
