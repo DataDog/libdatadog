@@ -274,6 +274,7 @@ macro_rules! unw_functions {
                 
                 // Local unwinding functions ("L" in arch prefix)
                 pub fn [<_ UL $arch _init_local>](cursor: *mut unw_cursor_t, context: *mut unw_context_t) -> ::std::os::raw::c_int;
+                pub fn [<_ UL $arch _init_local2>](cursor: *mut unw_cursor_t, context: *mut unw_context_t, flag: ::std::os::raw::c_int) -> ::std::os::raw::c_int;
                 pub fn [<_ UL $arch _step>](cursor: *mut unw_cursor_t) -> ::std::os::raw::c_int;
                 pub fn [<_ UL $arch _get_reg>](cursor: *mut unw_cursor_t, reg: ::std::os::raw::c_int, valp: *mut unw_word_t) -> ::std::os::raw::c_int;
                 pub fn [<_ UL $arch _get_proc_name>](cursor: *mut unw_cursor_t, buffer: *mut ::std::os::raw::c_char, len: usize, offset: *mut unw_word_t) -> ::std::os::raw::c_int;
@@ -286,6 +287,7 @@ macro_rules! unw_functions {
                 [<_ U $arch _strerror>] as unw_strerror,
                 [<_ U $arch _regname>] as unw_regname,
                 [<_ UL $arch _init_local>] as unw_init_local,
+                [<_ UL $arch _init_local2>] as unw_init_local2,
                 [<_ UL $arch _step>] as unw_step,
                 [<_ UL $arch _get_reg>] as unw_get_reg,
                 [<_ UL $arch _get_proc_name>] as unw_get_proc_name,
@@ -293,6 +295,10 @@ macro_rules! unw_functions {
             };
         }
     };
+}
+
+extern "C" {
+    pub fn unw_backtrace2(frames: *mut *mut ::std::os::raw::c_void, max_frames: ::std::os::raw::c_int, context: *mut unw_context_t, inner_frame_enum: ::std::os::raw::c_int) -> ::std::os::raw::c_int;
 }
 
 // Invoke for each supported architecture
@@ -360,6 +366,30 @@ mod tests {
             let ret = unw_get_reg(&mut cursor, UNW_REG_SP, &mut sp);
             assert_eq!(ret, 0, "Failed to get SP register");
             assert_ne!(sp, 0, "SP should not be zero");
+        }
+    }
+
+    #[test]
+    fn test_backtrace2() {
+        unsafe {
+            let mut context: unw_context_t = std::mem::zeroed();
+            assert_eq!(unw_getcontext(&mut context), 0);
+            
+            // unw_backtrace2 expects an array of void pointers
+            let mut frames: [*mut ::std::os::raw::c_void; 100] = [std::ptr::null_mut(); 100];
+            let ret = unw_backtrace2(frames.as_mut_ptr(), 100, &mut context, 0);
+            
+            // Return value should be >= 0 (number of frames captured)
+            assert!(ret >= 0, "unw_backtrace2 failed with error: {}", ret);
+            
+            let frame_count = ret as usize;
+            assert!(frame_count > 0, "Expected at least one frame");
+            
+            // Print captured frames
+            for i in 0..frame_count {
+                let frame_ptr = frames[i] as usize;
+                println!("Frame {}: 0x{:016x}", i, frame_ptr);
+            }
         }
     }
 }
