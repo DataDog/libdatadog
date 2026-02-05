@@ -6,7 +6,6 @@
 
 #include <datadog/common.h>
 #include <datadog/profiling.h>
-#include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -73,11 +72,6 @@ ddog_prof_Profile *create_profile_with_sample(void) {
 }
 
 int main(int argc, char *argv[]) {
-    // Ignore SIGPIPE to prevent termination when writing to closed pipes
-    // sockets
-    // TODO: handle EPIPE errors gracefully instead of dying
-    signal(SIGPIPE, SIG_IGN);
-
     // Disable stdout buffering to ensure output is visible even on crash
     setvbuf(stdout, NULL, _IONBF, 0);
 
