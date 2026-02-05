@@ -342,5 +342,6 @@ jobs:
             --head "$BRANCH_NAME" \
             --title "chore(release): proposal for ${{ inputs.crate }}" \
             --body "$PR_BODY" \
+            --label "release-proposal" \
             --base "${{ env.RELEASE_BRANCH }}"
 
