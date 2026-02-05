@@ -106,6 +106,11 @@ pub enum LogLevel {
     Debug,
 }
 
+#[derive(Serialize, Debug)]
+pub struct Logs {
+    pub logs: Vec<Log>,
+}
+
 #[derive(Serialize, Deserialize, Debug, PartialEq, Eq, Hash, Clone)]
 #[serde(rename_all = "UPPERCASE")]
 #[repr(C)]
