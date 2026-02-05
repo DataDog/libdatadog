@@ -123,6 +123,7 @@ fn skip_examples() -> &'static HashMap<&'static str, &'static str> {
         HashMap::from([
             ("crashtracking", "intentionally crashes"),
             ("exporter", "requires CLI arguments"),
+            ("exporter_manager", "Flaky because SIGPIPE thing"),
         ])
     })
 }
@@ -341,6 +342,32 @@ fn wait_with_output(
     (exit_status, output)
 }
 
+/// Format exit status for error messages, including signal info on Unix
+fn format_exit_status(status: &std::process::ExitStatus) -> String {
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::ExitStatusExt;
+        if let Some(signal) = status.signal() {
+            let signal_name = match signal {
+                1 => "SIGHUP",
+                2 => "SIGINT",
+                3 => "SIGQUIT",
+                4 => "SIGILL",
+                6 => "SIGABRT",
+                8 => "SIGFPE",
+                9 => "SIGKILL",
+                11 => "SIGSEGV",
+                13 => "SIGPIPE",
+                14 => "SIGALRM",
+                15 => "SIGTERM",
+                _ => "unknown",
+            };
+            return format!("killed by signal {} ({})", signal, signal_name);
+        }
+    }
+    format!("exit code {:?}", status.code())
+}
+
 /// Determine the test status from exit result and expected failure status
 fn determine_status(
     exit_status: Option<std::process::ExitStatus>,
@@ -353,7 +380,7 @@ fn determine_status(
                 (true, false) => TestStatus::Passed,
                 (true, true) => TestStatus::UnexpectedPass,
                 (false, true) => TestStatus::ExpectedFailure,
-                (false, false) => TestStatus::Failed(format!("exit code {:?}", status.code())),
+                (false, false) => TestStatus::Failed(format_exit_status(&status)),
             }
         }
         None => TestStatus::TimedOut,
