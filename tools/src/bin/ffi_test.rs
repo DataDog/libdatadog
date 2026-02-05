@@ -123,6 +123,7 @@ fn skip_examples() -> &'static HashMap<&'static str, &'static str> {
         HashMap::from([
             ("crashtracking", "intentionally crashes"),
             ("exporter", "requires CLI arguments"),
+            ("exporter_manager", "Flaky because SIGPIPE thing"),
         ])
     })
 }
