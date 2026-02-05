@@ -21,13 +21,13 @@ void print_error(const char *s, const ddog_Error *err) {
 
 // Helper function to create a simple profile with one sample
 ddog_prof_Profile *create_profile_with_sample(void) {
-    const ddog_prof_ValueType wall_time = {
-        .type_ = DDOG_CHARSLICE_C_BARE("wall-time"),
-        .unit = DDOG_CHARSLICE_C_BARE("nanoseconds"),
+    // Use the SampleType enum instead of ValueType struct
+    const ddog_prof_SampleType wall_time = DDOG_PROF_SAMPLE_TYPE_WALL_TIME;
+    const ddog_prof_Slice_SampleType sample_types = {&wall_time, 1};
+    const ddog_prof_Period period = {
+        .sample_type = wall_time,
+        .value = 60,
     };
-
-    const ddog_prof_Slice_ValueType sample_types = {&wall_time, 1};
-    const ddog_prof_Period period = {wall_time, 60};
 
     ddog_prof_Profile_NewResult profile_result = ddog_prof_Profile_new(sample_types, &period);
     if (profile_result.tag != DDOG_PROF_PROFILE_NEW_RESULT_OK) {
@@ -118,16 +118,16 @@ int main(int argc, char *argv[]) {
     }
 
     // We need to heap-allocate the exporter to pass it to ExporterManager_new
-    ddog_prof_ProfileExporter *exporter = malloc(sizeof(ddog_prof_ProfileExporter));
-    *exporter = exporter_result.ok;
+    // The function takes ownership via a mutable pointer
+    ddog_prof_ProfileExporter exporter = exporter_result.ok;
+    ddog_prof_ProfileExporter *exporter_ptr = &exporter;
 
     // Create the ExporterManager
     printf("Creating ExporterManager...\n");
-    ddog_prof_Result_HandleExporterManager manager_result = ddog_prof_ExporterManager_new(exporter);
+    ddog_prof_Result_HandleExporterManager manager_result = ddog_prof_ExporterManager_new(exporter_ptr);
     if (manager_result.tag != DDOG_PROF_RESULT_HANDLE_EXPORTER_MANAGER_OK_HANDLE_EXPORTER_MANAGER) {
         print_error("Failed to create ExporterManager", &manager_result.err);
         ddog_Error_drop(&manager_result.err);
-        free(exporter);
         return 1;
     }
 
@@ -153,7 +153,9 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
-    ddog_prof_EncodedProfile *encoded_profile = &serialize_result.ok;
+    // The queue function takes ownership of the encoded profile, so we need a mutable pointer
+    ddog_prof_EncodedProfile encoded_profile = serialize_result.ok;
+    ddog_prof_EncodedProfile *encoded_profile_ptr = &encoded_profile;
 
     // Queue the profile (no additional files or tags for this simple example)
     ddog_prof_Exporter_Slice_File empty_files = ddog_prof_Exporter_Slice_File_empty();
@@ -161,7 +163,7 @@ int main(int argc, char *argv[]) {
 
     ddog_VoidResult queue_result = ddog_prof_ExporterManager_queue(
         &manager,
-        encoded_profile,
+        encoded_profile_ptr,
         empty_files,
         &empty_tags,
         NULL,  // optional_process_tags
@@ -174,7 +176,7 @@ int main(int argc, char *argv[]) {
     if (queue_result.tag != DDOG_VOID_RESULT_OK) {
         print_error("Failed to queue profile", &queue_result.err);
         ddog_Error_drop(&queue_result.err);
-        ddog_prof_EncodedProfile_drop(encoded_profile);
+        // encoded_profile was consumed by queue, so we don't drop it here
         ddog_prof_Profile_drop(profile);
         free(profile);
         ddog_prof_ExporterManager_drop(&manager);
@@ -184,7 +186,7 @@ int main(int argc, char *argv[]) {
     printf("Profile queued successfully!\n");
 
     // Clean up profile after queueing
-    ddog_prof_EncodedProfile_drop(encoded_profile);
+    // Note: encoded_profile was consumed by queue, so we don't drop it
     ddog_prof_Profile_drop(profile);
     free(profile);
 
@@ -212,13 +214,15 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
-    encoded_profile = &serialize_result.ok;
+    // The queue function takes ownership of the encoded profile, so we need a mutable pointer
+    ddog_prof_EncodedProfile encoded_profile2 = serialize_result.ok;
+    ddog_prof_EncodedProfile *encoded_profile_ptr2 = &encoded_profile2;
 
     // Queue another profile
     empty_tags = ddog_Vec_Tag_new();
     queue_result = ddog_prof_ExporterManager_queue(
         &manager,
-        encoded_profile,
+        encoded_profile_ptr2,
         empty_files,
         &empty_tags,
         NULL,  // optional_process_tags
@@ -230,14 +234,14 @@ int main(int argc, char *argv[]) {
     if (queue_result.tag != DDOG_VOID_RESULT_OK) {
         print_error("Failed to queue profile for fork example", &queue_result.err);
         ddog_Error_drop(&queue_result.err);
-        ddog_prof_EncodedProfile_drop(encoded_profile);
+        // encoded_profile was consumed by queue, so we don't drop it here
         ddog_prof_Profile_drop(profile);
         free(profile);
         ddog_prof_ExporterManager_drop(&manager);
         return 1;
     }
 
-    ddog_prof_EncodedProfile_drop(encoded_profile);
+    // Note: encoded_profile was consumed by queue, so we don't drop it
     ddog_prof_Profile_drop(profile);
     free(profile);
 
