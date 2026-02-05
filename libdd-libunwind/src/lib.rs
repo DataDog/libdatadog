@@ -318,6 +318,7 @@ mod tests {
     use super::*;
 
     #[test]
+    #[cfg_attr(miri, ignore)]  // Miri cannot execute FFI calls to libunwind
     fn test_basic_unwind() {
         unsafe {
             let mut context: unw_context_t = std::mem::zeroed();
@@ -352,6 +353,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]  // Miri cannot execute FFI calls to libunwind
     fn test_get_register() {
         unsafe {
             let mut context: unw_context_t = std::mem::zeroed();
@@ -375,6 +377,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]  // Miri cannot execute FFI calls to libunwind
     fn test_backtrace2() {
         unsafe {
             let mut context: unw_context_t = std::mem::zeroed();
