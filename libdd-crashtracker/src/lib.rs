@@ -82,6 +82,12 @@ pub use collector::{
 #[cfg(all(windows, feature = "collector_windows"))]
 pub use collector_windows::api::{exception_event_callback, init_crashtracking_windows};
 
+// Testing utilities - only exposed when test-utils feature is enabled
+#[cfg(all(windows, feature = "test-utils"))]
+pub use collector_windows::api::{
+    get_wer_context_address, set_error_context, ErrorContext, ExceptionCode,
+};
+
 pub use crash_info::*;
 pub use runtime_callback::*;
 
