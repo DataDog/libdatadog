@@ -391,8 +391,8 @@ mod tests {
             assert!(frame_count > 0, "Expected at least one frame");
 
             // Print captured frames
-            for i in 0..frame_count {
-                let frame_ptr = frames[i] as usize;
+            for (i, &frame) in frames.iter().enumerate().take(frame_count) {
+                let frame_ptr = frame as usize;
                 println!("Frame {}: 0x{:016x}", i, frame_ptr);
             }
         }
