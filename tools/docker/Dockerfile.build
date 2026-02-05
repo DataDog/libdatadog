@@ -33,6 +33,9 @@ RUN apk update \
     unzip \
     bash \
     clang16-libclang \
+    autoconf \
+    automake \
+    libtool \
     && mkdir /usr/local/src
 
 # Tell docker to use bash as the default
@@ -150,6 +153,9 @@ RUN echo \
     libdd-trace-utils/benches/deserialization.rs \
     libdd-trace-utils/benches/main.rs \
     | xargs -n 1 sh -c 'mkdir -p $(dirname $1); touch $1; echo $1' create_stubs
+
+# Copy libunwind submodule for libdd-libunwind build.rs
+COPY "libdd-libunwind/libunwind" "libdd-libunwind/libunwind/"
 
 # cache dependencies
 RUN cargo fetch --locked
