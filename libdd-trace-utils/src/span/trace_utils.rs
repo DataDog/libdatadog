@@ -4,6 +4,7 @@
 //! Trace-utils functionalities implementation for tinybytes based spans
 
 use super::{Span, SpanMut, SpanText, OwnedTraceData, TraceProjector, TraceAttributesOp, TraceAttributesMutOp, TraceChunkMut, TracesMut, TraceAttributes, AttrRef, MUT, TraceData};
+use std::borrow::Borrow;
 use std::collections::{HashMap, HashSet};
 
 /// Span metric the mini agent must set for the backend to recognize top level span
@@ -31,27 +32,43 @@ where
 ///   - OR its parent belongs to another service (in that case it's a "local root" being the highest
 ///     ancestor of other spans belonging to this service and attached to it).
 pub fn compute_top_level_span<D: TraceData, T: TraceProjector<D>>(trace: &mut TraceChunkMut<T, D>) {
-    let mut span_id_to_service: HashMap<u64, D::Text> = HashMap::new();
+    // Collect span_id -> is_top_level decisions first
+    let mut top_level_decisions: HashMap<u64, bool> = HashMap::new();
+
+    // Build a map of span_id -> service (as borrowed str for comparison)
+    let mut span_services: Vec<(u64, &str)> = Vec::new();
     for span in trace.spans() {
-        span_id_to_service.insert(span.span_id(), span.service().clone());
+        span_services.push((span.span_id(), span.service().borrow()));
     }
-    for mut span in trace.spans_mut() {
+
+    // Make decisions about which spans are top-level
+    for span in trace.spans() {
+        let span_id = span.span_id();
         let parent_id = span.parent_id();
-        if parent_id == 0 {
-            set_top_level_span(&mut span, true);
-            continue;
-        }
-        match span_id_to_service.get(&parent_id) {
-            Some(parent_span_service) => {
-                if !parent_span_service.eq(span.service()) {
-                    // parent is not in the same service
-                    set_top_level_span(&mut span, true)
+
+        let is_top_level = if parent_id == 0 {
+            true
+        } else {
+            // Check if parent exists in this chunk and has the same service
+            match span_services.iter().find(|(id, _)| *id == parent_id) {
+                Some((_, parent_service)) => {
+                    // parent is in a different service
+                    span.service().borrow() != *parent_service
+                }
+                None => {
+                    // span has no parent in chunk
+                    true
                 }
             }
-            None => {
-                // span has no parent in chunk
-                set_top_level_span(&mut span, true)
-            }
+        };
+
+        top_level_decisions.insert(span_id, is_top_level);
+    }
+
+    // Now apply the decisions with mutable access
+    for mut span in trace.spans_mut() {
+        if let Some(&is_top_level) = top_level_decisions.get(&span.span_id()) {
+            set_top_level_span(&mut span, is_top_level);
         }
     }
 }

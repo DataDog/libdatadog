@@ -3397,6 +3397,7 @@ dependencies = [
  "criterion",
  "flate2",
  "futures",
+ "hashbrown 0.15.1",
  "http",
  "http-body-util",
  "httpmock",

@@ -50,7 +50,7 @@ impl<T: TraceData> TraceChunks<T> {
         match self {
             TraceChunks::V04(traces) => traces.len(),
             TraceChunks::V05((_, traces)) => traces.len(),
-            TraceChunks::V1(traces) => traces.chunks.iter().map(|c| c.spans.len()).sum()
+            TraceChunks::V1(traces) => traces.traces.chunks.iter().map(|c| c.spans.len()).sum()
         }
     }
 }
@@ -149,7 +149,7 @@ impl TracerPayloadCollection {
             }
             TracerPayloadCollection::V04(collection) => collection.len(),
             TracerPayloadCollection::V05((_, collection)) => collection.len(),
-            TracerPayloadCollection::V1(traces) => traces.chunks.iter().map(|c| c.spans.len()).sum()
+            TracerPayloadCollection::V1(traces) => traces.traces.chunks.iter().map(|c| c.spans.len()).sum()
         }
     }
 }

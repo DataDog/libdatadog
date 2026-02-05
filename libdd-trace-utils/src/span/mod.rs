@@ -13,6 +13,7 @@ pub use trace::*;
 use crate::msgpack_decoder::decode::buffer::read_string_ref_nomut;
 use crate::msgpack_decoder::decode::error::DecodeError;
 use crate::span::v05::dict::SharedDict;
+use hashbrown::Equivalent;
 use libdd_tinybytes::{Bytes, BytesString};
 use libdd_trace_protobuf::pb::idx::SpanKind;
 use serde::Serialize;
@@ -24,7 +25,7 @@ use std::ops::Deref;
 use std::ptr::NonNull;
 use std::{fmt, ptr};
 
-pub trait SpanDataContents: Debug + Eq + Hash + Serialize + Default {
+pub trait SpanDataContents: Debug + Eq + Hash + Serialize + Default + IntoData<Self> + Equivalent<Self::RefCopy> {
     type RefCopy: SpanDataContents;
 
     fn default_ref<'a>() -> &'a Self;
@@ -32,16 +33,85 @@ pub trait SpanDataContents: Debug + Eq + Hash + Serialize + Default {
     fn as_ref_copy(&self) -> Self::RefCopy;
 }
 
+pub trait HasAssoc<T : ?Sized> {
+    type Impls : ?Sized;
+}
+
+impl<T : ?Sized, Self_ : ?Sized> HasAssoc<T> for Self_ {
+    type Impls = T;
+}
+
+pub trait ImpliedPredicate<T : ?Sized> : HasAssoc<T, Impls = T>
+{}
+
+impl<T : ?Sized, Self_ : ?Sized> ImpliedPredicate<T> for Self_ {}
+
 /// Trait representing the requirements for a type to be used as a Span "string" type.
 /// Note: Borrow<str> is not required by the derived traits, but allows to access HashMap elements
 /// from a static str and check if the string is empty.
-pub trait SpanText: SpanDataContents + Borrow<str> {
+pub trait SpanText: SpanDataContents + Borrow<str> + ImpliedPredicate<&str, Impls: Equivalent<Self>> + ImpliedPredicate<Self::RefCopy, Impls: Borrow<str>> {
     fn from_static_str(value: &'static str) -> Self;
 }
 
 impl SpanText for &str {
     fn from_static_str(value: &'static str) -> Self {
         value
+    }
+}
+
+pub trait IntoData<T> {
+    fn into(self) -> T;
+}
+
+// Lifetime coercion for &str
+impl<'a, 'b: 'a> IntoData<&'a str> for &'b str {
+    fn into(self) -> &'a str {
+        self
+    }
+}
+
+// Lifetime coercion for &[u8]
+impl<'a, 'b: 'a> IntoData<&'a [u8]> for &'b [u8] {
+    fn into(self) -> &'a [u8] {
+        self
+    }
+}
+
+// BytesString conversions
+impl IntoData<BytesString> for &str {
+    fn into(self) -> BytesString {
+        BytesString::from(self)
+    }
+}
+
+impl IntoData<BytesString> for String {
+    fn into(self) -> BytesString {
+        BytesString::from(self)
+    }
+}
+
+impl IntoData<BytesString> for BytesString {
+    fn into(self) -> BytesString {
+        self
+    }
+}
+
+// Bytes conversions
+impl IntoData<Bytes> for &[u8] {
+    fn into(self) -> Bytes {
+        Bytes::from(Vec::from(self))
+    }
+}
+
+impl IntoData<Bytes> for Vec<u8> {
+    fn into(self) -> Bytes {
+        Bytes::from(self)
+    }
+}
+
+impl IntoData<Bytes> for Bytes {
+    fn into(self) -> Bytes {
+        self
     }
 }
 
@@ -121,7 +191,7 @@ impl SpanDataContents for Bytes {
 /// Note: The functions are internal to the msgpack decoder and should not be used directly: they're
 /// only exposed here due to the unavailability of min_specialization in stable Rust.
 /// Also note that the Clone and PartialEq bounds are only present for tests.
-pub trait TraceData: Default + Clone + Debug + PartialEq {
+pub trait TraceData: Default + Clone + Debug + PartialEq + ImpliedPredicate<&'static str, Impls: IntoData<Self::Text>> + ImpliedPredicate<&'static [u8], Impls: IntoData<Self::Bytes>> {
     type Text: SpanText;
     type Bytes: SpanBytes;
 }
@@ -129,17 +199,11 @@ pub trait TraceData: Default + Clone + Debug + PartialEq {
 /// TraceData that supports mutation - requires owned, cloneable types that can be constructed
 /// from standard Rust types like String and Vec<u8>. Read-only operations work with any TraceData,
 /// but mutation requires MutableTraceData.
-pub trait Dummy<T> {
-    type Impl;
-}
-impl<T, V> Dummy<T> for V { type Impl = T; }
 
-pub trait OwnedTraceData: TraceData + Dummy<Self::Text, Impl = Self::Text> + Dummy<Self::Bytes, Impl = Self::Bytes>
-where
-    Self::Text: Clone + From<String>,
-    Self::Bytes: Clone + From<Vec<u8>>,
+pub trait OwnedTraceData: TraceData + ImpliedPredicate<Self::Text, Impls: Clone> + ImpliedPredicate<String, Impls: IntoData<Self::Text>> + ImpliedPredicate<Self::Bytes, Impls: Clone> + ImpliedPredicate<Vec<u8>, Impls: IntoData<Self::Bytes>>
 {
 }
+
 pub trait DeserializableTraceData: TraceData {
     fn get_mut_slice(buf: &mut Self::Bytes) -> &mut &'static [u8];
 

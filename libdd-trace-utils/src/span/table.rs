@@ -1,11 +1,11 @@
 use std::borrow::Borrow;
-use std::collections::HashMap;
+use hashbrown::{HashMap, Equivalent};
 use std::fmt::Debug;
 use std::hash::Hash;
 use std::marker::PhantomData;
 use std::ops::Deref;
 use serde::Serialize;
-use crate::span::{OwnedTraceData, SpanDataContents, TraceData};
+use crate::span::{IntoData, OwnedTraceData, SpanDataContents, TraceData};
 
 trait TraceDataType: Copy + Clone + Debug + Default + Eq + PartialEq + Hash + Serialize {
     type Data<T: TraceData>: SpanDataContents;
@@ -60,7 +60,7 @@ impl<T: TraceData, D: TraceDataType> Default for StaticDataVec<T, D> {
                 value: D::Data::<T>::default(),
                 rc: 1 << 30, // so that we can just have TraceDataRef::new(0) as default without the rc ever reaching 0
             }],
-            table: HashMap::from([(D::Data::<T>::default(), TraceDataRef::new(0))]),
+            table: HashMap::from([(D::Data::<T>::default().as_ref_copy(), TraceDataRef::new(0))]),
         }
     }
 }
@@ -71,24 +71,19 @@ struct Shrunk<T> {
 }
 
 impl<T: TraceData, D: TraceDataType> StaticDataVec<T, D> {
-    // SAFETY: We ensure that we remove the entries from the hashtable first
-    fn lifetime_extended_copy(value: &D::Data<T>) {
-        let value: &'static D::Data<T> = unsafe { std::mem::transmute(value) };
-        value.as_ref_copy()
-    }
-
     pub fn get(&self, r#ref: TraceDataRef<D>) -> &D::Data<T> {
         &self.vec[r#ref.index as usize].value
     }
 
-    pub fn add<V: Into<D::Data<T>>>(&mut self, value: V) -> TraceDataRef<D> {
+    pub fn add<V: IntoData<D::Data<T>>>(&mut self, value: V) -> TraceDataRef<D> {
         let value = value.into();
-        if let Some(r#ref) = self.table.get(&value) {
+        let key = value.as_ref_copy();
+        if let Some(r#ref) = self.table.get(&key) {
             self.vec[r#ref.index as usize].rc += 1;
             return *r#ref;
         }
         let index = self.vec.len() as u32;
-        self.table.insert(value.lifetime_extended_copy(), TraceDataRef::new(index));
+        self.table.insert(key, TraceDataRef::new(index));
         self.vec.push(StaticDataValue {
             value,
             rc: 1,
@@ -96,13 +91,14 @@ impl<T: TraceData, D: TraceDataType> StaticDataVec<T, D> {
         TraceDataRef::new(index)
     }
 
-    pub fn update<V: Into<D::Data<T>>>(&mut self, r#ref: &mut TraceDataRef<D>, value: V)
+    pub fn update<V: IntoData<D::Data<T>>>(&mut self, r#ref: &mut TraceDataRef<D>, value: V)
     {
         let entry = &mut self.vec[r#ref.index as usize];
         if entry.rc == 1 {
-            self.table.remove(&entry.value);
+            self.table.remove(&entry.value.as_ref_copy());
             let value = value.into();
-            self.table.insert(value.lifetime_extended_copy(), *r#ref);
+            let key = value.as_ref_copy();
+            self.table.insert(key, *r#ref);
             entry.value = value;
         } else {
             entry.rc -= 1;
@@ -113,22 +109,29 @@ impl<T: TraceData, D: TraceDataType> StaticDataVec<T, D> {
     pub fn reset(&mut self, r#ref: &mut TraceDataRef<D>) {
         let entry = &mut self.vec[r#ref.index as usize];
         if entry.rc == 1 {
-            self.table.remove(&entry.value);
+            self.table.remove(&entry.value.as_ref_copy());
         } else {
             entry.rc -= 1;
         }
         *r#ref = TraceDataRef::default();
     }
 
-    // TODO: We don't quite need Into, only Equivalent
-    pub fn find<V: Into<D::Data<T>>>(&self, value: V) -> Option<TraceDataRef<D>> {
-        self.table.get(&value.into()).map(|v| *v)
+    pub fn find<Q>(&self, value: &Q) -> Option<TraceDataRef<D>>
+    where
+        Q: ?Sized + Hash + Equivalent<<D::Data::<T> as SpanDataContents>::RefCopy>,
+    {
+        self.table.get(value).copied()
     }
 
     pub fn decref(&mut self, r#ref: TraceDataRef<D>) {
         let rc = &mut self.vec[r#ref.index as usize].rc;
         debug_assert!(*rc >= 0);
         *rc -= 1;
+    }
+
+    pub fn incref(&mut self, r#ref: TraceDataRef<D>) {
+        let rc = &mut self.vec[r#ref.index as usize].rc;
+        *rc += 1;
     }
 
     pub fn shrink(mut self) -> Shrunk<D::Data<T>> {
@@ -155,12 +158,12 @@ impl<D: TraceDataType> TraceDataRef<D> {
         vec.get(self)
     }
 
-    pub fn set<T: OwnedTraceData, V: Into<D::Data<T>>>(&mut self, vec: &mut StaticDataVec<T, D>, value: V)
+    pub fn set<T: TraceData, V: IntoData<D::Data<T>>>(&mut self, vec: &mut StaticDataVec<T, D>, value: V)
     {
         vec.update(self, value)
     }
 
-    pub fn reset<T: OwnedTraceData>(&mut self, vec: &mut StaticDataVec<T, D>)
+    pub fn reset<T: TraceData>(&mut self, vec: &mut StaticDataVec<T, D>)
     {
         vec.reset(self)
     }
