@@ -20,7 +20,7 @@ jobs:
         id: octo-sts
         with:
           scope: DataDog/libdatadog  # target repository
-          policy: YOUR_POLICY  # trust policy in target repo, without the .sts.yaml extension
+          policy: self.read.members  # trust policy in target repo, without the .sts.yaml extension
       - name: Use GH token
         run: |
           gh auth status
