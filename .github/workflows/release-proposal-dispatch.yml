@@ -190,8 +190,8 @@ jobs:
                 continue
               fi
 
-              echo "Executing semver-level.sh for $NAME since $RANGE..."
-              SEMVER_LEVEL=$(./scripts/semver-level.sh "$NAME" "$TAG" 2>&1)
+              echo "Executing semver-level.sh for $NAME since $RANGE (tag: $TAG)..."
+              SEMVER_LEVEL=$(./scripts/semver-level.sh "$NAME" "refs/tags/$TAG" 2>&1)
               echo "Semver level: $SEMVER_LEVEL"
 
               LEVEL=$(echo "$SEMVER_LEVEL" | jq -r '.level')
