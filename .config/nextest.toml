@@ -1,3 +1,10 @@
+# Enable experimental setup scripts feature
+experimental = ["setup-scripts"]
+
+# Define the prebuild setup script that builds all bin_tests artifacts upfront
+[script.prebuild-bin-tests]
+command = 'cargo run -p bin_tests --bin prebuild'
+
 [store]
 dir = "target/nextest"
 
@@ -18,12 +25,22 @@ fail-fast = true
 filter = 'test(::single_threaded_tests::)'
 test-group = 'single-threaded'
 
+# Run prebuild script before bin_tests to build all artifacts upfront
+[[profile.default.scripts]]
+filter = 'package(bin_tests)'
+setup = 'prebuild-bin-tests'
+
 [profile.ci]
 # Print out output for failing tests as soon as they fail, and also at the end
 # of the run (for easy scrollability).
 failure-output = "immediate-final"
 # Do not cancel the test run on the first failure.
 fail-fast = false
+
+# Run prebuild script before bin_tests to build all artifacts upfront
+[[profile.ci.scripts]]
+filter = 'package(bin_tests)'
+setup = 'prebuild-bin-tests'
 
 [profile.ci.junit]
 # Output a JUnit report into the given file inside 'store.dir/<profile-name>'.
