@@ -57,21 +57,35 @@ mod linux {
                 }
             }
 
-            eprintln!("Configuring and building libunwind...");
+            eprintln!("Configuring libunwind...");
             let status = std::process::Command::new("sh")
                 .current_dir(&build_dir)
                 .args([
                     "-c",
                     &format!(
-                        "{}/configure --disable-shared --enable-static --disable-minidebuginfo --disable-zlibdebuginfo --disable-tests && make -j$(nproc)",
+                        r"{}/configure CXXFLAGS=-fPIC\ -D_GLIBCXX_USE_CXX11_ABI=0\ -O3\ -g CFLAGS=-fPIC\ -O3\ -g --disable-shared --enable-static --disable-minidebuginfo --disable-zlibdebuginfo --disable-tests",
                         libunwind_dir.display()
                     )
                 ])
                 .status()
-                .expect("Failed to run configure/make");
+                .expect("Failed to run configure");
 
             if !status.success() {
-                panic!("libunwind build failed with exit code: {:?}", status.code());
+                panic!(
+                    "libunwind configure failed with exit code: {:?}",
+                    status.code()
+                );
+            }
+
+            eprintln!("Building libunwind...");
+            let status = std::process::Command::new("sh")
+                .current_dir(&build_dir)
+                .args(["-c", "make -j$(nproc)"])
+                .status()
+                .expect("Failed to run make");
+
+            if !status.success() {
+                panic!("libunwind make failed with exit code: {:?}", status.code());
             }
 
             // Verify the library was actually created
@@ -90,9 +104,15 @@ mod linux {
         let lib_path = build_dir.join("src/.libs");
         let include_path = build_dir.join("include");
 
+        #[cfg(target_arch = "x86_64")]
+        let arch = "x86_64";
+        #[cfg(target_arch = "aarch64")]
+        let arch = "aarch64";
+
         // Link directives for this crate
         println!("cargo:rustc-link-search=native={}", lib_path.display());
         println!("cargo:rustc-link-lib=static=unwind");
+        println!("cargo:rustc-link-lib=static=unwind-{}", arch);
 
         // Export paths to dependent crates via DEP_UNWIND_* environment variables
         // These are automatically passed to crates that depend on us
