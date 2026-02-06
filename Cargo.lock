@@ -3063,6 +3063,7 @@ dependencies = [
  "http",
  "libc",
  "libdd-common",
+ "libdd-libunwind",
  "libdd-telemetry",
  "nix 0.29.0",
  "num-derive",

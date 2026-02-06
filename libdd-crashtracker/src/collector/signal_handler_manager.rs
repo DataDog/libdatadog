@@ -198,7 +198,7 @@ unsafe fn register_signal_handler(
 
     let sig_action = SigAction::new(
         SigHandler::SigAction(handle_posix_sigaction),
-        SaFlags::SA_NODEFER | extra_saflags,
+        SaFlags::SA_NODEFER | extra_saflags | SaFlags::SA_SIGINFO,
         signal::SigSet::empty(),
     );
 

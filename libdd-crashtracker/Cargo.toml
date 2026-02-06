@@ -41,6 +41,9 @@ cxx = ["dep:cxx", "dep:cxx-build"]
 # Should be kept in sync with the libdatadog symbolizer crate (also using blasesym)
 blazesym = "=0.2.0-rc.5"
 
+[target.'cfg(all(target_os = "linux", target_arch = "x86_64", target_env = "musl"))'.dependencies]
+libdd-libunwind = { path = "../libdd-libunwind" }
+
 [dependencies]
 anyhow = "1.0"
 backtrace = "=0.3.74"
