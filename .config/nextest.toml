@@ -1,4 +1,4 @@
-# Enable experimental setup scripts feature
+# Enable experimental setup scripts feature for pre-building bin_test binaries
 experimental = ["setup-scripts"]
 
 # Define the prebuild setup script that builds all bin_tests artifacts upfront
