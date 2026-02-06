@@ -1,15 +1,9 @@
+// Copyright 2025-Present Datadog, Inc. https://www.datadoghq.com/
+// SPDX-License-Identifier: Apache-2.0
+
 fn main() {
     #[cfg(target_os = "linux")]
     linux::main();
-    #[cfg(target_os = "windows")]
-    windows::main();
-}
-
-#[cfg(target_os = "windows")]
-mod windows {
-    pub(crate) fn main() {
-        println!("cargo:warning=windows platform is not supported yet");
-    }
 }
 
 #[cfg(target_os = "linux")]
