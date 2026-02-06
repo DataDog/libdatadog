@@ -46,7 +46,7 @@ members = [
   "libdd-tinybytes",
   "libdd-dogstatsd-client",
   "libdd-log",
-  "libdd-log-ffi",
+  "libdd-log-ffi", "libdd-libunwind",
 ]
 
 # https://doc.rust-lang.org/cargo/reference/resolver.html

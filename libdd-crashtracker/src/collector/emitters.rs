@@ -12,6 +12,12 @@ use crate::shared::constants::*;
 use crate::{translate_si_code, CrashtrackerConfiguration, SignalNames, StacktraceCollection};
 use backtrace::Frame;
 use libc::{siginfo_t, ucontext_t};
+
+#[cfg(all(target_os = "linux", target_arch = "x86_64", target_env = "musl"))]
+use libdd_libunwind::{
+    unw_get_proc_name, unw_get_reg, unw_init_local2, unw_step, UnwCursor, UnwWord, UNW_REG_IP,
+    UNW_REG_SP,
+};
 use std::{
     fs::File,
     io::{Read, Write},
@@ -132,6 +138,72 @@ unsafe fn emit_backtrace_by_frames(
     Ok(())
 }
 
+/// Emit backtrace using libunwind from the crash ucontext.
+/// Used on Linux x86_64 musl when ucontext is available.
+#[cfg(all(target_os = "linux", target_arch = "x86_64", target_env = "musl"))]
+unsafe fn emit_backtrace_by_libunwind(
+    w: &mut impl Write,
+    resolve_frames: StacktraceCollection,
+    ucontext: *const ucontext_t,
+) -> Result<(), EmitterError> {
+    writeln!(w, "{DD_CRASHTRACK_BEGIN_STACKTRACE}")?;
+    if ucontext.is_null() {
+        writeln!(w, "{DD_CRASHTRACK_END_STACKTRACE}")?;
+        return Err(EmitterError::NullUcontext);
+    }
+
+    let mut cursor: UnwCursor = std::mem::zeroed();
+    let mut context = *ucontext;
+    if unw_init_local2(&mut cursor, &mut context, 0) != 0 {
+        writeln!(w, "{DD_CRASHTRACK_END_STACKTRACE}")?;
+        w.flush()?;
+        return Ok(());
+    }
+
+    let mut frame_count = 0;
+    loop {
+        let mut ip: UnwWord = 0;
+        let mut sp: UnwWord = 0;
+        if unw_get_reg(&mut cursor, UNW_REG_IP, &mut ip) != 0
+            || unw_get_reg(&mut cursor, UNW_REG_SP, &mut sp) != 0
+        {
+            break;
+        }
+
+        if resolve_frames == StacktraceCollection::EnabledWithInprocessSymbols {
+            let mut name_buf = [0i8; 256];
+            let _ = unw_get_proc_name(
+                &mut cursor,
+                name_buf.as_mut_ptr(),
+                name_buf.len(),
+                std::ptr::null_mut(),
+            );
+            let fn_name = std::ffi::CStr::from_ptr(name_buf.as_ptr()).to_string_lossy();
+
+            writeln!(w, "{{ \"ip\": \"{ip:#x}\", \"module_base_address\": \"0x0\", \"sp\": \"{sp:#x}\"")?;
+            if !fn_name.is_empty() {
+                write!(w, ", \"function\": \"{fn_name}\"")?;
+            }
+            writeln!(w, "}}")?;
+        } else {
+            writeln!(w, "{{\"ip\": \"{ip:#x}\", \"module_base_address\": \"0x0\", \"sp\": \"{sp:#x}\", \"symbol_address\": \"{ip:#x}\"}}")?;
+        }
+        w.flush()?;
+
+        frame_count += 1;
+        if frame_count > 100 {
+            break;
+        }
+        if unw_step(&mut cursor) <= 0 {
+            break;
+        }
+    }
+
+    writeln!(w, "{DD_CRASHTRACK_END_STACKTRACE}")?;
+    w.flush()?;
+    Ok(())
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn emit_crashreport(
     pipe: &mut impl Write,
@@ -171,8 +243,20 @@ pub(crate) fn emit_crashreport(
     // https://doc.rust-lang.org/src/std/backtrace.rs.html#332
     // Do this last, so even if it crashes, we still get the other info.
     if config.resolve_frames() != StacktraceCollection::Disabled {
-        let fault_ip = extract_ip(ucontext);
-        unsafe { emit_backtrace_by_frames(pipe, config.resolve_frames(), fault_ip)? };
+        #[cfg(all(target_os = "linux", target_arch = "x86_64", target_env = "musl"))]
+        {
+            if !ucontext.is_null() {
+                unsafe { emit_backtrace_by_libunwind(pipe, config.resolve_frames(), ucontext)? };
+            } else {
+                let fault_ip = 0;
+                unsafe { emit_backtrace_by_frames(pipe, config.resolve_frames(), fault_ip)? };
+            }
+        }
+        #[cfg(not(all(target_os = "linux", target_arch = "x86_64", target_env = "musl")))]
+        {
+            let fault_ip = extract_ip(ucontext);
+            unsafe { emit_backtrace_by_frames(pipe, config.resolve_frames(), fault_ip)? };
+        }
     }
 
     if is_runtime_callback_registered() {

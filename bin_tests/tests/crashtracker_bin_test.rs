@@ -550,14 +550,14 @@ fn test_panic_hook_mode(mode: &str, expected_category: &str, expected_panic_mess
 // Don't forget to update the ignore condition for this and also
 // `test_crash_tracking_callstack` when this is revisited.
 #[test]
-#[cfg(not(any(all(target_arch = "x86_64", target_env = "musl"), target_os = "macos")))]
+#[cfg(not(target_os = "macos"))]
 #[cfg_attr(miri, ignore)]
 fn test_crasht_tracking_validate_callstack() {
     test_crash_tracking_callstack()
 }
 
 // This test is disabled for now on x86_64 musl and macos for the reason mentioned above.
-#[cfg(not(any(all(target_arch = "x86_64", target_env = "musl"), target_os = "macos")))]
+#[cfg(not(target_os = "macos"))]
 fn test_crash_tracking_callstack() {
     use bin_tests::test_runner::run_custom_crash_test;
 

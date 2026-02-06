@@ -33,6 +33,9 @@ RUN apk update \
     unzip \
     bash \
     clang16-libclang \
+    autoconf \
+    automake \
+    libtool \
     && mkdir /usr/local/src
 
 # Tell docker to use bash as the default
@@ -80,6 +83,8 @@ COPY "libdd-ddsketch/Cargo.toml" "libdd-ddsketch/"
 COPY "libdd-ddsketch-ffi/Cargo.toml" "libdd-ddsketch-ffi/"
 COPY "libdd-log/Cargo.toml" "libdd-log/"
 COPY "libdd-log-ffi/Cargo.toml" "libdd-log-ffi/"
+COPY "libdd-libunwind/Cargo.toml" "libdd-libunwind/"
+COPY "libdd-libunwind/build.rs" "libdd-libunwind/"
 COPY "libdd-dogstatsd-client/Cargo.toml" "libdd-dogstatsd-client/"
 COPY "libdd-library-config-ffi/Cargo.toml" "libdd-library-config-ffi/"
 COPY "libdd-library-config/Cargo.toml" "libdd-library-config/"
@@ -148,6 +153,9 @@ RUN echo \
     libdd-trace-utils/benches/deserialization.rs \
     libdd-trace-utils/benches/main.rs \
     | xargs -n 1 sh -c 'mkdir -p $(dirname $1); touch $1; echo $1' create_stubs
+
+# Copy libunwind submodule for libdd-libunwind build.rs
+COPY "libdd-libunwind/libunwind" "libdd-libunwind/libunwind/"
 
 # cache dependencies
 RUN cargo fetch --locked
