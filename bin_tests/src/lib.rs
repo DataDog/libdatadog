@@ -51,7 +51,6 @@ fn get_target_dir_for_build(c: &ArtifactsBuild) -> PathBuf {
 }
 
 /// Computes the path where the artifact will be located after building.
-/// This does not build the artifact, just computes its expected path.
 pub fn compute_artifact_path(c: &ArtifactsBuild) -> anyhow::Result<PathBuf> {
     let target_dir = get_target_dir_for_build(c);
 
