@@ -3,6 +3,9 @@ name = "clippy-annotation-reporter"
 rust-version = "1.78.0"
 edition = "2021"
 version = "0.1.0"
+description = "GitHub Action for reporting clippy annotation usage in PRs"
+homepage = "https://github.com/DataDog/libdatadog/tree/main/.github/actions/clippy-annotation-reporter"
+repository = "https://github.com/DataDog/libdatadog/tree/main/.github/actions/clippy-annotation-reporter"
 
 [dependencies]
 clap = { version = "4.3", features = ["derive", "env"] }
