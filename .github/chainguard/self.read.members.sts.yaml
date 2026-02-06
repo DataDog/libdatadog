@@ -4,7 +4,7 @@ subject_pattern: "repo:DataDog/libdatadog.*"
 
 claim_pattern:
   ref: "(main|release|julio/.*)" # TODO: remove testing branch and uncomment ref_protected
-  # ref_protected: "true"
+  # ref_protected: "true" # TODO: uncomment once tested.
 
 permissions:
   members: read
