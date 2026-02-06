@@ -3,8 +3,9 @@
 
 pub mod config;
 mod errors;
-mod file_exporter;
+pub mod exporter_manager;
 mod profile_exporter;
-#[cfg(any(test, feature = "test-utils"))]
-pub mod utils;
+
+pub use errors::SendError;
+pub use exporter_manager::ExporterManager;
 pub use profile_exporter::*;

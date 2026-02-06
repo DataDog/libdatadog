@@ -4,6 +4,7 @@
 
 .clang-format                        @Datadog/libdatadog
 .codecov.yml                         @Datadog/apm-common-components-core
+.cargo/*                             @Datadog/libdatadog-core
 .config/nextest.toml                 @Datadog/apm-common-components-core
 .config/commitlint.config.js         @Datadog/apm-common-components-core
 .devcontainer                        @Datadog/apm-common-components-core
@@ -18,6 +19,7 @@ bin_tests/                           @Datadog/libdatadog-profiling
 build-common/                        @Datadog/apm-common-components-core
 builder                              @Datadog/apm-common-components-core
 Cargo.*                              @Datadog/libdatadog
+cliff.toml                           @Datadog/libdatadog-core
 cmake/                               @Datadog/apm-common-components-core
 CONTRIBUTING.md                      @Datadog/libdatadog-core
 Cross.toml                           @Datadog/apm-common-components-core
@@ -31,6 +33,7 @@ datadog-sidecar                      @Datadog/libdatadog-php @Datadog/libdatadog
 datadog-sidecar-ffi                  @Datadog/libdatadog-php @Datadog/libdatadog-apm
 datadog-sidecar-macros               @Datadog/libdatadog-php
 datadog-tracer-flare                 @Datadog/libdatadog-apm
+deny.toml                            @Datadog/libdatadog
 docker-bake.hcl                      @Datadog/apm-common-components-core
 docs                                 @Datadog/libdatadog
 examples                             @Datadog/libdatadog
@@ -57,7 +60,11 @@ README.md                            @Datadog/libdatadog
 repository.datadog.yml               @Datadog/apm-common-components-core
 ruby/                                @Datadog/ruby-guild
 rustfmt.toml                         @Datadog/libdatadog-core
+scripts/check_cargo_metadata.sh      @Datadog/libdatadog-core
+scripts/commits-since-release.sh     @Datadog/libdatadog-core
+scripts/publication-order.sh         @Datadog/libdatadog-core
 scripts/reformat_copyright.sh        @Datadog/libdatadog-core
+scripts/semver-level.sh              @Datadog/libdatadog-core
 scripts/update_license_3rdparty.sh   @Datadog/libdatadog-core
 spawn_worker/                        @Datadog/libdatadog-php @Datadog/libdatadog-apm
 symbolizer-ffi                       @Datadog/libdatadog-profiling

@@ -4,8 +4,10 @@
 pub(crate) mod span;
 
 use self::span::decode_span;
+use crate::msgpack_decoder::decode::buffer::Buffer;
 use crate::msgpack_decoder::decode::error::DecodeError;
-use crate::span::{SpanBytes, SpanSlice};
+use crate::span::v04::{Span, SpanBytes, SpanSlice};
+use crate::span::DeserializableTraceData;
 
 /// Decodes a Bytes buffer into a `Vec<Vec<SpanBytes>>` object, also represented as a vector of
 /// `TracerPayloadV04` objects.
@@ -52,20 +54,7 @@ use crate::span::{SpanBytes, SpanSlice};
 pub fn from_bytes(
     data: libdd_tinybytes::Bytes,
 ) -> Result<(Vec<Vec<SpanBytes>>, usize), DecodeError> {
-    let (traces_ref, size) = from_slice(data.as_ref())?;
-
-    #[allow(clippy::unwrap_used)]
-    let traces_owned = traces_ref
-        .iter()
-        .map(|trace| {
-            trace
-                .iter()
-                // Safe to unwrap since the spans use subslices of the `data` slice
-                .map(|span| span.try_to_bytes(&data).unwrap())
-                .collect()
-        })
-        .collect();
-    Ok((traces_owned, size))
+    from_buffer(&mut Buffer::new(data))
 }
 
 /// Decodes a slice of bytes into a `Vec<Vec<SpanSlice>>` object.
@@ -110,11 +99,19 @@ pub fn from_bytes(
 /// let decoded_span = &decoded_traces[0][0];
 /// assert_eq!("test-span", decoded_span.name);
 /// ```
-pub fn from_slice(mut data: &[u8]) -> Result<(Vec<Vec<SpanSlice<'_>>>, usize), DecodeError> {
-    let trace_count = rmp::decode::read_array_len(&mut data).map_err(|_| {
+pub fn from_slice(data: &[u8]) -> Result<(Vec<Vec<SpanSlice<'_>>>, usize), DecodeError> {
+    from_buffer(&mut Buffer::new(data))
+}
+
+#[allow(clippy::type_complexity)]
+pub fn from_buffer<T: DeserializableTraceData>(
+    data: &mut Buffer<T>,
+) -> Result<(Vec<Vec<Span<T>>>, usize), DecodeError> {
+    let trace_count = rmp::decode::read_array_len(data.as_mut_slice()).map_err(|_| {
         DecodeError::InvalidFormat("Unable to read array len for trace count".to_owned())
     })?;
 
+    // Intentionally skip the size of the array (as it will be recomputed after coalescing).
     let start_len = data.len();
 
     #[allow(clippy::expect_used)]
@@ -126,9 +123,12 @@ pub fn from_slice(mut data: &[u8]) -> Result<(Vec<Vec<SpanSlice<'_>>>, usize), D
                     .expect("Unable to cast trace_count to usize"),
             ),
             |mut traces, _| {
-                let span_count = rmp::decode::read_array_len(&mut data).map_err(|_| {
-                    DecodeError::InvalidFormat("Unable to read array len for span count".to_owned())
-                })?;
+                let span_count =
+                    rmp::decode::read_array_len(data.as_mut_slice()).map_err(|_| {
+                        DecodeError::InvalidFormat(
+                            "Unable to read array len for span count".to_owned(),
+                        )
+                    })?;
 
                 let trace = (0..span_count).try_fold(
                     Vec::with_capacity(
@@ -137,7 +137,7 @@ pub fn from_slice(mut data: &[u8]) -> Result<(Vec<Vec<SpanSlice<'_>>>, usize), D
                             .expect("Unable to cast span_count to usize"),
                     ),
                     |mut trace, _| {
-                        let span = decode_span(&mut data)?;
+                        let span = decode_span(data)?;
                         trace.push(span);
                         Ok(trace)
                     },

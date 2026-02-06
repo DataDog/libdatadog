@@ -16,6 +16,7 @@ use super::*;
 pub struct ErrorDataBuilder {
     pub kind: Option<ErrorKind>,
     pub message: Option<String>,
+    pub thread_name: Option<String>,
     pub stack: Option<StackTrace>,
     pub threads: Option<Vec<ThreadData>>,
 }
@@ -26,6 +27,7 @@ impl ErrorDataBuilder {
         let is_crash = true;
         let kind = self.kind.context("required field 'kind' missing")?;
         let message = self.message;
+        let thread_name = self.thread_name;
         let source_type = SourceType::Crashtracking;
         let stack = self.stack.unwrap_or_else(StackTrace::missing);
         let threads = self.threads.unwrap_or_default();
@@ -34,6 +36,7 @@ impl ErrorDataBuilder {
                 is_crash,
                 kind,
                 message,
+                thread_name,
                 source_type,
                 stack,
                 threads,
@@ -56,6 +59,14 @@ impl ErrorDataBuilder {
         Ok(())
     }
 
+    pub fn with_thread_name(&mut self, thread_name: String) -> anyhow::Result<()> {
+        if thread_name.trim().is_empty() {
+            return Ok(());
+        }
+        self.thread_name = Some(thread_name);
+        Ok(())
+    }
+
     pub fn with_stack(&mut self, stack: StackTrace) -> anyhow::Result<()> {
         self.stack = Some(stack);
         Ok(())
@@ -74,13 +85,11 @@ impl ErrorDataBuilder {
         if let Some(stack) = &mut self.stack {
             stack.set_complete()?;
         } else {
-            // With https://github.com/DataDog/libdatadog/pull/1076 it happens that stack trace are
-            // empty on musl based Linux (Alpine) because stack unwinding may not be able to unwind
-            // passed the signal handler. This by-passing for musl is temporary and needs a fix.
-            #[cfg(target_env = "musl")]
-            return Ok(());
-            #[cfg(not(target_env = "musl"))]
-            anyhow::bail!("Can't set non-existant stack complete");
+            // No frames were received, but we got the end marker. This can happen on
+            // certain platforms/contexts where stack unwinding fails to capture any
+            // frames (e.g., musl-based Linux). Initialize an empty but incomplete stack
+            // to indicate that stack collection did not succeed.
+            self.stack = Some(StackTrace::new_incomplete());
         }
         Ok(())
     }
@@ -292,6 +301,10 @@ impl CrashInfoBuilder {
         self.error.with_message(message)
     }
 
+    pub fn with_thread_name(&mut self, thread_name: String) -> anyhow::Result<()> {
+        self.error.with_thread_name(thread_name)
+    }
+
     pub fn with_metadata(&mut self, metadata: Metadata) -> anyhow::Result<()> {
         self.metadata = Some(metadata);
         Ok(())
@@ -340,7 +353,15 @@ impl CrashInfoBuilder {
     }
 
     pub fn with_stack_set_complete(&mut self) -> anyhow::Result<()> {
-        self.error.with_stack_set_complete()
+        let had_no_frames = self.error.stack.is_none();
+        self.error.with_stack_set_complete()?;
+        if had_no_frames {
+            self.with_log_message(
+                "No native stack frames received; stack unwinding may have failed".to_string(),
+                true,
+            )?;
+        }
+        Ok(())
     }
 
     pub fn with_thread(&mut self, thread: ThreadData) -> anyhow::Result<()> {
@@ -529,5 +550,103 @@ mod tests {
         builder.with_kind(ErrorKind::UnixSignal).unwrap();
         let report = builder.build().unwrap();
         assert!(report.error.message.as_ref().unwrap().len() >= 10000);
+    }
+
+    #[test]
+    fn test_no_frames_is_incomplete() {
+        // When we receive an end stacktrace marker but no frames were collected,
+        // we should create an empty incomplete stack rather than erroring.
+        let mut builder = ErrorDataBuilder::new();
+        assert!(builder.stack.is_none());
+
+        // This should succeed and create an empty incomplete stack
+        let result = builder.with_stack_set_complete();
+        assert!(result.is_ok());
+
+        // Verify we now have a stack that is incomplete (no frames were captured)
+        assert!(builder.stack.is_some());
+        let stack = builder.stack.as_ref().unwrap();
+        assert!(stack.frames.is_empty());
+        assert!(stack.incomplete);
+    }
+
+    #[test]
+    fn test_with_stack_set_complete_with_frames() {
+        // When we have frames and call set_complete, it should mark them complete
+        let mut builder = ErrorDataBuilder::new();
+
+        // Add a frame (which creates an incomplete stack)
+        let frame = StackFrame::test_instance(1);
+        builder.with_stack_frame(frame, true).unwrap();
+        assert!(builder.stack.as_ref().unwrap().incomplete);
+
+        // Mark complete
+        builder.with_stack_set_complete().unwrap();
+
+        // Verify stack is now complete
+        let stack = builder.stack.as_ref().unwrap();
+        assert_eq!(stack.frames.len(), 1);
+        assert!(!stack.incomplete);
+    }
+
+    #[test]
+    fn test_crash_info_builder_empty_stack_is_incomplete() {
+        // When no frames were captured, the stack and CrashInfo should be marked
+        // incomplete to indicate that stack collection did not succeed.
+        let mut builder = CrashInfoBuilder::new();
+        builder.with_kind(ErrorKind::UnixSignal).unwrap();
+
+        // Simulate receiving BEGIN_STACKTRACE then END_STACKTRACE with no frames
+        builder.with_stack_set_complete().unwrap();
+
+        let crash_info = builder.build().unwrap();
+
+        // The stack should be empty and incomplete (no frames were captured)
+        assert!(crash_info.error.stack.frames.is_empty());
+        assert!(crash_info.error.stack.incomplete);
+
+        // The overall crash info should be marked complete
+        assert!(!crash_info.incomplete);
+
+        // A log message should be recorded noting that no frames were received
+        assert!(crash_info
+            .log_messages
+            .iter()
+            .any(|msg| msg.contains("No native stack frames received")));
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)] // os_info::get() spawns subprocess, unsupported by Miri
+    fn test_with_os_info_this_machine() {
+        let mut builder = CrashInfoBuilder::new();
+        builder.with_kind(ErrorKind::UnixSignal).unwrap();
+
+        builder.with_os_info_this_machine().unwrap();
+
+        let crash_info = builder.build().unwrap();
+
+        // Verify os_info was populated with non-empty values from the current machine
+        assert!(!crash_info.os_info.architecture.is_empty());
+        assert!(!crash_info.os_info.bitness.is_empty());
+        assert!(!crash_info.os_info.os_type.is_empty());
+        assert!(!crash_info.os_info.version.is_empty());
+
+        // Verify that the os_info is not the "unknown" default values
+        assert_ne!(
+            crash_info.os_info.architecture, "unknown",
+            "architecture should not be 'unknown'"
+        );
+        assert_ne!(
+            crash_info.os_info.bitness, "unknown bitness",
+            "bitness should not be 'unknown bitness'"
+        );
+        assert_ne!(
+            crash_info.os_info.os_type, "Unknown",
+            "os_type should not be 'Unknown'"
+        );
+        assert_ne!(
+            crash_info.os_info.version, "Unknown",
+            "version should not be 'Unknown'"
+        );
     }
 }

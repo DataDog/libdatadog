@@ -32,7 +32,7 @@ const HTTP_200_RESPONSE: &[u8] = b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n"
 /// # Returns
 /// The path to the Unix socket (on Unix) or named pipe (on Windows) that the server is listening on
 #[cfg(unix)]
-pub(crate) fn spawn_dump_server(output_path: PathBuf) -> anyhow::Result<PathBuf> {
+pub fn spawn_dump_server(output_path: PathBuf) -> anyhow::Result<PathBuf> {
     use tokio::net::UnixListener;
 
     // Create a temporary socket path with randomness to avoid collisions
@@ -86,7 +86,7 @@ pub(crate) fn spawn_dump_server(output_path: PathBuf) -> anyhow::Result<PathBuf>
 /// # Returns
 /// The path to the Windows named pipe that the server is listening on
 #[cfg(windows)]
-pub(crate) fn spawn_dump_server(output_path: PathBuf) -> anyhow::Result<PathBuf> {
+pub fn spawn_dump_server(output_path: PathBuf) -> anyhow::Result<PathBuf> {
     use tokio::net::windows::named_pipe::ServerOptions;
 
     // Create a unique named pipe name with randomness to avoid collisions

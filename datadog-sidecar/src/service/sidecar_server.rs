@@ -29,7 +29,7 @@ use std::collections::{HashMap, HashSet};
 use std::pin::Pin;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 use tracing::{debug, error, info, trace, warn};
 
 use futures::FutureExt;
@@ -444,7 +444,7 @@ impl SidecarInterface for SidecarServer {
             );
             let mut telemetry = telemetry_mutex.lock_or_panic();
 
-            let mut actions_to_process = vec![];
+            let mut actions_to_process: Vec<SidecarAction> = vec![];
             let mut composer_paths_to_process = vec![];
             let mut buffered_info_changed = false;
             let mut remove_entry = false;
@@ -471,6 +471,11 @@ impl SidecarInterface for SidecarServer {
                     }
                     SidecarAction::ClearQueueId => {
                         remove_entry = true;
+                    }
+                    SidecarAction::Telemetry(TelemetryActions::AddEndpoint(_)) => {
+                        telemetry.last_endpoints_push = SystemTime::now();
+                        buffered_info_changed = true;
+                        actions_to_process.push(action);
                     }
                     SidecarAction::Telemetry(TelemetryActions::Lifecycle(
                         LifecycleAction::Stop,

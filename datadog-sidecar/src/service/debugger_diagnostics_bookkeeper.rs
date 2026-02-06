@@ -170,6 +170,7 @@ mod tests {
                 details: None,
             }),
             message: None,
+            process_tags: None,
         }
     }
 
