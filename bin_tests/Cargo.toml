@@ -48,3 +48,7 @@ bench = false
 [[bin]]
 name = "crashing_test_app"
 bench = false
+
+[[bin]]
+name = "prebuild"
+bench = false
