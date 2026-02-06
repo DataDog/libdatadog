@@ -16,17 +16,15 @@ int main() {
         std::cout << "=== Datadog Profiling CXX Bindings Example ===" << std::endl;
         std::cout << "\nCreating Profile..." << std::endl;
         
-        ValueType wall_time{
-            .type_ = "wall-time",
-            .unit = "nanoseconds"
-        };
-        
         Period period{
-            .value_type = wall_time,
+            .value_type = SampleType::WallTime,
             .value = 60
         };
         
-        auto profile = Profile::create({wall_time}, period);
+        // Create profile with predefined sample types
+        // Note: ExperimentalCount, ExperimentalNanoseconds, and ExperimentalBytes
+        // are available for custom profiling metrics
+        auto profile = Profile::create({SampleType::WallTime}, period);
         std::cout << "✅ Profile created" << std::endl;
         
         std::cout << "Adding upscaling rules..." << std::endl;
