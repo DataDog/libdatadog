@@ -428,7 +428,7 @@ pub unsafe extern "C" fn ddog_crasht_CrashInfoBuilder_with_thread_name(
 /// The `builder` can be null, but if non-null it must point to a Builder made by this module,
 /// which has not previously been dropped.
 /// All arguments must be valid.
-/// This method requires that the builder has a UUID, siginfo, and metadata set
+/// This method requires that the builder has a UUID, and metadata set
 #[no_mangle]
 #[must_use]
 #[named]
