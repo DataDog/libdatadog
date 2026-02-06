@@ -51,4 +51,5 @@ bench = false
 
 [[bin]]
 name = "prebuild"
+path = "src/bin/prebuild.rs"
 bench = false
