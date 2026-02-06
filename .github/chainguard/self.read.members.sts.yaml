@@ -1,0 +1,12 @@
+issuer: https://token.actions.githubusercontent.com
+
+subject_pattern: "project_path:DataDog/.*"
+
+claim_pattern:
+  project_id: "2260"
+  ref: "(main|release|julio/.*)" # TODO: remove testing branch and uncomment ref_protected
+  # ref_protected: "true"
+
+permissions:
+  members: read
+  metadata: read
