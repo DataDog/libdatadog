@@ -124,6 +124,7 @@ RUN echo \
     bin_tests/src/bin/crashtracker_receiver.rs \
     bin_tests/src/bin/crashing_test_app.rs \
     bin_tests/src/bin/crashtracker_unix_socket_receiver.rs \
+    bin_tests/src/bin/prebuild.rs \
     bin_tests/src/bin/test_the_tests.rs \
     builder/src/bin/release.rs \
     libdd-telemetry/examples/tm-worker-test.rs \

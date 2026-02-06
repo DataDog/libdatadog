@@ -11,14 +11,12 @@ use std::{fs, path::PathBuf};
 
 use anyhow::Context;
 use bin_tests::{
+    artifacts::{self, StandardArtifacts},
     build_artifacts,
-    test_runner::{
-        run_crash_no_op, run_crash_test_with_artifacts, CrashTestConfig, StandardArtifacts,
-        ValidatorFn,
-    },
+    test_runner::{run_crash_no_op, run_crash_test_with_artifacts, CrashTestConfig, ValidatorFn},
     test_types::{CrashType, TestMode},
     validation::PayloadValidator,
-    ArtifactType, ArtifactsBuild, BuildProfile,
+    ArtifactsBuild, BuildProfile,
 };
 use libdd_crashtracker::{
     CrashtrackerConfiguration, Metadata, SiCodes, SigInfo, SignalNames, StacktraceCollection,
@@ -404,8 +402,8 @@ fn test_crash_tracking_app(crash_type: &str) {
     use bin_tests::test_runner::run_custom_crash_test;
 
     // Set up custom artifacts: receiver + crashing_test_app with panic_abort
-    let crashtracker_receiver = create_crashtracker_receiver(BuildProfile::Release);
-    let crashing_app = create_crashing_app(BuildProfile::Debug, true);
+    let crashtracker_receiver = artifacts::crashtracker_receiver(BuildProfile::Release);
+    let crashing_app = artifacts::crashing_app(BuildProfile::Debug, true);
 
     let artifacts_map = build_artifacts(&[&crashtracker_receiver, &crashing_app]).unwrap();
 
@@ -482,8 +480,8 @@ fn test_panic_hook_mode(mode: &str, expected_category: &str, expected_panic_mess
     use bin_tests::test_runner::run_custom_crash_test;
 
     // Set up custom artifacts: receiver + crashtracker_bin_test
-    let crashtracker_receiver = create_crashtracker_receiver(BuildProfile::Release);
-    let crashtracker_bin_test = create_crashtracker_bin_test(BuildProfile::Debug, true);
+    let crashtracker_receiver = artifacts::crashtracker_receiver(BuildProfile::Release);
+    let crashtracker_bin_test = artifacts::crashtracker_bin_test(BuildProfile::Debug, true);
 
     let artifacts_map = build_artifacts(&[&crashtracker_receiver, &crashtracker_bin_test]).unwrap();
 
@@ -562,9 +560,9 @@ fn test_crash_tracking_callstack() {
     use bin_tests::test_runner::run_custom_crash_test;
 
     // Set up custom artifacts: receiver + crashing_test_app (in Debug mode)
-    let crashtracker_receiver = create_crashtracker_receiver(BuildProfile::Release);
+    let crashtracker_receiver = artifacts::crashtracker_receiver(BuildProfile::Release);
     // compile in debug so we avoid inlining and can check the callchain
-    let crashing_app = create_crashing_app(BuildProfile::Debug, false);
+    let crashing_app = artifacts::crashing_app(BuildProfile::Debug, false);
 
     let artifacts_map = build_artifacts(&[&crashtracker_receiver, &crashing_app]).unwrap();
 
@@ -1308,13 +1306,7 @@ fn crash_tracking_empty_endpoint() {
 #[cfg_attr(miri, ignore)]
 #[cfg(unix)]
 fn test_receiver_emits_debug_logs_on_receiver_issue() -> anyhow::Result<()> {
-    let receiver = ArtifactsBuild {
-        name: "test_crashtracker_receiver".to_owned(),
-        build_profile: BuildProfile::Debug,
-        artifact_type: ArtifactType::Bin,
-        triple_target: None,
-        ..Default::default()
-    };
+    let receiver = artifacts::crashtracker_receiver(BuildProfile::Debug);
     let artifacts = build_artifacts(&[&receiver])?;
     let fixtures = bin_tests::test_runner::TestFixtures::new()?;
 
@@ -1605,44 +1597,9 @@ fn setup_test_fixtures<'a>(crates: &[&'a ArtifactsBuild]) -> TestFixtures<'a> {
 fn setup_crashtracking_crates(
     crash_tracking_receiver_profile: BuildProfile,
 ) -> (ArtifactsBuild, ArtifactsBuild) {
-    let crashtracker_bin = create_crashtracker_bin_test(crash_tracking_receiver_profile, false);
-    let crashtracker_receiver = create_crashtracker_receiver(crash_tracking_receiver_profile);
+    let crashtracker_bin = artifacts::crashtracker_bin_test(crash_tracking_receiver_profile, false);
+    let crashtracker_receiver = artifacts::crashtracker_receiver(crash_tracking_receiver_profile);
     (crashtracker_bin, crashtracker_receiver)
-}
-
-// Helper functions for creating common artifact configurations
-
-fn create_crashtracker_receiver(profile: BuildProfile) -> ArtifactsBuild {
-    ArtifactsBuild {
-        name: "test_crashtracker_receiver".to_owned(),
-        build_profile: profile,
-        artifact_type: ArtifactType::Bin,
-        triple_target: None,
-        ..Default::default()
-    }
-}
-
-#[cfg(not(target_os = "macos"))]
-fn create_crashing_app(profile: BuildProfile, panic_abort: bool) -> ArtifactsBuild {
-    ArtifactsBuild {
-        name: "crashing_test_app".to_owned(),
-        build_profile: profile,
-        artifact_type: ArtifactType::Bin,
-        triple_target: None,
-        panic_abort: if panic_abort { Some(true) } else { None },
-        ..Default::default()
-    }
-}
-
-fn create_crashtracker_bin_test(profile: BuildProfile, panic_abort: bool) -> ArtifactsBuild {
-    ArtifactsBuild {
-        name: "crashtracker_bin_test".to_owned(),
-        build_profile: profile,
-        artifact_type: ArtifactType::Bin,
-        triple_target: None,
-        panic_abort: if panic_abort { Some(true) } else { None },
-        ..Default::default()
-    }
 }
 
 #[cfg(unix)]

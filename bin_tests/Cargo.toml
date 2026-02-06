@@ -48,3 +48,8 @@ bench = false
 [[bin]]
 name = "crashing_test_app"
 bench = false
+
+[[bin]]
+name = "prebuild"
+path = "src/bin/prebuild.rs"
+bench = false
