@@ -1685,9 +1685,8 @@ version = "26.0.0"
 dependencies = [
  "anyhow",
  "datadog-remote-config",
- "http-body-util",
+ "httpmock",
  "hyper 1.6.0",
- "hyper-util",
  "libdd-common",
  "libdd-trace-utils",
  "serde_json",

@@ -146,13 +146,17 @@ mod tests {
 
     #[test]
     fn test_serialization() {
-        let task = AgentTask {
-            case_id: "12345".to_string(),
-            hostname: "test-host".to_string(),
-            user_handle: "test@example.com".to_string(),
+        let task = AgentTaskFile {
+            args: AgentTask {
+                case_id: "12345".to_string(),
+                hostname: "test-host".to_string(),
+                user_handle: "test@example.com".to_string(),
+            },
+            task_type: "tracer_flare".to_string(),
+            uuid: "test-uuid".to_string(),
         };
 
         let serialized = serde_json::to_string(&task).unwrap();
-        assert!(serialized.contains("\"case_id\":\"12345\""));
+        assert!(serialized.eq(r#"{"args":{"case_id":"12345","hostname":"test-host","user_handle":"test@example.com"},"task_type":"tracer_flare","uuid":"test-uuid"}"#));
     }
 }

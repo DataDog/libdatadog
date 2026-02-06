@@ -105,11 +105,14 @@ mod tests {
 
     #[test]
     fn test_serialization() {
-        let config = AgentConfig {
-            log_level: Some("warn".to_string()),
+        let config = AgentConfigFile {
+            name: "flare-log-level.warn".to_string(),
+            config: AgentConfig {
+                log_level: Some("warn".to_string()),
+            },
         };
 
         let serialized = serde_json::to_string(&config).unwrap();
-        assert!(serialized.contains("\"log_level\":\"warn\""));
+        assert!(serialized.eq(r#"{"name":"flare-log-level.warn","config":{"log_level":"warn"}}"#));
     }
 }
