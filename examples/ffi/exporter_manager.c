@@ -9,6 +9,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/wait.h>
 #include <unistd.h>
 
 static ddog_CharSlice to_slice_c_char(const char *s) { return (ddog_CharSlice){.ptr = s, .len = strlen(s)}; }
@@ -72,6 +73,9 @@ ddog_prof_Profile *create_profile_with_sample(void) {
 }
 
 int main(int argc, char *argv[]) {
+    // Disable stdout buffering to ensure output is visible even on crash
+    setvbuf(stdout, NULL, _IONBF, 0);
+
     // Default service name for automated testing
     const char *service = (argc >= 2) ? argv[1] : "libdatadog-test";
 

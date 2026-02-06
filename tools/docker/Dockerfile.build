@@ -112,6 +112,8 @@ COPY "datadog-ipc/plugins/Cargo.toml" "datadog-ipc/plugins/"
 COPY "libdd-data-pipeline/Cargo.toml" "libdd-data-pipeline/"
 COPY "libdd-data-pipeline-ffi/Cargo.toml" "libdd-data-pipeline-ffi/"
 COPY "bin_tests/Cargo.toml"  "bin_tests/"
+COPY "bin_tests/build.rs"  "bin_tests/"
+COPY "bin_tests/preload/preload.c"  "bin_tests/preload/"
 COPY "libdd-tinybytes/Cargo.toml" "libdd-tinybytes/"
 COPY "builder/Cargo.toml"  "builder/"
 COPY "datadog-ffe/Cargo.toml" "datadog-ffe/"
@@ -140,6 +142,7 @@ RUN echo \
     tools/sidecar_mockgen/src/bin/sidecar_mockgen.rs \
     tools/src/bin/dedup_headers.rs \
     tools/src/bin/ffi_test.rs \
+    tools/src/bin/add_junit_file_attributes.rs \
     libdd-trace-normalization/benches/normalization_utils.rs \
     libdd-trace-obfuscation/benches/trace_obfuscation.rs \
     libdd-trace-utils/benches/deserialization.rs \

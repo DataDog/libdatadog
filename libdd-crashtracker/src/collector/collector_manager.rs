@@ -38,6 +38,9 @@ impl Collector {
         // SAFETY: This function has no safety requirements.
         let pid = unsafe { libc::getpid() };
 
+        // Get the current tid to identify thread info
+        let tid = current_tid();
+
         let fork_result = alt_fork();
         match fork_result {
             0 => {
@@ -51,6 +54,7 @@ impl Collector {
                     ucontext,
                     receiver.handle.uds_fd,
                     pid,
+                    tid,
                 );
             }
             pid if pid > 0 => Ok(Self {
@@ -68,6 +72,18 @@ impl Collector {
     }
 }
 
+#[cfg(target_os = "linux")]
+fn current_tid() -> libc::pid_t {
+    // Prefer the raw syscall to avoid linking against libc's gettid symbol on glibc versions
+    // where it may not be exposed.
+    unsafe { libc::syscall(libc::SYS_gettid) as libc::pid_t }
+}
+
+#[cfg(not(target_os = "linux"))]
+fn current_tid() -> libc::pid_t {
+    0
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn run_collector_child(
     config: &CrashtrackerConfiguration,
@@ -78,6 +94,7 @@ pub(crate) fn run_collector_child(
     ucontext: *const ucontext_t,
     uds_fd: RawFd,
     ppid: libc::pid_t,
+    crashing_tid: libc::pid_t,
 ) -> ! {
     // Close stdio
     let _ = unsafe { libc::close(0) };
@@ -104,6 +121,7 @@ pub(crate) fn run_collector_child(
         sig_info,
         ucontext,
         ppid,
+        crashing_tid,
     );
     if let Err(e) = report {
         eprintln!("Failed to flush crash report: {e}");

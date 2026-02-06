@@ -8,6 +8,9 @@ jobs:
   test:
     name: "cargo test --workspace #${{ matrix.platform }} ${{ matrix.rust_version }}"
     runs-on: ${{ matrix.platform }}
+    permissions:
+      checks: write
+      contents: read
     env:
       CARGO_TERM_COLOR: always
       CARGO_INCREMENTAL: 0
@@ -72,6 +75,10 @@ jobs:
         env:
           RUSTFLAGS: "-C prefer-dynamic"
           RUST_BACKTRACE: full
+      - name: Add file attributes to JUnit XML
+        if: success() || failure()
+        shell: bash
+        run: cargo run --bin add_junit_file_attributes -- target/nextest/ci/junit.xml
       - name: Report Test Results
         if: success() || failure()
         uses: mikepenz/action-junit-report@db71d41eb79864e25ab0337e395c352e84523afe # 4.3.1
