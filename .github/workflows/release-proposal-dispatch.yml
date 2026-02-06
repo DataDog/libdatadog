@@ -290,8 +290,9 @@ jobs:
     needs: cargo-release
     runs-on: ubuntu-latest
     permissions:
+      id-token: write # Enable OIDC
       pull-requests: write
-      contents: read
+      contents: write
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # 4.2.2
         with:
@@ -347,3 +348,9 @@ jobs:
             --body "$PR_BODY" \
             --base "${{ env.RELEASE_BRANCH }}"
 
+      - name: Cleanup on failure
+        if: failure() && needs.cargo-release.outputs.branch_name != ''
+        run: |
+          BRANCH_NAME="${{ needs.cargo-release.outputs.branch_name }}"
+          echo "Job failed, deleting branch $BRANCH_NAME..."
+          git push origin --delete "$BRANCH_NAME" || echo "Failed to delete branch (may not exist on remote)"
