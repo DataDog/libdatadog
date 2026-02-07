@@ -15,8 +15,6 @@ const MEASURED_KEY: &str = "_dd.measured";
 const PARTIAL_VERSION_KEY: &str = "_dd.partial_version";
 
 fn set_top_level_span<D: TraceData, T: TraceProjector<D>>(span: &mut SpanMut<T, D>, is_top_level: bool)
-where
-    for<'a> TraceAttributes<'a, T, D, AttrRef<'a, T::Span<'a>>, T::Span<'a>, MUT>: TraceAttributesMutOp<T, D, T::Span<'a>>,
 {
     if is_top_level {
         span.attributes_mut().set_double(TOP_LEVEL_KEY, 1.0);
@@ -75,8 +73,6 @@ pub fn compute_top_level_span<D: TraceData, T: TraceProjector<D>>(trace: &mut Tr
 
 /// Return true if the span has a top level key set
 pub fn has_top_level<D: TraceData, T: TraceProjector<D>>(span: &Span<T, D>) -> bool
-where
-    for<'a> TraceAttributes<'a, T, D, AttrRef<'a, T::Span<'a>>, T::Span<'a>>: TraceAttributesOp<T, D, T::Span<'a>>,
 {
     span.attributes()
         .get_double(TRACER_TOP_LEVEL_KEY)
@@ -86,8 +82,6 @@ where
 
 /// Returns true if a span should be measured (i.e., it should get trace metrics calculated).
 pub fn is_measured<D: TraceData, T: TraceProjector<D>>(span: &Span<T, D>) -> bool
-where
-    for<'a> TraceAttributes<'a, T, D, AttrRef<'a, T::Span<'a>>, T::Span<'a>>: TraceAttributesOp<T, D, T::Span<'a>>,
 {
     span.attributes().get_double(MEASURED_KEY).is_some_and(|v| v == 1.0)
 }
@@ -98,8 +92,6 @@ where
 /// integer. The metric usually increases each time a new version of the same span is sent by
 /// the tracer
 pub fn is_partial_snapshot<D: TraceData, T: TraceProjector<D>>(span: &Span<T, D>) -> bool
-where
-    for<'a> TraceAttributes<'a, T, D, AttrRef<'a, T::Span<'a>>, T::Span<'a>>: TraceAttributesOp<T, D, T::Span<'a>>,
 {
     span.attributes()
         .get_double(PARTIAL_VERSION_KEY)
@@ -127,8 +119,6 @@ const SAMPLING_ANALYTICS_RATE_KEY: &str = "_dd1.sr.eausr";
 /// # Trace-level attributes
 /// Some attributes related to the whole trace are stored in the root span of the chunk.
 pub fn drop_chunks<'a, D: TraceData, T: TraceProjector<D>>(traces: &'a mut TracesMut<'a, T, D>) -> DroppedP0Stats
-where
-    for<'b> TraceAttributes<'b, T, D, AttrRef<'b, T::Span<'b>>, T::Span<'b>>: TraceAttributesOp<T, D, T::Span<'b>>,
 {
     let mut dropped_p0_traces = 0;
     let mut dropped_p0_spans = 0;

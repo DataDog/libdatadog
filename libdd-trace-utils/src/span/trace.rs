@@ -2,9 +2,20 @@ use std::hash::Hash;
 use std::marker::PhantomData;
 use hashbrown::Equivalent;
 use libdd_trace_protobuf::pb::idx::SpanKind;
-use crate::span::{IntoData, OwnedTraceData, SpanBytes, SpanText, SpanDataContents, TraceData};
+use crate::span::{IntoData, OwnedTraceData, SpanBytes, SpanText, SpanDataContents, TraceData, ImpliedPredicate, HasAssoc};
 
-pub trait TraceProjector<D: TraceData>: Sized {
+pub trait TraceProjector<D: TraceData>: Sized
+    + for<'a> ImpliedPredicate<TraceAttributes<'a, Self, D, AttrRef<'a, Self::Trace<'a>>, Self::Trace<'a>>, Impls: TraceAttributesOp<Self, D, Self::Trace<'a>>>
+    + for<'a> ImpliedPredicate<TraceAttributes<'a, Self, D, AttrRef<'a, Self::Chunk<'a>>, Self::Chunk<'a>>, Impls: TraceAttributesOp<Self, D, Self::Chunk<'a>>>
+    + for<'a> ImpliedPredicate<TraceAttributes<'a, Self, D, AttrRef<'a, Self::Span<'a>>, Self::Span<'a>>, Impls: TraceAttributesOp<Self, D, Self::Span<'a>>>
+    + for<'a> ImpliedPredicate<TraceAttributes<'a, Self, D, AttrRef<'a, Self::SpanLink<'a>>, Self::SpanLink<'a>>, Impls: TraceAttributesOp<Self, D, Self::SpanLink<'a>>>
+    + for<'a> ImpliedPredicate<TraceAttributes<'a, Self, D, AttrRef<'a, Self::SpanEvent<'a>>, Self::SpanEvent<'a>>, Impls: TraceAttributesOp<Self, D, Self::SpanEvent<'a>>>
+    + for<'a> ImpliedPredicate<TraceAttributesMut<'a, Self, D, AttrRef<'a, Self::Trace<'a>>, Self::Trace<'a>>, Impls: TraceAttributesMutOp<Self, D, Self::Trace<'a>>>
+    + for<'a> ImpliedPredicate<TraceAttributesMut<'a, Self, D, AttrRef<'a, Self::Chunk<'a>>, Self::Chunk<'a>>, Impls: TraceAttributesMutOp<Self, D, Self::Chunk<'a>>>
+    + for<'a> ImpliedPredicate<TraceAttributesMut<'a, Self, D, AttrRef<'a, Self::Span<'a>>, Self::Span<'a>>, Impls: TraceAttributesMutOp<Self, D, Self::Span<'a>>>
+    + for<'a> ImpliedPredicate<TraceAttributesMut<'a, Self, D, AttrRef<'a, Self::SpanLink<'a>>, Self::SpanLink<'a>>, Impls: TraceAttributesMutOp<Self, D, Self::SpanLink<'a>>>
+    + for<'a> ImpliedPredicate<TraceAttributesMut<'a, Self, D, AttrRef<'a, Self::SpanEvent<'a>>, Self::SpanEvent<'a>>, Impls: TraceAttributesMutOp<Self, D, Self::SpanEvent<'a>>>
+{
     type Storage<'a>: 'a;
     type Trace<'a>: 'a;
     type Chunk<'a>: 'a;
@@ -839,7 +850,8 @@ impl<T: TraceProjector<D>, D: TraceData, C: Clone> Clone for AttributeArray<'_, 
 }
 impl<T: TraceProjector<D>, D: TraceData, C: Copy> Copy for AttributeArray<'_, T, D, C> {}
 
-pub trait AttributeArrayOp<T: TraceProjector<D>, D: TraceData>: Sized {
+pub trait AttributeArrayOp<T: TraceProjector<D>, D: TraceData>: Sized + for<'a> ImpliedPredicate<TraceAttributes<'a, T, D, AttrOwned<Self>, Self>, Impls: TraceAttributesOp<T, D, Self>>
+{
     fn get_attribute_array_len(&self, storage: &T::Storage<'_>) -> usize;
     fn get_attribute_array_value<'a>(&'a self, storage: &'a T::Storage<'a>, index: usize) -> AttributeAnyGetterContainer<'a, TraceAttributes<'a, T, D, AttrOwned<Self>, Self>, T, D, Self>;
 }
@@ -854,7 +866,8 @@ impl<T: TraceProjector<D>, D: TraceData> AttributeArrayOp<T, D> for () {
     }
 }
 
-pub trait AttributeArrayMutOp<T: TraceProjector<D>, D: TraceData>: AttributeArrayOp<T, D> {
+pub trait AttributeArrayMutOp<T: TraceProjector<D>, D: TraceData>: AttributeArrayOp<T, D> + for<'a> ImpliedPredicate<TraceAttributesMut<'a, T, D, AttrOwned<Self>, Self>, Impls: TraceAttributesMutOp<T, D, Self>>
+{
     fn get_attribute_array_value_mut(&mut self, storage: &mut T::Storage<'_>, index: usize) -> Option<AttributeAnySetterContainer<TraceAttributesMut<T, D, AttrOwned<Self>, Self>, T, D, Self>>;
     fn append_attribute_array_value(&mut self, storage: &mut T::Storage<'_>, value: AttributeAnyValueType) -> AttributeAnySetterContainer<TraceAttributesMut<T, D, AttrOwned<Self>, Self>, T, D, Self>;
 }
@@ -880,7 +893,6 @@ impl<T: TraceProjector<D>, D: TraceData> AttributeArrayMutOp<T, D> for () {
 impl<'a, T: TraceProjector<D>, D: TraceData, C, const Mut: u8> AttributeArray<'a, T, D, C, Mut>
 where
     C: AttributeArrayOp<T, D>,
-    TraceAttributes<'a, T, D, AttrOwned<C>, C>: TraceAttributesOp<T, D, C>,
 {
     fn len(&self) -> usize {
         self.container.get_attribute_array_len(self.storage)
@@ -894,7 +906,6 @@ where
 impl<'a, T: TraceProjector<D>, D: TraceData, C> AttributeArrayMut<'a, T, D, C>
 where
     C: AttributeArrayMutOp<T, D>,
-    TraceAttributesMut<'a, T, D, AttrOwned<C>, C>: TraceAttributesMutOp<T, D, C>,
 {
     fn get_mut(&'a mut self, index: usize) -> Option<AttributeAnySetterContainer<'a, TraceAttributesMut<'a, T, D, AttrOwned<C>, C>, T, D, C>> {
         unsafe { self.container.get_attribute_array_value_mut(as_mut(self.storage), index) }
@@ -903,7 +914,7 @@ where
     fn append(&'a mut self, value: AttributeAnyValueType) -> AttributeAnySetterContainer<'a, TraceAttributesMut<'a, T, D, AttrOwned<C>, C>, T, D, C> {
         unsafe { self.container.append_attribute_array_value(as_mut(self.storage), value) }
     }
-    
+
     // TODO: retain_mut
 }
 
@@ -1013,10 +1024,25 @@ impl<T: TraceProjector<D>, D: TraceData, V: AttrVal<C> + Clone, C> Clone for Tra
 }
 impl<T: TraceProjector<D>, D: TraceData, A: AttrVal<C> + Copy, C> Copy for TraceAttributes<'_, T, D, A, C> {}
 
+// Helper traits to break the recursion cycle in TraceAttributesOp
+pub trait ArrayAttributesOp<T: TraceProjector<D>, D: TraceData>:
+    AttributeArrayOp<T, D>
+{}
+
+pub trait MapAttributesOp<T: TraceProjector<D>, D: TraceData> {}
+
+// Blanket implementations - any type implementing the base trait gets the helper trait
+impl<T: TraceProjector<D>, D: TraceData, C> ArrayAttributesOp<T, D> for C
+where
+    C: AttributeArrayOp<T, D>,
+{}
+
+impl<T: TraceProjector<D>, D: TraceData, C> MapAttributesOp<T, D> for C {}
+
 pub trait TraceAttributesOp<T: TraceProjector<D>, D: TraceData, C>
 {
-    type Array;
-    type Map;
+    type Array: ArrayAttributesOp<T, D>;
+    type Map: MapAttributesOp<T, D>;
 
     fn get<'a, K>(container: &'a C, storage: &'a T::Storage<'a>, key: &K) -> Option<AttributeAnyGetterContainer<'a, Self, T, D, C>>
     where
@@ -1045,6 +1071,21 @@ impl<'b, T: TraceProjector<D>, D: TraceData, const Mut: u8> TraceAttributesOp<T,
     }
 }
 
+// Helper traits to break the recursion cycle in TraceAttributesMutOp
+pub trait ArrayAttributesMutOp<T: TraceProjector<D>, D: TraceData>:
+    AttributeArrayMutOp<T, D>
+{}
+
+pub trait MapAttributesMutOp<T: TraceProjector<D>, D: TraceData> {}
+
+// Blanket implementations - any type implementing the base trait gets the helper trait
+impl<T: TraceProjector<D>, D: TraceData, C> ArrayAttributesMutOp<T, D> for C
+where
+    C: AttributeArrayMutOp<T, D>,
+{}
+
+impl<T: TraceProjector<D>, D: TraceData, C> MapAttributesMutOp<T, D> for C {}
+
 pub trait TraceAttributesMutOp<T: TraceProjector<D>, D: TraceData, C>: TraceAttributesOp<T, D, C>
 where
     Self::MutString: TraceAttributesString<T, D>,
@@ -1058,8 +1099,8 @@ where
     type MutBoolean;
     type MutInteger;
     type MutDouble;
-    type MutArray;
-    type MutMap;
+    type MutArray: ArrayAttributesMutOp<T, D>;
+    type MutMap: MapAttributesMutOp<T, D>;
 
     fn get_mut<'a, K>(container: &'a mut C, storage: &'a mut T::Storage<'a>, key: &K) -> Option<AttributeAnySetterContainer<'a, Self, T, D, C>>
     where
@@ -1336,7 +1377,7 @@ where
     }
 }
 
-impl<'a, T: TraceProjector<D>, D: TraceData, V: AttrVal<C>, C: 'a> TraceAttributes<'a, T, D, V, C>
+impl<'a, T: TraceProjector<D>, D: TraceData, V: AttrVal<C>, C: 'a> TraceAttributesMut<'a, T, D, V, C>
 where
     D::Text: Clone + From<String> + for<'b> From<&'b str>,
     D::Bytes: Clone + From<Vec<u8>> + for<'b> From<&'b [u8]>,

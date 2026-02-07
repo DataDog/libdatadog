@@ -3320,6 +3320,7 @@ dependencies = [
 name = "libdd-tinybytes"
 version = "1.0.0"
 dependencies = [
+ "hashbrown 0.15.1",
  "libdd-tinybytes",
  "once_cell",
  "pretty_assertions",
