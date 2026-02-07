@@ -17,6 +17,7 @@ pub enum RemoteConfigData {
     LiveDebugger(LiveDebuggingData),
     TracerFlareConfig(AgentConfigFile),
     TracerFlareTask(AgentTaskFile),
+    FfeFlags(Vec<u8>),
     Ignored(RemoteConfigProduct),
 }
 
@@ -40,6 +41,7 @@ impl RemoteConfigData {
                 let parsed = datadog_live_debugger::parse_json(&String::from_utf8_lossy(data))?;
                 RemoteConfigData::LiveDebugger(parsed)
             }
+            RemoteConfigProduct::FfeFlags => RemoteConfigData::FfeFlags(data.to_vec()),
             _ => RemoteConfigData::Ignored(product),
         })
     }
@@ -53,6 +55,7 @@ impl From<&RemoteConfigData> for RemoteConfigProduct {
             RemoteConfigData::LiveDebugger(_) => RemoteConfigProduct::LiveDebugger,
             RemoteConfigData::TracerFlareConfig(_) => RemoteConfigProduct::AgentConfig,
             RemoteConfigData::TracerFlareTask(_) => RemoteConfigProduct::AgentTask,
+            RemoteConfigData::FfeFlags(_) => RemoteConfigProduct::FfeFlags,
             RemoteConfigData::Ignored(product) => *product,
         }
     }
