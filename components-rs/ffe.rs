@@ -1,12 +1,11 @@
 use datadog_ffe::rules_based::{
-    self as ffe, AssignmentReason, AssignmentValue, Configuration, EvaluationContext,
-    EvaluationError, UniversalFlagConfig,
+    self as ffe, Attribute, AssignmentReason, AssignmentValue, Configuration, EvaluationContext,
+    EvaluationError, Str, UniversalFlagConfig,
 };
-use serde_json::Value;
 use std::collections::HashMap;
 use std::ffi::{c_char, CStr, CString};
 use std::ptr;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 lazy_static::lazy_static! {
     static ref FFE_CONFIG: Mutex<Option<Configuration>> = Mutex::new(None);
@@ -103,12 +102,9 @@ pub extern "C" fn ddog_ffe_evaluate(
     // Parse context from JSON
     let context = if !context_json.is_null() && context_json_len > 0 {
         let bytes = unsafe { std::slice::from_raw_parts(context_json, context_json_len) };
-        match serde_json::from_slice::<EvaluationContext>(bytes) {
-            Ok(ctx) => ctx,
-            Err(_) => EvaluationContext::default(),
-        }
+        parse_evaluation_context(bytes)
     } else {
-        EvaluationContext::default()
+        EvaluationContext::new(None, Arc::new(HashMap::new()))
     };
 
     let guard = match FFE_CONFIG.lock() {
@@ -281,16 +277,47 @@ fn assignment_value_to_json(value: &AssignmentValue) -> String {
         AssignmentValue::String(s) => serde_json::to_string(s.as_str()).unwrap_or_default(),
         AssignmentValue::Integer(i) => i.to_string(),
         AssignmentValue::Float(f) => {
-            // Ensure floats are serialized consistently
-            if f.fract() == 0.0 && f.abs() < i64::MAX as f64 {
-                format!("{f:.1}")
-            } else {
-                serde_json::Number::from_f64(*f)
-                    .map(|n| n.to_string())
-                    .unwrap_or_else(|| f.to_string())
-            }
+            serde_json::Number::from_f64(*f)
+                .map(|n| n.to_string())
+                .unwrap_or_else(|| f.to_string())
         }
         AssignmentValue::Boolean(b) => b.to_string(),
-        AssignmentValue::Json(v) => serde_json::to_string(v).unwrap_or_default(),
+        AssignmentValue::Json { raw, .. } => raw.get().to_string(),
     }
+}
+
+/// Parse a JSON evaluation context into an EvaluationContext.
+/// Expected format: {"targeting_key": "...", "attributes": {"key": value, ...}}
+fn parse_evaluation_context(bytes: &[u8]) -> EvaluationContext {
+    let parsed: serde_json::Value = match serde_json::from_slice(bytes) {
+        Ok(v) => v,
+        Err(_) => return EvaluationContext::new(None, Arc::new(HashMap::new())),
+    };
+
+    let targeting_key = parsed
+        .get("targeting_key")
+        .and_then(|v| v.as_str())
+        .map(Str::from);
+
+    let mut attributes = HashMap::new();
+    if let Some(attrs) = parsed.get("attributes").and_then(|v| v.as_object()) {
+        for (k, v) in attrs {
+            let attr = match v {
+                serde_json::Value::String(s) => Attribute::from(s.as_str()),
+                serde_json::Value::Number(n) => {
+                    if let Some(f) = n.as_f64() {
+                        Attribute::from(f)
+                    } else {
+                        continue;
+                    }
+                }
+                serde_json::Value::Bool(b) => Attribute::from(*b),
+                serde_json::Value::Null => continue,
+                _ => continue,
+            };
+            attributes.insert(Str::from(k.as_str()), attr);
+        }
+    }
+
+    EvaluationContext::new(targeting_key, Arc::new(attributes))
 }
