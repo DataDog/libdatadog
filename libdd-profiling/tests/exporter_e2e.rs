@@ -5,8 +5,10 @@
 //!
 //! These tests validate the full export flow across different endpoint types.
 
+mod common;
+
+use libdd_common::test_utils::parse_http_request;
 use libdd_profiling::exporter::config;
-use libdd_profiling::exporter::utils::parse_http_request;
 use libdd_profiling::exporter::{File, ProfileExporter};
 use libdd_profiling::internal::EncodedProfile;
 use std::collections::HashMap;
@@ -126,9 +128,8 @@ async fn spawn_server(transport: Transport) -> anyhow::Result<ServerInfo> {
                 }
             });
 
-            // Give the server a moment to start listening
-            tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
-
+            // No sleep needed - create() synchronously creates the pipe and makes it ready,
+            // just like bind() for TCP/UDS
             Ok(ServerInfo {
                 port: None,
                 #[cfg(unix)]
@@ -274,7 +275,7 @@ async fn export_full_profile(
     // Get the request from the appropriate source
     match source {
         RequestSource::File(path) => {
-            tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+            // No sleep needed - send_blocking() waits for file to be synced
             let request_bytes = std::fs::read(&path)?;
             let req = parse_http_request(&request_bytes)?;
             Ok(ReceivedRequest {
@@ -285,7 +286,8 @@ async fn export_full_profile(
             })
         }
         RequestSource::Captured(requests) => {
-            tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+            // No sleep needed - send().await waits until HTTP response is received,
+            // which means the server has already captured the request
             let reqs = requests.lock().unwrap();
             if reqs.is_empty() {
                 anyhow::bail!("No request captured");
@@ -300,6 +302,9 @@ fn validate_full_export(req: &ReceivedRequest, expected_path: &str) -> anyhow::R
     // Verify request basics
     assert_eq!(req.method, "POST");
     assert_eq!(req.path, expected_path);
+
+    // Check for entity headers and validate their values match what libdd_common provides
+    common::assert_entity_headers_match(&req.headers);
 
     // Parse the request to get multipart parts
     // We need to reconstruct a minimal HTTP request to parse

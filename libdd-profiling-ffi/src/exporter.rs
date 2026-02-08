@@ -7,9 +7,11 @@
 use function_name::named;
 use libdd_common::tag::Tag;
 use libdd_common_ffi::slice::{AsBytes, ByteSlice, CharSlice, Slice};
-use libdd_common_ffi::{wrap_with_ffi_result, Handle, Result, ToInner};
+use libdd_common_ffi::{
+    wrap_with_ffi_result, wrap_with_void_ffi_result, Handle, Result, ToInner, VoidResult,
+};
 use libdd_profiling::exporter;
-use libdd_profiling::exporter::ProfileExporter;
+use libdd_profiling::exporter::{ExporterManager, ProfileExporter};
 use libdd_profiling::internal::EncodedProfile;
 use std::borrow::Cow;
 use std::str::FromStr;
@@ -337,6 +339,165 @@ pub unsafe extern "C" fn ddog_CancellationToken_drop(
     drop(token.take())
 }
 
+// ============================================================================
+// ExporterManager - Async background worker for exporting profiles
+// ============================================================================
+
+/// Creates a new ExporterManager with a background worker thread.
+///
+/// The ExporterManager provides asynchronous profle export capabilities through a
+/// background worker thread and bounded channel.
+///
+/// # Arguments
+/// * `exporter` - Takes ownership of the ProfileExporter to use for sending profiles.
+///
+/// # Safety
+/// The `exporter` must point to a valid ProfileExporter that has not been dropped.
+#[no_mangle]
+#[must_use]
+#[named]
+pub unsafe extern "C" fn ddog_prof_ExporterManager_new(
+    mut exporter: *mut Handle<ProfileExporter>,
+) -> Result<Handle<ExporterManager>> {
+    wrap_with_ffi_result!({
+        let exporter = *exporter.take()?;
+        anyhow::Ok(ExporterManager::new(exporter)?.into())
+    })
+}
+
+/// Queues a profile to be sent asynchronously by the background worker thread.
+///
+/// **Important**: This function resets the profile and queues the *previous* profile data.
+/// After calling this, the profile will be empty and ready for new samples.
+///
+/// # Arguments
+/// * `manager` - Borrows the ExporterManager.
+/// * `profile` - Takes ownership of the profile to send.
+/// * `files_to_compress_and_export` - Files to compress and attach to the profile.
+/// * `optional_additional_tags` - Additional tags to include with this profile.
+/// * `optional_process_tags` - Process-level tags as a comma-separated string.
+/// * `optional_internal_metadata_json` - Internal metadata as a JSON string.
+/// * `optional_info_json` - System info as a JSON string.
+///
+/// # Safety
+/// All non-null arguments MUST have been created by APIs in this module.
+#[no_mangle]
+#[must_use]
+#[named]
+pub unsafe extern "C" fn ddog_prof_ExporterManager_queue(
+    mut manager: *mut Handle<ExporterManager>,
+    mut profile: *mut Handle<EncodedProfile>,
+    files_to_compress_and_export: Slice<File>,
+    optional_additional_tags: Option<&libdd_common_ffi::Vec<Tag>>,
+    optional_process_tags: Option<&CharSlice>,
+    optional_internal_metadata_json: Option<&CharSlice>,
+    optional_info_json: Option<&CharSlice>,
+) -> VoidResult {
+    wrap_with_void_ffi_result!({
+        let manager = manager.to_inner_mut()?;
+        let profile = *profile.take()?;
+        let files_to_compress_and_export = into_vec_files(files_to_compress_and_export);
+        let tags: Vec<Tag> = optional_additional_tags
+            .map(|tags| tags.iter().cloned().collect())
+            .unwrap_or_default();
+        let process_tags_str = optional_process_tags
+            .map(|cs| cs.try_to_utf8())
+            .transpose()?;
+        let internal_metadata = parse_json("internal_metadata", optional_internal_metadata_json)?;
+        let info = parse_json("info", optional_info_json)?;
+
+        manager.queue(
+            profile,
+            files_to_compress_and_export.as_slice(),
+            &tags,
+            internal_metadata,
+            info,
+            process_tags_str,
+        )?
+    })
+}
+
+/// Aborts the manager, stopping the worker thread and returning inflight requests.
+///
+/// **Note**: This consumes the manager - it cannot be used after calling abort.
+///
+/// # Arguments
+/// * `manager` - Takes ownership of the ExporterManager.
+///
+/// # Safety
+/// The `manager` must point to a valid ExporterManager that has not been dropped.
+#[no_mangle]
+#[must_use]
+#[named]
+pub unsafe extern "C" fn ddog_prof_ExporterManager_abort(
+    mut manager: *mut Handle<ExporterManager>,
+) -> VoidResult {
+    wrap_with_void_ffi_result!({ manager.to_inner_mut()?.abort()? })
+}
+
+/// Suspends the manager before forking (prefork).
+///
+/// **Note**: This consumes the manager - it cannot be used after calling prefork.
+///
+/// # Arguments
+/// * `manager` - Takes ownership of the ExporterManager.
+///
+/// # Safety
+/// The `manager` must point to a valid ExporterManager that has not been dropped.
+#[no_mangle]
+#[must_use]
+#[named]
+pub unsafe extern "C" fn ddog_prof_ExporterManager_prefork(
+    mut manager: *mut Handle<ExporterManager>,
+) -> VoidResult {
+    wrap_with_void_ffi_result!({ manager.to_inner_mut()?.prefork()? })
+}
+
+/// Creates a new manager in the child process after forking (postfork_child).
+///
+/// Inflight requests from the parent are discarded in the child.
+///
+/// # Arguments
+/// * `suspended` - Takes ownership of the suspended ExporterManager.
+///
+/// # Safety
+/// The `suspended` must point to a valid suspended ExporterManager that has not been dropped.
+#[no_mangle]
+#[must_use]
+#[named]
+pub unsafe extern "C" fn ddog_prof_ExporterManager_postfork_child(
+    mut suspended: *mut Handle<ExporterManager>,
+) -> VoidResult {
+    wrap_with_void_ffi_result!({ suspended.to_inner_mut()?.postfork_child()? })
+}
+
+/// Creates a new manager in the parent process after forking (postfork_parent).
+///
+/// Inflight requests from before the fork are re-queued in the new manager.
+///
+/// # Arguments
+/// * `suspended` - Takes ownership of the suspended ExporterManager.
+///
+/// # Safety
+/// The `suspended` must point to a valid suspended ExporterManager that has not been dropped.
+#[no_mangle]
+#[must_use]
+#[named]
+pub unsafe extern "C" fn ddog_prof_ExporterManager_postfork_parent(
+    mut suspended: *mut Handle<ExporterManager>,
+) -> VoidResult {
+    wrap_with_void_ffi_result!({ suspended.to_inner_mut()?.postfork_parent()? })
+}
+
+/// # Safety
+/// The `manager` may be null, but if non-null the pointer must point to a
+/// valid `ExporterManager` object made by the Rust Global allocator that
+/// has not already been dropped.
+#[no_mangle]
+pub unsafe extern "C" fn ddog_prof_ExporterManager_drop(mut manager: *mut Handle<ExporterManager>) {
+    drop(manager.take())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -370,7 +531,7 @@ mod tests {
     fn profile_exporter_new_and_delete() {
         let tags = vec![tag!("host", "localhost")].into();
 
-        let result = unsafe {
+        let mut exporter = unsafe {
             ddog_prof_Exporter_new(
                 profiling_library_name(),
                 profiling_library_version(),
@@ -378,15 +539,10 @@ mod tests {
                 Some(&tags),
                 ddog_prof_Endpoint_agent(endpoint(), 0),
             )
-        };
-
-        match result {
-            Result::Ok(mut exporter) => unsafe { ddog_prof_Exporter_drop(&mut exporter) },
-            Result::Err(message) => {
-                drop(message);
-                panic!("Should not occur!")
-            }
         }
+        .unwrap();
+
+        unsafe { ddog_prof_Exporter_drop(&mut exporter) }
     }
 
     #[test]
@@ -394,7 +550,7 @@ mod tests {
     // which Miri cannot evaluate.
     #[cfg_attr(miri, ignore)]
     fn test_send_blocking() {
-        let exporter_result = unsafe {
+        let mut exporter = unsafe {
             ddog_prof_Exporter_new(
                 profiling_library_name(),
                 profiling_library_version(),
@@ -402,9 +558,8 @@ mod tests {
                 None,
                 ddog_prof_Endpoint_agent(endpoint(), 0),
             )
-        };
-
-        let mut exporter = exporter_result.unwrap();
+        }
+        .unwrap();
 
         let profile = &mut EncodedProfile::test_instance().unwrap().into();
 
@@ -438,8 +593,8 @@ mod tests {
     // This test invokes an external function SecTrustSettingsCopyCertificates
     // which Miri cannot evaluate.
     #[cfg_attr(miri, ignore)]
-    fn test_send_blocking_with_metadata() {
-        let exporter_result = unsafe {
+    fn test_exporter_manager_new_and_drop() {
+        let mut exporter = unsafe {
             ddog_prof_Exporter_new(
                 profiling_library_name(),
                 profiling_library_version(),
@@ -447,9 +602,98 @@ mod tests {
                 None,
                 ddog_prof_Endpoint_agent(endpoint(), 0),
             )
-        };
+        }
+        .unwrap();
 
-        let mut exporter = exporter_result.unwrap();
+        // Create manager
+        let mut manager = unsafe { ddog_prof_ExporterManager_new(&mut exporter) }.unwrap();
+
+        // Drop manager
+        unsafe { ddog_prof_ExporterManager_drop(&mut manager) };
+    }
+
+    #[test]
+    // This test invokes an external function SecTrustSettingsCopyCertificates
+    // which Miri cannot evaluate.
+    #[cfg_attr(miri, ignore)]
+    fn test_exporter_manager_queue_and_abort() {
+        let mut exporter = unsafe {
+            ddog_prof_Exporter_new(
+                profiling_library_name(),
+                profiling_library_version(),
+                family(),
+                None,
+                ddog_prof_Endpoint_agent(endpoint(), 0),
+            )
+        }
+        .unwrap();
+        let mut manager = unsafe { ddog_prof_ExporterManager_new(&mut exporter) }.unwrap();
+
+        // Queue a profile
+        let profile = &mut EncodedProfile::test_instance().unwrap().into();
+        // Should succeed
+        unsafe {
+            ddog_prof_ExporterManager_queue(
+                &mut manager,
+                profile,
+                Slice::empty(),
+                None,
+                None,
+                None,
+                None,
+            )
+        }
+        .unwrap();
+
+        // Abort the manager (mutates in place to suspended state)
+        unsafe { ddog_prof_ExporterManager_abort(&mut manager) }.unwrap();
+
+        // Drop manager
+        unsafe { ddog_prof_ExporterManager_drop(&mut manager) };
+    }
+
+    #[test]
+    // This test invokes an external function SecTrustSettingsCopyCertificates
+    // which Miri cannot evaluate.
+    #[cfg_attr(miri, ignore)]
+    fn test_exporter_manager_fork_workflow() {
+        let mut exporter = unsafe {
+            ddog_prof_Exporter_new(
+                profiling_library_name(),
+                profiling_library_version(),
+                family(),
+                None,
+                ddog_prof_Endpoint_agent(endpoint(), 0),
+            )
+        }
+        .unwrap();
+        let mut manager = unsafe { ddog_prof_ExporterManager_new(&mut exporter) }.unwrap();
+
+        // Prefork
+        unsafe { ddog_prof_ExporterManager_prefork(&mut manager) }.unwrap();
+
+        // Postfork child
+        unsafe { ddog_prof_ExporterManager_postfork_child(&mut manager) }.unwrap();
+
+        // Drop child manager
+        unsafe { ddog_prof_ExporterManager_drop(&mut manager) };
+    }
+
+    #[test]
+    // This test invokes an external function SecTrustSettingsCopyCertificates
+    // which Miri cannot evaluate.
+    #[cfg_attr(miri, ignore)]
+    fn test_send_blocking_with_metadata() {
+        let mut exporter = unsafe {
+            ddog_prof_Exporter_new(
+                profiling_library_name(),
+                profiling_library_version(),
+                family(),
+                None,
+                ddog_prof_Endpoint_agent(endpoint(), 0),
+            )
+        }
+        .unwrap();
 
         let profile = &mut EncodedProfile::test_instance().unwrap().into();
 
