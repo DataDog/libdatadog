@@ -7,10 +7,10 @@ use crate::{
     },
     RemoteConfigPath, RemoteConfigProduct, RemoteConfigSource,
 };
-#[cfg(feature = "live-debugger")]
-use datadog_live_debugger::LiveDebuggingData;
 #[cfg(feature = "ffe")]
 use datadog_ffe::rules_based::UniversalFlagConfig;
+#[cfg(feature = "live-debugger")]
+use datadog_live_debugger::LiveDebuggingData;
 
 #[derive(Debug)]
 pub enum RemoteConfigData {
