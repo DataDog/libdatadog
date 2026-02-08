@@ -49,7 +49,7 @@ impl<T : ?Sized, Self_ : ?Sized> ImpliedPredicate<T> for Self_ {}
 /// Trait representing the requirements for a type to be used as a Span "string" type.
 /// Note: Borrow<str> is not required by the derived traits, but allows to access HashMap elements
 /// from a static str and check if the string is empty.
-pub trait SpanText: SpanDataContents + Borrow<str> + for<'a> ImpliedPredicate<&'a str, Impls: Equivalent<Self>> + ImpliedPredicate<Self::RefCopy, Impls: Borrow<str>> {
+pub trait SpanText: SpanDataContents + Borrow<str> + ImpliedPredicate<Self::RefCopy, Impls: Borrow<str>> {
     fn from_static_str(value: &'static str) -> Self;
 }
 

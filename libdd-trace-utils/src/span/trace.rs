@@ -34,16 +34,16 @@ pub trait TraceProjector<D: TraceData>: Sized
 
     fn add_chunk<'a>(trace: &'a mut Self::Trace<'a>, storage: &mut Self::Storage<'a>) -> &'a mut Self::Chunk<'a>;
     fn chunk_iterator<'a>(trace: &'a Self::Trace<'a>) -> std::slice::Iter<'a, Self::Chunk<'a>>;
-    fn retain_chunks<'r>(trace: &'r mut Self::Trace<'r>, storage: &'r mut Self::Storage<'r>, predicate: &mut dyn FnMut(&mut Self::Chunk<'r>, &mut Self::Storage<'r>) -> bool);
+    fn retain_chunks<'r, F: FnMut(&mut Self::Chunk<'r>, &mut Self::Storage<'r>) -> bool>(trace: &'r mut Self::Trace<'r>, storage: &'r mut Self::Storage<'r>, predicate: F);
     fn add_span<'a>(chunk: &'a mut Self::Chunk<'a>, storage: &mut Self::Storage<'a>) -> &'a mut Self::Span<'a>;
     fn span_iterator<'a>(chunk: &'a Self::Chunk<'a>) -> std::slice::Iter<'a, Self::Span<'a>>;
-    fn retain_spans<'r>(chunk: &'r mut Self::Chunk<'r>, storage: &'r mut Self::Storage<'r>, predicate: &mut dyn FnMut(&mut Self::Span<'r>, &mut Self::Storage<'r>) -> bool);
+    fn retain_spans<'r, F: FnMut(&mut Self::Span<'r>, &mut Self::Storage<'r>) -> bool>(chunk: &'r mut Self::Chunk<'r>, storage: &'r mut Self::Storage<'r>, predicate: F);
     fn add_span_link<'a>(span: &'a mut Self::Span<'a>, storage: &mut Self::Storage<'a>) -> &'a mut Self::SpanLink<'a>;
     fn span_link_iterator<'a>(span: &'a Self::Span<'a>) -> std::slice::Iter<'a, Self::SpanLink<'a>>;
-    fn retain_span_links<'r>(span: &'r mut Self::Span<'r>, storage: &'r mut Self::Storage<'r>, predicate: &mut dyn FnMut(&mut Self::SpanLink<'r>, &mut Self::Storage<'r>) -> bool);
+    fn retain_span_links<'r, F: FnMut(&mut Self::SpanLink<'r>, &mut Self::Storage<'r>) -> bool>(span: &'r mut Self::Span<'r>, storage: &'r mut Self::Storage<'r>, predicate: F);
     fn add_span_event<'a>(span: &mut Self::Span<'a>, storage: &mut Self::Storage<'a>) -> &'a mut Self::SpanEvent<'a>;
     fn span_event_iterator<'a>(span: &'a Self::Span<'a>) -> std::slice::Iter<'a, Self::SpanEvent<'a>>;
-    fn retain_span_events<'r>(span: &'r mut Self::Span<'r>, storage: &'r mut Self::Storage<'r>, predicate: &mut dyn FnMut(&mut Self::SpanEvent<'r>, &mut Self::Storage<'r>) -> bool);
+    fn retain_span_events<'r, F: FnMut(&mut Self::SpanEvent<'r>, &mut Self::Storage<'r>) -> bool>(span: &'r mut Self::Span<'r>, storage: &'r mut Self::Storage<'r>, predicate: F);
 
     fn get_trace_container_id<'a>(trace: &'a Self::Trace<'a>, storage: &'a Self::Storage<'a>) -> &'a D::Text;
     fn get_trace_language_name<'a>(trace: &'a Self::Trace<'a>, storage: &'a Self::Storage<'a>) -> &'a D::Text;
@@ -269,12 +269,12 @@ impl<'a, T: TraceProjector<D>, D: TraceData> TracesMut<'a, T, D> {
         }
     }
 
-    pub fn retain_chunks(&mut self, predicate: &mut dyn FnMut(&mut TraceChunkMut<'_, T, D>) -> bool) {
+    pub fn retain_chunks<F: FnMut(&mut TraceChunkMut<'_, T, D>) -> bool>(&mut self, mut predicate: F) {
         // We may not make self.storage mut inside the closure. As that would be a double mut-borrow
         unsafe {
             let traces: &'a mut T::Trace<'a> = as_mut(self.traces);
             let storage_ref: &'a mut T::Storage<'a> = as_mut(self.storage);
-            T::retain_chunks(traces, storage_ref, &mut |chunk, storage| {
+            T::retain_chunks(traces, storage_ref, |chunk, storage| {
                 let mut trace_chunk = TraceChunk::<T, D, MUT> { storage, chunk };
                 let chunk_ref: &mut TraceChunk<'_, T, D, MUT> = std::mem::transmute(&mut trace_chunk);
                 predicate(chunk_ref)
@@ -399,12 +399,12 @@ impl<'a, T: TraceProjector<D>, D: TraceData> TraceChunk<'a, T, D, MUT> {
         }
     }
 
-    pub fn retain_spans(&mut self, predicate: &mut dyn FnMut(&mut SpanMut<'_, T, D>) -> bool) {
+    pub fn retain_spans<F: FnMut(&mut SpanMut<'_, T, D>) -> bool>(&mut self, mut predicate: F) {
         // We may not make self.storage mut inside the closure. As that would be a double mut-borrow
         unsafe {
             let chunk: &'a mut T::Chunk<'a> = as_mut(self.chunk);
             let storage_ref: &'a mut T::Storage<'a> = as_mut(self.storage);
-            T::retain_spans(chunk, storage_ref, &mut |span, storage| {
+            T::retain_spans(chunk, storage_ref, |span, storage| {
                 let mut span_obj = Span::<T, D, MUT> { storage, span };
                 let span_ref: &mut Span<'_, T, D, MUT> = std::mem::transmute(&mut span_obj);
                 predicate(span_ref)
@@ -535,12 +535,12 @@ impl<'a, T: TraceProjector<D>, D: TraceData, const Mut: u8> Span<'a, T, D, Mut> 
         }
     }
 
-    pub fn retain_span_links(&mut self, predicate: &mut dyn FnMut(&mut SpanLinkMut<'_, T, D>) -> bool) {
+    pub fn retain_span_links<F: FnMut(&mut SpanLinkMut<'_, T, D>) -> bool>(&mut self, mut predicate: F) {
         // We may not make self.storage mut inside the closure. As that would be a double mut-borrow
         unsafe {
             let span: &'a mut T::Span<'a> = as_mut(self.span);
             let storage_ref: &'a mut T::Storage<'a> = as_mut(self.storage);
-            T::retain_span_links(span, storage_ref, &mut |link, storage| {
+            T::retain_span_links(span, storage_ref, |link, storage| {
                 let mut link_obj = SpanLink::<T, D, MUT> { storage, link };
                 let link_ref: &mut SpanLink<'_, T, D, MUT> = std::mem::transmute(&mut link_obj);
                 predicate(link_ref)
@@ -562,12 +562,12 @@ impl<'a, T: TraceProjector<D>, D: TraceData, const Mut: u8> Span<'a, T, D, Mut> 
         }
     }
 
-    pub fn retain_span_events(&mut self, predicate: &mut dyn FnMut(&mut SpanEventMut<'_, T, D>) -> bool) {
+    pub fn retain_span_events<F: FnMut(&mut SpanEventMut<'_, T, D>) -> bool>(&mut self, mut predicate: F) {
         // We may not make self.storage mut inside the closure. As that would be a double mut-borrow
         unsafe {
             let span: &'a mut T::Span<'a> = as_mut(self.span);
             let storage_ref: &'a mut T::Storage<'a> = as_mut(self.storage);
-            T::retain_span_events(span, storage_ref, &mut |event, storage| {
+            T::retain_span_events(span, storage_ref, |event, storage| {
                 let mut event_obj = SpanEvent::<T, D, MUT> { storage, event };
                 let event_ref: &mut SpanEvent<'_, T, D, MUT> = std::mem::transmute(&mut event_obj);
                 predicate(event_ref)

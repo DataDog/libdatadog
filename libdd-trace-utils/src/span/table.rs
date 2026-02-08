@@ -134,7 +134,7 @@ impl<T: TraceData, D: TraceDataType> StaticDataVec<T, D> {
         *rc += 1;
     }
 
-    pub fn shrink(mut self) -> Shrunk<D::Data<T>> {
+    pub fn shrink(self) -> Shrunk<D::Data<T>> {
         let mut offsets = Vec::with_capacity(self.vec.len());
         let mut table = Vec::with_capacity(self.vec.len());
         let mut i = 0;
