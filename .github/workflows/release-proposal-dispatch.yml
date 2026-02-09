@@ -95,6 +95,8 @@ jobs:
         with:
           cache-targets: true
       - uses: dtolnay/rust-toolchain@nightly
+        with:
+          toolchain: nightly-2026-02-08
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: 1.92.0
