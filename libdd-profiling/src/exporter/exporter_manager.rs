@@ -204,7 +204,7 @@ impl ExporterManager {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::exporter::{config, MimeType};
+    use crate::exporter::config;
     use crate::internal::EncodedProfile;
     use std::time::Duration;
 
@@ -405,7 +405,6 @@ mod tests {
         let files = vec![File {
             name: "test.txt",
             bytes: b"test content",
-            mime: MimeType::TextPlain,
         }];
 
         fixture

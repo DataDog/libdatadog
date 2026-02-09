@@ -6,10 +6,11 @@
 //! across different test scenarios.
 
 use crate::{
+    artifacts::StandardArtifacts,
     build_artifacts,
     test_types::{CrashType, TestMode},
     validation::{read_and_parse_crash_payload, validate_std_outputs, PayloadValidator},
-    ArtifactType, ArtifactsBuild, BuildProfile,
+    ArtifactsBuild, BuildProfile,
 };
 use anyhow::{Context, Result};
 use serde_json::Value;
@@ -101,35 +102,6 @@ fn extend_path(dir: &Path, file: &str) -> PathBuf {
     let mut path = dir.to_path_buf();
     path.push(file);
     path
-}
-
-/// Standard artifacts used in most crash tracking tests.
-pub struct StandardArtifacts {
-    pub crashtracker_bin: ArtifactsBuild,
-    pub crashtracker_receiver: ArtifactsBuild,
-}
-
-impl StandardArtifacts {
-    pub fn new(profile: BuildProfile) -> Self {
-        Self {
-            crashtracker_bin: ArtifactsBuild {
-                name: "crashtracker_bin_test".to_owned(),
-                build_profile: profile,
-                artifact_type: ArtifactType::Bin,
-                ..Default::default()
-            },
-            crashtracker_receiver: ArtifactsBuild {
-                name: "test_crashtracker_receiver".to_owned(),
-                build_profile: profile,
-                artifact_type: ArtifactType::Bin,
-                ..Default::default()
-            },
-        }
-    }
-
-    pub fn as_slice(&self) -> Vec<&ArtifactsBuild> {
-        vec![&self.crashtracker_bin, &self.crashtracker_receiver]
-    }
 }
 
 /// Generic crash test runner that handles common test logic.

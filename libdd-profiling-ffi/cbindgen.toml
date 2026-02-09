@@ -59,7 +59,6 @@ renaming_overrides_prefixing = true
 "VoidResult" = "ddog_VoidResult"
 
 "CbindgenIsDumbStringId" = "ddog_prof_StringId"
-"MimeType" = "ddog_prof_MimeType"
 
 "Slice_GenerationalIdLabelId" = "ddog_prof_Slice_LabelId"
 "Slice_GenerationalIdLocationId" = "ddog_prof_Slice_LocationId"
