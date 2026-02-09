@@ -3,7 +3,7 @@
 
 //! Trace-utils functionalities implementation for tinybytes based spans
 
-use super::{Span, SpanMut, SpanText, OwnedTraceData, TraceProjector, TraceAttributesOp, TraceAttributesMutOp, TraceChunkMut, TracesMut, TraceAttributes, AttrRef, MUT, TraceData};
+use super::{Span, SpanMut, SpanText, OwnedTraceData, TraceProjector, TraceAttributesOp, TraceAttributesMutOp, TraceChunkMut, TracesMut, TraceAttributes, AttrRef, MUT, TraceData, TraceDataLifetime};
 use std::borrow::Borrow;
 use std::collections::{HashMap, HashSet};
 
@@ -118,7 +118,7 @@ const SAMPLING_ANALYTICS_RATE_KEY: &str = "_dd1.sr.eausr";
 ///
 /// # Trace-level attributes
 /// Some attributes related to the whole trace are stored in the root span of the chunk.
-pub fn drop_chunks<'a, D: TraceData, T: TraceProjector<D>>(traces: &'a mut TracesMut<'a, T, D>) -> DroppedP0Stats
+pub fn drop_chunks<'a, D: TraceDataLifetime<'a>, T: TraceProjector<D>>(traces: &'a mut TracesMut<'a, T, D>) -> DroppedP0Stats
 {
     let mut dropped_p0_traces = 0;
     let mut dropped_p0_spans = 0;

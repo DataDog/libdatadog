@@ -196,6 +196,14 @@ pub trait TraceData: Default + Clone + Debug + PartialEq + ImpliedPredicate<&'st
     type Bytes: SpanBytes;
 }
 
+/// Note: When using this trait as a bound, you still need to add the explicit lifetime bounds
+/// in some contexts due to Rust's trait system limitations. Use it in combination with explicit bounds like:
+/// `D: TraceDataLifetime<'a> + ImpliedPredicate<D::Text, Impls: 'a> + ImpliedPredicate<D::Bytes, Impls: 'a>`
+pub trait TraceDataLifetime<'a>: TraceData + ImpliedPredicate<Self::Text, Impls: 'a> + ImpliedPredicate<Self::Bytes, Impls: 'a> {}
+
+impl<'a, D: TraceData> TraceDataLifetime<'a> for D where D::Text: 'a, D::Bytes: 'a {}
+
+
 /// TraceData that supports mutation - requires owned, cloneable types that can be constructed
 /// from standard Rust types like String and Vec<u8>. Read-only operations work with any TraceData,
 /// but mutation requires MutableTraceData.
