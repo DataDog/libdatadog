@@ -1,8 +1,38 @@
 use std::collections::HashMap;
 
-use anyhow::{anyhow, Result};
-
 mod utils;
+
+/// Errors that can occur when operating on a [`ChangeBuffer`] or [`ChangeBufferState`].
+#[derive(Debug)]
+pub enum ChangeBufferError {
+    SpanNotFound(u64),
+    StringNotFound(u32),
+    ReadOutOfBounds { offset: usize, len: usize },
+    WriteOutOfBounds { offset: usize, len: usize },
+    UnknownOpcode(u64),
+}
+
+impl std::fmt::Display for ChangeBufferError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ChangeBufferError::SpanNotFound(id) => write!(f, "span not found: {id}"),
+            ChangeBufferError::StringNotFound(id) => {
+                write!(f, "string not found internally: {id}")
+            }
+            ChangeBufferError::ReadOutOfBounds { offset, len } => {
+                write!(f, "read out of bounds: offset={offset}, len={len}")
+            }
+            ChangeBufferError::WriteOutOfBounds { offset, len } => {
+                write!(f, "write out of bounds: offset={offset}, len={len}")
+            }
+            ChangeBufferError::UnknownOpcode(val) => write!(f, "unknown opcode: {val}"),
+        }
+    }
+}
+
+impl std::error::Error for ChangeBufferError {}
+
+pub type Result<T> = std::result::Result<T, ChangeBufferError>;
 use utils::*;
 
 mod trace;
@@ -24,7 +54,7 @@ pub struct ChangeBufferState<T: SpanText + Clone> {
     trace_span_counts: HashMap<u128, usize>,
     tracer_service: T,
     tracer_language: T,
-    pid: f64,
+    pid: u32,
 }
 
 fn new_span<T: SpanText>(span_id: u64, parent_id: u64, trace_id: u128) -> Span<T> {
@@ -41,7 +71,7 @@ impl<T: SpanText + Clone> ChangeBufferState<T> {
         change_buffer: ChangeBuffer,
         tracer_service: T,
         tracer_language: T,
-        pid: f64,
+        pid: u32,
     ) -> Self {
         ChangeBufferState {
             change_buffer,
@@ -69,7 +99,8 @@ impl<T: SpanText + Clone> ChangeBufferState<T> {
             .map(|span_id| -> Result<Span<T>> {
                 let maybe_span = self.spans.remove(span_id);
 
-                let mut span = maybe_span.ok_or_else(|| anyhow!("span not found: {}", span_id))?;
+                let mut span =
+                    maybe_span.ok_or(ChangeBufferError::SpanNotFound(*span_id))?;
                 chunk_trace_id = Some(span.trace_id);
 
                 if is_local_root {
@@ -159,7 +190,7 @@ impl<T: SpanText + Clone> ChangeBufferState<T> {
         span.meta
             .insert(T::from_static_str("language"), self.tracer_language.clone());
         span.metrics
-            .insert(T::from_static_str("process_id"), self.pid);
+            .insert(T::from_static_str("process_id"), f64::from(self.pid));
 
         if let Some(trace) = self.traces.get(&span.trace_id) {
             if let Some(origin) = trace.origin.clone() {
@@ -176,7 +207,6 @@ impl<T: SpanText + Clone> ChangeBufferState<T> {
     pub fn flush_change_buffer(&mut self) -> Result<()> {
         let mut index = 0;
         let mut count = self.change_buffer.read::<u64>(&mut index)?;
-        index += 8;
 
         while count > 0 {
             let op = BufferedOperation::from_buf(&self.change_buffer, &mut index)?;
@@ -196,7 +226,7 @@ impl<T: SpanText + Clone> ChangeBufferState<T> {
         self.string_table
             .get(&num)
             .cloned()
-            .ok_or_else(|| anyhow!("string not found internally: {}", num))
+            .ok_or(ChangeBufferError::StringNotFound(num))
     }
 
     fn get_num_arg<U: Copy + FromBytes>(&self, index: &mut usize) -> Result<U> {
@@ -206,13 +236,13 @@ impl<T: SpanText + Clone> ChangeBufferState<T> {
     fn get_mut_span(&mut self, id: &u64) -> Result<&mut Span<T>> {
         self.spans
             .get_mut(id)
-            .ok_or_else(|| anyhow!("span not found internally: {}", id))
+            .ok_or(ChangeBufferError::SpanNotFound(*id))
     }
 
     pub fn get_span(&self, id: &u64) -> Result<&Span<T>> {
         self.spans
             .get(id)
-            .ok_or_else(|| anyhow!("span not found internally: {}", id))
+            .ok_or(ChangeBufferError::SpanNotFound(*id))
     }
 
     pub fn get_trace(&self, id: &u128) -> Option<&Trace<T>> {
@@ -330,9 +360,9 @@ mod tests {
 
     impl BufBuilder {
         fn new() -> Self {
-            // 8 bytes count + 8 bytes padding
+            // 8 bytes for the count field
             Self {
-                data: vec![0u8; 16],
+                data: vec![0u8; 8],
                 op_count: 0,
             }
         }
@@ -361,7 +391,7 @@ mod tests {
     }
 
     fn make_state(buf: ChangeBuffer) -> ChangeBufferState<&'static str> {
-        ChangeBufferState::new(buf, "my-service", "rust", 1234.0)
+        ChangeBufferState::new(buf, "my-service", "rust", 1234)
     }
 
     // -- string table --

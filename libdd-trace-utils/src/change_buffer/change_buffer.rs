@@ -1,6 +1,5 @@
-use anyhow::{anyhow, Result};
-
 use crate::change_buffer::utils::*;
+use crate::change_buffer::{ChangeBufferError, Result};
 
 #[derive(Clone, Copy)]
 pub struct ChangeBuffer {                                                                                                                                                                                                       
@@ -25,7 +24,7 @@ impl ChangeBuffer {
         let size = std::mem::size_of::<T>();
         let slice = self.as_slice();
         let bytes = slice.get(*index..*index + size)
-            .ok_or(anyhow!("read out of bounds: offset={}, len={}", *index, self.len))?;
+            .ok_or(ChangeBufferError::ReadOutOfBounds { offset: *index, len: self.len })?;
         *index += size;
         Ok(T::from_bytes(bytes))
     }
@@ -33,23 +32,22 @@ impl ChangeBuffer {
     pub fn write_u64(&mut self, offset: usize, value: u64) -> Result<()> {                                                                                                                                                      
         let len = self.len;
         let slice = self.as_mut_slice();                                                                                                                                                                                        
-        let target = slice.get_mut(offset..offset + 8)                                                                                                                                                                          
-            .ok_or(anyhow!("write_u64 out of bounds: offset={}, len={}", offset, len))?;                                                                                                                                 
+        let target = slice.get_mut(offset..offset + 8)
+            .ok_or(ChangeBufferError::WriteOutOfBounds { offset, len })?;                                                                                                                                 
         let bytes = value.to_le_bytes();
         target.copy_from_slice(&bytes);                                                                                                                                                                           
         Ok(())                                                                                                                                                                                                                  
     }                                                                                                                                                                                                                           
 
-    pub fn clear_count(&mut self) -> Result<()> {                                                                                                                                                                               
-        self.write_u64(0, 0)                                                                                                                                                                                                    
-            .map_err(|_| anyhow!("failed to clear buffer count"))                                                                                                                                                                            
+    pub fn clear_count(&mut self) -> Result<()> {
+        self.write_u64(0, 0)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::ChangeBuffer;
-    use anyhow::Result;
+    use crate::change_buffer::Result;
 
     #[test]
     fn buffer_creation_and_slices() {
