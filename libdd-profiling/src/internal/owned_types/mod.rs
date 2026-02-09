@@ -49,3 +49,45 @@ impl<'a> From<&'a api::Period<'a>> for Period {
         }
     }
 }
+
+/// Internal: owned frame data for heap-live tracking.
+/// Stores copies of borrowed strings so tracked allocations survive across
+/// profile resets.
+pub(crate) struct OwnedFrame {
+    pub function_name: Box<str>,
+    pub filename: Box<str>,
+    pub line: i64,
+}
+
+/// Internal: owned label for heap-live tracking.
+pub(crate) struct OwnedLabel {
+    pub key: Box<str>,
+    pub str_value: Box<str>,
+    pub num: i64,
+    pub num_unit: Box<str>,
+}
+
+impl OwnedFrame {
+    pub fn as_api_location(&self) -> api::Location<'_> {
+        api::Location {
+            function: api::Function {
+                name: &self.function_name,
+                system_name: "",
+                filename: &self.filename,
+            },
+            line: self.line,
+            ..api::Location::default()
+        }
+    }
+}
+
+impl OwnedLabel {
+    pub fn as_api_label(&self) -> api::Label<'_> {
+        api::Label {
+            key: &self.key,
+            str: &self.str_value,
+            num: self.num,
+            num_unit: &self.num_unit,
+        }
+    }
+}

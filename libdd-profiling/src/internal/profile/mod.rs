@@ -15,6 +15,7 @@ use crate::api::ManagedStringId;
 use crate::collections::identifiable::*;
 use crate::collections::string_storage::{CachedProfileId, ManagedStringStorage};
 use crate::collections::string_table::{self, StringTable};
+use crate::internal::heap_live::HeapLiveState;
 use crate::internal::owned_types;
 use crate::iter::{IntoLendingIterator, LendingIterator};
 use crate::profiles::collections::ArcOverflow;
@@ -62,6 +63,10 @@ pub struct Profile {
     string_storage_cached_profile_id: Option<CachedProfileId>,
     timestamp_key: StringId,
     upscaling_rules: UpscalingRules,
+    /// Optional heap-live tracking state. Survives profile resets.
+    /// When enabled, tracks live allocations and auto-injects them
+    /// into observations during `reset_and_return_previous()`.
+    heap_live: Option<HeapLiveState>,
 }
 
 pub struct EncodedProfile {
@@ -131,14 +136,33 @@ impl Profile {
         Ok(())
     }
 
+    /// Add a sample to the profile. If `track_ptr` is `Some(ptr)`, the sample
+    /// data is also copied into owned storage for heap-live tracking. The
+    /// tracked allocation will be automatically injected into the profile's
+    /// observations during `reset_and_return_previous()` and can be removed
+    /// earlier via `untrack_allocation()`.
+    ///
+    /// If heap-live tracking is at capacity, the tracking request is silently
+    /// discarded, the sample is still added to the profile normally.
+    /// If `ptr` matches an already-tracked allocation, the old entry is
+    /// replaced with the new sample data.
     pub fn try_add_sample(
         &mut self,
         sample: api::Sample,
         timestamp: Option<Timestamp>,
+        track_ptr: Option<u64>,
     ) -> anyhow::Result<()> {
         #[cfg(debug_assertions)]
         {
             self.validate_sample_labels(&sample)?;
+        }
+
+        // If tracking requested and heap-live is enabled, copy sample data
+        // into owned storage before interning consumes the borrowed strings.
+        if let Some(ptr) = track_ptr {
+            if let Some(hl) = self.heap_live.as_mut() {
+                hl.track(ptr, &sample);
+            }
         }
 
         let labels = {
@@ -270,6 +294,7 @@ impl Profile {
         &mut self,
         sample: api::StringIdSample,
         timestamp: Option<Timestamp>,
+        track_ptr: Option<u64>,
     ) -> anyhow::Result<()> {
         anyhow::ensure!(
             self.string_storage.is_some(),
@@ -277,6 +302,20 @@ impl Profile {
         );
 
         self.validate_string_id_sample_labels(&sample)?;
+
+        // If tracking requested and heap-live is enabled, resolve string IDs
+        // and copy sample data into owned storage before interning.
+        if let Some(ptr) = track_ptr {
+            if let Some(hl) = self.heap_live.as_mut() {
+                // SAFETY: the ensure! at the top of this function guarantees
+                // string_storage is Some, so unwrap cannot panic here.
+                let storage = unsafe { self.string_storage.as_ref().unwrap_unchecked() };
+                let locked = storage
+                    .lock()
+                    .map_err(|_| anyhow::anyhow!("string storage lock was poisoned"))?;
+                hl.track_string_id(ptr, &sample, &locked)?;
+            }
+        }
 
         let labels = sample
             .labels
@@ -345,6 +384,43 @@ impl Profile {
         )?;
 
         Ok(())
+    }
+
+    /// Enable heap-live allocation tracking on this profile. When enabled,
+    /// calls to `try_add_sample()` with `track_ptr: Some(ptr)` will copy
+    /// the sample's data into owned storage. Tracked allocations are
+    /// automatically injected into the profile during
+    /// `reset_and_return_previous()`, and the tracker moves to the new
+    /// active profile.
+    ///
+    /// # Arguments
+    /// * `max_tracked` - Maximum number of allocations to track simultaneously
+    /// * `excluded_labels` - Label keys to strip when copying into the tracker (e.g.,
+    ///   high-cardinality labels like "span id", "trace id")
+    pub fn enable_heap_live_tracking(
+        &mut self,
+        max_tracked: usize,
+        excluded_labels: &[&str],
+        alloc_size_idx: usize,
+        heap_live_samples_idx: usize,
+        heap_live_size_idx: usize,
+    ) {
+        self.heap_live = Some(HeapLiveState::new(
+            max_tracked,
+            excluded_labels,
+            alloc_size_idx,
+            heap_live_samples_idx,
+            heap_live_size_idx,
+            self.sample_types.len(),
+        ));
+    }
+
+    /// Remove a tracked heap-live allocation by pointer. No-op if heap-live
+    /// tracking is disabled or the pointer is not tracked.
+    pub fn untrack_allocation(&mut self, ptr: u64) {
+        if let Some(hl) = self.heap_live.as_mut() {
+            hl.untrack(ptr);
+        }
     }
 
     pub fn get_generation(&self) -> anyhow::Result<Generation> {
@@ -447,6 +523,10 @@ impl Profile {
     /// Returns the previous Profile on success.
     #[inline]
     pub fn reset_and_return_previous(&mut self) -> anyhow::Result<Profile> {
+        // Inject heap-live samples into current profile before swapping.
+        // This makes tracked allocations appear in the serialized output.
+        self.inject_heap_live_samples()?;
+
         let current_active_samples = self.sample_block()?;
         anyhow::ensure!(
             current_active_samples == 0,
@@ -469,6 +549,11 @@ impl Profile {
             profiles_dictionary_translator,
         )
         .context("failed to initialize new profile")?;
+
+        // Move heap-live tracker to the new active profile so it survives
+        // the reset. The old profile (returned) has heap-live data in its
+        // observations but no tracker.
+        profile.heap_live = self.heap_live.take();
 
         std::mem::swap(&mut *self, &mut profile);
         Ok(profile)
@@ -823,6 +908,39 @@ impl Profile {
         self.stack_traces.try_dedup(StackTrace { locations })
     }
 
+    /// Inject all tracked heap-live allocations into the profile's
+    /// observations. Called automatically by `reset_and_return_previous()`.
+    /// Takes the heap_live state out temporarily to avoid borrow conflicts.
+    fn inject_heap_live_samples(&mut self) -> anyhow::Result<()> {
+        let Some(hl) = self.heap_live.take() else {
+            return Ok(());
+        };
+        let result = (|| {
+            for alloc in hl.tracked.values() {
+                let locations: Vec<api::Location<'_>> = alloc
+                    .frames
+                    .iter()
+                    .map(owned_types::OwnedFrame::as_api_location)
+                    .collect();
+                let labels: Vec<api::Label<'_>> = alloc
+                    .labels
+                    .iter()
+                    .map(owned_types::OwnedLabel::as_api_label)
+                    .collect();
+                let sample = api::Sample {
+                    locations,
+                    values: &alloc.values,
+                    labels,
+                };
+                // Pass None for track_ptr to avoid re-tracking during injection
+                self.try_add_sample(sample, None, None)?;
+            }
+            anyhow::Ok(())
+        })();
+        self.heap_live = Some(hl);
+        result
+    }
+
     #[inline]
     fn backup_period(src: Option<api::Period>) -> Option<owned_types::Period> {
         src.as_ref().map(owned_types::Period::from)
@@ -952,6 +1070,7 @@ impl Profile {
                                                      * CachedProfileId for why. */
             timestamp_key: Default::default(),
             upscaling_rules: Default::default(),
+            heap_live: None,
         };
 
         let _id = profile.intern("");
@@ -1098,6 +1217,433 @@ impl Profile {
 }
 
 #[cfg(test)]
+mod heap_live_tests {
+    use super::*;
+    use crate::pprof::test_utils::{roundtrip_to_pprof, sorted_samples, string_table_fetch};
+
+    // Sample types matching the dd-trace-php layout when allocation + heap-live
+    // profiling are enabled (without cpu-time).
+    // Indices: 0=alloc-samples, 1=alloc-size, 2=heap-live-samples, 3=heap-live-size
+    const ALLOC_SIZE_IDX: usize = 1;
+    const HEAP_LIVE_SAMPLES_IDX: usize = 2;
+    const HEAP_LIVE_SIZE_IDX: usize = 3;
+
+    fn heap_live_sample_types() -> [api::ValueType<'static>; 4] {
+        [
+            api::ValueType::new("alloc-samples", "count"),
+            api::ValueType::new("alloc-size", "bytes"),
+            api::ValueType::new("heap-live-samples", "count"),
+            api::ValueType::new("heap-live-size", "bytes"),
+        ]
+    }
+
+    fn make_mapping() -> api::Mapping<'static> {
+        api::Mapping {
+            filename: "php",
+            ..Default::default()
+        }
+    }
+
+    fn make_locations(mapping: api::Mapping<'static>) -> Vec<api::Location<'static>> {
+        vec![api::Location {
+            mapping,
+            function: api::Function {
+                name: "malloc",
+                system_name: "malloc",
+                filename: "test.php",
+            },
+            line: 10,
+            ..Default::default()
+        }]
+    }
+
+    #[test]
+    fn heap_live_tracked_sample_appears_in_serialized_pprof() {
+        let sample_types = heap_live_sample_types();
+        let mut profile = Profile::new(&sample_types, None);
+        profile.enable_heap_live_tracking(
+            4096,
+            &[],
+            ALLOC_SIZE_IDX,
+            HEAP_LIVE_SAMPLES_IDX,
+            HEAP_LIVE_SIZE_IDX,
+        );
+
+        let mapping = make_mapping();
+        let locations = make_locations(mapping);
+        let labels = vec![api::Label {
+            key: "thread id",
+            num: 42,
+            ..Default::default()
+        }];
+
+        // values: [alloc-samples=1, alloc-size=1024, heap-live-samples=0, heap-live-size=0]
+        let sample = api::Sample {
+            locations,
+            values: &[1, 1024, 0, 0],
+            labels,
+        };
+
+        profile
+            .try_add_sample(sample, None, Some(0x1000))
+            .expect("add to succeed");
+
+        let old = profile
+            .reset_and_return_previous()
+            .expect("reset to succeed");
+
+        let pprof = roundtrip_to_pprof(old).unwrap();
+        // Original sample + 1 injected heap-live copy
+        assert_eq!(pprof.samples.len(), 2);
+
+        let samples = sorted_samples(&pprof);
+        let mut found_values: Vec<Vec<i64>> = samples.iter().map(|s| s.values.clone()).collect();
+        found_values.sort();
+        // Original: [1, 1024, 0, 0], Injected: [0, 0, 1, 1024]
+        assert_eq!(found_values, vec![vec![0, 0, 1, 1024], vec![1, 1024, 0, 0]]);
+
+        // Verify function name appears
+        assert!(pprof.string_table.iter().any(|s| s == "malloc"));
+        assert!(pprof.string_table.iter().any(|s| s == "test.php"));
+
+        // Verify label on all samples
+        for s in &samples {
+            assert!(!s.labels.is_empty());
+            let label = &s.labels[0];
+            assert_eq!(string_table_fetch(&pprof, label.key), "thread id");
+            assert_eq!(label.num, 42);
+        }
+    }
+
+    #[test]
+    fn heap_live_untracked_sample_does_not_appear() {
+        let sample_types = heap_live_sample_types();
+        let mut profile = Profile::new(&sample_types, None);
+        profile.enable_heap_live_tracking(
+            4096,
+            &[],
+            ALLOC_SIZE_IDX,
+            HEAP_LIVE_SAMPLES_IDX,
+            HEAP_LIVE_SIZE_IDX,
+        );
+
+        let mapping = make_mapping();
+        let locations = make_locations(mapping);
+
+        let sample = api::Sample {
+            locations,
+            values: &[1, 512, 0, 0],
+            labels: vec![],
+        };
+
+        profile
+            .try_add_sample(sample, None, Some(0x2000))
+            .expect("add to succeed");
+
+        // Untrack before reset — heap-live injection should skip this ptr
+        profile.untrack_allocation(0x2000);
+
+        let old = profile
+            .reset_and_return_previous()
+            .expect("reset to succeed");
+
+        let pprof = roundtrip_to_pprof(old).unwrap();
+        // Only the original sample, no heap-live injection
+        assert_eq!(pprof.samples.len(), 1);
+    }
+
+    #[test]
+    fn heap_live_survives_reset() {
+        let sample_types = heap_live_sample_types();
+        let mut profile = Profile::new(&sample_types, None);
+        profile.enable_heap_live_tracking(
+            4096,
+            &[],
+            ALLOC_SIZE_IDX,
+            HEAP_LIVE_SAMPLES_IDX,
+            HEAP_LIVE_SIZE_IDX,
+        );
+
+        let mapping = make_mapping();
+        let locations = make_locations(mapping);
+
+        // values: [alloc-samples=1, alloc-size=2048, heap-live-samples=0, heap-live-size=0]
+        let sample = api::Sample {
+            locations: locations.clone(),
+            values: &[1, 2048, 0, 0],
+            labels: vec![],
+        };
+
+        profile
+            .try_add_sample(sample, None, Some(0x3000))
+            .expect("add to succeed");
+
+        // First reset: original + heap-live copy
+        let old1 = profile
+            .reset_and_return_previous()
+            .expect("first reset to succeed");
+
+        let pprof1 = roundtrip_to_pprof(old1).unwrap();
+        assert_eq!(pprof1.samples.len(), 2);
+
+        // Add a new regular sample to the reset profile
+        let regular_sample = api::Sample {
+            locations,
+            values: &[5, 9999, 0, 0],
+            labels: vec![],
+        };
+
+        profile
+            .try_add_sample(regular_sample, None, None)
+            .expect("add regular to succeed");
+
+        // Second reset: the still-tracked heap-live + the new regular
+        let old2 = profile
+            .reset_and_return_previous()
+            .expect("second reset to succeed");
+
+        let pprof2 = roundtrip_to_pprof(old2).unwrap();
+        assert_eq!(pprof2.samples.len(), 2);
+
+        let samples = sorted_samples(&pprof2);
+        let mut found_values: Vec<Vec<i64>> = samples.iter().map(|s| s.values.clone()).collect();
+        found_values.sort();
+        // Injected heap-live: [0, 0, 1, 2048], Regular: [5, 9999, 0, 0]
+        assert_eq!(found_values, vec![vec![0, 0, 1, 2048], vec![5, 9999, 0, 0]]);
+    }
+
+    #[test]
+    fn heap_live_excluded_labels_are_filtered() {
+        let sample_types = heap_live_sample_types();
+        let mut profile = Profile::new(&sample_types, None);
+        profile.enable_heap_live_tracking(
+            4096,
+            &["span id", "trace id"],
+            ALLOC_SIZE_IDX,
+            HEAP_LIVE_SAMPLES_IDX,
+            HEAP_LIVE_SIZE_IDX,
+        );
+
+        let mapping = make_mapping();
+        let locations = make_locations(mapping);
+
+        let labels = vec![
+            api::Label {
+                key: "thread id",
+                num: 1,
+                ..Default::default()
+            },
+            api::Label {
+                key: "span id",
+                num: 999,
+                ..Default::default()
+            },
+            api::Label {
+                key: "trace id",
+                num: 888,
+                ..Default::default()
+            },
+        ];
+
+        let sample = api::Sample {
+            locations,
+            values: &[1, 256, 0, 0],
+            labels,
+        };
+
+        profile
+            .try_add_sample(sample, None, Some(0x4000))
+            .expect("add to succeed");
+
+        let old = profile
+            .reset_and_return_previous()
+            .expect("reset to succeed");
+
+        let pprof = roundtrip_to_pprof(old).unwrap();
+        // Original (3 labels) + heap-live copy (filtered labels)
+        assert_eq!(pprof.samples.len(), 2);
+
+        let samples = sorted_samples(&pprof);
+
+        // Find the sample with fewer labels — that's the injected heap-live copy
+        let injected = samples
+            .iter()
+            .find(|s| s.labels.len() == 1)
+            .expect("should find heap-live sample with 1 label");
+
+        let label = &injected.labels[0];
+        assert_eq!(string_table_fetch(&pprof, label.key), "thread id");
+        assert_eq!(label.num, 1);
+
+        // The original sample should still have all 3 labels
+        let original = samples
+            .iter()
+            .find(|s| s.labels.len() == 3)
+            .expect("should find original sample with 3 labels");
+        assert_eq!(original.labels.len(), 3);
+    }
+
+    #[test]
+    fn heap_live_capacity_limit() {
+        let sample_types = heap_live_sample_types();
+        let mut profile = Profile::new(&sample_types, None);
+        // Only allow 2 tracked allocations
+        profile.enable_heap_live_tracking(
+            2,
+            &[],
+            ALLOC_SIZE_IDX,
+            HEAP_LIVE_SAMPLES_IDX,
+            HEAP_LIVE_SIZE_IDX,
+        );
+
+        let mapping = make_mapping();
+
+        // Add 3 samples with different track_ptrs
+        for (i, ptr) in [1u64, 2, 3].iter().enumerate() {
+            let locations = vec![api::Location {
+                mapping,
+                function: api::Function {
+                    name: "alloc_fn",
+                    system_name: "alloc_fn",
+                    filename: "test.php",
+                },
+                line: (i + 1) as i64,
+                ..Default::default()
+            }];
+
+            let values: Vec<i64> = vec![1, (i as i64 + 1) * 100, 0, 0];
+            let sample = api::Sample {
+                locations,
+                values: &values,
+                labels: vec![],
+            };
+
+            profile
+                .try_add_sample(sample, None, Some(*ptr))
+                .expect("add to succeed");
+        }
+
+        let old = profile
+            .reset_and_return_previous()
+            .expect("reset to succeed");
+
+        let pprof = roundtrip_to_pprof(old).unwrap();
+        // 3 original samples + 2 heap-live injected (third rejected at capacity)
+        assert_eq!(pprof.samples.len(), 5);
+    }
+
+    #[test]
+    fn heap_live_disabled_by_default() {
+        let sample_types = heap_live_sample_types();
+        let mut profile = Profile::new(&sample_types, None);
+        // Do NOT call enable_heap_live_tracking
+
+        let mapping = make_mapping();
+        let locations = make_locations(mapping);
+
+        let sample = api::Sample {
+            locations,
+            values: &[1, 4096, 0, 0],
+            labels: vec![],
+        };
+
+        profile
+            .try_add_sample(sample, None, Some(0x5000))
+            .expect("add to succeed");
+
+        let old = profile
+            .reset_and_return_previous()
+            .expect("reset to succeed");
+
+        let pprof = roundtrip_to_pprof(old).unwrap();
+        // Only the original sample — track_ptr silently ignored
+        assert_eq!(pprof.samples.len(), 1);
+    }
+
+    #[test]
+    fn heap_live_mixed_tracked_and_regular_samples() {
+        let sample_types = heap_live_sample_types();
+        let mut profile = Profile::new(&sample_types, None);
+        profile.enable_heap_live_tracking(
+            4096,
+            &[],
+            ALLOC_SIZE_IDX,
+            HEAP_LIVE_SAMPLES_IDX,
+            HEAP_LIVE_SIZE_IDX,
+        );
+
+        let mapping = make_mapping();
+
+        // Tracked sample
+        let tracked_locations = vec![api::Location {
+            mapping,
+            function: api::Function {
+                name: "tracked_fn",
+                system_name: "tracked_fn",
+                filename: "alloc.php",
+            },
+            line: 1,
+            ..Default::default()
+        }];
+
+        let tracked_sample = api::Sample {
+            locations: tracked_locations,
+            values: &[1, 512, 0, 0],
+            labels: vec![],
+        };
+
+        profile
+            .try_add_sample(tracked_sample, None, Some(0x6000))
+            .expect("add tracked to succeed");
+
+        // Regular sample (no tracking)
+        let regular_locations = vec![api::Location {
+            mapping,
+            function: api::Function {
+                name: "regular_fn",
+                system_name: "regular_fn",
+                filename: "main.php",
+            },
+            line: 5,
+            ..Default::default()
+        }];
+
+        let regular_sample = api::Sample {
+            locations: regular_locations,
+            values: &[3, 7777, 0, 0],
+            labels: vec![],
+        };
+
+        profile
+            .try_add_sample(regular_sample, None, None)
+            .expect("add regular to succeed");
+
+        let old = profile
+            .reset_and_return_previous()
+            .expect("reset to succeed");
+
+        let pprof = roundtrip_to_pprof(old).unwrap();
+        // 2 original + 1 injected heap-live copy of the tracked sample
+        assert_eq!(pprof.samples.len(), 3);
+
+        // Verify we have both function names
+        assert!(pprof.string_table.iter().any(|s| s == "tracked_fn"));
+        assert!(pprof.string_table.iter().any(|s| s == "regular_fn"));
+
+        let samples = sorted_samples(&pprof);
+        let mut found_values: Vec<Vec<i64>> = samples.iter().map(|s| s.values.clone()).collect();
+        found_values.sort();
+        // Original tracked: [1, 512, 0, 0]
+        // Injected heap-live: [0, 0, 1, 512]
+        // Regular: [3, 7777, 0, 0]
+        assert_eq!(
+            found_values,
+            vec![vec![0, 0, 1, 512], vec![1, 512, 0, 0], vec![3, 7777, 0, 0]]
+        );
+    }
+}
+
+#[cfg(test)]
 mod api_tests {
     use super::*;
     use crate::pprof::test_utils::{roundtrip_to_pprof, sorted_samples, string_table_fetch};
@@ -1164,6 +1710,7 @@ mod api_tests {
                     values: &[1, 10000],
                     labels: vec![],
                 },
+                None,
                 None,
             )
             .expect("add to succeed");
@@ -1236,18 +1783,18 @@ mod api_tests {
         assert_eq!(profile.only_for_testing_num_aggregated_samples(), 0);
 
         profile
-            .try_add_sample(main_sample, None)
+            .try_add_sample(main_sample, None, None)
             .expect("profile to not be full");
         assert_eq!(profile.only_for_testing_num_aggregated_samples(), 1);
 
         profile
-            .try_add_sample(test_sample, None)
+            .try_add_sample(test_sample, None, None)
             .expect("profile to not be full");
         assert_eq!(profile.only_for_testing_num_aggregated_samples(), 2);
 
         assert_eq!(profile.only_for_testing_num_timestamped_samples(), 0);
         profile
-            .try_add_sample(timestamp_sample, Timestamp::new(42))
+            .try_add_sample(timestamp_sample, Timestamp::new(42), None)
             .expect("profile to not be full");
         assert_eq!(profile.only_for_testing_num_timestamped_samples(), 1);
         profile
@@ -1430,7 +1977,7 @@ mod api_tests {
             labels: vec![id_label],
         };
 
-        assert!(profile.try_add_sample(sample, None).is_err());
+        assert!(profile.try_add_sample(sample, None, None).is_err());
     }
 
     #[test]
@@ -1476,11 +2023,11 @@ mod api_tests {
         };
 
         profile
-            .try_add_sample(sample1, None)
+            .try_add_sample(sample1, None, None)
             .expect("add to success");
 
         profile
-            .try_add_sample(sample2, None)
+            .try_add_sample(sample2, None, None)
             .expect("add to success");
 
         profile.add_endpoint(10, Cow::from("my endpoint"))?;
@@ -1602,7 +2149,7 @@ mod api_tests {
             labels,
         };
 
-        profile.try_add_sample(sample, None).unwrap_err();
+        profile.try_add_sample(sample, None, None).unwrap_err();
     }
 
     #[test]
@@ -1628,7 +2175,7 @@ mod api_tests {
         };
 
         profile
-            .try_add_sample(sample1, None)
+            .try_add_sample(sample1, None, None)
             .expect("add to success");
 
         let serialized_profile = roundtrip_to_pprof(profile).unwrap();
@@ -1670,7 +2217,7 @@ mod api_tests {
         };
 
         profile
-            .try_add_sample(sample1, None)
+            .try_add_sample(sample1, None, None)
             .expect("add to success");
 
         let upscaling_info = UpscalingInfo::Proportional { scale: 2.0 };
@@ -1700,7 +2247,7 @@ mod api_tests {
         };
 
         profile
-            .try_add_sample(sample1, None)
+            .try_add_sample(sample1, None, None)
             .expect("add to success");
 
         let upscaling_info = UpscalingInfo::Proportional { scale: 2.7 };
@@ -1730,7 +2277,7 @@ mod api_tests {
         };
 
         profile
-            .try_add_sample(sample1, None)
+            .try_add_sample(sample1, None, None)
             .expect("add to success");
 
         let upscaling_info = UpscalingInfo::Poisson {
@@ -1764,7 +2311,7 @@ mod api_tests {
         };
 
         profile
-            .try_add_sample(sample1, None)
+            .try_add_sample(sample1, None, None)
             .expect("add to success");
 
         let upscaling_info = UpscalingInfo::PoissonNonSampleTypeCount {
@@ -1798,7 +2345,7 @@ mod api_tests {
         };
 
         profile
-            .try_add_sample(sample1, None)
+            .try_add_sample(sample1, None, None)
             .expect("add to success");
 
         let upscaling_info = UpscalingInfo::Poisson {
@@ -1832,7 +2379,7 @@ mod api_tests {
         };
 
         profile
-            .try_add_sample(sample1, None)
+            .try_add_sample(sample1, None, None)
             .expect("add to success");
 
         // invalid sampling_distance value
@@ -1903,10 +2450,10 @@ mod api_tests {
         };
 
         profile
-            .try_add_sample(sample1, None)
+            .try_add_sample(sample1, None, None)
             .expect("add to success");
         profile
-            .try_add_sample(sample2, None)
+            .try_add_sample(sample2, None, None)
             .expect("add to success");
 
         // upscale the first value and the last one
@@ -1962,10 +2509,10 @@ mod api_tests {
         };
 
         profile
-            .try_add_sample(sample1, None)
+            .try_add_sample(sample1, None, None)
             .expect("add to success");
         profile
-            .try_add_sample(sample2, None)
+            .try_add_sample(sample2, None, None)
             .expect("add to success");
 
         let mut values_offset: Vec<usize> = vec![0];
@@ -2011,7 +2558,7 @@ mod api_tests {
         };
 
         profile
-            .try_add_sample(sample1, None)
+            .try_add_sample(sample1, None, None)
             .expect("add to success");
 
         let values_offset: Vec<usize> = vec![0];
@@ -2069,7 +2616,7 @@ mod api_tests {
         };
 
         profile
-            .try_add_sample(sample1, None)
+            .try_add_sample(sample1, None, None)
             .expect("add to success");
 
         let upscaling_info = UpscalingInfo::Proportional { scale: 2.0 };
@@ -2127,10 +2674,10 @@ mod api_tests {
         };
 
         profile
-            .try_add_sample(sample1, None)
+            .try_add_sample(sample1, None, None)
             .expect("add to success");
         profile
-            .try_add_sample(sample2, None)
+            .try_add_sample(sample2, None, None)
             .expect("add to success");
 
         let upscaling_info = UpscalingInfo::Proportional { scale: 2.0 };
@@ -2201,10 +2748,10 @@ mod api_tests {
         };
 
         profile
-            .try_add_sample(sample1, None)
+            .try_add_sample(sample1, None, None)
             .expect("add to success");
         profile
-            .try_add_sample(sample2, None)
+            .try_add_sample(sample2, None, None)
             .expect("add to success");
 
         // add rule for the first sample on the 1st value
@@ -2258,7 +2805,7 @@ mod api_tests {
         };
 
         profile
-            .try_add_sample(sample1, None)
+            .try_add_sample(sample1, None, None)
             .expect("add to success");
 
         // upscale samples and wall-time values
@@ -2296,7 +2843,7 @@ mod api_tests {
         };
 
         profile
-            .try_add_sample(sample1, None)
+            .try_add_sample(sample1, None, None)
             .expect("add to success");
 
         let upscaling_info = UpscalingInfo::Proportional { scale: 2.0 };
@@ -2570,7 +3117,7 @@ mod api_tests {
         };
 
         profile
-            .try_add_sample(sample1, None)
+            .try_add_sample(sample1, None, None)
             .expect("add to success");
 
         let mut value_offsets: Vec<usize> = vec![0, 1];
@@ -2645,10 +3192,10 @@ mod api_tests {
         };
 
         profile
-            .try_add_sample(sample1, None)
+            .try_add_sample(sample1, None, None)
             .expect("add to success");
         profile
-            .try_add_sample(sample2, None)
+            .try_add_sample(sample2, None, None)
             .expect("add to success");
 
         profile.add_endpoint(10, Cow::from("endpoint 10"))?;
@@ -2947,8 +3494,12 @@ mod api_tests {
             labels: vec![],
         };
 
-        profile.add_string_id_sample(sample.clone(), None).unwrap();
-        profile.add_string_id_sample(sample.clone(), None).unwrap();
+        profile
+            .add_string_id_sample(sample.clone(), None, None)
+            .unwrap();
+        profile
+            .add_string_id_sample(sample.clone(), None, None)
+            .unwrap();
 
         let pprof_first_profile =
             roundtrip_to_pprof(profile.reset_and_return_previous().unwrap()).unwrap();
@@ -2965,8 +3516,12 @@ mod api_tests {
         // If the cache invalidation on the managed string table is working correctly, these strings
         // get correctly re-added to the profile's string table
 
-        profile.add_string_id_sample(sample.clone(), None).unwrap();
-        profile.add_string_id_sample(sample.clone(), None).unwrap();
+        profile
+            .add_string_id_sample(sample.clone(), None, None)
+            .unwrap();
+        profile
+            .add_string_id_sample(sample.clone(), None, None)
+            .unwrap();
         let pprof_second_profile = roundtrip_to_pprof(profile).unwrap();
 
         assert!(pprof_second_profile
@@ -3011,7 +3566,7 @@ mod api_tests {
         };
 
         profile
-            .try_add_sample(sample, None) // No timestamp = aggregated
+            .try_add_sample(sample, None, None) // No timestamp = aggregated
             .expect("profile to not be full");
 
         // We want to trigger an error inside the loop over observations.
