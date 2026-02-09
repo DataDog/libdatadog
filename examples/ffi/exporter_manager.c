@@ -60,7 +60,7 @@ ddog_prof_Profile *create_profile_with_sample(void) {
     };
 
     // Pass 0 as the timestamp parameter
-    ddog_prof_Profile_Result add_result = ddog_prof_Profile_add(profile, sample, 0);
+    ddog_prof_Profile_Result add_result = ddog_prof_Profile_add(profile, sample, 0, 0);
     if (add_result.tag != DDOG_PROF_PROFILE_RESULT_OK) {
         print_error("Failed to add sample to profile", &add_result.err);
         ddog_Error_drop(&add_result.err);
