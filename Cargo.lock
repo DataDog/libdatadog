@@ -1578,6 +1578,7 @@ dependencies = [
  "libdd-common",
  "libdd-trace-protobuf",
  "manual_future",
+ "regex",
  "serde",
  "serde_json",
  "serde_with",
@@ -1684,6 +1685,7 @@ version = "26.0.0"
 dependencies = [
  "anyhow",
  "datadog-remote-config",
+ "httpmock",
  "hyper 1.6.0",
  "libdd-common",
  "libdd-trace-utils",

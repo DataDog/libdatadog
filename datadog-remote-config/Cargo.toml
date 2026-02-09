@@ -45,6 +45,7 @@ tracing = { version = "0.1", default-features = false, optional = true }
 serde = "1.0"
 serde_json = { version = "1.0", features = ["raw_value"] }
 serde_with = "3"
+regex = "1.0"
 
 # Test feature
 hyper-util = { workspace = true, features = ["service"], optional = true }
