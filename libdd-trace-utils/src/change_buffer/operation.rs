@@ -1,5 +1,4 @@
-use crate::change_buffer::ChangeBuffer;
-use anyhow::{bail, Result};
+use crate::change_buffer::{ChangeBuffer, ChangeBufferError, Result};
 
 #[repr(u64)]
 #[derive(Debug, Clone)]
@@ -21,25 +20,25 @@ pub enum OpCode {
 }
 
 impl TryFrom<u64> for OpCode {
-    type Error = anyhow::Error;
+    type Error = ChangeBufferError;
 
     fn try_from(val: u64) -> Result<Self> {
-        Ok(match val {
-            0 => OpCode::Create,
-            1 => OpCode::SetMetaAttr,
-            2 => OpCode::SetMetricAttr,
-            3 => OpCode::SetServiceName,
-            4 => OpCode::SetResourceName,
-            5 => OpCode::SetError,
-            6 => OpCode::SetStart,
-            7 => OpCode::SetDuration,
-            8 => OpCode::SetType,
-            9 => OpCode::SetName,
-            10 => OpCode::SetTraceMetaAttr,
-            11 => OpCode::SetTraceMetricsAttr,
-            12 => OpCode::SetTraceOrigin,
-            _ => bail!("unknown opcode")
-        })
+        match val {
+            0 => Ok(OpCode::Create),
+            1 => Ok(OpCode::SetMetaAttr),
+            2 => Ok(OpCode::SetMetricAttr),
+            3 => Ok(OpCode::SetServiceName),
+            4 => Ok(OpCode::SetResourceName),
+            5 => Ok(OpCode::SetError),
+            6 => Ok(OpCode::SetStart),
+            7 => Ok(OpCode::SetDuration),
+            8 => Ok(OpCode::SetType),
+            9 => Ok(OpCode::SetName),
+            10 => Ok(OpCode::SetTraceMetaAttr),
+            11 => Ok(OpCode::SetTraceMetricsAttr),
+            12 => Ok(OpCode::SetTraceOrigin),
+            _ => Err(ChangeBufferError::UnknownOpcode(val)),
+        }
     }
 }
 
@@ -62,7 +61,7 @@ impl BufferedOperation {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use anyhow::Result;
+    use crate::change_buffer::Result;
 
     fn change_buffer_from_vec(buffer: &mut Vec<u8>) -> ChangeBuffer {
         unsafe {
