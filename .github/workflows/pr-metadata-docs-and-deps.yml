@@ -31,7 +31,9 @@ jobs:
   # Check cargo metadata for crates that are not flagged as publish = false
   cargo-metadata:
     needs: changed-crates
-    if: needs.changed-crates.outputs.crates_count > 0
+    if: |
+      needs.changed-crates.outputs.crates_count > 0 &&
+      !contains(github.event.pull_request.labels.*.name, 'skip-metadata-check')
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # 4.2.2

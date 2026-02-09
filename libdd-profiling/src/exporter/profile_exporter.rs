@@ -47,33 +47,9 @@ pub struct ProfileExporter {
     runtime: Option<Runtime>,
 }
 
-#[repr(C)]
-#[derive(Debug, Copy, Clone)]
-pub enum MimeType {
-    ApplicationJson,
-    ApplicationOctetStream,
-    TextCsv,
-    TextPlain,
-    TextXml,
-}
-
-impl MimeType {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            MimeType::ApplicationJson => mime::APPLICATION_JSON.as_ref(),
-            MimeType::ApplicationOctetStream => mime::APPLICATION_OCTET_STREAM.as_ref(),
-            MimeType::TextCsv => mime::TEXT_CSV.as_ref(),
-            MimeType::TextPlain => mime::TEXT_PLAIN.as_ref(),
-            MimeType::TextXml => mime::TEXT_XML.as_ref(),
-        }
-    }
-}
-
-#[derive(Debug)]
 pub struct File<'a> {
     pub name: &'a str,
     pub bytes: &'a [u8],
-    pub mime: MimeType,
 }
 
 impl ProfileExporter {
@@ -102,7 +78,6 @@ impl ProfileExporter {
         // Pre-build all static headers
         let mut headers = reqwest::header::HeaderMap::new();
 
-        // Always-present headers
         headers.insert(
             "Connection",
             reqwest::header::HeaderValue::from_static("close"),
@@ -123,18 +98,14 @@ impl ProfileExporter {
             ))?,
         );
 
-        // Optional headers (API key, test token)
-        if let Some(api_key) = &endpoint.api_key {
-            headers.insert(
-                "DD-API-KEY",
-                reqwest::header::HeaderValue::from_str(api_key)?,
-            );
+        // Add optional endpoint headers (api-key, test-token)
+        for (name, value) in endpoint.get_optional_headers() {
+            headers.insert(name, reqwest::header::HeaderValue::from_str(value)?);
         }
-        if let Some(test_token) = &endpoint.test_token {
-            headers.insert(
-                "X-Datadog-Test-Session-Token",
-                reqwest::header::HeaderValue::from_str(test_token)?,
-            );
+
+        // Add entity-related headers (container-id, entity-id, external-env)
+        for (name, value) in libdd_common::entity_id::get_entity_headers() {
+            headers.insert(name, reqwest::header::HeaderValue::from_static(value));
         }
 
         // Add Azure App Services tags if available
@@ -359,6 +330,11 @@ impl ProfileExporter {
         profile: EncodedProfile,
         additional_files: &[File],
     ) -> anyhow::Result<reqwest::multipart::Form> {
+        // Note: We don't set Content-Type for file attachments in the multipart form.
+        // The intake backend treats all attachments as raw bytes (application/octet-stream)
+        // and detects compression by reading magic bytes (gzip/zstd/etc headers).
+        // Content-Type is only meaningful for the main "event" part (set to application/json).
+        // Attachments are not forwarded beyond intake, so their MIME types are not needed.
         let event_bytes = serde_json::to_vec(&event)?;
 
         let mut form = reqwest::multipart::Form::new().part(

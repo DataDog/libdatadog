@@ -8,7 +8,9 @@ on:
 
 jobs:
   coverage:
-    runs-on: ubuntu-latest
+    runs-on:
+      labels: ubuntu-latest-16-cores
+      group: APM Larger Runners
     env:
       CARGO_TERM_COLOR: always
       CARGO_INCREMENTAL: 0
@@ -20,7 +22,7 @@ jobs:
           android: true
           dotnet: true
           haskell: true
-          large-packages: false
+          large-packages: true
           docker-images: true
           swap-storage: true
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # 4.2.2

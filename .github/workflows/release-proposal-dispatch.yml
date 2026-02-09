@@ -1,0 +1,364 @@
+name: Release - Open a release proposal PR
+on:
+  workflow_dispatch:
+    inputs:
+      crate:
+        description: Crate to release
+        required: true
+        type: choice
+        options:
+          - libdd-common
+          - libdd-crashtracker
+          - libdd-data-pipeline
+          - libdd-ddsketch
+          - libdd-dogstatsd-client
+          - libdd-library-config
+          - libdd-log
+          - libdd-profiling
+          - libdd-profiling-protobuf
+          - libdd-telemetry
+          - libdd-tinybytes
+          - libdd-trace-normalization
+          - libdd-trace-obfuscation
+          - libdd-trace-protobuf
+          - libdd-trace-stats
+          - libdd-trace-utils
+
+concurrency:
+  group: release-proposal-dispatch-group
+  cancel-in-progress: false
+
+env:
+  MAIN_BRANCH: main
+  RELEASE_BRANCH: release
+  PROPOSAL_BRANCH_PREFIX: release-proposal
+
+jobs:
+  check-proposal-ongoing:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # 4.2.2
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+      - name: Check if a release proposal is ongoing
+        run: |
+          # Check if there are any branches with the prefix "${{ env.PROPOSAL_BRANCH_PREFIX }}"
+          EXISTING_BRANCHES=$(git branch -r --list "origin/${{ env.PROPOSAL_BRANCH_PREFIX }}/*")
+          if [ -n "$EXISTING_BRANCHES" ]; then
+            echo "Error: A release proposal is ongoing. Please cancel it or wait for it to be merged." >&2
+            echo "Existing branches:"
+            echo "$EXISTING_BRANCHES"
+            exit 1
+          fi
+          echo "No release proposal is ongoing."
+
+  update-release-branch:
+    permissions:
+      id-token: write # Enable OIDC
+      contents: write
+    runs-on: ubuntu-latest
+    needs: check-proposal-ongoing
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # 4.2.2
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+      - name: Merge the main branch into the release branch
+        run: |
+          git fetch origin "${{ env.RELEASE_BRANCH }}" --tags
+          git checkout "${{ env.RELEASE_BRANCH }}"
+          # only fast-forward the merge
+          if ! git merge --ff-only origin/"${{ env.MAIN_BRANCH }}"; then
+            echo "Error: Cannot fast-forward merge ${{ env.MAIN_BRANCH }} into ${{ env.RELEASE_BRANCH }}" >&2
+            echo "The branches have diverged." >&2
+            echo "If you have recently launched another release, it is possible that ${{ env.MAIN_BRANCH }} branch is not yet updated with the ${{ env.RELEASE_BRANCH }} changes." >&2
+            echo "Please try again later." >&2
+            exit 1
+          fi
+          git push origin "${{ env.RELEASE_BRANCH }}" --tags
+  
+  cargo-release:
+    permissions:
+      id-token: write # Enable OIDC
+      pull-requests: write
+      contents: write
+    needs: update-release-branch
+    runs-on: ubuntu-latest
+    # TODO: uncomment this when we have a way to test this workflow
+    # if: ${{ github.repository_owner == 'datadog' }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # 4.2.2
+        with:
+          fetch-depth: 0  # Need full history for git tags
+      - uses: Swatinem/rust-cache@f13886b937689c021905a6b90929199931d60db1 # v2.8.1
+        with:
+          cache-targets: true
+      - uses: dtolnay/rust-toolchain@nightly
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.92.0
+      - uses: taiki-e/cache-cargo-install-action@7447f04c51f2ba27ca35e7f1e28fab848c5b3ba7 # 2.3.1
+        with:
+          tool: cargo-public-api@0.50.2
+      - uses: taiki-e/cache-cargo-install-action@7447f04c51f2ba27ca35e7f1e28fab848c5b3ba7 # 2.3.1
+        with:
+          tool: cargo-release
+      - uses: taiki-e/cache-cargo-install-action@7447f04c51f2ba27ca35e7f1e28fab848c5b3ba7 # 2.3.1
+        with:
+          tool: git-cliff
+      - uses: taiki-e/cache-cargo-install-action@7447f04c51f2ba27ca35e7f1e28fab848c5b3ba7 # 2.3.1
+        with:
+          tool: cargo-semver-checks@0.45.0
+      
+      - name: Configure Git for signing
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Get publication order for crate and dependencies
+        run: |
+          echo "Getting publication order for ${{ inputs.crate }}..."
+          
+          # Get the publication order as JSON and save to file
+          ./scripts/publication-order.sh --format=json "${{ inputs.crate }}" > /tmp/crates.json
+          echo "Publication order:"
+          cat /tmp/crates.json
+      
+      - name: Get commits since last release for each crate
+        run: |
+          # Get commits since release for each crate and save to file
+          ./scripts/commits-since-release.sh "$(cat /tmp/crates.json)" > /tmp/commits-by-crate.json
+          
+          # Display json output
+          jq . /tmp/commits-by-crate.json
+
+      - name: Create a branch for the release proposal
+        id: proposal-branch
+        run: |
+          git checkout "${{ env.RELEASE_BRANCH }}"
+          TIMESTAMP=$(date +%Y%m%d-%H%M%S)
+          BRANCH_NAME="${{ env.PROPOSAL_BRANCH_PREFIX }}/${{ inputs.crate }}/$TIMESTAMP"
+          git checkout -b "$BRANCH_NAME"
+          git push origin "$BRANCH_NAME"
+          echo "Branch created: $BRANCH_NAME from ${{ env.RELEASE_BRANCH }} branch"
+          echo "branch_name=$BRANCH_NAME" >> "$GITHUB_OUTPUT"
+          
+      - name: Release version bumps
+        id: release-version-bumps
+        env:
+          ORIGINAL_HEAD: ${{ github.sha }}
+        run: |
+          echo "Release version bumps..."
+
+          # Initialize results array
+          echo "[]" > /tmp/api-changes.json
+
+          BRANCH_NAME="${{ steps.proposal-branch.outputs.branch_name }}"
+
+          # iterate over the commits and execute cargo release for each crate
+          jq -c '.[]' /tmp/commits-by-crate.json | while read -r crate; do
+            NAME=$(echo "$crate" | jq -r '.name')
+            TAG=$(echo "$crate" | jq -r '.tag')
+            TAG_PREFIX="$NAME-v"
+            CRATE_PATH=$(echo "$crate" | jq -r '.path')
+            TAG_EXISTS=$(echo "$crate" | jq -r '.tag_exists')
+            COMMITS=$(echo "$crate" | jq -r '.commits')
+            INITIAL_RELEASE=false
+
+            # if there are no commits, skip the release
+            if [ "$COMMITS" = "[]" ]; then
+              echo "No commits since last release for $NAME, skipping release"
+              continue
+            fi
+
+            if [ "$TAG_EXISTS" = "true" ]; then
+              RANGE="$TAG..$ORIGINAL_HEAD"
+              echo "Using $RANGE as range"
+
+              echo "Is the tag $TAG in the branch:"
+              git branch --contains "$TAG" || {
+                echo "Error: Tag $TAG is not in the branch" >&2
+                exit 1
+              }
+
+              # if there is a tag more recent than $TAG, continue the loop
+              LATEST_TAG=$(git tag -l "$TAG_PREFIX*" --sort=-v:refname | head -1)
+              if [ "$LATEST_TAG" != "$TAG" ]; then
+                echo "Tag $TAG is not the latest. Latest is: $LATEST_TAG. main branch has the latest release for $NAME"
+                echo "Skipping release for $NAME"
+                continue
+              fi
+
+              echo "Executing semver-level.sh for $NAME since $RANGE (tag: $TAG)..."
+              SEMVER_LEVEL=$(./scripts/semver-level.sh "$NAME" "refs/tags/$TAG" 2>&1)
+              echo "Semver level: $SEMVER_LEVEL"
+
+              LEVEL=$(echo "$SEMVER_LEVEL" | jq -r '.level')
+
+              # TODO: cargo release warns if there are no changes to the public API
+              # warning: updating crate to 4.0.1 despite no changes made since tag crate-v4.0.0
+              # Should we skip the release if there are no changes to the public API?
+              echo "Executing cargo release for $NAME since $TAG with level $LEVEL..."
+              cargo release version -p "$NAME" --prev-tag-name "$TAG" --allow-branch "$BRANCH_NAME" -x $LEVEL --no-confirm
+
+            else
+              RANGE="$ORIGINAL_HEAD"
+              echo "No previous release tag for $NAME, using $ORIGINAL_HEAD as range"
+
+              # Use the version from the crate metadata
+              LEVEL=$(echo "$crate" | jq -r '.version')
+
+              # fail when the version is not an initial release
+              if [ "$LEVEL" != "1.0.0" ] && [ "$LEVEL" != "0.1.0" ]; then
+                echo "Error: $NAME is not a 1.0.0 or 0.1.0 release" >&2
+                exit 1
+              fi
+
+              INITIAL_RELEASE=true
+
+              echo "Executing cargo release for $NAME with level $LEVEL..."
+              cargo release version -p "$NAME" -x $LEVEL --no-confirm
+
+              # if CHANGELOG.md does not exist, create it
+              if [ ! -f "$CRATE_PATH/CHANGELOG.md" ]; then
+                echo "Creating CHANGELOG.md for $NAME..."
+                touch "$CRATE_PATH/CHANGELOG.md"
+              fi
+            fi
+            
+            # Update the CHANGELOG.md
+            NEXT_VERSION=$(cargo metadata --format-version=1 --no-deps | jq -r --arg name "$NAME" '.packages[] | select(.name == $name) | .version')
+            NEXT_TAG="$TAG_PREFIX$NEXT_VERSION"
+
+            # Check what commits git sees in the range
+            echo "Commits in the range $RANGE:"
+            git log --oneline "$RANGE" -- "$CRATE_PATH/"
+
+            echo "Executing git cliff for $NAME since $RANGE, next tag: $NEXT_TAG..."
+              
+            # It seems that git cliff does not like to use tags that are not on the branch
+            git cliff --tag "$NEXT_TAG" --include-path "$CRATE_PATH/**/*" --prepend "$CRATE_PATH/CHANGELOG.md" --tag-pattern "$TAG_PREFIX.*" -u -v "$RANGE"
+            git add "$CRATE_PATH/CHANGELOG.md"
+
+            # Commit the changes
+            cargo release commit --no-confirm -x
+
+            # Add to results array
+            jq --arg name "$NAME" \
+            --arg level "$LEVEL" \
+            --arg tag "$NEXT_TAG" \
+            --arg version "$NEXT_VERSION" \
+            --arg initial_release "$INITIAL_RELEASE" \
+            '. += [{"name": $name, "level": $level, "tag": $tag, "version": $version, "initial_release": $initial_release}]' \
+              /tmp/api-changes.json > /tmp/api-changes.tmp && mv /tmp/api-changes.tmp /tmp/api-changes.json
+          done
+
+          # Check if there are commits to push
+          if git diff --quiet "${{ env.RELEASE_BRANCH }}"; then
+            echo "No changes to push. Cancelling the workflow."
+            exit 1
+          fi
+
+          echo "Pushing branch $BRANCH_NAME to origin..."
+          git push origin "$BRANCH_NAME"
+
+          # Output the results
+          echo "API changes summary:"
+          jq . /tmp/api-changes.json
+
+      - name: Upload release data
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-dispatch-data
+          path: |
+            /tmp/commits-by-crate.json
+            /tmp/api-changes.json
+          retention-days: 1
+
+      - name: Cleanup on failure
+        if: failure() && steps.proposal-branch.outputs.branch_name != ''
+        run: |
+          BRANCH_NAME="${{ steps.proposal-branch.outputs.branch_name }}"
+          echo "Job failed, deleting branch $BRANCH_NAME..."
+          git push origin --delete "$BRANCH_NAME" || echo "Failed to delete branch (may not exist on remote)"
+
+    outputs:
+      branch_name: ${{ steps.proposal-branch.outputs.branch_name }}
+
+  create-pr:
+    needs: cargo-release
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write # Enable OIDC
+      pull-requests: write
+      contents: write
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # 4.2.2
+        with:
+          ref: ${{ needs.cargo-release.outputs.branch_name }}
+
+      - name: Download release data
+        uses: actions/download-artifact@v4
+        with:
+          name: release-dispatch-data
+          path: /tmp
+
+
+      - uses: DataDog/dd-octo-sts-action@acaa02eee7e3bb0839e4272dacb37b8f3b58ba80 # v1.0.3
+        id: octo-sts
+        with:
+          scope: DataDog/libdatadog
+          policy: self.write.pr
+
+      - name: Create a PR
+        env:
+          GH_TOKEN: ${{ steps.octo-sts.outputs.token }}
+        run: |
+          BRANCH_NAME="${{ needs.cargo-release.outputs.branch_name }}"
+                    
+          # Generate the PR body by merging commits and API changes
+          # Note: read returns 1 when it reaches EOF, which is expected for heredocs
+          read -r -d '' JQ_FILTER << 'EOF' || true
+          .[] |
+          . as $crate |
+          ($api[0] | map(select(.name == $crate.name)) | first // {
+            level: "skipped because there were no changes to the public API"
+          }) as $api_info |
+          [
+            "## \($crate.name)",
+            "",
+            (if $api_info.version then "**Next version:** `\($api_info.version)`\n" else null end),
+            "**Semver bump:** `\($api_info.level)`",
+            "",
+            (if $api_info.tag then "**Tag:** `\($api_info.tag)`\n" else null end),
+            (if $api_info.initial_release == "true" then
+              "**Warning:** this is an initial release. Please verify that the version and commits included are correct.\n"
+            else null end),
+            (if ($crate.commits | length) > 0 then "### Commits\n\n" + ($crate.commits | map("- \(.subject)") | join("\n")) else null end)
+          ] | map(select(. != null and . != "")) | join("\n")
+          EOF
+
+          PR_BODY=$(jq -r --slurpfile api /tmp/api-changes.json "$JQ_FILTER" /tmp/commits-by-crate.json)
+          
+          PR_BODY="# Release proposal for ${{ inputs.crate }} and its dependencies
+
+          This PR contains version bumps based on public API changes and commits since last release.
+
+          ${PR_BODY}"
+          
+          echo "PR_BODY: $PR_BODY"
+
+          gh pr create \
+            --head "$BRANCH_NAME" \
+            --title "chore(release): proposal for ${{ inputs.crate }}" \
+            --body "$PR_BODY" \
+            --label "release-proposal" \
+            --base "${{ env.RELEASE_BRANCH }}"
+
+      - name: Cleanup on failure
+        if: failure() && needs.cargo-release.outputs.branch_name != ''
+        run: |
+          BRANCH_NAME="${{ needs.cargo-release.outputs.branch_name }}"
+          echo "Job failed, deleting branch $BRANCH_NAME..."
+          git push origin --delete "$BRANCH_NAME" || echo "Failed to delete branch (may not exist on remote)"
