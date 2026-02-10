@@ -946,6 +946,20 @@ impl Profile {
             upscaling_rules: Default::default(),
         };
 
+        // Keep the profile string table attached to the same dictionary used
+        // for api2 translation so dictionary-backed ids can be interned later
+        // without copying bytes.
+        let dictionary = profile
+            .profiles_dictionary_translator
+            .as_ref()
+            .expect("profiles dictionary translator to be initialized")
+            .profiles_dictionary
+            .try_clone()
+            .map_err(|err| {
+                io::Error::other(format!("failed to clone profiles dictionary arc: {err}"))
+            })?;
+        profile.strings.attach_profiles_dictionary(dictionary);
+
         let _id = profile.intern("");
         debug_assert!(_id == StringId::ZERO);
 
@@ -1363,6 +1377,24 @@ mod api_tests {
         let sample_types = [api::ValueType::new("wall-time", "nanoseconds")];
         let profile = Profile::new(&sample_types, None);
         assert!(profile.get_profiles_dictionary().is_some());
+    }
+
+    #[test]
+    fn try_new_attaches_profiles_dictionary_to_string_table() {
+        let sample_types = [api::ValueType::new("wall-time", "nanoseconds")];
+        let mut profile = Profile::new(&sample_types, None);
+        let string_id2 = profile
+            .get_profiles_dictionary()
+            .expect("dictionary to exist")
+            .try_insert_str2("dict-only-string")
+            .expect("insert dict string");
+
+        let from_dictionary = profile
+            .strings
+            .try_intern_string_id2(string_id2)
+            .expect("intern from dictionary id");
+        let from_literal = profile.strings.intern("dict-only-string");
+        assert_eq!(from_dictionary, from_literal);
     }
 
     #[test]
