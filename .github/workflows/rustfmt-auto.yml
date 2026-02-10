@@ -1,11 +1,14 @@
 name: Rustfmt Auto
 on:
   pull_request:
+    types: [opened, synchronize, reopened, labeled]
 
 jobs:
   rustfmt:
     runs-on: ubuntu-latest
-    if: ${{ !startsWith(github.head_ref, 'mq-working-branch') }}
+    if: >-
+      contains(github.event.pull_request.labels.*.name, 'commit-rustfmt-changes') &&
+      !startsWith(github.head_ref, 'mq-working-branch')
     permissions:
       contents: write
     steps:
