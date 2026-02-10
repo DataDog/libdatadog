@@ -95,6 +95,10 @@ jobs:
         with:
           cache-targets: true
       - uses: dtolnay/rust-toolchain@nightly
+        with:
+          toolchain: nightly-2026-02-08
+      - name: Link nightly toolchain for cargo-public-api
+        run: ln -sf ~/.rustup/toolchains/nightly-2026-02-08-x86_64-unknown-linux-gnu ~/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: 1.92.0

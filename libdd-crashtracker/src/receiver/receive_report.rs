@@ -15,7 +15,6 @@ use libdd_telemetry::data::LogLevel;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use std::{fs, path::PathBuf};
 use tokio::io::AsyncBufReadExt;
 
 #[derive(Debug)]
@@ -524,6 +523,8 @@ pub(crate) async fn receive_report_from_stream(
 
 #[cfg(target_os = "linux")]
 fn enrich_thread_name(builder: &mut CrashInfoBuilder) -> anyhow::Result<()> {
+    use std::{fs, path::PathBuf};
+
     if builder.error.thread_name.is_some() {
         return Ok(());
     }
