@@ -30,7 +30,8 @@ http-body-util = "0.1"
 tower-service = "0.3"
 cc = "1.1.31"
 mime = { version = "0.3.16", optional = true }
-multipart = { version = "0.18", optional = true, default-features = false, features = ["server"] }
+multer = { version = "3.1", optional = true }
+bytes = { version = "1.4", optional = true }
 pin-project = "1"
 rand = { version = "0.8", optional = true }
 regex = "1.5"
@@ -71,7 +72,8 @@ httparse = "1.9"
 indexmap = "2.11"
 maplit = "1.0"
 mime = "0.3.16"
-multipart = { version = "0.18", default-features = false, features = ["server"] }
+multer = "3.1"
+bytes = "1.4"
 rand = "0.8"
 tempfile = "3.8"
 tokio = { version = "1.23", features = ["rt", "macros", "time"] }
@@ -88,7 +90,7 @@ fips = ["https", "hyper-rustls/fips"]
 # Enable reqwest client builder support with file dump debugging
 reqwest = ["dep:reqwest", "test-utils"]
 # Enable test utilities for use in other crates
-test-utils = ["dep:httparse", "dep:rand", "dep:mime", "dep:multipart"]
+test-utils = ["dep:httparse", "dep:rand", "dep:mime", "dep:multer", "dep:bytes"]
 
 [lints.rust]
 # We run coverage checks in our github actions. These checks are run with

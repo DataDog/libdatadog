@@ -160,9 +160,6 @@ pub fn parse_http_request(data: &[u8]) -> anyhow::Result<HttpRequest> {
 ///
 /// Extracts the boundary from the Content-Type header and parses the multipart body.
 fn parse_multipart(content_type: &str, body: &[u8]) -> anyhow::Result<Vec<MultipartPart>> {
-    use multipart::server::Multipart;
-    use std::io::Cursor;
-
     // Extract boundary from Content-Type header
     let mime: mime::Mime = content_type
         .parse()
@@ -171,21 +168,28 @@ fn parse_multipart(content_type: &str, body: &[u8]) -> anyhow::Result<Vec<Multip
     let boundary = mime
         .get_param(mime::BOUNDARY)
         .context("No boundary parameter found in Content-Type")?
-        .as_str();
+        .to_string();
 
-    // Parse multipart body
-    let cursor = Cursor::new(body);
-    let mut multipart = Multipart::with_body(cursor, boundary);
+    // multer is async, which is unnecessary for our use-case so just wrap in block_on to maintain a
+    // sync API
+    futures::executor::block_on(parse_multipart_async(boundary, body.to_vec()))
+}
+
+async fn parse_multipart_async(
+    boundary: String,
+    body: Vec<u8>,
+) -> anyhow::Result<Vec<MultipartPart>> {
+    use futures_util::stream::once;
+
+    let stream = once(async move { Ok::<_, std::io::Error>(bytes::Bytes::from(body)) });
+    let mut multipart = multer::Multipart::new(stream, boundary);
     let mut parts = Vec::new();
 
-    while let Some(mut field) = multipart.read_entry()? {
-        let headers = &field.headers;
-        let name = headers.name.to_string();
-        let filename = headers.filename.clone();
-        let content_type = headers.content_type.as_ref().map(|ct| ct.to_string());
-
-        let mut content = Vec::new();
-        std::io::Read::read_to_end(&mut field.data, &mut content)?;
+    while let Some(field) = multipart.next_field().await? {
+        let name = field.name().unwrap_or_default().to_string();
+        let filename = field.file_name().map(|s| s.to_string());
+        let content_type = field.content_type().map(|m| m.to_string());
+        let content = field.bytes().await?.to_vec();
 
         parts.push(MultipartPart {
             name,
