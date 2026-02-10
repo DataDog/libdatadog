@@ -410,7 +410,7 @@ impl Profile {
         };
 
         // Profile interns the strings
-        self.inner.try_add_sample(api_sample, None)?;
+        self.inner.try_add_sample(api_sample, None, None)?;
         Ok(())
     }
 
