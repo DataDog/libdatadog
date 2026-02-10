@@ -30,7 +30,7 @@ http-body-util = "0.1"
 tower-service = "0.3"
 cc = "1.1.31"
 mime = { version = "0.3.16", optional = true }
-multipart = { version = "0.18", optional = true }
+multipart = { version = "0.18", optional = true, default-features = false, features = ["server"] }
 pin-project = "1"
 rand = { version = "0.8", optional = true }
 regex = "1.5"
@@ -71,7 +71,7 @@ httparse = "1.9"
 indexmap = "2.11"
 maplit = "1.0"
 mime = "0.3.16"
-multipart = "0.18"
+multipart = { version = "0.18", default-features = false, features = ["server"] }
 rand = "0.8"
 tempfile = "3.8"
 tokio = { version = "1.23", features = ["rt", "macros", "time"] }
