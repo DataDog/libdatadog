@@ -3270,6 +3270,7 @@ dependencies = [
  "rustc-hash 1.1.0",
  "serde",
  "serde_json",
+ "strum",
  "target-triple",
  "tempfile",
  "thiserror 2.0.17",
