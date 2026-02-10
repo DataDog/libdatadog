@@ -6,6 +6,7 @@
 #![allow(clippy::needless_lifetimes)]
 
 use crate::api;
+use crate::api2;
 use crate::exporter;
 use crate::internal;
 
@@ -132,6 +133,26 @@ pub mod ffi {
         labels: Vec<Label<'a>>,
     }
 
+    struct Location2 {
+        // Opaque pointer to MappingId2 (stored as usize for CXX compatibility).
+        // Must come from the same ProfilesDictionary used to create the profile.
+        mapping: usize,
+        // Opaque pointer to FunctionId2 (stored as usize for CXX compatibility).
+        // Must come from the same ProfilesDictionary used to create the profile.
+        function: usize,
+        address: u64,
+        line: i64,
+    }
+
+    struct Label2 {
+        // Opaque pointer to StringId2 (stored as usize for CXX compatibility).
+        // Must come from the same ProfilesDictionary used to create the profile.
+        key: usize,
+        str: String,
+        num: i64,
+        num_unit: String,
+    }
+
     struct Tag<'a> {
         key: &'a str,
         value: &'a str,
@@ -161,6 +182,13 @@ pub mod ffi {
 
         // Profile methods
         fn add_sample(self: &mut Profile, sample: &Sample) -> Result<()>;
+        fn add_sample2_otel(
+            self: &mut Profile,
+            locations: &[Location2],
+            value: i64,
+            sample_type: SampleType,
+            labels: &[Label2],
+        ) -> Result<()>;
         fn add_endpoint(self: &mut Profile, local_root_span_id: u64, endpoint: &str) -> Result<()>;
         fn add_endpoint_count(self: &mut Profile, endpoint: &str, value: i64) -> Result<()>;
 
@@ -329,6 +357,42 @@ pub mod ffi {
 // ============================================================================
 // From Implementations - Convert CXX types to API types
 // ============================================================================
+
+impl TryFrom<&ffi::Location2> for api2::Location2 {
+    type Error = anyhow::Error;
+
+    fn try_from(loc: &ffi::Location2) -> Result<Self, Self::Error> {
+        use crate::profiles::datatypes::{FunctionId2, MappingId2};
+
+        // SAFETY: Since StringId2, MappingId2, and FunctionId2 are #[repr(transparent)] wrappers
+        // around pointers, and we're casting from usize (pointer value), we can safely construct
+        // them. The caller must ensure that all IDs come from the same ProfilesDictionary.
+        Ok(api2::Location2 {
+            mapping: MappingId2(loc.mapping as *mut _),
+            function: FunctionId2(loc.function as *mut _),
+            address: loc.address,
+            line: loc.line,
+        })
+    }
+}
+
+impl<'a> TryFrom<&'a ffi::Label2> for api2::Label<'a> {
+    type Error = anyhow::Error;
+
+    fn try_from(label: &'a ffi::Label2) -> Result<Self, Self::Error> {
+        use crate::profiles::datatypes::StringId2;
+
+        // SAFETY: Since StringId2 is a #[repr(transparent)] wrapper around a pointer,
+        // and we're casting from usize (pointer value), we can safely construct it.
+        // The caller must ensure that all IDs come from the same ProfilesDictionary.
+        Ok(api2::Label {
+            key: StringId2(label.key as *mut _),
+            str: &label.str,
+            num: label.num,
+            num_unit: &label.num_unit,
+        })
+    }
+}
 
 impl TryFrom<ffi::SampleType> for api::SampleType {
     type Error = anyhow::Error;
@@ -545,6 +609,36 @@ impl Profile {
 
         // Profile interns the strings
         self.inner.try_add_sample(api_sample, None)?;
+        Ok(())
+    }
+
+    pub fn add_sample2_otel(
+        &mut self,
+        locations: &[ffi::Location2],
+        value: i64,
+        sample_type: ffi::SampleType,
+        labels: &[ffi::Label2],
+    ) -> anyhow::Result<()> {
+        // Convert CXX types to internal api2 types
+        let locations: Vec<api2::Location2> = locations
+            .iter()
+            .map(TryInto::try_into)
+            .collect::<Result<Vec<_>, _>>()?;
+
+        // Convert labels to an ExactSizeIterator of Results.
+        // Slice iterators implement ExactSizeIterator, and map preserves it.
+        let labels_iter = labels.iter().map(TryInto::try_into);
+
+        let sample_type: api::SampleType = sample_type.try_into()?;
+
+        // SAFETY: The caller must ensure that all MappingId2, FunctionId2, and StringId2
+        // values in `locations` and `labels` come from the same ProfilesDictionary that
+        // this profile was created with. The CXX API doesn't enforce this at the type
+        // level, so it's the caller's responsibility to maintain this invariant.
+        unsafe {
+            self.inner
+                .try_add_sample2_otel(&locations, value, sample_type, labels_iter, None)?;
+        }
         Ok(())
     }
 

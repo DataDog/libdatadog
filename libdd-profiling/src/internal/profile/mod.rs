@@ -7,11 +7,12 @@ mod fuzz_tests;
 pub mod interning_api;
 mod profiles_dictionary_translator;
 
+use enum_map::EnumMap;
 pub use profiles_dictionary_translator::*;
 
 use self::api::UpscalingInfo;
 use super::*;
-use crate::api::ManagedStringId;
+use crate::api::{ManagedStringId, SampleType};
 use crate::collections::identifiable::*;
 use crate::collections::string_storage::{CachedProfileId, ManagedStringStorage};
 use crate::collections::string_table::{self, StringTable};
@@ -46,6 +47,7 @@ pub struct Profile {
     observations: Observations,
     period: Option<api::Period>,
     sample_types: Box<[api::SampleType]>,
+    sample_type_indicies: EnumMap<api::SampleType, Option<usize>>,
     stack_traces: FxIndexSet<StackTrace>,
     start_time: SystemTime,
     strings: StringTable,
@@ -163,6 +165,30 @@ impl Profile {
         }
 
         self.try_add_sample_internal(sample.values, labels, locations, timestamp)
+    }
+
+    /// Tries to add a sample using `api2` structures.
+    ///
+    /// # Safety
+    ///
+    /// All MappingId2, FunctionId2, and StringId2 values should be coming
+    /// from the same profiles dictionary used by this profile internally.
+    pub unsafe fn try_add_sample2_otel<
+        'a,
+        L: ExactSizeIterator<Item = anyhow::Result<api2::Label<'a>>>,
+    >(
+        &mut self,
+        locations: &[api2::Location2],
+        value: i64,
+        sample_type: SampleType,
+        labels: L,
+        timestamp: Option<Timestamp>,
+    ) -> anyhow::Result<()> {
+        let idx = self.sample_type_indicies[sample_type]
+            .with_context(|| format!("Unexpected sample type: {sample_type:?}"))?;
+        let mut values = vec![0; self.sample_types.len()];
+        values[idx] = value;
+        self.try_add_sample2(locations, &values, labels, timestamp)
     }
 
     /// Tries to add a sample using `api2` structures.
@@ -917,6 +943,13 @@ impl Profile {
         profiles_dictionary_translator: Option<ProfilesDictionaryTranslator>,
     ) -> io::Result<Self> {
         let start_time = SystemTime::now();
+        let mut sample_type_indicies = EnumMap::<api::SampleType, Option<usize>>::default();
+        sample_type_indicies.extend(
+            sample_types
+                .iter()
+                .enumerate()
+                .map(|(index, sample_type)| (*sample_type, Some(index))),
+        );
         let mut profile = Self {
             profiles_dictionary_translator,
             active_samples: Default::default(),
@@ -931,6 +964,7 @@ impl Profile {
             observations: Default::default(),
             period,
             sample_types,
+            sample_type_indicies,
             stack_traces: Default::default(),
             start_time,
             strings: Default::default(),
