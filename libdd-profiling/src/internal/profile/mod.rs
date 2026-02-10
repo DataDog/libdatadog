@@ -17,7 +17,7 @@ use crate::collections::string_storage::{CachedProfileId, ManagedStringStorage};
 use crate::collections::string_table::{self, StringTable};
 use crate::iter::{IntoLendingIterator, LendingIterator};
 use crate::profiles::collections::ArcOverflow;
-use crate::profiles::datatypes::ProfilesDictionary;
+use crate::profiles::datatypes::{Function2, Mapping2, ProfilesDictionary};
 use crate::profiles::{Compressor, DefaultProfileCodec};
 use crate::{api, api2};
 use anyhow::Context;
@@ -132,37 +132,89 @@ impl Profile {
             self.validate_sample_labels(&sample)?;
         }
 
-        let labels = {
-            let mut lbls = Vec::new();
-            // Using try_reserve_exact because it will be converted to Box<[]>,
-            // so excess capacity would make that conversion more expensive.
-            lbls.try_reserve_exact(sample.labels.len())?;
-            for label in &sample.labels {
-                let key = self.try_intern(label.key)?;
-                let internal_label = if !label.str.is_empty() {
-                    let str = self.try_intern(label.str)?;
-                    Label::str(key, str)
-                } else {
-                    let num = label.num;
-                    let num_unit = self.try_intern(label.num_unit)?;
-                    Label::num(key, num, num_unit)
-                };
-
-                let id = self.labels.try_dedup(internal_label)?;
-                lbls.push(id);
-            }
-            lbls.into_boxed_slice()
+        let (locations, labels) = {
+            let translator = self
+                .profiles_dictionary_translator
+                .as_ref()
+                .context("profiles dictionary translator not set")?;
+            let dict = translator.profiles_dictionary.deref();
+            Self::sample_to_api2(dict, &sample).context("failed to convert sample to api2")?
         };
+        let labels_iter = labels.into_iter();
+        // SAFETY: All ids were produced by this profile's dictionary in sample_to_api2.
+        unsafe { self.try_add_sample2(&locations, sample.values, labels_iter, timestamp) }
+    }
 
-        let mut locations = Vec::new();
-        locations
-            .try_reserve_exact(sample.locations.len())
-            .context("failed to reserve memory for sample locations")?;
-        for location in &sample.locations {
-            locations.push(self.try_add_location(location)?);
+    /// Converts an `api::Sample` to the format expected by `try_add_sample2`,
+    /// by inserting strings, mappings, and functions into the given dictionary.
+    fn sample_to_api2<'a>(
+        dict: &ProfilesDictionary,
+        sample: &'a api::Sample,
+    ) -> Result<
+        (Vec<api2::Location2>, Vec<anyhow::Result<api2::Label<'a>>>),
+        crate::profiles::collections::SetError,
+    > {
+        #[inline]
+        fn is_zero_mapping(mapping: &api::Mapping) -> bool {
+            let filename = mapping.filename.len();
+            let build_id = mapping.build_id.len();
+            if 0 != (filename | build_id) {
+                return false;
+            }
+            let memory_start = mapping.memory_start;
+            let memory_limit = mapping.memory_limit;
+            let file_offset = mapping.file_offset;
+            0 == (memory_start | memory_limit | file_offset)
         }
 
-        self.try_add_sample_internal(sample.values, labels, locations, timestamp)
+        let mut locations = Vec::new();
+        locations.try_reserve_exact(sample.locations.len())?;
+        for location in &sample.locations {
+            let mapping = if is_zero_mapping(&location.mapping) {
+                Default::default()
+            } else {
+                let filename_id = dict.try_insert_str2(location.mapping.filename)?;
+                let build_id = dict.try_insert_str2(location.mapping.build_id)?;
+                let mapping = Mapping2 {
+                    memory_start: location.mapping.memory_start,
+                    memory_limit: location.mapping.memory_limit,
+                    file_offset: location.mapping.file_offset,
+                    filename: filename_id,
+                    build_id,
+                };
+                dict.try_insert_mapping2(mapping)?
+            };
+
+            let function_name_id = dict.try_insert_str2(location.function.name)?;
+            let function_system_name_id = dict.try_insert_str2(location.function.system_name)?;
+            let function_filename_id = dict.try_insert_str2(location.function.filename)?;
+            let function = Function2 {
+                name: function_name_id,
+                system_name: function_system_name_id,
+                file_name: function_filename_id,
+            };
+            let function = dict.try_insert_function2(function)?;
+
+            locations.push(api2::Location2 {
+                mapping,
+                function,
+                address: location.address,
+                line: location.line,
+            });
+        }
+
+        let mut labels = Vec::new();
+        labels.try_reserve_exact(sample.labels.len())?;
+        for label in &sample.labels {
+            let key = dict.try_insert_str2(label.key)?;
+            labels.push(Ok(if !label.str.is_empty() {
+                api2::Label::str(key, label.str)
+            } else {
+                api2::Label::num(key, label.num, label.num_unit)
+            }));
+        }
+
+        Ok((locations, labels))
     }
 
     /// Tries to add a sample using `api2` structures.
@@ -687,18 +739,6 @@ impl Profile {
 
 /// Private helper functions
 impl Profile {
-    fn try_add_function(&mut self, function: &api::Function) -> anyhow::Result<FunctionId> {
-        let name = self.try_intern(function.name)?;
-        let system_name = self.try_intern(function.system_name)?;
-        let filename = self.try_intern(function.filename)?;
-
-        self.functions.try_dedup(Function {
-            name,
-            system_name,
-            filename,
-        })
-    }
-
     fn add_string_id_function(
         &mut self,
         function: &api::StringIdFunction,
@@ -714,17 +754,6 @@ impl Profile {
         })
     }
 
-    fn try_add_location(&mut self, location: &api::Location) -> anyhow::Result<LocationId> {
-        let mapping_id = self.try_add_mapping(&location.mapping)?;
-        let function_id = self.try_add_function(&location.function)?;
-        self.locations.checked_dedup(Location {
-            mapping_id,
-            function_id,
-            address: location.address,
-            line: location.line,
-        })
-    }
-
     fn add_string_id_location(
         &mut self,
         location: &api::StringIdLocation,
@@ -737,43 +766,6 @@ impl Profile {
             address: location.address,
             line: location.line,
         })
-    }
-
-    fn try_add_mapping(&mut self, mapping: &api::Mapping) -> anyhow::Result<Option<MappingId>> {
-        #[inline]
-        fn is_zero_mapping(mapping: &api::Mapping) -> bool {
-            // - PHP, Python, and Ruby use a mapping only as required.
-            // - .NET uses only the filename.
-            // - The native profiler uses all fields.
-            // We strike a balance for optimizing for the dynamic languages
-            // and the others by mixing branches and branchless programming.
-            let filename = mapping.filename.len();
-            let build_id = mapping.build_id.len();
-            if 0 != (filename | build_id) {
-                return false;
-            }
-
-            let memory_start = mapping.memory_start;
-            let memory_limit = mapping.memory_limit;
-            let file_offset = mapping.file_offset;
-            0 == (memory_start | memory_limit | file_offset)
-        }
-
-        if is_zero_mapping(mapping) {
-            return Ok(None);
-        }
-
-        let filename = self.try_intern(mapping.filename)?;
-        let build_id = self.try_intern(mapping.build_id)?;
-
-        let id = self.mappings.try_dedup(Mapping {
-            memory_start: mapping.memory_start,
-            memory_limit: mapping.memory_limit,
-            file_offset: mapping.file_offset,
-            filename,
-            build_id,
-        })?;
-        Ok(Some(id))
     }
 
     fn add_string_id_mapping(
