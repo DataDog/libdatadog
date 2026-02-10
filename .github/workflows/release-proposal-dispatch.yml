@@ -353,6 +353,7 @@ jobs:
           
           echo "PR_BODY: $PR_BODY"
 
+          # NOTE: the PR title is used to filter gitlab CI jobs. If you change it, you need to update the gitlab CI job filter.
           gh pr create \
             --head "$BRANCH_NAME" \
             --title "chore(release): proposal for ${{ inputs.crate }}" \
