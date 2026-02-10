@@ -112,13 +112,10 @@ compute_semver_results() {
           fi
         fi
 
-        # Check for changed items (major change)
-        if echo "$PUBLIC_API_OUTPUT" | grep -q "^Changed items in the public API$"; then
-          if ! echo "$PUBLIC_API_OUTPUT" | grep -A 2 "^Changed items in the public API$" | grep -q "^(none)$"; then
-            LEVEL="major"
-            log_verbose "Detected changed items (major change)" >&2
-          fi
-        fi
+        # TODO: Improve parsing changed items with an allowlist. Right now is not working because there is some occasions
+        # in which changed items are not a breaking change. Examples:
+        # - Adding #[repr(c)] is not a breaking change (https://doc.rust-lang.org/cargo/reference/semver.html#repr-c-add).
+        # - Removing #[repr(c)] is a breaking change.
 
         # Check for added items (minor change) - only if not already major
         if [[ "$LEVEL" != "major" ]]; then
