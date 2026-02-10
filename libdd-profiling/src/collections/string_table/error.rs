@@ -5,6 +5,7 @@
 pub enum Error {
     OutOfMemory,
     StorageFull,
+    ProfilesDictionaryRequired,
 }
 
 impl core::fmt::Display for Error {
@@ -12,6 +13,7 @@ impl core::fmt::Display for Error {
         let msg = match self {
             Error::OutOfMemory => "out of memory",
             Error::StorageFull => "storage full",
+            Error::ProfilesDictionaryRequired => "profiles dictionary is required",
         };
         std::fmt::Display::fmt(msg, f)
     }

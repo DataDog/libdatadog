@@ -9,6 +9,8 @@ pub use error::*;
 
 use crate::collections::identifiable::StringId;
 use crate::iter::{IntoLendingIterator, LendingIterator};
+use crate::profiles::collections::{Arc, StringRef};
+use crate::profiles::datatypes::{ProfilesDictionary, StringId2};
 use libdd_alloc::{AllocError, Allocator, ChainAllocator, VirtualAllocator};
 use std::alloc::Layout;
 
@@ -68,6 +70,11 @@ pub struct StringTable {
     /// but if they are, they should be bound to the string table's lifetime
     /// or the lending iterator's lifetime.
     strings: HashSet<&'static str>,
+
+    /// Optional dictionary backing for dictionary-provided string references.
+    /// Keeping this Arc alive allows the table to safely hold references into
+    /// dictionary-managed string storage.
+    profiles_dictionary: Option<Arc<ProfilesDictionary>>,
 }
 
 impl Default for StringTable {
@@ -110,7 +117,11 @@ impl StringTable {
         // which is sketchy.
         strings.insert("");
 
-        Self { bytes, strings }
+        Self {
+            bytes,
+            strings,
+            profiles_dictionary: None,
+        }
     }
 
     /// Returns the number of strings currently held in the string table.
@@ -169,6 +180,56 @@ impl StringTable {
             }
         }
     }
+
+    /// Attaches a `ProfilesDictionary` to this table so dictionary-backed ids
+    /// can be interned without copying string bytes.
+    pub fn attach_profiles_dictionary(&mut self, profiles_dictionary: Arc<ProfilesDictionary>) {
+        self.profiles_dictionary = Some(profiles_dictionary);
+    }
+
+    /// Adds a dictionary-backed `StringId2` to the table, returning its
+    /// corresponding local `StringId`.
+    ///
+    /// Fails with [`Error::ProfilesDictionaryRequired`] when no dictionary is
+    /// attached.
+    pub fn try_intern_string_id2(&mut self, string_id: StringId2) -> Result<StringId, Error> {
+        self.try_intern_string_ref(string_id.into())
+    }
+
+    /// Adds a dictionary-backed `StringRef` to the table, returning its
+    /// corresponding local `StringId`.
+    ///
+    /// Fails with [`Error::ProfilesDictionaryRequired`] when no dictionary is
+    /// attached.
+    pub fn try_intern_string_ref(&mut self, string_ref: StringRef) -> Result<StringId, Error> {
+        let profiles_dictionary = self
+            .profiles_dictionary
+            .as_deref()
+            .ok_or(Error::ProfilesDictionaryRequired)?;
+
+        // SAFETY: `string_ref` must come from the attached dictionary (or be a
+        // well-known StringRef valid across dictionaries).
+        let str = unsafe { profiles_dictionary.strings().get(string_ref) };
+
+        let set = &mut self.strings;
+        match set.get_index_of(str) {
+            // SAFETY: if it already exists, it must fit in the range.
+            Some(offset) => Ok(unsafe { StringId::try_from(offset).unwrap_unchecked() }),
+            None => {
+                // No match. Get the current size of the table, which
+                // corresponds to the StringId it will have when inserted.
+                let string_id = StringId::try_from(set.len()).map_err(|_| Error::StorageFull)?;
+
+                // Keep dictionary string bytes by reference (no copy).
+                // SAFETY: this lifetime is tied to the attached dictionary Arc
+                // held by the table and moved into its iterator.
+                let str = unsafe { core::mem::transmute::<&str, &'static str>(str) };
+                set.try_reserve(1)?;
+                set.insert(str);
+                Ok(string_id)
+            }
+        }
+    }
 }
 
 /// A [LendingIterator] for a [StringTable]. Make one by calling
@@ -178,6 +239,10 @@ pub struct StringTableIter {
     /// references in `iter` actually point in here.
     #[allow(unused)]
     bytes: ChainAllocator<VirtualAllocator>,
+
+    /// Keep dictionary-backed string memory alive while iterating.
+    #[allow(unused)]
+    profiles_dictionary: Option<Arc<ProfilesDictionary>>,
 
     /// The strings of the string table, in order of insertion.
     /// The static lifetimes are a lie, they are tied to the `bytes`. When
@@ -190,6 +255,7 @@ impl StringTableIter {
     fn new(string_table: StringTable) -> StringTableIter {
         StringTableIter {
             bytes: string_table.bytes,
+            profiles_dictionary: string_table.profiles_dictionary,
             iter: string_table.strings.into_iter(),
         }
     }
@@ -306,6 +372,35 @@ mod tests {
         // Intern a string literal to ensure ?Sized works.
         let string = table.intern("datadog");
         assert_eq!(StringId::from_offset(1), string);
+        assert_eq!(2, table.len());
+    }
+
+    #[test]
+    fn intern_string_id2_requires_dictionary_attachment() {
+        let mut table = StringTable::new();
+        let err = table
+            .try_intern_string_id2(StringRef::LOCAL_ROOT_SPAN_ID.into())
+            .expect_err("dictionary-backed intern should fail without dictionary");
+        assert_eq!(err, Error::ProfilesDictionaryRequired);
+    }
+
+    #[test]
+    fn intern_string_id2_with_dictionary_deduplicates_with_literal_strings() {
+        let dictionary = ProfilesDictionary::try_new().expect("dictionary");
+        let string_id2 = dictionary
+            .try_insert_str2("dictionary-string")
+            .expect("insert");
+        let dictionary = Arc::try_new(dictionary).expect("arc");
+
+        let mut table = StringTable::new();
+        table.attach_profiles_dictionary(dictionary);
+
+        let from_dictionary = table
+            .try_intern_string_id2(string_id2)
+            .expect("intern dictionary string");
+        let from_literal = table.intern("dictionary-string");
+
+        assert_eq!(from_dictionary, from_literal);
         assert_eq!(2, table.len());
     }
 
