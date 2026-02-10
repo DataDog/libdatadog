@@ -2,11 +2,33 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use serde::Deserialize;
-use serde_with::{serde_as, DisplayFromStr};
-use std::num::NonZeroU64;
 
 #[cfg(feature = "test")]
 use serde::Serialize;
+
+use regex::Regex;
+use serde::de::{self, Deserializer};
+
+fn deserialize_case_id<'de, D>(deserializer: D) -> Result<String, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let s = String::deserialize(deserializer)?;
+    if s == "0" {
+        return Err(de::Error::custom("case_id cannot be 0"));
+    }
+    if s.chars().all(|c| c.is_ascii_digit()) {
+        return Ok(s);
+    }
+    let re = Regex::new(r"^\d+-(with-debug|with-content)$")
+        .map_err(|_| de::Error::custom("Invalid case_id format"))?;
+    if re.is_match(&s) {
+        return Ok(s);
+    }
+    Err(de::Error::custom(
+        "case_id must be numeric or match '<digits>-with-debug|with-content'",
+    ))
+}
 
 #[derive(Debug, Deserialize, Clone, PartialEq)]
 #[cfg_attr(feature = "test", derive(Serialize))]
@@ -16,12 +38,11 @@ pub struct AgentTaskFile {
     pub uuid: String,
 }
 
-#[serde_as]
 #[derive(Debug, Deserialize, Clone, PartialEq)]
 #[cfg_attr(feature = "test", derive(Serialize))]
 pub struct AgentTask {
-    #[serde_as(as = "DisplayFromStr")]
-    pub case_id: NonZeroU64,
+    #[serde(deserialize_with = "deserialize_case_id")]
+    pub case_id: String,
     pub hostname: String,
     pub user_handle: String,
 }
@@ -88,7 +109,7 @@ mod tests {
         let result = parse_json(json_data.as_bytes());
         assert!(result.is_ok());
         let task = result.unwrap();
-        assert_eq!(task.args.case_id, NonZeroU64::new(12345).unwrap());
+        assert_eq!(task.args.case_id, "12345".to_string());
     }
 
     #[test]
@@ -125,13 +146,17 @@ mod tests {
 
     #[test]
     fn test_serialization() {
-        let task = AgentTask {
-            case_id: NonZeroU64::new(12345).unwrap(),
-            hostname: "test-host".to_string(),
-            user_handle: "test@example.com".to_string(),
+        let task = AgentTaskFile {
+            args: AgentTask {
+                case_id: "12345".to_string(),
+                hostname: "test-host".to_string(),
+                user_handle: "test@example.com".to_string(),
+            },
+            task_type: "tracer_flare".to_string(),
+            uuid: "test-uuid".to_string(),
         };
 
         let serialized = serde_json::to_string(&task).unwrap();
-        assert!(serialized.contains("\"case_id\":\"12345\""));
+        assert!(serialized.eq(r#"{"args":{"case_id":"12345","hostname":"test-host","user_handle":"test@example.com"},"task_type":"tracer_flare","uuid":"test-uuid"}"#));
     }
 }

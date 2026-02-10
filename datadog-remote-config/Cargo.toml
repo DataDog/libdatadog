@@ -23,6 +23,7 @@ client = [
     "tracing"
 ]
 live-debugger = ["datadog-live-debugger"]
+ffe = ["datadog-ffe"]
 test = ["hyper/server", "hyper-util"]
 
 [dependencies]
@@ -30,6 +31,7 @@ anyhow = { version = "1.0" }
 libdd-common = { path = "../libdd-common"}
 libdd-trace-protobuf = { path = "../libdd-trace-protobuf", optional = true }
 datadog-live-debugger = { path = "../datadog-live-debugger", optional = true }
+datadog-ffe = { path = "../datadog-ffe", optional = true }
 hyper = { workspace = true, optional = true }
 http-body-util = {version = "0.1", optional = true }
 http = { version = "1.0", optional = true }
@@ -45,6 +47,7 @@ tracing = { version = "0.1", default-features = false, optional = true }
 serde = "1.0"
 serde_json = { version = "1.0", features = ["raw_value"] }
 serde_with = "3"
+regex = "1.0"
 
 # Test feature
 hyper-util = { workspace = true, features = ["service"], optional = true }
