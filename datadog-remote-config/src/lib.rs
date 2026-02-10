@@ -14,7 +14,7 @@ pub mod fetch;
 pub mod file_change_tracker;
 #[cfg(feature = "client")]
 pub mod file_storage;
-mod parse;
+pub mod parse;
 mod path;
 #[cfg(feature = "client")]
 mod targets;
@@ -81,4 +81,5 @@ pub enum RemoteConfigCapabilities {
     ApmTracingEnableLiveDebugging = 41,
     AsmDdMulticonfig = 42,
     AsmTraceTaggingRules = 43,
+    FfeFlagConfigurationRules = 46,
 }

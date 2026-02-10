@@ -48,7 +48,11 @@ fn emit_debug_log(
     level: LogLevel,
 ) {
     if let Some(logger) = logger.as_ref().map(Arc::clone) {
-        let tags = format!("{},crash_uuid:{}", issue.tag(), crash_uuid);
+        let tags = format!(
+            "{},crash_uuid:{},is_crash_debug:true",
+            issue.tag(),
+            crash_uuid
+        );
         tokio::spawn(async move {
             let _ = logger.upload_general_log(message, tags, level).await;
         });
@@ -112,10 +116,12 @@ pub(crate) enum StdinState {
     TraceIds,
     Ucontext,
     Waiting,
+    ThreadName(Option<String>),
     // StackFrame is always emitted as one stream of all the frames but StackString
     // may have lines that we need to accumulate depending on runtime (e.g. Python)
     RuntimeStackFrame(Vec<StackFrame>),
     RuntimeStackString(Vec<String>),
+    Message,
 }
 
 /// A state machine that processes data from the crash-tracker collector line by
@@ -227,17 +233,24 @@ fn process_line(
         StdinState::SigInfo if line.starts_with(DD_CRASHTRACK_END_SIGINFO) => StdinState::Waiting,
         StdinState::SigInfo => {
             let sig_info: SigInfo = serde_json::from_str(line)?;
-            // By convention, siginfo is the first thing sent.
-            let message = format!(
-                "Process terminated with {:?} ({:?})",
-                sig_info.si_code_human_readable, sig_info.si_signo_human_readable
-            );
+            if !builder.has_message() {
+                let message = format!(
+                    "Process terminated with {:?} ({:?})",
+                    sig_info.si_code_human_readable, sig_info.si_signo_human_readable
+                );
+                builder.with_message(message)?;
+            }
 
             builder.with_timestamp_now()?;
             builder.with_sig_info(sig_info)?;
             builder.with_incomplete(true)?;
-            builder.with_message(message)?;
             StdinState::SigInfo
+        }
+
+        StdinState::Message if line.starts_with(DD_CRASHTRACK_END_MESSAGE) => StdinState::Waiting,
+        StdinState::Message => {
+            builder.with_message(line.to_string())?;
+            StdinState::Message
         }
 
         StdinState::SpanIds if line.starts_with(DD_CRASHTRACK_END_SPAN_IDS) => StdinState::Waiting,
@@ -255,6 +268,22 @@ fn process_line(
             let frame = serde_json::from_str(line)?;
             builder.with_stack_frame(frame, true)?;
             StdinState::StackTrace
+        }
+
+        StdinState::ThreadName(thread_name) if line.starts_with(DD_CRASHTRACK_END_THREAD_NAME) => {
+            if let Some(thread_name) = thread_name {
+                builder.with_thread_name(thread_name)?;
+            } else {
+                builder.with_log_message(
+                    "Thread name block ended without content".to_string(),
+                    true,
+                )?;
+            }
+            StdinState::Waiting
+        }
+        StdinState::ThreadName(_) => {
+            let name = line.trim_end_matches('\n').to_string();
+            StdinState::ThreadName(Some(name))
         }
 
         StdinState::TraceIds if line.starts_with(DD_CRASHTRACK_END_TRACE_IDS) => {
@@ -289,6 +318,7 @@ fn process_line(
             StdinState::ProcInfo
         }
         StdinState::Waiting if line.starts_with(DD_CRASHTRACK_BEGIN_SIGINFO) => StdinState::SigInfo,
+        StdinState::Waiting if line.starts_with(DD_CRASHTRACK_BEGIN_MESSAGE) => StdinState::Message,
         StdinState::Waiting if line.starts_with(DD_CRASHTRACK_BEGIN_SPAN_IDS) => {
             StdinState::SpanIds
         }
@@ -303,6 +333,9 @@ fn process_line(
         }
         StdinState::Waiting if line.starts_with(DD_CRASHTRACK_BEGIN_TRACE_IDS) => {
             StdinState::TraceIds
+        }
+        StdinState::Waiting if line.starts_with(DD_CRASHTRACK_BEGIN_THREAD_NAME) => {
+            StdinState::ThreadName(None)
         }
         StdinState::Waiting if line.starts_with(DD_CRASHTRACK_BEGIN_UCONTEXT) => {
             StdinState::Ucontext
@@ -454,6 +487,7 @@ pub(crate) async fn receive_report_from_stream(
 
     // For now, we only support Signal based crash detection in the receiver.
     builder.with_kind(ErrorKind::UnixSignal)?;
+    enrich_thread_name(&mut builder)?;
     builder.with_os_info_this_machine()?;
 
     // Without a config, we don't even know the endpoint to transmit to.  Not much to do to recover.
@@ -485,4 +519,254 @@ pub(crate) async fn receive_report_from_stream(
     }
 
     Ok(Some((config, crash_info)))
+}
+
+#[cfg(target_os = "linux")]
+fn enrich_thread_name(builder: &mut CrashInfoBuilder) -> anyhow::Result<()> {
+    use std::{fs, path::PathBuf};
+
+    if builder.error.thread_name.is_some() {
+        return Ok(());
+    }
+    let Some(proc_info) = builder.proc_info.as_ref() else {
+        return Ok(());
+    };
+    let Some(tid) = proc_info.tid else {
+        return Ok(());
+    };
+    let pid = proc_info.pid;
+    let path = PathBuf::from(format!("/proc/{pid}/task/{tid}/comm"));
+    let Ok(comm) = fs::read_to_string(&path) else {
+        return Ok(());
+    };
+    let thread_name = comm.trim_end_matches('\n');
+    if thread_name.is_empty() {
+        return Ok(());
+    }
+    builder.with_thread_name(thread_name.to_string())?;
+    Ok(())
+}
+
+#[cfg(not(target_os = "linux"))]
+fn enrich_thread_name(_builder: &mut CrashInfoBuilder) -> anyhow::Result<()> {
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_stdin_state_waiting_to_message() {
+        let mut builder = CrashInfoBuilder::new();
+        let mut config = None;
+
+        let state = StdinState::Waiting;
+        let line = DD_CRASHTRACK_BEGIN_MESSAGE;
+
+        let next_state = process_line(&mut builder, &mut config, line, state, &None).unwrap();
+
+        assert!(matches!(next_state, StdinState::Message));
+    }
+
+    #[test]
+    fn test_stdin_state_message_content() {
+        let mut builder = CrashInfoBuilder::new();
+        let mut config = None;
+
+        // Enter message state
+        let state = StdinState::Message;
+        let message_line = "program panicked";
+
+        let next_state =
+            process_line(&mut builder, &mut config, message_line, state, &None).unwrap();
+
+        // Should stay in message state
+        assert!(matches!(next_state, StdinState::Message));
+
+        // Verify message was stored
+        assert!(builder.has_message());
+    }
+
+    #[test]
+    fn test_stdin_state_message_to_waiting() {
+        let mut builder = CrashInfoBuilder::new();
+        let mut config = None;
+
+        let state = StdinState::Message;
+        let line = DD_CRASHTRACK_END_MESSAGE;
+
+        let next_state = process_line(&mut builder, &mut config, line, state, &None).unwrap();
+
+        assert!(matches!(next_state, StdinState::Waiting));
+    }
+
+    #[test]
+    fn test_message_state_with_empty_line() {
+        let mut builder = CrashInfoBuilder::new();
+        let mut config = None;
+
+        let state = StdinState::Message;
+        let empty_line = "";
+
+        let result = process_line(&mut builder, &mut config, empty_line, state, &None);
+
+        // Should handle empty line without error
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_message_state_with_multiline_content() {
+        let mut builder = CrashInfoBuilder::new();
+        let mut config = None;
+
+        // First line of message
+        let state = process_line(
+            &mut builder,
+            &mut config,
+            "Line 1 of panic",
+            StdinState::Message,
+            &None,
+        )
+        .unwrap();
+
+        // Should still be in message state
+        assert!(matches!(state, StdinState::Message));
+
+        // Note: Current implementation may only store last message
+        // This test documents current behavior
+    }
+
+    #[test]
+    fn test_message_state_full_workflow() {
+        let mut builder = CrashInfoBuilder::new();
+        let mut config = None;
+
+        // Start in waiting state
+        let mut state = StdinState::Waiting;
+
+        // Transition to message
+        state = process_line(
+            &mut builder,
+            &mut config,
+            DD_CRASHTRACK_BEGIN_MESSAGE,
+            state,
+            &None,
+        )
+        .unwrap();
+        assert!(matches!(state, StdinState::Message));
+
+        // Add message content
+        state = process_line(
+            &mut builder,
+            &mut config,
+            "test panic message",
+            state,
+            &None,
+        )
+        .unwrap();
+        assert!(matches!(state, StdinState::Message));
+        assert!(builder.has_message());
+
+        // End message
+        state = process_line(
+            &mut builder,
+            &mut config,
+            DD_CRASHTRACK_END_MESSAGE,
+            state,
+            &None,
+        )
+        .unwrap();
+        assert!(matches!(state, StdinState::Waiting));
+    }
+
+    #[test]
+    fn test_stacktrace_empty_workflow() {
+        // Test that receiving BEGIN_STACKTRACE followed by END_STACKTRACE
+        // (with no frames) creates an empty but complete stack
+        let mut builder = CrashInfoBuilder::new();
+        let mut config = None;
+
+        let mut state = StdinState::Waiting;
+
+        state = process_line(
+            &mut builder,
+            &mut config,
+            DD_CRASHTRACK_BEGIN_STACKTRACE,
+            state,
+            &None,
+        )
+        .unwrap();
+        assert!(matches!(state, StdinState::StackTrace));
+
+        // End stacktrace immediately (no frames)
+        state = process_line(
+            &mut builder,
+            &mut config,
+            DD_CRASHTRACK_END_STACKTRACE,
+            state,
+            &None,
+        )
+        .unwrap();
+        assert!(matches!(state, StdinState::Waiting));
+
+        // Verify we have an empty but incomplete stack (no frames captured = stack unwinding
+        // failed)
+        let stack = builder.error.stack.as_ref().expect("Stack should exist");
+        assert!(stack.frames.is_empty());
+        assert!(
+            stack.incomplete,
+            "Stack should be marked incomplete when no frames were captured"
+        );
+
+        // Verify a log message was recorded about no frames
+        assert!(builder
+            .log_messages
+            .as_ref()
+            .map(|msgs| msgs
+                .iter()
+                .any(|msg| msg.contains("No native stack frames received")))
+            .unwrap_or(false));
+    }
+
+    #[test]
+    fn test_stacktrace_with_frames_workflow() {
+        let mut builder = CrashInfoBuilder::new();
+        let mut config = None;
+
+        let mut state = StdinState::Waiting;
+
+        // Begin stacktrace
+        state = process_line(
+            &mut builder,
+            &mut config,
+            DD_CRASHTRACK_BEGIN_STACKTRACE,
+            state,
+            &None,
+        )
+        .unwrap();
+        assert!(matches!(state, StdinState::StackTrace));
+
+        // Add a frame
+        let frame_json = r#"{"ip":"0x1234"}"#;
+        state = process_line(&mut builder, &mut config, frame_json, state, &None).unwrap();
+        assert!(matches!(state, StdinState::StackTrace));
+
+        // End stacktrace
+        state = process_line(
+            &mut builder,
+            &mut config,
+            DD_CRASHTRACK_END_STACKTRACE,
+            state,
+            &None,
+        )
+        .unwrap();
+        assert!(matches!(state, StdinState::Waiting));
+
+        // Verify we have a stack with one frame, marked complete
+        let stack = builder.error.stack.as_ref().expect("Stack should exist");
+        assert_eq!(stack.frames.len(), 1);
+        assert!(!stack.incomplete, "Stack should be marked complete");
+        assert_eq!(stack.frames[0].ip, Some("0x1234".to_string()));
+    }
 }

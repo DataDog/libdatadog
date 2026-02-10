@@ -78,6 +78,8 @@ Consumers of the crash data format SHOULD be designed to handle all versions fro
   - `stack`: **[required]**
     This represents the stack of the crashing thread.
     See below for more details on how stacktraces are formatted.
+  - `thread_name`: **[optional]**
+    Name of the crashing thread
 - `files`: **[optional]**
   A `Map<filename, contents>` where `contents` is an array of plain text strings, one per line.
   Useful files for triage and debugging, such as `/proc/self/maps` or `/proc/meminfo`.
@@ -273,6 +275,15 @@ This section documents the evolution of the crashtracker structured log format a
 
 **Motivation:** When symbol names are demangled for readability, the original mangled names are lost. This makes debugging difficult when mangled names are needed (e.g., comparing against compiler-generated symbols). The `mangled_name` field preserves the original mangled name when demangling occurs.
 
+### Version 1.5
+*Added thread_name to `ErrorData`
+
+**Changes from v1.4:**
+- Added `thread_name` field to `Error` objects (optional string)
+- Updated `data_schema_version` to "1.5"
+
+**Motivation:** Having access to thread name of the crashing thread helps debugging, especially within multithreaded programs.
+
 ## Appendix A: Example output
 
 An example crash report in version 1.0 format is [available here](artifacts/0005-crashtracker-example.json).
@@ -281,7 +292,7 @@ Note: This example uses version 1.0 format. Version 1.1+ may include additional 
 
 ## Appendix B: Json Schema
 
-The current JSON schema (version 1.4) is [available here](artifacts/0009-crashtracker-schema.json).
+The current JSON schema (version 1.5) is [available here](artifacts/crashtracker-unified-runtime-stack-schema-v1_5.json).
 
 Historical schemas are also available:
 - [Version 1.0 schema](artifacts/0005-crashtracker-schema.json)

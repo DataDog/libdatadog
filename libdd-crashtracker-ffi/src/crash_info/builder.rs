@@ -403,6 +403,23 @@ pub unsafe extern "C" fn ddog_crasht_CrashInfoBuilder_with_message(
     })
 }
 
+/// # Safety
+/// The `builder` can be null, but if non-null it must point to a Builder made by this module,
+/// which has not previously been dropped.
+/// The CharSlice must be valid.
+#[no_mangle]
+#[must_use]
+#[named]
+pub unsafe extern "C" fn ddog_crasht_CrashInfoBuilder_with_thread_name(
+    mut builder: *mut Handle<CrashInfoBuilder>,
+    thread_name: CharSlice,
+) -> VoidResult {
+    wrap_with_void_ffi_result!({
+        let thread_name = thread_name.try_to_string()?;
+        builder.to_inner_mut()?.with_thread_name(thread_name)?;
+    })
+}
+
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 //                                            Crash Ping                                          //
 ////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -411,7 +428,7 @@ pub unsafe extern "C" fn ddog_crasht_CrashInfoBuilder_with_message(
 /// The `builder` can be null, but if non-null it must point to a Builder made by this module,
 /// which has not previously been dropped.
 /// All arguments must be valid.
-/// This method requires that the builder has a UUID, siginfo, and metadata set
+/// This method requires that the builder has a UUID and metadata set
 #[no_mangle]
 #[must_use]
 #[named]
