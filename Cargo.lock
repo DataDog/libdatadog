@@ -3031,6 +3031,7 @@ dependencies = [
  "tokio",
  "tokio-rustls",
  "tower-service",
+ "web-time",
  "windows-sys 0.52.0",
 ]
 
@@ -3140,6 +3141,7 @@ dependencies = [
  "tokio-util",
  "tracing",
  "uuid",
+ "web-time",
 ]
 
 [[package]]
@@ -3339,6 +3341,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "uuid",
+ "web-time",
  "winver",
 ]
 
