@@ -45,18 +45,13 @@ impl<'a> MatchMaps<'a> {
     fn args(&self, process_info: &'a ProcessInfo) -> &HashMap<&str, &str> {
         self.args_map.get_or_init(|| {
             let mut map = HashMap::new();
-            let mut args = process_info.args.iter().peekable();
-            loop {
-                let Some(arg) = args.next() else {
-                    break;
-                };
+            for arg in &process_info.args {
                 let Ok(arg) = std::str::from_utf8(arg.deref()) else {
                     continue;
                 };
                 // Split args between key and value on '='
                 if let Some((k, v)) = arg.split_once('=') {
                     map.insert(k, v);
-                    continue;
                 }
             }
             map

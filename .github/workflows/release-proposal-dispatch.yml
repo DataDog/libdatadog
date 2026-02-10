@@ -95,6 +95,10 @@ jobs:
         with:
           cache-targets: true
       - uses: dtolnay/rust-toolchain@nightly
+        with:
+          toolchain: nightly-2026-02-08
+      - name: Link nightly toolchain for cargo-public-api
+        run: ln -sf ~/.rustup/toolchains/nightly-2026-02-08-x86_64-unknown-linux-gnu ~/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: 1.92.0
@@ -349,6 +353,7 @@ jobs:
           
           echo "PR_BODY: $PR_BODY"
 
+          # NOTE: the PR title is used to filter gitlab CI jobs. If you change it, you need to update the gitlab CI job filter.
           gh pr create \
             --head "$BRANCH_NAME" \
             --title "chore(release): proposal for ${{ inputs.crate }}" \

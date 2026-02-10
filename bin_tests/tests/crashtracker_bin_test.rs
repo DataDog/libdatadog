@@ -10,10 +10,12 @@ use std::process;
 use std::{fs, path::PathBuf};
 
 use anyhow::Context;
+#[cfg(all(target_os = "linux", not(target_env = "musl")))]
+use bin_tests::test_runner::run_crash_no_op;
 use bin_tests::{
     artifacts::{self, StandardArtifacts},
     build_artifacts,
-    test_runner::{run_crash_no_op, run_crash_test_with_artifacts, CrashTestConfig, ValidatorFn},
+    test_runner::{run_crash_test_with_artifacts, CrashTestConfig, ValidatorFn},
     test_types::{CrashType, TestMode},
     validation::PayloadValidator,
     ArtifactsBuild, BuildProfile,
