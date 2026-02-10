@@ -917,8 +917,21 @@ impl Profile {
         profiles_dictionary_translator: Option<ProfilesDictionaryTranslator>,
     ) -> io::Result<Self> {
         let start_time = SystemTime::now();
+        let profiles_dictionary_translator = match profiles_dictionary_translator {
+            Some(translator) => translator,
+            None => {
+                let dict = ProfilesDictionary::try_new().map_err(io::Error::other)?;
+                let dict = crate::profiles::collections::Arc::try_new(dict).map_err(|err| {
+                    io::Error::new(
+                        io::ErrorKind::Other,
+                        format!("failed to allocate profiles dictionary arc: {err:?}"),
+                    )
+                })?;
+                ProfilesDictionaryTranslator::new(dict)
+            }
+        };
         let mut profile = Self {
-            profiles_dictionary_translator,
+            profiles_dictionary_translator: Some(profiles_dictionary_translator),
             active_samples: Default::default(),
             endpoints: Default::default(),
             functions: Default::default(),
@@ -1351,6 +1364,13 @@ mod api_tests {
 
         assert_eq!(profile.period, Some(period));
         assert_eq!(prev.period, Some(period));
+    }
+
+    #[test]
+    fn try_new_always_initializes_profiles_dictionary() {
+        let sample_types = [api::ValueType::new("wall-time", "nanoseconds")];
+        let profile = Profile::new(&sample_types, None);
+        assert!(profile.get_profiles_dictionary().is_some());
     }
 
     #[test]
