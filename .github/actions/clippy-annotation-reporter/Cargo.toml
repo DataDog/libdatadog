@@ -1,0 +1,31 @@
+[package]
+name = "clippy-annotation-reporter"
+rust-version = "1.78.0"
+edition = "2021"
+version = "0.1.0"
+description = "GitHub Action for reporting clippy annotation usage in PRs"
+homepage = "https://github.com/DataDog/libdatadog/tree/main/.github/actions/clippy-annotation-reporter"
+repository = "https://github.com/DataDog/libdatadog/tree/main/.github/actions/clippy-annotation-reporter"
+
+[dependencies]
+clap = { version = "4.3", features = ["derive", "env"] }
+octocrab = "0.44"
+anyhow = "1.0"
+regex = "1.9"
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+serde_json = "1.0"
+log = "0.4"
+env_logger = "0.10"
+# Octocrab has a defined MSRV < 1.78 and depends on url 2.5.4 which also has a defined MSRV < 1.78 but url has a  dependency on `idna` has a MSRV of 1.81. Not sure what is going on here.
+url = "=2.5.2"
+toml = "0.8.22"
+mockall = "0.13.1"
+
+[dev-dependencies]
+httpmock = "0.6"
+http = "1.1.0"
+tempfile = "3.20.0"
+
+# TODO: Remove this when move to separate repo
+[workspace]
+members = ["."]

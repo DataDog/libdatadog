@@ -23,6 +23,7 @@ pub enum RemoteConfigProduct {
     AsmData,
     AsmDD,
     AsmFeatures,
+    FfeFlags,
     #[cfg(feature = "live-debugger")]
     LiveDebugger,
 }
@@ -37,6 +38,7 @@ impl Display for RemoteConfigProduct {
             RemoteConfigProduct::AsmData => "ASM_DATA",
             RemoteConfigProduct::AsmDD => "ASM_DD",
             RemoteConfigProduct::AsmFeatures => "ASM_FEATURES",
+            RemoteConfigProduct::FfeFlags => "FFE_FLAGS",
             #[cfg(feature = "live-debugger")]
             RemoteConfigProduct::LiveDebugger => "LIVE_DEBUGGING",
         };
@@ -87,6 +89,7 @@ impl RemoteConfigPath {
                 "ASM_DATA" => RemoteConfigProduct::AsmData,
                 "ASM_DD" => RemoteConfigProduct::AsmDD,
                 "ASM_FEATURES" => RemoteConfigProduct::AsmFeatures,
+                "FFE_FLAGS" => RemoteConfigProduct::FfeFlags,
                 #[cfg(feature = "live-debugger")]
                 "LIVE_DEBUGGING" => RemoteConfigProduct::LiveDebugger,
                 product => anyhow::bail!("Unknown product {}", product),

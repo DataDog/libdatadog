@@ -30,12 +30,16 @@ impl Collector {
         config: &CrashtrackerConfiguration,
         config_str: &str,
         metadata_str: &str,
+        message_ptr: *mut String,
         sig_info: *const siginfo_t,
         ucontext: *const ucontext_t,
     ) -> Result<Self, CollectorSpawnError> {
         // When we spawn the child, our pid becomes the ppid.
         // SAFETY: This function has no safety requirements.
         let pid = unsafe { libc::getpid() };
+
+        // Get the current tid to identify thread info
+        let tid = current_tid();
 
         let fork_result = alt_fork();
         match fork_result {
@@ -45,10 +49,12 @@ impl Collector {
                     config,
                     config_str,
                     metadata_str,
+                    message_ptr,
                     sig_info,
                     ucontext,
                     receiver.handle.uds_fd,
                     pid,
+                    tid,
                 );
             }
             pid if pid > 0 => Ok(Self {
@@ -66,14 +72,29 @@ impl Collector {
     }
 }
 
+#[cfg(target_os = "linux")]
+fn current_tid() -> libc::pid_t {
+    // Prefer the raw syscall to avoid linking against libc's gettid symbol on glibc versions
+    // where it may not be exposed.
+    unsafe { libc::syscall(libc::SYS_gettid) as libc::pid_t }
+}
+
+#[cfg(not(target_os = "linux"))]
+fn current_tid() -> libc::pid_t {
+    0
+}
+
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn run_collector_child(
     config: &CrashtrackerConfiguration,
     config_str: &str,
     metadata_str: &str,
+    message_ptr: *mut String,
     sig_info: *const siginfo_t,
     ucontext: *const ucontext_t,
     uds_fd: RawFd,
     ppid: libc::pid_t,
+    crashing_tid: libc::pid_t,
 ) -> ! {
     // Close stdio
     let _ = unsafe { libc::close(0) };
@@ -96,9 +117,11 @@ pub(crate) fn run_collector_child(
         config,
         config_str,
         metadata_str,
+        message_ptr,
         sig_info,
         ucontext,
         ppid,
+        crashing_tid,
     );
     if let Err(e) = report {
         eprintln!("Failed to flush crash report: {e}");

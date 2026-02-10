@@ -16,8 +16,8 @@ jobs:
       run: |
         set -e
         rustup set profile minimal
-        rustup toolchain install nightly-2024-12-16
-        rustup default nightly-2024-12-16
+        rustup toolchain install nightly-2026-02-08
+        rustup default nightly-2026-02-08
     - uses: taiki-e/install-action@2c41309d51ede152b6f2ee6bf3b71e6dc9a8b7df # 2.49.27
       with:
         tool: cargo-bolero

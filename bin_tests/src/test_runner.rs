@@ -6,9 +6,11 @@
 //! across different test scenarios.
 
 use crate::{
+    artifacts::StandardArtifacts,
+    build_artifacts,
     test_types::{CrashType, TestMode},
     validation::{read_and_parse_crash_payload, validate_std_outputs, PayloadValidator},
-    ArtifactType, ArtifactsBuild, BuildProfile,
+    ArtifactsBuild, BuildProfile,
 };
 use anyhow::{Context, Result};
 use serde_json::Value;
@@ -102,35 +104,6 @@ fn extend_path(dir: &Path, file: &str) -> PathBuf {
     path
 }
 
-/// Standard artifacts used in most crash tracking tests.
-pub struct StandardArtifacts {
-    pub crashtracker_bin: ArtifactsBuild,
-    pub crashtracker_receiver: ArtifactsBuild,
-}
-
-impl StandardArtifacts {
-    pub fn new(profile: BuildProfile) -> Self {
-        Self {
-            crashtracker_bin: ArtifactsBuild {
-                name: "crashtracker_bin_test".to_owned(),
-                build_profile: profile,
-                artifact_type: ArtifactType::Bin,
-                ..Default::default()
-            },
-            crashtracker_receiver: ArtifactsBuild {
-                name: "test_crashtracker_receiver".to_owned(),
-                build_profile: profile,
-                artifact_type: ArtifactType::Bin,
-                ..Default::default()
-            },
-        }
-    }
-
-    pub fn as_slice(&self) -> Vec<&ArtifactsBuild> {
-        vec![&self.crashtracker_bin, &self.crashtracker_receiver]
-    }
-}
-
 /// Generic crash test runner that handles common test logic.
 ///
 /// This function:
@@ -190,7 +163,9 @@ where
 /// This is more flexible than `run_crash_test_with_artifacts` and allows for:
 /// - Custom binary selection (e.g., crashing_test_app instead of crashtracker_bin_test)
 /// - Custom command arguments
-/// - Custom exit status expectations
+///
+/// Note: This function always expects the test to crash (exit with non-success status).
+/// All current uses of this function test crash scenarios, not successful exits.
 ///
 /// # Example
 /// ```no_run
@@ -223,7 +198,6 @@ where
 ///             .arg(&artifacts_map[&receiver])
 ///             .arg(&fixtures.output_dir);
 ///     },
-///     false, // expect crash (not success)
 ///     |payload, _fixtures| {
 ///         // Custom validation
 ///         Ok(())
@@ -235,7 +209,6 @@ where
 pub fn run_custom_crash_test<CB, V>(
     binary_path: &std::path::Path,
     command_builder: CB,
-    expect_success: bool,
     validator: V,
 ) -> Result<()>
 where
@@ -251,13 +224,10 @@ where
 
     let exit_status = crate::timeit!("exit after signal", { p.wait()? });
 
-    // Validate exit status
-    let actual_success = exit_status.success();
+    // Validate exit status - custom crash tests always expect failure
     anyhow::ensure!(
-        expect_success == actual_success,
-        "Exit status mismatch: expected success={}, got success={} (exit code: {:?})",
-        expect_success,
-        actual_success,
+        !exit_status.success(),
+        "Expected test to crash (non-success exit), but it succeeded with code: {:?}",
         exit_status.code()
     );
 
@@ -269,6 +239,30 @@ where
 
     // Run custom validator
     validator(&crash_payload, &fixtures)?;
+
+    Ok(())
+}
+
+/// Minimal runner for scenarios where the process may not emit a crash report
+/// (preload allocation detector). It just runs the binary and waits.
+pub fn run_crash_no_op(config: &CrashTestConfig) -> Result<()> {
+    let artifacts = StandardArtifacts::new(config.profile);
+    let artifacts_map = build_artifacts(&artifacts.as_slice())?;
+    let fixtures = TestFixtures::new()?;
+
+    let mut cmd = process::Command::new(&artifacts_map[&artifacts.crashtracker_bin]);
+    cmd.arg(format!("file://{}", fixtures.crash_profile_path.display()))
+        .arg(&artifacts_map[&artifacts.crashtracker_receiver])
+        .arg(&fixtures.output_dir)
+        .arg(config.mode.as_str())
+        .arg(config.crash_type.as_str());
+
+    for (key, val) in &config.env_vars {
+        cmd.env(key, val);
+    }
+
+    let mut child = cmd.spawn().context("Failed to spawn test process")?;
+    let _ = child.wait();
 
     Ok(())
 }

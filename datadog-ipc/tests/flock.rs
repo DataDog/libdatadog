@@ -48,9 +48,12 @@ fn test_file_locking_works_as_expected() {
         .unwrap();
 
     let mut buf = [0; 10];
-    local
-        .set_read_timeout(Some(Duration::from_millis(500)))
-        .unwrap();
+    // give macOS runners on CI more time to read
+    #[cfg(target_os = "macos")]
+    let read_timeout = Duration::from_secs(10);
+    #[cfg(not(target_os = "macos"))]
+    let read_timeout = Duration::from_millis(500);
+    local.set_read_timeout(Some(read_timeout)).unwrap();
     // wait for child to signal its ready
     assert!(local.read(&mut buf).unwrap() > 0);
 

@@ -35,7 +35,7 @@ fn shm_open<P: ?Sized + NixPath>(
 ) -> nix::Result<std::os::unix::io::OwnedFd> {
     mman::shm_open(name, flag, mode).or_else(|e| {
         // This can happen on AWS lambda
-        if e == Errno::ENOSYS || e == Errno::ENOTSUP || e == Errno::ENOENT {
+        if e == Errno::ENOSYS || e == Errno::ENOTSUP || e == Errno::ENOENT || e == Errno::EACCES {
             // The path has a leading slash
             let path = fallback_path(name)?;
             open(path.as_c_str(), flag, mode)

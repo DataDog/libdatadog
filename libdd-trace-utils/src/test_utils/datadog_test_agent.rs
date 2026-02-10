@@ -127,7 +127,7 @@ impl DatadogAgentContainerBuilder {
 
         let output = run_command(
             Command::new("docker")
-                .args(["run", /* "--rm", */ "-d"])
+                .args(["run", "--rm", "-d"])
                 .args(mounts)
                 .args(envs)
                 .args(["-p".to_owned(), format!("{}", self.trace_agent_port)])
@@ -235,7 +235,7 @@ impl DatadogAgentContainerBuilder {
 ///
 ///     let data = SendData::new(
 ///         100,
-///         TracerPayloadCollection::V04(vec![trace.clone()]),
+///         TracerPayloadCollection::V04(vec![trace]),
 ///         TracerHeaderTags::default(),
 ///         &endpoint,
 ///     );

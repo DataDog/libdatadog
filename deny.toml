@@ -1,0 +1,5 @@
+[advisories]
+unmaintained = "workspace"
+
+[bans]
+multiple-versions = "warn"

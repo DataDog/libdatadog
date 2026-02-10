@@ -7,13 +7,12 @@ pub mod store;
 
 use crate::{
     config::Config,
-    data::{self, Application, Dependency, Host, Integration, Log, Payload, Telemetry},
+    data::{self, Application, Dependency, Endpoint, Host, Integration, Log, Payload, Telemetry},
     metrics::{ContextKey, MetricBuckets, MetricContexts},
 };
-use libdd_common::Endpoint;
+
 use libdd_common::{hyper_migration, tag::Tag, worker::Worker};
 
-use std::fmt::Debug;
 use std::iter::Sum;
 use std::ops::Add;
 use std::{
@@ -26,6 +25,7 @@ use std::{
     },
     time,
 };
+use std::{collections::HashSet, fmt::Debug, time::Duration};
 
 use crate::metrics::MetricBucketStats;
 use futures::{
@@ -89,6 +89,7 @@ pub enum TelemetryActions {
     AddDependency(Dependency),
     AddIntegration(Integration),
     AddLog((LogIdentifier, Log)),
+    AddEndpoint(Endpoint),
     Lifecycle(LifecycleAction),
     #[serde(skip)]
     CollectStats(oneshot::Sender<TelemetryWorkerStats>),
@@ -120,6 +121,7 @@ struct TelemetryWorkerData {
     dependencies: store::Store<Dependency>,
     configurations: store::Store<data::Configuration>,
     integrations: store::Store<data::Integration>,
+    endpoints: HashSet<data::Endpoint>,
     logs: store::QueueHashMap<LogIdentifier, Log>,
     metric_contexts: MetricContexts,
     metric_buckets: MetricBuckets,
@@ -135,6 +137,7 @@ pub struct TelemetryWorker {
     seq_id: AtomicU64,
     runtime_id: String,
     client: Box<dyn http_client::HttpClient + Sync + Send>,
+    metrics_flush_interval: Duration,
     deadlines: scheduler::Scheduler<LifecycleAction>,
     data: TelemetryWorkerData,
 }
@@ -147,6 +150,7 @@ impl Debug for TelemetryWorker {
             .field("cancellation_token", &self.cancellation_token)
             .field("seq_id", &self.seq_id)
             .field("runtime_id", &self.runtime_id)
+            .field("metrics_flush_interval", &self.metrics_flush_interval)
             .field("deadlines", &self.deadlines)
             .field("data", &self.data)
             .finish()
@@ -350,7 +354,11 @@ impl TelemetryWorker {
                     }
                 }
             }
-            AddConfig(_) | AddDependency(_) | AddIntegration(_) | Lifecycle(ExtendedHeartbeat) => {}
+            AddConfig(_)
+            | AddDependency(_)
+            | AddIntegration(_)
+            | AddEndpoint(_)
+            | Lifecycle(ExtendedHeartbeat) => {}
             Lifecycle(Stop) => {
                 if !self.data.started {
                     return BREAK;
@@ -407,6 +415,9 @@ impl TelemetryWorker {
             AddDependency(dep) => self.data.dependencies.insert(dep),
             AddIntegration(integration) => self.data.integrations.insert(integration),
             AddConfig(cfg) => self.data.configurations.insert(cfg),
+            AddEndpoint(endpoint) => {
+                self.data.endpoints.insert(endpoint);
+            }
             AddLog((identifier, log)) => {
                 let (l, new) = self.data.logs.get_mut_or_insert(identifier, log);
                 if !new {
@@ -551,6 +562,18 @@ impl TelemetryWorker {
                 },
             ))
         }
+        if !self.data.endpoints.is_empty() {
+            payloads.push(data::Payload::AppEndpoints(data::AppEndpoints {
+                is_first: true,
+                endpoints: self
+                    .data
+                    .endpoints
+                    .iter()
+                    .map(|e| e.to_json_value().unwrap_or_default())
+                    .filter(|e| e.is_object())
+                    .collect(),
+            }));
+        }
         payloads
     }
 
@@ -559,7 +582,7 @@ impl TelemetryWorker {
         let mut payloads = Vec::new();
 
         let logs = self.build_logs();
-        if !logs.is_empty() {
+        if !logs.logs.is_empty() {
             payloads.push(data::Payload::Logs(logs));
         }
         let metrics = self.build_metrics_series();
@@ -595,7 +618,7 @@ impl TelemetryWorker {
                 },
                 common: context.common,
                 _type: context.metric_type,
-                interval: MetricBuckets::METRICS_FLUSH_INTERVAL.as_secs(),
+                interval: self.metrics_flush_interval.as_secs(),
             });
         }
         data::Distributions { series }
@@ -619,7 +642,7 @@ impl TelemetryWorker {
                 points,
                 common: context.common,
                 _type: context.metric_type,
-                interval: MetricBuckets::METRICS_FLUSH_INTERVAL.as_secs(),
+                interval: self.metrics_flush_interval.as_secs(),
             });
         }
 
@@ -653,13 +676,14 @@ impl TelemetryWorker {
                 .data
                 .configurations
                 .removed_flushed(p.configuration.len()),
+            AppEndpoints(_) => self.data.endpoints.clear(),
             MessageBatch(batch) => {
                 for p in batch {
                     self.payload_sent_success(p);
                 }
             }
             Logs(p) => {
-                for _ in p {
+                for _ in &p.logs {
                     self.data.logs.pop_front();
                 }
             }
@@ -668,10 +692,10 @@ impl TelemetryWorker {
         }
     }
 
-    fn build_logs(&self) -> Vec<Log> {
+    fn build_logs(&self) -> data::Logs {
         // TODO: change the data model to take a &[Log] so don't have to clone data here
         let logs = self.data.logs.iter().map(|(_, l)| l.clone()).collect();
-        logs
+        data::Logs { logs }
     }
 
     fn next_seq_id(&self) -> u64 {
@@ -756,7 +780,7 @@ impl TelemetryWorker {
         let timeout_ms = if let Some(endpoint) = self.config.endpoint.as_ref() {
             endpoint.timeout_ms
         } else {
-            Endpoint::DEFAULT_TIMEOUT
+            libdd_common::Endpoint::DEFAULT_TIMEOUT
         };
 
         debug!(
@@ -1015,6 +1039,7 @@ pub struct TelemetryWorkerBuilder {
     pub dependencies: store::Store<data::Dependency>,
     pub integrations: store::Store<data::Integration>,
     pub configurations: store::Store<data::Configuration>,
+    pub endpoints: HashSet<data::Endpoint>,
     pub native_deps: bool,
     pub rust_shared_lib_deps: bool,
     pub config: Config,
@@ -1065,6 +1090,7 @@ impl TelemetryWorkerBuilder {
             dependencies: store::Store::new(MAX_ITEMS),
             integrations: store::Store::new(MAX_ITEMS),
             configurations: store::Store::new(MAX_ITEMS),
+            endpoints: HashSet::new(),
             native_deps: true,
             rust_shared_lib_deps: false,
             config: Config::default(),
@@ -1087,6 +1113,9 @@ impl TelemetryWorkerBuilder {
         let telemetry_heartbeat_interval = config.telemetry_heartbeat_interval;
         let client = http_client::from_config(&config);
 
+        let metrics_flush_interval =
+            telemetry_heartbeat_interval.min(MetricBuckets::METRICS_FLUSH_INTERVAL);
+
         #[allow(clippy::unwrap_used)]
         let worker = TelemetryWorker {
             flavor: self.flavor,
@@ -1095,6 +1124,7 @@ impl TelemetryWorkerBuilder {
                 dependencies: self.dependencies,
                 integrations: self.integrations,
                 configurations: self.configurations,
+                endpoints: self.endpoints,
                 logs: store::QueueHashMap::default(),
                 metric_contexts: contexts.clone(),
                 metric_buckets: MetricBuckets::default(),
@@ -1108,11 +1138,9 @@ impl TelemetryWorkerBuilder {
                 .runtime_id
                 .unwrap_or_else(|| uuid::Uuid::new_v4().to_string()),
             client,
+            metrics_flush_interval,
             deadlines: scheduler::Scheduler::new(vec![
-                (
-                    MetricBuckets::METRICS_FLUSH_INTERVAL,
-                    LifecycleAction::FlushMetricAggr,
-                ),
+                (metrics_flush_interval, LifecycleAction::FlushMetricAggr),
                 (telemetry_heartbeat_interval, LifecycleAction::FlushData),
                 (
                     time::Duration::from_secs(60 * 60 * 24),

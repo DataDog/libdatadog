@@ -4,7 +4,7 @@
 pub use crate::send_data::send_data_result::SendDataResult;
 pub use crate::send_data::SendData;
 use crate::span::v05::dict::SharedDict;
-use crate::span::{v05, SpanText};
+use crate::span::{v05, TraceData};
 pub use crate::tracer_header_tags::TracerHeaderTags;
 use crate::tracer_payload::TracerPayloadCollection;
 use crate::tracer_payload::{self, TraceChunks};
@@ -601,8 +601,8 @@ macro_rules! parse_root_span_tags {
     }
 }
 
-pub fn collect_trace_chunks<T: SpanText>(
-    traces: Vec<Vec<crate::span::Span<T>>>,
+pub fn collect_trace_chunks<T: TraceData>(
+    traces: Vec<Vec<crate::span::v04::Span<T>>>,
     use_v05_format: bool,
 ) -> anyhow::Result<TraceChunks<T>> {
     if use_v05_format {
@@ -613,7 +613,7 @@ pub fn collect_trace_chunks<T: SpanText>(
             let v05_trace = trace.into_iter().try_fold(
                 Vec::with_capacity(trace_len),
                 |mut acc, span| -> anyhow::Result<Vec<v05::Span>> {
-                    acc.push(v05::from_span(span, &mut shared_dict)?);
+                    acc.push(v05::from_v04_span(span, &mut shared_dict)?);
                     Ok(acc)
                 },
             )?;
@@ -728,36 +728,32 @@ mod tests {
 
     #[test]
     fn test_coalescing_does_not_exceed_max_size() {
-        let dummy = SendData::new(
-            MAX_PAYLOAD_SIZE / 5 + 1,
-            TracerPayloadCollection::V07(vec![pb::TracerPayload {
-                container_id: "".to_string(),
-                language_name: "".to_string(),
-                language_version: "".to_string(),
-                tracer_version: "".to_string(),
-                runtime_id: "".to_string(),
-                chunks: vec![pb::TraceChunk {
-                    priority: 0,
-                    origin: "".to_string(),
-                    spans: vec![],
+        fn dummy() -> SendData {
+            SendData::new(
+                MAX_PAYLOAD_SIZE / 5 + 1,
+                TracerPayloadCollection::V07(vec![pb::TracerPayload {
+                    container_id: "".to_string(),
+                    language_name: "".to_string(),
+                    language_version: "".to_string(),
+                    tracer_version: "".to_string(),
+                    runtime_id: "".to_string(),
+                    chunks: vec![pb::TraceChunk {
+                        priority: 0,
+                        origin: "".to_string(),
+                        spans: vec![],
+                        tags: Default::default(),
+                        dropped_trace: false,
+                    }],
                     tags: Default::default(),
-                    dropped_trace: false,
-                }],
-                tags: Default::default(),
-                env: "".to_string(),
-                hostname: "".to_string(),
-                app_version: "".to_string(),
-            }]),
-            TracerHeaderTags::default(),
-            &Endpoint::default(),
-        );
-        let coalesced = coalesce_send_data(vec![
-            dummy.clone(),
-            dummy.clone(),
-            dummy.clone(),
-            dummy.clone(),
-            dummy.clone(),
-        ]);
+                    env: "".to_string(),
+                    hostname: "".to_string(),
+                    app_version: "".to_string(),
+                }]),
+                TracerHeaderTags::default(),
+                &Endpoint::default(),
+            )
+        }
+        let coalesced = coalesce_send_data(vec![dummy(), dummy(), dummy(), dummy(), dummy()]);
         assert_eq!(
             5,
             coalesced
