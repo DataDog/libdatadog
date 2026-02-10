@@ -2,7 +2,7 @@ variables:
   # These are gitlab variables so that it's easier to do a manual deploy
   # If these are set witih value and description, then it gives you UI elements
   DOWNSTREAM_BRANCH:
-    value: "main"
+    value: "igor/versioning/fetch-pr-labels-restore-and-use-commit-title"
     description: "downstream jobs are triggered on this branch"
 
 include:
@@ -18,6 +18,8 @@ trigger_internal_build:
     LIBDATADOG_PULL_REQUEST_ID: $CI_EXTERNAL_PULL_REQUEST_IID
     LIBDATADOG_BASE_COMMIT_SHA: $CI_MERGE_REQUEST_DIFF_BASE_SHA
     LIBDATADOG_COMMIT_BEFORE_SHA: $CI_COMMIT_BEFORE_SHA
+    LIBDATADOG_COMMIT_TITLE: $CI_COMMIT_TITLE
+    
   trigger:
     project: DataDog/apm-reliability/libddprof-build
     strategy: depend
