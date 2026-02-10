@@ -41,8 +41,8 @@ pub use trace::*;
 mod operation;
 use operation::*;
 
-mod change_buffer;
-pub use change_buffer::*;
+mod buffer;
+pub use buffer::*;
 
 use crate::span::{Span, SpanText};
 
@@ -99,8 +99,7 @@ impl<T: SpanText + Clone> ChangeBufferState<T> {
             .map(|span_id| -> Result<Span<T>> {
                 let maybe_span = self.spans.remove(span_id);
 
-                let mut span =
-                    maybe_span.ok_or(ChangeBufferError::SpanNotFound(*span_id))?;
+                let mut span = maybe_span.ok_or(ChangeBufferError::SpanNotFound(*span_id))?;
                 chunk_trace_id = Some(span.trace_id);
 
                 if is_local_root {
@@ -144,7 +143,8 @@ impl<T: SpanText + Clone> ChangeBufferState<T> {
                     .insert(T::from_static_str("_dd.rule_psr"), rule);
             }
             if let Some(rule) = trace.sampling_limit_decision {
-                span.metrics.insert(T::from_static_str("_dd.limit_psr"), rule);
+                span.metrics
+                    .insert(T::from_static_str("_dd.limit_psr"), rule);
             }
             if let Some(rule) = trace.sampling_agent_decision {
                 span.metrics
@@ -700,7 +700,12 @@ mod tests {
 
     // -- flush_chunk --
 
-    fn create_span_directly(state: &mut ChangeBufferState<&'static str>, span_id: u64, trace_id: u128, parent_id: u64) {
+    fn create_span_directly(
+        state: &mut ChangeBufferState<&'static str>,
+        span_id: u64,
+        trace_id: u128,
+        parent_id: u64,
+    ) {
         let span = new_span(span_id, parent_id, trace_id);
         state.spans.insert(span_id, span);
         state.traces.entry(trace_id).or_default();
@@ -794,10 +799,7 @@ mod tests {
 
         // First span (chunk root) gets trace tags
         assert_eq!(spans[0].meta.get("env"), Some(&"staging"));
-        assert_eq!(
-            spans[0].metrics.get("_sampling_priority_v1"),
-            Some(&2.0)
-        );
+        assert_eq!(spans[0].metrics.get("_sampling_priority_v1"), Some(&2.0));
         // Second span does not get trace-level tags
         assert_eq!(spans[1].meta.get("env"), None);
         assert_eq!(spans[1].metrics.get("_sampling_priority_v1"), None);
@@ -841,7 +843,12 @@ mod tests {
         let mut state = make_state(buf);
 
         create_span_directly(&mut state, 1, 100, 0);
-        state.spans.get_mut(&1).unwrap().meta.insert("kind", "client");
+        state
+            .spans
+            .get_mut(&1)
+            .unwrap()
+            .meta
+            .insert("kind", "client");
 
         let spans = state.flush_chunk(vec![1], false)?;
         assert_eq!(spans[0].metrics.get("_dd.measured"), Some(&1.0));
@@ -877,10 +884,7 @@ mod tests {
         state.spans.get_mut(&1).unwrap().service = "other-service";
 
         let spans = state.flush_chunk(vec![1], false)?;
-        assert_eq!(
-            spans[0].meta.get("_dd.base_service"),
-            Some(&"my-service")
-        );
+        assert_eq!(spans[0].meta.get("_dd.base_service"), Some(&"my-service"));
         Ok(())
     }
 
@@ -934,4 +938,3 @@ mod tests {
         Ok(())
     }
 }
-

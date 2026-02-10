@@ -51,10 +51,7 @@ impl BufferedOperation {
     pub fn from_buf(buf: &ChangeBuffer, index: &mut usize) -> Result<Self> {
         let opcode = buf.read::<u64>(index)?.try_into()?;
         let span_id = buf.read(index)?;
-        Ok(BufferedOperation {
-            opcode,
-            span_id,
-        })
+        Ok(BufferedOperation { opcode, span_id })
     }
 }
 
@@ -64,13 +61,11 @@ mod tests {
     use crate::change_buffer::Result;
 
     fn change_buffer_from_vec(buffer: &mut Vec<u8>) -> ChangeBuffer {
-        unsafe {
-            ChangeBuffer::from_raw_parts(buffer.as_mut_ptr(), buffer.len())
-        }
+        unsafe { ChangeBuffer::from_raw_parts(buffer.as_mut_ptr(), buffer.len()) }
     }
 
     #[test]
-    fn opcode_try_from_valid_values() -> Result<()>{
+    fn opcode_try_from_valid_values() -> Result<()> {
         let expected = [
             (0, "Create"),
             (1, "SetMetaAttr"),
