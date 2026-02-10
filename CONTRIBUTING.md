@@ -78,6 +78,18 @@ We also recommend that you share in your description:
 If at any point you have a question or need assistance with your pull request, feel free to mention a project member!
 We're always happy to help contributors with their pull requests.
 
+## Code Formatting
+
+All Rust code must be formatted with `rustfmt` using the project's configuration in `rustfmt.toml`. You can format your
+code locally by running:
+
+```bash
+cargo +nightly fmt --all
+```
+
+If you'd like CI to automatically format your code and commit the changes to your PR, add the `commit-rustfmt-changes`
+label to your pull request. This will trigger an automatic formatting commit if any changes are needed.
+
 ## Commit Message Guidelines
 
 This project uses [Conventional Commits](https://www.conventionalcommits.org/) for commit messages and pull request titles.
