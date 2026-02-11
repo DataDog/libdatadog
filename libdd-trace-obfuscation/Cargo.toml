@@ -14,7 +14,7 @@ anyhow = "1.0"
 regex = "1"
 serde = { version = "1.0.145", features = ["derive"] }
 serde_json = "1.0"
-url = "2.4.0"
+url = "^2.5.4"
 percent-encoding = "2.1"
 log = "0.4"
 libdd-trace-protobuf = { version = "1.0.0", path = "../libdd-trace-protobuf" }
