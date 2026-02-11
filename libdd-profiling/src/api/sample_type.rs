@@ -14,7 +14,7 @@ use super::ValueType;
 /// - **pprof-nodejs**: `profile-serializer.ts` (value type functions)
 #[cfg_attr(test, derive(bolero::generator::TypeGenerator, strum::EnumIter))]
 #[repr(C)]
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, enum_map::Enum)]
 pub enum SampleType {
     AllocSamples,
     AllocSamplesUnscaled,

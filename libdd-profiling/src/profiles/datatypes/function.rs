@@ -61,7 +61,7 @@ impl From<Function2> for Function {
 /// implementation detail.
 #[derive(Clone, Copy, Debug)]
 #[repr(transparent)]
-pub struct FunctionId2(pub(crate) *mut Function2);
+pub struct FunctionId2(pub *mut Function2);
 
 // todo: when MSRV is 1.88.0+, derive Default
 impl Default for FunctionId2 {

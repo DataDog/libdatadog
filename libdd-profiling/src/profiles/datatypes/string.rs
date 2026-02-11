@@ -14,7 +14,7 @@ use crate::profiles::collections::StringRef;
 /// string set.
 #[repr(transparent)]
 #[derive(Clone, Copy, Debug)]
-pub struct StringId2(*mut StringHeader);
+pub struct StringId2(pub *mut StringHeader);
 
 /// Represents what StringIds point to. Its definition is intentionally
 /// obscured; the actual layout is being hidden. This is here so that

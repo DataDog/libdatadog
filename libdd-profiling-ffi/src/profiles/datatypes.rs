@@ -595,18 +595,75 @@ pub unsafe extern "C" fn ddog_prof_Profile_add2(
         let values = sample.values.try_as_slice()?;
         let labels = sample.labels.try_as_slice()?;
 
-        let labels_iter = labels.iter().map(|label| -> anyhow::Result<api2::Label> {
-            Ok(api2::Label {
-                key: label.key,
-                str: core::str::from_utf8(label.str.try_as_bytes()?)?,
-                num: label.num,
-                num_unit: core::str::from_utf8(label.num_unit.try_as_bytes()?)?,
-            })
-        });
         profile
-            .try_add_sample2(locations, values, labels_iter, timestamp)
+            .try_add_sample2(locations, values, label2_to_api2_labels(labels), timestamp)
             .context("ddog_prof_Profile_add failed")
     })())
+}
+
+/// Add a sample to the profile using the OTEL-style API (single value + sample type).
+///
+/// This is a convenience function that constructs a values array with a single
+/// non-zero value at the position corresponding to the given sample type.
+///
+/// # Arguments
+/// * `profile` - a pointer to the profile that will contain the sample
+/// * `locations` - a slice of Location2 structures representing the stack trace
+/// * `value` - the sample value for the specified sample type
+/// * `sample_type` - the type of sample being added
+/// * `labels` - a slice of Label2 structures for additional context
+/// * `timestamp` - optional timestamp for the sample
+///
+/// # Safety
+/// The `profile` ptr must point to a valid Profile object created by this
+/// module. All pointers inside the `locations` and `labels` need to be valid for the duration
+/// of this call.
+///
+/// If successful, it returns the Ok variant.
+/// On error, it holds an error message in the error variant.
+///
+/// This call is _NOT_ thread-safe.
+#[must_use]
+#[no_mangle]
+pub unsafe extern "C" fn ddog_prof_Profile_add2_otel(
+    profile: *mut Profile,
+    locations: Slice<api2::Location2>,
+    value: i64,
+    sample_type: SampleType,
+    labels: Slice<Label2>,
+    timestamp: Option<NonZeroI64>,
+) -> ProfileStatus {
+    ProfileStatus::from((|| {
+        let profile = profile_ptr_to_inner(profile)?;
+
+        let locations = locations.try_as_slice()?;
+        let labels = labels.try_as_slice()?;
+
+        profile
+            .try_add_sample2_otel(
+                locations,
+                value,
+                sample_type,
+                label2_to_api2_labels(labels),
+                timestamp,
+            )
+            .context("ddog_prof_Profile_add2_otel failed")
+    })())
+}
+
+/// Converts a slice of `Label2` to an iterator of `api2::Label`.
+/// Returns an `ExactSizeIterator` since it's based on a slice.
+fn label2_to_api2_labels<'a>(
+    labels: &'a [Label2<'a>],
+) -> impl ExactSizeIterator<Item = anyhow::Result<api2::Label<'a>>> + 'a {
+    labels.iter().map(|label| -> anyhow::Result<api2::Label> {
+        Ok(api2::Label {
+            key: label.key,
+            str: core::str::from_utf8(label.str.try_as_bytes()?)?,
+            num: label.num,
+            num_unit: core::str::from_utf8(label.num_unit.try_as_bytes()?)?,
+        })
+    })
 }
 
 pub(crate) unsafe fn profile_ptr_to_inner<'a>(

@@ -145,6 +145,22 @@ int main(void) {
     }
   }
 
+  // New API add2_otel: single value with sample type (OpenTelemetry-style)
+  // This is more convenient when you have one value per sample type
+  const ddog_prof_Slice_Location2 locations_slice = {&location2, 1};
+  for (int i = 0; i < NUM_SAMPLES; i++) {
+    label2.num = i;
+    int64_t otel_value = 10 + i;
+    const ddog_prof_Slice_Label2 labels_slice = {&label2, 1};
+
+    ddog_prof_Status add2_otel_status = ddog_prof_Profile_add2_otel(
+        &profile, locations_slice, otel_value, wall_time, labels_slice, 0);
+    if (add2_otel_status.err != NULL) {
+      fprintf(stderr, "add2_otel error: %s\n", add2_otel_status.err);
+      ddog_prof_Status_drop(&add2_otel_status);
+    }
+  }
+
   //   printf("Press any key to reset and drop...");
   //   getchar();
 

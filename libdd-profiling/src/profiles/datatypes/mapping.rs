@@ -69,7 +69,7 @@ impl From<Mapping> for Mapping2 {
 /// implementation detail.
 #[derive(Clone, Copy, Debug)]
 #[repr(transparent)]
-pub struct MappingId2(pub(crate) *mut Mapping2);
+pub struct MappingId2(pub *mut Mapping2);
 
 // todo: when MSRV is 1.88.0+, derive Default
 impl Default for MappingId2 {
