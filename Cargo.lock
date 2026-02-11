@@ -2976,6 +2976,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "libdd-capabilities"
+version = "0.1.0"
+
+[[package]]
 name = "libdd-common"
 version = "2.0.1"
 dependencies = [
@@ -2996,6 +3000,7 @@ dependencies = [
  "hyper-util",
  "indexmap 2.12.1",
  "libc",
+ "libdd-capabilities",
  "maplit",
  "mime",
  "multer",
