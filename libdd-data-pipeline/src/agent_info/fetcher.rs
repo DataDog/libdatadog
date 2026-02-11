@@ -5,6 +5,7 @@
 
 use super::{schema::AgentInfo, AGENT_INFO_CACHE};
 use anyhow::{anyhow, Result};
+use async_trait::async_trait;
 use http::header::HeaderName;
 use http_body_util::BodyExt;
 use libdd_common::{http_common, worker::Worker, Endpoint};
@@ -176,6 +177,7 @@ impl AgentInfoFetcher {
     }
 }
 
+#[async_trait]
 impl Worker for AgentInfoFetcher {
     /// Start fetching the info endpoint with the given interval.
     ///

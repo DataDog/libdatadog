@@ -11,6 +11,7 @@ use std::{
     time,
 };
 
+use async_trait::async_trait;
 use crate::trace_exporter::TracerMetadata;
 use libdd_common::{worker::Worker, Endpoint, HttpClient};
 use libdd_trace_protobuf::pb;
@@ -132,6 +133,7 @@ impl StatsExporter {
     }
 }
 
+#[async_trait]
 impl Worker for StatsExporter {
     /// Run loop of the stats exporter
     ///

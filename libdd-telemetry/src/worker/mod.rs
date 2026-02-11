@@ -11,6 +11,7 @@ use crate::{
     metrics::{ContextKey, MetricBuckets, MetricContexts},
 };
 
+use async_trait::async_trait;
 use libdd_common::{http_common, tag::Tag, worker::Worker};
 
 use std::iter::Sum;
@@ -140,6 +141,7 @@ pub struct TelemetryWorker {
     metrics_flush_interval: Duration,
     deadlines: scheduler::Scheduler<LifecycleAction>,
     data: TelemetryWorkerData,
+    next_action: Option<TelemetryActions>,
 }
 impl Debug for TelemetryWorker {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -157,58 +159,33 @@ impl Debug for TelemetryWorker {
     }
 }
 
+#[async_trait]
 impl Worker for TelemetryWorker {
-    // Runs a state machine that waits for actions, either from the worker's
-    // mailbox, or scheduled actions from the worker's deadline object.
+    async fn trigger(&mut self) {
+        // Wait for the next action and store it
+        let action = self.recv_next_action().await;
+        self.next_action = Some(action);
+    }
+
+    // Processes a single action from the state machine
     async fn run(&mut self) {
-        debug!(
-            worker.flavor = ?self.flavor,
-            worker.runtime_id = %self.runtime_id,
-            "Starting telemetry worker"
-        );
-
-        loop {
-            if self.cancellation_token.is_cancelled() {
-                debug!(
-                    worker.runtime_id = %self.runtime_id,
-                    "Telemetry worker cancelled, shutting down"
-                );
-                return;
-            }
-
-            let action = self.recv_next_action().await;
+        // Take the action that was stored by trigger()
+        if let Some(action) = self.next_action.take() {
             debug!(
                 worker.runtime_id = %self.runtime_id,
                 action = ?action,
                 "Received telemetry action"
             );
 
-            let action_result = match self.flavor {
+            let _action_result = match self.flavor {
                 TelemetryWorkerFlavor::Full => self.dispatch_action(action).await,
                 TelemetryWorkerFlavor::MetricsLogs => {
                     self.dispatch_metrics_logs_action(action).await
                 }
             };
-
-            match action_result {
-                ControlFlow::Continue(()) => {}
-                ControlFlow::Break(()) => {
-                    debug!(
-                        worker.runtime_id = %self.runtime_id,
-                        worker.restartable = self.config.restartable,
-                        "Telemetry worker received break signal"
-                    );
-                    if !self.config.restartable {
-                        break;
-                    }
-                }
-            };
         }
 
-        debug!(
-            worker.runtime_id = %self.runtime_id,
-            "Telemetry worker stopped"
-        );
+        // TODO: Handle action result and add support to stop worker from `run`
     }
 }
 
@@ -1145,6 +1122,7 @@ impl TelemetryWorkerBuilder {
                 ),
             ]),
             cancellation_token: token.clone(),
+            next_action: None,
         };
 
         (

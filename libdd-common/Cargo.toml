@@ -17,6 +17,7 @@ bench = false
 
 [dependencies]
 anyhow = "1.0"
+async-trait = "0.1"
 futures = "0.3"
 futures-core = { version = "0.3.0", default-features = false }
 futures-util = { version = "0.3.0", default-features = false }

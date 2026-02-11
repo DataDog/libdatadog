@@ -80,10 +80,17 @@ impl<T: Worker + Send + Sync + 'static> PausableWorker<T> {
             let stop_token = CancellationToken::new();
             let cloned_token = stop_token.clone();
             let handle = rt.spawn(async move {
-                select! {
-                    _ = worker.run() => {worker}
-                    _ = cloned_token.cancelled() => {worker}
+                loop {
+                    select! {
+                        _ = worker.trigger() => {
+                            worker.run().await;
+                        }
+                        _ = cloned_token.cancelled() => {
+                            break;
+                        }
+                    }
                 }
+                worker
             });
 
             *self = PausableWorker::Running { handle, stop_token };
@@ -115,6 +122,15 @@ impl<T: Worker + Send + Sync + 'static> PausableWorker<T> {
         }
     }
 
+    /// Reset the worker state (used in child process after fork).
+    ///
+    /// This delegates to the worker's reset method if the worker is in a paused state.
+    pub fn reset(&mut self) {
+        if let PausableWorker::Paused { worker } = self {
+            worker.reset();
+        }
+    }
+
     /// Wait for the run method of the worker to exit.
     pub async fn join(self) -> Result<(), JoinError> {
         if let PausableWorker::Running { handle, .. } = self {
@@ -126,6 +142,7 @@ impl<T: Worker + Send + Sync + 'static> PausableWorker<T> {
 
 #[cfg(test)]
 mod tests {
+    use async_trait::async_trait;
     use tokio::{runtime::Builder, time::sleep};
 
     use super::*;
@@ -140,13 +157,15 @@ mod tests {
         sender: Sender<u32>,
     }
 
+    #[async_trait]
     impl Worker for TestWorker {
         async fn run(&mut self) {
-            loop {
-                let _ = self.sender.send(self.state);
-                self.state += 1;
-                sleep(Duration::from_millis(100)).await;
-            }
+            let _ = self.sender.send(self.state);
+            self.state += 1;
+        }
+
+        async fn trigger(&mut self) {
+            sleep(Duration::from_millis(100)).await;
         }
     }
 

@@ -18,6 +18,7 @@ https = ["libdd-common/https"]
 
 [dependencies]
 anyhow = { version = "1.0" }
+async-trait = "0.1"
 base64 = "0.22"
 futures = { version = "0.3", default-features = false }
 http-body-util = "0.1"
