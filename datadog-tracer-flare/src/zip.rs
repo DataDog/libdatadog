@@ -290,6 +290,75 @@ impl TracerFlareManager {
         self.send(zip, agent_task).await
     }
 
+    /// Creates a zip archive containing the specified files and directories, ~~obfuscates sensitive
+    /// data~~, and sends the flare to the agent. This is a synchronous version of the
+    /// `zip_and_send` function that can be called from synchronous code.
+    ///
+    /// # Arguments
+    ///
+    /// * `files` - A vector of strings representing the paths of files and directories to include
+    ///   in the zip archive.
+    /// * `send_action` - FlareAction to perform by the tracer flare. Must be a Send action or the
+    ///   function will return an Error.
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(())` - If the zip archive was created, ~~obfuscated~~, and sent successfully.
+    /// * `Err(FlareError)` - An error if any step of the process fails.
+    ///
+    /// # Errors
+    ///
+    /// This function will return an error if:
+    /// - Any problem happened while zipping the file.
+    /// - The obfuscation process fails.
+    /// - The zip file cannot be sent to the agent.
+    /// - No agent task was received by the tracer_flare.
+    ///
+    /// # Examples
+    ///
+    /// ```rust no_run
+    /// use datadog_tracer_flare::{TracerFlareManager, FlareAction};
+    /// use datadog_remote_config::config::agent_task::{AgentTaskFile, AgentTask};
+    ///
+    /// let tracer_flare = TracerFlareManager::default();
+    ///
+    /// // ... listen to remote config and receive an agent task ...
+    ///
+    /// // Simulate receiving a Send action from remote config
+    /// let task = AgentTaskFile {
+    ///     args: AgentTask {
+    ///         case_id: "123".to_string(),
+    ///         hostname: "test-host".to_string(),
+    ///         user_handle: "test@example.com".to_string(),
+    ///     },
+    ///     task_type: "tracer_flare".to_string(),
+    ///     uuid: "test-uuid".to_string(),
+    /// };
+    /// let send_action = FlareAction::Send(task);
+    ///
+    /// let files = vec![
+    ///     "/path/to/logs".to_string(),
+    ///     "/path/to/config.txt".to_string(),
+    /// ];
+    ///
+    /// match tracer_flare.zip_and_send_sync(files, send_action) {
+    ///     Ok(_) => println!("Flare sent successfully"),
+    ///     Err(e) => eprintln!("Failed to send flare: {}", e),
+    /// }
+    /// ```
+    pub fn zip_and_send_sync(
+        &self,
+        files: Vec<String>,
+        send_action: FlareAction,
+    ) -> Result<(), FlareError> {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .map_err(|e| FlareError::SendError(format!("Failed to create runtime: {e}")))?;
+
+        runtime.block_on(self.zip_and_send(files, send_action))
+    }
+
     /// Sends a zip file to the agent via a POST request.
     ///
     /// This function reads the entire zip file into memory, constructs an HTTP request

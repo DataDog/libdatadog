@@ -68,6 +68,7 @@ criterion = "0.5.1"
 libdd-common = { path = "../libdd-common", features = ["test-utils"] }
 libdd-profiling = { path = ".", features = ["test-utils"] }
 proptest = "1"
+strum = { version = "0.26", features = ["derive"] }
 tempfile = "3"
 
 [build-dependencies]
