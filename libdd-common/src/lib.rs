@@ -14,6 +14,7 @@ use std::sync::{Mutex, MutexGuard};
 use std::{borrow::Cow, ops::Deref, path::PathBuf, str::FromStr};
 
 pub mod azure_app_services;
+pub mod capabilities;
 pub mod cc_utils;
 pub mod connector;
 #[cfg(feature = "reqwest")]
