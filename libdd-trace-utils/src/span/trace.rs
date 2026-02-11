@@ -2,19 +2,19 @@ use std::hash::Hash;
 use std::marker::PhantomData;
 use hashbrown::Equivalent;
 use libdd_trace_protobuf::pb::idx::SpanKind;
-use crate::span::{IntoData, OwnedTraceData, SpanDataContents, TraceDataLifetime, ImpliedPredicate, TraceData};
+use crate::span::{IntoData, OwnedTraceData, SpanDataContents, TraceDataLifetime, ImpliedPredicate, TraceData, SpanText, SpanBytes};
 
 pub trait TraceProjector<D: TraceData>: Sized
-    + for<'a> ImpliedPredicate<TraceAttributes<'a, Self, D, AttrRef<'a, Self::Trace<'a>>, Self::Trace<'a>>, Impls: TraceAttributesOp<Self, D, Self::Trace<'a>>>
-    + for<'a> ImpliedPredicate<TraceAttributes<'a, Self, D, AttrRef<'a, Self::Chunk<'a>>, Self::Chunk<'a>>, Impls: TraceAttributesOp<Self, D, Self::Chunk<'a>>>
-    + for<'a> ImpliedPredicate<TraceAttributes<'a, Self, D, AttrRef<'a, Self::Span<'a>>, Self::Span<'a>>, Impls: TraceAttributesOp<Self, D, Self::Span<'a>>>
-    + for<'a> ImpliedPredicate<TraceAttributes<'a, Self, D, AttrRef<'a, Self::SpanLink<'a>>, Self::SpanLink<'a>>, Impls: TraceAttributesOp<Self, D, Self::SpanLink<'a>>>
-    + for<'a> ImpliedPredicate<TraceAttributes<'a, Self, D, AttrRef<'a, Self::SpanEvent<'a>>, Self::SpanEvent<'a>>, Impls: TraceAttributesOp<Self, D, Self::SpanEvent<'a>>>
-    + for<'a> ImpliedPredicate<TraceAttributesMut<'a, Self, D, AttrRef<'a, Self::Trace<'a>>, Self::Trace<'a>>, Impls: TraceAttributesMutOp<Self, D, Self::Trace<'a>>>
-    + for<'a> ImpliedPredicate<TraceAttributesMut<'a, Self, D, AttrRef<'a, Self::Chunk<'a>>, Self::Chunk<'a>>, Impls: TraceAttributesMutOp<Self, D, Self::Chunk<'a>>>
-    + for<'a> ImpliedPredicate<TraceAttributesMut<'a, Self, D, AttrRef<'a, Self::Span<'a>>, Self::Span<'a>>, Impls: TraceAttributesMutOp<Self, D, Self::Span<'a>>>
-    + for<'a> ImpliedPredicate<TraceAttributesMut<'a, Self, D, AttrRef<'a, Self::SpanLink<'a>>, Self::SpanLink<'a>>, Impls: TraceAttributesMutOp<Self, D, Self::SpanLink<'a>>>
-    + for<'a> ImpliedPredicate<TraceAttributesMut<'a, Self, D, AttrRef<'a, Self::SpanEvent<'a>>, Self::SpanEvent<'a>>, Impls: TraceAttributesMutOp<Self, D, Self::SpanEvent<'a>>>
+    + for<'a> ImpliedPredicate<TraceAttributes<'a, Self, D, AttrRef<'a, Self::Trace<'a>>, Self::Trace<'a>>, Impls: TraceAttributesOp<'a, Self, D, Self::Trace<'a>>>
+    + for<'a> ImpliedPredicate<TraceAttributes<'a, Self, D, AttrRef<'a, Self::Chunk<'a>>, Self::Chunk<'a>>, Impls: TraceAttributesOp<'a, Self, D, Self::Chunk<'a>>>
+    + for<'a> ImpliedPredicate<TraceAttributes<'a, Self, D, AttrRef<'a, Self::Span<'a>>, Self::Span<'a>>, Impls: TraceAttributesOp<'a, Self, D, Self::Span<'a>>>
+    + for<'a> ImpliedPredicate<TraceAttributes<'a, Self, D, AttrRef<'a, Self::SpanLink<'a>>, Self::SpanLink<'a>>, Impls: TraceAttributesOp<'a, Self, D, Self::SpanLink<'a>>>
+    + for<'a> ImpliedPredicate<TraceAttributes<'a, Self, D, AttrRef<'a, Self::SpanEvent<'a>>, Self::SpanEvent<'a>>, Impls: TraceAttributesOp<'a, Self, D, Self::SpanEvent<'a>>>
+    + for<'a> ImpliedPredicate<TraceAttributesMut<'a, Self, D, AttrRef<'a, Self::Trace<'a>>, Self::Trace<'a>>, Impls: TraceAttributesMutOp<'a, Self, D, Self::Trace<'a>>>
+    + for<'a> ImpliedPredicate<TraceAttributesMut<'a, Self, D, AttrRef<'a, Self::Chunk<'a>>, Self::Chunk<'a>>, Impls: TraceAttributesMutOp<'a, Self, D, Self::Chunk<'a>>>
+    + for<'a> ImpliedPredicate<TraceAttributesMut<'a, Self, D, AttrRef<'a, Self::Span<'a>>, Self::Span<'a>>, Impls: TraceAttributesMutOp<'a, Self, D, Self::Span<'a>>>
+    + for<'a> ImpliedPredicate<TraceAttributesMut<'a, Self, D, AttrRef<'a, Self::SpanLink<'a>>, Self::SpanLink<'a>>, Impls: TraceAttributesMutOp<'a, Self, D, Self::SpanLink<'a>>>
+    + for<'a> ImpliedPredicate<TraceAttributesMut<'a, Self, D, AttrRef<'a, Self::SpanEvent<'a>>, Self::SpanEvent<'a>>, Impls: TraceAttributesMutOp<'a, Self, D, Self::SpanEvent<'a>>>
 {
     type Storage<'a>: 'a;
     type Trace<'a>: 'a;
@@ -23,18 +23,18 @@ pub trait TraceProjector<D: TraceData>: Sized
     type SpanLink<'a>: 'a;
     type SpanEvent<'a>: 'a;
 
-    type AttributeTrace<'a>: TraceAttributesOp<Self, D, Self::Trace<'a>> + 'a;
-    type AttributeChunk<'a>: TraceAttributesOp<Self, D, Self::Chunk<'a>> + 'a;
-    type AttributeSpan<'a>: TraceAttributesOp<Self, D, Self::Span<'a>> + 'a;
-    type AttributeSpanLink<'a>: TraceAttributesOp<Self, D, Self::SpanLink<'a>> + 'a;
-    type AttributeSpanEvent<'a>: TraceAttributesOp<Self, D, Self::SpanEvent<'a>> + 'a;
+    type AttributeTrace<'a>: TraceAttributesOp<'a, Self, D, Self::Trace<'a>> + 'a where D: TraceDataLifetime<'a>;
+    type AttributeChunk<'a>: TraceAttributesOp<'a, Self, D, Self::Chunk<'a>> + 'a where D: TraceDataLifetime<'a>;
+    type AttributeSpan<'a>: TraceAttributesOp<'a, Self, D, Self::Span<'a>> + 'a where D: TraceDataLifetime<'a>;
+    type AttributeSpanLink<'a>: TraceAttributesOp<'a, Self, D, Self::SpanLink<'a>> + 'a where D: TraceDataLifetime<'a>;
+    type AttributeSpanEvent<'a>: TraceAttributesOp<'a, Self, D, Self::SpanEvent<'a>> + 'a where D: TraceDataLifetime<'a>;
 
-    fn project(&self) -> Traces<Self, D>;
-    fn project_mut(&mut self) -> TracesMut<Self, D>;
+    fn project<'a>(&'a self) -> Traces<Self, D> where D: TraceDataLifetime<'a>;
+    fn project_mut<'a>(&'a mut self) -> TracesMut<Self, D> where D: TraceDataLifetime<'a>;
 
     fn add_chunk<'a>(trace: &'a mut Self::Trace<'a>, storage: &mut Self::Storage<'a>) -> &'a mut Self::Chunk<'a>;
     fn chunk_iterator<'a>(trace: &'a Self::Trace<'a>) -> std::slice::Iter<'a, Self::Chunk<'a>>;
-    fn retain_chunks<'r, F: FnMut(&mut Self::Chunk<'r>, &mut Self::Storage<'r>) -> bool>(trace: &'r mut Self::Trace<'r>, storage: &'r mut Self::Storage<'r>, predicate: F);
+    fn retain_chunks<'r, 'a, F: FnMut(&'a mut Self::Chunk<'a>, &'a mut Self::Storage<'a>) -> bool>(trace: &'r mut Self::Trace<'r>, storage: &'r mut Self::Storage<'r>, predicate: F) where 'a: 'r;
     fn add_span<'a>(chunk: &'a mut Self::Chunk<'a>, storage: &mut Self::Storage<'a>) -> &'a mut Self::Span<'a>;
     fn span_iterator<'a>(chunk: &'a Self::Chunk<'a>) -> std::slice::Iter<'a, Self::Span<'a>>;
     fn retain_spans<'r, F: FnMut(&mut Self::Span<'r>, &mut Self::Storage<'r>) -> bool>(chunk: &'r mut Self::Chunk<'r>, storage: &'r mut Self::Storage<'r>, predicate: F);
@@ -45,14 +45,14 @@ pub trait TraceProjector<D: TraceData>: Sized
     fn span_event_iterator<'a>(span: &'a Self::Span<'a>) -> std::slice::Iter<'a, Self::SpanEvent<'a>>;
     fn retain_span_events<'r, F: FnMut(&mut Self::SpanEvent<'r>, &mut Self::Storage<'r>) -> bool>(span: &'r mut Self::Span<'r>, storage: &'r mut Self::Storage<'r>, predicate: F);
 
-    fn get_trace_container_id<'a>(trace: &'a Self::Trace<'a>, storage: &'a Self::Storage<'a>) -> &'a D::Text;
-    fn get_trace_language_name<'a>(trace: &'a Self::Trace<'a>, storage: &'a Self::Storage<'a>) -> &'a D::Text;
-    fn get_trace_language_version<'a>(trace: &'a Self::Trace<'a>, storage: &'a Self::Storage<'a>) -> &'a D::Text;
-    fn get_trace_tracer_version<'a>(trace: &'a Self::Trace<'a>, storage: &'a Self::Storage<'a>) -> &'a D::Text;
-    fn get_trace_runtime_id<'a>(trace: &'a Self::Trace<'a>, storage: &'a Self::Storage<'a>) -> &'a D::Text;
-    fn get_trace_env<'a>(trace: &'a Self::Trace<'a>, storage: &'a Self::Storage<'a>) -> &'a D::Text;
-    fn get_trace_hostname<'a>(trace: &'a Self::Trace<'a>, storage: &'a Self::Storage<'a>) -> &'a D::Text;
-    fn get_trace_app_version<'a>(trace: &'a Self::Trace<'a>, storage: &'a Self::Storage<'a>) -> &'a D::Text;
+    fn get_trace_container_id<'a>(trace: &Self::Trace<'_>, storage: &'a Self::Storage<'a>) -> &'a D::Text;
+    fn get_trace_language_name<'a>(trace: &Self::Trace<'_>, storage: &'a Self::Storage<'a>) -> &'a D::Text;
+    fn get_trace_language_version<'a>(trace: &Self::Trace<'_>, storage: &'a Self::Storage<'a>) -> &'a D::Text;
+    fn get_trace_tracer_version<'a>(trace: &Self::Trace<'_>, storage: &'a Self::Storage<'a>) -> &'a D::Text;
+    fn get_trace_runtime_id<'a>(trace: &Self::Trace<'_>, storage: &'a Self::Storage<'a>) -> &'a D::Text;
+    fn get_trace_env<'a>(trace: &Self::Trace<'_>, storage: &'a Self::Storage<'a>) -> &'a D::Text;
+    fn get_trace_hostname<'a>(trace: &Self::Trace<'_>, storage: &'a Self::Storage<'a>) -> &'a D::Text;
+    fn get_trace_app_version<'a>(trace: &Self::Trace<'_>, storage: &'a Self::Storage<'a>) -> &'a D::Text;
 
     fn set_trace_container_id(trace: &mut Self::Trace<'_>, storage: &mut Self::Storage<'_>, value: D::Text);
     fn set_trace_language_name(trace: &mut Self::Trace<'_>, storage: &mut Self::Storage<'_>, value: D::Text);
@@ -64,7 +64,7 @@ pub trait TraceProjector<D: TraceData>: Sized
     fn set_trace_app_version(trace: &mut Self::Trace<'_>, storage: &mut Self::Storage<'_>, value: D::Text);
 
     fn get_chunk_priority(chunk: &Self::Chunk<'_>, storage: &Self::Storage<'_>) -> i32;
-    fn get_chunk_origin<'a>(chunk: &'a Self::Chunk<'a>, storage: &'a Self::Storage<'a>) -> &'a D::Text;
+    fn get_chunk_origin<'a>(chunk: &Self::Chunk<'_>, storage: &'a Self::Storage<'a>) -> &'a D::Text;
     fn get_chunk_dropped_trace(chunk: &Self::Chunk<'_>, storage: &Self::Storage<'_>) -> bool;
     fn get_chunk_trace_id(chunk: &Self::Chunk<'_>, storage: &Self::Storage<'_>) -> u128;
     fn get_chunk_sampling_mechanism(chunk: &Self::Chunk<'_>, storage: &Self::Storage<'_>) -> u32;
@@ -75,18 +75,18 @@ pub trait TraceProjector<D: TraceData>: Sized
     fn set_chunk_trace_id(chunk: &mut Self::Chunk<'_>, storage: &mut Self::Storage<'_>, value: u128) where D: OwnedTraceData;
     fn set_chunk_sampling_mechanism(chunk: &mut Self::Chunk<'_>, storage: &mut Self::Storage<'_>, value: u32);
 
-    fn get_span_service<'a>(span: &'a Self::Span<'a>, storage: &'a Self::Storage<'a>) -> &'a D::Text;
-    fn get_span_name<'a>(span: &'a Self::Span<'a>, storage: &'a Self::Storage<'a>) -> &'a D::Text;
-    fn get_span_resource<'a>(span: &'a Self::Span<'a>, storage: &'a Self::Storage<'a>) -> &'a D::Text;
-    fn get_span_type<'a>(span: &'a Self::Span<'a>, storage: &'a Self::Storage<'a>) -> &'a D::Text;
+    fn get_span_service<'a>(span: &Self::Span<'_>, storage: &'a Self::Storage<'a>) -> &'a D::Text;
+    fn get_span_name<'a>(span: &Self::Span<'_>, storage: &'a Self::Storage<'a>) -> &'a D::Text;
+    fn get_span_resource<'a>(span: &Self::Span<'_>, storage: &'a Self::Storage<'a>) -> &'a D::Text;
+    fn get_span_type<'a>(span: &Self::Span<'_>, storage: &'a Self::Storage<'a>) -> &'a D::Text;
     fn get_span_span_id(span: &Self::Span<'_>, storage: &Self::Storage<'_>) -> u64;
     fn get_span_parent_id(span: &Self::Span<'_>, storage: &Self::Storage<'_>) -> u64;
     fn get_span_start(span: &Self::Span<'_>, storage: &Self::Storage<'_>) -> i64;
     fn get_span_duration(span: &Self::Span<'_>, storage: &Self::Storage<'_>) -> i64;
     fn get_span_error(span: &Self::Span<'_>, storage: &Self::Storage<'_>) -> bool;
-    fn get_span_env<'a>(span: &'a Self::Span<'a>, storage: &'a Self::Storage<'a>) -> &'a D::Text;
-    fn get_span_version<'a>(span: &'a Self::Span<'a>, storage: &'a Self::Storage<'a>) -> &'a D::Text;
-    fn get_span_component<'a>(span: &'a Self::Span<'a>, storage: &'a Self::Storage<'a>) -> &'a D::Text;
+    fn get_span_env<'a>(span: &Self::Span<'_>, storage: &'a Self::Storage<'a>) -> &'a D::Text;
+    fn get_span_version<'a>(span: &Self::Span<'_>, storage: &'a Self::Storage<'a>) -> &'a D::Text;
+    fn get_span_component<'a>(span: &Self::Span<'_>, storage: &'a Self::Storage<'a>) -> &'a D::Text;
     fn get_span_kind(span: &Self::Span<'_>, storage: &Self::Storage<'_>) -> SpanKind;
 
     fn set_span_service(span: &mut Self::Span<'_>, storage: &mut Self::Storage<'_>, value: D::Text);
@@ -105,7 +105,7 @@ pub trait TraceProjector<D: TraceData>: Sized
 
     fn get_link_trace_id(link: &Self::SpanLink<'_>, storage: &Self::Storage<'_>) -> u128;
     fn get_link_span_id(link: &Self::SpanLink<'_>, storage: &Self::Storage<'_>) -> u64;
-    fn get_link_trace_state<'a>(link: &'a Self::SpanLink<'a>, storage: &'a Self::Storage<'a>) -> &'a D::Text;
+    fn get_link_trace_state<'a>(link: &Self::SpanLink<'_>, storage: &'a Self::Storage<'a>) -> &'a D::Text;
     fn get_link_flags(link: &Self::SpanLink<'_>, storage: &Self::Storage<'_>) -> u32;
 
     fn set_link_trace_id(link: &mut Self::SpanLink<'_>, storage: &mut Self::Storage<'_>, value: u128);
@@ -114,7 +114,7 @@ pub trait TraceProjector<D: TraceData>: Sized
     fn set_link_flags(link: &mut Self::SpanLink<'_>, storage: &mut Self::Storage<'_>, value: u32);
 
     fn get_event_time_unix_nano(event: &Self::SpanEvent<'_>, storage: &Self::Storage<'_>) -> u64;
-    fn get_event_name<'a>(event: &'a Self::SpanEvent<'a>, storage: &'a Self::Storage<'a>) -> &'a D::Text;
+    fn get_event_name<'a>(event: &Self::SpanEvent<'_>, storage: &'a Self::Storage<'a>) -> &'a D::Text;
 
     fn set_event_time_unix_nano(event: &mut Self::SpanEvent<'_>, storage: &mut Self::Storage<'_>, value: u64);
     fn set_event_name(event: &mut Self::SpanEvent<'_>, storage: &mut Self::Storage<'_>, value: D::Text);
@@ -132,14 +132,8 @@ struct TraceValue<'a, T: TraceProjector<D>, D: TraceDataLifetime<'a>, C, const T
     container: &'a C,
 }
 
-pub type TracesValue<'a, T: TraceProjector<D>, D: TraceDataLifetime<'a>, const Type: u8, const Mut: u8 = IMMUT> = TraceValue<'a, T, D, T::Trace<'a>, Type, Mut>;
-pub type ChunkValue<'a, T: TraceProjector<D>, D: TraceDataLifetime<'a>, const Type: u8, const Mut: u8 = IMMUT> = TraceValue<'a, T, D, T::Chunk<'a>, Type, Mut>;
-pub type SpanValue<'a, T: TraceProjector<D>, D: TraceDataLifetime<'a>, const Type: u8, const Mut: u8 = IMMUT> = TraceValue<'a, T, D, T::Span<'a>, Type, Mut>;
-pub type SpanLinkValue<'a, T: TraceProjector<D>, D: TraceDataLifetime<'a>, const Type: u8, const Mut: u8 = IMMUT> = TraceValue<'a, T, D, T::SpanLink<'a>, Type, Mut>;
-pub type SpanEventValue<'a, T: TraceProjector<D>, D: TraceDataLifetime<'a>, const Type: u8, const Mut: u8 = IMMUT> = TraceValue<'a, T, D, T::SpanEvent<'a>, Type, Mut>;
-
 #[derive(Debug)]
-pub struct Traces<'a, T: TraceProjector<D> + ?Sized, D: TraceDataLifetime<'a>, const Mut: u8 = IMMUT> {
+pub struct Traces<'a, T: TraceProjector<D>, D: TraceDataLifetime<'a>, const Mut: u8 = IMMUT> {
     storage: &'a T::Storage<'a>,
     traces: &'a T::Trace<'a>,
 }
@@ -209,7 +203,7 @@ impl<'a, T: TraceProjector<D>, D: TraceDataLifetime<'a>, const Mut: u8> Traces<'
         }
     }
 
-    pub fn chunks(&self) -> ChunkIterator<'a, T, D, std::slice::Iter<'a, T::Chunk<'a>>> {
+    pub fn chunks(&self) -> ChunkIterator<'a, 'a, T, D, std::slice::Iter<'a, T::Chunk<'a>>> {
         ChunkIterator {
             storage: self.storage,
             it: T::chunk_iterator(self.traces)
@@ -262,27 +256,28 @@ impl<'a, T: TraceProjector<D>, D: TraceDataLifetime<'a>> TracesMut<'a, T, D> {
         }
     }
 
-    pub fn chunks_mut(&mut self) -> ChunkIteratorMut<'a, T, D, std::slice::Iter<'a, T::Chunk<'a>>> {
+    pub fn chunks_mut(&mut self) -> ChunkIteratorMut<'a, 'a, T, D, std::slice::Iter<'a, T::Chunk<'a>>> {
         ChunkIterator {
             storage: self.storage,
             it: T::chunk_iterator(self.traces)
         }
     }
 
-    pub fn retain_chunks<F: FnMut(&mut TraceChunkMut<'_, T, D>) -> bool>(&mut self, mut predicate: F) {
+    pub fn retain_chunks<'b, F: FnMut(&mut TraceChunkMut<'a, 'b, T, D>) -> bool>(&mut self, mut predicate: F) where 'a: 'b {
         // We may not make self.storage mut inside the closure. As that would be a double mut-borrow
         unsafe {
             let traces: &'a mut T::Trace<'a> = as_mut(self.traces);
             let storage_ref: &'a mut T::Storage<'a> = as_mut(self.storage);
-            T::retain_chunks(traces, storage_ref, |chunk, storage| {
-                let mut trace_chunk = TraceChunk::<T, D, MUT> { storage, chunk };
-                let chunk_ref: &mut TraceChunk<'_, T, D, MUT> = std::mem::transmute(&mut trace_chunk);
-                predicate(chunk_ref)
+            T::retain_chunks(traces, storage_ref, move |chunk, storage| {
+                let mut trace_chunk = TraceChunkMut::<'a, '_, T, D> { storage, chunk };
+                //let chunk_ref: &mut TraceChunkMut<'a, T, D> = std::mem::transmute(&mut trace_chunk);
+                //predicate(chunk_ref)
+                predicate(&mut trace_chunk)
             })
         }
     }
 
-    pub fn add_chunk(&mut self) -> TraceChunk<'a, T, D, MUT> {
+    pub fn add_chunk(&mut self) -> TraceChunkMut<'a, 'a, T, D> {
         TraceChunk {
             storage: self.storage,
             chunk: unsafe { T::add_chunk(as_mut(self.traces), as_mut(self.storage)) },
@@ -290,14 +285,14 @@ impl<'a, T: TraceProjector<D>, D: TraceDataLifetime<'a>> TracesMut<'a, T, D> {
     }
 }
 
-pub struct ChunkIterator<'a, T: TraceProjector<D>, D: TraceDataLifetime<'a>, I: Iterator<Item = &'a T::Chunk<'a>>, const Mut: u8 = IMMUT> {
+pub struct ChunkIterator<'a: 'b, 'b, T: TraceProjector<D>, D: TraceDataLifetime<'a>, I: Iterator<Item = &'b T::Chunk<'b>>, const Mut: u8 = IMMUT> {
     storage: &'a T::Storage<'a>,
     it: I,
 }
-pub type ChunkIteratorMut<'a, T: TraceProjector<D>, D: TraceDataLifetime<'a>, I: Iterator<Item = &'a T::Chunk<'a>>> = ChunkIterator<'a, T, D, I, MUT>;
+pub type ChunkIteratorMut<'a: 'b, 'b, T: TraceProjector<D>, D: TraceDataLifetime<'a>, I: Iterator<Item = &'b T::Chunk<'b>>> = ChunkIterator<'a, 'b, T, D, I, MUT>;
 
-impl<'a, T: TraceProjector<D>, D: TraceDataLifetime<'a>, I: Iterator<Item = &'a T::Chunk<'a>>, const Mut: u8> Iterator for ChunkIterator<'a, T, D, I, Mut> {
-    type Item = TraceChunk<'a, T, D, Mut>;
+impl<'a: 'b, 'b, T: TraceProjector<D>, D: TraceDataLifetime<'a>, I: Iterator<Item = &'b T::Chunk<'b>>, const Mut: u8> Iterator for ChunkIterator<'a, 'b, T, D, I, Mut> {
+    type Item = TraceChunk<'a, 'b, T, D, Mut>;
 
     fn next(&mut self) -> Option<Self::Item> {
         self.it.next().map(|chunk| {
@@ -310,13 +305,13 @@ impl<'a, T: TraceProjector<D>, D: TraceDataLifetime<'a>, I: Iterator<Item = &'a 
 }
 
 #[derive(Debug)]
-pub struct TraceChunk<'a, T: TraceProjector<D>, D: TraceDataLifetime<'a>, const Mut: u8 = IMMUT> {
+pub struct TraceChunk<'a: 'b, 'b, T: TraceProjector<D>, D: TraceDataLifetime<'a>, const Mut: u8 = IMMUT> {
     storage: &'a T::Storage<'a>,
-    chunk: &'a T::Chunk<'a>,
+    chunk: &'b T::Chunk<'b>,
 }
-pub type TraceChunkMut<'a, T, D> = TraceChunk<'a, T, D, MUT>;
+pub type TraceChunkMut<'a: 'b, 'b, T, D> = TraceChunk<'a, 'b, T, D, MUT>;
 
-impl<'a, T: TraceProjector<D>, D: TraceDataLifetime<'a>> Clone for TraceChunk<'a, T, D> { // Note: not for MUT
+impl<'a: 'b, 'b, T: TraceProjector<D>, D: TraceDataLifetime<'a>> Clone for TraceChunk<'a, 'b, T, D> { // Note: not for MUT
     fn clone(&self) -> Self {
         TraceChunk {
             storage: self.storage,
@@ -324,9 +319,9 @@ impl<'a, T: TraceProjector<D>, D: TraceDataLifetime<'a>> Clone for TraceChunk<'a
         }
     }
 }
-impl<'a, T: TraceProjector<D>, D: TraceDataLifetime<'a>> Copy for TraceChunk<'a, T, D> {}
+impl<'a: 'b, 'b, T: TraceProjector<D>, D: TraceDataLifetime<'a>> Copy for TraceChunk<'a, 'b, T, D> {}
 
-impl<'a, T: TraceProjector<D>, D: TraceDataLifetime<'a>, const Mut: u8> TraceChunk<'a, T, D, Mut> {
+impl<'a: 'b, 'b, T: TraceProjector<D>, D: TraceDataLifetime<'a>, const Mut: u8> TraceChunk<'a, 'b, T, D, Mut> {
     pub fn priority(&self) -> i32 {
         T::get_chunk_priority(self.chunk, self.storage)
     }
@@ -347,7 +342,7 @@ impl<'a, T: TraceProjector<D>, D: TraceDataLifetime<'a>, const Mut: u8> TraceChu
         T::get_chunk_sampling_mechanism(self.chunk, self.storage)
     }
 
-    pub fn attributes(&self) -> TraceAttributes<'a, T, D, AttrRef<'a, T::Chunk<'a>>, T::Chunk<'a>> {
+    pub fn attributes(&self) -> TraceAttributes<'a, T, D, AttrRef<'b, T::Chunk<'b>>, T::Chunk<'b>> {
         TraceAttributes {
             storage: self.storage,
             container: AttrRef(self.chunk),
@@ -355,7 +350,7 @@ impl<'a, T: TraceProjector<D>, D: TraceDataLifetime<'a>, const Mut: u8> TraceChu
         }
     }
 
-    pub fn spans(&self) -> SpanIterator<'a, T, D, std::slice::Iter<'a, T::Span<'a>>> {
+    pub fn spans(&self) -> SpanIterator<'a, 'b, T, D, std::slice::Iter<'b, T::Span<'b>>> {
         SpanIterator {
             storage: self.storage,
             it: T::span_iterator(self.chunk)
@@ -363,7 +358,7 @@ impl<'a, T: TraceProjector<D>, D: TraceDataLifetime<'a>, const Mut: u8> TraceChu
     }
 }
 
-impl<'a, T: TraceProjector<D>, D: TraceDataLifetime<'a>> TraceChunk<'a, T, D, MUT> {
+impl<'a: 'b, 'b, T: TraceProjector<D>, D: TraceDataLifetime<'a>> TraceChunk<'a, 'b, T, D, MUT> {
     pub fn set_priority(&self, value: i32) {
         unsafe { T::set_chunk_priority(as_mut(self.chunk), as_mut(self.storage), value) }
     }
@@ -384,7 +379,7 @@ impl<'a, T: TraceProjector<D>, D: TraceDataLifetime<'a>> TraceChunk<'a, T, D, MU
         unsafe { T::set_chunk_sampling_mechanism(as_mut(self.chunk), as_mut(self.storage), value) }
     }
 
-    pub fn attributes_mut(&self) -> TraceAttributes<'a, T, D, AttrRef<'a, T::Chunk<'a>>, T::Chunk<'a>, MUT> {
+    pub fn attributes_mut(&self) -> TraceAttributes<'a, T, D, AttrRef<'b, T::Chunk<'b>>, T::Chunk<'b>, MUT> {
         TraceAttributes {
             storage: self.storage,
             container: AttrRef(self.chunk),
@@ -392,27 +387,27 @@ impl<'a, T: TraceProjector<D>, D: TraceDataLifetime<'a>> TraceChunk<'a, T, D, MU
         }
     }
 
-    pub fn spans_mut(&mut self) -> SpanIteratorMut<'a, T, D, std::slice::Iter<'a, T::Span<'a>>> {
+    pub fn spans_mut(&mut self) -> SpanIteratorMut<'a, 'b, T, D, std::slice::Iter<'b, T::Span<'b>>> {
         SpanIterator {
             storage: self.storage,
             it: T::span_iterator(self.chunk)
         }
     }
 
-    pub fn retain_spans<F: FnMut(&mut SpanMut<'_, T, D>) -> bool>(&mut self, mut predicate: F) {
+    pub fn retain_spans<F: FnMut(&mut SpanMut<'a, 'b, T, D>) -> bool>(&mut self, mut predicate: F) {
         // We may not make self.storage mut inside the closure. As that would be a double mut-borrow
         unsafe {
             let chunk: &'a mut T::Chunk<'a> = as_mut(self.chunk);
             let storage_ref: &'a mut T::Storage<'a> = as_mut(self.storage);
             T::retain_spans(chunk, storage_ref, |span, storage| {
-                let mut span_obj = Span::<T, D, MUT> { storage, span };
-                let span_ref: &mut Span<'_, T, D, MUT> = std::mem::transmute(&mut span_obj);
-                predicate(span_ref)
+                let mut span_obj = Span::<'a, '_, T, D, MUT> { storage, span };
+//                let span_ref: &mut Span<'a, T, D, MUT> = std::mem::transmute(&mut span_obj);
+                predicate(&mut span_obj)
             })
         }
     }
 
-    pub fn add_span(&mut self) -> Span<'a, T, D, MUT> {
+    pub fn add_span(&mut self) -> Span<'a, 'b, T, D, MUT> {
         Span {
             storage: self.storage,
             span: unsafe { T::add_span(as_mut(self.chunk), as_mut(self.storage)) }
@@ -420,17 +415,17 @@ impl<'a, T: TraceProjector<D>, D: TraceDataLifetime<'a>> TraceChunk<'a, T, D, MU
     }
 }
 
-pub struct SpanIterator<'a, T: TraceProjector<D>, D: TraceDataLifetime<'a>, I: Iterator<Item = &'a T::Span<'a>>, const Mut: u8 = IMMUT> {
+pub struct SpanIterator<'a: 'b, 'b, T: TraceProjector<D>, D: TraceDataLifetime<'a>, I: Iterator<Item = &'b T::Span<'b>>, const Mut: u8 = IMMUT> {
     storage: &'a T::Storage<'a>,
     it: I,
 }
-pub type SpanIteratorMut<'a, T: TraceProjector<D>, D: TraceDataLifetime<'a>, I: Iterator<Item = &'a T::Span<'a>>> = SpanIterator<'a, T, D, I, MUT>;
+pub type SpanIteratorMut<'a: 'b, 'b, T: TraceProjector<D>, D: TraceDataLifetime<'a>, I: Iterator<Item = &'b T::Span<'b>>> = SpanIterator<'a, 'b, T, D, I, MUT>;
 
-impl<'a, T: TraceProjector<D>, D: TraceDataLifetime<'a>, I: Iterator<Item = &'a T::Span<'a>>, const Mut: u8> Iterator for SpanIterator<'a, T, D, I, Mut> {
-    type Item = Span<'a, T, D, Mut>;
+impl<'a: 'b, 'b, T: TraceProjector<D>, D: TraceDataLifetime<'a>, I: Iterator<Item = &'b T::Span<'b>>, const Mut: u8> Iterator for SpanIterator<'a, 'b, T, D, I, Mut> {
+    type Item = Span<'a, 'b, T, D, Mut>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        self.it.next().map(|span| {
+        self.it.next().map(move |span| {
             Span {
                 storage: self.storage,
                 span,
@@ -451,13 +446,13 @@ impl<'a, T: TraceProjector<D>, D: TraceDataLifetime<'a>, I: Iterator<Item = &'a 
 /// }
 /// ```
 #[derive(Debug)]
-pub struct Span<'a, T: TraceProjector<D>, D: TraceDataLifetime<'a>, const Mut: u8 = IMMUT> {
+pub struct Span<'a: 'b, 'b, T: TraceProjector<D>, D: TraceDataLifetime<'a>, const Mut: u8 = IMMUT> {
     storage: &'a T::Storage<'a>,
-    span: &'a T::Span<'a>,
+    span: &'b T::Span<'b>,
 }
-pub type SpanMut<'a, T, D> = Span<'a, T, D, MUT>;
+pub type SpanMut<'a: 'b, 'b, T, D> = Span<'a, 'b, T, D, MUT>;
 
-impl<'a, T: TraceProjector<D>, D: TraceDataLifetime<'a>> Clone for Span<'a, T, D> { // Note: not for MUT
+impl<'a: 'b, 'b, T: TraceProjector<D>, D: TraceDataLifetime<'a>> Clone for Span<'a, 'b, T, D> { // Note: not for MUT
     fn clone(&self) -> Self {
         Span {
             storage: self.storage,
@@ -465,9 +460,9 @@ impl<'a, T: TraceProjector<D>, D: TraceDataLifetime<'a>> Clone for Span<'a, T, D
         }
     }
 }
-impl<'a, T: TraceProjector<D>, D: TraceDataLifetime<'a>> Copy for Span<'a, T, D> {}
+impl<'a: 'b, 'b, T: TraceProjector<D>, D: TraceDataLifetime<'a>> Copy for Span<'a, 'b, T, D> {}
 
-impl<'a, T: TraceProjector<D>, D: TraceDataLifetime<'a>, const Mut: u8> Span<'a, T, D, Mut> {
+impl<'a: 'b, 'b, T: TraceProjector<D>, D: TraceDataLifetime<'a>, const Mut: u8> Span<'a, 'b, T, D, Mut> {
     pub fn service(&self) -> &'a D::Text {
         T::get_span_service(self.span, self.storage)
     }
@@ -520,7 +515,7 @@ impl<'a, T: TraceProjector<D>, D: TraceDataLifetime<'a>, const Mut: u8> Span<'a,
         T::get_span_kind(self.span, self.storage)
     }
 
-    pub fn attributes(&self) -> TraceAttributes<'a, T, D, AttrRef<'a, T::Span<'a>>, T::Span<'a>> {
+    pub fn attributes(&self) -> TraceAttributes<'a, T, D, AttrRef<'b, T::Span<'b>>, T::Span<'b>> {
         TraceAttributes {
             storage: self.storage,
             container: AttrRef(self.span),
@@ -528,54 +523,54 @@ impl<'a, T: TraceProjector<D>, D: TraceDataLifetime<'a>, const Mut: u8> Span<'a,
         }
     }
 
-    pub fn span_links(&self) -> SpanLinkIterator<'a, T, D, std::slice::Iter<'a, T::SpanLink<'a>>> {
+    pub fn span_links(&self) -> SpanLinkIterator<'a, 'b, T, D, std::slice::Iter<'b, T::SpanLink<'b>>> {
         SpanLinkIterator {
             storage: self.storage,
             it: T::span_link_iterator(self.span)
         }
     }
 
-    pub fn retain_span_links<F: FnMut(&mut SpanLinkMut<'_, T, D>) -> bool>(&mut self, mut predicate: F) {
+    pub fn retain_span_links<F: FnMut(&mut SpanLinkMut<'a, 'b, T, D>) -> bool>(&mut self, mut predicate: F) {
         // We may not make self.storage mut inside the closure. As that would be a double mut-borrow
         unsafe {
-            let span: &'a mut T::Span<'a> = as_mut(self.span);
+            let span: &'b mut T::Span<'b> = as_mut(self.span);
             let storage_ref: &'a mut T::Storage<'a> = as_mut(self.storage);
             T::retain_span_links(span, storage_ref, |link, storage| {
-                let mut link_obj = SpanLink::<T, D, MUT> { storage, link };
-                let link_ref: &mut SpanLink<'_, T, D, MUT> = std::mem::transmute(&mut link_obj);
-                predicate(link_ref)
+                let mut link_obj = SpanLink::<'a, '_, T, D, MUT> { storage, link };
+//                let link_ref: &mut SpanLink<'a, T, D, MUT> = std::mem::transmute(&mut link_obj);
+                predicate(&mut link_obj)
             })
         }
     }
 
-    pub fn add_span_link(&mut self) -> SpanLink<'a, T, D, MUT> {
+    pub fn add_span_link(&mut self) -> SpanLink<'a, 'b, T, D, MUT> {
         SpanLink {
             storage: self.storage,
             link: unsafe { T::add_span_link(as_mut(self.span), as_mut(self.storage)) }
         }
     }
 
-    pub fn span_events(&self) -> SpanEventIterator<'a, T, D, std::slice::Iter<'a, T::SpanEvent<'a>>> {
+    pub fn span_events(&self) -> SpanEventIterator<'a, 'b, T, D, std::slice::Iter<'b, T::SpanEvent<'b>>> {
         SpanEventIterator {
             storage: self.storage,
             it: T::span_event_iterator(self.span)
         }
     }
 
-    pub fn retain_span_events<F: FnMut(&mut SpanEventMut<'_, T, D>) -> bool>(&mut self, mut predicate: F) {
+    pub fn retain_span_events<F: FnMut(&mut SpanEventMut<'a, 'b, T, D>) -> bool>(&mut self, mut predicate: F) {
         // We may not make self.storage mut inside the closure. As that would be a double mut-borrow
         unsafe {
-            let span: &'a mut T::Span<'a> = as_mut(self.span);
+            let span: &'b mut T::Span<'b> = as_mut(self.span);
             let storage_ref: &'a mut T::Storage<'a> = as_mut(self.storage);
             T::retain_span_events(span, storage_ref, |event, storage| {
-                let mut event_obj = SpanEvent::<T, D, MUT> { storage, event };
-                let event_ref: &mut SpanEvent<'_, T, D, MUT> = std::mem::transmute(&mut event_obj);
-                predicate(event_ref)
+                let mut event_obj = SpanEvent::<'a, '_, T, D, MUT> { storage, event };
+                //let event_ref: &mut SpanEvent<'a, '_, T, D, MUT> = std::mem::transmute(&mut event_obj);
+                predicate(&mut event_obj)
             })
         }
     }
 
-    pub fn add_span_event(&mut self) -> SpanEvent<'a, T, D, MUT> {
+    pub fn add_span_event(&mut self) -> SpanEvent<'a, 'b, T, D, MUT> {
         SpanEvent {
             storage: self.storage,
             event: unsafe { T::add_span_event(as_mut(self.span), as_mut(self.storage)) }
@@ -583,7 +578,7 @@ impl<'a, T: TraceProjector<D>, D: TraceDataLifetime<'a>, const Mut: u8> Span<'a,
     }
 }
 
-impl <'a, T: TraceProjector<D>, D: TraceDataLifetime<'a>> SpanMut<'a, T, D> {
+impl <'a: 'b, 'b, T: TraceProjector<D>, D: TraceDataLifetime<'a>> SpanMut<'a, 'b, T, D> {
     pub fn set_service<I: IntoData<D::Text>>(&mut self, value: I) {
         unsafe { T::set_span_service(as_mut(self.span), as_mut(self.storage), value.into()) }
     }
@@ -636,7 +631,7 @@ impl <'a, T: TraceProjector<D>, D: TraceDataLifetime<'a>> SpanMut<'a, T, D> {
         unsafe { T::set_span_kind(as_mut(self.span), as_mut(self.storage), value) }
     }
 
-    pub fn attributes_mut(&mut self) -> TraceAttributes<'a, T, D, AttrRef<'a, T::Span<'a>>, T::Span<'a>, MUT> {
+    pub fn attributes_mut(&mut self) -> TraceAttributes<'a, T, D, AttrRef<'b, T::Span<'b>>, T::Span<'b>, MUT> {
         TraceAttributes {
             storage: self.storage,
             container: AttrRef(self.span),
@@ -644,14 +639,14 @@ impl <'a, T: TraceProjector<D>, D: TraceDataLifetime<'a>> SpanMut<'a, T, D> {
         }
     }
 
-    pub fn span_links_mut(&mut self) -> SpanLinkIteratorMut<'a, T, D, std::slice::Iter<'a, T::SpanLink<'a>>> {
+    pub fn span_links_mut(&mut self) -> SpanLinkIteratorMut<'a, 'b, T, D, std::slice::Iter<'b, T::SpanLink<'b>>> {
         SpanLinkIterator {
             storage: self.storage,
             it: T::span_link_iterator(self.span)
         }
     }
 
-    pub fn span_events_mut(&mut self) -> SpanEventIteratorMut<'a, T, D, std::slice::Iter<'a, T::SpanEvent<'a>>> {
+    pub fn span_events_mut(&mut self) -> SpanEventIteratorMut<'a, 'b, T, D, std::slice::Iter<'b, T::SpanEvent<'b>>> {
         SpanEventIterator {
             storage: self.storage,
             it: T::span_event_iterator(self.span)
@@ -659,17 +654,17 @@ impl <'a, T: TraceProjector<D>, D: TraceDataLifetime<'a>> SpanMut<'a, T, D> {
     }
 }
 
-pub struct SpanLinkIterator<'a, T: TraceProjector<D>, D: TraceDataLifetime<'a>, I: Iterator<Item = &'a T::SpanLink<'a>>, const Mut: u8 = IMMUT> {
+pub struct SpanLinkIterator<'a: 'b, 'b, T: TraceProjector<D>, D: TraceDataLifetime<'a>, I: Iterator<Item = &'b T::SpanLink<'b>>, const Mut: u8 = IMMUT> {
     storage: &'a T::Storage<'a>,
     it: I,
 }
-pub type SpanLinkIteratorMut<'a, T: TraceProjector<D>, D: TraceDataLifetime<'a>, I: Iterator<Item = &'a T::SpanLink<'a>>> = SpanLinkIterator<'a, T, D, I, MUT>;
+pub type SpanLinkIteratorMut<'a: 'b, 'b, T: TraceProjector<D>, D: TraceDataLifetime<'a>, I: Iterator<Item = &'b T::SpanLink<'b>>> = SpanLinkIterator<'a, 'b, T, D, I, MUT>;
 
-impl<'a, T: TraceProjector<D>, D: TraceDataLifetime<'a>, I: Iterator<Item = &'a T::SpanLink<'a>>, const Mut: u8> Iterator for SpanLinkIterator<'a, T, D, I, Mut> {
-    type Item = SpanLink<'a, T, D>;
+impl<'a: 'b, 'b, T: TraceProjector<D>, D: TraceDataLifetime<'a>, I: Iterator<Item = &'b T::SpanLink<'b>>, const Mut: u8> Iterator for SpanLinkIterator<'a, 'b, T, D, I, Mut> {
+    type Item = SpanLink<'a, 'b, T, D>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        self.it.next().map(|link| {
+        self.it.next().map(move |link| {
             SpanLink {
                 storage: self.storage,
                 link,
@@ -678,17 +673,17 @@ impl<'a, T: TraceProjector<D>, D: TraceDataLifetime<'a>, I: Iterator<Item = &'a 
     }
 }
 
-pub struct SpanEventIterator<'a, T: TraceProjector<D>, D: TraceDataLifetime<'a>, I: Iterator<Item = &'a T::SpanEvent<'a>>, const Mut: u8 = IMMUT> {
+pub struct SpanEventIterator<'a: 'b, 'b, T: TraceProjector<D>, D: TraceDataLifetime<'a>, I: Iterator<Item = &'b T::SpanEvent<'b>>, const Mut: u8 = IMMUT> {
     storage: &'a T::Storage<'a>,
     it: I,
 }
-pub type SpanEventIteratorMut<'a, T: TraceProjector<D>, D: TraceDataLifetime<'a>, I: Iterator<Item = &'a T::SpanEvent<'a>>> = SpanEventIterator<'a, T, D, I, MUT>;
+pub type SpanEventIteratorMut<'a: 'b, 'b, T: TraceProjector<D>, D: TraceDataLifetime<'a>, I: Iterator<Item = &'b T::SpanEvent<'b>>> = SpanEventIterator<'a, 'b, T, D, I, MUT>;
 
-impl<'a, T: TraceProjector<D>, D: TraceDataLifetime<'a>, I: Iterator<Item = &'a T::SpanEvent<'a>>, const Mut: u8> Iterator for SpanEventIterator<'a, T, D, I, Mut> {
-    type Item = SpanEvent<'a, T, D>;
+impl<'a: 'b, 'b, T: TraceProjector<D>, D: TraceDataLifetime<'a>, I: Iterator<Item = &'b T::SpanEvent<'b>>, const Mut: u8> Iterator for SpanEventIterator<'a, 'b, T, D, I, Mut> {
+    type Item = SpanEvent<'a, 'b, T, D>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        self.it.next().map(|event| {
+        self.it.next().map(move |event| {
             SpanEvent {
                 storage: self.storage,
                 event,
@@ -700,13 +695,13 @@ impl<'a, T: TraceProjector<D>, D: TraceDataLifetime<'a>, I: Iterator<Item = &'a 
 /// The generic representation of a V04 span link.
 /// `T` is the type used to represent strings in the span link.
 #[derive(Debug)]
-pub struct SpanLink<'a, T: TraceProjector<D>, D: TraceDataLifetime<'a>, const Mut: u8 = IMMUT> {
+pub struct SpanLink<'a: 'b, 'b, T: TraceProjector<D>, D: TraceDataLifetime<'a>, const Mut: u8 = IMMUT> {
     storage: &'a T::Storage<'a>,
-    link: &'a T::SpanLink<'a>,
+    link: &'b T::SpanLink<'b>,
 }
-pub type SpanLinkMut<'a, T, D> = SpanLink<'a, T, D, MUT>;
+pub type SpanLinkMut<'a, 'b, T, D> = SpanLink<'a, 'b, T, D, MUT>;
 
-impl<'a, T: TraceProjector<D>, D: TraceDataLifetime<'a>> Clone for SpanLink<'a, T, D> { // Note: not for MUT
+impl<'a: 'b, 'b, T: TraceProjector<D>, D: TraceDataLifetime<'a>> Clone for SpanLink<'a, 'b, T, D> { // Note: not for MUT
     fn clone(&self) -> Self {
         SpanLink {
             storage: self.storage,
@@ -714,10 +709,10 @@ impl<'a, T: TraceProjector<D>, D: TraceDataLifetime<'a>> Clone for SpanLink<'a, 
         }
     }
 }
-impl<'a, T: TraceProjector<D>, D: TraceDataLifetime<'a>> Copy for SpanLink<'a, T, D> {}
+impl<'a: 'b, 'b, T: TraceProjector<D>, D: TraceDataLifetime<'a>> Copy for SpanLink<'a, 'b, T, D> {}
 
 
-impl<'a, T: TraceProjector<D>, D: TraceDataLifetime<'a>, const Mut: u8> SpanLink<'a, T, D, Mut> {
+impl<'a: 'b, 'b, T: TraceProjector<D>, D: TraceDataLifetime<'a>, const Mut: u8> SpanLink<'a, 'b, T, D, Mut> {
     pub fn trace_id(&self) -> u128 {
         T::get_link_trace_id(self.link, self.storage)
     }
@@ -734,7 +729,7 @@ impl<'a, T: TraceProjector<D>, D: TraceDataLifetime<'a>, const Mut: u8> SpanLink
         T::get_link_flags(self.link, self.storage)
     }
 
-    pub fn attributes(&self) -> TraceAttributes<'a, T, D, AttrRef<'a, T::SpanLink<'a>>, T::SpanLink<'a>> {
+    pub fn attributes(&self) -> TraceAttributes<'a, T, D, AttrRef<'b, T::SpanLink<'b>>, T::SpanLink<'b>> {
         TraceAttributes {
             storage: self.storage,
             container: AttrRef(self.link),
@@ -743,7 +738,7 @@ impl<'a, T: TraceProjector<D>, D: TraceDataLifetime<'a>, const Mut: u8> SpanLink
     }
 }
 
-impl<'a, T: TraceProjector<D>, D: TraceDataLifetime<'a>> SpanLinkMut<'a, T, D> {
+impl<'a: 'b, 'b, T: TraceProjector<D>, D: TraceDataLifetime<'a>> SpanLinkMut<'a, 'b, T, D> {
     pub fn set_trace_id(&self, value: u128) {
         unsafe { T::set_link_trace_id(as_mut(self.link), as_mut(self.storage), value) }
     }
@@ -760,7 +755,7 @@ impl<'a, T: TraceProjector<D>, D: TraceDataLifetime<'a>> SpanLinkMut<'a, T, D> {
         unsafe { T::set_link_flags(as_mut(self.link), as_mut(self.storage), value) }
     }
 
-    pub fn attributes_mut(&mut self) -> TraceAttributes<'a, T, D, AttrRef<'a, T::SpanLink<'a>>, T::SpanLink<'a>, MUT> {
+    pub fn attributes_mut(&mut self) -> TraceAttributes<'a, T, D, AttrRef<'b, T::SpanLink<'b>>, T::SpanLink<'b>, MUT> {
         TraceAttributes {
             storage: self.storage,
             container: AttrRef(self.link),
@@ -772,13 +767,13 @@ impl<'a, T: TraceProjector<D>, D: TraceDataLifetime<'a>> SpanLinkMut<'a, T, D> {
 /// The generic representation of a V04 span event.
 /// `T` is the type used to represent strings in the span event.
 #[derive(Debug)]
-pub struct SpanEvent<'a, T: TraceProjector<D>, D: TraceDataLifetime<'a>, const Mut: u8 = IMMUT> {
+pub struct SpanEvent<'a: 'b, 'b, T: TraceProjector<D>, D: TraceDataLifetime<'a>, const Mut: u8 = IMMUT> {
     storage: &'a T::Storage<'a>,
-    event: &'a T::SpanEvent<'a>,
+    event: &'b T::SpanEvent<'b>,
 }
-pub type SpanEventMut<'a, T, D> = SpanEvent<'a, T, D, MUT>;
+pub type SpanEventMut<'a: 'b, 'b, T, D> = SpanEvent<'a, 'b, T, D, MUT>;
 
-impl<'a, T: TraceProjector<D>, D: TraceDataLifetime<'a>> Clone for SpanEvent<'a, T, D> { // Note: not for MUT
+impl<'a: 'b, 'b, T: TraceProjector<D>, D: TraceDataLifetime<'a>> Clone for SpanEvent<'a, 'b, T, D> { // Note: not for MUT
     fn clone(&self) -> Self {
         SpanEvent {
             storage: self.storage,
@@ -786,9 +781,9 @@ impl<'a, T: TraceProjector<D>, D: TraceDataLifetime<'a>> Clone for SpanEvent<'a,
         }
     }
 }
-impl<'a, T: TraceProjector<D>, D: TraceDataLifetime<'a>> Copy for SpanEvent<'a, T, D> {}
+impl<'a: 'b, 'b, T: TraceProjector<D>, D: TraceDataLifetime<'a>> Copy for SpanEvent<'a, 'b, T, D> {}
 
-impl<'a, T: TraceProjector<D>, D: TraceDataLifetime<'a>, const Mut: u8> SpanEvent<'a, T, D, Mut> {
+impl<'a: 'b, 'b, T: TraceProjector<D>, D: TraceDataLifetime<'a>, const Mut: u8> SpanEvent<'a, 'b, T, D, Mut> {
     pub fn time_unix_nano(&self) -> u64 {
         T::get_event_time_unix_nano(self.event, self.storage)
     }
@@ -797,7 +792,7 @@ impl<'a, T: TraceProjector<D>, D: TraceDataLifetime<'a>, const Mut: u8> SpanEven
         T::get_event_name(self.event, self.storage)
     }
 
-    pub fn attributes(&self) -> TraceAttributes<'a, T, D, AttrRef<'a, T::SpanEvent<'a>>, T::SpanEvent<'a>> {
+    pub fn attributes(&self) -> TraceAttributes<'a, T, D, AttrRef<'b, T::SpanEvent<'b>>, T::SpanEvent<'b>> {
         TraceAttributes {
             storage: self.storage,
             container: AttrRef(self.event),
@@ -806,7 +801,7 @@ impl<'a, T: TraceProjector<D>, D: TraceDataLifetime<'a>, const Mut: u8> SpanEven
     }
 }
 
-impl<'a, T: TraceProjector<D>, D: TraceDataLifetime<'a>> SpanEventMut<'a, T, D> {
+impl<'a: 'b, 'b, T: TraceProjector<D>, D: TraceDataLifetime<'a>> SpanEventMut<'a, 'b, T, D> {
     pub fn set_time_unix_nano(&mut self, value: u64) {
         unsafe { T::set_event_time_unix_nano(as_mut(self.event), as_mut(self.storage), value) }
     }
@@ -815,7 +810,7 @@ impl<'a, T: TraceProjector<D>, D: TraceDataLifetime<'a>> SpanEventMut<'a, T, D> 
         unsafe { T::set_event_name(as_mut(self.event), as_mut(self.storage), value.into()) }
     }
 
-    pub fn attributes_mut(&mut self) -> TraceAttributes<'a, T, D, AttrRef<'a, T::SpanEvent<'a>>, T::SpanEvent<'a>, MUT> {
+    pub fn attributes_mut(&mut self) -> TraceAttributes<'a, T, D, AttrRef<'b, T::SpanEvent<'b>>, T::SpanEvent<'b>, MUT> {
         TraceAttributes {
             storage: self.storage,
             container: AttrRef(self.event),
@@ -850,34 +845,34 @@ impl<'a, T: TraceProjector<D>, D: TraceDataLifetime<'a>, C: Clone> Clone for Att
 }
 impl<'a, T: TraceProjector<D>, D: TraceDataLifetime<'a>, C: Copy> Copy for AttributeArray<'a, T, D, C> {}
 
-pub trait AttributeArrayOp<T: TraceProjector<D>, D: TraceData>: Sized + for<'a> ImpliedPredicate<TraceAttributes<'a, T, D, AttrOwned<Self>, Self>, Impls: TraceAttributesOp<T, D, Self>>
+pub trait AttributeArrayOp<'storage, T: TraceProjector<D>, D: TraceDataLifetime<'storage>>: Sized + ImpliedPredicate<TraceAttributes<'storage, T, D, AttrOwned<Self>, Self>, Impls: TraceAttributesOp<'storage, T, D, Self>>
 {
-    fn get_attribute_array_len(&self, storage: &T::Storage<'_>) -> usize;
-    fn get_attribute_array_value<'a>(&'a self, storage: &'a T::Storage<'a>, index: usize) -> AttributeAnyGetterContainer<'a, TraceAttributes<'a, T, D, AttrOwned<Self>, Self>, T, D, Self>;
+    fn get_attribute_array_len(&self, storage: &T::Storage<'storage>) -> usize;
+    fn get_attribute_array_value<'container>(&'container self, storage: &T::Storage<'storage>, index: usize) -> AttributeAnyGetterContainer<'container, 'storage, TraceAttributes<'storage, T, D, AttrOwned<Self>, Self>, T, D, Self>;
 }
 
-impl<T: TraceProjector<D>, D: TraceData> AttributeArrayOp<T, D> for () {
-    fn get_attribute_array_len(&self, _storage: &T::Storage<'_>) -> usize {
+impl<'storage, T: TraceProjector<D>, D: TraceDataLifetime<'storage>> AttributeArrayOp<'storage, T, D> for () {
+    fn get_attribute_array_len(&self, _storage: &T::Storage<'storage>) -> usize {
         0
     }
 
-    fn get_attribute_array_value<'a>(&'a self, _storage: &'a T::Storage<'a>, _index: usize) -> AttributeAnyGetterContainer<'a, TraceAttributes<'a, T, D, AttrOwned<()>, ()>, T, D, ()> {
+    fn get_attribute_array_value<'container>(&'container self, _storage: &T::Storage<'storage>, _index: usize) -> AttributeAnyGetterContainer<'container, 'storage, TraceAttributes<'storage, T, D, AttrOwned<()>, ()>, T, D, ()> {
         panic!("AttributeArrayOp::get_attribute_array_value called on empty array")
     }
 }
 
-pub trait AttributeArrayMutOp<T: TraceProjector<D>, D: TraceData>: AttributeArrayOp<T, D> + for<'a> ImpliedPredicate<TraceAttributesMut<'a, T, D, AttrOwned<Self>, Self>, Impls: TraceAttributesMutOp<T, D, Self>>
+pub trait AttributeArrayMutOp<'storage, T: TraceProjector<D>, D: TraceDataLifetime<'storage>>: AttributeArrayOp<'storage, T, D> + ImpliedPredicate<TraceAttributesMut<'storage, T, D, AttrOwned<Self>, Self>, Impls: TraceAttributesMutOp<'storage, T, D, Self>>
 {
-    fn get_attribute_array_value_mut(&mut self, storage: &mut T::Storage<'_>, index: usize) -> Option<AttributeAnySetterContainer<TraceAttributesMut<T, D, AttrOwned<Self>, Self>, T, D, Self>>;
-    fn append_attribute_array_value(&mut self, storage: &mut T::Storage<'_>, value: AttributeAnyValueType) -> AttributeAnySetterContainer<TraceAttributesMut<T, D, AttrOwned<Self>, Self>, T, D, Self>;
+    fn get_attribute_array_value_mut<'container>(&'container mut self, storage: &mut T::Storage<'storage>, index: usize) -> Option<AttributeAnySetterContainer<'container, 'storage, TraceAttributesMut<'storage, T, D, AttrOwned<Self>, Self>, T, D, Self>>;
+    fn append_attribute_array_value<'container>(&'container mut self, storage: &mut T::Storage<'storage>, value: AttributeAnyValueType) -> AttributeAnySetterContainer<'container, 'storage, TraceAttributesMut<'storage, T, D, AttrOwned<Self>, Self>, T, D, Self>;
 }
 
-impl<T: TraceProjector<D>, D: TraceData> AttributeArrayMutOp<T, D> for () {
-    fn get_attribute_array_value_mut(&mut self, _storage: &mut T::Storage<'_>, _index: usize) -> Option<AttributeAnySetterContainer<TraceAttributesMut<T, D, AttrOwned<()>, ()>, T, D, Self>> {
+impl<'storage, T: TraceProjector<D>, D: TraceDataLifetime<'storage>> AttributeArrayMutOp<'storage, T, D> for () {
+    fn get_attribute_array_value_mut<'container>(&'container mut self, _storage: &mut T::Storage<'storage>, _index: usize) -> Option<AttributeAnySetterContainer<'container, 'storage, TraceAttributesMut<'storage, T, D, AttrOwned<()>, ()>, T, D, Self>> {
         None
     }
 
-    fn append_attribute_array_value(&mut self, _storage: &mut T::Storage<'_>, value: AttributeAnyValueType) -> AttributeAnySetterContainer<TraceAttributesMut<T, D, AttrOwned<()>, ()>, T, D, ()> {
+    fn append_attribute_array_value<'container>(&'container mut self, _storage: &mut T::Storage<'storage>, value: AttributeAnyValueType) -> AttributeAnySetterContainer<'container, 'storage, TraceAttributesMut<'storage, T, D, AttrOwned<()>, ()>, T, D, ()> {
         match value {
             AttributeAnyValueType::String => AttributeAnyContainer::String(()),
             AttributeAnyValueType::Bytes => AttributeAnyContainer::Bytes(()),
@@ -890,28 +885,28 @@ impl<T: TraceProjector<D>, D: TraceData> AttributeArrayMutOp<T, D> for () {
     }
 }
 
-impl<'a, T: TraceProjector<D>, D: TraceDataLifetime<'a>, C, const Mut: u8> AttributeArray<'a, T, D, C, Mut>
+impl<'storage, T: TraceProjector<D>, D: TraceDataLifetime<'storage>, C, const Mut: u8> AttributeArray<'storage, T, D, C, Mut>
 where
-    C: AttributeArrayOp<T, D>,
+    C: AttributeArrayOp<'storage, T, D>,
 {
     fn len(&self) -> usize {
         self.container.get_attribute_array_len(self.storage)
     }
 
-    fn get(&'a self, index: usize) -> AttributeAnyGetterContainer<'a, TraceAttributes<'a, T, D, AttrOwned<C>, C>, T, D, C> {
+    fn get<'container>(&'container self, index: usize) -> AttributeAnyGetterContainer<'container, 'storage, TraceAttributes<'storage, T, D, AttrOwned<C>, C>, T, D, C> {
         self.container.get_attribute_array_value(self.storage, index)
     }
 }
 
-impl<'a, T: TraceProjector<D>, D: TraceDataLifetime<'a>, C> AttributeArrayMut<'a, T, D, C>
+impl<'storage, T: TraceProjector<D>, D: TraceDataLifetime<'storage>, C> AttributeArrayMut<'storage, T, D, C>
 where
-    C: AttributeArrayMutOp<T, D>,
+    C: AttributeArrayMutOp<'storage, T, D>,
 {
-    fn get_mut(&'a mut self, index: usize) -> Option<AttributeAnySetterContainer<'a, TraceAttributesMut<'a, T, D, AttrOwned<C>, C>, T, D, C>> {
+    fn get_mut<'container>(&'container mut self, index: usize) -> Option<AttributeAnySetterContainer<'container, 'storage, TraceAttributesMut<'storage, T, D, AttrOwned<C>, C>, T, D, C>> {
         unsafe { self.container.get_attribute_array_value_mut(as_mut(self.storage), index) }
     }
 
-    fn append(&'a mut self, value: AttributeAnyValueType) -> AttributeAnySetterContainer<'a, TraceAttributesMut<'a, T, D, AttrOwned<C>, C>, T, D, C> {
+    fn append<'container>(&'container mut self, value: AttributeAnyValueType) -> AttributeAnySetterContainer<'container, 'storage, TraceAttributesMut<'storage, T, D, AttrOwned<C>, C>, T, D, C> {
         unsafe { self.container.append_attribute_array_value(as_mut(self.storage), value) }
     }
 
@@ -921,9 +916,9 @@ where
 // TODO MUT iter
 impl<'a, T: TraceProjector<D>, D: TraceDataLifetime<'a>, C, const Mut: u8> Iterator for AttributeArray<'a, T, D, C, Mut>
 where
-    TraceAttributes<'a, T, D, AttrOwned<C>, C, Mut>: TraceAttributesOp<T, D, C>,
+    TraceAttributes<'a, T, D, AttrOwned<C>, C, Mut>: TraceAttributesOp<'a, T, D, C>,
 {
-    type Item = AttributeAnyGetterContainer<'a, TraceAttributes<'a, T, D, AttrOwned<C>, C, Mut>, T, D, C>;
+    type Item = AttributeAnyGetterContainer<'a, 'a, TraceAttributes<'a, T, D, AttrOwned<C>, C, Mut>, T, D, C>;
 
     fn next(&mut self) -> Option<Self::Item> {
         todo!()
@@ -940,9 +935,9 @@ pub enum AttributeAnyContainer<String, Bytes, Boolean, Integer, Double, Array, M
     Map(Map),
 }
 
-pub type AttributeAnyGetterContainer<'a, A: TraceAttributesOp<T, D, C>, T: TraceProjector<D>, D: TraceDataLifetime<'a>, C: 'a> = AttributeAnyContainer<
-    &'a D::Text,
-    &'a D::Bytes,
+pub type AttributeAnyGetterContainer<'container, 'storage: 'container, A: TraceAttributesOp<'storage, T, D, C>, T: TraceProjector<D>, D: TraceDataLifetime<'storage>, C: 'container> = AttributeAnyContainer<
+    &'storage D::Text,
+    &'storage D::Bytes,
     bool,
     i64,
     f64,
@@ -950,7 +945,7 @@ pub type AttributeAnyGetterContainer<'a, A: TraceAttributesOp<T, D, C>, T: Trace
     A::Map,
 >;
 
-pub type AttributeAnySetterContainer<'a, A: TraceAttributesMutOp<T, D, C>, T: TraceProjector<D>, D: TraceDataLifetime<'a>, C: 'a> = AttributeAnyContainer<
+pub type AttributeAnySetterContainer<'container, 'storage: 'container, A: TraceAttributesMutOp<'storage, T, D, C>, T: TraceProjector<D>, D: TraceDataLifetime<'storage>, C: 'container> = AttributeAnyContainer<
     A::MutString,
     A::MutBytes,
     A::MutBoolean,
@@ -960,14 +955,14 @@ pub type AttributeAnySetterContainer<'a, A: TraceAttributesMutOp<T, D, C>, T: Tr
     A::MutMap,
 >;
 
-pub type AttributeAnyValue<'a, A: TraceAttributesOp<T, D, C>, T: TraceProjector<D>, D: TraceDataLifetime<'a>, C: 'a> = AttributeAnyContainer<
-    &'a D::Text,
-    &'a D::Bytes,
+pub type AttributeAnyValue<'container, 'storage: 'container, A: TraceAttributesOp<'storage, T, D, C>, T: TraceProjector<D>, D: TraceDataLifetime<'storage>, C: 'container> = AttributeAnyContainer<
+    &'storage D::Text,
+    &'storage D::Bytes,
     bool,
     i64,
     f64,
-    AttributeArray<'a, T, D, A::Array>,
-    TraceAttributes<'a, T, D, AttrOwned<A::Map>, A::Map>,
+    AttributeArray<'container, T, D, A::Array>,
+    TraceAttributes<'container, T, D, AttrOwned<A::Map>, A::Map>,
 >;
 
 trait AttrVal<C> {
@@ -1025,30 +1020,30 @@ impl<'a, T: TraceProjector<D>, D: TraceDataLifetime<'a>, V: AttrVal<C> + Clone, 
 impl<'a, T: TraceProjector<D>, D: TraceDataLifetime<'a>, A: AttrVal<C> + Copy, C> Copy for TraceAttributes<'a, T, D, A, C> {}
 
 // Helper traits to break the recursion cycle in TraceAttributesOp
-pub trait ArrayAttributesOp<T: TraceProjector<D>, D: TraceData>:
-    AttributeArrayOp<T, D>
+pub trait ArrayAttributesOp<'a, T: TraceProjector<D>, D: TraceDataLifetime<'a>>: AttributeArrayOp<'a, T, D>
 {}
 
-pub trait MapAttributesOp<T: TraceProjector<D>, D: TraceData> {}
+pub trait MapAttributesOp<'a, T: TraceProjector<D>, D: TraceDataLifetime<'a>> {}
 
 // Blanket implementations - any type implementing the base trait gets the helper trait
-impl<T: TraceProjector<D>, D: TraceData, C> ArrayAttributesOp<T, D> for C
+impl<'a, T: TraceProjector<D>, D: TraceDataLifetime<'a>, C> ArrayAttributesOp<'a, T, D> for C
 where
-    C: AttributeArrayOp<T, D>,
+    C: AttributeArrayOp<'a, T, D>,
 {}
 
-impl<T: TraceProjector<D>, D: TraceData, C> MapAttributesOp<T, D> for C {}
+impl<'a, T: TraceProjector<D>, D: TraceDataLifetime<'a>, C> MapAttributesOp<'a, T, D> for C {}
 
-pub trait TraceAttributesOp<T: TraceProjector<D>, D: TraceData, C>
+pub trait TraceAttributesOp<'storage, T: TraceProjector<D>, D: TraceDataLifetime<'storage>, C>
 {
-    type Array: ArrayAttributesOp<T, D>;
-    type Map: MapAttributesOp<T, D>;
+    type Array: ArrayAttributesOp<'storage, T, D>;
+    type Map: MapAttributesOp<'storage, T, D>;
 
-    fn get<'a, K>(container: &'a C, storage: &'a T::Storage<'a>, key: &K) -> Option<AttributeAnyGetterContainer<'a, Self, T, D, C>>
+    fn get<'container, K>(container: &'container C, storage: &T::Storage<'storage>, key: &K) -> Option<AttributeAnyGetterContainer<'container, 'storage, Self, T, D, C>>
     where
+        'storage: 'container,
         K: ?Sized + Hash + Equivalent<<D::Text as SpanDataContents>::RefCopy>;
 
-    fn get_double<'a, K>(container: &'a C, storage: &'a T::Storage<'a>, key: &K) -> Option<f64>
+    fn get_double<K>(container: &C, storage: &T::Storage<'storage>, key: &K) -> Option<f64>
     where
         K: ?Sized + Hash + Equivalent<<D::Text as SpanDataContents>::RefCopy>,
     {
@@ -1059,12 +1054,13 @@ pub trait TraceAttributesOp<T: TraceProjector<D>, D: TraceData, C>
     }
 }
 
-impl<'b, T: TraceProjector<D>, D: TraceDataLifetime<'b>, const Mut: u8> TraceAttributesOp<T, D, ()> for TraceAttributes<'b, T, D, AttrOwned<()>, (), Mut> {
+impl<'storage, T: TraceProjector<D>, D: TraceDataLifetime<'storage>, const Mut: u8> TraceAttributesOp<'storage, T, D, ()> for TraceAttributes<'storage, T, D, AttrOwned<()>, (), Mut> {
     type Array = ();
     type Map = ();
 
-    fn get<'a, K>(_container: &'a (), _storage: &'a T::Storage<'a>, _key: &K) -> Option<AttributeAnyGetterContainer<'a, Self, T, D, ()>>
+    fn get<'container, K>(_container: &'container (), _storage: &T::Storage<'storage>, _key: &K) -> Option<AttributeAnyGetterContainer<'container, 'storage, Self, T, D, ()>>
     where
+        'storage: 'container,
         K: ?Sized + Hash + Equivalent<<D::Text as SpanDataContents>::RefCopy>
     {
         None
@@ -1072,24 +1068,23 @@ impl<'b, T: TraceProjector<D>, D: TraceDataLifetime<'b>, const Mut: u8> TraceAtt
 }
 
 // Helper traits to break the recursion cycle in TraceAttributesMutOp
-pub trait ArrayAttributesMutOp<T: TraceProjector<D>, D: TraceData>:
-    AttributeArrayMutOp<T, D>
+pub trait ArrayAttributesMutOp<'a, T: TraceProjector<D>, D: TraceDataLifetime<'a>>: AttributeArrayMutOp<'a, T, D>
 {}
 
-pub trait MapAttributesMutOp<T: TraceProjector<D>, D: TraceData> {}
+pub trait MapAttributesMutOp<'a, T: TraceProjector<D>, D: TraceDataLifetime<'a>> {}
 
 // Blanket implementations - any type implementing the base trait gets the helper trait
-impl<T: TraceProjector<D>, D: TraceData, C> ArrayAttributesMutOp<T, D> for C
+impl<'a, T: TraceProjector<D>, D: TraceDataLifetime<'a>, C> ArrayAttributesMutOp<'a, T, D> for C
 where
-    C: AttributeArrayMutOp<T, D>,
+    C: AttributeArrayMutOp<'a, T, D>,
 {}
 
-impl<T: TraceProjector<D>, D: TraceData, C> MapAttributesMutOp<T, D> for C {}
+impl<'a, T: TraceProjector<D>, D: TraceDataLifetime<'a>, C> MapAttributesMutOp<'a, T, D> for C {}
 
-pub trait TraceAttributesMutOp<T: TraceProjector<D>, D: TraceData, C>: TraceAttributesOp<T, D, C>
+pub trait TraceAttributesMutOp<'storage, T: TraceProjector<D>, D: TraceDataLifetime<'storage>, C>: TraceAttributesOp<'storage, T, D, C>
 where
-    Self::MutString: TraceAttributesString<T, D>,
-    Self::MutBytes: TraceAttributesBytes<T, D>,
+    Self::MutString: TraceAttributesString<'storage, T, D>,
+    Self::MutBytes: TraceAttributesBytes<'storage, T, D>,
     Self::MutBoolean: TraceAttributesBoolean,
     Self::MutInteger: TraceAttributesInteger,
     Self::MutDouble: TraceAttributesDouble,
@@ -1099,19 +1094,20 @@ where
     type MutBoolean;
     type MutInteger;
     type MutDouble;
-    type MutArray: ArrayAttributesMutOp<T, D>;
-    type MutMap: MapAttributesMutOp<T, D>;
+    type MutArray: ArrayAttributesMutOp<'storage, T, D>;
+    type MutMap: MapAttributesMutOp<'storage, T, D>;
 
-    fn get_mut<'a, K>(container: &'a mut C, storage: &'a mut T::Storage<'a>, key: &K) -> Option<AttributeAnySetterContainer<'a, Self, T, D, C>>
+    fn get_mut<'container, K>(container: &'container mut C, storage: &mut T::Storage<'storage>, key: &K) -> Option<AttributeAnySetterContainer<'container, 'storage, Self, T, D, C>>
     where
+        'storage: 'container,
         K: ?Sized + Hash + Equivalent<<D::Text as SpanDataContents>::RefCopy>;
-    fn set<'a>(container: &'a mut C, storage: &'a mut T::Storage<'a>, key: D::Text, value: AttributeAnyValueType) -> AttributeAnySetterContainer<'a, Self, T, D, C>;
-    fn remove<K>(container: &mut C, storage: &mut T::Storage<'_>, key: &K)
+    fn set<'container>(container: &'container mut C, storage: &mut T::Storage<'storage>, key: D::Text, value: AttributeAnyValueType) -> AttributeAnySetterContainer<'container, 'storage, Self, T, D, C> where 'storage: 'container;
+    fn remove<K>(container: &mut C, storage: &mut T::Storage<'storage>, key: &K)
     where
         K: ?Sized + Hash + Equivalent<<D::Text as SpanDataContents>::RefCopy>;
 }
 
-impl<'a, T: TraceProjector<D>, D: TraceDataLifetime<'a>> TraceAttributesMutOp<T, D, ()> for TraceAttributesMut<'a, T, D, AttrOwned<()>, ()> {
+impl<'storage, T: TraceProjector<D>, D: TraceDataLifetime<'storage>> TraceAttributesMutOp<'storage, T, D, ()> for TraceAttributesMut<'storage, T, D, AttrOwned<()>, ()> {
     type MutString = ();
     type MutBytes = ();
     type MutBoolean = ();
@@ -1120,14 +1116,15 @@ impl<'a, T: TraceProjector<D>, D: TraceDataLifetime<'a>> TraceAttributesMutOp<T,
     type MutArray = ();
     type MutMap = ();
 
-    fn get_mut<'b, K>(_container: &'b mut (), _storage: &'b mut T::Storage<'b>, _key: &K) -> Option<AttributeAnySetterContainer<'b, Self, T, D, ()>>
+    fn get_mut<'container, K>(_container: &'container mut (), _storage: &mut T::Storage<'storage>, _key: &K) -> Option<AttributeAnySetterContainer<'container, 'storage, Self, T, D, ()>>
     where
+        'storage: 'container,
         K: ?Sized + Hash + Equivalent<<D::Text as SpanDataContents>::RefCopy>,
     {
         None
     }
 
-    fn set<'b>(_container: &'b mut (), _storage: &'b mut T::Storage<'b>, _key: D::Text, value: AttributeAnyValueType) -> AttributeAnySetterContainer<'b, Self, T, D, ()> {
+    fn set<'container>(_container: &'container mut (), _storage: &mut T::Storage<'storage>, _key: D::Text, value: AttributeAnyValueType) -> AttributeAnySetterContainer<'container, 'storage, Self, T, D, ()> where 'storage: 'container {
         match value {
             AttributeAnyValueType::String => AttributeAnyContainer::String(()),
             AttributeAnyValueType::Bytes => AttributeAnyContainer::Bytes(()),
@@ -1139,38 +1136,38 @@ impl<'a, T: TraceProjector<D>, D: TraceDataLifetime<'a>> TraceAttributesMutOp<T,
         }
     }
 
-    fn remove<K>(_container: &mut (), _storage: &mut T::Storage<'_>, _key: &K)
+    fn remove<K>(_container: &mut (), _storage: &mut T::Storage<'storage>, _key: &K)
     where
         K: ?Sized + Hash + Equivalent<<D::Text as SpanDataContents>::RefCopy>
     {
     }
 }
 
-pub trait TraceAttributesString<T: TraceProjector<D>, D: TraceData> {
-    fn get<'s>(&self, storage: &'s T::Storage<'s>) -> &'s D::Text;
-    fn set(self, storage: &mut T::Storage<'_>, value: D::Text);
+pub trait TraceAttributesString<'a, T: TraceProjector<D>, D: TraceDataLifetime<'a>> {
+    fn get(&self, storage: &T::Storage<'a>) -> &'a D::Text;
+    fn set(self, storage: &mut T::Storage<'a>, value: D::Text);
 }
 
-impl<T: TraceProjector<D>, D: TraceData> TraceAttributesString<T, D> for () {
-    fn get<'s>(&self, _storage: &'s T::Storage<'s>) -> &'s D::Text {
+impl<'a, T: TraceProjector<D>, D: TraceDataLifetime<'a>> TraceAttributesString<'a, T, D> for () {
+    fn get(&self, _storage: &T::Storage<'a>) -> &'a D::Text {
         D::Text::default_ref()
     }
 
-    fn set(self, _storage: &mut T::Storage<'_>, _value: D::Text) {
+    fn set(self, _storage: &mut T::Storage<'a>, _value: D::Text) {
     }
 }
 
-pub trait TraceAttributesBytes<T: TraceProjector<D>, D: TraceData> {
-    fn get<'s>(&self, storage: &'s T::Storage<'s>) -> &'s D::Bytes;
-    fn set(self, storage: &mut T::Storage<'_>, value: D::Bytes);
+pub trait TraceAttributesBytes<'a, T: TraceProjector<D>, D: TraceDataLifetime<'a>> {
+    fn get(&self, storage: &T::Storage<'a>) -> &'a D::Bytes;
+    fn set(self, storage: &mut T::Storage<'a>, value: D::Bytes);
 }
 
-impl<T: TraceProjector<D>, D: TraceData> TraceAttributesBytes<T, D> for () {
-    fn get<'s>(&self, _storage: &'s T::Storage<'s>) -> &'s D::Bytes {
+impl<'a, T: TraceProjector<D>, D: TraceDataLifetime<'a>> TraceAttributesBytes<'a, T, D> for () {
+    fn get(&self, _storage: &T::Storage<'a>) -> &'a D::Bytes {
         D::Bytes::default_ref()
     }
 
-    fn set(self, _storage: &mut T::Storage<'_>, _value: D::Bytes) {
+    fn set(self, _storage: &mut T::Storage<'a>, _value: D::Bytes) {
     }
 }
 
@@ -1218,83 +1215,62 @@ impl TraceAttributesDouble for () {
 }
 
 // Simplified methods that work without the complex TraceAttributesOp bound
-impl<'a, T: TraceProjector<D>, D: TraceDataLifetime<'a>, C> TraceAttributes<'a, T, D, AttrRef<'a, C>, C>
+impl<'storage: 'container, 'container, T: TraceProjector<D>, D: TraceDataLifetime<'storage>, C: 'container> TraceAttributes<'storage, T, D, AttrRef<'container, C>, C>
 where
-    TraceAttributes<'a, T, D, AttrRef<'a, C>, C>: TraceAttributesOp<T, D, C>,
+    TraceAttributes<'storage, T, D, AttrRef<'container, C>, C>: TraceAttributesOp<'storage, T, D, C>,
 {
     pub fn get_double<K>(self, key: &K) -> Option<f64>
     where
         K: ?Sized + Hash + Equivalent<<D::Text as SpanDataContents>::RefCopy>
     {
-        let TraceAttributes { container, storage, .. } = self;
-        // SAFETY: container and storage genuinely have lifetime 'a (they came from AttrRef<'a, C> and &'a Storage),
-        // we just need to convince the compiler. This is safe because we're not extending the lifetime beyond
-        // what it actually is - the values truly do live for 'a.
-        unsafe {
-            let container_ref: &'a C = std::mem::transmute(container.as_ref());
-            let storage_ref: &'a T::Storage<'a> = std::mem::transmute(storage);
-            <TraceAttributes<'a, T, D, AttrRef<'a, C>, C> as TraceAttributesOp<T, D, C>>::get_double(container_ref, storage_ref, key)
-        }
+        <TraceAttributes<'storage, T, D, AttrRef<'storage, C>, C> as TraceAttributesOp<'storage, T, D, C>>::get_double(self.container.0, self.storage, key)
     }
 }
 
 // Simplified mutable methods
-impl<'a, T: TraceProjector<D>, D: TraceDataLifetime<'a>, C> TraceAttributes<'a, T, D, AttrRef<'a, C>, C, MUT>
+impl<'storage: 'container, 'container, T: TraceProjector<D>, D: TraceDataLifetime<'storage>, C: 'container> TraceAttributes<'storage, T, D, AttrRef<'container, C>, C, MUT>
 where
-    TraceAttributes<'a, T, D, AttrRef<'a, C>, C, MUT>: TraceAttributesMutOp<T, D, C>,
+    TraceAttributes<'storage, T, D, AttrRef<'container, C>, C, MUT>: TraceAttributesMutOp<'storage, T, D, C>,
 {
     pub fn set_double<K: IntoData<D::Text>>(mut self, key: K, value: f64) {
-        let TraceAttributes { mut container, storage, .. } = self;
-        // SAFETY: container and storage genuinely have lifetime 'a, we're just convincing the compiler.
-        // The values truly do live for 'a - we're not extending beyond their actual lifetime.
-        unsafe {
-            let container_ref: &'a mut C = std::mem::transmute(container.as_mut());
-            let storage_ref: &'a mut T::Storage<'a> = std::mem::transmute(as_mut(storage));
-            let AttributeAnyContainer::Double(container) = <Self as TraceAttributesMutOp<T, D, C>>::set(container_ref, storage_ref, key.into(), AttributeAnyValueType::Double) else { unreachable!() };
-            container.set(value)
-        }
+        let AttributeAnyContainer::Double(container) = <Self as TraceAttributesMutOp<'storage, T, D, C>>::set(unsafe { self.container.as_mut() }, unsafe { as_mut(self.storage) }, key.into(), AttributeAnyValueType::Double) else { unreachable!() };
+        container.set(value)
     }
 
-    pub fn remove<K>(mut self, key: &K)
+    pub fn remove<K>(self, key: &K)
     where
         K: ?Sized + Hash + Equivalent<<D::Text as SpanDataContents>::RefCopy>
     {
-        let TraceAttributes { mut container, storage, .. } = self;
-        // SAFETY: container and storage genuinely have lifetime 'a, we're just convincing the compiler.
-        unsafe {
-            let container_ref: &'a mut C = std::mem::transmute(container.as_mut());
-            let storage_ref: &'a mut T::Storage<'a> = std::mem::transmute(as_mut(storage));
-            <Self as TraceAttributesMutOp<T, D, C>>::remove(container_ref, storage_ref, key);
-        }
+        <Self as TraceAttributesMutOp<'storage, T, D, C>>::remove(unsafe { self.container.as_mut() }, unsafe { as_mut(self.storage) }, key);
     }
 }
 
-impl<'a, T: TraceProjector<D>, D: TraceDataLifetime<'a>, V: AttrVal<C>, C: 'a> TraceAttributes<'a, T, D, V, C>
+impl<'container, 'storage: 'container, T: TraceProjector<D>, D: TraceDataLifetime<'storage>, V: AttrVal<C>, C: 'container> TraceAttributes<'storage, T, D, V, C>
 where
-    TraceAttributes<'a, T, D, AttrRef<'a, C>, C>: TraceAttributesOp<T, D, C>,
+    TraceAttributes<'storage, T, D, AttrRef<'container, C>, C>: TraceAttributesOp<'storage, T, D, C>,
 {
-    fn fetch<K>(&'a self, key: &K) -> Option<AttributeAnyGetterContainer<'a, TraceAttributes<'a, T, D, AttrRef<'a, C>, C>, T, D, C>>
+    fn fetch<K>(&self, key: &K) -> Option<AttributeAnyGetterContainer<'container, 'storage, TraceAttributes<'storage, T, D, AttrRef<'container, C>, C>, T, D, C>>
     where
         K: ?Sized + Hash + Equivalent<<D::Text as SpanDataContents>::RefCopy>
     {
-        <TraceAttributes<'a, T, D, AttrRef<'a, C>, C> as TraceAttributesOp<T, D, C>>::get(self.container.as_ref(), self.storage, key)
+        <TraceAttributes<'storage, T, D, AttrRef<'container, C>, C> as TraceAttributesOp<'storage, T, D, C>>::get(self.container.as_ref(), self.storage, key)
     }
 
-    pub fn get<K>(&'a self, key: &K) -> Option<AttributeAnyValue<'a, TraceAttributes<'a, T, D, AttrRef<'a, C>, C>, T, D, C>>
+    pub fn get<K>(&self, key: &K) -> Option<AttributeAnyValue<'container, 'storage, TraceAttributes<'storage, T, D, AttrRef<'container, C>, C>, T, D, C>>
     where
         K: ?Sized + Hash + Equivalent<<D::Text as SpanDataContents>::RefCopy>
     {
-        self.fetch(key).map(|v| match v {
-            AttributeAnyContainer::String(text) => AttributeAnyValue::<TraceAttributes<'a, T, D, AttrRef<'a, C>, C>, T, D, C>::String(text),
-            AttributeAnyContainer::Bytes(bytes) => AttributeAnyValue::<TraceAttributes<'a, T, D, AttrRef<'a, C>, C>, T, D, C>::Bytes(bytes),
-            AttributeAnyContainer::Boolean(boolean) => AttributeAnyValue::<TraceAttributes<'a, T, D, AttrRef<'a, C>, C>, T, D, C>::Boolean(boolean),
-            AttributeAnyContainer::Integer(integer) => AttributeAnyValue::<TraceAttributes<'a, T, D, AttrRef<'a, C>, C>, T, D, C>::Integer(integer),
-            AttributeAnyContainer::Double(double) => AttributeAnyValue::<TraceAttributes<'a, T, D, AttrRef<'a, C>, C>, T, D, C>::Double(double),
-            AttributeAnyContainer::Array(array) => AttributeAnyValue::<TraceAttributes<'a, T, D, AttrRef<'a, C>, C>, T, D, C>::Array(AttributeArray {
+        self.fetch(key).map(move |v| match v {
+            AttributeAnyContainer::String(text) => AttributeAnyValue::<TraceAttributes<'storage, T, D, AttrRef<'container, C>, C>, T, D, C>::String(text),
+            AttributeAnyContainer::Bytes(bytes) => AttributeAnyValue::<TraceAttributes<'storage, T, D, AttrRef<'container, C>, C>, T, D, C>::Bytes(bytes),
+            AttributeAnyContainer::Boolean(boolean) => AttributeAnyValue::<TraceAttributes<'storage, T, D, AttrRef<'container, C>, C>, T, D, C>::Boolean(boolean),
+            AttributeAnyContainer::Integer(integer) => AttributeAnyValue::<TraceAttributes<'storage, T, D, AttrRef<'container, C>, C>, T, D, C>::Integer(integer),
+            AttributeAnyContainer::Double(double) => AttributeAnyValue::<TraceAttributes<'storage, T, D, AttrRef<'container, C>, C>, T, D, C>::Double(double),
+            AttributeAnyContainer::Array(array) => AttributeAnyValue::<TraceAttributes<'storage, T, D, AttrRef<'container, C>, C>, T, D, C>::Array(AttributeArray {
                 storage: self.storage,
                 container: array,
             }),
-            AttributeAnyContainer::Map(map) => AttributeAnyValue::<TraceAttributes<'a, T, D, AttrRef<'a, C>, C>, T, D, C>::Map(TraceAttributes {
+            AttributeAnyContainer::Map(map) => AttributeAnyValue::<TraceAttributes<'storage, T, D, AttrRef<'container, C>, C>, T, D, C>::Map(TraceAttributes {
                 storage: self.storage,
                 container: AttrOwned(map),
                 _phantom: PhantomData,
@@ -1302,7 +1278,7 @@ where
         })
     }
 
-    pub fn get_string<K>(&'a self, key: &K) -> Option<&'a D::Text>
+    pub fn get_string<K>(&self, key: &K) -> Option<&'storage D::Text>
     where
         K: ?Sized + Hash + Equivalent<<D::Text as SpanDataContents>::RefCopy>
     {
@@ -1313,7 +1289,7 @@ where
         }
     }
 
-    pub fn get_bytes<K>(&'a self, key: &K) -> Option<&'a D::Bytes>
+    pub fn get_bytes<K>(&self, key: &K) -> Option<&'storage D::Bytes>
     where
         K: ?Sized + Hash + Equivalent<<D::Text as SpanDataContents>::RefCopy>
     {
@@ -1324,7 +1300,7 @@ where
         }
     }
 
-    pub fn get_bool<K>(&'a self, key: &K) -> Option<bool>
+    pub fn get_bool<K>(&self, key: &K) -> Option<bool>
     where
         K: ?Sized + Hash + Equivalent<<D::Text as SpanDataContents>::RefCopy>
     {
@@ -1335,7 +1311,7 @@ where
         }
     }
 
-    pub fn get_int<K>(&'a self, key: &K) -> Option<i64>
+    pub fn get_int<K>(&self, key: &K) -> Option<i64>
     where
         K: ?Sized + Hash + Equivalent<<D::Text as SpanDataContents>::RefCopy>
     {
@@ -1346,7 +1322,7 @@ where
         }
     }
 
-    pub fn get_array<K>(&'a self, key: &K) -> Option<AttributeArray<'a, T, D, <TraceAttributes<'a, T, D, AttrRef<'a, C>, C> as TraceAttributesOp<T, D, C>>::Array>>
+    pub fn get_array<K>(&self, key: &K) -> Option<AttributeArray<'storage, T, D, <TraceAttributes<'storage, T, D, AttrRef<'container, C>, C> as TraceAttributesOp<'storage, T, D, C>>::Array>>
     where
         K: ?Sized + Hash + Equivalent<<D::Text as SpanDataContents>::RefCopy>
     {
@@ -1361,7 +1337,7 @@ where
     }
 
 
-    pub fn get_map<K>(&'a self, key: &K) -> Option<TraceAttributes<'a, T, D, AttrOwned<<TraceAttributes<'a, T, D, AttrRef<'a, C>, C> as TraceAttributesOp<T, D, C>>::Map>, <TraceAttributes<'a, T, D, AttrRef<'a, C>, C> as TraceAttributesOp<T, D, C>>::Map>>
+    pub fn get_map<K>(&self, key: &K) -> Option<TraceAttributes<'storage, T, D, AttrOwned<<TraceAttributes<'storage, T, D, AttrRef<'container, C>, C> as TraceAttributesOp<'storage, T, D, C>>::Map>, <TraceAttributes<'storage, T, D, AttrRef<'container, C>, C> as TraceAttributesOp<'storage, T, D, C>>::Map>>
     where
         K: ?Sized + Hash + Equivalent<<D::Text as SpanDataContents>::RefCopy>
     {
@@ -1377,28 +1353,28 @@ where
     }
 }
 
-impl<'a, T: TraceProjector<D>, D: TraceDataLifetime<'a>, V: AttrVal<C>, C: 'a> TraceAttributesMut<'a, T, D, V, C>
+impl<'container, 'storage: 'container, T: TraceProjector<D>, D: TraceDataLifetime<'storage>, V: AttrVal<C>, C: 'container> TraceAttributesMut<'storage, T, D, V, C>
 where
     D::Text: Clone + From<String> + for<'b> From<&'b str>,
     D::Bytes: Clone + From<Vec<u8>> + for<'b> From<&'b [u8]>,
-    Self: TraceAttributesMutOp<T, D, C>,
+    Self: TraceAttributesMutOp<'storage, T, D, C>,
 {
-    pub fn set_string<K: IntoData<D::Text>, Val: IntoData<D::Text>>(&'a mut self, key: K, value: Val) {
+    pub fn set_string<K: IntoData<D::Text>, Val: IntoData<D::Text>>(&mut self, key: K, value: Val) {
         let AttributeAnyContainer::String(container) = (unsafe { Self::set(self.container.as_mut(), as_mut(self.storage), key.into(), AttributeAnyValueType::String) }) else { unreachable!() };
         unsafe { container.set(as_mut(self.storage), value.into()) }
     }
 
-    pub fn set_bytes<K: IntoData<D::Text>, Val: IntoData<D::Bytes>>(&'a mut self, key: K, value: Val) {
+    pub fn set_bytes<K: IntoData<D::Text>, Val: IntoData<D::Bytes>>(&mut self, key: K, value: Val) {
         let AttributeAnyContainer::Bytes(container) = (unsafe { Self::set(self.container.as_mut(), as_mut(self.storage), key.into(), AttributeAnyValueType::Bytes) }) else { unreachable!() };
         unsafe { container.set(as_mut(self.storage), value.into()) }
     }
 
-    pub fn set_bool<K: IntoData<D::Text>>(&'a mut self, key: K, value: bool) {
+    pub fn set_bool<K: IntoData<D::Text>>(&mut self, key: K, value: bool) {
         let AttributeAnyContainer::Boolean(container) = (unsafe { Self::set(self.container.as_mut(), as_mut(self.storage), key.into(), AttributeAnyValueType::Boolean) }) else { unreachable!() };
         container.set(value)
     }
 
-    pub fn set_empty_array<K: IntoData<D::Text>>(&'a mut self, key: K) -> AttributeArrayMut<T, D, <Self as TraceAttributesMutOp<T, D, C>>::MutArray> {
+    pub fn set_empty_array<K: IntoData<D::Text>>(&mut self, key: K) -> AttributeArrayMut<'storage, T, D, <Self as TraceAttributesMutOp<'storage, T, D, C>>::MutArray> {
         let AttributeAnyContainer::Array(container) = (unsafe { Self::set(self.container.as_mut(), as_mut(self.storage), key.into(), AttributeAnyValueType::Array) }) else { unreachable!() };
         AttributeArray {
             storage: self.storage,
@@ -1406,7 +1382,7 @@ where
         }
     }
 
-    pub fn set_empty_map<K: IntoData<D::Text>>(&'a mut self, key: K) -> TraceAttributesMut<T, D, AttrOwned<<Self as TraceAttributesMutOp<T, D, C>>::MutMap>, <Self as TraceAttributesMutOp<T, D, C>>::MutMap> {
+    pub fn set_empty_map<K: IntoData<D::Text>>(&mut self, key: K) -> TraceAttributesMut<'storage, T, D, AttrOwned<<Self as TraceAttributesMutOp<'storage, T, D, C>>::MutMap>, <Self as TraceAttributesMutOp<'storage, T, D, C>>::MutMap> {
         let AttributeAnyContainer::Map(container) = (unsafe { Self::set(self.container.as_mut(), as_mut(self.storage), key.into(), AttributeAnyValueType::Map) }) else { unreachable!() };
         TraceAttributes {
             storage: self.storage,
@@ -1415,7 +1391,7 @@ where
         }
     }
 
-    pub fn get_array_mut<K>(&'a mut self, key: &K) -> Option<AttributeArrayMut<T, D, <Self as TraceAttributesMutOp<T, D, C>>::MutArray>>
+    pub fn get_array_mut<K>(&mut self, key: &K) -> Option<AttributeArrayMut<'storage, T, D, <Self as TraceAttributesMutOp<'storage, T, D, C>>::MutArray>>
     where
         K: ?Sized + Hash + Equivalent<<D::Text as SpanDataContents>::RefCopy>
     {
@@ -1430,7 +1406,7 @@ where
     }
 
 
-    pub fn get_map_mut<K>(&'a mut self, key: &K) -> Option<TraceAttributesMut<T, D, AttrOwned<<Self as TraceAttributesMutOp<T, D, C>>::MutMap>, <Self as TraceAttributesMutOp<T, D, C>>::MutMap>>
+    pub fn get_map_mut<K>(&mut self, key: &K) -> Option<TraceAttributesMut<'storage, T, D, AttrOwned<<Self as TraceAttributesMutOp<'storage, T, D, C>>::MutMap>, <Self as TraceAttributesMutOp<'storage, T, D, C>>::MutMap>>
     where
         K: ?Sized + Hash + Equivalent<<D::Text as SpanDataContents>::RefCopy>
     {
