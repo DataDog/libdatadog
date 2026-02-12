@@ -3295,6 +3295,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "libdd-trace-inferrer"
+version = "1.0.0"
+dependencies = [
+ "base64 0.22.1",
+ "chrono",
+ "hex",
+ "regex",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tracing",
+]
+
+[[package]]
 name = "libdd-trace-normalization"
 version = "2.0.0"
 dependencies = [

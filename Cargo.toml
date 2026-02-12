@@ -52,7 +52,9 @@ members = [
   "libdd-dogstatsd-client",
   "libdd-http-client",
   "libdd-log",
-  "libdd-log-ffi", "libdd-libunwind-sys",
+  "libdd-log-ffi",
+  "libdd-libunwind-sys",
+  "libdd-trace-inferrer",
 ]
 
 # https://doc.rust-lang.org/cargo/reference/resolver.html
