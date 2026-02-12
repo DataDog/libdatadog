@@ -7,7 +7,9 @@
 use function_name::named;
 use libdd_common::tag::Tag;
 use libdd_common_ffi::slice::{AsBytes, ByteSlice, CharSlice, Slice};
-use libdd_common_ffi::{wrap_with_ffi_result, Handle, Result, ToInner};
+use libdd_common_ffi::{
+    wrap_with_ffi_result, wrap_with_void_ffi_result, Handle, Result, ToInner, VoidResult,
+};
 use libdd_profiling::exporter;
 use libdd_profiling::exporter::ProfileExporter;
 use libdd_profiling::internal::EncodedProfile;
@@ -210,10 +212,40 @@ unsafe fn parse_json(
     }
 }
 
+/// Initializes the tokio runtime for the exporter.
+///
+/// This function creates the tokio runtime used by `ddog_prof_Exporter_send_blocking`.
+/// It can be called ahead of time to ensure the runtime is ready before sending.
+///
+/// # Thread Affinity
+///
+/// **Important**: The runtime has thread affinity. This function should be called from
+/// the same thread that will later call `ddog_prof_Exporter_send_blocking`.
+///
+/// # Arguments
+/// * `exporter` - Borrows the exporter.
+///
+/// # Safety
+/// The `exporter` must point to a valid ProfileExporter that has not been dropped.
+#[no_mangle]
+#[must_use]
+#[named]
+pub unsafe extern "C" fn ddog_prof_Exporter_init_runtime(
+    mut exporter: *mut Handle<ProfileExporter>,
+) -> VoidResult {
+    wrap_with_void_ffi_result!({
+        let exporter = exporter.to_inner_mut()?;
+        exporter.init_runtime()?
+    })
+}
+
 /// Builds a request and sends it, returning the HttpStatus.
 /// This is a more efficient version of calling `ddog_prof_Exporter_Request_build`
 /// followed by `ddog_prof_Exporter_send`, as it avoids exposing the intermediate
 /// `Request` object.
+///
+/// Note: If the runtime has not been initialized via `ddog_prof_Exporter_init_runtime`,
+/// it will be lazily initialized on first call.
 ///
 /// # Arguments
 /// * `exporter` - Borrows the exporter.

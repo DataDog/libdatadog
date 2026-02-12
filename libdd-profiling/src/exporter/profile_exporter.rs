@@ -217,6 +217,27 @@ impl ProfileExporter {
     /// - Using the async [`send`] method directly from within a tokio runtime
     ///
     /// [`send`]: ProfileExporter::send
+
+    /// Initializes the tokio runtime for blocking operations.
+    ///
+    /// This method lazily creates a single-threaded tokio runtime. It can be called
+    /// before `send_blocking` to ensure the runtime is ready ahead of time.
+    ///
+    /// # Thread Affinity
+    ///
+    /// **Important**: The runtime uses `new_current_thread()`, which has thread affinity.
+    /// This method should be called from the same thread that will later call `send_blocking`.
+    pub fn init_runtime(&mut self) -> anyhow::Result<()> {
+        if self.runtime.is_none() {
+            self.runtime = Some(
+                tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()?,
+            );
+        }
+        Ok(())
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub fn send_blocking(
         &mut self,
@@ -228,13 +249,7 @@ impl ProfileExporter {
         process_tags: Option<&str>,
         cancel: Option<&CancellationToken>,
     ) -> anyhow::Result<reqwest::StatusCode> {
-        if self.runtime.is_none() {
-            self.runtime = Some(
-                tokio::runtime::Builder::new_current_thread()
-                    .enable_all()
-                    .build()?,
-            );
-        }
+        self.init_runtime()?;
 
         self.runtime
             .as_ref()
