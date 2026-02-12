@@ -274,7 +274,8 @@ async fn parse_multipart(boundary: String, body: Vec<u8>) -> anyhow::Result<Vec<
 /// - **Windows**: Uses the Toolhelp32Snapshot API
 ///
 /// # Returns
-/// The number of active threads in the current process, or an error if the count cannot be determined.
+/// The number of active threads in the current process, or an error if the count cannot be
+/// determined.
 ///
 /// # Example
 /// ```no_run
@@ -287,7 +288,6 @@ pub fn count_active_threads() -> anyhow::Result<usize> {
     #[cfg(target_os = "linux")]
     {
         use std::fs;
-        use std::io::BufRead;
 
         let status = fs::read_to_string("/proc/self/status")?;
         for line in status.lines() {
@@ -309,7 +309,7 @@ pub fn count_active_threads() -> anyhow::Result<usize> {
 
         let pid = std::process::id();
         let output = Command::new("ps")
-            .args(&["-M", "-p", &pid.to_string()])
+            .args(["-M", "-p", &pid.to_string()])
             .output()
             .context("Failed to execute ps command")?;
 
@@ -317,8 +317,8 @@ pub fn count_active_threads() -> anyhow::Result<usize> {
             anyhow::bail!("ps command failed with status: {:?}", output.status);
         }
 
-        let stdout = String::from_utf8(output.stdout)
-            .context("Failed to parse ps output as UTF-8")?;
+        let stdout =
+            String::from_utf8(output.stdout).context("Failed to parse ps output as UTF-8")?;
 
         // ps -M output format: header line + one line per thread
         // Count lines and subtract 1 for the header
@@ -334,11 +334,10 @@ pub fn count_active_threads() -> anyhow::Result<usize> {
 
     #[cfg(windows)]
     {
-        use std::mem::size_of;
+        use std::mem::{size_of, zeroed};
         use windows_sys::Win32::Foundation::CloseHandle;
         use windows_sys::Win32::System::Diagnostics::ToolHelp::{
-            CreateToolhelp32Snapshot, Thread32First, Thread32Next, TH32CS_SNAPTHREAD,
-            THREADENTRY32,
+            CreateToolhelp32Snapshot, Thread32First, Thread32Next, TH32CS_SNAPTHREAD, THREADENTRY32,
         };
 
         let current_pid = std::process::id();
@@ -347,10 +346,9 @@ pub fn count_active_threads() -> anyhow::Result<usize> {
             anyhow::bail!("CreateToolhelp32Snapshot failed");
         }
 
-        let mut thread_entry = THREADENTRY32 {
-            dwSize: size_of::<THREADENTRY32>() as u32,
-            ..Default::default()
-        };
+        // THREADENTRY32 doesn't implement Default, so we use zeroed() and set dwSize
+        let mut thread_entry: THREADENTRY32 = unsafe { zeroed() };
+        thread_entry.dwSize = size_of::<THREADENTRY32>() as u32;
 
         let mut count = 0;
         if unsafe { Thread32First(snapshot, &mut thread_entry) } != 0 {
@@ -478,9 +476,14 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn test_count_active_threads() {
         let initial_count = count_active_threads().expect("Failed to count threads");
-        assert!(initial_count >= 1, "Expected at least 1 thread, got {}", initial_count);
+        assert!(
+            initial_count >= 1,
+            "Expected at least 1 thread, got {}",
+            initial_count
+        );
 
         // Spawn some threads and verify the count increases
         use std::sync::{Arc, Barrier};
