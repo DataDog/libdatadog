@@ -8,11 +8,10 @@ use std::process::exit;
 
 // Keep this in-sync with profiles.c
 fn main() {
-    let walltime = api::ValueType::new("wall-time", "nanoseconds");
-    let sample_types = [api::ValueType::new("samples", "count"), walltime];
+    let sample_types = [api::SampleType::CpuSamples, api::SampleType::WallTime];
 
     let period = api::Period {
-        r#type: walltime,
+        sample_type: api::SampleType::WallTime,
         value: 10000,
     };
 

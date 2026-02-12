@@ -1,6 +1,7 @@
 // Copyright 2023-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+pub mod artifacts;
 pub mod modes;
 pub mod test_runner;
 pub mod test_types;
@@ -9,6 +10,71 @@ pub mod validation;
 use std::{collections::HashMap, env, ops::DerefMut, path::PathBuf, process, sync::Mutex};
 
 use once_cell::sync::OnceCell;
+
+/// Returns the base target directory (e.g., `/path/to/target`).
+/// This is cached for the lifetime of the process.
+fn get_base_target_dir() -> &'static PathBuf {
+    static BASE_TARGET_DIR: OnceCell<PathBuf> = OnceCell::new();
+    BASE_TARGET_DIR.get_or_init(|| {
+        // If the CARGO_TARGET_DIR env var is set, use that.
+        if let Ok(env_target_dir) = env::var("CARGO_TARGET_DIR") {
+            return PathBuf::from(env_target_dir);
+        }
+
+        // Otherwise, find the target directory by walking up from the current binary.
+        let test_bin_location = PathBuf::from(env::args().next().unwrap());
+        let mut location_components = test_bin_location.components().rev().peekable();
+        while let Some(c) = location_components.peek() {
+            if c.as_os_str() == "target" {
+                break;
+            }
+            location_components.next();
+        }
+        location_components.rev().collect::<PathBuf>()
+    })
+}
+
+/// Returns the target directory for a specific build configuration.
+/// For builds with variants (like panic_abort), returns a variant-specific subdirectory.
+fn get_target_dir_for_build(c: &ArtifactsBuild) -> PathBuf {
+    let base = get_base_target_dir().clone();
+
+    // If this is a variant build (e.g., panic_abort), use a variant-specific target directory
+    if c.panic_abort == Some(true) {
+        base.join("panic-abort")
+    } else {
+        base
+    }
+}
+
+/// Computes the path where the artifact will be located after building.
+pub fn compute_artifact_path(c: &ArtifactsBuild) -> anyhow::Result<PathBuf> {
+    let target_dir = get_target_dir_for_build(c);
+
+    let mut artifact_path = target_dir;
+    artifact_path.push(match c.build_profile {
+        BuildProfile::Debug => "debug",
+        BuildProfile::Release => "release",
+    });
+
+    match c.artifact_type {
+        ArtifactType::ExecutablePackage | ArtifactType::Bin => artifact_path.push(&c.name),
+        ArtifactType::CDylib => {
+            let name = "lib".to_owned()
+                + c.lib_name_override
+                    .as_deref()
+                    .unwrap_or(&c.name.replace('-', "_"))
+                + "."
+                + shared_lib_extension(
+                    c.triple_target
+                        .as_deref()
+                        .unwrap_or(current_platform::CURRENT_PLATFORM),
+                )?;
+            artifact_path.push(name);
+        }
+    };
+    Ok(artifact_path)
+}
 
 /// This crate implements an abstraction over compilation with cargo with the purpose
 /// of testing full binaries or dynamic libraries, instead of just rust static libraries.
@@ -50,31 +116,46 @@ pub struct ArtifactsBuild {
 }
 
 fn inner_build_artifact(c: &ArtifactsBuild) -> anyhow::Result<PathBuf> {
+    // Compute the expected artifact path first
+    let artifact_path = compute_artifact_path(c)?;
+
+    // If the artifact already exists, skip building
+    if artifact_path.exists() {
+        return Ok(artifact_path);
+    }
+
     let mut build_cmd = process::Command::new(env!("CARGO"));
     build_cmd.arg("build");
+
+    // For variant builds (like panic_abort), use a separate target directory
+    // so they don't conflict with standard builds
+    let target_dir = get_target_dir_for_build(c);
+    if target_dir != *get_base_target_dir() {
+        build_cmd.arg("--target-dir").arg(&target_dir);
+    }
+
     if let BuildProfile::Release = c.build_profile {
         build_cmd.arg("--release");
     }
+
     match c.artifact_type {
         ArtifactType::ExecutablePackage | ArtifactType::CDylib => build_cmd.arg("-p"),
         ArtifactType::Bin => build_cmd.arg("--bin"),
     };
 
-    if let Some(panic_abort) = c.panic_abort {
-        if panic_abort {
-            let existing_rustflags = std::env::var("RUSTFLAGS").unwrap_or_default();
-            let new_rustflags = if existing_rustflags.is_empty() {
-                "-C panic=abort".to_string()
-            } else {
-                format!("{} -C panic=abort", existing_rustflags)
-            };
-            build_cmd.env("RUSTFLAGS", new_rustflags);
-        }
+    if c.panic_abort == Some(true) {
+        let existing_rustflags = std::env::var("RUSTFLAGS").unwrap_or_default();
+        let new_rustflags = if existing_rustflags.is_empty() {
+            "-C panic=abort".to_string()
+        } else {
+            format!("{} -C panic=abort", existing_rustflags)
+        };
+        build_cmd.env("RUSTFLAGS", new_rustflags);
     }
 
     build_cmd.arg(&c.name);
 
-    let output = build_cmd.output().unwrap();
+    let output = build_cmd.output()?;
     if !output.status.success() {
         anyhow::bail!(
             "Cargo build failed: status code {:?}\nstderr:\n {}",
@@ -83,53 +164,6 @@ fn inner_build_artifact(c: &ArtifactsBuild) -> anyhow::Result<PathBuf> {
         );
     }
 
-    /// This static variable contains the path in which cargo puts it's build artifacts
-    /// This relies on the assumption that the current binary is assumed to not have been moved from
-    /// it's directory
-    static ARTIFACT_DIR: OnceCell<PathBuf> = OnceCell::new();
-    let artifact_dir = ARTIFACT_DIR.get_or_init(|| {
-        // If the CARGO_TARGET_DIR env var is set, then just use that.
-        if let Ok(env_target_dir) = env::var("CARGO_TARGET_DIR") {
-            return PathBuf::from(env_target_dir);
-        }
-
-        let test_bin_location = PathBuf::from(env::args().next().unwrap());
-        let mut location_components = test_bin_location.components().rev().peekable();
-        loop {
-            let Some(c) = location_components.peek() else {
-                break;
-            };
-            if c.as_os_str() == "target" {
-                break;
-            }
-            location_components.next();
-        }
-        location_components.rev().collect::<PathBuf>()
-    });
-
-    let mut artifact_path = artifact_dir.clone();
-    artifact_path.push(match c.build_profile {
-        BuildProfile::Debug => "debug",
-        BuildProfile::Release => "release",
-    });
-
-    match c.artifact_type {
-        ArtifactType::ExecutablePackage | ArtifactType::Bin => artifact_path.push(&c.name),
-        ArtifactType::CDylib => {
-            let name = "lib".to_owned()
-                + c.lib_name_override
-                    .as_deref()
-                    .unwrap_or(&c.name.replace('-', "_"))
-                + "."
-                + shared_lib_extension(
-                    c.triple_target
-                        .as_deref()
-                        .unwrap_or(current_platform::CURRENT_PLATFORM),
-                )?;
-            println!("NAME: {}", name);
-            artifact_path.push(name);
-        }
-    };
     Ok(artifact_path)
 }
 

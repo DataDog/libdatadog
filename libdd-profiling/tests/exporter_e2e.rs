@@ -7,9 +7,9 @@
 
 mod common;
 
-use libdd_common::test_utils::parse_http_request;
+use libdd_common::test_utils::{parse_http_request, parse_http_request_sync};
 use libdd_profiling::exporter::config;
-use libdd_profiling::exporter::{File, MimeType, ProfileExporter};
+use libdd_profiling::exporter::{File, ProfileExporter};
 use libdd_profiling::internal::EncodedProfile;
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -187,7 +187,7 @@ async fn read_and_capture_request<S>(
         }
     }
 
-    if let Ok(req) = parse_http_request(&buffer) {
+    if let Ok(req) = parse_http_request(&buffer).await {
         received_requests.lock().unwrap().push(ReceivedRequest {
             method: req.method,
             path: req.path,
@@ -227,12 +227,10 @@ async fn export_full_profile(
         File {
             name: "jit.pprof",
             bytes: b"fake-jit-data",
-            mime: MimeType::ApplicationOctetStream,
         },
         File {
             name: "metadata.json",
             bytes: b"{\"test\": true}",
-            mime: MimeType::ApplicationJson,
         },
     ];
 
@@ -279,7 +277,7 @@ async fn export_full_profile(
         RequestSource::File(path) => {
             // No sleep needed - send_blocking() waits for file to be synced
             let request_bytes = std::fs::read(&path)?;
-            let req = parse_http_request(&request_bytes)?;
+            let req = parse_http_request(&request_bytes).await?;
             Ok(ReceivedRequest {
                 method: req.method,
                 path: req.path,
@@ -319,7 +317,7 @@ fn validate_full_export(req: &ReceivedRequest, expected_path: &str) -> anyhow::R
     http_request_bytes.extend_from_slice(b"\r\n");
     http_request_bytes.extend_from_slice(&req.body);
 
-    let parsed_req = parse_http_request(&http_request_bytes)?;
+    let parsed_req = parse_http_request_sync(&http_request_bytes)?;
     let parts = &parsed_req.multipart_parts;
 
     // Find event JSON
