@@ -4,6 +4,7 @@
 //! Trace-utils functionalities implementation for tinybytes based spans
 
 use super::{Span, SpanMut, SpanText, OwnedTraceData, TraceProjector, TraceAttributesOp, TraceAttributesMutOp, TraceChunkMut, TracesMut, TraceData, TraceDataLifetime};
+use crate::span::TraceData as TraceDataTrait;
 use std::borrow::Borrow;
 use std::collections::{HashMap, HashSet};
 
@@ -14,7 +15,7 @@ const TRACER_TOP_LEVEL_KEY: &str = "_dd.top_level";
 const MEASURED_KEY: &str = "_dd.measured";
 const PARTIAL_VERSION_KEY: &str = "_dd.partial_version";
 
-fn set_top_level_span<'a, D: TraceDataLifetime<'a>, T: TraceProjector<D>>(span: &mut SpanMut<'a, 'a, T, D>, is_top_level: bool)
+fn set_top_level_span<'b, 's, 'a, D: TraceDataLifetime<'a>, T: TraceProjector<D>>(span: &mut SpanMut<'b, 's, 'a, T, D>, is_top_level: bool) where 's: 'a
 {
     if is_top_level {
         span.attributes_mut().set_double(TOP_LEVEL_KEY, 1.0);
@@ -29,7 +30,7 @@ fn set_top_level_span<'a, D: TraceDataLifetime<'a>, T: TraceProjector<D>>(span: 
 ///   - OR its parent is unknown (other part of the code, distributed trace)
 ///   - OR its parent belongs to another service (in that case it's a "local root" being the highest
 ///     ancestor of other spans belonging to this service and attached to it).
-pub fn compute_top_level_span<'a, D: TraceDataLifetime<'a>, T: TraceProjector<D>>(trace: &mut TraceChunkMut<'a, 'a, T, D>) {
+pub fn compute_top_level_span<'b, 's, 'a, D: TraceDataLifetime<'a>, T: TraceProjector<D>>(trace: &mut TraceChunkMut<'b, 's, 'a, T, D>) where 's: 'a {
     // Collect span_id -> is_top_level decisions first
     let mut top_level_decisions: HashMap<u64, bool> = HashMap::new();
 
@@ -72,7 +73,7 @@ pub fn compute_top_level_span<'a, D: TraceDataLifetime<'a>, T: TraceProjector<D>
 }
 
 /// Return true if the span has a top level key set
-pub fn has_top_level<'a, D: TraceDataLifetime<'a>, T: TraceProjector<D>>(span: &Span<'a, 'a, T, D>) -> bool
+pub fn has_top_level<'b, 's, 'a, D: TraceDataLifetime<'a>, T: TraceProjector<D>>(span: &Span<'b, 's, 'a, T, D>) -> bool where 's: 'a
 {
     span.attributes()
         .get_double(TRACER_TOP_LEVEL_KEY)
@@ -81,7 +82,7 @@ pub fn has_top_level<'a, D: TraceDataLifetime<'a>, T: TraceProjector<D>>(span: &
 }
 
 /// Returns true if a span should be measured (i.e., it should get trace metrics calculated).
-pub fn is_measured<'a, D: TraceDataLifetime<'a>, T: TraceProjector<D>>(span: &Span<'a, 'a, T, D>) -> bool
+pub fn is_measured<'b, 's, 'a, D: TraceDataLifetime<'a>, T: TraceProjector<D>>(span: &Span<'b, 's, 'a, T, D>) -> bool where 's: 'a
 {
     span.attributes().get_double(MEASURED_KEY).is_some_and(|v| v == 1.0)
 }
@@ -91,7 +92,7 @@ pub fn is_measured<'a, D: TraceDataLifetime<'a>, T: TraceProjector<D>>(span: &Sp
 /// When incomplete, a partial snapshot has a metric _dd.partial_version which is a positive
 /// integer. The metric usually increases each time a new version of the same span is sent by
 /// the tracer
-pub fn is_partial_snapshot<'a, D: TraceDataLifetime<'a>, T: TraceProjector<D>>(span: &Span<'a, 'a, T, D>) -> bool
+pub fn is_partial_snapshot<'b, 's, 'a, D: TraceDataLifetime<'a>, T: TraceProjector<D>>(span: &Span<'b, 's, 'a, T, D>) -> bool where 's: 'a
 {
     span.attributes()
         .get_double(PARTIAL_VERSION_KEY)
@@ -107,6 +108,59 @@ pub struct DroppedP0Stats {
 const SAMPLING_PRIORITY_KEY: &str = "_sampling_priority_v1";
 const SAMPLING_SINGLE_SPAN_MECHANISM: &str = "_dd.span_sampling.mechanism";
 const SAMPLING_ANALYTICS_RATE_KEY: &str = "_dd1.sr.eausr";
+
+/// Remove spans and chunks from v04 traces (compatibility function).
+pub fn drop_chunks_v04<T: TraceData>(traces: &mut Vec<Vec<crate::span::v04::Span<T>>>) -> DroppedP0Stats {
+    let mut dropped_p0_traces = 0;
+    let mut dropped_p0_spans = 0;
+
+    traces.retain_mut(|chunk| {
+        let priority = chunk.first()
+            .and_then(|span| span.metrics.get(SAMPLING_PRIORITY_KEY).copied())
+            .unwrap_or(0.0) as i32;
+
+        // List of spans to keep even if the chunk is dropped
+        let mut sampled_indexes = HashSet::new();
+        for (index, span) in chunk.iter().enumerate() {
+            // ErrorSampler
+            if span.error != 0 {
+                return true;
+            }
+            // PrioritySampler and NoPrioritySampler
+            let is_top_level = span.metrics.get(TRACER_TOP_LEVEL_KEY).is_some_and(|v| *v == 1.0)
+                || span.metrics.get(TOP_LEVEL_KEY).is_some_and(|v| *v == 1.0);
+            if is_top_level && priority > 0 {
+                return true;
+            }
+            // SingleSpanSampler and AnalyzedSpansSampler
+            else if span.metrics.get(SAMPLING_SINGLE_SPAN_MECHANISM).is_some_and(|m| *m == 8.0)
+                || span.metrics.get(SAMPLING_ANALYTICS_RATE_KEY).is_some()
+            {
+                sampled_indexes.insert(index);
+            } else {
+                dropped_p0_spans += 1;
+            }
+        }
+
+        if sampled_indexes.is_empty() {
+            dropped_p0_traces += 1;
+            return false;
+        }
+
+        let mut index = 0;
+        chunk.retain(|_| {
+            let retain = sampled_indexes.contains(&index);
+            index += 1;
+            retain
+        });
+        true
+    });
+
+    DroppedP0Stats {
+        dropped_p0_traces,
+        dropped_p0_spans,
+    }
+}
 
 /// Remove spans and chunks from a TraceCollection only keeping the ones that may be sampled by
 /// the agent.

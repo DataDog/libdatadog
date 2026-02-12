@@ -7,7 +7,7 @@ use std::ops::Deref;
 use serde::Serialize;
 use crate::span::{IntoData, OwnedTraceData, SpanDataContents, TraceData};
 
-trait TraceDataType: Copy + Clone + Debug + Default + Eq + PartialEq + Hash + Serialize {
+pub trait TraceDataType: Copy + Clone + Debug + Default + Eq + PartialEq + Hash + Serialize {
     type Data<T: TraceData>: SpanDataContents;
 }
 #[derive(Copy, Clone, Debug, Default, Eq, PartialEq, Hash, Serialize)]

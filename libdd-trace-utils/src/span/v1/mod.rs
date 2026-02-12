@@ -19,11 +19,11 @@ struct TraceStaticData<T: TraceData> {
 
 impl<T: TraceData> TraceStaticData<T> {
     pub fn get_string(&self, r#ref: TraceStringRef) -> &T::Text {
-        self.strings.get(r#ref)
+        StaticDataVec::get(&self.strings, r#ref)
     }
 
     pub fn get_bytes(&self, r#ref: TraceBytesRef) -> &T::Bytes {
-        self.bytes.get(r#ref)
+        StaticDataVec::get(&self.bytes, r#ref)
     }
 
     pub fn add_string(&mut self, value: T::Text) -> TraceStringRef {

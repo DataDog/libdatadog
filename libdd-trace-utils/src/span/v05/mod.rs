@@ -50,7 +50,7 @@ impl Span {
     where
         K: ?Sized + Hash + Equivalent<<D::Text as SpanDataContents>::RefCopy>,
     {
-        storage.find(key).and_then(|r| self.meta.get(&r)).map(|r| r.get(storage))
+        storage.find(key).and_then(|r| self.meta.get(&r)).map(|r| storage.get(*r))
     }
 
     fn set_meta<D: TraceData, K: IntoData<D::Text>, V: IntoData<D::Text>>(&mut self, key: K, storage: &mut Storage<D>, value: V) -> &mut TraceStringRef {
@@ -189,6 +189,17 @@ impl<D: TraceData + 'static> TraceProjector<D> for ChunkCollection<D> {
         })
     }
 
+    fn retain_spans<'b, 'a, F: for<'c> FnMut(&'c mut Self::Span<'c>, &'c mut Self::Storage<'a>) -> bool>(chunk: &'b mut Self::Chunk<'b>, storage: &'a mut Self::Storage<'a>, mut predicate: F) {
+        chunk.retain_mut(|span| {
+            if predicate(span, storage) {
+                true
+            } else {
+                free_span_data(span, storage);
+                false
+            }
+        })
+    }
+
     fn add_span<'a>(chunk: &'a mut Chunk, storage: &mut Storage<D>) -> &'a mut Span {
         chunk.push(Span::default());
         let (trace_id, tidkey) = if let Some(first_span) = chunk.first() {
@@ -214,17 +225,6 @@ impl<D: TraceData + 'static> TraceProjector<D> for ChunkCollection<D> {
         chunk.iter()
     }
 
-    fn retain_spans<'r, F: FnMut(&mut Self::Span<'r>, &mut Self::Storage<'r>) -> bool>(chunk: &'r mut Self::Chunk<'r>, storage: &'r mut Self::Storage<'r>, mut predicate: F) {
-        chunk.retain_mut(|span| {
-            if predicate(span, storage) {
-                true
-            } else {
-                free_span_data(span, storage);
-                false
-            }
-        })
-    }
-
     fn add_span_link<'a>(_span: &'a mut Span, _storage: &mut Storage<D>) -> &'a mut SpanLink {
         &mut []
     }
@@ -233,7 +233,7 @@ impl<D: TraceData + 'static> TraceProjector<D> for ChunkCollection<D> {
         [].iter()
     }
 
-    fn retain_span_links<'r, F: FnMut(&mut Self::SpanLink<'r>, &mut Self::Storage<'r>) -> bool>(span: &'r mut Self::Span<'r>, storage: &'r mut Self::Storage<'r>, predicate: F) {
+    fn retain_span_links<'b, 'a, F: for<'c> FnMut(&'c mut Self::SpanLink<'c>, &'c mut Self::Storage<'a>) -> bool>(span: &'b mut Self::Span<'b>, storage: &'a mut Self::Storage<'a>, predicate: F) {
     }
 
     fn add_span_event<'a>(_span: &mut Span, _storage: &mut Storage<D>) -> &'a mut SpanEvent {
@@ -244,7 +244,7 @@ impl<D: TraceData + 'static> TraceProjector<D> for ChunkCollection<D> {
         [].iter()
     }
 
-    fn retain_span_events<'r, F: FnMut(&mut Self::SpanEvent<'r>, &mut Self::Storage<'r>) -> bool>(span: &'r mut Self::Span<'r>, storage: &'r mut Self::Storage<'r>, predicate: F) {
+    fn retain_span_events<'b, 'a, F: for<'c> FnMut(&'c mut Self::SpanEvent<'c>, &'c mut Self::Storage<'a>) -> bool>(span: &'b mut Self::Span<'b>, storage: &'a mut Self::Storage<'a>, predicate: F) {
     }
 
     fn get_trace_container_id<'a>(_trace: &Trace, _storage: &'a Storage<D>) -> &'a D::Text {
@@ -359,19 +359,19 @@ impl<D: TraceData + 'static> TraceProjector<D> for ChunkCollection<D> {
     }
 
     fn get_span_service<'a>(span: &Span, storage: &'a Storage<D>) -> &'a D::Text {
-        span.service.get(storage)
+        storage.get(span.service)
     }
 
     fn get_span_name<'a>(span: &Span, storage: &'a Storage<D>) -> &'a D::Text {
-        span.name.get(storage)
+        storage.get(span.name)
     }
 
     fn get_span_resource<'a>(span: &Span, storage: &'a Storage<D>) -> &'a D::Text {
-        span.resource.get(storage)
+        storage.get(span.resource)
     }
 
     fn get_span_type<'a>(span: &Span, storage: &'a Storage<D>) -> &'a D::Text {
-        span.r#type.get(storage)
+        storage.get(span.r#type)
     }
 
     fn get_span_span_id(span: &Span, _storage: &Storage<D>) -> u64 {
@@ -519,7 +519,7 @@ impl<'a, 'b, D: TraceData + 'static, const Mut: u8> TraceAttributesOp<'b, 'a, Ch
     {
         storage.find(key).and_then(move |r| {
             if let Some(meta) = container.meta.get(&r) {
-                Some(AttributeAnyContainer::String(meta.get(storage)))
+                Some(AttributeAnyContainer::String(storage.get(*meta)))
             } else if let Some(metric) = container.metrics.get(&r) {
                 Some(AttributeAnyContainer::Double(*metric))
             } else {
@@ -575,7 +575,7 @@ impl<'a, 'b, D: TraceData + 'static> TraceAttributesMutOp<'b, 'a, ChunkCollectio
 
 impl<'a, 'b, D: TraceDataLifetime<'a>> TraceAttributesString<'a, ChunkCollection<D>, D> for &'b mut TraceStringRef {
     fn get(&self, storage: &'a Storage<D>) -> &'a D::Text {
-        (**self).get(storage)
+        storage.get(**self)
     }
 
     fn set(self, storage: &mut Storage<D>, value: D::Text) {
