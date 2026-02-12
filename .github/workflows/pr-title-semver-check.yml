@@ -259,10 +259,80 @@ jobs:
             echo "❌ SEMVER VALIDATION FAILED"
             echo "============================================"
             echo ""
-            echo "Details:"
-            echo "  PR Title: $PR_TITLE"
-            echo "  Detected semver level: $SEMVER_LEVEL"
+            echo "PR Title: $PR_TITLE"
+            echo "PR Type: $TYPE"
+            echo "Detected semver level: $SEMVER_LEVEL"
+            echo "Breaking change marked: ${IS_BREAKING_CHANGE:-no}"
+            echo ""
+            echo "--------------------------------------------"
+            echo "WHAT WAS DETECTED:"
+            echo "--------------------------------------------"
+            # Show details for each crate
+            echo "$SEMVER_RESULT_JSON" | jq -r '.crates[] | "Crate: \(.name)\n  Level: \(.level)\n  Reason: \(.reason)\n  Details:\n\(.details | split("\n") | map("    " + .) | join("\n"))\n"'
+            echo ""
+            echo "--------------------------------------------"
+            echo "WHY THIS FAILED:"
+            echo "--------------------------------------------"
+            case "$TYPE" in
+              fix)
+                if [[ "$SEMVER_LEVEL" == "major" ]] && [[ -z "$IS_BREAKING_CHANGE" ]]; then
+                  echo "'fix' with major changes requires breaking change marker."
+                  echo "Add '!' to PR title (fix!:) or add 'BREAKING CHANGE:' footer in PR body."
+                elif [[ "$SEMVER_LEVEL" == "minor" ]]; then
+                  echo "'fix' cannot have minor-level changes (new public API)."
+                  echo "Use 'feat' type instead, or remove the new public API additions."
+                elif [[ "$SEMVER_LEVEL" == "none" ]]; then
+                  echo "'fix' requires changes to published crates."
+                  echo "Use 'chore' or 'ci' for non-published changes."
+                fi
+                ;;
+              feat)
+                if [[ "$SEMVER_LEVEL" == "major" ]] && [[ -z "$IS_BREAKING_CHANGE" ]]; then
+                  echo "'feat' with major changes requires breaking change marker."
+                  echo "Add '!' to PR title (feat!:) or add 'BREAKING CHANGE:' footer in PR body."
+                elif [[ "$SEMVER_LEVEL" == "patch" ]]; then
+                  echo "'feat' requires minor-level changes (new public API)."
+                  echo "Use 'fix' for bug fixes, or ensure new items are marked 'pub'."
+                elif [[ "$SEMVER_LEVEL" == "none" ]]; then
+                  echo "'feat' requires changes to published crates."
+                  echo "Use 'chore' for non-published changes."
+                fi
+                ;;
+              chore|ci|docs|style|test|build|perf)
+                if [[ -n "$IS_BREAKING_CHANGE" ]]; then
+                  echo "'$TYPE' cannot have breaking change marker."
+                  echo "Remove '!' from title or use 'feat!', 'fix!', or 'refactor!' instead."
+                elif [[ "$SEMVER_LEVEL" == "major" ]]; then
+                  echo "'$TYPE' cannot have major-level changes (breaking API)."
+                  echo "Use 'refactor!' or 'feat!' for intentional breaking changes."
+                elif [[ "$SEMVER_LEVEL" == "minor" ]]; then
+                  echo "'$TYPE' cannot have minor-level changes (new public API)."
+                  echo "Use 'feat' for new features, or mark new items as pub(crate)."
+                fi
+                ;;
+              refactor)
+                if [[ "$SEMVER_LEVEL" == "major" ]] && [[ -z "$IS_BREAKING_CHANGE" ]]; then
+                  echo "'refactor' with major changes requires breaking change marker."
+                  echo "Add '!' to PR title (refactor!:) or add 'BREAKING CHANGE:' footer in PR body."
+                fi
+                ;;
+              *)
+                echo "Unknown PR type: '$TYPE'"
+                echo "Valid types: feat, fix, docs, style, refactor, perf, test, build, ci, chore, revert"
+                ;;
+            esac
+            echo ""
+            echo "--------------------------------------------"
+            echo "VALID COMBINATIONS:"
+            echo "--------------------------------------------"
+            echo "  fix      -> patch, or major (with '!')"
+            echo "  feat     -> minor, or major (with '!')"
+            echo "  refactor -> patch, minor, or major (with '!')"
+            echo "  chore/ci/docs/style/test/build/perf -> patch or none only"
+            echo "  revert   -> any level"
+            echo ""
             exit 1
           else
+            echo "✅ Semver validation passed: '$TYPE' is compatible with '$SEMVER_LEVEL'"
             exit 0
           fi
