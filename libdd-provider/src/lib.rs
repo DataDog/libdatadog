@@ -7,7 +7,7 @@
 //! compile target. Downstream code uses these types directly, avoiding
 //! generic contagion.
 
-pub use libdd_capabilities::HttpClientTrait;
+pub use libdd_capabilities::{HttpClientTrait, HttpError, HttpRequest, HttpResponse};
 
 #[cfg(not(target_arch = "wasm32"))]
 pub use libdd_common::capabilities::HyperHttpClient as DefaultHttpClient;
