@@ -6,8 +6,8 @@
 use super::{schema::AgentInfo, AGENT_INFO_CACHE};
 use anyhow::{anyhow, Result};
 use http::header::HeaderName;
-use http_body_util::BodyExt;
-use libdd_common::{http_common, worker::Worker, Endpoint};
+use libdd_common::{entity_id, worker::Worker, Endpoint};
+use libdd_provider::{DefaultHttpClient, HttpClientTrait, HttpRequest};
 use sha2::{Digest, Sha256};
 use std::sync::Arc;
 use std::time::Duration;
@@ -81,15 +81,25 @@ pub async fn fetch_info(info_endpoint: &Endpoint) -> Result<Box<AgentInfo>> {
 /// Returns a tuple of (state_hash, response_body_bytes).
 /// The hash is calculated using SHA256 to match the agent's calculation method.
 async fn fetch_and_hash_response(info_endpoint: &Endpoint) -> Result<(String, bytes::Bytes)> {
-    let req = info_endpoint
-        .to_request_builder(concat!("Libdatadog/", env!("CARGO_PKG_VERSION")))?
-        .method(http::Method::GET)
-        .body(http_common::Body::empty());
-    let client = http_common::new_default_client();
-    let res = client.request(req?).await?;
+    let user_agent = concat!("Libdatadog/", env!("CARGO_PKG_VERSION"));
+    let mut req =
+        HttpRequest::get(info_endpoint.url.to_string()).with_header("user-agent", user_agent);
 
-    let body_bytes = res.into_body().collect().await?;
-    let body_data = body_bytes.to_bytes();
+    // Add optional endpoint headers (api-key, test-token)
+    for (name, value) in info_endpoint.get_optional_headers() {
+        req = req.with_header(name, value);
+    }
+
+    // Add entity-related headers (container-id, entity-id, external-env)
+    for (name, value) in entity_id::get_entity_headers() {
+        req = req.with_header(name, value);
+    }
+
+    let res = DefaultHttpClient::request(req)
+        .await
+        .map_err(|e| anyhow!("{}", e))?;
+
+    let body_data = bytes::Bytes::from(res.body);
     let hash = format!("{:x}", Sha256::digest(&body_data));
 
     Ok((hash, body_data))
