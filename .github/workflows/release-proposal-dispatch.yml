@@ -74,6 +74,19 @@ jobs:
           fetch-depth: 0
           fetch-tags: true
 
+      - name: Configure Git identity for dd-octo-sts GitHub App
+        env:
+          GH_TOKEN: ${{ steps.octo-sts.outputs.token }}
+        run: |
+          BOT_USER=$(gh api /user)
+          BOT_NAME=$(echo "$BOT_USER" | jq -r '.login')
+          BOT_ID=$(echo "$BOT_USER" | jq -r '.id')
+
+          git config --global user.name "$BOT_NAME"
+          git config --global user.email "${BOT_ID}+${BOT_NAME}@users.noreply.github.com"
+
+          echo "Configured git as: $BOT_NAME <${BOT_ID}+${BOT_NAME}@users.noreply.github.com>"
+
       - name: Merge the main branch into the release branch
         run: |
           git fetch origin "${{ env.RELEASE_BRANCH }}" --tags
