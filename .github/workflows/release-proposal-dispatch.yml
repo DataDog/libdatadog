@@ -76,7 +76,7 @@ jobs:
 
       - name: Merge the main branch into the release branch
         run: |
-          git fetch origin "${{ env.RELEASE_BRANCH }}"
+          git fetch origin "${{ env.RELEASE_BRANCH }}" --tags
           git checkout "${{ env.RELEASE_BRANCH }}"
 
           if ! git merge origin/"${{ env.MAIN_BRANCH }}"; then
