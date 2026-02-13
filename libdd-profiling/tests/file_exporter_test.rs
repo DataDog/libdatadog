@@ -3,7 +3,7 @@
 
 mod common;
 
-use libdd_common::test_utils::{create_temp_file_path, parse_http_request, TempFileGuard};
+use libdd_common::test_utils::{create_temp_file_path, parse_http_request_sync, TempFileGuard};
 use libdd_profiling::exporter::ProfileExporter;
 use libdd_profiling::internal::EncodedProfile;
 
@@ -72,7 +72,7 @@ mod tests {
         let request_bytes = std::fs::read(&file_path).expect("read dump file");
 
         // Parse HTTP request
-        let request = parse_http_request(&request_bytes).expect("parse HTTP request");
+        let request = parse_http_request_sync(&request_bytes).expect("parse HTTP request");
 
         // Validate request line
         assert_eq!(request.method, "POST");
@@ -182,7 +182,7 @@ mod tests {
         let request_bytes = std::fs::read(&file_path).expect("read dump file");
 
         // Parse and validate
-        let request = parse_http_request(&request_bytes).expect("parse HTTP request");
+        let request = parse_http_request_sync(&request_bytes).expect("parse HTTP request");
         let event_part = request
             .multipart_parts
             .iter()
@@ -231,7 +231,7 @@ mod tests {
         let request_bytes = std::fs::read(&file_path).expect("read dump file");
 
         // Parse and validate
-        let request = parse_http_request(&request_bytes).expect("parse HTTP request");
+        let request = parse_http_request_sync(&request_bytes).expect("parse HTTP request");
         let event_part = request
             .multipart_parts
             .iter()
@@ -287,7 +287,7 @@ mod tests {
         let request_bytes = std::fs::read(&file_path).expect("read dump file");
 
         // Parse and validate
-        let request = parse_http_request(&request_bytes).expect("parse HTTP request");
+        let request = parse_http_request_sync(&request_bytes).expect("parse HTTP request");
         let event_part = request
             .multipart_parts
             .iter()
@@ -327,7 +327,7 @@ mod tests {
         let request_bytes = std::fs::read(&file_path).expect("read dump file");
 
         // Parse HTTP request
-        let request = parse_http_request(&request_bytes).expect("parse HTTP request");
+        let request = parse_http_request_sync(&request_bytes).expect("parse HTTP request");
 
         // Validate headers - API key should be present
         assert_eq!(request.headers.get("dd-api-key").unwrap(), api_key);
