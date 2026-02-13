@@ -62,8 +62,7 @@ pub fn normalize_trace(trace: &mut [pb::Span]) -> anyhow::Result<()> {
     for span in trace {
         if span.trace_id != first_trace_id {
             anyhow::bail!(format!(
-                "Normalize Trace Error: Trace has foreign span: {:?}",
-                span
+                "Normalize Trace Error: Trace has foreign span: {span:?}."
             ));
         }
         normalize_span(span)?;
