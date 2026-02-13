@@ -58,7 +58,59 @@ jobs:
                   });
 
                   if (!report.valid) {
-                    core.setFailed("PR title linting failed");
+                    core.info('');
+                    core.info('============================================');
+                    core.info('❌ PR TITLE VALIDATION FAILED');
+                    core.info('============================================');
+                    core.info('');
+                    core.info(`PR Title: ${title}`);
+                    core.info('');
+                    core.info('Errors found:');
+                    report.errors.forEach((error) => {
+                      core.info(`  - ${error.message}`);
+                    });
+                    if (report.warnings.length > 0) {
+                      core.info('');
+                      core.info('Warnings:');
+                      report.warnings.forEach((warning) => {
+                        core.info(`  - ${warning.message}`);
+                      });
+                    }
+                    core.info('');
+                    core.info('============================================');
+                    core.info('PR TITLE FORMAT GUIDE');
+                    core.info('============================================');
+                    core.info('');
+                    core.info('Expected format: type(scope): description');
+                    core.info('');
+                    core.info('Valid types:');
+                    core.info('  feat     - A new feature (triggers minor version bump)');
+                    core.info('  fix      - A bug fix (triggers patch version bump)');
+                    core.info('  docs     - Documentation only changes');
+                    core.info('  style    - Code style changes (formatting, semicolons, etc)');
+                    core.info('  refactor - Code change that neither fixes a bug nor adds a feature');
+                    core.info('  perf     - Performance improvement');
+                    core.info('  test     - Adding or correcting tests');
+                    core.info('  build    - Changes to build system or dependencies');
+                    core.info('  ci       - Changes to CI configuration');
+                    core.info('  chore    - Other changes that don\'t modify src or test files');
+                    core.info('  revert   - Reverts a previous commit');
+                    core.info('');
+                    core.info('Breaking changes: Add ! after type, e.g., feat!: or fix(scope)!:');
+                    core.info('');
+                    core.info('Scope is optional but recommended for clarity.');
+                    core.info('');
+                    core.info('Ticket references: If included, must be at the END of the title');
+                    core.info('  ✓ feat(api): add new endpoint [PROJ-123]');
+                    core.info('  ✗ feat(api): [PROJ-123] add new endpoint');
+                    core.info('');
+                    core.info('Examples of valid PR titles:');
+                    core.info('  feat: add user authentication');
+                    core.info('  fix(parser): handle edge case in tokenizer');
+                    core.info('  feat!: redesign public API');
+                    core.info('  docs: update README with examples [PROJ-456]');
+                    core.info('');
+                    core.setFailed("PR title linting failed - see format guide above");
                   }
                 });
               });

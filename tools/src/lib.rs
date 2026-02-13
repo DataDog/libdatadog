@@ -32,10 +32,7 @@ pub mod headers {
         let mut items = Vec::new();
         let mut start = 0;
 
-        loop {
-            let Some(head) = ITEM_DEFINITION_HEAD.captures_at(header, start) else {
-                break;
-            };
+        while let Some(head) = ITEM_DEFINITION_HEAD.captures_at(header, start) {
             start = head.get(0).unwrap().start();
             let end: usize;
             if let Some(capture) = head.get(2) {

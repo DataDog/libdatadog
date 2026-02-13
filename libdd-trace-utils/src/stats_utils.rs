@@ -36,6 +36,14 @@ mod mini_agent {
     }
 
     pub fn construct_stats_payload(stats: Vec<pb::ClientStatsPayload>) -> pb::StatsPayload {
+        // set hostname on stats from tracer to empty string for serverless
+        let stats = stats
+            .into_iter()
+            .map(|mut stat| {
+                stat.hostname = "".to_string();
+                stat
+            })
+            .collect();
         pb::StatsPayload {
             agent_hostname: "".to_string(),
             agent_env: "".to_string(),

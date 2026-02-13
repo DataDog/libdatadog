@@ -68,10 +68,10 @@ jobs:
         run: |
           git fetch origin "${{ env.RELEASE_BRANCH }}" --tags
           git checkout "${{ env.RELEASE_BRANCH }}"
-          # only fast-forward the merge
-          if ! git merge --ff-only origin/"${{ env.MAIN_BRANCH }}"; then
-            echo "Error: Cannot fast-forward merge ${{ env.MAIN_BRANCH }} into ${{ env.RELEASE_BRANCH }}" >&2
-            echo "The branches have diverged." >&2
+          
+          if ! git merge origin/"${{ env.MAIN_BRANCH }}"; then
+            echo "Error: Cannot merge ${{ env.MAIN_BRANCH }} into ${{ env.RELEASE_BRANCH }}" >&2
+            echo "There are merge conflicts or the branches have diverged." >&2
             echo "If you have recently launched another release, it is possible that ${{ env.MAIN_BRANCH }} branch is not yet updated with the ${{ env.RELEASE_BRANCH }} changes." >&2
             echo "Please try again later." >&2
             exit 1
@@ -95,6 +95,10 @@ jobs:
         with:
           cache-targets: true
       - uses: dtolnay/rust-toolchain@nightly
+        with:
+          toolchain: nightly-2026-02-08
+      - name: Link nightly toolchain for cargo-public-api
+        run: ln -sf ~/.rustup/toolchains/nightly-2026-02-08-x86_64-unknown-linux-gnu ~/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: 1.92.0
@@ -349,6 +353,7 @@ jobs:
           
           echo "PR_BODY: $PR_BODY"
 
+          # NOTE: the PR title is used to filter gitlab CI jobs. If you change it, you need to update the gitlab CI job filter.
           gh pr create \
             --head "$BRANCH_NAME" \
             --title "chore(release): proposal for ${{ inputs.crate }}" \
