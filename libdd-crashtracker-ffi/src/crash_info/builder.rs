@@ -76,6 +76,11 @@ pub unsafe extern "C" fn ddog_crasht_CrashInfoBuilder_with_counter(
     })
 }
 
+/// Sets the error kind on the builder (e.g. UnixSignal, UnhandledException, Panic).
+///
+/// Setting the error kind (together with metadata) makes the builder eligible to
+/// send a crash ping. For signal-based crashes, sig_info serves the same purpose.
+///
 /// # Safety
 /// The `builder` can be null, but if non-null it must point to a Builder made by this module,
 /// which has not previously been dropped.
@@ -424,11 +429,17 @@ pub unsafe extern "C" fn ddog_crasht_CrashInfoBuilder_with_thread_name(
 //                                            Crash Ping                                          //
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
+/// Builds a crash ping from the builder state and uploads it to the given endpoint.
+///
+/// The crash ping is a lightweight early notification that crash processing has started.
+/// It requires that the builder has metadata set, plus at least one of:
+/// - sig_info (for signal-based crashes, via `with_sig_info`)
+/// - error kind (for runtime-detected crashes, via `with_kind`)
+///
 /// # Safety
 /// The `builder` can be null, but if non-null it must point to a Builder made by this module,
 /// which has not previously been dropped.
 /// All arguments must be valid.
-/// This method requires that the builder has a UUID and metadata set
 #[no_mangle]
 #[must_use]
 #[named]

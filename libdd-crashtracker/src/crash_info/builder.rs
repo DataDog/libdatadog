@@ -419,11 +419,12 @@ impl CrashInfoBuilder {
     }
 
     pub fn is_ping_ready(&self) -> bool {
-        // On Unix platforms, wait for both metadata and siginfo
-        // On Windows, siginfo is not available, so only wait for metadata
+        // On Unix platforms, wait for metadata AND either siginfo (signal path)
+        // or an explicit error kind (unhandled exception path).
+        // On Windows, siginfo is not available, so only wait for metadata.
         #[cfg(unix)]
         {
-            self.metadata.is_some() && self.sig_info.is_some()
+            self.metadata.is_some() && (self.sig_info.is_some() || self.error.kind.is_some())
         }
         #[cfg(windows)]
         {

@@ -107,6 +107,7 @@ pub(crate) enum StdinState {
     Config,
     Counters,
     Done,
+    ErrorKind,
     File(String, Vec<String>),
     Metadata,
     ProcInfo,
@@ -175,6 +176,15 @@ fn process_line(
                 true,
             )?;
             StdinState::Done
+        }
+
+        StdinState::ErrorKind if line.starts_with(DD_CRASHTRACK_END_ERROR_KIND) => {
+            StdinState::Waiting
+        }
+        StdinState::ErrorKind => {
+            let kind: ErrorKind = serde_json::from_str(line)?;
+            builder.with_kind(kind)?;
+            StdinState::ErrorKind
         }
 
         StdinState::File(filename, lines) if line.starts_with(DD_CRASHTRACK_END_FILE) => {
@@ -306,6 +316,9 @@ fn process_line(
         StdinState::Waiting if line.starts_with(DD_CRASHTRACK_BEGIN_CONFIG) => StdinState::Config,
         StdinState::Waiting if line.starts_with(DD_CRASHTRACK_BEGIN_COUNTERS) => {
             StdinState::Counters
+        }
+        StdinState::Waiting if line.starts_with(DD_CRASHTRACK_BEGIN_ERROR_KIND) => {
+            StdinState::ErrorKind
         }
         StdinState::Waiting if line.starts_with(DD_CRASHTRACK_BEGIN_FILE) => {
             let (_, filename) = line.split_once(' ').unwrap_or(("", "MISSING_FILENAME"));
@@ -485,8 +498,12 @@ pub(crate) async fn receive_report_from_stream(
         return Ok(None);
     }
 
-    // For now, we only support Signal based crash detection in the receiver.
-    builder.with_kind(ErrorKind::UnixSignal)?;
+    // Default to UnixSignal for backward compatibility with collectors that don't
+    // send an explicit ERROR_KIND block. If the collector already set the kind
+    // (e.g. UnhandledException), preserve it.
+    if builder.error.kind.is_none() {
+        builder.with_kind(ErrorKind::UnixSignal)?;
+    }
     enrich_thread_name(&mut builder)?;
     builder.with_os_info_this_machine()?;
 
@@ -768,5 +785,77 @@ mod tests {
         assert_eq!(stack.frames.len(), 1);
         assert!(!stack.incomplete, "Stack should be marked complete");
         assert_eq!(stack.frames[0].ip, Some("0x1234".to_string()));
+    }
+
+    #[test]
+    fn test_error_kind_parsing() {
+        let mut builder = CrashInfoBuilder::new();
+        let mut config = None;
+
+        // Transition to ErrorKind state
+        let mut state = StdinState::Waiting;
+        state = process_line(
+            &mut builder,
+            &mut config,
+            DD_CRASHTRACK_BEGIN_ERROR_KIND,
+            state,
+            &None,
+        )
+        .unwrap();
+        assert!(matches!(state, StdinState::ErrorKind));
+
+        // Parse the error kind
+        state = process_line(
+            &mut builder,
+            &mut config,
+            "\"UnhandledException\"",
+            state,
+            &None,
+        )
+        .unwrap();
+        assert!(matches!(state, StdinState::ErrorKind));
+        assert_eq!(builder.error.kind, Some(ErrorKind::UnhandledException));
+
+        // End the block
+        state = process_line(
+            &mut builder,
+            &mut config,
+            DD_CRASHTRACK_END_ERROR_KIND,
+            state,
+            &None,
+        )
+        .unwrap();
+        assert!(matches!(state, StdinState::Waiting));
+    }
+
+    #[test]
+    fn test_error_kind_default_fallback() {
+        // When no ERROR_KIND block is received, the builder should have no kind set.
+        // The receive_report_from_stream function defaults to UnixSignal.
+        let builder = CrashInfoBuilder::new();
+        assert!(builder.error.kind.is_none());
+    }
+
+    #[test]
+    fn test_is_ping_ready_with_error_kind() {
+        use crate::crash_info::Metadata;
+
+        let mut builder = CrashInfoBuilder::new();
+        assert!(!builder.is_ping_ready());
+
+        // With metadata alone, not ready
+        builder
+            .with_metadata(Metadata::new(
+                "lib".to_string(),
+                "1.0".to_string(),
+                "test".to_string(),
+                vec![],
+            ))
+            .unwrap();
+        assert!(!builder.is_ping_ready());
+
+        // With metadata + error_kind (no siginfo), should be ready
+        builder.with_kind(ErrorKind::UnhandledException).unwrap();
+        assert!(builder.is_ping_ready());
     }
 }

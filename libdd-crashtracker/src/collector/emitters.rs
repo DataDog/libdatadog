@@ -4,12 +4,15 @@
 use crate::collector::additional_tags::consume_and_emit_additional_tags;
 use crate::collector::counters::emit_counters;
 use crate::collector::spans::{emit_spans, emit_traces};
+use crate::crash_info::StackTrace;
 use crate::runtime_callback::{
     get_registered_callback, invoke_runtime_callback_with_writer, is_runtime_callback_registered,
     CallbackData,
 };
 use crate::shared::constants::*;
-use crate::{translate_si_code, CrashtrackerConfiguration, SignalNames, StacktraceCollection};
+use crate::{
+    translate_si_code, CrashtrackerConfiguration, ErrorKind, SignalNames, StacktraceCollection,
+};
 use backtrace::Frame;
 use libc::{siginfo_t, ucontext_t};
 use std::{
@@ -54,17 +57,6 @@ unsafe fn emit_backtrace_by_frames(
     // https://docs.rs/backtrace/latest/backtrace/index.html
     writeln!(w, "{DD_CRASHTRACK_BEGIN_STACKTRACE}")?;
 
-    // Absolute addresses appear to be safer to collect during a crash than debug info.
-    fn emit_absolute_addresses(w: &mut impl Write, frame: &Frame) -> Result<(), EmitterError> {
-        write!(w, "\"ip\": \"{:?}\"", frame.ip())?;
-        if let Some(module_base_address) = frame.module_base_address() {
-            write!(w, ", \"module_base_address\": \"{module_base_address:?}\"",)?;
-        }
-        write!(w, ", \"sp\": \"{:?}\"", frame.sp())?;
-        write!(w, ", \"symbol_address\": \"{:?}\"", frame.symbol_address())?;
-        Ok(())
-    }
-
     let mut ip_found = false;
     loop {
         backtrace::trace_unsynchronized(|frame| {
@@ -83,7 +75,7 @@ unsafe fn emit_backtrace_by_frames(
                     #[allow(clippy::unwrap_used)]
                     write!(w, "{{").unwrap();
                     #[allow(clippy::unwrap_used)]
-                    emit_absolute_addresses(w, frame).unwrap();
+                    emit_absolute_addresses_for_frame(w, frame).unwrap();
                     if let Some(column) = symbol.colno() {
                         #[allow(clippy::unwrap_used)]
                         write!(w, ", \"column\": {column}").unwrap();
@@ -112,7 +104,7 @@ unsafe fn emit_backtrace_by_frames(
                 #[allow(clippy::unwrap_used)]
                 write!(w, "{{").unwrap();
                 #[allow(clippy::unwrap_used)]
-                emit_absolute_addresses(w, frame).unwrap();
+                emit_absolute_addresses_for_frame(w, frame).unwrap();
                 #[allow(clippy::unwrap_used)]
                 writeln!(w, "}}").unwrap();
                 // Flush eagerly to ensure that each frame gets emitted even if the next one fails
@@ -285,6 +277,213 @@ fn emit_runtime_stack_by_stacktrace_string(w: &mut impl Write) -> Result<(), Emi
     unsafe { invoke_runtime_callback_with_writer(w)? };
     writeln!(w, "{DD_CRASHTRACK_END_RUNTIME_STACK_STRING}")?;
     w.flush()?;
+    Ok(())
+}
+
+fn emit_error_kind(w: &mut impl Write, kind: &ErrorKind) -> Result<(), EmitterError> {
+    writeln!(w, "{DD_CRASHTRACK_BEGIN_ERROR_KIND}")?;
+    writeln!(w, "\"{}\"", kind.as_str())?;
+    writeln!(w, "{DD_CRASHTRACK_END_ERROR_KIND}")?;
+    w.flush()?;
+    Ok(())
+}
+
+fn emit_message_str(w: &mut impl Write, message: &str) -> Result<(), EmitterError> {
+    if !message.trim().is_empty() {
+        writeln!(w, "{DD_CRASHTRACK_BEGIN_MESSAGE}")?;
+        writeln!(w, "{message}")?;
+        writeln!(w, "{DD_CRASHTRACK_END_MESSAGE}")?;
+        w.flush()?;
+    }
+    Ok(())
+}
+
+/// Capture and emit a native backtrace from the current call site.
+///
+/// Unlike `emit_backtrace_by_frames` which filters by `fault_ip` from a signal's
+/// ucontext, this function captures the backtrace from the current thread without
+/// filtering. The first few frames will be internal to the crashtracker, which is
+/// acceptable since the primary stack trace for unhandled exceptions is the
+/// runtime-provided stack in the `experimental.runtime_stack` field.
+///
+/// SAFETY:
+///     Crash-tracking functions are not reentrant.
+///     No other crash-handler functions should be called concurrently.
+unsafe fn emit_backtrace_from_caller(
+    w: &mut impl Write,
+    resolve_frames: StacktraceCollection,
+) -> Result<(), EmitterError> {
+    writeln!(w, "{DD_CRASHTRACK_BEGIN_STACKTRACE}")?;
+
+    backtrace::trace_unsynchronized(|frame| {
+        if resolve_frames == StacktraceCollection::EnabledWithInprocessSymbols {
+            backtrace::resolve_frame_unsynchronized(frame, |symbol| {
+                #[allow(clippy::unwrap_used)]
+                write!(w, "{{").unwrap();
+                #[allow(clippy::unwrap_used)]
+                emit_absolute_addresses_for_frame(w, frame).unwrap();
+                if let Some(column) = symbol.colno() {
+                    #[allow(clippy::unwrap_used)]
+                    write!(w, ", \"column\": {column}").unwrap();
+                }
+                if let Some(file) = symbol.filename() {
+                    #[allow(clippy::unwrap_used)]
+                    write!(w, ", \"file\": {file:?}").unwrap();
+                }
+                if let Some(function) = symbol.name() {
+                    #[allow(clippy::unwrap_used)]
+                    write!(w, ", \"function\": \"{function}\"").unwrap();
+                }
+                if let Some(line) = symbol.lineno() {
+                    #[allow(clippy::unwrap_used)]
+                    write!(w, ", \"line\": {line}").unwrap();
+                }
+                #[allow(clippy::unwrap_used)]
+                writeln!(w, "}}").unwrap();
+                #[allow(clippy::unwrap_used)]
+                w.flush().unwrap();
+            });
+        } else {
+            #[allow(clippy::unwrap_used)]
+            write!(w, "{{").unwrap();
+            #[allow(clippy::unwrap_used)]
+            emit_absolute_addresses_for_frame(w, frame).unwrap();
+            #[allow(clippy::unwrap_used)]
+            writeln!(w, "}}").unwrap();
+            #[allow(clippy::unwrap_used)]
+            w.flush().unwrap();
+        }
+        true // keep going to the next frame
+    });
+
+    writeln!(w, "{DD_CRASHTRACK_END_STACKTRACE}")?;
+    w.flush()?;
+    Ok(())
+}
+
+/// Emit absolute address fields for a backtrace frame.
+/// Shared between `emit_backtrace_by_frames` and `emit_backtrace_from_caller`.
+fn emit_absolute_addresses_for_frame(
+    w: &mut impl Write,
+    frame: &Frame,
+) -> Result<(), EmitterError> {
+    write!(w, "\"ip\": \"{:?}\"", frame.ip())?;
+    if let Some(module_base_address) = frame.module_base_address() {
+        write!(w, ", \"module_base_address\": \"{module_base_address:?}\"",)?;
+    }
+    write!(w, ", \"sp\": \"{:?}\"", frame.sp())?;
+    write!(w, ", \"symbol_address\": \"{:?}\"", frame.symbol_address())?;
+    Ok(())
+}
+
+/// Emit caller-provided runtime stack frames using the RuntimeStackFrame wire format.
+///
+/// This converts `StackFrame` fields into the byte-array JSON format expected by
+/// the receiver's `RuntimeStackFrame` parser, so the existing receiver parsing
+/// code works unchanged.
+fn emit_runtime_stack_from_stacktrace(
+    w: &mut impl Write,
+    stack: &StackTrace,
+) -> Result<(), EmitterError> {
+    writeln!(w, "{DD_CRASHTRACK_BEGIN_RUNTIME_STACK_FRAME}")?;
+    for frame in &stack.frames {
+        write!(w, "{{")?;
+        let mut first = true;
+        if let Some(ref func) = frame.function {
+            write!(w, "\"function\": {:?}", func.as_bytes())?;
+            first = false;
+        }
+        if let Some(ref tn) = frame.type_name {
+            if !first {
+                write!(w, ", ")?;
+            }
+            write!(w, "\"type_name\": {:?}", tn.as_bytes())?;
+            first = false;
+        }
+        if let Some(ref file) = frame.file {
+            if !first {
+                write!(w, ", ")?;
+            }
+            write!(w, "\"file\": {:?}", file.as_bytes())?;
+            first = false;
+        }
+        if let Some(line) = frame.line {
+            if !first {
+                write!(w, ", ")?;
+            }
+            write!(w, "\"line\": {}", line)?;
+            first = false;
+        }
+        if let Some(col) = frame.column {
+            if !first {
+                write!(w, ", ")?;
+            }
+            write!(w, "\"column\": {}", col)?;
+        }
+        writeln!(w, "}}")?;
+    }
+    writeln!(w, "{DD_CRASHTRACK_END_RUNTIME_STACK_FRAME}")?;
+    w.flush()?;
+    Ok(())
+}
+
+fn current_tid() -> libc::pid_t {
+    #[cfg(target_os = "linux")]
+    {
+        unsafe { libc::syscall(libc::SYS_gettid) as libc::pid_t }
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        0
+    }
+}
+
+/// Emit a complete crash report for an unhandled exception.
+///
+/// This is the non-signal counterpart to `emit_crashreport`. It collects the same
+/// data where applicable (config, metadata, procinfo, counters, spans, traces,
+/// additional tags, proc/self/maps, native backtrace) but skips signal-specific
+/// data (siginfo, ucontext) and uses the caller-provided runtime stack instead
+/// of the registered runtime callback.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn emit_unhandled_exception_report(
+    pipe: &mut impl Write,
+    config: &CrashtrackerConfiguration,
+    config_str: &str,
+    metadata_string: &str,
+    message: &str,
+    runtime_stack: &StackTrace,
+) -> Result<(), EmitterError> {
+    // Ordering is designed for crash ping timing:
+    // config -> message -> error_kind -> metadata (ping fires after metadata)
+    emit_config(pipe, config_str)?;
+    emit_message_str(pipe, message)?;
+    emit_error_kind(pipe, &ErrorKind::UnhandledException)?;
+    emit_metadata(pipe, metadata_string)?;
+    // After metadata, crash ping should fire on receiver side
+
+    let pid = unsafe { libc::getpid() };
+    let tid = current_tid();
+    emit_procinfo(pipe, pid, tid)?;
+    emit_counters(pipe)?;
+    emit_spans(pipe)?;
+    consume_and_emit_additional_tags(pipe)?;
+    emit_traces(pipe)?;
+
+    #[cfg(target_os = "linux")]
+    emit_proc_self_maps(pipe)?;
+
+    // Native backtrace from current thread
+    if config.resolve_frames() != StacktraceCollection::Disabled {
+        unsafe { emit_backtrace_from_caller(pipe, config.resolve_frames())? };
+    }
+
+    // Runtime-provided stack frames
+    emit_runtime_stack_from_stacktrace(pipe, runtime_stack)?;
+
+    writeln!(pipe, "{DD_CRASHTRACK_DONE}")?;
+    pipe.flush()?;
+
     Ok(())
 }
 
@@ -614,5 +813,67 @@ mod tests {
         assert!(out.contains(&long_message[..100])); // At least first 100 chars
 
         unsafe { drop(Box::from_raw(message_ptr)) };
+    }
+
+    #[test]
+    fn test_emit_error_kind() {
+        let mut buf = Vec::new();
+        emit_error_kind(&mut buf, &ErrorKind::UnhandledException).expect("to work");
+        let out = str::from_utf8(&buf).expect("valid UTF8");
+        assert!(out.contains(DD_CRASHTRACK_BEGIN_ERROR_KIND));
+        assert!(out.contains(DD_CRASHTRACK_END_ERROR_KIND));
+        assert!(out.contains("\"UnhandledException\""));
+    }
+
+    #[test]
+    fn test_emit_message_str() {
+        let mut buf = Vec::new();
+        emit_message_str(&mut buf, "test exception message").expect("to work");
+        let out = str::from_utf8(&buf).expect("valid UTF8");
+        assert!(out.contains("BEGIN_MESSAGE"));
+        assert!(out.contains("END_MESSAGE"));
+        assert!(out.contains("test exception message"));
+    }
+
+    #[test]
+    fn test_emit_message_str_empty() {
+        let mut buf = Vec::new();
+        emit_message_str(&mut buf, "").expect("to work");
+        assert!(buf.is_empty());
+    }
+
+    #[test]
+    fn test_emit_runtime_stack_from_stacktrace() {
+        use crate::crash_info::StackFrame;
+
+        let mut frame = StackFrame::new();
+        frame.function = Some("my_function".to_string());
+        frame.file = Some("test.py".to_string());
+        frame.line = Some(42);
+
+        let stack = StackTrace::from_frames(vec![frame], false);
+        let mut buf = Vec::new();
+        emit_runtime_stack_from_stacktrace(&mut buf, &stack).expect("to work");
+        let out = str::from_utf8(&buf).expect("valid UTF8");
+
+        assert!(out.contains(DD_CRASHTRACK_BEGIN_RUNTIME_STACK_FRAME));
+        assert!(out.contains(DD_CRASHTRACK_END_RUNTIME_STACK_FRAME));
+        // Verify the byte-array format for function name
+        assert!(out.contains("\"function\""));
+        assert!(out.contains("\"line\": 42"));
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_emit_backtrace_from_caller() {
+        let mut buf = Vec::new();
+        unsafe {
+            emit_backtrace_from_caller(&mut buf, StacktraceCollection::WithoutSymbols)
+                .expect("to work");
+        }
+        let out = str::from_utf8(&buf).expect("valid UTF8");
+        assert!(out.contains("BEGIN_STACKTRACE"));
+        assert!(out.contains("END_STACKTRACE"));
+        assert!(out.contains("\"ip\":"));
     }
 }
