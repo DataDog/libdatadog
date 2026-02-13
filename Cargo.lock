@@ -2894,6 +2894,7 @@ dependencies = [
  "futures",
  "futures-core",
  "futures-util",
+ "getrandom 0.2.15",
  "hex",
  "http",
  "http-body",
@@ -2921,6 +2922,7 @@ dependencies = [
  "tokio",
  "tokio-rustls",
  "tower-service",
+ "web-time",
  "windows-sys 0.52.0",
 ]
 
@@ -3030,6 +3032,7 @@ dependencies = [
  "tokio-util",
  "tracing",
  "uuid",
+ "web-time",
 ]
 
 [[package]]
@@ -3212,6 +3215,7 @@ dependencies = [
  "anyhow",
  "base64 0.22.1",
  "futures",
+ "getrandom 0.2.15",
  "hashbrown 0.15.1",
  "http",
  "http-body-util",
@@ -3228,6 +3232,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "uuid",
+ "web-time",
  "winver",
 ]
 
@@ -3326,6 +3331,7 @@ dependencies = [
  "criterion",
  "flate2",
  "futures",
+ "getrandom 0.2.15",
  "http",
  "http-body-util",
  "httpmock",
