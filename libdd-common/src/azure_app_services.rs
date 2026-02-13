@@ -263,6 +263,35 @@ impl AzureMetadata {
     pub fn get_function_runtime_version(&self) -> &str {
         get_value_or_unknown!(self.function_runtime_version)
     }
+
+    /// Returns all Azure App Services tags as an iterator of (tag_name, tag_value) tuples.
+    pub fn get_all_tags(&self) -> impl ExactSizeIterator<Item = (&'static str, &str)> {
+        [
+            (
+                "aas.environment.extension_version",
+                self.get_extension_version(),
+            ),
+            (
+                "aas.environment.function_runtime",
+                self.get_function_runtime_version(),
+            ),
+            ("aas.environment.instance_id", self.get_instance_id()),
+            ("aas.environment.instance_name", self.get_instance_name()),
+            ("aas.environment.os", self.get_operating_system()),
+            ("aas.environment.runtime", self.get_runtime()),
+            (
+                "aas.environment.runtime_version",
+                self.get_runtime_version(),
+            ),
+            ("aas.resource.group", self.get_resource_group()),
+            ("aas.resource.id", self.get_resource_id()),
+            ("aas.site.kind", self.get_site_kind()),
+            ("aas.site.name", self.get_site_name()),
+            ("aas.site.type", self.get_site_type()),
+            ("aas.subscription.id", self.get_subscription_id()),
+        ]
+        .into_iter()
+    }
 }
 
 pub static AAS_METADATA: LazyLock<Option<AzureMetadata>> =
@@ -710,6 +739,90 @@ mod tests {
         );
         assert_eq!(expected_runtime, metadata.get_runtime());
         assert_eq!(expected_runtime_version, metadata.get_runtime_version());
+    }
+
+    #[test]
+    fn test_get_all_tags() {
+        let expected_site_name = "my_site_name";
+        let expected_resource_group = "my_resource_group";
+        let expected_site_version = "v42";
+        let expected_operating_system = "FreeBSD";
+        let expected_instance_name = "my_instance_name";
+        let expected_instance_id = "my_instance_id";
+        let expected_function_extension_version = "~4";
+        let expected_runtime = "node";
+        let expected_runtime_version = "18";
+        let expected_subscription_id = "sub-123";
+        let expected_resource_id = "/subscriptions/sub-123/resourcegroups/my_resource_group/providers/microsoft.web/sites/my_site_name";
+
+        let mocked_env = MockEnv::new(&[
+            (WEBSITE_SITE_NAME, expected_site_name),
+            (WEBSITE_RESOURCE_GROUP, expected_resource_group),
+            (SITE_EXTENSION_VERSION, expected_site_version),
+            (WEBSITE_OS, expected_operating_system),
+            (INSTANCE_NAME, expected_instance_name),
+            (INSTANCE_ID, expected_instance_id),
+            (SERVICE_CONTEXT, "1"),
+            (
+                FUNCTIONS_EXTENSION_VERSION,
+                expected_function_extension_version,
+            ),
+            (FUNCTIONS_WORKER_RUNTIME, expected_runtime),
+            (FUNCTIONS_WORKER_RUNTIME_VERSION, expected_runtime_version),
+            (
+                WEBSITE_OWNER_NAME,
+                &format!("{}+rg-webspace", expected_subscription_id),
+            ),
+        ]);
+
+        let metadata = AzureMetadata::new(mocked_env).unwrap();
+
+        // Collect tags into a HashMap for easy lookup
+        let tags: std::collections::HashMap<&str, &str> = metadata.get_all_tags().collect();
+
+        // Verify all 13 tags are present
+        assert_eq!(tags.len(), 13);
+        assert_eq!(tags.get("aas.resource.id"), Some(&expected_resource_id));
+        assert_eq!(
+            tags.get("aas.environment.extension_version"),
+            Some(&expected_site_version)
+        );
+        assert_eq!(
+            tags.get("aas.environment.instance_id"),
+            Some(&expected_instance_id)
+        );
+        assert_eq!(
+            tags.get("aas.environment.instance_name"),
+            Some(&expected_instance_name)
+        );
+        assert_eq!(
+            tags.get("aas.environment.os"),
+            Some(&expected_operating_system)
+        );
+        assert_eq!(tags.get("aas.environment.runtime"), Some(&expected_runtime));
+        assert_eq!(
+            tags.get("aas.environment.runtime_version"),
+            Some(&expected_runtime_version)
+        );
+        assert_eq!(
+            tags.get("aas.environment.function_runtime"),
+            Some(&expected_function_extension_version)
+        );
+        assert_eq!(
+            tags.get("aas.resource.group"),
+            Some(&expected_resource_group)
+        );
+        assert_eq!(tags.get("aas.site.name"), Some(&expected_site_name));
+        assert_eq!(tags.get("aas.site.kind"), Some(&"functionapp"));
+        assert_eq!(tags.get("aas.site.type"), Some(&"function"));
+        assert_eq!(
+            tags.get("aas.subscription.id"),
+            Some(&expected_subscription_id)
+        );
+
+        // Verify it's an ExactSizeIterator
+        let iter = metadata.get_all_tags();
+        assert_eq!(iter.len(), 13);
     }
 
     #[test]
