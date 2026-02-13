@@ -226,38 +226,32 @@ pub fn enable() {
     ENABLED.store(true, SeqCst);
 }
 
-/// Returns whether the crashtracker is currently enabled.
-pub(crate) fn is_enabled() -> bool {
-    ENABLED.load(SeqCst)
-}
-
-/// Loads the current config and metadata without consuming them.
+/// Swaps the stored config and metadata to null and returns references to them.
 ///
-/// Unlike the signal handler path which swaps the statics to null (one-time use),
-/// this function uses `load()` so the statics remain available for future use.
-/// This is intended for the non-signal crash reporting path where the process
-/// continues running after the report.
+/// This is the common extraction pattern used by both the signal handler and the
+/// unhandled exception reporting path. The statics are consumed (swapped to null),
+/// so subsequent calls will return `NoConfig` / `NoMetadata`.
 ///
-/// # Safety
-///   Crash-tracking functions are not reentrant.
-///   No other crash-handler functions should be called concurrently.
-pub(crate) fn load_config_and_metadata() -> Result<
+/// SAFETY:
+///     The returned references are valid as long as the caller does not drop them.
+///     The pointers came from `Box::into_raw` in `update_config` / `update_metadata`.
+#[allow(clippy::type_complexity)]
+pub(crate) fn swap_config_and_metadata() -> Result<
     (
         &'static (CrashtrackerConfiguration, String),
         &'static (Metadata, String),
     ),
     CrashHandlerError,
 > {
-    let config_ptr = CONFIG.load(SeqCst);
+    let config_ptr = CONFIG.swap(ptr::null_mut(), SeqCst);
     if config_ptr.is_null() {
         return Err(CrashHandlerError::NoConfig);
     }
-    let metadata_ptr = METADATA.load(SeqCst);
+    let metadata_ptr = METADATA.swap(ptr::null_mut(), SeqCst);
     if metadata_ptr.is_null() {
         return Err(CrashHandlerError::NoMetadata);
     }
-    // SAFETY: The pointers came from Box::into_raw in update_config/update_metadata.
-    // Non-reentrant contract guarantees no concurrent mutation.
+    // SAFETY: pointers came from Box::into_raw in update_config/update_metadata.
     unsafe { Ok((&*config_ptr, &*metadata_ptr)) }
 }
 
@@ -289,17 +283,7 @@ fn handle_posix_signal_impl(
     // Leak config and metadata to avoid calling `drop` during a crash
     // Note that these operations also replace the global states.  When the one-time guard is
     // passed, all global configuration and metadata becomes invalid.
-    let config_ptr = CONFIG.swap(ptr::null_mut(), SeqCst);
-    if config_ptr.is_null() {
-        return Err(CrashHandlerError::NoConfig);
-    }
-    let (config, config_str) = unsafe { &*config_ptr };
-
-    let metadata_ptr = METADATA.swap(ptr::null_mut(), SeqCst);
-    if metadata_ptr.is_null() {
-        return Err(CrashHandlerError::NoMetadata);
-    }
-    let (_metadata, metadata_string) = unsafe { &*metadata_ptr };
+    let ((config, config_str), (_metadata, metadata_string)) = swap_config_and_metadata()?;
 
     // Get the panic message pointer but don't dereference or deallocate in signal handler.
     // The collector child process will handle converting this to a String after forking.

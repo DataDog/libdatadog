@@ -5,7 +5,7 @@
 use super::{crash_handler::enable, receiver_manager::Receiver};
 use crate::{
     clear_spans, clear_traces,
-    collector::crash_handler::{is_enabled, load_config_and_metadata, register_panic_hook},
+    collector::crash_handler::register_panic_hook,
     collector::emitters::emit_unhandled_exception_report,
     collector::signal_handler_manager::register_crash_handlers,
     crash_info::{Metadata, StackTrace},
@@ -124,19 +124,15 @@ pub fn reconfigure(
 /// Report an unhandled exception as a crash event.
 ///
 /// This function sends a crash report to the receiver for an unhandled exception
-/// detected by the runtime. Unlike the signal-based crash path:
-/// - No collector fork is needed (we are in normal execution context)
-/// - The process continues running after this call returns
-/// - Config, metadata, and receiver config are NOT consumed (loaded non-destructively)
-/// - Multiple calls are allowed (no one-time guard)
+/// detected by the runtime. Unlike the signal-based crash path, no collector fork
+/// is needed (we are in normal execution context).
 ///
 /// The runtime provides the stack trace (goes into `experimental.runtime_stack`),
 /// and libdatadog captures the native backtrace (goes into `error.stack`).
 ///
-/// # Parameters
-/// - `error_type`: The type/class of the exception (e.g. "NullPointerException")
-/// - `error_message`: Optional human-readable error message
-/// - `runtime_stack`: Runtime-provided stack frames
+/// Note: This function consumes the stored config, metadata, and receiver config
+/// (same as the signal-based crash path). It is intended to be called when the
+/// process is in a terminal state due to an unhandled exception.
 ///
 /// PRECONDITIONS:
 ///     This function assumes that the crash-tracker has previously been
@@ -152,12 +148,10 @@ pub fn report_unhandled_exception(
     error_message: Option<&str>,
     runtime_stack: StackTrace,
 ) -> anyhow::Result<()> {
-    if !is_enabled() {
-        return Ok(());
-    }
-
-    // Load config and metadata non-destructively (process continues after report)
-    let ((config, config_str), (_metadata, metadata_string)) = load_config_and_metadata()?;
+    // Swap config and metadata to null, same as the signal path.
+    // The process is expected to be in a terminal state.
+    let ((config, config_str), (_metadata, metadata_string)) =
+        super::crash_handler::swap_config_and_metadata()?;
 
     let timeout_manager = TimeoutManager::new(config.timeout());
 
@@ -173,10 +167,10 @@ pub fn report_unhandled_exception(
         ),
     };
 
-    // Spawn receiver (non-destructive, config remains for future use)
+    // Spawn receiver (consumes stored config, same as signal path)
     let unix_socket_path = config.unix_socket_path().as_deref().unwrap_or_default();
     let receiver = if unix_socket_path.is_empty() {
-        Receiver::spawn_from_stored_config_non_destructive()?
+        Receiver::spawn_from_stored_config()?
     } else {
         Receiver::from_socket(unix_socket_path)?
     };
@@ -184,7 +178,7 @@ pub fn report_unhandled_exception(
     // Save the fd before receiver is consumed by finish()
     let uds_fd = receiver.handle.uds_fd;
 
-    // Write directly to the receiver socket (no collector fork needed --
+    // Write directly to the receiver socket (no collector fork needed
     // we are in normal execution context, not a signal handler)
     let pipe = unsafe { UnixStream::from_raw_fd(uds_fd) };
 

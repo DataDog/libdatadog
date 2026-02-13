@@ -116,23 +116,6 @@ impl Receiver {
         Self::spawn_from_config(config, prepared_exec)
     }
 
-    /// Spawns a receiver from stored config without consuming it.
-    ///
-    /// Unlike `spawn_from_stored_config` which swaps the config to null (for signal
-    /// handler safety), this uses `load()` so the config remains available for future
-    /// use. Intended for the non-signal crash reporting path where the process continues
-    /// running after the report.
-    pub(crate) fn spawn_from_stored_config_non_destructive() -> Result<Self, ReceiverError> {
-        let receiver_config = RECEIVER_CONFIG.load(SeqCst);
-        if receiver_config.is_null() {
-            return Err(ReceiverError::NoConfig);
-        }
-        // SAFETY: pointer came from Box::into_raw in update_stored_config.
-        // Non-reentrant contract guarantees no concurrent mutation.
-        let (config, prepared_exec) = unsafe { &*receiver_config };
-        Self::spawn_from_config(config, prepared_exec)
-    }
-
     /// Ensures that the receiver has the configuration when it starts.
     /// PRECONDITIONS:
     ///    None
