@@ -49,6 +49,8 @@ pub struct Application {
     pub runtime_version: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub runtime_patches: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub process_tags: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Default, Debug)]

@@ -77,6 +77,7 @@ impl TelemetryCachedClient {
         instance_id: &InstanceId,
         runtime_meta: &RuntimeMetadata,
         get_config: impl FnOnce() -> libdd_telemetry::config::Config,
+        process_tags: Option<String>,
     ) -> Self {
         let mut builder = TelemetryWorkerBuilder::new_fetch_host(
             service.to_string(),
@@ -87,6 +88,7 @@ impl TelemetryCachedClient {
 
         builder.runtime_id = Some(instance_id.runtime_id.clone());
         builder.application.env = Some(env.to_string());
+        builder.application.process_tags = process_tags;
         let config = get_config();
         builder.config = config.clone();
 
@@ -298,6 +300,7 @@ impl TelemetryCachedClientSet {
         instance_id: &InstanceId,
         runtime_meta: &RuntimeMetadata,
         get_config: F,
+        process_tags: Option<String>,
     ) -> Arc<Mutex<TelemetryCachedClient>>
     where
         F: FnOnce() -> libdd_telemetry::config::Config,
@@ -330,6 +333,7 @@ impl TelemetryCachedClientSet {
                 instance_id,
                 runtime_meta,
                 get_config,
+                process_tags,
             ))),
         };
 
@@ -487,6 +491,8 @@ fn get_telemetry_client(
             })
     };
 
+    let process_tags = session.process_tags.lock_or_panic().clone();
+
     TelemetryCachedClientSet::get_or_create(
         &sidecar.telemetry_clients,
         service_name,
@@ -494,5 +500,6 @@ fn get_telemetry_client(
         instance_id,
         &runtime_meta,
         get_config,
+        process_tags,
     )
 }

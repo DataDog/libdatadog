@@ -67,6 +67,14 @@ pub trait SidecarInterface {
         is_fork: bool,
     );
 
+    /// Updates the process tags for an existing session.
+    ///
+    /// # Arguments
+    ///
+    /// * `session_id` - The ID of the session.
+    /// * `process_tags` - The process tags string.
+    async fn set_session_process_tags(session_id: String, process_tags: String);
+
     /// Shuts down a runtime.
     ///
     /// # Arguments
