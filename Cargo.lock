@@ -3147,6 +3147,7 @@ dependencies = [
  "libdd-ddsketch",
  "libdd-dogstatsd-client",
  "libdd-log",
+ "libdd-provider",
  "libdd-telemetry",
  "libdd-tinybytes",
  "libdd-trace-protobuf",
