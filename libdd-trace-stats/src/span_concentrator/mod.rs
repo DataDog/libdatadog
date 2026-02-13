@@ -74,11 +74,13 @@ impl SpanConcentrator {
     /// - `now` the current system time, used to define the oldest bucket
     /// - `span_kinds_stats_computed` list of span kinds eligible for stats computation
     /// - `peer_tags_keys` list of keys considered as peer tags for aggregation
+    /// - `buffer_len` number of buckets to keep when flushing
     pub fn new(
         bucket_size: Duration,
         now: SystemTime,
         span_kinds_stats_computed: Vec<String>,
         peer_tag_keys: Vec<String>,
+        buffer_len: usize,
     ) -> SpanConcentrator {
         SpanConcentrator {
             bucket_size: bucket_size.as_nanos() as u64,
@@ -87,7 +89,7 @@ impl SpanConcentrator {
                 system_time_to_unix_duration(now).as_nanos() as u64,
                 bucket_size.as_nanos() as u64,
             ),
-            buffer_len: 2,
+            buffer_len,
             span_kinds_stats_computed,
             peer_tag_keys,
         }
