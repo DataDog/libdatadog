@@ -8,6 +8,10 @@ use core::cmp::Ordering;
 use core::hash::Hasher;
 use core::ops::Deref;
 use libdd_profiling_protobuf::prost_impls as pprof;
+use std::collections::HashMap;
+use std::hash::BuildHasherDefault;
+
+type FxHashMap<K, V> = HashMap<K, V, BuildHasherDefault<rustc_hash::FxHasher>>;
 
 #[derive(Clone, Debug, Default, Eq, PartialEq, Hash, TypeGenerator)]
 struct Function {
@@ -147,7 +151,7 @@ impl<'a> From<&'a Line> for api::Line<'a> {
 
 #[derive(Clone, Debug, Default, Eq, PartialEq, Hash, TypeGenerator)]
 struct Location {
-    mapping: Mapping,
+    mapping: Option<Mapping>,
     function: Function,
 
     /// The instruction address for this location, if available.  It
@@ -160,7 +164,7 @@ struct Location {
 }
 
 impl Location {
-    fn new(mapping: Mapping, function: Function, address: u64, line: i64) -> Self {
+    fn new(mapping: Option<Mapping>, function: Function, address: u64, line: i64) -> Self {
         Self {
             mapping,
             function,
@@ -168,12 +172,32 @@ impl Location {
             line,
         }
     }
+
+    fn normalize_zero_mapping(self) -> Self {
+        let mapping = self.mapping.and_then(|m| {
+            let is_zero = m.memory_start == 0
+                && m.memory_limit == 0
+                && m.file_offset == 0
+                && m.filename.is_empty()
+                && m.build_id.is_empty();
+            if is_zero {
+                None
+            } else {
+                Some(m)
+            }
+        });
+        Self { mapping, ..self }
+    }
 }
 
 impl<'a> From<&'a Location> for api::Location<'a> {
     fn from(value: &'a Location) -> Self {
         Self {
-            mapping: (&value.mapping).into(),
+            mapping: value
+                .mapping
+                .as_ref()
+                .map(api::Mapping::from)
+                .unwrap_or_default(),
             function: (&value.function).into(),
             address: value.address,
             line: value.line,
@@ -263,7 +287,11 @@ struct FuzzSample {
 impl From<FuzzSample> for Sample {
     fn from(sample: FuzzSample) -> Self {
         Self {
-            locations: sample.locations,
+            locations: sample
+                .locations
+                .into_iter()
+                .map(Location::normalize_zero_mapping)
+                .collect(),
             values: sample.values,
             labels: sample.labels.into_iter().map(Label::from).collect(),
         }
@@ -273,7 +301,12 @@ impl From<FuzzSample> for Sample {
 impl From<&FuzzSample> for Sample {
     fn from(sample: &FuzzSample) -> Self {
         Self {
-            locations: sample.locations.clone(),
+            locations: sample
+                .locations
+                .iter()
+                .cloned()
+                .map(Location::normalize_zero_mapping)
+                .collect(),
             values: sample.values.clone(),
             labels: sample.labels.iter().map(Label::from).collect(),
         }
@@ -313,7 +346,7 @@ fn assert_samples_eq(
     original_samples: &[(Option<Timestamp>, Sample)],
     profile: &pprof::Profile,
     samples_with_timestamps: &[&Sample],
-    samples_without_timestamps: &HashMap<(&[Location], &[Label]), Vec<i64>>,
+    samples_without_timestamps: &FxHashMap<(&[Location], &[Label]), Vec<i64>>,
     endpoint_mappings: &FxIndexMap<u64, &String>,
 ) {
     assert_eq!(
@@ -323,37 +356,46 @@ fn assert_samples_eq(
     );
 
     let mut expected_timestamped_samples = samples_with_timestamps.iter();
+    let mappings_by_id: FxHashMap<u64, &pprof::Mapping> = profile
+        .mappings
+        .iter()
+        .map(|mapping| (mapping.id, mapping))
+        .collect();
+    let functions_by_id: FxHashMap<u64, &pprof::Function> = profile
+        .functions
+        .iter()
+        .map(|function| (function.id, function))
+        .collect();
 
     for sample in profile.samples.iter() {
         // Recreate owned_locations from vector of pprof::Location
         let mut owned_locations = Vec::new();
         for loc_id in sample.location_ids.iter() {
-            // Subtract 1 because when creating pprof location ids, we use
-            // `small_non_zero_pprof_id()` function which guarantees that the id stored in pprof
-            // is +1 of the index in the vector of Locations in internal::Profile.
+            // Location ids in pprof are local 1-based ids assigned from the
+            // location table position during serialization.
             let location = &profile.locations[*loc_id as usize - 1];
 
             // PHP, Python, and Ruby don't use mappings, so allow for zero id.
-            let mapping = if location.mapping_id != 0 {
-                profile.mappings[location.mapping_id as usize - 1]
-            } else {
-                Default::default()
-            };
-            // internal::Location::to_pprof() always creates a single line.
+            let mapping = mappings_by_id.get(&location.mapping_id).copied();
+            // Serialization emits one line per location from api2::Location2.
             assert_eq!(1, location.lines.len());
             let line = location.lines[0];
-            let function = profile.functions[line.function_id as usize - 1];
+            let function = functions_by_id
+                .get(&line.function_id)
+                .expect("function id to exist in profile function table");
             assert!(!location.is_folded);
 
             // TODO: Consider using &str from the string table and make an `api::` mapping
             // to save allocations.
-            let owned_mapping = Mapping::new(
-                mapping.memory_start,
-                mapping.memory_limit,
-                mapping.file_offset,
-                string_table_fetch_owned(profile, mapping.filename),
-                string_table_fetch_owned(profile, mapping.build_id),
-            );
+            let owned_mapping = mapping.map(|m| {
+                Mapping::new(
+                    m.memory_start,
+                    m.memory_limit,
+                    m.file_offset,
+                    string_table_fetch_owned(profile, m.filename),
+                    string_table_fetch_owned(profile, m.build_id),
+                )
+            });
             let owned_function = Function::new(
                 string_table_fetch_owned(profile, function.name),
                 string_table_fetch_owned(profile, function.system_name),
@@ -428,7 +470,7 @@ fn fuzz_add_sample<'a>(
     expected_sample_types: &[api::SampleType],
     profile: &mut Profile,
     samples_with_timestamps: &mut Vec<&'a Sample>,
-    samples_without_timestamps: &mut HashMap<(&'a [Location], &'a [Label]), Vec<i64>>,
+    samples_without_timestamps: &mut FxHashMap<(&'a [Location], &'a [Label]), Vec<i64>>,
 ) {
     let r = profile.try_add_sample(sample.into(), *timestamp);
     if expected_sample_types.len() == sample.values.len() {
@@ -477,7 +519,8 @@ fn fuzz_failure_001() {
     )];
     let mut expected_profile = Profile::new(&sample_types, None);
     let mut samples_with_timestamps = Vec::new();
-    let mut samples_without_timestamps: HashMap<(&[Location], &[Label]), Vec<i64>> = HashMap::new();
+    let mut samples_without_timestamps: FxHashMap<(&[Location], &[Label]), Vec<i64>> =
+        FxHashMap::default();
 
     fuzz_add_sample(
         &original_samples[0].0,
@@ -516,8 +559,8 @@ fn test_fuzz_add_sample() {
 
             let mut expected_profile = Profile::new(expected_sample_types, None);
             let mut samples_with_timestamps = Vec::new();
-            let mut samples_without_timestamps: HashMap<(&[Location], &[Label]), Vec<i64>> =
-                HashMap::new();
+            let mut samples_without_timestamps: FxHashMap<(&[Location], &[Label]), Vec<i64>> =
+                FxHashMap::default();
             for (timestamp, sample) in &samples {
                 fuzz_add_sample(
                     timestamp,
@@ -570,8 +613,8 @@ fn fuzz_add_sample_with_fixed_sample_length() {
         .for_each(|(sample_types, samples)| {
             let mut profile = Profile::new(sample_types, None);
             let mut samples_with_timestamps = Vec::new();
-            let mut samples_without_timestamps: HashMap<(&[Location], &[Label]), Vec<i64>> =
-                HashMap::new();
+            let mut samples_without_timestamps: FxHashMap<(&[Location], &[Label]), Vec<i64>> =
+                FxHashMap::default();
 
             let samples: Vec<(Option<Timestamp>, Sample)> = samples
                 .iter()
@@ -579,7 +622,11 @@ fn fuzz_add_sample_with_fixed_sample_length() {
                     (
                         *timestamp,
                         Sample {
-                            locations: locations.clone(),
+                            locations: locations
+                                .iter()
+                                .cloned()
+                                .map(Location::normalize_zero_mapping)
+                                .collect(),
                             values: values.clone(),
                             labels: labels.iter().map(Label::from).collect::<Vec<Label>>(),
                         },
@@ -684,8 +731,8 @@ fn fuzz_api_function_calls() {
 
             let mut profile = Profile::new(sample_types, None);
             let mut samples_with_timestamps: Vec<&Sample> = Vec::new();
-            let mut samples_without_timestamps: HashMap<(&[Location], &[Label]), Vec<i64>> =
-                HashMap::new();
+            let mut samples_without_timestamps: FxHashMap<(&[Location], &[Label]), Vec<i64>> =
+                FxHashMap::default();
             let mut endpoint_mappings: FxIndexMap<u64, &String> = FxIndexMap::default();
 
             let mut original_samples = Vec::new();
