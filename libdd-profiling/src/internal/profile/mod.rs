@@ -862,6 +862,12 @@ impl Profile {
         profiles_dictionary_translator: ProfilesDictionaryTranslator,
     ) -> io::Result<Self> {
         let start_time = SystemTime::now();
+        let dictionary = profiles_dictionary_translator
+            .profiles_dictionary
+            .try_clone()
+            .map_err(|err| {
+                io::Error::other(format!("failed to clone profiles dictionary arc: {err}"))
+            })?;
         let mut profile = Self {
             profiles_dictionary_translator,
             active_samples: Default::default(),
@@ -874,22 +880,10 @@ impl Profile {
             sample_types,
             stack_traces: Default::default(),
             start_time,
-            strings: Default::default(),
+            strings: StringTable::new(dictionary),
             timestamp_key: Default::default(),
             upscaling_rules: Default::default(),
         };
-
-        // Keep the profile string table attached to the same dictionary used
-        // for api2 translation so dictionary-backed ids can be interned later
-        // without copying bytes.
-        let dictionary = profile
-            .profiles_dictionary_translator
-            .profiles_dictionary
-            .try_clone()
-            .map_err(|err| {
-                io::Error::other(format!("failed to clone profiles dictionary arc: {err}"))
-            })?;
-        profile.strings.attach_profiles_dictionary(dictionary);
 
         let _id = profile.intern("");
         debug_assert!(_id == StringId::ZERO);
