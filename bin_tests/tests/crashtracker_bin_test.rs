@@ -318,7 +318,6 @@ fn test_report_unhandled_exception() {
     let artifacts_map = build_artifacts(&artifacts.as_slice()).unwrap();
 
     let validator: ValidatorFn = Box::new(|payload, _fixtures| {
-        assert!(false, "{payload:?}");
         // Verify error kind is UnhandledException
         let error = &payload["error"];
         assert_eq!(
