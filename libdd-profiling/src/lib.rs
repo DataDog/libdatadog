@@ -16,3 +16,4 @@ pub mod internal;
 pub mod iter;
 pub mod pprof;
 pub mod profiles;
+pub mod threading;
