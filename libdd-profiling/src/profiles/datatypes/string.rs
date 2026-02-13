@@ -13,7 +13,7 @@ use crate::profiles::collections::StringRef;
 /// exception is for well-known strings, which are considered present in every
 /// string set.
 #[repr(transparent)]
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
+#[derive(Clone, Copy, Debug)]
 pub struct StringId2(*mut StringHeader);
 
 /// Represents what StringIds point to. Its definition is intentionally
