@@ -109,59 +109,6 @@ const SAMPLING_PRIORITY_KEY: &str = "_sampling_priority_v1";
 const SAMPLING_SINGLE_SPAN_MECHANISM: &str = "_dd.span_sampling.mechanism";
 const SAMPLING_ANALYTICS_RATE_KEY: &str = "_dd1.sr.eausr";
 
-/// Remove spans and chunks from v04 traces (compatibility function).
-pub fn drop_chunks_v04<T: TraceData>(traces: &mut Vec<Vec<crate::span::v04::Span<T>>>) -> DroppedP0Stats {
-    let mut dropped_p0_traces = 0;
-    let mut dropped_p0_spans = 0;
-
-    traces.retain_mut(|chunk| {
-        let priority = chunk.first()
-            .and_then(|span| span.metrics.get(SAMPLING_PRIORITY_KEY).copied())
-            .unwrap_or(0.0) as i32;
-
-        // List of spans to keep even if the chunk is dropped
-        let mut sampled_indexes = HashSet::new();
-        for (index, span) in chunk.iter().enumerate() {
-            // ErrorSampler
-            if span.error != 0 {
-                return true;
-            }
-            // PrioritySampler and NoPrioritySampler
-            let is_top_level = span.metrics.get(TRACER_TOP_LEVEL_KEY).is_some_and(|v| *v == 1.0)
-                || span.metrics.get(TOP_LEVEL_KEY).is_some_and(|v| *v == 1.0);
-            if is_top_level && priority > 0 {
-                return true;
-            }
-            // SingleSpanSampler and AnalyzedSpansSampler
-            else if span.metrics.get(SAMPLING_SINGLE_SPAN_MECHANISM).is_some_and(|m| *m == 8.0)
-                || span.metrics.get(SAMPLING_ANALYTICS_RATE_KEY).is_some()
-            {
-                sampled_indexes.insert(index);
-            } else {
-                dropped_p0_spans += 1;
-            }
-        }
-
-        if sampled_indexes.is_empty() {
-            dropped_p0_traces += 1;
-            return false;
-        }
-
-        let mut index = 0;
-        chunk.retain(|_| {
-            let retain = sampled_indexes.contains(&index);
-            index += 1;
-            retain
-        });
-        true
-    });
-
-    DroppedP0Stats {
-        dropped_p0_traces,
-        dropped_p0_spans,
-    }
-}
-
 /// Remove spans and chunks from a TraceCollection only keeping the ones that may be sampled by
 /// the agent.
 ///
@@ -229,7 +176,8 @@ pub fn drop_chunks<'a, D: TraceDataLifetime<'a>, T: TraceProjector<D>>(traces: &
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::span::v04::SpanBytes;
+    use crate::span::v04::{SpanBytes, TraceCollection};
+    use crate::span::BytesData;
 
     fn create_test_span(
         trace_id: u64,
@@ -274,8 +222,22 @@ mod tests {
     fn test_has_top_level() {
         let top_level_span = create_test_span(123, 1234, 12, 1, true);
         let not_top_level_span = create_test_span(123, 1234, 12, 1, false);
-        assert!(has_top_level(&top_level_span));
-        assert!(!has_top_level(&not_top_level_span));
+
+        let mut collection = TraceCollection::<BytesData>::new(vec![vec![top_level_span]]);
+        let traces = collection.project_mut();
+        for chunk in traces.chunks() {
+            for span in chunk.spans() {
+                assert!(has_top_level(&span));
+            }
+        }
+
+        let mut collection2 = TraceCollection::<BytesData>::new(vec![vec![not_top_level_span]]);
+        let traces2 = collection2.project_mut();
+        for chunk in traces2.chunks() {
+            for span in chunk.spans() {
+                assert!(!has_top_level(&span));
+            }
+        }
     }
 
     #[test]
@@ -283,15 +245,29 @@ mod tests {
         let mut measured_span = create_test_span(123, 1234, 12, 1, true);
         measured_span.metrics.insert(MEASURED_KEY.into(), 1.0);
         let not_measured_span = create_test_span(123, 1234, 12, 1, true);
-        assert!(is_measured(&measured_span));
-        assert!(!is_measured(&not_measured_span));
+
+        let mut collection = TraceCollection::<BytesData>::new(vec![vec![measured_span]]);
+        let traces = collection.project_mut();
+        for chunk in traces.chunks() {
+            for span in chunk.spans() {
+                assert!(is_measured(&span));
+            }
+        }
+
+        let mut collection2 = TraceCollection::<BytesData>::new(vec![vec![not_measured_span]]);
+        let traces2 = collection2.project_mut();
+        for chunk in traces2.chunks() {
+            for span in chunk.spans() {
+                assert!(!is_measured(&span));
+            }
+        }
     }
 
     #[test]
     fn test_compute_top_level() {
         let mut span_with_different_service = create_test_span(123, 5, 2, 1, false);
         span_with_different_service.service = "another_service".into();
-        let mut trace = vec![
+        let trace = vec![
             // Root span, should be marked as top-level
             create_test_span(123, 1, 0, 1, false),
             // Should not be marked as top-level
@@ -304,13 +280,19 @@ mod tests {
             span_with_different_service,
         ];
 
-        compute_top_level_span(trace.as_mut_slice());
+        let mut collection = TraceCollection::<BytesData>::new(vec![trace]);
+        let mut traces = collection.project_mut();
 
-        let spans_marked_as_top_level: Vec<u64> = trace
-            .iter()
+        for mut chunk in traces.chunks_mut() {
+            compute_top_level_span(&mut chunk);
+        }
+
+        let traces = collection.project();
+        let spans_marked_as_top_level: Vec<u64> = traces.chunks()
+            .flat_map(|chunk| chunk.spans())
             .filter_map(|span| {
-                if has_top_level(span) {
-                    Some(span.span_id)
+                if has_top_level(&span) {
+                    Some(span.span_id())
                 } else {
                     None
                 }
@@ -444,13 +426,14 @@ mod tests {
         ];
 
         for (chunk, expected_count) in chunks_and_expected_sampled_spans.into_iter() {
-            let mut traces = vec![chunk];
+            let mut collection = TraceCollection::<BytesData>::new(vec![chunk]);
+            let mut traces = collection.project_mut();
             drop_chunks(&mut traces);
 
             if expected_count == 0 {
-                assert!(traces.is_empty());
+                assert!(collection.traces.is_empty());
             } else {
-                assert_eq!(traces[0].len(), expected_count);
+                assert_eq!(collection.traces[0].len(), expected_count);
             }
         }
     }

@@ -286,7 +286,7 @@ impl<'a> DeserializableTraceData for SliceData<'a> {
 
     #[inline]
     fn try_slice_and_advance(buf: &mut &'a [u8], bytes: usize) -> Option<&'a [u8]> {
-        let slice = buf.get(0..bytes)?;
+        let slice = <[u8]>::get(*buf, 0..bytes)?;
         *buf = &buf[bytes..];
         Some(slice)
     }

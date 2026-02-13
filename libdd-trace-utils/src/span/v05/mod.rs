@@ -116,7 +116,7 @@ type SpanLink = [(); 0];
 type SpanEvent = [(); 0];
 
 
-pub struct ChunkCollection<D: TraceData + 'static> {
+pub struct ChunkCollection<D: TraceData> {
     pub dict: Storage<D>,
     pub chunks: Vec<Vec<Span>>,
     // TODO: collect header data here
@@ -147,8 +147,8 @@ fn find_chunk_root_span() {
 
 }
 
-impl<D: TraceData + 'static> TraceProjector<D> for ChunkCollection<D> {
-    type Storage<'a> = Storage<D>;
+impl<D: TraceData> TraceProjector<D> for ChunkCollection<D> {
+    type Storage<'a> = Storage<D> where D: 'a;
     type Trace<'a> = Trace;
     type Chunk<'a> = Chunk;
     type Span<'a> = Span;
@@ -161,11 +161,11 @@ impl<D: TraceData + 'static> TraceProjector<D> for ChunkCollection<D> {
     type AttributeSpanLink<'a> = TraceAttributes<'a, ChunkCollection<D>, D, AttrRef<'a, SpanLink>, SpanLink>;
     type AttributeSpanEvent<'a> = TraceAttributes<'a, ChunkCollection<D>, D, AttrRef<'a, SpanEvent>, SpanEvent>;
 */
-    fn project<'a>(&'a self) -> Traces<Self, D> where D: TraceDataLifetime<'a> {
+    fn project<'a>(&'a self) -> Traces<Self, D> {
         Traces::new(&self.chunks, &self.dict)
     }
 
-    fn project_mut<'a>(&'a mut self) -> TracesMut<Self, D> where D: TraceDataLifetime<'a> {
+    fn project_mut<'a>(&'a mut self) -> TracesMut<Self, D> {
         Traces::new_mut(&mut self.chunks, &mut self.dict)
     }
 
@@ -509,7 +509,7 @@ impl<D: TraceData + 'static> TraceProjector<D> for ChunkCollection<D> {
     }
 }
 //note: trait bound `trace::TraceAttributes<'_, T, D, trace::AttrRef<'_, <T as trace::TraceProjector<D>>::Span>, <T as trace::TraceProjector<D>>::Span, 0>: trace::TraceAttributesOp<'_, T, D, <T as trace::TraceProjector<D>>::Span>` was not satisfied
-impl<'a, 'b, D: TraceData + 'static, const Mut: u8> TraceAttributesOp<'b, 'a, ChunkCollection<D>, D, Span> for TraceAttributes<'a, ChunkCollection<D>, D, AttrRef<'b, Span>, Span, Mut> {
+impl<'a, 'b, D: TraceData, const Mut: u8> TraceAttributesOp<'b, 'a, ChunkCollection<D>, D, Span> for TraceAttributes<'a, ChunkCollection<D>, D, AttrRef<'b, Span>, Span, Mut> {
     type Array = ();
     type Map = ();
 
@@ -529,7 +529,7 @@ impl<'a, 'b, D: TraceData + 'static, const Mut: u8> TraceAttributesOp<'b, 'a, Ch
     }
 }
 
-impl<'a, 'b, D: TraceData + 'static> TraceAttributesMutOp<'b, 'a, ChunkCollection<D>, D, Span> for TraceAttributesMut<'a, ChunkCollection<D>, D, AttrRef<'b, Span>, Span> {
+impl<'a, 'b, D: TraceData> TraceAttributesMutOp<'b, 'a, ChunkCollection<D>, D, Span> for TraceAttributesMut<'a, ChunkCollection<D>, D, AttrRef<'b, Span>, Span> {
     type MutString = &'b mut TraceStringRef;
     type MutBytes = ();
     type MutBoolean = &'b mut f64;
@@ -614,7 +614,7 @@ impl<'a> TraceAttributesDouble for &'a mut f64 {
 }
 
 // Empty implementations for SpanLink and SpanEvent which don't have attributes in v05
-impl<'b, 'a, D: TraceData + 'static, const Mut: u8> TraceAttributesOp<'b, 'a, ChunkCollection<D>, D, [(); 0]> for TraceAttributes<'a, ChunkCollection<D>, D, AttrRef<'b, [(); 0]>, [(); 0], Mut> {
+impl<'b, 'a, D: TraceData, const Mut: u8> TraceAttributesOp<'b, 'a, ChunkCollection<D>, D, [(); 0]> for TraceAttributes<'a, ChunkCollection<D>, D, AttrRef<'b, [(); 0]>, [(); 0], Mut> {
     type Array = ();
     type Map = ();
 
@@ -626,7 +626,7 @@ impl<'b, 'a, D: TraceData + 'static, const Mut: u8> TraceAttributesOp<'b, 'a, Ch
     }
 }
 
-impl<'b, 'a, D: TraceData + 'static> TraceAttributesMutOp<'b, 'a, ChunkCollection<D>, D, [(); 0]> for TraceAttributesMut<'a, ChunkCollection<D>, D, AttrRef<'b, [(); 0]>, [(); 0]> {
+impl<'b, 'a, D: TraceData> TraceAttributesMutOp<'b, 'a, ChunkCollection<D>, D, [(); 0]> for TraceAttributesMut<'a, ChunkCollection<D>, D, AttrRef<'b, [(); 0]>, [(); 0]> {
     type MutString = ();
     type MutBytes = ();
     type MutBoolean = ();
@@ -653,7 +653,7 @@ impl<'b, 'a, D: TraceData + 'static> TraceAttributesMutOp<'b, 'a, ChunkCollectio
     }
 }
 
-impl<'b, 'a, D: TraceData + 'static, const Mut: u8> TraceAttributesOp<'b, 'a, ChunkCollection<D>, D, [(); 0]> for TraceAttributes<'a, ChunkCollection<D>, D, AttrRef<'b, Span>, Span, Mut> {
+impl<'b, 'a, D: TraceData, const Mut: u8> TraceAttributesOp<'b, 'a, ChunkCollection<D>, D, [(); 0]> for TraceAttributes<'a, ChunkCollection<D>, D, AttrRef<'b, Span>, Span, Mut> {
     type Array = ();
     type Map = ();
 
@@ -665,7 +665,7 @@ impl<'b, 'a, D: TraceData + 'static, const Mut: u8> TraceAttributesOp<'b, 'a, Ch
     }
 }
 
-impl<'b, 'a, D: TraceData + 'static, const Mut: u8> TraceAttributesOp<'b, 'a, ChunkCollection<D>, D, Trace> for TraceAttributes<'a, ChunkCollection<D>, D, AttrRef<'b, Trace>, Trace, Mut> {
+impl<'b, 'a, D: TraceData, const Mut: u8> TraceAttributesOp<'b, 'a, ChunkCollection<D>, D, Trace> for TraceAttributes<'a, ChunkCollection<D>, D, AttrRef<'b, Trace>, Trace, Mut> {
     type Array = ();
     type Map = ();
 
@@ -677,7 +677,7 @@ impl<'b, 'a, D: TraceData + 'static, const Mut: u8> TraceAttributesOp<'b, 'a, Ch
     }
 }
 
-impl<'b, 'a, D: TraceData + 'static, const Mut: u8> TraceAttributesOp<'b, 'a, ChunkCollection<D>, D, Chunk> for TraceAttributes<'a, ChunkCollection<D>, D, AttrRef<'b, Chunk>, Chunk, Mut> {
+impl<'b, 'a, D: TraceData, const Mut: u8> TraceAttributesOp<'b, 'a, ChunkCollection<D>, D, Chunk> for TraceAttributes<'a, ChunkCollection<D>, D, AttrRef<'b, Chunk>, Chunk, Mut> {
     type Array = ();
     type Map = ();
 
@@ -689,7 +689,7 @@ impl<'b, 'a, D: TraceData + 'static, const Mut: u8> TraceAttributesOp<'b, 'a, Ch
     }
 }
 
-impl<'b, 'a, D: TraceData + 'static> TraceAttributesMutOp<'b, 'a, ChunkCollection<D>, D, Chunk> for TraceAttributesMut<'a, ChunkCollection<D>, D, AttrRef<'b, Chunk>, Chunk> {
+impl<'b, 'a, D: TraceData> TraceAttributesMutOp<'b, 'a, ChunkCollection<D>, D, Chunk> for TraceAttributesMut<'a, ChunkCollection<D>, D, AttrRef<'b, Chunk>, Chunk> {
     type MutString = ();
     type MutBytes = ();
     type MutBoolean = ();
@@ -716,7 +716,7 @@ impl<'b, 'a, D: TraceData + 'static> TraceAttributesMutOp<'b, 'a, ChunkCollectio
     }
 }
 
-impl<'b, 'a, D: TraceData + 'static> TraceAttributesMutOp<'b, 'a, ChunkCollection<D>, D, Trace> for TraceAttributesMut<'a, ChunkCollection<D>, D, AttrRef<'b, Trace>, Trace> {
+impl<'b, 'a, D: TraceData> TraceAttributesMutOp<'b, 'a, ChunkCollection<D>, D, Trace> for TraceAttributesMut<'a, ChunkCollection<D>, D, AttrRef<'b, Trace>, Trace> {
     type MutString = ();
     type MutBytes = ();
     type MutBoolean = ();
