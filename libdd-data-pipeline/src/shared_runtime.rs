@@ -11,11 +11,8 @@
 use crate::pausable_worker::{PausableWorker, PausableWorkerError};
 use libdd_common::{worker::Worker, MutexExt};
 use std::fmt;
-use std::sync::{Arc, Mutex, PoisonError};
-use tokio::{
-    runtime::{Builder, Runtime},
-    task::JoinSet,
-};
+use std::sync::{Arc, Mutex};
+use tokio::runtime::{Builder, Runtime};
 
 /// Type alias for a boxed worker trait object that can be used with PausableWorker.
 type BoxedWorker = Box<dyn Worker + Send + Sync>;
@@ -70,10 +67,18 @@ impl From<std::io::Error> for SharedRuntimeError {
 /// The SharedRuntime owns a tokio runtime and tracks PausableWorkers spawned on it.
 /// It provides methods to safely pause workers before forking and restart them
 /// after fork in both parent and child processes.
-#[derive(Debug)]
 pub struct SharedRuntime {
     runtime: Arc<Mutex<Option<Arc<Runtime>>>>,
     workers: Arc<Mutex<Vec<PausableWorker<BoxedWorker>>>>,
+}
+
+impl std::fmt::Debug for SharedRuntime {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SharedRuntime")
+            .field("runtime", &self.runtime)
+            .field("workers", &"<opaque>")
+            .finish()
+    }
 }
 
 impl SharedRuntime {
@@ -88,7 +93,7 @@ impl SharedRuntime {
             .build()?;
 
         Ok(Self {
-            runtime: Arc::new(Mutex::new(Some(runtime))),
+            runtime: Arc::new(Mutex::new(Some(Arc::new(runtime)))),
             workers: Arc::new(Mutex::new(Vec::new())),
         })
     }
@@ -131,20 +136,15 @@ impl SharedRuntime {
     /// Returns an error if workers cannot be paused or the runtime is in an invalid state.
     pub async fn before_fork(&self) -> Result<(), SharedRuntimeError> {
         if let Some(runtime) = self.runtime.lock_or_panic().take() {
-            let pause_result: Result<Vec<()>, PausableWorkerError> = runtime
-                .block_on(async {
-                    let mut set = JoinSet::new();
-                    let mut workers_lock = self.workers.lock_or_panic();
+            runtime.block_on(async {
+                let mut workers_lock = self.workers.lock_or_panic();
 
-                    // Pause all workers
-                    for pausable_worker in workers_lock.iter_mut() {
-                        set.spawn(pausable_worker.pause());
-                    }
-                    set.join_all().await
-                })
-                .into_iter()
-                .collect();
-            pause_result.map_err(|err| SharedRuntimeError::WorkerError(err))?;
+                // Pause all workers sequentially
+                for pausable_worker in workers_lock.iter_mut() {
+                    pausable_worker.pause().await?;
+                }
+                Ok::<(), PausableWorkerError>(())
+            })?;
         }
         Ok(())
     }
@@ -222,7 +222,7 @@ impl SharedRuntime {
     /// Returns None if the runtime is not available (e.g., during fork operations).
     pub fn runtime(&self) -> Arc<Runtime> {
         match self.runtime.lock_or_panic().as_ref() {
-            None => Builder.new_current_thread().enable_all().build().unwrap(),
+            None => Arc::new(Builder::new_current_thread().enable_all().build().unwrap()),
             Some(runtime) => runtime.clone(),
         }
     }
@@ -280,7 +280,7 @@ mod tests {
             self.state += 1;
         }
 
-        async fn trigger(&self) {
+        async fn trigger(&mut self) {
             sleep(Duration::from_millis(100)).await;
         }
     }
