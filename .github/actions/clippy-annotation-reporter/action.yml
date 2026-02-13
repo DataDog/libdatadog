@@ -1,0 +1,56 @@
+name: 'Clippy Annotation Reporter'
+description: 'Reports changes in Clippy allow annotations'
+author: 'Datadog'
+
+inputs:
+  github-token:
+    description: 'GitHub token for PR comment access'
+    required: true
+    default: ${{ github.token }}
+  allow-annotation-rules:
+    description: 'Comma-separated list of clippy rules to track'
+    required: false
+    default: 'unwrap_used,expect_used,todo,unimplemented,panic,unreachable'
+  base-branch:
+    description: 'Base branch to compare against'
+    required: false
+    default: 'origin/main'
+  log_level:
+    description: 'Log level (error, warn, info, debug, trace)'
+    required: false
+    default: 'info'
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Set up Rust
+      shell: bash
+      run: rustup install stable && rustup default stable
+
+    - name: Fetch all branches
+      shell: bash
+      run: |
+        git fetch --all
+        echo "Available branches:"
+        git branch -a
+
+    - name: Build annotation reporter
+      shell: bash
+      run: |
+        cd ${{ github.action_path }}
+        cargo build --release
+    - name: Debug step
+      shell: bash
+      run: |
+        FILE_PATH="data-pipeline/src/trace_exporter/mod.rs"
+    - name: Run annotation reporter
+      shell: bash
+      run: |
+        ${{ github.action_path }}/target/release/clippy-annotation-reporter \
+          --token "${{ inputs.github-token }}" \
+          --rules "${{ inputs.allow-annotation-rules }}" \
+          --repo "${{ github.repository }}" \
+          --pr "${{ github.event.number }}" \
+          --base-branch "${{ inputs.base_branch }}"
+      env:
+        GITHUB_TOKEN: ${{ inputs.github-token }}

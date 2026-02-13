@@ -24,8 +24,8 @@ pub struct Replayer<'pprof> {
     pub start_time: SystemTime,
     pub duration: Duration,
     pub end_time: SystemTime, // start_time + duration
-    pub sample_types: Vec<api::ValueType<'pprof>>,
-    pub period: Option<api::Period<'pprof>>,
+    pub sample_types: Vec<api::SampleType>,
+    pub period: Option<api::Period>,
     pub endpoints: Vec<(u64, &'pprof str)>,
     pub samples: Vec<(Option<Timestamp>, api::Sample<'pprof>)>,
 }
@@ -57,29 +57,27 @@ impl<'pprof> Replayer<'pprof> {
 
     fn sample_types<'a>(
         profile_index: &'a ProfileIndex<'pprof>,
-    ) -> anyhow::Result<Vec<api::ValueType<'pprof>>> {
+    ) -> anyhow::Result<Vec<api::SampleType>> {
         let mut sample_types = Vec::with_capacity(profile_index.pprof.sample_types.len());
         for sample_type in profile_index.pprof.sample_types.iter() {
-            sample_types.push(api::ValueType::new(
-                profile_index.get_string(sample_type.r#type)?,
-                profile_index.get_string(sample_type.unit)?,
-            ))
+            let type_str = profile_index.get_string(sample_type.r#type)?;
+            let unit = profile_index.get_string(sample_type.unit)?;
+            let vt = api::ValueType::new(type_str, unit);
+            sample_types.push(vt.try_into()?);
         }
         Ok(sample_types)
     }
 
-    fn period<'a>(
-        profile_index: &'a ProfileIndex<'pprof>,
-    ) -> anyhow::Result<Option<api::Period<'pprof>>> {
+    fn period<'a>(profile_index: &'a ProfileIndex<'pprof>) -> anyhow::Result<Option<api::Period>> {
         let value = profile_index.pprof.period;
 
         match profile_index.pprof.period_type {
             Some(period_type) => {
-                let r#type = api::ValueType::new(
-                    profile_index.get_string(period_type.r#type)?,
-                    profile_index.get_string(period_type.unit)?,
-                );
-                Ok(Some(api::Period { r#type, value }))
+                let type_str = profile_index.get_string(period_type.r#type)?;
+                let unit = profile_index.get_string(period_type.unit)?;
+                let vt = api::ValueType::new(type_str, unit);
+                let sample_type = vt.try_into()?;
+                Ok(Some(api::Period { sample_type, value }))
             }
             None => Ok(None),
         }

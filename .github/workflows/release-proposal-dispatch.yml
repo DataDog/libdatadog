@@ -32,6 +32,8 @@ env:
   MAIN_BRANCH: main
   RELEASE_BRANCH: release
   PROPOSAL_BRANCH_PREFIX: release-proposal
+  GIT_USER_NAME: "dd-octo-sts[bot]"
+  GIT_USER_EMAIL: "200755185+dd-octo-sts[bot]@users.noreply.github.com"
 
 jobs:
   check-proposal-ongoing:
@@ -60,22 +62,39 @@ jobs:
     runs-on: ubuntu-latest
     needs: check-proposal-ongoing
     steps:
+      - uses: DataDog/dd-octo-sts-action@acaa02eee7e3bb0839e4272dacb37b8f3b58ba80 # v1.0.3
+        id: octo-sts
+        with:
+          scope: DataDog/libdatadog
+          policy: self.write.pr
+
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # 4.2.2
         with:
+          token: ${{ steps.octo-sts.outputs.token }}
           fetch-depth: 0
           fetch-tags: true
+
+      - name: Configure Git identity for dd-octo-sts GitHub App
+        env:
+          GH_TOKEN: ${{ steps.octo-sts.outputs.token }}
+        run: |
+
+          git config --global user.name "$GIT_USER_NAME"
+          git config --global user.email "$GIT_USER_EMAIL"
+
       - name: Merge the main branch into the release branch
         run: |
           git fetch origin "${{ env.RELEASE_BRANCH }}" --tags
           git checkout "${{ env.RELEASE_BRANCH }}"
-          # only fast-forward the merge
-          if ! git merge --ff-only origin/"${{ env.MAIN_BRANCH }}"; then
-            echo "Error: Cannot fast-forward merge ${{ env.MAIN_BRANCH }} into ${{ env.RELEASE_BRANCH }}" >&2
-            echo "The branches have diverged." >&2
+
+          if ! git merge origin/"${{ env.MAIN_BRANCH }}"; then
+            echo "Error: Cannot merge ${{ env.MAIN_BRANCH }} into ${{ env.RELEASE_BRANCH }}" >&2
+            echo "There are merge conflicts or the branches have diverged." >&2
             echo "If you have recently launched another release, it is possible that ${{ env.MAIN_BRANCH }} branch is not yet updated with the ${{ env.RELEASE_BRANCH }} changes." >&2
             echo "Please try again later." >&2
             exit 1
           fi
+
           git push origin "${{ env.RELEASE_BRANCH }}" --tags
   
   cargo-release:
@@ -95,6 +114,10 @@ jobs:
         with:
           cache-targets: true
       - uses: dtolnay/rust-toolchain@nightly
+        with:
+          toolchain: nightly-2026-02-08
+      - name: Link nightly toolchain for cargo-public-api
+        run: ln -sf ~/.rustup/toolchains/nightly-2026-02-08-x86_64-unknown-linux-gnu ~/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: 1.92.0
@@ -113,8 +136,8 @@ jobs:
       
       - name: Configure Git for signing
         run: |
-          git config --global user.name "github-actions[bot]"
-          git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git config --global user.name "${{ env.GIT_USER_NAME }}"
+          git config --global user.email "${{ env.GIT_USER_EMAIL }}"
 
       - name: Get publication order for crate and dependencies
         run: |
@@ -349,6 +372,7 @@ jobs:
           
           echo "PR_BODY: $PR_BODY"
 
+          # NOTE: the PR title is used to filter gitlab CI jobs. If you change it, you need to update the gitlab CI job filter.
           gh pr create \
             --head "$BRANCH_NAME" \
             --title "chore(release): proposal for ${{ inputs.crate }}" \
