@@ -79,6 +79,7 @@ hyper-util = { version = "0.1.10", features = [
   "client",
   "client-legacy",
 ] }
+hickory-resolver = { version = "0.25", features = ["tokio-runtime"] }
 
 [profile.dev]
 debug = 2 # full debug info
