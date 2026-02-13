@@ -763,10 +763,10 @@ dependencies = [
 [[package]]
 name = "capabilities"
 version = "0.1.0"
-source = "git+https://github.com/DataDog/libdatadog-nodejs.git?branch=jwiriath/libdatadog-wasm-effort#da34b4cb9ce327ce9122f0b16097565d5080ee23"
+source = "git+https://github.com/DataDog/libdatadog-nodejs.git?branch=jwiriath%2Flibdatadog-wasm-effort#da34b4cb9ce327ce9122f0b16097565d5080ee23"
 dependencies = [
  "js-sys",
- "libdd-capabilities 0.1.0 (git+https://github.com/DataDog/libdatadog.git?branch=jwiriath/capability-traits-architecture)",
+ "libdd-capabilities 0.1.0 (git+https://github.com/DataDog/libdatadog.git?branch=jwiriath%2Fcapability-traits-architecture)",
  "serde_json",
  "wasm-bindgen",
  "wasm-bindgen-futures",
@@ -2885,7 +2885,7 @@ version = "0.1.0"
 [[package]]
 name = "libdd-capabilities"
 version = "0.1.0"
-source = "git+https://github.com/DataDog/libdatadog.git?branch=jwiriath/capability-traits-architecture#624bdacf986e654510df6ebcf2f39ca42594dba0"
+source = "git+https://github.com/DataDog/libdatadog.git?branch=jwiriath%2Fcapability-traits-architecture#624bdacf986e654510df6ebcf2f39ca42594dba0"
 
 [[package]]
 name = "libdd-common"
@@ -3019,6 +3019,7 @@ dependencies = [
  "libdd-ddsketch",
  "libdd-dogstatsd-client",
  "libdd-log",
+ "libdd-provider",
  "libdd-telemetry",
  "libdd-tinybytes",
  "libdd-trace-protobuf",
