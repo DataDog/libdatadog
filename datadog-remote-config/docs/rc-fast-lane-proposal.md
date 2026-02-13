@@ -29,7 +29,7 @@ POST /v0.7/config ──────────────►  gRPC ClientGetC
                                        │         (blocks up to 2s)
                                        │             │
                                        │             ├──► POST /configurations ──► Backend
-                                       │             │    (holds s.mu.Lock!)
+                                       │             │    (s.mu released during wait)
                                        │             ◄────────────────────────────
                                        │   YES → serve from local TUF state
                                        │
@@ -47,26 +47,59 @@ There are **three layers** that compound during a thundering herd, each in a dif
 
 #### Layer 1: libdatadog (this repo) — Tracer RC Client
 
-| Issue | Location | Impact |
-|-------|----------|--------|
-| All products bundled into one request | `fetcher.rs:302-335` | FFE_FLAGS blocked by slow ASM_DATA payloads |
-| Fixed 5s polling, no jitter | `shared.rs:262,354` | All tracers retry in lockstep |
-| `agent_refresh_interval` parsed but **never applied** | `targets.rs:47`, unused in `shared.rs` | Server cannot tell clients to slow down |
-| No backoff on errors | `shared.rs:346-354` | Failed clients hammer the Agent immediately |
-| No HTTP 429 handling | `fetcher.rs:360-368` | Rate limit responses treated as generic errors |
-| 100-permit FIFO semaphore, no prioritization | `multitarget.rs:54,551-553` | Fast lane products queue behind everything |
-| 3s HTTP timeout | `libdd-common/src/lib.rs:241` | Requests timeout under load, retry with no escalation |
+| Issue | Source | Impact |
+|-------|--------|--------|
+| All products bundled into one request | [`fetcher.rs:302-335`][lb1] — single `ClientGetConfigsRequest` with all `product_capabilities.products` | FFE_FLAGS blocked by slow ASM_DATA payloads |
+| Fixed 5s polling, no jitter | [`shared.rs:262`][lb2] (`AtomicU64::new(5_000_000_000)`), [`shared.rs:354`][lb3] (bare `sleep`, no jitter) | All tracers retry in lockstep |
+| `agent_refresh_interval` parsed but **never applied** | [`targets.rs:47`][lb4] (field definition in `TargetsCustom`), only other ref is [`test_server.rs:122`][lb5] (test stub) — never read by polling loop | Server cannot tell clients to slow down |
+| No backoff on errors | [`shared.rs:346-348`][lb6] (error branch logs + cleans up, no interval change), [`shared.rs:354`][lb3] (same fixed sleep on error or success) | Failed clients hammer the Agent immediately |
+| No HTTP 429 handling | [`fetcher.rs:358-369`][lb7] — only `StatusCode::OK` and `StatusCode::NOT_FOUND` special-cased; 429 hits generic `bail!()` | Rate limit responses treated as generic errors |
+| 100-permit FIFO semaphore, no prioritization | [`multitarget.rs:186`][lb8] (`DEFAULT_CLIENTS_LIMIT = 100`), [`multitarget.rs:195`][lb9] (init), [`multitarget.rs:551-555`][lb10] (comment: "no prioritization or anything") | Fast lane products queue behind everything |
+| 3s HTTP timeout | [`libdd-common/src/lib.rs:241`][lb11] (`DEFAULT_TIMEOUT: u64 = 3_000` ms) | Requests timeout under load, retry with no escalation |
+
+[lb1]: https://github.com/DataDog/libdatadog/blob/main/datadog-remote-config/src/fetch/fetcher.rs#L302-L335
+[lb2]: https://github.com/DataDog/libdatadog/blob/main/datadog-remote-config/src/fetch/shared.rs#L262
+[lb3]: https://github.com/DataDog/libdatadog/blob/main/datadog-remote-config/src/fetch/shared.rs#L354
+[lb4]: https://github.com/DataDog/libdatadog/blob/main/datadog-remote-config/src/targets.rs#L47
+[lb5]: https://github.com/DataDog/libdatadog/blob/main/datadog-remote-config/src/fetch/test_server.rs#L122
+[lb6]: https://github.com/DataDog/libdatadog/blob/main/datadog-remote-config/src/fetch/shared.rs#L346-L348
+[lb7]: https://github.com/DataDog/libdatadog/blob/main/datadog-remote-config/src/fetch/fetcher.rs#L358-L369
+[lb8]: https://github.com/DataDog/libdatadog/blob/main/datadog-remote-config/src/fetch/multitarget.rs#L186
+[lb9]: https://github.com/DataDog/libdatadog/blob/main/datadog-remote-config/src/fetch/multitarget.rs#L195
+[lb10]: https://github.com/DataDog/libdatadog/blob/main/datadog-remote-config/src/fetch/multitarget.rs#L551-L555
+[lb11]: https://github.com/DataDog/libdatadog/blob/main/libdd-common/src/lib.rs#L241
 
 #### Layer 2: DD Agent (`datadog-agent` repo) — RC Service
 
-| Issue | Location | Impact |
-|-------|----------|--------|
-| `s.mu.Lock()` held across entire `ClientGetConfigs` | `service.go:975-976` | All concurrent tracer requests serialize on a single mutex |
-| Cache bypass rate-limited to 5/interval | `service.go:737,52` | 6th+ new tracer in a window gets stale/empty data |
-| Bypass blocks up to 2s (`newClientBlockTTL`) | `service.go:1001-1014` | New tracers at boot wait up to 2s for backend round-trip |
-| `refreshBypassCh` is unbuffered channel | `service.go:702,1000` | Only one bypass can be in-flight; others timeout |
-| Backend poll default 1 minute | `service.go:47` | Stale data between polls; bypass is only escape hatch |
-| No product-level prioritization | `service.go:974-1159` | FFE_FLAGS and ASM_DATA use identical code path |
+Source: `pkg/config/remote/service/service.go` (all line refs below are in this file unless noted).
+
+| Issue | Source | Impact |
+|-------|--------|--------|
+| `s.mu.Lock()` held across `ClientGetConfigs` for filtering/matching; released during bypass wait | [L975-976][ag1] (lock + defer unlock), [L990][ag2] (explicit unlock before bypass wait), [L1016][ag3] (relock after bypass) | Active-client requests serialize on the mutex for predicate matching; new-client bypass wait does NOT hold the mutex |
+| Cache bypass rate-limited to 5/interval (fixed-window) | [L52][ag4] (`defaultCacheBypassLimit = 5`), [L737][ag5] (`refreshBypassLimiter.Limit()`), impl in [`clients.go:22-50`][ag6] (fixed-window: truncate time, reset allowance) | 6th+ new tracer in a window gets stale/empty data |
+| Bypass blocks up to 2s (`newClientBlockTTL`) | [L51][ag7] (`newClientBlockTTL = 2 * time.Second`), [L999-1004][ag8] (1st select: send on channel or timeout), [L1009-1014][ag9] (2nd select: wait for response or timeout with remaining budget) | New tracers at boot wait up to 2s for backend round-trip |
+| `refreshBypassCh` is unbuffered channel | [L702][ag10] (`make(chan chan<- struct{})` — no buffer), [L1000][ag11] (send blocks until poll loop reads) | Only one bypass can be in-flight; others timeout at 2s |
+| Client "active" TTL = 30s | [L49][ag12] (`defaultClientsTTL = 30 * time.Second`), [`clients.go:52-54`][ag13] (`expired()`: `clock.Now().After(lastSeen + TTL)`), [`clients.go:85-92`][ag14] (`active()`) | After 30s without a request, client triggers bypass again (but the 5/interval limit still applies) |
+| Backend poll default 1 minute | [L47][ag15] (`defaultRefreshInterval = 1 * time.Minute`) | Stale data between polls; bypass is only escape hatch |
+| No product-level prioritization | [L974-1159][ag16] (single code path), [`tracer_predicates.go:27-71`][ag17] (filters by product + tracer attributes, no priority ordering) | FFE_FLAGS and ASM_DATA use identical code path |
+
+[ag1]: https://github.com/DataDog/datadog-agent/blob/main/pkg/config/remote/service/service.go#L975-L976
+[ag2]: https://github.com/DataDog/datadog-agent/blob/main/pkg/config/remote/service/service.go#L990
+[ag3]: https://github.com/DataDog/datadog-agent/blob/main/pkg/config/remote/service/service.go#L1016
+[ag4]: https://github.com/DataDog/datadog-agent/blob/main/pkg/config/remote/service/service.go#L52
+[ag5]: https://github.com/DataDog/datadog-agent/blob/main/pkg/config/remote/service/service.go#L737
+[ag6]: https://github.com/DataDog/datadog-agent/blob/main/pkg/config/remote/service/clients.go#L22-L50
+[ag7]: https://github.com/DataDog/datadog-agent/blob/main/pkg/config/remote/service/service.go#L51
+[ag8]: https://github.com/DataDog/datadog-agent/blob/main/pkg/config/remote/service/service.go#L999-L1004
+[ag9]: https://github.com/DataDog/datadog-agent/blob/main/pkg/config/remote/service/service.go#L1009-L1014
+[ag10]: https://github.com/DataDog/datadog-agent/blob/main/pkg/config/remote/service/service.go#L702
+[ag11]: https://github.com/DataDog/datadog-agent/blob/main/pkg/config/remote/service/service.go#L1000
+[ag12]: https://github.com/DataDog/datadog-agent/blob/main/pkg/config/remote/service/service.go#L49
+[ag13]: https://github.com/DataDog/datadog-agent/blob/main/pkg/config/remote/service/clients.go#L52-L54
+[ag14]: https://github.com/DataDog/datadog-agent/blob/main/pkg/config/remote/service/clients.go#L85-L92
+[ag15]: https://github.com/DataDog/datadog-agent/blob/main/pkg/config/remote/service/service.go#L47
+[ag16]: https://github.com/DataDog/datadog-agent/blob/main/pkg/config/remote/service/service.go#L974-L1159
+[ag17]: https://github.com/DataDog/datadog-agent/blob/main/pkg/config/remote/service/tracer_predicates.go#L27-L71
 
 #### Layer 3: Backend
 
@@ -78,15 +111,22 @@ There are **three layers** that compound during a thundering herd, each in a dif
 ### Compounding Scenario: 100 Tracers Boot Simultaneously
 
 1. **T=0s**: 100 tracers call `/v0.7/config`. All are new clients (never seen before).
-2. **Agent**: First 5 trigger cache bypass (`refreshBypassLimiter`). Remaining 95 are rate-limited
-   and get stale/empty data. The mutex (`s.mu.Lock()`) serializes all 100 requests.
-3. **T=2s**: Bypass timeout fires. The 5 lucky tracers got fresh data (if backend responded in
-   time). The other 95 got nothing.
-4. **T=5s**: All 100 tracers retry simultaneously (no jitter). But now they're "active" (TTL not
-   expired), so no bypass — they get whatever the Agent has cached. If the Agent's 1-minute poll
-   hasn't run yet, this is still stale.
-5. **T=10-30s**: Cycle repeats. Tracers keep hitting the Agent every 5s, in lockstep. Eventually
-   the Agent's background poll completes and fresh data becomes available.
+2. **Agent**: Each tracer acquires `s.mu.Lock()` ([L975][ag1]), checks `clients.active()` → false
+   (never seen), calls `clients.seen()`, then **releases the mutex** ([L990][ag2]) before sending
+   on the unbuffered `refreshBypassCh` ([L1000][ag11]). However, the bypass channel is unbuffered
+   and the poll loop can only process one bypass at a time. The `refreshBypassLimiter`
+   ([L737][ag5]) allows only 5 bypasses per refresh window ([L52][ag4]). So: at most 5 tracers
+   get a backend round-trip; the rest either timeout at 2s waiting to send on the channel, or
+   are rate-limited and get stale/empty data.
+3. **T=2s**: Bypass timeout fires (`newClientBlockTTL`, [L51][ag7]). The <=5 lucky tracers got
+   fresh data (if backend responded in time). The other 95+ got whatever was cached (likely
+   nothing on first boot).
+4. **T=5s**: All 100 tracers retry simultaneously (no jitter — [`shared.rs:354`][lb3]). But now
+   they're "active" (`defaultClientsTTL = 30s`, [L49][ag12]), so no bypass — they get whatever
+   the Agent has cached. If the Agent's 1-minute poll ([L47][ag15]) hasn't run yet, this is
+   still stale.
+5. **T=10-60s**: Cycle repeats every 5s, in lockstep. Eventually the Agent's background poll
+   completes and fresh data becomes available.
 
 **Result**: FFE_FLAGS, which could be a 200-byte payload, is delayed 30+ seconds because it's
 trapped in the same pipeline as everything else.
@@ -310,13 +350,15 @@ A request is "fast lane" if it only contains fast-lane-eligible products (e.g. `
 
 #### B2. Reduce mutex contention for fast lane requests (`service.go`)
 
-Currently `ClientGetConfigs` holds `s.mu.Lock()` for the entire duration (`service.go:975`),
-including the cache bypass wait (up to 2s). This serializes all tracer requests.
+Currently `ClientGetConfigs` acquires `s.mu.Lock()` at entry ([L975][ag1]) and uses
+`defer s.mu.Unlock()` ([L976][ag1]). For new clients, the mutex is explicitly released
+([L990][ag2]) before the bypass wait and reacquired after ([L1016][ag3]). This means the mutex
+is held for predicate matching and response building, but **not** for the up-to-2s bypass wait.
+Active-client requests (no bypass) hold it for the full function body. All tracer requests still
+serialize on this single mutex for the filtering/matching work.
 
-For fast lane requests that can be served from cached TUF state (no bypass needed), the mutex
-hold time is already short. But when bypass IS needed, the mutex is released during the wait
-(`service.go:990`). The key improvement is ensuring fast lane requests don't contend with
-standard requests during the bypass:
+The key improvement is ensuring fast lane requests don't contend with standard requests during
+the bypass:
 
 ```go
 // Separate bypass channels:
@@ -440,18 +482,38 @@ Each tracer SDK has its own independent RC client implementation. **libdatadog's
 used by dd-trace-php** (via the sidecar). All other tracers implement RC natively in their own
 language:
 
-| Tracer | RC Implementation | Uses libdatadog RC? | Changes needed in |
-|--------|------------------|---------------------|-------------------|
-| **dd-trace-php** | libdatadog sidecar | **Yes** | This repo (libdatadog) |
-| **dd-trace-go** | Native Go (`internal/remoteconfig/`) | No | `dd-trace-go` |
-| **dd-trace-java** | Native Java/OkHttp (`remote-config/`) | No | `dd-trace-java` |
-| **dd-trace-py** | Native Python (`ddtrace/internal/remoteconfig/`) | No | `dd-trace-py` |
-| **dd-trace-rb** | Native Ruby/Net::HTTP (`lib/datadog/core/remote/`) | No | `dd-trace-rb` |
-| **dd-trace-dotnet** | Native C# (`RemoteConfigurationManagement/`) | No | `dd-trace-dotnet` |
-| **dd-trace-js** | Native JS (`packages/dd-trace/src/remote_config/`) | No | `dd-trace-js` |
+| Tracer | RC Implementation | Polling interval | Jitter/backoff? | Bundles all products? |
+|--------|------------------|-----------------|-----------------|----------------------|
+| **dd-trace-php** | libdatadog sidecar ([`ext/remote_config.c`][tr1] → `ddog_process_remote_configs()`) | 5s (via libdatadog [`shared.rs:262`][lb2]) | No | Yes |
+| **dd-trace-go** | Native Go, `net/http` ([`internal/remoteconfig/`][tr2]) | 5s ([`config.go:59`][tr3], env `DD_REMOTE_CONFIG_POLL_INTERVAL_SECONDS`) | No (fixed [`time.NewTicker`][tr4]) | Yes ([`remoteconfig.go` `c.allProducts()`][tr5]) |
+| **dd-trace-java** | Native Java, OkHttp3 ([`remote-config/`][tr6]) | 5s (`DEFAULT_POLL_PERIOD = 5000`) | No | Yes |
+| **dd-trace-py** | Native Python ([`ddtrace/internal/remoteconfig/`][tr7]) | 5s ([`settings/_config.py`][tr8], env `DD_REMOTE_CONFIG_POLL_INTERVAL_SECONDS`) | No | Yes |
+| **dd-trace-rb** | Native Ruby, `Net::HTTP` ([`lib/datadog/core/remote/`][tr9]) | 5s ([`configuration/settings.rb`][tr10]) | No | Yes |
+| **dd-trace-dotnet** | Native C#, `HttpClient` ([`RemoteConfigurationManagement/`][tr11]) | 5s ([`RemoteConfigurationSettings.cs:17`][tr12]) | No ([`Task.Delay(_pollInterval)`][tr13]) | Yes |
+| **dd-trace-js** | Native JS, Node `http`/`https` ([`packages/dd-trace/src/remote_config/`][tr14]) | 5s ([`config/defaults.js`][tr15]) | No | Yes |
+
+[tr1]: https://github.com/DataDog/dd-trace-php/blob/master/ext/remote_config.c
+[tr2]: https://github.com/DataDog/dd-trace-go/tree/main/internal/remoteconfig
+[tr3]: https://github.com/DataDog/dd-trace-go/blob/main/internal/remoteconfig/config.go#L59
+[tr4]: https://github.com/DataDog/dd-trace-go/blob/main/internal/remoteconfig/remoteconfig.go#L246
+[tr5]: https://github.com/DataDog/dd-trace-go/blob/main/internal/remoteconfig/remoteconfig.go#L798
+[tr6]: https://github.com/DataDog/dd-trace-java/tree/master/remote-config
+[tr7]: https://github.com/DataDog/dd-trace-py/tree/main/ddtrace/internal/remoteconfig
+[tr8]: https://github.com/DataDog/dd-trace-py/blob/main/ddtrace/internal/settings/_config.py
+[tr9]: https://github.com/DataDog/dd-trace-rb/tree/master/lib/datadog/core/remote
+[tr10]: https://github.com/DataDog/dd-trace-rb/blob/master/lib/datadog/core/configuration/settings.rb
+[tr11]: https://github.com/DataDog/dd-trace-dotnet/tree/master/tracer/src/Datadog.Trace/RemoteConfigurationManagement
+[tr12]: https://github.com/DataDog/dd-trace-dotnet/blob/master/tracer/src/Datadog.Trace/RemoteConfigurationManagement/RemoteConfigurationSettings.cs#L17
+[tr13]: https://github.com/DataDog/dd-trace-dotnet/blob/master/tracer/src/Datadog.Trace/RemoteConfigurationManagement/RemoteConfigurationSettings.cs#L107
+[tr14]: https://github.com/DataDog/dd-trace-js/tree/master/packages/dd-trace/src/remote_config
+[tr15]: https://github.com/DataDog/dd-trace-js/blob/master/packages/dd-trace/src/config/defaults.js
 
 Ruby depends on the libdatadog gem, but only for profiling/crashtracking/telemetry — its RC
-client is pure Ruby.
+client is pure Ruby (`Net::HTTP`).
+
+**Key finding: every tracer uses a fixed 5s poll interval with no jitter and bundles all products
+into a single request.** The thundering herd behavior described in this document applies uniformly
+across all language tracers, not just PHP/libdatadog.
 
 ### Implications for This Proposal
 
@@ -521,8 +583,10 @@ max:   22,396ms  (22.4s)
 ### Results: SetProviderAndWait (DO NOT USE for latency measurement)
 
 The Go tracer's `SetProviderAndWait` has a hard-coded 30-second timeout
-(`defaultInitTimeout` in `openfeature/provider.go:36`). This creates an artificial cliff
+([`defaultInitTimeout` in `openfeature/provider.go:36`][spaw]). This creates an artificial cliff
 that masks the real RC delivery latency:
+
+[spaw]: https://github.com/DataDog/dd-trace-go/blob/main/openfeature/provider.go#L36
 
 ```
 === TOTAL BOOT TIME ===
@@ -544,10 +608,12 @@ p99:   49,032ms  (49.0s)
    receive flags within 10 seconds (those lucky enough to trigger the Agent's cache bypass).
    The remaining 88% must wait for the Agent's 1-minute background poll cycle. This is
    driven by:
-   - Agent cache bypass rate limit: only 5 bypasses per refresh interval
-   - Agent background poll: 1 minute between polls to backend (the dominant factor)
-   - Agent mutex serialization (`s.mu.Lock()` across all `ClientGetConfigs` calls)
-   - Tracer fixed 5-second polling with no jitter
+   - Agent cache bypass rate limit: only 5 bypasses per refresh window ([L52][ag4], [L737][ag5])
+   - Agent background poll: 1 minute between polls to backend ([L47][ag15]) — the dominant factor
+   - Unbuffered bypass channel ([L702][ag10]) serializes bypass attempts; only one in-flight
+   - Agent mutex ([L975][ag1]) serializes predicate matching for all concurrent requests
+     (though released during bypass wait — [L990][ag2])
+   - Tracer fixed 5-second polling with no jitter ([`shared.rs:262,354`][lb2])
 
 3. **The 30s timeout in `SetProviderAndWait` compounds the problem.** With a 1-minute Agent
    poll interval, `SetProviderAndWait` always times out for non-bypass tracers (they'd need
