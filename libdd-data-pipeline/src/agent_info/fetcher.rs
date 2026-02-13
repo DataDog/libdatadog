@@ -179,45 +179,39 @@ impl AgentInfoFetcher {
 
 #[async_trait]
 impl Worker for AgentInfoFetcher {
-    /// Start fetching the info endpoint with the given interval.
-    ///
-    /// # Warning
-    /// This method does not return and should be called within a dedicated task.
-    async fn run(&mut self) {
-        // Skip the first fetch if some info is present to avoid calling the /info endpoint
-        // at fork for heavy-forking environment.
+    async fn initial_trigger(&mut self) {
+        // Skip initial wait if cache is not populated
         if AGENT_INFO_CACHE.load().is_none() {
-            self.fetch_and_update().await;
+            return;
         }
+        self.trigger().await
+    }
 
-        // Main loop waiting for a trigger event or the end of the refresh interval to trigger the
-        // fetch.
-        loop {
-            match &mut self.trigger_rx {
-                Some(trigger_rx) => {
-                    tokio::select! {
-                        // Wait for manual trigger (new state from headers)
-                        trigger = trigger_rx.recv() => {
-                            if trigger.is_some() {
-                                self.fetch_and_update().await;
-                            } else {
-                                // The channel has been closed
-                                self.trigger_rx = None;
-                            }
+    async fn trigger(&mut self) {
+        // Wait for either a manual trigger or the refresh interval
+        match &mut self.trigger_rx {
+            Some(trigger_rx) => {
+                tokio::select! {
+                    // Wait for manual trigger (new state from headers)
+                    trigger = trigger_rx.recv() => {
+                        if trigger.is_none() {
+                            // The channel has been closed
+                            self.trigger_rx = None;
                         }
-                        // Regular periodic fetch timer
-                        _ = sleep(self.refresh_interval) => {
-                            self.fetch_and_update().await;
-                        }
-                    };
-                }
-                None => {
-                    // If the trigger channel is closed we only use timed fetch.
-                    sleep(self.refresh_interval).await;
-                    self.fetch_and_update().await;
+                    }
+                    // Regular periodic fetch timer
+                    _ = sleep(self.refresh_interval) => {}
                 }
             }
+            None => {
+                // If the trigger channel is closed we only use timed fetch.
+                sleep(self.refresh_interval).await;
+            }
         }
+    }
+
+    async fn run(&mut self) {
+        self.fetch_and_update().await;
     }
 }
 
