@@ -114,6 +114,8 @@ pub enum CrashType {
     RaiseSigBus,
     /// Raise SIGSEGV
     RaiseSigSegv,
+    /// Report an unhandled exception (no signal, process continues)
+    UnhandledException,
 }
 
 impl CrashType {
@@ -129,20 +131,26 @@ impl CrashType {
             Self::RaiseSigIll => "raise_sigill",
             Self::RaiseSigBus => "raise_sigbus",
             Self::RaiseSigSegv => "raise_sigsegv",
+            Self::UnhandledException => "unhandled_exception",
         }
     }
 
     /// Returns whether this crash type should result in a successful exit code.
     /// Some signal types (SIGBUS, SIGSEGV via kill) may be caught and handled,
-    /// resulting in a clean exit.
+    /// resulting in a clean exit. UnhandledException also exits cleanly.
     pub const fn expects_success(self) -> bool {
         matches!(
             self,
-            Self::KillSigBus | Self::KillSigSegv | Self::RaiseSigBus | Self::RaiseSigSegv
+            Self::KillSigBus
+                | Self::KillSigSegv
+                | Self::RaiseSigBus
+                | Self::RaiseSigSegv
+                | Self::UnhandledException
         )
     }
 
     /// Returns the expected signal number for this crash type (Unix only).
+    /// Panics for UnhandledException since it doesn't involve a signal.
     #[cfg(unix)]
     pub const fn signal_number(self) -> i32 {
         match self {
@@ -150,6 +158,7 @@ impl CrashType {
             Self::KillSigAbrt | Self::RaiseSigAbrt => 6,                    // SIGABRT
             Self::KillSigIll | Self::RaiseSigIll => 4,                      // SIGILL
             Self::KillSigBus | Self::RaiseSigBus => 7,                      // SIGBUS
+            Self::UnhandledException => -1,                                 // No signal
         }
     }
 
@@ -160,6 +169,7 @@ impl CrashType {
             Self::KillSigAbrt | Self::RaiseSigAbrt => "SIGABRT",
             Self::KillSigIll | Self::RaiseSigIll => "SIGILL",
             Self::KillSigBus | Self::RaiseSigBus => "SIGBUS",
+            Self::UnhandledException => "UnhandledException",
         }
     }
 }
@@ -184,6 +194,7 @@ impl std::str::FromStr for CrashType {
             "raise_sigill" => Ok(Self::RaiseSigIll),
             "raise_sigbus" => Ok(Self::RaiseSigBus),
             "raise_sigsegv" => Ok(Self::RaiseSigSegv),
+            "unhandled_exception" => Ok(Self::UnhandledException),
             _ => Err(format!("Unknown crash type: {}", s)),
         }
     }

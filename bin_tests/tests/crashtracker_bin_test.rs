@@ -308,6 +308,83 @@ fn test_crash_ping_timing_and_content() {
 
 #[test]
 #[cfg_attr(miri, ignore)]
+fn test_report_unhandled_exception() {
+    let config = CrashTestConfig::new(
+        BuildProfile::Release,
+        TestMode::DoNothing,
+        CrashType::UnhandledException,
+    );
+    let artifacts = StandardArtifacts::new(config.profile);
+    let artifacts_map = build_artifacts(&artifacts.as_slice()).unwrap();
+
+    let validator: ValidatorFn = Box::new(|payload, _fixtures| {
+        assert!(false, "{payload:?}");
+        // Verify error kind is UnhandledException
+        let error = &payload["error"];
+        assert_eq!(
+            error["kind"].as_str(),
+            Some("UnhandledException"),
+            "error.kind should be UnhandledException"
+        );
+
+        // Verify the formatted message
+        let message = error["message"]
+            .as_str()
+            .expect("error.message should exist");
+        assert!(
+            message.contains("unhandled exception of type 'RuntimeError'"),
+            "message should contain error type, got: {message}"
+        );
+        assert!(
+            message.contains("something went wrong"),
+            "message should contain error message, got: {message}"
+        );
+
+        // Verify no sig_info (not a signal-based crash)
+        assert!(
+            payload["sig_info"].is_null(),
+            "sig_info should be absent for unhandled exceptions"
+        );
+
+        // Verify runtime stack is present in experimental field
+        let experimental = &payload["experimental"];
+        let runtime_stack = &experimental["runtime_stack"];
+        assert!(
+            !runtime_stack.is_null(),
+            "experimental.runtime_stack should be present"
+        );
+        let frames = runtime_stack["frames"]
+            .as_array()
+            .expect("runtime_stack.frames should be an array");
+        assert_eq!(frames.len(), 2, "should have 2 runtime stack frames");
+
+        // Verify the runtime stack frame content
+        assert_eq!(
+            frames[0]["function"].as_str(),
+            Some("TestApp.handleRequest"),
+        );
+        assert_eq!(frames[0]["file"].as_str(), Some("app.rb"));
+        assert_eq!(frames[0]["line"].as_u64(), Some(42));
+        assert_eq!(frames[1]["function"].as_str(), Some("TestApp.main"));
+
+        // Verify native stack is present (libdatadog captures it)
+        let native_stack = &error["stack"];
+        assert!(
+            !native_stack.is_null(),
+            "error.stack (native backtrace) should be present"
+        );
+
+        // Verify counters are present
+        PayloadValidator::new(payload).validate_counters()?;
+
+        Ok(())
+    });
+
+    run_crash_test_with_artifacts(&config, &artifacts_map, &artifacts, validator).unwrap();
+}
+
+#[test]
+#[cfg_attr(miri, ignore)]
 fn test_crash_tracking_errors_intake_upload() {
     let config = CrashTestConfig::new(
         BuildProfile::Release,

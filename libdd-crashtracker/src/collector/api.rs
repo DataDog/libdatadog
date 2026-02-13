@@ -4,11 +4,20 @@
 
 use super::{crash_handler::enable, receiver_manager::Receiver};
 use crate::{
-    clear_spans, clear_traces, collector::crash_handler::register_panic_hook,
-    collector::signal_handler_manager::register_crash_handlers, crash_info::Metadata,
-    reset_counters, shared::configuration::CrashtrackerReceiverConfig, update_config,
-    update_metadata, CrashtrackerConfiguration,
+    clear_spans, clear_traces,
+    collector::crash_handler::{is_enabled, load_config_and_metadata, register_panic_hook},
+    collector::emitters::emit_unhandled_exception_report,
+    collector::signal_handler_manager::register_crash_handlers,
+    crash_info::{Metadata, StackTrace},
+    reset_counters,
+    shared::configuration::CrashtrackerReceiverConfig,
+    update_config, update_metadata, CrashtrackerConfiguration,
 };
+use libdd_common::timeout::TimeoutManager;
+use std::net::Shutdown;
+use std::os::fd::FromRawFd;
+use std::os::unix::io::IntoRawFd;
+use std::os::unix::net::UnixStream;
 
 pub static DEFAULT_SYMBOLS: [libc::c_int; 4] =
     [libc::SIGBUS, libc::SIGABRT, libc::SIGSEGV, libc::SIGILL];
@@ -110,6 +119,102 @@ pub fn reconfigure(
     Receiver::update_stored_config(receiver_config)?;
     enable();
     Ok(())
+}
+
+/// Report an unhandled exception as a crash event.
+///
+/// This function sends a crash report to the receiver for an unhandled exception
+/// detected by the runtime. Unlike the signal-based crash path:
+/// - No collector fork is needed (we are in normal execution context)
+/// - The process continues running after this call returns
+/// - Config, metadata, and receiver config are NOT consumed (loaded non-destructively)
+/// - Multiple calls are allowed (no one-time guard)
+///
+/// The runtime provides the stack trace (goes into `experimental.runtime_stack`),
+/// and libdatadog captures the native backtrace (goes into `error.stack`).
+///
+/// # Parameters
+/// - `error_type`: The type/class of the exception (e.g. "NullPointerException")
+/// - `error_message`: Optional human-readable error message
+/// - `runtime_stack`: Runtime-provided stack frames
+///
+/// PRECONDITIONS:
+///     This function assumes that the crash-tracker has previously been
+///     initialized.
+/// SAFETY:
+///     Crash-tracking functions are not reentrant.
+///     No other crash-handler functions should be called concurrently.
+/// ATOMICITY:
+///     This function is not atomic. A crash during its execution may lead to
+///     unexpected crash-handling behaviour.
+pub fn report_unhandled_exception(
+    error_type: &str,
+    error_message: Option<&str>,
+    runtime_stack: StackTrace,
+) -> anyhow::Result<()> {
+    if !is_enabled() {
+        return Ok(());
+    }
+
+    // Load config and metadata non-destructively (process continues after report)
+    let ((config, config_str), (_metadata, metadata_string)) = load_config_and_metadata()?;
+
+    let timeout_manager = TimeoutManager::new(config.timeout());
+
+    // Format the error message
+    let message = match error_message {
+        Some(msg) => format!(
+            "Process was terminated due to an unhandled exception of type '{error_type}'. \
+             Message: \"{msg}\""
+        ),
+        None => format!(
+            "Process was terminated due to an unhandled exception of type '{error_type}'. \
+             Message: \"<no message>\""
+        ),
+    };
+
+    // Spawn receiver (non-destructive, config remains for future use)
+    let unix_socket_path = config.unix_socket_path().as_deref().unwrap_or_default();
+    let receiver = if unix_socket_path.is_empty() {
+        Receiver::spawn_from_stored_config_non_destructive()?
+    } else {
+        Receiver::from_socket(unix_socket_path)?
+    };
+
+    // Save the fd before receiver is consumed by finish()
+    let uds_fd = receiver.handle.uds_fd;
+
+    // Write directly to the receiver socket (no collector fork needed --
+    // we are in normal execution context, not a signal handler)
+    let pipe = unsafe { UnixStream::from_raw_fd(uds_fd) };
+
+    let result = emit_unhandled_exception_report(
+        &mut &pipe,
+        config,
+        config_str,
+        metadata_string,
+        &message,
+        &runtime_stack,
+    );
+
+    if let Err(ref e) = result {
+        eprintln!("Failed to emit unhandled exception report: {e}");
+    }
+
+    // Shutdown write end to signal EOF to receiver, then release UnixStream
+    // without closing the fd (ProcessHandle::finish needs it for wait_for_pollhup)
+    let _ = pipe.shutdown(Shutdown::Write);
+    let _ = pipe.into_raw_fd(); // prevents UnixStream from closing fd on drop
+
+    // Wait for receiver to process and upload the report
+    receiver.finish(&timeout_manager);
+
+    // Close our end of the socket now that the receiver is done
+    unsafe {
+        libc::close(uds_fd);
+    }
+
+    result.map_err(|e| e.into())
 }
 
 #[cfg(test)]

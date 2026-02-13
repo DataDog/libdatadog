@@ -226,6 +226,41 @@ pub fn enable() {
     ENABLED.store(true, SeqCst);
 }
 
+/// Returns whether the crashtracker is currently enabled.
+pub(crate) fn is_enabled() -> bool {
+    ENABLED.load(SeqCst)
+}
+
+/// Loads the current config and metadata without consuming them.
+///
+/// Unlike the signal handler path which swaps the statics to null (one-time use),
+/// this function uses `load()` so the statics remain available for future use.
+/// This is intended for the non-signal crash reporting path where the process
+/// continues running after the report.
+///
+/// # Safety
+///   Crash-tracking functions are not reentrant.
+///   No other crash-handler functions should be called concurrently.
+pub(crate) fn load_config_and_metadata() -> Result<
+    (
+        &'static (CrashtrackerConfiguration, String),
+        &'static (Metadata, String),
+    ),
+    CrashHandlerError,
+> {
+    let config_ptr = CONFIG.load(SeqCst);
+    if config_ptr.is_null() {
+        return Err(CrashHandlerError::NoConfig);
+    }
+    let metadata_ptr = METADATA.load(SeqCst);
+    if metadata_ptr.is_null() {
+        return Err(CrashHandlerError::NoMetadata);
+    }
+    // SAFETY: The pointers came from Box::into_raw in update_config/update_metadata.
+    // Non-reentrant contract guarantees no concurrent mutation.
+    unsafe { Ok((&*config_ptr, &*metadata_ptr)) }
+}
+
 fn handle_posix_signal_impl(
     sig_info: *const siginfo_t,
     ucontext: *const ucontext_t,
