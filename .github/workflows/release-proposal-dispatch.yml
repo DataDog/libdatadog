@@ -32,6 +32,8 @@ env:
   MAIN_BRANCH: main
   RELEASE_BRANCH: release
   PROPOSAL_BRANCH_PREFIX: release-proposal
+  GIT_USER_NAME: "github-actions[bot]"
+  GIT_USER_EMAIL: "41898282+github-actions[bot]@users.noreply.github.com"
 
 jobs:
   check-proposal-ongoing:
@@ -64,6 +66,10 @@ jobs:
         with:
           fetch-depth: 0
           fetch-tags: true
+      - name: Configure Git
+        run: |
+          git config --global user.name "${{ env.GIT_USER_NAME }}"
+          git config --global user.email "${{ env.GIT_USER_EMAIL }}"
       - name: Merge the main branch into the release branch
         run: |
           git fetch origin "${{ env.RELEASE_BRANCH }}" --tags
@@ -117,8 +123,8 @@ jobs:
       
       - name: Configure Git for signing
         run: |
-          git config --global user.name "github-actions[bot]"
-          git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git config --global user.name "${{ env.GIT_USER_NAME }}"
+          git config --global user.email "${{ env.GIT_USER_EMAIL }}"
 
       - name: Get publication order for crate and dependencies
         run: |
