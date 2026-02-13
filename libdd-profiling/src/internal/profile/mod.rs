@@ -4,53 +4,48 @@
 #[cfg(test)]
 mod fuzz_tests;
 
-pub mod interning_api;
 mod profiles_dictionary_translator;
 
 pub use profiles_dictionary_translator::*;
 
 use self::api::UpscalingInfo;
 use super::*;
-use crate::api::ManagedStringId;
 use crate::collections::identifiable::*;
-use crate::collections::string_storage::{CachedProfileId, ManagedStringStorage};
 use crate::collections::string_table::{self, StringTable};
 use crate::iter::{IntoLendingIterator, LendingIterator};
-use crate::profiles::collections::ArcOverflow;
-use crate::profiles::datatypes::{Function2, Mapping2, ProfilesDictionary};
+use crate::profiles::datatypes::{
+    Function2, FunctionId2, Mapping2, MappingId2, ProfilesDictionary,
+};
 use crate::profiles::{Compressor, DefaultProfileCodec};
 use crate::{api, api2};
 use anyhow::Context;
-use interning_api::Generation;
 use libdd_profiling_protobuf::{self as protobuf, Record, Value, NO_OPT_ZERO, OPT_ZERO};
 use std::borrow::Cow;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::io;
 use std::ops::Deref;
 use std::sync::atomic::AtomicU64;
-use std::sync::{Arc, Mutex};
+use std::sync::atomic::Ordering::SeqCst;
 use std::time::{Duration, SystemTime};
 
+impl Item for api2::Location2 {
+    type Id = LocationId;
+}
+
 pub struct Profile {
-    /// Translates from the new Id2 APIs to the older internal APIs. Long-term,
-    /// this should probably use the dictionary directly.
-    profiles_dictionary_translator: Option<ProfilesDictionaryTranslator>,
+    /// Translates dictionary strings to local string table ids.
+    profiles_dictionary_translator: ProfilesDictionaryTranslator,
     active_samples: AtomicU64,
     endpoints: Endpoints,
-    functions: FxIndexSet<Function>,
-    generation: interning_api::Generation,
     labels: FxIndexSet<Label>,
     label_sets: FxIndexSet<LabelSet>,
-    locations: FxIndexSet<Location>,
-    mappings: FxIndexSet<Mapping>,
+    locations: FxIndexSet<api2::Location2>,
     observations: Observations,
     period: Option<api::Period>,
     sample_types: Box<[api::SampleType]>,
     stack_traces: FxIndexSet<StackTrace>,
     start_time: SystemTime,
     strings: StringTable,
-    string_storage: Option<Arc<Mutex<ManagedStringStorage>>>,
-    string_storage_cached_profile_id: Option<CachedProfileId>,
     timestamp_key: StringId,
     upscaling_rules: UpscalingRules,
 }
@@ -132,28 +127,60 @@ impl Profile {
             self.validate_sample_labels(&sample)?;
         }
 
-        let (locations, labels) = {
-            let translator = self
+        let labels = self
+            .legacy_labels_to_internal(sample.labels.as_slice())
+            .context("failed to convert legacy sample labels")?;
+        let locations = {
+            let dict = self
                 .profiles_dictionary_translator
-                .as_ref()
-                .context("profiles dictionary translator not set")?;
-            let dict = translator.profiles_dictionary.deref();
-            Self::sample_to_api2(dict, &sample).context("failed to convert sample to api2")?
+                .profiles_dictionary
+                .deref();
+            Self::sample_locations_to_api2(dict, &sample)
+                .context("failed to convert sample locations to api2")?
         };
-        let labels_iter = labels.into_iter();
-        // SAFETY: All ids were produced by this profile's dictionary in sample_to_api2.
-        unsafe { self.try_add_sample2(&locations, sample.values, labels_iter, timestamp) }
+        let mut internal_locations = Vec::new();
+        internal_locations
+            .try_reserve_exact(locations.len())
+            .context("failed to reserve memory for sample locations")?;
+        for location in &locations {
+            let location_id = self.locations.checked_dedup(*location)?;
+            internal_locations.push(location_id);
+        }
+
+        self.try_add_sample_internal(sample.values, labels, internal_locations, timestamp)
     }
 
-    /// Converts an `api::Sample` to the format expected by `try_add_sample2`,
-    /// by inserting strings, mappings, and functions into the given dictionary.
-    fn sample_to_api2<'a>(
+    fn legacy_labels_to_internal(
+        &mut self,
+        labels: &[api::Label],
+    ) -> anyhow::Result<Box<[LabelId]>> {
+        let mut internal_labels = Vec::new();
+        // Using try_reserve_exact because it will be converted to Box<[]>,
+        // so excess capacity would make that conversion more expensive.
+        internal_labels.try_reserve_exact(labels.len())?;
+        for label in labels {
+            let key = self.try_intern(label.key)?;
+            let internal_label = if !label.str.is_empty() {
+                let str = self.try_intern(label.str)?;
+                Label::str(key, str)
+            } else {
+                let num = label.num;
+                let num_unit = self.try_intern(label.num_unit)?;
+                Label::num(key, num, num_unit)
+            };
+
+            let id = self.labels.try_dedup(internal_label)?;
+            internal_labels.push(id);
+        }
+        Ok(internal_labels.into_boxed_slice())
+    }
+
+    /// Converts legacy sample locations to `api2::Location2` by inserting
+    /// strings, mappings, and functions into the given dictionary.
+    fn sample_locations_to_api2(
         dict: &ProfilesDictionary,
-        sample: &'a api::Sample,
-    ) -> Result<
-        (Vec<api2::Location2>, Vec<anyhow::Result<api2::Label<'a>>>),
-        crate::profiles::collections::SetError,
-    > {
+        sample: &api::Sample,
+    ) -> Result<Vec<api2::Location2>, crate::profiles::collections::SetError> {
         #[inline]
         fn is_zero_mapping(mapping: &api::Mapping) -> bool {
             let filename = mapping.filename.len();
@@ -203,18 +230,7 @@ impl Profile {
             });
         }
 
-        let mut labels = Vec::new();
-        labels.try_reserve_exact(sample.labels.len())?;
-        for label in &sample.labels {
-            let key = dict.try_insert_str2(label.key)?;
-            labels.push(Ok(if !label.str.is_empty() {
-                api2::Label::str(key, label.str)
-            } else {
-                api2::Label::num(key, label.num, label.num_unit)
-            }));
-        }
-
-        Ok((locations, labels))
+        Ok(locations)
     }
 
     /// Tries to add a sample using `api2` structures.
@@ -233,9 +249,7 @@ impl Profile {
         labels: L,
         timestamp: Option<Timestamp>,
     ) -> anyhow::Result<()> {
-        let Some(translator) = &mut self.profiles_dictionary_translator else {
-            anyhow::bail!("profiles dictionary not set");
-        };
+        let translator = &mut self.profiles_dictionary_translator;
 
         // In debug builds, we iterate over the labels twice. That's not
         // something the trait bounds support, so we collect into a vector.
@@ -248,8 +262,6 @@ impl Profile {
         }
 
         let string_table = &mut self.strings;
-        let functions = &mut self.functions;
-        let mappings = &mut self.mappings;
         let locations_set = &mut self.locations;
         let labels_set = &mut self.labels;
 
@@ -281,17 +293,9 @@ impl Profile {
             .try_reserve_exact(locations.len())
             .context("failed to reserve memory for sample locations")?;
         for location in locations {
-            let l = Location {
-                mapping_id: translator.translate_mapping(
-                    mappings,
-                    string_table,
-                    location.mapping,
-                )?,
-                function_id: translator.translate_function(
-                    functions,
-                    string_table,
-                    location.function,
-                )?,
+            let l = api2::Location2 {
+                mapping: location.mapping,
+                function: location.function,
                 address: location.address,
                 line: location.line,
             };
@@ -303,49 +307,10 @@ impl Profile {
     }
 
     /// Gets the profiles dictionary, needed for `api2` operations.
-    pub fn get_profiles_dictionary(&self) -> Option<&ProfilesDictionary> {
+    pub fn get_profiles_dictionary(&self) -> &ProfilesDictionary {
         self.profiles_dictionary_translator
-            .as_ref()
-            .map(|p| p.profiles_dictionary.deref())
-    }
-
-    pub fn add_string_id_sample(
-        &mut self,
-        sample: api::StringIdSample,
-        timestamp: Option<Timestamp>,
-    ) -> anyhow::Result<()> {
-        anyhow::ensure!(
-            self.string_storage.is_some(),
-            "Current sample makes use of ManagedStringIds but profile was not created using a string table"
-        );
-
-        self.validate_string_id_sample_labels(&sample)?;
-
-        let labels = sample
-            .labels
-            .iter()
-            .map(|label| -> anyhow::Result<LabelId> {
-                let key = self.resolve(label.key)?;
-                let internal_label = if label.str != ManagedStringId::empty() {
-                    let str = self.resolve(label.str)?;
-                    Label::str(key, str)
-                } else {
-                    let num = label.num;
-                    let num_unit = self.resolve(label.num_unit)?;
-                    Label::num(key, num, num_unit)
-                };
-
-                self.labels.try_dedup(internal_label)
-            })
-            .collect::<Result<Box<[_]>, _>>()?;
-
-        let mut locations = Vec::new();
-        locations.try_reserve_exact(sample.locations.len())?;
-        for location in &sample.locations {
-            locations.push(self.add_string_id_location(location)?);
-        }
-
-        self.try_add_sample_internal(sample.values, labels, locations, timestamp)
+            .profiles_dictionary
+            .deref()
     }
 
     fn try_add_sample_internal(
@@ -390,38 +355,6 @@ impl Profile {
         Ok(())
     }
 
-    pub fn get_generation(&self) -> anyhow::Result<Generation> {
-        Ok(self.generation)
-    }
-
-    pub fn resolve(&mut self, id: ManagedStringId) -> anyhow::Result<StringId> {
-        let non_empty_string_id = if let Some(valid_id) = NonZeroU32::new(id.value) {
-            valid_id
-        } else {
-            return Ok(StringId::ZERO); // Both string tables use zero for the empty string
-        };
-
-        let string_storage = self.string_storage
-            .as_ref()
-            // Safety: We always get here through a direct or indirect call to add_string_id_sample,
-            // which already ensured that the string storage exists.
-            .ok_or_else(|| anyhow::anyhow!("Current sample makes use of ManagedStringIds but profile was not created using a string table"))?;
-
-        let mut write_locked_storage = string_storage
-            .lock()
-            .map_err(|_| anyhow::anyhow!("string storage lock was poisoned"))?;
-
-        let cached_profile_id = match self.string_storage_cached_profile_id.as_ref() {
-            Some(cached_profile_id) => cached_profile_id,
-            None => {
-                let new_id = write_locked_storage.next_cached_profile_id()?;
-                self.string_storage_cached_profile_id.get_or_insert(new_id)
-            }
-        };
-
-        write_locked_storage.get_seq_num(non_empty_string_id, &mut self.strings, cached_profile_id)
-    }
-
     /// This is used heavily enough in tests to make a helper.
     #[cfg(test)]
     pub fn new(sample_types: &[api::SampleType], period: Option<api::Period>) -> Self {
@@ -443,7 +376,12 @@ impl Profile {
         sample_types: &[api::SampleType],
         period: Option<api::Period>,
     ) -> io::Result<Self> {
-        Self::try_new_internal(period, sample_types.to_vec().into_boxed_slice(), None, None)
+        let dictionary = Self::try_new_dictionary()?;
+        Self::try_new_internal(
+            period,
+            sample_types.to_vec().into_boxed_slice(),
+            ProfilesDictionaryTranslator::new(dictionary),
+        )
     }
 
     /// Tries to create a profile with the given period and sample types.
@@ -457,22 +395,7 @@ impl Profile {
         Self::try_new_internal(
             period,
             sample_types.to_vec().into_boxed_slice(),
-            None,
-            Some(ProfilesDictionaryTranslator::new(profiles_dictionary)),
-        )
-    }
-
-    #[inline]
-    pub fn try_with_string_storage(
-        sample_types: &[api::SampleType],
-        period: Option<api::Period>,
-        string_storage: Arc<Mutex<ManagedStringStorage>>,
-    ) -> io::Result<Self> {
-        Self::try_new_internal(
-            period,
-            sample_types.to_vec().into_boxed_slice(),
-            Some(string_storage),
-            None,
+            ProfilesDictionaryTranslator::new(profiles_dictionary),
         )
     }
 
@@ -486,19 +409,17 @@ impl Profile {
             "Can't rotate the profile, there are still active samples. Drain them and try again."
         );
 
-        let profiles_dictionary_translator = self
-            .profiles_dictionary_translator
-            .as_ref()
-            .map(|t| -> Result<_, ArcOverflow> {
-                let dict = t.profiles_dictionary.try_clone()?;
-                Ok(ProfilesDictionaryTranslator::new(dict))
-            })
-            .transpose()?;
+        let profiles_dictionary_translator = {
+            let dict = self
+                .profiles_dictionary_translator
+                .profiles_dictionary
+                .try_clone()?;
+            ProfilesDictionaryTranslator::new(dict)
+        };
 
         let mut profile = Profile::try_new_internal(
             self.period,
             self.sample_types.clone(),
-            self.string_storage.clone(),
             profiles_dictionary_translator,
         )
         .context("failed to initialize new profile")?;
@@ -645,39 +566,79 @@ impl Profile {
             .period
             .map(|period| (self.intern_sample_type(period.sample_type), period.value));
 
-        for (offset, item) in self.mappings.into_iter().enumerate() {
-            let mapping = protobuf::Mapping {
-                id: Record::from((offset + 1) as u64),
-                memory_start: Record::from(item.memory_start),
-                memory_limit: Record::from(item.memory_limit),
-                file_offset: Record::from(item.file_offset),
-                filename: Record::from(item.filename),
-                build_id: Record::from(item.build_id),
-            };
-            Record::<_, 3, NO_OPT_ZERO>::from(mapping).encode(writer)?;
+        let mut seen_mappings: HashSet<u64> = HashSet::new();
+        let mut seen_functions: HashSet<u64> = HashSet::new();
+        {
+            let translator = &mut self.profiles_dictionary_translator;
+            let strings = &mut self.strings;
+            for location in self.locations.iter() {
+                let mapping_id = Self::mapping_id2_to_pprof_id(location.mapping);
+                if mapping_id != 0 && seen_mappings.insert(mapping_id) {
+                    // SAFETY: ids come from the same dictionary used by this profile.
+                    let mapping = unsafe { location.mapping.read() }.ok_or_else(|| {
+                        anyhow::anyhow!(
+                            "mapping id {} could not be resolved from profiles dictionary",
+                            mapping_id
+                        )
+                    })?;
+                    // SAFETY: mapping strings are from this translator's dictionary.
+                    let filename =
+                        unsafe { translator.translate_string(strings, mapping.filename.into())? };
+                    // SAFETY: mapping strings are from this translator's dictionary.
+                    let build_id =
+                        unsafe { translator.translate_string(strings, mapping.build_id.into())? };
+                    let mapping = protobuf::Mapping {
+                        id: Record::from(mapping_id),
+                        memory_start: Record::from(mapping.memory_start),
+                        memory_limit: Record::from(mapping.memory_limit),
+                        file_offset: Record::from(mapping.file_offset),
+                        filename: Record::from(filename),
+                        build_id: Record::from(build_id),
+                    };
+                    Record::<_, 3, NO_OPT_ZERO>::from(mapping).encode(writer)?;
+                }
+
+                let function_id = Self::function_id2_to_pprof_id(location.function);
+                if function_id != 0 && seen_functions.insert(function_id) {
+                    // SAFETY: ids come from the same dictionary used by this profile.
+                    let function = unsafe { location.function.read() }.ok_or_else(|| {
+                        anyhow::anyhow!(
+                            "function id {} could not be resolved from profiles dictionary",
+                            function_id
+                        )
+                    })?;
+                    // SAFETY: function strings are from this translator's dictionary.
+                    let name =
+                        unsafe { translator.translate_string(strings, function.name.into())? };
+                    // SAFETY: function strings are from this translator's dictionary.
+                    let system_name = unsafe {
+                        translator.translate_string(strings, function.system_name.into())?
+                    };
+                    // SAFETY: function strings are from this translator's dictionary.
+                    let filename =
+                        unsafe { translator.translate_string(strings, function.file_name.into())? };
+                    let function = protobuf::Function {
+                        id: Record::from(function_id),
+                        name: Record::from(name),
+                        system_name: Record::from(system_name),
+                        filename: Record::from(filename),
+                    };
+                    Record::<_, 5, NO_OPT_ZERO>::from(function).encode(writer)?;
+                }
+            }
         }
 
         for (offset, item) in self.locations.into_iter().enumerate() {
             let location = protobuf::Location {
                 id: Record::from((offset + 1) as u64),
-                mapping_id: Record::from(item.mapping_id.map(MappingId::into_raw_id).unwrap_or(0)),
+                mapping_id: Record::from(Self::mapping_id2_to_pprof_id(item.mapping)),
                 address: Record::from(item.address),
                 line: Record::from(protobuf::Line {
-                    function_id: Record::from(item.function_id.into_raw_id()),
+                    function_id: Record::from(Self::function_id2_to_pprof_id(item.function)),
                     lineno: Record::from(item.line),
                 }),
             };
             Record::<_, 4, NO_OPT_ZERO>::from(location).encode(writer)?;
-        }
-
-        for (offset, item) in self.functions.into_iter().enumerate() {
-            let function = protobuf::Function {
-                id: Record::from((offset + 1) as u64),
-                name: Record::from(item.name),
-                system_name: Record::from(item.system_name),
-                filename: Record::from(item.filename),
-            };
-            Record::<_, 5, NO_OPT_ZERO>::from(function).encode(writer)?;
         }
 
         let mut lender = self.strings.into_lending_iter();
@@ -718,6 +679,33 @@ impl Profile {
         Ok(self)
     }
 
+    // Simple synchronization between samples and profile rotation/export.
+    const FLAG: u64 = u32::MAX as u64;
+
+    /// Prevent any new samples from starting.
+    /// Returns the number of remaining samples.
+    pub fn sample_block(&mut self) -> anyhow::Result<u64> {
+        let current = self.active_samples.fetch_add(Self::FLAG, SeqCst);
+        if current >= Self::FLAG {
+            self.active_samples.fetch_sub(Self::FLAG, SeqCst);
+        }
+        Ok(current % Self::FLAG)
+    }
+
+    pub fn sample_end(&mut self) -> anyhow::Result<()> {
+        self.active_samples.fetch_sub(1, SeqCst);
+        Ok(())
+    }
+
+    pub fn sample_start(&mut self) -> anyhow::Result<()> {
+        let old = self.active_samples.fetch_add(1, SeqCst);
+        if old >= Self::FLAG {
+            self.active_samples.fetch_sub(1, SeqCst);
+            anyhow::bail!("Can't start sample, export in progress");
+        }
+        Ok(())
+    }
+
     /// In incident 35390 (JIRA PROF-11456) we observed invalid location_ids being present in
     /// emitted profiles. We're doing extra checks here so that if we see incorrect ids again,
     /// we are 100% sure they were not introduced prior to this stage.
@@ -739,68 +727,6 @@ impl Profile {
 
 /// Private helper functions
 impl Profile {
-    fn add_string_id_function(
-        &mut self,
-        function: &api::StringIdFunction,
-    ) -> anyhow::Result<FunctionId> {
-        let name = self.resolve(function.name)?;
-        let system_name = self.resolve(function.system_name)?;
-        let filename = self.resolve(function.filename)?;
-
-        self.functions.try_dedup(Function {
-            name,
-            system_name,
-            filename,
-        })
-    }
-
-    fn add_string_id_location(
-        &mut self,
-        location: &api::StringIdLocation,
-    ) -> anyhow::Result<LocationId> {
-        let mapping_id = self.add_string_id_mapping(&location.mapping)?;
-        let function_id = self.add_string_id_function(&location.function)?;
-        self.locations.checked_dedup(Location {
-            mapping_id,
-            function_id,
-            address: location.address,
-            line: location.line,
-        })
-    }
-
-    fn add_string_id_mapping(
-        &mut self,
-        mapping: &api::StringIdMapping,
-    ) -> anyhow::Result<Option<MappingId>> {
-        #[inline]
-        fn is_zero_mapping(mapping: &api::StringIdMapping) -> bool {
-            // See the other is_zero_mapping for more info, but only Ruby is
-            // using this API at the moment, so we optimize for the whole
-            // thing being a zero representation.
-            let memory_start = mapping.memory_start;
-            let memory_limit = mapping.memory_limit;
-            let file_offset = mapping.file_offset;
-            let strings = (mapping.filename.value | mapping.build_id.value) as u64;
-            0 == (memory_start | memory_limit | file_offset | strings)
-        }
-
-        if is_zero_mapping(mapping) {
-            return Ok(None);
-        }
-
-        let filename = self.resolve(mapping.filename)?;
-        let build_id = self.resolve(mapping.build_id)?;
-
-        let id = self.mappings.try_dedup(Mapping {
-            memory_start: mapping.memory_start,
-            memory_limit: mapping.memory_limit,
-            file_offset: mapping.file_offset,
-            filename,
-            build_id,
-        })?;
-        Ok(Some(id))
-    }
-
     fn try_add_stacktrace(&mut self, locations: Vec<LocationId>) -> anyhow::Result<StackTraceId> {
         self.stack_traces.try_dedup(StackTrace { locations })
     }
@@ -811,6 +737,24 @@ impl Profile {
         ValueType {
             r#type: Record::from(self.intern(vt.r#type)),
             unit: Record::from(self.intern(vt.unit)),
+        }
+    }
+
+    #[inline(always)]
+    fn function_id2_to_pprof_id(id: FunctionId2) -> u64 {
+        if id.is_empty() {
+            0
+        } else {
+            id.0 as usize as u64
+        }
+    }
+
+    #[inline(always)]
+    fn mapping_id2_to_pprof_id(id: MappingId2) -> u64 {
+        if id.is_empty() {
+            0
+        } else {
+            id.0 as usize as u64
         }
     }
 
@@ -900,48 +844,37 @@ impl Profile {
         self.strings.try_intern(item)
     }
 
+    fn try_new_dictionary() -> io::Result<crate::profiles::collections::Arc<ProfilesDictionary>> {
+        let dict = ProfilesDictionary::try_new().map_err(io::Error::other)?;
+        crate::profiles::collections::Arc::try_new(dict).map_err(|err| {
+            io::Error::new(
+                io::ErrorKind::Other,
+                format!("failed to allocate profiles dictionary arc: {err:?}"),
+            )
+        })
+    }
+
     /// Creates a profile from the period, sample types, and start time using
     /// the owned values.
     fn try_new_internal(
         period: Option<api::Period>,
         sample_types: Box<[api::SampleType]>,
-        string_storage: Option<Arc<Mutex<ManagedStringStorage>>>,
-        profiles_dictionary_translator: Option<ProfilesDictionaryTranslator>,
+        profiles_dictionary_translator: ProfilesDictionaryTranslator,
     ) -> io::Result<Self> {
         let start_time = SystemTime::now();
-        let profiles_dictionary_translator = match profiles_dictionary_translator {
-            Some(translator) => translator,
-            None => {
-                let dict = ProfilesDictionary::try_new().map_err(io::Error::other)?;
-                let dict = crate::profiles::collections::Arc::try_new(dict).map_err(|err| {
-                    io::Error::new(
-                        io::ErrorKind::Other,
-                        format!("failed to allocate profiles dictionary arc: {err:?}"),
-                    )
-                })?;
-                ProfilesDictionaryTranslator::new(dict)
-            }
-        };
         let mut profile = Self {
-            profiles_dictionary_translator: Some(profiles_dictionary_translator),
+            profiles_dictionary_translator,
             active_samples: Default::default(),
             endpoints: Default::default(),
-            functions: Default::default(),
-            generation: Generation::new(),
-
             labels: Default::default(),
             label_sets: Default::default(),
             locations: Default::default(),
-            mappings: Default::default(),
             observations: Default::default(),
             period,
             sample_types,
             stack_traces: Default::default(),
             start_time,
             strings: Default::default(),
-            string_storage,
-            string_storage_cached_profile_id: None, /* Never reuse an id! See comments on
-                                                     * CachedProfileId for why. */
             timestamp_key: Default::default(),
             upscaling_rules: Default::default(),
         };
@@ -951,8 +884,6 @@ impl Profile {
         // without copying bytes.
         let dictionary = profile
             .profiles_dictionary_translator
-            .as_ref()
-            .expect("profiles dictionary translator to be initialized")
             .profiles_dictionary
             .try_clone()
             .map_err(|err| {
@@ -990,36 +921,6 @@ impl Profile {
             anyhow::ensure!(
                 label.key != "end_timestamp_ns",
                 "Timestamp should not be passed as a label {label:?}"
-            );
-        }
-        Ok(())
-    }
-
-    fn validate_string_id_sample_labels(
-        &mut self,
-        sample: &api::StringIdSample,
-    ) -> anyhow::Result<()> {
-        let mut seen: HashMap<ManagedStringId, &api::StringIdLabel> = HashMap::new();
-
-        for label in sample.labels.iter() {
-            if let Some(duplicate) = seen.insert(label.key, label) {
-                anyhow::bail!("Duplicate label on sample: {:?} {:?}", duplicate, label);
-            }
-
-            let key_id: StringId = self.resolve(label.key)?;
-
-            if key_id == self.endpoints.local_root_span_id_label {
-                anyhow::ensure!(
-                    label.str != ManagedStringId::empty() && label.num != 0,
-                    "Invalid \"local root span id\" label: {:?}",
-                    label
-                );
-            }
-
-            anyhow::ensure!(
-                key_id != self.timestamp_key,
-                "Timestamp should not be passed as a label {:?}",
-                label
             );
         }
         Ok(())
@@ -1237,23 +1138,21 @@ mod api_tests {
         assert_eq!(profile.locations.len(), 2); // one of them dedups
         assert_eq!(profile.functions.len(), 2);
 
-        for (index, mapping) in profile.mappings.iter().enumerate() {
-            assert_eq!(
-                (index + 1) as u64,
-                mapping.id,
-                "id {id} didn't match offset {offset} for {mapping:#?}",
-                id = mapping.id,
-                offset = index + 1
-            );
-        }
+        let mapping_ids: HashSet<u64> = profile.mappings.iter().map(|mapping| mapping.id).collect();
+        assert_eq!(mapping_ids.len(), profile.mappings.len());
+        assert!(mapping_ids.iter().all(|id| *id != 0));
 
         for (index, location) in profile.locations.iter().enumerate() {
             assert_eq!((index + 1) as u64, location.id);
         }
 
-        for (index, function) in profile.functions.iter().enumerate() {
-            assert_eq!((index + 1) as u64, function.id);
-        }
+        let function_ids: HashSet<u64> = profile
+            .functions
+            .iter()
+            .map(|function| function.id)
+            .collect();
+        assert_eq!(function_ids.len(), profile.functions.len());
+        assert!(function_ids.iter().all(|id| *id != 0));
         let samples = sorted_samples(&profile);
 
         let sample = samples.first().expect("index 0 to exist");
@@ -1319,11 +1218,9 @@ mod api_tests {
         /* This set of asserts is to make sure it's a non-empty profile that we
          * are working with so that we can test that reset works.
          */
-        assert!(!profile.functions.is_empty());
         assert!(!profile.labels.is_empty());
         assert!(!profile.label_sets.is_empty());
         assert!(!profile.locations.is_empty());
-        assert!(!profile.mappings.is_empty());
         assert!(!profile.observations.is_empty());
         assert!(!profile.sample_types.as_ref().is_empty());
         assert!(profile.period.is_none());
@@ -1335,11 +1232,9 @@ mod api_tests {
             .expect("reset to succeed");
 
         // These should all be empty now
-        assert!(profile.functions.is_empty());
         assert!(profile.labels.is_empty());
         assert!(profile.label_sets.is_empty());
         assert!(profile.locations.is_empty());
-        assert!(profile.mappings.is_empty());
         assert!(profile.observations.is_empty());
         assert!(profile.endpoints.mappings.is_empty());
         assert!(profile.endpoints.stats.is_empty());
@@ -1374,18 +1269,17 @@ mod api_tests {
 
     #[test]
     fn try_new_always_initializes_profiles_dictionary() {
-        let sample_types = [api::ValueType::new("wall-time", "nanoseconds")];
+        let sample_types = [api::SampleType::WallTime];
         let profile = Profile::new(&sample_types, None);
-        assert!(profile.get_profiles_dictionary().is_some());
+        let _ = profile.get_profiles_dictionary();
     }
 
     #[test]
     fn try_new_attaches_profiles_dictionary_to_string_table() {
-        let sample_types = [api::ValueType::new("wall-time", "nanoseconds")];
+        let sample_types = [api::SampleType::WallTime];
         let mut profile = Profile::new(&sample_types, None);
         let string_id2 = profile
             .get_profiles_dictionary()
-            .expect("dictionary to exist")
             .try_insert_str2("dict-only-string")
             .expect("insert dict string");
 
@@ -2882,66 +2776,91 @@ mod api_tests {
     }
 
     #[test]
-    fn test_regression_managed_string_table_correctly_maps_ids() {
-        let storage = Arc::new(Mutex::new(ManagedStringStorage::new()));
-        let hello_id: u32;
-        let world_id: u32;
+    fn first_use_emits_pointer_identity_ids() {
+        let dict = crate::profiles::datatypes::ProfilesDictionary::try_new().unwrap();
+        let sample_types = [api::SampleType::CpuSamples];
 
-        {
-            let mut storage_guard = storage.lock().unwrap();
-            hello_id = storage_guard.intern("hello").unwrap();
-            world_id = storage_guard.intern("world").unwrap();
+        let file_a = dict.try_insert_str2("/tmp/a.rs").unwrap();
+        let file_b = dict.try_insert_str2("/tmp/b.rs").unwrap();
+        let fn_a = dict.try_insert_str2("func_a").unwrap();
+        let fn_b = dict.try_insert_str2("func_b").unwrap();
+
+        let mapping_a = dict
+            .try_insert_mapping2(Mapping2 {
+                memory_start: 0x1000,
+                memory_limit: 0x2000,
+                file_offset: 0,
+                filename: file_a,
+                build_id: Default::default(),
+            })
+            .unwrap();
+        let mapping_b = dict
+            .try_insert_mapping2(Mapping2 {
+                memory_start: 0x3000,
+                memory_limit: 0x4000,
+                file_offset: 0,
+                filename: file_b,
+                build_id: Default::default(),
+            })
+            .unwrap();
+
+        let function_a = dict
+            .try_insert_function2(Function2 {
+                name: fn_a,
+                system_name: Default::default(),
+                file_name: file_a,
+            })
+            .unwrap();
+        let function_b = dict
+            .try_insert_function2(Function2 {
+                name: fn_b,
+                system_name: Default::default(),
+                file_name: file_b,
+            })
+            .unwrap();
+
+        let location_first = api2::Location2 {
+            mapping: mapping_b,
+            function: function_a,
+            address: 0xaaaa,
+            line: 10,
+        };
+        let location_second = api2::Location2 {
+            mapping: mapping_a,
+            function: function_b,
+            address: 0xbbbb,
+            line: 20,
+        };
+        let locations = [location_first, location_second];
+
+        let dict = crate::profiles::collections::Arc::try_new(dict).unwrap();
+        let mut profile = Profile::try_new_with_dictionary(&sample_types, None, dict).unwrap();
+        let labels = std::iter::empty::<anyhow::Result<api2::Label>>();
+        // SAFETY: ids come from the same dictionary passed to this profile.
+        unsafe {
+            profile
+                .try_add_sample2(&locations, &[1], labels, None)
+                .expect("sample insertion to succeed");
         }
 
-        let sample_types = [api::SampleType::CpuSamples];
-        let mut profile =
-            Profile::try_with_string_storage(&sample_types, None, storage.clone()).unwrap();
+        let pprof = roundtrip_to_pprof(profile).unwrap();
+        assert_eq!(pprof.mappings.len(), 2);
+        assert_eq!(pprof.functions.len(), 2);
 
-        let location = api::StringIdLocation {
-            function: api::StringIdFunction {
-                name: api::ManagedStringId { value: hello_id },
-                filename: api::ManagedStringId { value: world_id },
-                ..Default::default()
-            },
-            ..Default::default()
-        };
+        let expected_mapping_ids = vec![
+            Profile::mapping_id2_to_pprof_id(mapping_b),
+            Profile::mapping_id2_to_pprof_id(mapping_a),
+        ];
+        let expected_function_ids = vec![
+            Profile::function_id2_to_pprof_id(function_a),
+            Profile::function_id2_to_pprof_id(function_b),
+        ];
 
-        let sample = api::StringIdSample {
-            locations: vec![location],
-            values: &[1],
-            labels: vec![],
-        };
+        let actual_mapping_ids: Vec<u64> = pprof.mappings.iter().map(|m| m.id).collect();
+        let actual_function_ids: Vec<u64> = pprof.functions.iter().map(|f| f.id).collect();
 
-        profile.add_string_id_sample(sample.clone(), None).unwrap();
-        profile.add_string_id_sample(sample.clone(), None).unwrap();
-
-        let pprof_first_profile =
-            roundtrip_to_pprof(profile.reset_and_return_previous().unwrap()).unwrap();
-
-        assert!(pprof_first_profile
-            .string_table
-            .iter()
-            .any(|s| s == "hello"));
-        assert!(pprof_first_profile
-            .string_table
-            .iter()
-            .any(|s| s == "world"));
-
-        // If the cache invalidation on the managed string table is working correctly, these strings
-        // get correctly re-added to the profile's string table
-
-        profile.add_string_id_sample(sample.clone(), None).unwrap();
-        profile.add_string_id_sample(sample.clone(), None).unwrap();
-        let pprof_second_profile = roundtrip_to_pprof(profile).unwrap();
-
-        assert!(pprof_second_profile
-            .string_table
-            .iter()
-            .any(|s| s == "hello"));
-        assert!(pprof_second_profile
-            .string_table
-            .iter()
-            .any(|s| s == "world"));
+        assert_eq!(actual_mapping_ids, expected_mapping_ids);
+        assert_eq!(actual_function_ids, expected_function_ids);
     }
 
     #[test]

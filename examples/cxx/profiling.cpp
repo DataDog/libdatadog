@@ -52,7 +52,8 @@ int main() {
         
         std::cout << "Adding samples..." << std::endl;
         for (int i = 0; i < 100; i++) {
-            // String storage must outlive add_sample() call for the profile to intern them
+            // This local storage must outlive each add_sample() call because
+            // the sample structs reference these string buffers by view.
             std::vector<std::string> string_storage;
             string_storage.push_back(std::format("hot_function_{}", i % 3));
             string_storage.push_back(std::format("_Z12hot_function{}v", i % 3));

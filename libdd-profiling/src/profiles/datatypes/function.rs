@@ -59,9 +59,8 @@ impl From<Function2> for Function {
 /// performed on; it is not generally guaranteed that ids from one dictionary
 /// can be used in another dictionary, even if it happens to work by
 /// implementation detail.
-///
-/// `Eq`/`Hash` and other comparisons are based on this handle value, and are
-/// only intended for ids produced by the same `ProfilesDictionary`.
+/// Equality and hashing are pointer-identity based. This is intended for ids
+/// that originate from the same [`crate::profiles::datatypes::ProfilesDictionary`].
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
 #[repr(transparent)]
 pub struct FunctionId2(pub(crate) *mut Function2);

@@ -2,143 +2,89 @@
 // SPDX-License-Identifier: Apache-2.0
 
 extern "C" {
-#include <datadog/common.h>
-#include <datadog/crashtracker.h>
 #include <datadog/profiling.h>
 }
+
 #include <chrono>
-#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <iostream>
-#include <memory>
-#include <optional>
-#include <string>
-#include <thread>
-#include <vector>
 
-static ddog_CharSlice to_slice_c_char(const char *s) { return {.ptr = s, .len = strlen(s)}; }
-static ddog_CharSlice to_slice_c_char(const char *s, std::size_t size) {
-  return {.ptr = s, .len = size};
-}
-static ddog_CharSlice to_slice_string(std::string const &s) {
-  return {.ptr = s.data(), .len = s.length()};
-}
+static ddog_CharSlice to_slice(const char *s) { return {.ptr = s, .len = strlen(s)}; }
 
-static std::string to_string(ddog_CharSlice s) { return std::string(s.ptr, s.len); }
-
-void print_error(const ddog_Error &err) {
+static void print_error(const ddog_Error &err) {
   auto charslice = ddog_Error_message(&err);
-  printf("%.*s\n", static_cast<int>(charslice.len), charslice.ptr);
+  fprintf(stderr, "%.*s\n", static_cast<int>(charslice.len), charslice.ptr);
 }
 
-#define CHECK_RESULT(typ, ok_tag)                                                                  \
-  void check_result(typ result) {                                                                  \
-    if (result.tag != ok_tag) {                                                                    \
-      print_error(result.err);                                                                     \
-      ddog_Error_drop(&result.err);                                                                \
-      exit(EXIT_FAILURE);                                                                          \
-    }                                                                                              \
+static void check_status(ddog_prof_Status status, const char *context) {
+  if (status != DDOG_PROF_STATUS_OK) {
+    fprintf(stderr, "%s failed with status=%d\n", context, static_cast<int>(status));
+    exit(EXIT_FAILURE);
   }
+}
 
-CHECK_RESULT(ddog_VoidResult, DDOG_VOID_RESULT_OK)
-
-#define EXTRACT_RESULT(typ, uppercase)                                                             \
-  ddog_prof_##typ##Id extract_result(ddog_prof_##typ##Id_Result result) {                          \
-    if (result.tag != DDOG_PROF_##uppercase##_ID_RESULT_OK_GENERATIONAL_ID_##uppercase##_ID) {     \
-      print_error(result.err);                                                                     \
-      ddog_Error_drop(&result.err);                                                                \
-      exit(EXIT_FAILURE);                                                                          \
-    } else {                                                                                       \
-      return result.ok;                                                                            \
-    }                                                                                              \
-  }
-
-EXTRACT_RESULT(Function, FUNCTION)
-EXTRACT_RESULT(Label, LABEL)
-EXTRACT_RESULT(LabelSet, LABEL_SET)
-EXTRACT_RESULT(Location, LOCATION)
-EXTRACT_RESULT(Mapping, MAPPING)
-EXTRACT_RESULT(StackTrace, STACK_TRACE)
-EXTRACT_RESULT(String, STRING)
-
-void wait_for_user(std::string s) {
-  std::cout << s << std::endl;
-  getchar();
+static ddog_prof_StringId2 insert_string(ddog_prof_ProfilesDictionary *dict, const char *s) {
+  ddog_prof_StringId2 out = DDOG_PROF_STRINGID2_EMPTY;
+  check_status(ddog_prof_ProfilesDictionary_insert_str(
+                   &out, dict, to_slice(s), DDOG_PROF_UTF8OPTION_ASSUME),
+               "ddog_prof_ProfilesDictionary_insert_str");
+  return out;
 }
 
 int main(void) {
-  // Use the SampleType enum instead of ValueType struct
+  ddog_prof_ProfilesDictionaryHandle dict_handle = {};
+  check_status(ddog_prof_ProfilesDictionary_new(&dict_handle), "ddog_prof_ProfilesDictionary_new");
+  auto *dict = ddog_prof_ProfilesDictionaryHandle_as_ref(&dict_handle);
+
   const ddog_prof_SampleType wall_time = DDOG_PROF_SAMPLE_TYPE_WALL_TIME;
   const ddog_prof_Slice_SampleType sample_types = {&wall_time, 1};
-  const ddog_prof_Period period = {
-      .sample_type = wall_time,
-      .value = 60,
-  };
+  const ddog_prof_Period period = {.sample_type = wall_time, .value = 60};
 
-  ddog_prof_Profile_NewResult new_result = ddog_prof_Profile_new(sample_types, &period);
-  if (new_result.tag != DDOG_PROF_PROFILE_NEW_RESULT_OK) {
-    ddog_CharSlice message = ddog_Error_message(&new_result.err);
-    fprintf(stderr, "%.*s", (int)message.len, message.ptr);
-    ddog_Error_drop(&new_result.err);
-    exit(EXIT_FAILURE);
+  ddog_prof_Profile profile = {};
+  check_status(ddog_prof_Profile_with_dictionary(&profile, &dict_handle, sample_types, &period),
+               "ddog_prof_Profile_with_dictionary");
+
+  ddog_prof_StringId2 fn_name = insert_string(dict, "{main}");
+  ddog_prof_StringId2 file_name = insert_string(dict, "/srv/example/index.php");
+  ddog_prof_StringId2 magic_key = insert_string(dict, "magic_word");
+  ddog_prof_StringId2 unique_counter = insert_string(dict, "unique_counter");
+
+  ddog_prof_Mapping2 mapping = {
+      .memory_start = 0, .memory_limit = 0, .file_offset = 0, .filename = file_name, .build_id = DDOG_PROF_STRINGID2_EMPTY};
+  ddog_prof_MappingId2 mapping_id = {};
+  check_status(
+      ddog_prof_ProfilesDictionary_insert_mapping(&mapping_id, dict, &mapping),
+      "ddog_prof_ProfilesDictionary_insert_mapping");
+
+  ddog_prof_Function2 function = {
+      .name = fn_name, .system_name = DDOG_PROF_STRINGID2_EMPTY, .file_name = file_name};
+  ddog_prof_FunctionId2 function_id = {};
+  check_status(
+      ddog_prof_ProfilesDictionary_insert_function(&function_id, dict, &function),
+      "ddog_prof_ProfilesDictionary_insert_function");
+
+  ddog_prof_Location2 location = {.mapping = mapping_id, .function = function_id, .address = 0, .line = 0};
+  ddog_Slice_Location2 locations = {.ptr = &location, .len = 1};
+
+  auto start = std::chrono::system_clock::now();
+  for (int64_t i = 1; i <= 100000; i++) {
+    ddog_prof_Label2 labels[2] = {
+        {.key = magic_key, .str = to_slice("abracadabra"), .num = 0, .num_unit = to_slice("")},
+        {.key = unique_counter, .str = to_slice(""), .num = i, .num_unit = to_slice("")},
+    };
+    ddog_Slice_I64 values = {.ptr = &i, .len = 1};
+    ddog_prof_Sample2 sample = {
+        .locations = locations, .values = values, .labels = {.ptr = labels, .len = 2}};
+    check_status(ddog_prof_Profile_add2(&profile, sample, i),
+                 "ddog_prof_Profile_add2");
   }
-
-  ddog_prof_Profile *profile = &new_result.ok;
-  auto root_function_name =
-      extract_result(ddog_prof_Profile_intern_string(profile, to_slice_c_char("{main}")));
-  auto root_file_name = extract_result(
-      ddog_prof_Profile_intern_string(profile, to_slice_c_char("/srv/example/index.php")));
-  auto root_mapping = extract_result(
-      ddog_prof_Profile_intern_mapping(profile, 0, 0, 0, root_file_name, ddog_INTERNED_EMPTY_STRING));
-  auto root_function = extract_result(ddog_prof_Profile_intern_function(
-      profile, root_function_name, ddog_INTERNED_EMPTY_STRING, root_file_name));
-  auto root_location = extract_result(ddog_prof_Profile_intern_location_with_mapping_id(
-      profile, root_mapping, root_function, 0, 0));
-  ddog_prof_Slice_LocationId locations = {.ptr = &root_location, .len = 1};
-  auto stacktrace = extract_result(ddog_prof_Profile_intern_stacktrace(profile, locations));
-
-  auto magic_label_key =
-      extract_result(ddog_prof_Profile_intern_string(profile, to_slice_c_char("magic_word")));
-  auto magic_label_val =
-      extract_result(ddog_prof_Profile_intern_string(profile, to_slice_c_char("abracadabra")));
-  auto magic_label =
-      extract_result(ddog_prof_Profile_intern_label_str(profile, magic_label_key, magic_label_val));
-
-  // Keep this id around, no need to reintern the same string over and over again.
-  auto counter_id =
-      extract_result(ddog_prof_Profile_intern_string(profile, to_slice_c_char("unique_counter")));
-
-  // wait_for_user("Press any key to start adding values ...");
-
-  std::chrono::time_point<std::chrono::system_clock> start = std::chrono::system_clock::now();
-  for (auto i = 0; i < 10000000; i++) {
-    auto counter_label = extract_result(ddog_prof_Profile_intern_label_num(profile, counter_id, i));
-    ddog_prof_LabelId label_array[2] = {magic_label, counter_label};
-    ddog_prof_Slice_LabelId label_slice = {.ptr = label_array, .len = 2};
-    auto labels = extract_result(ddog_prof_Profile_intern_labelset(profile, label_slice));
-
-    int64_t value = i * 10;
-    ddog_Slice_I64 values = {.ptr = &value, .len = 1};
-    int64_t timestamp = 3 + 800 * i;
-    check_result(ddog_prof_Profile_intern_sample(profile, stacktrace, values, labels, timestamp));
-  }
-  std::chrono::time_point<std::chrono::system_clock> end = std::chrono::system_clock::now();
+  auto end = std::chrono::system_clock::now();
   std::chrono::duration<double> elapsed_seconds = end - start;
   std::cout << "elapsed time: " << elapsed_seconds.count() << "s" << std::endl;
 
-  // wait_for_user("Press any key to reset and drop...");
-
-  ddog_prof_Profile_Result reset_result = ddog_prof_Profile_reset(profile);
-  if (reset_result.tag != DDOG_PROF_PROFILE_RESULT_OK) {
-    ddog_CharSlice message = ddog_Error_message(&reset_result.err);
-    fprintf(stderr, "%.*s", (int)message.len, message.ptr);
-    ddog_Error_drop(&reset_result.err);
-  }
-  ddog_prof_Profile_drop(profile);
-
-  // wait_for_user("Press any key to exit...");
-
+  ddog_prof_Profile_drop(&profile);
+  ddog_prof_ProfilesDictionary_drop(&dict_handle);
   return EXIT_SUCCESS;
 }
