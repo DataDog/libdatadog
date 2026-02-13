@@ -113,6 +113,9 @@ impl From<SetId<Mapping>> for MappingId2 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::profiles::datatypes::ProfilesDictionary;
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
     use std::mem::offset_of;
 
     #[test]
@@ -142,5 +145,38 @@ mod tests {
             offset_of!(Mapping, build_id),
             offset_of!(Mapping2, build_id)
         );
+    }
+
+    fn hash_of<T: Hash>(value: &T) -> u64 {
+        let mut hasher = DefaultHasher::new();
+        value.hash(&mut hasher);
+        hasher.finish()
+    }
+
+    #[test]
+    fn mapping_id2_equality_and_hash_are_pointer_identity_based() {
+        let dict = ProfilesDictionary::try_new().unwrap();
+        let filename = dict.try_insert_str2("filename").unwrap();
+        let build_id = dict.try_insert_str2("build").unwrap();
+
+        let mapping = Mapping2 {
+            memory_start: 100,
+            memory_limit: 200,
+            file_offset: 10,
+            filename,
+            build_id,
+        };
+        let same_a = dict.try_insert_mapping2(mapping).unwrap();
+        let same_b = dict.try_insert_mapping2(mapping).unwrap();
+        assert_eq!(same_a, same_b);
+        assert_eq!(hash_of(&same_a), hash_of(&same_b));
+
+        let different = dict
+            .try_insert_mapping2(Mapping2 {
+                memory_start: 101,
+                ..mapping
+            })
+            .unwrap();
+        assert_ne!(same_a, different);
     }
 }
