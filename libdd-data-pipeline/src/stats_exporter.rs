@@ -11,13 +11,12 @@ use std::{
     time,
 };
 
-use async_trait::async_trait;
 use crate::trace_exporter::TracerMetadata;
+use async_trait::async_trait;
 use libdd_common::{worker::Worker, Endpoint, HttpClient};
 use libdd_trace_protobuf::pb;
 use libdd_trace_stats::span_concentrator::SpanConcentrator;
 use libdd_trace_utils::send_with_retry::{send_with_retry, RetryStrategy};
-use tokio::select;
 use tokio_util::sync::CancellationToken;
 use tracing::error;
 
@@ -135,22 +134,22 @@ impl StatsExporter {
 
 #[async_trait]
 impl Worker for StatsExporter {
-    /// Run loop of the stats exporter
-    ///
-    /// Once started, the stats exporter will flush and send stats on every `self.flush_interval`.
-    /// If the `self.cancellation_token` is cancelled, the exporter will force flush all stats and
-    /// return.
+    async fn trigger(&mut self) {
+        tokio::time::sleep(self.flush_interval).await;
+    }
+
+    /// Flush and send stats on every trigger.
     async fn run(&mut self) {
-        loop {
-            select! {
-                _ = self.cancellation_token.cancelled() => {
-                    let _ = self.send(true).await;
-                    break;
-                },
-                _ = tokio::time::sleep(self.flush_interval) => {
-                        let _ = self.send(false).await;
-                },
-            };
+        let _ = self.send(false).await;
+    }
+
+    fn shutdown(&mut self) {
+        // Force flush all stats on shutdown
+        let rt = tokio::runtime::Handle::try_current();
+        if let Ok(handle) = rt {
+            handle.block_on(async {
+                let _ = self.send(true).await;
+            });
         }
     }
 }
