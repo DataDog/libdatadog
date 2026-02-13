@@ -2869,9 +2869,9 @@ checksum = "830d08ce1d1d941e6b30645f1a0eb5643013d835ce3779a5fc208261dbe10f55"
 
 [[package]]
 name = "libc"
-version = "0.2.178"
+version = "0.2.182"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "37c93d8daa9d8a012fd8ab92f088405fb202ea0b6ab73ee2482ae66af4f42091"
+checksum = "6800badb6cb2082ffd7b6a67e6125bb39f18782f793520caee8cb8846be06112"
 
 [[package]]
 name = "libdd-alloc"
@@ -3146,6 +3146,7 @@ dependencies = [
  "http-body-util",
  "httparse",
  "indexmap 2.12.1",
+ "libc",
  "libdd-alloc",
  "libdd-common",
  "libdd-profiling",
@@ -3165,6 +3166,7 @@ dependencies = [
  "thiserror 2.0.17",
  "tokio",
  "tokio-util",
+ "windows-sys 0.52.0",
  "zstd",
 ]
 
