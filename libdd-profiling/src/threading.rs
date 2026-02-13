@@ -4,8 +4,8 @@
 /// Returns a numeric identifier for the current OS thread.
 #[cfg(target_os = "linux")]
 pub fn get_current_thread_id() -> i64 {
-    // SAFETY: `gettid` has no preconditions and returns the current kernel TID.
-    unsafe { libc::gettid() as i64 }
+    // SAFETY: syscall(SYS_gettid) has no preconditions for current thread.
+    unsafe { libc::syscall(libc::SYS_gettid) as i64 }
 }
 
 /// Returns a numeric identifier for the current OS thread.
