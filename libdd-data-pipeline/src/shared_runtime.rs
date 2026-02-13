@@ -139,9 +139,13 @@ impl SharedRuntime {
             runtime.block_on(async {
                 let mut workers_lock = self.workers.lock_or_panic();
 
-                // Pause all workers sequentially
+                // First signal all workers to pause, then wait for each one to stop.
                 for pausable_worker in workers_lock.iter_mut() {
-                    pausable_worker.pause().await?;
+                    pausable_worker.request_pause()?;
+                }
+
+                for pausable_worker in workers_lock.iter_mut() {
+                    pausable_worker.join().await?;
                 }
                 Ok::<(), PausableWorkerError>(())
             })?;

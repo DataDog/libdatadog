@@ -383,7 +383,7 @@ impl TraceExporter {
             let stats_worker = self.workers.lock_or_panic().stats.take();
 
             if let Some(stats_worker) = stats_worker {
-                let _ = stats_worker.join().await;
+                let _ = stats_worker.join_task().await;
             }
         }
         if let Some(telemetry) = self.telemetry.take() {
@@ -391,7 +391,7 @@ impl TraceExporter {
             let telemetry_worker = self.workers.lock_or_panic().telemetry.take();
 
             if let Some(telemetry_worker) = telemetry_worker {
-                let _ = telemetry_worker.join().await;
+                let _ = telemetry_worker.join_task().await;
             }
         }
     }
