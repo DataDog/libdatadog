@@ -4,8 +4,16 @@
 
 When a large fleet of tracers boots simultaneously (e.g. a deployment rollout, auto-scaling
 event, or cluster restart), the Remote Configuration (RC) subsystem experiences a thundering
-herd problem that causes unacceptable delays — **30+ seconds** — for products like `FFE_FLAGS`
-(Feature Flag Evaluation) that are critical to application startup.
+herd problem that causes unacceptable delays — **p50=11s, p90=17s, max=22s** — for products
+like `FFE_FLAGS` (Feature Flag Evaluation) that are critical to application startup.
+
+> **Note:** Earlier measurements showed a 30-second cliff (p50=29s), but this was an artifact
+> of `SetProviderAndWait`'s hard-coded 30-second timeout in dd-trace-go (`defaultInitTimeout`
+> in `openfeature/provider.go:36`). When the provider's `Init()` times out, it returns
+> `context.DeadlineExceeded` — but the provider is still registered and RC continues in the
+> background. The flag becomes available on the next poll cycle, artificially inflating boot
+> time by the timeout duration. Switching to non-blocking `SetProvider` with event handlers
+> eliminated this cliff entirely and revealed the true RC delivery latency.
 
 ### Request Flow (End-to-End)
 
@@ -456,6 +464,86 @@ client is pure Ruby.
   prioritized over client-side changes if resources are constrained.
 - Client-side changes (product splitting, jitter) are still valuable per-tracer but can be rolled
   out incrementally, starting with the highest-traffic tracers.
+
+---
+
+## Load Test Results
+
+Load test repo: `DataDog/ffe-dogfooding` branch `leo.romanovsky/multitracer-loadtest`
+
+### Setup
+
+- 100 Go tracer instances (`dd-trace-go` v2.5.0 with OpenFeature provider)
+- 1 Datadog Agent (default config, `refresh_interval=5s`)
+- All instances boot against the same Agent and request `FFE_FLAGS` via RC
+- Each instance measures: tracer start, provider ready (ProviderReady event), first flag
+  evaluation, total boot time
+- Docker Compose on a single host (Apple Silicon, Docker Desktop)
+
+### Results: SetProvider (non-blocking) with event handlers
+
+```
+=== CONTAINER HEALTH ===
+Running: 100  |  Exited: 0  |  Restarting: 0  |  Crashes: 0
+
+=== PROVIDER READY TIME (ProviderReady event, i.e. actual RC delivery) ===
+min:    5,059ms  (5.1s)
+p50:   11,268ms  (11.3s)
+p90:   17,122ms  (17.1s)
+max:   22,396ms  (22.4s)
+
+=== TOTAL BOOT TIME (tracer start + provider ready + first eval) ===
+min:    5,075ms  (5.1s)
+p50:   11,782ms  (11.8s)
+p75:   14,355ms  (14.4s)
+p90:   17,184ms  (17.2s)
+p95:   18,705ms  (18.7s)
+p99:   24,298ms  (24.3s)
+max:   24,298ms  (24.3s)
+
+Success: 100/100  |  Timeout: 0  |  Error: 0
+ProviderError events: 0
+```
+
+### Results: SetProviderAndWait (for comparison — DO NOT USE for latency measurement)
+
+```
+=== TOTAL BOOT TIME ===
+min:    6,093ms  (6.1s)
+p50:   29,527ms  (29.5s)     <-- artificial 30s cliff from Init timeout
+p90:   34,654ms  (34.7s)
+p99:   49,032ms  (49.0s)
+max:   49,032ms  (49.0s)
+
+Under 10s: 20  |  28-32s (timeout cliff): 54  |  Over 32s: 15
+```
+
+### Conclusions
+
+1. **The RC backend API itself is fast.** There is no evidence of backend-side rate limiting
+   or slow responses. The `ProviderReady` event fires without errors for all 100 instances —
+   0 `ProviderError` events. The delay is entirely in the **client-side and Agent-side policies**
+   that throttle how quickly new tracers can receive their first configuration.
+
+2. **The thundering herd latency is real: p50=11s, p90=17s for 100 tracers.** Even without
+   the 30s timeout artifact, the RC delivery takes 5-22 seconds. This is driven by:
+   - Agent cache bypass rate limit (5 bypasses per refresh interval)
+   - Agent mutex serialization (`s.mu.Lock()` across `ClientGetConfigs`)
+   - Agent background poll interval (default 1 minute between polls to backend)
+   - Tracer fixed 5-second polling with no jitter
+
+3. **The 30s timeout in `dd-trace-go` `SetProviderAndWait` masks the real problem.** It makes
+   latency look worse than it is (p50=29s vs p50=11s), but it also hides the fact that every
+   instance *eventually* gets its config — just not fast enough. Applications using
+   `SetProviderAndWait` see either "fast" (under 30s) or "timeout + delayed", creating a
+   bimodal distribution that makes debugging harder.
+
+4. **A fast lane is needed.** Even the true p50=11s is unacceptable for feature flags at
+   application startup. The RC infrastructure can deliver configs quickly (the backend responds
+   promptly), but the Agent's conservative throttling policies (designed for ASM/APM products
+   that can tolerate delays) are the bottleneck. A dedicated fast path for latency-sensitive
+   products like `FFE_FLAGS` — with higher bypass budgets, separate concurrency controls, and
+   shorter polling intervals — would bring this down to sub-second.
 
 ---
 
