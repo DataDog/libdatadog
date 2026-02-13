@@ -31,6 +31,7 @@ members = [
   "datadog-tracer-flare",
   "libdd-capabilities",
   "libdd-common",
+  "libdd-provider",
   "libdd-common-ffi",
   "libdd-telemetry",
   "libdd-telemetry-ffi",
