@@ -48,7 +48,9 @@ mod tests {
         let captured = std::fs::read(&*file_path).expect("should read dump file");
 
         // Parse and validate
-        let request = parse_http_request(&captured).expect("should parse captured request");
+        let request = parse_http_request(&captured)
+            .await
+            .expect("should parse captured request");
 
         assert_eq!(request.method, "POST");
         assert_eq!(request.path, "/");
