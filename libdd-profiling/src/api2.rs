@@ -3,7 +3,11 @@
 
 use crate::profiles::datatypes::{FunctionId2, MappingId2, StringId2};
 
-#[derive(Copy, Clone, Debug, Default)]
+/// A location keyed by `MappingId2`/`FunctionId2` handles.
+///
+/// `Eq`/`Hash` comparisons use those handle values, so they are intended for
+/// data that comes from the same `ProfilesDictionary`.
+#[derive(Copy, Clone, Debug, Default, Eq, PartialEq, Hash)]
 #[repr(C)]
 pub struct Location2 {
     pub mapping: MappingId2,
