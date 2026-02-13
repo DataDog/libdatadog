@@ -180,6 +180,30 @@ jobs:
         body-path: doc-check-results.md
         edit-mode: replace
 
+  missing-docs-delete:
+    needs: changed-crates
+    if: needs.changed-crates.outputs.crates_count == 0
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+    steps:
+    - name: Find existing comment
+      uses: peter-evans/find-comment@3eae4d37986fb5a8592848f6a574fdf654e61f9e # v3.1.0
+      id: find-comment
+      with:
+        issue-number: ${{ github.event.pull_request.number }}
+        comment-author: 'github-actions[bot]'
+        body-includes: '## 📚 Documentation Check Results'
+    - name: Delete existing docs comment
+      uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8.0.0
+      with:
+        script: |
+          github.rest.issues.deleteComment({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            comment_id: ${{ steps.find-comment.outputs.comment-id }},
+          })
+
   changelog-check:
     needs: changed-crates
     if: |
@@ -338,3 +362,27 @@ jobs:
       run: |
         echo "cargo-deny found ${{ steps.cargo-deny.outputs.total_errors }} error(s) and FAIL_IF_CARGO_DENY is enabled"
         exit 1
+
+  dependency-check-delete:
+    needs: changed-crates
+    if: needs.changed-crates.outputs.crates_count == 0
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+    steps:
+    - name: Find existing comment
+      uses: peter-evans/find-comment@3eae4d37986fb5a8592848f6a574fdf654e61f9e # v3.1.0
+      id: find-comment
+      with:
+        issue-number: ${{ github.event.pull_request.number }}
+        comment-author: 'github-actions[bot]'
+        body-includes: '## 🔒 Cargo Deny Results'
+    - name: Delete existing dependency check comment
+      uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8.0.0
+      with:
+        script: |
+          github.rest.issues.deleteComment({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            comment_id: ${{ steps.find-comment.outputs.comment-id }},
+          })
