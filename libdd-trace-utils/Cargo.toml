@@ -74,6 +74,7 @@ test-utils = [
     "cargo-platform",
     "urlencoding",
 ]
+change-buffer = []
 compression = ["zstd", "flate2"]
 # FIPS mode uses the FIPS-compliant cryptographic provider (Unix only)
 fips = ["libdd-common/fips"]
