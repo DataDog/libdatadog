@@ -317,16 +317,11 @@ fn test_report_unhandled_exception() {
     let artifacts = StandardArtifacts::new(config.profile);
     let artifacts_map = build_artifacts(&artifacts.as_slice()).unwrap();
 
-    let validator: ValidatorFn = Box::new(|payload, _fixtures| {
-        // Verify error kind is UnhandledException
-        let error = &payload["error"];
-        assert_eq!(
-            error["kind"].as_str(),
-            Some("UnhandledException"),
-            "error.kind should be UnhandledException"
-        );
+    let validator: ValidatorFn = Box::new(|payload, fixtures| {
+        validate_telemetry(&fixtures.crash_telemetry_path, "UnhandledException")?;
 
         // Verify the formatted message
+        let error = &payload["error"];
         let message = error["message"]
             .as_str()
             .expect("error.message should exist");
@@ -1240,6 +1235,10 @@ fn assert_telemetry_message(crash_telemetry: &[u8], crash_typ: &str) {
             assert!(base_expected_tags.is_subset(&tags), "{tags:?}");
             assert!(tags.contains("si_signo_human_readable:SIGSEGV"), "{tags:?}");
             assert!(tags.contains("si_signo:11"), "{tags:?}");
+        }
+        // UnhandledExceptions have no signal tags
+        "UnhandledException" => {
+            assert!(base_expected_tags.is_subset(&tags), "{tags:?}");
         }
         _ => panic!("{crash_typ}"),
     }

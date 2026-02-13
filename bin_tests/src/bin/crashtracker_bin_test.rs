@@ -173,6 +173,9 @@ mod unix {
                     Some("something went wrong"),
                     stack,
                 )?;
+
+                // Exit cleanly
+                process::exit(0);
             }
             _ => anyhow::bail!("Unexpected crash_typ: {crash_typ}"),
         }

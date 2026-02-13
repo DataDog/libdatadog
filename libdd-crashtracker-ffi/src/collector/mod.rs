@@ -185,7 +185,12 @@ pub extern "C" fn ddog_crasht_default_signals() -> Slice<'static, libc::c_int> {
 /// Report an unhandled exception as a crash event.
 ///
 /// This function sends a crash report for an unhandled exception detected
-/// by the runtime. The process continues running after this call returns.
+/// by the runtime. It is intended to be called when the process is in a
+/// terminal state due to an unhandled exception. The stored config, metadata,
+/// and receiver config are consumed (same as the signal-based crash path).
+///
+/// The runtime-provided stack trace is included in the `experimental.runtime_stack`
+/// field, while libdatadog captures a native backtrace into `error.stack`.
 ///
 /// # Parameters
 /// - `error_type`: The type/class of the exception (e.g. "NullPointerException")
@@ -193,7 +198,8 @@ pub extern "C" fn ddog_crasht_default_signals() -> Slice<'static, libc::c_int> {
 /// - `runtime_stack`: Stack trace from the runtime. Consumed by this call.
 ///
 /// # Preconditions
-///   This function assumes that the crash-tracker has previously been initialized.
+///   This function assumes that the crash-tracker has previously been
+///   initialized via `ddog_crasht_init`.
 /// # Safety
 ///   Crash-tracking functions are not reentrant.
 ///   No other crash-handler functions should be called concurrently.
