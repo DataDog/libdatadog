@@ -80,6 +80,17 @@ impl<T: Worker + Send + Sync + 'static> PausableWorker<T> {
             let stop_token = CancellationToken::new();
             let cloned_token = stop_token.clone();
             let handle = rt.spawn(async move {
+                // First iteration: use initial_trigger
+                select! {
+                    _ = worker.initial_trigger() => {
+                        worker.run().await;
+                    }
+                    _ = cloned_token.cancelled() => {
+                        return worker;
+                    }
+                }
+
+                // Subsequent iterations: use regular trigger
                 loop {
                     select! {
                         _ = worker.trigger() => {
