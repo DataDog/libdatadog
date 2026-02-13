@@ -60,15 +60,23 @@ jobs:
     runs-on: ubuntu-latest
     needs: check-proposal-ongoing
     steps:
+      - uses: DataDog/dd-octo-sts-action@acaa02eee7e3bb0839e4272dacb37b8f3b58ba80 # v1.0.3
+        id: octo-sts
+        with:
+          scope: DataDog/libdatadog
+          policy: self.write.pr
+
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # 4.2.2
         with:
+          token: ${{ steps.octo-sts.outputs.token }}
           fetch-depth: 0
           fetch-tags: true
+
       - name: Merge the main branch into the release branch
         run: |
-          git fetch origin "${{ env.RELEASE_BRANCH }}" --tags
+          git fetch origin "${{ env.RELEASE_BRANCH }}"
           git checkout "${{ env.RELEASE_BRANCH }}"
-          
+
           if ! git merge origin/"${{ env.MAIN_BRANCH }}"; then
             echo "Error: Cannot merge ${{ env.MAIN_BRANCH }} into ${{ env.RELEASE_BRANCH }}" >&2
             echo "There are merge conflicts or the branches have diverged." >&2
@@ -76,6 +84,7 @@ jobs:
             echo "Please try again later." >&2
             exit 1
           fi
+
           git push origin "${{ env.RELEASE_BRANCH }}" --tags
   
   cargo-release:
