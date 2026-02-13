@@ -123,10 +123,6 @@ impl<C: hyper_util::client::legacy::connect::Connect + Clone + Send + Sync + 'st
 {
 }
 
-pub fn kaixo() {
-    println!("kaixo");
-}
-
 // Used by tag! macro
 pub use const_format;
 
