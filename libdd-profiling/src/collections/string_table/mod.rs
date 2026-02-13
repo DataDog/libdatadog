@@ -71,22 +71,16 @@ pub struct StringTable {
     /// or the lending iterator's lifetime.
     strings: HashSet<&'static str>,
 
-    /// Optional dictionary backing for dictionary-provided string references.
+    /// Dictionary backing for dictionary-provided string references.
     /// Keeping this Arc alive allows the table to safely hold references into
     /// dictionary-managed string storage.
-    profiles_dictionary: Option<Arc<ProfilesDictionary>>,
-}
-
-impl Default for StringTable {
-    fn default() -> Self {
-        Self::new()
-    }
+    profiles_dictionary: Arc<ProfilesDictionary>,
 }
 
 impl StringTable {
     /// Creates a new string table, which initially holds the empty string and
     /// no others.
-    pub fn new() -> Self {
+    pub fn new(profiles_dictionary: Arc<ProfilesDictionary>) -> Self {
         // Keep in mind 32-bit .NET. There is only 2 GiB of virtual memory
         // total available to an application, and we're not the application,
         // we're just a piece inside it. Additionally, there may be 2 or more
@@ -120,7 +114,7 @@ impl StringTable {
         Self {
             bytes,
             strings,
-            profiles_dictionary: None,
+            profiles_dictionary,
         }
     }
 
@@ -181,31 +175,16 @@ impl StringTable {
         }
     }
 
-    /// Attaches a `ProfilesDictionary` to this table so dictionary-backed ids
-    /// can be interned without copying string bytes.
-    pub fn attach_profiles_dictionary(&mut self, profiles_dictionary: Arc<ProfilesDictionary>) {
-        self.profiles_dictionary = Some(profiles_dictionary);
-    }
-
     /// Adds a dictionary-backed `StringId2` to the table, returning its
     /// corresponding local `StringId`.
-    ///
-    /// Fails with [`Error::ProfilesDictionaryRequired`] when no dictionary is
-    /// attached.
     pub fn try_intern_string_id2(&mut self, string_id: StringId2) -> Result<StringId, Error> {
         self.try_intern_string_ref(string_id.into())
     }
 
     /// Adds a dictionary-backed `StringRef` to the table, returning its
     /// corresponding local `StringId`.
-    ///
-    /// Fails with [`Error::ProfilesDictionaryRequired`] when no dictionary is
-    /// attached.
     pub fn try_intern_string_ref(&mut self, string_ref: StringRef) -> Result<StringId, Error> {
-        let profiles_dictionary = self
-            .profiles_dictionary
-            .as_deref()
-            .ok_or(Error::ProfilesDictionaryRequired)?;
+        let profiles_dictionary = &*self.profiles_dictionary;
 
         // SAFETY: `string_ref` must come from the attached dictionary (or be a
         // well-known StringRef valid across dictionaries).
@@ -242,7 +221,7 @@ pub struct StringTableIter {
 
     /// Keep dictionary-backed string memory alive while iterating.
     #[allow(unused)]
-    profiles_dictionary: Option<Arc<ProfilesDictionary>>,
+    profiles_dictionary: Arc<ProfilesDictionary>,
 
     /// The strings of the string table, in order of insertion.
     /// The static lifetimes are a lie, they are tied to the `bytes`. When
@@ -289,6 +268,12 @@ mod tests {
     use super::*;
     use crate::collections::identifiable::Id;
 
+    fn new_table() -> StringTable {
+        let dictionary = ProfilesDictionary::try_new().expect("dictionary");
+        let dictionary = Arc::try_new(dictionary).expect("arc");
+        StringTable::new(dictionary)
+    }
+
     #[test]
     fn fuzz_arena_allocator() {
         bolero::check!()
@@ -334,7 +319,7 @@ mod tests {
                 // from the standard library.
                 let mut golden_list = vec![""];
                 let mut golden_set = std::collections::HashSet::from([""]);
-                let mut st = StringTable::new();
+                let mut st = new_table();
 
                 for string in strings {
                     assert_eq!(st.len(), golden_set.len());
@@ -364,7 +349,7 @@ mod tests {
 
     #[test]
     fn test_basics() {
-        let mut table = StringTable::new();
+        let mut table = new_table();
         // The empty string should already be present.
         assert_eq!(1, table.len());
         assert_eq!(StringId::ZERO, table.intern(""));
@@ -376,15 +361,6 @@ mod tests {
     }
 
     #[test]
-    fn intern_string_id2_requires_dictionary_attachment() {
-        let mut table = StringTable::new();
-        let err = table
-            .try_intern_string_id2(StringRef::LOCAL_ROOT_SPAN_ID.into())
-            .expect_err("dictionary-backed intern should fail without dictionary");
-        assert_eq!(err, Error::ProfilesDictionaryRequired);
-    }
-
-    #[test]
     fn intern_string_id2_with_dictionary_deduplicates_with_literal_strings() {
         let dictionary = ProfilesDictionary::try_new().expect("dictionary");
         let string_id2 = dictionary
@@ -392,8 +368,7 @@ mod tests {
             .expect("insert");
         let dictionary = Arc::try_new(dictionary).expect("arc");
 
-        let mut table = StringTable::new();
-        table.attach_profiles_dictionary(dictionary);
+        let mut table = StringTable::new(dictionary);
 
         let from_dictionary = table
             .try_intern_string_id2(string_id2)
@@ -407,7 +382,7 @@ mod tests {
     #[track_caller]
     fn test_from_src(src: &[&str]) {
         // Insert all the strings.
-        let mut table = StringTable::new();
+        let mut table = new_table();
         let n_strings = src.len();
         for string in src {
             table.intern(string);
