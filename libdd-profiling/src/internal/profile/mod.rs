@@ -847,10 +847,9 @@ impl Profile {
     fn try_new_dictionary() -> io::Result<crate::profiles::collections::Arc<ProfilesDictionary>> {
         let dict = ProfilesDictionary::try_new().map_err(io::Error::other)?;
         crate::profiles::collections::Arc::try_new(dict).map_err(|err| {
-            io::Error::new(
-                io::ErrorKind::Other,
-                format!("failed to allocate profiles dictionary arc: {err:?}"),
-            )
+            io::Error::other(format!(
+                "failed to allocate profiles dictionary arc: {err:?}"
+            ))
         })
     }
 

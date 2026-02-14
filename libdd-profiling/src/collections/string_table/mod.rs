@@ -269,8 +269,10 @@ mod tests {
     use crate::collections::identifiable::Id;
 
     fn new_table() -> StringTable {
-        let dictionary = ProfilesDictionary::try_new().expect("dictionary");
-        let dictionary = Arc::try_new(dictionary).expect("arc");
+        let dictionary =
+            ProfilesDictionary::try_new().expect("failed to create ProfilesDictionary");
+        let dictionary =
+            Arc::try_new(dictionary).expect("failed to allocate Arc<ProfilesDictionary>");
         StringTable::new(dictionary)
     }
 
@@ -362,11 +364,13 @@ mod tests {
 
     #[test]
     fn intern_string_id2_with_dictionary_deduplicates_with_literal_strings() {
-        let dictionary = ProfilesDictionary::try_new().expect("dictionary");
+        let dictionary =
+            ProfilesDictionary::try_new().expect("failed to create ProfilesDictionary");
         let string_id2 = dictionary
             .try_insert_str2("dictionary-string")
             .expect("insert");
-        let dictionary = Arc::try_new(dictionary).expect("arc");
+        let dictionary =
+            Arc::try_new(dictionary).expect("failed to allocate Arc<ProfilesDictionary>");
 
         let mut table = StringTable::new(dictionary);
 

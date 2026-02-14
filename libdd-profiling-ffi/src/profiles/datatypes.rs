@@ -6,7 +6,7 @@ use anyhow::Context;
 use function_name::named;
 use libdd_common_ffi::slice::{AsBytes, ByteSlice, CharSlice, Slice};
 use libdd_common_ffi::{wrap_with_ffi_result, Error, Handle, Timespec, ToInner};
-use libdd_profiling::api::{self};
+use libdd_profiling::api;
 use libdd_profiling::profiles::datatypes::{ProfilesDictionary, StringId2};
 use libdd_profiling::{api2, internal};
 use std::num::NonZeroI64;

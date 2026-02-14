@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 extern "C" {
+#include <datadog/common.h>
 #include <datadog/profiling.h>
 }
 
@@ -19,16 +20,17 @@ static void print_error(const ddog_Error &err) {
 }
 
 static void check_status(ddog_prof_Status status, const char *context) {
-  if (status != DDOG_PROF_STATUS_OK) {
-    fprintf(stderr, "%s failed with status=%d\n", context, static_cast<int>(status));
+  if (status.err != nullptr) {
+    fprintf(stderr, "%s failed: %s\n", context, status.err);
+    ddog_prof_Status_drop(&status);
     exit(EXIT_FAILURE);
   }
 }
 
-static ddog_prof_StringId2 insert_string(ddog_prof_ProfilesDictionary *dict, const char *s) {
+static ddog_prof_StringId2 insert_string(ddog_prof_ProfilesDictionaryHandle dict, const char *s) {
   ddog_prof_StringId2 out = DDOG_PROF_STRINGID2_EMPTY;
   check_status(ddog_prof_ProfilesDictionary_insert_str(
-                   &out, dict, to_slice(s), DDOG_PROF_UTF8OPTION_ASSUME),
+                   &out, dict, to_slice(s), DDOG_PROF_UTF8_OPTION_ASSUME),
                "ddog_prof_ProfilesDictionary_insert_str");
   return out;
 }
@@ -36,7 +38,6 @@ static ddog_prof_StringId2 insert_string(ddog_prof_ProfilesDictionary *dict, con
 int main(void) {
   ddog_prof_ProfilesDictionaryHandle dict_handle = {};
   check_status(ddog_prof_ProfilesDictionary_new(&dict_handle), "ddog_prof_ProfilesDictionary_new");
-  auto *dict = ddog_prof_ProfilesDictionaryHandle_as_ref(&dict_handle);
 
   const ddog_prof_SampleType wall_time = DDOG_PROF_SAMPLE_TYPE_WALL_TIME;
   const ddog_prof_Slice_SampleType sample_types = {&wall_time, 1};
@@ -46,27 +47,27 @@ int main(void) {
   check_status(ddog_prof_Profile_with_dictionary(&profile, &dict_handle, sample_types, &period),
                "ddog_prof_Profile_with_dictionary");
 
-  ddog_prof_StringId2 fn_name = insert_string(dict, "{main}");
-  ddog_prof_StringId2 file_name = insert_string(dict, "/srv/example/index.php");
-  ddog_prof_StringId2 magic_key = insert_string(dict, "magic_word");
-  ddog_prof_StringId2 unique_counter = insert_string(dict, "unique_counter");
+  ddog_prof_StringId2 fn_name = insert_string(dict_handle, "{main}");
+  ddog_prof_StringId2 file_name = insert_string(dict_handle, "/srv/example/index.php");
+  ddog_prof_StringId2 magic_key = insert_string(dict_handle, "magic_word");
+  ddog_prof_StringId2 unique_counter = insert_string(dict_handle, "unique_counter");
 
   ddog_prof_Mapping2 mapping = {
       .memory_start = 0, .memory_limit = 0, .file_offset = 0, .filename = file_name, .build_id = DDOG_PROF_STRINGID2_EMPTY};
   ddog_prof_MappingId2 mapping_id = {};
   check_status(
-      ddog_prof_ProfilesDictionary_insert_mapping(&mapping_id, dict, &mapping),
+      ddog_prof_ProfilesDictionary_insert_mapping(&mapping_id, dict_handle, &mapping),
       "ddog_prof_ProfilesDictionary_insert_mapping");
 
   ddog_prof_Function2 function = {
       .name = fn_name, .system_name = DDOG_PROF_STRINGID2_EMPTY, .file_name = file_name};
   ddog_prof_FunctionId2 function_id = {};
   check_status(
-      ddog_prof_ProfilesDictionary_insert_function(&function_id, dict, &function),
+      ddog_prof_ProfilesDictionary_insert_function(&function_id, dict_handle, &function),
       "ddog_prof_ProfilesDictionary_insert_function");
 
   ddog_prof_Location2 location = {.mapping = mapping_id, .function = function_id, .address = 0, .line = 0};
-  ddog_Slice_Location2 locations = {.ptr = &location, .len = 1};
+  ddog_prof_Slice_Location2 locations = {.ptr = &location, .len = 1};
 
   auto start = std::chrono::system_clock::now();
   for (int64_t i = 1; i <= 100000; i++) {
