@@ -50,6 +50,15 @@ pub struct Profile {
     upscaling_rules: UpscalingRules,
 }
 
+// SAFETY:
+// - `Profile` owns the `ProfilesDictionaryTranslator`, which owns an `Arc<ProfilesDictionary>`
+//   keeping dictionary-backed storage alive.
+// - `api2::Location2` entries held in `self.locations` only contain `FunctionId2`/`MappingId2`
+//   handles produced from that dictionary.
+// - Dictionary entries are append-only and pointer-stable for the dictionary's lifetime, so moving
+//   the container between threads does not invalidate stored handles.
+unsafe impl Send for Profile {}
+
 pub struct EncodedProfile {
     pub start: SystemTime,
     pub end: SystemTime,
@@ -973,7 +982,13 @@ mod api_tests {
     use super::*;
     use crate::pprof::test_utils::{roundtrip_to_pprof, sorted_samples, string_table_fetch};
     use libdd_profiling_protobuf::prost_impls;
+    use static_assertions::assert_impl_all;
     use std::collections::HashSet;
+
+    #[test]
+    fn profile_is_send() {
+        assert_impl_all!(Profile: Send);
+    }
 
     #[test]
     fn interning() {
