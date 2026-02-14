@@ -11,7 +11,6 @@ use libdd_common_ffi::{wrap_with_void_ffi_result, VoidResult};
 ///
 /// This module now only exposes sample synchronization helpers kept for
 /// compatibility with existing exporter coordination logic.
-
 /// This functions ends the current sample and allows the profiler exporter to continue, if it was
 /// blocked.
 /// It must have been paired with exactly one `sample_start`.
