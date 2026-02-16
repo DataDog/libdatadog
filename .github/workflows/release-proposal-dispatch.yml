@@ -58,6 +58,7 @@ jobs:
   check-membership:
     permissions:
       id-token: write # Enable OIDC
+    runs-on: ubuntu-latest
     steps:
       - uses: DataDog/dd-octo-sts-action@08f2144903ced3254a3dafec2592563409ba2aa0 # v1.0.1
         id: octo-sts
