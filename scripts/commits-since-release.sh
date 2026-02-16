@@ -19,7 +19,10 @@ VERBOSE=false
 INPUT_JSON=""
 # Default patterns to exclude (one per line, checked with grep -E)
 EXCLUDE_PATTERNS="^Merge branch 
-^Merge pull request "
+^Merge pull request 
+^chore\(release\)"
+
+EXCLUDE_AUTHOR="dd-octo-sts\[bot\]"
 
 for arg in "$@"; do
     case "$arg" in
@@ -105,6 +108,13 @@ log_verbose() {
 # Check if a commit subject should be excluded
 should_exclude() {
     local subject="$1"
+    local author="$2"
+
+    # Check if author should be excluded
+    if echo "$author" | grep -qE "$EXCLUDE_AUTHOR"; then
+        return 0  # Exclude
+    fi
+
     if [ -z "$EXCLUDE_PATTERNS" ]; then
         return 1  # Don't exclude
     fi
@@ -175,7 +185,7 @@ while read -r crate; do
         while IFS=$'\x1F' read -r hash subject author date; do
             if [ -n "$hash" ]; then
                 # Check if commit should be excluded
-                if should_exclude "$subject"; then
+                if should_exclude "$subject" "$author"; then
                     log_verbose "    Excluding: $subject"
                     continue
                 fi
