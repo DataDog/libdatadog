@@ -939,40 +939,113 @@ impl<'a, 's, D: TraceData, const Mut: u8> TraceAttributesOp<'a, 's, TraceCollect
     type Array = ();
     type Map = ();
 
-    fn get<K>(_container: &'a SpanEvent<D>, _storage: &'s (), _key: &K) -> Option<AttributeAnyGetterContainer<'a, 's, Self, TraceCollection<D>, D, SpanEvent<D>>>
+    fn get<K>(container: &'a SpanEvent<D>, _storage: &'s (), key: &K) -> Option<AttributeAnyGetterContainer<'a, 's, Self, TraceCollection<D>, D, SpanEvent<D>>>
     where
         K: ?Sized + Hash + Equivalent<<D::Text as SpanDataContents>::RefCopy>,
     {
-        // SpanEvent attributes are stored in a different format (AttributeAnyValue)
-        // For now, return None - full implementation would need to convert AttributeAnyValue
+        // Iterate through attributes to find a match using Equivalent
+        for (k, v) in &container.attributes {
+            if key.equivalent(&k.as_ref_copy()) {
+                return match v {
+                    AttributeAnyValue::SingleValue(single) => match single {
+                        AttributeArrayValue::String(s) => {
+                            // SAFETY: In v04, data is stored directly in containers, not in storage.
+                            // We transmute the lifetime from 'a to 's for the return value.
+                            // This is sound because the data is owned by Traces<'s>, accessed through &'a.
+                            let s_storage: &'s D::Text = unsafe { std::mem::transmute(s) };
+                            Some(AttributeAnyContainer::String(s_storage))
+                        }
+                        AttributeArrayValue::Boolean(b) => Some(AttributeAnyContainer::Boolean(*b)),
+                        AttributeArrayValue::Integer(i) => Some(AttributeAnyContainer::Integer(*i)),
+                        AttributeArrayValue::Double(d) => Some(AttributeAnyContainer::Double(*d)),
+                    },
+                    AttributeAnyValue::Array(_) => {
+                        // Arrays are not fully supported yet
+                        Some(AttributeAnyContainer::Array(()))
+                    }
+                };
+            }
+        }
         None
     }
 }
 
 impl<'a, 's, D: TraceData> TraceAttributesMutOp<'a, 's, TraceCollection<D>, D, SpanEvent<D>> for TraceAttributesMut<'s, TraceCollection<D>, D, AttrRef<'a, SpanEvent<D>>, SpanEvent<D>> {
-    type MutString = ();
+    type MutString = &'s mut D::Text;
     type MutBytes = ();
-    type MutBoolean = ();
-    type MutInteger = ();
-    type MutDouble = ();
+    type MutBoolean = &'a mut bool;
+    type MutInteger = &'a mut i64;
+    type MutDouble = &'a mut f64;
     type MutArray = ();
     type MutMap = ();
 
-    fn get_mut<K>(_container: &'a mut SpanEvent<D>, _storage: &mut (), _key: &K) -> Option<AttributeAnySetterContainer<'a, 's, Self, TraceCollection<D>, D, SpanEvent<D>>>
+    fn get_mut<K>(container: &'a mut SpanEvent<D>, _storage: &mut (), key: &K) -> Option<AttributeAnySetterContainer<'a, 's, Self, TraceCollection<D>, D, SpanEvent<D>>>
     where
         K: ?Sized + Hash + Equivalent<<D::Text as SpanDataContents>::RefCopy>
     {
+        // Iterate through attributes to find a match
+        for (k, v) in &mut container.attributes {
+            if key.equivalent(&k.as_ref_copy()) {
+                return match v {
+                    AttributeAnyValue::SingleValue(single) => match single {
+                        AttributeArrayValue::String(s) => {
+                            // SAFETY: In v04, data is owned by Traces<'s> and stored in containers.
+                            // We transmute from 'a to 's. This is sound because the actual data lifetime
+                            // is 's (tied to Traces), and 'a is just the borrow lifetime.
+                            let s_storage: &'s mut D::Text = unsafe { std::mem::transmute(s) };
+                            Some(AttributeAnyContainer::String(s_storage))
+                        }
+                        AttributeArrayValue::Boolean(b) => Some(AttributeAnyContainer::Boolean(b)),
+                        AttributeArrayValue::Integer(i) => Some(AttributeAnyContainer::Integer(i)),
+                        AttributeArrayValue::Double(d) => Some(AttributeAnyContainer::Double(d)),
+                    },
+                    AttributeAnyValue::Array(_) => {
+                        // Arrays are not fully supported yet
+                        Some(AttributeAnyContainer::Array(()))
+                    }
+                };
+            }
+        }
         None
     }
 
-    fn set(_container: &'a mut SpanEvent<D>, _storage: &mut (), _key: D::Text, _value: AttributeAnyValueType) -> AttributeAnySetterContainer<'a, 's, Self, TraceCollection<D>, D, SpanEvent<D>> {
-        AttributeAnyContainer::Map(())
+    fn set(container: &'a mut SpanEvent<D>, _storage: &mut (), key: D::Text, value: AttributeAnyValueType) -> AttributeAnySetterContainer<'a, 's, Self, TraceCollection<D>, D, SpanEvent<D>> {
+        // Create or get the entry for this key
+        let entry = container.attributes.entry(key).or_insert_with(|| {
+            // Create a default value based on the type
+            match value {
+                AttributeAnyValueType::String => AttributeAnyValue::SingleValue(AttributeArrayValue::String(D::Text::default())),
+                AttributeAnyValueType::Boolean => AttributeAnyValue::SingleValue(AttributeArrayValue::Boolean(false)),
+                AttributeAnyValueType::Integer => AttributeAnyValue::SingleValue(AttributeArrayValue::Integer(0)),
+                AttributeAnyValueType::Double => AttributeAnyValue::SingleValue(AttributeArrayValue::Double(0.0)),
+                AttributeAnyValueType::Bytes => AttributeAnyValue::SingleValue(AttributeArrayValue::String(D::Text::default())), // Not supported, use String
+                AttributeAnyValueType::Array => AttributeAnyValue::Array(Vec::new()),
+                AttributeAnyValueType::Map => AttributeAnyValue::SingleValue(AttributeArrayValue::String(D::Text::default())), // Not supported, use String
+            }
+        });
+
+        // Return a reference to the appropriate field
+        match entry {
+            AttributeAnyValue::SingleValue(single) => match single {
+                AttributeArrayValue::String(s) => {
+                    // SAFETY: Same reasoning as get_mut - transmute from 'a to 's
+                    let s_storage: &'s mut D::Text = unsafe { std::mem::transmute(s) };
+                    AttributeAnyContainer::String(s_storage)
+                }
+                AttributeArrayValue::Boolean(b) => AttributeAnyContainer::Boolean(b),
+                AttributeArrayValue::Integer(i) => AttributeAnyContainer::Integer(i),
+                AttributeArrayValue::Double(d) => AttributeAnyContainer::Double(d),
+            },
+            AttributeAnyValue::Array(_) => AttributeAnyContainer::Array(()),
+        }
     }
 
-    fn remove<K>(_container: &mut SpanEvent<D>, _storage: &mut (), _key: &K)
+    fn remove<K>(container: &mut SpanEvent<D>, _storage: &mut (), key: &K)
     where
         K: ?Sized + Hash + Equivalent<<D::Text as SpanDataContents>::RefCopy>
     {
+        // Remove the attribute if the key matches
+        container.attributes.retain(|k, _| !key.equivalent(&k.as_ref_copy()));
     }
 }
 
@@ -1082,5 +1155,83 @@ mod tests {
 
         let serialized = rmp_serde::encode::to_vec_named(&span).unwrap();
         assert_eq!(expected, serialized.as_slice());
+    }
+
+    #[test]
+    fn test_span_event_attributes() {
+        use crate::span::{BytesData, TraceProjector};
+
+        // Create a span with an event that has various attribute types
+        let mut collection = TraceCollection::<BytesData>::new(vec![vec![Span {
+            span_events: vec![SpanEvent {
+                time_unix_nano: 12345,
+                name: "test_event".into(),
+                attributes: HashMap::from([
+                    ("str_attr".into(), AttributeAnyValue::SingleValue(AttributeArrayValue::String("hello".into()))),
+                    ("bool_attr".into(), AttributeAnyValue::SingleValue(AttributeArrayValue::Boolean(true))),
+                    ("int_attr".into(), AttributeAnyValue::SingleValue(AttributeArrayValue::Integer(42))),
+                    ("double_attr".into(), AttributeAnyValue::SingleValue(AttributeArrayValue::Double(3.14))),
+                ]),
+            }],
+            ..Default::default()
+        }]]);
+
+        // Test reading attributes
+        let traces = collection.project();
+        for chunk in traces.chunks() {
+            for span in chunk.spans() {
+                for event in span.events() {
+                    // Test string attribute
+                    let str_val = event.attributes().get_string("str_attr");
+                    assert_eq!(str_val, Some("hello"));
+
+                    // Test boolean attribute
+                    let bool_val = event.attributes().get_boolean("bool_attr");
+                    assert_eq!(bool_val, Some(true));
+
+                    // Test integer attribute
+                    let int_val = event.attributes().get_integer("int_attr");
+                    assert_eq!(int_val, Some(42));
+
+                    // Test double attribute
+                    let double_val = event.attributes().get_double("double_attr");
+                    assert_eq!(double_val, Some(3.14));
+
+                    // Test non-existent attribute
+                    let none_val = event.attributes().get_string("nonexistent");
+                    assert_eq!(none_val, None);
+                }
+            }
+        }
+
+        // Test writing attributes
+        let mut traces_mut = collection.project_mut();
+        for mut chunk in traces_mut.chunks_mut() {
+            for mut span in chunk.spans_mut() {
+                for mut event in span.events_mut() {
+                    // Modify existing string attribute
+                    event.attributes_mut().set_string("str_attr", "world".into());
+
+                    // Add new attribute
+                    event.attributes_mut().set_integer("new_int", 100);
+                }
+            }
+        }
+
+        // Verify modifications
+        let traces = collection.project();
+        for chunk in traces.chunks() {
+            for span in chunk.spans() {
+                for event in span.events() {
+                    // Check modified attribute
+                    let str_val = event.attributes().get_string("str_attr");
+                    assert_eq!(str_val, Some("world"));
+
+                    // Check new attribute
+                    let int_val = event.attributes().get_integer("new_int");
+                    assert_eq!(int_val, Some(100));
+                }
+            }
+        }
     }
 }
