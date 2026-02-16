@@ -466,19 +466,19 @@ impl<'s, D: TraceDataLifetime<'s>> TraceProjector<'s, D> for ChunkCollection<D> 
         }
     }
 
-    fn get_link_trace_id(_link: &SpanLink, _storage: &Storage<D>) -> u128 {
+    fn get_link_trace_id(_link: &'s SpanLink, _storage: &'s Storage<D>) -> u128 {
         0
     }
 
-    fn get_link_span_id(_link: &SpanLink, _storage: &Storage<D>) -> u64 {
+    fn get_link_span_id(_link: &'s SpanLink, _storage: &'s Storage<D>) -> u64 {
         0
     }
 
-    fn get_link_trace_state(_link: &SpanLink, _storage: &Storage<D>) -> &'s D::Text {
+    fn get_link_trace_state(_link: &'s SpanLink, _storage: &'s Storage<D>) -> &'s D::Text {
         D::Text::default_ref()
     }
 
-    fn get_link_flags(_link: &SpanLink, _storage: &Storage<D>) -> u32 {
+    fn get_link_flags(_link: &'s SpanLink, _storage: &'s Storage<D>) -> u32 {
         0
     }
 
@@ -494,11 +494,11 @@ impl<'s, D: TraceDataLifetime<'s>> TraceProjector<'s, D> for ChunkCollection<D> 
     fn set_link_flags(_link: &mut SpanLink, _storage: &mut Storage<D>, _value: u32) {
     }
 
-    fn get_event_time_unix_nano(_event: &SpanEvent, _storage: &Storage<D>) -> u64 {
+    fn get_event_time_unix_nano(_event: &'s SpanEvent, _storage: &'s Storage<D>) -> u64 {
         0
     }
 
-    fn get_event_name(_event: &SpanEvent, _storage: &Storage<D>) -> &'s D::Text {
+    fn get_event_name(_event: &'s SpanEvent, _storage: &'s Storage<D>) -> &'s D::Text {
         D::Text::default_ref()
     }
 

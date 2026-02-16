@@ -408,7 +408,7 @@ impl<'s, D: TraceDataLifetime<'s>> TraceProjector<'s, D> for TraceCollection<D> 
         span.span_events.push(SpanEvent::default());
         // SAFETY: We just pushed an element, so last_mut() will return Some
         // The lifetime 'b is tied to the span parameter
-        unsafe { std::mem::transmute(span.span_events.last_mut().unwrap_unchecked()) }
+        unsafe { span.span_events.last_mut().unwrap_unchecked() }
     }
 
     fn span_event_iterator(span: &'s Span<D>) -> Iter<'s, SpanEvent<D>> {
@@ -470,17 +470,11 @@ impl<'s, D: TraceDataLifetime<'s>> TraceProjector<'s, D> for TraceCollection<D> 
             .unwrap_or(0.0) as i32
     }
 
-    fn get_chunk_origin(chunk: &<TraceCollection<D> as TraceProjector<'s, D>>::Chunk, _storage: &()) -> &'s D::Text {
-        // SAFETY: For v04, data lives in the chunk, not storage
-        // We extend the lifetime from the chunk to 'a (which is tied to storage)
-        unsafe {
-            std::mem::transmute(
-                chunk.first()
-                    .and_then(|span| span.meta.get("_dd.origin"))
-                    .or_else(|| chunk.first().map(|s| &s.service))
-                    .unwrap_or(D::Text::default_ref())
-            )
-        }
+    fn get_chunk_origin(chunk: &'s <TraceCollection<D> as TraceProjector<'s, D>>::Chunk, _storage: &()) -> &'s D::Text {
+        chunk.first()
+            .and_then(|span| span.meta.get("_dd.origin"))
+            .or_else(|| chunk.first().map(|s| &s.service))
+            .unwrap_or(D::Text::default_ref())
     }
 
     fn get_chunk_dropped_trace<'a>(_chunk: &'a Chunk<D>, _storage: &'a ()) -> bool {
@@ -639,19 +633,19 @@ impl<'s, D: TraceDataLifetime<'s>> TraceProjector<'s, D> for TraceCollection<D> 
     }
 
     // SpanLink getters
-    fn get_link_trace_id(link: &SpanLink<D>, _storage: &()) -> u128 {
+    fn get_link_trace_id(link: &'s SpanLink<D>, _storage: &'s ()) -> u128 {
         (link.trace_id_high as u128) << 64 | link.trace_id as u128
     }
 
-    fn get_link_span_id(link: &SpanLink<D>, _storage: &()) -> u64 {
+    fn get_link_span_id(link: &'s SpanLink<D>, _storage: &'s ()) -> u64 {
         link.span_id
     }
 
-    fn get_link_trace_state(link: &'s <TraceCollection<D> as TraceProjector<'s, D>>::SpanLink, _storage: &()) -> &'s D::Text {
+    fn get_link_trace_state(link: &'s <TraceCollection<D> as TraceProjector<'s, D>>::SpanLink, _storage: &'s ()) -> &'s D::Text {
         &link.tracestate
     }
 
-    fn get_link_flags(link: &SpanLink<D>, _storage: &()) -> u32 {
+    fn get_link_flags(link: &'s SpanLink<D>, _storage: &'s ()) -> u32 {
         link.flags
     }
 
@@ -674,11 +668,11 @@ impl<'s, D: TraceDataLifetime<'s>> TraceProjector<'s, D> for TraceCollection<D> 
     }
 
     // SpanEvent getters
-    fn get_event_time_unix_nano(event: &SpanEvent<D>, _storage: &()) -> u64 {
+    fn get_event_time_unix_nano(event: &'s SpanEvent<D>, _storage: &'s ()) -> u64 {
         event.time_unix_nano
     }
 
-    fn get_event_name(event: &'s <TraceCollection<D> as TraceProjector<'s, D>>::SpanEvent, _storage: &()) -> &'s D::Text {
+    fn get_event_name(event: &'s <TraceCollection<D> as TraceProjector<'s, D>>::SpanEvent, _storage: &'s ()) -> &'s D::Text {
         &event.name
     }
 
@@ -785,7 +779,8 @@ impl<'a, 's, D: TraceData> TraceAttributesMutOp<'a, 's, TraceCollection<D>, D, S
 // This impl works for &'storage mut D::Text with both lifetimes being 'storage
 impl<'storage, D: TraceDataLifetime<'storage> + 'storage> TraceAttributesString<'storage, 'storage, TraceCollection<D>, D> for &'storage mut D::Text {
     fn get(&self, _storage: &'storage ()) -> &'storage D::Text {
-        // In v04, data is stored in the container, so we can safely transmute the lifetime
+        // SAFETY: In v04, data is owned by Traces<'s> and stored in containers. We transmute from 'a to 's.
+        // This is sound because the actual data lifetime is 's (tied to Traces), and 'a is just the borrow lifetime.
         unsafe { std::mem::transmute::<&D::Text, &'storage D::Text>(&**self) }
     }
 

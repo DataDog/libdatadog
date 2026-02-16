@@ -6,7 +6,7 @@ pub(crate) mod span;
 use self::span::decode_span;
 use crate::msgpack_decoder::decode::buffer::Buffer;
 use crate::msgpack_decoder::decode::error::DecodeError;
-use crate::span::{TraceData, v1::Traces, v1::TracePayloadBytes, v1::TracePayloadSlice, DeserializableTraceData};
+use crate::span::{TraceData, v1::TracePayloadBytes, v1::TracePayloadSlice, DeserializableTraceData};
 use crate::span::v1::TracePayload;
 
 /// Decodes a Bytes buffer into a `Vec<Vec<SpanBytes>>` object, also represented as a vector of

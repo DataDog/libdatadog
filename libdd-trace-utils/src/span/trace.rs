@@ -23,13 +23,6 @@ pub trait TraceProjector<'s, D: TraceDataLifetime<'s>>: Sized + 's
     type SpanLink: 's;
     type SpanEvent: 's;
 
-    /*
-    type AttributeTrace<'a>: TraceAttributesOp<'a, Self, D, Self::Trace<'a>> + 'a where D: TraceDataLifetime<'a>;
-    type AttributeChunk<'a>: TraceAttributesOp<'a, Self, D, Self::Chunk<'a>> + 'a where D: TraceDataLifetime<'a>;
-    type AttributeSpan<'a>: TraceAttributesOp<'a, Self, D, Self::Span<'a>> + 'a where D: TraceDataLifetime<'a>;
-    type AttributeSpanLink<'a>: TraceAttributesOp<'a, Self, D, Self::SpanLink<'a>> + 'a where D: TraceDataLifetime<'a>;
-    type AttributeSpanEvent<'a>: TraceAttributesOp<'a, Self, D, Self::SpanEvent<'a>> + 'a where D: TraceDataLifetime<'a>;
-*/
     fn project(&'s self) -> Traces<'s, Self, D>;
     fn project_mut(&'s mut self) -> TracesMut<'s, Self, D>;
 
@@ -104,18 +97,18 @@ pub trait TraceProjector<'s, D: TraceDataLifetime<'s>>: Sized + 's
     fn set_span_component(span: &mut Self::Span, storage: &mut Self::Storage, value: D::Text);
     fn set_span_kind(span: &mut Self::Span, storage: &mut Self::Storage, value: SpanKind);
 
-    fn get_link_trace_id(link: &Self::SpanLink, storage: &Self::Storage) -> u128;
-    fn get_link_span_id(link: &Self::SpanLink, storage: &Self::Storage) -> u64;
-    fn get_link_trace_state(link: &Self::SpanLink, storage: &Self::Storage) -> &'s D::Text;
-    fn get_link_flags(link: &Self::SpanLink, storage: &Self::Storage) -> u32;
+    fn get_link_trace_id(link: &'s Self::SpanLink, storage: &'s Self::Storage) -> u128;
+    fn get_link_span_id(link: &'s Self::SpanLink, storage: &'s Self::Storage) -> u64;
+    fn get_link_trace_state(link: &'s Self::SpanLink, storage: &'s Self::Storage) -> &'s D::Text;
+    fn get_link_flags(link: &'s Self::SpanLink, storage: &'s Self::Storage) -> u32;
 
     fn set_link_trace_id(link: &mut Self::SpanLink, storage: &mut Self::Storage, value: u128);
     fn set_link_span_id(link: &mut Self::SpanLink, storage: &mut Self::Storage, value: u64);
     fn set_link_trace_state(link: &mut Self::SpanLink, storage: &mut Self::Storage, value: D::Text);
     fn set_link_flags(link: &mut Self::SpanLink, storage: &mut Self::Storage, value: u32);
 
-    fn get_event_time_unix_nano(event: &Self::SpanEvent, storage: &Self::Storage) -> u64;
-    fn get_event_name(event: &Self::SpanEvent, storage: &Self::Storage) -> &'s D::Text;
+    fn get_event_time_unix_nano(event: &'s Self::SpanEvent, storage: &'s Self::Storage) -> u64;
+    fn get_event_name(event: &'s Self::SpanEvent, storage: &'s Self::Storage) -> &'s D::Text;
 
     fn set_event_time_unix_nano(event: &mut Self::SpanEvent, storage: &mut Self::Storage, value: u64);
     fn set_event_name(event: &mut Self::SpanEvent, storage: &mut Self::Storage, value: D::Text);
@@ -743,7 +736,7 @@ impl<'b, 's, 'a, T: TraceProjector<'s, D>, D: TraceDataLifetime<'s>> Clone for S
 impl<'b, 's, 'a, T: TraceProjector<'s, D>, D: TraceDataLifetime<'s>> Copy for SpanLink<'b, 's, T, D> {}
 
 
-impl<'b, 's, 'a, T: TraceProjector<'s, D>, D: TraceDataLifetime<'s>, const Mut: u8> SpanLink<'b, 's, T, D, Mut>  {
+impl<'b: 's, 's, 'a, T: TraceProjector<'s, D>, D: TraceDataLifetime<'s>, const Mut: u8> SpanLink<'b, 's, T, D, Mut>  {
     pub fn trace_id(&self) -> u128 {
         T::get_link_trace_id(self.link, self.storage)
     }
@@ -814,7 +807,7 @@ impl<'b, 's, 'a, T: TraceProjector<'s, D>, D: TraceDataLifetime<'s>> Clone for S
 }
 impl<'b, 's, 'a, T: TraceProjector<'s, D>, D: TraceDataLifetime<'s>> Copy for SpanEvent<'b, 's, T, D> {}
 
-impl<'b, 's, 'a, T: TraceProjector<'s, D>, D: TraceDataLifetime<'s>, const Mut: u8> SpanEvent<'b, 's, T, D, Mut>  {
+impl<'b: 's, 's, 'a, T: TraceProjector<'s, D>, D: TraceDataLifetime<'s>, const Mut: u8> SpanEvent<'b, 's, T, D, Mut>  {
     pub fn time_unix_nano(&self) -> u64 {
         T::get_event_time_unix_nano(self.event, self.storage)
     }
