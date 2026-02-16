@@ -2,20 +2,18 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::agent_info::AgentInfoFetcher;
-use crate::pausable_worker::PausableWorker;
+use crate::shared_runtime::SharedRuntime;
 use crate::telemetry::TelemetryClientBuilder;
 use crate::trace_exporter::agent_response::AgentResponsePayloadVersion;
 use crate::trace_exporter::error::BuilderErrorKind;
 use crate::trace_exporter::{
     add_path, StatsComputationStatus, TelemetryConfig, TraceExporter, TraceExporterError,
-    TraceExporterInputFormat, TraceExporterOutputFormat, TraceExporterWorkers, TracerMetadata,
-    INFO_ENDPOINT,
+    TraceExporterInputFormat, TraceExporterOutputFormat, TracerMetadata, INFO_ENDPOINT,
 };
 use arc_swap::ArcSwap;
 use libdd_common::http_common::new_default_client;
 use libdd_common::{parse_uri, tag, Endpoint};
 use libdd_dogstatsd_client::new;
-use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 const DEFAULT_AGENT_URL: &str = "http://127.0.0.1:8126";
@@ -227,12 +225,9 @@ impl TraceExporterBuilder {
             ));
         }
 
-        let runtime = Arc::new(
-            tokio::runtime::Builder::new_multi_thread()
-                .worker_threads(1)
-                .enable_all()
-                .build()?,
-        );
+        let shared_runtime = SharedRuntime::new().map_err(|e| {
+            TraceExporterError::Builder(BuilderErrorKind::InvalidConfiguration(e.to_string()))
+        })?;
 
         let dogstatsd = self.dogstatsd_url.and_then(|u| {
             new(Endpoint::from_slice(&u)).ok() // If we couldn't set the endpoint return
@@ -251,8 +246,7 @@ impl TraceExporterBuilder {
         let info_endpoint = Endpoint::from_url(add_path(&agent_url, INFO_ENDPOINT));
         let (info_fetcher, info_response_observer) =
             AgentInfoFetcher::new(info_endpoint.clone(), Duration::from_secs(5 * 60));
-        let mut info_fetcher_worker = PausableWorker::new(info_fetcher);
-        info_fetcher_worker.start(&runtime).map_err(|e| {
+        shared_runtime.spawn_worker(info_fetcher).map_err(|e| {
             TraceExporterError::Builder(BuilderErrorKind::InvalidConfiguration(e.to_string()))
         })?;
 
@@ -276,21 +270,20 @@ impl TraceExporterBuilder {
             if let Some(id) = telemetry_config.runtime_id {
                 builder = builder.set_runtime_id(&id);
             }
-            builder.build(runtime.handle().clone())
+            builder.build(shared_runtime.runtime().handle().clone())
         });
 
-        let (telemetry_client, telemetry_worker) = match telemetry {
+        let telemetry_client = match telemetry {
             Some((client, worker)) => {
-                let mut telemetry_worker = PausableWorker::new(worker);
-                telemetry_worker.start(&runtime).map_err(|e| {
+                shared_runtime.spawn_worker(worker).map_err(|e| {
                     TraceExporterError::Builder(BuilderErrorKind::InvalidConfiguration(
                         e.to_string(),
                     ))
                 })?;
-                runtime.block_on(client.start());
-                (Some(client), Some(telemetry_worker))
+                shared_runtime.runtime().block_on(client.start());
+                Some(client)
             }
-            None => (None, None),
+            None => None,
         };
 
         Ok(TraceExporter {
@@ -320,7 +313,7 @@ impl TraceExporterBuilder {
             input_format: self.input_format,
             output_format: self.output_format,
             client_computed_top_level: self.client_computed_top_level,
-            runtime: Arc::new(Mutex::new(Some(runtime))),
+            shared_runtime,
             dogstatsd,
             common_stats_tags: vec![libdatadog_version],
             client_side_stats: ArcSwap::new(stats.into()),
@@ -328,12 +321,6 @@ impl TraceExporterBuilder {
             info_response_observer,
             telemetry: telemetry_client,
             health_metrics_enabled: self.health_metrics_enabled,
-            workers: Arc::new(Mutex::new(TraceExporterWorkers {
-                info: info_fetcher_worker,
-                stats: None,
-                telemetry: telemetry_worker,
-            })),
-
             agent_payload_response_version: self
                 .agent_rates_payload_version_enabled
                 .then(AgentResponsePayloadVersion::new),

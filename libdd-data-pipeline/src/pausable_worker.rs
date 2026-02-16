@@ -8,7 +8,7 @@ use std::fmt::Display;
 use tokio::{
     runtime::Runtime,
     select,
-    task::{JoinError, JoinHandle},
+    task::JoinHandle,
 };
 use tokio_util::sync::CancellationToken;
 
@@ -165,13 +165,6 @@ impl<T: Worker + Send + Sync + 'static> PausableWorker<T> {
         }
     }
 
-    /// Wait for the run method of the worker to exit.
-    pub async fn join_task(self) -> Result<(), JoinError> {
-        if let PausableWorker::Running { handle, .. } = self {
-            handle.await?;
-        }
-        Ok(())
-    }
 }
 
 #[cfg(test)]

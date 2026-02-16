@@ -8,13 +8,13 @@
 //! and processing traces for stats collection.
 
 use crate::agent_info::schema::AgentInfo;
+use crate::shared_runtime::SharedRuntime;
 use crate::stats_exporter;
 use arc_swap::ArcSwap;
 use libdd_common::{Endpoint, HttpClient, MutexExt};
 use libdd_trace_stats::span_concentrator::SpanConcentrator;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
-use tokio::runtime::Runtime;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error};
 
@@ -28,7 +28,7 @@ pub(crate) const STATS_ENDPOINT: &str = "/v0.6/stats";
 pub(crate) struct StatsContext<'a> {
     pub metadata: &'a super::TracerMetadata,
     pub endpoint_url: &'a http::Uri,
-    pub runtime: &'a Arc<Mutex<Option<Arc<Runtime>>>>,
+    pub shared_runtime: &'a SharedRuntime,
 }
 
 #[derive(Debug)]
@@ -61,7 +61,6 @@ fn get_span_kinds_for_stats(agent_info: &Arc<AgentInfo>) -> Vec<String> {
 pub(crate) fn start_stats_computation(
     ctx: &StatsContext,
     client_side_stats: &ArcSwap<StatsComputationStatus>,
-    workers: &Arc<Mutex<super::TraceExporterWorkers>>,
     span_kinds: Vec<String>,
     peer_tags: Vec<String>,
     client: HttpClient,
@@ -79,7 +78,6 @@ pub(crate) fn start_stats_computation(
             bucket_size,
             &stats_concentrator,
             &cancellation_token,
-            workers,
             client_side_stats,
             client,
         )?;
@@ -93,7 +91,6 @@ fn create_and_start_stats_worker(
     bucket_size: Duration,
     stats_concentrator: &Arc<Mutex<SpanConcentrator>>,
     cancellation_token: &CancellationToken,
-    workers: &Arc<Mutex<super::TraceExporterWorkers>>,
     client_side_stats: &ArcSwap<StatsComputationStatus>,
     client: HttpClient,
 ) -> anyhow::Result<()> {
@@ -105,22 +102,11 @@ fn create_and_start_stats_worker(
         cancellation_token.clone(),
         client,
     );
-    let mut stats_worker = crate::pausable_worker::PausableWorker::new(stats_exporter);
+    ctx.shared_runtime
+        .spawn_worker(stats_exporter)
+        .map_err(|e| anyhow::anyhow!(e.to_string()))?;
 
-    // Get runtime guard
-    let runtime_guard = ctx.runtime.lock_or_panic();
-    if let Some(rt) = runtime_guard.as_ref() {
-        stats_worker.start(rt).map_err(|e| {
-            super::error::TraceExporterError::Internal(
-                super::error::InternalErrorKind::InvalidWorkerState(e.to_string()),
-            )
-        })?;
-    } else {
-        return Err(anyhow::anyhow!("Runtime not available"));
-    }
-
-    // Update the stats computation state with the new worker and components
-    workers.lock_or_panic().stats = Some(stats_worker);
+    // Update the stats computation state with the new worker components.
     client_side_stats.store(Arc::new(StatsComputationStatus::Enabled {
         stats_concentrator: stats_concentrator.clone(),
         cancellation_token: cancellation_token.clone(),
@@ -132,29 +118,17 @@ fn create_and_start_stats_worker(
 /// Stops the stats exporter and disable stats computation
 ///
 /// Used when client-side stats is disabled by the agent
-pub(crate) fn stop_stats_computation(
-    ctx: &StatsContext,
-    client_side_stats: &ArcSwap<StatsComputationStatus>,
-    workers: &Arc<Mutex<super::TraceExporterWorkers>>,
-) {
+pub(crate) fn stop_stats_computation(client_side_stats: &ArcSwap<StatsComputationStatus>) {
     if let StatsComputationStatus::Enabled {
         stats_concentrator,
         cancellation_token,
     } = &**client_side_stats.load()
     {
-        // If there's no runtime there's no exporter to stop
-        let runtime_guard = ctx.runtime.lock_or_panic();
-        if let Some(rt) = runtime_guard.as_ref() {
-            rt.block_on(async {
-                cancellation_token.cancel();
-            });
-            workers.lock_or_panic().stats = None;
-            let bucket_size = stats_concentrator.lock_or_panic().get_bucket_size();
-
-            client_side_stats.store(Arc::new(StatsComputationStatus::DisabledByAgent {
-                bucket_size,
-            }));
-        }
+        cancellation_token.cancel();
+        let bucket_size = stats_concentrator.lock_or_panic().get_bucket_size();
+        client_side_stats.store(Arc::new(StatsComputationStatus::DisabledByAgent {
+            bucket_size,
+        }));
     }
 }
 
@@ -163,7 +137,6 @@ pub(crate) fn handle_stats_disabled_by_agent(
     ctx: &StatsContext,
     agent_info: &Arc<AgentInfo>,
     client_side_stats: &ArcSwap<StatsComputationStatus>,
-    workers: &Arc<Mutex<super::TraceExporterWorkers>>,
     client: HttpClient,
 ) {
     if agent_info.info.client_drop_p0s.is_some_and(|v| v) {
@@ -171,7 +144,6 @@ pub(crate) fn handle_stats_disabled_by_agent(
         let status = start_stats_computation(
             ctx,
             client_side_stats,
-            workers,
             get_span_kinds_for_stats(agent_info),
             agent_info.info.peer_tags.clone().unwrap_or_default(),
             client,
@@ -187,18 +159,16 @@ pub(crate) fn handle_stats_disabled_by_agent(
 
 /// Handle stats computation when it's already enabled
 pub(crate) fn handle_stats_enabled(
-    ctx: &StatsContext,
     agent_info: &Arc<AgentInfo>,
     stats_concentrator: &Mutex<SpanConcentrator>,
     client_side_stats: &ArcSwap<StatsComputationStatus>,
-    workers: &Arc<Mutex<super::TraceExporterWorkers>>,
 ) {
     if agent_info.info.client_drop_p0s.is_some_and(|v| v) {
         let mut concentrator = stats_concentrator.lock_or_panic();
         concentrator.set_span_kinds(get_span_kinds_for_stats(agent_info));
         concentrator.set_peer_tags(agent_info.info.peer_tags.clone().unwrap_or_default());
     } else {
-        stop_stats_computation(ctx, client_side_stats, workers);
+        stop_stats_computation(client_side_stats);
         debug!("Client-side stats computation has been disabled by the agent")
     }
 }
@@ -258,25 +228,9 @@ pub(crate) fn process_traces_for_stats<T: libdd_trace_utils::span::TraceData>(
 
 #[cfg(test)]
 /// Test only function to check if the stats computation is active and the worker is running
-pub(crate) fn is_stats_worker_active(
-    client_side_stats: &ArcSwap<StatsComputationStatus>,
-    workers: &Arc<Mutex<super::TraceExporterWorkers>>,
-) -> bool {
-    if !matches!(
+pub(crate) fn is_stats_worker_active(client_side_stats: &ArcSwap<StatsComputationStatus>) -> bool {
+    matches!(
         **client_side_stats.load(),
         StatsComputationStatus::Enabled { .. }
-    ) {
-        return false;
-    }
-
-    if let Ok(workers) = workers.try_lock() {
-        if let Some(stats_worker) = &workers.stats {
-            return matches!(
-                stats_worker,
-                crate::pausable_worker::PausableWorker::Running { .. }
-            );
-        }
-    }
-
-    false
+    )
 }

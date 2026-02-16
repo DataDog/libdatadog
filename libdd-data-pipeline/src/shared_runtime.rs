@@ -134,7 +134,7 @@ impl SharedRuntime {
     ///
     /// # Errors
     /// Returns an error if workers cannot be paused or the runtime is in an invalid state.
-    pub async fn before_fork(&self) -> Result<(), SharedRuntimeError> {
+    pub fn before_fork(&self) -> Result<(), SharedRuntimeError> {
         if let Some(runtime) = self.runtime.lock_or_panic().take() {
             runtime.block_on(async {
                 let mut workers_lock = self.workers.lock_or_panic();
@@ -314,9 +314,7 @@ mod tests {
             let shared_runtime = SharedRuntime::new().unwrap();
 
             // Test before_fork
-            rt.block_on(async {
-                assert!(shared_runtime.before_fork().await.is_ok());
-            });
+            assert!(shared_runtime.before_fork().is_ok());
 
             // Test after_fork_parent (synchronous)
             assert!(shared_runtime.after_fork_parent().is_ok());
