@@ -341,41 +341,41 @@ impl<D: TraceData> TraceCollection<D> {
     }
 }
 
-impl<D: TraceData> TraceProjector<D> for TraceCollection<D> {
-    type Storage<'a> = () where D: 'a;
-    type Trace<'a> = Trace<D> where D: 'a;
-    type Chunk<'a> = Chunk<D> where D: 'a;
-    type Span<'a> = Span<D> where D: 'a;
-    type SpanLink<'a> = SpanLink<D> where D: 'a;
-    type SpanEvent<'a> = SpanEvent<D> where D: 'a;
+impl<'s, D: TraceDataLifetime<'s>> TraceProjector<'s, D> for TraceCollection<D> where D: 's {
+    type Storage = ();
+    type Trace = Trace<D>;
+    type Chunk = Chunk<D>;
+    type Span = Span<D>;
+    type SpanLink = SpanLink<D>;
+    type SpanEvent = SpanEvent<D>;
 
-    fn project<'a>(&'a self) -> Traces<Self, D> {
+    fn project(&'s self) -> Traces<'s, Self, D> {
         Traces::new(&self.traces, &())
     }
 
-    fn project_mut<'a>(&'a mut self) -> TracesMut<Self, D> {
+    fn project_mut(&'s mut self) -> TracesMut<'s, Self, D> {
         // For v04, storage is unit type (), which is zero-sized
         // We can safely create a mutable reference to a local unit value
         // because it doesn't actually store anything
         unsafe {
-            Traces::new_mut(&mut self.traces, std::mem::transmute::<&mut (), &'a mut ()>(&mut ()))
+            Traces::new_mut(&mut self.traces, std::mem::transmute::<&mut (), &'s mut ()>(&mut ()))
         }
     }
 
-    fn add_chunk<'a>(trace: &'a mut Trace<D>, _storage: &mut ()) -> &'a mut Chunk<D> {
+    fn add_chunk<'b>(trace: &'b mut Trace<D>, _storage: &mut ()) -> &'b mut Chunk<D> {
         trace.push(Vec::new());
         unsafe { trace.last_mut().unwrap_unchecked() }
     }
 
-    fn chunk_iterator<'a>(trace: &'a Trace<D>) -> Iter<'a, Chunk<D>> {
+    fn chunk_iterator(trace: &'s Trace<D>) -> Iter<'s, Chunk<D>> {
         trace.iter()
     }
 
-    fn retain_chunks<'b, 'a, F: for<'c> FnMut(&'c mut Self::Chunk<'c>, &'c mut Self::Storage<'a>) -> bool>(trace: &'b mut Self::Trace<'b>, storage: &'a mut Self::Storage<'a>, mut predicate: F) {
+    fn retain_chunks<'b, F: for<'c> FnMut(&'c mut <TraceCollection<D> as TraceProjector<'s, D>>::Chunk, &'c mut <TraceCollection<D> as TraceProjector<'s, D>>::Storage) -> bool>(trace: &'b mut <TraceCollection<D> as TraceProjector<'s, D>>::Trace, storage: &'b mut <TraceCollection<D> as TraceProjector<'s, D>>::Storage, mut predicate: F) {
         trace.retain_mut(move |chunk| predicate(chunk, storage))
     }
 
-    fn add_span<'a>(chunk: &'a mut Chunk<D>, _storage: &mut ()) -> &'a mut Span<D> {
+    fn add_span<'b>(chunk: &'b mut Chunk<D>, _storage: &mut ()) -> &'b mut Span<D> {
         chunk.push(Span::default());
         let trace_id = chunk.first().map(|s| s.trace_id).unwrap_or(0);
         let span = unsafe { chunk.last_mut().unwrap_unchecked() };
@@ -383,72 +383,72 @@ impl<D: TraceData> TraceProjector<D> for TraceCollection<D> {
         span
     }
 
-    fn span_iterator<'a>(chunk: &'a Chunk<D>) -> Iter<'a, Span<D>> {
+    fn span_iterator(chunk: &'s Chunk<D>) -> Iter<'s, Span<D>> {
         chunk.iter()
     }
 
-    fn retain_spans<'r, F: FnMut(&mut Self::Span<'r>, &mut Self::Storage<'r>) -> bool>(chunk: &'r mut Self::Chunk<'r>, storage: &'r mut Self::Storage<'r>, mut predicate: F) {
+    fn retain_spans<'b, F: FnMut(&mut <TraceCollection<D> as TraceProjector<'s, D>>::Span, &mut <TraceCollection<D> as TraceProjector<'s, D>>::Storage) -> bool>(chunk: &'b mut <TraceCollection<D> as TraceProjector<'s, D>>::Chunk, storage: &'b mut <TraceCollection<D> as TraceProjector<'s, D>>::Storage, mut predicate: F) {
         chunk.retain_mut(|span| predicate(span, storage))
     }
 
-    fn add_span_link<'a>(span: &'a mut Span<D>, _storage: &mut ()) -> &'a mut SpanLink<D> {
+    fn add_span_link<'b>(span: &'b mut Span<D>, _storage: &mut ()) -> &'b mut SpanLink<D> {
         span.span_links.push(SpanLink::default());
         unsafe { span.span_links.last_mut().unwrap_unchecked() }
     }
 
-    fn span_link_iterator<'a>(span: &'a Span<D>) -> Iter<'a, SpanLink<D>> {
+    fn span_link_iterator(span: &'s Span<D>) -> Iter<'s, SpanLink<D>> {
         span.span_links.iter()
     }
 
-    fn retain_span_links<'r, F: FnMut(&mut Self::SpanLink<'r>, &mut Self::Storage<'r>) -> bool>(span: &'r mut Self::Span<'r>, storage: &'r mut Self::Storage<'r>, mut predicate: F) {
+    fn retain_span_links<'b, F: FnMut(&mut <TraceCollection<D> as TraceProjector<'s, D>>::SpanLink, &mut <TraceCollection<D> as TraceProjector<'s, D>>::Storage) -> bool>(span: &'b mut <TraceCollection<D> as TraceProjector<'s, D>>::Span, storage: &'b mut <TraceCollection<D> as TraceProjector<'s, D>>::Storage, mut predicate: F) {
         span.span_links.retain_mut(|link| predicate(link, storage))
     }
 
-    fn add_span_event<'a>(span: &mut Self::Span<'a>, _storage: &mut Self::Storage<'a>) -> &'a mut Self::SpanEvent<'a> {
+    fn add_span_event<'b>(span: &'b mut <TraceCollection<D> as TraceProjector<'s, D>>::Span, _storage: &mut <TraceCollection<D> as TraceProjector<'s, D>>::Storage) -> &'b mut <TraceCollection<D> as TraceProjector<'s, D>>::SpanEvent {
         span.span_events.push(SpanEvent::default());
         // SAFETY: We just pushed an element, so last_mut() will return Some
-        // The lifetime 'a is tied to the span parameter through Self::Span<'a>
+        // The lifetime 'b is tied to the span parameter
         unsafe { std::mem::transmute(span.span_events.last_mut().unwrap_unchecked()) }
     }
 
-    fn span_event_iterator<'a>(span: &'a Span<D>) -> Iter<'a, SpanEvent<D>> {
+    fn span_event_iterator(span: &'s Span<D>) -> Iter<'s, SpanEvent<D>> {
         span.span_events.iter()
     }
 
-    fn retain_span_events<'r, F: FnMut(&mut Self::SpanEvent<'r>, &mut Self::Storage<'r>) -> bool>(span: &'r mut Self::Span<'r>, storage: &'r mut Self::Storage<'r>, mut predicate: F) {
+    fn retain_span_events<'b, F: FnMut(&mut <TraceCollection<D> as TraceProjector<'s, D>>::SpanEvent, &mut <TraceCollection<D> as TraceProjector<'s, D>>::Storage) -> bool>(span: &'b mut <TraceCollection<D> as TraceProjector<'s, D>>::Span, storage: &'b mut <TraceCollection<D> as TraceProjector<'s, D>>::Storage, mut predicate: F) {
         span.span_events.retain_mut(|event| predicate(event, storage))
     }
 
     // Trace-level getters - v04 doesn't have trace-level attributes, return defaults
-    fn get_trace_container_id<'a>(_trace: &Trace<D>, _storage: &'a ()) -> &'a D::Text {
+    fn get_trace_container_id(_trace: &'s Trace<D>, _storage: &'s ()) -> &'s D::Text {
         D::Text::default_ref()
     }
 
-    fn get_trace_language_name<'a>(_trace: &Trace<D>, _storage: &'a ()) -> &'a D::Text {
+    fn get_trace_language_name(_trace: &'s Trace<D>, _storage: &'s ()) -> &'s D::Text {
         D::Text::default_ref()
     }
 
-    fn get_trace_language_version<'a>(_trace: &Trace<D>, _storage: &'a ()) -> &'a D::Text {
+    fn get_trace_language_version(_trace: &'s Trace<D>, _storage: &'s ()) -> &'s D::Text {
         D::Text::default_ref()
     }
 
-    fn get_trace_tracer_version<'a>(_trace: &Trace<D>, _storage: &'a ()) -> &'a D::Text {
+    fn get_trace_tracer_version(_trace: &'s Trace<D>, _storage: &'s ()) -> &'s D::Text {
         D::Text::default_ref()
     }
 
-    fn get_trace_runtime_id<'a>(_trace: &Trace<D>, _storage: &'a ()) -> &'a D::Text {
+    fn get_trace_runtime_id(_trace: &'s Trace<D>, _storage: &'s ()) -> &'s D::Text {
         D::Text::default_ref()
     }
 
-    fn get_trace_env<'a>(_trace: &Trace<D>, _storage: &'a ()) -> &'a D::Text {
+    fn get_trace_env(_trace: &'s Trace<D>, _storage: &'s ()) -> &'s D::Text {
         D::Text::default_ref()
     }
 
-    fn get_trace_hostname<'a>(_trace: &Trace<D>, _storage: &'a ()) -> &'a D::Text {
+    fn get_trace_hostname(_trace: &'s Trace<D>, _storage: &'s ()) -> &'s D::Text {
         D::Text::default_ref()
     }
 
-    fn get_trace_app_version<'a>(_trace: &Trace<D>, _storage: &'a ()) -> &'a D::Text {
+    fn get_trace_app_version(_trace: &'s Trace<D>, _storage: &'s ()) -> &'s D::Text {
         D::Text::default_ref()
     }
 
@@ -463,14 +463,14 @@ impl<D: TraceData> TraceProjector<D> for TraceCollection<D> {
     fn set_trace_app_version(_trace: &mut Trace<D>, _storage: &mut (), _value: D::Text) {}
 
     // Chunk-level getters
-    fn get_chunk_priority(chunk: &Chunk<D>, _storage: &()) -> i32 {
+    fn get_chunk_priority<'a>(chunk: &'a Chunk<D>, _storage: &'a ()) -> i32 {
         chunk.first()
             .and_then(|span| span.metrics.get("_sampling_priority_v1"))
             .copied()
             .unwrap_or(0.0) as i32
     }
 
-    fn get_chunk_origin<'a>(chunk: &Self::Chunk<'_>, _storage: &'a ()) -> &'a D::Text {
+    fn get_chunk_origin(chunk: &<TraceCollection<D> as TraceProjector<'s, D>>::Chunk, _storage: &()) -> &'s D::Text {
         // SAFETY: For v04, data lives in the chunk, not storage
         // We extend the lifetime from the chunk to 'a (which is tied to storage)
         unsafe {
@@ -483,15 +483,15 @@ impl<D: TraceData> TraceProjector<D> for TraceCollection<D> {
         }
     }
 
-    fn get_chunk_dropped_trace(_chunk: &Chunk<D>, _storage: &()) -> bool {
+    fn get_chunk_dropped_trace<'a>(_chunk: &'a Chunk<D>, _storage: &'a ()) -> bool {
         false
     }
 
-    fn get_chunk_trace_id(chunk: &Chunk<D>, _storage: &()) -> u128 {
+    fn get_chunk_trace_id<'a>(chunk: &'a Chunk<D>, _storage: &'a ()) -> u128 {
         chunk.first().map(|span| span.trace_id).unwrap_or(0)
     }
 
-    fn get_chunk_sampling_mechanism(chunk: &Chunk<D>, _storage: &()) -> u32 {
+    fn get_chunk_sampling_mechanism<'a>(chunk: &'a Chunk<D>, _storage: &'a ()) -> u32 {
         chunk.first()
             .and_then(|span| span.metrics.get("_dd.span_sampling.mechanism"))
             .copied()
@@ -529,20 +529,20 @@ impl<D: TraceData> TraceProjector<D> for TraceCollection<D> {
     // For v04, data lives in the span itself, not storage
     // We must match the trait signature which expects lifetime 'a from storage
     // We extend the lifetime from the span to match the storage lifetime
-    fn get_span_service<'a>(span: &Self::Span<'_>, _storage: &'a ()) -> &'a D::Text {
-        unsafe { std::mem::transmute(&span.service) }
+    fn get_span_service(span: &'s <TraceCollection<D> as TraceProjector<'s, D>>::Span, _storage: &()) -> &'s D::Text {
+        &span.service
     }
 
-    fn get_span_name<'a>(span: &Self::Span<'_>, _storage: &'a ()) -> &'a D::Text {
-        unsafe { std::mem::transmute(&span.name) }
+    fn get_span_name(span: &'s <TraceCollection<D> as TraceProjector<'s, D>>::Span, _storage: &()) -> &'s D::Text {
+        &span.name
     }
 
-    fn get_span_resource<'a>(span: &Self::Span<'_>, _storage: &'a ()) -> &'a D::Text {
-        unsafe { std::mem::transmute(&span.resource) }
+    fn get_span_resource(span: &'s <TraceCollection<D> as TraceProjector<'s, D>>::Span, _storage: &()) -> &'s D::Text {
+        &span.resource
     }
 
-    fn get_span_type<'a>(span: &Self::Span<'_>, _storage: &'a ()) -> &'a D::Text {
-        unsafe { std::mem::transmute(&span.r#type) }
+    fn get_span_type(span: &'s <TraceCollection<D> as TraceProjector<'s, D>>::Span, _storage: &()) -> &'s D::Text {
+        &span.r#type
     }
 
     fn get_span_span_id(span: &Span<D>, _storage: &()) -> u64 {
@@ -565,16 +565,16 @@ impl<D: TraceData> TraceProjector<D> for TraceCollection<D> {
         span.error != 0
     }
 
-    fn get_span_env<'a>(span: &Self::Span<'_>, _storage: &'a ()) -> &'a D::Text {
-        unsafe { std::mem::transmute(span.meta.get("env").unwrap_or(&span.service)) }
+    fn get_span_env(span: &'s <TraceCollection<D> as TraceProjector<'s, D>>::Span, _storage: &()) -> &'s D::Text {
+        span.meta.get("env").unwrap_or(&span.service)
     }
 
-    fn get_span_version<'a>(span: &Self::Span<'_>, _storage: &'a ()) -> &'a D::Text {
-        unsafe { std::mem::transmute(span.meta.get("version").unwrap_or(&span.service)) }
+    fn get_span_version(span: &'s <TraceCollection<D> as TraceProjector<'s, D>>::Span, _storage: &()) -> &'s D::Text {
+        span.meta.get("version").unwrap_or(&span.service)
     }
 
-    fn get_span_component<'a>(span: &Self::Span<'_>, _storage: &'a ()) -> &'a D::Text {
-        unsafe { std::mem::transmute(span.meta.get("component").unwrap_or(&span.service)) }
+    fn get_span_component(span: &'s <TraceCollection<D> as TraceProjector<'s, D>>::Span, _storage: &()) -> &'s D::Text {
+        span.meta.get("component").unwrap_or(&span.service)
     }
 
     fn get_span_kind(span: &Span<D>, _storage: &()) -> SpanKind {
@@ -647,8 +647,8 @@ impl<D: TraceData> TraceProjector<D> for TraceCollection<D> {
         link.span_id
     }
 
-    fn get_link_trace_state<'a>(link: &Self::SpanLink<'_>, _storage: &'a ()) -> &'a D::Text {
-        unsafe { std::mem::transmute(&link.tracestate) }
+    fn get_link_trace_state(link: &'s <TraceCollection<D> as TraceProjector<'s, D>>::SpanLink, _storage: &()) -> &'s D::Text {
+        &link.tracestate
     }
 
     fn get_link_flags(link: &SpanLink<D>, _storage: &()) -> u32 {
@@ -678,8 +678,8 @@ impl<D: TraceData> TraceProjector<D> for TraceCollection<D> {
         event.time_unix_nano
     }
 
-    fn get_event_name<'a>(event: &Self::SpanEvent<'_>, _storage: &'a ()) -> &'a D::Text {
-        unsafe { std::mem::transmute(&event.name) }
+    fn get_event_name(event: &'s <TraceCollection<D> as TraceProjector<'s, D>>::SpanEvent, _storage: &()) -> &'s D::Text {
+        &event.name
     }
 
     // SpanEvent setters
@@ -694,11 +694,11 @@ impl<D: TraceData> TraceProjector<D> for TraceCollection<D> {
 
 // Attribute operations for Span
 // For v04, data lives in the span, so 'b (container lifetime) must outlive 'a (storage lifetime)
-impl<'a, 'b, D: TraceData, const Mut: u8> TraceAttributesOp<'b, 'a, TraceCollection<D>, D, Span<D>> for TraceAttributes<'a, TraceCollection<D>, D, AttrRef<'b, Span<D>>, Span<D>, Mut> {
+impl<'a, 's, D: TraceData, const Mut: u8> TraceAttributesOp<'a, 's, TraceCollection<D>, D, Span<D>> for TraceAttributes<'s, TraceCollection<D>, D, AttrRef<'a, Span<D>>, Span<D>, Mut> {
     type Array = ();
     type Map = ();
 
-    fn get<K>(container: &'b Span<D>, _storage: &'a (), key: &K) -> Option<AttributeAnyGetterContainer<'b, 'a, Self, TraceCollection<D>, D, Span<D>>>
+    fn get<K>(container: &'a Span<D>, _storage: &'s (), key: &K) -> Option<AttributeAnyGetterContainer<'a, 's, Self, TraceCollection<D>, D, Span<D>>>
     where
         K: ?Sized + Hash + Equivalent<<D::Text as SpanDataContents>::RefCopy>
     {
@@ -707,9 +707,10 @@ impl<'a, 'b, D: TraceData, const Mut: u8> TraceAttributesOp<'b, 'a, TraceCollect
         for (k, v) in &container.meta {
             if key.equivalent(&k.as_ref_copy()) {
                 // SAFETY: In v04, data is stored directly in containers, not in storage.
-                // We transmute the lifetime from 'b to 'a for the return value.
-                let v_with_storage_lifetime: &'a D::Text = unsafe { std::mem::transmute(v) };
-                return Some(AttributeAnyContainer::String(v_with_storage_lifetime));
+                // We transmute the lifetime from 'a to 's for the return value.
+                // This is sound because the data is owned by Traces<'s>, accessed through &'a.
+                let v_storage = unsafe { std::mem::transmute::<&'_ _, &'s D::Text>(v) };
+                return Some(AttributeAnyContainer::String(v_storage));
             }
         }
         for (k, v) in &container.metrics {
@@ -721,23 +722,26 @@ impl<'a, 'b, D: TraceData, const Mut: u8> TraceAttributesOp<'b, 'a, TraceCollect
     }
 }
 
-impl<'a, 'b, D: TraceData> TraceAttributesMutOp<'b, 'a, TraceCollection<D>, D, Span<D>> for TraceAttributesMut<'a, TraceCollection<D>, D, AttrRef<'b, Span<D>>, Span<D>> {
-    type MutString = &'b mut D::Text;
+impl<'a, 's, D: TraceData> TraceAttributesMutOp<'a, 's, TraceCollection<D>, D, Span<D>> for TraceAttributesMut<'s, TraceCollection<D>, D, AttrRef<'a, Span<D>>, Span<D>> {
+    type MutString = &'s mut D::Text;
     type MutBytes = ();
-    type MutBoolean = &'b mut f64;
-    type MutInteger = &'b mut f64;
-    type MutDouble = &'b mut f64;
+    type MutBoolean = &'a mut f64;
+    type MutInteger = &'a mut f64;
+    type MutDouble = &'a mut f64;
     type MutArray = ();
     type MutMap = ();
 
-    fn get_mut<K>(container: &'b mut Span<D>, _storage: &mut (), key: &K) -> Option<AttributeAnySetterContainer<'b, 'a, Self, TraceCollection<D>, D, Span<D>>>
+    fn get_mut<K>(container: &'a mut Span<D>, _storage: &mut (), key: &K) -> Option<AttributeAnySetterContainer<'a, 's, Self, TraceCollection<D>, D, Span<D>>>
     where
         K: ?Sized + Hash + Equivalent<<D::Text as SpanDataContents>::RefCopy>,
     {
         // Try to find in meta
         for (k, v) in &mut container.meta {
             if key.equivalent(&k.as_ref_copy()) {
-                return Some(AttributeAnyContainer::String(v));
+                // SAFETY: In v04, data is owned by Traces<'s> and stored in containers. We transmute from 'a to 's.
+                // This is sound because the actual data lifetime is 's (tied to Traces), and 'a is just the borrow lifetime.
+                let v_storage: &'s mut D::Text = unsafe { std::mem::transmute(v) };
+                return Some(AttributeAnyContainer::String(v_storage));
             }
         }
         // Try to find in metrics
@@ -749,12 +753,13 @@ impl<'a, 'b, D: TraceData> TraceAttributesMutOp<'b, 'a, TraceCollection<D>, D, S
         None
     }
 
-    fn set(container: &'b mut Span<D>, _storage: &mut (), key: D::Text, value: AttributeAnyValueType) -> AttributeAnySetterContainer<'b, 'a, Self, TraceCollection<D>, D, Span<D>> {
-        use std::collections::hash_map::Entry;
+    fn set(container: &'a mut Span<D>, _storage: &mut (), key: D::Text, value: AttributeAnyValueType) -> AttributeAnySetterContainer<'a, 's, Self, TraceCollection<D>, D, Span<D>> {
         match value {
             AttributeAnyValueType::String => {
                 let entry = container.meta.entry(key).or_insert_with(D::Text::default);
-                AttributeAnyContainer::String(entry)
+                // SAFETY: Same reasoning as get_mut - transmute from 'a to 's
+                let entry_storage: &'s mut D::Text = unsafe { std::mem::transmute(entry) };
+                AttributeAnyContainer::String(entry_storage)
             },
             AttributeAnyValueType::Bytes => AttributeAnyContainer::Bytes(()),
             AttributeAnyValueType::Boolean | AttributeAnyValueType::Integer | AttributeAnyValueType::Double => {
@@ -777,11 +782,11 @@ impl<'a, 'b, D: TraceData> TraceAttributesMutOp<'b, 'a, TraceCollection<D>, D, S
 }
 
 // Trait implementations for mutable references
-impl<'a, 'b, D: TraceData> TraceAttributesString<'a, TraceCollection<D>, D> for &'b mut D::Text {
-    fn get(&self, _storage: &'a ()) -> &'a D::Text {
-        // SAFETY: In v04, data is stored directly in containers, not in storage.
-        // We transmute the lifetime from 'b to 'a.
-        unsafe { std::mem::transmute::<&D::Text, &'a D::Text>(*self) }
+// This impl works for &'storage mut D::Text with both lifetimes being 'storage
+impl<'storage, D: TraceDataLifetime<'storage> + 'storage> TraceAttributesString<'storage, 'storage, TraceCollection<D>, D> for &'storage mut D::Text {
+    fn get(&self, _storage: &'storage ()) -> &'storage D::Text {
+        // In v04, data is stored in the container, so we can safely transmute the lifetime
+        unsafe { std::mem::transmute::<&D::Text, &'storage D::Text>(&**self) }
     }
 
     fn set(self, _storage: &mut (), value: D::Text) {
@@ -793,11 +798,11 @@ impl<'a, 'b, D: TraceData> TraceAttributesString<'a, TraceCollection<D>, D> for 
 // are already implemented in v05/mod.rs and apply to both v04 and v05
 
 // Empty implementations for types that don't have attributes
-impl<'a, 'b, D: TraceData, const Mut: u8> TraceAttributesOp<'b, 'a, TraceCollection<D>, D, Trace<D>> for TraceAttributes<'a, TraceCollection<D>, D, AttrRef<'b, Trace<D>>, Trace<D>, Mut> {
+impl<'a, 's, D: TraceData, const Mut: u8> TraceAttributesOp<'a, 's, TraceCollection<D>, D, Trace<D>> for TraceAttributes<'s, TraceCollection<D>, D, AttrRef<'a, Trace<D>>, Trace<D>, Mut> {
     type Array = ();
     type Map = ();
 
-    fn get<K>(_container: &'b Trace<D>, _storage: &'a (), _key: &K) -> Option<AttributeAnyGetterContainer<'b, 'a, Self, TraceCollection<D>, D, Trace<D>>>
+    fn get<K>(_container: &'a Trace<D>, _storage: &'s (), _key: &K) -> Option<AttributeAnyGetterContainer<'a, 's, Self, TraceCollection<D>, D, Trace<D>>>
     where
         K: ?Sized + Hash + Equivalent<<D::Text as SpanDataContents>::RefCopy>,
     {
@@ -805,7 +810,7 @@ impl<'a, 'b, D: TraceData, const Mut: u8> TraceAttributesOp<'b, 'a, TraceCollect
     }
 }
 
-impl<'a, 'b, D: TraceData> TraceAttributesMutOp<'b, 'a, TraceCollection<D>, D, Trace<D>> for TraceAttributesMut<'a, TraceCollection<D>, D, AttrRef<'b, Trace<D>>, Trace<D>> {
+impl<'a, 's, D: TraceData> TraceAttributesMutOp<'a, 's, TraceCollection<D>, D, Trace<D>> for TraceAttributesMut<'s, TraceCollection<D>, D, AttrRef<'a, Trace<D>>, Trace<D>> {
     type MutString = ();
     type MutBytes = ();
     type MutBoolean = ();
@@ -814,14 +819,14 @@ impl<'a, 'b, D: TraceData> TraceAttributesMutOp<'b, 'a, TraceCollection<D>, D, T
     type MutArray = ();
     type MutMap = ();
 
-    fn get_mut<K>(_container: &'b mut Trace<D>, _storage: &mut (), _key: &K) -> Option<AttributeAnySetterContainer<'b, 'a, Self, TraceCollection<D>, D, Trace<D>>>
+    fn get_mut<K>(_container: &'a mut Trace<D>, _storage: &mut (), _key: &K) -> Option<AttributeAnySetterContainer<'a, 's, Self, TraceCollection<D>, D, Trace<D>>>
     where
         K: ?Sized + Hash + Equivalent<<D::Text as SpanDataContents>::RefCopy>
     {
         None
     }
 
-    fn set(_container: &'b mut Trace<D>, _storage: &mut (), _key: D::Text, _value: AttributeAnyValueType) -> AttributeAnySetterContainer<'b, 'a, Self, TraceCollection<D>, D, Trace<D>> {
+    fn set(_container: &'a mut Trace<D>, _storage: &mut (), _key: D::Text, _value: AttributeAnyValueType) -> AttributeAnySetterContainer<'a, 's, Self, TraceCollection<D>, D, Trace<D>> {
         AttributeAnyContainer::Map(())
     }
 
@@ -832,11 +837,11 @@ impl<'a, 'b, D: TraceData> TraceAttributesMutOp<'b, 'a, TraceCollection<D>, D, T
     }
 }
 
-impl<'a, 'b, D: TraceData, const Mut: u8> TraceAttributesOp<'b, 'a, TraceCollection<D>, D, Chunk<D>> for TraceAttributes<'a, TraceCollection<D>, D, AttrRef<'b, Chunk<D>>, Chunk<D>, Mut> {
+impl<'a, 's, D: TraceData, const Mut: u8> TraceAttributesOp<'a, 's, TraceCollection<D>, D, Chunk<D>> for TraceAttributes<'s, TraceCollection<D>, D, AttrRef<'a, Chunk<D>>, Chunk<D>, Mut> {
     type Array = ();
     type Map = ();
 
-    fn get<K>(_container: &'b Chunk<D>, _storage: &'a (), _key: &K) -> Option<AttributeAnyGetterContainer<'b, 'a, Self, TraceCollection<D>, D, Chunk<D>>>
+    fn get<K>(_container: &'a Chunk<D>, _storage: &'s (), _key: &K) -> Option<AttributeAnyGetterContainer<'a, 's, Self, TraceCollection<D>, D, Chunk<D>>>
     where
         K: ?Sized + Hash + Equivalent<<D::Text as SpanDataContents>::RefCopy>,
     {
@@ -844,7 +849,7 @@ impl<'a, 'b, D: TraceData, const Mut: u8> TraceAttributesOp<'b, 'a, TraceCollect
     }
 }
 
-impl<'a, 'b, D: TraceData> TraceAttributesMutOp<'b, 'a, TraceCollection<D>, D, Chunk<D>> for TraceAttributesMut<'a, TraceCollection<D>, D, AttrRef<'b, Chunk<D>>, Chunk<D>> {
+impl<'a, 's, D: TraceData> TraceAttributesMutOp<'a, 's, TraceCollection<D>, D, Chunk<D>> for TraceAttributesMut<'s, TraceCollection<D>, D, AttrRef<'a, Chunk<D>>, Chunk<D>> {
     type MutString = ();
     type MutBytes = ();
     type MutBoolean = ();
@@ -853,14 +858,14 @@ impl<'a, 'b, D: TraceData> TraceAttributesMutOp<'b, 'a, TraceCollection<D>, D, C
     type MutArray = ();
     type MutMap = ();
 
-    fn get_mut<K>(_container: &'b mut Chunk<D>, _storage: &mut (), _key: &K) -> Option<AttributeAnySetterContainer<'b, 'a, Self, TraceCollection<D>, D, Chunk<D>>>
+    fn get_mut<K>(_container: &'a mut Chunk<D>, _storage: &mut (), _key: &K) -> Option<AttributeAnySetterContainer<'a, 's, Self, TraceCollection<D>, D, Chunk<D>>>
     where
         K: ?Sized + Hash + Equivalent<<D::Text as SpanDataContents>::RefCopy>
     {
         None
     }
 
-    fn set(_container: &'b mut Chunk<D>, _storage: &mut (), _key: D::Text, _value: AttributeAnyValueType) -> AttributeAnySetterContainer<'b, 'a, Self, TraceCollection<D>, D, Chunk<D>> {
+    fn set(_container: &'a mut Chunk<D>, _storage: &mut (), _key: D::Text, _value: AttributeAnyValueType) -> AttributeAnySetterContainer<'a, 's, Self, TraceCollection<D>, D, Chunk<D>> {
         AttributeAnyContainer::Map(())
     }
 
@@ -871,19 +876,20 @@ impl<'a, 'b, D: TraceData> TraceAttributesMutOp<'b, 'a, TraceCollection<D>, D, C
     }
 }
 
-impl<'a, 'b, D: TraceData, const Mut: u8> TraceAttributesOp<'b, 'a, TraceCollection<D>, D, SpanLink<D>> for TraceAttributes<'a, TraceCollection<D>, D, AttrRef<'b, SpanLink<D>>, SpanLink<D>, Mut> {
+impl<'a, 's, D: TraceData, const Mut: u8> TraceAttributesOp<'a, 's, TraceCollection<D>, D, SpanLink<D>> for TraceAttributes<'s, TraceCollection<D>, D, AttrRef<'a, SpanLink<D>>, SpanLink<D>, Mut> {
     type Array = ();
     type Map = ();
 
-    fn get<K>(container: &'b SpanLink<D>, _storage: &'a (), key: &K) -> Option<AttributeAnyGetterContainer<'b, 'a, Self, TraceCollection<D>, D, SpanLink<D>>>
+    fn get<K>(container: &'a SpanLink<D>, _storage: &'s (), key: &K) -> Option<AttributeAnyGetterContainer<'a, 's, Self, TraceCollection<D>, D, SpanLink<D>>>
     where
         K: ?Sized + Hash + Equivalent<<D::Text as SpanDataContents>::RefCopy>,
     {
         for (k, v) in &container.attributes {
             if key.equivalent(&k.as_ref_copy()) {
                 // SAFETY: In v04, data is stored directly in containers, not in storage.
-                // We transmute the lifetime from 'b to 'a for the return value.
-                let v_with_storage_lifetime: &'a D::Text = unsafe { std::mem::transmute(v) };
+                // We transmute the lifetime from 'a to 's for the return value.
+                // This is sound because the data is owned by Traces<'s>, accessed through &'a.
+                let v_with_storage_lifetime: &'s D::Text = unsafe { std::mem::transmute(v) };
                 return Some(AttributeAnyContainer::String(v_with_storage_lifetime));
             }
         }
@@ -891,8 +897,8 @@ impl<'a, 'b, D: TraceData, const Mut: u8> TraceAttributesOp<'b, 'a, TraceCollect
     }
 }
 
-impl<'a, 'b, D: TraceData> TraceAttributesMutOp<'b, 'a, TraceCollection<D>, D, SpanLink<D>> for TraceAttributesMut<'a, TraceCollection<D>, D, AttrRef<'b, SpanLink<D>>, SpanLink<D>> {
-    type MutString = &'b mut D::Text;
+impl<'a, 's, D: TraceData> TraceAttributesMutOp<'a, 's, TraceCollection<D>, D, SpanLink<D>> for TraceAttributesMut<'s, TraceCollection<D>, D, AttrRef<'a, SpanLink<D>>, SpanLink<D>> {
+    type MutString = &'s mut D::Text;
     type MutBytes = ();
     type MutBoolean = ();
     type MutInteger = ();
@@ -900,24 +906,27 @@ impl<'a, 'b, D: TraceData> TraceAttributesMutOp<'b, 'a, TraceCollection<D>, D, S
     type MutArray = ();
     type MutMap = ();
 
-    fn get_mut<K>(container: &'b mut SpanLink<D>, _storage: &mut (), key: &K) -> Option<AttributeAnySetterContainer<'b, 'a, Self, TraceCollection<D>, D, SpanLink<D>>>
+    fn get_mut<K>(container: &'a mut SpanLink<D>, _storage: &mut (), key: &K) -> Option<AttributeAnySetterContainer<'a, 's, Self, TraceCollection<D>, D, SpanLink<D>>>
     where
         K: ?Sized + Hash + Equivalent<<D::Text as SpanDataContents>::RefCopy>
     {
         for (k, v) in &mut container.attributes {
             if key.equivalent(&k.as_ref_copy()) {
-                return Some(AttributeAnyContainer::String(v));
+                // SAFETY: transmute from 'a to 's (same as Span impl)
+                let v_storage: &'s mut D::Text = unsafe { std::mem::transmute(v) };
+                return Some(AttributeAnyContainer::String(v_storage));
             }
         }
         None
     }
 
-    fn set(container: &'b mut SpanLink<D>, _storage: &mut (), key: D::Text, value: AttributeAnyValueType) -> AttributeAnySetterContainer<'b, 'a, Self, TraceCollection<D>, D, SpanLink<D>> {
-        use std::collections::hash_map::Entry;
+    fn set(container: &'a mut SpanLink<D>, _storage: &mut (), key: D::Text, value: AttributeAnyValueType) -> AttributeAnySetterContainer<'a, 's, Self, TraceCollection<D>, D, SpanLink<D>> {
         match value {
             AttributeAnyValueType::String => {
                 let entry = container.attributes.entry(key).or_insert_with(D::Text::default);
-                AttributeAnyContainer::String(entry)
+                // SAFETY: transmute from 'a to 's
+                let entry_storage: &'s mut D::Text = unsafe { std::mem::transmute(entry) };
+                AttributeAnyContainer::String(entry_storage)
             },
             _ => AttributeAnyContainer::Map(()),
         }
@@ -931,11 +940,11 @@ impl<'a, 'b, D: TraceData> TraceAttributesMutOp<'b, 'a, TraceCollection<D>, D, S
     }
 }
 
-impl<'a, 'b, D: TraceData, const Mut: u8> TraceAttributesOp<'b, 'a, TraceCollection<D>, D, SpanEvent<D>> for TraceAttributes<'a, TraceCollection<D>, D, AttrRef<'b, SpanEvent<D>>, SpanEvent<D>, Mut> {
+impl<'a, 's, D: TraceData, const Mut: u8> TraceAttributesOp<'a, 's, TraceCollection<D>, D, SpanEvent<D>> for TraceAttributes<'s, TraceCollection<D>, D, AttrRef<'a, SpanEvent<D>>, SpanEvent<D>, Mut> {
     type Array = ();
     type Map = ();
 
-    fn get<K>(_container: &'b SpanEvent<D>, _storage: &'a (), _key: &K) -> Option<AttributeAnyGetterContainer<'b, 'a, Self, TraceCollection<D>, D, SpanEvent<D>>>
+    fn get<K>(_container: &'a SpanEvent<D>, _storage: &'s (), _key: &K) -> Option<AttributeAnyGetterContainer<'a, 's, Self, TraceCollection<D>, D, SpanEvent<D>>>
     where
         K: ?Sized + Hash + Equivalent<<D::Text as SpanDataContents>::RefCopy>,
     {
@@ -945,7 +954,7 @@ impl<'a, 'b, D: TraceData, const Mut: u8> TraceAttributesOp<'b, 'a, TraceCollect
     }
 }
 
-impl<'a, 'b, D: TraceData> TraceAttributesMutOp<'b, 'a, TraceCollection<D>, D, SpanEvent<D>> for TraceAttributesMut<'a, TraceCollection<D>, D, AttrRef<'b, SpanEvent<D>>, SpanEvent<D>> {
+impl<'a, 's, D: TraceData> TraceAttributesMutOp<'a, 's, TraceCollection<D>, D, SpanEvent<D>> for TraceAttributesMut<'s, TraceCollection<D>, D, AttrRef<'a, SpanEvent<D>>, SpanEvent<D>> {
     type MutString = ();
     type MutBytes = ();
     type MutBoolean = ();
@@ -954,14 +963,14 @@ impl<'a, 'b, D: TraceData> TraceAttributesMutOp<'b, 'a, TraceCollection<D>, D, S
     type MutArray = ();
     type MutMap = ();
 
-    fn get_mut<K>(_container: &'b mut SpanEvent<D>, _storage: &mut (), _key: &K) -> Option<AttributeAnySetterContainer<'b, 'a, Self, TraceCollection<D>, D, SpanEvent<D>>>
+    fn get_mut<K>(_container: &'a mut SpanEvent<D>, _storage: &mut (), _key: &K) -> Option<AttributeAnySetterContainer<'a, 's, Self, TraceCollection<D>, D, SpanEvent<D>>>
     where
         K: ?Sized + Hash + Equivalent<<D::Text as SpanDataContents>::RefCopy>
     {
         None
     }
 
-    fn set(_container: &'b mut SpanEvent<D>, _storage: &mut (), _key: D::Text, _value: AttributeAnyValueType) -> AttributeAnySetterContainer<'b, 'a, Self, TraceCollection<D>, D, SpanEvent<D>> {
+    fn set(_container: &'a mut SpanEvent<D>, _storage: &mut (), _key: D::Text, _value: AttributeAnyValueType) -> AttributeAnySetterContainer<'a, 's, Self, TraceCollection<D>, D, SpanEvent<D>> {
         AttributeAnyContainer::Map(())
     }
 

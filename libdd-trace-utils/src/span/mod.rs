@@ -46,6 +46,13 @@ pub trait ImpliedPredicate<T : ?Sized> : HasAssoc<T, Impls = T>
 
 impl<T : ?Sized, Self_ : ?Sized> ImpliedPredicate<T> for Self_ {}
 
+// Lifetime-aware version for TraceProjector bounds
+pub trait ImpliedPredicateWithLifetime<'a, 'b, T : ?Sized, D: TraceData> : HasAssoc<T, Impls = T>
+{}
+
+impl<'a, 'b, T : ?Sized, Self_ : ?Sized, D: TraceData> ImpliedPredicateWithLifetime<'a, 'b, T, D> for Self_
+{}
+
 /// Trait representing the requirements for a type to be used as a Span "string" type.
 /// Note: Borrow<str> is not required by the derived traits, but allows to access HashMap elements
 /// from a static str and check if the string is empty.

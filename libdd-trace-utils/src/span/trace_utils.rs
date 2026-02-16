@@ -15,7 +15,7 @@ const TRACER_TOP_LEVEL_KEY: &str = "_dd.top_level";
 const MEASURED_KEY: &str = "_dd.measured";
 const PARTIAL_VERSION_KEY: &str = "_dd.partial_version";
 
-fn set_top_level_span<'b, 's, 'a, D: TraceDataLifetime<'a>, T: TraceProjector<D>>(span: &mut SpanMut<'b, 's, 'a, T, D>, is_top_level: bool) where 's: 'a
+fn set_top_level_span<'b: 's, 's, D: TraceDataLifetime<'s>, T: TraceProjector<'s, D>>(span: &mut SpanMut<'b, 's, T, D>, is_top_level: bool)
 {
     if is_top_level {
         span.attributes_mut().set_double(TOP_LEVEL_KEY, 1.0);
@@ -30,7 +30,7 @@ fn set_top_level_span<'b, 's, 'a, D: TraceDataLifetime<'a>, T: TraceProjector<D>
 ///   - OR its parent is unknown (other part of the code, distributed trace)
 ///   - OR its parent belongs to another service (in that case it's a "local root" being the highest
 ///     ancestor of other spans belonging to this service and attached to it).
-pub fn compute_top_level_span<'b, 's, 'a, D: TraceDataLifetime<'a>, T: TraceProjector<D>>(trace: &mut TraceChunkMut<'b, 's, 'a, T, D>) where 's: 'a {
+pub fn compute_top_level_span<'s, D: TraceDataLifetime<'s>, T: TraceProjector<'s, D>>(trace: &mut TraceChunkMut<'s, 's, T, D>) {
     // Collect span_id -> is_top_level decisions first
     let mut top_level_decisions: HashMap<u64, bool> = HashMap::new();
 
@@ -73,7 +73,7 @@ pub fn compute_top_level_span<'b, 's, 'a, D: TraceDataLifetime<'a>, T: TraceProj
 }
 
 /// Return true if the span has a top level key set
-pub fn has_top_level<'b, 's, 'a, D: TraceDataLifetime<'a>, T: TraceProjector<D>>(span: &Span<'b, 's, 'a, T, D>) -> bool where 's: 'a
+pub fn has_top_level<'b: 's, 's, D: TraceDataLifetime<'s>, T: TraceProjector<'s, D>>(span: &Span<'b, 's, T, D>) -> bool
 {
     span.attributes()
         .get_double(TRACER_TOP_LEVEL_KEY)
@@ -82,7 +82,7 @@ pub fn has_top_level<'b, 's, 'a, D: TraceDataLifetime<'a>, T: TraceProjector<D>>
 }
 
 /// Returns true if a span should be measured (i.e., it should get trace metrics calculated).
-pub fn is_measured<'b, 's, 'a, D: TraceDataLifetime<'a>, T: TraceProjector<D>>(span: &Span<'b, 's, 'a, T, D>) -> bool where 's: 'a
+pub fn is_measured<'b: 's, 's, D: TraceDataLifetime<'s>, T: TraceProjector<'s, D>>(span: &Span<'b, 's, T, D>) -> bool
 {
     span.attributes().get_double(MEASURED_KEY).is_some_and(|v| v == 1.0)
 }
@@ -92,7 +92,7 @@ pub fn is_measured<'b, 's, 'a, D: TraceDataLifetime<'a>, T: TraceProjector<D>>(s
 /// When incomplete, a partial snapshot has a metric _dd.partial_version which is a positive
 /// integer. The metric usually increases each time a new version of the same span is sent by
 /// the tracer
-pub fn is_partial_snapshot<'b, 's, 'a, D: TraceDataLifetime<'a>, T: TraceProjector<D>>(span: &Span<'b, 's, 'a, T, D>) -> bool where 's: 'a
+pub fn is_partial_snapshot<'b: 's, 's, D: TraceDataLifetime<'s>, T: TraceProjector<'s, D>>(span: &Span<'b, 's, T, D>) -> bool
 {
     span.attributes()
         .get_double(PARTIAL_VERSION_KEY)
@@ -119,7 +119,7 @@ const SAMPLING_ANALYTICS_RATE_KEY: &str = "_dd1.sr.eausr";
 ///
 /// # Trace-level attributes
 /// Some attributes related to the whole trace are stored in the root span of the chunk.
-pub fn drop_chunks<'a, D: TraceDataLifetime<'a>, T: TraceProjector<D>>(traces: &mut TracesMut<'a, T, D>) -> DroppedP0Stats
+pub fn drop_chunks<'s, D: TraceDataLifetime<'s>, T: TraceProjector<'s, D>>(traces: &mut TracesMut<'s, T, D>) -> DroppedP0Stats
 {
     let mut dropped_p0_traces = 0;
     let mut dropped_p0_spans = 0;
