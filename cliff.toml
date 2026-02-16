@@ -85,7 +85,7 @@ commit_parsers = [
   { message = "^feat", group = "<!-- A -->Added" },
   { message = "^fix", group = "<!-- C -->Fixed" },
   { message = "^refactor\\(clippy\\)", skip = true },
-  { message = "^chore\\(release\\): prepare for", skip = true },
+  { message = "^chore\\(release\\)", skip = true },
   { message = "^chore: Release", skip = true },
   { message = "^chore\\(deps.*\\)", skip = true },
   { message = "^chore\\(pr\\)", skip = true },
