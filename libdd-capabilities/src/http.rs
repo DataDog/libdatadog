@@ -10,7 +10,18 @@ use core::future::Future;
 #[derive(Debug, Clone)]
 pub struct HttpResponse {
     pub status: u16,
+    pub headers: Vec<(String, String)>,
     pub body: Vec<u8>,
+}
+
+impl HttpResponse {
+    /// Look up a response header by name (case-insensitive).
+    pub fn header(&self, name: &str) -> Option<&str> {
+        self.headers
+            .iter()
+            .find(|(k, _)| k.eq_ignore_ascii_case(name))
+            .map(|(_, v)| v.as_str())
+    }
 }
 
 #[derive(Debug, Clone)]
