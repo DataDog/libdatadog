@@ -133,8 +133,6 @@ jobs:
       contents: write
     needs: update-release-branch
     runs-on: ubuntu-latest
-    # TODO: uncomment this when we have a way to test this workflow
-    # if: ${{ github.repository_owner == 'datadog' }}
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # 4.2.2
         with:
