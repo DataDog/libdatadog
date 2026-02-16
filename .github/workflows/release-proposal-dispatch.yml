@@ -188,6 +188,14 @@ jobs:
       - name: Create a branch for the release proposal
         id: proposal-branch
         run: |
+          git status
+          
+          IS_SHALLOW=$(git rev-parse --is-shallow-repository)
+          if [ "$IS_SHALLOW" = "true" ]; then
+            echo "Repository is shallow"
+            git pull --unshallow
+          fi
+
           git checkout "${{ env.RELEASE_BRANCH }}"
           TIMESTAMP=$(date +%Y%m%d-%H%M%S)
           BRANCH_NAME="${{ env.PROPOSAL_BRANCH_PREFIX }}/${{ inputs.crate }}/$TIMESTAMP"
