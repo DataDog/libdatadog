@@ -390,7 +390,6 @@ jobs:
             "",
             (if $api_info.version then "**Next version:** `\($api_info.version)`\n" else null end),
             "**Semver bump:** `\($api_info.level)`",
-            "",
             (if $api_info.tag then "**Tag:** `\($api_info.tag)`\n" else null end),
             (if $api_info.initial_release == "true" then
               "**Warning:** this is an initial release. Please verify that the version and commits included are correct.\n"
