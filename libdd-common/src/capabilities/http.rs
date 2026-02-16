@@ -60,6 +60,13 @@ mod hyper_client {
                     .map_err(|e| HttpError::Network(format!("Request failed: {}", e)))?;
 
                 let status = response.status().as_u16();
+                let headers: Vec<(String, String)> = response
+                    .headers()
+                    .iter()
+                    .map(|(k, v)| {
+                        (k.as_str().to_owned(), v.to_str().unwrap_or("").to_owned())
+                    })
+                    .collect();
 
                 let body_collected = response.into_body().collect().await.map_err(|e| {
                     HttpError::Network(format!("Failed to read response body: {}", e))
@@ -68,6 +75,7 @@ mod hyper_client {
 
                 Ok(HttpResponse {
                     status,
+                    headers,
                     body: body_bytes.to_vec(),
                 })
             }
