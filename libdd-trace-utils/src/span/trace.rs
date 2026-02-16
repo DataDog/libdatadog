@@ -2,7 +2,7 @@ use std::hash::Hash;
 use std::marker::PhantomData;
 use hashbrown::Equivalent;
 use libdd_trace_protobuf::pb::idx::SpanKind;
-use crate::span::{IntoData, OwnedTraceData, SpanDataContents, TraceDataLifetime, ImpliedPredicate, TraceData, SpanText, SpanBytes};
+use crate::span::{IntoData, OwnedTraceData, SpanDataContents, TraceDataLifetime, ImpliedPredicate};
 
 pub trait TraceProjector<'s, D: TraceDataLifetime<'s>>: Sized + 's
     + for<'b> ImpliedPredicate<TraceAttributes<'s, Self, D, AttrRef<'b, Self::Trace>, Self::Trace>, Impls: TraceAttributesOp<'b, 's, Self, D, Self::Trace>>
@@ -122,13 +122,13 @@ unsafe fn as_mut<T>(v: &T) -> &mut T {
     &mut *(v as *const _ as *mut _)
 }
 
-struct TraceValue<'s, T: TraceProjector<'s, D>, D: TraceDataLifetime<'s>, C, const Type: u8, const Mut: u8 = IMMUT> {
+struct TraceValue<'s, T: TraceProjector<'s, D>, D: TraceDataLifetime<'s>, C, const TYPE: u8, const ISMUT: u8 = IMMUT> {
     storage: &'s T::Storage,
     container: &'s C,
 }
 
 #[derive(Debug)]
-pub struct Traces<'s, T: TraceProjector<'s, D>, D: TraceDataLifetime<'s>, const Mut: u8 = IMMUT> {
+pub struct Traces<'s, T: TraceProjector<'s, D>, D: TraceDataLifetime<'s>, const ISMUT: u8 = IMMUT> {
     storage: &'s T::Storage,
     traces: &'s T::Trace,
 }
@@ -150,7 +150,7 @@ impl<'s, T: TraceProjector<'s, D>, D: TraceDataLifetime<'s>> Traces<'s, T, D> {
     }
 }
 
-impl<'s, T: TraceProjector<'s, D>, D: TraceDataLifetime<'s>, const Mut: u8> Traces<'s, T, D, Mut> {
+impl<'s, T: TraceProjector<'s, D>, D: TraceDataLifetime<'s>, const ISMUT: u8> Traces<'s, T, D, ISMUT> {
     fn generic_new(traces: &'s T::Trace, storage: &'s T::Storage) -> Self {
         Traces {
             storage,
@@ -281,14 +281,14 @@ impl<'s, T: TraceProjector<'s, D>, D: TraceDataLifetime<'s>> TracesMut<'s, T, D>
     }
 }
 
-pub struct ChunkIterator<'b, 's: 'b, T: TraceProjector<'s, D>, D: TraceDataLifetime<'s>, I: Iterator<Item = &'b T::Chunk>, const Mut: u8 = IMMUT> {
+pub struct ChunkIterator<'b, 's: 'b, T: TraceProjector<'s, D>, D: TraceDataLifetime<'s>, I: Iterator<Item = &'b T::Chunk>, const ISMUT: u8 = IMMUT> {
     storage: &'s T::Storage,
     it: I,
 }
-pub type ChunkIteratorMut<'b, 's: 'b, T: TraceProjector<'s, D>, D: TraceDataLifetime<'s>, I: Iterator<Item = &'b T::Chunk>> = ChunkIterator<'b, 's, T, D, I, MUT>;
+pub type ChunkIteratorMut<'b, 's, T, D, I> = ChunkIterator<'b, 's, T, D, I, MUT>;
 
-impl<'b, 's: 'b, T: TraceProjector<'s, D>, D: TraceDataLifetime<'s>, I: Iterator<Item = &'b T::Chunk>, const Mut: u8> Iterator for ChunkIterator<'b, 's, T, D, I, Mut> {
-    type Item = TraceChunk<'b, 's, T, D, Mut>;
+impl<'b, 's: 'b, T: TraceProjector<'s, D>, D: TraceDataLifetime<'s>, I: Iterator<Item = &'b T::Chunk>, const ISMUT: u8> Iterator for ChunkIterator<'b, 's, T, D, I, ISMUT> {
+    type Item = TraceChunk<'b, 's, T, D, ISMUT>;
 
     fn next(&mut self) -> Option<Self::Item> {
         self.it.next().map(|chunk| {
@@ -301,7 +301,7 @@ impl<'b, 's: 'b, T: TraceProjector<'s, D>, D: TraceDataLifetime<'s>, I: Iterator
 }
 
 #[derive(Debug)]
-pub struct TraceChunk<'b, 's, T: TraceProjector<'s, D>, D: TraceDataLifetime<'s>, const Mut: u8 = IMMUT> {
+pub struct TraceChunk<'b, 's, T: TraceProjector<'s, D>, D: TraceDataLifetime<'s>, const ISMUT: u8 = IMMUT> {
     storage: &'s T::Storage,
     chunk: &'b T::Chunk,
 }
@@ -318,7 +318,7 @@ impl<'b, 's, T: TraceProjector<'s, D>, D: TraceDataLifetime<'s>> Clone for Trace
 impl<'b, 's, T: TraceProjector<'s, D>, D: TraceDataLifetime<'s>> Copy for TraceChunk<'b, 's, T, D> {}
 
 // Methods that don't need 'b: 's bound (return non-references)
-impl<'b, 's, T: TraceProjector<'s, D>, D: TraceDataLifetime<'s>, const Mut: u8> TraceChunk<'b, 's, T, D, Mut>  {
+impl<'b, 's, T: TraceProjector<'s, D>, D: TraceDataLifetime<'s>, const ISMUT: u8> TraceChunk<'b, 's, T, D, ISMUT>  {
     pub fn priority(&self) -> i32 {
         T::get_chunk_priority(self.chunk, self.storage)
     }
@@ -337,7 +337,7 @@ impl<'b, 's, T: TraceProjector<'s, D>, D: TraceDataLifetime<'s>, const Mut: u8> 
 }
 
 // Methods that need 'b: 's bound (return references with lifetimes)
-impl<'b: 's, 's, T: TraceProjector<'s, D>, D: TraceDataLifetime<'s>, const Mut: u8> TraceChunk<'b, 's, T, D, Mut>  {
+impl<'b: 's, 's, T: TraceProjector<'s, D>, D: TraceDataLifetime<'s>, const ISMUT: u8> TraceChunk<'b, 's, T, D, ISMUT>  {
     pub fn origin(&self) -> &'s D::Text {
         T::get_chunk_origin(self.chunk, self.storage)
     }
@@ -423,14 +423,14 @@ impl<'b: 's, 's, T: TraceProjector<'s, D>, D: TraceDataLifetime<'s>> TraceChunk<
     }
 }
 
-pub struct SpanIterator<'b, 's: 'b, T: TraceProjector<'s, D>, D: TraceDataLifetime<'s>, I: Iterator<Item = &'b T::Span>, const Mut: u8 = IMMUT> {
+pub struct SpanIterator<'b, 's: 'b, T: TraceProjector<'s, D>, D: TraceDataLifetime<'s>, I: Iterator<Item = &'b T::Span>, const ISMUT: u8 = IMMUT> {
     storage: &'s T::Storage,
     it: I,
 }
-pub type SpanIteratorMut<'b, 's: 'b, T: TraceProjector<'s, D>, D: TraceDataLifetime<'s>, I: Iterator<Item = &'b T::Span>> = SpanIterator<'b, 's, T, D, I, MUT>;
+pub type SpanIteratorMut<'b, 's, T, D, I> = SpanIterator<'b, 's, T, D, I, MUT>;
 
-impl<'b, 's: 'b, T: TraceProjector<'s, D>, D: TraceDataLifetime<'s>, I: Iterator<Item = &'b T::Span>, const Mut: u8> Iterator for SpanIterator<'b, 's, T, D, I, Mut> {
-    type Item = Span<'b, 's, T, D, Mut>;
+impl<'b, 's: 'b, T: TraceProjector<'s, D>, D: TraceDataLifetime<'s>, I: Iterator<Item = &'b T::Span>, const ISMUT: u8> Iterator for SpanIterator<'b, 's, T, D, I, ISMUT> {
+    type Item = Span<'b, 's, T, D, ISMUT>;
 
     fn next(&mut self) -> Option<Self::Item> {
         self.it.next().map(move |span| {
@@ -454,7 +454,7 @@ impl<'b, 's: 'b, T: TraceProjector<'s, D>, D: TraceDataLifetime<'s>, I: Iterator
 /// }
 /// ```
 #[derive(Debug)]
-pub struct Span<'b, 's, T: TraceProjector<'s, D>, D: TraceDataLifetime<'s>, const Mut: u8 = IMMUT> {
+pub struct Span<'b, 's, T: TraceProjector<'s, D>, D: TraceDataLifetime<'s>, const ISMUT: u8 = IMMUT> {
     storage: &'s T::Storage,
     span: &'b T::Span,
 }
@@ -470,7 +470,7 @@ impl<'b, 's, T: TraceProjector<'s, D>, D: TraceDataLifetime<'s>> Clone for Span<
 }
 impl<'b, 's, T: TraceProjector<'s, D>, D: TraceDataLifetime<'s>> Copy for Span<'b, 's, T, D> {}
 
-impl<'b: 's, 's, T: TraceProjector<'s, D>, D: TraceDataLifetime<'s>, const Mut: u8> Span<'b, 's, T, D, Mut>  {
+impl<'b: 's, 's, T: TraceProjector<'s, D>, D: TraceDataLifetime<'s>, const ISMUT: u8> Span<'b, 's, T, D, ISMUT>  {
     pub fn service(&self) -> &'s D::Text {
         T::get_span_service(self.span, self.storage)
     }
@@ -678,13 +678,13 @@ impl <'b: 's, 's, T: TraceProjector<'s, D>, D: TraceDataLifetime<'s>> SpanMut<'b
     }
 }
 
-pub struct SpanLinkIterator<'b, 's: 'b, T: TraceProjector<'s, D>, D: TraceDataLifetime<'s>, I: Iterator<Item = &'b T::SpanLink>, const Mut: u8 = IMMUT> {
+pub struct SpanLinkIterator<'b, 's: 'b, T: TraceProjector<'s, D>, D: TraceDataLifetime<'s>, I: Iterator<Item = &'b T::SpanLink>, const ISMUT: u8 = IMMUT> {
     storage: &'s T::Storage,
     it: I,
 }
-pub type SpanLinkIteratorMut<'b, 's: 'b, T: TraceProjector<'s, D>, D: TraceDataLifetime<'s>, I: Iterator<Item = &'b T::SpanLink>> = SpanLinkIterator<'b, 's, T, D, I, MUT>;
+pub type SpanLinkIteratorMut<'b, 's, T, D, I> = SpanLinkIterator<'b, 's, T, D, I, MUT>;
 
-impl<'b, 's: 'b, T: TraceProjector<'s, D>, D: TraceDataLifetime<'s>, I: Iterator<Item = &'b T::SpanLink>, const Mut: u8> Iterator for SpanLinkIterator<'b, 's, T, D, I, Mut> {
+impl<'b, 's: 'b, T: TraceProjector<'s, D>, D: TraceDataLifetime<'s>, I: Iterator<Item = &'b T::SpanLink>, const ISMUT: u8> Iterator for SpanLinkIterator<'b, 's, T, D, I, ISMUT> {
     type Item = SpanLink<'b, 's, T, D>;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -697,13 +697,13 @@ impl<'b, 's: 'b, T: TraceProjector<'s, D>, D: TraceDataLifetime<'s>, I: Iterator
     }
 }
 
-pub struct SpanEventIterator<'b, 's: 'b, T: TraceProjector<'s, D>, D: TraceDataLifetime<'s>, I: Iterator<Item = &'b T::SpanEvent>, const Mut: u8 = IMMUT> {
+pub struct SpanEventIterator<'b, 's: 'b, T: TraceProjector<'s, D>, D: TraceDataLifetime<'s>, I: Iterator<Item = &'b T::SpanEvent>, const ISMUT: u8 = IMMUT> {
     storage: &'s T::Storage,
     it: I,
 }
-pub type SpanEventIteratorMut<'b, 's: 'b, T: TraceProjector<'s, D>, D: TraceDataLifetime<'s>, I: Iterator<Item = &'b T::SpanEvent>> = SpanEventIterator<'b, 's, T, D, I, MUT>;
+pub type SpanEventIteratorMut<'b, 's, T, D, I> = SpanEventIterator<'b, 's, T, D, I, MUT>;
 
-impl<'b, 's: 'b, T: TraceProjector<'s, D>, D: TraceDataLifetime<'s>, I: Iterator<Item = &'b T::SpanEvent>, const Mut: u8> Iterator for SpanEventIterator<'b, 's, T, D, I, Mut> {
+impl<'b, 's: 'b, T: TraceProjector<'s, D>, D: TraceDataLifetime<'s>, I: Iterator<Item = &'b T::SpanEvent>, const ISMUT: u8> Iterator for SpanEventIterator<'b, 's, T, D, I, ISMUT> {
     type Item = SpanEvent<'b, 's, T, D>;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -719,7 +719,7 @@ impl<'b, 's: 'b, T: TraceProjector<'s, D>, D: TraceDataLifetime<'s>, I: Iterator
 /// The generic representation of a V04 span link.
 /// `T` is the type used to represent strings in the span link.
 #[derive(Debug)]
-pub struct SpanLink<'b, 's, T: TraceProjector<'s, D>, D: TraceDataLifetime<'s>, const Mut: u8 = IMMUT> {
+pub struct SpanLink<'b, 's, T: TraceProjector<'s, D>, D: TraceDataLifetime<'s>, const ISMUT: u8 = IMMUT> {
     storage: &'s T::Storage,
     link: &'b T::SpanLink,
 }
@@ -736,7 +736,7 @@ impl<'b, 's, 'a, T: TraceProjector<'s, D>, D: TraceDataLifetime<'s>> Clone for S
 impl<'b, 's, 'a, T: TraceProjector<'s, D>, D: TraceDataLifetime<'s>> Copy for SpanLink<'b, 's, T, D> {}
 
 
-impl<'b: 's, 's, 'a, T: TraceProjector<'s, D>, D: TraceDataLifetime<'s>, const Mut: u8> SpanLink<'b, 's, T, D, Mut>  {
+impl<'b: 's, 's, 'a, T: TraceProjector<'s, D>, D: TraceDataLifetime<'s>, const ISMUT: u8> SpanLink<'b, 's, T, D, ISMUT>  {
     pub fn trace_id(&self) -> u128 {
         T::get_link_trace_id(self.link, self.storage)
     }
@@ -791,7 +791,7 @@ impl<'b, 's, T: TraceProjector<'s, D>, D: TraceDataLifetime<'s>> SpanLinkMut<'b,
 /// The generic representation of a V04 span event.
 /// `T` is the type used to represent strings in the span event.
 #[derive(Debug)]
-pub struct SpanEvent<'b, 's, T: TraceProjector<'s, D>, D: TraceDataLifetime<'s>, const Mut: u8 = IMMUT> {
+pub struct SpanEvent<'b, 's, T: TraceProjector<'s, D>, D: TraceDataLifetime<'s>, const ISMUT: u8 = IMMUT> {
     storage: &'s T::Storage,
     event: &'b T::SpanEvent,
 }
@@ -807,7 +807,7 @@ impl<'b, 's, 'a, T: TraceProjector<'s, D>, D: TraceDataLifetime<'s>> Clone for S
 }
 impl<'b, 's, 'a, T: TraceProjector<'s, D>, D: TraceDataLifetime<'s>> Copy for SpanEvent<'b, 's, T, D> {}
 
-impl<'b: 's, 's, 'a, T: TraceProjector<'s, D>, D: TraceDataLifetime<'s>, const Mut: u8> SpanEvent<'b, 's, T, D, Mut>  {
+impl<'b: 's, 's, 'a, T: TraceProjector<'s, D>, D: TraceDataLifetime<'s>, const ISMUT: u8> SpanEvent<'b, 's, T, D, ISMUT>  {
     pub fn time_unix_nano(&self) -> u64 {
         T::get_event_time_unix_nano(self.event, self.storage)
     }
@@ -853,11 +853,12 @@ pub enum AttributeAnyValueType {
     Map,
 }
 
-pub struct AttributeArray<'c, 's: 'c, T: TraceProjector<'s, D>, D: TraceDataLifetime<'s>, C: 'c, const Mut: u8 = IMMUT> {
+pub struct AttributeArray<'c, 's: 'c, T: TraceProjector<'s, D>, D: TraceDataLifetime<'s>, C: 'c, const ISMUT: u8 = IMMUT> {
     storage: &'s T::Storage,
     container: C,
     _phantom: PhantomData<&'c C>,
 }
+#[allow(type_alias_bounds)]
 pub type AttributeArrayMut<'c, 's: 'c, T: TraceProjector<'s, D>, D: TraceDataLifetime<'s>, C: 'c> = AttributeArray<'c, 's, T, D, C, MUT>;
 
 impl<'s: 'c, 'c, T: TraceProjector<'s, D>, D: TraceDataLifetime<'s>, C: Clone> Clone for AttributeArray<'c, 's, T, D, C> { // Note: not for MUT
@@ -911,7 +912,7 @@ impl<'container, 'storage, T: TraceProjector<'storage, D>, D: TraceDataLifetime<
     }
 }
 
-impl<'container, 'storage, T: TraceProjector<'storage, D>, D: TraceDataLifetime<'storage>, C: 'container, const Mut: u8> AttributeArray<'container, 'storage, T, D, C, Mut>
+impl<'container, 'storage, T: TraceProjector<'storage, D>, D: TraceDataLifetime<'storage>, C: 'container, const ISMUT: u8> AttributeArray<'container, 'storage, T, D, C, ISMUT>
 where
     C: AttributeArrayOp<'container, 'storage, T, D>,
 {
@@ -940,11 +941,11 @@ where
 }
 
 // TODO MUT iter
-impl<'storage, 'container, T: TraceProjector<'storage, D>, D: TraceDataLifetime<'storage>, C: 'container, const Mut: u8> Iterator for AttributeArray<'container, 'storage, T, D, C, Mut>
+impl<'storage, 'container, T: TraceProjector<'storage, D>, D: TraceDataLifetime<'storage>, C: 'container, const ISMUT: u8> Iterator for AttributeArray<'container, 'storage, T, D, C, ISMUT>
 where
-    TraceAttributes<'storage, T, D, AttrOwned<C>, C, Mut>: TraceAttributesOp<'container, 'storage, T, D, C>,
+    TraceAttributes<'storage, T, D, AttrOwned<C>, C, ISMUT>: TraceAttributesOp<'container, 'storage, T, D, C>,
 {
-    type Item = AttributeAnyGetterContainer<'container, 'storage, TraceAttributes<'storage, T, D, AttrOwned<C>, C, Mut>, T, D, C>;
+    type Item = AttributeAnyGetterContainer<'container, 'storage, TraceAttributes<'storage, T, D, AttrOwned<C>, C, ISMUT>, T, D, C>;
 
     fn next(&mut self) -> Option<Self::Item> {
         todo!()
@@ -961,6 +962,7 @@ pub enum AttributeAnyContainer<String, Bytes, Boolean, Integer, Double, Array, M
     Map(Map),
 }
 
+#[allow(type_alias_bounds)]
 pub type AttributeAnyGetterContainer<'container, 'storage, A: TraceAttributesOp<'container, 'storage, T, D, C>, T: TraceProjector<'storage, D>, D: TraceDataLifetime<'storage>, C: 'container> = AttributeAnyContainer<
     &'storage D::Text,
     &'storage D::Bytes,
@@ -971,6 +973,7 @@ pub type AttributeAnyGetterContainer<'container, 'storage, A: TraceAttributesOp<
     A::Map,
 >;
 
+#[allow(type_alias_bounds)]
 pub type AttributeAnySetterContainer<'container, 'storage, A: TraceAttributesMutOp<'container, 'storage, T, D, C>, T: TraceProjector<'storage, D>, D: TraceDataLifetime<'storage>, C: 'container> = AttributeAnyContainer<
     A::MutString,
     A::MutBytes,
@@ -981,6 +984,7 @@ pub type AttributeAnySetterContainer<'container, 'storage, A: TraceAttributesMut
     A::MutMap,
 >;
 
+#[allow(type_alias_bounds)]
 pub type AttributeAnyValue<'container, 'storage, A: TraceAttributesOp<'container, 'storage, T, D, C>, T: TraceProjector<'storage, D>, D: TraceDataLifetime<'storage>, C: 'container> = AttributeAnyContainer<
     &'storage D::Text,
     &'storage D::Bytes,
@@ -991,7 +995,7 @@ pub type AttributeAnyValue<'container, 'storage, A: TraceAttributesOp<'container
     TraceAttributes<'storage, T, D, AttrOwned<A::Map>, A::Map>,
 >;
 
-trait AttrVal<C> {
+pub trait AttrVal<C> {
     unsafe fn as_mut(&self) -> &mut C;
     fn as_ref(&self) -> &C;
 }
@@ -1027,12 +1031,12 @@ impl<C: Clone> Clone for AttrOwned<C> {
 
 impl<C: Copy> Copy for AttrOwned<C> {}
 
-pub struct TraceAttributes<'s, T: TraceProjector<'s, D>, D: TraceDataLifetime<'s>, V: AttrVal<C>, C, const Mut: u8 = IMMUT> {
+pub struct TraceAttributes<'s, T: TraceProjector<'s, D>, D: TraceDataLifetime<'s>, V: AttrVal<C>, C, const ISMUT: u8 = IMMUT> {
     storage: &'s T::Storage,
     container: V,
     _phantom: PhantomData<C>,
 }
-pub type TraceAttributesMut<'s, T: TraceProjector<'s, D>, D: TraceDataLifetime<'s>, V: AttrVal<C>, C> = TraceAttributes<'s, T, D, V, C, MUT>;
+pub type TraceAttributesMut<'s, T, D, V, C> = TraceAttributes<'s, T, D, V, C, MUT>;
 
 impl<'s, T: TraceProjector<'s, D>, D: TraceDataLifetime<'s>, V: AttrVal<C> + Clone, C> Clone for TraceAttributes<'s, T, D, V, C> { // Note: not for MUT
     fn clone(&self) -> Self {
@@ -1086,7 +1090,7 @@ pub trait TraceAttributesOp<'container, 'storage, T: TraceProjector<'storage, D>
     }
 }
 
-impl<'container, 'storage, T: TraceProjector<'storage, D>, D: TraceDataLifetime<'storage>, const Mut: u8> TraceAttributesOp<'container, 'storage, T, D, ()> for TraceAttributes<'storage, T, D, AttrOwned<()>, (), Mut> {
+impl<'container, 'storage, T: TraceProjector<'storage, D>, D: TraceDataLifetime<'storage>, const ISMUT: u8> TraceAttributesOp<'container, 'storage, T, D, ()> for TraceAttributes<'storage, T, D, AttrOwned<()>, (), ISMUT> {
     type Array = ();
     type Map = ();
 

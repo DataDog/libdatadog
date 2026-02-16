@@ -3,8 +3,7 @@
 
 //! Trace-utils functionalities implementation for tinybytes based spans
 
-use super::{Span, SpanMut, SpanText, OwnedTraceData, TraceProjector, TraceAttributesOp, TraceAttributesMutOp, TraceChunkMut, TracesMut, TraceData, TraceDataLifetime};
-use crate::span::TraceData as TraceDataTrait;
+use super::{Span, SpanMut, TraceProjector, TraceChunkMut, TracesMut, TraceDataLifetime};
 use std::borrow::Borrow;
 use std::collections::{HashMap, HashSet};
 
@@ -159,7 +158,7 @@ pub fn drop_chunks<'s, D: TraceDataLifetime<'s>, T: TraceProjector<'s, D>>(trace
             return false;
         }
         let mut index = 0;
-        chunk.retain_spans(|span| {
+        chunk.retain_spans(|_span| {
             let retain = sampled_indexes.contains(&index);
             index += 1;
             retain

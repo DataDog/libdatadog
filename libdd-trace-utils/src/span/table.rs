@@ -1,11 +1,9 @@
-use std::borrow::Borrow;
 use hashbrown::{HashMap, Equivalent};
 use std::fmt::Debug;
 use std::hash::Hash;
 use std::marker::PhantomData;
-use std::ops::Deref;
 use serde::Serialize;
-use crate::span::{IntoData, OwnedTraceData, SpanDataContents, TraceData};
+use crate::span::{IntoData, SpanDataContents, TraceData};
 
 pub trait TraceDataType: Copy + Clone + Debug + Default + Eq + PartialEq + Hash + Serialize {
     type Data<T: TraceData>: SpanDataContents;
@@ -65,7 +63,7 @@ impl<T: TraceData, D: TraceDataType> Default for StaticDataVec<T, D> {
     }
 }
 
-struct Shrunk<T> {
+pub struct Shrunk<T> {
     table: Vec<T>,
     offsets: Vec<u32>,
 }
@@ -125,7 +123,7 @@ impl<T: TraceData, D: TraceDataType> StaticDataVec<T, D> {
 
     pub fn decref(&mut self, r#ref: TraceDataRef<D>) {
         let rc = &mut self.vec[r#ref.index as usize].rc;
-        debug_assert!(*rc >= 0);
+        debug_assert!(*rc > 0);
         *rc -= 1;
     }
 

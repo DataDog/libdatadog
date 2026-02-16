@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use std::hash::Hash;
 use hashbrown::Equivalent;
 use libdd_trace_protobuf::pb::idx::SpanKind;
-use crate::span::{BytesData, SliceData, TraceData, OwnedTraceData, TraceDataLifetime, IntoData, SpanDataContents, AttributeAnyContainer, AttributeAnySetterContainer, AttrRef, TraceAttributesMut, TraceAttributesMutOp, TraceAttributesString, TraceAttributesInteger, TraceAttributesBoolean, AttributeAnyGetterContainer, TraceAttributes, TraceAttributesOp, TracesMut, Traces as TracesStruct, TraceProjector, AttributeAnyValueType};
+use crate::span::{BytesData, SliceData, TraceData, OwnedTraceData, TraceDataLifetime, SpanDataContents, AttributeAnyContainer, AttributeAnySetterContainer, AttrRef, TraceAttributesMut, TraceAttributesMutOp, TraceAttributesString, TraceAttributesInteger, TraceAttributesBoolean, AttributeAnyGetterContainer, TraceAttributes, TraceAttributesOp, TracesMut, Traces as TracesStruct, TraceProjector, AttributeAnyValueType};
 use crate::span::table::{TraceBytesRef, TraceDataText, TraceDataBytes, TraceDataRef, TraceStringRef, StaticDataVec};
 
 
@@ -505,7 +505,7 @@ impl<D: TraceData> HashMapFind<D> for TraceStaticData<D> {
 }
 
 // TraceAttributesOp implementation for Traces
-impl<'a, 's, D: TraceDataLifetime<'s> + 's, const Mut: u8> TraceAttributesOp<'a, 's, TracePayload<D>, D, Traces> for TraceAttributes<'s, TracePayload<D>, D, AttrRef<'a, Traces>, Traces, Mut> {
+impl<'a, 's, D: TraceDataLifetime<'s> + 's, const ISMUT: u8> TraceAttributesOp<'a, 's, TracePayload<D>, D, Traces> for TraceAttributes<'s, TracePayload<D>, D, AttrRef<'a, Traces>, Traces, ISMUT> {
     type Array = ();
     type Map = ();
 
@@ -527,7 +527,7 @@ impl<'a, 's, D: TraceDataLifetime<'s> + 's, const Mut: u8> TraceAttributesOp<'a,
 }
 
 // Similar implementations for TraceChunk, Span, SpanLink, SpanEvent
-impl<'a, 's, D: TraceDataLifetime<'s> + 's, const Mut: u8> TraceAttributesOp<'a, 's, TracePayload<D>, D, TraceChunk> for TraceAttributes<'s, TracePayload<D>, D, AttrRef<'a, TraceChunk>, TraceChunk, Mut> {
+impl<'a, 's, D: TraceDataLifetime<'s> + 's, const ISMUT: u8> TraceAttributesOp<'a, 's, TracePayload<D>, D, TraceChunk> for TraceAttributes<'s, TracePayload<D>, D, AttrRef<'a, TraceChunk>, TraceChunk, ISMUT> {
     type Array = ();
     type Map = ();
 
@@ -548,7 +548,7 @@ impl<'a, 's, D: TraceDataLifetime<'s> + 's, const Mut: u8> TraceAttributesOp<'a,
     }
 }
 
-impl<'a, 's, D: TraceDataLifetime<'s> + 's, const Mut: u8> TraceAttributesOp<'a, 's, TracePayload<D>, D, Span> for TraceAttributes<'s, TracePayload<D>, D, AttrRef<'a, Span>, Span, Mut> {
+impl<'a, 's, D: TraceDataLifetime<'s> + 's, const ISMUT: u8> TraceAttributesOp<'a, 's, TracePayload<D>, D, Span> for TraceAttributes<'s, TracePayload<D>, D, AttrRef<'a, Span>, Span, ISMUT> {
     type Array = ();
     type Map = ();
 
@@ -569,7 +569,7 @@ impl<'a, 's, D: TraceDataLifetime<'s> + 's, const Mut: u8> TraceAttributesOp<'a,
     }
 }
 
-impl<'a, 's, D: TraceDataLifetime<'s> + 's, const Mut: u8> TraceAttributesOp<'a, 's, TracePayload<D>, D, SpanLink> for TraceAttributes<'s, TracePayload<D>, D, AttrRef<'a, SpanLink>, SpanLink, Mut> {
+impl<'a, 's, D: TraceDataLifetime<'s> + 's, const ISMUT: u8> TraceAttributesOp<'a, 's, TracePayload<D>, D, SpanLink> for TraceAttributes<'s, TracePayload<D>, D, AttrRef<'a, SpanLink>, SpanLink, ISMUT> {
     type Array = ();
     type Map = ();
 
@@ -590,7 +590,7 @@ impl<'a, 's, D: TraceDataLifetime<'s> + 's, const Mut: u8> TraceAttributesOp<'a,
     }
 }
 
-impl<'a, 's, D: TraceDataLifetime<'s> + 's, const Mut: u8> TraceAttributesOp<'a, 's, TracePayload<D>, D, SpanEvent> for TraceAttributes<'s, TracePayload<D>, D, AttrRef<'a, SpanEvent>, SpanEvent, Mut> {
+impl<'a, 's, D: TraceDataLifetime<'s> + 's, const ISMUT: u8> TraceAttributesOp<'a, 's, TracePayload<D>, D, SpanEvent> for TraceAttributes<'s, TracePayload<D>, D, AttrRef<'a, SpanEvent>, SpanEvent, ISMUT> {
     type Array = ();
     type Map = ();
 

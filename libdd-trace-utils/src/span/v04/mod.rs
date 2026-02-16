@@ -1,7 +1,7 @@
 // Copyright 2023-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::span::{BytesData, SliceData, SpanKeyParseError, TraceData, OwnedTraceData, TraceProjector, Traces, TraceAttributesOp, TraceAttributesMutOp, TraceAttributesMut, TraceAttributes, AttributeAnyContainer, AttributeAnyGetterContainer, AttributeAnySetterContainer, AttributeAnyValueType, TraceAttributesString, TraceAttributesBoolean, TraceAttributesInteger, TraceAttributesDouble, AttrRef, TraceDataLifetime, TracesMut, IntoData, SpanDataContents, parse_span_kind, span_kind_to_str};
+use crate::span::{BytesData, SliceData, SpanKeyParseError, TraceData, OwnedTraceData, TraceProjector, Traces, TraceAttributesOp, TraceAttributesMutOp, TraceAttributesMut, TraceAttributes, AttributeAnyContainer, AttributeAnyGetterContainer, AttributeAnySetterContainer, AttributeAnyValueType, TraceAttributesString, AttrRef, TraceDataLifetime, TracesMut, IntoData, SpanDataContents, parse_span_kind, span_kind_to_str};
 use crate::tracer_payload::TraceChunks;
 use serde::ser::SerializeStruct;
 use serde::Serialize;
@@ -688,7 +688,7 @@ impl<'s, D: TraceDataLifetime<'s>> TraceProjector<'s, D> for TraceCollection<D> 
 
 // Attribute operations for Span
 // For v04, data lives in the span, so 'b (container lifetime) must outlive 'a (storage lifetime)
-impl<'a, 's, D: TraceData, const Mut: u8> TraceAttributesOp<'a, 's, TraceCollection<D>, D, Span<D>> for TraceAttributes<'s, TraceCollection<D>, D, AttrRef<'a, Span<D>>, Span<D>, Mut> {
+impl<'a, 's, D: TraceData, const ISMUT: u8> TraceAttributesOp<'a, 's, TraceCollection<D>, D, Span<D>> for TraceAttributes<'s, TraceCollection<D>, D, AttrRef<'a, Span<D>>, Span<D>, ISMUT> {
     type Array = ();
     type Map = ();
 
@@ -793,7 +793,7 @@ impl<'storage, D: TraceDataLifetime<'storage> + 'storage> TraceAttributesString<
 // are already implemented in v05/mod.rs and apply to both v04 and v05
 
 // Empty implementations for types that don't have attributes
-impl<'a, 's, D: TraceData, const Mut: u8> TraceAttributesOp<'a, 's, TraceCollection<D>, D, Trace<D>> for TraceAttributes<'s, TraceCollection<D>, D, AttrRef<'a, Trace<D>>, Trace<D>, Mut> {
+impl<'a, 's, D: TraceData, const ISMUT: u8> TraceAttributesOp<'a, 's, TraceCollection<D>, D, Trace<D>> for TraceAttributes<'s, TraceCollection<D>, D, AttrRef<'a, Trace<D>>, Trace<D>, ISMUT> {
     type Array = ();
     type Map = ();
 
@@ -832,7 +832,7 @@ impl<'a, 's, D: TraceData> TraceAttributesMutOp<'a, 's, TraceCollection<D>, D, T
     }
 }
 
-impl<'a, 's, D: TraceData, const Mut: u8> TraceAttributesOp<'a, 's, TraceCollection<D>, D, Chunk<D>> for TraceAttributes<'s, TraceCollection<D>, D, AttrRef<'a, Chunk<D>>, Chunk<D>, Mut> {
+impl<'a, 's, D: TraceData, const ISMUT: u8> TraceAttributesOp<'a, 's, TraceCollection<D>, D, Chunk<D>> for TraceAttributes<'s, TraceCollection<D>, D, AttrRef<'a, Chunk<D>>, Chunk<D>, ISMUT> {
     type Array = ();
     type Map = ();
 
@@ -871,7 +871,7 @@ impl<'a, 's, D: TraceData> TraceAttributesMutOp<'a, 's, TraceCollection<D>, D, C
     }
 }
 
-impl<'a, 's, D: TraceData, const Mut: u8> TraceAttributesOp<'a, 's, TraceCollection<D>, D, SpanLink<D>> for TraceAttributes<'s, TraceCollection<D>, D, AttrRef<'a, SpanLink<D>>, SpanLink<D>, Mut> {
+impl<'a, 's, D: TraceData, const ISMUT: u8> TraceAttributesOp<'a, 's, TraceCollection<D>, D, SpanLink<D>> for TraceAttributes<'s, TraceCollection<D>, D, AttrRef<'a, SpanLink<D>>, SpanLink<D>, ISMUT> {
     type Array = ();
     type Map = ();
 
@@ -935,7 +935,7 @@ impl<'a, 's, D: TraceData> TraceAttributesMutOp<'a, 's, TraceCollection<D>, D, S
     }
 }
 
-impl<'a, 's, D: TraceData, const Mut: u8> TraceAttributesOp<'a, 's, TraceCollection<D>, D, SpanEvent<D>> for TraceAttributes<'s, TraceCollection<D>, D, AttrRef<'a, SpanEvent<D>>, SpanEvent<D>, Mut> {
+impl<'a, 's, D: TraceData, const ISMUT: u8> TraceAttributesOp<'a, 's, TraceCollection<D>, D, SpanEvent<D>> for TraceAttributes<'s, TraceCollection<D>, D, AttrRef<'a, SpanEvent<D>>, SpanEvent<D>, ISMUT> {
     type Array = ();
     type Map = ();
 

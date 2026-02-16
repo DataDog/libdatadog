@@ -12,9 +12,8 @@ use crate::msgpack_decoder::decode::string::{
 use crate::msgpack_decoder::decode::{meta_struct::read_meta_struct, metrics::read_metrics};
 use crate::span::{v04::Span, v04::SpanKey, DeserializableTraceData};
 use std::borrow::Borrow;
-use bytes::Buf;
-use rmp::{decode, Marker};
-use rmp::decode::{read_marker, RmpRead, ValueReadError};
+use rmp::Marker;
+use rmp::decode::{read_marker, RmpRead};
 
 /// Decodes a slice of bytes into a `Span` object.
 ///

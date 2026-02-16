@@ -3,10 +3,9 @@
 
 pub(crate) mod span;
 
-use self::span::decode_span;
 use crate::msgpack_decoder::decode::buffer::Buffer;
 use crate::msgpack_decoder::decode::error::DecodeError;
-use crate::span::{TraceData, v1::TracePayloadBytes, v1::TracePayloadSlice, DeserializableTraceData};
+use crate::span::{v1::TracePayloadBytes, v1::TracePayloadSlice, DeserializableTraceData};
 use crate::span::v1::TracePayload;
 
 /// Decodes a Bytes buffer into a `Vec<Vec<SpanBytes>>` object, also represented as a vector of
@@ -105,7 +104,7 @@ pub fn from_slice(data: &[u8]) -> Result<(TracePayloadSlice<'_>, usize), DecodeE
 pub fn from_buffer<T: DeserializableTraceData>(
     data: &mut Buffer<T>,
 ) -> Result<(TracePayload<T>, usize), DecodeError> {
-    let trace_count = rmp::decode::read_array_len(data.as_mut_slice()).map_err(|_| {
+    let _trace_count = rmp::decode::read_array_len(data.as_mut_slice()).map_err(|_| {
         DecodeError::InvalidFormat("Unable to read array len for trace count".to_owned())
     })?;
 

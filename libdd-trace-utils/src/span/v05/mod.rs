@@ -5,7 +5,7 @@ pub mod dict;
 
 use std::cmp::Ordering;
 use std::collections::hash_map::Entry;
-use crate::span::{v05::dict::SharedDict, OwnedTraceData, TraceProjector, Traces, TraceAttributes, TraceAttributesOp, parse_span_kind, span_kind_to_str, AttributeAnyContainer, TraceAttributesMutOp, TraceAttributesMut, AttributeAnyValueType, TraceAttributesString, TraceAttributesBytes, AttributeAnySetterContainer, AttributeAnyGetterContainer, TraceAttributesBoolean, TraceAttributesInteger, TraceAttributesDouble, SpanBytes, SpanDataContents, SpanText, AttrRef, TraceData, IntoData, TraceDataLifetime, TracesMut};
+use crate::span::{v05::dict::SharedDict, OwnedTraceData, TraceProjector, Traces, TraceAttributes, TraceAttributesOp, parse_span_kind, span_kind_to_str, AttributeAnyContainer, TraceAttributesMutOp, TraceAttributesMut, AttributeAnyValueType, TraceAttributesString, AttributeAnySetterContainer, AttributeAnyGetterContainer, TraceAttributesBoolean, TraceAttributesInteger, TraceAttributesDouble, SpanDataContents, AttrRef, TraceData, IntoData, TraceDataLifetime, TracesMut};
 use anyhow::Result;
 use serde::Serialize;
 use std::borrow::Borrow;
@@ -233,7 +233,7 @@ impl<'s, D: TraceDataLifetime<'s>> TraceProjector<'s, D> for ChunkCollection<D> 
         [].iter()
     }
 
-    fn retain_span_links<'b, F: FnMut(&mut <ChunkCollection<D> as TraceProjector<'s, D>>::SpanLink, &mut <ChunkCollection<D> as TraceProjector<'s, D>>::Storage) -> bool>(span: &'b mut <ChunkCollection<D> as TraceProjector<'s, D>>::Span, storage: &'b mut <ChunkCollection<D> as TraceProjector<'s, D>>::Storage, predicate: F) {
+    fn retain_span_links<'b, F: FnMut(&mut <ChunkCollection<D> as TraceProjector<'s, D>>::SpanLink, &mut <ChunkCollection<D> as TraceProjector<'s, D>>::Storage) -> bool>(_span: &'b mut <ChunkCollection<D> as TraceProjector<'s, D>>::Span, _storage: &'b mut <ChunkCollection<D> as TraceProjector<'s, D>>::Storage, _predicate: F) {
     }
 
     fn add_span_event<'b>(_span: &'b mut Span, _storage: &mut Storage<D>) -> &'b mut SpanEvent {
@@ -244,82 +244,82 @@ impl<'s, D: TraceDataLifetime<'s>> TraceProjector<'s, D> for ChunkCollection<D> 
         [].iter()
     }
 
-    fn retain_span_events<'b, F: FnMut(&mut <ChunkCollection<D> as TraceProjector<'s, D>>::SpanEvent, &mut <ChunkCollection<D> as TraceProjector<'s, D>>::Storage) -> bool>(span: &'b mut <ChunkCollection<D> as TraceProjector<'s, D>>::Span, storage: &'b mut <ChunkCollection<D> as TraceProjector<'s, D>>::Storage, predicate: F) {
+    fn retain_span_events<'b, F: FnMut(&mut <ChunkCollection<D> as TraceProjector<'s, D>>::SpanEvent, &mut <ChunkCollection<D> as TraceProjector<'s, D>>::Storage) -> bool>(_span: &'b mut <ChunkCollection<D> as TraceProjector<'s, D>>::Span, _storage: &'b mut <ChunkCollection<D> as TraceProjector<'s, D>>::Storage, _predicate: F) {
     }
 
     fn get_trace_container_id<'a>(_trace: &Trace, _storage: &'s Storage<D>) -> &'s D::Text {
         D::Text::default_ref()
     }
 
-    fn get_trace_language_name<'a>(trace: &Trace, storage: &'s Storage<D>) -> &'s D::Text {
+    fn get_trace_language_name<'a>(_trace: &Trace, _storage: &'s Storage<D>) -> &'s D::Text {
         todo!()
     }
 
-    fn get_trace_language_version<'a>(trace: &Trace, storage: &'s Storage<D>) -> &'s D::Text {
+    fn get_trace_language_version<'a>(_trace: &Trace, _storage: &'s Storage<D>) -> &'s D::Text {
         todo!()
     }
 
-    fn get_trace_tracer_version<'a>(trace: &Trace, storage: &'s Storage<D>) -> &'s D::Text {
+    fn get_trace_tracer_version<'a>(_trace: &Trace, _storage: &'s Storage<D>) -> &'s D::Text {
         todo!()
     }
 
-    fn get_trace_runtime_id<'a>(trace: &Trace, storage: &'s Storage<D>) -> &'s D::Text {
+    fn get_trace_runtime_id<'a>(_trace: &Trace, _storage: &'s Storage<D>) -> &'s D::Text {
         todo!()
     }
 
-    fn get_trace_env<'a>(trace: &Trace, storage: &'s Storage<D>) -> &'s D::Text {
+    fn get_trace_env<'a>(_trace: &Trace, _storage: &'s Storage<D>) -> &'s D::Text {
         todo!()
     }
 
-    fn get_trace_hostname<'a>(trace: &Trace, storage: &'s Storage<D>) -> &'s D::Text {
+    fn get_trace_hostname<'a>(_trace: &Trace, _storage: &'s Storage<D>) -> &'s D::Text {
         todo!()
     }
 
-    fn get_trace_app_version<'a>(trace: &Trace, storage: &'s Storage<D>) -> &'s D::Text {
+    fn get_trace_app_version<'a>(_trace: &Trace, _storage: &'s Storage<D>) -> &'s D::Text {
         todo!()
     }
 
-    fn set_trace_container_id(trace: &mut Trace, storage: &mut Storage<D>, value: D::Text) {
+    fn set_trace_container_id(_trace: &mut Trace, _storage: &mut Storage<D>, _value: D::Text) {
         todo!()
     }
 
-    fn set_trace_language_name(trace: &mut Trace, storage: &mut Storage<D>, value: D::Text) {
+    fn set_trace_language_name(_trace: &mut Trace, _storage: &mut Storage<D>, _value: D::Text) {
         todo!()
     }
 
-    fn set_trace_language_version(trace: &mut Trace, storage: &mut Storage<D>, value: D::Text) {
+    fn set_trace_language_version(_trace: &mut Trace, _storage: &mut Storage<D>, _value: D::Text) {
         todo!()
     }
 
-    fn set_trace_tracer_version(trace: &mut Trace, storage: &mut Storage<D>, value: D::Text) {
+    fn set_trace_tracer_version(_trace: &mut Trace, _storage: &mut Storage<D>, _value: D::Text) {
         todo!()
     }
 
-    fn set_trace_runtime_id(trace: &mut Trace, storage: &mut Storage<D>, value: D::Text) {
+    fn set_trace_runtime_id(_trace: &mut Trace, _storage: &mut Storage<D>, _value: D::Text) {
         todo!()
     }
 
-    fn set_trace_env(trace: &mut Trace, storage: &mut Storage<D>, value: D::Text) {
+    fn set_trace_env(_trace: &mut Trace, _storage: &mut Storage<D>, _value: D::Text) {
         todo!()
     }
 
-    fn set_trace_hostname(trace: &mut Trace, storage: &mut Storage<D>, value: D::Text) {
+    fn set_trace_hostname(_trace: &mut Trace, _storage: &mut Storage<D>, _value: D::Text) {
         todo!()
     }
 
-    fn set_trace_app_version(trace: &mut Trace, storage: &mut Storage<D>, value: D::Text) {
+    fn set_trace_app_version(_trace: &mut Trace, _storage: &mut Storage<D>, _value: D::Text) {
         todo!()
     }
 
-    fn get_chunk_priority<'a>(chunk: &'a Chunk, storage: &'a Storage<D>) -> i32 {
+    fn get_chunk_priority<'a>(_chunk: &'a Chunk, _storage: &'a Storage<D>) -> i32 {
         todo!()
     }
 
-    fn get_chunk_origin(chunk: &'s Chunk, storage: &'s Storage<D>) -> &'s D::Text {
+    fn get_chunk_origin(_chunk: &'s Chunk, _storage: &'s Storage<D>) -> &'s D::Text {
         todo!()
     }
 
-    fn get_chunk_dropped_trace<'a>(chunk: &'a Chunk, storage: &'a Storage<D>) -> bool {
+    fn get_chunk_dropped_trace<'a>(_chunk: &'a Chunk, _storage: &'a Storage<D>) -> bool {
         todo!()
     }
 
@@ -332,19 +332,19 @@ impl<'s, D: TraceDataLifetime<'s>> TraceProjector<'s, D> for ChunkCollection<D> 
         }
     }
 
-    fn get_chunk_sampling_mechanism<'a>(chunk: &'a Chunk, storage: &'a Storage<D>) -> u32 {
+    fn get_chunk_sampling_mechanism<'a>(_chunk: &'a Chunk, _storage: &'a Storage<D>) -> u32 {
         todo!()
     }
 
-    fn set_chunk_priority(chunk: &mut Chunk, storage: &mut Storage<D>, value: i32) {
+    fn set_chunk_priority(_chunk: &mut Chunk, _storage: &mut Storage<D>, _value: i32) {
         todo!()
     }
 
-    fn set_chunk_origin(chunk: &mut Chunk, storage: &mut Storage<D>, value: D::Text) {
+    fn set_chunk_origin(_chunk: &mut Chunk, _storage: &mut Storage<D>, _value: D::Text) {
         todo!()
     }
 
-    fn set_chunk_dropped_trace(chunk: &mut Chunk, storage: &mut Storage<D>, value: bool) {
+    fn set_chunk_dropped_trace(_chunk: &mut Chunk, _storage: &mut Storage<D>, _value: bool) {
         todo!()
     }
 
@@ -354,7 +354,7 @@ impl<'s, D: TraceDataLifetime<'s>> TraceProjector<'s, D> for ChunkCollection<D> 
         }
     }
 
-    fn set_chunk_sampling_mechanism(chunk: &mut Chunk, storage: &mut Storage<D>, value: u32) {
+    fn set_chunk_sampling_mechanism(_chunk: &mut Chunk, _storage: &mut Storage<D>, _value: u32) {
         todo!()
     }
 
@@ -509,7 +509,7 @@ impl<'s, D: TraceDataLifetime<'s>> TraceProjector<'s, D> for ChunkCollection<D> 
     }
 }
 //note: trait bound `trace::TraceAttributes<'_, T, D, trace::AttrRef<'_, <T as trace::TraceProjector<D>>::Span>, <T as trace::TraceProjector<D>>::Span, 0>: trace::TraceAttributesOp<'_, T, D, <T as trace::TraceProjector<D>>::Span>` was not satisfied
-impl<'a, 'b, D: TraceData, const Mut: u8> TraceAttributesOp<'b, 'a, ChunkCollection<D>, D, Span> for TraceAttributes<'a, ChunkCollection<D>, D, AttrRef<'b, Span>, Span, Mut> {
+impl<'a, 'b, D: TraceData, const ISMUT: u8> TraceAttributesOp<'b, 'a, ChunkCollection<D>, D, Span> for TraceAttributes<'a, ChunkCollection<D>, D, AttrRef<'b, Span>, Span, ISMUT> {
     type Array = ();
     type Map = ();
 
@@ -624,7 +624,7 @@ impl<'a> TraceAttributesDouble for &'a mut f64 {
 }
 
 // Empty implementations for SpanLink and SpanEvent which don't have attributes in v05
-impl<'b, 'a, D: TraceData, const Mut: u8> TraceAttributesOp<'b, 'a, ChunkCollection<D>, D, [(); 0]> for TraceAttributes<'a, ChunkCollection<D>, D, AttrRef<'b, [(); 0]>, [(); 0], Mut> {
+impl<'b, 'a, D: TraceData, const ISMUT: u8> TraceAttributesOp<'b, 'a, ChunkCollection<D>, D, [(); 0]> for TraceAttributes<'a, ChunkCollection<D>, D, AttrRef<'b, [(); 0]>, [(); 0], ISMUT> {
     type Array = ();
     type Map = ();
 
@@ -663,7 +663,7 @@ impl<'b, 'a, D: TraceData> TraceAttributesMutOp<'b, 'a, ChunkCollection<D>, D, [
     }
 }
 
-impl<'b, 'a, D: TraceData, const Mut: u8> TraceAttributesOp<'b, 'a, ChunkCollection<D>, D, [(); 0]> for TraceAttributes<'a, ChunkCollection<D>, D, AttrRef<'b, Span>, Span, Mut> {
+impl<'b, 'a, D: TraceData, const ISMUT: u8> TraceAttributesOp<'b, 'a, ChunkCollection<D>, D, [(); 0]> for TraceAttributes<'a, ChunkCollection<D>, D, AttrRef<'b, Span>, Span, ISMUT> {
     type Array = ();
     type Map = ();
 
@@ -675,7 +675,7 @@ impl<'b, 'a, D: TraceData, const Mut: u8> TraceAttributesOp<'b, 'a, ChunkCollect
     }
 }
 
-impl<'b, 'a, D: TraceData, const Mut: u8> TraceAttributesOp<'b, 'a, ChunkCollection<D>, D, Trace> for TraceAttributes<'a, ChunkCollection<D>, D, AttrRef<'b, Trace>, Trace, Mut> {
+impl<'b, 'a, D: TraceData, const ISMUT: u8> TraceAttributesOp<'b, 'a, ChunkCollection<D>, D, Trace> for TraceAttributes<'a, ChunkCollection<D>, D, AttrRef<'b, Trace>, Trace, ISMUT> {
     type Array = ();
     type Map = ();
 
@@ -687,7 +687,7 @@ impl<'b, 'a, D: TraceData, const Mut: u8> TraceAttributesOp<'b, 'a, ChunkCollect
     }
 }
 
-impl<'b, 'a, D: TraceData, const Mut: u8> TraceAttributesOp<'b, 'a, ChunkCollection<D>, D, Chunk> for TraceAttributes<'a, ChunkCollection<D>, D, AttrRef<'b, Chunk>, Chunk, Mut> {
+impl<'b, 'a, D: TraceData, const ISMUT: u8> TraceAttributesOp<'b, 'a, ChunkCollection<D>, D, Chunk> for TraceAttributes<'a, ChunkCollection<D>, D, AttrRef<'b, Chunk>, Chunk, ISMUT> {
     type Array = ();
     type Map = ();
 
