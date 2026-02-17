@@ -312,11 +312,13 @@ jobs:
                 continue
               fi
 
-              echo "Executing semver-level.sh for $NAME since $RANGE (tag: $TAG)..."
-              SEMVER_LEVEL=$(./scripts/semver-level.sh "$NAME" "refs/tags/$TAG" 2>&1)
-              echo "Semver level: $SEMVER_LEVEL"
+              # echo "Executing semver-level.sh for $NAME since $RANGE (tag: $TAG)..."
+              # SEMVER_LEVEL=$(./scripts/semver-level.sh "$NAME" "refs/tags/$TAG" 2>&1)
+              # echo "Semver level: $SEMVER_LEVEL"
 
-              LEVEL=$(echo "$SEMVER_LEVEL" | jq -r '.level')
+              # LEVEL=$(echo "$SEMVER_LEVEL" | jq -r '.level')
+              # TODO: remove this once semver-level.sh is fixed
+              LEVEL="patch"
 
               # TODO: cargo release warns if there are no changes to the public API
               # warning: updating crate to 4.0.1 despite no changes made since tag crate-v4.0.0
