@@ -28,6 +28,7 @@ pub mod rate_limiter;
 pub mod tag;
 #[cfg(any(test, feature = "test-utils"))]
 pub mod test_utils;
+pub mod threading;
 pub mod timeout;
 pub mod unix_utils;
 pub mod worker;
