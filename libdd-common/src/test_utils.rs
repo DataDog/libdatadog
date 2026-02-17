@@ -541,10 +541,9 @@ mod tests {
 
         barrier.wait();
         let count_with_threads = count_active_threads().expect("Failed to count threads");
-        assert_eq!(
-            count_with_threads,
-            initial_count + 5,
-            "Expected exactly {} threads (initial: {}, with spawned: {})",
+        assert!(
+            count_with_threads >= initial_count + 5,
+            "Expected at least {} threads (initial: {}, with 5 spawned: {})",
             initial_count + 5,
             initial_count,
             count_with_threads
@@ -555,10 +554,13 @@ mod tests {
         }
 
         let count_after_join = count_active_threads().expect("Failed to count threads");
-        assert_eq!(
-            count_after_join, initial_count,
-            "Expected thread count to return to {} after join, got {}",
-            initial_count, count_after_join
+        // Allow up to 1 extra: some platforms (e.g. CentOS 7) lazily spawn a helper thread
+        assert!(
+            count_after_join <= initial_count + 1,
+            "Expected thread count to return to {} or {} after join, got {}",
+            initial_count,
+            initial_count + 1,
+            count_after_join
         );
     }
 }
