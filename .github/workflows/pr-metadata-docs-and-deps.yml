@@ -1,0 +1,390 @@
+name: Metadata, docs and deps
+permissions:
+  contents: read
+  pull-requests: read
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, labeled, unlabeled]
+    branches-ignore:
+      - "v[0-9]+.[0-9]+.[0-9]+.[0-9]+"
+      - release
+
+env:
+  FAIL_IF_CARGO_DENY: false  # Set to true to make cargo-deny errors fail the job
+  FAIL_IF_MISSING_DOCS: false # Set to true to make missing docs errors fail the job
+
+jobs:
+  # Get crates changed in the PR that are not flagged as publish = false
+  changed-crates:
+    runs-on: ubuntu-latest
+    outputs:
+      crates: ${{ steps.changed-crates.outputs.crates }}
+      crates_count: ${{ steps.changed-crates.outputs.crates_count }}
+      base_ref: ${{ steps.changed-crates.outputs.base_ref }}
+    steps:
+    - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # 4.2.2
+      with:
+        fetch-depth: 0  # Need full history for git diff
+    - id: changed-crates
+      uses: ./.github/actions/changed-crates
+
+  # Check cargo metadata for crates that are not flagged as publish = false
+  cargo-metadata:
+    needs: changed-crates
+    if: |
+      needs.changed-crates.outputs.crates_count > 0 &&
+      !contains(github.event.pull_request.labels.*.name, 'skip-metadata-check')
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # 4.2.2
+      with:
+        fetch-depth: 0  # Need full history for git diff
+    - name: Check Cargo.toml version is not changed in the PR
+      run: |
+        # Get the base ref for comparison
+        BASE_REF='${{ needs.changed-crates.outputs.base_ref }}'
+        
+        # Get the list of changed crates
+        CRATES='${{ needs.changed-crates.outputs.crates }}'
+        
+        FAILED=0
+        while read -r crate; do
+          NAME=$(echo "$crate" | jq -r '.name')
+          CURRENT_VERSION=$(echo "$crate" | jq -r '.version')
+          MANIFEST=$(echo "$crate" | jq -r '.manifest')
+          
+          echo "Checking $NAME version is not changed in the PR..."
+          
+          # Get base version from Cargo.toml at base ref
+          BASE_VERSION=$(git show "$BASE_REF:$MANIFEST" 2>/dev/null | grep -E '^\s*version\s*=' | head -1 | sed -E 's/.*=\s*"([^"]+)".*/\1/' || echo "")
+          
+          if [[ -z "$BASE_VERSION" ]]; then
+            echo "  ✓ $NAME is a new crate (no base version found)"
+          elif [[ "$CURRENT_VERSION" != "$BASE_VERSION" ]]; then
+            echo "  ✗ ERROR: $NAME version changed from $BASE_VERSION to $CURRENT_VERSION"
+            echo "    Version changes should only happen through the release process."
+            FAILED=1
+          else
+            echo "  ✓ $NAME version unchanged ($CURRENT_VERSION)"
+          fi
+        done < <(echo "$CRATES" | jq -c '.[]')
+        
+        if [[ $FAILED -eq 1 ]]; then
+          echo ""
+          echo "ERROR: One or more crates have version changes in this PR."
+          echo "Version bumps should be done through the release process, not in feature PRs."
+          exit 1
+        fi
+
+    - name: Check cargo metadata for changed crates
+      run: |
+        # Get the list of changed crates
+        CRATES='${{ needs.changed-crates.outputs.crates }}'
+        
+        # Convert JSON array to space-separated arguments
+        CRATE_ARGS=$(echo "$CRATES" | jq -r '.[].path' | tr '\n' ' ')
+        
+        if [[ -n "$CRATE_ARGS" ]]; then
+          echo "Checking crates: $CRATE_ARGS"
+          ./scripts/check_cargo_metadata.sh $CRATE_ARGS
+        else
+          echo "No crates to check"
+        fi
+
+  # Check for missing documentation and post results as PR comment
+  missing-docs:
+    needs: changed-crates
+    if: needs.changed-crates.outputs.crates_count > 0
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+    steps:
+    - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # 4.2.2
+    - uses: Swatinem/rust-cache@f13886b937689c021905a6b90929199931d60db1 # v2.8.1
+      with:
+        cache-targets: true
+    - uses: dtolnay/rust-toolchain@stable
+    - name: Check missing docs
+      id: missing-docs
+      run: |
+        # Get the list of changed crates
+        CRATES='${{ needs.changed-crates.outputs.crates }}'
+        
+        # Capture doc warnings for each crate
+        OUTPUT=""
+        TOTAL_WARNINGS=0
+        
+        for crate in $(echo "$CRATES" | jq -r '.[].name'); do
+          echo "Checking docs for $crate..."
+          
+          # Run cargo check with missing_docs warning and capture output
+          WARNINGS=$(RUSTFLAGS="-W missing_docs" cargo check -p "$crate" --message-format=json | jq -r 'select(.reason == "compiler-message") | select(.message.code.code == "missing_docs") | .message.rendered' 2>&1 || true)
+
+          echo "WARNINGS: $WARNINGS"
+
+          WARNING_COUNT=$(echo "$WARNINGS" | grep -c "missing documentation" 2>/dev/null || true)
+          WARNING_COUNT=${WARNING_COUNT:-0}
+          
+          if [[ "$WARNING_COUNT" -gt 0 ]]; then
+            OUTPUT="${OUTPUT}\n### 📦 \`${crate}\` - ${WARNING_COUNT} warning(s)\n\n" # <details>\n<summary>Show warnings</summary>\n\n\`\`\`\n${WARNINGS}\n\`\`\`\n\n</details>\n
+            TOTAL_WARNINGS=$((TOTAL_WARNINGS + WARNING_COUNT))
+          else
+            OUTPUT="${OUTPUT}\n### 📦 \`${crate}\` - ✅ No warnings\n"
+          fi
+        done
+        
+        # Create the comment body
+        if [[ $TOTAL_WARNINGS -gt 0 ]]; then
+          HEADER="## 📚 Documentation Check Results\n\n⚠️ **${TOTAL_WARNINGS} documentation warning(s) found**\n"
+        else
+          HEADER="## 📚 Documentation Check Results\n\n✅ **No documentation warnings found!**\n"
+        fi
+        
+        # Get the specific job URL by querying the GitHub API for this job's numeric ID
+        JOB_ID=$(curl -s -H "Authorization: Bearer ${{ github.token }}" \
+          "${{ github.api_url }}/repos/${{ github.repository }}/actions/runs/${{ github.run_id }}/jobs" | \
+          jq -r '.jobs[] | select(.name == "missing-docs") | .id')
+        
+        if [ -n "$JOB_ID" ]; then
+          JOB_URL="${{ github.server_url }}/${{ github.repository }}/runs/${JOB_ID}"
+        else
+          JOB_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+        fi
+        
+        COMMENT_BODY="${HEADER}${OUTPUT}\n\n---\n*Updated: $(date -u '+%Y-%m-%d %H:%M:%S UTC') | Commit: ${{ github.sha }} | [missing-docs job results](${JOB_URL})*"
+        
+        # Write to file for the comment action (handle multi-line)
+        echo -e "$COMMENT_BODY" > doc-check-results.md
+        
+        echo "total_warnings=$TOTAL_WARNINGS" >> "$GITHUB_OUTPUT"
+    
+    - name: Fail if warnings found and FAIL_IF_MISSING_DOCS is true
+      if: env.FAIL_IF_MISSING_DOCS == 'true' && steps.missing-docs.outputs.total_warnings > 0
+      run: |
+        echo "missing-docs found ${{ steps.missing-docs.outputs.total_warnings }} warning(s) and FAIL_IF_MISSING_DOCS is enabled"
+        exit 1
+
+    - name: Find existing comment
+      uses: peter-evans/find-comment@3eae4d37986fb5a8592848f6a574fdf654e61f9e # v3.1.0
+      id: find-comment
+      with:
+        issue-number: ${{ github.event.pull_request.number }}
+        comment-author: 'github-actions[bot]'
+        body-includes: '## 📚 Documentation Check Results'
+        
+    - name: Create or update PR comment
+      uses: peter-evans/create-or-update-comment@71345be0265236311c031f5c7866368bd1eff043 # v4.0.0
+      with:
+        comment-id: ${{ steps.find-comment.outputs.comment-id }}
+        issue-number: ${{ github.event.pull_request.number }}
+        body-path: doc-check-results.md
+        edit-mode: replace
+
+  missing-docs-delete:
+    needs: changed-crates
+    if: needs.changed-crates.outputs.crates_count == 0
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+    steps:
+    - name: Find existing comment
+      uses: peter-evans/find-comment@3eae4d37986fb5a8592848f6a574fdf654e61f9e # v3.1.0
+      id: find-comment
+      with:
+        issue-number: ${{ github.event.pull_request.number }}
+        comment-author: 'github-actions[bot]'
+        body-includes: '## 📚 Documentation Check Results'
+    - name: Delete existing docs comment
+      uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8.0.0
+      if: steps.find-comment.outputs.comment-id != ''
+      with:
+        script: |
+          github.rest.issues.deleteComment({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            comment_id: ${{ steps.find-comment.outputs.comment-id }},
+          })
+
+  changelog-check:
+    needs: changed-crates
+    if: |
+      needs.changed-crates.outputs.crates_count > 0 &&
+      !contains(github.event.pull_request.labels.*.name, 'skip-changelog-check')
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # 4.2.2
+      with:
+        fetch-depth: 0  # Need full history for git diff
+    - name: Check for CHANGELOG.md changes in publishable crates
+      run: |
+        # Get the base ref for comparison
+        BASE_REF='${{ needs.changed-crates.outputs.base_ref }}'
+
+        # Get the list of changed crates
+        CRATES='${{ needs.changed-crates.outputs.crates }}'
+
+        FAILED=0
+        MODIFIED_CHANGELOGS=()
+
+        while read -r crate; do
+          NAME=$(echo "$crate" | jq -r '.name')
+          CRATE_PATH=$(echo "$crate" | jq -r '.path')
+          CHANGELOG_PATH="$CRATE_PATH/CHANGELOG.md"
+
+          # Check if CHANGELOG.md exists
+          if [[ ! -f "$CHANGELOG_PATH" ]]; then
+            # This shouldn't happen, skipping for now.
+            continue
+          fi
+
+          # Check if CHANGELOG.md has been modified in this PR
+          if git diff --name-only "$BASE_REF" HEAD | grep -q "^$CHANGELOG_PATH$"; then
+            MODIFIED_CHANGELOGS+=("$NAME ($CHANGELOG_PATH)")
+            FAILED=1
+          fi
+        done < <(echo "$CRATES" | jq -c '.[]')
+
+        if [[ $FAILED -eq 1 ]]; then
+          echo ""
+          echo "=========================================="
+          echo "ERROR: CHANGELOG.md files modified in publishable crates"
+          echo "=========================================="
+          echo ""
+          echo "The following publishable crates have CHANGELOG.md changes:"
+          for changelog in "${MODIFIED_CHANGELOGS[@]}"; do
+            echo "  - $changelog"
+          done
+          echo ""
+          echo "CHANGELOG.md files should only be updated during the release process."
+          echo "Please revert the CHANGELOG.md changes from this PR."
+          exit 1
+        fi
+
+        echo ""
+        echo "No CHANGELOG.md changes detected in publishable crates"
+
+  dependency-check:
+    needs: changed-crates
+    if: needs.changed-crates.outputs.crates_count > 0
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+    steps:
+    - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # 4.2.2
+    - uses: Swatinem/rust-cache@f13886b937689c021905a6b90929199931d60db1 # v2.8.1
+      with:
+        cache-targets: true
+    - uses: dtolnay/rust-toolchain@stable
+    - uses: taiki-e/cache-cargo-install-action@7447f04c51f2ba27ca35e7f1e28fab848c5b3ba7 # 2.3.1
+      with:
+        tool: cargo-deny
+    - name: Run cargo-deny on changed crates
+      id: cargo-deny
+      run: |
+        # Get the list of changed crates
+        CRATES='${{ needs.changed-crates.outputs.crates }}'
+        
+        OUTPUT=""
+        TOTAL_ISSUES=0
+        TOTAL_ERRORS=0
+        
+        while read -r crate; do
+          NAME=$(echo "$crate" | jq -r '.name')
+          MANIFEST=$(echo "$crate" | jq -r '.manifest')
+          
+          echo "Running cargo-deny for $NAME..."
+
+          # Run cargo-deny and capture output (always continue, results go to PR comment)
+          # TODO: disable log-level error to show all errors and warnings
+          DENY_OUTPUT=$(cargo deny --manifest-path "$MANIFEST" --color never --log-level error check advisories bans sources 2>&1 || true)
+          
+          echo "DENY_OUTPUT: $DENY_OUTPUT"
+
+          # Count errors and warnings
+          ERROR_COUNT=$(echo "$DENY_OUTPUT" | grep -cE "^error" 2>/dev/null || true)
+          ERROR_COUNT=${ERROR_COUNT:-0}
+          WARNING_COUNT=$(echo "$DENY_OUTPUT" | grep -cE "^warning" 2>/dev/null || true)
+          WARNING_COUNT=${WARNING_COUNT:-0}
+          ISSUE_COUNT=$((ERROR_COUNT + WARNING_COUNT))
+          
+          if [[ "$ISSUE_COUNT" -gt 0 ]]; then
+            OUTPUT="${OUTPUT}\n### 📦 \`${NAME}\` - ${ERROR_COUNT} error(s)\n\n<details>\n<summary>Show output</summary>\n\n\`\`\`\n${DENY_OUTPUT}\n\`\`\`\n\n</details>\n"
+            TOTAL_ISSUES=$((TOTAL_ISSUES + ISSUE_COUNT))
+            TOTAL_ERRORS=$((TOTAL_ERRORS + ERROR_COUNT))
+          else
+            OUTPUT="${OUTPUT}\n### 📦 \`${NAME}\` - ✅ No issues\n"
+          fi
+        done < <(echo "$CRATES" | jq -c '.[]')
+        
+        # Create the comment body
+        if [[ $TOTAL_ISSUES -gt 0 ]]; then
+          HEADER="## 🔒 Cargo Deny Results\n\n⚠️ **${TOTAL_ISSUES} issue(s) found, showing only errors** (advisories, bans, sources)\n"
+        else
+          HEADER="## 🔒 Cargo Deny Results\n\n✅ **No issues found!**\n"
+        fi
+        
+        # Get the specific job URL by querying the GitHub API for this job's numeric ID
+        JOB_ID=$(curl -s -H "Authorization: Bearer ${{ github.token }}" \
+          "${{ github.api_url }}/repos/${{ github.repository }}/actions/runs/${{ github.run_id }}/jobs" | \
+          jq -r '.jobs[] | select(.name == "dependency-check") | .id')
+        
+        if [ -n "$JOB_ID" ]; then
+          JOB_URL="${{ github.server_url }}/${{ github.repository }}/runs/${JOB_ID}"
+        else
+          JOB_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+        fi
+        
+        COMMENT_BODY="${HEADER}${OUTPUT}\n\n---\n*Updated: $(date -u '+%Y-%m-%d %H:%M:%S UTC') | Commit: ${{ github.sha }} | [dependency-check job results](${JOB_URL})*"
+        
+        # Write to file for the comment action
+        echo -e "$COMMENT_BODY" > cargo-deny-results.md
+        
+        echo "total_issues=$TOTAL_ISSUES" >> "$GITHUB_OUTPUT"
+        echo "total_errors=$TOTAL_ERRORS" >> "$GITHUB_OUTPUT"
+        
+    - name: Find existing comment
+      uses: peter-evans/find-comment@3eae4d37986fb5a8592848f6a574fdf654e61f9e # v3.1.0
+      id: find-comment
+      with:
+        issue-number: ${{ github.event.pull_request.number }}
+        comment-author: 'github-actions[bot]'
+        body-includes: '## 🔒 Cargo Deny Results'
+        
+    - name: Create or update PR comment
+      uses: peter-evans/create-or-update-comment@71345be0265236311c031f5c7866368bd1eff043 # v4.0.0
+      with:
+        comment-id: ${{ steps.find-comment.outputs.comment-id }}
+        issue-number: ${{ github.event.pull_request.number }}
+        body-path: cargo-deny-results.md
+        edit-mode: replace
+        
+    - name: Fail if errors found and FAIL_IF_CARGO_DENY is true
+      if: env.FAIL_IF_CARGO_DENY == 'true' && steps.cargo-deny.outputs.total_errors > 0
+      run: |
+        echo "cargo-deny found ${{ steps.cargo-deny.outputs.total_errors }} error(s) and FAIL_IF_CARGO_DENY is enabled"
+        exit 1
+
+  dependency-check-delete:
+    needs: changed-crates
+    if: needs.changed-crates.outputs.crates_count == 0
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+    steps:
+    - name: Find existing comment
+      uses: peter-evans/find-comment@3eae4d37986fb5a8592848f6a574fdf654e61f9e # v3.1.0
+      id: find-comment
+      with:
+        issue-number: ${{ github.event.pull_request.number }}
+        comment-author: 'github-actions[bot]'
+        body-includes: '## 🔒 Cargo Deny Results'
+    - name: Delete existing dependency check comment
+      uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8.0.0
+      if: steps.find-comment.outputs.comment-id != ''
+      with:
+        script: |
+          github.rest.issues.deleteComment({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            comment_id: ${{ steps.find-comment.outputs.comment-id }},
+          })

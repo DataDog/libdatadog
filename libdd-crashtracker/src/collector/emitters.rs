@@ -132,20 +132,30 @@ unsafe fn emit_backtrace_by_frames(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn emit_crashreport(
     pipe: &mut impl Write,
     config: &CrashtrackerConfiguration,
     config_str: &str,
     metadata_string: &str,
+    message_ptr: *mut String,
     sig_info: *const siginfo_t,
     ucontext: *const ucontext_t,
     ppid: i32,
+    crashing_tid: libc::pid_t,
 ) -> Result<(), EmitterError> {
-    emit_metadata(pipe, metadata_string)?;
+    // The following order is important in order to emit the crash ping:
+    // - receiver expects the config
+    // - then message if any
+    // - then siginfo (if the message is not set, we use the siginfo to generate the message)
+    // - then metadata
     emit_config(pipe, config_str)?;
+    emit_message(pipe, message_ptr)?;
     emit_siginfo(pipe, sig_info)?;
+    emit_metadata(pipe, metadata_string)?;
+    // after the metadata the ping should have been sent
     emit_ucontext(pipe, ucontext)?;
-    emit_procinfo(pipe, ppid)?;
+    emit_procinfo(pipe, ppid, crashing_tid)?;
     emit_counters(pipe)?;
     emit_spans(pipe)?;
     consume_and_emit_additional_tags(pipe)?;
@@ -191,9 +201,22 @@ fn emit_metadata(w: &mut impl Write, metadata_str: &str) -> Result<(), EmitterEr
     Ok(())
 }
 
-fn emit_procinfo(w: &mut impl Write, pid: i32) -> Result<(), EmitterError> {
+fn emit_message(w: &mut impl Write, message_ptr: *mut String) -> Result<(), EmitterError> {
+    if !message_ptr.is_null() {
+        let message = unsafe { &*message_ptr };
+        if !message.trim().is_empty() {
+            writeln!(w, "{DD_CRASHTRACK_BEGIN_MESSAGE}")?;
+            writeln!(w, "{message}")?;
+            writeln!(w, "{DD_CRASHTRACK_END_MESSAGE}")?;
+            w.flush()?;
+        }
+    }
+    Ok(())
+}
+
+fn emit_procinfo(w: &mut impl Write, pid: i32, tid: libc::pid_t) -> Result<(), EmitterError> {
     writeln!(w, "{DD_CRASHTRACK_BEGIN_PROCINFO}")?;
-    writeln!(w, "{{\"pid\": {pid} }}")?;
+    writeln!(w, "{{\"pid\": {pid}, \"tid\": {tid} }}")?;
     writeln!(w, "{DD_CRASHTRACK_END_PROCINFO}")?;
     w.flush()?;
     Ok(())
@@ -454,5 +477,142 @@ mod tests {
             !out.contains("backtrace::backtrace"),
             "crashtracker itself must be filtered away, found 'backtrace::backtrace'"
         );
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_emit_message_nullptr() {
+        let mut buf = Vec::new();
+        emit_message(&mut buf, std::ptr::null_mut()).expect("to work ;-)");
+        assert!(buf.is_empty());
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_emit_message() {
+        let message = "test message";
+        let message_ptr = Box::into_raw(Box::new(message.to_string()));
+        let mut buf = Vec::new();
+        emit_message(&mut buf, message_ptr).expect("to work ;-)");
+        let out = str::from_utf8(&buf).expect("to be valid UTF8");
+        assert!(out.contains("BEGIN_MESSAGE"));
+        assert!(out.contains("END_MESSAGE"));
+        assert!(out.contains(message));
+        // Clean up the allocated String
+        unsafe { drop(Box::from_raw(message_ptr)) };
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_emit_message_empty_string() {
+        let empty_message = String::new();
+        let message_ptr = Box::into_raw(Box::new(empty_message));
+        let mut buf = Vec::new();
+
+        emit_message(&mut buf, message_ptr).expect("to work");
+
+        // Empty messages should not emit anything
+        assert!(buf.is_empty());
+
+        unsafe { drop(Box::from_raw(message_ptr)) };
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_emit_message_whitespace_only() {
+        // Whitespace-only messages should not be emitted
+        let whitespace_message = "   \n\t  ".to_string();
+        let message_ptr = Box::into_raw(Box::new(whitespace_message));
+        let mut buf = Vec::new();
+
+        emit_message(&mut buf, message_ptr).expect("to work");
+
+        // Whitespace-only messages should not emit anything
+        assert!(buf.is_empty());
+
+        unsafe { drop(Box::from_raw(message_ptr)) };
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_emit_message_with_leading_trailing_whitespace() {
+        // Messages with content and whitespace should be emitted (with the whitespace)
+        let message_with_whitespace = "  error message  ".to_string();
+        let message_ptr = Box::into_raw(Box::new(message_with_whitespace.clone()));
+        let mut buf = Vec::new();
+
+        emit_message(&mut buf, message_ptr).expect("to work");
+        let out = str::from_utf8(&buf).expect("to be valid UTF8");
+
+        // Should emit markers and preserve whitespace in content
+        assert!(out.contains("BEGIN_MESSAGE"));
+        assert!(out.contains("END_MESSAGE"));
+        assert!(out.contains(&message_with_whitespace));
+
+        unsafe { drop(Box::from_raw(message_ptr)) };
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_emit_message_with_newlines() {
+        let message_with_newlines = "line1\nline2\nline3".to_string();
+        let message_ptr = Box::into_raw(Box::new(message_with_newlines));
+        let mut buf = Vec::new();
+
+        emit_message(&mut buf, message_ptr).expect("to work");
+        let out = str::from_utf8(&buf).expect("to be valid UTF8");
+
+        assert!(out.contains("line1"));
+        assert!(out.contains("line2"));
+        assert!(out.contains("line3"));
+
+        unsafe { drop(Box::from_raw(message_ptr)) };
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_emit_message_unicode() {
+        let unicode_message = "Hello 世界 🦀 Rust!".to_string();
+        let message_ptr = Box::into_raw(Box::new(unicode_message.clone()));
+        let mut buf = Vec::new();
+
+        emit_message(&mut buf, message_ptr).expect("to work");
+        let out = str::from_utf8(&buf).expect("to be valid UTF8");
+
+        assert!(out.contains(&unicode_message));
+
+        unsafe { drop(Box::from_raw(message_ptr)) };
+    }
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    #[cfg_attr(miri, ignore)]
+    fn test_emit_procinfo() {
+        let pid = unsafe { libc::getpid() };
+        let tid = unsafe { libc::syscall(libc::SYS_gettid) as libc::pid_t };
+        let mut buf = Vec::new();
+
+        emit_procinfo(&mut buf, pid, tid).expect("procinfo to emit");
+        let proc_info_block = str::from_utf8(&buf).expect("to be valid UTF8");
+        assert!(proc_info_block.contains(DD_CRASHTRACK_BEGIN_PROCINFO));
+        assert!(proc_info_block.contains(DD_CRASHTRACK_END_PROCINFO));
+
+        assert!(proc_info_block.contains(&format!("\"pid\": {pid}")));
+        assert!(proc_info_block.contains(&format!("\"tid\": {tid}")));
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_emit_message_very_long() {
+        let long_message = "x".repeat(100000); // 100KB
+        let message_ptr = Box::into_raw(Box::new(long_message.clone()));
+        let mut buf = Vec::new();
+
+        emit_message(&mut buf, message_ptr).expect("to work");
+        let out = str::from_utf8(&buf).expect("to be valid UTF8");
+
+        assert!(out.contains(&long_message[..100])); // At least first 100 chars
+
+        unsafe { drop(Box::from_raw(message_ptr)) };
     }
 }

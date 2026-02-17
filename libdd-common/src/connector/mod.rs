@@ -102,6 +102,8 @@ mod https {
         INIT_CRYPTO_PROVIDER.call_once(|| {
             #[cfg(unix)]
             let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
+            #[cfg(not(unix))]
+            let _ = rustls::crypto::ring::default_provider().install_default();
         });
     }
 

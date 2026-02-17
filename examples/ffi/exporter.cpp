@@ -31,13 +31,13 @@ int main(int argc, char *argv[]) {
 
   const auto service = argv[1];
 
-  const ddog_prof_ValueType wall_time = {
-      .type_ = DDOG_CHARSLICE_C_BARE("wall-time"),
-      .unit = DDOG_CHARSLICE_C_BARE("nanoseconds"),
+  // Use the SampleType enum instead of ValueType struct
+  const ddog_prof_SampleType wall_time = DDOG_PROF_SAMPLE_TYPE_WALL_TIME;
+  const ddog_prof_Slice_SampleType sample_types = {&wall_time, 1};
+  const ddog_prof_Period period = {
+      .sample_type = wall_time,
+      .value = 60,
   };
-
-  const ddog_prof_Slice_ValueType sample_types = {&wall_time, 1};
-  const ddog_prof_Period period = {wall_time, 60};
   ddog_prof_Profile_NewResult profile_new_result = ddog_prof_Profile_new(sample_types, &period);
   if (profile_new_result.tag != DDOG_PROF_PROFILE_NEW_RESULT_OK) {
     print_error("Failed to make new profile: ", profile_new_result.err);
@@ -97,8 +97,9 @@ int main(int argc, char *argv[]) {
 
   auto *encoded_profile = &serialize_result.ok;
 
+  // Set a custom timeout of 10000ms (10 seconds) instead of the default 3000ms
   auto endpoint =
-      ddog_prof_Endpoint_agentless(DDOG_CHARSLICE_C_BARE("datad0g.com"), to_slice_c_char(api_key));
+      ddog_prof_Endpoint_agentless(DDOG_CHARSLICE_C_BARE("datad0g.com"), to_slice_c_char(api_key), 10000);
 
   ddog_Vec_Tag tags = ddog_Vec_Tag_new();
   ddog_Vec_Tag_PushResult tag_result =
@@ -123,7 +124,6 @@ int main(int argc, char *argv[]) {
   auto exporter = &exporter_new_result.ok;
 
   auto files_to_compress_and_export = ddog_prof_Exporter_Slice_File_empty();
-  auto files_to_export_unmodified = ddog_prof_Exporter_Slice_File_empty();
 
   ddog_CharSlice internal_metadata_example = DDOG_CHARSLICE_C_BARE(
       "{\"no_signals_workaround_enabled\": \"true\", \"execution_trace_enabled\": \"false\"}");
@@ -132,32 +132,12 @@ int main(int argc, char *argv[]) {
       DDOG_CHARSLICE_C_BARE("{\"application\": {\"start_time\": \"2024-01-24T11:17:22+0000\"}, "
                             "\"platform\": {\"kernel\": \"Darwin Kernel 22.5.0\"}}");
 
-  auto res = ddog_prof_Exporter_set_timeout(exporter, 30000);
-  if (res.tag == DDOG_VOID_RESULT_ERR) {
-    print_error("Failed to set the timeout", res.err);
-    ddog_Error_drop(&res.err);
-    return 1;
-  }
-
-  auto build_result = ddog_prof_Exporter_Request_build(
-      exporter, encoded_profile, files_to_compress_and_export, files_to_export_unmodified, nullptr, nullptr,
-      &internal_metadata_example, &info_example);
-  ddog_prof_EncodedProfile_drop(encoded_profile);
-
-  if (build_result.tag == DDOG_PROF_REQUEST_RESULT_ERR_HANDLE_REQUEST) {
-    print_error("Failed to build request: ", build_result.err);
-    ddog_Error_drop(&build_result.err);
-    return 1;
-  }
-
-  auto request = &build_result.ok;
-
   auto cancel = ddog_CancellationToken_new();
   auto cancel_for_background_thread = ddog_CancellationToken_clone(&cancel);
 
   // As an example of CancellationToken usage, here we create a background
   // thread that sleeps for some time and then cancels a request early (e.g.
-  // before the timeout in ddog_ProfileExporter_send is hit).
+  // before the timeout in ddog_prof_Exporter_send_blocking is hit).
   //
   // If the request is faster than the sleep time, no cancellation takes place.
   std::thread trigger_cancel_if_request_takes_too_long_thread(
@@ -174,7 +154,9 @@ int main(int argc, char *argv[]) {
   trigger_cancel_if_request_takes_too_long_thread.detach();
 
   int exit_code = 0;
-  auto send_result = ddog_prof_Exporter_send(exporter, request, &cancel);
+  auto send_result = ddog_prof_Exporter_send_blocking(
+      exporter, encoded_profile, files_to_compress_and_export, 
+      nullptr, nullptr, &internal_metadata_example, &info_example, &cancel);
   if (send_result.tag == DDOG_PROF_RESULT_HTTP_STATUS_ERR_HTTP_STATUS) {
     print_error("Failed to send profile: ", send_result.err);
     exit_code = 1;
@@ -183,7 +165,6 @@ int main(int argc, char *argv[]) {
     printf("Response code: %d\n", send_result.ok.code);
   }
 
-  ddog_prof_Exporter_Request_drop(request);
   ddog_prof_Exporter_drop(exporter);
   ddog_CancellationToken_drop(&cancel);
   return exit_code;

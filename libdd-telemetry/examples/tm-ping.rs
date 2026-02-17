@@ -31,7 +31,7 @@ fn build_request<'a>(
     payload: &'a data::Payload,
 ) -> data::Telemetry<'a> {
     data::Telemetry {
-        api_version: data::ApiVersion::V1,
+        api_version: data::ApiVersion::V2,
         tracer_time: SystemTime::UNIX_EPOCH.elapsed().map_or(0, |d| d.as_secs()),
         runtime_id: "runtime_id",
         seq_id: seq_id(),
@@ -75,6 +75,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         runtime_name: None,
         runtime_version: None,
         runtime_patches: None,
+        process_tags: None,
     };
     let host = build_host();
     let payload = data::payload::Payload::AppStarted(build_app_started_payload());

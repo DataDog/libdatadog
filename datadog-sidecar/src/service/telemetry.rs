@@ -65,6 +65,7 @@ pub struct TelemetryCachedClient {
     pub config_sent: bool,
     pub buffered_integrations: HashSet<Integration>,
     pub buffered_composer_paths: HashSet<PathBuf>,
+    pub last_endpoints_push: SystemTime,
     pub telemetry_metrics: HashMap<String, ContextKey>,
     pub handle: Option<JoinHandle<()>>,
 }
@@ -76,6 +77,7 @@ impl TelemetryCachedClient {
         instance_id: &InstanceId,
         runtime_meta: &RuntimeMetadata,
         get_config: impl FnOnce() -> libdd_telemetry::config::Config,
+        process_tags: Option<String>,
     ) -> Self {
         let mut builder = TelemetryWorkerBuilder::new_fetch_host(
             service.to_string(),
@@ -86,6 +88,7 @@ impl TelemetryCachedClient {
 
         builder.runtime_id = Some(instance_id.runtime_id.clone());
         builder.application.env = Some(env.to_string());
+        builder.application.process_tags = process_tags;
         let config = get_config();
         builder.config = config.clone();
 
@@ -101,6 +104,7 @@ impl TelemetryCachedClient {
             config_sent: false,
             buffered_integrations: HashSet::new(),
             buffered_composer_paths: HashSet::new(),
+            last_endpoints_push: SystemTime::UNIX_EPOCH,
             telemetry_metrics: Default::default(),
             handle: None,
         }
@@ -111,6 +115,7 @@ impl TelemetryCachedClient {
             &self.config_sent,
             &self.buffered_integrations,
             &self.buffered_composer_paths,
+            &self.last_endpoints_push,
         )) {
             self.shm_writer.write(&buf);
         } else {
@@ -136,9 +141,10 @@ impl TelemetryCachedClient {
     pub fn to_telemetry_point(
         &self,
         (name, val, tags): (String, f64, Vec<Tag>),
-    ) -> TelemetryActions {
-        #[allow(clippy::unwrap_used)]
-        TelemetryActions::AddPoint((val, *self.telemetry_metrics.get(&name).unwrap(), tags))
+    ) -> Option<TelemetryActions> {
+        self.telemetry_metrics
+            .get(&name)
+            .map(|context_key| TelemetryActions::AddPoint((val, *context_key, tags)))
     }
 
     pub fn process_actions(
@@ -151,7 +157,12 @@ impl TelemetryCachedClient {
                 SidecarAction::Telemetry(t) => actions.push(t),
                 SidecarAction::RegisterTelemetryMetric(metric) => self.register_metric(metric),
                 SidecarAction::AddTelemetryMetricPoint(point) => {
-                    actions.push(self.to_telemetry_point(point));
+                    let metric_name = point.0.clone();
+                    if let Some(telemetry_action) = self.to_telemetry_point(point) {
+                        actions.push(telemetry_action);
+                    } else {
+                        warn!("Attempted to send telemetry point for unregistered metric: {metric_name}");
+                    }
                 }
                 SidecarAction::PhpComposerTelemetryFile(_) => {} // handled separately
                 SidecarAction::ClearQueueId => {}                // handled separately
@@ -289,6 +300,7 @@ impl TelemetryCachedClientSet {
         instance_id: &InstanceId,
         runtime_meta: &RuntimeMetadata,
         get_config: F,
+        process_tags: Option<String>,
     ) -> Arc<Mutex<TelemetryCachedClient>>
     where
         F: FnOnce() -> libdd_telemetry::config::Config,
@@ -321,6 +333,7 @@ impl TelemetryCachedClientSet {
                 instance_id,
                 runtime_meta,
                 get_config,
+                process_tags,
             ))),
         };
 
@@ -365,11 +378,18 @@ pub fn path_for_telemetry(service: &str, env: &str) -> CString {
 }
 
 #[derive(Debug)]
+pub enum InternalTelemetryAction {
+    TelemetryAction(TelemetryActions),
+    RegisterTelemetryMetric(MetricContext),
+    AddMetricPoint((f64, String, Vec<Tag>)),
+}
+
+#[derive(Debug)]
 pub struct InternalTelemetryActions {
     pub instance_id: InstanceId,
     pub service_name: String,
     pub env_name: String,
-    pub actions: Vec<TelemetryActions>,
+    pub actions: Vec<InternalTelemetryAction>,
 }
 
 pub fn get_telemetry_action_sender() -> Result<mpsc::Sender<InternalTelemetryActions>> {
@@ -379,15 +399,20 @@ pub fn get_telemetry_action_sender() -> Result<mpsc::Sender<InternalTelemetryAct
         .ok_or_else(|| anyhow!("Telemetry action sender not initialized"))
 }
 
-pub(crate) async fn telemetry_action_receiver_task(sidecar: SidecarServer) {
-    info!("Starting telemetry action receiver task...");
-
-    // create mpsc pair and set TELEMETRY_ACTION_SENDER
-    let (tx, mut rx) = mpsc::channel(1000);
+pub(crate) fn init_telemetry_sender() -> Option<mpsc::Receiver<InternalTelemetryActions>> {
+    let (tx, rx) = mpsc::channel(1000);
     if TELEMETRY_ACTION_SENDER.set(tx).is_err() {
-        warn!("Failed to set telemetry action sender");
-        return;
+        warn!("Telemetry action sender already initialized");
+        return None;
     }
+    Some(rx)
+}
+
+pub(crate) async fn telemetry_action_receiver_task(
+    sidecar: SidecarServer,
+    mut rx: mpsc::Receiver<InternalTelemetryActions>,
+) {
+    info!("Starting telemetry action receiver task...");
 
     while let Some(actions) = rx.recv().await {
         let telemetry_client = get_telemetry_client(
@@ -398,14 +423,40 @@ pub(crate) async fn telemetry_action_receiver_task(sidecar: SidecarServer) {
         );
         let client = telemetry_client.lock_or_panic().worker.clone();
 
-        for action in actions.actions {
-            let action_str = format!("{action:?}");
-            match client.send_msg(action).await {
-                Ok(_) => {
-                    debug!("Sent telemetry action to TelemetryWorker: {action_str}");
+        for it_action in actions.actions {
+            match it_action {
+                InternalTelemetryAction::TelemetryAction(action) => {
+                    let action_str = format!("{action:?}");
+                    match client.send_msg(action).await {
+                        Ok(_) => {
+                            debug!("Sent telemetry action to TelemetryWorker: {action_str}");
+                        }
+                        Err(e) => {
+                            warn!("Failed to send telemetry action {action_str} to TelemetryWorker: {e}");
+                        }
+                    }
                 }
-                Err(e) => {
-                    warn!("Failed to send telemetry action {action_str} to TelemetryWorker: {e}");
+                InternalTelemetryAction::RegisterTelemetryMetric(metric) => {
+                    debug!("Registered telemetry metric: {metric:?}");
+                    telemetry_client.lock_or_panic().register_metric(metric);
+                }
+                InternalTelemetryAction::AddMetricPoint((value, name, tags)) => {
+                    let metric_name = name.clone();
+                    let actions_point_opt = {
+                        telemetry_client
+                            .lock_or_panic()
+                            .to_telemetry_point((name, value, tags))
+                    };
+                    if let Some(actions_point) = actions_point_opt {
+                        match client.send_msg(actions_point).await {
+                            Ok(_) => {}
+                            Err(e) => {
+                                warn!("Failed to send telemetry point to TelemetryWorker: {e}");
+                            }
+                        }
+                    } else {
+                        warn!("Attempted to send telemetry point for unregistered metric: {metric_name}");
+                    }
                 }
             }
         }
@@ -440,6 +491,8 @@ fn get_telemetry_client(
             })
     };
 
+    let process_tags = session.process_tags.lock_or_panic().clone();
+
     TelemetryCachedClientSet::get_or_create(
         &sidecar.telemetry_clients,
         service_name,
@@ -447,5 +500,6 @@ fn get_telemetry_client(
         instance_id,
         &runtime_meta,
         get_config,
+        process_tags,
     )
 }

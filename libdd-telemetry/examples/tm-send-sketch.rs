@@ -29,7 +29,7 @@ fn build_request<'a>(
     payload: &'a data::Payload,
 ) -> data::Telemetry<'a> {
     data::Telemetry {
-        api_version: data::ApiVersion::V1,
+        api_version: data::ApiVersion::V2,
         tracer_time: SystemTime::UNIX_EPOCH.elapsed().map_or(0, |d| d.as_secs()),
         runtime_id: "runtime_id",
         seq_id: seq_id(),
@@ -78,6 +78,7 @@ async fn async_main() {
         runtime_name: None,
         runtime_version: None,
         runtime_patches: None,
+        process_tags: None,
     };
     let host = build_host();
 

@@ -6,11 +6,16 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct ProcInfo {
     pub pid: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tid: Option<u32>,
 }
 
 #[cfg(test)]
 impl super::test_utils::TestInstance for ProcInfo {
     fn test_instance(seed: u64) -> Self {
-        Self { pid: seed as u32 }
+        Self {
+            pid: seed as u32,
+            tid: None,
+        }
     }
 }

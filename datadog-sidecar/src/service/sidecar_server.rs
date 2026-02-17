@@ -29,7 +29,7 @@ use std::collections::{HashMap, HashSet};
 use std::pin::Pin;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 use tracing::{debug, error, info, trace, warn};
 
 use futures::FutureExt;
@@ -421,6 +421,8 @@ impl SidecarInterface for SidecarServer {
                 .unwrap_or("unknown-service");
             let env = entry.get().env.as_deref().unwrap_or("none");
 
+            let process_tags = session.process_tags.lock_or_panic().clone();
+
             // Lock telemetry client
             let telemetry_mutex = self.telemetry_clients.get_or_create(
                 service,
@@ -438,10 +440,11 @@ impl SidecarInterface for SidecarServer {
                             Config::default()
                         })
                 },
+                process_tags,
             );
             let mut telemetry = telemetry_mutex.lock_or_panic();
 
-            let mut actions_to_process = vec![];
+            let mut actions_to_process: Vec<SidecarAction> = vec![];
             let mut composer_paths_to_process = vec![];
             let mut buffered_info_changed = false;
             let mut remove_entry = false;
@@ -468,6 +471,11 @@ impl SidecarInterface for SidecarServer {
                     }
                     SidecarAction::ClearQueueId => {
                         remove_entry = true;
+                    }
+                    SidecarAction::Telemetry(TelemetryActions::AddEndpoint(_)) => {
+                        telemetry.last_endpoints_push = SystemTime::now();
+                        buffered_info_changed = true;
+                        actions_to_process.push(action);
                     }
                     SidecarAction::Telemetry(TelemetryActions::Lifecycle(
                         LifecycleAction::Stop,
@@ -560,6 +568,8 @@ impl SidecarInterface for SidecarServer {
             *session.remote_config_notify_function.lock().unwrap() = remote_config_notify_function;
         }
         *session.remote_config_enabled.lock_or_panic() = config.remote_config_enabled;
+        *session.process_tags.lock_or_panic() =
+            (!config.process_tags.is_empty()).then_some(config.process_tags.clone());
         session.modify_telemetry_config(|cfg| {
             cfg.telemetry_heartbeat_interval = config.telemetry_heartbeat_interval;
             let endpoint = get_product_endpoint(
@@ -651,6 +661,19 @@ impl SidecarInterface for SidecarServer {
             }
             no_response().await
         })
+    }
+
+    type SetSessionProcessTagsFut = NoResponse;
+
+    fn set_session_process_tags(
+        self,
+        _: Context,
+        session_id: String,
+        process_tags: String,
+    ) -> Self::SetSessionProcessTagsFut {
+        let session = self.get_session(&session_id);
+        *session.process_tags.lock_or_panic() = (!process_tags.is_empty()).then_some(process_tags);
+        no_response()
     }
 
     type ShutdownRuntimeFut = NoResponse;
