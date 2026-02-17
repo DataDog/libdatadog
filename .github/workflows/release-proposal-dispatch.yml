@@ -236,6 +236,20 @@ jobs:
               RANGE="$TAG..$ORIGINAL_HEAD"
               echo "Using $RANGE as range"
 
+              echo "Tag $TAG hash:"
+              git rev-parse "$TAG"
+
+              if git merge-base --is-ancestor "$TAG" "$ORIGINAL_HEAD" 2>/dev/null; then
+                echo "  Tag is ancestor of HEAD, using $RANGE"
+              else
+                MERGE_BASE=$(git merge-base "$TAG" "$ORIGINAL_HEAD" 2>/dev/null || echo "")
+                if [ -n "$MERGE_BASE" ]; then
+                    echo "  Tag is NOT ancestor of HEAD, using merge-base: $MERGE_BASE"
+                else
+                    echo "  WARNING: Could not find merge-base, using $RANGE"
+                fi
+              fi
+
               echo "Is the tag $TAG in the branch:"
               git branch --contains "$TAG" || {
                 echo "Error: Tag $TAG is not in the branch" >&2
