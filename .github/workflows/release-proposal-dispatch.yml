@@ -113,7 +113,7 @@ jobs:
 
       - name: Merge the main branch into the release branch
         run: |
-          git fetch origin "${{ env.RELEASE_BRANCH }}" --tags
+          git fetch origin "${{ env.MAIN_BRANCH }}" "${{ env.RELEASE_BRANCH }}" --tags
           git checkout "${{ env.RELEASE_BRANCH }}"
 
           if ! git merge origin/"${{ env.MAIN_BRANCH }}"; then
@@ -182,6 +182,12 @@ jobs:
           # Get commits since release for each crate and save to file
           ./scripts/commits-since-release.sh "$(cat /tmp/crates.json)" > /tmp/commits-by-crate.json
           
+          # Capture release branch tip now (while HEAD=release). Use this in Release version bumps
+          # so tag/merge-base resolution uses the same ref the script used; avoids failures after
+          # we switch to the new proposal branch.
+          git rev-parse HEAD > /tmp/release_head_sha
+          echo "Release branch HEAD (saved for later): $(cat /tmp/release_head_sha)"
+
           # Display json output
           jq . /tmp/commits-by-crate.json
 
@@ -190,29 +196,40 @@ jobs:
         run: |
           git status
           
-          IS_SHALLOW=$(git rev-parse --is-shallow-repository)
-          if [ "$IS_SHALLOW" = "true" ]; then
-            echo "Repository is shallow"
-            git pull --unshallow
+          if [ "$(git rev-parse --is-shallow-repository)" = "true" ]; then
+            echo "Repository is shallow, fetching full history..."
+            git fetch --unshallow
           fi
 
           git checkout "${{ env.RELEASE_BRANCH }}"
           TIMESTAMP=$(date +%Y%m%d-%H%M%S)
           BRANCH_NAME="${{ env.PROPOSAL_BRANCH_PREFIX }}/${{ inputs.crate }}/$TIMESTAMP"
           git checkout -b "$BRANCH_NAME"
-          git push origin "$BRANCH_NAME"
+          git push origin "$BRANCH_NAME" --tags
           echo "Branch created: $BRANCH_NAME from ${{ env.RELEASE_BRANCH }} branch"
           echo "branch_name=$BRANCH_NAME" >> "$GITHUB_OUTPUT"
           
       - name: Release version bumps
         id: release-version-bumps
-        env:
-          ORIGINAL_HEAD: ${{ github.sha }}
         run: |
           echo "Release version bumps..."
 
+          # After creating and pushing the proposal branch, tag/merge-base resolution can fail
+          # (tags no longer seen as ancestors of release_head_sha). Re-fetch release and tags,
+          # and unshallow if needed, so we have full history and tag refs for the rest of the step.
+          git fetch origin "${{ env.RELEASE_BRANCH }}" --tags
+          if [ "$(git rev-parse --is-shallow-repository)" = "true" ]; then
+            echo "Repository is shallow, fetching full history..."
+            git fetch --unshallow
+          fi
+
           # Initialize results array
           echo "[]" > /tmp/api-changes.json
+
+          # Use release branch tip from when we ran commits-since-release (same ref the script used).
+          # Avoids tag/merge-base resolution failures after switching to the new proposal branch.
+          ORIGINAL_HEAD=$(cat /tmp/release_head_sha)
+          echo "ORIGINAL_HEAD: $ORIGINAL_HEAD"
 
           BRANCH_NAME="${{ steps.proposal-branch.outputs.branch_name }}"
 
@@ -236,6 +253,18 @@ jobs:
               RANGE="$TAG..$ORIGINAL_HEAD"
               echo "Using $RANGE as range"
 
+              if git merge-base --is-ancestor "$TAG" "$ORIGINAL_HEAD" 2>/dev/null; then
+                echo "  Tag $TAGis ancestor of HEAD, using $RANGE"
+              else
+                MERGE_BASE=$(git merge-base "$TAG" "$ORIGINAL_HEAD" 2>/dev/null || echo "")
+                if [ -n "$MERGE_BASE" ]; then
+                    RANGE="$MERGE_BASE..$ORIGINAL_HEAD"
+                    echo "  Tag $TAG is NOT ancestor of HEAD, using merge-base: $RANGE"
+                else
+                    echo "  WARNING: Could not find merge-base for tag $TAG, using $RANGE"
+                fi
+              fi
+
               echo "Is the tag $TAG in the branch:"
               git branch --contains "$TAG" || {
                 echo "Error: Tag $TAG is not in the branch" >&2
@@ -255,7 +284,7 @@ jobs:
               echo "Semver level: $SEMVER_LEVEL"
 
               LEVEL=$(echo "$SEMVER_LEVEL" | jq -r '.level')
-
+              
               # TODO: cargo release warns if there are no changes to the public API
               # warning: updating crate to 4.0.1 despite no changes made since tag crate-v4.0.0
               # Should we skip the release if there are no changes to the public API?
@@ -292,7 +321,7 @@ jobs:
             NEXT_TAG="$TAG_PREFIX$NEXT_VERSION"
 
             # Check what commits git sees in the range
-            echo "Commits in the range $RANGE:"
+            echo "Commits in the range $RANGE filtered by $CRATE_PATH:"
             git log --oneline "$RANGE" -- "$CRATE_PATH/"
 
             echo "Executing git cliff for $NAME since $RANGE, next tag: $NEXT_TAG..."
