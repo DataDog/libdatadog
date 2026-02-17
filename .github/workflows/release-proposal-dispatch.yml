@@ -187,22 +187,6 @@ jobs:
           # we switch to the new proposal branch.
           git rev-parse HEAD > /tmp/release_head_sha
           echo "Release branch HEAD (saved for later): $(cat /tmp/release_head_sha)"
-          
-          ORIGINAL_HEAD=$(cat /tmp/release_head_sha)
-          jq -c '.[]' /tmp/commits-by-crate.json | while read -r crate; do
-            TAG=$(echo "$crate" | jq -r '.tag')
-            echo "Tag: $TAG"
-            if git merge-base --is-ancestor "$TAG" "$ORIGINAL_HEAD" 2>/dev/null; then
-              echo "  Tag is ancestor of HEAD, using $ORIGINAL_HEAD"
-            else
-              MERGE_BASE=$(git merge-base "$TAG" "$ORIGINAL_HEAD" 2>/dev/null || echo "")
-              if [ -n "$MERGE_BASE" ]; then
-                  echo "  Tag is NOT ancestor of HEAD, using merge-base: $MERGE_BASE"
-              else
-                  echo "  WARNING: Could not find merge-base, using $ORIGINAL_HEAD"
-              fi
-            fi
-          done
 
           # Display json output
           jq . /tmp/commits-by-crate.json
@@ -224,23 +208,6 @@ jobs:
           git push origin "$BRANCH_NAME" --tags
           echo "Branch created: $BRANCH_NAME from ${{ env.RELEASE_BRANCH }} branch"
           echo "branch_name=$BRANCH_NAME" >> "$GITHUB_OUTPUT"
-
-          # Check if the tags are ancestors of the original head
-          ORIGINAL_HEAD=$(cat /tmp/release_head_sha)
-          jq -c '.[]' /tmp/commits-by-crate.json | while read -r crate; do
-            TAG=$(echo "$crate" | jq -r '.tag')
-            echo "Tag: $TAG"
-            if git merge-base --is-ancestor "$TAG" "$ORIGINAL_HEAD" 2>/dev/null; then
-              echo "  Tag is ancestor of HEAD, using $ORIGINAL_HEAD"
-            else
-              MERGE_BASE=$(git merge-base "$TAG" "$ORIGINAL_HEAD" 2>/dev/null || echo "")
-              if [ -n "$MERGE_BASE" ]; then
-                  echo "  Tag is NOT ancestor of HEAD, using merge-base: $MERGE_BASE"
-              else
-                  echo "  WARNING: Could not find merge-base, using $ORIGINAL_HEAD"
-              fi
-            fi
-          done
           
       - name: Release version bumps
         id: release-version-bumps
@@ -312,14 +279,12 @@ jobs:
                 continue
               fi
 
-              # echo "Executing semver-level.sh for $NAME since $RANGE (tag: $TAG)..."
-              # SEMVER_LEVEL=$(./scripts/semver-level.sh "$NAME" "refs/tags/$TAG" 2>&1)
-              # echo "Semver level: $SEMVER_LEVEL"
+              echo "Executing semver-level.sh for $NAME since $RANGE (tag: $TAG)..."
+              SEMVER_LEVEL=$(./scripts/semver-level.sh "$NAME" "refs/tags/$TAG" 2>&1)
+              echo "Semver level: $SEMVER_LEVEL"
 
-              # LEVEL=$(echo "$SEMVER_LEVEL" | jq -r '.level')
-              # TODO: remove this once semver-level.sh is fixed
-              LEVEL="patch"
-
+              LEVEL=$(echo "$SEMVER_LEVEL" | jq -r '.level')
+              
               # TODO: cargo release warns if there are no changes to the public API
               # warning: updating crate to 4.0.1 despite no changes made since tag crate-v4.0.0
               # Should we skip the release if there are no changes to the public API?
