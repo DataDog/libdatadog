@@ -186,8 +186,7 @@ pub extern "C" fn ddog_crasht_default_signals() -> Slice<'static, libc::c_int> {
 ///
 /// This function sends a crash report for an unhandled exception detected
 /// by the runtime. It is intended to be called when the process is in a
-/// terminal state due to an unhandled exception. The stored config, metadata,
-/// and receiver config are consumed (same as the signal-based crash path).
+/// terminal state due to an unhandled exception.
 ///
 /// # Parameters
 /// - `error_type`: Optional type/class of the exception (e.g. "NullPointerException"). Pass empty
@@ -196,6 +195,23 @@ pub extern "C" fn ddog_crasht_default_signals() -> Slice<'static, libc::c_int> {
 /// - `runtime_stack`: Stack trace from the runtime. Consumed by this call.
 ///
 /// If the crash-tracker has not been initialized, this function is a no-op.
+///
+/// # Side effects
+///   This function disables the signal-based crash handler before performing
+///   any work. This means that if the process receives a fatal signal (SIGSEGV)
+///   during or after this call, the crashtracker will not produce a
+///   second crash report. The previous signal handler (if any) will still be
+///   chained.
+///
+/// # Failure mode
+///   This function performs synchronous network/file I/O to upload the crash
+///   report. If a fatal signal occurs while the upload is in progress (e.g.
+///   inside the HTTP stack), the calling process is in an unrecoverable state;
+///   the crashtracker cannot report the secondary fault and the caller's
+///   own signal handler (if any) will execute in a potentially corrupted
+///   context. Callers should treat this function as a terminal operation and
+///   exit shortly after it returns.
+///
 /// # Safety
 ///   Crash-tracking functions are not reentrant.
 ///   No other crash-handler functions should be called concurrently.

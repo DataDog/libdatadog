@@ -434,9 +434,9 @@ pub unsafe extern "C" fn ddog_crasht_CrashInfoBuilder_with_thread_name(
 /// The following fields are optional enrichments; if set on the builder before
 /// calling this function, they will be used in the following order to derive a crash
 /// ping message
-/// - `message` (via `with_message`): crash message
-/// - `sig_info` (via `with_sig_info`): signal information for signal-based crashes
-/// - `kind` (via `with_kind`): crash kind designating what `ErrorKind` the crash is
+/// - `message` (via `with_message`)
+/// - `sig_info` (via `with_sig_info`)
+/// - `kind` (via `with_kind`)
 ///
 /// # Safety
 /// The `builder` can be null, but if non-null it must point to a Builder made by this module,

@@ -18,6 +18,12 @@ pub fn report_unhandled_exception(
         return Ok(());
     };
 
+    // Disable the signal-based crash handler to prevent double reporting.
+    // If a segfault occurs during our upload (inside the tokio runtime),
+    // we don't want the signal handler to produce a second, conflicting crash
+    // report. The signal handler will still chain to any previous handler.
+    crash_handler::disable();
+
     let mut builder = CrashInfoBuilder::new();
     builder.with_kind(ErrorKind::UnhandledException)?;
 
