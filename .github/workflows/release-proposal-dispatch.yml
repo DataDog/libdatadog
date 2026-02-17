@@ -188,8 +188,20 @@ jobs:
           git rev-parse HEAD > /tmp/release_head_sha
           echo "Release branch HEAD (saved for later): $(cat /tmp/release_head_sha)"
           
-          echo "GITHUB SHA:"
-          git rev-parse "${{ github.sha }}"
+          ORIGINAL_HEAD=$(cat /tmp/release_head_sha)
+          jq -c '.[]' /tmp/commits-by-crate.json | while read -r crate; do
+            TAG=$(echo "$crate" | jq -r '.tag')
+            if git merge-base --is-ancestor "$TAG" "$ORIGINAL_HEAD" 2>/dev/null; then
+              echo "  Tag is ancestor of HEAD, using $ORIGINAL_HEAD"
+            else
+              MERGE_BASE=$(git merge-base "$TAG" "$ORIGINAL_HEAD" 2>/dev/null || echo "")
+              if [ -n "$MERGE_BASE" ]; then
+                  echo "  Tag is NOT ancestor of HEAD, using merge-base: $MERGE_BASE"
+              else
+                  echo "  WARNING: Could not find merge-base, using $ORIGINAL_HEAD"
+              fi
+            fi
+          done
 
           # Display json output
           jq . /tmp/commits-by-crate.json
