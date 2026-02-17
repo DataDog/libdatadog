@@ -317,7 +317,7 @@ fn test_report_unhandled_exception() {
     let artifacts = StandardArtifacts::new(config.profile);
     let artifacts_map = build_artifacts(&artifacts.as_slice()).unwrap();
 
-    let validator: ValidatorFn = Box::new(|payload, _fixtures| {
+    let validator: ValidatorFn = Box::new(|payload, fixtures| {
         // Verify error kind is UnhandledException
         let error = &payload["error"];
         assert_eq!(
@@ -362,6 +362,12 @@ fn test_report_unhandled_exception() {
         assert_eq!(frames[1]["function"].as_str(), Some("TestApp.main"));
         assert_eq!(frames[1]["file"].as_str(), Some("main.rb"));
         assert_eq!(frames[1]["line"].as_u64(), Some(10));
+
+        // Validate crash ping and crash report in telemetry
+        validate_unhandled_exception_telemetry(&fixtures.crash_telemetry_path)?;
+
+        // Validate crash report telemetry entry
+        validate_telemetry(&fixtures.crash_telemetry_path, "UnhandledException")?;
 
         Ok(())
     });
@@ -1092,6 +1098,107 @@ fn assert_siginfo_message(sig_info: &Value, crash_typ: &str) {
         }
         _ => panic!("unexpected crash_typ {crash_typ}"),
     }
+}
+
+/// Validates the crash ping entry in the telemetry file for unhandled exceptions.
+///
+/// The unhandled exception path sends both a crash ping (early notification) and a full
+/// crash report. This function validates the crash ping entry specifically.
+fn validate_unhandled_exception_telemetry(telemetry_path: &Path) -> anyhow::Result<()> {
+    let crash_telemetry = fs::read(telemetry_path).with_context(|| {
+        format!(
+            "reading crashtracker telemetry payload at {:?}",
+            telemetry_path
+        )
+    })?;
+
+    let payloads = crash_telemetry.split(|&b| b == b'\n').collect::<Vec<_>>();
+
+    // Find crash ping entries (is_crash_ping:true in the serialized payload)
+    let crash_ping_payloads: Vec<_> = payloads
+        .iter()
+        .filter(|p| {
+            let s = String::from_utf8_lossy(p);
+            s.contains("is_crash_ping:true") && !p.is_empty()
+        })
+        .collect();
+
+    assert!(
+        !crash_ping_payloads.is_empty(),
+        "Expected at least one crash ping entry in telemetry file"
+    );
+
+    for ping_bytes in &crash_ping_payloads {
+        let telemetry_payload: Value = serde_json::from_slice::<Value>(ping_bytes)
+            .context("deserializing crash ping telemetry payload")?;
+
+        // Verify telemetry structure
+        assert_eq!(telemetry_payload["request_type"], "logs");
+
+        let log_entry = &telemetry_payload["payload"]["logs"][0];
+
+        // Crash ping should NOT be marked as a crash (it's a notification, not the report)
+        assert_eq!(
+            log_entry["is_crash"], false,
+            "crash ping should have is_crash=false"
+        );
+
+        // Verify tags
+        let tags_raw = log_entry["tags"]
+            .as_str()
+            .expect("crash ping should have tags");
+        assert!(
+            tags_raw.contains("is_crash_ping:true"),
+            "crash ping tags should contain is_crash_ping:true, got: {tags_raw}"
+        );
+
+        // Unhandled exceptions should NOT have signal tags
+        assert!(
+            !tags_raw.contains("si_signo:"),
+            "unhandled exception crash ping should not have signal tags, got: {tags_raw}"
+        );
+        assert!(
+            !tags_raw.contains("si_signo_human_readable:"),
+            "unhandled exception crash ping should not have signal tags, got: {tags_raw}"
+        );
+
+        // Verify metadata tags are present
+        assert!(
+            tags_raw.contains("service:foo"),
+            "crash ping should have service tag, got: {tags_raw}"
+        );
+        assert!(
+            tags_raw.contains("language_name:native"),
+            "crash ping should have language_name tag, got: {tags_raw}"
+        );
+
+        // Verify the crash ping message body contains the exception info
+        let message_str = log_entry["message"]
+            .as_str()
+            .expect("crash ping should have a message");
+        let crash_ping_json: Value = serde_json::from_str(message_str)
+            .context("crash ping message should be valid JSON (serialized CrashPing)")?;
+
+        let ping_message = crash_ping_json["message"]
+            .as_str()
+            .expect("CrashPing should have a message field");
+        assert!(
+            ping_message.contains("crash processing started"),
+            "crash ping message should contain 'crash processing started', got: {ping_message}"
+        );
+        assert!(
+            ping_message.contains("unhandled exception"),
+            "crash ping message should reference the unhandled exception, got: {ping_message}"
+        );
+
+        // Verify no siginfo in the crash ping body
+        assert!(
+            crash_ping_json["siginfo"].is_null(),
+            "unhandled exception crash ping should not have siginfo"
+        );
+    }
+
+    Ok(())
 }
 
 // Takes bytes of telemetry and deserializes it into a Value.

@@ -110,6 +110,16 @@ pub fn emit_counters(w: &mut impl Write) -> Result<(), CounterError> {
     Ok(())
 }
 
+/// Returns the current counter values as a HashMap.
+/// This is intended for use outside of signal handlers (e.g. unhandled exception reporting).
+pub(crate) fn get_counters() -> Result<std::collections::HashMap<String, i64>, CounterError> {
+    let mut counters = std::collections::HashMap::new();
+    for (i, c) in OP_COUNTERS.iter().enumerate() {
+        counters.insert(OpTypes::name(i)?.to_string(), c.load(SeqCst));
+    }
+    Ok(counters)
+}
+
 /// Resets all counters to 0.
 /// Expected to be used after a fork, to reset the counters on the child
 /// ATOMICITY:

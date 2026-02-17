@@ -78,12 +78,13 @@ impl CrashPingBuilder {
                 "Crashtracker crash ping: crash processing started - Process terminated with {:?} ({:?})",
                 sig_info.si_code_human_readable, sig_info.si_signo_human_readable
             )
+        } else if let Some(kind) = kind {
+            format!(
+                "Crashtracker crash ping: crash processing started - Process terminated with {:?}",
+                kind.as_str()
+            )
         } else {
-            if let Some(kind) = kind {
-                format!("Crashtracker crash ping: crash processing started - Process terminated with {:?}", kind.as_str())
-            } else {
-                "Crashtracker crash ping: crash processing started - Process terminated".to_string()
-            }
+            "Crashtracker crash ping: crash processing started - Process terminated".to_string()
         };
 
         Ok(CrashPing {

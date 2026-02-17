@@ -431,10 +431,11 @@ pub unsafe extern "C" fn ddog_crasht_CrashInfoBuilder_with_thread_name(
 /// The crash ping is a lightweight early notification that crash processing has started.
 /// It requires that the builder has metadata set (via `with_metadata`).
 ///
-/// The following fields are optional enrichments — if set on the builder before
-/// calling this function, they will be included in the ping:
-/// - `sig_info` (via `with_sig_info`): signal information for signal-based crashes
+/// The following fields are optional enrichments; if set on the builder before
+/// calling this function, they will be used in the following order to derive a crash
+/// ping message
 /// - `message` (via `with_message`): crash message
+/// - `sig_info` (via `with_sig_info`): signal information for signal-based crashes
 /// - `kind` (via `with_kind`): crash kind designating what `ErrorKind` the crash is
 ///
 /// # Safety
