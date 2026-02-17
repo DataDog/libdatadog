@@ -3,7 +3,9 @@
 
 #[cfg(feature = "reqwest")]
 mod tests {
-    use libdd_common::test_utils::{create_temp_file_path, parse_http_request, EnvGuard};
+    use libdd_common::test_utils::{
+        count_active_threads, create_temp_file_path, parse_http_request, EnvGuard,
+    };
     use libdd_common::Endpoint;
 
     /// Helper to send a simple HTTP request and return the response
@@ -95,7 +97,11 @@ mod tests {
             .expect("should build client");
         let client = builder.build().expect("should create client");
 
-        let response = client.get(&url).send().await.expect("request should succeed");
+        let response = client
+            .get(&url)
+            .send()
+            .await
+            .expect("request should succeed");
         assert!(
             response.status().is_success() || response.status().is_redirection(),
             "status: {}",
@@ -117,11 +123,62 @@ mod tests {
             .expect("should build client");
         let client = builder.build().expect("should create client");
 
-        let response = client.get(&url).send().await.expect("request should succeed");
+        let response = client
+            .get(&url)
+            .send()
+            .await
+            .expect("request should succeed");
         assert!(
             response.status().is_success() || response.status().is_redirection(),
             "status: {}",
             response.status()
+        );
+    }
+
+    /// With hickory DNS, no extra thread is used for resolution; with the system resolver,
+    /// reqwest uses a threadpool thread. So after using hickory then dropping the client,
+    /// thread count is N; after using the system resolver (client still alive), count is N+1.
+    /// Uses http://example.com/ so DNS is exercised; example.com is reserved by RFC 2606.
+    /// Requires network. Only runs on platforms where count_active_threads is implemented.
+    #[tokio::test]
+    #[cfg_attr(miri, ignore)]
+    #[cfg(any(target_os = "linux", target_os = "macos", windows))]
+    async fn test_hickory_dns_saves_thread() {
+        let endpoint = Endpoint::from_slice("http://example.com/");
+
+        // Phase 1: hickory enabled — create client, send request, drop client, count threads.
+        let threads_after_hickory = {
+            let _guard = EnvGuard::set("DD_USE_HICKORY_DNS", "1");
+            let (builder, url) = endpoint
+                .to_reqwest_client_builder()
+                .expect("should build client");
+            let client = builder.build().expect("should create client");
+            let _ = client.get(&url).send().await;
+            drop(client);
+            drop(_guard);
+            count_active_threads().expect("count_active_threads not supported on this platform")
+        };
+
+        // Phase 2: system resolver — create client, send request, count threads (client alive).
+        let threads_with_system = {
+            let _guard = EnvGuard::remove("DD_USE_HICKORY_DNS");
+            let (builder, url) = endpoint
+                .to_reqwest_client_builder()
+                .expect("should build client");
+            let client = builder.build().expect("should create client");
+            let _ = client.get(&url).send().await;
+            let count = count_active_threads()
+                .expect("count_active_threads not supported on this platform");
+            drop(_guard);
+            count
+        };
+
+        assert_eq!(
+            threads_with_system,
+            threads_after_hickory + 1,
+            "system resolver should use one more thread than hickory (hickory: {}, system: {})",
+            threads_after_hickory,
+            threads_with_system
         );
     }
 }

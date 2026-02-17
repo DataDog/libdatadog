@@ -65,7 +65,8 @@ pub struct EnvGuard {
 }
 
 impl EnvGuard {
-    /// Set the environment variable to the given value. The previous value (if any) is restored on drop.
+    /// Set the environment variable to the given value. The previous value (if any) is restored on
+    /// drop.
     pub fn set(key: &'static str, value: &str) -> Self {
         let saved = std::env::var(key).ok();
         std::env::set_var(key, value);
@@ -86,6 +87,116 @@ impl Drop for EnvGuard {
             Some(s) => std::env::set_var(self.key, s),
             None => std::env::remove_var(self.key),
         }
+    }
+}
+
+/// Count the number of active threads in the current process.
+///
+/// This function works across different platforms:
+/// - **Linux**: Reads from `/proc/self/status`
+/// - **macOS**: Uses `ps -M` command
+/// - **Windows**: Uses the Toolhelp32Snapshot API
+///
+/// # Returns
+/// The number of active threads in the current process, or an error if the count cannot be
+/// determined.
+///
+/// # Example
+/// ```no_run
+/// use libdd_common::test_utils::count_active_threads;
+///
+/// let thread_count = count_active_threads().unwrap();
+/// println!("Current process has {} threads", thread_count);
+/// ```
+pub fn count_active_threads() -> anyhow::Result<usize> {
+    #[cfg(target_os = "linux")]
+    {
+        use std::fs;
+
+        let status = fs::read_to_string("/proc/self/status")?;
+        for line in status.lines() {
+            if line.starts_with("Threads:") {
+                let count = line
+                    .split_whitespace()
+                    .nth(1)
+                    .context("Failed to parse thread count from /proc/self/status")?
+                    .parse::<usize>()?;
+                return Ok(count);
+            }
+        }
+        anyhow::bail!("Threads: line not found in /proc/self/status");
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        use std::process::Command;
+
+        let pid = std::process::id();
+        let output = Command::new("ps")
+            .args(["-M", "-p", &pid.to_string()])
+            .output()
+            .context("Failed to execute ps command")?;
+
+        if !output.status.success() {
+            anyhow::bail!("ps command failed with status: {:?}", output.status);
+        }
+
+        let stdout =
+            String::from_utf8(output.stdout).context("Failed to parse ps output as UTF-8")?;
+
+        // ps -M output format: header line + one line per thread
+        // Count lines and subtract 1 for the header
+        let lines: Vec<&str> = stdout.lines().collect();
+        if lines.is_empty() {
+            anyhow::bail!("ps output is empty");
+        }
+
+        // Subtract 1 for the header line
+        let thread_count = lines.len().saturating_sub(1);
+        Ok(thread_count)
+    }
+
+    #[cfg(windows)]
+    {
+        use std::mem::{size_of, zeroed};
+        use windows_sys::Win32::Foundation::CloseHandle;
+        use windows_sys::Win32::System::Diagnostics::ToolHelp::{
+            CreateToolhelp32Snapshot, Thread32First, Thread32Next, TH32CS_SNAPTHREAD, THREADENTRY32,
+        };
+
+        let current_pid = std::process::id();
+        let snapshot = unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0) };
+        if snapshot == windows_sys::Win32::Foundation::INVALID_HANDLE_VALUE {
+            anyhow::bail!("CreateToolhelp32Snapshot failed");
+        }
+
+        // THREADENTRY32 doesn't implement Default, so we use zeroed() and set dwSize
+        let mut thread_entry: THREADENTRY32 = unsafe { zeroed() };
+        thread_entry.dwSize = size_of::<THREADENTRY32>() as u32;
+
+        let mut count = 0;
+        if unsafe { Thread32First(snapshot, &mut thread_entry) } != 0 {
+            loop {
+                if thread_entry.th32OwnerProcessID == current_pid {
+                    count += 1;
+                }
+
+                if unsafe { Thread32Next(snapshot, &mut thread_entry) } == 0 {
+                    break;
+                }
+            }
+        }
+
+        unsafe {
+            CloseHandle(snapshot);
+        }
+
+        Ok(count)
+    }
+
+    #[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
+    {
+        anyhow::bail!("Thread counting is not implemented for this platform");
     }
 }
 
@@ -402,5 +513,52 @@ mod tests {
         assert_eq!(parsed.multipart_parts.len(), 1);
         assert_eq!(parsed.multipart_parts[0].name, "field");
         assert_eq!(parsed.multipart_parts[0].content, b"value");
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_count_active_threads() {
+        let initial_count = count_active_threads().expect("Failed to count threads");
+        assert!(
+            initial_count >= 1,
+            "Expected at least 1 thread, got {}",
+            initial_count
+        );
+
+        // Spawn some threads and verify the count increases
+        use std::sync::{Arc, Barrier};
+        let barrier = Arc::new(Barrier::new(6)); // 5 spawned threads + main thread
+
+        let handles: Vec<_> = (0..5)
+            .map(|_| {
+                let barrier = Arc::clone(&barrier);
+                std::thread::spawn(move || {
+                    barrier.wait();
+                    std::thread::sleep(std::time::Duration::from_millis(50));
+                })
+            })
+            .collect();
+
+        barrier.wait();
+        let count_with_threads = count_active_threads().expect("Failed to count threads");
+        assert_eq!(
+            count_with_threads,
+            initial_count + 5,
+            "Expected exactly {} threads (initial: {}, with spawned: {})",
+            initial_count + 5,
+            initial_count,
+            count_with_threads
+        );
+
+        for handle in handles {
+            handle.join().expect("Thread should join successfully");
+        }
+
+        let count_after_join = count_active_threads().expect("Failed to count threads");
+        assert_eq!(
+            count_after_join, initial_count,
+            "Expected thread count to return to {} after join, got {}",
+            initial_count, count_after_join
+        );
     }
 }
