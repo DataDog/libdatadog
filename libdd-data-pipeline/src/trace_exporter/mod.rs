@@ -6,7 +6,6 @@ pub mod error;
 pub mod metrics;
 pub mod stats;
 mod trace_serializer;
-mod transport;
 
 // Re-export the builder
 pub use builder::TraceExporterBuilder;
@@ -15,7 +14,6 @@ use self::agent_response::AgentResponse;
 use self::metrics::MetricsEmitter;
 use self::stats::StatsComputationStatus;
 use self::trace_serializer::TraceSerializer;
-use self::transport::TransportClient;
 use crate::agent_info::{AgentInfoFetcher, ResponseObserver};
 use crate::pausable_worker::PausableWorker;
 use crate::stats_exporter::StatsExporter;
@@ -58,9 +56,6 @@ const INFO_ENDPOINT: &str = "/info";
 #[derive(Copy, Clone, Debug, Default, PartialEq)]
 #[repr(C)]
 pub enum TraceExporterInputFormat {
-    /// Proxy format is used when the traces are to be sent to the agent without processing them.
-    /// The whole payload is sent as is to the agent.
-    Proxy,
     #[allow(missing_docs)]
     #[default]
     V04,
@@ -340,12 +335,12 @@ impl TraceExporter {
     pub fn send(
         &self,
         data: &[u8],
-        trace_count: usize,
+        // previously used
+        _trace_count: usize,
     ) -> Result<AgentResponse, TraceExporterError> {
         self.check_agent_info();
 
         let res = match self.input_format {
-            TraceExporterInputFormat::Proxy => self.send_proxy(data.as_ref(), trace_count),
             TraceExporterInputFormat::V04 => self.send_deser(data, DeserInputFormat::V04),
             TraceExporterInputFormat::V05 => self.send_deser(data, DeserInputFormat::V05),
         }?;
@@ -486,115 +481,6 @@ impl TraceExporter {
             }
             std::thread::sleep(Duration::from_millis(10));
         }
-    }
-
-    fn send_proxy(
-        &self,
-        data: &[u8],
-        trace_count: usize,
-    ) -> Result<AgentResponse, TraceExporterError> {
-        self.send_data_to_url(
-            data,
-            trace_count,
-            self.output_format.add_path(&self.endpoint.url),
-        )
-    }
-
-    fn send_data_to_url(
-        &self,
-        data: &[u8],
-        trace_count: usize,
-        uri: Uri,
-    ) -> Result<AgentResponse, TraceExporterError> {
-        self.runtime()?.block_on(async {
-            self.send_request_and_handle_response(data, trace_count, uri)
-                .await
-        })
-    }
-
-    /// Send HTTP request and handle the response
-    async fn send_request_and_handle_response(
-        &self,
-        data: &[u8],
-        trace_count: usize,
-        uri: Uri,
-    ) -> Result<AgentResponse, TraceExporterError> {
-        let transport_client = TransportClient::new(&self.metadata);
-        let req = transport_client.build_trace_request(data, trace_count, uri);
-        match hyper_migration::new_default_client().request(req).await {
-            Ok(response) => {
-                let response = hyper_migration::into_response(response);
-                // For proxy path, always 1 request attempt (no retry)
-                self.handle_proxy_response(response, trace_count, data.len())
-                    .await
-            }
-            Err(err) => self.handle_request_error(err, data.len(), trace_count),
-        }
-    }
-
-    /// Handle response for proxy path (no retry)
-    async fn handle_proxy_response(
-        &self,
-        response: hyper::Response<hyper_migration::Body>,
-        trace_count: usize,
-        payload_len: usize,
-    ) -> Result<AgentResponse, TraceExporterError> {
-        let status = response.status();
-
-        if !status.is_success() {
-            let send_result = SendResult::failure(
-                TransportErrorType::Http(status.as_u16()),
-                payload_len,
-                trace_count,
-                1,
-            );
-            self.emit_send_result(&send_result);
-            let body = Self::read_response_body(response).await.map_err(|e| {
-                error!(?e, "Error reading error response body");
-                TraceExporterError::from(e)
-            })?;
-            return Err(TraceExporterError::Request(RequestError::new(
-                status, &body,
-            )));
-        }
-
-        match Self::read_response_body(response).await {
-            Ok(body) => {
-                debug!(trace_count, "Traces sent successfully to agent");
-                let send_result = SendResult::success(payload_len, trace_count, 1);
-                self.emit_send_result(&send_result);
-                Ok(AgentResponse::Changed { body })
-            }
-            Err(err) => {
-                error!(?err, "Failed to read agent response body");
-                let send_result = SendResult::failure(
-                    TransportErrorType::ResponseBody,
-                    payload_len,
-                    trace_count,
-                    1,
-                );
-                self.emit_send_result(&send_result);
-                Err(TraceExporterError::from(err))
-            }
-        }
-    }
-
-    /// Handle HTTP request errors
-    fn handle_request_error(
-        &self,
-        err: hyper_util::client::legacy::Error,
-        payload_size: usize,
-        trace_count: usize,
-    ) -> Result<AgentResponse, TraceExporterError> {
-        error!(
-            error = %err,
-            "Request to agent failed"
-        );
-        // For direct hyper errors (proxy path), always 1 request attempt
-        let send_result =
-            SendResult::failure(TransportErrorType::Network, payload_size, trace_count, 1);
-        self.emit_send_result(&send_result);
-        Err(TraceExporterError::from(err))
     }
 
     /// Emit a health metric to dogstatsd
