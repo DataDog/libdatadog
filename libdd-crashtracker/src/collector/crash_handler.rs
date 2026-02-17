@@ -226,6 +226,38 @@ pub fn enable() {
     ENABLED.store(true, SeqCst);
 }
 
+/// Gets a clone of the current metadata, if set.
+/// Unlike the signal handler path, this reads without consuming the stored value.
+///
+/// SAFETY:
+///     This function must not be called concurrently with `update_metadata`.
+pub(crate) fn get_metadata() -> Option<crate::crash_info::Metadata> {
+    let ptr = METADATA.load(SeqCst);
+    if ptr.is_null() {
+        None
+    } else {
+        // Safety: ptr was created by Box::into_raw in update_metadata
+        let (metadata, _) = unsafe { &*ptr };
+        Some(metadata.clone())
+    }
+}
+
+/// Gets a clone of the current config, if set.
+/// Unlike the signal handler path, this reads without consuming the stored value.
+///
+/// SAFETY:
+///     This function must not be called concurrently with `update_config`.
+pub(crate) fn get_config() -> Option<crate::shared::configuration::CrashtrackerConfiguration> {
+    let ptr = CONFIG.load(SeqCst);
+    if ptr.is_null() {
+        None
+    } else {
+        // Safety: ptr was created by Box::into_raw in update_config
+        let (config, _) = unsafe { &*ptr };
+        Some(config.clone())
+    }
+}
+
 fn handle_posix_signal_impl(
     sig_info: *const siginfo_t,
     ucontext: *const ucontext_t,
@@ -304,6 +336,19 @@ fn handle_posix_signal_impl(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_get_metadata() {
+        let metadata = Metadata {
+            library_name: "test".to_string(),
+            library_version: "1.0.0".to_string(),
+            family: "test_family".to_string(),
+            tags: vec![],
+        };
+        update_metadata(metadata.clone()).unwrap();
+        let retrieved_metadata = get_metadata().unwrap();
+        assert_eq!(retrieved_metadata, metadata);
+    }
 
     #[test]
     fn test_register_panic_hook() {

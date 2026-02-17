@@ -189,6 +189,16 @@ pub enum ErrorKind {
     UnixSignal,
 }
 
+impl ErrorKind {
+    pub const fn as_str(&self) -> &'static str {
+        match self {
+            Self::Panic => "Panic",
+            Self::UnhandledException => "UnhandledException",
+            Self::UnixSignal => "UnixSignal",
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct ThreadData {
     pub crashed: bool,

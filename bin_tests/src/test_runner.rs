@@ -148,7 +148,9 @@ where
     assert_exit_status(exit_status, config.crash_type)?;
 
     // Validate standard outputs
-    validate_std_outputs(&fixtures.output_dir)?;
+    if config.crash_type != CrashType::UnhandledException {
+        validate_std_outputs(&fixtures.output_dir)?;
+    }
 
     // Read and parse crash payload
     let crash_payload = read_and_parse_crash_payload(&fixtures.crash_profile_path)?;

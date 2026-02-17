@@ -25,6 +25,7 @@ mod unix {
     use libdd_common::{tag, Endpoint};
     use libdd_crashtracker::{
         self as crashtracker, CrashtrackerConfiguration, CrashtrackerReceiverConfig, Metadata,
+        StackFrame, StackTrace,
     };
 
     const TEST_COLLECTOR_TIMEOUT: Duration = Duration::from_secs(15);
@@ -154,6 +155,29 @@ mod unix {
             "raise_sigill" => raise(Signal::SIGILL)?,
             "raise_sigbus" => raise(Signal::SIGBUS)?,
             "raise_sigsegv" => raise(Signal::SIGSEGV)?,
+            "unhandled_exception" => {
+                let mut frame1 = StackFrame::new();
+                frame1.function = Some("TestApp.handleRequest".to_string());
+                frame1.file = Some("app.rb".to_string());
+                frame1.line = Some(42);
+
+                let mut frame2 = StackFrame::new();
+                frame2.function = Some("TestApp.main".to_string());
+                frame2.file = Some("main.rb".to_string());
+                frame2.line = Some(10);
+
+                let mut stack = StackTrace::from_frames(vec![frame1, frame2], false);
+                stack.set_complete()?;
+
+                crashtracker::report_unhandled_exception(
+                    Some("RuntimeError"),
+                    Some("something went wrong"),
+                    stack,
+                )?;
+
+                // Exit cleanly
+                process::exit(0);
+            }
             _ => anyhow::bail!("Unexpected crash_typ: {crash_typ}"),
         }
         crashtracker::end_op(crashtracker::OpTypes::ProfilerCollectingSample)?;

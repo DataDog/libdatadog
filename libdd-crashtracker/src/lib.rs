@@ -101,3 +101,6 @@ pub use receiver::benchmark;
 
 #[cfg(unix)]
 pub use common::{get_tests_folder_path, SharedLibrary};
+
+#[cfg(all(unix, feature = "collector"))]
+pub use collector::report_unhandled_exception;

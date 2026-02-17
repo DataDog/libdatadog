@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 use std::{fmt::Write, time::SystemTime};
 
-use crate::SigInfo;
+use crate::{ErrorKind, SigInfo};
 
 use super::{CrashInfo, Metadata};
 use anyhow::Context;
@@ -26,6 +26,7 @@ struct TelemetryMetadata {
 pub struct CrashPingBuilder {
     crash_uuid: Uuid,
     custom_message: Option<String>,
+    kind: Option<ErrorKind>,
     metadata: Option<Metadata>,
     sig_info: Option<SigInfo>,
 }
@@ -38,6 +39,7 @@ impl CrashPingBuilder {
         Self {
             crash_uuid,
             custom_message: None,
+            kind: None,
             metadata: None,
             sig_info: None,
         }
@@ -58,10 +60,16 @@ impl CrashPingBuilder {
         self
     }
 
+    pub fn with_kind(mut self, kind: ErrorKind) -> Self {
+        self.kind = Some(kind);
+        self
+    }
+
     pub fn build(self) -> anyhow::Result<CrashPing> {
         let crash_uuid = self.crash_uuid;
         let sig_info = self.sig_info;
         let metadata = self.metadata.context("metadata is required")?;
+        let kind = self.kind;
 
         let message = if let Some(custom_message) = self.custom_message {
             format!("Crashtracker crash ping: crash processing started - {custom_message}")
@@ -71,7 +79,11 @@ impl CrashPingBuilder {
                 sig_info.si_code_human_readable, sig_info.si_signo_human_readable
             )
         } else {
-            "Crashtracker crash ping: crash processing started - Process terminated".to_string()
+            if let Some(kind) = kind {
+                format!("Crashtracker crash ping: crash processing started - Process terminated with {:?}", kind.as_str())
+            } else {
+                "Crashtracker crash ping: crash processing started - Process terminated".to_string()
+            }
         };
 
         Ok(CrashPing {

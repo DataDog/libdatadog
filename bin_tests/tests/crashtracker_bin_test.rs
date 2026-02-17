@@ -308,6 +308,69 @@ fn test_crash_ping_timing_and_content() {
 
 #[test]
 #[cfg_attr(miri, ignore)]
+fn test_report_unhandled_exception() {
+    let config = CrashTestConfig::new(
+        BuildProfile::Release,
+        TestMode::DoNothing,
+        CrashType::UnhandledException,
+    );
+    let artifacts = StandardArtifacts::new(config.profile);
+    let artifacts_map = build_artifacts(&artifacts.as_slice()).unwrap();
+
+    let validator: ValidatorFn = Box::new(|payload, _fixtures| {
+        // Verify error kind is UnhandledException
+        let error = &payload["error"];
+        assert_eq!(
+            error["kind"].as_str(),
+            Some("UnhandledException"),
+            "error.kind should be UnhandledException"
+        );
+
+        // Verify the formatted message
+        let message = error["message"]
+            .as_str()
+            .expect("error.message should exist");
+        assert!(
+            message.contains("unhandled exception of type 'RuntimeError'"),
+            "message should contain error type, got: {message}"
+        );
+        assert!(
+            message.contains("something went wrong"),
+            "message should contain error message, got: {message}"
+        );
+
+        // Verify no sig_info (not a signal-based crash)
+        assert!(
+            payload["sig_info"].is_null(),
+            "sig_info should be absent for unhandled exceptions"
+        );
+
+        let stack = &error["stack"];
+        let frames = stack["frames"]
+            .as_array()
+            .expect("error.stack.frames should be an array");
+        println!("frames: {:?}", frames);
+        assert_eq!(frames.len(), 2, "should have 2 stack frames");
+
+        // Verify frame content
+        assert_eq!(
+            frames[0]["function"].as_str(),
+            Some("TestApp.handleRequest"),
+        );
+        assert_eq!(frames[0]["file"].as_str(), Some("app.rb"));
+        assert_eq!(frames[0]["line"].as_u64(), Some(42));
+        assert_eq!(frames[1]["function"].as_str(), Some("TestApp.main"));
+        assert_eq!(frames[1]["file"].as_str(), Some("main.rb"));
+        assert_eq!(frames[1]["line"].as_u64(), Some(10));
+
+        Ok(())
+    });
+
+    run_crash_test_with_artifacts(&config, &artifacts_map, &artifacts, validator).unwrap();
+}
+
+#[test]
+#[cfg_attr(miri, ignore)]
 fn test_crash_tracking_errors_intake_upload() {
     let config = CrashTestConfig::new(
         BuildProfile::Release,
@@ -1165,6 +1228,10 @@ fn assert_telemetry_message(crash_telemetry: &[u8], crash_typ: &str) {
             assert!(tags.contains("si_signo_human_readable:SIGSEGV"), "{tags:?}");
             assert!(tags.contains("si_signo:11"), "{tags:?}");
         }
+        // UnhandledExceptions have no signal tags
+        "UnhandledException" => {
+            assert!(base_expected_tags.is_subset(&tags), "{tags:?}");
+        }
         _ => panic!("{crash_typ}"),
     }
 
@@ -1365,11 +1432,16 @@ fn test_receiver_emits_debug_logs_on_receiver_issue() -> anyhow::Result<()> {
         .context("spawning receiver process")?;
 
     {
+        use libdd_crashtracker::ErrorKind;
+
         let mut stdin = BufWriter::new(child.stdin.take().context("child stdin missing")?);
         for line in [
             "DD_CRASHTRACK_BEGIN_CONFIG".to_string(),
             serde_json::to_string(&config)?,
             "DD_CRASHTRACK_END_CONFIG".to_string(),
+            "DD_CRASHTRACK_BEGIN_ERROR_KIND".to_string(),
+            serde_json::to_string(&ErrorKind::UnixSignal)?,
+            "DD_CRASHTRACK_END_ERROR_KIND".to_string(),
             "DD_CRASHTRACK_BEGIN_METADATA".to_string(),
             serde_json::to_string(&metadata)?,
             "DD_CRASHTRACK_END_METADATA".to_string(),

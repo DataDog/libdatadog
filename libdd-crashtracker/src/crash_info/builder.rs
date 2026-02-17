@@ -401,16 +401,27 @@ impl CrashInfoBuilder {
         Ok(())
     }
 
-    /// This method requires that the builder has a UUID and metadata set.
-    /// Siginfo is optional for platforms that don't support it (like Windows)
+    /// Builds a crash ping from the current builder state.
+    ///
+    /// Requires metadata to be set (returns an error otherwise).
+    ///
+    /// The following fields are optional enrichments; if present when the ping
+    /// is built, they will be used to build the ping message in the following order:
+    /// 1. `error.message`: provided crash message
+    /// 2. `sig_info`: signal information (signal-based crashes)
+    /// 3. `error.kind`: crash kind designating what `ErrorKind` the crash is
     pub fn build_crash_ping(&self) -> anyhow::Result<CrashPing> {
         let message = self.error.message.clone();
         let sig_info = self.sig_info.clone();
         let metadata = self.metadata.clone().context("metadata is required")?;
+        let kind = self.error.kind.clone();
 
         let mut builder = CrashPingBuilder::new(self.uuid).with_metadata(metadata);
         if let Some(sig_info) = sig_info {
             builder = builder.with_sig_info(sig_info);
+        }
+        if let Some(kind) = kind {
+            builder = builder.with_kind(kind);
         }
         if let Some(message) = message {
             builder = builder.with_custom_message(message);
@@ -418,17 +429,12 @@ impl CrashInfoBuilder {
         builder.build()
     }
 
+    /// Returns whether the builder has enough data to send a crash ping.
+    ///
+    /// The minimum requirement is metadata. The receiver also needs config
+    /// (checked separately) to know the upload endpoint.
     pub fn is_ping_ready(&self) -> bool {
-        // On Unix platforms, wait for both metadata and siginfo
-        // On Windows, siginfo is not available, so only wait for metadata
-        #[cfg(unix)]
-        {
-            self.metadata.is_some() && self.sig_info.is_some()
-        }
-        #[cfg(windows)]
-        {
-            self.metadata.is_some()
-        }
+        self.metadata.is_some()
     }
 
     pub fn has_message(&self) -> bool {
