@@ -50,6 +50,18 @@ fn obfuscate_redis_cmd<'a>(str: &mut String, cmd: &'a str, mut args: Vec<&'a str
                 args.push("?");
             }
         }
+        b"ACL" => {
+            // Obfuscate all arguments after the subcommand:
+            // • ACL SETUSER username on >password ~keys &channels +commands
+            // • ACL GETUSER username
+            // • ACL DELUSER username [username ...]
+            // • ACL LIST
+            // • ACL WHOAMI
+            if args.len() > 1 {
+                args[1] = "?";
+                args.drain(2..);
+            }
+        }
         b"APPEND" | b"GETSET" | b"LPUSHX" | b"GEORADIUSBYMEMBER" | b"RPUSHX" | b"SET"
         | b"SETNX" | b"SISMEMBER" | b"ZRANK" | b"ZREVRANK" | b"ZSCORE" => {
             // Obfuscate 2nd argument:
@@ -312,6 +324,46 @@ mod tests {
             test_name   [test_obfuscate_redis_string_hello_no_args]
             input       ["HELLO"]
             expected    ["HELLO"];
+        ]
+        [
+            test_name   [test_obfuscate_redis_string_acl_setuser]
+            input       ["ACL SETUSER alice on >password ~* &* +@all"]
+            expected    ["ACL SETUSER ?"];
+        ]
+        [
+            test_name   [test_obfuscate_redis_string_acl_setuser_complex]
+            input       ["ACL SETUSER bob on >mysecretpassword ~keys:* resetchannels &channel:* +@all -@dangerous"]
+            expected    ["ACL SETUSER ?"];
+        ]
+        [
+            test_name   [test_obfuscate_redis_string_acl_getuser]
+            input       ["ACL GETUSER alice"]
+            expected    ["ACL GETUSER ?"];
+        ]
+        [
+            test_name   [test_obfuscate_redis_string_acl_deluser]
+            input       ["ACL DELUSER alice"]
+            expected    ["ACL DELUSER ?"];
+        ]
+        [
+            test_name   [test_obfuscate_redis_string_acl_deluser_multi]
+            input       ["ACL DELUSER alice bob charlie"]
+            expected    ["ACL DELUSER ?"];
+        ]
+        [
+            test_name   [test_obfuscate_redis_string_acl_list]
+            input       ["ACL LIST"]
+            expected    ["ACL LIST"];
+        ]
+        [
+            test_name   [test_obfuscate_redis_string_acl_whoami]
+            input       ["ACL WHOAMI"]
+            expected    ["ACL WHOAMI"];
+        ]
+        [
+            test_name   [test_obfuscate_redis_string_acl_no_args]
+            input       ["ACL"]
+            expected    ["ACL"];
         ]
         [
             test_name   [test_obfuscate_redis_string_4]
