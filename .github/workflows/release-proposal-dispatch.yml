@@ -212,11 +212,9 @@ jobs:
         run: |
           git status
           
-          IS_SHALLOW=$(git rev-parse --is-shallow-repository)
-          if [ "$IS_SHALLOW" = "true" ]; then
-            echo "Repository is shallow"
-          else
-            echo "Repository is not shallow"
+          if [ "$(git rev-parse --is-shallow-repository)" = "true" ]; then
+            echo "Repository is shallow, fetching full history..."
+            git fetch --unshallow
           fi
 
           git checkout "${{ env.RELEASE_BRANCH }}"
@@ -226,6 +224,23 @@ jobs:
           git push origin "$BRANCH_NAME" --tags
           echo "Branch created: $BRANCH_NAME from ${{ env.RELEASE_BRANCH }} branch"
           echo "branch_name=$BRANCH_NAME" >> "$GITHUB_OUTPUT"
+
+          # Check if the tags are ancestors of the original head
+          ORIGINAL_HEAD=$(cat /tmp/release_head_sha)
+          jq -c '.[]' /tmp/commits-by-crate.json | while read -r crate; do
+            TAG=$(echo "$crate" | jq -r '.tag')
+            echo "Tag: $TAG"
+            if git merge-base --is-ancestor "$TAG" "$ORIGINAL_HEAD" 2>/dev/null; then
+              echo "  Tag is ancestor of HEAD, using $ORIGINAL_HEAD"
+            else
+              MERGE_BASE=$(git merge-base "$TAG" "$ORIGINAL_HEAD" 2>/dev/null || echo "")
+              if [ -n "$MERGE_BASE" ]; then
+                  echo "  Tag is NOT ancestor of HEAD, using merge-base: $MERGE_BASE"
+              else
+                  echo "  WARNING: Could not find merge-base, using $ORIGINAL_HEAD"
+              fi
+            fi
+          done
           
       - name: Release version bumps
         id: release-version-bumps
@@ -272,14 +287,14 @@ jobs:
               echo "Using $RANGE as range"
 
               if git merge-base --is-ancestor "$TAG" "$ORIGINAL_HEAD" 2>/dev/null; then
-                echo "  Tag is ancestor of HEAD, using $RANGE"
+                echo "  Tag $TAGis ancestor of HEAD, using $RANGE"
               else
                 MERGE_BASE=$(git merge-base "$TAG" "$ORIGINAL_HEAD" 2>/dev/null || echo "")
                 if [ -n "$MERGE_BASE" ]; then
                     RANGE="$MERGE_BASE..$ORIGINAL_HEAD"
-                    echo "  Tag is NOT ancestor of HEAD, using merge-base: $RANGE"
+                    echo "  Tag $TAG is NOT ancestor of HEAD, using merge-base: $RANGE"
                 else
-                    echo "  WARNING: Could not find merge-base, using $RANGE"
+                    echo "  WARNING: Could not find merge-base for tag $TAG, using $RANGE"
                 fi
               fi
 
