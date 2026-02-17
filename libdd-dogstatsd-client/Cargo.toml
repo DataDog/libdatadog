@@ -5,7 +5,7 @@ homepage = "https://github.com/DataDog/libdatadog/tree/main/libdd-dogstatsd-clie
 repository = "https://github.com/DataDog/libdatadog/tree/main/libdd-dogstatsd-client"
 rust-version.workspace = true
 edition.workspace = true
-version= "1.0.0"
+version= "1.0.1"
 license.workspace = true
 
 [lib]
