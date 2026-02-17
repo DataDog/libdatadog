@@ -182,10 +182,13 @@ jobs:
           # Get commits since release for each crate and save to file
           ./scripts/commits-since-release.sh "$(cat /tmp/crates.json)" > /tmp/commits-by-crate.json
           
-          echo "HEAD hash:"
-          git rev-parse HEAD
+          # Capture release branch tip now (while HEAD=release). Use this in Release version bumps
+          # so tag/merge-base resolution uses the same ref the script used; avoids failures after
+          # we switch to the new proposal branch.
+          git rev-parse HEAD > /tmp/release_head_sha
+          echo "Release branch HEAD (saved for later): $(cat /tmp/release_head_sha)"
           
-          echo "ORIGINAL_HEAD hash:"
+          echo "GITHUB SHA:"
           git rev-parse "${{ github.sha }}"
 
           # Display json output
@@ -199,7 +202,8 @@ jobs:
           IS_SHALLOW=$(git rev-parse --is-shallow-repository)
           if [ "$IS_SHALLOW" = "true" ]; then
             echo "Repository is shallow"
-            git pull --unshallow
+          else
+            echo "Repository is not shallow"
           fi
 
           git checkout "${{ env.RELEASE_BRANCH }}"
@@ -218,7 +222,11 @@ jobs:
           # Initialize results array
           echo "[]" > /tmp/api-changes.json
 
-          ORIGINAL_HEAD=$(git rev-parse HEAD)
+          # Use release branch tip from when we ran commits-since-release (same ref the script used).
+          # Avoids tag/merge-base resolution failures after switching to the new proposal branch.
+          ORIGINAL_HEAD=$(cat /tmp/release_head_sha)
+          echo "ORIGINAL_HEAD: $ORIGINAL_HEAD"
+
           BRANCH_NAME="${{ steps.proposal-branch.outputs.branch_name }}"
 
           # iterate over the commits and execute cargo release for each crate
@@ -240,9 +248,6 @@ jobs:
             if [ "$TAG_EXISTS" = "true" ]; then
               RANGE="$TAG..$ORIGINAL_HEAD"
               echo "Using $RANGE as range"
-
-              echo "Tag $TAG hash:"
-              git rev-parse "$TAG"
 
               if git merge-base --is-ancestor "$TAG" "$ORIGINAL_HEAD" 2>/dev/null; then
                 echo "  Tag is ancestor of HEAD, using $RANGE"
