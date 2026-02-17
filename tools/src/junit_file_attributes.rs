@@ -15,6 +15,12 @@ use std::fs;
 use std::io::Cursor;
 use std::path::{Path, PathBuf};
 
+/// Package name used for nextest setup scripts in the target lookup.
+/// Nextest uses classnames like "@setup-script:script-name" for setup scripts.
+const SETUP_SCRIPT_PACKAGE: &str = "@setup-script";
+/// Prefix for setup script classnames (includes the colon separator).
+const SETUP_SCRIPT_PREFIX: &str = "@setup-script:";
+
 /// Lookup table for resolving test classnames to source files.
 ///
 /// Uses a primary map keyed by `(package_name, target_name)` for all targets.
@@ -61,27 +67,20 @@ impl TargetLookup {
         self.targets.insert((package_name, target_name), src_path);
     }
 
-    /// Insert a test target (integration test).
-    pub fn insert_test(&mut self, package_name: &str, target_name: &str, src_path: PathBuf) {
-        let package_name = Self::normalize(package_name);
-        let target_name = Self::normalize(target_name);
-        self.targets.insert((package_name, target_name), src_path);
-    }
-
-    /// Insert a binary target.
-    pub fn insert_bin(&mut self, package_name: &str, target_name: &str, src_path: PathBuf) {
+    /// Insert a target (integration test or binary).
+    pub fn insert_target(&mut self, package_name: &str, target_name: &str, src_path: PathBuf) {
         let package_name = Self::normalize(package_name);
         let target_name = Self::normalize(target_name);
         self.targets.insert((package_name, target_name), src_path);
     }
 
     /// Insert a setup script entry.
-    /// Uses "@setup-script" as the package name so it can be looked up from
+    /// Uses `SETUP_SCRIPT_PACKAGE` as the package name so it can be looked up from
     /// classnames like "@setup-script:prebuild-bin-tests".
     fn insert_setup_script(&mut self, script_name: &str, src_path: PathBuf) {
         // Don't normalize - script names can have hyphens and we want exact match
         self.targets.insert(
-            ("@setup-script".to_string(), script_name.to_string()),
+            (SETUP_SCRIPT_PACKAGE.to_string(), script_name.to_string()),
             src_path,
         );
     }
@@ -92,9 +91,8 @@ impl TargetLookup {
     /// - If `target_name` is `None`, tries `(package, package)` first, then checks the alias map
     ///   for packages where lib name differs from package name
     pub fn get(&self, package_name: &str, target_name: Option<&str>) -> Option<&PathBuf> {
-        // Setup scripts are a bit of a special case. They use "@setup-script" as package name and
-        // shouldn't be normalized
-        if package_name == "@setup-script" {
+        // Setup scripts use SETUP_SCRIPT_PACKAGE as package name and shouldn't be normalized
+        if package_name == SETUP_SCRIPT_PACKAGE {
             let target_name = target_name?;
             return self
                 .targets
@@ -153,10 +151,10 @@ pub fn build_target_lookup(manifest_path: Option<&Path>) -> Result<(TargetLookup
                     lookup.insert_lib(&package.name, &target.name, src_path);
                 }
                 "test" => {
-                    lookup.insert_test(&package.name, &target.name, src_path);
+                    lookup.insert_target(&package.name, &target.name, src_path);
                 }
                 "bin" => {
-                    lookup.insert_bin(&package.name, &target.name, src_path);
+                    lookup.insert_target(&package.name, &target.name, src_path);
                 }
                 _ => {}
             }
@@ -331,7 +329,7 @@ fn resolve_setup_script_path(
     targets: &TargetLookup,
     workspace_root: &Path,
 ) -> Option<String> {
-    let src_path = targets.get("@setup-script", Some(script_name))?;
+    let src_path = targets.get(SETUP_SCRIPT_PACKAGE, Some(script_name))?;
     Some(to_relative_path(src_path, workspace_root))
 }
 
@@ -365,7 +363,7 @@ fn resolve_file_path(
     let classname = classname?;
 
     // Handle setup scripts: classname is "@setup-script:script_name"
-    if let Some(script_name) = classname.strip_prefix("@setup-script:") {
+    if let Some(script_name) = classname.strip_prefix(SETUP_SCRIPT_PREFIX) {
         return resolve_setup_script_path(script_name, targets, workspace_root);
     }
 
@@ -455,7 +453,7 @@ mod tests {
     #[test]
     fn test_target_lookup_test_target() {
         let mut lookup = TargetLookup::new();
-        lookup.insert_test(
+        lookup.insert_target(
             "libdd-trace-utils",
             "test_send_data",
             PathBuf::from("/tests/test_send_data.rs"),
@@ -491,7 +489,7 @@ mod tests {
     #[test]
     fn test_process_junit_xml_integration_test() {
         let mut lookup = TargetLookup::new();
-        lookup.insert_test(
+        lookup.insert_target(
             "my-crate",
             "integration_test",
             PathBuf::from("/workspace/my-crate/tests/integration_test.rs"),
