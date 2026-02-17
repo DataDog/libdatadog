@@ -136,7 +136,9 @@ jobs:
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # 4.2.2
         with:
-          fetch-depth: 0  # Need full history for git tags
+          ref: ${{ env.RELEASE_BRANCH }}
+          fetch-depth: 0
+          fetch-tags: true
       - uses: Swatinem/rust-cache@f13886b937689c021905a6b90929199931d60db1 # v2.8.1
         with:
           cache-targets: true
@@ -186,6 +188,14 @@ jobs:
       - name: Create a branch for the release proposal
         id: proposal-branch
         run: |
+          git status
+          
+          IS_SHALLOW=$(git rev-parse --is-shallow-repository)
+          if [ "$IS_SHALLOW" = "true" ]; then
+            echo "Repository is shallow"
+            git pull --unshallow
+          fi
+
           git checkout "${{ env.RELEASE_BRANCH }}"
           TIMESTAMP=$(date +%Y%m%d-%H%M%S)
           BRANCH_NAME="${{ env.PROPOSAL_BRANCH_PREFIX }}/${{ inputs.crate }}/$TIMESTAMP"
@@ -380,7 +390,6 @@ jobs:
             "",
             (if $api_info.version then "**Next version:** `\($api_info.version)`\n" else null end),
             "**Semver bump:** `\($api_info.level)`",
-            "",
             (if $api_info.tag then "**Tag:** `\($api_info.tag)`\n" else null end),
             (if $api_info.initial_release == "true" then
               "**Warning:** this is an initial release. Please verify that the version and commits included are correct.\n"
