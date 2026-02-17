@@ -136,7 +136,7 @@ jobs:
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # 4.2.2
         with:
-          ref: ${{ env.RELEASE_BRANCH }}
+          ref: ${{ env.MAIN_BRANCH }}
           fetch-depth: 0
           fetch-tags: true
       - uses: Swatinem/rust-cache@f13886b937689c021905a6b90929199931d60db1 # v2.8.1
@@ -202,7 +202,7 @@ jobs:
             git pull --unshallow
           fi
 
-          git checkout "${{ env.RELEASE_BRANCH }}"
+          git checkout "${{ env.RELEASE_BRANCH }}" --tags
           TIMESTAMP=$(date +%Y%m%d-%H%M%S)
           BRANCH_NAME="${{ env.PROPOSAL_BRANCH_PREFIX }}/${{ inputs.crate }}/$TIMESTAMP"
           git checkout -b "$BRANCH_NAME"
@@ -249,7 +249,8 @@ jobs:
               else
                 MERGE_BASE=$(git merge-base "$TAG" "$ORIGINAL_HEAD" 2>/dev/null || echo "")
                 if [ -n "$MERGE_BASE" ]; then
-                    echo "  Tag is NOT ancestor of HEAD, using merge-base: $MERGE_BASE"
+                    RANGE="$MERGE_BASE..$ORIGINAL_HEAD"
+                    echo "  Tag is NOT ancestor of HEAD, using merge-base: $RANGE"
                 else
                     echo "  WARNING: Could not find merge-base, using $RANGE"
                 fi
