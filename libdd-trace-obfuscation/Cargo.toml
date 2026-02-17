@@ -18,7 +18,7 @@ url = "2.4.0"
 percent-encoding = "2.1"
 log = "0.4"
 libdd-trace-protobuf = { version = "1.0.1", path = "../libdd-trace-protobuf" }
-libdd-trace-utils = { version = "1.0.0", path = "../libdd-trace-utils" }
+libdd-trace-utils = { version = "1.0.1", path = "../libdd-trace-utils" }
 libdd-common = { version = "1.1.1", path = "../libdd-common" }
 
 [dev-dependencies]
