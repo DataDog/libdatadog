@@ -460,7 +460,10 @@ mod tests {
         .unwrap()
     }
 
-    fn new_test_uploader_with_process_tags(seed: u64, process_tags: &str) -> TelemetryCrashUploader {
+    fn new_test_uploader_with_process_tags(
+        seed: u64,
+        process_tags: &str,
+    ) -> TelemetryCrashUploader {
         let mut metadata = Metadata::test_instance(seed);
         metadata.tags.push(format!("process_tags:{process_tags}"));
         TelemetryCrashUploader::new(
@@ -499,10 +502,8 @@ mod tests {
             p
         };
         let seed = 1;
-        let mut t = new_test_uploader_with_process_tags(
-            seed,
-            "entrypoint.name:cli,entrypoint.type:script",
-        );
+        let mut t =
+            new_test_uploader_with_process_tags(seed, "entrypoint.name:cli,entrypoint.type:script");
 
         t.cfg
             .set_host_from_url(&format!("file://{}", output_filename.to_str().unwrap()))
