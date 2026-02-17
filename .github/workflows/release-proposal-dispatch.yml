@@ -182,6 +182,12 @@ jobs:
           # Get commits since release for each crate and save to file
           ./scripts/commits-since-release.sh "$(cat /tmp/crates.json)" > /tmp/commits-by-crate.json
           
+          echo "HEAD hash:"
+          git rev-parse HEAD
+          
+          echo "ORIGINAL_HEAD hash:"
+          git rev-parse "${{ github.sha }}"
+
           # Display json output
           jq . /tmp/commits-by-crate.json
 
@@ -306,7 +312,7 @@ jobs:
             NEXT_TAG="$TAG_PREFIX$NEXT_VERSION"
 
             # Check what commits git sees in the range
-            echo "Commits in the range $RANGE:"
+            echo "Commits in the range $RANGE filtered by $CRATE_PATH:"
             git log --oneline "$RANGE" -- "$CRATE_PATH/"
 
             echo "Executing git cliff for $NAME since $RANGE, next tag: $NEXT_TAG..."
