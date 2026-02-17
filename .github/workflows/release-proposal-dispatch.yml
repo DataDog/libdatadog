@@ -212,14 +212,13 @@ jobs:
           
       - name: Release version bumps
         id: release-version-bumps
-        env:
-          ORIGINAL_HEAD: ${{ github.sha }}
         run: |
           echo "Release version bumps..."
 
           # Initialize results array
           echo "[]" > /tmp/api-changes.json
 
+          ORIGINAL_HEAD=$(git rev-parse HEAD)
           BRANCH_NAME="${{ steps.proposal-branch.outputs.branch_name }}"
 
           # iterate over the commits and execute cargo release for each crate
