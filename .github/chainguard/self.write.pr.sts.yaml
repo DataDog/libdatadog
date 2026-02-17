@@ -4,8 +4,8 @@ subject_pattern: "repo:DataDog/libdatadog.*"
 
 claim_pattern:
   ref: "refs/heads/(main|release|igor/.*|julio/.*)"
-  ref_protected: "true"
-  email: ".*@datadoghq.com"
+  # TODO: commented to debug changelog generation.
+  # ref_protected: "true"
   # job_workflow_ref: DataDog/libdatadog/\.github/workflows/release-proposal-dispatch\.yml@.+
 
 permissions:
