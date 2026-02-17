@@ -33,7 +33,7 @@ tracing = { version = "0.1", default-features = false }
 uuid = { version = "1.3", features = ["v4"] }
 hashbrown = "0.15"
 
-libdd-common = { version = "1.1.0", path = "../libdd-common", default-features = false }
+libdd-common = { version = "1.1.1", path = "../libdd-common", default-features = false }
 libdd-ddsketch = { version = "1.0.0", path = "../libdd-ddsketch" }
 
 [target."cfg(unix)".dependencies]
