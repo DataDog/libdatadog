@@ -113,7 +113,7 @@ jobs:
 
       - name: Merge the main branch into the release branch
         run: |
-          git fetch origin "${{ env.RELEASE_BRANCH }}" --tags
+          git fetch origin "${{ env.MAIN_BRANCH }}" "${{ env.RELEASE_BRANCH }}" --tags
           git checkout "${{ env.RELEASE_BRANCH }}"
 
           if ! git merge origin/"${{ env.MAIN_BRANCH }}"; then
@@ -200,7 +200,7 @@ jobs:
           TIMESTAMP=$(date +%Y%m%d-%H%M%S)
           BRANCH_NAME="${{ env.PROPOSAL_BRANCH_PREFIX }}/${{ inputs.crate }}/$TIMESTAMP"
           git checkout -b "$BRANCH_NAME"
-          git push origin "$BRANCH_NAME"
+          git push origin "$BRANCH_NAME" --tags
           echo "Branch created: $BRANCH_NAME from ${{ env.RELEASE_BRANCH }} branch"
           echo "branch_name=$BRANCH_NAME" >> "$GITHUB_OUTPUT"
           
