@@ -80,4 +80,66 @@ mod tests {
         let err = result.unwrap_err();
         assert!(err.to_string().contains("Unsupported endpoint scheme"));
     }
+
+    /// Helper function to test DNS resolution thread spawning behavior.
+    ///
+    /// This function performs DNS resolution using a reqwest client and checks
+    /// that no additional threads are spawned. The `expected` parameter reflects the
+    /// fact that there are still some threads spawned we need to understand.
+    async fn test_dns_resolution_thread_behavior(expected: usize) {
+        use libdd_common::test_utils::count_active_threads;
+
+        // Count threads before DNS resolution
+        let threads_before = count_active_threads().expect("Failed to count threads before");
+
+        // Create an endpoint that will trigger DNS resolution
+        // Using httpbin.org which is a reliable test service
+        let endpoint = Endpoint::from_slice("https://httpbin.org").with_timeout(5000);
+
+        // Build reqwest client from endpoint
+        let (builder, url) = endpoint
+            .to_reqwest_client_builder()
+            .expect("Failed to create reqwest client builder");
+        assert_eq!(threads_before, count_active_threads().unwrap());
+
+        let client = builder.build().expect("Failed to build reqwest client");
+        assert_eq!(threads_before, count_active_threads().unwrap());
+
+        // Make a request that will trigger DNS resolution
+        // The request may succeed or fail, but DNS resolution will definitely happen
+        let _ = client.get(format!("{url}/get")).send().await;
+        assert_eq!(threads_before + expected, count_active_threads().unwrap());
+
+        // Give any potential threads a moment to spawn if they were going to
+        tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
+        assert_eq!(threads_before + expected, count_active_threads().unwrap());
+    }
+
+    #[tokio::test]
+    #[cfg_attr(miri, ignore)]
+    async fn test_dns_resolution_does_not_spawn_threads() {
+        // TODO: switching to hickory-dns reduced this from 3-2, but we still need to figure
+        // out where the 2 is coming from.
+        test_dns_resolution_thread_behavior(2).await;
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_dns_resolution_does_not_spawn_threads_single_threaded() {
+        // Create a single-threaded tokio runtime without the blocking thread pool
+        // to avoid any background threads being spawned
+        // I had hoped this would prevent extra threads in the test, it doesn't.
+        // But still useful as a test.
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_io()
+            .enable_time()
+            .build()
+            .expect("Failed to create single-threaded runtime");
+
+        // TODO: switching to hickory-dns reduced this from 3-2, but we still need to figure
+        // out where the 2 is coming from.
+        rt.block_on(async {
+            test_dns_resolution_thread_behavior(2).await;
+        });
+    }
 }

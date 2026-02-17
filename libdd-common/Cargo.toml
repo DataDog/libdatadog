@@ -35,7 +35,7 @@ bytes = { version = "1.4", optional = true }
 pin-project = "1"
 rand = { version = "0.8", optional = true }
 regex = "1.5"
-reqwest = { version = "0.13", features = ["rustls"], default-features = false, optional = true }
+reqwest = { version = "0.13", features = ["rustls", "hickory-dns"], default-features = false, optional = true }
 rustls-native-certs = { version = "0.8.1", optional = true }
 thiserror = "1.0"
 tokio = { version = "1.23", features = ["rt", "macros", "net", "io-util", "fs"] }
@@ -47,7 +47,7 @@ const_format = "0.2.34"
 nix = { version = "0.29", features = ["process"] }
 [target.'cfg(windows)'.dependencies.windows-sys]
 version = "0.52"
-features = ["Win32_Foundation", "Win32_System_Performance"]
+features = ["Win32_Foundation", "Win32_System_Performance", "Win32_System_Diagnostics_ToolHelp"]
 
 [target.'cfg(unix)'.dependencies]
 rustls = { version = "0.23", default-features = false, optional = true, features = ["aws-lc-rs"] }
