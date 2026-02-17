@@ -322,6 +322,10 @@ impl Endpoint {
     /// - `windows`: Windows named pipes (Windows only)
     /// - `file`: File dump endpoints for debugging (spawns a local server to capture requests)
     ///
+    /// DNS resolution uses the system resolver unless the `DD_USE_HICKORY_DNS` environment
+    /// variable is set to a truthy value (`1`, `true`, or `yes`), in which case the hickory-dns
+    /// resolver is used.
+    ///
     /// # Returns
     /// A tuple of (ClientBuilder, request_url) where:
     /// - ClientBuilder is configured with the appropriate transport and timeout
@@ -338,6 +342,15 @@ impl Endpoint {
 
         let mut builder =
             reqwest::Client::builder().timeout(std::time::Duration::from_millis(self.timeout_ms));
+
+        // DNS resolver: use hickory only when DD_USE_HICKORY_DNS is set to a truthy value
+        // (e.g. 1, true, yes). Otherwise use the system resolver.
+        let use_hickory = std::env::var("DD_USE_HICKORY_DNS")
+            .ok()
+            .as_ref()
+            .map(|s| matches!(s.trim().to_lowercase().as_str(), "1" | "true" | "yes"))
+            .unwrap_or(false);
+        builder = builder.hickory_dns(use_hickory);
 
         let request_url = match self.url.scheme_str() {
             // HTTP/HTTPS endpoints

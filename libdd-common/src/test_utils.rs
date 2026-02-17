@@ -50,6 +50,45 @@ impl AsRef<std::path::Path> for TempFileGuard {
     }
 }
 
+/// RAII guard that restores an environment variable to its previous value when dropped.
+///
+/// # Example
+/// ```no_run
+/// use libdd_common::test_utils::EnvGuard;
+///
+/// let _guard = EnvGuard::set("MY_VAR", "value");
+/// // MY_VAR is set to "value"; when _guard drops, it is restored
+/// ```
+pub struct EnvGuard {
+    key: &'static str,
+    saved: Option<String>,
+}
+
+impl EnvGuard {
+    /// Set the environment variable to the given value. The previous value (if any) is restored on drop.
+    pub fn set(key: &'static str, value: &str) -> Self {
+        let saved = std::env::var(key).ok();
+        std::env::set_var(key, value);
+        EnvGuard { key, saved }
+    }
+
+    /// Remove the environment variable. The previous value (if any) is restored on drop.
+    pub fn remove(key: &'static str) -> Self {
+        let saved = std::env::var(key).ok();
+        std::env::remove_var(key);
+        EnvGuard { key, saved }
+    }
+}
+
+impl Drop for EnvGuard {
+    fn drop(&mut self) {
+        match &self.saved {
+            Some(s) => std::env::set_var(self.key, s),
+            None => std::env::remove_var(self.key),
+        }
+    }
+}
+
 /// Create a unique temporary file path with the given prefix
 ///
 /// The path will be in the system temp directory with a unique name based on

@@ -3,7 +3,7 @@
 
 #[cfg(feature = "reqwest")]
 mod tests {
-    use libdd_common::test_utils::{create_temp_file_path, parse_http_request};
+    use libdd_common::test_utils::{create_temp_file_path, parse_http_request, EnvGuard};
     use libdd_common::Endpoint;
 
     /// Helper to send a simple HTTP request and return the response
@@ -79,5 +79,49 @@ mod tests {
         assert!(result.is_err());
         let err = result.unwrap_err();
         assert!(err.to_string().contains("Unsupported endpoint scheme"));
+    }
+
+    /// Client resolves host via hickory when DD_USE_HICKORY_DNS is set.
+    /// Uses http://example.com/ so DNS is actually exercised; example.com is reserved by
+    /// RFC 2606 for documentation and testing. These tests require network access.
+    #[tokio::test]
+    #[cfg_attr(miri, ignore)]
+    async fn test_hickory_dns_env_enabled() {
+        let _guard = EnvGuard::set("DD_USE_HICKORY_DNS", "1");
+        let endpoint = Endpoint::from_slice("http://example.com/");
+
+        let (builder, url) = endpoint
+            .to_reqwest_client_builder()
+            .expect("should build client");
+        let client = builder.build().expect("should create client");
+
+        let response = client.get(&url).send().await.expect("request should succeed");
+        assert!(
+            response.status().is_success() || response.status().is_redirection(),
+            "status: {}",
+            response.status()
+        );
+    }
+
+    /// Client resolves host via system resolver when DD_USE_HICKORY_DNS is unset.
+    /// Uses http://example.com/ so DNS is actually exercised; example.com is reserved by
+    /// RFC 2606 for documentation and testing. These tests require network access.
+    #[tokio::test]
+    #[cfg_attr(miri, ignore)]
+    async fn test_hickory_dns_env_disabled() {
+        let _guard = EnvGuard::remove("DD_USE_HICKORY_DNS");
+        let endpoint = Endpoint::from_slice("http://example.com/");
+
+        let (builder, url) = endpoint
+            .to_reqwest_client_builder()
+            .expect("should build client");
+        let client = builder.build().expect("should create client");
+
+        let response = client.get(&url).send().await.expect("request should succeed");
+        assert!(
+            response.status().is_success() || response.status().is_redirection(),
+            "status: {}",
+            response.status()
+        );
     }
 }
