@@ -191,6 +191,7 @@ jobs:
           ORIGINAL_HEAD=$(cat /tmp/release_head_sha)
           jq -c '.[]' /tmp/commits-by-crate.json | while read -r crate; do
             TAG=$(echo "$crate" | jq -r '.tag')
+            echo "Tag: $TAG"
             if git merge-base --is-ancestor "$TAG" "$ORIGINAL_HEAD" 2>/dev/null; then
               echo "  Tag is ancestor of HEAD, using $ORIGINAL_HEAD"
             else
@@ -230,6 +231,15 @@ jobs:
         id: release-version-bumps
         run: |
           echo "Release version bumps..."
+
+          # After creating and pushing the proposal branch, tag/merge-base resolution can fail
+          # (tags no longer seen as ancestors of release_head_sha). Re-fetch release and tags,
+          # and unshallow if needed, so we have full history and tag refs for the rest of the step.
+          git fetch origin "${{ env.RELEASE_BRANCH }}" --tags
+          if [ "$(git rev-parse --is-shallow-repository)" = "true" ]; then
+            echo "Repository is shallow, fetching full history..."
+            git fetch --unshallow
+          fi
 
           # Initialize results array
           echo "[]" > /tmp/api-changes.json
