@@ -557,7 +557,7 @@ pub fn enrich_span_with_azure_function_metadata(span: &mut pb::Span) {
     if let Some(aas_metadata) = &*azure_app_services::AAS_METADATA_FUNCTION {
         span.meta.extend(
             aas_metadata
-                .get_all_tags()
+                .get_function_tags()
                 .map(|(name, value)| (name.to_string(), value.to_string())),
         );
     }
@@ -1237,7 +1237,6 @@ mod tests {
         // This test primarily ensures the function doesn't skip non-apim spans
         if azure_app_services::AAS_METADATA_FUNCTION.is_some() {
             assert!(span.meta.contains_key("aas.resource.id"));
-            assert!(span.meta.contains_key("aas.environment.extension_version"));
             assert!(span.meta.contains_key("aas.environment.instance_id"));
             assert!(span.meta.contains_key("aas.environment.instance_name"));
             assert!(span.meta.contains_key("aas.subscription.id"));
@@ -1261,7 +1260,6 @@ mod tests {
 
         // Verify no aas.* tags were added
         assert!(!span.meta.contains_key("aas.resource.id"));
-        assert!(!span.meta.contains_key("aas.environment.extension_version"));
         assert!(!span.meta.contains_key("aas.environment.instance_id"));
         assert!(!span.meta.contains_key("aas.environment.instance_name"));
         assert!(!span.meta.contains_key("aas.subscription.id"));

@@ -110,7 +110,7 @@ impl ProfileExporter {
 
         // Add Azure App Services tags if available
         if let Some(aas) = &*azure_app_services::AAS_METADATA {
-            let aas_tags_iter = aas.get_all_tags();
+            let aas_tags_iter = aas.get_app_service_tags();
             tags.try_reserve(aas_tags_iter.len())?;
             tags.extend(aas_tags_iter.filter_map(|(name, value)| Tag::new(name, value).ok()));
         }
