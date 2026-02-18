@@ -1,6 +1,24 @@
 # Changelog
 
 
+
+## [1.2.0](https://github.com/datadog/libdatadog/compare/libdd-common-v1.1.0..libdd-common-v1.2.0) - 2026-02-18
+
+### Added
+
+- Add current thread id API ([#1569](https://github.com/datadog/libdatadog/issues/1569)) - ([367c8b2](https://github.com/datadog/libdatadog/commit/367c8b24f8c4b75fdbe431ad572ae71cb94fdfa5))
+- Unify Azure tags ([#1553](https://github.com/datadog/libdatadog/issues/1553)) - ([aa58f2d](https://github.com/datadog/libdatadog/commit/aa58f2d7f6db9278f94d9a9034caf215b90ccbe0))
+- Single source of truth for headers (fixes issue in profiling with missing headers) ([#1493](https://github.com/datadog/libdatadog/issues/1493)) - ([9f2417e](https://github.com/datadog/libdatadog/commit/9f2417e1a472d433eddc2adeeb0c19ec2cb8b53a))
+
+### Changed
+
+- Merge remote-tracking branch 'origin/main' into release - ([4ff588e](https://github.com/datadog/libdatadog/commit/4ff588ef17b11276ffc3235c5eee7e72b67eb2c1))
+- Merge remote-tracking branch 'origin/main' into release - ([3262c12](https://github.com/datadog/libdatadog/commit/3262c1272da5e94b8a7cc36ae5c34b551492d9f2))
+- Merge remote-tracking branch 'origin/main' into release - ([4591b42](https://github.com/datadog/libdatadog/commit/4591b420e3b242770c862ae48d640b486009760c))
+- Switch from multipart to multer to resolve deprecation warnings and dependabot alerts ([#1540](https://github.com/datadog/libdatadog/issues/1540)) - ([0d804b3](https://github.com/datadog/libdatadog/commit/0d804b39c0bfb7315f59f097a3702f1b70aa191a))
+- Make reqwest available in common ([#1504](https://github.com/datadog/libdatadog/issues/1504)) - ([7986270](https://github.com/datadog/libdatadog/commit/7986270b124c313a71ae28ae415201ec3ccd794b))
+
+
 ## [1.1.0](https://github.com/datadog/libdatadog/compare/libdd-common-v1.0.0..libdd-common-v1.1.0) - 2026-01-20
 
 ### Added
