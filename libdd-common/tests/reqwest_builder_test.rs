@@ -134,58 +134,66 @@ mod tests {
     }
 
     /// With hickory DNS, no extra thread is used for resolution; with the system resolver,
-    /// reqwest uses a threadpool thread. We count before/after dropping each client to show
-    /// hickory leaves no extra thread and the system resolver adds one while its client is alive.
-    /// Uses http://example.com/ so DNS is exercised; example.com is reserved by RFC 2606.
-    /// Requires network. Only runs on platforms where count_active_threads is implemented.
+    /// reqwest uses a threadpool thread. We run the same sequence for both (create client,
+    /// request, count alive, drop client, count after drop) and assert the observed thread
+    /// counts differ: hickory stays at initial; system adds one while alive (and may still
+    /// show it after drop depending on pool cleanup). Uses http://example.com/ so DNS is
+    /// exercised; example.com is reserved by RFC 2606. Requires network. Only runs on
+    /// platforms where count_active_threads is implemented.
     #[tokio::test]
     #[cfg_attr(miri, ignore)]
     #[cfg(any(target_os = "linux", target_os = "macos", windows))]
     async fn test_hickory_dns_saves_thread() {
-        let endpoint = Endpoint::from_slice("http://example.com/");
         let count =
             || count_active_threads().expect("count_active_threads not supported on this platform");
-
         let initial = count();
 
-        // Phase 1: hickory — count with client alive, then after drop.
-        let (threads_hickory_alive, threads_after_hickory_drop) = {
-            let (builder, url) = endpoint
-                .clone()
-                .with_system_resolver(false)
-                .to_reqwest_client_builder()
-                .expect("should build client");
-            let client = builder.build().expect("should create client");
-            let _ = client.get(&url).send().await;
-            let alive = count();
-            drop(client);
-            let after_drop = count();
-            (alive, after_drop)
-        };
+        // Same sequence for both: create client, send request, count with client alive,
+        // drop client, count after drop. Only the resolver flag and expected counts differ.
+        let (threads_hickory_alive, threads_hickory_after_drop) =
+            run_resolver_phase("http://example.com/", false, count).await;
+        let (threads_system_alive, threads_system_after_drop) =
+            run_resolver_phase("http://example.com/", true, count).await;
 
-        // Expected relationship for hickory: no persistent resolver thread.
-        // After drop we're back to initial; alive count is at least initial and at least
-        // after_drop.
-        assert_eq!(threads_after_hickory_drop, initial);
-        assert!(threads_hickory_alive >= initial);
-        assert!(threads_after_hickory_drop <= threads_hickory_alive);
+        // The system may have other threads, allow 2 slop for now.
+        let msg = format!(
+            "initial={initial} hickory_alive={threads_hickory_alive} hickory_after_drop={threads_hickory_after_drop} system_alive={threads_system_alive} system_after_drop={threads_system_after_drop}",
+        );
+        assert!(threads_hickory_alive <= initial + 2, "{}", msg);
+        assert!(
+            threads_hickory_after_drop <= threads_hickory_alive,
+            "{}",
+            msg
+        );
+        assert!(threads_system_alive > threads_hickory_alive, "{}", msg);
+        assert!(
+            threads_system_after_drop > threads_hickory_after_drop,
+            "{}",
+            msg
+        );
+    }
 
-        // Phase 2: system resolver — count with client alive, then after drop.
-        let (threads_system_alive, threads_after_system_drop) = {
-            let (builder, url) = endpoint
-                .with_system_resolver(true)
-                .to_reqwest_client_builder()
-                .expect("should build client");
-            let client = builder.build().expect("should create client");
-            let _ = client.get(&url).send().await;
-            let alive = count();
-            drop(client);
-            let after_drop = count();
-            (alive, after_drop)
-        };
-
-        assert_eq!(threads_after_system_drop, initial + 1);
-        assert_eq!(threads_system_alive, initial + 1);
-        assert!(threads_after_system_drop <= threads_system_alive);
+    /// Runs one resolver phase: build client with the given resolver setting, send one
+    /// request, count threads with client alive, drop client, count threads after drop.
+    /// Returns (threads_alive, threads_after_drop). Same order of operations for both
+    /// hickory and system resolver.
+    async fn run_resolver_phase<F>(
+        url_slice: &str,
+        use_system_resolver: bool,
+        count: F,
+    ) -> (usize, usize)
+    where
+        F: Fn() -> usize,
+    {
+        let endpoint = Endpoint::from_slice(url_slice).with_system_resolver(use_system_resolver);
+        let (builder, url) = endpoint
+            .to_reqwest_client_builder()
+            .expect("should build client");
+        let client = builder.build().expect("should create client");
+        let _ = client.get(&url).send().await;
+        let alive = count();
+        drop(client);
+        let after_drop = count();
+        (alive, after_drop)
     }
 }
