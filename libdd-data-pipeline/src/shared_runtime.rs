@@ -35,10 +35,10 @@ pub struct WorkerHandle {
 }
 
 impl WorkerHandle {
-    /// Stop the worker and call it's shutdown logic.
+    /// Stop the worker, call it's shutdown logic and remove it from the worker list.
     ///
     /// # Errors
-    /// Returns an error if the worker does not exist anymore or is already stopped.
+    /// Returns an error if the worker does not exist anymore.
     pub async fn stop(self) -> Result<(), SharedRuntimeError> {
         let mut workers_lock = self.workers.lock_or_panic();
         let Some(position) = workers_lock
@@ -46,12 +46,12 @@ impl WorkerHandle {
             .position(|entry| entry.id == self.worker_id)
         else {
             return Err(SharedRuntimeError::Other(
-                "Worker not found or already stopped".to_string(),
+                "Worker has already been stopped".to_string(),
             ));
         };
-        workers_lock[position].worker.pause().await?;
-        workers_lock[position].worker.shutdown().await;
-        workers_lock[position].worker = PausableWorker::Stopped;
+        let WorkerEntry { mut worker, .. } = workers_lock.swap_remove(position);
+        worker.pause().await?;
+        worker.shutdown().await;
         Ok(())
     }
 }
@@ -225,12 +225,7 @@ impl SharedRuntime {
 
         // Restart all workers
         for worker_entry in workers_lock.iter_mut() {
-            if let Err(err) = worker_entry.worker.start(runtime) {
-                // Ignore worker not started because they are stopped
-                if !matches!(err, PausableWorkerError::WorkerStopped) {
-                    return Err(err.into());
-                }
-            }
+            worker_entry.worker.start(runtime)?;
         }
 
         Ok(())
@@ -257,11 +252,7 @@ impl SharedRuntime {
         // Restart all workers in child process
         for worker_entry in workers_lock.iter_mut() {
             worker_entry.worker.reset();
-            if let Err(err) = worker_entry.worker.start(runtime) {
-                if !matches!(err, PausableWorkerError::WorkerStopped) {
-                    return Err(err.into());
-                }
-            }
+            worker_entry.worker.start(runtime)?;
         }
 
         Ok(())
@@ -357,7 +348,7 @@ mod tests {
     }
 
     #[test]
-    fn test_worker_handle_stop_marks_worker_stopped() {
+    fn test_worker_handle_stop_removes_worker() {
         let rt = tokio::runtime::Runtime::new().unwrap();
         let shared_runtime = SharedRuntime::new().unwrap();
         let (sender, _receiver) = channel::<u32>();
@@ -370,9 +361,7 @@ mod tests {
             assert!(handle.stop().await.is_ok());
         });
 
-        let workers_lock = shared_runtime.workers.lock_or_panic();
-        assert_eq!(workers_lock.len(), 1);
-        assert!(matches!(workers_lock[0].worker, PausableWorker::Stopped));
+        assert_eq!(shared_runtime.workers.lock_or_panic().len(), 0);
     }
 
     #[test]

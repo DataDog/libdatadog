@@ -31,7 +31,6 @@ pub enum PausableWorker<T: Worker + Send + Sync + 'static> {
     Paused {
         worker: T,
     },
-    Stopped,
     InvalidState,
 }
 
@@ -39,7 +38,6 @@ pub enum PausableWorker<T: Worker + Send + Sync + 'static> {
 pub enum PausableWorkerError {
     InvalidState,
     TaskAborted,
-    WorkerStopped,
 }
 
 impl Display for PausableWorkerError {
@@ -50,9 +48,6 @@ impl Display for PausableWorkerError {
             }
             PausableWorkerError::TaskAborted => {
                 write!(f, "Worker task has been aborted and state has been lost.")
-            }
-            PausableWorkerError::WorkerStopped => {
-                write!(f, "Worker has been definitely stopped")
             }
         }
     }
@@ -73,44 +68,49 @@ impl<T: Worker + Send + Sync + 'static> PausableWorker<T> {
     /// # Errors
     /// Fails if the worker is in an invalid state.
     pub fn start(&mut self, rt: &Runtime) -> Result<(), PausableWorkerError> {
-        if let Self::Running { .. } = self {
-            Ok(())
-        } else if let Self::Stopped = self {
-            Err(PausableWorkerError::WorkerStopped)
-        } else if let Self::Paused { mut worker } = std::mem::replace(self, Self::InvalidState) {
-            // Worker is temporarily in an invalid state, but since this block is failsafe it will
-            // be replaced by a valid state.
-            let stop_token = CancellationToken::new();
-            let cloned_token = stop_token.clone();
-            let handle = rt.spawn(async move {
-                // First iteration: use initial_trigger
-                select! {
-                    _ = worker.initial_trigger() => {
-                        worker.run().await;
-                    }
-                    _ = cloned_token.cancelled() => {
-                        return worker;
-                    }
-                }
+        match self {
+            PausableWorker::Running { .. } => Ok(()),
+            PausableWorker::Paused { .. } => {
+                let PausableWorker::Paused { mut worker } =
+                    std::mem::replace(self, PausableWorker::InvalidState)
+                else {
+                    // Unreachable
+                    return Ok(());
+                };
 
-                // Subsequent iterations: use regular trigger
-                loop {
+                // Worker is temporarily in an invalid state, but since this block is failsafe it
+                // will be replaced by a valid state.
+                let stop_token = CancellationToken::new();
+                let cloned_token = stop_token.clone();
+                let handle = rt.spawn(async move {
+                    // First iteration using initial_trigger
                     select! {
-                        _ = worker.trigger() => {
+                        _ = worker.initial_trigger() => {
                             worker.run().await;
                         }
                         _ = cloned_token.cancelled() => {
-                            break;
+                            return worker;
                         }
                     }
-                }
-                worker
-            });
 
-            *self = PausableWorker::Running { handle, stop_token };
-            Ok(())
-        } else {
-            Err(PausableWorkerError::InvalidState)
+                    // Regular iterations
+                    loop {
+                        select! {
+                            _ = worker.trigger() => {
+                                worker.run().await;
+                            }
+                            _ = cloned_token.cancelled() => {
+                                break;
+                            }
+                        }
+                    }
+                    worker
+                });
+
+                *self = PausableWorker::Running { handle, stop_token };
+                Ok(())
+            }
+            PausableWorker::InvalidState => Err(PausableWorkerError::InvalidState),
         }
     }
 
@@ -127,7 +127,6 @@ impl<T: Worker + Send + Sync + 'static> PausableWorker<T> {
                 Ok(())
             }
             PausableWorker::Paused { .. } => Ok(()),
-            PausableWorker::Stopped => Ok(()),
             PausableWorker::InvalidState => Err(PausableWorkerError::InvalidState),
         }
     }
@@ -155,7 +154,7 @@ impl<T: Worker + Send + Sync + 'static> PausableWorker<T> {
                     Err(PausableWorkerError::TaskAborted)
                 }
             }
-            PausableWorker::Paused { .. } | PausableWorker::Stopped => Ok(()),
+            PausableWorker::Paused { .. } => Ok(()),
             PausableWorker::InvalidState => Err(PausableWorkerError::InvalidState),
         }
     }
@@ -181,7 +180,6 @@ impl<T: Worker + Send + Sync + 'static> PausableWorker<T> {
         if let PausableWorker::Paused { worker } = self {
             worker.shutdown().await;
         }
-        *self = PausableWorker::Stopped;
     }
 }
 
@@ -197,6 +195,7 @@ mod tests {
     };
 
     /// Test worker incrementing the state and sending it with the sender.
+    #[derive(Debug)]
     struct TestWorker {
         state: u32,
         sender: Sender<u32>,
