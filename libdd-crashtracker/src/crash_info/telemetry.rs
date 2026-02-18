@@ -208,6 +208,7 @@ impl TelemetryCrashUploader {
             "runtime-id" => runtime_id,
             "service_version" => service_version,
             "service" => service_name,
+            "process_tags" => process_tags,
         );
 
         let application = Application {
@@ -220,6 +221,7 @@ impl TelemetryCrashUploader {
                 .to_owned(),
             env: env.map(ToOwned::to_owned),
             service_version: service_version.map(ToOwned::to_owned),
+            process_tags: process_tags.map(ToOwned::to_owned),
             ..Default::default()
         };
 
@@ -458,6 +460,19 @@ mod tests {
         .unwrap()
     }
 
+    fn new_test_uploader_with_process_tags(
+        seed: u64,
+        process_tags: &str,
+    ) -> TelemetryCrashUploader {
+        let mut metadata = Metadata::test_instance(seed);
+        metadata.tags.push(format!("process_tags:{process_tags}"));
+        TelemetryCrashUploader::new(
+            &metadata,
+            &Some(Endpoint::from_slice("http://localhost:8126")),
+        )
+        .unwrap()
+    }
+
     #[test]
     #[cfg_attr(miri, ignore)]
     fn test_profiler_config_extraction() {
@@ -467,6 +482,7 @@ mod tests {
         assert_eq!(metadata.application.service_name, "foo");
         assert_eq!(metadata.application.service_version.as_deref(), Some("bar"));
         assert_eq!(metadata.application.language_name, "native");
+        assert_eq!(metadata.application.process_tags, None);
         assert_eq!(metadata.runtime_id, "xyz");
         let cfg = t.cfg;
         assert_eq!(
@@ -486,7 +502,8 @@ mod tests {
             p
         };
         let seed = 1;
-        let mut t = new_test_uploader(seed);
+        let mut t =
+            new_test_uploader_with_process_tags(seed, "entrypoint.name:cli,entrypoint.type:script");
 
         t.cfg
             .set_host_from_url(&format!("file://{}", output_filename.to_str().unwrap()))
@@ -501,6 +518,10 @@ mod tests {
         assert_eq!(payload["application"]["language_name"], "native");
         assert_eq!(payload["application"]["service_name"], "foo");
         assert_eq!(payload["application"]["service_version"], "bar");
+        assert_eq!(
+            payload["application"]["process_tags"],
+            "entrypoint.name:cli,entrypoint.type:script"
+        );
         assert_eq!(payload["request_type"], "logs");
         assert_eq!(payload["tracer_time"], 1568898000);
         assert_eq!(payload["origin"], "Crashtracker");

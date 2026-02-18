@@ -243,6 +243,28 @@ pub fn set_session_config(
     })
 }
 
+/// Updates the process tags for an existing session.
+///
+/// # Arguments
+///
+/// * `transport` - The transport used for communication.
+/// * `session_id` - The ID of the session.
+/// * `process_tags` - The process tags string to set.
+///
+/// # Returns
+///
+/// An `io::Result<()>` indicating the result of the operation.
+pub fn set_session_process_tags(
+    transport: &mut SidecarTransport,
+    session_id: String,
+    process_tags: String,
+) -> io::Result<()> {
+    transport.send(SidecarInterfaceRequest::SetSessionProcessTags {
+        session_id,
+        process_tags,
+    })
+}
+
 /// Sends a trace as bytes.
 ///
 /// # Arguments

@@ -15,9 +15,7 @@ body = """
 {%- endmacro -%}
 
 {% macro print_commit(commit, strip_body=false) -%}
-    - {% if commit.scope %}*({{ commit.scope }})* {% endif %}\
-        {% if commit.breaking %}[**breaking**] {% endif %}\
-        {% if strip_body %}{{ commit.message | split(pat="\n") | first | upper_first }}{% else %}{{ commit.message | upper_first }}{% endif %} - \
+    - {% if strip_body %}{{ commit.message | split(pat="\n") | first | upper_first }}{% else %}{{ commit.message | upper_first }}{% endif %} - \
         ([{{ commit.id | truncate(length=7, end="") }}]({{ self::remote_url() }}/commit/{{ commit.id }}))\
 {% endmacro -%}
 
@@ -87,7 +85,7 @@ commit_parsers = [
   { message = "^feat", group = "<!-- A -->Added" },
   { message = "^fix", group = "<!-- C -->Fixed" },
   { message = "^refactor\\(clippy\\)", skip = true },
-  { message = "^chore\\(release\\): prepare for", skip = true },
+  { message = "^chore\\(release\\)", skip = true },
   { message = "^chore: Release", skip = true },
   { message = "^chore\\(deps.*\\)", skip = true },
   { message = "^chore\\(pr\\)", skip = true },
