@@ -116,10 +116,7 @@ async fn fetch_and_hash_response(
     }
 
     let client = DefaultHttpClient::new_client();
-    let res = client
-        .request(req)
-        .await
-        .map_err(|e| anyhow!("{}", e))?;
+    let res = client.request(req).await.map_err(|e| anyhow!("{}", e))?;
 
     let body_data = bytes::Bytes::from(res.body);
     // TODO: extract Datadog-Container-Tags-Hash once HttpResponse includes headers

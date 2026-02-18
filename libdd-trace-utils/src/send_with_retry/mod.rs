@@ -8,9 +8,9 @@ mod retry_strategy;
 pub use retry_strategy::{RetryBackoffType, RetryStrategy};
 
 use http::HeaderMap;
-use libdd_common::Endpoint;
 use libdd_capabilities::{HttpClientTrait, HttpError, HttpRequest, HttpResponse};
 use libdd_capabilities_impl::DefaultHttpClient;
+use libdd_common::Endpoint;
 use std::time::Duration;
 use tracing::{debug, error};
 
