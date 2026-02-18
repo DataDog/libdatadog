@@ -761,18 +761,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "capabilities"
-version = "0.1.0"
-source = "git+https://github.com/DataDog/libdatadog-nodejs.git?branch=jwiriath%2Flibdatadog-wasm-effort#da34b4cb9ce327ce9122f0b16097565d5080ee23"
-dependencies = [
- "js-sys",
- "libdd-capabilities 0.1.0 (git+https://github.com/DataDog/libdatadog.git?branch=jwiriath%2Fcapability-traits-architecture)",
- "serde_json",
- "wasm-bindgen",
- "wasm-bindgen-futures",
-]
-
-[[package]]
 name = "cargo-platform"
 version = "0.1.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2883,9 +2871,14 @@ name = "libdd-capabilities"
 version = "0.1.0"
 
 [[package]]
-name = "libdd-capabilities"
+name = "libdd-capabilities-impl"
 version = "0.1.0"
-source = "git+https://github.com/DataDog/libdatadog.git?branch=jwiriath%2Fcapability-traits-architecture#624bdacf986e654510df6ebcf2f39ca42594dba0"
+dependencies = [
+ "http-body-util",
+ "hyper",
+ "libdd-capabilities",
+ "libdd-common",
+]
 
 [[package]]
 name = "libdd-common"
@@ -2908,7 +2901,7 @@ dependencies = [
  "hyper-util",
  "indexmap 2.12.1",
  "libc",
- "libdd-capabilities 0.1.0",
+ "libdd-capabilities",
  "maplit",
  "mime",
  "multer",
@@ -3015,11 +3008,12 @@ dependencies = [
  "http",
  "http-body-util",
  "httpmock",
+ "libdd-capabilities",
+ "libdd-capabilities-impl",
  "libdd-common",
  "libdd-ddsketch",
  "libdd-dogstatsd-client",
  "libdd-log",
- "libdd-provider",
  "libdd-telemetry",
  "libdd-tinybytes",
  "libdd-trace-protobuf",
@@ -3242,15 +3236,6 @@ dependencies = [
  "bolero",
  "libdd-profiling-protobuf",
  "prost",
-]
-
-[[package]]
-name = "libdd-provider"
-version = "0.1.0"
-dependencies = [
- "capabilities",
- "libdd-capabilities 0.1.0",
- "libdd-common",
 ]
 
 [[package]]

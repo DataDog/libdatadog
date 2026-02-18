@@ -30,8 +30,9 @@ tokio = { version = "1.23", features = [
 ], default-features = false }
 uuid = { version = "1.10.0", features = ["v4"] }
 tokio-util = "0.7.11"
+libdd-capabilities = { path = "../libdd-capabilities" }
+libdd-capabilities-impl = "0.1.0"
 libdd-common = { version = "3.0.2", path = "../libdd-common", default-features = false }
-libdd-provider = { version = "0.1.0", path = "../libdd-provider" }
 libdd-telemetry = { version = "4.0.0", path = "../libdd-telemetry", default-features = false }
 libdd-trace-protobuf = { version = "3.0.1", path = "../libdd-trace-protobuf" }
 libdd-trace-stats = { version = "2.0.0", path = "../libdd-trace-stats" }
