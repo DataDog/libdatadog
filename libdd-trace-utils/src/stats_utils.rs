@@ -74,7 +74,9 @@ mod mini_agent {
             .with_header("Content-Encoding", "gzip")
             .with_header("DD-API-KEY", api_key);
 
-        let response = DefaultHttpClient::request(req)
+        let client = DefaultHttpClient::new_client();
+        let response = client
+            .request(req)
             .await
             .map_err(|e| anyhow::anyhow!("Failed to send trace stats: {e}"))?;
 

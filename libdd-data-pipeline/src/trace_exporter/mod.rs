@@ -519,7 +519,8 @@ impl TraceExporter {
     ) -> Result<AgentResponse, TraceExporterError> {
         let transport_client = TransportClient::new(&self.metadata);
         let req = transport_client.build_trace_request(data, trace_count, uri);
-        match DefaultHttpClient::request(req).await {
+        let client = DefaultHttpClient::new_client();
+        match client.request(req).await {
             Ok(response) => {
                 // For proxy path, always 1 request attempt (no retry)
                 self.handle_proxy_response(response, trace_count, data.len())

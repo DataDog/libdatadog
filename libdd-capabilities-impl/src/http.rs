@@ -7,24 +7,25 @@ use http_body_util::BodyExt;
 use libdd_capabilities::http::{HttpClientTrait, HttpError, HttpRequest, HttpResponse};
 use libdd_capabilities::maybe_send::MaybeSend;
 use libdd_common::{connector::Connector, hyper_migration};
-use std::sync::OnceLock;
 
-static HTTP_CLIENT: OnceLock<hyper_migration::GenericHttpClient<Connector>> = OnceLock::new();
-
-fn get_client() -> &'static hyper_migration::GenericHttpClient<Connector> {
-    HTTP_CLIENT.get_or_init(hyper_migration::new_default_client)
+pub struct DefaultHttpClient {
+    client: hyper_migration::GenericHttpClient<Connector>,
 }
 
-pub struct DefaultHttpClient;
-
 impl HttpClientTrait for DefaultHttpClient {
+    fn new_client() -> Self {
+        Self {
+            client: hyper_migration::new_default_client(),
+        }
+    }
+
     #[allow(clippy::manual_async_fn)]
     fn request(
+        &self,
         req: HttpRequest,
     ) -> impl std::future::Future<Output = Result<HttpResponse, HttpError>> + MaybeSend {
+        let client = self.client.clone();
         async move {
-            let client = get_client();
-
             let uri: hyper::Uri = req
                 .url()
                 .parse()
