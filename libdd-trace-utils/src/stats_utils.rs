@@ -6,8 +6,9 @@ pub use mini_agent::*;
 
 #[cfg(feature = "mini_agent")]
 mod mini_agent {
+    use bytes::Buf;
+    use http::{Method, Request, StatusCode};
     use http_body_util::BodyExt;
-    use hyper::{body::Buf, Method, Request, StatusCode};
     use libdd_common::http_common;
     use libdd_common::Connect;
     use libdd_common::Endpoint;
@@ -114,7 +115,7 @@ mod mini_agent {
 #[cfg(feature = "mini_agent")]
 mod mini_agent_tests {
     use crate::stats_utils;
-    use hyper::Request;
+    use http::Request;
     use libdd_common::http_common;
     use libdd_trace_protobuf::pb::{
         ClientGroupedStats, ClientStatsBucket, ClientStatsPayload, Trilean::NotSet,
