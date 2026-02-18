@@ -215,13 +215,14 @@ jobs:
           echo "Release version bumps..."
 
           # After creating and pushing the proposal branch, tag/merge-base resolution can fail
-          # (tags no longer seen as ancestors of release_head_sha). Re-fetch release and tags,
-          # and unshallow if needed, so we have full history and tag refs for the rest of the step.
-          git fetch origin "${{ env.RELEASE_BRANCH }}" --tags
+          # (tags no longer seen as ancestors of release_head_sha). Re-fetch both main and release
+          # branches with tags, and unshallow if needed, so we have full history needed for merge-base.
+          # Fetching both branches ensures we have the complete history where tags were originally created.
           if [ "$(git rev-parse --is-shallow-repository)" = "true" ]; then
             echo "Repository is shallow, fetching full history..."
             git fetch --unshallow
           fi
+          git fetch origin "${{ env.MAIN_BRANCH }}" "${{ env.RELEASE_BRANCH }}" --tags
 
           # Initialize results array
           echo "[]" > /tmp/api-changes.json
