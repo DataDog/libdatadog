@@ -163,13 +163,20 @@ while read -r crate; do
         log_verbose "  Tag exists, finding commits since $TAG..."
         
         # Check if tag is an ancestor of HEAD (i.e., release was merged back to main)
-        # If not, use merge-base to find the common ancestor
-        if git merge-base --is-ancestor "$TAG" HEAD 2>/dev/null; then
+        # If not, use merge-base to find the common ancestor.
+        # Explicitly dereference annotated tags to their underlying commit: git merge-base does
+        # not consistently dereference annotated tag objects across all git versions.
+        TAG_COMMIT=$(git rev-parse "${TAG}^{}" 2>/dev/null || echo "")
+        if [ -z "$TAG_COMMIT" ]; then
+            COMMIT_RANGE="$TAG..HEAD"
+            TAG_ANCESTOR="no merge-base"
+            log_verbose "  WARNING: Could not dereference tag $TAG to a commit, using $COMMIT_RANGE"
+        elif git merge-base --is-ancestor "$TAG_COMMIT" HEAD 2>/dev/null; then
             COMMIT_RANGE="$TAG..HEAD"
             TAG_ANCESTOR="true"
             log_verbose "  Tag is ancestor of HEAD, using $COMMIT_RANGE"
         else
-            MERGE_BASE=$(git merge-base "$TAG" HEAD 2>/dev/null || echo "")
+            MERGE_BASE=$(git merge-base "$TAG_COMMIT" HEAD 2>/dev/null || echo "")
             if [ -n "$MERGE_BASE" ]; then
                 COMMIT_RANGE="$MERGE_BASE..HEAD"
                 TAG_ANCESTOR="$MERGE_BASE"

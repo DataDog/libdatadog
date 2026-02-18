@@ -251,13 +251,23 @@ jobs:
             fi
 
             if [ "$TAG_EXISTS" = "true" ]; then
-              RANGE="$TAG..$ORIGINAL_HEAD"
-              echo "Using $RANGE as range"
+              # Explicitly dereference annotated tags to their underlying commit.
+              # Several git commands (git branch --contains, git merge-base --is-ancestor,
+              # git log A..B) do not consistently dereference annotated tag objects across
+              # all git versions — using the commit SHA directly avoids all such issues.
+              TAG_COMMIT=$(git rev-parse "${TAG}^{}" 2>/dev/null || echo "")
+              if [ -z "$TAG_COMMIT" ]; then
+                echo "ERROR: Could not dereference tag $TAG to a commit" >&2
+                exit 1
+              fi
 
-              if git merge-base --is-ancestor "$TAG" "$ORIGINAL_HEAD" 2>/dev/null; then
-                echo "  Tag $TAGis ancestor of HEAD, using $RANGE"
+              RANGE="$TAG_COMMIT..$ORIGINAL_HEAD"
+              echo "Using $RANGE as range (tag: $TAG)"
+
+              if git merge-base --is-ancestor "$TAG_COMMIT" "$ORIGINAL_HEAD" 2>/dev/null; then
+                echo "  Tag $TAG is ancestor of HEAD"
               else
-                MERGE_BASE=$(git merge-base "$TAG" "$ORIGINAL_HEAD" 2>/dev/null || echo "")
+                MERGE_BASE=$(git merge-base "$TAG_COMMIT" "$ORIGINAL_HEAD" 2>/dev/null || echo "")
                 if [ -n "$MERGE_BASE" ]; then
                     RANGE="$MERGE_BASE..$ORIGINAL_HEAD"
                     echo "  Tag $TAG is NOT ancestor of HEAD, using merge-base: $RANGE"
@@ -266,11 +276,12 @@ jobs:
                 fi
               fi
 
-              echo "Is the tag $TAG in the branch:"
-              git branch --contains "$TAG" || {
-                echo "Error: Tag $TAG is not in the branch" >&2
+              BRANCHES=$(git branch --contains "$TAG_COMMIT" 2>/dev/null || echo "")
+              if [ -z "$BRANCHES" ]; then
+                echo "Error: Tag $TAG (commit $TAG_COMMIT) is not in any local branch" >&2
                 exit 1
-              }
+              fi
+              echo "Tag $TAG is in branches: $BRANCHES"
 
               # if there is a tag more recent than $TAG, continue the loop
               LATEST_TAG=$(git tag -l "$TAG_PREFIX*" --sort=-v:refname | head -1)
