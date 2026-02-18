@@ -372,7 +372,7 @@ mod tests {
             .set_language_interpreter("v8")
             .set_language_interpreter_vendor("node")
             .set_git_commit_sha("797e9ea")
-            .set_input_format(TraceExporterInputFormat::V05)
+            .set_input_format(TraceExporterInputFormat::V04)
             .set_output_format(TraceExporterOutputFormat::V04)
             .set_client_computed_stats()
             .enable_telemetry(TelemetryConfig {
@@ -389,7 +389,7 @@ mod tests {
                 .to_string(),
             "http://192.168.1.1:8127/v0.4/traces"
         );
-        assert_eq!(exporter.input_format, TraceExporterInputFormat::V05);
+        assert_eq!(exporter.input_format, TraceExporterInputFormat::V04);
         assert_eq!(exporter.metadata.tracer_version, "v0.1");
         assert_eq!(exporter.metadata.language, "nodejs");
         assert_eq!(exporter.metadata.language_version, "1.0");
