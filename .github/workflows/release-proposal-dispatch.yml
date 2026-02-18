@@ -277,11 +277,11 @@ jobs:
               fi
 
               BRANCHES=$(git branch --contains "$TAG_COMMIT" 2>/dev/null || echo "")
-              if [ -z "$BRANCHES" ]; then
-                echo "Error: Tag $TAG (commit $TAG_COMMIT) is not in any local branch" >&2
-                exit 1
+              if [ -n "$BRANCHES" ]; then
+                echo "Tag $TAG is in branches: $BRANCHES"
+              else
+                echo "Tag $TAG (commit $TAG_COMMIT) is not in any local branch (normal for squash-merged releases)"
               fi
-              echo "Tag $TAG is in branches: $BRANCHES"
 
               # if there is a tag more recent than $TAG, continue the loop
               LATEST_TAG=$(git tag -l "$TAG_PREFIX*" --sort=-v:refname | head -1)
