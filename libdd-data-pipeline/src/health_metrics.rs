@@ -384,13 +384,13 @@ mod tests {
 
             match result {
                 Ok((response, attempts)) => {
-                    if response.status().is_success() {
+                    if response.is_success() {
                         Self::success(payload_bytes, trace_chunks, *attempts)
                     } else {
                         // Non-success status in Ok variant (shouldn't happen with
                         // send_with_retry)
                         Self::failure(
-                            TransportErrorType::Http(response.status().as_u16()),
+                            TransportErrorType::Http(response.status),
                             payload_bytes,
                             trace_chunks,
                             *attempts,
@@ -399,10 +399,9 @@ mod tests {
                 }
                 Err(err) => {
                     let (error_type, attempts) = match err {
-                        SendWithRetryError::Http(response, attempts) => (
-                            TransportErrorType::Http(response.status().as_u16()),
-                            *attempts,
-                        ),
+                        SendWithRetryError::Http(response, attempts) => {
+                            (TransportErrorType::Http(response.status), *attempts)
+                        }
                         SendWithRetryError::Timeout(attempts) => {
                             (TransportErrorType::Timeout, *attempts)
                         }
@@ -669,23 +668,21 @@ mod tests {
 
     mod send_with_retry_conversion {
         use super::*;
-        use bytes::Bytes;
-        use hyper::{Response, StatusCode};
-        use libdd_common::hyper_migration;
+        use libdd_capabilities::HttpResponse;
         use libdd_trace_utils::send_with_retry::{SendWithRetryError, SendWithRetryResult};
 
         /// Helper to create a mock HTTP response for testing
-        fn mock_response(status: StatusCode) -> hyper_migration::HttpResponse {
-            hyper_migration::mock_response(
-                Response::builder().status(status),
-                Bytes::from("test body"),
-            )
-            .unwrap()
+        fn mock_response(status: u16) -> HttpResponse {
+            HttpResponse {
+                status,
+                body: b"test body".to_vec(),
+                headers: vec![],
+            }
         }
 
         #[test]
         fn test_from_retry_result_success_2xx() {
-            let response = mock_response(StatusCode::OK);
+            let response = mock_response(200);
             let retry_result: SendWithRetryResult = Ok((response, 1));
 
             let send_result = SendResult::from_retry_result(&retry_result, 1024, 5);
@@ -698,7 +695,7 @@ mod tests {
 
         #[test]
         fn test_from_retry_result_http_error() {
-            let response = mock_response(StatusCode::BAD_REQUEST);
+            let response = mock_response(400);
             let retry_result: SendWithRetryResult = Err(SendWithRetryError::Http(response, 3));
 
             let send_result = SendResult::from_retry_result(&retry_result, 2048, 10);
@@ -749,7 +746,7 @@ mod tests {
 
         #[test]
         fn test_from_retry_result_preserves_context() {
-            let response = mock_response(StatusCode::OK);
+            let response = mock_response(200);
             let retry_result: SendWithRetryResult = Ok((response, 2));
 
             let send_result = SendResult::from_retry_result(&retry_result, 4096, 25);

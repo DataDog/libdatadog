@@ -3,7 +3,6 @@
 
 use crate::telemetry::error::TelemetryError;
 use crate::trace_exporter::msgpack_decoder::decode::error::DecodeError;
-use hyper::http::StatusCode;
 use hyper::Error as HyperError;
 use libdd_common::hyper_migration;
 use rmp_serde::encode::Error as EncodeError;
@@ -132,7 +131,7 @@ impl Display for NetworkError {
 
 #[derive(Debug, PartialEq)]
 pub struct RequestError {
-    code: StatusCode,
+    code: u16,
     msg: String,
 }
 
@@ -147,14 +146,14 @@ impl Display for RequestError {
 }
 
 impl RequestError {
-    pub fn new(code: StatusCode, msg: &str) -> Self {
+    pub fn new(code: u16, msg: &str) -> Self {
         Self {
             code,
             msg: msg.to_owned(),
         }
     }
 
-    pub fn status(&self) -> StatusCode {
+    pub fn status(&self) -> u16 {
         self.code
     }
 
@@ -320,6 +319,20 @@ impl From<std::io::Error> for TraceExporterError {
     }
 }
 
+impl From<libdd_capabilities::HttpError> for TraceExporterError {
+    fn from(err: libdd_capabilities::HttpError) -> Self {
+        TraceExporterError::Network(NetworkError {
+            kind: match &err {
+                libdd_capabilities::HttpError::Timeout => NetworkErrorKind::TimedOut,
+                libdd_capabilities::HttpError::Network(_) => NetworkErrorKind::ConnectionClosed,
+                libdd_capabilities::HttpError::InvalidRequest(_) => NetworkErrorKind::Parse,
+                libdd_capabilities::HttpError::Other(_) => NetworkErrorKind::Unknown,
+            },
+            source: anyhow::anyhow!("{}", err),
+        })
+    }
+}
+
 impl From<TelemetryError> for TraceExporterError {
     fn from(value: TelemetryError) -> Self {
         match value {
@@ -339,8 +352,8 @@ mod tests {
 
     #[test]
     fn test_request_error() {
-        let error = RequestError::new(StatusCode::NOT_FOUND, "Not found");
-        assert_eq!(error.status(), StatusCode::NOT_FOUND);
+        let error = RequestError::new(404, "Not found");
+        assert_eq!(error.status(), 404);
         assert_eq!(error.msg(), "Not found")
     }
 }

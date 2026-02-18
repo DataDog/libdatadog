@@ -7,26 +7,25 @@
 mod retry_strategy;
 pub use retry_strategy::{RetryBackoffType, RetryStrategy};
 
-use bytes::Bytes;
-use hyper::Method;
-use libdd_common::{hyper_migration, Connect, Endpoint, GenericHttpClient, HttpRequestBuilder};
+use libdd_common::Endpoint;
+use libdd_capabilities::{HttpClientTrait, HttpError, HttpRequest, HttpResponse};
+use libdd_capabilities_impl::DefaultHttpClient;
 use std::{collections::HashMap, time::Duration};
 use tracing::{debug, error};
 
 pub type Attempts = u32;
 
-pub type SendWithRetryResult =
-    Result<(hyper_migration::HttpResponse, Attempts), SendWithRetryError>;
+pub type SendWithRetryResult = Result<(HttpResponse, Attempts), SendWithRetryError>;
 
 /// All errors contain the number of attempts after which the final error was returned
 #[derive(Debug)]
 pub enum SendWithRetryError {
     /// The request received an error HTTP code.
-    Http(hyper_migration::HttpResponse, Attempts),
+    Http(HttpResponse, Attempts),
     /// Treats timeout errors originated in the transport layer.
     Timeout(Attempts),
     /// Treats errors coming from networking.
-    Network(hyper_migration::ClientError, Attempts),
+    Network(HttpError, Attempts),
     /// Treats errors coming from building the request
     Build(Attempts),
 }
@@ -46,43 +45,12 @@ impl std::fmt::Display for SendWithRetryError {
 
 impl std::error::Error for SendWithRetryError {}
 
-impl SendWithRetryError {
-    fn from_request_error(err: RequestError, request_attempt: Attempts) -> Self {
-        match err {
-            RequestError::Build => SendWithRetryError::Build(request_attempt),
-            RequestError::Network(error) => SendWithRetryError::Network(error, request_attempt),
-            RequestError::TimeoutApi => SendWithRetryError::Timeout(request_attempt),
-        }
-    }
-}
-
-#[derive(Debug)]
-enum RequestError {
-    Build,
-    Network(hyper_migration::ClientError),
-    TimeoutApi,
-}
-
-impl std::fmt::Display for RequestError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            RequestError::TimeoutApi => write!(f, "Api timeout exhausted"),
-            RequestError::Network(error) => write!(f, "Network error: {error}"),
-            RequestError::Build => write!(f, "Failed to build request due to invalid property"),
-        }
-    }
-}
-
-impl std::error::Error for RequestError {}
-
 /// Send the `payload` with a POST request to `target` using the provided `retry_strategy` if the
 /// request fails.
 ///
-/// The request builder from [`Endpoint::to_request_builder`] is used with the associated headers
-/// (api key, test token), and `headers` are added to the request. The request is executed with a
-/// timeout of [`Endpoint::timeout_ms`].
-///
-/// # Arguments
+/// Standard endpoint headers (user-agent, api-key, test-token, entity headers) are set
+/// automatically via [`Endpoint::set_standard_headers`]. Additional `headers` are appended to the
+/// request. The request is executed with a timeout of [`Endpoint::timeout_ms`].
 ///
 /// # Returns
 ///
@@ -96,7 +64,6 @@ impl std::error::Error for RequestError {}
 ///
 /// ```rust, no_run
 /// # use libdd_common::Endpoint;
-/// # use libdd_common::hyper_migration::new_default_client;
 /// # use libdd_trace_utils::send_with_retry::*;
 /// # use std::collections::HashMap;
 /// # async fn run() -> SendWithRetryResult {
@@ -107,20 +74,17 @@ impl std::error::Error for RequestError {}
 /// };
 /// let headers = HashMap::from([("Content-type", "application/msgpack".to_string())]);
 /// let retry_strategy = RetryStrategy::new(3, 10, RetryBackoffType::Exponential, Some(5));
-/// let client = new_default_client();
-/// send_with_retry(&client, &target, payload, &headers, &retry_strategy).await
+/// send_with_retry(&target, payload, &headers, &retry_strategy).await
 /// # }
 /// ```
-pub async fn send_with_retry<C: Connect>(
-    client: &GenericHttpClient<C>,
+pub async fn send_with_retry(
     target: &Endpoint,
     payload: Vec<u8>,
     headers: &HashMap<&'static str, String>,
     retry_strategy: &RetryStrategy,
 ) -> SendWithRetryResult {
     let mut request_attempt = 0;
-    // Wrap the payload in Bytes to avoid expensive clone between retries
-    let payload = Bytes::from(payload);
+    let timeout = Duration::from_millis(target.timeout_ms);
 
     debug!(
         url = %target.url,
@@ -138,31 +102,23 @@ pub async fn send_with_retry<C: Connect>(
             "Attempting request"
         );
 
-        let mut req = target
-            .to_request_builder(concat!("Tracer/", env!("CARGO_PKG_VERSION")))
-            .or(Err(SendWithRetryError::Build(request_attempt)))?
-            .method(Method::POST);
+        // Build the request from scratch each retry (HttpRequest is cheap to construct)
+        let mut req = HttpRequest::post(target.url.to_string(), payload.clone());
+        req = target.set_standard_headers(req, concat!("Tracer/", env!("CARGO_PKG_VERSION")));
         for (key, value) in headers {
-            req = req.header(*key, value.clone());
+            req = req.with_header(*key, value.clone());
         }
 
-        match send_request(
-            client,
-            Duration::from_millis(target.timeout_ms),
-            req,
-            payload.clone(),
-        )
-        .await
-        {
-            // An Ok response doesn't necessarily mean the request was successful, we need to
-            // check the status code and if it's not a 2xx or 3xx we treat it as an error
-            Ok(response) => {
-                let status = response.status();
-                debug!(status = %status, attempt = request_attempt, "Received response");
+        let result = tokio::time::timeout(timeout, DefaultHttpClient::request(req)).await;
 
-                if status.is_client_error() || status.is_server_error() {
+        match result {
+            Ok(Ok(response)) => {
+                let status = response.status;
+                debug!(status, attempt = request_attempt, "Received response");
+
+                if response.is_client_error() || response.is_server_error() {
                     debug!(
-                        status = %status,
+                        status,
                         attempt = request_attempt,
                         max_retries = retry_strategy.max_retries(),
                         "Received error status code"
@@ -178,22 +134,18 @@ pub async fn send_with_retry<C: Connect>(
                         continue;
                     } else {
                         error!(
-                            status = %status,
+                            status,
                             attempts = request_attempt,
                             "Max retries exceeded, returning HTTP error"
                         );
                         return Err(SendWithRetryError::Http(response, request_attempt));
                     }
                 } else {
-                    debug!(
-                        status = %status,
-                        attempts = request_attempt,
-                        "Request succeeded"
-                    );
+                    debug!(status, attempts = request_attempt, "Request succeeded");
                     return Ok((response, request_attempt));
                 }
             }
-            Err(e) => {
+            Ok(Err(e)) => {
                 debug!(
                     error = ?e,
                     attempt = request_attempt,
@@ -215,31 +167,33 @@ pub async fn send_with_retry<C: Connect>(
                         attempts = request_attempt,
                         "Max retries exceeded, returning request error"
                     );
-                    return Err(SendWithRetryError::from_request_error(e, request_attempt));
+                    return Err(SendWithRetryError::Network(e, request_attempt));
+                }
+            }
+            Err(_) => {
+                debug!(
+                    attempt = request_attempt,
+                    max_retries = retry_strategy.max_retries(),
+                    "Request timed out"
+                );
+
+                if request_attempt < retry_strategy.max_retries() {
+                    debug!(
+                        attempt = request_attempt,
+                        remaining_retries = retry_strategy.max_retries() - request_attempt,
+                        "Retrying after timeout"
+                    );
+                    retry_strategy.delay(request_attempt).await;
+                    continue;
+                } else {
+                    error!(
+                        attempts = request_attempt,
+                        "Max retries exceeded, returning timeout error"
+                    );
+                    return Err(SendWithRetryError::Timeout(request_attempt));
                 }
             }
         }
-    }
-}
-
-async fn send_request<C: Connect>(
-    client: &GenericHttpClient<C>,
-    timeout: Duration,
-    req: HttpRequestBuilder,
-    payload: Bytes,
-) -> Result<hyper_migration::HttpResponse, RequestError> {
-    let req = req
-        .body(hyper_migration::Body::from_bytes(payload))
-        .or(Err(RequestError::Build))?;
-
-    let req_future = { client.request(req) };
-
-    match tokio::time::timeout(timeout, req_future).await {
-        Ok(resp) => match resp {
-            Ok(body) => Ok(hyper_migration::into_response(body)),
-            Err(e) => Err(RequestError::Network(e)),
-        },
-        Err(_) => Err(RequestError::TimeoutApi),
     }
 }
 
@@ -280,10 +234,8 @@ mod tests {
 
         let strategy = RetryStrategy::new(0, 2, RetryBackoffType::Constant, None);
 
-        let client = libdd_common::hyper_migration::new_default_client();
         tokio::spawn(async move {
             let result = send_with_retry(
-                &client,
                 &target_endpoint,
                 vec![0, 1, 2, 3],
                 &HashMap::new(),
@@ -329,10 +281,8 @@ mod tests {
 
         let strategy = RetryStrategy::new(2, 250, RetryBackoffType::Constant, None);
 
-        let client = libdd_common::hyper_migration::new_default_client();
         tokio::spawn(async move {
             let result = send_with_retry(
-                &client,
                 &target_endpoint,
                 vec![0, 1, 2, 3],
                 &HashMap::new(),
@@ -378,10 +328,8 @@ mod tests {
             None,
         );
 
-        let client = libdd_common::hyper_migration::new_default_client();
         tokio::spawn(async move {
             let result = send_with_retry(
-                &client,
                 &target_endpoint,
                 vec![0, 1, 2, 3],
                 &HashMap::new(),
@@ -427,10 +375,8 @@ mod tests {
 
         let strategy = RetryStrategy::new(2, 10, RetryBackoffType::Constant, None);
 
-        let client = libdd_common::hyper_migration::new_default_client();
         tokio::spawn(async move {
             let result = send_with_retry(
-                &client,
                 &target_endpoint,
                 vec![0, 1, 2, 3],
                 &HashMap::new(),

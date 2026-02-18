@@ -2,9 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::trace_exporter::TracerMetadata;
-use bytes::Bytes;
-use hyper::{Method, Uri};
-use libdd_common::hyper_migration;
+use hyper::Uri;
+use libdd_capabilities::HttpRequest;
 use std::collections::HashMap;
 
 /// Transport client for trace exporter operations
@@ -27,60 +26,22 @@ impl<'a> TransportClient<'a> {
         data: &[u8],
         trace_count: usize,
         uri: Uri,
-    ) -> hyper::Request<hyper_migration::Body> {
-        let mut req_builder = self.create_base_request_builder(uri);
-        req_builder = self.add_metadata_headers(req_builder);
-        req_builder = self.add_trace_headers(req_builder, trace_count);
-        self.build_request_with_body(req_builder, data)
-    }
+    ) -> HttpRequest {
+        let mut req = HttpRequest::post(uri.to_string(), data.to_vec())
+            .with_header("user-agent", concat!("Tracer/", env!("CARGO_PKG_VERSION")));
 
-    /// Create base HTTP request builder with URI, user agent, and method
-    fn create_base_request_builder(&self, uri: Uri) -> hyper::http::request::Builder {
-        hyper::Request::builder()
-            .uri(uri)
-            .header(
-                hyper::header::USER_AGENT,
-                concat!("Tracer/", env!("CARGO_PKG_VERSION")),
-            )
-            .method(Method::POST)
-    }
-
-    /// Add metadata headers to the request builder
-    fn add_metadata_headers(
-        &self,
-        mut req_builder: hyper::http::request::Builder,
-    ) -> hyper::http::request::Builder {
+        // Add metadata headers
         let headers: HashMap<&'static str, String> = self.metadata.into();
         for (key, value) in &headers {
-            req_builder = req_builder.header(*key, value);
+            req = req.with_header(*key, value.clone());
         }
-        req_builder
-    }
 
-    /// Add trace-specific headers to the request builder
-    fn add_trace_headers(
-        &self,
-        req_builder: hyper::http::request::Builder,
-        trace_count: usize,
-    ) -> hyper::http::request::Builder {
-        req_builder
-            .header("Content-type", "application/msgpack")
-            .header("X-Datadog-Trace-Count", trace_count.to_string().as_str())
-    }
+        // Add trace-specific headers
+        req = req
+            .with_header("content-type", "application/msgpack")
+            .with_header("X-Datadog-Trace-Count", trace_count.to_string());
 
-    /// Build the final request with body
-    fn build_request_with_body(
-        &self,
-        req_builder: hyper::http::request::Builder,
-        data: &[u8],
-    ) -> hyper::Request<hyper_migration::Body> {
-        #[allow(clippy::unwrap_used)]
-        req_builder
-            .body(hyper_migration::Body::from_bytes(Bytes::copy_from_slice(
-                data,
-            )))
-            // TODO: Properly handle non-OK states to prevent possible panics (APMSP-18190).
-            .unwrap()
+        req
     }
 }
 
@@ -125,23 +86,25 @@ mod tests {
 
         let request = client.build_trace_request(data, trace_count, uri);
 
-        assert_eq!(request.method(), hyper::Method::POST);
-        assert_eq!(request.uri().path(), "/v0.4/traces");
+        assert_eq!(request.method_str(), "POST");
+        assert!(request.url().contains("/v0.4/traces"));
 
         let headers = request.headers();
-        assert_eq!(headers.get("content-type").unwrap(), "application/msgpack");
-        assert_eq!(headers.get("x-datadog-trace-count").unwrap(), "5");
-        assert!(headers
-            .get("user-agent")
-            .unwrap()
-            .to_str()
-            .unwrap()
-            .starts_with("Tracer/"));
+        let find_header = |name: &str| -> Option<&str> {
+            headers
+                .iter()
+                .find(|(k, _)| k.eq_ignore_ascii_case(name))
+                .map(|(_, v)| v.as_str())
+        };
 
-        assert!(headers.contains_key("datadog-meta-lang"));
-        assert_eq!(headers.get("datadog-meta-lang").unwrap(), "rust");
-        assert!(headers.contains_key("datadog-meta-tracer-version"));
-        assert_eq!(headers.get("datadog-meta-tracer-version").unwrap(), "1.0.0");
+        assert_eq!(find_header("content-type"), Some("application/msgpack"));
+        assert_eq!(find_header("x-datadog-trace-count"), Some("5"));
+        assert!(find_header("user-agent").unwrap().starts_with("Tracer/"));
+
+        assert!(find_header("datadog-meta-lang").is_some());
+        assert_eq!(find_header("datadog-meta-lang"), Some("rust"));
+        assert!(find_header("datadog-meta-tracer-version").is_some());
+        assert_eq!(find_header("datadog-meta-tracer-version"), Some("1.0.0"));
     }
 
     #[test]
@@ -155,9 +118,16 @@ mod tests {
         let data = b"test";
 
         let request = client.build_trace_request(data, 1, uri);
-        let headers = request.headers();
 
-        assert_eq!(headers.get("datadog-meta-lang").unwrap(), "python");
-        assert_eq!(headers.get("datadog-meta-tracer-version").unwrap(), "2.0.0");
+        let headers = request.headers();
+        let find_header = |name: &str| -> Option<&str> {
+            headers
+                .iter()
+                .find(|(k, _)| k.eq_ignore_ascii_case(name))
+                .map(|(_, v)| v.as_str())
+        };
+
+        assert_eq!(find_header("datadog-meta-lang"), Some("python"));
+        assert_eq!(find_header("datadog-meta-tracer-version"), Some("2.0.0"));
     }
 }

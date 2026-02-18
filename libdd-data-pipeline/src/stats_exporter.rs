@@ -12,8 +12,7 @@ use std::{
 };
 
 use crate::trace_exporter::TracerMetadata;
-use hyper;
-use libdd_common::{worker::Worker, Endpoint, HttpClient};
+use libdd_common::{worker::Worker, Endpoint};
 use libdd_trace_protobuf::pb;
 use libdd_trace_stats::span_concentrator::SpanConcentrator;
 use libdd_trace_utils::send_with_retry::{send_with_retry, RetryStrategy};
@@ -32,7 +31,6 @@ pub struct StatsExporter {
     meta: TracerMetadata,
     sequence_id: AtomicU64,
     cancellation_token: CancellationToken,
-    client: HttpClient,
 }
 
 impl StatsExporter {
@@ -50,7 +48,6 @@ impl StatsExporter {
         meta: TracerMetadata,
         endpoint: Endpoint,
         cancellation_token: CancellationToken,
-        client: HttpClient,
     ) -> Self {
         Self {
             flush_interval,
@@ -59,7 +56,6 @@ impl StatsExporter {
             meta,
             sequence_id: AtomicU64::new(0),
             cancellation_token,
-            client,
         }
     }
 
@@ -88,18 +84,12 @@ impl StatsExporter {
         let mut headers: HashMap<&'static str, String> = self.meta.borrow().into();
 
         headers.insert(
-            hyper::header::CONTENT_TYPE.as_str(),
+            "content-type",
             libdd_common::header::APPLICATION_MSGPACK_STR.to_string(),
         );
 
-        let result = send_with_retry(
-            &self.client,
-            &self.endpoint,
-            body,
-            &headers,
-            &RetryStrategy::default(),
-        )
-        .await;
+        let result =
+            send_with_retry(&self.endpoint, body, &headers, &RetryStrategy::default()).await;
 
         match result {
             Ok(_) => Ok(()),
@@ -194,7 +184,6 @@ mod tests {
     use super::*;
     use httpmock::prelude::*;
     use httpmock::MockServer;
-    use libdd_common::hyper_migration::new_default_client;
     use libdd_trace_utils::span::{trace_utils, v04::SpanSlice};
     use libdd_trace_utils::test_utils::poll_for_mock_hit;
     use time::Duration;
@@ -271,7 +260,6 @@ mod tests {
             get_test_metadata(),
             Endpoint::from_url(stats_url_from_agent_url(&server.url("/")).unwrap()),
             CancellationToken::new(),
-            new_default_client(),
         );
 
         let send_status = stats_exporter.send(true).await;
@@ -299,7 +287,6 @@ mod tests {
             get_test_metadata(),
             Endpoint::from_url(stats_url_from_agent_url(&server.url("/")).unwrap()),
             CancellationToken::new(),
-            new_default_client(),
         );
 
         let send_status = stats_exporter.send(true).await;
@@ -332,7 +319,6 @@ mod tests {
             get_test_metadata(),
             Endpoint::from_url(stats_url_from_agent_url(&server.url("/")).unwrap()),
             CancellationToken::new(),
-            new_default_client(),
         );
 
         tokio::time::pause();
@@ -373,7 +359,6 @@ mod tests {
             get_test_metadata(),
             Endpoint::from_url(stats_url_from_agent_url(&server.url("/")).unwrap()),
             cancellation_token.clone(),
-            new_default_client(),
         );
 
         tokio::spawn(async move {

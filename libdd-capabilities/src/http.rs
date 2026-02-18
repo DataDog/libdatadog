@@ -22,6 +22,21 @@ impl HttpResponse {
             .find(|(k, _)| k.eq_ignore_ascii_case(name))
             .map(|(_, v)| v.as_str())
     }
+
+    /// Returns true if the status code is in the 2xx range.
+    pub fn is_success(&self) -> bool {
+        (200..300).contains(&self.status)
+    }
+
+    /// Returns true if the status code is in the 4xx range.
+    pub fn is_client_error(&self) -> bool {
+        (400..500).contains(&self.status)
+    }
+
+    /// Returns true if the status code is in the 5xx range.
+    pub fn is_server_error(&self) -> bool {
+        (500..600).contains(&self.status)
+    }
 }
 
 #[derive(Debug, Clone)]

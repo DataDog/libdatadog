@@ -3460,6 +3460,8 @@ dependencies = [
  "httpmock",
  "hyper 1.6.0",
  "indexmap 2.12.1",
+ "libdd-capabilities",
+ "libdd-capabilities-impl",
  "libdd-common",
  "libdd-tinybytes",
  "libdd-trace-normalization",
