@@ -312,8 +312,8 @@ mod tests {
     use http::{Response, StatusCode};
     use httpmock::Method::POST;
     use httpmock::MockServer;
-    use libdd_common::worker::Worker;
     use libdd_capabilities::{HttpError, HttpResponse};
+    use libdd_common::worker::Worker;
     use regex::Regex;
     use tokio::time::sleep;
 

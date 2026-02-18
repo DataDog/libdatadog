@@ -9,10 +9,11 @@ mod mini_agent {
     use bytes::Buf;
     use http::{Method, Request, StatusCode};
     use http_body_util::BodyExt;
-    use libdd_common::http_common;
     use libdd_common::Endpoint;
     use libdd_capabilities::{HttpClientTrait, HttpRequest};
     use libdd_capabilities_impl::DefaultHttpClient;
+    use libdd_common::hyper_migration;
+    use libdd_common::Endpoint;
     use libdd_trace_protobuf::pb;
     use std::io::Write;
     use tracing::debug;

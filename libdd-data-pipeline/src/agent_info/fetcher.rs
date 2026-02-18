@@ -93,10 +93,7 @@ async fn fetch_and_hash_response(info_endpoint: &Endpoint) -> Result<(String, by
     }
 
     let client = DefaultHttpClient::new_client();
-    let res = client
-        .request(req)
-        .await
-        .map_err(|e| anyhow!("{}", e))?;
+    let res = client.request(req).await.map_err(|e| anyhow!("{}", e))?;
 
     let body_data = bytes::Bytes::from(res.body);
     let hash = format!("{:x}", Sha256::digest(&body_data));
