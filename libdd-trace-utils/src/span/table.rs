@@ -33,6 +33,14 @@ impl<T: TraceDataType> TraceDataRef<T> {
             _phantom: PhantomData,
         }
     }
+
+    pub fn is_empty(&self) -> bool {
+        self.index == 0
+    }
+
+    pub fn get_index(&self) -> u32 {
+        self.index
+    }
 }
 
 pub type TraceStringRef = TraceDataRef<TraceDataText>;
@@ -64,8 +72,8 @@ impl<T: TraceData, D: TraceDataType> Default for StaticDataVec<T, D> {
 }
 
 pub struct Shrunk<T> {
-    table: Vec<T>,
-    offsets: Vec<u32>,
+    pub table: Vec<T>,
+    pub offsets: Vec<u32>,
 }
 
 impl<T: TraceData, D: TraceDataType> StaticDataVec<T, D> {
@@ -147,6 +155,10 @@ impl<T: TraceData, D: TraceDataType> StaticDataVec<T, D> {
             table,
             offsets,
         }
+    }
+
+    pub fn len(&self) -> usize {
+        self.table.len()
     }
 }
 

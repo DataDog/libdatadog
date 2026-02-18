@@ -142,11 +142,6 @@ fn free_chunk_data<D: TraceData>(chunk: &mut Vec<Span>, storage: &mut Storage<D>
     }
 }
 
-fn find_chunk_root_span() {
-    // TODO: we should probably cache this?!
-
-}
-
 impl<'s, D: TraceDataLifetime<'s>> TraceProjector<'s, D> for ChunkCollection<D> where D: 's {
     type Storage = Storage<D>;
     type Trace = Trace;
@@ -154,13 +149,7 @@ impl<'s, D: TraceDataLifetime<'s>> TraceProjector<'s, D> for ChunkCollection<D> 
     type Span = Span;
     type SpanLink = SpanLink;
     type SpanEvent = SpanEvent;
-/*
-    type AttributeTrace<'a> = TraceAttributes<'a, ChunkCollection<D>, D, AttrRef<'a, Trace>, Trace>;
-    type AttributeChunk<'a> = TraceAttributes<'a, ChunkCollection<D>, D, AttrRef<'a, Chunk>, Chunk>;
-    type AttributeSpan<'a> = TraceAttributes<'a, ChunkCollection<D>, D, AttrRef<'a, Span>, Span>;
-    type AttributeSpanLink<'a> = TraceAttributes<'a, ChunkCollection<D>, D, AttrRef<'a, SpanLink>, SpanLink>;
-    type AttributeSpanEvent<'a> = TraceAttributes<'a, ChunkCollection<D>, D, AttrRef<'a, SpanEvent>, SpanEvent>;
-*/
+
     fn project(&'s self) -> Traces<'s, Self, D> {
         Traces::new(&self.chunks, &self.dict)
     }

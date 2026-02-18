@@ -5,13 +5,12 @@ use crate::msgpack_decoder::decode::buffer::Buffer;
 use crate::msgpack_decoder::decode::error::DecodeError;
 use crate::msgpack_decoder::decode::number::{read_nullable_number, read_num, read_number};
 use crate::span::{v1::Span, DeserializableTraceData};
-use std::borrow::Borrow;
 use std::collections::HashMap;
 use rmp::{decode, Marker};
 use rmp::decode::{read_marker, RmpRead, ValueReadError};
 use strum::FromRepr;
 use libdd_trace_protobuf::pb::idx::SpanKind;
-use crate::span::table::{TraceDataRef, TraceDataType, TraceStringRef};
+use crate::span::table::{TraceBytesRef, TraceDataRef, TraceStringRef};
 use crate::span::v1::{AttributeAnyValue, SpanEvent, SpanLink, TraceChunk, TraceStaticData, Traces};
 
 #[derive(Debug, PartialEq, FromRepr)]
@@ -82,7 +81,7 @@ pub enum SpanEventKey {
 
 #[derive(Debug, PartialEq, FromRepr)]
 #[repr(u8)]
-enum AnyValueKey {
+pub enum AnyValueKey {
     String = 1,
     Bool = 2,
     Double = 3,
@@ -92,13 +91,12 @@ enum AnyValueKey {
     Map = 7,
 }
 
-fn read_string_ref<D: DeserializableTraceData, T: TraceDataType>(buf: &mut Buffer<D>, table: &mut TraceStaticData<T>) -> Result<TraceDataRef<T>, DecodeError> {
-    let original_slice = buf.as_mut_slice();
-    match buf.read_string()? { // read_string doesn't consume the marker on failure
+fn read_string_ref<T: DeserializableTraceData>(buf: &mut Buffer<T>, table: &mut TraceStaticData<T>) -> Result<TraceStringRef, DecodeError> {
+    match buf.read_string() { // read_string doesn't consume the marker on failure
         Ok(str) => Ok(table.add_string(str)),
         Err(e) => match e {
-            ValueReadError::TypeMismatch(_) => {
-                Ok(TraceDataRef::new(read_num(original_slice, false).map_err(|_|
+            DecodeError::InvalidType(_) => {
+                Ok(TraceDataRef::new(read_num(buf.as_mut_slice(), false).map_err(|_|
                     DecodeError::InvalidFormat("Bad data type for string".to_owned())
                 )?.try_into()?))
             },
@@ -107,7 +105,7 @@ fn read_string_ref<D: DeserializableTraceData, T: TraceDataType>(buf: &mut Buffe
     }
 }
 
-fn read_byte_ref<D: DeserializableTraceData, T: TraceDataType>(buf: &mut Buffer<D>, table: &mut TraceStaticData<T>) -> Result<TraceDataRef<T>, DecodeError> {
+fn read_byte_ref<T: DeserializableTraceData>(buf: &mut Buffer<T>, table: &mut TraceStaticData<T>) -> Result<TraceBytesRef, DecodeError> {
     let original_slice = buf.as_mut_slice();
     let mut data_slice = *original_slice;
     let byte_array_len = match decode::read_bin_len(&mut data_slice) {
@@ -123,17 +121,17 @@ fn read_byte_ref<D: DeserializableTraceData, T: TraceDataType>(buf: &mut Buffer<
     };
     *original_slice = data_slice;
     if let Some(data) = buf.try_slice_and_advance(byte_array_len as usize) {
-        table.add_bytes(data)
+        table.add_bytes(data);
     } else {
         return Err(DecodeError::InvalidFormat(
             "Invalid data length".to_string(),
-        ))
+        ));
     }
 
-    Ok(TraceDataRef::new(decode::read_int(buf).map_err(|_| DecodeError::InvalidFormat("Unable to read ref".to_owned()))?))
+    Ok(TraceDataRef::new(decode::read_int(buf.as_mut_slice()).map_err(|_| DecodeError::InvalidFormat("Unable to read ref".to_owned()))?))
 }
 
-fn read_array<T: DeserializableTraceData, V, F>(buf: &mut Buffer<T>, f: F, vec: &mut Vec<V>) -> Result<(), DecodeError> where F: FnMut(&mut Buffer<T>) -> Result<(), DecodeError> {
+fn read_array<T: DeserializableTraceData, V, F>(buf: &mut Buffer<T>, mut f: F, vec: &mut Vec<V>) -> Result<(), DecodeError> where F: FnMut(&mut Buffer<T>) -> Result<V, DecodeError> {
     let array_len = decode::read_array_len(buf.as_mut_slice()).map_err(|_| {
         DecodeError::InvalidFormat("Unable to get array len".to_owned())
     })?;
@@ -141,6 +139,10 @@ fn read_array<T: DeserializableTraceData, V, F>(buf: &mut Buffer<T>, f: F, vec: 
         vec.push(f(buf)?)
     }
     Ok(())
+}
+
+fn read_key<T: DeserializableTraceData>(buf: &mut Buffer<T>) -> Result<u8, DecodeError> {
+    buf.as_mut_slice().read_u8().map_err(|_| DecodeError::InvalidFormat("Could not read protobuf key".to_string()))
 }
 
 fn read_trace_id(buf: &mut &'static [u8]) -> Result<u128, DecodeError> {
@@ -193,7 +195,7 @@ pub fn decode_traces<T: DeserializableTraceData>(buf: &mut Buffer<T>, table: &mu
     })?;
 
     for _ in 0..trace_size {
-        let key = TraceKey::from_repr(buf.read_u8().map_err(|e| DecodeError::InvalidFormat(e.message))?);
+        let key = TraceKey::from_repr(read_key(buf)?);
         if let Some(key) = key {
             match key {
                 TraceKey::ContainerId => traces.container_id = read_string_ref(buf, table)?,
@@ -225,15 +227,15 @@ fn decode_chunk<T: DeserializableTraceData>(buf: &mut Buffer<T>, table: &mut Tra
     })?;
 
     for _ in 0..chunk_size {
-        let key = ChunkKey::from_repr(buf.read_u8().map_err(|e| DecodeError::InvalidFormat(e.message))?);
+        let key = ChunkKey::from_repr(read_key(buf)?);
         if let Some(key) = key {
             match key {
                 ChunkKey::Priority => chunk.priority = read_number(buf)?,
                 ChunkKey::Origin => chunk.origin = read_string_ref(buf, table)?,
-                ChunkKey::Attributes => decode_attributes(buf, table, chunk.attributes)?,
+                ChunkKey::Attributes => decode_attributes(buf, table, &mut chunk.attributes)?,
                 ChunkKey::Spans => read_array(buf, |b| decode_span(b, table), &mut chunk.spans)?,
-                ChunkKey::DroppedTrace => decode::read_bool(buf)?,
-                ChunkKey::TraceId => chunk.trace_id = read_trace_id(buf)?,
+                ChunkKey::DroppedTrace => chunk.dropped_trace = decode::read_bool(buf.as_mut_slice()).map_err(|e| DecodeError::InvalidFormat(e.to_string()))?,
+                ChunkKey::TraceId => chunk.trace_id = read_trace_id(buf.as_mut_slice())?,
                 ChunkKey::SamplingMechanism => chunk.sampling_mechanism = read_number(buf)?,
             }
         } else {
@@ -252,17 +254,17 @@ fn decode_span<T: DeserializableTraceData>(buf: &mut Buffer<T>, table: &mut Trac
     })?;
 
     for _ in 0..span_size {
-        let key = SpanKey::from_repr(buf.read_u8().map_err(|e| DecodeError::InvalidFormat(e.message))?);
+        let key = SpanKey::from_repr(read_key(buf)?);
         if let Some(key) = key {
             match key {
                 SpanKey::Service => span.service = read_string_ref(buf, table)?,
                 SpanKey::Name => span.name = read_string_ref(buf, table)?,
                 SpanKey::Resource => span.resource = read_string_ref(buf, table)?,
-                SpanKey::SpanId => span.span_id = decode::read_u64(buf)?,
-                SpanKey::ParentId => span.parent_id = decode::read_u64(buf)?,
-                SpanKey::Start => span.start = decode::read_u64(buf)?,
-                SpanKey::Duration => span.duration = decode::read_u64(buf)?,
-                SpanKey::Error => span.error = decode::read_bool(buf)?,
+                SpanKey::SpanId => span.span_id = read_number(buf)?,
+                SpanKey::ParentId => span.parent_id = read_number(buf)?,
+                SpanKey::Start => span.start = read_number(buf)?,
+                SpanKey::Duration => span.duration = read_number(buf)?,
+                SpanKey::Error => span.error = decode::read_bool(buf.as_mut_slice()).map_err(|e| DecodeError::InvalidFormat(e.to_string()))?,
                 SpanKey::Type => span.r#type = read_string_ref(buf, table)?,
                 SpanKey::Attributes => decode_attributes(buf, table, &mut span.attributes)?,
                 SpanKey::SpanLinks => read_array(buf, |buf| decode_span_link(buf, table), &mut span.span_links)?,
@@ -270,7 +272,10 @@ fn decode_span<T: DeserializableTraceData>(buf: &mut Buffer<T>, table: &mut Trac
                 SpanKey::Env => span.env = read_string_ref(buf, table)?,
                 SpanKey::Version => span.version = read_string_ref(buf, table)?,
                 SpanKey::Component => span.component = read_string_ref(buf, table)?,
-                SpanKey::Kind => span.kind = SpanKind::try_from(read_nullable_number(buf)?).map_err(|e| DecodeError::InvalidFormat(e.message))?,
+                SpanKey::Kind => {
+                    let kind: i32 = read_nullable_number(buf).map_err(|e| DecodeError::InvalidFormat(e.to_string()))?;
+                    span.kind = SpanKind::try_from(kind).map_err(|_| DecodeError::InvalidFormat("Invalid span kind".to_string()))?
+                },
             }
         } else {
             return Err(DecodeError::InvalidFormat("Invalid span key".to_owned()))
@@ -288,11 +293,11 @@ fn decode_span_link<T: DeserializableTraceData>(buf: &mut Buffer<T>, table: &mut
     })?;
 
     for _ in 0..span_link_size {
-        let key = SpanLinkKey::from_repr(buf.read_u8().map_err(|e| DecodeError::InvalidFormat(e.message))?);
+        let key = SpanLinkKey::from_repr(read_key(buf)?);
         if let Some(key) = key {
             match key {
-                SpanLinkKey::TraceId => span_link.trace_id = read_trace_id(buf)?,
-                SpanLinkKey::SpanId => span_link.span_id = decode::read_u64(buf)?,
+                SpanLinkKey::TraceId => span_link.trace_id = read_trace_id(buf.as_mut_slice())?,
+                SpanLinkKey::SpanId => span_link.span_id = read_number(buf)?,
                 SpanLinkKey::Attributes => decode_attributes(buf, table, &mut span_link.attributes)?,
                 SpanLinkKey::TraceState => span_link.tracestate = read_string_ref(buf, table)?,
                 SpanLinkKey::Flags => span_link.flags = read_number(buf)?,
@@ -313,10 +318,10 @@ fn decode_span_event<T: DeserializableTraceData>(buf: &mut Buffer<T>, table: &mu
     })?;
 
     for _ in 0..span_event_size {
-        let key = SpanEventKey::from_repr(buf.read_u8().map_err(|e| DecodeError::InvalidFormat(e.message))?);
+        let key = SpanEventKey::from_repr(read_key(buf)?);
         if let Some(key) = key {
             match key {
-                SpanEventKey::Time => span_event.time_unix_nano = decode::read_u64(buf)?,
+                SpanEventKey::Time => span_event.time_unix_nano = read_number(buf)?,
                 SpanEventKey::Name => span_event.name = read_string_ref(buf, table)?,
                 SpanEventKey::Attributes => decode_attributes(buf, table, &mut span_event.attributes)?,
             }
@@ -333,8 +338,8 @@ fn decode_any_value<T: DeserializableTraceData>(buf: &mut Buffer<T>, table: &mut
         Marker::FixPos(value_type) => {
             match AnyValueKey::from_repr(value_type) {
                 Some(AnyValueKey::String) => AttributeAnyValue::String(read_string_ref(buf, table)?),
-                Some(AnyValueKey::Bool) => AttributeAnyValue::Boolean(decode::read_bool(buf).map_err(|e| DecodeError::InvalidFormat(e.to_string()))?),
-                Some(AnyValueKey::Double) => AttributeAnyValue::Double(decode::read_f64(buf).map_err(|e| DecodeError::InvalidFormat(e.to_string()))?),
+                Some(AnyValueKey::Bool) => AttributeAnyValue::Boolean(decode::read_bool(buf.as_mut_slice()).map_err(|e| DecodeError::InvalidFormat(e.to_string()))?),
+                Some(AnyValueKey::Double) => AttributeAnyValue::Double(decode::read_f64(buf.as_mut_slice()).map_err(|e| DecodeError::InvalidFormat(e.to_string()))?),
                 Some(AnyValueKey::Int64) => AttributeAnyValue::Integer(read_number(buf)?),
                 Some(AnyValueKey::Bytes) => AttributeAnyValue::Bytes(read_byte_ref(buf, table)?),
                 Some(AnyValueKey::Array) => {

@@ -122,11 +122,6 @@ unsafe fn as_mut<T>(v: &T) -> &mut T {
     &mut *(v as *const _ as *mut _)
 }
 
-struct TraceValue<'s, T: TraceProjector<'s, D>, D: TraceDataLifetime<'s>, C, const TYPE: u8, const ISMUT: u8 = IMMUT> {
-    storage: &'s T::Storage,
-    container: &'s C,
-}
-
 #[derive(Debug)]
 pub struct Traces<'s, T: TraceProjector<'s, D>, D: TraceDataLifetime<'s>, const ISMUT: u8 = IMMUT> {
     storage: &'s T::Storage,
@@ -916,11 +911,11 @@ impl<'container, 'storage, T: TraceProjector<'storage, D>, D: TraceDataLifetime<
 where
     C: AttributeArrayOp<'container, 'storage, T, D>,
 {
-    fn len(&self) -> usize {
+    pub fn len(&self) -> usize {
         self.container.get_attribute_array_len(self.storage)
     }
 
-    fn get(&'container self, index: usize) -> AttributeAnyGetterContainer<'container, 'storage, TraceAttributes<'storage, T, D, AttrOwned<C>, C>, T, D, C> {
+    pub fn get(&'container self, index: usize) -> AttributeAnyGetterContainer<'container, 'storage, TraceAttributes<'storage, T, D, AttrOwned<C>, C>, T, D, C> {
         self.container.get_attribute_array_value(self.storage, index)
     }
 }
@@ -929,11 +924,11 @@ impl<'container, 'storage, T: TraceProjector<'storage, D>, D: TraceDataLifetime<
 where
     C: AttributeArrayMutOp<'container, 'storage, T, D>,
 {
-    fn get_mut(&'container mut self, index: usize) -> Option<AttributeAnySetterContainer<'container, 'storage, TraceAttributesMut<'storage, T, D, AttrOwned<C>, C>, T, D, C>> {
+    pub fn get_mut(&'container mut self, index: usize) -> Option<AttributeAnySetterContainer<'container, 'storage, TraceAttributesMut<'storage, T, D, AttrOwned<C>, C>, T, D, C>> {
         unsafe { self.container.get_attribute_array_value_mut(as_mut(self.storage), index) }
     }
 
-    fn append(&'container mut self, value: AttributeAnyValueType) -> AttributeAnySetterContainer<'container, 'storage, TraceAttributesMut<'storage, T, D, AttrOwned<C>, C>, T, D, C> {
+    pub fn append(&'container mut self, value: AttributeAnyValueType) -> AttributeAnySetterContainer<'container, 'storage, TraceAttributesMut<'storage, T, D, AttrOwned<C>, C>, T, D, C> {
         unsafe { self.container.append_attribute_array_value(as_mut(self.storage), value) }
     }
 

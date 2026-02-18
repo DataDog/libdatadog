@@ -1,18 +1,9 @@
-use std::borrow::Borrow;
 use std::collections::HashMap;
 use std::hash::Hash;
 use hashbrown::Equivalent;
 use libdd_trace_protobuf::pb::idx::SpanKind;
 use crate::span::{BytesData, SliceData, TraceData, OwnedTraceData, TraceDataLifetime, SpanDataContents, AttributeAnyContainer, AttributeAnySetterContainer, AttrRef, TraceAttributesMut, TraceAttributesMutOp, TraceAttributesString, TraceAttributesInteger, TraceAttributesBoolean, AttributeAnyGetterContainer, TraceAttributes, TraceAttributesOp, TracesMut, Traces as TracesStruct, TraceProjector, AttributeAnyValueType};
 use crate::span::table::{TraceBytesRef, TraceDataText, TraceDataBytes, TraceDataRef, TraceStringRef, StaticDataVec};
-
-
-
-/// Checks if the `value` represents an empty string. Used to skip serializing empty strings
-/// with serde.
-fn is_empty_str<T: Borrow<str>>(value: &T) -> bool {
-    value.borrow().is_empty()
-}
 
 #[derive(Default, Debug)]
 pub struct TraceStaticData<T: TraceData> {
