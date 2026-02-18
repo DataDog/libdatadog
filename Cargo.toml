@@ -30,8 +30,8 @@ members = [
   "libdd-trace-stats",
   "datadog-tracer-flare",
   "libdd-capabilities",
+  "libdd-capabilities-impl",
   "libdd-common",
-  "libdd-provider",
   "libdd-common-ffi",
   "libdd-telemetry",
   "libdd-telemetry-ffi",
@@ -109,3 +109,7 @@ codegen-units = 1
 # so benchmarks are not measuring the same thing as the release build. This patch removes
 # the default dependency on libm. A PR will be opened to proptest to make this optional.
 proptest = { git = 'https://github.com/bantonsson/proptest.git', branch = "ban/avoid-libm-in-std" }
+
+# Currently needs to live under patch but once it is on crates.io, only the
+# integration would need to specify this.
+libdd-capabilities-impl = { path = "libdd-capabilities-impl" }
