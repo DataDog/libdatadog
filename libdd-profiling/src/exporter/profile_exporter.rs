@@ -110,31 +110,9 @@ impl ProfileExporter {
 
         // Add Azure App Services tags if available
         if let Some(aas) = &*azure_app_services::AAS_METADATA {
-            let aas_tags = [
-                ("aas.resource.id", aas.get_resource_id()),
-                (
-                    "aas.environment.extension_version",
-                    aas.get_extension_version(),
-                ),
-                ("aas.environment.instance_id", aas.get_instance_id()),
-                ("aas.environment.instance_name", aas.get_instance_name()),
-                ("aas.environment.os", aas.get_operating_system()),
-                ("aas.resource.group", aas.get_resource_group()),
-                ("aas.site.name", aas.get_site_name()),
-                ("aas.site.kind", aas.get_site_kind()),
-                ("aas.site.type", aas.get_site_type()),
-                ("aas.subscription.id", aas.get_subscription_id()),
-            ];
-
-            // Avoid infallible allocation paths when adding the Azure tags.
-            // This is an upper bound since Tag::new can fail and we'll skip invalid tags.
-            tags.try_reserve(aas_tags.len())?;
-
-            tags.extend(
-                aas_tags
-                    .into_iter()
-                    .filter_map(|(name, value)| Tag::new(name, value).ok()),
-            );
+            let aas_tags_iter = aas.get_app_service_tags();
+            tags.try_reserve(aas_tags_iter.len())?;
+            tags.extend(aas_tags_iter.filter_map(|(name, value)| Tag::new(name, value).ok()));
         }
 
         // Precompute the base tags string (includes configured tags + Azure App Services tags)
