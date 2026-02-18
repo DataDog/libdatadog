@@ -349,19 +349,38 @@ fn take_config() -> Option<(
 
 /// This function is designed to be when a program is at a terminal state
 /// and the application wants to report an unhandled exception to the crashtracker
+/// If this crashes, then the application will also crash. Ensure that this API is
+/// called when the application is at a terminal state and exit quickly after.
+///
+/// This API handles reporting both the crash ping and the crash report for the
+/// unhandled exception.
 ///
 /// Preconditions:
 /// - The crashtracker must be started
 /// - The stacktrace must be valid
 ///
-/// This function will spawn the receiver process and call an emit function to pipe over
-/// the crash data. We don't use the collector process because we are not in a signal handler
-/// Rather, we call emit_crashreport directly and pipe over data to the receiver
+///  This function will spawn the receiver process and call an emit function to pipe over
+///  the crash data. We don't use the collector process because we are not in a signal handler
+///  Rather, we call emit_crashreport directly and pipe over data to the receiver
 pub fn report_unhandled_exception(
     exception_type: Option<&str>,
     exception_message: Option<&str>,
     stacktrace: StackTrace,
 ) -> Result<(), CrashHandlerError> {
+    // Although both report_unhandled_exception and handle_posix_signal_impl do similar things of
+    //   1. Getting config and metadata
+    //   2. Spawn receiver
+    //   3. Set timeout
+    //   4. Emit report
+    //   5. Finish logic
+    // It is not worth going out of the way to combine these because:
+    //   1. The signal handler borrows and leaks (async-signal-safe); unifying them would require a
+    //      generic or trait just to paper over a deliberate constraint, making the split harder to
+    //      see.
+    //   2. The emit + finish: completely different mechanisms (fork vs. direct IO, Collector vs.
+    //      raw ProcessHandle).
+    //   3. TimeoutManager::new(config.timeout()); one line, not worth extracting.
+
     // Turn crashtracker off to prevent a recursive crash report emission
     // We do not turn it back on because this function is not intended to be used as
     // a recurring mechanism to report exceptions. We expect the application to exit
@@ -382,7 +401,7 @@ pub fn report_unhandled_exception(
     let error_message_str = exception_message.unwrap_or("<no message>");
     let message = format!(
         "Process was terminated due to an unhandled exception of type '{error_type_str}'. \
-         Message: \"{error_message_str}\""
+         Message: {error_message_str}"
     );
 
     let message_ptr = Box::into_raw(Box::new(message));

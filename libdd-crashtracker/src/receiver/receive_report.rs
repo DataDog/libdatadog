@@ -105,7 +105,6 @@ impl From<RuntimeStackFrame> for StackFrame {
 pub(crate) enum StdinState {
     AdditionalTags,
     Config,
-    CompleteStackTrace,
     Counters,
     Done,
     File(String, Vec<String>),
@@ -118,6 +117,7 @@ pub(crate) enum StdinState {
     TraceIds,
     Ucontext,
     Waiting,
+    WholeStackTrace,
     ThreadName(Option<String>),
     // StackFrame is always emitted as one stream of all the frames but StackString
     // may have lines that we need to accumulate depending on runtime (e.g. Python)
@@ -157,17 +157,6 @@ fn process_line(
             StdinState::Config
         }
 
-        StdinState::CompleteStackTrace
-            if line.starts_with(DD_CRASHTRACK_END_COMPLETE_STACKTRACE) =>
-        {
-            StdinState::Waiting
-        }
-        StdinState::CompleteStackTrace => {
-            let stacktrace: StackTrace = serde_json::from_str(line)?;
-            builder.with_stack(stacktrace)?;
-            StdinState::CompleteStackTrace
-        }
-
         StdinState::Counters if line.starts_with(DD_CRASHTRACK_END_COUNTERS) => StdinState::Waiting,
         StdinState::Counters => {
             let v: serde_json::Value = serde_json::from_str(line)?;
@@ -180,6 +169,15 @@ fn process_line(
             let val = val.as_i64().context("Vals are ints")?;
             builder.with_counter(key.clone(), val)?;
             StdinState::Counters
+        }
+
+        StdinState::WholeStackTrace if line.starts_with(DD_CRASHTRACK_END_WHOLE_STACKTRACE) => {
+            StdinState::Waiting
+        }
+        StdinState::WholeStackTrace => {
+            let stacktrace: StackTrace = serde_json::from_str(line)?;
+            builder.with_stack(stacktrace)?;
+            StdinState::WholeStackTrace
         }
 
         StdinState::Done => {
@@ -324,9 +322,6 @@ fn process_line(
             StdinState::AdditionalTags
         }
         StdinState::Waiting if line.starts_with(DD_CRASHTRACK_BEGIN_CONFIG) => StdinState::Config,
-        StdinState::Waiting if line.starts_with(DD_CRASHTRACK_BEGIN_COMPLETE_STACKTRACE) => {
-            StdinState::CompleteStackTrace
-        }
         StdinState::Waiting if line.starts_with(DD_CRASHTRACK_BEGIN_COUNTERS) => {
             StdinState::Counters
         }
@@ -363,6 +358,9 @@ fn process_line(
         }
         StdinState::Waiting if line.starts_with(DD_CRASHTRACK_BEGIN_UCONTEXT) => {
             StdinState::Ucontext
+        }
+        StdinState::Waiting if line.starts_with(DD_CRASHTRACK_BEGIN_WHOLE_STACKTRACE) => {
+            StdinState::WholeStackTrace
         }
         StdinState::Waiting if line.starts_with(DD_CRASHTRACK_DONE) => {
             builder.with_incomplete(false)?;

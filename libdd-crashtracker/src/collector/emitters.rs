@@ -178,9 +178,16 @@ pub(crate) fn emit_crashreport(
     // we have an enhanced crash ping message
     emit_config(pipe, config_str)?;
     emit_message(pipe, message_ptr)?;
-    if let CrashKindData::UnixSignal { sig_info, .. } = &crash {
-        emit_siginfo(pipe, *sig_info)?;
+
+    match &crash {
+        CrashKindData::UnixSignal { sig_info, .. } => {
+            emit_siginfo(pipe, *sig_info)?;
+        }
+        CrashKindData::UnhandledException { .. } => {
+            // Unhandled exceptions have no signal info
+        }
     }
+
     emit_kind(pipe, &crash.error_kind())?;
     emit_metadata(pipe, metadata_string)?;
 
@@ -198,11 +205,14 @@ pub(crate) fn emit_crashreport(
     match crash {
         CrashKindData::UnixSignal { ucontext, .. } => {
             emit_ucontext(pipe, ucontext)?;
-            // Backtrace resolution is not guaranteed signal-safe; do it last so
-            // the rest of the report is captured even if this panics/crashes.
-            // https://github.com/rust-lang/backtrace-rs/issues/414
-            let fault_ip = extract_ip(ucontext);
             if config.resolve_frames() != StacktraceCollection::Disabled {
+                // SAFETY: Getting a backtrace on rust is not guaranteed to be signal safe
+                // https://github.com/rust-lang/backtrace-rs/issues/414
+                // let current_backtrace = backtrace::Backtrace::new();
+                // In fact, if we look into the code here, we see mallocs.
+                // https://doc.rust-lang.org/src/std/backtrace.rs.html#332
+                // We do this last, so even if it crashes, we still get the other info.
+                let fault_ip = extract_ip(ucontext);
                 unsafe { emit_backtrace_by_frames(pipe, config.resolve_frames(), fault_ip)? };
             }
             if is_runtime_callback_registered() {
@@ -210,7 +220,9 @@ pub(crate) fn emit_crashreport(
             }
         }
         CrashKindData::UnhandledException { stacktrace } => {
-            emit_complete_stacktrace(pipe, stacktrace)?;
+            // SAFETY: this branch only executes when an unhandled exception occurs
+            // and is not called from a signal handler.
+            unsafe { emit_whole_stacktrace(pipe, stacktrace)? };
         }
     }
 
@@ -219,17 +231,19 @@ pub(crate) fn emit_crashreport(
     Ok(())
 }
 
-/// Safety:
-///     This function is not signal safe
-///     It allocates memory when converting to JSON string
-///     It is not safe to call this function from a signal handler.
-pub fn emit_complete_stacktrace(
+/// SAFETY:
+///    This function is not safe to call from a signal handler.
+///    Although `serde_json::to_writer` does not technically allocate memory
+///    itself, it takes in `StackTrace` which is allocated and is only intended
+///    to be used in a non-signal-handler context
+unsafe fn emit_whole_stacktrace(
     w: &mut impl Write,
     stacktrace: StackTrace,
 ) -> Result<(), EmitterError> {
-    writeln!(w, "{DD_CRASHTRACK_BEGIN_COMPLETE_STACKTRACE}")?;
-    writeln!(w, "{}", serde_json::to_string(&stacktrace)?)?;
-    writeln!(w, "{DD_CRASHTRACK_END_COMPLETE_STACKTRACE}")?;
+    writeln!(w, "{DD_CRASHTRACK_BEGIN_WHOLE_STACKTRACE}")?;
+    let _ = serde_json::to_writer(&mut *w, &stacktrace);
+    writeln!(w)?;
+    writeln!(w, "{DD_CRASHTRACK_END_WHOLE_STACKTRACE}")?;
     w.flush()?;
     Ok(())
 }
@@ -242,7 +256,6 @@ fn emit_config(w: &mut impl Write, config_str: &str) -> Result<(), EmitterError>
     Ok(())
 }
 
-/// This allocates. Don't use this in signal handler path.
 fn emit_kind<W: std::io::Write>(w: &mut W, kind: &ErrorKind) -> Result<(), EmitterError> {
     writeln!(w, "{DD_CRASHTRACK_BEGIN_KIND}")?;
     let _ = serde_json::to_writer(&mut *w, kind);
@@ -515,7 +528,7 @@ mod tests {
         stacktrace.set_complete().unwrap();
 
         let mut buf = Vec::new();
-        emit_complete_stacktrace(&mut buf, stacktrace).expect("to work ;-)");
+        unsafe { emit_whole_stacktrace(&mut buf, stacktrace).expect("to work ;-)") };
         let out = str::from_utf8(&buf).expect("to be valid UTF8");
 
         assert!(out.contains("\"ip\":\"0x4d2\""));
