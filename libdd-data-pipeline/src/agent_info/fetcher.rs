@@ -6,8 +6,9 @@
 use super::{schema::AgentInfo, AGENT_INFO_CACHE};
 use anyhow::{anyhow, Result};
 use hyper::header::HeaderName;
+use libdd_capabilities::{HttpClientTrait, HttpRequest};
+use libdd_capabilities_impl::DefaultHttpClient;
 use libdd_common::{entity_id, worker::Worker, Endpoint};
-use libdd_provider::{DefaultHttpClient, HttpClientTrait, HttpRequest};
 use sha2::{Digest, Sha256};
 use std::sync::Arc;
 use std::time::Duration;

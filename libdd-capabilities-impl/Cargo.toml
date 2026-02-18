@@ -2,15 +2,16 @@
 # SPDX-License-Identifier: Apache-2.0
 
 [package]
-name = "libdd-provider"
+name = "libdd-capabilities-impl"
 version = "0.1.0"
 edition = "2021"
+description = "Native implementations of libdd-capabilities traits"
+
+[lib]
+crate-type = ["lib"]
 
 [dependencies]
 libdd-capabilities = { path = "../libdd-capabilities" }
-
-[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 libdd-common = { path = "../libdd-common" }
-
-[target.'cfg(target_arch = "wasm32")'.dependencies]
-capabilities = { git = "https://github.com/DataDog/libdatadog-nodejs.git", branch = "jwiriath/libdatadog-wasm-effort" }
+hyper = { workspace = true }
+http-body-util = "0.1"
