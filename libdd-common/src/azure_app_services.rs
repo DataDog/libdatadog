@@ -265,7 +265,7 @@ impl AzureMetadata {
     }
 
     /// Returns Azure App Services tags as an iterator of (tag_name, tag_value) tuples.
-    /// These tags are specific to Azure App Services (web apps) environments.
+    /// These tags are specific to Azure App Services.
     pub fn get_app_service_tags(&self) -> impl ExactSizeIterator<Item = (&'static str, &str)> {
         [
             (
@@ -286,7 +286,7 @@ impl AzureMetadata {
     }
 
     /// Returns Azure Functions tags as an iterator of (tag_name, tag_value) tuples.
-    /// These tags are specific to Azure Functions (serverless) environments.
+    /// These tags are specific to Azure Functions.
     pub fn get_function_tags(&self) -> impl ExactSizeIterator<Item = (&'static str, &str)> {
         [
             ("aas.environment.instance_id", self.get_instance_id()),
