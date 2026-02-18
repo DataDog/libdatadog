@@ -44,6 +44,7 @@ async fn main() {
                     api_key: None,
                     timeout_ms: 5000, // custom timeout, defaults to 3 seconds
                     test_token: None,
+                    ..Default::default()
                 },
             },
             products: vec![ApmTracing],

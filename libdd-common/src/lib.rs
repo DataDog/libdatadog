@@ -135,6 +135,10 @@ pub struct Endpoint {
     pub timeout_ms: u64,
     /// Sets X-Datadog-Test-Session-Token header on any request
     pub test_token: Option<Cow<'static, str>>,
+    /// Use the system DNS resolver instead of hickory-dns (when the reqwest hickory-dns feature is
+    /// enabled).
+    #[serde(default)]
+    pub use_system_resolver: bool,
 }
 
 impl Default for Endpoint {
@@ -144,6 +148,7 @@ impl Default for Endpoint {
             api_key: None,
             timeout_ms: Self::DEFAULT_TIMEOUT,
             test_token: None,
+            use_system_resolver: false,
         }
     }
 }
@@ -314,6 +319,14 @@ impl Endpoint {
         self
     }
 
+    /// Use the system DNS resolver instead of hickory-dns when building the reqwest client.
+    /// Only has effect when the endpoint uses HTTP(S) and reqwest is built with the hickory-dns
+    /// feature.
+    pub fn with_system_resolver(mut self, use_system_resolver: bool) -> Self {
+        self.use_system_resolver = use_system_resolver;
+        self
+    }
+
     /// Creates a reqwest ClientBuilder configured for this endpoint.
     ///
     /// This method handles various endpoint schemes:
@@ -322,9 +335,9 @@ impl Endpoint {
     /// - `windows`: Windows named pipes (Windows only)
     /// - `file`: File dump endpoints for debugging (spawns a local server to capture requests)
     ///
-    /// DNS resolution uses the system resolver unless the `DD_USE_HICKORY_DNS` environment
-    /// variable is set to a truthy value (`1`, `true`, or `yes`), in which case the hickory-dns
-    /// resolver is used.
+    /// DNS resolution uses hickory-dns by default when the reqwest hickory-dns feature is enabled.
+    /// Set [`Endpoint::use_system_resolver`] to true (e.g. via [`Endpoint::with_system_resolver`])
+    /// to use the system resolver instead.
     ///
     /// # Returns
     /// A tuple of (ClientBuilder, request_url) where:
@@ -343,14 +356,9 @@ impl Endpoint {
         let mut builder =
             reqwest::Client::builder().timeout(std::time::Duration::from_millis(self.timeout_ms));
 
-        // DNS resolver: use hickory only when DD_USE_HICKORY_DNS is set to a truthy value
-        // (e.g. 1, true, yes). Otherwise use the system resolver.
-        let use_hickory = std::env::var("DD_USE_HICKORY_DNS")
-            .ok()
-            .as_ref()
-            .map(|s| matches!(s.trim().to_lowercase().as_str(), "1" | "true" | "yes"))
-            .unwrap_or(false);
-        builder = builder.hickory_dns(use_hickory);
+        if self.use_system_resolver {
+            builder = builder.no_hickory_dns();
+        }
 
         let request_url = match self.url.scheme_str() {
             // HTTP/HTTPS endpoints
