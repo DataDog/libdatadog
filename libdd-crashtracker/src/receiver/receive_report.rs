@@ -7,7 +7,7 @@ use crate::{
     },
     runtime_callback::RuntimeStack,
     shared::constants::*,
-    CrashtrackerConfiguration,
+    CrashtrackerConfiguration, StackTrace,
 };
 
 use anyhow::Context;
@@ -105,6 +105,7 @@ impl From<RuntimeStackFrame> for StackFrame {
 pub(crate) enum StdinState {
     AdditionalTags,
     Config,
+    CompleteStackTrace,
     Counters,
     Done,
     File(String, Vec<String>),
@@ -154,6 +155,17 @@ fn process_line(
             }
             *config = Some(serde_json::from_str(line)?);
             StdinState::Config
+        }
+
+        StdinState::CompleteStackTrace
+            if line.starts_with(DD_CRASHTRACK_END_COMPLETE_STACKTRACE) =>
+        {
+            StdinState::Waiting
+        }
+        StdinState::CompleteStackTrace => {
+            let stacktrace: StackTrace = serde_json::from_str(line)?;
+            builder.with_stack(stacktrace)?;
+            StdinState::CompleteStackTrace
         }
 
         StdinState::Counters if line.starts_with(DD_CRASHTRACK_END_COUNTERS) => StdinState::Waiting,
@@ -312,6 +324,9 @@ fn process_line(
             StdinState::AdditionalTags
         }
         StdinState::Waiting if line.starts_with(DD_CRASHTRACK_BEGIN_CONFIG) => StdinState::Config,
+        StdinState::Waiting if line.starts_with(DD_CRASHTRACK_BEGIN_COMPLETE_STACKTRACE) => {
+            StdinState::CompleteStackTrace
+        }
         StdinState::Waiting if line.starts_with(DD_CRASHTRACK_BEGIN_COUNTERS) => {
             StdinState::Counters
         }

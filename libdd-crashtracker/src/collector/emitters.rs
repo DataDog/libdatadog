@@ -10,7 +10,8 @@ use crate::runtime_callback::{
 };
 use crate::shared::constants::*;
 use crate::{
-    translate_si_code, CrashtrackerConfiguration, ErrorKind, SignalNames, StacktraceCollection,
+    translate_si_code, CrashtrackerConfiguration, ErrorKind, SignalNames, StackTrace,
+    StacktraceCollection,
 };
 use backtrace::Frame;
 use libc::{siginfo_t, ucontext_t};
@@ -34,6 +35,8 @@ pub enum EmitterError {
     CounterError(#[from] crate::collector::counters::CounterError),
     #[error("Atomic set error: {0}")]
     AtomicSetError(#[from] crate::collector::atomic_set::AtomicSetError),
+    #[error("Serialization error: {0}")]
+    SerializationError(#[from] serde_json::Error),
 }
 
 /// Emit a stacktrace onto the given handle as formatted json.
@@ -134,6 +137,30 @@ unsafe fn emit_backtrace_by_frames(
     Ok(())
 }
 
+/// Crash-kind-specific data passed to `emit_crashreport`.
+///
+/// Each variant carries exactly the fields that are meaningful for that crash
+/// origin. the shared fields (config, metadata, procinfo, …) remain as plain
+/// function parameters
+pub(crate) enum CrashKindData {
+    UnixSignal {
+        sig_info: *const siginfo_t,
+        ucontext: *const ucontext_t,
+    },
+    UnhandledException {
+        stacktrace: StackTrace,
+    },
+}
+
+impl CrashKindData {
+    fn error_kind(&self) -> ErrorKind {
+        match self {
+            CrashKindData::UnixSignal { .. } => ErrorKind::UnixSignal,
+            CrashKindData::UnhandledException { .. } => ErrorKind::UnhandledException,
+        }
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn emit_crashreport(
     pipe: &mut impl Write,
@@ -141,24 +168,23 @@ pub(crate) fn emit_crashreport(
     config_str: &str,
     metadata_string: &str,
     message_ptr: *mut String,
-    sig_info: *const siginfo_t,
-    ucontext: *const ucontext_t,
+    crash: CrashKindData,
     ppid: i32,
     crashing_tid: libc::pid_t,
 ) -> Result<(), EmitterError> {
-    // The following order is important in order to emit the crash ping:
-    // - receiver expects the config because the endpoint to emit to is there
-    // - then message if any
-    // - then siginfo if any
-    // - then the kind if any
-    // - then metadata
+    // Crash-ping
+    // The receiver dispatches the crash ping as soon as it sees the metadata
+    // section, so try to emit message, siginfo, and kind before it to make sure
+    // we have an enhanced crash ping message
     emit_config(pipe, config_str)?;
     emit_message(pipe, message_ptr)?;
-    emit_siginfo(pipe, sig_info)?;
-    emit_kind(pipe, &ErrorKind::UnixSignal)?;
+    if let CrashKindData::UnixSignal { sig_info, .. } = &crash {
+        emit_siginfo(pipe, *sig_info)?;
+    }
+    emit_kind(pipe, &crash.error_kind())?;
     emit_metadata(pipe, metadata_string)?;
-    // after the metadata the ping should have been sent
-    emit_ucontext(pipe, ucontext)?;
+
+    // Shared process context
     emit_procinfo(pipe, ppid, crashing_tid)?;
     emit_counters(pipe)?;
     emit_spans(pipe)?;
@@ -168,24 +194,39 @@ pub(crate) fn emit_crashreport(
     #[cfg(target_os = "linux")]
     emit_proc_self_maps(pipe)?;
 
-    // Getting a backtrace on rust is not guaranteed to be signal safe
-    // https://github.com/rust-lang/backtrace-rs/issues/414
-    // let current_backtrace = backtrace::Backtrace::new();
-    // In fact, if we look into the code here, we see mallocs.
-    // https://doc.rust-lang.org/src/std/backtrace.rs.html#332
-    // Do this last, so even if it crashes, we still get the other info.
-    if config.resolve_frames() != StacktraceCollection::Disabled {
-        let fault_ip = extract_ip(ucontext);
-        unsafe { emit_backtrace_by_frames(pipe, config.resolve_frames(), fault_ip)? };
-    }
-
-    if is_runtime_callback_registered() {
-        emit_runtime_stack(pipe)?;
+    // Stack trace emission
+    match crash {
+        CrashKindData::UnixSignal { ucontext, .. } => {
+            emit_ucontext(pipe, ucontext)?;
+            // Backtrace resolution is not guaranteed signal-safe; do it last so
+            // the rest of the report is captured even if this panics/crashes.
+            // https://github.com/rust-lang/backtrace-rs/issues/414
+            let fault_ip = extract_ip(ucontext);
+            if config.resolve_frames() != StacktraceCollection::Disabled {
+                unsafe { emit_backtrace_by_frames(pipe, config.resolve_frames(), fault_ip)? };
+            }
+            if is_runtime_callback_registered() {
+                emit_runtime_stack(pipe)?;
+            }
+        }
+        CrashKindData::UnhandledException { stacktrace } => {
+            emit_complete_stacktrace(pipe, stacktrace)?;
+        }
     }
 
     writeln!(pipe, "{DD_CRASHTRACK_DONE}")?;
     pipe.flush()?;
+    Ok(())
+}
 
+pub fn emit_complete_stacktrace(
+    w: &mut impl Write,
+    stacktrace: StackTrace,
+) -> Result<(), EmitterError> {
+    writeln!(w, "{DD_CRASHTRACK_BEGIN_COMPLETE_STACKTRACE}")?;
+    writeln!(w, "{}", serde_json::to_string(&stacktrace)?)?;
+    writeln!(w, "{DD_CRASHTRACK_END_COMPLETE_STACKTRACE}")?;
+    w.flush()?;
     Ok(())
 }
 
@@ -197,6 +238,7 @@ fn emit_config(w: &mut impl Write, config_str: &str) -> Result<(), EmitterError>
     Ok(())
 }
 
+/// This allocates. Don't use this in signal handler path.
 fn emit_kind<W: std::io::Write>(w: &mut W, kind: &ErrorKind) -> Result<(), EmitterError> {
     writeln!(w, "{DD_CRASHTRACK_BEGIN_KIND}")?;
     let _ = serde_json::to_writer(&mut *w, kind);
@@ -425,6 +467,8 @@ fn extract_ip(ucontext: *const ucontext_t) -> usize {
 
 #[cfg(test)]
 mod tests {
+    use crate::StackFrame;
+
     use super::*;
     use std::str;
 
@@ -444,6 +488,38 @@ mod tests {
             emit_backtrace_by_frames(&mut buf, collection, ip_of_test_fn).expect("to work ;-)");
         }
         buf
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_emit_complete_stacktrace() {
+        // new_incomplete() starts with incomplete: true, which push_frame requires
+        let mut stacktrace = StackTrace::new_incomplete();
+        let mut stackframe1 = StackFrame::new();
+        stackframe1.with_ip(1234);
+        stackframe1.with_function("test_function1".to_string());
+        stackframe1.with_file("test_file1".to_string());
+
+        let mut stackframe2 = StackFrame::new();
+        stackframe2.with_ip(5678);
+        stackframe2.with_function("test_function2".to_string());
+        stackframe2.with_file("test_file2".to_string());
+
+        stacktrace.push_frame(stackframe1, true).unwrap();
+        stacktrace.push_frame(stackframe2, true).unwrap();
+
+        stacktrace.set_complete().unwrap();
+
+        let mut buf = Vec::new();
+        emit_complete_stacktrace(&mut buf, stacktrace).expect("to work ;-)");
+        let out = str::from_utf8(&buf).expect("to be valid UTF8");
+
+        assert!(out.contains("\"ip\":\"0x4d2\""));
+        assert!(out.contains("\"function\":\"test_function1\""));
+        assert!(out.contains("\"file\":\"test_file1\""));
+        assert!(out.contains("\"ip\":\"0x162e\""));
+        assert!(out.contains("\"function\":\"test_function2\""));
+        assert!(out.contains("\"file\":\"test_file2\""));
     }
 
     #[test]

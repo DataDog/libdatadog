@@ -8,8 +8,10 @@ use super::receiver_manager::Receiver;
 use super::signal_handler_manager::chain_signal_handler;
 use crate::crash_info::Metadata;
 use crate::shared::configuration::CrashtrackerConfiguration;
+use crate::StackTrace;
 use libc::{c_void, siginfo_t, ucontext_t};
 use libdd_common::timeout::TimeoutManager;
+use std::os::unix::{io::FromRawFd, net::UnixStream};
 use std::panic;
 use std::panic::PanicHookInfo;
 use std::ptr;
@@ -301,6 +303,119 @@ fn handle_posix_signal_impl(
     Ok(())
 }
 
+/// Gets a clone of the current metadata, if set.
+/// Unlike the signal handler path, this reads without consuming the stored value.
+///
+/// SAFETY:
+///     This function must not be called concurrently with `update_metadata`.
+fn get_metadata() -> Option<(crate::crash_info::Metadata, String)> {
+    let ptr = METADATA.load(SeqCst);
+    if ptr.is_null() {
+        None
+    } else {
+        // Safety: ptr was created by Box::into_raw in update_metadata
+        let (metadata, metadata_string) = unsafe { &*ptr };
+        Some((metadata.clone(), metadata_string.clone()))
+    }
+}
+
+/// Gets a clone of the current config, if set.
+/// Unlike the signal handler path, this reads without consuming the stored value.
+///
+/// SAFETY:
+///     This function must not be called concurrently with `update_config`.
+fn get_config() -> Option<(
+    crate::shared::configuration::CrashtrackerConfiguration,
+    String,
+)> {
+    let ptr = CONFIG.load(SeqCst);
+    if ptr.is_null() {
+        None
+    } else {
+        // Safety: ptr was created by Box::into_raw in update_config
+        let (config, config_string) = unsafe { &*ptr };
+        Some((config.clone(), config_string.clone()))
+    }
+}
+
+/// This function is designed to be when a program is at a terminal state
+/// and the application wants to report an unhandled exception to the crashtracker
+///
+/// Preconditions:
+/// - The crashtracker must be started
+/// - The stacktrace must be valid
+///
+/// This function will spawn the receiver process and call an emit function to pipe over
+/// the crash data. We don't use the collector process because we are not in a signal handler
+/// Rather, we call emit_crashreport directly and pipe over data to the receiver
+pub fn report_unhandled_exception(
+    exception_type: Option<&str>,
+    exception_message: Option<&str>,
+    stacktrace: StackTrace,
+) -> Result<(), CrashHandlerError> {
+    let Some((config, config_str)) = get_config() else {
+        return Err(CrashHandlerError::NoConfig);
+    };
+    let Some((_metadata, metadata_str)) = get_metadata() else {
+        return Err(CrashHandlerError::NoMetadata);
+    };
+
+    // Turn crashtracker off to prevent a recursive crash report emission
+    // We do not turn it back on because this function is not intended to be used as
+    // a recurring mechanism to report exceptions. We expect the application to exit
+    // after
+    disable();
+
+    let unix_socket_path = config.unix_socket_path().as_deref().unwrap_or_default();
+
+    let receiver = if unix_socket_path.is_empty() {
+        Receiver::spawn_from_stored_config()?
+    } else {
+        Receiver::from_socket(unix_socket_path)?
+    };
+
+    let timeout_manager = TimeoutManager::new(config.timeout());
+
+    let pid = unsafe { libc::getpid() };
+    let tid = libdd_common::threading::get_current_thread_id() as libc::pid_t;
+
+    let error_type_str = exception_type.unwrap_or("<unknown>");
+    let error_message_str = exception_message.unwrap_or("<no message>");
+    let message = format!(
+        "Process was terminated due to an unhandled exception of type '{error_type_str}'. \
+         Message: \"{error_message_str}\""
+    );
+
+    let message_ptr = Box::into_raw(Box::new(message));
+
+    // Duplicate the socket fd so we can poll for receiver completion after we close the write end.
+    // UnixStream::from_raw_fd takes ownership of uds_fd, so we need a separate fd to poll.
+    let poll_fd = unsafe { libc::dup(receiver.handle.uds_fd) };
+    let receiver_pid = receiver.handle.pid;
+
+    {
+        let mut unix_stream = unsafe { UnixStream::from_raw_fd(receiver.handle.uds_fd) };
+        let _ = super::emitters::emit_crashreport(
+            &mut unix_stream,
+            &config,
+            &config_str,
+            &metadata_str,
+            message_ptr,
+            super::emitters::CrashKindData::UnhandledException { stacktrace },
+            pid,
+            tid,
+        );
+        // unix_stream is dropped here, closing the write end of the socket.
+        // This signals EOF to the receiver so it can finish writing the crash report.
+    }
+
+    // Wait for the receiver to signal it is done (POLLHUP on the dup'd fd), then reap it.
+    let finish_handle = super::process_handle::ProcessHandle::new(poll_fd, receiver_pid);
+    finish_handle.finish(&timeout_manager);
+    unsafe { libc::close(poll_fd) };
+
+    Ok(())
+}
 #[cfg(test)]
 mod tests {
     use super::*;
