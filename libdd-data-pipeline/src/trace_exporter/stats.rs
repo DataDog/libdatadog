@@ -99,7 +99,6 @@ fn create_and_start_stats_worker(
         stats_concentrator.clone(),
         ctx.metadata.clone(),
         Endpoint::from_url(add_path(ctx.endpoint_url, STATS_ENDPOINT)),
-        cancellation_token.clone(),
         client,
     );
     ctx.shared_runtime

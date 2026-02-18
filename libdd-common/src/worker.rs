@@ -12,7 +12,7 @@ use async_trait::async_trait;
 /// This trait is dyn-compatible thanks to the `async_trait` macro,
 /// which allows it to be used as `Box<dyn Worker>`.
 #[async_trait]
-pub trait Worker {
+pub trait Worker: std::fmt::Debug {
     /// Main worker function
     async fn run(&mut self);
 
@@ -31,7 +31,7 @@ pub trait Worker {
     }
 
     /// Hook called when the app is shutting down. Used to flush all data.
-    fn shutdown(&mut self) {
+    async fn shutdown(&mut self) {
         return;
     }
 }
@@ -55,7 +55,7 @@ impl Worker for Box<dyn Worker + Send + Sync> {
         (**self).reset()
     }
 
-    fn shutdown(&mut self) {
-        (**self).shutdown()
+    async fn shutdown(&mut self) {
+        (**self).shutdown().await
     }
 }

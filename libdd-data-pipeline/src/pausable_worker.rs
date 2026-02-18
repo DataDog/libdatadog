@@ -5,11 +5,7 @@
 
 use libdd_common::worker::Worker;
 use std::fmt::Display;
-use tokio::{
-    runtime::Runtime,
-    select,
-    task::JoinHandle,
-};
+use tokio::{runtime::Runtime, select, task::JoinHandle};
 use tokio_util::sync::CancellationToken;
 
 /// A pausable worker which can be paused and restarted on forks.
@@ -35,6 +31,7 @@ pub enum PausableWorker<T: Worker + Send + Sync + 'static> {
     Paused {
         worker: T,
     },
+    Stopped,
     InvalidState,
 }
 
@@ -42,6 +39,7 @@ pub enum PausableWorker<T: Worker + Send + Sync + 'static> {
 pub enum PausableWorkerError {
     InvalidState,
     TaskAborted,
+    WorkerStopped,
 }
 
 impl Display for PausableWorkerError {
@@ -52,6 +50,9 @@ impl Display for PausableWorkerError {
             }
             PausableWorkerError::TaskAborted => {
                 write!(f, "Worker task has been aborted and state has been lost.")
+            }
+            PausableWorkerError::WorkerStopped => {
+                write!(f, "Worker has been definitely stopped")
             }
         }
     }
@@ -74,6 +75,8 @@ impl<T: Worker + Send + Sync + 'static> PausableWorker<T> {
     pub fn start(&mut self, rt: &Runtime) -> Result<(), PausableWorkerError> {
         if let Self::Running { .. } = self {
             Ok(())
+        } else if let Self::Stopped = self {
+            Err(PausableWorkerError::WorkerStopped)
         } else if let Self::Paused { mut worker } = std::mem::replace(self, Self::InvalidState) {
             // Worker is temporarily in an invalid state, but since this block is failsafe it will
             // be replaced by a valid state.
@@ -113,15 +116,18 @@ impl<T: Worker + Send + Sync + 'static> PausableWorker<T> {
 
     /// Request the worker to pause without waiting for task termination.
     ///
+    /// This is useful when pausing multiple workers in parallel.
+    ///
     /// # Errors
     /// Fails if the worker is in an invalid state.
-    pub fn request_pause(&mut self) -> Result<(), PausableWorkerError> {
+    pub fn request_pause(&self) -> Result<(), PausableWorkerError> {
         match self {
             PausableWorker::Running { stop_token, .. } => {
                 stop_token.cancel();
                 Ok(())
             }
             PausableWorker::Paused { .. } => Ok(()),
+            PausableWorker::Stopped => Ok(()),
             PausableWorker::InvalidState => Err(PausableWorkerError::InvalidState),
         }
     }
@@ -131,19 +137,26 @@ impl<T: Worker + Send + Sync + 'static> PausableWorker<T> {
     /// # Errors
     /// Fails if the worker handle has been aborted preventing the worker from being retrieved.
     pub async fn join(&mut self) -> Result<(), PausableWorkerError> {
-        if let PausableWorker::Running { handle, .. } = std::mem::replace(self, Self::InvalidState) {
-            if let Ok(worker) = handle.await {
-                *self = PausableWorker::Paused { worker };
-                Ok(())
-            } else {
-                // The task has been aborted and the worker can't be retrieved.
-                *self = PausableWorker::InvalidState;
-                Err(PausableWorkerError::TaskAborted)
+        match self {
+            PausableWorker::Running { .. } => {
+                let PausableWorker::Running { handle, .. } =
+                    std::mem::replace(self, PausableWorker::InvalidState)
+                else {
+                    // Unreachable
+                    return Ok(());
+                };
+
+                if let Ok(worker) = handle.await {
+                    *self = PausableWorker::Paused { worker };
+                    Ok(())
+                } else {
+                    // The task has been aborted and the worker can't be retrieved.
+                    *self = PausableWorker::InvalidState;
+                    Err(PausableWorkerError::TaskAborted)
+                }
             }
-        } else if let PausableWorker::Paused { .. } = self {
-            Ok(())
-        } else {
-            Err(PausableWorkerError::InvalidState)
+            PausableWorker::Paused { .. } | PausableWorker::Stopped => Ok(()),
+            PausableWorker::InvalidState => Err(PausableWorkerError::InvalidState),
         }
     }
 
@@ -156,15 +169,20 @@ impl<T: Worker + Send + Sync + 'static> PausableWorker<T> {
         self.join().await
     }
 
-    /// Reset the worker state (used in child process after fork).
-    ///
-    /// This delegates to the worker's reset method if the worker is in a paused state.
+    /// Reset the worker state (e.g. in a fork child).
     pub fn reset(&mut self) {
         if let PausableWorker::Paused { worker } = self {
             worker.reset();
         }
     }
 
+    /// Shutdown the worker.
+    pub async fn shutdown(&mut self) {
+        if let PausableWorker::Paused { worker } = self {
+            worker.shutdown().await;
+        }
+        *self = PausableWorker::Stopped;
+    }
 }
 
 #[cfg(test)]

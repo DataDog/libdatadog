@@ -11,11 +11,50 @@
 use crate::pausable_worker::{PausableWorker, PausableWorkerError};
 use libdd_common::{worker::Worker, MutexExt};
 use std::fmt;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use tokio::runtime::{Builder, Runtime};
+use tokio::task::JoinSet;
 
 /// Type alias for a boxed worker trait object that can be used with PausableWorker.
 type BoxedWorker = Box<dyn Worker + Send + Sync>;
+
+#[derive(Debug)]
+struct WorkerEntry {
+    id: u64,
+    worker: PausableWorker<BoxedWorker>,
+}
+
+/// Handle to a worker registered on a [`SharedRuntime`].
+///
+/// This handle can be used to stop the worker.
+#[derive(Clone, Debug)]
+pub struct WorkerHandle {
+    worker_id: u64,
+    workers: Arc<Mutex<Vec<WorkerEntry>>>,
+}
+
+impl WorkerHandle {
+    /// Stop the worker and call it's shutdown logic.
+    ///
+    /// # Errors
+    /// Returns an error if the worker does not exist anymore or is already stopped.
+    pub async fn stop(self) -> Result<(), SharedRuntimeError> {
+        let mut workers_lock = self.workers.lock_or_panic();
+        let Some(position) = workers_lock
+            .iter()
+            .position(|entry| entry.id == self.worker_id)
+        else {
+            return Err(SharedRuntimeError::Other(
+                "Worker not found or already stopped".to_string(),
+            ));
+        };
+        workers_lock[position].worker.pause().await?;
+        workers_lock[position].worker.shutdown().await;
+        workers_lock[position].worker = PausableWorker::Stopped;
+        Ok(())
+    }
+}
 
 /// Errors that can occur when using SharedRuntime.
 #[derive(Debug)]
@@ -67,18 +106,11 @@ impl From<std::io::Error> for SharedRuntimeError {
 /// The SharedRuntime owns a tokio runtime and tracks PausableWorkers spawned on it.
 /// It provides methods to safely pause workers before forking and restart them
 /// after fork in both parent and child processes.
+#[derive(Debug)]
 pub struct SharedRuntime {
     runtime: Arc<Mutex<Option<Arc<Runtime>>>>,
-    workers: Arc<Mutex<Vec<PausableWorker<BoxedWorker>>>>,
-}
-
-impl std::fmt::Debug for SharedRuntime {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("SharedRuntime")
-            .field("runtime", &self.runtime)
-            .field("workers", &"<opaque>")
-            .finish()
-    }
+    workers: Arc<Mutex<Vec<WorkerEntry>>>,
+    next_worker_id: AtomicU64,
 }
 
 impl SharedRuntime {
@@ -95,6 +127,7 @@ impl SharedRuntime {
         Ok(Self {
             runtime: Arc::new(Mutex::new(Some(Arc::new(runtime)))),
             workers: Arc::new(Mutex::new(Vec::new())),
+            next_worker_id: AtomicU64::new(1),
         })
     }
 
@@ -108,9 +141,10 @@ impl SharedRuntime {
     pub fn spawn_worker<T: Worker + Send + Sync + 'static>(
         &self,
         worker: T,
-    ) -> Result<(), SharedRuntimeError> {
+    ) -> Result<WorkerHandle, SharedRuntimeError> {
         let boxed_worker: BoxedWorker = Box::new(worker);
         let mut pausable_worker = PausableWorker::new(boxed_worker);
+        let worker_id = self.next_worker_id.fetch_add(1, Ordering::Relaxed);
 
         let runtime_lock = self.runtime.lock_or_panic();
 
@@ -121,9 +155,15 @@ impl SharedRuntime {
         }
 
         let mut workers_lock = self.workers.lock_or_panic();
-        workers_lock.push(pausable_worker);
+        workers_lock.push(WorkerEntry {
+            id: worker_id,
+            worker: pausable_worker,
+        });
 
-        Ok(())
+        Ok(WorkerHandle {
+            worker_id,
+            workers: self.workers.clone(),
+        })
     }
 
     /// Hook to be called before forking.
@@ -140,12 +180,12 @@ impl SharedRuntime {
                 let mut workers_lock = self.workers.lock_or_panic();
 
                 // First signal all workers to pause, then wait for each one to stop.
-                for pausable_worker in workers_lock.iter_mut() {
-                    pausable_worker.request_pause()?;
+                for worker_entry in workers_lock.iter_mut() {
+                    worker_entry.worker.request_pause()?;
                 }
 
-                for pausable_worker in workers_lock.iter_mut() {
-                    pausable_worker.join().await?;
+                for worker_entry in workers_lock.iter_mut() {
+                    worker_entry.worker.join().await?;
                 }
                 Ok::<(), PausableWorkerError>(())
             })?;
@@ -184,8 +224,13 @@ impl SharedRuntime {
         let mut workers_lock = self.workers.lock_or_panic();
 
         // Restart all workers
-        for pausable_worker in workers_lock.iter_mut() {
-            pausable_worker.start(runtime)?;
+        for worker_entry in workers_lock.iter_mut() {
+            if let Err(err) = worker_entry.worker.start(runtime) {
+                // Ignore worker not started because they are stopped
+                if !matches!(err, PausableWorkerError::WorkerStopped) {
+                    return Err(err.into());
+                }
+            }
         }
 
         Ok(())
@@ -210,9 +255,13 @@ impl SharedRuntime {
         let mut workers_lock = self.workers.lock_or_panic();
 
         // Restart all workers in child process
-        for pausable_worker in workers_lock.iter_mut() {
-            pausable_worker.reset();
-            pausable_worker.start(runtime)?;
+        for worker_entry in workers_lock.iter_mut() {
+            worker_entry.worker.reset();
+            if let Err(err) = worker_entry.worker.start(runtime) {
+                if !matches!(err, PausableWorkerError::WorkerStopped) {
+                    return Err(err.into());
+                }
+            }
         }
 
         Ok(())
@@ -236,24 +285,24 @@ impl SharedRuntime {
     /// This should be called during application shutdown to cleanly stop all
     /// background workers and the runtime.
     ///
-    /// Note: The runtime itself is not dropped by this method to avoid issues with
-    /// dropping a runtime from within an async context. The runtime will be dropped
-    /// when the SharedRuntime is dropped from a synchronous context.
-    ///
     /// # Errors
     /// Returns an error if workers cannot be stopped.
     pub async fn shutdown(&self) -> Result<(), SharedRuntimeError> {
-        let mut workers_lock = self.workers.lock_or_panic();
+        let workers = {
+            let mut workers_lock = self.workers.lock_or_panic();
+            std::mem::take(&mut *workers_lock)
+        };
 
-        // Pause all workers
-        for pausable_worker in workers_lock.iter_mut() {
-            pausable_worker.pause().await?;
+        let mut join_set = JoinSet::new();
+        for mut worker_entry in workers {
+            join_set.spawn(async move {
+                worker_entry.worker.pause().await?;
+                worker_entry.worker.shutdown().await;
+                Ok::<(), PausableWorkerError>(())
+            });
         }
 
-        // Note: We don't drop the runtime here because dropping a runtime from
-        // within an async context causes a panic. The runtime will be properly
-        // cleaned up when SharedRuntime is dropped from a synchronous context.
-
+        join_set.join_all().await;
         Ok(())
     }
 }
@@ -272,6 +321,7 @@ mod tests {
     use std::time::Duration;
     use tokio::time::sleep;
 
+    #[derive(Debug)]
     struct TestWorker {
         state: u32,
         sender: Sender<u32>,
@@ -301,9 +351,28 @@ mod tests {
         let (sender, _receiver) = channel::<u32>();
         let worker = TestWorker { state: 0, sender };
 
-        // TODO: Complete this test once spawn_worker properly stores workers
         let result = shared_runtime.spawn_worker(worker);
         assert!(result.is_ok());
+        assert_eq!(shared_runtime.workers.lock_or_panic().len(), 1);
+    }
+
+    #[test]
+    fn test_worker_handle_stop_marks_worker_stopped() {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let shared_runtime = SharedRuntime::new().unwrap();
+        let (sender, _receiver) = channel::<u32>();
+        let worker = TestWorker { state: 0, sender };
+
+        let handle = shared_runtime.spawn_worker(worker).unwrap();
+        assert_eq!(shared_runtime.workers.lock_or_panic().len(), 1);
+
+        rt.block_on(async {
+            assert!(handle.stop().await.is_ok());
+        });
+
+        let workers_lock = shared_runtime.workers.lock_or_panic();
+        assert_eq!(workers_lock.len(), 1);
+        assert!(matches!(workers_lock[0].worker, PausableWorker::Stopped));
     }
 
     #[test]

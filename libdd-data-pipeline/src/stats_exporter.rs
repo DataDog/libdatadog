@@ -17,7 +17,6 @@ use libdd_common::{worker::Worker, Endpoint, HttpClient};
 use libdd_trace_protobuf::pb;
 use libdd_trace_stats::span_concentrator::SpanConcentrator;
 use libdd_trace_utils::send_with_retry::{send_with_retry, RetryStrategy};
-use tokio_util::sync::CancellationToken;
 use tracing::error;
 
 const STATS_ENDPOINT_PATH: &str = "/v0.6/stats";
@@ -30,7 +29,6 @@ pub struct StatsExporter {
     endpoint: Endpoint,
     meta: TracerMetadata,
     sequence_id: AtomicU64,
-    cancellation_token: CancellationToken,
     client: HttpClient,
 }
 
@@ -48,7 +46,6 @@ impl StatsExporter {
         concentrator: Arc<Mutex<SpanConcentrator>>,
         meta: TracerMetadata,
         endpoint: Endpoint,
-        cancellation_token: CancellationToken,
         client: HttpClient,
     ) -> Self {
         Self {
@@ -57,7 +54,6 @@ impl StatsExporter {
             endpoint,
             meta,
             sequence_id: AtomicU64::new(0),
-            cancellation_token,
             client,
         }
     }
@@ -143,14 +139,9 @@ impl Worker for StatsExporter {
         let _ = self.send(false).await;
     }
 
-    fn shutdown(&mut self) {
+    async fn shutdown(&mut self) {
         // Force flush all stats on shutdown
-        let rt = tokio::runtime::Handle::try_current();
-        if let Ok(handle) = rt {
-            handle.block_on(async {
-                let _ = self.send(true).await;
-            });
-        }
+        let _ = self.send(true).await;
     }
 }
 
@@ -268,7 +259,6 @@ mod tests {
             Arc::new(Mutex::new(get_test_concentrator())),
             get_test_metadata(),
             Endpoint::from_url(stats_url_from_agent_url(&server.url("/")).unwrap()),
-            CancellationToken::new(),
             new_default_client(),
         );
 
@@ -296,7 +286,6 @@ mod tests {
             Arc::new(Mutex::new(get_test_concentrator())),
             get_test_metadata(),
             Endpoint::from_url(stats_url_from_agent_url(&server.url("/")).unwrap()),
-            CancellationToken::new(),
             new_default_client(),
         );
 
@@ -329,7 +318,6 @@ mod tests {
             Arc::new(Mutex::new(get_test_concentrator())),
             get_test_metadata(),
             Endpoint::from_url(stats_url_from_agent_url(&server.url("/")).unwrap()),
-            CancellationToken::new(),
             new_default_client(),
         );
 
@@ -347,42 +335,42 @@ mod tests {
         );
     }
 
-    #[cfg_attr(miri, ignore)]
-    #[tokio::test]
-    async fn test_cancellation_token() {
-        let server = MockServer::start_async().await;
-
-        let mut mock = server
-            .mock_async(|when, then| {
-                when.method(POST)
-                    .header("Content-type", "application/msgpack")
-                    .path("/v0.6/stats")
-                    .body_includes("libdatadog-test");
-                then.status(200).body("");
-            })
-            .await;
-
-        let buckets_duration = Duration::from_secs(10);
-        let cancellation_token = CancellationToken::new();
-
-        let mut stats_exporter = StatsExporter::new(
-            buckets_duration,
-            Arc::new(Mutex::new(get_test_concentrator())),
-            get_test_metadata(),
-            Endpoint::from_url(stats_url_from_agent_url(&server.url("/")).unwrap()),
-            cancellation_token.clone(),
-            new_default_client(),
-        );
-
-        tokio::spawn(async move {
-            stats_exporter.run().await;
-        });
-        // Cancel token to trigger force flush
-        cancellation_token.cancel();
-
-        assert!(
-            poll_for_mock_hit(&mut mock, 10, 100, 1, false).await,
-            "Expected max retry attempts"
-        );
-    }
+    //    #[cfg_attr(miri, ignore)]
+    //    #[tokio::test]
+    //    async fn test_cancellation_token() {
+    //        let server = MockServer::start_async().await;
+    //
+    //        let mut mock = server
+    //            .mock_async(|when, then| {
+    //                when.method(POST)
+    //                    .header("Content-type", "application/msgpack")
+    //                    .path("/v0.6/stats")
+    //                    .body_includes("libdatadog-test");
+    //                then.status(200).body("");
+    //            })
+    //            .await;
+    //
+    //        let buckets_duration = Duration::from_secs(10);
+    //        let cancellation_token = CancellationToken::new();
+    //
+    //        let mut stats_exporter = StatsExporter::new(
+    //            buckets_duration,
+    //            Arc::new(Mutex::new(get_test_concentrator())),
+    //            get_test_metadata(),
+    //            Endpoint::from_url(stats_url_from_agent_url(&server.url("/")).unwrap()),
+    //            cancellation_token.clone(),
+    //            new_default_client(),
+    //        );
+    //
+    //        tokio::spawn(async move {
+    //            stats_exporter.run().await;
+    //        });
+    //        // Cancel token to trigger force flush
+    //        cancellation_token.cancel();
+    //
+    //        assert!(
+    //            poll_for_mock_hit(&mut mock, 10, 100, 1, false).await,
+    //            "Expected max retry attempts"
+    //        );
+    //    }
 }
