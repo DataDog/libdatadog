@@ -55,12 +55,41 @@ jobs:
           fi
           echo "No release proposal is ongoing."
 
+  check-membership:
+    permissions:
+      id-token: write # Enable OIDC
+    runs-on: ubuntu-latest
+    needs: check-proposal-ongoing
+    steps:
+      - uses: DataDog/dd-octo-sts-action@08f2144903ced3254a3dafec2592563409ba2aa0 # v1.0.1
+        id: octo-sts
+        with:
+          scope: DataDog/libdatadog  # target repository
+          policy: self.read.members  # trust policy in target repo, without the .sts.yaml extension
+
+      - name: Check if user is in the team allowed to make crate releases
+        id: check
+        uses: TheModdingInquisition/actions-team-membership@057d91bb80f2976a1bc6dfab5b4ae1da9aebbd89 #v1.0.1
+        with:
+          team: 'apm-common-components-core'
+          organization: 'Datadog'
+          token: ${{ steps.octo-sts.outputs.token }} # Needs 'read:org' scope
+          exit: false
+
+      - name: Check output
+        run: |
+          permitted=${{ steps.check.outputs.permitted }}
+          if [[ "$permitted" != "true" ]]; then
+            echo "User is not part of apm-common-components-core"
+            exit 1
+          fi
+    
   update-release-branch:
     permissions:
       id-token: write # Enable OIDC
       contents: write
     runs-on: ubuntu-latest
-    needs: check-proposal-ongoing
+    needs: check-membership
     steps:
       - uses: DataDog/dd-octo-sts-action@acaa02eee7e3bb0839e4272dacb37b8f3b58ba80 # v1.0.3
         id: octo-sts
@@ -104,12 +133,12 @@ jobs:
       contents: write
     needs: update-release-branch
     runs-on: ubuntu-latest
-    # TODO: uncomment this when we have a way to test this workflow
-    # if: ${{ github.repository_owner == 'datadog' }}
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # 4.2.2
         with:
-          fetch-depth: 0  # Need full history for git tags
+          ref: ${{ env.RELEASE_BRANCH }}
+          fetch-depth: 0
+          fetch-tags: true
       - uses: Swatinem/rust-cache@f13886b937689c021905a6b90929199931d60db1 # v2.8.1
         with:
           cache-targets: true
@@ -159,6 +188,14 @@ jobs:
       - name: Create a branch for the release proposal
         id: proposal-branch
         run: |
+          git status
+          
+          IS_SHALLOW=$(git rev-parse --is-shallow-repository)
+          if [ "$IS_SHALLOW" = "true" ]; then
+            echo "Repository is shallow"
+            git pull --unshallow
+          fi
+
           git checkout "${{ env.RELEASE_BRANCH }}"
           TIMESTAMP=$(date +%Y%m%d-%H%M%S)
           BRANCH_NAME="${{ env.PROPOSAL_BRANCH_PREFIX }}/${{ inputs.crate }}/$TIMESTAMP"
@@ -353,7 +390,6 @@ jobs:
             "",
             (if $api_info.version then "**Next version:** `\($api_info.version)`\n" else null end),
             "**Semver bump:** `\($api_info.level)`",
-            "",
             (if $api_info.tag then "**Tag:** `\($api_info.tag)`\n" else null end),
             (if $api_info.initial_release == "true" then
               "**Warning:** this is an initial release. Please verify that the version and commits included are correct.\n"

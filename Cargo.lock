@@ -6118,6 +6118,7 @@ dependencies = [
  "colored",
  "quick-xml",
  "regex",
+ "toml",
  "wait-timeout",
 ]
 
