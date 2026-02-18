@@ -219,6 +219,10 @@ pub(crate) fn emit_crashreport(
     Ok(())
 }
 
+/// Safety:
+///     This function is not signal safe
+///     It allocates memory when converting to JSON string
+///     It is not safe to call this function from a signal handler.
 pub fn emit_complete_stacktrace(
     w: &mut impl Write,
     stacktrace: StackTrace,

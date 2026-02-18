@@ -11,7 +11,9 @@ use crate::shared::configuration::CrashtrackerConfiguration;
 use crate::StackTrace;
 use libc::{c_void, siginfo_t, ucontext_t};
 use libdd_common::timeout::TimeoutManager;
-use std::os::unix::{io::FromRawFd, net::UnixStream};
+use std::os::fd::OwnedFd;
+use std::os::unix::io::{AsRawFd, FromRawFd};
+use std::os::unix::net::UnixStream;
 use std::panic;
 use std::panic::PanicHookInfo;
 use std::ptr;
@@ -253,16 +255,17 @@ fn handle_posix_signal_impl(
         return Ok(());
     }
 
-    // Leak config and metadata to avoid calling `drop` during a crash
-    // Note that these operations also replace the global states.  When the one-time guard is
-    // passed, all global configuration and metadata becomes invalid.
-    let config_ptr = CONFIG.swap(ptr::null_mut(), SeqCst);
+    // Take config and metadata out of global storage.
+    // We borrow via raw pointer and intentionally leak (do not reconstruct the Box) to avoid
+    // calling `drop`, and therefore `free`, inside a signal handler, which is not
+    // async-signal-safe.  Once the one-time guard is passed, this storage is never updated again.
+    let config_ptr = take_config_ptr();
     if config_ptr.is_null() {
         return Err(CrashHandlerError::NoConfig);
     }
     let (config, config_str) = unsafe { &*config_ptr };
 
-    let metadata_ptr = METADATA.swap(ptr::null_mut(), SeqCst);
+    let metadata_ptr = take_metadata_ptr();
     if metadata_ptr.is_null() {
         return Err(CrashHandlerError::NoMetadata);
     }
@@ -275,16 +278,7 @@ fn handle_posix_signal_impl(
 
     let timeout_manager = TimeoutManager::new(config.timeout());
 
-    // Optionally, create the receiver.  This all hinges on whether or not the configuration has a
-    // non-null unix domain socket specified.  If it doesn't, then we need to check the receiver
-    // configuration.  If it does, then we just connect to the socket.
-    let unix_socket_path = config.unix_socket_path().as_deref().unwrap_or_default();
-
-    let receiver = if unix_socket_path.is_empty() {
-        Receiver::spawn_from_stored_config()?
-    } else {
-        Receiver::from_socket(unix_socket_path)?
-    };
+    let receiver = Receiver::from_crashtracker_config(config)?;
 
     let collector = Collector::spawn(
         &receiver,
@@ -303,38 +297,53 @@ fn handle_posix_signal_impl(
     Ok(())
 }
 
-/// Gets a clone of the current metadata, if set.
-/// Unlike the signal handler path, this reads without consuming the stored value.
+/// Atomically swaps the metadata pointer to null and returns the old raw pointer.
+/// Async-signal-safe (only performs an atomic swap).
 ///
-/// SAFETY:
-///     This function must not be called concurrently with `update_metadata`.
-fn get_metadata() -> Option<(crate::crash_info::Metadata, String)> {
-    let ptr = METADATA.load(SeqCst);
+/// Callers are responsible for the returned memory:
+/// - Signal handlers: borrow via `&*ptr` and intentionally leak (avoids signal-unsafe `free`).
+fn take_metadata_ptr() -> *mut (crate::crash_info::Metadata, String) {
+    METADATA.swap(ptr::null_mut(), SeqCst)
+}
+
+/// Atomically swaps the config pointer to null and returns the old raw pointer.
+/// Async-signal-safe (only performs an atomic swap).
+///
+/// Callers are responsible for the returned memory:
+/// - Signal handlers: borrow via `&*ptr` and intentionally leak (avoids signal-unsafe `free`).
+fn take_config_ptr() -> *mut (
+    crate::shared::configuration::CrashtrackerConfiguration,
+    String,
+) {
+    CONFIG.swap(ptr::null_mut(), SeqCst)
+}
+
+/// Takes the current metadata out of global storage, leaving it unset.
+/// The returned value is properly owned and will be dropped by the caller.
+/// Do NOT call from a signal handler; use `take_metadata_ptr` instead.
+fn take_metadata() -> Option<(crate::crash_info::Metadata, String)> {
+    let ptr = take_metadata_ptr();
     if ptr.is_null() {
         None
     } else {
         // Safety: ptr was created by Box::into_raw in update_metadata
-        let (metadata, metadata_string) = unsafe { &*ptr };
-        Some((metadata.clone(), metadata_string.clone()))
+        Some(*unsafe { Box::from_raw(ptr) })
     }
 }
 
-/// Gets a clone of the current config, if set.
-/// Unlike the signal handler path, this reads without consuming the stored value.
-///
-/// SAFETY:
-///     This function must not be called concurrently with `update_config`.
-fn get_config() -> Option<(
+/// Takes the current config out of global storage, leaving it unset.
+/// The returned value is properly owned and will be dropped by the caller.
+/// Do NOT call from a signal handler; use `take_config_ptr` instead.
+fn take_config() -> Option<(
     crate::shared::configuration::CrashtrackerConfiguration,
     String,
 )> {
-    let ptr = CONFIG.load(SeqCst);
+    let ptr = take_config_ptr();
     if ptr.is_null() {
         None
     } else {
         // Safety: ptr was created by Box::into_raw in update_config
-        let (config, config_string) = unsafe { &*ptr };
-        Some((config.clone(), config_string.clone()))
+        Some(*unsafe { Box::from_raw(ptr) })
     }
 }
 
@@ -353,26 +362,16 @@ pub fn report_unhandled_exception(
     exception_message: Option<&str>,
     stacktrace: StackTrace,
 ) -> Result<(), CrashHandlerError> {
-    let Some((config, config_str)) = get_config() else {
-        return Err(CrashHandlerError::NoConfig);
-    };
-    let Some((_metadata, metadata_str)) = get_metadata() else {
-        return Err(CrashHandlerError::NoMetadata);
-    };
-
     // Turn crashtracker off to prevent a recursive crash report emission
     // We do not turn it back on because this function is not intended to be used as
     // a recurring mechanism to report exceptions. We expect the application to exit
     // after
     disable();
 
-    let unix_socket_path = config.unix_socket_path().as_deref().unwrap_or_default();
+    let (config, config_str) = take_config().ok_or(CrashHandlerError::NoConfig)?;
+    let (_metadata, metadata_str) = take_metadata().ok_or(CrashHandlerError::NoMetadata)?;
 
-    let receiver = if unix_socket_path.is_empty() {
-        Receiver::spawn_from_stored_config()?
-    } else {
-        Receiver::from_socket(unix_socket_path)?
-    };
+    let receiver = Receiver::from_crashtracker_config(&config)?;
 
     let timeout_manager = TimeoutManager::new(config.timeout());
 
@@ -388,9 +387,13 @@ pub fn report_unhandled_exception(
 
     let message_ptr = Box::into_raw(Box::new(message));
 
-    // Duplicate the socket fd so we can poll for receiver completion after we close the write end.
-    // UnixStream::from_raw_fd takes ownership of uds_fd, so we need a separate fd to poll.
-    let poll_fd = unsafe { libc::dup(receiver.handle.uds_fd) };
+    // Duplicate the socket fd before handing it to UnixStream so we retain an fd to poll on after
+    // the write end is closed.  OwnedFd is the scope guard: it closes poll_fd on any exit path.
+    //
+    // SAFETY: dup() returns a fresh fd; we are its sole owner.  ProcessHandle only polls it
+    // (wait_for_pollhup) and has no Drop impl, so it never closes the fd. Closing it here
+    // after finish() returns is the first and only close
+    let poll_fd = unsafe { OwnedFd::from_raw_fd(libc::dup(receiver.handle.uds_fd)) };
     let receiver_pid = receiver.handle.pid;
 
     {
@@ -410,15 +413,57 @@ pub fn report_unhandled_exception(
     }
 
     // Wait for the receiver to signal it is done (POLLHUP on the dup'd fd), then reap it.
-    let finish_handle = super::process_handle::ProcessHandle::new(poll_fd, receiver_pid);
+    // poll_fd is dropped at the end of this function, closing the fd.
+    let finish_handle =
+        super::process_handle::ProcessHandle::new(poll_fd.as_raw_fd(), receiver_pid);
     finish_handle.finish(&timeout_manager);
-    unsafe { libc::close(poll_fd) };
 
     Ok(())
 }
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::Duration;
+
+    fn make_test_metadata() -> Metadata {
+        Metadata {
+            library_name: "test-lib".to_string(),
+            library_version: "1.0.0".to_string(),
+            family: "test-family".to_string(),
+            tags: vec![],
+        }
+    }
+
+    fn make_test_config() -> CrashtrackerConfiguration {
+        CrashtrackerConfiguration::new(
+            vec![], // additional_files
+            false,  // create_alt_stack
+            false,  // use_alt_stack
+            None,   // endpoint
+            crate::StacktraceCollection::Disabled,
+            vec![],                       // signals
+            Some(Duration::from_secs(1)), // timeout
+            None,                         // unix_socket_path
+            false,                        // demangle_names
+        )
+        .unwrap()
+    }
+
+    /// Clears METADATA global, properly freeing any existing Box
+    fn clear_metadata() {
+        let ptr = METADATA.swap(ptr::null_mut(), SeqCst);
+        if !ptr.is_null() {
+            unsafe { drop(Box::from_raw(ptr)) };
+        }
+    }
+
+    /// Clears CONFIG global, properly freeing any existing Box
+    fn clear_config() {
+        let ptr = CONFIG.swap(ptr::null_mut(), SeqCst);
+        if !ptr.is_null() {
+            unsafe { drop(Box::from_raw(ptr)) };
+        }
+    }
 
     #[test]
     fn test_register_panic_hook() {
@@ -562,5 +607,117 @@ mod tests {
             result,
             "Process panicked with message \"test \"quoted\" 'text'\""
         );
+    }
+
+    // take_metadata_ptr
+
+    #[test]
+    fn test_take_metadata_ptr_returns_null_when_unset() {
+        clear_metadata();
+        assert!(take_metadata_ptr().is_null());
+    }
+
+    #[test]
+    fn test_take_metadata_ptr_takes_value_and_leaves_null() {
+        clear_metadata();
+        update_metadata(make_test_metadata()).unwrap();
+
+        let ptr = take_metadata_ptr();
+        assert!(!ptr.is_null());
+
+        // Storage is now null; a second take returns null.
+        assert!(take_metadata_ptr().is_null());
+
+        // Reconstruct the Box to avoid a leak.
+        unsafe { drop(Box::from_raw(ptr)) };
+    }
+
+    #[test]
+    fn test_take_metadata_ptr_preserves_data() {
+        clear_metadata();
+        let metadata = make_test_metadata();
+        update_metadata(metadata.clone()).unwrap();
+
+        let ptr = take_metadata_ptr();
+        assert!(!ptr.is_null());
+
+        let (stored_metadata, stored_json) = unsafe { &*ptr };
+        assert_eq!(stored_metadata.library_name, metadata.library_name);
+        assert_eq!(stored_metadata.library_version, metadata.library_version);
+        assert_eq!(stored_metadata.family, metadata.family);
+        // The serialised string must be valid non-empty JSON.
+        assert!(!stored_json.is_empty());
+        assert!(serde_json::from_str::<serde_json::Value>(stored_json).is_ok());
+
+        unsafe { drop(Box::from_raw(ptr)) };
+    }
+
+    // take_config_ptr
+
+    #[test]
+    fn test_take_config_ptr_returns_null_when_unset() {
+        clear_config();
+        assert!(take_config_ptr().is_null());
+    }
+
+    #[test]
+    fn test_take_config_ptr_takes_value_and_leaves_null() {
+        clear_config();
+        update_config(make_test_config()).unwrap();
+
+        let ptr = take_config_ptr();
+        assert!(!ptr.is_null());
+
+        // Storage is now null; a second take returns null.
+        assert!(take_config_ptr().is_null());
+
+        unsafe { drop(Box::from_raw(ptr)) };
+    }
+
+    // take_metadata
+
+    #[test]
+    fn test_take_metadata_returns_none_when_unset() {
+        clear_metadata();
+        assert!(take_metadata().is_none());
+    }
+
+    #[test]
+    fn test_take_metadata_returns_value_and_leaves_none() {
+        clear_metadata();
+        let metadata = make_test_metadata();
+        update_metadata(metadata.clone()).unwrap();
+
+        let (taken_metadata, taken_json) = take_metadata().expect("should return Some");
+        assert_eq!(taken_metadata.library_name, metadata.library_name);
+        assert_eq!(taken_metadata.library_version, metadata.library_version);
+        assert_eq!(taken_metadata.family, metadata.family);
+        assert!(!taken_json.is_empty());
+
+        // Second take: storage is empty.
+        assert!(take_metadata().is_none());
+    }
+
+    // take_config
+
+    #[test]
+    fn test_take_config_returns_none_when_unset() {
+        clear_config();
+        assert!(take_config().is_none());
+    }
+
+    #[test]
+    fn test_take_config_returns_value_and_leaves_none() {
+        clear_config();
+        let config = make_test_config();
+        update_config(config.clone()).unwrap();
+
+        let (taken_config, taken_json) = take_config().expect("should return Some");
+        assert_eq!(taken_config, config);
+        assert!(!taken_json.is_empty());
+        assert!(serde_json::from_str::<serde_json::Value>(&taken_json).is_ok());
+
+        // Second take: storage is empty.
+        assert!(take_config().is_none());
     }
 }
