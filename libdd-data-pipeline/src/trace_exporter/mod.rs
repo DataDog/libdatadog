@@ -32,11 +32,11 @@ use crate::{
 use arc_swap::{ArcSwap, ArcSwapOption};
 use hyper::http::uri::PathAndQuery;
 use hyper::Uri;
+use libdd_capabilities::{HttpClientTrait, HttpError, HttpResponse};
+use libdd_capabilities_impl::DefaultHttpClient;
 use libdd_common::tag::Tag;
 use libdd_common::{Endpoint, MutexExt};
 use libdd_dogstatsd_client::Client;
-use libdd_capabilities::{HttpClientTrait, HttpError, HttpResponse};
-use libdd_capabilities_impl::DefaultHttpClient;
 use libdd_telemetry::worker::TelemetryWorker;
 use libdd_trace_utils::msgpack_decoder;
 use libdd_trace_utils::send_with_retry::{
