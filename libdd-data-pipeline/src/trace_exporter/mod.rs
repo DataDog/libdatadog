@@ -30,11 +30,11 @@ use crate::{
 use arc_swap::{ArcSwap, ArcSwapOption};
 use http::uri::PathAndQuery;
 use http::Uri;
-use http_body_util::BodyExt;
 use libdd_common::tag::Tag;
-use libdd_common::{http_common, Endpoint};
-use libdd_common::{HttpClient, MutexExt};
+use libdd_common::{Endpoint, MutexExt};
 use libdd_dogstatsd_client::Client;
+use libdd_capabilities::{HttpClientTrait, HttpError, HttpResponse};
+use libdd_capabilities_impl::DefaultHttpClient;
 use libdd_telemetry::worker::TelemetryWorker;
 use libdd_trace_utils::msgpack_decoder;
 use libdd_trace_utils::send_with_retry::{
@@ -204,7 +204,6 @@ pub struct TraceExporter {
     health_metrics_enabled: bool,
     workers: Arc<Mutex<TraceExporterWorkers>>,
     agent_payload_response_version: Option<AgentResponsePayloadVersion>,
-    http_client: HttpClient,
 }
 
 impl TraceExporter {
@@ -423,7 +422,6 @@ impl TraceExporter {
                             &agent_info,
                             &self.client_side_stats,
                             &self.workers,
-                            self.http_client.clone(),
                         );
                     }
                     StatsComputationStatus::Enabled {
@@ -476,6 +474,97 @@ impl TraceExporter {
             }
             std::thread::sleep(Duration::from_millis(10));
         }
+    }
+
+    fn send_proxy(
+        &self,
+        data: &[u8],
+        trace_count: usize,
+    ) -> Result<AgentResponse, TraceExporterError> {
+        self.send_data_to_url(
+            data,
+            trace_count,
+            self.output_format.add_path(&self.endpoint.url),
+        )
+    }
+
+    fn send_data_to_url(
+        &self,
+        data: &[u8],
+        trace_count: usize,
+        uri: Uri,
+    ) -> Result<AgentResponse, TraceExporterError> {
+        self.runtime()?.block_on(async {
+            self.send_request_and_handle_response(data, trace_count, uri)
+                .await
+        })
+    }
+
+    /// Send HTTP request and handle the response
+    async fn send_request_and_handle_response(
+        &self,
+        data: &[u8],
+        trace_count: usize,
+        uri: Uri,
+    ) -> Result<AgentResponse, TraceExporterError> {
+        let transport_client = TransportClient::new(&self.metadata);
+        let req = transport_client.build_trace_request(data, trace_count, uri);
+        match DefaultHttpClient::request(req).await {
+            Ok(response) => {
+                // For proxy path, always 1 request attempt (no retry)
+                self.handle_proxy_response(response, trace_count, data.len())
+                    .await
+            }
+            Err(err) => self.handle_request_error(err, data.len(), trace_count),
+        }
+    }
+
+    /// Handle response for proxy path (no retry)
+    async fn handle_proxy_response(
+        &self,
+        response: HttpResponse,
+        trace_count: usize,
+        payload_len: usize,
+    ) -> Result<AgentResponse, TraceExporterError> {
+        let status = response.status;
+
+        if !response.is_success() {
+            let send_result = SendResult::failure(
+                TransportErrorType::Http(status),
+                payload_len,
+                trace_count,
+                1,
+            );
+            self.emit_send_result(&send_result);
+            let body = String::from_utf8_lossy(&response.body).to_string();
+            return Err(TraceExporterError::Request(RequestError::new(
+                status, &body,
+            )));
+        }
+
+        let body = String::from_utf8_lossy(&response.body).to_string();
+        debug!(trace_count, "Traces sent successfully to agent");
+        let send_result = SendResult::success(payload_len, trace_count, 1);
+        self.emit_send_result(&send_result);
+        Ok(AgentResponse::Changed { body })
+    }
+
+    /// Handle HTTP request errors
+    fn handle_request_error(
+        &self,
+        err: HttpError,
+        payload_size: usize,
+        trace_count: usize,
+    ) -> Result<AgentResponse, TraceExporterError> {
+        error!(
+            error = %err,
+            "Request to agent failed"
+        );
+        // For direct hyper errors (proxy path), always 1 request attempt
+        let send_result =
+            SendResult::failure(TransportErrorType::Network, payload_size, trace_count, 1);
+        self.emit_send_result(&send_result);
+        Err(TraceExporterError::from(err))
     }
 
     /// Emit a health metric to dogstatsd
@@ -571,8 +660,7 @@ impl TraceExporter {
         let payload_len = mp_payload.len();
 
         // Send traces to the agent
-        let result =
-            send_with_retry(&self.http_client, endpoint, mp_payload, &headers, &strategy).await;
+        let result = send_with_retry(endpoint, mp_payload, &headers, &strategy).await;
 
         // Send telemetry for the payload sending
         if let Some(telemetry) = &self.telemetry {
@@ -692,53 +780,38 @@ impl TraceExporter {
     /// Handle HTTP error responses from send with retry
     async fn handle_http_send_error(
         &self,
-        response: http_common::HttpResponse,
+        response: HttpResponse,
         payload_len: usize,
         chunks: usize,
         attempts: u32,
     ) -> Result<AgentResponse, TraceExporterError> {
-        let status = response.status();
+        let status = response.status;
 
         // Check if the agent state has changed for error responses
         self.info_response_observer.check_response(&response);
 
         // Emit health metrics using SendResult
         let send_result = SendResult::failure(
-            TransportErrorType::Http(status.as_u16()),
+            TransportErrorType::Http(status),
             payload_len,
             chunks,
             attempts,
         );
         self.emit_send_result(&send_result);
 
-        let body = self.read_error_response_body(response).await?;
+        let body = String::from_utf8_lossy(&response.body);
         Err(TraceExporterError::Request(RequestError::new(
-            status,
-            &String::from_utf8_lossy(&body),
+            status, &body,
         )))
     }
 
-    /// Read response body from error response
-    async fn read_error_response_body(
-        &self,
-        response: http_common::HttpResponse,
-    ) -> Result<bytes::Bytes, TraceExporterError> {
-        match response.into_body().collect().await {
-            Ok(body) => Ok(body.to_bytes()),
-            Err(err) => {
-                error!(?err, "Error reading agent response body");
-                Err(TraceExporterError::from(err))
-            }
-        }
-    }
-
     /// Check if the agent's payload version has changed based on response headers
-    fn check_payload_version_changed(&self, response: &http_common::HttpResponse) -> bool {
-        let status = response.status();
+    fn check_payload_version_changed(&self, response: &HttpResponse) -> bool {
+        let is_success = response.is_success();
         match (
-            status.is_success(),
+            is_success,
             self.agent_payload_response_version.as_ref(),
-            response.headers().get(DATADOG_RATES_PAYLOAD_VERSION),
+            response.header(DATADOG_RATES_PAYLOAD_VERSION_HEADER),
         ) {
             (false, _, _) => {
                 // If the status is not success, the rates are considered unchanged
@@ -750,22 +823,10 @@ impl TraceExporter {
                 true
             }
             (true, Some(agent_payload_response_version), Some(new_payload_version)) => {
-                if let Ok(new_payload_version_str) = new_payload_version.to_str() {
-                    agent_payload_response_version.check_and_update(new_payload_version_str)
-                } else {
-                    false
-                }
+                agent_payload_response_version.check_and_update(new_payload_version)
             }
             _ => false,
         }
-    }
-
-    /// Read response body and handle potential errors
-    async fn read_response_body(
-        response: http_common::HttpResponse,
-    ) -> Result<String, http_common::Error> {
-        let body = http_common::collect_response_bytes(response).await?;
-        Ok(String::from_utf8_lossy(&body).to_string())
     }
 
     /// Handle successful trace sending response
@@ -791,55 +852,38 @@ impl TraceExporter {
     async fn handle_agent_response(
         &self,
         chunks: usize,
-        response: http_common::HttpResponse,
+        response: HttpResponse,
         payload_len: usize,
         attempts: u32,
     ) -> Result<AgentResponse, TraceExporterError> {
         // Check if the agent state has changed
         self.info_response_observer.check_response(&response);
 
-        let status = response.status();
+        let status = response.status;
         let payload_version_changed = self.check_payload_version_changed(&response);
+        let body = String::from_utf8_lossy(&response.body).to_string();
 
-        match Self::read_response_body(response).await {
-            Ok(body) => {
-                if !status.is_success() {
-                    warn!(
-                        status = %status,
-                        "Agent returned non-success status for trace send"
-                    );
-                    let send_result = SendResult::failure(
-                        TransportErrorType::Http(status.as_u16()),
-                        payload_len,
-                        chunks,
-                        attempts,
-                    );
-                    self.emit_send_result(&send_result);
-                    return Err(TraceExporterError::Request(RequestError::new(
-                        status, &body,
-                    )));
-                }
-
-                self.handle_successful_trace_response(
-                    chunks,
-                    payload_len,
-                    attempts,
-                    body,
-                    payload_version_changed,
-                )
-            }
-            Err(err) => {
-                error!(?err, "Error reading agent response body");
-                let send_result = SendResult::failure(
-                    TransportErrorType::ResponseBody,
-                    payload_len,
-                    chunks,
-                    attempts,
-                );
-                self.emit_send_result(&send_result);
-                Err(TraceExporterError::from(err))
-            }
+        if !response.is_success() {
+            warn!(status, "Agent returned non-success status for trace send");
+            let send_result = SendResult::failure(
+                TransportErrorType::Http(status),
+                payload_len,
+                chunks,
+                attempts,
+            );
+            self.emit_send_result(&send_result);
+            return Err(TraceExporterError::Request(RequestError::new(
+                status, &body,
+            )));
         }
+
+        self.handle_successful_trace_response(
+            chunks,
+            payload_len,
+            attempts,
+            body,
+            payload_version_changed,
+        )
     }
 
     fn get_agent_url(&self) -> Uri {
