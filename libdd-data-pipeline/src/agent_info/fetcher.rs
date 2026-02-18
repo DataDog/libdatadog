@@ -115,7 +115,9 @@ async fn fetch_and_hash_response(
         req = req.with_header(name, value);
     }
 
-    let res = DefaultHttpClient::request(req)
+    let client = DefaultHttpClient::new_client();
+    let res = client
+        .request(req)
         .await
         .map_err(|e| anyhow!("{}", e))?;
 

@@ -196,7 +196,10 @@ impl HttpRequest {
 }
 
 pub trait HttpClientTrait {
+    fn new_client() -> Self;
+
     fn request(
+        &self,
         req: HttpRequest,
     ) -> impl Future<Output = Result<HttpResponse, HttpError>> + MaybeSend;
 }
