@@ -327,17 +327,11 @@ impl TraceExporter {
     ///
     /// * data: A slice containing the serialized traces. This slice should be encoded following the
     ///   input_format passed to the TraceExporter on creating.
-    /// * trace_count: The number of traces in the data
     ///
     /// # Returns
     /// * Ok(AgentResponse): The response from the agent
     /// * Err(TraceExporterError): An error detailing what went wrong in the process
-    pub fn send(
-        &self,
-        data: &[u8],
-        // previously used
-        _trace_count: usize,
-    ) -> Result<AgentResponse, TraceExporterError> {
+    pub fn send(&self, data: &[u8]) -> Result<AgentResponse, TraceExporterError> {
         self.check_agent_info();
 
         let res = match self.input_format {
@@ -1020,9 +1014,7 @@ mod tests {
         ];
         let data = msgpack_encoder::v04::to_vec(&traces);
 
-        let _result = exporter
-            .send(data.as_ref(), 2)
-            .expect("failed to send trace");
+        let _result = exporter.send(data.as_ref()).expect("failed to send trace");
 
         // Collect all metrics
         let mut received_metrics = Vec::new();
@@ -1081,7 +1073,7 @@ mod tests {
         );
 
         let bad_payload = b"some_bad_payload".as_ref();
-        let result = exporter.send(bad_payload, 1);
+        let result = exporter.send(bad_payload);
 
         assert!(result.is_err());
 
@@ -1121,7 +1113,7 @@ mod tests {
             ..Default::default()
         }]];
         let data = msgpack_encoder::v04::to_vec(&traces);
-        let result = exporter.send(data.as_ref(), 1);
+        let result = exporter.send(data.as_ref());
 
         assert!(result.is_err());
 
@@ -1229,7 +1221,7 @@ mod tests {
             ..Default::default()
         }]];
         let data = msgpack_encoder::v04::to_vec(&traces);
-        let result = exporter.send(data.as_ref(), 1);
+        let result = exporter.send(data.as_ref());
 
         assert!(result.is_err());
 
@@ -1334,9 +1326,7 @@ mod tests {
         }]];
         let data = msgpack_encoder::v04::to_vec(&traces);
 
-        let _result = exporter
-            .send(data.as_ref(), 1)
-            .expect("failed to send trace");
+        let _result = exporter.send(data.as_ref()).expect("failed to send trace");
 
         // Try to read metrics - should timeout since none are sent
         let mut buf = [0; 1_000];
@@ -1395,7 +1385,7 @@ mod tests {
             ..Default::default()
         }]];
         let data = msgpack_encoder::v04::to_vec(&traces);
-        let result = exporter.send(data.as_ref(), 1).unwrap();
+        let result = exporter.send(data.as_ref()).unwrap();
 
         assert_eq!(
             result,
@@ -1437,7 +1427,7 @@ mod tests {
             ..Default::default()
         }]];
         let data = msgpack_encoder::v04::to_vec(&traces);
-        let code = match exporter.send(data.as_ref(), 1).unwrap_err() {
+        let code = match exporter.send(data.as_ref()).unwrap_err() {
             TraceExporterError::Request(e) => Some(e.status()),
             _ => None,
         }
@@ -1472,7 +1462,7 @@ mod tests {
             ..Default::default()
         }]];
         let data = msgpack_encoder::v04::to_vec(&traces);
-        let err = exporter.send(data.as_ref(), 1);
+        let err = exporter.send(data.as_ref());
 
         assert!(err.is_err());
         assert_eq!(
@@ -1526,7 +1516,7 @@ mod tests {
         let exporter = builder.build().unwrap();
 
         let traces = vec![0x90];
-        let result = exporter.send(traces.as_ref(), 1).unwrap();
+        let result = exporter.send(traces.as_ref()).unwrap();
         let AgentResponse::Changed { body } = result else {
             panic!("Expected Changed response");
         };
@@ -1584,7 +1574,7 @@ mod tests {
 
         let v5: (Vec<BytesString>, Vec<Vec<v05::Span>>) = (vec![], vec![]);
         let traces = rmp_serde::to_vec(&v5).unwrap();
-        let result = exporter.send(traces.as_ref(), 1).unwrap();
+        let result = exporter.send(traces.as_ref()).unwrap();
         let AgentResponse::Changed { body } = result else {
             panic!("Expected Changed response");
         };
@@ -1653,7 +1643,7 @@ mod tests {
         let exporter = builder.build().unwrap();
 
         let traces = vec![0x90];
-        let result = exporter.send(traces.as_ref(), 1).unwrap();
+        let result = exporter.send(traces.as_ref()).unwrap();
         let AgentResponse::Changed { body } = result else {
             panic!("Expected Changed response");
         };
@@ -1699,7 +1689,7 @@ mod tests {
         let exporter = builder.build().unwrap();
         let traces = vec![0x90];
         for _ in 0..2 {
-            let result = exporter.send(traces.as_ref(), 1).unwrap();
+            let result = exporter.send(traces.as_ref()).unwrap();
             let AgentResponse::Changed { body } = result else {
                 panic!("Expected Changed response");
             };
@@ -1735,13 +1725,13 @@ mod tests {
             .enable_agent_rates_payload_version();
         let exporter = builder.build().unwrap();
         let traces = vec![0x90];
-        let result = exporter.send(traces.as_ref(), 1).unwrap();
+        let result = exporter.send(traces.as_ref()).unwrap();
         let AgentResponse::Changed { body } = result else {
             panic!("Expected Changed response");
         };
         assert_eq!(body, response_body);
 
-        let result = exporter.send(traces.as_ref(), 1).unwrap();
+        let result = exporter.send(traces.as_ref()).unwrap();
         let AgentResponse::Unchanged = result else {
             panic!("Expected Unchanged response");
         };
@@ -1755,13 +1745,13 @@ mod tests {
                 .header("datadog-rates-payload-version", "def")
                 .body(response_body);
         });
-        let result = exporter.send(traces.as_ref(), 1).unwrap();
+        let result = exporter.send(traces.as_ref()).unwrap();
         let AgentResponse::Changed { body } = result else {
             panic!("Expected Changed response");
         };
         assert_eq!(body, response_body);
 
-        let result = exporter.send(traces.as_ref(), 1).unwrap();
+        let result = exporter.send(traces.as_ref()).unwrap();
         let AgentResponse::Unchanged = result else {
             panic!("Expected Unchanged response");
         };
@@ -1855,7 +1845,7 @@ mod tests {
                 })
         }
 
-        let _ = exporter.send(data.as_ref(), 1).unwrap();
+        let _ = exporter.send(data.as_ref()).unwrap();
 
         exporter.shutdown(None).unwrap();
 
@@ -1962,7 +1952,7 @@ mod single_threaded_tests {
                 })
         }
 
-        let result = exporter.send(data.as_ref(), 1);
+        let result = exporter.send(data.as_ref());
         // Error received because server is returning an empty body.
         assert!(result.is_err());
 
@@ -2067,7 +2057,7 @@ mod single_threaded_tests {
                 })
         }
 
-        exporter.send(data.as_ref(), 1).unwrap();
+        exporter.send(data.as_ref()).unwrap();
 
         // Wait for the stats worker to be active before shutting down to avoid potential flaky
         // tests on CI where we shutdown before the stats worker had time to start
