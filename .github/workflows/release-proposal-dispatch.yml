@@ -272,7 +272,19 @@ jobs:
                     RANGE="$MERGE_BASE..$ORIGINAL_HEAD"
                     echo "  Tag $TAG is NOT ancestor of HEAD, using merge-base: $RANGE"
                 else
-                    echo "  WARNING: Could not find merge-base for tag $TAG, using $RANGE"
+                    # No common ancestor (tag is on unrelated history, e.g. created before the
+                    # release branch existed). Derive the range start from the parent of the
+                    # oldest commit found by commits-since-release.sh. That commit is guaranteed
+                    # to be in the release branch, so git can compute TREESAME correctly and the
+                    # path filter won't include unrelated commits.
+                    OLDEST_COMMIT=$(echo "$COMMITS" | jq -r '.[-1].hash // empty')
+                    OLDEST_PARENT=$(git rev-parse "${OLDEST_COMMIT}^" 2>/dev/null || echo "")
+                    if [ -n "$OLDEST_PARENT" ]; then
+                        RANGE="$OLDEST_PARENT..$ORIGINAL_HEAD"
+                        echo "  No common ancestor with tag $TAG: using parent of oldest commit as range start: $RANGE"
+                    else
+                        echo "  WARNING: Could not find merge-base for tag $TAG, using $RANGE"
+                    fi
                 fi
               fi
 
