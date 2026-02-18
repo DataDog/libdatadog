@@ -555,35 +555,11 @@ pub fn enrich_span_with_azure_function_metadata(span: &mut pb::Span) {
     }
 
     if let Some(aas_metadata) = &*azure_app_services::AAS_METADATA_FUNCTION {
-        let aas_tags = [
-            ("aas.resource.id", aas_metadata.get_resource_id()),
-            (
-                "aas.environment.instance_id",
-                aas_metadata.get_instance_id(),
-            ),
-            (
-                "aas.environment.instance_name",
-                aas_metadata.get_instance_name(),
-            ),
-            ("aas.subscription.id", aas_metadata.get_subscription_id()),
-            ("aas.environment.os", aas_metadata.get_operating_system()),
-            ("aas.environment.runtime", aas_metadata.get_runtime()),
-            (
-                "aas.environment.runtime_version",
-                aas_metadata.get_runtime_version(),
-            ),
-            (
-                "aas.environment.function_runtime",
-                aas_metadata.get_function_runtime_version(),
-            ),
-            ("aas.resource.group", aas_metadata.get_resource_group()),
-            ("aas.site.name", aas_metadata.get_site_name()),
-            ("aas.site.kind", aas_metadata.get_site_kind()),
-            ("aas.site.type", aas_metadata.get_site_type()),
-        ];
-        aas_tags.into_iter().for_each(|(name, value)| {
-            span.meta.insert(name.to_string(), value.to_string());
-        });
+        span.meta.extend(
+            aas_metadata
+                .get_function_tags()
+                .map(|(name, value)| (name.to_string(), value.to_string())),
+        );
     }
 }
 
