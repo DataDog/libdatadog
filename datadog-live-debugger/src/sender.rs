@@ -2,12 +2,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::debugger_defs::{DebuggerData, DebuggerPayload};
+use bytes::Bytes;
 use constcat::concat;
+use http::uri::PathAndQuery;
+use http::{Method, Uri};
 use http_body_util::BodyExt;
-use hyper::body::Bytes;
-use hyper::http::uri::PathAndQuery;
-use hyper::{Method, Uri};
-use libdd_common::hyper_migration;
+use libdd_common::http_common;
 use libdd_common::tag::Tag;
 use libdd_common::Endpoint;
 use libdd_data_pipeline::agent_info::schema::AgentInfoStruct;
@@ -140,13 +140,13 @@ pub fn generate_tags(
 enum SenderFuture {
     #[default]
     Error,
-    Outstanding(hyper_migration::ResponseFuture),
-    Submitted(JoinHandle<anyhow::Result<hyper_migration::HttpResponse>>),
+    Outstanding(http_common::ResponseFuture),
+    Submitted(JoinHandle<anyhow::Result<http_common::HttpResponse>>),
 }
 
 pub struct PayloadSender {
     future: SenderFuture,
-    sender: hyper_migration::Sender,
+    sender: http_common::Sender,
     needs_boundary: bool,
     payloads: u32,
 }
@@ -190,7 +190,7 @@ impl PayloadSender {
             req = req.header("DD-EVP-ORIGIN", "agent-debugger");
         }
 
-        let (sender, body) = hyper_migration::Body::channel();
+        let (sender, body) = http_common::Body::channel();
 
         let needs_boundary = debugger_type == DebuggerType::Diagnostics;
         let req = req.header(
@@ -202,7 +202,7 @@ impl PayloadSender {
             },
         );
 
-        let future = hyper_migration::new_default_client().request(req.body(body)?);
+        let future = http_common::new_default_client().request(req.body(body)?);
         Ok(PayloadSender {
             future: SenderFuture::Outstanding(future),
             sender,
@@ -225,7 +225,7 @@ impl PayloadSender {
                 }
 
                 self.future = SenderFuture::Submitted(tokio::spawn(async {
-                    let resp = hyper_migration::into_response(future.await?);
+                    let resp = http_common::into_response(future.await?);
                     Ok(resp)
                 }));
                 true

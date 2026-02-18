@@ -31,8 +31,7 @@ libdd-tinybytes = { path = "../libdd-tinybytes" }
 
 futures = { version = "0.3", default-features = false }
 manual_future = "0.1.1"
-http = "1.0"
-hyper = { workspace = true}
+http = "1.1"
 http-body-util = "0.1"
 
 datadog-ipc = { path = "../datadog-ipc", features = ["tiny-bytes"] }

@@ -12,7 +12,7 @@ use crate::trace_exporter::{
     INFO_ENDPOINT,
 };
 use arc_swap::ArcSwap;
-use libdd_common::hyper_migration::new_default_client;
+use libdd_common::http_common::new_default_client;
 use libdd_common::{parse_uri, tag, Endpoint};
 use libdd_dogstatsd_client::new;
 use std::sync::{Arc, Mutex};
@@ -241,7 +241,7 @@ impl TraceExporterBuilder {
 
         let base_url = self.url.as_deref().unwrap_or(DEFAULT_AGENT_URL);
 
-        let agent_url: hyper::Uri = parse_uri(base_url).map_err(|e: anyhow::Error| {
+        let agent_url: http::Uri = parse_uri(base_url).map_err(|e: anyhow::Error| {
             TraceExporterError::Builder(BuilderErrorKind::InvalidUri(e.to_string()))
         })?;
 

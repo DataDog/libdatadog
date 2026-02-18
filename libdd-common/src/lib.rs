@@ -23,7 +23,7 @@ pub mod entity_id;
 pub mod cstr;
 pub mod config;
 pub mod error;
-pub mod hyper_migration;
+pub mod http_common;
 pub mod rate_limiter;
 pub mod tag;
 #[cfg(any(test, feature = "test-utils"))]
@@ -111,9 +111,9 @@ pub mod header {
         HeaderName::from_static("x-datadog-test-session-token");
 }
 
-pub type HttpClient = hyper_migration::GenericHttpClient<connector::Connector>;
-pub type GenericHttpClient<C> = hyper_migration::GenericHttpClient<C>;
-pub type HttpResponse = hyper_migration::HttpResponse;
+pub type HttpClient = http_common::GenericHttpClient<connector::Connector>;
+pub type GenericHttpClient<C> = http_common::GenericHttpClient<C>;
+pub type HttpResponse = http_common::HttpResponse;
 pub type HttpRequestBuilder = hyper::http::request::Builder;
 pub trait Connect:
     hyper_util::client::legacy::connect::Connect + Clone + Send + Sync + 'static

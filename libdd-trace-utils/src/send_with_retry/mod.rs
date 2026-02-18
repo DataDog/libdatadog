@@ -8,25 +8,24 @@ mod retry_strategy;
 pub use retry_strategy::{RetryBackoffType, RetryStrategy};
 
 use bytes::Bytes;
-use hyper::Method;
-use libdd_common::{hyper_migration, Connect, Endpoint, GenericHttpClient, HttpRequestBuilder};
+use http::Method;
+use libdd_common::{http_common, Connect, Endpoint, GenericHttpClient, HttpRequestBuilder};
 use std::{collections::HashMap, time::Duration};
 use tracing::{debug, error};
 
 pub type Attempts = u32;
 
-pub type SendWithRetryResult =
-    Result<(hyper_migration::HttpResponse, Attempts), SendWithRetryError>;
+pub type SendWithRetryResult = Result<(http_common::HttpResponse, Attempts), SendWithRetryError>;
 
 /// All errors contain the number of attempts after which the final error was returned
 #[derive(Debug)]
 pub enum SendWithRetryError {
     /// The request received an error HTTP code.
-    Http(hyper_migration::HttpResponse, Attempts),
+    Http(http_common::HttpResponse, Attempts),
     /// Treats timeout errors originated in the transport layer.
     Timeout(Attempts),
     /// Treats errors coming from networking.
-    Network(hyper_migration::ClientError, Attempts),
+    Network(http_common::ClientError, Attempts),
     /// Treats errors coming from building the request
     Build(Attempts),
 }
@@ -59,7 +58,7 @@ impl SendWithRetryError {
 #[derive(Debug)]
 enum RequestError {
     Build,
-    Network(hyper_migration::ClientError),
+    Network(http_common::ClientError),
     TimeoutApi,
 }
 
@@ -96,7 +95,7 @@ impl std::error::Error for RequestError {}
 ///
 /// ```rust, no_run
 /// # use libdd_common::Endpoint;
-/// # use libdd_common::hyper_migration::new_default_client;
+/// # use libdd_common::http_common::new_default_client;
 /// # use libdd_trace_utils::send_with_retry::*;
 /// # use std::collections::HashMap;
 /// # async fn run() -> SendWithRetryResult {
@@ -227,17 +226,17 @@ async fn send_request<C: Connect>(
     timeout: Duration,
     req: HttpRequestBuilder,
     payload: Bytes,
-) -> Result<hyper_migration::HttpResponse, RequestError> {
+) -> Result<http_common::HttpResponse, RequestError> {
     let req = req
-        .body(hyper_migration::Body::from_bytes(payload))
+        .body(http_common::Body::from_bytes(payload))
         .or(Err(RequestError::Build))?;
 
     let req_future = { client.request(req) };
 
     match tokio::time::timeout(timeout, req_future).await {
         Ok(resp) => match resp {
-            Ok(body) => Ok(hyper_migration::into_response(body)),
-            Err(e) => Err(RequestError::Network(e)),
+            Ok(body) => Ok(http_common::into_response(body)),
+            Err(e) => Err(RequestError::Network(http_common::into_error(e))),
         },
         Err(_) => Err(RequestError::TimeoutApi),
     }
@@ -280,7 +279,7 @@ mod tests {
 
         let strategy = RetryStrategy::new(0, 2, RetryBackoffType::Constant, None);
 
-        let client = libdd_common::hyper_migration::new_default_client();
+        let client = libdd_common::http_common::new_default_client();
         tokio::spawn(async move {
             let result = send_with_retry(
                 &client,
@@ -329,7 +328,7 @@ mod tests {
 
         let strategy = RetryStrategy::new(2, 250, RetryBackoffType::Constant, None);
 
-        let client = libdd_common::hyper_migration::new_default_client();
+        let client = libdd_common::http_common::new_default_client();
         tokio::spawn(async move {
             let result = send_with_retry(
                 &client,
@@ -378,7 +377,7 @@ mod tests {
             None,
         );
 
-        let client = libdd_common::hyper_migration::new_default_client();
+        let client = libdd_common::http_common::new_default_client();
         tokio::spawn(async move {
             let result = send_with_retry(
                 &client,
@@ -427,7 +426,7 @@ mod tests {
 
         let strategy = RetryStrategy::new(2, 10, RetryBackoffType::Constant, None);
 
-        let client = libdd_common::hyper_migration::new_default_client();
+        let client = libdd_common::http_common::new_default_client();
         tokio::spawn(async move {
             let result = send_with_retry(
                 &client,

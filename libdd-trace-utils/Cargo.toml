@@ -19,8 +19,9 @@ path = "benches/main.rs"
 
 [dependencies]
 anyhow = "1.0"
-hyper = { workspace = true}
+hyper = { workspace = true, optional = true, default-features = false }
 "http" = "1"
+"http-body" = "1"
 http-body-util = "0.1"
 serde = { version = "1.0.145", features = ["derive"] }
 prost = "0.14.1"

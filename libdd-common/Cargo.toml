@@ -24,14 +24,14 @@ hex = "0.4"
 httparse = { version = "1.9", optional = true }
 hyper = { workspace = true }
 hyper-util = { workspace = true }
-http = "1.0"
+http = "1.1"
 http-body = "1.0"
 http-body-util = "0.1"
 tower-service = "0.3"
 cc = "1.1.31"
 mime = { version = "0.3.16", optional = true }
 multer = { version = "3.1", optional = true }
-bytes = { version = "1.4", optional = true }
+bytes = { version = "1.4" }
 pin-project = "1"
 rand = { version = "0.8", optional = true }
 regex = "1.5"
@@ -90,7 +90,7 @@ fips = ["https", "hyper-rustls/fips"]
 # Enable reqwest client builder support with file dump debugging
 reqwest = ["dep:reqwest", "test-utils"]
 # Enable test utilities for use in other crates
-test-utils = ["dep:httparse", "dep:rand", "dep:mime", "dep:multer", "dep:bytes"]
+test-utils = ["dep:httparse", "dep:rand", "dep:mime", "dep:multer"]
 
 [lints.rust]
 # We run coverage checks in our github actions. These checks are run with

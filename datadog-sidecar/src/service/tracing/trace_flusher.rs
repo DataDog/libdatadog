@@ -6,7 +6,7 @@ use crate::agent_remote_config::AgentRemoteConfigWriter;
 use datadog_ipc::platform::NamedShmHandle;
 use futures::future::join_all;
 use http_body_util::BodyExt;
-use libdd_common::hyper_migration::new_default_client;
+use libdd_common::http_common::new_default_client;
 use libdd_common::{Endpoint, HttpClient, MutexExt};
 use libdd_trace_utils::trace_utils;
 use libdd_trace_utils::trace_utils::SendData;
