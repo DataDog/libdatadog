@@ -8,7 +8,6 @@ use super::{
     AGENT_INFO_CACHE,
 };
 use anyhow::{anyhow, Result};
-use http::header::HeaderName;
 use libdd_capabilities::{HttpClientTrait, HttpRequest};
 use libdd_capabilities_impl::DefaultHttpClient;
 use libdd_common::{entity_id, worker::Worker, Endpoint};
@@ -18,9 +17,6 @@ use std::time::Duration;
 use tokio::sync::mpsc;
 use tokio::time::sleep;
 use tracing::{debug, warn};
-
-/// HTTP header containing the agent state hash.
-const DATADOG_AGENT_STATE: HeaderName = HeaderName::from_static("datadog-agent-state");
 /// Whether the agent reported the same value or not.
 #[derive(Debug)]
 pub enum FetchInfoStatus {
@@ -304,21 +300,17 @@ impl ResponseObserver {
     /// This method examines the `Datadog-Agent-State` header in the response and compares
     /// it with the previously seen state. If the state has changed, it sends a trigger
     /// message to the agent info fetcher.
-    pub fn check_response(&self, response: &http_common::HttpResponse) {
-        if let Some(agent_state) = response.headers().get(DATADOG_AGENT_STATE) {
-            if let Ok(state_str) = agent_state.to_str() {
-                let current_state = AGENT_INFO_CACHE.load();
-                if current_state.as_ref().map(|s| s.state_hash.as_str()) != Some(state_str) {
-                    match self.trigger_tx.try_send(()) {
-                        Ok(_) => {}
-                        Err(mpsc::error::TrySendError::Full(_)) => {
-                            debug!(
-                                "Response observer channel full, fetch has already been triggered"
-                            );
-                        }
-                        Err(mpsc::error::TrySendError::Closed(_)) => {
-                            debug!("Agent info fetcher channel closed, unable to trigger refresh");
-                        }
+    pub fn check_response(&self, response: &libdd_capabilities::HttpResponse) {
+        if let Some(state_str) = response.header("datadog-agent-state") {
+            let current_state = AGENT_INFO_CACHE.load();
+            if current_state.as_ref().map(|s| s.state_hash.as_str()) != Some(state_str) {
+                match self.trigger_tx.try_send(()) {
+                    Ok(_) => {}
+                    Err(mpsc::error::TrySendError::Full(_)) => {
+                        debug!("Response observer channel full, fetch has already been triggered");
+                    }
+                    Err(mpsc::error::TrySendError::Closed(_)) => {
+                        debug!("Agent info fetcher channel closed, unable to trigger refresh");
                     }
                 }
             }
@@ -634,12 +626,11 @@ mod single_threaded_tests {
         });
 
         // Create a mock HTTP response with the new agent state
-        let response = http_common::empty_response(
-            http::Response::builder()
-                .status(200)
-                .header("datadog-agent-state", "new_state"),
-        )
-        .unwrap();
+        let response = libdd_capabilities::HttpResponse {
+            status: 200,
+            headers: vec![("datadog-agent-state".to_string(), "new_state".to_string())],
+            body: Vec::new(),
+        };
 
         // Use the trigger component to check the response
         response_observer.check_response(&response);
@@ -719,12 +710,11 @@ mod single_threaded_tests {
         });
 
         // Create a mock HTTP response with the same agent state
-        let response = http_common::empty_response(
-            http::Response::builder()
-                .status(200)
-                .header("datadog-agent-state", &same_hash),
-        )
-        .unwrap();
+        let response = libdd_capabilities::HttpResponse {
+            status: 200,
+            headers: vec![("datadog-agent-state".to_string(), same_hash.clone())],
+            body: Vec::new(),
+        };
 
         // Use the trigger component to check the response
         response_observer.check_response(&response);
