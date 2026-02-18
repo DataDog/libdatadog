@@ -85,6 +85,7 @@ pub async fn send_with_retry(
 ) -> SendWithRetryResult {
     let mut request_attempt = 0;
     let timeout = Duration::from_millis(target.timeout_ms);
+    let client = DefaultHttpClient::new_client();
 
     debug!(
         url = %target.url,
@@ -109,7 +110,7 @@ pub async fn send_with_retry(
             req = req.with_header(*key, value.clone());
         }
 
-        let result = tokio::time::timeout(timeout, DefaultHttpClient::request(req)).await;
+        let result = tokio::time::timeout(timeout, client.request(req)).await;
 
         match result {
             Ok(Ok(response)) => {
