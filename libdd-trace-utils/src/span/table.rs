@@ -27,7 +27,7 @@ pub struct TraceDataRef<T: TraceDataType> {
 }
 
 impl<T: TraceDataType> TraceDataRef<T> {
-    fn new(r#ref: u32) -> Self {
+    pub fn new(r#ref: u32) -> Self {
         Self {
             index: r#ref,
             _phantom: PhantomData,

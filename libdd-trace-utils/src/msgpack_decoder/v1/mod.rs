@@ -1,25 +1,25 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-pub(crate) mod span;
+pub(crate) mod trace;
 
 use crate::msgpack_decoder::decode::buffer::Buffer;
 use crate::msgpack_decoder::decode::error::DecodeError;
+use crate::msgpack_decoder::v1::trace::decode_traces;
 use crate::span::{v1::TracePayloadBytes, v1::TracePayloadSlice, DeserializableTraceData};
 use crate::span::v1::TracePayload;
 
-/// Decodes a Bytes buffer into a `Vec<Vec<SpanBytes>>` object, also represented as a vector of
-/// `TracerPayloadV04` objects.
+/// Decodes a Bytes buffer a `TracePayload` object.
 ///
 /// # Arguments
 ///
 /// * `data` - A libdd_tinybytes Bytes buffer containing the encoded data. Bytes are expected to be
-///   encoded msgpack data containing a list of a list of v04 spans.
+///   encoded msgpack data containing a list of a list of v1 spans.
 ///
 /// # Returns
 ///
-/// * `Ok(Vec<TracerPayloadV04>, usize)` - A vector of decoded `Vec<SpanSlice>` objects if
-///   successful. and the number of bytes in the slice used by the decoder.
+/// * `Ok(TracerPayload, usize)` - A `TracePayload` if successful. and the number of bytes in the
+///   slice used by the decoder.
 /// * `Err(DecodeError)` - An error if the decoding process fails.
 ///
 /// # Errors
@@ -32,7 +32,7 @@ use crate::span::v1::TracePayload;
 ///
 /// ```
 /// use datadog_trace_protobuf::pb::Span;
-/// use datadog_trace_utils::msgpack_decoder::v04::from_bytes;
+/// use datadog_trace_utils::msgpack_decoder::v1::from_bytes;
 /// use rmp_serde::to_vec_named;
 /// use libdd_tinybytes;
 ///
@@ -54,18 +54,18 @@ pub fn from_bytes(data: libdd_tinybytes::Bytes) -> Result<(TracePayloadBytes, us
     from_buffer(&mut Buffer::new(data))
 }
 
-/// Decodes a slice of bytes into a `Vec<Vec<SpanSlice>>` object.
+/// Decodes a slice of bytes into a `TracePayload` object.
 /// The resulting spans have the same lifetime as the initial buffer.
 ///
 /// # Arguments
 ///
 /// * `data` - A slice of bytes containing the encoded data. Bytes are expected to be encoded
-///   msgpack data containing a list of a list of v04 spans.
+///   msgpack data containing a list of a list of v1 spans.
 ///
 /// # Returns
 ///
-/// * `Ok(Vec<TracerPayloadV04>, usize)` - A vector of decoded `Vec<SpanSlice>` objects if
-///   successful. and the number of bytes in the slice used by the decoder.
+/// * `Ok(TracePayload, usize)` - A decoded `TracePayload` object if successful. and the
+///   number of bytes in the slice used by the decoder.
 /// * `Err(DecodeError)` - An error if the decoding process fails.
 ///
 /// # Errors
@@ -78,7 +78,7 @@ pub fn from_bytes(data: libdd_tinybytes::Bytes) -> Result<(TracePayloadBytes, us
 ///
 /// ```
 /// use datadog_trace_protobuf::pb::Span;
-/// use datadog_trace_utils::msgpack_decoder::v04::from_slice;
+/// use datadog_trace_utils::msgpack_decoder::v1::from_slice;
 /// use rmp_serde::to_vec_named;
 /// use libdd_tinybytes;
 ///
@@ -108,12 +108,12 @@ pub fn from_buffer<T: DeserializableTraceData>(
         DecodeError::InvalidFormat("Unable to read array len for trace count".to_owned())
     })?;
 
-    let traces = TracePayload::default();
+    let mut traces = TracePayload::default();
 
     // Intentionally skip the size of the array (as it will be recomputed after coalescing).
     let start_len = data.len();
 
-
+    decode_traces(data, &mut traces.static_data, &mut traces.traces)?;
 
     Ok((traces, start_len - data.len()))
 }
