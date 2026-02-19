@@ -251,7 +251,7 @@ impl TraceFlusher {
             Ok(response) => {
                 if endpoint.api_key.is_none() {
                     // not when intake
-                    self.write_remote_configs(endpoint.clone(), response.body);
+                    self.write_remote_configs(endpoint.clone(), response.into_body().to_vec());
                 }
                 info!("Successfully flushed traces to {endpoint:?}");
             }

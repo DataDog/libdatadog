@@ -7,7 +7,8 @@
 mod retry_strategy;
 pub use retry_strategy::{RetryBackoffType, RetryStrategy};
 
-use libdd_capabilities::{HttpClientTrait, HttpError, HttpRequest, HttpResponse};
+use bytes::Bytes;
+use libdd_capabilities::{HttpClientTrait, HttpError};
 use libdd_capabilities_impl::DefaultHttpClient;
 use libdd_common::Endpoint;
 use std::{collections::HashMap, time::Duration};
@@ -15,13 +16,13 @@ use tracing::{debug, error};
 
 pub type Attempts = u32;
 
-pub type SendWithRetryResult = Result<(HttpResponse, Attempts), SendWithRetryError>;
+pub type SendWithRetryResult = Result<(http::Response<Bytes>, Attempts), SendWithRetryError>;
 
 /// All errors contain the number of attempts after which the final error was returned
 #[derive(Debug)]
 pub enum SendWithRetryError {
     /// The request received an error HTTP code.
-    Http(HttpResponse, Attempts),
+    Http(http::Response<Bytes>, Attempts),
     /// Treats timeout errors originated in the transport layer.
     Timeout(Attempts),
     /// Treats errors coming from networking.
@@ -106,23 +107,30 @@ pub async fn send_with_retry(
             "Attempting request"
         );
 
-        // Build the request from scratch each retry (HttpRequest is cheap to construct)
-        let mut req = HttpRequest::post(target.url.to_string(), payload.clone());
-        req = target.set_standard_headers(req, concat!("Tracer/", env!("CARGO_PKG_VERSION")));
+        let mut builder = http::Request::builder()
+            .method(http::Method::POST)
+            .uri(target.url.clone());
+        builder = target.set_standard_headers(builder, concat!("Tracer/", env!("CARGO_PKG_VERSION")));
         for (key, value) in headers {
-            req = req.with_header(*key, value.clone());
+            builder = builder.header(*key, value.as_str());
         }
+        let req = match builder.body(Bytes::from(payload.clone())) {
+            Ok(r) => r,
+            Err(_) => {
+                return Err(SendWithRetryError::Build(request_attempt));
+            }
+        };
 
         let result = tokio::time::timeout(timeout, client.request(req)).await;
 
         match result {
             Ok(Ok(response)) => {
-                let status = response.status;
-                debug!(status, attempt = request_attempt, "Received response");
+                let status = response.status();
+                debug!(status = status.as_u16(), attempt = request_attempt, "Received response");
 
-                if response.is_client_error() || response.is_server_error() {
+                if status.is_client_error() || status.is_server_error() {
                     debug!(
-                        status,
+                        status = status.as_u16(),
                         attempt = request_attempt,
                         max_retries = retry_strategy.max_retries(),
                         "Received error status code"
@@ -138,14 +146,14 @@ pub async fn send_with_retry(
                         continue;
                     } else {
                         error!(
-                            status,
+                            status = status.as_u16(),
                             attempts = request_attempt,
                             "Max retries exceeded, returning HTTP error"
                         );
                         return Err(SendWithRetryError::Http(response, request_attempt));
                     }
                 } else {
-                    debug!(status, attempts = request_attempt, "Request succeeded");
+                    debug!(status = status.as_u16(), attempts = request_attempt, "Request succeeded");
                     return Ok((response, request_attempt));
                 }
             }
@@ -228,8 +236,6 @@ mod tests {
             })
             .await;
 
-        // We add this mock so that if a second request was made it would be a success and our
-        // assertion below that last_result is an error would fail.
         let _mock_202 = server
             .mock_async(|_when, then| {
                 then.status(202)

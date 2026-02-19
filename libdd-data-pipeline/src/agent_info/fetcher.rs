@@ -5,7 +5,8 @@
 
 use super::{schema::AgentInfo, AGENT_INFO_CACHE};
 use anyhow::{anyhow, Result};
-use libdd_capabilities::{HttpClientTrait, HttpRequest};
+use bytes::Bytes;
+use libdd_capabilities::HttpClientTrait;
 use libdd_capabilities_impl::DefaultHttpClient;
 use libdd_common::{entity_id, worker::Worker, Endpoint};
 use sha2::{Digest, Sha256};
@@ -79,23 +80,27 @@ pub async fn fetch_info(info_endpoint: &Endpoint) -> Result<Box<AgentInfo>> {
 /// The hash is calculated using SHA256 to match the agent's calculation method.
 async fn fetch_and_hash_response(info_endpoint: &Endpoint) -> Result<(String, bytes::Bytes)> {
     let user_agent = concat!("Libdatadog/", env!("CARGO_PKG_VERSION"));
-    let mut req =
-        HttpRequest::get(info_endpoint.url.to_string()).with_header("user-agent", user_agent);
+    let mut builder = http::Request::builder()
+        .method(http::Method::GET)
+        .uri(info_endpoint.url.clone())
+        .header("user-agent", user_agent);
 
-    // Add optional endpoint headers (api-key, test-token)
     for (name, value) in info_endpoint.get_optional_headers() {
-        req = req.with_header(name, value);
+        builder = builder.header(name, value);
     }
 
-    // Add entity-related headers (container-id, entity-id, external-env)
     for (name, value) in entity_id::get_entity_headers() {
-        req = req.with_header(name, value);
+        builder = builder.header(name, value);
     }
+
+    let req = builder
+        .body(Bytes::new())
+        .map_err(|e| anyhow!("Failed to build request: {}", e))?;
 
     let client = DefaultHttpClient::new_client();
     let res = client.request(req).await.map_err(|e| anyhow!("{}", e))?;
 
-    let body_data = bytes::Bytes::from(res.body);
+    let body_data = res.into_body();
     let hash = format!("{:x}", Sha256::digest(&body_data));
 
     Ok((hash, body_data))
@@ -266,8 +271,12 @@ impl ResponseObserver {
     /// This method examines the `Datadog-Agent-State` header in the response and compares
     /// it with the previously seen state. If the state has changed, it sends a trigger
     /// message to the agent info fetcher.
-    pub fn check_response(&self, response: &libdd_capabilities::HttpResponse) {
-        if let Some(state_str) = response.header("datadog-agent-state") {
+    pub fn check_response(&self, response: &http::Response<Bytes>) {
+        let state_str = response
+            .headers()
+            .get("datadog-agent-state")
+            .and_then(|v| v.to_str().ok());
+        if let Some(state_str) = state_str {
             let current_state = AGENT_INFO_CACHE.load();
             if current_state.as_ref().map(|s| s.state_hash.as_str()) != Some(state_str) {
                 match self.trigger_tx.try_send(()) {
@@ -534,11 +543,11 @@ mod single_threaded_tests {
         });
 
         // Create a mock HTTP response with the new agent state
-        let response = libdd_capabilities::HttpResponse {
-            status: 200,
-            headers: vec![("datadog-agent-state".to_string(), "new_state".to_string())],
-            body: Vec::new(),
-        };
+        let response = http::Response::builder()
+            .status(200)
+            .header("datadog-agent-state", "new_state")
+            .body(Bytes::new())
+            .unwrap();
 
         // Use the trigger component to check the response
         response_observer.check_response(&response);
@@ -618,11 +627,11 @@ mod single_threaded_tests {
         });
 
         // Create a mock HTTP response with the same agent state
-        let response = libdd_capabilities::HttpResponse {
-            status: 200,
-            headers: vec![("datadog-agent-state".to_string(), same_hash.clone())],
-            body: Vec::new(),
-        };
+        let response = http::Response::builder()
+            .status(200)
+            .header("datadog-agent-state", same_hash.as_str())
+            .body(Bytes::new())
+            .unwrap();
 
         // Use the trigger component to check the response
         response_observer.check_response(&response);
