@@ -12,6 +12,7 @@ license = "Apache-2.0"
 
 [lib]
 crate-type = ["lib"]
+bench = false
 
 [dependencies]
 
