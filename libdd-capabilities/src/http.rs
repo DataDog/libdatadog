@@ -43,6 +43,7 @@ impl HttpResponse {
 pub enum HttpError {
     Network(String),
     Timeout,
+    ResponseBody(String),
     InvalidRequest(String),
     Other(String),
 }
@@ -52,6 +53,7 @@ impl fmt::Display for HttpError {
         match self {
             HttpError::Network(msg) => write!(f, "Network error: {}", msg),
             HttpError::Timeout => write!(f, "Request timed out"),
+            HttpError::ResponseBody(msg) => write!(f, "Response body error: {}", msg),
             HttpError::InvalidRequest(msg) => write!(f, "Invalid request: {}", msg),
             HttpError::Other(msg) => write!(f, "HTTP error: {}", msg),
         }
@@ -60,138 +62,136 @@ impl fmt::Display for HttpError {
 
 impl std::error::Error for HttpError {}
 
-/// Request without body (GET, HEAD, DELETE, OPTIONS).
-#[derive(Debug, Clone, Default)]
-pub struct RequestHead {
-    pub url: String,
-    pub headers: Vec<(String, String)>,
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Method {
+    Get,
+    Head,
+    Delete,
+    Options,
+    Post,
+    Put,
+    Patch,
 }
 
-impl RequestHead {
-    pub fn new(url: impl Into<String>) -> Self {
+impl Method {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Get => "GET",
+            Self::Head => "HEAD",
+            Self::Delete => "DELETE",
+            Self::Options => "OPTIONS",
+            Self::Post => "POST",
+            Self::Put => "PUT",
+            Self::Patch => "PATCH",
+        }
+    }
+
+    pub fn accepts_body(self) -> bool {
+        matches!(self, Self::Post | Self::Put | Self::Patch)
+    }
+}
+
+pub type Body = Vec<u8>;
+
+#[derive(Debug, Clone)]
+pub struct HttpRequest {
+    method: Method,
+    url: String,
+    headers: Vec<(String, String)>,
+    body: Option<Body>,
+}
+
+impl HttpRequest {
+    pub fn new(method: Method, url: impl Into<String>) -> Self {
         Self {
+            method,
             url: url.into(),
             headers: Vec::new(),
+            body: None,
         }
+    }
+
+    pub fn get(url: impl Into<String>) -> Self {
+        Self::new(Method::Get, url)
+    }
+
+    pub fn head(url: impl Into<String>) -> Self {
+        Self::new(Method::Head, url)
+    }
+
+    pub fn delete(url: impl Into<String>) -> Self {
+        Self::new(Method::Delete, url)
+    }
+
+    pub fn options(url: impl Into<String>) -> Self {
+        Self::new(Method::Options, url)
+    }
+
+    pub fn post(url: impl Into<String>, body: Vec<u8>) -> Self {
+        Self::new(Method::Post, url)
+            .with_body(body)
+            .expect("POST must accept body")
+    }
+
+    pub fn put(url: impl Into<String>, body: Vec<u8>) -> Self {
+        Self::new(Method::Put, url)
+            .with_body(body)
+            .expect("PUT must accept body")
+    }
+
+    pub fn patch(url: impl Into<String>, body: Vec<u8>) -> Self {
+        Self::new(Method::Patch, url)
+            .with_body(body)
+            .expect("PATCH must accept body")
     }
 
     pub fn with_header(mut self, name: impl Into<String>, value: impl Into<String>) -> Self {
         self.headers.push((name.into(), value.into()));
         self
     }
-}
 
-/// Request with body (POST, PUT, PATCH).
-#[derive(Debug, Clone)]
-pub struct RequestWithBody {
-    pub head: RequestHead,
-    pub body: Vec<u8>,
-}
+    pub fn with_body(mut self, body: Body) -> Result<Self, HttpError> {
+        self.set_body(body)?;
+        Ok(self)
+    }
 
-impl RequestWithBody {
-    pub fn new(url: impl Into<String>, body: Vec<u8>) -> Self {
-        Self {
-            head: RequestHead::new(url),
-            body,
+    pub fn set_body(&mut self, body: Body) -> Result<(), HttpError> {
+        if !self.method.accepts_body() {
+            return Err(HttpError::InvalidRequest(format!(
+                "method {} does not accept a request body",
+                self.method.as_str()
+            )));
         }
+        self.body = Some(body);
+        Ok(())
     }
 
-    pub fn with_header(mut self, name: impl Into<String>, value: impl Into<String>) -> Self {
-        self.head = self.head.with_header(name, value);
-        self
-    }
-}
-
-#[derive(Debug, Clone)]
-pub enum HttpRequest {
-    Get(RequestHead),
-    Head(RequestHead),
-    Delete(RequestHead),
-    Options(RequestHead),
-    Post(RequestWithBody),
-    Put(RequestWithBody),
-    Patch(RequestWithBody),
-}
-
-impl HttpRequest {
-    pub fn get(url: impl Into<String>) -> Self {
-        Self::Get(RequestHead::new(url))
+    pub fn clear_body(&mut self) {
+        self.body = None;
     }
 
-    pub fn head(url: impl Into<String>) -> Self {
-        Self::Head(RequestHead::new(url))
-    }
-
-    pub fn delete(url: impl Into<String>) -> Self {
-        Self::Delete(RequestHead::new(url))
-    }
-
-    pub fn options(url: impl Into<String>) -> Self {
-        Self::Options(RequestHead::new(url))
-    }
-
-    pub fn post(url: impl Into<String>, body: Vec<u8>) -> Self {
-        Self::Post(RequestWithBody::new(url, body))
-    }
-
-    pub fn put(url: impl Into<String>, body: Vec<u8>) -> Self {
-        Self::Put(RequestWithBody::new(url, body))
-    }
-
-    pub fn patch(url: impl Into<String>, body: Vec<u8>) -> Self {
-        Self::Patch(RequestWithBody::new(url, body))
-    }
-
-    pub fn with_header(self, name: impl Into<String>, value: impl Into<String>) -> Self {
-        match self {
-            Self::Get(head) => Self::Get(head.with_header(name, value)),
-            Self::Head(head) => Self::Head(head.with_header(name, value)),
-            Self::Delete(head) => Self::Delete(head.with_header(name, value)),
-            Self::Options(head) => Self::Options(head.with_header(name, value)),
-            Self::Post(req) => Self::Post(req.with_header(name, value)),
-            Self::Put(req) => Self::Put(req.with_header(name, value)),
-            Self::Patch(req) => Self::Patch(req.with_header(name, value)),
-        }
+    pub fn method(&self) -> Method {
+        self.method
     }
 
     pub fn url(&self) -> &str {
-        match self {
-            Self::Get(h) | Self::Head(h) | Self::Delete(h) | Self::Options(h) => &h.url,
-            Self::Post(r) | Self::Put(r) | Self::Patch(r) => &r.head.url,
-        }
+        &self.url
     }
 
     pub fn headers(&self) -> &[(String, String)] {
-        match self {
-            Self::Get(h) | Self::Head(h) | Self::Delete(h) | Self::Options(h) => &h.headers,
-            Self::Post(r) | Self::Put(r) | Self::Patch(r) => &r.head.headers,
-        }
+        &self.headers
     }
 
-    pub fn body(&self) -> &[u8] {
-        match self {
-            Self::Get(_) | Self::Head(_) | Self::Delete(_) | Self::Options(_) => &[],
-            Self::Post(r) | Self::Put(r) | Self::Patch(r) => &r.body,
-        }
+    pub fn body(&self) -> Option<&Body> {
+        self.body.as_ref()
     }
 
-    pub fn into_body(self) -> Vec<u8> {
-        match self {
-            Self::Get(_) | Self::Head(_) | Self::Delete(_) | Self::Options(_) => Vec::new(),
-            Self::Post(r) | Self::Put(r) | Self::Patch(r) => r.body,
-        }
+    pub fn into_body(self) -> Option<Body> {
+        self.body
     }
 
     pub fn method_str(&self) -> &'static str {
-        match self {
-            Self::Get(_) => "GET",
-            Self::Head(_) => "HEAD",
-            Self::Delete(_) => "DELETE",
-            Self::Options(_) => "OPTIONS",
-            Self::Post(_) => "POST",
-            Self::Put(_) => "PUT",
-            Self::Patch(_) => "PATCH",
-        }
+        self.method.as_str()
     }
 }
 

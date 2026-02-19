@@ -408,6 +408,9 @@ mod tests {
                         SendWithRetryError::Network(_, attempts) => {
                             (TransportErrorType::Network, *attempts)
                         }
+                        SendWithRetryError::ResponseBody(attempts) => {
+                            (TransportErrorType::ResponseBody, *attempts)
+                        }
                         SendWithRetryError::Build(attempts) => {
                             (TransportErrorType::Build, *attempts)
                         }
@@ -742,6 +745,19 @@ mod tests {
 
             assert_eq!(send_result.error_type, Some(TransportErrorType::Build));
             assert_eq!(send_result.request_attempts, 1);
+        }
+
+        #[test]
+        fn test_from_retry_result_response_body_error() {
+            let retry_result: SendWithRetryResult = Err(SendWithRetryError::ResponseBody(2));
+
+            let send_result = SendResult::from_retry_result(&retry_result, 100, 1);
+
+            assert_eq!(
+                send_result.error_type,
+                Some(TransportErrorType::ResponseBody)
+            );
+            assert_eq!(send_result.request_attempts, 2);
         }
 
         #[test]

@@ -87,6 +87,11 @@ impl SendDataResult {
                     self.chunks_dropped += chunks;
                     self.requests_count += u64::from(attempts);
                 }
+                SendWithRetryError::ResponseBody(attempts) => {
+                    self.errors_network += 1;
+                    self.chunks_dropped += chunks;
+                    self.requests_count += u64::from(attempts);
+                }
                 SendWithRetryError::Build(attempts) => {
                     self.chunks_dropped += chunks;
                     self.requests_count += u64::from(attempts);

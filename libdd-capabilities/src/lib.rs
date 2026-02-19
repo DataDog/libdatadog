@@ -6,7 +6,5 @@
 pub mod http;
 pub mod maybe_send;
 
-pub use http::{
-    HttpClientTrait, HttpError, HttpRequest, HttpResponse, RequestHead, RequestWithBody,
-};
+pub use http::{Body, HttpClientTrait, HttpError, HttpRequest, HttpResponse, Method};
 pub use maybe_send::MaybeSend;

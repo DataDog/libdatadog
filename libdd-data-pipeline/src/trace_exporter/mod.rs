@@ -571,9 +571,14 @@ impl TraceExporter {
             error = %err,
             "Request to agent failed"
         );
+        let error_type = match &err {
+            HttpError::Timeout => TransportErrorType::Timeout,
+            HttpError::ResponseBody(_) => TransportErrorType::ResponseBody,
+            HttpError::InvalidRequest(_) => TransportErrorType::Build,
+            HttpError::Network(_) | HttpError::Other(_) => TransportErrorType::Network,
+        };
         // For direct hyper errors (proxy path), always 1 request attempt
-        let send_result =
-            SendResult::failure(TransportErrorType::Network, payload_size, trace_count, 1);
+        let send_result = SendResult::failure(error_type, payload_size, trace_count, 1);
         self.emit_send_result(&send_result);
         Err(TraceExporterError::from(err))
     }
@@ -776,6 +781,19 @@ impl TraceExporter {
                     SendResult::failure(TransportErrorType::Network, payload_len, chunks, attempts);
                 self.emit_send_result(&send_result);
                 Err(TraceExporterError::from(err))
+            }
+            SendWithRetryError::ResponseBody(attempts) => {
+                let send_result = SendResult::failure(
+                    TransportErrorType::ResponseBody,
+                    payload_len,
+                    chunks,
+                    attempts,
+                );
+                self.emit_send_result(&send_result);
+                Err(TraceExporterError::from(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "failed to read response body",
+                )))
             }
             SendWithRetryError::Build(attempts) => {
                 let send_result =

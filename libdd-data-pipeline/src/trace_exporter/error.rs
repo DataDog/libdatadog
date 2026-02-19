@@ -325,6 +325,7 @@ impl From<libdd_capabilities::HttpError> for TraceExporterError {
             kind: match &err {
                 libdd_capabilities::HttpError::Timeout => NetworkErrorKind::TimedOut,
                 libdd_capabilities::HttpError::Network(_) => NetworkErrorKind::ConnectionClosed,
+                libdd_capabilities::HttpError::ResponseBody(_) => NetworkErrorKind::Body,
                 libdd_capabilities::HttpError::InvalidRequest(_) => NetworkErrorKind::Parse,
                 libdd_capabilities::HttpError::Other(_) => NetworkErrorKind::Unknown,
             },

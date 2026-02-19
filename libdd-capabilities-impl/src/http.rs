@@ -4,7 +4,7 @@
 //! HTTP capability implementation using hyper.
 
 use http_body_util::BodyExt;
-use libdd_capabilities::http::{HttpClientTrait, HttpError, HttpRequest, HttpResponse};
+use libdd_capabilities::http::{HttpClientTrait, HttpError, HttpRequest, HttpResponse, Method};
 use libdd_capabilities::maybe_send::MaybeSend;
 use libdd_common::{connector::Connector, hyper_migration};
 
@@ -31,14 +31,14 @@ impl HttpClientTrait for DefaultHttpClient {
                 .parse()
                 .map_err(|e| HttpError::InvalidRequest(format!("Invalid URL: {}", e)))?;
 
-            let method = match &req {
-                HttpRequest::Get(_) => hyper::Method::GET,
-                HttpRequest::Head(_) => hyper::Method::HEAD,
-                HttpRequest::Delete(_) => hyper::Method::DELETE,
-                HttpRequest::Options(_) => hyper::Method::OPTIONS,
-                HttpRequest::Post(_) => hyper::Method::POST,
-                HttpRequest::Put(_) => hyper::Method::PUT,
-                HttpRequest::Patch(_) => hyper::Method::PATCH,
+            let method = match req.method() {
+                Method::Get => hyper::Method::GET,
+                Method::Head => hyper::Method::HEAD,
+                Method::Delete => hyper::Method::DELETE,
+                Method::Options => hyper::Method::OPTIONS,
+                Method::Post => hyper::Method::POST,
+                Method::Put => hyper::Method::PUT,
+                Method::Patch => hyper::Method::PATCH,
             };
 
             let mut builder = hyper::Request::builder().method(method).uri(uri);
@@ -47,7 +47,17 @@ impl HttpClientTrait for DefaultHttpClient {
                 builder = builder.header(key.as_str(), value.as_str());
             }
 
-            let body = hyper_migration::Body::from(req.into_body());
+            let method_str = req.method_str();
+            let accepts_body = req.method().accepts_body();
+            let body = req.into_body();
+            if body.is_some() && !accepts_body {
+                return Err(HttpError::InvalidRequest(format!(
+                    "method {} does not accept a request body",
+                    method_str
+                )));
+            }
+
+            let body = hyper_migration::Body::from(body.unwrap_or_default());
             let hyper_req = builder.body(body).map_err(|e| {
                 HttpError::InvalidRequest(format!("Failed to build request: {}", e))
             })?;
@@ -64,10 +74,9 @@ impl HttpClientTrait for DefaultHttpClient {
                 .map(|(k, v)| (k.as_str().to_owned(), v.to_str().unwrap_or("").to_owned()))
                 .collect();
 
-            let body_collected =
-                response.into_body().collect().await.map_err(|e| {
-                    HttpError::Network(format!("Failed to read response body: {}", e))
-                })?;
+            let body_collected = response.into_body().collect().await.map_err(|e| {
+                HttpError::ResponseBody(format!("Failed to read response body: {}", e))
+            })?;
             let body_bytes = body_collected.to_bytes();
 
             Ok(HttpResponse {
