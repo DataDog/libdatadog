@@ -19,6 +19,7 @@ bench = false
 [features]
 default = []
 cxx = ["dep:cxx", "dep:cxx-build"]
+otel = ["dep:opentelemetry-proto"]
 test-utils = ["libdd-common/test-utils"]
 
 [[bench]]
@@ -45,6 +46,7 @@ libdd-alloc = { version = "1.0.0", path = "../libdd-alloc" }
 libdd-common = { version = "1.1.0", path = "../libdd-common", default-features = false, features = ["reqwest", "test-utils"] }
 libdd-profiling-protobuf = { version = "1.0.0", path = "../libdd-profiling-protobuf", features = ["prost_impls"] }
 mime = "0.3.16"
+opentelemetry-proto = { version = "0.31", optional = true, default-features = false, features = ["profiles", "gen-tonic-messages"] }
 parking_lot = { version = "0.12", default-features = false }
 prost = "0.14.1"
 rand = "0.8"
