@@ -108,6 +108,7 @@ pub(crate) enum StdinState {
     Counters,
     Done,
     File(String, Vec<String>),
+    Kind,
     Metadata,
     ProcInfo,
     SigInfo,
@@ -184,6 +185,13 @@ fn process_line(
         StdinState::File(name, mut contents) => {
             contents.push(line.to_string());
             StdinState::File(name, contents)
+        }
+
+        StdinState::Kind if line.starts_with(DD_CRASHTRACK_END_KIND) => StdinState::Waiting,
+        StdinState::Kind => {
+            let kind: ErrorKind = serde_json::from_str(line)?;
+            builder.with_kind(kind)?;
+            StdinState::Kind
         }
 
         StdinState::Metadata if line.starts_with(DD_CRASHTRACK_END_METADATA) => StdinState::Waiting,
@@ -311,6 +319,7 @@ fn process_line(
             let (_, filename) = line.split_once(' ').unwrap_or(("", "MISSING_FILENAME"));
             StdinState::File(filename.to_string(), vec![])
         }
+        StdinState::Waiting if line.starts_with(DD_CRASHTRACK_BEGIN_KIND) => StdinState::Kind,
         StdinState::Waiting if line.starts_with(DD_CRASHTRACK_BEGIN_METADATA) => {
             StdinState::Metadata
         }
@@ -392,7 +401,7 @@ pub(crate) async fn receive_report_from_stream(
             }
         }
 
-        // We need to wait until at least we receive config, metadata, and siginfo (on non-Windows
+        // We need to wait until at least we receive config, metadata, and kind (on non-Windows
         // platforms) before sending the crash ping
         if !crash_ping_sent && builder.is_ping_ready() {
             if let Some(ref config_ref) = config {
@@ -485,8 +494,6 @@ pub(crate) async fn receive_report_from_stream(
         return Ok(None);
     }
 
-    // For now, we only support Signal based crash detection in the receiver.
-    builder.with_kind(ErrorKind::UnixSignal)?;
     enrich_thread_name(&mut builder)?;
     builder.with_os_info_this_machine()?;
 
