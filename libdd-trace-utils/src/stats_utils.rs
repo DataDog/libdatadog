@@ -6,9 +6,10 @@ pub use mini_agent::*;
 
 #[cfg(feature = "mini_agent")]
 mod mini_agent {
+    use bytes::Bytes;
     use http_body_util::BodyExt;
     use hyper::body::Buf;
-    use libdd_capabilities::{HttpClientTrait, HttpRequest};
+    use libdd_capabilities::HttpClientTrait;
     use libdd_capabilities_impl::DefaultHttpClient;
     use libdd_common::hyper_migration;
     use libdd_common::Endpoint;
@@ -69,10 +70,13 @@ mod mini_agent {
         target: &Endpoint,
         api_key: &str,
     ) -> anyhow::Result<()> {
-        let req = HttpRequest::post(target.url.to_string(), data)
-            .with_header("Content-Type", "application/msgpack")
-            .with_header("Content-Encoding", "gzip")
-            .with_header("DD-API-KEY", api_key);
+        let req = http::Request::builder()
+            .method(http::Method::POST)
+            .uri(target.url.clone())
+            .header("Content-Type", "application/msgpack")
+            .header("Content-Encoding", "gzip")
+            .header("DD-API-KEY", api_key)
+            .body(Bytes::from(data))?;
 
         let client = DefaultHttpClient::new_client();
         let response = client
@@ -80,8 +84,8 @@ mod mini_agent {
             .await
             .map_err(|e| anyhow::anyhow!("Failed to send trace stats: {e}"))?;
 
-        if response.status != 202 {
-            let response_body = String::from_utf8(response.body).unwrap_or_default();
+        if response.status() != http::StatusCode::ACCEPTED {
+            let response_body = String::from_utf8(response.into_body().to_vec()).unwrap_or_default();
             anyhow::bail!("Server did not accept trace stats: {response_body}");
         }
         Ok(())

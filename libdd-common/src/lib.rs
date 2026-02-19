@@ -255,20 +255,20 @@ impl Endpoint {
     }
 
     /// Apply standard headers (user-agent, api-key, test-token, entity headers) to an
-    /// [`HttpRequest`](libdd_capabilities::HttpRequest).
+    /// [`http::request::Builder`].
     pub fn set_standard_headers(
         &self,
-        req: libdd_capabilities::HttpRequest,
+        mut builder: http::request::Builder,
         user_agent: &str,
-    ) -> libdd_capabilities::HttpRequest {
-        let mut req = req.with_header("user-agent", user_agent);
+    ) -> http::request::Builder {
+        builder = builder.header("user-agent", user_agent);
         for (name, value) in self.get_optional_headers() {
-            req = req.with_header(name, value);
+            builder = builder.header(name, value);
         }
         for (name, value) in entity_id::get_entity_headers() {
-            req = req.with_header(name, value);
+            builder = builder.header(name, value);
         }
-        req
+        builder
     }
 
     /// Return a request builder with the following headers:

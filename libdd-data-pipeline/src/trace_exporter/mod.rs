@@ -32,7 +32,8 @@ use crate::{
 use arc_swap::{ArcSwap, ArcSwapOption};
 use hyper::http::uri::PathAndQuery;
 use hyper::Uri;
-use libdd_capabilities::{HttpClientTrait, HttpError, HttpResponse};
+use bytes::Bytes;
+use libdd_capabilities::{HttpClientTrait, HttpError};
 use libdd_capabilities_impl::DefaultHttpClient;
 use libdd_common::tag::Tag;
 use libdd_common::{Endpoint, MutexExt};
@@ -518,7 +519,7 @@ impl TraceExporter {
         uri: Uri,
     ) -> Result<AgentResponse, TraceExporterError> {
         let transport_client = TransportClient::new(&self.metadata);
-        let req = transport_client.build_trace_request(data, trace_count, uri);
+        let req = transport_client.build_trace_request(data, trace_count, uri)?;
         let client = DefaultHttpClient::new_client();
         match client.request(req).await {
             Ok(response) => {
@@ -533,13 +534,13 @@ impl TraceExporter {
     /// Handle response for proxy path (no retry)
     async fn handle_proxy_response(
         &self,
-        response: HttpResponse,
+        response: http::Response<Bytes>,
         trace_count: usize,
         payload_len: usize,
     ) -> Result<AgentResponse, TraceExporterError> {
-        let status = response.status;
+        let status = response.status().as_u16();
 
-        if !response.is_success() {
+        if !response.status().is_success() {
             let send_result = SendResult::failure(
                 TransportErrorType::Http(status),
                 payload_len,
@@ -547,13 +548,13 @@ impl TraceExporter {
                 1,
             );
             self.emit_send_result(&send_result);
-            let body = String::from_utf8_lossy(&response.body).to_string();
+            let body = String::from_utf8_lossy(response.body()).to_string();
             return Err(TraceExporterError::Request(RequestError::new(
                 status, &body,
             )));
         }
 
-        let body = String::from_utf8_lossy(&response.body).to_string();
+        let body = String::from_utf8_lossy(response.body()).to_string();
         debug!(trace_count, "Traces sent successfully to agent");
         let send_result = SendResult::success(payload_len, trace_count, 1);
         self.emit_send_result(&send_result);
@@ -809,17 +810,16 @@ impl TraceExporter {
     /// Handle HTTP error responses from send with retry
     async fn handle_http_send_error(
         &self,
-        response: HttpResponse,
+        response: http::Response<Bytes>,
         payload_len: usize,
         chunks: usize,
         attempts: u32,
     ) -> Result<AgentResponse, TraceExporterError> {
-        let status = response.status;
+        let status = response.status().as_u16();
 
         // Check if the agent state has changed for error responses
         self.info_response_observer.check_response(&response);
 
-        // Emit health metrics using SendResult
         let send_result = SendResult::failure(
             TransportErrorType::Http(status),
             payload_len,
@@ -828,19 +828,23 @@ impl TraceExporter {
         );
         self.emit_send_result(&send_result);
 
-        let body = String::from_utf8_lossy(&response.body);
+        let body = String::from_utf8_lossy(response.body());
         Err(TraceExporterError::Request(RequestError::new(
             status, &body,
         )))
     }
 
     /// Check if the agent's payload version has changed based on response headers
-    fn check_payload_version_changed(&self, response: &HttpResponse) -> bool {
-        let is_success = response.is_success();
+    fn check_payload_version_changed(&self, response: &http::Response<Bytes>) -> bool {
+        let is_success = response.status().is_success();
+        let version_header = response
+            .headers()
+            .get(DATADOG_RATES_PAYLOAD_VERSION_HEADER)
+            .and_then(|v| v.to_str().ok());
         match (
             is_success,
             self.agent_payload_response_version.as_ref(),
-            response.header(DATADOG_RATES_PAYLOAD_VERSION_HEADER),
+            version_header,
         ) {
             (false, _, _) => {
                 // If the status is not success, the rates are considered unchanged
@@ -881,18 +885,18 @@ impl TraceExporter {
     async fn handle_agent_response(
         &self,
         chunks: usize,
-        response: HttpResponse,
+        response: http::Response<Bytes>,
         payload_len: usize,
         attempts: u32,
     ) -> Result<AgentResponse, TraceExporterError> {
         // Check if the agent state has changed
         self.info_response_observer.check_response(&response);
 
-        let status = response.status;
+        let status = response.status().as_u16();
         let payload_version_changed = self.check_payload_version_changed(&response);
-        let body = String::from_utf8_lossy(&response.body).to_string();
+        let body = String::from_utf8_lossy(response.body()).to_string();
 
-        if !response.is_success() {
+        if !response.status().is_success() {
             warn!(status, "Agent returned non-success status for trace send");
             let send_result = SendResult::failure(
                 TransportErrorType::Http(status),

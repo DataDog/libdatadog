@@ -2997,11 +2997,17 @@ dependencies = [
 [[package]]
 name = "libdd-capabilities"
 version = "0.1.0"
+dependencies = [
+ "bytes",
+ "http",
+]
 
 [[package]]
 name = "libdd-capabilities-impl"
 version = "0.1.0"
 dependencies = [
+ "bytes",
+ "http",
  "http-body-util",
  "hyper 1.6.0",
  "libdd-capabilities",

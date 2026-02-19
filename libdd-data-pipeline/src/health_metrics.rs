@@ -384,13 +384,11 @@ mod tests {
 
             match result {
                 Ok((response, attempts)) => {
-                    if response.is_success() {
+                    if response.status().is_success() {
                         Self::success(payload_bytes, trace_chunks, *attempts)
                     } else {
-                        // Non-success status in Ok variant (shouldn't happen with
-                        // send_with_retry)
                         Self::failure(
-                            TransportErrorType::Http(response.status),
+                            TransportErrorType::Http(response.status().as_u16()),
                             payload_bytes,
                             trace_chunks,
                             *attempts,
@@ -400,7 +398,7 @@ mod tests {
                 Err(err) => {
                     let (error_type, attempts) = match err {
                         SendWithRetryError::Http(response, attempts) => {
-                            (TransportErrorType::Http(response.status), *attempts)
+                            (TransportErrorType::Http(response.status().as_u16()), *attempts)
                         }
                         SendWithRetryError::Timeout(attempts) => {
                             (TransportErrorType::Timeout, *attempts)
@@ -671,16 +669,15 @@ mod tests {
 
     mod send_with_retry_conversion {
         use super::*;
-        use libdd_capabilities::HttpResponse;
+        use bytes::Bytes;
         use libdd_trace_utils::send_with_retry::{SendWithRetryError, SendWithRetryResult};
 
         /// Helper to create a mock HTTP response for testing
-        fn mock_response(status: u16) -> HttpResponse {
-            HttpResponse {
-                status,
-                body: b"test body".to_vec(),
-                headers: vec![],
-            }
+        fn mock_response(status: u16) -> http::Response<Bytes> {
+            http::Response::builder()
+                .status(status)
+                .body(Bytes::from_static(b"test body"))
+                .unwrap()
         }
 
         #[test]

@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::trace_exporter::TracerMetadata;
+use bytes::Bytes;
 use hyper::Uri;
-use libdd_capabilities::HttpRequest;
 use std::collections::HashMap;
 
 /// Transport client for trace exporter operations
@@ -26,22 +26,21 @@ impl<'a> TransportClient<'a> {
         data: &[u8],
         trace_count: usize,
         uri: Uri,
-    ) -> HttpRequest {
-        let mut req = HttpRequest::post(uri.to_string(), data.to_vec())
-            .with_header("user-agent", concat!("Tracer/", env!("CARGO_PKG_VERSION")));
-
-        // Add metadata headers
+    ) -> Result<http::Request<Bytes>, http::Error> {
         let headers: HashMap<&'static str, String> = self.metadata.into();
+
+        let mut builder = http::Request::builder()
+            .method(http::Method::POST)
+            .uri(uri)
+            .header("user-agent", concat!("Tracer/", env!("CARGO_PKG_VERSION")))
+            .header("content-type", "application/msgpack")
+            .header("X-Datadog-Trace-Count", trace_count.to_string());
+
         for (key, value) in &headers {
-            req = req.with_header(*key, value.clone());
+            builder = builder.header(*key, value.as_str());
         }
 
-        // Add trace-specific headers
-        req = req
-            .with_header("content-type", "application/msgpack")
-            .with_header("X-Datadog-Trace-Count", trace_count.to_string());
-
-        req
+        builder.body(Bytes::from(data.to_vec()))
     }
 }
 
@@ -84,17 +83,14 @@ mod tests {
         let data = b"test payload";
         let trace_count = 5;
 
-        let request = client.build_trace_request(data, trace_count, uri);
+        let request = client.build_trace_request(data, trace_count, uri).unwrap();
 
-        assert_eq!(request.method_str(), "POST");
-        assert!(request.url().contains("/v0.4/traces"));
+        assert_eq!(request.method(), http::Method::POST);
+        assert!(request.uri().to_string().contains("/v0.4/traces"));
 
         let headers = request.headers();
         let find_header = |name: &str| -> Option<&str> {
-            headers
-                .iter()
-                .find(|(k, _)| k.eq_ignore_ascii_case(name))
-                .map(|(_, v)| v.as_str())
+            headers.get(name).and_then(|v| v.to_str().ok())
         };
 
         assert_eq!(find_header("content-type"), Some("application/msgpack"));
@@ -117,14 +113,11 @@ mod tests {
         let uri = "http://localhost:8126/v0.4/traces".parse().unwrap();
         let data = b"test";
 
-        let request = client.build_trace_request(data, 1, uri);
+        let request = client.build_trace_request(data, 1, uri).unwrap();
 
         let headers = request.headers();
         let find_header = |name: &str| -> Option<&str> {
-            headers
-                .iter()
-                .find(|(k, _)| k.eq_ignore_ascii_case(name))
-                .map(|(_, v)| v.as_str())
+            headers.get(name).and_then(|v| v.to_str().ok())
         };
 
         assert_eq!(find_header("datadog-meta-lang"), Some("python"));

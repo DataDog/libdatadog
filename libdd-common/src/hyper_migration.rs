@@ -157,6 +157,12 @@ impl From<Vec<u8>> for Body {
     }
 }
 
+impl From<bytes::Bytes> for Body {
+    fn from(b: bytes::Bytes) -> Self {
+        Body::from_bytes(b)
+    }
+}
+
 impl From<String> for Body {
     fn from(s: String) -> Self {
         Body::from_bytes(hyper::body::Bytes::from(s))

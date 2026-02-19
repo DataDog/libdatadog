@@ -319,6 +319,15 @@ impl From<std::io::Error> for TraceExporterError {
     }
 }
 
+impl From<http::Error> for TraceExporterError {
+    fn from(err: http::Error) -> Self {
+        TraceExporterError::Network(NetworkError {
+            kind: NetworkErrorKind::Parse,
+            source: err.into(),
+        })
+    }
+}
+
 impl From<libdd_capabilities::HttpError> for TraceExporterError {
     fn from(err: libdd_capabilities::HttpError) -> Self {
         TraceExporterError::Network(NetworkError {
