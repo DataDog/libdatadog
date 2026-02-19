@@ -24,7 +24,7 @@ use core::ptr::NonNull;
 /// - `region_ptr` must point to a writable, zero-initialized memory region of at least
 ///   `SHM_REGION_SIZE` bytes.
 /// - The region must remain valid and shared (e.g. `MAP_SHARED`) for the lifetime of all users.
-/// The caller owns the region and is responsible for unmapping it (e.g. `munmap`) when done.
+///   The caller owns the region and is responsible for unmapping it (e.g. `munmap`) when done.
 #[cfg_attr(all(feature = "no_panic", not(debug_assertions)), no_panic::no_panic)]
 #[no_mangle]
 pub unsafe extern "C" fn shm_string_table_init(region_ptr: *mut u8, region_len: usize) -> *mut u8 {
