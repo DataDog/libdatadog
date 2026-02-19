@@ -1,0 +1,28 @@
+# Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
+# SPDX-License-Identifier: Apache-2.0
+
+[package]
+name = "libdd-profiling-shm"
+version = "1.0.0"
+description = "Shared memory data structures for profiling"
+homepage = "https://github.com/DataDog/libdatadog/tree/main/libdd-profiling-shm"
+repository = "https://github.com/DataDog/libdatadog/tree/main/libdd-profiling-shm"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[lib]
+crate-type = ["rlib", "cdylib"]
+bench = false
+
+[features]
+ffi = []
+no_panic = ["ffi", "dep:no-panic"]
+
+[dependencies]
+allocator-api2 = { version = "0.2", default-features = false }
+hashbrown = { git = "https://github.com/morrisonlevi/hashbrown", rev = "99145fdd108217973e356257d87d0013c4feab51", default-features = false, features = ["allocator-api2", "inline-more"] }
+no-panic = { version = "0.1", optional = true }
+
+[dev-dependencies]
+bolero = "0.13"
