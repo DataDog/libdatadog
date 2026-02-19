@@ -18,6 +18,7 @@ members = [
   "libdd-profiling",
   "libdd-profiling-ffi",
   "libdd-profiling-protobuf",
+  "libdd-profiling-shm",
   "datadog-profiling-replayer",
   "datadog-remote-config",
   "datadog-sidecar",
