@@ -21,7 +21,7 @@ no_panic = ["ffi", "dep:no-panic"]
 
 [dependencies]
 allocator-api2 = { version = "0.2", default-features = false }
-hashbrown = { git = "https://github.com/morrisonlevi/hashbrown", rev = "99145fdd108217973e356257d87d0013c4feab51", default-features = false, features = ["allocator-api2", "inline-more"] }
+hashbrown = { git = "https://github.com/morrisonlevi/hashbrown", rev = "79973b8247ed8fc26c8c2e8c695fe531c6720075", default-features = false, features = ["allocator-api2", "inline-more"] }
 no-panic = { version = "0.1", optional = true }
 
 [dev-dependencies]

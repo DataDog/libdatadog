@@ -2258,17 +2258,17 @@ dependencies = [
 
 [[package]]
 name = "hashbrown"
-version = "0.16.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "841d1cc9bed7f9236f321df977030373f4a4163ae1a7dbfe1a51a2c1a51d9100"
+version = "0.16.0"
+source = "git+https://github.com/morrisonlevi/hashbrown?rev=79973b8247ed8fc26c8c2e8c695fe531c6720075#79973b8247ed8fc26c8c2e8c695fe531c6720075"
+dependencies = [
+ "allocator-api2",
+]
 
 [[package]]
 name = "hashbrown"
 version = "0.16.1"
-source = "git+https://github.com/morrisonlevi/hashbrown?rev=99145fdd108217973e356257d87d0013c4feab51#99145fdd108217973e356257d87d0013c4feab51"
-dependencies = [
- "allocator-api2",
-]
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "841d1cc9bed7f9236f321df977030373f4a4163ae1a7dbfe1a51a2c1a51d9100"
 
 [[package]]
 name = "hdrhistogram"
@@ -2706,7 +2706,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0ad4bb2b565bca0645f4d68c5c9af97fba094e9791da685bf83cb5f3ce74acf2"
 dependencies = [
  "equivalent",
- "hashbrown 0.16.1 (registry+https://github.com/rust-lang/crates.io-index)",
+ "hashbrown 0.16.1",
  "serde",
  "serde_core",
 ]
@@ -3149,7 +3149,7 @@ dependencies = [
  "cxx",
  "cxx-build",
  "futures",
- "hashbrown 0.16.1 (registry+https://github.com/rust-lang/crates.io-index)",
+ "hashbrown 0.16.1",
  "http",
  "http-body-util",
  "httparse",
@@ -3220,7 +3220,7 @@ version = "1.0.0"
 dependencies = [
  "allocator-api2",
  "bolero",
- "hashbrown 0.16.1 (git+https://github.com/morrisonlevi/hashbrown?rev=99145fdd108217973e356257d87d0013c4feab51)",
+ "hashbrown 0.16.0",
  "no-panic",
 ]
 
