@@ -695,10 +695,10 @@ mod tests {
         }
 
         // Verify dedup.
-        for i in 0..n {
+        for (i, &expected_id) in ids.iter().enumerate() {
             let s = format!("string_{:04}", i);
             let id2 = table.intern(&s).unwrap();
-            assert_eq!(id2, ids[i]);
+            assert_eq!(id2, expected_id);
         }
 
         assert_eq!(table.len(), n as u32 + base);
@@ -714,13 +714,12 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::assertions_on_constants)]
     fn constants_are_consistent() {
         assert!(SHM_MAX_STRINGS > 0);
         assert!(ARENA_OFFSET < SHM_REGION_SIZE);
         assert!(ARENA_SIZE > 0);
-        // Arena should be the bulk of the region.
         assert!(ARENA_SIZE > SHM_REGION_SIZE / 2);
-        // HT struct must fit before HT data.
         assert!(HT_STRUCT_OFFSET + HT_STRUCT_SIZE <= HT_DATA_OFFSET);
     }
 
