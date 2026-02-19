@@ -201,6 +201,7 @@ jobs:
             git fetch --unshallow
           fi
 
+          git fetch --depth=2147483647 --tags origin main release
           git checkout "${{ env.RELEASE_BRANCH }}"
           TIMESTAMP=$(date +%Y%m%d-%H%M%S)
           BRANCH_NAME="${{ env.PROPOSAL_BRANCH_PREFIX }}/${{ inputs.crate }}/$TIMESTAMP"
@@ -222,7 +223,7 @@ jobs:
             echo "Repository is shallow, fetching full history..."
             git fetch --unshallow
           fi
-          git fetch origin "${{ env.MAIN_BRANCH }}" "${{ env.RELEASE_BRANCH }}" --tags
+          git fetch --depth=2147483647 origin "${{ env.MAIN_BRANCH }}" "${{ env.RELEASE_BRANCH }}" --tags
 
           # Initialize results array
           echo "[]" > /tmp/api-changes.json
