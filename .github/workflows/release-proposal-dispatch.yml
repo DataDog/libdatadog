@@ -360,9 +360,36 @@ jobs:
             fi
             echo "Executing git cliff for $NAME since $COMMITS_RANGE (oldest: $OLDEST_COMMIT, newest: $NEWEST_COMMIT), next tag: $NEXT_TAG..."
 
-            # It seems that git cliff does not like to use tags that are not on the branch
-            # git cliff --tag "$NEXT_TAG" --include-path "$CRATE_PATH/**/*" --prepend "$CRATE_PATH/CHANGELOG.md" --tag-pattern "$TAG_PREFIX.*" -u -v "$COMMITS_RANGE"
-            git cliff --tag "$NEXT_TAG" --include-path "$CRATE_PATH/**/*" --prepend "$CRATE_PATH/CHANGELOG.md" -v "$COMMITS_RANGE"
+            # Two-step changelog generation to avoid git-cliff --include-path unreliability.
+            #
+            # Problem: git-cliff's --include-path uses cumulative tree diffs (range-start to
+            # each commit) rather than per-commit diffs. This causes commits that don't touch
+            # the crate to pass the filter if an earlier commit in the range does touch it.
+            # Additionally, existing tags in the range can override --tag or split commits
+            # into multiple releases unexpectedly.
+            #
+            # Solution:
+            # 1. Generate git-cliff context with --ignore-tags ".*" so no existing repository
+            #    tags interfere. --tag sets the version correctly.
+            # 2. Filter context commits to exactly those in $COMMITS (by full SHA match).
+            #    commits-since-release.sh already did the correct path filtering via git log.
+            # 3. Set previous.version so cliff.toml can render the comparison URL.
+            # 4. Feed filtered context to git-cliff via --from-context to render the changelog.
+            CLIFF_CONTEXT_FILE=$(mktemp /tmp/git-cliff-context-XXXXXX.json)
+            CLIFF_HASHES_FILE=$(mktemp /tmp/git-cliff-hashes-XXXXXX.json)
+            CLIFF_FILTERED_FILE=$(mktemp /tmp/git-cliff-filtered-XXXXXX.json)
+
+            git cliff --context --tag "$NEXT_TAG" --ignore-tags ".*" -v "$COMMITS_RANGE" > "$CLIFF_CONTEXT_FILE"
+            echo "$COMMITS" | jq '[.[].hash]' > "$CLIFF_HASHES_FILE"
+            jq --slurpfile hashes "$CLIFF_HASHES_FILE" \
+               --arg prev_tag "$TAG" \
+               'map(. + {
+                 commits: [.commits[] | select(.id | IN($hashes[0][]))],
+                 previous: (.previous + {"version": $prev_tag})
+               })' \
+               "$CLIFF_CONTEXT_FILE" > "$CLIFF_FILTERED_FILE"
+            git cliff --from-context "$CLIFF_FILTERED_FILE" -u -v --prepend "$CRATE_PATH/CHANGELOG.md"
+            rm -f "$CLIFF_CONTEXT_FILE" "$CLIFF_HASHES_FILE" "$CLIFF_FILTERED_FILE"
             git add "$CRATE_PATH/CHANGELOG.md"
 
             # Commit the changes
