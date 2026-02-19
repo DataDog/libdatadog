@@ -526,7 +526,7 @@ mod tests {
     /// mmap provides in production). The 64-byte header size ensures all
     /// sub-region offsets are well-aligned.
     fn make_region(size: usize) -> (Vec<u64>, NonNull<[u8]>) {
-        let u64_count = (size + 7) / 8;
+        let u64_count = size.div_ceil(8);
         let mut buf = vec![0u64; u64_count];
         let ptr = NonNull::new(buf.as_mut_ptr() as *mut u8).unwrap();
         let slice = NonNull::slice_from_raw_parts(ptr, u64_count * 8);
