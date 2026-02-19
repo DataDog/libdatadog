@@ -34,7 +34,7 @@ uuid = { version = "1.3", features = ["v4"] }
 hashbrown = "0.15"
 
 libdd-common = { version = "1.2.0", path = "../libdd-common", default-features = false }
-libdd-ddsketch = { version = "1.0.0", path = "../libdd-ddsketch" }
+libdd-ddsketch = { version = "1.0.1", path = "../libdd-ddsketch" }
 
 [target."cfg(unix)".dependencies]
 libc = "0.2.176"
