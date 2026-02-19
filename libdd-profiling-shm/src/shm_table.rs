@@ -41,7 +41,7 @@ use core::mem;
 use core::ptr::NonNull;
 use core::sync::atomic::{AtomicU32, Ordering};
 use hashbrown::HashTable;
-use std::io;
+
 
 // ---------------------------------------------------------------------------
 // Type alias for the hash table stored in SHM.
@@ -355,17 +355,13 @@ impl ShmStringTable {
     /// This crate does not take ownership of the region. The **caller** is responsible for
     /// unmapping/freeing it (e.g. `munmap`) after all users of the table and any derived
     /// `ShmStringId`s are done.
-    pub unsafe fn init(region: NonNull<[u8]>) -> io::Result<Self> {
+    #[inline]
+    pub unsafe fn init(region: NonNull<[u8]>) -> Option<Self> {
         if region.len() < SHM_REGION_SIZE {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                "region too small for ShmStringTable",
-            ));
+            return None;
         }
 
-        let base = NonNull::new(region.as_ptr() as *mut u8)
-            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "null region pointer"))?;
-
+        let base = NonNull::new(region.as_ptr() as *mut u8)?;
         let table = Self { base };
 
         // Zero the header.
@@ -373,37 +369,32 @@ impl ShmStringTable {
 
         // Construct the HashTable with a FixedAllocator pointing at the
         // hash data sub-region.
-        let ht_data_ptr = NonNull::new(base.as_ptr().add(HT_DATA_OFFSET))
-            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "null hash data pointer"))?;
+        let ht_data_ptr = NonNull::new(base.as_ptr().add(HT_DATA_OFFSET))?;
         let alloc = FixedAllocator::new(ht_data_ptr, HT_DATA_SIZE);
-        let ht: ShmHashTable = HashTable::try_with_capacity_in(SHM_MAX_STRINGS, alloc)
-            .map_err(|_| io::Error::from(io::ErrorKind::OutOfMemory))?;
+        let ht: ShmHashTable = HashTable::try_with_capacity_in(SHM_MAX_STRINGS, alloc).ok()?;
 
         // Write the HashTable struct into its SHM slot.
         let ht_dest = base.as_ptr().add(HT_STRUCT_OFFSET) as *mut ShmHashTable;
         core::ptr::write(ht_dest, ht);
-        // Do NOT drop the local `ht` -- ownership has moved to SHM via
-        // ptr::write. The local was consumed by write (it takes by value for
-        // Copy types, but HashTable is not Copy, so `ht` is moved out and
-        // the compiler won't drop it).
 
         // Pre-intern well-known strings so they get stable, low indices.
         for s in WELL_KNOWN_STRINGS {
             table.intern(s)?;
         }
 
-        Ok(table)
+        Some(table)
     }
 
     /// Intern a string, returning the existing id if already present, or a
     /// new id if this is the first time.
     ///
-    /// Returns `Err(io::ErrorKind::StorageFull)` if the table is at capacity
-    /// (directory full or arena full).
+    /// Returns `None` if the table is at capacity (directory full or arena
+    /// full).
     ///
     /// Internally serialized via the atomic spinlock -- safe to call from
     /// multiple processes/threads concurrently.
-    pub fn intern(&self, s: &str) -> io::Result<ShmStringId> {
+    #[inline]
+    pub fn intern(&self, s: &str) -> Option<ShmStringId> {
         let bytes = s.as_bytes();
         let hash = Self::hash_str(bytes);
 
@@ -412,7 +403,7 @@ impl ShmStringTable {
         let result = unsafe { self.intern_locked(bytes, hash) };
         self.spin_unlock();
 
-        result.ok_or_else(|| io::Error::from(io::ErrorKind::StorageFull))
+        result
     }
 
     /// FFI-friendly intern that takes raw bytes (must be valid UTF-8) and
@@ -436,6 +427,7 @@ impl ShmStringTable {
     ///
     /// # Safety
     /// Must only be called while the spinlock is held.
+    #[inline]
     unsafe fn intern_locked(&self, bytes: &[u8], hash: u64) -> Option<ShmStringId> {
         let ht = &mut *self.hash_table();
         let count = self.string_count().load(Ordering::Relaxed);
@@ -486,6 +478,7 @@ impl ShmStringTable {
     ///
     /// Returns the empty string if `id` is out of bounds (defensive -- should
     /// not happen with valid ids from [`intern`]).
+    #[inline]
     pub fn get(&self, id: ShmStringId) -> &str {
         let index = id.index();
         let count = self.string_count().load(Ordering::Acquire);
@@ -579,7 +572,7 @@ mod tests {
     fn region_too_small() {
         let (_buf, region) = make_region(1024);
         let result = unsafe { ShmStringTable::init(region) };
-        assert!(result.is_err());
+        assert!(result.is_none());
     }
 
     #[test]
@@ -739,7 +732,7 @@ mod tests {
 
                 for s in strings {
                     match table.intern(s) {
-                        Ok(id) => {
+                        Some(id) => {
                             // Round-trip: get must return the original string.
                             assert_eq!(table.get(id), s.as_str());
 
@@ -749,9 +742,8 @@ mod tests {
                             }
                             seen.insert(s.clone(), id);
                         }
-                        Err(e) => {
-                            // StorageFull is the only acceptable error.
-                            assert_eq!(e.kind(), io::ErrorKind::StorageFull);
+                        None => {
+                            // Table is full -- expected once capacity is exhausted.
                         }
                     }
                 }
