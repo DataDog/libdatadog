@@ -9,7 +9,9 @@ use crate::runtime_callback::{
     CallbackData,
 };
 use crate::shared::constants::*;
-use crate::{translate_si_code, CrashtrackerConfiguration, SignalNames, StacktraceCollection};
+use crate::{
+    translate_si_code, CrashtrackerConfiguration, ErrorKind, SignalNames, StacktraceCollection,
+};
 use backtrace::Frame;
 use libc::{siginfo_t, ucontext_t};
 use std::{
@@ -145,13 +147,15 @@ pub(crate) fn emit_crashreport(
     crashing_tid: libc::pid_t,
 ) -> Result<(), EmitterError> {
     // The following order is important in order to emit the crash ping:
-    // - receiver expects the config
+    // - receiver expects the config because the endpoint to emit to is there
     // - then message if any
-    // - then siginfo (if the message is not set, we use the siginfo to generate the message)
+    // - then siginfo if any
+    // - then the kind if any
     // - then metadata
     emit_config(pipe, config_str)?;
     emit_message(pipe, message_ptr)?;
     emit_siginfo(pipe, sig_info)?;
+    emit_kind(pipe, &ErrorKind::UnixSignal)?;
     emit_metadata(pipe, metadata_string)?;
     // after the metadata the ping should have been sent
     emit_ucontext(pipe, ucontext)?;
@@ -189,6 +193,15 @@ fn emit_config(w: &mut impl Write, config_str: &str) -> Result<(), EmitterError>
     writeln!(w, "{DD_CRASHTRACK_BEGIN_CONFIG}")?;
     writeln!(w, "{config_str}")?;
     writeln!(w, "{DD_CRASHTRACK_END_CONFIG}")?;
+    w.flush()?;
+    Ok(())
+}
+
+fn emit_kind<W: std::io::Write>(w: &mut W, kind: &ErrorKind) -> Result<(), EmitterError> {
+    writeln!(w, "{DD_CRASHTRACK_BEGIN_KIND}")?;
+    let _ = serde_json::to_writer(&mut *w, kind);
+    writeln!(w)?;
+    writeln!(w, "{DD_CRASHTRACK_END_KIND}")?;
     w.flush()?;
     Ok(())
 }

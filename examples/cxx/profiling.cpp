@@ -196,7 +196,7 @@ int main() {
                             Tag{.key = "env", .value = "dev"},
                             Tag{.key = "example", .value = "cxx"}
                         },
-                        dd_site.c_str(), api_key, 10000
+                        dd_site.c_str(), api_key, 10000, false
                     )
                 );
             } else if (agent_url) {
@@ -210,7 +210,7 @@ int main() {
                             Tag{.key = "env", .value = "dev"},
                             Tag{.key = "example", .value = "cxx"}
                         },
-                        agent_url, 10000
+                        agent_url, 10000, false
                     )
                 );
             } else {
