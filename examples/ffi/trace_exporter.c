@@ -112,7 +112,7 @@ int main(int argc, char** argv)
     ddog_ByteSlice buffer = { .ptr = NULL, .len=0 };
     ddog_TraceExporterResponse *response;
 
-    ret = ddog_trace_exporter_send(trace_exporter, buffer, 0, &response);
+    ret = ddog_trace_exporter_send(trace_exporter, buffer, &response);
 
     assert(ret->code == DDOG_TRACE_EXPORTER_ERROR_CODE_SERDE);
     if (ret) {

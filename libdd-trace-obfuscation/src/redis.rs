@@ -39,10 +39,27 @@ fn obfuscate_redis_cmd<'a>(str: &mut String, cmd: &'a str, mut args: Vec<&'a str
     let mut uppercase_cmd = [0; 32]; // no redis cmd is longer than 32 chars
     let uppercase_cmd = ascii_uppercase(cmd, &mut uppercase_cmd).unwrap_or(&[]);
     match uppercase_cmd {
-        b"AUTH" => {
+        b"AUTH" | b"MIGRATE" | b"HELLO" => {
+            // Obfuscate everything after command:
+            // • AUTH password
+            // • MIGRATE host port key|"" destination-db timeout [COPY] [REPLACE] [AUTH password]
+            //   [AUTH2 username password] [KEYS key [key ...]]
+            // • HELLO [protover [AUTH username password] [SETNAME clientname]]
             if !args.is_empty() {
                 args.clear();
                 args.push("?");
+            }
+        }
+        b"ACL" => {
+            // Obfuscate all arguments after the subcommand:
+            // • ACL SETUSER username on >password ~keys &channels +commands
+            // • ACL GETUSER username
+            // • ACL DELUSER username [username ...]
+            // • ACL LIST
+            // • ACL WHOAMI
+            if args.len() > 1 {
+                args[1] = "?";
+                args.drain(2..);
             }
         }
         b"APPEND" | b"GETSET" | b"LPUSHX" | b"GEORADIUSBYMEMBER" | b"RPUSHX" | b"SET"
@@ -267,6 +284,86 @@ mod tests {
             test_name   [test_obfuscate_redis_string_3]
             input       ["AUTH"]
             expected    ["AUTH"];
+        ]
+        [
+            test_name   [test_obfuscate_redis_string_migrate_basic]
+            input       ["MIGRATE host port key destination-db timeout"]
+            expected    ["MIGRATE ?"];
+        ]
+        [
+            test_name   [test_obfuscate_redis_string_migrate_with_flags]
+            input       ["MIGRATE host port key destination-db timeout COPY REPLACE"]
+            expected    ["MIGRATE ?"];
+        ]
+        [
+            test_name   [test_obfuscate_redis_string_migrate_with_keys]
+            input       [r#"MIGRATE host port "" destination-db timeout KEYS key1 key2 key3"#]
+            expected    ["MIGRATE ?"];
+        ]
+        [
+            test_name   [test_obfuscate_redis_string_migrate_no_args]
+            input       ["MIGRATE"]
+            expected    ["MIGRATE"];
+        ]
+        [
+            test_name   [test_obfuscate_redis_string_hello_version]
+            input       ["HELLO 3"]
+            expected    ["HELLO ?"];
+        ]
+        [
+            test_name   [test_obfuscate_redis_string_hello_auth]
+            input       ["HELLO 3 AUTH username password"]
+            expected    ["HELLO ?"];
+        ]
+        [
+            test_name   [test_obfuscate_redis_string_hello_auth_setname]
+            input       ["HELLO 3 AUTH username password SETNAME clientname"]
+            expected    ["HELLO ?"];
+        ]
+        [
+            test_name   [test_obfuscate_redis_string_hello_no_args]
+            input       ["HELLO"]
+            expected    ["HELLO"];
+        ]
+        [
+            test_name   [test_obfuscate_redis_string_acl_setuser]
+            input       ["ACL SETUSER alice on >password ~* &* +@all"]
+            expected    ["ACL SETUSER ?"];
+        ]
+        [
+            test_name   [test_obfuscate_redis_string_acl_setuser_complex]
+            input       ["ACL SETUSER bob on >mysecretpassword ~keys:* resetchannels &channel:* +@all -@dangerous"]
+            expected    ["ACL SETUSER ?"];
+        ]
+        [
+            test_name   [test_obfuscate_redis_string_acl_getuser]
+            input       ["ACL GETUSER alice"]
+            expected    ["ACL GETUSER ?"];
+        ]
+        [
+            test_name   [test_obfuscate_redis_string_acl_deluser]
+            input       ["ACL DELUSER alice"]
+            expected    ["ACL DELUSER ?"];
+        ]
+        [
+            test_name   [test_obfuscate_redis_string_acl_deluser_multi]
+            input       ["ACL DELUSER alice bob charlie"]
+            expected    ["ACL DELUSER ?"];
+        ]
+        [
+            test_name   [test_obfuscate_redis_string_acl_list]
+            input       ["ACL LIST"]
+            expected    ["ACL LIST"];
+        ]
+        [
+            test_name   [test_obfuscate_redis_string_acl_whoami]
+            input       ["ACL WHOAMI"]
+            expected    ["ACL WHOAMI"];
+        ]
+        [
+            test_name   [test_obfuscate_redis_string_acl_no_args]
+            input       ["ACL"]
+            expected    ["ACL"];
         ]
         [
             test_name   [test_obfuscate_redis_string_4]

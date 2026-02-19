@@ -314,7 +314,7 @@ jobs:
     name: "FFI ${{ matrix.target }} via docker bake"
     concurrency:
       group: ci-${{ github.ref }}-${{ matrix.target }}
-      cancel-in-progress: true
+      cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
     runs-on:
       labels: ubuntu-latest-16-cores
       group: APM Larger Runners
