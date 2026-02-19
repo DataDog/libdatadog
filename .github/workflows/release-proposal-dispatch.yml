@@ -361,7 +361,8 @@ jobs:
             echo "Executing git cliff for $NAME since $COMMITS_RANGE (oldest: $OLDEST_COMMIT, newest: $NEWEST_COMMIT), next tag: $NEXT_TAG..."
 
             # It seems that git cliff does not like to use tags that are not on the branch
-            git cliff --tag "$NEXT_TAG" --include-path "$CRATE_PATH/**/*" --prepend "$CRATE_PATH/CHANGELOG.md" --tag-pattern "$TAG_PREFIX.*" -u -v "$COMMITS_RANGE"
+            # git cliff --tag "$NEXT_TAG" --include-path "$CRATE_PATH/**/*" --prepend "$CRATE_PATH/CHANGELOG.md" --tag-pattern "$TAG_PREFIX.*" -u -v "$COMMITS_RANGE"
+            git cliff --tag "$NEXT_TAG" --include-path "$CRATE_PATH/**/*" --prepend "$CRATE_PATH/CHANGELOG.md" -v "$COMMITS_RANGE"
             git add "$CRATE_PATH/CHANGELOG.md"
 
             # Commit the changes
