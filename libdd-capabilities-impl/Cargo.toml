@@ -9,6 +9,7 @@ description = "Native implementations of libdd-capabilities traits"
 
 [lib]
 crate-type = ["lib"]
+bench = false
 
 [dependencies]
 libdd-capabilities = { path = "../libdd-capabilities" }
