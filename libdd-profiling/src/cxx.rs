@@ -205,9 +205,11 @@ pub mod ffi {
             tags: Vec<Tag>,
             agent_url: &str,
             timeout_ms: u64,
+            use_system_resolver: bool,
         ) -> Result<Box<ProfileExporter>>;
 
         #[Self = "ProfileExporter"]
+        #[allow(clippy::too_many_arguments)]
         fn create_agentless_exporter(
             profiling_library_name: &str,
             profiling_library_version: &str,
@@ -216,6 +218,7 @@ pub mod ffi {
             site: &str,
             api_key: &str,
             timeout_ms: u64,
+            use_system_resolver: bool,
         ) -> Result<Box<ProfileExporter>>;
 
         #[Self = "ProfileExporter"]
@@ -701,6 +704,7 @@ impl ProfileExporter {
         tags: Vec<ffi::Tag>,
         agent_url: &str,
         timeout_ms: u64,
+        use_system_resolver: bool,
     ) -> anyhow::Result<Box<ProfileExporter>> {
         let mut endpoint = exporter::config::agent(agent_url.parse()?)?;
 
@@ -708,6 +712,7 @@ impl ProfileExporter {
         if timeout_ms > 0 {
             endpoint.timeout_ms = timeout_ms;
         }
+        endpoint = endpoint.with_system_resolver(use_system_resolver);
 
         let tags_vec: Vec<libdd_common::tag::Tag> = tags
             .iter()
@@ -725,6 +730,7 @@ impl ProfileExporter {
         Ok(Box::new(ProfileExporter { inner }))
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn create_agentless_exporter(
         profiling_library_name: &str,
         profiling_library_version: &str,
@@ -733,6 +739,7 @@ impl ProfileExporter {
         site: &str,
         api_key: &str,
         timeout_ms: u64,
+        use_system_resolver: bool,
     ) -> anyhow::Result<Box<ProfileExporter>> {
         let mut endpoint = exporter::config::agentless(site, api_key.to_string())?;
 
@@ -740,6 +747,7 @@ impl ProfileExporter {
         if timeout_ms > 0 {
             endpoint.timeout_ms = timeout_ms;
         }
+        endpoint = endpoint.with_system_resolver(use_system_resolver);
 
         let tags_vec: Vec<libdd_common::tag::Tag> = tags
             .iter()
@@ -1025,6 +1033,7 @@ mod tests {
             }],
             "http://localhost:1", // Port 1 unlikely to have server
             100,
+            false,
         )
         .unwrap()
     }
@@ -1130,6 +1139,7 @@ mod tests {
             }],
             "http://localhost:8126",
             0,
+            false,
         )
         .is_ok());
 
@@ -1154,6 +1164,7 @@ mod tests {
             ],
             "http://localhost:8126",
             10000,
+            false,
         )
         .is_ok());
 
@@ -1166,6 +1177,7 @@ mod tests {
             "datadoghq.com",
             "fake-api-key",
             5000,
+            false,
         )
         .is_ok());
 
@@ -1177,6 +1189,7 @@ mod tests {
             "datadoghq.eu",
             "fake-api-key",
             0,
+            false,
         )
         .is_ok());
 
@@ -1188,6 +1201,7 @@ mod tests {
             vec![],
             "http://localhost:8126",
             0,
+            false,
         )
         .is_ok());
     }

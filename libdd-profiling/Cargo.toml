@@ -50,7 +50,10 @@ prost = "0.14.1"
 rand = "0.8"
 # Use rustls to align with the rest of the workspace (libdd-common, libdd-telemetry, etc.)
 # This uses the same TLS stack (rustls + aws-lc-rs/ring) as other crates
-reqwest = { version = "0.13", features = ["multipart", "rustls"], default-features = false}
+# Use hickory-dns instead of the default system DNS resolver to avoid fork safety issues.
+# The default resolver can hold locks or other global state that can cause deadlocks
+# or corruption when the process forks (e.g., in PHP-FPM or other forking environments).
+reqwest = { version = "0.13", features = ["multipart", "rustls", "hickory-dns"], default-features = false}
 rustc-hash = { version = "1.1", default-features = false }
 serde = {version = "1.0", features = ["derive"]}
 serde_json = {version = "1.0"}

@@ -21,8 +21,8 @@ type TokioCancellationToken = tokio_util::sync::CancellationToken;
 #[allow(dead_code)]
 #[repr(C)]
 pub enum ProfilingEndpoint<'a> {
-    Agent(CharSlice<'a>, u64),
-    Agentless(CharSlice<'a>, CharSlice<'a>, u64),
+    Agent(CharSlice<'a>, u64, bool),
+    Agentless(CharSlice<'a>, CharSlice<'a>, u64, bool),
     File(CharSlice<'a>),
 }
 
@@ -48,12 +48,15 @@ pub struct HttpStatus(u16);
 /// # Arguments
 /// * `base_url` - Contains a URL with scheme, host, and port e.g. "https://agent:8126/".
 /// * `timeout_ms` - Timeout in milliseconds. Use 0 for default timeout (3000ms).
+/// * `use_system_resolver` - If true, use the system DNS resolver (less fork-safe). If false, the
+///   default in-process resolver is used (fork-safe).
 #[no_mangle]
 pub extern "C" fn ddog_prof_Endpoint_agent(
     base_url: CharSlice,
     timeout_ms: u64,
+    use_system_resolver: bool,
 ) -> ProfilingEndpoint {
-    ProfilingEndpoint::Agent(base_url, timeout_ms)
+    ProfilingEndpoint::Agent(base_url, timeout_ms, use_system_resolver)
 }
 
 /// Creates an endpoint that uses the Datadog intake directly aka agentless.
@@ -61,13 +64,16 @@ pub extern "C" fn ddog_prof_Endpoint_agent(
 /// * `site` - Contains a host and port e.g. "datadoghq.com".
 /// * `api_key` - Contains the Datadog API key.
 /// * `timeout_ms` - Timeout in milliseconds. Use 0 for default timeout (3000ms).
+/// * `use_system_resolver` - If true, use the system DNS resolver (less fork-safe). If false, the
+///   default in-process resolver is used (fork-safe).
 #[no_mangle]
 pub extern "C" fn ddog_prof_Endpoint_agentless<'a>(
     site: CharSlice<'a>,
     api_key: CharSlice<'a>,
     timeout_ms: u64,
+    use_system_resolver: bool,
 ) -> ProfilingEndpoint<'a> {
-    ProfilingEndpoint::Agentless(site, api_key, timeout_ms)
+    ProfilingEndpoint::Agentless(site, api_key, timeout_ms, use_system_resolver)
 }
 
 /// Creates an endpoint that writes to a file.
@@ -102,18 +108,21 @@ pub unsafe fn try_to_endpoint(
     // convert to utf8 losslessly -- URLs and API keys should all be ASCII, so
     // a failed result is likely to be an error.
     match endpoint {
-        ProfilingEndpoint::Agent(url, timeout_ms) => {
+        ProfilingEndpoint::Agent(url, timeout_ms, use_system_resolver) => {
             let base_url = try_to_url(url)?;
-            Ok(exporter::config::agent(base_url)?.with_timeout(timeout_ms))
+            Ok(exporter::config::agent(base_url)?
+                .with_timeout(timeout_ms)
+                .with_system_resolver(use_system_resolver))
         }
-        ProfilingEndpoint::Agentless(site, api_key, timeout_ms) => {
+        ProfilingEndpoint::Agentless(site, api_key, timeout_ms, use_system_resolver) => {
             let site_str = site.try_to_utf8()?;
             let api_key_str = api_key.try_to_utf8()?;
             Ok(exporter::config::agentless(
                 Cow::Owned(site_str.to_owned()),
                 Cow::Owned(api_key_str.to_owned()),
             )?
-            .with_timeout(timeout_ms))
+            .with_timeout(timeout_ms)
+            .with_system_resolver(use_system_resolver))
         }
         ProfilingEndpoint::File(filename) => {
             let filename = filename.try_to_utf8()?;
@@ -134,7 +143,8 @@ pub unsafe fn try_to_endpoint(
 /// * `family` - Profile family, e.g. "ruby"
 /// * `tags` - Tags to include with every profile reported by this exporter. It's also possible to
 ///   include profile-specific tags, see `additional_tags` on `profile_exporter_build`.
-/// * `endpoint` - Configuration for reporting data
+/// * `endpoint` - Configuration for reporting data (includes use_system_resolver for
+///   Agent/Agentless).
 /// # Safety
 /// All pointers must refer to valid objects of the correct types.
 #[no_mangle]
@@ -537,7 +547,7 @@ mod tests {
                 profiling_library_version(),
                 family(),
                 Some(&tags),
-                ddog_prof_Endpoint_agent(endpoint(), 0),
+                ddog_prof_Endpoint_agent(endpoint(), 0, false),
             )
         }
         .unwrap();
@@ -556,7 +566,7 @@ mod tests {
                 profiling_library_version(),
                 family(),
                 None,
-                ddog_prof_Endpoint_agent(endpoint(), 0),
+                ddog_prof_Endpoint_agent(endpoint(), 0, false),
             )
         }
         .unwrap();
@@ -600,7 +610,7 @@ mod tests {
                 profiling_library_version(),
                 family(),
                 None,
-                ddog_prof_Endpoint_agent(endpoint(), 0),
+                ddog_prof_Endpoint_agent(endpoint(), 0, false),
             )
         }
         .unwrap();
@@ -623,7 +633,7 @@ mod tests {
                 profiling_library_version(),
                 family(),
                 None,
-                ddog_prof_Endpoint_agent(endpoint(), 0),
+                ddog_prof_Endpoint_agent(endpoint(), 0, false),
             )
         }
         .unwrap();
@@ -663,7 +673,7 @@ mod tests {
                 profiling_library_version(),
                 family(),
                 None,
-                ddog_prof_Endpoint_agent(endpoint(), 0),
+                ddog_prof_Endpoint_agent(endpoint(), 0, false),
             )
         }
         .unwrap();
@@ -690,7 +700,7 @@ mod tests {
                 profiling_library_version(),
                 family(),
                 None,
-                ddog_prof_Endpoint_agent(endpoint(), 0),
+                ddog_prof_Endpoint_agent(endpoint(), 0, false),
             )
         }
         .unwrap();
