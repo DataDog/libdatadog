@@ -345,14 +345,23 @@ jobs:
             NEXT_VERSION=$(cargo metadata --format-version=1 --no-deps | jq -r --arg name "$NAME" '.packages[] | select(.name == $name) | .version')
             NEXT_TAG="$TAG_PREFIX$NEXT_VERSION"
 
-            # Check what commits git sees in the range
-            echo "Commits in the range $RANGE filtered by $CRATE_PATH:"
-            git log --oneline "$RANGE" -- "$CRATE_PATH/"
+            # Build a tight range from commits already found by commits-since-release.sh.
+            # The commits array is sorted newest-first, so [0] is newest and [-1] is oldest.
+            # Using the parent of the oldest commit as range start guarantees the commit is
+            # in the release branch history, avoiding CI git path-filter quirks with unrelated
+            # tag histories.
+            NEWEST_COMMIT=$(echo "$COMMITS" | jq -r '.[0].hash // empty')
+            OLDEST_COMMIT=$(echo "$COMMITS" | jq -r '.[-1].hash // empty')
+            OLDEST_PARENT=$(git rev-parse "${OLDEST_COMMIT}^" 2>/dev/null || echo "")
+            if [ -n "$OLDEST_PARENT" ] && [ -n "$NEWEST_COMMIT" ]; then
+              COMMITS_RANGE="$OLDEST_PARENT..$NEWEST_COMMIT"
+            else
+              COMMITS_RANGE="$RANGE"
+            fi
+            echo "Executing git cliff for $NAME since $COMMITS_RANGE (oldest: $OLDEST_COMMIT, newest: $NEWEST_COMMIT), next tag: $NEXT_TAG..."
 
-            echo "Executing git cliff for $NAME since $RANGE, next tag: $NEXT_TAG..."
-              
             # It seems that git cliff does not like to use tags that are not on the branch
-            git cliff --tag "$NEXT_TAG" --include-path "$CRATE_PATH/**/*" --prepend "$CRATE_PATH/CHANGELOG.md" --tag-pattern "$TAG_PREFIX.*" -u -v "$RANGE"
+            git cliff --tag "$NEXT_TAG" --include-path "$CRATE_PATH/**/*" --prepend "$CRATE_PATH/CHANGELOG.md" --tag-pattern "$TAG_PREFIX.*" -u -v "$COMMITS_RANGE"
             git add "$CRATE_PATH/CHANGELOG.md"
 
             # Commit the changes
@@ -434,7 +443,7 @@ jobs:
           # Generate the PR body by merging commits and API changes
           # Note: read returns 1 when it reaches EOF, which is expected for heredocs
           read -r -d '' JQ_FILTER << 'EOF' || true
-          .[] |
+          .[] | select((.commits | length) > 0) |
           . as $crate |
           ($api[0] | map(select(.name == $crate.name)) | first // {
             level: "skipped because there were no changes to the public API"
