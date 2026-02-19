@@ -916,9 +916,8 @@ mod tests {
 
         let res = data.send().await;
 
-        // The mock assertion checks that the server received the expected requests.
-        // With a shared static HTTP client and timeouts, the client may drop connections
-        // before httpmock records the match, so we only verify the client-side result.
+        mock.assert_calls_async(5).await;
+
         assert_eq!(res.errors_timeout, 1);
         assert_eq!(res.errors_network, 0);
         assert_eq!(res.errors_status_code, 0);
@@ -959,7 +958,8 @@ mod tests {
 
         let res = data.send().await;
 
-        // See request_error_timeout_v04 for why mock assertion is removed.
+        mock.assert_calls_async(10).await;
+
         assert_eq!(res.errors_timeout, 1);
         assert_eq!(res.errors_network, 0);
         assert_eq!(res.errors_status_code, 0);
