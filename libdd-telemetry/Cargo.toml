@@ -1,6 +1,6 @@
 [package]
 name = "libdd-telemetry"
-version= "2.0.0"
+version= "3.0.0"
 description = "Telemetry client allowing to send data as described in https://docs.datadoghq.com/tracing/configure_data_security/?tab=net#telemetry-collection"
 homepage = "https://github.com/DataDog/libdatadog/tree/main/libdd-telemetry"
 repository = "https://github.com/DataDog/libdatadog/tree/main/libdd-telemetry"
