@@ -43,5 +43,5 @@ libc = "0.2.176"
 winver = "1.0.0"
 
 [dev-dependencies]
-tracing-subscriber = "0.3.18"
+tracing-subscriber = "0.3.22"
 tokio = { version = "1.23", features = ["sync", "io-util", "rt-multi-thread"] }
