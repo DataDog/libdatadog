@@ -122,11 +122,11 @@ impl<'a, W: RmpWrite, T: TraceData> TraceEncoder<'a, W, T> {
                 write_sint(self.writer, chunk.sampling_mechanism as i64)?;
             }
 
-            write_uint8(self.writer, TraceKey::Chunks as u8)?;
+            write_uint8(self.writer, ChunkKey::Spans as u8)?;
             self.encode_spans(&chunk.spans)?;
 
             if !chunk.attributes.is_empty() {
-                write_uint8(self.writer, TraceKey::Attributes as u8)?;
+                write_uint8(self.writer, ChunkKey::Attributes as u8)?;
                 self.encode_attributes(&chunk.attributes)?;
             }
         }

@@ -104,15 +104,9 @@ pub fn from_slice(data: &[u8]) -> Result<(TracePayloadSlice<'_>, usize), DecodeE
 pub fn from_buffer<T: DeserializableTraceData>(
     data: &mut Buffer<T>,
 ) -> Result<(TracePayload<T>, usize), DecodeError> {
-    let _trace_count = rmp::decode::read_array_len(data.as_mut_slice()).map_err(|_| {
-        DecodeError::InvalidFormat("Unable to read array len for trace count".to_owned())
-    })?;
-
-    let mut traces = TracePayload::default();
-
-    // Intentionally skip the size of the array (as it will be recomputed after coalescing).
     let start_len = data.len();
 
+    let mut traces = TracePayload::default();
     decode_traces(data, &mut traces.static_data, &mut traces.traces)?;
 
     Ok((traces, start_len - data.len()))

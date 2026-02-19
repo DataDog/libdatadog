@@ -121,14 +121,12 @@ fn read_byte_ref<T: DeserializableTraceData>(buf: &mut Buffer<T>, table: &mut Tr
     };
     *original_slice = data_slice;
     if let Some(data) = buf.try_slice_and_advance(byte_array_len as usize) {
-        table.add_bytes(data);
+        Ok(table.add_bytes(data))
     } else {
-        return Err(DecodeError::InvalidFormat(
+        Err(DecodeError::InvalidFormat(
             "Invalid data length".to_string(),
-        ));
+        ))
     }
-
-    Ok(TraceDataRef::new(decode::read_int(buf.as_mut_slice()).map_err(|_| DecodeError::InvalidFormat("Unable to read ref".to_owned()))?))
 }
 
 fn read_array<T: DeserializableTraceData, V, F>(buf: &mut Buffer<T>, mut f: F, vec: &mut Vec<V>) -> Result<(), DecodeError> where F: FnMut(&mut Buffer<T>) -> Result<V, DecodeError> {
@@ -380,4 +378,401 @@ fn decode_attributes<T: DeserializableTraceData>(buf: &mut Buffer<T>, table: &mu
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
+    use libdd_tinybytes::Bytes;
+    use libdd_trace_protobuf::pb::idx::SpanKind;
+    use crate::msgpack_encoder;
+    use crate::msgpack_decoder;
+    use crate::span::{BytesData, v1::{
+        AttributeAnyValue, Span, SpanEvent, SpanLink, TraceChunk, TracePayload,
+    }};
+    use crate::span::v1::to_v04;
+
+    fn roundtrip(payload: &TracePayload<BytesData>) -> TracePayload<BytesData> {
+        let bytes = Bytes::from(msgpack_encoder::v1::to_vec(payload));
+        msgpack_decoder::v1::from_bytes(bytes)
+            .expect("Decoding failed")
+            .0
+    }
+
+    // ── Tests ─────────────────────────────────────────────────────────────────
+
+    /// A completely default payload with no data should survive the round-trip.
+    #[test]
+    fn test_roundtrip_empty_payload() {
+        let payload = TracePayload::<BytesData>::default();
+        let decoded = roundtrip(&payload);
+        assert_eq!(to_v04(&payload), to_v04(&decoded));
+    }
+
+    /// All trace-level string fields (no chunks) must survive the round-trip.
+    #[test]
+    fn test_roundtrip_trace_level_fields() {
+        let mut payload = TracePayload::<BytesData>::default();
+        payload.traces.container_id = payload.static_data.add_string("container-abc123");
+        payload.traces.language_name = payload.static_data.add_string("php");
+        payload.traces.language_version = payload.static_data.add_string("8.3.0");
+        payload.traces.tracer_version = payload.static_data.add_string("1.2.3");
+        payload.traces.runtime_id = payload.static_data.add_string("runtime-uuid-xyz");
+        payload.traces.env = payload.static_data.add_string("production");
+        payload.traces.hostname = payload.static_data.add_string("web-server-01");
+        payload.traces.app_version = payload.static_data.add_string("v2.5.1");
+
+        let decoded = roundtrip(&payload);
+        assert_eq!(to_v04(&payload), to_v04(&decoded));
+    }
+
+    /// Trace-level attributes of primitive types (string, bool, int, double)
+    /// must survive the round-trip.
+    #[test]
+    fn test_roundtrip_trace_attributes_primitives() {
+        let mut payload = TracePayload::<BytesData>::default();
+
+        let k1 = payload.static_data.add_string("str_attr");
+        let v1 = AttributeAnyValue::String(payload.static_data.add_string("hello world"));
+        let k2 = payload.static_data.add_string("bool_attr");
+        let v2 = AttributeAnyValue::Boolean(true);
+        let k3 = payload.static_data.add_string("int_attr");
+        let v3 = AttributeAnyValue::Integer(-42);
+        let k4 = payload.static_data.add_string("double_attr");
+        let v4 = AttributeAnyValue::Double(3.14159_f64);
+
+        payload.traces.attributes.insert(k1, v1);
+        payload.traces.attributes.insert(k2, v2);
+        payload.traces.attributes.insert(k3, v3);
+        payload.traces.attributes.insert(k4, v4);
+
+        let decoded = roundtrip(&payload);
+        assert_eq!(to_v04(&payload), to_v04(&decoded));
+    }
+
+    /// Bytes-typed attributes must survive the round-trip.
+    #[test]
+    fn test_roundtrip_trace_attributes_bytes() {
+        let mut payload = TracePayload::<BytesData>::default();
+
+        let k = payload.static_data.add_string("bytes_attr");
+        let bytes_ref = payload.static_data.add_bytes(Bytes::from(vec![0xde, 0xad, 0xbe, 0xef]));
+        let v = AttributeAnyValue::Bytes(bytes_ref);
+        payload.traces.attributes.insert(k, v);
+
+        let decoded = roundtrip(&payload);
+        assert_eq!(to_v04(&payload), to_v04(&decoded));
+    }
+
+    /// Nested attribute values (arrays and maps) must survive the round-trip.
+    #[test]
+    fn test_roundtrip_nested_attributes() {
+        let mut payload = TracePayload::<BytesData>::default();
+
+        // Array value containing mixed types
+        let arr_key = payload.static_data.add_string("array_attr");
+        let arr_val = AttributeAnyValue::Array(vec![
+            AttributeAnyValue::String(payload.static_data.add_string("item1")),
+            AttributeAnyValue::Integer(99),
+            AttributeAnyValue::Boolean(false),
+            AttributeAnyValue::Double(2.718281828_f64),
+        ]);
+        payload.traces.attributes.insert(arr_key, arr_val);
+
+        // Map value
+        let map_key = payload.static_data.add_string("map_attr");
+        let inner_key = payload.static_data.add_string("nested_key");
+        let inner_val = AttributeAnyValue::String(payload.static_data.add_string("nested_val"));
+        let mut inner_map = HashMap::new();
+        inner_map.insert(inner_key, inner_val);
+        payload.traces.attributes.insert(map_key, AttributeAnyValue::Map(inner_map));
+
+        let decoded = roundtrip(&payload);
+        assert_eq!(to_v04(&payload), to_v04(&decoded));
+    }
+
+    /// All chunk-level scalar fields (priority, origin, dropped_trace, trace_id,
+    /// sampling_mechanism) must survive the round-trip.
+    #[test]
+    fn test_roundtrip_chunk_fields() {
+        let mut payload = TracePayload::<BytesData>::default();
+
+        let mut chunk = TraceChunk::default();
+        chunk.priority = 2;
+        chunk.origin = payload.static_data.add_string("rum");
+        chunk.dropped_trace = true;
+        chunk.trace_id = 0x1234567890abcdef_1234567890abcdef_u128;
+        chunk.sampling_mechanism = 3;
+        payload.traces.chunks.push(chunk);
+
+        let decoded = roundtrip(&payload);
+        assert_eq!(to_v04(&payload), to_v04(&decoded));
+    }
+
+    /// Attributes attached to a chunk must survive the round-trip.
+    #[test]
+    fn test_roundtrip_chunk_attributes() {
+        let mut payload = TracePayload::<BytesData>::default();
+
+        let k = payload.static_data.add_string("chunk.info");
+        let v = AttributeAnyValue::Integer(42);
+        let mut chunk = TraceChunk::default();
+        chunk.trace_id = 1;
+        chunk.attributes.insert(k, v);
+        payload.traces.chunks.push(chunk);
+
+        let decoded = roundtrip(&payload);
+        assert_eq!(to_v04(&payload), to_v04(&decoded));
+    }
+
+    /// A fully populated span (all fields, all attribute types, non-default kind)
+    /// must survive the round-trip.
+    #[test]
+    fn test_roundtrip_span_all_fields() {
+        let mut payload = TracePayload::<BytesData>::default();
+
+        let mut span = Span::default();
+        span.service = payload.static_data.add_string("my-service");
+        span.name = payload.static_data.add_string("GET /api/users");
+        span.resource = payload.static_data.add_string("/api/users");
+        span.r#type = payload.static_data.add_string("http");
+        span.env = payload.static_data.add_string("staging");
+        span.version = payload.static_data.add_string("1.0.0");
+        span.component = payload.static_data.add_string("web");
+        span.span_id = 0xabcdef1234567890_u64;
+        span.parent_id = 0x1234567890abcdef_u64;
+        span.start = 1_700_000_000_000_000_000_i64;
+        span.duration = 5_000_000_i64;
+        span.error = true;
+        span.kind = SpanKind::Server;
+
+        let ak = payload.static_data.add_string("http.status_code");
+        span.attributes.insert(ak, AttributeAnyValue::Integer(200));
+
+        let mut chunk = TraceChunk::default();
+        chunk.trace_id = 0xfedcba9876543210_fedcba9876543210_u128;
+        chunk.spans.push(span);
+        payload.traces.chunks.push(chunk);
+
+        let decoded = roundtrip(&payload);
+        assert_eq!(to_v04(&payload), to_v04(&decoded));
+    }
+
+    /// SpanLinks (with all fields and attributes) must survive the round-trip.
+    #[test]
+    fn test_roundtrip_span_links() {
+        let mut payload = TracePayload::<BytesData>::default();
+
+        let tracestate = payload.static_data.add_string("dd=s:1,t.tid:abc123");
+        let lk = payload.static_data.add_string("link.kind");
+        let lv = AttributeAnyValue::String(payload.static_data.add_string("follows_from"));
+
+        let mut link = SpanLink::default();
+        link.trace_id = 0x11223344_55667788_99aabbcc_ddeeff00_u128;
+        link.span_id = 0xdeadbeef12345678_u64;
+        link.tracestate = tracestate;
+        link.flags = 1;
+        link.attributes.insert(lk, lv);
+
+        let mut span = Span::default();
+        span.span_id = 1;
+        span.start = 1000;
+        span.span_links.push(link);
+
+        let mut chunk = TraceChunk::default();
+        chunk.trace_id = 42;
+        chunk.spans.push(span);
+        payload.traces.chunks.push(chunk);
+
+        let decoded = roundtrip(&payload);
+        assert_eq!(to_v04(&payload), to_v04(&decoded));
+    }
+
+    /// SpanEvents (with all fields and attributes) must survive the round-trip.
+    #[test]
+    fn test_roundtrip_span_events() {
+        let mut payload = TracePayload::<BytesData>::default();
+
+        let event_name = payload.static_data.add_string("exception");
+        let ek = payload.static_data.add_string("exception.message");
+        let ev = AttributeAnyValue::String(
+            payload.static_data.add_string("null pointer dereference"),
+        );
+
+        let mut event = SpanEvent::default();
+        event.time_unix_nano = 1_700_000_001_000_000_000_u64;
+        event.name = event_name;
+        event.attributes.insert(ek, ev);
+
+        let mut span = Span::default();
+        span.span_id = 2;
+        span.start = 1000;
+        span.span_events.push(event);
+
+        let mut chunk = TraceChunk::default();
+        chunk.trace_id = 99;
+        chunk.spans.push(span);
+        payload.traces.chunks.push(chunk);
+
+        let decoded = roundtrip(&payload);
+        assert_eq!(to_v04(&payload), to_v04(&decoded));
+    }
+
+    /// The same string ref used in multiple spans/chunks must decode to the
+    /// same string value everywhere (tests encoder deduplication + decoder
+    /// index-based re-use).
+    #[test]
+    fn test_roundtrip_string_deduplication() {
+        let mut payload = TracePayload::<BytesData>::default();
+
+        // Assign the same interned string ref to multiple fields
+        let shared_service = payload.static_data.add_string("shared-service");
+        payload.traces.language_name = payload.static_data.add_string("php");
+
+        // chunk1: origin reuses the same "php" string as language_name
+        let origin = payload.static_data.add_string("php");
+
+        let mut chunk1 = TraceChunk::default();
+        chunk1.trace_id = 1;
+        chunk1.origin = origin;
+        let mut span1 = Span::default();
+        span1.service = shared_service;
+        span1.name = payload.static_data.add_string("op-a");
+        span1.span_id = 100;
+        span1.start = 1000;
+        chunk1.spans.push(span1);
+        payload.traces.chunks.push(chunk1);
+
+        // chunk2: reuses shared_service ref (second occurrence → encoded as index)
+        let mut chunk2 = TraceChunk::default();
+        chunk2.trace_id = 2;
+        let mut span2 = Span::default();
+        span2.service = shared_service;
+        span2.name = payload.static_data.add_string("op-b");
+        span2.span_id = 200;
+        span2.start = 2000;
+        chunk2.spans.push(span2);
+        payload.traces.chunks.push(chunk2);
+
+        let decoded = roundtrip(&payload);
+        assert_eq!(to_v04(&payload), to_v04(&decoded));
+    }
+
+    /// A maximally complex payload exercises the full encoder/decoder path:
+    /// multiple chunks, multiple spans, span links, span events, attributes of
+    /// every supported type, and repeated strings.
+    #[test]
+    fn test_roundtrip_fully_populated() {
+        let mut payload = TracePayload::<BytesData>::default();
+
+        // Trace-level fields
+        payload.traces.container_id = payload.static_data.add_string("container-deadbeef");
+        payload.traces.language_name = payload.static_data.add_string("java");
+        payload.traces.language_version = payload.static_data.add_string("21.0.1");
+        payload.traces.tracer_version = payload.static_data.add_string("1.30.0");
+        payload.traces.runtime_id =
+            payload.static_data.add_string("xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx");
+        payload.traces.env = payload.static_data.add_string("prod");
+        payload.traces.hostname = payload.static_data.add_string("web-01.example.com");
+        payload.traces.app_version = payload.static_data.add_string("2.0.0");
+
+        let ta_k = payload.static_data.add_string("trace.global");
+        let ta_v = AttributeAnyValue::String(payload.static_data.add_string("global-value"));
+        payload.traces.attributes.insert(ta_k, ta_v);
+
+        // Shared string reused across spans
+        let service = payload.static_data.add_string("order-service");
+
+        // ── Chunk 1 ──────────────────────────────────────────────────────────
+        let ca_k = payload.static_data.add_string("chunk.meta");
+        let ca_v = AttributeAnyValue::Integer(7);
+
+        let mut chunk1 = TraceChunk::default();
+        chunk1.priority = 1;
+        chunk1.origin = payload.static_data.add_string("rum");
+        chunk1.trace_id = 0xabcdef12_34567890_abcdef12_34567890_u128;
+        chunk1.sampling_mechanism = 2;
+        chunk1.attributes.insert(ca_k, ca_v);
+
+        // Span 1: all attribute types + span link + span event
+        let mut span1 = Span::default();
+        span1.service = service;
+        span1.name = payload.static_data.add_string("create-order");
+        span1.resource = payload.static_data.add_string("POST /orders");
+        span1.r#type = payload.static_data.add_string("web");
+        span1.env = payload.static_data.add_string("prod");
+        span1.version = payload.static_data.add_string("2.0.0");
+        span1.component = payload.static_data.add_string("orders");
+        span1.span_id = 0x1111111111111111_u64;
+        span1.start = 1_700_000_001_000_000_000_i64;
+        span1.duration = 10_000_000_i64;
+        span1.error = false;
+        span1.kind = SpanKind::Server;
+
+        let a1k = payload.static_data.add_string("http.method");
+        span1.attributes.insert(
+            a1k,
+            AttributeAnyValue::String(payload.static_data.add_string("POST")),
+        );
+        let a2k = payload.static_data.add_string("http.status");
+        span1.attributes.insert(a2k, AttributeAnyValue::Integer(201));
+        let a3k = payload.static_data.add_string("success");
+        span1.attributes.insert(a3k, AttributeAnyValue::Boolean(true));
+        let a4k = payload.static_data.add_string("latency_ms");
+        span1.attributes.insert(a4k, AttributeAnyValue::Double(12.5_f64));
+        let a5k = payload.static_data.add_string("tags");
+        let tag_a = AttributeAnyValue::String(payload.static_data.add_string("tag_a"));
+        let tag_b = AttributeAnyValue::String(payload.static_data.add_string("tag_b"));
+        span1.attributes.insert(a5k, AttributeAnyValue::Array(vec![tag_a, tag_b]));
+        let a6k = payload.static_data.add_string("meta");
+        let mk = payload.static_data.add_string("region");
+        let mv = AttributeAnyValue::String(payload.static_data.add_string("us-east-1"));
+        let mut meta = HashMap::new();
+        meta.insert(mk, mv);
+        span1.attributes.insert(a6k, AttributeAnyValue::Map(meta));
+
+        // SpanLink on span1
+        let lk = payload.static_data.add_string("link.type");
+        let lv = AttributeAnyValue::String(payload.static_data.add_string("follows_from"));
+        let mut link = SpanLink::default();
+        link.trace_id = 0x11111111_11111111_22222222_22222222_u128;
+        link.span_id = 0xaaaaaaaabbbbbbbb_u64;
+        link.tracestate = payload.static_data.add_string("vendor=val");
+        link.flags = 1;
+        link.attributes.insert(lk, lv);
+        span1.span_links.push(link);
+
+        // SpanEvent on span1
+        let ek = payload.static_data.add_string("db.statement");
+        let ev = AttributeAnyValue::String(payload.static_data.add_string("SELECT 1"));
+        let mut event = SpanEvent::default();
+        event.time_unix_nano = 1_700_000_001_500_000_000_u64;
+        event.name = payload.static_data.add_string("db.query");
+        event.attributes.insert(ek, ev);
+        span1.span_events.push(event);
+        chunk1.spans.push(span1);
+
+        // Span 2: reuses service string (tests second-occurrence deduplication)
+        let mut span2 = Span::default();
+        span2.service = service;
+        span2.name = payload.static_data.add_string("validate");
+        span2.span_id = 0x2222222222222222_u64;
+        span2.parent_id = 0x1111111111111111_u64;
+        span2.start = 1_700_000_001_100_000_000_i64;
+        span2.duration = 1_000_000_i64;
+        span2.error = true;
+        chunk1.spans.push(span2);
+        payload.traces.chunks.push(chunk1);
+
+        // ── Chunk 2 ──────────────────────────────────────────────────────────
+        let mut chunk2 = TraceChunk::default();
+        chunk2.trace_id = 0x99999999_99999999_aaaaaaaa_aaaaaaaa_u128;
+        chunk2.dropped_trace = true;
+        let mut span3 = Span::default();
+        span3.service = service; // third occurrence of "order-service"
+        span3.name = payload.static_data.add_string("background-job");
+        span3.span_id = 0x3333333333333333_u64;
+        span3.start = 1_700_000_002_000_000_000_i64;
+        chunk2.spans.push(span3);
+        payload.traces.chunks.push(chunk2);
+
+        let decoded = roundtrip(&payload);
+        assert_eq!(to_v04(&payload), to_v04(&decoded));
+    }
 }

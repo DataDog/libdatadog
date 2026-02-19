@@ -283,6 +283,12 @@ impl<T: UnderlyingBytes> From<T> for Bytes {
     }
 }
 
+impl<'a> From<&'a [u8]> for Bytes {
+    fn from(value: &'a [u8]) -> Self {
+        Self::copy_from_slice(value)
+    }
+}
+
 impl AsRef<[u8]> for Bytes {
     #[inline]
     fn as_ref(&self) -> &[u8] {

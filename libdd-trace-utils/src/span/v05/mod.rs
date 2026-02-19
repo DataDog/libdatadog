@@ -1,11 +1,9 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-pub mod dict;
-
 use std::cmp::Ordering;
 use std::collections::hash_map::Entry;
-use crate::span::{v05::dict::SharedDict, OwnedTraceData, TraceProjector, Traces, TraceAttributes, TraceAttributesOp, parse_span_kind, span_kind_to_str, AttributeAnyContainer, TraceAttributesMutOp, TraceAttributesMut, AttributeAnyValueType, TraceAttributesString, AttributeAnySetterContainer, AttributeAnyGetterContainer, TraceAttributesBoolean, TraceAttributesInteger, TraceAttributesDouble, SpanDataContents, AttrRef, TraceData, IntoData, TraceDataLifetime, TracesMut};
+use crate::span::{OwnedTraceData, TraceProjector, Traces, TraceAttributes, TraceAttributesOp, parse_span_kind, span_kind_to_str, AttributeAnyContainer, TraceAttributesMutOp, TraceAttributesMut, AttributeAnyValueType, TraceAttributesString, AttributeAnySetterContainer, AttributeAnyGetterContainer, TraceAttributesBoolean, TraceAttributesInteger, TraceAttributesDouble, SpanDataContents, AttrRef, TraceData, IntoData, TraceDataLifetime, TracesMut};
 use anyhow::Result;
 use serde::Serialize;
 use std::borrow::Borrow;
@@ -749,48 +747,44 @@ impl<'b, 'a, D: TraceData> TraceAttributesMutOp<'b, 'a, ChunkCollection<D>, D, T
 
 
 pub fn from_v04_span<T: TraceData>(
-    _span: crate::span::v04::Span<T>,
-    _dict: &mut SharedDict<T::Text>,
+    span: crate::span::v04::Span<T>,
+    dict: &mut Storage<T>,
 ) -> Result<Span> {
-    /*
     let meta_len = span.meta.len();
     let metrics_len = span.metrics.len();
     Ok(Span {
-        service: dict.get_or_insert(span.service)?,
-        name: dict.get_or_insert(span.name)?,
-        resource: dict.get_or_insert(span.resource)?,
+        service: dict.add(span.service),
+        name: dict.add(span.name),
+        resource: dict.add(span.resource),
         trace_id: span.trace_id as u64,
         span_id: span.span_id,
         parent_id: span.parent_id,
         start: span.start,
         duration: span.duration,
         error: span.error,
-        meta: span.meta.into_iter().try_fold(
+        meta: span.meta.into_iter().fold(
             HashMap::with_capacity(meta_len),
-            |mut meta, (k, v)| -> anyhow::Result<HashMap<u32, u32>> {
-                meta.insert(dict.get_or_insert(k)?, dict.get_or_insert(v)?);
-                Ok(meta)
+            |mut meta, (k, v)| {
+                meta.insert(dict.add(k), dict.add(v));
+                meta
             },
-        )?,
-        metrics: span.metrics.into_iter().try_fold(
+        ),
+        metrics: span.metrics.into_iter().fold(
             HashMap::with_capacity(metrics_len),
-            |mut metrics, (k, v)| -> anyhow::Result<HashMap<u32, f64>> {
-                metrics.insert(dict.get_or_insert(k)?, v);
-                Ok(metrics)
+            |mut metrics, (k, v)| {
+                metrics.insert(dict.add(k), v);
+                metrics
             },
-        )?,
-        r#type: dict.get_or_insert(span.r#type)?,
+        ),
+        r#type: dict.add(span.r#type),
     })
-
-     */
-    Ok(Span::default())
 }
 
-/*
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::span::v04::SpanBytes;
+    use crate::span::BytesData;
     use libdd_tinybytes::BytesString;
 
     #[test]
@@ -816,21 +810,17 @@ mod tests {
             span_events: vec![],
         };
 
-        let mut dict = SharedDict::default();
+        let mut dict = Storage::<BytesData>::default();
         let v05_span = from_v04_span(span, &mut dict).unwrap();
 
-        let get_index_from_str = |str: &str| -> u32 {
-            dict.iter()
-                .position(|s| s.as_str() == str)
-                .unwrap()
-                .try_into()
-                .unwrap()
+        let get_ref = |s: &str| -> TraceStringRef {
+            dict.find(&BytesString::from(s)).unwrap()
         };
 
-        assert_eq!(v05_span.service, get_index_from_str("service"));
-        assert_eq!(v05_span.name, get_index_from_str("name"));
-        assert_eq!(v05_span.resource, get_index_from_str("resource"));
-        assert_eq!(v05_span.r#type, get_index_from_str("type"));
+        assert_eq!(v05_span.service, get_ref("service"));
+        assert_eq!(v05_span.name, get_ref("name"));
+        assert_eq!(v05_span.resource, get_ref("resource"));
+        assert_eq!(v05_span.r#type, get_ref("type"));
         assert_eq!(v05_span.trace_id, 1);
         assert_eq!(v05_span.span_id, 1);
         assert_eq!(v05_span.parent_id, 0);
@@ -841,19 +831,12 @@ mod tests {
         assert_eq!(v05_span.metrics.len(), 1);
 
         assert_eq!(
-            *v05_span
-                .meta
-                .get(&get_index_from_str("meta_field"))
-                .unwrap(),
-            get_index_from_str("meta_value")
+            *v05_span.meta.get(&get_ref("meta_field")).unwrap(),
+            get_ref("meta_value")
         );
         assert_eq!(
-            *v05_span
-                .metrics
-                .get(&get_index_from_str("metrics_field"))
-                .unwrap(),
+            *v05_span.metrics.get(&get_ref("metrics_field")).unwrap(),
             1.1
         );
     }
 }
-*/

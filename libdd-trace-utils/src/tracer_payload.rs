@@ -1,8 +1,8 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::span::v05::dict::SharedDict;
 use crate::span::{v04, v05, v1, BytesData, SharedDictBytes, TraceData};
+use crate::span::table::{StaticDataVec, TraceDataText};
 use crate::span::v1::TracePayload;
 use crate::trace_utils::collect_trace_chunks;
 use crate::{msgpack_decoder, trace_utils::cmp_send_data_payloads};
@@ -29,7 +29,7 @@ pub enum TraceChunks<T: TraceData> {
     /// Collection of TraceChunkSpan.
     V04(Vec<Vec<v04::Span<T>>>),
     /// Collection of TraceChunkSpan with de-duplicated strings.
-    V05((SharedDict<T::Text>, Vec<Vec<v05::Span>>)),
+    V05((StaticDataVec<T, TraceDataText>, Vec<Vec<v05::Span>>)),
     /// A full V1 trace.
     V1(TracePayload<T>)
 }

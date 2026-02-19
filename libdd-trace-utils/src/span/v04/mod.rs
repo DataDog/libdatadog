@@ -467,7 +467,7 @@ impl<'s, D: TraceDataLifetime<'s>> TraceProjector<'s, D> for TraceCollection<D> 
         chunk.first()
             .and_then(|span| span.metrics.get("_sampling_priority_v1"))
             .copied()
-            .unwrap_or(0.0) as i32
+            .unwrap_or(1.0) as i32
     }
 
     fn get_chunk_origin(chunk: &'s <TraceCollection<D> as TraceProjector<'s, D>>::Chunk, _storage: &()) -> &'s D::Text {
@@ -1054,8 +1054,10 @@ mod tests {
     use super::{AttributeAnyValue, AttributeArrayValue, Span, SpanEvent, SpanLink};
     use crate::msgpack_decoder::decode::buffer::Buffer;
     use crate::msgpack_decoder::v04::span::decode_span;
-    use crate::span::SliceData;
+    use crate::span::{BytesData, SliceData, TraceProjector};
+    use libdd_tinybytes::BytesString;
     use std::collections::HashMap;
+    use super::TraceCollection;
 
     #[test]
     fn skip_serializing_empty_fields_test() {
@@ -1159,8 +1161,6 @@ mod tests {
 
     #[test]
     fn test_span_event_attributes() {
-        use crate::span::{BytesData, TraceProjector};
-
         // Create a span with an event that has various attribute types
         let mut collection = TraceCollection::<BytesData>::new(vec![vec![Span {
             span_events: vec![SpanEvent {
@@ -1176,30 +1176,32 @@ mod tests {
             ..Default::default()
         }]]);
 
-        // Test reading attributes
-        let traces = collection.project();
-        for chunk in traces.chunks() {
-            for span in chunk.spans() {
-                for event in span.events() {
-                    // Test string attribute
-                    let str_val = event.attributes().get_string("str_attr");
-                    assert_eq!(str_val, Some("hello"));
+        {
+            // Test reading attributes
+            let traces = collection.project();
+            for chunk in traces.chunks() {
+                for span in chunk.spans() {
+                    for event in span.span_events() {
+                        // Test string attribute
+                        let str_val = event.attributes().get_string("str_attr");
+                        assert_eq!(str_val, Some(&BytesString::from("hello")));
 
-                    // Test boolean attribute
-                    let bool_val = event.attributes().get_boolean("bool_attr");
-                    assert_eq!(bool_val, Some(true));
+                        // Test boolean attribute
+                        let bool_val = event.attributes().get_bool("bool_attr");
+                        assert_eq!(bool_val, Some(true));
 
-                    // Test integer attribute
-                    let int_val = event.attributes().get_integer("int_attr");
-                    assert_eq!(int_val, Some(42));
+                        // Test integer attribute
+                        let int_val = event.attributes().get_int("int_attr");
+                        assert_eq!(int_val, Some(42));
 
-                    // Test double attribute
-                    let double_val = event.attributes().get_double("double_attr");
-                    assert_eq!(double_val, Some(3.14));
+                        // Test double attribute
+                        let double_val = event.attributes().get_double("double_attr");
+                        assert_eq!(double_val, Some(3.14));
 
-                    // Test non-existent attribute
-                    let none_val = event.attributes().get_string("nonexistent");
-                    assert_eq!(none_val, None);
+                        // Test non-existent attribute
+                        let none_val = event.attributes().get_string("nonexistent");
+                        assert_eq!(none_val, None);
+                    }
                 }
             }
         }
@@ -1208,12 +1210,12 @@ mod tests {
         let mut traces_mut = collection.project_mut();
         for mut chunk in traces_mut.chunks_mut() {
             for mut span in chunk.spans_mut() {
-                for mut event in span.events_mut() {
+                for mut event in span.span_events_mut() {
                     // Modify existing string attribute
-                    event.attributes_mut().set_string("str_attr", "world".into());
+                    event.attributes_mut().set_string("str_attr", "world");
 
                     // Add new attribute
-                    event.attributes_mut().set_integer("new_int", 100);
+                    event.attributes_mut().set_int("new_int", 100);
                 }
             }
         }
@@ -1222,13 +1224,13 @@ mod tests {
         let traces = collection.project();
         for chunk in traces.chunks() {
             for span in chunk.spans() {
-                for event in span.events() {
+                for event in span.span_events() {
                     // Check modified attribute
                     let str_val = event.attributes().get_string("str_attr");
-                    assert_eq!(str_val, Some("world"));
+                    assert_eq!(str_val, Some(&BytesString::from("world")));
 
                     // Check new attribute
-                    let int_val = event.attributes().get_integer("new_int");
+                    let int_val = event.attributes().get_int("new_int");
                     assert_eq!(int_val, Some(100));
                 }
             }

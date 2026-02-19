@@ -680,7 +680,7 @@ pub struct SpanLinkIterator<'b, 's: 'b, T: TraceProjector<'s, D>, D: TraceDataLi
 pub type SpanLinkIteratorMut<'b, 's, T, D, I> = SpanLinkIterator<'b, 's, T, D, I, MUT>;
 
 impl<'b, 's: 'b, T: TraceProjector<'s, D>, D: TraceDataLifetime<'s>, I: Iterator<Item = &'b T::SpanLink>, const ISMUT: u8> Iterator for SpanLinkIterator<'b, 's, T, D, I, ISMUT> {
-    type Item = SpanLink<'b, 's, T, D>;
+    type Item = SpanLink<'b, 's, T, D, ISMUT>;
 
     fn next(&mut self) -> Option<Self::Item> {
         self.it.next().map(move |link| {
@@ -699,7 +699,7 @@ pub struct SpanEventIterator<'b, 's: 'b, T: TraceProjector<'s, D>, D: TraceDataL
 pub type SpanEventIteratorMut<'b, 's, T, D, I> = SpanEventIterator<'b, 's, T, D, I, MUT>;
 
 impl<'b, 's: 'b, T: TraceProjector<'s, D>, D: TraceDataLifetime<'s>, I: Iterator<Item = &'b T::SpanEvent>, const ISMUT: u8> Iterator for SpanEventIterator<'b, 's, T, D, I, ISMUT> {
-    type Item = SpanEvent<'b, 's, T, D>;
+    type Item = SpanEvent<'b, 's, T, D, ISMUT>;
 
     fn next(&mut self) -> Option<Self::Item> {
         self.it.next().map(move |event| {
@@ -998,11 +998,11 @@ pub trait AttrVal<C> {
 #[derive(Copy, Clone)]
 pub struct AttrRef<'a, C>(&'a C);
 impl<'a, C> AttrVal<C> for AttrRef<'a, C> {
-    unsafe fn as_mut(&self) -> &mut C {
+    unsafe fn as_mut(&self) -> &'a mut C {
         as_mut(self.0)
     }
 
-    fn as_ref(&self) -> &C {
+    fn as_ref(&self) -> &'a C {
         self.0
     }
 }
@@ -1267,21 +1267,26 @@ impl<'container, 'storage, T: TraceProjector<'storage, D>, D: TraceDataLifetime<
 where
     TraceAttributes<'storage, T, D, AttrRef<'container, C>, C, MUT>: TraceAttributesMutOp<'container, 'storage, T, D, C>,
 {
-    #[allow(invalid_reference_casting, mutable_transmutes)]
-    pub fn set_double<K: IntoData<D::Text>>(&mut self, key: K, value: f64) {
-        let container_ref: &'container mut C = unsafe { &mut *(self.container.as_ref() as *const C as *mut C) };
-        let storage_ref: &mut T::Storage = unsafe { as_mut(self.storage) };
+    pub fn set_double<K: IntoData<D::Text>>(&'container mut self, key: K, value: f64) {
+        let container_ref = unsafe { self.container.as_mut() };
+        let storage_ref = unsafe { as_mut(self.storage) };
         let AttributeAnyContainer::Double(container) = <Self as TraceAttributesMutOp<'container, 'storage, T, D, C>>::set(container_ref, storage_ref, key.into(), AttributeAnyValueType::Double) else { unreachable!() };
         container.set(value)
     }
 
-    #[allow(invalid_reference_casting, mutable_transmutes)]
-    pub fn remove<K>(&mut self, key: &K)
+    pub fn set_int<K: IntoData<D::Text>>(&'container mut self, key: K, value: i64) {
+        let container_ref = unsafe { self.container.as_mut() };
+        let storage_ref = unsafe { as_mut(self.storage) };
+        let AttributeAnyContainer::Integer(container) = <Self as TraceAttributesMutOp<'container, 'storage, T, D, C>>::set(container_ref, storage_ref, key.into(), AttributeAnyValueType::Integer) else { unreachable!() };
+        container.set(value)
+    }
+
+    pub fn remove<K>(&'container mut self, key: &K)
     where
         K: ?Sized + Hash + Equivalent<<D::Text as SpanDataContents>::RefCopy>
     {
-        let container_ref: &'container mut C = unsafe { &mut *(self.container.as_ref() as *const C as *mut C) };
-        let storage_ref: &mut T::Storage = unsafe { as_mut(self.storage) };
+        let container_ref = unsafe { self.container.as_mut() };
+        let storage_ref = unsafe { as_mut(self.storage) };
         <Self as TraceAttributesMutOp<'container, 'storage, T, D, C>>::remove(container_ref, storage_ref, key);
     }
 }
@@ -1387,7 +1392,6 @@ where
     }
 
 
-    #[allow(invalid_reference_casting)]
     pub fn get_map<K>(&self, key: &K) -> Option<TraceAttributes<'storage, T, D, AttrOwned<<TraceAttributes<'storage, T, D, AttrRef<'container, C>, C> as TraceAttributesOp<'container, 'storage, T, D, C>>::Map>, <TraceAttributes<'storage, T, D, AttrRef<'container, C>, C> as TraceAttributesOp<'container, 'storage, T, D, C>>::Map>>
     where
         K: ?Sized + Hash + Equivalent<<D::Text as SpanDataContents>::RefCopy>

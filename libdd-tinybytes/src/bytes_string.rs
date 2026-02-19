@@ -199,6 +199,12 @@ impl hash::Hash for BytesString {
     }
 }
 
+impl PartialEq<str> for BytesString {
+    fn eq(&self, other: &str) -> bool {
+        self.as_str() == other
+    }
+}
+
 impl PartialEq<&str> for BytesString {
     fn eq(&self, other: &&str) -> bool {
         self.as_str() == *other

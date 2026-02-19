@@ -3,8 +3,8 @@
 
 pub use crate::send_data::send_data_result::SendDataResult;
 pub use crate::send_data::SendData;
-use crate::span::v05::dict::SharedDict;
 use crate::span::{v05, TraceData};
+use crate::span::table::{StaticDataVec, TraceDataText};
 pub use crate::tracer_header_tags::TracerHeaderTags;
 use crate::tracer_payload::TracerPayloadCollection;
 use crate::tracer_payload::{self, TraceChunks};
@@ -606,7 +606,7 @@ pub fn collect_trace_chunks<T: TraceData>(
     use_v05_format: bool,
 ) -> anyhow::Result<TraceChunks<T>> {
     if use_v05_format {
-        let mut shared_dict = SharedDict::default();
+        let mut shared_dict = StaticDataVec::<_, TraceDataText>::default();
         let mut v05_traces: Vec<Vec<v05::Span>> = Vec::with_capacity(traces.len());
         for trace in traces {
             let trace_len = trace.len();
@@ -714,16 +714,17 @@ pub fn is_partial_snapshot(span: &pb::Span) -> bool {
 mod tests {
     use super::*;
     use crate::{
-        span::SharedDictBytes,
         test_utils::{create_test_no_alloc_span, create_test_span},
+        span::table::{StaticDataVec, TraceDataText, TraceStringRef},
+        span::BytesData,
     };
     use hyper::Request;
     use libdd_common::Endpoint;
     use serde_json::json;
 
-    fn find_index_in_dict(dict: &SharedDictBytes, value: &str) -> Option<u32> {
-        let idx = dict.iter().position(|e| e.as_str() == value);
-        idx.map(|idx| idx.try_into().unwrap())
+    fn find_index_in_dict(dict: &StaticDataVec<BytesData, TraceDataText>, value: &str) -> Option<TraceStringRef> {
+        use libdd_tinybytes::BytesString;
+        dict.find(&BytesString::from(value))
     }
 
     #[test]
@@ -1137,16 +1138,15 @@ mod tests {
         assert_eq!(dict.len(), 16);
 
         let span = &traces[0][0];
-        assert_eq!(span.service, 1);
-        assert_eq!(span.name, 2);
-        assert_eq!(span.resource, 3);
+        assert_eq!(span.service, find_index_in_dict(&dict, "test-service").unwrap());
+        assert_eq!(span.name, find_index_in_dict(&dict, "test_name").unwrap());
+        assert_eq!(span.resource, find_index_in_dict(&dict, "test-resource").unwrap());
         assert_eq!(span.trace_id, 123);
         assert_eq!(span.span_id, 456);
         assert_eq!(span.parent_id, 789);
         assert_eq!(span.start, 1);
         assert_eq!(span.error, 0);
-        assert_eq!(span.error, 0);
-        assert_eq!(span.r#type, 15);
+        assert_eq!(span.r#type, find_index_in_dict(&dict, "serverless").unwrap());
         assert_eq!(
             *span
                 .meta

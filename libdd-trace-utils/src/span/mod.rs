@@ -12,7 +12,7 @@ pub use trace::*;
 
 use crate::msgpack_decoder::decode::buffer::read_string_ref_nomut;
 use crate::msgpack_decoder::decode::error::DecodeError;
-use crate::span::v05::dict::SharedDict;
+use crate::span::table::{StaticDataVec, TraceDataText};
 use hashbrown::Equivalent;
 use libdd_tinybytes::{Bytes, BytesString};
 use libdd_trace_protobuf::pb::idx::SpanKind;
@@ -326,7 +326,7 @@ impl fmt::Display for SpanKeyParseError {
 }
 impl std::error::Error for SpanKeyParseError {}
 
-pub type SharedDictBytes = SharedDict<BytesString>;
+pub type SharedDictBytes = StaticDataVec<BytesData, TraceDataText>;
 
 
 pub fn parse_span_kind(kind: &str) -> SpanKind {

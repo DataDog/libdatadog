@@ -234,49 +234,39 @@ pub fn create_test_v05_span(
 ) -> v05::Span {
     let mut meta = HashMap::from([
         (
-            dict.get_or_insert(BytesString::from("service")).unwrap(),
-            dict.get_or_insert(BytesString::from("test-service"))
-                .unwrap(),
+            dict.add(BytesString::from("service")),
+            dict.add(BytesString::from("test-service")),
         ),
         (
-            dict.get_or_insert(BytesString::from("env")).unwrap(),
-            dict.get_or_insert(BytesString::from("test-env")).unwrap(),
+            dict.add(BytesString::from("env")),
+            dict.add(BytesString::from("test-env")),
         ),
         (
-            dict.get_or_insert(BytesString::from("runtime-id")).unwrap(),
-            dict.get_or_insert(BytesString::from("test-runtime-id-value"))
-                .unwrap(),
+            dict.add(BytesString::from("runtime-id")),
+            dict.add(BytesString::from("test-runtime-id-value")),
         ),
     ]);
 
     if is_top_level {
         meta.extend([
             (
-                dict.get_or_insert(BytesString::from("functionname"))
-                    .unwrap(),
-                dict.get_or_insert(BytesString::from("dummy_function_name"))
-                    .unwrap(),
+                dict.add(BytesString::from("functionname")),
+                dict.add(BytesString::from("dummy_function_name")),
             ),
             (
-                dict.get_or_insert(BytesString::from("_dd.origin")).unwrap(),
-                dict.get_or_insert(BytesString::from("cloudfunction"))
-                    .unwrap(),
+                dict.add(BytesString::from("_dd.origin")),
+                dict.add(BytesString::from("cloudfunction")),
             ),
             (
-                dict.get_or_insert(BytesString::from("origin")).unwrap(),
-                dict.get_or_insert(BytesString::from("cloudfunction"))
-                    .unwrap(),
+                dict.add(BytesString::from("origin")),
+                dict.add(BytesString::from("cloudfunction")),
             ),
         ]);
     }
     v05::Span {
-        service: dict
-            .get_or_insert(BytesString::from("test-service"))
-            .unwrap(),
-        name: dict.get_or_insert(BytesString::from("test_name")).unwrap(),
-        resource: dict
-            .get_or_insert(BytesString::from("test-resource"))
-            .unwrap(),
+        service: dict.add(BytesString::from("test-service")),
+        name: dict.add(BytesString::from("test_name")),
+        resource: dict.add(BytesString::from("test-resource")),
         trace_id,
         span_id,
         parent_id,
@@ -287,15 +277,15 @@ pub fn create_test_v05_span(
         metrics: if let Some(metrics) = metrics {
             metrics
                 .into_iter()
-                .map(|(k, v)| (dict.get_or_insert(BytesString::from(k)).unwrap(), v))
+                .map(|(k, v)| (dict.add(BytesString::from(k)), v))
                 .collect()
         } else {
             HashMap::new()
         },
         r#type: if is_top_level {
-            dict.get_or_insert(BytesString::from("web")).unwrap()
+            dict.add(BytesString::from("web"))
         } else {
-            dict.get_or_insert(BytesString::from("")).unwrap()
+            dict.add(BytesString::from(""))
         },
     }
 }

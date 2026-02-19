@@ -19,11 +19,17 @@ impl TraceDataType for TraceDataText {
     type Data<T: TraceData> = T::Text;
 }
 
-#[derive(Copy, Clone, Debug, Default, Eq, PartialEq, Hash, Serialize)]
+#[derive(Copy, Clone, Debug, Default, Eq, PartialEq, Hash)]
 #[repr(transparent)]
 pub struct TraceDataRef<T: TraceDataType> {
     index: u32,
     _phantom: PhantomData<T>,
+}
+
+impl<T: TraceDataType> Serialize for TraceDataRef<T> {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        self.index.serialize(serializer)
+    }
 }
 
 impl<T: TraceDataType> TraceDataRef<T> {
@@ -159,6 +165,20 @@ impl<T: TraceData, D: TraceDataType> StaticDataVec<T, D> {
 
     pub fn len(&self) -> usize {
         self.table.len()
+    }
+}
+
+impl<T: TraceData, D: TraceDataType> Serialize for StaticDataVec<T, D>
+where
+    D::Data<T>: Serialize,
+{
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::SerializeSeq;
+        let mut seq = serializer.serialize_seq(Some(self.vec.len()))?;
+        for entry in &self.vec {
+            seq.serialize_element(&entry.value)?;
+        }
+        seq.end()
     }
 }
 

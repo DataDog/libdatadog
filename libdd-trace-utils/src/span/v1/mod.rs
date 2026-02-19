@@ -1,3 +1,6 @@
+mod to_v04;
+pub use to_v04::to_v04;
+
 use std::collections::HashMap;
 use std::hash::Hash;
 use hashbrown::Equivalent;
@@ -20,12 +23,12 @@ impl<T: TraceData> TraceStaticData<T> {
         StaticDataVec::get(&self.bytes, r#ref)
     }
 
-    pub fn add_string(&mut self, value: T::Text) -> TraceStringRef {
-        self.strings.add(value)
+    pub fn add_string(&mut self, value: impl Into<T::Text>) -> TraceStringRef {
+        self.strings.add(value.into())
     }
 
-    pub fn add_bytes(&mut self, value: T::Bytes) -> TraceBytesRef {
-        self.bytes.add(value)
+    pub fn add_bytes(&mut self, value: impl Into<T::Bytes>) -> TraceBytesRef {
+        self.bytes.add(value.into())
     }
 }
 

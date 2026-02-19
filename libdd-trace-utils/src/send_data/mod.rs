@@ -526,6 +526,7 @@ mod tests {
                 msgpack_encoder::v04::to_len(payloads) as usize
             }
             TracerPayloadCollection::V05(payloads) => rmp_serde::to_vec(payloads).unwrap().len(),
+            TracerPayloadCollection::V1(_) => todo!(),
         }
     }
 
