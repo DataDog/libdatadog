@@ -48,8 +48,8 @@ pub struct HttpStatus(u16);
 /// # Arguments
 /// * `base_url` - Contains a URL with scheme, host, and port e.g. "https://agent:8126/".
 /// * `timeout_ms` - Timeout in milliseconds. Use 0 for default timeout (3000ms).
-/// * `use_system_resolver` - Use the system DNS resolver instead of hickory-dns (e.g. for fork-safe
-///   envs).
+/// * `use_system_resolver` - If true, use the system DNS resolver (less fork-safe). If false, the
+///   default in-process resolver is used (fork-safe).
 #[no_mangle]
 pub extern "C" fn ddog_prof_Endpoint_agent(
     base_url: CharSlice,
@@ -64,8 +64,8 @@ pub extern "C" fn ddog_prof_Endpoint_agent(
 /// * `site` - Contains a host and port e.g. "datadoghq.com".
 /// * `api_key` - Contains the Datadog API key.
 /// * `timeout_ms` - Timeout in milliseconds. Use 0 for default timeout (3000ms).
-/// * `use_system_resolver` - Use the system DNS resolver instead of hickory-dns (e.g. for fork-safe
-///   envs).
+/// * `use_system_resolver` - If true, use the system DNS resolver (less fork-safe). If false, the
+///   default in-process resolver is used (fork-safe).
 #[no_mangle]
 pub extern "C" fn ddog_prof_Endpoint_agentless<'a>(
     site: CharSlice<'a>,

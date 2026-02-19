@@ -97,7 +97,7 @@ int main(int argc, char *argv[]) {
 
   auto *encoded_profile = &serialize_result.ok;
 
-  // Set a custom timeout of 10000ms (10 seconds); use_system_resolver = false (hickory DNS)
+  // Set a custom timeout of 10000ms (10 seconds); use_system_resolver = false (default resolver)
   auto endpoint = ddog_prof_Endpoint_agentless(
       DDOG_CHARSLICE_C_BARE("datad0g.com"), to_slice_c_char(api_key), 10000, false);
 

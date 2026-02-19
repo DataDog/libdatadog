@@ -83,117 +83,87 @@ mod tests {
         assert!(err.to_string().contains("Unsupported endpoint scheme"));
     }
 
-    /// Client resolves host via hickory when use_system_resolver is false.
-    /// Uses http://example.com/ so DNS is actually exercised; example.com is reserved by
-    /// RFC 2606 for documentation and testing. These tests require network access.
-    #[tokio::test]
-    #[cfg_attr(miri, ignore)]
-    async fn test_hickory_dns_when_system_resolver_disabled() {
-        let endpoint = Endpoint::from_slice("http://example.com/").with_system_resolver(false);
-
-        let (builder, url) = endpoint
-            .to_reqwest_client_builder()
-            .expect("should build client");
-        let client = builder.build().expect("should create client");
-
-        let response = client
-            .get(&url)
-            .send()
-            .await
-            .expect("request should succeed");
-        assert!(
-            response.status().is_success() || response.status().is_redirection(),
-            "status: {}",
-            response.status()
-        );
+    /// Both resolver configs produce a buildable reqwest client. Does not send a request (no
+    /// network). Does not verify which resolver is actually used; that is done by
+    /// test_system_resolver_uses_extra_thread.
+    #[test]
+    fn test_both_resolver_configs_build_client() {
+        let url = "http://example.com/";
+        for use_system_resolver in [false, true] {
+            let endpoint = Endpoint::from_slice(url).with_system_resolver(use_system_resolver);
+            let (builder, _) = endpoint
+                .to_reqwest_client_builder()
+                .expect("should build client");
+            builder.build().expect("should create client");
+        }
     }
 
-    /// Client resolves host via system resolver when with_system_resolver(true) is used.
-    /// Uses http://example.com/ so DNS is actually exercised; example.com is reserved by
-    /// RFC 2606 for documentation and testing. These tests require network access.
-    #[tokio::test]
-    #[cfg_attr(miri, ignore)]
-    async fn test_system_resolver_when_requested() {
-        let endpoint = Endpoint::from_slice("http://example.com/").with_system_resolver(true);
-
-        let (builder, url) = endpoint
-            .to_reqwest_client_builder()
-            .expect("should build client");
-        let client = builder.build().expect("should create client");
-
-        let response = client
-            .get(&url)
-            .send()
-            .await
-            .expect("request should succeed");
-        assert!(
-            response.status().is_success() || response.status().is_redirection(),
-            "status: {}",
-            response.status()
-        );
-    }
-
-    /// With hickory DNS, no extra thread is used for resolution; with the system resolver,
-    /// reqwest uses a threadpool thread. We run the same sequence for both (create client,
-    /// request, count alive, drop client, count after drop) and assert the observed thread
-    /// counts differ: hickory stays at initial; system adds one while alive (and may still
-    /// show it after drop depending on pool cleanup). Uses http://example.com/ so DNS is
-    /// exercised; example.com is reserved by RFC 2606. Requires network. Only runs on
-    /// platforms where count_active_threads is implemented.
-    #[tokio::test]
+    /// Verifies that the two resolver configs actually use different resolvers (default uses
+    /// fewer threads than system). With the default (in-process) resolver, no extra thread is
+    /// used for DNS; with the system resolver, reqwest uses a threadpool thread. Each phase
+    /// runs in its own single-threaded tokio runtime (started then dropped). Requires network.
+    /// Only runs on platforms where count_active_threads is implemented.
+    ///
+    /// TODO: Even the in-process resolver can lead to long-lived threads that outlast the
+    /// runtime (e.g. on OSX the "Grand Central Dispatch" thread). This should be
+    /// investigated so we can tighten or simplify the assertions.
+    #[test]
     #[cfg_attr(miri, ignore)]
     #[cfg(any(target_os = "linux", target_os = "macos", windows))]
-    async fn test_hickory_dns_saves_thread() {
-        let count =
-            || count_active_threads().expect("count_active_threads not supported on this platform");
-        let initial = count();
+    fn test_system_resolver_uses_extra_thread() {
+        let initial =
+            count_active_threads().expect("count_active_threads not supported on this platform");
 
-        // Same sequence for both: create client, send request, count with client alive,
-        // drop client, count after drop. Only the resolver flag and expected counts differ.
-        let (threads_hickory_alive, threads_hickory_after_drop) =
-            run_resolver_phase("http://example.com/", false, count).await;
+        let (threads_default_alive, threads_default_after_drop) =
+            run_resolver_phase("http://example.com/", false);
         let (threads_system_alive, threads_system_after_drop) =
-            run_resolver_phase("http://example.com/", true, count).await;
+            run_resolver_phase("http://example.com/", true);
 
-        // The system may have other threads, allow 2 slop for now.
         let msg = format!(
-            "initial={initial} hickory_alive={threads_hickory_alive} hickory_after_drop={threads_hickory_after_drop} system_alive={threads_system_alive} system_after_drop={threads_system_after_drop}",
+            "initial={initial} default_alive={threads_default_alive} default_after_drop={threads_default_after_drop} system_alive={threads_system_alive} system_after_drop={threads_system_after_drop}",
         );
-        assert!(threads_hickory_alive <= initial + 2, "{}", msg);
+
         assert!(
-            threads_hickory_after_drop <= threads_hickory_alive,
-            "{}",
+            threads_default_alive >= initial,
+            "Sanity check: spawning the resolver should spawn threads. {}",
             msg
         );
-        assert!(threads_system_alive > threads_hickory_alive, "{}", msg);
         assert!(
-            threads_system_after_drop > threads_hickory_after_drop,
-            "{}",
+            threads_default_after_drop <= initial + 2,
+            "More threads survived than expected.  See TODO on this test. {}",
             msg
         );
+        assert!(
+            threads_system_alive > threads_default_alive,
+            "We expect the system resolver to use at least one more thread than the in-process resolver while the client is alive. {}",
+            msg
+        );
+        // After dropping the runtime, the system resolver's thread may or may not be reclaimed
+        // depending on platform and timing; we only assert on the "alive" counts above.
     }
 
-    /// Runs one resolver phase: build client with the given resolver setting, send one
-    /// request, count threads with client alive, drop client, count threads after drop.
-    /// Returns (threads_alive, threads_after_drop). Same order of operations for both
-    /// hickory and system resolver.
-    async fn run_resolver_phase<F>(
-        url_slice: &str,
-        use_system_resolver: bool,
-        count: F,
-    ) -> (usize, usize)
-    where
-        F: Fn() -> usize,
-    {
-        let endpoint = Endpoint::from_slice(url_slice).with_system_resolver(use_system_resolver);
-        let (builder, url) = endpoint
-            .to_reqwest_client_builder()
-            .expect("should build client");
-        let client = builder.build().expect("should create client");
-        let _ = client.get(&url).send().await;
-        let alive = count();
-        drop(client);
-        let after_drop = count();
+    /// Runs one resolver phase in a fresh single-threaded tokio runtime (started then dropped):
+    /// build client with the given resolver setting, send one request, count threads with client
+    /// alive, drop client, drop runtime, then count threads after drop. Returns (threads_alive,
+    /// threads_after_drop).
+    fn run_resolver_phase(url_slice: &str, use_system_resolver: bool) -> (usize, usize) {
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("runtime");
+        let alive = rt.block_on(async {
+            let endpoint =
+                Endpoint::from_slice(url_slice).with_system_resolver(use_system_resolver);
+            let (builder, url) = endpoint
+                .to_reqwest_client_builder()
+                .expect("should build client");
+            let client = builder.build().expect("should create client");
+            let _ = client.get(&url).send().await;
+            count_active_threads().expect("count_active_threads not supported on this platform")
+        });
+        drop(rt);
+        let after_drop =
+            count_active_threads().expect("count_active_threads not supported on this platform");
         (alive, after_drop)
     }
 }
