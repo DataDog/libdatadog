@@ -1365,11 +1365,16 @@ fn test_receiver_emits_debug_logs_on_receiver_issue() -> anyhow::Result<()> {
         .context("spawning receiver process")?;
 
     {
+        use libdd_crashtracker::ErrorKind;
+
         let mut stdin = BufWriter::new(child.stdin.take().context("child stdin missing")?);
         for line in [
             "DD_CRASHTRACK_BEGIN_CONFIG".to_string(),
             serde_json::to_string(&config)?,
             "DD_CRASHTRACK_END_CONFIG".to_string(),
+            "DD_CRASHTRACK_BEGIN_KIND".to_string(),
+            serde_json::to_string(&ErrorKind::UnixSignal)?,
+            "DD_CRASHTRACK_END_KIND".to_string(),
             "DD_CRASHTRACK_BEGIN_METADATA".to_string(),
             serde_json::to_string(&metadata)?,
             "DD_CRASHTRACK_END_METADATA".to_string(),
@@ -1567,7 +1572,7 @@ fn assert_crash_ping_message(body: &str) {
 
     assert_eq!(message_json["version"].as_str(), Some("1.0"));
 
-    assert_eq!(message_json["kind"].as_str(), Some("Crash ping"));
+    assert_eq!(message_json["kind"].as_str(), Some("UnixSignal"));
 }
 
 // Old TestFixtures struct kept for UDS socket tests that weren't migrated
