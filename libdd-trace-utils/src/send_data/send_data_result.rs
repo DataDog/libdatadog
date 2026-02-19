@@ -3,13 +3,13 @@
 
 use crate::send_with_retry::{SendWithRetryError, SendWithRetryResult};
 use anyhow::anyhow;
-use libdd_capabilities::HttpResponse;
+use bytes::Bytes;
 use std::collections::HashMap;
 
 #[derive(Debug)]
 pub struct SendDataResult {
     /// Keeps track of the last request result.
-    pub last_result: anyhow::Result<HttpResponse>,
+    pub last_result: anyhow::Result<http::Response<Bytes>>,
     /// Count metric for 'trace_api.requests'.
     pub requests_count: u64,
     /// Count metric for 'trace_api.responses'. Each key maps a different HTTP status code.
@@ -56,9 +56,10 @@ impl SendDataResult {
     pub(crate) fn update(&mut self, res: SendWithRetryResult, bytes_sent: u64, chunks: u64) {
         match res {
             Ok((response, attempts)) => {
+                let status = response.status().as_u16();
                 *self
                     .responses_count_per_code
-                    .entry(response.status)
+                    .entry(status)
                     .or_default() += 1;
                 self.bytes_sent += bytes_sent;
                 self.chunks_sent += chunks;
@@ -67,7 +68,7 @@ impl SendDataResult {
             }
             Err(err) => match err {
                 SendWithRetryError::Http(response, attempts) => {
-                    let status_code = response.status;
+                    let status_code = response.status().as_u16();
                     self.errors_status_code += 1;
                     *self
                         .responses_count_per_code

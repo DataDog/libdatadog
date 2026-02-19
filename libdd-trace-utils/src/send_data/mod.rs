@@ -579,7 +579,7 @@ mod tests {
 
         mock.assert_async().await;
 
-        assert_eq!(res.last_result.unwrap().status, 202);
+        assert_eq!(res.last_result.unwrap().status().as_u16(), 202);
         assert_eq!(res.errors_timeout, 0);
         assert_eq!(res.errors_network, 0);
         assert_eq!(res.errors_status_code, 0);
@@ -624,7 +624,7 @@ mod tests {
 
         mock.assert_async().await;
 
-        assert_eq!(res.last_result.unwrap().status, 202);
+        assert_eq!(res.last_result.unwrap().status().as_u16(), 202);
         assert_eq!(res.errors_timeout, 0);
         assert_eq!(res.errors_network, 0);
         assert_eq!(res.errors_status_code, 0);
@@ -683,7 +683,7 @@ mod tests {
 
         mock.assert_async().await;
 
-        assert_eq!(res.last_result.unwrap().status, 200);
+        assert_eq!(res.last_result.unwrap().status().as_u16(), 200);
         assert_eq!(res.errors_timeout, 0);
         assert_eq!(res.errors_network, 0);
         assert_eq!(res.errors_status_code, 0);
@@ -741,7 +741,7 @@ mod tests {
 
         mock.assert_async().await;
 
-        assert_eq!(res.last_result.unwrap().status, 200);
+        assert_eq!(res.last_result.unwrap().status().as_u16(), 200);
         assert_eq!(res.errors_timeout, 0);
         assert_eq!(res.errors_network, 0);
         assert_eq!(res.errors_status_code, 0);
@@ -785,7 +785,7 @@ mod tests {
 
         mock.assert_calls_async(2).await;
 
-        assert_eq!(res.last_result.unwrap().status, 200);
+        assert_eq!(res.last_result.unwrap().status().as_u16(), 200);
         assert_eq!(res.errors_timeout, 0);
         assert_eq!(res.errors_network, 0);
         assert_eq!(res.errors_status_code, 0);
@@ -827,7 +827,7 @@ mod tests {
         mock.assert_calls_async(5).await;
 
         assert!(res.last_result.is_ok());
-        assert_eq!(res.last_result.unwrap().status, 500);
+        assert_eq!(res.last_result.unwrap().status().as_u16(), 500);
         assert_eq!(res.errors_timeout, 0);
         assert_eq!(res.errors_network, 0);
         assert_eq!(res.errors_status_code, 1);
