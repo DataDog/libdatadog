@@ -26,6 +26,8 @@ pub enum SendWithRetryError {
     Timeout(Attempts),
     /// Treats errors coming from networking.
     Network(HttpError, Attempts),
+    /// Treats errors while reading the response body.
+    ResponseBody(Attempts),
     /// Treats errors coming from building the request
     Build(Attempts),
 }
@@ -36,6 +38,7 @@ impl std::fmt::Display for SendWithRetryError {
             SendWithRetryError::Http(_, _) => write!(f, "Http error code received"),
             SendWithRetryError::Timeout(_) => write!(f, "Request timed out"),
             SendWithRetryError::Network(error, _) => write!(f, "Network error: {error}"),
+            SendWithRetryError::ResponseBody(_) => write!(f, "Failed to read response body"),
             SendWithRetryError::Build(_) => {
                 write!(f, "Failed to build request due to invalid property")
             }
@@ -163,12 +166,20 @@ pub async fn send_with_retry(
                     retry_strategy.delay(request_attempt).await;
                     continue;
                 } else {
+                    let classified_error = match e {
+                        HttpError::Timeout => SendWithRetryError::Timeout(request_attempt),
+                        HttpError::InvalidRequest(_) => SendWithRetryError::Build(request_attempt),
+                        HttpError::ResponseBody(_) => {
+                            SendWithRetryError::ResponseBody(request_attempt)
+                        }
+                        other => SendWithRetryError::Network(other, request_attempt),
+                    };
                     error!(
-                        error = ?e,
+                        error = ?classified_error,
                         attempts = request_attempt,
                         "Max retries exceeded, returning request error"
                     );
-                    return Err(SendWithRetryError::Network(e, request_attempt));
+                    return Err(classified_error);
                 }
             }
             Err(_) => {
