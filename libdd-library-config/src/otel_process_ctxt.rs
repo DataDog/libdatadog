@@ -1,7 +1,8 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-//! Implementation of the publisher part of the [OTEL process context](https://github.com/open-telemetry/opentelemetry-specification/pull/4719)
+//! Implementation of the publisher part of the [OTEL process
+//! context](https://github.com/open-telemetry/opentelemetry-specification/pull/4719)
 //!
 //! # A note on race conditions
 //!
@@ -25,7 +26,7 @@ pub mod linux {
         ffi::c_void,
         mem::ManuallyDrop,
         os::fd::AsFd as _,
-        ptr,
+        ptr::{self, addr_of_mut},
         sync::{
             atomic::{fence, AtomicU64, Ordering},
             Mutex, MutexGuard,
@@ -236,8 +237,9 @@ pub mod linux {
                 .context("madvise MADVISE_DONTFORK failed")?;
 
             let published_at_ns = time_now_ns().ok_or_else(|| {
-                anyhow::anyhow!("fail to get current time for process context publication")
+                anyhow::anyhow!("failed to get current time for process context publication")
             })?;
+
             let header = mapping.start_addr as *mut MappingHeader;
 
             unsafe {
@@ -275,12 +277,41 @@ pub mod linux {
             Ok(ProcessContextHandle { mapping, payload })
         }
 
-        /// Updates the context after initial publication. Currently unimplemented (always returns
-        /// `Err`).
-        fn update(&mut self, _payload: Vec<u8>) -> anyhow::Result<()> {
-            Err(anyhow::anyhow!(
-                "process context update isn't implemented yet"
-            ))
+        /// Updates the context after initial publication.
+        fn update(&mut self, payload: Vec<u8>) -> anyhow::Result<()> {
+            let header = self.mapping.start_addr as *mut MappingHeader;
+
+            // Note that setting `published_at_ns` to zero doesn't entirely avoid data races with
+            // the reader in theory, which could have read a previous non-zero value just before we
+            // flipped it but still see subsequent writes. However, since the reader is totally
+            // unable to manifest itself to the updating process, we can't have a truly atomic
+            // update of the whole header, and is the best we can do.
+            let published_at_atomic =
+                unsafe { AtomicU64::from_ptr(addr_of_mut!((*header).published_at_ns)) };
+
+            // A process shouldn't try to concurrently update its own context, so this shouldn't
+            // really happen.
+            if published_at_atomic.swap(0, Ordering::Acquire) == 0 {
+                return Err(anyhow::anyhow!(
+                    "concurrent update of the process context is not supported"
+                ));
+            }
+
+            let published_at_ns = time_now_ns()
+                .ok_or_else(|| anyhow::anyhow!("could not get the current timestamp"))?;
+
+            self.payload = payload;
+
+            unsafe {
+                (*header).payload_ptr = self.payload.as_ptr();
+                (*header).payload_size = self.payload.len().try_into().map_err(|_| {
+                    anyhow::anyhow!("couldn't update process protocol: new payload too large")
+                })?;
+            }
+
+            published_at_atomic.store(published_at_ns, Ordering::Release);
+
+            Ok(())
         }
     }
 
