@@ -3,7 +3,6 @@
 
 use super::ProfileExporter;
 use crate::{exporter::File, internal::EncodedProfile};
-use anyhow::Context;
 use crossbeam_channel::{Receiver, Sender};
 use libdd_common::tag::Tag;
 use reqwest::RequestBuilder;
@@ -15,7 +14,7 @@ pub enum ExporterManager {
     Active {
         cancel: CancellationToken,
         exporter: ProfileExporter,
-        handle: JoinHandle<anyhow::Result<()>>,
+        handle: JoinHandle<()>,
         sender: Sender<RequestBuilder>,
         receiver: Receiver<RequestBuilder>,
     },
@@ -35,9 +34,13 @@ impl ExporterManager {
         let cloned_receiver: Receiver<RequestBuilder> = receiver.clone();
         let cloned_cancel = cancel.clone();
         let handle = std::thread::spawn(move || {
-            let runtime = tokio::runtime::Builder::new_current_thread()
+            let Ok(runtime) = tokio::runtime::Builder::new_current_thread()
                 .enable_all()
-                .build()?;
+                .build()
+            else {
+                return;
+            };
+
             runtime.block_on(async {
                 loop {
                     let Ok(msg) = cloned_receiver.recv() else {
@@ -53,7 +56,6 @@ impl ExporterManager {
                     // TODO: Add logging for failed uploads.
                 }
             });
-            Ok(())
         });
         Ok(Self::Active {
             cancel,
@@ -84,13 +86,9 @@ impl ExporterManager {
         drop(sender);
 
         match handle.join() {
-            Ok(Ok(())) => {
+            Ok(()) => {
                 *self = Self::Suspended { exporter, inflight };
                 Ok(())
-            }
-            Ok(Err(e)) => {
-                *self = Self::Suspended { exporter, inflight };
-                Err(e).context("worker thread returned error")
             }
             Err(_) => {
                 *self = Self::Suspended { exporter, inflight };
