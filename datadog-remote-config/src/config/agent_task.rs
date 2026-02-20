@@ -148,6 +148,22 @@ mod tests {
     }
 
     #[test]
+    fn test_invalid_case_id_empty() {
+        let json_data = r#"{
+            "args": {
+                "case_id": "",
+                "hostname": "test-host",
+                "user_handle": "test@example.com"
+            },
+            "task_type": "tracer_flare",
+            "uuid": "test-uuid"
+        }"#;
+
+        let result = parse_json(json_data.as_bytes());
+        assert!(result.is_err());
+    }
+
+    #[test]
     fn test_serialization() {
         let task = AgentTaskFile {
             args: AgentTask {
