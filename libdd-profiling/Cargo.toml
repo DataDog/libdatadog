@@ -54,6 +54,8 @@ rand = "0.8"
 # The default resolver can hold locks or other global state that can cause deadlocks
 # or corruption when the process forks (e.g., in PHP-FPM or other forking environments).
 reqwest = { version = "0.13", features = ["multipart", "rustls", "hickory-dns"], default-features = false}
+rustls = { version = "0.23", default-features = false }
+rustls-platform-verifier = "0.6"
 rustc-hash = { version = "1.1", default-features = false }
 serde = {version = "1.0", features = ["derive"]}
 serde_json = {version = "1.0"}

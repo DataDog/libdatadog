@@ -65,16 +65,48 @@ impl ProfileExporter {
     /// The exporter can be used from any thread, but if using `send_blocking()`, the exporter
     /// should remain on the same thread for all blocking calls. See [`send_blocking`] for details.
     ///
+    /// # Performance
+    ///
+    /// This constructor initializes TLS on every call, which on Linux involves
+    /// loading the system certificate store from disk. Prefer [`new_with_tls`]
+    /// with a pre-created [`TlsConfig`] to avoid this repeated cost.
+    ///
     /// [`send_blocking`]: ProfileExporter::send_blocking
+    /// [`new_with_tls`]: ProfileExporter::new_with_tls
+    /// [`TlsConfig`]: super::TlsConfig
+    #[deprecated(note = "Use new_with_tls with a pre-created TlsConfig instead")]
     pub fn new(
+        profiling_library_name: &str,
+        profiling_library_version: &str,
+        family: &str,
+        tags: Vec<Tag>,
+        endpoint: Endpoint,
+    ) -> anyhow::Result<Self> {
+        let tls_config = super::TlsConfig::new()?;
+        Self::new_with_tls(
+            profiling_library_name,
+            profiling_library_version,
+            family,
+            tags,
+            endpoint,
+            tls_config,
+        )
+    }
+
+    /// Creates a new exporter with a pre-initialized TLS configuration.
+    ///
+    /// This avoids the per-exporter cost of loading the system certificate store and is
+    /// fork-safe on macOS when the [`TlsConfig`] was created before `fork()`.
+    ///
+    /// [`TlsConfig`]: super::TlsConfig
+    pub fn new_with_tls(
         profiling_library_name: &str,
         profiling_library_version: &str,
         family: &str,
         mut tags: Vec<Tag>,
         endpoint: Endpoint,
+        tls_config: super::TlsConfig,
     ) -> anyhow::Result<Self> {
-        let (builder, request_url) = endpoint.to_reqwest_client_builder()?;
-
         // Pre-build all static headers
         let mut headers = reqwest::header::HeaderMap::new();
 
@@ -117,6 +149,9 @@ impl ProfileExporter {
 
         // Precompute the base tags string (includes configured tags + Azure App Services tags)
         let base_tags_string: String = tags.iter().flat_map(|tag| [tag.as_ref(), ","]).collect();
+
+        let (builder, request_url) = endpoint.to_reqwest_client_builder()?;
+        let builder = builder.tls_backend_preconfigured(tls_config.0);
 
         Ok(Self {
             client: builder.build()?,

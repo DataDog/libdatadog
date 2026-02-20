@@ -25,6 +25,7 @@ fn create_file_exporter(
         endpoint.api_key = Some(key.to_string().into());
     }
 
+    #[allow(deprecated)]
     let exporter = ProfileExporter::new(
         profiling_library_name,
         profiling_library_version,

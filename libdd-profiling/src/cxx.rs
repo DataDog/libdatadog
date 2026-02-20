@@ -719,6 +719,7 @@ impl ProfileExporter {
             .map(TryInto::try_into)
             .collect::<Result<Vec<_>, _>>()?;
 
+        #[allow(deprecated)]
         let inner = exporter::ProfileExporter::new(
             profiling_library_name,
             profiling_library_version,
@@ -754,6 +755,7 @@ impl ProfileExporter {
             .map(TryInto::try_into)
             .collect::<Result<Vec<_>, _>>()?;
 
+        #[allow(deprecated)]
         let inner = exporter::ProfileExporter::new(
             profiling_library_name,
             profiling_library_version,
@@ -779,6 +781,7 @@ impl ProfileExporter {
             .map(TryInto::try_into)
             .collect::<Result<Vec<_>, _>>()?;
 
+        #[allow(deprecated)]
         let inner = exporter::ProfileExporter::new(
             profiling_library_name,
             profiling_library_version,

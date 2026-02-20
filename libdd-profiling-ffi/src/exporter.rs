@@ -4,6 +4,8 @@
 #![allow(renamed_and_removed_lints)]
 #![allow(clippy::box_vec)]
 
+use crate::arc_handle::ArcHandle;
+use crate::profile_status::ProfileStatus;
 use function_name::named;
 use libdd_common::tag::Tag;
 use libdd_common_ffi::slice::{AsBytes, ByteSlice, CharSlice, Slice};
@@ -11,7 +13,7 @@ use libdd_common_ffi::{
     wrap_with_ffi_result, wrap_with_void_ffi_result, Handle, Result, ToInner, VoidResult,
 };
 use libdd_profiling::exporter;
-use libdd_profiling::exporter::{ExporterManager, ProfileExporter};
+use libdd_profiling::exporter::{ExporterManager, ProfileExporter, TlsConfig};
 use libdd_profiling::internal::EncodedProfile;
 use std::borrow::Cow;
 use std::str::FromStr;
@@ -150,6 +152,7 @@ pub unsafe fn try_to_endpoint(
 #[no_mangle]
 #[must_use]
 #[named]
+#[deprecated(note = "Use ddog_prof_TlsConfig_new + ddog_prof_Exporter_new_with_tls instead")]
 pub unsafe extern "C" fn ddog_prof_Exporter_new(
     profiling_library_name: CharSlice,
     profiling_library_version: CharSlice,
@@ -165,13 +168,114 @@ pub unsafe extern "C" fn ddog_prof_Exporter_new(
         let tags = tags
             .map(|tags| tags.iter().cloned().collect())
             .unwrap_or_default();
+        #[allow(deprecated)]
+        let exporter = ProfileExporter::new(
+            library_name,
+            library_version,
+            family,
+            tags,
+            converted_endpoint,
+        )?;
+        anyhow::Ok(exporter.into())
+    })
+}
+
+/// Creates a new TLS configuration using the platform certificate verifier.
+///
+/// On Linux, this eagerly loads the native root certificate store, avoiding
+/// expensive repeated disk I/O on every exporter creation. On macOS, the
+/// platform verifier defers Security.framework calls to the first TLS
+/// handshake.
+///
+/// The returned handle is reference-counted and can be shared across threads
+/// and multiple exporter instances via `ddog_prof_TlsConfig_try_clone`.
+///
+/// # Safety
+/// `out` must be a non-null pointer to an uninitialized `ArcHandle<TlsConfig>`.
+#[no_mangle]
+#[named]
+pub unsafe extern "C" fn ddog_prof_TlsConfig_new(out: &mut ArcHandle<TlsConfig>) -> ProfileStatus {
+    match std::panic::catch_unwind(TlsConfig::new) {
+        Err(e) => ProfileStatus::from_error(libdd_common_ffi::utils::handle_panic_error(
+            e,
+            function_name!(),
+        )),
+        Ok(Err(e)) => ProfileStatus::from_error(e),
+        Ok(Ok(config)) => match ArcHandle::new(config) {
+            Ok(handle) => {
+                *out = handle;
+                ProfileStatus::OK
+            }
+            Err(e) => ProfileStatus::from(e),
+        },
+    }
+}
+
+/// Creates a reference-counted clone of the TLS configuration handle.
+///
+/// # Safety
+/// `tls` must point to a valid `ArcHandle<TlsConfig>`.
+/// `out` must be a non-null pointer to an uninitialized `ArcHandle<TlsConfig>`.
+#[no_mangle]
+pub unsafe extern "C" fn ddog_prof_TlsConfig_try_clone(
+    tls: &ArcHandle<TlsConfig>,
+    out: &mut ArcHandle<TlsConfig>,
+) -> ProfileStatus {
+    match tls.try_clone() {
+        Ok(clone) => {
+            *out = clone;
+            ProfileStatus::OK
+        }
+        Err(e) => ProfileStatus::from(e),
+    }
+}
+
+/// Drops a TLS configuration handle. The underlying config is freed when the
+/// last handle is dropped.
+///
+/// # Safety
+/// `tls` must point to a valid, non-null `ArcHandle<TlsConfig>`.
+#[no_mangle]
+pub unsafe extern "C" fn ddog_prof_TlsConfig_drop(tls: &mut ArcHandle<TlsConfig>) {
+    tls.drop_resource();
+}
+
+/// Creates a new exporter with a pre-initialized TLS configuration.
+///
+/// This is the preferred constructor for fork-safe, high-performance exporter creation.
+/// The `tls` handle should have been created with `ddog_prof_TlsConfig_new` before
+/// `fork()`.
+///
+/// # Safety
+/// All pointers must refer to valid objects of the correct types.
+#[no_mangle]
+#[must_use]
+#[named]
+pub unsafe extern "C" fn ddog_prof_Exporter_new_with_tls(
+    profiling_library_name: CharSlice,
+    profiling_library_version: CharSlice,
+    family: CharSlice,
+    tags: Option<&libdd_common_ffi::Vec<Tag>>,
+    endpoint: ProfilingEndpoint,
+    tls: &ArcHandle<TlsConfig>,
+) -> Result<Handle<ProfileExporter>> {
+    wrap_with_ffi_result!({
+        let library_name = profiling_library_name.try_to_utf8()?;
+        let library_version = profiling_library_version.try_to_utf8()?;
+        let family = family.try_to_utf8()?;
+        let converted_endpoint = unsafe { try_to_endpoint(endpoint)? };
+        let tags = tags
+            .map(|tags| tags.iter().cloned().collect())
+            .unwrap_or_default();
+        let tls_config = tls.as_inner().map_err(anyhow::Error::from)?.clone();
         anyhow::Ok(
-            ProfileExporter::new(
+            ProfileExporter::new_with_tls(
                 library_name,
                 library_version,
                 family,
                 tags,
                 converted_endpoint,
+                tls_config,
             )?
             .into(),
         )
@@ -509,6 +613,7 @@ pub unsafe extern "C" fn ddog_prof_ExporterManager_drop(mut manager: *mut Handle
 }
 
 #[cfg(test)]
+#[allow(deprecated)]
 mod tests {
     use super::*;
     use libdd_common::tag;

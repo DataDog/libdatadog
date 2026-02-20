@@ -257,6 +257,7 @@ async fn export_full_profile(
     });
 
     // Create exporter and send
+    #[allow(deprecated)]
     let exporter = ProfileExporter::new("test-lib", "1.0.0", "native", tags, endpoint)?;
     let profile = EncodedProfile::test_instance()?;
 
