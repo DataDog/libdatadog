@@ -178,7 +178,7 @@ fn convert_link(link: &V1SpanLink, data: &TraceStaticData<BytesData>) -> V04Span
     for (k, v) in &link.attributes {
         out.attributes.insert(
             BytesString::from(resolve(data, *k)),
-            BytesString::from(&value_to_string(v, data)),
+            BytesString::from(value_to_string(v, data)),
         );
     }
     out
@@ -210,12 +210,12 @@ fn v1_to_v04_any_value(v: &V1Value, data: &TraceStaticData<BytesData>) -> V04Any
         V1Value::Bytes(b) => {
             let bytes: &[u8] = data.get_bytes(*b).borrow();
             let hex: String = bytes.iter().map(|byte| format!("{byte:02x}")).collect();
-            V04AnyValue::SingleValue(V04ArrayValue::String(BytesString::from(&hex)))
+            V04AnyValue::SingleValue(V04ArrayValue::String(BytesString::from(hex)))
         }
         V1Value::Array(arr) =>
             V04AnyValue::Array(arr.iter().map(|elem| v1_to_v04_array_elem(elem, data)).collect()),
         V1Value::Map(_) =>
-            V04AnyValue::SingleValue(V04ArrayValue::String(BytesString::from(&value_to_string(v, data)))),
+            V04AnyValue::SingleValue(V04ArrayValue::String(BytesString::from(value_to_string(v, data)))),
     }
 }
 
@@ -226,7 +226,7 @@ fn v1_to_v04_array_elem(v: &V1Value, data: &TraceStaticData<BytesData>) -> V04Ar
         V1Value::Integer(i) => V04ArrayValue::Integer(*i),
         V1Value::Double(d) => V04ArrayValue::Double(*d),
         // Bytes, nested arrays, maps → string representation.
-        _ => V04ArrayValue::String(BytesString::from(&value_to_string(v, data))),
+        _ => V04ArrayValue::String(BytesString::from(value_to_string(v, data))),
     }
 }
 
@@ -283,7 +283,7 @@ fn flatten_value(
                 metrics.insert(BytesString::from(key), *i as f64);
             } else {
                 let s = i.to_string();
-                meta.insert(BytesString::from(key), BytesString::from(&s));
+                meta.insert(BytesString::from(key), BytesString::from(s));
             }
         }
         V1Value::Double(d) => {
@@ -326,7 +326,7 @@ fn flatten_value_no_overwrite(
                 span.metrics.entry(BytesString::from(key)).or_insert(*i as f64);
             } else {
                 let s = i.to_string();
-                span.meta.entry(BytesString::from(key)).or_insert_with(|| BytesString::from(&s));
+                span.meta.entry(BytesString::from(key)).or_insert_with(|| BytesString::from(s));
             }
         }
         V1Value::Double(d) => {
