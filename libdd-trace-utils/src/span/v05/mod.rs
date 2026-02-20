@@ -3,7 +3,7 @@
 
 use std::cmp::Ordering;
 use std::collections::hash_map::Entry;
-use crate::span::{OwnedTraceData, TraceProjector, Traces, TraceAttributes, TraceAttributesOp, parse_span_kind, span_kind_to_str, AttributeAnyContainer, TraceAttributesMutOp, TraceAttributesMut, AttributeAnyValueType, TraceAttributesString, AttributeAnySetterContainer, AttributeAnyGetterContainer, TraceAttributesBoolean, TraceAttributesInteger, TraceAttributesDouble, SpanDataContents, AttrRef, TraceData, IntoData, TraceDataLifetime, TracesMut};
+use crate::span::{OwnedTraceData, TraceProjector, Traces, TraceAttributes, TraceAttributesOp, parse_span_kind, span_kind_to_str, AttributeAnyContainer, TraceAttributesMutOp, TraceAttributesMut, AttributeAnyValueType, TraceAttributesString, AttributeAnySetterContainer, AttributeAnyGetterContainer, TraceAttributesBoolean, TraceAttributesInteger, TraceAttributesDouble, SpanDataContents, AttrRef, TraceData, IntoData, TraceDataLifetime, TracesMut, TraceAttributeGetterTypes, TraceAttributeSetterTypes};
 use anyhow::Result;
 use serde::Serialize;
 use std::borrow::Borrow;
@@ -496,10 +496,12 @@ impl<'s, D: TraceDataLifetime<'s>> TraceProjector<'s, D> for ChunkCollection<D> 
     }
 }
 //note: trait bound `trace::TraceAttributes<'_, T, D, trace::AttrRef<'_, <T as trace::TraceProjector<D>>::Span>, <T as trace::TraceProjector<D>>::Span, 0>: trace::TraceAttributesOp<'_, T, D, <T as trace::TraceProjector<D>>::Span>` was not satisfied
-impl<'a, 'b, D: TraceData, const ISMUT: u8> TraceAttributesOp<'b, 'a, ChunkCollection<D>, D, Span> for TraceAttributes<'a, ChunkCollection<D>, D, AttrRef<'b, Span>, Span, ISMUT> {
+impl<'a, 'b, D: TraceData, const ISMUT: u8> TraceAttributeGetterTypes<'b, 'a, ChunkCollection<D>, D, Span> for TraceAttributes<'a, ChunkCollection<D>, D, AttrRef<'b, Span>, Span, ISMUT> {
     type Array = ();
     type Map = ();
+}
 
+impl<'a, 'b, D: TraceData, const ISMUT: u8> TraceAttributesOp<'b, 'a, ChunkCollection<D>, D, Span> for TraceAttributes<'a, ChunkCollection<D>, D, AttrRef<'b, Span>, Span, ISMUT> {
     fn get<K>(container: &'b Span, storage: &'a Storage<D>, key: &K) -> Option<AttributeAnyGetterContainer<'b, 'a, Self, ChunkCollection<D>, D, Span>>
     where
         K: ?Sized + Hash + Equivalent<<D::Text as SpanDataContents>::RefCopy>
@@ -516,7 +518,7 @@ impl<'a, 'b, D: TraceData, const ISMUT: u8> TraceAttributesOp<'b, 'a, ChunkColle
     }
 }
 
-impl<'a, 'b, D: TraceData> TraceAttributesMutOp<'b, 'a, ChunkCollection<D>, D, Span> for TraceAttributesMut<'a, ChunkCollection<D>, D, AttrRef<'b, Span>, Span> {
+impl<'a, 'b, D: TraceData> TraceAttributeSetterTypes<'b, 'a, ChunkCollection<D>, D, Span> for TraceAttributesMut<'a, ChunkCollection<D>, D, AttrRef<'b, Span>, Span> {
     type MutString = &'a mut TraceStringRef;
     type MutBytes = ();
     type MutBoolean = &'b mut f64;
@@ -524,7 +526,9 @@ impl<'a, 'b, D: TraceData> TraceAttributesMutOp<'b, 'a, ChunkCollection<D>, D, S
     type MutDouble = &'b mut f64;
     type MutArray = ();
     type MutMap = ();
+}
 
+impl<'a, 'b, D: TraceData> TraceAttributesMutOp<'b, 'a, ChunkCollection<D>, D, Span> for TraceAttributesMut<'a, ChunkCollection<D>, D, AttrRef<'b, Span>, Span> {
     fn get_mut<K>(container: &'b mut Span, storage: &mut Storage<D>, key: &K) -> Option<AttributeAnySetterContainer<'b, 'a, Self, ChunkCollection<D>, D, Span>>
     where
         K: ?Sized + Hash + Equivalent<<D::Text as SpanDataContents>::RefCopy>,
@@ -611,10 +615,12 @@ impl<'a> TraceAttributesDouble for &'a mut f64 {
 }
 
 // Empty implementations for SpanLink and SpanEvent which don't have attributes in v05
-impl<'b, 'a, D: TraceData, const ISMUT: u8> TraceAttributesOp<'b, 'a, ChunkCollection<D>, D, [(); 0]> for TraceAttributes<'a, ChunkCollection<D>, D, AttrRef<'b, [(); 0]>, [(); 0], ISMUT> {
+impl<'b, 'a, D: TraceData, const ISMUT: u8> TraceAttributeGetterTypes<'b, 'a, ChunkCollection<D>, D, [(); 0]> for TraceAttributes<'a, ChunkCollection<D>, D, AttrRef<'b, [(); 0]>, [(); 0], ISMUT> {
     type Array = ();
     type Map = ();
+}
 
+impl<'b, 'a, D: TraceData, const ISMUT: u8> TraceAttributesOp<'b, 'a, ChunkCollection<D>, D, [(); 0]> for TraceAttributes<'a, ChunkCollection<D>, D, AttrRef<'b, [(); 0]>, [(); 0], ISMUT> {
     fn get<K>(_container: &'b [(); 0], _storage: &'a Storage<D>, _key: &K) -> Option<AttributeAnyGetterContainer<'b, 'a, Self, ChunkCollection<D>, D, [(); 0]>>
     where
         K: ?Sized + Hash + Equivalent<<D::Text as SpanDataContents>::RefCopy>,
@@ -623,7 +629,7 @@ impl<'b, 'a, D: TraceData, const ISMUT: u8> TraceAttributesOp<'b, 'a, ChunkColle
     }
 }
 
-impl<'b, 'a, D: TraceData> TraceAttributesMutOp<'b, 'a, ChunkCollection<D>, D, [(); 0]> for TraceAttributesMut<'a, ChunkCollection<D>, D, AttrRef<'b, [(); 0]>, [(); 0]> {
+impl<'b, 'a, D: TraceData> TraceAttributeSetterTypes<'b, 'a, ChunkCollection<D>, D, [(); 0]> for TraceAttributesMut<'a, ChunkCollection<D>, D, AttrRef<'b, [(); 0]>, [(); 0]> {
     type MutString = ();
     type MutBytes = ();
     type MutBoolean = ();
@@ -631,7 +637,9 @@ impl<'b, 'a, D: TraceData> TraceAttributesMutOp<'b, 'a, ChunkCollection<D>, D, [
     type MutDouble = ();
     type MutArray = ();
     type MutMap = ();
+}
 
+impl<'b, 'a, D: TraceData> TraceAttributesMutOp<'b, 'a, ChunkCollection<D>, D, [(); 0]> for TraceAttributesMut<'a, ChunkCollection<D>, D, AttrRef<'b, [(); 0]>, [(); 0]> {
     fn get_mut<K>(_container: &'b mut [(); 0], _storage: &mut Storage<D>, _key: &K) -> Option<AttributeAnySetterContainer<'b, 'a, Self, ChunkCollection<D>, D, [(); 0]>>
     where
         K: ?Sized + Hash + Equivalent<<D::Text as SpanDataContents>::RefCopy>
@@ -650,10 +658,12 @@ impl<'b, 'a, D: TraceData> TraceAttributesMutOp<'b, 'a, ChunkCollection<D>, D, [
     }
 }
 
-impl<'b, 'a, D: TraceData, const ISMUT: u8> TraceAttributesOp<'b, 'a, ChunkCollection<D>, D, [(); 0]> for TraceAttributes<'a, ChunkCollection<D>, D, AttrRef<'b, Span>, Span, ISMUT> {
+impl<'b, 'a, D: TraceData, const ISMUT: u8> TraceAttributeGetterTypes<'b, 'a, ChunkCollection<D>, D, [(); 0]> for TraceAttributes<'a, ChunkCollection<D>, D, AttrRef<'b, Span>, Span, ISMUT> {
     type Array = ();
     type Map = ();
+}
 
+impl<'b, 'a, D: TraceData, const ISMUT: u8> TraceAttributesOp<'b, 'a, ChunkCollection<D>, D, [(); 0]> for TraceAttributes<'a, ChunkCollection<D>, D, AttrRef<'b, Span>, Span, ISMUT> {
     fn get<K>(_container: &'b [(); 0], _storage: &'a Storage<D>, _key: &K) -> Option<AttributeAnyGetterContainer<'b, 'a, Self, ChunkCollection<D>, D, [(); 0]>>
     where
         K: ?Sized + Hash + Equivalent<<D::Text as SpanDataContents>::RefCopy>
@@ -662,10 +672,12 @@ impl<'b, 'a, D: TraceData, const ISMUT: u8> TraceAttributesOp<'b, 'a, ChunkColle
     }
 }
 
-impl<'b, 'a, D: TraceData, const ISMUT: u8> TraceAttributesOp<'b, 'a, ChunkCollection<D>, D, Trace> for TraceAttributes<'a, ChunkCollection<D>, D, AttrRef<'b, Trace>, Trace, ISMUT> {
+impl<'b, 'a, D: TraceData, const ISMUT: u8> TraceAttributeGetterTypes<'b, 'a, ChunkCollection<D>, D, Trace> for TraceAttributes<'a, ChunkCollection<D>, D, AttrRef<'b, Trace>, Trace, ISMUT> {
     type Array = ();
     type Map = ();
+}
 
+impl<'b, 'a, D: TraceData, const ISMUT: u8> TraceAttributesOp<'b, 'a, ChunkCollection<D>, D, Trace> for TraceAttributes<'a, ChunkCollection<D>, D, AttrRef<'b, Trace>, Trace, ISMUT> {
     fn get<K>(_container: &'b Trace, _storage: &'a Storage<D>, _key: &K) -> Option<AttributeAnyGetterContainer<'b, 'a, Self, ChunkCollection<D>, D, Trace>>
     where
         K: ?Sized + Hash + Equivalent<<D::Text as SpanDataContents>::RefCopy>
@@ -674,10 +686,12 @@ impl<'b, 'a, D: TraceData, const ISMUT: u8> TraceAttributesOp<'b, 'a, ChunkColle
     }
 }
 
-impl<'b, 'a, D: TraceData, const ISMUT: u8> TraceAttributesOp<'b, 'a, ChunkCollection<D>, D, Chunk> for TraceAttributes<'a, ChunkCollection<D>, D, AttrRef<'b, Chunk>, Chunk, ISMUT> {
+impl<'b, 'a, D: TraceData, const ISMUT: u8> TraceAttributeGetterTypes<'b, 'a, ChunkCollection<D>, D, Chunk> for TraceAttributes<'a, ChunkCollection<D>, D, AttrRef<'b, Chunk>, Chunk, ISMUT> {
     type Array = ();
     type Map = ();
+}
 
+impl<'b, 'a, D: TraceData, const ISMUT: u8> TraceAttributesOp<'b, 'a, ChunkCollection<D>, D, Chunk> for TraceAttributes<'a, ChunkCollection<D>, D, AttrRef<'b, Chunk>, Chunk, ISMUT> {
     fn get<K>(_container: &'b Chunk, _storage: &'a Storage<D>, _key: &K) -> Option<AttributeAnyGetterContainer<'b, 'a, Self, ChunkCollection<D>, D, Chunk>>
     where
         K: ?Sized + Hash + Equivalent<<D::Text as SpanDataContents>::RefCopy>
@@ -686,7 +700,7 @@ impl<'b, 'a, D: TraceData, const ISMUT: u8> TraceAttributesOp<'b, 'a, ChunkColle
     }
 }
 
-impl<'b, 'a, D: TraceData> TraceAttributesMutOp<'b, 'a, ChunkCollection<D>, D, Chunk> for TraceAttributesMut<'a, ChunkCollection<D>, D, AttrRef<'b, Chunk>, Chunk> {
+impl<'b, 'a, D: TraceData> TraceAttributeSetterTypes<'b, 'a, ChunkCollection<D>, D, Chunk> for TraceAttributesMut<'a, ChunkCollection<D>, D, AttrRef<'b, Chunk>, Chunk> {
     type MutString = ();
     type MutBytes = ();
     type MutBoolean = ();
@@ -694,7 +708,9 @@ impl<'b, 'a, D: TraceData> TraceAttributesMutOp<'b, 'a, ChunkCollection<D>, D, C
     type MutDouble = ();
     type MutArray = ();
     type MutMap = ();
+}
 
+impl<'b, 'a, D: TraceData> TraceAttributesMutOp<'b, 'a, ChunkCollection<D>, D, Chunk> for TraceAttributesMut<'a, ChunkCollection<D>, D, AttrRef<'b, Chunk>, Chunk> {
     fn get_mut<K>(_container: &'b mut Chunk, _storage: &mut Storage<D>, _key: &K) -> Option<AttributeAnySetterContainer<'b, 'a, Self, ChunkCollection<D>, D, Chunk>>
     where
         K: ?Sized + Hash + Equivalent<<D::Text as SpanDataContents>::RefCopy>
@@ -713,7 +729,7 @@ impl<'b, 'a, D: TraceData> TraceAttributesMutOp<'b, 'a, ChunkCollection<D>, D, C
     }
 }
 
-impl<'b, 'a, D: TraceData> TraceAttributesMutOp<'b, 'a, ChunkCollection<D>, D, Trace> for TraceAttributesMut<'a, ChunkCollection<D>, D, AttrRef<'b, Trace>, Trace> {
+impl<'b, 'a, D: TraceData> TraceAttributeSetterTypes<'b, 'a, ChunkCollection<D>, D, Trace> for TraceAttributesMut<'a, ChunkCollection<D>, D, AttrRef<'b, Trace>, Trace> {
     type MutString = ();
     type MutBytes = ();
     type MutBoolean = ();
@@ -721,7 +737,9 @@ impl<'b, 'a, D: TraceData> TraceAttributesMutOp<'b, 'a, ChunkCollection<D>, D, T
     type MutDouble = ();
     type MutArray = ();
     type MutMap = ();
+}
 
+impl<'b, 'a, D: TraceData> TraceAttributesMutOp<'b, 'a, ChunkCollection<D>, D, Trace> for TraceAttributesMut<'a, ChunkCollection<D>, D, AttrRef<'b, Trace>, Trace> {
     fn get_mut<K>(_container: &'b mut Trace, _storage: &mut Storage<D>, _key: &K) -> Option<AttributeAnySetterContainer<'b, 'a, Self, ChunkCollection<D>, D, Trace>>
     where
         K: ?Sized + Hash + Equivalent<<D::Text as SpanDataContents>::RefCopy>

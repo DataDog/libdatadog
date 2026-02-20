@@ -57,7 +57,7 @@ pub fn to_v04(payload: &TracePayload<BytesData>) -> Vec<Vec<V04Span<BytesData>>>
     let data = &payload.static_data;
     let traces = &payload.traces;
 
-    traces.chunks.iter().enumerate().map(|(chunk_idx, chunk)| {
+    traces.chunks.iter().map(|chunk| {
         // Convert each span individually.
         let mut spans: Vec<V04Span<BytesData>> = chunk.spans.iter()
             .map(|s| convert_span(s, data, chunk.trace_id))
