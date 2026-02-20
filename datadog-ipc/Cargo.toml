@@ -39,7 +39,7 @@ tokio = { version = "1.23", features = [
     "io-util",
 ] }
 tracing = { version = "0.1" }
-tracing-subscriber = { version = "0.3.11" }
+tracing-subscriber = { version = "0.3.22" }
 spawn_worker = { path = "../spawn_worker" }
 
 [target.'cfg(not(windows))'.dependencies]
