@@ -183,8 +183,7 @@ jobs:
           ./scripts/commits-since-release.sh "$(cat /tmp/crates.json)" > /tmp/commits-by-crate.json
           
           # Capture release branch tip now (while HEAD=release). Use this in Release version bumps
-          # so tag/merge-base resolution uses the same ref the script used; avoids failures after
-          # we switch to the new proposal branch.
+          # so tag/merge-base resolution uses the same ref the script used.
           git rev-parse HEAD > /tmp/release_head_sha
           echo "Release branch HEAD (saved for later): $(cat /tmp/release_head_sha)"
 
@@ -194,14 +193,17 @@ jobs:
       - name: Create a branch for the release proposal
         id: proposal-branch
         run: |
-          git status
-          
           if [ "$(git rev-parse --is-shallow-repository)" = "true" ]; then
             echo "Repository is shallow, fetching full history..."
             git fetch --unshallow
           fi
 
-          git fetch --depth=2147483647 --tags origin main release
+          # TODO: check if this is really necessary, we should have the full history from
+          # previous steps.
+          # Assure we have the full history, 2147483647 is the highest integer number that
+          # git accepts.
+          git fetch --depth=2147483647 --tags origin "${{ env.MAIN_BRANCH }}" "${{ env.RELEASE_BRANCH }}"
+
           git checkout "${{ env.RELEASE_BRANCH }}"
           TIMESTAMP=$(date +%Y%m%d-%H%M%S)
           BRANCH_NAME="${{ env.PROPOSAL_BRANCH_PREFIX }}/${{ inputs.crate }}/$TIMESTAMP"
@@ -215,15 +217,12 @@ jobs:
         run: |
           echo "Release version bumps..."
 
-          # After creating and pushing the proposal branch, tag/merge-base resolution can fail
-          # (tags no longer seen as ancestors of release_head_sha). Re-fetch both main and release
-          # branches with tags, and unshallow if needed, so we have full history needed for merge-base.
-          # Fetching both branches ensures we have the complete history where tags were originally created.
+          # TODO: check if this is really necessary, we should have the full history from
+          # previous steps.
           if [ "$(git rev-parse --is-shallow-repository)" = "true" ]; then
             echo "Repository is shallow, fetching full history..."
             git fetch --unshallow
           fi
-          git fetch --depth=2147483647 origin "${{ env.MAIN_BRANCH }}" "${{ env.RELEASE_BRANCH }}" --tags
 
           # Initialize results array
           echo "[]" > /tmp/api-changes.json
@@ -253,9 +252,8 @@ jobs:
 
             if [ "$TAG_EXISTS" = "true" ]; then
               # Explicitly dereference annotated tags to their underlying commit.
-              # Several git commands (git branch --contains, git merge-base --is-ancestor,
-              # git log A..B) do not consistently dereference annotated tag objects across
-              # all git versions — using the commit SHA directly avoids all such issues.
+              # Several git commands do not consistently dereference annotated tag objects
+              # across all git versions.
               TAG_COMMIT=$(git rev-parse "${TAG}^{}" 2>/dev/null || echo "")
               if [ -z "$TAG_COMMIT" ]; then
                 echo "ERROR: Could not dereference tag $TAG to a commit" >&2
@@ -273,11 +271,9 @@ jobs:
                     RANGE="$MERGE_BASE..$ORIGINAL_HEAD"
                     echo "  Tag $TAG is NOT ancestor of HEAD, using merge-base: $RANGE"
                 else
-                    # No common ancestor (tag is on unrelated history, e.g. created before the
-                    # release branch existed). Derive the range start from the parent of the
-                    # oldest commit found by commits-since-release.sh. That commit is guaranteed
-                    # to be in the release branch, so git can compute TREESAME correctly and the
-                    # path filter won't include unrelated commits.
+                    # No common ancestor, tag is on unrelated history. Derive the range start from
+                    # the parent of the oldest commit found by commits-since-release.sh. That way
+                    # git can compute TREESAME correctly and the path filter won't include unrelated commits.
                     OLDEST_COMMIT=$(echo "$COMMITS" | jq -r '.[-1].hash // empty')
                     OLDEST_PARENT=$(git rev-parse "${OLDEST_COMMIT}^" 2>/dev/null || echo "")
                     if [ -n "$OLDEST_PARENT" ]; then
@@ -310,9 +306,6 @@ jobs:
 
               LEVEL=$(echo "$SEMVER_LEVEL" | jq -r '.level')
               
-              # TODO: cargo release warns if there are no changes to the public API
-              # warning: updating crate to 4.0.1 despite no changes made since tag crate-v4.0.0
-              # Should we skip the release if there are no changes to the public API?
               echo "Executing cargo release for $NAME since $TAG with level $LEVEL..."
               cargo release version -p "$NAME" --prev-tag-name "$TAG" --allow-branch "$BRANCH_NAME" -x $LEVEL --no-confirm
 
@@ -346,10 +339,8 @@ jobs:
             NEXT_TAG="$TAG_PREFIX$NEXT_VERSION"
 
             # Build a tight range from commits already found by commits-since-release.sh.
-            # The commits array is sorted newest-first, so [0] is newest and [-1] is oldest.
-            # Using the parent of the oldest commit as range start guarantees the commit is
-            # in the release branch history, avoiding CI git path-filter quirks with unrelated
-            # tag histories.
+            # This will save some time analising unnecessary commits and prevent unrelated commits
+            # go through git-cliff filtering process.
             NEWEST_COMMIT=$(echo "$COMMITS" | jq -r '.[0].hash // empty')
             OLDEST_COMMIT=$(echo "$COMMITS" | jq -r '.[-1].hash // empty')
             OLDEST_PARENT=$(git rev-parse "${OLDEST_COMMIT}^" 2>/dev/null || echo "")
@@ -360,21 +351,11 @@ jobs:
             fi
             echo "Executing git cliff for $NAME since $COMMITS_RANGE (oldest: $OLDEST_COMMIT, newest: $NEWEST_COMMIT), next tag: $NEXT_TAG..."
 
-            # Two-step changelog generation to avoid git-cliff --include-path unreliability.
-            #
-            # Problem: git-cliff's --include-path uses cumulative tree diffs (range-start to
-            # each commit) rather than per-commit diffs. This causes commits that don't touch
-            # the crate to pass the filter if an earlier commit in the range does touch it.
-            # Additionally, existing tags in the range can override --tag or split commits
-            # into multiple releases unexpectedly.
-            #
-            # Solution:
-            # 1. Generate git-cliff context with --ignore-tags ".*" so no existing repository
-            #    tags interfere. --tag sets the version correctly.
-            # 2. Filter context commits to exactly those in $COMMITS (by full SHA match).
-            #    commits-since-release.sh already did the correct path filtering via git log.
-            # 3. Set previous.version so cliff.toml can render the comparison URL.
-            # 4. Feed filtered context to git-cliff via --from-context to render the changelog.
+            # git-cliff's --include-path uses cumulative tree diffs rather than per-commit
+            # diffs. This causes commits that don't touch the crate to pass the filter if an
+            # earlier commit in the range does touch it. In order to avoid that a first pass
+            # will generate the context inside the commit range and then a second step will
+            # filter the the commits according to the previously computed range stored in COMMITS.
             CLIFF_CONTEXT_FILE=$(mktemp /tmp/git-cliff-context-XXXXXX.json)
             CLIFF_HASHES_FILE=$(mktemp /tmp/git-cliff-hashes-XXXXXX.json)
             CLIFF_FILTERED_FILE=$(mktemp /tmp/git-cliff-filtered-XXXXXX.json)
