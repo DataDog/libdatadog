@@ -98,6 +98,42 @@ fn run_standard_crash_test_refactored(
 
 #[test]
 #[cfg_attr(miri, ignore)]
+fn test_crash_tracking_bin_unhandled_exception() {
+    let config = CrashTestConfig::new(
+        BuildProfile::Release,
+        TestMode::DoNothing,
+        CrashType::UnhandledException,
+    );
+    let artifacts = StandardArtifacts::new(config.profile);
+    let artifacts_map = build_artifacts(&artifacts.as_slice()).unwrap();
+
+    let validator: ValidatorFn = Box::new(|payload, fixtures| {
+        PayloadValidator::new(payload)
+            .validate_counters()?
+            .validate_error_kind("UnhandledException")?
+            .validate_error_message_contains("Process was terminated due to an unhandled exception of type 'RuntimeException'. Message: an exception occured")?
+            // The two frames emitted in the bin: test_function1 and test_function2
+            .validate_callstack_functions(&["test_function1", "test_function2"])?;
+
+        // Unhandled exceptions have no signal info
+        let sig_info = &payload["sig_info"];
+        assert!(
+            sig_info.is_null()
+                || sig_info.is_object() && sig_info.as_object().is_none_or(|m| m.is_empty()),
+            "Expected no sig_info for unhandled exception, got: {sig_info:?}"
+        );
+
+        // Validate rest of telemetry
+        validate_telemetry(&fixtures.crash_telemetry_path, "unhandled_exception")?;
+
+        Ok(())
+    });
+
+    run_crash_test_with_artifacts(&config, &artifacts_map, &artifacts, validator).unwrap();
+}
+
+#[test]
+#[cfg_attr(miri, ignore)]
 fn test_crash_tracking_bin_runtime_callback_frame() {
     let config = CrashTestConfig::new(
         BuildProfile::Release,
@@ -1027,6 +1063,12 @@ fn assert_siginfo_message(sig_info: &Value, crash_typ: &str) {
             assert_eq!(sig_info["si_signo"], libc::SIGILL);
             assert_eq!(sig_info["si_signo_human_readable"], "SIGILL");
         }
+        "unhandled_exception" => {
+            assert!(
+                sig_info.is_null()
+                    || sig_info.is_object() && sig_info.as_object().is_none_or(|m| m.is_empty())
+            );
+        }
         _ => panic!("unexpected crash_typ {crash_typ}"),
     }
 }
@@ -1101,9 +1143,10 @@ fn assert_telemetry_message(crash_telemetry: &[u8], crash_typ: &str) {
             "profiler_unwinding:0".to_string(),
         ]);
 
+    assert!(base_expected_tags.is_subset(&tags), "{tags:?}");
+
     match crash_typ {
         "null_deref" => {
-            assert!(base_expected_tags.is_subset(&tags), "{tags:?}");
             assert!(tags.contains("si_addr:0x0000000000000000"), "{tags:?}");
             assert!(
                 tags.contains("si_code_human_readable:SEGV_ACCERR")
@@ -1118,17 +1161,14 @@ fn assert_telemetry_message(crash_telemetry: &[u8], crash_typ: &str) {
             );
         }
         "kill_sigabrt" => {
-            assert!(base_expected_tags.is_subset(&tags), "{tags:?}");
             assert!(tags.contains("si_signo_human_readable:SIGABRT"), "{tags:?}");
             assert!(tags.contains("si_signo:6"), "{tags:?}");
         }
         "kill_sigill" => {
-            assert!(base_expected_tags.is_subset(&tags), "{tags:?}");
             assert!(tags.contains("si_signo_human_readable:SIGILL"), "{tags:?}");
             assert!(tags.contains("si_signo:4"), "{tags:?}");
         }
         "kill_sigbus" => {
-            assert!(base_expected_tags.is_subset(&tags), "{tags:?}");
             assert!(tags.contains("si_signo_human_readable:SIGBUS"), "{tags:?}");
             // SIGBUS can be 7 or 10, depending on the os.
             assert!(
@@ -1137,22 +1177,18 @@ fn assert_telemetry_message(crash_telemetry: &[u8], crash_typ: &str) {
             );
         }
         "kill_sigsegv" => {
-            assert!(base_expected_tags.is_subset(&tags), "{tags:?}");
             assert!(tags.contains("si_signo_human_readable:SIGSEGV"), "{tags:?}");
             assert!(tags.contains("si_signo:11"), "{tags:?}");
         }
         "raise_sigabrt" => {
-            assert!(base_expected_tags.is_subset(&tags), "{tags:?}");
             assert!(tags.contains("si_signo_human_readable:SIGABRT"), "{tags:?}");
             assert!(tags.contains("si_signo:6"), "{tags:?}");
         }
         "raise_sigill" => {
-            assert!(base_expected_tags.is_subset(&tags), "{tags:?}");
             assert!(tags.contains("si_signo_human_readable:SIGILL"), "{tags:?}");
             assert!(tags.contains("si_signo:4"), "{tags:?}");
         }
         "raise_sigbus" => {
-            assert!(base_expected_tags.is_subset(&tags), "{tags:?}");
             assert!(tags.contains("si_signo_human_readable:SIGBUS"), "{tags:?}");
             // SIGBUS can be 7 or 10, depending on the os.
             assert!(
@@ -1161,9 +1197,11 @@ fn assert_telemetry_message(crash_telemetry: &[u8], crash_typ: &str) {
             );
         }
         "raise_sigsegv" => {
-            assert!(base_expected_tags.is_subset(&tags), "{tags:?}");
             assert!(tags.contains("si_signo_human_readable:SIGSEGV"), "{tags:?}");
             assert!(tags.contains("si_signo:11"), "{tags:?}");
+        }
+        "unhandled_exception" => {
+            // Unhandled exceptions have no signal info tags
         }
         _ => panic!("{crash_typ}"),
     }

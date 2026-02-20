@@ -106,6 +106,19 @@ impl Receiver {
         }
     }
 
+    /// Resolves the right receiver for a given crashtracker config:
+    /// connects to `unix_socket_path` if set, otherwise spawns from stored receiver config.
+    pub(crate) fn from_crashtracker_config(
+        config: &crate::shared::configuration::CrashtrackerConfiguration,
+    ) -> Result<Self, ReceiverError> {
+        let unix_socket_path = config.unix_socket_path().as_deref().unwrap_or_default();
+        if unix_socket_path.is_empty() {
+            Self::spawn_from_stored_config()
+        } else {
+            Self::from_socket(unix_socket_path)
+        }
+    }
+
     pub(crate) fn spawn_from_stored_config() -> Result<Self, ReceiverError> {
         let receiver_config = RECEIVER_CONFIG.swap(ptr::null_mut(), SeqCst);
         if receiver_config.is_null() {
