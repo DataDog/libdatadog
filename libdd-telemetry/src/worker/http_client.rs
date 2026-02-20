@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use http_body_util::BodyExt;
-use libdd_common::{hyper_migration, HttpRequestBuilder};
+use libdd_common::{http_common, HttpRequestBuilder};
 use std::{
     fs::OpenOptions,
     future::Future,
@@ -26,12 +26,11 @@ pub mod header {
     pub const DEBUG_ENABLED: HeaderName = HeaderName::from_static("dd-telemetry-debug-enabled");
 }
 
-pub type ResponseFuture = Pin<
-    Box<dyn Future<Output = Result<hyper_migration::HttpResponse, hyper_migration::Error>> + Send>,
->;
+pub type ResponseFuture =
+    Pin<Box<dyn Future<Output = Result<http_common::HttpResponse, http_common::Error>> + Send>>;
 
 pub trait HttpClient {
-    fn request(&self, req: hyper_migration::HttpRequest) -> ResponseFuture;
+    fn request(&self, req: http_common::HttpRequest) -> ResponseFuture;
 }
 
 pub fn request_builder(c: &Config) -> anyhow::Result<HttpRequestBuilder> {
@@ -99,7 +98,7 @@ pub fn from_config(c: &Config) -> Box<dyn HttpClient + Sync + Send> {
         }
     };
     Box::new(HyperClient {
-        inner: hyper_migration::new_client_periodic(),
+        inner: http_common::new_client_periodic(),
     })
 }
 
@@ -108,12 +107,12 @@ pub struct HyperClient {
 }
 
 impl HttpClient for HyperClient {
-    fn request(&self, req: hyper_migration::HttpRequest) -> ResponseFuture {
+    fn request(&self, req: http_common::HttpRequest) -> ResponseFuture {
         let resp = self.inner.request(req);
         Box::pin(async move {
             match resp.await {
-                Ok(response) => Ok(hyper_migration::into_response(response)),
-                Err(e) => Err(e.into()),
+                Ok(response) => Ok(http_common::into_response(response)),
+                Err(e) => Err(http_common::Error::Client(http_common::into_error(e))),
             }
         })
     }
@@ -125,7 +124,7 @@ pub struct MockClient {
 }
 
 impl HttpClient for MockClient {
-    fn request(&self, req: hyper_migration::HttpRequest) -> ResponseFuture {
+    fn request(&self, req: http_common::HttpRequest) -> ResponseFuture {
         let s = self.clone();
         Box::pin(async move {
             debug!("MockClient writing request to file");
@@ -146,13 +145,13 @@ impl HttpClient for MockClient {
                             error = %e,
                             "Failed to write to mock file"
                         );
-                        return Err(hyper_migration::Error::from(e));
+                        return Err(http_common::Error::from(e));
                     }
                 }
             }
 
             debug!(http.status = 202, "MockClient returning success response");
-            hyper_migration::empty_response(hyper::Response::builder().status(202))
+            http_common::empty_response(http::Response::builder().status(202))
         })
     }
 }
@@ -172,7 +171,7 @@ mod tests {
         };
         c.request(
             HttpRequestBuilder::new()
-                .body(hyper_migration::Body::from("hello world\n"))
+                .body(http_common::Body::from("hello world\n"))
                 .unwrap(),
         )
         .await

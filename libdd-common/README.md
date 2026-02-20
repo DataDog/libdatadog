@@ -27,7 +27,7 @@ Common utilities and foundational components shared across Datadog telemetry lib
 - `entity_id`: Container and entity ID detection
 - `error`: Common error types
 - `header`: Datadog HTTP headers
-- `hyper_migration`: Hyper version migration helpers
+- `http_common`: Hyper version migration helpers
 - `rate_limiter`: Rate limiting implementation
 - `tag`: Tag creation and validation
 - `timeout`: Timeout utilities
