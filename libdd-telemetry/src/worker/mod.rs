@@ -187,6 +187,16 @@ impl Worker for TelemetryWorker {
 
         // TODO: Handle action result and add support to stop worker from `run`
     }
+
+    async fn shutdown(&mut self) {
+        let stop_action = TelemetryActions::Lifecycle(LifecycleAction::Stop);
+        let _action_result = match self.flavor {
+            TelemetryWorkerFlavor::Full => self.dispatch_action(stop_action).await,
+            TelemetryWorkerFlavor::MetricsLogs => {
+                self.dispatch_metrics_logs_action(stop_action).await
+            }
+        };
+    }
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]

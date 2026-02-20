@@ -35,10 +35,10 @@ pub struct WorkerHandle {
 }
 
 impl WorkerHandle {
-    /// Stop the worker, call it's shutdown logic and remove it from the worker list.
+    /// Stop the worker and execute the shutdown logic.
     ///
     /// # Errors
-    /// Returns an error if the worker does not exist anymore.
+    /// Returns an error if the worker has already been stopped.
     pub async fn stop(self) -> Result<(), SharedRuntimeError> {
         let mut workers_lock = self.workers.lock_or_panic();
         let Some(position) = workers_lock

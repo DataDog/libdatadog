@@ -8,14 +8,13 @@
 //! and processing traces for stats collection.
 
 use crate::agent_info::schema::AgentInfo;
-use crate::shared_runtime::SharedRuntime;
+use crate::shared_runtime::{SharedRuntime, WorkerHandle};
 use crate::stats_exporter;
 use arc_swap::ArcSwap;
 use libdd_common::{Endpoint, HttpClient, MutexExt};
 use libdd_trace_stats::span_concentrator::SpanConcentrator;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
-use tokio_util::sync::CancellationToken;
 use tracing::{debug, error};
 
 use super::add_path;
@@ -42,7 +41,7 @@ pub(crate) enum StatsComputationStatus {
     /// Client-side stats is enabled
     Enabled {
         stats_concentrator: Arc<Mutex<SpanConcentrator>>,
-        cancellation_token: CancellationToken,
+        worker_handle: WorkerHandle,
     },
 }
 
@@ -72,12 +71,10 @@ pub(crate) fn start_stats_computation(
             span_kinds,
             peer_tags,
         )));
-        let cancellation_token = CancellationToken::new();
         create_and_start_stats_worker(
             ctx,
             bucket_size,
             &stats_concentrator,
-            &cancellation_token,
             client_side_stats,
             client,
         )?;
@@ -90,7 +87,6 @@ fn create_and_start_stats_worker(
     ctx: &StatsContext,
     bucket_size: Duration,
     stats_concentrator: &Arc<Mutex<SpanConcentrator>>,
-    cancellation_token: &CancellationToken,
     client_side_stats: &ArcSwap<StatsComputationStatus>,
     client: HttpClient,
 ) -> anyhow::Result<()> {
@@ -101,14 +97,15 @@ fn create_and_start_stats_worker(
         Endpoint::from_url(add_path(ctx.endpoint_url, STATS_ENDPOINT)),
         client,
     );
-    ctx.shared_runtime
+    let worker_handle = ctx
+        .shared_runtime
         .spawn_worker(stats_exporter)
         .map_err(|e| anyhow::anyhow!(e.to_string()))?;
 
     // Update the stats computation state with the new worker components.
     client_side_stats.store(Arc::new(StatsComputationStatus::Enabled {
         stats_concentrator: stats_concentrator.clone(),
-        cancellation_token: cancellation_token.clone(),
+        worker_handle,
     }));
 
     Ok(())
@@ -117,17 +114,22 @@ fn create_and_start_stats_worker(
 /// Stops the stats exporter and disable stats computation
 ///
 /// Used when client-side stats is disabled by the agent
-pub(crate) fn stop_stats_computation(client_side_stats: &ArcSwap<StatsComputationStatus>) {
+pub(crate) fn stop_stats_computation(
+    ctx: &StatsContext,
+    client_side_stats: &ArcSwap<StatsComputationStatus>,
+) {
     if let StatsComputationStatus::Enabled {
         stats_concentrator,
-        cancellation_token,
+        worker_handle,
     } = &**client_side_stats.load()
     {
-        cancellation_token.cancel();
         let bucket_size = stats_concentrator.lock_or_panic().get_bucket_size();
         client_side_stats.store(Arc::new(StatsComputationStatus::DisabledByAgent {
             bucket_size,
         }));
+        ctx.shared_runtime
+            .runtime()
+            .block_on(async { worker_handle.clone().stop().await });
     }
 }
 
@@ -158,6 +160,7 @@ pub(crate) fn handle_stats_disabled_by_agent(
 
 /// Handle stats computation when it's already enabled
 pub(crate) fn handle_stats_enabled(
+    ctx: &StatsContext,
     agent_info: &Arc<AgentInfo>,
     stats_concentrator: &Mutex<SpanConcentrator>,
     client_side_stats: &ArcSwap<StatsComputationStatus>,
@@ -167,7 +170,7 @@ pub(crate) fn handle_stats_enabled(
         concentrator.set_span_kinds(get_span_kinds_for_stats(agent_info));
         concentrator.set_peer_tags(agent_info.info.peer_tags.clone().unwrap_or_default());
     } else {
-        stop_stats_computation(client_side_stats);
+        stop_stats_computation(ctx, client_side_stats);
         debug!("Client-side stats computation has been disabled by the agent")
     }
 }

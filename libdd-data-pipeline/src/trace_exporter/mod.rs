@@ -271,16 +271,7 @@ impl TraceExporter {
     /// This function should not take ownership of the trace exporter as it will cause the runtime
     /// stored in the trace exporter to be dropped in a non-blocking context causing a panic.
     async fn shutdown_async(&mut self) {
-        if let StatsComputationStatus::Enabled {
-            cancellation_token, ..
-        } = self.client_side_stats.load().as_ref()
-        {
-            cancellation_token.cancel();
-        }
-        if let Some(telemetry) = self.telemetry.take() {
-            telemetry.shutdown().await;
-        }
-        let _ = self.shared_runtime.shutdown().await;
+        self.shared_runtime.shutdown().await;
     }
 
     /// Check if agent info state has changed
@@ -314,7 +305,13 @@ impl TraceExporter {
                     StatsComputationStatus::Enabled {
                         stats_concentrator, ..
                     } => {
+                        let ctx = stats::StatsContext {
+                            metadata: &self.metadata,
+                            endpoint_url: &self.endpoint.url,
+                            shared_runtime: &self.shared_runtime,
+                        };
                         stats::handle_stats_enabled(
+                            &ctx,
                             &agent_info,
                             stats_concentrator,
                             &self.client_side_stats,
