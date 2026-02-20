@@ -18,7 +18,7 @@ mod tests {
     use crate::collector::default_signals;
     use crate::crash_info::{SiCodes, SigInfo, SignalNames};
     use crate::shared::constants::*;
-    use crate::{CrashtrackerConfiguration, StacktraceCollection};
+    use crate::{CrashtrackerConfiguration, ErrorKind, StacktraceCollection};
     use std::time::Duration;
     use tokio::io::{AsyncWriteExt, BufReader};
     use tokio::net::UnixStream;
@@ -48,6 +48,10 @@ mod tests {
         )
         .await?;
         to_socket(sender, DD_CRASHTRACK_END_SIGINFO).await?;
+
+        to_socket(sender, DD_CRASHTRACK_BEGIN_KIND).await?;
+        to_socket(sender, serde_json::to_string(&ErrorKind::UnixSignal)?).await?;
+        to_socket(sender, DD_CRASHTRACK_END_KIND).await?;
 
         to_socket(sender, DD_CRASHTRACK_BEGIN_CONFIG).await?;
         to_socket(
