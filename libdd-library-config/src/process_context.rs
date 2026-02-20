@@ -361,4 +361,161 @@ pub mod linux {
 
         Ok(())
     }
+
+    #[cfg(test)]
+    mod tests {
+        use super::MappingHeader;
+        use anyhow::ensure;
+        use std::{
+            fs::File,
+            io::{BufRead, BufReader},
+            sync::atomic::{AtomicU64, Ordering},
+        };
+
+        /// Parses the start address from a /proc/self/maps line
+        fn parse_mapping_start(line: &str) -> Option<usize> {
+            usize::from_str_radix(line.split('-').next()?, 16).ok()
+        }
+
+        /// Parses start and end addresses from a /proc/self/maps line
+        fn parse_mapping_range(line: &str) -> Option<(usize, usize)> {
+            let mut parts = line.split_whitespace();
+            let range = parts.next()?;
+            let mut addrs = range.split('-');
+            let start = usize::from_str_radix(addrs.next()?, 16).ok()?;
+            let end = usize::from_str_radix(addrs.next()?, 16).ok()?;
+
+            Some((start, end))
+        }
+
+        /// Checks if a /proc/self/maps line is a potential OTEL_CTX mapping
+        ///
+        /// Accepts both read-only (" r--p ") and read-write (" rw-p "/" rw-s ") permissions
+        /// for backwards compatibility (old writers used read-only, new writers use read-write).
+        /// memfd mappings use MAP_SHARED so they show as " rw-s ".
+        ///
+        /// Also accepts both 1-page (new) and 2-page (old) mapping sizes.
+        fn is_otel_mapping_candidate(line: &str) -> bool {
+            // Accept read-write private (anon), and read-write shared (memfd)
+            if !(line.contains(" rw-p ") || line.contains(" rw-s ")) {
+                return false;
+            }
+
+            // Check that the size matches
+            parse_mapping_range(line)
+                .map(|(start, end)| end.saturating_sub(start) == super::mapping_size())
+                .unwrap_or(false)
+        }
+
+        /// Checks if a mapping line refers to the OTEL_CTX mapping by name
+        ///
+        /// Handles both anonymous naming (`[anon:OTEL_CTX]`) and memfd naming
+        /// (`/memfd:OTEL_CTX` which may have ` (deleted)` suffix).
+        fn is_named_otel_mapping(line: &str) -> bool {
+            let trimmed = line.trim_end();
+            trimmed.ends_with("[anon:OTEL_CTX]")
+                || trimmed.contains("/memfd:OTEL_CTX")
+                || trimmed.contains("memfd:OTEL_CTX")
+        }
+
+        /// Checks if a mapping line refers to the OTEL_CTX memfd mapping
+        fn is_memfd_otel_mapping(line: &str) -> bool {
+            line.contains("/memfd:OTEL_CTX")
+        }
+
+        /// Reads the signature from a memory address to verify it's an OTEL_CTX mapping. This also
+        /// establish proper synchronization/memory ordering through atomics since the reader is
+        /// the same process in this test setup.
+        fn verify_signature_at(addr: usize) -> bool {
+            let ptr: *mut u64 = std::ptr::with_exposed_provenance_mut(addr);
+            // Safety: We're reading from our own process memory at an address
+            // we found in /proc/self/maps. This should be safe as long as the
+            // mapping exists and has read permissions.
+            //
+            // The atomic alignment constraints are checked during publication.
+            let signature = unsafe { AtomicU64::from_ptr(ptr).load(Ordering::Acquire) };
+            &signature.to_ne_bytes() == super::SIGNATURE
+        }
+
+        /// Find the OTEL_CTX mapping in /proc/self/maps
+        fn find_otel_mapping() -> anyhow::Result<usize> {
+            let file = File::open("/proc/self/maps")?;
+            let reader = BufReader::new(file);
+
+            for line in reader.lines() {
+                let line = line?;
+
+                if !is_otel_mapping_candidate(&line) {
+                    continue;
+                }
+
+                if is_named_otel_mapping(&line) {
+                    if let Some(addr) = parse_mapping_start(&line) {
+                        return Ok(addr);
+                    }
+                }
+
+                if is_memfd_otel_mapping(&line) {
+                    if let Some(addr) = parse_mapping_start(&line) {
+                        return Ok(addr);
+                    }
+                }
+
+                // For unnamed mappings, verify by reading the signature
+                if let Some(addr) = parse_mapping_start(&line) {
+                    if verify_signature_at(addr) {
+                        return Ok(addr);
+                    }
+                }
+            }
+
+            Err(anyhow::anyhow!(
+                "couldn't find the mapping of the process context"
+            ))
+        }
+
+        /// Read the process context from the current process.
+        ///
+        /// This searches `/proc/self/maps` for an OTEL_CTX mapping and decodes its contents.
+        pub fn read_process_context() -> anyhow::Result<MappingHeader> {
+            let mapping_addr = find_otel_mapping()?;
+            let header_ptr = mapping_addr as *const MappingHeader;
+
+            // Note: verifying the signature ensures proper synchronization
+            ensure!(
+                verify_signature_at(mapping_addr),
+                "verification of the signature failed"
+            );
+
+            // Safety: we found this address in /proc/self/maps and verified the signature
+            Ok(unsafe { std::ptr::read(header_ptr) })
+        }
+
+        #[test]
+        #[cfg_attr(miri, ignore)]
+        fn publish_then_read_context() {
+            let payload = "example process context payload";
+
+            super::publish(payload.as_bytes().to_vec())
+                .expect("couldn't publish the process context");
+            let header = read_process_context().expect("couldn't read back the process contex");
+            // Safety: the published context must have put valid bytes of size payload_size in the
+            // context if the signature check succeded.
+            let read_payload = unsafe {
+                std::slice::from_raw_parts(header.payload_ptr, header.payload_size as usize)
+            };
+
+            assert!(header.signature == *super::SIGNATURE, "wrong signature");
+            assert!(
+                header.version == super::PROCESS_CTX_VERSION,
+                "wrong context version"
+            );
+            assert!(
+                header.payload_size == payload.len() as u32,
+                "wrong payload size"
+            );
+            assert!(header.published_at_ns > 0, "published_at_ns is zero");
+            assert!(read_payload == payload.as_bytes(), "payload mismatch");
+        }
+    }
 }
