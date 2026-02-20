@@ -28,11 +28,11 @@ use crate::{
     health_metrics::{HealthMetric, SendResult, TransportErrorType},
 };
 use arc_swap::{ArcSwap, ArcSwapOption};
+use http::uri::PathAndQuery;
+use http::Uri;
 use http_body_util::BodyExt;
-use hyper::http::uri::PathAndQuery;
-use hyper::Uri;
 use libdd_common::tag::Tag;
-use libdd_common::{hyper_migration, Endpoint};
+use libdd_common::{http_common, Endpoint};
 use libdd_common::{HttpClient, MutexExt};
 use libdd_dogstatsd_client::Client;
 use libdd_telemetry::worker::TelemetryWorker;
@@ -691,7 +691,7 @@ impl TraceExporter {
     /// Handle HTTP error responses from send with retry
     async fn handle_http_send_error(
         &self,
-        response: hyper::Response<hyper_migration::Body>,
+        response: http_common::HttpResponse,
         payload_len: usize,
         chunks: usize,
         attempts: u32,
@@ -720,7 +720,7 @@ impl TraceExporter {
     /// Read response body from error response
     async fn read_error_response_body(
         &self,
-        response: hyper::Response<hyper_migration::Body>,
+        response: http_common::HttpResponse,
     ) -> Result<bytes::Bytes, TraceExporterError> {
         match response.into_body().collect().await {
             Ok(body) => Ok(body.to_bytes()),
@@ -732,10 +732,7 @@ impl TraceExporter {
     }
 
     /// Check if the agent's payload version has changed based on response headers
-    fn check_payload_version_changed(
-        &self,
-        response: &hyper::Response<hyper_migration::Body>,
-    ) -> bool {
+    fn check_payload_version_changed(&self, response: &http_common::HttpResponse) -> bool {
         let status = response.status();
         match (
             status.is_success(),
@@ -764,10 +761,10 @@ impl TraceExporter {
 
     /// Read response body and handle potential errors
     async fn read_response_body(
-        response: hyper::Response<hyper_migration::Body>,
-    ) -> Result<String, hyper_migration::Error> {
-        let body = response.into_body().collect().await?;
-        Ok(String::from_utf8_lossy(&body.to_bytes()).to_string())
+        response: http_common::HttpResponse,
+    ) -> Result<String, http_common::Error> {
+        let body = http_common::collect_response_bytes(response).await?;
+        Ok(String::from_utf8_lossy(&body).to_string())
     }
 
     /// Handle successful trace sending response
@@ -793,7 +790,7 @@ impl TraceExporter {
     async fn handle_agent_response(
         &self,
         chunks: usize,
-        response: hyper::Response<hyper_migration::Body>,
+        response: http_common::HttpResponse,
         payload_len: usize,
         attempts: u32,
     ) -> Result<AgentResponse, TraceExporterError> {
