@@ -14,6 +14,9 @@ where
     D: Deserializer<'de>,
 {
     let s = String::deserialize(deserializer)?;
+    if s.is_empty() {
+        return Err(de::Error::custom("case_id cannot be empty"));
+    }
     if s == "0" {
         return Err(de::Error::custom("case_id cannot be 0"));
     }
