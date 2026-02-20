@@ -232,6 +232,7 @@ mod tests {
         fn create_exporter(path: &std::path::Path) -> ProfileExporter {
             let endpoint =
                 config::file(path.to_string_lossy()).expect("Failed to create file endpoint");
+            #[allow(deprecated)]
             ProfileExporter::new("test-lib", "1.0.0", "test", vec![], endpoint)
                 .expect("Failed to create test exporter")
         }
