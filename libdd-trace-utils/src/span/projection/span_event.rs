@@ -3,12 +3,16 @@ use super::{TraceProjector, IMMUT, MUT, as_mut};
 use super::{TraceAttributes, TraceAttributesMut, AttrRef};
 use std::marker::PhantomData;
 
-/// The generic representation of a V04 span event.
-/// `T` is the type used to represent strings in the span event.
+/// A borrowed view over a span event.
+///
+/// A span event records a point-in-time occurrence within a span, with a timestamp
+/// (`time_unix_nano`), a name, and optional [`TraceAttributes`].
+///
+/// [`SpanEventMut`] is the mutable variant, exposing setter methods.
 #[derive(Debug)]
 pub struct SpanEvent<'b, 's, T: TraceProjector<'s, D>, D: TraceDataLifetime<'s>, const ISMUT: u8 = IMMUT> {
-    pub(crate) storage: &'s T::Storage,
-    pub(crate) event: &'b T::SpanEvent,
+    pub(super) storage: &'s T::Storage,
+    pub(super) event: &'b T::SpanEvent,
 }
 pub type SpanEventMut<'b, 's, T, D> = SpanEvent<'b, 's, T, D, MUT>;
 

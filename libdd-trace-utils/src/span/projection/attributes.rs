@@ -5,6 +5,9 @@ use crate::span::{TraceDataLifetime, ImpliedPredicate, SpanDataContents, IntoDat
 use super::{TraceProjector, IMMUT, MUT, as_mut};
 use super::{AttributeArray, AttributeArrayMut, AttributeArrayOp, AttributeArrayMutOp};
 
+/// Discriminant used when creating or overwriting an attribute value.
+///
+/// Passed to `set` / `append` methods to specify which variant to allocate.
 pub enum AttributeAnyValueType {
     String,
     Bytes,
@@ -15,6 +18,10 @@ pub enum AttributeAnyValueType {
     Map,
 }
 
+/// A tagged-union attribute value, parameterised by the concrete holder types for each variant.
+///
+/// Used as the return type of attribute getters (via the [`AttributeAnyGetterContainer`] alias)
+/// and the return/argument type of mutable setters (via [`AttributeAnySetterContainer`]).
 pub enum AttributeAnyContainer<String, Bytes, Boolean, Integer, Double, Array, Map> {
     String(String),
     Bytes(Bytes),
@@ -86,13 +93,21 @@ pub type AttributeAnyValue<'container, 'storage, A: TraceAttributeGetterTypes<'c
     TraceAttributes<'storage, T, D, AttrOwned<A::Map>, A::Map>,
 >;
 
+/// Abstraction over owned vs. borrowed container references used inside [`TraceAttributes`].
+///
+/// The two implementations are [`AttrRef`] (a shared reference, used in the common path) and
+/// [`AttrOwned`] (an owned value, used when a container is returned by value from a getter).
 pub trait AttrVal<C> {
     unsafe fn as_mut(&self) -> &mut C;
     fn as_ref(&self) -> &C;
 }
 
+/// A shared-reference container holder for use in [`TraceAttributes`].
+///
+/// The inner reference can be unsafely widened to `&mut` when the caller holds exclusive
+/// access at a higher level (see [`AttrVal::as_mut`]).
 #[derive(Copy, Clone)]
-pub struct AttrRef<'a, C>(pub(crate) &'a C);
+pub struct AttrRef<'a, C>(pub(super) &'a C);
 impl<'a, C> AttrVal<C> for AttrRef<'a, C> {
     unsafe fn as_mut(&self) -> &'a mut C {
         as_mut(self.0)
@@ -103,7 +118,11 @@ impl<'a, C> AttrVal<C> for AttrRef<'a, C> {
     }
 }
 
-pub struct AttrOwned<C>(pub(crate) C);
+/// An owned container holder for use in [`TraceAttributes`].
+///
+/// Used when a sub-map or sub-array is returned by value from an attribute getter and needs
+/// to be wrapped in a [`TraceAttributes`] or [`AttributeArray`] view.
+pub struct AttrOwned<C>(pub(super) C);
 impl<'a, C: 'a> AttrVal<C> for AttrOwned<C> {
     unsafe fn as_mut(&self) -> &mut C {
         as_mut(&self.0)
@@ -122,10 +141,21 @@ impl<C: Clone> Clone for AttrOwned<C> {
 
 impl<C: Copy> Copy for AttrOwned<C> {}
 
+/// A key-value attribute map view tied to a storage and container.
+///
+/// Keys are always of type `D::Text`; values are one of the types enumerated by
+/// [`AttributeAnyContainer`] (string, bytes, bool, integer, double, array, or nested map).
+///
+/// The `V` parameter is either [`AttrRef`] (borrowed) or [`AttrOwned`] (owned container).
+/// [`TraceAttributesMut`] is the mutable variant, exposing `set_*`, `get_*_mut`, and `remove`.
+///
+/// Attribute access requires the container to implement [`TraceAttributesOp`] (read) and
+/// [`TraceAttributesMutOp`] (write), which are typically derived from [`TraceProjector`]
+/// bounds on the containing span/chunk/link/event.
 pub struct TraceAttributes<'s, T: TraceProjector<'s, D>, D: TraceDataLifetime<'s>, V: AttrVal<C>, C, const ISMUT: u8 = IMMUT> {
-    pub(crate) storage: &'s T::Storage,
-    pub(crate) container: V,
-    pub(crate) _phantom: PhantomData<C>,
+    pub(super) storage: &'s T::Storage,
+    pub(super) container: V,
+    pub(super) _phantom: PhantomData<C>,
 }
 pub type TraceAttributesMut<'s, T, D, V, C> = TraceAttributes<'s, T, D, V, C, MUT>;
 
@@ -141,9 +171,16 @@ impl<'s, T: TraceProjector<'s, D>, D: TraceDataLifetime<'s>, V: AttrVal<C> + Clo
 impl<'s, T: TraceProjector<'s, D>, D: TraceDataLifetime<'s>, A: AttrVal<C> + Copy, C> Copy for TraceAttributes<'s, T, D, A, C> {}
 
 // Helper traits to break the recursion cycle in TraceAttributesOp
+/// Helper trait that breaks the recursion cycle in [`TraceAttributesOp`].
+///
+/// Blanket-implemented for any type that implements [`AttributeArrayOp`].
 pub trait ArrayAttributesOp<'container, 'storage, T: TraceProjector<'storage, D>, D: TraceDataLifetime<'storage>>: AttributeArrayOp<'container, 'storage, T, D> + ImpliedPredicate<AttributeArray<'container, 'storage, T, D, Self>, Impls: AttributeArrayOp<'container, 'storage, T, D>>
 {}
 
+/// Helper trait that breaks the recursion cycle in [`TraceAttributesOp`].
+///
+/// Blanket-implemented for any type whose [`TraceAttributes`] specialisation implements
+/// [`TraceAttributesOp`] for the same container.
 pub trait MapAttributesOp<'container, 'storage, T: TraceProjector<'storage, D>, D: TraceDataLifetime<'storage>>: ImpliedPredicate<TraceAttributes<'storage, T, D, AttrOwned<Self::Container>, Self::Container>, Impls: TraceAttributesOp<'container, 'storage, T, D, Self::Container>> {
     type Container: 'container;
 }
@@ -161,6 +198,10 @@ where
     type Container = Self;
 }
 
+/// Read-only operations on an attribute map for container type `C`.
+///
+/// Implemented by the projection's [`TraceAttributes`] specialisation for each concrete
+/// container type. The single required method `get` performs a key lookup.
 pub trait TraceAttributesOp<'container, 'storage, T: TraceProjector<'storage, D>, D: TraceDataLifetime<'storage>, C: 'container>:
     TraceAttributeGetterTypes<'container, 'storage, T, D, C>
 {
@@ -184,9 +225,16 @@ impl<'container, 'storage, T: TraceProjector<'storage, D>, D: TraceDataLifetime<
 }
 
 // Helper traits to break the recursion cycle in TraceAttributesMutOp
+/// Helper trait that breaks the recursion cycle in [`TraceAttributesMutOp`].
+///
+/// Blanket-implemented for any type that implements [`AttributeArrayMutOp`].
 pub trait ArrayAttributesMutOp<'container, 'storage, T: TraceProjector<'storage, D>, D: TraceDataLifetime<'storage>>: AttributeArrayMutOp<'container, 'storage, T, D>
 {}
 
+/// Helper trait that breaks the recursion cycle in [`TraceAttributesMutOp`].
+///
+/// Blanket-implemented for any type whose [`TraceAttributesMut`] specialisation implements
+/// [`TraceAttributesMutOp`] for the same container.
 pub trait MapAttributesMutOp<'container, 'storage, T: TraceProjector<'storage, D>, D: TraceDataLifetime<'storage>>: ImpliedPredicate<TraceAttributesMut<'storage, T, D, AttrOwned<Self::Container>, Self::Container>, Impls: TraceAttributesMutOp<'container, 'storage, T, D, Self::Container>> {
     type Container: 'container;
 }
@@ -204,6 +252,9 @@ where
     type Container = Self;
 }
 
+/// Read-write operations on an attribute map for container type `C`.
+///
+/// Extends [`TraceAttributesOp`] with `get_mut`, `set` (insert/overwrite), and `remove`.
 pub trait TraceAttributesMutOp<'container, 'storage, T: TraceProjector<'storage, D>, D: TraceDataLifetime<'storage>, C: 'container>: TraceAttributesOp<'container, 'storage, T, D, C> + TraceAttributeSetterTypes<'container, 'storage, T, D, C>
 where
     Self::MutString: TraceAttributesString<'storage, 'storage, T, D>,
@@ -258,6 +309,7 @@ impl<'container, 'storage, T: TraceProjector<'storage, D>, D: TraceDataLifetime<
     }
 }
 
+/// Accessor/mutator for a string-typed attribute slot.
 pub trait TraceAttributesString<'s, 'a, T: TraceProjector<'s, D>, D: TraceDataLifetime<'s>> {
     fn get(&self, storage: &'a T::Storage) -> &'s D::Text;
     fn set(self, storage: &mut T::Storage, value: D::Text);
@@ -272,6 +324,7 @@ impl<'s, 'a, T: TraceProjector<'s, D>, D: TraceDataLifetime<'s>> TraceAttributes
     }
 }
 
+/// Accessor/mutator for a bytes-typed attribute slot.
 pub trait TraceAttributesBytes<'s, 'a, T: TraceProjector<'s, D>, D: TraceDataLifetime<'s>> {
     fn get(&self, storage: &'a T::Storage) -> &'a D::Bytes;
     fn set(self, storage: &mut T::Storage, value: D::Bytes);
@@ -287,6 +340,7 @@ impl<'s, 'a, T: TraceProjector<'s, D>, D: TraceDataLifetime<'s>> TraceAttributes
 }
 
 
+/// Accessor/mutator for an integer-typed attribute slot.
 pub trait TraceAttributesInteger {
     fn get(&self) -> i64;
     fn set(self, value: i64);
@@ -301,6 +355,7 @@ impl TraceAttributesInteger for () {
     }
 }
 
+/// Accessor/mutator for a boolean-typed attribute slot.
 pub trait TraceAttributesBoolean {
     fn get(&self) -> bool;
     fn set(self, value: bool);
@@ -315,6 +370,7 @@ impl TraceAttributesBoolean for () {
     }
 }
 
+/// Accessor/mutator for a double-typed attribute slot.
 pub trait TraceAttributesDouble {
     fn get(&self) -> f64;
     fn set(self, value: f64);

@@ -4,10 +4,18 @@ use super::{TraceAttributes, TraceAttributesMut, AttrRef};
 use super::{Span, SpanMut};
 use std::marker::PhantomData;
 
+/// A borrowed view over a single trace chunk.
+///
+/// A chunk groups the spans that share one sampling decision (priority, origin, trace ID).
+/// Getter methods require no extra lifetime bound; methods returning references (e.g. `origin`)
+/// require the chunk reference lifetime `'b` to outlive the storage lifetime `'s`.
+///
+/// [`TraceChunkMut`] is the mutable variant; it additionally exposes setter methods and
+/// span mutation via `retain_spans` / `add_span`.
 #[derive(Debug)]
 pub struct TraceChunk<'b, 's, T: TraceProjector<'s, D>, D: TraceDataLifetime<'s>, const ISMUT: u8 = IMMUT> {
-    pub(crate) storage: &'s T::Storage,
-    pub(crate) chunk: &'b T::Chunk,
+    pub(super) storage: &'s T::Storage,
+    pub(super) chunk: &'b T::Chunk,
 }
 pub type TraceChunkMut<'b, 's, T, D> = TraceChunk<'b, 's, T, D, MUT>;
 
@@ -127,6 +135,9 @@ impl<'b: 's, 's, T: TraceProjector<'s, D>, D: TraceDataLifetime<'s>> TraceChunk<
     }
 }
 
+/// Iterator over [`Span`] views within a [`TraceChunk`].
+///
+/// [`SpanIteratorMut`] is the mutable variant.
 pub struct SpanIterator<'b, 's: 'b, T: TraceProjector<'s, D>, D: TraceDataLifetime<'s>, I: Iterator<Item = &'b T::Span>, const ISMUT: u8 = IMMUT> {
     storage: &'s T::Storage,
     it: I,

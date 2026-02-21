@@ -11,10 +11,17 @@ use super::{
     TraceAttributesBoolean, TraceAttributesInteger, TraceAttributesDouble,
 };
 
+/// An ordered sequence of attribute values within an attribute map.
+///
+/// Each element is an [`AttributeAnyContainer`] value of any supported type (string, bytes,
+/// bool, integer, double, nested array, or nested map).
+///
+/// [`AttributeArrayMut`] is the mutable variant; it exposes indexed `set_*` and `append_*`
+/// methods as well as `pop`, `retain_mut`, and `iter_mut`.
 pub struct AttributeArray<'c, 's, T: TraceProjector<'s, D>, D: TraceDataLifetime<'s>, C, const ISMUT: u8 = IMMUT> {
-    pub(crate) storage: &'s T::Storage,
-    pub(crate) container: C,
-    pub(crate) _phantom: PhantomData<&'c ()>,
+    pub(super) storage: &'s T::Storage,
+    pub(super) container: C,
+    pub(super) _phantom: PhantomData<&'c ()>,
 }
 #[allow(type_alias_bounds)]
 pub type AttributeArrayMut<'c, 's, T: TraceProjector<'s, D>, D: TraceDataLifetime<'s>, C> = AttributeArray<'c, 's, T, D, C, MUT>;
@@ -30,6 +37,10 @@ impl<'c, 's, T: TraceProjector<'s, D>, D: TraceDataLifetime<'s>, C: Clone> Clone
 }
 impl<'c, 's, T: TraceProjector<'s, D>, D: TraceDataLifetime<'s>, C: Copy> Copy for AttributeArray<'c, 's, T, D, C> {}
 
+/// Read-only operations on a type that can serve as an attribute array container.
+///
+/// Provides indexed length and element access. Implemented by `()` (empty/no-op) and by
+/// concrete array storage types via the projection.
 pub trait AttributeArrayOp<'container, 'storage, T: TraceProjector<'storage, D>, D: TraceDataLifetime<'storage>>: Sized + TraceAttributeGetterTypes<'container, 'storage, T, D, Self>
 {
     fn get_attribute_array_len(&self, storage: &'storage T::Storage) -> usize;
@@ -78,6 +89,14 @@ impl<'container, 'storage, T: TraceProjector<'storage, D>, D: TraceDataLifetime<
     }
 }
 
+/// Read-write operations on a type that can serve as an attribute array container.
+///
+/// Extends [`AttributeArrayOp`] with indexed set, append, swap, and truncate operations.
+///
+/// Note: A `retain` method taking a closure over [`AttributeAnySetterContainer`] was
+/// considered but could not be expressed because the Rust trait solver eagerly resolves
+/// `Self`'s bounds before solving the recursive [`ImpliedPredicate`] bounds of
+/// [`TraceProjector`]. Retention is instead performed via `retain_mut` on [`AttributeArrayMut`].
 pub trait AttributeArrayMutOp<'container, 'storage, T: TraceProjector<'storage, D>, D: TraceDataLifetime<'storage>>: AttributeArrayOp<'container, 'storage, T, D> + TraceAttributeSetterTypes<'container, 'storage, T, D, Self> + ImpliedPredicate<TraceAttributesMut<'storage, T, D, AttrOwned<Self>, Self>, Impls: TraceAttributesMutOp<'container, 'storage, T, D, Self>> + 'container
 {
     fn get_attribute_array_value_mut(&'container mut self, storage: &mut T::Storage, index: usize) -> Option<AttributeAnySetterContainer<'container, 'storage, TraceAttributesMut<'storage, T, D, AttrOwned<Self>, Self>, T, D, Self>>;
@@ -205,6 +224,7 @@ where
     }
 }
 
+/// Iterator over the values of an [`AttributeArray`].
 pub struct AttributeArrayIter<'container, 'storage, T: TraceProjector<'storage, D>, D: TraceDataLifetime<'storage>, C: 'container> {
     storage: &'storage T::Storage,
     container: &'container C,
@@ -227,6 +247,10 @@ where
     }
 }
 
+/// Mutable iterator over the values of an [`AttributeArrayMut`].
+///
+/// Uses a raw pointer to the container to allow yielding independent mutable accessors for
+/// successive elements without aliasing.
 pub struct AttributeArrayMutIter<'container, 'storage, T: TraceProjector<'storage, D>, D: TraceDataLifetime<'storage>, C: 'container> {
     storage: &'storage T::Storage,
     container: *mut C,

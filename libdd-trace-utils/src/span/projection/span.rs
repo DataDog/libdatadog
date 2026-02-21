@@ -6,21 +6,17 @@ use super::{TraceAttributes, TraceAttributesMut, AttrRef};
 use super::{SpanLink, SpanLinkMut};
 use super::{SpanEvent, SpanEventMut};
 
-/// The generic representation of a V04 span.
+/// A borrowed view over a single span's fields.
 ///
-/// `T` is the type used to represent strings in the span, it can be either owned (e.g. BytesString)
-/// or borrowed (e.g. &str). To define a generic function taking any `Span<T>` you can use the
-/// [`SpanValue`] trait:
-/// ```
-/// use datadog_trace_utils::span::{Span, SpanText};
-/// fn foo<T: SpanText>(span: Span<T>) {
-///     let _ = span.attributes.get("foo");
-/// }
-/// ```
+/// Exposes all span fields (service, name, resource, IDs, timing, error, …) as well as
+/// access to per-span [`TraceAttributes`], [`SpanLink`]s, and [`SpanEvent`]s.
+///
+/// `T` implements [`TraceProjector`] and determines storage layout; `D` carries the string
+/// and byte types. [`SpanMut`] is the mutable variant, exposing corresponding setter methods.
 #[derive(Debug)]
 pub struct Span<'b, 's, T: TraceProjector<'s, D>, D: TraceDataLifetime<'s>, const ISMUT: u8 = IMMUT> {
-    pub(crate) storage: &'s T::Storage,
-    pub(crate) span: &'b T::Span,
+    pub(super) storage: &'s T::Storage,
+    pub(super) span: &'b T::Span,
 }
 pub type SpanMut<'b, 's, T, D> = Span<'b, 's, T, D, MUT>;
 
@@ -242,6 +238,9 @@ impl <'b: 's, 's, T: TraceProjector<'s, D>, D: TraceDataLifetime<'s>> SpanMut<'b
     }
 }
 
+/// Iterator over [`SpanLink`] views within a [`Span`].
+///
+/// [`SpanLinkIteratorMut`] is the mutable variant.
 pub struct SpanLinkIterator<'b, 's: 'b, T: TraceProjector<'s, D>, D: TraceDataLifetime<'s>, I: Iterator<Item = &'b T::SpanLink>, const ISMUT: u8 = IMMUT> {
     storage: &'s T::Storage,
     it: I,
@@ -261,6 +260,9 @@ impl<'b, 's: 'b, T: TraceProjector<'s, D>, D: TraceDataLifetime<'s>, I: Iterator
     }
 }
 
+/// Iterator over [`SpanEvent`] views within a [`Span`].
+///
+/// [`SpanEventIteratorMut`] is the mutable variant.
 pub struct SpanEventIterator<'b, 's: 'b, T: TraceProjector<'s, D>, D: TraceDataLifetime<'s>, I: Iterator<Item = &'b T::SpanEvent>, const ISMUT: u8 = IMMUT> {
     storage: &'s T::Storage,
     it: I,

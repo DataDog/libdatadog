@@ -2,6 +2,15 @@ use libdd_trace_protobuf::pb::idx::SpanKind;
 use crate::span::{OwnedTraceData, TraceDataLifetime, ImpliedPredicate};
 use super::{Traces, TracesMut, TraceAttributes, TraceAttributesMut, TraceAttributesOp, TraceAttributesMutOp, AttrRef};
 
+/// Central trait that maps a storage type to the trace data model.
+///
+/// Implementors provide low-level getter and setter functions for every field in the
+/// trace hierarchy (trace → chunk → span → link/event) and methods for iterating and
+/// mutating collections at each level. The higher-level view types ([`Traces`], [`TraceChunk`],
+/// [`Span`], …) delegate to these methods.
+///
+/// `'s` is the lifetime of the underlying storage; all references returned by getters are
+/// tied to this lifetime. `D` carries the concrete string and byte types in use.
 pub trait TraceProjector<'s, D: TraceDataLifetime<'s>>: Sized + 's
     + for<'b> ImpliedPredicate<TraceAttributes<'s, Self, D, AttrRef<'b, Self::Trace>, Self::Trace>, Impls: TraceAttributesOp<'b, 's, Self, D, Self::Trace>>
     + for<'b> ImpliedPredicate<TraceAttributes<'s, Self, D, AttrRef<'b, Self::Chunk>, Self::Chunk>, Impls: TraceAttributesOp<'b, 's, Self, D, Self::Chunk>>

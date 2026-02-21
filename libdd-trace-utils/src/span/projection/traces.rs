@@ -4,6 +4,13 @@ use super::{TraceProjector, IMMUT, MUT, as_mut};
 use super::{TraceAttributes, TraceAttributesMut, AttrRef};
 use super::{TraceChunk, TraceChunkMut};
 
+/// A borrowed view over the top-level trace container.
+///
+/// Exposes trace-wide metadata fields (container ID, language, runtime ID, …) and provides
+/// an iterator over the [`TraceChunk`]s it contains.
+///
+/// The const `ISMUT` parameter selects between the read-only variant and [`TracesMut`],
+/// which additionally exposes setter methods and chunk mutation.
 #[derive(Debug)]
 pub struct Traces<'s, T: TraceProjector<'s, D>, D: TraceDataLifetime<'s>, const ISMUT: u8 = IMMUT> {
     pub(super) storage: &'s T::Storage,
@@ -158,6 +165,10 @@ impl<'s, T: TraceProjector<'s, D>, D: TraceDataLifetime<'s>> TracesMut<'s, T, D>
     }
 }
 
+/// Iterator over [`TraceChunk`] views within a [`Traces`].
+///
+/// Yielded items share the storage lifetime `'s` of the parent trace container.
+/// [`ChunkIteratorMut`] is the mutable variant.
 pub struct ChunkIterator<'b, 's: 'b, T: TraceProjector<'s, D>, D: TraceDataLifetime<'s>, I: Iterator<Item = &'b T::Chunk>, const ISMUT: u8 = IMMUT> {
     storage: &'s T::Storage,
     it: I,

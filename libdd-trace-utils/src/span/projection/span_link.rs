@@ -3,12 +3,16 @@ use super::{TraceProjector, IMMUT, MUT, as_mut};
 use super::{TraceAttributes, TraceAttributesMut, AttrRef};
 use std::marker::PhantomData;
 
-/// The generic representation of a V04 span link.
-/// `T` is the type used to represent strings in the span link.
+/// A borrowed view over a span link.
+///
+/// A span link records a causal relationship to a span in a (potentially different) trace,
+/// identified by trace ID, span ID, trace state, and flags.
+///
+/// [`SpanLinkMut`] is the mutable variant, exposing setter methods.
 #[derive(Debug)]
 pub struct SpanLink<'b, 's, T: TraceProjector<'s, D>, D: TraceDataLifetime<'s>, const ISMUT: u8 = IMMUT> {
-    pub(crate) storage: &'s T::Storage,
-    pub(crate) link: &'b T::SpanLink,
+    pub(super) storage: &'s T::Storage,
+    pub(super) link: &'b T::SpanLink,
 }
 pub type SpanLinkMut<'b, 's, T, D> = SpanLink<'b, 's, T, D, MUT>;
 
