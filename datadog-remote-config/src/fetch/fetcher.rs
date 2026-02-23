@@ -583,7 +583,7 @@ pub mod tests {
     use crate::fetch::test_server::RemoteConfigServer;
     use crate::RemoteConfigSource;
     use http::Response;
-    use libdd_common::hyper_migration;
+    use libdd_common::http_common;
     use std::sync::LazyLock;
 
     pub(crate) static PATH_FIRST: LazyLock<RemoteConfigPath> = LazyLock::new(|| RemoteConfigPath {
