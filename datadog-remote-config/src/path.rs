@@ -24,7 +24,7 @@ pub enum RemoteConfigProduct {
     AsmDD,
     AsmFeatures,
     FfeFlags,
-    #[cfg(feature = "live-debugger")]
+    #[cfg(all(feature = "live-debugger", not(target_arch = "wasm32")))]
     LiveDebugger,
 }
 
@@ -39,7 +39,7 @@ impl Display for RemoteConfigProduct {
             RemoteConfigProduct::AsmDD => "ASM_DD",
             RemoteConfigProduct::AsmFeatures => "ASM_FEATURES",
             RemoteConfigProduct::FfeFlags => "FFE_FLAGS",
-            #[cfg(feature = "live-debugger")]
+            #[cfg(all(feature = "live-debugger", not(target_arch = "wasm32")))]
             RemoteConfigProduct::LiveDebugger => "LIVE_DEBUGGING",
         };
         write!(f, "{str}")
@@ -90,7 +90,7 @@ impl RemoteConfigPath {
                 "ASM_DD" => RemoteConfigProduct::AsmDD,
                 "ASM_FEATURES" => RemoteConfigProduct::AsmFeatures,
                 "FFE_FLAGS" => RemoteConfigProduct::FfeFlags,
-                #[cfg(feature = "live-debugger")]
+                #[cfg(all(feature = "live-debugger", not(target_arch = "wasm32")))]
                 "LIVE_DEBUGGING" => RemoteConfigProduct::LiveDebugger,
                 product => anyhow::bail!("Unknown product {}", product),
             },
