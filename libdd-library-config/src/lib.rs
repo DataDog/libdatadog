@@ -1,6 +1,6 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
-pub mod process_context;
+pub mod otel_process_ctxt;
 pub mod tracer_metadata;
 
 use std::borrow::Cow;
