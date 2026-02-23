@@ -3472,6 +3472,7 @@ dependencies = [
  "flate2",
  "futures",
  "http",
+ "http-body",
  "http-body-util",
  "httpmock",
  "hyper 1.6.0",
