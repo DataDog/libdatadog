@@ -32,11 +32,39 @@ impl TlsConfig {
     /// the expensive operation that was previously repeated on every
     /// `ProfileExporter::new` call.
     ///
-    /// On macOS, this is lightweight — the platform verifier defers
+    /// On macOS, this is lightweight; the platform verifier defers
     /// Security.framework calls to the first TLS handshake.
     pub fn new() -> Result<Self, rustls::Error> {
-        use rustls_platform_verifier::ConfigVerifierExt;
-        let config = rustls::ClientConfig::with_platform_verifier()?;
+        use rustls_platform_verifier::BuilderVerifierExt;
+
+        // Use an explicit CryptoProvider rather than relying on
+        // `CryptoProvider::get_default_or_install_from_crate_features()`.
+        // Feature unification can enable both `aws-lc-rs` and `ring` in the
+        // same build (reqwest enables aws-lc-rs while libdd-common enables
+        // ring on Windows), which causes the automatic detection to panic.
+        let provider = rustls::crypto::CryptoProvider::get_default()
+            .cloned()
+            .unwrap_or_else(|| std::sync::Arc::new(Self::default_crypto_provider()));
+
+        let config = rustls::ClientConfig::builder_with_provider(provider)
+            .with_safe_default_protocol_versions()?
+            .with_platform_verifier()?
+            .with_no_client_auth();
         Ok(Self(config))
+    }
+
+    /// Returns the platform-appropriate default crypto provider.
+    ///
+    /// Matches the convention used by `libdd-common`: `aws-lc-rs` on Unix,
+    /// `ring` on Windows (where `aws-lc-rs` has issues).
+    fn default_crypto_provider() -> rustls::crypto::CryptoProvider {
+        #[cfg(unix)]
+        {
+            rustls::crypto::aws_lc_rs::default_provider()
+        }
+        #[cfg(not(unix))]
+        {
+            rustls::crypto::ring::default_provider()
+        }
     }
 }
