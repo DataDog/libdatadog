@@ -452,6 +452,8 @@ pub mod linux {
             );
             assert!(header.published_at_ns > 0, "published_at_ns is zero");
             assert!(read_payload == payload.as_bytes(), "payload mismatch");
+
+            super::unpublish().expect("couldn't unpublish the context");
         }
     }
 }
