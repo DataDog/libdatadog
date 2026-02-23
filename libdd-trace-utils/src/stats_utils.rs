@@ -85,7 +85,8 @@ mod mini_agent {
             .map_err(|e| anyhow::anyhow!("Failed to send trace stats: {e}"))?;
 
         if response.status() != http::StatusCode::ACCEPTED {
-            let response_body = String::from_utf8(response.into_body().to_vec()).unwrap_or_default();
+            let response_body =
+                String::from_utf8(response.into_body().to_vec()).unwrap_or_default();
             anyhow::bail!("Server did not accept trace stats: {response_body}");
         }
         Ok(())

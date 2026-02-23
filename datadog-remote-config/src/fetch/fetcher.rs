@@ -7,11 +7,12 @@ use crate::{
     RemoteConfigProduct, Target,
 };
 use base64::Engine;
-use http::uri::Scheme;
-use http_body_util::BodyExt;
-use hyper::http::uri::PathAndQuery;
-use hyper::StatusCode;
-use libdd_common::{hyper_migration, Endpoint, MutexExt};
+use bytes::Bytes;
+use http::uri::{PathAndQuery, Scheme};
+use http::StatusCode;
+use libdd_capabilities::HttpClientTrait;
+use libdd_capabilities_impl::DefaultHttpClient;
+use libdd_common::{Endpoint, MutexExt};
 use libdd_trace_protobuf::remoteconfig::{
     ClientGetConfigsRequest, ClientGetConfigsResponse, ClientState, ClientTracer, ConfigState,
     TargetFileHash, TargetFileMeta,
@@ -336,27 +337,29 @@ impl<S: FileStorage> ConfigFetcher<S> {
 
         trace!("Submitting remote config request: {config_req:?}");
 
-        let req = self
+        let mut builder = http::Request::builder()
+            .method(http::Method::POST)
+            .uri(self.state.endpoint.url.clone());
+        builder = self
             .state
             .endpoint
-            .to_request_builder(concat!("Libdatadog/", env!("CARGO_PKG_VERSION")))?
-            .method(http::Method::POST)
+            .set_standard_headers(builder, concat!("Libdatadog/", env!("CARGO_PKG_VERSION")));
+        let req = builder
             .header(
                 http::header::CONTENT_TYPE,
                 libdd_common::header::APPLICATION_JSON,
             )
-            .body(hyper_migration::Body::from(serde_json::to_string(
-                &config_req,
-            )?))?;
+            .body(Bytes::from(serde_json::to_string(&config_req)?))?;
+        let client = DefaultHttpClient::new_client();
         let response = tokio::time::timeout(
             Duration::from_millis(self.state.endpoint.timeout_ms),
-            hyper_migration::new_default_client().request(req),
+            client.request(req),
         )
         .await
         .map_err(|e| anyhow::Error::msg(e).context(format!("Url: {:?}", self.state.endpoint)))?
         .map_err(|e| anyhow::Error::msg(e).context(format!("Url: {:?}", self.state.endpoint)))?;
         let status = response.status();
-        let body_bytes = response.into_body().collect().await?.to_bytes();
+        let body_bytes = response.into_body();
         if status != StatusCode::OK {
             // Not active
             if status == StatusCode::NOT_FOUND {
@@ -567,7 +570,7 @@ fn get_product_endpoint(subdomain: &str, endpoint: &Endpoint) -> Endpoint {
     parts.path_and_query = Some(PathAndQuery::from_static("/v0.7/config"));
     #[allow(clippy::unwrap_used)]
     Endpoint {
-        url: hyper::Uri::from_parts(parts).unwrap(),
+        url: http::Uri::from_parts(parts).unwrap(),
         api_key: endpoint.api_key.clone(),
         test_token: endpoint.test_token.clone(),
         ..*endpoint
@@ -580,6 +583,7 @@ pub mod tests {
     use crate::fetch::test_server::RemoteConfigServer;
     use crate::RemoteConfigSource;
     use http::Response;
+    use libdd_common::hyper_migration;
     use std::sync::LazyLock;
 
     pub(crate) static PATH_FIRST: LazyLock<RemoteConfigPath> = LazyLock::new(|| RemoteConfigPath {

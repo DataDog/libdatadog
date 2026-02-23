@@ -1,9 +1,12 @@
 // Copyright 2025-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+use bytes::Bytes;
 use datadog_remote_config::config::agent_task::AgentTaskFile;
-use hyper::{body::Bytes, Method};
-use libdd_common::{hyper_migration, Endpoint, MutexExt};
+use http::Method;
+use libdd_capabilities::HttpClientTrait;
+use libdd_capabilities_impl::DefaultHttpClient;
+use libdd_common::{Endpoint, MutexExt};
 use std::{
     collections::HashMap,
     fs::File,
@@ -202,7 +205,7 @@ fn generate_payload(
     payload.extend_from_slice(format!("--{BOUNDARY}--\r\n").as_bytes());
 
     let headers: HashMap<String, String> = HashMap::from([(
-        hyper::header::CONTENT_TYPE.to_string(),
+        http::header::CONTENT_TYPE.to_string(),
         format!("multipart/form-data; boundary={BOUNDARY}"),
     )]);
 
@@ -401,7 +404,7 @@ impl TracerFlareManager {
         )?;
 
         let agent_url = self.agent_url.clone() + "/tracer_flare/v1";
-        let agent_url = match hyper::Uri::from_str(&agent_url) {
+        let agent_url = match http::Uri::from_str(&agent_url) {
             Ok(uri) => uri,
             Err(_) => {
                 return Err(FlareError::SendError(format!(
@@ -416,25 +419,28 @@ impl TracerFlareManager {
         };
 
         let payload = Bytes::from(payload);
-        let mut req = target
-            .to_request_builder(concat!("Tracer/", env!("CARGO_PKG_VERSION")))
-            .map_err(|_| FlareError::SendError("Unable to create the request".to_owned()))?
-            .method(Method::POST);
+        let mut builder = http::Request::builder()
+            .method(Method::POST)
+            .uri(target.url.clone());
+        builder =
+            target.set_standard_headers(builder, concat!("Tracer/", env!("CARGO_PKG_VERSION")));
         for (key, value) in headers {
-            req = req.header(key, value);
+            builder = builder.header(key, value);
         }
-        let req = req
-            .body(hyper_migration::Body::from_bytes(payload))
-            .map_err(|_| {
-                FlareError::SendError("Unable to had the body to the request".to_owned())
-            })?;
+        let req = builder.body(payload).map_err(|_| {
+            FlareError::SendError("Unable to add the body to the request".to_owned())
+        })?;
 
-        let req = hyper_migration::new_default_client().request(req);
+        let client = DefaultHttpClient::new_client();
 
-        match tokio::time::timeout(Duration::from_millis(target.timeout_ms), req).await {
+        match tokio::time::timeout(
+            Duration::from_millis(target.timeout_ms),
+            client.request(req),
+        )
+        .await
+        {
             Ok(resp) => match resp {
-                Ok(body) => {
-                    let response = hyper_migration::into_response(body);
+                Ok(response) => {
                     let status = response.status();
                     if status.is_success() {
                         Ok(())
@@ -570,7 +576,7 @@ mod tests {
         assert!(payload_str.contains("d53fc8a4-8820-47a2-aa7d-d565582feb81"));
         assert!(payload_str.contains(&format!("--{BOUNDARY}--\r\n")));
 
-        let headers_str = headers.get(hyper::header::CONTENT_TYPE.as_str()).unwrap();
+        let headers_str = headers.get(http::header::CONTENT_TYPE.as_str()).unwrap();
         assert!(!payload_str.contains("DD-API-KEY"));
         assert!(!payload_str.contains("dd-api-key"));
         assert!(headers_str.contains(&format!("multipart/form-data; boundary={BOUNDARY}")));

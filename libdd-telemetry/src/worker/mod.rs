@@ -11,7 +11,9 @@ use crate::{
     metrics::{ContextKey, MetricBuckets, MetricContexts},
 };
 
-use libdd_common::{hyper_migration, tag::Tag, worker::Worker};
+use bytes::Bytes;
+use libdd_capabilities::http::HttpError;
+use libdd_common::{tag::Tag, worker::Worker};
 
 use std::iter::Sum;
 use std::ops::Add;
@@ -728,10 +730,7 @@ impl TelemetryWorker {
         Ok(())
     }
 
-    fn build_request(
-        &self,
-        payload: &data::Payload,
-    ) -> anyhow::Result<hyper_migration::HttpRequest> {
+    fn build_request(&self, payload: &data::Payload) -> anyhow::Result<http::Request<Bytes>> {
         let seq_id = self.next_seq_id();
         let tel = Telemetry {
             api_version: data::ApiVersion::V2,
@@ -769,14 +768,14 @@ impl TelemetryWorker {
                 tel.application.tracer_version.clone(),
             );
 
-        let body = hyper_migration::Body::from(serialize::serialize(&tel)?);
+        let body = Bytes::from(serialize::serialize(&tel)?);
         Ok(req.body(body)?)
     }
 
     async fn send_request(
         &self,
-        req: hyper_migration::HttpRequest,
-    ) -> Result<hyper_migration::HttpResponse, hyper_migration::Error> {
+        req: http::Request<Bytes>,
+    ) -> Result<http::Response<Bytes>, HttpError> {
         let timeout_ms = if let Some(endpoint) = self.config.endpoint.as_ref() {
             endpoint.timeout_ms
         } else {
@@ -795,7 +794,7 @@ impl TelemetryWorker {
                     worker.runtime_id = %self.runtime_id,
                     "Telemetry request cancelled"
                 );
-                Err(hyper_migration::Error::Other(anyhow::anyhow!("Request cancelled")))
+                Err(HttpError::Other("Request cancelled".into()))
             },
             _ = tokio::time::sleep(time::Duration::from_millis(timeout_ms)) => {
                 debug!(
@@ -803,18 +802,9 @@ impl TelemetryWorker {
                     http.timeout_ms = timeout_ms,
                     "Telemetry request timed out"
                 );
-                Err(hyper_migration::Error::Other(anyhow::anyhow!("Request timed out")))
+                Err(HttpError::Timeout)
             },
-            r = self.client.request(req) => {
-                match r {
-                    Ok(resp) => {
-                        Ok(resp)
-                    }
-                    Err(e) => {
-                        Err(e)
-                    },
-                }
-            }
+            r = self.client.request(req) => r,
         }
     }
 

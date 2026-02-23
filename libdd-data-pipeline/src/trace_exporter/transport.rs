@@ -89,9 +89,8 @@ mod tests {
         assert!(request.uri().to_string().contains("/v0.4/traces"));
 
         let headers = request.headers();
-        let find_header = |name: &str| -> Option<&str> {
-            headers.get(name).and_then(|v| v.to_str().ok())
-        };
+        let find_header =
+            |name: &str| -> Option<&str> { headers.get(name).and_then(|v| v.to_str().ok()) };
 
         assert_eq!(find_header("content-type"), Some("application/msgpack"));
         assert_eq!(find_header("x-datadog-trace-count"), Some("5"));
@@ -116,9 +115,8 @@ mod tests {
         let request = client.build_trace_request(data, 1, uri).unwrap();
 
         let headers = request.headers();
-        let find_header = |name: &str| -> Option<&str> {
-            headers.get(name).and_then(|v| v.to_str().ok())
-        };
+        let find_header =
+            |name: &str| -> Option<&str> { headers.get(name).and_then(|v| v.to_str().ok()) };
 
         assert_eq!(find_header("datadog-meta-lang"), Some("python"));
         assert_eq!(find_header("datadog-meta-tracer-version"), Some("2.0.0"));

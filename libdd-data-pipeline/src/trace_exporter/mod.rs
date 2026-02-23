@@ -30,9 +30,9 @@ use crate::{
     health_metrics::{HealthMetric, SendResult, TransportErrorType},
 };
 use arc_swap::{ArcSwap, ArcSwapOption};
+use bytes::Bytes;
 use hyper::http::uri::PathAndQuery;
 use hyper::Uri;
-use bytes::Bytes;
 use libdd_capabilities::{HttpClientTrait, HttpError};
 use libdd_capabilities_impl::DefaultHttpClient;
 use libdd_common::tag::Tag;
