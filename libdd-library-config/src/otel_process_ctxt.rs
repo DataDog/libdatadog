@@ -366,7 +366,7 @@ pub mod linux {
 
             // The name of the mapping is the 6th column. The separator changes (both ' ' and '\t')
             // but `split_whitespace()` takes care of that.
-            let Some(name) = trimmed.split_whitespace().skip(5).next() else {
+            let Some(name) = trimmed.split_whitespace().nth(5) else {
                 return false;
             };
 
