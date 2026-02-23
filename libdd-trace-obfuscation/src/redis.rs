@@ -79,8 +79,8 @@ fn obfuscate_redis_cmd<'a>(str: &mut String, cmd: &'a str, mut args: Vec<&'a str
             // • ZSCORE key member
             args = obfuscate_redis_args_n(args, 1);
         }
-        b"HSET" | b"HSETNX" | b"LREM" | b"LSET" | b"SETBIT" | b"SETEX" | b"PSETEX"
-        | b"SETRANGE" | b"ZINCRBY" | b"SMOVE" | b"RESTORE" => {
+        b"HSETNX" | b"LREM" | b"LSET" | b"SETBIT" | b"SETEX" | b"PSETEX" | b"SETRANGE"
+        | b"ZINCRBY" | b"SMOVE" | b"RESTORE" => {
             // Obfuscate 3rd argument:
             // • HSET key field value
             // • HSETNX key field value
@@ -120,7 +120,7 @@ fn obfuscate_redis_cmd<'a>(str: &mut String, cmd: &'a str, mut args: Vec<&'a str
             // • GEOADD key longitude latitude member [longitude latitude member ...]
             args = obfuscate_redis_args_step(args, 1, 3)
         }
-        b"HMSET" => {
+        b"HMSET" | b"HSET" => {
             // Every 2nd argument starting from first.
             // • HMSET key field value [field value ...]
             args = obfuscate_redis_args_step(args, 1, 2)
