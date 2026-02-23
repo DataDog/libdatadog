@@ -7,16 +7,16 @@ use bytes::Bytes;
 use http_body_util::BodyExt;
 use libdd_capabilities::http::{HttpClientTrait, HttpError};
 use libdd_capabilities::maybe_send::MaybeSend;
-use libdd_common::{connector::Connector, hyper_migration};
+use libdd_common::{connector::Connector, http_common};
 
 pub struct DefaultHttpClient {
-    client: hyper_migration::GenericHttpClient<Connector>,
+    client: http_common::GenericHttpClient<Connector>,
 }
 
 impl HttpClientTrait for DefaultHttpClient {
     fn new_client() -> Self {
         Self {
-            client: hyper_migration::new_default_client(),
+            client: http_common::new_default_client(),
         }
     }
 
@@ -29,7 +29,7 @@ impl HttpClientTrait for DefaultHttpClient {
         let client = self.client.clone();
         async move {
             let (parts, body) = req.into_parts();
-            let hyper_req = hyper::Request::from_parts(parts, hyper_migration::Body::from(body));
+            let hyper_req = hyper::Request::from_parts(parts, http_common::Body::from_bytes(body));
 
             let response = client
                 .request(hyper_req)

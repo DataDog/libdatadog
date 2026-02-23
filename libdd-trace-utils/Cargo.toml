@@ -21,6 +21,7 @@ path = "benches/main.rs"
 anyhow = "1.0"
 hyper = { workspace = true}
 "http" = "1"
+"http-body" = "1"
 http-body-util = "0.1"
 serde = { version = "1.0.145", features = ["derive"] }
 prost = "0.14.1"

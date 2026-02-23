@@ -8,17 +8,17 @@ pub use mini_agent::*;
 mod mini_agent {
     use bytes::Bytes;
     use http_body_util::BodyExt;
-    use hyper::body::Buf;
+    use bytes::Buf;
     use libdd_capabilities::HttpClientTrait;
     use libdd_capabilities_impl::DefaultHttpClient;
-    use libdd_common::hyper_migration;
+    use libdd_common::http_common;
     use libdd_common::Endpoint;
     use libdd_trace_protobuf::pb;
     use std::io::Write;
     use tracing::debug;
 
     pub async fn get_stats_from_request_body(
-        body: hyper_migration::Body,
+        body: http_common::Body,
     ) -> anyhow::Result<pb::ClientStatsPayload> {
         let buffer = body.collect().await?.aggregate();
 
@@ -97,8 +97,8 @@ mod mini_agent {
 #[cfg(feature = "mini_agent")]
 mod mini_agent_tests {
     use crate::stats_utils;
-    use hyper::Request;
-    use libdd_common::hyper_migration;
+    use http::Request;
+    use libdd_common::http_common;
     use libdd_trace_protobuf::pb::{
         ClientGroupedStats, ClientStatsBucket, ClientStatsPayload, Trilean::NotSet,
     };
@@ -159,7 +159,7 @@ mod mini_agent_tests {
 
         let bytes = rmp_serde::to_vec(&v).unwrap();
         let request = Request::builder()
-            .body(hyper_migration::Body::from(bytes))
+            .body(http_common::Body::from(bytes))
             .unwrap();
 
         let res = stats_utils::get_stats_from_request_body(request.into_body()).await;
@@ -238,7 +238,7 @@ mod mini_agent_tests {
 
         let bytes = rmp_serde::to_vec(&v).unwrap();
         let request = Request::builder()
-            .body(hyper_migration::Body::from(bytes))
+            .body(http_common::Body::from(bytes))
             .unwrap();
 
         let res = stats_utils::get_stats_from_request_body(request.into_body()).await;

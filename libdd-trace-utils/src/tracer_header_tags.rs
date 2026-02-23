@@ -1,8 +1,8 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use hyper::http::HeaderValue;
-use hyper::HeaderMap;
+use http::HeaderMap;
+use http::HeaderValue;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -134,7 +134,6 @@ impl<'a> From<&'a HeaderMap<HeaderValue>> for TracerHeaderTags<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use hyper::HeaderMap;
 
     #[test]
     fn tags_to_hashmap() {

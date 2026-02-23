@@ -240,7 +240,7 @@ impl TraceExporterBuilder {
 
         let base_url = self.url.as_deref().unwrap_or(DEFAULT_AGENT_URL);
 
-        let agent_url: hyper::Uri = parse_uri(base_url).map_err(|e: anyhow::Error| {
+        let agent_url: http::Uri = parse_uri(base_url).map_err(|e: anyhow::Error| {
             TraceExporterError::Builder(BuilderErrorKind::InvalidUri(e.to_string()))
         })?;
 

@@ -31,8 +31,8 @@ use crate::{
 };
 use arc_swap::{ArcSwap, ArcSwapOption};
 use bytes::Bytes;
-use hyper::http::uri::PathAndQuery;
-use hyper::Uri;
+use http::uri::PathAndQuery;
+use http::Uri;
 use libdd_capabilities::{HttpClientTrait, HttpError};
 use libdd_capabilities_impl::DefaultHttpClient;
 use libdd_common::tag::Tag;

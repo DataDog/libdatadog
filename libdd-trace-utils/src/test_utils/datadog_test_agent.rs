@@ -6,7 +6,7 @@ use cargo_metadata::MetadataCommand;
 use http_body_util::BodyExt;
 use hyper::body::Incoming;
 use hyper::{Request, Response, Uri};
-use libdd_common::hyper_migration::{self, Body};
+use libdd_common::http_common::{self, Body};
 use std::collections::HashMap;
 use std::fmt::Write;
 use std::path::Path;
@@ -508,7 +508,7 @@ impl DatadogTestAgent {
         session_token: &str,
         agent_sample_rates_by_service: Option<&str>,
     ) {
-        // let client = hyper_migration::new_default_client();
+        // let client = http_common::new_default_client();
 
         let mut query_params_map = HashMap::new();
         query_params_map.insert(SESSION_TEST_TOKEN_QUERY_PARAM_KEY, session_token);
@@ -576,7 +576,7 @@ impl DatadogTestAgent {
         let mut last_response;
 
         loop {
-            let client = hyper_migration::new_default_client();
+            let client = http_common::new_default_client();
             let req = Request::from_parts(parts.clone(), Body::from_bytes(body_bytes.clone()));
             let res = client.request(req).await;
 

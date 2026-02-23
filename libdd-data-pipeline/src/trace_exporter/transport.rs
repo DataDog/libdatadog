@@ -3,7 +3,7 @@
 
 use crate::trace_exporter::TracerMetadata;
 use bytes::Bytes;
-use hyper::Uri;
+use http::Uri;
 use std::collections::HashMap;
 
 /// Transport client for trace exporter operations

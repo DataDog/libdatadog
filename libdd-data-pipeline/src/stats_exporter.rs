@@ -171,12 +171,12 @@ fn encode_stats_payload(
 }
 
 /// Return the stats endpoint url to send stats to the agent at `agent_url`
-pub fn stats_url_from_agent_url(agent_url: &str) -> anyhow::Result<hyper::Uri> {
-    let mut parts = agent_url.parse::<hyper::Uri>()?.into_parts();
+pub fn stats_url_from_agent_url(agent_url: &str) -> anyhow::Result<http::Uri> {
+    let mut parts = agent_url.parse::<http::Uri>()?.into_parts();
     parts.path_and_query = Some(hyper::http::uri::PathAndQuery::from_static(
         STATS_ENDPOINT_PATH,
     ));
-    Ok(hyper::Uri::from_parts(parts)?)
+    Ok(http::Uri::from_parts(parts)?)
 }
 
 #[cfg(test)]
