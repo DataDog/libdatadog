@@ -1,20 +1,13 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-//! Implementation of the publisher part of the [process sharing protocol](https://github.com/open-telemetry/opentelemetry-specification/pull/4719)
+//! Implementation of the publisher part of the [OTEL process context](https://github.com/open-telemetry/opentelemetry-specification/pull/4719)
 //!
 //! # A note on race conditions
 //!
 //! Process context sharing implies concurrently writing to a memory area that another process
 //! might be actively reading. However, reading isn't done as direct memory accesses but go through
 //! the OS, so the Rust definition of race conditions doesn't really apply.
-//!
-//! Still, we typically want to avoid the compiler and the hardware to re-order the write to the
-//! signature (which should be last according to the specification) with the writes to other fields
-//! of the header.
-//!
-//! To do so, we implement synchronization during publication _as if the reader were another thread
-//! of this program_, using atomics.
 
 /// Current version of the process context format
 pub const PROCESS_CTX_VERSION: u32 = 2;
@@ -31,10 +24,10 @@ pub mod linux {
     use std::{
         ffi::c_void,
         mem::ManuallyDrop,
-        os::fd::{AsFd as _, OwnedFd},
+        os::fd::AsFd as _,
         ptr,
         sync::{
-            atomic::{AtomicU64, Ordering},
+            atomic::{fence, AtomicU64, Ordering},
             Mutex, MutexGuard,
         },
         time::{SystemTime, UNIX_EPOCH},
@@ -88,8 +81,6 @@ pub mod linux {
     ///   pointed to by `start`.
     struct MemMapping {
         start_addr: *mut c_void,
-        /// The file descriptor, if the mapping was successfully created from `memfd`.
-        fd: Option<OwnedFd>,
     }
 
     // Safety: MemMapping represents ownership over the mapped region. It never leaks or
@@ -124,15 +115,15 @@ pub mod linux {
                         ptr::null_mut(),
                         size,
                         ProtFlags::WRITE | ProtFlags::READ,
-                        MapFlags::SHARED,
+                        MapFlags::PRIVATE,
                         fd.as_fd(),
                         0,
                     )?
                 };
 
+                // We (implicitly) close the file descriptor right away, but this ok
                 Ok(MemMapping {
                     start_addr,
-                    fd: Some(fd),
                 })
             })
             // If any previous step failed, we fallback to an anonymous mapping
@@ -150,12 +141,11 @@ pub mod linux {
                     )?
                 };
 
-                Ok(MemMapping { start_addr, fd: None })
+                Ok(MemMapping { start_addr })
             })
         }
 
-        /// Makes this mapping discoverable by giving it a name. This is not required for a
-        /// memfd-backed mapping.
+        /// Makes this mapping discoverable by giving it a name.
         fn set_name(&mut self) -> anyhow::Result<()> {
             // Safety: the invariants of `MemMapping` ensures that `start` is non null and comes
             // from a previous call to `mmap` of size `mapping_size()`
@@ -179,8 +169,6 @@ pub mod linux {
                 self.unmap()?;
             }
 
-            // Ensure `fd` is dropped and thus closed
-            self.fd = None;
             // Prevent `Self::drop` from being called
             let _ = ManuallyDrop::new(self);
 
@@ -214,7 +202,6 @@ pub mod linux {
     }
 
     /// Handle for future updates of a published process context.
-    #[cfg(target_os = "linux")]
     struct ProcessContextHandle {
         mapping: MemMapping,
         /// Once published, and until the next update is complete, the backing allocation of
@@ -250,14 +237,9 @@ pub mod linux {
             unsafe { madvise(mapping.start_addr, size, Advice::LinuxDontFork) }
                 .context("madvise MADVISE_DONTFORK failed")?;
 
-            let published_at_ns = time_now_ns();
-
-            if published_at_ns == 0 {
-                return Err(anyhow::anyhow!(
-                    "failed to get current time for process context publication"
-                ));
-            }
-
+            let published_at_ns = time_now_ns().ok_or_else(|| {
+                anyhow::anyhow!("fail to get current time for process context publication")
+            })?;
             let header = mapping.start_addr as *mut MappingHeader;
 
             unsafe {
@@ -278,22 +260,19 @@ pub mod linux {
                         payload_ptr: payload.as_ptr(),
                     },
                 );
-                // Signature is set last, which means that all the previous stores happens-before it
-                // (program order on a given single thread). Any fence or atomic load from the
-                // reader side which loads the completed signature with at least
-                // `Acquire` ordering will create a happens-before relationship with
-                // `signature`, ensuring the header is seen as fully initialized on
-                // their side.
+                // We typically want to avoid the compiler and the hardware to re-order the write to
+                // the signature (which should be last according to the
+                // specification) with the writes to other fields of the header.
+                //
+                // To do so, we implement synchronization during publication _as if the reader were
+                // another thread of this program_, using atomics and fences.
                 AtomicU64::from_ptr((*header).signature.as_mut_ptr().cast::<u64>())
                     // To avoid shuffling bytes, we must use the native endianness
                     .store(u64::from_ne_bytes(*SIGNATURE), Ordering::Release);
+                fence(Ordering::SeqCst);
             }
 
-            // For anonymous mappings, try to name it (optional, may fail on older kernels).
-            // `memfd` mappings don't need this - the name shows in /proc/pid/maps automatically
-            if mapping.fd.is_none() {
-                let _ = mapping.set_name();
-            }
+            let _ = mapping.set_name();
 
             Ok(ProcessContextHandle {
                 mapping,
@@ -311,16 +290,17 @@ pub mod linux {
         }
     }
 
-    fn time_now_ns() -> u64 {
+    // Rustix's page_size caches the value in a static atomic, so it's ok to call mapping_size()
+    // repeatedly; it won't result in a syscall each time.
+    fn mapping_size() -> usize {
+        page_size()
+    }
+
+    fn time_now_ns() -> Option<u64> {
         SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .ok()
             .and_then(|d| u64::try_from(d.as_nanos()).ok())
-            .unwrap_or(0)
-    }
-
-    fn mapping_size() -> usize {
-        page_size() * 2
     }
 
     /// Locks the context handle. Returns a uniform error if the lock has been poisoned.
@@ -369,7 +349,7 @@ pub mod linux {
         use std::{
             fs::File,
             io::{BufRead, BufReader},
-            sync::atomic::{AtomicU64, Ordering},
+            sync::atomic::{fence, AtomicU64, Ordering},
         };
 
         /// Parses the start address from a /proc/self/maps line
@@ -377,50 +357,22 @@ pub mod linux {
             usize::from_str_radix(line.split('-').next()?, 16).ok()
         }
 
-        /// Parses start and end addresses from a /proc/self/maps line
-        fn parse_mapping_range(line: &str) -> Option<(usize, usize)> {
-            let mut parts = line.split_whitespace();
-            let range = parts.next()?;
-            let mut addrs = range.split('-');
-            let start = usize::from_str_radix(addrs.next()?, 16).ok()?;
-            let end = usize::from_str_radix(addrs.next()?, 16).ok()?;
-
-            Some((start, end))
-        }
-
-        /// Checks if a /proc/self/maps line is a potential OTEL_CTX mapping
-        ///
-        /// Accepts both read-only (" r--p ") and read-write (" rw-p "/" rw-s ") permissions
-        /// for backwards compatibility (old writers used read-only, new writers use read-write).
-        /// memfd mappings use MAP_SHARED so they show as " rw-s ".
-        ///
-        /// Also accepts both 1-page (new) and 2-page (old) mapping sizes.
-        fn is_otel_mapping_candidate(line: &str) -> bool {
-            // Accept read-write private (anon), and read-write shared (memfd)
-            if !(line.contains(" rw-p ") || line.contains(" rw-s ")) {
-                return false;
-            }
-
-            // Check that the size matches
-            parse_mapping_range(line)
-                .map(|(start, end)| end.saturating_sub(start) == super::mapping_size())
-                .unwrap_or(false)
-        }
-
-        /// Checks if a mapping line refers to the OTEL_CTX mapping by name
+        /// Checks if a mapping line refers to the OTEL_CTX mapping.
         ///
         /// Handles both anonymous naming (`[anon:OTEL_CTX]`) and memfd naming
         /// (`/memfd:OTEL_CTX` which may have ` (deleted)` suffix).
         fn is_named_otel_mapping(line: &str) -> bool {
             let trimmed = line.trim_end();
-            trimmed.ends_with("[anon:OTEL_CTX]")
-                || trimmed.contains("/memfd:OTEL_CTX")
-                || trimmed.contains("memfd:OTEL_CTX")
-        }
 
-        /// Checks if a mapping line refers to the OTEL_CTX memfd mapping
-        fn is_memfd_otel_mapping(line: &str) -> bool {
-            line.contains("/memfd:OTEL_CTX")
+            // The name of the mapping is the 6th column. The separator changes (both ' ' and '\t')
+            // but `split_whitespace()` takes care of that.
+            let Some(name) = trimmed.split_whitespace().skip(5).next() else {
+                return false;
+            };
+
+            name.starts_with("/memfd:OTEL_CTX")
+                || name.starts_with("[anon_shmem:OTEL_CTX]")
+                || name.starts_with("[anon:OTEL_CTXT]")
         }
 
         /// Reads the signature from a memory address to verify it's an OTEL_CTX mapping. This also
@@ -433,7 +385,8 @@ pub mod linux {
             // mapping exists and has read permissions.
             //
             // The atomic alignment constraints are checked during publication.
-            let signature = unsafe { AtomicU64::from_ptr(ptr).load(Ordering::Acquire) };
+            let signature = unsafe { AtomicU64::from_ptr(ptr).load(Ordering::Relaxed) };
+            fence(Ordering::SeqCst);
             &signature.to_ne_bytes() == super::SIGNATURE
         }
 
@@ -445,25 +398,8 @@ pub mod linux {
             for line in reader.lines() {
                 let line = line?;
 
-                if !is_otel_mapping_candidate(&line) {
-                    continue;
-                }
-
                 if is_named_otel_mapping(&line) {
                     if let Some(addr) = parse_mapping_start(&line) {
-                        return Ok(addr);
-                    }
-                }
-
-                if is_memfd_otel_mapping(&line) {
-                    if let Some(addr) = parse_mapping_start(&line) {
-                        return Ok(addr);
-                    }
-                }
-
-                // For unnamed mappings, verify by reading the signature
-                if let Some(addr) = parse_mapping_start(&line) {
-                    if verify_signature_at(addr) {
                         return Ok(addr);
                     }
                 }
