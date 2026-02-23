@@ -6,9 +6,9 @@ pub use mini_agent::*;
 
 #[cfg(feature = "mini_agent")]
 mod mini_agent {
+    use bytes::Buf;
     use bytes::Bytes;
     use http_body_util::BodyExt;
-    use bytes::Buf;
     use libdd_capabilities::HttpClientTrait;
     use libdd_capabilities_impl::DefaultHttpClient;
     use libdd_common::http_common;

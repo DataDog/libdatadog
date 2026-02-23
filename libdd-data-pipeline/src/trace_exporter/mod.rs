@@ -567,8 +567,7 @@ impl TraceExporter {
         let payload_len = mp_payload.len();
 
         // Send traces to the agent
-        let result =
-            send_with_retry(endpoint, mp_payload, &headers, &strategy).await;
+        let result = send_with_retry(endpoint, mp_payload, &headers, &strategy).await;
 
         // Send telemetry for the payload sending
         if let Some(telemetry) = &self.telemetry {

@@ -677,9 +677,7 @@ mod tests {
     #[test]
     fn telemetry_from_ok_response_test() {
         let result = Ok((
-            http::response::Builder::new()
-                .body(Bytes::new())
-                .unwrap(),
+            http::response::Builder::new().body(Bytes::new()).unwrap(),
             3,
         ));
         let telemetry = SendPayloadTelemetry::from_retry_result(&result, 4, 5, 0);
@@ -698,9 +696,7 @@ mod tests {
     #[test]
     fn telemetry_from_ok_response_with_p0_drops_test() {
         let result = Ok((
-            http::response::Builder::new()
-                .body(Bytes::new())
-                .unwrap(),
+            http::response::Builder::new().body(Bytes::new()).unwrap(),
             3,
         ));
         let telemetry = SendPayloadTelemetry::from_retry_result(&result, 4, 5, 10);
