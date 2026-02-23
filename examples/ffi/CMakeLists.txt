@@ -65,6 +65,9 @@ set_vcruntime_link_type(telemetry_metrics ${VCRUNTIME_LINK_TYPE})
 if(NOT WIN32)
   add_executable(crashtracking crashtracking.c)
   target_link_libraries(crashtracking PRIVATE Datadog::Profiling)
+
+  add_executable(crashtracking_unhandled_exception crashtracking_unhandled_exception.c)
+  target_link_libraries(crashtracking_unhandled_exception PRIVATE Datadog::Profiling)
 endif()
 
 add_executable(trace_exporter trace_exporter.c)
