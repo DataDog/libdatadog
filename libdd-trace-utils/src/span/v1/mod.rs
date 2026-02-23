@@ -6,6 +6,7 @@ use std::hash::Hash;
 use hashbrown::Equivalent;
 use libdd_trace_protobuf::pb::idx::SpanKind;
 use crate::span::{BytesData, SliceData, TraceData, OwnedTraceData, TraceDataLifetime, SpanDataContents, AttributeAnyContainer, AttributeAnySetterContainer, AttrRef, AttrOwned, TraceAttributesMut, TraceAttributesMutOp, TraceAttributesString, TraceAttributesBytes, TraceAttributesInteger, TraceAttributesBoolean, AttributeAnyGetterContainer, AttributeArray, AttributeArrayOp, AttributeArrayMutOp, TraceAttributes, TraceAttributesOp, TraceAttributeGetterTypes, TraceAttributeSetterTypes, TracesMut, Traces as TracesStruct, TraceProjector, AttributeAnyValueType};
+
 use crate::span::table::{TraceBytesRef, TraceDataText, TraceDataBytes, TraceDataRef, TraceStringRef, StaticDataVec};
 
 #[derive(Default, Debug)]
@@ -920,11 +921,31 @@ impl<D: TraceData> HashMapFind<D> for TraceStaticData<D> {
     }
 }
 
-// TraceAttributesOp implementation for Traces
-impl<'a, 's, D: TraceDataLifetime<'s> + 's, const ISMUT: u8> TraceAttributeGetterTypes<'a, 's, TracePayload<D>, D, Traces> for TraceAttributes<'s, TracePayload<D>, D, AttrRef<'a, Traces>, Traces, ISMUT> {
-    type Array = &'a Vec<AttributeAnyValue>;
-    type Map = &'a AttributeMap;
+// Format-specific attribute type macro for v1
+// 'a = container lifetime, 's = storage lifetime (for getter)
+// 'a = storage lifetime, 'b = container lifetime (for setter)
+macro_rules! impl_v1_attribute_types {
+    ($C:ty) => {
+        impl<'a, 's, D: TraceDataLifetime<'s> + 's, const ISMUT: u8> TraceAttributeGetterTypes<'a, 's, TracePayload<D>, D, $C>
+        for TraceAttributes<'s, TracePayload<D>, D, AttrRef<'a, $C>, $C, ISMUT> {
+            type Array = &'a Vec<AttributeAnyValue>;
+            type Map = &'a AttributeMap;
+        }
+        impl<'a, 'b, D: TraceData> TraceAttributeSetterTypes<'b, 'a, TracePayload<D>, D, $C>
+        for TraceAttributesMut<'a, TracePayload<D>, D, AttrRef<'b, $C>, $C> {
+            type MutString = &'a mut TraceStringRef;
+            type MutBytes = &'a mut TraceBytesRef;
+            type MutBoolean = &'b mut bool;
+            type MutInteger = &'b mut i64;
+            type MutDouble = &'b mut f64;
+            type MutArray = &'b mut Vec<AttributeAnyValue>;
+            type MutMap = &'b mut AttributeMap;
+        }
+    };
 }
+
+// TraceAttributesOp implementation for Traces
+impl_v1_attribute_types!(Traces);
 
 impl<'a, 's, D: TraceDataLifetime<'s> + 's, const ISMUT: u8> TraceAttributesOp<'a, 's, TracePayload<D>, D, Traces> for TraceAttributes<'s, TracePayload<D>, D, AttrRef<'a, Traces>, Traces, ISMUT> {
     fn get<K>(container: &'a Traces, storage: &'s TraceStaticData<D>, key: &K) -> Option<AttributeAnyGetterContainer<'a, 's, Self, TracePayload<D>, D, Traces>>
@@ -937,10 +958,7 @@ impl<'a, 's, D: TraceDataLifetime<'s> + 's, const ISMUT: u8> TraceAttributesOp<'
 }
 
 // Similar implementations for TraceChunk, Span, SpanLink, SpanEvent
-impl<'a, 's, D: TraceDataLifetime<'s> + 's, const ISMUT: u8> TraceAttributeGetterTypes<'a, 's, TracePayload<D>, D, TraceChunk> for TraceAttributes<'s, TracePayload<D>, D, AttrRef<'a, TraceChunk>, TraceChunk, ISMUT> {
-    type Array = &'a Vec<AttributeAnyValue>;
-    type Map = &'a AttributeMap;
-}
+impl_v1_attribute_types!(TraceChunk);
 
 impl<'a, 's, D: TraceDataLifetime<'s> + 's, const ISMUT: u8> TraceAttributesOp<'a, 's, TracePayload<D>, D, TraceChunk> for TraceAttributes<'s, TracePayload<D>, D, AttrRef<'a, TraceChunk>, TraceChunk, ISMUT> {
     fn get<K>(container: &'a TraceChunk, storage: &'s TraceStaticData<D>, key: &K) -> Option<AttributeAnyGetterContainer<'a, 's, Self, TracePayload<D>, D, TraceChunk>>
@@ -952,10 +970,7 @@ impl<'a, 's, D: TraceDataLifetime<'s> + 's, const ISMUT: u8> TraceAttributesOp<'
     }
 }
 
-impl<'a, 's, D: TraceDataLifetime<'s> + 's, const ISMUT: u8> TraceAttributeGetterTypes<'a, 's, TracePayload<D>, D, Span> for TraceAttributes<'s, TracePayload<D>, D, AttrRef<'a, Span>, Span, ISMUT> {
-    type Array = &'a Vec<AttributeAnyValue>;
-    type Map = &'a AttributeMap;
-}
+impl_v1_attribute_types!(Span);
 
 impl<'a, 's, D: TraceDataLifetime<'s> + 's, const ISMUT: u8> TraceAttributesOp<'a, 's, TracePayload<D>, D, Span> for TraceAttributes<'s, TracePayload<D>, D, AttrRef<'a, Span>, Span, ISMUT> {
     fn get<K>(container: &'a Span, storage: &'s TraceStaticData<D>, key: &K) -> Option<AttributeAnyGetterContainer<'a, 's, Self, TracePayload<D>, D, Span>>
@@ -967,10 +982,7 @@ impl<'a, 's, D: TraceDataLifetime<'s> + 's, const ISMUT: u8> TraceAttributesOp<'
     }
 }
 
-impl<'a, 's, D: TraceDataLifetime<'s> + 's, const ISMUT: u8> TraceAttributeGetterTypes<'a, 's, TracePayload<D>, D, SpanLink> for TraceAttributes<'s, TracePayload<D>, D, AttrRef<'a, SpanLink>, SpanLink, ISMUT> {
-    type Array = &'a Vec<AttributeAnyValue>;
-    type Map = &'a AttributeMap;
-}
+impl_v1_attribute_types!(SpanLink);
 
 impl<'a, 's, D: TraceDataLifetime<'s> + 's, const ISMUT: u8> TraceAttributesOp<'a, 's, TracePayload<D>, D, SpanLink> for TraceAttributes<'s, TracePayload<D>, D, AttrRef<'a, SpanLink>, SpanLink, ISMUT> {
     fn get<K>(container: &'a SpanLink, storage: &'s TraceStaticData<D>, key: &K) -> Option<AttributeAnyGetterContainer<'a, 's, Self, TracePayload<D>, D, SpanLink>>
@@ -982,10 +994,7 @@ impl<'a, 's, D: TraceDataLifetime<'s> + 's, const ISMUT: u8> TraceAttributesOp<'
     }
 }
 
-impl<'a, 's, D: TraceDataLifetime<'s> + 's, const ISMUT: u8> TraceAttributeGetterTypes<'a, 's, TracePayload<D>, D, SpanEvent> for TraceAttributes<'s, TracePayload<D>, D, AttrRef<'a, SpanEvent>, SpanEvent, ISMUT> {
-    type Array = &'a Vec<AttributeAnyValue>;
-    type Map = &'a AttributeMap;
-}
+impl_v1_attribute_types!(SpanEvent);
 
 impl<'a, 's, D: TraceDataLifetime<'s> + 's, const ISMUT: u8> TraceAttributesOp<'a, 's, TracePayload<D>, D, SpanEvent> for TraceAttributes<'s, TracePayload<D>, D, AttrRef<'a, SpanEvent>, SpanEvent, ISMUT> {
     fn get<K>(container: &'a SpanEvent, storage: &'s TraceStaticData<D>, key: &K) -> Option<AttributeAnyGetterContainer<'a, 's, Self, TracePayload<D>, D, SpanEvent>>
@@ -1040,17 +1049,6 @@ impl<'storage, D: TraceDataLifetime<'storage> + 'storage> TraceAttributesBytes<'
     }
 }
 
-// TraceAttributesMutOp for Span - this is the main one we need
-impl<'a, 'b, D: TraceData> TraceAttributeSetterTypes<'b, 'a, TracePayload<D>, D, Span> for TraceAttributesMut<'a, TracePayload<D>, D, AttrRef<'b, Span>, Span> {
-    type MutString = &'a mut TraceStringRef;
-    type MutBytes = &'a mut TraceBytesRef;
-    type MutBoolean = &'b mut bool;
-    type MutInteger = &'b mut i64;
-    type MutDouble = &'b mut f64;
-    type MutArray = &'b mut Vec<AttributeAnyValue>;
-    type MutMap = &'b mut AttributeMap;
-}
-
 impl<'a, 'b, D: TraceData> TraceAttributesMutOp<'b, 'a, TracePayload<D>, D, Span> for TraceAttributesMut<'a, TracePayload<D>, D, AttrRef<'b, Span>, Span> {
     fn get_mut<K>(container: &'b mut Span, storage: &mut TraceStaticData<D>, key: &K) -> Option<AttributeAnySetterContainer<'b, 'a, Self, TracePayload<D>, D, Span>>
     where
@@ -1085,17 +1083,6 @@ impl<'a, 'b, D: TraceData> TraceAttributesMutOp<'b, 'a, TracePayload<D>, D, Span
             container.attributes.remove(&r);
         }
     }
-}
-
-// Similar implementations for other container types
-impl<'a, 'b, D: TraceData> TraceAttributeSetterTypes<'b, 'a, TracePayload<D>, D, Traces> for TraceAttributesMut<'a, TracePayload<D>, D, AttrRef<'b, Traces>, Traces> {
-    type MutString = &'a mut TraceStringRef;
-    type MutBytes = &'a mut TraceBytesRef;
-    type MutBoolean = &'b mut bool;
-    type MutInteger = &'b mut i64;
-    type MutDouble = &'b mut f64;
-    type MutArray = &'b mut Vec<AttributeAnyValue>;
-    type MutMap = &'b mut AttributeMap;
 }
 
 impl<'a, 'b, D: TraceData> TraceAttributesMutOp<'b, 'a, TracePayload<D>, D, Traces> for TraceAttributesMut<'a, TracePayload<D>, D, AttrRef<'b, Traces>, Traces> {
@@ -1134,16 +1121,6 @@ impl<'a, 'b, D: TraceData> TraceAttributesMutOp<'b, 'a, TracePayload<D>, D, Trac
     }
 }
 
-impl<'a, 'b, D: TraceData> TraceAttributeSetterTypes<'b, 'a, TracePayload<D>, D, TraceChunk> for TraceAttributesMut<'a, TracePayload<D>, D, AttrRef<'b, TraceChunk>, TraceChunk> {
-    type MutString = &'a mut TraceStringRef;
-    type MutBytes = &'a mut TraceBytesRef;
-    type MutBoolean = &'b mut bool;
-    type MutInteger = &'b mut i64;
-    type MutDouble = &'b mut f64;
-    type MutArray = &'b mut Vec<AttributeAnyValue>;
-    type MutMap = &'b mut AttributeMap;
-}
-
 impl<'a, 'b, D: TraceData> TraceAttributesMutOp<'b, 'a, TracePayload<D>, D, TraceChunk> for TraceAttributesMut<'a, TracePayload<D>, D, AttrRef<'b, TraceChunk>, TraceChunk> {
     fn get_mut<K>(container: &'b mut TraceChunk, storage: &mut TraceStaticData<D>, key: &K) -> Option<AttributeAnySetterContainer<'b, 'a, Self, TracePayload<D>, D, TraceChunk>>
     where
@@ -1180,16 +1157,6 @@ impl<'a, 'b, D: TraceData> TraceAttributesMutOp<'b, 'a, TracePayload<D>, D, Trac
     }
 }
 
-impl<'a, 'b, D: TraceData> TraceAttributeSetterTypes<'b, 'a, TracePayload<D>, D, SpanLink> for TraceAttributesMut<'a, TracePayload<D>, D, AttrRef<'b, SpanLink>, SpanLink> {
-    type MutString = &'a mut TraceStringRef;
-    type MutBytes = &'a mut TraceBytesRef;
-    type MutBoolean = &'b mut bool;
-    type MutInteger = &'b mut i64;
-    type MutDouble = &'b mut f64;
-    type MutArray = &'b mut Vec<AttributeAnyValue>;
-    type MutMap = &'b mut AttributeMap;
-}
-
 impl<'a, 'b, D: TraceData> TraceAttributesMutOp<'b, 'a, TracePayload<D>, D, SpanLink> for TraceAttributesMut<'a, TracePayload<D>, D, AttrRef<'b, SpanLink>, SpanLink> {
     fn get_mut<K>(container: &'b mut SpanLink, storage: &mut TraceStaticData<D>, key: &K) -> Option<AttributeAnySetterContainer<'b, 'a, Self, TracePayload<D>, D, SpanLink>>
     where
@@ -1224,16 +1191,6 @@ impl<'a, 'b, D: TraceData> TraceAttributesMutOp<'b, 'a, TracePayload<D>, D, Span
             container.attributes.remove(&r);
         }
     }
-}
-
-impl<'a, 'b, D: TraceData> TraceAttributeSetterTypes<'b, 'a, TracePayload<D>, D, SpanEvent> for TraceAttributesMut<'a, TracePayload<D>, D, AttrRef<'b, SpanEvent>, SpanEvent> {
-    type MutString = &'a mut TraceStringRef;
-    type MutBytes = &'a mut TraceBytesRef;
-    type MutBoolean = &'b mut bool;
-    type MutInteger = &'b mut i64;
-    type MutDouble = &'b mut f64;
-    type MutArray = &'b mut Vec<AttributeAnyValue>;
-    type MutMap = &'b mut AttributeMap;
 }
 
 impl<'a, 'b, D: TraceData> TraceAttributesMutOp<'b, 'a, TracePayload<D>, D, SpanEvent> for TraceAttributesMut<'a, TracePayload<D>, D, AttrRef<'b, SpanEvent>, SpanEvent> {

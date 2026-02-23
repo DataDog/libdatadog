@@ -1,7 +1,8 @@
 // Copyright 2023-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::span::{BytesData, SliceData, SpanKeyParseError, TraceData, OwnedTraceData, TraceProjector, Traces, TraceAttributesOp, TraceAttributesMutOp, TraceAttributesMut, TraceAttributes, AttributeAnyContainer, AttributeAnyGetterContainer, AttributeAnySetterContainer, AttributeAnyValueType, TraceAttributesString, AttrRef, TraceDataLifetime, TracesMut, IntoData, SpanDataContents, parse_span_kind, span_kind_to_str, TraceAttributeGetterTypes, TraceAttributeSetterTypes};
+use crate::span::{BytesData, SliceData, SpanKeyParseError, TraceData, OwnedTraceData, TraceProjector, Traces, TraceAttributesOp, TraceAttributesMutOp, TraceAttributesMut, TraceAttributes, AttributeAnyContainer, AttributeAnyGetterContainer, AttributeAnySetterContainer, AttributeAnyValueType, TraceAttributesString, TraceAttributesBytes, AttrRef, TraceDataLifetime, TracesMut, IntoData, SpanDataContents, parse_span_kind, span_kind_to_str, TraceAttributeGetterTypes, TraceAttributeSetterTypes};
+
 use crate::tracer_payload::TraceChunks;
 use serde::ser::SerializeStruct;
 use serde::Serialize;
@@ -758,12 +759,33 @@ impl<'s, D: TraceDataLifetime<'s>> TraceProjector<'s, D> for TraceCollection<D> 
     }
 }
 
+// Format-specific attribute type macros for v04
+// $C = container type (Span<D>, Trace<D>, or Chunk<D>)
+// 'a = container lifetime, 's = storage lifetime
+macro_rules! impl_v04_span_attribute_types {
+    ($C:ty) => {
+        impl<'a, 's, D: TraceData, const ISMUT: u8> TraceAttributeGetterTypes<'a, 's, TraceCollection<D>, D, $C>
+        for TraceAttributes<'s, TraceCollection<D>, D, AttrRef<'a, $C>, $C, ISMUT> {
+            type Array = ();
+            type Map = ();
+        }
+        impl<'a, 's, D: TraceData> TraceAttributeSetterTypes<'a, 's, TraceCollection<D>, D, $C>
+        for TraceAttributesMut<'s, TraceCollection<D>, D, AttrRef<'a, $C>, $C> {
+            type MutString = &'s mut D::Text;
+            type MutBytes = &'s mut D::Bytes;
+            type MutBoolean = &'a mut f64;
+            type MutInteger = &'a mut f64;
+            type MutDouble = &'a mut f64;
+            type MutArray = ();
+            type MutMap = ();
+        }
+    };
+}
+
+
 // Attribute operations for Span
 // For v04, data lives in the span, so 'b (container lifetime) must outlive 'a (storage lifetime)
-impl<'a, 's, D: TraceData, const ISMUT: u8> TraceAttributeGetterTypes<'a, 's, TraceCollection<D>, D, Span<D>> for TraceAttributes<'s, TraceCollection<D>, D, AttrRef<'a, Span<D>>, Span<D>, ISMUT> {
-    type Array = ();
-    type Map = ();
-}
+impl_v04_span_attribute_types!(Span<D>);
 
 impl<'a, 's, D: TraceData, const ISMUT: u8> TraceAttributesOp<'a, 's, TraceCollection<D>, D, Span<D>> for TraceAttributes<'s, TraceCollection<D>, D, AttrRef<'a, Span<D>>, Span<D>, ISMUT> {
     fn get<K>(container: &'a Span<D>, _storage: &'s (), key: &K) -> Option<AttributeAnyGetterContainer<'a, 's, Self, TraceCollection<D>, D, Span<D>>>
@@ -786,18 +808,14 @@ impl<'a, 's, D: TraceData, const ISMUT: u8> TraceAttributesOp<'a, 's, TraceColle
                 return Some(AttributeAnyContainer::Double(*v));
             }
         }
+        for (k, v) in &container.meta_struct {
+            if key.equivalent(&k.as_ref_copy()) {
+                let v_storage = unsafe { std::mem::transmute::<&'_ _, &'s D::Bytes>(v) };
+                return Some(AttributeAnyContainer::Bytes(v_storage));
+            }
+        }
         None
     }
-}
-
-impl<'a, 's, D: TraceData> TraceAttributeSetterTypes<'a, 's, TraceCollection<D>, D, Span<D>> for TraceAttributesMut<'s, TraceCollection<D>, D, AttrRef<'a, Span<D>>, Span<D>> {
-    type MutString = &'s mut D::Text;
-    type MutBytes = ();
-    type MutBoolean = &'a mut f64;
-    type MutInteger = &'a mut f64;
-    type MutDouble = &'a mut f64;
-    type MutArray = ();
-    type MutMap = ();
 }
 
 impl<'a, 's, D: TraceData> TraceAttributesMutOp<'a, 's, TraceCollection<D>, D, Span<D>> for TraceAttributesMut<'s, TraceCollection<D>, D, AttrRef<'a, Span<D>>, Span<D>> {
@@ -820,6 +838,13 @@ impl<'a, 's, D: TraceData> TraceAttributesMutOp<'a, 's, TraceCollection<D>, D, S
                 return Some(AttributeAnyContainer::Double(v));
             }
         }
+        // Try to find in meta_struct
+        for (k, v) in &mut container.meta_struct {
+            if key.equivalent(&k.as_ref_copy()) {
+                let v_storage: &'s mut D::Bytes = unsafe { std::mem::transmute(v) };
+                return Some(AttributeAnyContainer::Bytes(v_storage));
+            }
+        }
         None
     }
 
@@ -831,7 +856,11 @@ impl<'a, 's, D: TraceData> TraceAttributesMutOp<'a, 's, TraceCollection<D>, D, S
                 let entry_storage: &'s mut D::Text = unsafe { std::mem::transmute(entry) };
                 AttributeAnyContainer::String(entry_storage)
             },
-            AttributeAnyValueType::Bytes => AttributeAnyContainer::Bytes(()),
+            AttributeAnyValueType::Bytes => {
+                let entry = container.meta_struct.entry(key).or_insert_with(D::Bytes::default);
+                let entry_storage: &'s mut D::Bytes = unsafe { std::mem::transmute(entry) };
+                AttributeAnyContainer::Bytes(entry_storage)
+            },
             AttributeAnyValueType::Boolean | AttributeAnyValueType::Integer | AttributeAnyValueType::Double => {
                 let entry = container.metrics.entry(key).or_insert(0.0);
                 AttributeAnyContainer::Double(entry)
@@ -848,6 +877,7 @@ impl<'a, 's, D: TraceData> TraceAttributesMutOp<'a, 's, TraceCollection<D>, D, S
         // For std HashMap with owned keys, we use retain which allows us to check without cloning
         container.meta.retain(|k, _| !key.equivalent(&k.as_ref_copy()));
         container.metrics.retain(|k, _| !key.equivalent(&k.as_ref_copy()));
+        container.meta_struct.retain(|k, _| !key.equivalent(&k.as_ref_copy()));
     }
 }
 
@@ -865,14 +895,20 @@ impl<'storage, D: TraceDataLifetime<'storage> + 'storage> TraceAttributesString<
     }
 }
 
+impl<'storage, D: TraceDataLifetime<'storage> + 'storage> TraceAttributesBytes<'storage, 'storage, TraceCollection<D>, D> for &'storage mut D::Bytes {
+    fn get(&self, _storage: &'storage ()) -> &'storage D::Bytes {
+        unsafe { std::mem::transmute::<&D::Bytes, &'storage D::Bytes>(&**self) }
+    }
+
+    fn set(self, _storage: &mut (), value: D::Bytes) {
+        *self = value;
+    }
+}
+
 // Note: TraceAttributesBoolean, TraceAttributesInteger, and TraceAttributesDouble for &mut f64
 // are already implemented in v05/mod.rs and apply to both v04 and v05
 
-// Empty implementations for types that don't have attributes
-impl<'a, 's, D: TraceData, const ISMUT: u8> TraceAttributeGetterTypes<'a, 's, TraceCollection<D>, D, Trace<D>> for TraceAttributes<'s, TraceCollection<D>, D, AttrRef<'a, Trace<D>>, Trace<D>, ISMUT> {
-    type Array = ();
-    type Map = ();
-}
+impl_v04_span_attribute_types!(Trace<D>);
 
 impl<'a, 's, D: TraceData, const ISMUT: u8> TraceAttributesOp<'a, 's, TraceCollection<D>, D, Trace<D>> for TraceAttributes<'s, TraceCollection<D>, D, AttrRef<'a, Trace<D>>, Trace<D>, ISMUT> {
     fn get<K>(container: &'a Trace<D>, _storage: &'s (), key: &K) -> Option<AttributeAnyGetterContainer<'a, 's, Self, TraceCollection<D>, D, Trace<D>>>
@@ -892,18 +928,14 @@ impl<'a, 's, D: TraceData, const ISMUT: u8> TraceAttributesOp<'a, 's, TraceColle
                 return Some(AttributeAnyContainer::Double(*v));
             }
         }
+        for (k, v) in &span.meta_struct {
+            if key.equivalent(&k.as_ref_copy()) {
+                let v_storage = unsafe { std::mem::transmute::<&'_ _, &'s D::Bytes>(v) };
+                return Some(AttributeAnyContainer::Bytes(v_storage));
+            }
+        }
         None
     }
-}
-
-impl<'a, 's, D: TraceData> TraceAttributeSetterTypes<'a, 's, TraceCollection<D>, D, Trace<D>> for TraceAttributesMut<'s, TraceCollection<D>, D, AttrRef<'a, Trace<D>>, Trace<D>> {
-    type MutString = &'s mut D::Text;
-    type MutBytes = ();
-    type MutBoolean = &'a mut f64;
-    type MutInteger = &'a mut f64;
-    type MutDouble = &'a mut f64;
-    type MutArray = ();
-    type MutMap = ();
 }
 
 impl<'a, 's, D: TraceData> TraceAttributesMutOp<'a, 's, TraceCollection<D>, D, Trace<D>> for TraceAttributesMut<'s, TraceCollection<D>, D, AttrRef<'a, Trace<D>>, Trace<D>> {
@@ -924,6 +956,12 @@ impl<'a, 's, D: TraceData> TraceAttributesMutOp<'a, 's, TraceCollection<D>, D, T
                 return Some(AttributeAnyContainer::Double(v));
             }
         }
+        for (k, v) in &mut span.meta_struct {
+            if key.equivalent(&k.as_ref_copy()) {
+                let v_storage: &'s mut D::Bytes = unsafe { std::mem::transmute(v) };
+                return Some(AttributeAnyContainer::Bytes(v_storage));
+            }
+        }
         None
     }
 
@@ -937,7 +975,11 @@ impl<'a, 's, D: TraceData> TraceAttributesMutOp<'a, 's, TraceCollection<D>, D, T
                     let entry_storage: &'s mut D::Text = unsafe { std::mem::transmute(entry) };
                     AttributeAnyContainer::String(entry_storage)
                 },
-                AttributeAnyValueType::Bytes => AttributeAnyContainer::Bytes(()),
+                AttributeAnyValueType::Bytes => {
+                    let entry = span.meta_struct.entry(key).or_insert_with(D::Bytes::default);
+                    let entry_storage: &'s mut D::Bytes = unsafe { std::mem::transmute(entry) };
+                    AttributeAnyContainer::Bytes(entry_storage)
+                },
                 AttributeAnyValueType::Boolean | AttributeAnyValueType::Integer | AttributeAnyValueType::Double => {
                     let entry = span.metrics.entry(key).or_insert(0.0);
                     AttributeAnyContainer::Double(entry)
@@ -959,15 +1001,13 @@ impl<'a, 's, D: TraceData> TraceAttributesMutOp<'a, 's, TraceCollection<D>, D, T
             if let Some(span) = chunk.first_mut() {
                 span.meta.retain(|k, _| !key.equivalent(&k.as_ref_copy()));
                 span.metrics.retain(|k, _| !key.equivalent(&k.as_ref_copy()));
+                span.meta_struct.retain(|k, _| !key.equivalent(&k.as_ref_copy()));
             }
         }
     }
 }
 
-impl<'a, 's, D: TraceData, const ISMUT: u8> TraceAttributeGetterTypes<'a, 's, TraceCollection<D>, D, Chunk<D>> for TraceAttributes<'s, TraceCollection<D>, D, AttrRef<'a, Chunk<D>>, Chunk<D>, ISMUT> {
-    type Array = ();
-    type Map = ();
-}
+impl_v04_span_attribute_types!(Chunk<D>);
 
 impl<'a, 's, D: TraceData, const ISMUT: u8> TraceAttributesOp<'a, 's, TraceCollection<D>, D, Chunk<D>> for TraceAttributes<'s, TraceCollection<D>, D, AttrRef<'a, Chunk<D>>, Chunk<D>, ISMUT> {
     fn get<K>(container: &'a Chunk<D>, _storage: &'s (), key: &K) -> Option<AttributeAnyGetterContainer<'a, 's, Self, TraceCollection<D>, D, Chunk<D>>>
@@ -987,18 +1027,14 @@ impl<'a, 's, D: TraceData, const ISMUT: u8> TraceAttributesOp<'a, 's, TraceColle
                 return Some(AttributeAnyContainer::Double(*v));
             }
         }
+        for (k, v) in &span.meta_struct {
+            if key.equivalent(&k.as_ref_copy()) {
+                let v_storage = unsafe { std::mem::transmute::<&'_ _, &'s D::Bytes>(v) };
+                return Some(AttributeAnyContainer::Bytes(v_storage));
+            }
+        }
         None
     }
-}
-
-impl<'a, 's, D: TraceData> TraceAttributeSetterTypes<'a, 's, TraceCollection<D>, D, Chunk<D>> for TraceAttributesMut<'s, TraceCollection<D>, D, AttrRef<'a, Chunk<D>>, Chunk<D>> {
-    type MutString = &'s mut D::Text;
-    type MutBytes = ();
-    type MutBoolean = &'a mut f64;
-    type MutInteger = &'a mut f64;
-    type MutDouble = &'a mut f64;
-    type MutArray = ();
-    type MutMap = ();
 }
 
 impl<'a, 's, D: TraceData> TraceAttributesMutOp<'a, 's, TraceCollection<D>, D, Chunk<D>> for TraceAttributesMut<'s, TraceCollection<D>, D, AttrRef<'a, Chunk<D>>, Chunk<D>> {
@@ -1019,6 +1055,12 @@ impl<'a, 's, D: TraceData> TraceAttributesMutOp<'a, 's, TraceCollection<D>, D, C
                 return Some(AttributeAnyContainer::Double(v));
             }
         }
+        for (k, v) in &mut span.meta_struct {
+            if key.equivalent(&k.as_ref_copy()) {
+                let v_storage: &'s mut D::Bytes = unsafe { std::mem::transmute(v) };
+                return Some(AttributeAnyContainer::Bytes(v_storage));
+            }
+        }
         None
     }
 
@@ -1031,7 +1073,11 @@ impl<'a, 's, D: TraceData> TraceAttributesMutOp<'a, 's, TraceCollection<D>, D, C
                     let entry_storage: &'s mut D::Text = unsafe { std::mem::transmute(entry) };
                     AttributeAnyContainer::String(entry_storage)
                 },
-                AttributeAnyValueType::Bytes => AttributeAnyContainer::Bytes(()),
+                AttributeAnyValueType::Bytes => {
+                    let entry = span.meta_struct.entry(key).or_insert_with(D::Bytes::default);
+                    let entry_storage: &'s mut D::Bytes = unsafe { std::mem::transmute(entry) };
+                    AttributeAnyContainer::Bytes(entry_storage)
+                },
                 AttributeAnyValueType::Boolean | AttributeAnyValueType::Integer | AttributeAnyValueType::Double => {
                     let entry = span.metrics.entry(key).or_insert(0.0);
                     AttributeAnyContainer::Double(entry)
@@ -1051,13 +1097,25 @@ impl<'a, 's, D: TraceData> TraceAttributesMutOp<'a, 's, TraceCollection<D>, D, C
         if let Some(span) = container.first_mut() {
             span.meta.retain(|k, _| !key.equivalent(&k.as_ref_copy()));
             span.metrics.retain(|k, _| !key.equivalent(&k.as_ref_copy()));
+            span.meta_struct.retain(|k, _| !key.equivalent(&k.as_ref_copy()));
         }
     }
 }
 
-impl<'a, 's, D: TraceData, const ISMUT: u8> TraceAttributeGetterTypes<'a, 's, TraceCollection<D>, D, SpanLink<D>> for TraceAttributes<'s, TraceCollection<D>, D, AttrRef<'a, SpanLink<D>>, SpanLink<D>, ISMUT> {
+impl<'a, 's, D: TraceData, const ISMUT: u8> TraceAttributeGetterTypes<'a, 's, TraceCollection<D>, D, SpanLink<D>>
+for TraceAttributes<'s, TraceCollection<D>, D, AttrRef<'a, SpanLink<D>>, SpanLink<D>, ISMUT> {
     type Array = ();
     type Map = ();
+}
+impl<'a, 's, D: TraceData> TraceAttributeSetterTypes<'a, 's, TraceCollection<D>, D, SpanLink<D>>
+for TraceAttributesMut<'s, TraceCollection<D>, D, AttrRef<'a, SpanLink<D>>, SpanLink<D>> {
+    type MutString = &'s mut D::Text;
+    type MutBytes = ();
+    type MutBoolean = ();
+    type MutInteger = ();
+    type MutDouble = ();
+    type MutArray = ();
+    type MutMap = ();
 }
 
 impl<'a, 's, D: TraceData, const ISMUT: u8> TraceAttributesOp<'a, 's, TraceCollection<D>, D, SpanLink<D>> for TraceAttributes<'s, TraceCollection<D>, D, AttrRef<'a, SpanLink<D>>, SpanLink<D>, ISMUT> {
@@ -1076,16 +1134,6 @@ impl<'a, 's, D: TraceData, const ISMUT: u8> TraceAttributesOp<'a, 's, TraceColle
         }
         None
     }
-}
-
-impl<'a, 's, D: TraceData> TraceAttributeSetterTypes<'a, 's, TraceCollection<D>, D, SpanLink<D>> for TraceAttributesMut<'s, TraceCollection<D>, D, AttrRef<'a, SpanLink<D>>, SpanLink<D>> {
-    type MutString = &'s mut D::Text;
-    type MutBytes = ();
-    type MutBoolean = ();
-    type MutInteger = ();
-    type MutDouble = ();
-    type MutArray = ();
-    type MutMap = ();
 }
 
 impl<'a, 's, D: TraceData> TraceAttributesMutOp<'a, 's, TraceCollection<D>, D, SpanLink<D>> for TraceAttributesMut<'s, TraceCollection<D>, D, AttrRef<'a, SpanLink<D>>, SpanLink<D>> {
@@ -1123,9 +1171,20 @@ impl<'a, 's, D: TraceData> TraceAttributesMutOp<'a, 's, TraceCollection<D>, D, S
     }
 }
 
-impl<'a, 's, D: TraceData, const ISMUT: u8> TraceAttributeGetterTypes<'a, 's, TraceCollection<D>, D, SpanEvent<D>> for TraceAttributes<'s, TraceCollection<D>, D, AttrRef<'a, SpanEvent<D>>, SpanEvent<D>, ISMUT> {
+impl<'a, 's, D: TraceData, const ISMUT: u8> TraceAttributeGetterTypes<'a, 's, TraceCollection<D>, D, SpanEvent<D>>
+for TraceAttributes<'s, TraceCollection<D>, D, AttrRef<'a, SpanEvent<D>>, SpanEvent<D>, ISMUT> {
     type Array = ();
     type Map = ();
+}
+impl<'a, 's, D: TraceData> TraceAttributeSetterTypes<'a, 's, TraceCollection<D>, D, SpanEvent<D>>
+for TraceAttributesMut<'s, TraceCollection<D>, D, AttrRef<'a, SpanEvent<D>>, SpanEvent<D>> {
+    type MutString = &'s mut D::Text;
+    type MutBytes = ();
+    type MutBoolean = &'a mut bool;
+    type MutInteger = &'a mut i64;
+    type MutDouble = &'a mut f64;
+    type MutArray = ();
+    type MutMap = ();
 }
 
 impl<'a, 's, D: TraceData, const ISMUT: u8> TraceAttributesOp<'a, 's, TraceCollection<D>, D, SpanEvent<D>> for TraceAttributes<'s, TraceCollection<D>, D, AttrRef<'a, SpanEvent<D>>, SpanEvent<D>, ISMUT> {
@@ -1158,16 +1217,6 @@ impl<'a, 's, D: TraceData, const ISMUT: u8> TraceAttributesOp<'a, 's, TraceColle
         }
         None
     }
-}
-
-impl<'a, 's, D: TraceData> TraceAttributeSetterTypes<'a, 's, TraceCollection<D>, D, SpanEvent<D>> for TraceAttributesMut<'s, TraceCollection<D>, D, AttrRef<'a, SpanEvent<D>>, SpanEvent<D>> {
-    type MutString = &'s mut D::Text;
-    type MutBytes = ();
-    type MutBoolean = &'a mut bool;
-    type MutInteger = &'a mut i64;
-    type MutDouble = &'a mut f64;
-    type MutArray = ();
-    type MutMap = ();
 }
 
 impl<'a, 's, D: TraceData> TraceAttributesMutOp<'a, 's, TraceCollection<D>, D, SpanEvent<D>> for TraceAttributesMut<'s, TraceCollection<D>, D, AttrRef<'a, SpanEvent<D>>, SpanEvent<D>> {

@@ -4,6 +4,7 @@
 use std::cmp::Ordering;
 use std::collections::hash_map::Entry;
 use crate::span::{OwnedTraceData, TraceProjector, Traces, TraceAttributes, TraceAttributesOp, parse_span_kind, span_kind_to_str, AttributeAnyContainer, TraceAttributesMutOp, TraceAttributesMut, AttributeAnyValueType, TraceAttributesString, AttributeAnySetterContainer, AttributeAnyGetterContainer, TraceAttributesBoolean, TraceAttributesInteger, TraceAttributesDouble, SpanDataContents, AttrRef, TraceData, IntoData, TraceDataLifetime, TracesMut, TraceAttributeGetterTypes, TraceAttributeSetterTypes};
+
 use anyhow::Result;
 use serde::Serialize;
 use std::borrow::Borrow;
@@ -558,11 +559,50 @@ impl<'s, D: TraceDataLifetime<'s>> TraceProjector<'s, D> for ChunkCollection<D> 
     fn set_event_name(_event: &mut SpanEvent, _storage: &mut Storage<D>, _value: D::Text) {
     }
 }
-//note: trait bound `trace::TraceAttributes<'_, T, D, trace::AttrRef<'_, <T as trace::TraceProjector<D>>::Span>, <T as trace::TraceProjector<D>>::Span, 0>: trace::TraceAttributesOp<'_, T, D, <T as trace::TraceProjector<D>>::Span>` was not satisfied
-impl<'a, 'b, D: TraceData, const ISMUT: u8> TraceAttributeGetterTypes<'b, 'a, ChunkCollection<D>, D, Span> for TraceAttributes<'a, ChunkCollection<D>, D, AttrRef<'b, Span>, Span, ISMUT> {
-    type Array = ();
-    type Map = ();
+// Format-specific attribute type macros for v05
+// In v05: 'a = storage lifetime, 'b = container lifetime
+macro_rules! impl_v05_span_attribute_types {
+    ($C:ty) => {
+        impl<'a, 'b, D: TraceData, const ISMUT: u8> TraceAttributeGetterTypes<'b, 'a, ChunkCollection<D>, D, $C>
+        for TraceAttributes<'a, ChunkCollection<D>, D, AttrRef<'b, $C>, $C, ISMUT> {
+            type Array = ();
+            type Map = ();
+        }
+        impl<'a, 'b, D: TraceData> TraceAttributeSetterTypes<'b, 'a, ChunkCollection<D>, D, $C>
+        for TraceAttributesMut<'a, ChunkCollection<D>, D, AttrRef<'b, $C>, $C> {
+            type MutString = &'a mut TraceStringRef;
+            type MutBytes = ();
+            type MutBoolean = &'b mut f64;
+            type MutInteger = &'b mut f64;
+            type MutDouble = &'b mut f64;
+            type MutArray = ();
+            type MutMap = ();
+        }
+    };
 }
+
+macro_rules! impl_v05_null_attribute_types {
+    ($C:ty) => {
+        impl<'a, 'b, D: TraceData, const ISMUT: u8> TraceAttributeGetterTypes<'b, 'a, ChunkCollection<D>, D, $C>
+        for TraceAttributes<'a, ChunkCollection<D>, D, AttrRef<'b, $C>, $C, ISMUT> {
+            type Array = ();
+            type Map = ();
+        }
+        impl<'a, 'b, D: TraceData> TraceAttributeSetterTypes<'b, 'a, ChunkCollection<D>, D, $C>
+        for TraceAttributesMut<'a, ChunkCollection<D>, D, AttrRef<'b, $C>, $C> {
+            type MutString = ();
+            type MutBytes = ();
+            type MutBoolean = ();
+            type MutInteger = ();
+            type MutDouble = ();
+            type MutArray = ();
+            type MutMap = ();
+        }
+    };
+}
+
+//note: trait bound `trace::TraceAttributes<'_, T, D, trace::AttrRef<'_, <T as trace::TraceProjector<D>>::Span>, <T as trace::TraceProjector<D>>::Span, 0>: trace::TraceAttributesOp<'_, T, D, <T as trace::TraceProjector<D>>::Span>` was not satisfied
+impl_v05_span_attribute_types!(Span);
 
 impl<'a, 'b, D: TraceData, const ISMUT: u8> TraceAttributesOp<'b, 'a, ChunkCollection<D>, D, Span> for TraceAttributes<'a, ChunkCollection<D>, D, AttrRef<'b, Span>, Span, ISMUT> {
     fn get<K>(container: &'b Span, storage: &'a Storage<D>, key: &K) -> Option<AttributeAnyGetterContainer<'b, 'a, Self, ChunkCollection<D>, D, Span>>
@@ -579,16 +619,6 @@ impl<'a, 'b, D: TraceData, const ISMUT: u8> TraceAttributesOp<'b, 'a, ChunkColle
             }
         })
     }
-}
-
-impl<'a, 'b, D: TraceData> TraceAttributeSetterTypes<'b, 'a, ChunkCollection<D>, D, Span> for TraceAttributesMut<'a, ChunkCollection<D>, D, AttrRef<'b, Span>, Span> {
-    type MutString = &'a mut TraceStringRef;
-    type MutBytes = ();
-    type MutBoolean = &'b mut f64;
-    type MutInteger = &'b mut f64;
-    type MutDouble = &'b mut f64;
-    type MutArray = ();
-    type MutMap = ();
 }
 
 impl<'a, 'b, D: TraceData> TraceAttributesMutOp<'b, 'a, ChunkCollection<D>, D, Span> for TraceAttributesMut<'a, ChunkCollection<D>, D, AttrRef<'b, Span>, Span> {
@@ -678,10 +708,7 @@ impl<'a> TraceAttributesDouble for &'a mut f64 {
 }
 
 // Empty implementations for SpanLink and SpanEvent which don't have attributes in v05
-impl<'b, 'a, D: TraceData, const ISMUT: u8> TraceAttributeGetterTypes<'b, 'a, ChunkCollection<D>, D, [(); 0]> for TraceAttributes<'a, ChunkCollection<D>, D, AttrRef<'b, [(); 0]>, [(); 0], ISMUT> {
-    type Array = ();
-    type Map = ();
-}
+impl_v05_null_attribute_types!([(); 0]);
 
 impl<'b, 'a, D: TraceData, const ISMUT: u8> TraceAttributesOp<'b, 'a, ChunkCollection<D>, D, [(); 0]> for TraceAttributes<'a, ChunkCollection<D>, D, AttrRef<'b, [(); 0]>, [(); 0], ISMUT> {
     fn get<K>(_container: &'b [(); 0], _storage: &'a Storage<D>, _key: &K) -> Option<AttributeAnyGetterContainer<'b, 'a, Self, ChunkCollection<D>, D, [(); 0]>>
@@ -690,16 +717,6 @@ impl<'b, 'a, D: TraceData, const ISMUT: u8> TraceAttributesOp<'b, 'a, ChunkColle
     {
         None
     }
-}
-
-impl<'b, 'a, D: TraceData> TraceAttributeSetterTypes<'b, 'a, ChunkCollection<D>, D, [(); 0]> for TraceAttributesMut<'a, ChunkCollection<D>, D, AttrRef<'b, [(); 0]>, [(); 0]> {
-    type MutString = ();
-    type MutBytes = ();
-    type MutBoolean = ();
-    type MutInteger = ();
-    type MutDouble = ();
-    type MutArray = ();
-    type MutMap = ();
 }
 
 impl<'b, 'a, D: TraceData> TraceAttributesMutOp<'b, 'a, ChunkCollection<D>, D, [(); 0]> for TraceAttributesMut<'a, ChunkCollection<D>, D, AttrRef<'b, [(); 0]>, [(); 0]> {
@@ -721,7 +738,8 @@ impl<'b, 'a, D: TraceData> TraceAttributesMutOp<'b, 'a, ChunkCollection<D>, D, [
     }
 }
 
-impl<'b, 'a, D: TraceData, const ISMUT: u8> TraceAttributeGetterTypes<'b, 'a, ChunkCollection<D>, D, [(); 0]> for TraceAttributes<'a, ChunkCollection<D>, D, AttrRef<'b, Span>, Span, ISMUT> {
+impl<'a, 'b, D: TraceData, const ISMUT: u8> TraceAttributeGetterTypes<'b, 'a, ChunkCollection<D>, D, [(); 0]>
+for TraceAttributes<'a, ChunkCollection<D>, D, AttrRef<'b, Span>, Span, ISMUT> {
     type Array = ();
     type Map = ();
 }
@@ -735,10 +753,7 @@ impl<'b, 'a, D: TraceData, const ISMUT: u8> TraceAttributesOp<'b, 'a, ChunkColle
     }
 }
 
-impl<'b, 'a, D: TraceData, const ISMUT: u8> TraceAttributeGetterTypes<'b, 'a, ChunkCollection<D>, D, Trace> for TraceAttributes<'a, ChunkCollection<D>, D, AttrRef<'b, Trace>, Trace, ISMUT> {
-    type Array = ();
-    type Map = ();
-}
+impl_v05_span_attribute_types!(Trace);
 
 impl<'b, 'a, D: TraceData, const ISMUT: u8> TraceAttributesOp<'b, 'a, ChunkCollection<D>, D, Trace> for TraceAttributes<'a, ChunkCollection<D>, D, AttrRef<'b, Trace>, Trace, ISMUT> {
     fn get<K>(container: &'b Trace, storage: &'a Storage<D>, key: &K) -> Option<AttributeAnyGetterContainer<'b, 'a, Self, ChunkCollection<D>, D, Trace>>
@@ -758,10 +773,7 @@ impl<'b, 'a, D: TraceData, const ISMUT: u8> TraceAttributesOp<'b, 'a, ChunkColle
     }
 }
 
-impl<'b, 'a, D: TraceData, const ISMUT: u8> TraceAttributeGetterTypes<'b, 'a, ChunkCollection<D>, D, Chunk> for TraceAttributes<'a, ChunkCollection<D>, D, AttrRef<'b, Chunk>, Chunk, ISMUT> {
-    type Array = ();
-    type Map = ();
-}
+impl_v05_span_attribute_types!(Chunk);
 
 impl<'b, 'a, D: TraceData, const ISMUT: u8> TraceAttributesOp<'b, 'a, ChunkCollection<D>, D, Chunk> for TraceAttributes<'a, ChunkCollection<D>, D, AttrRef<'b, Chunk>, Chunk, ISMUT> {
     fn get<K>(container: &'b Chunk, storage: &'a Storage<D>, key: &K) -> Option<AttributeAnyGetterContainer<'b, 'a, Self, ChunkCollection<D>, D, Chunk>>
@@ -779,16 +791,6 @@ impl<'b, 'a, D: TraceData, const ISMUT: u8> TraceAttributesOp<'b, 'a, ChunkColle
             }
         })
     }
-}
-
-impl<'b, 'a, D: TraceData> TraceAttributeSetterTypes<'b, 'a, ChunkCollection<D>, D, Chunk> for TraceAttributesMut<'a, ChunkCollection<D>, D, AttrRef<'b, Chunk>, Chunk> {
-    type MutString = &'a mut TraceStringRef;
-    type MutBytes = ();
-    type MutBoolean = &'b mut f64;
-    type MutInteger = &'b mut f64;
-    type MutDouble = &'b mut f64;
-    type MutArray = ();
-    type MutMap = ();
 }
 
 impl<'b, 'a, D: TraceData> TraceAttributesMutOp<'b, 'a, ChunkCollection<D>, D, Chunk> for TraceAttributesMut<'a, ChunkCollection<D>, D, AttrRef<'b, Chunk>, Chunk> {
@@ -839,16 +841,6 @@ impl<'b, 'a, D: TraceData> TraceAttributesMutOp<'b, 'a, ChunkCollection<D>, D, C
             span.remove_metric(key, storage);
         }
     }
-}
-
-impl<'b, 'a, D: TraceData> TraceAttributeSetterTypes<'b, 'a, ChunkCollection<D>, D, Trace> for TraceAttributesMut<'a, ChunkCollection<D>, D, AttrRef<'b, Trace>, Trace> {
-    type MutString = &'a mut TraceStringRef;
-    type MutBytes = ();
-    type MutBoolean = &'b mut f64;
-    type MutInteger = &'b mut f64;
-    type MutDouble = &'b mut f64;
-    type MutArray = ();
-    type MutMap = ();
 }
 
 impl<'b, 'a, D: TraceData> TraceAttributesMutOp<'b, 'a, ChunkCollection<D>, D, Trace> for TraceAttributesMut<'a, ChunkCollection<D>, D, AttrRef<'b, Trace>, Trace> {
