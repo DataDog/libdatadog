@@ -39,7 +39,7 @@ pub mod linux {
         fs::{ftruncate, memfd_create, MemfdFlags},
         mm::{madvise, mmap, mmap_anonymous, munmap, Advice, MapFlags, ProtFlags},
         param::page_size,
-        process::{getpid, set_virtual_memory_region_name, Pid},
+        process::set_virtual_memory_region_name,
     };
 
     /// The header structure written at the start of the mapping. This must match the C
@@ -209,8 +209,6 @@ pub mod linux {
         /// or drop).
         #[allow(unused)]
         payload: Vec<u8>,
-        #[allow(unused)]
-        publisher_pid: Pid,
     }
 
     impl ProcessContextHandle {
@@ -274,11 +272,7 @@ pub mod linux {
 
             let _ = mapping.set_name();
 
-            Ok(ProcessContextHandle {
-                mapping,
-                payload,
-                publisher_pid: getpid(),
-            })
+            Ok(ProcessContextHandle { mapping, payload })
         }
 
         /// Updates the context after initial publication. Currently unimplemented (always returns
