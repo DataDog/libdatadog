@@ -1,6 +1,6 @@
 [package]
 name = "libdd-data-pipeline"
-version= "1.0.0"
+version= "2.0.0"
 description = "Trace exporter package allowing sending data from datadog SDKs to the Trace Agent."
 homepage = "https://github.com/DataDog/libdatadog/tree/main/libdd-data-pipeline"
 repository = "https://github.com/DataDog/libdatadog/tree/main/libdd-data-pipeline"
@@ -30,13 +30,13 @@ tokio = { version = "1.23", features = [
 ], default-features = false }
 uuid = { version = "1.10.0", features = ["v4"] }
 tokio-util = "0.7.11"
-libdd-common = { version = "1.1.0", path = "../libdd-common", default-features = false }
-libdd-telemetry = { version = "2.0.0", path = "../libdd-telemetry", default-features = false }
-libdd-trace-protobuf = { version = "1.0.0", path = "../libdd-trace-protobuf" }
-libdd-trace-stats = { version = "1.0.0", path = "../libdd-trace-stats" }
-libdd-trace-utils = { version = "1.0.0", path = "../libdd-trace-utils", default-features = false }
-libdd-ddsketch = { version = "1.0.0", path = "../libdd-ddsketch" }
-libdd-dogstatsd-client = { version = "1.0.0", path = "../libdd-dogstatsd-client", default-features = false }
+libdd-common = { version = "2.0.0", path = "../libdd-common", default-features = false }
+libdd-telemetry = { version = "3.0.0", path = "../libdd-telemetry", default-features = false }
+libdd-trace-protobuf = { version = "1.1.0", path = "../libdd-trace-protobuf" }
+libdd-trace-stats = { version = "1.0.1", path = "../libdd-trace-stats" }
+libdd-trace-utils = { version = "2.0.0", path = "../libdd-trace-utils", default-features = false }
+libdd-ddsketch = { version = "1.0.1", path = "../libdd-ddsketch" }
+libdd-dogstatsd-client = { version = "1.0.1", path = "../libdd-dogstatsd-client", default-features = false }
 libdd-tinybytes = { version = "1.1.0", path = "../libdd-tinybytes", features = [
     "bytes_string",
     "serialization",
