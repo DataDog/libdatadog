@@ -3,8 +3,8 @@ issuer: https://token.actions.githubusercontent.com
 subject_pattern: "repo:DataDog/libdatadog.*"
 
 claim_pattern:
-  ref: "refs/heads/(main|release|julio/.*|igor/.*)" # TODO: remove testing branch and uncomment ref_protected
-  # ref_protected: "true" # TODO: uncomment once tested.
+  ref: "refs/heads/(main|release)"
+  ref_protected: "true"
 
 permissions:
   members: read
