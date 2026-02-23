@@ -480,5 +480,36 @@ pub mod linux {
 
             super::unpublish().expect("couldn't unpublish the context");
         }
+
+        #[test]
+        #[cfg_attr(miri, ignore)]
+        fn update_process_context() {
+            let payload_v1 = "example process context payload";
+            let payload_v2 = "another example process context payload of different size";
+
+            super::publish(payload_v1.as_bytes().to_vec())
+                .expect("couldn't publish the process context");
+            super::publish(payload_v2.as_bytes().to_vec())
+                .expect("couldn't update the process contet");
+
+            let header = read_process_context().expect("couldn't read back the process contex");
+            // Safety: the published context must have put valid bytes of size payload_size in the
+            // context if the signature check succeded.
+            let read_payload = unsafe {
+                std::slice::from_raw_parts(header.payload_ptr, header.payload_size as usize)
+            };
+
+            assert!(header.signature == *super::SIGNATURE, "wrong signature");
+            assert!(
+                header.version == super::PROCESS_CTX_VERSION,
+                "wrong context version"
+            );
+            assert!(
+                header.payload_size == payload_v2.len() as u32,
+                "wrong payload size"
+            );
+            assert!(header.published_at_ns > 0, "published_at_ns is zero");
+            assert!(read_payload == payload_v2.as_bytes(), "payload mismatch");
+        }
     }
 }
