@@ -372,7 +372,7 @@ pub mod linux {
 
             name.starts_with("/memfd:OTEL_CTX")
                 || name.starts_with("[anon_shmem:OTEL_CTX]")
-                || name.starts_with("[anon:OTEL_CTXT]")
+                || name.starts_with("[anon:OTEL_CTX]")
         }
 
         /// Reads the signature from a memory address to verify it's an OTEL_CTX mapping. This also
