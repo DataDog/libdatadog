@@ -3159,6 +3159,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "libdd-http-client"
+version = "28.0.0"
+dependencies = [
+ "bytes",
+ "fastrand",
+ "httpmock",
+ "reqwest",
+ "rustls",
+ "tempfile",
+ "thiserror 2.0.17",
+ "tokio",
+]
+
+[[package]]
 name = "libdd-library-config"
 version = "1.0.0"
 dependencies = [
