@@ -277,7 +277,7 @@ pub mod linux {
 
         /// Updates the context after initial publication. Currently unimplemented (always returns
         /// `Err`).
-        fn update(&mut self) -> anyhow::Result<()> {
+        fn update(&mut self, _payload: Vec<u8>) -> anyhow::Result<()> {
             Err(anyhow::anyhow!(
                 "process context update isn't implemented yet"
             ))
@@ -314,7 +314,7 @@ pub mod linux {
         let mut guard = lock_context_handle()?;
 
         match &mut *guard {
-            Some(handler) => handler.update(),
+            Some(handler) => handler.update(payload),
             None => {
                 *guard = Some(ProcessContextHandle::publish(payload)?);
                 Ok(())
