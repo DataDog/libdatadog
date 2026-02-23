@@ -291,11 +291,13 @@ pub mod linux {
 
             // A process shouldn't try to concurrently update its own context, so this shouldn't
             // really happen.
-            if published_at_atomic.swap(0, Ordering::Acquire) == 0 {
+            if published_at_atomic.swap(0, Ordering::Relaxed) == 0 {
                 return Err(anyhow::anyhow!(
                     "concurrent update of the process context is not supported"
                 ));
             }
+
+            fence(Ordering::SeqCst);
 
             let published_at_ns = time_now_ns()
                 .ok_or_else(|| anyhow::anyhow!("could not get the current timestamp"))?;
@@ -309,7 +311,8 @@ pub mod linux {
                 })?;
             }
 
-            published_at_atomic.store(published_at_ns, Ordering::Release);
+            fence(Ordering::SeqCst);
+            published_at_atomic.store(published_at_ns, Ordering::Relaxed);
 
             Ok(())
         }
