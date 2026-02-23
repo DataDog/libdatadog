@@ -55,14 +55,14 @@ pub trait TraceProjector<'s, D: TraceDataLifetime<'s>>: Sized + 's
     fn get_trace_hostname(trace: &'s Self::Trace, storage: &'s Self::Storage) -> &'s D::Text;
     fn get_trace_app_version(trace: &'s Self::Trace, storage: &'s Self::Storage) -> &'s D::Text;
 
-    fn set_trace_container_id(trace: &mut Self::Trace, storage: &mut Self::Storage, value: D::Text);
-    fn set_trace_language_name(trace: &mut Self::Trace, storage: &mut Self::Storage, value: D::Text);
-    fn set_trace_language_version(trace: &mut Self::Trace, storage: &mut Self::Storage, value: D::Text);
-    fn set_trace_tracer_version(trace: &mut Self::Trace, storage: &mut Self::Storage, value: D::Text);
-    fn set_trace_runtime_id(trace: &mut Self::Trace, storage: &mut Self::Storage, value: D::Text);
-    fn set_trace_env(trace: &mut Self::Trace, storage: &mut Self::Storage, value: D::Text);
-    fn set_trace_hostname(trace: &mut Self::Trace, storage: &mut Self::Storage, value: D::Text);
-    fn set_trace_app_version(trace: &mut Self::Trace, storage: &mut Self::Storage, value: D::Text);
+    fn set_trace_container_id(trace: &mut Self::Trace, storage: &mut Self::Storage, value: D::Text) where D: OwnedTraceData;
+    fn set_trace_language_name(trace: &mut Self::Trace, storage: &mut Self::Storage, value: D::Text) where D: OwnedTraceData;
+    fn set_trace_language_version(trace: &mut Self::Trace, storage: &mut Self::Storage, value: D::Text) where D: OwnedTraceData;
+    fn set_trace_tracer_version(trace: &mut Self::Trace, storage: &mut Self::Storage, value: D::Text) where D: OwnedTraceData;
+    fn set_trace_runtime_id(trace: &mut Self::Trace, storage: &mut Self::Storage, value: D::Text) where D: OwnedTraceData;
+    fn set_trace_env(trace: &mut Self::Trace, storage: &mut Self::Storage, value: D::Text) where D: OwnedTraceData;
+    fn set_trace_hostname(trace: &mut Self::Trace, storage: &mut Self::Storage, value: D::Text) where D: OwnedTraceData;
+    fn set_trace_app_version(trace: &mut Self::Trace, storage: &mut Self::Storage, value: D::Text) where D: OwnedTraceData;
 
     fn get_chunk_priority<'a>(chunk: &'a Self::Chunk, storage: &'a Self::Storage) -> i32;
     fn get_chunk_origin(chunk: &'s Self::Chunk, storage: &'s Self::Storage) -> &'s D::Text;

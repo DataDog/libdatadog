@@ -1,5 +1,5 @@
 use std::marker::PhantomData;
-use crate::span::{TraceDataLifetime, IntoData};
+use crate::span::{TraceDataLifetime, IntoData, OwnedTraceData};
 use super::{TraceProjector, IMMUT, MUT, as_mut};
 use super::{TraceAttributes, TraceAttributesMut, AttrRef};
 use super::{TraceChunk, TraceChunkMut};
@@ -95,35 +95,35 @@ impl<'s, T: TraceProjector<'s, D>, D: TraceDataLifetime<'s>> TracesMut<'s, T, D>
         Self::generic_new(traces, storage)
     }
 
-    pub fn set_container_id<I: IntoData<D::Text>>(&mut self, value: I) {
+    pub fn set_container_id<I: IntoData<D::Text>>(&mut self, value: I) where D: OwnedTraceData {
         unsafe { T::set_trace_container_id(as_mut(self.traces), as_mut(self.storage), value.into()) }
     }
 
-    pub fn set_language_name<I: IntoData<D::Text>>(&mut self, value: I) {
+    pub fn set_language_name<I: IntoData<D::Text>>(&mut self, value: I) where D: OwnedTraceData {
         unsafe { T::set_trace_language_name(as_mut(self.traces), as_mut(self.storage), value.into()) }
     }
 
-    pub fn set_language_version<I: IntoData<D::Text>>(&mut self, value: I) {
+    pub fn set_language_version<I: IntoData<D::Text>>(&mut self, value: I) where D: OwnedTraceData {
         unsafe { T::set_trace_language_version(as_mut(self.traces), as_mut(self.storage), value.into()) }
     }
 
-    pub fn set_tracer_version<I: IntoData<D::Text>>(&mut self, value: I) {
+    pub fn set_tracer_version<I: IntoData<D::Text>>(&mut self, value: I) where D: OwnedTraceData {
         unsafe { T::set_trace_tracer_version(as_mut(self.traces), as_mut(self.storage), value.into()) }
     }
 
-    pub fn set_runtime_id<I: IntoData<D::Text>>(&mut self, value: I) {
+    pub fn set_runtime_id<I: IntoData<D::Text>>(&mut self, value: I) where D: OwnedTraceData {
         unsafe { T::set_trace_runtime_id(as_mut(self.traces), as_mut(self.storage), value.into()) }
     }
 
-    pub fn set_env<I: IntoData<D::Text>>(&mut self, value: I) {
+    pub fn set_env<I: IntoData<D::Text>>(&mut self, value: I) where D: OwnedTraceData {
         unsafe { T::set_trace_env(as_mut(self.traces), as_mut(self.storage), value.into()) }
     }
 
-    pub fn set_hostname<I: IntoData<D::Text>>(&mut self, value: I) {
+    pub fn set_hostname<I: IntoData<D::Text>>(&mut self, value: I) where D: OwnedTraceData {
         unsafe { T::set_trace_hostname(as_mut(self.traces), as_mut(self.storage), value.into()) }
     }
 
-    pub fn set_app_version<I: IntoData<D::Text>>(&mut self, value: I) {
+    pub fn set_app_version<I: IntoData<D::Text>>(&mut self, value: I) where D: OwnedTraceData {
         unsafe { T::set_trace_app_version(as_mut(self.traces), as_mut(self.storage), value.into()) }
     }
 

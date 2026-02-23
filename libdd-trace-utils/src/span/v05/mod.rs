@@ -120,6 +120,31 @@ pub struct ChunkCollection<D: TraceData> {
     // TODO: collect header data here
 }
 
+/// Sets `key` → `value` in the meta of the first span of every chunk.
+///
+/// The value is interned once; subsequent chunks reuse the same storage entry
+/// via reference-count increments, avoiding any cloning of `D::Text`.
+fn set_first_span_meta_all_chunks<D: OwnedTraceData>(trace: &mut Trace, storage: &mut Storage<D>, key: &'static str, value: D::Text) {
+    let key_ref = storage.add(key);
+    let value_ref = storage.add(value);
+    for chunk in trace.iter_mut() {
+        if let Some(span) = chunk.first_mut() {
+            storage.incref(value_ref);
+            match span.meta.entry(key_ref) {
+                Entry::Occupied(mut e) => {
+                    storage.decref(e.insert(value_ref));
+                }
+                Entry::Vacant(e) => {
+                    storage.incref(key_ref);
+                    e.insert(value_ref);
+                }
+            }
+        }
+    }
+    storage.decref(key_ref);
+    storage.decref(value_ref);
+}
+
 fn free_span_data<D: TraceData>(span: &mut Span, storage: &mut Storage<D>) {
     span.service.reset(storage);
     span.name.reset(storage);
@@ -165,7 +190,7 @@ impl<'s, D: TraceDataLifetime<'s>> TraceProjector<'s, D> for ChunkCollection<D> 
         trace.iter()
     }
 
-    fn retain_chunks<'b, F: for<'c> FnMut(&'c mut <ChunkCollection<D> as TraceProjector<'s, D>>::Chunk, &'c mut <ChunkCollection<D> as TraceProjector<'s, D>>::Storage) -> bool>(trace: &'b mut <ChunkCollection<D> as TraceProjector<'s, D>>::Trace, storage: &'b mut <ChunkCollection<D> as TraceProjector<'s, D>>::Storage, mut predicate: F) {
+    fn retain_chunks<'b, F: for<'c> FnMut(&'c mut Chunk, &'c mut Storage<D>) -> bool>(trace: &'b mut Trace, storage: &'b mut Storage<D>, mut predicate: F) {
         trace.retain_mut(move |chunk| {
             if predicate(chunk, storage) {
                 true
@@ -176,7 +201,7 @@ impl<'s, D: TraceDataLifetime<'s>> TraceProjector<'s, D> for ChunkCollection<D> 
         })
     }
 
-    fn retain_spans<'b, F: FnMut(&mut <ChunkCollection<D> as TraceProjector<'s, D>>::Span, &mut <ChunkCollection<D> as TraceProjector<'s, D>>::Storage) -> bool>(chunk: &'b mut <ChunkCollection<D> as TraceProjector<'s, D>>::Chunk, storage: &'b mut <ChunkCollection<D> as TraceProjector<'s, D>>::Storage, mut predicate: F) {
+    fn retain_spans<'b, F: FnMut(&mut Span, &mut Storage<D>) -> bool>(chunk: &'b mut Chunk, storage: &'b mut Storage<D>, mut predicate: F) {
         chunk.retain_mut(|span| {
             if predicate(span, storage) {
                 true
@@ -220,7 +245,7 @@ impl<'s, D: TraceDataLifetime<'s>> TraceProjector<'s, D> for ChunkCollection<D> 
         [].iter()
     }
 
-    fn retain_span_links<'b, F: FnMut(&mut <ChunkCollection<D> as TraceProjector<'s, D>>::SpanLink, &mut <ChunkCollection<D> as TraceProjector<'s, D>>::Storage) -> bool>(_span: &'b mut <ChunkCollection<D> as TraceProjector<'s, D>>::Span, _storage: &'b mut <ChunkCollection<D> as TraceProjector<'s, D>>::Storage, _predicate: F) {
+    fn retain_span_links<'b, F: FnMut(&mut SpanLink, &mut Storage<D>) -> bool>(_span: &'b mut Span, _storage: &'b mut Storage<D>, _predicate: F) {
     }
 
     fn add_span_event<'b>(_span: &'b mut Span, _storage: &mut Storage<D>) -> &'b mut SpanEvent {
@@ -231,83 +256,114 @@ impl<'s, D: TraceDataLifetime<'s>> TraceProjector<'s, D> for ChunkCollection<D> 
         [].iter()
     }
 
-    fn retain_span_events<'b, F: FnMut(&mut <ChunkCollection<D> as TraceProjector<'s, D>>::SpanEvent, &mut <ChunkCollection<D> as TraceProjector<'s, D>>::Storage) -> bool>(_span: &'b mut <ChunkCollection<D> as TraceProjector<'s, D>>::Span, _storage: &'b mut <ChunkCollection<D> as TraceProjector<'s, D>>::Storage, _predicate: F) {
+    fn retain_span_events<'b, F: FnMut(&mut SpanEvent, &mut Storage<D>) -> bool>(_span: &'b mut Span, _storage: &'b mut Storage<D>, _predicate: F) {
     }
 
-    fn get_trace_container_id<'a>(_trace: &Trace, _storage: &'s Storage<D>) -> &'s D::Text {
-        D::Text::default_ref()
+    fn get_trace_container_id(trace: &Trace, storage: &'s Storage<D>) -> &'s D::Text {
+        trace.first()
+            .and_then(|chunk| chunk.first())
+            .and_then(|span| span.get_meta("container_id", storage))
+            .unwrap_or(D::Text::default_ref())
     }
 
-    fn get_trace_language_name<'a>(_trace: &Trace, _storage: &'s Storage<D>) -> &'s D::Text {
-        todo!()
+    fn get_trace_language_name(trace: &Trace, storage: &'s Storage<D>) -> &'s D::Text {
+        trace.first()
+            .and_then(|chunk| chunk.first())
+            .and_then(|span| span.get_meta("language", storage))
+            .unwrap_or(D::Text::default_ref())
     }
 
-    fn get_trace_language_version<'a>(_trace: &Trace, _storage: &'s Storage<D>) -> &'s D::Text {
-        todo!()
+    fn get_trace_language_version(trace: &Trace, storage: &'s Storage<D>) -> &'s D::Text {
+        trace.first()
+            .and_then(|chunk| chunk.first())
+            .and_then(|span| span.get_meta("language_version", storage))
+            .unwrap_or(D::Text::default_ref())
     }
 
-    fn get_trace_tracer_version<'a>(_trace: &Trace, _storage: &'s Storage<D>) -> &'s D::Text {
-        todo!()
+    fn get_trace_tracer_version(trace: &Trace, storage: &'s Storage<D>) -> &'s D::Text {
+        trace.first()
+            .and_then(|chunk| chunk.first())
+            .and_then(|span| span.get_meta("tracer_version", storage))
+            .unwrap_or(D::Text::default_ref())
     }
 
-    fn get_trace_runtime_id<'a>(_trace: &Trace, _storage: &'s Storage<D>) -> &'s D::Text {
-        todo!()
+    fn get_trace_runtime_id(trace: &Trace, storage: &'s Storage<D>) -> &'s D::Text {
+        trace.first()
+            .and_then(|chunk| chunk.first())
+            .and_then(|span| span.get_meta("runtime-id", storage))
+            .unwrap_or(D::Text::default_ref())
     }
 
-    fn get_trace_env<'a>(_trace: &Trace, _storage: &'s Storage<D>) -> &'s D::Text {
-        todo!()
+    fn get_trace_env(trace: &Trace, storage: &'s Storage<D>) -> &'s D::Text {
+        trace.first()
+            .and_then(|chunk| chunk.first())
+            .and_then(|span| span.get_meta("env", storage))
+            .unwrap_or(D::Text::default_ref())
     }
 
-    fn get_trace_hostname<'a>(_trace: &Trace, _storage: &'s Storage<D>) -> &'s D::Text {
-        todo!()
+    fn get_trace_hostname(trace: &Trace, storage: &'s Storage<D>) -> &'s D::Text {
+        trace.first()
+            .and_then(|chunk| chunk.first())
+            .and_then(|span| span.get_meta("_dd.hostname", storage))
+            .unwrap_or(D::Text::default_ref())
     }
 
-    fn get_trace_app_version<'a>(_trace: &Trace, _storage: &'s Storage<D>) -> &'s D::Text {
-        todo!()
+    fn get_trace_app_version(trace: &Trace, storage: &'s Storage<D>) -> &'s D::Text {
+        trace.first()
+            .and_then(|chunk| chunk.first())
+            .and_then(|span| span.get_meta("version", storage))
+            .unwrap_or(D::Text::default_ref())
     }
 
-    fn set_trace_container_id(_trace: &mut Trace, _storage: &mut Storage<D>, _value: D::Text) {
-        todo!()
+    fn set_trace_container_id(trace: &mut Trace, storage: &mut Storage<D>, value: D::Text) where D: OwnedTraceData {
+        set_first_span_meta_all_chunks(trace, storage, "container_id", value);
     }
 
-    fn set_trace_language_name(_trace: &mut Trace, _storage: &mut Storage<D>, _value: D::Text) {
-        todo!()
+    fn set_trace_language_name(trace: &mut Trace, storage: &mut Storage<D>, value: D::Text) where D: OwnedTraceData {
+        set_first_span_meta_all_chunks(trace, storage, "language", value);
     }
 
-    fn set_trace_language_version(_trace: &mut Trace, _storage: &mut Storage<D>, _value: D::Text) {
-        todo!()
+    fn set_trace_language_version(trace: &mut Trace, storage: &mut Storage<D>, value: D::Text) where D: OwnedTraceData {
+        set_first_span_meta_all_chunks(trace, storage, "language_version", value);
     }
 
-    fn set_trace_tracer_version(_trace: &mut Trace, _storage: &mut Storage<D>, _value: D::Text) {
-        todo!()
+    fn set_trace_tracer_version(trace: &mut Trace, storage: &mut Storage<D>, value: D::Text) where D: OwnedTraceData {
+        set_first_span_meta_all_chunks(trace, storage, "tracer_version", value);
     }
 
-    fn set_trace_runtime_id(_trace: &mut Trace, _storage: &mut Storage<D>, _value: D::Text) {
-        todo!()
+    fn set_trace_runtime_id(trace: &mut Trace, storage: &mut Storage<D>, value: D::Text) where D: OwnedTraceData {
+        set_first_span_meta_all_chunks(trace, storage, "runtime-id", value);
     }
 
-    fn set_trace_env(_trace: &mut Trace, _storage: &mut Storage<D>, _value: D::Text) {
-        todo!()
+    fn set_trace_env(trace: &mut Trace, storage: &mut Storage<D>, value: D::Text) where D: OwnedTraceData {
+        set_first_span_meta_all_chunks(trace, storage, "env", value);
     }
 
-    fn set_trace_hostname(_trace: &mut Trace, _storage: &mut Storage<D>, _value: D::Text) {
-        todo!()
+    fn set_trace_hostname(trace: &mut Trace, storage: &mut Storage<D>, value: D::Text) where D: OwnedTraceData {
+        set_first_span_meta_all_chunks(trace, storage, "_dd.hostname", value);
     }
 
-    fn set_trace_app_version(_trace: &mut Trace, _storage: &mut Storage<D>, _value: D::Text) {
-        todo!()
+    fn set_trace_app_version(trace: &mut Trace, storage: &mut Storage<D>, value: D::Text) where D: OwnedTraceData {
+        set_first_span_meta_all_chunks(trace, storage, "version", value);
     }
 
-    fn get_chunk_priority<'a>(_chunk: &'a Chunk, _storage: &'a Storage<D>) -> i32 {
-        todo!()
+    fn get_chunk_priority<'a>(chunk: &'a Chunk, storage: &'a Storage<D>) -> i32 {
+        chunk.first()
+            .and_then(|span| span.get_metric("_sampling_priority_v1", storage))
+            .unwrap_or(1.0) as i32
     }
 
-    fn get_chunk_origin(_chunk: &'s Chunk, _storage: &'s Storage<D>) -> &'s D::Text {
-        todo!()
+    fn get_chunk_origin(chunk: &'s Chunk, storage: &'s Storage<D>) -> &'s D::Text {
+        if let Some(span) = chunk.first() {
+            span.get_meta("_dd.origin", storage)
+                .unwrap_or_else(|| storage.get(span.service))
+        } else {
+            D::Text::default_ref()
+        }
     }
 
     fn get_chunk_dropped_trace<'a>(_chunk: &'a Chunk, _storage: &'a Storage<D>) -> bool {
-        todo!()
+        false
     }
 
     fn get_chunk_trace_id<'a>(chunk: &'a Chunk, storage: &'a Storage<D>) -> u128 {
@@ -319,20 +375,25 @@ impl<'s, D: TraceDataLifetime<'s>> TraceProjector<'s, D> for ChunkCollection<D> 
         }
     }
 
-    fn get_chunk_sampling_mechanism<'a>(_chunk: &'a Chunk, _storage: &'a Storage<D>) -> u32 {
-        todo!()
+    fn get_chunk_sampling_mechanism<'a>(chunk: &'a Chunk, storage: &'a Storage<D>) -> u32 {
+        chunk.first()
+            .and_then(|span| span.get_metric("_dd.span_sampling.mechanism", storage))
+            .unwrap_or(0.0) as u32
     }
 
-    fn set_chunk_priority(_chunk: &mut Chunk, _storage: &mut Storage<D>, _value: i32) {
-        todo!()
+    fn set_chunk_priority(chunk: &mut Chunk, storage: &mut Storage<D>, value: i32) {
+        if let Some(span) = chunk.first_mut() {
+            span.set_metric("_sampling_priority_v1", storage, value as f64);
+        }
     }
 
-    fn set_chunk_origin(_chunk: &mut Chunk, _storage: &mut Storage<D>, _value: D::Text) {
-        todo!()
+    fn set_chunk_origin(chunk: &mut Chunk, storage: &mut Storage<D>, value: D::Text) {
+        if let Some(span) = chunk.first_mut() {
+            span.set_meta("_dd.origin", storage, value);
+        }
     }
 
     fn set_chunk_dropped_trace(_chunk: &mut Chunk, _storage: &mut Storage<D>, _value: bool) {
-        todo!()
     }
 
     fn set_chunk_trace_id(chunk: &mut Chunk, storage: &mut Storage<D>, value: u128) where D: OwnedTraceData {
@@ -341,8 +402,10 @@ impl<'s, D: TraceDataLifetime<'s>> TraceProjector<'s, D> for ChunkCollection<D> 
         }
     }
 
-    fn set_chunk_sampling_mechanism(_chunk: &mut Chunk, _storage: &mut Storage<D>, _value: u32) {
-        todo!()
+    fn set_chunk_sampling_mechanism(chunk: &mut Chunk, storage: &mut Storage<D>, value: u32) {
+        if let Some(span) = chunk.first_mut() {
+            span.set_metric("_dd.span_sampling.mechanism", storage, value as f64);
+        }
     }
 
     fn get_span_service<'a>(span: &Span, storage: &'s Storage<D>) -> &'s D::Text {
@@ -678,11 +741,20 @@ impl<'b, 'a, D: TraceData, const ISMUT: u8> TraceAttributeGetterTypes<'b, 'a, Ch
 }
 
 impl<'b, 'a, D: TraceData, const ISMUT: u8> TraceAttributesOp<'b, 'a, ChunkCollection<D>, D, Trace> for TraceAttributes<'a, ChunkCollection<D>, D, AttrRef<'b, Trace>, Trace, ISMUT> {
-    fn get<K>(_container: &'b Trace, _storage: &'a Storage<D>, _key: &K) -> Option<AttributeAnyGetterContainer<'b, 'a, Self, ChunkCollection<D>, D, Trace>>
+    fn get<K>(container: &'b Trace, storage: &'a Storage<D>, key: &K) -> Option<AttributeAnyGetterContainer<'b, 'a, Self, ChunkCollection<D>, D, Trace>>
     where
         K: ?Sized + Hash + Equivalent<<D::Text as SpanDataContents>::RefCopy>
     {
-        None
+        let span = container.first()?.first()?;
+        storage.find(key).and_then(move |r| {
+            if let Some(meta) = span.meta.get(&r) {
+                Some(AttributeAnyContainer::String(storage.get(*meta)))
+            } else if let Some(metric) = span.metrics.get(&r) {
+                Some(AttributeAnyContainer::Double(*metric))
+            } else {
+                None
+            }
+        })
     }
 }
 
@@ -692,69 +764,144 @@ impl<'b, 'a, D: TraceData, const ISMUT: u8> TraceAttributeGetterTypes<'b, 'a, Ch
 }
 
 impl<'b, 'a, D: TraceData, const ISMUT: u8> TraceAttributesOp<'b, 'a, ChunkCollection<D>, D, Chunk> for TraceAttributes<'a, ChunkCollection<D>, D, AttrRef<'b, Chunk>, Chunk, ISMUT> {
-    fn get<K>(_container: &'b Chunk, _storage: &'a Storage<D>, _key: &K) -> Option<AttributeAnyGetterContainer<'b, 'a, Self, ChunkCollection<D>, D, Chunk>>
+    fn get<K>(container: &'b Chunk, storage: &'a Storage<D>, key: &K) -> Option<AttributeAnyGetterContainer<'b, 'a, Self, ChunkCollection<D>, D, Chunk>>
     where
         K: ?Sized + Hash + Equivalent<<D::Text as SpanDataContents>::RefCopy>
     {
-        None
+        let span = container.first()?;
+        storage.find(key).and_then(move |r| {
+            if let Some(meta) = span.meta.get(&r) {
+                Some(AttributeAnyContainer::String(storage.get(*meta)))
+            } else if let Some(metric) = span.metrics.get(&r) {
+                Some(AttributeAnyContainer::Double(*metric))
+            } else {
+                None
+            }
+        })
     }
 }
 
 impl<'b, 'a, D: TraceData> TraceAttributeSetterTypes<'b, 'a, ChunkCollection<D>, D, Chunk> for TraceAttributesMut<'a, ChunkCollection<D>, D, AttrRef<'b, Chunk>, Chunk> {
-    type MutString = ();
+    type MutString = &'a mut TraceStringRef;
     type MutBytes = ();
-    type MutBoolean = ();
-    type MutInteger = ();
-    type MutDouble = ();
+    type MutBoolean = &'b mut f64;
+    type MutInteger = &'b mut f64;
+    type MutDouble = &'b mut f64;
     type MutArray = ();
     type MutMap = ();
 }
 
 impl<'b, 'a, D: TraceData> TraceAttributesMutOp<'b, 'a, ChunkCollection<D>, D, Chunk> for TraceAttributesMut<'a, ChunkCollection<D>, D, AttrRef<'b, Chunk>, Chunk> {
-    fn get_mut<K>(_container: &'b mut Chunk, _storage: &mut Storage<D>, _key: &K) -> Option<AttributeAnySetterContainer<'b, 'a, Self, ChunkCollection<D>, D, Chunk>>
+    fn get_mut<K>(container: &'b mut Chunk, storage: &mut Storage<D>, key: &K) -> Option<AttributeAnySetterContainer<'b, 'a, Self, ChunkCollection<D>, D, Chunk>>
     where
         K: ?Sized + Hash + Equivalent<<D::Text as SpanDataContents>::RefCopy>
     {
-        None
+        let span = container.first_mut()?;
+        let r = storage.find(key)?;
+        if let Some(meta) = span.meta.get_mut(&r) {
+            // SAFETY: same reasoning as Span::get_mut — transmute 'b→'a
+            let meta_storage: &'a mut TraceStringRef = unsafe { std::mem::transmute(meta) };
+            Some(AttributeAnyContainer::String(meta_storage))
+        } else if let Some(metric) = span.metrics.get_mut(&r) {
+            Some(AttributeAnyContainer::Double(metric))
+        } else {
+            None
+        }
     }
 
-    fn set(_container: &'b mut Chunk, _storage: &mut Storage<D>, _key: D::Text, _value: AttributeAnyValueType) -> AttributeAnySetterContainer<'b, 'a, Self, ChunkCollection<D>, D, Chunk> {
-        AttributeAnyContainer::Map(())
+    fn set(container: &'b mut Chunk, storage: &mut Storage<D>, key: D::Text, value: AttributeAnyValueType) -> AttributeAnySetterContainer<'b, 'a, Self, ChunkCollection<D>, D, Chunk> {
+        if let Some(span) = container.first_mut() {
+            match value {
+                AttributeAnyValueType::String => {
+                    let meta = span.set_meta(key, storage, "");
+                    // SAFETY: same reasoning as Span::set — transmute 'b→'a
+                    let meta_storage: &'a mut TraceStringRef = unsafe { std::mem::transmute(meta) };
+                    AttributeAnyContainer::String(meta_storage)
+                },
+                AttributeAnyValueType::Bytes => AttributeAnyContainer::Bytes(()),
+                AttributeAnyValueType::Boolean => AttributeAnyContainer::Boolean(span.set_metric(key, storage, 0.)),
+                AttributeAnyValueType::Integer => AttributeAnyContainer::Integer(span.set_metric(key, storage, 0.)),
+                AttributeAnyValueType::Double => AttributeAnyContainer::Double(span.set_metric(key, storage, 0.)),
+                AttributeAnyValueType::Array => AttributeAnyContainer::Array(()),
+                AttributeAnyValueType::Map => AttributeAnyContainer::Map(()),
+            }
+        } else {
+            AttributeAnyContainer::Map(())
+        }
     }
 
-    fn remove<K>(_container: &mut Chunk, _storage: &mut Storage<D>, _key: &K)
+    fn remove<K>(container: &mut Chunk, storage: &mut Storage<D>, key: &K)
     where
         K: ?Sized + Hash + Equivalent<<D::Text as SpanDataContents>::RefCopy>
     {
+        if let Some(span) = container.first_mut() {
+            span.remove_meta(key, storage);
+            span.remove_metric(key, storage);
+        }
     }
 }
 
 impl<'b, 'a, D: TraceData> TraceAttributeSetterTypes<'b, 'a, ChunkCollection<D>, D, Trace> for TraceAttributesMut<'a, ChunkCollection<D>, D, AttrRef<'b, Trace>, Trace> {
-    type MutString = ();
+    type MutString = &'a mut TraceStringRef;
     type MutBytes = ();
-    type MutBoolean = ();
-    type MutInteger = ();
-    type MutDouble = ();
+    type MutBoolean = &'b mut f64;
+    type MutInteger = &'b mut f64;
+    type MutDouble = &'b mut f64;
     type MutArray = ();
     type MutMap = ();
 }
 
 impl<'b, 'a, D: TraceData> TraceAttributesMutOp<'b, 'a, ChunkCollection<D>, D, Trace> for TraceAttributesMut<'a, ChunkCollection<D>, D, AttrRef<'b, Trace>, Trace> {
-    fn get_mut<K>(_container: &'b mut Trace, _storage: &mut Storage<D>, _key: &K) -> Option<AttributeAnySetterContainer<'b, 'a, Self, ChunkCollection<D>, D, Trace>>
+    fn get_mut<K>(container: &'b mut Trace, storage: &mut Storage<D>, key: &K) -> Option<AttributeAnySetterContainer<'b, 'a, Self, ChunkCollection<D>, D, Trace>>
     where
         K: ?Sized + Hash + Equivalent<<D::Text as SpanDataContents>::RefCopy>
     {
-        None
+        let span = container.first_mut()?.first_mut()?;
+        let r = storage.find(key)?;
+        if let Some(meta) = span.meta.get_mut(&r) {
+            // SAFETY: same reasoning as Span::get_mut — transmute 'b→'a
+            let meta_storage: &'a mut TraceStringRef = unsafe { std::mem::transmute(meta) };
+            Some(AttributeAnyContainer::String(meta_storage))
+        } else if let Some(metric) = span.metrics.get_mut(&r) {
+            Some(AttributeAnyContainer::Double(metric))
+        } else {
+            None
+        }
     }
 
-    fn set(_container: &'b mut Trace, _storage: &mut Storage<D>, _key: D::Text, _value: AttributeAnyValueType) -> AttributeAnySetterContainer<'b, 'a, Self, ChunkCollection<D>, D, Trace> {
-        AttributeAnyContainer::Map(())
+    fn set(container: &'b mut Trace, storage: &mut Storage<D>, key: D::Text, value: AttributeAnyValueType) -> AttributeAnySetterContainer<'b, 'a, Self, ChunkCollection<D>, D, Trace> {
+        // set operates on the first span of the first chunk only (must return a stable reference)
+        if let Some(span) = container.first_mut().and_then(|c| c.first_mut()) {
+            match value {
+                AttributeAnyValueType::String => {
+                    let meta = span.set_meta(key, storage, "");
+                    // SAFETY: same reasoning as Span::set — transmute 'b→'a
+                    let meta_storage: &'a mut TraceStringRef = unsafe { std::mem::transmute(meta) };
+                    AttributeAnyContainer::String(meta_storage)
+                },
+                AttributeAnyValueType::Bytes => AttributeAnyContainer::Bytes(()),
+                AttributeAnyValueType::Boolean => AttributeAnyContainer::Boolean(span.set_metric(key, storage, 0.)),
+                AttributeAnyValueType::Integer => AttributeAnyContainer::Integer(span.set_metric(key, storage, 0.)),
+                AttributeAnyValueType::Double => AttributeAnyContainer::Double(span.set_metric(key, storage, 0.)),
+                AttributeAnyValueType::Array => AttributeAnyContainer::Array(()),
+                AttributeAnyValueType::Map => AttributeAnyContainer::Map(()),
+            }
+        } else {
+            AttributeAnyContainer::Map(())
+        }
     }
 
-    fn remove<K>(_container: &mut Trace, _storage: &mut Storage<D>, _key: &K)
+    fn remove<K>(container: &mut Trace, storage: &mut Storage<D>, key: &K)
     where
         K: ?Sized + Hash + Equivalent<<D::Text as SpanDataContents>::RefCopy>
     {
+        // remove operates on the first span of ALL chunks (no reference returned)
+        for chunk in container.iter_mut() {
+            if let Some(span) = chunk.first_mut() {
+                span.remove_meta(key, storage);
+                span.remove_metric(key, storage);
+            }
+        }
     }
 }
 
