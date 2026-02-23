@@ -198,8 +198,8 @@ impl SpanDataContents for Bytes {
 /// only exposed here due to the unavailability of min_specialization in stable Rust.
 /// Also note that the Clone and PartialEq bounds are only present for tests.
 pub trait TraceData: Default + Clone + Debug + PartialEq + ImpliedPredicate<&'static str, Impls: IntoData<Self::Text>> + ImpliedPredicate<&'static [u8], Impls: IntoData<Self::Bytes>> {
-    type Text: SpanText;
-    type Bytes: SpanBytes;
+    type Text: SpanText + SpanDataContents<RefCopy = Self::Text>;
+    type Bytes: SpanBytes + SpanDataContents<RefCopy = Self::Bytes>;
 }
 
 /// Note: When using this trait as a bound, you still need to add the explicit lifetime bounds

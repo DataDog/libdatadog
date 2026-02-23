@@ -11,7 +11,7 @@
 
 pub mod datadog_test_agent;
 
-use std::collections::HashMap;
+use hashbrown::HashMap;
 use std::time::Duration;
 
 use crate::send_data::SendData;
@@ -100,7 +100,7 @@ pub fn create_test_span(
         start,
         duration: 5,
         error: 0,
-        meta: HashMap::from([
+        meta: std::collections::HashMap::from([
             ("service".to_string(), "test-service".to_string()),
             ("env".to_string(), "test-env".to_string()),
             (
@@ -108,9 +108,9 @@ pub fn create_test_span(
                 "test-runtime-id-value".to_string(),
             ),
         ]),
-        metrics: HashMap::new(),
+        metrics: std::collections::HashMap::new(),
         r#type: "".to_string(),
-        meta_struct: HashMap::new(),
+        meta_struct: std::collections::HashMap::new(),
         span_links: vec![],
         span_events: vec![],
     };
@@ -145,7 +145,7 @@ pub fn create_test_gcp_span(
         start,
         duration: 5,
         error: 0,
-        meta: HashMap::from([
+        meta: std::collections::HashMap::from([
             ("service".to_string(), "test-service".to_string()),
             ("env".to_string(), "test-env".to_string()),
             (
@@ -153,9 +153,9 @@ pub fn create_test_gcp_span(
                 "test-runtime-id-value".to_string(),
             ),
         ]),
-        metrics: HashMap::new(),
+        metrics: std::collections::HashMap::new(),
         r#type: "".to_string(),
-        meta_struct: HashMap::new(),
+        meta_struct: std::collections::HashMap::new(),
         span_links: vec![],
         span_events: vec![],
     };

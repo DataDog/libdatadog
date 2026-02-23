@@ -27,7 +27,7 @@
 //! | Map      | expanded with dot-notation string keys (`k.child`, …)        |
 
 use std::borrow::Borrow;
-use std::collections::HashMap;
+use hashbrown::HashMap;
 use libdd_tinybytes::{Bytes, BytesString};
 use libdd_trace_protobuf::pb::idx::SpanKind;
 use crate::span::{BytesData, span_kind_to_str};

@@ -4,7 +4,7 @@
 use crate::span::TraceData;
 use rmp::encode::{write_array_len, write_bin, write_bool, write_f64, write_i64, write_map_len, write_sint, write_str, write_u64, write_uint, write_uint8, RmpWrite, ValueWriteError};
 use std::borrow::Borrow;
-use std::collections::HashMap;
+use hashbrown::HashMap;
 use libdd_trace_protobuf::pb::idx::SpanKind;
 use crate::msgpack_decoder::v1::trace::{AnyValueKey, ChunkKey, SpanEventKey, SpanKey, SpanLinkKey, TraceKey};
 use crate::span::table::TraceStringRef;

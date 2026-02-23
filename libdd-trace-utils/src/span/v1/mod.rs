@@ -1,11 +1,10 @@
 mod to_v04;
 pub use to_v04::to_v04;
 
-use std::collections::HashMap;
 use std::hash::Hash;
-use hashbrown::Equivalent;
+use hashbrown::{Equivalent, HashMap};
 use libdd_trace_protobuf::pb::idx::SpanKind;
-use crate::span::{BytesData, SliceData, TraceData, OwnedTraceData, TraceDataLifetime, SpanDataContents, AttributeAnyContainer, AttributeAnySetterContainer, AttrRef, AttrOwned, TraceAttributesMut, TraceAttributesMutOp, TraceAttributesString, TraceAttributesBytes, TraceAttributesInteger, TraceAttributesBoolean, AttributeAnyGetterContainer, AttributeArray, AttributeArrayOp, AttributeArrayMutOp, TraceAttributes, TraceAttributesOp, TraceAttributeGetterTypes, TraceAttributeSetterTypes, TracesMut, Traces as TracesStruct, TraceProjector, AttributeAnyValueType};
+use crate::span::{BytesData, SliceData, TraceData, OwnedTraceData, TraceDataLifetime, AttributeAnyContainer, AttributeAnySetterContainer, AttrRef, AttrOwned, TraceAttributesMut, TraceAttributesMutOp, TraceAttributesString, TraceAttributesBytes, TraceAttributesInteger, TraceAttributesBoolean, AttributeAnyGetterContainer, AttributeArray, AttributeArrayOp, AttributeArrayMutOp, TraceAttributes, TraceAttributesOp, TraceAttributeGetterTypes, TraceAttributeSetterTypes, TracesMut, Traces as TracesStruct, TraceProjector, AttributeAnyValueType};
 
 use crate::span::table::{TraceBytesRef, TraceDataText, TraceDataBytes, TraceDataRef, TraceStringRef, StaticDataVec};
 
@@ -622,7 +621,7 @@ impl<'a, 's, D: TraceDataLifetime<'s> + 's, const ISMUT: u8>
         key: &K,
     ) -> Option<AttributeAnyGetterContainer<'a, 's, Self, TracePayload<D>, D, &'a AttributeMap>>
     where
-        K: ?Sized + Hash + Equivalent<<D::Text as SpanDataContents>::RefCopy>,
+        K: ?Sized + Hash + Equivalent<D::Text>,
     {
         let r = storage.find(key)?;
         (*container).get(&r).map(|v| attribute_getter(v, storage))
@@ -653,7 +652,7 @@ impl<'container, 'a: 'container, 's, D: TraceDataLifetime<'s> + 's, const ISMUT:
         key: &K,
     ) -> Option<AttributeAnyGetterContainer<'container, 's, Self, TracePayload<D>, D, &'a AttributeMap>>
     where
-        K: ?Sized + Hash + Equivalent<<D::Text as SpanDataContents>::RefCopy>,
+        K: ?Sized + Hash + Equivalent<D::Text>,
     {
         let r = storage.find(key)?;
         (*container).get(&r).map(|v| attribute_getter(v, storage))
@@ -673,7 +672,7 @@ impl<'a, 's, D: TraceDataLifetime<'s> + 's, const ISMUT: u8>
         key: &K,
     ) -> Option<AttributeAnyGetterContainer<'a, 's, Self, TracePayload<D>, D, &'a mut AttributeMap>>
     where
-        K: ?Sized + Hash + Equivalent<<D::Text as SpanDataContents>::RefCopy>,
+        K: ?Sized + Hash + Equivalent<D::Text>,
     {
         let r = storage.find(key)?;
         // .get() defaults to the trait method instead of the HashMap impl otherwise
@@ -695,7 +694,7 @@ impl<'a, 's, D: TraceDataLifetime<'s> + 's, const ISMUT: u8>
         _key: &K,
     ) -> Option<AttributeAnyGetterContainer<'a, 's, Self, TracePayload<D>, D, &'a mut Vec<AttributeAnyValue>>>
     where
-        K: ?Sized + Hash + Equivalent<<D::Text as SpanDataContents>::RefCopy>,
+        K: ?Sized + Hash + Equivalent<D::Text>,
     {
         None
     }
@@ -834,7 +833,7 @@ impl<'a, 'b, D: TraceData>
         _key: &K,
     ) -> Option<AttributeAnySetterContainer<'b, 'a, Self, TracePayload<D>, D, &'b mut Vec<AttributeAnyValue>>>
     where
-        K: ?Sized + Hash + Equivalent<<D::Text as SpanDataContents>::RefCopy>,
+        K: ?Sized + Hash + Equivalent<D::Text>,
     {
         None
     }
@@ -850,7 +849,7 @@ impl<'a, 'b, D: TraceData>
 
     fn remove<K>(_container: &mut &'b mut Vec<AttributeAnyValue>, _storage: &mut TraceStaticData<D>, _key: &K)
     where
-        K: ?Sized + Hash + Equivalent<<D::Text as SpanDataContents>::RefCopy>,
+        K: ?Sized + Hash + Equivalent<D::Text>,
     {}
 }
 
@@ -877,7 +876,7 @@ impl<'a, 'b, D: TraceData>
         key: &K,
     ) -> Option<AttributeAnySetterContainer<'b, 'a, Self, TracePayload<D>, D, &'b mut AttributeMap>>
     where
-        K: ?Sized + Hash + Equivalent<<D::Text as SpanDataContents>::RefCopy>,
+        K: ?Sized + Hash + Equivalent<D::Text>,
     {
         let r = storage.find(key)?;
         (*container).get_mut(&r).map(|v| v1_to_setter(v))
@@ -896,7 +895,7 @@ impl<'a, 'b, D: TraceData>
 
     fn remove<K>(container: &mut &'b mut AttributeMap, storage: &mut TraceStaticData<D>, key: &K)
     where
-        K: ?Sized + Hash + Equivalent<<D::Text as SpanDataContents>::RefCopy>,
+        K: ?Sized + Hash + Equivalent<D::Text>,
     {
         if let Some(r) = storage.find(key) {
             (*container).remove(&r);
@@ -908,13 +907,13 @@ impl<'a, 'b, D: TraceData>
 trait HashMapFind<D: TraceData> {
     fn find<K>(&self, key: &K) -> Option<TraceStringRef>
     where
-        K: ?Sized + Hash + Equivalent<<D::Text as SpanDataContents>::RefCopy>;
+        K: ?Sized + Hash + Equivalent<D::Text>;
 }
 
 impl<D: TraceData> HashMapFind<D> for TraceStaticData<D> {
     fn find<K>(&self, key: &K) -> Option<TraceStringRef>
     where
-        K: ?Sized + Hash + Equivalent<<D::Text as SpanDataContents>::RefCopy>
+        K: ?Sized + Hash + Equivalent<D::Text>
     {
         // Use the StaticDataVec's find method for fast lookup
         self.strings.find(key)
@@ -950,7 +949,7 @@ impl_v1_attribute_types!(Traces);
 impl<'a, 's, D: TraceDataLifetime<'s> + 's, const ISMUT: u8> TraceAttributesOp<'a, 's, TracePayload<D>, D, Traces> for TraceAttributes<'s, TracePayload<D>, D, AttrRef<'a, Traces>, Traces, ISMUT> {
     fn get<K>(container: &'a Traces, storage: &'s TraceStaticData<D>, key: &K) -> Option<AttributeAnyGetterContainer<'a, 's, Self, TracePayload<D>, D, Traces>>
     where
-        K: ?Sized + Hash + Equivalent<<D::Text as SpanDataContents>::RefCopy>
+        K: ?Sized + Hash + Equivalent<D::Text>
     {
         let r = storage.find(key)?;
         container.attributes.get(&r).map(|v| attribute_getter(v, storage))
@@ -963,7 +962,7 @@ impl_v1_attribute_types!(TraceChunk);
 impl<'a, 's, D: TraceDataLifetime<'s> + 's, const ISMUT: u8> TraceAttributesOp<'a, 's, TracePayload<D>, D, TraceChunk> for TraceAttributes<'s, TracePayload<D>, D, AttrRef<'a, TraceChunk>, TraceChunk, ISMUT> {
     fn get<K>(container: &'a TraceChunk, storage: &'s TraceStaticData<D>, key: &K) -> Option<AttributeAnyGetterContainer<'a, 's, Self, TracePayload<D>, D, TraceChunk>>
     where
-        K: ?Sized + Hash + Equivalent<<D::Text as SpanDataContents>::RefCopy>
+        K: ?Sized + Hash + Equivalent<D::Text>
     {
         let r = storage.find(key)?;
         container.attributes.get(&r).map(|v| attribute_getter(v, storage))
@@ -975,7 +974,7 @@ impl_v1_attribute_types!(Span);
 impl<'a, 's, D: TraceDataLifetime<'s> + 's, const ISMUT: u8> TraceAttributesOp<'a, 's, TracePayload<D>, D, Span> for TraceAttributes<'s, TracePayload<D>, D, AttrRef<'a, Span>, Span, ISMUT> {
     fn get<K>(container: &'a Span, storage: &'s TraceStaticData<D>, key: &K) -> Option<AttributeAnyGetterContainer<'a, 's, Self, TracePayload<D>, D, Span>>
     where
-        K: ?Sized + Hash + Equivalent<<D::Text as SpanDataContents>::RefCopy>
+        K: ?Sized + Hash + Equivalent<D::Text>
     {
         let r = storage.find(key)?;
         container.attributes.get(&r).map(|v| attribute_getter(v, storage))
@@ -987,7 +986,7 @@ impl_v1_attribute_types!(SpanLink);
 impl<'a, 's, D: TraceDataLifetime<'s> + 's, const ISMUT: u8> TraceAttributesOp<'a, 's, TracePayload<D>, D, SpanLink> for TraceAttributes<'s, TracePayload<D>, D, AttrRef<'a, SpanLink>, SpanLink, ISMUT> {
     fn get<K>(container: &'a SpanLink, storage: &'s TraceStaticData<D>, key: &K) -> Option<AttributeAnyGetterContainer<'a, 's, Self, TracePayload<D>, D, SpanLink>>
     where
-        K: ?Sized + Hash + Equivalent<<D::Text as SpanDataContents>::RefCopy>
+        K: ?Sized + Hash + Equivalent<D::Text>
     {
         let r = storage.find(key)?;
         container.attributes.get(&r).map(|v| attribute_getter(v, storage))
@@ -999,7 +998,7 @@ impl_v1_attribute_types!(SpanEvent);
 impl<'a, 's, D: TraceDataLifetime<'s> + 's, const ISMUT: u8> TraceAttributesOp<'a, 's, TracePayload<D>, D, SpanEvent> for TraceAttributes<'s, TracePayload<D>, D, AttrRef<'a, SpanEvent>, SpanEvent, ISMUT> {
     fn get<K>(container: &'a SpanEvent, storage: &'s TraceStaticData<D>, key: &K) -> Option<AttributeAnyGetterContainer<'a, 's, Self, TracePayload<D>, D, SpanEvent>>
     where
-        K: ?Sized + Hash + Equivalent<<D::Text as SpanDataContents>::RefCopy>
+        K: ?Sized + Hash + Equivalent<D::Text>
     {
         let r = storage.find(key)?;
         container.attributes.get(&r).map(|v| attribute_getter(v, storage))
@@ -1052,7 +1051,7 @@ impl<'storage, D: TraceDataLifetime<'storage> + 'storage> TraceAttributesBytes<'
 impl<'a, 'b, D: TraceData> TraceAttributesMutOp<'b, 'a, TracePayload<D>, D, Span> for TraceAttributesMut<'a, TracePayload<D>, D, AttrRef<'b, Span>, Span> {
     fn get_mut<K>(container: &'b mut Span, storage: &mut TraceStaticData<D>, key: &K) -> Option<AttributeAnySetterContainer<'b, 'a, Self, TracePayload<D>, D, Span>>
     where
-        K: ?Sized + Hash + Equivalent<<D::Text as SpanDataContents>::RefCopy>,
+        K: ?Sized + Hash + Equivalent<D::Text>,
     {
         let r = storage.find(key)?;
         container.attributes.get_mut(&r).map(|v| v1_to_setter(v))
@@ -1077,7 +1076,7 @@ impl<'a, 'b, D: TraceData> TraceAttributesMutOp<'b, 'a, TracePayload<D>, D, Span
 
     fn remove<K>(container: &mut Span, storage: &mut TraceStaticData<D>, key: &K)
     where
-        K: ?Sized + Hash + Equivalent<<D::Text as SpanDataContents>::RefCopy>
+        K: ?Sized + Hash + Equivalent<D::Text>
     {
         if let Some(r) = storage.find(key) {
             container.attributes.remove(&r);
@@ -1088,7 +1087,7 @@ impl<'a, 'b, D: TraceData> TraceAttributesMutOp<'b, 'a, TracePayload<D>, D, Span
 impl<'a, 'b, D: TraceData> TraceAttributesMutOp<'b, 'a, TracePayload<D>, D, Traces> for TraceAttributesMut<'a, TracePayload<D>, D, AttrRef<'b, Traces>, Traces> {
     fn get_mut<K>(container: &'b mut Traces, storage: &mut TraceStaticData<D>, key: &K) -> Option<AttributeAnySetterContainer<'b, 'a, Self, TracePayload<D>, D, Traces>>
     where
-        K: ?Sized + Hash + Equivalent<<D::Text as SpanDataContents>::RefCopy>,
+        K: ?Sized + Hash + Equivalent<D::Text>,
     {
         let r = storage.find(key)?;
         container.attributes.get_mut(&r).map(|v| v1_to_setter(v))
@@ -1113,7 +1112,7 @@ impl<'a, 'b, D: TraceData> TraceAttributesMutOp<'b, 'a, TracePayload<D>, D, Trac
 
     fn remove<K>(container: &mut Traces, storage: &mut TraceStaticData<D>, key: &K)
     where
-        K: ?Sized + Hash + Equivalent<<D::Text as SpanDataContents>::RefCopy>
+        K: ?Sized + Hash + Equivalent<D::Text>
     {
         if let Some(r) = storage.find(key) {
             container.attributes.remove(&r);
@@ -1124,7 +1123,7 @@ impl<'a, 'b, D: TraceData> TraceAttributesMutOp<'b, 'a, TracePayload<D>, D, Trac
 impl<'a, 'b, D: TraceData> TraceAttributesMutOp<'b, 'a, TracePayload<D>, D, TraceChunk> for TraceAttributesMut<'a, TracePayload<D>, D, AttrRef<'b, TraceChunk>, TraceChunk> {
     fn get_mut<K>(container: &'b mut TraceChunk, storage: &mut TraceStaticData<D>, key: &K) -> Option<AttributeAnySetterContainer<'b, 'a, Self, TracePayload<D>, D, TraceChunk>>
     where
-        K: ?Sized + Hash + Equivalent<<D::Text as SpanDataContents>::RefCopy>,
+        K: ?Sized + Hash + Equivalent<D::Text>,
     {
         let r = storage.find(key)?;
         container.attributes.get_mut(&r).map(|v| v1_to_setter(v))
@@ -1149,7 +1148,7 @@ impl<'a, 'b, D: TraceData> TraceAttributesMutOp<'b, 'a, TracePayload<D>, D, Trac
 
     fn remove<K>(container: &mut TraceChunk, storage: &mut TraceStaticData<D>, key: &K)
     where
-        K: ?Sized + Hash + Equivalent<<D::Text as SpanDataContents>::RefCopy>
+        K: ?Sized + Hash + Equivalent<D::Text>
     {
         if let Some(r) = storage.find(key) {
             container.attributes.remove(&r);
@@ -1160,7 +1159,7 @@ impl<'a, 'b, D: TraceData> TraceAttributesMutOp<'b, 'a, TracePayload<D>, D, Trac
 impl<'a, 'b, D: TraceData> TraceAttributesMutOp<'b, 'a, TracePayload<D>, D, SpanLink> for TraceAttributesMut<'a, TracePayload<D>, D, AttrRef<'b, SpanLink>, SpanLink> {
     fn get_mut<K>(container: &'b mut SpanLink, storage: &mut TraceStaticData<D>, key: &K) -> Option<AttributeAnySetterContainer<'b, 'a, Self, TracePayload<D>, D, SpanLink>>
     where
-        K: ?Sized + Hash + Equivalent<<D::Text as SpanDataContents>::RefCopy>,
+        K: ?Sized + Hash + Equivalent<D::Text>,
     {
         let r = storage.find(key)?;
         container.attributes.get_mut(&r).map(|v| v1_to_setter(v))
@@ -1185,7 +1184,7 @@ impl<'a, 'b, D: TraceData> TraceAttributesMutOp<'b, 'a, TracePayload<D>, D, Span
 
     fn remove<K>(container: &mut SpanLink, storage: &mut TraceStaticData<D>, key: &K)
     where
-        K: ?Sized + Hash + Equivalent<<D::Text as SpanDataContents>::RefCopy>
+        K: ?Sized + Hash + Equivalent<D::Text>
     {
         if let Some(r) = storage.find(key) {
             container.attributes.remove(&r);
@@ -1196,7 +1195,7 @@ impl<'a, 'b, D: TraceData> TraceAttributesMutOp<'b, 'a, TracePayload<D>, D, Span
 impl<'a, 'b, D: TraceData> TraceAttributesMutOp<'b, 'a, TracePayload<D>, D, SpanEvent> for TraceAttributesMut<'a, TracePayload<D>, D, AttrRef<'b, SpanEvent>, SpanEvent> {
     fn get_mut<K>(container: &'b mut SpanEvent, storage: &mut TraceStaticData<D>, key: &K) -> Option<AttributeAnySetterContainer<'b, 'a, Self, TracePayload<D>, D, SpanEvent>>
     where
-        K: ?Sized + Hash + Equivalent<<D::Text as SpanDataContents>::RefCopy>,
+        K: ?Sized + Hash + Equivalent<D::Text>,
     {
         let r = storage.find(key)?;
         container.attributes.get_mut(&r).map(|v| v1_to_setter(v))
@@ -1221,7 +1220,7 @@ impl<'a, 'b, D: TraceData> TraceAttributesMutOp<'b, 'a, TracePayload<D>, D, Span
 
     fn remove<K>(container: &mut SpanEvent, storage: &mut TraceStaticData<D>, key: &K)
     where
-        K: ?Sized + Hash + Equivalent<<D::Text as SpanDataContents>::RefCopy>
+        K: ?Sized + Hash + Equivalent<D::Text>
     {
         if let Some(r) = storage.find(key) {
             container.attributes.remove(&r);
@@ -1234,7 +1233,7 @@ mod tests {
     use super::{AttributeAnyValue, Span, SpanEvent, TraceChunk, TracePayload};
     use crate::span::{BytesData, TraceProjector};
     use libdd_tinybytes::BytesString;
-    use std::collections::HashMap;
+    use hashbrown::HashMap;
 
     #[test]
     fn test_basic_span_event_attributes() {

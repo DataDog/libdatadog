@@ -130,7 +130,8 @@ impl<T: TraceData, D: TraceDataType> StaticDataVec<T, D> {
 
     pub fn find<Q>(&self, value: &Q) -> Option<TraceDataRef<D>>
     where
-        Q: ?Sized + Hash + Equivalent<<D::Data::<T> as SpanDataContents>::RefCopy>,
+        Q: ?Sized + Hash + Equivalent<D::Data::<T>>,
+        D::Data<T>: SpanDataContents<RefCopy = D::Data<T>>,
     {
         self.table.get(value).copied()
     }
@@ -161,6 +162,25 @@ impl<T: TraceData, D: TraceDataType> StaticDataVec<T, D> {
             table,
             offsets,
         }
+    }
+
+    pub fn merge(&mut self, from: &mut Self) -> Vec<TraceDataRef<D>> {
+        let mut indices = Vec::with_capacity(from.vec.len());
+        indices.push(TraceDataRef::new(0)); // skip default
+        for entry in std::mem::take(&mut from.vec).into_iter().skip(1) {
+            match self.table.try_insert(entry.value.as_ref_copy(), TraceDataRef::new(self.vec.len() as u32)) {
+                Ok(value) => {
+                    indices.push(*value);
+                    self.vec.push(entry);
+                },
+                Err(mut existing) => {
+                    let index = *existing.entry.get_mut();
+                    self.vec[index.index as usize].rc += entry.rc;
+                    indices.push(index);
+                }
+            }
+        }
+        indices
     }
 
     pub fn len(&self) -> usize {

@@ -33,7 +33,7 @@ rand = "0.8.5"
 bytes = "1.6.0"
 rmpv = { version = "1.3.0", default-features = false }
 rmp = { version = "0.8.14", default-features = false }
-hashbrown = "0.15"
+hashbrown = { version = "0.15", features = ["serde"] }
 strum = { version = "0.26.2", features = ["derive"] }
 
 libdd-common = { version = "1.1.0", path = "../libdd-common", default-features = false }

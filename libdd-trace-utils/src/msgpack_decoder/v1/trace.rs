@@ -5,7 +5,7 @@ use crate::msgpack_decoder::decode::buffer::Buffer;
 use crate::msgpack_decoder::decode::error::DecodeError;
 use crate::msgpack_decoder::decode::number::{read_nullable_number, read_num, read_number};
 use crate::span::{v1::Span, DeserializableTraceData};
-use std::collections::HashMap;
+use hashbrown::HashMap;
 use rmp::{decode, Marker};
 use rmp::decode::{read_marker, RmpRead, ValueReadError};
 use strum::FromRepr;
@@ -378,7 +378,7 @@ fn decode_attributes<T: DeserializableTraceData>(buf: &mut Buffer<T>, table: &mu
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashMap;
+    use hashbrown::HashMap;
     use libdd_tinybytes::Bytes;
     use libdd_trace_protobuf::pb::idx::SpanKind;
     use crate::msgpack_encoder;

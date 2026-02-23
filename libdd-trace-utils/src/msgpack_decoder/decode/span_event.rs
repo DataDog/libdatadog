@@ -8,7 +8,7 @@ use crate::msgpack_decoder::decode::string::handle_null_marker;
 use crate::span::v04::{AttributeAnyValue, AttributeArrayValue, SpanEvent};
 use crate::span::DeserializableTraceData;
 use std::borrow::Borrow;
-use std::collections::HashMap;
+use hashbrown::HashMap;
 use std::str::FromStr;
 
 /// Reads a slice of bytes and decodes it into a vector of `SpanEvent` objects.

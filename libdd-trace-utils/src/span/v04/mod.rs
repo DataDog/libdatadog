@@ -7,11 +7,10 @@ use crate::tracer_payload::TraceChunks;
 use serde::ser::SerializeStruct;
 use serde::Serialize;
 use std::borrow::Borrow;
-use std::collections::HashMap;
 use std::str::FromStr;
 use std::hash::Hash;
 use std::slice::Iter;
-use hashbrown::Equivalent;
+use hashbrown::{Equivalent, HashMap};
 use libdd_trace_protobuf::pb::idx::SpanKind;
 
 #[derive(Debug, PartialEq)]
@@ -790,29 +789,18 @@ impl_v04_span_attribute_types!(Span<D>);
 impl<'a, 's, D: TraceData, const ISMUT: u8> TraceAttributesOp<'a, 's, TraceCollection<D>, D, Span<D>> for TraceAttributes<'s, TraceCollection<D>, D, AttrRef<'a, Span<D>>, Span<D>, ISMUT> {
     fn get<K>(container: &'a Span<D>, _storage: &'s (), key: &K) -> Option<AttributeAnyGetterContainer<'a, 's, Self, TraceCollection<D>, D, Span<D>>>
     where
-        K: ?Sized + Hash + Equivalent<<D::Text as SpanDataContents>::RefCopy>
+        K: ?Sized + Hash + Equivalent<D::Text>
     {
-        // For v04, HashMap uses D::Text as keys directly
-        // We need to iterate and find a match using Equivalent
-        for (k, v) in &container.meta {
-            if key.equivalent(&k.as_ref_copy()) {
-                // SAFETY: In v04, data is stored directly in containers, not in storage.
-                // We transmute the lifetime from 'a to 's for the return value.
-                // This is sound because the data is owned by Traces<'s>, accessed through &'a.
-                let v_storage = unsafe { std::mem::transmute::<&'_ _, &'s D::Text>(v) };
-                return Some(AttributeAnyContainer::String(v_storage));
-            }
+        if let Some(v) = container.meta.get(key) {
+            let v_storage = unsafe { std::mem::transmute::<&'_ _, &'s D::Text>(v) };
+            return Some(AttributeAnyContainer::String(v_storage));
         }
-        for (k, v) in &container.metrics {
-            if key.equivalent(&k.as_ref_copy()) {
-                return Some(AttributeAnyContainer::Double(*v));
-            }
+        if let Some(v) = container.metrics.get(key) {
+            return Some(AttributeAnyContainer::Double(*v));
         }
-        for (k, v) in &container.meta_struct {
-            if key.equivalent(&k.as_ref_copy()) {
-                let v_storage = unsafe { std::mem::transmute::<&'_ _, &'s D::Bytes>(v) };
-                return Some(AttributeAnyContainer::Bytes(v_storage));
-            }
+        if let Some(v) = container.meta_struct.get(key) {
+            let v_storage = unsafe { std::mem::transmute::<&'_ _, &'s D::Bytes>(v) };
+            return Some(AttributeAnyContainer::Bytes(v_storage));
         }
         None
     }
@@ -821,29 +809,18 @@ impl<'a, 's, D: TraceData, const ISMUT: u8> TraceAttributesOp<'a, 's, TraceColle
 impl<'a, 's, D: TraceData> TraceAttributesMutOp<'a, 's, TraceCollection<D>, D, Span<D>> for TraceAttributesMut<'s, TraceCollection<D>, D, AttrRef<'a, Span<D>>, Span<D>> {
     fn get_mut<K>(container: &'a mut Span<D>, _storage: &mut (), key: &K) -> Option<AttributeAnySetterContainer<'a, 's, Self, TraceCollection<D>, D, Span<D>>>
     where
-        K: ?Sized + Hash + Equivalent<<D::Text as SpanDataContents>::RefCopy>,
+        K: ?Sized + Hash + Equivalent<D::Text>,
     {
-        // Try to find in meta
-        for (k, v) in &mut container.meta {
-            if key.equivalent(&k.as_ref_copy()) {
-                // SAFETY: In v04, data is owned by Traces<'s> and stored in containers. We transmute from 'a to 's.
-                // This is sound because the actual data lifetime is 's (tied to Traces), and 'a is just the borrow lifetime.
-                let v_storage: &'s mut D::Text = unsafe { std::mem::transmute(v) };
-                return Some(AttributeAnyContainer::String(v_storage));
-            }
+        if let Some(v) = container.meta.get_mut(key) {
+            let v_storage: &'s mut D::Text = unsafe { std::mem::transmute(v) };
+            return Some(AttributeAnyContainer::String(v_storage));
         }
-        // Try to find in metrics
-        for (k, v) in &mut container.metrics {
-            if key.equivalent(&k.as_ref_copy()) {
-                return Some(AttributeAnyContainer::Double(v));
-            }
+        if let Some(v) = container.metrics.get_mut(key) {
+            return Some(AttributeAnyContainer::Double(v));
         }
-        // Try to find in meta_struct
-        for (k, v) in &mut container.meta_struct {
-            if key.equivalent(&k.as_ref_copy()) {
-                let v_storage: &'s mut D::Bytes = unsafe { std::mem::transmute(v) };
-                return Some(AttributeAnyContainer::Bytes(v_storage));
-            }
+        if let Some(v) = container.meta_struct.get_mut(key) {
+            let v_storage: &'s mut D::Bytes = unsafe { std::mem::transmute(v) };
+            return Some(AttributeAnyContainer::Bytes(v_storage));
         }
         None
     }
@@ -872,12 +849,11 @@ impl<'a, 's, D: TraceData> TraceAttributesMutOp<'a, 's, TraceCollection<D>, D, S
 
     fn remove<K>(container: &mut Span<D>, _storage: &mut (), key: &K)
     where
-        K: ?Sized + Hash + Equivalent<<D::Text as SpanDataContents>::RefCopy>
+        K: ?Sized + Hash + Equivalent<D::Text>
     {
-        // For std HashMap with owned keys, we use retain which allows us to check without cloning
-        container.meta.retain(|k, _| !key.equivalent(&k.as_ref_copy()));
-        container.metrics.retain(|k, _| !key.equivalent(&k.as_ref_copy()));
-        container.meta_struct.retain(|k, _| !key.equivalent(&k.as_ref_copy()));
+        container.meta.remove(key);
+        container.metrics.remove(key);
+        container.meta_struct.remove(key);
     }
 }
 
@@ -913,26 +889,19 @@ impl_v04_span_attribute_types!(Trace<D>);
 impl<'a, 's, D: TraceData, const ISMUT: u8> TraceAttributesOp<'a, 's, TraceCollection<D>, D, Trace<D>> for TraceAttributes<'s, TraceCollection<D>, D, AttrRef<'a, Trace<D>>, Trace<D>, ISMUT> {
     fn get<K>(container: &'a Trace<D>, _storage: &'s (), key: &K) -> Option<AttributeAnyGetterContainer<'a, 's, Self, TraceCollection<D>, D, Trace<D>>>
     where
-        K: ?Sized + Hash + Equivalent<<D::Text as SpanDataContents>::RefCopy>,
+        K: ?Sized + Hash + Equivalent<D::Text>,
     {
         let span = container.first()?.first()?;
-        for (k, v) in &span.meta {
-            if key.equivalent(&k.as_ref_copy()) {
-                // SAFETY: same reasoning as Span::get — data owned by Traces<'s>, transmute 'a→'s
-                let v_storage = unsafe { std::mem::transmute::<&'_ _, &'s D::Text>(v) };
-                return Some(AttributeAnyContainer::String(v_storage));
-            }
+        if let Some(v) = span.meta.get(key) {
+            let v_storage = unsafe { std::mem::transmute::<&'_ _, &'s D::Text>(v) };
+            return Some(AttributeAnyContainer::String(v_storage));
         }
-        for (k, v) in &span.metrics {
-            if key.equivalent(&k.as_ref_copy()) {
-                return Some(AttributeAnyContainer::Double(*v));
-            }
+        if let Some(v) = span.metrics.get(key) {
+            return Some(AttributeAnyContainer::Double(*v));
         }
-        for (k, v) in &span.meta_struct {
-            if key.equivalent(&k.as_ref_copy()) {
-                let v_storage = unsafe { std::mem::transmute::<&'_ _, &'s D::Bytes>(v) };
-                return Some(AttributeAnyContainer::Bytes(v_storage));
-            }
+        if let Some(v) = span.meta_struct.get(key) {
+            let v_storage = unsafe { std::mem::transmute::<&'_ _, &'s D::Bytes>(v) };
+            return Some(AttributeAnyContainer::Bytes(v_storage));
         }
         None
     }
@@ -941,26 +910,19 @@ impl<'a, 's, D: TraceData, const ISMUT: u8> TraceAttributesOp<'a, 's, TraceColle
 impl<'a, 's, D: TraceData> TraceAttributesMutOp<'a, 's, TraceCollection<D>, D, Trace<D>> for TraceAttributesMut<'s, TraceCollection<D>, D, AttrRef<'a, Trace<D>>, Trace<D>> {
     fn get_mut<K>(container: &'a mut Trace<D>, _storage: &mut (), key: &K) -> Option<AttributeAnySetterContainer<'a, 's, Self, TraceCollection<D>, D, Trace<D>>>
     where
-        K: ?Sized + Hash + Equivalent<<D::Text as SpanDataContents>::RefCopy>
+        K: ?Sized + Hash + Equivalent<D::Text>
     {
         let span = container.first_mut()?.first_mut()?;
-        for (k, v) in &mut span.meta {
-            if key.equivalent(&k.as_ref_copy()) {
-                // SAFETY: same reasoning as Span::get_mut — transmute 'a→'s
-                let v_storage: &'s mut D::Text = unsafe { std::mem::transmute(v) };
-                return Some(AttributeAnyContainer::String(v_storage));
-            }
+        if let Some(v) = span.meta.get_mut(key) {
+            let v_storage: &'s mut D::Text = unsafe { std::mem::transmute(v) };
+            return Some(AttributeAnyContainer::String(v_storage));
         }
-        for (k, v) in &mut span.metrics {
-            if key.equivalent(&k.as_ref_copy()) {
-                return Some(AttributeAnyContainer::Double(v));
-            }
+        if let Some(v) = span.metrics.get_mut(key) {
+            return Some(AttributeAnyContainer::Double(v));
         }
-        for (k, v) in &mut span.meta_struct {
-            if key.equivalent(&k.as_ref_copy()) {
-                let v_storage: &'s mut D::Bytes = unsafe { std::mem::transmute(v) };
-                return Some(AttributeAnyContainer::Bytes(v_storage));
-            }
+        if let Some(v) = span.meta_struct.get_mut(key) {
+            let v_storage: &'s mut D::Bytes = unsafe { std::mem::transmute(v) };
+            return Some(AttributeAnyContainer::Bytes(v_storage));
         }
         None
     }
@@ -994,14 +956,14 @@ impl<'a, 's, D: TraceData> TraceAttributesMutOp<'a, 's, TraceCollection<D>, D, T
 
     fn remove<K>(container: &mut Trace<D>, _storage: &mut (), key: &K)
     where
-        K: ?Sized + Hash + Equivalent<<D::Text as SpanDataContents>::RefCopy>
+        K: ?Sized + Hash + Equivalent<D::Text>
     {
         // remove operates on the first span of ALL chunks (no reference returned)
         for chunk in container.iter_mut() {
             if let Some(span) = chunk.first_mut() {
-                span.meta.retain(|k, _| !key.equivalent(&k.as_ref_copy()));
-                span.metrics.retain(|k, _| !key.equivalent(&k.as_ref_copy()));
-                span.meta_struct.retain(|k, _| !key.equivalent(&k.as_ref_copy()));
+                span.meta.remove(key);
+                span.metrics.remove(key);
+                span.meta_struct.remove(key);
             }
         }
     }
@@ -1012,26 +974,19 @@ impl_v04_span_attribute_types!(Chunk<D>);
 impl<'a, 's, D: TraceData, const ISMUT: u8> TraceAttributesOp<'a, 's, TraceCollection<D>, D, Chunk<D>> for TraceAttributes<'s, TraceCollection<D>, D, AttrRef<'a, Chunk<D>>, Chunk<D>, ISMUT> {
     fn get<K>(container: &'a Chunk<D>, _storage: &'s (), key: &K) -> Option<AttributeAnyGetterContainer<'a, 's, Self, TraceCollection<D>, D, Chunk<D>>>
     where
-        K: ?Sized + Hash + Equivalent<<D::Text as SpanDataContents>::RefCopy>,
+        K: ?Sized + Hash + Equivalent<D::Text>,
     {
         let span = container.first()?;
-        for (k, v) in &span.meta {
-            if key.equivalent(&k.as_ref_copy()) {
-                // SAFETY: same reasoning as Span::get — data owned by Traces<'s>, transmute 'a→'s
-                let v_storage = unsafe { std::mem::transmute::<&'_ _, &'s D::Text>(v) };
-                return Some(AttributeAnyContainer::String(v_storage));
-            }
+        if let Some(v) = span.meta.get(key) {
+            let v_storage = unsafe { std::mem::transmute::<&'_ _, &'s D::Text>(v) };
+            return Some(AttributeAnyContainer::String(v_storage));
         }
-        for (k, v) in &span.metrics {
-            if key.equivalent(&k.as_ref_copy()) {
-                return Some(AttributeAnyContainer::Double(*v));
-            }
+        if let Some(v) = span.metrics.get(key) {
+            return Some(AttributeAnyContainer::Double(*v));
         }
-        for (k, v) in &span.meta_struct {
-            if key.equivalent(&k.as_ref_copy()) {
-                let v_storage = unsafe { std::mem::transmute::<&'_ _, &'s D::Bytes>(v) };
-                return Some(AttributeAnyContainer::Bytes(v_storage));
-            }
+        if let Some(v) = span.meta_struct.get(key) {
+            let v_storage = unsafe { std::mem::transmute::<&'_ _, &'s D::Bytes>(v) };
+            return Some(AttributeAnyContainer::Bytes(v_storage));
         }
         None
     }
@@ -1040,26 +995,19 @@ impl<'a, 's, D: TraceData, const ISMUT: u8> TraceAttributesOp<'a, 's, TraceColle
 impl<'a, 's, D: TraceData> TraceAttributesMutOp<'a, 's, TraceCollection<D>, D, Chunk<D>> for TraceAttributesMut<'s, TraceCollection<D>, D, AttrRef<'a, Chunk<D>>, Chunk<D>> {
     fn get_mut<K>(container: &'a mut Chunk<D>, _storage: &mut (), key: &K) -> Option<AttributeAnySetterContainer<'a, 's, Self, TraceCollection<D>, D, Chunk<D>>>
     where
-        K: ?Sized + Hash + Equivalent<<D::Text as SpanDataContents>::RefCopy>
+        K: ?Sized + Hash + Equivalent<D::Text>
     {
         let span = container.first_mut()?;
-        for (k, v) in &mut span.meta {
-            if key.equivalent(&k.as_ref_copy()) {
-                // SAFETY: same reasoning as Span::get_mut — transmute 'a→'s
-                let v_storage: &'s mut D::Text = unsafe { std::mem::transmute(v) };
-                return Some(AttributeAnyContainer::String(v_storage));
-            }
+        if let Some(v) = span.meta.get_mut(key) {
+            let v_storage: &'s mut D::Text = unsafe { std::mem::transmute(v) };
+            return Some(AttributeAnyContainer::String(v_storage));
         }
-        for (k, v) in &mut span.metrics {
-            if key.equivalent(&k.as_ref_copy()) {
-                return Some(AttributeAnyContainer::Double(v));
-            }
+        if let Some(v) = span.metrics.get_mut(key) {
+            return Some(AttributeAnyContainer::Double(v));
         }
-        for (k, v) in &mut span.meta_struct {
-            if key.equivalent(&k.as_ref_copy()) {
-                let v_storage: &'s mut D::Bytes = unsafe { std::mem::transmute(v) };
-                return Some(AttributeAnyContainer::Bytes(v_storage));
-            }
+        if let Some(v) = span.meta_struct.get_mut(key) {
+            let v_storage: &'s mut D::Bytes = unsafe { std::mem::transmute(v) };
+            return Some(AttributeAnyContainer::Bytes(v_storage));
         }
         None
     }
@@ -1092,12 +1040,12 @@ impl<'a, 's, D: TraceData> TraceAttributesMutOp<'a, 's, TraceCollection<D>, D, C
 
     fn remove<K>(container: &mut Chunk<D>, _storage: &mut (), key: &K)
     where
-        K: ?Sized + Hash + Equivalent<<D::Text as SpanDataContents>::RefCopy>
+        K: ?Sized + Hash + Equivalent<D::Text>
     {
         if let Some(span) = container.first_mut() {
-            span.meta.retain(|k, _| !key.equivalent(&k.as_ref_copy()));
-            span.metrics.retain(|k, _| !key.equivalent(&k.as_ref_copy()));
-            span.meta_struct.retain(|k, _| !key.equivalent(&k.as_ref_copy()));
+            span.meta.remove(key);
+            span.metrics.remove(key);
+            span.meta_struct.remove(key);
         }
     }
 }
@@ -1121,16 +1069,11 @@ for TraceAttributesMut<'s, TraceCollection<D>, D, AttrRef<'a, SpanLink<D>>, Span
 impl<'a, 's, D: TraceData, const ISMUT: u8> TraceAttributesOp<'a, 's, TraceCollection<D>, D, SpanLink<D>> for TraceAttributes<'s, TraceCollection<D>, D, AttrRef<'a, SpanLink<D>>, SpanLink<D>, ISMUT> {
     fn get<K>(container: &'a SpanLink<D>, _storage: &'s (), key: &K) -> Option<AttributeAnyGetterContainer<'a, 's, Self, TraceCollection<D>, D, SpanLink<D>>>
     where
-        K: ?Sized + Hash + Equivalent<<D::Text as SpanDataContents>::RefCopy>,
+        K: ?Sized + Hash + Equivalent<D::Text>,
     {
-        for (k, v) in &container.attributes {
-            if key.equivalent(&k.as_ref_copy()) {
-                // SAFETY: In v04, data is stored directly in containers, not in storage.
-                // We transmute the lifetime from 'a to 's for the return value.
-                // This is sound because the data is owned by Traces<'s>, accessed through &'a.
-                let v_with_storage_lifetime: &'s D::Text = unsafe { std::mem::transmute(v) };
-                return Some(AttributeAnyContainer::String(v_with_storage_lifetime));
-            }
+        if let Some(v) = container.attributes.get(key) {
+            let v_with_storage_lifetime: &'s D::Text = unsafe { std::mem::transmute(v) };
+            return Some(AttributeAnyContainer::String(v_with_storage_lifetime));
         }
         None
     }
@@ -1139,14 +1082,11 @@ impl<'a, 's, D: TraceData, const ISMUT: u8> TraceAttributesOp<'a, 's, TraceColle
 impl<'a, 's, D: TraceData> TraceAttributesMutOp<'a, 's, TraceCollection<D>, D, SpanLink<D>> for TraceAttributesMut<'s, TraceCollection<D>, D, AttrRef<'a, SpanLink<D>>, SpanLink<D>> {
     fn get_mut<K>(container: &'a mut SpanLink<D>, _storage: &mut (), key: &K) -> Option<AttributeAnySetterContainer<'a, 's, Self, TraceCollection<D>, D, SpanLink<D>>>
     where
-        K: ?Sized + Hash + Equivalent<<D::Text as SpanDataContents>::RefCopy>
+        K: ?Sized + Hash + Equivalent<D::Text>
     {
-        for (k, v) in &mut container.attributes {
-            if key.equivalent(&k.as_ref_copy()) {
-                // SAFETY: transmute from 'a to 's (same as Span impl)
-                let v_storage: &'s mut D::Text = unsafe { std::mem::transmute(v) };
-                return Some(AttributeAnyContainer::String(v_storage));
-            }
+        if let Some(v) = container.attributes.get_mut(key) {
+            let v_storage: &'s mut D::Text = unsafe { std::mem::transmute(v) };
+            return Some(AttributeAnyContainer::String(v_storage));
         }
         None
     }
@@ -1165,9 +1105,9 @@ impl<'a, 's, D: TraceData> TraceAttributesMutOp<'a, 's, TraceCollection<D>, D, S
 
     fn remove<K>(container: &mut SpanLink<D>, _storage: &mut (), key: &K)
     where
-        K: ?Sized + Hash + Equivalent<<D::Text as SpanDataContents>::RefCopy>
+        K: ?Sized + Hash + Equivalent<D::Text>
     {
-        container.attributes.retain(|k, _| !key.equivalent(&k.as_ref_copy()));
+        container.attributes.remove(key);
     }
 }
 
@@ -1190,30 +1130,21 @@ for TraceAttributesMut<'s, TraceCollection<D>, D, AttrRef<'a, SpanEvent<D>>, Spa
 impl<'a, 's, D: TraceData, const ISMUT: u8> TraceAttributesOp<'a, 's, TraceCollection<D>, D, SpanEvent<D>> for TraceAttributes<'s, TraceCollection<D>, D, AttrRef<'a, SpanEvent<D>>, SpanEvent<D>, ISMUT> {
     fn get<K>(container: &'a SpanEvent<D>, _storage: &'s (), key: &K) -> Option<AttributeAnyGetterContainer<'a, 's, Self, TraceCollection<D>, D, SpanEvent<D>>>
     where
-        K: ?Sized + Hash + Equivalent<<D::Text as SpanDataContents>::RefCopy>,
+        K: ?Sized + Hash + Equivalent<D::Text>,
     {
-        // Iterate through attributes to find a match using Equivalent
-        for (k, v) in &container.attributes {
-            if key.equivalent(&k.as_ref_copy()) {
-                return match v {
-                    AttributeAnyValue::SingleValue(single) => match single {
-                        AttributeArrayValue::String(s) => {
-                            // SAFETY: In v04, data is stored directly in containers, not in storage.
-                            // We transmute the lifetime from 'a to 's for the return value.
-                            // This is sound because the data is owned by Traces<'s>, accessed through &'a.
-                            let s_storage: &'s D::Text = unsafe { std::mem::transmute(s) };
-                            Some(AttributeAnyContainer::String(s_storage))
-                        }
-                        AttributeArrayValue::Boolean(b) => Some(AttributeAnyContainer::Boolean(*b)),
-                        AttributeArrayValue::Integer(i) => Some(AttributeAnyContainer::Integer(*i)),
-                        AttributeArrayValue::Double(d) => Some(AttributeAnyContainer::Double(*d)),
-                    },
-                    AttributeAnyValue::Array(_) => {
-                        // Arrays are not fully supported yet
-                        Some(AttributeAnyContainer::Array(()))
+        if let Some(v) = container.attributes.get(key) {
+            return match v {
+                AttributeAnyValue::SingleValue(single) => match single {
+                    AttributeArrayValue::String(s) => {
+                        let s_storage: &'s D::Text = unsafe { std::mem::transmute(s) };
+                        Some(AttributeAnyContainer::String(s_storage))
                     }
-                };
-            }
+                    AttributeArrayValue::Boolean(b) => Some(AttributeAnyContainer::Boolean(*b)),
+                    AttributeArrayValue::Integer(i) => Some(AttributeAnyContainer::Integer(*i)),
+                    AttributeArrayValue::Double(d) => Some(AttributeAnyContainer::Double(*d)),
+                },
+                AttributeAnyValue::Array(_) => Some(AttributeAnyContainer::Array(())),
+            };
         }
         None
     }
@@ -1222,30 +1153,21 @@ impl<'a, 's, D: TraceData, const ISMUT: u8> TraceAttributesOp<'a, 's, TraceColle
 impl<'a, 's, D: TraceData> TraceAttributesMutOp<'a, 's, TraceCollection<D>, D, SpanEvent<D>> for TraceAttributesMut<'s, TraceCollection<D>, D, AttrRef<'a, SpanEvent<D>>, SpanEvent<D>> {
     fn get_mut<K>(container: &'a mut SpanEvent<D>, _storage: &mut (), key: &K) -> Option<AttributeAnySetterContainer<'a, 's, Self, TraceCollection<D>, D, SpanEvent<D>>>
     where
-        K: ?Sized + Hash + Equivalent<<D::Text as SpanDataContents>::RefCopy>
+        K: ?Sized + Hash + Equivalent<D::Text>
     {
-        // Iterate through attributes to find a match
-        for (k, v) in &mut container.attributes {
-            if key.equivalent(&k.as_ref_copy()) {
-                return match v {
-                    AttributeAnyValue::SingleValue(single) => match single {
-                        AttributeArrayValue::String(s) => {
-                            // SAFETY: In v04, data is owned by Traces<'s> and stored in containers.
-                            // We transmute from 'a to 's. This is sound because the actual data lifetime
-                            // is 's (tied to Traces), and 'a is just the borrow lifetime.
-                            let s_storage: &'s mut D::Text = unsafe { std::mem::transmute(s) };
-                            Some(AttributeAnyContainer::String(s_storage))
-                        }
-                        AttributeArrayValue::Boolean(b) => Some(AttributeAnyContainer::Boolean(b)),
-                        AttributeArrayValue::Integer(i) => Some(AttributeAnyContainer::Integer(i)),
-                        AttributeArrayValue::Double(d) => Some(AttributeAnyContainer::Double(d)),
-                    },
-                    AttributeAnyValue::Array(_) => {
-                        // Arrays are not fully supported yet
-                        Some(AttributeAnyContainer::Array(()))
+        if let Some(v) = container.attributes.get_mut(key) {
+            return match v {
+                AttributeAnyValue::SingleValue(single) => match single {
+                    AttributeArrayValue::String(s) => {
+                        let s_storage: &'s mut D::Text = unsafe { std::mem::transmute(s) };
+                        Some(AttributeAnyContainer::String(s_storage))
                     }
-                };
-            }
+                    AttributeArrayValue::Boolean(b) => Some(AttributeAnyContainer::Boolean(b)),
+                    AttributeArrayValue::Integer(i) => Some(AttributeAnyContainer::Integer(i)),
+                    AttributeArrayValue::Double(d) => Some(AttributeAnyContainer::Double(d)),
+                },
+                AttributeAnyValue::Array(_) => Some(AttributeAnyContainer::Array(())),
+            };
         }
         None
     }
@@ -1283,10 +1205,10 @@ impl<'a, 's, D: TraceData> TraceAttributesMutOp<'a, 's, TraceCollection<D>, D, S
 
     fn remove<K>(container: &mut SpanEvent<D>, _storage: &mut (), key: &K)
     where
-        K: ?Sized + Hash + Equivalent<<D::Text as SpanDataContents>::RefCopy>
+        K: ?Sized + Hash + Equivalent<D::Text>
     {
         // Remove the attribute if the key matches
-        container.attributes.retain(|k, _| !key.equivalent(&k.as_ref_copy()));
+        container.attributes.remove(key);
     }
 }
 
@@ -1296,8 +1218,8 @@ mod tests {
     use crate::msgpack_decoder::decode::buffer::Buffer;
     use crate::msgpack_decoder::v04::span::decode_span;
     use crate::span::{BytesData, SliceData, TraceProjector};
+    use hashbrown::HashMap;
     use libdd_tinybytes::BytesString;
-    use std::collections::HashMap;
     use super::TraceCollection;
 
     #[test]

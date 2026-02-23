@@ -207,7 +207,7 @@ pub trait TraceAttributesOp<'container, 'storage, T: TraceProjector<'storage, D>
 {
     fn get<K>(container: &'container C, storage: &'storage T::Storage, key: &K) -> Option<AttributeAnyGetterContainer<'container, 'storage, Self, T, D, C>>
     where
-        K: ?Sized + Hash + Equivalent<<D::Text as SpanDataContents>::RefCopy>;
+        K: ?Sized + Hash + Equivalent<D::Text>;
 }
 
 impl<'container, 'storage, T: TraceProjector<'storage, D>, D: TraceDataLifetime<'storage>, const ISMUT: u8> TraceAttributeGetterTypes<'container, 'storage, T, D, ()> for TraceAttributes<'storage, T, D, AttrOwned<()>, (), ISMUT> {
@@ -218,7 +218,7 @@ impl<'container, 'storage, T: TraceProjector<'storage, D>, D: TraceDataLifetime<
 impl<'container, 'storage, T: TraceProjector<'storage, D>, D: TraceDataLifetime<'storage>, const ISMUT: u8> TraceAttributesOp<'container, 'storage, T, D, ()> for TraceAttributes<'storage, T, D, AttrOwned<()>, (), ISMUT> {
     fn get<K>(_container: &'container (), _storage: &'storage T::Storage, _key: &K) -> Option<AttributeAnyGetterContainer<'container, 'storage, Self, T, D, ()>>
     where
-        K: ?Sized + Hash + Equivalent<<D::Text as SpanDataContents>::RefCopy>
+        K: ?Sized + Hash + Equivalent<D::Text>
     {
         None
     }
@@ -265,11 +265,11 @@ where
 {
     fn get_mut<K>(container: &'container mut C, storage: &mut T::Storage, key: &K) -> Option<AttributeAnySetterContainer<'container, 'storage, Self, T, D, C>>
     where
-        K: ?Sized + Hash + Equivalent<<D::Text as SpanDataContents>::RefCopy>;
+        K: ?Sized + Hash + Equivalent<D::Text>;
     fn set(container: &'container mut C, storage: &mut T::Storage, key: D::Text, value: AttributeAnyValueType) -> AttributeAnySetterContainer<'container, 'storage, Self, T, D, C>;
     fn remove<K>(container: &mut C, storage: &mut T::Storage, key: &K)
     where
-        K: ?Sized + Hash + Equivalent<<D::Text as SpanDataContents>::RefCopy>;
+        K: ?Sized + Hash + Equivalent<D::Text>;
 }
 
 impl<'container, 'storage, T: TraceProjector<'storage, D>, D: TraceDataLifetime<'storage>> TraceAttributeSetterTypes<'container, 'storage, T, D, ()> for TraceAttributesMut<'storage, T, D, AttrOwned<()>, ()> {
@@ -285,7 +285,7 @@ impl<'container, 'storage, T: TraceProjector<'storage, D>, D: TraceDataLifetime<
 impl<'container, 'storage, T: TraceProjector<'storage, D>, D: TraceDataLifetime<'storage>> TraceAttributesMutOp<'container, 'storage, T, D, ()> for TraceAttributesMut<'storage, T, D, AttrOwned<()>, ()> {
     fn get_mut<K>(_container: &'container mut (), _storage: &mut T::Storage, _key: &K) -> Option<AttributeAnySetterContainer<'container, 'storage, Self, T, D, ()>>
     where
-        K: ?Sized + Hash + Equivalent<<D::Text as SpanDataContents>::RefCopy>,
+        K: ?Sized + Hash + Equivalent<D::Text>,
     {
         None
     }
@@ -304,7 +304,7 @@ impl<'container, 'storage, T: TraceProjector<'storage, D>, D: TraceDataLifetime<
 
     fn remove<K>(_container: &mut (), _storage: &mut T::Storage, _key: &K)
     where
-        K: ?Sized + Hash + Equivalent<<D::Text as SpanDataContents>::RefCopy>
+        K: ?Sized + Hash + Equivalent<D::Text>
     {
     }
 }
@@ -449,7 +449,7 @@ where
 
     pub fn get_array_mut<K>(&'container mut self, key: &K) -> Option<AttributeArrayMut<'container, 'storage, T, D, <Self as TraceAttributeSetterTypes<'container, 'storage, T, D, C>>::MutArray>>
     where
-        K: ?Sized + Hash + Equivalent<<D::Text as SpanDataContents>::RefCopy>
+        K: ?Sized + Hash + Equivalent<D::Text>
     {
         let container_ref = unsafe { self.container.as_mut() };
         let storage_ref = unsafe { as_mut(self.storage) };
@@ -466,7 +466,7 @@ where
 
     pub fn get_map_mut<K>(&'container mut self, key: &K) -> Option<TraceAttributesMut<'storage, T, D, AttrOwned<<Self as TraceAttributeSetterTypes<'container, 'storage, T, D, C>>::MutMap>, <Self as TraceAttributeSetterTypes<'container, 'storage, T, D, C>>::MutMap>>
     where
-        K: ?Sized + Hash + Equivalent<<D::Text as SpanDataContents>::RefCopy>
+        K: ?Sized + Hash + Equivalent<D::Text>
     {
         let container_ref = unsafe { self.container.as_mut() };
         let storage_ref = unsafe { as_mut(self.storage) };
@@ -483,7 +483,7 @@ where
 
     pub fn remove<K>(&'container mut self, key: &K)
     where
-        K: ?Sized + Hash + Equivalent<<D::Text as SpanDataContents>::RefCopy>
+        K: ?Sized + Hash + Equivalent<D::Text>
     {
         let container_ref = unsafe { self.container.as_mut() };
         let storage_ref = unsafe { as_mut(self.storage) };
@@ -498,7 +498,7 @@ where
     #[allow(invalid_reference_casting)]
     fn fetch<K>(&self, key: &K) -> Option<AttributeAnyGetterContainer<'container, 'storage, TraceAttributes<'storage, T, D, AttrRef<'container, C>, C>, T, D, C>>
     where
-        K: ?Sized + Hash + Equivalent<<D::Text as SpanDataContents>::RefCopy>
+        K: ?Sized + Hash + Equivalent<D::Text>
     {
         let container_ref: &'container C = unsafe { &*(self.container.as_ref() as *const _) };
         <TraceAttributes<'storage, T, D, AttrRef<'container, C>, C> as TraceAttributesOp<'container, 'storage, T, D, C>>::get(container_ref, self.storage, key)
@@ -506,7 +506,7 @@ where
 
     pub fn get<K>(&self, key: &K) -> Option<AttributeAnyValue<'container, 'storage, TraceAttributes<'storage, T, D, AttrRef<'container, C>, C>, T, D, C>>
     where
-        K: ?Sized + Hash + Equivalent<<D::Text as SpanDataContents>::RefCopy>
+        K: ?Sized + Hash + Equivalent<D::Text>
     {
         self.fetch(key).map(move |v| match v {
             AttributeAnyContainer::String(text) => AttributeAnyValue::<TraceAttributes<'storage, T, D, AttrRef<'container, C>, C>, T, D, C>::String(text),
@@ -529,7 +529,7 @@ where
 
     pub fn get_string<K>(&self, key: &K) -> Option<&'storage D::Text>
     where
-        K: ?Sized + Hash + Equivalent<<D::Text as SpanDataContents>::RefCopy>
+        K: ?Sized + Hash + Equivalent<D::Text>
     {
         if let Some(AttributeAnyContainer::String(container)) = self.fetch(key) {
             Some(container)
@@ -540,7 +540,7 @@ where
 
     pub fn get_bytes<K>(&self, key: &K) -> Option<&'storage D::Bytes>
     where
-        K: ?Sized + Hash + Equivalent<<D::Text as SpanDataContents>::RefCopy>
+        K: ?Sized + Hash + Equivalent<D::Text>
     {
         if let Some(AttributeAnyContainer::Bytes(container)) = self.fetch(key) {
             Some(container)
@@ -551,7 +551,7 @@ where
 
     pub fn get_bool<K>(&self, key: &K) -> Option<bool>
     where
-        K: ?Sized + Hash + Equivalent<<D::Text as SpanDataContents>::RefCopy>
+        K: ?Sized + Hash + Equivalent<D::Text>
     {
         if let Some(AttributeAnyContainer::Boolean(container)) = self.fetch(key) {
             Some(container)
@@ -562,7 +562,7 @@ where
 
     pub fn get_int<K>(&self, key: &K) -> Option<i64>
     where
-        K: ?Sized + Hash + Equivalent<<D::Text as SpanDataContents>::RefCopy>
+        K: ?Sized + Hash + Equivalent<D::Text>
     {
         if let Some(AttributeAnyContainer::Integer(container)) = self.fetch(key) {
             Some(container)
@@ -573,7 +573,7 @@ where
 
     pub fn get_double<K>(self, key: &K) -> Option<f64>
     where
-        K: ?Sized + Hash + Equivalent<<D::Text as SpanDataContents>::RefCopy>
+        K: ?Sized + Hash + Equivalent<D::Text>
     {
         if let Some(AttributeAnyContainer::Double(container)) = self.fetch(key) {
             Some(container)
@@ -584,7 +584,7 @@ where
 
     pub fn get_array<K>(&self, key: &K) -> Option<AttributeArray<'container, 'storage, T, D, <TraceAttributes<'storage, T, D, AttrRef<'container, C>, C> as TraceAttributeGetterTypes<'container, 'storage, T, D, C>>::Array>>
     where
-        K: ?Sized + Hash + Equivalent<<D::Text as SpanDataContents>::RefCopy>
+        K: ?Sized + Hash + Equivalent<D::Text>
     {
         if let Some(AttributeAnyContainer::Array(container)) = self.fetch(key) {
             Some(AttributeArray {
@@ -600,7 +600,7 @@ where
 
     pub fn get_map<K>(&self, key: &K) -> Option<TraceAttributes<'storage, T, D, AttrOwned<<TraceAttributes<'storage, T, D, AttrRef<'container, C>, C> as TraceAttributeGetterTypes<'container, 'storage, T, D, C>>::Map>, <TraceAttributes<'storage, T, D, AttrRef<'container, C>, C> as TraceAttributeGetterTypes<'container, 'storage, T, D, C>>::Map>>
     where
-        K: ?Sized + Hash + Equivalent<<D::Text as SpanDataContents>::RefCopy>
+        K: ?Sized + Hash + Equivalent<D::Text>
     {
         if let Some(AttributeAnyContainer::Map(container)) = self.fetch(key) {
             Some(TraceAttributes {

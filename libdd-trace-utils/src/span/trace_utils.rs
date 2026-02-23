@@ -5,7 +5,8 @@
 
 use super::{Span, SpanMut, TraceProjector, TraceChunkMut, TracesMut, TraceDataLifetime};
 use std::borrow::Borrow;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
+use hashbrown::HashMap;
 
 /// Span metric the mini agent must set for the backend to recognize top level span
 const TOP_LEVEL_KEY: &str = "_top_level";
