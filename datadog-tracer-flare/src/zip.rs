@@ -4,9 +4,7 @@
 use bytes::Bytes;
 use datadog_remote_config::config::agent_task::AgentTaskFile;
 use http::Method;
-use libdd_capabilities::HttpClientTrait;
-use libdd_capabilities_impl::DefaultHttpClient;
-use libdd_common::{Endpoint, MutexExt};
+use libdd_common::{http_common, Endpoint, MutexExt};
 use std::{
     collections::HashMap,
     fs::File,
@@ -419,28 +417,25 @@ impl TracerFlareManager {
         };
 
         let payload = Bytes::from(payload);
-        let mut builder = http::Request::builder()
-            .method(Method::POST)
-            .uri(target.url.clone());
-        builder =
-            target.set_standard_headers(builder, concat!("Tracer/", env!("CARGO_PKG_VERSION")));
+        let mut req = target
+            .to_request_builder(concat!("Tracer/", env!("CARGO_PKG_VERSION")))
+            .map_err(|_| FlareError::SendError("Unable to create the request".to_owned()))?
+            .method(Method::POST);
         for (key, value) in headers {
-            builder = builder.header(key, value);
+            req = req.header(key, value);
         }
-        let req = builder.body(payload).map_err(|_| {
-            FlareError::SendError("Unable to add the body to the request".to_owned())
-        })?;
+        let req = req
+            .body(http_common::Body::from_bytes(payload))
+            .map_err(|_| {
+                FlareError::SendError("Unable to had the body to the request".to_owned())
+            })?;
 
-        let client = DefaultHttpClient::new_client();
+        let req = http_common::new_default_client().request(req);
 
-        match tokio::time::timeout(
-            Duration::from_millis(target.timeout_ms),
-            client.request(req),
-        )
-        .await
-        {
+        match tokio::time::timeout(Duration::from_millis(target.timeout_ms), req).await {
             Ok(resp) => match resp {
-                Ok(response) => {
+                Ok(body) => {
+                    let response = http_common::into_response(body);
                     let status = response.status();
                     if status.is_success() {
                         Ok(())

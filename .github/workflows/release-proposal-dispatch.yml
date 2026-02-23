@@ -32,6 +32,8 @@ env:
   MAIN_BRANCH: main
   RELEASE_BRANCH: release
   PROPOSAL_BRANCH_PREFIX: release-proposal
+  GIT_USER_NAME: "dd-octo-sts[bot]"
+  GIT_USER_EMAIL: "200755185+dd-octo-sts[bot]@users.noreply.github.com"
 
 jobs:
   check-proposal-ongoing:
@@ -53,22 +55,67 @@ jobs:
           fi
           echo "No release proposal is ongoing."
 
+  check-membership:
+    permissions:
+      id-token: write # Enable OIDC
+    runs-on: ubuntu-latest
+    needs: check-proposal-ongoing
+    steps:
+      - uses: DataDog/dd-octo-sts-action@08f2144903ced3254a3dafec2592563409ba2aa0 # v1.0.1
+        id: octo-sts
+        with:
+          scope: DataDog/libdatadog  # target repository
+          policy: self.read.members  # trust policy in target repo, without the .sts.yaml extension
+
+      - name: Check if user is in the team allowed to make crate releases
+        id: check
+        uses: TheModdingInquisition/actions-team-membership@057d91bb80f2976a1bc6dfab5b4ae1da9aebbd89 #v1.0.1
+        with:
+          team: 'apm-common-components-core'
+          organization: 'Datadog'
+          token: ${{ steps.octo-sts.outputs.token }} # Needs 'read:org' scope
+          exit: false
+
+      - name: Check output
+        run: |
+          permitted=${{ steps.check.outputs.permitted }}
+          if [[ "$permitted" != "true" ]]; then
+            echo "User is not part of apm-common-components-core"
+            exit 1
+          fi
+    
   update-release-branch:
     permissions:
       id-token: write # Enable OIDC
       contents: write
     runs-on: ubuntu-latest
-    needs: check-proposal-ongoing
+    needs: check-membership
     steps:
+      - uses: DataDog/dd-octo-sts-action@acaa02eee7e3bb0839e4272dacb37b8f3b58ba80 # v1.0.3
+        id: octo-sts
+        with:
+          scope: DataDog/libdatadog
+          policy: self.write.pr
+
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # 4.2.2
         with:
+          token: ${{ steps.octo-sts.outputs.token }}
           fetch-depth: 0
           fetch-tags: true
+
+      - name: Configure Git identity for dd-octo-sts GitHub App
+        env:
+          GH_TOKEN: ${{ steps.octo-sts.outputs.token }}
+        run: |
+
+          git config --global user.name "$GIT_USER_NAME"
+          git config --global user.email "$GIT_USER_EMAIL"
+
       - name: Merge the main branch into the release branch
         run: |
-          git fetch origin "${{ env.RELEASE_BRANCH }}" --tags
+          git fetch origin "${{ env.MAIN_BRANCH }}" "${{ env.RELEASE_BRANCH }}" --tags
           git checkout "${{ env.RELEASE_BRANCH }}"
-          
+
           if ! git merge origin/"${{ env.MAIN_BRANCH }}"; then
             echo "Error: Cannot merge ${{ env.MAIN_BRANCH }} into ${{ env.RELEASE_BRANCH }}" >&2
             echo "There are merge conflicts or the branches have diverged." >&2
@@ -76,6 +123,7 @@ jobs:
             echo "Please try again later." >&2
             exit 1
           fi
+
           git push origin "${{ env.RELEASE_BRANCH }}" --tags
   
   cargo-release:
@@ -85,12 +133,12 @@ jobs:
       contents: write
     needs: update-release-branch
     runs-on: ubuntu-latest
-    # TODO: uncomment this when we have a way to test this workflow
-    # if: ${{ github.repository_owner == 'datadog' }}
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # 4.2.2
         with:
-          fetch-depth: 0  # Need full history for git tags
+          ref: ${{ env.RELEASE_BRANCH }}
+          fetch-depth: 0
+          fetch-tags: true
       - uses: Swatinem/rust-cache@f13886b937689c021905a6b90929199931d60db1 # v2.8.1
         with:
           cache-targets: true
@@ -117,8 +165,8 @@ jobs:
       
       - name: Configure Git for signing
         run: |
-          git config --global user.name "github-actions[bot]"
-          git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git config --global user.name "${{ env.GIT_USER_NAME }}"
+          git config --global user.email "${{ env.GIT_USER_EMAIL }}"
 
       - name: Get publication order for crate and dependencies
         run: |
@@ -134,29 +182,55 @@ jobs:
           # Get commits since release for each crate and save to file
           ./scripts/commits-since-release.sh "$(cat /tmp/crates.json)" > /tmp/commits-by-crate.json
           
+          # Capture release branch tip now (while HEAD=release). Use this in Release version bumps
+          # so tag/merge-base resolution uses the same ref the script used.
+          git rev-parse HEAD > /tmp/release_head_sha
+          echo "Release branch HEAD (saved for later): $(cat /tmp/release_head_sha)"
+
           # Display json output
           jq . /tmp/commits-by-crate.json
 
       - name: Create a branch for the release proposal
         id: proposal-branch
         run: |
+          if [ "$(git rev-parse --is-shallow-repository)" = "true" ]; then
+            echo "Repository is shallow, fetching full history..."
+            git fetch --unshallow
+          fi
+
+          # TODO: check if this is really necessary, we should have the full history from
+          # previous steps.
+          # Assure we have the full history, 2147483647 is the highest integer number that
+          # git accepts.
+          git fetch --depth=2147483647 --tags origin "${{ env.MAIN_BRANCH }}" "${{ env.RELEASE_BRANCH }}"
+
           git checkout "${{ env.RELEASE_BRANCH }}"
           TIMESTAMP=$(date +%Y%m%d-%H%M%S)
           BRANCH_NAME="${{ env.PROPOSAL_BRANCH_PREFIX }}/${{ inputs.crate }}/$TIMESTAMP"
           git checkout -b "$BRANCH_NAME"
-          git push origin "$BRANCH_NAME"
+          git push origin "$BRANCH_NAME" --tags
           echo "Branch created: $BRANCH_NAME from ${{ env.RELEASE_BRANCH }} branch"
           echo "branch_name=$BRANCH_NAME" >> "$GITHUB_OUTPUT"
           
       - name: Release version bumps
         id: release-version-bumps
-        env:
-          ORIGINAL_HEAD: ${{ github.sha }}
         run: |
           echo "Release version bumps..."
 
+          # TODO: check if this is really necessary, we should have the full history from
+          # previous steps.
+          if [ "$(git rev-parse --is-shallow-repository)" = "true" ]; then
+            echo "Repository is shallow, fetching full history..."
+            git fetch --unshallow
+          fi
+
           # Initialize results array
           echo "[]" > /tmp/api-changes.json
+
+          # Use release branch tip from when we ran commits-since-release (same ref the script used).
+          # Avoids tag/merge-base resolution failures after switching to the new proposal branch.
+          ORIGINAL_HEAD=$(cat /tmp/release_head_sha)
+          echo "ORIGINAL_HEAD: $ORIGINAL_HEAD"
 
           BRANCH_NAME="${{ steps.proposal-branch.outputs.branch_name }}"
 
@@ -177,14 +251,46 @@ jobs:
             fi
 
             if [ "$TAG_EXISTS" = "true" ]; then
-              RANGE="$TAG..$ORIGINAL_HEAD"
-              echo "Using $RANGE as range"
-
-              echo "Is the tag $TAG in the branch:"
-              git branch --contains "$TAG" || {
-                echo "Error: Tag $TAG is not in the branch" >&2
+              # Explicitly dereference annotated tags to their underlying commit.
+              # Several git commands do not consistently dereference annotated tag objects
+              # across all git versions.
+              TAG_COMMIT=$(git rev-parse "${TAG}^{}" 2>/dev/null || echo "")
+              if [ -z "$TAG_COMMIT" ]; then
+                echo "ERROR: Could not dereference tag $TAG to a commit" >&2
                 exit 1
-              }
+              fi
+
+              RANGE="$TAG_COMMIT..$ORIGINAL_HEAD"
+              echo "Using $RANGE as range (tag: $TAG)"
+
+              if git merge-base --is-ancestor "$TAG_COMMIT" "$ORIGINAL_HEAD" 2>/dev/null; then
+                echo "  Tag $TAG is ancestor of HEAD"
+              else
+                MERGE_BASE=$(git merge-base "$TAG_COMMIT" "$ORIGINAL_HEAD" 2>/dev/null || echo "")
+                if [ -n "$MERGE_BASE" ]; then
+                    RANGE="$MERGE_BASE..$ORIGINAL_HEAD"
+                    echo "  Tag $TAG is NOT ancestor of HEAD, using merge-base: $RANGE"
+                else
+                    # No common ancestor, tag is on unrelated history. Derive the range start from
+                    # the parent of the oldest commit found by commits-since-release.sh. That way
+                    # git can compute TREESAME correctly and the path filter won't include unrelated commits.
+                    OLDEST_COMMIT=$(echo "$COMMITS" | jq -r '.[-1].hash // empty')
+                    OLDEST_PARENT=$(git rev-parse "${OLDEST_COMMIT}^" 2>/dev/null || echo "")
+                    if [ -n "$OLDEST_PARENT" ]; then
+                        RANGE="$OLDEST_PARENT..$ORIGINAL_HEAD"
+                        echo "  No common ancestor with tag $TAG: using parent of oldest commit as range start: $RANGE"
+                    else
+                        echo "  WARNING: Could not find merge-base for tag $TAG, using $RANGE"
+                    fi
+                fi
+              fi
+
+              BRANCHES=$(git branch --contains "$TAG_COMMIT" 2>/dev/null || echo "")
+              if [ -n "$BRANCHES" ]; then
+                echo "Tag $TAG is in branches: $BRANCHES"
+              else
+                echo "Tag $TAG (commit $TAG_COMMIT) is not in any local branch (normal for squash-merged releases)"
+              fi
 
               # if there is a tag more recent than $TAG, continue the loop
               LATEST_TAG=$(git tag -l "$TAG_PREFIX*" --sort=-v:refname | head -1)
@@ -199,10 +305,7 @@ jobs:
               echo "Semver level: $SEMVER_LEVEL"
 
               LEVEL=$(echo "$SEMVER_LEVEL" | jq -r '.level')
-
-              # TODO: cargo release warns if there are no changes to the public API
-              # warning: updating crate to 4.0.1 despite no changes made since tag crate-v4.0.0
-              # Should we skip the release if there are no changes to the public API?
+              
               echo "Executing cargo release for $NAME since $TAG with level $LEVEL..."
               cargo release version -p "$NAME" --prev-tag-name "$TAG" --allow-branch "$BRANCH_NAME" -x $LEVEL --no-confirm
 
@@ -235,14 +338,39 @@ jobs:
             NEXT_VERSION=$(cargo metadata --format-version=1 --no-deps | jq -r --arg name "$NAME" '.packages[] | select(.name == $name) | .version')
             NEXT_TAG="$TAG_PREFIX$NEXT_VERSION"
 
-            # Check what commits git sees in the range
-            echo "Commits in the range $RANGE:"
-            git log --oneline "$RANGE" -- "$CRATE_PATH/"
+            # Build a tight range from commits already found by commits-since-release.sh.
+            # This will save some time analising unnecessary commits and prevent unrelated commits
+            # go through git-cliff filtering process.
+            NEWEST_COMMIT=$(echo "$COMMITS" | jq -r '.[0].hash // empty')
+            OLDEST_COMMIT=$(echo "$COMMITS" | jq -r '.[-1].hash // empty')
+            OLDEST_PARENT=$(git rev-parse "${OLDEST_COMMIT}^" 2>/dev/null || echo "")
+            if [ -n "$OLDEST_PARENT" ] && [ -n "$NEWEST_COMMIT" ]; then
+              COMMITS_RANGE="$OLDEST_PARENT..$NEWEST_COMMIT"
+            else
+              COMMITS_RANGE="$RANGE"
+            fi
+            echo "Executing git cliff for $NAME since $COMMITS_RANGE (oldest: $OLDEST_COMMIT, newest: $NEWEST_COMMIT), next tag: $NEXT_TAG..."
 
-            echo "Executing git cliff for $NAME since $RANGE, next tag: $NEXT_TAG..."
-              
-            # It seems that git cliff does not like to use tags that are not on the branch
-            git cliff --tag "$NEXT_TAG" --include-path "$CRATE_PATH/**/*" --prepend "$CRATE_PATH/CHANGELOG.md" --tag-pattern "$TAG_PREFIX.*" -u -v "$RANGE"
+            # git-cliff's --include-path uses cumulative tree diffs rather than per-commit
+            # diffs. This causes commits that don't touch the crate to pass the filter if an
+            # earlier commit in the range does touch it. In order to avoid that a first pass
+            # will generate the context inside the commit range and then a second step will
+            # filter the the commits according to the previously computed range stored in COMMITS.
+            CLIFF_CONTEXT_FILE=$(mktemp /tmp/git-cliff-context-XXXXXX.json)
+            CLIFF_HASHES_FILE=$(mktemp /tmp/git-cliff-hashes-XXXXXX.json)
+            CLIFF_FILTERED_FILE=$(mktemp /tmp/git-cliff-filtered-XXXXXX.json)
+
+            git cliff --context --tag "$NEXT_TAG" --ignore-tags ".*" -v "$COMMITS_RANGE" > "$CLIFF_CONTEXT_FILE"
+            echo "$COMMITS" | jq '[.[].hash]' > "$CLIFF_HASHES_FILE"
+            jq --slurpfile hashes "$CLIFF_HASHES_FILE" \
+               --arg prev_tag "$TAG" \
+               'map(. + {
+                 commits: [.commits[] | select(.id | IN($hashes[0][]))],
+                 previous: (.previous + {"version": $prev_tag})
+               })' \
+               "$CLIFF_CONTEXT_FILE" > "$CLIFF_FILTERED_FILE"
+            git cliff --from-context "$CLIFF_FILTERED_FILE" -u -v --prepend "$CRATE_PATH/CHANGELOG.md"
+            rm -f "$CLIFF_CONTEXT_FILE" "$CLIFF_HASHES_FILE" "$CLIFF_FILTERED_FILE"
             git add "$CRATE_PATH/CHANGELOG.md"
 
             # Commit the changes
@@ -324,7 +452,7 @@ jobs:
           # Generate the PR body by merging commits and API changes
           # Note: read returns 1 when it reaches EOF, which is expected for heredocs
           read -r -d '' JQ_FILTER << 'EOF' || true
-          .[] |
+          .[] | select((.commits | length) > 0) |
           . as $crate |
           ($api[0] | map(select(.name == $crate.name)) | first // {
             level: "skipped because there were no changes to the public API"
@@ -334,7 +462,6 @@ jobs:
             "",
             (if $api_info.version then "**Next version:** `\($api_info.version)`\n" else null end),
             "**Semver bump:** `\($api_info.level)`",
-            "",
             (if $api_info.tag then "**Tag:** `\($api_info.tag)`\n" else null end),
             (if $api_info.initial_release == "true" then
               "**Warning:** this is an initial release. Please verify that the version and commits included are correct.\n"

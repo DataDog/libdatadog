@@ -3,7 +3,7 @@ on:
     pull_request:
     push:
       branches:
-        - main
+        - 'mq-working-branch-*'
 jobs:
     allchecks:
         runs-on: ubuntu-latest

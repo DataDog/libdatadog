@@ -85,13 +85,14 @@ commit_parsers = [
   { message = "^feat", group = "<!-- A -->Added" },
   { message = "^fix", group = "<!-- C -->Fixed" },
   { message = "^refactor\\(clippy\\)", skip = true },
-  { message = "^chore\\(release\\): prepare for", skip = true },
-  { message = "^chore: Release", skip = true },
+  { message = "^chore\\(release\\)", skip = true },
+  { message = "^chore: [R|r]elease", skip = true },
   { message = "^chore\\(deps.*\\)", skip = true },
   { message = "^chore\\(pr\\)", skip = true },
   { message = "^chore\\(pull\\)", skip = true },
   { message = "^chore\\(npm\\).*yarn\\.lock", skip = true },
   { message = "^Merge branch", skip = true },
+  { message = "^Merge remote-tracking branch", skip = true },
   { message = ".*", group = "<!-- B -->Changed" },
 ]
 # Prevent commits that are breaking from being excluded by commit parsers.

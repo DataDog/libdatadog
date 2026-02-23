@@ -29,6 +29,7 @@ pub mod rate_limiter;
 pub mod tag;
 #[cfg(any(test, feature = "test-utils"))]
 pub mod test_utils;
+pub mod threading;
 pub mod timeout;
 pub mod unix_utils;
 pub mod worker;
@@ -135,6 +136,10 @@ pub struct Endpoint {
     pub timeout_ms: u64,
     /// Sets X-Datadog-Test-Session-Token header on any request
     pub test_token: Option<Cow<'static, str>>,
+    /// Use the system DNS resolver when building the HTTP client. If false, the default
+    /// in-process resolver is used.
+    #[serde(default)]
+    pub use_system_resolver: bool,
 }
 
 impl Default for Endpoint {
@@ -144,6 +149,7 @@ impl Default for Endpoint {
             api_key: None,
             timeout_ms: Self::DEFAULT_TIMEOUT,
             test_token: None,
+            use_system_resolver: false,
         }
     }
 }
@@ -331,6 +337,13 @@ impl Endpoint {
         self
     }
 
+    /// Use the system DNS resolver when building the reqwest client. Only has effect for
+    /// HTTP(S) endpoints.
+    pub fn with_system_resolver(mut self, use_system_resolver: bool) -> Self {
+        self.use_system_resolver = use_system_resolver;
+        self
+    }
+
     /// Creates a reqwest ClientBuilder configured for this endpoint.
     ///
     /// This method handles various endpoint schemes:
@@ -338,6 +351,10 @@ impl Endpoint {
     /// - `unix`: Unix domain sockets (Unix only)
     /// - `windows`: Windows named pipes (Windows only)
     /// - `file`: File dump endpoints for debugging (spawns a local server to capture requests)
+    ///
+    /// The default in-process resolver is used for DNS (fork-safe). To use the system DNS resolver
+    /// instead (less fork-safe), set [`Endpoint::use_system_resolver`] to true via
+    /// [`Endpoint::with_system_resolver`].
     ///
     /// # Returns
     /// A tuple of (ClientBuilder, request_url) where:
@@ -353,8 +370,9 @@ impl Endpoint {
     pub fn to_reqwest_client_builder(&self) -> anyhow::Result<(reqwest::ClientBuilder, String)> {
         use anyhow::Context;
 
-        let mut builder =
-            reqwest::Client::builder().timeout(std::time::Duration::from_millis(self.timeout_ms));
+        let mut builder = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_millis(self.timeout_ms))
+            .hickory_dns(!self.use_system_resolver);
 
         let request_url = match self.url.scheme_str() {
             // HTTP/HTTPS endpoints

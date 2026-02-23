@@ -7,12 +7,11 @@ use crate::{
     RemoteConfigProduct, Target,
 };
 use base64::Engine;
-use bytes::Bytes;
-use http::uri::{PathAndQuery, Scheme};
+use http::uri::PathAndQuery;
+use http::uri::Scheme;
 use http::StatusCode;
-use libdd_capabilities::HttpClientTrait;
-use libdd_capabilities_impl::DefaultHttpClient;
-use libdd_common::{Endpoint, MutexExt};
+use http_body_util::BodyExt;
+use libdd_common::{http_common, Endpoint, MutexExt};
 use libdd_trace_protobuf::remoteconfig::{
     ClientGetConfigsRequest, ClientGetConfigsResponse, ClientState, ClientTracer, ConfigState,
     TargetFileHash, TargetFileMeta,
@@ -337,29 +336,25 @@ impl<S: FileStorage> ConfigFetcher<S> {
 
         trace!("Submitting remote config request: {config_req:?}");
 
-        let mut builder = http::Request::builder()
-            .method(http::Method::POST)
-            .uri(self.state.endpoint.url.clone());
-        builder = self
+        let req = self
             .state
             .endpoint
-            .set_standard_headers(builder, concat!("Libdatadog/", env!("CARGO_PKG_VERSION")));
-        let req = builder
+            .to_request_builder(concat!("Libdatadog/", env!("CARGO_PKG_VERSION")))?
+            .method(http::Method::POST)
             .header(
                 http::header::CONTENT_TYPE,
                 libdd_common::header::APPLICATION_JSON,
             )
-            .body(Bytes::from(serde_json::to_string(&config_req)?))?;
-        let client = DefaultHttpClient::new_client();
+            .body(http_common::Body::from(serde_json::to_string(&config_req)?))?;
         let response = tokio::time::timeout(
             Duration::from_millis(self.state.endpoint.timeout_ms),
-            client.request(req),
+            http_common::new_default_client().request(req),
         )
         .await
         .map_err(|e| anyhow::Error::msg(e).context(format!("Url: {:?}", self.state.endpoint)))?
         .map_err(|e| anyhow::Error::msg(e).context(format!("Url: {:?}", self.state.endpoint)))?;
         let status = response.status();
-        let body_bytes = response.into_body();
+        let body_bytes = response.into_body().collect().await?.to_bytes();
         if status != StatusCode::OK {
             // Not active
             if status == StatusCode::NOT_FOUND {
@@ -583,7 +578,6 @@ pub mod tests {
     use crate::fetch::test_server::RemoteConfigServer;
     use crate::RemoteConfigSource;
     use http::Response;
-    use libdd_common::http_common;
     use std::sync::LazyLock;
 
     pub(crate) static PATH_FIRST: LazyLock<RemoteConfigPath> = LazyLock::new(|| RemoteConfigPath {
@@ -686,7 +680,7 @@ pub mod tests {
         );
         let mut opaque_state = ConfigClientState::default();
 
-        let mut response = Response::new(http_common::Body::from(""));
+        let mut response = http_common::empty_response(Response::builder()).unwrap();
         *response.status_mut() = StatusCode::NOT_FOUND;
         *server.next_response.lock().unwrap() = Some(response);
 

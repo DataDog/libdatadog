@@ -20,10 +20,8 @@ https = ["libdd-common/https"]
 anyhow = { version = "1.0" }
 base64 = "0.22"
 futures = { version = "0.3", default-features = false }
-hyper = { workspace = true }
-hyper-util = { workspace = true }
 http-body-util = "0.1"
-http = "1.0"
+http = "1.1"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = { version = "1.0" }
 sys-info = { version = "0.9.0" }
@@ -46,5 +44,5 @@ libc = "0.2.176"
 winver = "1.0.0"
 
 [dev-dependencies]
-tracing-subscriber = "0.3.18"
+tracing-subscriber = "0.3.22"
 tokio = { version = "1.23", features = ["sync", "io-util", "rt-multi-thread"] }

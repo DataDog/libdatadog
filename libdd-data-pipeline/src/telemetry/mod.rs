@@ -193,7 +193,7 @@ impl SendPayloadTelemetry {
                 telemetry.bytes_sent = bytes_sent;
                 telemetry
                     .responses_count_per_code
-                    .insert(response.status().as_u16(), 1);
+                    .insert(response.status().into(), 1);
                 telemetry.requests_count = *attempts as u64;
             }
             Err(err) => match err {
@@ -202,7 +202,7 @@ impl SendPayloadTelemetry {
                     telemetry.errors_status_code = 1;
                     telemetry
                         .responses_count_per_code
-                        .insert(response.status().as_u16(), 1);
+                        .insert(response.status().into(), 1);
                     telemetry.requests_count = *attempts as u64;
                 }
                 SendWithRetryError::Timeout(attempts) => {
@@ -315,6 +315,7 @@ impl TelemetryClient {
 #[cfg(test)]
 mod tests {
     use bytes::Bytes;
+    use http::{Response, StatusCode};
     use httpmock::Method::POST;
     use httpmock::MockServer;
     use libdd_capabilities::HttpError;
@@ -676,8 +677,7 @@ mod tests {
     #[test]
     fn telemetry_from_ok_response_test() {
         let result = Ok((
-            http::Response::builder()
-                .status(200)
+            http::response::Builder::new()
                 .body(Bytes::new())
                 .unwrap(),
             3,
@@ -698,8 +698,7 @@ mod tests {
     #[test]
     fn telemetry_from_ok_response_with_p0_drops_test() {
         let result = Ok((
-            http::Response::builder()
-                .status(200)
+            http::response::Builder::new()
                 .body(Bytes::new())
                 .unwrap(),
             3,
@@ -720,8 +719,8 @@ mod tests {
 
     #[test]
     fn telemetry_from_request_error_test() {
-        let error_response = http::Response::builder()
-            .status(400)
+        let error_response = Response::builder()
+            .status(StatusCode::BAD_REQUEST)
             .body(Bytes::new())
             .unwrap();
         let result = Err(SendWithRetryError::Http(error_response, 5));
@@ -738,10 +737,13 @@ mod tests {
         )
     }
 
-    #[test]
-    fn telemetry_from_network_error_test() {
-        let http_error = HttpError::Network("connection refused".to_string());
-        let result = Err(SendWithRetryError::Network(http_error, 5));
+    #[cfg_attr(miri, ignore)]
+    #[tokio::test]
+    async fn telemetry_from_network_error_test() {
+        let result = Err(SendWithRetryError::Network(
+            HttpError::Network("connection refused".to_string()),
+            5,
+        ));
         let telemetry = SendPayloadTelemetry::from_retry_result(&result, 1, 2, 0);
         assert_eq!(
             telemetry,

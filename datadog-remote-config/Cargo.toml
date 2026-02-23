@@ -9,10 +9,6 @@ publish = false
 default = ["client"]
 client = [
     "libdd-trace-protobuf",
-    "libdd-capabilities",
-    "libdd-capabilities-impl",
-    "bytes",
-    "hyper",
     "http-body-util",
     "http",
     "base64",
@@ -31,15 +27,13 @@ test = ["hyper/server", "hyper-util"]
 
 [dependencies]
 anyhow = { version = "1.0" }
-bytes = { version = "1", optional = true }
-libdd-capabilities = { path = "../libdd-capabilities", optional = true }
-libdd-capabilities-impl = { path = "../libdd-capabilities-impl", optional = true }
 libdd-common = { path = "../libdd-common"}
 libdd-trace-protobuf = { path = "../libdd-trace-protobuf", optional = true }
+datadog-live-debugger = { path = "../datadog-live-debugger", optional = true }
 datadog-ffe = { path = "../datadog-ffe", optional = true }
-hyper = { workspace = true, optional = true }
+hyper = { workspace = true, optional = true, default-features = false }
 http-body-util = {version = "0.1", optional = true }
-http = { version = "1.0", optional = true }
+http = { version = "1.1", optional = true }
 base64 = { version = "0.22.1", optional = true }
 sha2 = { version = "0.10", optional = true }
 uuid = { version = "1.7.0", features = ["v4"], optional = true }
@@ -56,9 +50,6 @@ regex = "1.0"
 
 # Test feature
 hyper-util = { workspace = true, features = ["service"], optional = true }
-
-[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-datadog-live-debugger = { path = "../datadog-live-debugger", optional = true }
 
 [dev-dependencies]
 futures = "0.3"

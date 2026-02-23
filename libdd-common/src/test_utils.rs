@@ -50,6 +50,156 @@ impl AsRef<std::path::Path> for TempFileGuard {
     }
 }
 
+/// RAII guard that restores an environment variable to its previous value when dropped.
+///
+/// # Example
+/// ```no_run
+/// use libdd_common::test_utils::EnvGuard;
+///
+/// let _guard = EnvGuard::set("MY_VAR", "value");
+/// // MY_VAR is set to "value"; when _guard drops, it is restored
+/// ```
+pub struct EnvGuard {
+    key: &'static str,
+    saved: Option<String>,
+}
+
+impl EnvGuard {
+    /// Set the environment variable to the given value. The previous value (if any) is restored on
+    /// drop.
+    pub fn set(key: &'static str, value: &str) -> Self {
+        let saved = std::env::var(key).ok();
+        std::env::set_var(key, value);
+        EnvGuard { key, saved }
+    }
+
+    /// Remove the environment variable. The previous value (if any) is restored on drop.
+    pub fn remove(key: &'static str) -> Self {
+        let saved = std::env::var(key).ok();
+        std::env::remove_var(key);
+        EnvGuard { key, saved }
+    }
+}
+
+impl Drop for EnvGuard {
+    fn drop(&mut self) {
+        match &self.saved {
+            Some(s) => std::env::set_var(self.key, s),
+            None => std::env::remove_var(self.key),
+        }
+    }
+}
+
+/// Count the number of active threads in the current process.
+///
+/// This function works across different platforms:
+/// - **Linux**: Reads from `/proc/self/status`
+/// - **macOS**: Uses `ps -M` command
+/// - **Windows**: Uses the Toolhelp32Snapshot API
+///
+/// # Returns
+/// The number of active threads in the current process, or an error if the count cannot be
+/// determined.
+///
+/// # Example
+/// ```no_run
+/// use libdd_common::test_utils::count_active_threads;
+///
+/// let thread_count = count_active_threads().unwrap();
+/// println!("Current process has {} threads", thread_count);
+/// ```
+pub fn count_active_threads() -> anyhow::Result<usize> {
+    #[cfg(target_os = "linux")]
+    {
+        use std::fs;
+
+        let status = fs::read_to_string("/proc/self/status")?;
+        for line in status.lines() {
+            if line.starts_with("Threads:") {
+                let count = line
+                    .split_whitespace()
+                    .nth(1)
+                    .context("Failed to parse thread count from /proc/self/status")?
+                    .parse::<usize>()?;
+                return Ok(count);
+            }
+        }
+        anyhow::bail!("Threads: line not found in /proc/self/status");
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        use std::process::Command;
+
+        let pid = std::process::id();
+        let output = Command::new("ps")
+            .args(["-M", "-p", &pid.to_string()])
+            .output()
+            .context("Failed to execute ps command")?;
+
+        if !output.status.success() {
+            anyhow::bail!("ps command failed with status: {:?}", output.status);
+        }
+
+        let stdout =
+            String::from_utf8(output.stdout).context("Failed to parse ps output as UTF-8")?;
+
+        // ps -M output format: header line + one line per thread
+        // Count lines and subtract 1 for the header
+        let lines: Vec<&str> = stdout.lines().collect();
+        if lines.is_empty() {
+            anyhow::bail!("ps output is empty");
+        }
+
+        // Subtract 1 for the header line
+        let thread_count = lines.len().saturating_sub(1);
+        Ok(thread_count)
+    }
+
+    #[cfg(windows)]
+    {
+        use std::mem::{size_of, zeroed};
+        use windows_sys::Win32::Foundation::CloseHandle;
+        use windows_sys::Win32::System::Diagnostics::ToolHelp::{
+            CreateToolhelp32Snapshot, Thread32First, Thread32Next, TH32CS_SNAPTHREAD, THREADENTRY32,
+        };
+
+        let current_pid = std::process::id();
+        let snapshot = unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0) };
+        if snapshot == windows_sys::Win32::Foundation::INVALID_HANDLE_VALUE {
+            anyhow::bail!("CreateToolhelp32Snapshot failed");
+        }
+
+        // THREADENTRY32 doesn't implement Default, so we use zeroed() and set dwSize
+        let mut thread_entry: THREADENTRY32 = unsafe { zeroed() };
+        thread_entry.dwSize = size_of::<THREADENTRY32>() as u32;
+
+        let mut count = 0;
+        if unsafe { Thread32First(snapshot, &mut thread_entry) } != 0 {
+            loop {
+                if thread_entry.th32OwnerProcessID == current_pid {
+                    count += 1;
+                }
+
+                if unsafe { Thread32Next(snapshot, &mut thread_entry) } == 0 {
+                    break;
+                }
+            }
+        }
+
+        unsafe {
+            CloseHandle(snapshot);
+        }
+
+        Ok(count)
+    }
+
+    #[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
+    {
+        anyhow::bail!("Thread counting is not implemented for this platform");
+    }
+}
+
 /// Create a unique temporary file path with the given prefix
 ///
 /// The path will be in the system temp directory with a unique name based on
@@ -99,27 +249,16 @@ pub struct MultipartPart {
     pub content: Vec<u8>,
 }
 
-/// Parse an HTTP request from raw bytes
-///
-/// If the Content-Type header indicates multipart/form-data, the multipart body will be
-/// automatically parsed and available in the `multipart_parts` field.
-///
-/// # Arguments
-/// * `data` - Raw HTTP request bytes including headers and body
-///
-/// # Returns
-/// A parsed `HttpRequest` or an error if parsing fails
-///
-/// # Example
-/// ```no_run
-/// use libdd_common::test_utils::parse_http_request;
-///
-/// let request_bytes = b"POST /v1/input HTTP/1.1\r\nHost: example.com\r\n\r\nbody";
-/// let request = parse_http_request(request_bytes).unwrap();
-/// assert_eq!(request.method, "POST");
-/// assert_eq!(request.path, "/v1/input");
-/// ```
-pub fn parse_http_request(data: &[u8]) -> anyhow::Result<HttpRequest> {
+/// Parsed HTTP request components without multipart parsing.
+/// This is the shared result from `parse_http_request_headers`.
+struct ParsedRequestParts {
+    method: String,
+    path: String,
+    headers: HashMap<String, String>,
+    body: Vec<u8>,
+}
+
+fn parse_http_request_headers(data: &[u8]) -> anyhow::Result<ParsedRequestParts> {
     let mut header_buf = [httparse::EMPTY_HEADER; 64];
     let mut req = httparse::Request::new(&mut header_buf);
 
@@ -131,7 +270,6 @@ pub fn parse_http_request(data: &[u8]) -> anyhow::Result<HttpRequest> {
     let method = req.method.context("No method found")?.to_string();
     let path = req.path.context("No path found")?.to_string();
 
-    // Convert headers to HashMap with lowercase keys
     let mut headers = HashMap::new();
     for header in req.headers {
         let key = header.name.to_lowercase();
@@ -141,29 +279,15 @@ pub fn parse_http_request(data: &[u8]) -> anyhow::Result<HttpRequest> {
 
     let body = data[headers_len..].to_vec();
 
-    // Auto-parse multipart if Content-Type indicates multipart/form-data
-    let multipart_parts = match headers.get("content-type") {
-        Some(ct) if ct.contains("multipart/form-data") => parse_multipart(ct, &body)?,
-        _ => Vec::new(),
-    };
-
-    Ok(HttpRequest {
+    Ok(ParsedRequestParts {
         method,
         path,
         headers,
         body,
-        multipart_parts,
     })
 }
 
-/// Parse multipart form data from Content-Type header and body
-///
-/// Extracts the boundary from the Content-Type header and parses the multipart body.
-fn parse_multipart(content_type: &str, body: &[u8]) -> anyhow::Result<Vec<MultipartPart>> {
-    use multipart::server::Multipart;
-    use std::io::Cursor;
-
-    // Extract boundary from Content-Type header
+fn extract_multipart_boundary(content_type: &str) -> anyhow::Result<String> {
     let mime: mime::Mime = content_type
         .parse()
         .map_err(|e| anyhow::anyhow!("Failed to parse Content-Type as MIME type: {}", e))?;
@@ -171,21 +295,115 @@ fn parse_multipart(content_type: &str, body: &[u8]) -> anyhow::Result<Vec<Multip
     let boundary = mime
         .get_param(mime::BOUNDARY)
         .context("No boundary parameter found in Content-Type")?
-        .as_str();
+        .to_string();
 
-    // Parse multipart body
-    let cursor = Cursor::new(body);
-    let mut multipart = Multipart::with_body(cursor, boundary);
+    Ok(boundary)
+}
+
+/// Parse an HTTP request from raw bytes (async version).
+///
+/// If the Content-Type header indicates multipart/form-data, the multipart body will be
+/// automatically parsed and available in the `multipart_parts` field.
+///
+/// Use this function in async contexts (e.g., `#[tokio::test]`). For synchronous contexts,
+/// use [`parse_http_request_sync`] instead.
+///
+/// # Arguments
+/// * `data` - Raw HTTP request bytes including headers and body
+///
+/// # Returns
+/// A parsed `HttpRequest` or an error if parsing fails
+///
+/// # Example
+/// ```no_run
+/// use libdd_common::test_utils::parse_http_request;
+///
+/// # async fn example() -> anyhow::Result<()> {
+/// let request_bytes = b"POST /v1/input HTTP/1.1\r\nHost: example.com\r\n\r\nbody";
+/// let request = parse_http_request(request_bytes).await?;
+/// assert_eq!(request.method, "POST");
+/// assert_eq!(request.path, "/v1/input");
+/// # Ok(())
+/// # }
+/// ```
+pub async fn parse_http_request(data: &[u8]) -> anyhow::Result<HttpRequest> {
+    let parts = parse_http_request_headers(data)?;
+
+    // Auto-parse multipart if Content-Type indicates multipart/form-data
+    let multipart_parts = match parts.headers.get("content-type") {
+        Some(ct) if ct.contains("multipart/form-data") => {
+            let boundary = extract_multipart_boundary(ct)?;
+            parse_multipart(boundary, parts.body.clone()).await?
+        }
+        _ => Vec::new(),
+    };
+
+    Ok(HttpRequest {
+        method: parts.method,
+        path: parts.path,
+        headers: parts.headers,
+        body: parts.body,
+        multipart_parts,
+    })
+}
+
+/// Parse an HTTP request from raw bytes (sync version).
+///
+/// If the Content-Type header indicates multipart/form-data, the multipart body will be
+/// automatically parsed and available in the `multipart_parts` field.
+///
+/// **Note:** This function uses `futures::executor::block_on` internally for multipart parsing.
+/// In async contexts (e.g., `#[tokio::test]`), prefer [`parse_http_request`] to avoid blocking
+/// the async runtime.
+///
+/// # Arguments
+/// * `data` - Raw HTTP request bytes including headers and body
+///
+/// # Returns
+/// A parsed `HttpRequest` or an error if parsing fails
+///
+/// # Example
+/// ```no_run
+/// use libdd_common::test_utils::parse_http_request_sync;
+///
+/// let request_bytes = b"POST /v1/input HTTP/1.1\r\nHost: example.com\r\n\r\nbody";
+/// let request = parse_http_request_sync(request_bytes).unwrap();
+/// assert_eq!(request.method, "POST");
+/// assert_eq!(request.path, "/v1/input");
+/// ```
+pub fn parse_http_request_sync(data: &[u8]) -> anyhow::Result<HttpRequest> {
+    let parts = parse_http_request_headers(data)?;
+
+    // Auto-parse multipart if Content-Type indicates multipart/form-data
+    let multipart_parts = match parts.headers.get("content-type") {
+        Some(ct) if ct.contains("multipart/form-data") => {
+            let boundary = extract_multipart_boundary(ct)?;
+            futures::executor::block_on(parse_multipart(boundary, parts.body.clone()))?
+        }
+        _ => Vec::new(),
+    };
+
+    Ok(HttpRequest {
+        method: parts.method,
+        path: parts.path,
+        headers: parts.headers,
+        body: parts.body,
+        multipart_parts,
+    })
+}
+
+async fn parse_multipart(boundary: String, body: Vec<u8>) -> anyhow::Result<Vec<MultipartPart>> {
+    use futures_util::stream::once;
+
+    let stream = once(async move { Ok::<_, std::io::Error>(bytes::Bytes::from(body)) });
+    let mut multipart = multer::Multipart::new(stream, boundary);
     let mut parts = Vec::new();
 
-    while let Some(mut field) = multipart.read_entry()? {
-        let headers = &field.headers;
-        let name = headers.name.to_string();
-        let filename = headers.filename.clone();
-        let content_type = headers.content_type.as_ref().map(|ct| ct.to_string());
-
-        let mut content = Vec::new();
-        std::io::Read::read_to_end(&mut field.data, &mut content)?;
+    while let Some(field) = multipart.next_field().await? {
+        let name = field.name().unwrap_or_default().to_string();
+        let filename = field.file_name().map(|s| s.to_string());
+        let content_type = field.content_type().map(|m| m.to_string());
+        let content = field.bytes().await?.to_vec();
 
         parts.push(MultipartPart {
             name,
@@ -232,7 +450,7 @@ mod tests {
     #[test]
     fn test_parse_http_request_basic() {
         let request = b"POST /v1/input HTTP/1.1\r\nHost: example.com\r\nContent-Type: application/json\r\n\r\n{\"test\":true}";
-        let parsed = parse_http_request(request).unwrap();
+        let parsed = parse_http_request_sync(request).unwrap();
 
         assert_eq!(parsed.method, "POST");
         assert_eq!(parsed.path, "/v1/input");
@@ -249,7 +467,7 @@ mod tests {
     fn test_parse_http_request_with_custom_headers() {
         let request =
             b"GET /test HTTP/1.1\r\nX-Custom-Header: value\r\nAnother-Header: 123\r\n\r\n";
-        let parsed = parse_http_request(request).unwrap();
+        let parsed = parse_http_request_sync(request).unwrap();
 
         assert_eq!(parsed.method, "GET");
         assert_eq!(parsed.path, "/test");
@@ -270,11 +488,79 @@ mod tests {
         let mut request_bytes = request.into_bytes();
         request_bytes.extend_from_slice(body);
 
-        let parsed = parse_http_request(&request_bytes).unwrap();
+        let parsed = parse_http_request_sync(&request_bytes).unwrap();
 
         assert_eq!(parsed.method, "POST");
         assert_eq!(parsed.multipart_parts.len(), 1);
         assert_eq!(parsed.multipart_parts[0].name, "field");
         assert_eq!(parsed.multipart_parts[0].content, b"value");
+    }
+
+    #[tokio::test]
+    async fn test_parse_http_request_async_with_multipart() {
+        let content_type = "multipart/form-data; boundary=----WebKitFormBoundary";
+        let body = b"------WebKitFormBoundary\r\nContent-Disposition: form-data; name=\"field\"\r\n\r\nvalue\r\n------WebKitFormBoundary--";
+        let request = format!(
+            "POST /v1/input HTTP/1.1\r\nHost: example.com\r\nContent-Type: {}\r\n\r\n",
+            content_type
+        );
+        let mut request_bytes = request.into_bytes();
+        request_bytes.extend_from_slice(body);
+
+        let parsed = parse_http_request(&request_bytes).await.unwrap();
+
+        assert_eq!(parsed.method, "POST");
+        assert_eq!(parsed.multipart_parts.len(), 1);
+        assert_eq!(parsed.multipart_parts[0].name, "field");
+        assert_eq!(parsed.multipart_parts[0].content, b"value");
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_count_active_threads() {
+        let initial_count = count_active_threads().expect("Failed to count threads");
+        assert!(
+            initial_count >= 1,
+            "Expected at least 1 thread, got {}",
+            initial_count
+        );
+
+        // Spawn some threads and verify the count increases
+        use std::sync::{Arc, Barrier};
+        let barrier = Arc::new(Barrier::new(6)); // 5 spawned threads + main thread
+
+        let handles: Vec<_> = (0..5)
+            .map(|_| {
+                let barrier = Arc::clone(&barrier);
+                std::thread::spawn(move || {
+                    barrier.wait();
+                    std::thread::sleep(std::time::Duration::from_millis(50));
+                })
+            })
+            .collect();
+
+        barrier.wait();
+        let count_with_threads = count_active_threads().expect("Failed to count threads");
+        assert!(
+            count_with_threads >= initial_count + 5,
+            "Expected at least {} threads (initial: {}, with 5 spawned: {})",
+            initial_count + 5,
+            initial_count,
+            count_with_threads
+        );
+
+        for handle in handles {
+            handle.join().expect("Thread should join successfully");
+        }
+
+        let count_after_join = count_active_threads().expect("Failed to count threads");
+        // Allow up to 1 extra: some platforms (e.g. CentOS 7) lazily spawn a helper thread
+        assert!(
+            count_after_join <= initial_count + 1,
+            "Expected thread count to return to {} or {} after join, got {}",
+            initial_count,
+            initial_count + 1,
+            count_after_join
+        );
     }
 }

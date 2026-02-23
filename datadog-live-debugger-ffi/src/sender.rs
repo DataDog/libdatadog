@@ -114,7 +114,7 @@ pub extern "C" fn ddog_live_debugger_spawn_sender(
 
     let (tx, mailbox) = mpsc::channel(5000);
     let mut config = Config::default();
-    try_c!(config.set_endpoint(endpoint.clone(), endpoint.clone()));
+    try_c!(config.set_endpoint(endpoint.clone()));
     let config = Arc::new(config);
 
     *handle = Box::into_raw(Box::new(SenderHandle {

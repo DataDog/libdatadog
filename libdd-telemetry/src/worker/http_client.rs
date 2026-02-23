@@ -1,10 +1,8 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use bytes::Bytes;
-use libdd_capabilities::http::HttpError;
-use libdd_capabilities::HttpClientTrait;
-use libdd_capabilities_impl::DefaultHttpClient;
+use http_body_util::BodyExt;
+use libdd_common::{http_common, HttpRequestBuilder};
 use std::{
     fs::OpenOptions,
     future::Future,
@@ -29,13 +27,13 @@ pub mod header {
 }
 
 pub type ResponseFuture =
-    Pin<Box<dyn Future<Output = Result<http::Response<Bytes>, HttpError>> + Send>>;
+    Pin<Box<dyn Future<Output = Result<http_common::HttpResponse, http_common::Error>> + Send>>;
 
 pub trait HttpClient {
-    fn request(&self, req: http::Request<Bytes>) -> ResponseFuture;
+    fn request(&self, req: http_common::HttpRequest) -> ResponseFuture;
 }
 
-pub fn request_builder(c: &Config) -> anyhow::Result<http::request::Builder> {
+pub fn request_builder(c: &Config) -> anyhow::Result<HttpRequestBuilder> {
     match &c.endpoint {
         Some(e) => {
             debug!(
@@ -44,17 +42,16 @@ pub fn request_builder(c: &Config) -> anyhow::Result<http::request::Builder> {
                 telemetry.version = env!("CARGO_PKG_VERSION"),
                 "Building telemetry request"
             );
-            let mut builder = http::Request::builder().uri(e.url.clone());
-            builder =
-                e.set_standard_headers(builder, concat!("telemetry/", env!("CARGO_PKG_VERSION")));
+            let mut builder =
+                e.to_request_builder(concat!("telemetry/", env!("CARGO_PKG_VERSION")));
             if c.debug_enabled {
                 debug!(
                     telemetry.debug_enabled = true,
                     "Telemetry debug mode enabled"
                 );
-                builder = builder.header(header::DEBUG_ENABLED, "true");
+                builder = Ok(builder?.header(header::DEBUG_ENABLED, "true"))
             }
-            Ok(builder)
+            builder
         }
         None => {
             error!("No valid telemetry endpoint found, cannot build request");
@@ -100,16 +97,23 @@ pub fn from_config(c: &Config) -> Box<dyn HttpClient + Sync + Send> {
             );
         }
     };
-    Box::new(CapabilitiesClient)
+    Box::new(HyperClient {
+        inner: http_common::new_client_periodic(),
+    })
 }
 
-pub struct CapabilitiesClient;
+pub struct HyperClient {
+    inner: libdd_common::HttpClient,
+}
 
-impl HttpClient for CapabilitiesClient {
-    fn request(&self, req: http::Request<Bytes>) -> ResponseFuture {
+impl HttpClient for HyperClient {
+    fn request(&self, req: http_common::HttpRequest) -> ResponseFuture {
+        let resp = self.inner.request(req);
         Box::pin(async move {
-            let client = DefaultHttpClient::new_client();
-            client.request(req).await
+            match resp.await {
+                Ok(response) => Ok(http_common::into_response(response)),
+                Err(e) => Err(http_common::Error::Client(http_common::into_error(e))),
+            }
         })
     }
 }
@@ -120,11 +124,11 @@ pub struct MockClient {
 }
 
 impl HttpClient for MockClient {
-    fn request(&self, req: http::Request<Bytes>) -> ResponseFuture {
+    fn request(&self, req: http_common::HttpRequest) -> ResponseFuture {
         let s = self.clone();
         Box::pin(async move {
             debug!("MockClient writing request to file");
-            let mut body = req.into_body().to_vec();
+            let mut body = req.collect().await?.to_bytes().to_vec();
             body.push(b'\n');
 
             {
@@ -141,22 +145,21 @@ impl HttpClient for MockClient {
                             error = %e,
                             "Failed to write to mock file"
                         );
-                        return Err(HttpError::Other(format!("Mock file write error: {e}")));
+                        return Err(http_common::Error::from(e));
                     }
                 }
             }
 
             debug!(http.status = 202, "MockClient returning success response");
-            http::Response::builder()
-                .status(202)
-                .body(Bytes::new())
-                .map_err(|e| HttpError::Other(format!("Failed to build response: {e}")))
+            http_common::empty_response(http::Response::builder().status(202))
         })
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use libdd_common::HttpRequestBuilder;
+
     use super::*;
 
     #[tokio::test]
@@ -167,8 +170,8 @@ mod tests {
             file: Arc::new(Mutex::new(Box::new(output))),
         };
         c.request(
-            http::Request::builder()
-                .body(Bytes::from("hello world\n"))
+            HttpRequestBuilder::new()
+                .body(http_common::Body::from("hello world\n"))
                 .unwrap(),
         )
         .await

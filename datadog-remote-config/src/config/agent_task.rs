@@ -14,6 +14,9 @@ where
     D: Deserializer<'de>,
 {
     let s = String::deserialize(deserializer)?;
+    if s.is_empty() {
+        return Err(de::Error::custom("case_id cannot be empty"));
+    }
     if s == "0" {
         return Err(de::Error::custom("case_id cannot be 0"));
     }
@@ -133,6 +136,22 @@ mod tests {
         let json_data = r#"{
             "args": {
                 "case_id": "abc123",
+                "hostname": "test-host",
+                "user_handle": "test@example.com"
+            },
+            "task_type": "tracer_flare",
+            "uuid": "test-uuid"
+        }"#;
+
+        let result = parse_json(json_data.as_bytes());
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_invalid_case_id_empty() {
+        let json_data = r#"{
+            "args": {
+                "case_id": "",
                 "hostname": "test-host",
                 "user_handle": "test@example.com"
             },
