@@ -297,14 +297,6 @@ impl TelemetryClient {
             .send_msg(TelemetryActions::Lifecycle(LifecycleAction::Start))
             .await;
     }
-
-    /// Shutdowns the telemetry client.
-    pub async fn shutdown(self) {
-        _ = self
-            .worker
-            .send_msg(TelemetryActions::Lifecycle(LifecycleAction::Stop))
-            .await;
-    }
 }
 
 #[cfg(test)]

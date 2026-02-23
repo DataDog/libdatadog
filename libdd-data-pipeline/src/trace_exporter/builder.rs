@@ -270,19 +270,32 @@ impl TraceExporterBuilder {
             if let Some(id) = telemetry_config.runtime_id {
                 builder = builder.set_runtime_id(&id);
             }
-            builder.build(shared_runtime.runtime().handle().clone())
+            let runtime = shared_runtime.runtime().map_err(|e| {
+                TraceExporterError::Builder(BuilderErrorKind::InvalidConfiguration(e.to_string()))
+            })?;
+            // This handle is never used since we run it as a SharedRuntime worker. So it is fine
+            // if the tokio runtime is dropped by SharedRuntime.
+            Ok(builder.build(runtime.handle().clone()))
         });
 
         let telemetry_client = match telemetry {
-            Some((client, worker)) => {
+            Some(Ok((client, worker))) => {
                 shared_runtime.spawn_worker(worker).map_err(|e| {
                     TraceExporterError::Builder(BuilderErrorKind::InvalidConfiguration(
                         e.to_string(),
                     ))
                 })?;
-                shared_runtime.runtime().block_on(client.start());
+                shared_runtime
+                    .runtime()
+                    .map_err(|e| {
+                        TraceExporterError::Builder(BuilderErrorKind::InvalidConfiguration(
+                            e.to_string(),
+                        ))
+                    })?
+                    .block_on(client.start());
                 Some(client)
             }
+            Some(Err(e)) => return Err(e),
             None => None,
         };
 

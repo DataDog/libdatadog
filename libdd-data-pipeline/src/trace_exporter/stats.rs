@@ -127,9 +127,12 @@ pub(crate) fn stop_stats_computation(
         client_side_stats.store(Arc::new(StatsComputationStatus::DisabledByAgent {
             bucket_size,
         }));
-        ctx.shared_runtime
-            .runtime()
-            .block_on(async { worker_handle.clone().stop().await });
+        match ctx.shared_runtime.runtime() {
+            Ok(runtime) => {
+                let _ = runtime.block_on(async { worker_handle.clone().stop().await });
+            }
+            Err(e) => error!("Failed to stop stats worker: {e}"),
+        }
     }
 }
 

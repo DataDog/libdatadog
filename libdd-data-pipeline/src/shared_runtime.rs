@@ -10,13 +10,12 @@
 
 use crate::pausable_worker::{PausableWorker, PausableWorkerError};
 use libdd_common::{worker::Worker, MutexExt};
-use std::fmt;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
+use std::{fmt, io};
 use tokio::runtime::{Builder, Runtime};
 use tokio::task::JoinSet;
 
-/// Type alias for a boxed worker trait object that can be used with PausableWorker.
 type BoxedWorker = Box<dyn Worker + Send + Sync>;
 
 #[derive(Debug)]
@@ -34,22 +33,46 @@ pub struct WorkerHandle {
     workers: Arc<Mutex<Vec<WorkerEntry>>>,
 }
 
+#[derive(Debug)]
+pub enum WorkerHandleError {
+    AlreadyStopped,
+    WorkerError(PausableWorkerError),
+}
+
+impl fmt::Display for WorkerHandleError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::AlreadyStopped => {
+                write!(f, "Worker has already been stopped")
+            }
+            Self::WorkerError(err) => write!(f, "Worker error: {}", err),
+        }
+    }
+}
+
+impl From<PausableWorkerError> for WorkerHandleError {
+    fn from(err: PausableWorkerError) -> Self {
+        Self::WorkerError(err)
+    }
+}
+
 impl WorkerHandle {
     /// Stop the worker and execute the shutdown logic.
     ///
     /// # Errors
     /// Returns an error if the worker has already been stopped.
-    pub async fn stop(self) -> Result<(), SharedRuntimeError> {
-        let mut workers_lock = self.workers.lock_or_panic();
-        let Some(position) = workers_lock
-            .iter()
-            .position(|entry| entry.id == self.worker_id)
-        else {
-            return Err(SharedRuntimeError::Other(
-                "Worker has already been stopped".to_string(),
-            ));
+    pub async fn stop(self) -> Result<(), WorkerHandleError> {
+        let mut worker = {
+            let mut workers_lock = self.workers.lock_or_panic();
+            let Some(position) = workers_lock
+                .iter()
+                .position(|entry| entry.id == self.worker_id)
+            else {
+                return Err(WorkerHandleError::AlreadyStopped);
+            };
+            let WorkerEntry { worker, .. } = workers_lock.swap_remove(position);
+            worker
         };
-        let WorkerEntry { mut worker, .. } = workers_lock.swap_remove(position);
         worker.pause().await?;
         worker.shutdown().await;
         Ok(())
@@ -65,24 +88,21 @@ pub enum SharedRuntimeError {
     LockFailed(String),
     /// A worker operation failed.
     WorkerError(PausableWorkerError),
-    /// Failed to create or manage the tokio runtime.
-    RuntimeCreation(std::io::Error),
-    /// A generic error occurred.
-    Other(String),
+    /// Failed to create the tokio runtime.
+    RuntimeCreation(io::Error),
 }
 
 impl fmt::Display for SharedRuntimeError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            SharedRuntimeError::RuntimeUnavailable => {
+            Self::RuntimeUnavailable => {
                 write!(f, "Runtime is not available or in an invalid state")
             }
-            SharedRuntimeError::LockFailed(msg) => write!(f, "Failed to acquire lock: {}", msg),
-            SharedRuntimeError::WorkerError(err) => write!(f, "Worker error: {}", err),
-            SharedRuntimeError::RuntimeCreation(err) => {
+            Self::LockFailed(msg) => write!(f, "Failed to acquire lock: {}", msg),
+            Self::WorkerError(err) => write!(f, "Worker error: {}", err),
+            Self::RuntimeCreation(err) => {
                 write!(f, "Failed to create runtime: {}", err)
             }
-            SharedRuntimeError::Other(msg) => write!(f, "{}", msg),
         }
     }
 }
@@ -95,8 +115,8 @@ impl From<PausableWorkerError> for SharedRuntimeError {
     }
 }
 
-impl From<std::io::Error> for SharedRuntimeError {
-    fn from(err: std::io::Error) -> Self {
+impl From<io::Error> for SharedRuntimeError {
+    fn from(err: io::Error) -> Self {
         SharedRuntimeError::RuntimeCreation(err)
     }
 }
@@ -176,10 +196,8 @@ impl SharedRuntime {
     /// Returns an error if workers cannot be paused or the runtime is in an invalid state.
     pub fn before_fork(&self) -> Result<(), SharedRuntimeError> {
         if let Some(runtime) = self.runtime.lock_or_panic().take() {
-            runtime.block_on(async {
-                let mut workers_lock = self.workers.lock_or_panic();
-
-                // First signal all workers to pause, then wait for each one to stop.
+            let mut workers_lock = self.workers.lock_or_panic();
+            runtime.block_on(async move {
                 for worker_entry in workers_lock.iter_mut() {
                     worker_entry.worker.request_pause()?;
                 }
@@ -258,16 +276,18 @@ impl SharedRuntime {
         Ok(())
     }
 
-    /// Get a reference to the underlying runtime.
+    /// Get a reference to the underlying runtime or create a single-threaded one.
     ///
     /// This allows external code to spawn additional tasks on the runtime if needed.
     ///
     /// # Errors
-    /// Returns None if the runtime is not available (e.g., during fork operations).
-    pub fn runtime(&self) -> Arc<Runtime> {
+    /// Returns an error if it fails to create a runtime.
+    pub fn runtime(&self) -> Result<Arc<Runtime>, io::Error> {
         match self.runtime.lock_or_panic().as_ref() {
-            None => Arc::new(Builder::new_current_thread().enable_all().build().unwrap()),
-            Some(runtime) => runtime.clone(),
+            None => Ok(Arc::new(
+                Builder::new_current_thread().enable_all().build()?,
+            )),
+            Some(runtime) => Ok(runtime.clone()),
         }
     }
 
@@ -295,12 +315,6 @@ impl SharedRuntime {
 
         join_set.join_all().await;
         Ok(())
-    }
-}
-
-impl Default for SharedRuntime {
-    fn default() -> Self {
-        Self::new().expect("Failed to create default SharedRuntime")
     }
 }
 

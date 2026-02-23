@@ -5,12 +5,11 @@ use async_trait::async_trait;
 
 /// Trait representing a generic worker.
 ///
-/// The worker runs an async looping function running periodic tasks.
+/// # Lifecycle
+/// The worker's `Self::run` method should be executed everytime the `Self::trigger` method returns.
+/// On startup `Self::initial_trigger` should be called before `Self::run`.
 ///
-/// This trait can be used to provide wrapper around a worker.
 ///
-/// This trait is dyn-compatible thanks to the `async_trait` macro,
-/// which allows it to be used as `Box<dyn Worker>`.
 #[async_trait]
 pub trait Worker: std::fmt::Debug {
     /// Main worker function
@@ -26,14 +25,10 @@ pub trait Worker: std::fmt::Debug {
     }
 
     /// Reset the worker in the child after a fork
-    fn reset(&mut self) {
-        return;
-    }
+    fn reset(&mut self) {}
 
-    /// Hook called when the app is shutting down. Used to flush all data.
-    async fn shutdown(&mut self) {
-        return;
-    }
+    /// Hook called when the app is shutting down. Can be used to flush remaining data.
+    async fn shutdown(&mut self) {}
 }
 
 // Blanket implementation for boxed trait objects

@@ -14,7 +14,7 @@ use self::agent_response::AgentResponse;
 use self::metrics::MetricsEmitter;
 use self::stats::StatsComputationStatus;
 use self::trace_serializer::TraceSerializer;
-use crate::agent_info::{AgentInfoFetcher, ResponseObserver};
+use crate::agent_info::ResponseObserver;
 use crate::shared_runtime::SharedRuntime;
 use crate::telemetry::{SendPayloadTelemetry, TelemetryClient};
 use crate::trace_exporter::agent_response::{
@@ -31,8 +31,8 @@ use http::uri::PathAndQuery;
 use http::Uri;
 use http_body_util::BodyExt;
 use libdd_common::tag::Tag;
+use libdd_common::HttpClient;
 use libdd_common::{http_common, Endpoint};
-use libdd_common::{HttpClient, MutexExt};
 use libdd_dogstatsd_client::Client;
 use libdd_trace_utils::msgpack_decoder;
 use libdd_trace_utils::send_with_retry::{
@@ -204,7 +204,9 @@ impl TraceExporter {
 
     /// Return a runtime from the shared runtime manager.
     fn runtime(&self) -> Result<Arc<Runtime>, TraceExporterError> {
-        Ok(self.shared_runtime.runtime())
+        self.shared_runtime
+            .runtime()
+            .map_err(|e| TraceExporterError::Io(e))
     }
 
     /// Manually start all workers
@@ -271,7 +273,7 @@ impl TraceExporter {
     /// This function should not take ownership of the trace exporter as it will cause the runtime
     /// stored in the trace exporter to be dropped in a non-blocking context causing a panic.
     async fn shutdown_async(&mut self) {
-        self.shared_runtime.shutdown().await;
+        let _ = self.shared_runtime.shutdown().await;
     }
 
     /// Check if agent info state has changed
@@ -1397,7 +1399,7 @@ mod tests {
 
         traces_endpoint.assert_calls(1);
         while metrics_endpoint.calls() == 0 {
-            exporter.shared_runtime.runtime().block_on(async {
+            exporter.shared_runtime.runtime().unwrap().block_on(async {
                 sleep(Duration::from_millis(100)).await;
             })
         }
@@ -1449,7 +1451,7 @@ mod tests {
 
         traces_endpoint.assert_calls(1);
         while metrics_endpoint.calls() == 0 {
-            exporter.shared_runtime.runtime().block_on(async {
+            exporter.shared_runtime.runtime().unwrap().block_on(async {
                 sleep(Duration::from_millis(100)).await;
             })
         }
@@ -1512,7 +1514,7 @@ mod tests {
 
         traces_endpoint.assert_calls(1);
         while metrics_endpoint.calls() == 0 {
-            exporter.shared_runtime.runtime().block_on(async {
+            exporter.shared_runtime.runtime().unwrap().block_on(async {
                 sleep(Duration::from_millis(100)).await;
             })
         }
@@ -1689,7 +1691,7 @@ mod tests {
 
         // Wait for the info fetcher to get the config
         while mock_info.calls() == 0 {
-            exporter.shared_runtime.runtime().block_on(async {
+            exporter.shared_runtime.runtime().unwrap().block_on(async {
                 sleep(Duration::from_millis(100)).await;
             })
         }
@@ -1790,7 +1792,7 @@ mod single_threaded_tests {
 
         // Wait for the info fetcher to get the config
         while agent_info::get_agent_info().is_none() {
-            exporter.shared_runtime.runtime().block_on(async {
+            exporter.shared_runtime.runtime().unwrap().block_on(async {
                 sleep(Duration::from_millis(100)).await;
             })
         }
@@ -1889,7 +1891,7 @@ mod single_threaded_tests {
         // Wait for agent_info to be present so that sending a trace will trigger the stats worker
         // to start
         while agent_info::get_agent_info().is_none() {
-            exporter.shared_runtime.runtime().block_on(async {
+            exporter.shared_runtime.runtime().unwrap().block_on(async {
                 sleep(Duration::from_millis(100)).await;
             })
         }

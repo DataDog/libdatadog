@@ -64,9 +64,6 @@ impl<T: Worker + Send + Sync + 'static> PausableWorker<T> {
     /// Start the worker on the given runtime.
     ///
     /// The worker's main loop will be run on the runtime.
-    ///
-    /// # Errors
-    /// Fails if the worker is in an invalid state.
     pub fn start(&mut self, rt: &Runtime) -> Result<(), PausableWorkerError> {
         match self {
             PausableWorker::Running { .. } => Ok(()),
@@ -117,9 +114,6 @@ impl<T: Worker + Send + Sync + 'static> PausableWorker<T> {
     /// Request the worker to pause without waiting for task termination.
     ///
     /// This is useful when pausing multiple workers in parallel.
-    ///
-    /// # Errors
-    /// Fails if the worker is in an invalid state.
     pub fn request_pause(&self) -> Result<(), PausableWorkerError> {
         match self {
             PausableWorker::Running { stop_token, .. } => {
@@ -160,9 +154,6 @@ impl<T: Worker + Send + Sync + 'static> PausableWorker<T> {
     }
 
     /// Pause the worker saving it's state to be restarted.
-    ///
-    /// # Errors
-    /// Fails if the worker handle has been aborted preventing the worker from being retrieved.
     pub async fn pause(&mut self) -> Result<(), PausableWorkerError> {
         self.request_pause()?;
         self.join().await
