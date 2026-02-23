@@ -110,7 +110,8 @@ pub async fn send_with_retry(
         let mut builder = http::Request::builder()
             .method(http::Method::POST)
             .uri(target.url.clone());
-        builder = target.set_standard_headers(builder, concat!("Tracer/", env!("CARGO_PKG_VERSION")));
+        builder =
+            target.set_standard_headers(builder, concat!("Tracer/", env!("CARGO_PKG_VERSION")));
         for (key, value) in headers {
             builder = builder.header(*key, value.as_str());
         }
@@ -126,7 +127,11 @@ pub async fn send_with_retry(
         match result {
             Ok(Ok(response)) => {
                 let status = response.status();
-                debug!(status = status.as_u16(), attempt = request_attempt, "Received response");
+                debug!(
+                    status = status.as_u16(),
+                    attempt = request_attempt,
+                    "Received response"
+                );
 
                 if status.is_client_error() || status.is_server_error() {
                     debug!(
@@ -153,7 +158,11 @@ pub async fn send_with_retry(
                         return Err(SendWithRetryError::Http(response, request_attempt));
                     }
                 } else {
-                    debug!(status = status.as_u16(), attempts = request_attempt, "Request succeeded");
+                    debug!(
+                        status = status.as_u16(),
+                        attempts = request_attempt,
+                        "Request succeeded"
+                    );
                     return Ok((response, request_attempt));
                 }
             }

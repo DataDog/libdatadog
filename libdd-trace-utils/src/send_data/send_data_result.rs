@@ -57,10 +57,7 @@ impl SendDataResult {
         match res {
             Ok((response, attempts)) => {
                 let status = response.status().as_u16();
-                *self
-                    .responses_count_per_code
-                    .entry(status)
-                    .or_default() += 1;
+                *self.responses_count_per_code.entry(status).or_default() += 1;
                 self.bytes_sent += bytes_sent;
                 self.chunks_sent += chunks;
                 self.last_result = Ok(response);
