@@ -1567,6 +1567,7 @@ version = "0.0.1"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
+ "bytes",
  "datadog-ffe",
  "datadog-live-debugger",
  "datadog-remote-config",
@@ -1576,6 +1577,8 @@ dependencies = [
  "http-body-util",
  "hyper 1.6.0",
  "hyper-util",
+ "libdd-capabilities",
+ "libdd-capabilities-impl",
  "libdd-common",
  "libdd-trace-protobuf",
  "manual_future",
@@ -1685,9 +1688,13 @@ name = "datadog-tracer-flare"
 version = "27.0.0"
 dependencies = [
  "anyhow",
+ "bytes",
  "datadog-remote-config",
+ "http",
  "httpmock",
  "hyper 1.6.0",
+ "libdd-capabilities",
+ "libdd-capabilities-impl",
  "libdd-common",
  "libdd-trace-utils",
  "serde_json",
@@ -3346,6 +3353,7 @@ version = "2.0.0"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
+ "bytes",
  "futures",
  "hashbrown 0.15.1",
  "http",
@@ -3353,6 +3361,8 @@ dependencies = [
  "hyper 1.6.0",
  "hyper-util",
  "libc",
+ "libdd-capabilities",
+ "libdd-capabilities-impl",
  "libdd-common",
  "libdd-ddsketch",
  "serde",

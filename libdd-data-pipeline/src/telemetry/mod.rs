@@ -314,10 +314,8 @@ impl TelemetryClient {
 
 #[cfg(test)]
 mod tests {
-    use http::{Response, StatusCode};
     use httpmock::Method::POST;
     use httpmock::MockServer;
-    use bytes::Bytes;
     use libdd_capabilities::HttpError;
     use libdd_common::worker::Worker;
     use regex::Regex;

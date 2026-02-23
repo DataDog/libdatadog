@@ -397,9 +397,10 @@ mod tests {
                 }
                 Err(err) => {
                     let (error_type, attempts) = match err {
-                        SendWithRetryError::Http(response, attempts) => {
-                            (TransportErrorType::Http(response.status().as_u16()), *attempts)
-                        }
+                        SendWithRetryError::Http(response, attempts) => (
+                            TransportErrorType::Http(response.status().as_u16()),
+                            *attempts,
+                        ),
                         SendWithRetryError::Timeout(attempts) => {
                             (TransportErrorType::Timeout, *attempts)
                         }
