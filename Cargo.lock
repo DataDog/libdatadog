@@ -1645,6 +1645,8 @@ dependencies = [
  "datadog-remote-config",
  "http",
  "httpmock",
+ "libdd-capabilities",
+ "libdd-capabilities-impl",
  "libdd-common",
  "libdd-trace-utils",
  "serde_json",
@@ -2967,6 +2969,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "libdd-capabilities"
+version = "0.1.0"
+dependencies = [
+ "bytes",
+ "http",
+]
+
+[[package]]
+name = "libdd-capabilities-impl"
+version = "0.1.0"
+dependencies = [
+ "bytes",
+ "http",
+ "http-body-util",
+ "hyper",
+ "libdd-capabilities",
+ "libdd-common",
+]
+
+[[package]]
 name = "libdd-common"
 version = "1.1.0"
 dependencies = [
@@ -2987,6 +3009,7 @@ dependencies = [
  "hyper-util",
  "indexmap 2.12.1",
  "libc",
+ "libdd-capabilities",
  "maplit",
  "mime",
  "multer",
@@ -3091,6 +3114,8 @@ dependencies = [
  "http",
  "http-body-util",
  "httpmock",
+ "libdd-capabilities",
+ "libdd-capabilities-impl",
  "libdd-common",
  "libdd-ddsketch",
  "libdd-dogstatsd-client",
@@ -3292,11 +3317,14 @@ version = "2.0.0"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
+ "bytes",
  "futures",
  "hashbrown 0.15.1",
  "http",
  "http-body-util",
  "libc",
+ "libdd-capabilities",
+ "libdd-capabilities-impl",
  "libdd-common",
  "libdd-ddsketch",
  "serde",
@@ -3411,6 +3439,8 @@ dependencies = [
  "httpmock",
  "hyper",
  "indexmap 2.12.1",
+ "libdd-capabilities",
+ "libdd-capabilities-impl",
  "libdd-common",
  "libdd-tinybytes",
  "libdd-trace-normalization",

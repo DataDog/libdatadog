@@ -387,8 +387,6 @@ mod tests {
                     if response.status().is_success() {
                         Self::success(payload_bytes, trace_chunks, *attempts)
                     } else {
-                        // Non-success status in Ok variant (shouldn't happen with
-                        // send_with_retry)
                         Self::failure(
                             TransportErrorType::Http(response.status().as_u16()),
                             payload_bytes,
@@ -408,6 +406,9 @@ mod tests {
                         }
                         SendWithRetryError::Network(_, attempts) => {
                             (TransportErrorType::Network, *attempts)
+                        }
+                        SendWithRetryError::ResponseBody(attempts) => {
+                            (TransportErrorType::ResponseBody, *attempts)
                         }
                         SendWithRetryError::Build(attempts) => {
                             (TransportErrorType::Build, *attempts)
@@ -670,19 +671,19 @@ mod tests {
     mod send_with_retry_conversion {
         use super::*;
         use bytes::Bytes;
-        use http::{Response, StatusCode};
-        use libdd_common::http_common;
         use libdd_trace_utils::send_with_retry::{SendWithRetryError, SendWithRetryResult};
 
         /// Helper to create a mock HTTP response for testing
-        fn mock_response(status: StatusCode) -> http_common::HttpResponse {
-            http_common::mock_response(Response::builder().status(status), Bytes::from("test body"))
+        fn mock_response(status: u16) -> http::Response<Bytes> {
+            http::Response::builder()
+                .status(status)
+                .body(Bytes::from_static(b"test body"))
                 .unwrap()
         }
 
         #[test]
         fn test_from_retry_result_success_2xx() {
-            let response = mock_response(StatusCode::OK);
+            let response = mock_response(200);
             let retry_result: SendWithRetryResult = Ok((response, 1));
 
             let send_result = SendResult::from_retry_result(&retry_result, 1024, 5);
@@ -695,7 +696,7 @@ mod tests {
 
         #[test]
         fn test_from_retry_result_http_error() {
-            let response = mock_response(StatusCode::BAD_REQUEST);
+            let response = mock_response(400);
             let retry_result: SendWithRetryResult = Err(SendWithRetryError::Http(response, 3));
 
             let send_result = SendResult::from_retry_result(&retry_result, 2048, 10);
@@ -745,8 +746,21 @@ mod tests {
         }
 
         #[test]
+        fn test_from_retry_result_response_body_error() {
+            let retry_result: SendWithRetryResult = Err(SendWithRetryError::ResponseBody(2));
+
+            let send_result = SendResult::from_retry_result(&retry_result, 100, 1);
+
+            assert_eq!(
+                send_result.error_type,
+                Some(TransportErrorType::ResponseBody)
+            );
+            assert_eq!(send_result.request_attempts, 2);
+        }
+
+        #[test]
         fn test_from_retry_result_preserves_context() {
-            let response = mock_response(StatusCode::OK);
+            let response = mock_response(200);
             let retry_result: SendWithRetryResult = Ok((response, 2));
 
             let send_result = SendResult::from_retry_result(&retry_result, 4096, 25);

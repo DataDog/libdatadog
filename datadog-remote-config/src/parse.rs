@@ -9,13 +9,13 @@ use crate::{
 };
 #[cfg(feature = "ffe")]
 use datadog_ffe::rules_based::UniversalFlagConfig;
-#[cfg(feature = "live-debugger")]
+#[cfg(all(feature = "live-debugger", not(target_arch = "wasm32")))]
 use datadog_live_debugger::LiveDebuggingData;
 
 #[derive(Debug)]
 pub enum RemoteConfigData {
     DynamicConfig(DynamicConfigFile),
-    #[cfg(feature = "live-debugger")]
+    #[cfg(all(feature = "live-debugger", not(target_arch = "wasm32")))]
     LiveDebugger(LiveDebuggingData),
     TracerFlareConfig(AgentConfigFile),
     TracerFlareTask(AgentTaskFile),
@@ -39,7 +39,7 @@ impl RemoteConfigData {
             RemoteConfigProduct::ApmTracing => {
                 RemoteConfigData::DynamicConfig(config::dynamic::parse_json(data)?)
             }
-            #[cfg(feature = "live-debugger")]
+            #[cfg(all(feature = "live-debugger", not(target_arch = "wasm32")))]
             RemoteConfigProduct::LiveDebugger => {
                 let parsed = datadog_live_debugger::parse_json(&String::from_utf8_lossy(data))?;
                 RemoteConfigData::LiveDebugger(parsed)
@@ -57,7 +57,7 @@ impl From<&RemoteConfigData> for RemoteConfigProduct {
     fn from(value: &RemoteConfigData) -> Self {
         match value {
             RemoteConfigData::DynamicConfig(_) => RemoteConfigProduct::ApmTracing,
-            #[cfg(feature = "live-debugger")]
+            #[cfg(all(feature = "live-debugger", not(target_arch = "wasm32")))]
             RemoteConfigData::LiveDebugger(_) => RemoteConfigProduct::LiveDebugger,
             RemoteConfigData::TracerFlareConfig(_) => RemoteConfigProduct::AgentConfig,
             RemoteConfigData::TracerFlareTask(_) => RemoteConfigProduct::AgentTask,

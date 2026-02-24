@@ -1,0 +1,20 @@
+# Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
+# SPDX-License-Identifier: Apache-2.0
+
+[package]
+name = "libdd-capabilities-impl"
+version = "0.1.0"
+edition = "2021"
+description = "Native implementations of libdd-capabilities traits"
+
+[lib]
+crate-type = ["lib"]
+bench = false
+
+[dependencies]
+libdd-capabilities = { path = "../libdd-capabilities" }
+libdd-common = { path = "../libdd-common" }
+hyper = { workspace = true }
+http = "1.0"
+bytes = "1"
+http-body-util = "0.1"

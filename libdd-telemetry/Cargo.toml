@@ -31,6 +31,9 @@ tracing = { version = "0.1", default-features = false }
 uuid = { version = "1.3", features = ["v4"] }
 hashbrown = "0.15"
 
+bytes = "1"
+libdd-capabilities = { path = "../libdd-capabilities" }
+libdd-capabilities-impl = { path = "../libdd-capabilities-impl" }
 libdd-common = { version = "1.1.0", path = "../libdd-common", default-features = false }
 libdd-ddsketch = { version = "1.0.0", path = "../libdd-ddsketch" }
 

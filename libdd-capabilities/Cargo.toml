@@ -1,0 +1,19 @@
+# Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
+# SPDX-License-Identifier: Apache-2.0
+
+[package]
+name = "libdd-capabilities"
+version = "0.1.0"
+edition = "2021"
+description = "Portable capability traits for cross-platform libdatadog"
+homepage = "https://github.com/DataDog/libdatadog"
+repository = "https://github.com/DataDog/libdatadog"
+license = "Apache-2.0"
+
+[lib]
+crate-type = ["lib"]
+bench = false
+
+[dependencies]
+http = "1.0"
+bytes = "1"

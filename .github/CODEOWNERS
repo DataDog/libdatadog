@@ -38,6 +38,7 @@ docker-bake.hcl                      @DataDog/apm-common-components-core
 docs                                 @DataDog/libdatadog
 examples                             @DataDog/libdatadog
 libdd-alloc/                         @DataDog/libdatadog-profiling
+libdd-capabilities*/                 @DataDog/apm-common-components-core
 libdd-common*/                       @DataDog/libdatadog
 libdd-crashtracker*/                 @DataDog/libdatadog-profiling
 libdd-data-pipeline*/                @DataDog/libdatadog-apm

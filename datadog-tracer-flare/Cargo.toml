@@ -9,11 +9,13 @@ publish = false
 
 [dependencies]
 anyhow = "1.0"
+bytes = "1"
+http = "1.0"
+libdd-capabilities = { path = "../libdd-capabilities" }
+libdd-capabilities-impl = { path = "../libdd-capabilities-impl" }
 libdd-common = { path = "../libdd-common" }
 datadog-remote-config = { path = "../datadog-remote-config", default-features = false }
 libdd-trace-utils = { path = "../libdd-trace-utils" }
-http = "1"
-bytes = "1.4"
 tokio = { version = "1.36.0", features = ["time"] }
 serde_json = "1.0"
 zip = "4.0.0"

@@ -14,6 +14,7 @@ use std::sync::{Mutex, MutexGuard};
 use std::{borrow::Cow, ops::Deref, path::PathBuf, str::FromStr};
 
 pub mod azure_app_services;
+pub mod capabilities;
 pub mod cc_utils;
 pub mod connector;
 #[cfg(feature = "reqwest")]
@@ -257,6 +258,23 @@ impl Endpoint {
         ]
         .into_iter()
         .flatten()
+    }
+
+    /// Apply standard headers (user-agent, api-key, test-token, entity headers) to an
+    /// [`http::request::Builder`].
+    pub fn set_standard_headers(
+        &self,
+        mut builder: http::request::Builder,
+        user_agent: &str,
+    ) -> http::request::Builder {
+        builder = builder.header("user-agent", user_agent);
+        for (name, value) in self.get_optional_headers() {
+            builder = builder.header(name, value);
+        }
+        for (name, value) in entity_id::get_entity_headers() {
+            builder = builder.header(name, value);
+        }
+        builder
     }
 
     /// Return a request builder with the following headers:
