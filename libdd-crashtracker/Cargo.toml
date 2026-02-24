@@ -78,4 +78,8 @@ tempfile = { version = "3.13" }
 # If we use a newer version of cc, CI fails on alpine.
 cc = "1.1.31"
 cxx-build = { version = "1.0", optional = true }
-libdd-common = { version = "1.1.0", path = "../libdd-common" }
+# Use default-features = false to avoid pulling in the `https` feature (rustls/aws-lc-rs/aws-lc-sys)
+# in the build-script context. The build script only needs cc_utils, which has no TLS dependency.
+# Without this, aws-lc-sys gets compiled twice: once for the normal dep graph and once for the
+# build-script dep graph (Cargo resolver v2 keeps these contexts separate).
+libdd-common = { version = "1.1.0", path = "../libdd-common", default-features = false }
