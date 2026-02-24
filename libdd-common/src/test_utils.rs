@@ -419,6 +419,7 @@ async fn parse_multipart(boundary: String, body: Vec<u8>) -> anyhow::Result<Vec<
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rusty_fork::rusty_fork_test;
 
     #[test]
     fn test_temp_file_guard_and_path_generation() {
@@ -515,52 +516,58 @@ mod tests {
         assert_eq!(parsed.multipart_parts[0].content, b"value");
     }
 
-    #[test]
-    #[cfg_attr(miri, ignore)]
-    fn test_count_active_threads() {
-        let initial_count = count_active_threads().expect("Failed to count threads");
-        assert!(
-            initial_count >= 1,
-            "Expected at least 1 thread, got {}",
-            initial_count
-        );
+    // This test must run in its own process to get accurate thread counts,
+    // since the test runner and other parallel tests spawn threads.
+    rusty_fork_test! {
+        #[test]
+        #[cfg_attr(miri, ignore)]
+        fn test_count_active_threads() {
+            use crate::test_utils::count_active_threads;
 
-        // Spawn some threads and verify the count increases
-        use std::sync::{Arc, Barrier};
-        let barrier = Arc::new(Barrier::new(6)); // 5 spawned threads + main thread
+            let initial_count = count_active_threads().expect("Failed to count threads");
+            assert!(
+                initial_count >= 1,
+                "Expected at least 1 thread, got {}",
+                initial_count
+            );
 
-        let handles: Vec<_> = (0..5)
-            .map(|_| {
-                let barrier = Arc::clone(&barrier);
-                std::thread::spawn(move || {
-                    barrier.wait();
-                    std::thread::sleep(std::time::Duration::from_millis(50));
+            // Spawn some threads and verify the count increases
+            use std::sync::{Arc, Barrier};
+            let barrier = Arc::new(Barrier::new(6)); // 5 spawned threads + main thread
+
+            let handles: Vec<_> = (0..5)
+                .map(|_| {
+                    let barrier = Arc::clone(&barrier);
+                    std::thread::spawn(move || {
+                        barrier.wait();
+                        std::thread::sleep(std::time::Duration::from_millis(50));
+                    })
                 })
-            })
-            .collect();
+                .collect();
 
-        barrier.wait();
-        let count_with_threads = count_active_threads().expect("Failed to count threads");
-        assert!(
-            count_with_threads >= initial_count + 5,
-            "Expected at least {} threads (initial: {}, with 5 spawned: {})",
-            initial_count + 5,
-            initial_count,
-            count_with_threads
-        );
+            barrier.wait();
+            let count_with_threads = count_active_threads().expect("Failed to count threads");
+            assert!(
+                count_with_threads >= initial_count + 5,
+                "Expected at least {} threads (initial: {}, with 5 spawned: {})",
+                initial_count + 5,
+                initial_count,
+                count_with_threads
+            );
 
-        for handle in handles {
-            handle.join().expect("Thread should join successfully");
+            for handle in handles {
+                handle.join().expect("Thread should join successfully");
+            }
+
+            let count_after_join = count_active_threads().expect("Failed to count threads");
+            // Allow up to 1 extra: some platforms (e.g. CentOS 7) lazily spawn a helper thread
+            assert!(
+                count_after_join <= initial_count + 1,
+                "Expected thread count to return to {} or {} after join, got {}",
+                initial_count,
+                initial_count + 1,
+                count_after_join
+            );
         }
-
-        let count_after_join = count_active_threads().expect("Failed to count threads");
-        // Allow up to 1 extra: some platforms (e.g. CentOS 7) lazily spawn a helper thread
-        assert!(
-            count_after_join <= initial_count + 1,
-            "Expected thread count to return to {} or {} after join, got {}",
-            initial_count,
-            initial_count + 1,
-            count_after_join
-        );
     }
 }
