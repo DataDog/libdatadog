@@ -142,6 +142,7 @@ mod tests {
         assert!(client.is_ok());
     }
 
+    #[cfg_attr(miri, ignore)]
     #[tokio::test]
     async fn send_returns_error_when_no_server() {
         let client =
