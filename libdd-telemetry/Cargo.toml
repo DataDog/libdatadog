@@ -1,6 +1,6 @@
 [package]
 name = "libdd-telemetry"
-version= "2.0.0"
+version= "3.0.0"
 description = "Telemetry client allowing to send data as described in https://docs.datadoghq.com/tracing/configure_data_security/?tab=net#telemetry-collection"
 homepage = "https://github.com/DataDog/libdatadog/tree/main/libdd-telemetry"
 repository = "https://github.com/DataDog/libdatadog/tree/main/libdd-telemetry"
@@ -31,8 +31,8 @@ tracing = { version = "0.1", default-features = false }
 uuid = { version = "1.3", features = ["v4"] }
 hashbrown = "0.15"
 
-libdd-common = { version = "1.1.0", path = "../libdd-common", default-features = false }
-libdd-ddsketch = { version = "1.0.0", path = "../libdd-ddsketch" }
+libdd-common = { version = "2.0.0", path = "../libdd-common", default-features = false }
+libdd-ddsketch = { version = "1.0.1", path = "../libdd-ddsketch" }
 
 [target."cfg(unix)".dependencies]
 libc = "0.2.176"
