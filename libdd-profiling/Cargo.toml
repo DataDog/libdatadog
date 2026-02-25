@@ -30,7 +30,7 @@ allocator-api2 = { version = "0.2", default-features = false, features = ["alloc
 anyhow = "1.0"
 bitmaps = "3.2.0"
 byteorder = { version = "1.5", features = ["std"] }
-bytes = "1.1"
+bytes = "1.11.1"
 chrono = {version = "0.4", default-features = false, features = ["std", "clock"]}
 crossbeam-channel = "0.5.15"
 crossbeam-utils = { version = "0.8.21" }
