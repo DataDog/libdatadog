@@ -164,7 +164,7 @@ mod tests {
             }
 
             let sigpipe_action = libc::sigaction {
-                sa_sigaction: sigpipe_handler as usize,
+                sa_sigaction: sigpipe_handler as *const () as usize,
                 sa_mask: sigset,
                 sa_flags: libc::SA_RESTART | libc::SA_SIGINFO,
                 #[cfg(target_os = "linux")]
