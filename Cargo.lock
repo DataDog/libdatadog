@@ -2968,7 +2968,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-common"
-version = "1.1.0"
+version = "2.0.0"
 dependencies = [
  "anyhow",
  "bytes",
@@ -3080,7 +3080,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-data-pipeline"
-version = "1.0.0"
+version = "2.0.0"
 dependencies = [
  "anyhow",
  "arc-swap",
@@ -3129,7 +3129,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-ddsketch"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "prost",
  "prost-build",
@@ -3147,7 +3147,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-dogstatsd-client"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "anyhow",
  "cadence",
@@ -3288,7 +3288,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-telemetry"
-version = "2.0.0"
+version = "3.0.0"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -3340,7 +3340,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-trace-normalization"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "anyhow",
  "arbitrary",
@@ -3370,7 +3370,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-trace-protobuf"
-version = "1.0.0"
+version = "1.1.0"
 dependencies = [
  "prost",
  "prost-build",
@@ -3383,7 +3383,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-trace-stats"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "criterion",
  "hashbrown 0.15.1",
@@ -3395,7 +3395,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-trace-utils"
-version = "1.0.0"
+version = "2.0.0"
 dependencies = [
  "anyhow",
  "bolero",

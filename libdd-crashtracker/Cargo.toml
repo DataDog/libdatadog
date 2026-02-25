@@ -46,8 +46,8 @@ anyhow = "1.0"
 backtrace = "=0.3.74"
 chrono = {version = "0.4", default-features = false, features = ["std", "clock", "serde"]}
 cxx = { version = "1.0", optional = true }
-libdd-common = { version = "1.1.0", path = "../libdd-common" }
-libdd-telemetry = { version = "2.0.0", path = "../libdd-telemetry" }
+libdd-common = { version = "2.0.0", path = "../libdd-common" }
+libdd-telemetry = { version = "3.0.0", path = "../libdd-telemetry" }
 http = "1.1"
 libc = "0.2"
 nix = { version = "0.29", features = ["poll", "signal", "socket"] }
@@ -82,4 +82,4 @@ cxx-build = { version = "1.0", optional = true }
 # in the build-script context. The build script only needs cc_utils, which has no TLS dependency.
 # Without this, aws-lc-sys gets compiled twice: once for the normal dep graph and once for the
 # build-script dep graph (Cargo resolver v2 keeps these contexts separate).
-libdd-common = { version = "1.1.0", path = "../libdd-common", default-features = false }
+libdd-common = { version = "2.0.0", path = "../libdd-common", default-features = false }

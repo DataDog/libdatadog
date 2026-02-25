@@ -1,6 +1,23 @@
 # Changelog
 
 
+
+## [3.0.0](https://github.com/datadog/libdatadog/compare/libdd-telemetry-v2.0.0..libdd-telemetry-v3.0.0) - 2026-02-23
+
+### Added
+
+- Add endpoints collection ([#1182](https://github.com/datadog/libdatadog/issues/1182)) - ([44cabf1](https://github.com/datadog/libdatadog/commit/44cabf193fd0bde789b53be2a91bcce7ebce3fe7))
+- Add process_tags to Application in telemetry ([#1459](https://github.com/datadog/libdatadog/issues/1459)) - ([b09abfb](https://github.com/datadog/libdatadog/commit/b09abfb6ad12f139899e445b7034a6fdb85e3314))
+
+### Changed
+
+- Remove direct dependency on hyper client everywhere in common ([#1604](https://github.com/datadog/libdatadog/issues/1604)) - ([497e324](https://github.com/datadog/libdatadog/commit/497e324438614d0214e7991438062ca5de9f0a1f))
+
+### Fixed
+
+- Fix logs payload format [APMSP-2590] ([#1498](https://github.com/datadog/libdatadog/issues/1498)) - ([b44bb77](https://github.com/datadog/libdatadog/commit/b44bb77dc7e7dcfd8e47d9e8c2bbe1d3cfa894f6))
+
+
 ## [2.0.0](https://github.com/datadog/libdatadog/compare/libdd-telemetry-v1.0.0..libdd-telemetry-v2.0.0) - 2026-01-20
 
 ### Added
