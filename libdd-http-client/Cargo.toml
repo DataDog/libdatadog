@@ -15,7 +15,7 @@ bench = false
 [features]
 default = ["https", "reqwest-backend"]
 https = ["dep:reqwest", "reqwest?/rustls"]
-reqwest-backend = ["dep:reqwest", "reqwest?/hickory-dns"]
+reqwest-backend = ["dep:reqwest", "reqwest?/hickory-dns", "reqwest?/multipart"]
 fips = ["dep:reqwest", "reqwest?/rustls-no-provider", "dep:rustls", "rustls?/aws-lc-rs"]
 
 [dependencies]

@@ -55,7 +55,7 @@ pub mod retry;
 pub use client::HttpClient;
 pub use config::{HttpClientBuilder, HttpClientConfig};
 pub use error::HttpClientError;
-pub use request::{HttpMethod, HttpRequest};
+pub use request::{HttpMethod, HttpRequest, MultipartPart};
 pub use response::HttpResponse;
 pub use retry::RetryConfig;
 

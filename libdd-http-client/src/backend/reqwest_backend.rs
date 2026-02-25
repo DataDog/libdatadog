@@ -69,7 +69,15 @@ impl super::Backend for ReqwestBackend {
             builder = builder.header(name, value);
         }
 
-        if !request.body.is_empty() {
+        if !request.multipart_parts.is_empty() && !request.body.is_empty() {
+            return Err(HttpClientError::InvalidConfig(
+                "request cannot have both multipart parts and a body".to_owned(),
+            ));
+        }
+
+        if !request.multipart_parts.is_empty() {
+            builder = builder.multipart(build_multipart_form(request.multipart_parts)?);
+        } else if !request.body.is_empty() {
             builder = builder.body(request.body);
         }
 
@@ -111,6 +119,27 @@ impl super::Backend for ReqwestBackend {
             body: body_bytes,
         })
     }
+}
+
+/// Convert our `MultipartPart` list into a `reqwest::multipart::Form`.
+#[cfg(feature = "reqwest-backend")]
+fn build_multipart_form(
+    parts: Vec<crate::request::MultipartPart>,
+) -> Result<reqwest::multipart::Form, HttpClientError> {
+    let mut form = reqwest::multipart::Form::new();
+    for part in parts {
+        let mut reqwest_part = reqwest::multipart::Part::bytes(part.data.to_vec());
+        if let Some(filename) = part.filename {
+            reqwest_part = reqwest_part.file_name(filename);
+        }
+        if let Some(ct) = part.content_type {
+            reqwest_part = reqwest_part
+                .mime_str(&ct)
+                .map_err(|e| HttpClientError::InvalidConfig(e.to_string()))?;
+        }
+        form = form.part(part.name, reqwest_part);
+    }
+    Ok(form)
 }
 
 /// Map a `reqwest::Error` to our `HttpClientError` variants.
