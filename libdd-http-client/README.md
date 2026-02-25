@@ -82,6 +82,28 @@ let retry = RetryConfig::new()
 
 Backoff doubles each attempt: 100ms, 200ms, 400ms, etc.
 
+## Multipart Uploads
+
+Send multipart/form-data requests by adding parts to the request. Content-Type
+and boundary are handled automatically.
+
+```rust
+use libdd_http_client::{HttpMethod, HttpRequest, MultipartPart};
+
+let mut req = HttpRequest::new(HttpMethod::Post, url);
+req.add_multipart_part(
+    MultipartPart::new("metadata", json_bytes)
+        .content_type("application/json"),
+);
+req.add_multipart_part(
+    MultipartPart::new("file", binary_data)
+        .filename("archive.zip")
+        .content_type("application/octet-stream"),
+);
+```
+
+Setting both multipart parts and a body on the same request returns an error.
+
 ## Features
 
 | Feature | Default | Description |
