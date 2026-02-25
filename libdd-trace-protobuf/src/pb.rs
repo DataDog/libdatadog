@@ -646,6 +646,17 @@ pub struct ClientGroupedStats {
     #[serde(default)]
     #[serde(rename = "HTTPEndpoint")]
     pub http_endpoint: ::prost::alloc::string::String,
+    /// used to identify service override origin
+    #[prost(string, tag = "21")]
+    #[serde(default)]
+    pub service_source: ::prost::alloc::string::String,
+    /// span_derived_primary_tags are primary tags that are derived from span tags
+    /// These tags must be validated against configured primary tags for the org
+    #[prost(string, repeated, tag = "22")]
+    #[serde(default)]
+    pub span_derived_primary_tags: ::prost::alloc::vec::Vec<
+        ::prost::alloc::string::String,
+    >,
 }
 /// Trilean is an expanded boolean type that is meant to differentiate between being unset and false.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
