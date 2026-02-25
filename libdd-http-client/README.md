@@ -110,7 +110,12 @@ Setting both multipart parts and a body on the same request returns an error.
 |---------|---------|-------------|
 | `https` | yes | HTTPS via rustls with aws-lc-rs |
 | `reqwest-backend` | yes | reqwest-based HTTP backend with hickory-dns |
+| `hyper-backend` | no | Lighter hyper-based backend via libdd-common (smaller binary) |
 | `fips` | no | FIPS-compliant TLS via rustls without default crypto provider |
+
+Enable exactly one of `reqwest-backend` or `hyper-backend`. The hyper backend
+uses libdd-common's Connector infrastructure and produces smaller binaries at
+the cost of depending on libdd-common.
 
 ### FIPS TLS
 
