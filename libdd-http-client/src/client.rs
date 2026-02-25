@@ -7,11 +7,14 @@ use crate::config::{HttpClientBuilder, HttpClientConfig, TransportConfig};
 use crate::{HttpClientError, HttpRequest, HttpResponse};
 use std::time::Duration;
 
-#[cfg(feature = "reqwest-backend")]
+#[cfg(any(feature = "reqwest-backend", feature = "hyper-backend"))]
 use crate::backend::Backend;
 
 #[cfg(feature = "reqwest-backend")]
 use crate::backend::reqwest_backend::ReqwestBackend;
+
+#[cfg(feature = "hyper-backend")]
+use crate::backend::hyper_backend::HyperBackend;
 
 /// A high-level async HTTP client.
 ///
@@ -21,6 +24,8 @@ use crate::backend::reqwest_backend::ReqwestBackend;
 pub struct HttpClient {
     #[cfg(feature = "reqwest-backend")]
     backend: ReqwestBackend,
+    #[cfg(feature = "hyper-backend")]
+    backend: HyperBackend,
     config: HttpClientConfig,
 }
 
@@ -51,11 +56,16 @@ impl HttpClient {
             let backend = ReqwestBackend::new(config.timeout(), transport)?;
             Ok(Self { backend, config })
         }
-        #[cfg(not(feature = "reqwest-backend"))]
+        #[cfg(feature = "hyper-backend")]
+        {
+            let backend = HyperBackend::new(config.timeout(), transport)?;
+            Ok(Self { backend, config })
+        }
+        #[cfg(not(any(feature = "reqwest-backend", feature = "hyper-backend")))]
         {
             let _ = (config, transport);
             Err(HttpClientError::InvalidConfig(
-                "no backend feature enabled; enable the `reqwest-backend` feature".to_owned(),
+                "no backend feature enabled".to_owned(),
             ))
         }
     }
@@ -78,11 +88,11 @@ impl HttpClient {
     }
 
     async fn send_once(&self, request: HttpRequest) -> Result<HttpResponse, HttpClientError> {
-        #[cfg(feature = "reqwest-backend")]
+        #[cfg(any(feature = "reqwest-backend", feature = "hyper-backend"))]
         {
             self.backend.send(request, &self.config).await
         }
-        #[cfg(not(feature = "reqwest-backend"))]
+        #[cfg(not(any(feature = "reqwest-backend", feature = "hyper-backend")))]
         {
             let _ = request;
             Err(HttpClientError::InvalidConfig(

@@ -14,8 +14,9 @@ bench = false
 
 [features]
 default = ["https", "reqwest-backend"]
-https = ["dep:reqwest", "reqwest?/rustls"]
+https = ["dep:reqwest", "reqwest?/rustls", "libdd-common?/https"]
 reqwest-backend = ["dep:reqwest", "reqwest?/hickory-dns", "reqwest?/multipart"]
+hyper-backend = ["dep:libdd-common", "dep:hyper", "dep:hyper-util", "dep:http-body-util"]
 fips = ["dep:reqwest", "reqwest?/rustls-no-provider", "dep:rustls", "rustls?/aws-lc-rs"]
 
 [dependencies]
@@ -25,6 +26,10 @@ fastrand = "2"
 tokio = { version = "1.23", features = ["rt", "time"] }
 reqwest = { version = "0.13", default-features = false, optional = true }
 rustls = { version = "0.23", default-features = false, optional = true }
+libdd-common = { version = "1.1.0", path = "../libdd-common", default-features = false, optional = true }
+hyper = { workspace = true, optional = true }
+hyper-util = { workspace = true, optional = true }
+http-body-util = { version = "0.1", optional = true }
 
 
 [dev-dependencies]

@@ -3164,7 +3164,11 @@ version = "28.0.1"
 dependencies = [
  "bytes",
  "fastrand",
+ "http-body-util",
  "httpmock",
+ "hyper",
+ "hyper-util",
+ "libdd-common",
  "reqwest",
  "rustls",
  "tempfile",
