@@ -200,10 +200,9 @@ pub fn daemonize(listener: IpcServer, mut cfg: Config) -> anyhow::Result<()> {
     setup_daemon_process(listener, &mut spawn_cfg)?;
 
     let mut lib_deps = cfg.library_dependencies;
-    if cfg.appsec_config.is_some() {
-        #[allow(clippy::unwrap_used)]
+    if let Some(appsec_config) = cfg.appsec_config {
         lib_deps.push(spawn_worker::LibDependency::Path(
-            cfg.appsec_config.unwrap().shared_lib_path.into(),
+            appsec_config.shared_lib_path.into(),
         ));
     }
 
