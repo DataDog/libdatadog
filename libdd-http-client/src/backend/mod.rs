@@ -1,6 +1,8 @@
 // Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+#[cfg(feature = "hyper-backend")]
+pub(crate) mod hyper_backend;
 #[cfg(feature = "reqwest-backend")]
 pub(crate) mod reqwest_backend;
 
