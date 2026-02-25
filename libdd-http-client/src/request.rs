@@ -24,6 +24,43 @@ pub enum HttpMethod {
     Options,
 }
 
+/// A single part in a multipart form-data request.
+#[derive(Debug, Clone)]
+pub struct MultipartPart {
+    /// The field name for this part.
+    pub name: String,
+    /// The part's data.
+    pub data: bytes::Bytes,
+    /// Optional filename for this part.
+    pub filename: Option<String>,
+    /// Optional MIME content type (e.g. `"application/json"`).
+    pub content_type: Option<String>,
+}
+
+impl MultipartPart {
+    /// Create a new multipart part with the given field name and data.
+    pub fn new(name: impl Into<String>, data: impl Into<bytes::Bytes>) -> Self {
+        Self {
+            name: name.into(),
+            data: data.into(),
+            filename: None,
+            content_type: None,
+        }
+    }
+
+    /// Set the filename for this part.
+    pub fn filename(mut self, filename: impl Into<String>) -> Self {
+        self.filename = Some(filename.into());
+        self
+    }
+
+    /// Set the MIME content type for this part.
+    pub fn content_type(mut self, content_type: impl Into<String>) -> Self {
+        self.content_type = Some(content_type.into());
+        self
+    }
+}
+
 /// An outgoing HTTP request.
 #[derive(Debug, Clone)]
 pub struct HttpRequest {
@@ -44,6 +81,10 @@ pub struct HttpRequest {
 
     /// Per-request timeout. Overrides the client-level timeout if set.
     pub timeout: Option<Duration>,
+
+    /// Multipart form-data parts. When non-empty, the request is sent as
+    /// multipart/form-data and `body` is ignored.
+    pub multipart_parts: Vec<MultipartPart>,
 }
 
 impl HttpRequest {
@@ -56,7 +97,14 @@ impl HttpRequest {
             headers: Vec::new(),
             body: bytes::Bytes::new(),
             timeout: None,
+            multipart_parts: Vec::new(),
         }
+    }
+
+    /// Add a multipart part to this request. When any parts are present, the
+    /// request is sent as multipart/form-data and `body` is ignored.
+    pub fn add_multipart_part(&mut self, part: MultipartPart) {
+        self.multipart_parts.push(part);
     }
 }
 
