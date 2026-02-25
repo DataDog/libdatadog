@@ -10,9 +10,9 @@ use crate::tracer_payload::TracerPayloadCollection;
 use crate::tracer_payload::{self, TraceChunks};
 use anyhow::anyhow;
 use bytes::buf::Reader;
+use bytes::Buf;
 use http_body_util::BodyExt;
-use hyper::body::Buf;
-use libdd_common::{azure_app_services, hyper_migration};
+use libdd_common::azure_app_services;
 use libdd_trace_normalization::normalizer;
 use libdd_trace_protobuf::pb;
 use rmp::decode::read_array_len;
@@ -37,9 +37,11 @@ const MAX_STRING_DICT_SIZE: u32 = 25_000_000;
 const SPAN_ELEMENT_COUNT: usize = 12;
 
 /// First value of returned tuple is the payload size
-pub async fn get_traces_from_request_body(
-    body: hyper_migration::Body,
-) -> anyhow::Result<(usize, Vec<Vec<pb::Span>>)> {
+pub async fn get_traces_from_request_body<B>(body: B) -> anyhow::Result<(usize, Vec<Vec<pb::Span>>)>
+where
+    B: http_body::Body,
+    B::Error: std::error::Error + Send + Sync + 'static,
+{
     let buffer = body.collect().await?.aggregate();
     let size = buffer.remaining();
 
@@ -227,9 +229,13 @@ fn get_v05_string(
     }
 }
 
-pub async fn get_v05_traces_from_request_body(
-    body: hyper_migration::Body,
-) -> anyhow::Result<(usize, Vec<Vec<pb::Span>>)> {
+pub async fn get_v05_traces_from_request_body<B>(
+    body: B,
+) -> anyhow::Result<(usize, Vec<Vec<pb::Span>>)>
+where
+    B: http_body::Body,
+    B::Error: std::error::Error + Send + Sync + 'static,
+{
     let buffer = body.collect().await?.aggregate();
     let body_size = buffer.remaining();
     let mut reader = buffer.reader();
@@ -694,6 +700,7 @@ mod tests {
         test_utils::{create_test_no_alloc_span, create_test_span},
     };
     use hyper::Request;
+    use libdd_common::http_common;
     use libdd_common::Endpoint;
     use serde_json::json;
 
@@ -807,7 +814,7 @@ mod tests {
             )]],
         );
         let bytes = rmp_serde::to_vec(&data).unwrap();
-        let res = get_v05_traces_from_request_body(hyper_migration::Body::from(bytes)).await;
+        let res = get_v05_traces_from_request_body(http_common::Body::from(bytes)).await;
         assert!(res.is_ok());
         let (_, traces) = res.unwrap();
         let span = traces[0][0].clone();
@@ -907,7 +914,7 @@ mod tests {
         for (trace_input, output) in pairs {
             let bytes = rmp_serde::to_vec(&vec![&trace_input]).unwrap();
             let request = Request::builder()
-                .body(hyper_migration::Body::from(bytes))
+                .body(http_common::Body::from(bytes))
                 .unwrap();
             let res = get_traces_from_request_body(request.into_body()).await;
             assert!(res.is_ok());
@@ -967,7 +974,7 @@ mod tests {
 
         let bytes = rmp_serde::to_vec(&trace_input).unwrap();
         let request = Request::builder()
-            .body(hyper_migration::Body::from(bytes))
+            .body(http_common::Body::from(bytes))
             .unwrap();
 
         let res = get_traces_from_request_body(request.into_body()).await;

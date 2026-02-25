@@ -5,9 +5,9 @@
 
 use super::{schema::AgentInfo, AGENT_INFO_CACHE};
 use anyhow::{anyhow, Result};
+use http::header::HeaderName;
 use http_body_util::BodyExt;
-use hyper::{self, header::HeaderName};
-use libdd_common::{hyper_migration, worker::Worker, Endpoint};
+use libdd_common::{http_common, worker::Worker, Endpoint};
 use sha2::{Digest, Sha256};
 use std::sync::Arc;
 use std::time::Duration;
@@ -83,9 +83,9 @@ pub async fn fetch_info(info_endpoint: &Endpoint) -> Result<Box<AgentInfo>> {
 async fn fetch_and_hash_response(info_endpoint: &Endpoint) -> Result<(String, bytes::Bytes)> {
     let req = info_endpoint
         .to_request_builder(concat!("Libdatadog/", env!("CARGO_PKG_VERSION")))?
-        .method(hyper::Method::GET)
-        .body(hyper_migration::Body::empty());
-    let client = hyper_migration::new_default_client();
+        .method(http::Method::GET)
+        .body(http_common::Body::empty());
+    let client = http_common::new_default_client();
     let res = client.request(req?).await?;
 
     let body_bytes = res.into_body().collect().await?;
@@ -260,7 +260,7 @@ impl ResponseObserver {
     /// This method examines the `Datadog-Agent-State` header in the response and compares
     /// it with the previously seen state. If the state has changed, it sends a trigger
     /// message to the agent info fetcher.
-    pub fn check_response<T>(&self, response: &hyper::Response<T>) {
+    pub fn check_response(&self, response: &http_common::HttpResponse) {
         if let Some(agent_state) = response.headers().get(DATADOG_AGENT_STATE) {
             if let Ok(state_str) = agent_state.to_str() {
                 let current_state = AGENT_INFO_CACHE.load();
@@ -532,11 +532,12 @@ mod single_threaded_tests {
         });
 
         // Create a mock HTTP response with the new agent state
-        let response = hyper::Response::builder()
-            .status(200)
-            .header("datadog-agent-state", "new_state")
-            .body(())
-            .unwrap();
+        let response = http_common::empty_response(
+            http::Response::builder()
+                .status(200)
+                .header("datadog-agent-state", "new_state"),
+        )
+        .unwrap();
 
         // Use the trigger component to check the response
         response_observer.check_response(&response);
@@ -616,11 +617,12 @@ mod single_threaded_tests {
         });
 
         // Create a mock HTTP response with the same agent state
-        let response = hyper::Response::builder()
-            .status(200)
-            .header("datadog-agent-state", &same_hash)
-            .body(())
-            .unwrap();
+        let response = http_common::empty_response(
+            http::Response::builder()
+                .status(200)
+                .header("datadog-agent-state", &same_hash),
+        )
+        .unwrap();
 
         // Use the trigger component to check the response
         response_observer.check_response(&response);

@@ -128,6 +128,57 @@ fn skip_examples() -> &'static HashMap<&'static str, &'static str> {
     })
 }
 
+/// Per-test environment variables.  The runner sets these before spawning
+/// the test executable so that tests which need external resources (e.g. the
+/// receiver binary) can find them without hard-coding paths.
+fn per_test_env(name: &str, project_root: &Path) -> Vec<(String, String)> {
+    match name {
+        "crashtracking_unhandled_exception" => {
+            // The receiver binary and shared library may live in either
+            // "release/" (local/ffi_test build) or "artifacts/" (CI pre-built).
+            // Check both and use whichever exists.
+            let make_paths = |dir: &str| {
+                let base = project_root.join(dir);
+                (
+                    base.join("bin").join("libdatadog-crashtracking-receiver"),
+                    base.join("lib"),
+                )
+            };
+            let (receiver, lib_dir) = ["release", "artifacts"]
+                .iter()
+                .map(|dir| make_paths(dir))
+                .find(|(bin, _)| bin.exists())
+                .unwrap_or_else(|| make_paths("release"));
+
+            // The C test binary is dynamically linked against libdatadog_profiling.{so,dylib}
+            // which is not on the system library path.  Set the platform-specific linker
+            // search path so the binary can load, and the C test forwards it via getenv()
+            // into the receiver's explicit execve environment.
+            // Linux  → LD_LIBRARY_PATH
+            // macOS  → DYLD_LIBRARY_PATH
+            #[cfg(target_os = "macos")]
+            let search_path_var = "DYLD_LIBRARY_PATH";
+            #[cfg(not(target_os = "macos"))]
+            let search_path_var = "LD_LIBRARY_PATH";
+
+            let lib_path = match std::env::var(search_path_var) {
+                Ok(existing) if !existing.is_empty() => {
+                    format!("{}:{}", lib_dir.display(), existing)
+                }
+                _ => lib_dir.display().to_string(),
+            };
+            vec![
+                (
+                    "DDOG_CRASHT_TEST_RECEIVER".to_string(),
+                    receiver.display().to_string(),
+                ),
+                (search_path_var.to_string(), lib_path),
+            ]
+        }
+        _ => vec![],
+    }
+}
+
 fn expected_failures() -> &'static HashMap<&'static str, &'static str> {
     static MAP: OnceLock<HashMap<&'static str, &'static str>> = OnceLock::new();
     MAP.get_or_init(|| {
@@ -287,11 +338,16 @@ fn setup_work_dir(project_root: &Path) -> Result<PathBuf> {
 }
 
 /// Spawn a test process and return child with captured output handles
-fn spawn_test(exe_path: &Path, work_dir: &Path) -> Result<std::process::Child> {
+fn spawn_test(
+    exe_path: &Path,
+    work_dir: &Path,
+    env_vars: &[(String, String)],
+) -> Result<std::process::Child> {
     Command::new(exe_path)
         .current_dir(work_dir)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
+        .envs(env_vars.iter().map(|(k, v)| (k, v)))
         .spawn()
         .with_context(|| format!("spawning {}", exe_path.display()))
 }
@@ -387,11 +443,18 @@ fn determine_status(
     }
 }
 
-fn run_test(name: &str, exe_path: &Path, work_dir: &Path, timeout: Duration) -> TestResult {
+fn run_test(
+    name: &str,
+    exe_path: &Path,
+    work_dir: &Path,
+    project_root: &Path,
+    timeout: Duration,
+) -> TestResult {
     let is_expected_failure = expected_failures().contains_key(name);
+    let env_vars = per_test_env(name, project_root);
     let start = Instant::now();
 
-    let child = match spawn_test(exe_path, work_dir) {
+    let child = match spawn_test(exe_path, work_dir, &env_vars) {
         Ok(c) => c,
         Err(e) => {
             return TestResult {
@@ -507,7 +570,7 @@ fn run_examples(
             continue;
         }
 
-        let result = run_test(name, exe, &work_dir, timeout);
+        let result = run_test(name, exe, &work_dir, project_root, timeout);
         result.print();
         results.push(result);
     }

@@ -14,15 +14,13 @@ autobenches = false
 [dependencies]
 anyhow = { version = "1.0" }
 arc-swap = "1.7.1"
-hyper = { workspace = true }
-hyper-util = { workspace = true }
-http = "1.0"
+http = "1.1"
 http-body-util = "0.1"
 tracing = { version = "0.1", default-features = false }
 rmp-serde = "1.1.1"
 serde = "1.0.209"
 serde_json = "1.0.127"
-bytes = "1.4"
+bytes = "1.11.1"
 sha2 = "0.10"
 either = "1.13.0"
 tokio = { version = "1.23", features = [

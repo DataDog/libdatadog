@@ -24,18 +24,21 @@ hex = "0.4"
 httparse = { version = "1.9", optional = true }
 hyper = { workspace = true }
 hyper-util = { workspace = true }
-http = "1.0"
+http = "1.1"
 http-body = "1.0"
 http-body-util = "0.1"
 tower-service = "0.3"
 cc = "1.1.31"
 mime = { version = "0.3.16", optional = true }
 multer = { version = "3.1", optional = true }
-bytes = { version = "1.4", optional = true }
+bytes = { version = "1.11.1" }
 pin-project = "1"
 rand = { version = "0.8", optional = true }
 regex = "1.5"
-reqwest = { version = "0.13", features = ["rustls"], default-features = false, optional = true }
+# Use hickory-dns instead of the default system DNS resolver to avoid fork safety issues.
+# The default resolver can hold locks or other global state that can cause deadlocks
+# or corruption when the process forks (e.g., in PHP-FPM or other forking environments).
+reqwest = { version = "0.13", features = ["rustls", "hickory-dns"], default-features = false, optional = true }
 rustls-native-certs = { version = "0.8.1", optional = true }
 thiserror = "1.0"
 tokio = { version = "1.23", features = ["rt", "macros", "net", "io-util", "fs"] }
@@ -47,7 +50,12 @@ const_format = "0.2.34"
 nix = { version = "0.29", features = ["process"] }
 [target.'cfg(windows)'.dependencies.windows-sys]
 version = "0.52"
-features = ["Win32_Foundation", "Win32_System_Performance", "Win32_System_Threading"]
+features = [
+    "Win32_Foundation",
+    "Win32_System_Diagnostics_ToolHelp",
+    "Win32_System_Performance",
+    "Win32_System_Threading",
+]
 
 [target.'cfg(unix)'.dependencies]
 rustls = { version = "0.23", default-features = false, optional = true, features = ["aws-lc-rs"] }
@@ -73,7 +81,7 @@ indexmap = "2.11"
 maplit = "1.0"
 mime = "0.3.16"
 multer = "3.1"
-bytes = "1.4"
+bytes = "1.11.1"
 rand = "0.8"
 tempfile = "3.8"
 tokio = { version = "1.23", features = ["rt", "macros", "time"] }
@@ -90,7 +98,7 @@ fips = ["https", "hyper-rustls/fips"]
 # Enable reqwest client builder support with file dump debugging
 reqwest = ["dep:reqwest", "test-utils"]
 # Enable test utilities for use in other crates
-test-utils = ["dep:httparse", "dep:rand", "dep:mime", "dep:multer", "dep:bytes"]
+test-utils = ["dep:httparse", "dep:rand", "dep:mime", "dep:multer"]
 
 [lints.rust]
 # We run coverage checks in our github actions. These checks are run with
