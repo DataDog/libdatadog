@@ -646,12 +646,13 @@ pub struct ClientGroupedStats {
     #[serde(default)]
     #[serde(rename = "HTTPEndpoint")]
     pub http_endpoint: ::prost::alloc::string::String,
-    /// used to identify service override origin
+    /// @inject_tag: msg:"srv_src"
     #[prost(string, tag = "21")]
     #[serde(default)]
     pub service_source: ::prost::alloc::string::String,
-    /// span_derived_primary_tags are primary tags that are derived from span tags
-    /// These tags must be validated against configured primary tags for the org
+    /// used to identify service override origin
+    /// span_derived_primary_tags are user-configured tags that are extracted from spans and used for stats aggregation
+    /// E.g., `aws.s3.bucket`, `http.url`, or any custom tag
     #[prost(string, repeated, tag = "22")]
     #[serde(default)]
     pub span_derived_primary_tags: ::prost::alloc::vec::Vec<
