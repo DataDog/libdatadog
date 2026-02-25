@@ -13,7 +13,7 @@ use crate::backend::Backend;
 #[cfg(feature = "reqwest-backend")]
 use crate::backend::reqwest_backend::ReqwestBackend;
 
-#[cfg(feature = "hyper-backend")]
+#[cfg(all(feature = "hyper-backend", not(feature = "reqwest-backend")))]
 use crate::backend::hyper_backend::HyperBackend;
 
 /// A high-level async HTTP client.
@@ -24,7 +24,7 @@ use crate::backend::hyper_backend::HyperBackend;
 pub struct HttpClient {
     #[cfg(feature = "reqwest-backend")]
     backend: ReqwestBackend,
-    #[cfg(feature = "hyper-backend")]
+    #[cfg(all(feature = "hyper-backend", not(feature = "reqwest-backend")))]
     backend: HyperBackend,
     config: HttpClientConfig,
 }
@@ -56,7 +56,7 @@ impl HttpClient {
             let backend = ReqwestBackend::new(config.timeout(), transport)?;
             Ok(Self { backend, config })
         }
-        #[cfg(feature = "hyper-backend")]
+        #[cfg(all(feature = "hyper-backend", not(feature = "reqwest-backend")))]
         {
             let backend = HyperBackend::new(config.timeout(), transport)?;
             Ok(Self { backend, config })
