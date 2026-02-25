@@ -25,6 +25,31 @@ fn is_quoted(bytes: &[u8], start: usize, end: usize) -> bool {
     bytes[start] == b'\'' && bytes[end - 1] == b'\''
 }
 
+/// Returns the index just past the closing `'` of a quoted string starting at `start`,
+/// or None if no complete quoted string starts there.
+fn find_quoted_string_end(bytes: &[u8], start: usize, end: usize) -> Option<usize> {
+    if bytes[start] != b'\'' {
+        return None;
+    }
+    let mut i = start + 1;
+    let mut escaped = false;
+    while i < end {
+        if escaped {
+            escaped = false;
+        } else if bytes[i] == b'\\' {
+            escaped = true;
+        } else if bytes[i] == b'\'' {
+            if i + 1 < end && bytes[i + 1] == b'\'' {
+                i += 1; // double-quote escape ''
+            } else {
+                return Some(i + 1); // past closing quote
+            }
+        }
+        i += 1;
+    }
+    None
+}
+
 /// Obfuscates an sql string by replacing litterals with '?' chars.
 ///
 /// The algorithm works by finding the places where a litteral could start (so called splitters)
@@ -61,6 +86,15 @@ pub fn obfuscate_sql_string(s: &str) -> String {
                 || is_hex_litteral_prefix(bytes, start, end)
             {
                 obfuscated.push('?');
+            } else if bytes[start] == b'\'' {
+                // Segment starts with a quoted string followed by more content (e.g. 'value'::type).
+                // Obfuscate the quoted part and keep the suffix.
+                if let Some(q_end) = find_quoted_string_end(bytes, start, end) {
+                    obfuscated.push('?');
+                    obfuscated.push_str(&s[q_end..end]);
+                } else {
+                    obfuscated.push_str(&s[start..end]);
+                }
             } else {
                 obfuscated.push_str(&s[start..end]);
             }
@@ -71,6 +105,82 @@ pub fn obfuscate_sql_string(s: &str) -> String {
         start = end + 1;
     }
     obfuscated
+}
+
+/// SQL obfuscation with Go-compatible whitespace normalization for use in JSON plan obfuscation.
+/// Applies obfuscate_sql_string then:
+/// - Strips MySQL backtick identifiers (`id`) and adds spaces around adjacent `.` separators
+/// - Adds a space after `(` and before `)`
+/// - Adds spaces around `::` (PostgreSQL cast operator)
+pub fn obfuscate_sql_string_normalized(s: &str) -> String {
+    let obfuscated = obfuscate_sql_string(s);
+    normalize_plan_sql(&obfuscated)
+}
+
+fn normalize_plan_sql(s: &str) -> String {
+    let mut result = String::with_capacity(s.len() + 16);
+    let bytes = s.as_bytes();
+    let n = bytes.len();
+    let mut i = 0;
+
+    while i < n {
+        match bytes[i] {
+            b'`' => {
+                // Strip backtick, collect identifier content up to closing backtick
+                i += 1;
+                let id_start = i;
+                while i < n && bytes[i] != b'`' {
+                    i += 1;
+                }
+                let identifier = &s[id_start..i];
+                if i < n {
+                    i += 1;
+                } // skip closing backtick
+
+                result.push_str(identifier);
+
+                // If followed by `.` then another backtick identifier, add spaces around `.`
+                if i < n && bytes[i] == b'.' && i + 1 < n && bytes[i + 1] == b'`' {
+                    result.push_str(" . ");
+                    i += 1; // skip the `.`
+                    // next iteration will handle the next backtick
+                }
+            }
+            b'(' => {
+                result.push('(');
+                // Add space after `(` if next char is not already a space
+                if i + 1 < n && bytes[i + 1] != b' ' {
+                    result.push(' ');
+                }
+                i += 1;
+            }
+            b')' => {
+                // Add space before `)` if previous char is not already a space
+                if !result.is_empty() && result.as_bytes().last() != Some(&b' ') {
+                    result.push(' ');
+                }
+                result.push(')');
+                i += 1;
+            }
+            b':' if i + 1 < n && bytes[i + 1] == b':' => {
+                // Add space before `::` if not already there
+                if !result.is_empty() && result.as_bytes().last() != Some(&b' ') {
+                    result.push(' ');
+                }
+                result.push_str("::");
+                // Add space after `::` if next char is not already a space
+                if i + 2 < n && bytes[i + 2] != b' ' {
+                    result.push(' ');
+                }
+                i += 2;
+            }
+            b => {
+                result.push(b as char);
+                i += 1;
+            }
+        }
+    }
+    result
 }
 
 fn next_splitter(s: &[u8], at: usize) -> Option<usize> {
@@ -131,6 +241,70 @@ mod tests {
         }
         Ok(())
     }
+
+    #[test]
+    fn test_sql_obfuscation_normalized() {
+        let mut panic = None;
+        let err = NORMALIZED_CASES
+            .iter()
+            .enumerate()
+            .filter_map(|(i, (input, output))| {
+                let err =
+                    match std::panic::catch_unwind(|| test_sql_obfuscation_normalized_case(input, output)) {
+                        Ok(r) => r,
+                        Err(p) => {
+                            panic = Some(p);
+                            eprintln!("panicked normalized case {i}\n\tinput: {input}\n\n");
+                            return None;
+                        }
+                    }
+                    .err()?;
+                Some(format!("failed normalized case {i}\n\terr: {err}\n"))
+            })
+            .collect::<String>();
+        if !err.is_empty() {
+            if panic.is_none() {
+                panic!("{err}")
+            } else {
+                eprintln!("{err}")
+            }
+        }
+        if let Some(p) = panic {
+            std::panic::resume_unwind(p);
+        }
+    }
+
+    fn test_sql_obfuscation_normalized_case(input: &str, output: &str) -> anyhow::Result<()> {
+        let got = super::obfuscate_sql_string_normalized(input);
+        if output != got {
+            anyhow::bail!("expected {output}\n\tgot: {got}")
+        }
+        Ok(())
+    }
+
+    const NORMALIZED_CASES: &[(&str, &str)] = &[
+        // 'value'::type fix (in obfuscate_sql_string)
+        ("'60'::double precision",       "? :: double precision"),
+        ("'dogfood'::text",              "? :: text"),
+        ("'15531'::tid",                 "? :: tid"),
+        ("(query <> 'dogfood'::text)",   "( query <> ? :: text )"),
+        // normalize_plan_sql — parens spacing
+        ("(foo != ?)",                   "( foo != ? )"),
+        ("((a >= ?) AND (b < ?))",       "( ( a >= ? ) AND ( b < ? ) )"),
+        // normalize_plan_sql — :: spacing
+        ("?::double precision",          "? :: double precision"),
+        ("(query <> ?::text)",           "( query <> ? :: text )"),
+        // normalize_plan_sql — backtick stripping
+        ("`id`",                         "id"),
+        ("(`sbtest`.`sbtest1`.`id` between ? and ?)", "( sbtest . sbtest1 . id between ? and ? )"),
+        // full pipeline (obfuscate_sql_string_normalized)
+        ("(`sbtest`.`sbtest1`.`id` between 5016 and 5115)",
+         "( sbtest . sbtest1 . id between ? and ? )"),
+        ("(query <> 'dogfood'::text)",
+         "( query <> ? :: text )"),
+        ("'60'::double precision",
+         "? :: double precision"),
+    ];
 
     const CASES: &[(&str, &str)] = &[
         ("" , ""),

@@ -11,6 +11,7 @@
 pub mod credit_cards;
 pub mod http;
 pub mod ip_address;
+pub mod json;
 pub mod memcached;
 pub mod obfuscate;
 pub mod obfuscation_config;
