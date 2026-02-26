@@ -739,8 +739,10 @@ mod tests {
 
     #[test]
     fn telemetry_from_network_error_test() {
-        let http_error = HttpError::Network("connection refused".to_string());
-        let result = Err(SendWithRetryError::Network(http_error, 5));
+        let result = Err(SendWithRetryError::Network(
+            HttpError::Network(anyhow::anyhow!("connection refused")),
+            5,
+        ));
         let telemetry = SendPayloadTelemetry::from_retry_result(&result, 1, 2, 0);
         assert_eq!(
             telemetry,
