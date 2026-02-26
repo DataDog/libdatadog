@@ -842,6 +842,11 @@ SET k v
             expected    [r#"CONFIG command
 SET k ?"#];
         ]
+        [
+            test_name   [test_obfuscate_redis_string_67]
+            input       ["HSET key field value field value"]
+            expected    ["HSET key field ? field ?"];
+        ]
     )]
     #[test]
     fn test_name() {
