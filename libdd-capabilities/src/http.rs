@@ -8,31 +8,21 @@
 //! type is [`bytes::Bytes`].
 
 use crate::maybe_send::MaybeSend;
-use core::fmt;
 use core::future::Future;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, thiserror::Error)]
 pub enum HttpError {
-    Network(String),
+    #[error("Network error: {0}")]
+    Network(anyhow::Error),
+    #[error("Request timed out")]
     Timeout,
-    ResponseBody(String),
-    InvalidRequest(String),
-    Other(String),
+    #[error("Response body error: {0}")]
+    ResponseBody(anyhow::Error),
+    #[error("Invalid request: {0}")]
+    InvalidRequest(anyhow::Error),
+    #[error("HTTP error: {0}")]
+    Other(anyhow::Error),
 }
-
-impl fmt::Display for HttpError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            HttpError::Network(msg) => write!(f, "Network error: {}", msg),
-            HttpError::Timeout => write!(f, "Request timed out"),
-            HttpError::ResponseBody(msg) => write!(f, "Response body error: {}", msg),
-            HttpError::InvalidRequest(msg) => write!(f, "Invalid request: {}", msg),
-            HttpError::Other(msg) => write!(f, "HTTP error: {}", msg),
-        }
-    }
-}
-
-impl std::error::Error for HttpError {}
 
 pub trait HttpClientTrait {
     fn new_client() -> Self;
