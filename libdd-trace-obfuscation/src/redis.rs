@@ -11,17 +11,17 @@ pub fn quantize_redis_string(query: &str) -> String {
     let mut commands: Vec<String> = Vec::with_capacity(MAX_REDIS_NB_COMMANDS);
     let mut truncated = false;
 
-    for raw_line in query.split('\n') {
+    for raw_line in query.lines() {
         if commands.len() >= MAX_REDIS_NB_COMMANDS {
             break;
         }
 
-        let line = raw_line.trim_matches(' ');
+        let line = raw_line.trim();
         if line.is_empty() {
             continue;
         }
 
-        let mut tokens = line.split(' ').filter(|s| !s.is_empty());
+        let mut tokens = line.split_whitespace();
         let Some(first) = tokens.next() else { continue };
 
         if first.ends_with(REDIS_TRUNCATION_MARK) {
