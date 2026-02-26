@@ -143,7 +143,7 @@ fn normalize_plan_sql(s: &str) -> String {
                 if i < n && bytes[i] == b'.' && i + 1 < n && bytes[i + 1] == b'`' {
                     result.push_str(" . ");
                     i += 1; // skip the `.`
-                    // next iteration will handle the next backtick
+                            // next iteration will handle the next backtick
                 }
             }
             b'(' => {
@@ -249,16 +249,17 @@ mod tests {
             .iter()
             .enumerate()
             .filter_map(|(i, (input, output))| {
-                let err =
-                    match std::panic::catch_unwind(|| test_sql_obfuscation_normalized_case(input, output)) {
-                        Ok(r) => r,
-                        Err(p) => {
-                            panic = Some(p);
-                            eprintln!("panicked normalized case {i}\n\tinput: {input}\n\n");
-                            return None;
-                        }
+                let err = match std::panic::catch_unwind(|| {
+                    test_sql_obfuscation_normalized_case(input, output)
+                }) {
+                    Ok(r) => r,
+                    Err(p) => {
+                        panic = Some(p);
+                        eprintln!("panicked normalized case {i}\n\tinput: {input}\n\n");
+                        return None;
                     }
-                    .err()?;
+                }
+                .err()?;
                 Some(format!("failed normalized case {i}\n\terr: {err}\n"))
             })
             .collect::<String>();
@@ -284,26 +285,29 @@ mod tests {
 
     const NORMALIZED_CASES: &[(&str, &str)] = &[
         // 'value'::type fix (in obfuscate_sql_string)
-        ("'60'::double precision",       "? :: double precision"),
-        ("'dogfood'::text",              "? :: text"),
-        ("'15531'::tid",                 "? :: tid"),
-        ("(query <> 'dogfood'::text)",   "( query <> ? :: text )"),
+        ("'60'::double precision", "? :: double precision"),
+        ("'dogfood'::text", "? :: text"),
+        ("'15531'::tid", "? :: tid"),
+        ("(query <> 'dogfood'::text)", "( query <> ? :: text )"),
         // normalize_plan_sql — parens spacing
-        ("(foo != ?)",                   "( foo != ? )"),
-        ("((a >= ?) AND (b < ?))",       "( ( a >= ? ) AND ( b < ? ) )"),
+        ("(foo != ?)", "( foo != ? )"),
+        ("((a >= ?) AND (b < ?))", "( ( a >= ? ) AND ( b < ? ) )"),
         // normalize_plan_sql — :: spacing
-        ("?::double precision",          "? :: double precision"),
-        ("(query <> ?::text)",           "( query <> ? :: text )"),
+        ("?::double precision", "? :: double precision"),
+        ("(query <> ?::text)", "( query <> ? :: text )"),
         // normalize_plan_sql — backtick stripping
-        ("`id`",                         "id"),
-        ("(`sbtest`.`sbtest1`.`id` between ? and ?)", "( sbtest . sbtest1 . id between ? and ? )"),
+        ("`id`", "id"),
+        (
+            "(`sbtest`.`sbtest1`.`id` between ? and ?)",
+            "( sbtest . sbtest1 . id between ? and ? )",
+        ),
         // full pipeline (obfuscate_sql_string_normalized)
-        ("(`sbtest`.`sbtest1`.`id` between 5016 and 5115)",
-         "( sbtest . sbtest1 . id between ? and ? )"),
-        ("(query <> 'dogfood'::text)",
-         "( query <> ? :: text )"),
-        ("'60'::double precision",
-         "? :: double precision"),
+        (
+            "(`sbtest`.`sbtest1`.`id` between 5016 and 5115)",
+            "( sbtest . sbtest1 . id between ? and ? )",
+        ),
+        ("(query <> 'dogfood'::text)", "( query <> ? :: text )"),
+        ("'60'::double precision", "? :: double precision"),
     ];
 
     const CASES: &[(&str, &str)] = &[
