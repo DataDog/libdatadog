@@ -43,6 +43,7 @@ use libdd_trace_utils::send_with_retry::{
 use libdd_trace_utils::span::{v04::Span, TraceData};
 use libdd_trace_utils::trace_utils::TracerHeaderTags;
 use std::io;
+use std::marker::PhantomData;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use std::{borrow::Borrow, collections::HashMap, str::FromStr};
@@ -155,9 +156,9 @@ impl<'a> From<&'a TracerMetadata> for HashMap<&'static str, String> {
 }
 
 #[derive(Debug)]
-pub(crate) struct TraceExporterWorkers {
-    pub info: PausableWorker<AgentInfoFetcher>,
-    pub stats: Option<PausableWorker<StatsExporter>>,
+pub(crate) struct TraceExporterWorkers<H: HttpClientTrait + Send + Sync + 'static> {
+    pub info: PausableWorker<AgentInfoFetcher<H>>,
+    pub stats: Option<PausableWorker<StatsExporter<H>>>,
     pub telemetry: Option<PausableWorker<TelemetryWorker>>,
 }
 
@@ -186,12 +187,11 @@ enum DeserInputFormat {
 }
 
 #[derive(Debug)]
-pub struct TraceExporter {
+pub struct TraceExporter<H: HttpClientTrait + Send + Sync + 'static> {
     endpoint: Endpoint,
     metadata: TracerMetadata,
     input_format: TraceExporterInputFormat,
     output_format: TraceExporterOutputFormat,
-    // TODO - do something with the response callback - https://datadoghq.atlassian.net/browse/APMSP-1019
     runtime: Arc<Mutex<Option<Arc<Runtime>>>>,
     /// None if dogstatsd is disabled
     dogstatsd: Option<Client>,
@@ -202,11 +202,12 @@ pub struct TraceExporter {
     info_response_observer: ResponseObserver,
     telemetry: Option<TelemetryClient>,
     health_metrics_enabled: bool,
-    workers: Arc<Mutex<TraceExporterWorkers>>,
+    workers: Arc<Mutex<TraceExporterWorkers<H>>>,
     agent_payload_response_version: Option<AgentResponsePayloadVersion>,
+    _phantom: PhantomData<H>,
 }
 
-impl TraceExporter {
+impl<H: HttpClientTrait + Send + Sync + 'static> TraceExporter<H> {
     #[allow(missing_docs)]
     pub fn builder() -> TraceExporterBuilder {
         TraceExporterBuilder::default()
@@ -255,7 +256,7 @@ impl TraceExporter {
     /// Start the info worker
     fn start_info_worker(
         &self,
-        workers: &mut TraceExporterWorkers,
+        workers: &mut TraceExporterWorkers<H>,
         runtime: &Arc<Runtime>,
     ) -> Result<(), TraceExporterError> {
         workers.info.start(runtime).map_err(|e| {
@@ -266,7 +267,7 @@ impl TraceExporter {
     /// Start the stats worker if present
     fn start_stats_worker(
         &self,
-        workers: &mut TraceExporterWorkers,
+        workers: &mut TraceExporterWorkers<H>,
         runtime: &Arc<Runtime>,
     ) -> Result<(), TraceExporterError> {
         if let Some(stats_worker) = &mut workers.stats {
@@ -280,7 +281,7 @@ impl TraceExporter {
     /// Start the telemetry worker if present
     fn start_telemetry_worker(
         &self,
-        workers: &mut TraceExporterWorkers,
+        workers: &mut TraceExporterWorkers<H>,
         runtime: &Arc<Runtime>,
     ) -> Result<(), TraceExporterError> {
         if let Some(telemetry_worker) = &mut workers.telemetry {
@@ -667,7 +668,7 @@ impl TraceExporter {
         let payload_len = mp_payload.len();
 
         // Send traces to the agent
-        let result = send_with_retry(endpoint, mp_payload, &headers, &strategy).await;
+        let result = send_with_retry::<H>(endpoint, mp_payload, &headers, &strategy).await;
 
         // Send telemetry for the payload sending
         if let Some(telemetry) = &self.telemetry {
@@ -939,6 +940,7 @@ mod tests {
     use super::*;
     use httpmock::prelude::*;
     use httpmock::MockServer;
+    use libdd_capabilities_impl::DefaultHttpClient;
     use libdd_tinybytes::BytesString;
     use libdd_trace_utils::msgpack_encoder;
     use libdd_trace_utils::span::v04::SpanBytes;
@@ -1014,7 +1016,7 @@ mod tests {
         output: TraceExporterOutputFormat,
         enable_telemetry: bool,
         enable_health_metrics: bool,
-    ) -> TraceExporter {
+    ) -> TraceExporter<DefaultHttpClient> {
         let mut builder = TraceExporterBuilder::default();
         builder
             .set_url(&url)
@@ -1042,7 +1044,7 @@ mod tests {
             });
         }
 
-        builder.build().unwrap()
+        builder.build::<DefaultHttpClient>().unwrap()
     }
 
     #[test]
@@ -1443,7 +1445,7 @@ mod tests {
             .set_language("nodejs")
             .set_language_version("1.0")
             .set_language_interpreter("v8");
-        let exporter = builder.build().unwrap();
+        let exporter = builder.build::<DefaultHttpClient>().unwrap();
 
         let traces: Vec<Vec<SpanBytes>> = vec![vec![SpanBytes {
             name: BytesString::from_slice(b"test").unwrap(),
@@ -1485,7 +1487,7 @@ mod tests {
             .set_language("nodejs")
             .set_language_version("1.0")
             .set_language_interpreter("v8");
-        let exporter = builder.build().unwrap();
+        let exporter = builder.build::<DefaultHttpClient>().unwrap();
 
         let traces: Vec<Vec<SpanBytes>> = vec![vec![SpanBytes {
             name: BytesString::from_slice(b"test").unwrap(),
@@ -1520,7 +1522,7 @@ mod tests {
             .set_language("nodejs")
             .set_language_version("1.0")
             .set_language_interpreter("v8");
-        let exporter = builder.build().unwrap();
+        let exporter = builder.build::<DefaultHttpClient>().unwrap();
 
         let traces: Vec<Vec<SpanBytes>> = vec![vec![SpanBytes {
             name: BytesString::from_slice(b"test").unwrap(),
@@ -1578,7 +1580,7 @@ mod tests {
                 heartbeat: 100,
                 ..Default::default()
             });
-        let exporter = builder.build().unwrap();
+        let exporter = builder.build::<DefaultHttpClient>().unwrap();
 
         let traces = vec![0x90];
         let result = exporter.send(traces.as_ref()).unwrap();
@@ -1705,7 +1707,7 @@ mod tests {
             .set_input_format(TraceExporterInputFormat::V04)
             .set_output_format(TraceExporterOutputFormat::V05);
 
-        let exporter = builder.build().unwrap();
+        let exporter = builder.build::<DefaultHttpClient>().unwrap();
 
         let traces = vec![0x90];
         let result = exporter.send(traces.as_ref()).unwrap();
@@ -1751,7 +1753,7 @@ mod tests {
 
         let mut builder = TraceExporterBuilder::default();
         builder.set_url(&server.url("/"));
-        let exporter = builder.build().unwrap();
+        let exporter = builder.build::<DefaultHttpClient>().unwrap();
         let traces = vec![0x90];
         for _ in 0..2 {
             let result = exporter.send(traces.as_ref()).unwrap();
@@ -1788,7 +1790,7 @@ mod tests {
         builder
             .set_url(&server.url("/"))
             .enable_agent_rates_payload_version();
-        let exporter = builder.build().unwrap();
+        let exporter = builder.build::<DefaultHttpClient>().unwrap();
         let traces = vec![0x90];
         let result = exporter.send(traces.as_ref()).unwrap();
         let AgentResponse::Changed { body } = result else {
@@ -1888,7 +1890,7 @@ mod tests {
             .set_input_format(TraceExporterInputFormat::V04)
             .set_output_format(TraceExporterOutputFormat::V04)
             .enable_stats(Duration::from_secs(10));
-        let exporter = builder.build().unwrap();
+        let exporter = builder.build::<DefaultHttpClient>().unwrap();
 
         let trace_chunk = vec![SpanBytes {
             duration: 10,
@@ -1920,7 +1922,9 @@ mod tests {
     #[test]
     #[cfg_attr(miri, ignore)]
     fn test_connection_timeout() {
-        let exporter = TraceExporterBuilder::default().build().unwrap();
+        let exporter = TraceExporterBuilder::default()
+            .build::<DefaultHttpClient>()
+            .unwrap();
 
         assert_eq!(exporter.endpoint.timeout_ms, Endpoint::default().timeout_ms);
 
@@ -1928,7 +1932,7 @@ mod tests {
         let mut builder = TraceExporterBuilder::default();
         builder.set_connection_timeout(timeout);
 
-        let exporter = builder.build().unwrap();
+        let exporter = builder.build::<DefaultHttpClient>().unwrap();
 
         assert_eq!(exporter.endpoint.timeout_ms, 42);
     }
@@ -1937,7 +1941,7 @@ mod tests {
     #[cfg_attr(miri, ignore)]
     fn stop_and_start_runtime() {
         let builder = TraceExporterBuilder::default();
-        let exporter = builder.build().unwrap();
+        let exporter = builder.build::<DefaultHttpClient>().unwrap();
         exporter.stop_worker();
         exporter.run_worker().unwrap();
     }
@@ -1948,6 +1952,7 @@ mod single_threaded_tests {
     use super::*;
     use crate::agent_info;
     use httpmock::prelude::*;
+    use libdd_capabilities_impl::DefaultHttpClient;
     use libdd_trace_utils::msgpack_encoder;
     use libdd_trace_utils::span::v04::SpanBytes;
     use std::time::Duration;
@@ -1995,7 +2000,7 @@ mod single_threaded_tests {
             .set_input_format(TraceExporterInputFormat::V04)
             .set_output_format(TraceExporterOutputFormat::V04)
             .enable_stats(Duration::from_secs(10));
-        let exporter = builder.build().unwrap();
+        let exporter = builder.build::<DefaultHttpClient>().unwrap();
 
         let trace_chunk = vec![SpanBytes {
             duration: 10,
@@ -2095,7 +2100,7 @@ mod single_threaded_tests {
             .set_input_format(TraceExporterInputFormat::V04)
             .set_output_format(TraceExporterOutputFormat::V04)
             .enable_stats(Duration::from_secs(10));
-        let exporter = builder.build().unwrap();
+        let exporter = builder.build::<DefaultHttpClient>().unwrap();
 
         let trace_chunk = vec![SpanBytes {
             service: "test".into(),

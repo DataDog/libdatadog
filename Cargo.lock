@@ -1615,6 +1615,7 @@ dependencies = [
  "httpmock",
  "hyper 1.6.0",
  "libc",
+ "libdd-capabilities-impl",
  "libdd-common",
  "libdd-common-ffi",
  "libdd-crashtracker",
@@ -3181,6 +3182,7 @@ version = "27.0.0"
 dependencies = [
  "build_common",
  "httpmock",
+ "libdd-capabilities-impl",
  "libdd-common-ffi",
  "libdd-data-pipeline",
  "libdd-tinybytes",
