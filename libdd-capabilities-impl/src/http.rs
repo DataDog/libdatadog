@@ -28,8 +28,7 @@ impl HttpClientTrait for DefaultHttpClient {
     {
         let client = self.client.clone();
         async move {
-            let (parts, body) = req.into_parts();
-            let hyper_req = hyper::Request::from_parts(parts, http_common::Body::from_bytes(body));
+            let hyper_req = req.map(http_common::Body::from_bytes);
 
             let response = client
                 .request(hyper_req)
