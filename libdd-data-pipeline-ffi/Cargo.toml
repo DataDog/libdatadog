@@ -29,6 +29,7 @@ rmp-serde = "1.1.1"
 libdd-trace-utils = { path = "../libdd-trace-utils" }
 
 [dependencies]
+libdd-capabilities-impl = "0.1.0"
 libdd-data-pipeline = { path = "../libdd-data-pipeline" }
 libdd-common-ffi = { path = "../libdd-common-ffi", default-features = false }
 libdd-tinybytes = { path = "../libdd-tinybytes" }
