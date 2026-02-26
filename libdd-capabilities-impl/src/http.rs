@@ -34,15 +34,13 @@ impl HttpClientTrait for DefaultHttpClient {
             let response = client
                 .request(hyper_req)
                 .await
-                .map_err(|e| HttpError::Network(format!("Request failed: {}", e)))?;
+                .map_err(|e| HttpError::Network(e.into()))?;
 
             let (parts, body) = response.into_parts();
             let collected = body
                 .collect()
                 .await
-                .map_err(|e| {
-                    HttpError::ResponseBody(format!("Failed to read response body: {}", e))
-                })?
+                .map_err(|e| HttpError::ResponseBody(e.into()))?
                 .to_bytes();
 
             Ok(http::Response::from_parts(parts, collected))

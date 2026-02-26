@@ -737,7 +737,7 @@ mod tests {
     #[tokio::test]
     async fn telemetry_from_network_error_test() {
         let result = Err(SendWithRetryError::Network(
-            HttpError::Network("connection refused".to_string()),
+            HttpError::Network(anyhow::anyhow!("connection refused")),
             5,
         ));
         let telemetry = SendPayloadTelemetry::from_retry_result(&result, 1, 2, 0);
