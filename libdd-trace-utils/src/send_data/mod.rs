@@ -11,6 +11,7 @@ use anyhow::{anyhow, Context};
 use futures::stream::FuturesUnordered;
 use futures::StreamExt;
 use http::{header::CONTENT_TYPE, HeaderMap, HeaderValue};
+use libdd_capabilities::HttpClientTrait;
 use libdd_common::{
     header::{
         APPLICATION_MSGPACK, APPLICATION_PROTOBUF, DATADOG_SEND_REAL_HTTP_STATUS,
@@ -58,8 +59,8 @@ use zstd::stream::write::Encoder;
 ///
 ///     send_data.set_retry_strategy(retry_strategy);
 ///
-///     // Send the data (uses DefaultHttpClient internally)
-///     let result = send_data.send().await;
+///     // Send the data (caller picks the HTTP client implementation)
+///     let result = send_data.send::<libdd_capabilities_impl::DefaultHttpClient>().await;
 /// }
 /// ```
 pub struct SendData {
@@ -221,19 +222,22 @@ impl SendData {
     /// # Returns
     ///
     /// A `SendDataResult` instance containing the result of the operation.
-    pub async fn send(&self) -> SendDataResult {
-        self.send_internal(None).await
+    pub async fn send<H: HttpClientTrait>(&self) -> SendDataResult {
+        self.send_internal::<H>(None).await
     }
 
-    async fn send_internal(&self, endpoint: Option<Endpoint>) -> SendDataResult {
+    async fn send_internal<H: HttpClientTrait>(
+        &self,
+        endpoint: Option<Endpoint>,
+    ) -> SendDataResult {
         if self.use_protobuf() {
-            self.send_with_protobuf(endpoint).await
+            self.send_with_protobuf::<H>(endpoint).await
         } else {
-            self.send_with_msgpack(endpoint).await
+            self.send_with_msgpack::<H>(endpoint).await
         }
     }
 
-    async fn send_payload(
+    async fn send_payload<H: HttpClientTrait>(
         &self,
         chunks: u64,
         payload: Vec<u8>,
@@ -243,7 +247,7 @@ impl SendData {
         #[allow(clippy::unwrap_used)]
         let payload_len = u64::try_from(payload.len()).unwrap();
         (
-            send_with_retry(
+            send_with_retry::<H>(
                 endpoint.unwrap_or(&self.target),
                 payload,
                 &headers,
@@ -284,7 +288,10 @@ impl SendData {
         }
     }
 
-    async fn send_with_protobuf(&self, endpoint: Option<Endpoint>) -> SendDataResult {
+    async fn send_with_protobuf<H: HttpClientTrait>(
+        &self,
+        endpoint: Option<Endpoint>,
+    ) -> SendDataResult {
         let mut result = SendDataResult::default();
 
         #[allow(clippy::unwrap_used)]
@@ -311,7 +318,7 @@ impl SendData {
                 request_headers.insert(CONTENT_TYPE, APPLICATION_PROTOBUF);
 
                 let (response, bytes_sent, chunks) = self
-                    .send_payload(chunks, final_payload, request_headers, endpoint.as_ref())
+                    .send_payload::<H>(chunks, final_payload, request_headers, endpoint.as_ref())
                     .await;
 
                 result.update(response, bytes_sent, chunks);
@@ -322,7 +329,10 @@ impl SendData {
         }
     }
 
-    async fn send_with_msgpack(&self, endpoint: Option<Endpoint>) -> SendDataResult {
+    async fn send_with_msgpack<H: HttpClientTrait>(
+        &self,
+        endpoint: Option<Endpoint>,
+    ) -> SendDataResult {
         let mut result = SendDataResult::default();
         let mut futures = FuturesUnordered::new();
 
@@ -341,7 +351,12 @@ impl SendData {
                         Err(e) => return result.error(anyhow!(e)),
                     };
 
-                    futures.push(self.send_payload(chunks, payload, headers, endpoint.as_ref()));
+                    futures.push(self.send_payload::<H>(
+                        chunks,
+                        payload,
+                        headers,
+                        endpoint.as_ref(),
+                    ));
                 }
             }
             TracerPayloadCollection::V04(payload) => {
@@ -354,7 +369,7 @@ impl SendData {
 
                 let payload = msgpack_encoder::v04::to_vec(payload);
 
-                futures.push(self.send_payload(chunks, payload, headers, endpoint.as_ref()));
+                futures.push(self.send_payload::<H>(chunks, payload, headers, endpoint.as_ref()));
             }
             TracerPayloadCollection::V05(payload) => {
                 #[allow(clippy::unwrap_used)]
@@ -369,7 +384,7 @@ impl SendData {
                     Err(e) => return result.error(anyhow!(e)),
                 };
 
-                futures.push(self.send_payload(chunks, payload, headers, endpoint.as_ref()));
+                futures.push(self.send_payload::<H>(chunks, payload, headers, endpoint.as_ref()));
             }
         }
 
@@ -419,6 +434,7 @@ mod tests {
     use crate::tracer_header_tags::TracerHeaderTags;
     use httpmock::prelude::*;
     use httpmock::MockServer;
+    use libdd_capabilities_impl::DefaultHttpClient;
     use libdd_common::Endpoint;
     use libdd_trace_protobuf::pb::Span;
     use std::collections::HashMap;
@@ -575,7 +591,7 @@ mod tests {
         );
 
         let data_payload_len = compute_payload_len(&data.tracer_payloads);
-        let res = data.send().await;
+        let res = data.send::<DefaultHttpClient>().await;
 
         mock.assert_async().await;
 
@@ -620,7 +636,7 @@ mod tests {
         );
 
         let data_payload_len = compute_payload_len(&data.tracer_payloads);
-        let res = data.send().await;
+        let res = data.send::<DefaultHttpClient>().await;
 
         mock.assert_async().await;
 
@@ -679,7 +695,7 @@ mod tests {
         );
 
         let data_payload_len = rmp_compute_payload_len(&data.tracer_payloads);
-        let res = data.send().await;
+        let res = data.send::<DefaultHttpClient>().await;
 
         mock.assert_async().await;
 
@@ -737,7 +753,7 @@ mod tests {
         );
 
         let data_payload_len = rmp_compute_payload_len(&data.tracer_payloads);
-        let res = data.send().await;
+        let res = data.send::<DefaultHttpClient>().await;
 
         mock.assert_async().await;
 
@@ -781,7 +797,7 @@ mod tests {
         );
 
         let data_payload_len = rmp_compute_payload_len(&data.tracer_payloads);
-        let res = data.send().await;
+        let res = data.send::<DefaultHttpClient>().await;
 
         mock.assert_calls_async(2).await;
 
@@ -822,7 +838,7 @@ mod tests {
             },
         );
 
-        let res = data.send().await;
+        let res = data.send::<DefaultHttpClient>().await;
 
         mock.assert_calls_async(5).await;
 
@@ -854,7 +870,7 @@ mod tests {
             },
         );
 
-        let res = data.send().await;
+        let res = data.send::<DefaultHttpClient>().await;
 
         assert!(res.last_result.is_err());
         match std::env::consts::OS {
@@ -921,7 +937,7 @@ mod tests {
             },
         );
 
-        let res = data.send().await;
+        let res = data.send::<DefaultHttpClient>().await;
 
         mock.assert_calls_async(5).await;
 
@@ -963,7 +979,7 @@ mod tests {
             },
         );
 
-        let res = data.send().await;
+        let res = data.send::<DefaultHttpClient>().await;
 
         mock.assert_calls_async(10).await;
 

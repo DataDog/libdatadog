@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use clap::Parser;
+use libdd_capabilities_impl::DefaultHttpClient;
 use libdd_data_pipeline::trace_exporter::{
     TelemetryConfig, TraceExporter, TraceExporterInputFormat, TraceExporterOutputFormat,
 };
@@ -55,7 +56,7 @@ fn main() {
 
     let args = Args::parse();
     let telemetry_cfg = TelemetryConfig::default();
-    let mut builder = TraceExporter::builder();
+    let mut builder = TraceExporter::<DefaultHttpClient>::builder();
     builder
         .set_url(&args.url)
         .set_hostname("test")
@@ -69,7 +70,9 @@ fn main() {
         .set_output_format(TraceExporterOutputFormat::V04)
         .enable_telemetry(telemetry_cfg)
         .enable_stats(Duration::from_secs(10));
-    let exporter = builder.build().expect("Failed to build TraceExporter");
+    let exporter = builder
+        .build::<DefaultHttpClient>()
+        .expect("Failed to build TraceExporter");
     let now = UNIX_EPOCH
         .elapsed()
         .expect("Failed to get time since UNIX_EPOCH")
