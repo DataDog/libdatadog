@@ -206,7 +206,7 @@ impl TraceExporter {
     fn runtime(&self) -> Result<Arc<Runtime>, TraceExporterError> {
         self.shared_runtime
             .runtime()
-            .map_err(|e| TraceExporterError::Io(e))
+            .map_err(TraceExporterError::Io)
     }
 
     /// Manually start all workers
@@ -217,7 +217,10 @@ impl TraceExporter {
     }
 
     pub fn stop_worker(&self) {
-        let _ = self.shared_runtime.before_fork();
+        let errors = self.shared_runtime.before_fork();
+        if let Err(errors) = errors {
+            error!("Some workers failed to stop: {errors:?}");
+        }
         self.info_response_observer.manual_trigger();
     }
 

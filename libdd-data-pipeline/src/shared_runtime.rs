@@ -194,19 +194,30 @@ impl SharedRuntime {
     ///
     /// # Errors
     /// Returns an error if workers cannot be paused or the runtime is in an invalid state.
-    pub fn before_fork(&self) -> Result<(), SharedRuntimeError> {
+    pub fn before_fork(&self) -> Result<(), Vec<SharedRuntimeError>> {
         if let Some(runtime) = self.runtime.lock_or_panic().take() {
             let mut workers_lock = self.workers.lock_or_panic();
-            runtime.block_on(async move {
+            let results = runtime.block_on(async move {
+                let mut results = Vec::new();
                 for worker_entry in workers_lock.iter_mut() {
-                    worker_entry.worker.request_pause()?;
+                    let _ = worker_entry.worker.request_pause();
                 }
 
                 for worker_entry in workers_lock.iter_mut() {
-                    worker_entry.worker.join().await?;
+                    results.push(worker_entry.worker.join().await);
                 }
-                Ok::<(), PausableWorkerError>(())
-            })?;
+                results
+            });
+
+            // Collect all errors
+            let errors: Vec<SharedRuntimeError> = results
+                .into_iter()
+                .filter_map(|r| Some(r.err()?.into()))
+                .collect();
+
+            if !errors.is_empty() {
+                return Err(errors);
+            }
         }
         Ok(())
     }
