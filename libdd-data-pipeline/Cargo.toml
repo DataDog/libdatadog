@@ -14,7 +14,7 @@ autobenches = false
 [dependencies]
 anyhow = { version = "1.0" }
 arc-swap = "1.7.1"
-http = "1.1"
+http = "1"
 http-body-util = "0.1"
 tracing = { version = "0.1", default-features = false }
 rmp-serde = "1.1.1"
