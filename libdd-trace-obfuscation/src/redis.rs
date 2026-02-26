@@ -196,7 +196,7 @@ fn obfuscate_redis_args_step(mut args: Vec<&str>, start: usize, step: usize) -> 
     args
 }
 
-pub(crate) fn remove_all_redis_args(redis_cmd: &str) -> String {
+pub fn remove_all_redis_args(redis_cmd: &str) -> String {
     let mut redis_cmd_iter = redis_cmd.split_whitespace().peekable();
     let mut obfuscated_cmd = String::new();
 
