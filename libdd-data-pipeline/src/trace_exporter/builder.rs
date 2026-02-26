@@ -12,8 +12,10 @@ use crate::trace_exporter::{
     INFO_ENDPOINT,
 };
 use arc_swap::ArcSwap;
+use libdd_capabilities::HttpClientTrait;
 use libdd_common::{parse_uri, tag, Endpoint};
 use libdd_dogstatsd_client::new;
+use std::marker::PhantomData;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -217,7 +219,9 @@ impl TraceExporterBuilder {
     }
 
     #[allow(missing_docs)]
-    pub fn build(self) -> Result<TraceExporter, TraceExporterError> {
+    pub fn build<H: HttpClientTrait + Send + Sync + 'static>(
+        self,
+    ) -> Result<TraceExporter<H>, TraceExporterError> {
         if !Self::is_inputs_outputs_formats_compatible(self.input_format, self.output_format) {
             return Err(TraceExporterError::Builder(
                 BuilderErrorKind::InvalidConfiguration(
@@ -249,7 +253,7 @@ impl TraceExporterBuilder {
 
         let info_endpoint = Endpoint::from_url(add_path(&agent_url, INFO_ENDPOINT));
         let (info_fetcher, info_response_observer) =
-            AgentInfoFetcher::new(info_endpoint.clone(), Duration::from_secs(5 * 60));
+            AgentInfoFetcher::<H>::new(info_endpoint.clone(), Duration::from_secs(5 * 60));
         let mut info_fetcher_worker = PausableWorker::new(info_fetcher);
         info_fetcher_worker.start(&runtime).map_err(|e| {
             TraceExporterError::Builder(BuilderErrorKind::InvalidConfiguration(e.to_string()))
@@ -336,6 +340,7 @@ impl TraceExporterBuilder {
             agent_payload_response_version: self
                 .agent_rates_payload_version_enabled
                 .then(AgentResponsePayloadVersion::new),
+            _phantom: PhantomData,
         })
     }
 
@@ -357,6 +362,7 @@ impl TraceExporterBuilder {
 mod tests {
     use super::*;
     use crate::trace_exporter::error::BuilderErrorKind;
+    use libdd_capabilities_impl::DefaultHttpClient;
 
     #[cfg_attr(miri, ignore)]
     #[test]
@@ -378,7 +384,7 @@ mod tests {
                 runtime_id: None,
                 debug_enabled: false,
             });
-        let exporter = builder.build().unwrap();
+        let exporter = builder.build::<DefaultHttpClient>().unwrap();
 
         assert_eq!(
             exporter
@@ -402,7 +408,7 @@ mod tests {
     #[test]
     fn test_new_defaults() {
         let builder = TraceExporterBuilder::default();
-        let exporter = builder.build().unwrap();
+        let exporter = builder.build::<DefaultHttpClient>().unwrap();
 
         assert_eq!(
             exporter
@@ -433,7 +439,7 @@ mod tests {
             .set_language_version("1.0")
             .set_language_interpreter("v8");
 
-        let exporter = builder.build();
+        let exporter = builder.build::<DefaultHttpClient>();
 
         assert!(exporter.is_err());
 

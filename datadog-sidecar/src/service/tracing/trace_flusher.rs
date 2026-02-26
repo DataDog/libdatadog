@@ -5,6 +5,7 @@ use super::TraceSendData;
 use crate::agent_remote_config::AgentRemoteConfigWriter;
 use datadog_ipc::platform::NamedShmHandle;
 use futures::future::join_all;
+use libdd_capabilities_impl::DefaultHttpClient;
 use libdd_common::{Endpoint, MutexExt};
 use libdd_trace_utils::trace_utils;
 use libdd_trace_utils::trace_utils::SendData;
@@ -245,7 +246,7 @@ impl TraceFlusher {
 
     async fn send_and_handle_trace(&self, send_data: SendData) {
         let endpoint = send_data.get_target().clone();
-        let response = send_data.send().await;
+        let response = send_data.send::<DefaultHttpClient>().await;
         self.metrics.lock_or_panic().update(&response);
         match response.last_result {
             Ok(response) => {
