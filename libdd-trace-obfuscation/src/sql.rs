@@ -119,65 +119,48 @@ pub fn obfuscate_sql_string_normalized(s: &str) -> String {
 
 fn normalize_plan_sql(s: &str) -> String {
     let mut result = String::with_capacity(s.len() + 16);
-    let bytes = s.as_bytes();
-    let n = bytes.len();
-    let mut i = 0;
+    let mut chars = s.chars().peekable();
 
-    while i < n {
-        match bytes[i] {
-            b'`' => {
-                // Strip backtick, collect identifier content up to closing backtick
-                i += 1;
-                let id_start = i;
-                while i < n && bytes[i] != b'`' {
-                    i += 1;
-                }
-                let identifier = &s[id_start..i];
-                if i < n {
-                    i += 1;
-                } // skip closing backtick
+    while let Some(c) = chars.next() {
+        match c {
+            '`' => {
+                // Strip backticks: collect identifier content up to closing backtick
+                let identifier: String = chars.by_ref().take_while(|&c| c != '`').collect();
+                result.push_str(&identifier);
 
-                result.push_str(identifier);
-
-                // If followed by `.` then another backtick identifier, add spaces around `.`
-                if i < n && bytes[i] == b'.' && i + 1 < n && bytes[i + 1] == b'`' {
-                    result.push_str(" . ");
-                    i += 1; // skip the `.`
-                            // next iteration will handle the next backtick
+                // If followed by `.` then another backtick identifier, replace `.` with ` . `
+                if chars.peek() == Some(&'.') {
+                    chars.next(); // consume `.`
+                    result.push_str(if chars.peek() == Some(&'`') {
+                        " . "
+                    } else {
+                        "."
+                    });
                 }
             }
-            b'(' => {
+            '(' => {
                 result.push('(');
-                // Add space after `(` if next char is not already a space
-                if i + 1 < n && bytes[i + 1] != b' ' {
+                if chars.peek().is_some_and(|&c| c != ' ') {
                     result.push(' ');
                 }
-                i += 1;
             }
-            b')' => {
-                // Add space before `)` if previous char is not already a space
-                if !result.is_empty() && result.as_bytes().last() != Some(&b' ') {
+            ')' => {
+                if result.as_bytes().last().is_some_and(|&b| b != b' ') {
                     result.push(' ');
                 }
                 result.push(')');
-                i += 1;
             }
-            b':' if i + 1 < n && bytes[i + 1] == b':' => {
-                // Add space before `::` if not already there
-                if !result.is_empty() && result.as_bytes().last() != Some(&b' ') {
+            ':' if chars.peek() == Some(&':') => {
+                chars.next(); // consume second `:`
+                if result.as_bytes().last().is_some_and(|&b| b != b' ') {
                     result.push(' ');
                 }
                 result.push_str("::");
-                // Add space after `::` if next char is not already a space
-                if i + 2 < n && bytes[i + 2] != b' ' {
+                if chars.peek().is_some_and(|&c| c != ' ') {
                     result.push(' ');
                 }
-                i += 2;
             }
-            b => {
-                result.push(b as char);
-                i += 1;
-            }
+            _ => result.push(c),
         }
     }
     result
