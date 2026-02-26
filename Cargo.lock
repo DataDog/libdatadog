@@ -2872,8 +2872,10 @@ dependencies = [
 name = "libdd-capabilities"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "bytes",
  "http",
+ "thiserror 1.0.68",
 ]
 
 [[package]]
