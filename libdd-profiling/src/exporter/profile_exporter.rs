@@ -65,6 +65,11 @@ impl ProfileExporter {
     /// The exporter can be used from any thread, but if using `send_blocking()`, the exporter
     /// should remain on the same thread for all blocking calls. See [`send_blocking`] for details.
     ///
+    /// # Performance
+    ///
+    /// TLS configuration is cached globally and reused across exporter
+    /// instances, avoiding repeated root store loading on Linux.
+    ///
     /// [`send_blocking`]: ProfileExporter::send_blocking
     pub fn new(
         profiling_library_name: &str,
@@ -73,8 +78,7 @@ impl ProfileExporter {
         mut tags: Vec<Tag>,
         endpoint: Endpoint,
     ) -> anyhow::Result<Self> {
-        let (builder, request_url) = endpoint.to_reqwest_client_builder()?;
-
+        let tls_config = super::tls::cached_tls_config()?;
         // Pre-build all static headers
         let mut headers = reqwest::header::HeaderMap::new();
 
@@ -117,6 +121,9 @@ impl ProfileExporter {
 
         // Precompute the base tags string (includes configured tags + Azure App Services tags)
         let base_tags_string: String = tags.iter().flat_map(|tag| [tag.as_ref(), ","]).collect();
+
+        let (builder, request_url) = endpoint.to_reqwest_client_builder()?;
+        let builder = builder.tls_backend_preconfigured(tls_config.0);
 
         Ok(Self {
             client: builder.build()?,
