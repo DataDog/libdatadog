@@ -261,6 +261,7 @@ fn generate_protobuf() {
                 "src/pb/span.proto",
                 "src/pb/stats.proto",
                 "src/pb/remoteconfig.proto",
+                "src/pb/opentelemetry/proto/common/v1/process_context.proto",
                 "src/pb/idx/tracer_payload.proto",
                 "src/pb/idx/span.proto",
             ],
