@@ -118,7 +118,7 @@ pub fn obfuscate_sql_string_normalized(s: &str) -> String {
 }
 
 fn normalize_plan_sql(s: &str) -> String {
-    let mut result = String::with_capacity(s.len() + 16);
+    let mut result = String::with_capacity(s.len());
     let mut chars = s.chars().peekable();
 
     while let Some(c) = chars.next() {
