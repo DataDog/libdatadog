@@ -22,6 +22,9 @@ pub const MAPPING_NAME: &str = "OTEL_CTX";
 pub mod linux {
     use super::{MAPPING_NAME, PROCESS_CTX_VERSION, SIGNATURE};
 
+    use libdd_trace_protobuf::opentelemetry::proto::common::v1::ProcessContext;
+    use prost::Message;
+
     use std::{
         ffi::c_void,
         mem::ManuallyDrop,
@@ -344,7 +347,12 @@ pub mod linux {
     /// the Publish protocol of the process context specification.
     ///
     /// Otherwise, the context is updated following the Update protocol.
-    pub fn publish(payload: Vec<u8>) -> anyhow::Result<()> {
+    #[inline]
+    pub fn publish(context: &ProcessContext) -> anyhow::Result<()> {
+        publish_raw_payload(context.encode_to_vec())
+    }
+
+    fn publish_raw_payload(payload: Vec<u8>) -> anyhow::Result<()> {
         let mut guard = lock_context_handle()?;
 
         match &mut *guard {
@@ -460,7 +468,7 @@ pub mod linux {
         fn publish_then_read_context() {
             let payload = "example process context payload";
 
-            super::publish(payload.as_bytes().to_vec())
+            super::publish_raw_payload(payload.as_bytes().to_vec())
                 .expect("couldn't publish the process context");
             let header = read_process_context().expect("couldn't read back the process contex");
             // Safety: the published context must have put valid bytes of size payload_size in the
@@ -490,9 +498,9 @@ pub mod linux {
             let payload_v1 = "example process context payload";
             let payload_v2 = "another example process context payload of different size";
 
-            super::publish(payload_v1.as_bytes().to_vec())
+            super::publish_raw_payload(payload_v1.as_bytes().to_vec())
                 .expect("couldn't publish the process context");
-            super::publish(payload_v2.as_bytes().to_vec())
+            super::publish_raw_payload(payload_v2.as_bytes().to_vec())
                 .expect("couldn't update the process contet");
 
             let header = read_process_context().expect("couldn't read back the process contex");
