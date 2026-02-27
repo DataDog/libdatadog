@@ -3186,6 +3186,7 @@ dependencies = [
  "libdd-common",
  "libdd-common-ffi",
  "libdd-library-config",
+ "libdd-trace-protobuf",
  "tempfile",
 ]
 

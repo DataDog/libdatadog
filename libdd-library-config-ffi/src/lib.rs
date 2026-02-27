@@ -1,6 +1,7 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+pub mod otel_process_ctxt;
 pub mod tracer_metadata;
 
 use libdd_common_ffi::{self as ffi, slice::AsBytes, CString, CharSlice, Error};
