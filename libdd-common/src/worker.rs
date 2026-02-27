@@ -8,8 +8,6 @@ use async_trait::async_trait;
 /// # Lifecycle
 /// The worker's `Self::run` method should be executed everytime the `Self::trigger` method returns.
 /// On startup `Self::initial_trigger` should be called before `Self::run`.
-///
-///
 #[async_trait]
 pub trait Worker: std::fmt::Debug {
     /// Main worker function
@@ -19,7 +17,7 @@ pub trait Worker: std::fmt::Debug {
     async fn trigger(&mut self);
 
     /// Alternative trigger called on start to provide custom behavior
-    /// Can be used to trigger first run right away. Defaults to `trigger` behavior.
+    /// Defaults to `trigger` behavior.
     async fn initial_trigger(&mut self) {
         self.trigger().await
     }

@@ -216,6 +216,7 @@ impl TraceExporter {
         })
     }
 
+    /// Stop all background workers and drop the tokio runtime
     pub fn stop_worker(&self) {
         let errors = self.shared_runtime.before_fork();
         if let Err(errors) = errors {
