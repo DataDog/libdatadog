@@ -33,6 +33,9 @@ pub mod linux {
         process::{getpid, set_virtual_memory_region_name, Pid},
     };
 
+    use libdd_trace_protobuf::opentelemetry::proto::common::v1::ProcessContext;
+    use prost::Message;
+
     /// Current version of the process context format
     pub const PROCESS_CTX_VERSION: u32 = 2;
     /// Signature bytes for identifying process context mappings
@@ -368,7 +371,12 @@ pub mod linux {
     /// is Undefined Behavior, for example. We assume that a forking runtime (such as Python or
     /// Ruby) that doesn't follow with an immediate `exec` is already "taking that risk", so to
     /// speak (typically, if no thread is ever spawned before the fork, things are mostly fine).
-    pub fn publish(payload: Vec<u8>) -> anyhow::Result<()> {
+    #[inline]
+    pub fn publish(context: &ProcessContext) -> anyhow::Result<()> {
+        publish_raw_payload(context.encode_to_vec())
+    }
+
+    fn publish_raw_payload(payload: Vec<u8>) -> anyhow::Result<()> {
         let mut guard = lock_context_handle()?;
 
         match &mut *guard {
@@ -497,7 +505,7 @@ pub mod linux {
             let payload_v1 = "example process context payload";
             let payload_v2 = "another example process context payload of different size";
 
-            super::publish(payload_v1.as_bytes().to_vec())
+            super::publish_raw_payload(payload_v1.as_bytes().to_vec())
                 .expect("couldn't publish the process context");
 
             let header = read_process_context().expect("couldn't read back the process context");
@@ -522,7 +530,8 @@ pub mod linux {
             let published_at_ns_v1 = header.published_at_ns;
             // Ensure the clock advances so the updated timestamp is strictly greater
             std::thread::sleep(std::time::Duration::from_nanos(10));
-            super::publish(payload_v2.as_bytes().to_vec())
+
+            super::publish_raw_payload(payload_v2.as_bytes().to_vec())
                 .expect("couldn't update the process context");
 
             let header = read_process_context().expect("couldn't read back the process context");
@@ -555,7 +564,7 @@ pub mod linux {
         fn unpublish_process_context() {
             let payload = "example process context payload";
 
-            super::publish(payload.as_bytes().to_vec())
+            super::publish_raw_payload(payload.as_bytes().to_vec())
                 .expect("couldn't publish the process context");
 
             // The mapping must be discoverable right after publishing
