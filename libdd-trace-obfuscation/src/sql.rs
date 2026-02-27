@@ -87,8 +87,8 @@ pub fn obfuscate_sql_string(s: &str) -> String {
             {
                 obfuscated.push('?');
             } else if bytes[start] == b'\'' {
-                // Segment starts with a quoted string followed by more content (e.g. 'value'::type).
-                // Obfuscate the quoted part and keep the suffix.
+                // Segment starts with a quoted string followed by more content (e.g.
+                // 'value'::type). Obfuscate the quoted part and keep the suffix.
                 if let Some(q_end) = find_quoted_string_end(bytes, start, end) {
                     obfuscated.push('?');
                     obfuscated.push_str(&s[q_end..end]);
