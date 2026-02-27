@@ -7,6 +7,8 @@ use crate::{
     },
     RemoteConfigPath, RemoteConfigProduct, RemoteConfigSource,
 };
+#[cfg(feature = "ffe")]
+use datadog_ffe::rules_based::UniversalFlagConfig;
 #[cfg(feature = "live-debugger")]
 use datadog_live_debugger::LiveDebuggingData;
 
@@ -17,6 +19,8 @@ pub enum RemoteConfigData {
     LiveDebugger(LiveDebuggingData),
     TracerFlareConfig(AgentConfigFile),
     TracerFlareTask(AgentTaskFile),
+    #[cfg(feature = "ffe")]
+    FfeFlags(UniversalFlagConfig),
     Ignored(RemoteConfigProduct),
 }
 
@@ -40,6 +44,10 @@ impl RemoteConfigData {
                 let parsed = datadog_live_debugger::parse_json(&String::from_utf8_lossy(data))?;
                 RemoteConfigData::LiveDebugger(parsed)
             }
+            #[cfg(feature = "ffe")]
+            RemoteConfigProduct::FfeFlags => {
+                RemoteConfigData::FfeFlags(UniversalFlagConfig::from_json(data.to_vec())?)
+            }
             _ => RemoteConfigData::Ignored(product),
         })
     }
@@ -53,6 +61,8 @@ impl From<&RemoteConfigData> for RemoteConfigProduct {
             RemoteConfigData::LiveDebugger(_) => RemoteConfigProduct::LiveDebugger,
             RemoteConfigData::TracerFlareConfig(_) => RemoteConfigProduct::AgentConfig,
             RemoteConfigData::TracerFlareTask(_) => RemoteConfigProduct::AgentTask,
+            #[cfg(feature = "ffe")]
+            RemoteConfigData::FfeFlags(_) => RemoteConfigProduct::FfeFlags,
             RemoteConfigData::Ignored(product) => *product,
         }
     }

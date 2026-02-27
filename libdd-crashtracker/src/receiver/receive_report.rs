@@ -7,7 +7,7 @@ use crate::{
     },
     runtime_callback::RuntimeStack,
     shared::constants::*,
-    CrashtrackerConfiguration,
+    CrashtrackerConfiguration, StackTrace,
 };
 
 use anyhow::Context;
@@ -15,7 +15,6 @@ use libdd_telemetry::data::LogLevel;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use std::{fs, path::PathBuf};
 use tokio::io::AsyncBufReadExt;
 
 #[derive(Debug)]
@@ -109,6 +108,7 @@ pub(crate) enum StdinState {
     Counters,
     Done,
     File(String, Vec<String>),
+    Kind,
     Metadata,
     ProcInfo,
     SigInfo,
@@ -117,6 +117,7 @@ pub(crate) enum StdinState {
     TraceIds,
     Ucontext,
     Waiting,
+    WholeStackTrace,
     ThreadName(Option<String>),
     // StackFrame is always emitted as one stream of all the frames but StackString
     // may have lines that we need to accumulate depending on runtime (e.g. Python)
@@ -170,6 +171,15 @@ fn process_line(
             StdinState::Counters
         }
 
+        StdinState::WholeStackTrace if line.starts_with(DD_CRASHTRACK_END_WHOLE_STACKTRACE) => {
+            StdinState::Waiting
+        }
+        StdinState::WholeStackTrace => {
+            let stacktrace: StackTrace = serde_json::from_str(line)?;
+            builder.with_stack(stacktrace)?;
+            StdinState::WholeStackTrace
+        }
+
         StdinState::Done => {
             builder.with_log_message(
                 format!("Unexpected line after crashreport is done: {line}"),
@@ -185,6 +195,13 @@ fn process_line(
         StdinState::File(name, mut contents) => {
             contents.push(line.to_string());
             StdinState::File(name, contents)
+        }
+
+        StdinState::Kind if line.starts_with(DD_CRASHTRACK_END_KIND) => StdinState::Waiting,
+        StdinState::Kind => {
+            let kind: ErrorKind = serde_json::from_str(line)?;
+            builder.with_kind(kind)?;
+            StdinState::Kind
         }
 
         StdinState::Metadata if line.starts_with(DD_CRASHTRACK_END_METADATA) => StdinState::Waiting,
@@ -312,6 +329,7 @@ fn process_line(
             let (_, filename) = line.split_once(' ').unwrap_or(("", "MISSING_FILENAME"));
             StdinState::File(filename.to_string(), vec![])
         }
+        StdinState::Waiting if line.starts_with(DD_CRASHTRACK_BEGIN_KIND) => StdinState::Kind,
         StdinState::Waiting if line.starts_with(DD_CRASHTRACK_BEGIN_METADATA) => {
             StdinState::Metadata
         }
@@ -340,6 +358,9 @@ fn process_line(
         }
         StdinState::Waiting if line.starts_with(DD_CRASHTRACK_BEGIN_UCONTEXT) => {
             StdinState::Ucontext
+        }
+        StdinState::Waiting if line.starts_with(DD_CRASHTRACK_BEGIN_WHOLE_STACKTRACE) => {
+            StdinState::WholeStackTrace
         }
         StdinState::Waiting if line.starts_with(DD_CRASHTRACK_DONE) => {
             builder.with_incomplete(false)?;
@@ -393,7 +414,7 @@ pub(crate) async fn receive_report_from_stream(
             }
         }
 
-        // We need to wait until at least we receive config, metadata, and siginfo (on non-Windows
+        // We need to wait until at least we receive config, metadata, and kind (on non-Windows
         // platforms) before sending the crash ping
         if !crash_ping_sent && builder.is_ping_ready() {
             if let Some(ref config_ref) = config {
@@ -486,8 +507,6 @@ pub(crate) async fn receive_report_from_stream(
         return Ok(None);
     }
 
-    // For now, we only support Signal based crash detection in the receiver.
-    builder.with_kind(ErrorKind::UnixSignal)?;
     enrich_thread_name(&mut builder)?;
     builder.with_os_info_this_machine()?;
 
@@ -524,6 +543,8 @@ pub(crate) async fn receive_report_from_stream(
 
 #[cfg(target_os = "linux")]
 fn enrich_thread_name(builder: &mut CrashInfoBuilder) -> anyhow::Result<()> {
+    use std::{fs, path::PathBuf};
+
     if builder.error.thread_name.is_some() {
         return Ok(());
     }

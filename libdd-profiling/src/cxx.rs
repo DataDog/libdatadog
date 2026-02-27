@@ -16,14 +16,85 @@ use crate::internal;
 /// cbindgen:ignore
 #[cxx::bridge(namespace = "datadog::profiling")]
 pub mod ffi {
-    // Shared structs - CXX-friendly types
-    struct ValueType<'a> {
-        type_: &'a str,
-        unit: &'a str,
+    // Shared types - CXX-friendly types
+    //
+    // This enum covers the ValueType entries supported by Datadog profilers:
+    // - dd-trace-rb (stack_recorder.c `all_value_types`)
+    // - dd-trace-py (dd_wrapper/include/types.hpp + dd_wrapper/src/profile.cpp value strings)
+    // - dd-trace-php (profiling/src/profiling/samples.rs I/O profiling sample types)
+    // - dd-trace-dotnet (sample type definitions for allocations, locks, CPU, walltime, exceptions,
+    //   live objects, HTTP requests)
+    // - pprof-nodejs (profile-serializer.ts value type functions)
+    //
+    // Experimental variants allow profilers to use custom sample types for testing
+    // and development without modifying this enum. They map to fixed (type, unit) pairs.
+    //
+    // LEGACY VARIANTS (prefer alternatives for consistency):
+    // - CpuLegacy (use CpuTime)
+    // - CpuSampleLegacy (use CpuSamples)
+    // - ExceptionLegacy (use ExceptionSamples)
+    // - ObjectsLegacy (use InuseObjects)
+    // - SpaceLegacy (use specific variants: InuseSpace, HeapSpace, AllocSpace)
+    // - WallLegacy (use WallTime)
+    enum SampleType {
+        AllocSamples,
+        AllocSamplesUnscaled,
+        AllocSize,
+        AllocSpace,
+        CpuTime,
+        CpuSamples,
+        CpuLegacy,       // LEGACY: Use CpuTime instead
+        CpuSampleLegacy, // LEGACY: Use CpuSamples instead
+        ExceptionSamples,
+        ExceptionLegacy, // LEGACY: Use ExceptionSamples instead
+        FileIoReadSize,
+        FileIoReadSizeSamples,
+        FileIoReadTime,
+        FileIoReadTimeSamples,
+        FileIoWriteSize,
+        FileIoWriteSizeSamples,
+        FileIoWriteTime,
+        FileIoWriteTimeSamples,
+        GpuAllocSamples,
+        GpuFlops,
+        GpuFlopsSamples,
+        GpuSamples,
+        GpuSpace,
+        GpuTime,
+        HeapLiveSamples,
+        HeapLiveSize,
+        HeapSpace,
+        InuseObjects,
+        InuseSpace,
+        LockAcquire,
+        LockAcquireWait,
+        LockCount,
+        LockRelease,
+        LockReleaseHold,
+        LockTime,
+        ObjectsLegacy, // LEGACY: Use InuseObjects instead
+        RequestTime,
+        Sample,
+        SocketReadSize,
+        SocketReadSizeSamples,
+        SocketReadTime,
+        SocketReadTimeSamples,
+        SocketWriteSize,
+        SocketWriteSizeSamples,
+        SocketWriteTime,
+        SocketWriteTimeSamples,
+        SpaceLegacy, // LEGACY: Use specific variants (InuseSpace, HeapSpace, AllocSpace) instead
+        Timeline,
+        WallSamples,
+        WallTime,
+        WallLegacy, // LEGACY: Use WallTime instead
+        ExperimentalCount,
+        ExperimentalNanoseconds,
+        ExperimentalBytes,
     }
 
-    struct Period<'a> {
-        value_type: ValueType<'a>,
+    struct Period {
+        value_type: SampleType,
         value: i64,
     }
 
@@ -86,7 +157,7 @@ pub mod ffi {
 
         // Static factory methods for Profile
         #[Self = "Profile"]
-        fn create(sample_types: Vec<ValueType>, period: &Period) -> Result<Box<Profile>>;
+        fn create(sample_types: Vec<SampleType>, period: &Period) -> Result<Box<Profile>>;
 
         // Profile methods
         fn add_sample(self: &mut Profile, sample: &Sample) -> Result<()>;
@@ -134,9 +205,11 @@ pub mod ffi {
             tags: Vec<Tag>,
             agent_url: &str,
             timeout_ms: u64,
+            use_system_resolver: bool,
         ) -> Result<Box<ProfileExporter>>;
 
         #[Self = "ProfileExporter"]
+        #[allow(clippy::too_many_arguments)]
         fn create_agentless_exporter(
             profiling_library_name: &str,
             profiling_library_version: &str,
@@ -145,6 +218,7 @@ pub mod ffi {
             site: &str,
             api_key: &str,
             timeout_ms: u64,
+            use_system_resolver: bool,
         ) -> Result<Box<ProfileExporter>>;
 
         #[Self = "ProfileExporter"]
@@ -259,18 +333,78 @@ pub mod ffi {
 // From Implementations - Convert CXX types to API types
 // ============================================================================
 
-impl<'a> From<&ffi::ValueType<'a>> for api::ValueType<'a> {
-    fn from(vt: &ffi::ValueType<'a>) -> Self {
-        api::ValueType::new(vt.type_, vt.unit)
+impl TryFrom<ffi::SampleType> for api::SampleType {
+    type Error = anyhow::Error;
+
+    fn try_from(st: ffi::SampleType) -> Result<Self, Self::Error> {
+        Ok(match st {
+            ffi::SampleType::AllocSamples => api::SampleType::AllocSamples,
+            ffi::SampleType::AllocSamplesUnscaled => api::SampleType::AllocSamplesUnscaled,
+            ffi::SampleType::AllocSize => api::SampleType::AllocSize,
+            ffi::SampleType::AllocSpace => api::SampleType::AllocSpace,
+            ffi::SampleType::CpuTime => api::SampleType::CpuTime,
+            ffi::SampleType::CpuSamples => api::SampleType::CpuSamples,
+            ffi::SampleType::CpuLegacy => api::SampleType::CpuLegacy,
+            ffi::SampleType::CpuSampleLegacy => api::SampleType::CpuSampleLegacy,
+            ffi::SampleType::ExceptionSamples => api::SampleType::ExceptionSamples,
+            ffi::SampleType::ExceptionLegacy => api::SampleType::ExceptionLegacy,
+            ffi::SampleType::FileIoReadSize => api::SampleType::FileIoReadSize,
+            ffi::SampleType::FileIoReadSizeSamples => api::SampleType::FileIoReadSizeSamples,
+            ffi::SampleType::FileIoReadTime => api::SampleType::FileIoReadTime,
+            ffi::SampleType::FileIoReadTimeSamples => api::SampleType::FileIoReadTimeSamples,
+            ffi::SampleType::FileIoWriteSize => api::SampleType::FileIoWriteSize,
+            ffi::SampleType::FileIoWriteSizeSamples => api::SampleType::FileIoWriteSizeSamples,
+            ffi::SampleType::FileIoWriteTime => api::SampleType::FileIoWriteTime,
+            ffi::SampleType::FileIoWriteTimeSamples => api::SampleType::FileIoWriteTimeSamples,
+            ffi::SampleType::GpuAllocSamples => api::SampleType::GpuAllocSamples,
+            ffi::SampleType::GpuFlops => api::SampleType::GpuFlops,
+            ffi::SampleType::GpuFlopsSamples => api::SampleType::GpuFlopsSamples,
+            ffi::SampleType::GpuSamples => api::SampleType::GpuSamples,
+            ffi::SampleType::GpuSpace => api::SampleType::GpuSpace,
+            ffi::SampleType::GpuTime => api::SampleType::GpuTime,
+            ffi::SampleType::HeapLiveSamples => api::SampleType::HeapLiveSamples,
+            ffi::SampleType::HeapLiveSize => api::SampleType::HeapLiveSize,
+            ffi::SampleType::HeapSpace => api::SampleType::HeapSpace,
+            ffi::SampleType::InuseObjects => api::SampleType::InuseObjects,
+            ffi::SampleType::InuseSpace => api::SampleType::InuseSpace,
+            ffi::SampleType::LockAcquire => api::SampleType::LockAcquire,
+            ffi::SampleType::LockAcquireWait => api::SampleType::LockAcquireWait,
+            ffi::SampleType::LockCount => api::SampleType::LockCount,
+            ffi::SampleType::LockRelease => api::SampleType::LockRelease,
+            ffi::SampleType::LockReleaseHold => api::SampleType::LockReleaseHold,
+            ffi::SampleType::LockTime => api::SampleType::LockTime,
+            ffi::SampleType::ObjectsLegacy => api::SampleType::ObjectsLegacy,
+            ffi::SampleType::RequestTime => api::SampleType::RequestTime,
+            ffi::SampleType::Sample => api::SampleType::Sample,
+            ffi::SampleType::SocketReadSize => api::SampleType::SocketReadSize,
+            ffi::SampleType::SocketReadSizeSamples => api::SampleType::SocketReadSizeSamples,
+            ffi::SampleType::SocketReadTime => api::SampleType::SocketReadTime,
+            ffi::SampleType::SocketReadTimeSamples => api::SampleType::SocketReadTimeSamples,
+            ffi::SampleType::SocketWriteSize => api::SampleType::SocketWriteSize,
+            ffi::SampleType::SocketWriteSizeSamples => api::SampleType::SocketWriteSizeSamples,
+            ffi::SampleType::SocketWriteTime => api::SampleType::SocketWriteTime,
+            ffi::SampleType::SocketWriteTimeSamples => api::SampleType::SocketWriteTimeSamples,
+            ffi::SampleType::SpaceLegacy => api::SampleType::SpaceLegacy,
+            ffi::SampleType::Timeline => api::SampleType::Timeline,
+            ffi::SampleType::WallSamples => api::SampleType::WallSamples,
+            ffi::SampleType::WallTime => api::SampleType::WallTime,
+            ffi::SampleType::WallLegacy => api::SampleType::WallLegacy,
+            ffi::SampleType::ExperimentalCount => api::SampleType::ExperimentalCount,
+            ffi::SampleType::ExperimentalNanoseconds => api::SampleType::ExperimentalNanoseconds,
+            ffi::SampleType::ExperimentalBytes => api::SampleType::ExperimentalBytes,
+            _ => anyhow::bail!("invalid SampleType discriminant from C++"),
+        })
     }
 }
 
-impl<'a> From<&ffi::Period<'a>> for api::Period<'a> {
-    fn from(period: &ffi::Period<'a>) -> Self {
-        api::Period {
-            r#type: (&period.value_type).into(),
+impl TryFrom<&ffi::Period> for api::Period {
+    type Error = anyhow::Error;
+
+    fn try_from(period: &ffi::Period) -> Result<Self, Self::Error> {
+        Ok(api::Period {
+            sample_type: period.value_type.try_into()?,
             value: period.value,
-        }
+        })
     }
 }
 
@@ -389,12 +523,15 @@ pub struct Profile {
 
 impl Profile {
     pub fn create(
-        sample_types: Vec<ffi::ValueType>,
+        sample_types: Vec<ffi::SampleType>,
         period: &ffi::Period,
     ) -> anyhow::Result<Box<Profile>> {
-        // Convert using From trait
-        let types: Vec<api::ValueType> = sample_types.iter().map(Into::into).collect();
-        let period_value: api::Period = period.into();
+        // Convert (fallibly) from CXX types to API types
+        let types: Vec<api::SampleType> = sample_types
+            .into_iter()
+            .map(TryInto::try_into)
+            .collect::<Result<Vec<_>, _>>()?;
+        let period_value: api::Period = period.try_into()?;
 
         // Profile::try_new interns the strings
         let inner = internal::Profile::try_new(&types, Some(period_value))?;
@@ -567,6 +704,7 @@ impl ProfileExporter {
         tags: Vec<ffi::Tag>,
         agent_url: &str,
         timeout_ms: u64,
+        use_system_resolver: bool,
     ) -> anyhow::Result<Box<ProfileExporter>> {
         let mut endpoint = exporter::config::agent(agent_url.parse()?)?;
 
@@ -574,6 +712,7 @@ impl ProfileExporter {
         if timeout_ms > 0 {
             endpoint.timeout_ms = timeout_ms;
         }
+        endpoint = endpoint.with_system_resolver(use_system_resolver);
 
         let tags_vec: Vec<libdd_common::tag::Tag> = tags
             .iter()
@@ -591,6 +730,7 @@ impl ProfileExporter {
         Ok(Box::new(ProfileExporter { inner }))
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn create_agentless_exporter(
         profiling_library_name: &str,
         profiling_library_version: &str,
@@ -599,6 +739,7 @@ impl ProfileExporter {
         site: &str,
         api_key: &str,
         timeout_ms: u64,
+        use_system_resolver: bool,
     ) -> anyhow::Result<Box<ProfileExporter>> {
         let mut endpoint = exporter::config::agentless(site, api_key.to_string())?;
 
@@ -606,6 +747,7 @@ impl ProfileExporter {
         if timeout_ms > 0 {
             endpoint.timeout_ms = timeout_ms;
         }
+        endpoint = endpoint.with_system_resolver(use_system_resolver);
 
         let tags_vec: Vec<libdd_common::tag::Tag> = tags
             .iter()
@@ -844,20 +986,13 @@ mod tests {
     const TEST_LIB_VERSION: &str = "1.0.0";
     const TEST_FAMILY: &str = "test";
 
-    fn create_test_value_type() -> ffi::ValueType<'static> {
-        ffi::ValueType {
-            type_: "wall-time",
-            unit: "nanoseconds",
-        }
-    }
-
     fn create_test_profile() -> Box<Profile> {
-        let wall_time = create_test_value_type();
+        let wall_time = ffi::SampleType::WallTime;
         let period = ffi::Period {
             value_type: wall_time,
             value: 60,
         };
-        Profile::create(vec![create_test_value_type()], &period).unwrap()
+        Profile::create(vec![ffi::SampleType::WallTime], &period).unwrap()
     }
 
     fn create_test_location(address: u64, line: i64) -> ffi::Location<'static> {
@@ -898,6 +1033,7 @@ mod tests {
             }],
             "http://localhost:1", // Port 1 unlikely to have server
             100,
+            false,
         )
         .unwrap()
     }
@@ -1003,6 +1139,7 @@ mod tests {
             }],
             "http://localhost:8126",
             0,
+            false,
         )
         .is_ok());
 
@@ -1027,6 +1164,7 @@ mod tests {
             ],
             "http://localhost:8126",
             10000,
+            false,
         )
         .is_ok());
 
@@ -1039,6 +1177,7 @@ mod tests {
             "datadoghq.com",
             "fake-api-key",
             5000,
+            false,
         )
         .is_ok());
 
@@ -1050,6 +1189,7 @@ mod tests {
             "datadoghq.eu",
             "fake-api-key",
             0,
+            false,
         )
         .is_ok());
 
@@ -1061,6 +1201,7 @@ mod tests {
             vec![],
             "http://localhost:8126",
             0,
+            false,
         )
         .is_ok());
     }
@@ -1096,12 +1237,9 @@ mod tests {
         })
         .is_err());
 
-        // ValueType conversion
-        let vt: api::ValueType = (&ffi::ValueType {
-            type_: "cpu-samples",
-            unit: "count",
-        })
-            .into();
+        // SampleType conversion
+        let st: api::SampleType = ffi::SampleType::CpuSamples.try_into().unwrap();
+        let vt: api::ValueType<'static> = st.into();
         assert_eq!(vt.r#type, "cpu-samples");
         assert_eq!(vt.unit, "count");
 

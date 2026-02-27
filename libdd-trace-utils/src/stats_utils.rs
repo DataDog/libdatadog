@@ -6,9 +6,10 @@ pub use mini_agent::*;
 
 #[cfg(feature = "mini_agent")]
 mod mini_agent {
+    use bytes::Buf;
+    use http::{Method, Request, StatusCode};
     use http_body_util::BodyExt;
-    use hyper::{body::Buf, Method, Request, StatusCode};
-    use libdd_common::hyper_migration;
+    use libdd_common::http_common;
     use libdd_common::Connect;
     use libdd_common::Endpoint;
     use libdd_common::GenericHttpClient;
@@ -17,7 +18,7 @@ mod mini_agent {
     use tracing::debug;
 
     pub async fn get_stats_from_request_body(
-        body: hyper_migration::Body,
+        body: http_common::Body,
     ) -> anyhow::Result<pb::ClientStatsPayload> {
         let buffer = body.collect().await?.aggregate();
 
@@ -36,6 +37,14 @@ mod mini_agent {
     }
 
     pub fn construct_stats_payload(stats: Vec<pb::ClientStatsPayload>) -> pb::StatsPayload {
+        // set hostname on stats from tracer to empty string for serverless
+        let stats = stats
+            .into_iter()
+            .map(|mut stat| {
+                stat.hostname = "".to_string();
+                stat
+            })
+            .collect();
         pb::StatsPayload {
             agent_hostname: "".to_string(),
             agent_env: "".to_string(),
@@ -79,12 +88,12 @@ mod mini_agent {
             .header("Content-Type", "application/msgpack")
             .header("Content-Encoding", "gzip")
             .header("DD-API-KEY", api_key)
-            .body(hyper_migration::Body::from(data.clone()))?;
+            .body(http_common::Body::from(data.clone()))?;
 
         let response = if let Some(client) = client {
             client.request(req).await
         } else {
-            let default_client = hyper_migration::new_default_client();
+            let default_client = http_common::new_default_client();
             default_client.request(req).await
         };
 
@@ -106,8 +115,8 @@ mod mini_agent {
 #[cfg(feature = "mini_agent")]
 mod mini_agent_tests {
     use crate::stats_utils;
-    use hyper::Request;
-    use libdd_common::hyper_migration;
+    use http::Request;
+    use libdd_common::http_common;
     use libdd_trace_protobuf::pb::{
         ClientGroupedStats, ClientStatsBucket, ClientStatsPayload, Trilean::NotSet,
     };
@@ -168,7 +177,7 @@ mod mini_agent_tests {
 
         let bytes = rmp_serde::to_vec(&v).unwrap();
         let request = Request::builder()
-            .body(hyper_migration::Body::from(bytes))
+            .body(http_common::Body::from(bytes))
             .unwrap();
 
         let res = stats_utils::get_stats_from_request_body(request.into_body()).await;
@@ -247,7 +256,7 @@ mod mini_agent_tests {
 
         let bytes = rmp_serde::to_vec(&v).unwrap();
         let request = Request::builder()
-            .body(hyper_migration::Body::from(bytes))
+            .body(http_common::Body::from(bytes))
             .unwrap();
 
         let res = stats_utils::get_stats_from_request_body(request.into_body()).await;

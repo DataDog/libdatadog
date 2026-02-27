@@ -2,12 +2,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::debugger_defs::{DebuggerData, DebuggerPayload};
+use bytes::Bytes;
 use constcat::concat;
+use http::uri::PathAndQuery;
+use http::{Method, Uri};
 use http_body_util::BodyExt;
-use hyper::body::Bytes;
-use hyper::http::uri::PathAndQuery;
-use hyper::{Method, Uri};
-use libdd_common::hyper_migration;
+use libdd_common::http_common;
 use libdd_common::tag::Tag;
 use libdd_common::Endpoint;
 use libdd_data_pipeline::agent_info::schema::AgentInfoStruct;
@@ -19,12 +19,9 @@ use std::str::FromStr;
 use tokio::task::JoinHandle;
 use uuid::Uuid;
 
-pub const PROD_LOGS_INTAKE_SUBDOMAIN: &str = "http-intake.logs";
 pub const PROD_DIAGNOSTICS_INTAKE_SUBDOMAIN: &str = "debugger-intake";
 
-const DIRECT_DEBUGGER_LOGS_URL_PATH: &str = "/api/v2/logs";
 const DIRECT_DEBUGGER_DIAGNOSTICS_URL_PATH: &str = "/api/v2/debugger";
-const AGENT_DEBUGGER_LOGS_URL_PATH: &str = "/debugger/v1/input";
 const AGENT_DEBUGGER_SNAPSHOTS_URL_PATH: &str = "/debugger/v2/input";
 const AGENT_DEBUGGER_DIAGNOSTICS_URL_PATH: &str = "/debugger/v1/diagnostics";
 
@@ -36,39 +33,25 @@ pub struct Config {
 }
 
 impl Config {
-    pub fn set_endpoint(
-        &mut self,
-        mut logs_endpoint: Endpoint,
-        mut diagnostics_endpoint: Endpoint,
-    ) -> anyhow::Result<()> {
-        let mut snapshots_endpoint = if diagnostics_endpoint.api_key.is_some() {
-            diagnostics_endpoint.clone()
-        } else {
-            logs_endpoint.clone()
-        };
+    pub fn set_endpoint(&mut self, mut diagnostics_endpoint: Endpoint) -> anyhow::Result<()> {
+        let mut logs_endpoint = diagnostics_endpoint.clone();
+        let mut snapshots_endpoint = diagnostics_endpoint.clone();
 
         let mut logs_uri_parts = logs_endpoint.url.into_parts();
         let mut snapshots_uri_parts = snapshots_endpoint.url.into_parts();
         let mut diagnostics_uri_parts = diagnostics_endpoint.url.into_parts();
 
         #[allow(clippy::unwrap_used)]
-        if logs_uri_parts.scheme.is_some()
-            && logs_uri_parts.scheme.as_ref().unwrap().as_str() != "file"
+        if diagnostics_uri_parts.scheme.is_some()
+            && diagnostics_uri_parts.scheme.as_ref().unwrap().as_str() != "file"
         {
-            logs_uri_parts.path_and_query = Some(PathAndQuery::from_static(
-                if logs_endpoint.api_key.is_some() {
-                    DIRECT_DEBUGGER_LOGS_URL_PATH
-                } else {
-                    AGENT_DEBUGGER_LOGS_URL_PATH
-                },
-            ));
-            snapshots_uri_parts.path_and_query = Some(PathAndQuery::from_static(
-                if snapshots_endpoint.api_key.is_some() {
-                    DIRECT_DEBUGGER_DIAGNOSTICS_URL_PATH
-                } else {
-                    AGENT_DEBUGGER_SNAPSHOTS_URL_PATH
-                },
-            ));
+            let v2_path = PathAndQuery::from_static(if diagnostics_endpoint.api_key.is_some() {
+                DIRECT_DEBUGGER_DIAGNOSTICS_URL_PATH
+            } else {
+                AGENT_DEBUGGER_SNAPSHOTS_URL_PATH
+            });
+            logs_uri_parts.path_and_query = Some(v2_path.clone());
+            snapshots_uri_parts.path_and_query = Some(v2_path);
             diagnostics_uri_parts.path_and_query = Some(PathAndQuery::from_static(
                 if diagnostics_endpoint.api_key.is_some() {
                     DIRECT_DEBUGGER_DIAGNOSTICS_URL_PATH
@@ -87,12 +70,13 @@ impl Config {
         Ok(())
     }
 
-    pub fn without_dedicated_snapshots_endpoint(&mut self) {
+    pub fn downgrade_to_diagnostics_endpoint(&mut self) {
         self.snapshots_endpoint = self.diagnostics_endpoint.clone();
+        self.logs_endpoint = self.diagnostics_endpoint.clone();
     }
 }
 
-pub fn agent_info_supports_dedicated_snapshots_endpoint(info: &AgentInfoStruct) -> bool {
+pub fn agent_info_supports_debugger_v2_endpoint(info: &AgentInfoStruct) -> bool {
     info.endpoints
         .as_ref()
         .map(|endpoints| {
@@ -156,13 +140,13 @@ pub fn generate_tags(
 enum SenderFuture {
     #[default]
     Error,
-    Outstanding(hyper_migration::ResponseFuture),
-    Submitted(JoinHandle<anyhow::Result<hyper_migration::HttpResponse>>),
+    Outstanding(http_common::ResponseFuture),
+    Submitted(JoinHandle<anyhow::Result<http_common::HttpResponse>>),
 }
 
 pub struct PayloadSender {
     future: SenderFuture,
-    sender: hyper_migration::Sender,
+    sender: http_common::Sender,
     needs_boundary: bool,
     payloads: u32,
 }
@@ -206,7 +190,7 @@ impl PayloadSender {
             req = req.header("DD-EVP-ORIGIN", "agent-debugger");
         }
 
-        let (sender, body) = hyper_migration::Body::channel();
+        let (sender, body) = http_common::Body::channel();
 
         let needs_boundary = debugger_type == DebuggerType::Diagnostics;
         let req = req.header(
@@ -218,7 +202,7 @@ impl PayloadSender {
             },
         );
 
-        let future = hyper_migration::new_default_client().request(req.body(body)?);
+        let future = http_common::new_default_client().request(req.body(body)?);
         Ok(PayloadSender {
             future: SenderFuture::Outstanding(future),
             sender,
@@ -241,7 +225,7 @@ impl PayloadSender {
                 }
 
                 self.future = SenderFuture::Submitted(tokio::spawn(async {
-                    let resp = hyper_migration::into_response(future.await?);
+                    let resp = http_common::into_response(future.await?);
                     Ok(resp)
                 }));
                 true
@@ -311,4 +295,105 @@ pub async fn send(
 
 pub fn generate_new_id() -> Uuid {
     Uuid::new_v4()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::borrow::Cow;
+
+    fn agent_endpoint() -> Endpoint {
+        Endpoint::from_slice("http://localhost:8126")
+    }
+
+    fn direct_endpoint() -> Endpoint {
+        Endpoint {
+            url: Uri::from_static("https://debugger-intake.datadoghq.com"),
+            api_key: Some(Cow::Borrowed("test-api-key")),
+            ..Default::default()
+        }
+    }
+
+    fn endpoint_path(endpoint: &Option<Endpoint>) -> &str {
+        endpoint
+            .as_ref()
+            .unwrap()
+            .url
+            .path_and_query()
+            .unwrap()
+            .as_str()
+    }
+
+    #[test]
+    fn test_set_endpoint_agent_mode() {
+        let mut config = Config::default();
+        config.set_endpoint(agent_endpoint()).unwrap();
+
+        assert_eq!(endpoint_path(&config.logs_endpoint), "/debugger/v2/input");
+        assert_eq!(
+            endpoint_path(&config.snapshots_endpoint),
+            "/debugger/v2/input"
+        );
+        assert_eq!(
+            endpoint_path(&config.diagnostics_endpoint),
+            "/debugger/v1/diagnostics"
+        );
+    }
+
+    #[test]
+    fn test_set_endpoint_direct_mode() {
+        let mut config = Config::default();
+        config.set_endpoint(direct_endpoint()).unwrap();
+
+        assert_eq!(endpoint_path(&config.logs_endpoint), "/api/v2/debugger");
+        assert_eq!(
+            endpoint_path(&config.snapshots_endpoint),
+            "/api/v2/debugger"
+        );
+        assert_eq!(
+            endpoint_path(&config.diagnostics_endpoint),
+            "/api/v2/debugger"
+        );
+    }
+
+    #[test]
+    fn test_downgrade_to_diagnostics_endpoint() {
+        let mut config = Config::default();
+        config.set_endpoint(agent_endpoint()).unwrap();
+        config.downgrade_to_diagnostics_endpoint();
+
+        assert_eq!(
+            endpoint_path(&config.logs_endpoint),
+            "/debugger/v1/diagnostics"
+        );
+        assert_eq!(
+            endpoint_path(&config.snapshots_endpoint),
+            "/debugger/v1/diagnostics"
+        );
+        assert_eq!(
+            endpoint_path(&config.diagnostics_endpoint),
+            "/debugger/v1/diagnostics"
+        );
+    }
+
+    #[test]
+    fn test_agent_info_supports_debugger_v2_endpoint() {
+        let with_v2 = AgentInfoStruct {
+            endpoints: Some(vec!["/debugger/v2/input".to_string()]),
+            ..Default::default()
+        };
+        assert!(agent_info_supports_debugger_v2_endpoint(&with_v2));
+
+        let without_v2 = AgentInfoStruct {
+            endpoints: Some(vec!["/debugger/v1/diagnostics".to_string()]),
+            ..Default::default()
+        };
+        assert!(!agent_info_supports_debugger_v2_endpoint(&without_v2));
+
+        let no_endpoints = AgentInfoStruct {
+            endpoints: None,
+            ..Default::default()
+        };
+        assert!(!agent_info_supports_debugger_v2_endpoint(&no_endpoints));
+    }
 }

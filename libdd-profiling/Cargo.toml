@@ -19,7 +19,7 @@ bench = false
 [features]
 default = []
 cxx = ["dep:cxx", "dep:cxx-build"]
-test-utils = ["dep:multipart"]
+test-utils = ["libdd-common/test-utils"]
 
 [[bench]]
 name = "main"
@@ -30,28 +30,31 @@ allocator-api2 = { version = "0.2", default-features = false, features = ["alloc
 anyhow = "1.0"
 bitmaps = "3.2.0"
 byteorder = { version = "1.5", features = ["std"] }
-bytes = "1.1"
+bytes = "1.11.1"
 chrono = {version = "0.4", default-features = false, features = ["std", "clock"]}
 crossbeam-channel = "0.5.15"
 crossbeam-utils = { version = "0.8.21" }
 cxx = { version = "1.0", optional = true }
 futures = { version = "0.3", default-features = false }
 hashbrown = { version = "0.16", default-features = false }
-http = "1.0"
+http = "1.1"
 http-body-util = "0.1"
 httparse = "1.9"
 indexmap = "2.11"
 libdd-alloc = { version = "1.0.0", path = "../libdd-alloc" }
-libdd-common = { version = "1.1.0", path = "../libdd-common", default-features = false, features = ["reqwest", "test-utils"] }
+libdd-common = { version = "2.0.0", path = "../libdd-common", default-features = false, features = ["reqwest", "test-utils"] }
 libdd-profiling-protobuf = { version = "1.0.0", path = "../libdd-profiling-protobuf", features = ["prost_impls"] }
 mime = "0.3.16"
-multipart = { version = "0.18", optional = true }
 parking_lot = { version = "0.12", default-features = false }
 prost = "0.14.1"
 rand = "0.8"
 # Use rustls to align with the rest of the workspace (libdd-common, libdd-telemetry, etc.)
 # This uses the same TLS stack (rustls + aws-lc-rs/ring) as other crates
-reqwest = { version = "0.13", features = ["multipart", "rustls"], default-features = false}
+# Use hickory-dns instead of the default system DNS resolver to avoid fork safety issues.
+# The default resolver can hold locks or other global state that can cause deadlocks
+# or corruption when the process forks (e.g., in PHP-FPM or other forking environments).
+reqwest = { version = "0.13", features = ["multipart", "rustls", "hickory-dns"], default-features = false}
+rustls-platform-verifier = "0.6"
 rustc-hash = { version = "1.1", default-features = false }
 serde = {version = "1.0", features = ["derive"]}
 serde_json = {version = "1.0"}
@@ -61,6 +64,12 @@ tokio = {version = "1.23", features = ["rt", "macros", "net", "io-util", "fs"]}
 tokio-util = { version = "0.7.1", default-features = false }
 zstd = { version = "0.13", default-features = false }
 
+# aws-lc-rs is preferred on Unix; ring is used on Windows where aws-lc-rs has build issues.
+[target.'cfg(unix)'.dependencies]
+rustls = { version = "0.23", default-features = false, features = ["aws-lc-rs"] }
+
+[target.'cfg(not(unix))'.dependencies]
+rustls = { version = "0.23", default-features = false, features = ["ring"] }
 
 [dev-dependencies]
 bolero = "0.13"
@@ -68,6 +77,7 @@ criterion = "0.5.1"
 libdd-common = { path = "../libdd-common", features = ["test-utils"] }
 libdd-profiling = { path = ".", features = ["test-utils"] }
 proptest = "1"
+strum = { version = "0.26", features = ["derive"] }
 tempfile = "3"
 
 [build-dependencies]

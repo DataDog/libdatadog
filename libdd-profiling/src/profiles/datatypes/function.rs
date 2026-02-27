@@ -59,7 +59,10 @@ impl From<Function2> for Function {
 /// performed on; it is not generally guaranteed that ids from one dictionary
 /// can be used in another dictionary, even if it happens to work by
 /// implementation detail.
-#[derive(Clone, Copy, Debug)]
+///
+/// `Eq`/`Hash` and other comparisons are based on this handle value, and are
+/// only intended for ids produced by the same `ProfilesDictionary`.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
 #[repr(transparent)]
 pub struct FunctionId2(pub(crate) *mut Function2);
 
@@ -102,6 +105,9 @@ impl From<SetId<Function>> for FunctionId2 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::profiles::datatypes::ProfilesDictionary;
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
     use std::mem::offset_of;
 
     #[test]
@@ -120,5 +126,37 @@ mod tests {
             offset_of!(Function, file_name),
             offset_of!(Function2, file_name)
         );
+    }
+
+    fn hash_of<T: Hash>(value: &T) -> u64 {
+        let mut hasher = DefaultHasher::new();
+        value.hash(&mut hasher);
+        hasher.finish()
+    }
+
+    #[test]
+    fn function_id2_equality_and_hash_are_pointer_identity_based() {
+        let dict = ProfilesDictionary::try_new().unwrap();
+        let name = dict.try_insert_str2("name").unwrap();
+        let system_name = dict.try_insert_str2("system").unwrap();
+        let file_name = dict.try_insert_str2("file").unwrap();
+
+        let function = Function2 {
+            name,
+            system_name,
+            file_name,
+        };
+        let same_a = dict.try_insert_function2(function).unwrap();
+        let same_b = dict.try_insert_function2(function).unwrap();
+        assert_eq!(same_a, same_b);
+        assert_eq!(hash_of(&same_a), hash_of(&same_b));
+
+        let other = Function2 {
+            name: dict.try_insert_str2("other_name").unwrap(),
+            system_name,
+            file_name,
+        };
+        let different = dict.try_insert_function2(other).unwrap();
+        assert_ne!(same_a, different);
     }
 }

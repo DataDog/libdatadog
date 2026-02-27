@@ -428,7 +428,12 @@ pub unsafe extern "C" fn ddog_crasht_CrashInfoBuilder_with_thread_name(
 /// The `builder` can be null, but if non-null it must point to a Builder made by this module,
 /// which has not previously been dropped.
 /// All arguments must be valid.
-/// This method requires that the builder has a UUID, siginfo, and metadata set
+/// This method requires that the builder has `metadata` and `kind` set
+/// Applications can add `message` or `sig_info` to the builder to provide additional context.
+/// If set, the data will be used to derive the crash ping message in the order of
+/// - an explicit message set with `with_message`
+/// - sig_info set with `with_sig_info`
+/// - kind set with `with_kind`
 #[no_mangle]
 #[must_use]
 #[named]

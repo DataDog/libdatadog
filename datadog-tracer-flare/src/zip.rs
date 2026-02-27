@@ -1,9 +1,10 @@
 // Copyright 2025-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+use bytes::Bytes;
 use datadog_remote_config::config::agent_task::AgentTaskFile;
-use hyper::{body::Bytes, Method};
-use libdd_common::{hyper_migration, Endpoint, MutexExt};
+use http::Method;
+use libdd_common::{http_common, Endpoint, MutexExt};
 use std::{
     collections::HashMap,
     fs::File,
@@ -202,7 +203,7 @@ fn generate_payload(
     payload.extend_from_slice(format!("--{BOUNDARY}--\r\n").as_bytes());
 
     let headers: HashMap<String, String> = HashMap::from([(
-        hyper::header::CONTENT_TYPE.to_string(),
+        http::header::CONTENT_TYPE.to_string(),
         format!("multipart/form-data; boundary={BOUNDARY}"),
     )]);
 
@@ -290,6 +291,75 @@ impl TracerFlareManager {
         self.send(zip, agent_task).await
     }
 
+    /// Creates a zip archive containing the specified files and directories, ~~obfuscates sensitive
+    /// data~~, and sends the flare to the agent. This is a synchronous version of the
+    /// `zip_and_send` function that can be called from synchronous code.
+    ///
+    /// # Arguments
+    ///
+    /// * `files` - A vector of strings representing the paths of files and directories to include
+    ///   in the zip archive.
+    /// * `send_action` - FlareAction to perform by the tracer flare. Must be a Send action or the
+    ///   function will return an Error.
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(())` - If the zip archive was created, ~~obfuscated~~, and sent successfully.
+    /// * `Err(FlareError)` - An error if any step of the process fails.
+    ///
+    /// # Errors
+    ///
+    /// This function will return an error if:
+    /// - Any problem happened while zipping the file.
+    /// - The obfuscation process fails.
+    /// - The zip file cannot be sent to the agent.
+    /// - No agent task was received by the tracer_flare.
+    ///
+    /// # Examples
+    ///
+    /// ```rust no_run
+    /// use datadog_tracer_flare::{TracerFlareManager, FlareAction};
+    /// use datadog_remote_config::config::agent_task::{AgentTaskFile, AgentTask};
+    ///
+    /// let tracer_flare = TracerFlareManager::default();
+    ///
+    /// // ... listen to remote config and receive an agent task ...
+    ///
+    /// // Simulate receiving a Send action from remote config
+    /// let task = AgentTaskFile {
+    ///     args: AgentTask {
+    ///         case_id: "123".to_string(),
+    ///         hostname: "test-host".to_string(),
+    ///         user_handle: "test@example.com".to_string(),
+    ///     },
+    ///     task_type: "tracer_flare".to_string(),
+    ///     uuid: "test-uuid".to_string(),
+    /// };
+    /// let send_action = FlareAction::Send(task);
+    ///
+    /// let files = vec![
+    ///     "/path/to/logs".to_string(),
+    ///     "/path/to/config.txt".to_string(),
+    /// ];
+    ///
+    /// match tracer_flare.zip_and_send_sync(files, send_action) {
+    ///     Ok(_) => println!("Flare sent successfully"),
+    ///     Err(e) => eprintln!("Failed to send flare: {}", e),
+    /// }
+    /// ```
+    pub fn zip_and_send_sync(
+        &self,
+        files: Vec<String>,
+        send_action: FlareAction,
+    ) -> Result<(), FlareError> {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .map_err(|e| FlareError::SendError(format!("Failed to create runtime: {e}")))?;
+
+        runtime.block_on(self.zip_and_send(files, send_action))
+    }
+
     /// Sends a zip file to the agent via a POST request.
     ///
     /// This function reads the entire zip file into memory, constructs an HTTP request
@@ -332,7 +402,7 @@ impl TracerFlareManager {
         )?;
 
         let agent_url = self.agent_url.clone() + "/tracer_flare/v1";
-        let agent_url = match hyper::Uri::from_str(&agent_url) {
+        let agent_url = match http::Uri::from_str(&agent_url) {
             Ok(uri) => uri,
             Err(_) => {
                 return Err(FlareError::SendError(format!(
@@ -355,17 +425,17 @@ impl TracerFlareManager {
             req = req.header(key, value);
         }
         let req = req
-            .body(hyper_migration::Body::from_bytes(payload))
+            .body(http_common::Body::from_bytes(payload))
             .map_err(|_| {
                 FlareError::SendError("Unable to had the body to the request".to_owned())
             })?;
 
-        let req = hyper_migration::new_default_client().request(req);
+        let req = http_common::new_default_client().request(req);
 
         match tokio::time::timeout(Duration::from_millis(target.timeout_ms), req).await {
             Ok(resp) => match resp {
                 Ok(body) => {
-                    let response = hyper_migration::into_response(body);
+                    let response = http_common::into_response(body);
                     let status = response.status();
                     if status.is_success() {
                         Ok(())
@@ -501,7 +571,7 @@ mod tests {
         assert!(payload_str.contains("d53fc8a4-8820-47a2-aa7d-d565582feb81"));
         assert!(payload_str.contains(&format!("--{BOUNDARY}--\r\n")));
 
-        let headers_str = headers.get(hyper::header::CONTENT_TYPE.as_str()).unwrap();
+        let headers_str = headers.get(http::header::CONTENT_TYPE.as_str()).unwrap();
         assert!(!payload_str.contains("DD-API-KEY"));
         assert!(!payload_str.contains("dd-api-key"));
         assert!(headers_str.contains(&format!("multipart/form-data; boundary={BOUNDARY}")));

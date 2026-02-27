@@ -1,6 +1,6 @@
 [package]
 name = "libdd-tinybytes"
-version= "1.0.0"
+version= "1.1.0"
 description = "Tiny implementation of a bytes::Bytes like type that supports AsRef<[u8]>"
 homepage = "https://github.com/DataDog/libdatadog/tree/main/libdd-tinybytes"
 repository = "https://github.com/DataDog/libdatadog/tree/main/libdd-tinybytes"

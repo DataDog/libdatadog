@@ -99,7 +99,7 @@ impl AgentInfoFetcher {
             let mut fetch_endpoint = endpoint.clone();
             let mut parts = fetch_endpoint.url.into_parts();
             parts.path_and_query = Some(PathAndQuery::from_static("/info"));
-            fetch_endpoint.url = hyper::Uri::from_parts(parts).unwrap();
+            fetch_endpoint.url = http::Uri::from_parts(parts).unwrap();
             loop {
                 let fetched = fetch_info_with_state(&fetch_endpoint, state.as_deref()).await;
                 let mut complete_fut = None;

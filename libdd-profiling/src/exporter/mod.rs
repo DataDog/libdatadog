@@ -5,6 +5,7 @@ pub mod config;
 mod errors;
 pub mod exporter_manager;
 mod profile_exporter;
+mod tls;
 
 pub use errors::SendError;
 pub use exporter_manager::ExporterManager;

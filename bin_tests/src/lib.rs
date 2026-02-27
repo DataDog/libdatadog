@@ -24,10 +24,7 @@ fn get_base_target_dir() -> &'static PathBuf {
         // Otherwise, find the target directory by walking up from the current binary.
         let test_bin_location = PathBuf::from(env::args().next().unwrap());
         let mut location_components = test_bin_location.components().rev().peekable();
-        loop {
-            let Some(c) = location_components.peek() else {
-                break;
-            };
+        while let Some(c) = location_components.peek() {
             if c.as_os_str() == "target" {
                 break;
             }

@@ -72,7 +72,7 @@ fn calculate_luhn(payload: &[u32]) -> u32 {
         let x = if i % 2 == 0 {
             let dbl_x = val * 2;
             if dbl_x > 9 {
-                (dbl_x % 10) + 1
+                dbl_x - 9
             } else {
                 dbl_x
             }
@@ -81,7 +81,7 @@ fn calculate_luhn(payload: &[u32]) -> u32 {
         };
         acc += x;
     }
-    10 - (acc % 10) % 10
+    (10 - (acc % 10)) % 10
 }
 
 #[derive(Debug, PartialEq)]
@@ -159,7 +159,9 @@ fn valid_card_prefix(n: u32) -> FuzzyBool {
 
 #[cfg(test)]
 mod tests {
-    use crate::credit_cards::{calculate_luhn, is_card_number, valid_card_prefix, FuzzyBool};
+    use crate::credit_cards::{
+        calculate_luhn, is_card_number, luhn_valid, valid_card_prefix, FuzzyBool,
+    };
 
     #[test]
     fn test_valid_card_prefix() {
@@ -415,15 +417,32 @@ mod tests {
         ];
         for valid_card in valid_cards {
             assert!(
-                is_card_number(valid_card, false),
+                is_card_number(valid_card, true),
                 "valid card '{valid_card}' was detected as invalid"
             );
         }
     }
 
     #[test]
+    fn test_valid_luhn() {
+        let valid_cards = vec![[3, 5, 3, 0, 1, 1, 1, 3, 3, 3, 3, 0, 0, 0, 0, 0]];
+        for valid_card in valid_cards {
+            assert!(
+                luhn_valid(&valid_card),
+                "valid luhn '{valid_card:?}' was detected as invalid"
+            );
+        }
+    }
+
+    #[test]
     fn test_calculate_luhn() {
-        let actual = calculate_luhn(&[7, 9, 9, 2, 7, 3, 9, 8, 7, 1]);
-        assert_eq!(actual, 3);
+        let cases = vec![
+            (vec![7, 9, 9, 2, 7, 3, 9, 8, 7, 1], 3),
+            (vec![3, 5, 3, 0, 1, 1, 1, 3, 3, 3, 3, 0, 0, 0, 0, 0], 1),
+            (vec![3, 5, 3, 0, 1, 1, 1, 3, 3, 3, 3, 0, 0, 0, 0], 0),
+        ];
+        for (numbers, checksum) in cases {
+            assert_eq!(calculate_luhn(&numbers), checksum);
+        }
     }
 }
