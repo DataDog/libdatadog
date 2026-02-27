@@ -15,6 +15,7 @@ bench = false
 libdd-common = { path = "../libdd-common" }
 libdd-common-ffi = { path = "../libdd-common-ffi", default-features = false }
 libdd-library-config = { path = "../libdd-library-config" }
+libdd-trace-protobuf = { version = "1.0.0", path = "../libdd-trace-protobuf" }
 anyhow = "1.0"
 constcat = "0.4.1"
 
