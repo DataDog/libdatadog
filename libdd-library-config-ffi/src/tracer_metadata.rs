@@ -103,6 +103,7 @@ pub unsafe extern "C" fn ddog_tracer_metadata_set(
 }
 
 /// Serializes the `TracerMetadata` into a platform-specific memory handle (e.g., memfd on Linux).
+/// Also publish the tracer's metadata
 ///
 /// # Safety
 /// - `ptr` must be a valid, non-null pointer to a `TracerMetadata`.
@@ -117,7 +118,7 @@ pub unsafe extern "C" fn ddog_tracer_metadata_set(
 /// it will return an error.
 #[no_mangle]
 pub unsafe extern "C" fn ddog_tracer_metadata_store(
-    ptr: *mut TracerMetadata,
+    ptr: *const TracerMetadata,
 ) -> Result<TracerMemfdHandle> {
     if ptr.is_null() {
         return Err::<TracerMemfdHandle, _>(anyhow::anyhow!(
@@ -126,7 +127,13 @@ pub unsafe extern "C" fn ddog_tracer_metadata_store(
         .into();
     }
 
-    let metadata = &mut *ptr;
+    let metadata = &*ptr;
+
+    // For now, we ignore any error that happens during OTel process context publication
+    #[cfg(target_os = "linux")]
+    let _ =
+        libdd_library_config::otel_process_ctxt::linux::publish(metadata.to_otel_process_ctxt());
+
     let result: anyhow::Result<TracerMemfdHandle> =
         match tracer_metadata::store_tracer_metadata(metadata) {
             #[cfg(target_os = "linux")]

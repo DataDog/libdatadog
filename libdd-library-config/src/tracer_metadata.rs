@@ -1,6 +1,7 @@
 // Copyright 2023-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 use std::default::Default;
+use libdd_trace_protobuf::opentelemetry::proto as otel_proto;
 
 /// This struct MUST be backward compatible.
 #[derive(serde::Serialize, Debug)]
@@ -47,6 +48,52 @@ impl Default for TracerMetadata {
             service_version: None,
             process_tags: None,
             container_id: None,
+        }
+    }
+}
+
+impl TracerMetadata {
+    pub fn to_otel_process_ctxt(&self) -> 
+    otel_proto::common::v1::ProcessContext {
+        use otel_proto::common::v1::{any_value, AnyValue, KeyValue};
+
+        fn key_value(key: &'static str, val: String) -> KeyValue {
+            KeyValue {
+                key: key.to_owned(),
+                value: Some(AnyValue {
+                    value: Some(any_value::Value::StringValue(val)),
+                }),
+                key_ref: 0,
+            }
+        }
+
+        let mut attributes = vec![
+            key_value("telemetry.sdk.language", self.tracer_language.clone()),
+            key_value("telemetry.sdk.version", self.tracer_version.clone()),
+            key_value("host.name", self.hostname.clone()),
+        ];
+
+        let mut set_opt_attr = |key: &'static str, val: &Option<String>| {
+            if let Some(val) = val {
+            attributes.push(key_value(key, val.clone()))
+            }
+        };
+
+        set_opt_attr("dd.runtime_id", &self.runtime_id);
+        set_opt_attr("service.name", &self.service_name);
+        set_opt_attr("deployment.environment", &self.service_env);
+        set_opt_attr("service.version", &self.service_version);
+        set_opt_attr("dd.process_tags", &self.process_tags);
+        set_opt_attr("dd.process_tags", &self.process_tags);
+        set_opt_attr("container.id", &self.container_id);
+
+        otel_proto::common::v1::ProcessContext {
+            resource: Some(otel_proto::resource::v1::Resource {
+                attributes,
+                dropped_attributes_count: 0,
+                entity_refs: vec![],
+            }),
+            extra_attributes: vec![],
         }
     }
 }
