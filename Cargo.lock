@@ -3238,6 +3238,8 @@ dependencies = [
  "rand 0.8.5",
  "reqwest",
  "rustc-hash 1.1.0",
+ "rustls",
+ "rustls-platform-verifier",
  "serde",
  "serde_json",
  "strum",
