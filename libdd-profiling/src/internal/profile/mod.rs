@@ -44,6 +44,7 @@ pub struct Profile {
     locations: FxIndexSet<Location>,
     mappings: FxIndexSet<Mapping>,
     observations: Observations,
+    internal_observations_compression: TimestampedObservationsCompression,
     period: Option<api::Period>,
     sample_types: Box<[api::SampleType]>,
     stack_traces: FxIndexSet<StackTrace>,
@@ -99,6 +100,33 @@ impl Profile {
     /// level 1 provided better compressed files while taking less or equal
     /// time compared to lz4.
     pub const COMPRESSION_LEVEL: i32 = 1;
+
+    /// Enables or disables internal compression for timestamped observations.
+    ///
+    /// This only affects how timestamped samples are stored in memory while
+    /// building the profile. It does not affect final pprof output compression.
+    ///
+    /// Returns an error if timestamped samples have already been recorded.
+    pub fn set_internal_observations_compression(&mut self, enabled: bool) -> anyhow::Result<()> {
+        let compression = if enabled {
+            TimestampedObservationsCompression::Enabled
+        } else {
+            TimestampedObservationsCompression::Disabled
+        };
+        self.observations
+            .set_timestamped_compression(compression)
+            .context("failed to set internal observations compression")?;
+        self.internal_observations_compression = compression;
+        Ok(())
+    }
+
+    pub fn enable_internal_compression(&mut self) -> anyhow::Result<()> {
+        self.set_internal_observations_compression(true)
+    }
+
+    pub fn disable_internal_compression(&mut self) -> anyhow::Result<()> {
+        self.set_internal_observations_compression(false)
+    }
 
     /// Add the endpoint data to the endpoint mappings.
     /// The `endpoint` string will be interned.
@@ -391,7 +419,13 @@ impl Profile {
         sample_types: &[api::SampleType],
         period: Option<api::Period>,
     ) -> io::Result<Self> {
-        Self::try_new_internal(period, sample_types.to_vec().into_boxed_slice(), None, None)
+        Self::try_new_internal(
+            period,
+            sample_types.to_vec().into_boxed_slice(),
+            None,
+            None,
+            TimestampedObservationsCompression::Enabled,
+        )
     }
 
     /// Tries to create a profile with the given period and sample types.
@@ -407,6 +441,7 @@ impl Profile {
             sample_types.to_vec().into_boxed_slice(),
             None,
             Some(ProfilesDictionaryTranslator::new(profiles_dictionary)),
+            TimestampedObservationsCompression::Enabled,
         )
     }
 
@@ -421,6 +456,7 @@ impl Profile {
             sample_types.to_vec().into_boxed_slice(),
             Some(string_storage),
             None,
+            TimestampedObservationsCompression::Enabled,
         )
     }
 
@@ -448,6 +484,7 @@ impl Profile {
             self.sample_types.clone(),
             self.string_storage.clone(),
             profiles_dictionary_translator,
+            self.internal_observations_compression,
         )
         .context("failed to initialize new profile")?;
 
@@ -915,6 +952,7 @@ impl Profile {
         sample_types: Box<[api::SampleType]>,
         string_storage: Option<Arc<Mutex<ManagedStringStorage>>>,
         profiles_dictionary_translator: Option<ProfilesDictionaryTranslator>,
+        internal_observations_compression: TimestampedObservationsCompression,
     ) -> io::Result<Self> {
         let start_time = SystemTime::now();
         let mut profile = Self {
@@ -929,6 +967,7 @@ impl Profile {
             locations: Default::default(),
             mappings: Default::default(),
             observations: Default::default(),
+            internal_observations_compression,
             period,
             sample_types,
             stack_traces: Default::default(),
@@ -948,7 +987,10 @@ impl Profile {
         profile.endpoints.endpoint_label = profile.intern("trace endpoint");
         profile.timestamp_key = profile.intern("end_timestamp_ns");
 
-        profile.observations = Observations::try_new(profile.sample_types.len())?;
+        profile.observations = Observations::try_new_with_timestamped_compression(
+            profile.sample_types.len(),
+            profile.internal_observations_compression,
+        )?;
         Ok(profile)
     }
 
@@ -1124,6 +1166,51 @@ mod api_tests {
             .expect("add to succeed");
 
         assert_eq!(profile.only_for_testing_num_aggregated_samples(), 1);
+    }
+
+    #[test]
+    fn internal_observations_compression_toggle_accepts_safe_and_rejects_unsafe_cases() {
+        let sample_types = [api::SampleType::CpuSamples];
+        let mapping = api::Mapping {
+            filename: "php",
+            ..Default::default()
+        };
+        let location = api::Location {
+            mapping,
+            function: api::Function {
+                name: "f",
+                system_name: "f",
+                filename: "index.php",
+            },
+            ..Default::default()
+        };
+
+        // Safe: repeated toggles before timestamped samples.
+        let mut profile = Profile::new(&sample_types, None);
+        assert!(profile.disable_internal_compression().is_ok());
+        assert!(profile.enable_internal_compression().is_ok());
+        assert!(profile.disable_internal_compression().is_ok());
+
+        // Safe: aggregated samples don't use timestamped storage; toggles remain valid.
+        let aggregated_sample = api::Sample {
+            locations: vec![location],
+            values: &[1],
+            labels: vec![],
+        };
+        assert!(profile.try_add_sample(aggregated_sample, None).is_ok());
+        assert!(profile.enable_internal_compression().is_ok());
+
+        // Unsafe: once timestamped samples exist, toggles are rejected.
+        let timestamped_sample = api::Sample {
+            locations: vec![location],
+            values: &[1],
+            labels: vec![],
+        };
+        assert!(profile
+            .try_add_sample(timestamped_sample, Timestamp::new(1))
+            .is_ok());
+        assert!(profile.disable_internal_compression().is_err());
+        assert!(profile.enable_internal_compression().is_err());
     }
 
     fn provide_distinct_locations() -> Profile {

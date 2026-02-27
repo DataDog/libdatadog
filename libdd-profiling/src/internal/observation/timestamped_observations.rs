@@ -10,11 +10,20 @@ use super::super::Sample;
 use super::super::StackTraceId;
 use crate::collections::identifiable::Id;
 use crate::internal::Timestamp;
-use crate::profiles::{DefaultObservationCodec as DefaultCodec, ObservationCodec};
+use crate::profiles::{NoopObservationCodec, ObservationCodec, ZstdObservationCodec};
 use byteorder::{NativeEndian, ReadBytesExt};
 use std::io::{self, Write};
 
-pub type TimestampedObservations = TimestampedObservationsImpl<DefaultCodec>;
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum TimestampedObservationsCompression {
+    Enabled,
+    Disabled,
+}
+
+pub enum TimestampedObservations {
+    Compressed(TimestampedObservationsImpl<ZstdObservationCodec>),
+    Uncompressed(TimestampedObservationsImpl<NoopObservationCodec>),
+}
 
 pub struct TimestampedObservationsImpl<C: ObservationCodec> {
     compressed_timestamped_data: C::Encoder,
@@ -24,6 +33,37 @@ pub struct TimestampedObservationsImpl<C: ObservationCodec> {
 pub struct TimestampedObservationsIterImpl<C: ObservationCodec> {
     decoder: C::Decoder,
     sample_types_len: usize,
+}
+
+impl TimestampedObservations {
+    pub fn try_new(
+        sample_types_len: usize,
+        compression: TimestampedObservationsCompression,
+    ) -> io::Result<Self> {
+        match compression {
+            TimestampedObservationsCompression::Enabled => {
+                Ok(Self::Compressed(TimestampedObservationsImpl::<
+                    ZstdObservationCodec,
+                >::try_new(
+                    sample_types_len
+                )?))
+            }
+            TimestampedObservationsCompression::Disabled => {
+                Ok(Self::Uncompressed(TimestampedObservationsImpl::<
+                    NoopObservationCodec,
+                >::try_new(
+                    sample_types_len
+                )?))
+            }
+        }
+    }
+
+    pub fn add(&mut self, sample: Sample, ts: Timestamp, values: &[i64]) -> anyhow::Result<()> {
+        match self {
+            Self::Compressed(inner) => inner.add(sample, ts, values),
+            Self::Uncompressed(inner) => inner.add(sample, ts, values),
+        }
+    }
 }
 
 impl<C: ObservationCodec> TimestampedObservationsImpl<C> {

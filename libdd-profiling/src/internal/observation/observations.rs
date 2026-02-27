@@ -4,7 +4,9 @@
 //! See the mod.rs file comment for why this module and file exists.
 
 use super::super::Sample;
-use super::timestamped_observations::TimestampedObservations;
+use super::timestamped_observations::{
+    TimestampedObservations, TimestampedObservationsCompression,
+};
 use super::trimmed_observation::{ObservationLength, TrimmedObservation};
 use crate::internal::Timestamp;
 use std::collections::HashMap;
@@ -33,21 +35,47 @@ impl Observations {
     }
 
     pub fn try_new(observations_len: usize) -> io::Result<Self> {
+        Self::try_new_with_timestamped_compression(
+            observations_len,
+            TimestampedObservationsCompression::Enabled,
+        )
+    }
+
+    pub fn try_new_with_timestamped_compression(
+        observations_len: usize,
+        compression: TimestampedObservationsCompression,
+    ) -> io::Result<Self> {
         Ok(Observations {
             inner: Some(NonEmptyObservations {
                 aggregated_data: AggregatedObservations::new(observations_len),
-                timestamped_data: TimestampedObservations::try_new(observations_len).map_err(
-                    |err| {
-                        io::Error::new(
-                            err.kind(),
-                            format!("failed to create timestamped observations: {err}"),
-                        )
-                    },
-                )?,
+                timestamped_data: TimestampedObservations::try_new(observations_len, compression)
+                    .map_err(|err| {
+                    io::Error::new(
+                        err.kind(),
+                        format!("failed to create timestamped observations: {err}"),
+                    )
+                })?,
                 obs_len: ObservationLength::new(observations_len),
                 timestamped_samples_count: 0,
             }),
         })
+    }
+
+    pub fn set_timestamped_compression(
+        &mut self,
+        compression: TimestampedObservationsCompression,
+    ) -> anyhow::Result<()> {
+        let observations = self
+            .inner
+            .as_mut()
+            .ok_or_else(|| anyhow::anyhow!("observations are not initialized"))?;
+        anyhow::ensure!(
+            observations.timestamped_samples_count == 0,
+            "cannot change timestamped sample compression after timestamped samples are recorded"
+        );
+        observations.timestamped_data =
+            TimestampedObservations::try_new(observations.obs_len.as_usize(), compression)?;
+        Ok(())
     }
 
     pub fn add(
@@ -111,18 +139,25 @@ impl Observations {
                 obs_len,
                 ..
             }) => {
-                let ts_it = timestamped_data
-                    .try_into_iter()?
-                    .map(|(s, t, o)| (s, Some(t), o));
-
                 let agg_it = AggregatedObservationsIter {
                     iter: std::mem::take(&mut aggregated_data.data).into_iter(),
                     obs_len,
                 };
 
-                Ok(ObservationsIntoIter {
-                    it: Box::new(ts_it.chain(agg_it)),
-                })
+                match timestamped_data {
+                    TimestampedObservations::Compressed(data) => {
+                        let ts_it = data.try_into_iter()?.map(|(s, t, o)| (s, Some(t), o));
+                        Ok(ObservationsIntoIter {
+                            it: Box::new(ts_it.chain(agg_it)),
+                        })
+                    }
+                    TimestampedObservations::Uncompressed(data) => {
+                        let ts_it = data.try_into_iter()?.map(|(s, t, o)| (s, Some(t), o));
+                        Ok(ObservationsIntoIter {
+                            it: Box::new(ts_it.chain(agg_it)),
+                        })
+                    }
+                }
             }
         }
     }
