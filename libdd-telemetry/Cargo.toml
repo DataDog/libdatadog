@@ -19,12 +19,12 @@ https = ["libdd-common/https"]
 [dependencies]
 anyhow = { version = "1.0" }
 base64 = "0.22"
+web-time = "1.1"
 futures = { version = "0.3", default-features = false }
 http-body-util = "0.1"
 http = "1.1"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = { version = "1.0" }
-sys-info = { version = "0.9.0" }
 tokio = { version = "1.23", features = ["sync", "io-util"] }
 tokio-util = { version = "0.7", features = ["codec"] }
 tracing = { version = "0.1", default-features = false }
@@ -33,6 +33,11 @@ hashbrown = "0.15"
 
 libdd-common = { version = "2.0.0", path = "../libdd-common", default-features = false }
 libdd-ddsketch = { version = "1.0.1", path = "../libdd-ddsketch" }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+getrandom = { version = "0.2", features = ["js"] }
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+sys-info = { version = "0.9.0" }
 
 [target."cfg(unix)".dependencies]
 libc = "0.2.176"
