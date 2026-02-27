@@ -3167,6 +3167,7 @@ dependencies = [
  "rand 0.8.5",
  "rmp",
  "rmp-serde",
+ "rustix 1.1.3",
  "serde",
  "serde_yaml",
  "tempfile",
