@@ -2971,6 +2971,7 @@ name = "libdd-common"
 version = "2.0.0"
 dependencies = [
  "anyhow",
+ "async-trait",
  "bytes",
  "cc",
  "const_format",
@@ -3084,6 +3085,7 @@ version = "2.0.0"
 dependencies = [
  "anyhow",
  "arc-swap",
+ "async-trait",
  "bytes",
  "clap",
  "criterion",
@@ -3293,6 +3295,7 @@ name = "libdd-telemetry"
 version = "3.0.0"
 dependencies = [
  "anyhow",
+ "async-trait",
  "base64 0.22.1",
  "futures",
  "hashbrown 0.15.1",
