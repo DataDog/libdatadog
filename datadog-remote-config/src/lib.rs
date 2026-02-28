@@ -32,6 +32,7 @@ pub struct Target {
     pub env: String,
     pub app_version: String,
     pub tags: Vec<Tag>,
+    pub process_tags: Vec<Tag>,
 }
 
 #[repr(C)]
