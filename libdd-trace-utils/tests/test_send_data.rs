@@ -17,7 +17,7 @@ mod tracing_integration_tests {
     use libdd_trace_utils::trace_utils::TracerHeaderTags;
     use libdd_trace_utils::tracer_payload::{decode_to_trace_chunks, TraceEncoding};
     use serde_json::json;
-    use std::collections::HashMap;
+    use hashbrown::HashMap;
     #[cfg(target_os = "linux")]
     use std::fs::Permissions;
     #[cfg(target_os = "linux")]

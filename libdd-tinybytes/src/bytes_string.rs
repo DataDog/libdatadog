@@ -179,9 +179,9 @@ impl From<String> for BytesString {
     }
 }
 
-impl From<&'static str> for BytesString {
-    fn from(value: &'static str) -> Self {
-        Self::from_static(value)
+impl From<&str> for BytesString {
+    fn from(value: &str) -> Self {
+        Self::from_string(value.to_string())
     }
 }
 
@@ -199,6 +199,12 @@ impl hash::Hash for BytesString {
     }
 }
 
+impl PartialEq<str> for BytesString {
+    fn eq(&self, other: &str) -> bool {
+        self.as_str() == other
+    }
+}
+
 impl PartialEq<&str> for BytesString {
     fn eq(&self, other: &&str) -> bool {
         self.as_str() == *other
@@ -208,6 +214,20 @@ impl PartialEq<&str> for BytesString {
 impl Debug for BytesString {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         f.serialize_str(self.as_str())
+    }
+}
+
+#[cfg(feature = "hashbrown_support")]
+impl hashbrown::Equivalent<BytesString> for String {
+    fn equivalent(&self, key: &BytesString) -> bool {
+        self.as_str() == key.as_ref()
+    }
+}
+
+#[cfg(feature = "hashbrown_support")]
+impl<'a> hashbrown::Equivalent<BytesString> for &'a str {
+    fn equivalent(&self, key: &BytesString) -> bool {
+        *self == key.as_ref()
     }
 }
 

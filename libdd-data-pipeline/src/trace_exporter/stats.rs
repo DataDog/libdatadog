@@ -12,6 +12,7 @@ use crate::stats_exporter;
 use arc_swap::ArcSwap;
 use libdd_common::{Endpoint, HttpClient, MutexExt};
 use libdd_trace_stats::span_concentrator::SpanConcentrator;
+use libdd_trace_utils::span::TraceProjector;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::runtime::Runtime;
@@ -230,15 +231,22 @@ pub(crate) fn process_traces_for_stats<T: libdd_trace_utils::span::TraceData>(
         stats_concentrator, ..
     } = &**client_side_stats.load()
     {
+        // Wrap the traces in a TraceCollection to use the TraceProjector API
+        let mut collection = libdd_trace_utils::span::v04::TraceCollection::new(std::mem::take(traces));
+
         if !client_computed_top_level {
-            for chunk in traces.iter_mut() {
-                libdd_trace_utils::span::trace_utils::compute_top_level_span(chunk);
+            let mut projected = collection.project_mut();
+            for mut chunk in projected.chunks_mut() {
+                libdd_trace_utils::span::trace_utils::compute_top_level_span(&mut chunk);
             }
         }
-        add_spans_to_stats(stats_concentrator, traces);
+        add_spans_to_stats(stats_concentrator, &mut collection.traces);
         // Once stats have been computed we can drop all chunks that are not going to be
         // sampled by the agent
-        let dropped_p0_stats = libdd_trace_utils::span::trace_utils::drop_chunks(traces);
+        let mut projected = collection.project_mut();
+        let dropped_p0_stats = libdd_trace_utils::span::trace_utils::drop_chunks(&mut projected);
+        // Extract the traces back
+        *traces = collection.traces;
 
         // Update the headers to indicate that stats have been computed and forward dropped
         // traces counts
