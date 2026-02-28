@@ -732,6 +732,7 @@ dependencies = [
  "build_common",
  "cmake",
  "pico-args",
+ "regex",
  "serde",
  "tar",
  "toml",
