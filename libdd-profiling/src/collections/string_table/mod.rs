@@ -9,6 +9,8 @@ pub use error::*;
 
 use crate::collections::identifiable::StringId;
 use crate::iter::{IntoLendingIterator, LendingIterator};
+use crate::profiles::collections::{Arc, StringRef};
+use crate::profiles::datatypes::{ProfilesDictionary, StringId2};
 use libdd_alloc::{AllocError, Allocator, ChainAllocator, VirtualAllocator};
 use std::alloc::Layout;
 
@@ -68,18 +70,17 @@ pub struct StringTable {
     /// but if they are, they should be bound to the string table's lifetime
     /// or the lending iterator's lifetime.
     strings: HashSet<&'static str>,
-}
 
-impl Default for StringTable {
-    fn default() -> Self {
-        Self::new()
-    }
+    /// Dictionary backing for dictionary-provided string references.
+    /// Keeping this Arc alive allows the table to safely hold references into
+    /// dictionary-managed string storage.
+    profiles_dictionary: Arc<ProfilesDictionary>,
 }
 
 impl StringTable {
     /// Creates a new string table, which initially holds the empty string and
     /// no others.
-    pub fn new() -> Self {
+    pub fn new(profiles_dictionary: Arc<ProfilesDictionary>) -> Self {
         // Keep in mind 32-bit .NET. There is only 2 GiB of virtual memory
         // total available to an application, and we're not the application,
         // we're just a piece inside it. Additionally, there may be 2 or more
@@ -110,7 +111,11 @@ impl StringTable {
         // which is sketchy.
         strings.insert("");
 
-        Self { bytes, strings }
+        Self {
+            bytes,
+            strings,
+            profiles_dictionary,
+        }
     }
 
     /// Returns the number of strings currently held in the string table.
@@ -169,6 +174,41 @@ impl StringTable {
             }
         }
     }
+
+    /// Adds a dictionary-backed `StringId2` to the table, returning its
+    /// corresponding local `StringId`.
+    pub fn try_intern_string_id2(&mut self, string_id: StringId2) -> Result<StringId, Error> {
+        self.try_intern_string_ref(string_id.into())
+    }
+
+    /// Adds a dictionary-backed `StringRef` to the table, returning its
+    /// corresponding local `StringId`.
+    pub fn try_intern_string_ref(&mut self, string_ref: StringRef) -> Result<StringId, Error> {
+        let profiles_dictionary = &*self.profiles_dictionary;
+
+        // SAFETY: `string_ref` must come from the attached dictionary (or be a
+        // well-known StringRef valid across dictionaries).
+        let str = unsafe { profiles_dictionary.strings().get(string_ref) };
+
+        let set = &mut self.strings;
+        match set.get_index_of(str) {
+            // SAFETY: if it already exists, it must fit in the range.
+            Some(offset) => Ok(unsafe { StringId::try_from(offset).unwrap_unchecked() }),
+            None => {
+                // No match. Get the current size of the table, which
+                // corresponds to the StringId it will have when inserted.
+                let string_id = StringId::try_from(set.len()).map_err(|_| Error::StorageFull)?;
+
+                // Keep dictionary string bytes by reference (no copy).
+                // SAFETY: this lifetime is tied to the attached dictionary Arc
+                // held by the table and moved into its iterator.
+                let str = unsafe { core::mem::transmute::<&str, &'static str>(str) };
+                set.try_reserve(1)?;
+                set.insert(str);
+                Ok(string_id)
+            }
+        }
+    }
 }
 
 /// A [LendingIterator] for a [StringTable]. Make one by calling
@@ -178,6 +218,10 @@ pub struct StringTableIter {
     /// references in `iter` actually point in here.
     #[allow(unused)]
     bytes: ChainAllocator<VirtualAllocator>,
+
+    /// Keep dictionary-backed string memory alive while iterating.
+    #[allow(unused)]
+    profiles_dictionary: Arc<ProfilesDictionary>,
 
     /// The strings of the string table, in order of insertion.
     /// The static lifetimes are a lie, they are tied to the `bytes`. When
@@ -190,6 +234,7 @@ impl StringTableIter {
     fn new(string_table: StringTable) -> StringTableIter {
         StringTableIter {
             bytes: string_table.bytes,
+            profiles_dictionary: string_table.profiles_dictionary,
             iter: string_table.strings.into_iter(),
         }
     }
@@ -222,6 +267,14 @@ impl IntoLendingIterator for StringTable {
 mod tests {
     use super::*;
     use crate::collections::identifiable::Id;
+
+    fn new_table() -> StringTable {
+        let dictionary =
+            ProfilesDictionary::try_new().expect("failed to create ProfilesDictionary");
+        let dictionary =
+            Arc::try_new(dictionary).expect("failed to allocate Arc<ProfilesDictionary>");
+        StringTable::new(dictionary)
+    }
 
     #[test]
     fn fuzz_arena_allocator() {
@@ -268,7 +321,7 @@ mod tests {
                 // from the standard library.
                 let mut golden_list = vec![""];
                 let mut golden_set = std::collections::HashSet::from([""]);
-                let mut st = StringTable::new();
+                let mut st = new_table();
 
                 for string in strings {
                     assert_eq!(st.len(), golden_set.len());
@@ -298,7 +351,7 @@ mod tests {
 
     #[test]
     fn test_basics() {
-        let mut table = StringTable::new();
+        let mut table = new_table();
         // The empty string should already be present.
         assert_eq!(1, table.len());
         assert_eq!(StringId::ZERO, table.intern(""));
@@ -309,10 +362,31 @@ mod tests {
         assert_eq!(2, table.len());
     }
 
+    #[test]
+    fn intern_string_id2_with_dictionary_deduplicates_with_literal_strings() {
+        let dictionary =
+            ProfilesDictionary::try_new().expect("failed to create ProfilesDictionary");
+        let string_id2 = dictionary
+            .try_insert_str2("dictionary-string")
+            .expect("insert");
+        let dictionary =
+            Arc::try_new(dictionary).expect("failed to allocate Arc<ProfilesDictionary>");
+
+        let mut table = StringTable::new(dictionary);
+
+        let from_dictionary = table
+            .try_intern_string_id2(string_id2)
+            .expect("intern dictionary string");
+        let from_literal = table.intern("dictionary-string");
+
+        assert_eq!(from_dictionary, from_literal);
+        assert_eq!(2, table.len());
+    }
+
     #[track_caller]
     fn test_from_src(src: &[&str]) {
         // Insert all the strings.
-        let mut table = StringTable::new();
+        let mut table = new_table();
         let n_strings = src.len();
         for string in src {
             table.intern(string);

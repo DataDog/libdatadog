@@ -3242,6 +3242,7 @@ dependencies = [
  "rustls-platform-verifier",
  "serde",
  "serde_json",
+ "static_assertions",
  "strum",
  "target-triple",
  "tempfile",

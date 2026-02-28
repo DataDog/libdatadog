@@ -3,10 +3,8 @@
 
 mod endpoint_stats;
 mod endpoints;
-mod function;
 mod label;
 mod location;
-mod mapping;
 mod observation;
 mod profile;
 mod sample;
@@ -16,11 +14,9 @@ mod upscaling;
 
 pub use endpoint_stats::*;
 pub use endpoints::*;
-pub use function::*;
 pub use label::*;
 pub use libdd_profiling_protobuf::ValueType;
 pub use location::*;
-pub use mapping::*;
 pub use observation::*;
 pub use profile::*;
 pub use sample::*;
