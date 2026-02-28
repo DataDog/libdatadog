@@ -137,29 +137,31 @@ impl ActiveApplication {
         notify_target: RemoteConfigNotifyTarget,
         dynamic_instrumentation_state: DynamicInstrumentationConfigState,
     ) {
+        let (Some(env), Some(service_name), Some(app_version)) = (
+            self.env.clone(),
+            self.service_name.clone(),
+            self.app_version.clone(),
+        ) else {
+            debug!("Skipping remote config update: set_metadata has not been called yet");
+            return;
+        };
         let options = session
             .get_remote_config_options()
             .as_ref()
             .expect("Expecting remote config invariants to be set early")
             .clone();
         if *session.remote_config_enabled.lock_or_panic() {
-            self.remote_config_guard = Some(
-                remote_configs.add_runtime(
-                    options,
-                    *session.remote_config_interval.lock_or_panic(),
-                    instance_id.runtime_id,
-                    notify_target,
-                    self.env.clone().expect("set_metadata was called before"),
-                    self.service_name
-                        .clone()
-                        .expect("set_metadata was called before"),
-                    self.app_version
-                        .clone()
-                        .expect("set_metadata was called before"),
-                    self.global_tags.clone(),
-                    dynamic_instrumentation_state,
-                ),
-            );
+            self.remote_config_guard = Some(remote_configs.add_runtime(
+                options,
+                *session.remote_config_interval.lock_or_panic(),
+                instance_id.runtime_id,
+                notify_target,
+                env,
+                service_name,
+                app_version,
+                self.global_tags.clone(),
+                dynamic_instrumentation_state,
+            ));
         }
     }
 }
