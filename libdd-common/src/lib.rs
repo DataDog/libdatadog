@@ -24,6 +24,7 @@ pub mod cstr;
 pub mod config;
 pub mod error;
 pub mod http_common;
+pub mod multipart;
 pub mod rate_limiter;
 pub mod tag;
 #[cfg(any(test, feature = "test-utils"))]
