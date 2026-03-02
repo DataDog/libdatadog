@@ -1,0 +1,26 @@
+# Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
+# SPDX-License-Identifier: Apache-2.0
+
+[package]
+name = "ci-crates"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.84.1"
+publish = false
+
+[[bin]]
+name = "changed-crates"
+path = "src/bin/changed_crates.rs"
+
+[[bin]]
+name = "affected-crates"
+path = "src/bin/affected_crates.rs"
+
+[dependencies]
+ci-shared = { path = "../ci-shared" }
+anyhow = "1.0"
+clap = { version = "4", features = ["derive", "env"] }
+log = "0.4"
+env_logger = "0.11"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"

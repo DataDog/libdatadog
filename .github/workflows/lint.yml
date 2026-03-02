@@ -1,10 +1,24 @@
 name: Lint
 on:
+  pull_request:
   push:
+    branches: [main, 'julio/rd-week-*']
 env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  compute-scope:
+    runs-on: ubuntu-latest
+    outputs:
+      has_changes: ${{ steps.scope.outputs.has_changes }}
+      affected_crates: ${{ steps.scope.outputs.affected_crates }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # 4.2.2
+        with:
+          fetch-depth: 0
+      - id: scope
+        uses: ./.github/actions/affected-crates
+
   actionlint:
     runs-on: ubuntu-latest
     steps:
@@ -32,6 +46,8 @@ jobs:
       - run: cargo fmt --all -- --check
   clippy:
     name: "clippy #${{ matrix.platform }} ${{ matrix.rust_version }}"
+    needs: [compute-scope]
+    if: needs.compute-scope.outputs.has_changes == 'true'
     runs-on: ${{ matrix.platform }}
     strategy:
       fail-fast: false
@@ -54,8 +70,9 @@ jobs:
           if [[ "${{ matrix.platform }}" == "windows-latest" ]]; then
             export AWS_LC_FIPS_SYS_NO_ASM=1
           fi
-          # shellcheck disable=SC2046
-          cargo clippy --workspace --all-targets --all-features -- -D warnings 
+
+          AFFECTED_CRATES_ARGS=$(echo '${{ needs.compute-scope.outputs.affected_crates }}' | jq -r '[.[].name] | map("-p " + .) | join(" ")')
+          cargo clippy $AFFECTED_CRATES_ARGS --all-targets --all-features -- -D warnings
 
   licensecheck:
     runs-on: ubuntu-latest
@@ -77,7 +94,7 @@ jobs:
   # cargo-bundle-licenses is "unsure" or "semi" confident. This means that
   # when the found license was compared to a template license it was found to
   # have diverged in more than a few words. You should verify that the licence
-  #  text is in fact correct in these cases.
+  # text is in fact correct in these cases.
   license-3rdparty:
     runs-on: ubuntu-latest
     name: "Valid LICENSE-3rdparty.yml"
