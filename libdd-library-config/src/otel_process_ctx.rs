@@ -432,7 +432,7 @@ pub mod linux {
 
             super::publish(payload.as_bytes().to_vec())
                 .expect("couldn't publish the process context");
-            let header = read_process_context().expect("couldn't read back the process contex");
+            let header = read_process_context().expect("couldn't read back the process context");
             // Safety: the published context must have put valid bytes of size payload_size in the
             // context if the signature check succeded.
             let read_payload = unsafe {
