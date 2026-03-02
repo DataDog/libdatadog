@@ -246,8 +246,8 @@ pub mod linux {
 
             unsafe {
                 // Safety: MappingHeader is packed, thus have no alignment requirement. It points
-                // to a freshly mmaped region which is valid for writing at least PAGE_SIZE bytes,
-                // which is greater than the size of MappingHeader.
+                // to a freshly mmaped region which is valid for writing at least `mapping_size()`,
+                // which we make sure is greater than the size of MappingHeader.
                 ptr::write(
                     header,
                     MappingHeader {
@@ -288,8 +288,11 @@ pub mod linux {
         }
     }
 
-    // Rustix's page_size caches the value in a static atomic, so it's ok to call mapping_size()
-    // repeatedly; it won't result in a syscall each time.
+    // Whether this size depends on the page size or not in the future, Rustix's `page_size()`
+    // caches the value in a static atomic, so it's ok to call `mapping_size()` repeatedly; it
+    // won't result in a syscall each time.
+    //
+    // The returned size is guaranteed to be larger or equal to the size of `MappingHeader`.
     fn mapping_size() -> usize {
         page_size()
     }
