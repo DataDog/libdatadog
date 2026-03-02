@@ -329,8 +329,8 @@ pub mod linux {
         }
     }
 
-    /// Unmaps the region used to share the process context and close the associated file
-    /// descriptor, if any. If no context has ever been published, this is no-op.
+    /// Unmaps the region used to share the process context. If no context has ever been published,
+    /// this is no-op.
     ///
     /// A call to [publish] following an [unpublish] will create a new mapping.
     pub fn unpublish() -> anyhow::Result<()> {
