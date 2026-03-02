@@ -4,8 +4,9 @@
 //! OTLP trace export for libdatadog.
 //!
 //! When `OTEL_TRACES_EXPORTER=otlp` is set, the trace exporter sends traces in OTLP HTTP/JSON
-//! format to the configured endpoint instead of the Datadog agent. See [`config::otlp_trace_config_from_env`]
-//! and [`config::env_keys`] for environment variable names and precedence.
+//! format to the configured endpoint instead of the Datadog agent. See
+//! [`config::otlp_trace_config_from_env`] and [`config::env_keys`] for environment variable names
+//! and precedence.
 //!
 //! ## Sampling
 //!

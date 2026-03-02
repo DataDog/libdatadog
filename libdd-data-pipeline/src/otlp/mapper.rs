@@ -19,8 +19,9 @@ const MAX_ATTRIBUTES_PER_SPAN: usize = 128;
 ///
 /// Resource: SDK-level attributes (service.name, deployment.environment, telemetry.sdk.*).
 /// InstrumentationScope: "datadog" (DD SDKs don't have scope; all spans use this).
-/// All analogous DD span fields are mapped; meta→attributes (string), metrics→attributes (int/double),
-/// links and events mapped to OTLP links and events. Status from span.error and meta["error.msg"].
+/// All analogous DD span fields are mapped; meta→attributes (string), metrics→attributes
+/// (int/double), links and events mapped to OTLP links and events. Status from span.error and
+/// meta["error.msg"].
 pub fn map_traces_to_otlp<T: TraceData>(
     trace_chunks: Vec<Vec<Span<T>>>,
     metadata: &TracerMetadata,
@@ -371,8 +372,10 @@ mod tests {
         };
         span.metrics
             .insert(libdd_tinybytes::BytesString::from_static("count"), 42.0);
-        span.metrics
-            .insert(libdd_tinybytes::BytesString::from_static("rate"), std::f64::consts::PI);
+        span.metrics.insert(
+            libdd_tinybytes::BytesString::from_static("rate"),
+            std::f64::consts::PI,
+        );
         let req = map_traces_to_otlp(vec![vec![span]], &metadata);
         let attrs = &req.resource_spans[0].scope_spans[0].spans[0].attributes;
         let count_kv = attrs.iter().find(|a| a.key == "count").unwrap();

@@ -241,7 +241,8 @@ mod tests {
 
     #[test]
     fn test_explicit_endpoint_used_as_is() {
-        // Per spec: when OTEL_EXPORTER_OTLP_TRACES_ENDPOINT is set, use as-is (no /v1/traces appended)
+        // Per spec: when OTEL_EXPORTER_OTLP_TRACES_ENDPOINT is set, use as-is (no /v1/traces
+        // appended)
         std::env::remove_var(env_keys::TRACES_EXPORTER);
         std::env::remove_var(env_keys::TRACES_ENDPOINT);
         std::env::set_var(env_keys::TRACES_EXPORTER, "otlp");

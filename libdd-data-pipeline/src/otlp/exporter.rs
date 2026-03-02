@@ -1,7 +1,8 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-//! OTLP HTTP/JSON trace exporter. Sends ExportTraceServiceRequest with retries on 429, 502, 503, 504.
+//! OTLP HTTP/JSON trace exporter. Sends ExportTraceServiceRequest with retries on 429, 502, 503,
+//! 504.
 
 use super::config::OtlpTraceConfig;
 use crate::trace_exporter::error::TraceExporterError;
