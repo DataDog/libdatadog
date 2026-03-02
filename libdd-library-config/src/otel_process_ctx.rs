@@ -29,7 +29,6 @@ pub mod linux {
     use rustix::{
         fs::{ftruncate, memfd_create, MemfdFlags},
         mm::{madvise, mmap, mmap_anonymous, munmap, Advice, MapFlags, ProtFlags},
-        param::page_size,
         process::set_virtual_memory_region_name,
     };
 
@@ -294,7 +293,7 @@ pub mod linux {
     //
     // The returned size is guaranteed to be larger or equal to the size of `MappingHeader`.
     fn mapping_size() -> usize {
-        page_size()
+        size_of::<MappingHeader>()
     }
 
     fn time_now_ns() -> Option<u64> {
