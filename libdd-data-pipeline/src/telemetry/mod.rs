@@ -309,7 +309,25 @@ mod tests {
     use tokio::time::sleep;
 
     use super::*;
-    use crate::shared_runtime::SharedRuntime;
+    use crate::shared_runtime::{SharedRuntime, WorkerHandle};
+
+    fn get_test_client(url: &str, runtime: &SharedRuntime) -> (TelemetryClient, WorkerHandle) {
+        let (client, worker) = TelemetryClientBuilder::default()
+            .set_service_name("test_service")
+            .set_service_version("test_version")
+            .set_env("test_env")
+            .set_language("test_language")
+            .set_language_version("test_language_version")
+            .set_tracer_version("test_tracer_version")
+            .set_url(url)
+            .set_heartbeat(100)
+            .set_debug_enabled(true)
+            .build(Handle::current());
+        let handle = runtime
+            .spawn_worker(worker)
+            .expect("Failed to spawn worker");
+        (client, handle)
+    }
 
     #[test]
     fn builder_test() {
@@ -342,19 +360,6 @@ mod tests {
     }
 
     #[cfg_attr(miri, ignore)]
-    #[tokio::test(flavor = "multi_thread")]
-    async fn spawn_test() {
-        let _ = TelemetryClientBuilder::default()
-            .set_service_name("test_service")
-            .set_service_version("test_version")
-            .set_env("test_env")
-            .set_language("test_language")
-            .set_language_version("test_language_version")
-            .set_tracer_version("test_tracer_version")
-            .build(Handle::current());
-    }
-
-    #[cfg_attr(miri, ignore)]
     #[test]
     fn api_bytes_test() {
         let payload = Regex::new(r#""metric":"trace_api.bytes","tags":\["src_library:libdatadog"\],"sketch_b64":".+","common":true,"interval":\d+,"type":"distribution""#).unwrap();
@@ -375,21 +380,7 @@ mod tests {
                 ..Default::default()
             };
 
-            let (client, worker) = TelemetryClientBuilder::default()
-                .set_service_name("test_service")
-                .set_service_version("test_version")
-                .set_env("test_env")
-                .set_language("test_language")
-                .set_language_version("test_language_version")
-                .set_tracer_version("test_tracer_version")
-                .set_url(&server.url("/"))
-                .set_heartbeat(100)
-                .set_debug_enabled(true)
-                .build(rt.handle().clone());
-            let handle = shared_runtime
-                .spawn_worker(worker)
-                .expect("Failed to spawn worker");
-
+            let (client, handle) = get_test_client(&server.url("/"), &shared_runtime);
             client.start().await;
             let _ = client.send(&data);
             handle.stop().await.expect("Failed to stop worker");
@@ -425,21 +416,7 @@ mod tests {
                 ..Default::default()
             };
 
-            let (client, worker) = TelemetryClientBuilder::default()
-                .set_service_name("test_service")
-                .set_service_version("test_version")
-                .set_env("test_env")
-                .set_language("test_language")
-                .set_language_version("test_language_version")
-                .set_tracer_version("test_tracer_version")
-                .set_url(&server.url("/"))
-                .set_heartbeat(100)
-                .set_debug_enabled(true)
-                .build(rt.handle().clone());
-            let handle = shared_runtime
-                .spawn_worker(worker)
-                .expect("Failed to spawn worker");
-
+            let (client, handle) = get_test_client(&server.url("/"), &shared_runtime);
             client.start().await;
             let _ = client.send(&data);
             handle.stop().await.expect("Failed to stop worker");
@@ -475,21 +452,7 @@ mod tests {
                 ..Default::default()
             };
 
-            let (client, worker) = TelemetryClientBuilder::default()
-                .set_service_name("test_service")
-                .set_service_version("test_version")
-                .set_env("test_env")
-                .set_language("test_language")
-                .set_language_version("test_language_version")
-                .set_tracer_version("test_tracer_version")
-                .set_url(&server.url("/"))
-                .set_heartbeat(100)
-                .set_debug_enabled(true)
-                .build(rt.handle().clone());
-            let handle = shared_runtime
-                .spawn_worker(worker)
-                .expect("Failed to spawn worker");
-
+            let (client, handle) = get_test_client(&server.url("/"), &shared_runtime);
             client.start().await;
             let _ = client.send(&data);
             handle.stop().await.expect("Failed to stop worker");
@@ -525,21 +488,7 @@ mod tests {
                 ..Default::default()
             };
 
-            let (client, worker) = TelemetryClientBuilder::default()
-                .set_service_name("test_service")
-                .set_service_version("test_version")
-                .set_env("test_env")
-                .set_language("test_language")
-                .set_language_version("test_language_version")
-                .set_tracer_version("test_tracer_version")
-                .set_url(&server.url("/"))
-                .set_heartbeat(100)
-                .set_debug_enabled(true)
-                .build(rt.handle().clone());
-            let handle = shared_runtime
-                .spawn_worker(worker)
-                .expect("Failed to spawn worker");
-
+            let (client, handle) = get_test_client(&server.url("/"), &shared_runtime);
             client.start().await;
             let _ = client.send(&data);
             handle.stop().await.expect("Failed to stop worker");
@@ -575,21 +524,7 @@ mod tests {
                 ..Default::default()
             };
 
-            let (client, worker) = TelemetryClientBuilder::default()
-                .set_service_name("test_service")
-                .set_service_version("test_version")
-                .set_env("test_env")
-                .set_language("test_language")
-                .set_language_version("test_language_version")
-                .set_tracer_version("test_tracer_version")
-                .set_url(&server.url("/"))
-                .set_heartbeat(100)
-                .set_debug_enabled(true)
-                .build(rt.handle().clone());
-            let handle = shared_runtime
-                .spawn_worker(worker)
-                .expect("Failed to spawn worker");
-
+            let (client, handle) = get_test_client(&server.url("/"), &shared_runtime);
             client.start().await;
             let _ = client.send(&data);
             handle.stop().await.expect("Failed to stop worker");
@@ -625,21 +560,7 @@ mod tests {
                 ..Default::default()
             };
 
-            let (client, worker) = TelemetryClientBuilder::default()
-                .set_service_name("test_service")
-                .set_service_version("test_version")
-                .set_env("test_env")
-                .set_language("test_language")
-                .set_language_version("test_language_version")
-                .set_tracer_version("test_tracer_version")
-                .set_url(&server.url("/"))
-                .set_heartbeat(100)
-                .set_debug_enabled(true)
-                .build(rt.handle().clone());
-            let handle = shared_runtime
-                .spawn_worker(worker)
-                .expect("Failed to spawn worker");
-
+            let (client, handle) = get_test_client(&server.url("/"), &shared_runtime);
             client.start().await;
             let _ = client.send(&data);
             handle.stop().await.expect("Failed to stop worker");
@@ -675,21 +596,7 @@ mod tests {
                 ..Default::default()
             };
 
-            let (client, worker) = TelemetryClientBuilder::default()
-                .set_service_name("test_service")
-                .set_service_version("test_version")
-                .set_env("test_env")
-                .set_language("test_language")
-                .set_language_version("test_language_version")
-                .set_tracer_version("test_tracer_version")
-                .set_url(&server.url("/"))
-                .set_heartbeat(100)
-                .set_debug_enabled(true)
-                .build(rt.handle().clone());
-            let handle = shared_runtime
-                .spawn_worker(worker)
-                .expect("Failed to spawn worker");
-
+            let (client, handle) = get_test_client(&server.url("/"), &shared_runtime);
             client.start().await;
             let _ = client.send(&data);
             handle.stop().await.expect("Failed to stop worker");
@@ -725,21 +632,7 @@ mod tests {
                 ..Default::default()
             };
 
-            let (client, worker) = TelemetryClientBuilder::default()
-                .set_service_name("test_service")
-                .set_service_version("test_version")
-                .set_env("test_env")
-                .set_language("test_language")
-                .set_language_version("test_language_version")
-                .set_tracer_version("test_tracer_version")
-                .set_url(&server.url("/"))
-                .set_heartbeat(100)
-                .set_debug_enabled(true)
-                .build(rt.handle().clone());
-            let handle = shared_runtime
-                .spawn_worker(worker)
-                .expect("Failed to spawn worker");
-
+            let (client, handle) = get_test_client(&server.url("/"), &shared_runtime);
             client.start().await;
             let _ = client.send(&data);
             handle.stop().await.expect("Failed to stop worker");
@@ -775,21 +668,7 @@ mod tests {
                 ..Default::default()
             };
 
-            let (client, worker) = TelemetryClientBuilder::default()
-                .set_service_name("test_service")
-                .set_service_version("test_version")
-                .set_env("test_env")
-                .set_language("test_language")
-                .set_language_version("test_language_version")
-                .set_tracer_version("test_tracer_version")
-                .set_url(&server.url("/"))
-                .set_heartbeat(100)
-                .set_debug_enabled(true)
-                .build(rt.handle().clone());
-            let handle = shared_runtime
-                .spawn_worker(worker)
-                .expect("Failed to spawn worker");
-
+            let (client, handle) = get_test_client(&server.url("/"), &shared_runtime);
             client.start().await;
             let _ = client.send(&data);
             handle.stop().await.expect("Failed to stop worker");
@@ -825,21 +704,7 @@ mod tests {
                 ..Default::default()
             };
 
-            let (client, worker) = TelemetryClientBuilder::default()
-                .set_service_name("test_service")
-                .set_service_version("test_version")
-                .set_env("test_env")
-                .set_language("test_language")
-                .set_language_version("test_language_version")
-                .set_tracer_version("test_tracer_version")
-                .set_url(&server.url("/"))
-                .set_heartbeat(100)
-                .set_debug_enabled(true)
-                .build(rt.handle().clone());
-            let handle = shared_runtime
-                .spawn_worker(worker)
-                .expect("Failed to spawn worker");
-
+            let (client, handle) = get_test_client(&server.url("/"), &shared_runtime);
             client.start().await;
             let _ = client.send(&data);
             handle.stop().await.expect("Failed to stop worker");
@@ -1011,21 +876,7 @@ mod tests {
                 })
                 .await;
 
-            let (client, worker) = TelemetryClientBuilder::default()
-                .set_service_name("test_service")
-                .set_service_version("test_version")
-                .set_env("test_env")
-                .set_language("test_language")
-                .set_language_version("test_language_version")
-                .set_tracer_version("test_tracer_version")
-                .set_url(&server.url("/"))
-                .set_heartbeat(100)
-                .set_runtime_id("foo")
-                .build(rt.handle().clone());
-            let handle = shared_runtime
-                .spawn_worker(worker)
-                .expect("Failed to spawn worker");
-
+            let (client, handle) = get_test_client(&server.url("/"), &shared_runtime);
             client.start().await;
             client
                 .send(&SendPayloadTelemetry {
@@ -1062,21 +913,7 @@ mod tests {
                 })
                 .await;
 
-            let (client, worker) = TelemetryClientBuilder::default()
-                .set_service_name("test_service")
-                .set_service_version("test_version")
-                .set_env("test_env")
-                .set_language("test_language")
-                .set_language_version("test_language_version")
-                .set_tracer_version("test_tracer_version")
-                .set_url(&server.url("/"))
-                .set_heartbeat(100)
-                .set_runtime_id("foo")
-                .build(rt.handle().clone());
-            let handle = shared_runtime
-                .spawn_worker(worker)
-                .expect("Failed to spawn worker");
-
+            let (client, handle) = get_test_client(&server.url("/"), &shared_runtime);
             client.start().await;
             client
                 .send(&SendPayloadTelemetry {
