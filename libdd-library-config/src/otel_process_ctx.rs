@@ -95,8 +95,8 @@ pub mod linux {
     impl MemMapping {
         /// Creates a suitable memory mapping for the context protocol to be published.
         ///
-        /// `memfd` is the preferred method, but this function fallbacks to an anonymous mapping on
-        /// old kernels that don't support `memfd` (or if `memfd` failed).
+        /// `memfd` is the preferred method, but this function fallbacks to an anonymous mapping if
+        /// `memfd` failed for any reason.
         fn new() -> anyhow::Result<Self> {
             let size = mapping_size();
 
