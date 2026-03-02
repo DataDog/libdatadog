@@ -84,6 +84,7 @@ pub struct TelemetryClientConfig<'a> {
 #[derive(Debug, Default)]
 pub struct TraceExporterConfig {
     url: Option<String>,
+    tracer_name: Option<String>,
     tracer_version: Option<String>,
     language: Option<String>,
     language_version: Option<String>,
@@ -92,6 +93,8 @@ pub struct TraceExporterConfig {
     env: Option<String>,
     version: Option<String>,
     service: Option<String>,
+    git_commit_sha: Option<String>,
+    git_repository_url: Option<String>,
     input_format: TraceExporterInputFormat,
     output_format: TraceExporterOutputFormat,
     compute_stats: bool,
@@ -129,6 +132,27 @@ pub unsafe extern "C" fn ddog_trace_exporter_config_set_url(
     catch_panic!(
         if let Some(handle) = config {
             handle.url = match sanitize_string(url) {
+                Ok(s) => Some(s),
+                Err(e) => return Some(e),
+            };
+            None
+        } else {
+            gen_error!(ErrorCode::InvalidArgument)
+        },
+        gen_error!(ErrorCode::Panic)
+    )
+}
+
+/// Sets the tracer/SDK name for OTLP resource attribute `telemetry.sdk.name`
+/// (e.g. "dd-trace-py"). When unset, OTLP uses "libdatadog".
+#[no_mangle]
+pub unsafe extern "C" fn ddog_trace_exporter_config_set_tracer_name(
+    config: Option<&mut TraceExporterConfig>,
+    tracer_name: CharSlice,
+) -> Option<Box<ExporterError>> {
+    catch_panic!(
+        if let Option::Some(handle) = config {
+            handle.tracer_name = match sanitize_string(tracer_name) {
                 Ok(s) => Some(s),
                 Err(e) => return Some(e),
             };
@@ -268,6 +292,46 @@ pub unsafe extern "C" fn ddog_trace_exporter_config_set_version(
     catch_panic!(
         if let Option::Some(handle) = config {
             handle.version = match sanitize_string(version) {
+                Ok(s) => Some(s),
+                Err(e) => return Some(e),
+            };
+            None
+        } else {
+            gen_error!(ErrorCode::InvalidArgument)
+        },
+        gen_error!(ErrorCode::Panic)
+    )
+}
+
+/// Sets git commit SHA (e.g. for OTLP resource attribute `git.commit.sha`).
+#[no_mangle]
+pub unsafe extern "C" fn ddog_trace_exporter_config_set_git_commit_sha(
+    config: Option<&mut TraceExporterConfig>,
+    git_commit_sha: CharSlice,
+) -> Option<Box<ExporterError>> {
+    catch_panic!(
+        if let Option::Some(handle) = config {
+            handle.git_commit_sha = match sanitize_string(git_commit_sha) {
+                Ok(s) => Some(s),
+                Err(e) => return Some(e),
+            };
+            None
+        } else {
+            gen_error!(ErrorCode::InvalidArgument)
+        },
+        gen_error!(ErrorCode::Panic)
+    )
+}
+
+/// Sets git repository URL (e.g. for OTLP resource attribute `git.repository_url`).
+#[no_mangle]
+pub unsafe extern "C" fn ddog_trace_exporter_config_set_git_repository_url(
+    config: Option<&mut TraceExporterConfig>,
+    url: CharSlice,
+) -> Option<Box<ExporterError>> {
+    catch_panic!(
+        if let Option::Some(handle) = config {
+            handle.git_repository_url = match sanitize_string(url) {
                 Ok(s) => Some(s),
                 Err(e) => return Some(e),
             };
@@ -428,6 +492,11 @@ pub unsafe extern "C" fn ddog_trace_exporter_config_set_connection_timeout(
 
 /// Create a new TraceExporter instance.
 ///
+/// When `OTEL_TRACES_EXPORTER=otlp` is set in the environment, the exporter sends traces in
+/// OTLP HTTP/JSON to the configured OTLP endpoint instead of the Datadog agent. The same
+/// payload (e.g. MessagePack) is passed to `ddog_trace_exporter_send`; the library decodes
+/// and converts to OTLP when OTLP is enabled.
+///
 /// # Arguments
 ///
 /// * `out_handle` - The handle to write the TraceExporter instance in.
@@ -443,6 +512,7 @@ pub unsafe extern "C" fn ddog_trace_exporter_new(
             let mut builder = TraceExporter::builder();
             builder
                 .set_url(config.url.as_ref().unwrap_or(&"".to_string()))
+                .set_tracer_name(config.tracer_name.as_ref().unwrap_or(&"".to_string()))
                 .set_tracer_version(config.tracer_version.as_ref().unwrap_or(&"".to_string()))
                 .set_language(config.language.as_ref().unwrap_or(&"".to_string()))
                 .set_language_version(config.language_version.as_ref().unwrap_or(&"".to_string()))
@@ -456,6 +526,8 @@ pub unsafe extern "C" fn ddog_trace_exporter_new(
                 .set_env(config.env.as_ref().unwrap_or(&"".to_string()))
                 .set_app_version(config.version.as_ref().unwrap_or(&"".to_string()))
                 .set_service(config.service.as_ref().unwrap_or(&"".to_string()))
+                .set_git_commit_sha(config.git_commit_sha.as_ref().unwrap_or(&"".to_string()))
+                .set_git_repository_url(config.git_repository_url.as_ref().unwrap_or(&"".to_string()))
                 .set_input_format(config.input_format)
                 .set_output_format(config.output_format)
                 .set_connection_timeout(config.connection_timeout);
