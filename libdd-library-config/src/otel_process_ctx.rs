@@ -359,9 +359,6 @@ pub mod linux {
         }
 
         /// Checks if a mapping line refers to the OTEL_CTX mapping.
-        ///
-        /// Handles both anonymous naming (`[anon:OTEL_CTX]`) and memfd naming
-        /// (`/memfd:OTEL_CTX` which may have ` (deleted)` suffix).
         fn is_named_otel_mapping(line: &str) -> bool {
             let trimmed = line.trim_end();
 
