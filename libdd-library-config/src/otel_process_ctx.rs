@@ -268,10 +268,10 @@ pub mod linux {
                 //
                 // To do so, we implement synchronization during publication _as if the reader were
                 // another thread of this program_, using atomics and fences.
+                fence(Ordering::SeqCst);
                 AtomicU64::from_ptr((*header).signature.as_mut_ptr().cast::<u64>())
                     // To avoid shuffling bytes, we must use the native endianness
-                    .store(u64::from_ne_bytes(*SIGNATURE), Ordering::Release);
-                fence(Ordering::SeqCst);
+                    .store(u64::from_ne_bytes(*SIGNATURE), Ordering::Relaxed);
             }
 
             let _ = mapping.set_name();
