@@ -12,6 +12,7 @@ pub struct DebuggerPayload<'a> {
     pub timestamp: u64,
     pub debugger: DebuggerData<'a>,
     pub message: Option<Cow<'a, str>>,
+    pub process_tags: Option<Cow<'a, str>>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

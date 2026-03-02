@@ -1,6 +1,6 @@
 [package]
 name = "libdd-ddsketch"
-version = "1.0.0"
+version = "1.0.1"
 description = "Minimal implementation of Datadog's DDSketch"
 homepage = "https://github.com/DataDog/libdatadog/tree/main/libdd-ddsketch"
 repository = "https://github.com/DataDog/libdatadog/tree/main/libdd-ddsketch"

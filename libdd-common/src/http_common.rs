@@ -2,14 +2,13 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use core::fmt;
-use std::{convert::Infallible, task::Poll};
+use std::{convert::Infallible, error::Error as _, task::Poll};
 
 use crate::connector::Connector;
 use http_body_util::BodyExt;
 use hyper::body::Incoming;
 use pin_project::pin_project;
-// Need aliases because cbindgen is not smart enough to figure type aliases
-use hyper::Request as HyperRequest;
+use thiserror::Error;
 
 /// Create a new default configuration hyper client for fixed interval sending.
 ///
@@ -31,19 +30,98 @@ pub fn new_default_client() -> GenericHttpClient<Connector> {
         .build(Connector::default())
 }
 
-pub type HttpResponse = hyper::Response<Body>;
-pub type HttpRequest = HyperRequest<Body>;
-pub type ClientError = hyper_util::client::legacy::Error;
+#[derive(Debug, Clone, Copy)]
+pub enum ErrorKind {
+    Parse,
+    Closed,
+    Canceled,
+    Incomplete,
+    WriteAborted,
+    ParseStatus,
+    Timeout,
+    Other,
+}
+
+#[derive(Debug, Error)]
+pub struct ClientError {
+    source: anyhow::Error,
+    kind: ErrorKind,
+}
+
+impl std::fmt::Display for ClientError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.source.fmt(f)
+    }
+}
+
+impl ClientError {
+    pub fn kind(&self) -> ErrorKind {
+        self.kind
+    }
+}
+
+impl From<hyper::Error> for ClientError {
+    fn from(source: hyper::Error) -> Self {
+        use ErrorKind::*;
+        let kind = if source.is_canceled() {
+            Canceled
+        } else if source.is_parse() {
+            Parse
+        } else if source.is_parse_status() {
+            ParseStatus
+        } else if source.is_incomplete_message() {
+            Incomplete
+        } else if source.is_body_write_aborted() {
+            WriteAborted
+        } else if source.is_timeout() {
+            Timeout
+        } else if source.is_closed() {
+            Closed
+        } else {
+            Other
+        };
+        Self {
+            kind,
+            source: source.into(),
+        }
+    }
+}
+
+pub type HttpResponse = http::Response<Body>;
+pub type HttpRequest = http::Request<Body>;
+pub type HttpRequestError = hyper_util::client::legacy::Error;
+
 pub type ResponseFuture = hyper_util::client::legacy::ResponseFuture;
 
 pub fn into_response(response: hyper::Response<Incoming>) -> HttpResponse {
     response.map(Body::Incoming)
 }
 
+pub fn into_error(err: HttpRequestError) -> ClientError {
+    let kind = if let Some(source) = err.source().and_then(|s| s.downcast_ref::<Error>()) {
+        match source {
+            Error::Client(client_error) => client_error.kind,
+            Error::Other(_) => ErrorKind::Other,
+            Error::Infallible(infallible) => match *infallible {},
+        }
+    } else if err.is_connect() {
+        ErrorKind::Closed
+    } else {
+        ErrorKind::Other
+    };
+    ClientError {
+        source: err.into(),
+        kind,
+    }
+}
+
+pub async fn collect_response_bytes(response: HttpResponse) -> Result<bytes::Bytes, Error> {
+    Ok(response.into_body().collect().await?.to_bytes())
+}
+
 #[derive(Debug)]
 pub enum Error {
-    Hyper(hyper::Error),
-    Legacy(hyper_util::client::legacy::Error),
+    Client(ClientError),
     Other(anyhow::Error),
     Infallible(Infallible),
 }
@@ -51,17 +129,10 @@ pub enum Error {
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Error::Hyper(e) => write!(f, "hyper error: {e}"),
-            Error::Legacy(e) => write!(f, "hyper legacy error: {e}"),
+            Error::Client(e) => write!(f, "client error: {e}"),
             Error::Infallible(e) => match *e {},
             Error::Other(e) => write!(f, "other error: {e}"),
         }
-    }
-}
-
-impl From<hyper_util::client::legacy::Error> for Error {
-    fn from(value: hyper_util::client::legacy::Error) -> Self {
-        Self::Legacy(value)
     }
 }
 
@@ -184,7 +255,9 @@ impl hyper::body::Body for Body {
                 };
                 Poll::Ready(Some(Ok(hyper::body::Frame::data(data))))
             }
-            BodyProj::Incoming(pin) => pin.poll_frame(cx).map_err(Error::Hyper),
+            BodyProj::Incoming(pin) => pin
+                .poll_frame(cx)
+                .map_err(|e| Error::Client(ClientError::from(e))),
         }
     }
 

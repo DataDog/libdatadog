@@ -5,8 +5,9 @@
 //! support both trace-utils' Span and pb::Span.
 
 use libdd_trace_protobuf::pb;
-use libdd_trace_utils::span::{trace_utils, Span, SpanText};
+use libdd_trace_utils::span::{trace_utils, v04::Span, TraceData};
 use libdd_trace_utils::trace_utils as pb_utils;
+use std::borrow::Borrow;
 
 /// Common interface for spans used in stats computation
 pub trait StatSpan<'a> {
@@ -38,7 +39,7 @@ pub trait StatSpan<'a> {
     fn get_metrics(&'a self, key: &str) -> Option<f64>;
 }
 
-impl<'a, T: SpanText> StatSpan<'a> for Span<T> {
+impl<'a, T: TraceData> StatSpan<'a> for Span<T> {
     fn service(&'a self) -> &'a str {
         self.service.borrow()
     }

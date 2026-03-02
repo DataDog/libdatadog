@@ -4,7 +4,7 @@
 use crate::span_concentrator::aggregation::OwnedAggregationKey;
 
 use super::*;
-use libdd_trace_utils::span::{trace_utils::compute_top_level_span, SpanSlice};
+use libdd_trace_utils::span::{trace_utils::compute_top_level_span, v04::SpanSlice};
 use rand::{thread_rng, Rng};
 
 const BUCKET_SIZE: u64 = Duration::from_secs(2).as_nanos() as u64;

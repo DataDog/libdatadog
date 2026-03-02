@@ -40,10 +40,11 @@ async fn main() {
                 language: "awesomelang".to_string(),
                 tracer_version: "99.10.5".to_string(),
                 endpoint: Endpoint {
-                    url: hyper::Uri::from_static("http://localhost:8126"),
+                    url: http::Uri::from_static("http://localhost:8126"),
                     api_key: None,
                     timeout_ms: 5000, // custom timeout, defaults to 3 seconds
                     test_token: None,
+                    ..Default::default()
                 },
             },
             products: vec![ApmTracing],

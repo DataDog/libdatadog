@@ -22,7 +22,7 @@ fuzz:
   timeout: 1h
   script:
     - VAULT_VERSION=1.15.4 && curl -fsSL "https://releases.hashicorp.com/vault/${VAULT_VERSION}/vault_${VAULT_VERSION}_linux_amd64.zip" -o vault.zip && unzip vault.zip && mv vault /usr/local/bin/vault && rm vault.zip && chmod +x /usr/local/bin/vault
-    - rustup default nightly
+    - rustup default nightly-2026-02-08
     - cargo install cargo-fuzz
     - pip3 install requests toml
     - python3 fuzz/fuzz_infra.py

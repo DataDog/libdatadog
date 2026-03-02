@@ -128,7 +128,7 @@ mod tracing_integration_tests {
 
             let data = get_v04_trace_snapshot_test_payload("test_exporter_v04_snapshot");
 
-            let response = trace_exporter.send(data.as_ref(), 1);
+            let response = trace_exporter.send(data.as_ref());
             let expected_response = format!("{{\"rate_by_service\": {rate_param}}}");
 
             assert!(response.is_ok());
@@ -181,7 +181,7 @@ mod tracing_integration_tests {
 
             let data = get_v04_trace_snapshot_test_payload("test_exporter_v04_v05_snapshot");
 
-            let response = trace_exporter.send(data.as_ref(), 1);
+            let response = trace_exporter.send(data.as_ref());
             let expected_response = format!("{{\"rate_by_service\": {rate_param}}}");
 
             assert!(response.is_ok());
@@ -227,7 +227,7 @@ mod tracing_integration_tests {
 
             let data = get_v05_trace_snapshot_test_payload();
 
-            let response = trace_exporter.send(data.as_ref(), 1);
+            let response = trace_exporter.send(data.as_ref());
             let expected_response = format!("{{\"rate_by_service\": {rate_param}}}");
 
             assert!(response.is_ok());
@@ -303,7 +303,7 @@ mod tracing_integration_tests {
 
             let data = get_v04_trace_snapshot_test_payload("test_exporter_v04_snapshot_uds");
 
-            let response = trace_exporter.send(data.as_ref(), 1);
+            let response = trace_exporter.send(data.as_ref());
             let expected_response = format!("{{\"rate_by_service\": {rate_param}}}");
 
             assert!(response.is_ok());

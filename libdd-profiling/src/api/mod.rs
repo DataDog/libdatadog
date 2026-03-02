@@ -1,6 +1,10 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+mod sample_type;
+
+pub use sample_type::SampleType;
+
 use libdd_profiling_protobuf::prost_impls;
 use std::ops::{Add, Sub};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -18,9 +22,10 @@ impl<'a> ValueType<'a> {
     }
 }
 
+#[repr(C)]
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
-pub struct Period<'a> {
-    pub r#type: ValueType<'a>,
+pub struct Period {
+    pub sample_type: SampleType,
     pub value: i64,
 }
 

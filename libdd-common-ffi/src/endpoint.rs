@@ -75,6 +75,16 @@ extern "C" fn ddog_endpoint_set_test_token(endpoint: &mut Endpoint, token: crate
     };
 }
 
+/// Set whether to use the system DNS resolver when building the reqwest client.
+/// If false, the default in-process resolver is used.
+#[no_mangle]
+pub extern "C" fn ddog_endpoint_set_use_system_resolver(
+    endpoint: &mut Endpoint,
+    use_system_resolver: bool,
+) {
+    endpoint.use_system_resolver = use_system_resolver;
+}
+
 #[no_mangle]
 pub extern "C" fn ddog_endpoint_drop(_: Box<Endpoint>) {}
 

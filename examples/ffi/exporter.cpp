@@ -31,13 +31,13 @@ int main(int argc, char *argv[]) {
 
   const auto service = argv[1];
 
-  const ddog_prof_ValueType wall_time = {
-      .type_ = DDOG_CHARSLICE_C_BARE("wall-time"),
-      .unit = DDOG_CHARSLICE_C_BARE("nanoseconds"),
+  // Use the SampleType enum instead of ValueType struct
+  const ddog_prof_SampleType wall_time = DDOG_PROF_SAMPLE_TYPE_WALL_TIME;
+  const ddog_prof_Slice_SampleType sample_types = {&wall_time, 1};
+  const ddog_prof_Period period = {
+      .sample_type = wall_time,
+      .value = 60,
   };
-
-  const ddog_prof_Slice_ValueType sample_types = {&wall_time, 1};
-  const ddog_prof_Period period = {wall_time, 60};
   ddog_prof_Profile_NewResult profile_new_result = ddog_prof_Profile_new(sample_types, &period);
   if (profile_new_result.tag != DDOG_PROF_PROFILE_NEW_RESULT_OK) {
     print_error("Failed to make new profile: ", profile_new_result.err);
@@ -97,9 +97,9 @@ int main(int argc, char *argv[]) {
 
   auto *encoded_profile = &serialize_result.ok;
 
-  // Set a custom timeout of 10000ms (10 seconds) instead of the default 3000ms
-  auto endpoint =
-      ddog_prof_Endpoint_agentless(DDOG_CHARSLICE_C_BARE("datad0g.com"), to_slice_c_char(api_key), 10000);
+  // Set a custom timeout of 10000ms (10 seconds); use_system_resolver = false (default resolver)
+  auto endpoint = ddog_prof_Endpoint_agentless(
+      DDOG_CHARSLICE_C_BARE("datad0g.com"), to_slice_c_char(api_key), 10000, false);
 
   ddog_Vec_Tag tags = ddog_Vec_Tag_new();
   ddog_Vec_Tag_PushResult tag_result =

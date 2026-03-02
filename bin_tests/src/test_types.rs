@@ -18,6 +18,7 @@ pub enum TestMode {
     RuntimeCallbackFrame,
     RuntimeCallbackString,
     RuntimeCallbackFrameInvalidUtf8,
+    RuntimePreloadLogger,
 }
 
 impl TestMode {
@@ -37,6 +38,7 @@ impl TestMode {
             Self::RuntimeCallbackFrame => "runtime_callback_frame",
             Self::RuntimeCallbackString => "runtime_callback_string",
             Self::RuntimeCallbackFrameInvalidUtf8 => "runtime_callback_frame_invalid_utf8",
+            Self::RuntimePreloadLogger => "runtime_preload_logger",
         }
     }
 
@@ -56,6 +58,7 @@ impl TestMode {
             Self::RuntimeCallbackFrame,
             Self::RuntimeCallbackString,
             Self::RuntimeCallbackFrameInvalidUtf8,
+            Self::RuntimePreloadLogger,
         ]
     }
 }
@@ -84,6 +87,7 @@ impl std::str::FromStr for TestMode {
             "runtime_callback_frame" => Ok(Self::RuntimeCallbackFrame),
             "runtime_callback_string" => Ok(Self::RuntimeCallbackString),
             "runtime_callback_frame_invalid_utf8" => Ok(Self::RuntimeCallbackFrameInvalidUtf8),
+            "runtime_preload_logger" => Ok(Self::RuntimePreloadLogger),
             _ => Err(format!("Unknown test mode: {}", s)),
         }
     }
@@ -110,6 +114,8 @@ pub enum CrashType {
     RaiseSigBus,
     /// Raise SIGSEGV
     RaiseSigSegv,
+    /// Unhandled Exception
+    UnhandledException,
 }
 
 impl CrashType {
@@ -125,6 +131,7 @@ impl CrashType {
             Self::RaiseSigIll => "raise_sigill",
             Self::RaiseSigBus => "raise_sigbus",
             Self::RaiseSigSegv => "raise_sigsegv",
+            Self::UnhandledException => "unhandled_exception",
         }
     }
 
@@ -134,7 +141,11 @@ impl CrashType {
     pub const fn expects_success(self) -> bool {
         matches!(
             self,
-            Self::KillSigBus | Self::KillSigSegv | Self::RaiseSigBus | Self::RaiseSigSegv
+            Self::KillSigBus
+                | Self::KillSigSegv
+                | Self::RaiseSigBus
+                | Self::RaiseSigSegv
+                | Self::UnhandledException
         )
     }
 
@@ -146,6 +157,7 @@ impl CrashType {
             Self::KillSigAbrt | Self::RaiseSigAbrt => 6,                    // SIGABRT
             Self::KillSigIll | Self::RaiseSigIll => 4,                      // SIGILL
             Self::KillSigBus | Self::RaiseSigBus => 7,                      // SIGBUS
+            Self::UnhandledException => 0,                                  // no signal
         }
     }
 
@@ -156,6 +168,7 @@ impl CrashType {
             Self::KillSigAbrt | Self::RaiseSigAbrt => "SIGABRT",
             Self::KillSigIll | Self::RaiseSigIll => "SIGILL",
             Self::KillSigBus | Self::RaiseSigBus => "SIGBUS",
+            Self::UnhandledException => "Unhandled Exception",
         }
     }
 }
@@ -180,6 +193,7 @@ impl std::str::FromStr for CrashType {
             "raise_sigill" => Ok(Self::RaiseSigIll),
             "raise_sigbus" => Ok(Self::RaiseSigBus),
             "raise_sigsegv" => Ok(Self::RaiseSigSegv),
+            "unhandled_exception" => Ok(Self::UnhandledException),
             _ => Err(format!("Unknown crash type: {}", s)),
         }
     }
@@ -216,5 +230,6 @@ mod tests {
         assert!(!CrashType::KillSigAbrt.expects_success());
         assert!(CrashType::KillSigBus.expects_success());
         assert!(CrashType::KillSigSegv.expects_success());
+        assert!(CrashType::UnhandledException.expects_success());
     }
 }

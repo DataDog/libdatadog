@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 use std::{fmt::Write, time::SystemTime};
 
-use crate::SigInfo;
+use crate::{ErrorKind, SigInfo};
 
 use super::{CrashInfo, Metadata};
 use anyhow::Context;
@@ -26,6 +26,7 @@ struct TelemetryMetadata {
 pub struct CrashPingBuilder {
     crash_uuid: Uuid,
     custom_message: Option<String>,
+    kind: Option<ErrorKind>,
     metadata: Option<Metadata>,
     sig_info: Option<SigInfo>,
 }
@@ -38,6 +39,7 @@ impl CrashPingBuilder {
         Self {
             crash_uuid,
             custom_message: None,
+            kind: None,
             metadata: None,
             sig_info: None,
         }
@@ -53,6 +55,11 @@ impl CrashPingBuilder {
         self
     }
 
+    pub fn with_kind(mut self, kind: ErrorKind) -> Self {
+        self.kind = Some(kind);
+        self
+    }
+
     pub fn with_metadata(mut self, metadata: Metadata) -> Self {
         self.metadata = Some(metadata);
         self
@@ -62,22 +69,23 @@ impl CrashPingBuilder {
         let crash_uuid = self.crash_uuid;
         let sig_info = self.sig_info;
         let metadata = self.metadata.context("metadata is required")?;
+        let kind = self.kind.context("kind is required")?;
 
-        let message = self.custom_message.unwrap_or_else(|| {
-            if let Some(ref sig_info) = sig_info {
-                format!(
-                    "Crashtracker crash ping: crash processing started - Process terminated with {:?} ({:?})",
-                    sig_info.si_code_human_readable, sig_info.si_signo_human_readable
-                )
-            } else {
-                "Crashtracker crash ping: crash processing started - Process terminated".to_string()
-            }
-        });
+        let message = if let Some(custom_message) = self.custom_message {
+            format!("Crashtracker crash ping: crash processing started - {custom_message}")
+        } else if let Some(ref sig_info) = sig_info {
+            format!(
+                "Crashtracker crash ping: crash processing started - Process terminated with {:?} ({:?})",
+                sig_info.si_code_human_readable, sig_info.si_signo_human_readable
+            )
+        } else {
+            format!("Crashtracker crash ping: crash processing started - Process terminated due to {:?}", kind)
+        };
 
         Ok(CrashPing {
             crash_uuid: crash_uuid.to_string(),
-            kind: "Crash ping".to_string(),
             message,
+            kind,
             metadata,
             siginfo: sig_info,
             version: CrashPing::current_schema_version(),
@@ -88,11 +96,11 @@ impl CrashPingBuilder {
 #[derive(Debug, Serialize)]
 pub struct CrashPing {
     crash_uuid: String,
+    kind: ErrorKind,
+    message: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     siginfo: Option<SigInfo>,
-    message: String,
     version: String,
-    kind: String,
     metadata: Metadata,
 }
 
@@ -208,6 +216,7 @@ impl TelemetryCrashUploader {
             "runtime-id" => runtime_id,
             "service_version" => service_version,
             "service" => service_name,
+            "process_tags" => process_tags,
         );
 
         let application = Application {
@@ -220,6 +229,7 @@ impl TelemetryCrashUploader {
                 .to_owned(),
             env: env.map(ToOwned::to_owned),
             service_version: service_version.map(ToOwned::to_owned),
+            process_tags: process_tags.map(ToOwned::to_owned),
             ..Default::default()
         };
 
@@ -315,15 +325,17 @@ impl TelemetryCrashUploader {
             seq_id: 1,
             application: &self.metadata.application,
             host: &self.metadata.host,
-            payload: &data::Payload::Logs(vec![data::Log {
-                message,
-                level,
-                stack_trace: None,
-                tags,
-                is_sensitive,
-                count: 1,
-                is_crash,
-            }]),
+            payload: &data::Payload::Logs(data::Logs {
+                logs: vec![data::Log {
+                    message,
+                    level,
+                    stack_trace: None,
+                    tags,
+                    is_sensitive,
+                    count: 1,
+                    is_crash,
+                }],
+            }),
             origin: Some("Crashtracker"),
         };
 
@@ -442,7 +454,10 @@ fn extract_crash_info_tags(crash_info: &CrashInfo) -> anyhow::Result<String> {
 #[cfg(test)]
 mod tests {
     use super::TelemetryCrashUploader;
-    use crate::crash_info::{test_utils::TestInstance, CrashInfo, CrashInfoBuilder, Metadata};
+    use crate::{
+        crash_info::{test_utils::TestInstance, CrashInfo, CrashInfoBuilder, Metadata},
+        ErrorKind,
+    };
     use libdd_common::Endpoint;
     use libdd_telemetry::data::LogLevel;
     use std::{collections::HashSet, fs};
@@ -451,6 +466,19 @@ mod tests {
     fn new_test_uploader(seed: u64) -> TelemetryCrashUploader {
         TelemetryCrashUploader::new(
             &Metadata::test_instance(seed),
+            &Some(Endpoint::from_slice("http://localhost:8126")),
+        )
+        .unwrap()
+    }
+
+    fn new_test_uploader_with_process_tags(
+        seed: u64,
+        process_tags: &str,
+    ) -> TelemetryCrashUploader {
+        let mut metadata = Metadata::test_instance(seed);
+        metadata.tags.push(format!("process_tags:{process_tags}"));
+        TelemetryCrashUploader::new(
+            &metadata,
             &Some(Endpoint::from_slice("http://localhost:8126")),
         )
         .unwrap()
@@ -465,6 +493,7 @@ mod tests {
         assert_eq!(metadata.application.service_name, "foo");
         assert_eq!(metadata.application.service_version.as_deref(), Some("bar"));
         assert_eq!(metadata.application.language_name, "native");
+        assert_eq!(metadata.application.process_tags, None);
         assert_eq!(metadata.runtime_id, "xyz");
         let cfg = t.cfg;
         assert_eq!(
@@ -484,7 +513,8 @@ mod tests {
             p
         };
         let seed = 1;
-        let mut t = new_test_uploader(seed);
+        let mut t =
+            new_test_uploader_with_process_tags(seed, "entrypoint.name:cli,entrypoint.type:script");
 
         t.cfg
             .set_host_from_url(&format!("file://{}", output_filename.to_str().unwrap()))
@@ -499,12 +529,16 @@ mod tests {
         assert_eq!(payload["application"]["language_name"], "native");
         assert_eq!(payload["application"]["service_name"], "foo");
         assert_eq!(payload["application"]["service_version"], "bar");
+        assert_eq!(
+            payload["application"]["process_tags"],
+            "entrypoint.name:cli,entrypoint.type:script"
+        );
         assert_eq!(payload["request_type"], "logs");
         assert_eq!(payload["tracer_time"], 1568898000);
         assert_eq!(payload["origin"], "Crashtracker");
 
-        assert_eq!(payload["payload"].as_array().unwrap().len(), 1);
-        let tags = payload["payload"][0]["tags"]
+        assert_eq!(payload["payload"]["logs"].as_array().unwrap().len(), 1);
+        let tags = payload["payload"]["logs"][0]["tags"]
             .as_str()
             .unwrap()
             .split(',')
@@ -512,7 +546,7 @@ mod tests {
         assert_eq!(
             HashSet::from_iter([
                 "collecting_sample:1",
-                "data_schema_version:1.4",
+                "data_schema_version:1.5",
                 "incomplete:true",
                 "is_crash:true",
                 "not_profiling:0",
@@ -525,12 +559,12 @@ mod tests {
             ]),
             tags
         );
-        assert_eq!(payload["payload"][0]["is_sensitive"], true);
-        assert_eq!(payload["payload"][0]["level"], "ERROR");
+        assert_eq!(payload["payload"]["logs"][0]["is_sensitive"], true);
+        assert_eq!(payload["payload"]["logs"][0]["level"], "ERROR");
         let body: CrashInfo =
-            serde_json::from_str(payload["payload"][0]["message"].as_str().unwrap())?;
+            serde_json::from_str(payload["payload"]["logs"][0]["message"].as_str().unwrap())?;
         assert_eq!(body, test_instance);
-        assert_eq!(payload["payload"][0]["is_crash"], true);
+        assert_eq!(payload["payload"]["logs"][0]["is_crash"], true);
         Ok(())
     }
 
@@ -557,6 +591,7 @@ mod tests {
         let mut crash_info_builder = CrashInfoBuilder::new();
         crash_info_builder.with_sig_info(sig_info.clone()).unwrap();
         crash_info_builder.with_metadata(metadata.clone()).unwrap();
+        crash_info_builder.with_kind(ErrorKind::UnixSignal).unwrap();
         let crash_ping = crash_info_builder.build_crash_ping().unwrap();
         t.upload_crash_ping(&crash_ping).await.unwrap();
 
@@ -569,8 +604,8 @@ mod tests {
         assert_eq!(payload["request_type"], "logs");
         assert_eq!(payload["origin"], "Crashtracker");
 
-        assert_eq!(payload["payload"].as_array().unwrap().len(), 1);
-        let log_entry = &payload["payload"][0];
+        assert_eq!(payload["payload"]["logs"].as_array().unwrap().len(), 1);
+        let log_entry = &payload["payload"]["logs"][0];
 
         // Crash ping properties
         assert_eq!(log_entry["is_sensitive"], false);
@@ -584,7 +619,7 @@ mod tests {
         assert!(Uuid::parse_str(message_json["crash_uuid"].as_str().unwrap()).is_ok());
 
         assert_eq!(message_json["version"], "1.0");
-        assert_eq!(message_json["kind"], "Crash ping");
+        assert_eq!(message_json["kind"], "UnixSignal");
 
         let metadata_in_message = &message_json["metadata"];
         assert!(
@@ -632,6 +667,7 @@ mod tests {
         let mut crash_info_builder = CrashInfoBuilder::new();
         crash_info_builder.with_sig_info(sig_info.clone()).unwrap();
         crash_info_builder.with_metadata(metadata.clone()).unwrap();
+        crash_info_builder.with_kind(ErrorKind::UnixSignal).unwrap();
         let crash_ping = crash_info_builder.build_crash_ping().unwrap();
         t.upload_crash_ping(&crash_ping).await.unwrap();
 
@@ -644,8 +680,8 @@ mod tests {
         assert_eq!(payload["request_type"], "logs");
         assert_eq!(payload["origin"], "Crashtracker");
 
-        assert_eq!(payload["payload"].as_array().unwrap().len(), 1);
-        let log_entry = &payload["payload"][0];
+        assert_eq!(payload["payload"]["logs"].as_array().unwrap().len(), 1);
+        let log_entry = &payload["payload"]["logs"][0];
 
         // Crash ping properties
         assert_eq!(log_entry["is_crash"], false);
@@ -684,7 +720,7 @@ mod tests {
         );
 
         assert_eq!(message_json["version"], "1.0");
-        assert_eq!(message_json["kind"], "Crash ping");
+        assert_eq!(message_json["kind"], "UnixSignal");
 
         let tags = log_entry["tags"].as_str().unwrap();
         let uuid_str = message_json["crash_uuid"].as_str().unwrap();
@@ -715,6 +751,7 @@ mod tests {
         let mut crash_info_builder = CrashInfoBuilder::new();
         crash_info_builder.with_sig_info(sig_info.clone()).unwrap();
         crash_info_builder.with_metadata(metadata.clone()).unwrap();
+        crash_info_builder.with_kind(ErrorKind::UnixSignal).unwrap();
         let crash_ping = crash_info_builder.build_crash_ping()?;
 
         let endpoint = Some(Endpoint::from_slice(&format!(
@@ -748,7 +785,7 @@ mod tests {
         assert_eq!(payload["request_type"], "logs");
         assert_eq!(payload["origin"], "Crashtracker");
 
-        let log_entry = &payload["payload"][0];
+        let log_entry = &payload["payload"]["logs"][0];
         assert_eq!(log_entry["level"], "DEBUG");
         assert_eq!(log_entry["is_sensitive"], false);
         assert_eq!(log_entry["is_crash"], false);
@@ -758,7 +795,7 @@ mod tests {
         assert!(message_json["crash_uuid"].is_string());
         assert!(Uuid::parse_str(message_json["crash_uuid"].as_str().unwrap()).is_ok());
         assert_eq!(message_json["version"], "1.0");
-        assert_eq!(message_json["kind"], "Crash ping");
+        assert_eq!(message_json["kind"], "UnixSignal");
 
         Ok(())
     }
@@ -771,6 +808,7 @@ mod tests {
         crash_info_builder
             .with_metadata(Metadata::test_instance(1))
             .unwrap();
+        crash_info_builder.with_kind(ErrorKind::UnixSignal).unwrap();
         let result = crash_info_builder.build_crash_ping();
         assert!(result.is_ok());
         let crash_ping = result.unwrap();
@@ -784,6 +822,7 @@ mod tests {
         crash_info_builder
             .with_sig_info(crate::SigInfo::test_instance(1))
             .unwrap();
+        crash_info_builder.with_kind(ErrorKind::UnixSignal).unwrap();
         let result = crash_info_builder.build_crash_ping();
         assert!(result.is_err());
         assert!(result
@@ -799,6 +838,7 @@ mod tests {
         crash_info_builder
             .with_metadata(Metadata::test_instance(1))
             .unwrap();
+        crash_info_builder.with_kind(ErrorKind::UnixSignal).unwrap();
         let result = crash_info_builder.build_crash_ping();
         assert!(result.is_ok());
         let crash_ping = result.unwrap();
@@ -815,11 +855,60 @@ mod tests {
         let mut crash_info_builder = CrashInfoBuilder::new();
         crash_info_builder.with_sig_info(sig_info.clone()).unwrap();
         crash_info_builder.with_metadata(metadata.clone()).unwrap();
+        crash_info_builder.with_kind(ErrorKind::UnixSignal).unwrap();
         let crash_ping = crash_info_builder.build_crash_ping().unwrap();
 
         assert!(!crash_ping.crash_uuid().is_empty());
         assert!(Uuid::parse_str(crash_ping.crash_uuid()).is_ok());
         assert!(crash_ping.message().contains("crash processing started"));
+        assert_eq!(crash_ping.metadata(), &metadata);
+        assert_eq!(crash_ping.siginfo(), Some(&sig_info));
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_crash_ping_with_message_generated_from_sig_info() {
+        let sig_info = crate::SigInfo::test_instance(99);
+        let metadata = Metadata::test_instance(2);
+
+        // Build crash ping through CrashInfoBuilder
+        let mut crash_info_builder = CrashInfoBuilder::new();
+        crash_info_builder.with_sig_info(sig_info.clone()).unwrap();
+        crash_info_builder.with_metadata(metadata.clone()).unwrap();
+        crash_info_builder.with_kind(ErrorKind::UnixSignal).unwrap();
+        let crash_ping = crash_info_builder.build_crash_ping().unwrap();
+
+        assert!(!crash_ping.crash_uuid().is_empty());
+        assert!(Uuid::parse_str(crash_ping.crash_uuid()).is_ok());
+        assert_eq!(crash_ping.message(), format!(
+            "Crashtracker crash ping: crash processing started - Process terminated with {:?} ({:?})",
+            sig_info.si_code_human_readable, sig_info.si_signo_human_readable
+        ));
+        assert_eq!(crash_ping.metadata(), &metadata);
+        assert_eq!(crash_ping.siginfo(), Some(&sig_info));
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_crash_ping_with_custom_message() {
+        let sig_info = crate::SigInfo::test_instance(99);
+        let metadata = Metadata::test_instance(2);
+
+        // Build crash ping through CrashInfoBuilder
+        let mut crash_info_builder = CrashInfoBuilder::new();
+        crash_info_builder.with_sig_info(sig_info.clone()).unwrap();
+        crash_info_builder.with_metadata(metadata.clone()).unwrap();
+        crash_info_builder
+            .with_message("my process panicked".to_string())
+            .unwrap();
+        crash_info_builder.with_kind(ErrorKind::UnixSignal).unwrap();
+        let crash_ping = crash_info_builder.build_crash_ping().unwrap();
+
+        assert!(!crash_ping.crash_uuid().is_empty());
+        assert!(Uuid::parse_str(crash_ping.crash_uuid()).is_ok());
+        assert!(crash_ping
+            .message()
+            .contains("crash processing started - my process panicked"));
         assert_eq!(crash_ping.metadata(), &metadata);
         assert_eq!(crash_ping.siginfo(), Some(&sig_info));
     }
@@ -849,6 +938,7 @@ mod tests {
         let mut crash_info_builder = CrashInfoBuilder::new();
         crash_info_builder.with_sig_info(sig_info.clone()).unwrap();
         crash_info_builder.with_metadata(metadata.clone()).unwrap();
+        crash_info_builder.with_kind(ErrorKind::UnixSignal).unwrap();
         let crash_ping = crash_info_builder.build_crash_ping().unwrap();
 
         uploader.upload_crash_ping(&crash_ping).await?;
@@ -861,7 +951,7 @@ mod tests {
         assert_eq!(payload["request_type"], "logs");
         assert_eq!(payload["origin"], "Crashtracker");
 
-        let log_entry = &payload["payload"][0];
+        let log_entry = &payload["payload"]["logs"][0];
         assert_eq!(log_entry["level"], "DEBUG");
         assert_eq!(log_entry["is_sensitive"], false);
         assert_eq!(log_entry["is_crash"], false);
@@ -872,7 +962,7 @@ mod tests {
         assert!(message_json["crash_uuid"].is_string());
         assert!(Uuid::parse_str(message_json["crash_uuid"].as_str().unwrap()).is_ok());
         assert_eq!(message_json["version"], "1.0");
-        assert_eq!(message_json["kind"], "Crash ping");
+        assert_eq!(message_json["kind"], "UnixSignal");
 
         let uploaded_siginfo = &message_json["siginfo"];
         assert_eq!(uploaded_siginfo["si_signo"], sig_info.si_signo);
@@ -931,7 +1021,7 @@ mod tests {
         assert_eq!(payload["request_type"], "logs");
         assert_eq!(payload["origin"], "Crashtracker");
 
-        let log_entry = &payload["payload"][0];
+        let log_entry = &payload["payload"]["logs"][0];
         assert_eq!(log_entry["level"], "WARN");
         assert_eq!(log_entry["is_sensitive"], false);
         assert_eq!(log_entry["is_crash"], false);

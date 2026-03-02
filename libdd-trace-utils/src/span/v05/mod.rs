@@ -3,7 +3,7 @@
 
 pub mod dict;
 
-use crate::span::{v05::dict::SharedDict, SpanText};
+use crate::span::{v05::dict::SharedDict, TraceData};
 use anyhow::Result;
 use serde::Serialize;
 use std::collections::HashMap;
@@ -28,9 +28,9 @@ pub struct Span {
     pub r#type: u32,
 }
 
-pub fn from_span<T: SpanText>(
-    span: crate::span::Span<T>,
-    dict: &mut SharedDict<T>,
+pub fn from_v04_span<T: TraceData>(
+    span: crate::span::v04::Span<T>,
+    dict: &mut SharedDict<T::Text>,
 ) -> Result<Span> {
     let meta_len = span.meta.len();
     let metrics_len = span.metrics.len();
@@ -65,7 +65,7 @@ pub fn from_span<T: SpanText>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::span::SpanBytes;
+    use crate::span::v04::SpanBytes;
     use libdd_tinybytes::BytesString;
 
     #[test]
@@ -92,7 +92,7 @@ mod tests {
         };
 
         let mut dict = SharedDict::default();
-        let v05_span = from_span(span, &mut dict).unwrap();
+        let v05_span = from_v04_span(span, &mut dict).unwrap();
 
         let get_index_from_str = |str: &str| -> u32 {
             dict.iter()

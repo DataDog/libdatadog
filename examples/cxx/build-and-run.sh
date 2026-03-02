@@ -63,10 +63,21 @@ echo "📚 CXX bridge library: $CXX_BRIDGE_LIB"
 
 echo "🔨 Compiling C++ example..."
 # Platform-specific linker flags
+#
+# Note: when linking Rust staticlibs from C++, native system libraries that Rust
+# would normally link automatically for Rust binaries must be provided here.
+#
+# - macOS: Security/CoreFoundation for TLS root store access
+# - Windows: Crypt32 for `rustls-platform-verifier` (Cert* APIs)
 if [[ "$OSTYPE" == "darwin"* ]]; then
     PLATFORM_LIBS="-framework Security -framework CoreFoundation"
+    THREAD_LIBS="-lpthread -ldl"
+elif [[ "$OSTYPE" == "msys"* || "$OSTYPE" == "cygwin"* || "$OSTYPE" == "win32"* ]]; then
+    PLATFORM_LIBS="-lcrypt32"
+    THREAD_LIBS=""
 else
     PLATFORM_LIBS=""
+    THREAD_LIBS="-lpthread -ldl"
 fi
 
 c++ -std=c++20 $EXTRA_CXX_FLAGS \
@@ -77,7 +88,7 @@ c++ -std=c++20 $EXTRA_CXX_FLAGS \
     "examples/cxx/${EXAMPLE_NAME}.cpp" \
     "$CRATE_LIB" \
     "$CXX_BRIDGE_LIB" \
-    -lpthread -ldl $PLATFORM_LIBS $EXTRA_LIBS \
+    $THREAD_LIBS $PLATFORM_LIBS $EXTRA_LIBS \
     -o "examples/cxx/${EXAMPLE_NAME}"
 
 echo "🚀 Running example..."

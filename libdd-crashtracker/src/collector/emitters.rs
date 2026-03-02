@@ -9,7 +9,10 @@ use crate::runtime_callback::{
     CallbackData,
 };
 use crate::shared::constants::*;
-use crate::{translate_si_code, CrashtrackerConfiguration, SignalNames, StacktraceCollection};
+use crate::{
+    translate_si_code, CrashtrackerConfiguration, ErrorKind, SignalNames, StackTrace,
+    StacktraceCollection,
+};
 use backtrace::Frame;
 use libc::{siginfo_t, ucontext_t};
 use std::{
@@ -32,6 +35,8 @@ pub enum EmitterError {
     CounterError(#[from] crate::collector::counters::CounterError),
     #[error("Atomic set error: {0}")]
     AtomicSetError(#[from] crate::collector::atomic_set::AtomicSetError),
+    #[error("Serialization error: {0}")]
+    SerializationError(#[from] serde_json::Error),
 }
 
 /// Emit a stacktrace onto the given handle as formatted json.
@@ -132,20 +137,62 @@ unsafe fn emit_backtrace_by_frames(
     Ok(())
 }
 
+/// Crash-kind-specific data passed to `emit_crashreport`.
+///
+/// Each variant carries exactly the fields that are meaningful for that crash
+/// origin. the shared fields (config, metadata, procinfo, …) remain as plain
+/// function parameters
+pub(crate) enum CrashKindData {
+    UnixSignal {
+        sig_info: *const siginfo_t,
+        ucontext: *const ucontext_t,
+    },
+    UnhandledException {
+        stacktrace: StackTrace,
+    },
+}
+
+impl CrashKindData {
+    fn error_kind(&self) -> ErrorKind {
+        match self {
+            CrashKindData::UnixSignal { .. } => ErrorKind::UnixSignal,
+            CrashKindData::UnhandledException { .. } => ErrorKind::UnhandledException,
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn emit_crashreport(
     pipe: &mut impl Write,
     config: &CrashtrackerConfiguration,
     config_str: &str,
     metadata_string: &str,
-    sig_info: *const siginfo_t,
-    ucontext: *const ucontext_t,
+    message_ptr: *mut String,
+    crash: CrashKindData,
     ppid: i32,
+    crashing_tid: libc::pid_t,
 ) -> Result<(), EmitterError> {
-    emit_metadata(pipe, metadata_string)?;
+    // Crash-ping
+    // The receiver dispatches the crash ping as soon as it sees the metadata
+    // section, so try to emit message, siginfo, and kind before it to make sure
+    // we have an enhanced crash ping message
     emit_config(pipe, config_str)?;
-    emit_siginfo(pipe, sig_info)?;
-    emit_ucontext(pipe, ucontext)?;
-    emit_procinfo(pipe, ppid)?;
+    emit_message(pipe, message_ptr)?;
+
+    match &crash {
+        CrashKindData::UnixSignal { sig_info, .. } => {
+            emit_siginfo(pipe, *sig_info)?;
+        }
+        CrashKindData::UnhandledException { .. } => {
+            // Unhandled exceptions have no signal info
+        }
+    }
+
+    emit_kind(pipe, &crash.error_kind())?;
+    emit_metadata(pipe, metadata_string)?;
+
+    // Shared process context
+    emit_procinfo(pipe, ppid, crashing_tid)?;
     emit_counters(pipe)?;
     emit_spans(pipe)?;
     consume_and_emit_additional_tags(pipe)?;
@@ -154,24 +201,50 @@ pub(crate) fn emit_crashreport(
     #[cfg(target_os = "linux")]
     emit_proc_self_maps(pipe)?;
 
-    // Getting a backtrace on rust is not guaranteed to be signal safe
-    // https://github.com/rust-lang/backtrace-rs/issues/414
-    // let current_backtrace = backtrace::Backtrace::new();
-    // In fact, if we look into the code here, we see mallocs.
-    // https://doc.rust-lang.org/src/std/backtrace.rs.html#332
-    // Do this last, so even if it crashes, we still get the other info.
-    if config.resolve_frames() != StacktraceCollection::Disabled {
-        let fault_ip = extract_ip(ucontext);
-        unsafe { emit_backtrace_by_frames(pipe, config.resolve_frames(), fault_ip)? };
-    }
-
-    if is_runtime_callback_registered() {
-        emit_runtime_stack(pipe)?;
+    // Stack trace emission
+    match crash {
+        CrashKindData::UnixSignal { ucontext, .. } => {
+            emit_ucontext(pipe, ucontext)?;
+            if config.resolve_frames() != StacktraceCollection::Disabled {
+                // SAFETY: Getting a backtrace on rust is not guaranteed to be signal safe
+                // https://github.com/rust-lang/backtrace-rs/issues/414
+                // let current_backtrace = backtrace::Backtrace::new();
+                // In fact, if we look into the code here, we see mallocs.
+                // https://doc.rust-lang.org/src/std/backtrace.rs.html#332
+                // We do this last, so even if it crashes, we still get the other info.
+                let fault_ip = extract_ip(ucontext);
+                unsafe { emit_backtrace_by_frames(pipe, config.resolve_frames(), fault_ip)? };
+            }
+            if is_runtime_callback_registered() {
+                emit_runtime_stack(pipe)?;
+            }
+        }
+        CrashKindData::UnhandledException { stacktrace } => {
+            // SAFETY: this branch only executes when an unhandled exception occurs
+            // and is not called from a signal handler.
+            unsafe { emit_whole_stacktrace(pipe, stacktrace)? };
+        }
     }
 
     writeln!(pipe, "{DD_CRASHTRACK_DONE}")?;
     pipe.flush()?;
+    Ok(())
+}
 
+/// SAFETY:
+///    This function is not safe to call from a signal handler.
+///    Although `serde_json::to_writer` does not technically allocate memory
+///    itself, it takes in `StackTrace` which is allocated and is only intended
+///    to be used in a non-signal-handler context
+unsafe fn emit_whole_stacktrace(
+    w: &mut impl Write,
+    stacktrace: StackTrace,
+) -> Result<(), EmitterError> {
+    writeln!(w, "{DD_CRASHTRACK_BEGIN_WHOLE_STACKTRACE}")?;
+    let _ = serde_json::to_writer(&mut *w, &stacktrace);
+    writeln!(w)?;
+    writeln!(w, "{DD_CRASHTRACK_END_WHOLE_STACKTRACE}")?;
+    w.flush()?;
     Ok(())
 }
 
@@ -179,6 +252,15 @@ fn emit_config(w: &mut impl Write, config_str: &str) -> Result<(), EmitterError>
     writeln!(w, "{DD_CRASHTRACK_BEGIN_CONFIG}")?;
     writeln!(w, "{config_str}")?;
     writeln!(w, "{DD_CRASHTRACK_END_CONFIG}")?;
+    w.flush()?;
+    Ok(())
+}
+
+fn emit_kind<W: std::io::Write>(w: &mut W, kind: &ErrorKind) -> Result<(), EmitterError> {
+    writeln!(w, "{DD_CRASHTRACK_BEGIN_KIND}")?;
+    let _ = serde_json::to_writer(&mut *w, kind);
+    writeln!(w)?;
+    writeln!(w, "{DD_CRASHTRACK_END_KIND}")?;
     w.flush()?;
     Ok(())
 }
@@ -191,9 +273,22 @@ fn emit_metadata(w: &mut impl Write, metadata_str: &str) -> Result<(), EmitterEr
     Ok(())
 }
 
-fn emit_procinfo(w: &mut impl Write, pid: i32) -> Result<(), EmitterError> {
+fn emit_message(w: &mut impl Write, message_ptr: *mut String) -> Result<(), EmitterError> {
+    if !message_ptr.is_null() {
+        let message = unsafe { &*message_ptr };
+        if !message.trim().is_empty() {
+            writeln!(w, "{DD_CRASHTRACK_BEGIN_MESSAGE}")?;
+            writeln!(w, "{message}")?;
+            writeln!(w, "{DD_CRASHTRACK_END_MESSAGE}")?;
+            w.flush()?;
+        }
+    }
+    Ok(())
+}
+
+fn emit_procinfo(w: &mut impl Write, pid: i32, tid: libc::pid_t) -> Result<(), EmitterError> {
     writeln!(w, "{DD_CRASHTRACK_BEGIN_PROCINFO}")?;
-    writeln!(w, "{{\"pid\": {pid} }}")?;
+    writeln!(w, "{{\"pid\": {pid}, \"tid\": {tid} }}")?;
     writeln!(w, "{DD_CRASHTRACK_END_PROCINFO}")?;
     w.flush()?;
     Ok(())
@@ -389,6 +484,8 @@ fn extract_ip(ucontext: *const ucontext_t) -> usize {
 
 #[cfg(test)]
 mod tests {
+    use crate::StackFrame;
+
     use super::*;
     use std::str;
 
@@ -408,6 +505,38 @@ mod tests {
             emit_backtrace_by_frames(&mut buf, collection, ip_of_test_fn).expect("to work ;-)");
         }
         buf
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_emit_complete_stacktrace() {
+        // new_incomplete() starts with incomplete: true, which push_frame requires
+        let mut stacktrace = StackTrace::new_incomplete();
+        let mut stackframe1 = StackFrame::new();
+        stackframe1.with_ip(1234);
+        stackframe1.with_function("test_function1".to_string());
+        stackframe1.with_file("test_file1".to_string());
+
+        let mut stackframe2 = StackFrame::new();
+        stackframe2.with_ip(5678);
+        stackframe2.with_function("test_function2".to_string());
+        stackframe2.with_file("test_file2".to_string());
+
+        stacktrace.push_frame(stackframe1, true).unwrap();
+        stacktrace.push_frame(stackframe2, true).unwrap();
+
+        stacktrace.set_complete().unwrap();
+
+        let mut buf = Vec::new();
+        unsafe { emit_whole_stacktrace(&mut buf, stacktrace).expect("to work ;-)") };
+        let out = str::from_utf8(&buf).expect("to be valid UTF8");
+
+        assert!(out.contains("\"ip\":\"0x4d2\""));
+        assert!(out.contains("\"function\":\"test_function1\""));
+        assert!(out.contains("\"file\":\"test_file1\""));
+        assert!(out.contains("\"ip\":\"0x162e\""));
+        assert!(out.contains("\"function\":\"test_function2\""));
+        assert!(out.contains("\"file\":\"test_file2\""));
     }
 
     #[test]
@@ -454,5 +583,142 @@ mod tests {
             !out.contains("backtrace::backtrace"),
             "crashtracker itself must be filtered away, found 'backtrace::backtrace'"
         );
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_emit_message_nullptr() {
+        let mut buf = Vec::new();
+        emit_message(&mut buf, std::ptr::null_mut()).expect("to work ;-)");
+        assert!(buf.is_empty());
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_emit_message() {
+        let message = "test message";
+        let message_ptr = Box::into_raw(Box::new(message.to_string()));
+        let mut buf = Vec::new();
+        emit_message(&mut buf, message_ptr).expect("to work ;-)");
+        let out = str::from_utf8(&buf).expect("to be valid UTF8");
+        assert!(out.contains("BEGIN_MESSAGE"));
+        assert!(out.contains("END_MESSAGE"));
+        assert!(out.contains(message));
+        // Clean up the allocated String
+        unsafe { drop(Box::from_raw(message_ptr)) };
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_emit_message_empty_string() {
+        let empty_message = String::new();
+        let message_ptr = Box::into_raw(Box::new(empty_message));
+        let mut buf = Vec::new();
+
+        emit_message(&mut buf, message_ptr).expect("to work");
+
+        // Empty messages should not emit anything
+        assert!(buf.is_empty());
+
+        unsafe { drop(Box::from_raw(message_ptr)) };
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_emit_message_whitespace_only() {
+        // Whitespace-only messages should not be emitted
+        let whitespace_message = "   \n\t  ".to_string();
+        let message_ptr = Box::into_raw(Box::new(whitespace_message));
+        let mut buf = Vec::new();
+
+        emit_message(&mut buf, message_ptr).expect("to work");
+
+        // Whitespace-only messages should not emit anything
+        assert!(buf.is_empty());
+
+        unsafe { drop(Box::from_raw(message_ptr)) };
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_emit_message_with_leading_trailing_whitespace() {
+        // Messages with content and whitespace should be emitted (with the whitespace)
+        let message_with_whitespace = "  error message  ".to_string();
+        let message_ptr = Box::into_raw(Box::new(message_with_whitespace.clone()));
+        let mut buf = Vec::new();
+
+        emit_message(&mut buf, message_ptr).expect("to work");
+        let out = str::from_utf8(&buf).expect("to be valid UTF8");
+
+        // Should emit markers and preserve whitespace in content
+        assert!(out.contains("BEGIN_MESSAGE"));
+        assert!(out.contains("END_MESSAGE"));
+        assert!(out.contains(&message_with_whitespace));
+
+        unsafe { drop(Box::from_raw(message_ptr)) };
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_emit_message_with_newlines() {
+        let message_with_newlines = "line1\nline2\nline3".to_string();
+        let message_ptr = Box::into_raw(Box::new(message_with_newlines));
+        let mut buf = Vec::new();
+
+        emit_message(&mut buf, message_ptr).expect("to work");
+        let out = str::from_utf8(&buf).expect("to be valid UTF8");
+
+        assert!(out.contains("line1"));
+        assert!(out.contains("line2"));
+        assert!(out.contains("line3"));
+
+        unsafe { drop(Box::from_raw(message_ptr)) };
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_emit_message_unicode() {
+        let unicode_message = "Hello 世界 🦀 Rust!".to_string();
+        let message_ptr = Box::into_raw(Box::new(unicode_message.clone()));
+        let mut buf = Vec::new();
+
+        emit_message(&mut buf, message_ptr).expect("to work");
+        let out = str::from_utf8(&buf).expect("to be valid UTF8");
+
+        assert!(out.contains(&unicode_message));
+
+        unsafe { drop(Box::from_raw(message_ptr)) };
+    }
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    #[cfg_attr(miri, ignore)]
+    fn test_emit_procinfo() {
+        let pid = unsafe { libc::getpid() };
+        let tid = unsafe { libc::syscall(libc::SYS_gettid) as libc::pid_t };
+        let mut buf = Vec::new();
+
+        emit_procinfo(&mut buf, pid, tid).expect("procinfo to emit");
+        let proc_info_block = str::from_utf8(&buf).expect("to be valid UTF8");
+        assert!(proc_info_block.contains(DD_CRASHTRACK_BEGIN_PROCINFO));
+        assert!(proc_info_block.contains(DD_CRASHTRACK_END_PROCINFO));
+
+        assert!(proc_info_block.contains(&format!("\"pid\": {pid}")));
+        assert!(proc_info_block.contains(&format!("\"tid\": {tid}")));
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_emit_message_very_long() {
+        let long_message = "x".repeat(100000); // 100KB
+        let message_ptr = Box::into_raw(Box::new(long_message.clone()));
+        let mut buf = Vec::new();
+
+        emit_message(&mut buf, message_ptr).expect("to work");
+        let out = str::from_utf8(&buf).expect("to be valid UTF8");
+
+        assert!(out.contains(&long_message[..100])); // At least first 100 chars
+
+        unsafe { drop(Box::from_raw(message_ptr)) };
     }
 }

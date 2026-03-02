@@ -118,8 +118,8 @@ impl Config {
         if let Ok(json) = serde_json::to_string(&self.crashtracker_endpoint) {
             res.insert(ENV_SIDECAR_CRASHTRACKER_ENDPOINT, json.into());
         }
-        if let Some(appsec_config) = &self.appsec_config {
-            res.extend(appsec_config.to_env());
+        if let Some(appsec) = self.appsec_config.as_ref() {
+            res.extend(appsec.to_env());
         }
         if self.max_memory != 0 {
             res.insert(
@@ -277,7 +277,7 @@ pub fn get_product_endpoint(subdomain: &str, endpoint: &Endpoint) -> Endpoint {
 
         #[allow(clippy::unwrap_used)]
         Endpoint {
-            url: hyper::Uri::from_parts(parts).unwrap(),
+            url: http::Uri::from_parts(parts).unwrap(),
             api_key: Some(api_key.clone()),
             test_token: endpoint.test_token.clone(),
             ..*endpoint

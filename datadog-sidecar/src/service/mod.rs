@@ -44,8 +44,8 @@ pub mod telemetry;
 pub(crate) mod tracing;
 
 pub use sidecar_interface::DynamicInstrumentationConfigState;
-pub(crate) use telemetry::telemetry_action_receiver_task;
 pub use telemetry::{get_telemetry_action_sender, InternalTelemetryActions};
+pub(crate) use telemetry::{init_telemetry_sender, telemetry_action_receiver_task};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SessionConfig {
@@ -64,6 +64,7 @@ pub struct SessionConfig {
     pub remote_config_products: Vec<RemoteConfigProduct>,
     pub remote_config_capabilities: Vec<RemoteConfigCapabilities>,
     pub remote_config_enabled: bool,
+    pub process_tags: String,
 }
 
 #[derive(Debug, Deserialize, Serialize)]

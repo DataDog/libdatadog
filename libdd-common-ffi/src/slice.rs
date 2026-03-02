@@ -404,7 +404,7 @@ mod tests {
             len: 0,
             _marker: PhantomData,
         };
-        assert_eq!(null_len0.as_slice(), &[]);
+        assert_eq!(null_len0.as_slice(), &[] as &[u8]);
     }
 
     #[should_panic]
@@ -447,7 +447,7 @@ mod tests {
         };
 
         let result = null_zero_len.try_as_slice();
-        assert_eq!(result.unwrap(), &[]);
+        assert_eq!(result.unwrap(), &[] as &[u8]);
     }
 
     #[test]

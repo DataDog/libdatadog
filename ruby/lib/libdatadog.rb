@@ -36,6 +36,12 @@ module Libdatadog
       platform = platform[0..-5]
     end
 
+    # Normalize macOS/Darwin platform strings by stripping the version number.
+    # e.g., "arm64-darwin-24" -> "arm64-darwin", "x86_64-darwin-19" -> "x86_64-darwin"
+    if platform.include?("darwin")
+      platform = platform.gsub(/-darwin-?\d*$/, "-darwin")
+    end
+
     if RbConfig::CONFIG["arch"].include?("-musl") && !platform.include?("-musl")
       # Fix/workaround for https://github.com/datadog/dd-trace-rb/issues/2222
       #

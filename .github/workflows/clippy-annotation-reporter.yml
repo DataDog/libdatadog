@@ -1,0 +1,37 @@
+name: Clippy Annotation Reporter
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  clippy-annotation-reporter:
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    env:
+      CARGO_TERM_COLOR: always
+    steps:
+      - name: Free Disk Space
+        uses: jlumbroso/free-disk-space@54081f138730dfa15788a46383842cd2f914a1be # v1.3.1
+        with:
+          tool-cache: false
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: false
+          docker-images: true
+          swap-storage: true
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # 4.2.2
+        with:
+          fetch-depth: 0  # Full history
+      - name: Install Rust
+        run: rustup install stable
+      - name: Run annotation reporter
+        uses: ./.github/actions/clippy-annotation-reporter
+        with:
+          github-token: "${{ secrets.GITHUB_TOKEN }}"
+          allow-annotation-rules: "expect_used, panic, todo, unimplemented, unwrap_used"
+          log_level: 'info'

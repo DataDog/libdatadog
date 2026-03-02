@@ -1,33 +1,11 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use libdd_profiling::exporter::utils::parse_http_request;
+mod common;
+
+use libdd_common::test_utils::{create_temp_file_path, parse_http_request_sync, TempFileGuard};
 use libdd_profiling::exporter::ProfileExporter;
 use libdd_profiling::internal::EncodedProfile;
-use std::path::PathBuf;
-
-/// RAII guard to ensure test files are cleaned up even if the test panics
-struct TempFileGuard(PathBuf);
-
-impl Drop for TempFileGuard {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_file(&self.0);
-    }
-}
-
-impl std::ops::Deref for TempFileGuard {
-    type Target = PathBuf;
-
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-
-impl AsRef<std::path::Path> for TempFileGuard {
-    fn as_ref(&self) -> &std::path::Path {
-        self.0.as_ref()
-    }
-}
 
 /// Create a file-based exporter and return the temp file path with auto-cleanup
 fn create_file_exporter(
@@ -40,12 +18,7 @@ fn create_file_exporter(
     use libdd_profiling::exporter::config;
 
     // Create a unique temp file path
-    let file_path = std::env::temp_dir().join(format!(
-        "libdd_test_{}_{}_{:x}.http",
-        std::process::id(),
-        chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0),
-        rand::random::<u64>()
-    ));
+    let file_path = create_temp_file_path("libdd_profiling_test", "http");
 
     let mut endpoint = config::file(file_path.to_string_lossy().as_ref())?;
     if let Some(key) = api_key {
@@ -53,14 +26,14 @@ fn create_file_exporter(
     }
 
     let exporter = ProfileExporter::new(
-        profiling_library_name.to_string(),
-        profiling_library_version.to_string(),
-        family.to_string(),
-        Some(tags),
+        profiling_library_name,
+        profiling_library_version,
+        family,
+        tags,
         endpoint,
     )?;
 
-    Ok((exporter, TempFileGuard(file_path)))
+    Ok((exporter, file_path))
 }
 
 #[cfg(test)]
@@ -79,7 +52,7 @@ mod tests {
         let profiling_library_name = "dd-trace-foo";
         let profiling_library_version = "1.2.3";
 
-        let (exporter, file_path) = create_file_exporter(
+        let (mut exporter, file_path) = create_file_exporter(
             profiling_library_name,
             profiling_library_version,
             "php",
@@ -90,19 +63,16 @@ mod tests {
 
         // Build and send profile
         let profile = EncodedProfile::test_instance().expect("test profile");
-        let request = exporter
-            .build(profile, &[], None, None, None, None)
-            .expect("build to succeed");
-        exporter.send(request, None).expect("send to succeed");
+        exporter
+            .send_blocking(profile, &[], &[], None, None, None, None)
+            .expect("send to succeed");
 
-        // Read the dump file (wait a moment for it to be written)
-        // The file is synced before the 200 response, but we still need a small delay
-        // to ensure the background thread's runtime has fully completed the async operation
-        std::thread::sleep(std::time::Duration::from_millis(200));
+        // Read the dump file
+        // send_blocking() blocks until the request completes and file is synced
         let request_bytes = std::fs::read(&file_path).expect("read dump file");
 
         // Parse HTTP request
-        let request = parse_http_request(&request_bytes).expect("parse HTTP request");
+        let request = parse_http_request_sync(&request_bytes).expect("parse HTTP request");
 
         // Validate request line
         assert_eq!(request.method, "POST");
@@ -177,7 +147,7 @@ mod tests {
         let profiling_library_name = "dd-trace-foo";
         let profiling_library_version = "1.2.3";
 
-        let (exporter, file_path) = create_file_exporter(
+        let (mut exporter, file_path) = create_file_exporter(
             profiling_library_name,
             profiling_library_version,
             "php",
@@ -195,26 +165,24 @@ mod tests {
 
         // Build and send profile
         let profile = EncodedProfile::test_instance().expect("test profile");
-        let request = exporter
-            .build(
+        exporter
+            .send_blocking(
                 profile,
                 &[],
-                None,
-                None,
+                &[],
                 Some(internal_metadata.clone()),
                 None,
+                None,
+                None,
             )
-            .expect("build to succeed");
-        exporter.send(request, None).expect("send to succeed");
+            .expect("send to succeed");
 
-        // Read the dump file (wait a moment for it to be written)
-        // The file is synced before the 200 response, but we still need a small delay
-        // to ensure the background thread's runtime has fully completed the async operation
-        std::thread::sleep(std::time::Duration::from_millis(200));
+        // Read the dump file
+        // send_blocking() blocks until the request completes and file is synced
         let request_bytes = std::fs::read(&file_path).expect("read dump file");
 
         // Parse and validate
-        let request = parse_http_request(&request_bytes).expect("parse HTTP request");
+        let request = parse_http_request_sync(&request_bytes).expect("parse HTTP request");
         let event_part = request
             .multipart_parts
             .iter()
@@ -233,7 +201,7 @@ mod tests {
         let profiling_library_name = "dd-trace-foo";
         let profiling_library_version = "1.2.3";
 
-        let (exporter, file_path) = create_file_exporter(
+        let (mut exporter, file_path) = create_file_exporter(
             profiling_library_name,
             profiling_library_version,
             "php",
@@ -246,19 +214,24 @@ mod tests {
 
         // Build and send profile
         let profile = EncodedProfile::test_instance().expect("test profile");
-        let request = exporter
-            .build(profile, &[], None, Some(expected_process_tags), None, None)
-            .expect("build to succeed");
-        exporter.send(request, None).expect("send to succeed");
+        exporter
+            .send_blocking(
+                profile,
+                &[],
+                &[],
+                None,
+                None,
+                Some(expected_process_tags),
+                None,
+            )
+            .expect("send to succeed");
 
-        // Read the dump file (wait a moment for it to be written)
-        // The file is synced before the 200 response, but we still need a small delay
-        // to ensure the background thread's runtime has fully completed the async operation
-        std::thread::sleep(std::time::Duration::from_millis(200));
+        // Read the dump file
+        // send_blocking() blocks until the request completes and file is synced
         let request_bytes = std::fs::read(&file_path).expect("read dump file");
 
         // Parse and validate
-        let request = parse_http_request(&request_bytes).expect("parse HTTP request");
+        let request = parse_http_request_sync(&request_bytes).expect("parse HTTP request");
         let event_part = request
             .multipart_parts
             .iter()
@@ -277,7 +250,7 @@ mod tests {
         let profiling_library_name = "dd-trace-foo";
         let profiling_library_version = "1.2.3";
 
-        let (exporter, file_path) = create_file_exporter(
+        let (mut exporter, file_path) = create_file_exporter(
             profiling_library_name,
             profiling_library_version,
             "php",
@@ -305,19 +278,16 @@ mod tests {
 
         // Build and send profile
         let profile = EncodedProfile::test_instance().expect("test profile");
-        let request = exporter
-            .build(profile, &[], None, None, None, Some(info.clone()))
-            .expect("build to succeed");
-        exporter.send(request, None).expect("send to succeed");
+        exporter
+            .send_blocking(profile, &[], &[], None, Some(info.clone()), None, None)
+            .expect("send to succeed");
 
-        // Read the dump file (wait a moment for it to be written)
-        // The file is synced before the 200 response, but we still need a small delay
-        // to ensure the background thread's runtime has fully completed the async operation
-        std::thread::sleep(std::time::Duration::from_millis(200));
+        // Read the dump file
+        // send_blocking() blocks until the request completes and file is synced
         let request_bytes = std::fs::read(&file_path).expect("read dump file");
 
         // Parse and validate
-        let request = parse_http_request(&request_bytes).expect("parse HTTP request");
+        let request = parse_http_request_sync(&request_bytes).expect("parse HTTP request");
         let event_part = request
             .multipart_parts
             .iter()
@@ -337,7 +307,7 @@ mod tests {
         let profiling_library_version = "1.2.3";
         let api_key = "1234567890123456789012";
 
-        let (exporter, file_path) = create_file_exporter(
+        let (mut exporter, file_path) = create_file_exporter(
             profiling_library_name,
             profiling_library_version,
             "php",
@@ -348,19 +318,16 @@ mod tests {
 
         // Build and send profile
         let profile = EncodedProfile::test_instance().expect("test profile");
-        let request = exporter
-            .build(profile, &[], None, None, None, None)
-            .expect("build to succeed");
-        exporter.send(request, None).expect("send to succeed");
+        exporter
+            .send_blocking(profile, &[], &[], None, None, None, None)
+            .expect("send to succeed");
 
-        // Read the dump file (wait a moment for it to be written)
-        // The file is synced before the 200 response, but we still need a small delay
-        // to ensure the background thread's runtime has fully completed the async operation
-        std::thread::sleep(std::time::Duration::from_millis(200));
+        // Read the dump file
+        // send_blocking() blocks until the request completes and file is synced
         let request_bytes = std::fs::read(&file_path).expect("read dump file");
 
         // Parse HTTP request
-        let request = parse_http_request(&request_bytes).expect("parse HTTP request");
+        let request = parse_http_request_sync(&request_bytes).expect("parse HTTP request");
 
         // Validate headers - API key should be present
         assert_eq!(request.headers.get("dd-api-key").unwrap(), api_key);
@@ -372,5 +339,8 @@ mod tests {
             request.headers.get("dd-evp-origin-version").unwrap(),
             profiling_library_version
         );
+
+        // Check for entity headers and validate their values match what libdd_common provides
+        common::assert_entity_headers_match(&request.headers);
     }
 }

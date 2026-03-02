@@ -1,0 +1,11 @@
+# Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
+# SPDX-License-Identifier: Apache-2.0
+
+[alias]
+# Build and run all FFI examples to verify they compile and work correctly.
+# Usage: cargo ffi-test
+# This will:
+# 1. Build the FFI libraries with all features
+# 2. Compile the C/C++ examples using CMake
+# 3. Run each example and report pass/fail
+ffi-test = "run --package tools --bin ffi_test --"

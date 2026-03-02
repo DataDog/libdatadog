@@ -1,0 +1,9 @@
+issuer: https://token.actions.githubusercontent.com
+
+subject_pattern: "repo:DataDog/libdatadog:pull_request"
+
+claim_pattern:
+  job_workflow_ref: DataDog/libdatadog/\.github/workflows/rustfmt-auto\.yml@.+
+
+permissions:
+  contents: write

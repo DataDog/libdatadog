@@ -41,9 +41,8 @@ RSpec.describe "gem release process (after packaging)" do
     so_files.each do |so_file|
       raw_symbols = `nm -D --defined-only #{so_file}`
 
-      symbols = raw_symbols.split("\n").map { |symbol| symbol.split(" ").last }.sort
+      symbols = raw_symbols.split("\n").map { |symbol| symbol.split(" ").last.downcase }.sort
       expect(symbols.size).to be > 20 # Quick sanity check
-
       expect(symbols).to all(
         start_with("ddog_").or(start_with("blaze_"))
       )

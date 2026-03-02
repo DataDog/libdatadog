@@ -15,7 +15,7 @@
     <!-- Expland the items to a property -->
     <LibDatadogStaticLibraries>@(LibDatadogStaticLibs)</LibDatadogStaticLibraries>
     <LibDatadogDynLibraries>@(LibDatadogDynLibs)</LibDatadogDynLibraries>
-    <LibDatadogDependencies>PowrProf.lib;NtDll.lib;UserEnv.lib;Bcrypt.lib;crypt32.lib;wsock32.lib;ws2_32.lib;shlwapi.lib;Secur32.lib;Ncrypt.lib</LibDatadogDependencies>
+    <LibDatadogDependencies>PowrProf.lib;NtDll.lib;UserEnv.lib;Bcrypt.lib;crypt32.lib;wsock32.lib;ws2_32.lib;shlwapi.lib;Secur32.lib;Ncrypt.lib;iphlpapi.lib</LibDatadogDependencies>
   </PropertyGroup>
   <ItemDefinitionGroup>
     <ClCompile>

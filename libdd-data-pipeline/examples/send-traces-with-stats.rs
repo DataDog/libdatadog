@@ -85,9 +85,7 @@ fn main() {
     }
     let data = rmp_serde::to_vec_named(&traces).expect("Failed to serialize traces");
 
-    exporter
-        .send(data.as_ref(), 2)
-        .expect("Failed to send traces");
+    exporter.send(data.as_ref()).expect("Failed to send traces");
     exporter
         .shutdown(None)
         .expect("Failed to shutdown exporter");

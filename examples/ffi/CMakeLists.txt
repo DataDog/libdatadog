@@ -25,6 +25,11 @@ target_compile_features(exporter PRIVATE cxx_std_20)
 target_link_libraries(exporter PRIVATE Datadog::Profiling)
 set_vcruntime_link_type(exporter ${VCRUNTIME_LINK_TYPE})
 
+if(NOT WIN32)
+  add_executable(exporter_manager exporter_manager.c)
+  target_link_libraries(exporter_manager PRIVATE Datadog::Profiling)
+endif()
+
 add_executable(crashinfo crashinfo.cpp)
 # needed for designated initializers
 target_compile_features(crashinfo PRIVATE cxx_std_20)
@@ -60,6 +65,9 @@ set_vcruntime_link_type(telemetry_metrics ${VCRUNTIME_LINK_TYPE})
 if(NOT WIN32)
   add_executable(crashtracking crashtracking.c)
   target_link_libraries(crashtracking PRIVATE Datadog::Profiling)
+
+  add_executable(crashtracking_unhandled_exception crashtracking_unhandled_exception.c)
+  target_link_libraries(crashtracking_unhandled_exception PRIVATE Datadog::Profiling)
 endif()
 
 add_executable(trace_exporter trace_exporter.c)

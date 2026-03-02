@@ -6,7 +6,7 @@ use crate::agent_remote_config::AgentRemoteConfigWriter;
 use datadog_ipc::platform::NamedShmHandle;
 use futures::future::join_all;
 use http_body_util::BodyExt;
-use libdd_common::hyper_migration::new_default_client;
+use libdd_common::http_common::new_default_client;
 use libdd_common::{Endpoint, HttpClient, MutexExt};
 use libdd_trace_utils::trace_utils;
 use libdd_trace_utils::trace_utils::SendData;
@@ -355,9 +355,8 @@ mod tests {
         };
 
         let send_data_1 = create_send_data(size, &target_endpoint);
-
-        let send_data_2 = send_data_1.clone();
-        let send_data_3 = send_data_1.clone();
+        let send_data_2 = create_send_data(size, &target_endpoint);
+        let send_data_3 = create_send_data(size, &target_endpoint);
 
         trace_flusher.enqueue(send_data_1);
         trace_flusher.enqueue(send_data_2);

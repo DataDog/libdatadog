@@ -3,8 +3,7 @@
 
 use crate::handles::TransferHandles;
 use crate::platform::{Message, PlatformHandle};
-use nix::sys::select::FdSet;
-use nix::sys::time::{TimeVal, TimeValLike};
+use nix::poll::{poll, PollFd, PollFlags, PollTimeout};
 use std::{
     io::{self, ErrorKind, Read, Write},
     os::{
@@ -61,11 +60,13 @@ impl Channel {
     pub fn probe_readable(&self) -> bool {
         #[allow(clippy::unwrap_used)]
         let raw_fd = self.inner.as_owned_fd().unwrap().as_fd();
-        let mut fds = FdSet::new();
-        fds.insert(raw_fd);
-        nix::sys::select::select(None, Some(&mut fds), None, None, Some(&mut TimeVal::zero()))
-            .is_err()
-            || fds.contains(raw_fd)
+
+        let mut fds = [PollFd::new(raw_fd, PollFlags::POLLIN)];
+        poll(&mut fds, PollTimeout::ZERO).is_err()
+            || fds[0]
+                .revents()
+                .unwrap_or(PollFlags::empty())
+                .intersects(PollFlags::POLLIN | PollFlags::POLLHUP | PollFlags::POLLERR)
     }
 
     pub fn create_message<T>(&mut self, item: T) -> Result<Message<T>, io::Error>

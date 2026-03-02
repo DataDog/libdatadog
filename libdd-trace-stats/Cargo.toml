@@ -1,6 +1,6 @@
 [package]
 name = "libdd-trace-stats"
-version = "1.0.0"
+version = "1.0.1"
 description = "This crate provides utilities to compute stats from Datadog traces."
 homepage = "https://github.com/DataDog/libdatadog/tree/main/libdd-trace-stats"
 repository = "https://github.com/DataDog/libdatadog/tree/main/libdd-trace-stats"
@@ -10,9 +10,9 @@ license.workspace = true
 autobenches = false
 
 [dependencies]
-libdd-ddsketch = { version = "1.0.0", path = "../libdd-ddsketch" }
-libdd-trace-protobuf = { version = "1.0.0", path = "../libdd-trace-protobuf" }
-libdd-trace-utils = { version = "1.0.0", path = "../libdd-trace-utils", default-features = false }
+libdd-ddsketch = { version = "1.0.1", path = "../libdd-ddsketch" }
+libdd-trace-protobuf = { version = "1.1.0", path = "../libdd-trace-protobuf" }
+libdd-trace-utils = { version = "2.0.0", path = "../libdd-trace-utils", default-features = false }
 hashbrown = { version = "0.15" }
 
 [lib]

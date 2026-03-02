@@ -7,8 +7,6 @@ use crate::data::*;
 
 #[derive(Serialize, Deserialize, Debug)]
 pub enum ApiVersion {
-    #[serde(rename = "v1")]
-    V1,
     #[serde(rename = "v2")]
     V2,
 }
@@ -16,7 +14,6 @@ pub enum ApiVersion {
 impl ApiVersion {
     pub fn to_str(&self) -> &'static str {
         match self {
-            ApiVersion::V1 => "v1",
             ApiVersion::V2 => "v2",
         }
     }
@@ -52,6 +49,8 @@ pub struct Application {
     pub runtime_version: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub runtime_patches: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub process_tags: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Default, Debug)]

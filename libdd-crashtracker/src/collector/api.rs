@@ -4,9 +4,10 @@
 
 use super::{crash_handler::enable, receiver_manager::Receiver};
 use crate::{
-    clear_spans, clear_traces, collector::signal_handler_manager::register_crash_handlers,
-    crash_info::Metadata, reset_counters, shared::configuration::CrashtrackerReceiverConfig,
-    update_config, update_metadata, CrashtrackerConfiguration,
+    clear_spans, clear_traces, collector::crash_handler::register_panic_hook,
+    collector::signal_handler_manager::register_crash_handlers, crash_info::Metadata,
+    reset_counters, shared::configuration::CrashtrackerReceiverConfig, update_config,
+    update_metadata, CrashtrackerConfiguration,
 };
 
 pub static DEFAULT_SYMBOLS: [libc::c_int; 4] =
@@ -14,6 +15,20 @@ pub static DEFAULT_SYMBOLS: [libc::c_int; 4] =
 
 pub fn default_signals() -> Vec<libc::c_int> {
     Vec::from(DEFAULT_SYMBOLS)
+}
+
+#[cfg(target_os = "linux")]
+pub(super) fn mark_preload_logger_collector() {
+    // This function is specific only for LD_PRELOAD testing
+    // Best effort; this symbol exists only when the preload logger preload is present.
+    const SYMBOL: &[u8] = b"dd_preload_logger_mark_collector\0";
+    unsafe {
+        let sym = libc::dlsym(libc::RTLD_DEFAULT, SYMBOL.as_ptr() as *const _);
+        if !sym.is_null() {
+            let func: extern "C" fn() = std::mem::transmute(sym);
+            func();
+        }
+    }
 }
 
 /// Reinitialize the crash-tracking infrastructure after a fork.
@@ -43,6 +58,8 @@ pub fn on_fork(
     // The altstack (if any) is similarly unaffected by fork:
     // https://man7.org/linux/man-pages/man2/sigaltstack.2.html
 
+    // panic hook is unaffected by fork.
+
     update_metadata(metadata)?;
     update_config(config)?;
     Receiver::update_stored_config(receiver_config)?;
@@ -68,6 +85,7 @@ pub fn init(
     update_config(config.clone())?;
     Receiver::update_stored_config(receiver_config)?;
     register_crash_handlers(&config)?;
+    register_panic_hook()?;
     enable();
     Ok(())
 }

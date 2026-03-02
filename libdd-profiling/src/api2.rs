@@ -3,7 +3,11 @@
 
 use crate::profiles::datatypes::{FunctionId2, MappingId2, StringId2};
 
-#[derive(Copy, Clone, Debug, Default)]
+/// A location keyed by `MappingId2`/`FunctionId2` handles.
+///
+/// `Eq`/`Hash` comparisons use those handle values, so they are intended for
+/// data that comes from the same `ProfilesDictionary`.
+#[derive(Copy, Clone, Debug, Default, Eq, PartialEq, Hash)]
 #[repr(C)]
 pub struct Location2 {
     pub mapping: MappingId2,
@@ -53,5 +57,53 @@ impl<'a> Label<'a> {
             num,
             num_unit,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::profiles::datatypes::{Function2, Mapping2, ProfilesDictionary};
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+
+    fn hash_of<T: Hash>(value: &T) -> u64 {
+        let mut hasher = DefaultHasher::new();
+        value.hash(&mut hasher);
+        hasher.finish()
+    }
+
+    #[test]
+    fn location2_equality_and_hash_follow_dictionary_handle_identity() {
+        let dict = ProfilesDictionary::try_new().unwrap();
+        let shared = dict.try_insert_str2("shared").unwrap();
+
+        let function = Function2 {
+            name: shared,
+            system_name: shared,
+            file_name: shared,
+        };
+        let mapping = Mapping2 {
+            memory_start: 1,
+            memory_limit: 2,
+            file_offset: 3,
+            filename: shared,
+            build_id: shared,
+        };
+
+        let location_a = Location2 {
+            mapping: dict.try_insert_mapping2(mapping).unwrap(),
+            function: dict.try_insert_function2(function).unwrap(),
+            address: 42,
+            line: 7,
+        };
+        let location_b = Location2 {
+            mapping: dict.try_insert_mapping2(mapping).unwrap(),
+            function: dict.try_insert_function2(function).unwrap(),
+            address: 42,
+            line: 7,
+        };
+        assert_eq!(location_a, location_b);
+        assert_eq!(hash_of(&location_a), hash_of(&location_b));
     }
 }
