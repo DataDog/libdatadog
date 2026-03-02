@@ -103,6 +103,8 @@ jobs:
     - uses: Swatinem/rust-cache@f13886b937689c021905a6b90929199931d60db1 # v2.8.1
       with:
         cache-targets: true
+        shared-key: shared-${{ runner.os }}
+        # save-if: ${{ github.ref == 'refs/heads/main' }}
     - uses: dtolnay/rust-toolchain@stable
     - name: Check missing docs
       id: missing-docs
@@ -274,6 +276,8 @@ jobs:
     - uses: Swatinem/rust-cache@f13886b937689c021905a6b90929199931d60db1 # v2.8.1
       with:
         cache-targets: true
+        shared-key: shared-${{ runner.os }}
+        # save-if: ${{ github.ref == 'refs/heads/main' }}
     - uses: dtolnay/rust-toolchain@stable
     - uses: taiki-e/cache-cargo-install-action@7447f04c51f2ba27ca35e7f1e28fab848c5b3ba7 # 2.3.1
       with:

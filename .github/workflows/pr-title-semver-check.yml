@@ -99,6 +99,8 @@ jobs:
         uses: Swatinem/rust-cache@f13886b937689c021905a6b90929199931d60db1 # 2.8.1
         with:
           cache-targets: true
+          shared-key: shared-${{ runner.os }}
+          # save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Install dependencies
         run: |
