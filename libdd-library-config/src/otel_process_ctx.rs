@@ -148,7 +148,7 @@ pub mod linux {
         /// Note that naming must be unconditionally attempted, even on kernels where we might know
         /// it will fail. It is ok for naming to fail - we must only make sure that at least we
         /// tried, as per the
-        /// [spec](https://github.com/open-telemetry/opentelemetry-specification/pull/4719). 
+        /// [spec](https://github.com/open-telemetry/opentelemetry-specification/pull/4719).
         fn set_name(&mut self) -> anyhow::Result<()> {
             // Safety: the invariants of `MemMapping` ensures that `start` is non null and comes
             // from a previous call to `mmap` of size `mapping_size()`
@@ -163,8 +163,8 @@ pub mod linux {
             Ok(())
         }
 
-        /// Unmaps the underlying memory region and close the memfd file descriptor, if set. This
-        /// has same effect as dropping `self`, but propagates potential errors.
+        /// Unmaps the underlying memory region. This has same effect as dropping `self`, but
+        /// propagates potential errors.
         fn free(mut self) -> anyhow::Result<()> {
             // Safety: We put `self` in a `ManuallyDrop`, which prevents drop and future calls to
             // `free()`.
@@ -185,7 +185,8 @@ pub mod linux {
         /// This method must only be called once. After calling `unmap()`, no other method of
         /// `MemMapping` must be ever called on `self` again, including `unmap()` and `drop()`.
         ///
-        /// Practically, `self` must be put in a `ManuallyDrop` wrapper and forgotten.
+        /// Practically, `self` must be put in a `ManuallyDrop` wrapper and forgotten, or being in
+        /// the process of being dropped.
         unsafe fn unmap(&mut self) -> anyhow::Result<()> {
             unsafe {
                 munmap(self.start_addr, mapping_size()).map_err(|errno| {
