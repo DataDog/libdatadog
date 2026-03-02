@@ -527,7 +527,12 @@ pub unsafe extern "C" fn ddog_trace_exporter_new(
                 .set_app_version(config.version.as_ref().unwrap_or(&"".to_string()))
                 .set_service(config.service.as_ref().unwrap_or(&"".to_string()))
                 .set_git_commit_sha(config.git_commit_sha.as_ref().unwrap_or(&"".to_string()))
-                .set_git_repository_url(config.git_repository_url.as_ref().unwrap_or(&"".to_string()))
+                .set_git_repository_url(
+                    config
+                        .git_repository_url
+                        .as_ref()
+                        .unwrap_or(&"".to_string()),
+                )
                 .set_input_format(config.input_format)
                 .set_output_format(config.output_format)
                 .set_connection_timeout(config.connection_timeout);

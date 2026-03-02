@@ -207,9 +207,7 @@ where
     }
 }
 
-fn map_span_events<T: TraceData>(
-    events: &[SpanEvent<T>],
-) -> (Vec<OtlpSpanEvent>, usize)
+fn map_span_events<T: TraceData>(events: &[SpanEvent<T>]) -> (Vec<OtlpSpanEvent>, usize)
 where
     T::Text: Borrow<str>,
 {
@@ -306,39 +304,49 @@ mod tests {
     #[test]
     fn test_trace_id_span_id_format() {
         let metadata = TracerMetadata::default();
-        let mut span: Span<BytesData> = Span::default();
-        span.trace_id = 0x5B8EFFF798038103D269B633813FC60C_u128;
-        span.span_id = 0xEEE19B7EC3C1B174;
-        span.parent_id = 0xEEE19B7EC3C1B173;
-        span.name = libdd_tinybytes::BytesString::from_static("test");
-        span.service = libdd_tinybytes::BytesString::from_static("svc");
-        span.resource = libdd_tinybytes::BytesString::from_static("res");
-        span.r#type = libdd_tinybytes::BytesString::from_static("web");
-        span.start = 1544712660000000000;
-        span.duration = 1000000000;
-        span.error = 0;
+        let span: Span<BytesData> = Span {
+            trace_id: 0x5B8EFFF798038103D269B633813FC60C_u128,
+            span_id: 0xEEE19B7EC3C1B174,
+            parent_id: 0xEEE19B7EC3C1B173,
+            name: libdd_tinybytes::BytesString::from_static("test"),
+            service: libdd_tinybytes::BytesString::from_static("svc"),
+            resource: libdd_tinybytes::BytesString::from_static("res"),
+            r#type: libdd_tinybytes::BytesString::from_static("web"),
+            start: 1544712660000000000,
+            duration: 1000000000,
+            error: 0,
+            ..Default::default()
+        };
         let req = map_traces_to_otlp(vec![vec![span]], &metadata);
         let rs = &req.resource_spans[0];
         let otlp_span = &rs.scope_spans[0].spans[0];
         assert_eq!(otlp_span.trace_id, "5B8EFFF798038103D269B633813FC60C");
         assert_eq!(otlp_span.span_id, "EEE19B7EC3C1B174");
-        assert_eq!(otlp_span.parent_span_id.as_deref(), Some("EEE19B7EC3C1B173"));
+        assert_eq!(
+            otlp_span.parent_span_id.as_deref(),
+            Some("EEE19B7EC3C1B173")
+        );
         assert_eq!(otlp_span.kind, json_types::span_kind::SERVER);
         assert_eq!(otlp_span.start_time_unix_nano, "1544712660000000000");
         assert_eq!(otlp_span.end_time_unix_nano, "1544712661000000000");
-        assert_eq!(rs.scope_spans[0].scope.as_ref().unwrap().name.as_deref(), Some("datadog"));
+        assert_eq!(
+            rs.scope_spans[0].scope.as_ref().unwrap().name.as_deref(),
+            Some("datadog")
+        );
     }
 
     #[test]
     fn test_status_error_message_from_meta() {
         let metadata = TracerMetadata::default();
-        let mut span: Span<BytesData> = Span::default();
-        span.trace_id = 1;
-        span.span_id = 2;
-        span.name = libdd_tinybytes::BytesString::from_static("err_span");
-        span.start = 0;
-        span.duration = 1;
-        span.error = 1;
+        let mut span: Span<BytesData> = Span {
+            trace_id: 1,
+            span_id: 2,
+            name: libdd_tinybytes::BytesString::from_static("err_span"),
+            start: 0,
+            duration: 1,
+            error: 1,
+            ..Default::default()
+        };
         span.meta.insert(
             libdd_tinybytes::BytesString::from_static("error.msg"),
             libdd_tinybytes::BytesString::from_static("something broke"),
@@ -353,20 +361,18 @@ mod tests {
     #[test]
     fn test_metrics_as_int_or_double() {
         let metadata = TracerMetadata::default();
-        let mut span: Span<BytesData> = Span::default();
-        span.trace_id = 1;
-        span.span_id = 2;
-        span.name = libdd_tinybytes::BytesString::from_static("m");
-        span.start = 0;
-        span.duration = 1;
-        span.metrics.insert(
-            libdd_tinybytes::BytesString::from_static("count"),
-            42.0,
-        );
-        span.metrics.insert(
-            libdd_tinybytes::BytesString::from_static("rate"),
-            3.14,
-        );
+        let mut span: Span<BytesData> = Span {
+            trace_id: 1,
+            span_id: 2,
+            name: libdd_tinybytes::BytesString::from_static("m"),
+            start: 0,
+            duration: 1,
+            ..Default::default()
+        };
+        span.metrics
+            .insert(libdd_tinybytes::BytesString::from_static("count"), 42.0);
+        span.metrics
+            .insert(libdd_tinybytes::BytesString::from_static("rate"), std::f64::consts::PI);
         let req = map_traces_to_otlp(vec![vec![span]], &metadata);
         let attrs = &req.resource_spans[0].scope_spans[0].spans[0].attributes;
         let count_kv = attrs.iter().find(|a| a.key == "count").unwrap();
@@ -374,6 +380,6 @@ mod tests {
         assert_eq!(count_kv.value.int_value, Some(42));
         let rate_kv = attrs.iter().find(|a| a.key == "rate").unwrap();
         assert!(rate_kv.value.double_value.is_some());
-        assert!((rate_kv.value.double_value.unwrap() - 3.14).abs() < 1e-9);
+        assert!((rate_kv.value.double_value.unwrap() - std::f64::consts::PI).abs() < 1e-9);
     }
 }

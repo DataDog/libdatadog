@@ -131,7 +131,11 @@ pub fn otlp_trace_config_from_env() -> Option<OtlpTraceConfig> {
             let endpoint = s.trim().to_string();
             if endpoint.is_empty() {
                 fallback_traces_url(DEFAULT_OTLP_HTTP_ENDPOINT, protocol)
-            } else if endpoint.contains("://") && (endpoint.contains(':') || endpoint.starts_with("http://") || endpoint.starts_with("https://")) {
+            } else if endpoint.contains("://")
+                && (endpoint.contains(':')
+                    || endpoint.starts_with("http://")
+                    || endpoint.starts_with("https://"))
+            {
                 // Explicitly set: use as-is
                 endpoint
             } else {
@@ -173,9 +177,17 @@ fn parse_timeout(s: &str) -> Option<u64> {
     if s.ends_with("ms") {
         s[..s.len() - 2].trim().parse::<u64>().ok()
     } else if s.ends_with('s') && !s.ends_with("ms") {
-        s[..s.len() - 1].trim().parse::<u64>().ok().map(|v| v * 1000)
+        s[..s.len() - 1]
+            .trim()
+            .parse::<u64>()
+            .ok()
+            .map(|v| v * 1000)
     } else if s.ends_with('m') {
-        s[..s.len() - 1].trim().parse::<u64>().ok().map(|v| v * 60 * 1000)
+        s[..s.len() - 1]
+            .trim()
+            .parse::<u64>()
+            .ok()
+            .map(|v| v * 60 * 1000)
     } else {
         s.parse::<u64>().ok()
     }
@@ -222,21 +234,21 @@ mod tests {
     #[test]
     fn test_otlp_disabled_without_traces_exporter() {
         // Without OTEL_TRACES_EXPORTER=otlp, config should be None
-        let _ = std::env::remove_var(env_keys::TRACES_EXPORTER);
-        let _ = std::env::remove_var(env_keys::TRACES_ENDPOINT);
+        std::env::remove_var(env_keys::TRACES_EXPORTER);
+        std::env::remove_var(env_keys::TRACES_ENDPOINT);
         assert!(otlp_trace_config_from_env().is_none());
     }
 
     #[test]
     fn test_explicit_endpoint_used_as_is() {
         // Per spec: when OTEL_EXPORTER_OTLP_TRACES_ENDPOINT is set, use as-is (no /v1/traces appended)
-        let _ = std::env::remove_var(env_keys::TRACES_EXPORTER);
-        let _ = std::env::remove_var(env_keys::TRACES_ENDPOINT);
+        std::env::remove_var(env_keys::TRACES_EXPORTER);
+        std::env::remove_var(env_keys::TRACES_ENDPOINT);
         std::env::set_var(env_keys::TRACES_EXPORTER, "otlp");
         std::env::set_var(env_keys::TRACES_ENDPOINT, "http://custom:9999");
         let config = otlp_trace_config_from_env();
-        let _ = std::env::remove_var(env_keys::TRACES_EXPORTER);
-        let _ = std::env::remove_var(env_keys::TRACES_ENDPOINT);
+        std::env::remove_var(env_keys::TRACES_EXPORTER);
+        std::env::remove_var(env_keys::TRACES_ENDPOINT);
         let config = config.expect("config when TRACES_EXPORTER=otlp and endpoint set");
         assert_eq!(config.endpoint_url, "http://custom:9999");
     }

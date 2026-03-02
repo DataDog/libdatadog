@@ -32,9 +32,12 @@ pub async fn send_otlp_traces_http(
     json_body: Vec<u8>,
 ) -> Result<(), TraceExporterError> {
     let uri = libdd_common::parse_uri(&config.endpoint_url).map_err(|e| {
-        TraceExporterError::Internal(crate::trace_exporter::error::InternalErrorKind::InvalidWorkerState(
-            format!("Invalid OTLP endpoint URL: {}", e),
-        ))
+        TraceExporterError::Internal(
+            crate::trace_exporter::error::InternalErrorKind::InvalidWorkerState(format!(
+                "Invalid OTLP endpoint URL: {}",
+                e
+            )),
+        )
     })?;
 
     let mut attempt = 0u32;
@@ -50,11 +53,15 @@ pub async fn send_otlp_traces_http(
             "OTLP trace export attempt"
         );
 
-        let req = req_builder.body(Body::from_bytes(body_bytes)).map_err(|e| {
-            TraceExporterError::Internal(crate::trace_exporter::error::InternalErrorKind::InvalidWorkerState(
-                e.to_string(),
-            ))
-        })?;
+        let req = req_builder
+            .body(Body::from_bytes(body_bytes))
+            .map_err(|e| {
+                TraceExporterError::Internal(
+                    crate::trace_exporter::error::InternalErrorKind::InvalidWorkerState(
+                        e.to_string(),
+                    ),
+                )
+            })?;
 
         match tokio::time::timeout(timeout, client.request(req)).await {
             Ok(Ok(response)) => {
@@ -76,7 +83,9 @@ pub async fn send_otlp_traces_http(
                     continue;
                 }
                 let response = http_common::into_response(response);
-                let body_bytes = http_common::collect_response_bytes(response).await.unwrap_or_default();
+                let body_bytes = http_common::collect_response_bytes(response)
+                    .await
+                    .unwrap_or_default();
                 let body_str = String::from_utf8_lossy(&body_bytes);
                 error!(
                     status = %status,

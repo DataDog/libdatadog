@@ -15,13 +15,13 @@ use self::metrics::MetricsEmitter;
 use self::stats::StatsComputationStatus;
 use self::trace_serializer::TraceSerializer;
 use crate::agent_info::{AgentInfoFetcher, ResponseObserver};
+use crate::otlp::{map_traces_to_otlp, send_otlp_traces_http, OtlpTraceConfig};
 use crate::pausable_worker::PausableWorker;
 use crate::stats_exporter::StatsExporter;
 use crate::telemetry::{SendPayloadTelemetry, TelemetryClient};
 use crate::trace_exporter::agent_response::{
     AgentResponsePayloadVersion, DATADOG_RATES_PAYLOAD_VERSION_HEADER,
 };
-use crate::otlp::{map_traces_to_otlp, send_otlp_traces_http, OtlpTraceConfig};
 use crate::trace_exporter::error::{InternalErrorKind, RequestError, TraceExporterError};
 use crate::{
     agent_info::{self, schema::AgentInfo},
@@ -508,7 +508,10 @@ impl TraceExporter {
     /// # Returns
     /// * Ok(AgentResponse): The response from the agent (or Unchanged for OTLP)
     /// * Err(TraceExporterError): An error detailing what went wrong in the process
-    pub fn send_trace_chunks<T: TraceData>(&self, trace_chunks: Vec<Vec<Span<T>>>) -> Result<AgentResponse, TraceExporterError>
+    pub fn send_trace_chunks<T: TraceData>(
+        &self,
+        trace_chunks: Vec<Vec<Span<T>>>,
+    ) -> Result<AgentResponse, TraceExporterError>
     where
         T::Text: Borrow<str>,
     {
@@ -1947,10 +1950,14 @@ mod tests {
         let data = msgpack_encoder::v04::to_vec(&traces);
         let result = exporter.send(data.as_ref());
 
-        let _ = std::env::remove_var(crate::otlp::config::env_keys::TRACES_EXPORTER);
-        let _ = std::env::remove_var(crate::otlp::config::env_keys::TRACES_ENDPOINT);
+        std::env::remove_var(crate::otlp::config::env_keys::TRACES_EXPORTER);
+        std::env::remove_var(crate::otlp::config::env_keys::TRACES_ENDPOINT);
 
-        assert!(result.is_ok(), "OTLP send should succeed: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "OTLP send should succeed: {:?}",
+            result.err()
+        );
         mock_otlp.assert();
     }
 
