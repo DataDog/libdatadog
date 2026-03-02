@@ -6,21 +6,12 @@
 //! # A note on race conditions
 //!
 //! Process context sharing implies concurrently writing to a memory area that another process
-//! might be actively reading. However, reading isn't done as direct memory accesses but goes through
-//! the OS, so the Rust definition of race conditions doesn't really apply.
-
-/// Current version of the process context format
-pub const PROCESS_CTX_VERSION: u32 = 2;
-/// Signature bytes for identifying process context mappings
-pub const SIGNATURE: &[u8; 8] = b"OTEL_CTX";
-/// The discoverable name of the memory mapping.
-pub const MAPPING_NAME: &str = "OTEL_CTX";
+//! might be actively reading. However, reading isn't done as direct memory accesses but goes
+//! through the OS, so the Rust definition of race conditions doesn't really apply.
 
 #[cfg(target_os = "linux")]
 #[cfg(target_has_atomic = "64")]
 pub mod linux {
-    use super::{MAPPING_NAME, PROCESS_CTX_VERSION, SIGNATURE};
-
     use std::{
         ffi::c_void,
         mem::ManuallyDrop,
@@ -41,6 +32,13 @@ pub mod linux {
         param::page_size,
         process::set_virtual_memory_region_name,
     };
+
+    /// Current version of the process context format
+    pub const PROCESS_CTX_VERSION: u32 = 2;
+    /// Signature bytes for identifying process context mappings
+    pub const SIGNATURE: &[u8; 8] = b"OTEL_CTX";
+    /// The discoverable name of the memory mapping.
+    pub const MAPPING_NAME: &str = "OTEL_CTX";
 
     /// The header structure written at the start of the mapping. This must match the C
     /// layout of the specification.
