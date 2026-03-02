@@ -6,7 +6,7 @@
 //! # A note on race conditions
 //!
 //! Process context sharing implies concurrently writing to a memory area that another process
-//! might be actively reading. However, reading isn't done as direct memory accesses but go through
+//! might be actively reading. However, reading isn't done as direct memory accesses but goes through
 //! the OS, so the Rust definition of race conditions doesn't really apply.
 
 /// Current version of the process context format
