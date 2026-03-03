@@ -388,6 +388,7 @@ pub mod linux {
     }
 
     #[cfg(test)]
+    #[serial_test::serial]
     mod tests {
         use super::MappingHeader;
         use anyhow::ensure;
