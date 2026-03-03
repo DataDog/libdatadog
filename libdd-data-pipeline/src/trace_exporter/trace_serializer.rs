@@ -106,6 +106,9 @@ impl<'a> TraceSerializer<'a> {
             tracer_payload::TraceChunks::V05(p) => {
                 rmp_serde::to_vec(p).map_err(TraceExporterError::Serialization)
             }
+            tracer_payload::TraceChunks::V1(_) => {
+                todo!("V1 serialization not yet implemented")
+            }
         }
     }
 }

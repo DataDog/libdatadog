@@ -5,7 +5,7 @@
 //! support both trace-utils' Span and pb::Span.
 
 use libdd_trace_protobuf::pb;
-use libdd_trace_utils::span::{trace_utils, v04::Span, TraceData};
+use libdd_trace_utils::span::{v04::Span, TraceData};
 use libdd_trace_utils::trace_utils as pb_utils;
 use std::borrow::Borrow;
 
@@ -73,15 +73,16 @@ impl<'a, T: TraceData> StatSpan<'a> for Span<T> {
     }
 
     fn is_measured(&'a self) -> bool {
-        trace_utils::is_measured(self)
+        self.metrics.get("_dd.measured").is_some_and(|v| *v == 1.0)
     }
 
     fn is_partial_snapshot(&'a self) -> bool {
-        trace_utils::is_partial_snapshot(self)
+        self.metrics.get("_dd.partial_version").is_some_and(|v| *v >= 0.0)
     }
 
     fn has_top_level(&'a self) -> bool {
-        trace_utils::has_top_level(self)
+        self.metrics.get("_dd.top_level").is_some_and(|v| *v == 1.0)
+            || self.metrics.get("_top_level").is_some_and(|v| *v == 1.0)
     }
 
     fn get_meta(&'a self, key: &str) -> Option<&'a str> {

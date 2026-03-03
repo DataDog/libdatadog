@@ -1,14 +1,21 @@
 // Copyright 2023-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+pub mod table;
 pub mod trace_utils;
 pub mod v04;
 pub mod v05;
+pub mod v1;
+
+mod projection;
+pub use projection::*;
 
 use crate::msgpack_decoder::decode::buffer::read_string_ref_nomut;
 use crate::msgpack_decoder::decode::error::DecodeError;
-use crate::span::v05::dict::SharedDict;
+use crate::span::table::{StaticDataVec, TraceDataText};
+use hashbrown::Equivalent;
 use libdd_tinybytes::{Bytes, BytesString};
+use libdd_trace_protobuf::pb::idx::SpanKind;
 use serde::Serialize;
 use std::borrow::Borrow;
 use std::fmt::Debug;
@@ -17,10 +24,38 @@ use std::marker::PhantomData;
 use std::ptr::NonNull;
 use std::{fmt, ptr};
 
+pub trait SpanDataContents: Debug + Eq + Hash + Serialize + Default + IntoData<Self> + Equivalent<Self::RefCopy> {
+    type RefCopy: SpanDataContents;
+
+    fn default_ref<'a>() -> &'a Self;
+
+    fn as_ref_copy(&self) -> Self::RefCopy;
+}
+
+pub trait HasAssoc<T : ?Sized> {
+    type Impls : ?Sized;
+}
+
+impl<T : ?Sized, Self_ : ?Sized> HasAssoc<T> for Self_ {
+    type Impls = T;
+}
+
+pub trait ImpliedPredicate<T : ?Sized> : HasAssoc<T, Impls = T>
+{}
+
+impl<T : ?Sized, Self_ : ?Sized> ImpliedPredicate<T> for Self_ {}
+
+// Lifetime-aware version for TraceProjector bounds
+pub trait ImpliedPredicateWithLifetime<'a, 'b, T : ?Sized, D: TraceData> : HasAssoc<T, Impls = T>
+{}
+
+impl<'a, 'b, T : ?Sized, Self_ : ?Sized, D: TraceData> ImpliedPredicateWithLifetime<'a, 'b, T, D> for Self_
+{}
+
 /// Trait representing the requirements for a type to be used as a Span "string" type.
 /// Note: Borrow<str> is not required by the derived traits, but allows to access HashMap elements
 /// from a static str and check if the string is empty.
-pub trait SpanText: Debug + Eq + Hash + Borrow<str> + Serialize + Default {
+pub trait SpanText: SpanDataContents + Borrow<str> + ImpliedPredicate<Self::RefCopy, Impls: Borrow<str>> {
     fn from_static_str(value: &'static str) -> Self;
 }
 
@@ -30,25 +65,131 @@ impl SpanText for &str {
     }
 }
 
+pub trait IntoData<T> {
+    fn into(self) -> T;
+}
+
+// Lifetime coercion for &str
+impl<'a, 'b: 'a> IntoData<&'a str> for &'b str {
+    fn into(self) -> &'a str {
+        self
+    }
+}
+
+// Lifetime coercion for &[u8]
+impl<'a, 'b: 'a> IntoData<&'a [u8]> for &'b [u8] {
+    fn into(self) -> &'a [u8] {
+        self
+    }
+}
+
+// BytesString conversions
+impl IntoData<BytesString> for &str {
+    fn into(self) -> BytesString {
+        BytesString::from(self)
+    }
+}
+
+impl IntoData<BytesString> for String {
+    fn into(self) -> BytesString {
+        BytesString::from(self)
+    }
+}
+
+impl IntoData<BytesString> for BytesString {
+    fn into(self) -> BytesString {
+        self
+    }
+}
+
+// Bytes conversions
+impl IntoData<Bytes> for &[u8] {
+    fn into(self) -> Bytes {
+        Bytes::from(Vec::from(self))
+    }
+}
+
+impl IntoData<Bytes> for Vec<u8> {
+    fn into(self) -> Bytes {
+        Bytes::from(self)
+    }
+}
+
+impl IntoData<Bytes> for Bytes {
+    fn into(self) -> Bytes {
+        self
+    }
+}
+
+impl SpanDataContents for &str {
+    type RefCopy = Self;
+
+    fn default_ref<'a>() -> &'a Self {
+        &""
+    }
+
+    fn as_ref_copy(&self) -> Self::RefCopy {
+        *self
+    }
+}
+
+static EMPTY_BYTESSTRING: BytesString = BytesString::from_static("");
 impl SpanText for BytesString {
     fn from_static_str(value: &'static str) -> Self {
         BytesString::from_static(value)
     }
 }
 
-pub trait SpanBytes: Debug + Eq + Hash + Borrow<[u8]> + Serialize + Default {
+impl SpanDataContents for BytesString {
+    type RefCopy = Self;
+
+    fn default_ref<'a>() -> &'a Self {
+        &EMPTY_BYTESSTRING
+    }
+
+    fn as_ref_copy(&self) -> Self::RefCopy {
+        self.clone()
+    }
+}
+
+pub trait SpanBytes: SpanDataContents + Borrow<[u8]> {
     fn from_static_bytes(value: &'static [u8]) -> Self;
 }
 
+static EMPTY_SLICE: &[u8] = &[];
 impl SpanBytes for &[u8] {
     fn from_static_bytes(value: &'static [u8]) -> Self {
         value
     }
 }
 
+impl SpanDataContents for &[u8] {
+    type RefCopy = Self;
+
+    fn default_ref<'a>() -> &'a Self {
+        &EMPTY_SLICE
+    }
+
+    fn as_ref_copy(&self) -> Self::RefCopy {
+        *self
+    }
+}
+
+static EMPTY_BYTES: Bytes = Bytes::empty();
 impl SpanBytes for Bytes {
     fn from_static_bytes(value: &'static [u8]) -> Self {
         Bytes::from_static(value)
+    }
+}
+impl SpanDataContents for Bytes {
+    type RefCopy = Self;
+
+    fn default_ref<'a>() -> &'a Self {
+        &EMPTY_BYTES
+    }
+
+    fn as_ref_copy(&self) -> Self::RefCopy {
+        self.clone()
     }
 }
 
@@ -56,9 +197,25 @@ impl SpanBytes for Bytes {
 /// Note: The functions are internal to the msgpack decoder and should not be used directly: they're
 /// only exposed here due to the unavailability of min_specialization in stable Rust.
 /// Also note that the Clone and PartialEq bounds are only present for tests.
-pub trait TraceData: Default + Clone + Debug + PartialEq {
-    type Text: SpanText;
-    type Bytes: SpanBytes;
+pub trait TraceData: Default + Clone + Debug + PartialEq + ImpliedPredicate<&'static str, Impls: IntoData<Self::Text>> + ImpliedPredicate<&'static [u8], Impls: IntoData<Self::Bytes>> {
+    type Text: SpanText + SpanDataContents<RefCopy = Self::Text>;
+    type Bytes: SpanBytes + SpanDataContents<RefCopy = Self::Bytes>;
+}
+
+/// Note: When using this trait as a bound, you still need to add the explicit lifetime bounds
+/// in some contexts due to Rust's trait system limitations. Use it in combination with explicit bounds like:
+/// `D: TraceDataLifetime<'a> + ImpliedPredicate<D::Text, Impls: 'a> + ImpliedPredicate<D::Bytes, Impls: 'a>`
+pub trait TraceDataLifetime<'a>: TraceData + ImpliedPredicate<Self::Text, Impls: 'a> + ImpliedPredicate<Self::Bytes, Impls: 'a> {}
+
+impl<'a, D: TraceData> TraceDataLifetime<'a> for D where D::Text: 'a, D::Bytes: 'a {}
+
+
+/// TraceData that supports mutation - requires owned, cloneable types that can be constructed
+/// from standard Rust types like String and Vec<u8>. Read-only operations work with any TraceData,
+/// but mutation requires MutableTraceData.
+
+pub trait OwnedTraceData: TraceData + ImpliedPredicate<Self::Text, Impls: Clone> + ImpliedPredicate<String, Impls: IntoData<Self::Text>> + ImpliedPredicate<Self::Bytes, Impls: Clone> + ImpliedPredicate<Vec<u8>, Impls: IntoData<Self::Bytes>>
+{
 }
 
 pub trait DeserializableTraceData: TraceData {
@@ -117,6 +274,8 @@ impl DeserializableTraceData for BytesData {
     }
 }
 
+impl OwnedTraceData for BytesData {}
+
 /// TraceData implementation using `&str` and `&[u8]`.
 #[derive(Clone, Default, Debug, PartialEq, Serialize)]
 pub struct SliceData<'a>(PhantomData<&'a u8>);
@@ -133,7 +292,7 @@ impl<'a> DeserializableTraceData for SliceData<'a> {
 
     #[inline]
     fn try_slice_and_advance(buf: &mut &'a [u8], bytes: usize) -> Option<&'a [u8]> {
-        let slice = buf.get(0..bytes)?;
+        let slice = <[u8]>::get(*buf, 0..bytes)?;
         *buf = &buf[bytes..];
         Some(slice)
     }
@@ -146,6 +305,7 @@ impl<'a> DeserializableTraceData for SliceData<'a> {
         })
     }
 }
+
 
 #[derive(Debug)]
 pub struct SpanKeyParseError {
@@ -166,4 +326,27 @@ impl fmt::Display for SpanKeyParseError {
 }
 impl std::error::Error for SpanKeyParseError {}
 
-pub type SharedDictBytes = SharedDict<BytesString>;
+pub type SharedDictBytes = StaticDataVec<BytesData, TraceDataText>;
+
+
+pub fn parse_span_kind(kind: &str) -> SpanKind {
+    match kind {
+        "internal" => SpanKind::Internal,
+        "server" => SpanKind::Server,
+        "client" => SpanKind::Client,
+        "producer" => SpanKind::Producer,
+        "consumer" => SpanKind::Consumer,
+        _ => SpanKind::Unspecified,
+    }
+}
+
+pub fn span_kind_to_str(kind: SpanKind) -> Option<&'static str> {
+    match kind {
+        SpanKind::Internal => Some("internal"),
+        SpanKind::Server => Some("server"),
+        SpanKind::Client => Some("client"),
+        SpanKind::Producer => Some("producer"),
+        SpanKind::Consumer => Some("consumer"),
+        _ => None,
+    }
+}

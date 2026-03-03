@@ -161,7 +161,7 @@ mod tests {
     use rmp_serde;
     use rmp_serde::to_vec_named;
     use serde_json::json;
-    use std::collections::HashMap;
+    use hashbrown::HashMap;
 
     #[test]
     fn test_empty_array() {
@@ -288,7 +288,7 @@ mod tests {
 
     #[test]
     fn test_decoder_meta_fixed_map_success() {
-        let expected_meta = HashMap::from([
+        let expected_meta: HashMap<String, String> = HashMap::from([
             ("key1".to_string(), "value1".to_string()),
             ("key2".to_string(), "value2".to_string()),
         ]);
@@ -360,7 +360,7 @@ mod tests {
 
     #[test]
     fn test_decoder_metrics_fixed_map_success() {
-        let expected_metrics = HashMap::from([("metric1", 1.23), ("metric2", 4.56)]);
+        let expected_metrics: HashMap<&str, f64> = HashMap::from([("metric1", 1.23), ("metric2", 4.56)]);
 
         let mut span = create_test_json_span(1, 2, 0, 0, false);
         span["metrics"] = json!(expected_metrics.clone());
