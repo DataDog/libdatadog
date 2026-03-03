@@ -3,7 +3,7 @@
 
 [package]
 name = "libdd-common"
-version = "1.1.0"
+version = "2.0.0"
 description = "Shared utilities for Datadog libraries including HTTP/HTTPS connectors, container entity detection, tag validation, rate limiting, and Unix/Windows platform helpers"
 homepage = "https://github.com/DataDog/libdatadog/tree/main/datadog-common"
 repository = "https://github.com/DataDog/libdatadog/tree/main/datadog-common"
@@ -31,7 +31,7 @@ tower-service = "0.3"
 cc = "1.1.31"
 mime = { version = "0.3.16", optional = true }
 multer = { version = "3.1", optional = true }
-bytes = { version = "1.4" }
+bytes = { version = "1.11.1" }
 pin-project = "1"
 rand = { version = "0.8", optional = true }
 regex = "1.5"
@@ -81,7 +81,7 @@ indexmap = "2.11"
 maplit = "1.0"
 mime = "0.3.16"
 multer = "3.1"
-bytes = "1.4"
+bytes = "1.11.1"
 rand = "0.8"
 tempfile = "3.8"
 tokio = { version = "1.23", features = ["rt", "macros", "time"] }
