@@ -46,8 +46,6 @@ jobs:
         uses: taiki-e/install-action@2c41309d51ede152b6f2ee6bf3b71e6dc9a8b7df # 2.49.27
         with:
           tool: nextest@0.9.96
-      # shared-key = one cache per (OS, lockfile, toolchain) shared across workflows
-      # save-if: main = only save on default branch to avoid filling GH cache with PR runs
       - name: Cache [rust]
         uses: Swatinem/rust-cache@f13886b937689c021905a6b90929199931d60db1 # 2.8.1
         with:
