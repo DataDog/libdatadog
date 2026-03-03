@@ -549,24 +549,31 @@ impl From<ProfileNewResult> for Result<Profile, Error> {
 /// The `profile` ptr must point to a valid Profile object created by this
 /// module.
 /// This call is _NOT_ thread-safe.
+///
+/// # Arguments
+/// * `track_ptr` - If non-zero, also track this allocation for heap-live profiling. The sample data
+///   is copied into owned storage and will be automatically injected during profile reset. Use 0 to
+///   skip tracking.
 #[must_use]
 #[no_mangle]
 pub unsafe extern "C" fn ddog_prof_Profile_add(
     profile: *mut Profile,
     sample: Sample,
     timestamp: Option<NonZeroI64>,
+    track_ptr: usize,
 ) -> ProfileResult {
     (|| {
         let profile = profile_ptr_to_inner(profile)?;
+        let track = (track_ptr != 0).then_some(track_ptr as u64);
         let uses_string_ids = sample
             .labels
             .first()
             .is_some_and(|label| label.key.is_empty() && label.key_id.value > 0);
 
         if uses_string_ids {
-            profile.add_string_id_sample(sample.into(), timestamp)
+            profile.add_string_id_sample(sample.into(), timestamp, track)
         } else {
-            profile.try_add_sample(sample.try_into()?, timestamp)
+            profile.try_add_sample(sample.try_into()?, timestamp, track)
         }
     })()
     .context("ddog_prof_Profile_add failed")
@@ -896,6 +903,69 @@ pub unsafe extern "C" fn ddog_prof_Profile_reset(profile: *mut Profile) -> Profi
     .into()
 }
 
+/// Enable heap-live allocation tracking on this profile. When enabled,
+/// calls to `ddog_prof_Profile_add` with a non-zero `track_ptr` will copy
+/// the sample data into owned storage. Tracked allocations are automatically
+/// injected during profile reset and survive across resets.
+///
+/// # Arguments
+/// * `profile` - A mutable reference to the profile.
+/// * `max_tracked` - Maximum number of allocations to track simultaneously.
+/// * `excluded_labels` - Label keys to strip from tracked allocations (e.g., high-cardinality
+///   labels like "span id").
+/// * `alloc_size_idx` - Index of alloc-size in the sample values array.
+/// * `heap_live_samples_idx` - Index of heap-live-samples in the sample values array.
+/// * `heap_live_size_idx` - Index of heap-live-size in the sample values array.
+///
+/// # Safety
+/// The `profile` ptr must point to a valid Profile object created by this
+/// module. `excluded_labels` must be a valid `Slice<CharSlice>`.
+/// This call is _NOT_ thread-safe.
+#[no_mangle]
+pub unsafe extern "C" fn ddog_prof_Profile_enable_heap_live_tracking(
+    profile: *mut Profile,
+    max_tracked: usize,
+    excluded_labels: Slice<CharSlice>,
+    alloc_size_idx: usize,
+    heap_live_samples_idx: usize,
+    heap_live_size_idx: usize,
+) -> ProfileResult {
+    (|| {
+        let profile = profile_ptr_to_inner(profile)?;
+        let labels: Vec<&str> = excluded_labels
+            .iter()
+            .map(|cs| cs.try_to_utf8())
+            .collect::<Result<Vec<_>, _>>()?;
+        profile.enable_heap_live_tracking(
+            max_tracked,
+            &labels,
+            alloc_size_idx,
+            heap_live_samples_idx,
+            heap_live_size_idx,
+        );
+        anyhow::Ok(())
+    })()
+    .context("ddog_prof_Profile_enable_heap_live_tracking failed")
+    .into()
+}
+
+/// Remove a tracked heap-live allocation by pointer. No-op if heap-live
+/// tracking is disabled or the pointer is not tracked.
+///
+/// # Arguments
+/// * `profile` - A mutable reference to the profile.
+/// * `ptr` - The pointer value of the allocation to untrack.
+///
+/// # Safety
+/// The `profile` ptr must point to a valid Profile object created by this
+/// module. This call is _NOT_ thread-safe.
+#[no_mangle]
+pub unsafe extern "C" fn ddog_prof_Profile_untrack_allocation(profile: *mut Profile, ptr: usize) {
+    if let Ok(profile) = profile_ptr_to_inner(profile) {
+        profile.untrack_allocation(ptr as u64);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -931,7 +1001,7 @@ mod tests {
                 labels: Slice::empty(),
             };
 
-            let result = Result::from(ddog_prof_Profile_add(&mut profile, sample, None));
+            let result = Result::from(ddog_prof_Profile_add(&mut profile, sample, None, 0));
             result.unwrap_err();
             ddog_prof_Profile_drop(&mut profile);
             Ok(())
@@ -979,7 +1049,7 @@ mod tests {
                 labels: Slice::from(&labels),
             };
 
-            Result::from(ddog_prof_Profile_add(&mut profile, sample, None))?;
+            Result::from(ddog_prof_Profile_add(&mut profile, sample, None, 0))?;
             assert_eq!(
                 profile
                     .inner
@@ -989,7 +1059,7 @@ mod tests {
                 1
             );
 
-            Result::from(ddog_prof_Profile_add(&mut profile, sample, None))?;
+            Result::from(ddog_prof_Profile_add(&mut profile, sample, None, 0))?;
             assert_eq!(
                 profile
                     .inner
@@ -1065,7 +1135,7 @@ mod tests {
             labels: Slice::from(labels.as_slice()),
         };
 
-        Result::from(ddog_prof_Profile_add(&mut profile, main_sample, None)).unwrap();
+        Result::from(ddog_prof_Profile_add(&mut profile, main_sample, None, 0)).unwrap();
         assert_eq!(
             profile
                 .inner
@@ -1075,7 +1145,7 @@ mod tests {
             1
         );
 
-        Result::from(ddog_prof_Profile_add(&mut profile, test_sample, None)).unwrap();
+        Result::from(ddog_prof_Profile_add(&mut profile, test_sample, None, 0)).unwrap();
         assert_eq!(
             profile
                 .inner
