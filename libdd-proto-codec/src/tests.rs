@@ -1,7 +1,7 @@
 use arbitrary::Arbitrary;
 use prost::Message;
 
-use crate::encoder;
+use crate::encoder::{self, MAP_KEY_FIELD_NUM, MAP_VALUE_FIELD_NUM};
 
 #[derive(PartialEq, prost::Message, arbitrary::Arbitrary)]
 struct Bar {
@@ -13,6 +13,8 @@ struct Bar {
     i32_repeated_field: Vec<i32>,
     #[prost(string, tag = "4")]
     string_field: String,
+    #[prost(map = "string, sint64", tag = "5")]
+    map_field: std::collections::HashMap<String, i64>,
 }
 
 #[derive(prost::Message, arbitrary::Arbitrary)]
@@ -62,6 +64,13 @@ fn manual_encode_bar<B: crate::encoder::BufMut>(e: &mut encoder::Encoder<'_, B>,
     e.write_strings_repeated(2, bar.string_repeated_field.iter().map(|s| s.as_str()));
     e.write_sfixed32_packed(3, bar.i32_repeated_field.iter().copied());
     e.write_string(4, &bar.string_field);
+    let mut map_enc = e.write_map(5);
+    for (k, v) in &bar.map_field {
+        let mut entry = map_enc.write_map_entry();
+        let mut entry_enc = entry.encoder();
+        entry_enc.write_string(MAP_KEY_FIELD_NUM, k);
+        entry_enc.write_sint64(MAP_VALUE_FIELD_NUM, *v);
+    }
 }
 
 fn manual_bar_top_level_encoder(bar: &Bar) -> Vec<u8> {
@@ -118,7 +127,6 @@ fn test_roundtrip_foo() {
         let l = rand::random_range(0..255_usize);
         let input: Vec<u8> = (0..l).map(|_| rand::random()).collect();
         let input_foo: Foo = Foo::arbitrary(&mut arbitrary::Unstructured::new(&input)).unwrap();
-
         test_roundtrip_foo_inner(&input_foo);
     }
 }

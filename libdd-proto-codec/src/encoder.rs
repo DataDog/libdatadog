@@ -2,6 +2,9 @@ use crate::constants::WireType;
 use alloc::vec::Vec;
 use core::ops::DerefMut;
 
+pub const MAP_KEY_FIELD_NUM: u32 = 1;
+pub const MAP_VALUE_FIELD_NUM: u32 = 2;
+
 pub trait BufMut: DerefMut<Target = [u8]> {
     fn put_u8(&mut self, v: u8);
     fn put_slice(&mut self, slice: &[u8]);
@@ -221,13 +224,13 @@ impl<B: BufMut> Encoder<'_, B> {
     /// returns an Encoder for a nested message.
     ///
     /// ```rust
-    /// use proto_codec::encoder::{TopLevelEncoder, Encoder};
+    /// use libdd_proto_codec::encoder::{TopLevelEncoder, Encoder, BufMut};
     ///
     /// struct Bar {
     ///    baz: i32,
     /// }
     ///
-    /// fn encode_bar(e: &mut Encoder<'_>, bar: &Bar) {
+    /// fn encode_bar<B: BufMut>(e: &mut Encoder<'_, B>, bar: &Bar) {
     ///     e.write_sint32(1, bar.baz);
     /// }
     ///
@@ -235,11 +238,11 @@ impl<B: BufMut> Encoder<'_, B> {
     ///     bar: Bar,
     /// }
     ///
-    /// fn encode_foo(e: &mut Encoder<'_>, foo: &Foo) {
+    /// fn encode_foo<B: BufMut>(e: &mut Encoder<'_, B>, foo: &Foo) {
     ///     encode_bar(&mut e.write_message(1).encoder(), &foo.bar);
     /// }
     ///
-    /// let mut e = TopLevelEncoder::default();
+    /// let mut e = TopLevelEncoder::<Vec<u8>>::default();
     /// encode_foo(&mut e.encoder(), &Foo { bar: Bar { baz: -1 } } );
     /// dbg!(e.finish());
     /// ```
@@ -276,13 +279,13 @@ impl<B: BufMut> Encoder<'_, B> {
     /// returns an Encoder for a nested message with repeated annotation
     ///
     /// ```rust
-    /// use proto_codec::encoder::{TopLevelEncoder, Encoder};
+    /// use libdd_proto_codec::encoder::{TopLevelEncoder, Encoder, BufMut};
     ///
     /// struct Bar {
     ///    baz: i32,
     /// }
     ///
-    /// fn encode_bar(e: &mut Encoder<'_>, bar: &Bar) {
+    /// fn encode_bar<B: BufMut>(e: &mut Encoder<'_, B>, bar: &Bar) {
     ///     e.write_sint32(1, bar.baz);
     /// }
     ///
@@ -290,13 +293,13 @@ impl<B: BufMut> Encoder<'_, B> {
     ///     bars: Vec<Bar>,
     /// }
     ///
-    /// fn encode_foo(e: &mut Encoder<'_>, foo: &Foo) {
+    /// fn encode_foo<B: BufMut>(e: &mut Encoder<'_, B>, foo: &Foo) {
     ///     for bar in &foo.bars {
     ///         encode_bar(&mut e.write_message(1).encoder(), &bar);
     ///    }
     /// }
     ///
-    /// let mut e = TopLevelEncoder::default();
+    /// let mut e = TopLevelEncoder::<Vec<u8>>::default();
     /// encode_foo(&mut e.encoder(), &Foo { bars: vec![Bar { baz: -1 }, Bar { baz: 0 }] } );
     /// dbg!(e.finish());
     /// ```
@@ -324,7 +327,60 @@ impl<B: BufMut> Encoder<'_, B> {
         }
     }
 
-    // todo map
+    /// returns a helper to encode protobufs maps
+    ///
+    /// ```
+    /// use libdd_proto_codec::encoder::{Encoder, MapEncoder, BufMut, MAP_KEY_FIELD_NUM, MAP_VALUE_FIELD_NUM};
+    ///
+    /// // message Example {
+    /// //   map<string, int> field = 3;
+    /// //}
+    ///
+    /// struct Example {
+    ///     field: Vec<(String, i64)>,
+    /// }
+    /// fn encode_example(e: &mut Encoder<'_, Vec<u8>>, example: &Example) {
+    ///     let map_encoder = e.write_map(3);
+    /// }
+    ///
+    /// fn encode_string_i64_map<'a, I: IntoIterator<Item = &'a (String, i64)>>(mut e: MapEncoder<'_, Vec<u8>>, map: I) {
+    ///     for (k, v) in map {
+    ///         encode_string_i64_map_entry(&mut e.write_map_entry()
+    ///             .encoder(), k, *v);
+    ///     }
+    /// }
+    ///
+    /// fn encode_string_i64_map_entry<B: BufMut>(e: &mut Encoder<'_, B>, key: &str, value: i64) {
+    ///     e.write_string(MAP_KEY_FIELD_NUM, key);
+    ///     e.write_int64(MAP_VALUE_FIELD_NUM, value);
+    /// }
+    /// ```
+    pub fn write_map(&mut self, field_number: u32) -> MapEncoder<'_, B> {
+        MapEncoder {
+            data: self.data,
+            field_number,
+        }
+    }
+}
+
+pub struct MapEncoder<'a, B: BufMut> {
+    data: &'a mut B,
+    field_number: u32,
+}
+
+impl<B: BufMut> MapEncoder<'_, B> {
+    pub fn write_map_entry(&mut self) -> NestedEncoder<'_, B> {
+        let tag_position = self.data.len();
+        encode_tagged(self.field_number, WireType::LengthDelimited, self.data);
+        let size_position = self.data.len();
+        self.data.put_slice(&[0; 5]); // Placeholder for size
+        NestedEncoder {
+            tag_position,
+            write_empty: true,
+            size_position,
+            encoder: Encoder { data: self.data },
+        }
+    }
 }
 
 macro_rules! impl_scalar {
@@ -418,7 +474,7 @@ fn test_encoding() {
 
     encoder.write_message(1).encoder().write_uint32(1, 2);
     encoder.write_uint32(2, 3);
-    assert_eq!(data, &[])
+    assert_eq!(data, &[10, 130, 128, 128, 128, 0, 8, 2, 16, 3])
 }
 
 #[inline]
