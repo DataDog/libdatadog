@@ -15,7 +15,12 @@ pub const PROF_DYNAMIC_LIB_FFI: &str = "libdatadog_profiling_ffi.dylib";
 pub const PROF_STATIC_LIB_FFI: &str = "libdatadog_profiling_ffi.a";
 pub const REMOVE_RPATH: bool = true;
 pub const BUILD_CRASHTRACKER: bool = true;
-pub const RUSTFLAGS: [&str; 2] = ["-C", "relocation-model=pic"];
+pub const RUSTFLAGS: [&str; 4] = [
+    "-C",
+    "relocation-model=pic",
+    "-C",
+    "link-arg=-Wl,-install_name,@rpath/libdatadog_profiling.dylib",
+];
 
 pub fn fix_rpath(lib_path: &str) {
     if REMOVE_RPATH {
