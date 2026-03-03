@@ -3426,6 +3426,7 @@ dependencies = [
  "hyper",
  "indexmap 2.12.1",
  "libdd-common",
+ "libdd-proto-codec",
  "libdd-tinybytes",
  "libdd-trace-normalization",
  "libdd-trace-protobuf",

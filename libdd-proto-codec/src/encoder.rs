@@ -9,6 +9,8 @@ pub trait BufMut: DerefMut<Target = [u8]> {
     fn put_u8(&mut self, v: u8);
     fn put_slice(&mut self, slice: &[u8]);
     fn truncate(&mut self, new_len: usize);
+
+    fn with_capacity(cap: usize) -> Self;
 }
 
 impl BufMut for Vec<u8> {
@@ -23,6 +25,28 @@ impl BufMut for Vec<u8> {
     fn truncate(&mut self, new_len: usize) {
         self.truncate(new_len);
     }
+
+    fn with_capacity(cap: usize) -> Self {
+        Vec::with_capacity(cap)
+    }
+}
+
+impl BufMut for bytes::BytesMut {
+    fn put_u8(&mut self, v: u8) {
+        <Self as bytes::BufMut>::put_u8(self, v);
+    }
+
+    fn put_slice(&mut self, slice: &[u8]) {
+        <Self as bytes::BufMut>::put_slice(self, slice);
+    }
+
+    fn truncate(&mut self, new_len: usize) {
+        self.truncate(new_len);
+    }
+
+    fn with_capacity(cap: usize) -> Self {
+        bytes::BytesMut::with_capacity(cap)
+    }
 }
 
 #[derive(Default)]
@@ -31,6 +55,11 @@ pub struct TopLevelEncoder<B: BufMut> {
 }
 
 impl<B: BufMut> TopLevelEncoder<B> {
+    pub fn with_capacity(cap: usize) -> Self {
+        Self {
+            data: B::with_capacity(cap),
+        }
+    }
     pub fn encoder(&mut self) -> Encoder<'_, B> {
         Encoder {
             data: &mut self.data,
