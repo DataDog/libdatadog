@@ -527,5 +527,25 @@ pub mod linux {
 
             super::unpublish().expect("couldn't unpublish the context");
         }
+
+        #[test]
+        #[cfg_attr(miri, ignore)]
+        fn unpublish_process_context() {
+            let payload = "example process context payload";
+
+            super::publish(payload.as_bytes().to_vec())
+                .expect("couldn't publish the process context");
+
+            // The mapping must be discoverable right after publishing
+            find_otel_mapping().expect("couldn't find the otel mapping after publishing");
+
+            super::unpublish().expect("couldn't unpublish the context");
+
+            // After unpublishing the name must no longer appear in /proc/self/maps
+            assert!(
+                find_otel_mapping().is_err(),
+                "otel mapping should not be visible after unpublish"
+            );
+        }
     }
 }
