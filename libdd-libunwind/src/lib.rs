@@ -23,9 +23,8 @@ mod tests {
             let mut context: UnwContext = std::mem::zeroed();
             let mut cursor: UnwCursor = std::mem::zeroed();
 
-            // Get current context
-            let ret = unw_getcontext(&mut context);
-            assert_eq!(ret, 0, "unw_getcontext failed");
+            let ret = getcontext(&mut context);
+            assert_eq!(ret, 0, "getcontext failed");
 
             // Initialize cursor
             let ret = unw_init_local2(&mut cursor, &mut context, 0);
@@ -58,7 +57,7 @@ mod tests {
             let mut context: UnwContext = std::mem::zeroed();
             let mut cursor: UnwCursor = std::mem::zeroed();
 
-            assert_eq!(unw_getcontext(&mut context), 0);
+            assert_eq!(getcontext(&mut context), 0);
             assert_eq!(unw_init_local2(&mut cursor, &mut context, 0), 0);
 
             // Get instruction pointer
@@ -80,7 +79,7 @@ mod tests {
     fn test_backtrace2() {
         unsafe {
             let mut context: UnwContext = std::mem::zeroed();
-            assert_eq!(unw_getcontext(&mut context), 0);
+            assert_eq!(getcontext(&mut context), 0);
 
             // unw_backtrace2 expects an array of void pointers
             let mut frames: [*mut ::std::os::raw::c_void; 100] = [std::ptr::null_mut(); 100];
@@ -107,7 +106,7 @@ mod tests {
             let mut context: UnwContext = std::mem::zeroed();
             let mut cursor: UnwCursor = std::mem::zeroed();
 
-            assert_eq!(unw_getcontext(&mut context), 0);
+            assert_eq!(getcontext(&mut context), 0);
             assert_eq!(
                 unw_init_local2(&mut cursor, &mut context, UNW_INIT_LOCAL_ONLY_IP),
                 0

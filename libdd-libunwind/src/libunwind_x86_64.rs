@@ -16,8 +16,6 @@ pub struct UnwCursor {
 // This is a subset of the libunwind API.
 
 extern "C" {
-    #[link_name = "_Ux86_64_getcontext"]
-    pub fn unw_getcontext(context: *mut UnwContext) -> i32;
     #[link_name = "_ULx86_64_init_local2"]
     pub fn unw_init_local2(cursor: *mut UnwCursor, context: *mut UnwContext, flag: i32) -> i32;
     #[link_name = "_ULx86_64_step"]
@@ -44,3 +42,37 @@ extern "C" {
 pub const UNW_REG_IP: i32 = 16; // Instruction Pointer
 pub const UNW_REG_SP: i32 = 17; // Stack Pointer
 pub const UNW_INIT_LOCAL_ONLY_IP: i32 = 1;
+
+/// Saves the current CPU context into `uc_mcontext.gregs`.
+/// gregs layout: [R8, R9, R10, R11, R12, R13, R14, R15,
+///                RDI, RSI, RBP, RBX, RDX, RAX, RCX, RSP, RIP, ...]
+#[cfg(test)]
+#[inline(always)]
+pub unsafe fn getcontext(context: *mut UnwContext) -> i32 {
+    let gregs = core::ptr::addr_of_mut!((*context).uc_mcontext.gregs) as u64;
+    core::arch::asm!(
+        "mov [rdi], r8",
+        "mov [rdi + 8], r9",
+        "mov [rdi + 16], r10",
+        "mov [rdi + 24], r11",
+        "mov [rdi + 32], r12",
+        "mov [rdi + 40], r13",
+        "mov [rdi + 48], r14",
+        "mov [rdi + 56], r15",
+        "mov [rdi + 64], rdi",
+        "mov [rdi + 72], rsi",
+        "mov [rdi + 80], rbp",
+        "mov [rdi + 88], rbx",
+        "mov [rdi + 96], rdx",
+        "mov [rdi + 104], rax",
+        "mov [rdi + 112], rcx",
+        "mov [rdi + 120], rsp",
+        "lea rax, [rip + 2f]",
+        "mov [rdi + 128], rax",
+        "2:",
+        inout("rdi") gregs => _,
+        out("rax") _,
+        options(nostack, preserves_flags),
+    );
+    0
+}
