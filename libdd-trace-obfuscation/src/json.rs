@@ -38,22 +38,17 @@ impl JsonObfuscator {
             return String::new();
         }
 
-        let mut out = String::with_capacity(input.len());
-        let stream = serde_json::Deserializer::from_str(input).into_iter::<Value>();
-
-        for result in stream {
-            match result {
-                Ok(value) => out.push_str(
-                    &serde_json::to_string(&self.obfuscate_value(value)).unwrap_or_default(),
-                ),
-                Err(_) => {
-                    out.push_str("...");
-                    break;
+        serde_json::Deserializer::from_str(input)
+            .into_iter::<Value>()
+            .map(|result| match result {
+                Ok(value) => {
+                    serde_json::to_string(&self.obfuscate_value(value)).unwrap_or_default()
                 }
-            }
-        }
-
-        out
+                Err(_) => "...".to_string(),
+            })
+            .collect::<Vec<_>>()
+            .join(" ")
+            + "\n"
     }
 
     fn obfuscate_value(&self, value: Value) -> Value {
@@ -219,7 +214,7 @@ mod tests {
     #[test]
     fn test_invalid_json_appends_ellipsis() {
         let result = obf(&[]).obfuscate("INVALID");
-        assert_eq!(result, "...");
+        assert_eq!(result, "...\n");
     }
 
     #[test]
@@ -227,7 +222,7 @@ mod tests {
         // A truncated JSON object — partial output + "..."
         let result = obf(&[]).obfuscate(r#"{"key": "value""#);
         assert!(
-            result.ends_with("..."),
+            result.ends_with("...\n"),
             "expected '...' suffix, got: {result}"
         );
     }
