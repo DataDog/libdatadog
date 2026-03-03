@@ -29,7 +29,7 @@ jobs:
           cache-targets: true # cache build artifacts
           cache-bin: true # cache the ~/.cargo/bin directory
           shared-key: shared-${{ runner.os }}
-          # save-if: ${{ github.ref == 'refs/heads/main' }}
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - run: MIRIFLAGS="-Zmiri-disable-isolation" cargo miri nextest run --partition count:${{ matrix.partition }}/5
       # We need to disable isolation because
       # "unsupported operation: `clock_gettime` with `REALTIME` clocks not available when isolation is enabled"

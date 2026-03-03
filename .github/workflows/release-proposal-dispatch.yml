@@ -143,7 +143,7 @@ jobs:
         with:
           cache-targets: true
           shared-key: shared-${{ runner.os }}
-          # save-if: ${{ github.ref == 'refs/heads/main' }}
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - uses: dtolnay/rust-toolchain@nightly
         with:
           toolchain: nightly-2026-02-08

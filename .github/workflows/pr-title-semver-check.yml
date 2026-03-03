@@ -100,7 +100,7 @@ jobs:
         with:
           cache-targets: true
           shared-key: shared-${{ runner.os }}
-          # save-if: ${{ github.ref == 'refs/heads/main' }}
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Install dependencies
         run: |
