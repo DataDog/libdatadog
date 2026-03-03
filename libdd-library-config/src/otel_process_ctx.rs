@@ -467,11 +467,13 @@ pub mod linux {
 
         #[test]
         #[cfg_attr(miri, ignore)]
-        fn publish_then_read_context() {
-            let payload = "example process context payload";
+        fn publish_then_update_process_context() {
+            let payload_v1 = "example process context payload";
+            let payload_v2 = "another example process context payload of different size";
 
-            super::publish(payload.as_bytes().to_vec())
+            super::publish(payload_v1.as_bytes().to_vec())
                 .expect("couldn't publish the process context");
+
             let header = read_process_context().expect("couldn't read back the process context");
             // Safety: the published context must have put valid bytes of size payload_size in the
             // context if the signature check succeded.
@@ -485,27 +487,16 @@ pub mod linux {
                 "wrong context version"
             );
             assert!(
-                header.payload_size == payload.len() as u32,
+                header.payload_size == payload_v1.len() as u32,
                 "wrong payload size"
             );
             assert!(header.published_at_ns > 0, "published_at_ns is zero");
-            assert!(read_payload == payload.as_bytes(), "payload mismatch");
+            assert!(read_payload == payload_v1.as_bytes(), "payload mismatch");
 
-            super::unpublish().expect("couldn't unpublish the context");
-        }
-
-        #[test]
-        #[cfg_attr(miri, ignore)]
-        fn update_process_context() {
-            let payload_v1 = "example process context payload";
-            let payload_v2 = "another example process context payload of different size";
-
-            super::publish(payload_v1.as_bytes().to_vec())
-                .expect("couldn't publish the process context");
             super::publish(payload_v2.as_bytes().to_vec())
                 .expect("couldn't update the process context");
 
-            let header = read_process_context().expect("couldn't read back the process contex");
+            let header = read_process_context().expect("couldn't read back the process context");
             // Safety: the published context must have put valid bytes of size payload_size in the
             // context if the signature check succeded.
             let read_payload = unsafe {
