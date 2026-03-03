@@ -4,6 +4,45 @@
 use percent_encoding::percent_decode_str;
 use url::Url;
 
+/// Go-ish behavior:
+/// - Accepts almost anything as a URL reference
+/// - If it's absolute, return it as-is (normalized/encoded)
+/// - If it's relative, return the encoded relative reference (no dummy base in output)
+pub fn go_like_reference(input: &str) -> String {
+    // Dummy base just to let the parser resolve relatives
+    let base = Url::parse("https://example.invalid/").unwrap();
+
+    // Try absolute first (like "https://...", "mailto:...", etc.)
+    if let Ok(abs) = Url::parse(input) {
+        return abs.to_string();
+    }
+
+    // Otherwise parse as a relative reference against the dummy base
+    let resolved = base.join(input).unwrap_or_else(|_| {
+        // If join fails (rare, but can happen with weird inputs), fall back to putting it in the path.
+        let mut u = base.clone();
+        u.set_path(input);
+        u
+    });
+
+    // Strip the dummy origin back off so you get "hello%20world", "/x%20y", "?q=a%20b", "#frag", etc.
+    let full = resolved.as_str();
+
+    // base.as_str() is "https://example.invalid/"
+    let base_prefix = base.as_str();
+
+    if let Some(rest) = full.strip_prefix(base_prefix) {
+        // relative path (e.g. "hello%20world" or "dir/hello%20world")
+        rest.to_string()
+    } else if let Some(rest) = full.strip_prefix("https://example.invalid") {
+        // covers cases like "/path" where the base origin remains
+        rest.to_string()
+    } else {
+        // shouldn't happen, but safe fallback
+        full.to_string()
+    }
+}
+
 pub fn obfuscate_url_string(
     url: &str,
     remove_query_string: bool,
@@ -11,7 +50,7 @@ pub fn obfuscate_url_string(
 ) -> String {
     let mut parsed_url = match Url::parse(url) {
         Ok(res) => res,
-        Err(_) => return "?".to_string(),
+        Err(_) => return go_like_reference(url),
     };
 
     // remove username & password
@@ -158,11 +197,11 @@ mod tests {
             expected_output     ["http://foo.com/?/nam%3Fe/?"];
         ]
         [
-            test_name           [remove_path_digits_9]
+            test_name           [empty_input]
             remove_query_string [false]
-            remove_path_digits  [true]
-            input               ["http://user:password@foo.com/1/2/3?q=james"]
-            expected_output     ["http://foo.com/?/?/??q=james"];
+            remove_path_digits  [false]
+            input               [""]
+            expected_output     [""];
         ]
     )]
     #[test]
