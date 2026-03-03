@@ -115,6 +115,25 @@ impl SharedDirLiaison {
     pub fn new_default_location() -> Self {
         Self::new(env::temp_dir().join("libdatadog"))
     }
+
+    pub fn ipc_for_pid(pid: u32) -> Self {
+        let base_dir = env::temp_dir().join("libdatadog");
+        let versioned_socket_basename = format!(
+            "libdd.{}@{}.sock",
+            crate::sidecar_version!(),
+            pid
+        );
+        let socket_path = base_dir
+            .join(&versioned_socket_basename)
+            .with_extension(".sock");
+        let lock_path = base_dir
+            .join(&versioned_socket_basename)
+            .with_extension(".sock.lock");
+        Self {
+            socket_path,
+            lock_path,
+        }
+    }
 }
 
 impl Default for SharedDirLiaison {

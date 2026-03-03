@@ -9,7 +9,6 @@ use tokio::sync::oneshot;
 use tracing::{error, info};
 
 use crate::config::Config;
-use crate::config::IpcMode::{InstancePerProcess, Shared};
 use crate::entry::MainLoopConfig;
 use crate::service::blocking::SidecarTransport;
 use crate::setup::{Liaison, SharedDirLiaison};
@@ -44,7 +43,7 @@ impl MasterListener {
         let thread_handle = thread::Builder::new()
             .name(format!("ddtrace-sidecar-listener-{}", pid))
             .spawn(move || {
-                if let Err(e) = run_listener(config, shutdown_rx) {
+                if let Err(e) = run_listener(pid as u32, config, shutdown_rx) {
                     error!("Listener thread error: {}", e);
                 }
             })
@@ -150,14 +149,13 @@ async fn accept_socket_loop_thread(
 }
 
 /// Entry point for thread listener - calls enter_listener_loop_with_config
-fn run_listener(config: Config, shutdown_rx: oneshot::Receiver<()>) -> io::Result<()> {
+fn run_listener(pid: u32, _config: Config, shutdown_rx: oneshot::Receiver<()>) -> io::Result<()> {
     info!("Listener thread running, creating IPC server");
 
     let acquire_listener = move || {
-        let liaison: SharedDirLiaison = match config.ipc_mode {
-            Shared => Liaison::ipc_shared(),
-            InstancePerProcess => Liaison::ipc_per_process(),
-        };
+        // In thread mode, always use a pid-specific socket so that multiple PHP processes
+        // with the same euid do not share a listener.
+        let liaison = SharedDirLiaison::ipc_for_pid(pid);
 
         let std_listener = liaison
             .attempt_listen()?
@@ -194,12 +192,8 @@ fn run_listener(config: Config, shutdown_rx: oneshot::Receiver<()>) -> io::Resul
 pub fn connect_to_master(pid: i32) -> io::Result<Box<SidecarTransport>> {
     info!("Connecting to master listener (PID {})", pid);
 
-    let config = Config::get();
-
-    let liaison: SharedDirLiaison = match config.ipc_mode {
-        Shared => Liaison::ipc_shared(),
-        InstancePerProcess => Liaison::ipc_per_process(),
-    };
+    // Use the same pid-specific socket path as the master listener.
+    let liaison = SharedDirLiaison::ipc_for_pid(pid as u32);
 
     let channel = liaison
         .connect_to_server()
