@@ -55,11 +55,38 @@ unsafe fn emit_backtrace_by_frames(
     w: &mut impl Write,
     resolve_frames: StacktraceCollection,
     fault_ip: usize,
+    ucontext: *const ucontext_t,
 ) -> Result<(), EmitterError> {
     // https://docs.rs/backtrace/latest/backtrace/index.html
     writeln!(w, "{DD_CRASHTRACK_BEGIN_STACKTRACE}")?;
 
-    // Absolute addresses appear to be safer to collect during a crash than debug info.
+    // On macOS, backtrace::trace_unsynchronized fails in forked children because
+    // macOS restricts many APIs after fork-without-exec. Walk the frame pointer
+    // chain directly from the saved ucontext registers instead. The parent's
+    // stack memory is still readable in the forked child
+    #[cfg(target_os = "macos")]
+    {
+        let _ = (resolve_frames, fault_ip);
+        emit_backtrace_from_ucontext(w, ucontext)?;
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = ucontext;
+        emit_backtrace_via_library(w, resolve_frames, fault_ip)?;
+    }
+
+    writeln!(w, "{DD_CRASHTRACK_END_STACKTRACE}")?;
+    w.flush()?;
+    Ok(())
+}
+
+#[allow(dead_code)] // used from tests on macOS, from emit_backtrace_by_frames on other platforms
+unsafe fn emit_backtrace_via_library(
+    w: &mut impl Write,
+    resolve_frames: StacktraceCollection,
+    fault_ip: usize,
+) -> Result<(), EmitterError> {
     fn emit_absolute_addresses(w: &mut impl Write, frame: &Frame) -> Result<(), EmitterError> {
         write!(w, "\"ip\": \"{:?}\"", frame.ip())?;
         if let Some(module_base_address) = frame.module_base_address() {
@@ -132,7 +159,83 @@ unsafe fn emit_backtrace_by_frames(
         // emit anything at all, if the crashing frame is not found for some reason
         ip_found = true;
     }
-    writeln!(w, "{DD_CRASHTRACK_END_STACKTRACE}")?;
+    Ok(())
+}
+
+/// Walk the frame pointer chain from the ucontext's saved registers.
+///
+/// After fork(), the child process has a copy-on-write view of the parent's
+/// stack memory, so the frame pointer chain from the crashed thread is still
+/// readable. This avoids depending on `backtrace::trace_unsynchronized` which
+/// uses macOS APIs that don't work in forked-but-not-exec'd children.
+///
+/// For each IP we call `dladdr` to resolve the symbol name, symbol address,
+/// and containing shared-object path. `dladdr` is safe here because it only
+/// reads dyld's internal data structures (no allocation, no Mach IPC).
+#[cfg(target_os = "macos")]
+unsafe fn emit_backtrace_from_ucontext(
+    w: &mut impl Write,
+    ucontext: *const ucontext_t,
+) -> Result<(), EmitterError> {
+    if ucontext.is_null() {
+        return Ok(());
+    }
+    let mcontext = (*ucontext).uc_mcontext;
+    if mcontext.is_null() {
+        return Ok(());
+    }
+
+    let ss = &(*mcontext).__ss;
+    #[cfg(target_arch = "aarch64")]
+    let (pc, mut fp) = (ss.__pc as usize, ss.__fp as usize);
+    #[cfg(target_arch = "x86_64")]
+    let (pc, mut fp) = (ss.__rip as usize, ss.__rbp as usize);
+
+    emit_frame_with_dladdr(w, pc)?;
+
+    loop {
+        if fp == 0 || fp % std::mem::align_of::<usize>() != 0 {
+            break;
+        }
+        let next_fp = *(fp as *const usize);
+        let return_addr = *((fp + std::mem::size_of::<usize>()) as *const usize);
+        if return_addr == 0 {
+            break;
+        }
+        emit_frame_with_dladdr(w, return_addr)?;
+        if next_fp <= fp {
+            break;
+        }
+        fp = next_fp;
+    }
+
+    Ok(())
+}
+
+/// Emit a single stack frame, enriched with `dladdr` symbol information.
+#[cfg(target_os = "macos")]
+unsafe fn emit_frame_with_dladdr(w: &mut impl Write, ip: usize) -> Result<(), EmitterError> {
+    let mut info: libc::Dl_info = std::mem::zeroed();
+    let resolved = libc::dladdr(ip as *const libc::c_void, &mut info) != 0;
+
+    write!(w, "{{\"ip\": \"0x{ip:x}\"")?;
+
+    if resolved {
+        if !info.dli_fbase.is_null() {
+            write!(w, ", \"module_base_address\": \"{:?}\"", info.dli_fbase)?;
+        }
+        if !info.dli_saddr.is_null() {
+            write!(w, ", \"symbol_address\": \"{:?}\"", info.dli_saddr)?;
+        }
+        if !info.dli_sname.is_null() {
+            let name = std::ffi::CStr::from_ptr(info.dli_sname);
+            if let Ok(s) = name.to_str() {
+                write!(w, ", \"function\": \"{s}\"")?;
+            }
+        }
+    }
+
+    writeln!(w, "}}")?;
     w.flush()?;
     Ok(())
 }
@@ -213,7 +316,9 @@ pub(crate) fn emit_crashreport(
                 // https://doc.rust-lang.org/src/std/backtrace.rs.html#332
                 // We do this last, so even if it crashes, we still get the other info.
                 let fault_ip = extract_ip(ucontext);
-                unsafe { emit_backtrace_by_frames(pipe, config.resolve_frames(), fault_ip)? };
+                unsafe {
+                    emit_backtrace_by_frames(pipe, config.resolve_frames(), fault_ip, ucontext)?
+                };
             }
             if is_runtime_callback_registered() {
                 emit_runtime_stack(pipe)?;
@@ -501,9 +606,11 @@ mod tests {
             })
         };
         let mut buf = Vec::new();
+        writeln!(buf, "{DD_CRASHTRACK_BEGIN_STACKTRACE}").unwrap();
         unsafe {
-            emit_backtrace_by_frames(&mut buf, collection, ip_of_test_fn).expect("to work ;-)");
+            emit_backtrace_via_library(&mut buf, collection, ip_of_test_fn).expect("to work ;-)");
         }
+        writeln!(buf, "{DD_CRASHTRACK_END_STACKTRACE}").unwrap();
         buf
     }
 

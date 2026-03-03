@@ -29,7 +29,6 @@ pub fn crashtracker_bin_test(profile: BuildProfile, panic_abort: bool) -> Artifa
 }
 
 /// Creates an ArtifactsBuild for the crashing_test_app binary.
-#[cfg(not(target_os = "macos"))]
 pub fn crashing_app(profile: BuildProfile, panic_abort: bool) -> ArtifactsBuild {
     ArtifactsBuild {
         name: "crashing_test_app".to_owned(),
@@ -90,15 +89,11 @@ pub fn all_prebuild_artifacts() -> Vec<ArtifactsBuild> {
         artifacts.push(crashtracker_receiver(profile));
         artifacts.push(test_the_tests(profile));
         artifacts.push(profiling_ffi(profile));
-
-        #[cfg(not(target_os = "macos"))]
         artifacts.push(crashing_app(profile, false));
     }
 
     // Panic abort variants (used by panic hook tests)
     artifacts.push(crashtracker_bin_test(BuildProfile::Debug, true));
-
-    #[cfg(not(target_os = "macos"))]
     artifacts.push(crashing_app(BuildProfile::Debug, true));
 
     artifacts
