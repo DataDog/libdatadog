@@ -275,12 +275,22 @@ pub mod linux {
 
             check_atomic_u64_align_constraints()?;
 
+            let published_at_ns = time_now_ns()
+                .ok_or_else(|| anyhow::anyhow!("could not get the current timestamp"))?;
+            let payload_size = payload.len().try_into().map_err(|_| {
+                anyhow::anyhow!("couldn't update process protocol: new payload too large")
+            })?;
+
             // Safety: we checked the alignment constraints, and the header memory is valid for
             // both read and writes.
             let published_at_atomic =
                 unsafe { AtomicU64::from_ptr(addr_of_mut!((*header).published_at_ns)) };
 
             // A process shouldn't try to concurrently update its own context
+            //
+            // Note: be careful of early return while `published_at` is still zero, as this would
+            // effectively "lock" any future publishing. Move throwing code above this swap, or
+            // properly restore the previous value the former can't be done.
             if published_at_atomic.swap(0, Ordering::Relaxed) == 0 {
                 return Err(anyhow::anyhow!(
                     "concurrent update of the process context is not supported"
@@ -288,19 +298,13 @@ pub mod linux {
             }
 
             fence(Ordering::SeqCst);
-
-            let published_at_ns = time_now_ns()
-                .ok_or_else(|| anyhow::anyhow!("could not get the current timestamp"))?;
-
             self.payload = payload;
 
             // Safety: we own the mapping, which is live and valid for writes. The header is packed
             // and thus has no alignment constraints.
             unsafe {
                 (*header).payload_ptr = self.payload.as_ptr();
-                (*header).payload_size = self.payload.len().try_into().map_err(|_| {
-                    anyhow::anyhow!("couldn't update process protocol: new payload too large")
-                })?;
+                (*header).payload_size = payload_size;
             }
 
             fence(Ordering::SeqCst);
