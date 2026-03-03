@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use std::ffi::OsStr;
-use std::os::unix::process::ExitStatusExt;
 use std::process::Command;
 
 use crate::utils::wait_for_success;
@@ -13,7 +12,6 @@ pub const PROF_DYNAMIC_LIB: &str = "libdatadog_profiling.dylib";
 pub const PROF_STATIC_LIB: &str = "libdatadog_profiling.a";
 pub const PROF_DYNAMIC_LIB_FFI: &str = "libdatadog_profiling_ffi.dylib";
 pub const PROF_STATIC_LIB_FFI: &str = "libdatadog_profiling_ffi.a";
-pub const REMOVE_RPATH: bool = true;
 pub const BUILD_CRASHTRACKER: bool = true;
 pub const RUSTFLAGS: [&str; 4] = [
     "-C",
@@ -21,31 +19,6 @@ pub const RUSTFLAGS: [&str; 4] = [
     "-C",
     "link-arg=-Wl,-install_name,@rpath/libdatadog_profiling.dylib",
 ];
-
-pub fn fix_rpath(lib_path: &str) {
-    if REMOVE_RPATH {
-        let lib_name = lib_path.split('/').next_back().unwrap();
-
-        let exit_status = Command::new("install_name_tool")
-            .arg("-id")
-            .arg("@rpath/".to_string() + lib_name)
-            .arg(lib_path)
-            .status()
-            .expect("Failed to fix rpath using install_name_tool");
-        match exit_status.code() {
-            Some(0) => {}
-            Some(rc) => panic!("Failed to fix rpath using install_name_tool: return code {rc}"),
-            None => match exit_status.signal() {
-                Some(sig) => {
-                    panic!("Failed to fix rpath using install_name_tool: killed by signal {sig}")
-                }
-                None => panic!(
-                    "Failed to fix rpath using install_name_tool: exit status {exit_status:?}"
-                ),
-            },
-        }
-    }
-}
 
 pub fn strip_libraries(lib_path: &str) {
     // objcopy is not available in macos image. Investigate llvm-objcopy
