@@ -497,6 +497,9 @@ pub mod linux {
             assert!(header.published_at_ns > 0, "published_at_ns is zero");
             assert!(read_payload == payload_v1.as_bytes(), "payload mismatch");
 
+            let published_at_ns_v1 = header.published_at_ns;
+            // Ensure the clock advances so the updated timestamp is strictly greater
+            std::thread::sleep(std::time::Duration::from_nanos(10));
             super::publish(payload_v2.as_bytes().to_vec())
                 .expect("couldn't update the process context");
 
@@ -516,7 +519,10 @@ pub mod linux {
                 header.payload_size == payload_v2.len() as u32,
                 "wrong payload size"
             );
-            assert!(header.published_at_ns > 0, "published_at_ns is zero");
+            assert!(
+                header.published_at_ns > published_at_ns_v1,
+                "published_at_ns should be strictly greater after update"
+            );
             assert!(read_payload == payload_v2.as_bytes(), "payload mismatch");
 
             super::unpublish().expect("couldn't unpublish the context");
