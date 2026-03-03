@@ -315,7 +315,7 @@ pub mod linux {
     fn check_atomic_u64_align_constraints() -> anyhow::Result<()> {
         // Page size is at minimum 4KB and will be always 8 bytes aligned even on
         // exotic platforms. The respective offsets of `signature` and `published_at_ns` are
-        // 0 and 8 bytes, so it suffices for `AtomicU64` to require an alignment of at most 8
+        // 0 and 16 bytes, so it suffices for `AtomicU64` to require an alignment of at most 8
         // (which is the expected alignment anyway).
         //
         // Note that `align_of` is a `const fn`, so this is in fact a compile-time check and
