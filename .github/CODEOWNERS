@@ -46,6 +46,7 @@ libdd-dogstatsd-client               @DataDog/apm-common-components-core
 libdd-library-config*/               @DataDog/apm-sdk-capabilities
 libdd-log*/                          @DataDog/apm-common-components-core
 libdd-profiling*/                    @DataDog/libdatadog-profiling
+libdd-proto-codec/*                  @DataDog/apm-common-components-core
 libdd-telemetry*/                    @DataDog/apm-common-components-core
 libdd-tinybytes                      @DataDog/apm-common-components-core
 libdd-trace-normalization            @DataDog/serverless @DataDog/libdatadog-apm
