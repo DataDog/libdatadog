@@ -503,7 +503,7 @@ pub mod linux {
             super::publish(payload_v1.as_bytes().to_vec())
                 .expect("couldn't publish the process context");
             super::publish(payload_v2.as_bytes().to_vec())
-                .expect("couldn't update the process contet");
+                .expect("couldn't update the process context");
 
             let header = read_process_context().expect("couldn't read back the process contex");
             // Safety: the published context must have put valid bytes of size payload_size in the
