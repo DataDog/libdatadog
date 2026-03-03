@@ -13,8 +13,8 @@ use std::time::Duration;
 use tokio::time::sleep;
 use tracing::{debug, error, warn};
 
-/// Max retries for OTLP export (transient failures only).
-const OTLP_MAX_RETRIES: u32 = 5;
+/// Max total attempts for OTLP export (1 initial + up to 4 retries on transient failures).
+const OTLP_MAX_ATTEMPTS: u32 = 5;
 /// Initial backoff between retries (milliseconds).
 const OTLP_RETRY_DELAY_MS: u64 = 100;
 
@@ -72,7 +72,7 @@ pub async fn send_otlp_traces_http(
                     return Ok(());
                 }
                 let code = status.as_u16();
-                if is_retryable_status(code) && attempt < OTLP_MAX_RETRIES {
+                if is_retryable_status(code) && attempt < OTLP_MAX_ATTEMPTS {
                     let delay_ms = OTLP_RETRY_DELAY_MS * (1 << (attempt - 1));
                     warn!(
                         status = %status,
@@ -99,7 +99,7 @@ pub async fn send_otlp_traces_http(
                 ));
             }
             Ok(Err(e)) => {
-                if attempt < OTLP_MAX_RETRIES {
+                if attempt < OTLP_MAX_ATTEMPTS {
                     let delay_ms = OTLP_RETRY_DELAY_MS * (1 << (attempt - 1));
                     warn!(error = ?e, attempt, "OTLP export network error, retrying");
                     sleep(Duration::from_millis(delay_ms)).await;
@@ -109,7 +109,7 @@ pub async fn send_otlp_traces_http(
                 return Err(TraceExporterError::from(http_common::into_error(e)));
             }
             Err(_) => {
-                if attempt < OTLP_MAX_RETRIES {
+                if attempt < OTLP_MAX_ATTEMPTS {
                     let delay_ms = OTLP_RETRY_DELAY_MS * (1 << (attempt - 1));
                     warn!(attempt, "OTLP export timeout, retrying");
                     sleep(Duration::from_millis(delay_ms)).await;

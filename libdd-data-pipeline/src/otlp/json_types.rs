@@ -160,6 +160,7 @@ impl AnyValue {
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Status {
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub message: Option<String>,
     pub code: i32,
 }

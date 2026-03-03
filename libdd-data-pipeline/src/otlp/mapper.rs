@@ -127,10 +127,10 @@ fn map_span<T: TraceData>(span: &Span<T>) -> OtlpSpan
 where
     T::Text: Borrow<str>,
 {
-    let trace_id_hex = format!("{:032X}", span.trace_id);
-    let span_id_hex = format!("{:016X}", span.span_id);
+    let trace_id_hex = format!("{:032x}", span.trace_id);
+    let span_id_hex = format!("{:016x}", span.span_id);
     let parent_span_id = if span.parent_id != 0 {
-        Some(format!("{:016X}", span.parent_id))
+        Some(format!("{:016x}", span.parent_id))
     } else {
         None
     };
@@ -184,8 +184,8 @@ where
     T::Text: Borrow<str>,
 {
     let trace_id_128 = (link.trace_id_high as u128) << 64 | (link.trace_id as u128);
-    let trace_id_hex = format!("{:032X}", trace_id_128);
-    let span_id_hex = format!("{:016X}", link.span_id);
+    let trace_id_hex = format!("{:032x}", trace_id_128);
+    let span_id_hex = format!("{:016x}", link.span_id);
     let trace_state = if link.tracestate.borrow().is_empty() {
         None
     } else {
@@ -321,11 +321,11 @@ mod tests {
         let req = map_traces_to_otlp(vec![vec![span]], &metadata);
         let rs = &req.resource_spans[0];
         let otlp_span = &rs.scope_spans[0].spans[0];
-        assert_eq!(otlp_span.trace_id, "5B8EFFF798038103D269B633813FC60C");
-        assert_eq!(otlp_span.span_id, "EEE19B7EC3C1B174");
+        assert_eq!(otlp_span.trace_id, "5b8efff798038103d269b633813fc60c");
+        assert_eq!(otlp_span.span_id, "eee19b7ec3c1b174");
         assert_eq!(
             otlp_span.parent_span_id.as_deref(),
-            Some("EEE19B7EC3C1B173")
+            Some("eee19b7ec3c1b173")
         );
         assert_eq!(otlp_span.kind, json_types::span_kind::SERVER);
         assert_eq!(otlp_span.start_time_unix_nano, "1544712660000000000");
