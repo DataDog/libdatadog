@@ -1,0 +1,16 @@
+[package]
+name = "libdd-proto-codec"
+rust-version.workspace = true
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+bytes = { version = "1.4" }
+
+[dev-dependencies]
+prost = { version = "0.13", features = ["derive"] }
+arbitrary = { version = "1", features = ["derive"] }
+rand = "0.9"
+criterion = { version = "0.5", features = ["html_reports"] }
