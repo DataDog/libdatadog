@@ -10,7 +10,6 @@ mod mini_agent {
     use bytes::Bytes;
     use http_body_util::BodyExt;
     use libdd_capabilities::HttpClientTrait;
-    use libdd_capabilities_impl::DefaultHttpClient;
     use libdd_common::http_common;
     use libdd_common::Endpoint;
     use libdd_trace_protobuf::pb;
@@ -65,20 +64,12 @@ mod mini_agent {
         }
     }
 
-    pub async fn send_stats_payload(
+    pub async fn send_stats_payload<H: HttpClientTrait>(
         data: Vec<u8>,
         target: &Endpoint,
         api_key: &str,
     ) -> anyhow::Result<()> {
-        send_stats_payload_with_client::<DefaultHttpClient>(data, target, api_key, None).await
-    }
-
-    pub async fn send_stats_payload_with_client<HttpClient: libdd_capabilities::HttpClientTrait>(
-        data: Vec<u8>,
-        target: &Endpoint,
-        api_key: &str,
-        client: Option<&HttpClient>,
-    ) -> anyhow::Result<()> {
+        let client = H::new_client();
         let req = http::Request::builder()
             .method(http::Method::POST)
             .uri(target.url.clone())
@@ -87,15 +78,10 @@ mod mini_agent {
             .header("DD-API-KEY", api_key)
             .body(Bytes::from(data))?;
 
-        let response = {
-            if let Some(client) = client {
-                client.request(req).await
-            } else {
-                let default_client = DefaultHttpClient::new_client();
-                default_client.request(req).await
-            }
-            .map_err(|e| anyhow::anyhow!("Failed to send trace stats: {e}"))?
-        };
+        let response = client
+            .request(req)
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to send trace stats: {e}"))?;
 
         if response.status() != http::StatusCode::ACCEPTED {
             let response_body =

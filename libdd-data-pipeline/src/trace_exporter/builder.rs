@@ -12,16 +12,18 @@ use crate::trace_exporter::{
     INFO_ENDPOINT,
 };
 use arc_swap::ArcSwap;
+use libdd_capabilities::HttpClientTrait;
 use libdd_common::{parse_uri, tag, Endpoint};
 use libdd_dogstatsd_client::new;
+use std::marker::PhantomData;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 const DEFAULT_AGENT_URL: &str = "http://127.0.0.1:8126";
 
 #[allow(missing_docs)]
-#[derive(Default, Debug)]
-pub struct TraceExporterBuilder {
+#[derive(Debug)]
+pub struct TraceExporterBuilder<H> {
     url: Option<String>,
     hostname: String,
     env: String,
@@ -49,9 +51,43 @@ pub struct TraceExporterBuilder {
     test_session_token: Option<String>,
     agent_rates_payload_version_enabled: bool,
     connection_timeout: Option<u64>,
+    _phantom: PhantomData<H>,
 }
 
-impl TraceExporterBuilder {
+impl<H> Default for TraceExporterBuilder<H> {
+    fn default() -> Self {
+        Self {
+            url: None,
+            hostname: String::new(),
+            env: String::new(),
+            app_version: String::new(),
+            service: String::new(),
+            tracer_version: String::new(),
+            language: String::new(),
+            language_version: String::new(),
+            language_interpreter: String::new(),
+            language_interpreter_vendor: String::new(),
+            git_commit_sha: String::new(),
+            input_format: TraceExporterInputFormat::default(),
+            output_format: TraceExporterOutputFormat::default(),
+            dogstatsd_url: None,
+            client_computed_stats: false,
+            client_computed_top_level: false,
+            stats_bucket_size: None,
+            peer_tags_aggregation: false,
+            compute_stats_by_span_kind: false,
+            peer_tags: Vec::new(),
+            telemetry: None,
+            health_metrics_enabled: false,
+            test_session_token: None,
+            agent_rates_payload_version_enabled: false,
+            connection_timeout: None,
+            _phantom: PhantomData,
+        }
+    }
+}
+
+impl<H: HttpClientTrait + Send + Sync + 'static> TraceExporterBuilder<H> {
     /// Sets the URL of the agent.
     ///
     /// The agent supports the following URL schemes:
@@ -217,7 +253,7 @@ impl TraceExporterBuilder {
     }
 
     #[allow(missing_docs)]
-    pub fn build(self) -> Result<TraceExporter, TraceExporterError> {
+    pub fn build(self) -> Result<TraceExporter<H>, TraceExporterError> {
         if !Self::is_inputs_outputs_formats_compatible(self.input_format, self.output_format) {
             return Err(TraceExporterError::Builder(
                 BuilderErrorKind::InvalidConfiguration(
@@ -249,7 +285,7 @@ impl TraceExporterBuilder {
 
         let info_endpoint = Endpoint::from_url(add_path(&agent_url, INFO_ENDPOINT));
         let (info_fetcher, info_response_observer) =
-            AgentInfoFetcher::new(info_endpoint.clone(), Duration::from_secs(5 * 60));
+            AgentInfoFetcher::<H>::new(info_endpoint.clone(), Duration::from_secs(5 * 60));
         let mut info_fetcher_worker = PausableWorker::new(info_fetcher);
         info_fetcher_worker.start(&runtime).map_err(|e| {
             TraceExporterError::Builder(BuilderErrorKind::InvalidConfiguration(e.to_string()))
@@ -336,6 +372,7 @@ impl TraceExporterBuilder {
             agent_payload_response_version: self
                 .agent_rates_payload_version_enabled
                 .then(AgentResponsePayloadVersion::new),
+            _phantom: PhantomData,
         })
     }
 
@@ -357,11 +394,12 @@ impl TraceExporterBuilder {
 mod tests {
     use super::*;
     use crate::trace_exporter::error::BuilderErrorKind;
+    use libdd_capabilities_impl::DefaultHttpClient;
 
     #[cfg_attr(miri, ignore)]
     #[test]
     fn test_new() {
-        let mut builder = TraceExporterBuilder::default();
+        let mut builder = TraceExporterBuilder::<DefaultHttpClient>::default();
         builder
             .set_url("http://192.168.1.1:8127/")
             .set_tracer_version("v0.1")
@@ -401,7 +439,7 @@ mod tests {
     #[cfg_attr(miri, ignore)]
     #[test]
     fn test_new_defaults() {
-        let builder = TraceExporterBuilder::default();
+        let builder = TraceExporterBuilder::<DefaultHttpClient>::default();
         let exporter = builder.build().unwrap();
 
         assert_eq!(
@@ -423,7 +461,7 @@ mod tests {
     #[test]
     #[cfg_attr(miri, ignore)]
     fn test_builder_error() {
-        let mut builder = TraceExporterBuilder::default();
+        let mut builder = TraceExporterBuilder::<DefaultHttpClient>::default();
         builder
             .set_url("")
             .set_service("foo")

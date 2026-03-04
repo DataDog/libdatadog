@@ -1568,6 +1568,7 @@ dependencies = [
  "http-body-util",
  "httpmock",
  "libc",
+ "libdd-capabilities-impl",
  "libdd-common",
  "libdd-common-ffi",
  "libdd-crashtracker",
@@ -3146,6 +3147,7 @@ version = "28.0.0"
 dependencies = [
  "build_common",
  "httpmock",
+ "libdd-capabilities-impl",
  "libdd-common-ffi",
  "libdd-data-pipeline",
  "libdd-tinybytes",
