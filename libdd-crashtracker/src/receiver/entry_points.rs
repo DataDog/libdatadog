@@ -2,7 +2,10 @@
 // Copyright 2023-Present Datadog, Inc. https://www.datadoghq.com/
 
 use super::receive_report::receive_report_from_stream;
-use crate::{crash_info::CrashInfo, CrashtrackerConfiguration, StacktraceCollection};
+use crate::crash_info::CrashInfo;
+use crate::CrashtrackerConfiguration;
+#[cfg(target_os = "linux")]
+use crate::StacktraceCollection;
 use anyhow::Context;
 use std::time::Duration;
 use tokio::{
@@ -133,6 +136,10 @@ fn resolve_frames(
     config: &CrashtrackerConfiguration,
     crash_info: &mut CrashInfo,
 ) -> anyhow::Result<()> {
+    // enrich_callstacks uses blazesym's normalize_user_addrs (reads /proc/<pid>/maps)
+    // and assumes ELF binaries. Both are Linux-specific; macOS has no procfs and
+    // uses Mach-O binaries.
+    #[cfg(target_os = "linux")]
     if config.resolve_frames() == StacktraceCollection::EnabledWithSymbolsInReceiver {
         let pid = crash_info
             .proc_info
@@ -141,5 +148,7 @@ fn resolve_frames(
             .pid;
         crash_info.enrich_callstacks(pid)?;
     }
+    #[cfg(not(target_os = "linux"))]
+    let _ = (config, crash_info);
     Ok(())
 }
