@@ -4,7 +4,6 @@ subject_pattern: "repo:DataDog/libdatadog.*"
 
 claim_pattern:
   ref: "refs/heads/(main|release)"
-  ref_protected: "true"
 
 permissions:
   members: read
