@@ -69,12 +69,7 @@ impl JsonObfuscator {
                     transforming_value = false;
                 }
                 Op::EndArray | Op::EndObject => {
-                    // Only pop if we'd still have at least one element.
-                    let n = closures.len();
-                    if n > 1 {
-                        closures.truncate(n - 1);
-                    }
-                    // Fallthrough to value-done logic (same as ObjectValue).
+                    closures.pop();
                     set_key(&closures, &mut key, &mut wiped);
                     handle_value_done(
                         &mut out,
