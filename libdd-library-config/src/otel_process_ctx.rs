@@ -221,8 +221,6 @@ pub mod linux {
             let mut mapping = MemMapping::new()?;
             let size = mapping_size();
 
-            check_atomic_u64_align_constraints()?;
-
             // Safety: the invariants of MemMapping ensures `start_addr` is not null and comes
             // from a previous call to `mmap`
             unsafe { madvise(mapping.start_addr, size, Advice::LinuxDontFork) }
@@ -273,16 +271,20 @@ pub mod linux {
         fn update(&mut self, payload: Vec<u8>) -> anyhow::Result<()> {
             let header = self.mapping.start_addr as *mut MappingHeader;
 
-            check_atomic_u64_align_constraints()?;
-
             let published_at_ns = time_now_ns()
                 .ok_or_else(|| anyhow::anyhow!("could not get the current timestamp"))?;
             let payload_size = payload.len().try_into().map_err(|_| {
                 anyhow::anyhow!("couldn't update process protocol: new payload too large")
             })?;
 
-            // Safety: we checked the alignment constraints, and the header memory is valid for
-            // both read and writes.
+            // Safety
+            //
+            // [^atomic-u64-alignment]: Page size is at minimum 4KB and will be always 8 bytes
+            // aligned even on exotic platforms. The respective offsets of `signature` and
+            // `published_at_ns` are 0 and 16 bytes, so they are 8-bytes aligned (`AtomicU64` has
+            // both a size and align of 8 bytes).
+            //
+            // The header memory is valid for both read and writes.
             let published_at_atomic =
                 unsafe { AtomicU64::from_ptr(addr_of_mut!((*header).published_at_ns)) };
 
@@ -290,7 +292,7 @@ pub mod linux {
             //
             // Note: be careful of early return while `published_at` is still zero, as this would
             // effectively "lock" any future publishing. Move throwing code above this swap, or
-            // properly restore the previous value the former can't be done.
+            // properly restore the previous value if the former can't be done.
             if published_at_atomic.swap(0, Ordering::Relaxed) == 0 {
                 return Err(anyhow::anyhow!(
                     "concurrent update of the process context is not supported"
@@ -311,24 +313,6 @@ pub mod linux {
             published_at_atomic.store(published_at_ns, Ordering::Relaxed);
 
             Ok(())
-        }
-    }
-
-    // Checks that the layout allows us to access `signature` and `published_at_ns` as
-    // atomics u64.
-    fn check_atomic_u64_align_constraints() -> anyhow::Result<()> {
-        // Page size is at minimum 4KB and will be always 8 bytes aligned even on
-        // exotic platforms. The respective offsets of `signature` and `published_at_ns` are
-        // 0 and 16 bytes, so it suffices for `AtomicU64` to require an alignment of at most 8
-        // (which is the expected alignment anyway).
-        //
-        // Note that `align_of` is a `const fn`, so this is in fact a compile-time check and
-        // will be optimized away, hence the `allow(unreachable_code)`.
-        #[allow(unreachable_code)]
-        if std::mem::align_of::<AtomicU64>() <= 8 {
-            Ok(())
-        } else {
-            Err(anyhow::anyhow!("alignment constraints forbid the use of atomics for publishing the protocol context"))
         }
     }
 
@@ -427,7 +411,7 @@ pub mod linux {
             // we found in /proc/self/maps. This should be safe as long as the
             // mapping exists and has read permissions.
             //
-            // The atomic alignment constraints are checked during publication.
+            // For the alignment constraint of `AtomicU64`, see [atomic-u64-alignment].
             let signature = unsafe { AtomicU64::from_ptr(ptr).load(Ordering::Relaxed) };
             fence(Ordering::SeqCst);
             &signature.to_ne_bytes() == super::SIGNATURE
