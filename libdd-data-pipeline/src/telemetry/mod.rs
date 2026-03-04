@@ -389,10 +389,6 @@ mod tests {
             }
             telemetry_srv.assert_calls_async(1).await;
         });
-
-        rt.block_on(async {
-            shared_runtime.shutdown().await.expect("Failed to shutdown");
-        });
     }
 
     #[cfg_attr(miri, ignore)]
@@ -424,10 +420,6 @@ mod tests {
                 sleep(Duration::from_millis(10)).await;
             }
             telemetry_srv.assert_calls_async(1).await;
-        });
-
-        rt.block_on(async {
-            shared_runtime.shutdown().await.expect("Failed to shutdown");
         });
     }
 
@@ -461,10 +453,6 @@ mod tests {
             }
             telemetry_srv.assert_calls_async(1).await;
         });
-
-        rt.block_on(async {
-            shared_runtime.shutdown().await.expect("Failed to shutdown");
-        });
     }
 
     #[cfg_attr(miri, ignore)]
@@ -496,10 +484,6 @@ mod tests {
                 sleep(Duration::from_millis(10)).await;
             }
             telemetry_srv.assert_calls_async(1).await;
-        });
-
-        rt.block_on(async {
-            shared_runtime.shutdown().await.expect("Failed to shutdown");
         });
     }
 
@@ -533,10 +517,6 @@ mod tests {
             }
             telemetry_srv.assert_calls_async(1).await;
         });
-
-        rt.block_on(async {
-            shared_runtime.shutdown().await.expect("Failed to shutdown");
-        });
     }
 
     #[cfg_attr(miri, ignore)]
@@ -568,10 +548,6 @@ mod tests {
                 sleep(Duration::from_millis(10)).await;
             }
             telemetry_srv.assert_calls_async(1).await;
-        });
-
-        rt.block_on(async {
-            shared_runtime.shutdown().await.expect("Failed to shutdown");
         });
     }
 
@@ -605,10 +581,6 @@ mod tests {
             }
             telemetry_srv.assert_calls_async(1).await;
         });
-
-        rt.block_on(async {
-            shared_runtime.shutdown().await.expect("Failed to shutdown");
-        });
     }
 
     #[cfg_attr(miri, ignore)]
@@ -640,10 +612,6 @@ mod tests {
                 sleep(Duration::from_millis(10)).await;
             }
             telemetry_srv.assert_calls_async(1).await;
-        });
-
-        rt.block_on(async {
-            shared_runtime.shutdown().await.expect("Failed to shutdown");
         });
     }
 
@@ -677,10 +645,6 @@ mod tests {
             }
             telemetry_srv.assert_calls_async(1).await;
         });
-
-        rt.block_on(async {
-            shared_runtime.shutdown().await.expect("Failed to shutdown");
-        });
     }
 
     #[cfg_attr(miri, ignore)]
@@ -712,10 +676,6 @@ mod tests {
                 sleep(Duration::from_millis(10)).await;
             }
             telemetry_srv.assert_calls_async(1).await;
-        });
-
-        rt.block_on(async {
-            shared_runtime.shutdown().await.expect("Failed to shutdown");
         });
     }
 
@@ -778,28 +738,25 @@ mod tests {
     }
 
     #[cfg_attr(miri, ignore)]
-    #[test]
-    fn telemetry_from_network_error_test() {
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        rt.block_on(async {
-            // Create an hyper error by calling an undefined service
-            let err = http_common::new_default_client()
-                .get(http::Uri::from_static("localhost:12345"))
-                .await
-                .unwrap_err();
+    #[tokio::test]
+    async fn telemetry_from_network_error_test() {
+        // Create an hyper error by calling an undefined service
+        let err = http_common::new_default_client()
+            .get(http::Uri::from_static("localhost:12345"))
+            .await
+            .unwrap_err();
 
-            let result = Err(SendWithRetryError::Network(http_common::into_error(err), 5));
-            let telemetry = SendPayloadTelemetry::from_retry_result(&result, 1, 2, 0);
-            assert_eq!(
-                telemetry,
-                SendPayloadTelemetry {
-                    chunks_dropped_send_failure: 2,
-                    requests_count: 5,
-                    errors_network: 1,
-                    ..Default::default()
-                }
-            )
-        });
+        let result = Err(SendWithRetryError::Network(http_common::into_error(err), 5));
+        let telemetry = SendPayloadTelemetry::from_retry_result(&result, 1, 2, 0);
+        assert_eq!(
+            telemetry,
+            SendPayloadTelemetry {
+                chunks_dropped_send_failure: 2,
+                requests_count: 5,
+                errors_network: 1,
+                ..Default::default()
+            }
+        )
     }
 
     #[test]
@@ -891,10 +848,6 @@ mod tests {
             // One payload generate-metrics
             telemetry_srv.assert_calls_async(1).await;
         });
-
-        rt.block_on(async {
-            shared_runtime.shutdown().await.expect("Failed to shutdown");
-        });
     }
 
     #[cfg_attr(miri, ignore)]
@@ -932,10 +885,6 @@ mod tests {
             }
             // One payload generate-metrics
             telemetry_srv.assert_calls_async(1).await;
-        });
-
-        rt.block_on(async {
-            shared_runtime.shutdown().await.expect("Failed to shutdown");
         });
     }
 }

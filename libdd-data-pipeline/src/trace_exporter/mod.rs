@@ -31,8 +31,7 @@ use http::uri::PathAndQuery;
 use http::Uri;
 use http_body_util::BodyExt;
 use libdd_common::tag::Tag;
-use libdd_common::HttpClient;
-use libdd_common::{http_common, Endpoint};
+use libdd_common::{http_common, Endpoint, HttpClient};
 use libdd_dogstatsd_client::Client;
 use libdd_trace_utils::msgpack_decoder;
 use libdd_trace_utils::send_with_retry::{
@@ -181,7 +180,6 @@ pub struct TraceExporter {
     metadata: TracerMetadata,
     input_format: TraceExporterInputFormat,
     output_format: TraceExporterOutputFormat,
-    // TODO - do something with the response callback - https://datadoghq.atlassian.net/browse/APMSP-1019
     shared_runtime: SharedRuntime,
     /// None if dogstatsd is disabled
     dogstatsd: Option<Client>,
@@ -222,6 +220,12 @@ impl TraceExporter {
         if let Err(errors) = errors {
             error!("Some workers failed to stop: {errors:?}");
         }
+
+        // When the info fetcher is paused, the trigger channel keeps a reference to the runtime's
+        // IoStack through the waker. This prevents the IoStack from being dropped when shutting
+        // down the runtime. By manually sending a message to the trigger channel we trigger the
+        // waker releasing the reference to the IoStack. Finally we drain the channel to
+        // avoid triggering a fetch when the info fetcher is restarted.
         self.info_response_observer.manual_trigger();
     }
 

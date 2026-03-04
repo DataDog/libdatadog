@@ -73,7 +73,7 @@ impl WorkerHandle {
             let WorkerEntry { worker, .. } = workers_lock.swap_remove(position);
             worker
         };
-        worker.pause().await?;
+        worker.join().await?;
         worker.shutdown().await;
         Ok(())
     }
@@ -318,13 +318,27 @@ impl SharedRuntime {
         let mut join_set = JoinSet::new();
         for mut worker_entry in workers {
             join_set.spawn(async move {
-                worker_entry.worker.pause().await?;
+                worker_entry.worker.join().await?;
                 worker_entry.worker.shutdown().await;
                 Ok::<(), PausableWorkerError>(())
             });
         }
 
-        join_set.join_all().await;
+        let mut results = Vec::new();
+        while let Some(result) = join_set.join_next().await {
+            // Unwrap the JoinHandle result (panic if task panicked)
+            results.push(result.expect("Worker task panicked"));
+        }
+
+        // Collect all errors
+        let errors: Vec<SharedRuntimeError> = results
+            .into_iter()
+            .filter_map(|r| Some(r.err()?.into()))
+            .collect();
+
+        if !errors.is_empty() {
+            return Err(errors);
+        }
         Ok(())
     }
 }

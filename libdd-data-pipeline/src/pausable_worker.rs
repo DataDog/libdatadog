@@ -125,19 +125,29 @@ impl<T: Worker + Send + Sync + 'static> PausableWorker<T> {
         }
     }
 
-    /// Wait for a requested pause to complete and store the worker state.
+    /// Pause the worker and wait for it to complete, storing its state for restart.
+    ///
+    /// This method will cancel the worker's cancellation token if it hasn't been cancelled yet,
+    /// then wait for the worker to finish and store its state. Calling [`Self::request_pause`]
+    /// before this method is optional - it's only needed when shutting down multiple workers
+    /// simultaneously to allow them to pause concurrently before waiting for all of them.
     ///
     /// # Errors
     /// Fails if the worker handle has been aborted preventing the worker from being retrieved.
     pub async fn join(&mut self) -> Result<(), PausableWorkerError> {
         match self {
             PausableWorker::Running { .. } => {
-                let PausableWorker::Running { handle, .. } =
+                let PausableWorker::Running { handle, stop_token } =
                     std::mem::replace(self, PausableWorker::InvalidState)
                 else {
                     // Unreachable
                     return Ok(());
                 };
+
+                // Cancel the token if it hasn't been cancelled yet to avoid deadlock
+                if !stop_token.is_cancelled() {
+                    stop_token.cancel();
+                }
 
                 if let Ok(worker) = handle.await {
                     *self = PausableWorker::Paused { worker };
@@ -151,12 +161,6 @@ impl<T: Worker + Send + Sync + 'static> PausableWorker<T> {
             PausableWorker::Paused { .. } => Ok(()),
             PausableWorker::InvalidState => Err(PausableWorkerError::InvalidState),
         }
-    }
-
-    /// Pause the worker saving it's state to be restarted.
-    pub async fn pause(&mut self) -> Result<(), PausableWorkerError> {
-        self.request_pause()?;
-        self.join().await
     }
 
     /// Reset the worker state (e.g. in a fork child).
@@ -214,7 +218,7 @@ mod tests {
         pausable_worker.start(&runtime).unwrap();
 
         assert_eq!(receiver.recv().unwrap(), 0);
-        runtime.block_on(async { pausable_worker.pause().await.unwrap() });
+        runtime.block_on(async { pausable_worker.join().await.unwrap() });
         // Empty the message queue and get the last message
         let mut next_message = 1;
         for message in receiver.try_iter() {

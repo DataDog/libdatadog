@@ -335,42 +335,46 @@ mod tests {
         );
     }
 
-    //    #[cfg_attr(miri, ignore)]
-    //    #[tokio::test]
-    //    async fn test_cancellation_token() {
-    //        let server = MockServer::start_async().await;
-    //
-    //        let mut mock = server
-    //            .mock_async(|when, then| {
-    //                when.method(POST)
-    //                    .header("Content-type", "application/msgpack")
-    //                    .path("/v0.6/stats")
-    //                    .body_includes("libdatadog-test");
-    //                then.status(200).body("");
-    //            })
-    //            .await;
-    //
-    //        let buckets_duration = Duration::from_secs(10);
-    //        let cancellation_token = CancellationToken::new();
-    //
-    //        let mut stats_exporter = StatsExporter::new(
-    //            buckets_duration,
-    //            Arc::new(Mutex::new(get_test_concentrator())),
-    //            get_test_metadata(),
-    //            Endpoint::from_url(stats_url_from_agent_url(&server.url("/")).unwrap()),
-    //            cancellation_token.clone(),
-    //            new_default_client(),
-    //        );
-    //
-    //        tokio::spawn(async move {
-    //            stats_exporter.run().await;
-    //        });
-    //        // Cancel token to trigger force flush
-    //        cancellation_token.cancel();
-    //
-    //        assert!(
-    //            poll_for_mock_hit(&mut mock, 10, 100, 1, false).await,
-    //            "Expected max retry attempts"
-    //        );
-    //    }
+    #[cfg_attr(miri, ignore)]
+    #[test]
+    fn test_worker_shutdown() {
+        use crate::shared_runtime::SharedRuntime;
+
+        let shared_runtime = SharedRuntime::new().expect("Failed to create runtime");
+        let rt = shared_runtime.runtime().expect("Failed to get runtime");
+
+        let server = MockServer::start();
+
+        let mut mock = server.mock(|when, then| {
+            when.method(POST)
+                .header("Content-type", "application/msgpack")
+                .path("/v0.6/stats")
+                .body_includes("libdatadog-test");
+            then.status(200).body("");
+        });
+
+        let buckets_duration = Duration::from_secs(10);
+
+        let stats_exporter = StatsExporter::new(
+            buckets_duration,
+            Arc::new(Mutex::new(get_test_concentrator())),
+            get_test_metadata(),
+            Endpoint::from_url(stats_url_from_agent_url(&server.url("/")).unwrap()),
+            new_default_client(),
+        );
+
+        let handle = shared_runtime
+            .spawn_worker(stats_exporter)
+            .expect("Failed to spawn worker");
+
+        // Stop the worker to trigger force flush
+        rt.block_on(async {
+            handle.stop().await.expect("Failed to stop worker");
+        });
+
+        assert!(
+            rt.block_on(poll_for_mock_hit(&mut mock, 10, 100, 1, false)),
+            "Expected max retry attempts"
+        );
+    }
 }
