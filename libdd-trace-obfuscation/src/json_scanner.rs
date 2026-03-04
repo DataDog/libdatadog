@@ -1,9 +1,7 @@
 // Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-// Port of Go's encoding/json scanner (stdlib) and DataDog Agent's
-// pkg/obfuscate/json_scanner.go. Original Go code is BSD-licensed.
-// Modified to support multiple concatenated JSON objects (see State::EndTop).
+// Port of Agent's pkg/obfuscate/json_scanner.go.
 
 /// Opcode returned by [`Scanner::step`] for each input byte.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -31,6 +29,7 @@ enum ParseState {
 }
 
 /// One variant per position in the JSON grammar.
+#[rustfmt::skip]
 #[derive(Clone, Copy)]
 enum State {
     BeginValue,
@@ -235,16 +234,16 @@ impl Scanner {
             }
 
             // Literal keywords: "true", "false", "null"
-            State::T    => self.lit(c, b'r', State::Tr,   "in literal true (expecting 'r')"),
-            State::Tr   => self.lit(c, b'u', State::Tru,  "in literal true (expecting 'u')"),
-            State::Tru  => self.lit_end(c, b'e',           "in literal true (expecting 'e')"),
-            State::F    => self.lit(c, b'a', State::Fa,   "in literal false (expecting 'a')"),
-            State::Fa   => self.lit(c, b'l', State::Fal,  "in literal false (expecting 'l')"),
-            State::Fal  => self.lit(c, b's', State::Fals, "in literal false (expecting 's')"),
-            State::Fals => self.lit_end(c, b'e',           "in literal false (expecting 'e')"),
-            State::N    => self.lit(c, b'u', State::Nu,   "in literal null (expecting 'u')"),
-            State::Nu   => self.lit(c, b'l', State::Nul,  "in literal null (expecting 'l')"),
-            State::Nul  => self.lit_end(c, b'l',           "in literal null (expecting 'l')"),
+            State::T => self.lit(c, b'r', State::Tr, "in literal true (expecting 'r')"),
+            State::Tr => self.lit(c, b'u', State::Tru, "in literal true (expecting 'u')"),
+            State::Tru => self.lit_end(c, b'e', "in literal true (expecting 'e')"),
+            State::F => self.lit(c, b'a', State::Fa, "in literal false (expecting 'a')"),
+            State::Fa => self.lit(c, b'l', State::Fal, "in literal false (expecting 'l')"),
+            State::Fal => self.lit(c, b's', State::Fals, "in literal false (expecting 's')"),
+            State::Fals => self.lit_end(c, b'e', "in literal false (expecting 'e')"),
+            State::N => self.lit(c, b'u', State::Nu, "in literal null (expecting 'u')"),
+            State::Nu => self.lit(c, b'l', State::Nul, "in literal null (expecting 'l')"),
+            State::Nul => self.lit_end(c, b'l', "in literal null (expecting 'l')"),
 
             State::Error => Op::Error,
         }
@@ -436,11 +435,7 @@ impl Scanner {
 
     fn error(&mut self, c: u8, ctx: &str) -> Op {
         self.state = State::Error;
-        self.err = Some(format!(
-            "invalid character '{}' {}",
-            c.escape_ascii(),
-            ctx
-        ));
+        self.err = Some(format!("invalid character '{}' {}", c.escape_ascii(), ctx));
         Op::Error
     }
 }

@@ -162,8 +162,8 @@ fn handle_value_done(
     if *transforming_value {
         if let Some(t) = transformer {
             // Unquote the collected JSON string literal (handles escape sequences).
-            let raw: String = serde_json::from_str(buf)
-                .unwrap_or_else(|_| buf.trim_matches('"').to_string());
+            let raw: String =
+                serde_json::from_str(buf).unwrap_or_else(|_| buf.trim_matches('"').to_string());
             let result = t(&raw);
             out.push('"');
             out.push_str(&result);
