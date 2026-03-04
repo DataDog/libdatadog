@@ -1,111 +1,116 @@
 // Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-//! Detects which Rust crates have changed files in a PR or push.
+//! Computes all crates affected (direct + transitive) by changes in a PR or push.
 //!
 //! Reads env vars following the GitHub Actions INPUT_* convention and writes
 //! to $GITHUB_OUTPUT.
 //!
 //! Outputs:
-//!   crates        – JSON array of {name, version, path, manifest}
-//!   crates_count  – integer count
-//!   base_ref      – the base ref used for comparison
+//!   changed_crates         - JSON array
+//!   affected_crates        – JSON array of {name, version, path, manifest}
+//!   affected_crates_count  – integer
 
-use anyhow::Result;
+use anyhow::{anyhow, Result};
+use cargo_metadata::Package;
 use ci_crates::git;
-use ci_shared::crate_detection::{find_closest_cargo_toml, parse_crate_info, CrateInfo};
+use ci_crates::workspace;
+use ci_shared::crate_detection::CrateInfo;
 use ci_shared::github_output::set_output;
 use std::collections::HashSet;
-use std::path::PathBuf;
 
 fn main() -> Result<()> {
     env_logger::init();
-
-    let include_non_publishable = std::env::var("INPUT_INCLUDE_NON_PUBLISHABLE")
-        .unwrap_or_default()
-        .to_lowercase()
-        == "true";
-
-    let input_base_ref = std::env::var("INPUT_BASE_REF").unwrap_or_default();
-    let event_name = std::env::var("GITHUB_EVENT_NAME").unwrap_or_default();
-    let pr_base_ref = std::env::var("GITHUB_BASE_REF").unwrap_or_default();
-
-    let base_ref = determine_base_ref(&input_base_ref, &event_name, &pr_base_ref)?;
-
-    log::info!("Using base ref: {base_ref}");
-    set_output("base_ref", &base_ref)?;
-
-    let changed = git::changed_files(&base_ref)?;
-    log::info!("Changed files: {:?}", changed);
-
-    let crates = collect_changed_crates(&changed, include_non_publishable);
-
-    let json = serde_json::to_string(&crates)?;
-    log::info!("Changed crates: {json}");
-
-    set_output("crates", &json)?;
-    set_output("crates_count", &crates.len().to_string())?;
-
-    Ok(())
-}
-
-fn determine_base_ref(
-    input_base_ref: &str,
-    event_name: &str,
-    pr_base_ref: &str,
-) -> Result<String> {
-    if !input_base_ref.is_empty() {
-        return Ok(input_base_ref.to_string());
+    // Parse args
+    let args: Vec<String> = std::env::args().collect();
+    if args.len() < 2 {
+        return Err(anyhow!("A reference base needs to be passed"))
     }
 
-    if event_name == "pull_request" {
-        let base = format!("origin/{pr_base_ref}");
-        git::fetch_base(&base)?;
-        return Ok(base);
+    let base_ref = &args[1];
+    
+    let changed_files = git::changed_files(&base_ref)?;
+    log::info!("Changed files: {:?}", changed_files);
+
+    // TODO: Check heuristics when workspace manifest (Cargo.toml) or config.toml changed. This could indicate a
+    // change in:
+    // * Rust version.
+    // * Edition.
+    // * Profile.
+    // * Compilation flags.
+
+    let workspace = workspace::load()?;
+    let changed_crates = collect_changed_crates(&changed_files, workspace.members());
+
+
+    if changed_crates.is_empty() {
+        log::info!("Changed crates is empty");
+        return build_output(None, None, base_ref)
     }
 
-    Ok("HEAD~1".to_string())
+    let seeds: Vec<String> = changed_crates.iter().map(|c| c.name.clone()).collect();
+
+    let result = workspace.affected_from(&seeds);
+
+    build_output(Some(changed_crates), Some(result.into_iter().collect()), base_ref)
 }
 
-pub fn collect_changed_crates(
+fn collect_changed_crates(
     changed_files: &[String],
-    include_non_publishable: bool,
-) -> Vec<serde_json::Value> {
-    let mut seen_manifests: HashSet<PathBuf> = HashSet::new();
+    members: &[Package],
+) -> Vec<CrateInfo> {
     let mut crates: Vec<CrateInfo> = Vec::new();
+    let mut crate_inventory: HashSet<String> = HashSet::new();
 
     for file in changed_files {
-        let path = std::path::Path::new(file);
-        let Some(manifest) = find_closest_cargo_toml(path) else {
-            continue;
-        };
-
-        if seen_manifests.contains(&manifest) {
-            continue;
-        }
-        seen_manifests.insert(manifest.clone());
-
-        match parse_crate_info(&manifest) {
-            Ok(info) => {
-                if include_non_publishable || info.publish {
-                    crates.push(info);
+        for member in members {
+            if file.contains(member.name.as_str()) {
+                if crate_inventory.insert(member.name.to_string()) {
+                    crates.push(CrateInfo { 
+                        name: member.name.as_str().to_string(),
+                        version: format!("{}.{}.{}", member.version.major, member.version.minor, member.version.patch),
+                        manifest: member.manifest_path.clone().into(),
+                        path: member.manifest_path.parent().unwrap().into(),
+                        publish: if let Some(publishable) = &member.publish {
+                            !publishable.is_empty()
+                        } else {
+                            true
+                        }
+                    });
                 }
-            }
-            Err(e) => {
-                log::warn!("Skipping {}: {e}", manifest.display());
             }
         }
     }
 
     crates
-        .into_iter()
-        .map(|c| {
-            serde_json::json!({
-                "name": c.name,
-                "version": c.version,
-                "path": c.path,
-                "manifest": c.manifest,
-            })
-        })
-        .collect()
+}
+
+fn build_output(changed_crates: Option<Vec<CrateInfo>>, affected_crates: Option<Vec<String>>, base_ref: &str) -> Result<()> {
+    
+    let (changed, changed_len): (String, String) = if let Some(crates) = changed_crates {
+        (serde_json::to_string(&crates).unwrap_or("[]".to_string()), crates.len().to_string())
+    } else {
+        ("[]".to_string(), "0".to_string())
+    };
+
+    let (affected, affected_len): (String, String) = if let Some(crates) = affected_crates {
+        (serde_json::to_string(&crates).unwrap_or("[]".to_string()), crates.len().to_string())
+    } else {
+        ("[]".to_string(), "0".to_string())
+    };
+
+    if std::env::var("DEBUG").is_ok() {
+        log::info!("crates: {:?}", changed);
+        log::info!("crates_count: {:?}", changed_len);
+        log::info!("dependants: {:?}", affected);
+        log::info!("dependants_count: {:?}", affected_len);
+        log::info!("base_ref: {:?}", base_ref);
+    } else {
+        set_output("crates", &changed)?;
+        set_output("crates_count", &changed_len)?;
+        set_output("dependants", &affected)?;
+        set_output("has_changes", &affected_len)?;
+        set_output("base_ref", base_ref)?;
+    }
+    Ok(())
 }

@@ -4,16 +4,6 @@
 name: 'Get Changed Crates'
 description: 'Detects which Rust crates have changed files in a PR or push'
 
-inputs:
-  include-non-publishable:
-    description: 'Include crates with publish = false'
-    required: false
-    default: 'false'
-  base-ref:
-    description: 'Base ref for comparison (defaults to PR base or HEAD~1 for push)'
-    required: false
-    default: ''
-
 outputs:
   crates:
     description: 'JSON array of changed crates with name, version, path and manifest'
@@ -28,23 +18,10 @@ outputs:
 runs:
   using: 'composite'
   steps:
-    - name: Cache [ci-crates build]
-      uses: Swatinem/rust-cache@f13886b937689c021905a6b90929199931d60db1 # 2.8.1
-      with:
-        workspaces: .github/actions
-        cache-targets: true
-
-    - name: Build ci-crates
-      shell: bash
-      run: |
-        cd ${{ github.action_path }}/..
-        cargo build --release -p ci-crates
-
     - id: detect
-      name: Detect changed crates
       shell: bash
       env:
-        INPUT_INCLUDE_NON_PUBLISHABLE: ${{ inputs.include-non-publishable }}
-        INPUT_BASE_REF: ${{ inputs.base-ref }}
+        EVENT_NAME: ${{ github.event_name }}
+        PR_BASE_REF: ${{ github.base_ref }}
       run: |
-        ${{ github.action_path }}/../target/release/changed-crates
+        ${{ github.action_path }}/../target/release/changed-crates $PR_BASE_REF

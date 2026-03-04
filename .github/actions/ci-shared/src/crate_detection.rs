@@ -33,6 +33,7 @@ pub fn find_closest_cargo_toml(mut path: &Path) -> Option<PathBuf> {
     loop {
         let cargo_path = path.join("Cargo.toml");
         if cargo_path.exists() {
+            log::info!("Return {:?}", cargo_path);
             return Some(cargo_path);
         }
 

@@ -47,6 +47,7 @@ pub fn changed_files(base_ref: &str) -> Result<Vec<String>> {
         .lines()
         .map(|l| l.to_string())
         .filter(|l| !l.is_empty())
+        .filter(|l| !l.contains(".github/"))
         .collect();
 
     Ok(files)
