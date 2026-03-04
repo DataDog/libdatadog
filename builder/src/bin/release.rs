@@ -27,6 +27,7 @@ impl From<pico_args::Arguments> for ReleaseArgs {
         };
 
         args.finish();
+
         release_args
     }
 }
