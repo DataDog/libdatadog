@@ -193,29 +193,10 @@ unsafe fn emit_backtrace_from_ucontext(
     let stack_size = libc::pthread_get_stacksize_np(thread);
     let stack_bottom = stack_top.saturating_sub(stack_size);
 
-    // Also account for an alt stack, since the
-    // signal handler may have been invoked on one
-    let mut alt_stack: libc::stack_t = std::mem::zeroed();
-    let has_alt_stack = libc::sigaltstack(std::ptr::null(), &mut alt_stack) == 0
-        && (alt_stack.ss_flags & libc::SS_DISABLE) == 0
-        && alt_stack.ss_size > 0;
-    let alt_bottom = if has_alt_stack {
-        alt_stack.ss_sp as usize
-    } else {
-        0
-    };
-    let alt_top = if has_alt_stack {
-        alt_bottom + alt_stack.ss_size
-    } else {
-        0
-    };
-
-    // Returns true when the range [addr, addr+len) falls within
-    // either the thread stack or the alt stack
+    // Returns true when the range [addr, addr+len) falls within the thread stack
     let in_stack_bounds = |addr: usize, len: usize| -> bool {
         let end = addr.saturating_add(len);
-        (addr >= stack_bottom && end <= stack_top)
-            || (has_alt_stack && addr >= alt_bottom && end <= alt_top)
+        addr >= stack_bottom && end <= stack_top
     };
 
     let ss = &(*mcontext).__ss;
@@ -232,7 +213,7 @@ unsafe fn emit_backtrace_from_ucontext(
             break;
         }
         // Each frame record is two pointer-sized words: [saved_fp, return_addr]
-        // Bail out if the record falls outside known stack regions
+        // Bail out if the record falls outside the thread stack
         if !in_stack_bounds(fp, 2 * std::mem::size_of::<usize>()) {
             break;
         }
