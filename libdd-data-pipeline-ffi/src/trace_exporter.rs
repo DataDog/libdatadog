@@ -501,7 +501,7 @@ pub unsafe extern "C" fn ddog_trace_exporter_new(
             if let Some(ref url) = config.otlp_endpoint {
                 builder.set_otlp_endpoint(url);
             }
-            match builder.build::<DefaultHttpClient>() {
+            match builder.build() {
                 Ok(exporter) => {
                     out_handle.as_ptr().write(Box::new(exporter));
                     None

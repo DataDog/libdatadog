@@ -24,8 +24,8 @@ use std::time::Duration;
 const DEFAULT_AGENT_URL: &str = "http://127.0.0.1:8126";
 
 #[allow(missing_docs)]
-#[derive(Default, Debug)]
-pub struct TraceExporterBuilder {
+#[derive(Debug)]
+pub struct TraceExporterBuilder<H> {
     url: Option<String>,
     hostname: String,
     env: String,
@@ -56,9 +56,46 @@ pub struct TraceExporterBuilder {
     connection_timeout: Option<u64>,
     otlp_endpoint: Option<String>,
     otlp_headers: Vec<(String, String)>,
+    _phantom: PhantomData<H>,
 }
 
-impl TraceExporterBuilder {
+impl<H> Default for TraceExporterBuilder<H> {
+    fn default() -> Self {
+        Self {
+            url: None,
+            hostname: String::new(),
+            env: String::new(),
+            app_version: String::new(),
+            service: String::new(),
+            tracer_version: String::new(),
+            language: String::new(),
+            language_version: String::new(),
+            language_interpreter: String::new(),
+            language_interpreter_vendor: String::new(),
+            git_commit_sha: String::new(),
+            input_format: TraceExporterInputFormat::default(),
+            output_format: TraceExporterOutputFormat::default(),
+            dogstatsd_url: None,
+            client_computed_stats: false,
+            client_computed_top_level: false,
+            stats_bucket_size: None,
+            peer_tags_aggregation: false,
+            compute_stats_by_span_kind: false,
+            peer_tags: Vec::new(),
+            telemetry: None,
+            health_metrics_enabled: false,
+            test_session_token: None,
+            agent_rates_payload_version_enabled: false,
+            connection_timeout: None,
+            otlp_endpoint: None,
+            otlp_headers: Vec::new(),
+            process_tags: String::new(),
+            _phantom: PhantomData,
+        }
+    }
+}
+
+impl<H: HttpClientTrait + Send + Sync + 'static> TraceExporterBuilder<H> {
     /// Sets the URL of the agent.
     ///
     /// The agent supports the following URL schemes:
@@ -251,9 +288,7 @@ impl TraceExporterBuilder {
     }
 
     #[allow(missing_docs)]
-    pub fn build<H: HttpClientTrait + Send + Sync + 'static>(
-        self,
-    ) -> Result<TraceExporter<H>, TraceExporterError> {
+    pub fn build(self) -> Result<TraceExporter<H>, TraceExporterError> {
         if !Self::is_inputs_outputs_formats_compatible(self.input_format, self.output_format) {
             return Err(TraceExporterError::Builder(
                 BuilderErrorKind::InvalidConfiguration(
@@ -430,7 +465,7 @@ mod tests {
     #[cfg_attr(miri, ignore)]
     #[test]
     fn test_new() {
-        let mut builder = TraceExporterBuilder::default();
+        let mut builder = TraceExporterBuilder::<DefaultHttpClient>::default();
         builder
             .set_url("http://192.168.1.1:8127/")
             .set_tracer_version("v0.1")
@@ -447,7 +482,7 @@ mod tests {
                 runtime_id: None,
                 debug_enabled: false,
             });
-        let exporter = builder.build::<DefaultHttpClient>().unwrap();
+        let exporter = builder.build().unwrap();
 
         assert_eq!(
             exporter
@@ -470,8 +505,8 @@ mod tests {
     #[cfg_attr(miri, ignore)]
     #[test]
     fn test_new_defaults() {
-        let builder = TraceExporterBuilder::default();
-        let exporter = builder.build::<DefaultHttpClient>().unwrap();
+        let builder = TraceExporterBuilder::<DefaultHttpClient>::default();
+        let exporter = builder.build().unwrap();
 
         assert_eq!(
             exporter
@@ -492,7 +527,7 @@ mod tests {
     #[test]
     #[cfg_attr(miri, ignore)]
     fn test_builder_error() {
-        let mut builder = TraceExporterBuilder::default();
+        let mut builder = TraceExporterBuilder::<DefaultHttpClient>::default();
         builder
             .set_url("")
             .set_service("foo")
@@ -502,7 +537,7 @@ mod tests {
             .set_language_version("1.0")
             .set_language_interpreter("v8");
 
-        let exporter = builder.build::<DefaultHttpClient>();
+        let exporter = builder.build();
 
         assert!(exporter.is_err());
 
