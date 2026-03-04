@@ -95,10 +95,10 @@ impl JsonObfuscator {
                 }
                 Op::BeginLiteral | Op::Continue => {
                     if transforming_value {
-                        buf.push(c as char);
+                        buf.push(c);
                         continue;
                     } else if key {
-                        buf.push(c as char);
+                        buf.push(c);
                     } else if !keeping {
                         if !wiped {
                             out.push_str("\"?\"");
@@ -129,7 +129,7 @@ impl JsonObfuscator {
                 Op::End => {} // whitespace between JSON objects — fall through to output char
             }
 
-            out.push(c as char);
+            out.push(c);
         }
 
         if scanner.eof() == Op::Error {
