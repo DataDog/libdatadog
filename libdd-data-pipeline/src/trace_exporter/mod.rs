@@ -209,7 +209,7 @@ pub struct TraceExporter<H: HttpClientTrait + Send + Sync + 'static> {
 
 impl<H: HttpClientTrait + Send + Sync + 'static> TraceExporter<H> {
     #[allow(missing_docs)]
-    pub fn builder() -> TraceExporterBuilder {
+    pub fn builder() -> TraceExporterBuilder<H> {
         TraceExporterBuilder::default()
     }
 
@@ -1015,7 +1015,7 @@ mod tests {
         enable_telemetry: bool,
         enable_health_metrics: bool,
     ) -> TraceExporter<DefaultHttpClient> {
-        let mut builder = TraceExporterBuilder::default();
+        let mut builder = TraceExporter::<DefaultHttpClient>::builder();
         builder
             .set_url(&url)
             .set_service("test")
@@ -1042,7 +1042,7 @@ mod tests {
             });
         }
 
-        builder.build::<DefaultHttpClient>().unwrap()
+        builder.build().unwrap()
     }
 
     #[test]
@@ -1434,7 +1434,7 @@ mod tests {
                 );
         });
 
-        let mut builder = TraceExporterBuilder::default();
+        let mut builder = TraceExporter::<DefaultHttpClient>::builder();
         builder
             .set_url(&server.url("/"))
             .set_service("foo")
@@ -1443,7 +1443,7 @@ mod tests {
             .set_language("nodejs")
             .set_language_version("1.0")
             .set_language_interpreter("v8");
-        let exporter = builder.build::<DefaultHttpClient>().unwrap();
+        let exporter = builder.build().unwrap();
 
         let traces: Vec<Vec<SpanBytes>> = vec![vec![SpanBytes {
             name: BytesString::from_slice(b"test").unwrap(),
@@ -1476,7 +1476,7 @@ mod tests {
                 .body(r#"{ "error": "Unavailable" }"#);
         });
 
-        let mut builder = TraceExporterBuilder::default();
+        let mut builder = TraceExporter::<DefaultHttpClient>::builder();
         builder
             .set_url(&server.url("/"))
             .set_service("foo")
@@ -1485,7 +1485,7 @@ mod tests {
             .set_language("nodejs")
             .set_language_version("1.0")
             .set_language_interpreter("v8");
-        let exporter = builder.build::<DefaultHttpClient>().unwrap();
+        let exporter = builder.build().unwrap();
 
         let traces: Vec<Vec<SpanBytes>> = vec![vec![SpanBytes {
             name: BytesString::from_slice(b"test").unwrap(),
@@ -1511,7 +1511,7 @@ mod tests {
                 .body("");
         });
 
-        let mut builder = TraceExporterBuilder::default();
+        let mut builder = TraceExporter::<DefaultHttpClient>::builder();
         builder
             .set_url(&server.url("/"))
             .set_service("foo")
@@ -1520,7 +1520,7 @@ mod tests {
             .set_language("nodejs")
             .set_language_version("1.0")
             .set_language_interpreter("v8");
-        let exporter = builder.build::<DefaultHttpClient>().unwrap();
+        let exporter = builder.build().unwrap();
 
         let traces: Vec<Vec<SpanBytes>> = vec![vec![SpanBytes {
             name: BytesString::from_slice(b"test").unwrap(),
@@ -1565,7 +1565,7 @@ mod tests {
                 .body("");
         });
 
-        let mut builder = TraceExporterBuilder::default();
+        let mut builder = TraceExporter::<DefaultHttpClient>::builder();
         builder
             .set_url(&server.url("/"))
             .set_service("foo")
@@ -1578,7 +1578,7 @@ mod tests {
                 heartbeat: 100,
                 ..Default::default()
             });
-        let exporter = builder.build::<DefaultHttpClient>().unwrap();
+        let exporter = builder.build().unwrap();
 
         let traces = vec![0x90];
         let result = exporter.send(traces.as_ref()).unwrap();
@@ -1689,7 +1689,7 @@ mod tests {
                 .body("");
         });
 
-        let mut builder = TraceExporterBuilder::default();
+        let mut builder = TraceExporter::<DefaultHttpClient>::builder();
         builder
             .set_url(&server.url("/"))
             .set_service("foo")
@@ -1705,7 +1705,7 @@ mod tests {
             .set_input_format(TraceExporterInputFormat::V04)
             .set_output_format(TraceExporterOutputFormat::V05);
 
-        let exporter = builder.build::<DefaultHttpClient>().unwrap();
+        let exporter = builder.build().unwrap();
 
         let traces = vec![0x90];
         let result = exporter.send(traces.as_ref()).unwrap();
@@ -1749,9 +1749,9 @@ mod tests {
                 .body(response_body);
         });
 
-        let mut builder = TraceExporterBuilder::default();
+        let mut builder = TraceExporter::<DefaultHttpClient>::builder();
         builder.set_url(&server.url("/"));
-        let exporter = builder.build::<DefaultHttpClient>().unwrap();
+        let exporter = builder.build().unwrap();
         let traces = vec![0x90];
         for _ in 0..2 {
             let result = exporter.send(traces.as_ref()).unwrap();
@@ -1784,11 +1784,11 @@ mod tests {
                 .body(response_body);
         });
 
-        let mut builder = TraceExporterBuilder::default();
+        let mut builder = TraceExporter::<DefaultHttpClient>::builder();
         builder
             .set_url(&server.url("/"))
             .enable_agent_rates_payload_version();
-        let exporter = builder.build::<DefaultHttpClient>().unwrap();
+        let exporter = builder.build().unwrap();
         let traces = vec![0x90];
         let result = exporter.send(traces.as_ref()).unwrap();
         let AgentResponse::Changed { body } = result else {
@@ -1876,7 +1876,7 @@ mod tests {
             then.delay(delay).status(status).body(response);
         });
 
-        let mut builder = TraceExporterBuilder::default();
+        let mut builder = TraceExporter::<DefaultHttpClient>::builder();
         builder
             .set_url(&server.url("/"))
             .set_service("test")
@@ -1888,7 +1888,7 @@ mod tests {
             .set_input_format(TraceExporterInputFormat::V04)
             .set_output_format(TraceExporterOutputFormat::V04)
             .enable_stats(Duration::from_secs(10));
-        let exporter = builder.build::<DefaultHttpClient>().unwrap();
+        let exporter = builder.build().unwrap();
 
         let trace_chunk = vec![SpanBytes {
             duration: 10,
@@ -1920,17 +1920,17 @@ mod tests {
     #[test]
     #[cfg_attr(miri, ignore)]
     fn test_connection_timeout() {
-        let exporter = TraceExporterBuilder::default()
-            .build::<DefaultHttpClient>()
+        let exporter = TraceExporter::<DefaultHttpClient>::builder()
+            .build()
             .unwrap();
 
         assert_eq!(exporter.endpoint.timeout_ms, Endpoint::default().timeout_ms);
 
         let timeout = Some(42);
-        let mut builder = TraceExporterBuilder::default();
+        let mut builder = TraceExporter::<DefaultHttpClient>::builder();
         builder.set_connection_timeout(timeout);
 
-        let exporter = builder.build::<DefaultHttpClient>().unwrap();
+        let exporter = builder.build().unwrap();
 
         assert_eq!(exporter.endpoint.timeout_ms, 42);
     }
@@ -1938,8 +1938,8 @@ mod tests {
     #[test]
     #[cfg_attr(miri, ignore)]
     fn stop_and_start_runtime() {
-        let builder = TraceExporterBuilder::default();
-        let exporter = builder.build::<DefaultHttpClient>().unwrap();
+        let builder = TraceExporter::<DefaultHttpClient>::builder();
+        let exporter = builder.build().unwrap();
         exporter.stop_worker();
         exporter.run_worker().unwrap();
     }
@@ -1986,7 +1986,7 @@ mod single_threaded_tests {
                 .body(r#"{"version":"1","client_drop_p0s":true,"endpoints":["/v0.4/traces","/v0.6/stats"]}"#);
         });
 
-        let mut builder = TraceExporterBuilder::default();
+        let mut builder = TraceExporter::<DefaultHttpClient>::builder();
         builder
             .set_url(&server.url("/"))
             .set_service("test")
@@ -1998,7 +1998,7 @@ mod single_threaded_tests {
             .set_input_format(TraceExporterInputFormat::V04)
             .set_output_format(TraceExporterOutputFormat::V04)
             .enable_stats(Duration::from_secs(10));
-        let exporter = builder.build::<DefaultHttpClient>().unwrap();
+        let exporter = builder.build().unwrap();
 
         let trace_chunk = vec![SpanBytes {
             duration: 10,
@@ -2086,7 +2086,7 @@ mod single_threaded_tests {
                 .body(r#"{"version":"1","client_drop_p0s":true,"endpoints":["/v0.4/traces","/v0.6/stats"]}"#);
         });
 
-        let mut builder = TraceExporterBuilder::default();
+        let mut builder = TraceExporter::<DefaultHttpClient>::builder();
         builder
             .set_url(&server.url("/"))
             .set_service("test")
@@ -2098,7 +2098,7 @@ mod single_threaded_tests {
             .set_input_format(TraceExporterInputFormat::V04)
             .set_output_format(TraceExporterOutputFormat::V04)
             .enable_stats(Duration::from_secs(10));
-        let exporter = builder.build::<DefaultHttpClient>().unwrap();
+        let exporter = builder.build().unwrap();
 
         let trace_chunk = vec![SpanBytes {
             service: "test".into(),
