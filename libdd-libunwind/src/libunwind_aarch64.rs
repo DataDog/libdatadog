@@ -43,6 +43,9 @@ pub const UNW_INIT_LOCAL_ONLY_IP: i32 = 1;
 /// On aarch64 libunwind does not emit a callable symbol for getcontext —
 /// it uses a C preprocessor macro with inline assembly. This is the Rust
 /// equivalent: save all GPRs, SP, LR, and PC into `uc_mcontext`.
+///
+/// # Safety
+/// `context` must be a valid, non-null pointer to a zeroed or initialized `UnwContext`.
 // This is only for testing purposes and allow the tests to work with libc and musl-libc
 #[cfg(test)]
 #[inline(always)]

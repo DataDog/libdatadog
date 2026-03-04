@@ -46,6 +46,10 @@ pub const UNW_INIT_LOCAL_ONLY_IP: i32 = 1;
 /// Saves the current CPU context into `uc_mcontext.gregs`.
 /// gregs layout: [R8, R9, R10, R11, R12, R13, R14, R15,
 ///                RDI, RSI, RBP, RBX, RDX, RAX, RCX, RSP, RIP, ...]
+///
+/// # Safety
+/// `context` must be a valid, non-null pointer to a zeroed or initialized `UnwContext`.
+// This is only for testing purposes and allow the tests to work with libc and musl-libc
 #[cfg(test)]
 #[inline(always)]
 pub unsafe fn getcontext(context: *mut UnwContext) -> i32 {
