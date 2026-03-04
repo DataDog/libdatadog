@@ -185,6 +185,39 @@ unsafe fn emit_backtrace_from_ucontext(
         return Ok(());
     }
 
+    // Get the thread's stack bounds so we only deref frame pointers
+    // that lie within known stack memory. Both pthread_get_stackaddr_np and
+    // pthread_get_stacksize_np are async-signal-safe on macOS
+    let thread = libc::pthread_self();
+    let stack_top = libc::pthread_get_stackaddr_np(thread) as usize;
+    let stack_size = libc::pthread_get_stacksize_np(thread);
+    let stack_bottom = stack_top.saturating_sub(stack_size);
+
+    // Also account for an alt stack, since the
+    // signal handler may have been invoked on one
+    let mut alt_stack: libc::stack_t = std::mem::zeroed();
+    let has_alt_stack = libc::sigaltstack(std::ptr::null(), &mut alt_stack) == 0
+        && (alt_stack.ss_flags & libc::SS_DISABLE) == 0
+        && alt_stack.ss_size > 0;
+    let alt_bottom = if has_alt_stack {
+        alt_stack.ss_sp as usize
+    } else {
+        0
+    };
+    let alt_top = if has_alt_stack {
+        alt_bottom + alt_stack.ss_size
+    } else {
+        0
+    };
+
+    // Returns true when the range [addr, addr+len) falls within
+    // either the thread stack or the alt stack
+    let in_stack_bounds = |addr: usize, len: usize| -> bool {
+        let end = addr.saturating_add(len);
+        (addr >= stack_bottom && end <= stack_top)
+            || (has_alt_stack && addr >= alt_bottom && end <= alt_top)
+    };
+
     let ss = &(*mcontext).__ss;
     #[cfg(target_arch = "aarch64")]
     let (pc, mut fp) = (ss.__pc as usize, ss.__fp as usize);
@@ -193,8 +226,14 @@ unsafe fn emit_backtrace_from_ucontext(
 
     emit_frame_with_dladdr(w, pc)?;
 
-    loop {
+    const MAX_FRAMES: usize = 512;
+    for _ in 0..MAX_FRAMES {
         if fp == 0 || fp % std::mem::align_of::<usize>() != 0 {
+            break;
+        }
+        // Each frame record is two pointer-sized words: [saved_fp, return_addr]
+        // Bail out if the record falls outside known stack regions
+        if !in_stack_bounds(fp, 2 * std::mem::size_of::<usize>()) {
             break;
         }
         let next_fp = *(fp as *const usize);
