@@ -156,7 +156,7 @@ RUN echo \
     | xargs -n 1 sh -c 'mkdir -p $(dirname $1); touch $1; echo $1' create_stubs
 
 # Copy libunwind submodule for libdd-libunwind build.rs
-COPY "libdd-libunwind/libunwind" "libdd-libunwind/libunwind/"
+COPY "libdd-libunwind-sys/libunwind" "libdd-libunwind-sys/libunwind/"
 
 # cache dependencies
 RUN cargo fetch --locked
