@@ -3,7 +3,7 @@
 
 use std::collections::HashSet;
 
-use serde_json::Value;
+use crate::json_scanner::{Op, Scanner};
 
 type Transformer = Box<dyn Fn(&str) -> String + Send + Sync>;
 
@@ -38,54 +38,147 @@ impl JsonObfuscator {
             return String::new();
         }
 
-        serde_json::Deserializer::from_str(input)
-            .into_iter::<Value>()
-            .map(|result| match result {
-                Ok(value) => {
-                    serde_json::to_string(&self.obfuscate_value(value)).unwrap_or_default()
+        let mut out = String::with_capacity(input.len());
+        let mut scanner = Scanner::new();
+        let mut buf = String::new(); // accumulates key bytes or transform-value bytes
+        let mut closures: Vec<bool> = Vec::new(); // true = object, false = array
+        let mut keep_depth: usize = 0;
+        let mut key = false;
+        let mut wiped = false;
+        let mut keeping = false;
+        let mut transforming_value = false;
+
+        for &c in input.as_bytes() {
+            scanner.bytes += 1;
+            let op = scanner.step(c);
+            let depth = closures.len(); // snapshot before any mutation
+
+            match op {
+                Op::BeginObject => {
+                    closures.push(true);
+                    set_key(&closures, &mut key, &mut wiped);
+                    transforming_value = false;
                 }
-                Err(_) => "...".to_string(),
-            })
-            .collect::<Vec<_>>()
-            .join(" ")
-            + "\n"
-    }
-
-    fn obfuscate_value(&self, value: Value) -> Value {
-        match value {
-            Value::Object(map) => Value::Object(
-                map.into_iter()
-                    .map(|(k, v)| {
-                        let v = self.obfuscate_entry(&k, v);
-                        (k, v)
-                    })
-                    .collect(),
-            ),
-            Value::Array(arr) => {
-                Value::Array(arr.into_iter().map(|v| self.obfuscate_value(v)).collect())
+                Op::BeginArray => {
+                    closures.push(false);
+                    set_key(&closures, &mut key, &mut wiped);
+                    transforming_value = false;
+                }
+                Op::EndArray | Op::EndObject => {
+                    // Only pop if we'd still have at least one element.
+                    let n = closures.len();
+                    if n > 1 {
+                        closures.truncate(n - 1);
+                    }
+                    // Fallthrough to value-done logic (same as ObjectValue).
+                    set_key(&closures, &mut key, &mut wiped);
+                    handle_value_done(
+                        &mut out,
+                        &mut buf,
+                        &mut keeping,
+                        &mut transforming_value,
+                        &mut keep_depth,
+                        depth,
+                        self.transformer.as_deref(),
+                    );
+                }
+                Op::ObjectValue | Op::ArrayValue => {
+                    set_key(&closures, &mut key, &mut wiped);
+                    handle_value_done(
+                        &mut out,
+                        &mut buf,
+                        &mut keeping,
+                        &mut transforming_value,
+                        &mut keep_depth,
+                        depth,
+                        self.transformer.as_deref(),
+                    );
+                }
+                Op::BeginLiteral | Op::Continue => {
+                    if transforming_value {
+                        buf.push(c as char);
+                        continue;
+                    } else if key {
+                        buf.push(c as char);
+                    } else if !keeping {
+                        if !wiped {
+                            out.push_str("\"?\"");
+                            wiped = true;
+                        }
+                        continue;
+                    }
+                }
+                Op::ObjectKey => {
+                    let k = buf.trim_matches('"');
+                    if !keeping && self.keep_keys.contains(k) {
+                        keeping = true;
+                        keep_depth = depth + 1;
+                    } else if !transforming_value
+                        && self.transformer.is_some()
+                        && self.transform_keys.contains(k)
+                    {
+                        transforming_value = true;
+                    }
+                    buf.clear();
+                    key = false;
+                }
+                Op::SkipSpace => continue,
+                Op::Error => {
+                    out.push_str("...");
+                    return out;
+                }
+                Op::End => {} // whitespace between JSON objects — fall through to output byte
             }
-            _ => Value::String("?".to_string()),
-        }
-    }
 
-    fn obfuscate_entry(&self, key: &str, value: Value) -> Value {
-        if self.keep_keys.contains(key) {
-            return value;
+            out.push(c as char);
         }
-        if let Some(transformer) = &self.transformer {
-            if self.transform_keys.contains(key) {
-                return match value {
-                    Value::String(s) => Value::String(transformer(&s)),
-                    other => self.obfuscate_value(other),
-                };
-            }
+
+        if scanner.eof() == Op::Error {
+            out.push_str("...");
         }
-        self.obfuscate_value(value)
+        out
+    }
+}
+
+/// Updates `key` and `wiped` based on the current closure stack.
+/// `key` is true at top level or when inside an object (not an array).
+fn set_key(closures: &[bool], key: &mut bool, wiped: &mut bool) {
+    let n = closures.len();
+    *key = n == 0 || closures[n - 1];
+    *wiped = false;
+}
+
+/// Handles the "value is done" logic after a value-ending opcode.
+/// Writes the transformer result if applicable, or stops keeping if depth shrinks.
+fn handle_value_done(
+    out: &mut String,
+    buf: &mut String,
+    keeping: &mut bool,
+    transforming_value: &mut bool,
+    keep_depth: &mut usize,
+    depth: usize,
+    transformer: Option<&(dyn Fn(&str) -> String + Send + Sync)>,
+) {
+    if *transforming_value {
+        if let Some(t) = transformer {
+            // Unquote the collected JSON string literal (handles escape sequences).
+            let raw: String = serde_json::from_str(buf)
+                .unwrap_or_else(|_| buf.trim_matches('"').to_string());
+            let result = t(&raw);
+            out.push('"');
+            out.push_str(&result);
+            out.push('"');
+            *transforming_value = false;
+            buf.clear();
+        }
+    } else if *keeping && depth < *keep_depth {
+        *keeping = false;
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use duplicate::duplicate_item;
     use serde_json::json;
 
     use super::JsonObfuscator;
@@ -111,90 +204,55 @@ mod tests {
         assert_eq!(result, expected);
     }
 
+    // Basic obfuscation tests — parametric over (keep_keys, input, expected).
+    // Uses assert_json_eq (structural comparison, whitespace-insensitive).
+    #[duplicate_item(
+        test_name                         keep_keys           input                                                                                                                          expected;
+        [test_empty_object]               [&[]]               ["{}"]                                                                                                                         ["{}"];
+        [test_empty_array]                [&[]]               ["[]"]                                                                                                                         ["[]"];
+        [test_nested_empty_objects]       [&[]]               [r#"{"a":{},"b":{"c":{}}}"#]                                                                                                  [r#"{"a":{},"b":{"c":{}}}"#];
+        [test_boolean_and_null_obfuscated][&[]]               [r#"{"a":true,"b":false,"c":null}"#]                                                                                          [r#"{"a":"?","b":"?","c":"?"}"#];
+        [test_all_values_obfuscated]      [&[]]               [r#"{"query":{"multi_match":{"query":"guide","fields":["_all",{"key":"value","other":["1","2",{"k":"v"}]},"2"]}}}"#]           [r#"{"query":{"multi_match":{"query":"?","fields":["?",{"key":"?","other":["?","?",{"k":"?"}]},"?"]}}}"#];
+        [test_numbers_obfuscated]         [&[]]               [r#"{"highlight":{"pre_tags":["<em>"],"post_tags":["</em>"],"index":1}}"#]                                                    [r#"{"highlight":{"pre_tags":["?"],"post_tags":["?"],"index":"?"}}"#];
+        [test_keep_key_keeps_entire_value][&["other"]]        [r#"{"query":{"multi_match":{"query":"guide","fields":["_all",{"key":"value","other":["1","2",{"k":"v"}]},"2"]}}}"#]           [r#"{"query":{"multi_match":{"query":"?","fields":["?",{"key":"?","other":["1","2",{"k":"v"}]},"?"]}}}"#];
+        [test_keep_key_nested_array_fully_kept][&["fields"]]  [r#"{"fields":["_all",{"key":"value","other":["1","2",{"k":"v"}]},"2"]}"#]                                                    [r#"{"fields":["_all",{"key":"value","other":["1","2",{"k":"v"}]},"2"]}"#];
+        [test_keep_key_deep_nested]       [&["k"]]            [r#"{"fields":["_all",{"key":"value","other":["1","2",{"k":"v"}]},"2"]}"#]                                                    [r#"{"fields":["?",{"key":"?","other":["?","?",{"k":"v"}]},"?"]}"#];
+        [test_keep_key_in_nested_object]  [&["C"]]            [r#"{"fields":[{"A":1,"B":{"C":3}},"2"]}"#]                                                                                   [r#"{"fields":[{"A":"?","B":{"C":3}},"?"]}"#];
+        [test_keep_key_large_nested_structure][&["hits"]]     [r#"{"outer":{"total":2,"max_score":0.9105287,"hits":[{"_index":"bookdb_index","_score":0.9105287}]}}"#]                      [r#"{"outer":{"total":"?","max_score":"?","hits":[{"_index":"bookdb_index","_score":0.9105287}]}}"#];
+        [test_keep_multiple_keys]         [&["_index","title"]][r#"{"hits":[{"_index":"bookdb_index","_type":"book","_score":0.9,"_source":{"summary":"text","title":"ES in Action","publish_date":"2015-12-03"},"highlight":{"title":["ES Action"]}}]}"#] [r#"{"hits":[{"_index":"bookdb_index","_type":"?","_score":"?","_source":{"summary":"?","title":"ES in Action","publish_date":"?"},"highlight":{"title":["ES Action"]}}]}"#];
+        [test_keep_key_wallet]            [&["company_wallet_configuration_id"]] [r#"{"email":"dev@datadoghq.com","company_wallet_configuration_id":1}"#] [r#"{"email":"?","company_wallet_configuration_id":1}"#];
+    )]
     #[test]
-    fn test_empty_input() {
-        assert_eq!(obf(&[]).obfuscate(""), "");
+    fn test_name() {
+        assert_json_eq(&obf(keep_keys).obfuscate(input), expected);
+    }
+
+    // Truncation / error tests — parametric over (input, expected_exact_string).
+    #[duplicate_item(
+        test_name                           input                                                                    expected;
+        [test_empty_input]                  [""]                                                                     [""];
+        [test_invalid_json_appends_ellipsis]["INVALID"]                                                              ["..."];
+        [test_invalid_single_char]          [")"]                                                                    ["..."];
+        [test_truncated_open_value_string]  [r#"{"query":""#]                                                       [r#"{"query":"?"..."#];
+        [test_truncated_multi_json]         [r#"{"first json": "valid"} {"second json": "unfinished"#]               [r#"{"first json":"?"} {"second json":"?"..."#];
+    )]
+    #[test]
+    fn test_name() {
+        assert_eq!(obf(&[]).obfuscate(input), expected);
     }
 
     #[test]
-    fn test_all_values_obfuscated() {
-        // elasticsearch.body.1
-        let input = r#"{"query":{"multi_match":{"query":"guide","fields":["_all",{"key":"value","other":["1","2",{"k":"v"}]},"2"]}}}"#;
-        let expected = r#"{"query":{"multi_match":{"query":"?","fields":["?",{"key":"?","other":["?","?",{"k":"?"}]},"?"]}}}"#;
-        assert_json_eq(&obf(&[]).obfuscate(input), expected);
-    }
-
-    #[test]
-    fn test_numbers_obfuscated() {
-        // elasticsearch.body.2
-        let input = r#"{"highlight":{"pre_tags":["<em>"],"post_tags":["</em>"],"index":1}}"#;
-        let expected = r#"{"highlight":{"pre_tags":["?"],"post_tags":["?"],"index":"?"}}"#;
-        assert_json_eq(&obf(&[]).obfuscate(input), expected);
-    }
-
-    #[test]
-    fn test_keep_key_keeps_entire_value() {
-        // elasticsearch.body.3: keep "other" preserves the whole array value
-        let input = r#"{"query":{"multi_match":{"query":"guide","fields":["_all",{"key":"value","other":["1","2",{"k":"v"}]},"2"]}}}"#;
-        let expected = r#"{"query":{"multi_match":{"query":"?","fields":["?",{"key":"?","other":["1","2",{"k":"v"}]},"?"]}}}"#;
-        assert_json_eq(&obf(&["other"]).obfuscate(input), expected);
-    }
-
-    #[test]
-    fn test_keep_key_nested_array_fully_kept() {
-        // elasticsearch.body.4: keep "fields" keeps the entire array
-        let input = r#"{"fields":["_all",{"key":"value","other":["1","2",{"k":"v"}]},"2"]}"#;
-        let expected = r#"{"fields":["_all",{"key":"value","other":["1","2",{"k":"v"}]},"2"]}"#;
-        assert_json_eq(&obf(&["fields"]).obfuscate(input), expected);
-    }
-
-    #[test]
-    fn test_keep_key_deep_nested() {
-        // elasticsearch.body.5: keep "k" only at the exact key occurrence
-        let input = r#"{"fields":["_all",{"key":"value","other":["1","2",{"k":"v"}]},"2"]}"#;
-        let expected = r#"{"fields":["?",{"key":"?","other":["?","?",{"k":"v"}]},"?"]}"#;
-        assert_json_eq(&obf(&["k"]).obfuscate(input), expected);
-    }
-
-    #[test]
-    fn test_keep_key_in_nested_object() {
-        // elasticsearch.body.6: keep "C" inside nested object
-        let input = r#"{"fields":[{"A":1,"B":{"C":3}},"2"]}"#;
-        let expected = r#"{"fields":[{"A":"?","B":{"C":3}},"?"]}"#;
-        assert_json_eq(&obf(&["C"]).obfuscate(input), expected);
-    }
-
-    #[test]
-    fn test_keep_key_large_nested_structure() {
-        // elasticsearch.body.11: keep "hits" preserves its entire value
-        let input = r#"{"outer":{"total":2,"max_score":0.9105287,"hits":[{"_index":"bookdb_index","_score":0.9105287}]}}"#;
-        let expected = r#"{"outer":{"total":"?","max_score":"?","hits":[{"_index":"bookdb_index","_score":0.9105287}]}}"#;
-        assert_json_eq(&obf(&["hits"]).obfuscate(input), expected);
-    }
-
-    #[test]
-    fn test_keep_multiple_keys() {
-        // elasticsearch.body.12: keep "_index" and "title" individually
-        let input = r#"{"hits":[{"_index":"bookdb_index","_type":"book","_score":0.9,"_source":{"summary":"text","title":"ES in Action","publish_date":"2015-12-03"},"highlight":{"title":["ES Action"]}}]}"#;
-        let expected = r#"{"hits":[{"_index":"bookdb_index","_type":"?","_score":"?","_source":{"summary":"?","title":"ES in Action","publish_date":"?"},"highlight":{"title":["ES Action"]}}]}"#;
-        assert_json_eq(&obf(&["_index", "title"]).obfuscate(input), expected);
-    }
-
-    #[test]
-    fn test_keep_key_wallet() {
-        // obfuscate.mongo.json.keep_values
-        let input = r#"{"email":"dev@datadoghq.com","company_wallet_configuration_id":1}"#;
-        let expected = r#"{"email":"?","company_wallet_configuration_id":1}"#;
-        assert_json_eq(
-            &obf(&["company_wallet_configuration_id"]).obfuscate(input),
-            expected,
+    fn test_partial_json_appends_ellipsis() {
+        let result = obf(&[]).obfuscate(r#"{"key": "value""#);
+        assert!(
+            result.ends_with("..."),
+            "expected '...' suffix, got: {result}"
         );
     }
 
     #[test]
     fn test_multiple_json_objects() {
         // Multiple concatenated JSON objects (elasticsearch bulk API pattern).
-        // The output is also concatenated — parse each value out of the stream.
         let input = r#"{"index":{"_index":"traces","_type":"trace"}} {"value":1,"name":"test"}"#;
         let result = obf(&[]).obfuscate(input);
         let mut stream =
@@ -212,30 +270,12 @@ mod tests {
     }
 
     #[test]
-    fn test_invalid_json_appends_ellipsis() {
-        let result = obf(&[]).obfuscate("INVALID");
-        assert_eq!(result, "...\n");
-    }
-
-    #[test]
-    fn test_partial_json_appends_ellipsis() {
-        // A truncated JSON object — partial output + "..."
-        let result = obf(&[]).obfuscate(r#"{"key": "value""#);
-        assert!(
-            result.ends_with("...\n"),
-            "expected '...' suffix, got: {result}"
-        );
-    }
-
-    #[test]
     fn test_transform_key_sql_basic() {
-        // obfuscate.sql.json.basic
         let input = r#"{"query":"select * from table where id = 2","hello":"world","hi":"there"}"#;
         let result = obf_sql(&["hello"], &["query"]).obfuscate(input);
         let val: serde_json::Value = serde_json::from_str(&result).unwrap();
         assert_eq!(val["hello"], json!("world"));
         assert_eq!(val["hi"], json!("?"));
-        // SQL obfuscated: literal 2 → ?
         assert!(
             val["query"].as_str().unwrap().contains('?'),
             "SQL value should be obfuscated"
@@ -244,7 +284,6 @@ mod tests {
 
     #[test]
     fn test_transform_key_with_object_value_falls_through() {
-        // obfuscate.sql.json.tried_sql_obfuscate_an_object
         let input = r#"{"object":{"not a":"query"}}"#;
         let expected = r#"{"object":{"not a":"?"}}"#;
         assert_json_eq(&obf_sql(&[], &["object"]).obfuscate(input), expected);
@@ -252,33 +291,8 @@ mod tests {
 
     #[test]
     fn test_transform_key_with_array_value_falls_through() {
-        // obfuscate.sql.json.tried_sql_obfuscate_an_array
         let input = r#"{"object":["not","a","query"]}"#;
         let expected = r#"{"object":["?","?","?"]}"#;
         assert_json_eq(&obf_sql(&[], &["object"]).obfuscate(input), expected);
-    }
-
-    #[test]
-    fn test_empty_object() {
-        assert_json_eq(&obf(&[]).obfuscate("{}"), "{}");
-    }
-
-    #[test]
-    fn test_empty_array() {
-        assert_json_eq(&obf(&[]).obfuscate("[]"), "[]");
-    }
-
-    #[test]
-    fn test_nested_empty_objects() {
-        let input = r#"{"a":{},"b":{"c":{}}}"#;
-        let expected = r#"{"a":{},"b":{"c":{}}}"#;
-        assert_json_eq(&obf(&[]).obfuscate(input), expected);
-    }
-
-    #[test]
-    fn test_boolean_and_null_obfuscated() {
-        let input = r#"{"a":true,"b":false,"c":null}"#;
-        let expected = r#"{"a":"?","b":"?","c":"?"}"#;
-        assert_json_eq(&obf(&[]).obfuscate(input), expected);
     }
 }
