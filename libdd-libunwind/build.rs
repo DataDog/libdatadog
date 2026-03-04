@@ -9,13 +9,41 @@ fn main() {
 #[cfg(target_os = "linux")]
 mod linux {
     use std::env;
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
+
+    const LIBUNWIND_REPO: &str = "https://github.com/DataDog/libunwind";
+    const LIBUNWIND_BRANCH: &str = "kevin/v1.8.1-custom-2";
+
+    fn clone_libunwind(out_dir: &Path) -> PathBuf {
+        let source_dir = out_dir.join("libunwind-src");
+        if source_dir.exists() {
+            eprintln!("Using cached libunwind source");
+            return source_dir;
+        }
+
+        eprintln!(
+            "Cloning libunwind from {LIBUNWIND_REPO} (branch: {LIBUNWIND_BRANCH})..."
+        );
+        let status = std::process::Command::new("git")
+            .args([
+                "clone",
+                "--depth=1",
+                "--branch",
+                LIBUNWIND_BRANCH,
+                LIBUNWIND_REPO,
+                source_dir.to_str().unwrap(),
+            ])
+            .status()
+            .expect("Failed to run git. Is git installed?");
+        assert!(status.success(), "Failed to clone libunwind");
+
+        source_dir
+    }
 
     pub(crate) fn main() {
         let out_dir = PathBuf::from(env::var("OUT_DIR").unwrap());
         let build_dir = out_dir.join("libunwind_build");
-        let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap();
-        let libunwind_dir = std::path::Path::new(&manifest_dir).join("libunwind");
+        let libunwind_dir = clone_libunwind(&out_dir);
 
         // Check if libunwind submodule is initialized
         if !libunwind_dir.exists() || std::fs::read_dir(&libunwind_dir).unwrap().next().is_none() {
@@ -115,17 +143,13 @@ mod linux {
         println!("cargo:rustc-link-lib=static=unwind-{}", arch);
 
         // Export paths to dependent crates via DEP_UNWIND_* environment variables
-        // These are automatically passed to crates that depend on us
         println!("cargo:include={}", include_path.display());
         println!("cargo:lib={}", lib_path.display());
-        println!("cargo:libdir={}", lib_path.display()); // Alternative name
+        println!("cargo:libdir={}", lib_path.display());
         println!("cargo:root={}", build_dir.display());
 
         eprintln!("libunwind library ready at {}", lib_path.display());
 
-        // More specific rerun triggers
-        println!("cargo:rerun-if-changed={}/src", libunwind_dir.display());
-        println!("cargo:rerun-if-changed={}/include", libunwind_dir.display());
         println!("cargo:rerun-if-changed=build.rs");
     }
 }
