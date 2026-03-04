@@ -3,11 +3,11 @@
 
 // Port of Agent's pkg/obfuscate/json_scanner.go.
 
-/// Opcode returned by [`Scanner::step`] for each input byte.
+/// Opcode returned by [`Scanner::step`] for each input char.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum Op {
-    Continue,     // uninteresting byte (inside a literal)
-    BeginLiteral, // first byte of a string / number / bool / null
+    Continue,     // uninteresting char (inside a literal)
+    BeginLiteral, // first char of a string / number / bool / null
     BeginObject,  // '{'
     ObjectKey,    // ':' — object key just finished
     ObjectValue,  // ',' — non-last object value just finished
@@ -55,15 +55,15 @@ enum State {
     Error,
 }
 
-/// A streaming JSON scanner. Feed bytes one at a time via [`Scanner::step`];
-/// the returned [`Op`] describes the structural significance of each byte.
+/// A streaming JSON scanner. Feed chars one at a time via [`Scanner::step`];
+/// the returned [`Op`] describes the structural significance of each char.
 pub(crate) struct Scanner {
     state: State,
     end_top: bool,
     parse_state: Vec<ParseState>,
     err: Option<String>,
-    /// Total bytes consumed — incremented by the caller before each `step` call.
-    pub(crate) bytes: i64,
+    /// Total chars consumed — incremented by the caller before each `step` call.
+    position: i64,
 }
 
 impl Scanner {
@@ -73,7 +73,7 @@ impl Scanner {
             end_top: false,
             parse_state: Vec::new(),
             err: None,
-            bytes: 0,
+            position: 0,
         }
     }
 
@@ -93,21 +93,22 @@ impl Scanner {
         if self.end_top {
             return Op::End;
         }
-        self.step(b' ');
+        self.step(' ');
         if self.end_top {
             return Op::End;
         }
         if self.err.is_none() {
             self.err = Some(format!(
-                "unexpected end of JSON input at byte {}",
-                self.bytes
+                "unexpected end of JSON input at char position {}",
+                self.position
             ));
         }
         Op::Error
     }
 
-    /// Advances the scanner by one byte and returns its structural opcode.
-    pub(crate) fn step(&mut self, c: u8) -> Op {
+    /// Advances the scanner by one char and returns its structural opcode.
+    pub(crate) fn step(&mut self, c: char) -> Op {
+        self.position += 1;
         match self.state {
             State::BeginValue => self.begin_value(c),
 
@@ -115,7 +116,7 @@ impl Scanner {
                 if is_space(c) {
                     return Op::SkipSpace;
                 }
-                if c == b']' {
+                if c == ']' {
                     return self.end_value(c);
                 }
                 self.begin_value(c)
@@ -125,7 +126,7 @@ impl Scanner {
                 if is_space(c) {
                     return Op::SkipSpace;
                 }
-                if c == b'}' {
+                if c == '}' {
                     // Empty object: mark last parse state as ObjectValue so
                     // end_value sees a "}" in ObjectValue context.
                     if let Some(ps) = self.parse_state.last_mut() {
@@ -141,24 +142,24 @@ impl Scanner {
             State::EndTop => self.end_top(c),
 
             State::InString => match c {
-                b'"' => {
+                '"' => {
                     self.state = State::EndValue;
                     Op::Continue
                 }
-                b'\\' => {
+                '\\' => {
                     self.state = State::InStringEsc;
                     Op::Continue
                 }
-                _ if c < 0x20 => self.error(c, "in string literal"),
+                '\x00'..'\x20' => self.error(c, "in string literal"),
                 _ => Op::Continue,
             },
 
             State::InStringEsc => match c {
-                b'b' | b'f' | b'n' | b'r' | b't' | b'\\' | b'/' | b'"' => {
+                'b' | 'f' | 'n' | 'r' | 't' | '\\' | '/' | '"' => {
                     self.state = State::InString;
                     Op::Continue
                 }
-                b'u' => {
+                'u' => {
                     self.state = State::InStringEscU;
                     Op::Continue
                 }
@@ -172,10 +173,10 @@ impl Scanner {
             State::InStringEscU123 => self.hex_digit(c, State::InString),
 
             State::Neg => {
-                if c == b'0' {
+                if c == '0' {
                     self.state = State::Num0;
                     Op::Continue
-                } else if (b'1'..=b'9').contains(&c) {
+                } else if ('1'..='9').contains(&c) {
                     self.state = State::Num1;
                     Op::Continue
                 } else {
@@ -206,7 +207,7 @@ impl Scanner {
             State::Dot0 => {
                 if c.is_ascii_digit() {
                     Op::Continue
-                } else if c == b'e' || c == b'E' {
+                } else if c == 'e' || c == 'E' {
                     self.state = State::Exp;
                     Op::Continue
                 } else {
@@ -215,7 +216,7 @@ impl Scanner {
             }
 
             State::Exp => {
-                if c == b'+' || c == b'-' {
+                if c == '+' || c == '-' {
                     self.state = State::ExpSign;
                     Op::Continue
                 } else {
@@ -234,16 +235,16 @@ impl Scanner {
             }
 
             // Literal keywords: "true", "false", "null"
-            State::T => self.lit(c, b'r', State::Tr, "in literal true (expecting 'r')"),
-            State::Tr => self.lit(c, b'u', State::Tru, "in literal true (expecting 'u')"),
-            State::Tru => self.lit_end(c, b'e', "in literal true (expecting 'e')"),
-            State::F => self.lit(c, b'a', State::Fa, "in literal false (expecting 'a')"),
-            State::Fa => self.lit(c, b'l', State::Fal, "in literal false (expecting 'l')"),
-            State::Fal => self.lit(c, b's', State::Fals, "in literal false (expecting 's')"),
-            State::Fals => self.lit_end(c, b'e', "in literal false (expecting 'e')"),
-            State::N => self.lit(c, b'u', State::Nu, "in literal null (expecting 'u')"),
-            State::Nu => self.lit(c, b'l', State::Nul, "in literal null (expecting 'l')"),
-            State::Nul => self.lit_end(c, b'l', "in literal null (expecting 'l')"),
+            State::T => self.lit(c, 'r', State::Tr, "in literal true (expecting 'r')"),
+            State::Tr => self.lit(c, 'u', State::Tru, "in literal true (expecting 'u')"),
+            State::Tru => self.lit_end(c, 'e', "in literal true (expecting 'e')"),
+            State::F => self.lit(c, 'a', State::Fa, "in literal false (expecting 'a')"),
+            State::Fa => self.lit(c, 'l', State::Fal, "in literal false (expecting 'l')"),
+            State::Fal => self.lit(c, 's', State::Fals, "in literal false (expecting 's')"),
+            State::Fals => self.lit_end(c, 'e', "in literal false (expecting 'e')"),
+            State::N => self.lit(c, 'u', State::Nu, "in literal null (expecting 'u')"),
+            State::Nu => self.lit(c, 'l', State::Nul, "in literal null (expecting 'l')"),
+            State::Nul => self.lit_end(c, 'l', "in literal null (expecting 'l')"),
 
             State::Error => Op::Error,
         }
@@ -251,46 +252,46 @@ impl Scanner {
 
     // --- Helper methods ---
 
-    fn begin_value(&mut self, c: u8) -> Op {
+    fn begin_value(&mut self, c: char) -> Op {
         if is_space(c) {
             return Op::SkipSpace;
         }
         match c {
-            b'{' => {
+            '{' => {
                 self.state = State::BeginStringOrEmpty;
                 self.parse_state.push(ParseState::ObjectKey);
                 Op::BeginObject
             }
-            b'[' => {
+            '[' => {
                 self.state = State::BeginValueOrEmpty;
                 self.parse_state.push(ParseState::ArrayValue);
                 Op::BeginArray
             }
-            b'"' => {
+            '"' => {
                 self.state = State::InString;
                 Op::BeginLiteral
             }
-            b'-' => {
+            '-' => {
                 self.state = State::Neg;
                 Op::BeginLiteral
             }
-            b'0' => {
+            '0' => {
                 self.state = State::Num0;
                 Op::BeginLiteral
             }
-            b't' => {
+            't' => {
                 self.state = State::T;
                 Op::BeginLiteral
             }
-            b'f' => {
+            'f' => {
                 self.state = State::F;
                 Op::BeginLiteral
             }
-            b'n' => {
+            'n' => {
                 self.state = State::N;
                 Op::BeginLiteral
             }
-            b'1'..=b'9' => {
+            '1'..='9' => {
                 self.state = State::Num1;
                 Op::BeginLiteral
             }
@@ -298,11 +299,11 @@ impl Scanner {
         }
     }
 
-    fn begin_string(&mut self, c: u8) -> Op {
+    fn begin_string(&mut self, c: char) -> Op {
         if is_space(c) {
             return Op::SkipSpace;
         }
-        if c == b'"' {
+        if c == '"' {
             self.state = State::InString;
             Op::BeginLiteral
         } else {
@@ -310,7 +311,7 @@ impl Scanner {
         }
     }
 
-    fn end_value(&mut self, c: u8) -> Op {
+    fn end_value(&mut self, c: char) -> Op {
         let n = self.parse_state.len();
         if n == 0 {
             self.state = State::EndTop;
@@ -323,7 +324,7 @@ impl Scanner {
         }
         match self.parse_state[n - 1] {
             ParseState::ObjectKey => {
-                if c == b':' {
+                if c == ':' {
                     self.parse_state[n - 1] = ParseState::ObjectValue;
                     self.state = State::BeginValue;
                     Op::ObjectKey
@@ -332,11 +333,11 @@ impl Scanner {
                 }
             }
             ParseState::ObjectValue => {
-                if c == b',' {
+                if c == ',' {
                     self.parse_state[n - 1] = ParseState::ObjectKey;
                     self.state = State::BeginString;
                     Op::ObjectValue
-                } else if c == b'}' {
+                } else if c == '}' {
                     self.pop_parse_state();
                     Op::EndObject
                 } else {
@@ -344,10 +345,10 @@ impl Scanner {
                 }
             }
             ParseState::ArrayValue => {
-                if c == b',' {
+                if c == ',' {
                     self.state = State::BeginValue;
                     Op::ArrayValue
-                } else if c == b']' {
+                } else if c == ']' {
                     self.pop_parse_state();
                     Op::EndArray
                 } else {
@@ -357,9 +358,9 @@ impl Scanner {
         }
     }
 
-    fn end_top(&mut self, c: u8) -> Op {
+    fn end_top(&mut self, c: char) -> Op {
         if !is_space(c) {
-            // A new JSON value is starting. Reset and process this byte fresh.
+            // A new JSON value is starting. Reset and process this char fresh.
             // This allows multiple concatenated JSON objects (ElasticSearch bulk API).
             self.reset();
             self.step(c)
@@ -380,13 +381,13 @@ impl Scanner {
     }
 
     /// After a decimal point: consume digits, optional exponent, then end value.
-    fn num0(&mut self, c: u8) -> Op {
+    fn num0(&mut self, c: char) -> Op {
         match c {
-            b'.' => {
+            '.' => {
                 self.state = State::Dot;
                 Op::Continue
             }
-            b'e' | b'E' => {
+            'e' | 'E' => {
                 self.state = State::Exp;
                 Op::Continue
             }
@@ -394,7 +395,7 @@ impl Scanner {
         }
     }
 
-    fn exp_sign(&mut self, c: u8) -> Op {
+    fn exp_sign(&mut self, c: char) -> Op {
         if c.is_ascii_digit() {
             self.state = State::Exp0;
             Op::Continue
@@ -404,7 +405,7 @@ impl Scanner {
     }
 
     /// One hex digit in a `\uXXXX` escape; on success transitions to `next`.
-    fn hex_digit(&mut self, c: u8, next: State) -> Op {
+    fn hex_digit(&mut self, c: char, next: State) -> Op {
         if c.is_ascii_hexdigit() {
             self.state = next;
             Op::Continue
@@ -414,7 +415,7 @@ impl Scanner {
     }
 
     /// One character in a keyword literal (true/false/null); on match transitions to `next`.
-    fn lit(&mut self, c: u8, expected: u8, next: State, ctx: &'static str) -> Op {
+    fn lit(&mut self, c: char, expected: char, next: State, ctx: &'static str) -> Op {
         if c == expected {
             self.state = next;
             Op::Continue
@@ -424,7 +425,7 @@ impl Scanner {
     }
 
     /// Last character in a keyword literal; on match transitions to `EndValue`.
-    fn lit_end(&mut self, c: u8, expected: u8, ctx: &'static str) -> Op {
+    fn lit_end(&mut self, c: char, expected: char, ctx: &'static str) -> Op {
         if c == expected {
             self.state = State::EndValue;
             Op::Continue
@@ -433,16 +434,16 @@ impl Scanner {
         }
     }
 
-    fn error(&mut self, c: u8, ctx: &str) -> Op {
+    fn error(&mut self, c: char, ctx: &str) -> Op {
         self.state = State::Error;
-        self.err = Some(format!("invalid character '{}' {}", c.escape_ascii(), ctx));
+        self.err = Some(format!("invalid character '{}' {}", c, ctx));
         Op::Error
     }
 }
 
 #[inline]
-fn is_space(c: u8) -> bool {
-    matches!(c, b' ' | b'\t' | b'\r' | b'\n')
+fn is_space(c: char) -> bool {
+    matches!(c, ' ' | '\t' | '\r' | '\n')
 }
 
 #[cfg(test)]
@@ -452,9 +453,9 @@ mod tests {
     #[test]
     fn test_valid_empty_object() {
         let mut s = Scanner::new();
-        for &c in b"{}" {
-            s.bytes += 1;
-            assert_ne!(s.step(c), Op::Error, "error on byte '{}'", c as char);
+        for c in "{}".chars() {
+            s.position += 1;
+            assert_ne!(s.step(c), Op::Error, "error on char '{}'", c as char);
         }
         assert_eq!(s.eof(), Op::End);
     }
@@ -462,9 +463,9 @@ mod tests {
     #[test]
     fn test_valid_nested_json() {
         let mut s = Scanner::new();
-        for &c in br#"{"key":"value","num":42}"# {
-            s.bytes += 1;
-            assert_ne!(s.step(c), Op::Error, "error on byte '{}'", c as char);
+        for c in r#"{"key":"value","num":42}"#.chars() {
+            s.position += 1;
+            assert_ne!(s.step(c), Op::Error, "error on char '{}'", c as char);
         }
         assert_eq!(s.eof(), Op::End);
     }
@@ -472,8 +473,8 @@ mod tests {
     #[test]
     fn test_truncated_input_returns_error_on_eof() {
         let mut s = Scanner::new();
-        for &c in br#"{"key":"# {
-            s.bytes += 1;
+        for c in r#"{"key":"#.chars() {
+            s.position += 1;
             s.step(c);
         }
         assert_eq!(s.eof(), Op::Error);
@@ -482,16 +483,16 @@ mod tests {
     #[test]
     fn test_invalid_input_returns_error() {
         let mut s = Scanner::new();
-        s.bytes += 1;
-        assert_eq!(s.step(b')'), Op::Error);
+        s.position += 1;
+        assert_eq!(s.step(')'), Op::Error);
     }
 
     #[test]
     fn test_multiple_json_objects_no_errors() {
         let mut s = Scanner::new();
-        for &c in br#"{"a":1} {"b":2}"# {
-            s.bytes += 1;
-            assert_ne!(s.step(c), Op::Error, "error on byte '{}'", c as char);
+        for c in r#"{"a":1} {"b":2}"#.chars() {
+            s.position += 1;
+            assert_ne!(s.step(c), Op::Error, "error on char '{}'", c as char);
         }
     }
 }

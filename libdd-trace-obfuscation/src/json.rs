@@ -20,6 +20,11 @@ pub struct JsonObfuscator {
     transformer: Option<Transformer>,
 }
 
+enum ClosureKind {
+    Array,
+    Object,
+}
+
 impl JsonObfuscator {
     pub fn new(
         keep_keys: impl IntoIterator<Item = String>,
@@ -40,27 +45,26 @@ impl JsonObfuscator {
 
         let mut out = String::with_capacity(input.len());
         let mut scanner = Scanner::new();
-        let mut buf = String::new(); // accumulates key bytes or transform-value bytes
-        let mut closures: Vec<bool> = Vec::new(); // true = object, false = array
+        let mut buf = String::new(); // accumulates key chars or transform-value chars
+        let mut closures: Vec<ClosureKind> = Vec::new();
         let mut keep_depth: usize = 0;
         let mut key = false;
         let mut wiped = false;
         let mut keeping = false;
         let mut transforming_value = false;
 
-        for &c in input.as_bytes() {
-            scanner.bytes += 1;
+        for c in input.chars() {
             let op = scanner.step(c);
             let depth = closures.len(); // snapshot before any mutation
 
             match op {
                 Op::BeginObject => {
-                    closures.push(true);
+                    closures.push(ClosureKind::Object);
                     set_key(&closures, &mut key, &mut wiped);
                     transforming_value = false;
                 }
                 Op::BeginArray => {
-                    closures.push(false);
+                    closures.push(ClosureKind::Array);
                     set_key(&closures, &mut key, &mut wiped);
                     transforming_value = false;
                 }
@@ -127,7 +131,7 @@ impl JsonObfuscator {
                     out.push_str("...");
                     return out;
                 }
-                Op::End => {} // whitespace between JSON objects — fall through to output byte
+                Op::End => {} // whitespace between JSON objects — fall through to output char
             }
 
             out.push(c as char);
@@ -142,9 +146,9 @@ impl JsonObfuscator {
 
 /// Updates `key` and `wiped` based on the current closure stack.
 /// `key` is true at top level or when inside an object (not an array).
-fn set_key(closures: &[bool], key: &mut bool, wiped: &mut bool) {
+fn set_key(closures: &[ClosureKind], key: &mut bool, wiped: &mut bool) {
     let n = closures.len();
-    *key = n == 0 || closures[n - 1];
+    *key = n == 0 || matches!(closures[n - 1], ClosureKind::Object);
     *wiped = false;
 }
 
@@ -210,6 +214,7 @@ mod tests {
         test_name                         keep_keys           input                                                                                                                          expected;
         [test_empty_object]               [&[]]               ["{}"]                                                                                                                         ["{}"];
         [test_empty_array]                [&[]]               ["[]"]                                                                                                                         ["[]"];
+        [test_emoji_object]                [&["🐵"]]               [r#"{"🐵":"🙊"}"#]                                                                                                                         [r#"{"🐵":"🙊"}"#];
         [test_nested_empty_objects]       [&[]]               [r#"{"a":{},"b":{"c":{}}}"#]                                                                                                  [r#"{"a":{},"b":{"c":{}}}"#];
         [test_boolean_and_null_obfuscated][&[]]               [r#"{"a":true,"b":false,"c":null}"#]                                                                                          [r#"{"a":"?","b":"?","c":"?"}"#];
         [test_all_values_obfuscated]      [&[]]               [r#"{"query":{"multi_match":{"query":"guide","fields":["_all",{"key":"value","other":["1","2",{"k":"v"}]},"2"]}}}"#]           [r#"{"query":{"multi_match":{"query":"?","fields":["?",{"key":"?","other":["?","?",{"k":"?"}]},"?"]}}}"#];
@@ -231,6 +236,8 @@ mod tests {
     #[duplicate_item(
         test_name                           input                                                                    expected;
         [test_empty_input]                  [""]                                                                     [""];
+        [test_invalid_emoji]                ["🤨"]                                                                   ["..."];
+        [test_invalid_unicode]              ["ჸ"]                                                                    ["..."];
         [test_invalid_json_appends_ellipsis]["INVALID"]                                                              ["..."];
         [test_invalid_single_char]          [")"]                                                                    ["..."];
         [test_truncated_open_value_string]  [r#"{"query":""#]                                                       [r#"{"query":"?"..."#];
@@ -239,15 +246,6 @@ mod tests {
     #[test]
     fn test_name() {
         assert_eq!(obf(&[]).obfuscate(input), expected);
-    }
-
-    #[test]
-    fn test_partial_json_appends_ellipsis() {
-        let result = obf(&[]).obfuscate(r#"{"key": "value""#);
-        assert!(
-            result.ends_with("..."),
-            "expected '...' suffix, got: {result}"
-        );
     }
 
     #[test]
