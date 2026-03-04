@@ -72,7 +72,11 @@ impl Liaison for SharedDirLiaison {
             }
             fs::remove_file(&self.socket_path)?;
         }
-        Ok(Some(UnixListener::bind(&self.socket_path)?))
+        let listener = UnixListener::bind(&self.socket_path)?;
+        // Make the socket world-accessible so PHP workers running as a different user
+        // (e.g. www-data under PHP-FPM when the master started as root) can connect.
+        let _ = fs::set_permissions(&self.socket_path, fs::Permissions::from_mode(0o777));
+        Ok(Some(listener))
     }
 
     fn ipc_shared() -> Self {
@@ -112,10 +116,8 @@ impl SharedDirLiaison {
     }
 
     pub fn ipc_for_pid(pid: u32) -> Self {
-        let uid = crate::sidecar_master_uid();
         let base_dir = env::temp_dir().join("libdatadog");
-        let versioned_socket_basename =
-            format!("libdd.{}@{}-{}.sock", crate::sidecar_version!(), uid, pid);
+        let versioned_socket_basename = format!("libdd.{}@{}.sock", crate::sidecar_version!(), pid);
         let socket_path = base_dir.join(&versioned_socket_basename);
         let lock_path = base_dir
             .join(&versioned_socket_basename)
@@ -180,6 +182,16 @@ mod linux {
             let path = PathBuf::from(format!(
                 concat!("libdatadog/", crate::sidecar_version!(), ".{}.sock"),
                 getpid()
+            ));
+            Self { path }
+        }
+    }
+
+    impl AbstractUnixSocketLiaison {
+        pub fn ipc_for_pid(pid: u32) -> Self {
+            let path = PathBuf::from(format!(
+                concat!("libdatadog/", crate::sidecar_version!(), "@{}.sock"),
+                pid
             ));
             Self { path }
         }

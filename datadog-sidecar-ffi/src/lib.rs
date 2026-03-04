@@ -316,10 +316,7 @@ pub extern "C" fn ddog_sidecar_connect(connection: &mut *mut SidecarTransport) -
 pub extern "C" fn ddog_sidecar_connect_master(pid: i32) -> MaybeError {
     let cfg = datadog_sidecar::config::FromEnv::config();
     #[cfg(unix)]
-    {
-        datadog_sidecar::set_sidecar_master_pid(pid as u32);
-        datadog_sidecar::set_sidecar_master_uid(unsafe { libc::geteuid() });
-    }
+    datadog_sidecar::set_sidecar_master_pid(pid as u32);
     try_c!(MasterListener::start(pid, cfg));
 
     MaybeError::None

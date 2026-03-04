@@ -135,23 +135,8 @@ pub fn setup_daemon_process(
 
 static SIDECAR_MASTER_PID: AtomicU32 = AtomicU32::new(0);
 
-static SIDECAR_MASTER_UID: AtomicU32 = AtomicU32::new(u32::MAX);
-
 pub fn set_sidecar_master_pid(pid: u32) {
     SIDECAR_MASTER_PID.store(pid, Ordering::Relaxed);
-}
-
-pub fn set_sidecar_master_uid(uid: u32) {
-    SIDECAR_MASTER_UID.store(uid, Ordering::Relaxed);
-}
-
-pub fn sidecar_master_uid() -> u32 {
-    let uid = SIDECAR_MASTER_UID.load(Ordering::Relaxed);
-    if uid != u32::MAX {
-        uid
-    } else {
-        unsafe { libc::geteuid() }
-    }
 }
 
 pub fn primary_sidecar_identifier() -> u32 {

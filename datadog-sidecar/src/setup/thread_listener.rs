@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use std::io;
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::thread::{self, JoinHandle};
 use tokio::net::UnixListener;
 use tokio::sync::oneshot;
@@ -11,7 +11,11 @@ use tracing::{error, info};
 use crate::config::Config;
 use crate::entry::MainLoopConfig;
 use crate::service::blocking::SidecarTransport;
-use crate::setup::{Liaison, SharedDirLiaison};
+#[cfg(target_os = "linux")]
+use crate::setup::AbstractUnixSocketLiaison;
+use crate::setup::Liaison;
+#[cfg(not(target_os = "linux"))]
+use crate::setup::SharedDirLiaison;
 use datadog_ipc::transport::blocking::BlockingTransport;
 
 static MASTER_LISTENER: OnceLock<Mutex<Option<MasterListener>>> = OnceLock::new();
@@ -148,38 +152,52 @@ async fn accept_socket_loop_thread(
     Ok(())
 }
 
-/// Entry point for thread listener - calls enter_listener_loop_with_config
+/// Entry point for thread listener.
+///
+/// Uses a single-threaded Tokio runtime (current_thread) to avoid spawning extra OS
+/// threads. A multi-thread runtime would leave worker threads visible to LSan/ASAN at
+/// process exit, causing "Running thread was not suspended" warnings. With
+/// current_thread all async work runs on this OS thread; no other threads are created.
 fn run_listener(pid: u32, _config: Config, shutdown_rx: oneshot::Receiver<()>) -> io::Result<()> {
     info!("Listener thread running, creating IPC server");
 
-    let acquire_listener = move || {
-        // In thread mode, always use a pid-specific socket so that multiple PHP processes
-        // with the same euid do not share a listener.
-        let liaison = SharedDirLiaison::ipc_for_pid(pid);
+    #[cfg(target_os = "linux")]
+    let liaison = AbstractUnixSocketLiaison::ipc_for_pid(pid);
+    #[cfg(not(target_os = "linux"))]
+    let liaison = SharedDirLiaison::ipc_for_pid(pid);
 
-        let std_listener = liaison
-            .attempt_listen()?
-            .ok_or_else(|| io::Error::other("Failed to create IPC listener"))?;
+    let std_listener = liaison
+        .attempt_listen()?
+        .ok_or_else(|| io::Error::other("Failed to create IPC listener"))?;
 
-        std_listener.set_nonblocking(true)?;
-        let listener = UnixListener::from_std(std_listener)?;
+    std_listener.set_nonblocking(true)?;
 
-        info!("IPC server listening for worker connections");
+    info!("IPC server listening for worker connections");
 
-        let cancel = || {};
-        Ok((
-            move |handler| accept_socket_loop_thread(listener, handler, shutdown_rx),
-            cancel,
-        ))
-    };
-
+    let cancel = || {};
     let loop_config = MainLoopConfig {
         enable_ctrl_c_handler: false,
         enable_crashtracker: false,
         external_shutdown_rx: None,
     };
 
-    crate::entry::enter_listener_loop_with_config(acquire_listener, loop_config)
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|e| io::Error::other(format!("Failed building tokio runtime: {}", e)))?;
+
+    // UnixListener::from_std() requires a Tokio reactor context, so it must be
+    // called inside block_on rather than before the runtime is built.
+    runtime
+        .block_on(async {
+            let listener = UnixListener::from_std(std_listener)?;
+            crate::entry::main_loop(
+                move |handler| accept_socket_loop_thread(listener, handler, shutdown_rx),
+                Arc::new(cancel),
+                loop_config,
+            )
+            .await
+        })
         .map_err(|e| io::Error::other(format!("Thread listener failed: {}", e)))?;
 
     info!("Listener thread exiting");
@@ -193,6 +211,9 @@ pub fn connect_to_master(pid: i32) -> io::Result<Box<SidecarTransport>> {
     info!("Connecting to master listener (PID {})", pid);
 
     // Use the same pid-specific socket path as the master listener.
+    #[cfg(target_os = "linux")]
+    let liaison = AbstractUnixSocketLiaison::ipc_for_pid(pid as u32);
+    #[cfg(not(target_os = "linux"))]
     let liaison = SharedDirLiaison::ipc_for_pid(pid as u32);
 
     let channel = liaison
