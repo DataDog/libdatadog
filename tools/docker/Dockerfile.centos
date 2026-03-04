@@ -12,7 +12,7 @@ RUN sed -i s/mirror.centos.org/vault.centos.org/g /etc/yum.repos.d/*.repo \
     && sed -i s/^#.*baseurl=http/baseurl=http/g /etc/yum.repos.d/*.repo \
     && sed -i s/^mirrorlist=http/#mirrorlist=http/g /etc/yum.repos.d/*.repo \
     && yum update -y \
-    && yum install -y devtoolset-11 \
+    && yum install -y devtoolset-11 autoconf automake libtool \
     && yum clean all
 
 ENV PATH="/opt/rh/devtoolset-11/root/usr/bin:$PATH"

@@ -21,10 +21,9 @@ mod linux {
             return source_dir;
         }
 
-        eprintln!(
-            "Cloning libunwind from {LIBUNWIND_REPO} (branch: {LIBUNWIND_BRANCH})..."
-        );
+        eprintln!("Cloning libunwind from {LIBUNWIND_REPO} (branch: {LIBUNWIND_BRANCH})...");
         let status = std::process::Command::new("git")
+            .env("HOME", out_dir)
             .args([
                 "clone",
                 "--depth=1",
