@@ -455,7 +455,7 @@ mod tests {
         let mut s = Scanner::new();
         for c in "{}".chars() {
             s.position += 1;
-            assert_ne!(s.step(c), Op::Error, "error on char '{}'", c as char);
+            assert_ne!(s.step(c), Op::Error, "error on char '{}'", { c });
         }
         assert_eq!(s.eof(), Op::End);
     }
@@ -465,7 +465,7 @@ mod tests {
         let mut s = Scanner::new();
         for c in r#"{"key":"value","num":42}"#.chars() {
             s.position += 1;
-            assert_ne!(s.step(c), Op::Error, "error on char '{}'", c as char);
+            assert_ne!(s.step(c), Op::Error, "error on char '{}'", { c });
         }
         assert_eq!(s.eof(), Op::End);
     }
@@ -492,7 +492,7 @@ mod tests {
         let mut s = Scanner::new();
         for c in r#"{"a":1} {"b":2}"#.chars() {
             s.position += 1;
-            assert_ne!(s.step(c), Op::Error, "error on char '{}'", c as char);
+            assert_ne!(s.step(c), Op::Error, "error on char '{}'", { c });
         }
     }
 }
