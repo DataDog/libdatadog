@@ -35,6 +35,8 @@ pub struct AgentInfoStruct {
     pub peer_tags: Option<Vec<String>>,
     /// List of span kinds eligible for stats computation
     pub span_kinds_stats_computed: Option<Vec<String>>,
+    /// Org Propagation Marker, unique per org
+    pub opm: Option<String>,
 }
 
 #[allow(missing_docs)]

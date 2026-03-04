@@ -1342,6 +1342,21 @@ pub unsafe extern "C" fn ddog_get_agent_info_env<'a>(
         .unwrap_or(ffi::CharSlice::empty())
 }
 
+/// Gets the current agent info Org Propagation Marker (or empty if not existing)
+#[no_mangle]
+#[allow(clippy::missing_safety_doc)]
+pub unsafe extern "C" fn ddog_get_agent_info_opm<'a>(
+    reader: &'a mut AgentInfoReader,
+    changed: &mut bool,
+) -> ffi::CharSlice<'a> {
+    let (has_changed, info) = reader.read();
+    *changed = has_changed;
+    info.as_ref()
+        .and_then(|i| i.opm.as_ref())
+        .map(|s| ffi::CharSlice::from(s.as_str()))
+        .unwrap_or(ffi::CharSlice::empty())
+}
+
 #[macro_export]
 macro_rules! check {
     ($failable:expr, $msg:expr) => {
