@@ -126,7 +126,7 @@ mod tracing_integration_tests {
                 .set_test_session_token(snapshot_name);
 
             let trace_exporter = builder
-                .build::<DefaultHttpClient>()
+                .build()
                 .expect("Unable to build TraceExporter");
 
             let data = get_v04_trace_snapshot_test_payload("test_exporter_v04_snapshot");
@@ -181,7 +181,7 @@ mod tracing_integration_tests {
                 .set_input_format(TraceExporterInputFormat::V04)
                 .set_output_format(TraceExporterOutputFormat::V05);
             let trace_exporter = builder
-                .build::<DefaultHttpClient>()
+                .build()
                 .expect("Unable to build TraceExporter");
 
             let data = get_v04_trace_snapshot_test_payload("test_exporter_v04_v05_snapshot");
@@ -229,7 +229,7 @@ mod tracing_integration_tests {
                 .set_input_format(TraceExporterInputFormat::V05)
                 .set_output_format(TraceExporterOutputFormat::V05);
             let trace_exporter = builder
-                .build::<DefaultHttpClient>()
+                .build()
                 .expect("Unable to build TraceExporter");
 
             let data = get_v05_trace_snapshot_test_payload();
@@ -307,7 +307,7 @@ mod tracing_integration_tests {
                 .set_service("test");
 
             let trace_exporter = builder
-                .build::<DefaultHttpClient>()
+                .build()
                 .expect("Unable to build TraceExporter");
 
             let data = get_v04_trace_snapshot_test_payload("test_exporter_v04_snapshot_uds");
