@@ -71,7 +71,7 @@ fn main() {
         .enable_telemetry(telemetry_cfg)
         .enable_stats(Duration::from_secs(10));
     let exporter = builder
-        .build::<DefaultHttpClient>()
+        .build()
         .expect("Failed to build TraceExporter");
     let now = UNIX_EPOCH
         .elapsed()

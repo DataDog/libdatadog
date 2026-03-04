@@ -479,7 +479,7 @@ pub unsafe extern "C" fn ddog_trace_exporter_new(
                 builder.enable_health_metrics();
             }
 
-            match builder.build::<DefaultHttpClient>() {
+            match builder.build() {
                 Ok(exporter) => {
                     out_handle.as_ptr().write(Box::new(exporter));
                     None
