@@ -24,11 +24,13 @@ fn main() -> Result<()> {
     // Parse args
     let args: Vec<String> = std::env::args().collect();
     if args.len() < 2 {
-        return Err(anyhow!("A reference base needs to be passed"))
+        return Err(anyhow!("A reference base needs to be passed"));
     }
 
     let base_ref = &args[1];
-    
+
+    git::fetch_base(&base_ref)?;
+
     let changed_files = git::changed_files(&base_ref)?;
     log::info!("Changed files: {:?}", changed_files);
 
@@ -42,23 +44,23 @@ fn main() -> Result<()> {
     let workspace = workspace::load()?;
     let changed_crates = collect_changed_crates(&changed_files, workspace.members());
 
-
     if changed_crates.is_empty() {
         log::info!("Changed crates is empty");
-        return build_output(None, None, base_ref)
+        return build_output(None, None, base_ref);
     }
 
     let seeds: Vec<String> = changed_crates.iter().map(|c| c.name.clone()).collect();
 
     let result = workspace.affected_from(&seeds);
 
-    build_output(Some(changed_crates), Some(result.into_iter().collect()), base_ref)
+    build_output(
+        Some(changed_crates),
+        Some(result.into_iter().collect()),
+        base_ref,
+    )
 }
 
-fn collect_changed_crates(
-    changed_files: &[String],
-    members: &[Package],
-) -> Vec<CrateInfo> {
+fn collect_changed_crates(changed_files: &[String], members: &[Package]) -> Vec<CrateInfo> {
     let mut crates: Vec<CrateInfo> = Vec::new();
     let mut crate_inventory: HashSet<String> = HashSet::new();
 
@@ -66,16 +68,19 @@ fn collect_changed_crates(
         for member in members {
             if file.contains(member.name.as_str()) {
                 if crate_inventory.insert(member.name.to_string()) {
-                    crates.push(CrateInfo { 
+                    crates.push(CrateInfo {
                         name: member.name.as_str().to_string(),
-                        version: format!("{}.{}.{}", member.version.major, member.version.minor, member.version.patch),
+                        version: format!(
+                            "{}.{}.{}",
+                            member.version.major, member.version.minor, member.version.patch
+                        ),
                         manifest: member.manifest_path.clone().into(),
                         path: member.manifest_path.parent().unwrap().into(),
                         publish: if let Some(publishable) = &member.publish {
                             !publishable.is_empty()
                         } else {
                             true
-                        }
+                        },
                     });
                 }
             }
@@ -85,16 +90,25 @@ fn collect_changed_crates(
     crates
 }
 
-fn build_output(changed_crates: Option<Vec<CrateInfo>>, affected_crates: Option<Vec<String>>, base_ref: &str) -> Result<()> {
-    
+fn build_output(
+    changed_crates: Option<Vec<CrateInfo>>,
+    affected_crates: Option<Vec<String>>,
+    base_ref: &str,
+) -> Result<()> {
     let (changed, changed_len): (String, String) = if let Some(crates) = changed_crates {
-        (serde_json::to_string(&crates).unwrap_or("[]".to_string()), crates.len().to_string())
+        (
+            serde_json::to_string(&crates).unwrap_or("[]".to_string()),
+            crates.len().to_string(),
+        )
     } else {
         ("[]".to_string(), "0".to_string())
     };
 
     let (affected, affected_len): (String, String) = if let Some(crates) = affected_crates {
-        (serde_json::to_string(&crates).unwrap_or("[]".to_string()), crates.len().to_string())
+        (
+            serde_json::to_string(&crates).unwrap_or("[]".to_string()),
+            crates.len().to_string(),
+        )
     } else {
         ("[]".to_string(), "0".to_string())
     };
