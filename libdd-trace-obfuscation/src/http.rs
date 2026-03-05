@@ -204,11 +204,15 @@ pub fn obfuscate_url_string(
                 return go_like_reference(&url_for_join, remove_query_string);
             }
             // Go's url.Parse rejects control characters (bytes < 0x20 or 0x7F) in the PATH and
-            // returns "?". Control chars in the FRAGMENT are percent-encoded, not rejected.
-            // Only reject if there are control chars in the path portion (before '#').
+            // returns "?". BUT when both options are false, Go's obfuscateUserInfo returns
+            // the original URL on parse failure (no "?").
+            // Control chars in the FRAGMENT are percent-encoded, not rejected.
             {
                 let path_end = url.find('#').unwrap_or(url.len());
                 if url[..path_end].bytes().any(|b| b < 0x20 || b == 0x7F) {
+                    if !remove_query_string && !remove_path_digits {
+                        return url.to_string();
+                    }
                     return String::from("?");
                 }
                 // Pre-encode control chars in the fragment (if any) before go_like_reference.
@@ -567,7 +571,8 @@ mod tests {
             remove_query_string [false]
             remove_path_digits  [false]
             input               ["\u{10}"]
-            expected_output     ["?"];
+            // When both options false, Go returns original (obfuscateUserInfo passthrough)
+            expected_output     ["\u{10}"];
         ]
         [
             test_name           [non_printable_chars_and_unicode]
