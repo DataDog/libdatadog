@@ -167,11 +167,16 @@ pub fn obfuscate_url_string(
     let mut parsed_url = match Url::parse(url) {
         Ok(res) => {
             // For cannot-be-a-base (opaque) URIs like "A:ᏤᏤ", Go keeps the opaque
-            // path verbatim. Return the original with the scheme lowercased.
+            // path verbatim. Return with lowercased scheme.
+            // Exception: if the opaque part has control chars, Go's url.Parse fails
+            // and obfuscateUserInfo returns the original URL unchanged.
             if res.cannot_be_a_base() {
                 let scheme_len = url.find(':').unwrap_or(0);
-                let lowered = url[..scheme_len].to_lowercase() + &url[scheme_len..];
-                return lowered;
+                let opaque_part = &url[scheme_len..];
+                if opaque_part.bytes().any(|b| b < 0x20 || b == 0x7F) {
+                    return url.to_string(); // Go returns original on parse error
+                }
+                return url[..scheme_len].to_lowercase() + opaque_part;
             }
             res
         }
