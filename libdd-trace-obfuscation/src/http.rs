@@ -113,6 +113,20 @@ pub fn go_like_reference(input: &str, remove_query_string: bool) -> String {
     // base.as_str() is "https://example.invalid/"
     let base_prefix = base.as_str();
 
+    // For absolute-path inputs (starting with '/'), use the no-trailing-slash strip
+    // to preserve the leading '/' in the result. Otherwise base.join("/ჸ") resolves to
+    // "https://example.invalid/%E1%83%B8" and stripping the base WITH trailing slash
+    // drops the leading '/'.
+    if input.starts_with('/') {
+        if let Some(rest) = full.strip_prefix("https://example.invalid") {
+            if remove_query_string && resolved.query().is_some() {
+                let path_end = rest.find('?').unwrap_or(rest.len());
+                return format!("{}?", &rest[..path_end]);
+            }
+            return rest.to_string();
+        }
+    }
+
     if let Some(rest) = full.strip_prefix(base_prefix) {
         // relative path (e.g. "hello%20world" or "dir/hello%20world")
         if remove_query_string && resolved.query().is_some() {
@@ -541,6 +555,13 @@ mod tests {
             remove_path_digits  [true]
             input               ["!#ჸ"]
             expected_output     ["!#%E1%83%B8"];
+        ]
+        [
+            test_name           [fuzzing_slash_unicode]
+            remove_query_string [true]
+            remove_path_digits  [true]
+            input               ["/ჸ"]
+            expected_output     ["/%E1%83%B8"];
         ]
     )]
     #[test]
