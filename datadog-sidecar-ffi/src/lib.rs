@@ -324,6 +324,12 @@ pub extern "C" fn ddog_sidecar_connect_master(pid: i32) -> MaybeError {
 }
 
 #[no_mangle]
+#[cfg(unix)]
+pub extern "C" fn ddog_sidecar_set_shm_open_mode(mode: u32) {
+    datadog_ipc::platform::set_shm_open_mode(mode);
+}
+
+#[no_mangle]
 pub extern "C" fn ddog_sidecar_connect_worker(
     pid: i32,
     connection: &mut *mut SidecarTransport,
