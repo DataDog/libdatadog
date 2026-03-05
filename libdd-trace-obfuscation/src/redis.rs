@@ -63,6 +63,8 @@ pub fn quantize_redis_string(query: &str) -> String {
 }
 
 pub fn obfuscate_redis_string(cmd: &str) -> String {
+    // Go's newRedisTokenizer calls bytes.TrimSpace before tokenizing
+    let cmd = cmd.trim();
     let mut tokenizer = RedisTokenizer::new(cmd);
     let s = &mut String::new();
     let mut cmd: Option<&str> = None;
