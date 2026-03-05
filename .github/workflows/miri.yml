@@ -1,7 +1,9 @@
 name: Miri test
 on:
+  pull_request:
   push:
-
+    branches:
+      - main
 jobs:
   run-miri:
     runs-on: ubuntu-latest
