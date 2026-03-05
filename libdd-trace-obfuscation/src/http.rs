@@ -199,21 +199,20 @@ pub fn obfuscate_url_string(
                 //   (These are in validEncoded's allowlist so kept for pure-ASCII fragments,
                 //    but escape() encodes them too.)
                 let frag_has_non_ascii = fragment.bytes().any(|b| b > 127);
+                // Cat1: always encode in fragments; Cat2: encode when non-ASCII present
                 let url_for_join =
                     if fragment.bytes().any(|b| b < 0x20 || b == 0x7F || b == b'#')
-                        || (frag_has_non_ascii
-                            && fragment
-                                .chars()
-                                .any(|c| matches!(c, '\'' | '[' | ']')))
+                        || fragment.chars().any(|c| matches!(c, '{' | '}' | '|' | '^' | '`' | '\\' | '<' | '>' | ' '))
+                        || (frag_has_non_ascii && fragment.chars().any(|c| matches!(c, '\'' | '[' | ']')))
                     {
                         let mut encoded = String::from('#');
                         for c in fragment.chars() {
                             let cp = c as u32;
                             if cp < 0x20 || cp == 0x7F || c == '#' {
                                 encoded.push_str(&format!("%{cp:02X}"));
-                            } else if frag_has_non_ascii
-                                && matches!(c, '\'' | '[' | ']')
-                            {
+                            } else if matches!(c, '{' | '}' | '|' | '^' | '`' | '\\' | '<' | '>' | ' ') {
+                                encoded.push_str(&format!("%{:02X}", c as u8));
+                            } else if frag_has_non_ascii && matches!(c, '\'' | '[' | ']') {
                                 encoded.push_str(&format!("%{:02X}", c as u8));
                             } else {
                                 encoded.push(c);
@@ -274,6 +273,23 @@ pub fn obfuscate_url_string(
                         for c in pp.chars() { match c { '\\' | '^' | '{' | '}' | '|' | '<' | '>' | '`' | ' ' => { enc.push('%'); enc.push_str(&format!("{:02X}", c as u8)); changed = true; } _ => enc.push(c), } }
                         if changed { if rr.is_empty() { enc } else { format!("{enc}{rr}") } } else { result }
                     };
+                    // Also encode Cat1 and (when frag has non-ASCII) Cat2 in the result's fragment
+                    let orig_frag_has_non_ascii = url[url.find('#').map(|i|i+1).unwrap_or(url.len())..].bytes().any(|b| b > 127);
+                    let result = if let Some(fs) = result.find('#') {
+                        let (ph, fr) = result.split_at(fs);
+                        let fr_inner = &fr[1..];
+                        let needs = fr_inner.chars().any(|c| matches!(c, '{' | '}' | '|' | '^' | '`' | '\\' | '<' | '>' | ' '))
+                            || (orig_frag_has_non_ascii && fr_inner.chars().any(|c| matches!(c, '\'' | '[' | ']')));
+                        if needs {
+                            let mut out = ph.to_string(); out.push('#');
+                            for c in fr_inner.chars() {
+                                if matches!(c, '{' | '}' | '|' | '^' | '`' | '\\' | '<' | '>' | ' ') { out.push_str(&format!("%{:02X}", c as u8)); }
+                                else if orig_frag_has_non_ascii && matches!(c, '\'' | '[' | ']') { out.push_str(&format!("%{:02X}", c as u8)); }
+                                else { out.push(c); }
+                            }
+                            out
+                        } else { result }
+                    } else { result };
                     if remove_path_digits { return remove_relative_path_digits(&result); }
                     return result;
                 }
@@ -311,9 +327,10 @@ pub fn obfuscate_url_string(
             // The url crate treats '\' as a path separator, silently consuming it.
             // Go encodes '\' as '%5C'. Pre-encode backslashes before go_like_reference
             // so they are preserved through base.join() and appear as '%5C' in the output.
+            // Also pre-encode spaces (url crate may drop them).
             let url_pre_encoded;
-            let url_for_go_like = if url.contains('\\') {
-                url_pre_encoded = url.replace('\\', "%5C");
+            let url_for_go_like = if url.contains('\\') || url.contains(' ') {
+                url_pre_encoded = url.replace('\\', "%5C").replace(' ', "%20");
                 url_pre_encoded.as_str()
             } else {
                 url
@@ -388,32 +405,24 @@ pub fn obfuscate_url_string(
                 // Check if original URL's fragment also has non-ASCII
                 let url_frag_start = url.find('#').map(|i| i + 1).unwrap_or(url.len());
                 let frag_has_non_ascii = url[url_frag_start..].bytes().any(|b| b > 127);
-                if frag_has_non_ascii {
-                    // Also encode cat2 chars in the result's fragment
-                    if let Some(frag_start) = encoded.find('#') {
-                        let path_and_hash = &encoded[..=frag_start];
-                        let frag = &encoded[frag_start + 1..];
-                        // In fragments, Go encodes ' [ ] when non-ASCII triggers escape(),
-                        // but NOT ! ( ) * (shouldEscape returns false for those in encodeFragment)
-                        if frag.chars().any(|c| matches!(c, '\'' | '[' | ']')) {
-                            let mut out = path_and_hash.to_string();
-                            for c in frag.chars() {
-                                if matches!(c, '\'' | '[' | ']') {
-                                    out.push_str(&format!("%{:02X}", c as u8));
-                                } else {
-                                    out.push(c);
-                                }
-                            }
-                            out
-                        } else {
-                            encoded
+                // Encode Cat1 and (when frag has non-ASCII) Cat2 in the result's fragment
+                if let Some(frag_start) = encoded.find('#') {
+                    let path_and_hash = &encoded[..=frag_start];
+                    let frag = &encoded[frag_start + 1..];
+                    let frag_needs_enc = frag.chars().any(|c| matches!(c, '{' | '}' | '|' | '^' | '`' | '\\' | '<' | '>' | ' '))
+                        || (frag_has_non_ascii && frag.chars().any(|c| matches!(c, '\'' | '[' | ']' )));
+                    if frag_needs_enc {
+                        let mut out = path_and_hash.to_string();
+                        for c in frag.chars() {
+                            if matches!(c, '{' | '}' | '|' | '^' | '`' | '\\' | '<' | '>' | ' ') {
+                                out.push_str(&format!("%{:02X}", c as u8));
+                            } else if frag_has_non_ascii && matches!(c, '\'' | '[' | ']' ) {
+                                out.push_str(&format!("%{:02X}", c as u8));
+                            } else { out.push(c); }
                         }
-                    } else {
-                        encoded
-                    }
-                } else {
-                    encoded
-                }
+                        out
+                    } else { encoded }
+                } else { encoded }
             } else {
                 // ASCII-only: only category 1 chars (\, ^, etc.)
                 // Category 2 (!, ', (, ), *) are left as-is for pure ASCII inputs
