@@ -35,8 +35,10 @@ pub fn go_like_reference(input: &str, remove_query_string: bool) -> String {
 
     if let Some(rest) = full.strip_prefix(base_prefix) {
         // relative path (e.g. "hello%20world" or "dir/hello%20world")
-        if remove_query_string && !rest.is_empty() {
-            return "?".to_owned();
+        if remove_query_string && resolved.query().is_some() {
+            // Strip the query string, preserving the path with a trailing "?"
+            let path_end = rest.find('?').unwrap_or(rest.len());
+            return format!("{}?", &rest[..path_end]);
         }
         rest.to_string()
     } else if let Some(rest) = full.strip_prefix("https://example.invalid") {
@@ -65,6 +67,12 @@ pub fn obfuscate_url_string(
                     return String::new();
                 }
                 return format!("#{fragment}");
+            }
+            // Go's url.Parse rejects control characters (bytes < 0x20 or 0x7F) and returns an
+            // error, causing ObfuscateURLString to return "?". The `url` crate silently drops
+            // them, so we must check explicitly before calling go_like_reference.
+            if url.bytes().any(|b| b < 0x20 || b == 0x7F) {
+                return String::from("?");
             }
             let fixme_url_go_parsing = go_like_reference(url, remove_query_string);
             if fixme_url_go_parsing.is_empty() && !url.is_empty() {
@@ -244,6 +252,13 @@ mod tests {
             remove_path_digits  [true]
             input               ["#"]
             expected_output     [""];
+        ]
+        [
+            test_name           [fuzzing_1050521893]
+            remove_query_string [true]
+            remove_path_digits  [true]
+            input               ["ჸ"]
+            expected_output     ["%E1%83%B8"];
         ]
     )]
     #[test]
