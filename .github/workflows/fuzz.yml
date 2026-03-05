@@ -13,7 +13,6 @@ jobs:
       with:
         fetch-depth: 0
     - name: Get changed crates
-      if: ${{ github.event_name == 'pull_request' }}
       id: changed-crates
       uses: ./.github/actions/changed-crates
     - name: Set fuzz directories
