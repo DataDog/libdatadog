@@ -23,7 +23,9 @@ pub fn quantize_redis_string(query: &str) -> String {
             continue;
         }
 
-        let mut tokens = line.split_whitespace();
+        // Go splits on spaces only (strings.SplitN(line, " ", 3)), not all whitespace.
+        // Use split(' ').filter to match that behavior and preserve tab tokens.
+        let mut tokens = line.split(' ').filter(|s| !s.is_empty());
         let Some(first) = tokens.next() else { continue };
 
         if first.ends_with(REDIS_TRUNCATION_MARK) {
