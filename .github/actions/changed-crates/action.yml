@@ -24,7 +24,24 @@ outputs:
 runs:
   using: 'composite'
   steps:
-    - id: detect
+    - name: Set up Rust
+      shell: bash
+      run: rustup install stable && rustup default stable
+
+    - name: Fetch all branches
+      shell: bash
+      run: |
+        git fetch --all
+        echo "Available branches:"
+        git branch -a
+
+    - name: Build change reporter
+      shell: bash
+      run: |
+        cd ${{ github.action_path }}/..
+        cargo build --release -p ci-crates
+
+    - name: Run change reporter
       shell: bash
       env:
         EVENT_NAME: ${{ github.event_name }}
