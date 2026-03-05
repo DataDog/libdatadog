@@ -29,7 +29,7 @@ pub fn quantize_redis_string(query: &str) -> String {
             continue;
         }
 
-        let cmd = first.to_ascii_uppercase();
+        let cmd = first.to_uppercase();
         let command = match cmd.as_bytes() {
             b"CLIENT" | b"CLUSTER" | b"COMMAND" | b"CONFIG" | b"DEBUG" | b"SCRIPT" => {
                 match tokens.next() {
@@ -37,7 +37,7 @@ pub fn quantize_redis_string(query: &str) -> String {
                         truncated = true;
                         continue;
                     }
-                    Some(sub) => format!("{cmd} {}", sub.to_ascii_uppercase()),
+                    Some(sub) => format!("{cmd} {}", sub.to_uppercase()),
                     None => cmd,
                 }
             }
@@ -419,6 +419,11 @@ mod tests {
             test_name   [test_quantize_redis_string_unknown]
             input       ["UNKNOWN 123"]
             expected    ["UNKNOWN"];
+        ]
+        [
+            test_name   [fuzzing_3286489773]
+            input       ["ꭺ"]
+            expected    ["Ꭺ"];
         ]
     )]
     #[test]
