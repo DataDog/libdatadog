@@ -296,6 +296,18 @@ pub fn obfuscate_url_string(
                     return String::from("?");
                 }
             }
+            // For query-only references (starting with '?'), Go keeps the query raw.
+            // With remove_query_string=true, return "?". Otherwise return original.
+            if url.starts_with('?') {
+                if has_invalid_percent_encoding(&url[1..]) {
+                    return String::from("?");
+                }
+                if remove_query_string {
+                    return String::from("?");
+                }
+                // Return original (Go keeps query chars raw, including non-ASCII)
+                return url.to_string();
+            }
             // The url crate treats '\' as a path separator, silently consuming it.
             // Go encodes '\' as '%5C'. Pre-encode backslashes before go_like_reference
             // so they are preserved through base.join() and appear as '%5C' in the output.
