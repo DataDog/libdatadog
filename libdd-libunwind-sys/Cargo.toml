@@ -1,5 +1,5 @@
 [package]
-name = "libdd-libunwind"
+name = "libdd-libunwind-sys"
 edition.workspace = true
 version.workspace = true
 rust-version.workspace = true

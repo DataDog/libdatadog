@@ -3197,7 +3197,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "libdd-libunwind"
+name = "libdd-libunwind-sys"
 version = "28.0.2"
 dependencies = [
  "cc",
