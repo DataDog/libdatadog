@@ -34,7 +34,17 @@ pub fn quantize_redis_string(query: &str) -> String {
             continue;
         }
 
-        let cmd = first.to_uppercase();
+        // Go's strings.ToUpper uses unicode.ToUpper which maps each rune to exactly one uppercase
+        // rune. Rust's str::to_uppercase() uses full Unicode case folding which can expand a single
+        // char to multiple (e.g. some Greek letters with diacritics). To match Go: uppercase when
+        // it maps to exactly one char, otherwise keep the original.
+        let cmd: String = first.chars().map(|c| {
+            let mut upper = c.to_uppercase();
+            match (upper.next(), upper.next()) {
+                (Some(u), None) => u,  // single-char mapping: use it
+                _ => c,                // multi-char expansion: keep original (matches Go)
+            }
+        }).collect();
         let command = match cmd.as_bytes() {
             b"CLIENT" | b"CLUSTER" | b"COMMAND" | b"CONFIG" | b"DEBUG" | b"SCRIPT" => {
                 match tokens.next() {
@@ -42,7 +52,7 @@ pub fn quantize_redis_string(query: &str) -> String {
                         truncated = true;
                         continue;
                     }
-                    Some(sub) => format!("{cmd} {}", sub.to_uppercase()),
+                    Some(sub) => format!("{cmd} {}", sub.chars().map(|c| { let mut u = c.to_uppercase(); match (u.next(), u.next()) { (Some(up), None) => up, _ => c } }).collect::<String>()),
                     None => cmd,
                 }
             }
