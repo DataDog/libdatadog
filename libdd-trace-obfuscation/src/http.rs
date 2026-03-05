@@ -189,7 +189,17 @@ pub fn obfuscate_url_string(
                     return String::from("?");
                 }
             }
-            let fixme_url_go_parsing = go_like_reference(url, remove_query_string);
+            // The url crate treats '\' as a path separator, silently consuming it.
+            // Go encodes '\' as '%5C'. Pre-encode backslashes before go_like_reference
+            // so they are preserved through base.join() and appear as '%5C' in the output.
+            let url_pre_encoded;
+            let url_for_go_like = if url.contains('\\') {
+                url_pre_encoded = url.replace('\\', "%5C");
+                url_pre_encoded.as_str()
+            } else {
+                url
+            };
+            let fixme_url_go_parsing = go_like_reference(url_for_go_like, remove_query_string);
             let result = if fixme_url_go_parsing.is_empty() && !url.is_empty() {
                 // The url crate resolved away dot path segments (e.g. "." or "..") via RFC 3986
                 // normalization. Go's url.Parse preserves them literally. Return the original.
@@ -499,6 +509,13 @@ mod tests {
             remove_path_digits  [true]
             input               ["[ჸ"]
             expected_output     ["%5B%E1%83%B8"];
+        ]
+        [
+            test_name           [fuzzing_backslash_unicode]
+            remove_query_string [true]
+            remove_path_digits  [true]
+            input               ["\\ჸ"]
+            expected_output     ["%5C%E1%83%B8"];
         ]
     )]
     #[test]
