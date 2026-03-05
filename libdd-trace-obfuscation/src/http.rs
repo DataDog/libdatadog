@@ -224,7 +224,10 @@ pub fn obfuscate_url_string(
             // handled by validEncoded allowing them in RawPath. But since we're post-processing
             // the url crate's output (which keeps them), we must encode them only when non-ASCII.
             // Simplification: apply all encodings, but for category 2 chars only when non-ASCII.
-            let has_non_ascii = url.bytes().any(|b| b > 127);
+            // Only check path portion (before '#') for non-ASCII; a non-ASCII fragment
+            // does not trigger Go's escape() fallback for the path encoding.
+            let path_end_for_ascii_check = url.find('#').unwrap_or(url.len());
+            let has_non_ascii = url[..path_end_for_ascii_check].bytes().any(|b| b > 127);
             let result = if has_non_ascii {
                 // Full encoding: both category 1 and category 2
                 encode_go_path_chars(&result)
@@ -531,6 +534,13 @@ mod tests {
             remove_path_digits  [true]
             input               ["ჸ#"]
             expected_output     ["%E1%83%B8"];
+        ]
+        [
+            test_name           [fuzzing_2729083127]
+            remove_query_string [true]
+            remove_path_digits  [true]
+            input               ["!#ჸ"]
+            expected_output     ["!#%E1%83%B8"];
         ]
     )]
     #[test]
