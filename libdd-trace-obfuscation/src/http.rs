@@ -392,19 +392,17 @@ pub fn obfuscate_url_string(
                 }
             };
             // Encode path chars that Go encodes but the url crate doesn't.
-            // Always apply encode_go_path_chars since it handles:
-            // - Category 1 (always encoded): \, ^, {, }, |, <, >, `, space
-            // - Category 2 (only when non-ASCII triggers escape() fallback): !, ', (, ), *
-            // For category 2, we still apply them here unconditionally since encode_go_path_chars
-            // would encode them for non-ASCII inputs; for pure-ASCII those chars were already
-            // handled by validEncoded allowing them in RawPath. But since we're post-processing
-            // the url crate's output (which keeps them), we must encode them only when non-ASCII.
-            // Simplification: apply all encodings, but for category 2 chars only when non-ASCII.
-            // Only check path portion (before '#') for non-ASCII; a non-ASCII fragment
-            // does not trigger Go's escape() fallback for the path encoding.
+            // Go's EscapedPath() calls escape(path, encodePath) whenever validEncoded() returns
+            // false. validEncoded() fails on: non-ASCII chars OR Cat1 chars (\,^,{,},|,<,>,`,space).
+            // When escape() is called, it also encodes Cat2 chars (!, ', (, ), *, [, ]).
+            // So Cat2 chars are encoded whenever any Cat1 or non-ASCII char is present in the path.
+            // Only check path portion (before '#'); fragment has separate encoding logic.
             let path_end_for_ascii_check = url.find('#').unwrap_or(url.len());
-            let has_non_ascii = url[..path_end_for_ascii_check].bytes().any(|b| b > 127);
-            let result = if has_non_ascii {
+            let path_for_check = &url[..path_end_for_ascii_check];
+            let has_non_ascii = path_for_check.bytes().any(|b| b > 127);
+            let has_cat1 = path_for_check.chars().any(|c| matches!(c, '\\' | '^' | '{' | '}' | '|' | '<' | '>' | '`' | ' '));
+            let needs_full_encoding = has_non_ascii || has_cat1;
+            let result = if needs_full_encoding {
                 // Full encoding: both category 1 and category 2 in path + fragment.
                 // When non-ASCII is present, Go's escape() also encodes cat2 chars in fragments.
                 let encoded = encode_go_path_chars(&result);
@@ -813,6 +811,14 @@ mod tests {
             remove_path_digits  [true]
             input               ["#!ჸ"]
             expected_output     ["#!%E1%83%B8"];
+        ]
+        [
+            // Cat1 char (<) triggers full escape(), which also encodes Cat2 char (!)
+            test_name           [fuzzing_2455396347_cat1_triggers_cat2]
+            remove_query_string [true]
+            remove_path_digits  [true]
+            input               ["<!"]
+            expected_output     ["%3C%21"];
         ]
     )]
     #[test]
