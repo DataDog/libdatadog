@@ -90,6 +90,8 @@ pub enum SharedRuntimeError {
     WorkerError(PausableWorkerError),
     /// Failed to create the tokio runtime.
     RuntimeCreation(io::Error),
+    /// Shutdown timed out.
+    ShutdownTimedOut(std::time::Duration),
 }
 
 impl fmt::Display for SharedRuntimeError {
@@ -102,6 +104,9 @@ impl fmt::Display for SharedRuntimeError {
             Self::WorkerError(err) => write!(f, "Worker error: {}", err),
             Self::RuntimeCreation(err) => {
                 write!(f, "Failed to create runtime: {}", err)
+            }
+            Self::ShutdownTimedOut(duration) => {
+                write!(f, "Shutdown timed out after {:?}", duration)
             }
         }
     }
@@ -302,14 +307,43 @@ impl SharedRuntime {
         }
     }
 
-    /// Shutdown the runtime and all workers.
+    /// Shutdown the runtime and all workers synchronously with optional timeout.
+    ///
+    /// This creates a temporary runtime to execute the async shutdown and should be called
+    /// from non-async contexts during application shutdown.
+    ///
+    /// Worker errors are logged but do not cause the function to fail.
+    ///
+    /// # Errors
+    /// Returns an error only if shutdown times out or runtime creation fails.
+    pub fn shutdown(self, timeout: Option<std::time::Duration>) -> Result<(), SharedRuntimeError> {
+        let runtime = self.runtime()?;
+
+        if let Some(timeout) = timeout {
+            match runtime
+                .block_on(async { tokio::time::timeout(timeout, self.shutdown_async()).await })
+            {
+                Ok(()) => Ok(()),
+                Err(_) => Err(SharedRuntimeError::ShutdownTimedOut(timeout)),
+            }
+        } else {
+            runtime.block_on(self.shutdown_async());
+            Ok(())
+        }
+    }
+
+    /// Shutdown all workers asynchronously.
     ///
     /// This should be called during application shutdown to cleanly stop all
     /// background workers and the runtime.
     ///
-    /// # Errors
-    /// Returns an error if workers cannot be stopped.
-    pub async fn shutdown(&self) -> Result<(), SharedRuntimeError> {
+    /// Worker errors are logged but do not cause the function to fail.
+    ///
+    /// This function should not take ownership of the SharedRuntime as it will cause the runtime
+    /// to be dropped in a non-blocking context causing a panic.
+    pub async fn shutdown_async(&self) {
+        use tracing::error;
+
         let workers = {
             let mut workers_lock = self.workers.lock_or_panic();
             std::mem::take(&mut *workers_lock)
@@ -318,28 +352,16 @@ impl SharedRuntime {
         let mut join_set = JoinSet::new();
         for mut worker_entry in workers {
             join_set.spawn(async move {
-                worker_entry.worker.join().await?;
+                let result = worker_entry.worker.join().await;
+                if let Err(e) = result {
+                    error!("Worker failed to shutdown: {:?}", e);
+                    return;
+                }
                 worker_entry.worker.shutdown().await;
-                Ok::<(), PausableWorkerError>(())
             });
         }
 
-        let mut results = Vec::new();
-        while let Some(result) = join_set.join_next().await {
-            // Unwrap the JoinHandle result (panic if task panicked)
-            results.push(result.expect("Worker task panicked"));
-        }
-
-        // Collect all errors
-        let errors: Vec<SharedRuntimeError> = results
-            .into_iter()
-            .filter_map(|r| Some(r.err()?.into()))
-            .collect();
-
-        if !errors.is_empty() {
-            return Err(errors);
-        }
-        Ok(())
+        join_set.join_all().await;
     }
 }
 
@@ -418,7 +440,7 @@ mod tests {
 
             // Clean shutdown
             rt.block_on(async {
-                assert!(shared_runtime.shutdown().await.is_ok());
+                shared_runtime.shutdown_async().await;
             });
         });
 

@@ -256,32 +256,19 @@ impl TraceExporter {
     }
 
     /// Safely shutdown the TraceExporter and all related tasks
-    pub fn shutdown(mut self, timeout: Option<Duration>) -> Result<(), TraceExporterError> {
-        let runtime = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()?;
-
-        if let Some(timeout) = timeout {
-            match runtime
-                .block_on(async { tokio::time::timeout(timeout, self.shutdown_async()).await })
-            {
-                Ok(()) => Ok(()),
-                Err(_e) => Err(TraceExporterError::Shutdown(
-                    error::ShutdownError::TimedOut(timeout),
-                )),
-            }
-        } else {
-            runtime.block_on(self.shutdown_async());
-            Ok(())
-        }
-    }
-
-    /// Future used inside `Self::shutdown`.
-    ///
-    /// This function should not take ownership of the trace exporter as it will cause the runtime
-    /// stored in the trace exporter to be dropped in a non-blocking context causing a panic.
-    async fn shutdown_async(&mut self) {
-        let _ = self.shared_runtime.shutdown().await;
+    pub fn shutdown(self, timeout: Option<Duration>) -> Result<(), TraceExporterError> {
+        self.shared_runtime
+            .shutdown(timeout)
+            .map_err(|e| match e {
+                crate::shared_runtime::SharedRuntimeError::ShutdownTimedOut(duration) => {
+                    TraceExporterError::Shutdown(error::ShutdownError::TimedOut(duration))
+                }
+                crate::shared_runtime::SharedRuntimeError::RuntimeCreation(io_err) => {
+                    TraceExporterError::Io(io_err)
+                }
+                // Other error cases should not occur from shutdown()
+                _ => unreachable!("Unexpected SharedRuntimeError from shutdown: {:?}", e),
+            })
     }
 
     /// Check if agent info state has changed
