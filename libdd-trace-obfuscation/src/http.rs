@@ -48,9 +48,12 @@ fn encode_go_path_chars(url_str: &str) -> String {
 /// Operates only on the path portion (before the first '?'), matching Go's behavior of
 /// splitting path by '/' and replacing segments containing digits with '?'.
 fn remove_relative_path_digits(url_str: &str) -> String {
-    let query_start = url_str.find('?').unwrap_or(url_str.len());
-    let path_part = &url_str[..query_start];
-    let rest = &url_str[query_start..];
+    // Only apply digit removal to the path (before '?' or '#'); fragments are not paths.
+    let path_end = url_str
+        .find(|c: char| c == '?' || c == '#')
+        .unwrap_or(url_str.len());
+    let path_part = &url_str[..path_end];
+    let rest = &url_str[path_end..];
 
     let mut segments: Vec<&str> = path_part.split('/').collect();
     let mut changed = false;
