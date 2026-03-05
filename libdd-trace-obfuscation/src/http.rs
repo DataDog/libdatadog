@@ -199,7 +199,15 @@ pub fn obfuscate_url_string(
             } else {
                 url
             };
-            let fixme_url_go_parsing = go_like_reference(url_for_go_like, remove_query_string);
+            let fixme_url_go_parsing_raw =
+                go_like_reference(url_for_go_like, remove_query_string);
+            // Go's url.URL.String() omits a trailing empty fragment (bare '#').
+            // The url crate keeps it. Strip it here for parity.
+            let fixme_url_go_parsing = if fixme_url_go_parsing_raw.ends_with('#') {
+                fixme_url_go_parsing_raw[..fixme_url_go_parsing_raw.len() - 1].to_string()
+            } else {
+                fixme_url_go_parsing_raw
+            };
             let result = if fixme_url_go_parsing.is_empty() && !url.is_empty() {
                 // The url crate resolved away dot path segments (e.g. "." or "..") via RFC 3986
                 // normalization. Go's url.Parse preserves them literally. Return the original.
@@ -516,6 +524,13 @@ mod tests {
             remove_path_digits  [true]
             input               ["\\ჸ"]
             expected_output     ["%5C%E1%83%B8"];
+        ]
+        [
+            test_name           [fuzzing_2438023093]
+            remove_query_string [true]
+            remove_path_digits  [true]
+            input               ["ჸ#"]
+            expected_output     ["%E1%83%B8"];
         ]
     )]
     #[test]
