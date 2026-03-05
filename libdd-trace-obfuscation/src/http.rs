@@ -295,9 +295,12 @@ pub fn obfuscate_url_string(
                 }
             }
             // Go's url.Parse rejects invalid percent-encoding sequences (bare '%' or '%' not
-            // followed by exactly two hex digits). The `url` crate re-encodes them as '%25',
-            // so we must detect and reject them explicitly.
+            // followed by exactly two hex digits). Returns '?' if options are active,
+            // or original if both options are false (obfuscateUserInfo passthrough).
             if has_invalid_percent_encoding(url) {
+                if !remove_query_string && !remove_path_digits {
+                    return url.to_string();
+                }
                 return String::from("?");
             }
             // Go's url.Parse rejects URLs where the first path segment contains ':' (RFC 3986
