@@ -295,6 +295,16 @@ pub fn obfuscate_url_string(
                 // but strip a trailing empty fragment '#' (Go omits empty fragments).
                 let fallback = if url.ends_with('#') { &url[..url.len()-1] } else { url };
                 fallback.to_string()
+            } else if fixme_url_go_parsing.starts_with('#') {
+                // go_like_reference resolved away the path (e.g. ".#frag" → "#frag").
+                // Go preserves the original path. Prepend it.
+                let path_end = url.find('#').unwrap_or(url.len());
+                let orig_path = &url[..path_end];
+                if !orig_path.is_empty() {
+                    format!("{}{}", orig_path, fixme_url_go_parsing)
+                } else {
+                    fixme_url_go_parsing
+                }
             } else {
                 fixme_url_go_parsing
             };
