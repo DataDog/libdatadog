@@ -4,6 +4,32 @@
 use percent_encoding::percent_decode_str;
 use url::Url;
 
+/// Encode path characters that Go's url.EscapedPath() encodes but the url crate doesn't.
+/// Go's shouldEscape for encodePath does not allow !, ', (, ), * even though RFC 3986
+/// considers them valid sub-delimiters in path segments.
+/// Only applied to the path portion (before the first '?').
+fn encode_go_path_chars(url_str: &str) -> String {
+    let query_start = url_str.find('?').unwrap_or(url_str.len());
+    let path_part = &url_str[..query_start];
+    let rest = &url_str[query_start..];
+
+    let mut encoded = String::with_capacity(path_part.len());
+    for c in path_part.chars() {
+        match c {
+            '!' | '\'' | '(' | ')' | '*' => {
+                encoded.push('%');
+                encoded.push_str(&format!("{:02X}", c as u8));
+            }
+            _ => encoded.push(c),
+        }
+    }
+    if rest.is_empty() {
+        encoded
+    } else {
+        format!("{encoded}{rest}")
+    }
+}
+
 /// Apply path-digit removal to a relative URL string returned by go_like_reference.
 /// Operates only on the path portion (before the first '?'), matching Go's behavior of
 /// splitting path by '/' and replacing segments containing digits with '?'.
@@ -132,6 +158,8 @@ pub fn obfuscate_url_string(
             } else {
                 fixme_url_go_parsing
             };
+            // Encode path chars that Go encodes but the url crate doesn't (!, ', (, ), *).
+            let result = encode_go_path_chars(&result);
             if remove_path_digits {
                 return remove_relative_path_digits(&result);
             }
@@ -337,6 +365,13 @@ mod tests {
             remove_path_digits  [true]
             input               ["0"]
             expected_output     ["?"];
+        ]
+        [
+            test_name           [fuzzing_4273565798]
+            remove_query_string [true]
+            remove_path_digits  [true]
+            input               ["!ჸ"]
+            expected_output     ["%21%E1%83%B8"];
         ]
     )]
     #[test]
