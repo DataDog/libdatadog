@@ -1,11 +1,37 @@
 name: Lint
 on:
   push:
+  pull_request:
 env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  setup:
+    runs-on: ubuntu-latest
+    outputs:
+      crates-count: ${{ steps.set-count.outputs.crates-count }}
+    steps:
+    - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # 4.2.2
+      with:
+        fetch-depth: 0
+    - name: Get changed crates
+      if: ${{ github.event_name == 'pull_request' }}
+      id: changed-crates
+      uses: ./.github/actions/changed-crates
+    - name: Set crates count
+      id: set-count
+      env:
+        CRATES_COUNT: ${{ steps.changed-crates.outputs.crates_count }}
+      run: |
+        if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+          echo "crates-count=$CRATES_COUNT" >> $GITHUB_OUTPUT
+        else
+          echo "crates-count=1" >> $GITHUB_OUTPUT
+        fi
+
   actionlint:
+    needs: setup
+    if: needs.setup.outputs.crates-count != '0'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout sources
@@ -15,6 +41,8 @@ jobs:
         with:
           shellcheck_opts: '-e SC2086'
   rustfmt:
+    needs: setup
+    if: needs.setup.outputs.crates-count != '0'
     runs-on: ubuntu-latest
     env:
       CARGO_TERM_COLOR: always
@@ -31,6 +59,8 @@ jobs:
           cache-bin: true # cache the ~/.cargo/bin directory
       - run: cargo fmt --all -- --check
   clippy:
+    needs: setup
+    if: needs.setup.outputs.crates-count != '0'
     name: "clippy #${{ matrix.platform }} ${{ matrix.rust_version }}"
     runs-on: ${{ matrix.platform }}
     strategy:
@@ -58,6 +88,8 @@ jobs:
           cargo clippy --workspace --all-targets --all-features -- -D warnings 
 
   licensecheck:
+    needs: setup
+    if: needs.setup.outputs.crates-count != '0'
     runs-on: ubuntu-latest
     name: "Presence of licence headers"
     steps:
@@ -79,6 +111,8 @@ jobs:
   # have diverged in more than a few words. You should verify that the licence
   #  text is in fact correct in these cases.
   license-3rdparty:
+    needs: setup
+    if: needs.setup.outputs.crates-count != '0'
     runs-on: ubuntu-latest
     name: "Valid LICENSE-3rdparty.yml"
     steps:
