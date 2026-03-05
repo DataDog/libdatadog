@@ -165,7 +165,16 @@ pub fn obfuscate_url_string(
         }
     }
     let mut parsed_url = match Url::parse(url) {
-        Ok(res) => res,
+        Ok(res) => {
+            // For cannot-be-a-base (opaque) URIs like "A:ᏤᏤ", Go keeps the opaque
+            // path verbatim. Return the original with the scheme lowercased.
+            if res.cannot_be_a_base() {
+                let scheme_len = url.find(':').unwrap_or(0);
+                let lowered = url[..scheme_len].to_lowercase() + &url[scheme_len..];
+                return lowered;
+            }
+            res
+        }
         Err(_) => {
             // Fragment-only references (e.g. "#", "#frag") are valid relative URL references.
             // Go's url.Parse handles them successfully: "#" → "" (empty fragment → empty string),
