@@ -11,7 +11,8 @@ pub fn quantize_redis_string(query: &str) -> String {
     let mut commands: Vec<String> = Vec::with_capacity(MAX_REDIS_NB_COMMANDS);
     let mut truncated = false;
 
-    for raw_line in query.lines() {
+    // Split on '\n' only (like Go's strings.IndexByte), preserving '\r' in line content
+    for raw_line in query.split('\n') {
         if commands.len() >= MAX_REDIS_NB_COMMANDS {
             break;
         }
