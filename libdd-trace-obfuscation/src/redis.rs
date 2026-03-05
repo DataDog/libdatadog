@@ -82,7 +82,15 @@ pub fn obfuscate_redis_string(cmd: &str) -> String {
             RedisTokenType::RedisTokenArgument => args.push(res.token),
         }
         if res.done {
-            obfuscate_redis_cmd(s, cmd.unwrap_or_default(), args);
+            // Skip whitespace-only final "command" tokens (trailing whitespace after last \n).
+            // Also strip the trailing '\n' that was added before this whitespace-only token.
+            let final_cmd = cmd.unwrap_or_default();
+            if !final_cmd.trim().is_empty() {
+                obfuscate_redis_cmd(s, final_cmd, args);
+            } else {
+                // Remove the trailing '\n' added when this whitespace-only command was scanned
+                if s.ends_with('\n') { s.pop(); }
+            }
             break;
         }
     }
