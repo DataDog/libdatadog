@@ -136,9 +136,22 @@ pub fn obfuscate_url_string(
                 if fragment.is_empty() {
                     return String::new();
                 }
-                // Use go_like_reference to properly encode non-ASCII chars in the fragment
-                // (Go's url.Parse encodes them; our simple format!("#{fragment}") doesn't).
-                return go_like_reference(url, remove_query_string);
+                // Go's url.Parse percent-encodes control chars in fragments.
+                // The url crate silently drops them, so pre-encode them manually.
+                let url_for_join = if fragment.bytes().any(|b| b < 0x20 || b == 0x7F) {
+                    let mut encoded = String::from('#');
+                    for b in fragment.bytes() {
+                        if b < 0x20 || b == 0x7F {
+                            encoded.push_str(&format!("%{b:02X}"));
+                        } else {
+                            encoded.push(b as char);
+                        }
+                    }
+                    encoded
+                } else {
+                    url.to_string()
+                };
+                return go_like_reference(&url_for_join, remove_query_string);
             }
             // Go's url.Parse rejects control characters (bytes < 0x20 or 0x7F) and returns an
             // error, causing ObfuscateURLString to return "?". The `url` crate silently drops
@@ -414,6 +427,13 @@ mod tests {
             remove_path_digits  [true]
             input               ["#ჸ"]
             expected_output     ["#%E1%83%B8"];
+        ]
+        [
+            test_name           [fuzzing_1323831861]
+            remove_query_string [true]
+            remove_path_digits  [true]
+            input               ["#\u{01}"]
+            expected_output     ["#%01"];
         ]
     )]
     #[test]
