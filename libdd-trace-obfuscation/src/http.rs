@@ -291,8 +291,10 @@ pub fn obfuscate_url_string(
             };
             let result = if fixme_url_go_parsing.is_empty() && !url.is_empty() {
                 // The url crate resolved away dot path segments (e.g. "." or "..") via RFC 3986
-                // normalization. Go's url.Parse preserves them literally. Return the original.
-                url.to_string()
+                // normalization. Go's url.Parse preserves them literally. Return the original,
+                // but strip a trailing empty fragment '#' (Go omits empty fragments).
+                let fallback = if url.ends_with('#') { &url[..url.len()-1] } else { url };
+                fallback.to_string()
             } else {
                 fixme_url_go_parsing
             };
