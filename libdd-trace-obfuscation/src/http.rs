@@ -101,7 +101,9 @@ pub fn obfuscate_url_string(
             }
             let fixme_url_go_parsing = go_like_reference(url, remove_query_string);
             if fixme_url_go_parsing.is_empty() && !url.is_empty() {
-                return String::from("?");
+                // The url crate resolved away dot path segments (e.g. "." or "..") via RFC 3986
+                // normalization. Go's url.Parse preserves them literally. Return the original.
+                return url.to_string();
             }
             return fixme_url_go_parsing;
         }
@@ -291,6 +293,13 @@ mod tests {
             remove_path_digits  [true]
             input               ["%"]
             expected_output     ["?"];
+        ]
+        [
+            test_name           [fuzzing_3638045804]
+            remove_query_string [true]
+            remove_path_digits  [true]
+            input               ["."]
+            expected_output     ["."];
         ]
     )]
     #[test]
