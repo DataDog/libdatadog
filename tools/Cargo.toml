@@ -18,7 +18,7 @@ bench = false
 anyhow = "1.0"
 cargo_metadata = "0.18"
 clap = { version = "4.0", features = ["derive"] }
-colored = "2"
+colored = "3"
 quick-xml = "0.37"
 regex = "1"
 toml = "0.8"
