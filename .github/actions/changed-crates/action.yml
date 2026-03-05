@@ -48,4 +48,4 @@ runs:
         EVENT_NAME: ${{ github.event_name }}
         PR_BASE_REF: ${{ github.base_ref }}
       run: |
-        ${{ github.action_path }}/../target/release/changed-crates $PR_BASE_REF
+        RUST_LOG=debug ${{ github.action_path }}/../target/release/changed-crates $PR_BASE_REF
