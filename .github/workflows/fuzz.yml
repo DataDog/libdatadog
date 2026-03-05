@@ -1,29 +1,12 @@
 name: Fuzz test
 on:
-  pull_request:
   push:
-    branches: [main, 'julio/rd-week-*']
 jobs:
-  compute-scope:
-    runs-on: ubuntu-latest
-    outputs:
-      run_full: ${{ steps.scope.outputs.run_full }}
-      has_changes: ${{ steps.scope.outputs.has_changes }}
-      affected_fuzz_dirs: ${{ steps.scope.outputs.affected_fuzz_dirs }}
-    steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # 4.2.2
-        with:
-          fetch-depth: 0
-      - id: scope
-        uses: ./.github/actions/changed-crates
-
   run-fuzz:
-    needs: [compute-scope]
-    if: needs.compute-scope.outputs.affected_fuzz_dirs != '[]'
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        directory: ${{ fromJSON(needs.compute-scope.outputs.affected_fuzz_dirs) }}
+        directory: [libdd-alloc, libdd-profiling, libdd-common-ffi, libdd-trace-utils]
     env:
       CARGO_TERM_COLOR: always
       CARGO_INCREMENTAL: 0
