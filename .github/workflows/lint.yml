@@ -17,7 +17,7 @@ jobs:
         with:
           fetch-depth: 0
       - id: scope
-        uses: ./.github/actions/affected-crates
+        uses: ./.github/actions/changed-crates
 
   actionlint:
     runs-on: ubuntu-latest
@@ -71,7 +71,7 @@ jobs:
             export AWS_LC_FIPS_SYS_NO_ASM=1
           fi
 
-          AFFECTED_CRATES_ARGS=$(echo '${{ needs.compute-scope.outputs.affected_crates }}' | jq -r '[.[].name] | map("-p " + .) | join(" ")')
+          AFFECTED_CRATES_ARGS=$(echo '${{ needs.compute-scope.outputs.crates }}' | jq -r '[.[].name] | map("-p " + .) | join(" ")')
           cargo clippy $AFFECTED_CRATES_ARGS --all-targets --all-features -- -D warnings
 
   licensecheck:

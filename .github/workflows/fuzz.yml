@@ -15,7 +15,7 @@ jobs:
         with:
           fetch-depth: 0
       - id: scope
-        uses: ./.github/actions/affected-crates
+        uses: ./.github/actions/changed-crates
 
   run-fuzz:
     needs: [compute-scope]
