@@ -42,6 +42,7 @@ runs:
         cargo build --release -p ci-crates
 
     - name: Run change reporter
+      id: detect
       shell: bash
       env:
         EVENT_NAME: ${{ github.event_name }}
