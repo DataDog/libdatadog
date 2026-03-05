@@ -295,9 +295,9 @@ pub fn obfuscate_url_string(
                 }
             }
             // Go's url.Parse rejects invalid percent-encoding sequences (bare '%' or '%' not
-            // followed by exactly two hex digits). Returns '?' if options are active,
-            // or original if both options are false (obfuscateUserInfo passthrough).
-            if has_invalid_percent_encoding(url) {
+            // followed by exactly two hex digits) in the PATH only, not in the query string.
+            // Check only the portion before '?' (and before '#').
+            if has_invalid_percent_encoding(&url[..url.find(|c| c == '?' || c == '#').unwrap_or(url.len())]) {
                 if !remove_query_string && !remove_path_digits {
                     return url.to_string();
                 }
