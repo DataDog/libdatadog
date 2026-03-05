@@ -229,6 +229,250 @@ module Helpers
   end
 end
 
+# ---------------------------------------------------------------------------
+# From-source compilation (for local development)
+#
+# Usage:
+#   rake compile
+#
+# This builds the Rust shared library from source and populates the vendor
+# tree so that dd-trace-rb can link against it.  After running this task,
+# point dd-trace-rb at this gem with:
+#
+#   gem 'libdatadog', path: '<path-to-libdatadog>/ruby'
+#
+# Prerequisites:
+#   - A working Rust toolchain (cargo, rustc)
+#   - pkg-config (for dd-trace-rb's extconf.rb)
+#   - install_name_tool (macOS only, ships with Xcode CLI tools)
+# ---------------------------------------------------------------------------
+module CompileFromSource
+  # Ruby gem platform → Rust target triple
+  RUST_TARGETS = {
+    "arm64-darwin" => "aarch64-apple-darwin",
+    "x86_64-darwin" => "x86_64-apple-darwin",
+    "x86_64-linux" => "x86_64-unknown-linux-gnu",
+    "x86_64-linux-musl" => "x86_64-unknown-linux-musl",
+    "aarch64-linux" => "aarch64-unknown-linux-gnu",
+    "aarch64-linux-musl" => "aarch64-unknown-linux-musl"
+  }.freeze
+
+  # Features to enable on the profiling FFI uber-crate.
+  # This must match what the official builder (`builder/src/bin/release.rs`)
+  # enables so that the resulting shared library exports all symbols that
+  # dd-trace-rb's C extensions expect.
+  CARGO_FEATURES = %w[
+    data-pipeline-ffi
+    cbindgen
+    ddtelemetry-ffi
+    crashtracker-ffi
+    crashtracker-collector
+    demangler
+    ddsketch-ffi
+    datadog-library-config-ffi
+    datadog-log-ffi
+    datadog-ffe-ffi
+  ].freeze
+
+  PROFILING_FFI_CRATE = "libdd-profiling-ffi"
+  PKGCONFIG_TEMPLATE_DIR = "libdd-profiling-ffi"
+
+  class << self
+    def project_root
+      File.expand_path("..", __dir__)
+    end
+
+    # Replicates the platform detection from Libdatadog.current_platform
+    # so that `rake compile` works without requiring the full gem to be loaded.
+    def ruby_platform
+      platform = Gem::Platform.local.to_s
+      platform = platform[0..-5] if platform.end_with?("-gnu")
+      platform = platform.gsub(/-darwin-?\d*$/, "-darwin") if platform.include?("darwin")
+      if RbConfig::CONFIG["arch"].include?("-musl") && !platform.include?("-musl")
+        RbConfig::CONFIG["arch"]
+      else
+        platform
+      end
+    end
+
+    def rust_target
+      platform = ruby_platform
+      RUST_TARGETS.fetch(platform) do
+        raise "No Rust target mapping for Ruby platform #{platform.inspect}. " \
+          "Known platforms: #{RUST_TARGETS.keys.inspect}"
+      end
+    end
+
+    def vendor_dir
+      File.join(__dir__, "vendor", "libdatadog-#{Libdatadog::LIB_VERSION}", ruby_platform)
+    end
+
+    def target_dir
+      File.join(project_root, "target", rust_target, "release")
+    end
+
+    def dylib_extension
+      ruby_platform.include?("darwin") ? "dylib" : "so"
+    end
+
+    # -- Step 1: Build the Rust shared library ---------------------------------
+
+    def cargo_build!
+      features = CARGO_FEATURES.join(",")
+      target = rust_target
+
+      puts "Building #{PROFILING_FFI_CRATE} for #{target} (release)..."
+      cmd = %W[
+        cargo build
+        -p #{PROFILING_FFI_CRATE}
+        --features #{features}
+        --release
+        --target #{target}
+      ]
+      puts "  #{cmd.join(" ")}"
+
+      Dir.chdir(project_root) do
+        raise "Cargo build failed (exit #{$?.exitstatus})" unless system(*cmd)
+      end
+    end
+
+    # -- Step 2: Build the dedup_headers helper --------------------------------
+    #
+    # cbindgen emits each module header as a self-contained file, so types
+    # defined in common.h are duplicated into every child header.  The
+    # dedup_headers tool strips those duplicates so the C compiler doesn't
+    # see conflicting typedefs when both common.h and a child header are
+    # included.
+
+    def build_dedup_headers!
+      puts "Building dedup_headers tool..."
+      Dir.chdir(project_root) do
+        raise "Failed to build dedup_headers" \
+          unless system("cargo", "build", "-p", "tools", "--bin", "dedup_headers", "--release")
+      end
+    end
+
+    # -- Step 3: Install headers -----------------------------------------------
+
+    def install_headers!
+      src_include = File.join(project_root, "target", "include", "datadog")
+      dst_include = File.join(vendor_dir, "include", "datadog")
+      FileUtils.mkdir_p(dst_include)
+
+      headers = Dir.glob(File.join(src_include, "*.h"))
+      raise "No headers found in #{src_include} — did cbindgen run?" if headers.empty?
+
+      headers.each do |h|
+        FileUtils.cp(h, dst_include)
+        puts "  Copied #{File.basename(h)}"
+      end
+
+      # Dedup: strip definitions from child headers that already exist in common.h
+      dedup_bin = File.join(project_root, "target", "release", "dedup_headers")
+      base_header = File.join(dst_include, "common.h")
+      child_headers = Dir.glob(File.join(dst_include, "*.h"))
+        .reject { |h| File.basename(h) == "common.h" }
+
+      unless child_headers.empty?
+        puts "  Running dedup_headers on #{child_headers.length} child headers..."
+        raise "dedup_headers failed" unless system(dedup_bin, base_header, *child_headers)
+      end
+    end
+
+    # -- Step 4: Install shared library ----------------------------------------
+
+    def install_libs!
+      dst_lib = File.join(vendor_dir, "lib")
+      FileUtils.mkdir_p(dst_lib)
+
+      ext = dylib_extension
+      src_dylib  = File.join(target_dir, "libdatadog_profiling_ffi.#{ext}")
+      src_static = File.join(target_dir, "libdatadog_profiling_ffi.a")
+      dst_dylib  = File.join(dst_lib, "libdatadog_profiling.#{ext}")
+      dst_static = File.join(dst_lib, "libdatadog_profiling.a")
+
+      raise "Shared library not found at #{src_dylib}" unless File.exist?(src_dylib)
+
+      FileUtils.cp(src_dylib, dst_dylib)
+      puts "  Installed libdatadog_profiling.#{ext}"
+
+      if File.exist?(src_static)
+        FileUtils.cp(src_static, dst_static)
+        puts "  Installed libdatadog_profiling.a"
+      end
+
+      # macOS: rewrite the dylib's install name so the linker records an
+      # @rpath-relative reference instead of an absolute build path.
+      if ruby_platform.include?("darwin")
+        puts "  Fixing dylib install name with install_name_tool..."
+        system("install_name_tool", "-id", "@rpath/libdatadog_profiling.dylib", dst_dylib)
+      end
+    end
+
+    # -- Step 5: Generate pkg-config files -------------------------------------
+    #
+    # dd-trace-rb's extconf.rb uses pkg-config to discover include paths and
+    # linker flags.  The .pc files use ${pcfiledir}-relative paths so they
+    # work regardless of where the gem tree lives on disk.
+
+    def install_pkgconfig!
+      dst_pkgconfig = File.join(vendor_dir, "lib", "pkgconfig")
+      FileUtils.mkdir_p(dst_pkgconfig)
+
+      template_dir = File.join(project_root, PKGCONFIG_TEMPLATE_DIR)
+
+      %w[datadog_profiling_with_rpath.pc datadog_profiling.pc].each do |pc_name|
+        template = File.join(template_dir, "#{pc_name}.in")
+        raise "pkgconfig template not found: #{template}" unless File.exist?(template)
+
+        content = File.read(template).gsub("@Datadog_VERSION@", Libdatadog::LIB_VERSION)
+        File.write(File.join(dst_pkgconfig, pc_name), content)
+        puts "  Generated #{pc_name}"
+      end
+    end
+
+    # -- Orchestrator ----------------------------------------------------------
+
+    def run!
+      puts "=" * 72
+      puts "Compiling libdatadog from source"
+      puts "  Ruby platform : #{ruby_platform}"
+      puts "  Rust target   : #{rust_target}"
+      puts "  Vendor dir    : #{vendor_dir}"
+      puts "=" * 72
+      puts
+
+      cargo_build!
+      puts
+      build_dedup_headers!
+      puts
+
+      puts "Installing into #{vendor_dir}..."
+      FileUtils.rm_rf(vendor_dir)
+      FileUtils.mkdir_p(vendor_dir)
+
+      install_headers!
+      install_libs!
+      install_pkgconfig!
+
+      puts
+      puts "=" * 72
+      puts "Done! Vendor tree ready at:"
+      puts "  #{vendor_dir}"
+      puts
+      puts "To use in dd-trace-rb, add to its Gemfile:"
+      puts "  gem 'libdatadog', path: '#{File.expand_path(__dir__)}'"
+      puts "Then:  cd <dd-trace-rb> && bundle exec rake compile"
+      puts "=" * 72
+    end
+  end
+end
+
+desc "Build libdatadog from Rust source and populate the vendor tree for the current platform"
+task :compile do
+  CompileFromSource.run!
+end
+
 Rake::Task["build"].clear
 task(:build) { raise "Build task is disabled, use package instead" }
 
