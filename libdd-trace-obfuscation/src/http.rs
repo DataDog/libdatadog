@@ -25,7 +25,8 @@ fn encode_go_path_chars(url_str: &str) -> String {
                 encoded.push_str(&format!("{:02X}", c as u8));
             }
             // Category 2: encoded only when escape() fallback (handled by caller check)
-            '!' | '\'' | '(' | ')' | '*' => {
+            // These are in Go's validEncoded allowlist but get encoded when escape() is called
+            '!' | '\'' | '(' | ')' | '*' | '[' | ']' => {
                 encoded.push('%');
                 encoded.push_str(&format!("{:02X}", c as u8));
             }
@@ -491,6 +492,13 @@ mod tests {
             remove_path_digits  [true]
             input               ["\\"]
             expected_output     ["%5C"];
+        ]
+        [
+            test_name           [fuzzing_1505427946]
+            remove_query_string [true]
+            remove_path_digits  [true]
+            input               ["[ჸ"]
+            expected_output     ["%5B%E1%83%B8"];
         ]
     )]
     #[test]
