@@ -12,9 +12,13 @@ use url::Url;
 /// 2. Encoded only when escape() fallback occurs (non-ASCII present): '!', '\'', '(', ')', '*'
 ///    These are in validEncoded's allowlist so RawPath is used for pure-ASCII paths.
 fn encode_go_path_chars(url_str: &str) -> String {
-    let query_start = url_str.find('?').unwrap_or(url_str.len());
-    let path_part = &url_str[..query_start];
-    let rest = &url_str[query_start..];
+    // Only encode up to the first '?' or '#' — the fragment has different encoding rules
+    // (e.g., '!' is allowed in fragments per Go's shouldEscape for encodeFragment).
+    let path_end = url_str
+        .find(|c| c == '?' || c == '#')
+        .unwrap_or(url_str.len());
+    let path_part = &url_str[..path_end];
+    let rest = &url_str[path_end..];
 
     let mut encoded = String::with_capacity(path_part.len());
     for c in path_part.chars() {
@@ -292,9 +296,10 @@ pub fn obfuscate_url_string(
             } else {
                 // ASCII-only: only category 1 chars (\, ^, etc.)
                 // Category 2 (!, ', (, ), *) are left as-is for pure ASCII inputs
-                let query_start = result.find('?').unwrap_or(result.len());
-                let path_part = &result[..query_start];
-                let rest = &result[query_start..];
+                // Also stop at '#' since fragment has different encoding rules
+                let path_end = result.find(|c| c == '?' || c == '#').unwrap_or(result.len());
+                let path_part = &result[..path_end];
+                let rest = &result[path_end..];
                 let mut encoded = String::with_capacity(path_part.len());
                 let mut changed = false;
                 for c in path_part.chars() {
@@ -620,6 +625,13 @@ mod tests {
             remove_path_digits  [true]
             input               ["ჸ#\u{10}"]
             expected_output     ["%E1%83%B8#%10"];
+        ]
+        [
+            test_name           [fuzzing_hash_exclamation]
+            remove_query_string [true]
+            remove_path_digits  [true]
+            input               ["ჸ#!"]
+            expected_output     ["%E1%83%B8#!"];
         ]
     )]
     #[test]
