@@ -16,7 +16,9 @@ pub fn quantize_redis_string(query: &str) -> String {
             break;
         }
 
-        let line = raw_line.trim();
+        // Go's QuantizeRedisString trims only ASCII spaces (strings.Trim(rawLine, " ")),
+        // not all whitespace. Use trim_matches(' ') to match that behavior.
+        let line = raw_line.trim_matches(' ');
         if line.is_empty() {
             continue;
         }
@@ -424,6 +426,11 @@ mod tests {
             test_name   [fuzzing_3286489773]
             input       ["ꭺ"]
             expected    ["Ꭺ"];
+        ]
+        [
+            test_name   [fuzzing_2812552373]
+            input       ["\t"]
+            expected    ["\t"];
         ]
     )]
     #[test]
