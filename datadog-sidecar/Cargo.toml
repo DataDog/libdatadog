@@ -37,7 +37,7 @@ http-body-util = "0.1"
 datadog-ipc = { path = "../datadog-ipc", features = ["tiny-bytes"] }
 datadog-ipc-macros = { path = "../datadog-ipc-macros" }
 
-rand = "0.8.3"
+rand = "0.10.0"
 serde = { version = "1.0", features = ["derive", "rc"] }
 serde_with = "3.6.0"
 bincode = { version = "1.3.3" }
@@ -77,7 +77,7 @@ features = [
     "Win32_System_IO",
     "Win32_System_WindowsProgramming",
 ]
-version = "0.51.0"
+version = "0.62.0"
 
 # unstable-only feature
 [target.'cfg(all(tokio_unstable, target_os = "linux"))'.dependencies.tokio]
@@ -86,20 +86,20 @@ version = "1.49.0"
 
 # simd-json v0.15 uses Rust 2024 Edition, so it needs Rust 1.85+.
 [target.'cfg(not(target_arch = "x86"))'.dependencies]
-simd-json = "=0.14"
+simd-json = "=0.17.0"
 
 [target.'cfg(unix)'.dependencies]
-nix = { version = "0.29", features = ["socket", "mman"] }
+nix = { version = "0.31", features = ["socket", "mman"] }
 sendfd = { version = "0.4", features = ["tokio"] }
 
 [target.'cfg(windows)'.dependencies]
 libdd-common-ffi = { path = "../libdd-common-ffi", default-features = false }
 libdd-crashtracker-ffi = { path = "../libdd-crashtracker-ffi", default-features = false, features = ["collector", "collector_windows"] }
 winapi = { version = "0.3.9", features = ["securitybaseapi", "sddl"] }
-windows-sys = { version = "0.52.0", features = ["Win32_System_SystemInformation"] }
+windows-sys = { version = "0.61.0", features = ["Win32_System_SystemInformation"] }
 
 [target.'cfg(windows_seh_wrapper)'.dependencies]
-microseh = "0.1.1"
+microseh = "0.2.0"
 
 [dev-dependencies]
 libc = { version = "0.2" }

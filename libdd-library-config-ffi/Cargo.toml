@@ -16,7 +16,7 @@ libdd-common = { path = "../libdd-common" }
 libdd-common-ffi = { path = "../libdd-common-ffi", default-features = false }
 libdd-library-config = { path = "../libdd-library-config" }
 anyhow = "1.0"
-constcat = "0.4.1"
+constcat = "0.6.0"
 
 [features]
 default = ["cbindgen", "catch_panic"]

@@ -21,9 +21,9 @@ arbitrary = { version = "1.3", features = ["derive"], optional = true }
 fuzzing = ["arbitrary"]
 
 [dev-dependencies]
-rand = "0.8.5"
+rand = "0.10.0"
 duplicate = "0.4.1"
-criterion = "0.5"
+criterion = "0.8"
 
 [[bench]]
 name = "normalization_utils"

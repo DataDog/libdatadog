@@ -16,12 +16,12 @@ bench = false
 
 [dependencies]
 anyhow = "1.0"
-cargo_metadata = "0.18"
+cargo_metadata = "0.23"
 clap = { version = "4.0", features = ["derive"] }
 colored = "2"
-quick-xml = "0.37"
+quick-xml = "0.39"
 regex = "1"
-toml = "0.8"
+toml = "0.9"
 wait-timeout = "0.2"
 
 [[bin]]

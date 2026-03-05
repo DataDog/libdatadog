@@ -8,7 +8,7 @@ publish = false
 bench = false
 
 [dependencies]
-object = {version = "0.31.0"}
+object = {version = "0.38.0"}
 
 [[bin]]
 name = "sidecar_mockgen"

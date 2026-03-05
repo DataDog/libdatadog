@@ -48,12 +48,12 @@ bench = false
 [dev-dependencies]
 libdd-log = { path = "../libdd-log" }
 clap = { version = "4.0", features = ["derive"] }
-criterion = "0.5.1"
+criterion = "0.8.0"
 libdd-trace-utils = { path = "../libdd-trace-utils", features = [
     "test-utils",
 ] }
 httpmock = "0.8.0-alpha.1"
-rand = "0.8.5"
+rand = "0.10.0"
 regex = "1.5"
 tempfile = "3.3.0"
 tokio = { version = "1.23", features = [
