@@ -8,7 +8,7 @@ use url::Url;
 /// - Accepts almost anything as a URL reference
 /// - If it's absolute, return it as-is (normalized/encoded)
 /// - If it's relative, return the encoded relative reference (no dummy base in output)
-pub fn go_like_reference(input: &str) -> String {
+pub fn go_like_reference(input: &str, remove_query_string: bool) -> String {
     // Dummy base just to let the parser resolve relatives
     let base = Url::parse("https://example.invalid/").unwrap();
 
@@ -19,13 +19,15 @@ pub fn go_like_reference(input: &str) -> String {
 
     // Otherwise parse as a relative reference against the dummy base
     let resolved = base.join(input).unwrap_or_else(|_| {
-        // If join fails (rare, but can happen with weird inputs), fall back to putting it in the path.
+        // If join fails (rare, but can happen with weird inputs), fall back to putting it in the
+        // path.
         let mut u = base.clone();
         u.set_path(input);
         u
     });
 
-    // Strip the dummy origin back off so you get "hello%20world", "/x%20y", "?q=a%20b", "#frag", etc.
+    // Strip the dummy origin back off so you get "hello%20world", "/x%20y", "?q=a%20b", "#frag",
+    // etc.
     let full = resolved.as_str();
 
     // base.as_str() is "https://example.invalid/"
@@ -33,6 +35,9 @@ pub fn go_like_reference(input: &str) -> String {
 
     if let Some(rest) = full.strip_prefix(base_prefix) {
         // relative path (e.g. "hello%20world" or "dir/hello%20world")
+        if remove_query_string && !rest.is_empty() {
+            return "?".to_owned();
+        }
         rest.to_string()
     } else if let Some(rest) = full.strip_prefix("https://example.invalid") {
         // covers cases like "/path" where the base origin remains
@@ -50,7 +55,23 @@ pub fn obfuscate_url_string(
 ) -> String {
     let mut parsed_url = match Url::parse(url) {
         Ok(res) => res,
-        Err(_) => return go_like_reference(url),
+        Err(_) => {
+            // Fragment-only references (e.g. "#", "#frag") are valid relative URL references.
+            // Go's url.Parse handles them successfully: "#" → "" (empty fragment → empty string),
+            // "#frag" → "#frag". Handle these before the go_like_reference fallback to prevent
+            // the "empty result → ?" heuristic from incorrectly triggering.
+            if let Some(fragment) = url.strip_prefix('#') {
+                if fragment.is_empty() {
+                    return String::new();
+                }
+                return format!("#{fragment}");
+            }
+            let fixme_url_go_parsing = go_like_reference(url, remove_query_string);
+            if fixme_url_go_parsing.is_empty() && !url.is_empty() {
+                return String::from("?");
+            }
+            return fixme_url_go_parsing;
+        }
     };
 
     // remove username & password
@@ -201,6 +222,27 @@ mod tests {
             remove_query_string [false]
             remove_path_digits  [false]
             input               [""]
+            expected_output     [""];
+        ]
+        [
+            test_name           [non_printable_chars]
+            remove_query_string [false]
+            remove_path_digits  [false]
+            input               ["\u{10}"]
+            expected_output     ["?"];
+        ]
+        [
+            test_name           [non_printable_chars_and_unicode]
+            remove_query_string [true]
+            remove_path_digits  [true]
+            input               ["\u{10}ჸ"]
+            expected_output     ["?"];
+        ]
+        [
+            test_name           [hashtag]
+            remove_query_string [true]
+            remove_path_digits  [true]
+            input               ["#"]
             expected_output     [""];
         ]
     )]
