@@ -159,7 +159,14 @@ pub fn obfuscate_url_string(
                 fixme_url_go_parsing
             };
             // Encode path chars that Go encodes but the url crate doesn't (!, ', (, ), *).
-            let result = encode_go_path_chars(&result);
+            // Go's validEncoded allows these in RawPath (pure ASCII path → no re-encoding).
+            // But when the path has non-ASCII chars, Go calls escape() which also encodes them.
+            // Only apply when the original input contains non-ASCII bytes.
+            let result = if url.bytes().any(|b| b > 127) {
+                encode_go_path_chars(&result)
+            } else {
+                result
+            };
             if remove_path_digits {
                 return remove_relative_path_digits(&result);
             }
@@ -372,6 +379,13 @@ mod tests {
             remove_path_digits  [true]
             input               ["!ჸ"]
             expected_output     ["%21%E1%83%B8"];
+        ]
+        [
+            test_name           [fuzzing_1457007156]
+            remove_query_string [true]
+            remove_path_digits  [true]
+            input               ["!"]
+            expected_output     ["!"];
         ]
     )]
     #[test]
