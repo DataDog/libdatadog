@@ -13,7 +13,6 @@ pub fn fetch_base(base_ref: &str) -> Result<()> {
     let status = Command::new("git")
         .args([
             "fetch",
-            "--depth=1",
             "origin",
             &format!("{branch}:refs/remotes/origin/{branch}"),
         ])

@@ -102,14 +102,14 @@ fn build_output(changed_crates: Option<Vec<CrateInfo>>, affected_crates: Option<
     if std::env::var("DEBUG").is_ok() {
         log::info!("crates: {:?}", changed);
         log::info!("crates_count: {:?}", changed_len);
-        log::info!("dependants: {:?}", affected);
-        log::info!("dependants_count: {:?}", affected_len);
+        log::info!("affected_crates: {:?}", affected);
+        log::info!("affected_crates_count: {:?}", affected_len);
         log::info!("base_ref: {:?}", base_ref);
     } else {
         set_output("crates", &changed)?;
         set_output("crates_count", &changed_len)?;
-        set_output("dependants", &affected)?;
-        set_output("has_changes", &affected_len)?;
+        set_output("affected_crates", &affected)?;
+        set_output("affected_crates_count", &affected_len)?;
         set_output("base_ref", base_ref)?;
     }
     Ok(())

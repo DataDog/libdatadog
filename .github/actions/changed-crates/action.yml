@@ -11,6 +11,12 @@ outputs:
   crates_count:
     description: 'Number of changed crates'
     value: ${{ steps.detect.outputs.crates_count }}
+  affected_crates:
+    description: 'Affected crates by the changes'
+    value: ${{ steps.detect.outputs.affected_crates }}
+  affected_crates_count:
+    description: 'Number of affected crates by the changes'
+    value: ${{ steps.detect.outputs.affected_crates_count }}
   base_ref:
     description: 'The base ref used for comparison'
     value: ${{ steps.detect.outputs.base_ref }}
