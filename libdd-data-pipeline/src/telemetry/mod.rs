@@ -607,6 +607,9 @@ mod tests {
             let (client, handle) = get_test_client(&server.url("/"), &shared_runtime);
             client.start().await;
             let _ = client.send(&data);
+            // Wait for send to be processed
+            sleep(Duration::from_millis(10)).await;
+
             handle.stop().await.expect("Failed to stop worker");
             while telemetry_srv.calls_async().await == 0 {
                 sleep(Duration::from_millis(10)).await;
