@@ -4,6 +4,25 @@
 use percent_encoding::percent_decode_str;
 use url::Url;
 
+fn has_invalid_percent_encoding(s: &str) -> bool {
+    let bytes = s.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' {
+            if i + 2 >= bytes.len()
+                || !bytes[i + 1].is_ascii_hexdigit()
+                || !bytes[i + 2].is_ascii_hexdigit()
+            {
+                return true;
+            }
+            i += 3;
+        } else {
+            i += 1;
+        }
+    }
+    false
+}
+
 /// Go-ish behavior:
 /// - Accepts almost anything as a URL reference
 /// - If it's absolute, return it as-is (normalized/encoded)
@@ -72,6 +91,12 @@ pub fn obfuscate_url_string(
             // error, causing ObfuscateURLString to return "?". The `url` crate silently drops
             // them, so we must check explicitly before calling go_like_reference.
             if url.bytes().any(|b| b < 0x20 || b == 0x7F) {
+                return String::from("?");
+            }
+            // Go's url.Parse rejects invalid percent-encoding sequences (bare '%' or '%' not
+            // followed by exactly two hex digits). The `url` crate re-encodes them as '%25',
+            // so we must detect and reject them explicitly.
+            if has_invalid_percent_encoding(url) {
                 return String::from("?");
             }
             let fixme_url_go_parsing = go_like_reference(url, remove_query_string);
@@ -259,6 +284,13 @@ mod tests {
             remove_path_digits  [true]
             input               ["ჸ"]
             expected_output     ["%E1%83%B8"];
+        ]
+        [
+            test_name           [fuzzing_594901251]
+            remove_query_string [true]
+            remove_path_digits  [true]
+            input               ["%"]
+            expected_output     ["?"];
         ]
     )]
     #[test]
