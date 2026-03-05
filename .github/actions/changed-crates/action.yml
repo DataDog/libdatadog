@@ -48,7 +48,7 @@ runs:
           BASE_REF="origin/$PR_BASE_REF"
           # Ensure base branch is fetched
           echo "Fetching base branch: $PR_BASE_REF"
-          git fetch --depth=1 origin "$PR_BASE_REF:refs/remotes/origin/$PR_BASE_REF" || true
+          git fetch origin "$PR_BASE_REF:refs/remotes/origin/$PR_BASE_REF" || true
         else
           # For push events, compare with previous commit
           BASE_REF="HEAD~1"
