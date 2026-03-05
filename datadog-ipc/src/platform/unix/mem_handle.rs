@@ -18,7 +18,7 @@ use std::io;
 use std::num::NonZeroUsize;
 use std::os::fd::AsFd;
 use std::os::unix::fs::MetadataExt;
-use std::sync::atomic::{AtomicI32, Ordering};
+use std::sync::atomic::{AtomicI32, AtomicU32, Ordering};
 
 fn fallback_path<P: ?Sized + NixPath>(name: &P) -> nix::Result<CString> {
     name.with_nix_path(|cstr| {
@@ -95,6 +95,16 @@ pub(crate) fn munmap_handle<T: MemoryHandle>(mapped: &mut MappedMem<T>) {
 
 static ANON_SHM_ID: AtomicI32 = AtomicI32::new(0);
 
+static SHM_OPEN_MODE: AtomicU32 = AtomicU32::new(0o600);
+
+pub fn set_shm_open_mode(mode: u32) {
+    SHM_OPEN_MODE.store(mode, Ordering::Relaxed);
+}
+
+fn shm_open_mode() -> Mode {
+    Mode::from_bits_truncate(SHM_OPEN_MODE.load(Ordering::Relaxed))
+}
+
 impl ShmHandle {
     #[cfg(target_os = "linux")]
     fn open_anon_shm(name: &str) -> anyhow::Result<OwnedFd> {
@@ -139,7 +149,7 @@ impl ShmHandle {
 
 impl NamedShmHandle {
     pub fn create(path: CString, size: usize) -> io::Result<NamedShmHandle> {
-        Self::create_mode(path, size, Mode::S_IWUSR | Mode::S_IRUSR)
+        Self::create_mode(path, size, shm_open_mode())
     }
 
     pub fn create_mode(path: CString, size: usize, mode: Mode) -> io::Result<NamedShmHandle> {
