@@ -72,11 +72,7 @@ impl Liaison for SharedDirLiaison {
             }
             fs::remove_file(&self.socket_path)?;
         }
-        let listener = UnixListener::bind(&self.socket_path)?;
-        // Make the socket world-accessible so PHP workers running as a different user
-        // (e.g. www-data under PHP-FPM when the master started as root) can connect.
-        let _ = fs::set_permissions(&self.socket_path, fs::Permissions::from_mode(0o777));
-        Ok(Some(listener))
+        Ok(Some(UnixListener::bind(&self.socket_path)?))
     }
 
     fn ipc_shared() -> Self {
