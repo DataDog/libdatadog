@@ -283,7 +283,7 @@ jobs:
           .\build-profiling.ps1
 
   cross-centos7:
-    name: build and test using cross - on centos7
+    name: Test x86_64-unknown-linux-gnu on centOS7 docker image
     runs-on: ubuntu-latest
     concurrency:
       group: ci-${{ github.ref }}-cross-centos7
@@ -308,10 +308,65 @@ jobs:
         with:
           cache-targets: true # cache build artifacts
           cache-bin: true # cache the ~/.cargo/bin directory
-      - run: cargo install cross || true
-      - run: cross build --workspace --target x86_64-unknown-linux-gnu --exclude builder
-      - run: cross test --workspace --features libdd-crashtracker/generate-unit-test-files --target x86_64-unknown-linux-gnu --exclude builder  -- --skip "::single_threaded_tests::" --skip "tracing_integration_tests::"
-      - run: cross test --workspace --features libdd-crashtracker/generate-unit-test-files --target x86_64-unknown-linux-gnu --exclude builder --exclude bin_tests -- --skip "::tests::" --skip "::api_tests::" --test-threads 1 --skip "tracing_integration_tests::"
+      - name: Build CentOS 7 Docker image
+        run: docker build -t libdatadog-centos7 -f tools/docker/Dockerfile.centos .
+      - name: "cargo nextest run (centos7)"
+        # Run docker as a user, not the default root
+        # Mount and use the runner's toolchain as it's the same arch
+        # exclude tracing integration tests since they require docker in docker to run a test-agent
+        run: >-
+          docker run --rm
+          --user "$(id -u):$(id -g)" 
+          -v "${{ github.workspace }}:/workspace"
+          -v "${CARGO_HOME:-$HOME/.cargo}:/usr/local/cargo"
+          -v "${RUSTUP_HOME:-$HOME/.rustup}:/usr/local/rustup"
+          -e CARGO_HOME=/usr/local/cargo
+          -e RUSTUP_HOME=/usr/local/rustup
+          -e PATH=/usr/local/cargo/bin:/usr/local/rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin:/opt/rh/devtoolset-11/root/usr/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+          -w /workspace
+          libdatadog-centos7
+          cargo nextest run --workspace --features libdd-crashtracker/generate-unit-test-files
+          --exclude builder --profile ci
+          -E '!test(tracing_integration_tests::)'
+      - name: Add file attributes to JUnit XML
+        if: success() || failure()
+        run: cargo run --bin add_junit_file_attributes -- target/nextest/ci/junit.xml
+      - name: Report Test Results
+        if: success() || failure()
+        uses: mikepenz/action-junit-report@db71d41eb79864e25ab0337e395c352e84523afe # 4.3.1
+        with:
+          report_paths: "target/nextest/ci/junit.xml"
+          check_name: "[centos7] test report"
+          include_passed: true
+      - name: Upload test results to Datadog
+        if: success() || failure()
+        run: |
+          URL="https://github.com/DataDog/datadog-ci/releases/download/v4.2.2/datadog-ci_linux-x64"
+          OUTPUT="datadog-ci"
+          EXPECTED_CHECKSUM="3e1e9649d15d3feacced89ec90de66151046a58c7844217e4112362ad8dbf8d1"
+
+          echo "Downloading datadog-ci from $URL"
+          curl -L --fail --retry 3 -o "$OUTPUT" "$URL"
+          chmod +x "$OUTPUT"
+
+          ACTUAL_CHECKSUM=$(sha256sum "$OUTPUT" | cut -d' ' -f1)
+          echo "Expected checksum: $EXPECTED_CHECKSUM"
+          echo "Actual checksum: $ACTUAL_CHECKSUM"
+
+          if [ "$ACTUAL_CHECKSUM" != "$EXPECTED_CHECKSUM" ]; then
+            echo "Checksum verification failed!"
+            exit 1
+          fi
+          echo "Checksum verification passed"
+
+          ./"$OUTPUT" junit upload \
+            --service libdatadog \
+            --env ci \
+            --logs \
+            --tags arch:${{ runner.arch }},os:Linux,platform:centos7 \
+            target/nextest/ci/junit.xml
+        env:
+          DATADOG_API_KEY: ${{ secrets.DATADOG_API_KEY }}
 
   ffi_bake:
     strategy:
