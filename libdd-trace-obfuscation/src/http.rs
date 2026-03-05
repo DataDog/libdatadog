@@ -4,6 +4,31 @@
 use percent_encoding::percent_decode_str;
 use url::Url;
 
+/// Apply path-digit removal to a relative URL string returned by go_like_reference.
+/// Operates only on the path portion (before the first '?'), matching Go's behavior of
+/// splitting path by '/' and replacing segments containing digits with '?'.
+fn remove_relative_path_digits(url_str: &str) -> String {
+    let query_start = url_str.find('?').unwrap_or(url_str.len());
+    let path_part = &url_str[..query_start];
+    let rest = &url_str[query_start..];
+
+    let mut segments: Vec<&str> = path_part.split('/').collect();
+    let mut changed = false;
+    for segment in segments.iter_mut() {
+        if let Ok(decoded) = percent_decode_str(segment).decode_utf8() {
+            if decoded.chars().any(|c| char::is_ascii_digit(&c)) {
+                *segment = "?";
+                changed = true;
+            }
+        }
+    }
+    if changed {
+        format!("{}{}", segments.join("/"), rest)
+    } else {
+        url_str.to_string()
+    }
+}
+
 fn has_invalid_percent_encoding(s: &str) -> bool {
     let bytes = s.as_bytes();
     let mut i = 0;
@@ -100,12 +125,17 @@ pub fn obfuscate_url_string(
                 return String::from("?");
             }
             let fixme_url_go_parsing = go_like_reference(url, remove_query_string);
-            if fixme_url_go_parsing.is_empty() && !url.is_empty() {
+            let result = if fixme_url_go_parsing.is_empty() && !url.is_empty() {
                 // The url crate resolved away dot path segments (e.g. "." or "..") via RFC 3986
                 // normalization. Go's url.Parse preserves them literally. Return the original.
-                return url.to_string();
+                url.to_string()
+            } else {
+                fixme_url_go_parsing
+            };
+            if remove_path_digits {
+                return remove_relative_path_digits(&result);
             }
-            return fixme_url_go_parsing;
+            return result;
         }
     };
 
@@ -300,6 +330,13 @@ mod tests {
             remove_path_digits  [true]
             input               ["."]
             expected_output     ["."];
+        ]
+        [
+            test_name           [fuzzing_1928485962]
+            remove_query_string [true]
+            remove_path_digits  [true]
+            input               ["0"]
+            expected_output     ["?"];
         ]
     )]
     #[test]
