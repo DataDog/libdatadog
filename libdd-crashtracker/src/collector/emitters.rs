@@ -13,7 +13,6 @@ use crate::{
     translate_si_code, CrashtrackerConfiguration, ErrorKind, SignalNames, StackTrace,
     StacktraceCollection,
 };
-use backtrace::Frame;
 use libc::{siginfo_t, ucontext_t};
 use std::{
     fs::File,
@@ -39,6 +38,94 @@ pub enum EmitterError {
     SerializationError(#[from] serde_json::Error),
 }
 
+/// Crash-kind-specific data passed to `emit_crashreport`.
+///
+/// Each variant carries exactly the fields that are meaningful for that crash
+/// origin. the shared fields (config, metadata, procinfo, …) remain as plain
+/// function parameters
+pub(crate) enum CrashKindData {
+    UnixSignal {
+        sig_info: *const siginfo_t,
+        ucontext: *const ucontext_t,
+    },
+    UnhandledException {
+        stacktrace: StackTrace,
+    },
+}
+
+impl CrashKindData {
+    fn error_kind(&self) -> ErrorKind {
+        match self {
+            CrashKindData::UnixSignal { .. } => ErrorKind::UnixSignal,
+            CrashKindData::UnhandledException { .. } => ErrorKind::UnhandledException,
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn emit_crashreport(
+    pipe: &mut impl Write,
+    config: &CrashtrackerConfiguration,
+    config_str: &str,
+    metadata_string: &str,
+    message_ptr: *mut String,
+    crash: CrashKindData,
+    ppid: i32,
+    crashing_tid: libc::pid_t,
+) -> Result<(), EmitterError> {
+    // Crash-ping
+    // The receiver dispatches the crash ping as soon as it sees the metadata
+    // section, so try to emit message, siginfo, and kind before it to make sure
+    // we have an enhanced crash ping message
+    emit_config(pipe, config_str)?;
+    emit_message(pipe, message_ptr)?;
+
+    match &crash {
+        CrashKindData::UnixSignal { sig_info, .. } => {
+            emit_siginfo(pipe, *sig_info)?;
+        }
+        CrashKindData::UnhandledException { .. } => {
+            // Unhandled exceptions have no signal info
+        }
+    }
+
+    emit_kind(pipe, &crash.error_kind())?;
+    emit_metadata(pipe, metadata_string)?;
+
+    // Shared process context
+    emit_procinfo(pipe, ppid, crashing_tid)?;
+    emit_counters(pipe)?;
+    emit_spans(pipe)?;
+    consume_and_emit_additional_tags(pipe)?;
+    emit_traces(pipe)?;
+
+    #[cfg(target_os = "linux")]
+    emit_proc_self_maps(pipe)?;
+
+    // Stack trace emission
+    match crash {
+        CrashKindData::UnixSignal { ucontext, .. } => {
+            emit_ucontext(pipe, ucontext)?;
+            if config.resolve_frames() != StacktraceCollection::Disabled {
+                // We do this last, so even if it crashes, we still get the other info.
+                unsafe { emit_backtrace_by_frames(pipe, config.resolve_frames(), ucontext)? };
+            }
+            if is_runtime_callback_registered() {
+                emit_runtime_stack(pipe)?;
+            }
+        }
+        CrashKindData::UnhandledException { stacktrace } => {
+            // SAFETY: this branch only executes when an unhandled exception occurs
+            // and is not called from a signal handler.
+            unsafe { emit_whole_stacktrace(pipe, stacktrace)? };
+        }
+    }
+
+    writeln!(pipe, "{DD_CRASHTRACK_DONE}")?;
+    pipe.flush()?;
+    Ok(())
+}
+
 /// Emit a stacktrace onto the given handle as formatted json.
 /// SAFETY:
 ///     Crash-tracking functions are not reentrant.
@@ -46,119 +133,127 @@ pub enum EmitterError {
 /// ATOMICITY:
 ///     This function is not atomic. A crash during its execution may lead to
 ///     unexpected crash-handling behaviour.
-/// SIGNAL SAFETY:
-///     Getting a backtrace on rust is not guaranteed to be signal safe.
-///     https://github.com/rust-lang/backtrace-rs/issues/414
-///     Calculating the `ip` of the frames seems safe, but resolving the frames
-///     sometimes crashes.
 unsafe fn emit_backtrace_by_frames(
     w: &mut impl Write,
     resolve_frames: StacktraceCollection,
-    fault_ip: usize,
     ucontext: *const ucontext_t,
 ) -> Result<(), EmitterError> {
-    // https://docs.rs/backtrace/latest/backtrace/index.html
     writeln!(w, "{DD_CRASHTRACK_BEGIN_STACKTRACE}")?;
 
     // On macOS, backtrace::trace_unsynchronized fails in forked children because
     // macOS restricts many APIs after fork-without-exec. Walk the frame pointer
     // chain directly from the saved ucontext registers instead. The parent's
-    // stack memory is still readable in the forked child
+    // stack memory is still readable in the forked child.
     #[cfg(target_os = "macos")]
     {
-        let _ = (resolve_frames, fault_ip);
+        let _ = resolve_frames;
         emit_backtrace_from_ucontext(w, ucontext)?;
     }
 
-    #[cfg(not(target_os = "macos"))]
-    {
-        let _ = ucontext;
-        emit_backtrace_via_library(w, resolve_frames, fault_ip)?;
-    }
+    // On Linux, use the bundled libunwind. unw_init_local2(cursor, ucontext, 0)
+    // seeds the unwinder from the saved CPU context that the OS captured at the
+    // moment of the crash, so we start already past the signal frame at the
+    // actual faulting instruction. This is essential on musl libc (Alpine
+    // Linux), where the signal trampoline provides no DWARF unwind info and
+    // libgcc's unwinder cannot cross the signal frame boundary.
+    #[cfg(target_os = "linux")]
+    emit_backtrace_via_libunwind(w, resolve_frames, ucontext)?;
 
     writeln!(w, "{DD_CRASHTRACK_END_STACKTRACE}")?;
     w.flush()?;
     Ok(())
 }
 
-#[allow(dead_code)] // used from tests on macOS, from emit_backtrace_by_frames on other platforms
-unsafe fn emit_backtrace_via_library(
+/// Unwind the stack using the bundled libunwind, seeded from the OS-captured
+/// ucontext.
+///
+/// `unw_init_local2(cursor, ucontext, 0)` initialises the cursor from the
+/// register snapshot that the kernel saved at the moment of the fault. The
+/// unwinder therefore starts directly at the faulting instruction; it never
+/// has to walk backward through the signal trampoline frame.
+///
+/// This matters on musl libc (Alpine Linux x86_64): musl's signal trampoline
+/// does not carry DWARF unwind info, so libgcc's unwinder (used by the
+/// `backtrace` crate) cannot cross the frame boundary and gets stuck inside
+/// the signal handler. libunwind's local unwinder has no such limitation.
+///
+/// For each frame we emit:
+///   - `ip`  / `sp`                             — always
+///   - `module_base_address` / `symbol_address` — when `dladdr` succeeds
+///   - `function`                               — for `EnabledWithInprocessSymbols`
+#[cfg(target_os = "linux")]
+unsafe fn emit_backtrace_via_libunwind(
     w: &mut impl Write,
     resolve_frames: StacktraceCollection,
-    fault_ip: usize,
+    ucontext: *const ucontext_t,
 ) -> Result<(), EmitterError> {
-    fn emit_absolute_addresses(w: &mut impl Write, frame: &Frame) -> Result<(), EmitterError> {
-        write!(w, "\"ip\": \"{:?}\"", frame.ip())?;
-        if let Some(module_base_address) = frame.module_base_address() {
-            write!(w, ", \"module_base_address\": \"{module_base_address:?}\"",)?;
-        }
-        write!(w, ", \"sp\": \"{:?}\"", frame.sp())?;
-        write!(w, ", \"symbol_address\": \"{:?}\"", frame.symbol_address())?;
-        Ok(())
+    use libdd_libunwind_sys::{
+        unw_get_proc_name, unw_get_reg, unw_init_local2, unw_step, UnwCursor, UnwWord, UNW_REG_IP,
+        UNW_REG_SP,
+    };
+
+    if ucontext.is_null() {
+        return Ok(());
     }
 
-    let mut ip_found = false;
-    loop {
-        backtrace::trace_unsynchronized(|frame| {
-            // Skip all stack frames until we encounter the determined crash instruction pointer
-            // (fault_ip). These initial frames belong exclusively to the crash tracker and the
-            // backtrace functionality and are therefore not relevant for troubleshooting.
-            let ip = frame.ip();
-            if ip as usize == fault_ip {
-                ip_found = true;
-            }
-            if !ip_found {
-                return true;
-            }
-            if resolve_frames == StacktraceCollection::EnabledWithInprocessSymbols {
-                backtrace::resolve_frame_unsynchronized(frame, |symbol| {
-                    #[allow(clippy::unwrap_used)]
-                    write!(w, "{{").unwrap();
-                    #[allow(clippy::unwrap_used)]
-                    emit_absolute_addresses(w, frame).unwrap();
-                    if let Some(column) = symbol.colno() {
-                        #[allow(clippy::unwrap_used)]
-                        write!(w, ", \"column\": {column}").unwrap();
-                    }
-                    if let Some(file) = symbol.filename() {
-                        // The debug printer for path already wraps it in `"` marks.
-                        #[allow(clippy::unwrap_used)]
-                        write!(w, ", \"file\": {file:?}").unwrap();
-                    }
-                    if let Some(function) = symbol.name() {
-                        #[allow(clippy::unwrap_used)]
-                        write!(w, ", \"function\": \"{function}\"").unwrap();
-                    }
-                    if let Some(line) = symbol.lineno() {
-                        #[allow(clippy::unwrap_used)]
-                        write!(w, ", \"line\": {line}").unwrap();
-                    }
-                    #[allow(clippy::unwrap_used)]
-                    writeln!(w, "}}").unwrap();
-                    // Flush eagerly to ensure that each frame gets emitted even if the next one
-                    // fails
-                    #[allow(clippy::unwrap_used)]
-                    w.flush().unwrap();
-                });
-            } else {
-                #[allow(clippy::unwrap_used)]
-                write!(w, "{{").unwrap();
-                #[allow(clippy::unwrap_used)]
-                emit_absolute_addresses(w, frame).unwrap();
-                #[allow(clippy::unwrap_used)]
-                writeln!(w, "}}").unwrap();
-                // Flush eagerly to ensure that each frame gets emitted even if the next one fails
-                #[allow(clippy::unwrap_used)]
-                w.flush().unwrap();
-            }
-            true // keep going to the next frame
-        });
-        if ip_found {
+    let mut cursor: UnwCursor = std::mem::zeroed();
+    // Cast away const: libunwind only reads the context to copy the register
+    // state into the cursor; it does not modify the ucontext itself.
+    let ret = unw_init_local2(&mut cursor, ucontext as *mut _, 0);
+    if ret != 0 {
+        return Ok(());
+    }
+
+    const MAX_FRAMES: usize = 512;
+    for _ in 0..MAX_FRAMES {
+        let mut ip: UnwWord = 0;
+        let mut sp: UnwWord = 0;
+
+        if unw_get_reg(&mut cursor, UNW_REG_IP, &mut ip) != 0 || ip == 0 {
             break;
         }
-        // emit anything at all, if the crashing frame is not found for some reason
-        ip_found = true;
+        let _ = unw_get_reg(&mut cursor, UNW_REG_SP, &mut sp);
+
+        write!(w, "{{\"ip\": \"0x{ip:x}\"")?;
+        write!(w, ", \"sp\": \"0x{sp:x}\"")?;
+
+        // dladdr resolves the containing shared object and nearest symbol.
+        // It only reads dyld/ld.so internal tables; no allocation, no locks
+        let mut dl_info: libc::Dl_info = std::mem::zeroed();
+        if libc::dladdr(ip as *const libc::c_void, &mut dl_info) != 0 {
+            if !dl_info.dli_fbase.is_null() {
+                write!(w, ", \"module_base_address\": \"{:?}\"", dl_info.dli_fbase)?;
+            }
+            if !dl_info.dli_saddr.is_null() {
+                write!(w, ", \"symbol_address\": \"{:?}\"", dl_info.dli_saddr)?;
+            }
+        }
+
+        if resolve_frames == StacktraceCollection::EnabledWithInprocessSymbols {
+            let mut name_buf: [libc::c_char; 256] = [0; 256];
+            if unw_get_proc_name(
+                &mut cursor,
+                name_buf.as_mut_ptr(),
+                name_buf.len(),
+                std::ptr::null_mut(),
+            ) == 0
+            {
+                let name = std::ffi::CStr::from_ptr(name_buf.as_ptr());
+                if let Ok(s) = name.to_str() {
+                    write!(w, ", \"function\": \"{s}\"")?;
+                }
+            }
+        }
+
+        writeln!(w, "}}")?;
+        // Flush eagerly so each frame is visible even if the next step crashes.
+        w.flush()?;
+
+        if unw_step(&mut cursor) <= 0 {
+            break;
+        }
     }
+
     Ok(())
 }
 
@@ -257,102 +352,6 @@ unsafe fn emit_frame_with_dladdr(w: &mut impl Write, ip: usize) -> Result<(), Em
 
     writeln!(w, "}}")?;
     w.flush()?;
-    Ok(())
-}
-
-/// Crash-kind-specific data passed to `emit_crashreport`.
-///
-/// Each variant carries exactly the fields that are meaningful for that crash
-/// origin. the shared fields (config, metadata, procinfo, …) remain as plain
-/// function parameters
-pub(crate) enum CrashKindData {
-    UnixSignal {
-        sig_info: *const siginfo_t,
-        ucontext: *const ucontext_t,
-    },
-    UnhandledException {
-        stacktrace: StackTrace,
-    },
-}
-
-impl CrashKindData {
-    fn error_kind(&self) -> ErrorKind {
-        match self {
-            CrashKindData::UnixSignal { .. } => ErrorKind::UnixSignal,
-            CrashKindData::UnhandledException { .. } => ErrorKind::UnhandledException,
-        }
-    }
-}
-
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn emit_crashreport(
-    pipe: &mut impl Write,
-    config: &CrashtrackerConfiguration,
-    config_str: &str,
-    metadata_string: &str,
-    message_ptr: *mut String,
-    crash: CrashKindData,
-    ppid: i32,
-    crashing_tid: libc::pid_t,
-) -> Result<(), EmitterError> {
-    // Crash-ping
-    // The receiver dispatches the crash ping as soon as it sees the metadata
-    // section, so try to emit message, siginfo, and kind before it to make sure
-    // we have an enhanced crash ping message
-    emit_config(pipe, config_str)?;
-    emit_message(pipe, message_ptr)?;
-
-    match &crash {
-        CrashKindData::UnixSignal { sig_info, .. } => {
-            emit_siginfo(pipe, *sig_info)?;
-        }
-        CrashKindData::UnhandledException { .. } => {
-            // Unhandled exceptions have no signal info
-        }
-    }
-
-    emit_kind(pipe, &crash.error_kind())?;
-    emit_metadata(pipe, metadata_string)?;
-
-    // Shared process context
-    emit_procinfo(pipe, ppid, crashing_tid)?;
-    emit_counters(pipe)?;
-    emit_spans(pipe)?;
-    consume_and_emit_additional_tags(pipe)?;
-    emit_traces(pipe)?;
-
-    #[cfg(target_os = "linux")]
-    emit_proc_self_maps(pipe)?;
-
-    // Stack trace emission
-    match crash {
-        CrashKindData::UnixSignal { ucontext, .. } => {
-            emit_ucontext(pipe, ucontext)?;
-            if config.resolve_frames() != StacktraceCollection::Disabled {
-                // SAFETY: Getting a backtrace on rust is not guaranteed to be signal safe
-                // https://github.com/rust-lang/backtrace-rs/issues/414
-                // let current_backtrace = backtrace::Backtrace::new();
-                // In fact, if we look into the code here, we see mallocs.
-                // https://doc.rust-lang.org/src/std/backtrace.rs.html#332
-                // We do this last, so even if it crashes, we still get the other info.
-                let fault_ip = extract_ip(ucontext);
-                unsafe {
-                    emit_backtrace_by_frames(pipe, config.resolve_frames(), fault_ip, ucontext)?
-                };
-            }
-            if is_runtime_callback_registered() {
-                emit_runtime_stack(pipe)?;
-            }
-        }
-        CrashKindData::UnhandledException { stacktrace } => {
-            // SAFETY: this branch only executes when an unhandled exception occurs
-            // and is not called from a signal handler.
-            unsafe { emit_whole_stacktrace(pipe, stacktrace)? };
-        }
-    }
-
-    writeln!(pipe, "{DD_CRASHTRACK_DONE}")?;
-    pipe.flush()?;
     Ok(())
 }
 
@@ -593,46 +592,12 @@ fn emit_text_file(w: &mut impl Write, path: &str) -> Result<(), EmitterError> {
     Ok(())
 }
 
-fn extract_ip(ucontext: *const ucontext_t) -> usize {
-    unsafe {
-        #[cfg(all(target_os = "macos", target_arch = "x86_64"))]
-        return (*(*ucontext).uc_mcontext).__ss.__rip as usize;
-        #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
-        return (*(*ucontext).uc_mcontext).__ss.__pc as usize;
-
-        #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
-        return (*ucontext).uc_mcontext.gregs[libc::REG_RIP as usize] as usize;
-        #[cfg(all(target_os = "linux", target_arch = "aarch64"))]
-        return (*ucontext).uc_mcontext.pc as usize;
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use crate::StackFrame;
 
     use super::*;
     use std::str;
-
-    #[inline(never)]
-    fn inner_test_emit_backtrace_with_symbols(collection: StacktraceCollection) -> Vec<u8> {
-        let mut ip_of_test_fn = 0;
-        let mut skip = 3;
-        unsafe {
-            backtrace::trace_unsynchronized(|frame| {
-                ip_of_test_fn = frame.ip() as usize;
-                skip -= 1;
-                skip > 0
-            })
-        };
-        let mut buf = Vec::new();
-        writeln!(buf, "{DD_CRASHTRACK_BEGIN_STACKTRACE}").unwrap();
-        unsafe {
-            emit_backtrace_via_library(&mut buf, collection, ip_of_test_fn).expect("to work ;-)");
-        }
-        writeln!(buf, "{DD_CRASHTRACK_END_STACKTRACE}").unwrap();
-        buf
-    }
 
     #[test]
     #[cfg_attr(miri, ignore)]
@@ -664,52 +629,6 @@ mod tests {
         assert!(out.contains("\"ip\":\"0x162e\""));
         assert!(out.contains("\"function\":\"test_function2\""));
         assert!(out.contains("\"file\":\"test_file2\""));
-    }
-
-    #[test]
-    #[cfg_attr(miri, ignore)]
-    fn test_emit_backtrace_disabled() {
-        let buf = inner_test_emit_backtrace_with_symbols(StacktraceCollection::Disabled);
-        let out = str::from_utf8(&buf).expect("to be valid UTF8");
-        assert!(out.contains("BEGIN_STACKTRACE"));
-        assert!(out.contains("END_STACKTRACE"));
-        assert!(out.contains("\"ip\":"));
-        assert!(
-            !out.contains("\"column\":"),
-            "'column' key must not be emitted"
-        );
-        assert!(!out.contains("\"file\":"), "'file' key must not be emitted");
-        assert!(
-            !out.contains("\"function\":"),
-            "'function' key must not be emitted"
-        );
-        assert!(!out.contains("\"line\":"), "'line' key must not be emitted");
-    }
-
-    #[test]
-    #[cfg_attr(miri, ignore)]
-    fn test_emit_backtrace_with_symbols() {
-        let buf = inner_test_emit_backtrace_with_symbols(
-            StacktraceCollection::EnabledWithInprocessSymbols,
-        );
-        // retrieve stack pointer for this function
-        let out = str::from_utf8(&buf).expect("to be valid UTF8");
-        assert!(out.contains("BEGIN_STACKTRACE"));
-        assert!(out.contains("END_STACKTRACE"));
-        // basic structure assertions
-        assert!(out.contains("\"column\":"), "'column' key missing");
-        assert!(out.contains("\"file\":"), "'file' key missing");
-        assert!(out.contains("\"function\":"), "'function' key missing");
-        assert!(out.contains("\"line\":"), "'line' key missing");
-        // filter assertions
-        assert!(
-            !out.contains("emitters::emit_backtrace_by_frames"),
-            "crashtracker itself must be filtered, found 'backtrace::backtrace::libunwind'"
-        );
-        assert!(
-            !out.contains("backtrace::backtrace"),
-            "crashtracker itself must be filtered away, found 'backtrace::backtrace'"
-        );
     }
 
     #[test]
@@ -847,5 +766,46 @@ mod tests {
         assert!(out.contains(&long_message[..100])); // At least first 100 chars
 
         unsafe { drop(Box::from_raw(message_ptr)) };
+    }
+
+    // We only test edge cases specific to this wrapper function here.
+    // The core unwinding logic is tested in the libunwind crate.
+    #[test]
+    #[cfg(target_os = "linux")]
+    #[cfg_attr(miri, ignore)]
+    fn test_emit_backtrace_via_libunwind_null_ucontext() {
+        let mut buf = Vec::new();
+        unsafe {
+            emit_backtrace_via_libunwind(
+                &mut buf,
+                StacktraceCollection::WithoutSymbols,
+                std::ptr::null(),
+            )
+            .expect("should handle null ucontext gracefully");
+        }
+        // With null ucontext, function should return early and emit nothing
+        assert!(buf.is_empty());
+    }
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    #[cfg_attr(miri, ignore)]
+    fn test_emit_backtrace_via_libunwind_unw_init_failure() {
+        // Test that when unw_init_local2 fails (e.g., with invalid context),
+        // the function returns Ok(()) gracefully without writing anything
+        let context: libc::ucontext_t = unsafe { std::mem::zeroed() };
+        let mut buf = Vec::new();
+
+        unsafe {
+            emit_backtrace_via_libunwind(&mut buf, StacktraceCollection::WithoutSymbols, &context)
+                .expect("should handle unw_init_local2 failure gracefully");
+        }
+
+        // When unw_init_local2 fails, function should return early without error
+        // Buffer should be empty since no frames were written
+        assert!(
+            buf.is_empty(),
+            "Function should return early on unw_init_local2 failure"
+        );
     }
 }

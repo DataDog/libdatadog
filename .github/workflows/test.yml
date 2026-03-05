@@ -109,11 +109,11 @@ jobs:
             CHECKSUM_CMD="shasum -a 256"
             EXPECTED_CHECKSUM="071a6140b17438b3f9dd6c65da48b48ea03fc310034fa624ce874fdb6c325da4"
           fi
-                    
+
           echo "Downloading datadog-ci from $URL"
           curl -L --fail --retry 3 -o "$OUTPUT" "$URL"
           chmod +x "$OUTPUT"
-          
+
           # Verify checksum
           ACTUAL_CHECKSUM=$($CHECKSUM_CMD "$OUTPUT" | cut -d' ' -f1)
           echo "Expected checksum: $EXPECTED_CHECKSUM"
