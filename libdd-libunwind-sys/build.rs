@@ -18,26 +18,27 @@ mod linux {
         let libunwind_dir = std::path::Path::new(&manifest_dir).join("libunwind");
 
         if !libunwind_dir.join("src").exists() {
-            panic!(
-                "libunwind source not found at {}. \
-                 Did you forget to run `git submodule update --init`?",
-                libunwind_dir.display()
-            );
-        }
+            eprintln!("Initializing libunwind submodule...");
+            let status = std::process::Command::new("git")
+                .args([
+                    "submodule",
+                    "update",
+                    "--init",
+                    "--recursive",
+                    "--",
+                    "libdd-libunwind-sys/libunwind",
+                ])
+                .current_dir(std::path::Path::new(&manifest_dir).parent().unwrap())
+                .status()
+                .expect("Failed to run git. Is git installed?");
 
-        // Check if libunwind submodule is initialized
-        if !libunwind_dir.exists() || std::fs::read_dir(&libunwind_dir).unwrap().next().is_none() {
-            panic!(
-                "libunwind submodule not initialized!\n\
-                 Run: git submodule update --init --recursive\n\
-                 \n\
-                 For CI, ensure your workflow checks out submodules:\n\
-                 - GitHub Actions: add 'submodules: recursive' to actions/checkout\n\
-                 - GitLab CI: add 'GIT_SUBMODULE_STRATEGY: recursive'\n\
-                 \n\
-                 Directory checked: {}",
-                libunwind_dir.display()
-            );
+            if !status.success() || !libunwind_dir.join("src").exists() {
+                panic!(
+                    "Failed to initialize libunwind submodule at {}.\n\
+                     Try manually: git submodule update --init --recursive",
+                    libunwind_dir.display()
+                );
+            }
         }
 
         std::fs::create_dir_all(&build_dir).unwrap();
