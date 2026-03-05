@@ -168,24 +168,36 @@ pub fn obfuscate_url_string(
                 if has_invalid_percent_encoding(fragment) {
                     return String::from("?");
                 }
-                // Go's url.Parse percent-encodes control chars and '#' in fragments.
-                // ('#' in a fragment is encoded as %23 since shouldEscape('#', encodeFragment)=true)
-                // The url crate keeps them raw, so pre-encode them manually.
-                // Iterate over chars (not bytes) to preserve multi-byte Unicode sequences.
-                let url_for_join = if fragment.bytes().any(|b| b < 0x20 || b == 0x7F || b == b'#') {
-                    let mut encoded = String::from('#');
-                    for c in fragment.chars() {
-                        let cp = c as u32;
-                        if cp < 0x20 || cp == 0x7F || c == '#' {
-                            encoded.push_str(&format!("%{cp:02X}"));
-                        } else {
-                            encoded.push(c);
+                // Go's url.Parse percent-encodes certain chars in fragments:
+                // - Always: control chars, '#'
+                // - When non-ASCII present (escape() fallback): '!', '\'', '(', ')', '*', '[', ']'
+                //   (These are in validEncoded's allowlist so kept for pure-ASCII fragments,
+                //    but escape() encodes them too.)
+                let frag_has_non_ascii = fragment.bytes().any(|b| b > 127);
+                let url_for_join =
+                    if fragment.bytes().any(|b| b < 0x20 || b == 0x7F || b == b'#')
+                        || (frag_has_non_ascii
+                            && fragment
+                                .chars()
+                                .any(|c| matches!(c, '!' | '\'' | '(' | ')' | '*' | '[' | ']')))
+                    {
+                        let mut encoded = String::from('#');
+                        for c in fragment.chars() {
+                            let cp = c as u32;
+                            if cp < 0x20 || cp == 0x7F || c == '#' {
+                                encoded.push_str(&format!("%{cp:02X}"));
+                            } else if frag_has_non_ascii
+                                && matches!(c, '!' | '\'' | '(' | ')' | '*' | '[' | ']')
+                            {
+                                encoded.push_str(&format!("%{:02X}", c as u8));
+                            } else {
+                                encoded.push(c);
+                            }
                         }
-                    }
-                    encoded
-                } else {
-                    url.to_string()
-                };
+                        encoded
+                    } else {
+                        url.to_string()
+                    };
                 return go_like_reference(&url_for_join, remove_query_string);
             }
             // Go's url.Parse rejects control characters (bytes < 0x20 or 0x7F) in the PATH and
@@ -643,6 +655,13 @@ mod tests {
             remove_path_digits  [true]
             input               ["#%"]
             expected_output     ["?"];
+        ]
+        [
+            test_name           [fuzzing_3991369296]
+            remove_query_string [true]
+            remove_path_digits  [true]
+            input               ["#'ჸ"]
+            expected_output     ["#%27%E1%83%B8"];
         ]
     )]
     #[test]
