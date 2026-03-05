@@ -138,13 +138,15 @@ pub fn obfuscate_url_string(
                 }
                 // Go's url.Parse percent-encodes control chars in fragments.
                 // The url crate silently drops them, so pre-encode them manually.
+                // Iterate over chars (not bytes) to preserve multi-byte Unicode sequences.
                 let url_for_join = if fragment.bytes().any(|b| b < 0x20 || b == 0x7F) {
                     let mut encoded = String::from('#');
-                    for b in fragment.bytes() {
-                        if b < 0x20 || b == 0x7F {
-                            encoded.push_str(&format!("%{b:02X}"));
+                    for c in fragment.chars() {
+                        let cp = c as u32;
+                        if cp < 0x20 || cp == 0x7F {
+                            encoded.push_str(&format!("%{cp:02X}"));
                         } else {
-                            encoded.push(b as char);
+                            encoded.push(c);
                         }
                     }
                     encoded
@@ -434,6 +436,13 @@ mod tests {
             remove_path_digits  [true]
             input               ["#\u{01}"]
             expected_output     ["#%01"];
+        ]
+        [
+            test_name           [fuzzing_35626170]
+            remove_query_string [true]
+            remove_path_digits  [true]
+            input               ["#\u{01}ჸ"]
+            expected_output     ["#%01%E1%83%B8"];
         ]
     )]
     #[test]
