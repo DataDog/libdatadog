@@ -443,6 +443,22 @@ pub fn obfuscate_url_string(
                     result
                 }
             };
+            // Go keeps the query string raw (url.RawQuery in Go's URL struct).
+            // The url crate encodes query chars; restore the original query from the input.
+            let result = if !remove_query_string {
+                if let Some(orig_q_start) = url.find('?') {
+                    let orig_query = &url[orig_q_start..]; // includes '?' and up to '#'
+                    if let Some(result_q_start) = result.find('?') {
+                        format!("{}{}", &result[..result_q_start], orig_query)
+                    } else {
+                        result
+                    }
+                } else {
+                    result
+                }
+            } else {
+                result
+            };
             if remove_path_digits {
                 return remove_relative_path_digits(&result);
             }
