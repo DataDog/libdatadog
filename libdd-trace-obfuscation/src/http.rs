@@ -152,6 +152,18 @@ pub fn obfuscate_url_string(
             if has_invalid_percent_encoding(url) {
                 return String::from("?");
             }
+            // Go's url.Parse rejects URLs where the first path segment contains ':' (RFC 3986
+            // §4.2): this is ambiguous with a scheme separator. E.g., ":" and "1:b" both fail
+            // with "missing protocol scheme" or "first path segment cannot contain colon".
+            // The url crate silently accepts these as path chars.
+            {
+                let segment_end = url
+                    .find(|c| matches!(c, '/' | '?' | '#'))
+                    .unwrap_or(url.len());
+                if url[..segment_end].contains(':') {
+                    return String::from("?");
+                }
+            }
             let fixme_url_go_parsing = go_like_reference(url, remove_query_string);
             let result = if fixme_url_go_parsing.is_empty() && !url.is_empty() {
                 // The url crate resolved away dot path segments (e.g. "." or "..") via RFC 3986
@@ -388,6 +400,13 @@ mod tests {
             remove_path_digits  [true]
             input               ["!"]
             expected_output     ["!"];
+        ]
+        [
+            test_name           [fuzzing_3119724369]
+            remove_query_string [true]
+            remove_path_digits  [true]
+            input               [":"]
+            expected_output     ["?"];
         ]
         [
             test_name           [fuzzing_1092426409]
