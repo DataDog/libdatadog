@@ -312,6 +312,9 @@ pub fn obfuscate_url_string(
                     .find(|c| matches!(c, '/' | '?' | '#'))
                     .unwrap_or(url.len());
                 if url[..segment_end].contains(':') {
+                    if !remove_query_string && !remove_path_digits {
+                        return url.to_string();
+                    }
                     return String::from("?");
                 }
             }
