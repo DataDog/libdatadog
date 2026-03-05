@@ -160,14 +160,15 @@ pub fn obfuscate_url_string(
                 if fragment.is_empty() {
                     return String::new();
                 }
-                // Go's url.Parse percent-encodes control chars in fragments.
-                // The url crate silently drops them, so pre-encode them manually.
+                // Go's url.Parse percent-encodes control chars and '#' in fragments.
+                // ('#' in a fragment is encoded as %23 since shouldEscape('#', encodeFragment)=true)
+                // The url crate keeps them raw, so pre-encode them manually.
                 // Iterate over chars (not bytes) to preserve multi-byte Unicode sequences.
-                let url_for_join = if fragment.bytes().any(|b| b < 0x20 || b == 0x7F) {
+                let url_for_join = if fragment.bytes().any(|b| b < 0x20 || b == 0x7F || b == b'#') {
                     let mut encoded = String::from('#');
                     for c in fragment.chars() {
                         let cp = c as u32;
-                        if cp < 0x20 || cp == 0x7F {
+                        if cp < 0x20 || cp == 0x7F || c == '#' {
                             encoded.push_str(&format!("%{cp:02X}"));
                         } else {
                             encoded.push(c);
@@ -562,6 +563,13 @@ mod tests {
             remove_path_digits  [true]
             input               ["/ჸ"]
             expected_output     ["/%E1%83%B8"];
+        ]
+        [
+            test_name           [fuzzing_3710129001]
+            remove_query_string [true]
+            remove_path_digits  [true]
+            input               ["##"]
+            expected_output     ["#%23"];
         ]
     )]
     #[test]
