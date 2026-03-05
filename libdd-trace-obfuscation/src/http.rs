@@ -307,8 +307,36 @@ pub fn obfuscate_url_string(
             let path_end_for_ascii_check = url.find('#').unwrap_or(url.len());
             let has_non_ascii = url[..path_end_for_ascii_check].bytes().any(|b| b > 127);
             let result = if has_non_ascii {
-                // Full encoding: both category 1 and category 2
-                encode_go_path_chars(&result)
+                // Full encoding: both category 1 and category 2 in path + fragment.
+                // When non-ASCII is present, Go's escape() also encodes cat2 chars in fragments.
+                let encoded = encode_go_path_chars(&result);
+                // Check if original URL's fragment also has non-ASCII
+                let url_frag_start = url.find('#').map(|i| i + 1).unwrap_or(url.len());
+                let frag_has_non_ascii = url[url_frag_start..].bytes().any(|b| b > 127);
+                if frag_has_non_ascii {
+                    // Also encode cat2 chars in the result's fragment
+                    if let Some(frag_start) = encoded.find('#') {
+                        let path_and_hash = &encoded[..=frag_start];
+                        let frag = &encoded[frag_start + 1..];
+                        if frag.chars().any(|c| matches!(c, '!' | '\'' | '(' | ')' | '*' | '[' | ']')) {
+                            let mut out = path_and_hash.to_string();
+                            for c in frag.chars() {
+                                if matches!(c, '!' | '\'' | '(' | ')' | '*' | '[' | ']') {
+                                    out.push_str(&format!("%{:02X}", c as u8));
+                                } else {
+                                    out.push(c);
+                                }
+                            }
+                            out
+                        } else {
+                            encoded
+                        }
+                    } else {
+                        encoded
+                    }
+                } else {
+                    encoded
+                }
             } else {
                 // ASCII-only: only category 1 chars (\, ^, etc.)
                 // Category 2 (!, ', (, ), *) are left as-is for pure ASCII inputs
@@ -662,6 +690,13 @@ mod tests {
             remove_path_digits  [true]
             input               ["#'ჸ"]
             expected_output     ["#%27%E1%83%B8"];
+        ]
+        [
+            test_name           [fuzzing_path_frag_quote]
+            remove_query_string [true]
+            remove_path_digits  [true]
+            input               ["ჸ#'ჸ"]
+            expected_output     ["%E1%83%B8#%27%E1%83%B8"];
         ]
     )]
     #[test]
