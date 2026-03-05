@@ -295,13 +295,18 @@ pub fn obfuscate_url_string(
                 }
             }
             // Go's url.Parse rejects invalid percent-encoding sequences (bare '%' or '%' not
-            // followed by exactly two hex digits) in the PATH only, not in the query string.
-            // Check only the portion before '?' (and before '#').
-            if has_invalid_percent_encoding(&url[..url.find(|c| c == '?' || c == '#').unwrap_or(url.len())]) {
-                if !remove_query_string && !remove_path_digits {
-                    return url.to_string();
+            // followed by exactly two hex digits) in the PATH and FRAGMENT, but not query string.
+            {
+                let path_end = url.find(|c| c == '?' || c == '#').unwrap_or(url.len());
+                let frag_start = url.find('#').map(|i| i + 1);
+                let path_invalid = has_invalid_percent_encoding(&url[..path_end]);
+                let frag_invalid = frag_start.is_some_and(|i| has_invalid_percent_encoding(&url[i..]));
+                if path_invalid || frag_invalid {
+                    if !remove_query_string && !remove_path_digits {
+                        return url.to_string();
+                    }
+                    return String::from("?");
                 }
-                return String::from("?");
             }
             // Go's url.Parse rejects URLs where the first path segment contains ':' (RFC 3986
             // §4.2): this is ambiguous with a scheme separator. E.g., ":" and "1:b" both fail
