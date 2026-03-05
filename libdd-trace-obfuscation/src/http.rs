@@ -295,18 +295,40 @@ pub fn obfuscate_url_string(
                 // but strip a trailing empty fragment '#' (Go omits empty fragments).
                 let fallback = if url.ends_with('#') { &url[..url.len()-1] } else { url };
                 fallback.to_string()
-            } else if fixme_url_go_parsing.starts_with('#') {
-                // go_like_reference resolved away the path (e.g. ".#frag" → "#frag").
-                // Go preserves the original path. Prepend it.
-                let path_end = url.find('#').unwrap_or(url.len());
-                let orig_path = &url[..path_end];
-                if !orig_path.is_empty() {
-                    format!("{}{}", orig_path, fixme_url_go_parsing)
+            } else {
+                // If the original URL had a dot-segment prefix (., .., ./, ../) that
+                // base.join() resolved away, Go preserves it literally. Re-prepend it.
+                let frag_or_end = url.find(|c| c == '#' || c == '?').unwrap_or(url.len());
+                let orig_path = &url[..frag_or_end];
+                let dot_prefix_len = {
+                    let mut i = 0;
+                    loop {
+                        if orig_path[i..].starts_with("../") { i += 3; }
+                        else if orig_path[i..].starts_with("./") { i += 2; }
+                        else if &orig_path[i..] == ".." || &orig_path[i..] == "." {
+                            i += orig_path[i..].len(); break;
+                        } else { break; }
+                    }
+                    i
+                };
+                if dot_prefix_len > 0 {
+                    let dot_prefix = &url[..dot_prefix_len];
+                    // Prepend the lost dot prefix
+                    if !fixme_url_go_parsing.starts_with(dot_prefix) {
+                        format!("{}{}", dot_prefix, fixme_url_go_parsing)
+                    } else {
+                        fixme_url_go_parsing
+                    }
+                } else if fixme_url_go_parsing.starts_with('#') {
+                    // Non-dot path resolved to fragment only - prepend original path
+                    if !orig_path.is_empty() {
+                        format!("{}{}", orig_path, fixme_url_go_parsing)
+                    } else {
+                        fixme_url_go_parsing
+                    }
                 } else {
                     fixme_url_go_parsing
                 }
-            } else {
-                fixme_url_go_parsing
             };
             // Encode path chars that Go encodes but the url crate doesn't.
             // Always apply encode_go_path_chars since it handles:
