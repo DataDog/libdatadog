@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 use std::{fmt::Write, time::SystemTime};
 
-use crate::SigInfo;
+use crate::{ErrorKind, SigInfo};
 
 use super::{CrashInfo, Metadata};
 use anyhow::Context;
@@ -26,6 +26,7 @@ struct TelemetryMetadata {
 pub struct CrashPingBuilder {
     crash_uuid: Uuid,
     custom_message: Option<String>,
+    kind: Option<ErrorKind>,
     metadata: Option<Metadata>,
     sig_info: Option<SigInfo>,
 }
@@ -38,6 +39,7 @@ impl CrashPingBuilder {
         Self {
             crash_uuid,
             custom_message: None,
+            kind: None,
             metadata: None,
             sig_info: None,
         }
@@ -53,6 +55,11 @@ impl CrashPingBuilder {
         self
     }
 
+    pub fn with_kind(mut self, kind: ErrorKind) -> Self {
+        self.kind = Some(kind);
+        self
+    }
+
     pub fn with_metadata(mut self, metadata: Metadata) -> Self {
         self.metadata = Some(metadata);
         self
@@ -62,6 +69,7 @@ impl CrashPingBuilder {
         let crash_uuid = self.crash_uuid;
         let sig_info = self.sig_info;
         let metadata = self.metadata.context("metadata is required")?;
+        let kind = self.kind.context("kind is required")?;
 
         let message = if let Some(custom_message) = self.custom_message {
             format!("Crashtracker crash ping: crash processing started - {custom_message}")
@@ -71,13 +79,13 @@ impl CrashPingBuilder {
                 sig_info.si_code_human_readable, sig_info.si_signo_human_readable
             )
         } else {
-            "Crashtracker crash ping: crash processing started - Process terminated".to_string()
+            format!("Crashtracker crash ping: crash processing started - Process terminated due to {:?}", kind)
         };
 
         Ok(CrashPing {
             crash_uuid: crash_uuid.to_string(),
-            kind: "Crash ping".to_string(),
             message,
+            kind,
             metadata,
             siginfo: sig_info,
             version: CrashPing::current_schema_version(),
@@ -88,11 +96,11 @@ impl CrashPingBuilder {
 #[derive(Debug, Serialize)]
 pub struct CrashPing {
     crash_uuid: String,
+    kind: ErrorKind,
+    message: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     siginfo: Option<SigInfo>,
-    message: String,
     version: String,
-    kind: String,
     metadata: Metadata,
 }
 
@@ -446,7 +454,10 @@ fn extract_crash_info_tags(crash_info: &CrashInfo) -> anyhow::Result<String> {
 #[cfg(test)]
 mod tests {
     use super::TelemetryCrashUploader;
-    use crate::crash_info::{test_utils::TestInstance, CrashInfo, CrashInfoBuilder, Metadata};
+    use crate::{
+        crash_info::{test_utils::TestInstance, CrashInfo, CrashInfoBuilder, Metadata},
+        ErrorKind,
+    };
     use libdd_common::Endpoint;
     use libdd_telemetry::data::LogLevel;
     use std::{collections::HashSet, fs};
@@ -580,6 +591,7 @@ mod tests {
         let mut crash_info_builder = CrashInfoBuilder::new();
         crash_info_builder.with_sig_info(sig_info.clone()).unwrap();
         crash_info_builder.with_metadata(metadata.clone()).unwrap();
+        crash_info_builder.with_kind(ErrorKind::UnixSignal).unwrap();
         let crash_ping = crash_info_builder.build_crash_ping().unwrap();
         t.upload_crash_ping(&crash_ping).await.unwrap();
 
@@ -607,7 +619,7 @@ mod tests {
         assert!(Uuid::parse_str(message_json["crash_uuid"].as_str().unwrap()).is_ok());
 
         assert_eq!(message_json["version"], "1.0");
-        assert_eq!(message_json["kind"], "Crash ping");
+        assert_eq!(message_json["kind"], "UnixSignal");
 
         let metadata_in_message = &message_json["metadata"];
         assert!(
@@ -655,6 +667,7 @@ mod tests {
         let mut crash_info_builder = CrashInfoBuilder::new();
         crash_info_builder.with_sig_info(sig_info.clone()).unwrap();
         crash_info_builder.with_metadata(metadata.clone()).unwrap();
+        crash_info_builder.with_kind(ErrorKind::UnixSignal).unwrap();
         let crash_ping = crash_info_builder.build_crash_ping().unwrap();
         t.upload_crash_ping(&crash_ping).await.unwrap();
 
@@ -707,7 +720,7 @@ mod tests {
         );
 
         assert_eq!(message_json["version"], "1.0");
-        assert_eq!(message_json["kind"], "Crash ping");
+        assert_eq!(message_json["kind"], "UnixSignal");
 
         let tags = log_entry["tags"].as_str().unwrap();
         let uuid_str = message_json["crash_uuid"].as_str().unwrap();
@@ -738,6 +751,7 @@ mod tests {
         let mut crash_info_builder = CrashInfoBuilder::new();
         crash_info_builder.with_sig_info(sig_info.clone()).unwrap();
         crash_info_builder.with_metadata(metadata.clone()).unwrap();
+        crash_info_builder.with_kind(ErrorKind::UnixSignal).unwrap();
         let crash_ping = crash_info_builder.build_crash_ping()?;
 
         let endpoint = Some(Endpoint::from_slice(&format!(
@@ -781,7 +795,7 @@ mod tests {
         assert!(message_json["crash_uuid"].is_string());
         assert!(Uuid::parse_str(message_json["crash_uuid"].as_str().unwrap()).is_ok());
         assert_eq!(message_json["version"], "1.0");
-        assert_eq!(message_json["kind"], "Crash ping");
+        assert_eq!(message_json["kind"], "UnixSignal");
 
         Ok(())
     }
@@ -794,6 +808,7 @@ mod tests {
         crash_info_builder
             .with_metadata(Metadata::test_instance(1))
             .unwrap();
+        crash_info_builder.with_kind(ErrorKind::UnixSignal).unwrap();
         let result = crash_info_builder.build_crash_ping();
         assert!(result.is_ok());
         let crash_ping = result.unwrap();
@@ -807,6 +822,7 @@ mod tests {
         crash_info_builder
             .with_sig_info(crate::SigInfo::test_instance(1))
             .unwrap();
+        crash_info_builder.with_kind(ErrorKind::UnixSignal).unwrap();
         let result = crash_info_builder.build_crash_ping();
         assert!(result.is_err());
         assert!(result
@@ -822,6 +838,7 @@ mod tests {
         crash_info_builder
             .with_metadata(Metadata::test_instance(1))
             .unwrap();
+        crash_info_builder.with_kind(ErrorKind::UnixSignal).unwrap();
         let result = crash_info_builder.build_crash_ping();
         assert!(result.is_ok());
         let crash_ping = result.unwrap();
@@ -838,6 +855,7 @@ mod tests {
         let mut crash_info_builder = CrashInfoBuilder::new();
         crash_info_builder.with_sig_info(sig_info.clone()).unwrap();
         crash_info_builder.with_metadata(metadata.clone()).unwrap();
+        crash_info_builder.with_kind(ErrorKind::UnixSignal).unwrap();
         let crash_ping = crash_info_builder.build_crash_ping().unwrap();
 
         assert!(!crash_ping.crash_uuid().is_empty());
@@ -857,6 +875,7 @@ mod tests {
         let mut crash_info_builder = CrashInfoBuilder::new();
         crash_info_builder.with_sig_info(sig_info.clone()).unwrap();
         crash_info_builder.with_metadata(metadata.clone()).unwrap();
+        crash_info_builder.with_kind(ErrorKind::UnixSignal).unwrap();
         let crash_ping = crash_info_builder.build_crash_ping().unwrap();
 
         assert!(!crash_ping.crash_uuid().is_empty());
@@ -882,6 +901,7 @@ mod tests {
         crash_info_builder
             .with_message("my process panicked".to_string())
             .unwrap();
+        crash_info_builder.with_kind(ErrorKind::UnixSignal).unwrap();
         let crash_ping = crash_info_builder.build_crash_ping().unwrap();
 
         assert!(!crash_ping.crash_uuid().is_empty());
@@ -918,6 +938,7 @@ mod tests {
         let mut crash_info_builder = CrashInfoBuilder::new();
         crash_info_builder.with_sig_info(sig_info.clone()).unwrap();
         crash_info_builder.with_metadata(metadata.clone()).unwrap();
+        crash_info_builder.with_kind(ErrorKind::UnixSignal).unwrap();
         let crash_ping = crash_info_builder.build_crash_ping().unwrap();
 
         uploader.upload_crash_ping(&crash_ping).await?;
@@ -941,7 +962,7 @@ mod tests {
         assert!(message_json["crash_uuid"].is_string());
         assert!(Uuid::parse_str(message_json["crash_uuid"].as_str().unwrap()).is_ok());
         assert_eq!(message_json["version"], "1.0");
-        assert_eq!(message_json["kind"], "Crash ping");
+        assert_eq!(message_json["kind"], "UnixSignal");
 
         let uploaded_siginfo = &message_json["siginfo"];
         assert_eq!(uploaded_siginfo["si_signo"], sig_info.si_signo);

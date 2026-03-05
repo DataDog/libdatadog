@@ -401,14 +401,16 @@ impl CrashInfoBuilder {
         Ok(())
     }
 
-    /// This method requires that the builder has a UUID and metadata set.
-    /// Siginfo is optional for platforms that don't support it (like Windows)
+    /// This method requires that the builder has Metadata and Kind set
     pub fn build_crash_ping(&self) -> anyhow::Result<CrashPing> {
+        let metadata = self.metadata.clone().context("metadata is required")?;
+        let kind = self.error.kind.clone().context("kind is required")?;
         let message = self.error.message.clone();
         let sig_info = self.sig_info.clone();
-        let metadata = self.metadata.clone().context("metadata is required")?;
 
-        let mut builder = CrashPingBuilder::new(self.uuid).with_metadata(metadata);
+        let mut builder = CrashPingBuilder::new(self.uuid)
+            .with_metadata(metadata)
+            .with_kind(kind);
         if let Some(sig_info) = sig_info {
             builder = builder.with_sig_info(sig_info);
         }
@@ -419,16 +421,7 @@ impl CrashInfoBuilder {
     }
 
     pub fn is_ping_ready(&self) -> bool {
-        // On Unix platforms, wait for both metadata and siginfo
-        // On Windows, siginfo is not available, so only wait for metadata
-        #[cfg(unix)]
-        {
-            self.metadata.is_some() && self.sig_info.is_some()
-        }
-        #[cfg(windows)]
-        {
-            self.metadata.is_some()
-        }
+        self.metadata.is_some() && self.error.kind.is_some()
     }
 
     pub fn has_message(&self) -> bool {
@@ -463,6 +456,8 @@ mod tests {
     #[test]
     fn test_with_message() {
         let mut builder = CrashInfoBuilder::new();
+
+        builder.with_kind(ErrorKind::UnixSignal).unwrap();
         let test_message = "Test error message".to_string();
 
         let result = builder.with_message(test_message.clone());
@@ -473,6 +468,7 @@ mod tests {
         let sig_info = SigInfo::test_instance(42);
         builder.with_sig_info(sig_info).unwrap();
         builder.with_metadata(Metadata::test_instance(1)).unwrap();
+        builder.with_kind(ErrorKind::UnixSignal).unwrap();
 
         let crash_ping = builder.build_crash_ping().unwrap();
         assert!(crash_ping.message().contains(&test_message));
@@ -506,6 +502,7 @@ mod tests {
         let sig_info = SigInfo::test_instance(42);
         builder.with_sig_info(sig_info).unwrap();
         builder.with_metadata(Metadata::test_instance(1)).unwrap();
+        builder.with_kind(ErrorKind::UnixSignal).unwrap();
 
         let crash_ping = builder.build_crash_ping().unwrap();
         assert!(crash_ping.message().contains("second message"));
@@ -524,6 +521,7 @@ mod tests {
         builder.with_message(special_message.to_string()).unwrap();
         builder.with_sig_info(SigInfo::test_instance(42)).unwrap();
         builder.with_metadata(Metadata::test_instance(1)).unwrap();
+        builder.with_kind(ErrorKind::UnixSignal).unwrap();
 
         let crash_ping = builder.build_crash_ping().unwrap();
         assert!(crash_ping.message().contains(special_message));
@@ -543,6 +541,7 @@ mod tests {
 
         builder.with_sig_info(SigInfo::test_instance(42)).unwrap();
         builder.with_metadata(Metadata::test_instance(1)).unwrap();
+        builder.with_kind(ErrorKind::UnixSignal).unwrap();
 
         let crash_ping = builder.build_crash_ping().unwrap();
         assert!(crash_ping.message().len() >= 10000);

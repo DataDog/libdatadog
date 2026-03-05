@@ -516,7 +516,6 @@ pub unsafe extern "C" fn ddog_trace_exporter_free(handle: Box<TraceExporter>) {
 pub unsafe extern "C" fn ddog_trace_exporter_send(
     handle: Option<&TraceExporter>,
     trace: ByteSlice,
-    trace_count: usize,
     response_out: Option<NonNull<Box<ExporterResponse>>>,
 ) -> Option<Box<ExporterError>> {
     let exporter = match handle {
@@ -525,7 +524,7 @@ pub unsafe extern "C" fn ddog_trace_exporter_send(
     };
 
     catch_panic!(
-        match exporter.send(&trace, trace_count) {
+        match exporter.send(&trace) {
             Ok(resp) => {
                 if let Some(result) = response_out {
                     result
@@ -899,7 +898,6 @@ mod tests {
             let ret = ddog_trace_exporter_send(
                 None,
                 trace,
-                0,
                 Some(NonNull::new_unchecked(&mut resp).cast()),
             );
 
@@ -973,7 +971,6 @@ mod tests {
             ret = ddog_trace_exporter_send(
                 Some(exporter.as_ref()),
                 traces,
-                0,
                 Some(NonNull::new_unchecked(&mut response).cast()),
             );
             assert_eq!(ret, None);
@@ -1042,7 +1039,6 @@ mod tests {
             ret = ddog_trace_exporter_send(
                 Some(exporter.as_ref()),
                 traces,
-                0,
                 Some(NonNull::new_unchecked(&mut response).cast()),
             );
             mock_traces.assert();
@@ -1121,7 +1117,6 @@ mod tests {
             ret = ddog_trace_exporter_send(
                 Some(exporter.as_ref()),
                 traces,
-                0,
                 Some(NonNull::new_unchecked(&mut response).cast()),
             );
             mock_traces.assert();

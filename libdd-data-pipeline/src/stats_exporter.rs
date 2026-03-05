@@ -12,7 +12,6 @@ use std::{
 };
 
 use crate::trace_exporter::TracerMetadata;
-use hyper;
 use libdd_common::{worker::Worker, Endpoint, HttpClient};
 use libdd_trace_protobuf::pb;
 use libdd_trace_stats::span_concentrator::SpanConcentrator;
@@ -88,7 +87,7 @@ impl StatsExporter {
         let mut headers: HashMap<&'static str, String> = self.meta.borrow().into();
 
         headers.insert(
-            hyper::header::CONTENT_TYPE.as_str(),
+            http::header::CONTENT_TYPE.as_str(),
             libdd_common::header::APPLICATION_MSGPACK_STR.to_string(),
         );
 
@@ -181,12 +180,10 @@ fn encode_stats_payload(
 }
 
 /// Return the stats endpoint url to send stats to the agent at `agent_url`
-pub fn stats_url_from_agent_url(agent_url: &str) -> anyhow::Result<hyper::Uri> {
-    let mut parts = agent_url.parse::<hyper::Uri>()?.into_parts();
-    parts.path_and_query = Some(hyper::http::uri::PathAndQuery::from_static(
-        STATS_ENDPOINT_PATH,
-    ));
-    Ok(hyper::Uri::from_parts(parts)?)
+pub fn stats_url_from_agent_url(agent_url: &str) -> anyhow::Result<http::Uri> {
+    let mut parts = agent_url.parse::<http::Uri>()?.into_parts();
+    parts.path_and_query = Some(http::uri::PathAndQuery::from_static(STATS_ENDPOINT_PATH));
+    Ok(http::Uri::from_parts(parts)?)
 }
 
 #[cfg(test)]
@@ -194,7 +191,7 @@ mod tests {
     use super::*;
     use httpmock::prelude::*;
     use httpmock::MockServer;
-    use libdd_common::hyper_migration::new_default_client;
+    use libdd_common::http_common::new_default_client;
     use libdd_trace_utils::span::{trace_utils, v04::SpanSlice};
     use libdd_trace_utils::test_utils::poll_for_mock_hit;
     use time::Duration;

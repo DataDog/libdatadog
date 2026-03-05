@@ -670,17 +670,14 @@ mod tests {
     mod send_with_retry_conversion {
         use super::*;
         use bytes::Bytes;
-        use hyper::{Response, StatusCode};
-        use libdd_common::hyper_migration;
+        use http::{Response, StatusCode};
+        use libdd_common::http_common;
         use libdd_trace_utils::send_with_retry::{SendWithRetryError, SendWithRetryResult};
 
         /// Helper to create a mock HTTP response for testing
-        fn mock_response(status: StatusCode) -> hyper_migration::HttpResponse {
-            hyper_migration::mock_response(
-                Response::builder().status(status),
-                Bytes::from("test body"),
-            )
-            .unwrap()
+        fn mock_response(status: StatusCode) -> http_common::HttpResponse {
+            http_common::mock_response(Response::builder().status(status), Bytes::from("test body"))
+                .unwrap()
         }
 
         #[test]

@@ -46,7 +46,7 @@ members = [
   "libdd-tinybytes",
   "libdd-dogstatsd-client",
   "libdd-log",
-  "libdd-log-ffi",
+  "libdd-log-ffi", "libdd-libunwind-sys",
 ]
 
 # https://doc.rust-lang.org/cargo/reference/resolver.html
@@ -65,7 +65,7 @@ resolver = "2"
 [workspace.package]
 rust-version = "1.84.1"
 edition = "2021"
-version = "27.0.0"
+version = "28.0.2"
 license = "Apache-2.0"
 authors = ["Datadog Inc. <info@datadoghq.com>"]
 

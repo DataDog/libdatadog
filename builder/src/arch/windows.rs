@@ -12,7 +12,6 @@ pub const PROF_PDB: &str = "datadog_profiling.pdb";
 pub const PROF_DYNAMIC_LIB_FFI: &str = "datadog_profiling_ffi.dll";
 pub const PROF_STATIC_LIB_FFI: &str = "datadog_profiling_ffi.lib";
 pub const PROF_PDB_FFI: &str = "datadog_profiling_ffi.pdb";
-pub const REMOVE_RPATH: bool = false;
 pub const BUILD_CRASHTRACKER: bool = false;
 pub const RUSTFLAGS: [&str; 4] = [
     "-C",
@@ -21,7 +20,6 @@ pub const RUSTFLAGS: [&str; 4] = [
     "target-feature=+crt-static",
 ];
 
-pub fn fix_rpath(_lib_path: &str) {}
 pub fn strip_libraries(_lib_path: &str) {}
 
 pub fn add_additional_files(lib_path: &str, target_path: &OsStr) {

@@ -47,9 +47,7 @@ use crate::service::tracing::trace_flusher::TraceFlusherStats;
 use crate::tokio_util::run_or_spawn_shared;
 use datadog_ipc::platform::FileBackedHandle;
 use datadog_ipc::tarpc::server::{Channel, InFlightRequest};
-use datadog_live_debugger::sender::{
-    agent_info_supports_dedicated_snapshots_endpoint, DebuggerType,
-};
+use datadog_live_debugger::sender::{agent_info_supports_debugger_v2_endpoint, DebuggerType};
 use datadog_remote_config::fetch::{ConfigInvariants, ConfigOptions, MultiTargetStats};
 use libdd_common::tag::Tag;
 use libdd_dogstatsd_client::{new, DogStatsDActionOwned};
@@ -594,24 +592,20 @@ impl SidecarInterface for SidecarServer {
             *dogstatsd = d;
         });
         session.modify_debugger_config(|cfg| {
-            let logs_endpoint = get_product_endpoint(
-                datadog_live_debugger::sender::PROD_LOGS_INTAKE_SUBDOMAIN,
-                &config.endpoint,
-            );
             let diagnostics_endpoint = get_product_endpoint(
                 datadog_live_debugger::sender::PROD_DIAGNOSTICS_INTAKE_SUBDOMAIN,
                 &config.endpoint,
             );
-            cfg.set_endpoint(logs_endpoint, diagnostics_endpoint).ok();
+            cfg.set_endpoint(diagnostics_endpoint).ok();
         });
         if config.endpoint.api_key.is_none() {
             // no agent info if agentless
             let agent_info = self.agent_infos.query_for(config.endpoint.clone());
             let session_info = session.clone();
             run_or_spawn_shared(agent_info.get(), move |info| {
-                if !agent_info_supports_dedicated_snapshots_endpoint(info) {
+                if !agent_info_supports_debugger_v2_endpoint(info) {
                     session_info.modify_debugger_config(|cfg| {
-                        cfg.without_dedicated_snapshots_endpoint();
+                        cfg.downgrade_to_diagnostics_endpoint();
                     });
                 }
             });

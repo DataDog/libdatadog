@@ -21,6 +21,7 @@ clap = { version = "4.0", features = ["derive"] }
 colored = "2"
 quick-xml = "0.37"
 regex = "1"
+toml = "0.8"
 wait-timeout = "0.2"
 
 [[bin]]

@@ -11,8 +11,15 @@ use cargo_metadata::{CargoOpt, MetadataCommand};
 use quick_xml::events::{BytesStart, Event};
 use quick_xml::{Reader, Writer};
 use std::collections::HashMap;
+use std::fs;
 use std::io::Cursor;
 use std::path::{Path, PathBuf};
+
+/// Package name used for nextest setup scripts in the target lookup.
+/// Nextest uses classnames like "@setup-script:script-name" for setup scripts.
+const SETUP_SCRIPT_PACKAGE: &str = "@setup-script";
+/// Prefix for setup script classnames (includes the colon separator).
+const SETUP_SCRIPT_PREFIX: &str = "@setup-script:";
 
 /// Lookup table for resolving test classnames to source files.
 ///
@@ -60,11 +67,22 @@ impl TargetLookup {
         self.targets.insert((package_name, target_name), src_path);
     }
 
-    /// Insert a test target (integration test).
-    pub fn insert_test(&mut self, package_name: &str, target_name: &str, src_path: PathBuf) {
+    /// Insert a target (integration test or binary).
+    pub fn insert_target(&mut self, package_name: &str, target_name: &str, src_path: PathBuf) {
         let package_name = Self::normalize(package_name);
         let target_name = Self::normalize(target_name);
         self.targets.insert((package_name, target_name), src_path);
+    }
+
+    /// Insert a setup script entry.
+    /// Uses `SETUP_SCRIPT_PACKAGE` as the package name so it can be looked up from
+    /// classnames like "@setup-script:prebuild-bin-tests".
+    fn insert_setup_script(&mut self, script_name: &str, src_path: PathBuf) {
+        // Don't normalize - script names can have hyphens and we want exact match
+        self.targets.insert(
+            (SETUP_SCRIPT_PACKAGE.to_string(), script_name.to_string()),
+            src_path,
+        );
     }
 
     /// Look up a target's source path.
@@ -73,6 +91,14 @@ impl TargetLookup {
     /// - If `target_name` is `None`, tries `(package, package)` first, then checks the alias map
     ///   for packages where lib name differs from package name
     pub fn get(&self, package_name: &str, target_name: Option<&str>) -> Option<&PathBuf> {
+        // Setup scripts use SETUP_SCRIPT_PACKAGE as package name and shouldn't be normalized
+        if package_name == SETUP_SCRIPT_PACKAGE {
+            let target_name = target_name?;
+            return self
+                .targets
+                .get(&(package_name.to_string(), target_name.to_string()));
+        }
+
         let package_name = Self::normalize(package_name);
         match target_name {
             Some(name) => {
@@ -118,23 +144,104 @@ pub fn build_target_lookup(manifest_path: Option<&Path>) -> Result<(TargetLookup
         for target in package.targets {
             let kind = target.kind.first().map(|s| s.as_str()).unwrap_or("unknown");
 
-            // Only interested in lib-like (lib, proc-macro) and test targets
-            let is_lib_like = kind == "lib" || kind == "proc-macro";
-            if !is_lib_like && kind != "test" {
-                continue;
-            }
-
             let src_path = target.src_path.into_std_path_buf();
 
-            if is_lib_like {
-                lookup.insert_lib(&package.name, &target.name, src_path);
-            } else {
-                lookup.insert_test(&package.name, &target.name, src_path);
+            match kind {
+                "lib" | "proc-macro" => {
+                    lookup.insert_lib(&package.name, &target.name, src_path);
+                }
+                "test" => {
+                    lookup.insert_target(&package.name, &target.name, src_path);
+                }
+                "bin" => {
+                    lookup.insert_target(&package.name, &target.name, src_path);
+                }
+                _ => {}
             }
         }
     }
 
+    // Load setup scripts from nextest.toml if it exists
+    load_setup_scripts(&workspace_root, &mut lookup);
+
     Ok((lookup, workspace_root))
+}
+
+/// Load setup scripts from nextest.toml and add them to the lookup.
+fn load_setup_scripts(workspace_root: &Path, lookup: &mut TargetLookup) {
+    let nextest_path = workspace_root.join(".config/nextest.toml");
+    let content = match fs::read_to_string(&nextest_path) {
+        Ok(c) => c,
+        Err(_) => return, // No nextest.toml, nothing to do
+    };
+
+    let table: toml::Table = match content.parse() {
+        Ok(t) => t,
+        Err(_) => return, // Invalid TOML, skip
+    };
+
+    // Look for [script.X] sections
+    let script_section = match table.get("script").and_then(|v| v.as_table()) {
+        Some(s) => s,
+        None => return,
+    };
+
+    for (script_name, script_value) in script_section {
+        let command = match script_value.get("command").and_then(|v| v.as_str()) {
+            Some(c) => c,
+            None => continue,
+        };
+
+        // Parse "cargo run -p <package> --bin <binary>" to get package and binary
+        if let Some((package, binary)) = parse_cargo_run_command(command) {
+            // Look up the binary's source path and insert as setup script
+            if let Some(src_path) = lookup.get(&package, Some(&binary)).cloned() {
+                lookup.insert_setup_script(script_name, src_path);
+            }
+        }
+    }
+}
+
+/// Parse a cargo run command to extract package and binary names.
+/// Expected format: "cargo run -p <package> --bin <binary>" (flags can be in any order)
+fn parse_cargo_run_command(command: &str) -> Option<(String, String)> {
+    let parts: Vec<&str> = command.split_whitespace().collect();
+
+    // Must start with "cargo run"
+    if parts.len() < 2 || parts[0] != "cargo" || parts[1] != "run" {
+        return None;
+    }
+
+    let mut package = None;
+    let mut binary = None;
+    let mut i = 2;
+
+    while i < parts.len() {
+        match parts[i] {
+            "-p" | "--package" => {
+                if i + 1 < parts.len() {
+                    package = Some(parts[i + 1].to_string());
+                    i += 2;
+                } else {
+                    i += 1;
+                }
+            }
+            "--bin" => {
+                if i + 1 < parts.len() {
+                    binary = Some(parts[i + 1].to_string());
+                    i += 2;
+                } else {
+                    i += 1;
+                }
+            }
+            _ => i += 1,
+        }
+    }
+
+    match (package, binary) {
+        (Some(p), Some(b)) => Some((p, b)),
+        _ => None,
+    }
 }
 
 /// Process the JUnit XML and add file attributes to testcase elements.
@@ -209,9 +316,41 @@ fn add_file_to_testcase(
     new_elem
 }
 
-/// Normalize path separators to forward slashes for cross-platform CODEOWNERS compatibility
-fn normalize_path_separators(path: &str) -> String {
-    path.replace('\\', "/")
+/// Convert an absolute path to a workspace-relative path with normalized separators
+fn to_relative_path(path: &Path, workspace_root: &Path) -> String {
+    let relative = path.strip_prefix(workspace_root).unwrap_or(path);
+    // Normalize path separators to forward slashes for cross-platform CODEOWNERS compatibility
+    relative.to_string_lossy().replace('\\', "/")
+}
+
+/// Resolve file path for a setup script
+fn resolve_setup_script_path(
+    script_name: &str,
+    targets: &TargetLookup,
+    workspace_root: &Path,
+) -> Option<String> {
+    let src_path = targets.get(SETUP_SCRIPT_PACKAGE, Some(script_name))?;
+    Some(to_relative_path(src_path, workspace_root))
+}
+
+/// Resolve file path for a unit test, trying to find the specific module file
+fn resolve_unit_test_path(
+    src_path: &Path,
+    testcase_name: Option<&str>,
+    workspace_root: &Path,
+) -> String {
+    // Try to find the module file from the test name
+    // Test name is like "trace_utils::tests::test_compute_top_level"
+    // We want to find src/trace_utils.rs or src/trace_utils/mod.rs
+    if let Some(test_name) = testcase_name {
+        if let Some(src_dir) = src_path.parent() {
+            if let Some(file_path) = resolve_module_file(test_name, src_dir, workspace_root) {
+                return file_path;
+            }
+        }
+    }
+    // Fallback to lib.rs
+    to_relative_path(src_path, workspace_root)
 }
 
 /// Resolve a file path from classname using cargo metadata
@@ -223,45 +362,29 @@ fn resolve_file_path(
 ) -> Option<String> {
     let classname = classname?;
 
-    // Split classname into parts: e.g., "libdd-trace-utils::test_send_data" ->
-    // ["libdd-trace-utils", "test_send_data"]
-    let parts: Vec<&str> = classname.split("::").collect();
-    if parts.is_empty() {
-        return None;
+    // Handle setup scripts: classname is "@setup-script:script_name"
+    if let Some(script_name) = classname.strip_prefix(SETUP_SCRIPT_PREFIX) {
+        return resolve_setup_script_path(script_name, targets, workspace_root);
     }
 
-    // For integration tests, classname is "package::target_name"
-    // For unit tests, classname is just "package"
-    let package_name = parts[0];
+    // Parse classname: "package::target" for integration tests, "package" for unit tests
+    let parts: Vec<&str> = classname.split("::").collect();
+    let package_name = parts.first()?;
     let target_name = parts.get(1).copied();
 
-    if let Some(src_path) = targets.get(package_name, target_name) {
-        // For integration tests, return the test file directly
-        if target_name.is_some() {
-            let relative = src_path.strip_prefix(workspace_root).unwrap_or(src_path);
-            return Some(normalize_path_separators(
-                relative.to_string_lossy().as_ref(),
-            ));
-        }
+    let src_path = targets.get(package_name, target_name)?;
 
-        // For unit tests, try to find the module file from the test name
-        // Test name is like "trace_utils::tests::test_compute_top_level"
-        // We want to find src/trace_utils.rs or src/trace_utils/mod.rs
-        let src_dir = src_path.parent()?;
-        if let Some(test_name) = testcase_name {
-            if let Some(file_path) = resolve_module_file(test_name, src_dir, workspace_root) {
-                return Some(file_path);
-            }
-        }
-
-        // Fallback to lib.rs
-        let relative = src_path.strip_prefix(workspace_root).unwrap_or(src_path);
-        return Some(normalize_path_separators(
-            relative.to_string_lossy().as_ref(),
-        ));
+    if target_name.is_some() {
+        // Integration test - return the test file directly
+        Some(to_relative_path(src_path, workspace_root))
+    } else {
+        // Unit test - try to find module file, fallback to lib.rs
+        Some(resolve_unit_test_path(
+            src_path,
+            testcase_name,
+            workspace_root,
+        ))
     }
-
-    None
 }
 
 /// Try to find the source file for a unit test based on its module path
@@ -284,21 +407,13 @@ fn resolve_module_file(test_name: &str, src_dir: &Path, workspace_root: &Path) -
     // Try module_path.rs (e.g., src/trace_utils.rs or src/span/trace_utils.rs)
     let module_file = src_dir.join(format!("{}.rs", module_parts.join("/")));
     if module_file.exists() {
-        let relative = module_file
-            .strip_prefix(workspace_root)
-            .unwrap_or(&module_file);
-        return Some(normalize_path_separators(
-            relative.to_string_lossy().as_ref(),
-        ));
+        return Some(to_relative_path(&module_file, workspace_root));
     }
 
     // Try module_path/mod.rs (e.g., src/trace_utils/mod.rs)
     let mod_file = src_dir.join(format!("{}/mod.rs", module_parts.join("/")));
     if mod_file.exists() {
-        let relative = mod_file.strip_prefix(workspace_root).unwrap_or(&mod_file);
-        return Some(normalize_path_separators(
-            relative.to_string_lossy().as_ref(),
-        ));
+        return Some(to_relative_path(&mod_file, workspace_root));
     }
 
     None
@@ -338,7 +453,7 @@ mod tests {
     #[test]
     fn test_target_lookup_test_target() {
         let mut lookup = TargetLookup::new();
-        lookup.insert_test(
+        lookup.insert_target(
             "libdd-trace-utils",
             "test_send_data",
             PathBuf::from("/tests/test_send_data.rs"),
@@ -374,7 +489,7 @@ mod tests {
     #[test]
     fn test_process_junit_xml_integration_test() {
         let mut lookup = TargetLookup::new();
-        lookup.insert_test(
+        lookup.insert_target(
             "my-crate",
             "integration_test",
             PathBuf::from("/workspace/my-crate/tests/integration_test.rs"),
@@ -391,5 +506,59 @@ mod tests {
         let result = process_junit_xml(input, &lookup, &workspace_root).unwrap();
 
         assert!(result.contains(r#"file="my-crate/tests/integration_test.rs""#));
+    }
+
+    #[test]
+    fn test_process_junit_xml_setup_script() {
+        let mut lookup = TargetLookup::new();
+        // Simulate what load_setup_scripts does - insert with @setup-script as package
+        lookup.insert_setup_script(
+            "prebuild-bin-tests",
+            PathBuf::from("/workspace/bin_tests/src/bin/prebuild.rs"),
+        );
+
+        let input = r#"<?xml version="1.0" encoding="UTF-8"?>
+<testsuites>
+  <testsuite name="@setup-script:prebuild-bin-tests">
+    <testcase classname="@setup-script:prebuild-bin-tests" name="prebuild-bin-tests" />
+  </testsuite>
+</testsuites>"#;
+
+        let workspace_root = PathBuf::from("/workspace");
+        let result = process_junit_xml(input, &lookup, &workspace_root).unwrap();
+
+        assert!(result.contains(r#"file="bin_tests/src/bin/prebuild.rs""#));
+    }
+
+    #[test]
+    fn test_parse_cargo_run_command() {
+        // Standard format
+        let result = parse_cargo_run_command("cargo run -p bin_tests --bin prebuild");
+        assert_eq!(
+            result,
+            Some(("bin_tests".to_string(), "prebuild".to_string()))
+        );
+
+        // Different flag order
+        let result = parse_cargo_run_command("cargo run --bin prebuild -p bin_tests");
+        assert_eq!(
+            result,
+            Some(("bin_tests".to_string(), "prebuild".to_string()))
+        );
+
+        // With --package instead of -p
+        let result = parse_cargo_run_command("cargo run --package bin_tests --bin prebuild");
+        assert_eq!(
+            result,
+            Some(("bin_tests".to_string(), "prebuild".to_string()))
+        );
+
+        // Missing binary
+        let result = parse_cargo_run_command("cargo run -p bin_tests");
+        assert_eq!(result, None);
+
+        // Not a cargo run command
+        let result = parse_cargo_run_command("cargo build -p bin_tests");
+        assert_eq!(result, None);
     }
 }

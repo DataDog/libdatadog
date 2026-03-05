@@ -2,8 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use criterion::*;
+use libdd_common::threading::get_current_thread_id;
 use libdd_profiling::api2::Location2;
-use libdd_profiling::profiles::datatypes::{Function, FunctionId2, MappingId2};
+use libdd_profiling::profiles::datatypes::{Function, FunctionId2, MappingId2, StringId2};
 use libdd_profiling::{self as profiling, api, api2};
 
 fn make_sample_types() -> Vec<api::SampleType> {
@@ -103,6 +104,14 @@ pub fn bench_add_sample_vs_add2(c: &mut Criterion) {
 
     let strings = dict.strings();
     let functions = dict.functions();
+    let thread_id = get_current_thread_id();
+    let thread_id_key: StringId2 = strings.try_insert("thread id").unwrap().into();
+    let labels_api = vec![api::Label {
+        key: "thread id",
+        str: "",
+        num: thread_id,
+        num_unit: "",
+    }];
 
     let frames2 = frames.map(|f| {
         let set_id = functions
@@ -127,7 +136,7 @@ pub fn bench_add_sample_vs_add2(c: &mut Criterion) {
                 let sample = api::Sample {
                     locations: locations.clone(),
                     values: &values,
-                    labels: vec![],
+                    labels: labels_api.clone(),
                 };
                 black_box(profile.try_add_sample(sample, None)).unwrap();
             }
@@ -145,8 +154,7 @@ pub fn bench_add_sample_vs_add2(c: &mut Criterion) {
             .unwrap();
             let (locations, values) = make_stack_api2(frames2.as_slice());
             for _ in 0..1000 {
-                // Provide an empty iterator for labels conversion path
-                let labels_iter = std::iter::empty::<anyhow::Result<api2::Label>>();
+                let labels_iter = [Ok(api2::Label::num(thread_id_key, thread_id, ""))].into_iter();
                 // SAFETY: all ids come from the profile's dictionary.
                 black_box(unsafe {
                     profile.try_add_sample2(&locations, &values, labels_iter, None)

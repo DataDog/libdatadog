@@ -34,7 +34,7 @@ serde_json = "1.0"
 libdd-crashtracker-ffi = { path = "../libdd-crashtracker-ffi", features = ["collector", "collector_windows"] }
 
 [dev-dependencies]
-http = "1.0"
+http = "1.1"
 tempfile = { version = "3.3" }
 
 [lints.rust]

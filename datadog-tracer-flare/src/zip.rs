@@ -1,9 +1,10 @@
 // Copyright 2025-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+use bytes::Bytes;
 use datadog_remote_config::config::agent_task::AgentTaskFile;
-use hyper::{body::Bytes, Method};
-use libdd_common::{hyper_migration, Endpoint, MutexExt};
+use http::Method;
+use libdd_common::{http_common, Endpoint, MutexExt};
 use std::{
     collections::HashMap,
     fs::File,
@@ -202,7 +203,7 @@ fn generate_payload(
     payload.extend_from_slice(format!("--{BOUNDARY}--\r\n").as_bytes());
 
     let headers: HashMap<String, String> = HashMap::from([(
-        hyper::header::CONTENT_TYPE.to_string(),
+        http::header::CONTENT_TYPE.to_string(),
         format!("multipart/form-data; boundary={BOUNDARY}"),
     )]);
 
@@ -401,7 +402,7 @@ impl TracerFlareManager {
         )?;
 
         let agent_url = self.agent_url.clone() + "/tracer_flare/v1";
-        let agent_url = match hyper::Uri::from_str(&agent_url) {
+        let agent_url = match http::Uri::from_str(&agent_url) {
             Ok(uri) => uri,
             Err(_) => {
                 return Err(FlareError::SendError(format!(
@@ -424,17 +425,17 @@ impl TracerFlareManager {
             req = req.header(key, value);
         }
         let req = req
-            .body(hyper_migration::Body::from_bytes(payload))
+            .body(http_common::Body::from_bytes(payload))
             .map_err(|_| {
                 FlareError::SendError("Unable to had the body to the request".to_owned())
             })?;
 
-        let req = hyper_migration::new_default_client().request(req);
+        let req = http_common::new_default_client().request(req);
 
         match tokio::time::timeout(Duration::from_millis(target.timeout_ms), req).await {
             Ok(resp) => match resp {
                 Ok(body) => {
-                    let response = hyper_migration::into_response(body);
+                    let response = http_common::into_response(body);
                     let status = response.status();
                     if status.is_success() {
                         Ok(())
@@ -570,7 +571,7 @@ mod tests {
         assert!(payload_str.contains("d53fc8a4-8820-47a2-aa7d-d565582feb81"));
         assert!(payload_str.contains(&format!("--{BOUNDARY}--\r\n")));
 
-        let headers_str = headers.get(hyper::header::CONTENT_TYPE.as_str()).unwrap();
+        let headers_str = headers.get(http::header::CONTENT_TYPE.as_str()).unwrap();
         assert!(!payload_str.contains("DD-API-KEY"));
         assert!(!payload_str.contains("dd-api-key"));
         assert!(headers_str.contains(&format!("multipart/form-data; boundary={BOUNDARY}")));

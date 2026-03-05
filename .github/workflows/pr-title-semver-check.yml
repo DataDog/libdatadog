@@ -32,7 +32,7 @@ jobs:
 
           # Get the base branch
           BASE_REF="${{ github.base_ref }}"
-          git fetch origin "$BASE_REF" --depth=50
+          git fetch origin "$BASE_REF"
 
           # Find all changed files
           CHANGED_FILES=$(git diff --name-only "origin/$BASE_REF"...HEAD)

@@ -73,7 +73,7 @@ pub struct TracerFlareManager {
 impl Default for TracerFlareManager {
     fn default() -> Self {
         TracerFlareManager {
-            agent_url: hyper::Uri::default().to_string(),
+            agent_url: http::Uri::default().to_string(),
             language: "rust".to_string(),
             collecting: AtomicBool::new(false),
             current_log_level: Mutex::new(None),
@@ -160,7 +160,7 @@ impl TracerFlareManager {
     ) -> Result<Self, FlareError> {
         let mut tracer_flare = Self::new(&agent_url, &language);
 
-        let agent_url = match hyper::Uri::from_str(&agent_url) {
+        let agent_url = match http::Uri::from_str(&agent_url) {
             Ok(uri) => uri,
             Err(_) => {
                 return Err(FlareError::ListeningError(format!(

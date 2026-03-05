@@ -27,7 +27,7 @@ pub(crate) const STATS_ENDPOINT: &str = "/v0.6/stats";
 /// Context struct that groups immutable parameters used by stats functions
 pub(crate) struct StatsContext<'a> {
     pub metadata: &'a super::TracerMetadata,
-    pub endpoint_url: &'a hyper::Uri,
+    pub endpoint_url: &'a http::Uri,
     pub runtime: &'a Arc<Mutex<Option<Arc<Runtime>>>>,
 }
 

@@ -199,7 +199,7 @@ impl tower_service::Service<hyper::Uri> for Connector {
 
 #[cfg(test)]
 mod tests {
-    use crate::hyper_migration;
+    use crate::http_common;
     use std::env;
     use tower_service::Service;
 
@@ -211,14 +211,14 @@ mod tests {
     /// Verify that the Connector type implements the correct bound Connect + Clone
     /// to be able to use the hyper::Client
     fn test_hyper_client_from_connector() {
-        let _ = hyper_migration::new_default_client();
+        let _ = http_common::new_default_client();
     }
 
     #[test]
     #[cfg_attr(miri, ignore)]
     #[cfg(feature = "use_webpki_roots")]
     fn test_hyper_client_from_connector_with_webpki_roots() {
-        let _ = hyper_migration::new_default_client();
+        let _ = http_common::new_default_client();
     }
 
     #[tokio::test]

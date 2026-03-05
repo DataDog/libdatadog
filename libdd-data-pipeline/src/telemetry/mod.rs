@@ -309,10 +309,10 @@ impl TelemetryClient {
 
 #[cfg(test)]
 mod tests {
+    use http::{Response, StatusCode};
     use httpmock::Method::POST;
     use httpmock::MockServer;
-    use hyper::{Response, StatusCode};
-    use libdd_common::{hyper_migration, worker::Worker};
+    use libdd_common::{http_common, worker::Worker};
     use regex::Regex;
     use tokio::time::sleep;
 
@@ -669,7 +669,10 @@ mod tests {
 
     #[test]
     fn telemetry_from_ok_response_test() {
-        let result = Ok((Response::default(), 3));
+        let result = Ok((
+            http_common::empty_response(http::response::Builder::new()).unwrap(),
+            3,
+        ));
         let telemetry = SendPayloadTelemetry::from_retry_result(&result, 4, 5, 0);
         assert_eq!(
             telemetry,
@@ -685,7 +688,10 @@ mod tests {
 
     #[test]
     fn telemetry_from_ok_response_with_p0_drops_test() {
-        let result = Ok((Response::default(), 3));
+        let result = Ok((
+            http_common::empty_response(http::response::Builder::new()).unwrap(),
+            3,
+        ));
         let telemetry = SendPayloadTelemetry::from_retry_result(&result, 4, 5, 10);
         assert_eq!(
             telemetry,
@@ -702,8 +708,9 @@ mod tests {
 
     #[test]
     fn telemetry_from_request_error_test() {
-        let mut error_response = Response::default();
-        *error_response.status_mut() = StatusCode::BAD_REQUEST;
+        let error_response =
+            http_common::empty_response(Response::builder().status(StatusCode::BAD_REQUEST))
+                .unwrap();
         let result = Err(SendWithRetryError::Http(error_response, 5));
         let telemetry = SendPayloadTelemetry::from_retry_result(&result, 1, 2, 0);
         assert_eq!(
@@ -722,12 +729,12 @@ mod tests {
     #[tokio::test]
     async fn telemetry_from_network_error_test() {
         // Create an hyper error by calling an undefined service
-        let hyper_error = hyper_migration::new_default_client()
-            .get(hyper::Uri::from_static("localhost:12345"))
+        let err = http_common::new_default_client()
+            .get(http::Uri::from_static("localhost:12345"))
             .await
             .unwrap_err();
 
-        let result = Err(SendWithRetryError::Network(hyper_error, 5));
+        let result = Err(SendWithRetryError::Network(http_common::into_error(err), 5));
         let telemetry = SendPayloadTelemetry::from_retry_result(&result, 1, 2, 0);
         assert_eq!(
             telemetry,

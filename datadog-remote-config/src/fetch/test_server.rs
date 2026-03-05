@@ -18,7 +18,7 @@ use base64::Engine;
 use http::Response;
 use http_body_util::BodyExt;
 use hyper::service::service_fn;
-use libdd_common::{hyper_migration, Endpoint};
+use libdd_common::{http_common, Endpoint};
 use libdd_trace_protobuf::remoteconfig::{ClientGetConfigsRequest, ClientGetConfigsResponse, File};
 use serde_json::value::to_raw_value;
 use sha2::{Digest, Sha256};
@@ -34,7 +34,7 @@ pub struct RemoteConfigServer {
     pub last_request: Mutex<Option<ClientGetConfigsRequest>>,
     #[allow(clippy::type_complexity)]
     pub files: Mutex<HashMap<RemoteConfigPath, (Vec<Arc<Target>>, u64, String)>>,
-    pub next_response: Mutex<Option<Response<hyper_migration::Body>>>,
+    pub next_response: Mutex<Option<Response<http_common::Body>>>,
     pub endpoint: Endpoint,
     #[allow(dead_code)] // stops receiver on drop
     shutdown_complete_tx: Sender<()>,
@@ -44,7 +44,7 @@ impl RemoteConfigServer {
     fn handle_request(
         &self,
         body_bytes: hyper::body::Bytes,
-    ) -> Result<Response<hyper_migration::Body>, Infallible> {
+    ) -> Result<Response<http_common::Body>, Infallible> {
         let request: ClientGetConfigsRequest =
             serde_json::from_str(core::str::from_utf8(&body_bytes).unwrap()).unwrap();
         let response = if let Some(response) = self.next_response.lock().unwrap().take() {
@@ -94,7 +94,7 @@ impl RemoteConfigServer {
                     false
                 })
             {
-                Response::new(hyper_migration::Body::from("{}"))
+                Response::new(http_common::Body::from("{}"))
             } else {
                 let target_info: Vec<_> = applied_files
                     .iter()
@@ -156,7 +156,7 @@ impl RemoteConfigServer {
                         .collect(),
                     client_configs: applied_files.keys().map(|k| k.to_string()).collect(),
                 };
-                Response::new(hyper_migration::Body::from(
+                Response::new(http_common::Body::from(
                     serde_json::to_vec(&response).unwrap(),
                 ))
             }

@@ -81,7 +81,8 @@ int main(int argc, char *argv[]) {
                 },
                 "datadoghq.com",
                 api_key,
-                10000
+                10000,
+                false
               )
             : ProfileExporter::create_file_exporter(
                 "libdatadog-example",

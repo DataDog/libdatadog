@@ -5,7 +5,7 @@ use super::process_handle::ProcessHandle;
 use super::receiver_manager::Receiver;
 use libdd_common::timeout::TimeoutManager;
 
-use super::emitters::emit_crashreport;
+use super::emitters::{emit_crashreport, CrashKindData};
 use crate::shared::configuration::CrashtrackerConfiguration;
 use libc::{siginfo_t, ucontext_t};
 use libdd_common::unix_utils::{alt_fork, terminate};
@@ -118,8 +118,7 @@ pub(crate) fn run_collector_child(
         config_str,
         metadata_str,
         message_ptr,
-        sig_info,
-        ucontext,
+        CrashKindData::UnixSignal { sig_info, ucontext },
         ppid,
         crashing_tid,
     );

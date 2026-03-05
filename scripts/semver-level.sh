@@ -53,7 +53,7 @@ compute_semver_results() {
     fi
 
     # Fetch base commit
-    git fetch origin "$baseline" --depth=50 --quiet
+    git fetch origin "$baseline" --quiet
 
     # Ensure baseline has origin/ prefix if it doesn't already (skip for tags: refs/tags/...)
     if [[ ! "$baseline" =~ ^origin/ ]] && [[ "$baseline" != *"refs/tags"* ]]; then

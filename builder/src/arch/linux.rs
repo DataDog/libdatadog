@@ -11,7 +11,6 @@ pub const PROF_DYNAMIC_LIB: &str = "libdatadog_profiling.so";
 pub const PROF_STATIC_LIB: &str = "libdatadog_profiling.a";
 pub const PROF_DYNAMIC_LIB_FFI: &str = "libdatadog_profiling_ffi.so";
 pub const PROF_STATIC_LIB_FFI: &str = "libdatadog_profiling_ffi.a";
-pub const REMOVE_RPATH: bool = false;
 pub const BUILD_CRASHTRACKER: bool = true;
 pub const RUSTFLAGS: [&str; 4] = [
     "-C",
@@ -19,18 +18,6 @@ pub const RUSTFLAGS: [&str; 4] = [
     "-C",
     "link-arg=-Wl,-soname,libdatadog_profiling.so",
 ];
-
-pub fn fix_rpath(lib_path: &str) {
-    if REMOVE_RPATH {
-        let patchelf = Command::new("patchelf")
-            .arg("--remove-rpath")
-            .arg(lib_path)
-            .spawn()
-            .expect("failed to spawn patchelf");
-
-        wait_for_success(patchelf, "patchelf");
-    }
-}
 
 pub fn strip_libraries(lib_path: &str) {
     let rm_section = Command::new("objcopy")
