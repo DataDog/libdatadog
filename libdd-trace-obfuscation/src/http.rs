@@ -179,7 +179,7 @@ pub fn obfuscate_url_string(
                         || (frag_has_non_ascii
                             && fragment
                                 .chars()
-                                .any(|c| matches!(c, '!' | '\'' | '(' | ')' | '*' | '[' | ']')))
+                                .any(|c| matches!(c, '\'' | '[' | ']')))
                     {
                         let mut encoded = String::from('#');
                         for c in fragment.chars() {
@@ -187,7 +187,7 @@ pub fn obfuscate_url_string(
                             if cp < 0x20 || cp == 0x7F || c == '#' {
                                 encoded.push_str(&format!("%{cp:02X}"));
                             } else if frag_has_non_ascii
-                                && matches!(c, '!' | '\'' | '(' | ')' | '*' | '[' | ']')
+                                && matches!(c, '\'' | '[' | ']')
                             {
                                 encoded.push_str(&format!("%{:02X}", c as u8));
                             } else {
@@ -318,10 +318,12 @@ pub fn obfuscate_url_string(
                     if let Some(frag_start) = encoded.find('#') {
                         let path_and_hash = &encoded[..=frag_start];
                         let frag = &encoded[frag_start + 1..];
-                        if frag.chars().any(|c| matches!(c, '!' | '\'' | '(' | ')' | '*' | '[' | ']')) {
+                        // In fragments, Go encodes ' [ ] when non-ASCII triggers escape(),
+                        // but NOT ! ( ) * (shouldEscape returns false for those in encodeFragment)
+                        if frag.chars().any(|c| matches!(c, '\'' | '[' | ']')) {
                             let mut out = path_and_hash.to_string();
                             for c in frag.chars() {
-                                if matches!(c, '!' | '\'' | '(' | ')' | '*' | '[' | ']') {
+                                if matches!(c, '\'' | '[' | ']') {
                                     out.push_str(&format!("%{:02X}", c as u8));
                                 } else {
                                     out.push(c);
@@ -697,6 +699,13 @@ mod tests {
             remove_path_digits  [true]
             input               ["ჸ#'ჸ"]
             expected_output     ["%E1%83%B8#%27%E1%83%B8"];
+        ]
+        [
+            test_name           [fuzzing_hash_excl_unicode]
+            remove_query_string [true]
+            remove_path_digits  [true]
+            input               ["#!ჸ"]
+            expected_output     ["#!%E1%83%B8"];
         ]
     )]
     #[test]
