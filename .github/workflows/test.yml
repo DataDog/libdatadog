@@ -69,6 +69,11 @@ jobs:
         run: cargo nextest run --workspace --features libdd-crashtracker/generate-unit-test-files --exclude builder --profile ci --test-threads=1 --verbose -E 'test(tracing_integration_tests::)'
         env:
           RUST_BACKTRACE: full
+      - name: "[${{ steps.rust-version.outputs.version}}] cargo nextest run -p libdd-http-client (hyper-backend)"
+        shell: bash
+        run: cargo nextest run -p libdd-http-client --no-default-features --features hyper-backend,https --profile ci --verbose
+        env:
+          RUST_BACKTRACE: full
       - name: "[${{ steps.rust-version.outputs.version}}] RUSTFLAGS=\"-C prefer-dynamic\" cargo nextest run --package test_spawn_from_lib --features prefer-dynamic -E '!test(tracing_integration_tests::)'"
         shell: bash
         run: cargo nextest run --package test_spawn_from_lib --features prefer-dynamic -E '!test(tracing_integration_tests::)'

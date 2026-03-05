@@ -1,0 +1,38 @@
+[package]
+name = "libdd-http-client"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "HTTP client library intended for use by other languages via FFI"
+homepage = "https://github.com/DataDog/libdatadog/tree/main/libdd-http-client"
+repository = "https://github.com/DataDog/libdatadog/tree/main/libdd-http-client"
+
+[lib]
+bench = false
+
+[features]
+default = ["https", "reqwest-backend"]
+https = ["dep:reqwest", "reqwest?/rustls", "libdd-common?/https"]
+reqwest-backend = ["dep:reqwest", "reqwest?/hickory-dns", "reqwest?/multipart"]
+hyper-backend = ["dep:libdd-common", "dep:hyper", "dep:hyper-util", "dep:http-body-util"]
+fips = ["dep:reqwest", "reqwest?/rustls-no-provider", "dep:rustls", "rustls?/aws-lc-rs"]
+
+[dependencies]
+bytes = "1.4"
+thiserror = "2"
+fastrand = "2"
+tokio = { version = "1.23", features = ["rt", "time"] }
+reqwest = { version = "0.13", default-features = false, optional = true }
+rustls = { version = "0.23", default-features = false, optional = true }
+libdd-common = { version = "2.0.0", path = "../libdd-common", default-features = false, optional = true }
+hyper = { workspace = true, optional = true }
+hyper-util = { workspace = true, optional = true }
+http-body-util = { version = "0.1", optional = true }
+
+
+[dev-dependencies]
+httpmock = "0.8.0-alpha.1"
+tokio = { version = "1.23", features = ["rt", "macros", "io-util", "net"] }
+tempfile = "3"
