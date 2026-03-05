@@ -164,6 +164,10 @@ pub fn obfuscate_url_string(
                 if fragment.is_empty() {
                     return String::new();
                 }
+                // Go also rejects invalid percent-encoding in fragments.
+                if has_invalid_percent_encoding(fragment) {
+                    return String::from("?");
+                }
                 // Go's url.Parse percent-encodes control chars and '#' in fragments.
                 // ('#' in a fragment is encoded as %23 since shouldEscape('#', encodeFragment)=true)
                 // The url crate keeps them raw, so pre-encode them manually.
@@ -632,6 +636,13 @@ mod tests {
             remove_path_digits  [true]
             input               ["ჸ#!"]
             expected_output     ["%E1%83%B8#!"];
+        ]
+        [
+            test_name           [fuzzing_578834728]
+            remove_query_string [true]
+            remove_path_digits  [true]
+            input               ["#%"]
+            expected_output     ["?"];
         ]
     )]
     #[test]
