@@ -5,9 +5,12 @@ use percent_encoding::percent_decode_str;
 use url::Url;
 
 /// Encode path characters that Go's url.EscapedPath() encodes but the url crate doesn't.
-/// Go's shouldEscape for encodePath does not allow !, ', (, ), * even though RFC 3986
-/// considers them valid sub-delimiters in path segments.
 /// Only applied to the path portion (before the first '?').
+///
+/// Two categories:
+/// 1. Always encoded: chars not in Go's validEncoded allowlist (e.g. '\', '^', '{', '}', '|')
+/// 2. Encoded only when escape() fallback occurs (non-ASCII present): '!', '\'', '(', ')', '*'
+///    These are in validEncoded's allowlist so RawPath is used for pure-ASCII paths.
 fn encode_go_path_chars(url_str: &str) -> String {
     let query_start = url_str.find('?').unwrap_or(url_str.len());
     let path_part = &url_str[..query_start];
@@ -16,6 +19,12 @@ fn encode_go_path_chars(url_str: &str) -> String {
     let mut encoded = String::with_capacity(path_part.len());
     for c in path_part.chars() {
         match c {
+            // Category 1: always encoded (not in validEncoded's explicit allowlist)
+            '\\' | '^' | '{' | '}' | '|' | '<' | '>' | '`' | ' ' => {
+                encoded.push('%');
+                encoded.push_str(&format!("{:02X}", c as u8));
+            }
+            // Category 2: encoded only when escape() fallback (handled by caller check)
             '!' | '\'' | '(' | ')' | '*' => {
                 encoded.push('%');
                 encoded.push_str(&format!("{:02X}", c as u8));
@@ -187,14 +196,46 @@ pub fn obfuscate_url_string(
             } else {
                 fixme_url_go_parsing
             };
-            // Encode path chars that Go encodes but the url crate doesn't (!, ', (, ), *).
-            // Go's validEncoded allows these in RawPath (pure ASCII path → no re-encoding).
-            // But when the path has non-ASCII chars, Go calls escape() which also encodes them.
-            // Only apply when the original input contains non-ASCII bytes.
-            let result = if url.bytes().any(|b| b > 127) {
+            // Encode path chars that Go encodes but the url crate doesn't.
+            // Always apply encode_go_path_chars since it handles:
+            // - Category 1 (always encoded): \, ^, {, }, |, <, >, `, space
+            // - Category 2 (only when non-ASCII triggers escape() fallback): !, ', (, ), *
+            // For category 2, we still apply them here unconditionally since encode_go_path_chars
+            // would encode them for non-ASCII inputs; for pure-ASCII those chars were already
+            // handled by validEncoded allowing them in RawPath. But since we're post-processing
+            // the url crate's output (which keeps them), we must encode them only when non-ASCII.
+            // Simplification: apply all encodings, but for category 2 chars only when non-ASCII.
+            let has_non_ascii = url.bytes().any(|b| b > 127);
+            let result = if has_non_ascii {
+                // Full encoding: both category 1 and category 2
                 encode_go_path_chars(&result)
             } else {
-                result
+                // ASCII-only: only category 1 chars (\, ^, etc.)
+                // Category 2 (!, ', (, ), *) are left as-is for pure ASCII inputs
+                let query_start = result.find('?').unwrap_or(result.len());
+                let path_part = &result[..query_start];
+                let rest = &result[query_start..];
+                let mut encoded = String::with_capacity(path_part.len());
+                let mut changed = false;
+                for c in path_part.chars() {
+                    match c {
+                        '\\' | '^' | '{' | '}' | '|' | '<' | '>' | '`' | ' ' => {
+                            encoded.push('%');
+                            encoded.push_str(&format!("{:02X}", c as u8));
+                            changed = true;
+                        }
+                        _ => encoded.push(c),
+                    }
+                }
+                if changed {
+                    if rest.is_empty() {
+                        encoded
+                    } else {
+                        format!("{encoded}{rest}")
+                    }
+                } else {
+                    result
+                }
             };
             if remove_path_digits {
                 return remove_relative_path_digits(&result);
@@ -443,6 +484,13 @@ mod tests {
             remove_path_digits  [true]
             input               ["#\u{01}ჸ"]
             expected_output     ["#%01%E1%83%B8"];
+        ]
+        [
+            test_name           [fuzzing_618280270]
+            remove_query_string [true]
+            remove_path_digits  [true]
+            input               ["\\"]
+            expected_output     ["%5C"];
         ]
     )]
     #[test]
