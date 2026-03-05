@@ -156,6 +156,14 @@ pub fn obfuscate_url_string(
     remove_query_string: bool,
     remove_path_digits: bool,
 ) -> String {
+    // Go rejects control chars in the path (returns '?'). Check before Url::parse since
+    // the url crate may silently drop control chars and succeed where Go would fail.
+    if remove_query_string || remove_path_digits {
+        let path_end = url.find('#').unwrap_or(url.len());
+        if url[..path_end].bytes().any(|b| b < 0x20 || b == 0x7F) {
+            return String::from("?");
+        }
+    }
     let mut parsed_url = match Url::parse(url) {
         Ok(res) => res,
         Err(_) => {
