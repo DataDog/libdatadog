@@ -180,11 +180,54 @@ pub fn obfuscate_url_string(
                 };
                 return go_like_reference(&url_for_join, remove_query_string);
             }
-            // Go's url.Parse rejects control characters (bytes < 0x20 or 0x7F) and returns an
-            // error, causing ObfuscateURLString to return "?". The `url` crate silently drops
-            // them, so we must check explicitly before calling go_like_reference.
-            if url.bytes().any(|b| b < 0x20 || b == 0x7F) {
-                return String::from("?");
+            // Go's url.Parse rejects control characters (bytes < 0x20 or 0x7F) in the PATH and
+            // returns "?". Control chars in the FRAGMENT are percent-encoded, not rejected.
+            // Only reject if there are control chars in the path portion (before '#').
+            {
+                let path_end = url.find('#').unwrap_or(url.len());
+                if url[..path_end].bytes().any(|b| b < 0x20 || b == 0x7F) {
+                    return String::from("?");
+                }
+                // Pre-encode control chars in the fragment (if any) before go_like_reference.
+                if path_end < url.len()
+                    && url[path_end + 1..].bytes().any(|b| b < 0x20 || b == 0x7F || b == b'#')
+                {
+                    let mut pre_encoded = url[..path_end].to_string();
+                    pre_encoded.push('#');
+                    for c in url[path_end + 1..].chars() {
+                        let cp = c as u32;
+                        if cp < 0x20 || cp == 0x7F || c == '#' {
+                            pre_encoded.push_str(&format!("%{cp:02X}"));
+                        } else {
+                            pre_encoded.push(c);
+                        }
+                    }
+                    // Use the pre-encoded URL for the rest of the processing
+                    let url = pre_encoded.as_str();
+                    // Continue to go_like_reference below using the pre-encoded url
+                    // (fall through with modified url)
+                    let url_pre_encoded_for_backslash;
+                    let url_for_go_like = if url.contains('\\') {
+                        url_pre_encoded_for_backslash = url.replace('\\', "%5C");
+                        url_pre_encoded_for_backslash.as_str()
+                    } else {
+                        url
+                    };
+                    let raw = go_like_reference(url_for_go_like, remove_query_string);
+                    let raw = if raw.ends_with('#') { raw[..raw.len()-1].to_string() } else { raw };
+                    let result = if raw.is_empty() && !url.is_empty() { url.to_string() } else { raw };
+                    let path_end_for_ascii = url.find('#').unwrap_or(url.len());
+                    let has_non_ascii = url[..path_end_for_ascii].bytes().any(|b| b > 127);
+                    let result = if has_non_ascii { encode_go_path_chars(&result) } else {
+                        let qs = result.find('?').unwrap_or(result.len());
+                        let pp = &result[..qs]; let rr = &result[qs..];
+                        let mut enc = String::with_capacity(pp.len()); let mut changed = false;
+                        for c in pp.chars() { match c { '\\' | '^' | '{' | '}' | '|' | '<' | '>' | '`' | ' ' => { enc.push('%'); enc.push_str(&format!("{:02X}", c as u8)); changed = true; } _ => enc.push(c), } }
+                        if changed { if rr.is_empty() { enc } else { format!("{enc}{rr}") } } else { result }
+                    };
+                    if remove_path_digits { return remove_relative_path_digits(&result); }
+                    return result;
+                }
             }
             // Go's url.Parse rejects invalid percent-encoding sequences (bare '%' or '%' not
             // followed by exactly two hex digits). The `url` crate re-encodes them as '%25',
@@ -570,6 +613,13 @@ mod tests {
             remove_path_digits  [true]
             input               ["##"]
             expected_output     ["#%23"];
+        ]
+        [
+            test_name           [fuzzing_1009954227]
+            remove_query_string [true]
+            remove_path_digits  [true]
+            input               ["ჸ#\u{10}"]
+            expected_output     ["%E1%83%B8#%10"];
         ]
     )]
     #[test]
