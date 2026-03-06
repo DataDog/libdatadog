@@ -371,11 +371,32 @@ pub fn obfuscate_url_string(
                     if !after_q.contains('#') {
                         return String::from("?");
                     }
+                } else if let Some(hash_pos) = after_q.find('#') {
+                    // Fragment present. Go keeps query raw and percent-encodes non-ASCII in
+                    // the fragment (url.URL.String() calls EscapeFragment). Handle it here so
+                    // the "restore original query" pass below doesn't undo the encoding.
+                    let query_part = &after_q[..hash_pos]; // query content (without '?')
+                    let frag = &after_q[hash_pos + 1..]; // fragment content
+                    if frag.is_empty() {
+                        // Go's url.URL.String() omits an empty trailing fragment (bare '#').
+                        return format!("?{query_part}");
+                    }
+                    // Encode non-ASCII chars in the fragment byte-by-byte.
+                    let mut encoded_frag = String::new();
+                    for c in frag.chars() {
+                        if (c as u32) > 127 {
+                            let mut buf = [0u8; 4];
+                            for &b in c.encode_utf8(&mut buf).as_bytes() {
+                                encoded_frag.push_str(&format!("%{b:02X}"));
+                            }
+                        } else {
+                            encoded_frag.push(c);
+                        }
+                    }
+                    return format!("?{query_part}#{encoded_frag}");
                 } else {
-                    // Return original (Go keeps query chars raw, including non-ASCII).
-                    // Go's url.URL.String() omits an empty trailing fragment (bare '#').
-                    let s = url.to_string();
-                    return if s.ends_with('#') { s[..s.len() - 1].to_string() } else { s };
+                    // No fragment: Go keeps query chars raw, including non-ASCII.
+                    return url.to_string();
                 }
             }
             // The url crate treats '\' as a path separator, silently consuming it.
