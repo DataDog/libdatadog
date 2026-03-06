@@ -3,6 +3,61 @@
 
 use crate::redis_tokenizer::{RedisTokenType, RedisTokenizer};
 
+const REDIS_TRUNCATION_MARK: &str = "...";
+const MAX_REDIS_NB_COMMANDS: usize = 3;
+
+/// Returns a quantized version of a Redis query, keeping only up to 3 command names.
+pub fn quantize_redis_string(query: &str) -> String {
+    let mut commands: Vec<String> = Vec::with_capacity(MAX_REDIS_NB_COMMANDS);
+    let mut truncated = false;
+
+    for raw_line in query.lines() {
+        if commands.len() >= MAX_REDIS_NB_COMMANDS {
+            break;
+        }
+
+        let line = raw_line.trim();
+        if line.is_empty() {
+            continue;
+        }
+
+        let mut tokens = line.split_whitespace();
+        let Some(first) = tokens.next() else { continue };
+
+        if first.ends_with(REDIS_TRUNCATION_MARK) {
+            truncated = true;
+            continue;
+        }
+
+        let cmd = first.to_ascii_uppercase();
+        let command = match cmd.as_bytes() {
+            b"CLIENT" | b"CLUSTER" | b"COMMAND" | b"CONFIG" | b"DEBUG" | b"SCRIPT" => {
+                match tokens.next() {
+                    Some(sub) if sub.ends_with(REDIS_TRUNCATION_MARK) => {
+                        truncated = true;
+                        continue;
+                    }
+                    Some(sub) => format!("{cmd} {}", sub.to_ascii_uppercase()),
+                    None => cmd,
+                }
+            }
+            _ => cmd,
+        };
+
+        commands.push(command);
+        truncated = false;
+    }
+
+    let mut result = commands.join(" ");
+    if commands.len() == MAX_REDIS_NB_COMMANDS || truncated {
+        if !result.is_empty() {
+            result.push(' ');
+        }
+        result.push_str("...");
+    }
+    result
+}
+
 pub fn obfuscate_redis_string(cmd: &str) -> String {
     let mut tokenizer = RedisTokenizer::new(cmd);
     let s = &mut String::new();
@@ -79,8 +134,8 @@ fn obfuscate_redis_cmd<'a>(str: &mut String, cmd: &'a str, mut args: Vec<&'a str
             // • ZSCORE key member
             args = obfuscate_redis_args_n(args, 1);
         }
-        b"HSET" | b"HSETNX" | b"LREM" | b"LSET" | b"SETBIT" | b"SETEX" | b"PSETEX"
-        | b"SETRANGE" | b"ZINCRBY" | b"SMOVE" | b"RESTORE" => {
+        b"HSETNX" | b"LREM" | b"LSET" | b"SETBIT" | b"SETEX" | b"PSETEX" | b"SETRANGE"
+        | b"ZINCRBY" | b"SMOVE" | b"RESTORE" => {
             // Obfuscate 3rd argument:
             // • HSET key field value
             // • HSETNX key field value
@@ -120,7 +175,7 @@ fn obfuscate_redis_cmd<'a>(str: &mut String, cmd: &'a str, mut args: Vec<&'a str
             // • GEOADD key longitude latitude member [longitude latitude member ...]
             args = obfuscate_redis_args_step(args, 1, 3)
         }
-        b"HMSET" => {
+        b"HMSET" | b"HSET" => {
             // Every 2nd argument starting from first.
             // • HMSET key field value [field value ...]
             args = obfuscate_redis_args_step(args, 1, 2)
@@ -196,7 +251,7 @@ fn obfuscate_redis_args_step(mut args: Vec<&str>, start: usize, step: usize) -> 
     args
 }
 
-pub(crate) fn remove_all_redis_args(redis_cmd: &str) -> String {
+pub fn remove_all_redis_args(redis_cmd: &str) -> String {
     let mut redis_cmd_iter = redis_cmd.split_whitespace().peekable();
     let mut obfuscated_cmd = String::new();
 
@@ -267,7 +322,110 @@ fn ascii_uppercase<'a>(s: &str, dest: &'a mut [u8]) -> Option<&'a [u8]> {
 mod tests {
     use duplicate::duplicate_item;
 
-    use super::{obfuscate_redis_string, remove_all_redis_args};
+    use super::{obfuscate_redis_string, quantize_redis_string, remove_all_redis_args};
+
+    #[duplicate_item(
+        [
+            test_name   [test_quantize_redis_string_client]
+            input       ["CLIENT"]
+            expected    ["CLIENT"];
+        ]
+        [
+            test_name   [test_quantize_redis_string_client_list]
+            input       ["CLIENT LIST"]
+            expected    ["CLIENT LIST"];
+        ]
+        [
+            test_name   [test_quantize_redis_string_get_lowercase]
+            input       ["get my_key"]
+            expected    ["GET"];
+        ]
+        [
+            test_name   [test_quantize_redis_string_set]
+            input       ["SET le_key le_value"]
+            expected    ["SET"];
+        ]
+        [
+            test_name   [test_quantize_redis_string_set_with_newlines]
+            input       ["\n\n  \nSET foo bar  \n  \n\n  "]
+            expected    ["SET"];
+        ]
+        [
+            test_name   [test_quantize_redis_string_config_set]
+            input       ["CONFIG SET parameter value"]
+            expected    ["CONFIG SET"];
+        ]
+        [
+            test_name   [test_quantize_redis_string_two_cmds]
+            input       ["SET toto tata \n \n  EXPIRE toto 15  "]
+            expected    ["SET EXPIRE"];
+        ]
+        [
+            test_name   [test_quantize_redis_string_mset]
+            input       ["MSET toto tata toto tata toto tata \n "]
+            expected    ["MSET"];
+        ]
+        [
+            test_name   [test_quantize_redis_string_max_cmds]
+            input       ["MULTI\nSET k1 v1\nSET k2 v2\nSET k3 v3\nSET k4 v4\nDEL to_del\nEXEC"]
+            expected    ["MULTI SET SET ..."];
+        ]
+        [
+            test_name   [test_quantize_redis_string_truncation_first]
+            input       ["GET..."]
+            expected    ["..."];
+        ]
+        [
+            test_name   [test_quantize_redis_string_truncation_arg]
+            input       ["GET k..."]
+            expected    ["GET"];
+        ]
+        [
+            test_name   [test_quantize_redis_string_truncation_third]
+            input       ["GET k1\nGET k2\nG..."]
+            expected    ["GET GET ..."];
+        ]
+        [
+            test_name   [test_quantize_redis_string_truncation_after_max]
+            input       ["GET k1\nGET k2\nDEL k3\nGET k..."]
+            expected    ["GET GET DEL ..."];
+        ]
+        [
+            test_name   [test_quantize_redis_string_truncation_hdel]
+            input       ["GET k1\nGET k2\nHDEL k3 a\nG..."]
+            expected    ["GET GET HDEL ..."];
+        ]
+        [
+            test_name   [test_quantize_redis_string_truncation_mid]
+            input       ["GET k...\nDEL k2\nMS..."]
+            expected    ["GET DEL ..."];
+        ]
+        [
+            test_name   [test_quantize_redis_string_truncation_early]
+            input       ["GET k...\nDE...\nMS..."]
+            expected    ["GET ..."];
+        ]
+        [
+            test_name   [test_quantize_redis_string_truncation_then_cmd]
+            input       ["GET k1\nDE...\nGET k2"]
+            expected    ["GET GET"];
+        ]
+        [
+            test_name   [test_quantize_redis_string_truncation_complex]
+            input       ["GET k1\nDE...\nGET k2\nHDEL k3 a\nGET k4\nDEL k5"]
+            expected    ["GET GET HDEL ..."];
+        ]
+        [
+            test_name   [test_quantize_redis_string_unknown]
+            input       ["UNKNOWN 123"]
+            expected    ["UNKNOWN"];
+        ]
+    )]
+    #[test]
+    fn test_name() {
+        let result = quantize_redis_string(input);
+        assert_eq!(result, expected);
+    }
 
     #[duplicate_item(
         [
@@ -683,6 +841,11 @@ SET k v
                         "#]
             expected    [r#"CONFIG command
 SET k ?"#];
+        ]
+        [
+            test_name   [test_obfuscate_redis_string_67]
+            input       ["HSET key field value field value"]
+            expected    ["HSET key field ? field ?"];
         ]
     )]
     #[test]

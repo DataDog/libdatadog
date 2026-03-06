@@ -423,19 +423,16 @@ fn test_crash_tracking_errors_intake_uds_socket() {
 /// DD_CRASHTRACK_END_STACKTRACE. Error: Can't set non-existant stack complete\n")
 #[test]
 #[cfg_attr(miri, ignore)]
-#[cfg(not(target_os = "macos"))]
 fn test_crash_tracking_bin_panic() {
     test_crash_tracking_app("panic");
 }
 
 #[test]
-#[cfg(not(target_os = "macos"))]
 #[cfg_attr(miri, ignore)]
 fn test_crash_tracking_bin_segfault() {
     test_crash_tracking_app("segfault");
 }
 
-#[cfg(not(target_os = "macos"))]
 fn test_crash_tracking_app(crash_type: &str) {
     use bin_tests::test_runner::run_custom_crash_test;
 
@@ -484,7 +481,6 @@ fn test_crash_tracking_app(crash_type: &str) {
 
 #[test]
 #[cfg_attr(miri, ignore)]
-#[cfg(not(target_os = "macos"))] // Same restriction as other panic tests
 fn test_crash_tracking_bin_panic_hook_after_fork() {
     test_panic_hook_mode(
         "panic_hook_after_fork",
@@ -495,14 +491,12 @@ fn test_crash_tracking_bin_panic_hook_after_fork() {
 
 #[test]
 #[cfg_attr(miri, ignore)]
-#[cfg(not(target_os = "macos"))] // Same restriction as other panic tests
 fn test_crash_tracking_bin_panic_hook_string() {
     test_panic_hook_mode("panic_hook_string", "message", Some("Panic with value: 42"));
 }
 
 #[test]
 #[cfg_attr(miri, ignore)]
-#[cfg(not(target_os = "macos"))] // Same restriction as other panic tests
 fn test_crash_tracking_bin_panic_hook_unknown_type() {
     test_panic_hook_mode(
         "panic_hook_unknown_type",
@@ -513,7 +507,6 @@ fn test_crash_tracking_bin_panic_hook_unknown_type() {
 
 /// Helper function to run panic hook tests with different payload types.
 /// Note: Since tests are built with Debug profile, location is always expected.
-#[cfg(not(target_os = "macos"))]
 fn test_panic_hook_mode(mode: &str, expected_category: &str, expected_panic_message: Option<&str>) {
     use bin_tests::test_runner::run_custom_crash_test;
 
@@ -580,20 +573,20 @@ fn test_panic_hook_mode(mode: &str, expected_category: &str, expected_panic_mess
 // ====================================================================================
 // These tests use `run_custom_crash_test` with the crashing_test_app artifact.
 
-// This test is disabled for now on x86_64 musl and macos
+// This test is disabled for now on x86_64 musl
 // It seems that on aarch64 musl, libc has CFI which allows
 // unwinding passed the signal frame.
 // Don't forget to update the ignore condition for this and also
 // `test_crash_tracking_callstack` when this is revisited.
 #[test]
-#[cfg(not(any(all(target_arch = "x86_64", target_env = "musl"), target_os = "macos")))]
+#[cfg(not(any(all(target_arch = "x86_64", target_env = "musl"))))]
 #[cfg_attr(miri, ignore)]
 fn test_crasht_tracking_validate_callstack() {
     test_crash_tracking_callstack()
 }
 
-// This test is disabled for now on x86_64 musl and macos for the reason mentioned above.
-#[cfg(not(any(all(target_arch = "x86_64", target_env = "musl"), target_os = "macos")))]
+// This test is disabled for now on x86_64 musl for the reason mentioned above.
+#[cfg(not(any(all(target_arch = "x86_64", target_env = "musl"))))]
 fn test_crash_tracking_callstack() {
     use bin_tests::test_runner::run_custom_crash_test;
 
