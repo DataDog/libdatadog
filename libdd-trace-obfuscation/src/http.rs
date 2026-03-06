@@ -64,7 +64,7 @@ fn encode_go_path_chars(url_str: &str) -> String {
     // Only encode up to the first '?' or '#' — the fragment has different encoding rules
     // (e.g., '!' is allowed in fragments per Go's shouldEscape for encodeFragment).
     let path_end = url_str
-        .find(|c| c == '?' || c == '#')
+        .find(['?', '#'])
         .unwrap_or(url_str.len());
     let path_part = &url_str[..path_end];
     let rest = &url_str[path_end..];
@@ -99,7 +99,7 @@ fn encode_go_path_chars(url_str: &str) -> String {
 fn remove_relative_path_digits(url_str: &str) -> String {
     // Only apply digit removal to the path (before '?' or '#'); fragments are not paths.
     let path_end = url_str
-        .find(|c: char| c == '?' || c == '#')
+        .find(['?', '#'])
         .unwrap_or(url_str.len());
     let path_part = &url_str[..path_end];
     let rest = &url_str[path_end..];
@@ -166,7 +166,8 @@ fn has_invalid_percent_encoding(s: &str) -> bool {
 /// - If it's relative, return the encoded relative reference (no dummy base in output)
 pub fn go_like_reference(input: &str, remove_query_string: bool) -> String {
     // Dummy base just to let the parser resolve relatives
-    let base = Url::parse("https://example.invalid/").unwrap();
+    #[allow(clippy::expect_used)]
+    let base = Url::parse("https://example.invalid/").expect("known-good base URL");
 
     // Try absolute first (like "https://...", "mailto:...", etc.)
     if let Ok(abs) = Url::parse(input) {
@@ -289,9 +290,9 @@ pub fn obfuscate_url_string(
                             let cp = c as u32;
                             if cp < 0x20 || cp == 0x7F || c == '#' {
                                 encoded.push_str(&format!("%{cp:02X}"));
-                            } else if matches!(c, '{' | '}' | '|' | '^' | '`' | '\\' | '<' | '>' | ' ') {
-                                encoded.push_str(&format!("%{:02X}", c as u8));
-                            } else if frag_has_non_ascii && matches!(c, '\'' | '[' | ']') {
+                            } else if matches!(c, '{' | '}' | '|' | '^' | '`' | '\\' | '<' | '>' | ' ')
+                                || (frag_has_non_ascii && matches!(c, '\'' | '[' | ']'))
+                            {
                                 encoded.push_str(&format!("%{:02X}", c as u8));
                             } else {
                                 encoded.push(c);
@@ -384,8 +385,9 @@ pub fn obfuscate_url_string(
                         if needs {
                             let mut out = ph.to_string(); out.push('#');
                             for c in fr_inner.chars() {
-                                if matches!(c, '{' | '}' | '|' | '^' | '`' | '\\' | '<' | '>' | ' ') { out.push_str(&format!("%{:02X}", c as u8)); }
-                                else if orig_frag_has_non_ascii && matches!(c, '\'' | '[' | ']') { out.push_str(&format!("%{:02X}", c as u8)); }
+                                if matches!(c, '{' | '}' | '|' | '^' | '`' | '\\' | '<' | '>' | ' ')
+                                    || (orig_frag_has_non_ascii && matches!(c, '\'' | '[' | ']'))
+                                { out.push_str(&format!("%{:02X}", c as u8)); }
                                 else { out.push(c); }
                             }
                             out
@@ -398,7 +400,7 @@ pub fn obfuscate_url_string(
             // Go's url.Parse rejects invalid percent-encoding sequences (bare '%' or '%' not
             // followed by exactly two hex digits) in the PATH and FRAGMENT, but not query string.
             {
-                let path_end = url.find(|c| c == '?' || c == '#').unwrap_or(url.len());
+                let path_end = url.find(['?', '#']).unwrap_or(url.len());
                 let frag_start = url.find('#').map(|i| i + 1);
                 let path_invalid = has_invalid_percent_encoding(&url[..path_end]);
                 let frag_invalid = frag_start.is_some_and(|i| has_invalid_percent_encoding(&url[i..]));
@@ -415,7 +417,7 @@ pub fn obfuscate_url_string(
             // The url crate silently accepts these as path chars.
             {
                 let segment_end = url
-                    .find(|c| matches!(c, '/' | '?' | '#'))
+                    .find(['/', '?', '#'])
                     .unwrap_or(url.len());
                 if url[..segment_end].contains(':') {
                     if !remove_query_string && !remove_path_digits {
@@ -426,8 +428,8 @@ pub fn obfuscate_url_string(
             }
             // For query-only references (starting with '?'), Go keeps the query raw.
             // With remove_query_string=true, return "?". Otherwise return original.
-            if url.starts_with('?') {
-                if has_invalid_percent_encoding(&url[1..]) {
+            if let Some(after_q) = url.strip_prefix('?') {
+                if has_invalid_percent_encoding(after_q) {
                     return String::from("?");
                 }
                 if remove_query_string {
@@ -489,12 +491,12 @@ pub fn obfuscate_url_string(
                 // The url crate resolved away dot path segments (e.g. "." or "..") via RFC 3986
                 // normalization. Go's url.Parse preserves them literally. Return the original,
                 // but strip a trailing empty fragment '#' (Go omits empty fragments).
-                let fallback = if url.ends_with('#') { &url[..url.len()-1] } else { url };
+                let fallback = url.strip_suffix('#').unwrap_or(url);
                 fallback.to_string()
             } else {
                 // If the original URL had a dot-segment prefix (., .., ./, ../) that
                 // base.join() resolved away, Go preserves it literally. Re-prepend it.
-                let frag_or_end = url.find(|c| c == '#' || c == '?').unwrap_or(url.len());
+                let frag_or_end = url.find(['#', '?']).unwrap_or(url.len());
                 let orig_path = &url[..frag_or_end];
                 let dot_prefix_len = {
                     let mut i = 0;
@@ -554,9 +556,9 @@ pub fn obfuscate_url_string(
                     if frag_needs_enc {
                         let mut out = path_and_hash.to_string();
                         for c in frag.chars() {
-                            if matches!(c, '{' | '}' | '|' | '^' | '`' | '\\' | '<' | '>' | ' ') {
-                                out.push_str(&format!("%{:02X}", c as u8));
-                            } else if frag_has_non_ascii && matches!(c, '\'' | '[' | ']' ) {
+                            if matches!(c, '{' | '}' | '|' | '^' | '`' | '\\' | '<' | '>' | ' ')
+                                || (frag_has_non_ascii && matches!(c, '\'' | '[' | ']'))
+                            {
                                 out.push_str(&format!("%{:02X}", c as u8));
                             } else { out.push(c); }
                         }
@@ -567,7 +569,7 @@ pub fn obfuscate_url_string(
                 // ASCII-only: only category 1 chars (\, ^, etc.)
                 // Category 2 (!, ', (, ), *) are left as-is for pure ASCII inputs
                 // Also stop at '#' since fragment has different encoding rules
-                let path_end = result.find(|c| c == '?' || c == '#').unwrap_or(result.len());
+                let path_end = result.find(['?', '#']).unwrap_or(result.len());
                 let path_part = &result[..path_end];
                 let rest = &result[path_end..];
                 let mut encoded = String::with_capacity(path_part.len());
