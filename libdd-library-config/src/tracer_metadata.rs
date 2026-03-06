@@ -59,6 +59,22 @@ impl TracerMetadata {
     pub fn to_otel_process_ctx(&self) -> otel_proto::common::v1::ProcessContext {
         use otel_proto::common::v1::{any_value, AnyValue, KeyValue};
 
+        // Every field of `self` should gets propagated to the otel context.
+        // If you add a new field, please also add it here and as a key/value in the otel context.
+        let TracerMetadata {
+            // This one isn't propagated on purpose
+            schema_version: _,
+            runtime_id,
+            tracer_language,
+            tracer_version,
+            hostname,
+            service_name,
+            service_env,
+            service_version,
+            process_tags,
+            container_id,
+        } = self;
+
         fn key_value(key: &'static str, val: String) -> KeyValue {
             KeyValue {
                 key: key.to_owned(),
@@ -70,10 +86,10 @@ impl TracerMetadata {
         }
 
         let mut attributes = vec![
-            key_value("telemetry.sdk.language", self.tracer_language.clone()),
-            key_value("telemetry.sdk.version", self.tracer_version.clone()),
+            key_value("telemetry.sdk.language", tracer_language.clone()),
+            key_value("telemetry.sdk.version", tracer_version.clone()),
             key_value("telemetry.sdk.name", Self::OTEL_SDK_NAME.to_owned()),
-            key_value("host.name", self.hostname.clone()),
+            key_value("host.name", hostname.clone()),
         ];
 
         let mut set_opt_attr = |key: &'static str, val: &Option<String>| {
@@ -82,14 +98,13 @@ impl TracerMetadata {
             }
         };
 
-        set_opt_attr("service.name", &self.service_name);
-        set_opt_attr("service.instance.id", &self.runtime_id);
-        set_opt_attr("service.version", &self.service_version);
-        set_opt_attr("deployment.environment.name", &self.service_env);
-        set_opt_attr("container.id", &self.container_id);
+        set_opt_attr("service.name", service_name);
+        set_opt_attr("service.instance.id", runtime_id);
+        set_opt_attr("service.version", service_version);
+        set_opt_attr("deployment.environment.name", service_env);
+        set_opt_attr("container.id", container_id);
 
-        let extra_attributes: Vec<_> = self
-            .process_tags
+        let extra_attributes: Vec<_> = process_tags
             .as_ref()
             .map(|tags| key_value("datadog.process_tags", tags.clone()))
             .into_iter()
