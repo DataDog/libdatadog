@@ -14,7 +14,7 @@ use std::ffi::{CStr, CString};
 use std::io;
 use std::num::NonZeroUsize;
 use std::os::fd::{AsFd, OwnedFd};
-use std::sync::atomic::{AtomicI32, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicI32, AtomicU32, AtomicUsize, Ordering};
 
 const MAPPING_MAX_SIZE: usize = 1 << 17; // 128 MiB ought to be enough for everybody?
 const NOT_COMMITTED: usize = 1 << (usize::BITS - 1);
@@ -69,6 +69,16 @@ pub(crate) fn munmap_handle<T: MemoryHandle>(mapped: &MappedMem<T>) {
 
 static ANON_SHM_ID: AtomicI32 = AtomicI32::new(0);
 
+static SHM_OPEN_MODE: AtomicU32 = AtomicU32::new(0o600);
+
+pub fn set_shm_open_mode(mode: u32) {
+    SHM_OPEN_MODE.store(mode, Ordering::Relaxed);
+}
+
+fn shm_open_mode() -> Mode {
+    Mode::from_bits_truncate(SHM_OPEN_MODE.load(Ordering::Relaxed) as u16)
+}
+
 impl ShmHandle {
     pub fn new(size: usize) -> anyhow::Result<ShmHandle> {
         let path = format!(
@@ -100,7 +110,7 @@ fn path_slice(path: &CStr) -> &[u8] {
 
 impl NamedShmHandle {
     pub fn create(path: CString, size: usize) -> io::Result<NamedShmHandle> {
-        Self::create_mode(path, size, Mode::S_IWUSR | Mode::S_IRUSR)
+        Self::create_mode(path, size, shm_open_mode())
     }
 
     pub fn create_mode(path: CString, size: usize, mode: Mode) -> io::Result<NamedShmHandle> {
