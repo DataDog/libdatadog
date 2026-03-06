@@ -77,13 +77,33 @@ fn has_invalid_percent_encoding(s: &str) -> bool {
     let mut i = 0;
     while i < bytes.len() {
         if bytes[i] == b'%' {
-            if i + 2 >= bytes.len()
-                || !bytes[i + 1].is_ascii_hexdigit()
-                || !bytes[i + 2].is_ascii_hexdigit()
-            {
+            // Collect a run of consecutive percent-encoded bytes and validate as UTF-8.
+            // Go's url.unescape rejects sequences whose decoded bytes are not valid UTF-8
+            // in path/fragment mode (e.g. %80 alone is a lone continuation byte).
+            let mut buf = Vec::new();
+            while i < bytes.len() && bytes[i] == b'%' {
+                if i + 2 >= bytes.len()
+                    || !bytes[i + 1].is_ascii_hexdigit()
+                    || !bytes[i + 2].is_ascii_hexdigit()
+                {
+                    return true;
+                }
+                let hi = match bytes[i + 1] {
+                    b'0'..=b'9' => bytes[i + 1] - b'0',
+                    b'a'..=b'f' => bytes[i + 1] - b'a' + 10,
+                    _ => bytes[i + 1] - b'A' + 10,
+                };
+                let lo = match bytes[i + 2] {
+                    b'0'..=b'9' => bytes[i + 2] - b'0',
+                    b'a'..=b'f' => bytes[i + 2] - b'a' + 10,
+                    _ => bytes[i + 2] - b'A' + 10,
+                };
+                buf.push((hi << 4) | lo);
+                i += 3;
+            }
+            if std::str::from_utf8(&buf).is_err() {
                 return true;
             }
-            i += 3;
         } else {
             i += 1;
         }
