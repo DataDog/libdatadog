@@ -255,6 +255,7 @@ pub unsafe extern "C" fn ddog_remote_config_reader_for_endpoint<'a>(
             env: env_name.to_utf8_lossy().into(),
             app_version: app_version.to_utf8_lossy().into(),
             tags: tags.as_slice().to_vec(),
+            process_tags: vec![],
         }),
     ))
 }
