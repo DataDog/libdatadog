@@ -9,3 +9,7 @@
 //! This crate provides utilities to compute stats from traces.
 
 pub mod span_concentrator;
+
+pub fn epa() {
+    println!("epa");
+}
