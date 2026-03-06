@@ -365,10 +365,10 @@ pub fn obfuscate_url_string(
                     return String::from("?");
                 }
                 if remove_query_string {
-                    // If the URL is "?#frag" (empty query + fragment), preserve the fragment.
+                    // If the URL has a fragment ("?query#frag" or "?#frag"), preserve it.
                     // Fall through to go_like_reference which encodes and preserves it.
                     // For "?query" (no fragment), remove the query and return "?".
-                    if !after_q.starts_with('#') {
+                    if !after_q.contains('#') {
                         return String::from("?");
                     }
                 } else {
