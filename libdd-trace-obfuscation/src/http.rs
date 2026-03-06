@@ -315,6 +315,19 @@ pub fn obfuscate_url_string(
                     }
                     return String::from("?");
                 }
+                // Check if Go would reject the pre-fragment path due to ':' in first segment.
+                // This check must come before the CTL-in-fragment pre-encode block (which
+                // returns early) so that ":#\x01" is caught here rather than being pre-encoded
+                // and passed to go_like_reference.
+                if path_end < url.len() {
+                    let segment_end = url.find(['/', '?', '#']).unwrap_or(url.len());
+                    if url[..segment_end].contains(':') {
+                        if !remove_query_string && !remove_path_digits {
+                            return url.to_string();
+                        }
+                        return String::from("?");
+                    }
+                }
                 // Pre-encode control chars in the fragment (if any) before go_like_reference.
                 if path_end < url.len()
                     && url[path_end + 1..].bytes().any(|b| b < 0x20 || b == 0x7F || b == b'#')
