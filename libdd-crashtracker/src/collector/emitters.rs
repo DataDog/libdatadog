@@ -107,7 +107,10 @@ pub(crate) fn emit_crashreport(
         CrashKindData::UnixSignal { ucontext, .. } => {
             emit_ucontext(pipe, ucontext)?;
             if config.resolve_frames() != StacktraceCollection::Disabled {
-                // We do this last, so even if it crashes, we still get the other info.
+                // SAFETY: `ucontext` comes from the signal handler and points to
+                // valid kernel-saved registers. This is called last so that even
+                // if the unwinder crashes, the other crash data has already been
+                // written. The crash handler is non-reentrant and single-threaded
                 unsafe { emit_backtrace_by_frames(pipe, config.resolve_frames(), ucontext)? };
             }
             if is_runtime_callback_registered() {
@@ -115,8 +118,8 @@ pub(crate) fn emit_crashreport(
             }
         }
         CrashKindData::UnhandledException { stacktrace } => {
-            // SAFETY: this branch only executes when an unhandled exception occurs
-            // and is not called from a signal handler.
+            // SAFETY: This branch only executes for unhandled exceptions, never
+            // from a signal handler
             unsafe { emit_whole_stacktrace(pipe, stacktrace)? };
         }
     }
@@ -147,7 +150,11 @@ unsafe fn emit_backtrace_by_frames(
     #[cfg(target_os = "macos")]
     {
         let _ = resolve_frames;
-        emit_backtrace_from_ucontext(w, ucontext)?;
+        // SAFETY: `ucontext` originates from the signal handler and points to
+        // the kernel-saved register snapshot. The caller guarantees we are in a
+        // crash-handling context where the parent's stack is still readable
+        // (copy-on-write after fork)
+        unsafe { emit_macos_backtrace_from_ucontext(w, ucontext)? };
     }
 
     // On Linux, use the bundled libunwind. unw_init_local2(cursor, ucontext, 0)
@@ -157,8 +164,12 @@ unsafe fn emit_backtrace_by_frames(
     // Linux), where the signal trampoline provides no DWARF unwind info and
     // libgcc's unwinder cannot cross the signal frame boundary.
     #[cfg(target_os = "linux")]
-    emit_backtrace_via_libunwind(w, resolve_frames, ucontext)?;
-
+    // SAFETY: `ucontext` originates from the signal handler and points to the
+    // kernel-saved register snapshot. The caller guarantees single-threaded,
+    // non-reentrant crash-handler execution
+    unsafe {
+        emit_backtrace_via_libunwind(w, resolve_frames, ucontext)?
+    };
     writeln!(w, "{DD_CRASHTRACK_END_STACKTRACE}")?;
     w.flush()?;
     Ok(())
@@ -176,6 +187,9 @@ unsafe fn emit_backtrace_by_frames(
 /// does not carry DWARF unwind info, so libgcc's unwinder (used by the
 /// `backtrace` crate) cannot cross the frame boundary and gets stuck inside
 /// the signal handler. libunwind's local unwinder has no such limitation.
+///
+/// We choose to use step instead of backtrace2, because we want to eagerly flush
+/// frame by frame
 ///
 /// For each frame we emit:
 ///   - `ip`  / `sp`                             — always
@@ -196,10 +210,15 @@ unsafe fn emit_backtrace_via_libunwind(
         return Ok(());
     }
 
-    let mut cursor: UnwCursor = std::mem::zeroed();
-    // Cast away const: libunwind only reads the context to copy the register
-    // state into the cursor; it does not modify the ucontext itself.
-    let ret = unw_init_local2(&mut cursor, ucontext as *mut _, 0);
+    // SAFETY: UnwCursor is a repr(C) struct of plain integers (`[u64; 127]`);
+    // all-zeros is a valid bit pattern
+    let mut cursor: UnwCursor = unsafe { std::mem::zeroed() };
+
+    // SAFETY: `cursor` is zeroed and is valid for initialization.
+    // `ucontext` was checked non-null above and points to the kernel-saved
+    // register snapshot captured by the signal handler. The const-to-mut cast
+    // is benign: libunwind only reads the context to seed the cursor
+    let ret = unsafe { unw_init_local2(&mut cursor, ucontext as *mut _, 0) };
     if ret != 0 {
         return Ok(());
     }
@@ -209,18 +228,24 @@ unsafe fn emit_backtrace_via_libunwind(
         let mut ip: UnwWord = 0;
         let mut sp: UnwWord = 0;
 
-        if unw_get_reg(&mut cursor, UNW_REG_IP, &mut ip) != 0 || ip == 0 {
+        // SAFETY: `cursor` was successfully initialized by `unw_init_local2`
+        // and is advanced by `unw_step` at the end of each iteration.
+        // UNW_REG_IP and UNW_REG_SP are valid libunwind register constants
+        if unsafe { unw_get_reg(&mut cursor, UNW_REG_IP, &mut ip) } != 0 || ip == 0 {
             break;
         }
-        let _ = unw_get_reg(&mut cursor, UNW_REG_SP, &mut sp);
+        let _ = unsafe { unw_get_reg(&mut cursor, UNW_REG_SP, &mut sp) };
 
         write!(w, "{{\"ip\": \"0x{ip:x}\"")?;
         write!(w, ", \"sp\": \"0x{sp:x}\"")?;
 
-        // dladdr resolves the containing shared object and nearest symbol.
-        // It only reads dyld/ld.so internal tables; no allocation, no locks
-        let mut dl_info: libc::Dl_info = std::mem::zeroed();
-        if libc::dladdr(ip as *const libc::c_void, &mut dl_info) != 0 {
+        // SAFETY: Dl_info is a repr(C) struct of pointers and integers;
+        // all-zeros (null pointers, zero integers) is a valid representation
+        let mut dl_info: libc::Dl_info = unsafe { std::mem::zeroed() };
+        // SAFETY: `ip` is a code address obtained from the unwinder.
+        // dladdr only reads ld.so internal tables (no allocation, no locks)
+        // making it safe to call from a signal handler
+        if unsafe { libc::dladdr(ip as *const libc::c_void, &mut dl_info) } != 0 {
             if !dl_info.dli_fbase.is_null() {
                 write!(w, ", \"module_base_address\": \"{:?}\"", dl_info.dli_fbase)?;
             }
@@ -231,14 +256,20 @@ unsafe fn emit_backtrace_via_libunwind(
 
         if resolve_frames == StacktraceCollection::EnabledWithInprocessSymbols {
             let mut name_buf: [libc::c_char; 256] = [0; 256];
-            if unw_get_proc_name(
-                &mut cursor,
-                name_buf.as_mut_ptr(),
-                name_buf.len(),
-                std::ptr::null_mut(),
-            ) == 0
+            // SAFETY: `cursor` is in a valid state (unw_get_reg succeeded).
+            // `name_buf` is a valid stack-allocated buffer with known length.
+            if unsafe {
+                unw_get_proc_name(
+                    &mut cursor,
+                    name_buf.as_mut_ptr(),
+                    name_buf.len(),
+                    std::ptr::null_mut(),
+                )
+            } == 0
             {
-                let name = std::ffi::CStr::from_ptr(name_buf.as_ptr());
+                // SAFETY: unw_get_proc_name returned 0 (success), guaranteeing
+                // a NUL-terminated string was written into name_buf.
+                let name = unsafe { std::ffi::CStr::from_ptr(name_buf.as_ptr()) };
                 if let Ok(s) = name.to_str() {
                     write!(w, ", \"function\": \"{s}\"")?;
                 }
@@ -246,10 +277,11 @@ unsafe fn emit_backtrace_via_libunwind(
         }
 
         writeln!(w, "}}")?;
-        // Flush eagerly so each frame is visible even if the next step crashes.
         w.flush()?;
 
-        if unw_step(&mut cursor) <= 0 {
+        // SAFETY: `cursor` is in a valid state; unw_step advances to the next
+        // frame or returns <= 0 when no more frames remain.
+        if unsafe { unw_step(&mut cursor) } <= 0 {
             break;
         }
     }
@@ -268,56 +300,63 @@ unsafe fn emit_backtrace_via_libunwind(
 /// and containing shared-object path. `dladdr` is safe here because it only
 /// reads dyld's internal data structures (no allocation, no Mach IPC).
 #[cfg(target_os = "macos")]
-unsafe fn emit_backtrace_from_ucontext(
+unsafe fn emit_macos_backtrace_from_ucontext(
     w: &mut impl Write,
     ucontext: *const ucontext_t,
 ) -> Result<(), EmitterError> {
     if ucontext.is_null() {
         return Ok(());
     }
-    let mcontext = (*ucontext).uc_mcontext;
+    // SAFETY: `ucontext` was checked non-null above and points to the
+    // kernel-provided register snapshot from the signal handler.
+    let mcontext = unsafe { (*ucontext).uc_mcontext };
     if mcontext.is_null() {
         return Ok(());
     }
 
-    // Get the thread's stack bounds so we only deref frame pointers
-    // that lie within known stack memory. Both pthread_get_stackaddr_np and
-    // pthread_get_stacksize_np are async-signal-safe on macOS
-    let thread = libc::pthread_self();
-    let stack_top = libc::pthread_get_stackaddr_np(thread) as usize;
-    let stack_size = libc::pthread_get_stacksize_np(thread);
+    // SAFETY: pthread_self and pthread_get_stack{addr,size}_np are
+    // async-signal-safe on macOS and always succeed for the calling thread.
+    let thread = unsafe { libc::pthread_self() };
+    let stack_top = unsafe { libc::pthread_get_stackaddr_np(thread) } as usize;
+    let stack_size = unsafe { libc::pthread_get_stacksize_np(thread) };
     let stack_bottom = stack_top.saturating_sub(stack_size);
 
-    // Returns true when the range [addr, addr+len) falls within the thread stack
     let in_stack_bounds = |addr: usize, len: usize| -> bool {
         let end = addr.saturating_add(len);
         addr >= stack_bottom && end <= stack_top
     };
 
-    let ss = &(*mcontext).__ss;
+    // SAFETY: `mcontext` was checked non-null above and is the kernel-provided
+    // machine context from the signal handler's ucontext.
+    let ss = unsafe { &(*mcontext).__ss };
     #[cfg(target_arch = "aarch64")]
     let (pc, mut fp) = (ss.__pc as usize, ss.__fp as usize);
     #[cfg(target_arch = "x86_64")]
     let (pc, mut fp) = (ss.__rip as usize, ss.__rbp as usize);
 
-    emit_frame_with_dladdr(w, pc)?;
+    // SAFETY: `pc` is a valid code address from the kernel-saved register state.
+    unsafe { emit_frame_with_dladdr(w, pc)? };
 
     const MAX_FRAMES: usize = 512;
     for _ in 0..MAX_FRAMES {
         if fp == 0 || fp % std::mem::align_of::<usize>() != 0 {
             break;
         }
-        // Each frame record is two pointer-sized words: [saved_fp, return_addr]
-        // Bail out if the record falls outside the thread stack
         if !in_stack_bounds(fp, 2 * std::mem::size_of::<usize>()) {
             break;
         }
-        let next_fp = *(fp as *const usize);
-        let return_addr = *((fp + std::mem::size_of::<usize>()) as *const usize);
+        // SAFETY: `fp` is non-zero, properly aligned, and the two-word frame
+        // record [saved_fp, return_addr] lies within the validated thread stack
+        // bounds (checked by in_stack_bounds above). After fork(), the child
+        // has a copy-on-write view of the parent's stack memory.
+        let next_fp = unsafe { *(fp as *const usize) };
+        let return_addr = unsafe { *((fp + std::mem::size_of::<usize>()) as *const usize) };
         if return_addr == 0 {
             break;
         }
-        emit_frame_with_dladdr(w, return_addr)?;
+        // SAFETY: `return_addr` is a code address read from a validated
+        // in-bounds frame record on the thread stack.
+        unsafe { emit_frame_with_dladdr(w, return_addr)? };
         if next_fp <= fp {
             break;
         }
@@ -330,8 +369,13 @@ unsafe fn emit_backtrace_from_ucontext(
 /// Emit a single stack frame, enriched with `dladdr` symbol information.
 #[cfg(target_os = "macos")]
 unsafe fn emit_frame_with_dladdr(w: &mut impl Write, ip: usize) -> Result<(), EmitterError> {
-    let mut info: libc::Dl_info = std::mem::zeroed();
-    let resolved = libc::dladdr(ip as *const libc::c_void, &mut info) != 0;
+    // SAFETY: Dl_info is a repr(C) struct of pointers and integers;
+    // all-zeros (null pointers, zero integers) is a valid representation.
+    let mut info: libc::Dl_info = unsafe { std::mem::zeroed() };
+    // SAFETY: dladdr only reads dyld's internal data structures (no
+    // allocation, no Mach IPC) making it async-signal-safe. `ip` is a code
+    // address from the unwound stack or kernel-saved registers.
+    let resolved = unsafe { libc::dladdr(ip as *const libc::c_void, &mut info) } != 0;
 
     write!(w, "{{\"ip\": \"0x{ip:x}\"")?;
 
@@ -343,7 +387,10 @@ unsafe fn emit_frame_with_dladdr(w: &mut impl Write, ip: usize) -> Result<(), Em
             write!(w, ", \"symbol_address\": \"{:?}\"", info.dli_saddr)?;
         }
         if !info.dli_sname.is_null() {
-            let name = std::ffi::CStr::from_ptr(info.dli_sname);
+            // SAFETY: dladdr returned non-zero and dli_sname is non-null, so
+            // it points to a valid NUL-terminated C string in the shared
+            // library's string table (static lifetime, read-only).
+            let name = unsafe { std::ffi::CStr::from_ptr(info.dli_sname) };
             if let Ok(s) = name.to_str() {
                 write!(w, ", \"function\": \"{s}\"")?;
             }
@@ -399,6 +446,9 @@ fn emit_metadata(w: &mut impl Write, metadata_str: &str) -> Result<(), EmitterEr
 
 fn emit_message(w: &mut impl Write, message_ptr: *mut String) -> Result<(), EmitterError> {
     if !message_ptr.is_null() {
+        // SAFETY: `message_ptr` was checked non-null above. The caller is
+        // required to pass a pointer to a valid, live String for the duration
+        // of this call.
         let message = unsafe { &*message_ptr };
         if !message.trim().is_empty() {
             writeln!(w, "{DD_CRASHTRACK_BEGIN_MESSAGE}")?;
@@ -455,6 +505,9 @@ fn emit_ucontext(w: &mut impl Write, ucontext: *const ucontext_t) -> Result<(), 
 ///     callbacks and writing to the provided stream. The runtime callback itself
 ///     must be signal safe.
 fn emit_runtime_stack(w: &mut impl Write) -> Result<(), EmitterError> {
+    // SAFETY: Reads from a global atomic pointer set during crashtracker
+    // initialization. The crash handler's non-reentrant execution model
+    // guarantees no concurrent modification.
     let callback = unsafe { get_registered_callback() };
 
     let callback = match callback {
@@ -470,6 +523,9 @@ fn emit_runtime_stack(w: &mut impl Write) -> Result<(), EmitterError> {
 
 fn emit_runtime_stack_by_frames(w: &mut impl Write) -> Result<(), EmitterError> {
     writeln!(w, "{DD_CRASHTRACK_BEGIN_RUNTIME_STACK_FRAME}")?;
+    // SAFETY: The runtime callback was registered during initialization and
+    // must be signal-safe per its API contract. The crash handler's
+    // non-reentrant model ensures no concurrent invocation.
     unsafe { invoke_runtime_callback_with_writer(w)? };
     writeln!(w, "{DD_CRASHTRACK_END_RUNTIME_STACK_FRAME}")?;
     w.flush()?;
@@ -478,6 +534,8 @@ fn emit_runtime_stack_by_frames(w: &mut impl Write) -> Result<(), EmitterError> 
 
 fn emit_runtime_stack_by_stacktrace_string(w: &mut impl Write) -> Result<(), EmitterError> {
     writeln!(w, "{DD_CRASHTRACK_BEGIN_RUNTIME_STACK_STRING}")?;
+    // SAFETY: Same contract as emit_runtime_stack_by_frames — the callback
+    // was registered at init time and the crash handler runs non-reentrantly.
     unsafe { invoke_runtime_callback_with_writer(w)? };
     writeln!(w, "{DD_CRASHTRACK_END_RUNTIME_STACK_STRING}")?;
     w.flush()?;
@@ -510,6 +568,8 @@ fn emit_siginfo(w: &mut impl Write, sig_info: *const siginfo_t) -> Result<(), Em
         return Err(EmitterError::NullSiginfo);
     }
 
+    // SAFETY: `sig_info` was checked non-null above and points to the
+    // kernel-provided siginfo_t from the signal handler.
     let si_signo = unsafe { (*sig_info).si_signo };
     let si_signo_human_readable: SignalNames = si_signo.into();
 
@@ -518,11 +578,14 @@ fn emit_siginfo(w: &mut impl Write, sig_info: *const siginfo_t) -> Result<(), Em
     // SIGILL, SIGFPE, SIGSEGV, SIGBUS, and SIGTRAP fill in si_addr with the address of the fault.
     let si_addr: Option<usize> = match si_signo {
         libc::SIGILL | libc::SIGFPE | libc::SIGSEGV | libc::SIGBUS | libc::SIGTRAP => {
+            // SAFETY: for these signal types, si_addr is defined and valid
+            // per sigaction(2). `sig_info` was checked non-null above.
             Some(unsafe { (*sig_info).si_addr() as usize })
         }
         _ => None,
     };
 
+    // SAFETY: `sig_info` was checked non-null and points to valid kernel data.
     let si_code = unsafe { (*sig_info).si_code };
     let si_code_human_readable = translate_si_code(si_signo, si_code);
 
