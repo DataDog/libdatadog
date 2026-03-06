@@ -6,15 +6,13 @@ use std::process::Command;
 
 /// Run `git fetch --depth=1 origin <base_ref>` to ensure the base ref is available locally.
 pub fn fetch_base(base_ref: &str) -> Result<()> {
-    // Strip "origin/" prefix if present — we pass it to `git fetch origin <branch>`
-    let branch = base_ref.strip_prefix("origin/").unwrap_or(base_ref);
-    log::info!("Fetching base branch: {branch}");
+    log::info!("Fetching base branch: {base_ref}");
 
     let status = Command::new("git")
         .args([
             "fetch",
             "origin",
-            &format!("{branch}:refs/remotes/origin/{branch}"),
+            &format!("{base_ref}:refs/remotes/origin/{base_ref}"),
         ])
         .status()
         .context("Failed to run git fetch")?;
@@ -27,18 +25,18 @@ pub fn fetch_base(base_ref: &str) -> Result<()> {
     Ok(())
 }
 
-/// Return the list of files changed between `<base_ref>...HEAD` (three-dot diff).
+/// Return the list of files changed between `origin/<base_ref>...HEAD` (three-dot diff).
 ///
-/// Uses `git diff --name-only <base_ref>...HEAD`.
+/// Uses `git diff --name-only origin/<base_ref>...HEAD`.
 pub fn changed_files(base_ref: &str) -> Result<Vec<String>> {
     let output = Command::new("git")
-        .args(["diff", "--name-only", &format!("{base_ref}...HEAD")])
+        .args(["diff", "--name-only", &format!("origin/{base_ref}...HEAD")])
         .output()
         .context("Failed to run git diff")?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        bail!("git diff failed against {base_ref}: {stderr}");
+        bail!("git diff failed against origin/{base_ref}: {stderr}");
     }
 
     let stdout = String::from_utf8_lossy(&output.stdout);

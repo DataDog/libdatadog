@@ -27,7 +27,7 @@ fn main() -> Result<()> {
         return Err(anyhow!("A reference base needs to be passed"));
     }
 
-    let base_ref = &args[1];
+    let base_ref = args[1].strip_prefix("origin/").unwrap_or(&args[1]).to_string();
 
     git::fetch_base(&base_ref)?;
 
@@ -46,7 +46,7 @@ fn main() -> Result<()> {
 
     if changed_crates.is_empty() {
         log::info!("Changed crates is empty");
-        return build_output(None, None, base_ref);
+        return build_output(None, None, &base_ref);
     }
 
     let seeds: Vec<String> = changed_crates.iter().map(|c| c.name.clone()).collect();
@@ -56,7 +56,7 @@ fn main() -> Result<()> {
     build_output(
         Some(changed_crates),
         Some(result.into_iter().collect()),
-        base_ref,
+        &base_ref,
     )
 }
 
