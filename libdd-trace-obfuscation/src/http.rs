@@ -416,7 +416,7 @@ pub fn obfuscate_url_string(
             let path_end_for_ascii_check = url.find('#').unwrap_or(url.len());
             let path_for_check = &url[..path_end_for_ascii_check];
             let has_non_ascii = path_for_check.bytes().any(|b| b > 127);
-            let has_cat1 = path_for_check.chars().any(|c| matches!(c, '\\' | '^' | '{' | '}' | '|' | '<' | '>' | '`' | ' '));
+            let has_cat1 = path_for_check.chars().any(|c| matches!(c, '\\' | '^' | '{' | '}' | '|' | '<' | '>' | '`' | ' ' | '"'));
             let needs_full_encoding = has_non_ascii || has_cat1;
             let result = if needs_full_encoding {
                 // Full encoding: both category 1 and category 2 in path + fragment.
