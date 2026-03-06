@@ -365,7 +365,7 @@ pub fn obfuscate_url_string(
                     let raw = go_like_reference(url_for_go_like, remove_query_string);
                     let raw = if raw.ends_with('#') { raw[..raw.len()-1].to_string() } else { raw };
                     let result = if raw.is_empty() && !url.is_empty() { url.to_string() } else { raw };
-                    let path_end_for_ascii = url.find('#').unwrap_or(url.len());
+                    let path_end_for_ascii = url.find(['?', '#']).unwrap_or(url.len());
                     let has_non_ascii = url[..path_end_for_ascii].bytes().any(|b| b > 127);
                     let result = if has_non_ascii { encode_go_path_chars(&result) } else {
                         let qs = result.find('?').unwrap_or(result.len());
@@ -531,8 +531,9 @@ pub fn obfuscate_url_string(
             // false. validEncoded() fails on: non-ASCII chars OR Cat1 chars (\,^,{,},|,<,>,`,space).
             // When escape() is called, it also encodes Cat2 chars (!, ', (, ), *, [, ]).
             // So Cat2 chars are encoded whenever any Cat1 or non-ASCII char is present in the path.
-            // Only check path portion (before '#'); fragment has separate encoding logic.
-            let path_end_for_ascii_check = url.find('#').unwrap_or(url.len());
+            // Only check path portion (before '?' or '#'); query string and fragment have
+            // separate handling. Go's EscapedPath() only runs on the path component.
+            let path_end_for_ascii_check = url.find(['?', '#']).unwrap_or(url.len());
             let path_for_check = &url[..path_end_for_ascii_check];
             let has_non_ascii = path_for_check.bytes().any(|b| b > 127);
             let has_cat1 = path_for_check.chars().any(|c| matches!(c, '\\' | '^' | '{' | '}' | '|' | '<' | '>' | '`' | ' ' | '"'));
