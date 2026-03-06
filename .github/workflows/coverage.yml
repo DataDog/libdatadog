@@ -1,6 +1,11 @@
 name: Coverage
 
 on:
+  push:
+    branches:
+      # Allowing to generate coverage when pushes are made to main in order to generate all independent crate reports
+      # so we can establish a proper baseline without manual intervention or a manual workflow dispatch.
+      - main
   pull_request:
     types: ['opened', 'edited', 'reopened', 'synchronize']
     branches-ignore:
@@ -13,6 +18,7 @@ jobs:
     outputs:
       packages: ${{ steps.set-packages.outputs.packages }}
       packages-count: ${{ steps.set-packages.outputs.packages-count }}
+      crates-json: ${{ steps.set-packages.outputs.crates-json }}
     steps:
     - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # 4.2.2
       with:
@@ -24,19 +30,29 @@ jobs:
     - name: Set packages to get coverage
       id: set-packages
       env:
-        CHANGED_CRATES: ${{ steps.changed-crates.outputs.crates }}
         CHANGED_CRATES_COUNT: ${{ steps.changed-crates.outputs.crates_count }}
         AFFECTED_CRATES: ${{ steps.changed-crates.outputs.affected_crates }}
       run: |
-        if [[ "$CHANGED_CRATES_COUNT" == "0" ]]; then
+        if [[ "${{ github.event_name }}" == "push" ]]; then
+          COUNT="1"
+          PACKAGES=""
+          CRATES_JSON=""
+        elif [[ "$CHANGED_CRATES_COUNT" == "0" ]]; then
           COUNT="0"
           PACKAGES=""
-        else 
-          COUNT=$CHANGED_CRATES_COUNT
-          PACKAGES=""
+          CRATES_JSON=""
+        else
+          COUNT=$(echo "$AFFECTED_CRATES" | jq 'length')
+          PACKAGES=$(echo "$AFFECTED_CRATES" | jq -r 'map("-p " + .) | join(" ")')
+          CRATES_JSON="$AFFECTED_CRATES"
         fi
         echo "packages-count=$COUNT" >> $GITHUB_OUTPUT
         echo "packages=$PACKAGES" >> $GITHUB_OUTPUT
+        {
+          echo "crates-json<<EOF"
+          echo "$CRATES_JSON"
+          echo "EOF"
+        } >> $GITHUB_OUTPUT
 
   coverage:
     needs: setup
@@ -71,13 +87,54 @@ jobs:
           cache-targets: true # cache build artifacts
           cache-bin: true # cache the ~/.cargo/bin directory
       - name: Generate code coverage (including doc tests)
+        env:
+          PACKAGES: ${{ needs.setup.outputs.packages }}
+          CRATES_JSON: ${{ needs.setup.outputs.crates-json }}
         run: |
-          cargo llvm-cov --all-features --workspace --no-report nextest
-          cargo llvm-cov --all-features --workspace --no-report --doc
-          cargo llvm-cov report --doctests --lcov --output-path lcov.info
+          if [[ -z "$PACKAGES" ]]; then
+            cargo llvm-cov --all-features --workspace --no-report nextest
+            cargo llvm-cov --all-features --workspace --no-report --doc
+            CRATES_JSON=$(cargo metadata --no-deps --format-version 1 | jq '[.packages[].name]')
+          else
+            # shellcheck disable=SC2086 - word splitting on $PACKAGES is intentional
+            cargo llvm-cov --all-features --no-report nextest $PACKAGES
+            # shellcheck disable=SC2086
+            cargo llvm-cov --all-features --no-report --doc $PACKAGES
+          fi
+          for crate in $(echo "$CRATES_JSON" | jq -r '.[]'); do
+            if ! cargo llvm-cov report --doctests --lcov \
+                --output-path "lcov-${crate}.info" \
+                --package "${crate}"; then
+              if [[ -s "lcov-${crate}.info" ]]; then
+                echo "::error::Coverage report generation failed for ${crate}"
+                exit 1
+              else
+                echo "No coverage data for ${crate}, skipping"
+              fi
+            fi
+          done
+          {
+            echo "CRATES_JSON_COMPUTED<<EOF"
+            echo "$CRATES_JSON"
+            echo "EOF"
+          } >> "$GITHUB_ENV"
+      - name: Install Codecov CLI
+        run: |
+          curl -Os https://cli.codecov.io/v10.4.0/linux/codecov
+          curl -Os https://cli.codecov.io/v10.4.0/linux/codecov.SHA256SUM
+          echo "0f7aadde579ebde1443ad2f977beada703f562997fdda603f213faf2a8559868  codecov" | shasum -a 256 -c
+          chmod +x codecov
+          sudo mv codecov /usr/local/bin/codecov
       - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@5a1091511ad55cbe89839c7260b706298ca349f7 # 5.5.1
-        with:
-          token: ${{ secrets.CODECOV_TOKEN }}
-          files: lcov.info
-          fail_ci_if_error: true
+        env:
+          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+        run: |
+          for crate in $(echo "$CRATES_JSON_COMPUTED" | jq -r '.[]'); do
+            if [[ -s "lcov-${crate}.info" ]]; then
+              codecov upload-process \
+                --token "$CODECOV_TOKEN" \
+                --file "lcov-${crate}.info" \
+                --flag "${crate}" \
+                --fail-on-error
+            fi
+          done
