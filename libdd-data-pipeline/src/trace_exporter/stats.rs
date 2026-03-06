@@ -10,7 +10,7 @@
 use crate::agent_info::schema::AgentInfo;
 use crate::stats_exporter;
 use arc_swap::ArcSwap;
-use libdd_capabilities::HttpClientTrait;
+use libdd_capabilities::{HttpClientTrait, MaybeSend};
 use libdd_common::{Endpoint, MutexExt};
 use libdd_trace_stats::span_concentrator::SpanConcentrator;
 use std::sync::{Arc, Mutex};
@@ -59,7 +59,7 @@ fn get_span_kinds_for_stats(agent_info: &Arc<AgentInfo>) -> Vec<String> {
 /// Start the stats exporter and enable stats computation
 ///
 /// Should only be used if the agent enabled stats computation
-pub(crate) fn start_stats_computation<H: HttpClientTrait + Send + Sync + 'static>(
+pub(crate) fn start_stats_computation<H: HttpClientTrait + MaybeSend + Sync + 'static>(
     ctx: &StatsContext,
     client_side_stats: &ArcSwap<StatsComputationStatus>,
     workers: &Arc<Mutex<super::TraceExporterWorkers<H>>>,
@@ -87,7 +87,7 @@ pub(crate) fn start_stats_computation<H: HttpClientTrait + Send + Sync + 'static
 }
 
 /// Create stats exporter and worker, start the worker, and update the state
-fn create_and_start_stats_worker<H: HttpClientTrait + Send + Sync + 'static>(
+fn create_and_start_stats_worker<H: HttpClientTrait + MaybeSend + Sync + 'static>(
     ctx: &StatsContext,
     bucket_size: Duration,
     stats_concentrator: &Arc<Mutex<SpanConcentrator>>,
@@ -129,7 +129,7 @@ fn create_and_start_stats_worker<H: HttpClientTrait + Send + Sync + 'static>(
 /// Stops the stats exporter and disable stats computation
 ///
 /// Used when client-side stats is disabled by the agent
-pub(crate) fn stop_stats_computation<H: HttpClientTrait + Send + Sync + 'static>(
+pub(crate) fn stop_stats_computation<H: HttpClientTrait + MaybeSend + Sync + 'static>(
     ctx: &StatsContext,
     client_side_stats: &ArcSwap<StatsComputationStatus>,
     workers: &Arc<Mutex<super::TraceExporterWorkers<H>>>,
@@ -156,7 +156,7 @@ pub(crate) fn stop_stats_computation<H: HttpClientTrait + Send + Sync + 'static>
 }
 
 /// Handle stats computation when agent changes from disabled to enabled
-pub(crate) fn handle_stats_disabled_by_agent<H: HttpClientTrait + Send + Sync + 'static>(
+pub(crate) fn handle_stats_disabled_by_agent<H: HttpClientTrait + MaybeSend + Sync + 'static>(
     ctx: &StatsContext,
     agent_info: &Arc<AgentInfo>,
     client_side_stats: &ArcSwap<StatsComputationStatus>,
@@ -181,7 +181,7 @@ pub(crate) fn handle_stats_disabled_by_agent<H: HttpClientTrait + Send + Sync + 
 }
 
 /// Handle stats computation when it's already enabled
-pub(crate) fn handle_stats_enabled<H: HttpClientTrait + Send + Sync + 'static>(
+pub(crate) fn handle_stats_enabled<H: HttpClientTrait + MaybeSend + Sync + 'static>(
     ctx: &StatsContext,
     agent_info: &Arc<AgentInfo>,
     stats_concentrator: &Mutex<SpanConcentrator>,
@@ -253,7 +253,7 @@ pub(crate) fn process_traces_for_stats<T: libdd_trace_utils::span::TraceData>(
 
 #[cfg(test)]
 /// Test only function to check if the stats computation is active and the worker is running
-pub(crate) fn is_stats_worker_active<H: HttpClientTrait + Send + Sync + 'static>(
+pub(crate) fn is_stats_worker_active<H: HttpClientTrait + MaybeSend + Sync + 'static>(
     client_side_stats: &ArcSwap<StatsComputationStatus>,
     workers: &Arc<Mutex<super::TraceExporterWorkers<H>>>,
 ) -> bool {

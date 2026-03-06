@@ -12,11 +12,12 @@ use std::{
 };
 
 use crate::trace_exporter::TracerMetadata;
-use libdd_capabilities::HttpClientTrait;
+use libdd_capabilities::{HttpClientTrait, MaybeSend};
 use libdd_common::{worker::Worker, Endpoint};
 use libdd_trace_protobuf::pb;
 use libdd_trace_stats::span_concentrator::SpanConcentrator;
 use libdd_trace_utils::send_with_retry::{send_with_retry, RetryStrategy};
+#[cfg(not(target_arch = "wasm32"))]
 use tokio::select;
 use tokio_util::sync::CancellationToken;
 use tracing::error;
@@ -126,13 +127,19 @@ impl<H: HttpClientTrait> StatsExporter<H> {
     }
 }
 
-impl<H: HttpClientTrait + Send + Sync + 'static> Worker for StatsExporter<H> {
+impl<H: HttpClientTrait + MaybeSend + Sync + 'static> Worker for StatsExporter<H> {
     /// Run loop of the stats exporter
     ///
     /// Once started, the stats exporter will flush and send stats on every `self.flush_interval`.
     /// If the `self.cancellation_token` is cancelled, the exporter will force flush all stats and
     /// return.
     async fn run(&mut self) {
+        #[cfg(target_arch = "wasm32")]
+        {
+            return;
+        }
+
+        #[cfg(not(target_arch = "wasm32"))]
         loop {
             select! {
                 _ = self.cancellation_token.cancelled() => {
