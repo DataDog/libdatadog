@@ -59,10 +59,12 @@ jobs:
             RUN_TEST_SPAWN="false"
           fi
         fi
-        echo "packages-count=$COUNT" >> $GITHUB_OUTPUT
-        echo "packages=$PACKAGES" >> $GITHUB_OUTPUT
-        echo "crashtracker-feature=$CRASHTRACKER_FEATURE" >> $GITHUB_OUTPUT
-        echo "run-test-spawn=$RUN_TEST_SPAWN" >> $GITHUB_OUTPUT
+        {
+          echo "packages-count=$COUNT"
+          echo "packages=$PACKAGES"
+          echo "crashtracker-feature=$CRASHTRACKER_FEATURE"
+          echo "run-test-spawn=$RUN_TEST_SPAWN"
+        } >> $GITHUB_OUTPUT
 
   test:
     name: "cargo test #${{ matrix.platform }} ${{ matrix.rust_version }}"
@@ -123,7 +125,8 @@ jobs:
           if [[ -z "$PACKAGES" ]]; then
             cargo build --workspace --exclude builder --verbose
           else
-            # shellcheck disable=SC2086 - word splitting on $PACKAGES is intentional
+            # word splitting on $PACKAGES is intentional
+            # shellcheck disable=SC2086
             cargo build $PACKAGES --verbose
           fi
       - name: "[${{ steps.rust-version.outputs.version}}] cargo test (doc) and cargo nextest run"
