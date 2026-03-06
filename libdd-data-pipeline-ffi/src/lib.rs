@@ -9,3 +9,8 @@
 mod error;
 mod response;
 mod trace_exporter;
+
+/// Add dummy function to test transitive dependencies.
+pub fn dummy() {
+    println!("dummy");
+}
