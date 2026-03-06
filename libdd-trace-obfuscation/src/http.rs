@@ -176,7 +176,9 @@ pub fn obfuscate_url_string(
                 if opaque_part.bytes().any(|b| b < 0x20 || b == 0x7F) {
                     return url.to_string(); // Go returns original on parse error
                 }
-                return url[..scheme_len].to_lowercase() + opaque_part;
+                let result = url[..scheme_len].to_lowercase() + opaque_part;
+                // Go's url.URL.String() omits empty trailing fragment (bare '#')
+                return if result.ends_with('#') { result[..result.len() - 1].to_string() } else { result };
             }
             res
         }
@@ -240,6 +242,15 @@ pub fn obfuscate_url_string(
                 if path_end < url.len()
                     && url[path_end + 1..].bytes().any(|b| b < 0x20 || b == 0x7F || b == b'#')
                 {
+                    // If the path or fragment has invalid percent-encoding, Go rejects the URL.
+                    let path_invalid = has_invalid_percent_encoding(&url[..path_end]);
+                    let frag_invalid = has_invalid_percent_encoding(&url[path_end + 1..]);
+                    if path_invalid || frag_invalid {
+                        if !remove_query_string && !remove_path_digits {
+                            return url.to_string();
+                        }
+                        return String::from("?");
+                    }
                     let mut pre_encoded = url[..path_end].to_string();
                     pre_encoded.push('#');
                     for c in url[path_end + 1..].chars() {
@@ -824,6 +835,14 @@ mod tests {
             remove_path_digits  [true]
             input               ["<!"]
             expected_output     ["%3C%21"];
+        ]
+        [
+            // Fragment has invalid percent-encoding (%\u{1}) AND control char — Go rejects
+            test_name           [fuzzing_3886417401]
+            remove_query_string [true]
+            remove_path_digits  [true]
+            input               ["ჸ#%\u{1}"]
+            expected_output     ["?"];
         ]
     )]
     #[test]
