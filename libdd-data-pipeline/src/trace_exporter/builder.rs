@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::agent_info::AgentInfoFetcher;
+use crate::otlp::otlp_trace_config_from_env;
 use crate::pausable_worker::PausableWorker;
 use crate::telemetry::TelemetryClientBuilder;
 use crate::trace_exporter::agent_response::AgentResponsePayloadVersion;
@@ -338,6 +339,7 @@ impl TraceExporterBuilder {
                 .agent_rates_payload_version_enabled
                 .then(AgentResponsePayloadVersion::new),
             http_client: new_default_client(),
+            otlp_config: otlp_trace_config_from_env(),
         })
     }
 
