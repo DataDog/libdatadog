@@ -6,6 +6,20 @@ use crate::redis_tokenizer::{RedisTokenType, RedisTokenizer};
 const REDIS_TRUNCATION_MARK: &str = "...";
 const MAX_REDIS_NB_COMMANDS: usize = 3;
 
+/// Uppercase a single char to match Go's unicode.ToUpper (Unicode 15.0).
+/// Rust uses Unicode 16.0 which added case pairs for U+16E80–U+16EFF (Bamum Supplement)
+/// that Go 1.25 doesn't know about — keep those chars unchanged to match Go.
+fn go_toupper(c: char) -> char {
+    if (0x16E80..=0x16EFF).contains(&(c as u32)) {
+        return c;
+    }
+    let mut upper = c.to_uppercase();
+    match (upper.next(), upper.next()) {
+        (Some(u), None) => u,
+        _ => c,
+    }
+}
+
 /// Returns a quantized version of a Redis query, keeping only up to 3 command names.
 pub fn quantize_redis_string(query: &str) -> String {
     let mut commands: Vec<String> = Vec::with_capacity(MAX_REDIS_NB_COMMANDS);
@@ -34,17 +48,7 @@ pub fn quantize_redis_string(query: &str) -> String {
             continue;
         }
 
-        // Go's strings.ToUpper uses unicode.ToUpper which maps each rune to exactly one uppercase
-        // rune. Rust's str::to_uppercase() uses full Unicode case folding which can expand a single
-        // char to multiple (e.g. some Greek letters with diacritics). To match Go: uppercase when
-        // it maps to exactly one char, otherwise keep the original.
-        let cmd: String = first.chars().map(|c| {
-            let mut upper = c.to_uppercase();
-            match (upper.next(), upper.next()) {
-                (Some(u), None) => u,  // single-char mapping: use it
-                _ => c,                // multi-char expansion: keep original (matches Go)
-            }
-        }).collect();
+        let cmd: String = first.chars().map(go_toupper).collect();
         let command = match cmd.as_bytes() {
             b"CLIENT" | b"CLUSTER" | b"COMMAND" | b"CONFIG" | b"DEBUG" | b"SCRIPT" => {
                 match tokens.next() {
@@ -52,7 +56,7 @@ pub fn quantize_redis_string(query: &str) -> String {
                         truncated = true;
                         continue;
                     }
-                    Some(sub) => format!("{cmd} {}", sub.chars().map(|c| { let mut u = c.to_uppercase(); match (u.next(), u.next()) { (Some(up), None) => up, _ => c } }).collect::<String>()),
+                    Some(sub) => format!("{cmd} {}", sub.chars().map(go_toupper).collect::<String>()),
                     None => cmd,
                 }
             }
