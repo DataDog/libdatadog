@@ -93,9 +93,7 @@ impl TracerMetadata {
         ];
 
         let mut set_opt_attr = |key: &'static str, val: &Option<String>| {
-            if let Some(val) = val {
-                attributes.push(key_value(key, val.clone()))
-            }
+            attributes.push(key_value(key, val.as_ref().cloned().unwrap_or_default()))
         };
 
         set_opt_attr("service.name", service_name);
