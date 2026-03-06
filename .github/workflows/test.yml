@@ -13,8 +13,61 @@ env:
   RUST_VERSION: 1.84.1
 
 jobs:
+  setup:
+    runs-on: ubuntu-latest
+    outputs:
+      packages-count: ${{ steps.set-packages.outputs.packages-count }}
+      packages: ${{ steps.set-packages.outputs.packages }}
+      crashtracker-feature: ${{ steps.set-packages.outputs.crashtracker-feature }}
+      run-test-spawn: ${{ steps.set-packages.outputs.run-test-spawn }}
+    steps:
+    - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # 4.2.2
+      with:
+        fetch-depth: 0
+    - name: Get changed crates
+      if: ${{ github.event_name == 'pull_request' }}
+      id: changed-crates
+      uses: ./.github/actions/changed-crates
+    - name: Set unit test packages
+      id: set-packages
+      env:
+        CHANGED_CRATES_COUNT: ${{ steps.changed-crates.outputs.crates_count }}
+        AFFECTED_CRATES: ${{ steps.changed-crates.outputs.affected_crates }}
+      run: |
+        if [[ "${{ github.event_name }}" == "push" ]]; then
+          COUNT="1"
+          PACKAGES=""
+          CRASHTRACKER_FEATURE="--features libdd-crashtracker/generate-unit-test-files"
+          RUN_TEST_SPAWN="true"
+        elif [[ "$CHANGED_CRATES_COUNT" == "0" ]]; then
+          COUNT="0"
+          PACKAGES=""
+          CRASHTRACKER_FEATURE=""
+          RUN_TEST_SPAWN="false"
+        else
+          UNIT_CRATES=$(echo "$AFFECTED_CRATES" | jq '[.[] | select(. != "builder")]')
+          COUNT=$(echo "$UNIT_CRATES" | jq 'length')
+          PACKAGES=$(echo "$UNIT_CRATES" | jq -r 'map("-p " + .) | join(" ")')
+          if echo "$UNIT_CRATES" | jq -e 'any(. == "libdd-crashtracker")' > /dev/null; then
+            CRASHTRACKER_FEATURE="--features libdd-crashtracker/generate-unit-test-files"
+          else
+            CRASHTRACKER_FEATURE=""
+          fi
+          if echo "$UNIT_CRATES" | jq -e 'any(. == "test_spawn_from_lib")' > /dev/null; then
+            RUN_TEST_SPAWN="true"
+          else
+            RUN_TEST_SPAWN="false"
+          fi
+        fi
+        echo "packages-count=$COUNT" >> $GITHUB_OUTPUT
+        echo "packages=$PACKAGES" >> $GITHUB_OUTPUT
+        echo "crashtracker-feature=$CRASHTRACKER_FEATURE" >> $GITHUB_OUTPUT
+        echo "run-test-spawn=$RUN_TEST_SPAWN" >> $GITHUB_OUTPUT
+
   test:
-    name: "cargo test --workspace #${{ matrix.platform }} ${{ matrix.rust_version }}"
+    name: "cargo test #${{ matrix.platform }} ${{ matrix.rust_version }}"
+    needs: setup
+    if: needs.setup.outputs.packages-count != '0'
     runs-on: ${{ matrix.platform }}
     permissions:
       checks: write
@@ -22,6 +75,8 @@ jobs:
     env:
       CARGO_TERM_COLOR: always
       CARGO_INCREMENTAL: 0
+      PACKAGES: ${{ needs.setup.outputs.packages }}
+      CRASHTRACKER_FEATURE: ${{ needs.setup.outputs.crashtracker-feature }}
     strategy:
       matrix:
         platform: [windows-latest, ubuntu-latest, macos-15]
@@ -62,22 +117,47 @@ jobs:
       - name: "Remove nextest CI report"
         shell: bash
         run: rm -rf target/nextest/ci/junit.xml
-      - name: "[${{ steps.rust-version.outputs.version}}] cargo build --workspace --exclude builder --verbose"
+      - name: "[${{ steps.rust-version.outputs.version}}] cargo build"
         shell: bash
-        run: cargo build --workspace --exclude builder --verbose
-      - name: "[${{ steps.rust-version.outputs.version}}] cargo nextest run --workspace --features libdd-crashtracker/generate-unit-test-files --exclude builder --profile ci --verbose -E '!test(tracing_integration_tests::)'"
+        run: |
+          if [[ -z "$PACKAGES" ]]; then
+            cargo build --workspace --exclude builder --verbose
+          else
+            # shellcheck disable=SC2086 - word splitting on $PACKAGES is intentional
+            cargo build $PACKAGES --verbose
+          fi
+      - name: "[${{ steps.rust-version.outputs.version}}] cargo test (doc) and cargo nextest run"
         shell: bash
         # Run doc tests with cargo test and run tests with nextest and generate junit.xml
-        run: cargo test --workspace --features libdd-crashtracker/generate-unit-test-files --exclude builder --doc --verbose && cargo nextest run --workspace --features libdd-crashtracker/generate-unit-test-files --exclude builder --profile ci --verbose -E '!test(tracing_integration_tests::)'
+        run: |
+          if [[ -z "$PACKAGES" ]]; then
+            # shellcheck disable=SC2086
+            cargo test --workspace $CRASHTRACKER_FEATURE --exclude builder --doc --verbose
+            # shellcheck disable=SC2086
+            cargo nextest run --workspace $CRASHTRACKER_FEATURE --exclude builder --profile ci --verbose -E '!test(tracing_integration_tests::)'
+          else
+            # shellcheck disable=SC2086
+            cargo test $PACKAGES $CRASHTRACKER_FEATURE --doc --verbose
+            # shellcheck disable=SC2086
+            cargo nextest run $PACKAGES $CRASHTRACKER_FEATURE --profile ci --verbose -E '!test(tracing_integration_tests::)'
+          fi
         env:
           RUST_BACKTRACE: full
-      - name: "[${{ steps.rust-version.outputs.version}}] Tracing integration tests: cargo nextest run --workspace --features libdd-crashtracker/generate-unit-test-files --exclude builder --profile ci --test-threads=1 --verbose -E 'test(tracing_integration_tests::)'"
+      - name: "[${{ steps.rust-version.outputs.version}}] Tracing integration tests"
         if: runner.os == 'Linux'
         shell: bash
-        run: cargo nextest run --workspace --features libdd-crashtracker/generate-unit-test-files --exclude builder --profile ci --test-threads=1 --verbose -E 'test(tracing_integration_tests::)'
+        run: |
+          if [[ -z "$PACKAGES" ]]; then
+            # shellcheck disable=SC2086
+            cargo nextest run --workspace $CRASHTRACKER_FEATURE --exclude builder --profile ci --test-threads=1 --verbose -E 'test(tracing_integration_tests::)'
+          else
+            # shellcheck disable=SC2086
+            cargo nextest run $PACKAGES $CRASHTRACKER_FEATURE --profile ci --test-threads=1 --verbose -E 'test(tracing_integration_tests::)'
+          fi
         env:
           RUST_BACKTRACE: full
-      - name: "[${{ steps.rust-version.outputs.version}}] RUSTFLAGS=\"-C prefer-dynamic\" cargo nextest run --package test_spawn_from_lib --features prefer-dynamic -E '!test(tracing_integration_tests::)'"
+      - name: "[${{ steps.rust-version.outputs.version}}] RUSTFLAGS=\"-C prefer-dynamic\" cargo nextest run --package test_spawn_from_lib"
+        if: needs.setup.outputs.run-test-spawn == 'true'
         shell: bash
         run: cargo nextest run --package test_spawn_from_lib --features prefer-dynamic -E '!test(tracing_integration_tests::)'
         env:
@@ -115,22 +195,22 @@ jobs:
             CHECKSUM_CMD="shasum -a 256"
             EXPECTED_CHECKSUM="071a6140b17438b3f9dd6c65da48b48ea03fc310034fa624ce874fdb6c325da4"
           fi
-                    
+
           echo "Downloading datadog-ci from $URL"
           curl -L --fail --retry 3 -o "$OUTPUT" "$URL"
           chmod +x "$OUTPUT"
-          
+
           # Verify checksum
           ACTUAL_CHECKSUM=$($CHECKSUM_CMD "$OUTPUT" | cut -d' ' -f1)
           echo "Expected checksum: $EXPECTED_CHECKSUM"
           echo "Actual checksum: $ACTUAL_CHECKSUM"
-          
+
           if [ "$ACTUAL_CHECKSUM" != "$EXPECTED_CHECKSUM" ]; then
             echo "Checksum verification failed!"
             exit 1
           fi
           echo "Checksum verification passed"
-          
+
           # Upload test results
           ./"$OUTPUT" junit upload \
             --service libdatadog \
@@ -143,7 +223,12 @@ jobs:
 
   cross-centos7:
     name: build and test using cross - on centos7
+    needs: setup
+    if: needs.setup.outputs.packages-count != '0'
     runs-on: ubuntu-latest
+    env:
+      PACKAGES: ${{ needs.setup.outputs.packages }}
+      CRASHTRACKER_FEATURE: ${{ needs.setup.outputs.crashtracker-feature }}
     concurrency:
       group: ci-${{ github.ref }}-cross-centos7
       cancel-in-progress: true
@@ -166,7 +251,21 @@ jobs:
           cache-targets: true # cache build artifacts
           cache-bin: true # cache the ~/.cargo/bin directory
       - run: cargo install cross || true
-      - run: cross build --workspace --target x86_64-unknown-linux-gnu --exclude builder
-      - run: cross test --workspace --features libdd-crashtracker/generate-unit-test-files --target x86_64-unknown-linux-gnu --exclude builder  -- --skip "::single_threaded_tests::" --skip "tracing_integration_tests::"
-      - run: cross test --workspace --features libdd-crashtracker/generate-unit-test-files --target x86_64-unknown-linux-gnu --exclude builder --exclude bin_tests -- --skip "::tests::" --skip "::api_tests::" --test-threads 1 --skip "tracing_integration_tests::"
-
+      - name: cross build and test
+        run: |
+          if [[ -z "$PACKAGES" ]]; then
+            cross build --workspace --target x86_64-unknown-linux-gnu --exclude builder
+            # shellcheck disable=SC2086
+            cross test --workspace $CRASHTRACKER_FEATURE --target x86_64-unknown-linux-gnu --exclude builder -- --skip "::single_threaded_tests::" --skip "tracing_integration_tests::"
+            # shellcheck disable=SC2086
+            cross test --workspace $CRASHTRACKER_FEATURE --target x86_64-unknown-linux-gnu --exclude builder --exclude bin_tests -- --skip "::tests::" --skip "::api_tests::" --test-threads 1 --skip "tracing_integration_tests::"
+          else
+            # shellcheck disable=SC2086
+            cross build $PACKAGES --target x86_64-unknown-linux-gnu
+            # shellcheck disable=SC2086
+            cross test $PACKAGES $CRASHTRACKER_FEATURE --target x86_64-unknown-linux-gnu -- --skip "::single_threaded_tests::" --skip "tracing_integration_tests::"
+            # Remove bin_tests from packages for the second test run, as it is excluded in workspace mode too
+            PACKAGES_NO_BIN_TESTS=$(echo "$PACKAGES" | sed 's/-p bin_tests//g' | xargs)
+            # shellcheck disable=SC2086
+            cross test $PACKAGES_NO_BIN_TESTS $CRASHTRACKER_FEATURE --target x86_64-unknown-linux-gnu -- --skip "::tests::" --skip "::api_tests::" --test-threads 1 --skip "tracing_integration_tests::"
+          fi
