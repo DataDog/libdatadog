@@ -319,6 +319,7 @@ mod tests {
             .set_language("test_language")
             .set_language_version("test_language_version")
             .set_tracer_version("test_tracer_version")
+            .set_runtime_id("foo")
             .set_url(url)
             .set_heartbeat(100)
             .set_debug_enabled(true)
@@ -327,6 +328,18 @@ mod tests {
             .spawn_worker(worker)
             .expect("Failed to spawn worker");
         (client, handle)
+    }
+
+    macro_rules! wait_for_telemetry_call {
+        ($telemetry_srv:expr) => {{
+            let start = std::time::Instant::now();
+            while $telemetry_srv.calls_async().await == 0 {
+                if start.elapsed() > Duration::from_secs(10) {
+                    panic!("telemetry server did not receive calls within timeout");
+                }
+                sleep(Duration::from_millis(10)).await;
+            }
+        }};
     }
 
     #[test]
@@ -383,10 +396,11 @@ mod tests {
             let (client, handle) = get_test_client(&server.url("/"), &shared_runtime);
             client.start().await;
             let _ = client.send(&data);
+            // Wait for send to be processed
+            sleep(Duration::from_millis(1)).await;
+
             handle.stop().await.expect("Failed to stop worker");
-            while telemetry_srv.calls_async().await == 0 {
-                sleep(Duration::from_millis(10)).await;
-            }
+            wait_for_telemetry_call!(telemetry_srv);
             telemetry_srv.assert_calls_async(1).await;
         });
     }
@@ -415,10 +429,11 @@ mod tests {
             let (client, handle) = get_test_client(&server.url("/"), &shared_runtime);
             client.start().await;
             let _ = client.send(&data);
+            // Wait for send to be processed
+            sleep(Duration::from_millis(1)).await;
+
             handle.stop().await.expect("Failed to stop worker");
-            while telemetry_srv.calls_async().await == 0 {
-                sleep(Duration::from_millis(10)).await;
-            }
+            wait_for_telemetry_call!(telemetry_srv);
             telemetry_srv.assert_calls_async(1).await;
         });
     }
@@ -447,10 +462,11 @@ mod tests {
             let (client, handle) = get_test_client(&server.url("/"), &shared_runtime);
             client.start().await;
             let _ = client.send(&data);
+            // Wait for send to be processed
+            sleep(Duration::from_millis(1)).await;
+
             handle.stop().await.expect("Failed to stop worker");
-            while telemetry_srv.calls_async().await == 0 {
-                sleep(Duration::from_millis(10)).await;
-            }
+            wait_for_telemetry_call!(telemetry_srv);
             telemetry_srv.assert_calls_async(1).await;
         });
     }
@@ -479,10 +495,11 @@ mod tests {
             let (client, handle) = get_test_client(&server.url("/"), &shared_runtime);
             client.start().await;
             let _ = client.send(&data);
+            // Wait for send to be processed
+            sleep(Duration::from_millis(1)).await;
+
             handle.stop().await.expect("Failed to stop worker");
-            while telemetry_srv.calls_async().await == 0 {
-                sleep(Duration::from_millis(10)).await;
-            }
+            wait_for_telemetry_call!(telemetry_srv);
             telemetry_srv.assert_calls_async(1).await;
         });
     }
@@ -511,10 +528,11 @@ mod tests {
             let (client, handle) = get_test_client(&server.url("/"), &shared_runtime);
             client.start().await;
             let _ = client.send(&data);
+            // Wait for send to be processed
+            sleep(Duration::from_millis(1)).await;
+
             handle.stop().await.expect("Failed to stop worker");
-            while telemetry_srv.calls_async().await == 0 {
-                sleep(Duration::from_millis(10)).await;
-            }
+            wait_for_telemetry_call!(telemetry_srv);
             telemetry_srv.assert_calls_async(1).await;
         });
     }
@@ -543,10 +561,11 @@ mod tests {
             let (client, handle) = get_test_client(&server.url("/"), &shared_runtime);
             client.start().await;
             let _ = client.send(&data);
+            // Wait for send to be processed
+            sleep(Duration::from_millis(1)).await;
+
             handle.stop().await.expect("Failed to stop worker");
-            while telemetry_srv.calls_async().await == 0 {
-                sleep(Duration::from_millis(10)).await;
-            }
+            wait_for_telemetry_call!(telemetry_srv);
             telemetry_srv.assert_calls_async(1).await;
         });
     }
@@ -575,10 +594,11 @@ mod tests {
             let (client, handle) = get_test_client(&server.url("/"), &shared_runtime);
             client.start().await;
             let _ = client.send(&data);
+            // Wait for send to be processed
+            sleep(Duration::from_millis(1)).await;
+
             handle.stop().await.expect("Failed to stop worker");
-            while telemetry_srv.calls_async().await == 0 {
-                sleep(Duration::from_millis(10)).await;
-            }
+            wait_for_telemetry_call!(telemetry_srv);
             telemetry_srv.assert_calls_async(1).await;
         });
     }
@@ -608,12 +628,10 @@ mod tests {
             client.start().await;
             let _ = client.send(&data);
             // Wait for send to be processed
-            sleep(Duration::from_millis(10)).await;
+            sleep(Duration::from_millis(1)).await;
 
             handle.stop().await.expect("Failed to stop worker");
-            while telemetry_srv.calls_async().await == 0 {
-                sleep(Duration::from_millis(10)).await;
-            }
+            wait_for_telemetry_call!(telemetry_srv);
             telemetry_srv.assert_calls_async(1).await;
         });
     }
@@ -642,10 +660,11 @@ mod tests {
             let (client, handle) = get_test_client(&server.url("/"), &shared_runtime);
             client.start().await;
             let _ = client.send(&data);
+            // Wait for send to be processed
+            sleep(Duration::from_millis(1)).await;
+
             handle.stop().await.expect("Failed to stop worker");
-            while telemetry_srv.calls_async().await == 0 {
-                sleep(Duration::from_millis(10)).await;
-            }
+            wait_for_telemetry_call!(telemetry_srv);
             telemetry_srv.assert_calls_async(1).await;
         });
     }
@@ -674,10 +693,11 @@ mod tests {
             let (client, handle) = get_test_client(&server.url("/"), &shared_runtime);
             client.start().await;
             let _ = client.send(&data);
+            // Wait for send to be processed
+            sleep(Duration::from_millis(1)).await;
+
             handle.stop().await.expect("Failed to stop worker");
-            while telemetry_srv.calls_async().await == 0 {
-                sleep(Duration::from_millis(10)).await;
-            }
+            wait_for_telemetry_call!(telemetry_srv);
             telemetry_srv.assert_calls_async(1).await;
         });
     }
@@ -844,10 +864,11 @@ mod tests {
                     ..Default::default()
                 })
                 .unwrap();
+            // Wait for send to be processed
+            sleep(Duration::from_millis(10)).await;
+
             handle.stop().await.expect("Failed to stop worker");
-            while telemetry_srv.calls_async().await == 0 {
-                sleep(Duration::from_millis(10)).await;
-            }
+            wait_for_telemetry_call!(telemetry_srv);
             // One payload generate-metrics
             telemetry_srv.assert_calls_async(1).await;
         });
@@ -877,15 +898,12 @@ mod tests {
                     ..Default::default()
                 })
                 .unwrap();
+            // Wait for send to be processed
+            sleep(Duration::from_millis(1)).await;
+
             handle.stop().await.expect("Failed to stop worker");
             // Wait for the server to receive at least one call, but don't hang forever.
-            let start = std::time::Instant::now();
-            while telemetry_srv.calls_async().await == 0 {
-                if start.elapsed() > Duration::from_secs(180) {
-                    panic!("telemetry server did not receive calls within timeout");
-                }
-                sleep(Duration::from_millis(10)).await;
-            }
+            wait_for_telemetry_call!(telemetry_srv);
             // One payload generate-metrics
             telemetry_srv.assert_calls_async(1).await;
         });
