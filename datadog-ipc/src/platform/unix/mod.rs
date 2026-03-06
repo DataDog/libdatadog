@@ -20,6 +20,8 @@ pub(crate) use mem_handle_macos::*;
 mod mem_handle;
 #[cfg(not(target_os = "macos"))]
 pub use mem_handle::set_shm_open_mode;
+#[cfg(target_os = "macos")]
+pub use mem_handle_macos::set_shm_open_mode;
 #[cfg(not(target_os = "macos"))]
 pub(crate) use mem_handle::*;
 
