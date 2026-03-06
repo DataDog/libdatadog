@@ -152,7 +152,8 @@ impl SidecarServer {
             server.requests(),
             self.clone().serve(),
             500,
-        );
+        )
+        .with_backpressure(SidecarInterfaceRequest::requires_backpressure);
         let (tx, rx) = tokio::sync::mpsc::channel::<_>(100);
         let tx = executor.swap_sender(tx);
 
