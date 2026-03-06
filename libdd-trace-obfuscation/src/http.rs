@@ -4,6 +4,55 @@
 use percent_encoding::percent_decode_str;
 use url::Url;
 
+/// Go's url.Parse normalizes percent-encoded unreserved chars (A-Z, a-z, 0-9, -, ., _, ~)
+/// in the path by decoding them. E.g. %30 → 0, %41 → A. The url crate does not do this.
+/// Apply this normalization to the path portion (before '?' or '#') of a URL string.
+fn normalize_pct_encoded_unreserved(s: &str) -> String {
+    let path_end = s.find(['?', '#']).unwrap_or(s.len());
+    let path_part = &s[..path_end];
+    let rest = &s[path_end..];
+
+    let bytes = path_part.as_bytes();
+    let mut out = String::with_capacity(path_part.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%'
+            && i + 2 < bytes.len()
+            && bytes[i + 1].is_ascii_hexdigit()
+            && bytes[i + 2].is_ascii_hexdigit()
+        {
+            let hi = match bytes[i + 1] {
+                b'0'..=b'9' => bytes[i + 1] - b'0',
+                b'a'..=b'f' => bytes[i + 1] - b'a' + 10,
+                _ => bytes[i + 1] - b'A' + 10,
+            };
+            let lo = match bytes[i + 2] {
+                b'0'..=b'9' => bytes[i + 2] - b'0',
+                b'a'..=b'f' => bytes[i + 2] - b'a' + 10,
+                _ => bytes[i + 2] - b'A' + 10,
+            };
+            let c = (hi << 4) | lo;
+            // Unreserved chars per RFC 3986: ALPHA / DIGIT / "-" / "." / "_" / "~"
+            if c.is_ascii_alphanumeric() || matches!(c, b'-' | b'.' | b'_' | b'~') {
+                out.push(c as char);
+            } else {
+                out.push('%');
+                out.push(bytes[i + 1] as char);
+                out.push(bytes[i + 2] as char);
+            }
+            i += 3;
+        } else {
+            out.push(bytes[i] as char);
+            i += 1;
+        }
+    }
+    if rest.is_empty() {
+        out
+    } else {
+        format!("{out}{rest}")
+    }
+}
+
 /// Encode path characters that Go's url.EscapedPath() encodes but the url crate doesn't.
 /// Only applied to the path portion (before the first '?').
 ///
@@ -144,15 +193,19 @@ pub fn go_like_reference(input: &str, remove_query_string: bool) -> String {
     // to preserve the leading '/' in the result. Otherwise base.join("/ჸ") resolves to
     // "https://example.invalid/%E1%83%B8" and stripping the base WITH trailing slash
     // drops the leading '/'.
+    // Helper: normalize percent-encoded unreserved chars in path, then append rest unchanged.
+    // Go's url.Parse normalizes %XX of unreserved chars (e.g. %30 → 0) in the path.
+    let normalize = |s: &str| normalize_pct_encoded_unreserved(s);
+
     if input.starts_with('/') {
         if let Some(rest) = full.strip_prefix("https://example.invalid") {
             if remove_query_string && resolved.query().is_some() {
                 let path_end = rest.find('?').unwrap_or(rest.len());
                 // Preserve fragment (Go keeps it when removing the query string)
                 let frag = rest.find('#').map(|i| &rest[i..]).unwrap_or("");
-                return format!("{}?{}", &rest[..path_end], frag);
+                return normalize(&format!("{}?{}", &rest[..path_end], frag));
             }
-            return rest.to_string();
+            return normalize(rest);
         }
     }
 
@@ -163,15 +216,15 @@ pub fn go_like_reference(input: &str, remove_query_string: bool) -> String {
             let path_end = rest.find('?').unwrap_or(rest.len());
             // Preserve fragment (Go keeps it when removing the query string)
             let frag = rest.find('#').map(|i| &rest[i..]).unwrap_or("");
-            return format!("{}?{}", &rest[..path_end], frag);
+            return normalize(&format!("{}?{}", &rest[..path_end], frag));
         }
-        rest.to_string()
+        normalize(rest)
     } else if let Some(rest) = full.strip_prefix("https://example.invalid") {
         // covers cases like "/path" where the base origin remains
-        rest.to_string()
+        normalize(rest)
     } else {
         // shouldn't happen, but safe fallback
-        full.to_string()
+        normalize(full)
     }
 }
 
