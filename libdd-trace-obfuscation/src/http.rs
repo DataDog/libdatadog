@@ -527,11 +527,17 @@ pub fn obfuscate_url_string(
             };
             // Go keeps the query string raw (url.RawQuery in Go's URL struct).
             // The url crate encodes query chars; restore the original query from the input.
+            // Only restore the query portion (up to '#'), not the fragment — the fragment
+            // comes from go_like_reference which already handles encoding and empty stripping.
             let result = if !remove_query_string {
                 if let Some(orig_q_start) = url.find('?') {
-                    let orig_query = &url[orig_q_start..]; // includes '?' and up to '#'
+                    let orig_frag_start = url.find('#');
+                    // orig_query: from '?' to '#' (exclusive), e.g. "?rawquery"
+                    let orig_query = &url[orig_q_start..orig_frag_start.unwrap_or(url.len())];
                     if let Some(result_q_start) = result.find('?') {
-                        format!("{}{}", &result[..result_q_start], orig_query)
+                        // Keep the fragment from `result` (already encoded/stripped by go_like_reference)
+                        let result_frag = result.find('#').map_or("", |i| &result[i..]);
+                        format!("{}{}{}", &result[..result_q_start], orig_query, result_frag)
                     } else {
                         result
                     }
