@@ -372,8 +372,10 @@ pub fn obfuscate_url_string(
                         return String::from("?");
                     }
                 } else {
-                    // Return original (Go keeps query chars raw, including non-ASCII)
-                    return url.to_string();
+                    // Return original (Go keeps query chars raw, including non-ASCII).
+                    // Go's url.URL.String() omits an empty trailing fragment (bare '#').
+                    let s = url.to_string();
+                    return if s.ends_with('#') { s[..s.len() - 1].to_string() } else { s };
                 }
             }
             // The url crate treats '\' as a path separator, silently consuming it.
