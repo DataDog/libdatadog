@@ -2,6 +2,10 @@ name: Coverage
 
 on:
   pull_request:
+    types: ['opened', 'edited', 'reopened', 'synchronize']
+    branches-ignore:
+      - "v[0-9]+.[0-9]+.[0-9]+.[0-9]+"
+      - release
 
 jobs:
   setup:
