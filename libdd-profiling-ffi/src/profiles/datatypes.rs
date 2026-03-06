@@ -101,6 +101,24 @@ impl From<anyhow::Result<internal::EncodedProfile>> for SerializeResult {
 /// Re-exported from libdd_profiling::api for FFI use.
 pub use api::SampleType;
 
+/// Returns the pprof type string for a `SampleType` (e.g. `"cpu-time"`).
+/// The returned slice points to a static string; it is always valid and
+/// never needs to be freed.
+#[no_mangle]
+pub extern "C" fn ddog_prof_SampleType_type_str(sample_type: SampleType) -> CharSlice<'static> {
+    let vt: api::ValueType = sample_type.into();
+    CharSlice::from(vt.r#type)
+}
+
+/// Returns the pprof unit string for a `SampleType` (e.g. `"nanoseconds"`).
+/// The returned slice points to a static string; it is always valid and
+/// never needs to be freed.
+#[no_mangle]
+pub extern "C" fn ddog_prof_SampleType_unit_str(sample_type: SampleType) -> CharSlice<'static> {
+    let vt: api::ValueType = sample_type.into();
+    CharSlice::from(vt.unit)
+}
+
 /// Re-export Period from the API for consistency.
 /// The FFI Period is identical to the API Period.
 pub use api::Period;
@@ -1092,6 +1110,38 @@ mod tests {
     fn distinct_locations_ffi() {
         unsafe {
             ddog_prof_Profile_drop(&mut provide_distinct_locations_ffi());
+        }
+    }
+
+    #[test]
+    fn sample_type_str_functions() {
+        // Verify that the type/unit strings match expected pprof column names.
+        // These strings are what the backend uses to identify profile types, so
+        // any change here would be a breaking change for consumers.
+        let cases: &[(SampleType, &str, &str)] = &[
+            (SampleType::CpuTime, "cpu-time", "nanoseconds"),
+            (SampleType::CpuSamples, "cpu-samples", "count"),
+            (SampleType::AllocSpace, "alloc-space", "bytes"),
+            (SampleType::AllocSamples, "alloc-samples", "count"),
+            (SampleType::InuseSpace, "inuse-space", "bytes"),
+            (SampleType::InuseObjects, "inuse-objects", "count"),
+            (SampleType::Tracepoint, "tracepoint", "events"),
+            (SampleType::WallTime, "wall-time", "nanoseconds"),
+            (SampleType::WallSamples, "wall-samples", "count"),
+        ];
+        for &(sample_type, expected_type, expected_unit) in cases {
+            let type_str = ddog_prof_SampleType_type_str(sample_type);
+            let unit_str = ddog_prof_SampleType_unit_str(sample_type);
+            assert_eq!(
+                type_str.try_to_utf8().unwrap(),
+                expected_type,
+                "type string mismatch for {sample_type:?}"
+            );
+            assert_eq!(
+                unit_str.try_to_utf8().unwrap(),
+                expected_unit,
+                "unit string mismatch for {sample_type:?}"
+            );
         }
     }
 }
