@@ -31,8 +31,8 @@ jobs:
           echo "Changed crates: $CHANGED_CRATES"
           echo "Affected crates: $AFFECTED_CRATES"
 
-          # create a list of crates by joining the changed and affected crates
-          CRATES=$(echo "$CHANGED_CRATES" | jq --argjson aff "$AFFECTED_CRATES" '. + $aff | [.[].name] | unique | map("-p " + .) | join(" ")')
+          # create a list of crates from the affected crates
+          CRATES=$(echo "$AFFECTED_CRATES" | jq -r 'map("-p " + .) | join(" ")')
           [[ -z "$CRATES" || "$CRATES" == '""' ]] && CRATES=""
         else
           echo "This is a push event, running Miri on all crates"
