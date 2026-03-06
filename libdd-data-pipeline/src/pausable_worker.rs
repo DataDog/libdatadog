@@ -5,11 +5,7 @@
 
 use libdd_common::worker::Worker;
 use std::fmt::Display;
-use tokio::{
-    runtime::Runtime,
-    select,
-    task::{JoinError, JoinHandle},
-};
+use tokio::{runtime::Runtime, select, task::JoinHandle};
 use tokio_util::sync::CancellationToken;
 
 /// A pausable worker which can be paused and restarted on forks.
@@ -68,39 +64,81 @@ impl<T: Worker + Send + Sync + 'static> PausableWorker<T> {
     /// Start the worker on the given runtime.
     ///
     /// The worker's main loop will be run on the runtime.
-    ///
-    /// # Errors
-    /// Fails if the worker is in an invalid state.
     pub fn start(&mut self, rt: &Runtime) -> Result<(), PausableWorkerError> {
-        if let Self::Running { .. } = self {
-            Ok(())
-        } else if let Self::Paused { mut worker } = std::mem::replace(self, Self::InvalidState) {
-            // Worker is temporarily in an invalid state, but since this block is failsafe it will
-            // be replaced by a valid state.
-            let stop_token = CancellationToken::new();
-            let cloned_token = stop_token.clone();
-            let handle = rt.spawn(async move {
-                select! {
-                    _ = worker.run() => {worker}
-                    _ = cloned_token.cancelled() => {worker}
-                }
-            });
+        match self {
+            PausableWorker::Running { .. } => Ok(()),
+            PausableWorker::Paused { .. } => {
+                let PausableWorker::Paused { mut worker } =
+                    std::mem::replace(self, PausableWorker::InvalidState)
+                else {
+                    // Unreachable
+                    return Ok(());
+                };
 
-            *self = PausableWorker::Running { handle, stop_token };
-            Ok(())
-        } else {
-            Err(PausableWorkerError::InvalidState)
+                // Worker is temporarily in an invalid state, but since this block is failsafe it
+                // will be replaced by a valid state.
+                let stop_token = CancellationToken::new();
+                let cloned_token = stop_token.clone();
+                let handle = rt.spawn(async move {
+                    // First iteration using initial_trigger
+                    select! {
+                        _ = worker.initial_trigger() => {
+                            worker.run().await;
+                        }
+                        _ = cloned_token.cancelled() => {
+                            return worker;
+                        }
+                    }
+
+                    // Regular iterations
+                    loop {
+                        select! {
+                            _ = worker.trigger() => {
+                                worker.run().await;
+                            }
+                            _ = cloned_token.cancelled() => {
+                                break;
+                            }
+                        }
+                    }
+                    worker
+                });
+
+                *self = PausableWorker::Running { handle, stop_token };
+                Ok(())
+            }
+            PausableWorker::InvalidState => Err(PausableWorkerError::InvalidState),
         }
     }
 
-    /// Pause the worker saving it's state to be restarted.
+    /// Request the worker to pause without waiting for task termination.
+    ///
+    /// This is useful when pausing multiple workers in parallel.
+    pub fn request_pause(&self) -> Result<(), PausableWorkerError> {
+        match self {
+            PausableWorker::Running { stop_token, .. } => {
+                stop_token.cancel();
+                Ok(())
+            }
+            PausableWorker::Paused { .. } => Ok(()),
+            PausableWorker::InvalidState => Err(PausableWorkerError::InvalidState),
+        }
+    }
+
+    /// Wait for a requested pause to complete and store the worker state.
     ///
     /// # Errors
     /// Fails if the worker handle has been aborted preventing the worker from being retrieved.
-    pub async fn pause(&mut self) -> Result<(), PausableWorkerError> {
+    pub async fn join(&mut self) -> Result<(), PausableWorkerError> {
         match self {
-            PausableWorker::Running { handle, stop_token } => {
-                stop_token.cancel();
+            PausableWorker::Running { .. } => {
+                let PausableWorker::Running { handle, .. } =
+                    std::mem::replace(self, PausableWorker::InvalidState)
+                else {
+                    // Unreachable
+                    return Ok(());
+                };
+
                 if let Ok(worker) = handle.await {
                     *self = PausableWorker::Paused { worker };
                     Ok(())
@@ -115,17 +153,30 @@ impl<T: Worker + Send + Sync + 'static> PausableWorker<T> {
         }
     }
 
-    /// Wait for the run method of the worker to exit.
-    pub async fn join(self) -> Result<(), JoinError> {
-        if let PausableWorker::Running { handle, .. } = self {
-            handle.await?;
+    /// Pause the worker saving it's state to be restarted.
+    pub async fn pause(&mut self) -> Result<(), PausableWorkerError> {
+        self.request_pause()?;
+        self.join().await
+    }
+
+    /// Reset the worker state (e.g. in a fork child).
+    pub fn reset(&mut self) {
+        if let PausableWorker::Paused { worker } = self {
+            worker.reset();
         }
-        Ok(())
+    }
+
+    /// Shutdown the worker.
+    pub async fn shutdown(&mut self) {
+        if let PausableWorker::Paused { worker } = self {
+            worker.shutdown().await;
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use async_trait::async_trait;
     use tokio::{runtime::Builder, time::sleep};
 
     use super::*;
@@ -135,18 +186,21 @@ mod tests {
     };
 
     /// Test worker incrementing the state and sending it with the sender.
+    #[derive(Debug)]
     struct TestWorker {
         state: u32,
         sender: Sender<u32>,
     }
 
+    #[async_trait]
     impl Worker for TestWorker {
         async fn run(&mut self) {
-            loop {
-                let _ = self.sender.send(self.state);
-                self.state += 1;
-                sleep(Duration::from_millis(100)).await;
-            }
+            let _ = self.sender.send(self.state);
+            self.state += 1;
+        }
+
+        async fn trigger(&mut self) {
+            sleep(Duration::from_millis(100)).await;
         }
     }
 
