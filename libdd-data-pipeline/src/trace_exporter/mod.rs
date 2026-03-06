@@ -17,6 +17,7 @@ use self::trace_serializer::TraceSerializer;
 use crate::agent_info::{AgentInfoFetcher, ResponseObserver};
 use crate::pausable_worker::PausableWorker;
 use crate::stats_exporter::StatsExporter;
+#[cfg(feature = "telemetry")]
 use crate::telemetry::{SendPayloadTelemetry, TelemetryClient};
 use crate::trace_exporter::agent_response::{
     AgentResponsePayloadVersion, DATADOG_RATES_PAYLOAD_VERSION_HEADER,
@@ -30,11 +31,11 @@ use crate::{
 use arc_swap::{ArcSwap, ArcSwapOption};
 use http::uri::PathAndQuery;
 use http::Uri;
-use libdd_capabilities::{HttpClientTrait, HttpError, HttpResponse};
-use libdd_capabilities_impl::DefaultHttpClient;
+use libdd_capabilities::{HttpClientTrait, HttpError, HttpResponse, MaybeSend};
 use libdd_common::tag::Tag;
 use libdd_common::{Endpoint, MutexExt};
 use libdd_dogstatsd_client::Client;
+#[cfg(feature = "telemetry")]
 use libdd_telemetry::worker::TelemetryWorker;
 use libdd_trace_utils::msgpack_decoder;
 use libdd_trace_utils::send_with_retry::{
@@ -116,6 +117,20 @@ fn add_path(url: &Uri, path: &str) -> Uri {
     Uri::from_parts(parts).unwrap()
 }
 
+pub(crate) fn build_runtime() -> io::Result<Runtime> {
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(1)
+            .enable_all()
+            .build()
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        tokio::runtime::Builder::new_current_thread().build()
+    }
+}
+
 #[derive(Clone, Default, Debug)]
 pub struct TracerMetadata {
     pub hostname: String,
@@ -156,9 +171,10 @@ impl<'a> From<&'a TracerMetadata> for HashMap<&'static str, String> {
 }
 
 #[derive(Debug)]
-pub(crate) struct TraceExporterWorkers<H: HttpClientTrait + Send + Sync + 'static> {
+pub(crate) struct TraceExporterWorkers<H: HttpClientTrait + MaybeSend + Sync + 'static> {
     pub info: PausableWorker<AgentInfoFetcher<H>>,
     pub stats: Option<PausableWorker<StatsExporter<H>>>,
+    #[cfg(feature = "telemetry")]
     pub telemetry: Option<PausableWorker<TelemetryWorker>>,
 }
 
@@ -187,7 +203,7 @@ enum DeserInputFormat {
 }
 
 #[derive(Debug)]
-pub struct TraceExporter<H: HttpClientTrait + Send + Sync + 'static> {
+pub struct TraceExporter<H: HttpClientTrait + MaybeSend + Sync + 'static> {
     endpoint: Endpoint,
     metadata: TracerMetadata,
     input_format: TraceExporterInputFormat,
@@ -200,6 +216,7 @@ pub struct TraceExporter<H: HttpClientTrait + Send + Sync + 'static> {
     client_side_stats: ArcSwap<StatsComputationStatus>,
     previous_info_state: ArcSwapOption<String>,
     info_response_observer: ResponseObserver,
+    #[cfg(feature = "telemetry")]
     telemetry: Option<TelemetryClient>,
     health_metrics_enabled: bool,
     workers: Arc<Mutex<TraceExporterWorkers<H>>>,
@@ -207,7 +224,7 @@ pub struct TraceExporter<H: HttpClientTrait + Send + Sync + 'static> {
     _phantom: PhantomData<H>,
 }
 
-impl<H: HttpClientTrait + Send + Sync + 'static> TraceExporter<H> {
+impl<H: HttpClientTrait + MaybeSend + Sync + 'static> TraceExporter<H> {
     #[allow(missing_docs)]
     pub fn builder() -> TraceExporterBuilder<H> {
         TraceExporterBuilder::default()
@@ -222,13 +239,7 @@ impl<H: HttpClientTrait + Send + Sync + 'static> TraceExporter<H> {
                 Ok(runtime.clone())
             }
             None => {
-                // Create a new current thread runtime with all features enabled
-                let runtime = Arc::new(
-                    tokio::runtime::Builder::new_multi_thread()
-                        .worker_threads(1)
-                        .enable_all()
-                        .build()?,
-                );
+                let runtime = Arc::new(build_runtime()?);
                 *runtime_guard = Some(runtime.clone());
                 self.start_all_workers(&runtime)?;
                 Ok(runtime)
@@ -278,7 +289,7 @@ impl<H: HttpClientTrait + Send + Sync + 'static> TraceExporter<H> {
         Ok(())
     }
 
-    /// Start the telemetry worker if present
+    #[cfg(feature = "telemetry")]
     fn start_telemetry_worker(
         &self,
         workers: &mut TraceExporterWorkers<H>,
@@ -295,6 +306,15 @@ impl<H: HttpClientTrait + Send + Sync + 'static> TraceExporter<H> {
         Ok(())
     }
 
+    #[cfg(not(feature = "telemetry"))]
+    fn start_telemetry_worker(
+        &self,
+        _workers: &mut TraceExporterWorkers<H>,
+        _runtime: &Arc<Runtime>,
+    ) -> Result<(), TraceExporterError> {
+        Ok(())
+    }
+
     pub fn stop_worker(&self) {
         let runtime = self.runtime.lock_or_panic().take();
         if let Some(ref rt) = runtime {
@@ -305,6 +325,7 @@ impl<H: HttpClientTrait + Send + Sync + 'static> TraceExporter<H> {
                 if let Some(stats_worker) = &mut workers.stats {
                     let _ = stats_worker.pause().await;
                 };
+                #[cfg(feature = "telemetry")]
                 if let Some(telemetry_worker) = &mut workers.telemetry {
                     let _ = telemetry_worker.pause().await;
                 };
@@ -348,25 +369,66 @@ impl<H: HttpClientTrait + Send + Sync + 'static> TraceExporter<H> {
         Ok(res)
     }
 
+    /// Async version of [`Self::send`] for platforms that cannot use `block_on` (e.g. wasm).
+    pub async fn send_async(&self, data: &[u8]) -> Result<AgentResponse, TraceExporterError> {
+        self.check_agent_info();
+
+        let format = match self.input_format {
+            TraceExporterInputFormat::V04 => DeserInputFormat::V04,
+            TraceExporterInputFormat::V05 => DeserInputFormat::V05,
+        };
+
+        let (traces, _) = match format {
+            DeserInputFormat::V04 => msgpack_decoder::v04::from_slice(data),
+            DeserInputFormat::V05 => msgpack_decoder::v05::from_slice(data),
+        }
+        .map_err(|e| {
+            error!("Error deserializing trace from request body: {e}");
+            self.emit_metric(
+                HealthMetric::Count(health_metrics::DESERIALIZE_TRACES_ERRORS, 1),
+                None,
+            );
+            TraceExporterError::Deserialization(e)
+        })?;
+        debug!(
+            trace_count = traces.len(),
+            "Trace deserialization completed successfully"
+        );
+        self.emit_metric(
+            HealthMetric::Count(health_metrics::DESERIALIZE_TRACES, traces.len() as i64),
+            None,
+        );
+
+        let res = self.send_trace_chunks_inner(traces).await?;
+        if matches!(&res, AgentResponse::Changed { body } if body.is_empty()) {
+            return Err(TraceExporterError::Agent(
+                error::AgentErrorKind::EmptyResponse,
+            ));
+        }
+        Ok(res)
+    }
+
     /// Safely shutdown the TraceExporter and all related tasks
     pub fn shutdown(mut self, timeout: Option<Duration>) -> Result<(), TraceExporterError> {
-        let runtime = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()?;
+        let runtime = build_runtime()?;
 
+        #[cfg(not(target_arch = "wasm32"))]
         if let Some(timeout) = timeout {
-            match runtime
+            return match runtime
                 .block_on(async { tokio::time::timeout(timeout, self.shutdown_async()).await })
             {
                 Ok(()) => Ok(()),
                 Err(_e) => Err(TraceExporterError::Shutdown(
                     error::ShutdownError::TimedOut(timeout),
                 )),
-            }
-        } else {
-            runtime.block_on(self.shutdown_async());
-            Ok(())
+            };
         }
+
+        #[cfg(target_arch = "wasm32")]
+        let _ = timeout;
+
+        runtime.block_on(self.shutdown_async());
+        Ok(())
     }
 
     /// Future used inside `Self::shutdown`.
@@ -387,6 +449,7 @@ impl<H: HttpClientTrait + Send + Sync + 'static> TraceExporter<H> {
                 let _ = stats_worker.join().await;
             }
         }
+        #[cfg(feature = "telemetry")]
         if let Some(telemetry) = self.telemetry.take() {
             telemetry.shutdown().await;
             let telemetry_worker = self.workers.lock_or_panic().telemetry.take();
@@ -670,7 +733,7 @@ impl<H: HttpClientTrait + Send + Sync + 'static> TraceExporter<H> {
         // Send traces to the agent
         let result = send_with_retry::<H>(endpoint, mp_payload, &headers, &strategy).await;
 
-        // Send telemetry for the payload sending
+        #[cfg(feature = "telemetry")]
         if let Some(telemetry) = &self.telemetry {
             if let Err(e) = telemetry.send(&SendPayloadTelemetry::from_retry_result(
                 &result,
@@ -921,6 +984,7 @@ impl<H: HttpClientTrait + Send + Sync + 'static> TraceExporter<H> {
     }
 }
 
+#[cfg(feature = "telemetry")]
 #[derive(Debug, Default, Clone)]
 pub struct TelemetryConfig {
     pub heartbeat: u64,

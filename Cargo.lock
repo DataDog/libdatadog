@@ -3365,8 +3365,6 @@ dependencies = [
  "hyper 1.6.0",
  "hyper-util",
  "libc",
- "libdd-capabilities",
- "libdd-capabilities-impl",
  "libdd-common",
  "libdd-ddsketch",
  "serde",

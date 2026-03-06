@@ -4,6 +4,7 @@
 //! Types used when calling [`super::send_with_retry`] to configure the retry logic.
 
 use std::time::Duration;
+#[cfg(not(target_arch = "wasm32"))]
 use tokio::time::sleep;
 
 /// Enum representing the type of backoff to use for the delay between retries.
@@ -92,17 +93,24 @@ impl RetryStrategy {
     ///
     /// * `attempt`: The number of the current attempt (1-indexed).
     pub(crate) async fn delay(&self, attempt: u32) {
-        let delay = match self.backoff_type {
-            RetryBackoffType::Exponential => self.delay_ms * 2u32.pow(attempt - 1),
-            RetryBackoffType::Constant => self.delay_ms,
-            RetryBackoffType::Linear => self.delay_ms + (self.delay_ms * (attempt - 1)),
-        };
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let delay = match self.backoff_type {
+                RetryBackoffType::Exponential => self.delay_ms * 2u32.pow(attempt - 1),
+                RetryBackoffType::Constant => self.delay_ms,
+                RetryBackoffType::Linear => self.delay_ms + (self.delay_ms * (attempt - 1)),
+            };
 
-        if let Some(jitter) = self.jitter {
-            let jitter = rand::random::<u64>() % jitter.as_millis() as u64;
-            sleep(delay + Duration::from_millis(jitter)).await;
-        } else {
-            sleep(delay).await;
+            if let Some(jitter) = self.jitter {
+                let jitter = rand::random::<u64>() % jitter.as_millis() as u64;
+                sleep(delay + Duration::from_millis(jitter)).await;
+            } else {
+                sleep(delay).await;
+            }
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
+            let _ = attempt;
         }
     }
 
