@@ -102,3 +102,7 @@ pub use receiver::benchmark;
 
 #[cfg(unix)]
 pub use common::{get_tests_folder_path, SharedLibrary};
+
+pub fn epa() {
+    println!("epa");
+}
