@@ -116,15 +116,15 @@ pub struct KeyValue {
 #[serde(rename_all = "camelCase")]
 pub struct AnyValue {
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub string_value: Option<String>,
+    string_value: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub bool_value: Option<bool>,
+    bool_value: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub int_value: Option<i64>,
+    int_value: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub double_value: Option<f64>,
+    double_value: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub bytes_value: Option<String>,
+    bytes_value: Option<String>,
 }
 
 impl AnyValue {

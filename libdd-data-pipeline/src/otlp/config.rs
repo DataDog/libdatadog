@@ -50,6 +50,7 @@ pub struct OtlpTraceConfig {
     /// Request timeout.
     pub timeout: Duration,
     /// Protocol (for future use; currently only HttpJson is supported).
+    #[allow(dead_code)]
     pub(crate) protocol: OtlpProtocol,
 }
 

@@ -357,12 +357,22 @@ mod tests {
             std::f64::consts::PI,
         );
         let req = map_traces_to_otlp(vec![vec![span]], &metadata);
-        let attrs = &req.resource_spans[0].scope_spans[0].spans[0].attributes;
-        let count_kv = attrs.iter().find(|a| a.key == "count").unwrap();
-        assert!(count_kv.value.int_value.is_some());
-        assert_eq!(count_kv.value.int_value, Some(42));
-        let rate_kv = attrs.iter().find(|a| a.key == "rate").unwrap();
-        assert!(rate_kv.value.double_value.is_some());
-        assert!((rate_kv.value.double_value.unwrap() - std::f64::consts::PI).abs() < 1e-9);
+        let json = serde_json::to_value(&req).unwrap();
+        let attrs = &json["resourceSpans"][0]["scopeSpans"][0]["spans"][0]["attributes"];
+        let count_kv = attrs
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|a| a["key"] == "count")
+            .unwrap();
+        assert_eq!(count_kv["value"]["intValue"], 42);
+        let rate_kv = attrs
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|a| a["key"] == "rate")
+            .unwrap();
+        let rate = rate_kv["value"]["doubleValue"].as_f64().unwrap();
+        assert!((rate - std::f64::consts::PI).abs() < 1e-9);
     }
 }
