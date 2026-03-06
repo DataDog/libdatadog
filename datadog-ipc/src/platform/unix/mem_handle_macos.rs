@@ -76,7 +76,7 @@ pub fn set_shm_open_mode(mode: u32) {
 }
 
 fn shm_open_mode() -> Mode {
-    Mode::from_bits_truncate(SHM_OPEN_MODE.load(Ordering::Relaxed))
+    Mode::from_bits_truncate(SHM_OPEN_MODE.load(Ordering::Relaxed) as u16)
 }
 
 impl ShmHandle {
