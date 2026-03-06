@@ -148,7 +148,9 @@ pub fn go_like_reference(input: &str, remove_query_string: bool) -> String {
         if let Some(rest) = full.strip_prefix("https://example.invalid") {
             if remove_query_string && resolved.query().is_some() {
                 let path_end = rest.find('?').unwrap_or(rest.len());
-                return format!("{}?", &rest[..path_end]);
+                // Preserve fragment (Go keeps it when removing the query string)
+                let frag = rest.find('#').map(|i| &rest[i..]).unwrap_or("");
+                return format!("{}?{}", &rest[..path_end], frag);
             }
             return rest.to_string();
         }
@@ -157,9 +159,11 @@ pub fn go_like_reference(input: &str, remove_query_string: bool) -> String {
     if let Some(rest) = full.strip_prefix(base_prefix) {
         // relative path (e.g. "hello%20world" or "dir/hello%20world")
         if remove_query_string && resolved.query().is_some() {
-            // Strip the query string, preserving the path with a trailing "?"
+            // Strip the query string, preserving the path and fragment with a trailing "?"
             let path_end = rest.find('?').unwrap_or(rest.len());
-            return format!("{}?", &rest[..path_end]);
+            // Preserve fragment (Go keeps it when removing the query string)
+            let frag = rest.find('#').map(|i| &rest[i..]).unwrap_or("");
+            return format!("{}?{}", &rest[..path_end], frag);
         }
         rest.to_string()
     } else if let Some(rest) = full.strip_prefix("https://example.invalid") {
@@ -361,10 +365,16 @@ pub fn obfuscate_url_string(
                     return String::from("?");
                 }
                 if remove_query_string {
-                    return String::from("?");
+                    // If the URL is "?#frag" (empty query + fragment), preserve the fragment.
+                    // Fall through to go_like_reference which encodes and preserves it.
+                    // For "?query" (no fragment), remove the query and return "?".
+                    if !after_q.starts_with('#') {
+                        return String::from("?");
+                    }
+                } else {
+                    // Return original (Go keeps query chars raw, including non-ASCII)
+                    return url.to_string();
                 }
-                // Return original (Go keeps query chars raw, including non-ASCII)
-                return url.to_string();
             }
             // The url crate treats '\' as a path separator, silently consuming it.
             // Go encodes '\' as '%5C'. Pre-encode backslashes before go_like_reference
