@@ -29,14 +29,12 @@ pub struct TraceExporterBuilder {
     env: String,
     app_version: String,
     service: String,
-    tracer_name: String,
     tracer_version: String,
     language: String,
     language_version: String,
     language_interpreter: String,
     language_interpreter_vendor: String,
     git_commit_sha: String,
-    git_repository_url: String,
     input_format: TraceExporterInputFormat,
     output_format: TraceExporterOutputFormat,
     dogstatsd_url: Option<String>,
@@ -111,19 +109,6 @@ impl TraceExporterBuilder {
     /// Only used when client-side stats is enabled
     pub fn set_git_commit_sha(&mut self, git_commit_sha: &str) -> &mut Self {
         git_commit_sha.clone_into(&mut self.git_commit_sha);
-        self
-    }
-
-    /// Set the git repository URL (e.g. for OTLP resource attribute `git.repository_url`)
-    pub fn set_git_repository_url(&mut self, url: &str) -> &mut Self {
-        url.clone_into(&mut self.git_repository_url);
-        self
-    }
-
-    /// Set the tracer/SDK name used for OTLP resource attribute `telemetry.sdk.name`
-    /// (e.g. "dd-trace-py", "dd-trace-js"). When unset, OTLP export uses "libdatadog".
-    pub fn set_tracer_name(&mut self, tracer_name: &str) -> &mut Self {
-        tracer_name.clone_into(&mut self.tracer_name);
         self
     }
 
@@ -319,14 +304,12 @@ impl TraceExporterBuilder {
                 ..Default::default()
             },
             metadata: TracerMetadata {
-                tracer_name: self.tracer_name.clone(),
                 tracer_version: self.tracer_version,
                 language_version: self.language_version,
                 language_interpreter: self.language_interpreter,
                 language_interpreter_vendor: self.language_interpreter_vendor,
                 language: self.language,
                 git_commit_sha: self.git_commit_sha,
-                git_repository_url: self.git_repository_url.clone(),
                 client_computed_stats: self.client_computed_stats,
                 client_computed_top_level: self.client_computed_top_level,
                 hostname: self.hostname,

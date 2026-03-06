@@ -17,8 +17,8 @@ const MAX_ATTRIBUTES_PER_SPAN: usize = 128;
 
 /// Maps Datadog trace chunks and metadata to an OTLP ExportTraceServiceRequest.
 ///
-/// Resource: SDK-level attributes (service.name, deployment.environment, telemetry.sdk.*).
-/// InstrumentationScope: "datadog" (DD SDKs don't have scope; all spans use this).
+/// Resource: SDK-level attributes (service.name, deployment.environment, telemetry.sdk.*,
+/// runtime-id). InstrumentationScope: "datadog" (DD SDKs don't have scope; all spans use this).
 /// All analogous DD span fields are mapped; meta→attributes (string), metrics→attributes
 /// (int/double), links and events mapped to OTLP links and events. Status from span.error and
 /// meta["error.msg"].
@@ -78,14 +78,9 @@ fn build_resource(metadata: &TracerMetadata) -> Resource {
             value: AnyValue::string(metadata.app_version.clone()),
         });
     }
-    let sdk_name = if metadata.tracer_name.is_empty() {
-        "libdatadog".to_string()
-    } else {
-        metadata.tracer_name.clone()
-    };
     attributes.push(KeyValue {
         key: "telemetry.sdk.name".to_string(),
-        value: AnyValue::string(sdk_name),
+        value: AnyValue::string("libdatadog".to_string()),
     });
     if !metadata.language.is_empty() {
         attributes.push(KeyValue {
@@ -99,28 +94,13 @@ fn build_resource(metadata: &TracerMetadata) -> Resource {
             value: AnyValue::string(metadata.tracer_version.clone()),
         });
     }
-    if !metadata.git_commit_sha.is_empty() {
-        attributes.push(KeyValue {
-            key: "git.commit.sha".to_string(),
-            value: AnyValue::string(metadata.git_commit_sha.clone()),
-        });
-    }
-    if !metadata.git_repository_url.is_empty() {
-        attributes.push(KeyValue {
-            key: "git.repository_url".to_string(),
-            value: AnyValue::string(metadata.git_repository_url.clone()),
-        });
-    }
     if !metadata.runtime_id.is_empty() {
         attributes.push(KeyValue {
             key: "runtime-id".to_string(),
             value: AnyValue::string(metadata.runtime_id.clone()),
         });
     }
-    Resource {
-        attributes,
-        dropped_attributes_count: None,
-    }
+    Resource { attributes }
 }
 
 fn map_span<T: TraceData>(span: &Span<T>) -> OtlpSpan

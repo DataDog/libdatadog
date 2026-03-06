@@ -1,9 +1,21 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-//! OTLP JSON encoding types for ExportTraceServiceRequest.
-//! Field names use lowerCamelCase per the OTLP HTTP/JSON spec (Protocol Buffers JSON Mapping).
-//! Trace/span IDs are hex-encoded strings; enum values are integers.
+//! Minimal serde types for OTLP HTTP/JSON export (ExportTraceServiceRequest).
+//!
+//! These types mirror the OTLP protobuf schema for the HTTP/JSON wire format. Field names use
+//! lowerCamelCase per the Protocol Buffers JSON Mapping spec; trace/span IDs are hex-encoded
+//! strings; enum values (SpanKind, StatusCode) are integers.
+//!
+//! The canonical definitions live in the opentelemetry-proto repository:
+//!   <https://github.com/open-telemetry/opentelemetry-proto/blob/v1.5.0/opentelemetry/proto/trace/v1/trace.proto>
+//!   <https://github.com/open-telemetry/opentelemetry-proto/blob/v1.5.0/opentelemetry/proto/common/v1/common.proto>
+//!
+//! The Rust implementation in opentelemetry-rust uses `prost`-generated types with an optional
+//! `with-serde` feature (`opentelemetry-proto` crate). We use hand-rolled serde structs here to
+//! avoid the `prost` + `tonic` dependency tree in this early implementation. If/when protobuf
+//! support is added, these types should be replaced with `opentelemetry-proto`:
+//!   <https://github.com/open-telemetry/opentelemetry-rust/tree/opentelemetry-proto-0.28.0/opentelemetry-proto>
 
 use serde::Serialize;
 
@@ -22,11 +34,8 @@ pub struct ResourceSpans {
 }
 
 #[derive(Debug, Default, Serialize)]
-#[serde(rename_all = "camelCase")]
 pub struct Resource {
     pub attributes: Vec<KeyValue>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub dropped_attributes_count: Option<u32>,
 }
 
 #[derive(Debug, Serialize)]

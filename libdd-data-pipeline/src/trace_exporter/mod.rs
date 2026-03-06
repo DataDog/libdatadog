@@ -123,16 +123,12 @@ pub struct TracerMetadata {
     pub app_version: String,
     pub runtime_id: String,
     pub service: String,
-    /// Tracer/SDK name for OTLP resource attribute `telemetry.sdk.name` (e.g. "dd-trace-py").
-    /// When empty, OTLP export uses "libdatadog".
-    pub tracer_name: String,
     pub tracer_version: String,
     pub language: String,
     pub language_version: String,
     pub language_interpreter: String,
     pub language_interpreter_vendor: String,
     pub git_commit_sha: String,
-    pub git_repository_url: String,
     pub client_computed_stats: bool,
     pub client_computed_top_level: bool,
 }

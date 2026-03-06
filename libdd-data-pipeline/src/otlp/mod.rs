@@ -26,6 +26,6 @@ pub mod exporter;
 pub mod json_types;
 pub mod mapper;
 
-pub use config::{otlp_trace_config_from_env, OtlpProtocol, OtlpTraceConfig};
+pub use config::{otlp_trace_config_from_env, OtlpTraceConfig};
 pub use exporter::send_otlp_traces_http;
 pub use mapper::map_traces_to_otlp;
