@@ -1,0 +1,229 @@
+name: Test FFI
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+env:
+  CARGO_TERM_COLOR: always
+  RUST_VERSION: 1.84.1
+
+jobs:
+  setup:
+    runs-on: ubuntu-latest
+    outputs:
+      packages: ${{ steps.set-packages.outputs.packages }}
+      packages-count: ${{ steps.set-packages.outputs.packages-count }}
+      crates-json: ${{ steps.set-packages.outputs.crates-json }}
+    steps:
+    - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # 4.2.2
+      with:
+        fetch-depth: 0
+    - name: Get changed crates
+      if: ${{ github.event_name == 'pull_request' }}
+      id: changed-crates
+      uses: ./.github/actions/changed-crates
+    - name: Set FFI packages
+      id: set-packages
+      env:
+        CHANGED_CRATES_COUNT: ${{ steps.changed-crates.outputs.crates_count }}
+        AFFECTED_CRATES: ${{ steps.changed-crates.outputs.affected_crates }}
+      run: |
+        if [[ "${{ github.event_name }}" == "push" ]]; then
+          COUNT="1"
+          PACKAGES=""
+          CRATES_JSON=""
+        elif [[ "$CHANGED_CRATES_COUNT" == "0" ]]; then
+          COUNT="0"
+          PACKAGES=""
+          CRATES_JSON=""
+        else
+          FFI_CRATES=$(echo "$AFFECTED_CRATES" | jq '[.[] | select(endswith("-ffi"))]')
+          COUNT=$(echo "$FFI_CRATES" | jq 'length')
+          PACKAGES=$(echo "$FFI_CRATES" | jq -r 'map("-p " + .) | join(" ")')
+          CRATES_JSON="$FFI_CRATES"
+        fi
+        echo "packages-count=$COUNT" >> $GITHUB_OUTPUT
+        echo "packages=$PACKAGES" >> $GITHUB_OUTPUT
+        {
+          echo "crates-json<<EOF"
+          echo "$CRATES_JSON"
+          echo "EOF"
+        } >> $GITHUB_OUTPUT
+
+  ffi:
+    name: "FFI #${{ matrix.platform }} ${{ matrix.rust_version }}"
+    needs: setup
+    if: needs.setup.outputs.packages-count != '0'
+    runs-on: ${{ matrix.platform }}
+    env:
+      CARGO_TERM_COLOR: always
+      CARGO_INCREMENTAL: 0
+    strategy:
+      matrix:
+        platform: [windows-latest, ubuntu-latest, macos-15]
+        rust_version: [""]
+        include:
+          - platform: "ubuntu-latest"
+            rust_version: "${RUST_VERSION}"
+          - platform: "ubuntu-latest"
+            flags: "-C relocation-model=pic"
+          - platform: "macos-15"
+            flags: "-C relocation-model=pic"
+          - platform: "windows-latest"
+            flags: "-C target-feature=+crt-static"
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # 4.2.2
+      - name: Setup output dir
+        shell: bash
+        run: |
+          WORKSPACE_PATH=${{ github.workspace }}
+          if [[ "${{ matrix.platform }}" == "windows-latest" ]]; then
+             WORKSPACE_PATH=$(cygpath -ua '${{ github.workspace }}')
+          fi
+          echo "LIBDD_OUTPUT_FOLDER=$WORKSPACE_PATH/artifacts" >> $GITHUB_ENV
+      - name: Free Disk Space (Ubuntu only)
+        if: runner.os == 'Linux' && matrix.platform == 'ubuntu-latest'
+        uses: jlumbroso/free-disk-space@54081f138730dfa15788a46383842cd2f914a1be # 1.3.1
+        with:
+          tool-cache: false
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: false
+          docker-images: false
+          swap-storage: true
+      - name: Install Rust ${{ matrix.rust_version }}
+        if: matrix.rust_version != ''
+        run: rustup install ${{ matrix.rust_version }} && rustup default ${{ matrix.rust_version }}
+
+      - id: rust-version
+        # On Windows run happens in a PowerShell, so start bash explicitly
+        run: bash -c 'echo "version=$(rustc --version)" >> $GITHUB_OUTPUT'
+
+      - name: Cache [rust]
+        uses: Swatinem/rust-cache@f13886b937689c021905a6b90929199931d60db1 # 2.8.1
+        env:
+          RUSTFLAGS: "${{ matrix.flags }}"
+        with:
+          cache-targets: true # cache build artifacts
+          cache-bin: true # cache the ~/.cargo/bin directory
+      - name: "Generate profiling FFI"
+        shell: bash
+        env:
+          RUSTFLAGS: "${{ matrix.flags }}"
+        run: |
+          cargo run --bin release --release -- --out $LIBDD_OUTPUT_FOLDER
+      - name: 'Publish libdatadog'
+        uses: actions/upload-artifact@4cec3d8aa04e39d1a68397de0c4cd6fb9dce8ec1 # 4.6.1
+        # Only upload the artifacts built with the default Rust version
+        if: (success() || failure()) && matrix.rust_version == ''
+        with:
+          if-no-files-found: error
+          name: libdatadog.${{ matrix.platform }}
+          path: ${{ github.workspace }}/artifacts
+          retention-days: 1
+      - name: "(Windows) Test building Profiling C bindings - dynamic link vc runtime"
+        if: matrix.platform == 'windows-latest'
+        shell: bash
+        run: |
+          set -e
+          rm -rf examples/ffi/build_dll
+          mkdir examples/ffi/build_dll
+          cd examples/ffi/build_dll
+          cmake -S .. -DDatadog_ROOT=$LIBDD_OUTPUT_FOLDER -DVCRUNTIME_LINK_TYPE=DLL
+          cmake --build .
+      - name: "(Windows) Test building Profiling C bindings - static link vc runtime"
+        if: matrix.platform == 'windows-latest'
+        shell: bash
+        run: |
+          set -e
+          rm -rf examples/ffi/build_static
+          mkdir examples/ffi/build_static
+          cd examples/ffi/build_static
+          cmake -S .. -DDatadog_ROOT=$LIBDD_OUTPUT_FOLDER -DVCRUNTIME_LINK_TYPE=STATIC
+          cmake --build .
+      - name: "Test building Profiling C bindings"
+        shell: bash
+        if: matrix.platform != 'windows-latest'
+        run: |
+          set -e
+          mkdir examples/ffi/build
+          cd examples/ffi/build
+          # Add BUILD_SYMBOLIZER variable only for Linux platforms
+          if [[ "${{ matrix.platform }}" == "ubuntu-latest" ]]; then
+            cmake -S .. -DDatadog_ROOT=$LIBDD_OUTPUT_FOLDER -DBUILD_SYMBOLIZER=true
+          else
+            cmake -S .. -DDatadog_ROOT=$LIBDD_OUTPUT_FOLDER
+          fi
+          cmake --build .
+      - name: "Run FFI examples"
+        shell: bash
+        if: matrix.platform != 'windows-latest'
+        run: |
+          cargo ffi-test --skip-build
+      - name: "(Windows) Run FFI examples"
+        shell: bash
+        if: matrix.platform == 'windows-latest'
+        run: |
+          cargo ffi-test
+      - name: "Test building CXX bindings - Crashinfo (Unix)"
+        shell: bash
+        if: matrix.platform != 'windows-latest'
+        run: |
+          set -e
+          cd examples/cxx
+          ./build-and-run-crashinfo.sh
+      - name: "Test building CXX bindings - Profiling (Unix)"
+        shell: bash
+        if: matrix.platform != 'windows-latest'
+        run: |
+          set -e
+          cd examples/cxx
+          ./build-profiling.sh
+      - name: "Setup MSVC (Windows)"
+        if: matrix.platform == 'windows-latest'
+        uses: ilammy/msvc-dev-cmd@v1
+      - name: "Test building CXX bindings - Crashinfo (Windows)"
+        shell: pwsh
+        if: matrix.platform == 'windows-latest'
+        run: |
+          cd examples/cxx
+          .\build-and-run-crashinfo.ps1
+      - name: "Test building CXX bindings - Profiling (Windows)"
+        shell: pwsh
+        if: matrix.platform == 'windows-latest'
+        run: |
+          cd examples/cxx
+          .\build-profiling.ps1
+
+  ffi_bake:
+    strategy:
+      matrix:
+        target: [alpine-build] # debian-build-aarch64 is oom killed at the moment
+    name: "FFI ${{ matrix.target }} via docker bake"
+    needs: setup
+    if: needs.setup.outputs.packages-count != '0'
+    concurrency:
+      group: ci-${{ github.ref }}-${{ matrix.target }}
+      cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+    runs-on:
+      labels: ubuntu-latest-16-cores
+      group: APM Larger Runners
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # 4.2.2
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@b5ca514318bd6ebac0fb2aedd5d36ec1b5c232a2 # 3.10.0
+        with:
+          buildkitd-config: .github/buildkitd-16-cores.toml
+      - name: Build and Generate FFI
+        uses: docker/bake-action@4ba453fbc2db7735392b93edf935aaf9b1e8f747 # 6.5.0
+        with:
+          targets: ${{ matrix.target }}
+          # Caching is useful, when it works. We are routinely hanging, maybe this:
+          # https://github.com/docker/buildx/issues/537
+          #set: |
+          #  *.cache-from=type=gha,scope=${{ matrix.target }}
+          #  *.cache-to=type=gha,mode=max,scope=${{ matrix.target }}
