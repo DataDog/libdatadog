@@ -11,6 +11,7 @@ use bytes::Bytes;
 use http::HeaderMap;
 use libdd_capabilities::{HttpClientTrait, HttpError};
 use libdd_common::Endpoint;
+#[cfg(not(target_arch = "wasm32"))]
 use std::time::Duration;
 use tracing::{debug, error};
 
@@ -97,6 +98,7 @@ pub async fn send_with_retry<H: HttpClientTrait>(
     retry_strategy: &RetryStrategy,
 ) -> SendWithRetryResult {
     let mut request_attempt = 0;
+    #[cfg(not(target_arch = "wasm32"))]
     let timeout = Duration::from_millis(target.timeout_ms);
     let client = H::new_client();
 
@@ -131,7 +133,10 @@ pub async fn send_with_retry<H: HttpClientTrait>(
             }
         };
 
+        #[cfg(not(target_arch = "wasm32"))]
         let result = tokio::time::timeout(timeout, client.request(req)).await;
+        #[cfg(target_arch = "wasm32")]
+        let result: Result<Result<_, _>, std::convert::Infallible> = Ok(client.request(req).await);
 
         match result {
             Ok(Ok(response)) => {

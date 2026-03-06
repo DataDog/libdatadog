@@ -9,13 +9,14 @@ use super::{
 };
 use anyhow::{anyhow, Result};
 use bytes::Bytes;
-use libdd_capabilities::HttpClientTrait;
+use libdd_capabilities::{HttpClientTrait, MaybeSend};
 use libdd_common::{entity_id, worker::Worker, Endpoint};
 use sha2::{Digest, Sha256};
 use std::marker::PhantomData;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::mpsc;
+#[cfg(not(target_arch = "wasm32"))]
 use tokio::time::sleep;
 use tracing::{debug, warn};
 /// Whether the agent reported the same value or not.
@@ -219,43 +220,52 @@ impl<H: HttpClientTrait> AgentInfoFetcher<H> {
     }
 }
 
-impl<H: HttpClientTrait + Send + Sync + 'static> Worker for AgentInfoFetcher<H> {
+impl<H: HttpClientTrait + MaybeSend + Sync + 'static> Worker for AgentInfoFetcher<H> {
     /// Start fetching the info endpoint with the given interval.
     ///
     /// # Warning
     /// This method does not return and should be called within a dedicated task.
     async fn run(&mut self) {
-        // Skip the first fetch if some info is present to avoid calling the /info endpoint
-        // at fork for heavy-forking environment.
-        if AGENT_INFO_CACHE.load().is_none() {
-            self.fetch_and_update().await;
+        #[cfg(target_arch = "wasm32")]
+        {
+            // Worker is never started on wasm; this is unreachable.
+            return;
         }
 
-        // Main loop waiting for a trigger event or the end of the refresh interval to trigger the
-        // fetch.
-        loop {
-            match &mut self.trigger_rx {
-                Some(trigger_rx) => {
-                    tokio::select! {
-                        // Wait for manual trigger (new state from headers)
-                        trigger = trigger_rx.recv() => {
-                            if trigger.is_some() {
-                                self.fetch_and_update().await;
-                            } else {
-                                // The channel has been closed
-                                self.trigger_rx = None;
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            // Skip the first fetch if some info is present to avoid calling the /info endpoint
+            // at fork for heavy-forking environment.
+            if AGENT_INFO_CACHE.load().is_none() {
+                self.fetch_and_update().await;
+            }
+
+            // Main loop waiting for a trigger event or the end of the refresh interval to trigger
+            // the fetch.
+            loop {
+                match &mut self.trigger_rx {
+                    Some(trigger_rx) => {
+                        tokio::select! {
+                            // Wait for manual trigger (new state from headers)
+                            trigger = trigger_rx.recv() => {
+                                if trigger.is_some() {
+                                    self.fetch_and_update().await;
+                                } else {
+                                    // The channel has been closed
+                                    self.trigger_rx = None;
+                                }
                             }
-                        }
-                        // Regular periodic fetch timer
-                        _ = sleep(self.refresh_interval) => {
-                            self.fetch_and_update().await;
-                        }
-                    };
-                }
-                None => {
-                    // If the trigger channel is closed we only use timed fetch.
-                    sleep(self.refresh_interval).await;
-                    self.fetch_and_update().await;
+                            // Regular periodic fetch timer
+                            _ = sleep(self.refresh_interval) => {
+                                self.fetch_and_update().await;
+                            }
+                        };
+                    }
+                    None => {
+                        // If the trigger channel is closed we only use timed fetch.
+                        sleep(self.refresh_interval).await;
+                        self.fetch_and_update().await;
+                    }
                 }
             }
         }

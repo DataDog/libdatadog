@@ -25,15 +25,13 @@ sha2 = "0.10"
 either = "1.13.0"
 tokio = { version = "1.23", features = [
     "rt",
-    "test-util",
-    "time",
 ], default-features = false }
 uuid = { version = "1.10.0", features = ["v4"] }
 tokio-util = "0.7.11"
 libdd-capabilities = { path = "../libdd-capabilities" }
 libdd-capabilities-impl = "0.1.0"
 libdd-common = { version = "3.0.2", path = "../libdd-common", default-features = false }
-libdd-telemetry = { version = "4.0.0", path = "../libdd-telemetry", default-features = false }
+libdd-telemetry = { version = "4.0.0", path = "../libdd-telemetry", default-features = false, optional = true }
 libdd-trace-protobuf = { version = "3.0.1", path = "../libdd-trace-protobuf" }
 libdd-trace-stats = { version = "2.0.0", path = "../libdd-trace-stats" }
 libdd-trace-utils = { version = "3.0.1", path = "../libdd-trace-utils", default-features = false }
@@ -43,6 +41,9 @@ libdd-tinybytes = { version = "1.1.0", path = "../libdd-tinybytes", features = [
     "bytes_string",
     "serialization",
 ] }
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+tokio = { version = "1.23", features = ["time", "test-util"], default-features = false }
 
 [lib]
 bench = false
@@ -66,10 +67,11 @@ tokio = { version = "1.23", features = [
 ], default-features = false }
 
 [features]
-default = ["https"]
+default = ["https", "telemetry"]
+telemetry = ["libdd-telemetry"]
 https = [
     "libdd-common/https",
-    "libdd-telemetry/https",
+    "libdd-telemetry?/https",
     "libdd-trace-utils/https",
     "libdd-dogstatsd-client/https",
 ]
