@@ -23,7 +23,7 @@ libdd-common = { version = "2.0.0", path = "../libdd-common" }
 
 [dev-dependencies]
 duplicate = "0.4.1"
-criterion = { version = "0.5", features = [ "csv_output"] }
+criterion = { version = "0.8", features = [ "csv_output"] }
 libdd-trace-utils = { path = "../libdd-trace-utils", features = ["test-utils"] }
 
 [lib]

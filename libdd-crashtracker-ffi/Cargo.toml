@@ -48,10 +48,10 @@ serde_json = "1.0.132"
 serde = { version = "1.0.214", features = ["derive"] }
 
 [target.'cfg(windows)'.dependencies]
-windows = { version = "0.59.0", features = ["Win32_System_Diagnostics_Debug", "Win32_System_ErrorReporting"] }
+windows = { version = "0.62.0", features = ["Win32_System_Diagnostics_Debug", "Win32_System_ErrorReporting"] }
 
 [dev-dependencies]
 tempfile = "3.3"
 
 [target.'cfg(windows)'.dev-dependencies]
-windows = { version = "0.59.0", features = ["Win32_System_LibraryLoader"] }
+windows = { version = "0.62.0", features = ["Win32_System_LibraryLoader"] }

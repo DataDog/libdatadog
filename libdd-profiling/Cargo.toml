@@ -26,7 +26,7 @@ name = "main"
 harness = false
 
 [dependencies]
-allocator-api2 = { version = "0.2", default-features = false, features = ["alloc"] }
+allocator-api2 = { version = "0.4", default-features = false, features = ["alloc"] }
 anyhow = "1.0"
 bitmaps = "3.2.0"
 byteorder = { version = "1.5", features = ["std"] }
@@ -47,7 +47,7 @@ libdd-profiling-protobuf = { version = "1.0.0", path = "../libdd-profiling-proto
 mime = "0.3.16"
 parking_lot = { version = "0.12", default-features = false }
 prost = "0.14.1"
-rand = "0.8"
+rand = "0.10"
 # Use rustls to align with the rest of the workspace (libdd-common, libdd-telemetry, etc.)
 # This uses the same TLS stack (rustls + aws-lc-rs/ring) as other crates
 # Use hickory-dns instead of the default system DNS resolver to avoid fork safety issues.
@@ -73,11 +73,11 @@ rustls = { version = "0.23", default-features = false, features = ["ring"] }
 
 [dev-dependencies]
 bolero = "0.13"
-criterion = "0.5.1"
+criterion = "0.8.0"
 libdd-common = { path = "../libdd-common", features = ["test-utils"] }
 libdd-profiling = { path = ".", features = ["test-utils"] }
 proptest = "1"
-strum = { version = "0.26", features = ["derive"] }
+strum = { version = "0.28", features = ["derive"] }
 tempfile = "3"
 
 [build-dependencies]

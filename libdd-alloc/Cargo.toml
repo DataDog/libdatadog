@@ -12,13 +12,13 @@ rust-version.workspace = true
 license.workspace = true
 
 [dependencies]
-allocator-api2 = { version = "0.2", default-features = false }
+allocator-api2 = { version = "0.4", default-features = false }
 
 [target.'cfg(unix)'.dependencies.libc]
 version = "0.2.153"
 
 [target.'cfg(windows)'.dependencies.windows-sys]
-version = "0.52"
+version = "0.61"
 features = [
     "Win32_Foundation",
     "Win32_System_Memory",
@@ -26,7 +26,7 @@ features = [
 ]
 
 [dev-dependencies]
-allocator-api2 = { version = "0.2", default-features = false, features = ["alloc"] }
+allocator-api2 = { version = "0.4", default-features = false, features = ["alloc"] }
 bolero = "0.13"
 
 [lib]

@@ -29,7 +29,7 @@ tokio = { version = "1.23", features = ["sync", "io-util"] }
 tokio-util = { version = "0.7", features = ["codec"] }
 tracing = { version = "0.1", default-features = false }
 uuid = { version = "1.3", features = ["v4"] }
-hashbrown = "0.15"
+hashbrown = "0.16"
 
 libdd-common = { version = "2.0.0", path = "../libdd-common", default-features = false }
 libdd-ddsketch = { version = "1.0.1", path = "../libdd-ddsketch" }
