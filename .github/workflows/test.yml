@@ -79,6 +79,7 @@ jobs:
       CARGO_INCREMENTAL: 0
       PACKAGES: ${{ needs.setup.outputs.packages }}
       CRASHTRACKER_FEATURE: ${{ needs.setup.outputs.crashtracker-feature }}
+      TRACING_CRATES: "libdd-data-pipeline libdd-trace-utils datadog-tracer-flare"
     strategy:
       matrix:
         platform: [windows-latest, ubuntu-latest, macos-15]
@@ -152,10 +153,23 @@ jobs:
         run: |
           if [[ -z "$PACKAGES" ]]; then
             # shellcheck disable=SC2086
-            cargo nextest run --workspace $CRASHTRACKER_FEATURE --exclude builder --profile ci --test-threads=1 --verbose -E 'test(tracing_integration_tests::)'
+            for crate in $TRACING_CRATES; do
+              PACKAGES="$PACKAGES -p $crate"
+            done
+            cargo nextest run $PACKAGES --profile ci --test-threads=1 --verbose -E 'test(tracing_integration_tests::)'
           else
-            # shellcheck disable=SC2086
-            cargo nextest run $PACKAGES $CRASHTRACKER_FEATURE --profile ci --test-threads=1 --verbose -E 'test(tracing_integration_tests::)'
+            TRACING_PACKAGES=""
+            for crate in $TRACING_CRATES; do
+              if echo "$PACKAGES" | grep -qw -- "-p $crate"; then
+                TRACING_PACKAGES="$TRACING_PACKAGES -p $crate"
+              fi
+            done
+            if [[ -z "$TRACING_PACKAGES" ]]; then
+              echo "No tracing integration test crates found in PACKAGES, skipping."
+            else
+              # shellcheck disable=SC2086
+              cargo nextest run $TRACING_PACKAGES --profile ci --test-threads=1 --verbose -E 'test(tracing_integration_tests::)'
+            fi
           fi
         env:
           RUST_BACKTRACE: full
