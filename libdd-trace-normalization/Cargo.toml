@@ -22,7 +22,7 @@ fuzzing = ["arbitrary"]
 
 [dev-dependencies]
 rand = "0.8.5"
-duplicate = "0.4.1"
+duplicate = "2.0.0"
 criterion = "0.5"
 
 [[bench]]
