@@ -334,6 +334,7 @@ where
             channel: self,
             pending_responses: responses,
             responses_tx,
+            buffered_response: None,
         }
     }
 
@@ -571,6 +572,8 @@ where
     pending_responses: mpsc::Receiver<RequestResponse<C::Resp>>,
     /// Handed out to request handlers to fan in responses.
     responses_tx: mpsc::Sender<RequestResponse<C::Resp>>,
+    /// A response received from pending_responses but not yet sent (waiting for writeable transport).
+    buffered_response: Option<RequestResponse<C::Resp>>,
 }
 
 impl<C> Requests<C>
@@ -653,21 +656,37 @@ where
 
     /// Yields a response ready to be written to the Channel sink.
     ///
-    /// Note that a response will only be yielded if the Channel is *ready* to be written to (i.e.
-    /// start_send would succeed).
+    /// For `Discarded` responses (fire-and-forget), no bytes are written to the transport so
+    /// `ensure_writeable` is skipped. For actual `Response` variants, `ensure_writeable` is
+    /// called after receiving a response (not before), so the `poll_recv` waker is always
+    /// registered regardless of transport backpressure.
     fn poll_next_response(
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
     ) -> Poll<Option<Result<RequestResponse<C::Resp>, C::Error>>> {
-        ready!(self.ensure_writeable(cx)?);
+        // Take buffered response or wait for a new one, registering the waker so we wake
+        // as soon as a response is ready (independent of transport writability).
+        let response = match self.as_mut().project().buffered_response.take() {
+            Some(r) => r,
+            None => match ready!(self.pending_responses_mut().poll_recv(cx)) {
+                Some(r) => r,
+                None => {
+                    // This branch likely won't happen, since the Requests stream is holding a Sender.
+                    return Poll::Ready(None);
+                }
+            },
+        };
 
-        match ready!(self.pending_responses_mut().poll_recv(cx)) {
-            Some(response) => Poll::Ready(Some(Ok(response))),
-            None => {
-                // This branch likely won't happen, since the Requests stream is holding a Sender.
-                Poll::Ready(None)
-            }
+        // Discarded responses don't write any bytes, so no need to check writability.
+        if matches!(response, RequestResponse::Response(_))
+            && self.ensure_writeable(cx)?.is_pending()
+        {
+            // Buffer the response and wait for the transport to become writable.
+            *self.as_mut().project().buffered_response = Some(response);
+            return Poll::Pending;
         }
+
+        Poll::Ready(Some(Ok(response)))
     }
 
     /// Returns Ready if writing a message to the Channel would not fail due to a full buffer. If
@@ -1218,11 +1237,9 @@ mod tests {
             requests.as_mut().pump_write(&mut noop_context(), true),
             Poll::Pending
         );
-        // Assert that the pending response was not polled while the channel was blocked.
-        assert_matches!(
-            requests.as_mut().pending_responses_mut().recv().await,
-            Some(_)
-        );
+        // Assert that the pending response was consumed from pending_responses and buffered
+        // internally, waiting for the transport to become writable.
+        assert!(requests.as_mut().project().buffered_response.is_some());
     }
 
     #[tokio::test]
