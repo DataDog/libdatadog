@@ -9,3 +9,7 @@
 mod error;
 mod response;
 mod trace_exporter;
+
+pub fn dummy() {
+    print!("dummy");
+}
