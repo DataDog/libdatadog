@@ -44,9 +44,11 @@ jobs:
           # clippy: affected crates — a change can introduce warnings in dependants
           CLIPPY_PACKAGES=$(echo "$AFFECTED_CRATES" | jq -r 'map("-p " + .) | join(" ")')
         fi
-        echo "crates-count=$COUNT" >> $GITHUB_OUTPUT
-        echo "fmt-packages=$FMT_PACKAGES" >> $GITHUB_OUTPUT
-        echo "clippy-packages=$CLIPPY_PACKAGES" >> $GITHUB_OUTPUT
+        {
+          echo "crates-count=$COUNT"
+          echo "fmt-packages=$FMT_PACKAGES"
+          echo "clippy-packages=$CLIPPY_PACKAGES"
+        } >> $GITHUB_OUTPUT
 
   actionlint:
     needs: setup
@@ -83,7 +85,7 @@ jobs:
           if [[ -z "$FMT_PACKAGES" ]]; then
             cargo fmt --all -- --check
           else
-            # shellcheck disable=SC2086 - word splitting on $FMT_PACKAGES is intentional
+            # shellcheck disable=SC2086
             cargo fmt $FMT_PACKAGES -- --check
           fi
   clippy:
@@ -117,7 +119,7 @@ jobs:
           if [[ -z "$CLIPPY_PACKAGES" ]]; then
             cargo clippy --workspace --all-targets --all-features -- -D warnings
           else
-            # shellcheck disable=SC2086 - word splitting on $CLIPPY_PACKAGES is intentional
+            # shellcheck disable=SC2086
             cargo clippy $CLIPPY_PACKAGES --all-targets --all-features -- -D warnings
           fi
 
