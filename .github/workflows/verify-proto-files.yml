@@ -52,6 +52,8 @@ jobs:
         with:
           cache-targets: true # cache build artifacts
           cache-bin: true # cache the ~/.cargo/bin directory
+          shared-key: shared-${{ runner.os }}
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: diff pb.rs
         working-directory: libdd-trace-protobuf
         run: |

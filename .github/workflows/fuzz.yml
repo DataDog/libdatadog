@@ -26,6 +26,8 @@ jobs:
       with:
         cache-targets: true # cache build artifacts
         cache-bin: true # cache the ~/.cargo/bin directory
+        shared-key: shared-${{ runner.os }}
+        save-if: ${{ github.ref == 'refs/heads/main' }}
     - run: |
         set -e
         # cargo bolero list outputs {"package":"package-name","test":"test-name"}
