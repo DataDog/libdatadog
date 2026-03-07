@@ -19,12 +19,11 @@ pub use runtime_metadata::RuntimeMetadata;
 pub use serialized_tracer_header_tags::SerializedTracerHeaderTags;
 
 // public to crate types we want to bring up to top level of service:: scope
-pub(crate) use request_identification::{RequestIdentification, RequestIdentifier};
 pub(crate) use sidecar_server::SidecarServer;
 
 use runtime_info::RuntimeInfo;
 use session_info::SessionInfo;
-use sidecar_interface::{SidecarInterface, SidecarInterfaceRequest, SidecarInterfaceResponse};
+pub(crate) use sidecar_interface::SidecarInterface;
 
 pub mod agent_info;
 pub mod blocking;
@@ -33,12 +32,12 @@ pub mod exception_hash_rate_limiter;
 mod instance_id;
 mod queue_id;
 mod remote_configs;
-mod request_identification;
 mod runtime_info;
 mod runtime_metadata;
 mod serialized_tracer_header_tags;
 mod session_info;
-mod sidecar_interface;
+pub mod sender;
+pub mod sidecar_interface;
 pub(crate) mod sidecar_server;
 pub mod telemetry;
 pub(crate) mod tracing;

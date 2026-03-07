@@ -1,0 +1,419 @@
+// Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
+// SPDX-License-Identifier: Apache-2.0
+
+//! Higher-level sender with priority outbox and telemetry load-shedding.
+//!
+//! Wraps [`SidecarInterfaceChannel`] with:
+//! - A **priority outbox** for state-change messages: coalesced and drained before
+//!   fire-and-forget sends.
+//! - **Telemetry load-shedding**: when `outstanding > max_outstanding / 2`, 90% of
+//!   `EnqueueActions` calls are dropped (telemetry is low priority).
+//!
+//! `SidecarSender` takes `&mut self`; the caller is responsible for exclusive access.
+
+use crate::service::{
+    sidecar_interface::{DynamicInstrumentationConfigState, SidecarInterfaceChannel, SidecarInterfaceRequest},
+    InstanceId, QueueId, SerializedTracerHeaderTags, SessionConfig, SidecarAction,
+};
+use datadog_ipc::platform::ShmHandle;
+use datadog_live_debugger::sender::DebuggerType;
+use libdd_common::tag::Tag;
+use libdd_dogstatsd_client::DogStatsDActionOwned;
+use std::{io, time::Duration};
+
+// ---------------------------------------------------------------------------
+// Outbox
+// ---------------------------------------------------------------------------
+
+/// Priority outbox for state-change (coalesced) messages.
+///
+/// Each slot holds the most recent pending message of its kind.
+/// Slots are drained in field order (priority order) before fire-and-forget sends.
+#[derive(Default)]
+struct SidecarOutbox {
+    set_session_config: Option<SidecarInterfaceRequest>,
+    set_session_process_tags: Option<SidecarInterfaceRequest>,
+    set_universal_service_tags: Option<SidecarInterfaceRequest>,
+    set_request_config: Option<SidecarInterfaceRequest>,
+    shutdown_runtime: Option<SidecarInterfaceRequest>,
+    shutdown_session: Option<SidecarInterfaceRequest>,
+}
+
+impl SidecarOutbox {
+    fn slots_mut(&mut self) -> [&mut Option<SidecarInterfaceRequest>; 6] {
+        [
+            &mut self.set_session_config,
+            &mut self.set_session_process_tags,
+            &mut self.set_universal_service_tags,
+            &mut self.set_request_config,
+            &mut self.shutdown_runtime,
+            &mut self.shutdown_session,
+        ]
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Outbox coalescing helpers
+// ---------------------------------------------------------------------------
+
+fn cancel_if_instance(slot: &mut Option<SidecarInterfaceRequest>, instance_id: &InstanceId) {
+    let should_cancel = match slot {
+        Some(SidecarInterfaceRequest::SetUniversalServiceTags { instance_id: id, .. }) => {
+            id == instance_id
+        }
+        Some(SidecarInterfaceRequest::SetRequestConfig { instance_id: id, .. }) => {
+            id == instance_id
+        }
+        _ => false,
+    };
+    if should_cancel {
+        *slot = None;
+    }
+}
+
+fn cancel_if_session(slot: &mut Option<SidecarInterfaceRequest>, session_id: &str) {
+    let should_cancel = match slot {
+        Some(SidecarInterfaceRequest::SetSessionConfig { session_id: id, .. }) => {
+            id.as_str() == session_id
+        }
+        _ => false,
+    };
+    if should_cancel {
+        *slot = None;
+    }
+}
+
+fn coalesce(outbox: &mut SidecarOutbox, incoming: SidecarInterfaceRequest) {
+    // For messages that trigger cancellations, do the cancellation first using a
+    // borrow, then move `incoming` into the slot.
+    if let SidecarInterfaceRequest::ShutdownRuntime { ref instance_id } = incoming {
+        let id = instance_id.clone();
+        cancel_if_instance(&mut outbox.set_request_config, &id);
+        cancel_if_instance(&mut outbox.set_universal_service_tags, &id);
+    }
+    if let SidecarInterfaceRequest::ShutdownSession { ref session_id } = incoming {
+        let id = session_id.clone();
+        cancel_if_session(&mut outbox.set_session_config, &id);
+    }
+
+    match incoming {
+        SidecarInterfaceRequest::SetSessionConfig { .. } => {
+            outbox.set_session_config = Some(incoming);
+        }
+        SidecarInterfaceRequest::SetSessionProcessTags { .. } => {
+            outbox.set_session_process_tags = Some(incoming);
+        }
+        SidecarInterfaceRequest::SetUniversalServiceTags { .. } => {
+            outbox.set_universal_service_tags = Some(incoming);
+        }
+        SidecarInterfaceRequest::SetRequestConfig { .. } => {
+            outbox.set_request_config = Some(incoming);
+        }
+        SidecarInterfaceRequest::ShutdownRuntime { .. } => {
+            outbox.shutdown_runtime = Some(incoming);
+        }
+        SidecarInterfaceRequest::ShutdownSession { .. } => {
+            outbox.shutdown_session = Some(incoming);
+        }
+        _ => {
+            // Non-outbox messages should not be routed here.
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// SidecarSender
+// ---------------------------------------------------------------------------
+
+/// Higher-level IPC sender with outbox coalescing and telemetry load-shedding.
+///
+/// Takes `&mut self` — callers are responsible for exclusive access.
+pub struct SidecarSender {
+    pub channel: SidecarInterfaceChannel,
+    outbox: SidecarOutbox,
+    /// Cycles 0–9; used to implement 90% telemetry drop under backpressure.
+    enqueue_actions_counter: u8,
+}
+
+impl SidecarSender {
+    pub fn new(channel: SidecarInterfaceChannel) -> Self {
+        Self {
+            channel,
+            outbox: SidecarOutbox::default(),
+            enqueue_actions_counter: 0,
+        }
+    }
+
+    /// Non-blocking drain of the outbox.  Returns `true` if all messages were sent.
+    fn try_drain_outbox(&mut self) -> bool {
+        self.channel.0.drain_acks();
+        for slot in self.outbox.slots_mut() {
+            if let Some(msg) = slot {
+                if self.channel.0.outstanding() >= self.channel.0.max_outstanding {
+                    return false;
+                }
+                if !self.channel.try_send_request(msg) {
+                    return false;
+                }
+                *slot = None;
+            }
+        }
+        true
+    }
+
+    /// Blocking drain of the outbox (used before blocking calls).
+    fn drain_outbox_blocking(&mut self) {
+        self.channel.0.drain_acks();
+        for slot in self.outbox.slots_mut() {
+            if let Some(msg) = slot.take() {
+                self.channel.send_request_blocking(&msg).ok();
+            }
+        }
+    }
+
+    /// Drain outbox blocking, then send pre-serialized bytes blocking (no fds).
+    ///
+    /// Returns `Err(BrokenPipe)` (or another I/O error) when the connection is broken,
+    /// allowing callers to detect failure and trigger reconnect via `SidecarTransport::with_retry`.
+    /// Only suitable for requests that transfer no file descriptors (e.g. `enqueue_actions`).
+    pub fn drain_and_send_raw_blocking(&mut self, data: &[u8]) -> io::Result<()> {
+        self.drain_outbox_blocking();
+        self.channel.0.send_blocking(&mut data.to_vec(), &[])
+    }
+
+    // -------------------------------------------------------------------------
+    // Outbox-coalesced state-change methods
+    // -------------------------------------------------------------------------
+
+    pub fn set_session_config(
+        &mut self,
+        session_id: String,
+        #[cfg(windows)] remote_config_notify_function: crate::service::remote_configs::RemoteConfigNotifyFunction,
+        config: SessionConfig,
+        is_fork: bool,
+    ) {
+        coalesce(
+            &mut self.outbox,
+            SidecarInterfaceRequest::SetSessionConfig {
+                session_id,
+                #[cfg(windows)] remote_config_notify_function,
+                config,
+                is_fork,
+            },
+        );
+        self.try_drain_outbox();
+    }
+
+    pub fn set_session_process_tags(&mut self, session_id: String, process_tags: String) {
+        coalesce(
+            &mut self.outbox,
+            SidecarInterfaceRequest::SetSessionProcessTags {
+                session_id,
+                process_tags,
+            },
+        );
+        self.try_drain_outbox();
+    }
+
+    pub fn set_universal_service_tags(
+        &mut self,
+        instance_id: InstanceId,
+        queue_id: QueueId,
+        service_name: String,
+        env_name: String,
+        app_version: String,
+        global_tags: Vec<Tag>,
+        dynamic_instrumentation_state: DynamicInstrumentationConfigState,
+    ) {
+        coalesce(
+            &mut self.outbox,
+            SidecarInterfaceRequest::SetUniversalServiceTags {
+                instance_id,
+                queue_id,
+                service_name,
+                env_name,
+                app_version,
+                global_tags,
+                dynamic_instrumentation_state,
+            },
+        );
+        self.try_drain_outbox();
+    }
+
+    pub fn set_request_config(
+        &mut self,
+        instance_id: InstanceId,
+        queue_id: QueueId,
+        dynamic_instrumentation_state: DynamicInstrumentationConfigState,
+    ) {
+        coalesce(
+            &mut self.outbox,
+            SidecarInterfaceRequest::SetRequestConfig {
+                instance_id,
+                queue_id,
+                dynamic_instrumentation_state,
+            },
+        );
+        self.try_drain_outbox();
+    }
+
+    pub fn shutdown_runtime(&mut self, instance_id: InstanceId) {
+        coalesce(
+            &mut self.outbox,
+            SidecarInterfaceRequest::ShutdownRuntime { instance_id },
+        );
+        self.try_drain_outbox();
+    }
+
+    pub fn shutdown_session(&mut self, session_id: String) {
+        coalesce(
+            &mut self.outbox,
+            SidecarInterfaceRequest::ShutdownSession { session_id },
+        );
+        self.try_drain_outbox();
+    }
+
+    // -------------------------------------------------------------------------
+    // Fire-and-forget methods (drain outbox first, then send; drop on EAGAIN)
+    // -------------------------------------------------------------------------
+
+    /// Enqueue telemetry actions.
+    ///
+    /// When `outstanding > max_outstanding / 2`, 90% of calls are dropped to shed load.
+    pub fn enqueue_actions(
+        &mut self,
+        instance_id: InstanceId,
+        queue_id: QueueId,
+        actions: Vec<SidecarAction>,
+    ) {
+        if !self.try_drain_outbox() {
+            return;
+        }
+        // Load-shed: drop 90% when buffer is more than half full.
+        if self.channel.0.outstanding() > self.channel.0.max_outstanding / 2 {
+            self.enqueue_actions_counter = self.enqueue_actions_counter.wrapping_add(1) % 10;
+            if self.enqueue_actions_counter != 0 {
+                return;
+            }
+            // The 1-in-10 that passes through falls to the try_send below.
+        }
+        self.channel.try_send_enqueue_actions(instance_id, queue_id, actions);
+    }
+
+    pub fn send_trace_v04_shm(
+        &mut self,
+        instance_id: InstanceId,
+        handle: ShmHandle,
+        len: usize,
+        headers: SerializedTracerHeaderTags,
+    ) {
+        if !self.try_drain_outbox() {
+            return;
+        }
+        self.channel
+            .try_send_send_trace_v04_shm(instance_id, handle, len, headers);
+    }
+
+    pub fn send_trace_v04_bytes(
+        &mut self,
+        instance_id: InstanceId,
+        data: Vec<u8>,
+        headers: SerializedTracerHeaderTags,
+    ) {
+        if !self.try_drain_outbox() {
+            return;
+        }
+        self.channel
+            .try_send_send_trace_v04_bytes(instance_id, data, headers);
+    }
+
+    pub fn send_debugger_data_shm(
+        &mut self,
+        instance_id: InstanceId,
+        queue_id: QueueId,
+        handle: ShmHandle,
+        debugger_type: DebuggerType,
+    ) {
+        if !self.try_drain_outbox() {
+            return;
+        }
+        self.channel
+            .try_send_send_debugger_data_shm(instance_id, queue_id, handle, debugger_type);
+    }
+
+    pub fn send_debugger_diagnostics(
+        &mut self,
+        instance_id: InstanceId,
+        queue_id: QueueId,
+        diagnostics_payload: Vec<u8>,
+    ) {
+        if !self.try_drain_outbox() {
+            return;
+        }
+        self.channel
+            .try_send_send_debugger_diagnostics(instance_id, queue_id, diagnostics_payload);
+    }
+
+    pub fn acquire_exception_hash_rate_limiter(
+        &mut self,
+        exception_hash: u64,
+        granularity: Duration,
+    ) {
+        if !self.try_drain_outbox() {
+            return;
+        }
+        self.channel
+            .try_send_acquire_exception_hash_rate_limiter(exception_hash, granularity);
+    }
+
+    pub fn send_dogstatsd_actions(
+        &mut self,
+        instance_id: InstanceId,
+        actions: Vec<DogStatsDActionOwned>,
+    ) {
+        if !self.try_drain_outbox() {
+            return;
+        }
+        self.channel
+            .try_send_send_dogstatsd_actions(instance_id, actions);
+    }
+
+    pub fn set_test_session_token(&mut self, session_id: String, token: String) {
+        if !self.try_drain_outbox() {
+            return;
+        }
+        self.channel.try_send_set_test_session_token(session_id, token);
+    }
+
+    pub fn set_read_timeout(&mut self, d: Option<Duration>) -> io::Result<()> {
+        self.channel.0.set_read_timeout(d)
+    }
+
+    pub fn set_write_timeout(&mut self, d: Option<Duration>) -> io::Result<()> {
+        self.channel.0.set_write_timeout(d)
+    }
+
+    // -------------------------------------------------------------------------
+    // Blocking methods (drain outbox blocking first, then call)
+    // -------------------------------------------------------------------------
+
+    pub fn flush_traces(&mut self) -> io::Result<()> {
+        self.drain_outbox_blocking();
+        self.channel.call_flush_traces()
+    }
+
+    pub fn ping(&mut self) -> io::Result<()> {
+        self.drain_outbox_blocking();
+        self.channel.call_ping()
+    }
+
+    pub fn dump(&mut self) -> Result<String, datadog_ipc::codec::DecodeError> {
+        self.drain_outbox_blocking();
+        self.channel.call_dump()
+    }
+
+    pub fn stats(&mut self) -> Result<String, datadog_ipc::codec::DecodeError> {
+        self.drain_outbox_blocking();
+        self.channel.call_stats()
+    }
+}

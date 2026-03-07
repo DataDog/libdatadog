@@ -1,72 +1,52 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-#[cfg(not(windows))]
+#[cfg(unix)]
 use criterion::{criterion_group, criterion_main, Criterion};
-#[cfg(all(not(windows), not(target_arch = "aarch64")))]
-use datadog_ipc::example_interface::ExampleInterfaceResponse;
-#[cfg(not(windows))]
-use datadog_ipc::{
-    example_interface::{ExampleInterfaceRequest, ExampleServer, ExampleTransport},
-    platform::Channel,
-};
+#[cfg(unix)]
+use datadog_ipc::example_interface::{ExampleInterfaceChannel, ExampleServer};
 
-#[cfg(not(windows))]
-use std::{
-    os::unix::net::UnixStream,
-    thread::{self},
-};
-#[cfg(not(windows))]
+#[cfg(unix)]
+use std::thread;
+#[cfg(unix)]
 use tokio::runtime;
 
-#[cfg(not(windows))]
+#[cfg(unix)]
 fn criterion_benchmark(c: &mut Criterion) {
-    let (sock_a, sock_b) = UnixStream::pair().unwrap();
+    let (conn_server, conn_client) = datadog_ipc::SeqpacketConn::socketpair().unwrap();
 
     let worker = thread::spawn(move || {
         let rt = runtime::Builder::new_current_thread()
             .enable_all()
             .build()
             .unwrap();
-        let _g = rt.enter();
-        sock_a.set_nonblocking(true).unwrap();
         let server = ExampleServer::default();
-
-        rt.block_on(server.accept_connection(Channel::from(sock_a)));
+        rt.block_on(server.accept_connection(conn_server));
     });
 
-    let mut transport = ExampleTransport::from(sock_b);
-    transport.set_nonblocking(false).unwrap();
+    let mut channel = ExampleInterfaceChannel::new(conn_client);
 
     c.bench_function("write only interface", |b| {
-        b.iter(|| transport.send(&ExampleInterfaceRequest::Notify {}).unwrap())
+        b.iter(|| channel.try_send_notify())
     });
 
     // This consistently blocks on aarch64 (both MacOS and Linux), is there an issue with the
     // optimized code?
     #[cfg(not(target_arch = "aarch64"))]
     c.bench_function("two way interface", |b| {
-        b.iter(|| transport.call(&ExampleInterfaceRequest::ReqCnt {}).unwrap())
+        b.iter(|| channel.call_req_cnt().unwrap())
     });
 
-    // This consistently blocks on aarch64 (both MacOS and Linux), is there an issue with the
-    // optimized code?
     #[cfg(not(target_arch = "aarch64"))]
-    match transport.call(&ExampleInterfaceRequest::ReqCnt {}).unwrap() {
-        ExampleInterfaceResponse::ReqCnt(cnt) => {
-            println!("Total requests handled: {cnt}");
-        }
-        _ => panic!("shouldn't happen"),
-    };
+    println!("Total requests handled: {}", channel.call_req_cnt().unwrap());
 
-    drop(transport);
+    drop(channel);
     worker.join().unwrap();
 }
 
-#[cfg(not(windows))]
+#[cfg(unix)]
 criterion_group!(benches, criterion_benchmark);
-
-#[cfg(not(windows))]
+#[cfg(unix)]
 criterion_main!(benches);
 
 #[cfg(windows)]

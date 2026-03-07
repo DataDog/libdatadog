@@ -6,6 +6,7 @@ use crate::setup::pid_shm_path;
 use datadog_ipc::platform::{
     named_pipe_name_from_raw_handle, FileBackedHandle, MappedMem, NamedShmHandle,
 };
+use datadog_ipc::{SeqpacketConn, SeqpacketListener};
 
 use futures::FutureExt;
 use libdd_common::Endpoint;
@@ -16,7 +17,7 @@ use manual_future::ManualFuture;
 use spawn_worker::{write_crashtracking_trampoline, SpawnWorker, Stdio, TrampolineData};
 use std::ffi::CStr;
 use std::io::{self, Error};
-use std::os::windows::io::{AsRawHandle, IntoRawHandle, OwnedHandle};
+use std::os::windows::io::{AsRawHandle, FromRawHandle, IntoRawHandle, OwnedHandle};
 use std::ptr::null_mut;
 use std::sync::LazyLock;
 use std::sync::{Arc, Mutex};
@@ -24,6 +25,9 @@ use std::time::Instant;
 use tokio::net::windows::named_pipe::{NamedPipeServer, ServerOptions};
 use tokio::select;
 use tracing::{error, info};
+use winapi::shared::minwindef::ULONG;
+use winapi::um::winbase::GetNamedPipeClientProcessId;
+use winapi::um::winnt::HANDLE;
 use winapi::{
     shared::{
         sddl::ConvertSidToStringSidA,
@@ -36,7 +40,7 @@ use winapi::{
         },
         securitybaseapi::GetTokenInformation,
         winbase::LocalFree,
-        winnt::{TokenUser, HANDLE, TOKEN_QUERY, TOKEN_USER},
+        winnt::{TokenUser, TOKEN_QUERY, TOKEN_USER},
     },
 };
 
@@ -66,10 +70,10 @@ pub extern "C" fn ddog_daemon_entry_point(_trampoline_data: &TrampolineData) {
 
         info!("Starting sidecar, pid: {}", pid);
 
-        let acquire_listener = move || unsafe {
+        let acquire_listener = move || {
             let (closed_future, close_completer) = ManualFuture::new();
             let close_completer = Arc::from(Mutex::new(Some(close_completer)));
-            let pipe = NamedPipeServer::from_raw_handle(handle.into_raw_handle())?;
+            let listener = SeqpacketListener::from_owned_fd(handle);
 
             let cancel = move || {
                 if let Some(completer) = close_completer.lock_or_panic().take() {
@@ -80,7 +84,7 @@ pub extern "C" fn ddog_daemon_entry_point(_trampoline_data: &TrampolineData) {
             // We pass the shm to ensure we drop the shm handle with the pid immediately after
             // cancellation To avoid actual race conditions
             Ok((
-                |handler| accept_socket_loop(pipe, closed_future, handler, shm),
+                |handler| accept_socket_loop(listener, closed_future, handler, shm),
                 cancel,
             ))
         };
@@ -98,13 +102,19 @@ pub extern "C" fn ddog_daemon_entry_point(_trampoline_data: &TrampolineData) {
 }
 
 async fn accept_socket_loop(
-    mut pipe: NamedPipeServer,
+    listener: SeqpacketListener,
     cancellation: ManualFuture<()>,
-    handler: Box<dyn Fn(NamedPipeServer)>,
+    handler: Box<dyn Fn(SeqpacketConn)>,
     _: MappedMem<NamedShmHandle>,
 ) -> io::Result<()> {
-    let name = named_pipe_name_from_raw_handle(pipe.as_raw_handle())
+    // Wrap the first server instance as a Tokio NamedPipeServer for async connect polling.
+    // After each accepted connection we create a fresh Tokio server for the next client.
+    let name = named_pipe_name_from_raw_handle(listener.as_raw_handle())
         .ok_or(io::Error::from(io::ErrorKind::InvalidInput))?;
+
+    // Transfer the listener's handle into a Tokio NamedPipeServer.
+    let mut pipe =
+        unsafe { NamedPipeServer::from_raw_handle(listener.into_raw_handle()) }?;
 
     let cancellation = cancellation.shared();
     loop {
@@ -113,22 +123,39 @@ async fn accept_socket_loop(
             result = pipe.connect() => result?,
         }
         let connected_pipe = pipe;
-        pipe = ServerOptions::new().create(&name)?;
-        handler(connected_pipe);
+        pipe = ServerOptions::new()
+            .pipe_mode(tokio::net::windows::named_pipe::PipeMode::Message)
+            .create(&name)?;
+
+        // Convert the connected NamedPipeServer into a SeqpacketConn.
+        let raw = connected_pipe.as_raw_handle();
+        let mut client_pid: ULONG = 0;
+        unsafe { GetNamedPipeClientProcessId(raw as HANDLE, &mut client_pid) };
+        // Transfer ownership: forget the Tokio wrapper (which doesn't implement IntoRawHandle)
+        // and take the handle ourselves.
+        std::mem::forget(connected_pipe);
+        let owned = unsafe { OwnedHandle::from_raw_handle(raw) };
+        let conn = SeqpacketConn::from_server_handle(owned, client_pid);
+        handler(conn);
     }
     // drops pipe and shm here
     Ok(())
 }
 
-pub fn setup_daemon_process(listener: OwnedHandle, spawn_cfg: &mut SpawnWorker) -> io::Result<()> {
+pub fn setup_daemon_process(
+    listener: SeqpacketListener,
+    spawn_cfg: &mut SpawnWorker,
+) -> io::Result<()> {
     // Ensure unique process names - we spawn one sidecar per console session id (see
     // setup/windows.rs for the reasoning)
+    let raw = listener.into_raw_handle();
+    let owned = unsafe { OwnedHandle::from_raw_handle(raw) };
     spawn_cfg
         .process_name(format!(
             "datadog-ipc-helper-{}",
             primary_sidecar_identifier()
         ))
-        .pass_handle(listener)
+        .pass_handle(owned)
         .stdin(Stdio::Null);
 
     Ok(())

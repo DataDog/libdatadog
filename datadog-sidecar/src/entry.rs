@@ -21,7 +21,6 @@ use tokio::sync::mpsc;
 use crate::crashtracker::crashtracker_unix_socket_path;
 use crate::service::blocking::SidecarTransport;
 use crate::service::SidecarServer;
-use datadog_ipc::platform::AsyncChannel;
 
 use crate::setup::{self, IpcClient, IpcServer, Liaison};
 
@@ -120,7 +119,7 @@ where
             let server = server.clone();
             let shutdown_complete_tx = shutdown_complete_tx.clone();
             tokio::spawn(async move {
-                server.accept_connection(AsyncChannel::from(socket)).await;
+                server.accept_connection(socket).await;
                 cloned_counter.fetch_add(-1, Ordering::AcqRel);
                 tracing::info!("connection closed");
 
@@ -235,8 +234,9 @@ pub fn start_or_connect_to_sidecar(cfg: Config) -> anyhow::Result<SidecarTranspo
         err => err.context("Error starting sidecar").err(),
     };
 
-    Ok(liaison
-        .connect_to_server()
-        .map_err(|e| err.unwrap_or(e.into()))?
-        .into())
+    Ok(SidecarTransport::from(
+        liaison
+            .connect_to_server()
+            .map_err(|e| err.unwrap_or(e.into()))?,
+    ))
 }

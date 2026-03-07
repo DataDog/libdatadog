@@ -3,20 +3,14 @@
 
 use crate::log::{TemporarilyRetainedMapStats, MULTI_LOG_FILTER, MULTI_LOG_WRITER};
 use crate::service::{
-    sidecar_interface::ServeSidecarInterface,
+    sidecar_interface::serve_sidecar_interface_connection,
     telemetry::{TelemetryCachedClient, TelemetryCachedClientSet},
     tracing::TraceFlusher,
-    DynamicInstrumentationConfigState, InstanceId, QueueId, RequestIdentification,
-    RequestIdentifier, RuntimeInfo, RuntimeMetadata, SerializedTracerHeaderTags, SessionConfig,
-    SessionInfo, SidecarAction, SidecarInterface, SidecarInterfaceRequest,
-    SidecarInterfaceResponse,
+    DynamicInstrumentationConfigState, InstanceId, QueueId, RuntimeInfo, RuntimeMetadata,
+    SerializedTracerHeaderTags, SessionConfig, SessionInfo, SidecarAction, SidecarInterface,
 };
-use datadog_ipc::platform::{AsyncChannel, ShmHandle};
-use datadog_ipc::tarpc;
-use datadog_ipc::tarpc::context::Context;
-use datadog_ipc::transport::Transport;
-use futures::future;
-use futures::future::Ready;
+use datadog_ipc::platform::{FileBackedHandle, ShmHandle};
+use datadog_ipc::{PeerCredentials, SeqpacketConn};
 use libdd_common::{Endpoint, MutexExt};
 use libdd_telemetry::worker::{LifecycleAction, TelemetryActions, TelemetryWorkerStats};
 use libdd_trace_utils::trace_utils::SendData;
@@ -25,16 +19,13 @@ use libdd_trace_utils::tracer_payload::TraceEncoding;
 use manual_future::ManualFutureCompleter;
 use std::borrow::Cow;
 use std::collections::hash_map::Entry;
-use std::collections::{HashMap, HashSet};
-use std::pin::Pin;
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime};
 use tracing::{debug, error, info, trace, warn};
 
-use futures::FutureExt;
 use serde::{Deserialize, Serialize};
-use tokio::task::{JoinError, JoinHandle};
 
 use crate::config::get_product_endpoint;
 use crate::service::agent_info::AgentInfos;
@@ -45,8 +36,6 @@ use crate::service::exception_hash_rate_limiter::EXCEPTION_HASH_LIMITER;
 use crate::service::remote_configs::{RemoteConfigNotifyTarget, RemoteConfigs};
 use crate::service::tracing::trace_flusher::TraceFlusherStats;
 use crate::tokio_util::run_or_spawn_shared;
-use datadog_ipc::platform::FileBackedHandle;
-use datadog_ipc::tarpc::server::{Channel, InFlightRequest};
 use datadog_live_debugger::sender::{agent_info_supports_debugger_v2_endpoint, DebuggerType};
 use datadog_remote_config::fetch::{ConfigInvariants, ConfigOptions, MultiTargetStats};
 use libdd_common::tag::Tag;
@@ -55,11 +44,43 @@ use libdd_telemetry::config::Config;
 use libdd_tinybytes as tinybytes;
 use libdd_trace_utils::tracer_header_tags::TracerHeaderTags;
 
-type NoResponse = Ready<()>;
+/// A Windows process handle used for remote config notification.
+///
+/// Wraps a raw `HANDLE` value (from `OpenProcess`). The handle is intentionally not
+/// closed on drop — it is valid for the lifetime of the session.
+#[cfg(windows)]
+#[derive(Clone)]
+pub struct ProcessHandle(pub winapi::um::winnt::HANDLE);
 
-fn no_response() -> NoResponse {
-    future::ready(())
+#[cfg(windows)]
+impl std::fmt::Debug for ProcessHandle {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "ProcessHandle({:p})", self.0)
+    }
 }
+
+#[cfg(windows)]
+impl PartialEq for ProcessHandle {
+    fn eq(&self, other: &Self) -> bool {
+        self.0 == other.0
+    }
+}
+
+#[cfg(windows)]
+impl Eq for ProcessHandle {}
+
+#[cfg(windows)]
+impl std::hash::Hash for ProcessHandle {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        (self.0 as usize).hash(state);
+    }
+}
+
+#[cfg(windows)]
+unsafe impl Send for ProcessHandle {}
+
+#[cfg(windows)]
+unsafe impl Sync for ProcessHandle {}
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct SidecarStats {
@@ -78,15 +99,6 @@ pub struct SidecarStats {
     log_writer: TemporarilyRetainedMapStats,
     log_filter: TemporarilyRetainedMapStats,
 }
-
-#[cfg(windows)]
-#[derive(Debug, Copy, Clone, Hash, Eq, PartialEq)]
-pub struct ProcessHandle(pub winapi::um::winnt::HANDLE);
-
-#[cfg(windows)]
-unsafe impl Send for ProcessHandle {}
-#[cfg(windows)]
-unsafe impl Sync for ProcessHandle {}
 
 /// The `SidecarServer` struct represents a server that handles sidecar operations.
 ///
@@ -114,62 +126,92 @@ pub struct SidecarServer {
     remote_configs: RemoteConfigs,
     /// Diagnostics bookkeeper
     debugger_diagnostics_bookkeeper: Arc<DebuggerDiagnosticsBookkeeper>,
-    /// The ProcessHandle tied to the connection
-    #[cfg(windows)]
-    process_handle: Option<ProcessHandle>,
+}
+
+/// Per-connection handler wrapper that tracks sessions/instances for cleanup on disconnect.
+struct ConnectionSidecarHandler {
+    server: SidecarServer,
+    sessions: std::sync::Mutex<std::collections::HashSet<String>>,
+    instances: std::sync::Mutex<std::collections::HashSet<InstanceId>>,
+}
+
+impl ConnectionSidecarHandler {
+    fn new(server: SidecarServer) -> Self {
+        Self {
+            server,
+            sessions: Default::default(),
+            instances: Default::default(),
+        }
+    }
+
+    fn track_session(&self, session_id: &str) {
+        if self.sessions.lock_or_panic().insert(session_id.to_owned()) {
+            let mut counter = self.server.session_counter.lock_or_panic();
+            match counter.entry(session_id.to_owned()) {
+                Entry::Occupied(mut e) => {
+                    e.insert(e.get() + 1);
+                }
+                Entry::Vacant(e) => {
+                    e.insert(1);
+                }
+            }
+        }
+    }
+
+    fn track_instance(&self, instance_id: &InstanceId) {
+        self.instances.lock_or_panic().insert(instance_id.clone());
+    }
+
+    async fn cleanup(&self) {
+        let sessions: Vec<String> = self.sessions.lock_or_panic().iter().cloned().collect();
+        let instances: Vec<InstanceId> = self.instances.lock_or_panic().iter().cloned().collect();
+
+        for session_id in &sessions {
+            let stop = {
+                let mut counter = self.server.session_counter.lock_or_panic();
+                if let Entry::Occupied(mut entry) = counter.entry(session_id.clone()) {
+                    if entry.insert(entry.get() - 1) == 1 {
+                        entry.remove();
+                        true
+                    } else {
+                        false
+                    }
+                } else {
+                    false
+                }
+            };
+            if stop {
+                self.server.stop_session(session_id).await;
+            }
+        }
+        for instance_id in instances {
+            let maybe_session = self
+                .server
+                .sessions
+                .lock_or_panic()
+                .get(&instance_id.session_id)
+                .cloned();
+            if let Some(session) = maybe_session {
+                session.shutdown_runtime(&instance_id.runtime_id).await;
+            }
+        }
+    }
 }
 
 impl SidecarServer {
     /// Accepts a new connection and starts processing requests.
     ///
-    /// This function creates a new `tarpc` server with the provided `async_channel` and starts
-    /// processing incoming requests. It also starts a session interceptor to keep track of active
-    /// sessions and submitted payload counts.
+    /// This function creates a per-connection `ConnectionSidecarHandler` and serves the connection,
+    /// then runs cleanup when the connection closes.
     ///
     /// # Arguments
     ///
-    /// * `async_channel`: An `AsyncChannel` that represents the connection to the client.
-    #[cfg_attr(not(windows), allow(unused_mut))]
-    pub async fn accept_connection(mut self, async_channel: AsyncChannel) {
-        let handle = async_channel.handle();
-        #[cfg(windows)]
-        #[allow(clippy::unwrap_used)]
-        {
-            self.process_handle = async_channel
-                .metadata
-                .lock()
-                .unwrap()
-                .process_handle()
-                .map(|p| ProcessHandle(p as winapi::um::winnt::HANDLE));
-        }
-        let server = tarpc::server::BaseChannel::new(
-            tarpc::server::Config {
-                pending_response_buffer: 10000,
-            },
-            Transport::from(async_channel),
-        );
-        let mut executor = datadog_ipc::sequential::execute_sequential(
-            server.requests(),
-            self.clone().serve(),
-            500,
-        )
-        .with_backpressure(SidecarInterfaceRequest::requires_backpressure);
-        let (tx, rx) = tokio::sync::mpsc::channel::<_>(100);
-        let tx = executor.swap_sender(tx);
-
-        let session_interceptor = tokio::spawn(session_interceptor(
-            self.session_counter.clone(),
-            self.submitted_payloads.clone(),
-            rx,
-            tx,
-        ));
-
-        if let Err(e) = executor.await {
-            warn!("Error from executor for handle {handle}: {e:?}");
-        }
-
-        self.process_interceptor_response(session_interceptor.await)
-            .await;
+    /// * `conn`: A `SeqpacketConn` that represents the connection to the client.
+    pub async fn accept_connection(self, conn: SeqpacketConn) {
+        let handler = Arc::new(ConnectionSidecarHandler::new(self));
+        let handler_for_cleanup = handler.clone();
+        serve_sidecar_interface_connection(conn, handler).await;
+        handler_for_cleanup.cleanup().await;
     }
 
     /// Returns the number of active sidecar sessions.
@@ -179,48 +221,6 @@ impl SidecarServer {
     /// * `usize`: The number of active sessions.
     pub fn active_session_count(&self) -> usize {
         self.session_counter.lock_or_panic().len()
-    }
-
-    async fn process_interceptor_response(
-        &self,
-        result: Result<(HashSet<String>, HashSet<InstanceId>), JoinError>,
-    ) {
-        match result {
-            Ok((sessions, instances)) => {
-                for session in sessions {
-                    let stop = {
-                        let mut counter = self.session_counter.lock_or_panic();
-                        if let Entry::Occupied(mut entry) = counter.entry(session.to_owned()) {
-                            if entry.insert(entry.get() - 1) == 1 {
-                                entry.remove();
-                                true
-                            } else {
-                                false
-                            }
-                        } else {
-                            false
-                        }
-                    };
-                    if stop {
-                        self.stop_session(&session).await;
-                    }
-                }
-                for instance_id in instances {
-                    let maybe_session = self
-                        .sessions
-                        .lock_or_panic()
-                        .get(&instance_id.session_id)
-                        .cloned();
-                    if let Some(session) = maybe_session {
-                        session.shutdown_runtime(&instance_id.runtime_id).await;
-                    }
-                }
-            }
-            Err(e) => {
-                // TODO: APMSP-1076 - Do we need to do more than just log this error?
-                debug!("session interceptor encountered an error: {:?}", e);
-            }
-        }
     }
 
     pub(crate) fn get_session(&self, session_id: &String) -> SessionInfo {
@@ -297,11 +297,17 @@ impl SidecarServer {
     #[cfg(windows)]
     #[allow(clippy::unwrap_used)]
     fn get_notify_target(&self, session: &SessionInfo) -> Option<RemoteConfigNotifyTarget> {
-        self.process_handle.map(|handle| RemoteConfigNotifyTarget {
-            process_handle: handle,
-            notify_function: *session.remote_config_notify_function.lock().unwrap(),
+        let notify_function = *session.remote_config_notify_function.lock().unwrap();
+        if notify_function.0.is_null() {
+            return None;
+        }
+        let process_handle = session.process_handle.lock_or_panic().clone()?;
+        Some(RemoteConfigNotifyTarget {
+            process_handle,
+            notify_function,
         })
     }
+
     #[cfg(unix)]
     fn get_notify_target(&self, session: &SessionInfo) -> Option<RemoteConfigNotifyTarget> {
         Some(RemoteConfigNotifyTarget {
@@ -381,18 +387,13 @@ impl SidecarServer {
     pub fn shutdown(&self) {
         self.remote_configs.shutdown();
     }
-}
 
-impl SidecarInterface for SidecarServer {
-    type EnqueueActionsFut = NoResponse;
-
-    fn enqueue_actions(
-        self,
-        _context: Context,
+    fn enqueue_actions_impl(
+        &self,
         instance_id: InstanceId,
         queue_id: QueueId,
         actions: Vec<SidecarAction>,
-    ) -> Self::EnqueueActionsFut {
+    ) {
         let session = self.get_session(&instance_id.session_id);
         let trace_config = session.get_trace_config();
         let runtime_metadata = RuntimeMetadata::new(
@@ -409,8 +410,7 @@ impl SidecarInterface for SidecarServer {
             if actions.len() == 1 && matches!(actions[0], SidecarAction::ClearQueueId) {
                 info!("Removing queue_id {queue_id:?} from instance {instance_id:?}");
                 entry.remove();
-
-                return no_response();
+                return;
             }
 
             let service = entry
@@ -538,33 +538,34 @@ impl SidecarInterface for SidecarServer {
         } else {
             info!("No application found for instance {instance_id:?} and queue_id {queue_id:?}");
         }
-
-        no_response()
     }
 
-    type SetSessionConfigFut = Pin<Box<dyn Send + futures::Future<Output = ()>>>;
-
-    fn set_session_config(
-        self,
-        _: Context,
+    async fn set_session_config_impl(
+        &self,
         session_id: String,
-        #[cfg(unix)] pid: libc::pid_t,
-        #[cfg(windows)]
-        remote_config_notify_function: crate::service::remote_configs::RemoteConfigNotifyFunction,
+        peer_pid: u32,
+        #[cfg(windows)] remote_config_notify_function: crate::service::remote_configs::RemoteConfigNotifyFunction,
         config: SessionConfig,
         is_fork: bool,
-    ) -> Self::SetSessionConfigFut {
+    ) {
         debug!("Set session config for {session_id} to {config:?}");
 
         let session = self.get_session(&session_id);
-        #[cfg(unix)]
-        {
-            session.pid.store(pid, Ordering::Relaxed);
-        }
+        session.pid.store(peer_pid as i32, Ordering::Relaxed);
         #[cfg(windows)]
         #[allow(clippy::unwrap_used)]
         {
             *session.remote_config_notify_function.lock().unwrap() = remote_config_notify_function;
+            let handle = unsafe {
+                winapi::um::processthreadsapi::OpenProcess(
+                    winapi::um::winnt::PROCESS_ALL_ACCESS,
+                    0,
+                    peer_pid,
+                )
+            };
+            if !handle.is_null() {
+                *session.process_handle.lock_or_panic() = Some(ProcessHandle(handle));
+            }
         }
         *session.remote_config_enabled.lock_or_panic() = config.remote_config_enabled;
         *session.process_tags.lock_or_panic() = config.process_tags.clone();
@@ -649,64 +650,45 @@ impl SidecarInterface for SidecarServer {
             });
         }
 
-        Box::pin(async move {
-            if !is_fork {
-                session.shutdown_running_instances().await;
-            }
-            no_response().await
-        })
+        if !is_fork {
+            session.shutdown_running_instances().await;
+        }
     }
 
-    type SetSessionProcessTagsFut = NoResponse;
-
-    fn set_session_process_tags(
-        self,
-        _: Context,
-        session_id: String,
-        process_tags: Vec<Tag>,
-    ) -> Self::SetSessionProcessTagsFut {
+    fn set_session_process_tags_impl(&self, session_id: String, process_tags: Vec<Tag>) {
         let session = self.get_session(&session_id);
         *session.process_tags.lock_or_panic() = process_tags;
-        no_response()
     }
 
-    type ShutdownRuntimeFut = NoResponse;
-
-    fn shutdown_runtime(self, _: Context, instance_id: InstanceId) -> Self::ShutdownRuntimeFut {
+    fn shutdown_runtime_impl(&self, instance_id: InstanceId) {
         let session = self.get_session(&instance_id.session_id);
         tokio::spawn(async move { session.shutdown_runtime(&instance_id.runtime_id).await });
-
-        no_response()
     }
 
-    type ShutdownSessionFut = NoResponse;
-
-    fn shutdown_session(self, _: Context, session_id: String) -> Self::ShutdownSessionFut {
-        tokio::spawn(async move { SidecarServer::stop_session(&self, &session_id).await });
-        no_response()
+    fn shutdown_session_impl(&self, session_id: String) {
+        let server = self.clone();
+        tokio::spawn(async move { server.stop_session(&session_id).await });
     }
 
-    type SendTraceV04ShmFut = NoResponse;
-
-    fn send_trace_v04_shm(
-        self,
-        _: Context,
+    fn send_trace_v04_shm_impl(
+        &self,
         instance_id: InstanceId,
         handle: ShmHandle,
         _len: usize,
         headers: SerializedTracerHeaderTags,
-    ) -> Self::SendTraceV04ShmFut {
+    ) {
         if let Some(endpoint) = self
             .get_session(&instance_id.session_id)
             .get_trace_config()
             .endpoint
             .clone()
         {
+            let server = self.clone();
             tokio::spawn(async move {
                 match handle.map() {
                     Ok(mapped) => {
                         let bytes = tinybytes::Bytes::from(mapped);
-                        self.send_trace_v04(&headers, bytes, &endpoint);
+                        server.send_trace_v04(&headers, bytes, &endpoint);
                     }
                     Err(e) => error!("Failed mapping shared trace data memory: {}", e),
                 }
@@ -717,28 +699,24 @@ impl SidecarInterface for SidecarServer {
                 instance_id.session_id
             );
         }
-
-        no_response()
     }
 
-    type SendTraceV04BytesFut = NoResponse;
-
-    fn send_trace_v04_bytes(
-        self,
-        _: Context,
+    fn send_trace_v04_bytes_impl(
+        &self,
         instance_id: InstanceId,
         data: Vec<u8>,
         headers: SerializedTracerHeaderTags,
-    ) -> Self::SendTraceV04BytesFut {
+    ) {
         if let Some(endpoint) = self
             .get_session(&instance_id.session_id)
             .get_trace_config()
             .endpoint
             .clone()
         {
+            let server = self.clone();
             tokio::spawn(async move {
                 let bytes = tinybytes::Bytes::from(data);
-                self.send_trace_v04(&headers, bytes, &endpoint);
+                server.send_trace_v04(&headers, bytes, &endpoint);
             });
         } else {
             warn!(
@@ -746,20 +724,15 @@ impl SidecarInterface for SidecarServer {
                 instance_id.session_id
             );
         }
-
-        no_response()
     }
 
-    type SendDebuggerDataShmFut = NoResponse;
-
-    fn send_debugger_data_shm(
-        self,
-        _: Context,
+    fn send_debugger_data_shm_impl(
+        &self,
         instance_id: InstanceId,
         queue_id: QueueId,
         handle: ShmHandle,
         debugger_type: DebuggerType,
-    ) -> Self::SendDebuggerDataShmFut {
+    ) {
         let session = self.get_session(&instance_id.session_id);
         match handle.map() {
             Ok(mapped) => {
@@ -772,19 +745,14 @@ impl SidecarInterface for SidecarServer {
             }
             Err(e) => error!("Failed mapping shared debugger data memory: {}", e),
         }
-
-        no_response()
     }
 
-    type SendDebuggerDiagnosticsFut = NoResponse;
-
-    fn send_debugger_diagnostics(
-        self,
-        _: Context,
+    fn send_debugger_diagnostics_impl(
+        &self,
         instance_id: InstanceId,
         queue_id: QueueId,
         diagnostics_payload: Vec<u8>,
-    ) -> Self::SendDebuggerDiagnosticsFut {
+    ) {
         let session = self.get_session(&instance_id.session_id);
         #[allow(clippy::unwrap_used)]
         let payload = serde_json::from_slice(diagnostics_payload.as_slice()).unwrap();
@@ -799,30 +767,16 @@ impl SidecarInterface for SidecarServer {
                 serde_json::to_vec(&vec![payload]).unwrap(),
             );
         }
-
-        no_response()
     }
 
-    type AcquireExceptionHashRateLimiterFut = NoResponse;
-
-    fn acquire_exception_hash_rate_limiter(
-        self,
-        _: Context,
-        exception_hash: u64,
-        granularity: Duration,
-    ) -> Self::AcquireExceptionHashRateLimiterFut {
+    fn acquire_exception_hash_rate_limiter_impl(&self, exception_hash: u64, granularity: Duration) {
         EXCEPTION_HASH_LIMITER
             .lock_or_panic()
             .add(exception_hash, granularity);
-
-        no_response()
     }
 
-    type SetUniversalServiceTagsFut = NoResponse;
-
-    fn set_universal_service_tags(
-        self,
-        _: Context,
+    fn set_universal_service_tags_impl(
+        &self,
         instance_id: InstanceId,
         queue_id: QueueId,
         service_name: String,
@@ -830,7 +784,7 @@ impl SidecarInterface for SidecarServer {
         app_version: String,
         global_tags: Vec<Tag>,
         dynamic_instrumentation_state: DynamicInstrumentationConfigState,
-    ) -> Self::SetUniversalServiceTagsFut {
+    ) {
         debug!("Registered remote config metadata: instance {instance_id:?}, queue_id: {queue_id:?}, service: {service_name}, env: {env_name}, version: {app_version}");
 
         let session = self.get_session(&instance_id.session_id);
@@ -839,7 +793,7 @@ impl SidecarInterface for SidecarServer {
         let app = applications.entry(queue_id).or_default();
         app.set_metadata(env_name, app_version, service_name, global_tags);
         let Some(notify_target) = self.get_notify_target(&session) else {
-            return no_response();
+            return;
         };
         app.update_remote_config(
             &self.remote_configs,
@@ -848,25 +802,20 @@ impl SidecarInterface for SidecarServer {
             notify_target,
             dynamic_instrumentation_state,
         );
-
-        no_response()
     }
 
-    type SetRequestConfigFut = NoResponse;
-
-    fn set_request_config(
-        self,
-        _: Context,
+    fn set_request_config_impl(
+        &self,
         instance_id: InstanceId,
         queue_id: QueueId,
         dynamic_instrumentation_state: DynamicInstrumentationConfigState,
-    ) -> Self::SetRequestConfigFut {
+    ) {
         let session = self.get_session(&instance_id.session_id);
         let runtime_info = session.get_runtime(&instance_id.runtime_id);
         let mut applications = runtime_info.lock_applications();
         let app = applications.entry(queue_id).or_default();
         let Some(notify_target) = self.get_notify_target(&session) else {
-            return no_response();
+            return;
         };
         app.update_remote_config(
             &self.remote_configs,
@@ -875,48 +824,27 @@ impl SidecarInterface for SidecarServer {
             notify_target,
             dynamic_instrumentation_state,
         );
-
-        no_response()
     }
 
-    type SendDogstatsdActionsFut = NoResponse;
-
-    fn send_dogstatsd_actions(
-        self,
-        _: Context,
-        instance_id: InstanceId,
-        actions: Vec<DogStatsDActionOwned>,
-    ) -> Self::SendDogstatsdActionsFut {
+    fn send_dogstatsd_actions_impl(&self, instance_id: InstanceId, actions: Vec<DogStatsDActionOwned>) {
+        let server = self.clone();
         tokio::spawn(async move {
-            self.get_session(&instance_id.session_id)
+            server
+                .get_session(&instance_id.session_id)
                 .get_dogstatsd()
                 .as_ref()
                 .inspect(|f| f.send_owned(actions));
         });
-
-        no_response()
     }
 
-    type FlushTracesFut = future::Map<JoinHandle<()>, fn(Result<(), JoinError>)>;
-
-    fn flush_traces(self, _: Context) -> Self::FlushTracesFut {
+    async fn flush_traces_impl(&self) {
         let flusher = self.trace_flusher.clone();
-        fn report_result(result: Result<(), JoinError>) {
-            if let Err(e) = result {
-                error!("Failed flushing traces: {e:?}");
-            }
+        if let Err(e) = tokio::spawn(async move { flusher.flush().await }).await {
+            error!("Failed flushing traces: {e:?}");
         }
-        tokio::spawn(async move { flusher.flush().await }).map(report_result)
     }
 
-    type SetTestSessionTokenFut = NoResponse;
-
-    fn set_test_session_token(
-        self,
-        _: Context,
-        session_id: String,
-        token: String,
-    ) -> Self::SetTestSessionTokenFut {
+    fn set_test_session_token_impl(&self, session_id: String, token: String) {
         let session = self.get_session(&session_id);
         let token = if token.is_empty() {
             None
@@ -934,78 +862,218 @@ impl SidecarInterface for SidecarServer {
         // session.configure_dogstatsd(|cfg| {
         //     update_cfg(cfg.endpoint.take(), |e| cfg.set_endpoint(e), &token);
         // });
-
-        no_response()
     }
 
-    type PingFut = Ready<()>;
-
-    fn ping(self, _: Context) -> Ready<()> {
-        future::ready(())
+    async fn dump_impl(&self) -> String {
+        crate::dump::dump().await
     }
 
-    type DumpFut = Pin<Box<dyn Send + futures::Future<Output = String>>>;
-
-    fn dump(self, _: Context) -> Self::DumpFut {
-        Box::pin(crate::dump::dump())
-    }
-
-    type StatsFut = Pin<Box<dyn Send + futures::Future<Output = String>>>;
-
-    fn stats(self, _: Context) -> Self::StatsFut {
-        let this = self.clone();
+    async fn stats_impl(&self) -> String {
+        let stats = self.compute_stats().await;
         #[allow(clippy::expect_used)]
-        Box::pin(async move {
-            let stats = this.compute_stats().await;
-            simd_json::serde::to_string(&stats).expect("unable to serialize stats to string")
-        })
+        simd_json::serde::to_string(&stats).expect("unable to serialize stats to string")
     }
 }
 
-// The session_interceptor function keeps track of session counts and submitted payload counts. It
-// also keeps track of RequestIdentifiers and returns hashsets of session and instance ids when the
-// rx channel is closed.
-async fn session_interceptor(
-    session_counter: Arc<Mutex<HashMap<String, u32>>>,
-    submitted_payload_count: Arc<AtomicU64>,
-    mut rx: tokio::sync::mpsc::Receiver<(
-        ServeSidecarInterface<SidecarServer>,
-        InFlightRequest<SidecarInterfaceRequest, SidecarInterfaceResponse>,
-    )>,
-    tx: tokio::sync::mpsc::Sender<(
-        ServeSidecarInterface<SidecarServer>,
-        InFlightRequest<SidecarInterfaceRequest, SidecarInterfaceResponse>,
-    )>,
-) -> (HashSet<String>, HashSet<InstanceId>) {
-    let mut sessions = HashSet::new();
-    let mut instances = HashSet::new();
-    loop {
-        let (serve, req) = match rx.recv().await {
-            None => return (sessions, instances),
-            Some(s) => s,
-        };
+impl SidecarInterface for ConnectionSidecarHandler {
+    async fn enqueue_actions(
+        &self,
+        _peer: PeerCredentials,
+        instance_id: InstanceId,
+        queue_id: QueueId,
+        actions: Vec<SidecarAction>,
+    ) {
+        self.server.submitted_payloads.fetch_add(1, Ordering::Relaxed);
+        self.track_instance(&instance_id);
+        self.server.enqueue_actions_impl(instance_id, queue_id, actions);
+    }
 
-        submitted_payload_count.fetch_add(1, Ordering::Relaxed);
+    async fn set_session_config(
+        &self,
+        peer: PeerCredentials,
+        session_id: String,
+        #[cfg(windows)] remote_config_notify_function: crate::service::remote_configs::RemoteConfigNotifyFunction,
+        config: SessionConfig,
+        is_fork: bool,
+    ) {
+        self.server.submitted_payloads.fetch_add(1, Ordering::Relaxed);
+        self.track_session(&session_id);
+        self.server
+            .set_session_config_impl(
+                session_id,
+                peer.pid,
+                #[cfg(windows)] remote_config_notify_function,
+                config,
+                is_fork,
+            )
+            .await;
+    }
 
-        let instance: RequestIdentifier = req.get().extract_identifier();
-        if tx.send((serve, req)).await.is_ok() {
-            if let RequestIdentifier::InstanceId(ref instance_id) = instance {
-                instances.insert(instance_id.clone());
-            }
-            if let RequestIdentifier::SessionId(session)
-            | RequestIdentifier::InstanceId(InstanceId {
-                session_id: session,
-                ..
-            }) = instance
-            {
-                if sessions.insert(session.clone()) {
-                    match session_counter.lock_or_panic().entry(session) {
-                        Entry::Occupied(mut entry) => entry.insert(entry.get() + 1),
-                        Entry::Vacant(entry) => *entry.insert(1),
-                    };
-                }
-            }
-        }
+    async fn set_session_process_tags(
+        &self,
+        _peer: PeerCredentials,
+        session_id: String,
+        process_tags: String,
+    ) {
+        self.server.submitted_payloads.fetch_add(1, Ordering::Relaxed);
+        self.track_session(&session_id);
+        self.server
+            .set_session_process_tags_impl(session_id, process_tags);
+    }
+
+    async fn shutdown_runtime(&self, _peer: PeerCredentials, instance_id: InstanceId) {
+        self.server.submitted_payloads.fetch_add(1, Ordering::Relaxed);
+        self.track_instance(&instance_id);
+        self.server.shutdown_runtime_impl(instance_id);
+    }
+
+    async fn shutdown_session(&self, _peer: PeerCredentials, session_id: String) {
+        self.server.submitted_payloads.fetch_add(1, Ordering::Relaxed);
+        self.track_session(&session_id);
+        self.server.shutdown_session_impl(session_id);
+    }
+
+    async fn send_trace_v04_shm(
+        &self,
+        _peer: PeerCredentials,
+        instance_id: InstanceId,
+        handle: ShmHandle,
+        len: usize,
+        headers: SerializedTracerHeaderTags,
+    ) {
+        self.server.submitted_payloads.fetch_add(1, Ordering::Relaxed);
+        self.track_instance(&instance_id);
+        self.server
+            .send_trace_v04_shm_impl(instance_id, handle, len, headers);
+    }
+
+    async fn send_trace_v04_bytes(
+        &self,
+        _peer: PeerCredentials,
+        instance_id: InstanceId,
+        data: Vec<u8>,
+        headers: SerializedTracerHeaderTags,
+    ) {
+        self.server.submitted_payloads.fetch_add(1, Ordering::Relaxed);
+        self.track_instance(&instance_id);
+        self.server
+            .send_trace_v04_bytes_impl(instance_id, data, headers);
+    }
+
+    async fn send_debugger_data_shm(
+        &self,
+        _peer: PeerCredentials,
+        instance_id: InstanceId,
+        queue_id: QueueId,
+        handle: ShmHandle,
+        debugger_type: DebuggerType,
+    ) {
+        self.server.submitted_payloads.fetch_add(1, Ordering::Relaxed);
+        self.track_instance(&instance_id);
+        self.server
+            .send_debugger_data_shm_impl(instance_id, queue_id, handle, debugger_type);
+    }
+
+    async fn send_debugger_diagnostics(
+        &self,
+        _peer: PeerCredentials,
+        instance_id: InstanceId,
+        queue_id: QueueId,
+        diagnostics_payload: Vec<u8>,
+    ) {
+        self.server.submitted_payloads.fetch_add(1, Ordering::Relaxed);
+        self.track_instance(&instance_id);
+        self.server
+            .send_debugger_diagnostics_impl(instance_id, queue_id, diagnostics_payload);
+    }
+
+    async fn acquire_exception_hash_rate_limiter(
+        &self,
+        _peer: PeerCredentials,
+        exception_hash: u64,
+        granularity: Duration,
+    ) {
+        self.server.submitted_payloads.fetch_add(1, Ordering::Relaxed);
+        self.server
+            .acquire_exception_hash_rate_limiter_impl(exception_hash, granularity);
+    }
+
+    async fn set_universal_service_tags(
+        &self,
+        _peer: PeerCredentials,
+        instance_id: InstanceId,
+        queue_id: QueueId,
+        service_name: String,
+        env_name: String,
+        app_version: String,
+        global_tags: Vec<Tag>,
+        dynamic_instrumentation_state: DynamicInstrumentationConfigState,
+    ) {
+        self.server.submitted_payloads.fetch_add(1, Ordering::Relaxed);
+        self.track_instance(&instance_id);
+        self.server.set_universal_service_tags_impl(
+            instance_id,
+            queue_id,
+            service_name,
+            env_name,
+            app_version,
+            global_tags,
+            dynamic_instrumentation_state,
+        );
+    }
+
+    async fn set_request_config(
+        &self,
+        _peer: PeerCredentials,
+        instance_id: InstanceId,
+        queue_id: QueueId,
+        dynamic_instrumentation_state: DynamicInstrumentationConfigState,
+    ) {
+        self.server.submitted_payloads.fetch_add(1, Ordering::Relaxed);
+        self.track_instance(&instance_id);
+        self.server
+            .set_request_config_impl(instance_id, queue_id, dynamic_instrumentation_state);
+    }
+
+    async fn send_dogstatsd_actions(
+        &self,
+        _peer: PeerCredentials,
+        instance_id: InstanceId,
+        actions: Vec<DogStatsDActionOwned>,
+    ) {
+        self.server.submitted_payloads.fetch_add(1, Ordering::Relaxed);
+        self.track_instance(&instance_id);
+        self.server.send_dogstatsd_actions_impl(instance_id, actions);
+    }
+
+    async fn flush_traces(&self, _peer: PeerCredentials) {
+        self.server.submitted_payloads.fetch_add(1, Ordering::Relaxed);
+        self.server.flush_traces_impl().await;
+    }
+
+    async fn set_test_session_token(
+        &self,
+        _peer: PeerCredentials,
+        session_id: String,
+        token: String,
+    ) {
+        self.server.submitted_payloads.fetch_add(1, Ordering::Relaxed);
+        self.track_session(&session_id);
+        self.server.set_test_session_token_impl(session_id, token);
+    }
+
+    async fn ping(&self, _peer: PeerCredentials) {
+        self.server.submitted_payloads.fetch_add(1, Ordering::Relaxed);
+    }
+
+    async fn dump(&self, _peer: PeerCredentials) -> String {
+        self.server.submitted_payloads.fetch_add(1, Ordering::Relaxed);
+        self.server.dump_impl().await
+    }
+
+    async fn stats(&self, _peer: PeerCredentials) -> String {
+        self.server.submitted_payloads.fetch_add(1, Ordering::Relaxed);
+        self.server.stats_impl().await
     }
 }
 

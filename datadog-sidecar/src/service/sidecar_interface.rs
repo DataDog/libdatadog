@@ -3,26 +3,13 @@
 
 #![allow(clippy::too_many_arguments)]
 
-use crate::service::{
-    InstanceId, QueueId, RequestIdentification, RequestIdentifier, SerializedTracerHeaderTags,
-    SessionConfig, SidecarAction,
-};
-use anyhow::Result;
+use crate::service::{InstanceId, QueueId, SerializedTracerHeaderTags, SessionConfig, SidecarAction};
 use datadog_ipc::platform::ShmHandle;
-use datadog_ipc::tarpc;
 use datadog_live_debugger::sender::DebuggerType;
 use libdd_common::tag::Tag;
 use libdd_dogstatsd_client::DogStatsDActionOwned;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
-
-// This is a bit weird, but depending on the OS we're interested in different things...
-// and the macro expansion is not going to be happy with #[cfg()] instructions inside them.
-// So we'll just define a type, a pid on unix, a function pointer on windows.
-#[cfg(unix)]
-type RemoteConfigNotifyTarget = libc::pid_t;
-#[cfg(windows)]
-type RemoteConfigNotifyTarget = crate::service::remote_configs::RemoteConfigNotifyFunction;
 
 #[repr(C)]
 #[derive(Debug, Eq, PartialEq, Copy, Clone, Serialize, Deserialize)]
@@ -36,9 +23,7 @@ pub enum DynamicInstrumentationConfigState {
 ///
 /// These methods include operations such as enqueueing actions, registering services, setting
 /// session configurations, and sending traces.
-#[datadog_sidecar_macros::extract_request_id]
-#[datadog_ipc_macros::impl_transfer_handles]
-#[tarpc::service]
+#[datadog_ipc_macros::service]
 pub trait SidecarInterface {
     /// Enqueues a list of actions to be performed.
     ///
@@ -60,10 +45,9 @@ pub trait SidecarInterface {
     /// * `session_id` - The ID of the session.
     /// * `pid` - The pid of the sidecar client.
     /// * `config` - The configuration to be set.
-    #[force_backpressure]
     async fn set_session_config(
         session_id: String,
-        remote_config_notify_target: RemoteConfigNotifyTarget,
+        #[cfg(windows)] remote_config_notify_function: crate::service::remote_configs::RemoteConfigNotifyFunction,
         config: SessionConfig,
         is_fork: bool,
     );
@@ -74,7 +58,6 @@ pub trait SidecarInterface {
     ///
     /// * `session_id` - The ID of the session.
     /// * `process_tags` - The process tags.
-    #[force_backpressure]
     async fn set_session_process_tags(session_id: String, process_tags: Vec<Tag>);
 
     /// Shuts down a runtime.
@@ -82,7 +65,6 @@ pub trait SidecarInterface {
     /// # Arguments
     ///
     /// * `instance_id` - The ID of the instance.
-    #[force_backpressure]
     async fn shutdown_runtime(instance_id: InstanceId);
 
     /// Shuts down a session.
@@ -90,7 +72,6 @@ pub trait SidecarInterface {
     /// # Arguments
     ///
     /// * `session_id` - The ID of the session.
-    #[force_backpressure]
     async fn shutdown_session(session_id: String);
 
     /// Sends a trace via shared memory.
@@ -169,7 +150,6 @@ pub trait SidecarInterface {
     /// * `global_tags` - Global tags which need to be propagated.
     /// * `dynamic_instrumentation_state` - Whether dynamic instrumentation is enabled, disabled or
     ///   not set.
-    #[force_backpressure]
     async fn set_universal_service_tags(
         instance_id: InstanceId,
         queue_id: QueueId,
@@ -187,7 +167,6 @@ pub trait SidecarInterface {
     /// * `queue_id` - The unique identifier for the trace context.
     /// * `dynamic_instrumentation_state` - Whether dynamic instrumentation is enabled, disabled or
     ///   not set.
-    #[force_backpressure]
     async fn set_request_config(
         instance_id: InstanceId,
         queue_id: QueueId,
@@ -203,7 +182,7 @@ pub trait SidecarInterface {
     async fn send_dogstatsd_actions(instance_id: InstanceId, actions: Vec<DogStatsDActionOwned>);
 
     /// Flushes any outstanding traces queued for sending.
-    #[force_backpressure]
+    #[blocking]
     async fn flush_traces();
 
     /// Sets x-datadog-test-session-token on all requests for the given session.
@@ -215,7 +194,7 @@ pub trait SidecarInterface {
     async fn set_test_session_token(session_id: String, token: String);
 
     /// Sends a ping to the service.
-    #[force_backpressure]
+    #[blocking]
     async fn ping();
 
     /// Dumps the current state of the service.
@@ -223,7 +202,6 @@ pub trait SidecarInterface {
     /// # Returns
     ///
     /// A string representation of the current state of the service.
-    #[force_backpressure]
     async fn dump() -> String;
 
     /// Retrieves the current statistics of the service.
@@ -231,6 +209,5 @@ pub trait SidecarInterface {
     /// # Returns
     ///
     /// A string representation of the current statistics of the service.
-    #[force_backpressure]
     async fn stats() -> String;
 }

@@ -13,7 +13,7 @@ use winapi::um::processthreadsapi::{GetCurrentProcess, OpenProcess};
 use winapi::um::winnt::{DUPLICATE_SAME_ACCESS, HANDLE, PROCESS_DUP_HANDLE};
 
 use crate::{
-    handles::TransferHandles,
+    handles::{HandlesTransport, TransferHandles},
     platform::{Message, PlatformHandle},
 };
 
@@ -73,6 +73,24 @@ impl ProcessHandle {
             }
         }
         Ok(dup_handle as RawHandle)
+    }
+}
+
+impl HandlesTransport for &mut ChannelMetadata {
+    type Error = io::Error;
+
+    fn copy_handle<T>(self, handle: PlatformHandle<T>) -> Result<(), Self::Error> {
+        self.enqueue_for_sending(handle);
+        Ok(())
+    }
+
+    fn provide_handle<T>(self, hint: &PlatformHandle<T>) -> Result<PlatformHandle<T>, Self::Error> {
+        self.find_handle(hint).ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::NotFound,
+                "handle not found in received handles map",
+            )
+        })
     }
 }
 

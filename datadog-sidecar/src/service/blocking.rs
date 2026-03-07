@@ -3,36 +3,32 @@
 
 use super::{
     DynamicInstrumentationConfigState, InstanceId, QueueId, SerializedTracerHeaderTags,
-    SessionConfig, SidecarAction, SidecarInterfaceRequest, SidecarInterfaceResponse,
+    SessionConfig, SidecarAction,
 };
-use datadog_ipc::platform::{Channel, FileBackedHandle, ShmHandle};
-use datadog_ipc::transport::blocking::BlockingTransport;
+use crate::service::sender::SidecarSender;
+use crate::service::sidecar_interface::{SidecarInterfaceChannel, SidecarInterfaceRequest};
+use datadog_ipc::platform::{FileBackedHandle, ShmHandle};
+use datadog_ipc::SeqpacketConn;
 use datadog_live_debugger::debugger_defs::DebuggerPayload;
 use datadog_live_debugger::sender::DebuggerType;
 use libdd_common::tag::Tag;
-use libdd_common::MutexExt;
 use libdd_dogstatsd_client::DogStatsDActionOwned;
 use serde::Serialize;
-use std::sync::{Mutex, MutexGuard};
+use std::sync::Mutex;
 use std::{
     io,
     time::{Duration, Instant},
 };
 use tracing::{info, warn};
 
-/// `SidecarTransport` is a wrapper around a BlockingTransport struct from the `datadog_ipc` crate
-/// that handles transparent reconnection.
-/// It is used for sending `SidecarInterfaceRequest` and receiving `SidecarInterfaceResponse`.
+/// `SidecarTransport` wraps a [`SidecarSender`] with transparent reconnection support.
 ///
 /// This transport is used for communication between different parts of the sidecar service.
-/// It is a blocking transport, meaning that it will block the current thread until the operation is
-/// complete.
+/// It is a blocking transport (all operations block the current thread).
 pub struct SidecarTransport {
-    pub inner: Mutex<BlockingTransport<SidecarInterfaceResponse, SidecarInterfaceRequest>>,
-    /// If the reconnect_fn is given, whenever a broken pipe is encountered, the connection will be
+    pub inner: Mutex<SidecarSender>,
+    /// If provided, whenever a connection error is encountered, the connection will be
     /// attempted to be re-established by calling this function.
-    /// Note that reconnecting only changes the transport (i.e. inner), but keeps the original
-    /// reconnect_fn.
     pub reconnect_fn: Option<Box<dyn Fn() -> Option<Box<SidecarTransport>>>>,
 }
 
@@ -47,7 +43,7 @@ impl SidecarTransport {
         };
 
         #[allow(clippy::unwrap_used)]
-        if transport.is_closed() {
+        if transport.channel.0.is_closed() {
             info!("The sidecar transport is closed. Reconnecting...");
             let new = match factory() {
                 None => return,
@@ -60,46 +56,56 @@ impl SidecarTransport {
         }
     }
 
-    pub fn set_read_timeout(&mut self, timeout: Option<Duration>) -> io::Result<()> {
-        match self.inner.lock() {
-            Ok(mut t) => t.set_read_timeout(timeout),
-            Err(e) => Err(io::Error::other(e.to_string())),
-        }
+    pub fn set_read_timeout(&mut self, d: Option<Duration>) -> io::Result<()> {
+        lock_sender(self)?.set_read_timeout(d)
     }
 
-    pub fn set_write_timeout(&mut self, timeout: Option<Duration>) -> io::Result<()> {
-        match self.inner.lock() {
-            Ok(mut t) => t.set_write_timeout(timeout),
-            Err(e) => Err(io::Error::other(e.to_string())),
+    pub fn set_write_timeout(&mut self, d: Option<Duration>) -> io::Result<()> {
+        lock_sender(self)?.set_write_timeout(d)
+    }
+
+    pub fn ensure_alive(&mut self) {
+        let closed = match self.inner.lock() {
+            Ok(guard) => guard.channel.0.is_closed(),
+            Err(_) => return,
+        };
+        if closed {
+            if let Some(ref reconnect) = self.reconnect_fn {
+                warn!("The sidecar transport is closed. Reconnecting... This generally indicates a problem with the sidecar, most likely a crash. Check the logs / core dump locations and possibly report a bug.");
+                if let Some(n) = reconnect() {
+                    if let Ok(mut guard) = self.inner.lock() {
+                        if let Ok(new) = n.inner.into_inner() {
+                            *guard = new;
+                        }
+                    }
+                }
+            }
         }
     }
 
     pub fn is_closed(&self) -> bool {
         match self.inner.lock() {
-            Ok(t) => t.is_closed(),
+            Ok(t) => t.channel.0.is_closed(),
             // Should happen only during the "reconnection" phase. During this phase the transport
-            // is always closed.
+            // is always considered closed.
             Err(_) => true,
         }
     }
 
-    fn with_retry<
-        F: Fn(
-            &mut MutexGuard<BlockingTransport<SidecarInterfaceResponse, SidecarInterfaceRequest>>,
-        ) -> io::Result<V>,
-        V,
-    >(
-        &mut self,
-        f: F,
-    ) -> io::Result<V> {
+    fn with_retry<F, V>(&mut self, f: F) -> io::Result<V>
+    where
+        F: Fn(&mut SidecarSender) -> io::Result<V>,
+    {
         let mut inner = match self.inner.lock() {
             Ok(t) => t,
             Err(e) => return Err(io::Error::other(e.to_string())),
         };
-        match f(&mut inner) {
+        match f(&mut *inner) {
             Ok(ret) => Ok(ret),
             Err(e) => {
-                if e.kind() == io::ErrorKind::BrokenPipe {
+                if e.kind() == io::ErrorKind::BrokenPipe
+                    || e.kind() == io::ErrorKind::ConnectionReset
+                {
                     if let Some(ref reconnect) = self.reconnect_fn {
                         warn!("The sidecar transport is closed. Reconnecting... This generally indicates a problem with the sidecar, most likely a crash. Check the logs / core dump locations and possibly report a bug.");
                         *inner = match reconnect() {
@@ -107,7 +113,7 @@ impl SidecarTransport {
                             #[allow(clippy::unwrap_used)]
                             Some(n) => n.inner.into_inner().unwrap(),
                         };
-                        f(&mut inner)
+                        f(&mut *inner)
                     } else {
                         Err(e)
                     }
@@ -118,191 +124,106 @@ impl SidecarTransport {
         }
     }
 
-    pub fn send(&mut self, item: SidecarInterfaceRequest) -> io::Result<()> {
-        self.with_retry(|t| t.send(&item))
-    }
-
-    pub fn call(&mut self, item: SidecarInterfaceRequest) -> io::Result<SidecarInterfaceResponse> {
-        self.with_retry(|t| t.call(&item))
-    }
-
-    pub fn call_noretry(
-        &mut self,
-        item: SidecarInterfaceRequest,
-    ) -> io::Result<SidecarInterfaceResponse> {
-        let mut inner = match self.inner.lock() {
-            Ok(t) => t,
-            Err(e) => return Err(io::Error::other(e.to_string())),
-        };
-        inner.call(&item)
-    }
-
+    /// Send garbage data (used in tests to verify error handling).
     pub fn send_garbage(&mut self) -> io::Result<()> {
-        self.inner.lock_or_panic().send_garbage()
+        match self.inner.lock() {
+            Ok(mut c) => c.channel.0.send_blocking(&mut vec![0xDE, 0xAD, 0xBE, 0xEF], &[]),
+            Err(e) => Err(io::Error::other(e.to_string())),
+        }
     }
 }
 
-impl From<Channel> for SidecarTransport {
-    fn from(c: Channel) -> Self {
+impl From<SeqpacketConn> for SidecarTransport {
+    fn from(conn: SeqpacketConn) -> Self {
         SidecarTransport {
-            inner: Mutex::new(c.into()),
+            inner: Mutex::new(SidecarSender::new(SidecarInterfaceChannel::new(conn))),
             reconnect_fn: None,
         }
     }
 }
 
+fn lock_sender(transport: &mut SidecarTransport) -> io::Result<std::sync::MutexGuard<SidecarSender>> {
+    transport.ensure_alive();
+    transport.inner.lock().map_err(|e| io::Error::other(e.to_string()))
+}
+
 /// Shuts down a runtime.
-///
-/// # Arguments
-///
-/// * `transport` - The transport used for communication.
-/// * `instance_id` - The ID of the instance.
-///
-/// # Returns
-///
-/// An `io::Result<()>` indicating the result of the operation.
 pub fn shutdown_runtime(
     transport: &mut SidecarTransport,
     instance_id: &InstanceId,
 ) -> io::Result<()> {
-    transport.send(SidecarInterfaceRequest::ShutdownRuntime {
-        instance_id: instance_id.clone(),
-    })
+    lock_sender(transport)?.shutdown_runtime(instance_id.clone());
+    Ok(())
 }
 
 /// Shuts down a session.
-///
-/// # Arguments
-///
-/// * `transport` - The transport used for communication.
-/// * `session_id` - The ID of the session.
-///
-/// # Returns
-///
-/// An `io::Result<()>` indicating the result of the operation.
 pub fn shutdown_session(transport: &mut SidecarTransport, session_id: String) -> io::Result<()> {
-    transport.send(SidecarInterfaceRequest::ShutdownSession { session_id })
+    lock_sender(transport)?.shutdown_session(session_id);
+    Ok(())
 }
 
 /// Enqueues a list of actions to be performed.
 ///
-/// # Arguments
-///
-/// * `transport` - The transport used for communication.
-/// * `instance_id` - The ID of the instance.
-/// * `queue_id` - The unique identifier for the action in the queue.
-/// * `actions` - The action type being enqueued.
-///
-/// # Returns
-///
-/// An `io::Result<()>` indicating the result of the operation.
+/// Uses `with_retry`: if the connection is broken the transport reconnects and the actions
+/// are retried once on the new connection, so that telemetry/lifecycle events are not lost
+/// when the sidecar crashes and restarts.
 pub fn enqueue_actions(
     transport: &mut SidecarTransport,
     instance_id: &InstanceId,
     queue_id: &QueueId,
     actions: Vec<SidecarAction>,
 ) -> io::Result<()> {
-    transport.send(SidecarInterfaceRequest::EnqueueActions {
+    // Pre-serialize once so the Fn closure can borrow the bytes for both the initial
+    // attempt and the reconnect retry without needing SidecarAction: Clone.
+    let req = SidecarInterfaceRequest::EnqueueActions {
         instance_id: instance_id.clone(),
         queue_id: *queue_id,
         actions,
-    })
+    };
+    let data = datadog_ipc::codec::encode(req.discriminant(), &req);
+    transport.with_retry(|s| s.drain_and_send_raw_blocking(&data))
 }
 
 /// Sets the configuration for a session.
-///
-/// # Arguments
-///
-/// * `transport` - The transport used for communication.
-/// * `remote_config_notify_function` (windows): a function pointer to be invoked
-/// * `pid` (unix): the pid of the remote process
-/// * `session_id` - The ID of the session.
-/// * `config` - The configuration to be set.
-///
-/// # Returns
-///
-/// An `io::Result<()>` indicating the result of the operation.
 pub fn set_session_config(
     transport: &mut SidecarTransport,
-    #[cfg(unix)] pid: libc::pid_t,
-    #[cfg(windows)] remote_config_notify_function: *mut libc::c_void,
     session_id: String,
+    #[cfg(windows)] remote_config_notify_function: crate::service::remote_configs::RemoteConfigNotifyFunction,
     config: &SessionConfig,
     is_fork: bool,
 ) -> io::Result<()> {
-    #[cfg(unix)]
-    let remote_config_notify_target = pid;
-    #[cfg(windows)]
-    let remote_config_notify_target =
-        crate::service::remote_configs::RemoteConfigNotifyFunction(remote_config_notify_function);
-    transport.send(SidecarInterfaceRequest::SetSessionConfig {
+    lock_sender(transport)?.set_session_config(
         session_id,
-        remote_config_notify_target,
-        config: config.clone(),
+        #[cfg(windows)]
+        remote_config_notify_function,
+        config.clone(),
         is_fork,
-    })
+    );
+    Ok(())
 }
 
 /// Updates the process tags for an existing session.
-///
-/// # Arguments
-///
-/// * `transport` - The transport used for communication.
-/// * `session_id` - The ID of the session.
-/// * `process_tags` - The process tags to set.
-///
-/// # Returns
-///
-/// An `io::Result<()>` indicating the result of the operation.
 pub fn set_session_process_tags(
     transport: &mut SidecarTransport,
     session_id: String,
     process_tags: Vec<Tag>,
 ) -> io::Result<()> {
-    transport.send(SidecarInterfaceRequest::SetSessionProcessTags {
-        session_id,
-        process_tags,
-    })
+    lock_sender(transport)?.set_session_process_tags(session_id, process_tags);
+    Ok(())
 }
 
 /// Sends a trace as bytes.
-///
-/// # Arguments
-///
-/// * `transport` - The transport used for communication.
-/// * `instance_id` - The ID of the instance.
-/// * `data` - The trace data serialized as bytes.
-/// * `headers` - The serialized headers from the tracer.
-///
-/// # Returns
-///
-/// An `io::Result<()>` indicating the result of the operation.
 pub fn send_trace_v04_bytes(
     transport: &mut SidecarTransport,
     instance_id: &InstanceId,
     data: Vec<u8>,
     headers: SerializedTracerHeaderTags,
 ) -> io::Result<()> {
-    transport.send(SidecarInterfaceRequest::SendTraceV04Bytes {
-        instance_id: instance_id.clone(),
-        data,
-        headers,
-    })
+    lock_sender(transport)?.send_trace_v04_bytes(instance_id.clone(), data, headers);
+    Ok(())
 }
 
 /// Sends a trace via shared memory.
-///
-/// # Arguments
-///
-/// * `transport` - The transport used for communication.
-/// * `instance_id` - The ID of the instance.
-/// * `handle` - The handle to the shared memory.
-/// * `len` - The size of the shared memory data.
-/// * `headers` - The serialized headers from the tracer.
-///
-/// # Returns
-///
-/// An `io::Result<()>` indicating the result of the operation.
 pub fn send_trace_v04_shm(
     transport: &mut SidecarTransport,
     instance_id: &InstanceId,
@@ -310,27 +231,11 @@ pub fn send_trace_v04_shm(
     len: usize,
     headers: SerializedTracerHeaderTags,
 ) -> io::Result<()> {
-    transport.send(SidecarInterfaceRequest::SendTraceV04Shm {
-        instance_id: instance_id.clone(),
-        handle,
-        len,
-        headers,
-    })
+    lock_sender(transport)?.send_trace_v04_shm(instance_id.clone(), handle, len, headers);
+    Ok(())
 }
 
 /// Sends raw data from shared memory to the debugger endpoint.
-///
-/// # Arguments
-///
-/// * `transport` - The transport used for communication.
-/// * `instance_id` - The ID of the instance.
-/// * `queue_id` - The unique identifier for the trace context.
-/// * `handle` - The handle to the shared memory.
-/// * `debugger_type` - Whether it's log or diagnostic data.
-///
-/// # Returns
-///
-/// An `io::Result<()>` indicating the result of the operation.
 pub fn send_debugger_data_shm(
     transport: &mut SidecarTransport,
     instance_id: &InstanceId,
@@ -338,26 +243,11 @@ pub fn send_debugger_data_shm(
     handle: ShmHandle,
     debugger_type: DebuggerType,
 ) -> io::Result<()> {
-    transport.send(SidecarInterfaceRequest::SendDebuggerDataShm {
-        instance_id: instance_id.clone(),
-        queue_id,
-        handle,
-        debugger_type,
-    })
+    lock_sender(transport)?.send_debugger_data_shm(instance_id.clone(), queue_id, handle, debugger_type);
+    Ok(())
 }
 
-/// Sends a collection of debugger payloads to the debugger endpoint.
-///
-/// # Arguments
-///
-/// * `transport` - The transport used for communication.
-/// * `instance_id` - The ID of the instance.
-/// * `queue_id` - The unique identifier for the trace context.
-/// * `payloads` - The payloads to be sent
-///
-/// # Returns
-///
-/// An `anyhow::Result<()>` indicating the result of the operation.
+/// Sends a collection of debugger payloads to the debugger endpoint via shared memory.
 pub fn send_debugger_data_shm_vec(
     transport: &mut SidecarTransport,
     instance_id: &InstanceId,
@@ -399,65 +289,31 @@ pub fn send_debugger_data_shm_vec(
 }
 
 /// Submits debugger diagnostics.
-///
-/// # Arguments
-///
-/// * `transport` - The transport used for communication.
-/// * `instance_id` - The ID of the instance.
-/// * `queue_id` - The unique identifier for the trace context.
-/// * `handle` - The handle to the shared memory.
-/// * `diagnostics_payload` - The diagnostics data to send.
-///
-/// # Returns
-///
-/// An `io::Result<()>` indicating the result of the operation.
 pub fn send_debugger_diagnostics(
     transport: &mut SidecarTransport,
     instance_id: &InstanceId,
     queue_id: QueueId,
     diagnostics_payload: DebuggerPayload,
 ) -> io::Result<()> {
-    transport.send(SidecarInterfaceRequest::SendDebuggerDiagnostics {
-        instance_id: instance_id.clone(),
+    lock_sender(transport)?.send_debugger_diagnostics(
+        instance_id.clone(),
         queue_id,
-        diagnostics_payload: serde_json::to_vec(&diagnostics_payload)?,
-    })
+        serde_json::to_vec(&diagnostics_payload)?,
+    );
+    Ok(())
 }
 
 /// Acquire an exception hash rate limiter
-///
-/// # Arguments
-/// * `exception_hash` - the ID
-/// * `granularity` - how much time needs to pass between two exceptions
 pub fn acquire_exception_hash_rate_limiter(
     transport: &mut SidecarTransport,
     exception_hash: u64,
     granularity: Duration,
 ) -> io::Result<()> {
-    transport.send(SidecarInterfaceRequest::AcquireExceptionHashRateLimiter {
-        exception_hash,
-        granularity,
-    })
+    lock_sender(transport)?.acquire_exception_hash_rate_limiter(exception_hash, granularity);
+    Ok(())
 }
 
 /// Sets the state of the current remote config operation.
-/// The queue id is shared with telemetry and the associated data will be freed upon a
-/// `Lifecycle::Stop` event.
-///
-/// # Arguments
-///
-/// * `transport` - The transport used for communication.
-/// * `instance_id` - The ID of the instance.
-/// * `queue_id` - The unique identifier for the action in the queue.
-/// * `service_name` - The name of the service.
-/// * `env_name` - The name of the environment.
-/// * `app_version` - The metadata of the runtime.
-/// * `global_tags` - Global tags.
-/// * `dynamic_instrumentation_state` - Whether dynamic instrumentation is enabled.
-///
-/// # Returns
-///
-/// An `io::Result<()>` indicating the result of the operation.
 #[allow(clippy::too_many_arguments)]
 pub fn set_universal_service_tags(
     transport: &mut SidecarTransport,
@@ -469,146 +325,72 @@ pub fn set_universal_service_tags(
     global_tags: Vec<Tag>,
     dynamic_instrumentation_state: DynamicInstrumentationConfigState,
 ) -> io::Result<()> {
-    transport.send(SidecarInterfaceRequest::SetUniversalServiceTags {
-        instance_id: instance_id.clone(),
-        queue_id: *queue_id,
+    lock_sender(transport)?.set_universal_service_tags(
+        instance_id.clone(),
+        *queue_id,
         service_name,
         env_name,
         app_version,
         global_tags,
         dynamic_instrumentation_state,
-    })
+    );
+    Ok(())
 }
 
 /// Sets request state which do not directly affect the RC connection.
-/// The queue id is shared with telemetry and the associated data will be freed upon a
-/// `Lifecycle::Stop` event.
-///
-/// # Arguments
-///
-/// * `transport` - The transport used for communication.
-/// * `instance_id` - The ID of the instance.
-/// * `queue_id` - The unique identifier for the action in the queue.
-/// * `dynamic_instrumentation_state` - Whether dynamic instrumentation is enabled.
-///
-/// # Returns
-///
-/// An `io::Result<()>` indicating the result of the operation.
 pub fn set_request_config(
     transport: &mut SidecarTransport,
     instance_id: &InstanceId,
     queue_id: &QueueId,
     dynamic_instrumentation_state: DynamicInstrumentationConfigState,
 ) -> io::Result<()> {
-    transport.send(SidecarInterfaceRequest::SetRequestConfig {
-        instance_id: instance_id.clone(),
-        queue_id: *queue_id,
+    lock_sender(transport)?.set_request_config(
+        instance_id.clone(),
+        *queue_id,
         dynamic_instrumentation_state,
-    })
+    );
+    Ok(())
 }
 
 /// Sends DogStatsD actions.
-///
-/// # Arguments
-///
-/// * `transport` - The transport used for communication.
-/// * `instance_id` - The ID of the instance.
-/// * `actions` - The DogStatsD actions to send.
-///
-/// # Returns
-///
-/// An `io::Result<()>` indicating the result of the operation.
 pub fn send_dogstatsd_actions(
     transport: &mut SidecarTransport,
     instance_id: &InstanceId,
     actions: Vec<DogStatsDActionOwned>,
 ) -> io::Result<()> {
-    transport.send(SidecarInterfaceRequest::SendDogstatsdActions {
-        instance_id: instance_id.clone(),
-        actions,
-    })
+    lock_sender(transport)?.send_dogstatsd_actions(instance_id.clone(), actions);
+    Ok(())
 }
 
 /// Sets x-datadog-test-session-token on all requests for the given session.
-///
-/// # Arguments
-///
-/// * `session_id` - The ID of the session.
-/// * `token` - The session token.
-/// # Returns
-///
-/// An `io::Result<()>` indicating the result of the operation.
 pub fn set_test_session_token(
     transport: &mut SidecarTransport,
     session_id: String,
     token: String,
 ) -> io::Result<()> {
-    transport.send(SidecarInterfaceRequest::SetTestSessionToken { session_id, token })
-}
-
-/// Dumps the current state of the service.
-///
-/// # Arguments
-///
-/// * `transport` - The transport used for communication.
-///
-/// # Returns
-///
-/// An `io::Result<String>` representing the current state of the service.
-pub fn dump(transport: &mut SidecarTransport) -> io::Result<String> {
-    let res = transport.call(SidecarInterfaceRequest::Dump {})?;
-    if let SidecarInterfaceResponse::Dump(dump) = res {
-        Ok(dump)
-    } else {
-        Ok(String::default())
-    }
-}
-
-/// Retrieves the current statistics of the service.
-///
-/// # Arguments
-///
-/// * `transport` - The transport used for communication.
-///
-/// # Returns
-///
-/// An `io::Result<String>` representing the current statistics of the service.
-pub fn stats(transport: &mut SidecarTransport) -> io::Result<String> {
-    let res = transport.call(SidecarInterfaceRequest::Stats {})?;
-    if let SidecarInterfaceResponse::Stats(stats) = res {
-        Ok(stats)
-    } else {
-        Ok(String::default())
-    }
-}
-
-/// Flushes the outstanding traces.
-///
-/// # Arguments
-///
-/// * `transport` - The transport used for communication.
-///
-/// # Returns
-///
-/// An `io::Result<()>` indicating the result of the operation.
-pub fn flush_traces(transport: &mut SidecarTransport) -> io::Result<()> {
-    transport.call_noretry(SidecarInterfaceRequest::FlushTraces {})?;
+    lock_sender(transport)?.set_test_session_token(session_id, token);
     Ok(())
 }
 
+/// Dumps the current state of the service.
+pub fn dump(transport: &mut SidecarTransport) -> io::Result<String> {
+    transport.with_retry(|s| s.dump().map_err(|e| io::Error::other(e.to_string())))
+}
+
+/// Retrieves the current statistics of the service.
+pub fn stats(transport: &mut SidecarTransport) -> io::Result<String> {
+    transport.with_retry(|s| s.stats().map_err(|e| io::Error::other(e.to_string())))
+}
+
+/// Flushes the outstanding traces.
+pub fn flush_traces(transport: &mut SidecarTransport) -> io::Result<()> {
+    transport.with_retry(|s| s.flush_traces())
+}
+
 /// Sends a ping to the service.
-///
-/// # Arguments
-///
-/// * `transport` - The transport used for communication.
-///
-/// # Returns
-///
-/// An `io::Result<Duration>` representing the round-trip time of the ping.
 pub fn ping(transport: &mut SidecarTransport) -> io::Result<Duration> {
     let start = Instant::now();
-    transport.call(SidecarInterfaceRequest::Ping {})?;
-
+    transport.with_retry(|s| s.ping())?;
     Ok(start.elapsed())
 }
 
@@ -616,71 +398,53 @@ pub fn ping(transport: &mut SidecarTransport) -> io::Result<Duration> {
 #[cfg(unix)]
 mod tests {
     use crate::service::blocking::SidecarTransport;
-    use datadog_ipc::platform::Channel;
-    use std::net::Shutdown;
-    use std::os::unix::net::{UnixListener, UnixStream};
+    use datadog_ipc::{SeqpacketConn, SeqpacketListener};
     use std::time::Duration;
+    use tempfile::tempdir;
 
     #[test]
     #[cfg_attr(miri, ignore)]
     fn test_reconnect() {
-        let bind_addr = "/tmp/test_reconnect.sock";
-        let _ = std::fs::remove_file(bind_addr);
+        let tmpdir = tempdir().unwrap();
+        let socket_path = tmpdir.path().join("test.sock");
 
-        let listener = UnixListener::bind(bind_addr).expect("Cannot bind");
-        let sock = UnixStream::connect_addr(&listener.local_addr().unwrap()).unwrap();
+        let listener = SeqpacketListener::bind(&socket_path).expect("Cannot bind");
+        let conn = SeqpacketConn::connect(&socket_path).unwrap();
+        // Accept so the server holds liveness_read; dropping server_conn triggers POLLHUP.
+        let server_conn = listener.try_accept().expect("try_accept");
 
-        let mut transport = SidecarTransport::from(Channel::from(sock.try_clone().unwrap()));
+        let mut transport = SidecarTransport::from(conn);
         assert!(!transport.is_closed());
 
-        sock.shutdown(Shutdown::Both)
-            .expect("shutdown function failed");
+        // Drop the accepted conn: closes liveness_read → POLLHUP on liveness_write.
+        drop(server_conn);
+        drop(listener);
+        // Force close detection by triggering an I/O operation.
+        let _ = transport.send_garbage();
         assert!(transport.is_closed());
 
+        let socket_path2 = socket_path.clone();
+        let listener2 = SeqpacketListener::bind(&socket_path2).expect("Cannot rebind");
         transport.reconnect(|| {
-            let new_sock = UnixStream::connect_addr(&listener.local_addr().unwrap()).unwrap();
-            Some(Box::new(SidecarTransport::from(Channel::from(new_sock))))
+            let new_conn = SeqpacketConn::connect(&socket_path2).ok()?;
+            Some(Box::new(SidecarTransport::from(new_conn)))
         });
         assert!(!transport.is_closed());
-
-        let _ = std::fs::remove_file(bind_addr);
+        drop(listener2);
     }
 
     #[test]
     #[cfg_attr(miri, ignore)]
-    fn test_set_timeout() {
-        let bind_addr = "/tmp/test_set_timeout.sock";
-        let _ = std::fs::remove_file(bind_addr);
+    fn test_connection_basic() {
+        let tmpdir = tempdir().unwrap();
+        let socket_path = tmpdir.path().join("test_basic.sock");
 
-        let listener = UnixListener::bind(bind_addr).expect("Cannot bind");
-        let sock = UnixStream::connect_addr(&listener.local_addr().unwrap()).unwrap();
+        let listener = SeqpacketListener::bind(&socket_path).expect("Cannot bind");
+        let conn = SeqpacketConn::connect(&socket_path).unwrap();
 
-        let mut transport = SidecarTransport::from(Channel::from(sock.try_clone().unwrap()));
-        assert_eq!(
-            Duration::default(),
-            sock.read_timeout().unwrap().unwrap_or_default()
-        );
-        assert_eq!(
-            Duration::default(),
-            sock.write_timeout().unwrap().unwrap_or_default()
-        );
-
-        transport
-            .set_read_timeout(Some(Duration::from_millis(200)))
-            .expect("set_read_timeout function failed");
-        transport
-            .set_write_timeout(Some(Duration::from_millis(300)))
-            .expect("set_write_timeout function failed");
-
-        assert_eq!(
-            Duration::from_millis(200),
-            sock.read_timeout().unwrap().unwrap_or_default()
-        );
-        assert_eq!(
-            Duration::from_millis(300),
-            sock.write_timeout().unwrap().unwrap_or_default()
-        );
-
-        let _ = std::fs::remove_file(bind_addr);
+        let transport = SidecarTransport::from(conn);
+        assert!(!transport.is_closed());
+        drop(transport);
+        drop(listener);
     }
 }

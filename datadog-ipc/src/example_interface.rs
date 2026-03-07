@@ -9,95 +9,73 @@ use std::{
     time::{Duration, Instant},
 };
 
-use futures::future::{pending, ready, Pending, Ready};
-use tarpc::context::Context;
-use tarpc::server::Channel;
-
-use super::{
-    platform::PlatformHandle,
-    transport::{blocking::BlockingTransport, Transport},
-};
+use super::platform::PlatformHandle;
 
 extern crate self as datadog_ipc;
 
-#[datadog_ipc_macros::impl_transfer_handles]
-#[tarpc::service]
+#[datadog_ipc_macros::service]
 pub trait ExampleInterface {
-    async fn notify() -> ();
-    async fn ping() -> ();
+    async fn notify();
+    #[blocking]
+    async fn ping();
     async fn time_now() -> Duration;
     async fn req_cnt() -> u32;
-    async fn store_file(#[SerializedHandle] file: PlatformHandle<File>) -> ();
-    #[SerializedHandle]
-    async fn retrieve_file() -> Option<PlatformHandle<File>>;
+    async fn store_file(#[SerializedHandle] file: PlatformHandle<File>);
 }
 
-pub type ExampleTransport = BlockingTransport<ExampleInterfaceResponse, ExampleInterfaceRequest>;
-
-#[derive(Default, Clone, Debug)]
+#[derive(Default, Clone)]
 pub struct ExampleServer {
     req_cnt: Arc<AtomicU32>,
     stored_files: Arc<Mutex<Vec<PlatformHandle<File>>>>,
 }
 
+#[cfg(unix)]
 impl ExampleServer {
-    pub async fn accept_connection(self, channel: crate::platform::Channel) {
-        #[allow(clippy::unwrap_used)]
-        let server = tarpc::server::BaseChannel::new(
-            tarpc::server::Config::default(),
-            Transport::try_from(channel).unwrap(),
-        );
-
-        server.execute(self.serve()).await
+    pub async fn accept_connection(self, conn: crate::SeqpacketConn) {
+        serve_example_interface_connection(conn, Arc::new(self)).await
     }
 }
 
 impl ExampleInterface for ExampleServer {
-    type PingFut = Ready<()>;
-
-    fn ping(self, _: Context) -> Self::PingFut {
+    fn notify(
+        &self,
+        _peer: datadog_ipc::PeerCredentials,
+    ) -> impl std::future::Future<Output = ()> + Send + '_ {
         self.req_cnt.fetch_add(1, Ordering::AcqRel);
-        ready(())
+        std::future::ready(())
     }
 
-    type NotifyFut = Pending<()>;
-
-    fn notify(self, _: Context) -> Self::NotifyFut {
+    fn ping(
+        &self,
+        _peer: datadog_ipc::PeerCredentials,
+    ) -> impl std::future::Future<Output = ()> + Send + '_ {
         self.req_cnt.fetch_add(1, Ordering::AcqRel);
-        pending() // returning pending future, ensures the RPC system will not try to return a
-                  // response to the client
+        std::future::ready(())
     }
 
-    type TimeNowFut = Ready<Duration>;
-
-    fn time_now(self, _: Context) -> Self::TimeNowFut {
+    fn time_now(
+        &self,
+        _peer: datadog_ipc::PeerCredentials,
+    ) -> impl std::future::Future<Output = Duration> + Send + '_ {
         self.req_cnt.fetch_add(1, Ordering::AcqRel);
-        ready(Instant::now().elapsed())
+        std::future::ready(Instant::now().elapsed())
     }
 
-    type ReqCntFut = Ready<u32>;
-
-    fn req_cnt(self, _: Context) -> Self::ReqCntFut {
-        ready(self.req_cnt.fetch_add(1, Ordering::AcqRel))
+    fn req_cnt(
+        &self,
+        _peer: datadog_ipc::PeerCredentials,
+    ) -> impl std::future::Future<Output = u32> + Send + '_ {
+        std::future::ready(self.req_cnt.fetch_add(1, Ordering::AcqRel))
     }
 
-    type StoreFileFut = Ready<()>;
-
-    fn store_file(self, _: Context, file: PlatformHandle<File>) -> Self::StoreFileFut {
+    fn store_file(
+        &self,
+        _peer: datadog_ipc::PeerCredentials,
+        file: PlatformHandle<File>,
+    ) -> impl std::future::Future<Output = ()> + Send + '_ {
         self.req_cnt.fetch_add(1, Ordering::AcqRel);
-
         #[allow(clippy::unwrap_used)]
         self.stored_files.lock().unwrap().push(file);
-
-        ready(())
-    }
-
-    type RetrieveFileFut = Ready<Option<PlatformHandle<File>>>;
-
-    fn retrieve_file(self, _: Context) -> Self::RetrieveFileFut {
-        self.req_cnt.fetch_add(1, Ordering::AcqRel);
-
-        #[allow(clippy::unwrap_used)]
-        ready(self.stored_files.lock().unwrap().pop())
+        std::future::ready(())
     }
 }

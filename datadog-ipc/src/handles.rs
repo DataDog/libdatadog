@@ -45,126 +45,141 @@ impl<T: TransferHandles> TransferHandles for &T {
     }
 }
 
-mod transport_impls {
-    use super::{HandlesTransport, TransferHandles};
+/// Collects raw file descriptors to be sent via `SCM_RIGHTS` alongside a message.
+#[cfg(unix)]
+pub struct FdSink(Vec<std::os::unix::io::RawFd>);
 
-    impl<T, E> TransferHandles for Result<T, E>
+#[cfg(unix)]
+impl FdSink {
+    pub fn new() -> Self {
+        FdSink(Vec::new())
+    }
+
+    pub fn fds(&self) -> &[std::os::unix::io::RawFd] {
+        &self.0
+    }
+
+    pub fn into_fds(self) -> Vec<std::os::unix::io::RawFd> {
+        self.0
+    }
+}
+
+#[cfg(unix)]
+impl Default for FdSink {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[cfg(unix)]
+impl HandlesTransport for &mut FdSink {
+    type Error = std::convert::Infallible;
+
+    fn copy_handle<T>(self, handle: super::platform::PlatformHandle<T>) -> Result<(), Self::Error> {
+        if let Some(owned) = &handle.inner {
+            use std::os::unix::io::AsRawFd;
+            self.0.push(owned.as_raw_fd());
+        }
+        Ok(())
+    }
+
+    fn provide_handle<T>(
+        self,
+        _hint: &super::platform::PlatformHandle<T>,
+    ) -> Result<super::platform::PlatformHandle<T>, Self::Error> {
+        unreachable!("FdSink::provide_handle should never be called")
+    }
+}
+
+/// Distributes received `SCM_RIGHTS` file descriptors into `PlatformHandle` fields.
+///
+/// Created fresh for each received message — no global fd queue, no fd stranding.
+#[cfg(unix)]
+pub struct FdSource(std::collections::VecDeque<io_lifetimes::OwnedFd>);
+
+#[cfg(unix)]
+impl FdSource {
+    pub fn new(fds: Vec<io_lifetimes::OwnedFd>) -> Self {
+        FdSource(fds.into_iter().collect())
+    }
+}
+
+#[cfg(unix)]
+impl HandlesTransport for &mut FdSource {
+    type Error = std::io::Error;
+
+    fn copy_handle<T>(
+        self,
+        _handle: super::platform::PlatformHandle<T>,
+    ) -> Result<(), Self::Error> {
+        Ok(())
+    }
+
+    fn provide_handle<T>(
+        self,
+        _hint: &super::platform::PlatformHandle<T>,
+    ) -> Result<super::platform::PlatformHandle<T>, Self::Error> {
+        use std::os::unix::io::{FromRawFd, IntoRawFd};
+        let fd = self.0.pop_front().ok_or_else(|| {
+            std::io::Error::new(
+                std::io::ErrorKind::UnexpectedEof,
+                "no more SCM_RIGHTS file descriptors available",
+            )
+        })?;
+        Ok(unsafe { super::platform::PlatformHandle::from_raw_fd(fd.into_raw_fd()) })
+    }
+}
+
+impl<T, E> TransferHandles for Result<T, E>
+where
+    T: TransferHandles,
+{
+    fn copy_handles<Transport>(&self, transport: Transport) -> Result<(), Transport::Error>
     where
-        T: TransferHandles,
+        Transport: HandlesTransport,
     {
-        fn copy_handles<Transport>(&self, transport: Transport) -> Result<(), Transport::Error>
-        where
-            Transport: HandlesTransport,
-        {
-            match self {
-                Ok(i) => i.copy_handles(transport),
-                Err(_) => Ok(()),
-            }
-        }
-
-        fn receive_handles<Transport>(
-            &mut self,
-            transport: Transport,
-        ) -> Result<(), Transport::Error>
-        where
-            Transport: HandlesTransport,
-        {
-            match self {
-                Ok(i) => i.receive_handles(transport),
-                Err(_) => Ok(()),
-            }
+        match self {
+            Ok(i) => i.copy_handles(transport),
+            Err(_) => Ok(()),
         }
     }
 
-    impl<T> TransferHandles for Option<T>
+    fn receive_handles<Transport>(
+        &mut self,
+        transport: Transport,
+    ) -> Result<(), Transport::Error>
     where
-        T: TransferHandles,
+        Transport: HandlesTransport,
     {
-        fn copy_handles<Transport: HandlesTransport>(
-            &self,
-            transport: Transport,
-        ) -> Result<(), Transport::Error> {
-            match self {
-                Some(s) => s.copy_handles(transport),
-                None => Ok(()),
-            }
+        match self {
+            Ok(i) => i.receive_handles(transport),
+            Err(_) => Ok(()),
         }
+    }
+}
 
-        fn receive_handles<Transport: HandlesTransport>(
-            &mut self,
-            transport: Transport,
-        ) -> Result<(), Transport::Error> {
-            match self {
-                Some(s) => s.receive_handles(transport),
-                #[allow(clippy::todo)]
-                None => todo!(),
-            }
+impl<T> TransferHandles for Option<T>
+where
+    T: TransferHandles,
+{
+    fn copy_handles<Transport: HandlesTransport>(
+        &self,
+        transport: Transport,
+    ) -> Result<(), Transport::Error> {
+        match self {
+            Some(s) => s.copy_handles(transport),
+            None => Ok(()),
         }
     }
 
-    use tarpc::{ClientMessage, Request, Response};
-
-    impl<T: TransferHandles> TransferHandles for Response<T> {
-        fn copy_handles<Transport: HandlesTransport>(
-            &self,
-            transport: Transport,
-        ) -> Result<(), Transport::Error> {
-            self.message.copy_handles(transport)
-        }
-
-        fn receive_handles<Transport: HandlesTransport>(
-            &mut self,
-            transport: Transport,
-        ) -> Result<(), Transport::Error> {
-            self.message.receive_handles(transport)
-        }
-    }
-
-    impl<T> TransferHandles for ClientMessage<T>
-    where
-        T: TransferHandles,
-    {
-        fn copy_handles<M>(&self, mover: M) -> Result<(), M::Error>
-        where
-            M: HandlesTransport,
-        {
-            match self {
-                ClientMessage::Request(r) => r.copy_handles(mover),
-                ClientMessage::Cancel {
-                    trace_context: _,
-                    request_id: _,
-                } => Ok(()),
-                _ => Ok(()),
-            }
-        }
-        fn receive_handles<P>(&mut self, provider: P) -> Result<(), P::Error>
-        where
-            P: HandlesTransport,
-        {
-            match self {
-                ClientMessage::Request(r) => r.receive_handles(provider),
-                ClientMessage::Cancel {
-                    trace_context: _,
-                    request_id: _,
-                } => Ok(()),
-                _ => Ok(()),
-            }
-        }
-    }
-
-    impl<T: TransferHandles> TransferHandles for Request<T> {
-        fn receive_handles<P>(&mut self, provider: P) -> Result<(), P::Error>
-        where
-            P: HandlesTransport,
-        {
-            self.message.receive_handles(provider)
-        }
-
-        fn copy_handles<M>(&self, mover: M) -> Result<(), M::Error>
-        where
-            M: HandlesTransport,
-        {
-            self.message.copy_handles(mover)
+    fn receive_handles<Transport: HandlesTransport>(
+        &mut self,
+        transport: Transport,
+    ) -> Result<(), Transport::Error> {
+        match self {
+            Some(s) => s.receive_handles(transport),
+            #[allow(clippy::todo)]
+            None => todo!(),
         }
     }
 }
