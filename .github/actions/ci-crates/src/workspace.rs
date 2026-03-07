@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use anyhow::Result;
+use cargo_metadata::camino::{Utf8Path, Utf8PathBuf};
 use cargo_metadata::{MetadataCommand, Package};
 use std::collections::{HashMap, HashSet, VecDeque};
 
@@ -10,11 +11,16 @@ pub struct WorkspaceMetadata {
     packages: Vec<Package>,
     /// Maps each crate name to the list of workspace crates that depend on it.
     reverse_deps: HashMap<String, Vec<String>>,
+    workspace_root: Utf8PathBuf,
 }
 
 impl WorkspaceMetadata {
     pub fn members(&self) -> &[Package] {
         &self.packages
+    }
+
+    pub fn workspace_root(&self) -> &Utf8Path {
+        &self.workspace_root
     }
 
     pub fn affected_from(&self, seeds: &[String]) -> HashSet<String> {
@@ -44,6 +50,7 @@ impl WorkspaceMetadata {
 pub fn load() -> Result<WorkspaceMetadata> {
     let metadata = MetadataCommand::new().exec()?;
 
+    let workspace_root = metadata.workspace_root.clone();
     let packages: Vec<Package> = metadata.workspace_packages().into_iter().cloned().collect();
 
     let member_names: HashSet<String> = packages.iter().map(|p| p.name.as_str().to_string()).collect();
@@ -63,6 +70,7 @@ pub fn load() -> Result<WorkspaceMetadata> {
     Ok(WorkspaceMetadata {
         packages,
         reverse_deps,
+        workspace_root,
     })
 }
 
@@ -85,6 +93,7 @@ mod tests {
         WorkspaceMetadata {
             packages: vec![],
             reverse_deps,
+            workspace_root: Utf8PathBuf::new(),
         }
     }
 

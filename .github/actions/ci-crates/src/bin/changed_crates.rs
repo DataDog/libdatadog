@@ -12,6 +12,7 @@
 //!   affected_crates_count  – integer
 
 use anyhow::{anyhow, Result};
+use cargo_metadata::camino::Utf8Path;
 use cargo_metadata::Package;
 use ci_crates::git;
 use ci_crates::workspace;
@@ -42,7 +43,7 @@ fn main() -> Result<()> {
     // * Compilation flags.
 
     let workspace = workspace::load()?;
-    let changed_crates = collect_changed_crates(&changed_files, workspace.members());
+    let changed_crates = collect_changed_crates(&changed_files, workspace.members(), workspace.workspace_root());
 
     if changed_crates.is_empty() {
         log::info!("Changed crates is empty");
@@ -60,13 +61,20 @@ fn main() -> Result<()> {
     )
 }
 
-fn collect_changed_crates(changed_files: &[String], members: &[Package]) -> Vec<CrateInfo> {
+fn collect_changed_crates(changed_files: &[String], members: &[Package], workspace_root: &Utf8Path) -> Vec<CrateInfo> {
     let mut crates: Vec<CrateInfo> = Vec::new();
     let mut crate_inventory: HashSet<String> = HashSet::new();
 
     for file in changed_files {
         for member in members {
-            if file.contains(member.name.as_str()) {
+            let Some(crate_dir) = member.manifest_path.parent() else {
+                continue;
+            };
+            let Ok(relative_dir) = crate_dir.strip_prefix(workspace_root) else {
+                continue;
+            };
+            let relative_dir_str = relative_dir.as_str();
+            if file == relative_dir_str || file.starts_with(&format!("{relative_dir_str}/")) {
                 if crate_inventory.insert(member.name.to_string()) {
                     crates.push(CrateInfo {
                         name: member.name.as_str().to_string(),
