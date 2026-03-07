@@ -59,10 +59,12 @@ jobs:
             RUN_TEST_SPAWN="false"
           fi
         fi
-        echo "packages-count=$COUNT" >> $GITHUB_OUTPUT
-        echo "packages=$PACKAGES" >> $GITHUB_OUTPUT
-        echo "crashtracker-feature=$CRASHTRACKER_FEATURE" >> $GITHUB_OUTPUT
-        echo "run-test-spawn=$RUN_TEST_SPAWN" >> $GITHUB_OUTPUT
+        {
+          echo "packages-count=$COUNT"
+          echo "packages=$PACKAGES"
+          echo "crashtracker-feature=$CRASHTRACKER_FEATURE"
+          echo "run-test-spawn=$RUN_TEST_SPAWN"
+        } >> $GITHUB_OUTPUT
 
   test:
     name: "cargo test #${{ matrix.platform }} ${{ matrix.rust_version }}"
@@ -77,6 +79,7 @@ jobs:
       CARGO_INCREMENTAL: 0
       PACKAGES: ${{ needs.setup.outputs.packages }}
       CRASHTRACKER_FEATURE: ${{ needs.setup.outputs.crashtracker-feature }}
+      TRACING_CRATES: "libdd-data-pipeline libdd-trace-utils datadog-tracer-flare"
     strategy:
       matrix:
         platform: [windows-latest, ubuntu-latest, macos-15]
@@ -123,7 +126,8 @@ jobs:
           if [[ -z "$PACKAGES" ]]; then
             cargo build --workspace --exclude builder --verbose
           else
-            # shellcheck disable=SC2086 - word splitting on $PACKAGES is intentional
+            # word splitting on $PACKAGES is intentional
+            # shellcheck disable=SC2086
             cargo build $PACKAGES --verbose
           fi
       - name: "[${{ steps.rust-version.outputs.version}}] cargo test (doc) and cargo nextest run"
@@ -149,10 +153,23 @@ jobs:
         run: |
           if [[ -z "$PACKAGES" ]]; then
             # shellcheck disable=SC2086
-            cargo nextest run --workspace $CRASHTRACKER_FEATURE --exclude builder --profile ci --test-threads=1 --verbose -E 'test(tracing_integration_tests::)'
+            for crate in $TRACING_CRATES; do
+              PACKAGES="$PACKAGES -p $crate"
+            done
+            cargo nextest run $PACKAGES --profile ci --test-threads=1 --verbose -E 'test(tracing_integration_tests::)'
           else
-            # shellcheck disable=SC2086
-            cargo nextest run $PACKAGES $CRASHTRACKER_FEATURE --profile ci --test-threads=1 --verbose -E 'test(tracing_integration_tests::)'
+            TRACING_PACKAGES=""
+            for crate in $TRACING_CRATES; do
+              if echo "$PACKAGES" | grep -qw -- "-p $crate"; then
+                TRACING_PACKAGES="$TRACING_PACKAGES -p $crate"
+              fi
+            done
+            if [[ -z "$TRACING_PACKAGES" ]]; then
+              echo "No tracing integration test crates found in PACKAGES, skipping."
+            else
+              # shellcheck disable=SC2086
+              cargo nextest run $TRACING_PACKAGES --profile ci --test-threads=1 --verbose -E 'test(tracing_integration_tests::)'
+            fi
           fi
         env:
           RUST_BACKTRACE: full

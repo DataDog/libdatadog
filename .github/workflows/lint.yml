@@ -11,7 +11,9 @@ jobs:
   setup:
     runs-on: ubuntu-latest
     outputs:
-      crates-count: ${{ steps.set-count.outputs.crates-count }}
+      crates-count: ${{ steps.set-packages.outputs.crates-count }}
+      fmt-packages: ${{ steps.set-packages.outputs.fmt-packages }}
+      clippy-packages: ${{ steps.set-packages.outputs.clippy-packages }}
     steps:
     - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # 4.2.2
       with:
@@ -20,16 +22,33 @@ jobs:
       if: ${{ github.event_name == 'pull_request' }}
       id: changed-crates
       uses: ./.github/actions/changed-crates
-    - name: Set crates count
-      id: set-count
+    - name: Set lint packages
+      id: set-packages
       env:
-        CRATES_COUNT: ${{ steps.changed-crates.outputs.crates_count }}
+        CHANGED_CRATES_COUNT: ${{ steps.changed-crates.outputs.crates_count }}
+        CHANGED_CRATES: ${{ steps.changed-crates.outputs.crates }}
+        AFFECTED_CRATES: ${{ steps.changed-crates.outputs.affected_crates }}
       run: |
-        if [[ "${{ github.event_name }}" == "pull_request" ]]; then
-          echo "crates-count=$CRATES_COUNT" >> $GITHUB_OUTPUT
+        if [[ "${{ github.event_name }}" == "push" ]]; then
+          COUNT="1"
+          FMT_PACKAGES=""
+          CLIPPY_PACKAGES=""
+        elif [[ "$CHANGED_CRATES_COUNT" == "0" ]]; then
+          COUNT="0"
+          FMT_PACKAGES=""
+          CLIPPY_PACKAGES=""
         else
-          echo "crates-count=1" >> $GITHUB_OUTPUT
+          COUNT="$CHANGED_CRATES_COUNT"
+          # rustfmt: only directly changed crates — dependants were not modified by this PR
+          FMT_PACKAGES=$(echo "$CHANGED_CRATES" | jq -r '[.[].name] | map("-p " + .) | join(" ")')
+          # clippy: affected crates — a change can introduce warnings in dependants
+          CLIPPY_PACKAGES=$(echo "$AFFECTED_CRATES" | jq -r 'map("-p " + .) | join(" ")')
         fi
+        {
+          echo "crates-count=$COUNT"
+          echo "fmt-packages=$FMT_PACKAGES"
+          echo "clippy-packages=$CLIPPY_PACKAGES"
+        } >> $GITHUB_OUTPUT
 
   actionlint:
     needs: setup
@@ -59,7 +78,16 @@ jobs:
         with:
           cache-targets: true # cache build artifacts
           cache-bin: true # cache the ~/.cargo/bin directory
-      - run: cargo fmt --all -- --check
+      - name: Run rustfmt
+        env:
+          FMT_PACKAGES: ${{ needs.setup.outputs.fmt-packages }}
+        run: |
+          if [[ -z "$FMT_PACKAGES" ]]; then
+            cargo fmt --all -- --check
+          else
+            # shellcheck disable=SC2086
+            cargo fmt $FMT_PACKAGES -- --check
+          fi
   clippy:
     needs: setup
     if: needs.setup.outputs.crates-count != '0'
@@ -82,12 +110,18 @@ jobs:
           cache-bin: true # cache the ~/.cargo/bin directory
       - name: Run clippy on ${{ matrix.platform }} ${{ matrix.rust_version }}
         shell: bash
+        env:
+          CLIPPY_PACKAGES: ${{ needs.setup.outputs.clippy-packages }}
         run: |
           if [[ "${{ matrix.platform }}" == "windows-latest" ]]; then
             export AWS_LC_FIPS_SYS_NO_ASM=1
           fi
-          # shellcheck disable=SC2046
-          cargo clippy --workspace --all-targets --all-features -- -D warnings 
+          if [[ -z "$CLIPPY_PACKAGES" ]]; then
+            cargo clippy --workspace --all-targets --all-features -- -D warnings
+          else
+            # shellcheck disable=SC2086
+            cargo clippy $CLIPPY_PACKAGES --all-targets --all-features -- -D warnings
+          fi
 
   licensecheck:
     needs: setup

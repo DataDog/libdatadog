@@ -43,9 +43,9 @@ jobs:
           PACKAGES=$(echo "$FFI_CRATES" | jq -r 'map("-p " + .) | join(" ")')
           CRATES_JSON="$FFI_CRATES"
         fi
-        echo "packages-count=$COUNT" >> $GITHUB_OUTPUT
-        echo "packages=$PACKAGES" >> $GITHUB_OUTPUT
         {
+          echo "packages-count=$COUNT"
+          echo "packages=$PACKAGES"
           echo "crates-json<<EOF"
           echo "$CRATES_JSON"
           echo "EOF"
