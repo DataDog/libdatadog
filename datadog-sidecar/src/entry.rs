@@ -37,6 +37,9 @@ pub struct MainLoopConfig {
     pub enable_ctrl_c_handler: bool,
     pub enable_crashtracker: bool,
     pub external_shutdown_rx: Option<oneshot::Receiver<()>>,
+    /// Set to false in thread mode so the worker's UID can be obtained on the
+    /// first connection and used to fchown the SHM.
+    pub init_shm_eagerly: bool,
 }
 
 impl Default for MainLoopConfig {
@@ -45,6 +48,7 @@ impl Default for MainLoopConfig {
             enable_ctrl_c_handler: true,
             enable_crashtracker: true,
             external_shutdown_rx: None,
+            init_shm_eagerly: true,
         }
     }
 }
@@ -125,8 +129,9 @@ where
         });
     }
 
-    // Init. Early, before we start listening.
-    drop(SHM_LIMITER.lock());
+    if loop_config.init_shm_eagerly {
+        drop(SHM_LIMITER.lock());
+    }
 
     let server = SidecarServer::default();
 

@@ -16,9 +16,13 @@ use crate::setup::AbstractUnixSocketLiaison;
 use crate::setup::Liaison;
 #[cfg(not(target_os = "linux"))]
 use crate::setup::SharedDirLiaison;
+use crate::tracer::SHM_LIMITER;
 use datadog_ipc::transport::blocking::BlockingTransport;
 
 static MASTER_LISTENER: OnceLock<Mutex<Option<MasterListener>>> = OnceLock::new();
+
+/// Ensures first-connection SHM initialization runs exactly once across all threads.
+static FIRST_CONNECTION_INIT: OnceLock<()> = OnceLock::new();
 
 pub struct MasterListener {
     shutdown_tx: Option<oneshot::Sender<()>>,
@@ -139,6 +143,15 @@ async fn accept_socket_loop_thread(
                 match accept {
                     Ok((socket, _)) => {
                         info!("Accepted new worker connection");
+                        // On the first connection, get the worker's UID and
+                        // fchown the SHM to that UID so cross-user access works when
+                        // the master runs as root and workers run as a different user.
+                        FIRST_CONNECTION_INIT.get_or_init(|| {
+                            if let Ok(cred) = socket.peer_cred() {
+                                datadog_ipc::platform::set_shm_owner_uid(cred.uid());
+                            }
+                            drop(SHM_LIMITER.lock());
+                        });
                         handler(socket);
                     }
                     Err(e) => {
@@ -179,6 +192,8 @@ fn run_listener(pid: u32, _config: Config, shutdown_rx: oneshot::Receiver<()>) -
         enable_ctrl_c_handler: false,
         enable_crashtracker: false,
         external_shutdown_rx: None,
+        // Defer SHM init to first connection so we can fchown using the worker's UID.
+        init_shm_eagerly: false,
     };
 
     let runtime = tokio::runtime::Builder::new_current_thread()

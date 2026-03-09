@@ -10,7 +10,7 @@ use nix::errno::Errno;
 use nix::fcntl::{open, OFlag};
 use nix::sys::mman::{self, mmap, munmap, MapFlags, ProtFlags};
 use nix::sys::stat::Mode;
-use nix::unistd::{ftruncate, mkdir, unlink};
+use nix::unistd::{fchown, ftruncate, mkdir, unlink, Uid};
 use nix::NixPath;
 use std::ffi::{CStr, CString};
 use std::fs::File;
@@ -18,7 +18,11 @@ use std::io;
 use std::num::NonZeroUsize;
 use std::os::fd::AsFd;
 use std::os::unix::fs::MetadataExt;
+use std::os::unix::io::AsRawFd;
 use std::sync::atomic::{AtomicI32, AtomicU32, Ordering};
+
+// Sentinel value meaning "no owner UID override"
+const NO_OWNER_UID: u32 = u32::MAX;
 
 fn fallback_path<P: ?Sized + NixPath>(name: &P) -> nix::Result<CString> {
     name.with_nix_path(|cstr| {
@@ -95,14 +99,19 @@ pub(crate) fn munmap_handle<T: MemoryHandle>(mapped: &mut MappedMem<T>) {
 
 static ANON_SHM_ID: AtomicI32 = AtomicI32::new(0);
 
-static SHM_OPEN_MODE: AtomicU32 = AtomicU32::new(0o600);
+static SHM_OWNER_UID: AtomicU32 = AtomicU32::new(NO_OWNER_UID);
 
-pub fn set_shm_open_mode(mode: u32) {
-    SHM_OPEN_MODE.store(mode, Ordering::Relaxed);
+pub fn set_shm_owner_uid(uid: u32) {
+    SHM_OWNER_UID.store(uid, Ordering::Relaxed);
 }
 
-fn shm_open_mode() -> Mode {
-    Mode::from_bits_truncate(SHM_OPEN_MODE.load(Ordering::Relaxed))
+fn shm_owner_uid() -> Option<u32> {
+    let uid = SHM_OWNER_UID.load(Ordering::Relaxed);
+    if uid == NO_OWNER_UID {
+        None
+    } else {
+        Some(uid)
+    }
 }
 
 impl ShmHandle {
@@ -149,12 +158,15 @@ impl ShmHandle {
 
 impl NamedShmHandle {
     pub fn create(path: CString, size: usize) -> io::Result<NamedShmHandle> {
-        Self::create_mode(path, size, shm_open_mode())
+        Self::create_mode(path, size, Mode::S_IWUSR | Mode::S_IRUSR)
     }
 
     pub fn create_mode(path: CString, size: usize, mode: Mode) -> io::Result<NamedShmHandle> {
         let fd = shm_open(path.as_bytes(), OFlag::O_CREAT | OFlag::O_RDWR, mode)?;
         ftruncate(&fd, size as off_t)?;
+        if let Some(uid) = shm_owner_uid() {
+            let _ = fchown(fd.as_raw_fd(), Some(Uid::from_raw(uid)), None);
+        }
         Self::new(fd, Some(path), size)
     }
 

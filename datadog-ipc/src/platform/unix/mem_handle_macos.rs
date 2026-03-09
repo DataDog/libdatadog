@@ -9,11 +9,12 @@ use nix::errno::Errno;
 use nix::fcntl::OFlag;
 use nix::sys::mman::{mmap, munmap, shm_open, shm_unlink, MapFlags, ProtFlags};
 use nix::sys::stat::Mode;
-use nix::unistd::ftruncate;
+use nix::unistd::{fchown, ftruncate, Uid};
 use std::ffi::{CStr, CString};
 use std::io;
 use std::num::NonZeroUsize;
 use std::os::fd::{AsFd, OwnedFd};
+use std::os::unix::io::AsRawFd;
 use std::sync::atomic::{AtomicI32, AtomicU32, AtomicUsize, Ordering};
 
 const MAPPING_MAX_SIZE: usize = 1 << 17; // 128 MiB ought to be enough for everybody?
@@ -69,14 +70,21 @@ pub(crate) fn munmap_handle<T: MemoryHandle>(mapped: &MappedMem<T>) {
 
 static ANON_SHM_ID: AtomicI32 = AtomicI32::new(0);
 
-static SHM_OPEN_MODE: AtomicU32 = AtomicU32::new(0o600);
+const NO_OWNER_UID: u32 = u32::MAX;
 
-pub fn set_shm_open_mode(mode: u32) {
-    SHM_OPEN_MODE.store(mode, Ordering::Relaxed);
+static SHM_OWNER_UID: AtomicU32 = AtomicU32::new(NO_OWNER_UID);
+
+pub fn set_shm_owner_uid(uid: u32) {
+    SHM_OWNER_UID.store(uid, Ordering::Relaxed);
 }
 
-fn shm_open_mode() -> Mode {
-    Mode::from_bits_truncate(SHM_OPEN_MODE.load(Ordering::Relaxed) as u16)
+fn shm_owner_uid() -> Option<u32> {
+    let uid = SHM_OWNER_UID.load(Ordering::Relaxed);
+    if uid == NO_OWNER_UID {
+        None
+    } else {
+        Some(uid)
+    }
 }
 
 impl ShmHandle {
@@ -110,7 +118,7 @@ fn path_slice(path: &CStr) -> &[u8] {
 
 impl NamedShmHandle {
     pub fn create(path: CString, size: usize) -> io::Result<NamedShmHandle> {
-        Self::create_mode(path, size, shm_open_mode())
+        Self::create_mode(path, size, Mode::S_IWUSR | Mode::S_IRUSR)
     }
 
     pub fn create_mode(path: CString, size: usize, mode: Mode) -> io::Result<NamedShmHandle> {
@@ -121,6 +129,9 @@ impl NamedShmHandle {
             if error != Errno::EINVAL {
                 truncate?;
             }
+        }
+        if let Some(uid) = shm_owner_uid() {
+            let _ = fchown(fd.as_raw_fd(), Some(Uid::from_raw(uid)), None);
         }
         Self::new(fd, Some(path), size)
     }
