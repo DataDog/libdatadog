@@ -102,7 +102,7 @@ pub fn obfuscate_url_string(
     // Determine Go's escape() trigger: Cat1 or non-ASCII in path causes Cat2 encoding too
     let path = &url[..path_end];
     let needs_full_path = path.bytes().any(|b| b > 127) || path.chars().any(is_cat1);
-    let frag_has_non_ascii = frag_pos.map_or(false, |i| url[i + 1..].bytes().any(|b| b > 127));
+    let frag_has_non_ascii = frag_pos.is_some_and(|i| url[i + 1..].bytes().any(|b| b > 127));
 
     // Pre-encode chars that UriRef (strict RFC 3986) rejects.
     // We encode ALL non-ASCII chars (not just Cat1/Cat2) so that characters outside
