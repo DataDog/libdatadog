@@ -169,6 +169,7 @@ fn run_listener_windows(pipe_name: String, shutdown_rx: oneshot::Receiver<()>) -
         enable_ctrl_c_handler: false,
         enable_crashtracker: false,
         external_shutdown_rx: None,
+        init_shm_eagerly: true,
     };
 
     crate::entry::enter_listener_loop_with_config(acquire_listener, loop_config)
