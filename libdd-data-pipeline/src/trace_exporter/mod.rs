@@ -1745,7 +1745,7 @@ mod single_threaded_tests {
                 .body(r#"{"version":"1","client_drop_p0s":true,"endpoints":["/v0.4/traces","/v0.6/stats"]}"#);
         });
 
-        let runtime = SharedRuntime::new().unwrap();
+        let runtime = Arc::new(SharedRuntime::new().unwrap());
 
         let mut builder = TraceExporterBuilder::default();
         builder
@@ -1842,7 +1842,7 @@ mod single_threaded_tests {
                 .body(r#"{"version":"1","client_drop_p0s":true,"endpoints":["/v0.4/traces","/v0.6/stats"]}"#);
         });
 
-        let runtime = SharedRuntime::new().unwrap();
+        let runtime = Arc::new(SharedRuntime::new().unwrap());
 
         let mut builder = TraceExporterBuilder::default();
         builder

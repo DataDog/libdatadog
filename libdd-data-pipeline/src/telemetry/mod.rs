@@ -305,6 +305,7 @@ mod tests {
     use httpmock::Method::POST;
     use httpmock::MockServer;
     use libdd_common::http_common;
+    use libdd_trace_utils::test_utils::poll_for_mock_hit;
     use regex::Regex;
     use tokio::time::sleep;
 
@@ -329,19 +330,6 @@ mod tests {
             .expect("Failed to spawn worker");
         (client, handle)
     }
-
-    macro_rules! wait_for_telemetry_call {
-        ($telemetry_srv:expr) => {{
-            let start = std::time::Instant::now();
-            while $telemetry_srv.calls_async().await == 0 {
-                if start.elapsed() > Duration::from_secs(10) {
-                    panic!("telemetry server did not receive calls within timeout");
-                }
-                sleep(Duration::from_millis(10)).await;
-            }
-        }};
-    }
-
     #[test]
     fn builder_test() {
         let builder = TelemetryClientBuilder::default()
@@ -381,7 +369,7 @@ mod tests {
 
         rt.block_on(async {
             let server = MockServer::start_async().await;
-            let telemetry_srv = server
+            let mut telemetry_srv = server
                 .mock_async(|when, then| {
                     when.method(POST).body_matches(payload);
                     then.status(200).body("");
@@ -400,8 +388,10 @@ mod tests {
             sleep(Duration::from_millis(1)).await;
 
             handle.stop().await.expect("Failed to stop worker");
-            wait_for_telemetry_call!(telemetry_srv);
-            telemetry_srv.assert_calls_async(1).await;
+            assert!(
+                poll_for_mock_hit(&mut telemetry_srv, 1000, 10, 1, false).await,
+                "telemetry server did not receive calls within timeout"
+            );
         });
     }
 
@@ -414,7 +404,7 @@ mod tests {
 
         rt.block_on(async {
             let server = MockServer::start_async().await;
-            let telemetry_srv = server
+            let mut telemetry_srv = server
                 .mock_async(|when, then| {
                     when.method(POST).body_matches(payload);
                     then.status(200).body("");
@@ -433,8 +423,10 @@ mod tests {
             sleep(Duration::from_millis(1)).await;
 
             handle.stop().await.expect("Failed to stop worker");
-            wait_for_telemetry_call!(telemetry_srv);
-            telemetry_srv.assert_calls_async(1).await;
+            assert!(
+                poll_for_mock_hit(&mut telemetry_srv, 1000, 10, 1, false).await,
+                "telemetry server did not receive calls within timeout"
+            );
         });
     }
 
@@ -447,7 +439,7 @@ mod tests {
 
         rt.block_on(async {
             let server = MockServer::start_async().await;
-            let telemetry_srv = server
+            let mut telemetry_srv = server
                 .mock_async(|when, then| {
                     when.method(POST).body_matches(payload);
                     then.status(200).body("");
@@ -466,8 +458,10 @@ mod tests {
             sleep(Duration::from_millis(1)).await;
 
             handle.stop().await.expect("Failed to stop worker");
-            wait_for_telemetry_call!(telemetry_srv);
-            telemetry_srv.assert_calls_async(1).await;
+            assert!(
+                poll_for_mock_hit(&mut telemetry_srv, 1000, 10, 1, false).await,
+                "telemetry server did not receive calls within timeout"
+            );
         });
     }
 
@@ -480,7 +474,7 @@ mod tests {
 
         rt.block_on(async {
             let server = MockServer::start_async().await;
-            let telemetry_srv = server
+            let mut telemetry_srv = server
                 .mock_async(|when, then| {
                     when.method(POST).body_matches(payload);
                     then.status(200).body("");
@@ -499,8 +493,10 @@ mod tests {
             sleep(Duration::from_millis(1)).await;
 
             handle.stop().await.expect("Failed to stop worker");
-            wait_for_telemetry_call!(telemetry_srv);
-            telemetry_srv.assert_calls_async(1).await;
+            assert!(
+                poll_for_mock_hit(&mut telemetry_srv, 1000, 10, 1, false).await,
+                "telemetry server did not receive calls within timeout"
+            );
         });
     }
 
@@ -513,7 +509,7 @@ mod tests {
 
         rt.block_on(async {
             let server = MockServer::start_async().await;
-            let telemetry_srv = server
+            let mut telemetry_srv = server
                 .mock_async(|when, then| {
                     when.method(POST).body_matches(payload);
                     then.status(200).body("");
@@ -532,8 +528,10 @@ mod tests {
             sleep(Duration::from_millis(1)).await;
 
             handle.stop().await.expect("Failed to stop worker");
-            wait_for_telemetry_call!(telemetry_srv);
-            telemetry_srv.assert_calls_async(1).await;
+            assert!(
+                poll_for_mock_hit(&mut telemetry_srv, 1000, 10, 1, false).await,
+                "telemetry server did not receive calls within timeout"
+            );
         });
     }
 
@@ -546,7 +544,7 @@ mod tests {
 
         rt.block_on(async {
             let server = MockServer::start_async().await;
-            let telemetry_srv = server
+            let mut telemetry_srv = server
                 .mock_async(|when, then| {
                     when.method(POST).body_matches(payload);
                     then.status(200).body("");
@@ -565,8 +563,10 @@ mod tests {
             sleep(Duration::from_millis(1)).await;
 
             handle.stop().await.expect("Failed to stop worker");
-            wait_for_telemetry_call!(telemetry_srv);
-            telemetry_srv.assert_calls_async(1).await;
+            assert!(
+                poll_for_mock_hit(&mut telemetry_srv, 1000, 10, 1, false).await,
+                "telemetry server did not receive calls within timeout"
+            );
         });
     }
 
@@ -579,7 +579,7 @@ mod tests {
 
         rt.block_on(async {
             let server = MockServer::start_async().await;
-            let telemetry_srv = server
+            let mut telemetry_srv = server
                 .mock_async(|when, then| {
                     when.method(POST).body_matches(payload);
                     then.status(200).body("");
@@ -598,8 +598,10 @@ mod tests {
             sleep(Duration::from_millis(1)).await;
 
             handle.stop().await.expect("Failed to stop worker");
-            wait_for_telemetry_call!(telemetry_srv);
-            telemetry_srv.assert_calls_async(1).await;
+            assert!(
+                poll_for_mock_hit(&mut telemetry_srv, 1000, 10, 1, false).await,
+                "telemetry server did not receive calls within timeout"
+            );
         });
     }
 
@@ -612,7 +614,7 @@ mod tests {
 
         rt.block_on(async {
             let server = MockServer::start_async().await;
-            let telemetry_srv = server
+            let mut telemetry_srv = server
                 .mock_async(|when, then| {
                     when.method(POST).body_matches(payload);
                     then.status(200).body("");
@@ -631,8 +633,10 @@ mod tests {
             sleep(Duration::from_millis(1)).await;
 
             handle.stop().await.expect("Failed to stop worker");
-            wait_for_telemetry_call!(telemetry_srv);
-            telemetry_srv.assert_calls_async(1).await;
+            assert!(
+                poll_for_mock_hit(&mut telemetry_srv, 1000, 10, 1, false).await,
+                "telemetry server did not receive calls within timeout"
+            );
         });
     }
 
@@ -645,7 +649,7 @@ mod tests {
 
         rt.block_on(async {
             let server = MockServer::start_async().await;
-            let telemetry_srv = server
+            let mut telemetry_srv = server
                 .mock_async(|when, then| {
                     when.method(POST).body_matches(payload);
                     then.status(200).body("");
@@ -664,8 +668,10 @@ mod tests {
             sleep(Duration::from_millis(1)).await;
 
             handle.stop().await.expect("Failed to stop worker");
-            wait_for_telemetry_call!(telemetry_srv);
-            telemetry_srv.assert_calls_async(1).await;
+            assert!(
+                poll_for_mock_hit(&mut telemetry_srv, 1000, 10, 1, false).await,
+                "telemetry server did not receive calls within timeout"
+            );
         });
     }
 
@@ -678,7 +684,7 @@ mod tests {
 
         rt.block_on(async {
             let server = MockServer::start_async().await;
-            let telemetry_srv = server
+            let mut telemetry_srv = server
                 .mock_async(|when, then| {
                     when.method(POST).body_matches(payload);
                     then.status(200).body("");
@@ -697,8 +703,10 @@ mod tests {
             sleep(Duration::from_millis(1)).await;
 
             handle.stop().await.expect("Failed to stop worker");
-            wait_for_telemetry_call!(telemetry_srv);
-            telemetry_srv.assert_calls_async(1).await;
+            assert!(
+                poll_for_mock_hit(&mut telemetry_srv, 1000, 10, 1, false).await,
+                "telemetry server did not receive calls within timeout"
+            );
         });
     }
 
@@ -849,7 +857,7 @@ mod tests {
 
         rt.block_on(async {
             let server = MockServer::start_async().await;
-            let telemetry_srv = server
+            let mut telemetry_srv = server
                 .mock_async(|when, then| {
                     when.method(POST).body_includes(r#""runtime_id":"foo""#);
                     then.status(200).body("");
@@ -868,9 +876,11 @@ mod tests {
             sleep(Duration::from_millis(10)).await;
 
             handle.stop().await.expect("Failed to stop worker");
-            wait_for_telemetry_call!(telemetry_srv);
+            assert!(
+                poll_for_mock_hit(&mut telemetry_srv, 1000, 10, 1, false).await,
+                "telemetry server did not receive calls within timeout"
+            );
             // One payload generate-metrics
-            telemetry_srv.assert_calls_async(1).await;
         });
     }
 
@@ -882,7 +892,7 @@ mod tests {
 
         rt.block_on(async {
             let server = MockServer::start_async().await;
-            let telemetry_srv = server
+            let mut telemetry_srv = server
                 .mock_async(|when, then| {
                     when.method(POST)
                         .body_includes(r#""application":{"service_name":"test_service","service_version":"test_version","env":"test_env","language_name":"test_language","language_version":"test_language_version","tracer_version":"test_tracer_version"}"#);
@@ -903,9 +913,11 @@ mod tests {
 
             handle.stop().await.expect("Failed to stop worker");
             // Wait for the server to receive at least one call, but don't hang forever.
-            wait_for_telemetry_call!(telemetry_srv);
+            assert!(
+                poll_for_mock_hit(&mut telemetry_srv, 1000, 10, 1, false).await,
+                "telemetry server did not receive calls within timeout"
+            );
             // One payload generate-metrics
-            telemetry_srv.assert_calls_async(1).await;
         });
     }
 }
