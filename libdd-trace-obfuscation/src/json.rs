@@ -38,9 +38,11 @@ impl JsonObfuscator {
         }
     }
 
-    pub fn obfuscate(&self, input: &str) -> String {
+    /// Obfuscates json string and return an optional error on malformatted json
+    /// If an error occurs, an value is returned anyways which might be truncated (...)
+    pub fn obfuscate(&self, input: &str) -> (String, Option<String>) {
         if input.is_empty() {
-            return String::new();
+            return (String::new(), None);
         }
 
         let mut out = String::with_capacity(input.len());
@@ -124,7 +126,7 @@ impl JsonObfuscator {
                 Op::SkipSpace => continue,
                 Op::Error => {
                     out.push_str("...");
-                    return out;
+                    return (out, scanner.err);
                 }
                 Op::End => {} // whitespace between JSON objects — fall through to output char
             }
@@ -135,7 +137,7 @@ impl JsonObfuscator {
         if scanner.eof() == Op::Error {
             out.push_str("...");
         }
-        out
+        (out, scanner.err)
     }
 }
 
@@ -224,30 +226,35 @@ mod tests {
     )]
     #[test]
     fn test_name() {
-        assert_json_eq(&obf(keep_keys).obfuscate(input), expected);
+        let (res, err) = obf(keep_keys).obfuscate(input);
+        assert_eq!(err, None);
+        assert_json_eq(&res, expected);
     }
 
     // Truncation / error tests — parametric over (input, expected_exact_string).
     #[duplicate_item(
-        test_name                           input                                                                    expected;
-        [test_empty_input]                  [""]                                                                     [""];
-        [test_invalid_emoji]                ["🤨"]                                                                   ["..."];
-        [test_invalid_unicode]              ["ჸ"]                                                                    ["..."];
-        [test_invalid_json_appends_ellipsis]["INVALID"]                                                              ["..."];
-        [test_invalid_single_char]          [")"]                                                                    ["..."];
-        [test_truncated_open_value_string]  [r#"{"query":""#]                                                       [r#"{"query":"?"..."#];
-        [test_truncated_multi_json]         [r#"{"first json": "valid"} {"second json": "unfinished"#]               [r#"{"first json":"?"} {"second json":"?"..."#];
+        test_name                           input                                                                    expected                                          expected_error;
+        [test_empty_input]                  [""]                                                                     [""]                                              [None];
+        [test_invalid_emoji]                ["🤨"]                                                                   ["..."]                                           [Some("invalid character '🤨' looking for beginning of value")];
+        [test_invalid_unicode]              ["ჸ"]                                                                    ["..."]                                           [Some("invalid character 'ჸ' looking for beginning of value")];
+        [test_invalid_json_appends_ellipsis]["INVALID"]                                                              ["..."]                                           [Some("invalid character 'I' looking for beginning of value")];
+        [test_invalid_single_char]          [")"]                                                                    ["..."]                                           [Some("invalid character ')' looking for beginning of value")];
+        [test_truncated_open_value_string]  [r#"{"query":""#]                                                        [r#"{"query":"?"..."#]                            [Some("unexpected end of JSON input at char position 11")];
+        [test_truncated_multi_json]         [r#"{"first json": "valid"} {"second json": "unfinished"#]               [r#"{"first json":"?"} {"second json":"?"..."#]   [Some("unexpected end of JSON input at char position 53")];
     )]
     #[test]
     fn test_name() {
-        assert_eq!(obf(&[]).obfuscate(input), expected);
+        let (res, err) = obf(&[]).obfuscate(input);
+        assert_eq!(res, expected);
+        assert_eq!(err, expected_error.map(str::to_owned));
     }
 
     #[test]
     fn test_multiple_json_objects() {
         // Multiple concatenated JSON objects (elasticsearch bulk API pattern).
         let input = r#"{"index":{"_index":"traces","_type":"trace"}} {"value":1,"name":"test"}"#;
-        let result = obf(&[]).obfuscate(input);
+        let (result, err) = obf(&[]).obfuscate(input);
+        assert_eq!(err, None);
         let mut stream =
             serde_json::Deserializer::from_str(&result).into_iter::<serde_json::Value>();
         let first = stream
@@ -265,7 +272,9 @@ mod tests {
     #[test]
     fn test_transform_key_sql_basic() {
         let input = r#"{"query":"select * from table where id = 2","hello":"world","hi":"there"}"#;
-        let result = obf_sql(&["hello"], &["query"]).obfuscate(input);
+        let (result, err) = obf_sql(&["hello"], &["query"]).obfuscate(input);
+        assert_eq!(err, None);
+
         let val: serde_json::Value = serde_json::from_str(&result).unwrap();
         assert_eq!(val["hello"], json!("world"));
         assert_eq!(val["hi"], json!("?"));
@@ -279,13 +288,19 @@ mod tests {
     fn test_transform_key_with_object_value_falls_through() {
         let input = r#"{"object":{"not a":"query"}}"#;
         let expected = r#"{"object":{"not a":"?"}}"#;
-        assert_json_eq(&obf_sql(&[], &["object"]).obfuscate(input), expected);
+        let (res, err) = obf_sql(&[], &["object"]).obfuscate(input);
+        assert_eq!(err, None);
+
+        assert_json_eq(&res, expected);
     }
 
     #[test]
     fn test_transform_key_with_array_value_falls_through() {
         let input = r#"{"object":["not","a","query"]}"#;
         let expected = r#"{"object":["?","?","?"]}"#;
-        assert_json_eq(&obf_sql(&[], &["object"]).obfuscate(input), expected);
+        let (res, err) = obf_sql(&[], &["object"]).obfuscate(input);
+        assert_eq!(err, None);
+
+        assert_json_eq(&res, expected);
     }
 }

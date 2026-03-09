@@ -61,7 +61,7 @@ pub(crate) struct Scanner {
     state: State,
     end_top: bool,
     parse_state: Vec<ParseState>,
-    err: Option<String>,
+    pub(crate) err: Option<String>,
     /// Total chars consumed — incremented by the caller before each `step` call.
     position: i64,
 }
@@ -454,17 +454,16 @@ mod tests {
     fn test_valid_empty_object() {
         let mut s = Scanner::new();
         for c in "{}".chars() {
-            s.position += 1;
             assert_ne!(s.step(c), Op::Error, "error on char '{}'", { c });
         }
         assert_eq!(s.eof(), Op::End);
+        assert_eq!(s.position, 2);
     }
 
     #[test]
     fn test_valid_nested_json() {
         let mut s = Scanner::new();
         for c in r#"{"key":"value","num":42}"#.chars() {
-            s.position += 1;
             assert_ne!(s.step(c), Op::Error, "error on char '{}'", { c });
         }
         assert_eq!(s.eof(), Op::End);
@@ -474,7 +473,6 @@ mod tests {
     fn test_truncated_input_returns_error_on_eof() {
         let mut s = Scanner::new();
         for c in r#"{"key":"#.chars() {
-            s.position += 1;
             s.step(c);
         }
         assert_eq!(s.eof(), Op::Error);
@@ -483,7 +481,6 @@ mod tests {
     #[test]
     fn test_invalid_input_returns_error() {
         let mut s = Scanner::new();
-        s.position += 1;
         assert_eq!(s.step(')'), Op::Error);
     }
 
@@ -491,7 +488,6 @@ mod tests {
     fn test_multiple_json_objects_no_errors() {
         let mut s = Scanner::new();
         for c in r#"{"a":1} {"b":2}"#.chars() {
-            s.position += 1;
             assert_ne!(s.step(c), Op::Error, "error on char '{}'", { c });
         }
     }
