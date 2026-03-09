@@ -235,18 +235,18 @@ mod tests {
     #[duplicate_item(
         test_name                           input                                                                    expected                                          expected_error;
         [test_empty_input]                  [""]                                                                     [""]                                              [None];
-        [test_invalid_emoji]                ["🤨"]                                                                   ["..."]                                           [Some("invalid character '🤨' looking for beginning of value")];
-        [test_invalid_unicode]              ["ჸ"]                                                                    ["..."]                                           [Some("invalid character 'ჸ' looking for beginning of value")];
-        [test_invalid_json_appends_ellipsis]["INVALID"]                                                              ["..."]                                           [Some("invalid character 'I' looking for beginning of value")];
-        [test_invalid_single_char]          [")"]                                                                    ["..."]                                           [Some("invalid character ')' looking for beginning of value")];
-        [test_truncated_open_value_string]  [r#"{"query":""#]                                                        [r#"{"query":"?"..."#]                            [Some("unexpected end of JSON input at char position 11")];
-        [test_truncated_multi_json]         [r#"{"first json": "valid"} {"second json": "unfinished"#]               [r#"{"first json":"?"} {"second json":"?"..."#]   [Some("unexpected end of JSON input at char position 53")];
+        [test_invalid_emoji]                ["🤨"]                                                                   ["..."]                                           [Some("invalid character '🤨' looking for beginning of value".to_owned())];
+        [test_invalid_unicode]              ["ჸ"]                                                                    ["..."]                                           [Some("invalid character 'ჸ' looking for beginning of value".to_owned())];
+        [test_invalid_json_appends_ellipsis]["INVALID"]                                                              ["..."]                                           [Some("invalid character 'I' looking for beginning of value".to_owned())];
+        [test_invalid_single_char]          [")"]                                                                    ["..."]                                           [Some("invalid character ')' looking for beginning of value".to_owned())];
+        [test_truncated_open_value_string]  [r#"{"query":""#]                                                        [r#"{"query":"?"..."#]                            [Some("unexpected end of JSON input at char position 11".to_owned())];
+        [test_truncated_multi_json]         [r#"{"first json": "valid"} {"second json": "unfinished"#]               [r#"{"first json":"?"} {"second json":"?"..."#]   [Some("unexpected end of JSON input at char position 53".to_owned())];
     )]
     #[test]
     fn test_name() {
         let (res, err) = obf(&[]).obfuscate(input);
         assert_eq!(res, expected);
-        assert_eq!(err, expected_error.map(str::to_owned));
+        assert_eq!(err, expected_error);
     }
 
     #[test]
