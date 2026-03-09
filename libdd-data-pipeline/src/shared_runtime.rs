@@ -309,26 +309,27 @@ impl SharedRuntime {
 
     /// Shutdown the runtime and all workers synchronously with optional timeout.
     ///
-    /// This creates a temporary runtime to execute the async shutdown and should be called
-    /// from non-async contexts during application shutdown.
-    ///
     /// Worker errors are logged but do not cause the function to fail.
     ///
     /// # Errors
-    /// Returns an error only if shutdown times out or runtime creation fails.
-    pub fn shutdown(self, timeout: Option<std::time::Duration>) -> Result<(), SharedRuntimeError> {
-        let runtime = self.runtime()?;
-
-        if let Some(timeout) = timeout {
-            match runtime
-                .block_on(async { tokio::time::timeout(timeout, self.shutdown_async()).await })
-            {
-                Ok(()) => Ok(()),
-                Err(_) => Err(SharedRuntimeError::ShutdownTimedOut(timeout)),
+    /// Returns an error only if shutdown times out.
+    pub fn shutdown(&self, timeout: Option<std::time::Duration>) -> Result<(), SharedRuntimeError> {
+        match self.runtime.lock_or_panic().take() {
+            Some(runtime) => {
+                let result = if let Some(timeout) = timeout {
+                    match runtime.block_on(async {
+                        tokio::time::timeout(timeout, self.shutdown_async()).await
+                    }) {
+                        Ok(()) => Ok(()),
+                        Err(_) => Err(SharedRuntimeError::ShutdownTimedOut(timeout)),
+                    }
+                } else {
+                    runtime.block_on(self.shutdown_async());
+                    Ok(())
+                };
+                result
             }
-        } else {
-            runtime.block_on(self.shutdown_async());
-            Ok(())
+            None => Ok(()), // The runtime is not running so there's nothing to shutdown
         }
     }
 
