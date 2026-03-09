@@ -59,7 +59,23 @@ impl TracerMetadata {
     pub fn to_otel_process_ctx(&self) -> otel_proto::common::v1::ProcessContext {
         use otel_proto::common::v1::{any_value, AnyValue, KeyValue};
 
-        // Every field of `self` should gets propagated to the otel context.
+        fn key_value(key: &'static str, val: String) -> KeyValue {
+            KeyValue {
+                key: key.to_owned(),
+                value: Some(AnyValue {
+                    value: Some(any_value::Value::StringValue(val)),
+                }),
+                key_ref: 0,
+            }
+        }
+
+        // Even if there's no value, we still set the key to let the reader know that we do support
+        // and emit this specific attribute, which happens to be empty in this case.
+        fn key_value_opt(key: &'static str, val: &Option<String>) -> KeyValue {
+            key_value(key, val.as_ref().cloned().unwrap_or_default())
+        }
+
+        // Every field of `self` should get propagated to the otel context.
         // If you add a new field, please also add it here and as a key/value in the otel context.
         let TracerMetadata {
             // This one isn't propagated on purpose
@@ -75,46 +91,23 @@ impl TracerMetadata {
             container_id,
         } = self;
 
-        fn key_value(key: &'static str, val: String) -> KeyValue {
-            KeyValue {
-                key: key.to_owned(),
-                value: Some(AnyValue {
-                    value: Some(any_value::Value::StringValue(val)),
-                }),
-                key_ref: 0,
-            }
-        }
-
-        let mut attributes = vec![
-            key_value("telemetry.sdk.language", tracer_language.clone()),
-            key_value("telemetry.sdk.version", tracer_version.clone()),
-            key_value("telemetry.sdk.name", Self::OTEL_SDK_NAME.to_owned()),
-            key_value("host.name", hostname.clone()),
-        ];
-
-        let mut set_opt_attr = |key: &'static str, val: &Option<String>| {
-            attributes.push(key_value(key, val.as_ref().cloned().unwrap_or_default()))
-        };
-
-        set_opt_attr("service.name", service_name);
-        set_opt_attr("service.instance.id", runtime_id);
-        set_opt_attr("service.version", service_version);
-        set_opt_attr("deployment.environment.name", service_env);
-        set_opt_attr("container.id", container_id);
-
-        let extra_attributes: Vec<_> = process_tags
-            .as_ref()
-            .map(|tags| key_value("datadog.process_tags", tags.clone()))
-            .into_iter()
-            .collect();
-
         otel_proto::common::v1::ProcessContext {
             resource: Some(otel_proto::resource::v1::Resource {
-                attributes,
+                attributes: vec![
+                    key_value_opt("service.name", service_name),
+                    key_value_opt("service.instance.id", runtime_id),
+                    key_value_opt("service.version", service_version),
+                    key_value_opt("deployment.environment.name", service_env),
+                    key_value("telemetry.sdk.language", tracer_language.clone()),
+                    key_value("telemetry.sdk.version", tracer_version.clone()),
+                    key_value("telemetry.sdk.name", Self::OTEL_SDK_NAME.to_owned()),
+                    key_value("host.name", hostname.clone()),
+                    key_value_opt("container.id", container_id),
+                ],
                 dropped_attributes_count: 0,
                 entity_refs: vec![],
             }),
-            extra_attributes,
+            extra_attributes: vec![key_value_opt("datadog.process_tags", process_tags)],
         }
     }
 }
