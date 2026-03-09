@@ -4,6 +4,12 @@
 name: 'Get Changed Crates'
 description: 'Detects which Rust crates have changed files in a PR or push'
 
+inputs:
+  changed-crates-version:
+    description: 'Version of the prebuilt changed-crates binary to download (e.g. v0.1.0). Must match a ci-crates-v* release.'
+    required: false
+    default: 'v0.1.0'
+
 outputs:
   status:
     description: 'Exit status of the action (e.g. success, skipped)'
@@ -27,11 +33,6 @@ outputs:
 runs:
   using: 'composite'
   steps:
-    - name: Set up Rust
-      if: ${{ github.event_name == 'pull_request' }}
-      shell: bash
-      run: rustup install stable && rustup default stable
-
     - name: Fetch all branches
       if: ${{ github.event_name == 'pull_request' }}
       shell: bash
@@ -40,12 +41,26 @@ runs:
         echo "Available branches:"
         git branch -a
 
-    - name: Build change reporter
+    - name: Get changed-crates binary
       if: ${{ github.event_name == 'pull_request' }}
       shell: bash
+      env:
+        VERSION: ${{ inputs.changed-crates-version }}
+        REPO: ${{ github.repository }}
       run: |
-        cd ${{ github.action_path }}/..
-        cargo build --release -p ci-crates
+        BIN_DIR="${{ github.action_path }}/../bin"
+        mkdir -p "$BIN_DIR"
+        TAG="ci-crates-v${VERSION#v}"
+        URL="https://github.com/${REPO}/releases/download/${TAG}/changed-crates"
+        if curl -sSLfo "$BIN_DIR/changed-crates" "$URL"; then
+          chmod +x "$BIN_DIR/changed-crates"
+        else
+          echo "Prebuilt binary not found, building from source..."
+          rustup default stable
+          cd "${{ github.action_path }}/.."
+          cargo build --release -p ci-crates
+          cp target/release/changed-crates "$BIN_DIR/changed-crates"
+        fi
 
     - name: Run change reporter
       id: detect
@@ -59,7 +74,8 @@ runs:
           exit 0
         fi
 
-        if RUST_LOG=debug ${{ github.action_path }}/../target/release/changed-crates $PR_BASE_REF; then
+        CHANGED_CRATES_BIN="${{ github.action_path }}/../bin/changed-crates"
+        if RUST_LOG=debug "$CHANGED_CRATES_BIN" $PR_BASE_REF; then
           echo "status=success" >> $GITHUB_OUTPUT
         else
           echo "status=skipped" >> $GITHUB_OUTPUT
