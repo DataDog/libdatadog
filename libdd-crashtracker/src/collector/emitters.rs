@@ -13,7 +13,6 @@ use crate::{
     translate_si_code, CrashtrackerConfiguration, ErrorKind, SignalNames, StackTrace,
     StacktraceCollection,
 };
-use backtrace::Frame;
 use libc::{siginfo_t, ucontext_t};
 use std::{
     fs::File,
@@ -37,227 +36,6 @@ pub enum EmitterError {
     AtomicSetError(#[from] crate::collector::atomic_set::AtomicSetError),
     #[error("Serialization error: {0}")]
     SerializationError(#[from] serde_json::Error),
-}
-
-/// Emit a stacktrace onto the given handle as formatted json.
-/// SAFETY:
-///     Crash-tracking functions are not reentrant.
-///     No other crash-handler functions should be called concurrently.
-/// ATOMICITY:
-///     This function is not atomic. A crash during its execution may lead to
-///     unexpected crash-handling behaviour.
-/// SIGNAL SAFETY:
-///     Getting a backtrace on rust is not guaranteed to be signal safe.
-///     https://github.com/rust-lang/backtrace-rs/issues/414
-///     Calculating the `ip` of the frames seems safe, but resolving the frames
-///     sometimes crashes.
-unsafe fn emit_backtrace_by_frames(
-    w: &mut impl Write,
-    resolve_frames: StacktraceCollection,
-    fault_ip: usize,
-    ucontext: *const ucontext_t,
-) -> Result<(), EmitterError> {
-    // https://docs.rs/backtrace/latest/backtrace/index.html
-    writeln!(w, "{DD_CRASHTRACK_BEGIN_STACKTRACE}")?;
-
-    // On macOS, backtrace::trace_unsynchronized fails in forked children because
-    // macOS restricts many APIs after fork-without-exec. Walk the frame pointer
-    // chain directly from the saved ucontext registers instead. The parent's
-    // stack memory is still readable in the forked child
-    #[cfg(target_os = "macos")]
-    {
-        let _ = (resolve_frames, fault_ip);
-        emit_backtrace_from_ucontext(w, ucontext)?;
-    }
-
-    #[cfg(not(target_os = "macos"))]
-    {
-        let _ = ucontext;
-        emit_backtrace_via_library(w, resolve_frames, fault_ip)?;
-    }
-
-    writeln!(w, "{DD_CRASHTRACK_END_STACKTRACE}")?;
-    w.flush()?;
-    Ok(())
-}
-
-#[allow(dead_code)] // used from tests on macOS, from emit_backtrace_by_frames on other platforms
-unsafe fn emit_backtrace_via_library(
-    w: &mut impl Write,
-    resolve_frames: StacktraceCollection,
-    fault_ip: usize,
-) -> Result<(), EmitterError> {
-    fn emit_absolute_addresses(w: &mut impl Write, frame: &Frame) -> Result<(), EmitterError> {
-        write!(w, "\"ip\": \"{:?}\"", frame.ip())?;
-        if let Some(module_base_address) = frame.module_base_address() {
-            write!(w, ", \"module_base_address\": \"{module_base_address:?}\"",)?;
-        }
-        write!(w, ", \"sp\": \"{:?}\"", frame.sp())?;
-        write!(w, ", \"symbol_address\": \"{:?}\"", frame.symbol_address())?;
-        Ok(())
-    }
-
-    let mut ip_found = false;
-    loop {
-        backtrace::trace_unsynchronized(|frame| {
-            // Skip all stack frames until we encounter the determined crash instruction pointer
-            // (fault_ip). These initial frames belong exclusively to the crash tracker and the
-            // backtrace functionality and are therefore not relevant for troubleshooting.
-            let ip = frame.ip();
-            if ip as usize == fault_ip {
-                ip_found = true;
-            }
-            if !ip_found {
-                return true;
-            }
-            if resolve_frames == StacktraceCollection::EnabledWithInprocessSymbols {
-                backtrace::resolve_frame_unsynchronized(frame, |symbol| {
-                    #[allow(clippy::unwrap_used)]
-                    write!(w, "{{").unwrap();
-                    #[allow(clippy::unwrap_used)]
-                    emit_absolute_addresses(w, frame).unwrap();
-                    if let Some(column) = symbol.colno() {
-                        #[allow(clippy::unwrap_used)]
-                        write!(w, ", \"column\": {column}").unwrap();
-                    }
-                    if let Some(file) = symbol.filename() {
-                        // The debug printer for path already wraps it in `"` marks.
-                        #[allow(clippy::unwrap_used)]
-                        write!(w, ", \"file\": {file:?}").unwrap();
-                    }
-                    if let Some(function) = symbol.name() {
-                        #[allow(clippy::unwrap_used)]
-                        write!(w, ", \"function\": \"{function}\"").unwrap();
-                    }
-                    if let Some(line) = symbol.lineno() {
-                        #[allow(clippy::unwrap_used)]
-                        write!(w, ", \"line\": {line}").unwrap();
-                    }
-                    #[allow(clippy::unwrap_used)]
-                    writeln!(w, "}}").unwrap();
-                    // Flush eagerly to ensure that each frame gets emitted even if the next one
-                    // fails
-                    #[allow(clippy::unwrap_used)]
-                    w.flush().unwrap();
-                });
-            } else {
-                #[allow(clippy::unwrap_used)]
-                write!(w, "{{").unwrap();
-                #[allow(clippy::unwrap_used)]
-                emit_absolute_addresses(w, frame).unwrap();
-                #[allow(clippy::unwrap_used)]
-                writeln!(w, "}}").unwrap();
-                // Flush eagerly to ensure that each frame gets emitted even if the next one fails
-                #[allow(clippy::unwrap_used)]
-                w.flush().unwrap();
-            }
-            true // keep going to the next frame
-        });
-        if ip_found {
-            break;
-        }
-        // emit anything at all, if the crashing frame is not found for some reason
-        ip_found = true;
-    }
-    Ok(())
-}
-
-/// Walk the frame pointer chain from the ucontext's saved registers.
-///
-/// After fork(), the child process has a copy-on-write view of the parent's
-/// stack memory, so the frame pointer chain from the crashed thread is still
-/// readable. This avoids depending on `backtrace::trace_unsynchronized` which
-/// uses macOS APIs that don't work in forked-but-not-exec'd children.
-///
-/// For each IP we call `dladdr` to resolve the symbol name, symbol address,
-/// and containing shared-object path. `dladdr` is safe here because it only
-/// reads dyld's internal data structures (no allocation, no Mach IPC).
-#[cfg(target_os = "macos")]
-unsafe fn emit_backtrace_from_ucontext(
-    w: &mut impl Write,
-    ucontext: *const ucontext_t,
-) -> Result<(), EmitterError> {
-    if ucontext.is_null() {
-        return Ok(());
-    }
-    let mcontext = (*ucontext).uc_mcontext;
-    if mcontext.is_null() {
-        return Ok(());
-    }
-
-    // Get the thread's stack bounds so we only deref frame pointers
-    // that lie within known stack memory. Both pthread_get_stackaddr_np and
-    // pthread_get_stacksize_np are async-signal-safe on macOS
-    let thread = libc::pthread_self();
-    let stack_top = libc::pthread_get_stackaddr_np(thread) as usize;
-    let stack_size = libc::pthread_get_stacksize_np(thread);
-    let stack_bottom = stack_top.saturating_sub(stack_size);
-
-    // Returns true when the range [addr, addr+len) falls within the thread stack
-    let in_stack_bounds = |addr: usize, len: usize| -> bool {
-        let end = addr.saturating_add(len);
-        addr >= stack_bottom && end <= stack_top
-    };
-
-    let ss = &(*mcontext).__ss;
-    #[cfg(target_arch = "aarch64")]
-    let (pc, mut fp) = (ss.__pc as usize, ss.__fp as usize);
-    #[cfg(target_arch = "x86_64")]
-    let (pc, mut fp) = (ss.__rip as usize, ss.__rbp as usize);
-
-    emit_frame_with_dladdr(w, pc)?;
-
-    const MAX_FRAMES: usize = 512;
-    for _ in 0..MAX_FRAMES {
-        if fp == 0 || fp % std::mem::align_of::<usize>() != 0 {
-            break;
-        }
-        // Each frame record is two pointer-sized words: [saved_fp, return_addr]
-        // Bail out if the record falls outside the thread stack
-        if !in_stack_bounds(fp, 2 * std::mem::size_of::<usize>()) {
-            break;
-        }
-        let next_fp = *(fp as *const usize);
-        let return_addr = *((fp + std::mem::size_of::<usize>()) as *const usize);
-        if return_addr == 0 {
-            break;
-        }
-        emit_frame_with_dladdr(w, return_addr)?;
-        if next_fp <= fp {
-            break;
-        }
-        fp = next_fp;
-    }
-
-    Ok(())
-}
-
-/// Emit a single stack frame, enriched with `dladdr` symbol information.
-#[cfg(target_os = "macos")]
-unsafe fn emit_frame_with_dladdr(w: &mut impl Write, ip: usize) -> Result<(), EmitterError> {
-    let mut info: libc::Dl_info = std::mem::zeroed();
-    let resolved = libc::dladdr(ip as *const libc::c_void, &mut info) != 0;
-
-    write!(w, "{{\"ip\": \"0x{ip:x}\"")?;
-
-    if resolved {
-        if !info.dli_fbase.is_null() {
-            write!(w, ", \"module_base_address\": \"{:?}\"", info.dli_fbase)?;
-        }
-        if !info.dli_saddr.is_null() {
-            write!(w, ", \"symbol_address\": \"{:?}\"", info.dli_saddr)?;
-        }
-        if !info.dli_sname.is_null() {
-            let name = std::ffi::CStr::from_ptr(info.dli_sname);
-            if let Ok(s) = name.to_str() {
-                write!(w, ", \"function\": \"{s}\"")?;
-            }
-        }
-    }
-
-    writeln!(w, "}}")?;
-    w.flush()?;
-    Ok(())
 }
 
 /// Crash-kind-specific data passed to `emit_crashreport`.
@@ -329,30 +107,296 @@ pub(crate) fn emit_crashreport(
         CrashKindData::UnixSignal { ucontext, .. } => {
             emit_ucontext(pipe, ucontext)?;
             if config.resolve_frames() != StacktraceCollection::Disabled {
-                // SAFETY: Getting a backtrace on rust is not guaranteed to be signal safe
-                // https://github.com/rust-lang/backtrace-rs/issues/414
-                // let current_backtrace = backtrace::Backtrace::new();
-                // In fact, if we look into the code here, we see mallocs.
-                // https://doc.rust-lang.org/src/std/backtrace.rs.html#332
-                // We do this last, so even if it crashes, we still get the other info.
-                let fault_ip = extract_ip(ucontext);
-                unsafe {
-                    emit_backtrace_by_frames(pipe, config.resolve_frames(), fault_ip, ucontext)?
-                };
+                // SAFETY: `ucontext` comes from the signal handler and points to
+                // valid kernel-saved registers. This is called last so that even
+                // if the unwinder crashes, the other crash data has already been
+                // written. The crash handler is non-reentrant and single-threaded
+                unsafe { emit_backtrace_by_frames(pipe, config.resolve_frames(), ucontext)? };
             }
             if is_runtime_callback_registered() {
                 emit_runtime_stack(pipe)?;
             }
         }
         CrashKindData::UnhandledException { stacktrace } => {
-            // SAFETY: this branch only executes when an unhandled exception occurs
-            // and is not called from a signal handler.
+            // SAFETY: This branch only executes for unhandled exceptions, never
+            // from a signal handler
             unsafe { emit_whole_stacktrace(pipe, stacktrace)? };
         }
     }
 
     writeln!(pipe, "{DD_CRASHTRACK_DONE}")?;
     pipe.flush()?;
+    Ok(())
+}
+
+/// Emit a stacktrace onto the given handle as formatted json.
+/// SAFETY:
+///     Crash-tracking functions are not reentrant.
+///     No other crash-handler functions should be called concurrently.
+/// ATOMICITY:
+///     This function is not atomic. A crash during its execution may lead to
+///     unexpected crash-handling behaviour.
+unsafe fn emit_backtrace_by_frames(
+    w: &mut impl Write,
+    resolve_frames: StacktraceCollection,
+    ucontext: *const ucontext_t,
+) -> Result<(), EmitterError> {
+    writeln!(w, "{DD_CRASHTRACK_BEGIN_STACKTRACE}")?;
+
+    // On macOS, backtrace::trace_unsynchronized fails in forked children because
+    // macOS restricts many APIs after fork-without-exec. Walk the frame pointer
+    // chain directly from the saved ucontext registers instead. The parent's
+    // stack memory is still readable in the forked child.
+    #[cfg(target_os = "macos")]
+    {
+        let _ = resolve_frames;
+        // SAFETY: `ucontext` originates from the signal handler and points to
+        // the kernel-saved register snapshot. The caller guarantees we are in a
+        // crash-handling context where the parent's stack is still readable
+        // (copy-on-write after fork)
+        unsafe { emit_macos_backtrace_from_ucontext(w, ucontext)? };
+    }
+
+    // On Linux, use the bundled libunwind. unw_init_local2(cursor, ucontext, 0)
+    // seeds the unwinder from the saved CPU context that the OS captured at the
+    // moment of the crash, so we start already past the signal frame at the
+    // actual faulting instruction. This is essential on musl libc (Alpine
+    // Linux), where the signal trampoline provides no DWARF unwind info and
+    // libgcc's unwinder cannot cross the signal frame boundary.
+    #[cfg(target_os = "linux")]
+    // SAFETY: `ucontext` originates from the signal handler and points to the
+    // kernel-saved register snapshot. The caller guarantees single-threaded,
+    // non-reentrant crash-handler execution
+    unsafe {
+        emit_backtrace_via_libunwind(w, resolve_frames, ucontext)?
+    };
+    writeln!(w, "{DD_CRASHTRACK_END_STACKTRACE}")?;
+    w.flush()?;
+    Ok(())
+}
+
+/// Unwind the stack using the bundled libunwind, seeded from the OS-captured
+/// ucontext.
+///
+/// `unw_init_local2(cursor, ucontext, 0)` initialises the cursor from the
+/// register snapshot that the kernel saved at the moment of the fault. The
+/// unwinder therefore starts directly at the faulting instruction; it never
+/// has to walk backward through the signal trampoline frame.
+///
+/// This matters on musl libc (Alpine Linux x86_64): musl's signal trampoline
+/// does not carry DWARF unwind info, so libgcc's unwinder (used by the
+/// `backtrace` crate) cannot cross the frame boundary and gets stuck inside
+/// the signal handler. libunwind's local unwinder has no such limitation.
+///
+/// We choose to use step instead of backtrace2, because we want to eagerly flush
+/// frame by frame
+///
+/// For each frame we emit:
+///   - `ip`  / `sp`                             — always
+///   - `module_base_address` / `symbol_address` — when `dladdr` succeeds
+///   - `function`                               — for `EnabledWithInprocessSymbols`
+#[cfg(target_os = "linux")]
+unsafe fn emit_backtrace_via_libunwind(
+    w: &mut impl Write,
+    resolve_frames: StacktraceCollection,
+    ucontext: *const ucontext_t,
+) -> Result<(), EmitterError> {
+    use libdd_libunwind_sys::{
+        unw_get_proc_name, unw_get_reg, unw_init_local2, unw_step, UnwCursor, UnwWord, UNW_REG_IP,
+        UNW_REG_SP,
+    };
+
+    if ucontext.is_null() {
+        return Ok(());
+    }
+
+    // SAFETY: UnwCursor is a repr(C) struct of plain integers (`[u64; 127]`);
+    // all-zeros is a valid bit pattern
+    let mut cursor: UnwCursor = unsafe { std::mem::zeroed() };
+
+    // SAFETY: `cursor` is zeroed and is valid for initialization.
+    // `ucontext` was checked non-null above and points to the kernel-saved
+    // register snapshot captured by the signal handler. The const-to-mut cast
+    // is ok: libunwind only reads the context to seed the cursor
+    let ret = unsafe { unw_init_local2(&mut cursor, ucontext as *mut _, 1) };
+    if ret != 0 {
+        return Ok(());
+    }
+
+    const MAX_FRAMES: usize = 512;
+    for _ in 0..MAX_FRAMES {
+        let mut ip: UnwWord = 0;
+        let mut sp: UnwWord = 0;
+
+        // SAFETY: `cursor` was successfully initialized by `unw_init_local2`
+        // and is advanced by `unw_step` at the end of each iteration.
+        // UNW_REG_IP and UNW_REG_SP are valid libunwind register constants
+        if unsafe { unw_get_reg(&mut cursor, UNW_REG_IP, &mut ip) } != 0 || ip == 0 {
+            break;
+        }
+        let _ = unsafe { unw_get_reg(&mut cursor, UNW_REG_SP, &mut sp) };
+
+        write!(w, "{{\"ip\": \"0x{ip:x}\"")?;
+        write!(w, ", \"sp\": \"0x{sp:x}\"")?;
+
+        // SAFETY: Dl_info is a repr(C) struct of pointers and integers;
+        // all-zeros (null pointers, zero integers) is a valid representation
+        let mut dl_info: libc::Dl_info = unsafe { std::mem::zeroed() };
+        // SAFETY: `ip` is a code address obtained from the unwinder.
+        // dladdr only reads ld.so internal tables (no allocation, no locks)
+        // making it safe to call from a signal handler
+        if unsafe { libc::dladdr(ip as *const libc::c_void, &mut dl_info) } != 0 {
+            if !dl_info.dli_fbase.is_null() {
+                write!(w, ", \"module_base_address\": \"{:?}\"", dl_info.dli_fbase)?;
+            }
+            if !dl_info.dli_saddr.is_null() {
+                write!(w, ", \"symbol_address\": \"{:?}\"", dl_info.dli_saddr)?;
+            }
+        }
+
+        if resolve_frames == StacktraceCollection::EnabledWithInprocessSymbols {
+            let mut name_buf: [libc::c_char; 256] = [0; 256];
+            // SAFETY: `cursor` is in a valid state (unw_get_reg succeeded).
+            // `name_buf` is a valid stack-allocated buffer with known length.
+            if unsafe {
+                unw_get_proc_name(
+                    &mut cursor,
+                    name_buf.as_mut_ptr(),
+                    name_buf.len(),
+                    std::ptr::null_mut(),
+                )
+            } == 0
+            {
+                // SAFETY: unw_get_proc_name returned 0 (success), guaranteeing
+                // a NUL-terminated string was written into name_buf.
+                let name = unsafe { std::ffi::CStr::from_ptr(name_buf.as_ptr()) };
+                if let Ok(s) = name.to_str() {
+                    write!(w, ", \"function\": \"{s}\"")?;
+                }
+            }
+        }
+
+        writeln!(w, "}}")?;
+        w.flush()?;
+
+        // SAFETY: `cursor` is in a valid state; unw_step advances to the next
+        // frame or returns <= 0 when no more frames remain.
+        if unsafe { unw_step(&mut cursor) } <= 0 {
+            break;
+        }
+    }
+
+    Ok(())
+}
+
+/// Walk the frame pointer chain from the ucontext's saved registers.
+///
+/// After fork(), the child process has a copy-on-write view of the parent's
+/// stack memory, so the frame pointer chain from the crashed thread is still
+/// readable. This avoids depending on `backtrace::trace_unsynchronized` which
+/// uses macOS APIs that don't work in forked-but-not-exec'd children.
+///
+/// For each IP we call `dladdr` to resolve the symbol name, symbol address,
+/// and containing shared-object path. `dladdr` is safe here because it only
+/// reads dyld's internal data structures (no allocation, no Mach IPC).
+#[cfg(target_os = "macos")]
+unsafe fn emit_macos_backtrace_from_ucontext(
+    w: &mut impl Write,
+    ucontext: *const ucontext_t,
+) -> Result<(), EmitterError> {
+    if ucontext.is_null() {
+        return Ok(());
+    }
+    let mcontext = unsafe { (*ucontext).uc_mcontext };
+    if mcontext.is_null() {
+        return Ok(());
+    }
+
+    // SAFETY: pthread_self and pthread_get_stack{addr,size}_np are
+    // async-signal-safe on macOS and always succeed for the calling thread.
+    let thread = unsafe { libc::pthread_self() };
+    let stack_top = unsafe { libc::pthread_get_stackaddr_np(thread) } as usize;
+    let stack_size = unsafe { libc::pthread_get_stacksize_np(thread) };
+    let stack_bottom = stack_top.saturating_sub(stack_size);
+
+    let in_stack_bounds = |addr: usize, len: usize| -> bool {
+        let end = addr.saturating_add(len);
+        addr >= stack_bottom && end <= stack_top
+    };
+
+    // SAFETY: `mcontext` was checked non-null above and is the kernel-provided
+    // machine context from the signal handler's ucontext.
+    let ss = unsafe { &(*mcontext).__ss };
+    #[cfg(target_arch = "aarch64")]
+    let (pc, mut fp) = (ss.__pc as usize, ss.__fp as usize);
+    #[cfg(target_arch = "x86_64")]
+    let (pc, mut fp) = (ss.__rip as usize, ss.__rbp as usize);
+
+    // SAFETY: `pc` is a valid code address from the kernel-saved register state.
+    unsafe { emit_frame_with_dladdr(w, pc)? };
+
+    const MAX_FRAMES: usize = 512;
+    for _ in 0..MAX_FRAMES {
+        if fp == 0 || fp % std::mem::align_of::<usize>() != 0 {
+            break;
+        }
+        if !in_stack_bounds(fp, 2 * std::mem::size_of::<usize>()) {
+            break;
+        }
+        // SAFETY: `fp` is non-zero, properly aligned, and the two-word frame
+        // record [saved_fp, return_addr] lies within the validated thread stack
+        // bounds (checked by in_stack_bounds above). After fork(), the child
+        // has a copy-on-write view of the parent's stack memory.
+        let next_fp = unsafe { *(fp as *const usize) };
+        let return_addr = unsafe { *((fp + std::mem::size_of::<usize>()) as *const usize) };
+        if return_addr == 0 {
+            break;
+        }
+        // SAFETY: `return_addr` is a code address read from a validated
+        // in-bounds frame record on the thread stack.
+        unsafe { emit_frame_with_dladdr(w, return_addr)? };
+        if next_fp <= fp {
+            break;
+        }
+        fp = next_fp;
+    }
+
+    Ok(())
+}
+
+/// Emit a single stack frame, enriched with `dladdr` symbol information.
+#[cfg(target_os = "macos")]
+unsafe fn emit_frame_with_dladdr(w: &mut impl Write, ip: usize) -> Result<(), EmitterError> {
+    // SAFETY: Dl_info is a repr(C) struct of pointers and integers;
+    // all-zeros (null pointers, zero integers) is a valid representation.
+    let mut info: libc::Dl_info = unsafe { std::mem::zeroed() };
+    // SAFETY: dladdr only reads dyld's internal data structures (no
+    // allocation, no Mach IPC) making it async-signal-safe. `ip` is a code
+    // address from the unwound stack or kernel-saved registers.
+    let resolved = unsafe { libc::dladdr(ip as *const libc::c_void, &mut info) } != 0;
+
+    write!(w, "{{\"ip\": \"0x{ip:x}\"")?;
+
+    if resolved {
+        if !info.dli_fbase.is_null() {
+            write!(w, ", \"module_base_address\": \"{:?}\"", info.dli_fbase)?;
+        }
+        if !info.dli_saddr.is_null() {
+            write!(w, ", \"symbol_address\": \"{:?}\"", info.dli_saddr)?;
+        }
+        if !info.dli_sname.is_null() {
+            // SAFETY: dladdr returned non-zero and dli_sname is non-null, so
+            // it points to a valid NUL-terminated C string in the shared
+            // library's string table (static lifetime, read-only).
+            let name = unsafe { std::ffi::CStr::from_ptr(info.dli_sname) };
+            if let Ok(s) = name.to_str() {
+                write!(w, ", \"function\": \"{s}\"")?;
+            }
+        }
+    }
+
+    writeln!(w, "}}")?;
+    w.flush()?;
     Ok(())
 }
 
@@ -456,6 +500,9 @@ fn emit_ucontext(w: &mut impl Write, ucontext: *const ucontext_t) -> Result<(), 
 ///     callbacks and writing to the provided stream. The runtime callback itself
 ///     must be signal safe.
 fn emit_runtime_stack(w: &mut impl Write) -> Result<(), EmitterError> {
+    // SAFETY: Reads from a global atomic pointer set during crashtracker
+    // initialization. The crash handler's non-reentrant execution model
+    // guarantees no concurrent modification.
     let callback = unsafe { get_registered_callback() };
 
     let callback = match callback {
@@ -471,6 +518,9 @@ fn emit_runtime_stack(w: &mut impl Write) -> Result<(), EmitterError> {
 
 fn emit_runtime_stack_by_frames(w: &mut impl Write) -> Result<(), EmitterError> {
     writeln!(w, "{DD_CRASHTRACK_BEGIN_RUNTIME_STACK_FRAME}")?;
+    // SAFETY: The runtime callback was registered during initialization and
+    // must be signal-safe per its API contract. The crash handler's
+    // non-reentrant model ensures no concurrent invocation.
     unsafe { invoke_runtime_callback_with_writer(w)? };
     writeln!(w, "{DD_CRASHTRACK_END_RUNTIME_STACK_FRAME}")?;
     w.flush()?;
@@ -479,6 +529,8 @@ fn emit_runtime_stack_by_frames(w: &mut impl Write) -> Result<(), EmitterError> 
 
 fn emit_runtime_stack_by_stacktrace_string(w: &mut impl Write) -> Result<(), EmitterError> {
     writeln!(w, "{DD_CRASHTRACK_BEGIN_RUNTIME_STACK_STRING}")?;
+    // SAFETY: Same contract as emit_runtime_stack_by_frames — the callback
+    // was registered at init time and the crash handler runs non-reentrantly.
     unsafe { invoke_runtime_callback_with_writer(w)? };
     writeln!(w, "{DD_CRASHTRACK_END_RUNTIME_STACK_STRING}")?;
     w.flush()?;
@@ -511,6 +563,8 @@ fn emit_siginfo(w: &mut impl Write, sig_info: *const siginfo_t) -> Result<(), Em
         return Err(EmitterError::NullSiginfo);
     }
 
+    // SAFETY: `sig_info` was checked non-null above and points to the
+    // kernel-provided siginfo_t from the signal handler.
     let si_signo = unsafe { (*sig_info).si_signo };
     let si_signo_human_readable: SignalNames = si_signo.into();
 
@@ -519,11 +573,14 @@ fn emit_siginfo(w: &mut impl Write, sig_info: *const siginfo_t) -> Result<(), Em
     // SIGILL, SIGFPE, SIGSEGV, SIGBUS, and SIGTRAP fill in si_addr with the address of the fault.
     let si_addr: Option<usize> = match si_signo {
         libc::SIGILL | libc::SIGFPE | libc::SIGSEGV | libc::SIGBUS | libc::SIGTRAP => {
+            // SAFETY: for these signal types, si_addr is defined and valid
+            // per sigaction(2). `sig_info` was checked non-null above.
             Some(unsafe { (*sig_info).si_addr() as usize })
         }
         _ => None,
     };
 
+    // SAFETY: `sig_info` was checked non-null and points to valid kernel data.
     let si_code = unsafe { (*sig_info).si_code };
     let si_code_human_readable = translate_si_code(si_signo, si_code);
 
@@ -593,46 +650,12 @@ fn emit_text_file(w: &mut impl Write, path: &str) -> Result<(), EmitterError> {
     Ok(())
 }
 
-fn extract_ip(ucontext: *const ucontext_t) -> usize {
-    unsafe {
-        #[cfg(all(target_os = "macos", target_arch = "x86_64"))]
-        return (*(*ucontext).uc_mcontext).__ss.__rip as usize;
-        #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
-        return (*(*ucontext).uc_mcontext).__ss.__pc as usize;
-
-        #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
-        return (*ucontext).uc_mcontext.gregs[libc::REG_RIP as usize] as usize;
-        #[cfg(all(target_os = "linux", target_arch = "aarch64"))]
-        return (*ucontext).uc_mcontext.pc as usize;
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use crate::StackFrame;
 
     use super::*;
     use std::str;
-
-    #[inline(never)]
-    fn inner_test_emit_backtrace_with_symbols(collection: StacktraceCollection) -> Vec<u8> {
-        let mut ip_of_test_fn = 0;
-        let mut skip = 3;
-        unsafe {
-            backtrace::trace_unsynchronized(|frame| {
-                ip_of_test_fn = frame.ip() as usize;
-                skip -= 1;
-                skip > 0
-            })
-        };
-        let mut buf = Vec::new();
-        writeln!(buf, "{DD_CRASHTRACK_BEGIN_STACKTRACE}").unwrap();
-        unsafe {
-            emit_backtrace_via_library(&mut buf, collection, ip_of_test_fn).expect("to work ;-)");
-        }
-        writeln!(buf, "{DD_CRASHTRACK_END_STACKTRACE}").unwrap();
-        buf
-    }
 
     #[test]
     #[cfg_attr(miri, ignore)]
@@ -664,52 +687,6 @@ mod tests {
         assert!(out.contains("\"ip\":\"0x162e\""));
         assert!(out.contains("\"function\":\"test_function2\""));
         assert!(out.contains("\"file\":\"test_file2\""));
-    }
-
-    #[test]
-    #[cfg_attr(miri, ignore)]
-    fn test_emit_backtrace_disabled() {
-        let buf = inner_test_emit_backtrace_with_symbols(StacktraceCollection::Disabled);
-        let out = str::from_utf8(&buf).expect("to be valid UTF8");
-        assert!(out.contains("BEGIN_STACKTRACE"));
-        assert!(out.contains("END_STACKTRACE"));
-        assert!(out.contains("\"ip\":"));
-        assert!(
-            !out.contains("\"column\":"),
-            "'column' key must not be emitted"
-        );
-        assert!(!out.contains("\"file\":"), "'file' key must not be emitted");
-        assert!(
-            !out.contains("\"function\":"),
-            "'function' key must not be emitted"
-        );
-        assert!(!out.contains("\"line\":"), "'line' key must not be emitted");
-    }
-
-    #[test]
-    #[cfg_attr(miri, ignore)]
-    fn test_emit_backtrace_with_symbols() {
-        let buf = inner_test_emit_backtrace_with_symbols(
-            StacktraceCollection::EnabledWithInprocessSymbols,
-        );
-        // retrieve stack pointer for this function
-        let out = str::from_utf8(&buf).expect("to be valid UTF8");
-        assert!(out.contains("BEGIN_STACKTRACE"));
-        assert!(out.contains("END_STACKTRACE"));
-        // basic structure assertions
-        assert!(out.contains("\"column\":"), "'column' key missing");
-        assert!(out.contains("\"file\":"), "'file' key missing");
-        assert!(out.contains("\"function\":"), "'function' key missing");
-        assert!(out.contains("\"line\":"), "'line' key missing");
-        // filter assertions
-        assert!(
-            !out.contains("emitters::emit_backtrace_by_frames"),
-            "crashtracker itself must be filtered, found 'backtrace::backtrace::libunwind'"
-        );
-        assert!(
-            !out.contains("backtrace::backtrace"),
-            "crashtracker itself must be filtered away, found 'backtrace::backtrace'"
-        );
     }
 
     #[test]
@@ -847,5 +824,46 @@ mod tests {
         assert!(out.contains(&long_message[..100])); // At least first 100 chars
 
         unsafe { drop(Box::from_raw(message_ptr)) };
+    }
+
+    // We only test edge cases specific to this wrapper function here.
+    // The core unwinding logic is tested in the libunwind crate.
+    #[test]
+    #[cfg(target_os = "linux")]
+    #[cfg_attr(miri, ignore)]
+    fn test_emit_backtrace_via_libunwind_null_ucontext() {
+        let mut buf = Vec::new();
+        unsafe {
+            emit_backtrace_via_libunwind(
+                &mut buf,
+                StacktraceCollection::WithoutSymbols,
+                std::ptr::null(),
+            )
+            .expect("should handle null ucontext gracefully");
+        }
+        // With null ucontext, function should return early and emit nothing
+        assert!(buf.is_empty());
+    }
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    #[cfg_attr(miri, ignore)]
+    fn test_emit_backtrace_via_libunwind_unw_init_failure() {
+        // Test that when unw_init_local2 fails (e.g., with invalid context),
+        // the function returns Ok(()) gracefully without writing anything
+        let context: libc::ucontext_t = unsafe { std::mem::zeroed() };
+        let mut buf = Vec::new();
+
+        unsafe {
+            emit_backtrace_via_libunwind(&mut buf, StacktraceCollection::WithoutSymbols, &context)
+                .expect("should handle unw_init_local2 failure gracefully");
+        }
+
+        // When unw_init_local2 fails, function should return early without error
+        // Buffer should be empty since no frames were written
+        assert!(
+            buf.is_empty(),
+            "Function should return early on unw_init_local2 failure"
+        );
     }
 }
