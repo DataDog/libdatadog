@@ -20,16 +20,16 @@ jobs:
       with:
         fetch-depth: 0
     - name: Get changed crates
-      if: ${{ github.event_name == 'pull_request' }}
       id: changed-crates
       uses: ./.github/actions/changed-crates
     - name: Set FFI packages
       id: set-packages
       env:
+        CHANGED_CRATES_STATUS: ${{ steps.changed-crates.outputs.status }}
         CHANGED_CRATES_COUNT: ${{ steps.changed-crates.outputs.crates_count }}
         AFFECTED_CRATES: ${{ steps.changed-crates.outputs.affected_crates }}
       run: |
-        if [[ "${{ github.event_name }}" == "push" ]]; then
+        if [[ "$CHANGED_CRATES_STATUS" == "skipped" ]]; then
           COUNT="1"
           PACKAGES=""
           CRATES_JSON=""

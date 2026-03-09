@@ -17,16 +17,16 @@ jobs:
       with:
         fetch-depth: 0
     - name: Get changed crates
-      if: ${{ github.event_name == 'pull_request' }}
       id: changed-crates
       uses: ./.github/actions/changed-crates
     - name: Set crates to run Miri on
       id: set-crates
       env:
+        CHANGED_CRATES_STATUS: ${{ steps.changed-crates.outputs.status }}
         CHANGED_CRATES: ${{ steps.changed-crates.outputs.crates }}
         AFFECTED_CRATES: ${{ steps.changed-crates.outputs.affected_crates }}
       run: |
-        if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+        if [[ "$CHANGED_CRATES_STATUS" == "success" ]]; then
           echo "This is a pull request event, running Miri on changed and affected crates"
           echo "Changed crates: $CHANGED_CRATES"
           echo "Affected crates: $AFFECTED_CRATES"
