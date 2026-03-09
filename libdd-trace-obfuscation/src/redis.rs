@@ -56,7 +56,9 @@ pub fn quantize_redis_string(query: &str) -> String {
                         truncated = true;
                         continue;
                     }
-                    Some(sub) => format!("{cmd} {}", sub.chars().map(go_toupper).collect::<String>()),
+                    Some(sub) => {
+                        format!("{cmd} {}", sub.chars().map(go_toupper).collect::<String>())
+                    }
                     None => cmd,
                 }
             }
@@ -106,7 +108,9 @@ pub fn obfuscate_redis_string(cmd: &str) -> String {
                 obfuscate_redis_cmd(s, final_cmd, args);
             } else {
                 // Remove the trailing '\n' added when this whitespace-only command was scanned
-                if s.ends_with('\n') { s.pop(); }
+                if s.ends_with('\n') {
+                    s.pop();
+                }
             }
             break;
         }
