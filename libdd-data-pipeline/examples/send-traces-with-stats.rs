@@ -2,8 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use clap::Parser;
-use libdd_data_pipeline::trace_exporter::{
-    TelemetryConfig, TraceExporter, TraceExporterInputFormat, TraceExporterOutputFormat,
+use libdd_data_pipeline::{
+    shared_runtime::SharedRuntime,
+    trace_exporter::{
+        TelemetryConfig, TraceExporter, TraceExporterInputFormat, TraceExporterOutputFormat,
+    },
 };
 use libdd_log::logger::{
     logger_configure_std, logger_set_log_level, LogEventLevel, StdConfig, StdTarget,
@@ -11,6 +14,7 @@ use libdd_log::logger::{
 use libdd_trace_protobuf::pb;
 use std::{
     collections::HashMap,
+    sync::Arc,
     time::{Duration, UNIX_EPOCH},
 };
 
@@ -53,6 +57,8 @@ fn main() {
     .expect("Failed to configure logger");
     logger_set_log_level(LogEventLevel::Debug).expect("Failed to set log level");
 
+    let shared_runtime = Arc::new(SharedRuntime::new().expect("Failed to create runtime"));
+
     let args = Args::parse();
     let telemetry_cfg = TelemetryConfig::default();
     let mut builder = TraceExporter::builder();
@@ -67,6 +73,7 @@ fn main() {
         .set_language_version(env!("CARGO_PKG_RUST_VERSION"))
         .set_input_format(TraceExporterInputFormat::V04)
         .set_output_format(TraceExporterOutputFormat::V04)
+        .set_shared_runtime(shared_runtime.clone())
         .enable_telemetry(telemetry_cfg)
         .enable_stats(Duration::from_secs(10));
     let exporter = builder.build().expect("Failed to build TraceExporter");
@@ -86,7 +93,7 @@ fn main() {
     let data = rmp_serde::to_vec_named(&traces).expect("Failed to serialize traces");
 
     exporter.send(data.as_ref()).expect("Failed to send traces");
-    exporter
+    shared_runtime
         .shutdown(None)
-        .expect("Failed to shutdown exporter");
+        .expect("Failed to shutdown runtime");
 }

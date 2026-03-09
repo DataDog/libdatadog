@@ -41,7 +41,6 @@ use libdd_trace_utils::span::{v04::Span, TraceData};
 use libdd_trace_utils::trace_utils::TracerHeaderTags;
 use std::io;
 use std::sync::Arc;
-use std::time::Duration;
 use std::{borrow::Borrow, collections::HashMap, str::FromStr};
 use tokio::runtime::Runtime;
 use tracing::{debug, error, warn};
@@ -180,7 +179,7 @@ pub struct TraceExporter {
     metadata: TracerMetadata,
     input_format: TraceExporterInputFormat,
     output_format: TraceExporterOutputFormat,
-    shared_runtime: SharedRuntime,
+    shared_runtime: Arc<SharedRuntime>,
     /// None if dogstatsd is disabled
     dogstatsd: Option<Client>,
     common_stats_tags: Vec<Tag>,
@@ -253,22 +252,6 @@ impl TraceExporter {
         }
 
         Ok(res)
-    }
-
-    /// Safely shutdown the TraceExporter and all related tasks
-    pub fn shutdown(self, timeout: Option<Duration>) -> Result<(), TraceExporterError> {
-        self.shared_runtime
-            .shutdown(timeout)
-            .map_err(|e| match e {
-                crate::shared_runtime::SharedRuntimeError::ShutdownTimedOut(duration) => {
-                    TraceExporterError::Shutdown(error::ShutdownError::TimedOut(duration))
-                }
-                crate::shared_runtime::SharedRuntimeError::RuntimeCreation(io_err) => {
-                    TraceExporterError::Io(io_err)
-                }
-                // Other error cases should not occur from shutdown()
-                _ => unreachable!("Unexpected SharedRuntimeError from shutdown: {:?}", e),
-            })
     }
 
     /// Check if agent info state has changed
@@ -1693,8 +1676,6 @@ mod tests {
 
         let _ = exporter.send(data.as_ref()).unwrap();
 
-        exporter.shutdown(None).unwrap();
-
         mock_traces.assert();
     }
 
@@ -1764,6 +1745,8 @@ mod single_threaded_tests {
                 .body(r#"{"version":"1","client_drop_p0s":true,"endpoints":["/v0.4/traces","/v0.6/stats"]}"#);
         });
 
+        let runtime = SharedRuntime::new().unwrap();
+
         let mut builder = TraceExporterBuilder::default();
         builder
             .set_url(&server.url("/"))
@@ -1775,6 +1758,7 @@ mod single_threaded_tests {
             .set_language_interpreter("v8")
             .set_input_format(TraceExporterInputFormat::V04)
             .set_output_format(TraceExporterOutputFormat::V04)
+            .set_shared_runtime(runtime.clone())
             .enable_stats(Duration::from_secs(10));
         let exporter = builder.build().unwrap();
 
@@ -1806,7 +1790,7 @@ mod single_threaded_tests {
             std::thread::sleep(Duration::from_millis(10));
         }
 
-        exporter.shutdown(None).unwrap();
+        runtime.shutdown(None).unwrap();
 
         // Wait for the mock server to process the stats
         for _ in 0..1000 {
@@ -1858,6 +1842,8 @@ mod single_threaded_tests {
                 .body(r#"{"version":"1","client_drop_p0s":true,"endpoints":["/v0.4/traces","/v0.6/stats"]}"#);
         });
 
+        let runtime = SharedRuntime::new().unwrap();
+
         let mut builder = TraceExporterBuilder::default();
         builder
             .set_url(&server.url("/"))
@@ -1869,6 +1855,7 @@ mod single_threaded_tests {
             .set_language_interpreter("v8")
             .set_input_format(TraceExporterInputFormat::V04)
             .set_output_format(TraceExporterOutputFormat::V04)
+            .set_shared_runtime(runtime.clone())
             .enable_stats(Duration::from_secs(10));
         let exporter = builder.build().unwrap();
 
@@ -1903,7 +1890,7 @@ mod single_threaded_tests {
             std::thread::sleep(Duration::from_millis(10));
         }
 
-        exporter
+        runtime
             .shutdown(Some(Duration::from_millis(5)))
             .unwrap_err(); // The shutdown should timeout
 

@@ -181,6 +181,7 @@ pub fn stats_url_from_agent_url(agent_url: &str) -> anyhow::Result<http::Uri> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::shared_runtime::SharedRuntime;
     use httpmock::prelude::*;
     use httpmock::MockServer;
     use libdd_common::http_common::new_default_client;
@@ -338,8 +339,6 @@ mod tests {
     #[cfg_attr(miri, ignore)]
     #[test]
     fn test_worker_shutdown() {
-        use crate::shared_runtime::SharedRuntime;
-
         let shared_runtime = SharedRuntime::new().expect("Failed to create runtime");
         let rt = shared_runtime.runtime().expect("Failed to get runtime");
 
@@ -363,14 +362,11 @@ mod tests {
             new_default_client(),
         );
 
-        let handle = shared_runtime
+        let _handle = shared_runtime
             .spawn_worker(stats_exporter)
             .expect("Failed to spawn worker");
 
-        // Stop the worker to trigger force flush
-        rt.block_on(async {
-            handle.stop().await.expect("Failed to stop worker");
-        });
+        shared_runtime.shutdown(None).unwrap();
 
         assert!(
             rt.block_on(poll_for_mock_hit(&mut mock, 10, 100, 1, false)),
