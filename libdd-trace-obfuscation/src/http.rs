@@ -168,10 +168,12 @@ pub fn obfuscate_url_string(
         } else {
             out.push_str(&path_str);
         }
-    } else if uri.scheme().is_some() {
-        // Opaque URL (scheme but no authority): Go keeps the opaque part verbatim.
-        // u.Path is empty for opaque URLs in Go, so no digit redaction applies.
-        let scheme_end = url.find(':').unwrap() + 1;
+    } else if let Some(scheme) = uri.scheme() {
+        // This is a really weird case because there is a scheme but no authority.
+        // For example: http:#
+        // Length of "http:"
+        let scheme_end = scheme.as_str().len() + 1;
+        // http://example.com/?query -> //example.com/
         out.push_str(&url[scheme_end..path_end]);
     } else {
         // Relative reference: use pre-encoded path
