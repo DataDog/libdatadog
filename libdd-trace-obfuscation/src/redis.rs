@@ -101,17 +101,7 @@ pub fn obfuscate_redis_string(cmd: &str) -> String {
             RedisTokenType::RedisTokenArgument => args.push(res.token),
         }
         if res.done {
-            // Skip whitespace-only final "command" tokens (trailing whitespace after last \n).
-            // Also strip the trailing '\n' that was added before this whitespace-only token.
-            let final_cmd = cmd.unwrap_or_default();
-            if !final_cmd.trim().is_empty() {
-                obfuscate_redis_cmd(s, final_cmd, args);
-            } else {
-                // Remove the trailing '\n' added when this whitespace-only command was scanned
-                if s.ends_with('\n') {
-                    s.pop();
-                }
-            }
+            obfuscate_redis_cmd(s, cmd.unwrap_or_default(), args);
             break;
         }
     }
@@ -366,6 +356,11 @@ mod tests {
             expected    ["CLIENT LIST"];
         ]
         [
+            test_name   [test_quantize_redis_string_client_truncated]
+            input       ["CLIENT ..."]
+            expected    ["..."];
+        ]
+        [
             test_name   [test_quantize_redis_string_get_lowercase]
             input       ["get my_key"]
             expected    ["GET"];
@@ -459,6 +454,17 @@ mod tests {
             test_name   [fuzzing_2812552373]
             input       ["\t"]
             expected    ["\t"];
+        ]
+        [
+            test_name   [fuzzing_crlf]
+            input       ["\r\n"]
+            // Split on \n specifically, not newlines, to copy agent's behaviour
+            expected    ["\r"];
+        ]
+        [
+            test_name   [fuzzing_box_char]
+            input       ["𖺻"]
+            expected    ["𖺻"];
         ]
     )]
     #[test]
@@ -979,6 +985,16 @@ SET k ?"#];
             test_name   [test_obfuscate_all_redis_args_17]
             input       ["bitfield key SET key value incrby 3"]
             expected    ["bitfield ? SET ? incrby ?"];
+        ]
+        [
+            test_name   [test_obfuscate_fuzzing_unicode]
+            input       ["\u{00b}ჸ"]
+            expected    ["ჸ"];
+        ]
+        [
+            test_name   [test_obfuscate_fuzzing_whitespaces]
+            input       ["ჸ\n\tჸ"]
+            expected    ["ჸ ?"];
         ]
     )]
     #[test]
