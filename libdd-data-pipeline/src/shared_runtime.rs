@@ -296,6 +296,11 @@ impl SharedRuntime {
     ///
     /// This allows external code to spawn additional tasks on the runtime if needed.
     ///
+    /// # Warning
+    /// Since this method can return a single-threaded runtime it should only be use to
+    /// execute async code with `block_on` if you need to spawn async code on it without blocking,
+    /// you should us a `Worker` instead.
+    ///
     /// # Errors
     /// Returns an error if it fails to create a runtime.
     pub fn runtime(&self) -> Result<Arc<Runtime>, io::Error> {
