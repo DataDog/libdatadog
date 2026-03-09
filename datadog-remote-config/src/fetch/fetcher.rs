@@ -919,7 +919,11 @@ pub mod tests {
         let server: Arc<RemoteConfigServer> = RemoteConfigServer::spawn();
         server.files.lock().unwrap().insert(
             PATH_FIRST.clone(),
-            (vec![DUMMY_TARGET_WITH_PROCESS_TAGS.clone()], 1, "v1".to_string()),
+            (
+                vec![DUMMY_TARGET_WITH_PROCESS_TAGS.clone()],
+                1,
+                "v1".to_string(),
+            ),
         );
 
         let storage = Arc::new(Storage::default());
@@ -946,7 +950,13 @@ pub mod tests {
         let req = server.last_request.lock().unwrap();
         let req = req.as_ref().unwrap();
         let tracer = req.client.as_ref().unwrap().client_tracer.as_ref().unwrap();
-        assert_eq!(tracer.process_tags, &["entrypoint.workdir:datadog-remote-config", "entrypoint.type:script"]);
+        assert_eq!(
+            tracer.process_tags,
+            &[
+                "entrypoint.workdir:datadog-remote-config",
+                "entrypoint.type:script"
+            ]
+        );
     }
 
     #[test]
