@@ -514,6 +514,11 @@ mod tests {
         assert_eq!(parsed.multipart_parts[0].name, "field");
         assert_eq!(parsed.multipart_parts[0].content, b"value");
     }
+}
+
+#[cfg(test)]
+mod single_threaded_tests {
+    use crate::test_utils::count_active_threads;
 
     #[test]
     #[cfg_attr(miri, ignore)]

@@ -114,6 +114,8 @@ pub enum CrashType {
     RaiseSigBus,
     /// Raise SIGSEGV
     RaiseSigSegv,
+    /// Unhandled Exception
+    UnhandledException,
 }
 
 impl CrashType {
@@ -129,6 +131,7 @@ impl CrashType {
             Self::RaiseSigIll => "raise_sigill",
             Self::RaiseSigBus => "raise_sigbus",
             Self::RaiseSigSegv => "raise_sigsegv",
+            Self::UnhandledException => "unhandled_exception",
         }
     }
 
@@ -138,7 +141,11 @@ impl CrashType {
     pub const fn expects_success(self) -> bool {
         matches!(
             self,
-            Self::KillSigBus | Self::KillSigSegv | Self::RaiseSigBus | Self::RaiseSigSegv
+            Self::KillSigBus
+                | Self::KillSigSegv
+                | Self::RaiseSigBus
+                | Self::RaiseSigSegv
+                | Self::UnhandledException
         )
     }
 
@@ -150,6 +157,7 @@ impl CrashType {
             Self::KillSigAbrt | Self::RaiseSigAbrt => 6,                    // SIGABRT
             Self::KillSigIll | Self::RaiseSigIll => 4,                      // SIGILL
             Self::KillSigBus | Self::RaiseSigBus => 7,                      // SIGBUS
+            Self::UnhandledException => 0,                                  // no signal
         }
     }
 
@@ -160,6 +168,7 @@ impl CrashType {
             Self::KillSigAbrt | Self::RaiseSigAbrt => "SIGABRT",
             Self::KillSigIll | Self::RaiseSigIll => "SIGILL",
             Self::KillSigBus | Self::RaiseSigBus => "SIGBUS",
+            Self::UnhandledException => "Unhandled Exception",
         }
     }
 }
@@ -184,6 +193,7 @@ impl std::str::FromStr for CrashType {
             "raise_sigill" => Ok(Self::RaiseSigIll),
             "raise_sigbus" => Ok(Self::RaiseSigBus),
             "raise_sigsegv" => Ok(Self::RaiseSigSegv),
+            "unhandled_exception" => Ok(Self::UnhandledException),
             _ => Err(format!("Unknown crash type: {}", s)),
         }
     }
@@ -220,5 +230,6 @@ mod tests {
         assert!(!CrashType::KillSigAbrt.expects_success());
         assert!(CrashType::KillSigBus.expects_success());
         assert!(CrashType::KillSigSegv.expects_success());
+        assert!(CrashType::UnhandledException.expects_success());
     }
 }

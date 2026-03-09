@@ -10,7 +10,8 @@ use crate::runtime_callback::{
 };
 use crate::shared::constants::*;
 use crate::{
-    translate_si_code, CrashtrackerConfiguration, ErrorKind, SignalNames, StacktraceCollection,
+    translate_si_code, CrashtrackerConfiguration, ErrorKind, SignalNames, StackTrace,
+    StacktraceCollection,
 };
 use backtrace::Frame;
 use libc::{siginfo_t, ucontext_t};
@@ -34,6 +35,8 @@ pub enum EmitterError {
     CounterError(#[from] crate::collector::counters::CounterError),
     #[error("Atomic set error: {0}")]
     AtomicSetError(#[from] crate::collector::atomic_set::AtomicSetError),
+    #[error("Serialization error: {0}")]
+    SerializationError(#[from] serde_json::Error),
 }
 
 /// Emit a stacktrace onto the given handle as formatted json.
@@ -52,11 +55,38 @@ unsafe fn emit_backtrace_by_frames(
     w: &mut impl Write,
     resolve_frames: StacktraceCollection,
     fault_ip: usize,
+    ucontext: *const ucontext_t,
 ) -> Result<(), EmitterError> {
     // https://docs.rs/backtrace/latest/backtrace/index.html
     writeln!(w, "{DD_CRASHTRACK_BEGIN_STACKTRACE}")?;
 
-    // Absolute addresses appear to be safer to collect during a crash than debug info.
+    // On macOS, backtrace::trace_unsynchronized fails in forked children because
+    // macOS restricts many APIs after fork-without-exec. Walk the frame pointer
+    // chain directly from the saved ucontext registers instead. The parent's
+    // stack memory is still readable in the forked child
+    #[cfg(target_os = "macos")]
+    {
+        let _ = (resolve_frames, fault_ip);
+        emit_backtrace_from_ucontext(w, ucontext)?;
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = ucontext;
+        emit_backtrace_via_library(w, resolve_frames, fault_ip)?;
+    }
+
+    writeln!(w, "{DD_CRASHTRACK_END_STACKTRACE}")?;
+    w.flush()?;
+    Ok(())
+}
+
+#[allow(dead_code)] // used from tests on macOS, from emit_backtrace_by_frames on other platforms
+unsafe fn emit_backtrace_via_library(
+    w: &mut impl Write,
+    resolve_frames: StacktraceCollection,
+    fault_ip: usize,
+) -> Result<(), EmitterError> {
     fn emit_absolute_addresses(w: &mut impl Write, frame: &Frame) -> Result<(), EmitterError> {
         write!(w, "\"ip\": \"{:?}\"", frame.ip())?;
         if let Some(module_base_address) = frame.module_base_address() {
@@ -129,9 +159,129 @@ unsafe fn emit_backtrace_by_frames(
         // emit anything at all, if the crashing frame is not found for some reason
         ip_found = true;
     }
-    writeln!(w, "{DD_CRASHTRACK_END_STACKTRACE}")?;
+    Ok(())
+}
+
+/// Walk the frame pointer chain from the ucontext's saved registers.
+///
+/// After fork(), the child process has a copy-on-write view of the parent's
+/// stack memory, so the frame pointer chain from the crashed thread is still
+/// readable. This avoids depending on `backtrace::trace_unsynchronized` which
+/// uses macOS APIs that don't work in forked-but-not-exec'd children.
+///
+/// For each IP we call `dladdr` to resolve the symbol name, symbol address,
+/// and containing shared-object path. `dladdr` is safe here because it only
+/// reads dyld's internal data structures (no allocation, no Mach IPC).
+#[cfg(target_os = "macos")]
+unsafe fn emit_backtrace_from_ucontext(
+    w: &mut impl Write,
+    ucontext: *const ucontext_t,
+) -> Result<(), EmitterError> {
+    if ucontext.is_null() {
+        return Ok(());
+    }
+    let mcontext = (*ucontext).uc_mcontext;
+    if mcontext.is_null() {
+        return Ok(());
+    }
+
+    // Get the thread's stack bounds so we only deref frame pointers
+    // that lie within known stack memory. Both pthread_get_stackaddr_np and
+    // pthread_get_stacksize_np are async-signal-safe on macOS
+    let thread = libc::pthread_self();
+    let stack_top = libc::pthread_get_stackaddr_np(thread) as usize;
+    let stack_size = libc::pthread_get_stacksize_np(thread);
+    let stack_bottom = stack_top.saturating_sub(stack_size);
+
+    // Returns true when the range [addr, addr+len) falls within the thread stack
+    let in_stack_bounds = |addr: usize, len: usize| -> bool {
+        let end = addr.saturating_add(len);
+        addr >= stack_bottom && end <= stack_top
+    };
+
+    let ss = &(*mcontext).__ss;
+    #[cfg(target_arch = "aarch64")]
+    let (pc, mut fp) = (ss.__pc as usize, ss.__fp as usize);
+    #[cfg(target_arch = "x86_64")]
+    let (pc, mut fp) = (ss.__rip as usize, ss.__rbp as usize);
+
+    emit_frame_with_dladdr(w, pc)?;
+
+    const MAX_FRAMES: usize = 512;
+    for _ in 0..MAX_FRAMES {
+        if fp == 0 || fp % std::mem::align_of::<usize>() != 0 {
+            break;
+        }
+        // Each frame record is two pointer-sized words: [saved_fp, return_addr]
+        // Bail out if the record falls outside the thread stack
+        if !in_stack_bounds(fp, 2 * std::mem::size_of::<usize>()) {
+            break;
+        }
+        let next_fp = *(fp as *const usize);
+        let return_addr = *((fp + std::mem::size_of::<usize>()) as *const usize);
+        if return_addr == 0 {
+            break;
+        }
+        emit_frame_with_dladdr(w, return_addr)?;
+        if next_fp <= fp {
+            break;
+        }
+        fp = next_fp;
+    }
+
+    Ok(())
+}
+
+/// Emit a single stack frame, enriched with `dladdr` symbol information.
+#[cfg(target_os = "macos")]
+unsafe fn emit_frame_with_dladdr(w: &mut impl Write, ip: usize) -> Result<(), EmitterError> {
+    let mut info: libc::Dl_info = std::mem::zeroed();
+    let resolved = libc::dladdr(ip as *const libc::c_void, &mut info) != 0;
+
+    write!(w, "{{\"ip\": \"0x{ip:x}\"")?;
+
+    if resolved {
+        if !info.dli_fbase.is_null() {
+            write!(w, ", \"module_base_address\": \"{:?}\"", info.dli_fbase)?;
+        }
+        if !info.dli_saddr.is_null() {
+            write!(w, ", \"symbol_address\": \"{:?}\"", info.dli_saddr)?;
+        }
+        if !info.dli_sname.is_null() {
+            let name = std::ffi::CStr::from_ptr(info.dli_sname);
+            if let Ok(s) = name.to_str() {
+                write!(w, ", \"function\": \"{s}\"")?;
+            }
+        }
+    }
+
+    writeln!(w, "}}")?;
     w.flush()?;
     Ok(())
+}
+
+/// Crash-kind-specific data passed to `emit_crashreport`.
+///
+/// Each variant carries exactly the fields that are meaningful for that crash
+/// origin. the shared fields (config, metadata, procinfo, …) remain as plain
+/// function parameters
+pub(crate) enum CrashKindData {
+    UnixSignal {
+        sig_info: *const siginfo_t,
+        ucontext: *const ucontext_t,
+    },
+    UnhandledException {
+        stacktrace: StackTrace,
+    },
+}
+
+impl CrashKindData {
+    fn error_kind(&self) -> ErrorKind {
+        match self {
+            CrashKindData::UnixSignal { .. } => ErrorKind::UnixSignal,
+            CrashKindData::UnhandledException { .. } => ErrorKind::UnhandledException,
+        }
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -141,24 +291,30 @@ pub(crate) fn emit_crashreport(
     config_str: &str,
     metadata_string: &str,
     message_ptr: *mut String,
-    sig_info: *const siginfo_t,
-    ucontext: *const ucontext_t,
+    crash: CrashKindData,
     ppid: i32,
     crashing_tid: libc::pid_t,
 ) -> Result<(), EmitterError> {
-    // The following order is important in order to emit the crash ping:
-    // - receiver expects the config because the endpoint to emit to is there
-    // - then message if any
-    // - then siginfo if any
-    // - then the kind if any
-    // - then metadata
+    // Crash-ping
+    // The receiver dispatches the crash ping as soon as it sees the metadata
+    // section, so try to emit message, siginfo, and kind before it to make sure
+    // we have an enhanced crash ping message
     emit_config(pipe, config_str)?;
     emit_message(pipe, message_ptr)?;
-    emit_siginfo(pipe, sig_info)?;
-    emit_kind(pipe, &ErrorKind::UnixSignal)?;
+
+    match &crash {
+        CrashKindData::UnixSignal { sig_info, .. } => {
+            emit_siginfo(pipe, *sig_info)?;
+        }
+        CrashKindData::UnhandledException { .. } => {
+            // Unhandled exceptions have no signal info
+        }
+    }
+
+    emit_kind(pipe, &crash.error_kind())?;
     emit_metadata(pipe, metadata_string)?;
-    // after the metadata the ping should have been sent
-    emit_ucontext(pipe, ucontext)?;
+
+    // Shared process context
     emit_procinfo(pipe, ppid, crashing_tid)?;
     emit_counters(pipe)?;
     emit_spans(pipe)?;
@@ -168,24 +324,52 @@ pub(crate) fn emit_crashreport(
     #[cfg(target_os = "linux")]
     emit_proc_self_maps(pipe)?;
 
-    // Getting a backtrace on rust is not guaranteed to be signal safe
-    // https://github.com/rust-lang/backtrace-rs/issues/414
-    // let current_backtrace = backtrace::Backtrace::new();
-    // In fact, if we look into the code here, we see mallocs.
-    // https://doc.rust-lang.org/src/std/backtrace.rs.html#332
-    // Do this last, so even if it crashes, we still get the other info.
-    if config.resolve_frames() != StacktraceCollection::Disabled {
-        let fault_ip = extract_ip(ucontext);
-        unsafe { emit_backtrace_by_frames(pipe, config.resolve_frames(), fault_ip)? };
-    }
-
-    if is_runtime_callback_registered() {
-        emit_runtime_stack(pipe)?;
+    // Stack trace emission
+    match crash {
+        CrashKindData::UnixSignal { ucontext, .. } => {
+            emit_ucontext(pipe, ucontext)?;
+            if config.resolve_frames() != StacktraceCollection::Disabled {
+                // SAFETY: Getting a backtrace on rust is not guaranteed to be signal safe
+                // https://github.com/rust-lang/backtrace-rs/issues/414
+                // let current_backtrace = backtrace::Backtrace::new();
+                // In fact, if we look into the code here, we see mallocs.
+                // https://doc.rust-lang.org/src/std/backtrace.rs.html#332
+                // We do this last, so even if it crashes, we still get the other info.
+                let fault_ip = extract_ip(ucontext);
+                unsafe {
+                    emit_backtrace_by_frames(pipe, config.resolve_frames(), fault_ip, ucontext)?
+                };
+            }
+            if is_runtime_callback_registered() {
+                emit_runtime_stack(pipe)?;
+            }
+        }
+        CrashKindData::UnhandledException { stacktrace } => {
+            // SAFETY: this branch only executes when an unhandled exception occurs
+            // and is not called from a signal handler.
+            unsafe { emit_whole_stacktrace(pipe, stacktrace)? };
+        }
     }
 
     writeln!(pipe, "{DD_CRASHTRACK_DONE}")?;
     pipe.flush()?;
+    Ok(())
+}
 
+/// SAFETY:
+///    This function is not safe to call from a signal handler.
+///    Although `serde_json::to_writer` does not technically allocate memory
+///    itself, it takes in `StackTrace` which is allocated and is only intended
+///    to be used in a non-signal-handler context
+unsafe fn emit_whole_stacktrace(
+    w: &mut impl Write,
+    stacktrace: StackTrace,
+) -> Result<(), EmitterError> {
+    writeln!(w, "{DD_CRASHTRACK_BEGIN_WHOLE_STACKTRACE}")?;
+    let _ = serde_json::to_writer(&mut *w, &stacktrace);
+    writeln!(w)?;
+    writeln!(w, "{DD_CRASHTRACK_END_WHOLE_STACKTRACE}")?;
+    w.flush()?;
     Ok(())
 }
 
@@ -425,6 +609,8 @@ fn extract_ip(ucontext: *const ucontext_t) -> usize {
 
 #[cfg(test)]
 mod tests {
+    use crate::StackFrame;
+
     use super::*;
     use std::str;
 
@@ -440,10 +626,44 @@ mod tests {
             })
         };
         let mut buf = Vec::new();
+        writeln!(buf, "{DD_CRASHTRACK_BEGIN_STACKTRACE}").unwrap();
         unsafe {
-            emit_backtrace_by_frames(&mut buf, collection, ip_of_test_fn).expect("to work ;-)");
+            emit_backtrace_via_library(&mut buf, collection, ip_of_test_fn).expect("to work ;-)");
         }
+        writeln!(buf, "{DD_CRASHTRACK_END_STACKTRACE}").unwrap();
         buf
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_emit_complete_stacktrace() {
+        // new_incomplete() starts with incomplete: true, which push_frame requires
+        let mut stacktrace = StackTrace::new_incomplete();
+        let mut stackframe1 = StackFrame::new();
+        stackframe1.with_ip(1234);
+        stackframe1.with_function("test_function1".to_string());
+        stackframe1.with_file("test_file1".to_string());
+
+        let mut stackframe2 = StackFrame::new();
+        stackframe2.with_ip(5678);
+        stackframe2.with_function("test_function2".to_string());
+        stackframe2.with_file("test_file2".to_string());
+
+        stacktrace.push_frame(stackframe1, true).unwrap();
+        stacktrace.push_frame(stackframe2, true).unwrap();
+
+        stacktrace.set_complete().unwrap();
+
+        let mut buf = Vec::new();
+        unsafe { emit_whole_stacktrace(&mut buf, stacktrace).expect("to work ;-)") };
+        let out = str::from_utf8(&buf).expect("to be valid UTF8");
+
+        assert!(out.contains("\"ip\":\"0x4d2\""));
+        assert!(out.contains("\"function\":\"test_function1\""));
+        assert!(out.contains("\"file\":\"test_file1\""));
+        assert!(out.contains("\"ip\":\"0x162e\""));
+        assert!(out.contains("\"function\":\"test_function2\""));
+        assert!(out.contains("\"file\":\"test_file2\""));
     }
 
     #[test]

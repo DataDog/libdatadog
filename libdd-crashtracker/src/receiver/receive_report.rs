@@ -7,7 +7,7 @@ use crate::{
     },
     runtime_callback::RuntimeStack,
     shared::constants::*,
-    CrashtrackerConfiguration,
+    CrashtrackerConfiguration, StackTrace,
 };
 
 use anyhow::Context;
@@ -117,6 +117,7 @@ pub(crate) enum StdinState {
     TraceIds,
     Ucontext,
     Waiting,
+    WholeStackTrace,
     ThreadName(Option<String>),
     // StackFrame is always emitted as one stream of all the frames but StackString
     // may have lines that we need to accumulate depending on runtime (e.g. Python)
@@ -168,6 +169,15 @@ fn process_line(
             let val = val.as_i64().context("Vals are ints")?;
             builder.with_counter(key.clone(), val)?;
             StdinState::Counters
+        }
+
+        StdinState::WholeStackTrace if line.starts_with(DD_CRASHTRACK_END_WHOLE_STACKTRACE) => {
+            StdinState::Waiting
+        }
+        StdinState::WholeStackTrace => {
+            let stacktrace: StackTrace = serde_json::from_str(line)?;
+            builder.with_stack(stacktrace)?;
+            StdinState::WholeStackTrace
         }
 
         StdinState::Done => {
@@ -348,6 +358,9 @@ fn process_line(
         }
         StdinState::Waiting if line.starts_with(DD_CRASHTRACK_BEGIN_UCONTEXT) => {
             StdinState::Ucontext
+        }
+        StdinState::Waiting if line.starts_with(DD_CRASHTRACK_BEGIN_WHOLE_STACKTRACE) => {
+            StdinState::WholeStackTrace
         }
         StdinState::Waiting if line.starts_with(DD_CRASHTRACK_DONE) => {
             builder.with_incomplete(false)?;
