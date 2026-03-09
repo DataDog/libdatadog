@@ -1,228 +1,80 @@
 // Copyright 2023-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+use fluent_uri::UriRef;
 use percent_encoding::percent_decode_str;
-use url::Url;
 
-/// Go's url.Parse normalizes percent-encoded unreserved chars (A-Z, a-z, 0-9, -, ., _, ~)
-/// in the path by decoding them. E.g. %30 → 0, %41 → A. The url crate does not do this.
-/// Apply this normalization to the path portion (before '?' or '#') of a URL string.
-fn normalize_pct_encoded_unreserved(s: &str) -> String {
-    let path_end = s.find(['?', '#']).unwrap_or(s.len());
-    let path_part = &s[..path_end];
-    let rest = &s[path_end..];
+fn is_cat1(c: char) -> bool {
+    matches!(
+        c,
+        '\\' | '^' | '{' | '}' | '|' | '<' | '>' | '`' | ' ' | '"'
+    )
+}
 
-    let bytes = path_part.as_bytes();
-    let mut out = String::with_capacity(path_part.len());
+fn hex_val(b: u8) -> u8 {
+    match b {
+        b'0'..=b'9' => b - b'0',
+        b'a'..=b'f' => b - b'a' + 10,
+        _ => b - b'A' + 10,
+    }
+}
+
+/// Decode %XX for unreserved chars (A-Za-z0-9-._~) in path, matching Go's url.Parse behavior.
+fn normalize_pct_encoded_unreserved(path: &str) -> String {
+    let b = path.as_bytes();
+    let mut out = String::with_capacity(path.len());
     let mut i = 0;
-    while i < bytes.len() {
-        if bytes[i] == b'%'
-            && i + 2 < bytes.len()
-            && bytes[i + 1].is_ascii_hexdigit()
-            && bytes[i + 2].is_ascii_hexdigit()
+    while i < b.len() {
+        if b[i] == b'%'
+            && i + 2 < b.len()
+            && b[i + 1].is_ascii_hexdigit()
+            && b[i + 2].is_ascii_hexdigit()
         {
-            let hi = match bytes[i + 1] {
-                b'0'..=b'9' => bytes[i + 1] - b'0',
-                b'a'..=b'f' => bytes[i + 1] - b'a' + 10,
-                _ => bytes[i + 1] - b'A' + 10,
-            };
-            let lo = match bytes[i + 2] {
-                b'0'..=b'9' => bytes[i + 2] - b'0',
-                b'a'..=b'f' => bytes[i + 2] - b'a' + 10,
-                _ => bytes[i + 2] - b'A' + 10,
-            };
-            let c = (hi << 4) | lo;
-            // Unreserved chars per RFC 3986: ALPHA / DIGIT / "-" / "." / "_" / "~"
-            if c.is_ascii_alphanumeric() || matches!(c, b'-' | b'.' | b'_' | b'~') {
-                out.push(c as char);
+            let v = (hex_val(b[i + 1]) << 4) | hex_val(b[i + 2]);
+            if v.is_ascii_alphanumeric() || matches!(v, b'-' | b'.' | b'_' | b'~') {
+                out.push(v as char);
             } else {
-                out.push('%');
-                out.push(bytes[i + 1] as char);
-                out.push(bytes[i + 2] as char);
+                out.push_str(&path[i..i + 3]);
             }
             i += 3;
         } else {
-            out.push(bytes[i] as char);
+            out.push(b[i] as char);
             i += 1;
         }
     }
-    if rest.is_empty() {
-        out
-    } else {
-        format!("{out}{rest}")
+    out
+}
+
+fn is_path_cat2(c: char) -> bool {
+    matches!(c, '!' | '\'' | '(' | ')' | '*' | '[' | ']')
+}
+
+fn is_frag_cat2(c: char) -> bool {
+    matches!(c, '\'' | '[' | ']')
+}
+
+fn encode_char(out: &mut String, c: char) {
+    let mut buf = [0u8; 4];
+    for &b in c.encode_utf8(&mut buf).as_bytes() {
+        out.push_str(&format!("%{b:02X}"));
     }
 }
 
-/// Encode path characters that Go's url.EscapedPath() encodes but the url crate doesn't.
-/// Only applied to the path portion (before the first '?').
-///
-/// Two categories:
-/// 1. Always encoded: chars not in Go's validEncoded allowlist (e.g. '\', '^', '{', '}', '|')
-/// 2. Encoded only when escape() fallback occurs (non-ASCII present): '!', '\'', '(', ')', '*'
-///    These are in validEncoded's allowlist so RawPath is used for pure-ASCII paths.
-fn encode_go_path_chars(url_str: &str) -> String {
-    // Only encode up to the first '?' or '#' — the fragment has different encoding rules
-    // (e.g., '!' is allowed in fragments per Go's shouldEscape for encodeFragment).
-    let path_end = url_str.find(['?', '#']).unwrap_or(url_str.len());
-    let path_part = &url_str[..path_end];
-    let rest = &url_str[path_end..];
-
-    let mut encoded = String::with_capacity(path_part.len());
-    for c in path_part.chars() {
-        match c {
-            // Category 1: always encoded (not in validEncoded's explicit allowlist)
-            '\\' | '^' | '{' | '}' | '|' | '<' | '>' | '`' | ' ' => {
-                encoded.push('%');
-                encoded.push_str(&format!("{:02X}", c as u8));
+fn redact_path_digits(path: &str) -> String {
+    path.split('/')
+        .map(|seg| {
+            if percent_decode_str(seg)
+                .decode_utf8_lossy()
+                .chars()
+                .any(|c| c.is_ascii_digit())
+            {
+                "?"
+            } else {
+                seg
             }
-            // Category 2: encoded only when escape() fallback (handled by caller check)
-            // These are in Go's validEncoded allowlist but get encoded when escape() is called
-            '!' | '\'' | '(' | ')' | '*' | '[' | ']' => {
-                encoded.push('%');
-                encoded.push_str(&format!("{:02X}", c as u8));
-            }
-            _ => encoded.push(c),
-        }
-    }
-    if rest.is_empty() {
-        encoded
-    } else {
-        format!("{encoded}{rest}")
-    }
-}
-
-/// Apply path-digit removal to a relative URL string returned by go_like_reference.
-/// Operates only on the path portion (before the first '?'), matching Go's behavior of
-/// splitting path by '/' and replacing segments containing digits with '?'.
-fn remove_relative_path_digits(url_str: &str) -> String {
-    // Only apply digit removal to the path (before '?' or '#'); fragments are not paths.
-    let path_end = url_str.find(['?', '#']).unwrap_or(url_str.len());
-    let path_part = &url_str[..path_end];
-    let rest = &url_str[path_end..];
-
-    let mut segments: Vec<&str> = path_part.split('/').collect();
-    let mut changed = false;
-    for segment in segments.iter_mut() {
-        if let Ok(decoded) = percent_decode_str(segment).decode_utf8() {
-            if decoded.chars().any(|c| char::is_ascii_digit(&c)) {
-                *segment = "?";
-                changed = true;
-            }
-        }
-    }
-    if changed {
-        format!("{}{}", segments.join("/"), rest)
-    } else {
-        url_str.to_string()
-    }
-}
-
-fn has_invalid_percent_encoding(s: &str) -> bool {
-    let bytes = s.as_bytes();
-    let mut i = 0;
-    while i < bytes.len() {
-        if bytes[i] == b'%' {
-            // Collect a run of consecutive percent-encoded bytes and validate as UTF-8.
-            // Go's url.unescape rejects sequences whose decoded bytes are not valid UTF-8
-            // in path/fragment mode (e.g. %80 alone is a lone continuation byte).
-            let mut buf = Vec::new();
-            while i < bytes.len() && bytes[i] == b'%' {
-                if i + 2 >= bytes.len()
-                    || !bytes[i + 1].is_ascii_hexdigit()
-                    || !bytes[i + 2].is_ascii_hexdigit()
-                {
-                    return true;
-                }
-                let hi = match bytes[i + 1] {
-                    b'0'..=b'9' => bytes[i + 1] - b'0',
-                    b'a'..=b'f' => bytes[i + 1] - b'a' + 10,
-                    _ => bytes[i + 1] - b'A' + 10,
-                };
-                let lo = match bytes[i + 2] {
-                    b'0'..=b'9' => bytes[i + 2] - b'0',
-                    b'a'..=b'f' => bytes[i + 2] - b'a' + 10,
-                    _ => bytes[i + 2] - b'A' + 10,
-                };
-                buf.push((hi << 4) | lo);
-                i += 3;
-            }
-            if std::str::from_utf8(&buf).is_err() {
-                return true;
-            }
-        } else {
-            i += 1;
-        }
-    }
-    false
-}
-
-/// Go-ish behavior:
-/// - Accepts almost anything as a URL reference
-/// - If it's absolute, return it as-is (normalized/encoded)
-/// - If it's relative, return the encoded relative reference (no dummy base in output)
-pub fn go_like_reference(input: &str, remove_query_string: bool) -> String {
-    // Dummy base just to let the parser resolve relatives
-    #[allow(clippy::expect_used)]
-    let base = Url::parse("https://example.invalid/").expect("known-good base URL");
-
-    // Try absolute first (like "https://...", "mailto:...", etc.)
-    if let Ok(abs) = Url::parse(input) {
-        return abs.to_string();
-    }
-
-    // Otherwise parse as a relative reference against the dummy base
-    let resolved = base.join(input).unwrap_or_else(|_| {
-        // If join fails (rare, but can happen with weird inputs), fall back to putting it in the
-        // path.
-        let mut u = base.clone();
-        u.set_path(input);
-        u
-    });
-
-    // Strip the dummy origin back off so you get "hello%20world", "/x%20y", "?q=a%20b", "#frag",
-    // etc.
-    let full = resolved.as_str();
-
-    // base.as_str() is "https://example.invalid/"
-    let base_prefix = base.as_str();
-
-    // For absolute-path inputs (starting with '/'), use the no-trailing-slash strip
-    // to preserve the leading '/' in the result. Otherwise base.join("/ჸ") resolves to
-    // "https://example.invalid/%E1%83%B8" and stripping the base WITH trailing slash
-    // drops the leading '/'.
-    // Helper: normalize percent-encoded unreserved chars in path, then append rest unchanged.
-    // Go's url.Parse normalizes %XX of unreserved chars (e.g. %30 → 0) in the path.
-    let normalize = |s: &str| normalize_pct_encoded_unreserved(s);
-
-    if input.starts_with('/') {
-        if let Some(rest) = full.strip_prefix("https://example.invalid") {
-            if remove_query_string && resolved.query().is_some() {
-                let path_end = rest.find('?').unwrap_or(rest.len());
-                // Preserve fragment (Go keeps it when removing the query string)
-                let frag = rest.find('#').map(|i| &rest[i..]).unwrap_or("");
-                return normalize(&format!("{}?{}", &rest[..path_end], frag));
-            }
-            return normalize(rest);
-        }
-    }
-
-    if let Some(rest) = full.strip_prefix(base_prefix) {
-        // relative path (e.g. "hello%20world" or "dir/hello%20world")
-        if remove_query_string && resolved.query().is_some() {
-            // Strip the query string, preserving the path and fragment with a trailing "?"
-            let path_end = rest.find('?').unwrap_or(rest.len());
-            // Preserve fragment (Go keeps it when removing the query string)
-            let frag = rest.find('#').map(|i| &rest[i..]).unwrap_or("");
-            return normalize(&format!("{}?{}", &rest[..path_end], frag));
-        }
-        normalize(rest)
-    } else if let Some(rest) = full.strip_prefix("https://example.invalid") {
-        // covers cases like "/path" where the base origin remains
-        normalize(rest)
-    } else {
-        // shouldn't happen, but safe fallback
-        normalize(full)
-    }
+        })
+        .collect::<Vec<_>>()
+        .join("/")
 }
 
 pub fn obfuscate_url_string(
@@ -230,495 +82,126 @@ pub fn obfuscate_url_string(
     remove_query_string: bool,
     remove_path_digits: bool,
 ) -> String {
-    // Go rejects control chars in the path (returns '?'). Check before Url::parse since
-    // the url crate may silently drop control chars and succeed where Go would fail.
-    if remove_query_string || remove_path_digits {
-        let path_end = url.find('#').unwrap_or(url.len());
-        if url[..path_end].bytes().any(|b| b < 0x20 || b == 0x7F) {
-            return String::from("?");
+    if url.is_empty() {
+        return String::new();
+    }
+
+    let frag_pos = url.find('#');
+    let path_query_end = frag_pos.unwrap_or(url.len());
+    let path_end = url[..path_query_end].find('?').unwrap_or(path_query_end);
+
+    // Control chars in path/query — Go rejects these
+    if url[..path_query_end].bytes().any(|b| b < 0x20 || b == 0x7F) {
+        return if remove_query_string || remove_path_digits {
+            "?".to_string()
+        } else {
+            url.to_string()
+        };
+    }
+
+    // Determine Go's escape() trigger: Cat1 or non-ASCII in path causes Cat2 encoding too
+    let path = &url[..path_end];
+    let needs_full_path = path.bytes().any(|b| b > 127) || path.chars().any(is_cat1);
+    let frag_has_non_ascii = frag_pos.map_or(false, |i| url[i + 1..].bytes().any(|b| b > 127));
+
+    // Pre-encode chars that UriRef (strict RFC 3986) rejects.
+    // We encode ALL non-ASCII chars (not just Cat1/Cat2) so that characters outside
+    // RFC 3987 ucschar ranges (e.g. U+10EF4F, U+10FFFF) don't cause parse failures.
+    // Exclude the query — Go doesn't validate query percent-encoding, so we pass
+    // only path + fragment to UriRef and restore the original query afterward.
+    let mut pre = String::with_capacity(url.len() * 4);
+    for c in url[..path_end].chars() {
+        if !c.is_ascii() {
+            encode_char(&mut pre, c);
+        } else if is_cat1(c) || (needs_full_path && is_path_cat2(c)) {
+            pre.push_str(&format!("%{:02X}", c as u8));
+        } else {
+            pre.push(c);
         }
     }
-    let mut parsed_url = match Url::parse(url) {
-        Ok(res) => {
-            // For cannot-be-a-base (opaque) URIs like "A:ᏤᏤ", Go keeps the opaque
-            // path verbatim. Return with lowercased scheme.
-            // Exception: if the opaque part has control chars, Go's url.Parse fails
-            // and obfuscateUserInfo returns the original URL unchanged.
-            if res.cannot_be_a_base() {
-                let scheme_len = url.find(':').unwrap_or(0);
-                let opaque_part = &url[scheme_len..];
-                if opaque_part.bytes().any(|b| b < 0x20 || b == 0x7F) {
-                    return url.to_string(); // Go returns original on parse error
-                }
-                let result = url[..scheme_len].to_lowercase() + opaque_part;
-                // Go's url.URL.String() omits empty trailing fragment (bare '#')
-                return if result.ends_with('#') {
-                    result[..result.len() - 1].to_string()
-                } else {
-                    result
-                };
+    if let Some(fi) = frag_pos {
+        pre.push('#');
+        for c in url[fi + 1..].chars() {
+            if !c.is_ascii()
+                || (c as u32) < 0x20
+                || c as u32 == 0x7F
+                || c == '#'
+                || is_cat1(c)
+                || (frag_has_non_ascii && is_frag_cat2(c))
+            {
+                encode_char(&mut pre, c);
+            } else {
+                pre.push(c);
             }
-            res
         }
+    }
+
+    let uri = match UriRef::parse(pre.as_str()) {
+        Ok(u) => u,
         Err(_) => {
-            // Fragment-only references (e.g. "#", "#frag") are valid relative URL references.
-            // Go's url.Parse handles them successfully: "#" → "" (empty fragment → empty string),
-            // "#frag" → "#frag". Handle these before the go_like_reference fallback to prevent
-            // the "empty result → ?" heuristic from incorrectly triggering.
-            if let Some(fragment) = url.strip_prefix('#') {
-                if fragment.is_empty() {
-                    return String::new();
-                }
-                // Go also rejects invalid percent-encoding in fragments.
-                if has_invalid_percent_encoding(fragment) {
-                    return String::from("?");
-                }
-                // Go's url.Parse percent-encodes certain chars in fragments:
-                // - Always: control chars, '#'
-                // - When non-ASCII present (escape() fallback): '!', '\'', '(', ')', '*', '[', ']'
-                //   (These are in validEncoded's allowlist so kept for pure-ASCII fragments, but
-                //   escape() encodes them too.)
-                let frag_has_non_ascii = fragment.bytes().any(|b| b > 127);
-                // Cat1: always encode in fragments; Cat2: encode when non-ASCII present
-                let url_for_join = if fragment.bytes().any(|b| b < 0x20 || b == 0x7F || b == b'#')
-                    || fragment
-                        .chars()
-                        .any(|c| matches!(c, '{' | '}' | '|' | '^' | '`' | '\\' | '<' | '>' | ' '))
-                    || (frag_has_non_ascii
-                        && fragment.chars().any(|c| matches!(c, '\'' | '[' | ']')))
-                {
-                    let mut encoded = String::from('#');
-                    for c in fragment.chars() {
-                        let cp = c as u32;
-                        if cp < 0x20 || cp == 0x7F || c == '#' {
-                            encoded.push_str(&format!("%{cp:02X}"));
-                        } else if matches!(c, '{' | '}' | '|' | '^' | '`' | '\\' | '<' | '>' | ' ')
-                            || (frag_has_non_ascii && matches!(c, '\'' | '[' | ']'))
-                        {
-                            encoded.push_str(&format!("%{:02X}", c as u8));
-                        } else {
-                            encoded.push(c);
-                        }
-                    }
-                    encoded
-                } else {
-                    url.to_string()
-                };
-                return go_like_reference(&url_for_join, remove_query_string);
-            }
-            // Go's url.Parse rejects control characters (bytes < 0x20 or 0x7F) in the PATH and
-            // returns "?". BUT when both options are false, Go's obfuscateUserInfo returns
-            // the original URL on parse failure (no "?").
-            // Control chars in the FRAGMENT are percent-encoded, not rejected.
-            {
-                let path_end = url.find('#').unwrap_or(url.len());
-                if url[..path_end].bytes().any(|b| b < 0x20 || b == 0x7F) {
-                    if !remove_query_string && !remove_path_digits {
-                        return url.to_string();
-                    }
-                    return String::from("?");
-                }
-                // Check if Go would reject the pre-fragment path due to ':' in first segment.
-                // This check must come before the CTL-in-fragment pre-encode block (which
-                // returns early) so that ":#\x01" is caught here rather than being pre-encoded
-                // and passed to go_like_reference.
-                if path_end < url.len() {
-                    let segment_end = url.find(['/', '?', '#']).unwrap_or(url.len());
-                    if url[..segment_end].contains(':') {
-                        if !remove_query_string && !remove_path_digits {
-                            return url.to_string();
-                        }
-                        return String::from("?");
-                    }
-                }
-                // Pre-encode control chars in the fragment (if any) before go_like_reference.
-                if path_end < url.len()
-                    && url[path_end + 1..]
-                        .bytes()
-                        .any(|b| b < 0x20 || b == 0x7F || b == b'#')
-                {
-                    // If the path or fragment has invalid percent-encoding, Go rejects the URL.
-                    let path_invalid = has_invalid_percent_encoding(&url[..path_end]);
-                    let frag_invalid = has_invalid_percent_encoding(&url[path_end + 1..]);
-                    if path_invalid || frag_invalid {
-                        if !remove_query_string && !remove_path_digits {
-                            return url.to_string();
-                        }
-                        return String::from("?");
-                    }
-                    let mut pre_encoded = url[..path_end].to_string();
-                    pre_encoded.push('#');
-                    for c in url[path_end + 1..].chars() {
-                        let cp = c as u32;
-                        if cp < 0x20 || cp == 0x7F || c == '#' {
-                            pre_encoded.push_str(&format!("%{cp:02X}"));
-                        } else {
-                            pre_encoded.push(c);
-                        }
-                    }
-                    // Use the pre-encoded URL for the rest of the processing
-                    let url = pre_encoded.as_str();
-                    // Continue to go_like_reference below using the pre-encoded url
-                    // (fall through with modified url)
-                    let url_pre_encoded_for_backslash;
-                    let url_for_go_like = if url.contains('\\') {
-                        url_pre_encoded_for_backslash = url.replace('\\', "%5C");
-                        url_pre_encoded_for_backslash.as_str()
-                    } else {
-                        url
-                    };
-                    let raw = go_like_reference(url_for_go_like, remove_query_string);
-                    let raw = if raw.ends_with('#') {
-                        raw[..raw.len() - 1].to_string()
-                    } else {
-                        raw
-                    };
-                    let result = if raw.is_empty() && !url.is_empty() {
-                        url.to_string()
-                    } else {
-                        raw
-                    };
-                    let path_end_for_ascii = url.find(['?', '#']).unwrap_or(url.len());
-                    let has_non_ascii = url[..path_end_for_ascii].bytes().any(|b| b > 127);
-                    let result = if has_non_ascii {
-                        encode_go_path_chars(&result)
-                    } else {
-                        let qs = result.find('?').unwrap_or(result.len());
-                        let pp = &result[..qs];
-                        let rr = &result[qs..];
-                        let mut enc = String::with_capacity(pp.len());
-                        let mut changed = false;
-                        for c in pp.chars() {
-                            match c {
-                                '\\' | '^' | '{' | '}' | '|' | '<' | '>' | '`' | ' ' => {
-                                    enc.push('%');
-                                    enc.push_str(&format!("{:02X}", c as u8));
-                                    changed = true;
-                                }
-                                _ => enc.push(c),
-                            }
-                        }
-                        if changed {
-                            if rr.is_empty() {
-                                enc
-                            } else {
-                                format!("{enc}{rr}")
-                            }
-                        } else {
-                            result
-                        }
-                    };
-                    // Also encode Cat1 and (when frag has non-ASCII) Cat2 in the result's fragment
-                    let orig_frag_has_non_ascii = url
-                        [url.find('#').map(|i| i + 1).unwrap_or(url.len())..]
-                        .bytes()
-                        .any(|b| b > 127);
-                    let result = if let Some(fs) = result.find('#') {
-                        let (ph, fr) = result.split_at(fs);
-                        let fr_inner = &fr[1..];
-                        let needs = fr_inner.chars().any(|c| {
-                            matches!(c, '{' | '}' | '|' | '^' | '`' | '\\' | '<' | '>' | ' ')
-                        }) || (orig_frag_has_non_ascii
-                            && fr_inner.chars().any(|c| matches!(c, '\'' | '[' | ']')));
-                        if needs {
-                            let mut out = ph.to_string();
-                            out.push('#');
-                            for c in fr_inner.chars() {
-                                if matches!(c, '{' | '}' | '|' | '^' | '`' | '\\' | '<' | '>' | ' ')
-                                    || (orig_frag_has_non_ascii && matches!(c, '\'' | '[' | ']'))
-                                {
-                                    out.push_str(&format!("%{:02X}", c as u8));
-                                } else {
-                                    out.push(c);
-                                }
-                            }
-                            out
-                        } else {
-                            result
-                        }
-                    } else {
-                        result
-                    };
-                    if remove_path_digits {
-                        return remove_relative_path_digits(&result);
-                    }
-                    return result;
-                }
-            }
-            // Go's url.Parse rejects invalid percent-encoding sequences (bare '%' or '%' not
-            // followed by exactly two hex digits) in the PATH and FRAGMENT, but not query string.
-            {
-                let path_end = url.find(['?', '#']).unwrap_or(url.len());
-                let frag_start = url.find('#').map(|i| i + 1);
-                let path_invalid = has_invalid_percent_encoding(&url[..path_end]);
-                let frag_invalid =
-                    frag_start.is_some_and(|i| has_invalid_percent_encoding(&url[i..]));
-                if path_invalid || frag_invalid {
-                    if !remove_query_string && !remove_path_digits {
-                        return url.to_string();
-                    }
-                    return String::from("?");
-                }
-            }
-            // Go's url.Parse rejects URLs where the first path segment contains ':' (RFC 3986
-            // §4.2): this is ambiguous with a scheme separator. E.g., ":" and "1:b" both fail
-            // with "missing protocol scheme" or "first path segment cannot contain colon".
-            // The url crate silently accepts these as path chars.
-            {
-                let segment_end = url.find(['/', '?', '#']).unwrap_or(url.len());
-                if url[..segment_end].contains(':') {
-                    if !remove_query_string && !remove_path_digits {
-                        return url.to_string();
-                    }
-                    return String::from("?");
-                }
-            }
-            // For query-only references (starting with '?'), Go keeps the query raw.
-            // With remove_query_string=true, return "?". Otherwise return original.
-            if let Some(after_q) = url.strip_prefix('?') {
-                if has_invalid_percent_encoding(after_q) {
-                    return String::from("?");
-                }
-                if remove_query_string {
-                    // If the URL has a fragment ("?query#frag" or "?#frag"), preserve it.
-                    // Fall through to go_like_reference which encodes and preserves it.
-                    // For "?query" (no fragment), remove the query and return "?".
-                    if !after_q.contains('#') {
-                        return String::from("?");
-                    }
-                } else if let Some(hash_pos) = after_q.find('#') {
-                    // Fragment present. Go keeps query raw and percent-encodes non-ASCII in
-                    // the fragment (url.URL.String() calls EscapeFragment). Handle it here so
-                    // the "restore original query" pass below doesn't undo the encoding.
-                    let query_part = &after_q[..hash_pos]; // query content (without '?')
-                    let frag = &after_q[hash_pos + 1..]; // fragment content
-                    if frag.is_empty() {
-                        // Go's url.URL.String() omits an empty trailing fragment (bare '#').
-                        return format!("?{query_part}");
-                    }
-                    // Encode non-ASCII chars in the fragment byte-by-byte.
-                    let mut encoded_frag = String::new();
-                    for c in frag.chars() {
-                        if (c as u32) > 127 {
-                            let mut buf = [0u8; 4];
-                            for &b in c.encode_utf8(&mut buf).as_bytes() {
-                                encoded_frag.push_str(&format!("%{b:02X}"));
-                            }
-                        } else {
-                            encoded_frag.push(c);
-                        }
-                    }
-                    return format!("?{query_part}#{encoded_frag}");
-                } else {
-                    // No fragment: Go keeps query chars raw, including non-ASCII.
-                    return url.to_string();
-                }
-            }
-            // The url crate treats '\' as a path separator, silently consuming it.
-            // Go encodes '\' as '%5C'. Pre-encode backslashes before go_like_reference
-            // so they are preserved through base.join() and appear as '%5C' in the output.
-            // Also pre-encode spaces (url crate may drop them).
-            let url_pre_encoded;
-            let url_for_go_like = if url.contains('\\') || url.contains(' ') {
-                url_pre_encoded = url.replace('\\', "%5C").replace(' ', "%20");
-                url_pre_encoded.as_str()
+            return if remove_query_string || remove_path_digits {
+                "?".to_string()
             } else {
-                url
+                url.to_string()
             };
-            let fixme_url_go_parsing_raw = go_like_reference(url_for_go_like, remove_query_string);
-            // Go's url.URL.String() omits a trailing empty fragment (bare '#').
-            // The url crate keeps it. Strip it here for parity.
-            let fixme_url_go_parsing = if fixme_url_go_parsing_raw.ends_with('#') {
-                fixme_url_go_parsing_raw[..fixme_url_go_parsing_raw.len() - 1].to_string()
-            } else {
-                fixme_url_go_parsing_raw
-            };
-            let result = if fixme_url_go_parsing.is_empty() && !url.is_empty() {
-                // The url crate resolved away dot path segments (e.g. "." or "..") via RFC 3986
-                // normalization. Go's url.Parse preserves them literally. Return the original,
-                // but strip a trailing empty fragment '#' (Go omits empty fragments).
-                let fallback = url.strip_suffix('#').unwrap_or(url);
-                fallback.to_string()
-            } else {
-                // If the original URL had a dot-segment prefix (., .., ./, ../) that
-                // base.join() resolved away, Go preserves it literally. Re-prepend it.
-                let frag_or_end = url.find(['#', '?']).unwrap_or(url.len());
-                let orig_path = &url[..frag_or_end];
-                let dot_prefix_len = {
-                    let mut i = 0;
-                    loop {
-                        if orig_path[i..].starts_with("../") {
-                            i += 3;
-                        } else if orig_path[i..].starts_with("./") {
-                            i += 2;
-                        } else if &orig_path[i..] == ".." || &orig_path[i..] == "." {
-                            i += orig_path[i..].len();
-                            break;
-                        } else {
-                            break;
-                        }
-                    }
-                    i
-                };
-                if dot_prefix_len > 0 {
-                    let dot_prefix = &url[..dot_prefix_len];
-                    // Prepend the lost dot prefix
-                    if !fixme_url_go_parsing.starts_with(dot_prefix) {
-                        format!("{}{}", dot_prefix, fixme_url_go_parsing)
-                    } else {
-                        fixme_url_go_parsing
-                    }
-                } else if fixme_url_go_parsing.starts_with('#') {
-                    // Non-dot path resolved to fragment only - prepend original path
-                    if !orig_path.is_empty() {
-                        format!("{}{}", orig_path, fixme_url_go_parsing)
-                    } else {
-                        fixme_url_go_parsing
-                    }
-                } else {
-                    fixme_url_go_parsing
-                }
-            };
-            // Encode path chars that Go encodes but the url crate doesn't.
-            // Go's EscapedPath() calls escape(path, encodePath) whenever validEncoded() returns
-            // false. validEncoded() fails on: non-ASCII chars OR Cat1 chars
-            // (\,^,{,},|,<,>,`,space). When escape() is called, it also encodes Cat2
-            // chars (!, ', (, ), *, [, ]). So Cat2 chars are encoded whenever any Cat1
-            // or non-ASCII char is present in the path. Only check path portion (before
-            // '?' or '#'); query string and fragment have separate handling. Go's
-            // EscapedPath() only runs on the path component.
-            let path_end_for_ascii_check = url.find(['?', '#']).unwrap_or(url.len());
-            let path_for_check = &url[..path_end_for_ascii_check];
-            let has_non_ascii = path_for_check.bytes().any(|b| b > 127);
-            let has_cat1 = path_for_check.chars().any(|c| {
-                matches!(
-                    c,
-                    '\\' | '^' | '{' | '}' | '|' | '<' | '>' | '`' | ' ' | '"'
-                )
-            });
-            let needs_full_encoding = has_non_ascii || has_cat1;
-            let result = if needs_full_encoding {
-                // Full encoding: both category 1 and category 2 in path + fragment.
-                // When non-ASCII is present, Go's escape() also encodes cat2 chars in fragments.
-                let encoded = encode_go_path_chars(&result);
-                // Check if original URL's fragment also has non-ASCII
-                let url_frag_start = url.find('#').map(|i| i + 1).unwrap_or(url.len());
-                let frag_has_non_ascii = url[url_frag_start..].bytes().any(|b| b > 127);
-                // Encode Cat1 and (when frag has non-ASCII) Cat2 in the result's fragment
-                if let Some(frag_start) = encoded.find('#') {
-                    let path_and_hash = &encoded[..=frag_start];
-                    let frag = &encoded[frag_start + 1..];
-                    let frag_needs_enc = frag
-                        .chars()
-                        .any(|c| matches!(c, '{' | '}' | '|' | '^' | '`' | '\\' | '<' | '>' | ' '))
-                        || (frag_has_non_ascii
-                            && frag.chars().any(|c| matches!(c, '\'' | '[' | ']')));
-                    if frag_needs_enc {
-                        let mut out = path_and_hash.to_string();
-                        for c in frag.chars() {
-                            if matches!(c, '{' | '}' | '|' | '^' | '`' | '\\' | '<' | '>' | ' ')
-                                || (frag_has_non_ascii && matches!(c, '\'' | '[' | ']'))
-                            {
-                                out.push_str(&format!("%{:02X}", c as u8));
-                            } else {
-                                out.push(c);
-                            }
-                        }
-                        out
-                    } else {
-                        encoded
-                    }
-                } else {
-                    encoded
-                }
-            } else {
-                // ASCII-only: only category 1 chars (\, ^, etc.)
-                // Category 2 (!, ', (, ), *) are left as-is for pure ASCII inputs
-                // Also stop at '#' since fragment has different encoding rules
-                let path_end = result.find(['?', '#']).unwrap_or(result.len());
-                let path_part = &result[..path_end];
-                let rest = &result[path_end..];
-                let mut encoded = String::with_capacity(path_part.len());
-                let mut changed = false;
-                for c in path_part.chars() {
-                    match c {
-                        '\\' | '^' | '{' | '}' | '|' | '<' | '>' | '`' | ' ' => {
-                            encoded.push('%');
-                            encoded.push_str(&format!("{:02X}", c as u8));
-                            changed = true;
-                        }
-                        _ => encoded.push(c),
-                    }
-                }
-                if changed {
-                    if rest.is_empty() {
-                        encoded
-                    } else {
-                        format!("{encoded}{rest}")
-                    }
-                } else {
-                    result
-                }
-            };
-            // Go keeps the query string raw (url.RawQuery in Go's URL struct).
-            // The url crate encodes query chars; restore the original query from the input.
-            // Only restore the query portion (up to '#'), not the fragment — the fragment
-            // comes from go_like_reference which already handles encoding and empty stripping.
-            let result = if !remove_query_string {
-                if let Some(orig_q_start) = url.find('?') {
-                    let orig_frag_start = url.find('#');
-                    // orig_query: from '?' to '#' (exclusive), e.g. "?rawquery"
-                    let orig_query = &url[orig_q_start..orig_frag_start.unwrap_or(url.len())];
-                    if let Some(result_q_start) = result.find('?') {
-                        // Keep the fragment from `result` (already encoded/stripped by
-                        // go_like_reference)
-                        let result_frag = result.find('#').map_or("", |i| &result[i..]);
-                        format!("{}{}{}", &result[..result_q_start], orig_query, result_frag)
-                    } else {
-                        result
-                    }
-                } else {
-                    result
-                }
-            } else {
-                result
-            };
-            if remove_path_digits {
-                return remove_relative_path_digits(&result);
-            }
-            return result;
         }
     };
 
-    // remove username & password
-    parsed_url.set_username("").unwrap_or_default();
-    parsed_url.set_password(Some("")).unwrap_or_default();
+    let mut out = String::new();
 
-    if remove_query_string && parsed_url.query().is_some() {
-        parsed_url.set_query(Some(""));
+    if let Some(scheme) = uri.scheme() {
+        out.push_str(&scheme.as_str().to_lowercase());
+        out.push(':');
     }
 
-    if !remove_path_digits {
-        return parsed_url.to_string();
-    }
-
-    // remove path digits
-    let mut split_url: Vec<&str> = parsed_url.path().split('/').collect();
-    let mut changed = false;
-    for segment in split_url.iter_mut() {
-        // we don't want to redact any HTML encodings
-        #[allow(clippy::unwrap_used)]
-        let decoded = percent_decode_str(segment).decode_utf8().unwrap();
-        if decoded.chars().any(|c| char::is_ascii_digit(&c)) {
-            *segment = "/REDACTED/";
-            changed = true;
+    if let Some(auth) = uri.authority() {
+        out.push_str("//");
+        // Strip userinfo — emit only host[:port]
+        out.push_str(auth.host());
+        if let Some(port) = auth.port() {
+            out.push(':');
+            out.push_str(port.as_str());
+        }
+        let path_str = normalize_pct_encoded_unreserved(uri.path().as_str());
+        if remove_path_digits {
+            out.push_str(&redact_path_digits(&path_str));
+        } else {
+            out.push_str(&path_str);
+        }
+    } else if uri.scheme().is_some() {
+        // Opaque URL (scheme but no authority): Go keeps the opaque part verbatim.
+        // u.Path is empty for opaque URLs in Go, so no digit redaction applies.
+        let scheme_end = url.find(':').unwrap() + 1;
+        out.push_str(&url[scheme_end..path_end]);
+    } else {
+        // Relative reference: use pre-encoded path
+        let path_str = normalize_pct_encoded_unreserved(uri.path().as_str());
+        if remove_path_digits {
+            out.push_str(&redact_path_digits(&path_str));
+        } else {
+            out.push_str(&path_str);
         }
     }
-    if changed {
-        parsed_url.set_path(&split_url.join("/"));
+
+    // Use original URL positions to detect query — uri.query() is always None since we
+    // excluded the query from the string we passed to UriRef.
+    if remove_query_string {
+        if path_end < path_query_end {
+            out.push('?');
+        }
+    } else if path_end < path_query_end {
+        // Restore original raw query (Go's url.RawQuery is kept verbatim)
+        out.push_str(&url[path_end..path_query_end]);
     }
 
-    parsed_url.to_string().replace("/REDACTED/", "?")
+    if let Some(frag) = uri.fragment() {
+        if !frag.as_str().is_empty() {
+            out.push('#');
+            out.push_str(frag.as_str());
+        }
+    }
+
+    out
 }
 
 #[cfg(test)]
@@ -1038,6 +521,191 @@ mod tests {
             remove_path_digits  [true]
             input               ["ჸ#%\u{1}"]
             expected_output     ["?"];
+        ]
+        [
+            test_name           [parity_double_quote_cat1]
+            remove_query_string [true]
+            remove_path_digits  [true]
+            input               ["\"!"]
+            expected_output     ["%22%21"];
+        ]
+        [
+            test_name           [parity_dot_hash_unicode]
+            remove_query_string [true]
+            remove_path_digits  [true]
+            input               [".#ჸ"]
+            expected_output     [".#%E1%83%B8"];
+        ]
+        [
+            test_name           [parity_dot_hash]
+            remove_query_string [true]
+            remove_path_digits  [true]
+            input               [".#"]
+            expected_output     ["."];
+        ]
+        [
+            test_name           [parity_unicode_hash_digit]
+            remove_query_string [true]
+            remove_path_digits  [true]
+            input               ["ჸ#0"]
+            expected_output     ["%E1%83%B8#0"];
+        ]
+        [
+            test_name           [parity_scheme_empty_frag]
+            remove_query_string [true]
+            remove_path_digits  [true]
+            input               ["C:#"]
+            expected_output     ["c:"];
+        ]
+        [
+            test_name           [parity_relative_dotdot_unicode]
+            remove_query_string [true]
+            remove_path_digits  [true]
+            input               ["../ჸ"]
+            expected_output     ["../%E1%83%B8"];
+        ]
+        [
+            test_name           [parity_query_hash_unicode_both]
+            remove_query_string [true]
+            remove_path_digits  [true]
+            input               ["?#ჸ"]
+            expected_output     ["?#%E1%83%B8"];
+        ]
+        [
+            test_name           [parity_query_hash_unicode_digits]
+            remove_query_string [false]
+            remove_path_digits  [true]
+            input               ["?#ჸ"]
+            expected_output     ["?#%E1%83%B8"];
+        ]
+        [
+            test_name           [parity_excl_query_unicode]
+            remove_query_string [true]
+            remove_path_digits  [true]
+            input               ["!?ჸ"]
+            expected_output     ["!?"];
+        ]
+        [
+            test_name           [parity_query_unicode_keep]
+            remove_query_string [false]
+            remove_path_digits  [true]
+            input               ["?ჸ"]
+            expected_output     ["?ჸ"];
+        ]
+        [
+            test_name           [parity_space_unicode]
+            remove_query_string [true]
+            remove_path_digits  [true]
+            input               [" ჸ"]
+            expected_output     ["%20%E1%83%B8"];
+        ]
+        [
+            test_name           [parity_unicode_query_unicode_keep]
+            remove_query_string [false]
+            remove_path_digits  [true]
+            input               ["ჸ?ჸ"]
+            expected_output     ["%E1%83%B8?ჸ"];
+        ]
+        [
+            test_name           [parity_unicode_query_hash_both]
+            remove_query_string [true]
+            remove_path_digits  [true]
+            input               ["?ჸ#ჸ"]
+            expected_output     ["?#%E1%83%B8"];
+        ]
+        [
+            test_name           [parity_unicode_query_empty_hash]
+            remove_query_string [false]
+            remove_path_digits  [true]
+            input               ["ჸ?#"]
+            expected_output     ["%E1%83%B8?"];
+        ]
+        [
+            test_name           [parity_pct_unreserved_normalize]
+            remove_query_string [true]
+            remove_path_digits  [false]
+            input               ["%30ჸ"]
+            expected_output     ["0%E1%83%B8"];
+        ]
+        [
+            test_name           [parity_unicode_query_invalid_pct]
+            remove_query_string [true]
+            remove_path_digits  [true]
+            input               ["ჸ?%"]
+            expected_output     ["%E1%83%B8?"];
+        ]
+        [
+            test_name           [parity_not_a_url_both_false]
+            remove_query_string [false]
+            remove_path_digits  [false]
+            input               ["this is not a valid url"]
+            expected_output     ["this%20is%20not%20a%20valid%20url"];
+        ]
+        [
+            test_name           [parity_not_a_url_both_true]
+            remove_query_string [true]
+            remove_path_digits  [true]
+            input               ["this is not a valid url"]
+            expected_output     ["this%20is%20not%20a%20valid%20url"];
+        ]
+        [
+            test_name           [parity_disabled_userinfo]
+            remove_query_string [false]
+            remove_path_digits  [false]
+            input               ["http://user:password@foo.com/1/2/3?q=james"]
+            expected_output     ["http://foo.com/1/2/3?q=james"];
+        ]
+        [
+            test_name           [parity_colon_both_false]
+            remove_query_string [false]
+            remove_path_digits  [false]
+            input               [":"]
+            expected_output     [":"];
+        ]
+        [
+            test_name           [parity_pct_both_false]
+            remove_query_string [false]
+            remove_path_digits  [false]
+            input               ["%"]
+            expected_output     ["%"];
+        ]
+        [
+            test_name           [parity_ctrl_in_scheme_both_false]
+            remove_query_string [false]
+            remove_path_digits  [false]
+            input               ["C:\u{1}"]
+            expected_output     ["C:\u{1}"];
+        ]
+        [
+            test_name           [parity_ctrl_both_false]
+            remove_query_string [false]
+            remove_path_digits  [false]
+            input               ["\u{1}"]
+            expected_output     ["\u{1}"];
+        ]
+        [
+            test_name           [parity_frag_curly_brace]
+            remove_query_string [true]
+            remove_path_digits  [true]
+            input               ["ჸ#{ჸ"]
+            expected_output     ["%E1%83%B8#%7B%E1%83%B8"];
+        ]
+        [
+            // Opaque URL: Go keeps the opaque part verbatim (not percent-encoded)
+            test_name           [parity_opaque_url_unicode]
+            remove_query_string [true]
+            remove_path_digits  [true]
+            input               ["A:ჸ"]
+            expected_output     ["a:ჸ"];
+        ]
+        [
+            // Fragment with chars outside RFC 3987 ucschar ranges (U+10EF4F, U+10FFFF, etc.)
+            // These must be percent-encoded, not cause a parse failure returning "?"
+            test_name           [parity_fuzzing_supp_unicode_frag]
+            remove_query_string [true]
+            remove_path_digits  [true]
+            input               ["\u{91cb8}\u{9232f}झ\u{44db0}#\u{3}\n\u{5bb50}\u{925d9}\u{925d5}\u{925d5}\u{925d5}\u{925d5}䕞\u{9a70d}\u{3d2ff}\u{10ef4f}\u{87307}\u{6}\u{10ef0a}\u{10ffff}\u{ad7e5}\u{33f}筚\u{361}➑\u{2}{\u{10de13}\u{10ffff}\u{10ffff}'"]
+            expected_output     ["%F2%91%B2%B8%F2%92%8C%AF%E0%A4%9D%F1%84%B6%B0#%03%0A%F1%9B%AD%90%F2%92%97%99%F2%92%97%95%F2%92%97%95%F2%92%97%95%F2%92%97%95%E4%95%9E%F2%9A%9C%8D%F0%BD%8B%BF%F4%8E%BD%8F%F2%87%8C%87%06%F4%8E%BC%8A%F4%8F%BF%BF%F2%AD%9F%A5%CC%BF%E7%AD%9A%CD%A1%E2%9E%91%02%7B%F4%8D%B8%93%F4%8F%BF%BF%F4%8F%BF%BF%27"];
         ]
     )]
     #[test]
