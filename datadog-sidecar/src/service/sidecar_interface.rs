@@ -60,6 +60,7 @@ pub trait SidecarInterface {
     /// * `session_id` - The ID of the session.
     /// * `pid` - The pid of the sidecar client.
     /// * `config` - The configuration to be set.
+    #[force_backpressure]
     async fn set_session_config(
         session_id: String,
         remote_config_notify_target: RemoteConfigNotifyTarget,
@@ -73,6 +74,7 @@ pub trait SidecarInterface {
     ///
     /// * `session_id` - The ID of the session.
     /// * `process_tags` - The process tags string.
+    #[force_backpressure]
     async fn set_session_process_tags(session_id: String, process_tags: String);
 
     /// Shuts down a runtime.
@@ -80,6 +82,7 @@ pub trait SidecarInterface {
     /// # Arguments
     ///
     /// * `instance_id` - The ID of the instance.
+    #[force_backpressure]
     async fn shutdown_runtime(instance_id: InstanceId);
 
     /// Shuts down a session.
@@ -87,6 +90,7 @@ pub trait SidecarInterface {
     /// # Arguments
     ///
     /// * `session_id` - The ID of the session.
+    #[force_backpressure]
     async fn shutdown_session(session_id: String);
 
     /// Sends a trace via shared memory.
@@ -165,6 +169,7 @@ pub trait SidecarInterface {
     /// * `global_tags` - Global tags which need to be propagated.
     /// * `dynamic_instrumentation_state` - Whether dynamic instrumentation is enabled, disabled or
     ///   not set.
+    #[force_backpressure]
     async fn set_universal_service_tags(
         instance_id: InstanceId,
         queue_id: QueueId,
@@ -182,6 +187,7 @@ pub trait SidecarInterface {
     /// * `queue_id` - The unique identifier for the trace context.
     /// * `dynamic_instrumentation_state` - Whether dynamic instrumentation is enabled, disabled or
     ///   not set.
+    #[force_backpressure]
     async fn set_request_config(
         instance_id: InstanceId,
         queue_id: QueueId,
@@ -197,6 +203,7 @@ pub trait SidecarInterface {
     async fn send_dogstatsd_actions(instance_id: InstanceId, actions: Vec<DogStatsDActionOwned>);
 
     /// Flushes any outstanding traces queued for sending.
+    #[force_backpressure]
     async fn flush_traces();
 
     /// Sets x-datadog-test-session-token on all requests for the given session.
@@ -208,6 +215,7 @@ pub trait SidecarInterface {
     async fn set_test_session_token(session_id: String, token: String);
 
     /// Sends a ping to the service.
+    #[force_backpressure]
     async fn ping();
 
     /// Dumps the current state of the service.
@@ -215,6 +223,7 @@ pub trait SidecarInterface {
     /// # Returns
     ///
     /// A string representation of the current state of the service.
+    #[force_backpressure]
     async fn dump() -> String;
 
     /// Retrieves the current statistics of the service.
@@ -222,5 +231,6 @@ pub trait SidecarInterface {
     /// # Returns
     ///
     /// A string representation of the current statistics of the service.
+    #[force_backpressure]
     async fn stats() -> String;
 }

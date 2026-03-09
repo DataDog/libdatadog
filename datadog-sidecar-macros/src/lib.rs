@@ -28,25 +28,46 @@ fn snake_to_camel(ident_str: &str) -> String {
 }
 
 #[proc_macro_attribute]
-pub fn extract_request_id(_attr: TokenStream, mut input: TokenStream) -> TokenStream {
-    let item: ItemTrait = syn::parse(input.clone()).unwrap();
+pub fn extract_request_id(_attr: TokenStream, input: TokenStream) -> TokenStream {
+    let mut item: ItemTrait = syn::parse(input).unwrap();
     let name = &format_ident!("{}Request", item.ident);
     let mut arms: Vec<Arm> = vec![];
-    for inner in item.items {
+    let mut backpressure_variants: Vec<Ident> = vec![];
+
+    for inner in item.items.iter_mut() {
         if let TraitItem::Fn(func) = inner {
-            for any_arg in func.sig.inputs {
+            // Strip #[force_backpressure] and record which methods carry it.
+            let had_force_backpressure = func.attrs.iter().any(|attr| {
+                attr.meta
+                    .path()
+                    .get_ident()
+                    .is_some_and(|i| i == "force_backpressure")
+            });
+            func.attrs.retain(|attr| {
+                attr.meta
+                    .path()
+                    .get_ident()
+                    .is_none_or(|i| i != "force_backpressure")
+            });
+
+            let method = Ident::new(
+                &snake_to_camel(&func.sig.ident.to_string()),
+                Span::mixed_site(),
+            );
+
+            if had_force_backpressure {
+                backpressure_variants.push(method.clone());
+            }
+
+            for any_arg in &func.sig.inputs {
                 if let Typed(arg) = any_arg {
-                    if let Pat::Ident(ident) = *arg.pat {
+                    if let Pat::Ident(ident) = &*arg.pat {
                         let matched_enum_type = match ident.ident.to_string().as_str() {
                             "session_id" => Some(format_ident!("SessionId")),
                             "instance_id" => Some(format_ident!("InstanceId")),
                             _ => None,
                         };
                         if let Some(enum_type) = matched_enum_type {
-                            let method = Ident::new(
-                                &snake_to_camel(&func.sig.ident.to_string()),
-                                Span::mixed_site(),
-                            );
                             arms.push(parse_quote! {
                                 #name::#method { #ident, .. } => RequestIdentifier::#enum_type(#ident.clone())
                             });
@@ -56,7 +77,16 @@ pub fn extract_request_id(_attr: TokenStream, mut input: TokenStream) -> TokenSt
             }
         }
     }
-    input.extend(TokenStream::from(quote! {
+
+    let backpressure_body = if backpressure_variants.is_empty() {
+        quote! { false }
+    } else {
+        quote! { matches!(self, #(#name::#backpressure_variants { .. })|*) }
+    };
+
+    TokenStream::from(quote! {
+        #item
+
         impl RequestIdentification for tarpc::Request<#name> {
             fn extract_identifier(&self) -> RequestIdentifier {
                 match &self.message {
@@ -67,8 +97,14 @@ pub fn extract_request_id(_attr: TokenStream, mut input: TokenStream) -> TokenSt
                 }
             }
         }
-    }));
-    input
+
+        impl #name {
+            /// Returns true if this request variant was annotated with `#[force_backpressure]`.
+            pub fn requires_backpressure(&self) -> bool {
+                #backpressure_body
+            }
+        }
+    })
 }
 
 struct EnvOrDefault {

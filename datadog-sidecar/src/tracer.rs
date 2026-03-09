@@ -8,13 +8,23 @@ use libdd_common::Endpoint;
 use libdd_trace_utils::config_utils::trace_intake_url_prefixed;
 use std::borrow::Cow;
 use std::ffi::CString;
+use std::mem::ManuallyDrop;
 use std::str::FromStr;
 use std::sync::{LazyLock, Mutex};
 
-pub static SHM_LIMITER: LazyLock<Mutex<ShmLimiterMemory<()>>> = LazyLock::new(|| {
+pub static SHM_LIMITER: LazyLock<Mutex<ManuallyDrop<ShmLimiterMemory<()>>>> = LazyLock::new(|| {
+    unsafe { libc::atexit(drop_shm_limiter) };
     #[allow(clippy::unwrap_used)]
-    Mutex::new(ShmLimiterMemory::create(shm_limiter_path()).unwrap())
+    Mutex::new(ManuallyDrop::new(
+        ShmLimiterMemory::create(shm_limiter_path()).unwrap(),
+    ))
 });
+
+extern "C" fn drop_shm_limiter() {
+    let mut guard = SHM_LIMITER.lock().unwrap_or_else(|e| e.into_inner());
+    // SAFETY: atexit runs once at program exit; no code accesses this static afterward.
+    unsafe { ManuallyDrop::drop(&mut *guard) };
+}
 
 #[derive(Default)]
 pub struct Config {

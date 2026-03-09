@@ -121,58 +121,102 @@ fn skip_examples() -> &'static HashMap<&'static str, &'static str> {
     static MAP: OnceLock<HashMap<&'static str, &'static str>> = OnceLock::new();
     MAP.get_or_init(|| {
         HashMap::from([
-            ("crashtracking", "intentionally crashes"),
             ("exporter", "requires CLI arguments"),
             ("exporter_manager", "Flaky because SIGPIPE thing"),
         ])
     })
 }
 
+struct ExpectedCrash {
+    /// Expected Unix signal number (ex 11 for SIGSEGV).
+    #[cfg(unix)]
+    signal: i32,
+    /// File that should exist in the work directory after the crash,
+    /// confirming the crash handler ran successfully
+    output_file: &'static str,
+}
+
+fn expected_crashes() -> &'static HashMap<&'static str, ExpectedCrash> {
+    static MAP: OnceLock<HashMap<&'static str, ExpectedCrash>> = OnceLock::new();
+    MAP.get_or_init(|| {
+        HashMap::from([(
+            "crashtracking",
+            ExpectedCrash {
+                #[cfg(unix)]
+                signal: 11, // SIGSEGV
+                output_file: "crashreport.json",
+            },
+        )])
+    })
+}
+
+/// Locate the crashtracking receiver binary and library directory.
+///
+/// They may live in either "release/" (local/ffi_test build) or "artifacts/"
+/// (CI pre-built).  Returns `(receiver_binary_path, lib_dir)`
+fn find_receiver_paths(project_root: &Path) -> (PathBuf, PathBuf) {
+    let make_paths = |dir: &str| {
+        let base = project_root.join(dir);
+        (
+            base.join("bin").join("libdatadog-crashtracking-receiver"),
+            base.join("lib"),
+        )
+    };
+    ["release", "artifacts"]
+        .iter()
+        .map(|dir| make_paths(dir))
+        .find(|(bin, _)| bin.exists())
+        .unwrap_or_else(|| make_paths("release"))
+}
+
+/// Build the library search-path env var for the receiver process.
+///
+/// The C test binary is dynamically linked against libdatadog_profiling.{so,dylib}
+/// which is not on the system library path.  Returns `(var_name, value)`
+fn library_search_path_env(lib_dir: &Path) -> (String, String) {
+    #[cfg(target_os = "macos")]
+    let search_path_var = "DYLD_LIBRARY_PATH";
+    #[cfg(not(target_os = "macos"))]
+    let search_path_var = "LD_LIBRARY_PATH";
+
+    let lib_path = match std::env::var(search_path_var) {
+        Ok(existing) if !existing.is_empty() => {
+            format!("{}:{}", lib_dir.display(), existing)
+        }
+        _ => lib_dir.display().to_string(),
+    };
+    (search_path_var.to_string(), lib_path)
+}
+
 /// Per-test environment variables.  The runner sets these before spawning
 /// the test executable so that tests which need external resources (e.g. the
 /// receiver binary) can find them without hard-coding paths.
-fn per_test_env(name: &str, project_root: &Path) -> Vec<(String, String)> {
+fn per_test_env(name: &str, project_root: &Path, work_dir: &Path) -> Vec<(String, String)> {
     match name {
-        "crashtracking_unhandled_exception" => {
-            // The receiver binary and shared library may live in either
-            // "release/" (local/ffi_test build) or "artifacts/" (CI pre-built).
-            // Check both and use whichever exists.
-            let make_paths = |dir: &str| {
-                let base = project_root.join(dir);
-                (
-                    base.join("bin").join("libdatadog-crashtracking-receiver"),
-                    base.join("lib"),
-                )
-            };
-            let (receiver, lib_dir) = ["release", "artifacts"]
-                .iter()
-                .map(|dir| make_paths(dir))
-                .find(|(bin, _)| bin.exists())
-                .unwrap_or_else(|| make_paths("release"));
-
-            // The C test binary is dynamically linked against libdatadog_profiling.{so,dylib}
-            // which is not on the system library path.  Set the platform-specific linker
-            // search path so the binary can load, and the C test forwards it via getenv()
-            // into the receiver's explicit execve environment.
-            // Linux  → LD_LIBRARY_PATH
-            // macOS  → DYLD_LIBRARY_PATH
-            #[cfg(target_os = "macos")]
-            let search_path_var = "DYLD_LIBRARY_PATH";
-            #[cfg(not(target_os = "macos"))]
-            let search_path_var = "LD_LIBRARY_PATH";
-
-            let lib_path = match std::env::var(search_path_var) {
-                Ok(existing) if !existing.is_empty() => {
-                    format!("{}:{}", lib_dir.display(), existing)
-                }
-                _ => lib_dir.display().to_string(),
-            };
+        "crashtracking" => {
+            let (receiver, lib_dir) = find_receiver_paths(project_root);
+            let (search_var, search_val) = library_search_path_env(&lib_dir);
             vec![
                 (
                     "DDOG_CRASHT_TEST_RECEIVER".to_string(),
                     receiver.display().to_string(),
                 ),
-                (search_path_var.to_string(), lib_path),
+                (
+                    "DDOG_CRASHT_TEST_OUTPUT_DIR".to_string(),
+                    work_dir.display().to_string(),
+                ),
+                (search_var, search_val),
+            ]
+        }
+        "crashtracking_unhandled_exception" => {
+            let (receiver, lib_dir) = find_receiver_paths(project_root);
+            let (search_var, search_val) = library_search_path_env(&lib_dir);
+            vec![
+                (
+                    "DDOG_CRASHT_TEST_RECEIVER".to_string(),
+                    receiver.display().to_string(),
+                ),
+                (search_var, search_val),
             ]
         }
         _ => vec![],
@@ -428,9 +472,46 @@ fn format_exit_status(status: &std::process::ExitStatus) -> String {
 fn determine_status(
     exit_status: Option<std::process::ExitStatus>,
     is_expected_failure: bool,
+    expected_crash: Option<&ExpectedCrash>,
+    work_dir: &Path,
 ) -> TestStatus {
     match exit_status {
         Some(status) => {
+            // Check for expected crash first
+            if let Some(crash) = expected_crash {
+                let crashed_with_expected_signal = {
+                    #[cfg(unix)]
+                    {
+                        use std::os::unix::process::ExitStatusExt;
+                        status.signal() == Some(crash.signal)
+                    }
+                    #[cfg(not(unix))]
+                    {
+                        !status.success()
+                    }
+                };
+
+                if crashed_with_expected_signal {
+                    let output_path = work_dir.join(crash.output_file);
+                    if output_path.exists() {
+                        return TestStatus::Passed;
+                    }
+                    return TestStatus::Failed(format!(
+                        "crashed as expected but output file '{}' not found",
+                        crash.output_file
+                    ));
+                }
+                if status.success() {
+                    return TestStatus::Failed(
+                        "expected crash but process exited successfully".to_string(),
+                    );
+                }
+                return TestStatus::Failed(format!(
+                    "expected crash signal but got {}",
+                    format_exit_status(&status)
+                ));
+            }
+
             let success = status.success();
             match (success, is_expected_failure) {
                 (true, false) => TestStatus::Passed,
@@ -451,7 +532,8 @@ fn run_test(
     timeout: Duration,
 ) -> TestResult {
     let is_expected_failure = expected_failures().contains_key(name);
-    let env_vars = per_test_env(name, project_root);
+    let expected_crash = expected_crashes().get(name);
+    let env_vars = per_test_env(name, project_root, work_dir);
     let start = Instant::now();
 
     let child = match spawn_test(exe_path, work_dir, &env_vars) {
@@ -467,7 +549,7 @@ fn run_test(
     };
 
     let (exit_status, output) = wait_with_output(child, timeout);
-    let status = determine_status(exit_status, is_expected_failure);
+    let status = determine_status(exit_status, is_expected_failure, expected_crash, work_dir);
 
     TestResult {
         name: name.to_string(),
