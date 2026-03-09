@@ -15,16 +15,16 @@ jobs:
       with:
         fetch-depth: 0
     - name: Get changed crates
-      if: ${{ github.event_name == 'pull_request' }}
       id: changed-crates
       uses: ./.github/actions/changed-crates
     - name: Set fuzz directories
       id: set-dirs
       env:
+        CHANGED_CRATES_STATUS: ${{ steps.changed-crates.outputs.status }}
         CHANGED_CRATES: ${{ steps.changed-crates.outputs.crates }}
       run: |
         ALL_FUZZ='["libdd-alloc", "libdd-profiling", "libdd-common-ffi", "libdd-trace-utils"]'
-        if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+        if [[ "$CHANGED_CRATES_STATUS" == "success" ]]; then
           FILTERED=$(echo "$CHANGED_CRATES" | jq --argjson fuzz "$ALL_FUZZ" \
             '[.[] | .path | split("/") | last | . as $dir | if ($fuzz | index($dir) != null) then $dir else empty end]')
           COUNT=$(echo "$FILTERED" | jq 'length')
