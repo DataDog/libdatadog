@@ -86,30 +86,20 @@ impl<'a> RedisTokenizer<'a> {
         loop {
             match self.curr_char() {
                 0 => break,
-                b'\\' => {
-                    if !escape {
-                        escape = true;
-                        self.offset += 1;
-                        continue;
-                    }
+                b'\\' if !escape => {
+                    escape = true;
+                    self.offset += 1;
+                    continue;
                 }
-                b'"' => {
-                    if !escape {
-                        quote = !quote
-                    }
+                b'"' if !escape => quote = !quote,
+                b'\n' if !quote => {
+                    let span = (start, self.offset);
+                    self.offset += 1;
+                    self.state = RedisTokenType::RedisTokenCommand;
+                    return span;
                 }
-                b'\n' => {
-                    if !quote {
-                        let span = (start, self.offset);
-                        self.offset += 1;
-                        self.state = RedisTokenType::RedisTokenCommand;
-                        return span;
-                    }
-                }
-                b' ' => {
-                    if !quote {
-                        return (start, self.offset);
-                    }
+                b' ' if !quote => {
+                    return (start, self.offset);
                 }
                 _ => {}
             }
