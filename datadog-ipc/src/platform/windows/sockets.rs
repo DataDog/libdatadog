@@ -23,13 +23,14 @@
 //! bytes beyond the maximum expected payload size.
 
 use std::io;
-use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle, RawHandle};
+use std::os::windows::io::{AsRawHandle, FromRawHandle, IntoRawHandle, OwnedHandle, RawHandle};
 use std::path::Path;
 use std::ptr::{null, null_mut};
 use std::sync::{
     atomic::{AtomicU64, Ordering},
     Mutex,
 };
+use tokio::net::windows::named_pipe::{NamedPipeClient, NamedPipeServer};
 use crate::platform::message::MAX_FDS;
 
 // winapi – only used for things not cleanly available in windows-sys
@@ -42,18 +43,13 @@ use winapi::um::winnt::{DUPLICATE_SAME_ACCESS, HANDLE, PROCESS_DUP_HANDLE};
 
 // windows-sys – used for all pipe/IO/threading syscalls
 use windows_sys::Win32::Foundation::{HANDLE as SysHANDLE, WAIT_OBJECT_0, WAIT_TIMEOUT};
-use windows_sys::Win32::Storage::FileSystem::{ReadFile, WriteFile};
+use windows_sys::Win32::Storage::FileSystem::{ReadFile, WriteFile, FILE_FLAG_FIRST_PIPE_INSTANCE, FILE_FLAG_OVERLAPPED, PIPE_ACCESS_DUPLEX};
 use windows_sys::Win32::System::IO::{CancelIo, GetOverlappedResult, OVERLAPPED, OVERLAPPED_0};
 use windows_sys::Win32::System::Pipes::{
     ConnectNamedPipe, CreateNamedPipeA, PeekNamedPipe, SetNamedPipeHandleState,
     PIPE_NOWAIT, PIPE_READMODE_MESSAGE, PIPE_TYPE_MESSAGE, PIPE_UNLIMITED_INSTANCES, PIPE_WAIT,
 };
 use windows_sys::Win32::System::Threading::{CreateEventA, WaitForSingleObject, INFINITE};
-
-// Named-pipe open-mode bits not available in windows-sys 0.48
-const PIPE_ACCESS_DUPLEX: u32 = 0x0000_0003; // PIPE_ACCESS_INBOUND | PIPE_ACCESS_OUTBOUND
-const FILE_FLAG_OVERLAPPED_: u32 = 0x4000_0000;
-const FILE_FLAG_FIRST_PIPE_INSTANCE_: u32 = 0x0008_0000;
 
 /// Maximum IPC message payload size (4 MiB).
 pub const MAX_MESSAGE_SIZE: usize = 4 * 1024 * 1024;
@@ -113,6 +109,36 @@ fn append_handle_suffix(
     Ok(())
 }
 
+/// Parse the handle-suffix wire format from a received message.
+///
+/// `buf[..n]` contains the raw bytes received from the pipe.
+/// Returns `(payload_len, owned_handles)`.
+fn parse_message(buf: &[u8], n: usize) -> io::Result<(usize, Vec<OwnedHandle>)> {
+    if n < 4 {
+        return Err(io::Error::from(io::ErrorKind::UnexpectedEof));
+    }
+    let count_bytes: [u8; 4] = buf[n - 4..n]
+        .try_into()
+        .map_err(|_| io::Error::from(io::ErrorKind::InvalidData))?;
+    let count = u32::from_le_bytes(count_bytes) as usize;
+
+    let handles_start = n
+        .checked_sub(4 + 8 * count)
+        .ok_or_else(|| io::Error::from(io::ErrorKind::InvalidData))?;
+
+    let mut handles = Vec::with_capacity(count);
+    for i in 0..count {
+        let off = handles_start + 8 * i;
+        let val_bytes: [u8; 8] = buf[off..off + 8]
+            .try_into()
+            .map_err(|_| io::Error::from(io::ErrorKind::InvalidData))?;
+        let val = u64::from_le_bytes(val_bytes);
+        handles.push(unsafe { OwnedHandle::from_raw_handle(val as RawHandle) });
+    }
+
+    Ok((handles_start, handles))
+}
+
 /// Read one message from `h` directly into `buf`.
 ///
 /// `buf` must be large enough to hold the entire wire message
@@ -140,34 +166,7 @@ fn pipe_read(
     {
         return Err(io::Error::last_os_error());
     }
-    let n = read as usize;
-
-    // Parse the suffix: last 4 bytes are handle_count (LE u32).
-    if n < 4 {
-        return Err(io::Error::from(io::ErrorKind::UnexpectedEof));
-    }
-    let count_bytes: [u8; 4] = buf[n - 4..n]
-        .try_into()
-        .map_err(|_| io::Error::from(io::ErrorKind::InvalidData))?;
-    let count = u32::from_le_bytes(count_bytes) as usize;
-
-    // Before the count are 8 bytes × count handle values.
-    let handles_start = n
-        .checked_sub(4 + 8 * count)
-        .ok_or_else(|| io::Error::from(io::ErrorKind::InvalidData))?;
-
-    let mut handles = Vec::with_capacity(count);
-    for i in 0..count {
-        let off = handles_start + 8 * i;
-        let val_bytes: [u8; 8] = buf[off..off + 8]
-            .try_into()
-            .map_err(|_| io::Error::from(io::ErrorKind::InvalidData))?;
-        let val = u64::from_le_bytes(val_bytes);
-        handles.push(unsafe { OwnedHandle::from_raw_handle(val as RawHandle) });
-    }
-
-    // payload occupies buf[0..handles_start]
-    Ok((handles_start, handles))
+    parse_message(buf, read as usize)
 }
 
 fn pipe_write(h: SysHANDLE, data: &[u8], blocking: bool) -> io::Result<()> {
@@ -200,12 +199,8 @@ fn pipe_write(h: SysHANDLE, data: &[u8], blocking: bool) -> io::Result<()> {
 
 fn create_pipe_server(name: &[u8], first_instance: bool) -> io::Result<OwnedHandle> {
     let open_mode = PIPE_ACCESS_DUPLEX
-        | FILE_FLAG_OVERLAPPED_
-        | if first_instance {
-            FILE_FLAG_FIRST_PIPE_INSTANCE_
-        } else {
-            0
-        };
+        | FILE_FLAG_OVERLAPPED
+        | if first_instance { FILE_FLAG_FIRST_PIPE_INSTANCE } else { 0 };
 
     let h = unsafe {
         CreateNamedPipeA(
@@ -358,6 +353,7 @@ impl SeqpacketListener {
         Ok(SeqpacketConn {
             inner: conn_handle,
             peer_pid: client_pid,
+            is_server: true,
             read_timeout: None,
             write_timeout: None,
         })
@@ -371,13 +367,13 @@ impl SeqpacketListener {
     }
 }
 
-impl std::os::windows::io::AsRawHandle for SeqpacketListener {
+impl AsRawHandle for SeqpacketListener {
     fn as_raw_handle(&self) -> RawHandle {
         SeqpacketListener::as_raw_handle(self)
     }
 }
 
-impl std::os::windows::io::IntoRawHandle for SeqpacketListener {
+impl IntoRawHandle for SeqpacketListener {
     fn into_raw_handle(self) -> RawHandle {
         self.inner
             .into_inner()
@@ -390,6 +386,9 @@ impl std::os::windows::io::IntoRawHandle for SeqpacketListener {
 pub struct SeqpacketConn {
     pub(crate) inner: OwnedHandle,
     peer_pid: u32,
+    /// True for server-side handles (opened with `FILE_FLAG_OVERLAPPED` via `CreateNamedPipeA`);
+    /// these can be converted to a Tokio async pipe via `into_async_conn`.
+    is_server: bool,
     read_timeout: Option<std::time::Duration>,
     write_timeout: Option<std::time::Duration>,
 }
@@ -435,6 +434,7 @@ impl SeqpacketConn {
         Ok(Self {
             inner,
             peer_pid: server_pid,
+            is_server: false,
             read_timeout: None,
             write_timeout: None,
         })
@@ -470,6 +470,7 @@ impl SeqpacketConn {
         let server = Self {
             inner: server_handle,
             peer_pid: pid,
+            is_server: true,
             read_timeout: None,
             write_timeout: None,
         };
@@ -481,6 +482,7 @@ impl SeqpacketConn {
         Self {
             inner: handle,
             peer_pid: client_pid,
+            is_server: true,
             read_timeout: None,
             write_timeout: None,
         }
@@ -556,33 +558,90 @@ pub fn is_listening<P: AsRef<Path>>(path: P) -> io::Result<bool> {
     Ok(SeqpacketConn::connect(path).is_ok())
 }
 
-/// The async connection type on Windows is the synchronous `SeqpacketConn` itself;
-/// blocking I/O is wrapped in `tokio::task::block_in_place` for async compatibility.
-pub type AsyncConn = SeqpacketConn;
+/// Internal: wraps either a `NamedPipeServer` or `NamedPipeClient` for dispatch.
+enum AsyncPipe {
+    Server(NamedPipeServer),
+    Client(NamedPipeClient),
+}
+
+macro_rules! async_pipe {
+    ($pipe:expr, $method:ident($($args:expr),*)$($trailing:tt)*) => {
+        match &$pipe {
+            AsyncPipe::Server(s) => s.$method($($args),*)$($trailing)*,
+            AsyncPipe::Client(c) => c.$method($($args),*)$($trailing)*,
+        }
+    };
+}
+
+/// Async connection type for Windows named-pipe IPC.
+///
+/// Wraps a Tokio `NamedPipeServer` or `NamedPipeClient` registered with the IOCP reactor,
+/// enabling fully async recv/send without blocking any Tokio thread.
+pub struct AsyncSeqpacketConn {
+    inner: AsyncPipe,
+    pub(crate) peer_pid: u32,
+}
+
+impl AsyncSeqpacketConn {
+    pub fn peer_credentials(&self) -> io::Result<PeerCredentials> {
+        Ok(PeerCredentials { pid: self.peer_pid, uid: 0 })
+    }
+}
+
+pub type AsyncConn = AsyncSeqpacketConn;
 
 impl SeqpacketConn {
-    /// Convert to an async connection (identity on Windows).
+    /// Convert to an async connection for use in async server dispatch loops.
+    ///
+    /// Requires a running Tokio runtime with IOCP support.
+    /// Only works for server-side handles (created with `FILE_FLAG_OVERLAPPED` via
+    /// `CreateNamedPipeA`).  Client handles from `connect()` are synchronous and will
+    /// return an error.
     pub fn into_async_conn(self) -> io::Result<AsyncConn> {
-        Ok(self)
+        let raw = self.inner.into_raw_handle();
+        let inner = if self.is_server {
+            AsyncPipe::Server(unsafe { NamedPipeServer::from_raw_handle(raw)? })
+        } else {
+            AsyncPipe::Client(unsafe { NamedPipeClient::from_raw_handle(raw)? })
+        };
+        Ok(AsyncSeqpacketConn { inner, peer_pid: self.peer_pid })
     }
 }
 
 /// Async receive on a Windows named pipe IPC connection.
 ///
-/// Wraps `recv_raw_blocking` in `tokio::task::block_in_place` so it can be awaited
-/// without blocking the Tokio thread pool.  Requires a multi-thread Tokio runtime.
+/// Waits for the pipe to become readable (via IOCP), then reads one complete message.
+/// The handle-count suffix is stripped and any transferred handles are returned.
 pub async fn recv_raw_async(
     conn: &AsyncConn,
     buf: &mut [u8],
 ) -> io::Result<(usize, Vec<OwnedHandle>)> {
-    tokio::task::block_in_place(|| conn.recv_raw_blocking(buf))
+    loop {
+        async_pipe!(conn.inner, readable().await)?;
+        match async_pipe!(conn.inner, try_read(buf)) {
+            Ok(0) => return Err(io::Error::from(io::ErrorKind::BrokenPipe)),
+            Ok(n) => return parse_message(buf, n),
+            Err(e) if e.kind() == io::ErrorKind::WouldBlock => continue,
+            Err(e) => return Err(e),
+        }
+    }
 }
 
 /// Async send on a Windows named pipe IPC connection.
 ///
-/// Wraps `send_raw_blocking` in `tokio::task::block_in_place`.
-/// Server responses never carry handles (handles flow client→server only via in-band suffix).
+/// Server responses never carry handles; a zero-handle-count suffix is appended automatically.
+/// Waits for writability (via IOCP) and writes the message atomically.
 pub async fn send_raw_async(conn: &AsyncConn, data: &[u8]) -> io::Result<()> {
-    let mut data_vec = data.to_vec();
-    tokio::task::block_in_place(|| conn.send_raw_blocking(&mut data_vec, &[]))
+    // Server responses never carry handles; append a 0-handle-count suffix (4 bytes).
+    let mut buf = data.to_vec();
+    buf.extend_from_slice(&0u32.to_le_bytes());
+    loop {
+        async_pipe!(conn.inner, writable().await)?;
+        match async_pipe!(conn.inner, try_write(&buf)) {
+            Ok(n) if n == buf.len() => return Ok(()),
+            Ok(_) => return Err(io::Error::from(io::ErrorKind::WriteZero)),
+            Err(e) if e.kind() == io::ErrorKind::WouldBlock => continue,
+            Err(e) => return Err(e),
+        }
+    }
 }
