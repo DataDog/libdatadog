@@ -836,6 +836,59 @@ impl TelemetryWorker {
             metric_buckets: self.data.metric_buckets.stats(),
         }
     }
+
+    // Runs a state machine that waits for actions, either from the worker's
+    // mailbox, or scheduled actions from the worker's deadline object.
+    async fn run_loop(mut self) {
+        debug!(
+            worker.flavor = ?self.flavor,
+            worker.runtime_id = %self.runtime_id,
+            "Starting telemetry worker"
+        );
+
+        loop {
+            if self.cancellation_token.is_cancelled() {
+                debug!(
+                    worker.runtime_id = %self.runtime_id,
+                    "Telemetry worker cancelled, shutting down"
+                );
+                return;
+            }
+
+            let action = self.recv_next_action().await;
+            debug!(
+                worker.runtime_id = %self.runtime_id,
+                action = ?action,
+                "Received telemetry action"
+            );
+
+            let action_result = match self.flavor {
+                TelemetryWorkerFlavor::Full => self.dispatch_action(action).await,
+                TelemetryWorkerFlavor::MetricsLogs => {
+                    self.dispatch_metrics_logs_action(action).await
+                }
+            };
+
+            match action_result {
+                ControlFlow::Continue(()) => {}
+                ControlFlow::Break(()) => {
+                    debug!(
+                        worker.runtime_id = %self.runtime_id,
+                        worker.restartable = self.config.restartable,
+                        "Telemetry worker received break signal"
+                    );
+                    if !self.config.restartable {
+                        break;
+                    }
+                }
+            };
+        }
+
+        debug!(
+            worker.runtime_id = %self.runtime_id,
+            "Telemetry worker stopped"
+        );
+    }
 }
 
 #[derive(Debug)]
@@ -1162,6 +1215,7 @@ impl TelemetryWorkerBuilder {
                 shutdown,
                 cancellation_token: token,
                 runtime: tokio_runtime,
+
                 contexts,
             },
             worker,
@@ -1173,9 +1227,9 @@ impl TelemetryWorkerBuilder {
     pub fn spawn(self) -> (TelemetryWorkerHandle, JoinHandle<()>) {
         let tokio_runtime = tokio::runtime::Handle::current();
 
-        let (worker_handle, mut worker) = self.build_worker(tokio_runtime.clone());
+        let (worker_handle, worker) = self.build_worker(tokio_runtime.clone());
 
-        let join_handle = tokio_runtime.spawn(async move { worker.run().await });
+        let join_handle = tokio_runtime.spawn(async move { worker.run_loop().await });
 
         (worker_handle, join_handle)
     }
@@ -1185,10 +1239,10 @@ impl TelemetryWorkerBuilder {
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()?;
-        let (handle, mut worker) = self.build_worker(runtime.handle().clone());
+        let (handle, worker) = self.build_worker(runtime.handle().clone());
         let notify_shutdown = handle.shutdown.clone();
         std::thread::spawn(move || {
-            runtime.block_on(worker.run());
+            runtime.block_on(worker.run_loop());
             runtime.shutdown_background();
             notify_shutdown.shutdown_finished();
         });
