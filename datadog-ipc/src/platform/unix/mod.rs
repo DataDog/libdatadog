@@ -10,9 +10,6 @@ pub use sockets::*;
 mod handles;
 pub use handles::*;
 
-mod message;
-pub use message::*;
-
 #[cfg(target_os = "macos")]
 mod mem_handle_macos;
 #[cfg(target_os = "macos")]
