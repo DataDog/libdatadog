@@ -613,8 +613,8 @@ pub mod tests {
             app_version: "1.3.5".to_string(),
             tags: vec![],
             process_tags: vec![
-                libdd_common::tag::Tag::new("entrypoint.workdir", "datadog-remote-config").unwrap(),
-                libdd_common::tag::Tag::new("entrypoint.type", "script").unwrap(),
+                libdd_common::tag!("entrypoint.workdir", "datadog-remote-config"),
+                libdd_common::tag!("entrypoint.type", "script"),
             ],
         })
     });
