@@ -32,4 +32,5 @@ libdd-trace-utils = { path = "../libdd-trace-utils" }
 libdd-data-pipeline = { path = "../libdd-data-pipeline" }
 libdd-common-ffi = { path = "../libdd-common-ffi", default-features = false }
 libdd-tinybytes = { path = "../libdd-tinybytes" }
+libdd-trace-utils = { path = "../libdd-trace-utils", default-features = false }
 tracing = { version = "0.1", default-features = false }

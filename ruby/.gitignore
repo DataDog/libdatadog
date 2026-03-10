@@ -10,6 +10,9 @@
 # rspec failure tracking
 .rspec_status
 
-gems.locked
+/gems.locked
 
-vendor/
+/vendor/
+
+/.envrc
+/.direnv
