@@ -53,6 +53,8 @@ jobs:
         with:
           cache-targets: true # cache build artifacts
           cache-bin: true # cache the ~/.cargo/bin directory
+          shared-key: shared-${{ runner.os }}
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: "Remove nextest CI report"
         shell: bash
         run: rm -rf target/nextest/ci/junit.xml
@@ -193,6 +195,8 @@ jobs:
         with:
           cache-targets: true # cache build artifacts
           cache-bin: true # cache the ~/.cargo/bin directory
+          shared-key: shared-${{ runner.os }}
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: "Generate profiling FFI"
         shell: bash
         env:
@@ -308,6 +312,8 @@ jobs:
         with:
           cache-targets: true # cache build artifacts
           cache-bin: true # cache the ~/.cargo/bin directory
+          shared-key: shared-${{ runner.os }}
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - run: cargo install cross || true
       - run: cross build --workspace --target x86_64-unknown-linux-gnu --exclude builder
       - run: cross test --workspace --features libdd-crashtracker/generate-unit-test-files --target x86_64-unknown-linux-gnu --exclude builder  -- --skip "::single_threaded_tests::" --skip "tracing_integration_tests::"

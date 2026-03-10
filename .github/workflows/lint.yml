@@ -33,6 +33,8 @@ jobs:
         with:
           cache-targets: true # cache build artifacts
           cache-bin: true # cache the ~/.cargo/bin directory
+          shared-key: shared-${{ runner.os }}
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - run: cargo fmt --all -- --check
   clippy:
     name: "clippy #${{ matrix.platform }} ${{ matrix.rust_version }}"
@@ -54,6 +56,8 @@ jobs:
         with:
           cache-targets: true # cache build artifacts
           cache-bin: true # cache the ~/.cargo/bin directory
+          shared-key: shared-${{ runner.os }}
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Run clippy on ${{ matrix.platform }} ${{ matrix.rust_version }}
         shell: bash
         run: |
