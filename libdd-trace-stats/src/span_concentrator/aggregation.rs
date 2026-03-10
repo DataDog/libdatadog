@@ -295,7 +295,9 @@ fn encode_grouped_stats(key: OwnedAggregationKey, group: GroupedStats) -> pb::Cl
         },
         http_method: key.http_method,
         http_endpoint: key.http_endpoint,
-        grpc_status_code: String::new(), // currently not used
+        grpc_status_code: String::new(),   // currently not used
+        service_source: String::new(),     // set by the agent
+        span_derived_primary_tags: vec![], // set by the agent
     }
 }
 
