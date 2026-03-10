@@ -7,15 +7,15 @@ use super::json_types::{
     self, AnyValue, ExportTraceServiceRequest, InstrumentationScope, KeyValue, OtlpSpan,
     OtlpSpanEvent, OtlpSpanLink, Resource, ResourceSpans, ScopeSpans, Status,
 };
-use crate::trace_exporter::TracerMetadata;
-use libdd_trace_utils::span::v04::{Span, SpanEvent, SpanLink};
-use libdd_trace_utils::span::TraceData;
+use super::OtlpResourceInfo;
+use crate::span::v04::{Span, SpanEvent, SpanLink};
+use crate::span::TraceData;
 use std::borrow::Borrow;
 
 /// Maximum number of attributes per span; excess are dropped and counted.
 const MAX_ATTRIBUTES_PER_SPAN: usize = 128;
 
-/// Maps Datadog trace chunks and metadata to an OTLP ExportTraceServiceRequest.
+/// Maps Datadog trace chunks and resource info to an OTLP ExportTraceServiceRequest.
 ///
 /// Resource: SDK-level attributes (service.name, deployment.environment, telemetry.sdk.*,
 /// runtime-id). InstrumentationScope: "datadog" (DD SDKs don't have scope; all spans use this).
@@ -24,12 +24,12 @@ const MAX_ATTRIBUTES_PER_SPAN: usize = 128;
 /// meta["error.msg"].
 pub fn map_traces_to_otlp<T: TraceData>(
     trace_chunks: Vec<Vec<Span<T>>>,
-    metadata: &TracerMetadata,
+    resource_info: &OtlpResourceInfo,
 ) -> ExportTraceServiceRequest
 where
     T::Text: Borrow<str>,
 {
-    let resource = build_resource(metadata);
+    let resource = build_resource(resource_info);
     let mut all_spans: Vec<OtlpSpan> = Vec::new();
     for chunk in &trace_chunks {
         for span in chunk {
@@ -54,50 +54,50 @@ where
     }
 }
 
-fn build_resource(metadata: &TracerMetadata) -> Resource {
+fn build_resource(resource_info: &OtlpResourceInfo) -> Resource {
     let mut attributes: Vec<KeyValue> = Vec::new();
-    if !metadata.service.is_empty() {
+    if !resource_info.service.is_empty() {
         attributes.push(KeyValue {
             key: "service.name".to_string(),
-            value: AnyValue::string(metadata.service.clone()),
+            value: AnyValue::string(resource_info.service.clone()),
         });
     }
-    if !metadata.env.is_empty() {
+    if !resource_info.env.is_empty() {
         attributes.push(KeyValue {
             key: "deployment.environment".to_string(),
-            value: AnyValue::string(metadata.env.clone()),
+            value: AnyValue::string(resource_info.env.clone()),
         });
         attributes.push(KeyValue {
             key: "deployment.environment.name".to_string(),
-            value: AnyValue::string(metadata.env.clone()),
+            value: AnyValue::string(resource_info.env.clone()),
         });
     }
-    if !metadata.app_version.is_empty() {
+    if !resource_info.app_version.is_empty() {
         attributes.push(KeyValue {
             key: "service.version".to_string(),
-            value: AnyValue::string(metadata.app_version.clone()),
+            value: AnyValue::string(resource_info.app_version.clone()),
         });
     }
     attributes.push(KeyValue {
         key: "telemetry.sdk.name".to_string(),
         value: AnyValue::string("libdatadog".to_string()),
     });
-    if !metadata.language.is_empty() {
+    if !resource_info.language.is_empty() {
         attributes.push(KeyValue {
             key: "telemetry.sdk.language".to_string(),
-            value: AnyValue::string(metadata.language.clone()),
+            value: AnyValue::string(resource_info.language.clone()),
         });
     }
-    if !metadata.tracer_version.is_empty() {
+    if !resource_info.tracer_version.is_empty() {
         attributes.push(KeyValue {
             key: "telemetry.sdk.version".to_string(),
-            value: AnyValue::string(metadata.tracer_version.clone()),
+            value: AnyValue::string(resource_info.tracer_version.clone()),
         });
     }
-    if !metadata.runtime_id.is_empty() {
+    if !resource_info.runtime_id.is_empty() {
         attributes.push(KeyValue {
             key: "runtime-id".to_string(),
-            value: AnyValue::string(metadata.runtime_id.clone()),
+            value: AnyValue::string(resource_info.runtime_id.clone()),
         });
     }
     Resource { attributes }
@@ -213,20 +213,20 @@ where
 
 fn event_attr_to_key_value<T: TraceData>(
     k: &T::Text,
-    v: &libdd_trace_utils::span::v04::AttributeAnyValue<T>,
+    v: &crate::span::v04::AttributeAnyValue<T>,
 ) -> Option<KeyValue>
 where
     T::Text: Borrow<str>,
 {
-    use libdd_trace_utils::span::v04::AttributeArrayValue;
+    use crate::span::v04::AttributeArrayValue;
     let value = match v {
-        libdd_trace_utils::span::v04::AttributeAnyValue::SingleValue(av) => match av {
+        crate::span::v04::AttributeAnyValue::SingleValue(av) => match av {
             AttributeArrayValue::String(s) => AnyValue::string(s.borrow().to_string()),
             AttributeArrayValue::Boolean(b) => AnyValue::bool(*b),
             AttributeArrayValue::Integer(i) => AnyValue::int(*i),
             AttributeArrayValue::Double(d) => AnyValue::double(*d),
         },
-        libdd_trace_utils::span::v04::AttributeAnyValue::Array(_) => return None,
+        crate::span::v04::AttributeAnyValue::Array(_) => return None,
     };
     Some(KeyValue {
         key: k.borrow().to_string(),
@@ -280,11 +280,12 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use libdd_trace_utils::span::BytesData;
+    use crate::otlp_encoder::OtlpResourceInfo;
+    use crate::span::BytesData;
 
     #[test]
     fn test_trace_id_span_id_format() {
-        let metadata = TracerMetadata::default();
+        let resource_info = OtlpResourceInfo::default();
         let span: Span<BytesData> = Span {
             trace_id: 0x5B8EFFF798038103D269B633813FC60C_u128,
             span_id: 0xEEE19B7EC3C1B174,
@@ -298,7 +299,7 @@ mod tests {
             error: 0,
             ..Default::default()
         };
-        let req = map_traces_to_otlp(vec![vec![span]], &metadata);
+        let req = map_traces_to_otlp(vec![vec![span]], &resource_info);
         let rs = &req.resource_spans[0];
         let otlp_span = &rs.scope_spans[0].spans[0];
         assert_eq!(otlp_span.trace_id, "5b8efff798038103d269b633813fc60c");
@@ -318,7 +319,7 @@ mod tests {
 
     #[test]
     fn test_status_error_message_from_meta() {
-        let metadata = TracerMetadata::default();
+        let resource_info = OtlpResourceInfo::default();
         let mut span: Span<BytesData> = Span {
             trace_id: 1,
             span_id: 2,
@@ -332,7 +333,7 @@ mod tests {
             libdd_tinybytes::BytesString::from_static("error.msg"),
             libdd_tinybytes::BytesString::from_static("something broke"),
         );
-        let req = map_traces_to_otlp(vec![vec![span]], &metadata);
+        let req = map_traces_to_otlp(vec![vec![span]], &resource_info);
         let otlp_span = &req.resource_spans[0].scope_spans[0].spans[0];
         let status = otlp_span.status.as_ref().unwrap();
         assert_eq!(status.code, json_types::status_code::ERROR);
@@ -341,7 +342,7 @@ mod tests {
 
     #[test]
     fn test_metrics_as_int_or_double() {
-        let metadata = TracerMetadata::default();
+        let resource_info = OtlpResourceInfo::default();
         let mut span: Span<BytesData> = Span {
             trace_id: 1,
             span_id: 2,
@@ -356,7 +357,7 @@ mod tests {
             libdd_tinybytes::BytesString::from_static("rate"),
             std::f64::consts::PI,
         );
-        let req = map_traces_to_otlp(vec![vec![span]], &metadata);
+        let req = map_traces_to_otlp(vec![vec![span]], &resource_info);
         let json = serde_json::to_value(&req).unwrap();
         let attrs = &json["resourceSpans"][0]["scopeSpans"][0]["spans"][0]["attributes"];
         let count_kv = attrs

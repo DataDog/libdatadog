@@ -15,7 +15,7 @@ use self::metrics::MetricsEmitter;
 use self::stats::StatsComputationStatus;
 use self::trace_serializer::TraceSerializer;
 use crate::agent_info::{AgentInfoFetcher, ResponseObserver};
-use crate::otlp::{map_traces_to_otlp, send_otlp_traces_http, OtlpTraceConfig};
+use crate::otlp::{map_traces_to_otlp, send_otlp_traces_http, OtlpResourceInfo, OtlpTraceConfig};
 use crate::pausable_worker::PausableWorker;
 use crate::stats_exporter::StatsExporter;
 use crate::telemetry::{SendPayloadTelemetry, TelemetryClient};
@@ -544,7 +544,15 @@ impl TraceExporter {
     where
         T::Text: Borrow<str>,
     {
-        let request = map_traces_to_otlp(traces, &self.metadata);
+        let resource_info = OtlpResourceInfo {
+            service: self.metadata.service.clone(),
+            env: self.metadata.env.clone(),
+            app_version: self.metadata.app_version.clone(),
+            language: self.metadata.language.clone(),
+            tracer_version: self.metadata.tracer_version.clone(),
+            runtime_id: self.metadata.runtime_id.clone(),
+        };
+        let request = map_traces_to_otlp(traces, &resource_info);
         let json_body = serde_json::to_vec(&request).map_err(|e| {
             error!("OTLP JSON serialization error: {e}");
             TraceExporterError::Internal(InternalErrorKind::InvalidWorkerState(e.to_string()))

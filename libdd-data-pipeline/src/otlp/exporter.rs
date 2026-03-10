@@ -1,139 +1,79 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-//! OTLP HTTP/JSON trace exporter. Sends ExportTraceServiceRequest with retries on 429, 502, 503,
-//! 504.
+//! OTLP HTTP/JSON trace exporter.
 
 use super::config::OtlpTraceConfig;
-use crate::trace_exporter::error::TraceExporterError;
-use http::Method;
-use libdd_common::http_common::{self, Body};
-use libdd_common::HttpClient;
-use std::time::Duration;
-use tokio::time::sleep;
-use tracing::{debug, error, warn};
+use crate::trace_exporter::error::{InternalErrorKind, RequestError, TraceExporterError};
+use libdd_common::{http_common, Endpoint, HttpClient};
+use libdd_trace_utils::send_with_retry::{
+    RetryBackoffType, RetryStrategy, SendWithRetryError,
+    send_with_retry,
+};
+use std::collections::HashMap;
 
 /// Max total attempts for OTLP export (1 initial + up to 4 retries on transient failures).
 const OTLP_MAX_ATTEMPTS: u32 = 5;
 /// Initial backoff between retries (milliseconds).
 const OTLP_RETRY_DELAY_MS: u64 = 100;
 
-/// Status codes that trigger a retry (transient).
-fn is_retryable_status(code: u16) -> bool {
-    matches!(code, 429 | 502 | 503 | 504)
-}
-
-/// Send OTLP trace payload (JSON bytes) to the configured endpoint.
+/// Send OTLP trace payload (JSON bytes) to the configured endpoint with retries.
 ///
-/// Retries with exponential backoff only on 429, 502, 503, 504. Does not retry on 4xx (e.g. 400).
-/// Uses the timeout from config.
+/// Uses [`send_with_retry`] for consistent retry behaviour and observability across exporters.
+///
+/// Note: dynamic OTLP headers from `OTEL_EXPORTER_OTLP_HEADERS` are not forwarded because
+/// [`send_with_retry`] requires `&'static str` header keys. Support for arbitrary OTEL headers
+/// would require the API to accept `HashMap<String, String>`.
 pub async fn send_otlp_traces_http(
     client: &HttpClient,
     config: &OtlpTraceConfig,
     json_body: Vec<u8>,
 ) -> Result<(), TraceExporterError> {
-    let uri = libdd_common::parse_uri(&config.endpoint_url).map_err(|e| {
-        TraceExporterError::Internal(
-            crate::trace_exporter::error::InternalErrorKind::InvalidWorkerState(format!(
-                "Invalid OTLP endpoint URL: {}",
-                e
-            )),
-        )
+    let url = libdd_common::parse_uri(&config.endpoint_url).map_err(|e| {
+        TraceExporterError::Internal(InternalErrorKind::InvalidWorkerState(format!(
+            "Invalid OTLP endpoint URL: {}",
+            e
+        )))
     })?;
 
-    let mut attempt = 0u32;
-    loop {
-        attempt += 1;
-        let req_builder = build_request(&uri, config)?;
-        let timeout = config.timeout;
-        let body_bytes = bytes::Bytes::from(json_body.clone());
+    let target = Endpoint {
+        url,
+        timeout_ms: config.timeout.as_millis() as u64,
+        ..Endpoint::default()
+    };
 
-        debug!(
-            attempt,
-            url = %config.endpoint_url,
-            "OTLP trace export attempt"
-        );
+    let headers: HashMap<&'static str, String> =
+        HashMap::from([("Content-Type", "application/json".to_string())]);
 
-        let req = req_builder
-            .body(Body::from_bytes(body_bytes))
-            .map_err(|e| {
-                TraceExporterError::Internal(
-                    crate::trace_exporter::error::InternalErrorKind::InvalidWorkerState(
-                        e.to_string(),
-                    ),
-                )
-            })?;
+    let retry_strategy = RetryStrategy::new(
+        OTLP_MAX_ATTEMPTS,
+        OTLP_RETRY_DELAY_MS,
+        RetryBackoffType::Exponential,
+        None,
+    );
 
-        match tokio::time::timeout(timeout, client.request(req)).await {
-            Ok(Ok(response)) => {
-                let status = response.status();
-                if status.is_success() {
-                    debug!(status = %status, "OTLP trace export succeeded");
-                    return Ok(());
-                }
-                let code = status.as_u16();
-                if is_retryable_status(code) && attempt < OTLP_MAX_ATTEMPTS {
-                    let delay_ms = OTLP_RETRY_DELAY_MS * (1 << (attempt - 1));
-                    warn!(
-                        status = %status,
-                        attempt,
-                        delay_ms,
-                        "OTLP export transient failure, retrying"
-                    );
-                    sleep(Duration::from_millis(delay_ms)).await;
-                    continue;
-                }
-                let response = http_common::into_response(response);
-                let body_bytes = http_common::collect_response_bytes(response)
-                    .await
-                    .unwrap_or_default();
-                let body_str = String::from_utf8_lossy(&body_bytes);
-                error!(
-                    status = %status,
-                    attempt,
-                    body = %body_str,
-                    "OTLP trace export failed"
-                );
-                return Err(TraceExporterError::Request(
-                    crate::trace_exporter::error::RequestError::new(status, &body_str),
-                ));
-            }
-            Ok(Err(e)) => {
-                if attempt < OTLP_MAX_ATTEMPTS {
-                    let delay_ms = OTLP_RETRY_DELAY_MS * (1 << (attempt - 1));
-                    warn!(error = ?e, attempt, "OTLP export network error, retrying");
-                    sleep(Duration::from_millis(delay_ms)).await;
-                    continue;
-                }
-                error!(error = ?e, attempt, "OTLP trace export failed after retries");
-                return Err(TraceExporterError::from(http_common::into_error(e)));
-            }
-            Err(_) => {
-                if attempt < OTLP_MAX_ATTEMPTS {
-                    let delay_ms = OTLP_RETRY_DELAY_MS * (1 << (attempt - 1));
-                    warn!(attempt, "OTLP export timeout, retrying");
-                    sleep(Duration::from_millis(delay_ms)).await;
-                    continue;
-                }
-                error!(attempt, "OTLP trace export timed out after retries");
-                return Err(TraceExporterError::from(std::io::Error::from(
-                    std::io::ErrorKind::TimedOut,
-                )));
-            }
-        }
+    match send_with_retry(client, &target, json_body, &headers, &retry_strategy).await {
+        Ok(_) => Ok(()),
+        Err(e) => Err(map_send_error(e).await),
     }
 }
 
-fn build_request(
-    uri: &http::Uri,
-    config: &OtlpTraceConfig,
-) -> Result<http::request::Builder, TraceExporterError> {
-    let mut builder = http::Request::builder()
-        .method(Method::POST)
-        .uri(uri.clone())
-        .header("Content-Type", "application/json");
-    for (k, v) in &config.headers {
-        builder = builder.header(k.as_str(), v.as_str());
+async fn map_send_error(err: SendWithRetryError) -> TraceExporterError {
+    match err {
+        SendWithRetryError::Http(response, _) => {
+            let status = response.status();
+            let body_bytes = http_common::collect_response_bytes(response)
+                .await
+                .unwrap_or_default();
+            let body_str = String::from_utf8_lossy(&body_bytes);
+            TraceExporterError::Request(RequestError::new(status, &body_str))
+        }
+        SendWithRetryError::Timeout(_) => {
+            TraceExporterError::Io(std::io::Error::from(std::io::ErrorKind::TimedOut))
+        }
+        SendWithRetryError::Network(error, _) => TraceExporterError::from(error),
+        SendWithRetryError::Build(_) => TraceExporterError::Internal(
+            InternalErrorKind::InvalidWorkerState("Failed to build OTLP request".to_string()),
+        ),
     }
-    Ok(builder)
 }
