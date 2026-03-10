@@ -3,50 +3,17 @@
 
 use crate::error::{ExporterError, ExporterErrorCode as ErrorCode};
 use crate::response::ExporterResponse;
+use crate::{catch_panic, gen_error};
 use libdd_common_ffi::{
     CharSlice,
     {slice::AsBytes, slice::ByteSlice},
 };
+
 use libdd_data_pipeline::trace_exporter::{
     TelemetryConfig, TraceExporter, TraceExporterInputFormat, TraceExporterOutputFormat,
 };
 use std::{ptr::NonNull, time::Duration};
 use tracing::{debug, error};
-
-#[cfg(all(feature = "catch_panic", panic = "unwind"))]
-use std::panic::{catch_unwind, AssertUnwindSafe};
-
-macro_rules! gen_error {
-    ($l:expr) => {
-        Some(Box::new(ExporterError::new($l, &$l.to_string())))
-    };
-}
-
-#[cfg(all(feature = "catch_panic", panic = "unwind"))]
-macro_rules! catch_panic {
-    ($f:expr, $err:expr) => {
-        match catch_unwind(AssertUnwindSafe(|| $f)) {
-            Ok(ret) => ret,
-            Err(info) => {
-                if let Some(s) = info.downcast_ref::<String>() {
-                    error!(error = %ErrorCode::Panic, s);
-                } else if let Some(s) = info.downcast_ref::<&str>() {
-                    error!(error = %ErrorCode::Panic, s);
-                } else {
-                    error!(error = %ErrorCode::Panic, "Unable to retrieve panic context");
-                }
-                $err
-            }
-        }
-    };
-}
-
-#[cfg(any(not(feature = "catch_panic"), panic = "abort"))]
-macro_rules! catch_panic {
-    ($f:expr, $err:expr) => {
-        $f
-    };
-}
 
 #[inline]
 fn sanitize_string(str: CharSlice) -> Result<String, Box<ExporterError>> {
