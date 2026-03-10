@@ -98,9 +98,11 @@ async fn fetch_and_hash_response(info_endpoint: &Endpoint) -> Result<(String, by
 
 /// Fetch the info endpoint and update an ArcSwap keeping it up-to-date.
 ///
-/// Once the run method has been started, the fetcher will
-/// update the global info state based on the given refresh interval. You can access the current
-/// state with [`crate::agent_info::get_agent_info`]
+/// This type implements [`libdd_common::worker::Worker`] and is intended to be driven by a worker
+/// runner such as [`crate::shared_runtime::SharedRuntime`].
+/// In that lifecycle, `trigger()` waits for the next refresh event and `run()` performs a single fetch.
+///
+/// You can access the current state with [`crate::agent_info::get_agent_info`].
 ///
 /// # Response observer
 /// When the fetcher is created it also returns a [`ResponseObserver`] which can be used to check
@@ -121,10 +123,9 @@ async fn fetch_and_hash_response(info_endpoint: &Endpoint) -> Result<(String, by
 ///     endpoint,
 ///     std::time::Duration::from_secs(5 * 60),
 /// );
-/// // Start the runner
-/// tokio::spawn(async move {
-///     fetcher.run().await;
-/// });
+/// // Start the fetcher on a shared runtime
+/// let runtime = libdd_data_pipeline::shared_runtime::SharedRuntime::new()?;
+/// runtime.spawn_worker(fetcher)?;
 ///
 /// // Get the Arc to access the info
 /// let agent_info_arc = agent_info::get_agent_info();
