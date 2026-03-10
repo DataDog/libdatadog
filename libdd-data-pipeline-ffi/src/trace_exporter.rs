@@ -7,10 +7,11 @@ use libdd_common_ffi::{
     CharSlice,
     {slice::AsBytes, slice::ByteSlice},
 };
+use libdd_data_pipeline::shared_runtime::SharedRuntime;
 use libdd_data_pipeline::trace_exporter::{
     TelemetryConfig, TraceExporter, TraceExporterInputFormat, TraceExporterOutputFormat,
 };
-use std::{ptr::NonNull, time::Duration};
+use std::{ptr::NonNull, sync::Arc, time::Duration};
 use tracing::{debug, error};
 
 #[cfg(all(feature = "catch_panic", panic = "unwind"))]
@@ -100,6 +101,7 @@ pub struct TraceExporterConfig {
     health_metrics_enabled: bool,
     test_session_token: Option<String>,
     connection_timeout: Option<u64>,
+    shared_runtime: Option<Arc<SharedRuntime>>,
 }
 
 #[no_mangle]
@@ -426,6 +428,28 @@ pub unsafe extern "C" fn ddog_trace_exporter_config_set_connection_timeout(
     )
 }
 
+/// Sets a shared runtime for the TraceExporter to use for background workers.
+///
+/// When set, the exporter will use the provided runtime instead of creating its own.
+/// This allows multiple exporters (or other components) to share a single runtime.
+/// The config holds a clone of the `Arc`, so the original handle remains valid.
+#[no_mangle]
+pub unsafe extern "C" fn ddog_trace_exporter_config_set_shared_runtime(
+    config: Option<&mut TraceExporterConfig>,
+    handle: Option<&Arc<SharedRuntime>>,
+) -> Option<Box<ExporterError>> {
+    catch_panic!(
+        match (config, handle) {
+            (Some(config), Some(runtime)) => {
+                config.shared_runtime = Some(runtime.clone());
+                None
+            }
+            _ => gen_error!(ErrorCode::InvalidArgument),
+        },
+        gen_error!(ErrorCode::Panic)
+    )
+}
+
 /// Create a new TraceExporter instance.
 ///
 /// # Arguments
@@ -476,6 +500,10 @@ pub unsafe extern "C" fn ddog_trace_exporter_new(
 
             if config.health_metrics_enabled {
                 builder.enable_health_metrics();
+            }
+
+            if let Some(runtime) = config.shared_runtime.clone() {
+                builder.set_shared_runtime(runtime);
             }
 
             match builder.build() {

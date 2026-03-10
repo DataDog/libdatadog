@@ -197,34 +197,24 @@ impl SharedRuntime {
     /// It ensures that no background tasks are running when the fork occurs,
     /// preventing potential deadlocks in the child process.
     ///
-    /// # Errors
-    /// Returns an error if workers cannot be paused or the runtime is in an invalid state.
-    pub fn before_fork(&self) -> Result<(), Vec<SharedRuntimeError>> {
+    /// Worker errors are logged but do not cause the function to fail.
+    pub fn before_fork(&self) {
+        use tracing::error;
+
         if let Some(runtime) = self.runtime.lock_or_panic().take() {
             let mut workers_lock = self.workers.lock_or_panic();
-            let results = runtime.block_on(async move {
-                let mut results = Vec::new();
+            runtime.block_on(async move {
                 for worker_entry in workers_lock.iter_mut() {
                     let _ = worker_entry.worker.request_pause();
                 }
 
                 for worker_entry in workers_lock.iter_mut() {
-                    results.push(worker_entry.worker.join().await);
+                    if let Err(e) = worker_entry.worker.join().await {
+                        error!("Worker failed to pause before fork: {:?}", e);
+                    }
                 }
-                results
             });
-
-            // Collect all errors
-            let errors: Vec<SharedRuntimeError> = results
-                .into_iter()
-                .filter_map(|r| Some(r.err()?.into()))
-                .collect();
-
-            if !errors.is_empty() {
-                return Err(errors);
-            }
         }
-        Ok(())
     }
 
     fn restart_runtime(&self) -> Result<(), SharedRuntimeError> {
@@ -439,7 +429,7 @@ mod tests {
             let shared_runtime = SharedRuntime::new().unwrap();
 
             // Test before_fork
-            assert!(shared_runtime.before_fork().is_ok());
+            shared_runtime.before_fork();
 
             // Test after_fork_parent (synchronous)
             assert!(shared_runtime.after_fork_parent().is_ok());

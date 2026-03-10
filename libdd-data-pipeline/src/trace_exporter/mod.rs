@@ -213,21 +213,6 @@ impl TraceExporter {
         })
     }
 
-    /// Stop all background workers and drop the tokio runtime
-    pub fn stop_worker(&self) {
-        let errors = self.shared_runtime.before_fork();
-        if let Err(errors) = errors {
-            error!("Some workers failed to stop: {errors:?}");
-        }
-
-        // When the info fetcher is paused, the trigger channel keeps a reference to the runtime's
-        // IoStack through the waker. This prevents the IoStack from being dropped when shutting
-        // down the runtime. By manually sending a message to the trigger channel we trigger the
-        // waker releasing the reference to the IoStack. Finally we drain the channel to
-        // avoid triggering a fetch when the info fetcher is restarted.
-        self.info_response_observer.manual_trigger();
-    }
-
     /// Send msgpack serialized traces to the agent
     ///
     /// # Arguments
@@ -1693,15 +1678,6 @@ mod tests {
         let exporter = builder.build().unwrap();
 
         assert_eq!(exporter.endpoint.timeout_ms, 42);
-    }
-
-    #[test]
-    #[cfg_attr(miri, ignore)]
-    fn stop_and_start_runtime() {
-        let builder = TraceExporterBuilder::default();
-        let exporter = builder.build().unwrap();
-        exporter.stop_worker();
-        exporter.run_worker().unwrap();
     }
 }
 
