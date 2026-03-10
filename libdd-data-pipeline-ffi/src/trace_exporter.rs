@@ -13,41 +13,6 @@ use libdd_data_pipeline::trace_exporter::{
 use std::{ptr::NonNull, time::Duration};
 use tracing::{debug, error};
 
-#[cfg(all(feature = "catch_panic", panic = "unwind"))]
-use std::panic::{catch_unwind, AssertUnwindSafe};
-
-macro_rules! gen_error {
-    ($l:expr) => {
-        Some(Box::new(ExporterError::new($l, &$l.to_string())))
-    };
-}
-
-#[cfg(all(feature = "catch_panic", panic = "unwind"))]
-macro_rules! catch_panic {
-    ($f:expr, $err:expr) => {
-        match catch_unwind(AssertUnwindSafe(|| $f)) {
-            Ok(ret) => ret,
-            Err(info) => {
-                if let Some(s) = info.downcast_ref::<String>() {
-                    error!(error = %ErrorCode::Panic, s);
-                } else if let Some(s) = info.downcast_ref::<&str>() {
-                    error!(error = %ErrorCode::Panic, s);
-                } else {
-                    error!(error = %ErrorCode::Panic, "Unable to retrieve panic context");
-                }
-                $err
-            }
-        }
-    };
-}
-
-#[cfg(any(not(feature = "catch_panic"), panic = "abort"))]
-macro_rules! catch_panic {
-    ($f:expr, $err:expr) => {
-        $f
-    };
-}
-
 #[inline]
 fn sanitize_string(str: CharSlice) -> Result<String, Box<ExporterError>> {
     match str.try_to_utf8() {
@@ -106,7 +71,7 @@ pub struct TraceExporterConfig {
 pub unsafe extern "C" fn ddog_trace_exporter_config_new(
     out_handle: NonNull<Box<TraceExporterConfig>>,
 ) {
-    catch_panic!(
+    crate::catch_panic!(
         out_handle
             .as_ptr()
             .write(Box::<TraceExporterConfig>::default()),
@@ -126,7 +91,7 @@ pub unsafe extern "C" fn ddog_trace_exporter_config_set_url(
     config: Option<&mut TraceExporterConfig>,
     url: CharSlice,
 ) -> Option<Box<ExporterError>> {
-    catch_panic!(
+    crate::catch_panic!(
         if let Some(handle) = config {
             handle.url = match sanitize_string(url) {
                 Ok(s) => Some(s),
@@ -134,9 +99,9 @@ pub unsafe extern "C" fn ddog_trace_exporter_config_set_url(
             };
             None
         } else {
-            gen_error!(ErrorCode::InvalidArgument)
+            crate::gen_error!(ErrorCode::InvalidArgument)
         },
-        gen_error!(ErrorCode::Panic)
+        crate::gen_error!(ErrorCode::Panic)
     )
 }
 
@@ -146,7 +111,7 @@ pub unsafe extern "C" fn ddog_trace_exporter_config_set_tracer_version(
     config: Option<&mut TraceExporterConfig>,
     version: CharSlice,
 ) -> Option<Box<ExporterError>> {
-    catch_panic!(
+    crate::catch_panic!(
         if let Option::Some(handle) = config {
             handle.tracer_version = match sanitize_string(version) {
                 Ok(s) => Some(s),
@@ -154,9 +119,9 @@ pub unsafe extern "C" fn ddog_trace_exporter_config_set_tracer_version(
             };
             None
         } else {
-            gen_error!(ErrorCode::InvalidArgument)
+            crate::gen_error!(ErrorCode::InvalidArgument)
         },
-        gen_error!(ErrorCode::Panic)
+        crate::gen_error!(ErrorCode::Panic)
     )
 }
 
@@ -166,7 +131,7 @@ pub unsafe extern "C" fn ddog_trace_exporter_config_set_language(
     config: Option<&mut TraceExporterConfig>,
     lang: CharSlice,
 ) -> Option<Box<ExporterError>> {
-    catch_panic!(
+    crate::catch_panic!(
         if let Option::Some(handle) = config {
             handle.language = match sanitize_string(lang) {
                 Ok(s) => Some(s),
@@ -174,9 +139,9 @@ pub unsafe extern "C" fn ddog_trace_exporter_config_set_language(
             };
             None
         } else {
-            gen_error!(ErrorCode::InvalidArgument)
+            crate::gen_error!(ErrorCode::InvalidArgument)
         },
-        gen_error!(ErrorCode::Panic)
+        crate::gen_error!(ErrorCode::Panic)
     )
 }
 
@@ -186,7 +151,7 @@ pub unsafe extern "C" fn ddog_trace_exporter_config_set_lang_version(
     config: Option<&mut TraceExporterConfig>,
     version: CharSlice,
 ) -> Option<Box<ExporterError>> {
-    catch_panic!(
+    crate::catch_panic!(
         if let Option::Some(handle) = config {
             handle.language_version = match sanitize_string(version) {
                 Ok(s) => Some(s),
@@ -194,9 +159,9 @@ pub unsafe extern "C" fn ddog_trace_exporter_config_set_lang_version(
             };
             None
         } else {
-            gen_error!(ErrorCode::InvalidArgument)
+            crate::gen_error!(ErrorCode::InvalidArgument)
         },
-        gen_error!(ErrorCode::Panic)
+        crate::gen_error!(ErrorCode::Panic)
     )
 }
 
@@ -206,7 +171,7 @@ pub unsafe extern "C" fn ddog_trace_exporter_config_set_lang_interpreter(
     config: Option<&mut TraceExporterConfig>,
     interpreter: CharSlice,
 ) -> Option<Box<ExporterError>> {
-    catch_panic!(
+    crate::catch_panic!(
         if let Option::Some(handle) = config {
             handle.language_interpreter = match sanitize_string(interpreter) {
                 Ok(s) => Some(s),
@@ -214,9 +179,9 @@ pub unsafe extern "C" fn ddog_trace_exporter_config_set_lang_interpreter(
             };
             None
         } else {
-            gen_error!(ErrorCode::InvalidArgument)
+            crate::gen_error!(ErrorCode::InvalidArgument)
         },
-        gen_error!(ErrorCode::Panic)
+        crate::gen_error!(ErrorCode::Panic)
     )
 }
 
@@ -226,7 +191,7 @@ pub unsafe extern "C" fn ddog_trace_exporter_config_set_hostname(
     config: Option<&mut TraceExporterConfig>,
     hostname: CharSlice,
 ) -> Option<Box<ExporterError>> {
-    catch_panic!(
+    crate::catch_panic!(
         if let Option::Some(handle) = config {
             handle.hostname = match sanitize_string(hostname) {
                 Ok(s) => Some(s),
@@ -234,9 +199,9 @@ pub unsafe extern "C" fn ddog_trace_exporter_config_set_hostname(
             };
             None
         } else {
-            gen_error!(ErrorCode::InvalidArgument)
+            crate::gen_error!(ErrorCode::InvalidArgument)
         },
-        gen_error!(ErrorCode::Panic)
+        crate::gen_error!(ErrorCode::Panic)
     )
 }
 
@@ -246,7 +211,7 @@ pub unsafe extern "C" fn ddog_trace_exporter_config_set_env(
     config: Option<&mut TraceExporterConfig>,
     env: CharSlice,
 ) -> Option<Box<ExporterError>> {
-    catch_panic!(
+    crate::catch_panic!(
         if let Option::Some(handle) = config {
             handle.env = match sanitize_string(env) {
                 Ok(s) => Some(s),
@@ -254,9 +219,9 @@ pub unsafe extern "C" fn ddog_trace_exporter_config_set_env(
             };
             None
         } else {
-            gen_error!(ErrorCode::InvalidArgument)
+            crate::gen_error!(ErrorCode::InvalidArgument)
         },
-        gen_error!(ErrorCode::Panic)
+        crate::gen_error!(ErrorCode::Panic)
     )
 }
 
@@ -265,7 +230,7 @@ pub unsafe extern "C" fn ddog_trace_exporter_config_set_version(
     config: Option<&mut TraceExporterConfig>,
     version: CharSlice,
 ) -> Option<Box<ExporterError>> {
-    catch_panic!(
+    crate::catch_panic!(
         if let Option::Some(handle) = config {
             handle.version = match sanitize_string(version) {
                 Ok(s) => Some(s),
@@ -273,9 +238,9 @@ pub unsafe extern "C" fn ddog_trace_exporter_config_set_version(
             };
             None
         } else {
-            gen_error!(ErrorCode::InvalidArgument)
+            crate::gen_error!(ErrorCode::InvalidArgument)
         },
-        gen_error!(ErrorCode::Panic)
+        crate::gen_error!(ErrorCode::Panic)
     )
 }
 
@@ -285,7 +250,7 @@ pub unsafe extern "C" fn ddog_trace_exporter_config_set_service(
     config: Option<&mut TraceExporterConfig>,
     service: CharSlice,
 ) -> Option<Box<ExporterError>> {
-    catch_panic!(
+    crate::catch_panic!(
         if let Option::Some(handle) = config {
             handle.service = match sanitize_string(service) {
                 Ok(s) => Some(s),
@@ -293,9 +258,9 @@ pub unsafe extern "C" fn ddog_trace_exporter_config_set_service(
             };
             None
         } else {
-            gen_error!(ErrorCode::InvalidArgument)
+            crate::gen_error!(ErrorCode::InvalidArgument)
         },
-        gen_error!(ErrorCode::Panic)
+        crate::gen_error!(ErrorCode::Panic)
     )
 }
 
@@ -305,14 +270,14 @@ pub unsafe extern "C" fn ddog_trace_exporter_config_enable_health_metrics(
     config: Option<&mut TraceExporterConfig>,
     is_enabled: bool,
 ) -> Option<Box<ExporterError>> {
-    catch_panic!(
+    crate::catch_panic!(
         if let Option::Some(config) = config {
             config.health_metrics_enabled = is_enabled;
             None
         } else {
-            gen_error!(ErrorCode::InvalidArgument)
+            crate::gen_error!(ErrorCode::InvalidArgument)
         },
-        gen_error!(ErrorCode::Panic)
+        crate::gen_error!(ErrorCode::Panic)
     )
 }
 
@@ -322,7 +287,7 @@ pub unsafe extern "C" fn ddog_trace_exporter_config_enable_telemetry(
     config: Option<&mut TraceExporterConfig>,
     telemetry_cfg: Option<&TelemetryClientConfig>,
 ) -> Option<Box<ExporterError>> {
-    catch_panic!(
+    crate::catch_panic!(
         if let Option::Some(config) = config {
             if let Option::Some(telemetry_cfg) = telemetry_cfg {
                 let cfg = TelemetryConfig {
@@ -338,9 +303,9 @@ pub unsafe extern "C" fn ddog_trace_exporter_config_enable_telemetry(
             }
             None
         } else {
-            gen_error!(ErrorCode::InvalidArgument)
+            crate::gen_error!(ErrorCode::InvalidArgument)
         },
-        gen_error!(ErrorCode::Panic)
+        crate::gen_error!(ErrorCode::Panic)
     )
 }
 
@@ -350,14 +315,14 @@ pub unsafe extern "C" fn ddog_trace_exporter_config_set_compute_stats(
     config: Option<&mut TraceExporterConfig>,
     is_enabled: bool,
 ) -> Option<Box<ExporterError>> {
-    catch_panic!(
+    crate::catch_panic!(
         if let Option::Some(config) = config {
             config.compute_stats = is_enabled;
             None
         } else {
-            gen_error!(ErrorCode::InvalidArgument)
+            crate::gen_error!(ErrorCode::InvalidArgument)
         },
-        gen_error!(ErrorCode::Panic)
+        crate::gen_error!(ErrorCode::Panic)
     )
 }
 
@@ -378,14 +343,14 @@ pub unsafe extern "C" fn ddog_trace_exporter_config_set_client_computed_stats(
     config: Option<&mut TraceExporterConfig>,
     client_computed_stats: bool,
 ) -> Option<Box<ExporterError>> {
-    catch_panic!(
+    crate::catch_panic!(
         if let Option::Some(config) = config {
             config.client_computed_stats = client_computed_stats;
             None
         } else {
-            gen_error!(ErrorCode::InvalidArgument)
+            crate::gen_error!(ErrorCode::InvalidArgument)
         },
-        gen_error!(ErrorCode::Panic)
+        crate::gen_error!(ErrorCode::Panic)
     )
 }
 
@@ -395,7 +360,7 @@ pub unsafe extern "C" fn ddog_trace_exporter_config_set_test_session_token(
     config: Option<&mut TraceExporterConfig>,
     token: CharSlice,
 ) -> Option<Box<ExporterError>> {
-    catch_panic!(
+    crate::catch_panic!(
         if let Option::Some(handle) = config {
             handle.test_session_token = match sanitize_string(token) {
                 Ok(s) => Some(s),
@@ -403,9 +368,9 @@ pub unsafe extern "C" fn ddog_trace_exporter_config_set_test_session_token(
             };
             None
         } else {
-            gen_error!(ErrorCode::InvalidArgument)
+            crate::gen_error!(ErrorCode::InvalidArgument)
         },
-        gen_error!(ErrorCode::Panic)
+        crate::gen_error!(ErrorCode::Panic)
     )
 }
 
@@ -415,14 +380,14 @@ pub unsafe extern "C" fn ddog_trace_exporter_config_set_connection_timeout(
     config: Option<&mut TraceExporterConfig>,
     timeout_ms: u64,
 ) -> Option<Box<ExporterError>> {
-    catch_panic!(
+    crate::catch_panic!(
         if let Option::Some(handle) = config {
             handle.connection_timeout = Some(timeout_ms);
             None
         } else {
-            gen_error!(ErrorCode::InvalidArgument)
+            crate::gen_error!(ErrorCode::InvalidArgument)
         },
-        gen_error!(ErrorCode::Panic)
+        crate::gen_error!(ErrorCode::Panic)
     )
 }
 
@@ -437,7 +402,7 @@ pub unsafe extern "C" fn ddog_trace_exporter_new(
     out_handle: NonNull<Box<TraceExporter>>,
     config: Option<&TraceExporterConfig>,
 ) -> Option<Box<ExporterError>> {
-    catch_panic!(
+    crate::catch_panic!(
         if let Some(config) = config {
             // let config = &*ptr;
             let mut builder = TraceExporter::builder();
@@ -486,9 +451,9 @@ pub unsafe extern "C" fn ddog_trace_exporter_new(
                 Err(err) => Some(Box::new(ExporterError::from(err))),
             }
         } else {
-            gen_error!(ErrorCode::InvalidArgument)
+            crate::gen_error!(ErrorCode::InvalidArgument)
         },
-        gen_error!(ErrorCode::Panic)
+        crate::gen_error!(ErrorCode::Panic)
     )
 }
 
@@ -499,7 +464,7 @@ pub unsafe extern "C" fn ddog_trace_exporter_new(
 /// * handle - The handle to the TraceExporter instance.
 #[no_mangle]
 pub unsafe extern "C" fn ddog_trace_exporter_free(handle: Box<TraceExporter>) {
-    let _ = catch_panic!(handle.shutdown(None), Ok(()));
+    let _ = crate::catch_panic!(handle.shutdown(None), Ok(()));
 }
 
 /// Send traces to the Datadog Agent.
@@ -520,10 +485,10 @@ pub unsafe extern "C" fn ddog_trace_exporter_send(
 ) -> Option<Box<ExporterError>> {
     let exporter = match handle {
         Some(exp) => exp,
-        None => return gen_error!(ErrorCode::InvalidArgument),
+        None => return crate::gen_error!(ErrorCode::InvalidArgument),
     };
 
-    catch_panic!(
+    crate::catch_panic!(
         match exporter.send(&trace) {
             Ok(resp) => {
                 if let Some(result) = response_out {
@@ -535,7 +500,7 @@ pub unsafe extern "C" fn ddog_trace_exporter_send(
             }
             Err(e) => Some(Box::new(ExporterError::from(e))),
         },
-        gen_error!(ErrorCode::Panic)
+        crate::gen_error!(ErrorCode::Panic)
     )
 }
 
@@ -1135,7 +1100,7 @@ mod tests {
     #[cfg(all(feature = "catch_panic", panic = "unwind"))]
     #[test]
     fn catch_panic_test() {
-        let ret = catch_panic!(panic!("Panic!"), gen_error!(ErrorCode::Panic));
+        let ret = crate::catch_panic!(panic!("Panic!"), crate::gen_error!(ErrorCode::Panic));
 
         assert!(ret.is_some());
         assert_eq!(ret.unwrap().code, ErrorCode::Panic);
