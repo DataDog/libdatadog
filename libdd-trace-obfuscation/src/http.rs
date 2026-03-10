@@ -31,7 +31,7 @@ fn normalize_pct_encoded_unreserved(path: &str) -> String {
             && b[i + 2].is_ascii_hexdigit()
         {
             let v = (hex_val(b[i + 1]) << 4) | hex_val(b[i + 2]);
-            if v.is_ascii_alphanumeric() || matches!(v, b'-' | b'.' | b'_' | b'~') {
+            if v.is_ascii_alphanumeric() || matches!(v, b'.' | b'_' | b'~') {
                 out.push(v as char);
             } else {
                 out.push_str(&path[i..i + 3]);
@@ -699,6 +699,13 @@ mod tests {
             remove_path_digits  [true]
             input               ["A:ჸ"]
             expected_output     ["a:ჸ"];
+        ]
+        [
+            test_name           [no_decode_dash]
+            remove_query_string [false]
+            remove_path_digits  [false]
+            input               ["http://foo.com/foo%20bar/"]
+            expected_output     ["http://foo.com/foo%20bar/"];
         ]
         [
             // Fragment with chars outside RFC 3987 ucschar ranges (U+10EF4F, U+10FFFF, etc.)
