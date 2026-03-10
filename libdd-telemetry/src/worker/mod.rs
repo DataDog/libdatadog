@@ -184,8 +184,29 @@ impl Worker for TelemetryWorker {
                 }
             };
         }
+    }
 
-        // TODO: Handle action result and add support to stop worker from `run`
+    /// Reset the worker state in the child process after a fork.
+    ///
+    /// Discards inherited pending telemetry state without sending anything, and drains
+    /// the mailbox so that actions queued before the fork are not processed by the child.
+    /// Dedupe history is preserved across forks so the child does not re-emit already
+    /// seen dependencies, integrations, or configurations unless they are observed again
+    /// as new data.
+    fn reset(&mut self) {
+        // Drain all actions queued in the mailbox before the fork.
+        while self.mailbox.try_recv().is_ok() {}
+
+        // Discard any action that was staged by the last trigger() call.
+        self.next_action = None;
+
+        // Clear all unbuffered telemetry data; the child must not send pre-fork data.
+        self.data.logs = store::QueueHashMap::default();
+        self.data.metric_buckets = MetricBuckets::default();
+        self.data.dependencies.clear();
+        self.data.integrations.clear();
+        self.data.configurations.clear();
+        self.data.endpoints.clear();
     }
 
     async fn shutdown(&mut self) {
@@ -1189,5 +1210,232 @@ mod tests {
         let _ = |h: TelemetryWorkerHandle| is_send(h);
         #[allow(clippy::redundant_closure)]
         let _ = |h: TelemetryWorkerHandle| is_sync(h);
+    }
+
+    mod reset {
+        use super::super::*;
+        use crate::data::{
+            metrics::{MetricNamespace, MetricType},
+            Configuration, ConfigurationOrigin, Dependency, Endpoint, Integration, Log, LogLevel,
+        };
+        use libdd_common::worker::Worker;
+
+        fn build_test_worker() -> (TelemetryWorkerHandle, TelemetryWorker) {
+            let builder = TelemetryWorkerBuilder::new(
+                "hostname".to_string(),
+                "test-service".to_string(),
+                "rust".to_string(),
+                "1.0.0".to_string(),
+                "1.0.0".to_string(),
+            );
+            // build_worker requires a tokio Handle; tests using this must be #[tokio::test]
+            builder.build_worker(tokio::runtime::Handle::current())
+        }
+
+        fn make_log(id: u64, message: &str) -> (LogIdentifier, Log) {
+            (
+                LogIdentifier { identifier: id },
+                Log {
+                    message: message.to_string(),
+                    level: LogLevel::Warn,
+                    stack_trace: None,
+                    count: 1,
+                    tags: String::new(),
+                    is_sensitive: false,
+                    is_crash: false,
+                },
+            )
+        }
+
+        /// After reset(), pending buffered telemetry is cleared while dedupe history is preserved.
+        #[tokio::test]
+        async fn test_reset_clears_buffered_data() {
+            let (handle, mut worker) = build_test_worker();
+
+            // Populate every data field that reset() should clear.
+            worker.data.dependencies.insert(Dependency {
+                name: "dep".to_string(),
+                version: None,
+            });
+            worker.data.integrations.insert(Integration {
+                name: "integration".to_string(),
+                version: None,
+                enabled: true,
+                compatible: None,
+                auto_enabled: None,
+            });
+            worker.data.configurations.insert(Configuration {
+                name: "cfg".to_string(),
+                value: "true".to_string(),
+                origin: ConfigurationOrigin::Code,
+                config_id: None,
+                seq_id: None,
+            });
+            worker.data.endpoints.insert(Endpoint {
+                operation_name: "GET /health".to_string(),
+                resource_name: "/health".to_string(),
+                ..Default::default()
+            });
+            let (id, log) = make_log(42, "msg");
+            worker.data.logs.get_mut_or_insert(id, log);
+
+            // Register a metric context and add a data point.
+            let key = handle.register_metric_context(
+                "test.metric".to_string(),
+                vec![],
+                MetricType::Count,
+                false,
+                MetricNamespace::Tracers,
+            );
+            worker.data.metric_buckets.add_point(key, 1.0, vec![]);
+
+            worker.reset();
+
+            let stats = worker.stats();
+            assert_eq!(
+                stats.dependencies_stored, 1,
+                "dependency dedupe history should be preserved"
+            );
+            assert_eq!(
+                stats.dependencies_unflushed, 0,
+                "dependency pending queue should be cleared"
+            );
+            assert_eq!(
+                stats.integrations_stored, 1,
+                "integration dedupe history should be preserved"
+            );
+            assert_eq!(
+                stats.integrations_unflushed, 0,
+                "integration pending queue should be cleared"
+            );
+            assert_eq!(
+                stats.configurations_stored, 1,
+                "configuration dedupe history should be preserved"
+            );
+            assert_eq!(
+                stats.configurations_unflushed, 0,
+                "configuration pending queue should be cleared"
+            );
+            assert_eq!(stats.logs, 0, "logs should be cleared");
+            assert_eq!(
+                stats.metric_buckets.buckets, 0,
+                "metric buckets should be cleared"
+            );
+            assert_eq!(
+                stats.metric_buckets.series, 0,
+                "metric series should be cleared"
+            );
+            assert!(
+                worker.data.endpoints.is_empty(),
+                "endpoints should be cleared"
+            );
+            assert!(worker.next_action.is_none(), "next_action should be None");
+        }
+
+        /// After reset(), actions queued in the mailbox before the fork are discarded.
+        #[tokio::test]
+        async fn test_reset_drains_mailbox() {
+            let (handle, mut worker) = build_test_worker();
+
+            // Enqueue several actions that should be discarded.
+            handle
+                .try_send_msg(TelemetryActions::AddDependency(Dependency {
+                    name: "dep".to_string(),
+                    version: None,
+                }))
+                .unwrap();
+            let (id, log) = make_log(1, "pre-fork log");
+            handle
+                .try_send_msg(TelemetryActions::AddLog((id, log)))
+                .unwrap();
+
+            // Stage one action as if trigger() had already stored it.
+            worker.next_action = Some(TelemetryActions::Lifecycle(LifecycleAction::Start));
+
+            worker.reset();
+
+            // The mailbox must be empty and next_action cleared.
+            assert!(
+                worker.mailbox.try_recv().is_err(),
+                "mailbox should be empty"
+            );
+            assert!(worker.next_action.is_none(), "next_action should be None");
+            // None of the queued actions should have been applied to pending state.
+            let stats = worker.stats();
+            assert_eq!(
+                stats.dependencies_stored, 0,
+                "queued AddDependency must not be applied"
+            );
+            assert_eq!(
+                stats.dependencies_unflushed, 0,
+                "queued AddDependency must not be pending"
+            );
+            assert_eq!(stats.logs, 0, "queued AddLog must be discarded");
+        }
+
+        /// After reset(), the worker accepts new telemetry and processes it normally.
+        #[tokio::test]
+        async fn test_worker_accepts_new_data_after_reset() {
+            let (handle, mut worker) = build_test_worker();
+            worker.flavor = TelemetryWorkerFlavor::MetricsLogs;
+
+            // Populate state before reset – this data must not survive.
+            let (id, log) = make_log(99, "pre-fork");
+            worker.data.logs.get_mut_or_insert(id, log);
+
+            worker.reset();
+
+            // Send a new log from the child side.
+            let (id2, log2) = make_log(1, "post-fork");
+            handle
+                .try_send_msg(TelemetryActions::AddLog((id2, log2)))
+                .unwrap();
+
+            // Simulate one trigger() + run() cycle.
+            worker.trigger().await;
+            worker.run().await;
+
+            let stats = worker.stats();
+            // Only the new post-fork log should be buffered.
+            assert_eq!(stats.logs, 1, "only post-fork log should be present");
+        }
+
+        /// After reset(), lifecycle state needed to keep periodic flushing alive is preserved.
+        #[tokio::test]
+        async fn test_reset_preserves_started_and_deadlines() {
+            let (_handle, mut worker) = build_test_worker();
+
+            worker.data.started = true;
+            worker
+                .deadlines
+                .schedule_event(LifecycleAction::FlushMetricAggr)
+                .unwrap();
+            worker
+                .deadlines
+                .schedule_event(LifecycleAction::FlushData)
+                .unwrap();
+
+            let deadlines_before = worker.deadlines.deadlines.clone();
+
+            worker.reset();
+
+            assert!(worker.data.started, "started flag should be preserved");
+            assert_eq!(
+                worker.deadlines.deadlines.len(),
+                deadlines_before.len(),
+                "scheduled deadlines should be preserved"
+            );
+            for ((_, actual), (_, expected)) in worker
+                .deadlines
+                .deadlines
+                .iter()
+                .zip(deadlines_before.iter())
+            {
+                assert_eq!(
+                    actual, expected,
+                    "deadline kinds should be preserved across reset"
+                );
+            }
+        }
     }
 }
