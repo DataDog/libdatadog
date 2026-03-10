@@ -8,7 +8,8 @@ use crate::trace_exporter::agent_response::AgentResponsePayloadVersion;
 use crate::trace_exporter::error::BuilderErrorKind;
 use crate::trace_exporter::{
     add_path, StatsComputationStatus, TelemetryConfig, TraceExporter, TraceExporterError,
-    TraceExporterInputFormat, TraceExporterOutputFormat, TracerMetadata, INFO_ENDPOINT,
+    TraceExporterInputFormat, TraceExporterOutputFormat, TracerMetadata, TraceExporterWorkers,
+    INFO_ENDPOINT,
 };
 use arc_swap::ArcSwap;
 use libdd_common::http_common::new_default_client;
@@ -258,7 +259,7 @@ impl TraceExporterBuilder {
         let info_endpoint = Endpoint::from_url(add_path(&agent_url, INFO_ENDPOINT));
         let (info_fetcher, info_response_observer) =
             AgentInfoFetcher::new(info_endpoint.clone(), Duration::from_secs(5 * 60));
-        shared_runtime.spawn_worker(info_fetcher).map_err(|e| {
+        let info_fetcher_handle = shared_runtime.spawn_worker(info_fetcher).map_err(|e| {
             TraceExporterError::Builder(BuilderErrorKind::InvalidConfiguration(e.to_string()))
         })?;
 
@@ -290,9 +291,9 @@ impl TraceExporterBuilder {
             Ok(builder.build(runtime.handle().clone()))
         });
 
-        let telemetry_client = match telemetry {
+        let (telemetry_client, telemetry_handle) = match telemetry {
             Some(Ok((client, worker))) => {
-                shared_runtime.spawn_worker(worker).map_err(|e| {
+                let handle = shared_runtime.spawn_worker(worker).map_err(|e| {
                     TraceExporterError::Builder(BuilderErrorKind::InvalidConfiguration(
                         e.to_string(),
                     ))
@@ -305,10 +306,10 @@ impl TraceExporterBuilder {
                         ))
                     })?
                     .block_on(client.start());
-                Some(client)
+                (Some(client), Some(handle))
             }
             Some(Err(e)) => return Err(e),
-            None => None,
+            None => (None, None),
         };
 
         Ok(TraceExporter {
@@ -350,6 +351,10 @@ impl TraceExporterBuilder {
                 .agent_rates_payload_version_enabled
                 .then(AgentResponsePayloadVersion::new),
             http_client: new_default_client(),
+            workers: TraceExporterWorkers {
+                info_fetcher: info_fetcher_handle,
+                telemetry: telemetry_handle,
+            },
         })
     }
 

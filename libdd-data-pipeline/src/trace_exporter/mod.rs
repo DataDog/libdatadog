@@ -15,12 +15,12 @@ use self::metrics::MetricsEmitter;
 use self::stats::StatsComputationStatus;
 use self::trace_serializer::TraceSerializer;
 use crate::agent_info::ResponseObserver;
-use crate::shared_runtime::SharedRuntime;
+use crate::shared_runtime::{SharedRuntime, WorkerHandle};
 use crate::telemetry::{SendPayloadTelemetry, TelemetryClient};
 use crate::trace_exporter::agent_response::{
     AgentResponsePayloadVersion, DATADOG_RATES_PAYLOAD_VERSION_HEADER,
 };
-use crate::trace_exporter::error::{InternalErrorKind, RequestError, TraceExporterError};
+use crate::trace_exporter::error::{InternalErrorKind, RequestError, ShutdownError, TraceExporterError};
 use crate::{
     agent_info::{self, schema::AgentInfo},
     health_metrics,
@@ -43,6 +43,7 @@ use std::io;
 use std::sync::Arc;
 use std::{borrow::Borrow, collections::HashMap, str::FromStr};
 use tokio::runtime::Runtime;
+use tokio::task::JoinSet;
 use tracing::{debug, error, warn};
 
 const INFO_ENDPOINT: &str = "/info";
@@ -149,6 +150,13 @@ impl<'a> From<&'a TracerMetadata> for HashMap<&'static str, String> {
     }
 }
 
+/// Handles for the background workers owned by a [`TraceExporter`].
+#[derive(Debug)]
+pub(crate) struct TraceExporterWorkers {
+    info_fetcher: WorkerHandle,
+    telemetry: Option<WorkerHandle>,
+}
+
 /// The TraceExporter ingest traces from the tracers serialized as messagepack and forward them to
 /// the agent while applying some transformation.
 ///
@@ -191,12 +199,65 @@ pub struct TraceExporter {
     health_metrics_enabled: bool,
     agent_payload_response_version: Option<AgentResponsePayloadVersion>,
     http_client: HttpClient,
+    workers: TraceExporterWorkers,
 }
 
 impl TraceExporter {
     #[allow(missing_docs)]
     pub fn builder() -> TraceExporterBuilder {
         TraceExporterBuilder::default()
+    }
+
+    /// Stop the background workers owned by this exporter.
+    ///
+    /// Only the workers spawned for this exporter are stopped. Workers from other components
+    /// sharing the same [`SharedRuntime`] are unaffected.
+    ///
+    /// # Errors
+    /// Returns [`SharedRuntimeError::ShutdownTimedOut`] if a timeout was given and elapsed before
+    /// all workers finished.
+    pub fn shutdown(self, timeout: Option<std::time::Duration>) -> Result<(), TraceExporterError> {
+        let runtime = self.runtime()?;
+        if let Some(timeout) = timeout {
+            match runtime.block_on(async {
+                tokio::time::timeout(timeout, self.shutdown_workers()).await
+            }) {
+                Ok(()) => Ok(()),
+                Err(_) => Err(TraceExporterError::Shutdown(ShutdownError::TimedOut(
+                    timeout,
+                ))),
+            }
+        } else {
+            runtime.block_on(self.shutdown_workers());
+            Ok(())
+        }
+    }
+
+    async fn shutdown_workers(self) {
+        let mut join_set = JoinSet::new();
+
+        // Extract the stats handle before moving other fields.
+        if let StatsComputationStatus::Enabled { worker_handle, .. } =
+            &**self.client_side_stats.load()
+        {
+            let handle = worker_handle.clone();
+            join_set.spawn(async move { handle.stop().await });
+        }
+
+        let info_fetcher = self.workers.info_fetcher;
+        let telemetry = self.workers.telemetry;
+
+        join_set.spawn(async move { info_fetcher.stop().await });
+
+        if let Some(telemetry) = telemetry {
+            join_set.spawn(async move { telemetry.stop().await });
+        }
+
+        while let Some(result) = join_set.join_next().await {
+            if let Ok(Err(e)) = result {
+                error!("Worker failed to shutdown: {:?}", e);
+            }
+        }
     }
 
     /// Return a runtime from the shared runtime manager.
