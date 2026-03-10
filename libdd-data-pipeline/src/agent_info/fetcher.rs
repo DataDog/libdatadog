@@ -34,7 +34,7 @@ pub enum FetchInfoStatus {
 /// If the state hash is different from the current one:
 /// - Return a `FetchInfoStatus::NewState` of the info struct
 /// - Else return `FetchInfoStatus::SameState`
-async fn fetch_info_with_state_and_container(
+async fn fetch_info_with_state_and_container_tags(
     info_endpoint: &Endpoint,
     current_state_hash: Option<&str>,
     current_container_tags_hash: Option<&str>,
@@ -62,7 +62,7 @@ pub async fn fetch_info_with_state(
     info_endpoint: &Endpoint,
     current_state_hash: Option<&str>,
 ) -> Result<FetchInfoStatus> {
-    fetch_info_with_state_and_container(info_endpoint, current_state_hash, None).await
+    fetch_info_with_state_and_container_tags(info_endpoint, current_state_hash, None).await
 }
 
 /// Fetch the info endpoint once and return the info.
@@ -253,7 +253,7 @@ impl AgentInfoFetcher {
         let current_container_tags_hash = current_info
             .as_ref()
             .and_then(|info| info.info.container_tags_hash.as_deref());
-        let res = fetch_info_with_state_and_container(
+        let res = fetch_info_with_state_and_container_tags(
             &self.info_endpoint,
             current_hash,
             current_container_tags_hash,
@@ -455,7 +455,7 @@ mod single_threaded_tests {
             .await;
         let endpoint = Endpoint::from_url(server.url("/info").parse().unwrap());
 
-        let info_status = fetch_info_with_state_and_container(
+        let info_status = fetch_info_with_state_and_container_tags(
             &endpoint,
             Some(TEST_INFO_HASH),
             Some("old-container-hash"),
