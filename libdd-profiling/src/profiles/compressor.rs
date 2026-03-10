@@ -145,6 +145,12 @@ pub trait ObservationCodec {
 
     fn new_encoder(size_hint: usize, max_capacity: usize) -> io::Result<Self::Encoder>;
     fn encoder_into_decoder(encoder: Self::Encoder) -> io::Result<Self::Decoder>;
+
+    /// Returns the recommended input buffer size for the encoder.
+    /// Used to size the `BufWriter` that wraps the encoder.
+    fn recommended_input_buf_size() -> usize {
+        0
+    }
 }
 
 #[allow(unused)]
@@ -180,6 +186,10 @@ impl ObservationCodec for ZstdObservationCodec {
             Ok(buffer) => zstd::Decoder::with_buffer(io::Cursor::new(buffer)),
             Err((_enc, error)) => Err(error),
         }
+    }
+
+    fn recommended_input_buf_size() -> usize {
+        zstd::Encoder::<SizeRestrictedBuffer>::recommended_input_size()
     }
 }
 
