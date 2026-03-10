@@ -13,7 +13,17 @@ rules:
   - require: all-files-are-owned
   - require: commit-signatures
     excluded_emails:
-      - '200755185+dd-octo-sts[bot]@users.noreply.github.com' # version-bump bots
+      # dd-octo-sts pool of apps (version-bump bots)
+      - '200755185+dd-octo-sts[bot]@users.noreply.github.com'
+      - '256648585+dd-octo-sts-6cbbf8[bot]@users.noreply.github.com'
+      - '256648796+dd-octo-sts-6bb5b9[bot]@users.noreply.github.com'
+      - '256648685+dd-octo-sts-4191dd[bot]@users.noreply.github.com'
+      - '256648544+dd-octo-sts-c33ac5[bot]@users.noreply.github.com'
+      - '256648608+dd-octo-sts-09fbc5[bot]@users.noreply.github.com'
+      - '256648516+dd-octo-sts-98cdbc[bot]@users.noreply.github.com'
+      - '256648721+dd-octo-sts-03ec73[bot]@users.noreply.github.com'
+      - '256648829+dd-octo-sts-0c48d7[bot]@users.noreply.github.com'
+      - '256648753+dd-octo-sts-019303[bot]@users.noreply.github.com'
 ---
 schema-version: v2
 kind: adms
