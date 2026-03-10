@@ -50,7 +50,7 @@ impl HandlesTransport for &mut FdSink {
 
 /// Distributes received `SCM_RIGHTS` file descriptors into `PlatformHandle` fields.
 ///
-/// Created fresh for each received message — no global fd queue, no fd stranding.
+/// Every message should have its own FdSource.
 pub struct FdSource(VecDeque<OwnedFd>);
 
 impl FdSource {

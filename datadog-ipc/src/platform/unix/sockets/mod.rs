@@ -14,6 +14,7 @@ use std::{
     os::unix::io::{AsRawFd, FromRawFd, OwnedFd, RawFd},
     time::Duration,
 };
+use tokio::io::unix::AsyncFd;
 
 #[cfg(target_os = "linux")]
 mod linux;
@@ -47,8 +48,6 @@ pub struct PeerCredentials {
     pub uid: u32,
 }
 
-// ── Shared socket helpers ────────────────────────────────────────────────────
-
 pub(super) fn create_unix_socket(sock_type: SockType) -> io::Result<OwnedFd> {
     let fd = nix::sys::socket::socket(AddressFamily::Unix, sock_type, SockFlag::empty(), None)
         .map_err(io::Error::from)?;
@@ -77,7 +76,7 @@ pub(super) fn set_nonblocking(fd: RawFd, nonblocking: bool) -> io::Result<()> {
 }
 
 pub(super) fn sendmsg_raw(fd: RawFd, data: &[u8], fds: &[RawFd], flags: MsgFlags) -> io::Result<()> {
-    let iov = [std::io::IoSlice::new(data)];
+    let iov = [io::IoSlice::new(data)];
     if fds.is_empty() {
         sendmsg::<UnixAddr>(fd, &iov, &[], flags, None)
     } else {
@@ -93,10 +92,10 @@ pub(super) fn recvmsg_raw(
     flags: MsgFlags,
 ) -> io::Result<(usize, Vec<OwnedFd>)> {
     let cmsg_space = unsafe {
-        libc::CMSG_SPACE((std::mem::size_of::<libc::c_int>() * MAX_FDS) as libc::c_uint)
+        libc::CMSG_SPACE((size_of::<libc::c_int>() * MAX_FDS) as libc::c_uint)
     } as usize;
     let mut cmsg_buf = vec![0u8; cmsg_space];
-    let mut iov = [std::io::IoSliceMut::new(buf)];
+    let mut iov = [io::IoSliceMut::new(buf)];
 
     let msg = recvmsg::<UnixAddr>(fd, &mut iov, Some(&mut cmsg_buf), flags)
         .map_err(io::Error::from)?;
@@ -143,8 +142,6 @@ pub(super) fn poll_until_ready(fd: RawFd, event: libc::c_short) -> io::Result<()
     poll_with_timeout(fd, event, None)
 }
 
-// ── Types ────────────────────────────────────────────────────────────────────
-
 /// A listening socket for accepting IPC connections.
 ///
 /// - Linux: `AF_UNIX SOCK_SEQPACKET` with `listen`/`accept`.
@@ -166,9 +163,9 @@ impl SeqpacketListener {
     ///
     /// Sets the socket to non-blocking mode, then wraps in `AsyncFd<SeqpacketListener>`.
     /// Requires a running Tokio runtime.
-    pub fn into_async_listener(self) -> io::Result<tokio::io::unix::AsyncFd<SeqpacketListener>> {
+    pub fn into_async_listener(self) -> io::Result<AsyncFd<SeqpacketListener>> {
         set_nonblocking(self.inner.as_raw_fd(), true)?;
-        tokio::io::unix::AsyncFd::new(self)
+        AsyncFd::new(self)
     }
 
     pub fn as_raw_fd(&self) -> RawFd {
@@ -176,7 +173,7 @@ impl SeqpacketListener {
     }
 }
 
-impl std::os::unix::io::AsRawFd for SeqpacketListener {
+impl AsRawFd for SeqpacketListener {
     fn as_raw_fd(&self) -> RawFd {
         self.inner.as_raw_fd()
     }
@@ -198,25 +195,29 @@ pub struct SeqpacketConn {
     /// immediately disconnects this socket, even if the peer is still alive in another
     /// process. Keep `_peer` alive here so the connection remains valid until this
     /// `SeqpacketConn` is dropped.
+    #[cfg(target_os = "macos")]
     _peer: Option<OwnedFd>,
+    /// macOS only: one end of a liveness pipe.  Client holds the write end, server holds
+    /// the read end.  Polling either end for `POLLHUP` detects peer disconnection:
+    /// write-end POLLHUP ← server closed read end; read-end POLLHUP ← client closed write end.
+    #[cfg(target_os = "macos")]
+    liveness: Option<OwnedFd>,
     read_timeout: Option<Duration>,
     write_timeout: Option<Duration>,
 }
 
 impl SeqpacketConn {
-    pub(super) fn from_owned(fd: OwnedFd) -> io::Result<Self> {
+    pub(super) fn from_owned(fd: OwnedFd, #[cfg(target_os = "macos")] liveness: Option<OwnedFd>) -> io::Result<Self> {
         set_nonblocking(fd.as_raw_fd(), true)?;
-        Ok(Self { inner: fd, _peer: None, read_timeout: None, write_timeout: None })
-    }
-
-    /// Create from a connected fd plus a peer fd that must be kept alive.
-    ///
-    /// On macOS, the peer fd must be kept open locally to maintain the SOCK_DGRAM
-    /// socketpair connection on this end.  It is stored in `_peer` and closed when
-    /// this `SeqpacketConn` is dropped.
-    pub(super) fn from_owned_pair(client: OwnedFd, peer: OwnedFd) -> io::Result<Self> {
-        set_nonblocking(client.as_raw_fd(), true)?;
-        Ok(Self { inner: client, _peer: Some(peer), read_timeout: None, write_timeout: None })
+        Ok(Self {
+            inner: fd,
+            #[cfg(target_os = "macos")]
+            _peer: None,
+            #[cfg(target_os = "macos")]
+            liveness,
+            read_timeout: None,
+            write_timeout: None,
+        })
     }
 
     /// Retrieve the peer process's credentials (pid, uid).
@@ -234,11 +235,15 @@ impl SeqpacketConn {
     /// `MSG_DONTWAIT` is not needed and is intentionally omitted — on macOS `AF_UNIX SOCK_DGRAM`
     /// socketpairs, `MSG_DONTWAIT` can return EINVAL instead of EAGAIN.
     pub fn try_send_raw(&self, data: &mut Vec<u8>, fds: &[RawFd]) -> io::Result<()> {
+        #[cfg(target_os = "macos")]
+        self.poll_liveness_pipe();
         sendmsg_raw(self.inner.as_raw_fd(), data, fds, MsgFlags::empty())
     }
 
     /// Blocking send. Polls for writability (respecting write_timeout), then sends.
     pub fn send_raw_blocking(&self, data: &mut Vec<u8>, fds: &[RawFd]) -> io::Result<()> {
+        #[cfg(target_os = "macos")]
+        self.poll_liveness_pipe();
         let fd = self.inner.as_raw_fd();
         loop {
             match sendmsg_raw(fd, data, fds, MsgFlags::empty()) {
@@ -282,7 +287,7 @@ impl SeqpacketConn {
 
     /// Convert to an async connection for use in async server dispatch loops.
     pub fn into_async_conn(self) -> io::Result<AsyncConn> {
-        tokio::io::unix::AsyncFd::new(self.inner)
+        AsyncFd::new(self.inner)
     }
 
     pub fn as_raw_fd(&self) -> RawFd {
@@ -291,7 +296,7 @@ impl SeqpacketConn {
 }
 
 /// The async connection type on Unix: a Tokio `AsyncFd` wrapping the raw fd.
-pub type AsyncConn = tokio::io::unix::AsyncFd<OwnedFd>;
+pub type AsyncConn = AsyncFd<OwnedFd>;
 
 /// Async receive on a Tokio `AsyncFd`-wrapped IPC connection.
 ///

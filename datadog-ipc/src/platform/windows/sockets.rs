@@ -244,8 +244,6 @@ fn make_overlapped(event: SysHANDLE) -> OVERLAPPED {
     }
 }
 
-// ── SeqpacketListener ─────────────────────────────────────────────────────────
-
 /// A named-pipe server that accepts message-mode IPC connections.
 ///
 /// `try_accept` swaps the connected pipe instance for a fresh server instance so the listener

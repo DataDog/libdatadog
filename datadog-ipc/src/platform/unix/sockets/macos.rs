@@ -58,8 +58,6 @@ fn set_dgram_buffers(fd: i32) -> io::Result<()> {
     Ok(())
 }
 
-// ── SeqpacketListener ────────────────────────────────────────────────────────
-
 impl SeqpacketListener {
     /// Bind to a filesystem path (DGRAM rendezvous socket; no `listen()` needed).
     ///
@@ -81,8 +79,12 @@ impl SeqpacketListener {
             let mut buf = [0u8; 1];
             let (_, owned_fds) =
                 super::recvmsg_raw(self.inner.as_raw_fd(), &mut buf, MsgFlags::MSG_DONTWAIT)?;
-            if let Some(client_fd) = owned_fds.into_iter().next() {
-                return SeqpacketConn::from_owned(client_fd);
+            let mut it = owned_fds.into_iter();
+            if let Some(client_fd) = it.next() {
+                // The second fd (if present) is the liveness pipe read end from `connect()`.
+                // Holding it alive lets the client detect when we drop this connection.
+                // Unlike socketpairs, pipes aren't autoclosed when the transferred end is closed locally.
+                return SeqpacketConn::from_owned(client_fd, it.next());
             }
             // No SCM_RIGHTS: liveness probe — discard and try the next message.
             // If the socket is empty, the next recvmsg call returns WouldBlock.
@@ -109,9 +111,13 @@ impl SeqpacketConn {
 
     /// Connect to a server at the given filesystem path using the fd-passing handshake.
     ///
-    /// Creates a `SOCK_DGRAM` socketpair with 4 MiB buffers, then sends the server end
-    /// to the rendezvous socket via SCM_RIGHTS using a fresh unconnected DGRAM socket.
-    /// Returns the client end of the socketpair.
+    /// Creates a `SOCK_DGRAM` socketpair with 4 MiB buffers and a liveness pipe, then
+    /// sends the server end of the socketpair **and** the read end of the liveness pipe
+    /// to the rendezvous socket via SCM_RIGHTS.  Returns the client end of the socketpair.
+    ///
+    /// The liveness pipe enables disconnect detection: when the daemon drops its
+    /// `SeqpacketConn` (closing `liveness_read`), `POLLHUP` appears on `liveness_write`
+    /// and subsequent sends return `BrokenPipe`.
     pub fn connect(path: impl AsRef<Path>) -> io::Result<Self> {
         let mut fds = [0i32; 2];
         if unsafe {
@@ -125,30 +131,75 @@ impl SeqpacketConn {
         set_dgram_buffers(fd_client.as_raw_fd())?;
         set_dgram_buffers(fd_server.as_raw_fd())?;
 
+        // Create a liveness pipe.  The read end is sent to the daemon; we keep the
+        // write end.  When the daemon drops its connection (closing liveness_read),
+        // poll on liveness_write returns POLLHUP — enabling disconnect detection even
+        // though _peer keeps the socketpair alive to prevent EINVAL on sendmsg.
+        let mut pipe_fds = [-1i32; 2];
+        if unsafe { libc::pipe(pipe_fds.as_mut_ptr()) } == -1 {
+            return Err(io::Error::last_os_error());
+        }
+        let liveness_read = unsafe { OwnedFd::from_raw_fd(pipe_fds[0]) };
+        let liveness_write = unsafe { OwnedFd::from_raw_fd(pipe_fds[1]) };
+        // Set FD_CLOEXEC on both pipe ends so they are not inherited across exec().
+        for &fd in &[liveness_read.as_raw_fd(), liveness_write.as_raw_fd()] {
+            let flags = unsafe { libc::fcntl(fd, libc::F_GETFD) };
+            if flags >= 0 {
+                unsafe { libc::fcntl(fd, libc::F_SETFD, flags | libc::FD_CLOEXEC) };
+            }
+        }
+
         // A fresh unconnected DGRAM socket is required for the handshake sendmsg.
         // fd_client is already "connected" to fd_server and cannot reach the rendezvous path.
         let handshake_fd = create_dgram_socket()?;
         let addr = UnixAddr::new(path.as_ref()).map_err(io::Error::from)?;
         let server_raw = fd_server.as_raw_fd();
+        let liveness_r_raw = liveness_read.as_raw_fd();
         let iov = [std::io::IoSlice::new(&[0u8])];
         sendmsg::<UnixAddr>(
             handshake_fd.as_raw_fd(),
             &iov,
-            &[ControlMessage::ScmRights(&[server_raw])],
+            &[ControlMessage::ScmRights(&[server_raw, liveness_r_raw])],
             MsgFlags::empty(),
             Some(&addr),
         )
         .map_err(io::Error::from)?;
-        // Do NOT drop fd_server here. On macOS, closing any local fd that references
-        // the peer end of a SOCK_DGRAM socketpair immediately disconnects this end
-        // (fd_client), even if fd_server is still alive in another process via
-        // SCM_RIGHTS.  Keep fd_server alive in `_peer` for the lifetime of this
-        // SeqpacketConn so that sendmsg on fd_client continues to work.
-        Self::from_owned_pair(fd_client, fd_server)
+        // liveness_read was sent via SCM_RIGHTS; drop our local copy (daemon has the reference).
+        drop(liveness_read);
+        // Keep fd_server (_peer) to prevent EINVAL: on macOS, closing the local fd for the
+        // peer end of a SOCK_DGRAM socketpair disconnects this end even when the peer socket
+        // is alive in the daemon via SCM_RIGHTS.
+        // Keep liveness_w (liveness_write) to detect daemon death via POLLHUP.
+        Self::from_owned_pair(fd_client, fd_server, Some(liveness_write))
+    }
+
+    fn poll_liveness_pipe(&self) -> io::Result<()> {
+        if let Some(ref lw) = self.liveness {
+            let mut pfd = libc::pollfd { fd: lw.as_raw_fd(), events: libc::POLLHUP as libc::c_short, revents: 0 };
+            let ret = unsafe { libc::poll(&mut pfd, 1, 0) };
+            if ret > 0 && pfd.revents & (libc::POLLHUP | libc::POLLERR) != 0 {
+                return Err(io::Error::from(io::ErrorKind::BrokenPipe));
+            }
+        }
+        Ok(())
+    }
+
+    /// Create from a connected fd plus a peer fd that must be kept alive.
+    ///
+    /// On macOS, the peer fd must be kept open locally to maintain the SOCK_DGRAM
+    /// socketpair connection on this end.  It is stored in `_peer` and closed when
+    /// this `SeqpacketConn` is dropped.
+    pub(super) fn from_owned_pair(client: OwnedFd, peer: OwnedFd, liveness: Option<OwnedFd>) -> io::Result<Self> {
+        set_nonblocking(client.as_raw_fd(), true)?;
+        Ok(Self {
+            inner: client,
+            _peer: Some(peer),
+            liveness,
+            read_timeout: None,
+            write_timeout: None,
+        })
     }
 }
-
-// ── Free functions ───────────────────────────────────────────────────────────
 
 /// Returns `true` if a live server is listening at the given socket path.
 ///
