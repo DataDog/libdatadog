@@ -26,8 +26,7 @@ pub fn map_traces_to_otlp<T: TraceData>(
     trace_chunks: Vec<Vec<Span<T>>>,
     resource_info: &OtlpResourceInfo,
 ) -> ExportTraceServiceRequest
-where
-    T::Text: Borrow<str>,
+
 {
     let resource = build_resource(resource_info);
     let mut all_spans: Vec<OtlpSpan> = Vec::new();
@@ -59,53 +58,52 @@ fn build_resource(resource_info: &OtlpResourceInfo) -> Resource {
     if !resource_info.service.is_empty() {
         attributes.push(KeyValue {
             key: "service.name".to_string(),
-            value: AnyValue::string(resource_info.service.clone()),
+            value: AnyValue::StringValue(resource_info.service.clone()),
         });
     }
     if !resource_info.env.is_empty() {
         attributes.push(KeyValue {
             key: "deployment.environment".to_string(),
-            value: AnyValue::string(resource_info.env.clone()),
+            value: AnyValue::StringValue(resource_info.env.clone()),
         });
         attributes.push(KeyValue {
             key: "deployment.environment.name".to_string(),
-            value: AnyValue::string(resource_info.env.clone()),
+            value: AnyValue::StringValue(resource_info.env.clone()),
         });
     }
     if !resource_info.app_version.is_empty() {
         attributes.push(KeyValue {
             key: "service.version".to_string(),
-            value: AnyValue::string(resource_info.app_version.clone()),
+            value: AnyValue::StringValue(resource_info.app_version.clone()),
         });
     }
     attributes.push(KeyValue {
         key: "telemetry.sdk.name".to_string(),
-        value: AnyValue::string("libdatadog".to_string()),
+        value: AnyValue::StringValue("libdatadog".to_string()),
     });
     if !resource_info.language.is_empty() {
         attributes.push(KeyValue {
             key: "telemetry.sdk.language".to_string(),
-            value: AnyValue::string(resource_info.language.clone()),
+            value: AnyValue::StringValue(resource_info.language.clone()),
         });
     }
     if !resource_info.tracer_version.is_empty() {
         attributes.push(KeyValue {
             key: "telemetry.sdk.version".to_string(),
-            value: AnyValue::string(resource_info.tracer_version.clone()),
+            value: AnyValue::StringValue(resource_info.tracer_version.clone()),
         });
     }
     if !resource_info.runtime_id.is_empty() {
         attributes.push(KeyValue {
             key: "runtime-id".to_string(),
-            value: AnyValue::string(resource_info.runtime_id.clone()),
+            value: AnyValue::StringValue(resource_info.runtime_id.clone()),
         });
     }
     Resource { attributes }
 }
 
 fn map_span<T: TraceData>(span: &Span<T>) -> OtlpSpan
-where
-    T::Text: Borrow<str>,
+
 {
     let trace_id_hex = format!("{:032x}", span.trace_id);
     let span_id_hex = format!("{:016x}", span.span_id);
@@ -160,8 +158,7 @@ where
 }
 
 fn map_span_link<T: TraceData>(link: &SpanLink<T>) -> OtlpSpanLink
-where
-    T::Text: Borrow<str>,
+
 {
     let trace_id_128 = (link.trace_id_high as u128) << 64 | (link.trace_id as u128);
     let trace_id_hex = format!("{:032x}", trace_id_128);
@@ -176,7 +173,7 @@ where
         .iter()
         .map(|(k, v)| KeyValue {
             key: k.borrow().to_string(),
-            value: AnyValue::string(v.borrow().to_string()),
+            value: AnyValue::StringValue(v.borrow().to_string()),
         })
         .collect();
     OtlpSpanLink {
@@ -189,8 +186,7 @@ where
 }
 
 fn map_span_events<T: TraceData>(events: &[SpanEvent<T>]) -> (Vec<OtlpSpanEvent>, usize)
-where
-    T::Text: Borrow<str>,
+
 {
     const MAX_EVENTS_PER_SPAN: usize = 128;
     let mut otlp_events = Vec::with_capacity(events.len().min(MAX_EVENTS_PER_SPAN));
@@ -215,16 +211,15 @@ fn event_attr_to_key_value<T: TraceData>(
     k: &T::Text,
     v: &crate::span::v04::AttributeAnyValue<T>,
 ) -> Option<KeyValue>
-where
-    T::Text: Borrow<str>,
+
 {
     use crate::span::v04::AttributeArrayValue;
     let value = match v {
         crate::span::v04::AttributeAnyValue::SingleValue(av) => match av {
-            AttributeArrayValue::String(s) => AnyValue::string(s.borrow().to_string()),
-            AttributeArrayValue::Boolean(b) => AnyValue::bool(*b),
-            AttributeArrayValue::Integer(i) => AnyValue::int(*i),
-            AttributeArrayValue::Double(d) => AnyValue::double(*d),
+            AttributeArrayValue::String(s) => AnyValue::StringValue(s.borrow().to_string()),
+            AttributeArrayValue::Boolean(b) => AnyValue::BoolValue(*b),
+            AttributeArrayValue::Integer(i) => AnyValue::IntValue(*i),
+            AttributeArrayValue::Double(d) => AnyValue::DoubleValue(*d),
         },
         crate::span::v04::AttributeAnyValue::Array(_) => return None,
     };
@@ -245,8 +240,7 @@ fn dd_type_to_otlp_kind(t: &str) -> i32 {
 }
 
 fn map_attributes<T: TraceData>(span: &Span<T>) -> (Vec<KeyValue>, usize)
-where
-    T::Text: Borrow<str>,
+
 {
     let mut attrs: Vec<KeyValue> = Vec::new();
     for (k, v) in span.meta.iter() {
@@ -255,7 +249,7 @@ where
         }
         attrs.push(KeyValue {
             key: k.borrow().to_string(),
-            value: AnyValue::string(v.borrow().to_string()),
+            value: AnyValue::StringValue(v.borrow().to_string()),
         });
     }
     for (k, v) in span.metrics.iter() {
@@ -263,9 +257,9 @@ where
             break;
         }
         let value = if v.fract() == 0.0 && (*v >= i64::MIN as f64 && *v <= i64::MAX as f64) {
-            AnyValue::int(*v as i64)
+            AnyValue::IntValue(*v as i64)
         } else {
-            AnyValue::double(*v)
+            AnyValue::DoubleValue(*v)
         };
         attrs.push(KeyValue {
             key: k.borrow().to_string(),

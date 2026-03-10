@@ -11,10 +11,10 @@
 //!   <https://github.com/open-telemetry/opentelemetry-proto/blob/v1.5.0/opentelemetry/proto/trace/v1/trace.proto>
 //!   <https://github.com/open-telemetry/opentelemetry-proto/blob/v1.5.0/opentelemetry/proto/common/v1/common.proto>
 //!
-//! The Rust implementation in opentelemetry-rust uses `prost`-generated types with an optional
-//! `with-serde` feature (`opentelemetry-proto` crate). We use hand-rolled serde structs here to
-//! avoid the `prost` + `tonic` dependency tree in this early implementation. If/when protobuf
-//! support is added, these types should be replaced with `opentelemetry-proto`:
+//! Hand-rolled serde structs are intentional here: for HTTP/JSON export, duplicating the type
+//! definitions is simpler than pulling in `prost`-generated types from the `opentelemetry-proto`
+//! crate. When HTTP/protobuf export is added, `opentelemetry-proto` should be introduced as a
+//! dependency for that purpose:
 //!   <https://github.com/open-telemetry/opentelemetry-rust/tree/opentelemetry-proto-0.28.0/opentelemetry-proto>
 
 use serde::Serialize;
@@ -112,58 +112,16 @@ pub struct KeyValue {
     pub value: AnyValue,
 }
 
+/// A typed value in an OTLP attribute. Each variant serializes as a single-key JSON object
+/// matching the OTLP HTTP/JSON wire format (e.g. `{"stringValue":"hello"}`).
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct AnyValue {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    string_value: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    bool_value: Option<bool>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    int_value: Option<i64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    double_value: Option<f64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    bytes_value: Option<String>,
-}
-
-impl AnyValue {
-    pub fn string(s: String) -> Self {
-        AnyValue {
-            string_value: Some(s),
-            bool_value: None,
-            int_value: None,
-            double_value: None,
-            bytes_value: None,
-        }
-    }
-    pub fn int(i: i64) -> Self {
-        AnyValue {
-            string_value: None,
-            bool_value: None,
-            int_value: Some(i),
-            double_value: None,
-            bytes_value: None,
-        }
-    }
-    pub fn double(d: f64) -> Self {
-        AnyValue {
-            string_value: None,
-            bool_value: None,
-            int_value: None,
-            double_value: Some(d),
-            bytes_value: None,
-        }
-    }
-    pub fn bool(b: bool) -> Self {
-        AnyValue {
-            string_value: None,
-            bool_value: Some(b),
-            int_value: None,
-            double_value: None,
-            bytes_value: None,
-        }
-    }
+pub enum AnyValue {
+    StringValue(String),
+    BoolValue(bool),
+    IntValue(i64),
+    DoubleValue(f64),
+    BytesValue(String),
 }
 
 #[derive(Debug, Serialize)]

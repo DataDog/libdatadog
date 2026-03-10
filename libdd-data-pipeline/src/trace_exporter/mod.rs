@@ -508,8 +508,7 @@ impl TraceExporter {
         &self,
         trace_chunks: Vec<Vec<Span<T>>>,
     ) -> Result<AgentResponse, TraceExporterError>
-    where
-        T::Text: Borrow<str>,
+
     {
         self.check_agent_info();
         self.runtime()?
@@ -528,8 +527,7 @@ impl TraceExporter {
         &self,
         trace_chunks: Vec<Vec<Span<T>>>,
     ) -> Result<AgentResponse, TraceExporterError>
-    where
-        T::Text: Borrow<str>,
+
     {
         self.check_agent_info();
         self.send_trace_chunks_inner(trace_chunks).await
@@ -541,8 +539,7 @@ impl TraceExporter {
         traces: Vec<Vec<Span<T>>>,
         config: &OtlpTraceConfig,
     ) -> Result<AgentResponse, TraceExporterError>
-    where
-        T::Text: Borrow<str>,
+
     {
         let resource_info = OtlpResourceInfo {
             service: self.metadata.service.clone(),
@@ -627,8 +624,7 @@ impl TraceExporter {
         &self,
         mut traces: Vec<Vec<Span<T>>>,
     ) -> Result<AgentResponse, TraceExporterError>
-    where
-        T::Text: Borrow<str>,
+
     {
         // OTLP path: when OTEL_TRACES_EXPORTER=otlp. No sampling/dropping—export all received
         // (equivalent to OTEL_TRACES_SAMPLER=parentbased_always_on).
