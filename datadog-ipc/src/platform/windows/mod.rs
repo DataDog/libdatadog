@@ -18,3 +18,6 @@ pub use named_pipe::*;
 
 pub mod sockets;
 pub use sockets::*;
+
+mod handles;
+pub use handles::*;

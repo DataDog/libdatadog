@@ -638,7 +638,7 @@ pub unsafe extern "C" fn ddog_sidecar_session_set_config(
     try_c!(blocking::set_session_config(
         transport,
         session_id_str,
-        datadog_sidecar::service::remote_configs::RemoteConfigNotifyFunction(
+        datadog_sidecar::service::RemoteConfigNotifyFunction(
             _remote_config_notify_function,
         ),
         &session_config,

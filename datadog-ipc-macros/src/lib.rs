@@ -409,13 +409,13 @@ fn gen_serve_fn(
                 quote! {
                     let result = handler.#name(peer, #(#field_names),*).await;
                     let __resp_data = datadog_ipc::codec::encode_response(&result);
-                    datadog_ipc::send_raw_async(&async_fd, &__resp_data, &[]).await.ok();
+                    datadog_ipc::send_raw_async(&async_fd, &__resp_data).await.ok();
                 }
             } else {
                 quote! {
                     handler.#name(peer, #(#field_names),*).await;
                     // 1-byte ack: distinguishable from EOF (0 bytes from recvmsg on closed socket).
-                    datadog_ipc::send_raw_async(&async_fd, &[0u8], &[]).await.ok();
+                    datadog_ipc::send_raw_async(&async_fd, &[0u8]).await.ok();
                 }
             };
 
@@ -433,15 +433,15 @@ fn gen_serve_fn(
             handler: ::std::sync::Arc<H>,
         ) {
             let peer = conn.peer_credentials().unwrap_or_default();
-            let async_fd = match conn.into_async_fd() {
+            let async_fd = match conn.into_async_conn() {
                 Ok(fd) => fd,
                 Err(e) => {
-                    ::tracing::error!("IPC serve: into_async_fd failed: {e}");
+                    ::tracing::error!("IPC serve: into_async_conn failed: {e}");
                     return;
                 }
             };
             let mut recv_counter: u64 = 0;
-            let mut buf = vec![0u8; datadog_ipc::MAX_MESSAGE_SIZE];
+            let mut buf = vec![0u8; datadog_ipc::MAX_MESSAGE_SIZE + datadog_ipc::HANDLE_SUFFIX_SIZE];
             loop {
                 let (n, fds) = match datadog_ipc::recv_raw_async(&async_fd, &mut buf).await {
                     Ok(x) => x,

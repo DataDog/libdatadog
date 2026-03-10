@@ -23,7 +23,7 @@
 //! bytes beyond the maximum expected payload size.
 
 use std::io;
-use std::os::windows::io::{AsRawHandle, FromRawHandle, IntoRawHandle, OwnedHandle, RawHandle};
+use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle, RawHandle};
 use std::path::Path;
 use std::ptr::{null, null_mut};
 use std::sync::{
@@ -558,4 +558,35 @@ impl SeqpacketConn {
 /// Returns `true` if a server is listening at the given named pipe path.
 pub fn is_listening<P: AsRef<Path>>(path: P) -> io::Result<bool> {
     Ok(SeqpacketConn::connect(path).is_ok())
+}
+
+/// The async connection type on Windows is the synchronous `SeqpacketConn` itself;
+/// blocking I/O is wrapped in `tokio::task::block_in_place` for async compatibility.
+pub type AsyncConn = SeqpacketConn;
+
+impl SeqpacketConn {
+    /// Convert to an async connection (identity on Windows).
+    pub fn into_async_conn(self) -> io::Result<AsyncConn> {
+        Ok(self)
+    }
+}
+
+/// Async receive on a Windows named pipe IPC connection.
+///
+/// Wraps `recv_raw_blocking` in `tokio::task::block_in_place` so it can be awaited
+/// without blocking the Tokio thread pool.  Requires a multi-thread Tokio runtime.
+pub async fn recv_raw_async(
+    conn: &AsyncConn,
+    buf: &mut [u8],
+) -> io::Result<(usize, Vec<OwnedHandle>)> {
+    tokio::task::block_in_place(|| conn.recv_raw_blocking(buf))
+}
+
+/// Async send on a Windows named pipe IPC connection.
+///
+/// Wraps `send_raw_blocking` in `tokio::task::block_in_place`.
+/// Server responses never carry handles (handles flow client→server only via in-band suffix).
+pub async fn send_raw_async(conn: &AsyncConn, data: &[u8]) -> io::Result<()> {
+    let mut data_vec = data.to_vec();
+    tokio::task::block_in_place(|| conn.send_raw_blocking(&mut data_vec, &[]))
 }

@@ -7,6 +7,9 @@ pub mod locks;
 pub mod sockets;
 pub use sockets::*;
 
+mod handles;
+pub use handles::*;
+
 mod message;
 pub use message::*;
 
