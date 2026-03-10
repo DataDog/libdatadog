@@ -13,7 +13,6 @@ use std::time::Duration;
 #[repr(C)]
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum StacktraceCollection {
-    /// Stacktrace collection occurs in the
     Disabled,
     WithoutSymbols,
     /// This option uses `backtrace::resolve_frame_unsynchronized()` to gather symbol information

@@ -6,15 +6,28 @@ use datadog_ipc::rate_limiter::{ShmLimiter, ShmLimiterMemory};
 use libdd_common::{rate_limiter::Limiter, MutexExt};
 use std::ffi::CString;
 use std::io;
+use std::mem::ManuallyDrop;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{LazyLock, Mutex};
 use std::time::Duration;
 
-pub(crate) static EXCEPTION_HASH_LIMITER: LazyLock<Mutex<ManagedExceptionHashRateLimiter>> =
-    LazyLock::new(|| {
-        #[allow(clippy::unwrap_used)]
-        Mutex::new(ManagedExceptionHashRateLimiter::create().unwrap())
-    });
+pub(crate) static EXCEPTION_HASH_LIMITER: LazyLock<
+    Mutex<ManuallyDrop<ManagedExceptionHashRateLimiter>>,
+> = LazyLock::new(|| {
+    unsafe { libc::atexit(drop_exception_hash_limiter) };
+    #[allow(clippy::unwrap_used)]
+    Mutex::new(ManuallyDrop::new(
+        ManagedExceptionHashRateLimiter::create().unwrap(),
+    ))
+});
+
+extern "C" fn drop_exception_hash_limiter() {
+    let mut guard = EXCEPTION_HASH_LIMITER
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    // SAFETY: atexit runs once at program exit; no code accesses this static afterward.
+    unsafe { ManuallyDrop::drop(&mut *guard) };
+}
 
 pub(crate) struct ManagedExceptionHashRateLimiter {
     limiter: ExceptionHashRateLimiter,
