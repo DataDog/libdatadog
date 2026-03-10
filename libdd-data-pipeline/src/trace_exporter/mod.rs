@@ -507,9 +507,7 @@ impl TraceExporter {
     pub fn send_trace_chunks<T: TraceData>(
         &self,
         trace_chunks: Vec<Vec<Span<T>>>,
-    ) -> Result<AgentResponse, TraceExporterError>
-
-    {
+    ) -> Result<AgentResponse, TraceExporterError> {
         self.check_agent_info();
         self.runtime()?
             .block_on(async { self.send_trace_chunks_inner(trace_chunks).await })
@@ -526,9 +524,7 @@ impl TraceExporter {
     pub async fn send_trace_chunks_async<T: TraceData>(
         &self,
         trace_chunks: Vec<Vec<Span<T>>>,
-    ) -> Result<AgentResponse, TraceExporterError>
-
-    {
+    ) -> Result<AgentResponse, TraceExporterError> {
         self.check_agent_info();
         self.send_trace_chunks_inner(trace_chunks).await
     }
@@ -538,9 +534,7 @@ impl TraceExporter {
         &self,
         traces: Vec<Vec<Span<T>>>,
         config: &OtlpTraceConfig,
-    ) -> Result<AgentResponse, TraceExporterError>
-
-    {
+    ) -> Result<AgentResponse, TraceExporterError> {
         let resource_info = OtlpResourceInfo {
             service: self.metadata.service.clone(),
             env: self.metadata.env.clone(),
@@ -623,9 +617,7 @@ impl TraceExporter {
     async fn send_trace_chunks_inner<T: TraceData>(
         &self,
         mut traces: Vec<Vec<Span<T>>>,
-    ) -> Result<AgentResponse, TraceExporterError>
-
-    {
+    ) -> Result<AgentResponse, TraceExporterError> {
         // OTLP path: when OTEL_TRACES_EXPORTER=otlp. No sampling/dropping—export all received
         // (equivalent to OTEL_TRACES_SAMPLER=parentbased_always_on).
         if let Some(ref config) = self.otlp_config {

@@ -25,9 +25,7 @@ const MAX_ATTRIBUTES_PER_SPAN: usize = 128;
 pub fn map_traces_to_otlp<T: TraceData>(
     trace_chunks: Vec<Vec<Span<T>>>,
     resource_info: &OtlpResourceInfo,
-) -> ExportTraceServiceRequest
-
-{
+) -> ExportTraceServiceRequest {
     let resource = build_resource(resource_info);
     let mut all_spans: Vec<OtlpSpan> = Vec::new();
     for chunk in &trace_chunks {
@@ -102,9 +100,7 @@ fn build_resource(resource_info: &OtlpResourceInfo) -> Resource {
     Resource { attributes }
 }
 
-fn map_span<T: TraceData>(span: &Span<T>) -> OtlpSpan
-
-{
+fn map_span<T: TraceData>(span: &Span<T>) -> OtlpSpan {
     let trace_id_hex = format!("{:032x}", span.trace_id);
     let span_id_hex = format!("{:016x}", span.span_id);
     let parent_span_id = if span.parent_id != 0 {
@@ -157,9 +153,7 @@ fn map_span<T: TraceData>(span: &Span<T>) -> OtlpSpan
     }
 }
 
-fn map_span_link<T: TraceData>(link: &SpanLink<T>) -> OtlpSpanLink
-
-{
+fn map_span_link<T: TraceData>(link: &SpanLink<T>) -> OtlpSpanLink {
     let trace_id_128 = (link.trace_id_high as u128) << 64 | (link.trace_id as u128);
     let trace_id_hex = format!("{:032x}", trace_id_128);
     let span_id_hex = format!("{:016x}", link.span_id);
@@ -185,9 +179,7 @@ fn map_span_link<T: TraceData>(link: &SpanLink<T>) -> OtlpSpanLink
     }
 }
 
-fn map_span_events<T: TraceData>(events: &[SpanEvent<T>]) -> (Vec<OtlpSpanEvent>, usize)
-
-{
+fn map_span_events<T: TraceData>(events: &[SpanEvent<T>]) -> (Vec<OtlpSpanEvent>, usize) {
     const MAX_EVENTS_PER_SPAN: usize = 128;
     let mut otlp_events = Vec::with_capacity(events.len().min(MAX_EVENTS_PER_SPAN));
     for ev in events.iter().take(MAX_EVENTS_PER_SPAN) {
@@ -210,9 +202,7 @@ fn map_span_events<T: TraceData>(events: &[SpanEvent<T>]) -> (Vec<OtlpSpanEvent>
 fn event_attr_to_key_value<T: TraceData>(
     k: &T::Text,
     v: &crate::span::v04::AttributeAnyValue<T>,
-) -> Option<KeyValue>
-
-{
+) -> Option<KeyValue> {
     use crate::span::v04::AttributeArrayValue;
     let value = match v {
         crate::span::v04::AttributeAnyValue::SingleValue(av) => match av {
@@ -239,9 +229,7 @@ fn dd_type_to_otlp_kind(t: &str) -> i32 {
     }
 }
 
-fn map_attributes<T: TraceData>(span: &Span<T>) -> (Vec<KeyValue>, usize)
-
-{
+fn map_attributes<T: TraceData>(span: &Span<T>) -> (Vec<KeyValue>, usize) {
     let mut attrs: Vec<KeyValue> = Vec::new();
     for (k, v) in span.meta.iter() {
         if attrs.len() >= MAX_ATTRIBUTES_PER_SPAN {

@@ -7,8 +7,7 @@ use super::config::OtlpTraceConfig;
 use crate::trace_exporter::error::{InternalErrorKind, RequestError, TraceExporterError};
 use libdd_common::{http_common, Endpoint, HttpClient};
 use libdd_trace_utils::send_with_retry::{
-    RetryBackoffType, RetryStrategy, SendWithRetryError,
-    send_with_retry,
+    send_with_retry, RetryBackoffType, RetryStrategy, SendWithRetryError,
 };
 use std::collections::HashMap;
 
