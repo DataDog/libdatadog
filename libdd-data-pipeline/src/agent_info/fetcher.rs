@@ -144,6 +144,7 @@ pub struct AgentInfoFetcher {
     info_endpoint: Endpoint,
     refresh_interval: Duration,
     trigger_rx: Option<mpsc::Receiver<()>>,
+    trigger_tx: mpsc::Sender<()>,
 }
 
 impl AgentInfoFetcher {
@@ -161,6 +162,7 @@ impl AgentInfoFetcher {
             info_endpoint,
             refresh_interval,
             trigger_rx: Some(trigger_rx),
+            trigger_tx: trigger_tx.clone(),
         };
 
         let response_observer = ResponseObserver::new(trigger_tx);
@@ -208,6 +210,13 @@ impl Worker for AgentInfoFetcher {
                 sleep(self.refresh_interval).await;
             }
         }
+    }
+
+    async fn on_pause(&mut self) {
+        // Release the IoStack waker stored in trigger_rx by waking the channel,
+        // then drain the message to avoid a spurious fetch on restart.
+        let _ = self.trigger_tx.try_send(());
+        self.drain();
     }
 
     fn reset(&mut self) {

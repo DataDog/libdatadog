@@ -149,7 +149,8 @@ impl<T: Worker + Send + Sync + 'static> PausableWorker<T> {
                     stop_token.cancel();
                 }
 
-                if let Ok(worker) = handle.await {
+                if let Ok(mut worker) = handle.await {
+                    worker.on_pause().await;
                     *self = PausableWorker::Paused { worker };
                     Ok(())
                 } else {

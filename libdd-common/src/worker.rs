@@ -28,6 +28,10 @@ pub trait Worker: std::fmt::Debug {
     /// Reset the worker in the child after a fork
     fn reset(&mut self) {}
 
+    /// Hook called after the worker has been paused (e.g. before a fork).
+    /// Default is a no-op.
+    async fn on_pause(&mut self) {}
+
     /// Hook called when the app is shutting down. Can be used to flush remaining data.
     async fn shutdown(&mut self) {}
 }
@@ -49,6 +53,10 @@ impl Worker for Box<dyn Worker + Send + Sync> {
 
     fn reset(&mut self) {
         (**self).reset()
+    }
+
+    async fn on_pause(&mut self) {
+        (**self).on_pause().await
     }
 
     async fn shutdown(&mut self) {
