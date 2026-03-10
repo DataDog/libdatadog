@@ -5,7 +5,7 @@
 //!
 //! - Linux: `AF_UNIX SOCK_SEQPACKET` with `SCM_RIGHTS` for fd transfer.
 //! - macOS: `AF_UNIX SOCK_DGRAM` with an fd-passing connection handshake. This emulates the
-//!           semantics which SOCK_SEQPACKET provides us on Linux.
+//!   semantics which SOCK_SEQPACKET provides us on Linux.
 
 pub use nix::sys::socket::{ControlMessage, ControlMessageOwned, MsgFlags, UnixAddr};
 use nix::sys::socket::{recvmsg, sendmsg, AddressFamily, SockFlag, SockType};
@@ -30,9 +30,7 @@ pub use macos::is_listening;
 use linux::get_peer_credentials;
 #[cfg(target_os = "macos")]
 use macos::get_peer_credentials;
-
-/// Maximum file descriptors transferable in a single message.
-pub const MAX_FDS: usize = 20;
+use crate::platform::message::MAX_FDS;
 
 /// Maximum IPC message payload size (4 MiB).
 pub const MAX_MESSAGE_SIZE: usize = 4 * 1024 * 1024;
@@ -138,10 +136,6 @@ pub(super) fn poll_with_timeout(fd: RawFd, event: libc::c_short, timeout: Option
     }
 }
 
-pub(super) fn poll_until_ready(fd: RawFd, event: libc::c_short) -> io::Result<()> {
-    poll_with_timeout(fd, event, None)
-}
-
 /// A listening socket for accepting IPC connections.
 ///
 /// - Linux: `AF_UNIX SOCK_SEQPACKET` with `listen`/`accept`.
@@ -234,16 +228,18 @@ impl SeqpacketConn {
     /// Note: `O_NONBLOCK` is always set on `SeqpacketConn` sockets (via `from_owned`), so
     /// `MSG_DONTWAIT` is not needed and is intentionally omitted — on macOS `AF_UNIX SOCK_DGRAM`
     /// socketpairs, `MSG_DONTWAIT` can return EINVAL instead of EAGAIN.
+    #[allow(clippy::ptr_arg)] // windows interface compat
     pub fn try_send_raw(&self, data: &mut Vec<u8>, fds: &[RawFd]) -> io::Result<()> {
         #[cfg(target_os = "macos")]
-        self.poll_liveness_pipe();
+        self.poll_liveness_pipe()?;
         sendmsg_raw(self.inner.as_raw_fd(), data, fds, MsgFlags::empty())
     }
 
     /// Blocking send. Polls for writability (respecting write_timeout), then sends.
+    #[allow(clippy::ptr_arg)] // windows interface compat
     pub fn send_raw_blocking(&self, data: &mut Vec<u8>, fds: &[RawFd]) -> io::Result<()> {
         #[cfg(target_os = "macos")]
-        self.poll_liveness_pipe();
+        self.poll_liveness_pipe()?;
         let fd = self.inner.as_raw_fd();
         loop {
             match sendmsg_raw(fd, data, fds, MsgFlags::empty()) {

@@ -4,6 +4,10 @@
 use crate::handles::{HandlesTransport, TransferHandles};
 use crate::platform::Message;
 
+/// Maximum file descriptors transferable in a single message.
+pub const MAX_FDS: usize = 20;
+
+
 impl<Item> Message<Item> {
     pub fn ref_item(&self) -> &Item {
         &self.item

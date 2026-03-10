@@ -100,7 +100,7 @@ impl SidecarTransport {
             Ok(t) => t,
             Err(e) => return Err(io::Error::other(e.to_string())),
         };
-        match f(&mut *inner) {
+        match f(&mut inner) {
             Ok(ret) => Ok(ret),
             Err(e) => {
                 if e.kind() == io::ErrorKind::BrokenPipe
@@ -113,7 +113,7 @@ impl SidecarTransport {
                             #[allow(clippy::unwrap_used)]
                             Some(n) => n.inner.into_inner().unwrap(),
                         };
-                        f(&mut *inner)
+                        f(&mut inner)
                     } else {
                         Err(e)
                     }
@@ -142,7 +142,7 @@ impl From<SeqpacketConn> for SidecarTransport {
     }
 }
 
-fn lock_sender(transport: &mut SidecarTransport) -> io::Result<std::sync::MutexGuard<SidecarSender>> {
+fn lock_sender(transport: &mut SidecarTransport) -> io::Result<std::sync::MutexGuard<'_, SidecarSender>> {
     transport.ensure_alive();
     transport.inner.lock().map_err(|e| io::Error::other(e.to_string()))
 }
@@ -399,7 +399,7 @@ pub fn ping(transport: &mut SidecarTransport) -> io::Result<Duration> {
 mod tests {
     use crate::service::blocking::SidecarTransport;
     use datadog_ipc::{SeqpacketConn, SeqpacketListener};
-    use std::time::Duration;
+    
     use tempfile::tempdir;
 
     #[test]

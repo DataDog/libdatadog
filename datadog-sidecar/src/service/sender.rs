@@ -215,6 +215,7 @@ impl SidecarSender {
         self.try_drain_outbox();
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn set_universal_service_tags(
         &mut self,
         instance_id: InstanceId,

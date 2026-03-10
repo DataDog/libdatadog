@@ -106,7 +106,7 @@ impl SeqpacketConn {
         let fd1 = unsafe { OwnedFd::from_raw_fd(fds[1]) };
         set_dgram_buffers(fd0.as_raw_fd())?;
         set_dgram_buffers(fd1.as_raw_fd())?;
-        Ok((Self::from_owned(fd0)?, Self::from_owned(fd1)?))
+        Ok((Self::from_owned(fd0, None)?, Self::from_owned(fd1, None)?))
     }
 
     /// Connect to a server at the given filesystem path using the fd-passing handshake.
@@ -173,7 +173,7 @@ impl SeqpacketConn {
         Self::from_owned_pair(fd_client, fd_server, Some(liveness_write))
     }
 
-    fn poll_liveness_pipe(&self) -> io::Result<()> {
+    pub(super) fn poll_liveness_pipe(&self) -> io::Result<()> {
         if let Some(ref lw) = self.liveness {
             let mut pfd = libc::pollfd { fd: lw.as_raw_fd(), events: libc::POLLHUP as libc::c_short, revents: 0 };
             let ret = unsafe { libc::poll(&mut pfd, 1, 0) };
@@ -225,6 +225,27 @@ pub fn is_listening<P: AsRef<Path>>(path: P) -> io::Result<bool> {
     )
 }
 
+pub fn get_peer_credentials(fd: RawFd) -> io::Result<PeerCredentials> {
+    let mut pid: libc::pid_t = 0;
+    let mut len = std::mem::size_of::<libc::pid_t>() as libc::socklen_t;
+    if unsafe {
+        libc::getsockopt(
+            fd,
+            libc::SOL_LOCAL,
+            libc::LOCAL_PEERPID,
+            &mut pid as *mut _ as *mut libc::c_void,
+            &mut len,
+        )
+    } < 0
+    {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(PeerCredentials {
+        pid: pid as u32,
+        uid: 0,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -268,25 +289,4 @@ mod tests {
             "expected send error after dropping peer on macOS"
         );
     }
-}
-
-pub fn get_peer_credentials(fd: RawFd) -> io::Result<PeerCredentials> {
-    let mut pid: libc::pid_t = 0;
-    let mut len = std::mem::size_of::<libc::pid_t>() as libc::socklen_t;
-    if unsafe {
-        libc::getsockopt(
-            fd,
-            libc::SOL_LOCAL,
-            libc::LOCAL_PEERPID,
-            &mut pid as *mut _ as *mut libc::c_void,
-            &mut len,
-        )
-    } < 0
-    {
-        return Err(io::Error::last_os_error());
-    }
-    Ok(PeerCredentials {
-        pid: pid as u32,
-        uid: 0,
-    })
 }

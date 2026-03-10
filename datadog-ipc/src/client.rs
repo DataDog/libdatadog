@@ -69,11 +69,8 @@ impl IpcClientConn {
 
     /// Non-blocking drain of all pending acks.  Updates `ack_count`.
     pub fn drain_acks(&mut self) {
-        loop {
-            match self.conn.try_recv_raw(&mut self.recv_buf) {
-                Ok(_) => self.ack_count += 1,
-                Err(_) => break,
-            }
+        while self.conn.try_recv_raw(&mut self.recv_buf).is_ok() {
+            self.ack_count += 1;
         }
     }
 
@@ -105,9 +102,8 @@ impl IpcClientConn {
     ///
     /// Used when draining the outbox of state-change messages.
     pub fn send_blocking(&mut self, data: &mut Vec<u8>, fds: &[RawFd]) -> io::Result<()> {
-        self.conn.send_raw_blocking(data, fds).map_err(|e| {
+        self.conn.send_raw_blocking(data, fds).inspect_err(|_| {
             self.closed = true;
-            e
         })?;
         self.send_count += 1;
         Ok(())
@@ -120,16 +116,14 @@ impl IpcClientConn {
     /// ack for this specific send arrives.  Returns the response bytes and any
     /// transferred file descriptors.
     pub fn call(&mut self, data: &mut Vec<u8>, fds: &[RawFd]) -> io::Result<(Vec<u8>, Vec<OwnedFd>)> {
-        self.conn.send_raw_blocking(data, fds).map_err(|e| {
+        self.conn.send_raw_blocking(data, fds).inspect_err(|_| {
             self.closed = true;
-            e
         })?;
         self.send_count += 1;
         let target = self.send_count;
         loop {
-            let (n, resp_fds) = self.conn.recv_raw_blocking(&mut self.recv_buf).map_err(|e| {
+            let (n, resp_fds) = self.conn.recv_raw_blocking(&mut self.recv_buf).inspect_err(|_| {
                 self.closed = true;
-                e
             })?;
             self.ack_count += 1;
             if self.ack_count == target {

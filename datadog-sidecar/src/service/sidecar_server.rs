@@ -775,6 +775,7 @@ impl SidecarServer {
             .add(exception_hash, granularity);
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn set_universal_service_tags_impl(
         &self,
         instance_id: InstanceId,

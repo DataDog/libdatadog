@@ -221,8 +221,8 @@ mod tests {
             // can't listen twice when some listener is active
             assert!(liaison.attempt_listen().unwrap().is_none());
 
-            let mut client: SeqpacketConn = liaison.connect_to_server().unwrap();
-            let mut srv: SeqpacketConn = listener.try_accept().unwrap();
+            let client: SeqpacketConn = liaison.connect_to_server().unwrap();
+            let srv: SeqpacketConn = listener.try_accept().unwrap();
             client.send_raw_blocking(&mut vec![255], &[]).unwrap();
             let mut buf = [0u8; 4];
             let (n, _) = srv.recv_raw_blocking(&mut buf).unwrap();

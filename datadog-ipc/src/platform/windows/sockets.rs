@@ -30,6 +30,7 @@ use std::sync::{
     atomic::{AtomicU64, Ordering},
     Mutex,
 };
+use crate::platform::message::MAX_FDS;
 
 // winapi – only used for things not cleanly available in windows-sys
 use winapi::shared::minwindef::ULONG;
@@ -53,9 +54,6 @@ use windows_sys::Win32::System::Threading::{CreateEventA, WaitForSingleObject, I
 const PIPE_ACCESS_DUPLEX: u32 = 0x0000_0003; // PIPE_ACCESS_INBOUND | PIPE_ACCESS_OUTBOUND
 const FILE_FLAG_OVERLAPPED_: u32 = 0x4000_0000;
 const FILE_FLAG_FIRST_PIPE_INSTANCE_: u32 = 0x0008_0000;
-
-/// Maximum file descriptors (handles) transferable in a single message.
-pub const MAX_FDS: usize = 20;
 
 /// Maximum IPC message payload size (4 MiB).
 pub const MAX_MESSAGE_SIZE: usize = 4 * 1024 * 1024;
