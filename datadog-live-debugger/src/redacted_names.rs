@@ -151,7 +151,7 @@ pub unsafe fn add_redacted_type<I: AsRef<[u8]>>(name: I) {
             regex_str.push('|')
         }
         let name = String::from_utf8_lossy(name);
-        regex_str.push_str(regex::escape(&name[..name.len() - 1]).as_str());
+        regex_str.push_str(regex_lite::escape(&name[..name.len() - 1]).as_str());
         regex_str.push_str(".*");
     } else {
         let added_types = &mut (*(&*ADDED_REDACTED_TYPES as *const Vec<Vec<u8>>).cast_mut());

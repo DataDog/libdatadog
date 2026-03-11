@@ -1,8 +1,7 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use regex::Regex;
-use std::{borrow::Cow, collections::HashSet, net::Ipv6Addr, sync::LazyLock};
+use std::{borrow::Cow, collections::HashSet, net::Ipv6Addr};
 
 const ALLOWED_IP_ADDRESSES: [&str; 5] = [
     // localhost
@@ -15,11 +14,23 @@ const ALLOWED_IP_ADDRESSES: [&str; 5] = [
     "169.254.170.2",
 ];
 
-const PREFIX_REGEX_LITERAL: &str = r"^((?:dnspoll|ftp|file|http|https):/{2,3})";
-static PREFIX_REGEX: LazyLock<Regex> = LazyLock::new(|| {
-    #[allow(clippy::unwrap_used)]
-    Regex::new(PREFIX_REGEX_LITERAL).unwrap()
-});
+const PROTOCOL_PREFIXES: &[&str] = &["dnspoll", "ftp", "file", "http", "https"];
+
+fn find_protocol_prefix(s: &str) -> Option<usize> {
+    for &proto in PROTOCOL_PREFIXES {
+        if let Some(rest) = s.strip_prefix(proto) {
+            if let Some(rest) = rest.strip_prefix(":///") {
+                let _ = rest;
+                return Some(proto.len() + 4);
+            }
+            if let Some(rest) = rest.strip_prefix("://") {
+                let _ = rest;
+                return Some(proto.len() + 3);
+            }
+        }
+    }
+    None
+}
 
 /// Quantizes a comma separated list of hosts.
 ///
@@ -87,11 +98,10 @@ fn quantize_ip(s: &str) -> Option<String> {
 
 /// Split the ip prefix, can be either a provider specific prefix or a protocol
 fn split_prefix(s: &str) -> (&str, &str) {
-    #[allow(clippy::unwrap_used)]
     if let Some(tail) = s.strip_prefix("ip-") {
         ("ip-", tail)
-    } else if let Some(protocol) = PREFIX_REGEX.find(s) {
-        s.split_at(protocol.end())
+    } else if let Some(end) = find_protocol_prefix(s) {
+        s.split_at(end)
     } else {
         ("", s)
     }

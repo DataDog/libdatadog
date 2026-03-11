@@ -1491,6 +1491,7 @@ dependencies = [
  "percent-encoding",
  "regex",
  "regex-automata",
+ "regex-lite",
  "serde",
  "serde_json",
  "smallvec",
@@ -1545,7 +1546,6 @@ dependencies = [
  "libdd-common",
  "libdd-trace-protobuf",
  "manual_future",
- "regex",
  "serde",
  "serde_json",
  "serde_with",
@@ -3002,7 +3002,6 @@ dependencies = [
  "nix 0.29.0",
  "pin-project",
  "rand 0.8.5",
- "regex",
  "reqwest",
  "rustls",
  "rustls-native-certs",
@@ -4852,6 +4851,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "regex-lite"
+version = "0.1.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cab834c73d247e67f4fae452806d17d3c7501756d98c8808d7c9c7aa7d18f973"
+
+[[package]]
 name = "regex-syntax"
 version = "0.8.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6254,7 +6259,7 @@ dependencies = [
  "clap",
  "colored",
  "quick-xml",
- "regex",
+ "regex-lite",
  "toml",
  "wait-timeout",
 ]

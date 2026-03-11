@@ -4,7 +4,7 @@
 pub mod junit_file_attributes;
 
 pub mod headers {
-    use regex::{Regex, RegexBuilder};
+    use regex_lite::{Regex, RegexBuilder};
     use std::collections::HashSet;
     use std::fs::{File, OpenOptions};
     use std::io::{self, BufReader, BufWriter, Read, Seek, Write};

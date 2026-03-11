@@ -34,7 +34,6 @@ multer = { version = "3.1", optional = true }
 bytes = { version = "1.11.1" }
 pin-project = "1"
 rand = { version = "0.8", optional = true }
-regex = "1.5"
 # Use hickory-dns instead of the default system DNS resolver to avoid fork safety issues.
 # The default resolver can hold locks or other global state that can cause deadlocks
 # or corruption when the process forks (e.g., in PHP-FPM or other forking environments).

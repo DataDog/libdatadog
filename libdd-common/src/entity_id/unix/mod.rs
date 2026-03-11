@@ -104,15 +104,27 @@ pub static ENTITY_ID: LazyLock<Option<&'static str>> = LazyLock::new(|| {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use regex::Regex;
 
-    static IN_REGEX: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"in-\d+").unwrap());
-    static CI_REGEX: LazyLock<Regex> = LazyLock::new(|| {
-        Regex::new(&format!(r"ci-{}", container_id::CONTAINER_REGEX.as_str())).unwrap()
-    });
+    enum EntityIdKind {
+        Inode,
+        ContainerId,
+    }
 
-    /// The following test can only be run in isolation because of caching behaviour
-    fn test_entity_id(filename: &str, expected_result: Option<&Regex>) {
+    fn matches_entity_id_kind(entity_id: &str, kind: &EntityIdKind) -> bool {
+        match kind {
+            EntityIdKind::Inode => {
+                entity_id.starts_with("in-")
+                    && entity_id[3..].bytes().all(|b| b.is_ascii_digit())
+                    && entity_id.len() > 3
+            }
+            EntityIdKind::ContainerId => {
+                entity_id.starts_with("ci-")
+                    && container_id::extract_container_id_from_path(&entity_id[3..]).is_some()
+            }
+        }
+    }
+
+    fn test_entity_id(filename: &str, expected_kind: Option<EntityIdKind>) {
         let test_root_dir = Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/tests"));
 
         let entity_id = compute_entity_id(
@@ -121,12 +133,11 @@ mod tests {
             test_root_dir.join("cgroup").as_path(),
         );
 
-        if let Some(regex) = expected_result {
+        if let Some(kind) = expected_kind {
+            let id = entity_id.as_deref().unwrap();
             assert!(
-                regex.is_match(entity_id.as_deref().unwrap()),
-                "testing get_entity_id with file {}: {} is not matching the expected regex",
-                filename,
-                entity_id.as_deref().unwrap_or("None")
+                matches_entity_id_kind(id, &kind),
+                "testing get_entity_id with file {filename}: {id} did not match expected format",
             );
         } else {
             assert_eq!(
@@ -139,19 +150,19 @@ mod tests {
     #[cfg_attr(miri, ignore)]
     #[test]
     fn test_entity_id_for_v2() {
-        test_entity_id("cgroup.v2", Some(&*IN_REGEX))
+        test_entity_id("cgroup.v2", Some(EntityIdKind::Inode))
     }
 
     #[cfg_attr(miri, ignore)]
     #[test]
     fn test_entity_id_for_v1() {
-        test_entity_id("cgroup.linux", Some(&*IN_REGEX))
+        test_entity_id("cgroup.linux", Some(EntityIdKind::Inode))
     }
 
     #[cfg_attr(miri, ignore)]
     #[test]
     fn test_entity_id_for_container_id() {
-        test_entity_id("cgroup.docker", Some(&*CI_REGEX))
+        test_entity_id("cgroup.docker", Some(EntityIdKind::ContainerId))
     }
 
     #[cfg_attr(miri, ignore)]

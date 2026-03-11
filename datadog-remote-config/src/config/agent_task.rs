@@ -6,8 +6,18 @@ use serde::Deserialize;
 #[cfg(feature = "test")]
 use serde::Serialize;
 
-use regex::Regex;
 use serde::de::{self, Deserializer};
+
+fn is_valid_suffixed_case_id(s: &str) -> bool {
+    let rest = if let Some(rest) = s.strip_suffix("-with-debug") {
+        rest
+    } else if let Some(rest) = s.strip_suffix("-with-content") {
+        rest
+    } else {
+        return false;
+    };
+    !rest.is_empty() && rest.bytes().all(|b| b.is_ascii_digit())
+}
 
 fn deserialize_case_id<'de, D>(deserializer: D) -> Result<String, D::Error>
 where
@@ -23,9 +33,7 @@ where
     if s.chars().all(|c| c.is_ascii_digit()) {
         return Ok(s);
     }
-    let re = Regex::new(r"^\d+-(with-debug|with-content)$")
-        .map_err(|_| de::Error::custom("Invalid case_id format"))?;
-    if re.is_match(&s) {
+    if is_valid_suffixed_case_id(&s) {
         return Ok(s);
     }
     Err(de::Error::custom(
