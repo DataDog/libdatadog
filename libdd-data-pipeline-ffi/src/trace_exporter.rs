@@ -785,8 +785,7 @@ mod tests {
     #[test]
     fn config_process_tags_test() {
         unsafe {
-            let error =
-                ddog_trace_exporter_config_set_process_tags(None, CharSlice::from("k:v"));
+            let error = ddog_trace_exporter_config_set_process_tags(None, CharSlice::from("k:v"));
             assert_eq!(error.as_ref().unwrap().code, ErrorCode::InvalidArgument);
 
             ddog_trace_exporter_error_free(error);
