@@ -10,6 +10,7 @@ mod tracing_integration_tests {
     use libdd_trace_utils::test_utils::datadog_test_agent::DatadogTestAgent;
     use libdd_trace_utils::test_utils::{create_test_json_span, create_test_v05_span};
     use serde_json::json;
+    use std::time::Duration;
     use tokio::task;
 
     fn get_v04_trace_snapshot_test_payload(name_prefix: &str) -> Vec<u8> {
@@ -322,6 +323,55 @@ mod tracing_integration_tests {
                 serde_json::to_string_pretty(&received_traces).unwrap()
             );
         }
+
+        assert!(task_result.is_ok());
+
+        test_agent.assert_snapshot(snapshot_name).await;
+    }
+
+    #[cfg_attr(miri, ignore)]
+    #[tokio::test]
+    async fn stats_snapshot_test() {
+        let relative_snapshot_path = "libdd-data-pipeline/tests/snapshots/";
+        let snapshot_name = "stats_with_process_tags_snapshot_test";
+        let test_agent = DatadogTestAgent::new(Some(relative_snapshot_path), None, &[]).await;
+        let url = test_agent.get_base_uri().await;
+        test_agent.start_session(snapshot_name, None).await;
+
+        let task_result = task::spawn_blocking(move || {
+            let mut builder = TraceExporter::builder();
+            builder
+                .set_url(url.to_string().as_ref())
+                .set_language("test-lang")
+                .set_language_version("2.0")
+                .set_language_interpreter_vendor("vendor")
+                .set_language_interpreter("interpreter")
+                .set_tracer_version("1.0")
+                .set_env("test_env")
+                .set_service("test")
+                .set_hostname("test-host")
+                .set_process_tags("key1:val1,key2:val2")
+                .set_test_session_token(snapshot_name)
+                .enable_stats(Duration::from_secs(10));
+
+            let trace_exporter = builder.build().expect("Unable to build TraceExporter");
+
+            // Give the info-fetcher worker time to fetch agent info on its first iteration.
+            // Once the cache is populated, the first send() call will enable stats computation
+            // via check_agent_info() and spans will be recorded in the concentrator.
+            std::thread::sleep(Duration::from_secs(1));
+
+            let data = get_v04_trace_snapshot_test_payload("stats_process_tags_test");
+            trace_exporter
+                .send(data.as_ref())
+                .expect("Failed to send traces");
+
+            // shutdown force-flushes and sends any remaining stats
+            trace_exporter
+                .shutdown(Some(Duration::from_secs(5)))
+                .expect("Failed to shutdown exporter");
+        })
+        .await;
 
         assert!(task_result.is_ok());
 
