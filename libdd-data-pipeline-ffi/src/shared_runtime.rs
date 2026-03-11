@@ -76,10 +76,6 @@ pub unsafe extern "C" fn ddog_shared_runtime_error_free(error: Option<Box<Shared
 /// On success writes a raw handle into `*out_handle` and returns `None`.
 /// On failure leaves `*out_handle` unchanged and returns an error.
 ///
-/// The handle is produced by [`Arc::into_raw`]: the strong count lives inside
-/// the `Arc` allocation, immediately before the `SharedRuntime` data, so no
-/// extra heap allocation is needed.
-///
 /// The caller owns the handle and must eventually pass it to
 /// [`ddog_shared_runtime_free`] (or another consumer that takes ownership).
 #[no_mangle]
@@ -95,35 +91,10 @@ pub unsafe extern "C" fn ddog_shared_runtime_new(
     }
 }
 
-/// Clone the handle, incrementing the `Arc` strong count.
-///
-/// The new handle is independent from the original: either can be freed
-/// without affecting the other.  The underlying runtime is only destroyed
-/// when every handle has been freed.
-///
-/// On success writes the cloned handle into `*out_handle` and returns `None`.
-#[no_mangle]
-pub unsafe extern "C" fn ddog_shared_runtime_clone(
-    handle: *const SharedRuntime,
-    out_handle: NonNull<*const SharedRuntime>,
-) -> Option<Box<SharedRuntimeFFIError>> {
-    if handle.is_null() {
-        return Some(Box::new(SharedRuntimeFFIError::new(
-            SharedRuntimeErrorCode::InvalidArgument,
-            "handle is null",
-        )));
-    }
-    // SAFETY: handle was produced by Arc::into_raw and the Arc is still alive.
-    Arc::increment_strong_count(handle);
-    out_handle.as_ptr().write(handle);
-    None
-}
-
 /// Free a handle, decrementing the `Arc` strong count.
 ///
-/// The underlying runtime is only destroyed once the last handle is freed.
-/// Use [`ddog_shared_runtime_shutdown`] to explicitly stop the runtime and
-/// all its workers before the last handle is freed.
+/// The underlying runtime may not be dropped if other components are still using it.
+/// Use [`ddog_shared_runtime_shutdown`] to cleanly stop workers.
 #[no_mangle]
 pub unsafe extern "C" fn ddog_shared_runtime_free(handle: *const SharedRuntime) {
     if !handle.is_null() {
@@ -236,14 +207,6 @@ mod tests {
     use super::*;
     use std::mem::MaybeUninit;
 
-    unsafe fn strong_count(handle: *const SharedRuntime) -> usize {
-        // Reconstruct the Arc temporarily without dropping it.
-        let arc = Arc::from_raw(handle);
-        let count = Arc::strong_count(&arc);
-        std::mem::forget(arc);
-        count
-    }
-
     #[test]
     fn test_new_and_free() {
         unsafe {
@@ -251,41 +214,6 @@ mod tests {
             let err = ddog_shared_runtime_new(NonNull::new_unchecked(handle.as_mut_ptr()));
             assert!(err.is_none());
             ddog_shared_runtime_free(handle.assume_init());
-        }
-    }
-
-    #[test]
-    fn test_clone() {
-        unsafe {
-            let mut handle: MaybeUninit<*const SharedRuntime> = MaybeUninit::uninit();
-            ddog_shared_runtime_new(NonNull::new_unchecked(handle.as_mut_ptr()));
-            let handle = handle.assume_init();
-
-            let mut cloned: MaybeUninit<*const SharedRuntime> = MaybeUninit::uninit();
-            let err =
-                ddog_shared_runtime_clone(handle, NonNull::new_unchecked(cloned.as_mut_ptr()));
-            assert!(err.is_none());
-
-            // Both handles point to the same underlying runtime (strong count == 2).
-            assert_eq!(strong_count(handle), 2);
-
-            ddog_shared_runtime_free(cloned.assume_init());
-            assert_eq!(strong_count(handle), 1);
-
-            ddog_shared_runtime_free(handle);
-        }
-    }
-
-    #[test]
-    fn test_clone_null_handle() {
-        unsafe {
-            let mut cloned: MaybeUninit<*const SharedRuntime> = MaybeUninit::uninit();
-            let err = ddog_shared_runtime_clone(
-                std::ptr::null(),
-                NonNull::new_unchecked(cloned.as_mut_ptr()),
-            );
-            assert!(err.is_some());
-            assert_eq!(err.unwrap().code, SharedRuntimeErrorCode::InvalidArgument);
         }
     }
 

@@ -43,6 +43,8 @@ use libdd_trace_utils::span::{v04::Span, TraceData};
 use libdd_trace_utils::trace_utils::TracerHeaderTags;
 use std::io;
 use std::sync::Arc;
+#[cfg(feature = "test-utils")]
+use std::time::Duration;
 use std::{borrow::Borrow, collections::HashMap, str::FromStr};
 use tokio::runtime::Runtime;
 use tokio::task::JoinSet;
