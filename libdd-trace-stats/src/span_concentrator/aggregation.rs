@@ -41,23 +41,40 @@ pub(super) struct BorrowedAggregationKey<'a> {
 
 impl hashbrown::Equivalent<OwnedAggregationKey> for BorrowedAggregationKey<'_> {
     #[inline]
-    fn equivalent(&self, key: &OwnedAggregationKey) -> bool {
-        self.resource_name == key.resource_name
-            && self.service_name == key.service_name
-            && self.operation_name == key.operation_name
-            && self.span_type == key.span_type
-            && self.span_kind == key.span_kind
-            && self.http_status_code == key.http_status_code
-            && self.is_synthetics_request == key.is_synthetics_request
-            && self.peer_tags.len() == key.peer_tags.len()
+    fn equivalent(
+        &self,
+        OwnedAggregationKey {
+            resource_name,
+            service_name,
+            operation_name,
+            span_type,
+            span_kind,
+            http_status_code,
+            is_synthetics_request,
+            peer_tags,
+            is_trace_root,
+            http_method,
+            http_endpoint,
+            grpc_status_code,
+        }: &OwnedAggregationKey,
+    ) -> bool {
+        self.resource_name == resource_name
+            && self.service_name == service_name
+            && self.operation_name == operation_name
+            && self.span_type == span_type
+            && self.span_kind == span_kind
+            && self.http_status_code == *http_status_code
+            && self.is_synthetics_request == *is_synthetics_request
+            && self.peer_tags.len() == peer_tags.len()
             && self
                 .peer_tags
                 .iter()
-                .zip(key.peer_tags.iter())
+                .zip(peer_tags.iter())
                 .all(|((k1, v1), (k2, v2))| k1 == k2 && v1 == v2)
-            && self.is_trace_root == key.is_trace_root
-            && self.http_method == key.http_method
-            && self.http_endpoint == key.http_endpoint
+            && self.is_trace_root == *is_trace_root
+            && self.http_method == http_method
+            && self.http_endpoint == http_endpoint
+            && self.grpc_status_code == *grpc_status_code
     }
 }
 
@@ -378,7 +395,7 @@ fn encode_grouped_stats(key: OwnedAggregationKey, group: GroupedStats) -> pb::Cl
             .map(|c| c.to_string())
             .unwrap_or_default(),
         service_source: String::new(),     // set by the agent
-        span_derived_primary_tags: vec![], // set by the agent
+        span_derived_primary_tags: vec![], // Todo
     }
 }
 
