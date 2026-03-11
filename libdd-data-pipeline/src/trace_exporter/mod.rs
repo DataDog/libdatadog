@@ -618,21 +618,21 @@ impl TraceExporter {
         &self,
         mut traces: Vec<Vec<Span<T>>>,
     ) -> Result<AgentResponse, TraceExporterError> {
-        // OTLP path: when OTEL_TRACES_EXPORTER=otlp. No sampling/dropping—export all received
-        // (equivalent to OTEL_TRACES_SAMPLER=parentbased_always_on).
-        if let Some(ref config) = self.otlp_config {
-            return self.send_otlp_traces_inner(traces, config).await;
-        }
-
         let mut header_tags: TracerHeaderTags = self.metadata.borrow().into();
 
-        // Process stats computation
+        // Process stats computation and drop non-sampled (p0) chunks.
+        // This must run before the OTLP path so that unsampled spans are not exported.
         let dropped_p0_stats = stats::process_traces_for_stats(
             &mut traces,
             &mut header_tags,
             &self.client_side_stats,
             self.client_computed_top_level,
         );
+
+        // OTLP path: send sampled traces via OTLP when OTEL_TRACES_EXPORTER=otlp.
+        if let Some(ref config) = self.otlp_config {
+            return self.send_otlp_traces_inner(traces, config).await;
+        }
 
         let serializer = TraceSerializer::new(
             self.output_format,
@@ -1899,7 +1899,7 @@ mod tests {
 
     #[test]
     #[cfg_attr(miri, ignore)]
-    fn test_otlp_export_when_env_set() {
+    fn test_otlp_export_via_builder() {
         let server = MockServer::start();
         let mock_otlp = server.mock(|when, then| {
             when.method(POST)
@@ -1908,12 +1908,7 @@ mod tests {
             then.status(200).body("");
         });
 
-        std::env::set_var(crate::otlp::config::env_keys::TRACES_EXPORTER, "otlp");
-        // Endpoint set explicitly is used as-is (no path appended); so set full path for mock
-        std::env::set_var(
-            crate::otlp::config::env_keys::TRACES_ENDPOINT,
-            format!("{}/v1/traces", server.url("/").trim_end_matches('/')),
-        );
+        let otlp_endpoint = format!("{}/v1/traces", server.url("/").trim_end_matches('/'));
         let mut builder = TraceExporterBuilder::default();
         builder
             .set_url("http://127.0.0.1:8126")
@@ -1923,6 +1918,7 @@ mod tests {
             .set_language("rust")
             .set_language_version("1.0")
             .set_language_interpreter("rustc")
+            .set_otlp_endpoint(&otlp_endpoint)
             .set_input_format(TraceExporterInputFormat::V04)
             .set_output_format(TraceExporterOutputFormat::V04);
         let exporter = builder.build().unwrap();
@@ -1941,9 +1937,6 @@ mod tests {
         }]];
         let data = msgpack_encoder::v04::to_vec(&traces);
         let result = exporter.send(data.as_ref());
-
-        std::env::remove_var(crate::otlp::config::env_keys::TRACES_EXPORTER);
-        std::env::remove_var(crate::otlp::config::env_keys::TRACES_ENDPOINT);
 
         assert!(
             result.is_ok(),

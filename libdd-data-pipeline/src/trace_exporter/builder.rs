@@ -2,7 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::agent_info::AgentInfoFetcher;
-use crate::otlp::otlp_trace_config_from_env;
+use crate::otlp::config::{OtlpProtocol, DEFAULT_OTLP_TIMEOUT};
+use crate::otlp::OtlpTraceConfig;
 use crate::pausable_worker::PausableWorker;
 use crate::telemetry::TelemetryClientBuilder;
 use crate::trace_exporter::agent_response::AgentResponsePayloadVersion;
@@ -51,6 +52,7 @@ pub struct TraceExporterBuilder {
     test_session_token: Option<String>,
     agent_rates_payload_version_enabled: bool,
     connection_timeout: Option<u64>,
+    otlp_endpoint: Option<String>,
 }
 
 impl TraceExporterBuilder {
@@ -218,6 +220,18 @@ impl TraceExporterBuilder {
         self
     }
 
+    /// Enables OTLP HTTP/JSON export and sets the endpoint URL.
+    ///
+    /// When set, traces are sent to this endpoint in OTLP HTTP/JSON format instead of the
+    /// Datadog agent. The host language is responsible for resolving the endpoint from its
+    /// configuration (e.g. `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`) before calling this method.
+    ///
+    /// Example: `set_otlp_endpoint("http://localhost:4318/v1/traces")`
+    pub fn set_otlp_endpoint(&mut self, url: &str) -> &mut Self {
+        self.otlp_endpoint = Some(url.to_owned());
+        self
+    }
+
     #[allow(missing_docs)]
     pub fn build(self) -> Result<TraceExporter, TraceExporterError> {
         if !Self::is_inputs_outputs_formats_compatible(self.input_format, self.output_format) {
@@ -339,7 +353,12 @@ impl TraceExporterBuilder {
                 .agent_rates_payload_version_enabled
                 .then(AgentResponsePayloadVersion::new),
             http_client: new_default_client(),
-            otlp_config: otlp_trace_config_from_env(),
+            otlp_config: self.otlp_endpoint.map(|url| OtlpTraceConfig {
+                endpoint_url: url,
+                headers: vec![],
+                timeout: DEFAULT_OTLP_TIMEOUT,
+                protocol: OtlpProtocol::HttpJson,
+            }),
         })
     }
 
