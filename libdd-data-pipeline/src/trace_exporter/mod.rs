@@ -128,6 +128,7 @@ pub struct TracerMetadata {
     pub language_interpreter: String,
     pub language_interpreter_vendor: String,
     pub git_commit_sha: String,
+    pub process_tags: String,
     pub client_computed_stats: bool,
     pub client_computed_top_level: bool,
 }
