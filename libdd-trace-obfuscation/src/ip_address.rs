@@ -19,12 +19,10 @@ const PROTOCOL_PREFIXES: &[&str] = &["dnspoll", "ftp", "file", "http", "https"];
 fn find_protocol_prefix(s: &str) -> Option<usize> {
     for &proto in PROTOCOL_PREFIXES {
         if let Some(rest) = s.strip_prefix(proto) {
-            if let Some(rest) = rest.strip_prefix(":///") {
-                let _ = rest;
+            if rest.starts_with(":///") {
                 return Some(proto.len() + 4);
             }
-            if let Some(rest) = rest.strip_prefix("://") {
-                let _ = rest;
+            if rest.starts_with("://") {
                 return Some(proto.len() + 3);
             }
         }

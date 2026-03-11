@@ -9,11 +9,10 @@ use serde::Serialize;
 use serde::de::{self, Deserializer};
 
 fn is_valid_suffixed_case_id(s: &str) -> bool {
-    let rest = if let Some(rest) = s.strip_suffix("-with-debug") {
-        rest
-    } else if let Some(rest) = s.strip_suffix("-with-content") {
-        rest
-    } else {
+    let Some(rest) = s
+        .strip_suffix("-with-debug")
+        .or_else(|| s.strip_suffix("-with-content"))
+    else {
         return false;
     };
     !rest.is_empty() && rest.bytes().all(|b| b.is_ascii_digit())
