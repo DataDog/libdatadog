@@ -71,27 +71,31 @@ pub unsafe extern "C" fn ddog_shared_runtime_error_free(error: Option<Box<Shared
     drop(error);
 }
 
-/// Create a new `SharedRuntime` wrapped in an `Arc`.
+/// Create a new `SharedRuntime`.
 ///
-/// On success writes the new handle into `*out_handle` and returns `None`.
+/// On success writes a raw handle into `*out_handle` and returns `None`.
 /// On failure leaves `*out_handle` unchanged and returns an error.
 ///
-/// The caller owns the returned handle and must eventually pass it to
+/// The handle is produced by [`Arc::into_raw`]: the strong count lives inside
+/// the `Arc` allocation, immediately before the `SharedRuntime` data, so no
+/// extra heap allocation is needed.
+///
+/// The caller owns the handle and must eventually pass it to
 /// [`ddog_shared_runtime_free`] (or another consumer that takes ownership).
 #[no_mangle]
 pub unsafe extern "C" fn ddog_shared_runtime_new(
-    out_handle: NonNull<Box<Arc<SharedRuntime>>>,
+    out_handle: NonNull<*const SharedRuntime>,
 ) -> Option<Box<SharedRuntimeFFIError>> {
     match SharedRuntime::new() {
         Ok(runtime) => {
-            out_handle.as_ptr().write(Box::new(Arc::new(runtime)));
+            out_handle.as_ptr().write(Arc::into_raw(Arc::new(runtime)));
             None
         }
         Err(err) => Some(Box::new(SharedRuntimeFFIError::from(err))),
     }
 }
 
-/// Clone the `Arc<SharedRuntime>`, incrementing the reference count.
+/// Clone the handle, incrementing the `Arc` strong count.
 ///
 /// The new handle is independent from the original: either can be freed
 /// without affecting the other.  The underlying runtime is only destroyed
@@ -100,29 +104,32 @@ pub unsafe extern "C" fn ddog_shared_runtime_new(
 /// On success writes the cloned handle into `*out_handle` and returns `None`.
 #[no_mangle]
 pub unsafe extern "C" fn ddog_shared_runtime_clone(
-    handle: Option<&Arc<SharedRuntime>>,
-    out_handle: NonNull<Box<Arc<SharedRuntime>>>,
+    handle: *const SharedRuntime,
+    out_handle: NonNull<*const SharedRuntime>,
 ) -> Option<Box<SharedRuntimeFFIError>> {
-    match handle {
-        Some(arc) => {
-            out_handle.as_ptr().write(Box::new(arc.clone()));
-            None
-        }
-        None => Some(Box::new(SharedRuntimeFFIError::new(
+    if handle.is_null() {
+        return Some(Box::new(SharedRuntimeFFIError::new(
             SharedRuntimeErrorCode::InvalidArgument,
             "handle is null",
-        ))),
+        )));
     }
+    // SAFETY: handle was produced by Arc::into_raw and the Arc is still alive.
+    Arc::increment_strong_count(handle);
+    out_handle.as_ptr().write(handle);
+    None
 }
 
-/// Free a `SharedRuntime` handle, decrementing the `Arc` reference count.
+/// Free a handle, decrementing the `Arc` strong count.
 ///
-/// The underlying runtime is only shut down once the last handle is freed.
+/// The underlying runtime is only destroyed once the last handle is freed.
 /// Use [`ddog_shared_runtime_shutdown`] to explicitly stop the runtime and
 /// all its workers before the last handle is freed.
 #[no_mangle]
-pub unsafe extern "C" fn ddog_shared_runtime_free(handle: Box<Arc<SharedRuntime>>) {
-    drop(handle);
+pub unsafe extern "C" fn ddog_shared_runtime_free(handle: *const SharedRuntime) {
+    if !handle.is_null() {
+        // SAFETY: handle was produced by Arc::into_raw; this call takes ownership.
+        drop(Arc::from_raw(handle));
+    }
 }
 
 /// Must be called in the parent process before `fork()`.
@@ -133,19 +140,16 @@ pub unsafe extern "C" fn ddog_shared_runtime_free(handle: Box<Arc<SharedRuntime>
 /// Returns an error if `handle` is null.
 #[no_mangle]
 pub unsafe extern "C" fn ddog_shared_runtime_before_fork(
-    handle: Option<&Arc<SharedRuntime>>,
+    handle: *const SharedRuntime,
 ) -> Option<Box<SharedRuntimeFFIError>> {
-    let runtime = match handle {
-        Some(r) => r,
-        None => {
-            return Some(Box::new(SharedRuntimeFFIError::new(
-                SharedRuntimeErrorCode::InvalidArgument,
-                "handle is null",
-            )))
-        }
-    };
-
-    runtime.before_fork();
+    if handle.is_null() {
+        return Some(Box::new(SharedRuntimeFFIError::new(
+            SharedRuntimeErrorCode::InvalidArgument,
+            "handle is null",
+        )));
+    }
+    // SAFETY: handle was produced by Arc::into_raw and the Arc is still alive.
+    (*handle).before_fork();
     None
 }
 
@@ -156,19 +160,16 @@ pub unsafe extern "C" fn ddog_shared_runtime_before_fork(
 /// Returns `None` on success, or an error if workers could not be restarted.
 #[no_mangle]
 pub unsafe extern "C" fn ddog_shared_runtime_after_fork_parent(
-    handle: Option<&Arc<SharedRuntime>>,
+    handle: *const SharedRuntime,
 ) -> Option<Box<SharedRuntimeFFIError>> {
-    let runtime = match handle {
-        Some(r) => r,
-        None => {
-            return Some(Box::new(SharedRuntimeFFIError::new(
-                SharedRuntimeErrorCode::InvalidArgument,
-                "handle is null",
-            )))
-        }
-    };
-
-    match runtime.after_fork_parent() {
+    if handle.is_null() {
+        return Some(Box::new(SharedRuntimeFFIError::new(
+            SharedRuntimeErrorCode::InvalidArgument,
+            "handle is null",
+        )));
+    }
+    // SAFETY: handle was produced by Arc::into_raw and the Arc is still alive.
+    match (*handle).after_fork_parent() {
         Ok(()) => None,
         Err(err) => Some(Box::new(SharedRuntimeFFIError::from(err))),
     }
@@ -183,19 +184,16 @@ pub unsafe extern "C" fn ddog_shared_runtime_after_fork_parent(
 /// reinitialized.
 #[no_mangle]
 pub unsafe extern "C" fn ddog_shared_runtime_after_fork_child(
-    handle: Option<&Arc<SharedRuntime>>,
+    handle: *const SharedRuntime,
 ) -> Option<Box<SharedRuntimeFFIError>> {
-    let runtime = match handle {
-        Some(r) => r,
-        None => {
-            return Some(Box::new(SharedRuntimeFFIError::new(
-                SharedRuntimeErrorCode::InvalidArgument,
-                "handle is null",
-            )))
-        }
-    };
-
-    match runtime.after_fork_child() {
+    if handle.is_null() {
+        return Some(Box::new(SharedRuntimeFFIError::new(
+            SharedRuntimeErrorCode::InvalidArgument,
+            "handle is null",
+        )));
+    }
+    // SAFETY: handle was produced by Arc::into_raw and the Arc is still alive.
+    match (*handle).after_fork_child() {
         Ok(()) => None,
         Err(err) => Some(Box::new(SharedRuntimeFFIError::from(err))),
     }
@@ -210,18 +208,15 @@ pub unsafe extern "C" fn ddog_shared_runtime_after_fork_child(
 /// if the timeout was reached.
 #[no_mangle]
 pub unsafe extern "C" fn ddog_shared_runtime_shutdown(
-    handle: Option<&Arc<SharedRuntime>>,
+    handle: *const SharedRuntime,
     timeout_ms: u64,
 ) -> Option<Box<SharedRuntimeFFIError>> {
-    let runtime = match handle {
-        Some(r) => r,
-        None => {
-            return Some(Box::new(SharedRuntimeFFIError::new(
-                SharedRuntimeErrorCode::InvalidArgument,
-                "handle is null",
-            )))
-        }
-    };
+    if handle.is_null() {
+        return Some(Box::new(SharedRuntimeFFIError::new(
+            SharedRuntimeErrorCode::InvalidArgument,
+            "handle is null",
+        )));
+    }
 
     let timeout = if timeout_ms > 0 {
         Some(std::time::Duration::from_millis(timeout_ms))
@@ -229,7 +224,8 @@ pub unsafe extern "C" fn ddog_shared_runtime_shutdown(
         None
     };
 
-    match runtime.shutdown(timeout) {
+    // SAFETY: handle was produced by Arc::into_raw and the Arc is still alive.
+    match (*handle).shutdown(timeout) {
         Ok(()) => None,
         Err(err) => Some(Box::new(SharedRuntimeFFIError::from(err))),
     }
@@ -240,11 +236,19 @@ mod tests {
     use super::*;
     use std::mem::MaybeUninit;
 
+    unsafe fn strong_count(handle: *const SharedRuntime) -> usize {
+        // Reconstruct the Arc temporarily without dropping it.
+        let arc = Arc::from_raw(handle);
+        let count = Arc::strong_count(&arc);
+        std::mem::forget(arc);
+        count
+    }
+
     #[test]
     fn test_new_and_free() {
         unsafe {
-            let mut handle: MaybeUninit<Box<Arc<SharedRuntime>>> = MaybeUninit::uninit();
-            let err = ddog_shared_runtime_new(NonNull::new_unchecked(&mut handle).cast());
+            let mut handle: MaybeUninit<*const SharedRuntime> = MaybeUninit::uninit();
+            let err = ddog_shared_runtime_new(NonNull::new_unchecked(handle.as_mut_ptr()));
             assert!(err.is_none());
             ddog_shared_runtime_free(handle.assume_init());
         }
@@ -253,22 +257,22 @@ mod tests {
     #[test]
     fn test_clone() {
         unsafe {
-            let mut handle: MaybeUninit<Box<Arc<SharedRuntime>>> = MaybeUninit::uninit();
-            ddog_shared_runtime_new(NonNull::new_unchecked(&mut handle).cast());
+            let mut handle: MaybeUninit<*const SharedRuntime> = MaybeUninit::uninit();
+            ddog_shared_runtime_new(NonNull::new_unchecked(handle.as_mut_ptr()));
             let handle = handle.assume_init();
 
-            let mut cloned: MaybeUninit<Box<Arc<SharedRuntime>>> = MaybeUninit::uninit();
+            let mut cloned: MaybeUninit<*const SharedRuntime> = MaybeUninit::uninit();
             let err = ddog_shared_runtime_clone(
-                Some(handle.as_ref()),
-                NonNull::new_unchecked(&mut cloned).cast(),
+                handle,
+                NonNull::new_unchecked(cloned.as_mut_ptr()),
             );
             assert!(err.is_none());
 
-            // Both handles should point to the same underlying runtime (strong count == 2).
-            assert_eq!(Arc::strong_count(handle.as_ref()), 2);
+            // Both handles point to the same underlying runtime (strong count == 2).
+            assert_eq!(strong_count(handle), 2);
 
             ddog_shared_runtime_free(cloned.assume_init());
-            assert_eq!(Arc::strong_count(handle.as_ref()), 1);
+            assert_eq!(strong_count(handle), 1);
 
             ddog_shared_runtime_free(handle);
         }
@@ -277,8 +281,11 @@ mod tests {
     #[test]
     fn test_clone_null_handle() {
         unsafe {
-            let mut cloned: MaybeUninit<Box<Arc<SharedRuntime>>> = MaybeUninit::uninit();
-            let err = ddog_shared_runtime_clone(None, NonNull::new_unchecked(&mut cloned).cast());
+            let mut cloned: MaybeUninit<*const SharedRuntime> = MaybeUninit::uninit();
+            let err = ddog_shared_runtime_clone(
+                std::ptr::null(),
+                NonNull::new_unchecked(cloned.as_mut_ptr()),
+            );
             assert!(err.is_some());
             assert_eq!(err.unwrap().code, SharedRuntimeErrorCode::InvalidArgument);
         }
@@ -287,13 +294,13 @@ mod tests {
     #[test]
     fn test_before_after_fork_null() {
         unsafe {
-            let err = ddog_shared_runtime_before_fork(None);
+            let err = ddog_shared_runtime_before_fork(std::ptr::null());
             assert_eq!(err.unwrap().code, SharedRuntimeErrorCode::InvalidArgument);
 
-            let err = ddog_shared_runtime_after_fork_parent(None);
+            let err = ddog_shared_runtime_after_fork_parent(std::ptr::null());
             assert_eq!(err.unwrap().code, SharedRuntimeErrorCode::InvalidArgument);
 
-            let err = ddog_shared_runtime_after_fork_child(None);
+            let err = ddog_shared_runtime_after_fork_child(std::ptr::null());
             assert_eq!(err.unwrap().code, SharedRuntimeErrorCode::InvalidArgument);
         }
     }
@@ -301,14 +308,14 @@ mod tests {
     #[test]
     fn test_fork_lifecycle() {
         unsafe {
-            let mut handle: MaybeUninit<Box<Arc<SharedRuntime>>> = MaybeUninit::uninit();
-            ddog_shared_runtime_new(NonNull::new_unchecked(&mut handle).cast());
+            let mut handle: MaybeUninit<*const SharedRuntime> = MaybeUninit::uninit();
+            ddog_shared_runtime_new(NonNull::new_unchecked(handle.as_mut_ptr()));
             let handle = handle.assume_init();
 
-            let err = ddog_shared_runtime_before_fork(Some(handle.as_ref()));
+            let err = ddog_shared_runtime_before_fork(handle);
             assert!(err.is_none(), "{:?}", err.map(|e| e.code));
 
-            let err = ddog_shared_runtime_after_fork_parent(Some(handle.as_ref()));
+            let err = ddog_shared_runtime_after_fork_parent(handle);
             assert!(err.is_none(), "{:?}", err.map(|e| e.code));
 
             ddog_shared_runtime_free(handle);
@@ -318,11 +325,11 @@ mod tests {
     #[test]
     fn test_shutdown() {
         unsafe {
-            let mut handle: MaybeUninit<Box<Arc<SharedRuntime>>> = MaybeUninit::uninit();
-            ddog_shared_runtime_new(NonNull::new_unchecked(&mut handle).cast());
+            let mut handle: MaybeUninit<*const SharedRuntime> = MaybeUninit::uninit();
+            ddog_shared_runtime_new(NonNull::new_unchecked(handle.as_mut_ptr()));
             let handle = handle.assume_init();
 
-            let err = ddog_shared_runtime_shutdown(Some(handle.as_ref()), 0);
+            let err = ddog_shared_runtime_shutdown(handle, 0);
             assert!(err.is_none());
 
             ddog_shared_runtime_free(handle);
