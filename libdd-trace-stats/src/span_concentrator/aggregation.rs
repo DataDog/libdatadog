@@ -134,6 +134,26 @@ fn float_to_int(f: f64) -> Option<u8> {
     Some(f as u8)
 }
 
+fn get_grpc_status_code<'a>(span: &'a impl StatSpan<'a>) -> Option<u8> {
+    for key in GRPC_STATUS_CODE_FIELD {
+        if let Some(val) = span.get_meta(key) {
+            if let Some(code) = grpc_status_str_to_int_value(val) {
+                return Some(code);
+            }
+        }
+    }
+
+    for key in GRPC_STATUS_CODE_FIELD {
+        if let Some(val) = span.get_metrics(key) {
+            if let Some(code) = float_to_int(val) {
+                return Some(code);
+            }
+        }
+    }
+
+    None
+}
+
 fn grpc_status_str_to_int_value(v: &str) -> Option<u8> {
     if let Ok(status) = v.parse() {
         return Some(status);
@@ -212,17 +232,7 @@ impl<'a> BorrowedAggregationKey<'a> {
             0
         };
 
-        let mut grpc_status_code = None;
-        for key in GRPC_STATUS_CODE_FIELD {
-            if let Some(val) = span.get_meta(key) {
-                grpc_status_code = grpc_status_str_to_int_value(val);
-            }
-
-            if let Some(val) = span.get_metrics(key) {
-                grpc_status_code = float_to_int(val);
-                break;
-            }
-        }
+        let grpc_status_code = get_grpc_status_code(span);
 
         Self {
             resource_name: span.resource(),
@@ -669,6 +679,7 @@ mod tests {
                 },
                 OwnedAggregationKey {
                     grpc_status_code: Some(0),
+                    is_trace_root: true,
                     ..Default::default()
                 },
             ),
@@ -680,6 +691,7 @@ mod tests {
                 },
                 OwnedAggregationKey {
                     grpc_status_code: Some(14),
+                    is_trace_root: true,
                     ..Default::default()
                 },
             ),
@@ -691,18 +703,20 @@ mod tests {
                 },
                 OwnedAggregationKey {
                     grpc_status_code: Some(14),
+                    is_trace_root: true,
                     ..Default::default()
                 },
             ),
             // Span with grpc status from metrics takes precedence over meta
             (
                 SpanBytes {
-                    meta: HashMap::from([("rpc.grpc.status_code".into(), "OK".into())]),
+                    meta: HashMap::from([("rpc.grpc.status_code".into(), "PERMISSION_DENIED".into())]),
                     metrics: HashMap::from([("rpc.grpc.status_code".into(), 2.0)]),
                     ..Default::default()
                 },
                 OwnedAggregationKey {
-                    grpc_status_code: Some(2),
+                    grpc_status_code: Some(7),
+                    is_trace_root: true,
                     ..Default::default()
                 },
             ),
@@ -714,6 +728,7 @@ mod tests {
                 },
                 OwnedAggregationKey {
                     grpc_status_code: Some(3),
+                    is_trace_root: true,
                     ..Default::default()
                 },
             ),
@@ -723,7 +738,10 @@ mod tests {
                     meta: HashMap::from([("rpc.grpc.status_code".into(), "NOPE".into())]),
                     ..Default::default()
                 },
-                OwnedAggregationKey::default(),
+                OwnedAggregationKey {
+                    is_trace_root: true,
+                    ..Default::default()
+                },
             ),
         ];
 
@@ -815,7 +833,7 @@ mod tests {
 
         for (span, expected_key) in test_cases {
             let borrowed_key = BorrowedAggregationKey::from_span(&span, &[]);
-            assert_eq!(OwnedAggregationKey::from(&borrowed_key), expected_key);
+            assert_eq!(OwnedAggregationKey::from(&borrowed_key), expected_key, "for span {span:?}");
             assert_eq!(
                 get_hash(&borrowed_key),
                 get_hash(&OwnedAggregationKey::from(&borrowed_key))
