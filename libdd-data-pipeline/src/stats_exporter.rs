@@ -168,13 +168,13 @@ fn encode_stats_payload(
         sequence,
         stats: buckets,
         git_commit_sha: meta.git_commit_sha.clone(),
+        process_tags: meta.process_tags.clone(),
         // These fields are unused or will be set by the Agent
         service: String::new(),
         container_id: String::new(),
         tags: Vec::new(),
         agent_aggregation: String::new(),
         image_tag: String::new(),
-        process_tags: meta.process_tags.clone(),
         process_tags_hash: 0,
     }
 }
