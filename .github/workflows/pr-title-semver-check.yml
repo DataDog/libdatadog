@@ -48,6 +48,11 @@ jobs:
             {name: .name, manifest_path: .manifest_path, relative_path: (.manifest_path | sub($root + "/"; ""))}
           ')
 
+          # Crates excluded from semver checks because cargo-semver-checks cannot
+          # build their baseline (e.g. git-submodule dependencies that aren't
+          # available in the semver-checks worktree).
+          EXCLUDED_CRATES="libdd-crashtracker"
+
           # Array to store changed published crates
           CHANGED_CRATES=()
 
@@ -56,6 +61,12 @@ jobs:
             CRATE_NAME=$(echo "$crate_info" | jq -r '.name')
             RELATIVE_PATH=$(echo "$crate_info" | jq -r '.relative_path')
             CRATE_DIR=$(dirname "$RELATIVE_PATH")
+
+            # Skip excluded crates
+            if echo "$EXCLUDED_CRATES" | grep -qw "$CRATE_NAME"; then
+              echo "Skipping excluded crate: $CRATE_NAME"
+              continue
+            fi
 
             # Check if any files in this crate directory changed
             if echo "$CHANGED_FILES" | grep -q "^${CRATE_DIR}/"; then
