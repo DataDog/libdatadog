@@ -51,12 +51,14 @@ runs:
         BIN_DIR="${{ github.action_path }}/../bin"
         mkdir -p "$BIN_DIR"
         TAG="ci-crates-v${VERSION#v}"
+
+        ## gh release create $TAG --latest=false .github/actions/target/release/changed-crates#changed-crates-x86_64-unknown-linux-gnu --title "changed-crates ${VERSION}" --notes "Prebuilt binary for changed-crates action."
         URL="https://github.com/${REPO}/releases/download/${TAG}/changed-crates"
         if curl -sSLfo "$BIN_DIR/changed-crates" "$URL"; then
           chmod +x "$BIN_DIR/changed-crates"
         else
           echo "Prebuilt binary not found, building from source..."
-          rustup default stable
+          rustup install stable && rustup default stable
           cd "${{ github.action_path }}/.."
           cargo build --release -p ci-crates
           cp target/release/changed-crates "$BIN_DIR/changed-crates"
