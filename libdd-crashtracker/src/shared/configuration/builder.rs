@@ -46,7 +46,9 @@ impl CrashtrackerConfigurationBuilder {
     }
 
     pub fn endpoint_url(mut self, url: &str) -> Self {
-        self.endpoint_url = Some(url.to_string());
+        if !url.is_empty() {
+            self.endpoint_url = Some(url.to_string());
+        }
         self
     }
 
