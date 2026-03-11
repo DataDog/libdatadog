@@ -115,10 +115,11 @@ pub fn reconfigure(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{begin_op, insert_span, insert_trace, StacktraceCollection};
+    use crate::{
+        begin_op, insert_span, insert_trace, CrashtrackerConfigurationBuilder, StacktraceCollection,
+    };
     use chrono::Utc;
     use libdd_common::tag;
-    use libdd_common::Endpoint;
     use std::time::Duration;
     // We can't run this in the main test runner because it (deliberately) crashes,
     // and would make all following tests unrunable.
@@ -133,7 +134,7 @@ mod tests {
         let dir = "/tmp/crashreports/";
         let output_url = format!("file://{dir}{time}.txt");
 
-        let endpoint = Some(Endpoint::from_slice(&output_url));
+        let endpoint_url = output_url.as_str();
 
         let path_to_receiver_binary =
             "/tmp/libdatadog/bin/libdatadog-crashtracking-receiver".to_string();
@@ -151,18 +152,16 @@ mod tests {
             stdout_filename,
         )
         .unwrap();
-        let config = CrashtrackerConfiguration::new(
-            vec![],
-            create_alt_stack,
-            use_alt_stack,
-            endpoint,
-            resolve_frames,
-            default_signals(),
-            Some(timeout),
-            None,
-            true,
-        )
-        .unwrap();
+        let config = CrashtrackerConfigurationBuilder::default()
+            .create_alt_stack(create_alt_stack)
+            .use_alt_stack(use_alt_stack)
+            .endpoint_url(endpoint_url)
+            .resolve_frames(resolve_frames)
+            .signals(default_signals())
+            .timeout(timeout)
+            .demangle_names(true)
+            .build()
+            .unwrap();
         let metadata = Metadata::new(
             "libname".to_string(),
             "version".to_string(),
@@ -198,7 +197,7 @@ mod tests {
         let dir = "/tmp/crashreports/";
         let output_url = format!("file://{dir}{time}.txt");
 
-        let endpoint = Some(Endpoint::from_slice(&output_url));
+        let endpoint_url = output_url.as_str();
 
         let create_alt_stack = true;
         let use_alt_stack = false;
@@ -206,17 +205,14 @@ mod tests {
         let timeout = Duration::from_secs(10);
 
         // This should return an error, because we're creating an altstack without using it
-        let config = CrashtrackerConfiguration::new(
-            vec![],
-            create_alt_stack,
-            use_alt_stack,
-            endpoint,
-            resolve_frames,
-            default_signals(),
-            Some(timeout),
-            None,
-            true,
-        );
+        let config = CrashtrackerConfigurationBuilder::default()
+            .create_alt_stack(create_alt_stack)
+            .use_alt_stack(use_alt_stack)
+            .endpoint_url(endpoint_url)
+            .resolve_frames(resolve_frames)
+            .timeout(timeout)
+            .demangle_names(true)
+            .build();
 
         // This is slightly over-tuned to the language of the error message, but it'd require some
         // novel engineering just for this test in order to tighten this up.
@@ -254,7 +250,7 @@ mod tests {
         let dir = "/tmp/crashreports/";
         let output_url = format!("file://{dir}{time}.txt");
 
-        let endpoint = Some(Endpoint::from_slice(&output_url));
+        let endpoint_url = output_url.as_str();
 
         let path_to_receiver_binary =
             "/tmp/libdatadog/bin/libdatadog-crashtracking-receiver".to_string();
@@ -273,18 +269,16 @@ mod tests {
             stdout_filename,
         )
         .unwrap();
-        let config = CrashtrackerConfiguration::new(
-            vec![],
-            create_alt_stack,
-            use_alt_stack,
-            endpoint,
-            resolve_frames,
-            signals,
-            Some(timeout),
-            None,
-            true,
-        )
-        .unwrap();
+        let config = CrashtrackerConfigurationBuilder::default()
+            .create_alt_stack(create_alt_stack)
+            .use_alt_stack(use_alt_stack)
+            .endpoint_url(endpoint_url)
+            .resolve_frames(resolve_frames)
+            .signals(signals)
+            .timeout(timeout)
+            .demangle_names(true)
+            .build()
+            .unwrap();
         let metadata = Metadata::new(
             "libname".to_string(),
             "version".to_string(),
@@ -376,7 +370,7 @@ mod tests {
         let dir = "/tmp/crashreports/";
         let output_url = format!("file://{dir}{time}.txt");
 
-        let endpoint = Some(Endpoint::from_slice(&output_url));
+        let endpoint_url = output_url.as_str();
 
         let path_to_receiver_binary =
             "/tmp/libdatadog/bin/libdatadog-crashtracking-receiver".to_string();
@@ -395,18 +389,16 @@ mod tests {
             stdout_filename,
         )
         .unwrap();
-        let config = CrashtrackerConfiguration::new(
-            vec![],
-            create_alt_stack,
-            use_alt_stack,
-            endpoint,
-            resolve_frames,
-            signals,
-            Some(timeout),
-            None,
-            true,
-        )
-        .unwrap();
+        let config = CrashtrackerConfigurationBuilder::default()
+            .create_alt_stack(create_alt_stack)
+            .use_alt_stack(use_alt_stack)
+            .endpoint_url(endpoint_url)
+            .resolve_frames(resolve_frames)
+            .signals(signals)
+            .timeout(timeout)
+            .demangle_names(true)
+            .build()
+            .unwrap();
         let metadata = Metadata::new(
             "libname".to_string(),
             "version".to_string(),
@@ -504,7 +496,7 @@ mod tests {
         let dir = "/tmp/crashreports/";
         let output_url = format!("file://{dir}{time}.txt");
 
-        let endpoint = Some(Endpoint::from_slice(&output_url));
+        let endpoint_url = output_url.as_str();
 
         let path_to_receiver_binary =
             "/tmp/libdatadog/bin/libdatadog-crashtracking-receiver".to_string();
@@ -523,18 +515,16 @@ mod tests {
             stdout_filename,
         )
         .unwrap();
-        let config = CrashtrackerConfiguration::new(
-            vec![],
-            create_alt_stack,
-            use_alt_stack,
-            endpoint,
-            resolve_frames,
-            signals,
-            Some(timeout),
-            None,
-            true,
-        )
-        .unwrap();
+        let config = CrashtrackerConfigurationBuilder::default()
+            .create_alt_stack(create_alt_stack)
+            .use_alt_stack(use_alt_stack)
+            .endpoint_url(endpoint_url)
+            .resolve_frames(resolve_frames)
+            .signals(signals)
+            .timeout(timeout)
+            .demangle_names(true)
+            .build()
+            .unwrap();
         let metadata = Metadata::new(
             "libname".to_string(),
             "version".to_string(),
@@ -667,7 +657,7 @@ mod tests {
         let dir = "/tmp/crashreports/";
         let output_url = format!("file://{dir}{time}.txt");
 
-        let endpoint = Some(Endpoint::from_slice(&output_url));
+        let endpoint_url = output_url.as_str();
 
         let path_to_receiver_binary =
             "/tmp/libdatadog/bin/libdatadog-crashtracking-receiver".to_string();
@@ -686,18 +676,16 @@ mod tests {
             stdout_filename,
         )
         .unwrap();
-        let config = CrashtrackerConfiguration::new(
-            vec![],
-            create_alt_stack,
-            use_alt_stack,
-            endpoint,
-            resolve_frames,
-            signals,
-            Some(timeout),
-            None,
-            true,
-        )
-        .unwrap();
+        let config = CrashtrackerConfigurationBuilder::default()
+            .create_alt_stack(create_alt_stack)
+            .use_alt_stack(use_alt_stack)
+            .endpoint_url(endpoint_url)
+            .resolve_frames(resolve_frames)
+            .signals(signals)
+            .timeout(timeout)
+            .demangle_names(true)
+            .build()
+            .unwrap();
 
         let metadata = Metadata::new(
             "libname".to_string(),
