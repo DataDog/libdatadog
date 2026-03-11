@@ -310,7 +310,8 @@ impl<'a> Tokenizer<'a> {
     }
 
     /// Called when we're about to emit a real token after 'AS'.
-    /// If we're in alias-stripping mode, truncate result to before 'AS' and return true (skip token).
+    /// If we're in alias-stripping mode, truncate result to before 'AS' and return true (skip
+    /// token).
     fn maybe_consume_alias_next(&mut self) -> bool {
         if let Some(before_len) = self.before_as_len.take() {
             // Truncate result to remove the ' AS' we emitted
@@ -436,7 +437,8 @@ impl<'a> Tokenizer<'a> {
         self.emit(&out);
     }
 
-    /// After emitting a backtick/double-quote identifier, check if followed by '.' and another quoted ident.
+    /// After emitting a backtick/double-quote identifier, check if followed by '.' and another
+    /// quoted ident.
     fn handle_dot_after_quoted_ident(&mut self) {
         if !self.at_end() && self.bytes[self.pos] == b'.' {
             let next = self.bytes.get(self.pos + 1).copied();
@@ -535,7 +537,8 @@ impl<'a> Tokenizer<'a> {
                     self.skip_line_comment();
                 }
 
-                // MySQL-style comment: # ... (# as temp table prefix like #temp is handled via is_ident_char)
+                // MySQL-style comment: # ... (# as temp table prefix like #temp is handled via
+                // is_ident_char)
                 b'#' => {
                     let next = self.peek(1);
                     match next {
@@ -624,8 +627,9 @@ impl<'a> Tokenizer<'a> {
                     self.result.push('(');
                     self.pos += 1;
                     if !self.config.remove_space_between_parentheses && !self.is_obfuscate_only() {
-                        // Skip following whitespace and always add a space (Go always spaces inside parens)
-                        // Not done in obfuscate_only mode (go-sqllexer obfuscator preserves input spacing)
+                        // Skip following whitespace and always add a space (Go always spaces inside
+                        // parens) Not done in obfuscate_only mode
+                        // (go-sqllexer obfuscator preserves input spacing)
                         self.skip_whitespace();
                         self.result.push(' ');
                     }
@@ -752,7 +756,8 @@ impl<'a> Tokenizer<'a> {
                             self.handle_dot_after_quoted_ident();
                         }
                     } else if self.config.keep_identifier_quotation || self.is_obfuscate_only() {
-                        // Keep original double-quote syntax (go-sqllexer obfuscate_only keeps quotes)
+                        // Keep original double-quote syntax (go-sqllexer obfuscate_only keeps
+                        // quotes)
                         let quoted = format!("\"{ident}\"");
                         if self.maybe_consume_alias_next() {
                             // consumed
@@ -890,7 +895,8 @@ impl<'a> Tokenizer<'a> {
                                     let inner = &self.s[inner_start..inner_end];
                                     let close_tag = &self.s[inner_end..outer_end];
                                     let obfuscated_inner = obfuscate_sql(inner, self.config);
-                                    // If inner collapses to just '?' (trivial content), emit ? directly
+                                    // If inner collapses to just '?' (trivial content), emit ?
+                                    // directly
                                     if obfuscated_inner.trim() == "?" {
                                         self.emit_placeholder();
                                     } else {
@@ -905,7 +911,8 @@ impl<'a> Tokenizer<'a> {
                                 }
                                 self.pos = outer_end;
                             } else {
-                                // Not a valid dollar quote, check if it's an identifier starting with $
+                                // Not a valid dollar quote, check if it's an identifier starting
+                                // with $
                                 self.pos += 1; // skip '$'
                                 let id_start_pos = self.pos;
                                 while !self.at_end()
@@ -1249,7 +1256,8 @@ impl<'a> Tokenizer<'a> {
                         }
                         Some(b) if b.is_ascii_digit() => {
                             // Could be signed number: -42
-                            // Only treat as signed number if preceding context is an operator/paren/comma/start
+                            // Only treat as signed number if preceding context is an
+                            // operator/paren/comma/start
                             let last = self.last_char();
                             if matches!(
                                 last,
@@ -1386,9 +1394,10 @@ impl<'a> Tokenizer<'a> {
                         _ => {
                             // Raw ? in input:
                             // - For postgresql: treat as JSONB operator (not FilteredGroupable).
-                            //   Don't set last_was_placeholder, so consecutive literals aren't suppressed.
-                            // - For other dbms: treat as bind parameter (FilteredGroupable).
-                            //   Use emit_placeholder so consecutive ?s are suppressed in legacy mode.
+                            //   Don't set last_was_placeholder, so consecutive literals aren't
+                            //   suppressed.
+                            // - For other dbms: treat as bind parameter (FilteredGroupable). Use
+                            //   emit_placeholder so consecutive ?s are suppressed in legacy mode.
                             if self.maybe_consume_alias_next() {
                                 continue;
                             }
@@ -1701,7 +1710,8 @@ fn collapse_grouped_values(s: &str) -> String {
 }
 
 /// Collapse `VALUES ( ? ) , ( ? ) , ...` → `VALUES ( ? )`.
-/// Also handles comma-less groups `VALUES ( ? ) ( ? )` (when commas were stripped by placeholder logic).
+/// Also handles comma-less groups `VALUES ( ? ) ( ? )` (when commas were stripped by placeholder
+/// logic).
 fn collapse_multi_values(s: &str) -> String {
     // Pattern: "VALUES ( ? )" followed by one or more " , ( ? )" or " ( ? )" groups
     let mut result = String::with_capacity(s.len());
