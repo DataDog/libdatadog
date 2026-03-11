@@ -85,6 +85,7 @@ multer = "3.1"
 bytes = "1.11.1"
 rand = "0.8"
 tempfile = "3.8"
+rusty-fork = "0.3"
 tokio = { version = "1.23", features = ["rt", "macros", "time"] }
 
 [features]

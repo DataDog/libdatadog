@@ -3007,6 +3007,7 @@ dependencies = [
  "reqwest",
  "rustls",
  "rustls-native-certs",
+ "rusty-fork",
  "serde",
  "static_assertions",
  "tempfile",
@@ -3038,7 +3039,6 @@ name = "libdd-crashtracker"
 version = "1.0.0"
 dependencies = [
  "anyhow",
- "backtrace",
  "blazesym",
  "cc",
  "chrono",
@@ -3049,6 +3049,7 @@ dependencies = [
  "http",
  "libc",
  "libdd-common",
+ "libdd-libunwind-sys",
  "libdd-telemetry",
  "nix 0.29.0",
  "num-derive",
@@ -5328,6 +5329,7 @@ version = "1.0.132"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d726bfaff4b320266d395898905d0eba0345aae23b54aee3a737e260fd46db03"
 dependencies = [
+ "indexmap 2.12.1",
  "itoa",
  "memchr",
  "ryu",
