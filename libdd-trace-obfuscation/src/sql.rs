@@ -1,117 +1,1818 @@
 // Copyright 2023-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-fn is_splitter(b: u8) -> bool {
-    matches!(
-        b,
-        b',' | b'(' | b')' | b'|' | b' ' | b'\t' | b'\n' | b'\r' |
-        0xB | // vertical tab 
-        0xC // form feed
-    )
+/// Configuration for SQL obfuscation
+#[derive(Debug, Default, Clone)]
+pub struct SqlObfuscateConfig {
+    pub dbms: String,
+    pub replace_digits: bool,
+    pub keep_sql_alias: bool,
+    pub dollar_quoted_func: bool,
+    pub keep_null: bool,
+    pub keep_boolean: bool,
+    pub keep_positional_parameter: bool,
+    pub keep_trailing_semicolon: bool,
+    pub keep_identifier_quotation: bool,
+    pub replace_bind_parameter: bool,
+    pub remove_space_between_parentheses: bool,
+    pub keep_json_path: bool,
+    /// obfuscation mode: "", "normalize_only", "obfuscate_only", "obfuscate_and_normalize"
+    pub obfuscation_mode: String,
 }
 
-fn is_numeric_litteral_prefix(bytes: &[u8], start: usize) -> bool {
-    matches!(
-        bytes[start],
-        b'0' | b'1' | b'2' | b'3' | b'4' | b'5' | b'6' | b'7' | b'8' | b'9' | b'-' | b'+' | b'.'
-    ) && !(start + 1 < bytes.len() && bytes[start] == b'-' && bytes[start + 1] == b'-')
+fn is_whitespace(b: u8) -> bool {
+    matches!(b, b' ' | b'\t' | b'\n' | b'\r' | 0x0B | 0x0C)
 }
 
-fn is_hex_litteral_prefix(bytes: &[u8], start: usize, end: usize) -> bool {
-    (bytes[start] | b' ') == b'x' && start + 1 < end && bytes[start + 1] == b'\''
+fn is_ident_start(b: u8) -> bool {
+    b.is_ascii_alphabetic() || b == b'_' || b > 127
 }
 
-fn is_quoted(bytes: &[u8], start: usize, end: usize) -> bool {
-    bytes[start] == b'\'' && bytes[end - 1] == b'\''
+fn is_ident_char(b: u8) -> bool {
+    b.is_ascii_alphanumeric() || b == b'_' || b == b'$' || b == b'#' || b > 127
 }
 
-/// Returns the index just past the closing `'` of a quoted string starting at `start`,
-/// or None if no complete quoted string starts there.
-fn find_quoted_string_end(bytes: &[u8], start: usize, end: usize) -> Option<usize> {
-    if bytes[start] != b'\'' {
+/// Replace trailing digit sequences in identifier with `?`
+/// e.g., sales_2019_07_01 → sales_?_?_?
+///       item1001 → item?
+///       ddh19 → ddh?
+fn apply_replace_digits(ident: &str) -> String {
+    let bytes = ident.as_bytes();
+    let mut result = String::with_capacity(ident.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i].is_ascii_digit() {
+            while i < bytes.len() && bytes[i].is_ascii_digit() {
+                i += 1;
+            }
+            result.push('?');
+        } else {
+            // Push char as UTF-8
+            let c = ident[i..].chars().next().unwrap_or(' ');
+            result.push(c);
+            i += c.len_utf8();
+        }
+    }
+    result
+}
+
+/// Returns the index just past the closing `'` of a quoted string starting at `start`.
+fn find_quoted_string_end(bytes: &[u8], start: usize) -> Option<usize> {
+    if bytes.get(start) != Some(&b'\'') {
         return None;
     }
+    // First: try short close (no backslash escape) — standard SQL uses '' only
+    let short_end = {
+        let mut i = start + 1;
+        let mut result = None;
+        while i < bytes.len() {
+            if bytes[i] == b'\'' {
+                if i + 1 < bytes.len() && bytes[i + 1] == b'\'' {
+                    i += 2; // '' escape
+                    continue;
+                } else {
+                    result = Some(i + 1);
+                    break;
+                }
+            }
+            i += 1;
+        }
+        result
+    };
+
+    // Use the short close if what follows is a SQL word boundary (not alphanumeric/underscore),
+    // meaning the string truly ends there. If followed by alphanumeric, the \' was likely
+    // an escape and the string continues — try greedy (with backslash escape).
+    let short_at_boundary = short_end.is_some_and(|end| {
+        !bytes
+            .get(end)
+            .is_some_and(|&c| c.is_ascii_alphanumeric() || c == b'_')
+    });
+
+    if short_at_boundary {
+        return short_end;
+    }
+
+    // Greedy: use backslash escape to find a longer match
     let mut i = start + 1;
     let mut escaped = false;
-    while i < end {
+    while i < bytes.len() {
         if escaped {
             escaped = false;
         } else if bytes[i] == b'\\' {
             escaped = true;
         } else if bytes[i] == b'\'' {
-            if i + 1 < end && bytes[i + 1] == b'\'' {
-                i += 1; // double-quote escape ''
+            if i + 1 < bytes.len() && bytes[i + 1] == b'\'' {
+                i += 1; // '' escape inside greedy scan
             } else {
-                return Some(i + 1); // past closing quote
+                return Some(i + 1);
             }
+        }
+        i += 1;
+    }
+
+    // Greedy found nothing; fall back to short_end (even if not at word boundary)
+    short_end
+}
+
+/// Find the end of a dollar-quoted string $tag$...$tag$
+/// Returns (inner_start, inner_end, outer_end) or None if not a valid dollar quote
+fn find_dollar_quote_end(bytes: &[u8], start: usize) -> Option<(usize, usize, usize)> {
+    let n = bytes.len();
+    if start >= n || bytes[start] != b'$' {
+        return None;
+    }
+    // Collect the tag: $<tag>$ — Go allows spaces and other chars in tags
+    let mut tag_end = start + 1;
+    while tag_end < n && bytes[tag_end] != b'$' {
+        if bytes[tag_end] == b'\n' {
+            return None; // tags don't span lines
+        }
+        tag_end += 1;
+    }
+    if tag_end >= n {
+        return None;
+    }
+    // tag is bytes[start..=tag_end], e.g. $func$ or $$
+    let tag = &bytes[start..=tag_end];
+    let inner_start = tag_end + 1;
+
+    // Search for closing tag
+    let mut i = inner_start;
+    while i + tag.len() <= n {
+        if bytes[i] == b'$' && bytes[i..].starts_with(tag) {
+            return Some((inner_start, i, i + tag.len()));
         }
         i += 1;
     }
     None
 }
 
-/// Obfuscates an sql string by replacing litterals with '?' chars.
-///
-/// The algorithm works by finding the places where a litteral could start (so called splitters)
-/// and then identifies them by looking at their first few characters.
-///
-/// It does not attempt at rigorous parsing of the SQL syntax, and does not take any context
-/// sensitive decision, contrary to the more exhaustive datadog-agent implementation.
-///
-/// based off
-/// https://github.com/DataDog/dd-trace-java/blob/36e924eaa/internal-api/src/main/java/datadog/trace/api/normalize/SQLNormalizer.java
-pub fn obfuscate_sql_string(s: &str) -> String {
-    let bytes = s.as_bytes();
-    let mut obfuscated = String::new();
-    if s.is_empty() {
-        return obfuscated;
-    }
-    let mut start = 0;
-    loop {
-        if start >= s.len() {
-            break;
+struct Tokenizer<'a> {
+    s: &'a str,
+    bytes: &'a [u8],
+    pos: usize,
+    result: String,
+    config: &'a SqlObfuscateConfig,
+    // For alias stripping: length of result before we emitted the most recent ' AS' segment
+    before_as_len: Option<usize>,
+    // After SAVEPOINT keyword, next token should become ?
+    pending_savepoint: bool,
+    // True when the last emitted non-space char was a standalone placeholder '?'
+    // (as opposed to '?' from replace_digits inside an identifier name)
+    last_was_placeholder: bool,
+    // When keep_json_path=true, set after -> or ->> to keep next literal as-is
+    pending_json_path: bool,
+    // True when the last emitted operator was a standalone = (assignment/comparison)
+    // Used to detect value context for double-quoted strings
+    last_was_assign: bool,
+}
+
+impl<'a> Tokenizer<'a> {
+    fn new(s: &'a str, config: &'a SqlObfuscateConfig) -> Self {
+        Self {
+            s,
+            bytes: s.as_bytes(),
+            pos: 0,
+            result: String::with_capacity(s.len()),
+            config,
+            before_as_len: None,
+            pending_savepoint: false,
+            last_was_placeholder: false,
+            pending_json_path: false,
+            last_was_assign: false,
         }
-        let end = next_splitter(bytes, start).unwrap_or(s.len());
-        #[allow(clippy::comparison_chain)]
-        if start + 1 == end {
-            // if the gap is 1 character it can only be a number
-            if bytes[start].is_ascii_digit() {
-                obfuscated.push('?');
-            } else {
-                obfuscated.push_str(&s[start..end]);
+    }
+
+    fn peek(&self, offset: usize) -> Option<u8> {
+        self.bytes.get(self.pos + offset).copied()
+    }
+
+    fn at_end(&self) -> bool {
+        self.pos >= self.bytes.len()
+    }
+
+    fn is_normalize_only(&self) -> bool {
+        self.config.obfuscation_mode == "normalize_only"
+    }
+
+    fn is_obfuscate_only(&self) -> bool {
+        self.config.obfuscation_mode == "obfuscate_only"
+    }
+
+    fn last_char(&self) -> Option<u8> {
+        self.result.as_bytes().last().copied()
+    }
+
+    fn last_nonspace_char(&self) -> Option<u8> {
+        self.result
+            .as_bytes()
+            .iter()
+            .rev()
+            .find(|&&b| b != b' ')
+            .copied()
+    }
+
+    /// Push a space if result doesn't already end with one (and result is non-empty).
+    /// Does NOT add space after `.` (qualifier separator).
+    /// When actually pushing a space, resets last_was_placeholder — equivalent to Go's
+    /// groupingFilter.Reset() on any non-comma, non-paren, non-FilteredGroupable token.
+    fn space(&mut self) {
+        if !self.result.is_empty()
+            && self.last_char() != Some(b' ')
+            && self.last_char() != Some(b'.')
+            && !(self.last_char() == Some(b'(')
+                && (self.config.remove_space_between_parentheses || self.is_obfuscate_only()))
+        {
+            // Reset last_was_placeholder when transitioning past a non-placeholder token
+            // (e.g., operator or identifier). When last non-space char is '?', preserve
+            // the group state so that commas stripped after a literal don't break grouping.
+            if self.last_nonspace_char() != Some(b'?') {
+                self.last_was_placeholder = false;
             }
-        } else if start + 1 < end {
-            if is_numeric_litteral_prefix(bytes, start)
-                || is_quoted(bytes, start, end)
-                || is_hex_litteral_prefix(bytes, start, end)
-            {
-                obfuscated.push('?');
-            } else if bytes[start] == b'\'' {
-                // Segment starts with a quoted string followed by more content (e.g.
-                // 'value'::type). Obfuscate the quoted part and keep the suffix.
-                if let Some(q_end) = find_quoted_string_end(bytes, start, end) {
-                    obfuscated.push('?');
-                    obfuscated.push_str(&s[q_end..end]);
-                } else {
-                    obfuscated.push_str(&s[start..end]);
+            self.result.push(' ');
+        }
+    }
+
+    /// Emit a token, adding a space before it if needed.
+    fn emit(&mut self, token: &str) {
+        self.space();
+        self.result.push_str(token);
+        self.last_was_placeholder = false;
+        self.last_was_assign = false;
+    }
+
+    /// Emit a single char token, adding a space before if needed.
+    fn emit_char(&mut self, c: char) {
+        self.space();
+        self.result.push(c);
+        self.last_was_placeholder = c == '?';
+        self.last_was_assign = false;
+    }
+
+    /// Emit a literal-replacement '?' with consecutive-duplicate suppression.
+    /// In legacy mode, Go's groupingFilter suppresses consecutive FilteredGroupable tokens
+    /// (groupFilter > 1). If last_was_placeholder is already true, suppress this one.
+    fn emit_placeholder(&mut self) {
+        if self.config.obfuscation_mode.is_empty() && self.last_was_placeholder {
+            // Suppress consecutive placeholder (Go groupFilter > 1 rule)
+            return;
+        }
+        self.emit_char('?');
+    }
+
+    fn skip_whitespace(&mut self) {
+        while !self.at_end() && is_whitespace(self.bytes[self.pos]) {
+            self.pos += 1;
+        }
+    }
+
+    fn skip_line_comment(&mut self) {
+        while !self.at_end() && self.bytes[self.pos] != b'\n' {
+            self.pos += 1;
+        }
+    }
+
+    fn skip_block_comment(&mut self) {
+        // We've already consumed '/*', now find '*/'
+        while self.pos + 1 < self.bytes.len() {
+            if self.bytes[self.pos] == b'*' && self.bytes[self.pos + 1] == b'/' {
+                self.pos += 2;
+                return;
+            }
+            self.pos += 1;
+        }
+        // Malformed - skip to end
+        self.pos = self.bytes.len();
+    }
+
+    /// Handle a single-quoted string: emit '?'
+    fn handle_single_quote(&mut self) {
+        let str_start = self.pos;
+        if let Some(end) = find_quoted_string_end(self.bytes, self.pos) {
+            self.pos = end;
+        } else {
+            // Unterminated string: consume to end of input, emit ?
+            self.pos = self.bytes.len();
+        }
+        if self.pending_json_path || self.is_normalize_only() {
+            self.pending_json_path = false;
+            // Keep the string as-is (don't quantize)
+            let raw = &self.s[str_start..self.pos].to_string();
+            if !self.maybe_consume_alias_next() {
+                self.emit(raw);
+            }
+            return;
+        }
+        if !self.maybe_consume_alias_next() {
+            self.emit_placeholder();
+        }
+    }
+
+    /// Called when we're about to emit a real token after 'AS'.
+    /// If we're in alias-stripping mode, truncate result to before 'AS' and return true (skip token).
+    fn maybe_consume_alias_next(&mut self) -> bool {
+        if let Some(before_len) = self.before_as_len.take() {
+            // Truncate result to remove the ' AS' we emitted
+            self.result.truncate(before_len);
+            return true; // caller should skip emitting the token
+        }
+        false
+    }
+
+    /// Emit an identifier token (handles NULL/bool/AS).
+    fn emit_identifier(&mut self, ident: &str) {
+        let lower = ident.to_ascii_lowercase();
+
+        // If we're in pending_savepoint state, the next token becomes ?
+        if self.pending_savepoint {
+            self.pending_savepoint = false;
+            if self.maybe_consume_alias_next() {
+                return;
+            }
+            self.emit_placeholder();
+            return;
+        }
+
+        // Handle NULL
+        if !self.config.keep_null && !self.is_normalize_only() && lower == "null" {
+            if self.maybe_consume_alias_next() {
+                return;
+            }
+            self.emit_placeholder();
+            return;
+        }
+
+        // Handle boolean literals
+        if !self.config.keep_boolean
+            && !self.is_normalize_only()
+            && (lower == "true" || lower == "false")
+        {
+            if self.maybe_consume_alias_next() {
+                return;
+            }
+            self.emit_placeholder();
+            return;
+        }
+
+        // Handle AS keyword for alias stripping
+        // Alias stripping applies in legacy mode and normalize modes, but NOT in obfuscate_only
+        // (go-sqllexer obfuscator does not strip aliases)
+        if !self.config.keep_sql_alias
+            && !self.is_normalize_only()
+            && !self.is_obfuscate_only()
+            && lower == "as"
+        {
+            // Don't consume alias here - emit AS but remember where to truncate
+            // Trim trailing space from result if any
+            if self.last_char() == Some(b' ') {
+                self.result.pop();
+            }
+            let before_len = self.result.len();
+            self.result.push(' ');
+            self.result.push_str(ident);
+            self.before_as_len = Some(before_len);
+            // Go's groupingFilter resets when it sees AS (non-groupable, non-paren, non-comma).
+            // Reset last_was_placeholder so the comma after `alias` is not stripped.
+            self.last_was_placeholder = false;
+            return;
+        }
+
+        // SQL control-flow keywords should NOT be consumed as aliases
+        // (e.g., `CREATE PROCEDURE TestProc AS BEGIN ...` — BEGIN is not an alias)
+        // The `AS` is already in self.result; just clear before_as_len to keep it.
+        // Go's discardFilter discards the token after AS unconditionally (except '[' which triggers
+        // MSSQL bracketed identifier mode). However, SQL block-start keywords like BEGIN should not
+        // be consumed as aliases (e.g., CREATE PROCEDURE ... AS BEGIN).
+        // We keep the exclusion list minimal: only true SQL block-starters that cannot be aliases.
+        if self.before_as_len.is_some()
+            && matches!(
+                lower.as_str(),
+                "begin"
+                    | "end"
+                    | "select"
+                    | "insert"
+                    | "update"
+                    | "delete"
+                    | "from"
+                    | "where"
+                    | "join"
+                    | "on"
+                    | "set"
+                    | "values"
+                    | "into"
+                    | "group"
+                    | "order"
+                    | "having"
+                    | "union"
+                    | "intersect"
+                    | "except"
+                    | "limit"
+                    | "offset"
+                    | "with"
+                    | "create"
+                    | "drop"
+                    | "alter"
+                    | "truncate"
+            )
+        {
+            self.before_as_len = None;
+        }
+
+        if self.maybe_consume_alias_next() {
+            return;
+        }
+
+        // After emitting SAVEPOINT, the next identifier/literal becomes ?
+        if lower == "savepoint" {
+            self.pending_savepoint = true;
+        }
+
+        let out = if self.config.replace_digits {
+            apply_replace_digits(ident)
+        } else {
+            ident.to_string()
+        };
+        self.emit(&out);
+    }
+
+    /// After emitting a backtick/double-quote identifier, check if followed by '.' and another quoted ident.
+    fn handle_dot_after_quoted_ident(&mut self) {
+        if !self.at_end() && self.bytes[self.pos] == b'.' {
+            let next = self.bytes.get(self.pos + 1).copied();
+            // In obfuscate_only mode, preserve input spacing (no spaces around dots)
+            if self.is_obfuscate_only() {
+                self.result.push('.');
+                self.pos += 1;
+                return;
+            }
+            match next {
+                Some(b'`') | Some(b'"') | Some(b'[') => {
+                    self.result.push_str(" . ");
+                    self.pos += 1; // skip '.'
                 }
-            } else {
-                obfuscated.push_str(&s[start..end]);
+                Some(b'*') => {
+                    self.result.push_str(".*");
+                    self.pos += 2;
+                }
+                Some(c) if is_ident_start(c) => {
+                    self.result.push_str(" . ");
+                    self.pos += 1; // skip '.'
+                }
+                _ => {
+                    self.result.push('.');
+                    self.pos += 1;
+                }
             }
         }
-        if end < s.len() {
-            obfuscated.push(bytes[end] as char);
-        }
-        start = end + 1;
     }
-    obfuscated
+
+    /// After emitting a bracket identifier, check if followed by '.' and another bracket ident.
+    fn handle_dot_after_bracket_ident(&mut self) {
+        if !self.at_end() && self.bytes[self.pos] == b'.' {
+            let next = self.bytes.get(self.pos + 1).copied();
+            if next == Some(b'[') {
+                self.result.push_str(" . ");
+                self.pos += 1; // skip '.'
+            } else {
+                self.result.push('.');
+                self.pos += 1;
+            }
+        }
+    }
+
+    /// Consume and emit the rest of a numeric literal starting at current pos.
+    fn consume_number(&mut self) {
+        // Consume digits, '.', 'e'/'E', optional sign after 'e', suffix letters
+        let mut saw_dot = false;
+        let mut saw_exp = false;
+        while !self.at_end() {
+            let b = self.bytes[self.pos];
+            match b {
+                b'0'..=b'9' => {
+                    self.pos += 1;
+                }
+                b'.' if !saw_dot => {
+                    saw_dot = true;
+                    self.pos += 1;
+                }
+                b'e' | b'E' if !saw_exp => {
+                    saw_exp = true;
+                    self.pos += 1;
+                    // optional sign
+                    if !self.at_end() && matches!(self.bytes[self.pos], b'+' | b'-') {
+                        self.pos += 1;
+                    }
+                }
+                b'f' | b'F' | b'd' | b'D' | b'l' | b'L' => {
+                    // numeric suffix
+                    self.pos += 1;
+                    break;
+                }
+                _ => break,
+            }
+        }
+    }
+
+    fn process(&mut self) {
+        while !self.at_end() {
+            let b = self.bytes[self.pos];
+
+            match b {
+                // Whitespace: normalize to single space
+                b if is_whitespace(b) => {
+                    self.pos += 1;
+                    self.skip_whitespace();
+                    // Don't push space if we're in alias-stripping mode (waiting for next token)
+                    if self.before_as_len.is_none() {
+                        self.space();
+                    }
+                }
+
+                // Line comment: -- ...
+                b'-' if self.peek(1) == Some(b'-') => {
+                    self.pos += 2;
+                    self.skip_line_comment();
+                }
+
+                // MySQL-style comment: # ... (# as temp table prefix like #temp is handled via is_ident_char)
+                b'#' => {
+                    let next = self.peek(1);
+                    match next {
+                        Some(b) if b.is_ascii_alphanumeric() || b == b'_' || b == b'#' => {
+                            // SQL Server temp table identifier like #temp or ##global
+                            let start = self.pos;
+                            while !self.at_end() && is_ident_char(self.bytes[self.pos]) {
+                                self.pos += 1;
+                            }
+                            let ident = &self.s[start..self.pos];
+                            if self.maybe_consume_alias_next() {
+                                continue;
+                            }
+                            let out = if self.config.replace_digits {
+                                apply_replace_digits(ident)
+                            } else {
+                                ident.to_string()
+                            };
+                            self.emit(&out);
+                        }
+                        // PostgreSQL JSON operators: #>, #>>, #- (only for dbms=postgresql)
+                        Some(b'>') if self.config.dbms.eq_ignore_ascii_case("postgresql") => {
+                            if self.maybe_consume_alias_next() {
+                                continue;
+                            }
+                            if self.peek(2) == Some(b'>') {
+                                self.emit("#>>");
+                                self.pos += 3;
+                            } else {
+                                self.emit("#>");
+                                self.pos += 2;
+                            }
+                            self.result.push(' ');
+                        }
+                        Some(b'-') if self.config.dbms.eq_ignore_ascii_case("postgresql") => {
+                            if self.maybe_consume_alias_next() {
+                                continue;
+                            }
+                            self.emit("#-");
+                            self.pos += 2;
+                            self.result.push(' ');
+                        }
+                        _ => {
+                            // MySQL-style comment: skip to end of line
+                            self.pos += 1;
+                            self.skip_line_comment();
+                        }
+                    }
+                }
+
+                // Block comment: /* ... */
+                b'/' if self.peek(1) == Some(b'*') => {
+                    self.pos += 2;
+                    self.skip_block_comment();
+                }
+
+                // Semicolon
+                b';' => {
+                    self.pos += 1;
+                    // Keep semicolons when configured, or in obfuscate_only mode
+                    // (go-sqllexer obfuscator does not strip semicolons)
+                    if self.config.keep_trailing_semicolon || self.is_obfuscate_only() {
+                        if self.maybe_consume_alias_next() {
+                            continue;
+                        }
+                        // Don't add space before ';', just emit
+                        self.result.push(';');
+                    }
+                }
+
+                // Opening paren
+                b'(' => {
+                    if self.before_as_len.is_some() && !self.config.obfuscation_mode.is_empty() {
+                        // In obfuscate_and_normalize mode: keep AS before ( (CTE body)
+                        self.before_as_len = None;
+                    } else if self.before_as_len.is_some() {
+                        // Legacy mode: Go discards the token immediately after AS, including '('.
+                        // Strip AS from result and skip '(' (matching Go's discardFilter behavior).
+                        self.maybe_consume_alias_next();
+                        self.pos += 1;
+                        self.skip_whitespace();
+                        continue; // skip emitting '('
+                    }
+                    self.pending_savepoint = false;
+                    self.space();
+                    self.result.push('(');
+                    self.pos += 1;
+                    if !self.config.remove_space_between_parentheses && !self.is_obfuscate_only() {
+                        // Skip following whitespace and always add a space (Go always spaces inside parens)
+                        // Not done in obfuscate_only mode (go-sqllexer obfuscator preserves input spacing)
+                        self.skip_whitespace();
+                        self.result.push(' ');
+                    }
+                }
+
+                // Closing paren
+                b')' => {
+                    if self.maybe_consume_alias_next() {
+                        continue;
+                    }
+                    if self.config.remove_space_between_parentheses || self.is_obfuscate_only() {
+                        // No space before ) in compact modes
+                    } else {
+                        // Add space before ) if needed (not after '(')
+                        if !matches!(self.last_char(), Some(b'(') | Some(b' ') | None) {
+                            self.result.push(' ');
+                        }
+                    }
+                    self.result.push(')');
+                    self.pos += 1;
+                    // NOTE: do NOT clear last_was_placeholder here.
+                    // Go's groupingFilter doesn't reset on ')' either, which means
+                    // a comma after `? )` (CTE body ending with a placeholder) is stripped.
+                }
+
+                // Comma
+                b',' => {
+                    if self.maybe_consume_alias_next() {
+                        continue;
+                    }
+                    self.pos += 1;
+                    // Go behavior: commas that follow a standalone placeholder ? are stripped
+                    // Go's groupingFilter comma stripping: when groupFilter > 0 and token == ',',
+                    // discard it. This only applies in legacy mode (obfuscation_mode == "").
+                    // go-sqllexer modes (obfuscate_only, etc.) do NOT strip commas.
+                    if self.last_was_placeholder && self.config.obfuscation_mode.is_empty() {
+                        // Remove any trailing space too
+                        while self.last_char() == Some(b' ') {
+                            self.result.pop();
+                        }
+                        continue;
+                    }
+                    // Remove any trailing space before comma (input may have `token ,`)
+                    if self.last_char() == Some(b' ') {
+                        self.result.pop();
+                    }
+                    self.result.push(',');
+                    // Space after comma handled by next token's space() call
+                }
+
+                // Single-quoted string
+                b'\'' => {
+                    self.handle_single_quote();
+                }
+
+                // Backtick identifier (MySQL-style, handle doubled backtick escaping)
+                b'`' => {
+                    self.pos += 1;
+                    let mut ident_buf = String::new();
+                    loop {
+                        if self.at_end() {
+                            break;
+                        }
+                        if self.bytes[self.pos] == b'`' {
+                            if self.bytes.get(self.pos + 1) == Some(&b'`') {
+                                // Escaped backtick
+                                ident_buf.push('`');
+                                self.pos += 2;
+                            } else {
+                                self.pos += 1; // skip closing backtick
+                                break;
+                            }
+                        } else {
+                            let c = self.s[self.pos..].chars().next().unwrap_or(' ');
+                            ident_buf.push(c);
+                            self.pos += c.len_utf8();
+                        }
+                    }
+                    let out = if self.config.replace_digits {
+                        apply_replace_digits(&ident_buf)
+                    } else {
+                        ident_buf.clone()
+                    };
+                    if self.maybe_consume_alias_next() {
+                        // The alias token is consumed
+                    } else {
+                        self.emit(&out);
+                        self.handle_dot_after_quoted_ident();
+                    }
+                }
+
+                // Double-quoted identifier
+                b'"' => {
+                    self.pos += 1;
+                    let id_start = self.pos;
+                    while !self.at_end() {
+                        if self.bytes[self.pos] == b'"' {
+                            if self.bytes.get(self.pos + 1) == Some(&b'"') {
+                                self.pos += 2; // escaped ""
+                            } else {
+                                break;
+                            }
+                        } else {
+                            self.pos += 1;
+                        }
+                    }
+                    let ident = &self.s[id_start..self.pos];
+                    if !self.at_end() {
+                        self.pos += 1; // skip closing quote
+                    }
+                    // If last token was = (assignment/comparison), treat double-quoted string
+                    // as a value (quantize), not as an identifier.
+                    let is_string_value = self.last_was_assign;
+                    // If pending SAVEPOINT or empty/whitespace content, treat as literal → ?
+                    if self.pending_savepoint
+                        || ident.chars().all(|c| c.is_whitespace())
+                        || (!self.is_normalize_only() && is_string_value)
+                    {
+                        self.pending_savepoint = false;
+                        if self.maybe_consume_alias_next() {
+                            // consumed
+                        } else {
+                            self.emit_placeholder();
+                            self.handle_dot_after_quoted_ident();
+                        }
+                    } else if self.config.keep_identifier_quotation || self.is_obfuscate_only() {
+                        // Keep original double-quote syntax (go-sqllexer obfuscate_only keeps quotes)
+                        let quoted = format!("\"{ident}\"");
+                        if self.maybe_consume_alias_next() {
+                            // consumed
+                        } else {
+                            self.emit(&quoted);
+                            self.handle_dot_after_quoted_ident();
+                        }
+                    } else {
+                        let out = if self.config.replace_digits {
+                            apply_replace_digits(ident)
+                        } else {
+                            ident.to_string()
+                        };
+                        if self.maybe_consume_alias_next() {
+                            // consumed
+                        } else {
+                            self.emit(&out);
+                            self.handle_dot_after_quoted_ident();
+                        }
+                    }
+                }
+
+                // Square bracket identifier [...]
+                b'[' => {
+                    if self.config.dbms == "mssql" {
+                        self.pos += 1;
+                        let id_start = self.pos;
+                        while !self.at_end() && self.bytes[self.pos] != b']' {
+                            self.pos += 1;
+                        }
+                        let ident = &self.s[id_start..self.pos];
+                        if !self.at_end() {
+                            self.pos += 1; // skip ']'
+                        }
+                        if self.maybe_consume_alias_next() {
+                            // consumed
+                        } else {
+                            let out = if self.config.replace_digits {
+                                apply_replace_digits(ident)
+                            } else {
+                                ident.to_string()
+                            };
+                            self.emit(&out);
+                            self.handle_dot_after_bracket_ident();
+                        }
+                    } else {
+                        // Non-mssql: emit [ as operator, let content be tokenized normally
+                        // But if in alias mode, consume the whole [...] block as the alias
+                        if self.before_as_len.is_some() {
+                            self.pos += 1; // skip '['
+                            while !self.at_end() && self.bytes[self.pos] != b']' {
+                                self.pos += 1;
+                            }
+                            if !self.at_end() {
+                                self.pos += 1; // skip ']'
+                            }
+                            self.maybe_consume_alias_next();
+                        } else {
+                            self.space();
+                            self.result.push('[');
+                            self.pos += 1;
+                            self.skip_whitespace();
+                            self.result.push(' ');
+                        }
+                    }
+                }
+
+                b']' => {
+                    if self.maybe_consume_alias_next() {
+                        continue;
+                    }
+                    if !matches!(self.last_char(), Some(b'[') | Some(b' ') | None) {
+                        self.result.push(' ');
+                    }
+                    self.result.push(']');
+                    self.pos += 1;
+                    // If followed by '.', emit ' . ' for chained bracket access
+                    if !self.at_end() && self.bytes[self.pos] == b'.' {
+                        self.result.push_str(" . ");
+                        self.pos += 1; // skip '.'
+                    }
+                }
+
+                // Dollar sign: positional param, dollar-quoted string, or identifier
+                b'$' => {
+                    let next = self.peek(1);
+                    match next {
+                        // Positional param: $1, $2, $?, $09
+                        Some(b) if b.is_ascii_digit() || b == b'?' => {
+                            let token_start = self.pos;
+                            self.pos += 1; // skip '$'
+                            while !self.at_end()
+                                && (self.bytes[self.pos].is_ascii_alphanumeric()
+                                    || self.bytes[self.pos] == b'?')
+                            {
+                                self.pos += 1;
+                            }
+                            if self.maybe_consume_alias_next() {
+                                continue;
+                            }
+                            if self.config.keep_positional_parameter
+                                || self.is_normalize_only()
+                                || self.is_obfuscate_only()
+                            {
+                                self.emit(&self.s[token_start..self.pos]);
+                            } else {
+                                self.emit_placeholder();
+                            }
+                        }
+                        // Dollar-quoted string: $tag$...$tag$ or $$...$$
+                        _ if next == Some(b'$')
+                            || next.is_some_and(|c| c.is_ascii_alphabetic() || c == b'_') =>
+                        {
+                            let start = self.pos;
+                            if let Some((inner_start, inner_end, outer_end)) =
+                                find_dollar_quote_end(self.bytes, start)
+                            {
+                                if self.maybe_consume_alias_next() {
+                                    self.pos = outer_end;
+                                    continue;
+                                }
+                                if self.is_normalize_only() {
+                                    // In normalize mode: process inner content with same config
+                                    let tag_str = &self.s[start..inner_start];
+                                    let inner = &self.s[inner_start..inner_end];
+                                    let close_tag = &self.s[inner_end..outer_end];
+                                    let normalized_inner = obfuscate_sql(inner, self.config);
+                                    self.space();
+                                    self.result.push_str(tag_str);
+                                    self.result.push_str(&normalized_inner);
+                                    self.result.push_str(close_tag);
+                                } else if self.config.dollar_quoted_func {
+                                    // Obfuscate the content inside dollar quotes
+                                    let tag_str = &self.s[start..inner_start];
+                                    let inner = &self.s[inner_start..inner_end];
+                                    let close_tag = &self.s[inner_end..outer_end];
+                                    let obfuscated_inner = obfuscate_sql(inner, self.config);
+                                    // If inner collapses to just '?' (trivial content), emit ? directly
+                                    if obfuscated_inner.trim() == "?" {
+                                        self.emit_placeholder();
+                                    } else {
+                                        self.space();
+                                        self.result.push_str(tag_str);
+                                        self.result.push_str(&obfuscated_inner);
+                                        self.result.push_str(close_tag);
+                                    }
+                                } else {
+                                    // Replace whole thing with ?
+                                    self.emit_placeholder();
+                                }
+                                self.pos = outer_end;
+                            } else {
+                                // Not a valid dollar quote, check if it's an identifier starting with $
+                                self.pos += 1; // skip '$'
+                                let id_start_pos = self.pos;
+                                while !self.at_end()
+                                    && (is_ident_char(self.bytes[self.pos])
+                                        || self.bytes[self.pos] == b'$')
+                                {
+                                    self.pos += 1;
+                                }
+                                let ident = &self.s[id_start_pos - 1..self.pos]; // include '$'
+                                if self.maybe_consume_alias_next() {
+                                    continue;
+                                }
+                                self.emit(ident);
+                            }
+                            let _ = b; // suppress unused warning
+                        }
+                        _ => {
+                            // $identifier like $action - keep as-is
+                            let start = self.pos;
+                            self.pos += 1; // skip '$'
+                            while !self.at_end()
+                                && (is_ident_char(self.bytes[self.pos])
+                                    || self.bytes[self.pos] == b'$')
+                            {
+                                self.pos += 1;
+                            }
+                            let token = &self.s[start..self.pos];
+                            if self.maybe_consume_alias_next() {
+                                continue;
+                            }
+                            self.emit(token);
+                        }
+                    }
+                }
+
+                // Hex literal: 0x...
+                b'0' if matches!(self.peek(1), Some(b'x') | Some(b'X')) => {
+                    self.pos += 2; // skip '0x'
+                    while !self.at_end() && self.bytes[self.pos].is_ascii_hexdigit() {
+                        self.pos += 1;
+                    }
+                    if self.maybe_consume_alias_next() {
+                        continue;
+                    }
+                    self.emit_placeholder();
+                }
+
+                // Hex literal: X'...' or x'...'
+                b'X' | b'x' if self.peek(1) == Some(b'\'') => {
+                    self.pos += 1; // skip 'X'/'x'
+                    if let Some(end) = find_quoted_string_end(self.bytes, self.pos) {
+                        self.pos = end;
+                    } else {
+                        self.pos += 1;
+                    }
+                    if self.maybe_consume_alias_next() {
+                        continue;
+                    }
+                    self.emit_placeholder();
+                }
+
+                // % bind param: %s, %d, %b, %i, %(name)s
+                b'%' => {
+                    let next = self.peek(1);
+                    match next {
+                        Some(b's') | Some(b'd') | Some(b'b') | Some(b'i') => {
+                            self.pos += 2;
+                            if self.maybe_consume_alias_next() {
+                                continue;
+                            }
+                            self.emit_placeholder();
+                        }
+                        Some(b'(') => {
+                            self.pos += 2; // skip '%('
+                            while !self.at_end() && self.bytes[self.pos] != b')' {
+                                self.pos += 1;
+                            }
+                            if !self.at_end() {
+                                self.pos += 1;
+                            } // skip ')'
+                              // Skip the format character
+                            if !self.at_end() && self.bytes[self.pos].is_ascii_alphabetic() {
+                                self.pos += 1;
+                            }
+                            if self.maybe_consume_alias_next() {
+                                continue;
+                            }
+                            self.emit_placeholder();
+                        }
+                        _ => {
+                            // Just a % sign - emit as operator
+                            if self.maybe_consume_alias_next() {
+                                continue;
+                            }
+                            self.space();
+                            self.result.push('%');
+                            self.pos += 1;
+                            self.result.push(' ');
+                        }
+                    }
+                }
+
+                // Number starting with '.'
+                b'.' if self.peek(1).is_some_and(|b| b.is_ascii_digit()) => {
+                    let num_start = self.pos;
+                    self.pos += 1; // skip '.'
+                    self.consume_number();
+                    if self.maybe_consume_alias_next() {
+                        continue;
+                    }
+                    if self.is_normalize_only() {
+                        let raw = self.s[num_start..self.pos].to_string();
+                        self.emit(&raw);
+                    } else {
+                        self.emit_placeholder();
+                    }
+                }
+
+                // Plain dot (qualifier separator)
+                b'.' => {
+                    if self.peek(1) == Some(b'*') {
+                        // .* - keep as-is (joined with previous)
+                        self.result.push_str(".*");
+                        self.pos += 2;
+                    } else {
+                        self.result.push('.');
+                        self.pos += 1;
+                    }
+                }
+
+                // Numeric literal
+                b'0'..=b'9' => {
+                    let num_start = self.pos;
+                    self.consume_number();
+                    if self.maybe_consume_alias_next() {
+                        continue;
+                    }
+                    if self.pending_json_path || self.is_normalize_only() {
+                        self.pending_json_path = false;
+                        let raw = self.s[num_start..self.pos].to_string();
+                        self.emit(&raw);
+                    } else {
+                        self.emit_placeholder();
+                    }
+                }
+
+                // Curly braces { ... }
+                b'{' => {
+                    if self.maybe_consume_alias_next() {
+                        continue;
+                    }
+                    // Peek at content after { and optional whitespace
+                    let mut peek_pos = self.pos + 1;
+                    while peek_pos < self.bytes.len() && is_whitespace(self.bytes[peek_pos]) {
+                        peek_pos += 1;
+                    }
+                    // ODBC stored proc: {call ...} — keep outer braces, tokenize content normally
+                    let is_call = peek_pos + 4 <= self.bytes.len()
+                        && self.bytes[peek_pos..peek_pos + 4].eq_ignore_ascii_case(b"call")
+                        && (peek_pos + 4 >= self.bytes.len()
+                            || !self.bytes[peek_pos + 4].is_ascii_alphanumeric());
+                    if is_call {
+                        self.space();
+                        self.result.push('{');
+                        self.pos += 1;
+                        self.skip_whitespace();
+                        self.result.push(' ');
+                    } else {
+                        // Cassandra maps, {fn ...}, etc. → scan to matching } and emit ?
+                        let mut depth = 1usize;
+                        self.pos += 1; // skip '{'
+                        while !self.at_end() && depth > 0 {
+                            match self.bytes[self.pos] {
+                                b'{' => {
+                                    depth += 1;
+                                    self.pos += 1;
+                                }
+                                b'}' => {
+                                    depth -= 1;
+                                    self.pos += 1;
+                                }
+                                b'\'' => {
+                                    if let Some(end) = find_quoted_string_end(self.bytes, self.pos)
+                                    {
+                                        self.pos = end;
+                                    } else {
+                                        self.pos += 1;
+                                    }
+                                }
+                                _ => {
+                                    self.pos += 1;
+                                }
+                            }
+                        }
+                        self.emit_placeholder();
+                    }
+                }
+                b'}' => {
+                    if self.maybe_consume_alias_next() {
+                        continue;
+                    }
+                    // Unmatched closing brace — emit as operator
+                    self.space();
+                    self.result.push('}');
+                    self.pos += 1;
+                }
+
+                // @ - named params (@name, @1, @@var) - keep as-is
+                b'@' => {
+                    if self.peek(1) == Some(b'@') {
+                        // @@global_var
+                        let start = self.pos;
+                        self.pos += 2; // skip '@@'
+                        while !self.at_end() && is_ident_char(self.bytes[self.pos]) {
+                            self.pos += 1;
+                        }
+                        let token = &self.s[start..self.pos];
+                        if self.maybe_consume_alias_next() {
+                            continue;
+                        }
+                        self.emit(token);
+                    } else if self
+                        .peek(1)
+                        .is_some_and(|b| b.is_ascii_alphanumeric() || b == b'_')
+                    {
+                        // @name or @1
+                        let start = self.pos;
+                        self.pos += 1; // skip '@'
+                        while !self.at_end() && is_ident_char(self.bytes[self.pos]) {
+                            self.pos += 1;
+                        }
+                        let token = &self.s[start..self.pos].to_string();
+                        if self.maybe_consume_alias_next() {
+                            continue;
+                        }
+                        if self.config.replace_bind_parameter {
+                            self.emit_placeholder();
+                        } else {
+                            self.emit(token);
+                        }
+                    } else if self.peek(1) == Some(b'>') {
+                        // @> operator
+                        if self.maybe_consume_alias_next() {
+                            continue;
+                        }
+                        self.emit("@>");
+                        self.pos += 2;
+                        self.result.push(' ');
+                    } else {
+                        // @ as standalone operator
+                        if self.maybe_consume_alias_next() {
+                            continue;
+                        }
+                        self.space();
+                        self.result.push('@');
+                        self.pos += 1;
+                        self.result.push(' ');
+                    }
+                }
+
+                // Colon: ::, :=, :name, or standalone
+                b':' => {
+                    match self.peek(1) {
+                        Some(b':') => {
+                            // :: PostgreSQL cast
+                            if self.maybe_consume_alias_next() {
+                                continue;
+                            }
+                            self.space();
+                            self.result.push_str("::");
+                            self.pos += 2;
+                            self.result.push(' ');
+                        }
+                        Some(b'=') => {
+                            // := assignment
+                            if self.maybe_consume_alias_next() {
+                                continue;
+                            }
+                            self.space();
+                            self.result.push_str(":=");
+                            self.pos += 2;
+                            self.result.push(' ');
+                        }
+                        Some(b) if b.is_ascii_alphanumeric() || b == b'_' => {
+                            // :name bind parameter - keep as-is
+                            let start = self.pos;
+                            self.pos += 1; // skip ':'
+                            while !self.at_end() && is_ident_char(self.bytes[self.pos]) {
+                                self.pos += 1;
+                            }
+                            let token = &self.s[start..self.pos];
+                            if self.maybe_consume_alias_next() {
+                                continue;
+                            }
+                            self.emit(token);
+                        }
+                        _ => {
+                            // Standalone : (e.g., autovacuum:)
+                            if self.maybe_consume_alias_next() {
+                                continue;
+                            }
+                            self.space();
+                            self.result.push(':');
+                            self.pos += 1;
+                            self.result.push(' ');
+                        }
+                    }
+                }
+
+                // Minus: --, ->, ->>, or operator, or signed number
+                b'-' => {
+                    match self.peek(1) {
+                        Some(b'-') => {
+                            // Already handled above, but just in case
+                            self.pos += 2;
+                            self.skip_line_comment();
+                        }
+                        Some(b'>') if self.peek(2) == Some(b'>') => {
+                            // ->> operator
+                            if self.maybe_consume_alias_next() {
+                                continue;
+                            }
+                            self.emit("->>");
+                            self.pos += 3;
+                            self.result.push(' ');
+                            if self.config.keep_json_path {
+                                self.pending_json_path = true;
+                            }
+                        }
+                        Some(b'>') => {
+                            // -> operator
+                            if self.maybe_consume_alias_next() {
+                                continue;
+                            }
+                            self.emit("->");
+                            self.pos += 2;
+                            self.result.push(' ');
+                            if self.config.keep_json_path {
+                                self.pending_json_path = true;
+                            }
+                        }
+                        Some(b) if b.is_ascii_digit() => {
+                            // Could be signed number: -42
+                            // Only treat as signed number if preceding context is an operator/paren/comma/start
+                            let last = self.last_char();
+                            if matches!(
+                                last,
+                                None | Some(b'(')
+                                    | Some(b' ')
+                                    | Some(b'=')
+                                    | Some(b'>')
+                                    | Some(b'<')
+                                    | Some(b',')
+                                    | Some(b'+')
+                                    | Some(b'-')
+                                    | Some(b'*')
+                                    | Some(b'/')
+                            ) {
+                                self.pos += 1; // skip '-'
+                                self.consume_number();
+                                if self.maybe_consume_alias_next() {
+                                    continue;
+                                }
+                                self.emit_placeholder();
+                            } else {
+                                if self.maybe_consume_alias_next() {
+                                    continue;
+                                }
+                                self.space();
+                                self.result.push('-');
+                                self.pos += 1;
+                                self.last_was_placeholder = false;
+                                self.result.push(' ');
+                            }
+                        }
+                        Some(b'.') if self.peek(2).is_some_and(|d| d.is_ascii_digit()) => {
+                            // -.5 signed float
+                            let last = self.last_char();
+                            if matches!(
+                                last,
+                                None | Some(b'(')
+                                    | Some(b' ')
+                                    | Some(b'=')
+                                    | Some(b'>')
+                                    | Some(b'<')
+                                    | Some(b',')
+                            ) {
+                                self.pos += 2; // skip '-.'
+                                self.consume_number();
+                                if self.maybe_consume_alias_next() {
+                                    continue;
+                                }
+                                self.emit_placeholder();
+                            } else {
+                                if self.maybe_consume_alias_next() {
+                                    continue;
+                                }
+                                self.space();
+                                self.result.push('-');
+                                self.pos += 1;
+                                self.last_was_placeholder = false;
+                                self.result.push(' ');
+                            }
+                        }
+                        _ => {
+                            if self.maybe_consume_alias_next() {
+                                continue;
+                            }
+                            self.space();
+                            self.result.push('-');
+                            self.pos += 1;
+                            self.last_was_placeholder = false;
+                            self.result.push(' ');
+                        }
+                    }
+                }
+
+                // Plus: signed number or operator
+                b'+' => {
+                    let next = self.peek(1);
+                    let last = self.last_nonspace_char();
+                    if matches!(
+                        last,
+                        None | Some(b'(') | Some(b'=') | Some(b'>') | Some(b'<') | Some(b',')
+                    ) {
+                        if next.is_some_and(|b| b.is_ascii_digit()) {
+                            self.pos += 1; // skip '+'
+                            self.consume_number();
+                            if self.maybe_consume_alias_next() {
+                                continue;
+                            }
+                            self.emit_placeholder();
+                            continue;
+                        } else if next == Some(b'.')
+                            && self.peek(2).is_some_and(|d| d.is_ascii_digit())
+                        {
+                            self.pos += 2; // skip '+.'
+                            self.consume_number();
+                            if self.maybe_consume_alias_next() {
+                                continue;
+                            }
+                            self.emit_placeholder();
+                            continue;
+                        }
+                    }
+                    if self.maybe_consume_alias_next() {
+                        continue;
+                    }
+                    self.space();
+                    self.result.push('+');
+                    self.pos += 1;
+                    self.last_was_placeholder = false;
+                    self.result.push(' ');
+                }
+
+                // ? - keep as-is (already a placeholder, or JSONB operator)
+                b'?' => {
+                    let next = self.peek(1);
+                    match next {
+                        Some(b'|') if self.peek(2) != Some(b'|') => {
+                            // ?| operator (but NOT ?|| which is ? followed by || concatenation)
+                            if self.maybe_consume_alias_next() {
+                                continue;
+                            }
+                            self.emit("?|");
+                            self.pos += 2;
+                            self.result.push(' ');
+                        }
+                        Some(b'&') => {
+                            // ?& operator
+                            if self.maybe_consume_alias_next() {
+                                continue;
+                            }
+                            self.emit("?&");
+                            self.pos += 2;
+                            self.result.push(' ');
+                        }
+                        _ => {
+                            // Raw ? in input:
+                            // - For postgresql: treat as JSONB operator (not FilteredGroupable).
+                            //   Don't set last_was_placeholder, so consecutive literals aren't suppressed.
+                            // - For other dbms: treat as bind parameter (FilteredGroupable).
+                            //   Use emit_placeholder so consecutive ?s are suppressed in legacy mode.
+                            if self.maybe_consume_alias_next() {
+                                continue;
+                            }
+                            if self.config.dbms.eq_ignore_ascii_case("postgresql") {
+                                self.space();
+                                self.result.push('?');
+                                self.last_was_assign = false;
+                                // last_was_placeholder intentionally NOT set to true for PG JSONB ?
+                            } else {
+                                self.emit_placeholder();
+                            }
+                            self.pos += 1;
+                        }
+                    }
+                }
+
+                // < operator and <@ / <> / <= operators
+                b'<' => {
+                    let next = self.peek(1);
+                    if self.maybe_consume_alias_next() {
+                        continue;
+                    }
+                    match next {
+                        // <@ containment operator: always PG operator when dbms=postgresql,
+                        // but when non-PG and followed by identifier, treat as < @ident
+                        Some(b'@') => {
+                            let next2_is_ident = self
+                                .peek(2)
+                                .is_some_and(|c| c.is_ascii_alphanumeric() || c == b'_');
+                            if self.config.dbms.eq_ignore_ascii_case("postgresql")
+                                || !next2_is_ident
+                            {
+                                self.emit("<@");
+                                self.pos += 2;
+                                self.result.push(' ');
+                            } else {
+                                // Non-PG dbms with <@name → emit < then @name handled separately
+                                self.space();
+                                self.result.push('<');
+                                self.pos += 1;
+                                self.result.push(' ');
+                            }
+                        }
+                        Some(b'>') => {
+                            self.emit("<>");
+                            self.pos += 2;
+                            self.result.push(' ');
+                        }
+                        Some(b'=') => {
+                            self.emit("<=");
+                            self.pos += 2;
+                            self.result.push(' ');
+                        }
+                        _ => {
+                            self.space();
+                            self.result.push('<');
+                            self.pos += 1;
+                            self.result.push(' ');
+                        }
+                    }
+                }
+
+                // > and >= operators
+                b'>' => {
+                    if self.maybe_consume_alias_next() {
+                        continue;
+                    }
+                    if self.peek(1) == Some(b'=') {
+                        self.emit(">=");
+                        self.pos += 2;
+                    } else {
+                        self.space();
+                        self.result.push('>');
+                        self.pos += 1;
+                    }
+                    self.result.push(' ');
+                }
+
+                // = operator
+                b'=' => {
+                    if self.maybe_consume_alias_next() {
+                        continue;
+                    }
+                    self.space();
+                    self.result.push('=');
+                    self.pos += 1;
+                    self.last_was_placeholder = false;
+                    self.result.push(' ');
+                    self.last_was_assign = true;
+                    continue; // skip emit() clearing last_was_assign
+                }
+
+                // ! and !=, !~, !~*
+                b'!' => {
+                    if self.maybe_consume_alias_next() {
+                        continue;
+                    }
+                    if self.peek(1) == Some(b'=') {
+                        self.emit("!=");
+                        self.pos += 2;
+                        self.result.push(' ');
+                    } else if self.peek(1) == Some(b'~') {
+                        if self.peek(2) == Some(b'*') {
+                            self.emit("!~*");
+                            self.pos += 3;
+                        } else {
+                            self.emit("!~");
+                            self.pos += 2;
+                        }
+                        self.result.push(' ');
+                    } else {
+                        self.space();
+                        self.result.push('!');
+                        self.pos += 1;
+                        self.result.push(' ');
+                    }
+                }
+
+                // | and ||
+                b'|' => {
+                    if self.maybe_consume_alias_next() {
+                        continue;
+                    }
+                    // Emit single | (Go tokenizes || as two separate | tokens, each with spaces)
+                    self.space();
+                    self.result.push('|');
+                    self.pos += 1;
+                    self.last_was_placeholder = false;
+                    self.result.push(' ');
+                }
+
+                // & operator
+                b'&' => {
+                    if self.maybe_consume_alias_next() {
+                        continue;
+                    }
+                    self.space();
+                    self.result.push('&');
+                    self.pos += 1;
+                    self.last_was_placeholder = false;
+                    self.result.push(' ');
+                }
+
+                // ~ ^ operators (and ~* compound)
+                b'~' => {
+                    if self.maybe_consume_alias_next() {
+                        continue;
+                    }
+                    if self.peek(1) == Some(b'*') {
+                        self.emit("~*");
+                        self.pos += 2;
+                    } else {
+                        self.space();
+                        self.result.push('~');
+                        self.pos += 1;
+                        self.last_was_placeholder = false;
+                    }
+                    self.result.push(' ');
+                }
+                b'^' => {
+                    if self.maybe_consume_alias_next() {
+                        continue;
+                    }
+                    self.space();
+                    self.result.push('^');
+                    self.pos += 1;
+                    self.last_was_placeholder = false;
+                    self.result.push(' ');
+                }
+
+                // * operator (or SELECT *)
+                b'*' => {
+                    if self.maybe_consume_alias_next() {
+                        continue;
+                    }
+                    self.space();
+                    self.result.push('*');
+                    self.pos += 1;
+                    self.last_was_placeholder = false;
+                    self.result.push(' ');
+                }
+
+                // / operator (not /*, which is handled above)
+                b'/' => {
+                    if self.maybe_consume_alias_next() {
+                        continue;
+                    }
+                    self.space();
+                    self.result.push('/');
+                    self.pos += 1;
+                    self.last_was_placeholder = false;
+                    self.result.push(' ');
+                }
+
+                // Identifier or keyword
+                _ if is_ident_start(b) || b > 127 => {
+                    let start = self.pos;
+                    while !self.at_end()
+                        && (is_ident_char(self.bytes[self.pos]) || self.bytes[self.pos] > 127)
+                    {
+                        self.pos += 1;
+                    }
+                    let token = &self.s[start..self.pos];
+                    self.emit_identifier(token);
+                }
+
+                // Unknown: emit as-is
+                _ => {
+                    let c = self.s[self.pos..].chars().next().unwrap_or(' ');
+                    if self.maybe_consume_alias_next() {
+                        self.pos += c.len_utf8();
+                        continue;
+                    }
+                    self.result.push(c);
+                    self.pos += c.len_utf8();
+                }
+            }
+        }
+    }
+
+    fn finalize(mut self) -> String {
+        // Trim trailing whitespace
+        while self.result.ends_with(' ') {
+            self.result.pop();
+        }
+        self.result
+    }
+}
+
+/// Try to match a `( ?, ?, ..., ? )` or `[ ?, ?, ..., ? ]` pattern starting at `i`.
+/// Returns Some(k) where k is the index after the closing bracket if matched, else None.
+fn try_match_pure_group(bytes: &[u8], open: u8, close: u8, i: usize) -> Option<usize> {
+    let n = bytes.len();
+    if i >= n || bytes[i] != open {
+        return None;
+    }
+    let mut k = i + 1;
+    if k < n && bytes[k] == b' ' {
+        k += 1;
+    }
+    if k >= n || bytes[k] != b'?' {
+        return None;
+    }
+    k += 1;
+    loop {
+        if k < n && bytes[k] == b' ' {
+            k += 1;
+        }
+        if k >= n {
+            return None;
+        }
+        if bytes[k] == close {
+            return Some(k + 1);
+        }
+        // Accept either `?, ?` or `? ?` (commas may have been stripped)
+        if bytes[k] == b',' {
+            k += 1;
+            if k < n && bytes[k] == b' ' {
+                k += 1;
+            }
+        }
+        if k < n && bytes[k] == b'?' {
+            k += 1;
+        } else {
+            return None;
+        }
+    }
+}
+
+/// Collapse `( ?, ?, ..., ? )` into `( ? )`, `[ ?, ?, ..., ? ]` into `[ ? ]`,
+/// multi-row `VALUES ( ? ) , ( ? ) , ...` into `VALUES ( ? )`, and `LIMIT ?, ?` into `LIMIT ?`.
+fn collapse_grouped_values(s: &str) -> String {
+    let bytes = s.as_bytes();
+    let n = bytes.len();
+    let mut result = String::with_capacity(n);
+    let mut i = 0;
+
+    while i < n {
+        // Try ( ?, ... )
+        if bytes[i] == b'(' {
+            if let Some(end) = try_match_pure_group(bytes, b'(', b')', i) {
+                result.push_str("( ? )");
+                i = end;
+                continue;
+            }
+        }
+        // Try [ ?, ... ]
+        if bytes[i] == b'[' {
+            if let Some(end) = try_match_pure_group(bytes, b'[', b']', i) {
+                result.push_str("[ ? ]");
+                i = end;
+                continue;
+            }
+        }
+        // Push next character correctly (multi-byte UTF-8 safe)
+        if bytes[i] < 128 {
+            result.push(bytes[i] as char);
+            i += 1;
+        } else {
+            let c = s[i..].chars().next().unwrap_or('\u{FFFD}');
+            result.push(c);
+            i += c.len_utf8();
+        }
+    }
+
+    // Collapse multi-row VALUES: `VALUES ( ? ) , ( ? ) , ...` → `VALUES ( ? )`
+    let result = collapse_multi_values(&result);
+    // Collapse `LIMIT ?, ?` → `LIMIT ?` (MySQL/SQLite LIMIT offset, count syntax)
+    collapse_limit_two_args(&result)
+}
+
+/// Collapse `VALUES ( ? ) , ( ? ) , ...` → `VALUES ( ? )`.
+/// Also handles comma-less groups `VALUES ( ? ) ( ? )` (when commas were stripped by placeholder logic).
+fn collapse_multi_values(s: &str) -> String {
+    // Pattern: "VALUES ( ? )" followed by one or more " , ( ? )" or " ( ? )" groups
+    let mut result = String::with_capacity(s.len());
+    let mut remaining = s;
+
+    while !remaining.is_empty() {
+        // Check for "VALUES ( ? )" pattern
+        let rb = remaining.as_bytes();
+        let vlen = "VALUES ( ? )".len(); // 12
+        if rb.len() >= vlen && rb[..6].eq_ignore_ascii_case(b"VALUES") && &rb[6..vlen] == b" ( ? )"
+        {
+            // Check preceding context: must be start or space
+            let prev_ok = result.is_empty()
+                || matches!(
+                    result.as_bytes().last(),
+                    Some(b' ') | Some(b'(') | Some(b'\n')
+                );
+            if prev_ok {
+                result.push_str(&remaining[..vlen]);
+                remaining = &remaining[vlen..];
+                // Now consume any trailing groups (may have content or be empty due to suppression)
+                loop {
+                    if remaining.starts_with(", ( ? )") {
+                        remaining = &remaining[", ( ? )".len()..];
+                    } else if remaining.starts_with(" ( ? )") {
+                        remaining = &remaining[" ( ? )".len()..];
+                    } else if remaining.starts_with(" ()") {
+                        // Empty group after consecutive placeholder suppression
+                        remaining = &remaining[" ()".len()..];
+                    } else {
+                        break;
+                    }
+                }
+                continue;
+            }
+        }
+        let c = remaining.chars().next().unwrap_or(' ');
+        result.push(c);
+        remaining = &remaining[c.len_utf8()..];
+    }
+    result
+}
+
+/// Collapse `LIMIT ?, ?` → `LIMIT ?`
+fn collapse_limit_two_args(s: &str) -> String {
+    // Scan for "LIMIT ?, ?" pattern (all ASCII keywords, UTF-8 safe via char iteration)
+    let mut result = String::with_capacity(s.len());
+    let mut remaining = s;
+
+    while !remaining.is_empty() {
+        // Check for LIMIT (case-insensitive) + " ?, ?" or " ? ?"
+        if remaining.len() >= 9 {
+            let rb = remaining.as_bytes();
+            if rb[..5].eq_ignore_ascii_case(b"LIMIT") && rb[5] == b' ' && rb[6] == b'?' {
+                // Check " ?, ?" or " ? ?"
+                let skip =
+                    if remaining.len() >= 10 && rb[7] == b',' && rb[8] == b' ' && rb[9] == b'?' {
+                        Some(10) // "LIMIT ?, ?"
+                    } else if rb[7] == b' ' && rb[8] == b'?' {
+                        Some(9) // "LIMIT ? ?" (comma already stripped)
+                    } else {
+                        None
+                    };
+                if let Some(skip_len) = skip {
+                    // Word boundary: previous char in result should be space or start
+                    let prev_ok = result.is_empty()
+                        || matches!(
+                            result.as_bytes().last(),
+                            Some(b' ') | Some(b'(') | Some(b'\n')
+                        );
+                    if prev_ok {
+                        result.push_str(&remaining[..7]); // "LIMIT ?"
+                        remaining = &remaining[skip_len..];
+                        continue;
+                    }
+                }
+            }
+        }
+        let c = remaining.chars().next().unwrap_or(' ');
+        result.push(c);
+        remaining = &remaining[c.len_utf8()..];
+    }
+    result
+}
+
+/// Obfuscates a SQL string using a proper tokenizer.
+pub fn obfuscate_sql(s: &str, config: &SqlObfuscateConfig) -> String {
+    if s.is_empty() {
+        return String::new();
+    }
+    let mut tokenizer = Tokenizer::new(s, config);
+    tokenizer.process();
+    let raw = tokenizer.finalize();
+    // collapse_grouped_values applies in legacy mode and obfuscate_and_normalize mode.
+    // In obfuscate_only and normalize_only modes, values are NOT collapsed.
+    let should_collapse =
+        config.obfuscation_mode.is_empty() || config.obfuscation_mode == "obfuscate_and_normalize";
+    if should_collapse {
+        collapse_grouped_values(&raw)
+    } else {
+        raw
+    }
+}
+
+/// Obfuscates a SQL string with default configuration.
+pub fn obfuscate_sql_string(s: &str) -> String {
+    obfuscate_sql(s, &SqlObfuscateConfig::default())
 }
 
 /// SQL obfuscation with Go-compatible whitespace normalization for use in JSON plan obfuscation.
-/// Applies obfuscate_sql_string then:
-/// - Strips MySQL backtick identifiers (`id`) and adds spaces around adjacent `.` separators
-/// - Adds a space after `(` and before `)`
-/// - Adds spaces around `::` (PostgreSQL cast operator)
+/// Applies obfuscate_sql_string then additional normalizations for JSON plan SQL.
 pub fn obfuscate_sql_string_normalized(s: &str) -> String {
     let obfuscated = obfuscate_sql_string(s);
     normalize_plan_sql(&obfuscated)
@@ -166,22 +1867,6 @@ fn normalize_plan_sql(s: &str) -> String {
     result
 }
 
-fn next_splitter(s: &[u8], at: usize) -> Option<usize> {
-    let mut quoted = false;
-    let mut escaped = false;
-    for (pos, b) in s.iter().copied().enumerate().skip(at) {
-        if b == b'\'' && !escaped {
-            quoted = !quoted;
-            continue;
-        }
-        escaped = (b == b'\\') && !escaped;
-        if !quoted && is_splitter(b) {
-            return Some(pos);
-        }
-    }
-    None
-}
-
 #[cfg(test)]
 mod tests {
 
@@ -220,7 +1905,7 @@ mod tests {
     fn test_sql_obfuscation_case(input: &str, output: &str) -> anyhow::Result<()> {
         let got = super::obfuscate_sql_string(input);
         if output != got {
-            anyhow::bail!("expected {output}\n\tgot: {got}")
+            anyhow::bail!("expected {output:?}\n\tgot:      {got:?}")
         }
         Ok(())
     }
@@ -261,9 +1946,58 @@ mod tests {
     fn test_sql_obfuscation_normalized_case(input: &str, output: &str) -> anyhow::Result<()> {
         let got = super::obfuscate_sql_string_normalized(input);
         if output != got {
-            anyhow::bail!("expected {output}\n\tgot: {got}")
+            anyhow::bail!("expected {output:?}\n\tgot:      {got:?}")
         }
         Ok(())
+    }
+
+    #[test]
+    fn test_keep_identifier_quotation() {
+        let config = super::SqlObfuscateConfig {
+            keep_identifier_quotation: true,
+            ..Default::default()
+        };
+        let got = super::obfuscate_sql(
+            r#"SELECT * FROM "users" WHERE id = 1 AND name = 'test'"#,
+            &config,
+        );
+        let expected = r#"SELECT * FROM "users" WHERE id = ? AND name = ?"#;
+        assert_eq!(got, expected, "keep_identifier_quotation: got {got:?}");
+    }
+
+    #[test]
+    fn test_remove_space_between_parentheses() {
+        let config = super::SqlObfuscateConfig {
+            remove_space_between_parentheses: true,
+            ..Default::default()
+        };
+        let got = super::obfuscate_sql(
+            "SELECT * FROM users WHERE id = ? AND (name = 'test' OR name = 'test2')",
+            &config,
+        );
+        let expected = "SELECT * FROM users WHERE id = ? AND (name = ? OR name = ?)";
+        assert_eq!(
+            got, expected,
+            "remove_space_between_parentheses: got {got:?}"
+        );
+    }
+
+    #[test]
+    fn test_keep_positional_parameter() {
+        // When keep_positional_parameter=true, $1/$2 should be kept as-is
+        let config = super::SqlObfuscateConfig {
+            keep_positional_parameter: true,
+            ..Default::default()
+        };
+        let got = super::obfuscate_sql(
+            "SELECT * FROM users WHERE id = ? AND name = $1 and id = $2",
+            &config,
+        );
+        let expected = "SELECT * FROM users WHERE id = ? AND name = $1 and id = $2";
+        assert_eq!(
+            got, expected,
+            "keep_positional_parameter: got {got:?}, expected {expected:?}"
+        );
     }
 
     const NORMALIZED_CASES: &[(&str, &str)] = &[
@@ -294,139 +2028,542 @@ mod tests {
     ];
 
     const CASES: &[(&str, &str)] = &[
-        ("" , ""),
-        ("   " , "   "),
-        ("         " , "         "),
-        ("罿" , "罿"),
-        ("罿潯" , "罿潯"),
-        ("罿潯罿潯罿潯罿潯罿潯" , "罿潯罿潯罿潯罿潯罿潯"),
+        ("", ""),
+        ("   ", ""),
+        ("         ", ""),
+        ("罿", "罿"),
+        ("罿潯", "罿潯"),
+        ("罿潯罿潯罿潯罿潯罿潯", "罿潯罿潯罿潯罿潯罿潯"),
         ("'abc1287681964'", "?"),
-        ("-- comment", "-- comment"),
-        ("---", "---"),
+        ("-- comment", ""),
+        ("---", ""),
         ("1 - 2", "? - ?"),
-        ("SELECT * FROM TABLE WHERE userId = 'abc1287681964'" , "SELECT * FROM TABLE WHERE userId = ?"),
-        ("SELECT * FROM TABLE WHERE userId = 'abc\\'1287681964'" , "SELECT * FROM TABLE WHERE userId = ?"),
-        ("SELECT * FROM TABLE WHERE userId = '\\'abc1287681964'" , "SELECT * FROM TABLE WHERE userId = ?"),
-        ("SELECT * FROM TABLE WHERE userId = 'abc1287681964\\''" , "SELECT * FROM TABLE WHERE userId = ?"),
-        ("SELECT * FROM TABLE WHERE userId = '\\'abc1287681964\\''" , "SELECT * FROM TABLE WHERE userId = ?"),
-        ("SELECT * FROM TABLE WHERE userId = 'abc\\'1287681\\'964'" , "SELECT * FROM TABLE WHERE userId = ?"),
-        ("SELECT * FROM TABLE WHERE userId = 'abc\\'1287\\'681\\'964'" , "SELECT * FROM TABLE WHERE userId = ?"),
-        ("SELECT * FROM TABLE WHERE userId = 'abc\\'1287\\'681\\'\\'\\'\\'964'" , "SELECT * FROM TABLE WHERE userId = ?"),
-        ("SELECT * FROM TABLE WHERE userId IN (\'a\', \'b\', \'c\')" , "SELECT * FROM TABLE WHERE userId IN (?, ?, ?)"),
-        ("SELECT * FROM TABLE WHERE userId IN (\'abc\\'1287681\\'964\', \'abc\\'1287\\'681\\'\\'\\'\\'964\', \'abc\\'1287\\'681\\'964\')" , "SELECT * FROM TABLE WHERE userId IN (?, ?, ?)"),
-        ("SELECT * FROM TABLE WHERE userId = 'abc1287681964' ORDER BY FOO DESC" , "SELECT * FROM TABLE WHERE userId = ? ORDER BY FOO DESC"),
-        ("SELECT * FROM TABLE WHERE userId = 'abc\\'1287\\'681\\'\\'\\'\\'964' ORDER BY FOO DESC" , "SELECT * FROM TABLE WHERE userId = ? ORDER BY FOO DESC"),
-        ("SELECT * FROM TABLE JOIN SOMETHING ON TABLE.foo = SOMETHING.bar" , "SELECT * FROM TABLE JOIN SOMETHING ON TABLE.foo = SOMETHING.bar"),
-        ("CREATE TABLE \"VALUE\"" , "CREATE TABLE \"VALUE\""),
-        ("INSERT INTO \"VALUE\" (\"column\") VALUES (\'ljahklshdlKASH\')" , "INSERT INTO \"VALUE\" (\"column\") VALUES (?)"),
-        ("INSERT INTO \"VALUE\" (\"col1\",\"col2\",\"col3\") VALUES (\'blah\',12983,X'ff')" , "INSERT INTO \"VALUE\" (\"col1\",\"col2\",\"col3\") VALUES (?,?,?)"),
-        ("INSERT INTO \"VALUE\" (\"col1\", \"col2\", \"col3\") VALUES (\'blah\',12983,X'ff')" , "INSERT INTO \"VALUE\" (\"col1\", \"col2\", \"col3\") VALUES (?,?,?)"),
-        ("INSERT INTO VALUE (col1,col2,col3) VALUES (\'blah\',12983,X'ff')" , "INSERT INTO VALUE (col1,col2,col3) VALUES (?,?,?)"),
-        ("INSERT INTO VALUE (col1,col2,col3) VALUES (12983,X'ff',\'blah\')" , "INSERT INTO VALUE (col1,col2,col3) VALUES (?,?,?)"),
-        ("INSERT INTO VALUE (col1,col2,col3) VALUES (X'ff',\'blah\',12983)" , "INSERT INTO VALUE (col1,col2,col3) VALUES (?,?,?)"),
-        ("INSERT INTO VALUE (col1,col2,col3) VALUES ('a',\'b\',1)" , "INSERT INTO VALUE (col1,col2,col3) VALUES (?,?,?)"),
-        ("INSERT INTO VALUE (col1, col2, col3) VALUES ('a',\'b\',1)" , "INSERT INTO VALUE (col1, col2, col3) VALUES (?,?,?)"),
-        ("INSERT INTO VALUE ( col1, col2, col3 ) VALUES ('a',\'b\',1)" , "INSERT INTO VALUE ( col1, col2, col3 ) VALUES (?,?,?)"),
-        ("INSERT INTO VALUE (col1,col2,col3) VALUES ('a', \'b\' ,1)" , "INSERT INTO VALUE (col1,col2,col3) VALUES (?, ? ,?)"),
-        ("INSERT INTO VALUE (col1, col2, col3) VALUES ('a', \'b\', 1)" , "INSERT INTO VALUE (col1, col2, col3) VALUES (?, ?, ?)"),
-        ("INSERT INTO VALUE ( col1, col2, col3 ) VALUES ('a', \'b\', 1)" , "INSERT INTO VALUE ( col1, col2, col3 ) VALUES (?, ?, ?)"),
-        ("INSERT INTO VALUE (col1,col2,col3) VALUES (X'ff',\'罿潯罿潯罿潯罿潯罿潯\',12983)" , "INSERT INTO VALUE (col1,col2,col3) VALUES (?,?,?)"),
-        ("INSERT INTO VALUE (col1,col2,col3) VALUES (X'ff',\'罿\',12983)" , "INSERT INTO VALUE (col1,col2,col3) VALUES (?,?,?)"),
-        ("SELECT 3 AS NUCLEUS_TYPE,A0.ID,A0.\"NAME\" FROM \"VALUE\" A0" , "SELECT ? AS NUCLEUS_TYPE,A0.ID,A0.\"NAME\" FROM \"VALUE\" A0"),
-        ("SELECT COUNT(*) FROM TABLE_1 JOIN table_2 ON TABLE_1.foo = table_2.bar where col1 > .9999" , "SELECT COUNT(*) FROM TABLE_1 JOIN table_2 ON TABLE_1.foo = table_2.bar where col1 > ?"),
-        ("SELECT COUNT(*) FROM TABLE_1 JOIN table_2 ON TABLE_1.foo = table_2.bar where col1 > 0.9999" , "SELECT COUNT(*) FROM TABLE_1 JOIN table_2 ON TABLE_1.foo = table_2.bar where col1 > ?"),
-        ("SELECT COUNT(*) FROM TABLE_1 JOIN table_2 ON TABLE_1.foo = table_2.bar where col1 > -0.9999" , "SELECT COUNT(*) FROM TABLE_1 JOIN table_2 ON TABLE_1.foo = table_2.bar where col1 > ?"),
-        ("SELECT COUNT(*) FROM TABLE_1 JOIN table_2 ON TABLE_1.foo = table_2.bar where col1 > -1e6" , "SELECT COUNT(*) FROM TABLE_1 JOIN table_2 ON TABLE_1.foo = table_2.bar where col1 > ?"),
-        ("SELECT COUNT(*) FROM TABLE_1 JOIN table_2 ON TABLE_1.foo = table_2.bar where col1 > +1e6" , "SELECT COUNT(*) FROM TABLE_1 JOIN table_2 ON TABLE_1.foo = table_2.bar where col1 > ?"),
-        ("SELECT COUNT(*) FROM TABLE_1 JOIN table_2 ON TABLE_1.foo = table_2.bar where col1 > +255" , "SELECT COUNT(*) FROM TABLE_1 JOIN table_2 ON TABLE_1.foo = table_2.bar where col1 > ?"),
-        ("SELECT COUNT(*) FROM TABLE_1 JOIN table_2 ON TABLE_1.foo = table_2.bar where col1 > +6.34F" , "SELECT COUNT(*) FROM TABLE_1 JOIN table_2 ON TABLE_1.foo = table_2.bar where col1 > ?"),
-        ("SELECT COUNT(*) FROM TABLE_1 JOIN table_2 ON TABLE_1.foo = table_2.bar where col1 > +6f" , "SELECT COUNT(*) FROM TABLE_1 JOIN table_2 ON TABLE_1.foo = table_2.bar where col1 > ?"),
-        ("SELECT COUNT(*) FROM TABLE_1 JOIN table_2 ON TABLE_1.foo = table_2.bar where col1 > +0.5D" , "SELECT COUNT(*) FROM TABLE_1 JOIN table_2 ON TABLE_1.foo = table_2.bar where col1 > ?"),
-        ("SELECT COUNT(*) FROM TABLE_1 JOIN table_2 ON TABLE_1.foo = table_2.bar where col1 > -1d" , "SELECT COUNT(*) FROM TABLE_1 JOIN table_2 ON TABLE_1.foo = table_2.bar where col1 > ?"),
-        ("SELECT COUNT(*) FROM TABLE_1 JOIN table_2 ON TABLE_1.foo = table_2.bar where col1 > x'ff'" , "SELECT COUNT(*) FROM TABLE_1 JOIN table_2 ON TABLE_1.foo = table_2.bar where col1 > ?"),
-        ("SELECT COUNT(*) FROM TABLE_1 JOIN table_2 ON TABLE_1.foo = table_2.bar where col1 > X'ff'" , "SELECT COUNT(*) FROM TABLE_1 JOIN table_2 ON TABLE_1.foo = table_2.bar where col1 > ?"),
-        ("SELECT COUNT(*) FROM TABLE_1 JOIN table_2 ON TABLE_1.foo = table_2.bar where col1 > 0xff" , "SELECT COUNT(*) FROM TABLE_1 JOIN table_2 ON TABLE_1.foo = table_2.bar where col1 > ?"),
-        ("SELECT COUNT(*) FROM TABLE_1 JOIN table_2 ON TABLE_1.foo = table_2.bar where col1 <> \'\'" , "SELECT COUNT(*) FROM TABLE_1 JOIN table_2 ON TABLE_1.foo = table_2.bar where col1 <> ?"),
-        ("SELECT COUNT(*) FROM TABLE_1 JOIN table_2 ON TABLE_1.foo = table_2.bar where col1 <> \' \'" , "SELECT COUNT(*) FROM TABLE_1 JOIN table_2 ON TABLE_1.foo = table_2.bar where col1 <> ?"),
-        ("SELECT COUNT(*) FROM TABLE_1 JOIN table_2 ON TABLE_1.foo = table_2.bar where col1 <> \'  \'" , "SELECT COUNT(*) FROM TABLE_1 JOIN table_2 ON TABLE_1.foo = table_2.bar where col1 <> ?"),
-        ("SELECT COUNT(*) FROM TABLE_1 JOIN table_2 ON TABLE_1.foo = table_2.bar where col1 <> \' \\\' \'" , "SELECT COUNT(*) FROM TABLE_1 JOIN table_2 ON TABLE_1.foo = table_2.bar where col1 <> ?"),
-        ("SELECT COUNT(*) FROM TABLE_1 JOIN table_2 ON TABLE_1.foo = table_2.bar where col1 <> \' \\\'Бегите, глупцы \'" , "SELECT COUNT(*) FROM TABLE_1 JOIN table_2 ON TABLE_1.foo = table_2.bar where col1 <> ?"),
-        ("SELECT COUNT(*) FROM TABLE_1 JOIN table_2 ON TABLE_1.foo = table_2.bar where col1 <> \' x \'" , "SELECT COUNT(*) FROM TABLE_1 JOIN table_2 ON TABLE_1.foo = table_2.bar where col1 <> ?"),
-        ("SELECT COUNT(*) FROM TABLE_1 JOIN table_2 ON TABLE_1.foo = table_2.bar where col1 <> \' x x\'" , "SELECT COUNT(*) FROM TABLE_1 JOIN table_2 ON TABLE_1.foo = table_2.bar where col1 <> ?"),
-        ("SELECT COUNT(*) FROM TABLE_1 JOIN table_2 ON TABLE_1.foo = table_2.bar where col1 <> \' x\\\'ab x\'" , "SELECT COUNT(*) FROM TABLE_1 JOIN table_2 ON TABLE_1.foo = table_2.bar where col1 <> ?"),
-        ("SELECT COUNT(*) FROM TABLE_1 JOIN table_2 ON TABLE_1.foo = table_2.bar where col1 <> \' \\\' 0xf \'" , "SELECT COUNT(*) FROM TABLE_1 JOIN table_2 ON TABLE_1.foo = table_2.bar where col1 <> ?"),
-        ("SELECT COUNT(*) FROM TABLE_1 JOIN table_2 ON TABLE_1.foo = table_2.bar where col1 <> \'5,123\'" , "SELECT COUNT(*) FROM TABLE_1 JOIN table_2 ON TABLE_1.foo = table_2.bar where col1 <> ?"),
-        ("CREATE TABLE S_H2 (id INTEGER not NULL, PRIMARY KEY ( id ))" , "CREATE TABLE S_H2 (id INTEGER not NULL, PRIMARY KEY ( id ))"),
-        ("CREATE TABLE S_H2 ( id INTEGER not NULL, PRIMARY KEY ( id ) )" , "CREATE TABLE S_H2 ( id INTEGER not NULL, PRIMARY KEY ( id ) )"),
-        ("SELECT * FROM TABLE WHERE name = 'O''Brady'" , "SELECT * FROM TABLE WHERE name = ?"),
-        ("INSERT INTO visits VALUES (2, 8, '2013-01-02', 'rabies shot')" , "INSERT INTO visits VALUES (?, ?, ?, ?)"),
         (
-            "SELECT
-\tcountry.country_name_eng,
-\tSUM(CASE WHEN call.id IS NOT NULL THEN 1 ELSE 0 END) AS calls,
-\tAVG(ISNULL(DATEDIFF(SECOND, call.start_time, call.end_time),0)) AS avg_difference
-FROM country
-LEFT JOIN city ON city.country_id = country.id
-LEFT JOIN customer ON city.id = customer.city_id
-LEFT JOIN call ON call.customer_id = customer.id
-GROUP BY
-\tcountry.id,
-\tcountry.country_name_eng
-HAVING AVG(ISNULL(DATEDIFF(SECOND, call.start_time, call.end_time),0)) > (SELECT AVG(DATEDIFF(SECOND, call.start_time, call.end_time)) FROM call)
-ORDER BY calls DESC, country.id ASC;",
-                "SELECT
-\tcountry.country_name_eng,
-\tSUM(CASE WHEN call.id IS NOT NULL THEN ? ELSE ? END) AS calls,
-\tAVG(ISNULL(DATEDIFF(SECOND, call.start_time, call.end_time),?)) AS avg_difference
-FROM country
-LEFT JOIN city ON city.country_id = country.id
-LEFT JOIN customer ON city.id = customer.city_id
-LEFT JOIN call ON call.customer_id = customer.id
-GROUP BY
-\tcountry.id,
-\tcountry.country_name_eng
-HAVING AVG(ISNULL(DATEDIFF(SECOND, call.start_time, call.end_time),?)) > (SELECT AVG(DATEDIFF(SECOND, call.start_time, call.end_time)) FROM call)
-ORDER BY calls DESC, country.id ASC;"
+            "SELECT * FROM TABLE WHERE userId = 'abc1287681964'",
+            "SELECT * FROM TABLE WHERE userId = ?",
         ),
-        ("DROP VIEW IF EXISTS v_country_all; GO CREATE VIEW v_country_all AS SELECT * FROM country;", "DROP VIEW IF EXISTS v_country_all; GO CREATE VIEW v_country_all AS SELECT * FROM country;"),
+        // Standard SQL uses '' to escape quotes, not backslash
         (
-            "UPDATE v_country_all /* 1. in-line comment */ SET
-/*
-    * 2. multi-line comment
-    */
-country_name = 'Nova1'
--- 3. single-line comment
-WHERE id = 8;",
-                "UPDATE v_country_all /* ? in-line comment */ SET
-/*
-    * ? multi-line comment
-    */
-country_name = ?
--- ? single-line comment
-WHERE id = ?"
+            "SELECT * FROM TABLE WHERE userId = 'it''s a string'",
+            "SELECT * FROM TABLE WHERE userId = ?",
         ),
         (
-            "INSERT INTO country (country_name, country_name_eng, country_code) VALUES ('Deutschland', 'Germany', 'DEU');
-INSERT INTO country (country_name, country_name_eng, country_code) VALUES ('Srbija', 'Serbia', 'SRB');
-INSERT INTO country (country_name, country_name_eng, country_code) VALUES ('Hrvatska', 'Croatia', 'HRV');
-INSERT INTO country (country_name, country_name_eng, country_code) VALUES ('United States of America', 'United States of America', 'USA');
-INSERT INTO country (country_name, country_name_eng, country_code) VALUES ('Polska', 'Poland', 'POL');",
-                "INSERT INTO country (country_name, country_name_eng, country_code) VALUES (?, ?, ?);
-INSERT INTO country (country_name, country_name_eng, country_code) VALUES (?, ?, ?);
-INSERT INTO country (country_name, country_name_eng, country_code) VALUES (?, ?, ?);
-INSERT INTO country (country_name, country_name_eng, country_code) VALUES (?, ?, ?);
-INSERT INTO country (country_name, country_name_eng, country_code) VALUES (?, ?, ?);"
+            "SELECT * FROM TABLE WHERE userId IN ('a', 'b', 'c')",
+            "SELECT * FROM TABLE WHERE userId IN ( ? )",
         ),
-        ("SELECT * FROM TABLE WHERE userId = ',' and foo=foo.bar", "SELECT * FROM TABLE WHERE userId = ? and foo=foo.bar"),
-        ("SELECT * FROM TABLE WHERE userId =     ','||foo.bar", "SELECT * FROM TABLE WHERE userId =     ?||foo.bar"),
         (
-            concat!(
-            "SELECT count(*) AS totcount FROM (SELECT \"c1\", \"c2\",\"c3\",\"c4\",\"c5\",\"c6\",\"c7\",\"c8\", \"c9\", \"c10\",\"c11\",\"c12\",\"c13\",\"c14\", \"c15\",\"c16\",\"c17\",\"c18\", \"c19\",\"c20\",\"c21\",\"c22\",\"c23\", \"c24\",\"c25\",\"c26\", \"c27\" FROM (SELECT bar.y AS \"c2\", foo.x AS \"c3\", foo.z AS \"c4\", DECODE(foo.a, NULL,NULL, foo.a ||', '|| foo.b) AS \"c5\" , foo.c AS \"c6\", bar.d AS \"c1\", bar.e AS \"c7\", bar.f AS \"c8\", bar.g AS \"c9\", TO_DATE(TO_CHAR(TO_DATE(bar.h,'YYYYMMDD'),'DD-MON-YYYY'),'DD-MON-YYYY') AS \"c10\", TO_DATE(TO_CHAR(TO_DATE(bar.i,'YYYYMMDD'),'DD-MON-YYYY'),'DD-MON-YYYY') AS \"c11\", CASE WHEN DECODE(bar.j, NULL, TRUNC(SYSDATE) - TRUNC(TO_DATE(bar.h,'YYYYMMDD'))) > 150 THEN '>150 Days' WHEN DECODE(bar.j, NULL, TRUNC(SYSDATE) - TRUNC(TO_DATE(bar.h,'YYYYMMDD'))) > 120 THEN '121 to 150 Days' WHEN DECODE(bar.j, NULL, TRUNC(SYSDATE) - TRUNC(TO_DATE(bar.h,'YYYYMMDD'))) > 90 THEN '91 to 120 Days' WHEN DECODE(bar.j, NULL, TRUNC(SYSDATE) - TRUNC(TO_DATE(bar.h,'YYYYMMDD'))) > 60 THEN '61 to 90 Days' WHEN DECODE(bar.j, NULL, TRUNC(SYSDATE) - TRUNC(TO_DATE(bar.h,'YYYYMMDD'))) > 30 THEN '31 to 60 Days' WHEN DECODE(bar.j, NULL, TRUNC(SYSDATE) - TRUNC(TO_DATE(bar.h,'YYYYMMDD'))) > 0 THEN '1 to 30 Days' ELSE NULL END AS \"c12\", DECODE(bar.j, NULL, TRUNC(SYSDATE) - TRUNC(TO_DATE(bar.h,'YYYYMMDD')),NULL) as \"c13\", bar.k AS \"c14\", bar.l ||', '||bar.m AS \"c15\", DECODE(bar.n, NULL, NULL,bar.n ||', '||bar.o) AS \"c16\", bar.p AS \"c17\", bar.q AS \"c18\", bar.r AS \"c19\", bar.s AS \"c20\", qux.a AS \"c21\", TO_CHAR(TO_DATE(qux.b,'YYYYMMDD'),'DD-MON-YYYY') AS \"c22\", DECODE(qux.l,NULL,NULL, qux.l ||', '||qux.m) AS \"c23\", bar.a AS \"c24\", TO_CHAR(TO_DATE(bar.j,'YYYYMMDD'),'DD-MON-YYYY') AS \"c25\", DECODE(bar.c , 1,'N',0, 'Y', bar.c ) AS \"c26\", bar.y AS y, bar.d, bar.d AS \"c27\" FROM blort.bar , ( SELECT * FROM (SELECT a,a,l,m,b,c, RANK() OVER (PARTITION BY c ORDER BY b DESC) RNK FROM blort.d WHERE y IN (:protocols)) WHERE RNK = 1) qux, blort.foo WHERE bar.c = qux.c(+) AND bar.x = foo.x AND bar.y IN (:protocols) and bar.x IN (:sites)) ) ",
-            "SELECT count(*) AS totcount FROM (SELECT \"c1\", \"c2\",\"c3\",\"c4\",\"c5\",\"c6\",\"c7\",\"c8\", \"c9\", \"c10\",\"c11\",\"c12\",\"c13\",\"c14\", \"c15\",\"c16\",\"c17\",\"c18\", \"c19\",\"c20\",\"c21\",\"c22\",\"c23\", \"c24\",\"c25\",\"c26\", \"c27\" FROM (SELECT bar.y AS \"c2\", foo.x AS \"c3\", foo.z AS \"c4\", DECODE(foo.a, NULL,NULL, foo.a ||', '|| foo.b) AS \"c5\" , foo.c AS \"c6\", bar.d AS \"c1\", bar.e AS \"c7\", bar.f AS \"c8\", bar.g AS \"c9\", TO_DATE(TO_CHAR(TO_DATE(bar.h,'YYYYMMDD'),'DD-MON-YYYY'),'DD-MON-YYYY') AS \"c10\", TO_DATE(TO_CHAR(TO_DATE(bar.i,'YYYYMMDD'),'DD-MON-YYYY'),'DD-MON-YYYY') AS \"c11\", CASE WHEN DECODE(bar.j, NULL, TRUNC(SYSDATE) - TRUNC(TO_DATE(bar.h,'YYYYMMDD'))) > 150 THEN '>150 Days' WHEN DECODE(bar.j, NULL, TRUNC(SYSDATE) - TRUNC(TO_DATE(bar.h,'YYYYMMDD'))) > 120 THEN '121 to 150 Days' WHEN DECODE(bar.j, NULL, TRUNC(SYSDATE) - TRUNC(TO_DATE(bar.h,'YYYYMMDD'))) > 90 THEN '91 to 120 Days' WHEN DECODE(bar.j, NULL, TRUNC(SYSDATE) - TRUNC(TO_DATE(bar.h,'YYYYMMDD'))) > 60 THEN '61 to 90 Days' WHEN DECODE(bar.j, NULL, TRUNC(SYSDATE) - TRUNC(TO_DATE(bar.h,'YYYYMMDD'))) > 30 THEN '31 to 60 Days' WHEN DECODE(bar.j, NULL, TRUNC(SYSDATE) - TRUNC(TO_DATE(bar.h,'YYYYMMDD'))) > 0 THEN '1 to 30 Days' ELSE NULL END AS \"c12\", DECODE(bar.j, NULL, TRUNC(SYSDATE) - TRUNC(TO_DATE(bar.h,'YYYYMMDD')),NULL) as \"c13\", bar.k AS \"c14\", bar.l ||', '||bar.m AS \"c15\", DECODE(bar.n, NULL, NULL,bar.n ||', '||bar.o) AS \"c16\", bar.p AS \"c17\", bar.q AS \"c18\", bar.r AS \"c19\", bar.s AS \"c20\", qux.a AS \"c21\", TO_CHAR(TO_DATE(qux.b,'YYYYMMDD'),'DD-MON-YYYY') AS \"c22\", DECODE(qux.l,NULL,NULL, qux.l ||', '||qux.m) AS \"c23\", bar.a AS \"c24\", TO_CHAR(TO_DATE(bar.j,'YYYYMMDD'),'DD-MON-YYYY') AS \"c25\", DECODE(bar.c , 1,'N',0, 'Y', bar.c ) AS \"c26\", bar.y AS y, bar.d, bar.d AS \"c27\" FROM blort.bar , ( SELECT * FROM (SELECT a,a,l,m,b,c, RANK() OVER (PARTITION BY c ORDER BY b DESC) RNK FROM blort.d WHERE y IN (:protocols)) WHERE RNK = 1) qux, blort.foo WHERE bar.c = qux.c(+) AND bar.x = foo.x AND bar.y IN (:protocols) and bar.x IN (:sites)) )"),
-            concat!(
-                "SELECT count(*) AS totcount FROM (SELECT \"c1\", \"c2\",\"c3\",\"c4\",\"c5\",\"c6\",\"c7\",\"c8\", \"c9\", \"c10\",\"c11\",\"c12\",\"c13\",\"c14\", \"c15\",\"c16\",\"c17\",\"c18\", \"c19\",\"c20\",\"c21\",\"c22\",\"c23\", \"c24\",\"c25\",\"c26\", \"c27\" FROM (SELECT bar.y AS \"c2\", foo.x AS \"c3\", foo.z AS \"c4\", DECODE(foo.a, NULL,NULL, foo.a ||?|| foo.b) AS \"c5\" , foo.c AS \"c6\", bar.d AS \"c1\", bar.e AS \"c7\", bar.f AS \"c8\", bar.g AS \"c9\", TO_DATE(TO_CHAR(TO_DATE(bar.h,?),?),?) AS \"c10\", TO_DATE(TO_CHAR(TO_DATE(bar.i,?),?),?) AS \"c11\", CASE WHEN DECODE(bar.j, NULL, TRUNC(SYSDATE) - TRUNC(TO_DATE(bar.h,?))) > ? THEN ? WHEN DECODE(bar.j, NULL, TRUNC(SYSDATE) - TRUNC(TO_DATE(bar.h,?))) > ? THEN ? WHEN DECODE(bar.j, NULL, TRUNC(SYSDATE) - TRUNC(TO_DATE(bar.h,?))) > ? THEN ? WHEN DECODE(bar.j, NULL, TRUNC(SYSDATE) - TRUNC(TO_DATE(bar.h,?))) > ? THEN ? WHEN DECODE(bar.j, NULL, TRUNC(SYSDATE) - TRUNC(TO_DATE(bar.h,?))) > ? THEN ? WHEN DECODE(bar.j, NULL, TRUNC(SYSDATE) - TRUNC(TO_DATE(bar.h,?))) > ? THEN ? ELSE NULL END AS \"c12\", DECODE(bar.j, NULL, TRUNC(SYSDATE) - TRUNC(TO_DATE(bar.h,?)),NULL) as \"c13\", bar.k AS \"c14\", bar.l ||?||bar.m AS \"c15\", DECODE(bar.n, NULL, NULL,bar.n ||?||bar.o) AS \"c16\", bar.p AS \"c17\", bar.q AS \"c18\", bar.r AS \"c19\", bar.s AS \"c20\", qux.a AS \"c21\", TO_CHAR(TO_DATE(qux.b,?),?) AS \"c22\", DECODE(qux.l,NULL,NULL, qux.l ||?||qux.m) AS \"c23\", bar.a AS \"c24\", TO_CHAR(TO_DATE(bar.j,?),?) AS \"c25\", DECODE(bar.c , ?,?,?, ?, bar.c ) AS \"c26\", bar.y AS y, bar.d, bar.d AS \"c27\" FROM blort.bar , ( SELECT * FROM (SELECT a,a,l,m,b,c, RANK() OVER (PARTITION BY c ORDER BY b DESC) RNK FROM blort.d WHERE y IN (:protocols)) WHERE RNK = ?) qux, blort.foo WHERE bar.c = qux.c(+) AND bar.x = foo.x AND bar.y IN (:protocols) and bar.x IN (:sites)) ) ",
-                "SELECT count(*) AS totcount FROM (SELECT \"c1\", \"c2\",\"c3\",\"c4\",\"c5\",\"c6\",\"c7\",\"c8\", \"c9\", \"c10\",\"c11\",\"c12\",\"c13\",\"c14\", \"c15\",\"c16\",\"c17\",\"c18\", \"c19\",\"c20\",\"c21\",\"c22\",\"c23\", \"c24\",\"c25\",\"c26\", \"c27\" FROM (SELECT bar.y AS \"c2\", foo.x AS \"c3\", foo.z AS \"c4\", DECODE(foo.a, NULL,NULL, foo.a ||?|| foo.b) AS \"c5\" , foo.c AS \"c6\", bar.d AS \"c1\", bar.e AS \"c7\", bar.f AS \"c8\", bar.g AS \"c9\", TO_DATE(TO_CHAR(TO_DATE(bar.h,?),?),?) AS \"c10\", TO_DATE(TO_CHAR(TO_DATE(bar.i,?),?),?) AS \"c11\", CASE WHEN DECODE(bar.j, NULL, TRUNC(SYSDATE) - TRUNC(TO_DATE(bar.h,?))) > ? THEN ? WHEN DECODE(bar.j, NULL, TRUNC(SYSDATE) - TRUNC(TO_DATE(bar.h,?))) > ? THEN ? WHEN DECODE(bar.j, NULL, TRUNC(SYSDATE) - TRUNC(TO_DATE(bar.h,?))) > ? THEN ? WHEN DECODE(bar.j, NULL, TRUNC(SYSDATE) - TRUNC(TO_DATE(bar.h,?))) > ? THEN ? WHEN DECODE(bar.j, NULL, TRUNC(SYSDATE) - TRUNC(TO_DATE(bar.h,?))) > ? THEN ? WHEN DECODE(bar.j, NULL, TRUNC(SYSDATE) - TRUNC(TO_DATE(bar.h,?))) > ? THEN ? ELSE NULL END AS \"c12\", DECODE(bar.j, NULL, TRUNC(SYSDATE) - TRUNC(TO_DATE(bar.h,?)),NULL) as \"c13\", bar.k AS \"c14\", bar.l ||?||bar.m AS \"c15\", DECODE(bar.n, NULL, NULL,bar.n ||?||bar.o) AS \"c16\", bar.p AS \"c17\", bar.q AS \"c18\", bar.r AS \"c19\", bar.s AS \"c20\", qux.a AS \"c21\", TO_CHAR(TO_DATE(qux.b,?),?) AS \"c22\", DECODE(qux.l,NULL,NULL, qux.l ||?||qux.m) AS \"c23\", bar.a AS \"c24\", TO_CHAR(TO_DATE(bar.j,?),?) AS \"c25\", DECODE(bar.c , ?,?,?, ?, bar.c ) AS \"c26\", bar.y AS y, bar.d, bar.d AS \"c27\" FROM blort.bar , ( SELECT * FROM (SELECT a,a,l,m,b,c, RANK() OVER (PARTITION BY c ORDER BY b DESC) RNK FROM blort.d WHERE y IN (:protocols)) WHERE RNK = ?) qux, blort.foo WHERE bar.c = qux.c(+) AND bar.x = foo.x AND bar.y IN (:protocols) and bar.x IN (:sites)) )"
-            )
+            "SELECT * FROM TABLE WHERE userId = 'abc1287681964' ORDER BY FOO DESC",
+            "SELECT * FROM TABLE WHERE userId = ? ORDER BY FOO DESC",
+        ),
+        // Backslash followed by ' at a SQL word boundary (space follows): string closes there
+        // 'backslash\' closes at the ' after \, because ' is followed by space (SQL boundary)
+        (
+            "SELECT * FROM foo LEFT JOIN bar ON 'backslash\\' = foo.b WHERE foo.name = 'String'",
+            "SELECT * FROM foo LEFT JOIN bar ON ? = foo.b WHERE foo.name = ?",
+        ),
+        (
+            "SELECT * FROM foo LEFT JOIN bar ON 'backslash\\' = foo.b LEFT JOIN bar2 ON 'backslash2\\' = foo.b2 WHERE foo.name = 'String'",
+            "SELECT * FROM foo LEFT JOIN bar ON ? = foo.b LEFT JOIN bar2 ON ? = foo.b2 WHERE foo.name = ?",
+        ),
+        // Backslash followed by ' before more string content (alphanumeric follows): acts as escape
+        // 'embedded \'quote\' in string' is ONE string because ' after \ is followed by 'q'
+        (
+            "SELECT * FROM foo LEFT JOIN bar ON 'embedded \\'quote\\' in string' = foo.b WHERE foo.name = 'String'",
+            "SELECT * FROM foo LEFT JOIN bar ON ? = foo.b WHERE foo.name = ?",
+        ),
+        (
+            "SELECT * FROM TABLE JOIN SOMETHING ON TABLE.foo = SOMETHING.bar",
+            "SELECT * FROM TABLE JOIN SOMETHING ON TABLE.foo = SOMETHING.bar",
+        ),
+        (
+            "CREATE TABLE \"VALUE\"",
+            "CREATE TABLE VALUE",
+        ),
+        (
+            "INSERT INTO \"VALUE\" (\"column\") VALUES (\'ljahklshdlKASH\')",
+            "INSERT INTO VALUE ( column ) VALUES ( ? )",
+        ),
+        (
+            "INSERT INTO \"VALUE\" (\"col1\",\"col2\",\"col3\") VALUES (\'blah\',12983,X'ff')",
+            "INSERT INTO VALUE ( col1, col2, col3 ) VALUES ( ? )",
+        ),
+        (
+            "INSERT INTO \"VALUE\" (\"col1\", \"col2\", \"col3\") VALUES (\'blah\',12983,X'ff')",
+            "INSERT INTO VALUE ( col1, col2, col3 ) VALUES ( ? )",
+        ),
+        (
+            "INSERT INTO VALUE (col1,col2,col3) VALUES (\'blah\',12983,X'ff')",
+            "INSERT INTO VALUE ( col1, col2, col3 ) VALUES ( ? )",
+        ),
+        (
+            "INSERT INTO VALUE (col1,col2,col3) VALUES (12983,X'ff',\'blah\')",
+            "INSERT INTO VALUE ( col1, col2, col3 ) VALUES ( ? )",
+        ),
+        (
+            "INSERT INTO VALUE (col1,col2,col3) VALUES (X'ff',\'blah\',12983)",
+            "INSERT INTO VALUE ( col1, col2, col3 ) VALUES ( ? )",
+        ),
+        (
+            "INSERT INTO VALUE (col1,col2,col3) VALUES ('a',\'b\',1)",
+            "INSERT INTO VALUE ( col1, col2, col3 ) VALUES ( ? )",
+        ),
+        (
+            "INSERT INTO VALUE (col1, col2, col3) VALUES ('a',\'b\',1)",
+            "INSERT INTO VALUE ( col1, col2, col3 ) VALUES ( ? )",
+        ),
+        (
+            "INSERT INTO VALUE ( col1, col2, col3 ) VALUES ('a',\'b\',1)",
+            "INSERT INTO VALUE ( col1, col2, col3 ) VALUES ( ? )",
+        ),
+        (
+            "INSERT INTO VALUE (col1,col2,col3) VALUES ('a', \'b\' ,1)",
+            "INSERT INTO VALUE ( col1, col2, col3 ) VALUES ( ? )",
+        ),
+        (
+            "INSERT INTO VALUE (col1, col2, col3) VALUES ('a', \'b\', 1)",
+            "INSERT INTO VALUE ( col1, col2, col3 ) VALUES ( ? )",
+        ),
+        (
+            "INSERT INTO VALUE ( col1, col2, col3 ) VALUES ('a', \'b\', 1)",
+            "INSERT INTO VALUE ( col1, col2, col3 ) VALUES ( ? )",
+        ),
+        (
+            "INSERT INTO VALUE (col1,col2,col3) VALUES (X'ff',\'罿潯罿潯罿潯罿潯罿潯\',12983)",
+            "INSERT INTO VALUE ( col1, col2, col3 ) VALUES ( ? )",
+        ),
+        (
+            "INSERT INTO VALUE (col1,col2,col3) VALUES (X'ff',\'罿\',12983)",
+            "INSERT INTO VALUE ( col1, col2, col3 ) VALUES ( ? )",
+        ),
+        // AS resets groupFilter: comma after alias IS kept (verified against Go)
+        (
+            "SELECT 3 AS NUCLEUS_TYPE,A0.ID,A0.\"NAME\" FROM \"VALUE\" A0",
+            "SELECT ?, A0.ID, A0.NAME FROM VALUE A0",
+        ),
+        (
+            "SELECT COUNT(*) FROM TABLE_1 JOIN table_2 ON TABLE_1.foo = table_2.bar where col1 > .9999",
+            "SELECT COUNT ( * ) FROM TABLE_1 JOIN table_2 ON TABLE_1.foo = table_2.bar where col1 > ?",
+        ),
+        (
+            "SELECT COUNT(*) FROM TABLE_1 JOIN table_2 ON TABLE_1.foo = table_2.bar where col1 > 0.9999",
+            "SELECT COUNT ( * ) FROM TABLE_1 JOIN table_2 ON TABLE_1.foo = table_2.bar where col1 > ?",
+        ),
+        (
+            "SELECT COUNT(*) FROM TABLE_1 JOIN table_2 ON TABLE_1.foo = table_2.bar where col1 > -0.9999",
+            "SELECT COUNT ( * ) FROM TABLE_1 JOIN table_2 ON TABLE_1.foo = table_2.bar where col1 > ?",
+        ),
+        (
+            "SELECT COUNT(*) FROM TABLE_1 JOIN table_2 ON TABLE_1.foo = table_2.bar where col1 > -1e6",
+            "SELECT COUNT ( * ) FROM TABLE_1 JOIN table_2 ON TABLE_1.foo = table_2.bar where col1 > ?",
+        ),
+        (
+            "SELECT COUNT(*) FROM TABLE_1 JOIN table_2 ON TABLE_1.foo = table_2.bar where col1 > +1e6",
+            "SELECT COUNT ( * ) FROM TABLE_1 JOIN table_2 ON TABLE_1.foo = table_2.bar where col1 > ?",
+        ),
+        (
+            "SELECT COUNT(*) FROM TABLE_1 JOIN table_2 ON TABLE_1.foo = table_2.bar where col1 > +255",
+            "SELECT COUNT ( * ) FROM TABLE_1 JOIN table_2 ON TABLE_1.foo = table_2.bar where col1 > ?",
+        ),
+        (
+            "SELECT COUNT(*) FROM TABLE_1 JOIN table_2 ON TABLE_1.foo = table_2.bar where col1 > +6.34F",
+            "SELECT COUNT ( * ) FROM TABLE_1 JOIN table_2 ON TABLE_1.foo = table_2.bar where col1 > ?",
+        ),
+        (
+            "SELECT COUNT(*) FROM TABLE_1 JOIN table_2 ON TABLE_1.foo = table_2.bar where col1 > +6f",
+            "SELECT COUNT ( * ) FROM TABLE_1 JOIN table_2 ON TABLE_1.foo = table_2.bar where col1 > ?",
+        ),
+        (
+            "SELECT COUNT(*) FROM TABLE_1 JOIN table_2 ON TABLE_1.foo = table_2.bar where col1 > +0.5D",
+            "SELECT COUNT ( * ) FROM TABLE_1 JOIN table_2 ON TABLE_1.foo = table_2.bar where col1 > ?",
+        ),
+        (
+            "SELECT COUNT(*) FROM TABLE_1 JOIN table_2 ON TABLE_1.foo = table_2.bar where col1 > -1d",
+            "SELECT COUNT ( * ) FROM TABLE_1 JOIN table_2 ON TABLE_1.foo = table_2.bar where col1 > ?",
+        ),
+        (
+            "SELECT COUNT(*) FROM TABLE_1 JOIN table_2 ON TABLE_1.foo = table_2.bar where col1 > x'ff'",
+            "SELECT COUNT ( * ) FROM TABLE_1 JOIN table_2 ON TABLE_1.foo = table_2.bar where col1 > ?",
+        ),
+        (
+            "SELECT COUNT(*) FROM TABLE_1 JOIN table_2 ON TABLE_1.foo = table_2.bar where col1 > X'ff'",
+            "SELECT COUNT ( * ) FROM TABLE_1 JOIN table_2 ON TABLE_1.foo = table_2.bar where col1 > ?",
+        ),
+        (
+            "SELECT COUNT(*) FROM TABLE_1 JOIN table_2 ON TABLE_1.foo = table_2.bar where col1 > 0xff",
+            "SELECT COUNT ( * ) FROM TABLE_1 JOIN table_2 ON TABLE_1.foo = table_2.bar where col1 > ?",
+        ),
+        (
+            "SELECT COUNT(*) FROM TABLE_1 JOIN table_2 ON TABLE_1.foo = table_2.bar where col1 <> \'\'",
+            "SELECT COUNT ( * ) FROM TABLE_1 JOIN table_2 ON TABLE_1.foo = table_2.bar where col1 <> ?",
+        ),
+        (
+            "SELECT COUNT(*) FROM TABLE_1 JOIN table_2 ON TABLE_1.foo = table_2.bar where col1 <> \' \'",
+            "SELECT COUNT ( * ) FROM TABLE_1 JOIN table_2 ON TABLE_1.foo = table_2.bar where col1 <> ?",
+        ),
+        (
+            "SELECT COUNT(*) FROM TABLE_1 JOIN table_2 ON TABLE_1.foo = table_2.bar where col1 <> \'  \'",
+            "SELECT COUNT ( * ) FROM TABLE_1 JOIN table_2 ON TABLE_1.foo = table_2.bar where col1 <> ?",
+        ),
+        // Standard SQL strings with spaces and regular content
+        (
+            "SELECT COUNT(*) FROM TABLE_1 JOIN table_2 ON TABLE_1.foo = table_2.bar where col1 <> ' x '",
+            "SELECT COUNT ( * ) FROM TABLE_1 JOIN table_2 ON TABLE_1.foo = table_2.bar where col1 <> ?",
+        ),
+        (
+            "SELECT COUNT(*) FROM TABLE_1 JOIN table_2 ON TABLE_1.foo = table_2.bar where col1 <> ' x x'",
+            "SELECT COUNT ( * ) FROM TABLE_1 JOIN table_2 ON TABLE_1.foo = table_2.bar where col1 <> ?",
+        ),
+        (
+            "SELECT COUNT(*) FROM TABLE_1 JOIN table_2 ON TABLE_1.foo = table_2.bar where col1 <> \'5,123\'",
+            "SELECT COUNT ( * ) FROM TABLE_1 JOIN table_2 ON TABLE_1.foo = table_2.bar where col1 <> ?",
+        ),
+        // comma after ? is stripped: NOT NULL, next_col → NOT ? next_col
+        (
+            "CREATE TABLE S_H2 (id INTEGER not NULL, PRIMARY KEY ( id ))",
+            "CREATE TABLE S_H2 ( id INTEGER not ? PRIMARY KEY ( id ) )",
+        ),
+        (
+            "CREATE TABLE S_H2 ( id INTEGER not NULL, PRIMARY KEY ( id ) )",
+            "CREATE TABLE S_H2 ( id INTEGER not ? PRIMARY KEY ( id ) )",
+        ),
+        (
+            "SELECT * FROM TABLE WHERE name = 'O''Brady'",
+            "SELECT * FROM TABLE WHERE name = ?",
+        ),
+        (
+            "INSERT INTO visits VALUES (2, 8, '2013-01-02', 'rabies shot')",
+            "INSERT INTO visits VALUES ( ? )",
+        ),
+        (
+            "SELECT * FROM TABLE WHERE userId = ',' and foo=foo.bar",
+            "SELECT * FROM TABLE WHERE userId = ? and foo = foo.bar",
+        ),
+        (
+            "SELECT * FROM TABLE WHERE userId =     ','||foo.bar",
+            "SELECT * FROM TABLE WHERE userId = ? | | foo.bar",
+        ),
+        // :named bind params kept as-is
+        (
+            "SELECT * FROM t WHERE y IN (:protocols) AND x IN (:sites)",
+            "SELECT * FROM t WHERE y IN ( :protocols ) AND x IN ( :sites )",
+        ),
+        // multi-row VALUES collapse (quantizer_33)
+        (
+            "INSERT INTO user (id, username) VALUES ('Fred','Smith'), ('John','Smith'), ('Michael','Smith'), ('Robert','Smith');",
+            "INSERT INTO user ( id, username ) VALUES ( ? )",
+        ),
+        // backtick identifier with regular ident after dot (quantizer_43)
+        (
+            "INSERT INTO `qual-aa`.issues (alert0, alert1) VALUES (NULL, NULL)",
+            "INSERT INTO qual-aa . issues ( alert0, alert1 ) VALUES ( ? )",
+        ),
+        // !+2 sign handling: + after ! should be an operator (table_finder_23)
+        (
+            "select !+2",
+            "select ! + ?",
+        ),
+        // keep_positional_parameter handled in test_sql_obfuscation_config below
+
+        // 5*s1: multiplication, not sign prefix (quantizer_49 style)
+        (
+            "SELECT 5*s1 FROM t4",
+            "SELECT ? * s1 FROM t4",
+        ),
+        (
+            "(SELECT 5*s1 FROM t4 UNION SELECT 77 FROM t5)",
+            "( SELECT ? * s1 FROM t4 UNION SELECT ? FROM t5 )",
+        ),
+        // Full quantizer_49 relevant fragment (ROW with = subquery)
+        (
+            "WHERE ROW(5*t2.s1,77)=(SELECT 5*s1 FROM t4 UNION SELECT 77 FROM (SELECT * FROM t5))",
+            "WHERE ROW ( ? * t2.s1, ? ) = ( SELECT ? * s1 FROM t4 UNION SELECT ? FROM ( SELECT * FROM t5 ) )",
+        ),
+        // comma after ? is stripped (quantizer_10 style)
+        (
+            "UPDATE user_dash_pref SET json_prefs = %(json_prefs)s, modified = '2015-08-27' WHERE user_id = %(user_id)s AND url = %(url)s",
+            "UPDATE user_dash_pref SET json_prefs = ? modified = ? WHERE user_id = ? AND url = ?",
+        ),
+        // comma after ? in SET list (metadata_create_trigger style)
+        (
+            "UPDATE t SET a = 1, b = 2, c = 3",
+            "UPDATE t SET a = ? b = ? c = ?",
+        ),
+        // comma after ? in function call (quantizer_81 style): comma after first ? arg stripped
+        (
+            "SELECT set_config('foo', bar, FALSE)",
+            "SELECT set_config ( ? bar, ? )",
         ),
     ];
+
+    #[test]
+    fn test_normalize_only() {
+        let config = super::SqlObfuscateConfig {
+            obfuscation_mode: "normalize_only".to_string(),
+            ..Default::default()
+        };
+        let cases = &[
+            // Simple: keep numbers as-is
+            (
+                "SELECT * FROM users WHERE id = 1",
+                "SELECT * FROM users WHERE id = 1",
+            ),
+            // Keep strings as-is
+            (
+                "SELECT * FROM users WHERE id = 1 AND name = 'test'",
+                "SELECT * FROM users WHERE id = 1 AND name = 'test'",
+            ),
+            // Strip comments, normalize whitespace
+            (
+                "-- comment\n/* comment */\nSELECT id as id, name as n FROM users123 WHERE id in (1,2,3)",
+                "SELECT id as id, name as n FROM users123 WHERE id in ( 1, 2, 3 )",
+            ),
+            // WITH CTE: keep AS
+            (
+                "WITH users AS (SELECT * FROM people) SELECT * FROM users",
+                "WITH users AS ( SELECT * FROM people ) SELECT * FROM users",
+            ),
+            // Keep positional params as-is
+            (
+                "SELECT * FROM users WHERE id = 1 AND address = $1 and id = $2 AND deleted IS NULL AND active is TRUE",
+                "SELECT * FROM users WHERE id = 1 AND address = $1 and id = $2 AND deleted IS NULL AND active is TRUE",
+            ),
+            // keep_trailing_semicolon ignored — semicolon stripped in normalize mode (same as obfuscate)
+            // Actually in normalize mode: keep semicolon when keep_trailing_semicolon=true
+            // Here with default (false): strip semicolon
+            (
+                "SELECT * FROM users WHERE id = 1;",
+                "SELECT * FROM users WHERE id = 1",
+            ),
+        ];
+        for (input, expected) in cases {
+            let got = super::obfuscate_sql(input, &config);
+            assert_eq!(got, *expected, "normalize_only input={input:?}");
+        }
+    }
+
+    #[test]
+    fn test_normalize_only_keep_trailing_semi() {
+        let config = super::SqlObfuscateConfig {
+            obfuscation_mode: "normalize_only".to_string(),
+            keep_trailing_semicolon: true,
+            ..Default::default()
+        };
+        let got = super::obfuscate_sql(
+            "SELECT * FROM users WHERE id = 1 AND name = 'test';",
+            &config,
+        );
+        let expected = "SELECT * FROM users WHERE id = 1 AND name = 'test';";
+        assert_eq!(
+            got, expected,
+            "normalize_only+keep_trailing_semicolon: {got:?}"
+        );
+    }
+
+    #[test]
+    fn test_normalize_only_keep_identifier_quotation() {
+        let config = super::SqlObfuscateConfig {
+            obfuscation_mode: "normalize_only".to_string(),
+            keep_identifier_quotation: true,
+            ..Default::default()
+        };
+        let got = super::obfuscate_sql(
+            r#"SELECT * FROM "users" WHERE id = 1 AND name = 'test'"#,
+            &config,
+        );
+        let expected = r#"SELECT * FROM "users" WHERE id = 1 AND name = 'test'"#;
+        assert_eq!(
+            got, expected,
+            "normalize_only+keep_identifier_quotation: {got:?}"
+        );
+    }
+
+    #[test]
+    fn test_with_cte_stripping() {
+        // In legacy mode (obfuscation_mode=""), WITH T1 AS (SELECT...) → WITH T1 SELECT...
+        let config = super::SqlObfuscateConfig::default();
+        let cases = &[
+            // Single CTE - strip AS and opening paren, keep closing )
+            (
+                "WITH sales AS (SELECT x FROM t WHERE id = 1) SELECT * FROM sales",
+                "WITH sales SELECT x FROM t WHERE id = ? ) SELECT * FROM sales",
+            ),
+            // Two CTEs - comma between CTEs stripped too
+            (
+                "WITH T1 AS (SELECT a FROM t1 WHERE id = 1), T2 AS (SELECT b FROM t2) SELECT * FROM T1",
+                "WITH T1 SELECT a FROM t1 WHERE id = ? ) T2 SELECT b FROM t2 ) SELECT * FROM T1",
+            ),
+        ];
+        for (input, expected) in cases {
+            let got = super::obfuscate_sql(input, &config);
+            assert_eq!(got, *expected, "with_cte_stripping input={input:?}");
+        }
+    }
+
+    #[test]
+    fn test_double_quoted_string_value_quantize() {
+        // Double-quoted strings in value context (after =) should be quantized
+        let config = super::SqlObfuscateConfig::default();
+        let cases = &[
+            // After = in SET clause
+            (
+                r#"update Orders set created = "2019-05-24 00:26:17", gross = 30.28"#,
+                "update Orders set created = ? gross = ?",
+            ),
+            // After = in SET clause, identifier-like value
+            (
+                r#"update Orders set payment_type = "eventbrite""#,
+                "update Orders set payment_type = ?",
+            ),
+            // Table identifier (after FROM) — keep
+            (
+                r#"SELECT * FROM "users" WHERE id = 1"#,
+                r#"SELECT * FROM users WHERE id = ?"#,
+            ),
+        ];
+        for (input, expected) in cases {
+            let got = super::obfuscate_sql(input, &config);
+            assert_eq!(got, *expected, "double_quoted_value input={input:?}");
+        }
+    }
+
+    #[test]
+    fn test_normalize_only_dollar_func() {
+        // In normalize_only mode, dollar-quoted strings are normalized (not quantized)
+        let config = super::SqlObfuscateConfig {
+            obfuscation_mode: "normalize_only".to_string(),
+            ..Default::default()
+        };
+        let got = super::obfuscate_sql(
+            "SELECT $func$INSERT INTO table VALUES ('a', 1, 2)$func$ FROM users",
+            &config,
+        );
+        let expected = "SELECT $func$INSERT INTO table VALUES ( 'a', 1, 2 )$func$ FROM users";
+        assert_eq!(got, expected, "normalize_only dollar_func: {got:?}");
+    }
+
+    #[test]
+    fn test_dollar_quoted_func_trivial_collapse() {
+        // When dollar_quoted_func=true and inner content obfuscates to a single ?, collapse to ?
+        let config = super::SqlObfuscateConfig {
+            dollar_quoted_func: true,
+            replace_digits: true,
+            ..Default::default()
+        };
+        let got = super::obfuscate_sql("SELECT * FROM users123 WHERE id = $tag$1$tag$", &config);
+        let expected = "SELECT * FROM users? WHERE id = ?";
+        assert_eq!(
+            got, expected,
+            "dollar_quoted_func trivial collapse: {got:?}"
+        );
+    }
+
+    #[test]
+    fn test_obfuscate_only_keeps_quotes_and_semi() {
+        // In obfuscate_only mode: keep double-quoted identifiers, keep $?, keep trailing ;
+        let config = super::SqlObfuscateConfig {
+            obfuscation_mode: "obfuscate_only".to_string(),
+            ..Default::default()
+        };
+        let got = super::obfuscate_sql(
+            r#"SELECT "table"."field" FROM "table" WHERE "table"."otherfield" = $? AND "table"."thirdfield" = $?;"#,
+            &config,
+        );
+        let expected = r#"SELECT "table"."field" FROM "table" WHERE "table"."otherfield" = $? AND "table"."thirdfield" = $?;"#;
+        assert_eq!(got, expected, "obfuscate_only keeps quotes/$/semi: {got:?}");
+    }
+
+    #[test]
+    fn test_obfuscate_only_dollar_quoted_func_no_collapse() {
+        // In obfuscate_only+dollar_quoted_func: VALUES inside func are NOT collapsed
+        let config = super::SqlObfuscateConfig {
+            obfuscation_mode: "obfuscate_only".to_string(),
+            dollar_quoted_func: true,
+            ..Default::default()
+        };
+        let got = super::obfuscate_sql(
+            "SELECT $func$INSERT INTO table VALUES ('a', 1, 2)$func$ FROM users",
+            &config,
+        );
+        let expected = "SELECT $func$INSERT INTO table VALUES (?, ?, ?)$func$ FROM users";
+        assert_eq!(
+            got, expected,
+            "obfuscate_only dollar_quoted_func no collapse: {got:?}"
+        );
+    }
+
+    #[test]
+    fn test_normalize_only_procedure() {
+        let config = super::SqlObfuscateConfig {
+            obfuscation_mode: "normalize_only".to_string(),
+            ..Default::default()
+        };
+        let got = super::obfuscate_sql(
+            "CREATE PROCEDURE TestProc AS BEGIN UPDATE users SET name = 'test' WHERE id = 1 END",
+            &config,
+        );
+        let expected =
+            "CREATE PROCEDURE TestProc AS BEGIN UPDATE users SET name = 'test' WHERE id = 1 END";
+        assert_eq!(got, expected, "normalize_only+procedure: {got:?}");
+    }
+
+    #[test]
+    fn test_q41() {
+        let config = super::SqlObfuscateConfig::default();
+        let input = "SELECT * FROM public.table ( array [ ROW ( array [ 'magic', 'foo',";
+        // First check raw (pre-collapse) output
+        let mut tok = super::Tokenizer::new(input, &config);
+        tok.process();
+        let raw = tok.finalize();
+        eprintln!("RAW: {raw:?}");
+        let got = super::obfuscate_sql(input, &config);
+        let expected = "SELECT * FROM public.table ( array [ ROW ( array [ ?";
+        assert_eq!(got, expected, "q41: {got:?}");
+    }
+
+    // --- Integration test cases added for faster iteration ---
+
+    #[test]
+    fn test_pg_json_operators_7() {
+        // JSONB ? operator followed by string literal — both should be kept as ?
+        let config = super::SqlObfuscateConfig {
+            dbms: "postgresql".to_string(),
+            ..Default::default()
+        };
+        let got = super::obfuscate_sql("select * from users where user.custom ? 'foo'", &config);
+        let expected = "select * from users where user.custom ? ?";
+        assert_eq!(got, expected, "pg_json_7: {got:?}");
+    }
+
+    #[test]
+    fn test_quantizer_90() {
+        // Inline comment /*!obfuscation*/ should be stripped; consecutive literals after = reset
+        let config = super::SqlObfuscateConfig::default();
+        let got = super::obfuscate_sql(
+            "SELECT * FROM dbo.Items WHERE id = 1 or /*!obfuscation*/ 1 = 1",
+            &config,
+        );
+        let expected = "SELECT * FROM dbo.Items WHERE id = ? or ? = ?";
+        assert_eq!(got, expected, "q90: {got:?}");
+    }
+
+    #[test]
+    fn test_cassandra_nested_dates() {
+        // Consecutive ? placeholders inside nested function calls should be suppressed
+        let config = super::SqlObfuscateConfig::default();
+        let got = super::obfuscate_sql(
+            "SELECT TO_DATE(TO_CHAR(TO_DATE(bar.h,?),?),?) FROM t",
+            &config,
+        );
+        let expected = "SELECT TO_DATE ( TO_CHAR ( TO_DATE ( bar.h, ? ) ) ) FROM t";
+        assert_eq!(got, expected, "cassandra_nested_dates: {got:?}");
+    }
+
+    #[test]
+    fn test_cassandra_pipe_concat() {
+        // || concatenation — Go tokenizes as two separate | tokens with spaces
+        let config = super::SqlObfuscateConfig::default();
+        let got = super::obfuscate_sql("SELECT a ||?|| b FROM t", &config);
+        let expected = "SELECT a | | ? | | b FROM t";
+        assert_eq!(got, expected, "cassandra_pipe: {got:?}");
+    }
 }
