@@ -112,6 +112,8 @@ mod tests {
                     grpc_status_code: "0".to_string(),
                     http_endpoint: "/test".to_string(),
                     http_method: "GET".to_string(),
+                    service_source: "".to_string(),
+                    span_derived_primary_tags: vec![],
                 }],
                 agent_time_shift: 0,
             }],

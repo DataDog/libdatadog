@@ -36,6 +36,8 @@ jobs:
           swap-storage: true
       - name: Checkout sources
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # 4.2.2
+        with:
+          submodules: recursive
       - name: Install Rust ${{ matrix.rust_version }}
         if: matrix.rust_version != ''
         run: rustup install ${{ matrix.rust_version }} && rustup default ${{ matrix.rust_version }}
@@ -86,6 +88,21 @@ jobs:
           report_paths: "target/nextest/ci/junit.xml"
           check_name: "[${{ matrix.platform }}:${{ matrix.rust_version }}] test report"
           include_passed: true
+      # We're using not-that-ideal XSLT here as this change, because it must be done over 17+ repos.
+      # It's a workaround until this gets integrated into a better place, such as datadog-ci or the backend.
+      #
+      # * ticket: https://datadoghq.atlassian.net/browse/APMSP-2610
+      # * RFC: https://docs.google.com/document/d/1OaX_h09fCXWmK_1ADrwvilt8Yt5h4WjC7UUAdS3Y3uw/edit?pli=1&tab=t.0#heading=h.tfy5viz7rz2
+      - name: Add final_status property
+        if: success() || failure()
+        shell: bash
+        run: |
+          which xsltproc || sudo apt-get install -y xsltproc
+          echo "Fixing target/nextest/ci/junit.xml"
+          tmp_file="$(mktemp)"
+          xsltproc --output "$tmp_file" ".github/workflows/add_final_status.xsl" "target/nextest/ci/junit.xml"
+          mv "$tmp_file" "target/nextest/ci/junit.xml"
+
       - name: Upload test results to Datadog
         if: success() || failure()
         shell: bash
@@ -107,11 +124,11 @@ jobs:
             CHECKSUM_CMD="shasum -a 256"
             EXPECTED_CHECKSUM="071a6140b17438b3f9dd6c65da48b48ea03fc310034fa624ce874fdb6c325da4"
           fi
-                    
+
           echo "Downloading datadog-ci from $URL"
           curl -L --fail --retry 3 -o "$OUTPUT" "$URL"
           chmod +x "$OUTPUT"
-          
+
           # Verify checksum
           ACTUAL_CHECKSUM=$($CHECKSUM_CMD "$OUTPUT" | cut -d' ' -f1)
           echo "Expected checksum: $EXPECTED_CHECKSUM"
@@ -155,6 +172,8 @@ jobs:
     steps:
       - name: Checkout sources
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # 4.2.2
+        with:
+          submodules: recursive
       - name: Setup output dir
         shell: bash
         run: |
@@ -279,7 +298,7 @@ jobs:
           .\build-profiling.ps1
 
   cross-centos7:
-    name: build and test using cross - on centos7
+    name: Test x86_64-unknown-linux-gnu on centOS7 docker image
     runs-on: ubuntu-latest
     concurrency:
       group: ci-${{ github.ref }}-cross-centos7
@@ -297,15 +316,72 @@ jobs:
           swap-storage: true
       - name: Checkout
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # 4.2.2
+        with:
+          submodules: recursive
       - name: Cache [rust]
         uses: Swatinem/rust-cache@f13886b937689c021905a6b90929199931d60db1 # 2.8.1
         with:
           cache-targets: true # cache build artifacts
           cache-bin: true # cache the ~/.cargo/bin directory
-      - run: cargo install cross || true
-      - run: cross build --workspace --target x86_64-unknown-linux-gnu --exclude builder
-      - run: cross test --workspace --features libdd-crashtracker/generate-unit-test-files --target x86_64-unknown-linux-gnu --exclude builder  -- --skip "::single_threaded_tests::" --skip "tracing_integration_tests::"
-      - run: cross test --workspace --features libdd-crashtracker/generate-unit-test-files --target x86_64-unknown-linux-gnu --exclude builder --exclude bin_tests -- --skip "::tests::" --skip "::api_tests::" --test-threads 1 --skip "tracing_integration_tests::"
+      - name: Build CentOS 7 Docker image
+        run: docker build -t libdatadog-centos7 -f tools/docker/Dockerfile.centos .
+      - name: "cargo nextest run (centos7)"
+        # Run docker as a user, not the default root
+        # Mount and use the runner's toolchain as it's the same arch
+        # exclude tracing integration tests since they require docker in docker to run a test-agent
+        run: >-
+          docker run --rm
+          --user "$(id -u):$(id -g)" 
+          -v "${{ github.workspace }}:/workspace"
+          -v "${CARGO_HOME:-$HOME/.cargo}:/usr/local/cargo"
+          -v "${RUSTUP_HOME:-$HOME/.rustup}:/usr/local/rustup"
+          -e CARGO_HOME=/usr/local/cargo
+          -e RUSTUP_HOME=/usr/local/rustup
+          -e PATH=/usr/local/cargo/bin:/usr/local/rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin:/opt/rh/devtoolset-11/root/usr/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+          -w /workspace
+          libdatadog-centos7
+          cargo nextest run --workspace --features libdd-crashtracker/generate-unit-test-files
+          --exclude builder --profile ci
+          -E '!test(tracing_integration_tests::)'
+      - name: Add file attributes to JUnit XML
+        if: success() || failure()
+        run: cargo run --bin add_junit_file_attributes -- target/nextest/ci/junit.xml
+      - name: Report Test Results
+        if: success() || failure()
+        uses: mikepenz/action-junit-report@db71d41eb79864e25ab0337e395c352e84523afe # 4.3.1
+        with:
+          report_paths: "target/nextest/ci/junit.xml"
+          check_name: "[centos7] test report"
+          include_passed: true
+      - name: Upload test results to Datadog
+        if: success() || failure()
+        run: |
+          URL="https://github.com/DataDog/datadog-ci/releases/download/v4.2.2/datadog-ci_linux-x64"
+          OUTPUT="datadog-ci"
+          EXPECTED_CHECKSUM="3e1e9649d15d3feacced89ec90de66151046a58c7844217e4112362ad8dbf8d1"
+
+          echo "Downloading datadog-ci from $URL"
+          curl -L --fail --retry 3 -o "$OUTPUT" "$URL"
+          chmod +x "$OUTPUT"
+
+          ACTUAL_CHECKSUM=$(sha256sum "$OUTPUT" | cut -d' ' -f1)
+          echo "Expected checksum: $EXPECTED_CHECKSUM"
+          echo "Actual checksum: $ACTUAL_CHECKSUM"
+
+          if [ "$ACTUAL_CHECKSUM" != "$EXPECTED_CHECKSUM" ]; then
+            echo "Checksum verification failed!"
+            exit 1
+          fi
+          echo "Checksum verification passed"
+
+          ./"$OUTPUT" junit upload \
+            --service libdatadog \
+            --env ci \
+            --logs \
+            --tags arch:${{ runner.arch }},os:Linux,platform:centos7 \
+            target/nextest/ci/junit.xml
+        env:
+          DATADOG_API_KEY: ${{ secrets.DATADOG_API_KEY }}
 
   ffi_bake:
     strategy:
@@ -321,6 +397,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # 4.2.2
+        with:
+          submodules: recursive
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@b5ca514318bd6ebac0fb2aedd5d36ec1b5c232a2 # 3.10.0
         with:

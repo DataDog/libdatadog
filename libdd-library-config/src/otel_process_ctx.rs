@@ -1,7 +1,8 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-//! Implementation of the publisher part of the [OTEL process context](https://github.com/open-telemetry/opentelemetry-specification/pull/4719)
+//! Implementation of the publisher part of the [OTEL process
+//! context](https://github.com/open-telemetry/opentelemetry-specification/pull/4719)
 //!
 //! # A note on race conditions
 //!
@@ -16,7 +17,7 @@ pub mod linux {
         ffi::c_void,
         mem::ManuallyDrop,
         os::fd::AsFd as _,
-        ptr,
+        ptr::{self, addr_of_mut},
         sync::{
             atomic::{fence, AtomicU64, Ordering},
             Mutex, MutexGuard,
@@ -29,8 +30,11 @@ pub mod linux {
     use rustix::{
         fs::{ftruncate, memfd_create, MemfdFlags},
         mm::{madvise, mmap, mmap_anonymous, munmap, Advice, MapFlags, ProtFlags},
-        process::set_virtual_memory_region_name,
+        process::{getpid, set_virtual_memory_region_name, Pid},
     };
+
+    use libdd_trace_protobuf::opentelemetry::proto::common::v1::ProcessContext;
+    use prost::Message;
 
     /// Current version of the process context format
     pub const PROCESS_CTX_VERSION: u32 = 2;
@@ -212,6 +216,9 @@ pub mod linux {
         /// or drop).
         #[allow(unused)]
         payload: Vec<u8>,
+        /// The process id of the last publisher. This is useful to detect forks(), and publish a
+        /// new context accordingly.
+        pid: Pid,
     }
 
     impl ProcessContextHandle {
@@ -220,27 +227,15 @@ pub mod linux {
             let mut mapping = MemMapping::new()?;
             let size = mapping_size();
 
-            // Checks that the layout allow us to access `signature` and `published_at_ns` as
-            // atomics u64. Page size is at minimum 4KB and will be always 8 bytes aligned even on
-            // exotic platforms. The respective offsets of `signature` and `published_at_ns` are
-            // 0 and 8 bytes, so it suffices for `AtomicU64` to require an alignment of at most 8
-            // (which is the expected alignment anyway).
-            //
-            // Note that `align_of` is a `const fn`, so this is in fact a compile-time check and
-            // will be optimized away, hence the `allow(unreachable_code)`.
-            #[allow(unreachable_code)]
-            if std::mem::align_of::<AtomicU64>() > 8 {
-                return Err(anyhow::anyhow!("alignment constraints forbid the use of atomics for publishing the protocol context"));
-            }
-
             // Safety: the invariants of MemMapping ensures `start_addr` is not null and comes
             // from a previous call to `mmap`
             unsafe { madvise(mapping.start_addr, size, Advice::LinuxDontFork) }
                 .context("madvise MADVISE_DONTFORK failed")?;
 
             let published_at_ns = time_now_ns().ok_or_else(|| {
-                anyhow::anyhow!("fail to get current time for process context publication")
+                anyhow::anyhow!("failed to get current time for process context publication")
             })?;
+
             let header = mapping.start_addr as *mut MappingHeader;
 
             unsafe {
@@ -275,15 +270,59 @@ pub mod linux {
 
             let _ = mapping.set_name();
 
-            Ok(ProcessContextHandle { mapping, payload })
+            Ok(ProcessContextHandle {
+                mapping,
+                payload,
+                pid: getpid(),
+            })
         }
 
-        /// Updates the context after initial publication. Currently unimplemented (always returns
-        /// `Err`).
-        fn update(&mut self, _payload: Vec<u8>) -> anyhow::Result<()> {
-            Err(anyhow::anyhow!(
-                "process context update isn't implemented yet"
-            ))
+        /// Updates the context after initial publication.
+        fn update(&mut self, payload: Vec<u8>) -> anyhow::Result<()> {
+            let header = self.mapping.start_addr as *mut MappingHeader;
+
+            let published_at_ns = time_now_ns()
+                .ok_or_else(|| anyhow::anyhow!("could not get the current timestamp"))?;
+            let payload_size = payload.len().try_into().map_err(|_| {
+                anyhow::anyhow!("couldn't update process protocol: new payload too large")
+            })?;
+
+            // Safety
+            //
+            // [^atomic-u64-alignment]: Page size is at minimum 4KB and will be always 8 bytes
+            // aligned even on exotic platforms. The respective offsets of `signature` and
+            // `published_at_ns` are 0 and 16 bytes, so they are 8-bytes aligned (`AtomicU64` has
+            // both a size and align of 8 bytes).
+            //
+            // The header memory is valid for both read and writes.
+            let published_at_atomic =
+                unsafe { AtomicU64::from_ptr(addr_of_mut!((*header).published_at_ns)) };
+
+            // A process shouldn't try to concurrently update its own context
+            //
+            // Note: be careful of early return while `published_at` is still zero, as this would
+            // effectively "lock" any future publishing. Move throwing code above this swap, or
+            // properly restore the previous value if the former can't be done.
+            if published_at_atomic.swap(0, Ordering::Relaxed) == 0 {
+                return Err(anyhow::anyhow!(
+                    "concurrent update of the process context is not supported"
+                ));
+            }
+
+            fence(Ordering::SeqCst);
+            self.payload = payload;
+
+            // Safety: we own the mapping, which is live and valid for writes. The header is packed
+            // and thus has no alignment constraints.
+            unsafe {
+                (*header).payload_ptr = self.payload.as_ptr();
+                (*header).payload_size = payload_size;
+            }
+
+            fence(Ordering::SeqCst);
+            published_at_atomic.store(published_at_ns, Ordering::Relaxed);
+
+            Ok(())
         }
     }
 
@@ -312,15 +351,50 @@ pub mod linux {
 
     /// Publishes or updates the process context for it to be visible by external readers.
     ///
-    /// If this is the first publication, or if [unpublish] has been called last, this will follow
-    /// the Publish protocol of the process context specification.
+    /// If any of the following condition holds:
     ///
-    /// Otherwise, the context is updated following the Update protocol.
-    pub fn publish(payload: Vec<u8>) -> anyhow::Result<()> {
+    /// - this is the first publication
+    /// - [unpublish] has been called last
+    /// - the previous context has been published from a different process id (that is, a `fork()`
+    ///   happened and we're the child process)
+    ///
+    /// Then we follow the Publish protocol of the OTel process context specification (allocating a
+    /// fresh mapping).
+    ///
+    /// Otherwise, if a context has been previously published from the same process and hasn't been
+    /// unpublished since, we follow the Update protocol.
+    ///
+    /// # Fork safety
+    ///
+    /// If we're a forked children of the original publisher, we are extremely restricted in the
+    /// set of operations that we can do (we must be async-signal-safe). On paper, heap allocation
+    /// is Undefined Behavior, for example. We assume that a forking runtime (such as Python or
+    /// Ruby) that doesn't follow with an immediate `exec` is already "taking that risk", so to
+    /// speak (typically, if no thread is ever spawned before the fork, things are mostly fine).
+    #[inline]
+    pub fn publish(context: &ProcessContext) -> anyhow::Result<()> {
+        publish_raw_payload(context.encode_to_vec())
+    }
+
+    fn publish_raw_payload(payload: Vec<u8>) -> anyhow::Result<()> {
         let mut guard = lock_context_handle()?;
 
         match &mut *guard {
-            Some(handler) => handler.update(payload),
+            Some(handler) if handler.pid == getpid() => handler.update(payload),
+            Some(handler) => {
+                let mut local_handler = ProcessContextHandle::publish(payload)?;
+                // If we've been forked, we need to prevent the mapping from being dropped
+                // normally, as it would try to unmap a region that isn't mapped anymore in the
+                // child process, or worse, could have been remapped to something else in the
+                // meantime.
+                //
+                // To do so, we get the old handler back in `local_handler` and prevent `mapping`
+                // from being dropped specifically.
+                std::mem::swap(&mut local_handler, handler);
+                let _: ManuallyDrop<MemMapping> = ManuallyDrop::new(local_handler.mapping);
+
+                Ok(())
+            }
             None => {
                 *guard = Some(ProcessContextHandle::publish(payload)?);
                 Ok(())
@@ -343,6 +417,7 @@ pub mod linux {
     }
 
     #[cfg(test)]
+    #[serial_test::serial]
     mod tests {
         use super::MappingHeader;
         use anyhow::ensure;
@@ -381,7 +456,7 @@ pub mod linux {
             // we found in /proc/self/maps. This should be safe as long as the
             // mapping exists and has read permissions.
             //
-            // The atomic alignment constraints are checked during publication.
+            // For the alignment constraint of `AtomicU64`, see [atomic-u64-alignment].
             let signature = unsafe { AtomicU64::from_ptr(ptr).load(Ordering::Relaxed) };
             fence(Ordering::SeqCst);
             &signature.to_ne_bytes() == super::SIGNATURE
@@ -426,11 +501,13 @@ pub mod linux {
 
         #[test]
         #[cfg_attr(miri, ignore)]
-        fn publish_then_read_context() {
-            let payload = "example process context payload";
+        fn publish_then_update_process_context() {
+            let payload_v1 = "example process context payload";
+            let payload_v2 = "another example process context payload of different size";
 
-            super::publish(payload.as_bytes().to_vec())
+            super::publish_raw_payload(payload_v1.as_bytes().to_vec())
                 .expect("couldn't publish the process context");
+
             let header = read_process_context().expect("couldn't read back the process context");
             // Safety: the published context must have put valid bytes of size payload_size in the
             // context if the signature check succeded.
@@ -444,13 +521,62 @@ pub mod linux {
                 "wrong context version"
             );
             assert!(
-                header.payload_size == payload.len() as u32,
+                header.payload_size == payload_v1.len() as u32,
                 "wrong payload size"
             );
             assert!(header.published_at_ns > 0, "published_at_ns is zero");
-            assert!(read_payload == payload.as_bytes(), "payload mismatch");
+            assert!(read_payload == payload_v1.as_bytes(), "payload mismatch");
+
+            let published_at_ns_v1 = header.published_at_ns;
+            // Ensure the clock advances so the updated timestamp is strictly greater
+            std::thread::sleep(std::time::Duration::from_nanos(10));
+
+            super::publish_raw_payload(payload_v2.as_bytes().to_vec())
+                .expect("couldn't update the process context");
+
+            let header = read_process_context().expect("couldn't read back the process context");
+            // Safety: the published context must have put valid bytes of size payload_size in the
+            // context if the signature check succeded.
+            let read_payload = unsafe {
+                std::slice::from_raw_parts(header.payload_ptr, header.payload_size as usize)
+            };
+
+            assert!(header.signature == *super::SIGNATURE, "wrong signature");
+            assert!(
+                header.version == super::PROCESS_CTX_VERSION,
+                "wrong context version"
+            );
+            assert!(
+                header.payload_size == payload_v2.len() as u32,
+                "wrong payload size"
+            );
+            assert!(
+                header.published_at_ns > published_at_ns_v1,
+                "published_at_ns should be strictly greater after update"
+            );
+            assert!(read_payload == payload_v2.as_bytes(), "payload mismatch");
 
             super::unpublish().expect("couldn't unpublish the context");
+        }
+
+        #[test]
+        #[cfg_attr(miri, ignore)]
+        fn unpublish_process_context() {
+            let payload = "example process context payload";
+
+            super::publish_raw_payload(payload.as_bytes().to_vec())
+                .expect("couldn't publish the process context");
+
+            // The mapping must be discoverable right after publishing
+            find_otel_mapping().expect("couldn't find the otel mapping after publishing");
+
+            super::unpublish().expect("couldn't unpublish the context");
+
+            // After unpublishing the name must no longer appear in /proc/self/maps
+            assert!(
+                find_otel_mapping().is_err(),
+                "otel mapping should not be visible after unpublish"
+            );
         }
     }
 }
