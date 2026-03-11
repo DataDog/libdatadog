@@ -333,7 +333,7 @@ mod tracing_integration_tests {
     #[tokio::test]
     async fn stats_snapshot_test() {
         let relative_snapshot_path = "libdd-data-pipeline/tests/snapshots/";
-        let snapshot_name = "stats_with_process_tags_snapshot_test";
+        let snapshot_name = "stats_snapshot_test";
         let test_agent = DatadogTestAgent::new(Some(relative_snapshot_path), None, &[]).await;
         let url = test_agent.get_base_uri().await;
         test_agent.start_session(snapshot_name, None).await;
@@ -361,7 +361,7 @@ mod tracing_integration_tests {
             // via check_agent_info() and spans will be recorded in the concentrator.
             std::thread::sleep(Duration::from_secs(1));
 
-            let data = get_v04_trace_snapshot_test_payload("stats_process_tags_test");
+            let data = get_v04_trace_snapshot_test_payload("stats_test");
             trace_exporter
                 .send(data.as_ref())
                 .expect("Failed to send traces");
