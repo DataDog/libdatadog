@@ -4,7 +4,7 @@ permissions:
   pull-requests: read
 on:
   pull_request:
-    types: ['opened', 'edited', 'reopened', 'synchronize']
+    types: ['opened', 'edited', 'reopened', 'synchronize', 'labeled', 'unlabeled']
     branches-ignore:
       - "v[0-9]+.[0-9]+.[0-9]+.[0-9]+"
       - release
