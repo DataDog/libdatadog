@@ -710,7 +710,10 @@ mod tests {
             // Span with grpc status from metrics takes precedence over meta
             (
                 SpanBytes {
-                    meta: HashMap::from([("rpc.grpc.status_code".into(), "PERMISSION_DENIED".into())]),
+                    meta: HashMap::from([(
+                        "rpc.grpc.status_code".into(),
+                        "PERMISSION_DENIED".into(),
+                    )]),
                     metrics: HashMap::from([("rpc.grpc.status_code".into(), 2.0)]),
                     ..Default::default()
                 },
@@ -833,7 +836,11 @@ mod tests {
 
         for (span, expected_key) in test_cases {
             let borrowed_key = BorrowedAggregationKey::from_span(&span, &[]);
-            assert_eq!(OwnedAggregationKey::from(&borrowed_key), expected_key, "for span {span:?}");
+            assert_eq!(
+                OwnedAggregationKey::from(&borrowed_key),
+                expected_key,
+                "for span {span:?}"
+            );
             assert_eq!(
                 get_hash(&borrowed_key),
                 get_hash(&OwnedAggregationKey::from(&borrowed_key))
