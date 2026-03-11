@@ -12,12 +12,11 @@ use std::{
 };
 
 use crate::trace_exporter::TracerMetadata;
+use async_trait::async_trait;
 use libdd_common::{worker::Worker, Endpoint, HttpClient};
 use libdd_trace_protobuf::pb;
 use libdd_trace_stats::span_concentrator::SpanConcentrator;
 use libdd_trace_utils::send_with_retry::{send_with_retry, RetryStrategy};
-use tokio::select;
-use tokio_util::sync::CancellationToken;
 use tracing::error;
 
 const STATS_ENDPOINT_PATH: &str = "/v0.6/stats";
@@ -30,7 +29,6 @@ pub struct StatsExporter {
     endpoint: Endpoint,
     meta: TracerMetadata,
     sequence_id: AtomicU64,
-    cancellation_token: CancellationToken,
     client: HttpClient,
 }
 
@@ -48,7 +46,6 @@ impl StatsExporter {
         concentrator: Arc<Mutex<SpanConcentrator>>,
         meta: TracerMetadata,
         endpoint: Endpoint,
-        cancellation_token: CancellationToken,
         client: HttpClient,
     ) -> Self {
         Self {
@@ -57,7 +54,6 @@ impl StatsExporter {
             endpoint,
             meta,
             sequence_id: AtomicU64::new(0),
-            cancellation_token,
             client,
         }
     }
@@ -132,24 +128,20 @@ impl StatsExporter {
     }
 }
 
+#[async_trait]
 impl Worker for StatsExporter {
-    /// Run loop of the stats exporter
-    ///
-    /// Once started, the stats exporter will flush and send stats on every `self.flush_interval`.
-    /// If the `self.cancellation_token` is cancelled, the exporter will force flush all stats and
-    /// return.
+    async fn trigger(&mut self) {
+        tokio::time::sleep(self.flush_interval).await;
+    }
+
+    /// Flush and send stats on every trigger.
     async fn run(&mut self) {
-        loop {
-            select! {
-                _ = self.cancellation_token.cancelled() => {
-                    let _ = self.send(true).await;
-                    break;
-                },
-                _ = tokio::time::sleep(self.flush_interval) => {
-                        let _ = self.send(false).await;
-                },
-            };
-        }
+        let _ = self.send(false).await;
+    }
+
+    async fn shutdown(&mut self) {
+        // Force flush all stats on shutdown
+        let _ = self.send(true).await;
     }
 }
 
@@ -189,6 +181,7 @@ pub fn stats_url_from_agent_url(agent_url: &str) -> anyhow::Result<http::Uri> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::shared_runtime::SharedRuntime;
     use httpmock::prelude::*;
     use httpmock::MockServer;
     use libdd_common::http_common::new_default_client;
@@ -267,7 +260,6 @@ mod tests {
             Arc::new(Mutex::new(get_test_concentrator())),
             get_test_metadata(),
             Endpoint::from_url(stats_url_from_agent_url(&server.url("/")).unwrap()),
-            CancellationToken::new(),
             new_default_client(),
         );
 
@@ -295,7 +287,6 @@ mod tests {
             Arc::new(Mutex::new(get_test_concentrator())),
             get_test_metadata(),
             Endpoint::from_url(stats_url_from_agent_url(&server.url("/")).unwrap()),
-            CancellationToken::new(),
             new_default_client(),
         );
 
@@ -328,7 +319,6 @@ mod tests {
             Arc::new(Mutex::new(get_test_concentrator())),
             get_test_metadata(),
             Endpoint::from_url(stats_url_from_agent_url(&server.url("/")).unwrap()),
-            CancellationToken::new(),
             new_default_client(),
         );
 
@@ -347,40 +337,39 @@ mod tests {
     }
 
     #[cfg_attr(miri, ignore)]
-    #[tokio::test]
-    async fn test_cancellation_token() {
-        let server = MockServer::start_async().await;
+    #[test]
+    fn test_worker_shutdown() {
+        let shared_runtime = SharedRuntime::new().expect("Failed to create runtime");
+        let rt = shared_runtime.runtime().expect("Failed to get runtime");
 
-        let mut mock = server
-            .mock_async(|when, then| {
-                when.method(POST)
-                    .header("Content-type", "application/msgpack")
-                    .path("/v0.6/stats")
-                    .body_includes("libdatadog-test");
-                then.status(200).body("");
-            })
-            .await;
+        let server = MockServer::start();
+
+        let mut mock = server.mock(|when, then| {
+            when.method(POST)
+                .header("Content-type", "application/msgpack")
+                .path("/v0.6/stats")
+                .body_includes("libdatadog-test");
+            then.status(200).body("");
+        });
 
         let buckets_duration = Duration::from_secs(10);
-        let cancellation_token = CancellationToken::new();
 
-        let mut stats_exporter = StatsExporter::new(
+        let stats_exporter = StatsExporter::new(
             buckets_duration,
             Arc::new(Mutex::new(get_test_concentrator())),
             get_test_metadata(),
             Endpoint::from_url(stats_url_from_agent_url(&server.url("/")).unwrap()),
-            cancellation_token.clone(),
             new_default_client(),
         );
 
-        tokio::spawn(async move {
-            stats_exporter.run().await;
-        });
-        // Cancel token to trigger force flush
-        cancellation_token.cancel();
+        let _handle = shared_runtime
+            .spawn_worker(stats_exporter)
+            .expect("Failed to spawn worker");
+
+        shared_runtime.shutdown(None).unwrap();
 
         assert!(
-            poll_for_mock_hit(&mut mock, 10, 100, 1, false).await,
+            rt.block_on(poll_for_mock_hit(&mut mock, 10, 100, 1, false)),
             "Expected max retry attempts"
         );
     }

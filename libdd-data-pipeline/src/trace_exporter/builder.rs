@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::agent_info::AgentInfoFetcher;
-use crate::pausable_worker::PausableWorker;
+use crate::shared_runtime::SharedRuntime;
 use crate::telemetry::TelemetryClientBuilder;
 use crate::trace_exporter::agent_response::AgentResponsePayloadVersion;
 use crate::trace_exporter::error::BuilderErrorKind;
@@ -15,7 +15,7 @@ use arc_swap::ArcSwap;
 use libdd_common::http_common::new_default_client;
 use libdd_common::{parse_uri, tag, Endpoint};
 use libdd_dogstatsd_client::new;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::Duration;
 
 const DEFAULT_AGENT_URL: &str = "http://127.0.0.1:8126";
@@ -46,6 +46,7 @@ pub struct TraceExporterBuilder {
     compute_stats_by_span_kind: bool,
     peer_tags: Vec<String>,
     telemetry: Option<TelemetryConfig>,
+    shared_runtime: Option<Arc<SharedRuntime>>,
     health_metrics_enabled: bool,
     test_session_token: Option<String>,
     agent_rates_payload_version_enabled: bool,
@@ -199,6 +200,12 @@ impl TraceExporterBuilder {
         self
     }
 
+    /// Set a shared runtime used by the exporter for background workers.
+    pub fn set_shared_runtime(&mut self, shared_runtime: Arc<SharedRuntime>) -> &mut Self {
+        self.shared_runtime = Some(shared_runtime);
+        self
+    }
+
     /// Enables health metrics emission.
     pub fn enable_health_metrics(&mut self) -> &mut Self {
         self.health_metrics_enabled = true;
@@ -227,12 +234,13 @@ impl TraceExporterBuilder {
             ));
         }
 
-        let runtime = Arc::new(
-            tokio::runtime::Builder::new_multi_thread()
-                .worker_threads(1)
-                .enable_all()
-                .build()?,
-        );
+        let shared_runtime =
+            self.shared_runtime
+                .unwrap_or(Arc::new(SharedRuntime::new().map_err(|e| {
+                    TraceExporterError::Builder(BuilderErrorKind::InvalidConfiguration(
+                        e.to_string(),
+                    ))
+                })?));
 
         let dogstatsd = self.dogstatsd_url.and_then(|u| {
             new(Endpoint::from_slice(&u)).ok() // If we couldn't set the endpoint return
@@ -251,8 +259,7 @@ impl TraceExporterBuilder {
         let info_endpoint = Endpoint::from_url(add_path(&agent_url, INFO_ENDPOINT));
         let (info_fetcher, info_response_observer) =
             AgentInfoFetcher::new(info_endpoint.clone(), Duration::from_secs(5 * 60));
-        let mut info_fetcher_worker = PausableWorker::new(info_fetcher);
-        info_fetcher_worker.start(&runtime).map_err(|e| {
+        let info_fetcher_handle = shared_runtime.spawn_worker(info_fetcher).map_err(|e| {
             TraceExporterError::Builder(BuilderErrorKind::InvalidConfiguration(e.to_string()))
         })?;
 
@@ -276,20 +283,32 @@ impl TraceExporterBuilder {
             if let Some(id) = telemetry_config.runtime_id {
                 builder = builder.set_runtime_id(&id);
             }
-            builder.build(runtime.handle().clone())
+            let runtime = shared_runtime.runtime().map_err(|e| {
+                TraceExporterError::Builder(BuilderErrorKind::InvalidConfiguration(e.to_string()))
+            })?;
+            // This handle is never used since we run it as a SharedRuntime worker. So it is fine
+            // if the tokio runtime is dropped by SharedRuntime.
+            Ok(builder.build(runtime.handle().clone()))
         });
 
-        let (telemetry_client, telemetry_worker) = match telemetry {
-            Some((client, worker)) => {
-                let mut telemetry_worker = PausableWorker::new(worker);
-                telemetry_worker.start(&runtime).map_err(|e| {
+        let (telemetry_client, telemetry_handle) = match telemetry {
+            Some(Ok((client, worker))) => {
+                let handle = shared_runtime.spawn_worker(worker).map_err(|e| {
                     TraceExporterError::Builder(BuilderErrorKind::InvalidConfiguration(
                         e.to_string(),
                     ))
                 })?;
-                runtime.block_on(client.start());
-                (Some(client), Some(telemetry_worker))
+                shared_runtime
+                    .runtime()
+                    .map_err(|e| {
+                        TraceExporterError::Builder(BuilderErrorKind::InvalidConfiguration(
+                            e.to_string(),
+                        ))
+                    })?
+                    .block_on(client.start());
+                (Some(client), Some(handle))
             }
+            Some(Err(e)) => return Err(e),
             None => (None, None),
         };
 
@@ -320,7 +339,7 @@ impl TraceExporterBuilder {
             input_format: self.input_format,
             output_format: self.output_format,
             client_computed_top_level: self.client_computed_top_level,
-            runtime: Arc::new(Mutex::new(Some(runtime))),
+            shared_runtime,
             dogstatsd,
             common_stats_tags: vec![libdatadog_version],
             client_side_stats: ArcSwap::new(stats.into()),
@@ -328,16 +347,14 @@ impl TraceExporterBuilder {
             info_response_observer,
             telemetry: telemetry_client,
             health_metrics_enabled: self.health_metrics_enabled,
-            workers: Arc::new(Mutex::new(TraceExporterWorkers {
-                info: info_fetcher_worker,
-                stats: None,
-                telemetry: telemetry_worker,
-            })),
-
             agent_payload_response_version: self
                 .agent_rates_payload_version_enabled
                 .then(AgentResponsePayloadVersion::new),
             http_client: new_default_client(),
+            workers: TraceExporterWorkers {
+                info_fetcher: info_fetcher_handle,
+                telemetry: telemetry_handle,
+            },
         })
     }
 
@@ -420,6 +437,22 @@ mod tests {
         assert_eq!(exporter.metadata.language_interpreter, "");
         assert!(!exporter.metadata.client_computed_stats);
         assert!(exporter.telemetry.is_none());
+        assert!(
+            exporter.shared_runtime.runtime().is_ok(),
+            "default shared runtime should be initialized"
+        );
+    }
+
+    #[cfg_attr(miri, ignore)]
+    #[test]
+    fn test_set_shared_runtime() {
+        let mut builder = TraceExporterBuilder::default();
+        let shared_runtime = Arc::new(SharedRuntime::new().unwrap());
+        builder.set_shared_runtime(shared_runtime.clone());
+
+        let exporter = builder.build().unwrap();
+
+        assert!(Arc::ptr_eq(&exporter.shared_runtime, &shared_runtime));
     }
 
     #[test]

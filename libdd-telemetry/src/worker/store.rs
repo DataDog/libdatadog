@@ -208,6 +208,11 @@ where
     pub fn len_stored(&self) -> usize {
         self.items.len()
     }
+
+    /// Discard only pending unflushed items while preserving stored dedupe history.
+    pub fn clear(&mut self) {
+        self.unflushed.clear();
+    }
 }
 
 impl<T> Extend<T> for Store<T>

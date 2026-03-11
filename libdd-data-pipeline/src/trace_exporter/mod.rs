@@ -14,14 +14,15 @@ use self::agent_response::AgentResponse;
 use self::metrics::MetricsEmitter;
 use self::stats::StatsComputationStatus;
 use self::trace_serializer::TraceSerializer;
-use crate::agent_info::{AgentInfoFetcher, ResponseObserver};
-use crate::pausable_worker::PausableWorker;
-use crate::stats_exporter::StatsExporter;
+use crate::agent_info::ResponseObserver;
+use crate::shared_runtime::{SharedRuntime, WorkerHandle};
 use crate::telemetry::{SendPayloadTelemetry, TelemetryClient};
 use crate::trace_exporter::agent_response::{
     AgentResponsePayloadVersion, DATADOG_RATES_PAYLOAD_VERSION_HEADER,
 };
-use crate::trace_exporter::error::{InternalErrorKind, RequestError, TraceExporterError};
+use crate::trace_exporter::error::{
+    InternalErrorKind, RequestError, ShutdownError, TraceExporterError,
+};
 use crate::{
     agent_info::{self, schema::AgentInfo},
     health_metrics,
@@ -32,10 +33,8 @@ use http::uri::PathAndQuery;
 use http::Uri;
 use http_body_util::BodyExt;
 use libdd_common::tag::Tag;
-use libdd_common::{http_common, Endpoint};
-use libdd_common::{HttpClient, MutexExt};
+use libdd_common::{http_common, Endpoint, HttpClient};
 use libdd_dogstatsd_client::Client;
-use libdd_telemetry::worker::TelemetryWorker;
 use libdd_trace_utils::msgpack_decoder;
 use libdd_trace_utils::send_with_retry::{
     send_with_retry, RetryStrategy, SendWithRetryError, SendWithRetryResult,
@@ -43,10 +42,12 @@ use libdd_trace_utils::send_with_retry::{
 use libdd_trace_utils::span::{v04::Span, TraceData};
 use libdd_trace_utils::trace_utils::TracerHeaderTags;
 use std::io;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+#[cfg(feature = "test-utils")]
 use std::time::Duration;
 use std::{borrow::Borrow, collections::HashMap, str::FromStr};
 use tokio::runtime::Runtime;
+use tokio::task::JoinSet;
 use tracing::{debug, error, warn};
 
 const INFO_ENDPOINT: &str = "/info";
@@ -153,11 +154,11 @@ impl<'a> From<&'a TracerMetadata> for HashMap<&'static str, String> {
     }
 }
 
+/// Handles for the background workers owned by a [`TraceExporter`].
 #[derive(Debug)]
 pub(crate) struct TraceExporterWorkers {
-    pub info: PausableWorker<AgentInfoFetcher>,
-    pub stats: Option<PausableWorker<StatsExporter>>,
-    pub telemetry: Option<PausableWorker<TelemetryWorker>>,
+    info_fetcher: WorkerHandle,
+    telemetry: Option<WorkerHandle>,
 }
 
 /// The TraceExporter ingest traces from the tracers serialized as messagepack and forward them to
@@ -190,8 +191,7 @@ pub struct TraceExporter {
     metadata: TracerMetadata,
     input_format: TraceExporterInputFormat,
     output_format: TraceExporterOutputFormat,
-    // TODO - do something with the response callback - https://datadoghq.atlassian.net/browse/APMSP-1019
-    runtime: Arc<Mutex<Option<Arc<Runtime>>>>,
+    shared_runtime: Arc<SharedRuntime>,
     /// None if dogstatsd is disabled
     dogstatsd: Option<Client>,
     common_stats_tags: Vec<Tag>,
@@ -201,9 +201,9 @@ pub struct TraceExporter {
     info_response_observer: ResponseObserver,
     telemetry: Option<TelemetryClient>,
     health_metrics_enabled: bool,
-    workers: Arc<Mutex<TraceExporterWorkers>>,
     agent_payload_response_version: Option<AgentResponsePayloadVersion>,
     http_client: HttpClient,
+    workers: TraceExporterWorkers,
 }
 
 impl TraceExporter {
@@ -212,113 +212,70 @@ impl TraceExporter {
         TraceExporterBuilder::default()
     }
 
-    /// Return the existing runtime or create a new one and start all workers
-    fn runtime(&self) -> Result<Arc<Runtime>, TraceExporterError> {
-        let mut runtime_guard = self.runtime.lock_or_panic();
-        match runtime_guard.as_ref() {
-            Some(runtime) => {
-                // Runtime already running
-                Ok(runtime.clone())
+    /// Stop the background workers owned by this exporter.
+    ///
+    /// Only the workers spawned for this exporter are stopped. Workers from other components
+    /// sharing the same [`SharedRuntime`] are unaffected.
+    ///
+    /// # Errors
+    /// Returns [`SharedRuntimeError::ShutdownTimedOut`] if a timeout was given and elapsed before
+    /// all workers finished.
+    pub fn shutdown(self, timeout: Option<std::time::Duration>) -> Result<(), TraceExporterError> {
+        let runtime = self.runtime()?;
+        if let Some(timeout) = timeout {
+            match runtime
+                .block_on(async { tokio::time::timeout(timeout, self.shutdown_workers()).await })
+            {
+                Ok(()) => Ok(()),
+                Err(_) => Err(TraceExporterError::Shutdown(ShutdownError::TimedOut(
+                    timeout,
+                ))),
             }
-            None => {
-                // Create a new current thread runtime with all features enabled
-                let runtime = Arc::new(
-                    tokio::runtime::Builder::new_multi_thread()
-                        .worker_threads(1)
-                        .enable_all()
-                        .build()?,
-                );
-                *runtime_guard = Some(runtime.clone());
-                self.start_all_workers(&runtime)?;
-                Ok(runtime)
+        } else {
+            runtime.block_on(self.shutdown_workers());
+            Ok(())
+        }
+    }
+
+    async fn shutdown_workers(self) {
+        let mut join_set = JoinSet::new();
+
+        // Extract the stats handle before moving other fields.
+        if let StatsComputationStatus::Enabled { worker_handle, .. } =
+            &**self.client_side_stats.load()
+        {
+            let handle = worker_handle.clone();
+            join_set.spawn(async move { handle.stop().await });
+        }
+
+        let info_fetcher = self.workers.info_fetcher;
+        let telemetry = self.workers.telemetry;
+
+        join_set.spawn(async move { info_fetcher.stop().await });
+
+        if let Some(telemetry) = telemetry {
+            join_set.spawn(async move { telemetry.stop().await });
+        }
+
+        while let Some(result) = join_set.join_next().await {
+            if let Ok(Err(e)) = result {
+                error!("Worker failed to shutdown: {:?}", e);
             }
         }
+    }
+
+    /// Return a runtime from the shared runtime manager.
+    fn runtime(&self) -> Result<Arc<Runtime>, TraceExporterError> {
+        self.shared_runtime
+            .runtime()
+            .map_err(TraceExporterError::Io)
     }
 
     /// Manually start all workers
     pub fn run_worker(&self) -> Result<(), TraceExporterError> {
-        self.runtime()?;
-        Ok(())
-    }
-
-    /// Start all workers with the given runtime
-    fn start_all_workers(&self, runtime: &Arc<Runtime>) -> Result<(), TraceExporterError> {
-        let mut workers = self.workers.lock_or_panic();
-
-        self.start_info_worker(&mut workers, runtime)?;
-        self.start_stats_worker(&mut workers, runtime)?;
-        self.start_telemetry_worker(&mut workers, runtime)?;
-
-        Ok(())
-    }
-
-    /// Start the info worker
-    fn start_info_worker(
-        &self,
-        workers: &mut TraceExporterWorkers,
-        runtime: &Arc<Runtime>,
-    ) -> Result<(), TraceExporterError> {
-        workers.info.start(runtime).map_err(|e| {
+        self.shared_runtime.after_fork_parent().map_err(|e| {
             TraceExporterError::Internal(InternalErrorKind::InvalidWorkerState(e.to_string()))
         })
-    }
-
-    /// Start the stats worker if present
-    fn start_stats_worker(
-        &self,
-        workers: &mut TraceExporterWorkers,
-        runtime: &Arc<Runtime>,
-    ) -> Result<(), TraceExporterError> {
-        if let Some(stats_worker) = &mut workers.stats {
-            stats_worker.start(runtime).map_err(|e| {
-                TraceExporterError::Internal(InternalErrorKind::InvalidWorkerState(e.to_string()))
-            })?;
-        }
-        Ok(())
-    }
-
-    /// Start the telemetry worker if present
-    fn start_telemetry_worker(
-        &self,
-        workers: &mut TraceExporterWorkers,
-        runtime: &Arc<Runtime>,
-    ) -> Result<(), TraceExporterError> {
-        if let Some(telemetry_worker) = &mut workers.telemetry {
-            telemetry_worker.start(runtime).map_err(|e| {
-                TraceExporterError::Internal(InternalErrorKind::InvalidWorkerState(e.to_string()))
-            })?;
-            if let Some(client) = &self.telemetry {
-                runtime.block_on(client.start());
-            }
-        }
-        Ok(())
-    }
-
-    pub fn stop_worker(&self) {
-        let runtime = self.runtime.lock_or_panic().take();
-        if let Some(ref rt) = runtime {
-            // Stop workers to save their state
-            let mut workers = self.workers.lock_or_panic();
-            rt.block_on(async {
-                let _ = workers.info.pause().await;
-                if let Some(stats_worker) = &mut workers.stats {
-                    let _ = stats_worker.pause().await;
-                };
-                if let Some(telemetry_worker) = &mut workers.telemetry {
-                    let _ = telemetry_worker.pause().await;
-                };
-            });
-        }
-        // When the info fetcher is paused, the trigger channel keeps a reference to the runtime's
-        // IoStack as a waker. This prevents the IoStack from being dropped when shutting
-        // down runtime. By manually sending a message to the trigger channel we trigger the
-        // waker releasing the reference to the IoStack. Finally we drain the channel to
-        // avoid triggering a fetch when the info fetcher is restarted.
-        if let PausableWorker::Paused { worker } = &mut self.workers.lock_or_panic().info {
-            self.info_response_observer.manual_trigger();
-            worker.drain();
-        }
-        drop(runtime);
     }
 
     /// Send msgpack serialized traces to the agent
@@ -347,55 +304,6 @@ impl TraceExporter {
         Ok(res)
     }
 
-    /// Safely shutdown the TraceExporter and all related tasks
-    pub fn shutdown(mut self, timeout: Option<Duration>) -> Result<(), TraceExporterError> {
-        let runtime = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()?;
-
-        if let Some(timeout) = timeout {
-            match runtime
-                .block_on(async { tokio::time::timeout(timeout, self.shutdown_async()).await })
-            {
-                Ok(()) => Ok(()),
-                Err(_e) => Err(TraceExporterError::Shutdown(
-                    error::ShutdownError::TimedOut(timeout),
-                )),
-            }
-        } else {
-            runtime.block_on(self.shutdown_async());
-            Ok(())
-        }
-    }
-
-    /// Future used inside `Self::shutdown`.
-    ///
-    /// This function should not take ownership of the trace exporter as it will cause the runtime
-    /// stored in the trace exporter to be dropped in a non-blocking context causing a panic.
-    async fn shutdown_async(&mut self) {
-        let stats_status = self.client_side_stats.load();
-        if let StatsComputationStatus::Enabled {
-            cancellation_token, ..
-        } = stats_status.as_ref()
-        {
-            cancellation_token.cancel();
-
-            let stats_worker = self.workers.lock_or_panic().stats.take();
-
-            if let Some(stats_worker) = stats_worker {
-                let _ = stats_worker.join().await;
-            }
-        }
-        if let Some(telemetry) = self.telemetry.take() {
-            telemetry.shutdown().await;
-            let telemetry_worker = self.workers.lock_or_panic().telemetry.take();
-
-            if let Some(telemetry_worker) = telemetry_worker {
-                let _ = telemetry_worker.join().await;
-            }
-        }
-    }
-
     /// Check if agent info state has changed
     fn has_agent_info_state_changed(&self, agent_info: &Arc<AgentInfo>) -> bool {
         Some(agent_info.state_hash.as_str())
@@ -415,13 +323,12 @@ impl TraceExporter {
                         let ctx = stats::StatsContext {
                             metadata: &self.metadata,
                             endpoint_url: &self.endpoint.url,
-                            runtime: &self.runtime,
+                            shared_runtime: &self.shared_runtime,
                         };
                         stats::handle_stats_disabled_by_agent(
                             &ctx,
                             &agent_info,
                             &self.client_side_stats,
-                            &self.workers,
                             self.http_client.clone(),
                         );
                     }
@@ -431,14 +338,13 @@ impl TraceExporter {
                         let ctx = stats::StatsContext {
                             metadata: &self.metadata,
                             endpoint_url: &self.endpoint.url,
-                            runtime: &self.runtime,
+                            shared_runtime: &self.shared_runtime,
                         };
                         stats::handle_stats_enabled(
                             &ctx,
                             &agent_info,
                             stats_concentrator,
                             &self.client_side_stats,
-                            &self.workers,
                         );
                     }
                 }
@@ -848,7 +754,7 @@ impl TraceExporter {
     #[cfg(test)]
     /// Test only function to check if the stats computation is active and the worker is running
     pub fn is_stats_worker_active(&self) -> bool {
-        stats::is_stats_worker_active(&self.client_side_stats, &self.workers)
+        stats::is_stats_worker_active(&self.client_side_stats)
     }
 }
 
@@ -1521,15 +1427,9 @@ mod tests {
 
         traces_endpoint.assert_calls(1);
         while metrics_endpoint.calls() == 0 {
-            exporter
-                .runtime
-                .lock()
-                .unwrap()
-                .as_ref()
-                .unwrap()
-                .block_on(async {
-                    sleep(Duration::from_millis(100)).await;
-                })
+            exporter.shared_runtime.runtime().unwrap().block_on(async {
+                sleep(Duration::from_millis(100)).await;
+            })
         }
         metrics_endpoint.assert_calls(1);
     }
@@ -1579,15 +1479,9 @@ mod tests {
 
         traces_endpoint.assert_calls(1);
         while metrics_endpoint.calls() == 0 {
-            exporter
-                .runtime
-                .lock()
-                .unwrap()
-                .as_ref()
-                .unwrap()
-                .block_on(async {
-                    sleep(Duration::from_millis(100)).await;
-                })
+            exporter.shared_runtime.runtime().unwrap().block_on(async {
+                sleep(Duration::from_millis(100)).await;
+            })
         }
         metrics_endpoint.assert_calls(1);
     }
@@ -1648,15 +1542,9 @@ mod tests {
 
         traces_endpoint.assert_calls(1);
         while metrics_endpoint.calls() == 0 {
-            exporter
-                .runtime
-                .lock()
-                .unwrap()
-                .as_ref()
-                .unwrap()
-                .block_on(async {
-                    sleep(Duration::from_millis(100)).await;
-                })
+            exporter.shared_runtime.runtime().unwrap().block_on(async {
+                sleep(Duration::from_millis(100)).await;
+            })
         }
         metrics_endpoint.assert_calls(1);
     }
@@ -1831,20 +1719,12 @@ mod tests {
 
         // Wait for the info fetcher to get the config
         while mock_info.calls() == 0 {
-            exporter
-                .runtime
-                .lock()
-                .unwrap()
-                .as_ref()
-                .unwrap()
-                .block_on(async {
-                    sleep(Duration::from_millis(100)).await;
-                })
+            exporter.shared_runtime.runtime().unwrap().block_on(async {
+                sleep(Duration::from_millis(100)).await;
+            })
         }
 
         let _ = exporter.send(data.as_ref()).unwrap();
-
-        exporter.shutdown(None).unwrap();
 
         mock_traces.assert();
     }
@@ -1863,15 +1743,6 @@ mod tests {
         let exporter = builder.build().unwrap();
 
         assert_eq!(exporter.endpoint.timeout_ms, 42);
-    }
-
-    #[test]
-    #[cfg_attr(miri, ignore)]
-    fn stop_and_start_runtime() {
-        let builder = TraceExporterBuilder::default();
-        let exporter = builder.build().unwrap();
-        exporter.stop_worker();
-        exporter.run_worker().unwrap();
     }
 }
 
@@ -1915,6 +1786,8 @@ mod single_threaded_tests {
                 .body(r#"{"version":"1","client_drop_p0s":true,"endpoints":["/v0.4/traces","/v0.6/stats"]}"#);
         });
 
+        let runtime = Arc::new(SharedRuntime::new().unwrap());
+
         let mut builder = TraceExporterBuilder::default();
         builder
             .set_url(&server.url("/"))
@@ -1926,6 +1799,7 @@ mod single_threaded_tests {
             .set_language_interpreter("v8")
             .set_input_format(TraceExporterInputFormat::V04)
             .set_output_format(TraceExporterOutputFormat::V04)
+            .set_shared_runtime(runtime.clone())
             .enable_stats(Duration::from_secs(10));
         let exporter = builder.build().unwrap();
 
@@ -1938,15 +1812,9 @@ mod single_threaded_tests {
 
         // Wait for the info fetcher to get the config
         while agent_info::get_agent_info().is_none() {
-            exporter
-                .runtime
-                .lock()
-                .unwrap()
-                .as_ref()
-                .unwrap()
-                .block_on(async {
-                    sleep(Duration::from_millis(100)).await;
-                })
+            exporter.shared_runtime.runtime().unwrap().block_on(async {
+                sleep(Duration::from_millis(100)).await;
+            })
         }
 
         let result = exporter.send(data.as_ref());
@@ -1963,7 +1831,7 @@ mod single_threaded_tests {
             std::thread::sleep(Duration::from_millis(10));
         }
 
-        exporter.shutdown(None).unwrap();
+        runtime.shutdown(None).unwrap();
 
         // Wait for the mock server to process the stats
         for _ in 0..1000 {
@@ -2015,6 +1883,8 @@ mod single_threaded_tests {
                 .body(r#"{"version":"1","client_drop_p0s":true,"endpoints":["/v0.4/traces","/v0.6/stats"]}"#);
         });
 
+        let runtime = Arc::new(SharedRuntime::new().unwrap());
+
         let mut builder = TraceExporterBuilder::default();
         builder
             .set_url(&server.url("/"))
@@ -2026,6 +1896,7 @@ mod single_threaded_tests {
             .set_language_interpreter("v8")
             .set_input_format(TraceExporterInputFormat::V04)
             .set_output_format(TraceExporterOutputFormat::V04)
+            .set_shared_runtime(runtime.clone())
             .enable_stats(Duration::from_secs(10));
         let exporter = builder.build().unwrap();
 
@@ -2043,15 +1914,9 @@ mod single_threaded_tests {
         // Wait for agent_info to be present so that sending a trace will trigger the stats worker
         // to start
         while agent_info::get_agent_info().is_none() {
-            exporter
-                .runtime
-                .lock()
-                .unwrap()
-                .as_ref()
-                .unwrap()
-                .block_on(async {
-                    sleep(Duration::from_millis(100)).await;
-                })
+            exporter.shared_runtime.runtime().unwrap().block_on(async {
+                sleep(Duration::from_millis(100)).await;
+            })
         }
 
         exporter.send(data.as_ref()).unwrap();
@@ -2066,7 +1931,7 @@ mod single_threaded_tests {
             std::thread::sleep(Duration::from_millis(10));
         }
 
-        exporter
+        runtime
             .shutdown(Some(Duration::from_millis(5)))
             .unwrap_err(); // The shutdown should timeout
 
