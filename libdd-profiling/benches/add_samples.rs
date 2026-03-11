@@ -184,7 +184,7 @@ pub fn bench_add_sample_vs_add2(c: &mut Criterion) {
                     values: &values,
                     labels: labels_api.clone(),
                 };
-                black_box(profile.try_add_sample(sample, None, None)).unwrap();
+                black_box(profile.try_add_sample(sample, None)).unwrap();
             }
             black_box(profile.only_for_testing_num_aggregated_samples())
         })
