@@ -4,7 +4,7 @@
 use crate::trace_utils;
 use std::env;
 
-pub const PROD_INTAKE_SUBDOMAIN: &str = "trace.agent";
+const PROD_INTAKE_SUBDOMAIN: &str = "trace.agent";
 
 const TRACE_INTAKE_ROUTE: &str = "/api/v0.2/traces";
 const TRACE_STATS_INTAKE_ROUTE: &str = "/api/v0.2/stats";

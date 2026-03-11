@@ -580,7 +580,7 @@ impl SidecarInterface for SidecarServer {
         });
         session.modify_trace_config(|cfg| {
             let endpoint = get_product_endpoint(
-                libdd_trace_utils::config_utils::PROD_INTAKE_SUBDOMAIN,
+                "trace.agent",
                 &config.endpoint,
             );
             cfg.set_endpoint(endpoint).ok();

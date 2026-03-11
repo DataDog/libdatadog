@@ -209,15 +209,19 @@ jobs:
           VALIDATION_FAILED="false"
           FAILURE_REASONS=()
 
-          # Rule: ci/docs/style/test/build cannot change the public API
+          # Rule: ci/docs/style/test/build/chore cannot change the public API or be marked breaking
           case "$TYPE" in
-            ci|docs|style|test|build)
+            ci|docs|style|test|build|chore)
               if [[ "$SEMVER_LEVEL" == "major" ]] || [[ "$SEMVER_LEVEL" == "minor" ]]; then
                 VALIDATION_FAILED="true"
                 FAILURE_REASONS+=("'$TYPE' cannot have major or minor API changes. Use a different PR type, or avoid public API changes.")
               fi
+              if [[ -n "$IS_BREAKING_CHANGE" ]]; then
+                VALIDATION_FAILED="true"
+                FAILURE_REASONS+=("'$TYPE' cannot be marked as a breaking change. Remove '!' from the title and the 'BREAKING CHANGE:' footer, or use a different PR type (e.g. 'feat!', 'fix!', 'refactor!').")
+              fi
               ;;
-            feat|fix|refactor|chore|perf|revert)
+            feat|fix|refactor|perf|revert)
               # These can be any semver level (subject to breaking change rules below)
               ;;
             *)
@@ -258,9 +262,9 @@ jobs:
             echo "--------------------------------------------"
             echo "VALID COMBINATIONS:"
             echo "--------------------------------------------"
-            echo "  ci/docs/style/test/build -> patch or none only (no public API changes)"
-            echo "  all other types          -> any level allowed"
-            echo "  major changes            -> must have '!' or 'BREAKING CHANGE:' footer"
+            echo "  ci/docs/style/test/build/chore -> patch or none only (no public API changes, no '!' marker)"
+            echo "  all other types               -> any level allowed"
+            echo "  major changes                 -> must have '!' or 'BREAKING CHANGE:' footer"
             echo ""
             exit 1
           else
