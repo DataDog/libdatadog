@@ -20,7 +20,9 @@ use crate::telemetry::{SendPayloadTelemetry, TelemetryClient};
 use crate::trace_exporter::agent_response::{
     AgentResponsePayloadVersion, DATADOG_RATES_PAYLOAD_VERSION_HEADER,
 };
-use crate::trace_exporter::error::{InternalErrorKind, RequestError, ShutdownError, TraceExporterError};
+use crate::trace_exporter::error::{
+    InternalErrorKind, RequestError, ShutdownError, TraceExporterError,
+};
 use crate::{
     agent_info::{self, schema::AgentInfo},
     health_metrics,
@@ -219,9 +221,9 @@ impl TraceExporter {
     pub fn shutdown(self, timeout: Option<std::time::Duration>) -> Result<(), TraceExporterError> {
         let runtime = self.runtime()?;
         if let Some(timeout) = timeout {
-            match runtime.block_on(async {
-                tokio::time::timeout(timeout, self.shutdown_workers()).await
-            }) {
+            match runtime
+                .block_on(async { tokio::time::timeout(timeout, self.shutdown_workers()).await })
+            {
                 Ok(()) => Ok(()),
                 Err(_) => Err(TraceExporterError::Shutdown(ShutdownError::TimedOut(
                     timeout,

@@ -100,7 +100,8 @@ async fn fetch_and_hash_response(info_endpoint: &Endpoint) -> Result<(String, by
 ///
 /// This type implements [`libdd_common::worker::Worker`] and is intended to be driven by a worker
 /// runner such as [`crate::shared_runtime::SharedRuntime`].
-/// In that lifecycle, `trigger()` waits for the next refresh event and `run()` performs a single fetch.
+/// In that lifecycle, `trigger()` waits for the next refresh event and `run()` performs a single
+/// fetch.
 ///
 /// You can access the current state with [`crate::agent_info::get_agent_info`].
 ///

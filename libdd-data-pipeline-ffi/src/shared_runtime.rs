@@ -262,10 +262,8 @@ mod tests {
             let handle = handle.assume_init();
 
             let mut cloned: MaybeUninit<*const SharedRuntime> = MaybeUninit::uninit();
-            let err = ddog_shared_runtime_clone(
-                handle,
-                NonNull::new_unchecked(cloned.as_mut_ptr()),
-            );
+            let err =
+                ddog_shared_runtime_clone(handle, NonNull::new_unchecked(cloned.as_mut_ptr()));
             assert!(err.is_none());
 
             // Both handles point to the same underlying runtime (strong count == 2).
