@@ -34,6 +34,7 @@ pub struct TraceExporterBuilder {
     language_interpreter: String,
     language_interpreter_vendor: String,
     git_commit_sha: String,
+    process_tags: String,
     input_format: TraceExporterInputFormat,
     output_format: TraceExporterOutputFormat,
     dogstatsd_url: Option<String>,
@@ -108,6 +109,11 @@ impl TraceExporterBuilder {
     /// Only used when client-side stats is enabled
     pub fn set_git_commit_sha(&mut self, git_commit_sha: &str) -> &mut Self {
         git_commit_sha.clone_into(&mut self.git_commit_sha);
+        self
+    }
+
+    pub fn set_process_tags(&mut self, process_tags: &str) -> &mut Self {
+        process_tags.clone_into(&mut self.process_tags);
         self
     }
 
@@ -309,6 +315,7 @@ impl TraceExporterBuilder {
                 language_interpreter_vendor: self.language_interpreter_vendor,
                 language: self.language,
                 git_commit_sha: self.git_commit_sha,
+                process_tags: self.process_tags,
                 client_computed_stats: self.client_computed_stats,
                 client_computed_top_level: self.client_computed_top_level,
                 hostname: self.hostname,

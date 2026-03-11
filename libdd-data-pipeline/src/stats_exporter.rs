@@ -174,7 +174,7 @@ fn encode_stats_payload(
         tags: Vec::new(),
         agent_aggregation: String::new(),
         image_tag: String::new(),
-        process_tags: String::new(),
+        process_tags: meta.process_tags.clone(),
         process_tags_hash: 0,
     }
 }
