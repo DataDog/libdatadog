@@ -102,7 +102,8 @@ mod tests {
             let client: SeqpacketConn = liaison.connect_to_server().unwrap();
             let srv: SeqpacketConn = listener.try_accept().unwrap();
             client.send_raw_blocking(&mut vec![255], &[]).unwrap();
-            let mut buf = vec![0u8; datadog_ipc::MAX_MESSAGE_SIZE + datadog_ipc::HANDLE_SUFFIX_SIZE];
+            let mut buf =
+                vec![0u8; datadog_ipc::MAX_MESSAGE_SIZE + datadog_ipc::HANDLE_SUFFIX_SIZE];
             let (n, _) = srv.recv_raw_blocking(&mut buf).unwrap();
             assert_eq!(n, 1);
             assert_eq!(buf[0], 255);

@@ -34,17 +34,17 @@ mod queue_id;
 mod remote_configs;
 mod runtime_info;
 mod runtime_metadata;
+pub mod sender;
 mod serialized_tracer_header_tags;
 mod session_info;
-pub mod sender;
 pub mod sidecar_interface;
 pub(crate) mod sidecar_server;
 pub mod telemetry;
 pub(crate) mod tracing;
 
-pub use sidecar_interface::DynamicInstrumentationConfigState;
 #[cfg(windows)]
 pub use remote_configs::RemoteConfigNotifyFunction;
+pub use sidecar_interface::DynamicInstrumentationConfigState;
 pub use telemetry::{get_telemetry_action_sender, InternalTelemetryActions};
 pub(crate) use telemetry::{init_telemetry_sender, telemetry_action_receiver_task};
 

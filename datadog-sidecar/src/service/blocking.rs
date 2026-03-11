@@ -127,7 +127,10 @@ impl SidecarTransport {
     /// Send garbage data (used in tests to verify error handling).
     pub fn send_garbage(&mut self) -> io::Result<()> {
         match self.inner.lock() {
-            Ok(mut c) => c.channel.0.send_blocking(&mut vec![0xDE, 0xAD, 0xBE, 0xEF], &[]),
+            Ok(mut c) => c
+                .channel
+                .0
+                .send_blocking(&mut vec![0xDE, 0xAD, 0xBE, 0xEF], &[]),
             Err(e) => Err(io::Error::other(e.to_string())),
         }
     }
@@ -142,9 +145,14 @@ impl From<SeqpacketConn> for SidecarTransport {
     }
 }
 
-fn lock_sender(transport: &mut SidecarTransport) -> io::Result<std::sync::MutexGuard<'_, SidecarSender>> {
+fn lock_sender(
+    transport: &mut SidecarTransport,
+) -> io::Result<std::sync::MutexGuard<'_, SidecarSender>> {
     transport.ensure_alive();
-    transport.inner.lock().map_err(|e| io::Error::other(e.to_string()))
+    transport
+        .inner
+        .lock()
+        .map_err(|e| io::Error::other(e.to_string()))
 }
 
 /// Shuts down a runtime.
@@ -188,7 +196,8 @@ pub fn enqueue_actions(
 pub fn set_session_config(
     transport: &mut SidecarTransport,
     session_id: String,
-    #[cfg(windows)] remote_config_notify_function: crate::service::remote_configs::RemoteConfigNotifyFunction,
+    #[cfg(windows)]
+    remote_config_notify_function: crate::service::remote_configs::RemoteConfigNotifyFunction,
     config: &SessionConfig,
     is_fork: bool,
 ) -> io::Result<()> {
@@ -243,7 +252,12 @@ pub fn send_debugger_data_shm(
     handle: ShmHandle,
     debugger_type: DebuggerType,
 ) -> io::Result<()> {
-    lock_sender(transport)?.send_debugger_data_shm(instance_id.clone(), queue_id, handle, debugger_type);
+    lock_sender(transport)?.send_debugger_data_shm(
+        instance_id.clone(),
+        queue_id,
+        handle,
+        debugger_type,
+    );
     Ok(())
 }
 
@@ -399,7 +413,7 @@ pub fn ping(transport: &mut SidecarTransport) -> io::Result<Duration> {
 mod tests {
     use crate::service::blocking::SidecarTransport;
     use datadog_ipc::{SeqpacketConn, SeqpacketListener};
-    
+
     use tempfile::tempdir;
 
     #[test]

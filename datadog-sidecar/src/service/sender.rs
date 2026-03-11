@@ -4,15 +4,17 @@
 //! Higher-level sender with priority outbox and telemetry load-shedding.
 //!
 //! Wraps [`SidecarInterfaceChannel`] with:
-//! - A **priority outbox** for state-change messages: coalesced and drained before
-//!   fire-and-forget sends.
-//! - **Telemetry load-shedding**: when `outstanding > max_outstanding / 2`, 90% of
-//!   `EnqueueActions` calls are dropped (telemetry is low priority).
+//! - A **priority outbox** for state-change messages: coalesced and drained before fire-and-forget
+//!   sends.
+//! - **Telemetry load-shedding**: when `outstanding > max_outstanding / 2`, 90% of `EnqueueActions`
+//!   calls are dropped (telemetry is low priority).
 //!
 //! `SidecarSender` takes `&mut self`; the caller is responsible for exclusive access.
 
 use crate::service::{
-    sidecar_interface::{DynamicInstrumentationConfigState, SidecarInterfaceChannel, SidecarInterfaceRequest},
+    sidecar_interface::{
+        DynamicInstrumentationConfigState, SidecarInterfaceChannel, SidecarInterfaceRequest,
+    },
     InstanceId, QueueId, SerializedTracerHeaderTags, SessionConfig, SidecarAction,
 };
 use datadog_ipc::platform::ShmHandle;
@@ -58,12 +60,12 @@ impl SidecarOutbox {
 
 fn cancel_if_instance(slot: &mut Option<SidecarInterfaceRequest>, instance_id: &InstanceId) {
     let should_cancel = match slot {
-        Some(SidecarInterfaceRequest::SetUniversalServiceTags { instance_id: id, .. }) => {
-            id == instance_id
-        }
-        Some(SidecarInterfaceRequest::SetRequestConfig { instance_id: id, .. }) => {
-            id == instance_id
-        }
+        Some(SidecarInterfaceRequest::SetUniversalServiceTags {
+            instance_id: id, ..
+        }) => id == instance_id,
+        Some(SidecarInterfaceRequest::SetRequestConfig {
+            instance_id: id, ..
+        }) => id == instance_id,
         _ => false,
     };
     if should_cancel {
@@ -196,7 +198,8 @@ impl SidecarSender {
             &mut self.outbox,
             SidecarInterfaceRequest::SetSessionConfig {
                 session_id,
-                #[cfg(windows)] remote_config_notify_function,
+                #[cfg(windows)]
+                remote_config_notify_function,
                 config,
                 is_fork,
             },
@@ -298,7 +301,8 @@ impl SidecarSender {
             }
             // The 1-in-10 that passes through falls to the try_send below.
         }
-        self.channel.try_send_enqueue_actions(instance_id, queue_id, actions);
+        self.channel
+            .try_send_enqueue_actions(instance_id, queue_id, actions);
     }
 
     pub fn send_trace_v04_shm(
@@ -383,7 +387,8 @@ impl SidecarSender {
         if !self.try_drain_outbox() {
             return;
         }
-        self.channel.try_send_set_test_session_token(session_id, token);
+        self.channel
+            .try_send_set_test_session_token(session_id, token);
     }
 
     pub fn set_read_timeout(&mut self, d: Option<Duration>) -> io::Result<()> {

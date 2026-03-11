@@ -67,7 +67,10 @@ pub extern "C" fn ddog_daemon_entry_point(trampoline_data: &TrampolineData) {
                 move || stop_listening(listener_fd)
             };
 
-            Ok((move |handler| accept_socket_loop(async_listener, handler), cancel))
+            Ok((
+                move |handler| accept_socket_loop(async_listener, handler),
+                cancel,
+            ))
         };
         if let Err(err) = enter_listener_loop(acquire_listener) {
             error!("Error: {err}")

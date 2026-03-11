@@ -38,8 +38,7 @@ pub(crate) struct SessionInfo {
     pub(crate) remote_config_notify_function:
         Arc<Mutex<crate::service::remote_configs::RemoteConfigNotifyFunction>>,
     #[cfg(windows)]
-    pub(crate) process_handle:
-        Arc<Mutex<Option<crate::service::sidecar_server::ProcessHandle>>>,
+    pub(crate) process_handle: Arc<Mutex<Option<crate::service::sidecar_server::ProcessHandle>>>,
     pub(crate) log_guard:
         Arc<Mutex<Option<(MultiEnvFilterGuard<'static>, MultiWriterGuard<'static>)>>>,
     pub(crate) session_id: String,

@@ -13,11 +13,11 @@ pub mod handles;
 pub mod platform;
 pub mod rate_limiter;
 
-pub mod codec;
 pub mod client;
+pub mod codec;
 
+pub use client::IpcClientConn;
+pub use platform::{recv_raw_async, send_raw_async};
 pub use platform::{
     PeerCredentials, SeqpacketConn, SeqpacketListener, HANDLE_SUFFIX_SIZE, MAX_MESSAGE_SIZE,
 };
-pub use platform::{recv_raw_async, send_raw_async};
-pub use client::IpcClientConn;

@@ -113,8 +113,7 @@ async fn accept_socket_loop(
         .ok_or(io::Error::from(io::ErrorKind::InvalidInput))?;
 
     // Transfer the listener's handle into a Tokio NamedPipeServer.
-    let mut pipe =
-        unsafe { NamedPipeServer::from_raw_handle(listener.into_raw_handle()) }?;
+    let mut pipe = unsafe { NamedPipeServer::from_raw_handle(listener.into_raw_handle()) }?;
 
     let cancellation = cancellation.shared();
     loop {

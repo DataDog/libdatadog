@@ -11,7 +11,7 @@ use nix::sys::socket::{recvmsg, sendmsg, AddressFamily, SockFlag, SockType};
 pub use nix::sys::socket::{ControlMessage, ControlMessageOwned, MsgFlags, UnixAddr};
 use std::{
     io,
-    os::unix::io::{AsRawFd, FromRawFd, OwnedFd, RawFd},
+    os::unix::io::{AsRawFd, FromRawFd, IntoRawFd, OwnedFd, RawFd},
     time::Duration,
 };
 use tokio::io::unix::AsyncFd;
@@ -185,7 +185,7 @@ impl AsRawFd for SeqpacketListener {
     }
 }
 
-impl std::os::unix::io::IntoRawFd for SeqpacketListener {
+impl IntoRawFd for SeqpacketListener {
     fn into_raw_fd(self) -> RawFd {
         self.inner.into_raw_fd()
     }

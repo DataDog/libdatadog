@@ -52,10 +52,7 @@ impl FdSource {
 impl HandlesTransport for &mut FdSource {
     type Error = std::io::Error;
 
-    fn copy_handle<T>(
-        self,
-        _handle: PlatformHandle<T>,
-    ) -> Result<(), Self::Error> {
+    fn copy_handle<T>(self, _handle: PlatformHandle<T>) -> Result<(), Self::Error> {
         Ok(())
     }
 

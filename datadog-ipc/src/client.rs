@@ -115,16 +115,23 @@ impl IpcClientConn {
     /// intermediate 0-byte acks for prior fire-and-forget messages, until the
     /// ack for this specific send arrives.  Returns the response bytes and any
     /// transferred file descriptors.
-    pub fn call(&mut self, data: &mut Vec<u8>, fds: &[RawFd]) -> io::Result<(Vec<u8>, Vec<OwnedFd>)> {
+    pub fn call(
+        &mut self,
+        data: &mut Vec<u8>,
+        fds: &[RawFd],
+    ) -> io::Result<(Vec<u8>, Vec<OwnedFd>)> {
         self.conn.send_raw_blocking(data, fds).inspect_err(|_| {
             self.closed = true;
         })?;
         self.send_count += 1;
         let target = self.send_count;
         loop {
-            let (n, resp_fds) = self.conn.recv_raw_blocking(&mut self.recv_buf).inspect_err(|_| {
-                self.closed = true;
-            })?;
+            let (n, resp_fds) = self
+                .conn
+                .recv_raw_blocking(&mut self.recv_buf)
+                .inspect_err(|_| {
+                    self.closed = true;
+                })?;
             self.ack_count += 1;
             if self.ack_count == target {
                 return Ok((self.recv_buf[..n].to_vec(), resp_fds));

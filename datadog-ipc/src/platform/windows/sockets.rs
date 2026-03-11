@@ -22,6 +22,7 @@
 //! no intermediate copy needed.  The caller's buffer must have at least `HANDLE_SUFFIX_SIZE`
 //! bytes beyond the maximum expected payload size.
 
+use crate::platform::message::MAX_FDS;
 use std::io;
 use std::os::windows::io::{AsRawHandle, FromRawHandle, IntoRawHandle, OwnedHandle, RawHandle};
 use std::path::Path;
@@ -31,7 +32,6 @@ use std::sync::{
     Mutex,
 };
 use tokio::net::windows::named_pipe::{NamedPipeClient, NamedPipeServer};
-use crate::platform::message::MAX_FDS;
 
 // winapi – only used for things not cleanly available in windows-sys
 use winapi::shared::minwindef::ULONG;
@@ -43,13 +43,15 @@ use winapi::um::winnt::{DUPLICATE_SAME_ACCESS, HANDLE, PROCESS_DUP_HANDLE};
 
 // windows-sys – used for all pipe/IO/threading syscalls
 use windows_sys::Win32::Foundation::{HANDLE as SysHANDLE, WAIT_OBJECT_0, WAIT_TIMEOUT};
-use windows_sys::Win32::Storage::FileSystem::{ReadFile, WriteFile, FILE_FLAG_FIRST_PIPE_INSTANCE, FILE_FLAG_OVERLAPPED, PIPE_ACCESS_DUPLEX};
-use windows_sys::Win32::System::IO::{CancelIo, GetOverlappedResult, OVERLAPPED, OVERLAPPED_0};
+use windows_sys::Win32::Storage::FileSystem::{
+    ReadFile, WriteFile, FILE_FLAG_FIRST_PIPE_INSTANCE, FILE_FLAG_OVERLAPPED, PIPE_ACCESS_DUPLEX,
+};
 use windows_sys::Win32::System::Pipes::{
-    ConnectNamedPipe, CreateNamedPipeA, PeekNamedPipe, SetNamedPipeHandleState,
-    PIPE_NOWAIT, PIPE_READMODE_MESSAGE, PIPE_TYPE_MESSAGE, PIPE_UNLIMITED_INSTANCES, PIPE_WAIT,
+    ConnectNamedPipe, CreateNamedPipeA, PeekNamedPipe, SetNamedPipeHandleState, PIPE_NOWAIT,
+    PIPE_READMODE_MESSAGE, PIPE_TYPE_MESSAGE, PIPE_UNLIMITED_INSTANCES, PIPE_WAIT,
 };
 use windows_sys::Win32::System::Threading::{CreateEventA, WaitForSingleObject, INFINITE};
+use windows_sys::Win32::System::IO::{CancelIo, GetOverlappedResult, OVERLAPPED, OVERLAPPED_0};
 
 /// Maximum IPC message payload size (4 MiB).
 pub const MAX_MESSAGE_SIZE: usize = 4 * 1024 * 1024;
@@ -162,7 +164,15 @@ fn pipe_read(
     }
 
     let mut read: u32 = 0;
-    if unsafe { ReadFile(h, buf.as_mut_ptr() as _, buf.len() as u32, &mut read, null_mut()) } == 0
+    if unsafe {
+        ReadFile(
+            h,
+            buf.as_mut_ptr() as _,
+            buf.len() as u32,
+            &mut read,
+            null_mut(),
+        )
+    } == 0
     {
         return Err(io::Error::last_os_error());
     }
@@ -176,8 +186,15 @@ fn pipe_write(h: SysHANDLE, data: &[u8], blocking: bool) -> io::Result<()> {
     }
 
     let mut written: u32 = 0;
-    let ok =
-        unsafe { WriteFile(h, data.as_ptr() as _, data.len() as u32, &mut written, null_mut()) };
+    let ok = unsafe {
+        WriteFile(
+            h,
+            data.as_ptr() as _,
+            data.len() as u32,
+            &mut written,
+            null_mut(),
+        )
+    };
 
     if !blocking {
         let mode = PIPE_WAIT;
@@ -187,8 +204,7 @@ fn pipe_write(h: SysHANDLE, data: &[u8], blocking: bool) -> io::Result<()> {
     if ok == 0 {
         let err = io::Error::last_os_error();
         if !blocking
-            && err.raw_os_error()
-                == Some(windows_sys::Win32::Foundation::ERROR_NO_DATA as i32)
+            && err.raw_os_error() == Some(windows_sys::Win32::Foundation::ERROR_NO_DATA as i32)
         {
             return Err(io::ErrorKind::WouldBlock.into());
         }
@@ -200,7 +216,11 @@ fn pipe_write(h: SysHANDLE, data: &[u8], blocking: bool) -> io::Result<()> {
 fn create_pipe_server(name: &[u8], first_instance: bool) -> io::Result<OwnedHandle> {
     let open_mode = PIPE_ACCESS_DUPLEX
         | FILE_FLAG_OVERLAPPED
-        | if first_instance { FILE_FLAG_FIRST_PIPE_INSTANCE } else { 0 };
+        | if first_instance {
+            FILE_FLAG_FIRST_PIPE_INSTANCE
+        } else {
+            0
+        };
 
     let h = unsafe {
         CreateNamedPipeA(
@@ -232,7 +252,9 @@ fn make_overlapped(event: SysHANDLE) -> OVERLAPPED {
     OVERLAPPED {
         Internal: 0,
         InternalHigh: 0,
-        Anonymous: OVERLAPPED_0 { Pointer: null_mut() },
+        Anonymous: OVERLAPPED_0 {
+            Pointer: null_mut(),
+        },
         hEvent: event,
     }
 }
@@ -271,7 +293,11 @@ impl SeqpacketListener {
     pub fn from_owned_fd(fd: OwnedHandle) -> Self {
         use crate::platform::named_pipe_name_from_raw_handle;
         let name = named_pipe_name_from_raw_handle(fd.as_raw_handle())
-            .map(|s| { let mut b = s.into_bytes(); b.push(0); b })
+            .map(|s| {
+                let mut b = s.into_bytes();
+                b.push(0);
+                b
+            })
             .unwrap_or_default();
         Self {
             inner: Mutex::new(fd),
@@ -584,7 +610,10 @@ pub struct AsyncSeqpacketConn {
 
 impl AsyncSeqpacketConn {
     pub fn peer_credentials(&self) -> io::Result<PeerCredentials> {
-        Ok(PeerCredentials { pid: self.peer_pid, uid: 0 })
+        Ok(PeerCredentials {
+            pid: self.peer_pid,
+            uid: 0,
+        })
     }
 }
 
@@ -604,7 +633,10 @@ impl SeqpacketConn {
         } else {
             AsyncPipe::Client(unsafe { NamedPipeClient::from_raw_handle(raw)? })
         };
-        Ok(AsyncSeqpacketConn { inner, peer_pid: self.peer_pid })
+        Ok(AsyncSeqpacketConn {
+            inner,
+            peer_pid: self.peer_pid,
+        })
     }
 }
 

@@ -59,10 +59,7 @@ where
         }
     }
 
-    fn receive_handles<Transport>(
-        &mut self,
-        transport: Transport,
-    ) -> Result<(), Transport::Error>
+    fn receive_handles<Transport>(&mut self, transport: Transport) -> Result<(), Transport::Error>
     where
         Transport: HandlesTransport,
     {

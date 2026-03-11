@@ -3,7 +3,9 @@
 
 #![allow(clippy::too_many_arguments)]
 
-use crate::service::{InstanceId, QueueId, SerializedTracerHeaderTags, SessionConfig, SidecarAction};
+use crate::service::{
+    InstanceId, QueueId, SerializedTracerHeaderTags, SessionConfig, SidecarAction,
+};
 use datadog_ipc::platform::ShmHandle;
 use datadog_live_debugger::sender::DebuggerType;
 use libdd_common::tag::Tag;

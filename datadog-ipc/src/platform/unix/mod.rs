@@ -26,4 +26,3 @@ pub(crate) use mem_handle::*;
 pub unsafe extern "C" fn memfd_create(name: libc::c_void, flags: libc::c_uint) -> libc::c_int {
     libc::syscall(libc::SYS_memfd_create, name, flags) as libc::c_int
 }
-

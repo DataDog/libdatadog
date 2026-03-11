@@ -38,7 +38,10 @@ fn criterion_benchmark(c: &mut Criterion) {
     });
 
     #[cfg(not(target_arch = "aarch64"))]
-    println!("Total requests handled: {}", channel.call_req_cnt().unwrap());
+    println!(
+        "Total requests handled: {}",
+        channel.call_req_cnt().unwrap()
+    );
 
     drop(channel);
     worker.join().unwrap();

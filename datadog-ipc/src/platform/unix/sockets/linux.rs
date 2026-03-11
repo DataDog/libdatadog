@@ -3,8 +3,9 @@
 
 //! Linux-specific IPC socket implementation using `AF_UNIX SOCK_SEQPACKET`.
 
-use super::{create_unix_socket, SeqpacketConn, SeqpacketListener, PeerCredentials};
+use super::{create_unix_socket, PeerCredentials, SeqpacketConn, SeqpacketListener};
 use nix::sys::socket::{accept, bind, connect, listen, Backlog, SockType, UnixAddr};
+use std::os::fd::RawFd;
 use std::{
     io,
     os::unix::{
@@ -13,7 +14,6 @@ use std::{
     },
     path::Path,
 };
-use std::os::fd::RawFd;
 
 fn create_seqpacket_socket() -> io::Result<OwnedFd> {
     create_unix_socket(SockType::SeqPacket)
@@ -43,8 +43,8 @@ impl SeqpacketListener {
 
     /// Accept a new connection (non-blocking in non-blocking mode).
     ///
-    /// Skips intermittent connections left by `is_listening` probes: after `accept()`, peek to check
-    /// if the peer has already closed the connection (EOF). If so, discard and loop.
+    /// Skips intermittent connections left by `is_listening` probes: after `accept()`, peek to
+    /// check if the peer has already closed the connection (EOF). If so, discard and loop.
     pub fn try_accept(&self) -> io::Result<SeqpacketConn> {
         loop {
             let new_fd = accept(self.inner.as_raw_fd()).map_err(io::Error::from)?;
@@ -73,9 +73,8 @@ impl SeqpacketConn {
     /// Create a connected pair (SEQPACKET, for testing / in-process use).
     pub fn socketpair() -> io::Result<(Self, Self)> {
         let mut fds = [0i32; 2];
-        if unsafe {
-            libc::socketpair(libc::AF_UNIX, libc::SOCK_SEQPACKET, 0, fds.as_mut_ptr())
-        } == -1
+        if unsafe { libc::socketpair(libc::AF_UNIX, libc::SOCK_SEQPACKET, 0, fds.as_mut_ptr()) }
+            == -1
         {
             return Err(io::Error::last_os_error());
         }

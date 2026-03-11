@@ -14,8 +14,8 @@
 //!
 //! **Client side** (`SeqpacketConn::connect`):
 //! - Creates a `socketpair(AF_UNIX, SOCK_DGRAM)` with 4 MiB send/recv buffers.
-//! - Sends one socketpair end to the server's rendezvous path via a **fresh, unconnected**
-//!   DGRAM socket (using `sendmsg` with `SCM_RIGHTS`). The client retains the other end.
+//! - Sends one socketpair end to the server's rendezvous path via a **fresh, unconnected** DGRAM
+//!   socket (using `sendmsg` with `SCM_RIGHTS`). The client retains the other end.
 //!
 //! **Liveness probe** (`is_listening`):
 //! - Sends a 1-byte datagram **without** SCM_RIGHTS to the rendezvous socket.
@@ -25,14 +25,14 @@ use super::{
     create_unix_socket, sendmsg, set_nonblocking, ControlMessage, MsgFlags, SeqpacketConn,
     SeqpacketListener, UnixAddr, MAX_MESSAGE_SIZE,
 };
+use crate::PeerCredentials;
 use nix::sys::socket::{bind, AddressFamily, SockFlag, SockType};
+use std::os::fd::RawFd;
 use std::{
     io,
     os::unix::io::{AsRawFd, FromRawFd, OwnedFd},
     path::Path,
 };
-use std::os::fd::RawFd;
-use crate::PeerCredentials;
 
 fn create_dgram_socket() -> io::Result<OwnedFd> {
     create_unix_socket(SockType::Datagram)
@@ -83,7 +83,8 @@ impl SeqpacketListener {
             if let Some(client_fd) = it.next() {
                 // The second fd (if present) is the liveness pipe read end from `connect()`.
                 // Holding it alive lets the client detect when we drop this connection.
-                // Unlike socketpairs, pipes aren't autoclosed when the transferred end is closed locally.
+                // Unlike socketpairs, pipes aren't autoclosed when the transferred end is closed
+                // locally.
                 return SeqpacketConn::from_owned(client_fd, it.next());
             }
             // No SCM_RIGHTS: liveness probe — discard and try the next message.
@@ -96,10 +97,7 @@ impl SeqpacketConn {
     /// Create a connected pair (SOCK_DGRAM with 4 MiB buffers, for testing / in-process use).
     pub fn socketpair() -> io::Result<(Self, Self)> {
         let mut fds = [0i32; 2];
-        if unsafe {
-            libc::socketpair(libc::AF_UNIX, libc::SOCK_DGRAM, 0, fds.as_mut_ptr())
-        } == -1
-        {
+        if unsafe { libc::socketpair(libc::AF_UNIX, libc::SOCK_DGRAM, 0, fds.as_mut_ptr()) } == -1 {
             return Err(io::Error::last_os_error());
         }
         let fd0 = unsafe { OwnedFd::from_raw_fd(fds[0]) };
@@ -120,10 +118,7 @@ impl SeqpacketConn {
     /// and subsequent sends return `BrokenPipe`.
     pub fn connect(path: impl AsRef<Path>) -> io::Result<Self> {
         let mut fds = [0i32; 2];
-        if unsafe {
-            libc::socketpair(libc::AF_UNIX, libc::SOCK_DGRAM, 0, fds.as_mut_ptr())
-        } == -1
-        {
+        if unsafe { libc::socketpair(libc::AF_UNIX, libc::SOCK_DGRAM, 0, fds.as_mut_ptr()) } == -1 {
             return Err(io::Error::last_os_error());
         }
         let fd_client = unsafe { OwnedFd::from_raw_fd(fds[0]) };
@@ -175,7 +170,11 @@ impl SeqpacketConn {
 
     pub(super) fn poll_liveness_pipe(&self) -> io::Result<()> {
         if let Some(ref lw) = self.liveness {
-            let mut pfd = libc::pollfd { fd: lw.as_raw_fd(), events: libc::POLLHUP as libc::c_short, revents: 0 };
+            let mut pfd = libc::pollfd {
+                fd: lw.as_raw_fd(),
+                events: libc::POLLHUP as libc::c_short,
+                revents: 0,
+            };
             let ret = unsafe { libc::poll(&mut pfd, 1, 0) };
             if ret > 0 && pfd.revents & (libc::POLLHUP | libc::POLLERR) != 0 {
                 return Err(io::Error::from(io::ErrorKind::BrokenPipe));
@@ -189,7 +188,11 @@ impl SeqpacketConn {
     /// On macOS, the peer fd must be kept open locally to maintain the SOCK_DGRAM
     /// socketpair connection on this end.  It is stored in `_peer` and closed when
     /// this `SeqpacketConn` is dropped.
-    pub(super) fn from_owned_pair(client: OwnedFd, peer: OwnedFd, liveness: Option<OwnedFd>) -> io::Result<Self> {
+    pub(super) fn from_owned_pair(
+        client: OwnedFd,
+        peer: OwnedFd,
+        liveness: Option<OwnedFd>,
+    ) -> io::Result<Self> {
         set_nonblocking(client.as_raw_fd(), true)?;
         Ok(Self {
             inner: client,
@@ -219,10 +222,7 @@ pub fn is_listening<P: AsRef<Path>>(path: P) -> io::Result<bool> {
     .map_err(io::Error::from)?;
     let addr = UnixAddr::new(path.as_ref()).map_err(io::Error::from)?;
     let iov = [std::io::IoSlice::new(&[0u8])];
-    Ok(
-        sendmsg::<UnixAddr>(probe.as_raw_fd(), &iov, &[], MsgFlags::empty(), Some(&addr))
-            .is_ok(),
-    )
+    Ok(sendmsg::<UnixAddr>(probe.as_raw_fd(), &iov, &[], MsgFlags::empty(), Some(&addr)).is_ok())
 }
 
 pub fn get_peer_credentials(fd: RawFd) -> io::Result<PeerCredentials> {
@@ -260,14 +260,18 @@ mod tests {
         let server = listener.try_accept().expect("try_accept");
 
         // Client → server
-        client.try_send_raw(&mut vec![1u8; 10], &[]).expect("client send");
+        client
+            .try_send_raw(&mut vec![1u8; 10], &[])
+            .expect("client send");
         let mut buf = vec![0u8; 64];
         let (n, _) = server.try_recv_raw(&mut buf).expect("server recv");
         assert_eq!(&buf[..n], &[1u8; 10]);
 
         // Server → client (use a large enough buffer for 220 bytes)
         let mut buf220 = vec![0u8; 256];
-        server.try_send_raw(&mut vec![2u8; 220], &[]).expect("server send 220B");
+        server
+            .try_send_raw(&mut vec![2u8; 220], &[])
+            .expect("server send 220B");
         let (n, _) = client.try_recv_raw(&mut buf220).expect("client recv");
         assert_eq!(n, 220);
     }
@@ -280,7 +284,9 @@ mod tests {
         let (conn0, conn1) = SeqpacketConn::socketpair().expect("socketpair");
 
         // Both ends alive: send must succeed.
-        conn0.try_send_raw(&mut vec![42u8; 10], &[]).expect("send with peer alive");
+        conn0
+            .try_send_raw(&mut vec![42u8; 10], &[])
+            .expect("send with peer alive");
 
         // Drop the peer: on macOS this disconnects conn0.
         drop(conn1);
