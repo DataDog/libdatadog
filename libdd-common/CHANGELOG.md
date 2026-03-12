@@ -2,6 +2,16 @@
 
 
 
+## [2.0.1](https://github.com/datadog/libdatadog/compare/libdd-common-v2.0.0..libdd-common-v2.0.1) - 2026-03-12
+
+### Changed
+
+- Run thread count test as single threaded ([#1626](https://github.com/datadog/libdatadog/issues/1626)) - ([b0296aa](https://github.com/datadog/libdatadog/commit/b0296aa173211c81ba1349f2e2812a79938f3153))
+- Run thread count test in own process ([#1693](https://github.com/datadog/libdatadog/issues/1693)) - ([3f3efef](https://github.com/datadog/libdatadog/commit/3f3efefb2ff45d7a5491b770480396d001b87631))
+- Update bytes to 1.11.1 to address RUSTSEC-2026-0007 ([#1628](https://github.com/datadog/libdatadog/issues/1628)) - ([0b0863b](https://github.com/datadog/libdatadog/commit/0b0863b2afb7302fe02ea0af77cb9f98550e2a62))
+
+
+
 ## [2.0.0](https://github.com/datadog/libdatadog/compare/libdd-common-v1.1.0..libdd-common-v2.0.0) - 2026-02-23
 
 ### Added
