@@ -148,11 +148,12 @@ fn coalesce(outbox: &mut SidecarOutbox, incoming: SidecarInterfaceRequest) {
 }
 
 /// Higher-level IPC sender with outbox coalescing and telemetry load-shedding.
-///
-/// Takes `&mut self` — callers are responsible for exclusive access.
 pub struct SidecarSender {
     pub channel: SidecarInterfaceChannel,
     outbox: SidecarOutbox,
+    /// Maximum allowed outstanding (sent-but-not-acked) messages before outbox drain is skipped
+    /// and fire-and-forget sends are blocked.
+    pub max_outstanding: u64,
     /// Cycles 0–9; used to implement 90% telemetry drop under backpressure.
     enqueue_actions_counter: u8,
 }
@@ -162,6 +163,7 @@ impl SidecarSender {
         Self {
             channel,
             outbox: SidecarOutbox::default(),
+            max_outstanding: 100,
             enqueue_actions_counter: 0,
         }
     }
@@ -171,7 +173,7 @@ impl SidecarSender {
         self.channel.0.drain_acks();
         for slot in self.outbox.slots_mut() {
             if let Some(msg) = slot {
-                if self.channel.0.outstanding() >= self.channel.0.max_outstanding {
+                if self.channel.0.outstanding() >= self.max_outstanding {
                     return false;
                 }
                 if !self.channel.try_send_request(msg) {
@@ -317,12 +319,12 @@ impl SidecarSender {
             return;
         }
         // Load-shed: drop 90% when buffer is more than half full.
-        if self.channel.0.outstanding() > self.channel.0.max_outstanding / 2 {
+        if self.channel.0.outstanding() > self.max_outstanding / 2 {
             self.enqueue_actions_counter = self.enqueue_actions_counter.wrapping_add(1) % 10;
             if self.enqueue_actions_counter != 0 {
                 return;
             }
-            // The 1-in-10 that passes through falls to the try_send below.
+            // The 10% that passes through falls to the try_send below.
         }
         self.channel
             .try_send_enqueue_actions(instance_id, queue_id, actions);

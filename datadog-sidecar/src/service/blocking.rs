@@ -66,7 +66,7 @@ impl SidecarTransport {
 
     pub fn set_backpressure(&mut self, max_bytes: usize, max_queue: u64) -> io::Result<()> {
         let mut sender = lock_sender(self)?;
-        sender.channel.0.max_outstanding = max_queue;
+        sender.max_outstanding = max_queue;
         #[cfg(unix)]
         sender.channel.0.conn.set_sndbuf_size(max_bytes)?;
         #[cfg(not(unix))]

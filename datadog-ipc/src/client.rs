@@ -13,10 +13,6 @@ use std::os::windows::io::{OwnedHandle as OwnedFd, RawHandle as RawFd};
 use std::io;
 use std::time::Duration;
 
-/// Maximum number of fire-and-forget messages that may be outstanding
-/// (sent but not yet acked) before the client blocks or drops new messages.
-pub const MAX_OUTSTANDING: u64 = 100;
-
 /// Client-side state for a single IPC connection.
 ///
 /// Tracks in-flight message counts for ack-based flow control.
@@ -28,13 +24,13 @@ pub struct IpcClientConn {
     send_count: u64,
     /// Number of server replies received (acks or typed responses).
     ack_count: u64,
-    /// Maximum allowed `send_count - ack_count` before `try_send` returns false.
-    pub max_outstanding: u64,
     /// Reusable receive buffer.  Sized to hold a maximum payload plus the platform wire overhead
     /// (`HANDLE_SUFFIX_SIZE`), so that messages can be read directly without an intermediate copy.
     recv_buf: Vec<u8>,
     /// Set to true when a fatal I/O error occurs on send or receive.
     closed: bool,
+    /// Skip draining when the caller already drained
+    drained_acks_since_send: bool,
 }
 
 impl IpcClientConn {
@@ -43,9 +39,9 @@ impl IpcClientConn {
             conn,
             send_count: 0,
             ack_count: 0,
-            max_outstanding: MAX_OUTSTANDING,
             recv_buf: vec![0u8; max_message_size() + HANDLE_SUFFIX_SIZE],
             closed: false,
+            drained_acks_since_send: true,
         }
     }
 
@@ -62,28 +58,29 @@ impl IpcClientConn {
         self.closed
     }
 
-    /// Number of sent-but-not-yet-acked messages.
+    /// Number of sent-but-not-yet-acked messages on client side.
     pub fn outstanding(&self) -> u64 {
         self.send_count - self.ack_count
     }
 
-    /// Non-blocking drain of all pending acks.  Updates `ack_count`.
+    /// Non-blocking drain of all pending acks for client side. Updates `ack_count`.
     pub fn drain_acks(&mut self) {
+        self.drained_acks_since_send = true;
         while self.conn.try_recv_raw(&mut self.recv_buf).is_ok() {
             self.ack_count += 1;
         }
     }
 
-    /// Non-blocking send.
+    /// Attempt a non-blocking send.
     ///
-    /// First drains pending acks, then checks the outstanding limit.
-    /// Returns `false` if the socket would block (EAGAIN) or the outstanding
-    /// limit has been reached.  `data` is unmodified after the call.
+    /// Returns `false` if the socket would block (EAGAIN).
+    /// `data` is unmodified after the call.
     pub fn try_send(&mut self, data: &mut Vec<u8>, fds: &[RawFd]) -> bool {
-        self.drain_acks();
-        if self.outstanding() >= self.max_outstanding {
-            return false;
+        if !self.drained_acks_since_send {
+            self.drain_acks();
         }
+        self.drained_acks_since_send = false;
+
         match self.conn.try_send_raw(data, fds) {
             Ok(()) => {
                 self.send_count += 1;
@@ -136,7 +133,7 @@ impl IpcClientConn {
             if self.ack_count == target {
                 return Ok((self.recv_buf[..n].to_vec(), resp_fds));
             }
-            // Intermediate ack for a prior fire-and-forget message — discard.
+            // Intermediate ack for a prior fire-and-forget message — continue.
         }
     }
 }
