@@ -6,13 +6,12 @@
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
-#define INIT_FROM_SLICE(s) {.ptr = s.ptr, .len = s.len}
+#define INIT_FROM_SLICE(s)                                                                         \
+  { .ptr = s.ptr, .len = s.len }
 
-void example_segfault_handler(int signal) {
-  printf("Segmentation fault caught. Signal number: %d\n", signal);
-  exit(-1);
-}
+static ddog_CharSlice slice(const char *s) { return (ddog_CharSlice){.ptr = s, .len = strlen(s)}; }
 
 void handle_result(ddog_VoidResult result) {
   if (result.tag == DDOG_VOID_RESULT_ERR) {
@@ -34,30 +33,58 @@ uintptr_t handle_uintptr_t_result(ddog_crasht_Result_Usize result) {
 }
 
 int main(int argc, char **argv) {
-  if (signal(SIGSEGV, example_segfault_handler) == SIG_ERR) {
-    perror("Error setting up signal handler");
-    return -1;
+  // Receiver binary path: CLI arg > env var > hardcoded default
+  const char *receiver_path = NULL;
+  if (argc >= 2) {
+    receiver_path = argv[1];
+  } else {
+    receiver_path = getenv("DDOG_CRASHT_TEST_RECEIVER");
+  }
+  if (!receiver_path || receiver_path[0] == '\0') {
+    receiver_path = "/tmp/libdatadog/bin/libdatadog-crashtracking-receiver";
+  }
+
+  // Output directory: env var > hardcoded default
+  const char *output_dir = getenv("DDOG_CRASHT_TEST_OUTPUT_DIR");
+  if (!output_dir || output_dir[0] == '\0') {
+    output_dir = "/tmp/crashreports";
+  }
+
+  // Build output file paths
+  char report_path[512];
+  char stderr_path[512];
+  char stdout_path[512];
+  snprintf(report_path, sizeof(report_path), "%s/crashreport.json", output_dir);
+  snprintf(stderr_path, sizeof(stderr_path), "%s/stderr.txt", output_dir);
+  snprintf(stdout_path, sizeof(stdout_path), "%s/stdout.txt", output_dir);
+
+  // Forward the dynamic-linker search path to the receiver process.
+#ifdef __APPLE__
+  const char *ld_search_path_var = "DYLD_LIBRARY_PATH";
+#else
+  const char *ld_search_path_var = "LD_LIBRARY_PATH";
+#endif
+  const char *ld_library_path = getenv(ld_search_path_var);
+  ddog_crasht_EnvVar env_vars[1];
+  ddog_crasht_Slice_EnvVar env_slice = {.ptr = NULL, .len = 0};
+  if (ld_library_path && ld_library_path[0] != '\0') {
+    env_vars[0].key = slice(ld_search_path_var);
+    env_vars[0].val = slice(ld_library_path);
+    env_slice.ptr = env_vars;
+    env_slice.len = 1;
   }
 
   ddog_crasht_ReceiverConfig receiver_config = {
       .args = {},
-      .env = {},
-      //.path_to_receiver_binary = DDOG_CHARSLICE_C("SET ME TO THE ACTUAL PATH ON YOUR MACHINE"),
-      // E.g. on my machine, where I run ./build-profiling-ffi.sh /tmp/libdatadog
-      .path_to_receiver_binary =
-          DDOG_CHARSLICE_C("/tmp/libdatadog/bin/libdatadog-crashtracking-receiver"),
-      .optional_stderr_filename = DDOG_CHARSLICE_C("/tmp/crashreports/stderr.txt"),
-      .optional_stdout_filename = DDOG_CHARSLICE_C("/tmp/crashreports/stdout.txt"),
+      .env = env_slice,
+      .path_to_receiver_binary = slice(receiver_path),
+      .optional_stderr_filename = slice(stderr_path),
+      .optional_stdout_filename = slice(stdout_path),
   };
 
-  struct ddog_Endpoint *endpoint =
-      ddog_endpoint_from_filename(DDOG_CHARSLICE_C("/tmp/crashreports/crashreport.json"));
-  // Alternatively:
-  //  struct ddog_Endpoint * endpoint =
-  //      ddog_endpoint_from_url(DDOG_CHARSLICE_C("http://localhost:8126"));
+  struct ddog_Endpoint *endpoint = ddog_endpoint_from_filename(slice(report_path));
 
   // Get the default signals and explicitly use them.
-  // We could also pass an empty list here, which would also use the default signals.
   struct ddog_crasht_Slice_CInt signals = ddog_crasht_default_signals();
   ddog_crasht_Config config = {
       .create_alt_stack = false,
@@ -79,8 +106,10 @@ int main(int argc, char **argv) {
   handle_result(ddog_crasht_begin_op(DDOG_CRASHT_OP_TYPES_PROFILER_COLLECTING_SAMPLE));
   handle_uintptr_t_result(ddog_crasht_insert_span_id(0, 42));
   handle_uintptr_t_result(ddog_crasht_insert_trace_id(1, 1));
-  handle_uintptr_t_result(ddog_crasht_insert_additional_tag(DDOG_CHARSLICE_C("This is a very informative extra bit of info")));
-  handle_uintptr_t_result(ddog_crasht_insert_additional_tag(DDOG_CHARSLICE_C("This message will for sure help us debug the crash")));
+  handle_uintptr_t_result(ddog_crasht_insert_additional_tag(
+      DDOG_CHARSLICE_C("This is a very informative extra bit of info")));
+  handle_uintptr_t_result(ddog_crasht_insert_additional_tag(
+      DDOG_CHARSLICE_C("This message will for sure help us debug the crash")));
 
 #ifdef EXPLICIT_RAISE_SEGV
   // Test raising SEGV explicitly, to ensure chaining works
@@ -91,8 +120,8 @@ int main(int argc, char **argv) {
   char *bug = NULL;
   *bug = 42;
 
-  // At this point, we expect the following files to be written into /tmp/crashreports
-  // foo.txt  foo.txt.telemetry  stderr.txt  stdout.txt
+  // The crash handler should intercept the SIGSEGV, invoke the receiver,
+  // and write the crash report to output_dir before the process terminates.
   return 0;
 }
 

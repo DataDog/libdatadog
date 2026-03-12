@@ -11,7 +11,7 @@ libdd-common = { path = "../libdd-common" }
 libdd-data-pipeline = { path = "../libdd-data-pipeline" }
 http-body-util = "0.1"
 "http" = "1"
-bytes =  "1.4"
+bytes =  "1.11.1"
 
 regex = "1.9.3"
 percent-encoding = "2.1"
