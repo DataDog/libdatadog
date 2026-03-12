@@ -257,10 +257,6 @@ impl SidecarSender {
         self.try_drain_outbox();
     }
 
-    // -------------------------------------------------------------------------
-    // Fire-and-forget methods (drain outbox first, then send; drop on EAGAIN)
-    // -------------------------------------------------------------------------
-
     /// Enqueue telemetry actions.
     ///
     /// When `outstanding > max_outstanding / 2`, 90% of calls are dropped to shed load.

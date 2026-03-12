@@ -191,15 +191,8 @@ pub fn enqueue_actions(
     queue_id: &QueueId,
     actions: Vec<SidecarAction>,
 ) -> io::Result<()> {
-    // Pre-serialize once so the Fn closure can borrow the bytes for both the initial
-    // attempt and the reconnect retry without needing SidecarAction: Clone.
-    let req = SidecarInterfaceRequest::EnqueueActions {
-        instance_id: instance_id.clone(),
-        queue_id: *queue_id,
-        actions,
-    };
-    let data = datadog_ipc::codec::encode(req.discriminant(), &req);
-    transport.with_retry(|s| s.drain_and_send_raw_blocking(&data))
+    lock_sender(transport)?.enqueue_actions(instance_id.clone(), *queue_id, actions);
+    Ok(())
 }
 
 /// Sets the configuration for a session.
