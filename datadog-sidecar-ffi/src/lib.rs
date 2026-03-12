@@ -1513,3 +1513,80 @@ pub unsafe extern "C" fn ddog_sidecar_send_garbage(transport: &mut Box<SidecarTr
     // This shall fail.
     let _ = transport.send_garbage();
 }
+
+/// Re-export so that cbindgen can see the type and include it in the generated header.
+#[cfg(unix)]
+pub use datadog_sidecar::appsec::{AppsecCResponse, FreeResponseFn, OnDisconnectFn, OnMessageFn};
+
+/// Sends an AppSec message from the PHP extension through the sidecar to the registered helper.
+///
+/// The response is allocated by the sidecar and must be freed with
+/// `ddog_sidecar_appsec_response_drop` when the caller is done with it.
+///
+/// Returns a zeroed `ddog_AppsecCResponse` (null ptr) on transport errors.
+#[cfg(unix)]
+#[no_mangle]
+#[allow(clippy::missing_safety_doc)]
+pub unsafe extern "C" fn ddog_sidecar_send_appsec_message(
+    transport: &mut Box<SidecarTransport>,
+    session_id: ffi::CharSlice,
+    client_id: u64,
+    data: ffi::CharSlice,
+) -> AppsecCResponse {
+    let session_id = session_id.to_utf8_lossy().to_string();
+    let data = data.as_bytes().to_vec();
+    match blocking::send_appsec_message(transport, session_id, client_id, data) {
+        Ok((bytes, disconnect)) => {
+            let mut bytes = std::mem::ManuallyDrop::new(bytes);
+            AppsecCResponse {
+                ptr: bytes.as_mut_ptr(),
+                len: bytes.len(),
+                capacity: bytes.capacity(),
+                disconnect,
+            }
+        }
+        Err(_) => AppsecCResponse {
+            ptr: std::ptr::null_mut(),
+            len: 0,
+            capacity: 0,
+            disconnect: false,
+        },
+    }
+}
+
+/// Frees an `AppsecCResponse` that was returned by `ddog_sidecar_send_appsec_message`.
+#[cfg(unix)]
+#[no_mangle]
+pub extern "C" fn ddog_sidecar_appsec_response_drop(response: AppsecCResponse) {
+    if !response.ptr.is_null() {
+        // SAFETY: ptr/len/capacity were produced by ManuallyDrop<Vec> in
+        // ddog_sidecar_send_appsec_message and use the sidecar's allocator.
+        unsafe {
+            let _ = Vec::from_raw_parts(response.ptr, response.len, response.capacity);
+        }
+    }
+}
+
+/// Re-export the registration function so that it appears in the generated C header.
+///
+/// Called by any shared library loaded into the sidecar process (e.g. the AppSec
+/// helper) to register callbacks for AppSec message handling:
+///
+/// - `on_message` – invoked for each message from a PHP extension session; the
+///   returned `AppsecCResponse` is forwarded back to the extension.
+/// - `on_disconnect` – invoked when a PHP extension session closes.
+/// - `free_response` – invoked by the sidecar to free a non-null buffer returned
+///   by `on_message`; must use the same allocator that allocated the buffer.
+///
+/// # Safety
+/// All function pointers must remain valid for the lifetime of the process.
+#[cfg(unix)]
+#[no_mangle]
+#[allow(clippy::missing_safety_doc)]
+pub unsafe extern "C" fn ddog_sidecar_appsec_register_message_handler(
+    on_message: OnMessageFn,
+    on_disconnect: OnDisconnectFn,
+    free_response: FreeResponseFn,
+) {
+    datadog_sidecar::appsec::register_message_handler(on_message, on_disconnect, free_response)
+}

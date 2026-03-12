@@ -226,6 +226,11 @@ impl SidecarServer {
         info!("Shutting down session: {}", session_id);
         session.shutdown().await;
         debug!("Successfully shut down session: {}", session_id);
+
+        #[cfg(unix)]
+        {
+            crate::appsec::dispatch_disconnect(session_id);
+        }
     }
 
     fn send_trace_v04(
@@ -933,6 +938,35 @@ impl SidecarInterface for ConnectionSidecarHandler {
         #[allow(clippy::expect_used)]
         simd_json::serde::to_string(&stats).expect("unable to serialize stats to string")
     }
+
+    async fn send_appsec_message(
+        &self,
+        _peer: PeerCredentials,
+        session_id: String,
+        client_id: u64,
+        data: Vec<u8>,
+    ) -> (Vec<u8>, bool) {
+        #[cfg(unix)]
+        {
+            tokio::task::spawn_blocking(move || {
+                match crate::appsec::dispatch_message(&session_id, client_id, &data) {
+                    None => (vec![], false),
+                    Some(response) => {
+                        let bytes = response.as_bytes().to_vec();
+                        let disconnect = response.disconnect;
+                        (bytes, disconnect)
+                    }
+                }
+            })
+            .await
+            .unwrap_or_default()
+        }
+        #[cfg(not(unix))]
+        {
+            (vec![], false)
+        }
+    }
+
 }
 
 // TODO: APMSP-1079 - Unit tests are sparse for the sidecar server. We should add more.

@@ -438,6 +438,16 @@ impl SidecarSender {
         self.channel.0.set_write_timeout(d)
     }
 
+    pub fn send_appsec_message(
+        &mut self,
+        session_id: String,
+        client_id: u64,
+        data: Vec<u8>,
+    ) -> Result<(Vec<u8>, bool), datadog_ipc::codec::DecodeError> {
+        self.drain_outbox_blocking();
+        self.channel.call_send_appsec_message(session_id, client_id, data)
+    }
+
     pub fn flush_traces(&mut self) -> io::Result<()> {
         self.drain_outbox_blocking();
         self.channel.call_flush_traces()
