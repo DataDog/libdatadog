@@ -229,7 +229,7 @@ jobs:
           # Rule: major API changes must have a breaking change marker
           if [[ "$SEMVER_LEVEL" == "major" ]] && [[ -z "$IS_BREAKING_CHANGE" ]]; then
             VALIDATION_FAILED="true"
-            FAILURE_REASONS+=("Major API changes require a breaking change marker. Add '!' to PR title (e.g. 'feat!:') or add 'BREAKING CHANGE:' footer in PR body.")
+            FAILURE_REASONS+=("Major API changes require a breaking change marker. Add '!' to PR title (e.g. 'feat!:' or 'feat(scope)!:') or add 'BREAKING CHANGE:' footer in PR body.")
           fi
 
           if [[ "$VALIDATION_FAILED" == "true" ]]; then
