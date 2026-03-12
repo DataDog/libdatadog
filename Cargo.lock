@@ -717,7 +717,7 @@ dependencies = [
 
 [[package]]
 name = "build_common"
-version = "28.0.3"
+version = "29.0.0"
 dependencies = [
  "cbindgen",
  "serde",
@@ -726,7 +726,7 @@ dependencies = [
 
 [[package]]
 name = "builder"
-version = "28.0.3"
+version = "29.0.0"
 dependencies = [
  "anyhow",
  "build_common",
@@ -1518,7 +1518,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-profiling-replayer"
-version = "28.0.3"
+version = "29.0.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -1648,7 +1648,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-tracer-flare"
-version = "28.0.3"
+version = "29.0.0"
 dependencies = [
  "anyhow",
  "bytes",
@@ -3020,7 +3020,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-common-ffi"
-version = "28.0.3"
+version = "29.0.0"
 dependencies = [
  "anyhow",
  "assert_no_alloc",
@@ -3072,7 +3072,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-crashtracker-ffi"
-version = "28.0.3"
+version = "29.0.0"
 dependencies = [
  "anyhow",
  "build_common",
@@ -3126,7 +3126,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-data-pipeline-ffi"
-version = "28.0.3"
+version = "29.0.0"
 dependencies = [
  "build_common",
  "httpmock",
@@ -3149,7 +3149,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-ddsketch-ffi"
-version = "28.0.3"
+version = "29.0.0"
 dependencies = [
  "build_common",
  "libdd-common-ffi",
@@ -3202,7 +3202,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-libunwind-sys"
-version = "28.0.3"
+version = "29.0.0"
 dependencies = [
  "cc",
  "libc",
@@ -3222,7 +3222,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-log-ffi"
-version = "28.0.3"
+version = "29.0.0"
 dependencies = [
  "build_common",
  "libdd-common-ffi",
@@ -3338,7 +3338,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-telemetry-ffi"
-version = "28.0.3"
+version = "29.0.0"
 dependencies = [
  "build_common",
  "function_name",
@@ -5722,7 +5722,7 @@ dependencies = [
 
 [[package]]
 name = "symbolizer-ffi"
-version = "28.0.3"
+version = "29.0.0"
 dependencies = [
  "blazesym-c",
  "build_common",
@@ -6248,7 +6248,7 @@ dependencies = [
 
 [[package]]
 name = "tools"
-version = "28.0.3"
+version = "29.0.0"
 dependencies = [
  "anyhow",
  "cargo_metadata",
