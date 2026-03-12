@@ -435,7 +435,6 @@ jobs:
         with:
           branch: ${{ steps.proposal-branch.outputs.branch_name }}
           head-sha: ${{ steps.commits-since-release.outputs.release_head_sha }}
-          create-branch: true
           command: push
           commits: "${{ steps.release-version-bumps.outputs.commits }}"
 
