@@ -1,6 +1,7 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+use regex_lite::Regex;
 use std::env;
 use std::sync::LazyLock;
 
@@ -103,23 +104,13 @@ impl AzureMetadata {
     }
 
     fn extract_resource_group(s: Option<String>) -> Option<String> {
-        // /.+\+(.+)-.+webspace(-Linux)?/
-        let text = s.as_ref()?;
-        let (before_plus, after_plus) = text.rsplit_once('+')?;
-        if before_plus.is_empty() {
-            return None;
-        }
-        let webspace_pos = after_plus.rfind("webspace")?;
-        let before_webspace = &after_plus[..webspace_pos];
-        let dash_pos = before_webspace.rfind('-')?;
-        if dash_pos + 1 >= before_webspace.len() {
-            return None;
-        }
-        let resource_group = &before_webspace[..dash_pos];
-        if resource_group.is_empty() {
-            return None;
-        }
-        Some(resource_group.to_string())
+        #[allow(clippy::unwrap_used)]
+        let re: Regex = Regex::new(r".+\+(.+)-.+webspace(-Linux)?").unwrap();
+
+        s.as_ref().and_then(|text| {
+            re.captures(text)
+                .and_then(|caps| caps.get(1).map(|m| m.as_str().to_string()))
+        })
     }
 
     /*

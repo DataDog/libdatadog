@@ -49,6 +49,7 @@ serde_with = "3"
 
 # Test feature
 hyper-util = { workspace = true, features = ["service"], optional = true }
+regex-lite = "0.1.9"
 
 [dev-dependencies]
 futures = "0.3"

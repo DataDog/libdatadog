@@ -1,7 +1,8 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use std::{borrow::Cow, collections::HashSet, net::Ipv6Addr};
+use regex_lite::Regex;
+use std::{borrow::Cow, collections::HashSet, net::Ipv6Addr, sync::LazyLock};
 
 const ALLOWED_IP_ADDRESSES: [&str; 5] = [
     // localhost
@@ -14,21 +15,11 @@ const ALLOWED_IP_ADDRESSES: [&str; 5] = [
     "169.254.170.2",
 ];
 
-const PROTOCOL_PREFIXES: &[&str] = &["dnspoll", "ftp", "file", "http", "https"];
-
-fn find_protocol_prefix(s: &str) -> Option<usize> {
-    for &proto in PROTOCOL_PREFIXES {
-        if let Some(rest) = s.strip_prefix(proto) {
-            if rest.starts_with(":///") {
-                return Some(proto.len() + 4);
-            }
-            if rest.starts_with("://") {
-                return Some(proto.len() + 3);
-            }
-        }
-    }
-    None
-}
+const PREFIX_REGEX_LITERAL: &str = r"^((?:dnspoll|ftp|file|http|https):/{2,3})";
+static PREFIX_REGEX: LazyLock<Regex> = LazyLock::new(|| {
+    #[allow(clippy::unwrap_used)]
+    Regex::new(PREFIX_REGEX_LITERAL).unwrap()
+});
 
 /// Quantizes a comma separated list of hosts.
 ///
@@ -96,10 +87,11 @@ fn quantize_ip(s: &str) -> Option<String> {
 
 /// Split the ip prefix, can be either a provider specific prefix or a protocol
 fn split_prefix(s: &str) -> (&str, &str) {
+    #[allow(clippy::unwrap_used)]
     if let Some(tail) = s.strip_prefix("ip-") {
         ("ip-", tail)
-    } else if let Some(end) = find_protocol_prefix(s) {
-        s.split_at(end)
+    } else if let Some(protocol) = PREFIX_REGEX.find(s) {
+        s.split_at(protocol.end())
     } else {
         ("", s)
     }
@@ -112,8 +104,12 @@ fn parse_ip(s: &str) -> Option<(&str, &str)> {
         match ch {
             '0'..='9' => continue,
             '.' | '-' | '_' => return parse_ip_v4(s, ch),
-            ':' | 'A'..='F' | 'a'..='f' if s.parse::<Ipv6Addr>().is_ok() => {
-                return Some((s, ""));
+            ':' | 'A'..='F' | 'a'..='f' => {
+                if s.parse::<Ipv6Addr>().is_ok() {
+                    return Some((s, ""));
+                } else {
+                    return None;
+                }
             }
             '[' => {
                 // Parse IPv6 in [host]:port format

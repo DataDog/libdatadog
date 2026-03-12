@@ -3,85 +3,37 @@
 
 //! This module provides functions to parse the container id from the cgroup file
 use super::CgroupFileParsingError;
+use regex_lite::Regex;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::path::Path;
+use std::sync::LazyLock;
 
-fn is_lowercase_hex(b: u8) -> bool {
-    matches!(b, b'0'..=b'9' | b'a'..=b'f')
-}
+const UUID_SOURCE: &str =
+    r"[0-9a-f]{8}[-_][0-9a-f]{4}[-_][0-9a-f]{4}[-_][0-9a-f]{4}[-_][0-9a-f]{12}";
+const CONTAINER_SOURCE: &str = r"[0-9a-f]{64}";
+const TASK_SOURCE: &str = r"[0-9a-f]{32}-\d+";
 
-/// Try to match `[0-9a-f]{64}` at the end of `s`.
-fn try_match_hex64(s: &str) -> Option<&str> {
-    if s.len() < 64 {
-        return None;
-    }
+pub(crate) static LINE_REGEX: LazyLock<Regex> = LazyLock::new(|| {
+    #[allow(clippy::unwrap_used)]
+    Regex::new(r"^\d+:[^:]*:(.+)$").unwrap()
+});
 
-    let candidate = &s[s.len() - 64..];
-    candidate.bytes().all(is_lowercase_hex).then_some(candidate)
-}
+pub(crate) static CONTAINER_REGEX: LazyLock<Regex> = LazyLock::new(|| {
+    #[allow(clippy::unwrap_used)]
+    Regex::new(&format!(
+        r"({UUID_SOURCE}|{CONTAINER_SOURCE}|{TASK_SOURCE})(?:.scope)? *$"
+    ))
+    .unwrap()
+});
 
-/// Try to match a UUID `[0-9a-f]{8}[-_][0-9a-f]{4}[-_]..[-_][0-9a-f]{12}` (36 chars) at the end.
-fn try_match_uuid(s: &str) -> Option<&str> {
-    if s.len() < 36 {
-        return None;
-    }
-
-    let candidate = &s[s.len() - 36..];
-    const TEMPLATE: &[u8; 36] = b"hhhhhhhh-hhhh-hhhh-hhhh-hhhhhhhhhhhh";
-    candidate
-        .as_bytes()
-        .iter()
-        .zip(TEMPLATE)
-        .all(|(&c, &t)| match t {
-            b'h' => is_lowercase_hex(c),
-            b'-' => matches!(c, b'-' | b'_'),
-            _ => false,
-        })
-        .then_some(candidate)
-}
-
-/// Try to match `[0-9a-f]{32}-\d+` at the end of `s`.
-fn try_match_task_id(s: &str) -> Option<&str> {
-    let (prefix, digits) = s.rsplit_once('-')?;
-    if digits.is_empty() || !digits.bytes().all(|b| b.is_ascii_digit()) || prefix.len() < 32 {
-        return None;
-    }
-
-    let hex_start = prefix.len() - 32;
-    prefix[hex_start..]
-        .bytes()
-        .all(is_lowercase_hex)
-        .then_some(&s[hex_start..])
-}
-
-/// Extract a container ID from a cgroup path, matching the pattern
-/// `(UUID|HEX64|TASK_ID)(?:.scope)? *$`
-pub(super) fn extract_container_id_from_path(path: &str) -> Option<&str> {
-    let path = {
-        let trimmed = path.trim_end();
-        trimmed.strip_suffix(".scope").unwrap_or(trimmed)
-    };
-
-    try_match_hex64(path)
-        .or_else(|| try_match_uuid(path))
-        .or_else(|| try_match_task_id(path))
-}
-
-/// Parse a cgroup line (`^\d+:[^:]*:(.+)$`) and extract a container ID from the path component.
 fn parse_line(line: &str) -> Option<&str> {
-    let mut parts = line.splitn(3, ':');
-    let hierarchy_id = parts.next()?;
-    let _controllers = parts.next()?;
-    let path = parts.next()?;
-
-    if hierarchy_id.is_empty()
-        || !hierarchy_id.bytes().all(|b| b.is_ascii_digit())
-        || path.is_empty()
-    {
-        return None;
-    }
-    extract_container_id_from_path(path)
+    // unwrap is OK since if regex matches then the groups must exist
+    #[allow(clippy::unwrap_used)]
+    LINE_REGEX
+        .captures(line)
+        .and_then(|captures| CONTAINER_REGEX.captures(captures.get(1).unwrap().as_str()))
+        .map(|captures| captures.get(1).unwrap().as_str())
 }
 
 /// Extract container id contained in the cgroup file located at `cgroup_path`
