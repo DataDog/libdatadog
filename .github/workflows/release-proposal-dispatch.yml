@@ -415,8 +415,10 @@ jobs:
             exit 1
           fi
           
-          # List both commit hashes in reverse order, space separated
-          echo "commits=\"$(git log "${{ steps.commits-since-release.outputs.release_head_sha }}".. --format='%H' | tr '\n' ' ')\"" >> $GITHUB_OUTPUT
+          # List both commit hashes in reverse order, space separated (no extra quotes so commit-headless gets plain SHAs)
+          COMMITS=$(git log "${{ steps.commits-since-release.outputs.release_head_sha }}".. --format='%H' | tr '\n' ' ')
+          echo "COMMITS: $COMMITS"
+          echo "commits=$COMMITS" >> $GITHUB_OUTPUT
 
           # Output the results
           echo "API changes summary:"
