@@ -29,9 +29,9 @@ pub enum FetchInfoStatus {
     NewState(Box<AgentInfo>),
 }
 
-/// Fetch info from the given info_endpoint and compare its state to the current state hash.
+/// Fetch info from the given endpoint and compare state-related hashes.
 ///
-/// If the state hash is different from the current one:
+/// If either the agent state hash or container tags hash is different from the current one:
 /// - Return a `FetchInfoStatus::NewState` of the info struct
 /// - Else return `FetchInfoStatus::SameState`
 async fn fetch_info_with_state_and_container_tags(
@@ -58,6 +58,11 @@ async fn fetch_info_with_state_and_container_tags(
     Ok(FetchInfoStatus::NewState(info))
 }
 
+/// Fetch info from the given info_endpoint and compare its state to the current state hash.
+///
+/// If the state hash is different from the current one:
+/// - Return a `FetchInfoStatus::NewState` of the info struct
+/// - Else return `FetchInfoStatus::SameState`
 pub async fn fetch_info_with_state(
     info_endpoint: &Endpoint,
     current_state_hash: Option<&str>,
