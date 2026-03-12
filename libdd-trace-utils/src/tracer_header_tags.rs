@@ -141,8 +141,16 @@ impl<'a> From<&'a HeaderMap<HeaderValue>> for TracerHeaderTags<'a> {
 
 #[cfg(test)]
 mod tests {
+    use std::str::FromStr;
+
     use super::*;
     use hyper::HeaderMap;
+
+    fn get<'a>(m: &'a HashMap<HeaderName, String>, key: & str) -> Option<&'a str> {
+        m.get(&HeaderName::from_str(key).unwrap()).map(|v| v.as_str())
+    }
+
+    
 
     #[test]
     fn tags_to_hashmap() {
@@ -162,26 +170,18 @@ mod tests {
         let map: HashMap<HeaderName, String> = header_tags.into();
 
         assert_eq!(map.len(), 10);
-        assert_eq!(map.get("datadog-meta-lang").unwrap(), "test-lang");
-        assert_eq!(map.get("datadog-meta-lang-version").unwrap(), "2.0");
-        assert_eq!(
-            map.get("datadog-meta-lang-interpreter").unwrap(),
-            "interpreter"
-        );
-        assert_eq!(
-            map.get("datadog-meta-lang-interpreter-vendor").unwrap(),
-            "vendor"
-        );
-        assert_eq!(map.get("datadog-meta-tracer-version").unwrap(), "1.0");
-        assert_eq!(map.get("datadog-container-id").unwrap(), "id");
-        assert_eq!(
-            map.get("datadog-client-computed-top-level").unwrap(),
-            "true"
-        );
-        assert_eq!(map.get("datadog-client-computed-stats").unwrap(), "true");
-        assert_eq!(map.get("datadog-client-dropped-p0-traces").unwrap(), "12");
-        assert_eq!(map.get("datadog-client-dropped-p0-spans").unwrap(), "120");
+        assert_eq!(get(&map, "datadog-meta-lang"), Some("test-lang"));
+        assert_eq!(get(&map, "datadog-meta-lang-version"), Some("2.0"));
+        assert_eq!(get(&map, "datadog-meta-lang-interpreter"), Some("interpreter"));
+        assert_eq!(get(&map, "datadog-meta-lang-interpreter-vendor"), Some("vendor"));
+        assert_eq!(get(&map, "datadog-meta-tracer-version"), Some("1.0"));
+        assert_eq!(get(&map, "datadog-container-id"), Some("id"));
+        assert_eq!(get(&map, "datadog-client-computed-top-level"), Some("true"));
+        assert_eq!(get(&map, "datadog-client-computed-stats"), Some("true"));
+        assert_eq!(get(&map, "datadog-client-dropped-p0-traces"), Some("12"));
+        assert_eq!(get(&map, "datadog-client-dropped-p0-spans"), Some("120"));
     }
+
     #[test]
     fn tags_to_hashmap_empty_value() {
         let header_tags = TracerHeaderTags {
@@ -200,22 +200,16 @@ mod tests {
         let map: HashMap<HeaderName, String> = header_tags.into();
 
         assert_eq!(map.len(), 5);
-        assert_eq!(map.get("datadog-meta-lang").unwrap(), "test-lang");
-        assert_eq!(map.get("datadog-meta-lang-version").unwrap(), "2.0");
-        assert_eq!(
-            map.get("datadog-meta-lang-interpreter").unwrap(),
-            "interpreter"
-        );
-        assert_eq!(
-            map.get("datadog-meta-lang-interpreter-vendor").unwrap(),
-            "vendor"
-        );
-        assert_eq!(map.get("datadog-meta-tracer-version").unwrap(), "1.0");
-        assert_eq!(map.get("datadog-container-id"), None);
-        assert_eq!(map.get("datadog-client-computed-top-level"), None);
-        assert_eq!(map.get("datadog-client-computed-stats"), None);
-        assert_eq!(map.get("datadog-client-dropped-p0-traces"), None);
-        assert_eq!(map.get("datadog-client-dropped-p0-spans"), None);
+        assert_eq!(get(&map, "datadog-meta-lang"), Some("test-lang"));
+        assert_eq!(get(&map, "datadog-meta-lang-version"), Some("2.0"));
+        assert_eq!(get(&map, "datadog-meta-lang-interpreter"), Some("interpreter"));
+        assert_eq!(get(&map, "datadog-meta-lang-interpreter-vendor"), Some("vendor"));
+        assert_eq!(get(&map, "datadog-meta-tracer-version"), Some("1.0"));
+        assert_eq!(get(&map, "datadog-container-id"), None);
+        assert_eq!(get(&map, "datadog-client-computed-top-level"), None);
+        assert_eq!(get(&map, "datadog-client-computed-stats"), None);
+        assert_eq!(get(&map, "datadog-client-dropped-p0-traces"), None);
+        assert_eq!(get(&map, "datadog-client-dropped-p0-spans"), None);
     }
 
     #[test]
