@@ -171,7 +171,6 @@ impl TelemetryCachedClient {
                     }
                 }
                 SidecarAction::PhpComposerTelemetryFile(_) => {} // handled separately
-                SidecarAction::ClearQueueId => {}                // handled separately
             }
         }
         actions

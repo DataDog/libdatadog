@@ -62,6 +62,14 @@ pub trait SidecarInterface {
     /// * `process_tags` - The process tags.
     async fn set_session_process_tags(session_id: String, process_tags: Vec<Tag>);
 
+    /// Removes the application entry for the given queue ID from the instance.
+    ///
+    /// # Arguments
+    ///
+    /// * `instance_id` - The ID of the instance.
+    /// * `queue_id` - The queue ID to clear.
+    async fn clear_queue_id(instance_id: InstanceId, queue_id: QueueId);
+
     /// Shuts down a runtime.
     ///
     /// # Arguments

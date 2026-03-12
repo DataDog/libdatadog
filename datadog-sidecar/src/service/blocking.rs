@@ -195,6 +195,16 @@ pub fn enqueue_actions(
     Ok(())
 }
 
+/// Removes the application entry for the given queue ID from the instance.
+pub fn clear_queue_id(
+    transport: &mut SidecarTransport,
+    instance_id: &InstanceId,
+    queue_id: &QueueId,
+) -> io::Result<()> {
+    lock_sender(transport)?.clear_queue_id(instance_id.clone(), *queue_id);
+    Ok(())
+}
+
 /// Sets the configuration for a session.
 pub fn set_session_config(
     transport: &mut SidecarTransport,

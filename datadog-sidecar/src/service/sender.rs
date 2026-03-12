@@ -33,17 +33,19 @@ struct SidecarOutbox {
     set_session_process_tags: Option<SidecarInterfaceRequest>,
     set_universal_service_tags: Option<SidecarInterfaceRequest>,
     set_request_config: Option<SidecarInterfaceRequest>,
+    clear_queue_id: Option<SidecarInterfaceRequest>,
     shutdown_runtime: Option<SidecarInterfaceRequest>,
     shutdown_session: Option<SidecarInterfaceRequest>,
 }
 
 impl SidecarOutbox {
-    fn slots_mut(&mut self) -> [&mut Option<SidecarInterfaceRequest>; 6] {
+    fn slots_mut(&mut self) -> [&mut Option<SidecarInterfaceRequest>; 7] {
         [
             &mut self.set_session_config,
             &mut self.set_session_process_tags,
             &mut self.set_universal_service_tags,
             &mut self.set_request_config,
+            &mut self.clear_queue_id,
             &mut self.shutdown_runtime,
             &mut self.shutdown_session,
         ]
@@ -77,6 +79,29 @@ fn cancel_if_session(slot: &mut Option<SidecarInterfaceRequest>, session_id: &st
     }
 }
 
+fn cancel_if_queue(
+    slot: &mut Option<SidecarInterfaceRequest>,
+    instance_id: &InstanceId,
+    queue_id: &QueueId,
+) {
+    let should_cancel = match slot {
+        Some(SidecarInterfaceRequest::SetUniversalServiceTags {
+            instance_id: id,
+            queue_id: q,
+            ..
+        }) => id == instance_id && q == queue_id,
+        Some(SidecarInterfaceRequest::SetRequestConfig {
+            instance_id: id,
+            queue_id: q,
+            ..
+        }) => id == instance_id && q == queue_id,
+        _ => false,
+    };
+    if should_cancel {
+        *slot = None;
+    }
+}
+
 fn coalesce(outbox: &mut SidecarOutbox, incoming: SidecarInterfaceRequest) {
     if let SidecarInterfaceRequest::ShutdownRuntime { ref instance_id } = incoming {
         cancel_if_instance(&mut outbox.set_request_config, instance_id);
@@ -84,6 +109,14 @@ fn coalesce(outbox: &mut SidecarOutbox, incoming: SidecarInterfaceRequest) {
     }
     if let SidecarInterfaceRequest::ShutdownSession { ref session_id } = incoming {
         cancel_if_session(&mut outbox.set_session_config, session_id);
+    }
+    if let SidecarInterfaceRequest::ClearQueueId {
+        ref instance_id,
+        ref queue_id,
+    } = incoming
+    {
+        cancel_if_queue(&mut outbox.set_request_config, instance_id, queue_id);
+        cancel_if_queue(&mut outbox.set_universal_service_tags, instance_id, queue_id);
     }
 
     match incoming {
@@ -98,6 +131,9 @@ fn coalesce(outbox: &mut SidecarOutbox, incoming: SidecarInterfaceRequest) {
         }
         SidecarInterfaceRequest::SetRequestConfig { .. } => {
             outbox.set_request_config = Some(incoming);
+        }
+        SidecarInterfaceRequest::ClearQueueId { .. } => {
+            outbox.clear_queue_id = Some(incoming);
         }
         SidecarInterfaceRequest::ShutdownRuntime { .. } => {
             outbox.shutdown_runtime = Some(incoming);
@@ -236,6 +272,17 @@ impl SidecarSender {
                 instance_id,
                 queue_id,
                 dynamic_instrumentation_state,
+            },
+        );
+        self.try_drain_outbox();
+    }
+
+    pub fn clear_queue_id(&mut self, instance_id: InstanceId, queue_id: QueueId) {
+        coalesce(
+            &mut self.outbox,
+            SidecarInterfaceRequest::ClearQueueId {
+                instance_id,
+                queue_id,
             },
         );
         self.try_drain_outbox();

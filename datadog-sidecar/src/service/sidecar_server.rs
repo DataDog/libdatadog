@@ -406,13 +406,6 @@ impl SidecarServer {
         let mut applications = rt_info.lock_applications();
 
         if let Entry::Occupied(entry) = applications.entry(queue_id) {
-            // Avoid materializing a telemetry client just to clear it
-            if actions.len() == 1 && matches!(actions[0], SidecarAction::ClearQueueId) {
-                info!("Removing queue_id {queue_id:?} from instance {instance_id:?}");
-                entry.remove();
-                return;
-            }
-
             let service = entry
                 .get()
                 .service_name
@@ -446,7 +439,6 @@ impl SidecarServer {
             let mut actions_to_process: Vec<SidecarAction> = vec![];
             let mut composer_paths_to_process = vec![];
             let mut buffered_info_changed = false;
-            let mut remove_entry = false;
             let mut remove_client = false;
 
             for action in actions {
@@ -467,9 +459,6 @@ impl SidecarServer {
                         telemetry.config_sent = true;
                         buffered_info_changed = true;
                         actions_to_process.push(action);
-                    }
-                    SidecarAction::ClearQueueId => {
-                        remove_entry = true;
                     }
                     SidecarAction::Telemetry(TelemetryActions::AddEndpoint(_)) => {
                         telemetry.last_endpoints_push = SystemTime::now();
@@ -531,10 +520,6 @@ impl SidecarServer {
                 self.telemetry_clients.remove_telemetry_client(service, env);
             }
 
-            if remove_entry {
-                info!("Removing queue_id {queue_id:?} from instance {instance_id:?}");
-                entry.remove();
-            }
         } else {
             info!("No application found for instance {instance_id:?} and queue_id {queue_id:?}");
         }
@@ -894,6 +879,24 @@ impl SidecarInterface for ConnectionSidecarHandler {
         self.track_instance(&instance_id);
         self.server
             .enqueue_actions_impl(instance_id, queue_id, actions);
+    }
+
+    async fn clear_queue_id(
+        &self,
+        _peer: PeerCredentials,
+        instance_id: InstanceId,
+        queue_id: QueueId,
+    ) {
+        self.server
+            .submitted_payloads
+            .fetch_add(1, Ordering::Relaxed);
+        self.track_instance(&instance_id);
+        let rt_info = self.server.get_runtime(&instance_id);
+        let mut applications = rt_info.lock_applications();
+        if let Entry::Occupied(entry) = applications.entry(queue_id) {
+            info!("Removing queue_id {queue_id:?} from instance {instance_id:?}");
+            entry.remove();
+        }
     }
 
     async fn set_session_config(

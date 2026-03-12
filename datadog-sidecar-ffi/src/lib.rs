@@ -507,11 +507,11 @@ pub unsafe extern "C" fn ddog_sidecar_lifecycle_end(
         transport,
         instance_id,
         queue_id,
-        vec![
-            SidecarAction::Telemetry(TelemetryActions::Lifecycle(LifecycleAction::Stop)),
-            SidecarAction::ClearQueueId
-        ],
+        vec![SidecarAction::Telemetry(TelemetryActions::Lifecycle(
+            LifecycleAction::Stop,
+        ))],
     ));
+    try_c!(blocking::clear_queue_id(transport, instance_id, queue_id));
 
     MaybeError::None
 }
@@ -524,12 +524,7 @@ pub unsafe extern "C" fn ddog_sidecar_application_remove(
     instance_id: &InstanceId,
     queue_id: &QueueId,
 ) -> MaybeError {
-    try_c!(blocking::enqueue_actions(
-        transport,
-        instance_id,
-        queue_id,
-        vec![SidecarAction::ClearQueueId],
-    ));
+    try_c!(blocking::clear_queue_id(transport, instance_id, queue_id));
 
     MaybeError::None
 }
