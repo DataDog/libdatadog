@@ -106,6 +106,13 @@ jobs:
           GH_TOKEN: ${{ steps.octo-sts.outputs.token }}
           GITHUB_ACTOR: ${{ github.actor }}
         run: |
+
+          GITHUB_USER_RESPONSE=$(curl -s -H "Authorization: token ${GH_TOKEN}" "https://api.github.com/user")
+          echo "GITHUB_USER_RESPONSE: $GITHUB_USER_RESPONSE"
+
+          GITHUB_APP_RESPONSE=$(curl -s -H "Authorization: token ${GH_TOKEN}" "https://api.github.com/app")
+          echo "GITHUB_APP_RESPONSE: $GITHUB_APP_RESPONSE"
+        
           # GET /user is not allowed with installation tokens; use GET /users/ACTOR (who triggered the workflow).
           GITHUB_USER_RESPONSE=$(curl -s -H "Authorization: token ${GH_TOKEN}" "https://api.github.com/users/${GITHUB_ACTOR}")
           GIT_USER_NAME=$(echo "${GITHUB_USER_RESPONSE}" | jq -r '.login // empty')
@@ -529,7 +536,8 @@ jobs:
             --title "chore(release): proposal for ${{ inputs.crate }}" \
             --body "$PR_BODY" \
             --label "release-proposal" \
-            --base "${{ env.RELEASE_BRANCH }}"
+            --base "${{ env.RELEASE_BRANCH }}" \
+            --draft
 
       - name: Cleanup on failure
         if: failure() && needs.cargo-release.outputs.branch_name != ''
