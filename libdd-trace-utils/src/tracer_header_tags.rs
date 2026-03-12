@@ -1,8 +1,7 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use http::HeaderMap;
-use http::HeaderValue;
+use http::{HeaderMap, HeaderName, HeaderValue};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -41,26 +40,35 @@ pub struct TracerHeaderTags<'a> {
     pub dropped_p0_spans: usize,
 }
 
-impl<'a> From<TracerHeaderTags<'a>> for HashMap<&'static str, String> {
-    fn from(tags: TracerHeaderTags<'a>) -> HashMap<&'static str, String> {
+impl<'a> From<TracerHeaderTags<'a>> for HashMap<HeaderName, String> {
+    fn from(tags: TracerHeaderTags<'a>) -> HashMap<HeaderName, String> {
         let mut headers = HashMap::from([
-            ("datadog-meta-lang", tags.lang.to_string()),
-            ("datadog-meta-lang-version", tags.lang_version.to_string()),
             (
-                "datadog-meta-lang-interpreter",
+                HeaderName::from_static("datadog-meta-lang"),
+                tags.lang.to_string(),
+            ),
+            (
+                HeaderName::from_static("datadog-meta-lang-version"),
+                tags.lang_version.to_string(),
+            ),
+            (
+                HeaderName::from_static("datadog-meta-lang-interpreter"),
                 tags.lang_interpreter.to_string(),
             ),
             (
-                "datadog-meta-lang-interpreter-vendor",
+                HeaderName::from_static("datadog-meta-lang-interpreter-vendor"),
                 tags.lang_vendor.to_string(),
             ),
             (
-                "datadog-meta-tracer-version",
+                HeaderName::from_static("datadog-meta-tracer-version"),
                 tags.tracer_version.to_string(),
             ),
-            ("datadog-container-id", tags.container_id.to_string()),
             (
-                "datadog-client-computed-stats",
+                HeaderName::from_static("datadog-container-id"),
+                tags.container_id.to_string(),
+            ),
+            (
+                HeaderName::from_static("datadog-client-computed-stats"),
                 if tags.client_computed_stats {
                     "true".to_string()
                 } else {
@@ -68,7 +76,7 @@ impl<'a> From<TracerHeaderTags<'a>> for HashMap<&'static str, String> {
                 },
             ),
             (
-                "datadog-client-computed-top-level",
+                HeaderName::from_static("datadog-client-computed-top-level"),
                 if tags.client_computed_top_level {
                     "true".to_string()
                 } else {
@@ -76,7 +84,7 @@ impl<'a> From<TracerHeaderTags<'a>> for HashMap<&'static str, String> {
                 },
             ),
             (
-                "datadog-client-dropped-p0-traces",
+                HeaderName::from_static("datadog-client-dropped-p0-traces"),
                 if tags.dropped_p0_traces > 0 {
                     tags.dropped_p0_traces.to_string()
                 } else {
@@ -84,7 +92,7 @@ impl<'a> From<TracerHeaderTags<'a>> for HashMap<&'static str, String> {
                 },
             ),
             (
-                "datadog-client-dropped-p0-spans",
+                HeaderName::from_static("datadog-client-dropped-p0-spans"),
                 if tags.dropped_p0_spans > 0 {
                     tags.dropped_p0_spans.to_string()
                 } else {
@@ -151,7 +159,7 @@ mod tests {
             dropped_p0_spans: 120,
         };
 
-        let map: HashMap<&'static str, String> = header_tags.into();
+        let map: HashMap<HeaderName, String> = header_tags.into();
 
         assert_eq!(map.len(), 10);
         assert_eq!(map.get("datadog-meta-lang").unwrap(), "test-lang");
@@ -189,7 +197,7 @@ mod tests {
             dropped_p0_traces: 0,
         };
 
-        let map: HashMap<&'static str, String> = header_tags.into();
+        let map: HashMap<HeaderName, String> = header_tags.into();
 
         assert_eq!(map.len(), 5);
         assert_eq!(map.get("datadog-meta-lang").unwrap(), "test-lang");

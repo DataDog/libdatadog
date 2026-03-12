@@ -10,11 +10,11 @@ use crate::tracer_payload::TracerPayloadCollection;
 use anyhow::{anyhow, Context};
 use futures::stream::FuturesUnordered;
 use futures::StreamExt;
-use http::header::CONTENT_TYPE;
+use http::{header::CONTENT_TYPE, HeaderName};
 use libdd_common::{
     header::{
-        APPLICATION_MSGPACK_STR, APPLICATION_PROTOBUF_STR, DATADOG_SEND_REAL_HTTP_STATUS_STR,
-        DATADOG_TRACE_COUNT_STR,
+        APPLICATION_MSGPACK_STR, APPLICATION_PROTOBUF_STR, DATADOG_SEND_REAL_HTTP_STATUS,
+        DATADOG_TRACE_COUNT,
     },
     Connect, Endpoint, GenericHttpClient,
 };
@@ -68,7 +68,7 @@ pub struct SendData {
     pub(crate) tracer_payloads: TracerPayloadCollection,
     pub(crate) size: usize, // have a rough size estimate to force flushing if it's large
     target: Endpoint,
-    headers: HashMap<&'static str, String>,
+    headers: HashMap<HeaderName, String>,
     retry_strategy: RetryStrategy,
     #[cfg(feature = "compression")]
     compression: Compression,
@@ -85,7 +85,7 @@ pub struct SendDataBuilder {
     pub(crate) tracer_payloads: TracerPayloadCollection,
     pub(crate) size: usize,
     target: Endpoint,
-    headers: HashMap<&'static str, String>,
+    headers: HashMap<HeaderName, String>,
     retry_strategy: RetryStrategy,
     #[cfg(feature = "compression")]
     compression: Compression,
@@ -98,8 +98,8 @@ impl SendDataBuilder {
         tracer_header_tags: TracerHeaderTags,
         target: &Endpoint,
     ) -> SendDataBuilder {
-        let mut headers: HashMap<&'static str, String> = tracer_header_tags.into();
-        headers.insert(DATADOG_SEND_REAL_HTTP_STATUS_STR, "1".to_string());
+        let mut headers: HashMap<HeaderName, String> = tracer_header_tags.into();
+        headers.insert(DATADOG_SEND_REAL_HTTP_STATUS, "1".to_string());
         SendDataBuilder {
             tracer_payloads: tracer_payload,
             size,
@@ -160,8 +160,8 @@ impl SendData {
         tracer_header_tags: TracerHeaderTags,
         target: &Endpoint,
     ) -> SendData {
-        let mut headers: HashMap<&'static str, String> = tracer_header_tags.into();
-        headers.insert(DATADOG_SEND_REAL_HTTP_STATUS_STR, "1".to_string());
+        let mut headers: HashMap<HeaderName, String> = tracer_header_tags.into();
+        headers.insert(DATADOG_SEND_REAL_HTTP_STATUS, "1".to_string());
         SendData {
             tracer_payloads: tracer_payload,
             size,
@@ -243,7 +243,7 @@ impl SendData {
         &self,
         chunks: u64,
         payload: Vec<u8>,
-        headers: HashMap<&'static str, String>,
+        headers: HashMap<HeaderName, String>,
         http_client: &GenericHttpClient<C>,
         endpoint: Option<&Endpoint>,
     ) -> (SendWithRetryResult, u64, u64) {
@@ -268,7 +268,11 @@ impl SendData {
     }
 
     #[cfg(feature = "compression")]
-    fn compress_payload(&self, payload: Vec<u8>, headers: &mut HashMap<&str, String>) -> Vec<u8> {
+    fn compress_payload(
+        &self,
+        payload: Vec<u8>,
+        headers: &mut HashMap<HeaderName, String>,
+    ) -> Vec<u8> {
         match self.compression {
             Compression::Zstd(level) => {
                 let result = (|| -> std::io::Result<Vec<u8>> {
@@ -279,7 +283,7 @@ impl SendData {
 
                 match result {
                     Ok(compressed_payload) => {
-                        headers.insert("Content-Encoding", "zstd".to_string());
+                        headers.insert(http::header::CONTENT_ENCODING, "zstd".to_string());
                         compressed_payload
                     }
                     Err(_) => payload,
@@ -317,7 +321,7 @@ impl SendData {
                 #[cfg(not(feature = "compression"))]
                 let final_payload = serialized_trace_payload;
 
-                request_headers.insert(CONTENT_TYPE.as_str(), APPLICATION_PROTOBUF_STR.to_string());
+                request_headers.insert(CONTENT_TYPE, APPLICATION_PROTOBUF_STR.to_string());
 
                 let (response, bytes_sent, chunks) = self
                     .send_payload(
@@ -351,8 +355,8 @@ impl SendData {
                     #[allow(clippy::unwrap_used)]
                     let chunks = u64::try_from(tracer_payload.chunks.len()).unwrap();
                     let mut headers = self.headers.clone();
-                    headers.insert(DATADOG_TRACE_COUNT_STR, chunks.to_string());
-                    headers.insert(CONTENT_TYPE.as_str(), APPLICATION_MSGPACK_STR.to_string());
+                    headers.insert(DATADOG_TRACE_COUNT, chunks.to_string());
+                    headers.insert(CONTENT_TYPE, APPLICATION_MSGPACK_STR.to_string());
 
                     let payload = match rmp_serde::to_vec_named(tracer_payload) {
                         Ok(p) => p,
@@ -372,8 +376,8 @@ impl SendData {
                 #[allow(clippy::unwrap_used)]
                 let chunks = u64::try_from(self.tracer_payloads.size()).unwrap();
                 let mut headers = self.headers.clone();
-                headers.insert(DATADOG_TRACE_COUNT_STR, chunks.to_string());
-                headers.insert(CONTENT_TYPE.as_str(), APPLICATION_MSGPACK_STR.to_string());
+                headers.insert(DATADOG_TRACE_COUNT, chunks.to_string());
+                headers.insert(CONTENT_TYPE, APPLICATION_MSGPACK_STR.to_string());
 
                 let payload = msgpack_encoder::v04::to_vec(payload);
 
@@ -389,8 +393,8 @@ impl SendData {
                 #[allow(clippy::unwrap_used)]
                 let chunks = u64::try_from(self.tracer_payloads.size()).unwrap();
                 let mut headers = self.headers.clone();
-                headers.insert(DATADOG_TRACE_COUNT_STR, chunks.to_string());
-                headers.insert(CONTENT_TYPE.as_str(), APPLICATION_MSGPACK_STR.to_string());
+                headers.insert(DATADOG_TRACE_COUNT, chunks.to_string());
+                headers.insert(CONTENT_TYPE, APPLICATION_MSGPACK_STR.to_string());
 
                 let payload = match rmp_serde::to_vec(payload) {
                     Ok(p) => p,
@@ -574,7 +578,7 @@ mod tests {
         assert_eq!(data.target.url.path(), "/foo/bar");
 
         for (key, value) in HashMap::from(header_tags) {
-            assert_eq!(data.headers.get(key).unwrap(), &value);
+            assert_eq!(data.headers.get(&key).unwrap(), &value);
         }
     }
 
@@ -679,7 +683,7 @@ mod tests {
         let mock = server
             .mock_async(|when, then| {
                 when.method(POST)
-                    .header(DATADOG_TRACE_COUNT_STR, "1")
+                    .header(DATADOG_TRACE_COUNT.as_str(), "1")
                     .header("Content-type", "application/msgpack")
                     .header("datadog-meta-lang", header_tags.lang)
                     .header(
@@ -739,7 +743,7 @@ mod tests {
         let mock = server
             .mock_async(|when, then| {
                 when.method(POST)
-                    .header(DATADOG_TRACE_COUNT_STR, "1")
+                    .header(DATADOG_TRACE_COUNT.as_str(), "1")
                     .header("Content-type", "application/msgpack")
                     .header("datadog-meta-lang", header_tags.lang)
                     .header(
@@ -928,7 +932,7 @@ mod tests {
         let mock = server
             .mock_async(|when, then| {
                 when.method(POST)
-                    .header(DATADOG_TRACE_COUNT_STR, "2")
+                    .header(DATADOG_TRACE_COUNT.as_str(), "2")
                     .header("Content-type", "application/msgpack")
                     .header("datadog-meta-lang", header_tags.lang)
                     .header(

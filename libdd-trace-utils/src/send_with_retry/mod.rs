@@ -8,9 +8,9 @@ mod retry_strategy;
 pub use retry_strategy::{RetryBackoffType, RetryStrategy};
 
 use bytes::Bytes;
-use http::Method;
+use http::{HeaderName, Method};
 use libdd_common::{http_common, Connect, Endpoint, GenericHttpClient, HttpRequestBuilder};
-use std::{collections::HashMap, time::Duration};
+use std::{collections::HashMap, ops::Deref, time::Duration};
 use tracing::{debug, error};
 
 pub type Attempts = u32;
@@ -104,7 +104,10 @@ impl std::error::Error for RequestError {}
 ///     url: "localhost:8126/v04/traces".parse::<hyper::Uri>().unwrap(),
 ///     ..Endpoint::default()
 /// };
-/// let headers = HashMap::from([("Content-type", "application/msgpack".to_string())]);
+/// let headers = HashMap::from([(
+///     http::HeaderName::from_static("content-type"),
+///     "application/msgpack".to_string(),
+/// )]);
 /// let retry_strategy = RetryStrategy::new(3, 10, RetryBackoffType::Exponential, Some(5));
 /// let client = new_default_client();
 /// send_with_retry(&client, &target, payload, &headers, &retry_strategy).await
@@ -114,7 +117,7 @@ pub async fn send_with_retry<C: Connect>(
     client: &GenericHttpClient<C>,
     target: &Endpoint,
     payload: Vec<u8>,
-    headers: &HashMap<&'static str, String>,
+    headers: &HashMap<HeaderName, String>,
     retry_strategy: &RetryStrategy,
 ) -> SendWithRetryResult {
     let mut request_attempt = 0;
@@ -142,7 +145,7 @@ pub async fn send_with_retry<C: Connect>(
             .or(Err(SendWithRetryError::Build(request_attempt)))?
             .method(Method::POST);
         for (key, value) in headers {
-            req = req.header(*key, value.clone());
+            req = req.header(key.clone(), value.deref());
         }
 
         match send_request(
