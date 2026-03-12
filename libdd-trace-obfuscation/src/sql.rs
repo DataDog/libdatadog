@@ -1,10 +1,36 @@
 // Copyright 2023-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Default, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DbmsKind {
+    #[default]
+    Generic,
+    Mssql,
+    Mysql,
+    Postgresql,
+    Oracle,
+}
+
+#[derive(Debug, Default, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum SqlObfuscationMode {
+    #[default]
+    #[deprecated = "kept for compatibility with agent's obfuscator but has unintuitive behavior"]
+    #[allow(deprecated)]
+    Unspecified,
+    NormalizeOnly,
+    ObfuscateOnly,
+    ObfuscateAndNormalize,
+}
+
 /// Configuration for SQL obfuscation
 #[derive(Debug, Default, Clone)]
 pub struct SqlObfuscateConfig {
-    pub dbms: String,
+    pub dbms: DbmsKind,
     pub replace_digits: bool,
     pub keep_sql_alias: bool,
     pub dollar_quoted_func: bool,
@@ -16,8 +42,7 @@ pub struct SqlObfuscateConfig {
     pub replace_bind_parameter: bool,
     pub remove_space_between_parentheses: bool,
     pub keep_json_path: bool,
-    /// obfuscation mode: "", "normalize_only", "obfuscate_only", "obfuscate_and_normalize"
-    pub obfuscation_mode: String,
+    pub obfuscation_mode: SqlObfuscationMode,
 }
 
 fn is_whitespace(b: u8) -> bool {
@@ -29,7 +54,16 @@ fn is_ident_start(b: u8) -> bool {
 }
 
 fn is_ident_char(b: u8) -> bool {
-    b.is_ascii_alphanumeric() || b == b'_' || b == b'$' || b == b'#' || b > 127
+    // Go's scanIdentifier includes '.*$' as continuation chars in addition to alnum/_.
+    // '@' is in Go's isLetter (isLeadingLetter) so it continues identifiers too.
+    // '.' is handled separately (qualifier), but '*', '$', '@' are included here.
+    b.is_ascii_alphanumeric()
+        || b == b'_'
+        || b == b'$'
+        || b == b'#'
+        || b == b'*'
+        || b == b'@'
+        || b > 127
 }
 
 /// Replace trailing digit sequences in identifier with `?`
@@ -193,11 +227,24 @@ impl<'a> Tokenizer<'a> {
     }
 
     fn is_normalize_only(&self) -> bool {
-        self.config.obfuscation_mode == "normalize_only"
+        matches!(
+            self.config.obfuscation_mode,
+            SqlObfuscationMode::NormalizeOnly
+        )
     }
 
     fn is_obfuscate_only(&self) -> bool {
-        self.config.obfuscation_mode == "obfuscate_only"
+        matches!(
+            self.config.obfuscation_mode,
+            SqlObfuscationMode::ObfuscateOnly
+        )
+    }
+
+    fn is_unspecified_obfuscate_mode(&self) -> bool {
+        matches!(
+            self.config.obfuscation_mode,
+            SqlObfuscationMode::Unspecified
+        )
     }
 
     fn last_char(&self) -> Option<u8> {
@@ -220,7 +267,24 @@ impl<'a> Tokenizer<'a> {
     fn space(&mut self) {
         if !self.result.is_empty()
             && self.last_char() != Some(b' ')
-            && self.last_char() != Some(b'.')
+            && !(self.last_char() == Some(b'.') && {
+                // Only suppress space after '.' when it acts as a qualifier separator
+                // (preceded by an identifier character like "table.column").
+                // For standalone '.' at the start or after operators, add the space.
+                let len = self.result.len();
+                if len < 2 {
+                    false
+                } else {
+                    let before_dot = self.result.as_bytes()[len - 2];
+                    before_dot.is_ascii_alphanumeric()
+                        || before_dot == b'_'
+                        || before_dot == b'"'
+                        || before_dot == b']'
+                        || before_dot == b'#'
+                        || before_dot == b'?'
+                        || before_dot > 127 // Non-ASCII identifier chars
+                }
+            })
             && !(self.last_char() == Some(b'(')
                 && (self.config.remove_space_between_parentheses || self.is_obfuscate_only()))
         {
@@ -231,6 +295,13 @@ impl<'a> Tokenizer<'a> {
                 self.last_was_placeholder = false;
             }
             self.result.push(' ');
+        } else if self.last_char() == Some(b' ')
+            && !matches!(self.last_nonspace_char(), Some(b'?') | Some(b'('))
+        {
+            // Result already ends in space (e.g. after an operator like '!') and we still need
+            // to reset placeholder state. Do NOT reset after '(' — Go's groupingFilter lets
+            // last_was_placeholder persist through '(' tokens.
+            self.last_was_placeholder = false;
         }
     }
 
@@ -254,7 +325,7 @@ impl<'a> Tokenizer<'a> {
     /// In legacy mode, Go's groupingFilter suppresses consecutive FilteredGroupable tokens
     /// (groupFilter > 1). If last_was_placeholder is already true, suppress this one.
     fn emit_placeholder(&mut self) {
-        if self.config.obfuscation_mode.is_empty() && self.last_was_placeholder {
+        if self.is_unspecified_obfuscate_mode() && self.last_was_placeholder {
             // Suppress consecutive placeholder (Go groupFilter > 1 rule)
             return;
         }
@@ -264,6 +335,20 @@ impl<'a> Tokenizer<'a> {
     fn skip_whitespace(&mut self) {
         while !self.at_end() && is_whitespace(self.bytes[self.pos]) {
             self.pos += 1;
+        }
+        // Also skip Unicode whitespace (e.g. U+2003 EM SPACE) — Go uses unicode.IsSpace
+        while !self.at_end() && self.bytes[self.pos] > 127 {
+            if let Some(c) = self.s[self.pos..].chars().next() {
+                if c.is_whitespace() {
+                    self.pos += c.len_utf8();
+                    // There may be ASCII whitespace after, loop again
+                    while !self.at_end() && is_whitespace(self.bytes[self.pos]) {
+                        self.pos += 1;
+                    }
+                    continue;
+                }
+            }
+            break;
         }
     }
 
@@ -370,7 +455,7 @@ impl<'a> Tokenizer<'a> {
                 self.result.pop();
             }
             let before_len = self.result.len();
-            self.result.push(' ');
+            self.space();
             self.result.push_str(ident);
             self.before_as_len = Some(before_len);
             // Go's groupingFilter resets when it sees AS (non-groupable, non-paren, non-comma).
@@ -485,8 +570,15 @@ impl<'a> Tokenizer<'a> {
 
     /// Consume and emit the rest of a numeric literal starting at current pos.
     fn consume_number(&mut self) {
-        // Consume digits, '.', 'e'/'E', optional sign after 'e', suffix letters
-        let mut saw_dot = false;
+        self.consume_number_inner(false);
+    }
+
+    fn consume_number_inner(&mut self, seen_dot: bool) {
+        // Consume digits, '.', 'e'/'E', optional sign after 'e', suffix letters.
+        // `seen_dot`: true when caller already consumed the leading '.', so don't allow another.
+        // This mirrors Go's scanNumber(seenDecimalPoint) which goes straight to `exponent`
+        // without looping back to `fraction`, leaving a second '.' as a separate token.
+        let mut saw_dot = seen_dot;
         let mut saw_exp = false;
         while !self.at_end() {
             let b = self.bytes[self.pos];
@@ -506,11 +598,9 @@ impl<'a> Tokenizer<'a> {
                         self.pos += 1;
                     }
                 }
-                b'f' | b'F' | b'd' | b'D' | b'l' | b'L' => {
-                    // numeric suffix
-                    self.pos += 1;
-                    break;
-                }
+                // Note: letter suffixes like 'f'/'d'/'l' are NOT consumed here.
+                // Go's old SQL tokenizer does not treat them as numeric suffixes,
+                // so "0D" parses as number "0" + identifier "D".
                 _ => break,
             }
         }
@@ -531,18 +621,26 @@ impl<'a> Tokenizer<'a> {
                     }
                 }
 
-                // Line comment: -- ...
+                // Line comment: -- ... (also // like Go's old tokenizer)
                 b'-' if self.peek(1) == Some(b'-') => {
                     self.pos += 2;
                     self.skip_line_comment();
                 }
+                b'/' if self.peek(1) == Some(b'/') => {
+                    self.pos += 2;
+                    self.skip_line_comment();
+                }
 
-                // MySQL-style comment: # ... (# as temp table prefix like #temp is handled via
-                // is_ident_char)
+                // MySQL-style comment: # ...
+                // In Go's old tokenizer, # is ALWAYS a comment unless DBMS is SQL Server.
                 b'#' => {
                     let next = self.peek(1);
+                    let is_sqlserver = matches!(self.config.dbms, DbmsKind::Mssql);
                     match next {
-                        Some(b) if b.is_ascii_alphanumeric() || b == b'_' || b == b'#' => {
+                        Some(b)
+                            if is_sqlserver
+                                && (b.is_ascii_alphanumeric() || b == b'_' || b == b'#') =>
+                        {
                             // SQL Server temp table identifier like #temp or ##global
                             let start = self.pos;
                             while !self.at_end() && is_ident_char(self.bytes[self.pos]) {
@@ -559,8 +657,8 @@ impl<'a> Tokenizer<'a> {
                             };
                             self.emit(&out);
                         }
-                        // PostgreSQL JSON operators: #>, #>>, #- (only for dbms=postgresql)
-                        Some(b'>') if self.config.dbms.eq_ignore_ascii_case("postgresql") => {
+                        // PostgreSQL JSON operators: #>, #>>, #-
+                        Some(b'>') if matches!(self.config.dbms, DbmsKind::Postgresql) => {
                             if self.maybe_consume_alias_next() {
                                 continue;
                             }
@@ -571,15 +669,15 @@ impl<'a> Tokenizer<'a> {
                                 self.emit("#>");
                                 self.pos += 2;
                             }
-                            self.result.push(' ');
+                            self.space();
                         }
-                        Some(b'-') if self.config.dbms.eq_ignore_ascii_case("postgresql") => {
+                        Some(b'-') if matches!(self.config.dbms, DbmsKind::Postgresql) => {
                             if self.maybe_consume_alias_next() {
                                 continue;
                             }
                             self.emit("#-");
                             self.pos += 2;
-                            self.result.push(' ');
+                            self.space();
                         }
                         _ => {
                             // MySQL-style comment: skip to end of line
@@ -598,20 +696,26 @@ impl<'a> Tokenizer<'a> {
                 // Semicolon
                 b';' => {
                     self.pos += 1;
-                    // Keep semicolons when configured, or in obfuscate_only mode
-                    // (go-sqllexer obfuscator does not strip semicolons)
-                    if self.config.keep_trailing_semicolon || self.is_obfuscate_only() {
+                    // In old tokenizer mode (obfuscation_mode=""), Go ALWAYS strips semicolons.
+                    // Go's discardFilter marks ';' as filterable-groupable, so the next '?'
+                    // gets grouped/dropped. Set last_was_placeholder to replicate this.
+                    if self.is_obfuscate_only()
+                        || (!self.is_unspecified_obfuscate_mode()
+                            && self.config.keep_trailing_semicolon)
+                    {
                         if self.maybe_consume_alias_next() {
                             continue;
                         }
-                        // Don't add space before ';', just emit
                         self.result.push(';');
+                    } else if self.is_unspecified_obfuscate_mode() {
+                        // Mark as "filterable groupable" so next ? is grouped (Go behavior)
+                        self.last_was_placeholder = true;
                     }
                 }
 
                 // Opening paren
                 b'(' => {
-                    if self.before_as_len.is_some() && !self.config.obfuscation_mode.is_empty() {
+                    if self.before_as_len.is_some() && !self.is_unspecified_obfuscate_mode() {
                         // In obfuscate_and_normalize mode: keep AS before ( (CTE body)
                         self.before_as_len = None;
                     } else if self.before_as_len.is_some() {
@@ -626,10 +730,14 @@ impl<'a> Tokenizer<'a> {
                     self.space();
                     self.result.push('(');
                     self.pos += 1;
-                    if !self.config.remove_space_between_parentheses && !self.is_obfuscate_only() {
-                        // Skip following whitespace and always add a space (Go always spaces inside
-                        // parens) Not done in obfuscate_only mode
-                        // (go-sqllexer obfuscator preserves input spacing)
+                    // In old-tokenizer mode (obfuscation_mode=""), Go always adds a space after '('
+                    // regardless of remove_space_between_parentheses. Only suppress in new modes.
+                    let add_space = if self.is_unspecified_obfuscate_mode() {
+                        !self.is_obfuscate_only()
+                    } else {
+                        !self.config.remove_space_between_parentheses && !self.is_obfuscate_only()
+                    };
+                    if add_space {
                         self.skip_whitespace();
                         self.result.push(' ');
                     }
@@ -640,10 +748,14 @@ impl<'a> Tokenizer<'a> {
                     if self.maybe_consume_alias_next() {
                         continue;
                     }
-                    if self.config.remove_space_between_parentheses || self.is_obfuscate_only() {
-                        // No space before ) in compact modes
+                    // In old-tokenizer mode, Go always adds spaces before ')'
+                    let add_close_space = if self.is_unspecified_obfuscate_mode() {
+                        !self.is_obfuscate_only()
                     } else {
-                        // Add space before ) if needed (not after '(')
+                        !self.config.remove_space_between_parentheses && !self.is_obfuscate_only()
+                    };
+                    if add_close_space {
+                        // Add space before ) if needed (not after '(' or already spaced)
                         if !matches!(self.last_char(), Some(b'(') | Some(b' ') | None) {
                             self.result.push(' ');
                         }
@@ -665,7 +777,7 @@ impl<'a> Tokenizer<'a> {
                     // Go's groupingFilter comma stripping: when groupFilter > 0 and token == ',',
                     // discard it. This only applies in legacy mode (obfuscation_mode == "").
                     // go-sqllexer modes (obfuscate_only, etc.) do NOT strip commas.
-                    if self.last_was_placeholder && self.config.obfuscation_mode.is_empty() {
+                    if self.last_was_placeholder && self.is_unspecified_obfuscate_mode() {
                         // Remove any trailing space too
                         while self.last_char() == Some(b' ') {
                             self.result.pop();
@@ -708,7 +820,11 @@ impl<'a> Tokenizer<'a> {
                             self.pos += c.len_utf8();
                         }
                     }
-                    let out = if self.config.replace_digits {
+                    // Empty/whitespace-only backtick identifiers must keep their delimiters
+                    // to avoid producing invalid SQL (matches Go's scanString behavior).
+                    let out = if ident_buf.chars().all(char::is_whitespace) {
+                        format!("`{ident_buf}`")
+                    } else if self.config.replace_digits {
                         apply_replace_digits(&ident_buf)
                     } else {
                         ident_buf.clone()
@@ -724,19 +840,24 @@ impl<'a> Tokenizer<'a> {
                 // Double-quoted identifier
                 b'"' => {
                     self.pos += 1;
-                    let id_start = self.pos;
+                    // Scan double-quoted identifier, decoding "" escape sequences to single "
+                    let mut ident_buf = String::new();
                     while !self.at_end() {
                         if self.bytes[self.pos] == b'"' {
                             if self.bytes.get(self.pos + 1) == Some(&b'"') {
-                                self.pos += 2; // escaped ""
+                                ident_buf.push('"'); // "" → one "
+                                self.pos += 2;
                             } else {
                                 break;
                             }
                         } else {
-                            self.pos += 1;
+                            let ch = self.s[self.pos..].chars().next().unwrap_or('\0');
+                            ident_buf.push(ch);
+                            self.pos += ch.len_utf8();
                         }
                     }
-                    let ident = &self.s[id_start..self.pos];
+                    let ident_owned = ident_buf;
+                    let ident = ident_owned.as_str();
                     if !self.at_end() {
                         self.pos += 1; // skip closing quote
                     }
@@ -745,7 +866,7 @@ impl<'a> Tokenizer<'a> {
                     let is_string_value = self.last_was_assign;
                     // If pending SAVEPOINT or empty/whitespace content, treat as literal → ?
                     if self.pending_savepoint
-                        || ident.chars().all(|c| c.is_whitespace())
+                        || (!ident.is_empty() && ident.chars().all(|c| c.is_whitespace()))
                         || (!self.is_normalize_only() && is_string_value)
                     {
                         self.pending_savepoint = false;
@@ -755,9 +876,13 @@ impl<'a> Tokenizer<'a> {
                             self.emit_placeholder();
                             self.handle_dot_after_quoted_ident();
                         }
-                    } else if self.config.keep_identifier_quotation || self.is_obfuscate_only() {
+                    } else if (self.config.keep_identifier_quotation
+                        && !self.is_unspecified_obfuscate_mode())
+                        || self.is_obfuscate_only()
+                    {
                         // Keep original double-quote syntax (go-sqllexer obfuscate_only keeps
-                        // quotes)
+                        // quotes) In old tokenizer mode,
+                        // keep_identifier_quotation is ignored (like Go).
                         let quoted = format!("\"{ident}\"");
                         if self.maybe_consume_alias_next() {
                             // consumed
@@ -766,8 +891,12 @@ impl<'a> Tokenizer<'a> {
                             self.handle_dot_after_quoted_ident();
                         }
                     } else {
-                        let out = if self.config.replace_digits {
-                            apply_replace_digits(ident)
+                        // For empty identifiers, keep quotes (empty ident without quotes = invalid
+                        // SQL) Go's replaceFilter never applies
+                        // replace_digits to DoubleQuotedString tokens (only
+                        // ID/TableName), so we never digit-replace quoted identifier content.
+                        let out = if ident.is_empty() {
+                            format!("\"{ident}\"")
                         } else {
                             ident.to_string()
                         };
@@ -782,7 +911,7 @@ impl<'a> Tokenizer<'a> {
 
                 // Square bracket identifier [...]
                 b'[' => {
-                    if self.config.dbms == "mssql" {
+                    if matches!(self.config.dbms, DbmsKind::Mssql) {
                         self.pos += 1;
                         let id_start = self.pos;
                         while !self.at_end() && self.bytes[self.pos] != b']' {
@@ -820,7 +949,7 @@ impl<'a> Tokenizer<'a> {
                             self.result.push('[');
                             self.pos += 1;
                             self.skip_whitespace();
-                            self.result.push(' ');
+                            self.space();
                         }
                     }
                 }
@@ -830,7 +959,7 @@ impl<'a> Tokenizer<'a> {
                         continue;
                     }
                     if !matches!(self.last_char(), Some(b'[') | Some(b' ') | None) {
-                        self.result.push(' ');
+                        self.space();
                     }
                     self.result.push(']');
                     self.pos += 1;
@@ -849,19 +978,35 @@ impl<'a> Tokenizer<'a> {
                         Some(b) if b.is_ascii_digit() || b == b'?' => {
                             let token_start = self.pos;
                             self.pos += 1; // skip '$'
+                                           // Go's scanPreparedStatement calls scanNumber which only scans
+                                           // decimal digits (not all alphanumeric). Letters like 'C' in "$2C"
+                                           // are NOT part of the positional param.
                             while !self.at_end()
-                                && (self.bytes[self.pos].is_ascii_alphanumeric()
+                                && (self.bytes[self.pos].is_ascii_digit()
                                     || self.bytes[self.pos] == b'?')
                             {
                                 self.pos += 1;
                             }
+                            // Go's scanNumber follows the fraction path: a trailing '.' (and any
+                            // following digits) is consumed as part of the number, e.g. "$0." → "?"
+                            if !self.at_end() && self.bytes[self.pos] == b'.' {
+                                self.pos += 1; // consume '.'
+                                while !self.at_end() && self.bytes[self.pos].is_ascii_digit() {
+                                    self.pos += 1;
+                                }
+                            }
                             if self.maybe_consume_alias_next() {
                                 continue;
                             }
-                            if self.config.keep_positional_parameter
+                            // In old-tokenizer mode (obfuscation_mode=Unspecified), Go always
+                            // replaces positional parameters regardless
+                            // of keep_positional_parameter.
+                            // Only respect keep_positional_parameter in new lexer modes.
+                            let keep = (self.config.keep_positional_parameter
+                                && !self.is_unspecified_obfuscate_mode())
                                 || self.is_normalize_only()
-                                || self.is_obfuscate_only()
-                            {
+                                || self.is_obfuscate_only();
+                            if keep {
                                 self.emit(&self.s[token_start..self.pos]);
                             } else {
                                 self.emit_placeholder();
@@ -978,7 +1123,11 @@ impl<'a> Tokenizer<'a> {
                 b'%' => {
                     let next = self.peek(1);
                     match next {
-                        Some(b's') | Some(b'd') | Some(b'b') | Some(b'i') => {
+                        Some(b)
+                            if b.is_ascii_alphabetic() || b == b'_' || b == b'@' || b == b'#' =>
+                        {
+                            // Any ASCII letter/underscore/@/# after % is a format parameter
+                            // (Go's scanFormatParameter handles all isLetter chars)
                             self.pos += 2;
                             if self.maybe_consume_alias_next() {
                                 continue;
@@ -1002,6 +1151,28 @@ impl<'a> Tokenizer<'a> {
                             }
                             self.emit_placeholder();
                         }
+                        Some(b) if b > 127 => {
+                            // Non-ASCII byte: check if it starts a Unicode letter.
+                            // Go's old SQL tokenizer treats %<letter> as a format parameter
+                            // (Variable token) which gets obfuscated to '?'.
+                            let next_char = self.s[self.pos + 1..].chars().next();
+                            if let Some(nc) = next_char.filter(|c| c.is_alphabetic() || *c == '_') {
+                                let skip = 1 + nc.len_utf8();
+                                self.pos += skip;
+                                if self.maybe_consume_alias_next() {
+                                    continue;
+                                }
+                                self.emit_placeholder();
+                            } else {
+                                if self.maybe_consume_alias_next() {
+                                    continue;
+                                }
+                                self.space();
+                                self.result.push('%');
+                                self.pos += 1;
+                                self.space();
+                            }
+                        }
                         _ => {
                             // Just a % sign - emit as operator
                             if self.maybe_consume_alias_next() {
@@ -1010,16 +1181,25 @@ impl<'a> Tokenizer<'a> {
                             self.space();
                             self.result.push('%');
                             self.pos += 1;
-                            self.result.push(' ');
+                            self.space();
                         }
                     }
                 }
 
                 // Number starting with '.'
-                b'.' if self.peek(1).is_some_and(|b| b.is_ascii_digit()) => {
+                // Only treat .digit as a float literal if NOT preceded by an identifier char.
+                // When preceded by an identifier, '.2' is a qualifier (Go's scanIdentifier includes
+                // '.')
+                b'.' if self.peek(1).is_some_and(|b| b.is_ascii_digit())
+                    && !self
+                        .last_char()
+                        .is_some_and(|b| is_ident_char(b) || b == b'"' || b == b'`') =>
+                {
                     let num_start = self.pos;
                     self.pos += 1; // skip '.'
-                    self.consume_number();
+                                   // Go's scanNumber(seenDecimalPoint=true) doesn't loop back to fraction,
+                                   // so a second '.' is NOT consumed (e.g. ".0.x" → number ".0" + dot + "x")
+                    self.consume_number_inner(true);
                     if self.maybe_consume_alias_next() {
                         continue;
                     }
@@ -1032,11 +1212,56 @@ impl<'a> Tokenizer<'a> {
                 }
 
                 // Plain dot (qualifier separator)
+                // When preceded by an identifier and followed by digits, Go's scanIdentifier
+                // includes '.' in the identifier (see ContainsRune(".*$",...)).
+                // We need to handle ident.digit as a single identifier-like token.
                 b'.' => {
-                    if self.peek(1) == Some(b'*') {
-                        // .* - keep as-is (joined with previous)
-                        self.result.push_str(".*");
-                        self.pos += 2;
+                    let after_dot_is_digit = self.peek(1).is_some_and(|b| b.is_ascii_digit());
+                    let preceded_by_ident = self
+                        .last_char()
+                        .is_some_and(|b| is_ident_char(b) || b == b'"' || b == b'`');
+                    if after_dot_is_digit && preceded_by_ident {
+                        // handled below
+                    } else if !after_dot_is_digit && !preceded_by_ident {
+                        // Standalone dot not after identifier: needs space (Go adds space before
+                        // every token)
+                        if self.maybe_consume_alias_next() {
+                            continue;
+                        }
+                        self.space();
+                        self.result.push('.');
+                        self.pos += 1;
+                        continue;
+                    }
+                    if after_dot_is_digit && preceded_by_ident {
+                        // Scan the rest of the identifier (including .digit parts) as one unit
+                        let start = self.pos; // start at '.'
+                        self.pos += 1; // skip '.'
+                        while !self.at_end()
+                            && (is_ident_char(self.bytes[self.pos]) || self.bytes[self.pos] == b'.')
+                        {
+                            if self.bytes[self.pos] == b'.' {
+                                if self
+                                    .peek(1)
+                                    .is_some_and(|b| b.is_ascii_digit() || is_ident_char(b))
+                                {
+                                    self.pos += 1;
+                                } else {
+                                    break;
+                                }
+                            } else {
+                                self.pos += 1;
+                            }
+                        }
+                        let suffix = &self.s[start..self.pos];
+                        // Apply replace_digits if configured, otherwise emit as-is
+                        let out = if self.config.replace_digits {
+                            apply_replace_digits(suffix)
+                        } else {
+                            suffix.to_string()
+                        };
+                        // Append directly to result (already have the identifier prefix)
+                        self.result.push_str(&out);
                     } else {
                         self.result.push('.');
                         self.pos += 1;
@@ -1134,24 +1359,72 @@ impl<'a> Tokenizer<'a> {
                             continue;
                         }
                         self.emit(token);
-                    } else if self
-                        .peek(1)
-                        .is_some_and(|b| b.is_ascii_alphanumeric() || b == b'_')
-                    {
-                        // @name or @1
+                    } else if self.peek(1).is_some_and(|b| {
+                        b.is_ascii_alphanumeric()
+                            || b == b'_'
+                            || b == b'#'
+                            || b == b'$'
+                            || b == b'*'
+                    }) {
+                        // @name, @1, @#name, @$name, @*name — all valid Go ident chars (ASCII)
                         let start = self.pos;
                         self.pos += 1; // skip '@'
                         while !self.at_end() && is_ident_char(self.bytes[self.pos]) {
                             self.pos += 1;
                         }
-                        let token = &self.s[start..self.pos].to_string();
+                        let token = self.s[start..self.pos].to_string();
                         if self.maybe_consume_alias_next() {
                             continue;
                         }
-                        if self.config.replace_bind_parameter {
+                        // Go's old tokenizer keeps @ prefix and only applies replace_digits.
+                        // In new modes (obfuscation_mode!=""), respect replace_bind_parameter.
+                        if self.config.replace_digits && token.chars().any(|c| c.is_ascii_digit()) {
+                            let replaced = apply_replace_digits(&token);
+                            self.emit(&replaced);
+                        } else if self.config.replace_bind_parameter
+                            && !self.is_unspecified_obfuscate_mode()
+                        {
                             self.emit_placeholder();
                         } else {
-                            self.emit(token);
+                            self.emit(&token);
+                        }
+                    } else if self.peek(1).is_some_and(|b| b > 127) {
+                        // @unicodeLetter — Go's isAlphaNumeric includes Unicode letters
+                        let next_char = self.s[self.pos + 1..].chars().next();
+                        if next_char.is_some_and(|c| c.is_alphabetic() || c == '_') {
+                            let start = self.pos;
+                            self.pos += 1; // skip '@'
+                            while !self.at_end() {
+                                if self.bytes[self.pos] == b'#' || self.bytes[self.pos] == b'@' {
+                                    self.pos += 1;
+                                    continue;
+                                }
+                                let rest = &self.s[self.pos..];
+                                match rest.chars().next() {
+                                    Some(c) if c.is_alphanumeric() || c == '_' => {
+                                        self.pos += c.len_utf8();
+                                    }
+                                    _ => break,
+                                }
+                            }
+                            let token = self.s[start..self.pos].to_string();
+                            if self.maybe_consume_alias_next() {
+                                continue;
+                            }
+                            if self.config.replace_digits {
+                                self.emit(&apply_replace_digits(&token));
+                            } else {
+                                self.emit(&token);
+                            }
+                        } else {
+                            if self.maybe_consume_alias_next() {
+                                continue;
+                            }
+                            self.space();
+                            self.result.push('@');
+                            self.pos += 1;
+                            self.last_was_placeholder = false;
+                            self.result.push(' ');
                         }
                     } else if self.peek(1) == Some(b'>') {
                         // @> operator
@@ -1169,6 +1442,7 @@ impl<'a> Tokenizer<'a> {
                         self.space();
                         self.result.push('@');
                         self.pos += 1;
+                        self.last_was_placeholder = false;
                         self.result.push(' ');
                     }
                 }
@@ -1184,6 +1458,7 @@ impl<'a> Tokenizer<'a> {
                             self.space();
                             self.result.push_str("::");
                             self.pos += 2;
+                            self.last_was_placeholder = false;
                             self.result.push(' ');
                         }
                         Some(b'=') => {
@@ -1194,13 +1469,21 @@ impl<'a> Tokenizer<'a> {
                             self.space();
                             self.result.push_str(":=");
                             self.pos += 2;
+                            self.last_was_placeholder = false;
                             self.result.push(' ');
                         }
-                        Some(b) if b.is_ascii_alphanumeric() || b == b'_' => {
-                            // :name bind parameter - keep as-is
+                        Some(b)
+                            if b.is_ascii_alphanumeric() || b == b'_' || b == b'#' || b == b'@' =>
+                        {
+                            // :name bind parameter - keep as-is; '#' is valid in Go identifiers;
+                            // '@' is isLeadingLetter in Go
                             let start = self.pos;
                             self.pos += 1; // skip ':'
-                            while !self.at_end() && is_ident_char(self.bytes[self.pos]) {
+                                           // Go's scanBindVar loops while isLetter || isDigit || ch == '.'
+                            while !self.at_end()
+                                && (is_ident_char(self.bytes[self.pos])
+                                    || self.bytes[self.pos] == b'.')
+                            {
                                 self.pos += 1;
                             }
                             let token = &self.s[start..self.pos];
@@ -1208,6 +1491,61 @@ impl<'a> Tokenizer<'a> {
                                 continue;
                             }
                             self.emit(token);
+                            // If the bind var ends with '.', push a trailing space so that
+                            // the next token doesn't get its space suppressed by space()'s
+                            // qualifier-separator logic (which checks last_char == '.').
+                            if token.ends_with('.') {
+                                self.result.push(' ');
+                            }
+                        }
+                        Some(b) if b > 127 => {
+                            // Non-ASCII byte: check if it starts a Unicode letter.
+                            // Go's normalizer emits ':' and a following IDENT without a space
+                            // in bind-variable context. Treat ':unicodeword' as a single token.
+                            let next_char = self.s[self.pos + 1..].chars().next();
+                            if next_char.is_some_and(|c| c.is_alphabetic() || c == '_') {
+                                let start = self.pos;
+                                self.pos += 1; // skip ':'
+                                while !self.at_end() {
+                                    // '#' and '@' are valid Go identifier chars (isLetter includes
+                                    // them). '.' is also valid:
+                                    // Go's scanBindVar loops while isLetter || isDigit || ch == '.'
+                                    if self.bytes[self.pos] == b'#'
+                                        || self.bytes[self.pos] == b'@'
+                                        || self.bytes[self.pos] == b'.'
+                                    {
+                                        self.pos += 1;
+                                        continue;
+                                    }
+                                    let rest = &self.s[self.pos..];
+                                    match rest.chars().next() {
+                                        Some(c) if c.is_alphanumeric() || c == '_' => {
+                                            self.pos += c.len_utf8();
+                                        }
+                                        _ => break,
+                                    }
+                                }
+                                let token = &self.s[start..self.pos];
+                                if self.maybe_consume_alias_next() {
+                                    continue;
+                                }
+                                self.emit(token);
+                                // If the bind var ends with '.', push a trailing space so that
+                                // the next token doesn't get its space suppressed by space()'s
+                                // qualifier-separator logic (which checks last_char == '.').
+                                if token.ends_with('.') {
+                                    self.result.push(' ');
+                                }
+                            } else {
+                                if self.maybe_consume_alias_next() {
+                                    continue;
+                                }
+                                self.space();
+                                self.result.push(':');
+                                self.pos += 1;
+                                self.last_was_placeholder = false;
+                                self.result.push(' ');
+                            }
                         }
                         _ => {
                             // Standalone : (e.g., autovacuum:)
@@ -1217,6 +1555,7 @@ impl<'a> Tokenizer<'a> {
                             self.space();
                             self.result.push(':');
                             self.pos += 1;
+                            self.last_was_placeholder = false;
                             self.result.push(' ');
                         }
                     }
@@ -1255,68 +1594,75 @@ impl<'a> Tokenizer<'a> {
                             }
                         }
                         Some(b) if b.is_ascii_digit() => {
-                            // Could be signed number: -42
-                            // Only treat as signed number if preceding context is an
-                            // operator/paren/comma/start
-                            let last = self.last_char();
-                            if matches!(
-                                last,
-                                None | Some(b'(')
-                                    | Some(b' ')
-                                    | Some(b'=')
-                                    | Some(b'>')
-                                    | Some(b'<')
-                                    | Some(b',')
-                                    | Some(b'+')
-                                    | Some(b'-')
-                                    | Some(b'*')
-                                    | Some(b'/')
-                            ) {
+                            // Go's old tokenizer ALWAYS scans -digit as a negative number
+                            // regardless of preceding context (tkn.lastChar check is only on next
+                            // char).
+                            {
                                 self.pos += 1; // skip '-'
                                 self.consume_number();
                                 if self.maybe_consume_alias_next() {
                                     continue;
                                 }
                                 self.emit_placeholder();
-                            } else {
-                                if self.maybe_consume_alias_next() {
-                                    continue;
+                            }
+                        }
+                        Some(b'.')
+                            if self.peek(2).is_some()
+                                && !self.peek(2).is_some_and(|d| d.is_ascii_digit()) =>
+                        {
+                            // '-' followed by '.' followed by a non-digit non-EOF char:
+                            // Go's tokenizer peeks at '.' then backtracks; because off advances
+                            // past '.', bytes() captures '-.' as a
+                            // single token. Emit '-.' together.
+                            // When '.' is at EOF, Go's advance() doesn't change off (EndChar path),
+                            // so bytes() only returns '-' — handled by the fallthrough `_` arm.
+                            //
+                            // Additionally, Go's advance() for the peek also advances off past the
+                            // non-digit char ('v' in '-.v5'), making it the first byte of the NEXT
+                            // token's bytes() output. Replicate that off-leak inline:
+                            if self.maybe_consume_alias_next() {
+                                continue;
+                            }
+                            self.space();
+                            self.result.push_str("-.");
+                            self.pos += 2;
+                            self.last_was_placeholder = false;
+                            self.result.push(' ');
+                            // Handle the off-leak: the char at pos was advanced past by Go's peek.
+                            // It becomes the first byte of the next token in Go's model.
+                            if !self.at_end() {
+                                let c_len = self.s[self.pos..]
+                                    .chars()
+                                    .next()
+                                    .map_or(1, |c| c.len_utf8());
+                                let after_c = self.pos + c_len;
+                                if after_c < self.bytes.len()
+                                    && self.bytes[after_c].is_ascii_digit()
+                                {
+                                    // Leaked char + following digits = Number in Go → '?'
+                                    self.pos = after_c;
+                                    self.consume_number();
+                                    self.emit_placeholder();
+                                } else {
+                                    // Leaked char becomes the bytes of a '.' token in Go → emit
+                                    // as-is
+                                    let n = c_len.min(self.bytes.len() - self.pos);
+                                    let leaked = self.s[self.pos..self.pos + n].to_owned();
+                                    self.pos += n;
+                                    self.result.push_str(&leaked);
+                                    self.result.push(' ');
                                 }
-                                self.space();
-                                self.result.push('-');
-                                self.pos += 1;
-                                self.last_was_placeholder = false;
-                                self.result.push(' ');
                             }
                         }
                         Some(b'.') if self.peek(2).is_some_and(|d| d.is_ascii_digit()) => {
-                            // -.5 signed float
-                            let last = self.last_char();
-                            if matches!(
-                                last,
-                                None | Some(b'(')
-                                    | Some(b' ')
-                                    | Some(b'=')
-                                    | Some(b'>')
-                                    | Some(b'<')
-                                    | Some(b',')
-                            ) {
-                                self.pos += 2; // skip '-.'
-                                self.consume_number();
-                                if self.maybe_consume_alias_next() {
-                                    continue;
-                                }
-                                self.emit_placeholder();
-                            } else {
-                                if self.maybe_consume_alias_next() {
-                                    continue;
-                                }
-                                self.space();
-                                self.result.push('-');
-                                self.pos += 1;
-                                self.last_was_placeholder = false;
-                                self.result.push(' ');
+                            // -.digit: Go ALWAYS treats this as a signed float number,
+                            // regardless of the preceding token context.
+                            self.pos += 2; // skip '-.'
+                            self.consume_number();
+                            if self.maybe_consume_alias_next() {
+                                continue;
                             }
+                            self.emit_placeholder();
                         }
                         _ => {
                             if self.maybe_consume_alias_next() {
@@ -1333,32 +1679,8 @@ impl<'a> Tokenizer<'a> {
 
                 // Plus: signed number or operator
                 b'+' => {
-                    let next = self.peek(1);
-                    let last = self.last_nonspace_char();
-                    if matches!(
-                        last,
-                        None | Some(b'(') | Some(b'=') | Some(b'>') | Some(b'<') | Some(b',')
-                    ) {
-                        if next.is_some_and(|b| b.is_ascii_digit()) {
-                            self.pos += 1; // skip '+'
-                            self.consume_number();
-                            if self.maybe_consume_alias_next() {
-                                continue;
-                            }
-                            self.emit_placeholder();
-                            continue;
-                        } else if next == Some(b'.')
-                            && self.peek(2).is_some_and(|d| d.is_ascii_digit())
-                        {
-                            self.pos += 2; // skip '+.'
-                            self.consume_number();
-                            if self.maybe_consume_alias_next() {
-                                continue;
-                            }
-                            self.emit_placeholder();
-                            continue;
-                        }
-                    }
+                    // Go's old SQL tokenizer does NOT consume '+' as part of a signed number.
+                    // '+' always stays as a separate operator token (unlike '-').
                     if self.maybe_consume_alias_next() {
                         continue;
                     }
@@ -1401,7 +1723,7 @@ impl<'a> Tokenizer<'a> {
                             if self.maybe_consume_alias_next() {
                                 continue;
                             }
-                            if self.config.dbms.eq_ignore_ascii_case("postgresql") {
+                            if matches!(self.config.dbms, DbmsKind::Postgresql) {
                                 self.space();
                                 self.result.push('?');
                                 self.last_was_assign = false;
@@ -1427,9 +1749,7 @@ impl<'a> Tokenizer<'a> {
                             let next2_is_ident = self
                                 .peek(2)
                                 .is_some_and(|c| c.is_ascii_alphanumeric() || c == b'_');
-                            if self.config.dbms.eq_ignore_ascii_case("postgresql")
-                                || !next2_is_ident
-                            {
+                            if matches!(self.config.dbms, DbmsKind::Postgresql) || !next2_is_ident {
                                 self.emit("<@");
                                 self.pos += 2;
                                 self.result.push(' ');
@@ -1455,6 +1775,7 @@ impl<'a> Tokenizer<'a> {
                             self.space();
                             self.result.push('<');
                             self.pos += 1;
+                            self.last_was_placeholder = false;
                             self.result.push(' ');
                         }
                     }
@@ -1472,6 +1793,7 @@ impl<'a> Tokenizer<'a> {
                         self.space();
                         self.result.push('>');
                         self.pos += 1;
+                        self.last_was_placeholder = false;
                     }
                     self.result.push(' ');
                 }
@@ -1512,6 +1834,7 @@ impl<'a> Tokenizer<'a> {
                         self.space();
                         self.result.push('!');
                         self.pos += 1;
+                        self.last_was_placeholder = false;
                         self.result.push(' ');
                     }
                 }
@@ -1592,16 +1915,48 @@ impl<'a> Tokenizer<'a> {
                     self.result.push(' ');
                 }
 
+                // Unicode whitespace (e.g. U+2003 EM SPACE): Go uses unicode.IsSpace
+                b if b > 127
+                    && self.s[self.pos..]
+                        .chars()
+                        .next()
+                        .is_some_and(|c| c.is_whitespace()) =>
+                {
+                    let c = self.s[self.pos..].chars().next().unwrap_or(' ');
+                    self.pos += c.len_utf8();
+                    self.skip_whitespace();
+                    if self.before_as_len.is_none() {
+                        self.space();
+                    }
+                }
+
                 // Identifier or keyword
                 _ if is_ident_start(b) || b > 127 => {
                     let start = self.pos;
-                    while !self.at_end()
-                        && (is_ident_char(self.bytes[self.pos]) || self.bytes[self.pos] > 127)
-                    {
-                        self.pos += 1;
+                    // Go's scanIdentifier includes '.' and '$' in identifiers
+                    while !self.at_end() {
+                        let b = self.bytes[self.pos];
+                        if b > 127 {
+                            // Non-ASCII: check if this char is Unicode whitespace — if so, stop.
+                            // Go's scanIdentifier stops at unicode.IsSpace chars.
+                            let c = self.s[self.pos..].chars().next();
+                            if c.is_some_and(|c| c.is_whitespace()) {
+                                break;
+                            }
+                            self.pos += c.map_or(1, |c| c.len_utf8());
+                        } else if is_ident_char(b) || b == b'.' {
+                            self.pos += 1;
+                        } else {
+                            break;
+                        }
                     }
                     let token = &self.s[start..self.pos];
                     self.emit_identifier(token);
+                    // If identifier ends with '.', push space so next token is separated
+                    // (Go includes trailing '.' in identifier but still spaces next token)
+                    if token.ends_with('.') && !self.at_end() {
+                        self.result.push(' ');
+                    }
                 }
 
                 // Unknown: emit as-is
@@ -1718,29 +2073,37 @@ fn collapse_multi_values(s: &str) -> String {
     let mut remaining = s;
 
     while !remaining.is_empty() {
-        // Check for "VALUES ( ? )" pattern
-        let rb = remaining.as_bytes();
-        let vlen = "VALUES ( ? )".len(); // 12
-        if rb.len() >= vlen && rb[..6].eq_ignore_ascii_case(b"VALUES") && &rb[6..vlen] == b" ( ? )"
-        {
-            // Check preceding context: must be start or space
+        const VALUES_KW: &str = "VALUES";
+        const VALUES_TAIL: &str = " ( ? )";
+        const VALUES_FULL: &str = "VALUES ( ? )";
+
+        // Match "VALUES" case-insensitively, and then match the exact tail " ( ? )"
+        let matches_values_pattern = remaining.get(..VALUES_FULL.len()).is_some_and(|head| {
+            head.get(..VALUES_KW.len())
+                .is_some_and(|kw| kw.eq_ignore_ascii_case(VALUES_KW))
+                && head
+                    .get(VALUES_KW.len()..)
+                    .is_some_and(|tail| tail == VALUES_TAIL)
+        });
+
+        if matches_values_pattern {
+            // Preceding context: must be start or space/'(' or '\n'
             let prev_ok = result.is_empty()
-                || matches!(
-                    result.as_bytes().last(),
-                    Some(b' ') | Some(b'(') | Some(b'\n')
-                );
+                || matches!(result.chars().last(), Some(' ') | Some('(') | Some('\n'));
+
             if prev_ok {
-                result.push_str(&remaining[..vlen]);
-                remaining = &remaining[vlen..];
-                // Now consume any trailing groups (may have content or be empty due to suppression)
+                // Keep the original casing as it appeared in `remaining`
+                result.push_str(&remaining[..VALUES_FULL.len()]);
+                remaining = &remaining[VALUES_FULL.len()..];
+
+                // Consume trailing groups
                 loop {
-                    if remaining.starts_with(", ( ? )") {
-                        remaining = &remaining[", ( ? )".len()..];
-                    } else if remaining.starts_with(" ( ? )") {
-                        remaining = &remaining[" ( ? )".len()..];
-                    } else if remaining.starts_with(" ()") {
-                        // Empty group after consecutive placeholder suppression
-                        remaining = &remaining[" ()".len()..];
+                    if let Some(rest) = remaining.strip_prefix(", ( ? )") {
+                        remaining = rest;
+                    } else if let Some(rest) = remaining.strip_prefix(" ( ? )") {
+                        remaining = rest;
+                    } else if let Some(rest) = remaining.strip_prefix(" ()") {
+                        remaining = rest;
                     } else {
                         break;
                     }
@@ -1748,7 +2111,9 @@ fn collapse_multi_values(s: &str) -> String {
                 continue;
             }
         }
-        let c = remaining.chars().next().unwrap_or(' ');
+
+        // Fallback: consume one char
+        let c = remaining.chars().next().unwrap(); // safe because remaining not empty
         result.push(c);
         remaining = &remaining[c.len_utf8()..];
     }
@@ -1765,7 +2130,7 @@ fn collapse_limit_two_args(s: &str) -> String {
         // Check for LIMIT (case-insensitive) + " ?, ?" or " ? ?"
         if remaining.len() >= 9 {
             let rb = remaining.as_bytes();
-            if rb[..5].eq_ignore_ascii_case(b"LIMIT") && rb[5] == b' ' && rb[6] == b'?' {
+            if rb.starts_with(b"LIMIT ?") {
                 // Check " ?, ?" or " ? ?"
                 let skip =
                     if remaining.len() >= 10 && rb[7] == b',' && rb[8] == b' ' && rb[9] == b'?' {
@@ -1807,8 +2172,10 @@ pub fn obfuscate_sql(s: &str, config: &SqlObfuscateConfig) -> String {
     let raw = tokenizer.finalize();
     // collapse_grouped_values applies in legacy mode and obfuscate_and_normalize mode.
     // In obfuscate_only and normalize_only modes, values are NOT collapsed.
-    let should_collapse =
-        config.obfuscation_mode.is_empty() || config.obfuscation_mode == "obfuscate_and_normalize";
+    let should_collapse = matches!(
+        config.obfuscation_mode,
+        SqlObfuscationMode::Unspecified | SqlObfuscationMode::ObfuscateAndNormalize
+    );
     if should_collapse {
         collapse_grouped_values(&raw)
     } else {
@@ -1823,6 +2190,8 @@ pub fn obfuscate_sql_string(s: &str) -> String {
 
 /// SQL obfuscation with Go-compatible whitespace normalization for use in JSON plan obfuscation.
 /// Applies obfuscate_sql_string then additional normalizations for JSON plan SQL.
+// FIXME: remove these tiny wrappers they provide no value, keep the public api 1 function which
+// takes a config
 pub fn obfuscate_sql_string_normalized(s: &str) -> String {
     let obfuscated = obfuscate_sql_string(s);
     normalize_plan_sql(&obfuscated)
@@ -1971,7 +2340,8 @@ mod tests {
             r#"SELECT * FROM "users" WHERE id = 1 AND name = 'test'"#,
             &config,
         );
-        let expected = r#"SELECT * FROM "users" WHERE id = ? AND name = ?"#;
+        // In old tokenizer mode, keep_identifier_quotation is ignored (Go does too).
+        let expected = "SELECT * FROM users WHERE id = ? AND name = ?";
         assert_eq!(got, expected, "keep_identifier_quotation: got {got:?}");
     }
 
@@ -1985,7 +2355,8 @@ mod tests {
             "SELECT * FROM users WHERE id = ? AND (name = 'test' OR name = 'test2')",
             &config,
         );
-        let expected = "SELECT * FROM users WHERE id = ? AND (name = ? OR name = ?)";
+        // In old-tokenizer mode, Go ignores remove_space_between_parentheses and always adds spaces
+        let expected = "SELECT * FROM users WHERE id = ? AND ( name = ? OR name = ? )";
         assert_eq!(
             got, expected,
             "remove_space_between_parentheses: got {got:?}"
@@ -2003,7 +2374,9 @@ mod tests {
             "SELECT * FROM users WHERE id = ? AND name = $1 and id = $2",
             &config,
         );
-        let expected = "SELECT * FROM users WHERE id = ? AND name = $1 and id = $2";
+        // In old-tokenizer mode (obfuscation_mode=""), positional params are always replaced
+        // regardless of keep_positional_parameter (matches Go's old tokenizer behavior).
+        let expected = "SELECT * FROM users WHERE id = ? AND name = ? and id = ?";
         assert_eq!(
             got, expected,
             "keep_positional_parameter: got {got:?}, expected {expected:?}"
@@ -2148,7 +2521,7 @@ mod tests {
         // AS resets groupFilter: comma after alias IS kept (verified against Go)
         (
             "SELECT 3 AS NUCLEUS_TYPE,A0.ID,A0.\"NAME\" FROM \"VALUE\" A0",
-            "SELECT ?, A0.ID, A0.NAME FROM VALUE A0",
+            "SELECT ?, A0.ID, A0. NAME FROM VALUE A0",
         ),
         (
             "SELECT COUNT(*) FROM TABLE_1 JOIN table_2 ON TABLE_1.foo = table_2.bar where col1 > .9999",
@@ -2168,27 +2541,27 @@ mod tests {
         ),
         (
             "SELECT COUNT(*) FROM TABLE_1 JOIN table_2 ON TABLE_1.foo = table_2.bar where col1 > +1e6",
-            "SELECT COUNT ( * ) FROM TABLE_1 JOIN table_2 ON TABLE_1.foo = table_2.bar where col1 > ?",
+            "SELECT COUNT ( * ) FROM TABLE_1 JOIN table_2 ON TABLE_1.foo = table_2.bar where col1 > + ?",
         ),
         (
             "SELECT COUNT(*) FROM TABLE_1 JOIN table_2 ON TABLE_1.foo = table_2.bar where col1 > +255",
-            "SELECT COUNT ( * ) FROM TABLE_1 JOIN table_2 ON TABLE_1.foo = table_2.bar where col1 > ?",
+            "SELECT COUNT ( * ) FROM TABLE_1 JOIN table_2 ON TABLE_1.foo = table_2.bar where col1 > + ?",
         ),
         (
             "SELECT COUNT(*) FROM TABLE_1 JOIN table_2 ON TABLE_1.foo = table_2.bar where col1 > +6.34F",
-            "SELECT COUNT ( * ) FROM TABLE_1 JOIN table_2 ON TABLE_1.foo = table_2.bar where col1 > ?",
+            "SELECT COUNT ( * ) FROM TABLE_1 JOIN table_2 ON TABLE_1.foo = table_2.bar where col1 > + ? F",
         ),
         (
             "SELECT COUNT(*) FROM TABLE_1 JOIN table_2 ON TABLE_1.foo = table_2.bar where col1 > +6f",
-            "SELECT COUNT ( * ) FROM TABLE_1 JOIN table_2 ON TABLE_1.foo = table_2.bar where col1 > ?",
+            "SELECT COUNT ( * ) FROM TABLE_1 JOIN table_2 ON TABLE_1.foo = table_2.bar where col1 > + ? f",
         ),
         (
             "SELECT COUNT(*) FROM TABLE_1 JOIN table_2 ON TABLE_1.foo = table_2.bar where col1 > +0.5D",
-            "SELECT COUNT ( * ) FROM TABLE_1 JOIN table_2 ON TABLE_1.foo = table_2.bar where col1 > ?",
+            "SELECT COUNT ( * ) FROM TABLE_1 JOIN table_2 ON TABLE_1.foo = table_2.bar where col1 > + ? D",
         ),
         (
             "SELECT COUNT(*) FROM TABLE_1 JOIN table_2 ON TABLE_1.foo = table_2.bar where col1 > -1d",
-            "SELECT COUNT ( * ) FROM TABLE_1 JOIN table_2 ON TABLE_1.foo = table_2.bar where col1 > ?",
+            "SELECT COUNT ( * ) FROM TABLE_1 JOIN table_2 ON TABLE_1.foo = table_2.bar where col1 > ? d",
         ),
         (
             "SELECT COUNT(*) FROM TABLE_1 JOIN table_2 ON TABLE_1.foo = table_2.bar where col1 > x'ff'",
@@ -2303,12 +2676,36 @@ mod tests {
             "SELECT set_config('foo', bar, FALSE)",
             "SELECT set_config ( ? bar, ? )",
         ),
+        // fuzzing_792557810: colon followed by unicode letter should not add space
+        (":ჸ", ":ჸ"),
+        // fuzzing_1113621604: % followed by unicode letter is a format parameter → ?
+        ("%ჸ", "?"),
+        // fuzzing_4250509562: % followed by any ASCII letter is a format parameter → ?
+        ("%C", "?"),
+        // fuzzing_1492599371: standalone dot followed by unicode ident needs space
+        (".ჸ", ". ჸ"),
+        // sql_fuzzing: 0!(2 grouping — operator resets lp, so '2' after '(' gets '?'
+        ("0!(2", "? ! ( ?"),
+        // sql_fuzzing_3326675327: '(' does NOT reset lp — '$0' grouped with leading '?'
+        ("0(($0", "? ( ("),
+        // fuzzing_4233627642: digit followed by letter suffix — letter is separate IDENT
+        ("0D", "? D"),
+        // sql_fuzzing_4064530249: @ followed by unicode ident → no space (bind param)
+        ("@ᏤᏤ", "@ᏤᏤ"),
+        // fuzzing_4138960753: unicode ident immediately followed by * is one token
+        ("ჸ*", "ჸ*"),
+        // sql_fuzzing: standalone .* → ". *" but table.* → "table.*"
+        (".*", ". *"),
+        ("table.*", "table.*"),
+        // fuzzing test: ( followed by unicode ident should have space
+        ("(ჷ", "( ჷ"),
+        ("2%$2", "? % ?"),
     ];
 
     #[test]
     fn test_normalize_only() {
         let config = super::SqlObfuscateConfig {
-            obfuscation_mode: "normalize_only".to_string(),
+            obfuscation_mode: super::SqlObfuscationMode::NormalizeOnly,
             ..Default::default()
         };
         let cases = &[
@@ -2354,7 +2751,7 @@ mod tests {
     #[test]
     fn test_normalize_only_keep_trailing_semi() {
         let config = super::SqlObfuscateConfig {
-            obfuscation_mode: "normalize_only".to_string(),
+            obfuscation_mode: super::SqlObfuscationMode::NormalizeOnly,
             keep_trailing_semicolon: true,
             ..Default::default()
         };
@@ -2372,7 +2769,7 @@ mod tests {
     #[test]
     fn test_normalize_only_keep_identifier_quotation() {
         let config = super::SqlObfuscateConfig {
-            obfuscation_mode: "normalize_only".to_string(),
+            obfuscation_mode: super::SqlObfuscationMode::NormalizeOnly,
             keep_identifier_quotation: true,
             ..Default::default()
         };
@@ -2440,7 +2837,7 @@ mod tests {
     fn test_normalize_only_dollar_func() {
         // In normalize_only mode, dollar-quoted strings are normalized (not quantized)
         let config = super::SqlObfuscateConfig {
-            obfuscation_mode: "normalize_only".to_string(),
+            obfuscation_mode: super::SqlObfuscationMode::NormalizeOnly,
             ..Default::default()
         };
         let got = super::obfuscate_sql(
@@ -2471,7 +2868,7 @@ mod tests {
     fn test_obfuscate_only_keeps_quotes_and_semi() {
         // In obfuscate_only mode: keep double-quoted identifiers, keep $?, keep trailing ;
         let config = super::SqlObfuscateConfig {
-            obfuscation_mode: "obfuscate_only".to_string(),
+            obfuscation_mode: crate::sql::SqlObfuscationMode::ObfuscateOnly,
             ..Default::default()
         };
         let got = super::obfuscate_sql(
@@ -2486,7 +2883,7 @@ mod tests {
     fn test_obfuscate_only_dollar_quoted_func_no_collapse() {
         // In obfuscate_only+dollar_quoted_func: VALUES inside func are NOT collapsed
         let config = super::SqlObfuscateConfig {
-            obfuscation_mode: "obfuscate_only".to_string(),
+            obfuscation_mode: crate::sql::SqlObfuscationMode::ObfuscateOnly,
             dollar_quoted_func: true,
             ..Default::default()
         };
@@ -2504,7 +2901,7 @@ mod tests {
     #[test]
     fn test_normalize_only_procedure() {
         let config = super::SqlObfuscateConfig {
-            obfuscation_mode: "normalize_only".to_string(),
+            obfuscation_mode: super::SqlObfuscationMode::NormalizeOnly,
             ..Default::default()
         };
         let got = super::obfuscate_sql(
@@ -2536,7 +2933,7 @@ mod tests {
     fn test_pg_json_operators_7() {
         // JSONB ? operator followed by string literal — both should be kept as ?
         let config = super::SqlObfuscateConfig {
-            dbms: "postgresql".to_string(),
+            dbms: super::DbmsKind::Postgresql,
             ..Default::default()
         };
         let got = super::obfuscate_sql("select * from users where user.custom ? 'foo'", &config);
