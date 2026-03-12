@@ -12,6 +12,7 @@ pub use nix::sys::socket::{ControlMessage, ControlMessageOwned, MsgFlags, UnixAd
 use std::{
     io,
     os::unix::io::{AsRawFd, FromRawFd, IntoRawFd, OwnedFd, RawFd},
+    sync::atomic::{AtomicUsize, Ordering},
     time::Duration,
 };
 use tokio::io::unix::AsyncFd;
@@ -32,8 +33,21 @@ use linux::get_peer_credentials;
 #[cfg(target_os = "macos")]
 use macos::get_peer_credentials;
 
-/// Maximum IPC message payload size (4 MiB).
-pub const MAX_MESSAGE_SIZE: usize = 4 * 1024 * 1024;
+/// Global socket buffer size. Determines `max_message_size()` and is applied to new connections.
+static SOCKET_BUFFER_SIZE: AtomicUsize = AtomicUsize::new(4 * 1024 * 1024);
+
+/// Set the socket send/receive buffer size used for all future connections.
+///
+/// This also determines [`max_message_size()`]. Call before creating connections for the new
+/// size to take effect on `socketpair`/`connect` calls (macOS).
+pub fn set_socket_buffer_size(size: usize) {
+    SOCKET_BUFFER_SIZE.store(size, Ordering::Relaxed);
+}
+
+/// Maximum IPC message payload size, equal to the configured socket buffer size.
+pub fn max_message_size() -> usize {
+    SOCKET_BUFFER_SIZE.load(Ordering::Relaxed)
+}
 
 /// Extra receive-buffer overhead for the wire format.  Zero on Unix because fds are
 /// transferred out-of-band via `SCM_RIGHTS`; non-zero on Windows (see `sockets.rs`).
@@ -294,6 +308,29 @@ impl SeqpacketConn {
     pub fn set_write_timeout(&mut self, d: Option<Duration>) -> io::Result<()> {
         self.write_timeout = d;
         Ok(())
+    }
+
+    fn setsockopt_int(&self, optname: libc::c_int, size: usize) -> io::Result<()> {
+        let size_c = size as libc::c_int;
+        let ret = unsafe {
+            libc::setsockopt(
+                self.inner.as_raw_fd(),
+                libc::SOL_SOCKET,
+                optname,
+                &size_c as *const _ as *const libc::c_void,
+                std::mem::size_of::<libc::c_int>() as libc::socklen_t,
+            )
+        };
+        if ret < 0 { Err(io::Error::last_os_error()) } else { Ok(()) }
+    }
+
+    pub fn set_sndbuf_size(&self, size: usize) -> io::Result<()> {
+        set_socket_buffer_size(size);
+        self.setsockopt_int(libc::SO_SNDBUF, size)
+    }
+
+    pub fn set_rcvbuf_size(&self, size: usize) -> io::Result<()> {
+        self.setsockopt_int(libc::SO_RCVBUF, size)
     }
 
     /// Convert to an async connection for use in async server dispatch loops.

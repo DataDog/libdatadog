@@ -22,8 +22,8 @@
 //! - Success → live server.  `ECONNRESET` → stale socket file.
 
 use super::{
-    create_unix_socket, sendmsg, set_nonblocking, ControlMessage, MsgFlags, SeqpacketConn,
-    SeqpacketListener, UnixAddr, MAX_MESSAGE_SIZE,
+    create_unix_socket, max_message_size, sendmsg, set_nonblocking, ControlMessage, MsgFlags,
+    SeqpacketConn, SeqpacketListener, UnixAddr,
 };
 use crate::PeerCredentials;
 use nix::sys::socket::{bind, AddressFamily, SockFlag, SockType};
@@ -39,7 +39,7 @@ fn create_dgram_socket() -> io::Result<OwnedFd> {
 }
 
 fn set_dgram_buffers(fd: i32) -> io::Result<()> {
-    let size = MAX_MESSAGE_SIZE as libc::c_int;
+    let size = max_message_size() as libc::c_int;
     let len = std::mem::size_of::<libc::c_int>() as libc::socklen_t;
     for opt in [libc::SO_SNDBUF, libc::SO_RCVBUF] {
         if unsafe {

@@ -301,7 +301,7 @@ fn gen_serve_fn(
                 }
             };
             let mut recv_counter: u64 = 0;
-            let mut buf = vec![0u8; datadog_ipc::MAX_MESSAGE_SIZE + datadog_ipc::HANDLE_SUFFIX_SIZE];
+            let mut buf = vec![0u8; datadog_ipc::max_message_size() + datadog_ipc::HANDLE_SUFFIX_SIZE];
             loop {
                 let (n, fds) = match datadog_ipc::recv_raw_async(&async_fd, &mut buf).await {
                     Ok(x) => x,

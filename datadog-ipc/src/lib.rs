@@ -19,5 +19,5 @@ pub mod codec;
 pub use client::IpcClientConn;
 pub use platform::{recv_raw_async, send_raw_async};
 pub use platform::{
-    PeerCredentials, SeqpacketConn, SeqpacketListener, HANDLE_SUFFIX_SIZE, MAX_MESSAGE_SIZE,
+    max_message_size, PeerCredentials, SeqpacketConn, SeqpacketListener, HANDLE_SUFFIX_SIZE,
 };

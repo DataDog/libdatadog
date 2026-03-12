@@ -23,10 +23,6 @@ use libdd_common::tag::Tag;
 use libdd_dogstatsd_client::DogStatsDActionOwned;
 use std::{io, time::Duration};
 
-// ---------------------------------------------------------------------------
-// Outbox
-// ---------------------------------------------------------------------------
-
 /// Priority outbox for state-change (coalesced) messages.
 ///
 /// Each slot holds the most recent pending message of its kind.
@@ -53,10 +49,6 @@ impl SidecarOutbox {
         ]
     }
 }
-
-// ---------------------------------------------------------------------------
-// Outbox coalescing helpers
-// ---------------------------------------------------------------------------
 
 fn cancel_if_instance(slot: &mut Option<SidecarInterfaceRequest>, instance_id: &InstanceId) {
     let should_cancel = match slot {
@@ -86,16 +78,12 @@ fn cancel_if_session(slot: &mut Option<SidecarInterfaceRequest>, session_id: &st
 }
 
 fn coalesce(outbox: &mut SidecarOutbox, incoming: SidecarInterfaceRequest) {
-    // For messages that trigger cancellations, do the cancellation first using a
-    // borrow, then move `incoming` into the slot.
     if let SidecarInterfaceRequest::ShutdownRuntime { ref instance_id } = incoming {
-        let id = instance_id.clone();
-        cancel_if_instance(&mut outbox.set_request_config, &id);
-        cancel_if_instance(&mut outbox.set_universal_service_tags, &id);
+        cancel_if_instance(&mut outbox.set_request_config, instance_id);
+        cancel_if_instance(&mut outbox.set_universal_service_tags, instance_id);
     }
     if let SidecarInterfaceRequest::ShutdownSession { ref session_id } = incoming {
-        let id = session_id.clone();
-        cancel_if_session(&mut outbox.set_session_config, &id);
+        cancel_if_session(&mut outbox.set_session_config, session_id);
     }
 
     match incoming {
@@ -118,14 +106,10 @@ fn coalesce(outbox: &mut SidecarOutbox, incoming: SidecarInterfaceRequest) {
             outbox.shutdown_session = Some(incoming);
         }
         _ => {
-            // Non-outbox messages should not be routed here.
+            unreachable!("Not in outbox");
         }
     }
 }
-
-// ---------------------------------------------------------------------------
-// SidecarSender
-// ---------------------------------------------------------------------------
 
 /// Higher-level IPC sender with outbox coalescing and telemetry load-shedding.
 ///
@@ -182,10 +166,6 @@ impl SidecarSender {
         self.drain_outbox_blocking();
         self.channel.0.send_blocking(&mut data.to_vec(), &[])
     }
-
-    // -------------------------------------------------------------------------
-    // Outbox-coalesced state-change methods
-    // -------------------------------------------------------------------------
 
     pub fn set_session_config(
         &mut self,
@@ -398,10 +378,6 @@ impl SidecarSender {
     pub fn set_write_timeout(&mut self, d: Option<Duration>) -> io::Result<()> {
         self.channel.0.set_write_timeout(d)
     }
-
-    // -------------------------------------------------------------------------
-    // Blocking methods (drain outbox blocking first, then call)
-    // -------------------------------------------------------------------------
 
     pub fn flush_traces(&mut self) -> io::Result<()> {
         self.drain_outbox_blocking();

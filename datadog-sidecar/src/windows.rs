@@ -50,6 +50,13 @@ pub extern "C" fn ddog_daemon_entry_point(_trampoline_data: &TrampolineData) {
     #[cfg(feature = "tracing")]
     crate::log::enable_logging().ok();
 
+    // Restore the pipe buffer size the PHP parent process configured before spawning us,
+    // so subsequent try_accept calls use the same buffer size.
+    let buf_size = crate::config::Config::get().pipe_buffer_size;
+    if buf_size > 0 {
+        datadog_ipc::platform::set_pipe_buffer_size(buf_size);
+    }
+
     let now = Instant::now();
 
     let pid = unsafe { libc::getpid() };

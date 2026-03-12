@@ -3,7 +3,7 @@
 
 //! Generic IPC client connection state shared by all generated channel types.
 
-use crate::platform::{SeqpacketConn, HANDLE_SUFFIX_SIZE, MAX_MESSAGE_SIZE};
+use crate::platform::{max_message_size, SeqpacketConn, HANDLE_SUFFIX_SIZE};
 
 #[cfg(unix)]
 use std::os::unix::io::{OwnedFd, RawFd};
@@ -44,7 +44,7 @@ impl IpcClientConn {
             send_count: 0,
             ack_count: 0,
             max_outstanding: MAX_OUTSTANDING,
-            recv_buf: vec![0u8; MAX_MESSAGE_SIZE + HANDLE_SUFFIX_SIZE],
+            recv_buf: vec![0u8; max_message_size() + HANDLE_SUFFIX_SIZE],
             closed: false,
         }
     }

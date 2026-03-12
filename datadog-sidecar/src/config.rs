@@ -36,6 +36,8 @@ const ENV_SIDECAR_APPSEC_LOCK_FILE_PATH: &str = "_DD_SIDECAR_APPSEC_LOCK_FILE_PA
 const ENV_SIDECAR_APPSEC_LOG_FILE_PATH: &str = "_DD_SIDECAR_APPSEC_LOG_FILE_PATH";
 const ENV_SIDECAR_APPSEC_LOG_LEVEL: &str = "_DD_SIDECAR_APPSEC_LOG_LEVEL";
 
+const ENV_SIDECAR_PIPE_BUFFER_SIZE: &str = "_DD_SIDECAR_PIPE_BUFFER_SIZE";
+
 #[derive(Debug, Copy, Clone, Default)]
 pub enum IpcMode {
     #[default]
@@ -84,6 +86,9 @@ pub struct Config {
     pub crashtracker_endpoint: Option<Endpoint>,
     pub appsec_config: Option<AppSecConfig>,
     pub max_memory: usize,
+    /// Socket/pipe buffer size for IPC connections (bytes).
+    /// 0 means use the platform default.
+    pub pipe_buffer_size: usize,
 }
 
 #[derive(Debug, Clone)]
@@ -125,6 +130,12 @@ impl Config {
             res.insert(
                 ENV_SIDECAR_WATCHDOG_MAX_MEMORY,
                 format!("{}", self.max_memory).into(),
+            );
+        }
+        if self.pipe_buffer_size != 0 {
+            res.insert(
+                ENV_SIDECAR_PIPE_BUFFER_SIZE,
+                format!("{}", self.pipe_buffer_size).into(),
             );
         }
         res
@@ -222,6 +233,13 @@ impl FromEnv {
             .unwrap_or(0)
     }
 
+    fn pipe_buffer_size() -> usize {
+        std::env::var(ENV_SIDECAR_PIPE_BUFFER_SIZE)
+            .unwrap_or_default()
+            .parse()
+            .unwrap_or(0)
+    }
+
     fn crashtracker_endpoint() -> Option<Endpoint> {
         std::env::var(ENV_SIDECAR_CRASHTRACKER_ENDPOINT)
             .ok()
@@ -240,6 +258,7 @@ impl FromEnv {
             crashtracker_endpoint: Self::crashtracker_endpoint(),
             appsec_config: Self::appsec_config(),
             max_memory: Self::max_memory(),
+            pipe_buffer_size: Self::pipe_buffer_size(),
         }
     }
 

@@ -28,7 +28,7 @@ use std::os::windows::io::{AsRawHandle, FromRawHandle, IntoRawHandle, OwnedHandl
 use std::path::Path;
 use std::ptr::{null, null_mut};
 use std::sync::{
-    atomic::{AtomicU64, Ordering},
+    atomic::{AtomicU64, AtomicUsize, Ordering},
     Mutex,
 };
 use tokio::net::windows::named_pipe::{NamedPipeClient, NamedPipeServer};
@@ -53,13 +53,30 @@ use windows_sys::Win32::System::Pipes::{
 use windows_sys::Win32::System::Threading::{CreateEventA, WaitForSingleObject, INFINITE};
 use windows_sys::Win32::System::IO::{CancelIo, GetOverlappedResult, OVERLAPPED, OVERLAPPED_0};
 
-/// Maximum IPC message payload size (4 MiB).
-pub const MAX_MESSAGE_SIZE: usize = 4 * 1024 * 1024;
-
 /// Wire-format suffix overhead: 4-byte count + 8 bytes per handle slot.
 ///
 /// Receive buffers must be at least `expected_payload_max + HANDLE_SUFFIX_SIZE` bytes.
 pub const HANDLE_SUFFIX_SIZE: usize = 4 + 8 * MAX_FDS;
+
+/// Global pipe buffer size used by `create_pipe_server`.
+///
+/// Defaults to 4 MiB payload + handle suffix.  Changed via [`set_pipe_buffer_size`]
+/// before binding a listener or creating a socketpair.
+static PIPE_BUFFER_SIZE: AtomicUsize = AtomicUsize::new(4 * 1024 * 1024 + HANDLE_SUFFIX_SIZE);
+
+/// Maximum IPC message payload size, equal to the pipe buffer minus the handle suffix.
+pub fn max_message_size() -> usize {
+    PIPE_BUFFER_SIZE.load(Ordering::Relaxed) - HANDLE_SUFFIX_SIZE
+}
+
+/// Set the named-pipe send/receive buffer size used for all future [`SeqpacketListener::bind`]
+/// and [`SeqpacketConn::socketpair`] calls.
+///
+/// Named-pipe buffer sizes are fixed at creation time on Windows; this must be called *before*
+/// creating a listener or socketpair to take effect on new connections.
+pub fn set_pipe_buffer_size(size: usize) {
+    PIPE_BUFFER_SIZE.store(size, Ordering::Relaxed);
+}
 
 /// Credentials of the connected peer.
 #[derive(Debug, Clone, Copy, Default)]
@@ -223,13 +240,14 @@ fn create_pipe_server(name: &[u8], first_instance: bool) -> io::Result<OwnedHand
         };
 
     let h = unsafe {
+        let buf_size = PIPE_BUFFER_SIZE.load(Ordering::Relaxed) as u32;
         CreateNamedPipeA(
             name.as_ptr(),
             open_mode,
             PIPE_TYPE_MESSAGE | PIPE_READMODE_MESSAGE | PIPE_WAIT,
             PIPE_UNLIMITED_INSTANCES,
-            (MAX_MESSAGE_SIZE + HANDLE_SUFFIX_SIZE) as u32,
-            (MAX_MESSAGE_SIZE + HANDLE_SUFFIX_SIZE) as u32,
+            buf_size,
+            buf_size,
             0,
             null_mut(),
         )
@@ -575,6 +593,17 @@ impl SeqpacketConn {
 
     pub fn set_write_timeout(&mut self, d: Option<std::time::Duration>) -> io::Result<()> {
         self.write_timeout = d;
+        Ok(())
+    }
+
+    /// Sets the pipe buffer size for future connections.
+    ///
+    /// Named-pipe buffer sizes are fixed at creation time on Windows, so this does not affect
+    /// the current connection.  It updates the global [`PIPE_BUFFER_SIZE`] used by all
+    /// subsequent [`SeqpacketListener::bind`] / [`try_accept`] / [`SeqpacketConn::socketpair`]
+    /// calls — i.e. it takes effect on the next reconnect.
+    pub fn set_sndbuf_size(&self, size: usize) -> io::Result<()> {
+        set_pipe_buffer_size(size);
         Ok(())
     }
 }

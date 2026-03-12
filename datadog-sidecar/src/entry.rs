@@ -220,6 +220,15 @@ pub fn daemonize(listener: IpcServer, mut cfg: Config) -> anyhow::Result<()> {
 }
 
 pub fn start_or_connect_to_sidecar(cfg: Config) -> anyhow::Result<SidecarTransport> {
+    // On Windows, named-pipe buffer sizes are fixed at creation time.  Set the global before
+    // attempt_listen so that the initial server pipe (created by this process and handed to the
+    // daemon) uses the configured size.  The daemon restores the same value at startup so that
+    // subsequent try_accept calls also use the right size.
+    #[cfg(windows)]
+    if cfg.pipe_buffer_size > 0 {
+        datadog_ipc::platform::set_pipe_buffer_size(cfg.pipe_buffer_size);
+    }
+
     let liaison = match cfg.ipc_mode {
         config::IpcMode::Shared => setup::DefaultLiason::ipc_shared(),
         config::IpcMode::InstancePerProcess => setup::DefaultLiason::ipc_per_process(),

@@ -49,6 +49,11 @@ pub extern "C" fn ddog_daemon_entry_point(trampoline_data: &TrampolineData) {
         warn!("Failed to initialize crashtracker: {e}");
     }
 
+    let buf_size = Config::get().pipe_buffer_size;
+    if buf_size > 0 {
+        datadog_ipc::platform::set_socket_buffer_size(buf_size);
+    }
+
     let now = Instant::now();
 
     let appsec_started = maybe_start_appsec();
@@ -113,7 +118,13 @@ async fn accept_socket_loop(
                 match ready {
                     Ok(mut guard) => {
                         match guard.try_io(|inner| inner.get_ref().try_accept()) {
-                            Ok(Ok(conn)) => handler(conn),
+                            Ok(Ok(conn)) => {
+                                let buf_size = Config::get().pipe_buffer_size;
+                                if buf_size > 0 {
+                                    let _ = conn.set_rcvbuf_size(buf_size);
+                                }
+                                handler(conn);
+                            }
                             Ok(Err(e)) => {
                                 error!("IPC accept error: {e}");
                                 break;

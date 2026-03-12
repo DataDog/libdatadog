@@ -64,6 +64,16 @@ impl SidecarTransport {
         lock_sender(self)?.set_write_timeout(d)
     }
 
+    pub fn set_backpressure(&mut self, max_bytes: usize, max_queue: u64) -> io::Result<()> {
+        let mut sender = lock_sender(self)?;
+        sender.channel.0.max_outstanding = max_queue;
+        #[cfg(unix)]
+        sender.channel.0.conn.set_sndbuf_size(max_bytes)?;
+        #[cfg(not(unix))]
+        let _ = max_bytes; // handled on pipe creation
+        Ok(())
+    }
+
     pub fn ensure_alive(&mut self) {
         let closed = match self.inner.lock() {
             Ok(guard) => guard.channel.0.is_closed(),
