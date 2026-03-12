@@ -103,6 +103,7 @@ impl AzureMetadata {
     }
 
     fn extract_resource_group(s: Option<String>) -> Option<String> {
+        // /.+\+(.+)-.+webspace(-Linux)?/
         let text = s.as_ref()?;
         let (before_plus, after_plus) = text.rsplit_once('+')?;
         if before_plus.is_empty() {
