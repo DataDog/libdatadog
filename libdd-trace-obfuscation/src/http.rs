@@ -1,8 +1,13 @@
 // Copyright 2023-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+// FIXME: once obfuscation feature parity is reached with the agent, change both modules to be more
+// restrictive on the accepted forms of urls so that this module can be greatly simplified.
+// One idea for now is to match the url to a regex on both side to validate it
+
 use fluent_uri::UriRef;
 use percent_encoding::percent_decode_str;
+use std::fmt::Write;
 
 fn is_cat1(c: char) -> bool {
     matches!(
@@ -56,7 +61,7 @@ fn is_frag_cat2(c: char) -> bool {
 fn encode_char(out: &mut String, c: char) {
     let mut buf = [0u8; 4];
     for &b in c.encode_utf8(&mut buf).as_bytes() {
-        out.push_str(&format!("%{b:02X}"));
+        let _ = write!(out, "%{b:02X}");
     }
 }
 
@@ -114,7 +119,7 @@ pub fn obfuscate_url_string(
         if !c.is_ascii() {
             encode_char(&mut pre, c);
         } else if is_cat1(c) || (needs_full_path && is_path_cat2(c)) {
-            pre.push_str(&format!("%{:02X}", c as u8));
+            let _ = write!(pre, "%{:02X}", c as u8);
         } else {
             pre.push(c);
         }
