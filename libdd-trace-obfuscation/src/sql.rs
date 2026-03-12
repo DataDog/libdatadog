@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum DbmsKind {
     #[default]
     Generic,
@@ -16,7 +17,6 @@ pub enum DbmsKind {
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-#[non_exhaustive]
 #[allow(deprecated)]
 pub enum SqlObfuscationMode {
     #[default]
