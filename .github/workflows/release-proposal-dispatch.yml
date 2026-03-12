@@ -113,6 +113,9 @@ jobs:
           GIT_USER_ID=$(echo "${GITHUB_USER_RESPONSE}" | jq -r '.id')
           GIT_USER_EMAIL="${GIT_USER_ID}+${GIT_USER_NAME}@users.noreply.github.com"
 
+          echo "GIT_USER_NAME: $GIT_USER_NAME"
+          echo "GIT_USER_EMAIL: $GIT_USER_EMAIL"
+
           git config --global user.name "$GIT_USER_NAME"
           git config --global user.email "$GIT_USER_EMAIL"
 
@@ -185,6 +188,9 @@ jobs:
           GIT_USER_NAME=$(echo "${GITHUB_USER_RESPONSE}" | jq -r '.login')
           GIT_USER_ID=$(echo "${GITHUB_USER_RESPONSE}" | jq -r '.id')
           GIT_USER_EMAIL="${GIT_USER_ID}+${GIT_USER_NAME}@users.noreply.github.com"
+
+          echo "GIT_USER_NAME: $GIT_USER_NAME"
+          echo "GIT_USER_EMAIL: $GIT_USER_EMAIL"
 
           git config --global user.name "$GIT_USER_NAME"
           git config --global user.email "$GIT_USER_EMAIL"
@@ -416,7 +422,7 @@ jobs:
           fi
           
           # List both commit hashes in reverse order, space separated (no extra quotes so commit-headless gets plain SHAs)
-          COMMITS=$(git log "${{ steps.commits-since-release.outputs.release_head_sha }}".. --format='%H' | tr '\n' ' ')
+          COMMITS=$(git log "${{ steps.commits-since-release.outputs.release_head_sha }}".. --format='%H' | tr '\n' ' ' | xargs)
           echo "COMMITS: $COMMITS"
           echo "commits=$COMMITS" >> $GITHUB_OUTPUT
 
