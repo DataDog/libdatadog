@@ -493,7 +493,12 @@ pub mod linux {
         /// Read the process context from the current process.
         ///
         /// This searches `/proc/self/maps` for an OTEL_CTX mapping and decodes its contents.
-        pub fn read_process_context() -> anyhow::Result<MappingHeader> {
+        ///
+        /// **CAUTION**: Note that the reader implemented in this module, as well as the helper
+        /// functions it relies on, are specialized for tests (for example, it doesn't check for
+        /// concurrent writers after reading the header, because we know they can't be). Do not
+        /// extract or use as it is as a generic Rust OTel process context reader.
+        fn read_process_context() -> anyhow::Result<MappingHeader> {
             let mapping_addr = find_otel_mapping()?;
             let header_ptr = verify_mapping_at(mapping_addr)?;
             // Safety: the pointer returned by `verify_mapping_at` points to an initialized header
