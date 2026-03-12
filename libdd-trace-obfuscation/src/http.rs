@@ -9,11 +9,25 @@ use fluent_uri::UriRef;
 use percent_encoding::percent_decode_str;
 use std::fmt::Write;
 
-fn is_cat1(c: char) -> bool {
+/// Returns true for Go net/url's "category 1" characters:
+/// ASCII bytes that always trigger escaping in URLs (plus space and quote).
+fn is_go_url_escape_cat1(c: char) -> bool {
     matches!(
         c,
         '\\' | '^' | '{' | '}' | '|' | '<' | '>' | '`' | ' ' | '"'
     )
+}
+
+/// Returns true for Go net/url's "category 2" characters for PATH contexts:
+/// characters Go may escape in paths when Cat1 is present or non-ASCII exists.
+fn is_go_url_escape_cat2_path(c: char) -> bool {
+    matches!(c, '!' | '\'' | '(' | ')' | '*' | '[' | ']')
+}
+
+/// Returns true for Go net/url's "category 2" characters for FRAGMENT contexts:
+/// characters Go may escape in fragments when non-ASCII exists.
+fn is_go_url_escape_cat2_fragment(c: char) -> bool {
+    matches!(c, '\'' | '[' | ']')
 }
 
 fn hex_val(b: u8) -> u8 {
@@ -48,14 +62,6 @@ fn normalize_pct_encoded_unreserved(path: &str) -> String {
         }
     }
     out
-}
-
-fn is_path_cat2(c: char) -> bool {
-    matches!(c, '!' | '\'' | '(' | ')' | '*' | '[' | ']')
-}
-
-fn is_frag_cat2(c: char) -> bool {
-    matches!(c, '\'' | '[' | ']')
 }
 
 fn encode_char(out: &mut String, c: char) {
@@ -106,7 +112,7 @@ pub fn obfuscate_url_string(
 
     // Determine Go's escape() trigger: Cat1 or non-ASCII in path causes Cat2 encoding too
     let path = &url[..path_end];
-    let needs_full_path = path.bytes().any(|b| b > 127) || path.chars().any(is_cat1);
+    let needs_full_path = path.bytes().any(|b| b > 127) || path.chars().any(is_go_url_escape_cat1);
     let frag_has_non_ascii = frag_pos.is_some_and(|i| url[i + 1..].bytes().any(|b| b > 127));
 
     // Pre-encode chars that UriRef (strict RFC 3986) rejects.
@@ -118,7 +124,7 @@ pub fn obfuscate_url_string(
     for c in url[..path_end].chars() {
         if !c.is_ascii() {
             encode_char(&mut pre, c);
-        } else if is_cat1(c) || (needs_full_path && is_path_cat2(c)) {
+        } else if is_go_url_escape_cat1(c) || (needs_full_path && is_go_url_escape_cat2_path(c)) {
             let _ = write!(pre, "%{:02X}", c as u8);
         } else {
             pre.push(c);
@@ -131,8 +137,8 @@ pub fn obfuscate_url_string(
                 || (c as u32) < 0x20
                 || c as u32 == 0x7F
                 || c == '#'
-                || is_cat1(c)
-                || (frag_has_non_ascii && is_frag_cat2(c))
+                || is_go_url_escape_cat1(c)
+                || (frag_has_non_ascii && is_go_url_escape_cat2_fragment(c))
             {
                 encode_char(&mut pre, c);
             } else {
