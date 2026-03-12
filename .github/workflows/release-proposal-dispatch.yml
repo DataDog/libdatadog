@@ -32,8 +32,6 @@ env:
   MAIN_BRANCH: main
   RELEASE_BRANCH: release
   PROPOSAL_BRANCH_PREFIX: release-proposal
-  GIT_USER_NAME: "dd-octo-sts[bot]"
-  GIT_USER_EMAIL: "200755185+dd-octo-sts[bot]@users.noreply.github.com"
 
 jobs:
   check-proposal-ongoing:
@@ -108,6 +106,13 @@ jobs:
           GH_TOKEN: ${{ steps.octo-sts.outputs.token }}
         run: |
 
+          # Dynamically retrieve the GitHub App user info to support dd-octo-sts app pools.
+          # The pool may assign any app (e.g. dd-octo-sts[bot] or dd-octo-sts-001[bot])
+          GITHUB_USER_RESPONSE=$(curl -s -H "Authorization: token ${GH_TOKEN}" https://api.github.com/user)
+          GIT_USER_NAME=$(echo "${GITHUB_USER_RESPONSE}" | jq -r '.login')
+          GIT_USER_ID=$(echo "${GITHUB_USER_RESPONSE}" | jq -r '.id')
+          GIT_USER_EMAIL="${GIT_USER_ID}+${GIT_USER_NAME}@users.noreply.github.com"
+
           git config --global user.name "$GIT_USER_NAME"
           git config --global user.email "$GIT_USER_EMAIL"
 
@@ -162,11 +167,27 @@ jobs:
       - uses: taiki-e/cache-cargo-install-action@7447f04c51f2ba27ca35e7f1e28fab848c5b3ba7 # 2.3.1
         with:
           tool: cargo-semver-checks@0.45.0
-      
+
+      - uses: DataDog/dd-octo-sts-action@acaa02eee7e3bb0839e4272dacb37b8f3b58ba80 # v1.0.3
+        id: octo-sts
+        with:
+          scope: DataDog/libdatadog
+          policy: self.write.pr    
+
       - name: Configure Git for signing
+        env:
+            GH_TOKEN: ${{ steps.octo-sts.outputs.token }}
         run: |
-          git config --global user.name "${{ env.GIT_USER_NAME }}"
-          git config --global user.email "${{ env.GIT_USER_EMAIL }}"
+
+          # Dynamically retrieve the GitHub App user info to support dd-octo-sts app pools.
+          # The pool may assign any app (e.g. dd-octo-sts[bot] or dd-octo-sts-001[bot])
+          GITHUB_USER_RESPONSE=$(curl -s -H "Authorization: token ${GH_TOKEN}" https://api.github.com/user)
+          GIT_USER_NAME=$(echo "${GITHUB_USER_RESPONSE}" | jq -r '.login')
+          GIT_USER_ID=$(echo "${GITHUB_USER_RESPONSE}" | jq -r '.id')
+          GIT_USER_EMAIL="${GIT_USER_ID}+${GIT_USER_NAME}@users.noreply.github.com"
+
+          git config --global user.name "$GIT_USER_NAME"
+          git config --global user.email "$GIT_USER_EMAIL"
 
       - name: Get publication order for crate and dependencies
         run: |
@@ -178,6 +199,7 @@ jobs:
           cat /tmp/crates.json
       
       - name: Get commits since last release for each crate
+        id: commits-since-release
         run: |
           # Get commits since release for each crate and save to file
           ./scripts/commits-since-release.sh "$(cat /tmp/crates.json)" > /tmp/commits-by-crate.json
@@ -186,6 +208,7 @@ jobs:
           # so tag/merge-base resolution uses the same ref the script used.
           git rev-parse HEAD > /tmp/release_head_sha
           echo "Release branch HEAD (saved for later): $(cat /tmp/release_head_sha)"
+          echo "release_head_sha=$(cat /tmp/release_head_sha)" >> "$GITHUB_OUTPUT"
 
           # Display json output
           jq . /tmp/commits-by-crate.json
@@ -391,13 +414,22 @@ jobs:
             echo "No changes to push. Cancelling the workflow."
             exit 1
           fi
-
-          echo "Pushing branch $BRANCH_NAME to origin..."
-          git push origin "$BRANCH_NAME"
+          
+          # List both commit hashes in reverse order, space separated
+          echo "commits=\"$(git log "${{ steps.commits-since-release.outputs.release_head_sha }}".. --format='%H' | tr '\n' ' ')\"" >> $GITHUB_OUTPUT
 
           # Output the results
           echo "API changes summary:"
           jq . /tmp/api-changes.json
+
+      - name: Push commits
+        uses: DataDog/commit-headless@action/v2.0.3
+        with:
+          branch: ${{ steps.proposal-branch.outputs.branch_name }}
+          head-sha: ${{ steps.commits-since-release.outputs.release_head_sha }}
+          create-branch: true
+          command: push
+          commits: "${{ steps.release-version-bumps.outputs.commits }}"
 
       - name: Upload release data
         uses: actions/upload-artifact@v4
