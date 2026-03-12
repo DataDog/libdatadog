@@ -2,6 +2,13 @@
 
 
 
+## [2.1.0](https://github.com/datadog/libdatadog/compare/libdd-common-v2.0.0..libdd-common-v2.1.0) - 2026-03-12
+
+### Added
+
+- Epasss
+
+
 ## [2.0.0](https://github.com/datadog/libdatadog/compare/libdd-common-v1.1.0..libdd-common-v2.0.0) - 2026-02-23
 
 ### Added
