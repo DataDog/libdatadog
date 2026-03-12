@@ -104,18 +104,20 @@ jobs:
       - name: Configure Git identity for dd-octo-sts GitHub App
         env:
           GH_TOKEN: ${{ steps.octo-sts.outputs.token }}
+          GITHUB_ACTOR: ${{ github.actor }}
         run: |
-
-          # Dynamically retrieve the GitHub App user info to support dd-octo-sts app pools.
-          # The pool may assign any app (e.g. dd-octo-sts[bot] or dd-octo-sts-001[bot])
-          GITHUB_USER_RESPONSE=$(curl -s -H "Authorization: token ${GH_TOKEN}" https://api.github.com/user)
-          GIT_USER_NAME=$(echo "${GITHUB_USER_RESPONSE}" | jq -r '.login')
-          GIT_USER_ID=$(echo "${GITHUB_USER_RESPONSE}" | jq -r '.id')
-          GIT_USER_EMAIL="${GIT_USER_ID}+${GIT_USER_NAME}@users.noreply.github.com"
-
+          # GET /user is not allowed with installation tokens; use GET /users/ACTOR (who triggered the workflow).
+          GITHUB_USER_RESPONSE=$(curl -s -H "Authorization: token ${GH_TOKEN}" "https://api.github.com/users/${GITHUB_ACTOR}")
+          GIT_USER_NAME=$(echo "${GITHUB_USER_RESPONSE}" | jq -r '.login // empty')
+          GIT_USER_ID=$(echo "${GITHUB_USER_RESPONSE}" | jq -r '.id // empty')
+          if [[ -z "$GIT_USER_NAME" ]]; then
+            GIT_USER_NAME="${GITHUB_ACTOR}"
+            GIT_USER_EMAIL="${GITHUB_ACTOR}@users.noreply.github.com"
+          else
+            GIT_USER_EMAIL="${GIT_USER_ID}+${GIT_USER_NAME}@users.noreply.github.com"
+          fi
           echo "GIT_USER_NAME: $GIT_USER_NAME"
           echo "GIT_USER_EMAIL: $GIT_USER_EMAIL"
-
           git config --global user.name "$GIT_USER_NAME"
           git config --global user.email "$GIT_USER_EMAIL"
 
@@ -179,19 +181,21 @@ jobs:
 
       - name: Configure Git for signing
         env:
-            GH_TOKEN: ${{ steps.octo-sts.outputs.token }}
+          GH_TOKEN: ${{ steps.octo-sts.outputs.token }}
+          GITHUB_ACTOR: ${{ github.actor }}
         run: |
-
-          # Dynamically retrieve the GitHub App user info to support dd-octo-sts app pools.
-          # The pool may assign any app (e.g. dd-octo-sts[bot] or dd-octo-sts-001[bot])
-          GITHUB_USER_RESPONSE=$(curl -s -H "Authorization: token ${GH_TOKEN}" https://api.github.com/user)
-          GIT_USER_NAME=$(echo "${GITHUB_USER_RESPONSE}" | jq -r '.login')
-          GIT_USER_ID=$(echo "${GITHUB_USER_RESPONSE}" | jq -r '.id')
-          GIT_USER_EMAIL="${GIT_USER_ID}+${GIT_USER_NAME}@users.noreply.github.com"
-
+          # GET /user is not allowed with installation tokens; use GET /users/ACTOR (who triggered the workflow).
+          GITHUB_USER_RESPONSE=$(curl -s -H "Authorization: token ${GH_TOKEN}" "https://api.github.com/users/${GITHUB_ACTOR}")
+          GIT_USER_NAME=$(echo "${GITHUB_USER_RESPONSE}" | jq -r '.login // empty')
+          GIT_USER_ID=$(echo "${GITHUB_USER_RESPONSE}" | jq -r '.id // empty')
+          if [[ -z "$GIT_USER_NAME" ]]; then
+            GIT_USER_NAME="${GITHUB_ACTOR}"
+            GIT_USER_EMAIL="${GITHUB_ACTOR}@users.noreply.github.com"
+          else
+            GIT_USER_EMAIL="${GIT_USER_ID}+${GIT_USER_NAME}@users.noreply.github.com"
+          fi
           echo "GIT_USER_NAME: $GIT_USER_NAME"
           echo "GIT_USER_EMAIL: $GIT_USER_EMAIL"
-
           git config --global user.name "$GIT_USER_NAME"
           git config --global user.email "$GIT_USER_EMAIL"
 
