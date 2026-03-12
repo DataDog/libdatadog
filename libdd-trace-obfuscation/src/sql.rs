@@ -17,10 +17,10 @@ pub enum DbmsKind {
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
+#[allow(deprecated)]
 pub enum SqlObfuscationMode {
     #[default]
     #[deprecated = "kept for compatibility with agent's obfuscator but has unintuitive behavior"]
-    #[allow(deprecated)]
     Unspecified,
     NormalizeOnly,
     ObfuscateOnly,
@@ -240,6 +240,7 @@ impl<'a> Tokenizer<'a> {
         )
     }
 
+    #[allow(deprecated)]
     fn is_unspecified_obfuscate_mode(&self) -> bool {
         matches!(
             self.config.obfuscation_mode,
@@ -2072,7 +2073,7 @@ fn collapse_multi_values(s: &str) -> String {
     let mut result = String::with_capacity(s.len());
     let mut remaining = s;
 
-    while !remaining.is_empty() {
+    while let Some(c) = remaining.chars().next() {
         const VALUES_KW: &str = "VALUES";
         const VALUES_TAIL: &str = " ( ? )";
         const VALUES_FULL: &str = "VALUES ( ? )";
@@ -2112,8 +2113,6 @@ fn collapse_multi_values(s: &str) -> String {
             }
         }
 
-        // Fallback: consume one char
-        let c = remaining.chars().next().unwrap(); // safe because remaining not empty
         result.push(c);
         remaining = &remaining[c.len_utf8()..];
     }
@@ -2172,6 +2171,7 @@ pub fn obfuscate_sql(s: &str, config: &SqlObfuscateConfig) -> String {
     let raw = tokenizer.finalize();
     // collapse_grouped_values applies in legacy mode and obfuscate_and_normalize mode.
     // In obfuscate_only and normalize_only modes, values are NOT collapsed.
+    #[allow(deprecated)]
     let should_collapse = matches!(
         config.obfuscation_mode,
         SqlObfuscationMode::Unspecified | SqlObfuscationMode::ObfuscateAndNormalize
