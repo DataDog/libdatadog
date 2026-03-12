@@ -245,6 +245,12 @@ pub trait SidecarInterface {
         span: datadog_ipc::shm_stats::OwnedShmSpanInput,
     );
 
+    /// Forwards an AppSec message from the PHP extension to the registered helper.
+    ///
+    /// Returns the response bytes from the helper and a flag indicating whether
+    /// the extension session should be disconnected.
+    async fn send_appsec_message(session_id: String, client_id: u64, data: Vec<u8>) -> (Vec<u8>, bool);
+
     /// Sends a ping to the service.
     #[blocking]
     async fn ping();

@@ -471,6 +471,21 @@ pub fn stats(transport: &mut SidecarTransport) -> io::Result<String> {
     transport.with_retry(|s| s.stats().map_err(|e| io::Error::other(e.to_string())))
 }
 
+/// Forwards an AppSec message to the sidecar for dispatching to the registered helper.
+///
+/// Returns the response bytes from the helper and a disconnect flag.
+pub fn send_appsec_message(
+    transport: &mut SidecarTransport,
+    session_id: String,
+    client_id: u64,
+    data: Vec<u8>,
+) -> io::Result<(Vec<u8>, bool)> {
+    transport.with_retry(|s| {
+        s.send_appsec_message(session_id.clone(), client_id, data.clone())
+            .map_err(|e| io::Error::other(e.to_string()))
+    })
+}
+
 /// Flushes traces/stats and/or telemetry, as specified by options.
 pub fn flush(transport: &mut SidecarTransport, options: SidecarFlushOptions) -> io::Result<()> {
     transport.with_retry(|s| s.flush(options))

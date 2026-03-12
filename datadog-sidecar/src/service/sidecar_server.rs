@@ -130,6 +130,10 @@ struct ConnectionSidecarHandler {
     /// Used to auto-register metrics in newly-created telemetry clients when a metric point
     /// for a previously registered metric arrives for a new (service, env) combination.
     metric_registrations: Mutex<HashMap<String, MetricContext>>,
+    /// The client_id of the currently active appsec logical client on this connection, if any.
+    /// Updated by send_appsec_message; read by cleanup to fire on_disconnect.
+    #[cfg(unix)]
+    appsec_client_id: Mutex<Option<u64>>,
 }
 
 impl ConnectionSidecarHandler {
@@ -145,6 +149,8 @@ impl ConnectionSidecarHandler {
             session_id: Default::default(),
             instances: Default::default(),
             metric_registrations: Default::default(),
+            #[cfg(unix)]
+            appsec_client_id: Mutex::new(None),
         }
     }
 
@@ -154,6 +160,24 @@ impl ConnectionSidecarHandler {
 
     async fn cleanup(&self) {
         let instances: Vec<InstanceId> = self.instances.lock_or_panic().iter().cloned().collect();
+
+        // Notify the appsec helper of the per-client disconnect before session
+        // teardown. This lets it evict the exact ClientKey for this connection
+        // without touching sibling workers that share the same session_id.
+        #[cfg(unix)]
+        {
+            let client_id_opt = *self.appsec_client_id.lock_or_panic();
+            if let (Some(session_id), Some(client_id)) = (self.session_id.get(), client_id_opt) {
+                let session_id = session_id.clone();
+                tokio::task::spawn_blocking(move || {
+                    crate::appsec::dispatch_disconnect(&session_id, client_id);
+                })
+                .await
+                .unwrap_or_else(|e| {
+                    error!("appsec disconnect callback panicked/was cancelled: {e:#}");
+                });
+            }
+        }
 
         if let Some(session_id) = self.session_id.get() {
             let stop = {
@@ -241,6 +265,15 @@ impl SidecarServer {
         info!("Shutting down session: {}", session_id);
         session.shutdown().await;
         debug!("Successfully shut down session: {}", session_id);
+
+        // Failsafe: evict any remaining appsec clients for this session.
+        // cleanup() already fires per-client notifications (client_id != 0)
+        // before decrementing the session counter, so in the normal path this
+        // is a no-op. client_id == 0 signals a session-wide sweep.
+        #[cfg(unix)]
+        {
+            crate::appsec::dispatch_disconnect(session_id, 0);
+        }
     }
 
     fn send_trace_v04(
@@ -1167,6 +1200,99 @@ impl SidecarInterface for ConnectionSidecarHandler {
         let stats = self.server.compute_stats().await;
         #[allow(clippy::expect_used)]
         simd_json::serde::to_string(&stats).expect("unable to serialize stats to string")
+    }
+
+    async fn send_appsec_message(
+        &self,
+        _peer: PeerCredentials,
+        session_id: String,
+        client_id: u64,
+        data: Vec<u8>,
+    ) -> (Vec<u8>, bool) {
+        #[cfg(unix)]
+        {
+            // Update the tracked active client and determine whether an old
+            // client_id must be eagerly evicted before dispatching the message.
+            //
+            // Cases:
+            //  stored=None,    incoming=0  → no-op (waiting for first real id)
+            //  stored=None,    incoming=N  → reject: tell client to reconnect;
+            //                                sidecar could have restarted and this id
+            //                                belong to a separate php
+            //  stored=Some(N), incoming=N  → steady state, no-op
+            //  stored=Some(P), incoming=0  → extension abandons client: evict P, clear
+            //  stored=Some(P), incoming=N≠P → bug: log, evict P, tell client to reconnect
+            let (evict, reject) = match (*self.appsec_client_id.lock_or_panic(), client_id) {
+                (None, 0) => (None, false),
+                (None, _) => {
+                    warn!(
+                        "appsec: extension sends client_id {client_id} without this \
+                        connection having memory of it (sidecar restarted?)"
+                    );
+                    (Some(client_id), true)
+                }
+                (Some(prev), 0) => {
+                    warn!(
+                        "appsec: extension abandoned client associated with \
+                        this connection (client_id {prev})"
+                    );
+                    (Some(prev), false)
+                }
+                // normal case: extension resumes associated client
+                (Some(prev), client_id) if prev == client_id => (None, false),
+                // bug: extension sends a different client_id on the same connection
+                (Some(prev), client_id) => {
+                    warn!(
+                        "appsec: extension sends client_id {client_id} on \
+                         connection associated with a different client (client_id {prev})"
+                    );
+                    (Some(prev), true)
+                }
+            };
+
+            if let Some(prev) = evict {
+                let session_id_evict = session_id.clone();
+                tokio::task::spawn_blocking(move || {
+                    crate::appsec::dispatch_disconnect(&session_id_evict, prev);
+                })
+                .await
+                .unwrap_or_else(|e| {
+                    error!("appsec: evict disconnect callback panicked/was cancelled: {e:#}");
+                });
+            }
+
+            if reject {
+                // tell extension to forget client_id and redo client_init
+                return (vec![], true /* disconnect */);
+            }
+
+            let (res, new_client_id) = tokio::task::spawn_blocking(move || {
+                let mut new_client_id = client_id;
+                let res =
+                    match crate::appsec::dispatch_message(&session_id, &mut new_client_id, &data) {
+                        None => (vec![], false),
+                        Some(response) => {
+                            let bytes = response.as_bytes().to_vec();
+                            let disconnect = response.disconnect;
+                            (bytes, disconnect)
+                        }
+                    };
+                (res, new_client_id)
+            })
+            .await
+            .unwrap_or_else(|e| {
+                error!("appsec: dispatch callback panicked/was cancelled: {e:#}");
+                ((vec![], false), client_id)
+            });
+            if new_client_id != client_id {
+                *self.appsec_client_id.lock_or_panic() = Some(new_client_id);
+            }
+            res
+        }
+        #[cfg(not(unix))]
+        {
+            (vec![], false)
+        }
     }
 }
 
