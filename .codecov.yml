@@ -1,6 +1,10 @@
 comment:
   layout: "condensed_header, diff, flags, components"
 
+flag_management:
+  default_rules:
+    carryforward: true
+
 component_management:
   individual_components:
     - component_id: crashtracker  # this is an identifier that should not be changed
