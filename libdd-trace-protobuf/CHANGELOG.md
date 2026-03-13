@@ -2,6 +2,15 @@
 
 
 
+## [2.0.0](https://github.com/datadog/libdatadog/compare/libdd-trace-protobuf-v1.1.0..libdd-trace-protobuf-v2.0.0) - 2026-03-13
+
+### Added
+
+- Add two fields to ClientGroupedStats [SVLS-8627] ([#1630](https://github.com/datadog/libdatadog/issues/1630)) - ([7e909c0](https://github.com/datadog/libdatadog/commit/7e909c0910a15303eb90fdb3399211a3517d70c8))
+- Otel process ctxt protobuf encoding ([#1651](https://github.com/datadog/libdatadog/issues/1651)) - ([412ae10](https://github.com/datadog/libdatadog/commit/412ae10fdacc06e1cbffa8cc2051caad0d02f64f))
+
+
+
 ## [1.1.0](https://github.com/datadog/libdatadog/compare/libdd-trace-protobuf-v1.0.0..libdd-trace-protobuf-v1.1.0) - 2026-02-23
 
 ### Changed
