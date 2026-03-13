@@ -14,15 +14,14 @@
 use anyhow::{anyhow, Result};
 use cargo_metadata::camino::Utf8Path;
 use cargo_metadata::Package;
-use ci_crates::git;
-use ci_crates::workspace;
+use ci_shared::git;
+use ci_shared::workspace;
 use ci_shared::crate_detection::CrateInfo;
 use ci_shared::github_output::set_output;
 use std::collections::HashSet;
 
 fn main() -> Result<()> {
     env_logger::init();
-    // Parse args
     let args: Vec<String> = std::env::args().collect();
     if args.len() < 2 {
         return Err(anyhow!("A reference base needs to be passed"));
@@ -34,13 +33,6 @@ fn main() -> Result<()> {
 
     let changed_files = git::changed_files(&base_ref)?;
     log::info!("Changed files: {:?}", changed_files);
-
-    // TODO: Check heuristics when workspace manifest (Cargo.toml) or config.toml changed. This could indicate a
-    // change in:
-    // * Rust version.
-    // * Edition.
-    // * Profile.
-    // * Compilation flags.
 
     let workspace = workspace::load()?;
     let changed_crates = collect_changed_crates(&changed_files, workspace.members(), workspace.workspace_root());

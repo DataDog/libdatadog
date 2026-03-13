@@ -58,6 +58,7 @@ pub enum SampleType {
     ObjectsLegacy,
     RequestTime,
     Sample,
+    Tracepoint,
     SocketReadSize,
     SocketReadSizeSamples,
     SocketReadTime,
@@ -137,6 +138,7 @@ impl From<SampleType> for ValueType<'static> {
             SampleType::ObjectsLegacy => ValueType::new("objects", "count"),
             SampleType::RequestTime => ValueType::new("request-time", "nanoseconds"),
             SampleType::Sample => ValueType::new("sample", "count"),
+            SampleType::Tracepoint => ValueType::new("tracepoint", "events"),
             SampleType::SocketReadSize => ValueType::new("socket-read-size", "bytes"),
             SampleType::SocketReadSizeSamples => {
                 ValueType::new("socket-read-size-samples", "count")
@@ -210,6 +212,7 @@ impl<'a> TryFrom<ValueType<'a>> for SampleType {
             ("objects", "count") => SampleType::ObjectsLegacy,
             ("request-time", "nanoseconds") => SampleType::RequestTime,
             ("sample", "count") => SampleType::Sample,
+            ("tracepoint", "events") => SampleType::Tracepoint,
             ("socket-read-size", "bytes") => SampleType::SocketReadSize,
             ("socket-read-size-samples", "count") => SampleType::SocketReadSizeSamples,
             ("socket-read-time", "nanoseconds") => SampleType::SocketReadTime,

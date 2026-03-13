@@ -4,6 +4,7 @@
 use std::{
     collections::VecDeque,
     io,
+    os::fd::IntoRawFd,
     os::unix::prelude::{AsRawFd, FromRawFd, RawFd},
 };
 
@@ -17,8 +18,8 @@ use crate::{
 #[derive(Debug)]
 pub struct ChannelMetadata {
     fds_to_send: Vec<PlatformHandle<OwnedFd>>,
-    fds_received: VecDeque<RawFd>,
-    pid: libc::pid_t, // must always be set to current Process ID
+    fds_received: VecDeque<OwnedFd>, // Store as OwnedFd to prevent leaking them
+    pid: libc::pid_t,                // must always be set to current Process ID
 }
 
 impl Default for ChannelMetadata {
@@ -80,7 +81,13 @@ impl ChannelMetadata {
     }
 
     pub(crate) fn receive_fds(&mut self, fds: &[RawFd]) {
-        self.fds_received.append(&mut fds.to_vec().into());
+        self.fds_received.append(
+            &mut fds
+                .iter()
+                .map(|fd| unsafe { OwnedFd::from_raw_fd(*fd) })
+                .collect::<Vec<_>>()
+                .into(),
+        );
     }
 
     pub(crate) fn find_handle<T>(&mut self, hint: &PlatformHandle<T>) -> Option<PlatformHandle<T>> {
@@ -90,6 +97,6 @@ impl ChannelMetadata {
 
         let fd = self.fds_received.pop_front();
 
-        fd.map(|fd| unsafe { PlatformHandle::from_raw_fd(fd) })
+        fd.map(|fd| unsafe { PlatformHandle::from_raw_fd(fd.into_raw_fd()) })
     }
 }

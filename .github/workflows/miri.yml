@@ -16,17 +16,17 @@ jobs:
     - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # 4.2.2
       with:
         fetch-depth: 0
-    - name: Get changed crates
-      if: ${{ github.event_name == 'pull_request' }}
+    - name: Get crates report
       id: changed-crates
-      uses: ./.github/actions/changed-crates
+      uses: ./.github/actions/crates-reporter
     - name: Set crates to run Miri on
       id: set-crates
       env:
+        CHANGED_CRATES_STATUS: ${{ steps.changed-crates.outputs.status }}
         CHANGED_CRATES: ${{ steps.changed-crates.outputs.crates }}
         AFFECTED_CRATES: ${{ steps.changed-crates.outputs.affected_crates }}
       run: |
-        if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+        if [[ "$CHANGED_CRATES_STATUS" == "success" ]]; then
           echo "This is a pull request event, running Miri on changed and affected crates"
           echo "Changed crates: $CHANGED_CRATES"
           echo "Affected crates: $AFFECTED_CRATES"
@@ -54,6 +54,8 @@ jobs:
       PROPTEST_CASES: 1
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # 4.2.2
+        with:
+          submodules: recursive
       - name: Set up Rust
         run: |
           set -e

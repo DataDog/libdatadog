@@ -5,6 +5,9 @@ name: 'Get Changed Crates'
 description: 'Detects which Rust crates have changed files in a PR or push'
 
 outputs:
+  status:
+    description: 'Exit status of the action (e.g. success, skipped)'
+    value: ${{ steps.detect.outputs.status }}
   crates:
     description: 'JSON array of changed crates with name, version, path and manifest'
     value: ${{ steps.detect.outputs.crates }}
@@ -25,10 +28,12 @@ runs:
   using: 'composite'
   steps:
     - name: Set up Rust
+      if: ${{ github.event_name == 'pull_request' }}
       shell: bash
       run: rustup install stable && rustup default stable
 
     - name: Fetch all branches
+      if: ${{ github.event_name == 'pull_request' }}
       shell: bash
       run: |
         git fetch --all
@@ -36,10 +41,11 @@ runs:
         git branch -a
 
     - name: Build change reporter
+      if: ${{ github.event_name == 'pull_request' }}
       shell: bash
       run: |
         cd ${{ github.action_path }}/..
-        cargo build --release -p ci-crates
+        cargo build --release -p crates-reporter
 
     - name: Run change reporter
       id: detect
@@ -48,4 +54,12 @@ runs:
         EVENT_NAME: ${{ github.event_name }}
         PR_BASE_REF: ${{ github.base_ref }}
       run: |
-        RUST_LOG=debug ${{ github.action_path }}/../target/release/changed-crates $PR_BASE_REF
+        if [[ "$EVENT_NAME" != "pull_request" ]]; then
+          echo "status=skipped" >> $GITHUB_OUTPUT
+          exit 0
+        fi
+        if RUST_LOG=debug ${{ github.action_path }}/../target/release/crates-reporter $PR_BASE_REF; then
+          echo "status=success" >> $GITHUB_OUTPUT
+        else
+          echo "status=skipped" >> $GITHUB_OUTPUT
+        fi

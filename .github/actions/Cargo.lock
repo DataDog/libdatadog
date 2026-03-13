@@ -431,24 +431,11 @@ dependencies = [
 ]
 
 [[package]]
-name = "ci-crates"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "cargo_metadata",
- "ci-shared",
- "clap",
- "env_logger 0.11.9",
- "log",
- "serde",
- "serde_json",
-]
-
-[[package]]
 name = "ci-shared"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "cargo_metadata",
  "log",
  "serde",
  "serde_json",
@@ -546,6 +533,20 @@ name = "core-foundation-sys"
 version = "0.8.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "773648b94d0e5d620f64f280777445740e61fe701025087ec8b57f45c791888b"
+
+[[package]]
+name = "crates-reporter"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "cargo_metadata",
+ "ci-shared",
+ "clap",
+ "env_logger 0.11.9",
+ "log",
+ "serde",
+ "serde_json",
+]
 
 [[package]]
 name = "crossbeam-utils"
