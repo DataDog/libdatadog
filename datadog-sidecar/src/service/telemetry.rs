@@ -161,7 +161,6 @@ impl TelemetryCachedClient {
         for action in sidecar_actions {
             match action {
                 SidecarAction::Telemetry(t) => actions.push(t),
-                SidecarAction::RegisterTelemetryMetric(metric) => self.register_metric(metric),
                 SidecarAction::AddTelemetryMetricPoint(point) => {
                     let metric_name = point.0.clone();
                     if let Some(telemetry_action) = self.to_telemetry_point(point) {

@@ -6,7 +6,6 @@ use crate::config;
 use datadog_remote_config::{RemoteConfigCapabilities, RemoteConfigProduct};
 use libdd_common::tag::Tag;
 use libdd_common::Endpoint;
-use libdd_telemetry::metrics::MetricContext;
 use libdd_telemetry::worker::TelemetryActions;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -71,7 +70,6 @@ pub struct SessionConfig {
 #[derive(Debug, Deserialize, Serialize)]
 pub enum SidecarAction {
     Telemetry(TelemetryActions),
-    RegisterTelemetryMetric(MetricContext),
     AddTelemetryMetricPoint((String, f64, Vec<Tag>)),
     PhpComposerTelemetryFile(PathBuf),
 }

@@ -21,6 +21,8 @@ use datadog_ipc::platform::ShmHandle;
 use datadog_live_debugger::sender::DebuggerType;
 use libdd_common::tag::Tag;
 use libdd_dogstatsd_client::DogStatsDActionOwned;
+use libdd_telemetry::metrics::MetricContext;
+use std::collections::HashMap;
 use std::{io, time::Duration};
 
 /// Priority outbox for state-change (coalesced) messages.
@@ -156,6 +158,9 @@ pub struct SidecarSender {
     pub max_outstanding: u64,
     /// Cycles 0–9; used to implement 90% telemetry drop under backpressure.
     enqueue_actions_counter: u8,
+    /// All metric registrations ever sent on this transport (keyed by name).
+    /// Persisted across reconnects; replayed on new connections before any metric points.
+    pub metric_registrations: HashMap<String, MetricContext>,
 }
 
 impl SidecarSender {
@@ -165,6 +170,7 @@ impl SidecarSender {
             outbox: SidecarOutbox::default(),
             max_outstanding: 100,
             enqueue_actions_counter: 0,
+            metric_registrations: HashMap::new(),
         }
     }
 
@@ -277,6 +283,20 @@ impl SidecarSender {
             },
         );
         self.try_drain_outbox();
+    }
+
+    /// Registers a telemetry metric context on this connection.
+    ///
+    /// Deduplicates by name: if already registered on this connection, the call is a no-op.
+    /// Sends the registration blocking (bypasses load-shedding).  The registration is stored
+    /// and replayed automatically after any reconnect, before the next `enqueue_actions` call.
+    pub fn register_telemetry_metric(&mut self, metric: MetricContext) {
+        if self.metric_registrations.contains_key(&metric.name) {
+            return;
+        }
+        self.metric_registrations.insert(metric.name.clone(), metric.clone());
+        let req = SidecarInterfaceRequest::RegisterTelemetryMetric { metric };
+        self.channel.send_request_blocking(&req).ok();
     }
 
     pub fn clear_queue_id(&mut self, instance_id: InstanceId, queue_id: QueueId) {

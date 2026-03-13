@@ -6,6 +6,7 @@
 use crate::service::{
     InstanceId, QueueId, SerializedTracerHeaderTags, SessionConfig, SidecarAction,
 };
+use libdd_telemetry::metrics::MetricContext;
 use datadog_ipc::platform::ShmHandle;
 use datadog_live_debugger::sender::DebuggerType;
 use libdd_common::tag::Tag;
@@ -69,6 +70,18 @@ pub trait SidecarInterface {
     /// * `instance_id` - The ID of the instance.
     /// * `queue_id` - The queue ID to clear.
     async fn clear_queue_id(instance_id: InstanceId, queue_id: QueueId);
+
+    /// Registers a telemetry metric context for a specific instance and queue.
+    ///
+    /// Registrations are connection-bound: tracked per connection, never dropped,
+    /// and automatically replayed after a reconnect.
+    ///
+    /// # Arguments
+    ///
+    /// * `metric` - The metric context to register on this connection.
+    async fn register_telemetry_metric(
+        metric: MetricContext,
+    );
 
     /// Shuts down a runtime.
     ///

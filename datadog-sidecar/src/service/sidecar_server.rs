@@ -12,6 +12,7 @@ use crate::service::{
 use datadog_ipc::platform::{FileBackedHandle, ShmHandle};
 use datadog_ipc::{PeerCredentials, SeqpacketConn};
 use libdd_common::{Endpoint, MutexExt};
+use libdd_telemetry::metrics::MetricContext;
 use libdd_telemetry::worker::{LifecycleAction, TelemetryActions, TelemetryWorkerStats};
 use libdd_trace_utils::trace_utils::SendData;
 use libdd_trace_utils::tracer_payload::decode_to_trace_chunks;
@@ -131,8 +132,12 @@ pub struct SidecarServer {
 /// Per-connection handler wrapper that tracks sessions/instances for cleanup on disconnect.
 struct ConnectionSidecarHandler {
     server: SidecarServer,
-    sessions: std::sync::Mutex<std::collections::HashSet<String>>,
-    instances: std::sync::Mutex<std::collections::HashSet<InstanceId>>,
+    sessions: Mutex<std::collections::HashSet<String>>,
+    instances: Mutex<std::collections::HashSet<InstanceId>>,
+    /// All telemetry metric registrations received on this connection, keyed by metric name.
+    /// Used to auto-register metrics in newly-created telemetry clients when a metric point
+    /// for a previously registered metric arrives for a new (service, env) combination.
+    metric_registrations: Mutex<HashMap<String, MetricContext>>,
 }
 
 impl ConnectionSidecarHandler {
@@ -141,6 +146,7 @@ impl ConnectionSidecarHandler {
             server,
             sessions: Default::default(),
             instances: Default::default(),
+            metric_registrations: Default::default(),
         }
     }
 
@@ -393,6 +399,7 @@ impl SidecarServer {
         instance_id: InstanceId,
         queue_id: QueueId,
         actions: Vec<SidecarAction>,
+        connection_metric_registrations: &HashMap<String, MetricContext>,
     ) {
         let session = self.get_session(&instance_id.session_id);
         let trace_config = session.get_trace_config();
@@ -435,6 +442,18 @@ impl SidecarServer {
                 process_tags,
             );
             let mut telemetry = telemetry_mutex.lock_or_panic();
+
+            // Auto-register any metrics known to this connection but not yet registered
+            // in this telemetry client (e.g., the client was just created for a new service/env).
+            for action in &actions {
+                if let SidecarAction::AddTelemetryMetricPoint((name, _, _)) = action {
+                    if !telemetry.telemetry_metrics.contains_key(name) {
+                        if let Some(metric) = connection_metric_registrations.get(name) {
+                            telemetry.register_metric(metric.clone());
+                        }
+                    }
+                }
+            }
 
             let mut actions_to_process: Vec<SidecarAction> = vec![];
             let mut composer_paths_to_process = vec![];
@@ -877,8 +896,9 @@ impl SidecarInterface for ConnectionSidecarHandler {
             .submitted_payloads
             .fetch_add(1, Ordering::Relaxed);
         self.track_instance(&instance_id);
+        let metrics_registrations = self.metric_registrations.lock_or_panic().clone();
         self.server
-            .enqueue_actions_impl(instance_id, queue_id, actions);
+            .enqueue_actions_impl(instance_id, queue_id, actions, &metrics_registrations);
     }
 
     async fn clear_queue_id(
@@ -897,6 +917,20 @@ impl SidecarInterface for ConnectionSidecarHandler {
             info!("Removing queue_id {queue_id:?} from instance {instance_id:?}");
             entry.remove();
         }
+    }
+
+    async fn register_telemetry_metric(
+        &self,
+        _peer: PeerCredentials,
+        metric: MetricContext,
+    ) {
+        self.server
+            .submitted_payloads
+            .fetch_add(1, Ordering::Relaxed);
+        self.metric_registrations
+            .lock_or_panic()
+            .entry(metric.name.clone())
+            .or_insert(metric);
     }
 
     async fn set_session_config(

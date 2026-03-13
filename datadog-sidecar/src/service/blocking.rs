@@ -5,8 +5,9 @@ use super::{
     DynamicInstrumentationConfigState, InstanceId, QueueId, SerializedTracerHeaderTags,
     SessionConfig, SidecarAction,
 };
+use libdd_telemetry::metrics::MetricContext;
 use crate::service::sender::SidecarSender;
-use crate::service::sidecar_interface::{SidecarInterfaceChannel, SidecarInterfaceRequest};
+use crate::service::sidecar_interface::SidecarInterfaceChannel;
 use datadog_ipc::platform::{FileBackedHandle, ShmHandle};
 use datadog_ipc::SeqpacketConn;
 use datadog_live_debugger::debugger_defs::DebuggerPayload;
@@ -19,7 +20,8 @@ use std::{
     io,
     time::{Duration, Instant},
 };
-use tracing::{info, warn};
+use tracing::warn;
+use libdd_common::MutexExt;
 
 /// `SidecarTransport` wraps a [`SidecarSender`] with transparent reconnection support.
 ///
@@ -37,23 +39,38 @@ impl SidecarTransport {
     where
         F: FnOnce() -> Option<Box<SidecarTransport>>,
     {
-        let mut transport = match self.inner.lock() {
+        Self::do_reconnect(&mut self.inner, factory, false);
+    }
+
+    pub fn do_reconnect<F>(transport: &mut Mutex<SidecarSender>, factory: F, force_reconnect: bool) -> bool
+    where
+        F: FnOnce() -> Option<Box<SidecarTransport>>,
+    {
+        let mut transport = match transport.lock() {
             Ok(t) => t,
-            Err(_) => return,
+            Err(_) => return false,
         };
 
         #[allow(clippy::unwrap_used)]
-        if transport.channel.0.is_closed() {
-            info!("The sidecar transport is closed. Reconnecting...");
+        if force_reconnect || transport.channel.0.is_closed() {
+            warn!("The sidecar transport is closed. Reconnecting... This generally indicates a problem with the sidecar, most likely a crash. Check the logs / core dump locations and possibly report a bug.");
             let new = match factory() {
-                None => return,
+                None => return false,
                 Some(n) => n.inner.into_inner(),
             };
             if new.is_err() {
-                return;
+                return false;
             }
+            let registrations = std::mem::take(&mut transport.metric_registrations);
+
             *transport = new.unwrap();
+
+            // Replay all registered metrics after a reconnect
+            for metric in registrations.into_values() {
+                transport.register_telemetry_metric(metric);
+            }
         }
+        true
     }
 
     pub fn set_read_timeout(&mut self, d: Option<Duration>) -> io::Result<()> {
@@ -75,21 +92,8 @@ impl SidecarTransport {
     }
 
     pub fn ensure_alive(&mut self) {
-        let closed = match self.inner.lock() {
-            Ok(guard) => guard.channel.0.is_closed(),
-            Err(_) => return,
-        };
-        if closed {
-            if let Some(ref reconnect) = self.reconnect_fn {
-                warn!("The sidecar transport is closed. Reconnecting... This generally indicates a problem with the sidecar, most likely a crash. Check the logs / core dump locations and possibly report a bug.");
-                if let Some(n) = reconnect() {
-                    if let Ok(mut guard) = self.inner.lock() {
-                        if let Ok(new) = n.inner.into_inner() {
-                            *guard = new;
-                        }
-                    }
-                }
-            }
+        if let Some(ref reconnect) = self.reconnect_fn {
+            Self::do_reconnect(&mut self.inner, reconnect, false);
         }
     }
 
@@ -106,32 +110,26 @@ impl SidecarTransport {
     where
         F: Fn(&mut SidecarSender) -> io::Result<V>,
     {
-        let mut inner = match self.inner.lock() {
-            Ok(t) => t,
-            Err(e) => return Err(io::Error::other(e.to_string())),
+        let e = {
+            let mut inner = match self.inner.lock() {
+                Ok(t) => t,
+                Err(e) => return Err(io::Error::other(e.to_string())),
+            };
+            match f(&mut inner) {
+                Ok(ret) => return Ok(ret),
+                Err(e) => e,
+            }
         };
-        match f(&mut inner) {
-            Ok(ret) => Ok(ret),
-            Err(e) => {
-                if e.kind() == io::ErrorKind::BrokenPipe
-                    || e.kind() == io::ErrorKind::ConnectionReset
-                {
-                    if let Some(ref reconnect) = self.reconnect_fn {
-                        warn!("The sidecar transport is closed. Reconnecting... This generally indicates a problem with the sidecar, most likely a crash. Check the logs / core dump locations and possibly report a bug.");
-                        *inner = match reconnect() {
-                            None => return Err(e),
-                            #[allow(clippy::unwrap_used)]
-                            Some(n) => n.inner.into_inner().unwrap(),
-                        };
-                        f(&mut inner)
-                    } else {
-                        Err(e)
-                    }
-                } else {
-                    Err(e)
+        if e.kind() == io::ErrorKind::BrokenPipe
+            || e.kind() == io::ErrorKind::ConnectionReset
+        {
+            if let Some(ref reconnect) = self.reconnect_fn {
+                if Self::do_reconnect(&mut self.inner, reconnect, true) {
+                    return f(&mut self.inner.lock_or_panic());
                 }
             }
         }
+        Err(e)
     }
 
     /// Send garbage data (used in tests to verify error handling).
@@ -202,6 +200,17 @@ pub fn clear_queue_id(
     queue_id: &QueueId,
 ) -> io::Result<()> {
     lock_sender(transport)?.clear_queue_id(instance_id.clone(), *queue_id);
+    Ok(())
+}
+
+/// Registers a telemetry metric context on this connection.
+///
+/// Connection-bound: deduplicated per connection, never dropped, replayed after reconnect.
+pub fn register_telemetry_metric(
+    transport: &mut SidecarTransport,
+    metric: MetricContext,
+) -> io::Result<()> {
+    lock_sender(transport)?.register_telemetry_metric(metric);
     Ok(())
 }
 
