@@ -60,7 +60,6 @@ local-linux.Dockerfile               @DataDog/libdatadog
 NOTICE                               @DataDog/libdatadog
 README.md                            @DataDog/libdatadog
 repository.datadog.yml               @DataDog/apm-common-components-core
-ruby/                                @DataDog/ruby-guild
 rustfmt.toml                         @DataDog/libdatadog-core
 scripts/check_cargo_metadata.sh      @DataDog/libdatadog-core
 scripts/commits-since-release.sh     @DataDog/libdatadog-core
