@@ -90,10 +90,10 @@ impl<'a> TryFrom<Config<'a>> for libdd_crashtracker::CrashtrackerConfiguration {
         let mut builder = Self::builder()
             .additional_files(additional_files)
             .create_alt_stack(value.create_alt_stack)
-            .use_alt_stack(value.use_alt_stack)
+            .demangle_names(value.demangle_names)
             .resolve_frames(value.resolve_frames)
             .signals(value.signals.iter().copied().collect())
-            .demangle_names(value.demangle_names);
+            .use_alt_stack(value.use_alt_stack);
         if let Some(url) = value.endpoint.try_to_string_option()? {
             builder = builder.endpoint_url(&url);
         }
