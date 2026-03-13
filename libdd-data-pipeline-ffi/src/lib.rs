@@ -18,11 +18,11 @@ macro_rules! catch_panic {
             Ok(ret) => ret,
             Err(info) => {
                 if let Some(s) = info.downcast_ref::<String>() {
-                    error!(error = %ErrorCode::Panic, s);
+                    tracing::error!("panic: {}", s);
                 } else if let Some(s) = info.downcast_ref::<&str>() {
-                    error!(error = %ErrorCode::Panic, s);
+                    tracing::error!("panic: {}", s);
                 } else {
-                    error!(error = %ErrorCode::Panic, "Unable to retrieve panic context");
+                    tracing::error!("panic: unable to retrieve panic context");
                 }
                 $err
             }

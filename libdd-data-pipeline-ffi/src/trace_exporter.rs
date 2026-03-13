@@ -13,7 +13,7 @@ use libdd_data_pipeline::trace_exporter::{
     TelemetryConfig, TraceExporter, TraceExporterInputFormat, TraceExporterOutputFormat,
 };
 use std::{ptr::NonNull, sync::Arc, time::Duration};
-use tracing::{debug, error};
+use tracing::debug;
 
 #[inline]
 fn sanitize_string(str: CharSlice) -> Result<String, Box<ExporterError>> {

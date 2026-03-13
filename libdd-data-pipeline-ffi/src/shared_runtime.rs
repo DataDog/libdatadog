@@ -1,6 +1,7 @@
 // Copyright 2025-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+use crate::catch_panic;
 use libdd_data_pipeline::shared_runtime::{SharedRuntime, SharedRuntimeError};
 use std::ffi::{c_char, CString};
 use std::ptr::NonNull;
@@ -22,6 +23,9 @@ pub enum SharedRuntimeErrorCode {
     RuntimeCreation,
     /// Shutdown timed out.
     ShutdownTimedOut,
+    /// An unexpected panic occurred inside the FFI call.
+    #[cfg(feature = "catch_panic")]
+    Panic,
 }
 
 /// Error returned by SharedRuntime FFI functions.
@@ -65,10 +69,19 @@ impl Drop for SharedRuntimeFFIError {
     }
 }
 
+macro_rules! panic_error {
+    () => {
+        Some(Box::new(SharedRuntimeFFIError::new(
+            SharedRuntimeErrorCode::Panic,
+            "panic",
+        )))
+    };
+}
+
 /// Frees a `SharedRuntimeFFIError`. After this call the pointer is invalid.
 #[no_mangle]
 pub unsafe extern "C" fn ddog_shared_runtime_error_free(error: Option<Box<SharedRuntimeFFIError>>) {
-    drop(error);
+    catch_panic!(drop(error), ())
 }
 
 /// Create a new `SharedRuntime`.
@@ -82,13 +95,16 @@ pub unsafe extern "C" fn ddog_shared_runtime_error_free(error: Option<Box<Shared
 pub unsafe extern "C" fn ddog_shared_runtime_new(
     out_handle: NonNull<*const SharedRuntime>,
 ) -> Option<Box<SharedRuntimeFFIError>> {
-    match SharedRuntime::new() {
-        Ok(runtime) => {
-            out_handle.as_ptr().write(Arc::into_raw(Arc::new(runtime)));
-            None
-        }
-        Err(err) => Some(Box::new(SharedRuntimeFFIError::from(err))),
-    }
+    catch_panic!(
+        match SharedRuntime::new() {
+            Ok(runtime) => {
+                out_handle.as_ptr().write(Arc::into_raw(Arc::new(runtime)));
+                None
+            }
+            Err(err) => Some(Box::new(SharedRuntimeFFIError::from(err))),
+        },
+        panic_error!()
+    )
 }
 
 /// Free a handle, decrementing the `Arc` strong count.
@@ -97,10 +113,15 @@ pub unsafe extern "C" fn ddog_shared_runtime_new(
 /// Use [`ddog_shared_runtime_shutdown`] to cleanly stop workers.
 #[no_mangle]
 pub unsafe extern "C" fn ddog_shared_runtime_free(handle: *const SharedRuntime) {
-    if !handle.is_null() {
-        // SAFETY: handle was produced by Arc::into_raw; this call takes ownership.
-        drop(Arc::from_raw(handle));
-    }
+    catch_panic!(
+        {
+            if !handle.is_null() {
+                // SAFETY: handle was produced by Arc::into_raw; this call takes ownership.
+                drop(Arc::from_raw(handle));
+            }
+        },
+        ()
+    )
 }
 
 /// Must be called in the parent process before `fork()`.
@@ -113,15 +134,20 @@ pub unsafe extern "C" fn ddog_shared_runtime_free(handle: *const SharedRuntime) 
 pub unsafe extern "C" fn ddog_shared_runtime_before_fork(
     handle: *const SharedRuntime,
 ) -> Option<Box<SharedRuntimeFFIError>> {
-    if handle.is_null() {
-        return Some(Box::new(SharedRuntimeFFIError::new(
-            SharedRuntimeErrorCode::InvalidArgument,
-            "handle is null",
-        )));
-    }
-    // SAFETY: handle was produced by Arc::into_raw and the Arc is still alive.
-    (*handle).before_fork();
-    None
+    catch_panic!(
+        {
+            if handle.is_null() {
+                return Some(Box::new(SharedRuntimeFFIError::new(
+                    SharedRuntimeErrorCode::InvalidArgument,
+                    "handle is null",
+                )));
+            }
+            // SAFETY: handle was produced by Arc::into_raw and the Arc is still alive.
+            (*handle).before_fork();
+            None
+        },
+        panic_error!()
+    )
 }
 
 /// Must be called in the parent process after `fork()`.
@@ -133,17 +159,22 @@ pub unsafe extern "C" fn ddog_shared_runtime_before_fork(
 pub unsafe extern "C" fn ddog_shared_runtime_after_fork_parent(
     handle: *const SharedRuntime,
 ) -> Option<Box<SharedRuntimeFFIError>> {
-    if handle.is_null() {
-        return Some(Box::new(SharedRuntimeFFIError::new(
-            SharedRuntimeErrorCode::InvalidArgument,
-            "handle is null",
-        )));
-    }
-    // SAFETY: handle was produced by Arc::into_raw and the Arc is still alive.
-    match (*handle).after_fork_parent() {
-        Ok(()) => None,
-        Err(err) => Some(Box::new(SharedRuntimeFFIError::from(err))),
-    }
+    catch_panic!(
+        {
+            if handle.is_null() {
+                return Some(Box::new(SharedRuntimeFFIError::new(
+                    SharedRuntimeErrorCode::InvalidArgument,
+                    "handle is null",
+                )));
+            }
+            // SAFETY: handle was produced by Arc::into_raw and the Arc is still alive.
+            match (*handle).after_fork_parent() {
+                Ok(()) => None,
+                Err(err) => Some(Box::new(SharedRuntimeFFIError::from(err))),
+            }
+        },
+        panic_error!()
+    )
 }
 
 /// Must be called in the child process after `fork()`.
@@ -157,17 +188,22 @@ pub unsafe extern "C" fn ddog_shared_runtime_after_fork_parent(
 pub unsafe extern "C" fn ddog_shared_runtime_after_fork_child(
     handle: *const SharedRuntime,
 ) -> Option<Box<SharedRuntimeFFIError>> {
-    if handle.is_null() {
-        return Some(Box::new(SharedRuntimeFFIError::new(
-            SharedRuntimeErrorCode::InvalidArgument,
-            "handle is null",
-        )));
-    }
-    // SAFETY: handle was produced by Arc::into_raw and the Arc is still alive.
-    match (*handle).after_fork_child() {
-        Ok(()) => None,
-        Err(err) => Some(Box::new(SharedRuntimeFFIError::from(err))),
-    }
+    catch_panic!(
+        {
+            if handle.is_null() {
+                return Some(Box::new(SharedRuntimeFFIError::new(
+                    SharedRuntimeErrorCode::InvalidArgument,
+                    "handle is null",
+                )));
+            }
+            // SAFETY: handle was produced by Arc::into_raw and the Arc is still alive.
+            match (*handle).after_fork_child() {
+                Ok(()) => None,
+                Err(err) => Some(Box::new(SharedRuntimeFFIError::from(err))),
+            }
+        },
+        panic_error!()
+    )
 }
 
 /// Shut down the `SharedRuntime`, stopping all workers.
@@ -182,24 +218,29 @@ pub unsafe extern "C" fn ddog_shared_runtime_shutdown(
     handle: *const SharedRuntime,
     timeout_ms: u64,
 ) -> Option<Box<SharedRuntimeFFIError>> {
-    if handle.is_null() {
-        return Some(Box::new(SharedRuntimeFFIError::new(
-            SharedRuntimeErrorCode::InvalidArgument,
-            "handle is null",
-        )));
-    }
+    catch_panic!(
+        {
+            if handle.is_null() {
+                return Some(Box::new(SharedRuntimeFFIError::new(
+                    SharedRuntimeErrorCode::InvalidArgument,
+                    "handle is null",
+                )));
+            }
 
-    let timeout = if timeout_ms > 0 {
-        Some(std::time::Duration::from_millis(timeout_ms))
-    } else {
-        None
-    };
+            let timeout = if timeout_ms > 0 {
+                Some(std::time::Duration::from_millis(timeout_ms))
+            } else {
+                None
+            };
 
-    // SAFETY: handle was produced by Arc::into_raw and the Arc is still alive.
-    match (*handle).shutdown(timeout) {
-        Ok(()) => None,
-        Err(err) => Some(Box::new(SharedRuntimeFFIError::from(err))),
-    }
+            // SAFETY: handle was produced by Arc::into_raw and the Arc is still alive.
+            match (*handle).shutdown(timeout) {
+                Ok(()) => None,
+                Err(err) => Some(Box::new(SharedRuntimeFFIError::from(err))),
+            }
+        },
+        panic_error!()
+    )
 }
 
 #[cfg(test)]
