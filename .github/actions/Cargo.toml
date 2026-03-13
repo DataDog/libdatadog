@@ -4,7 +4,7 @@
 [workspace]
 members = [
     "ci-shared",
-    "ci-crates",
+    "crates-reporter",
     "clippy-annotation-reporter",
 ]
 resolver = "2"
