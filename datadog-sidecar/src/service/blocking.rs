@@ -173,8 +173,8 @@ pub fn shutdown_runtime(
 }
 
 /// Shuts down a session.
-pub fn shutdown_session(transport: &mut SidecarTransport, session_id: String) -> io::Result<()> {
-    lock_sender(transport)?.shutdown_session(session_id);
+pub fn shutdown_session(transport: &mut SidecarTransport) -> io::Result<()> {
+    lock_sender(transport)?.shutdown_session();
     Ok(())
 }
 
@@ -236,10 +236,9 @@ pub fn set_session_config(
 /// Updates the process tags for an existing session.
 pub fn set_session_process_tags(
     transport: &mut SidecarTransport,
-    session_id: String,
     process_tags: Vec<Tag>,
 ) -> io::Result<()> {
-    lock_sender(transport)?.set_session_process_tags(session_id, process_tags);
+    lock_sender(transport)?.set_session_process_tags(process_tags);
     Ok(())
 }
 
@@ -401,10 +400,9 @@ pub fn send_dogstatsd_actions(
 /// Sets x-datadog-test-session-token on all requests for the given session.
 pub fn set_test_session_token(
     transport: &mut SidecarTransport,
-    session_id: String,
     token: String,
 ) -> io::Result<()> {
-    lock_sender(transport)?.set_test_session_token(session_id, token);
+    lock_sender(transport)?.set_test_session_token(token);
     Ok(())
 }
 

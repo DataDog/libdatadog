@@ -59,9 +59,8 @@ pub trait SidecarInterface {
     ///
     /// # Arguments
     ///
-    /// * `session_id` - The ID of the session.
     /// * `process_tags` - The process tags.
-    async fn set_session_process_tags(session_id: String, process_tags: Vec<Tag>);
+    async fn set_session_process_tags(process_tags: Vec<Tag>);
 
     /// Removes the application entry for the given queue ID from the instance.
     ///
@@ -95,7 +94,7 @@ pub trait SidecarInterface {
     /// # Arguments
     ///
     /// * `session_id` - The ID of the session.
-    async fn shutdown_session(session_id: String);
+    async fn shutdown_session();
 
     /// Sends a trace via shared memory.
     ///
@@ -214,7 +213,7 @@ pub trait SidecarInterface {
     ///
     /// * `session_id` - The ID of the session.
     /// * `token` - The session token.
-    async fn set_test_session_token(session_id: String, token: String);
+    async fn set_test_session_token(token: String);
 
     /// Sends a ping to the service.
     #[blocking]

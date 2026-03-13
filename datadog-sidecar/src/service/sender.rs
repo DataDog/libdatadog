@@ -69,17 +69,6 @@ fn cancel_if_instance(slot: &mut Option<SidecarInterfaceRequest>, instance_id: &
     }
 }
 
-fn cancel_if_session(slot: &mut Option<SidecarInterfaceRequest>, session_id: &str) {
-    let should_cancel = match slot {
-        Some(SidecarInterfaceRequest::SetSessionConfig { session_id: id, .. }) => {
-            id.as_str() == session_id
-        }
-        _ => false,
-    };
-    if should_cancel {
-        *slot = None;
-    }
-}
 
 fn cancel_if_queue(
     slot: &mut Option<SidecarInterfaceRequest>,
@@ -109,8 +98,8 @@ fn coalesce(outbox: &mut SidecarOutbox, incoming: SidecarInterfaceRequest) {
         cancel_if_instance(&mut outbox.set_request_config, instance_id);
         cancel_if_instance(&mut outbox.set_universal_service_tags, instance_id);
     }
-    if let SidecarInterfaceRequest::ShutdownSession { ref session_id } = incoming {
-        cancel_if_session(&mut outbox.set_session_config, session_id);
+    if matches!(incoming, SidecarInterfaceRequest::ShutdownSession {}) {
+        outbox.set_session_config = None;
     }
     if let SidecarInterfaceRequest::ClearQueueId {
         ref instance_id,
@@ -231,13 +220,10 @@ impl SidecarSender {
         self.try_drain_outbox();
     }
 
-    pub fn set_session_process_tags(&mut self, session_id: String, process_tags: String) {
+    pub fn set_session_process_tags(&mut self, process_tags: String) {
         coalesce(
             &mut self.outbox,
-            SidecarInterfaceRequest::SetSessionProcessTags {
-                session_id,
-                process_tags,
-            },
+            SidecarInterfaceRequest::SetSessionProcessTags { process_tags },
         );
         self.try_drain_outbox();
     }
@@ -318,10 +304,10 @@ impl SidecarSender {
         self.try_drain_outbox();
     }
 
-    pub fn shutdown_session(&mut self, session_id: String) {
+    pub fn shutdown_session(&mut self) {
         coalesce(
             &mut self.outbox,
-            SidecarInterfaceRequest::ShutdownSession { session_id },
+            SidecarInterfaceRequest::ShutdownSession {},
         );
         self.try_drain_outbox();
     }
@@ -428,12 +414,11 @@ impl SidecarSender {
             .try_send_send_dogstatsd_actions(instance_id, actions);
     }
 
-    pub fn set_test_session_token(&mut self, session_id: String, token: String) {
+    pub fn set_test_session_token(&mut self, token: String) {
         if !self.try_drain_outbox() {
             return;
         }
-        self.channel
-            .try_send_set_test_session_token(session_id, token);
+        self.channel.try_send_set_test_session_token(token);
     }
 
     pub fn set_read_timeout(&mut self, d: Option<Duration>) -> io::Result<()> {

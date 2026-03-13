@@ -132,7 +132,7 @@ pub struct SidecarServer {
 /// Per-connection handler wrapper that tracks sessions/instances for cleanup on disconnect.
 struct ConnectionSidecarHandler {
     server: SidecarServer,
-    sessions: Mutex<std::collections::HashSet<String>>,
+    session_id: std::sync::OnceLock<String>,
     instances: Mutex<std::collections::HashSet<InstanceId>>,
     /// All telemetry metric registrations received on this connection, keyed by metric name.
     /// Used to auto-register metrics in newly-created telemetry clients when a metric point
@@ -144,23 +144,9 @@ impl ConnectionSidecarHandler {
     fn new(server: SidecarServer) -> Self {
         Self {
             server,
-            sessions: Default::default(),
+            session_id: Default::default(),
             instances: Default::default(),
             metric_registrations: Default::default(),
-        }
-    }
-
-    fn track_session(&self, session_id: &str) {
-        if self.sessions.lock_or_panic().insert(session_id.to_owned()) {
-            let mut counter = self.server.session_counter.lock_or_panic();
-            match counter.entry(session_id.to_owned()) {
-                Entry::Occupied(mut e) => {
-                    e.insert(e.get() + 1);
-                }
-                Entry::Vacant(e) => {
-                    e.insert(1);
-                }
-            }
         }
     }
 
@@ -169,10 +155,9 @@ impl ConnectionSidecarHandler {
     }
 
     async fn cleanup(&self) {
-        let sessions: Vec<String> = self.sessions.lock_or_panic().iter().cloned().collect();
         let instances: Vec<InstanceId> = self.instances.lock_or_panic().iter().cloned().collect();
 
-        for session_id in &sessions {
+        if let Some(session_id) = self.session_id.get() {
             let stop = {
                 let mut counter = self.server.session_counter.lock_or_panic();
                 if let Entry::Occupied(mut entry) = counter.entry(session_id.clone()) {
@@ -190,6 +175,7 @@ impl ConnectionSidecarHandler {
                 self.server.stop_session(session_id).await;
             }
         }
+
         for instance_id in instances {
             let maybe_session = self
                 .server
@@ -393,15 +379,23 @@ impl SidecarServer {
     pub fn shutdown(&self) {
         self.remote_configs.shutdown();
     }
+}
 
-    fn enqueue_actions_impl(
+impl SidecarInterface for ConnectionSidecarHandler {
+    fn recv_counter(&self) -> &AtomicU64 {
+        &self.server.submitted_payloads
+    }
+
+    async fn enqueue_actions(
         &self,
+        _peer: PeerCredentials,
         instance_id: InstanceId,
         queue_id: QueueId,
         actions: Vec<SidecarAction>,
-        connection_metric_registrations: &HashMap<String, MetricContext>,
     ) {
-        let session = self.get_session(&instance_id.session_id);
+        self.track_instance(&instance_id);
+        let connection_metric_registrations = self.metric_registrations.lock_or_panic().clone();
+        let session = self.server.get_session(&instance_id.session_id);
         let trace_config = session.get_trace_config();
         let runtime_metadata = RuntimeMetadata::new(
             trace_config.language.clone(),
@@ -409,7 +403,7 @@ impl SidecarServer {
             trace_config.tracer_version.clone(),
         );
 
-        let rt_info = self.get_runtime(&instance_id);
+        let rt_info = self.server.get_runtime(&instance_id);
         let mut applications = rt_info.lock_applications();
 
         if let Entry::Occupied(entry) = applications.entry(queue_id) {
@@ -423,7 +417,7 @@ impl SidecarServer {
             let process_tags = session.process_tags.lock_or_panic().clone();
 
             // Lock telemetry client
-            let telemetry_mutex = self.telemetry_clients.get_or_create(
+            let telemetry_mutex = self.server.telemetry_clients.get_or_create(
                 service,
                 env,
                 &instance_id,
@@ -536,26 +530,57 @@ impl SidecarServer {
 
             if remove_client {
                 info!("Removing telemetry client for instance {instance_id:?}");
-                self.telemetry_clients.remove_telemetry_client(service, env);
+                self.server.telemetry_clients.remove_telemetry_client(service, env);
             }
-
         } else {
             info!("No application found for instance {instance_id:?} and queue_id {queue_id:?}");
         }
     }
 
-    async fn set_session_config_impl(
+    async fn clear_queue_id(
         &self,
+        _peer: PeerCredentials,
+        instance_id: InstanceId,
+        queue_id: QueueId,
+    ) {
+        let rt_info = self.server.get_runtime(&instance_id);
+        let mut applications = rt_info.lock_applications();
+        if let Entry::Occupied(entry) = applications.entry(queue_id) {
+            info!("Removing queue_id {queue_id:?} from instance {instance_id:?}");
+            entry.remove();
+        }
+    }
+
+    async fn register_telemetry_metric(
+        &self,
+        _peer: PeerCredentials,
+        metric: MetricContext,
+    ) {
+        self.metric_registrations
+            .lock_or_panic()
+            .entry(metric.name.clone())
+            .or_insert(metric);
+    }
+
+    async fn set_session_config(
+        &self,
+        peer: PeerCredentials,
         session_id: String,
-        peer_pid: u32,
         #[cfg(windows)] remote_config_notify_function: crate::service::remote_configs::RemoteConfigNotifyFunction,
         config: SessionConfig,
         is_fork: bool,
     ) {
+        if self.session_id.set(session_id.clone()).is_ok() {
+            let mut counter = self.server.session_counter.lock_or_panic();
+            match counter.entry(session_id.clone()) {
+                Entry::Occupied(mut e) => { e.insert(e.get() + 1); }
+                Entry::Vacant(e) => { e.insert(1); }
+            }
+        }
         debug!("Set session config for {session_id} to {config:?}");
 
-        let session = self.get_session(&session_id);
-        session.pid.store(peer_pid as i32, Ordering::Relaxed);
+        let session = self.server.get_session(&session_id);
+        session.pid.store(peer.pid as i32, Ordering::Relaxed);
         #[cfg(windows)]
         #[allow(clippy::unwrap_used)]
         {
@@ -564,7 +589,7 @@ impl SidecarServer {
                 winapi::um::processthreadsapi::OpenProcess(
                     winapi::um::winnt::PROCESS_ALL_ACCESS,
                     0,
-                    peer_pid,
+                    peer.pid,
                 )
             };
             if !handle.is_null() {
@@ -605,7 +630,7 @@ impl SidecarServer {
         });
         if config.endpoint.api_key.is_none() {
             // no agent info if agentless
-            let agent_info = self.agent_infos.query_for(config.endpoint.clone());
+            let agent_info = self.server.agent_infos.query_for(config.endpoint.clone());
             let session_info = session.clone();
             run_or_spawn_shared(agent_info.get(), move |info| {
                 if !agent_info_supports_debugger_v2_endpoint(info) {
@@ -626,13 +651,16 @@ impl SidecarServer {
             capabilities: config.remote_config_capabilities,
         });
         *session.remote_config_interval.lock_or_panic() = config.remote_config_poll_interval;
-        self.trace_flusher
+        self.server
+            .trace_flusher
             .interval_ms
             .store(config.flush_interval.as_millis() as u64, Ordering::Relaxed);
-        self.trace_flusher
+        self.server
+            .trace_flusher
             .min_force_flush_size_bytes
             .store(config.force_flush_size as u32, Ordering::Relaxed);
-        self.trace_flusher
+        self.server
+            .trace_flusher
             .min_force_drop_size_bytes
             .store(config.force_drop_size as u32, Ordering::Relaxed);
 
@@ -641,7 +669,7 @@ impl SidecarServer {
             MULTI_LOG_WRITER.add(config.log_file),
         ));
 
-        if let Some(completer) = self.self_telemetry_config.lock_or_panic().take() {
+        if let Some(completer) = self.server.self_telemetry_config.lock_or_panic().take() {
             #[allow(clippy::expect_used)]
             let config = session
                 .session_config
@@ -659,35 +687,44 @@ impl SidecarServer {
         }
     }
 
-    fn set_session_process_tags_impl(&self, session_id: String, process_tags: Vec<Tag>) {
-        let session = self.get_session(&session_id);
+    async fn set_session_process_tags(
+        &self,
+        _peer: PeerCredentials,
+        process_tags: Vec<Tag>,
+    ) {
+        let session_id = self.session_id.get().cloned().unwrap_or_default();
+        let session = self.server.get_session(&session_id);
         *session.process_tags.lock_or_panic() = process_tags;
     }
 
-    fn shutdown_runtime_impl(&self, instance_id: InstanceId) {
-        let session = self.get_session(&instance_id.session_id);
+    async fn shutdown_runtime(&self, _peer: PeerCredentials, instance_id: InstanceId) {
+        let session = self.server.get_session(&instance_id.session_id);
         tokio::spawn(async move { session.shutdown_runtime(&instance_id.runtime_id).await });
     }
 
-    fn shutdown_session_impl(&self, session_id: String) {
-        let server = self.clone();
+    async fn shutdown_session(&self, _peer: PeerCredentials) {
+        let server = self.server.clone();
+        let session_id = self.session_id.get().cloned().unwrap_or_default();
         tokio::spawn(async move { server.stop_session(&session_id).await });
     }
 
-    fn send_trace_v04_shm_impl(
+    async fn send_trace_v04_shm(
         &self,
+        _peer: PeerCredentials,
         instance_id: InstanceId,
         handle: ShmHandle,
         _len: usize,
         headers: SerializedTracerHeaderTags,
     ) {
+        self.track_instance(&instance_id);
         if let Some(endpoint) = self
+            .server
             .get_session(&instance_id.session_id)
             .get_trace_config()
             .endpoint
             .clone()
         {
-            let server = self.clone();
+            let server = self.server.clone();
             tokio::spawn(async move {
                 match handle.map() {
                     Ok(mapped) => {
@@ -705,19 +742,22 @@ impl SidecarServer {
         }
     }
 
-    fn send_trace_v04_bytes_impl(
+    async fn send_trace_v04_bytes(
         &self,
+        _peer: PeerCredentials,
         instance_id: InstanceId,
         data: Vec<u8>,
         headers: SerializedTracerHeaderTags,
     ) {
+        self.track_instance(&instance_id);
         if let Some(endpoint) = self
+            .server
             .get_session(&instance_id.session_id)
             .get_trace_config()
             .endpoint
             .clone()
         {
-            let server = self.clone();
+            let server = self.server.clone();
             tokio::spawn(async move {
                 let bytes = tinybytes::Bytes::from(data);
                 server.send_trace_v04(&headers, bytes, &endpoint);
@@ -730,14 +770,16 @@ impl SidecarServer {
         }
     }
 
-    fn send_debugger_data_shm_impl(
+    async fn send_debugger_data_shm(
         &self,
+        _peer: PeerCredentials,
         instance_id: InstanceId,
         queue_id: QueueId,
         handle: ShmHandle,
         debugger_type: DebuggerType,
     ) {
-        let session = self.get_session(&instance_id.session_id);
+        self.track_instance(&instance_id);
+        let session = self.server.get_session(&instance_id.session_id);
         match handle.map() {
             Ok(mapped) => {
                 session.send_debugger_data(
@@ -751,19 +793,21 @@ impl SidecarServer {
         }
     }
 
-    fn send_debugger_diagnostics_impl(
+    async fn send_debugger_diagnostics(
         &self,
+        _peer: PeerCredentials,
         instance_id: InstanceId,
         queue_id: QueueId,
         diagnostics_payload: Vec<u8>,
     ) {
-        let session = self.get_session(&instance_id.session_id);
+        self.track_instance(&instance_id);
+        let session = self.server.get_session(&instance_id.session_id);
         #[allow(clippy::unwrap_used)]
         let payload = serde_json::from_slice(diagnostics_payload.as_slice()).unwrap();
         // We segregate RC by endpoint.
         // So we assume that runtime ids are unique per endpoint and we can safely filter globally.
         #[allow(clippy::unwrap_used)]
-        if self.debugger_diagnostics_bookkeeper.add_payload(&payload) {
+        if self.server.debugger_diagnostics_bookkeeper.add_payload(&payload) {
             session.send_debugger_data(
                 DebuggerType::Diagnostics,
                 &instance_id.runtime_id,
@@ -773,15 +817,21 @@ impl SidecarServer {
         }
     }
 
-    fn acquire_exception_hash_rate_limiter_impl(&self, exception_hash: u64, granularity: Duration) {
+    async fn acquire_exception_hash_rate_limiter(
+        &self,
+        _peer: PeerCredentials,
+        exception_hash: u64,
+        granularity: Duration,
+    ) {
         EXCEPTION_HASH_LIMITER
             .lock_or_panic()
             .add(exception_hash, granularity);
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn set_universal_service_tags_impl(
+    async fn set_universal_service_tags(
         &self,
+        _peer: PeerCredentials,
         instance_id: InstanceId,
         queue_id: QueueId,
         service_name: String,
@@ -790,18 +840,19 @@ impl SidecarServer {
         global_tags: Vec<Tag>,
         dynamic_instrumentation_state: DynamicInstrumentationConfigState,
     ) {
+        self.track_instance(&instance_id);
         debug!("Registered remote config metadata: instance {instance_id:?}, queue_id: {queue_id:?}, service: {service_name}, env: {env_name}, version: {app_version}");
 
-        let session = self.get_session(&instance_id.session_id);
+        let session = self.server.get_session(&instance_id.session_id);
         let runtime_info = session.get_runtime(&instance_id.runtime_id);
         let mut applications = runtime_info.lock_applications();
         let app = applications.entry(queue_id).or_default();
         app.set_metadata(env_name, app_version, service_name, global_tags);
-        let Some(notify_target) = self.get_notify_target(&session) else {
+        let Some(notify_target) = self.server.get_notify_target(&session) else {
             return;
         };
         app.update_remote_config(
-            &self.remote_configs,
+            &self.server.remote_configs,
             &session,
             instance_id,
             notify_target,
@@ -809,21 +860,23 @@ impl SidecarServer {
         );
     }
 
-    fn set_request_config_impl(
+    async fn set_request_config(
         &self,
+        _peer: PeerCredentials,
         instance_id: InstanceId,
         queue_id: QueueId,
         dynamic_instrumentation_state: DynamicInstrumentationConfigState,
     ) {
-        let session = self.get_session(&instance_id.session_id);
+        self.track_instance(&instance_id);
+        let session = self.server.get_session(&instance_id.session_id);
         let runtime_info = session.get_runtime(&instance_id.runtime_id);
         let mut applications = runtime_info.lock_applications();
         let app = applications.entry(queue_id).or_default();
-        let Some(notify_target) = self.get_notify_target(&session) else {
+        let Some(notify_target) = self.server.get_notify_target(&session) else {
             return;
         };
         app.update_remote_config(
-            &self.remote_configs,
+            &self.server.remote_configs,
             &session,
             instance_id,
             notify_target,
@@ -831,12 +884,14 @@ impl SidecarServer {
         );
     }
 
-    fn send_dogstatsd_actions_impl(
+    async fn send_dogstatsd_actions(
         &self,
+        _peer: PeerCredentials,
         instance_id: InstanceId,
         actions: Vec<DogStatsDActionOwned>,
     ) {
-        let server = self.clone();
+        self.track_instance(&instance_id);
+        let server = self.server.clone();
         tokio::spawn(async move {
             server
                 .get_session(&instance_id.session_id)
@@ -846,15 +901,20 @@ impl SidecarServer {
         });
     }
 
-    async fn flush_traces_impl(&self) {
-        let flusher = self.trace_flusher.clone();
+    async fn flush_traces(&self, _peer: PeerCredentials) {
+        let flusher = self.server.trace_flusher.clone();
         if let Err(e) = tokio::spawn(async move { flusher.flush().await }).await {
             error!("Failed flushing traces: {e:?}");
         }
     }
 
-    fn set_test_session_token_impl(&self, session_id: String, token: String) {
-        let session = self.get_session(&session_id);
+    async fn set_test_session_token(
+        &self,
+        _peer: PeerCredentials,
+        token: String,
+    ) {
+        let session_id = self.session_id.get().cloned().unwrap_or_default();
+        let session = self.server.get_session(&session_id);
         let token = if token.is_empty() {
             None
         } else {
@@ -873,231 +933,16 @@ impl SidecarServer {
         // });
     }
 
-    async fn dump_impl(&self) -> String {
-        crate::dump::dump().await
-    }
-
-    async fn stats_impl(&self) -> String {
-        let stats = self.compute_stats().await;
-        #[allow(clippy::expect_used)]
-        simd_json::serde::to_string(&stats).expect("unable to serialize stats to string")
-    }
-}
-
-impl SidecarInterface for ConnectionSidecarHandler {
-    fn recv_counter(&self) -> &AtomicU64 {
-        &self.server.submitted_payloads
-    }
-
-    async fn enqueue_actions(
-        &self,
-        _peer: PeerCredentials,
-        instance_id: InstanceId,
-        queue_id: QueueId,
-        actions: Vec<SidecarAction>,
-    ) {
-        self.track_instance(&instance_id);
-        let metrics_registrations = self.metric_registrations.lock_or_panic().clone();
-        self.server
-            .enqueue_actions_impl(instance_id, queue_id, actions, &metrics_registrations);
-    }
-
-    async fn clear_queue_id(
-        &self,
-        _peer: PeerCredentials,
-        instance_id: InstanceId,
-        queue_id: QueueId,
-    ) {
-        self.track_instance(&instance_id);
-        let rt_info = self.server.get_runtime(&instance_id);
-        let mut applications = rt_info.lock_applications();
-        if let Entry::Occupied(entry) = applications.entry(queue_id) {
-            info!("Removing queue_id {queue_id:?} from instance {instance_id:?}");
-            entry.remove();
-        }
-    }
-
-    async fn register_telemetry_metric(
-        &self,
-        _peer: PeerCredentials,
-        metric: MetricContext,
-    ) {
-        self.metric_registrations
-            .lock_or_panic()
-            .entry(metric.name.clone())
-            .or_insert(metric);
-    }
-
-    async fn set_session_config(
-        &self,
-        peer: PeerCredentials,
-        session_id: String,
-        #[cfg(windows)] remote_config_notify_function: crate::service::remote_configs::RemoteConfigNotifyFunction,
-        config: SessionConfig,
-        is_fork: bool,
-    ) {
-        self.track_session(&session_id);
-        self.server
-            .set_session_config_impl(
-                session_id,
-                peer.pid,
-                #[cfg(windows)]
-                remote_config_notify_function,
-                config,
-                is_fork,
-            )
-            .await;
-    }
-
-    async fn set_session_process_tags(
-        &self,
-        _peer: PeerCredentials,
-        session_id: String,
-        process_tags: String,
-    ) {
-        self.track_session(&session_id);
-        self.server
-            .set_session_process_tags_impl(session_id, process_tags);
-    }
-
-    async fn shutdown_runtime(&self, _peer: PeerCredentials, instance_id: InstanceId) {
-        self.track_instance(&instance_id);
-        self.server.shutdown_runtime_impl(instance_id);
-    }
-
-    async fn shutdown_session(&self, _peer: PeerCredentials, session_id: String) {
-        self.track_session(&session_id);
-        self.server.shutdown_session_impl(session_id);
-    }
-
-    async fn send_trace_v04_shm(
-        &self,
-        _peer: PeerCredentials,
-        instance_id: InstanceId,
-        handle: ShmHandle,
-        len: usize,
-        headers: SerializedTracerHeaderTags,
-    ) {
-        self.track_instance(&instance_id);
-        self.server
-            .send_trace_v04_shm_impl(instance_id, handle, len, headers);
-    }
-
-    async fn send_trace_v04_bytes(
-        &self,
-        _peer: PeerCredentials,
-        instance_id: InstanceId,
-        data: Vec<u8>,
-        headers: SerializedTracerHeaderTags,
-    ) {
-        self.track_instance(&instance_id);
-        self.server
-            .send_trace_v04_bytes_impl(instance_id, data, headers);
-    }
-
-    async fn send_debugger_data_shm(
-        &self,
-        _peer: PeerCredentials,
-        instance_id: InstanceId,
-        queue_id: QueueId,
-        handle: ShmHandle,
-        debugger_type: DebuggerType,
-    ) {
-        self.track_instance(&instance_id);
-        self.server
-            .send_debugger_data_shm_impl(instance_id, queue_id, handle, debugger_type);
-    }
-
-    async fn send_debugger_diagnostics(
-        &self,
-        _peer: PeerCredentials,
-        instance_id: InstanceId,
-        queue_id: QueueId,
-        diagnostics_payload: Vec<u8>,
-    ) {
-        self.track_instance(&instance_id);
-        self.server
-            .send_debugger_diagnostics_impl(instance_id, queue_id, diagnostics_payload);
-    }
-
-    async fn acquire_exception_hash_rate_limiter(
-        &self,
-        _peer: PeerCredentials,
-        exception_hash: u64,
-        granularity: Duration,
-    ) {
-        self.server
-            .acquire_exception_hash_rate_limiter_impl(exception_hash, granularity);
-    }
-
-    async fn set_universal_service_tags(
-        &self,
-        _peer: PeerCredentials,
-        instance_id: InstanceId,
-        queue_id: QueueId,
-        service_name: String,
-        env_name: String,
-        app_version: String,
-        global_tags: Vec<Tag>,
-        dynamic_instrumentation_state: DynamicInstrumentationConfigState,
-    ) {
-        self.track_instance(&instance_id);
-        self.server.set_universal_service_tags_impl(
-            instance_id,
-            queue_id,
-            service_name,
-            env_name,
-            app_version,
-            global_tags,
-            dynamic_instrumentation_state,
-        );
-    }
-
-    async fn set_request_config(
-        &self,
-        _peer: PeerCredentials,
-        instance_id: InstanceId,
-        queue_id: QueueId,
-        dynamic_instrumentation_state: DynamicInstrumentationConfigState,
-    ) {
-        self.track_instance(&instance_id);
-        self.server
-            .set_request_config_impl(instance_id, queue_id, dynamic_instrumentation_state);
-    }
-
-    async fn send_dogstatsd_actions(
-        &self,
-        _peer: PeerCredentials,
-        instance_id: InstanceId,
-        actions: Vec<DogStatsDActionOwned>,
-    ) {
-        self.track_instance(&instance_id);
-        self.server
-            .send_dogstatsd_actions_impl(instance_id, actions);
-    }
-
-    async fn flush_traces(&self, _peer: PeerCredentials) {
-        self.server.flush_traces_impl().await;
-    }
-
-    async fn set_test_session_token(
-        &self,
-        _peer: PeerCredentials,
-        session_id: String,
-        token: String,
-    ) {
-        self.track_session(&session_id);
-        self.server.set_test_session_token_impl(session_id, token);
-    }
-
     async fn ping(&self, _peer: PeerCredentials) {}
 
     async fn dump(&self, _peer: PeerCredentials) -> String {
-        self.server.dump_impl().await
+        crate::dump::dump().await
     }
 
     async fn stats(&self, _peer: PeerCredentials) -> String {
-        self.server.stats_impl().await
+        let stats = self.server.compute_stats().await;
+        #[allow(clippy::expect_used)]
+        simd_json::serde::to_string(&stats).expect("unable to serialize stats to string")
     }
 }
 

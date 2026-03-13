@@ -646,12 +646,10 @@ pub unsafe extern "C" fn ddog_sidecar_session_set_config(
 #[allow(clippy::missing_safety_doc)]
 pub unsafe extern "C" fn ddog_sidecar_session_set_process_tags(
     transport: &mut Box<SidecarTransport>,
-    session_id: ffi::CharSlice,
     process_tags: &libdd_common_ffi::Vec<Tag>,
 ) -> MaybeError {
     try_c!(blocking::set_session_process_tags(
         transport,
-        session_id.to_utf8_lossy().into(),
         process_tags.to_vec(),
     ));
 
@@ -1273,12 +1271,10 @@ pub unsafe extern "C" fn ddog_sidecar_dogstatsd_set(
 #[allow(clippy::missing_safety_doc)]
 pub unsafe extern "C" fn ddog_sidecar_set_test_session_token(
     transport: &mut Box<SidecarTransport>,
-    session_id: ffi::CharSlice,
     token: ffi::CharSlice,
 ) -> MaybeError {
     try_c!(blocking::set_test_session_token(
         transport,
-        session_id.to_utf8_lossy().into_owned(),
         token.to_utf8_lossy().into_owned(),
     ));
 

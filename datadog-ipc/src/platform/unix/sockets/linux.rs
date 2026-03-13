@@ -25,19 +25,20 @@ impl SeqpacketListener {
     /// Removes any stale socket file before binding (standard Unix practice).
     pub fn bind(path: impl AsRef<Path>) -> io::Result<Self> {
         let _ = std::fs::remove_file(path.as_ref());
-        let fd = create_seqpacket_socket()?;
         let addr = UnixAddr::new(path.as_ref()).map_err(io::Error::from)?;
-        bind(fd.as_raw_fd(), &addr).map_err(io::Error::from)?;
-        listen(&fd, Backlog::new(128).map_err(io::Error::from)?).map_err(io::Error::from)?;
-        Ok(Self { inner: fd })
+        Self::do_bind(addr)
     }
 
     /// Bind to a Linux abstract socket name and start listening.
     pub fn bind_abstract(name: &[u8]) -> io::Result<Self> {
-        let fd = create_seqpacket_socket()?;
         let addr = UnixAddr::new_abstract(name).map_err(io::Error::from)?;
+        Self::do_bind(addr)
+    }
+    
+    fn do_bind(addr: UnixAddr) -> io::Result<Self> {
+        let fd = create_seqpacket_socket()?;
         bind(fd.as_raw_fd(), &addr).map_err(io::Error::from)?;
-        listen(&fd, Backlog::new(128).map_err(io::Error::from)?).map_err(io::Error::from)?;
+        listen(&fd, Backlog::new(128).unwrap_or(Backlog::MAXCONN)).map_err(io::Error::from)?;
         Ok(Self { inner: fd })
     }
 
