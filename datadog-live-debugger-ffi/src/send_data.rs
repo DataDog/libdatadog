@@ -351,7 +351,7 @@ fn ddog_snapshot_push_stack_frame_internal<'a, 'b: 'a, 'c: 'a>(
     snapshot.stack.push(SnapshotStackFrame {
         file_name: file_name.to_utf8_lossy(),
         function: if !type_name.is_empty() {
-            Cow::Owned(format!("{}::{}", function_name, type_name.to_utf8_lossy()))
+            Cow::Owned(format!("{}::{}", type_name.to_utf8_lossy(), function_name))
         } else {
             function_name
         },

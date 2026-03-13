@@ -25,6 +25,7 @@ tarpc = { path = "./tarpc", default-features = false, features = ["serde-transpo
 
 libdd-common = { path = "../libdd-common" }
 datadog-ipc-macros = { path = "../datadog-ipc-macros" }
+tracing = { version = "0.1", default-features = false }
 
 [dev-dependencies]
 criterion = "0.5"
