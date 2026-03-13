@@ -10,8 +10,8 @@ use std::collections::{HashMap, HashSet};
 #[derive(Default)]
 pub struct Observations {
     sample_types: Box<[SampleType]>,
-    aggregated: HashMap<SampleType, HashMap<Sample, i64>>,
-    timestamped: HashMap<SampleType, HashMap<Sample, Vec<(i64, Timestamp)>>>,
+    pub aggregated: HashMap<SampleType, HashMap<Sample, i64>>,
+    pub timestamped: HashMap<SampleType, HashMap<Sample, Vec<(i64, Timestamp)>>>,
 }
 
 impl Observations {
@@ -64,7 +64,7 @@ impl Observations {
         let samples: HashSet<&Sample> = self
             .aggregated
             .iter()
-            .flat_map(|(_, samples)| samples.iter().map(|(s, _)| s))
+            .flat_map(|(_, samples)| samples.keys())
             .collect();
         samples.len()
     }
@@ -72,7 +72,7 @@ impl Observations {
     pub fn timestamped_samples_count(&self) -> usize {
         self.timestamped
             .iter()
-            .flat_map(|(_, v)| v.iter().map(|(_, v)| v.len()))
+            .flat_map(|(_, v)| v.values().map(|v| v.len()))
             .sum()
     }
 
@@ -82,6 +82,8 @@ impl Observations {
         Ok(self.into_iter())
     }
 
+    // TODO make this a trait impl
+    #[allow(clippy::should_implement_trait)]
     pub fn into_iter(self) -> impl Iterator<Item = (Sample, Option<Timestamp>, Vec<i64>)> {
         let index_map: HashMap<SampleType, usize> = self
             .sample_types

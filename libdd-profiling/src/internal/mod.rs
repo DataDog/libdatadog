@@ -7,7 +7,9 @@ mod function;
 mod label;
 mod location;
 mod mapping;
+#[cfg(not(feature = "otel"))]
 mod observation;
+#[cfg(feature = "otel")]
 mod otel_style_observation;
 mod profile;
 mod sample;
@@ -22,6 +24,9 @@ pub use label::*;
 pub use libdd_profiling_protobuf::ValueType;
 pub use location::*;
 pub use mapping::*;
+#[cfg(not(feature = "otel"))]
+pub use observation::*;
+#[cfg(feature = "otel")]
 pub use otel_style_observation::*;
 pub use profile::*;
 pub use sample::*;

@@ -16,6 +16,17 @@ pub struct Location {
     pub line: i64,
 }
 
+impl Default for Location {
+    fn default() -> Self {
+        Self {
+            mapping_id: None,
+            function_id: super::FunctionId::from_offset(0),
+            address: 0,
+            line: 0,
+        }
+    }
+}
+
 impl Item for Location {
     type Id = LocationId;
 }
