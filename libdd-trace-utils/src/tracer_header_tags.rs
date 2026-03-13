@@ -146,11 +146,10 @@ mod tests {
     use super::*;
     use hyper::HeaderMap;
 
-    fn get<'a>(m: &'a HashMap<HeaderName, String>, key: & str) -> Option<&'a str> {
-        m.get(&HeaderName::from_str(key).unwrap()).map(|v| v.as_str())
+    fn get<'a>(m: &'a HashMap<HeaderName, String>, key: &str) -> Option<&'a str> {
+        m.get(&HeaderName::from_str(key).unwrap())
+            .map(|v| v.as_str())
     }
-
-    
 
     #[test]
     fn tags_to_hashmap() {
@@ -172,8 +171,14 @@ mod tests {
         assert_eq!(map.len(), 10);
         assert_eq!(get(&map, "datadog-meta-lang"), Some("test-lang"));
         assert_eq!(get(&map, "datadog-meta-lang-version"), Some("2.0"));
-        assert_eq!(get(&map, "datadog-meta-lang-interpreter"), Some("interpreter"));
-        assert_eq!(get(&map, "datadog-meta-lang-interpreter-vendor"), Some("vendor"));
+        assert_eq!(
+            get(&map, "datadog-meta-lang-interpreter"),
+            Some("interpreter")
+        );
+        assert_eq!(
+            get(&map, "datadog-meta-lang-interpreter-vendor"),
+            Some("vendor")
+        );
         assert_eq!(get(&map, "datadog-meta-tracer-version"), Some("1.0"));
         assert_eq!(get(&map, "datadog-container-id"), Some("id"));
         assert_eq!(get(&map, "datadog-client-computed-top-level"), Some("true"));
@@ -202,8 +207,14 @@ mod tests {
         assert_eq!(map.len(), 5);
         assert_eq!(get(&map, "datadog-meta-lang"), Some("test-lang"));
         assert_eq!(get(&map, "datadog-meta-lang-version"), Some("2.0"));
-        assert_eq!(get(&map, "datadog-meta-lang-interpreter"), Some("interpreter"));
-        assert_eq!(get(&map, "datadog-meta-lang-interpreter-vendor"), Some("vendor"));
+        assert_eq!(
+            get(&map, "datadog-meta-lang-interpreter"),
+            Some("interpreter")
+        );
+        assert_eq!(
+            get(&map, "datadog-meta-lang-interpreter-vendor"),
+            Some("vendor")
+        );
         assert_eq!(get(&map, "datadog-meta-tracer-version"), Some("1.0"));
         assert_eq!(get(&map, "datadog-container-id"), None);
         assert_eq!(get(&map, "datadog-client-computed-top-level"), None);
