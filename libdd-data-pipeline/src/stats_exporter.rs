@@ -168,13 +168,13 @@ fn encode_stats_payload(
         sequence,
         stats: buckets,
         git_commit_sha: meta.git_commit_sha.clone(),
+        process_tags: meta.process_tags.clone(),
         // These fields are unused or will be set by the Agent
         service: String::new(),
         container_id: String::new(),
         tags: Vec::new(),
         agent_aggregation: String::new(),
         image_tag: String::new(),
-        process_tags: String::new(),
         process_tags_hash: 0,
     }
 }
@@ -217,6 +217,7 @@ mod tests {
             language: "rust".into(),
             tracer_version: "0.0.0".into(),
             runtime_id: "e39d6d12-0752-489f-b488-cf80006c0378".into(),
+            process_tags: "key1:value1,key2:value2".into(),
             ..Default::default()
         }
     }
@@ -257,7 +258,8 @@ mod tests {
                 when.method(POST)
                     .header("Content-type", "application/msgpack")
                     .path("/v0.6/stats")
-                    .body_includes("libdatadog-test");
+                    .body_includes("libdatadog-test")
+                    .body_includes("key1:value1,key2:value2");
                 then.status(200).body("");
             })
             .await;
@@ -318,7 +320,8 @@ mod tests {
                 when.method(POST)
                     .header("Content-type", "application/msgpack")
                     .path("/v0.6/stats")
-                    .body_includes("libdatadog-test");
+                    .body_includes("libdatadog-test")
+                    .body_includes("key1:value1,key2:value2");
                 then.status(200).body("");
             })
             .await;
@@ -356,7 +359,8 @@ mod tests {
                 when.method(POST)
                     .header("Content-type", "application/msgpack")
                     .path("/v0.6/stats")
-                    .body_includes("libdatadog-test");
+                    .body_includes("libdatadog-test")
+                    .body_includes("key1:value1,key2:value2");
                 then.status(200).body("");
             })
             .await;

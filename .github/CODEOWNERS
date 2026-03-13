@@ -14,6 +14,7 @@
 .gitlab-ci.yml                       @DataDog/apm-common-components-core
 .gitlab/benchmarks.yml               @DataDog/apm-common-components-core
 .gitlab/fuzz.yml                     @DataDog/chaos-platform
+.gitmodules                          @DataDog/libdatadog
 benchmark/                           @DataDog/apm-common-components-core
 bin_tests/                           @DataDog/libdatadog-profiling
 build-common/                        @DataDog/apm-common-components-core
@@ -44,6 +45,7 @@ libdd-data-pipeline*/                @DataDog/libdatadog-apm
 libdd-ddsketch*/                     @DataDog/libdatadog-apm @DataDog/apm-common-components-core
 libdd-dogstatsd-client               @DataDog/apm-common-components-core
 libdd-library-config*/               @DataDog/apm-sdk-capabilities
+libdd-libunwind*/                    @DataDog/libdatadog-profiling
 libdd-log*/                          @DataDog/apm-common-components-core
 libdd-profiling*/                    @DataDog/libdatadog-profiling
 libdd-telemetry*/                    @DataDog/apm-common-components-core
