@@ -37,6 +37,7 @@ use tokio::net::windows::named_pipe::{NamedPipeClient, NamedPipeServer};
 use winapi::shared::minwindef::ULONG;
 use winapi::shared::winerror::ERROR_PIPE_CONNECTED;
 use winapi::um::handleapi::{CloseHandle, DuplicateHandle, INVALID_HANDLE_VALUE};
+use winapi::um::minwinbase::SECURITY_ATTRIBUTES;
 use winapi::um::processthreadsapi::{GetCurrentProcess, GetCurrentProcessId, OpenProcess};
 use winapi::um::winbase::{GetNamedPipeClientProcessId, GetNamedPipeServerProcessId};
 use winapi::um::winnt::{DUPLICATE_SAME_ACCESS, HANDLE, PROCESS_DUP_HANDLE};
@@ -241,6 +242,11 @@ fn create_pipe_server(name: &[u8], first_instance: bool) -> io::Result<OwnedHand
 
     let h = unsafe {
         let buf_size = PIPE_BUFFER_SIZE.load(Ordering::Relaxed) as u32;
+        let mut sec_attributes = SECURITY_ATTRIBUTES {
+            nLength: std::mem::size_of::<SECURITY_ATTRIBUTES>() as u32,
+            lpSecurityDescriptor: null_mut(),
+            bInheritHandle: 1, // We want this one to be inherited
+        };
         CreateNamedPipeA(
             name.as_ptr(),
             open_mode,
@@ -249,7 +255,7 @@ fn create_pipe_server(name: &[u8], first_instance: bool) -> io::Result<OwnedHand
             buf_size,
             buf_size,
             0,
-            null_mut(),
+            &mut sec_attributes as *mut SECURITY_ATTRIBUTES as *mut _,
         )
     };
 

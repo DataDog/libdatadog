@@ -6,7 +6,6 @@ use crate::setup::Liaison;
 use datadog_ipc::platform::PIPE_PATH;
 use datadog_ipc::{SeqpacketConn, SeqpacketListener};
 use libc::getpid;
-use std::ffi::CString;
 use std::io;
 
 pub type IpcClient = SeqpacketConn;
@@ -69,11 +68,6 @@ impl Default for NamedPipeLiaison {
 
 pub type DefaultLiason = NamedPipeLiaison;
 
-/// Helper: derive the shared-memory path used to publish the sidecar PID.
-pub fn pid_shm_path(pipe_path: &str) -> CString {
-    #[allow(clippy::unwrap_used)]
-    CString::new(&pipe_path[PIPE_PATH.len() - 1..]).unwrap()
-}
 
 #[cfg(test)]
 mod tests {

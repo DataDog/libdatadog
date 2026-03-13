@@ -2,10 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::enter_listener_loop;
-use crate::setup::pid_shm_path;
-use datadog_ipc::platform::{
-    named_pipe_name_from_raw_handle, FileBackedHandle, MappedMem, NamedShmHandle,
-};
+use datadog_ipc::platform::named_pipe_name_from_raw_handle;
 use datadog_ipc::{SeqpacketConn, SeqpacketListener};
 
 use futures::FutureExt;
@@ -62,19 +59,6 @@ pub extern "C" fn ddog_daemon_entry_point(_trampoline_data: &TrampolineData) {
     let pid = unsafe { libc::getpid() };
 
     if let Some(handle) = spawn_worker::recv_passed_handle() {
-        let mut shm = match named_pipe_name_from_raw_handle(handle.as_raw_handle())
-            .ok_or(io::Error::from(io::ErrorKind::InvalidInput))
-            .and_then(|name| NamedShmHandle::create(pid_shm_path(&name), 4))
-            .and_then(FileBackedHandle::map)
-        {
-            Ok(ok) => ok,
-            Err(err) => {
-                error!("Couldn't store pid to shared memory: {err}");
-                return;
-            }
-        };
-        shm.as_slice_mut().copy_from_slice(&pid.to_ne_bytes());
-
         info!("Starting sidecar, pid: {}", pid);
 
         let acquire_listener = move || {
@@ -88,10 +72,8 @@ pub extern "C" fn ddog_daemon_entry_point(_trampoline_data: &TrampolineData) {
                 }
             };
 
-            // We pass the shm to ensure we drop the shm handle with the pid immediately after
-            // cancellation To avoid actual race conditions
             Ok((
-                |handler| accept_socket_loop(listener, closed_future, handler, shm),
+                |handler| accept_socket_loop(listener, closed_future, handler),
                 cancel,
             ))
         };
@@ -112,7 +94,6 @@ async fn accept_socket_loop(
     listener: SeqpacketListener,
     cancellation: ManualFuture<()>,
     handler: Box<dyn Fn(SeqpacketConn)>,
-    _: MappedMem<NamedShmHandle>,
 ) -> io::Result<()> {
     // Wrap the first server instance as a Tokio NamedPipeServer for async connect polling.
     // After each accepted connection we create a fresh Tokio server for the next client.
@@ -144,7 +125,6 @@ async fn accept_socket_loop(
         let conn = SeqpacketConn::from_server_handle(owned, client_pid);
         handler(conn);
     }
-    // drops pipe and shm here
     Ok(())
 }
 
