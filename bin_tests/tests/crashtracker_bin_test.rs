@@ -1331,23 +1331,23 @@ fn crash_tracking_empty_endpoint() {
 #[cfg_attr(miri, ignore)]
 #[cfg(unix)]
 fn test_receiver_emits_debug_logs_on_receiver_issue() -> anyhow::Result<()> {
+    use std::time::Duration;
+
     let receiver = artifacts::crashtracker_receiver(BuildProfile::Debug);
     let artifacts = build_artifacts(&[&receiver])?;
     let fixtures = bin_tests::test_runner::TestFixtures::new()?;
 
     let missing_file = fixtures.output_dir.join("missing_additional_file.txt");
 
-    let config = CrashtrackerConfiguration::new(
-        vec![missing_file.display().to_string()],
-        true,
-        true,
-        None,
-        StacktraceCollection::WithoutSymbols,
-        libdd_crashtracker::default_signals(),
-        Some(std::time::Duration::from_millis(500)),
-        None,
-        true,
-    )?;
+    let config = CrashtrackerConfiguration::builder()
+        .additional_files(vec![missing_file.display().to_string()])
+        .create_alt_stack(true)
+        .demangle_names(true)
+        .resolve_frames(StacktraceCollection::WithoutSymbols)
+        .signals(libdd_crashtracker::default_signals())
+        .timeout(Duration::from_millis(500))
+        .use_alt_stack(true)
+        .build()?;
 
     let metadata = Metadata {
         library_name: "libdatadog".to_owned(),
