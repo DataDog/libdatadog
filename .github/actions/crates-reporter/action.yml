@@ -45,7 +45,7 @@ runs:
       shell: bash
       run: |
         cd ${{ github.action_path }}/..
-        cargo build --release -p ci-crates
+        cargo build --release -p crates-reporter
 
     - name: Run change reporter
       id: detect
@@ -58,7 +58,7 @@ runs:
           echo "status=skipped" >> $GITHUB_OUTPUT
           exit 0
         fi
-        if RUST_LOG=debug ${{ github.action_path }}/../target/release/changed-crates $PR_BASE_REF; then
+        if RUST_LOG=debug ${{ github.action_path }}/../target/release/crates-reporter $PR_BASE_REF; then
           echo "status=success" >> $GITHUB_OUTPUT
         else
           echo "status=skipped" >> $GITHUB_OUTPUT
