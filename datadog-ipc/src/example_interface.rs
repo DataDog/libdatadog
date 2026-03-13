@@ -3,7 +3,7 @@
 use std::{
     fs::File,
     sync::{
-        atomic::{AtomicU32, Ordering},
+        atomic::{AtomicU64, Ordering},
         Arc, Mutex,
     },
     time::{Duration, Instant},
@@ -25,7 +25,7 @@ pub trait ExampleInterface {
 
 #[derive(Default, Clone)]
 pub struct ExampleServer {
-    req_cnt: Arc<AtomicU32>,
+    req_cnt: Arc<AtomicU64>,
     stored_files: Arc<Mutex<Vec<PlatformHandle<File>>>>,
 }
 
@@ -37,11 +37,14 @@ impl ExampleServer {
 }
 
 impl ExampleInterface for ExampleServer {
+    fn recv_counter(&self) -> &AtomicU64 {
+        &self.req_cnt
+    }
+
     fn notify(
         &self,
         _peer: datadog_ipc::PeerCredentials,
     ) -> impl std::future::Future<Output = ()> + Send + '_ {
-        self.req_cnt.fetch_add(1, Ordering::AcqRel);
         std::future::ready(())
     }
 
@@ -49,7 +52,6 @@ impl ExampleInterface for ExampleServer {
         &self,
         _peer: datadog_ipc::PeerCredentials,
     ) -> impl std::future::Future<Output = ()> + Send + '_ {
-        self.req_cnt.fetch_add(1, Ordering::AcqRel);
         std::future::ready(())
     }
 
@@ -57,7 +59,6 @@ impl ExampleInterface for ExampleServer {
         &self,
         _peer: datadog_ipc::PeerCredentials,
     ) -> impl std::future::Future<Output = Duration> + Send + '_ {
-        self.req_cnt.fetch_add(1, Ordering::AcqRel);
         std::future::ready(Instant::now().elapsed())
     }
 
@@ -65,7 +66,7 @@ impl ExampleInterface for ExampleServer {
         &self,
         _peer: datadog_ipc::PeerCredentials,
     ) -> impl std::future::Future<Output = u32> + Send + '_ {
-        std::future::ready(self.req_cnt.fetch_add(1, Ordering::AcqRel))
+        std::future::ready(self.req_cnt.load(Ordering::Relaxed) as u32)
     }
 
     fn store_file(
@@ -73,7 +74,6 @@ impl ExampleInterface for ExampleServer {
         _peer: datadog_ipc::PeerCredentials,
         file: PlatformHandle<File>,
     ) -> impl std::future::Future<Output = ()> + Send + '_ {
-        self.req_cnt.fetch_add(1, Ordering::AcqRel);
         #[allow(clippy::unwrap_used)]
         self.stored_files.lock().unwrap().push(file);
         std::future::ready(())

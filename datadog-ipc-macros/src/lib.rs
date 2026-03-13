@@ -255,6 +255,10 @@ fn gen_handler_trait(
 
     quote! {
         #vis trait #trait_name: Send + Sync + 'static {
+            /// Returns the counter incremented on each received IPC message.
+            /// The serve loop uses this to track received payloads.
+            fn recv_counter(&self) -> &::std::sync::atomic::AtomicU64;
+
             #(#handler_methods)*
         }
     }
@@ -315,7 +319,6 @@ fn gen_serve_fn(
                     return;
                 }
             };
-            let mut recv_counter: u64 = 0;
             let mut buf = vec![0u8; datadog_ipc::max_message_size() + datadog_ipc::HANDLE_SUFFIX_SIZE];
             loop {
                 let (n, fds) = match datadog_ipc::recv_raw_async(&async_fd, &mut buf).await {
@@ -339,7 +342,7 @@ fn gen_serve_fn(
                     ::tracing::warn!("IPC serve: failed to receive handles");
                     break;
                 }
-                recv_counter += 1;
+                let recv_counter = handler.recv_counter().fetch_add(1, ::std::sync::atomic::Ordering::Relaxed) + 1;
                 ::tracing::trace!(recv_counter, discriminant, pid = peer.pid, "IPC recv");
 
                 match req {

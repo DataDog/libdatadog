@@ -885,6 +885,10 @@ impl SidecarServer {
 }
 
 impl SidecarInterface for ConnectionSidecarHandler {
+    fn recv_counter(&self) -> &AtomicU64 {
+        &self.server.submitted_payloads
+    }
+
     async fn enqueue_actions(
         &self,
         _peer: PeerCredentials,
@@ -892,9 +896,6 @@ impl SidecarInterface for ConnectionSidecarHandler {
         queue_id: QueueId,
         actions: Vec<SidecarAction>,
     ) {
-        self.server
-            .submitted_payloads
-            .fetch_add(1, Ordering::Relaxed);
         self.track_instance(&instance_id);
         let metrics_registrations = self.metric_registrations.lock_or_panic().clone();
         self.server
@@ -907,9 +908,6 @@ impl SidecarInterface for ConnectionSidecarHandler {
         instance_id: InstanceId,
         queue_id: QueueId,
     ) {
-        self.server
-            .submitted_payloads
-            .fetch_add(1, Ordering::Relaxed);
         self.track_instance(&instance_id);
         let rt_info = self.server.get_runtime(&instance_id);
         let mut applications = rt_info.lock_applications();
@@ -924,9 +922,6 @@ impl SidecarInterface for ConnectionSidecarHandler {
         _peer: PeerCredentials,
         metric: MetricContext,
     ) {
-        self.server
-            .submitted_payloads
-            .fetch_add(1, Ordering::Relaxed);
         self.metric_registrations
             .lock_or_panic()
             .entry(metric.name.clone())
@@ -941,9 +936,6 @@ impl SidecarInterface for ConnectionSidecarHandler {
         config: SessionConfig,
         is_fork: bool,
     ) {
-        self.server
-            .submitted_payloads
-            .fetch_add(1, Ordering::Relaxed);
         self.track_session(&session_id);
         self.server
             .set_session_config_impl(
@@ -963,26 +955,17 @@ impl SidecarInterface for ConnectionSidecarHandler {
         session_id: String,
         process_tags: String,
     ) {
-        self.server
-            .submitted_payloads
-            .fetch_add(1, Ordering::Relaxed);
         self.track_session(&session_id);
         self.server
             .set_session_process_tags_impl(session_id, process_tags);
     }
 
     async fn shutdown_runtime(&self, _peer: PeerCredentials, instance_id: InstanceId) {
-        self.server
-            .submitted_payloads
-            .fetch_add(1, Ordering::Relaxed);
         self.track_instance(&instance_id);
         self.server.shutdown_runtime_impl(instance_id);
     }
 
     async fn shutdown_session(&self, _peer: PeerCredentials, session_id: String) {
-        self.server
-            .submitted_payloads
-            .fetch_add(1, Ordering::Relaxed);
         self.track_session(&session_id);
         self.server.shutdown_session_impl(session_id);
     }
@@ -995,9 +978,6 @@ impl SidecarInterface for ConnectionSidecarHandler {
         len: usize,
         headers: SerializedTracerHeaderTags,
     ) {
-        self.server
-            .submitted_payloads
-            .fetch_add(1, Ordering::Relaxed);
         self.track_instance(&instance_id);
         self.server
             .send_trace_v04_shm_impl(instance_id, handle, len, headers);
@@ -1010,9 +990,6 @@ impl SidecarInterface for ConnectionSidecarHandler {
         data: Vec<u8>,
         headers: SerializedTracerHeaderTags,
     ) {
-        self.server
-            .submitted_payloads
-            .fetch_add(1, Ordering::Relaxed);
         self.track_instance(&instance_id);
         self.server
             .send_trace_v04_bytes_impl(instance_id, data, headers);
@@ -1026,9 +1003,6 @@ impl SidecarInterface for ConnectionSidecarHandler {
         handle: ShmHandle,
         debugger_type: DebuggerType,
     ) {
-        self.server
-            .submitted_payloads
-            .fetch_add(1, Ordering::Relaxed);
         self.track_instance(&instance_id);
         self.server
             .send_debugger_data_shm_impl(instance_id, queue_id, handle, debugger_type);
@@ -1041,9 +1015,6 @@ impl SidecarInterface for ConnectionSidecarHandler {
         queue_id: QueueId,
         diagnostics_payload: Vec<u8>,
     ) {
-        self.server
-            .submitted_payloads
-            .fetch_add(1, Ordering::Relaxed);
         self.track_instance(&instance_id);
         self.server
             .send_debugger_diagnostics_impl(instance_id, queue_id, diagnostics_payload);
@@ -1055,9 +1026,6 @@ impl SidecarInterface for ConnectionSidecarHandler {
         exception_hash: u64,
         granularity: Duration,
     ) {
-        self.server
-            .submitted_payloads
-            .fetch_add(1, Ordering::Relaxed);
         self.server
             .acquire_exception_hash_rate_limiter_impl(exception_hash, granularity);
     }
@@ -1073,9 +1041,6 @@ impl SidecarInterface for ConnectionSidecarHandler {
         global_tags: Vec<Tag>,
         dynamic_instrumentation_state: DynamicInstrumentationConfigState,
     ) {
-        self.server
-            .submitted_payloads
-            .fetch_add(1, Ordering::Relaxed);
         self.track_instance(&instance_id);
         self.server.set_universal_service_tags_impl(
             instance_id,
@@ -1095,9 +1060,6 @@ impl SidecarInterface for ConnectionSidecarHandler {
         queue_id: QueueId,
         dynamic_instrumentation_state: DynamicInstrumentationConfigState,
     ) {
-        self.server
-            .submitted_payloads
-            .fetch_add(1, Ordering::Relaxed);
         self.track_instance(&instance_id);
         self.server
             .set_request_config_impl(instance_id, queue_id, dynamic_instrumentation_state);
@@ -1109,18 +1071,12 @@ impl SidecarInterface for ConnectionSidecarHandler {
         instance_id: InstanceId,
         actions: Vec<DogStatsDActionOwned>,
     ) {
-        self.server
-            .submitted_payloads
-            .fetch_add(1, Ordering::Relaxed);
         self.track_instance(&instance_id);
         self.server
             .send_dogstatsd_actions_impl(instance_id, actions);
     }
 
     async fn flush_traces(&self, _peer: PeerCredentials) {
-        self.server
-            .submitted_payloads
-            .fetch_add(1, Ordering::Relaxed);
         self.server.flush_traces_impl().await;
     }
 
@@ -1130,30 +1086,17 @@ impl SidecarInterface for ConnectionSidecarHandler {
         session_id: String,
         token: String,
     ) {
-        self.server
-            .submitted_payloads
-            .fetch_add(1, Ordering::Relaxed);
         self.track_session(&session_id);
         self.server.set_test_session_token_impl(session_id, token);
     }
 
-    async fn ping(&self, _peer: PeerCredentials) {
-        self.server
-            .submitted_payloads
-            .fetch_add(1, Ordering::Relaxed);
-    }
+    async fn ping(&self, _peer: PeerCredentials) {}
 
     async fn dump(&self, _peer: PeerCredentials) -> String {
-        self.server
-            .submitted_payloads
-            .fetch_add(1, Ordering::Relaxed);
         self.server.dump_impl().await
     }
 
     async fn stats(&self, _peer: PeerCredentials) -> String {
-        self.server
-            .submitted_payloads
-            .fetch_add(1, Ordering::Relaxed);
         self.server.stats_impl().await
     }
 }
