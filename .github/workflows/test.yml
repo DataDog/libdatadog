@@ -257,6 +257,8 @@ jobs:
 
   cross-centos7:
     name: Test x86_64-unknown-linux-gnu on centOS7 docker image
+    needs: setup
+    if: needs.setup.outputs.packages-count != '0'
     runs-on: ubuntu-latest
     env:
       PACKAGES: ${{ needs.setup.outputs.packages }}
