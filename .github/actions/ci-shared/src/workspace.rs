@@ -9,7 +9,6 @@ use std::collections::{HashMap, HashSet, VecDeque};
 /// Parsed workspace metadata with reverse-dependency index.
 pub struct WorkspaceMetadata {
     packages: Vec<Package>,
-    /// Maps each crate name to the list of workspace crates that depend on it.
     reverse_deps: HashMap<String, Vec<String>>,
     workspace_root: Utf8PathBuf,
 }
@@ -105,8 +104,6 @@ mod tests {
         s.iter().map(|s| s.to_string()).collect()
     }
 
-    // --- affected_from ---
-
     #[test]
     fn affected_from_empty_seeds_returns_empty() {
         let meta = make_meta(&[]);
@@ -170,8 +167,6 @@ mod tests {
             set(&["not-in-workspace"])
         );
     }
-
-    // --- load() integration ---
 
     #[test]
     fn load_returns_non_empty_workspace() {

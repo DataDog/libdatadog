@@ -10,6 +10,7 @@ publish = false
 
 [dependencies]
 anyhow = "1.0"
+cargo_metadata = "0.23.1"
 log = "0.4"
 toml = "0.8"
 serde = { version = "1", features = ["derive"] }

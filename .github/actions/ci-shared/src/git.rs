@@ -4,7 +4,6 @@
 use anyhow::{bail, Context, Result};
 use std::process::Command;
 
-/// Run `git fetch --depth=1 origin <base_ref>` to ensure the base ref is available locally.
 pub fn fetch_base(base_ref: &str) -> Result<()> {
     log::info!("Fetching base branch: {base_ref}");
 
@@ -18,16 +17,12 @@ pub fn fetch_base(base_ref: &str) -> Result<()> {
         .context("Failed to run git fetch")?;
 
     if !status.success() {
-        // Non-fatal: warn but do not abort (mirrors `|| true` in the bash version)
         log::warn!("git fetch for {base_ref} returned non-zero exit code; continuing");
     }
 
     Ok(())
 }
 
-/// Return the list of files changed between `origin/<base_ref>...HEAD` (three-dot diff).
-///
-/// Uses `git diff --name-only origin/<base_ref>...HEAD`.
 pub fn changed_files(base_ref: &str) -> Result<Vec<String>> {
     let output = Command::new("git")
         .args(["diff", "--name-only", &format!("origin/{base_ref}...HEAD")])
