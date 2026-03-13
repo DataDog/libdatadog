@@ -8,6 +8,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#define MAX_FILE_PATH   512
 #define INIT_FROM_SLICE(s)                                                                         \
   { .ptr = s.ptr, .len = s.len }
 
@@ -51,10 +52,10 @@ int main(int argc, char **argv) {
   }
 
   // Build output file paths
-  char report_path[512];
-  char stderr_path[512];
-  char stdout_path[512];
-  snprintf(report_path, sizeof(report_path), "%s/crashreport.json", output_dir);
+  char report_path[MAX_FILE_PATH];
+  char stderr_path[MAX_FILE_PATH];
+  char stdout_path[MAX_FILE_PATH];
+  snprintf(report_path, sizeof(report_path), "file://%s/crashreport.json", output_dir);
   snprintf(stderr_path, sizeof(stderr_path), "%s/stderr.txt", output_dir);
   snprintf(stdout_path, sizeof(stdout_path), "%s/stdout.txt", output_dir);
 
@@ -82,13 +83,11 @@ int main(int argc, char **argv) {
       .optional_stdout_filename = slice(stdout_path),
   };
 
-  struct ddog_Endpoint *endpoint = ddog_endpoint_from_filename(slice(report_path));
-
   // Get the default signals and explicitly use them.
   struct ddog_crasht_Slice_CInt signals = ddog_crasht_default_signals();
   ddog_crasht_Config config = {
       .create_alt_stack = false,
-      .endpoint = endpoint,
+      .endpoint = slice(report_path),
       .resolve_frames = DDOG_CRASHT_STACKTRACE_COLLECTION_ENABLED_WITH_INPROCESS_SYMBOLS,
       .signals = INIT_FROM_SLICE(signals),
   };
@@ -101,7 +100,6 @@ int main(int argc, char **argv) {
   };
 
   handle_result(ddog_crasht_init(config, receiver_config, metadata));
-  ddog_endpoint_drop(endpoint);
 
   handle_result(ddog_crasht_begin_op(DDOG_CRASHT_OP_TYPES_PROFILER_COLLECTING_SAMPLE));
   handle_uintptr_t_result(ddog_crasht_insert_span_id(0, 42));

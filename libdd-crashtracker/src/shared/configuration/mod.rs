@@ -1,6 +1,8 @@
 // Copyright 2023-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
-use crate::{default_signals, shared::constants, signal_from_signum};
+//
+mod builder;
+pub use builder::CrashtrackerConfigurationBuilder;
 use libdd_common::Endpoint;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
@@ -11,8 +13,9 @@ use std::time::Duration;
 /// We recommend fully enabling stacktrace collection, but having an environment
 /// variable to allow downgrading the collector.
 #[repr(C)]
-#[derive(Debug, Copy, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum StacktraceCollection {
+    #[default]
     Disabled,
     WithoutSymbols,
     /// This option uses `backtrace::resolve_frame_unsynchronized()` to gather symbol information
@@ -73,54 +76,8 @@ impl CrashtrackerReceiverConfig {
 }
 
 impl CrashtrackerConfiguration {
-    #[allow(clippy::too_many_arguments)]
-    pub fn new(
-        additional_files: Vec<String>,
-        create_alt_stack: bool,
-        use_alt_stack: bool,
-        endpoint: Option<Endpoint>,
-        resolve_frames: StacktraceCollection,
-        mut signals: Vec<i32>,
-        timeout: Option<Duration>,
-        unix_socket_path: Option<String>,
-        demangle_names: bool,
-    ) -> anyhow::Result<Self> {
-        // Requesting to create, but not use, the altstack is considered paradoxical.
-        anyhow::ensure!(
-            !create_alt_stack || use_alt_stack,
-            "Cannot create an altstack without using it"
-        );
-        let timeout = timeout.unwrap_or(constants::DD_CRASHTRACK_DEFAULT_TIMEOUT);
-        if signals.is_empty() {
-            signals = default_signals();
-        } else {
-            // Ensure we don't have double elements in the signals list.
-            let before_len = signals.len();
-            signals.sort();
-            signals.dedup();
-            anyhow::ensure!(
-                before_len == signals.len(),
-                "Signals contained duplicate elements"
-            );
-            // Ensure that all signal values translate to a valid signum
-            signals
-                .iter()
-                .try_for_each(|x| signal_from_signum(*x).map(|_| ()))?;
-        }
-
-        // Note:  don't check the receiver socket upfront, since a configuration can be interned
-        // before the receiver is started when using an async-receiver.
-        Ok(Self {
-            additional_files,
-            create_alt_stack,
-            use_alt_stack,
-            endpoint,
-            resolve_frames,
-            signals,
-            timeout,
-            unix_socket_path,
-            demangle_names,
-        })
+    pub fn builder() -> CrashtrackerConfigurationBuilder {
+        CrashtrackerConfigurationBuilder::default()
     }
 
     pub fn additional_files(&self) -> &Vec<String> {
@@ -135,7 +92,7 @@ impl CrashtrackerConfiguration {
         self.use_alt_stack
     }
 
-    pub fn endpoint(&self) -> &Option<Endpoint> {
+    pub(crate) fn endpoint(&self) -> &Option<Endpoint> {
         &self.endpoint
     }
 

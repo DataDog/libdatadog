@@ -22,7 +22,7 @@ mod unix {
     use std::process;
     use std::time::Duration;
 
-    use libdd_common::{tag, Endpoint};
+    use libdd_common::tag;
     use libdd_crashtracker::{
         self as crashtracker, CrashtrackerConfiguration, CrashtrackerReceiverConfig, Metadata,
         StackFrame, StackTrace,
@@ -73,12 +73,6 @@ mod unix {
         let stdout_filename = format!("{output_dir}/out.stdout");
         let output_dir: &Path = output_dir.as_ref();
 
-        let endpoint = if output_url.is_empty() {
-            None
-        } else {
-            Some(Endpoint::from_slice(output_url))
-        };
-
         // The configuration can be modified by a Behavior (testing plan), so it is mut here.
         // Unlike a normal harness, in this harness tests are run in individual processes, so race
         // issues are avoided.
@@ -97,17 +91,16 @@ mod unix {
             Err(_) => crashtracker::StacktraceCollection::WithoutSymbols,
         };
 
-        let mut config = CrashtrackerConfiguration::new(
-            vec![],
-            true,
-            true,
-            endpoint,
-            stacktrace_collection,
-            crashtracker::default_signals(),
-            Some(TEST_COLLECTOR_TIMEOUT),
-            Some("".to_string()),
-            true,
-        )?;
+        let mut config = CrashtrackerConfiguration::builder()
+            .create_alt_stack(true)
+            .demangle_names(true)
+            .endpoint_url(output_url)
+            .resolve_frames(stacktrace_collection)
+            .signals(crashtracker::default_signals())
+            .timeout(TEST_COLLECTOR_TIMEOUT)
+            .unix_socket_path("".to_string())
+            .use_alt_stack(true)
+            .build()?;
 
         let metadata = Metadata {
             library_name: "libdatadog".to_owned(),
