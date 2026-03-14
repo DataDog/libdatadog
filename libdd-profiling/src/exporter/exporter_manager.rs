@@ -3,65 +3,194 @@
 
 use super::ProfileExporter;
 use crate::{exporter::File, internal::EncodedProfile};
-use anyhow::Context;
-use crossbeam_channel::{Receiver, Sender};
 use libdd_common::tag::Tag;
 use reqwest::RequestBuilder;
-use std::sync::Arc;
 use std::thread::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
-/// TSAN annotations for crossbeam-channel synchronization.
+/// A bounded SPMC channel backed by `pthread_mutex_t`/`pthread_cond_t`.
 ///
-/// When C++ tests are compiled with `-fsanitize=thread` but the Rust library is
-/// not, TSAN cannot see the atomic synchronization inside crossbeam-channel.
-/// These annotations tell TSAN about the happens-before relationship between
-/// channel send and receive operations via `__tsan_release`/`__tsan_acquire`.
-mod tsan {
-    use std::ffi::c_void;
-    use std::sync::OnceLock;
+/// TSAN intercepts pthread synchronization primitives at the dynamic-linker
+/// level, so all data accesses guarded by this mutex are properly visible to
+/// TSAN even from uninstrumented Rust code. This avoids the false-positive
+/// data-race reports that occur with crossbeam-channel whose internal atomics
+/// are invisible to TSAN when the Rust library is not compiled with
+/// `-Z sanitizer=thread`.
+mod pthread_channel {
+    use std::cell::UnsafeCell;
+    use std::collections::VecDeque;
+    use std::fmt;
+    use std::sync::Arc;
 
-    type TsanAnnotateFn = unsafe extern "C" fn(*mut c_void);
-
-    struct TsanFunctions {
-        acquire: Option<TsanAnnotateFn>,
-        release: Option<TsanAnnotateFn>,
+    struct Inner<T> {
+        mutex: UnsafeCell<libc::pthread_mutex_t>,
+        not_empty: UnsafeCell<libc::pthread_cond_t>,
+        queue: UnsafeCell<VecDeque<T>>,
+        capacity: usize,
+        closed: UnsafeCell<bool>,
     }
 
-    static FUNCTIONS: OnceLock<TsanFunctions> = OnceLock::new();
+    unsafe impl<T: Send> Send for Inner<T> {}
+    unsafe impl<T: Send> Sync for Inner<T> {}
 
-    fn get() -> &'static TsanFunctions {
-        FUNCTIONS.get_or_init(|| unsafe {
-            let acquire =
-                libc::dlsym(libc::RTLD_DEFAULT, b"__tsan_acquire\0".as_ptr().cast());
-            let release =
-                libc::dlsym(libc::RTLD_DEFAULT, b"__tsan_release\0".as_ptr().cast());
-            TsanFunctions {
-                acquire: if acquire.is_null() {
-                    None
-                } else {
-                    Some(std::mem::transmute(acquire))
-                },
-                release: if release.is_null() {
-                    None
-                } else {
-                    Some(std::mem::transmute(release))
-                },
-            }
-        })
-    }
+    impl<T> Inner<T> {
+        fn lock(&self) {
+            unsafe { libc::pthread_mutex_lock(self.mutex.get()) };
+        }
 
-    /// Signal that data associated with `addr` has been published (sender side).
-    pub fn release(addr: *const u8) {
-        if let Some(f) = get().release {
-            unsafe { f(addr as *mut c_void) };
+        fn unlock(&self) {
+            unsafe { libc::pthread_mutex_unlock(self.mutex.get()) };
         }
     }
 
-    /// Signal that data associated with `addr` has been consumed (receiver side).
-    pub fn acquire(addr: *const u8) {
-        if let Some(f) = get().acquire {
-            unsafe { f(addr as *mut c_void) };
+    impl<T> Drop for Inner<T> {
+        fn drop(&mut self) {
+            unsafe {
+                libc::pthread_cond_destroy(self.not_empty.get());
+                libc::pthread_mutex_destroy(self.mutex.get());
+            }
+        }
+    }
+
+    pub struct Sender<T> {
+        inner: Arc<Inner<T>>,
+    }
+
+    pub struct Receiver<T> {
+        inner: Arc<Inner<T>>,
+    }
+
+    impl<T> Clone for Receiver<T> {
+        fn clone(&self) -> Self {
+            Self {
+                inner: Arc::clone(&self.inner),
+            }
+        }
+    }
+
+    impl<T: fmt::Debug> fmt::Debug for Sender<T> {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            f.debug_struct("Sender").finish_non_exhaustive()
+        }
+    }
+
+    impl<T: fmt::Debug> fmt::Debug for Receiver<T> {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            f.debug_struct("Receiver").finish_non_exhaustive()
+        }
+    }
+
+    #[derive(Debug)]
+    pub enum TrySendError<T> {
+        Full(T),
+        Disconnected(T),
+    }
+
+    impl<T> fmt::Display for TrySendError<T> {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            match self {
+                Self::Full(_) => write!(f, "channel is full"),
+                Self::Disconnected(_) => write!(f, "channel is disconnected"),
+            }
+        }
+    }
+
+    impl<T: fmt::Debug> std::error::Error for TrySendError<T> {}
+
+    pub fn bounded<T>(capacity: usize) -> (Sender<T>, Receiver<T>) {
+        let inner = Arc::new(Inner {
+            mutex: UnsafeCell::new(libc::PTHREAD_MUTEX_INITIALIZER),
+            not_empty: UnsafeCell::new(libc::PTHREAD_COND_INITIALIZER),
+            queue: UnsafeCell::new(VecDeque::with_capacity(capacity)),
+            capacity,
+            closed: UnsafeCell::new(false),
+        });
+        unsafe {
+            libc::pthread_mutex_init(inner.mutex.get(), std::ptr::null());
+            libc::pthread_cond_init(inner.not_empty.get(), std::ptr::null());
+        }
+        (
+            Sender {
+                inner: Arc::clone(&inner),
+            },
+            Receiver { inner },
+        )
+    }
+
+    impl<T> Sender<T> {
+        pub fn try_send(&self, msg: T) -> Result<(), TrySendError<T>> {
+            self.inner.lock();
+            let result = unsafe {
+                if *self.inner.closed.get() {
+                    Err(TrySendError::Disconnected(msg))
+                } else {
+                    let queue = &mut *self.inner.queue.get();
+                    if queue.len() >= self.inner.capacity {
+                        Err(TrySendError::Full(msg))
+                    } else {
+                        queue.push_back(msg);
+                        libc::pthread_cond_signal(self.inner.not_empty.get());
+                        Ok(())
+                    }
+                }
+            };
+            self.inner.unlock();
+            result
+        }
+
+        pub fn send(&self, msg: T) -> Result<(), TrySendError<T>> {
+            self.try_send(msg)
+        }
+
+        /// Close the channel from the sender side, waking all waiting receivers.
+        pub fn close(&self) {
+            self.inner.lock();
+            unsafe {
+                *self.inner.closed.get() = true;
+                libc::pthread_cond_broadcast(self.inner.not_empty.get());
+            }
+            self.inner.unlock();
+        }
+    }
+
+    impl<T> Drop for Sender<T> {
+        fn drop(&mut self) {
+            self.close();
+        }
+    }
+
+    impl<T> Receiver<T> {
+        /// Block until a message is available or the channel is closed.
+        pub fn recv(&self) -> Result<T, ()> {
+            self.inner.lock();
+            let result = unsafe {
+                loop {
+                    let queue = &mut *self.inner.queue.get();
+                    if let Some(msg) = queue.pop_front() {
+                        break Ok(msg);
+                    }
+                    if *self.inner.closed.get() {
+                        break Err(());
+                    }
+                    libc::pthread_cond_wait(
+                        self.inner.not_empty.get(),
+                        self.inner.mutex.get(),
+                    );
+                }
+            };
+            self.inner.unlock();
+            result
+        }
+
+        /// Drain all currently buffered messages without blocking.
+        pub fn try_iter(&self) -> Vec<T> {
+            self.inner.lock();
+            let items = unsafe {
+                let queue = &mut *self.inner.queue.get();
+                queue.drain(..).collect()
+            };
+            self.inner.unlock();
+            items
         }
     }
 }
@@ -71,11 +200,9 @@ pub enum ExporterManager {
     Active {
         cancel: CancellationToken,
         exporter: ProfileExporter,
-        handle: JoinHandle<anyhow::Result<()>>,
-        sender: Sender<RequestBuilder>,
-        receiver: Receiver<RequestBuilder>,
-        /// Stable heap address used for TSAN release/acquire annotations.
-        tsan_sync: Arc<u8>,
+        handle: JoinHandle<()>,
+        sender: pthread_channel::Sender<RequestBuilder>,
+        receiver: pthread_channel::Receiver<RequestBuilder>,
     },
     Suspended {
         exporter: ProfileExporter,
@@ -88,22 +215,23 @@ pub enum ExporterManager {
 
 impl ExporterManager {
     pub fn new(exporter: ProfileExporter) -> anyhow::Result<Self> {
-        let (sender, receiver) = crossbeam_channel::bounded(2);
+        let (sender, receiver) = pthread_channel::bounded(2);
         let cancel = CancellationToken::new();
-        let tsan_sync = Arc::new(0u8);
-        let cloned_receiver: Receiver<RequestBuilder> = receiver.clone();
+        let cloned_receiver: pthread_channel::Receiver<RequestBuilder> = receiver.clone();
         let cloned_cancel = cancel.clone();
-        let cloned_tsan_sync = tsan_sync.clone();
         let handle = std::thread::spawn(move || {
-            let runtime = tokio::runtime::Builder::new_current_thread()
+            let Ok(runtime) = tokio::runtime::Builder::new_current_thread()
                 .enable_all()
-                .build()?;
+                .build()
+            else {
+                return;
+            };
+
             runtime.block_on(async {
                 loop {
                     let Ok(msg) = cloned_receiver.recv() else {
                         return;
                     };
-                    tsan::acquire(Arc::as_ptr(&cloned_tsan_sync));
                     if cloned_cancel
                         .run_until_cancelled(msg.send())
                         .await
@@ -111,10 +239,8 @@ impl ExporterManager {
                     {
                         return;
                     }
-                    // TODO: Add logging for failed uploads.
                 }
             });
-            Ok(())
         });
         Ok(Self::Active {
             cancel,
@@ -122,7 +248,6 @@ impl ExporterManager {
             handle,
             sender,
             receiver,
-            tsan_sync,
         })
     }
 
@@ -135,7 +260,6 @@ impl ExporterManager {
             handle,
             sender,
             receiver,
-            tsan_sync: _,
         } = old
         else {
             *self = old;
@@ -143,17 +267,13 @@ impl ExporterManager {
         };
 
         cancel.cancel();
-        let inflight: Vec<_> = receiver.try_iter().collect();
+        let inflight = receiver.try_iter();
         drop(sender);
 
         match handle.join() {
-            Ok(Ok(())) => {
+            Ok(()) => {
                 *self = Self::Suspended { exporter, inflight };
                 Ok(())
-            }
-            Ok(Err(e)) => {
-                *self = Self::Suspended { exporter, inflight };
-                Err(e).context("worker thread returned error")
             }
             Err(_) => {
                 *self = Self::Suspended { exporter, inflight };
@@ -195,7 +315,7 @@ impl ExporterManager {
         let new_manager = Self::new(exporter)?;
         if let Self::Active { ref sender, .. } = new_manager {
             for msg in inflight {
-                sender.send(msg)?;
+                sender.send(msg).map_err(|_| anyhow::anyhow!("channel closed"))?;
             }
         }
         *self = new_manager;
@@ -212,10 +332,7 @@ impl ExporterManager {
         process_tags: Option<&str>,
     ) -> anyhow::Result<()> {
         let Self::Active {
-            exporter,
-            sender,
-            tsan_sync,
-            ..
+            exporter, sender, ..
         } = self
         else {
             anyhow::bail!("Cannot queue on manager in state: {:?}", self);
@@ -229,15 +346,11 @@ impl ExporterManager {
             info,
             process_tags,
         )?;
-        // TODO, use thiserror and get back the actual error if one.
         sender.try_send(msg)?;
-        tsan::release(Arc::as_ptr(tsan_sync));
         Ok(())
     }
 
     /// Returns the number of inflight (unprocessed) requests
-    ///
-    /// This is primarily useful for testing and observability.
     #[cfg(test)]
     pub fn inflight_count(&self) -> usize {
         match self {
