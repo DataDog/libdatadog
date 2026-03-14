@@ -61,8 +61,8 @@ jobs:
         run: cargo build --workspace --exclude builder --verbose
       - name: "[${{ steps.rust-version.outputs.version}}] cargo nextest run --workspace --features libdd-crashtracker/generate-unit-test-files --exclude builder --profile ci --verbose -E '!test(tracing_integration_tests::)'"
         shell: bash
-        # Run doc tests with cargo test and run tests with nextest and generate junit.xml
-        run: cargo test --workspace --features libdd-crashtracker/generate-unit-test-files --exclude builder --doc --verbose && cargo nextest run --workspace --features libdd-crashtracker/generate-unit-test-files --exclude builder --profile ci --verbose -E '!test(tracing_integration_tests::)'
+        # Run tests with nextest and generate junit.xml
+        run: cargo nextest run --workspace --features libdd-crashtracker/generate-unit-test-files --exclude builder --profile ci --verbose -E '!test(tracing_integration_tests::)'
         env:
           RUST_BACKTRACE: full
       - name: "[${{ steps.rust-version.outputs.version}}] Tracing integration tests: cargo nextest run --workspace --features libdd-crashtracker/generate-unit-test-files --exclude builder --profile ci --test-threads=1 --verbose -E 'test(tracing_integration_tests::)'"

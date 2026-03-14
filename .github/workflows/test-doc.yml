@@ -1,0 +1,40 @@
+name: Test doc
+on: [push]
+env:
+  CARGO_TERM_COLOR: always
+  RUST_VERSION: 1.84.1
+
+jobs:
+  test-doc:
+    name: "[${{ matrix.rust_version }}] cargo test --doc"
+    runs-on: ubuntu-latest
+    permissions:
+      checks: write
+      contents: read
+    env:
+      CARGO_TERM_COLOR: always
+      CARGO_INCREMENTAL: 0
+    strategy:
+      matrix:
+        rust_version: ["${RUST_VERSION}", "stable"]
+      fail-fast: false
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # 4.2.2
+      - name: Install Rust ${{ matrix.rust_version }}
+        run: rustup install ${{ matrix.rust_version }} && rustup default ${{ matrix.rust_version }}
+      - name: Cache [rust]
+        uses: Swatinem/rust-cache@f13886b937689c021905a6b90929199931d60db1 # 2.8.1
+        with:
+          cache-targets: true
+          cache-bin: true
+      - id: rust-version
+        run: bash -c 'echo "version=$(rustc --version)" >> $GITHUB_OUTPUT'
+      - name: "[${{ steps.rust-version.outputs.version }}] cargo build --workspace --exclude builder --verbose"
+        shell: bash
+        run: cargo build --workspace --exclude builder --verbose
+      - name: "[${{ steps.rust-version.outputs.version }}] cargo test --doc"
+        shell: bash
+        run: cargo test --workspace --features libdd-crashtracker/generate-unit-test-files --exclude builder --doc --verbose
+        env:
+          RUST_BACKTRACE: full
