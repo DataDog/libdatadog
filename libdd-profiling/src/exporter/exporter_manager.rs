@@ -7,8 +7,64 @@ use anyhow::Context;
 use crossbeam_channel::{Receiver, Sender};
 use libdd_common::tag::Tag;
 use reqwest::RequestBuilder;
+use std::sync::Arc;
 use std::thread::JoinHandle;
 use tokio_util::sync::CancellationToken;
+
+/// TSAN annotations for crossbeam-channel synchronization.
+///
+/// When C++ tests are compiled with `-fsanitize=thread` but the Rust library is
+/// not, TSAN cannot see the atomic synchronization inside crossbeam-channel.
+/// These annotations tell TSAN about the happens-before relationship between
+/// channel send and receive operations via `__tsan_release`/`__tsan_acquire`.
+mod tsan {
+    use std::ffi::c_void;
+    use std::sync::OnceLock;
+
+    type TsanAnnotateFn = unsafe extern "C" fn(*mut c_void);
+
+    struct TsanFunctions {
+        acquire: Option<TsanAnnotateFn>,
+        release: Option<TsanAnnotateFn>,
+    }
+
+    static FUNCTIONS: OnceLock<TsanFunctions> = OnceLock::new();
+
+    fn get() -> &'static TsanFunctions {
+        FUNCTIONS.get_or_init(|| unsafe {
+            let acquire =
+                libc::dlsym(libc::RTLD_DEFAULT, b"__tsan_acquire\0".as_ptr().cast());
+            let release =
+                libc::dlsym(libc::RTLD_DEFAULT, b"__tsan_release\0".as_ptr().cast());
+            TsanFunctions {
+                acquire: if acquire.is_null() {
+                    None
+                } else {
+                    Some(std::mem::transmute(acquire))
+                },
+                release: if release.is_null() {
+                    None
+                } else {
+                    Some(std::mem::transmute(release))
+                },
+            }
+        })
+    }
+
+    /// Signal that data associated with `addr` has been published (sender side).
+    pub fn release(addr: *const u8) {
+        if let Some(f) = get().release {
+            unsafe { f(addr as *mut c_void) };
+        }
+    }
+
+    /// Signal that data associated with `addr` has been consumed (receiver side).
+    pub fn acquire(addr: *const u8) {
+        if let Some(f) = get().acquire {
+            unsafe { f(addr as *mut c_void) };
+        }
+    }
+}
 
 #[derive(Debug)]
 pub enum ExporterManager {
@@ -18,6 +74,8 @@ pub enum ExporterManager {
         handle: JoinHandle<anyhow::Result<()>>,
         sender: Sender<RequestBuilder>,
         receiver: Receiver<RequestBuilder>,
+        /// Stable heap address used for TSAN release/acquire annotations.
+        tsan_sync: Arc<u8>,
     },
     Suspended {
         exporter: ProfileExporter,
@@ -32,8 +90,10 @@ impl ExporterManager {
     pub fn new(exporter: ProfileExporter) -> anyhow::Result<Self> {
         let (sender, receiver) = crossbeam_channel::bounded(2);
         let cancel = CancellationToken::new();
+        let tsan_sync = Arc::new(0u8);
         let cloned_receiver: Receiver<RequestBuilder> = receiver.clone();
         let cloned_cancel = cancel.clone();
+        let cloned_tsan_sync = tsan_sync.clone();
         let handle = std::thread::spawn(move || {
             let runtime = tokio::runtime::Builder::new_current_thread()
                 .enable_all()
@@ -43,6 +103,7 @@ impl ExporterManager {
                     let Ok(msg) = cloned_receiver.recv() else {
                         return;
                     };
+                    tsan::acquire(Arc::as_ptr(&cloned_tsan_sync));
                     if cloned_cancel
                         .run_until_cancelled(msg.send())
                         .await
@@ -61,6 +122,7 @@ impl ExporterManager {
             handle,
             sender,
             receiver,
+            tsan_sync,
         })
     }
 
@@ -73,6 +135,7 @@ impl ExporterManager {
             handle,
             sender,
             receiver,
+            tsan_sync: _,
         } = old
         else {
             *self = old;
@@ -149,7 +212,10 @@ impl ExporterManager {
         process_tags: Option<&str>,
     ) -> anyhow::Result<()> {
         let Self::Active {
-            exporter, sender, ..
+            exporter,
+            sender,
+            tsan_sync,
+            ..
         } = self
         else {
             anyhow::bail!("Cannot queue on manager in state: {:?}", self);
@@ -165,6 +231,7 @@ impl ExporterManager {
         )?;
         // TODO, use thiserror and get back the actual error if one.
         sender.try_send(msg)?;
+        tsan::release(Arc::as_ptr(tsan_sync));
         Ok(())
     }
 

@@ -3227,6 +3227,7 @@ dependencies = [
  "http-body-util",
  "httparse",
  "indexmap 2.12.1",
+ "libc",
  "libdd-alloc",
  "libdd-common",
  "libdd-profiling",
