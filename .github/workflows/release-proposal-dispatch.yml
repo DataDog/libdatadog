@@ -399,6 +399,79 @@ jobs:
           echo "API changes summary:"
           jq . /tmp/api-changes.json
 
+      - name: Check dependents crates for major changes
+        run: |
+          BRANCH_NAME="${{ steps.proposal-branch.outputs.branch_name }}"
+
+          METADATA=$(cargo metadata --format-version=1 --no-deps)
+          WORKSPACE_ROOT=$(echo "$METADATA" | jq -r '.workspace_root' || pwd)
+
+          echo "[]" > /tmp/dependents-changes.json
+
+          # iterate /tmp/api-changes.json and check if the level is major, if so, check the dependents
+          jq -c '.[]' /tmp/api-changes.json | while read -r crate; do
+            LEVEL=$(echo "$crate" | jq -r '.level')
+            NAME=$(echo "$crate" | jq -r '.name')
+            if [ "$LEVEL" != "major" ]; then
+              continue
+            fi
+
+            echo "Major changes detected for $NAME, checking dependents..."
+            
+            # Packages that depend on $NAME (dependents), not packages $NAME depends on (dependencies)
+            # Exclude packages with publish = false (cargo metadata exposes that as .publish == [])
+            DEPENDENTS=$(echo "$METADATA" | jq -r --arg name "$NAME" '.packages[] | select(.name != $name) | select(.publish == null or (.publish | type == "array" and length > 0)) | select(any(.dependencies[]?; .name == $name))')
+            
+            for dependent in $DEPENDENTS; do
+              DEPENDENT_NAME=$(echo "$dependent" | jq -r '.name')
+              # if DEPENDENT is not in /tmp/api-changes.json, bump a patch release
+              if ! jq -e --arg name "$DEPENDENT_NAME" '.[] | select(.name == $name)' /tmp/api-changes.json > /dev/null; then
+                DEPENDENT_PREV_TAG="$DEPENDENT_NAME-v$(echo "$dependent" | jq -r '.version')"
+
+                # Find dependent crate path from cached metadata
+                DEPENDENT_PATH=$(echo "$METADATA" | \
+                    jq -r --arg name "$DEPENDENT_NAME" '.packages[] | select(.name == $name) | .manifest_path' | \
+                    sed 's|/Cargo.toml$||' | \
+                    sed "s|^$WORKSPACE_ROOT/||")
+
+                echo "Bumping $DEPENDENT_NAME (tag: $DEPENDENT_PREV_TAG) to patch release as it is a dependent of a major change of $NAME"
+
+                cargo release version -p "$DEPENDENT_NAME" --prev-tag-name "$DEPENDENT_PREV_TAG" --allow-branch "$BRANCH_NAME" -x patch --no-confirm
+                
+                # TODO: uncomment this when git cliff is fixed
+                # git cliff --from-context "$CLIFF_FILTERED_FILE" -u -v --prepend "$DEPENDENT_PATH/CHANGELOG.md"
+                # git add "$DEPENDENT_PATH/CHANGELOG.md"
+                
+                cargo release commit --no-confirm -x
+
+                DEPENDENT_NEXT_VERSION=$(cargo metadata --format-version=1 --no-deps | jq -r --arg name "$DEPENDENT_NAME" '.packages[] | select(.name == $name) | .version')
+                DEPENDENT_NEXT_TAG="$DEPENDENT_NAME-v$DEPENDENT_NEXT_VERSION"
+          
+                jq --arg name "$DEPENDENT_NAME" \
+                  --arg level "patch" \
+                  --arg tag "$DEPENDENT_NEXT_TAG" \
+                  --arg version "$DEPENDENT_NEXT_VERSION" \
+                  --arg initial_release "false" \
+                  '. += [{"name": $name, "level": $level, "tag": $tag, "version": $version, "initial_release": $initial_release}]' \
+                    /tmp/dependents-changes.json > /tmp/dependents-changes.tmp && mv /tmp/dependents-changes.tmp /tmp/dependents-changes.json
+
+                echo "Added $DEPENDENT_NAME to the release proposal as a patch release (tag: $DEPENDENT_NEXT_TAG)"
+              else
+                echo "Dependency $DEPENDENT_NAME is already in the release proposal"
+              fi
+            done
+
+            # merge /tmp/dependents-changes.json into /tmp/api-changes.json
+            jq --slurpfile dependents /tmp/dependents-changes.json \
+              '.[0] + $dependents[0]' \
+              /tmp/api-changes.json > /tmp/api-changes.tmp && mv /tmp/api-changes.tmp /tmp/api-changes.json
+
+            # Output the results
+            echo "API changes summary after adding dependents changes:"
+            jq . /tmp/api-changes.json
+            
+          done
+
       - name: Upload release data
         uses: actions/upload-artifact@v4
         with:
