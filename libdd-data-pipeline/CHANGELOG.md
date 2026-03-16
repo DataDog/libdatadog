@@ -1,6 +1,13 @@
 # Changelog
 
 
+## [2.0.1](https://github.com/datadog/libdatadog/compare/libdd-data-pipeline-v2.0.0..libdd-data-pipeline-v2.0.1) - 2026-03-16
+
+### Changed
+
+- Update dependencies ([#1734](https://github.com/DataDog/libdatadog/issues/1734)) - ([38dd71b](https://github.com/DataDog/libdatadog/commit/38dd71bd6fdac45ecab3d74ce1b4a827abae794a))
+
+
 
 ## [2.0.0](https://github.com/datadog/libdatadog/compare/libdd-data-pipeline-v1.0.0..libdd-data-pipeline-v2.0.0) - 2026-02-23
 
