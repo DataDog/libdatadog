@@ -9,7 +9,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use super::platform::PlatformHandle;
+use super::platform::{FileBackedHandle, PlatformHandle, ShmHandle};
 
 extern crate self as datadog_ipc;
 
@@ -21,6 +21,13 @@ pub trait ExampleInterface {
     async fn time_now() -> Duration;
     async fn req_cnt() -> u32;
     async fn store_file(#[SerializedHandle] file: PlatformHandle<File>);
+    /// Receives a shared memory handle, maps it, and returns the sum of the first `len` bytes.
+    /// Used to verify cross-process handle transfer (Windows DuplicateHandle / Unix SCM_RIGHTS).
+    async fn shm_sum(#[SerializedHandle] handle: ShmHandle, len: usize) -> u64;
+    /// Receives a byte payload and returns its length.
+    /// Used to verify that messages larger than mio's 4 KB internal read buffer are handled
+    /// correctly (no ERROR_MORE_DATA panic).
+    async fn echo_len(payload: Vec<u8>) -> u32;
 }
 
 #[derive(Default, Clone)]
@@ -29,7 +36,6 @@ pub struct ExampleServer {
     stored_files: Arc<Mutex<Vec<PlatformHandle<File>>>>,
 }
 
-#[cfg(unix)]
 impl ExampleServer {
     pub async fn accept_connection(self, conn: crate::SeqpacketConn) {
         serve_example_interface_connection(conn, Arc::new(self)).await
@@ -77,5 +83,27 @@ impl ExampleInterface for ExampleServer {
         #[allow(clippy::unwrap_used)]
         self.stored_files.lock().unwrap().push(file);
         std::future::ready(())
+    }
+
+    fn shm_sum(
+        &self,
+        _peer: datadog_ipc::PeerCredentials,
+        handle: ShmHandle,
+        len: usize,
+    ) -> impl std::future::Future<Output = u64> + Send + '_ {
+        async move {
+            match handle.map() {
+                Ok(mapped) => mapped.as_slice()[..len].iter().map(|&b| b as u64).sum(),
+                Err(_) => u64::MAX,
+            }
+        }
+    }
+
+    fn echo_len(
+        &self,
+        _peer: datadog_ipc::PeerCredentials,
+        payload: Vec<u8>,
+    ) -> impl std::future::Future<Output = u32> + Send + '_ {
+        std::future::ready(payload.len() as u32)
     }
 }

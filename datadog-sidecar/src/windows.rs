@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::enter_listener_loop;
-use datadog_ipc::platform::named_pipe_name_from_raw_handle;
 use datadog_ipc::{SeqpacketConn, SeqpacketListener};
 
 use futures::FutureExt;
@@ -14,16 +13,13 @@ use manual_future::ManualFuture;
 use spawn_worker::{write_crashtracking_trampoline, SpawnWorker, Stdio, TrampolineData};
 use std::ffi::CStr;
 use std::io::{self, Error};
-use std::os::windows::io::{AsRawHandle, FromRawHandle, IntoRawHandle, OwnedHandle};
+use std::os::windows::io::{FromRawHandle, IntoRawHandle, OwnedHandle};
 use std::ptr::null_mut;
 use std::sync::LazyLock;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
-use tokio::net::windows::named_pipe::{NamedPipeServer, ServerOptions};
 use tokio::select;
 use tracing::{error, info};
-use winapi::shared::minwindef::ULONG;
-use winapi::um::winbase::GetNamedPipeClientProcessId;
 use winapi::um::winnt::HANDLE;
 use winapi::{
     shared::{
@@ -95,35 +91,20 @@ async fn accept_socket_loop(
     cancellation: ManualFuture<()>,
     handler: Box<dyn Fn(SeqpacketConn)>,
 ) -> io::Result<()> {
-    // Wrap the first server instance as a Tokio NamedPipeServer for async connect polling.
-    // After each accepted connection we create a fresh Tokio server for the next client.
-    let name = named_pipe_name_from_raw_handle(listener.as_raw_handle())
-        .ok_or(io::Error::from(io::ErrorKind::InvalidInput))?;
-
-    // Transfer the listener's handle into a Tokio NamedPipeServer.
-    let mut pipe = unsafe { NamedPipeServer::from_raw_handle(listener.into_raw_handle()) }?;
-
+    // Use spawn_blocking + accept_blocking so the accepted handle has no pending overlapped
+    // I/O registered with mio/IOCP.  recv_raw_async/send_raw_async then use block_in_place
+    // with a caller-supplied large buffer, bypassing mio's 4 KB internal ReadFile buffer
+    // (which would cause ERROR_MORE_DATA → unreachable!() panic for larger messages).
+    let listener = Arc::new(listener);
     let cancellation = cancellation.shared();
     loop {
+        let listener_clone = Arc::clone(&listener);
         select! {
             _ = cancellation.clone() => break,
-            result = pipe.connect() => result?,
+            result = tokio::task::spawn_blocking(move || listener_clone.accept_blocking()) => {
+                handler(result??);
+            }
         }
-        let connected_pipe = pipe;
-        pipe = ServerOptions::new()
-            .pipe_mode(tokio::net::windows::named_pipe::PipeMode::Message)
-            .create(&name)?;
-
-        // Convert the connected NamedPipeServer into a SeqpacketConn.
-        let raw = connected_pipe.as_raw_handle();
-        let mut client_pid: ULONG = 0;
-        unsafe { GetNamedPipeClientProcessId(raw as HANDLE, &mut client_pid) };
-        // Transfer ownership: forget the Tokio wrapper (which doesn't implement IntoRawHandle)
-        // and take the handle ourselves.
-        std::mem::forget(connected_pipe);
-        let owned = unsafe { OwnedHandle::from_raw_handle(raw) };
-        let conn = SeqpacketConn::from_server_handle(owned, client_pid);
-        handler(conn);
     }
     Ok(())
 }

@@ -31,7 +31,6 @@ use std::sync::{
     atomic::{AtomicU64, AtomicUsize, Ordering},
     Mutex,
 };
-use tokio::net::windows::named_pipe::{NamedPipeClient, NamedPipeServer};
 
 // winapi – only used for things not cleanly available in windows-sys
 use winapi::shared::minwindef::ULONG;
@@ -286,8 +285,9 @@ fn make_overlapped(event: SysHANDLE) -> OVERLAPPED {
 /// A named-pipe server that accepts message-mode IPC connections.
 ///
 /// `try_accept` swaps the connected pipe instance for a fresh server instance so the listener
-/// remains ready for the next client.  Interior mutability (`Mutex`) allows `&self` in
-/// `try_accept`.
+/// remains ready for the next client.  `accept_blocking` does the same but blocks until a client
+/// connects (polling `try_accept` with a short sleep).  Interior mutability (`Mutex`) allows
+/// `&self` in both methods.
 pub struct SeqpacketListener {
     inner: Mutex<OwnedHandle>,
     name: Vec<u8>, // NUL-terminated ANSI pipe name, e.g. `\\.\\pipe\\…`
@@ -400,13 +400,50 @@ impl SeqpacketListener {
         // Swap: the connected handle goes to the SeqpacketConn; the fresh server replaces it.
         let conn_handle = std::mem::replace(&mut *guard, new_server);
 
+        // PID handshake: write our PID to the client so it can correctly DuplicateHandle into us.
+        //
+        // The named pipe creator is determined by who calls CreateNamedPipeA.  When PHP creates the
+        // listener and passes it to the sidecar, GetNamedPipeServerProcessId on the client side
+        // returns PHP's own PID — not the sidecar's — causing DuplicateHandle to target the wrong
+        // process.  This one-shot 4-byte message lets the client discover the actual acceptor PID
+        // before sending any handles.
+        let my_pid = unsafe { GetCurrentProcessId() };
+        let pid_bytes = my_pid.to_le_bytes();
+        let mut written: u32 = 0;
+        unsafe {
+            WriteFile(
+                conn_handle.as_raw_handle() as SysHANDLE,
+                pid_bytes.as_ptr() as _,
+                4,
+                &mut written,
+                null_mut(),
+            )
+        };
+
         Ok(SeqpacketConn {
-            inner: conn_handle,
+            handle: conn_handle,
             peer_pid: client_pid,
-            is_server: true,
             read_timeout: None,
             write_timeout: None,
         })
+    }
+
+    /// Block until a client connects and return the accepted connection.
+    ///
+    /// Polls `try_accept` in a loop with a short sleep so that callers running on a
+    /// `spawn_blocking` thread do not spin.  Because this does not go through Tokio's
+    /// IOCP reactor, the accepted handle is a raw synchronous handle with **no** pending
+    /// overlapped I/O — safe to use with `block_in_place` reads.
+    pub fn accept_blocking(&self) -> io::Result<SeqpacketConn> {
+        loop {
+            match self.try_accept() {
+                Ok(conn) => return Ok(conn),
+                Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
+                    std::thread::sleep(std::time::Duration::from_millis(10));
+                }
+                Err(e) => return Err(e),
+            }
+        }
     }
 
     pub fn as_raw_handle(&self) -> RawHandle {
@@ -434,11 +471,8 @@ impl IntoRawHandle for SeqpacketListener {
 
 /// A connected named pipe providing message-boundary-preserving IPC.
 pub struct SeqpacketConn {
-    pub(crate) inner: OwnedHandle,
+    handle: OwnedHandle,
     peer_pid: u32,
-    /// True for server-side handles (opened with `FILE_FLAG_OVERLAPPED` via `CreateNamedPipeA`);
-    /// these can be converted to a Tokio async pipe via `into_async_conn`.
-    is_server: bool,
     read_timeout: Option<std::time::Duration>,
     write_timeout: Option<std::time::Duration>,
 }
@@ -476,15 +510,37 @@ impl SeqpacketConn {
         let mode = PIPE_READMODE_MESSAGE;
         unsafe { SetNamedPipeHandleState(h as SysHANDLE, &mode, null(), null()) };
 
-        let inner = unsafe { OwnedHandle::from_raw_handle(h as RawHandle) };
-        let mut server_pid: ULONG = 0;
-        unsafe {
-            GetNamedPipeServerProcessId(inner.as_raw_handle() as HANDLE, &mut server_pid);
-        }
+        // PID handshake: read the 4-byte PID written by try_accept() so that we know the real
+        // acceptor PID, not the pipe-creator PID returned by GetNamedPipeServerProcessId.
+        //
+        // When PHP creates the listener and passes it to the sidecar, GetNamedPipeServerProcessId
+        // returns PHP's own PID.  Using that for DuplicateHandle silently duplicates handles back
+        // into PHP rather than into the sidecar, causing ERROR_INVALID_HANDLE on the sidecar side.
+        let mut pid_buf = [0u8; 4];
+        let mut read_bytes: u32 = 0;
+        let pid_ok = unsafe {
+            ReadFile(
+                h as SysHANDLE,
+                pid_buf.as_mut_ptr() as _,
+                4,
+                &mut read_bytes,
+                null_mut(),
+            )
+        };
+        let server_pid: ULONG = if pid_ok != 0 && read_bytes == 4 {
+            u32::from_le_bytes(pid_buf)
+        } else {
+            // Fallback: use GetNamedPipeServerProcessId (returns the creator's PID, which may be
+            // our own PID if we created the pipe and passed it to the sidecar).
+            let mut spid: ULONG = 0;
+            unsafe { GetNamedPipeServerProcessId(h as HANDLE, &mut spid) };
+            spid
+        };
+
+        let handle = unsafe { OwnedHandle::from_raw_handle(h as RawHandle) };
         Ok(Self {
-            inner,
+            handle,
             peer_pid: server_pid,
-            is_server: false,
             read_timeout: None,
             write_timeout: None,
         })
@@ -518,9 +574,8 @@ impl SeqpacketConn {
         }
 
         let server = Self {
-            inner: server_handle,
+            handle: server_handle,
             peer_pid: pid,
-            is_server: true,
             read_timeout: None,
             write_timeout: None,
         };
@@ -530,12 +585,15 @@ impl SeqpacketConn {
     /// Build a `SeqpacketConn` from a server-side pipe handle (after `ConnectNamedPipe`).
     pub fn from_server_handle(handle: OwnedHandle, client_pid: u32) -> Self {
         Self {
-            inner: handle,
+            handle,
             peer_pid: client_pid,
-            is_server: true,
             read_timeout: None,
             write_timeout: None,
         }
+    }
+
+    fn raw_handle(&self) -> SysHANDLE {
+        self.handle.as_raw_handle() as SysHANDLE
     }
 
     /// Retrieve the peer process's credentials (pid, uid).
@@ -557,7 +615,7 @@ impl SeqpacketConn {
             data.truncate(orig_len);
             return Err(e);
         }
-        let result = pipe_write(self.inner.as_raw_handle() as SysHANDLE, data, false);
+        let result = pipe_write(self.raw_handle(), data, false);
         data.truncate(orig_len);
         result
     }
@@ -569,7 +627,7 @@ impl SeqpacketConn {
             data.truncate(orig_len);
             return Err(e);
         }
-        let result = pipe_write(self.inner.as_raw_handle() as SysHANDLE, data, true);
+        let result = pipe_write(self.raw_handle(), data, true);
         data.truncate(orig_len);
         result
     }
@@ -578,18 +636,18 @@ impl SeqpacketConn {
     ///
     /// `buf` must be at least `payload_max + HANDLE_SUFFIX_SIZE` bytes.
     pub fn try_recv_raw(&self, buf: &mut [u8]) -> io::Result<(usize, Vec<OwnedHandle>)> {
-        pipe_read(self.inner.as_raw_handle() as SysHANDLE, buf, false)
+        pipe_read(self.raw_handle(), buf, false)
     }
 
     /// Blocking receive.
     ///
     /// `buf` must be at least `payload_max + HANDLE_SUFFIX_SIZE` bytes.
     pub fn recv_raw_blocking(&self, buf: &mut [u8]) -> io::Result<(usize, Vec<OwnedHandle>)> {
-        pipe_read(self.inner.as_raw_handle() as SysHANDLE, buf, true)
+        pipe_read(self.raw_handle(), buf, true)
     }
 
     pub fn as_raw_handle(&self) -> RawHandle {
-        self.inner.as_raw_handle()
+        self.raw_handle() as RawHandle
     }
 
     pub fn set_read_timeout(&mut self, d: Option<std::time::Duration>) -> io::Result<()> {
@@ -619,29 +677,18 @@ pub fn is_listening<P: AsRef<Path>>(path: P) -> io::Result<bool> {
     Ok(SeqpacketConn::connect(path).is_ok())
 }
 
-/// Internal: wraps either a `NamedPipeServer` or `NamedPipeClient` for dispatch.
-enum AsyncPipe {
-    Server(NamedPipeServer),
-    Client(NamedPipeClient),
-}
-
-macro_rules! async_pipe {
-    ($pipe:expr, $method:ident($($args:expr),*)$($trailing:tt)*) => {
-        match &$pipe {
-            AsyncPipe::Server(s) => s.$method($($args),*)$($trailing)*,
-            AsyncPipe::Client(c) => c.$method($($args),*)$($trailing)*,
-        }
-    };
-}
-
 /// Async connection type for Windows named-pipe IPC.
 ///
-/// Wraps a Tokio `NamedPipeServer` or `NamedPipeClient` registered with the IOCP reactor,
-/// enabling fully async recv/send without blocking any Tokio thread.
+/// Wraps a raw synchronous pipe handle; recv/send go through `block_in_place` +
+/// `ReadFile`/`WriteFile` with a caller-supplied large buffer, bypassing mio's
+/// 4 KB internal IOCP read buffer limit.
 pub struct AsyncSeqpacketConn {
-    inner: AsyncPipe,
+    handle: OwnedHandle,
     pub(crate) peer_pid: u32,
 }
+
+// SAFETY: the inner OwnedHandle is not shared.
+unsafe impl Send for AsyncSeqpacketConn {}
 
 impl AsyncSeqpacketConn {
     pub fn peer_credentials(&self) -> io::Result<PeerCredentials> {
@@ -656,20 +703,9 @@ pub type AsyncConn = AsyncSeqpacketConn;
 
 impl SeqpacketConn {
     /// Convert to an async connection for use in async server dispatch loops.
-    ///
-    /// Requires a running Tokio runtime with IOCP support.
-    /// Only works for server-side handles (created with `FILE_FLAG_OVERLAPPED` via
-    /// `CreateNamedPipeA`).  Client handles from `connect()` are synchronous and will
-    /// return an error.
     pub fn into_async_conn(self) -> io::Result<AsyncConn> {
-        let raw = self.inner.into_raw_handle();
-        let inner = if self.is_server {
-            AsyncPipe::Server(unsafe { NamedPipeServer::from_raw_handle(raw)? })
-        } else {
-            AsyncPipe::Client(unsafe { NamedPipeClient::from_raw_handle(raw)? })
-        };
         Ok(AsyncSeqpacketConn {
-            inner,
+            handle: self.handle,
             peer_pid: self.peer_pid,
         })
     }
@@ -677,38 +713,23 @@ impl SeqpacketConn {
 
 /// Async receive on a Windows named pipe IPC connection.
 ///
-/// Waits for the pipe to become readable (via IOCP), then reads one complete message.
-/// The handle-count suffix is stripped and any transferred handles are returned.
+/// Calls `block_in_place` with a direct blocking `ReadFile` into the caller-supplied buffer,
+/// bypassing mio's 4 KB internal read buffer and correctly handling messages of any size.
 pub async fn recv_raw_async(
     conn: &AsyncConn,
     buf: &mut [u8],
 ) -> io::Result<(usize, Vec<OwnedHandle>)> {
-    loop {
-        async_pipe!(conn.inner, readable().await)?;
-        match async_pipe!(conn.inner, try_read(buf)) {
-            Ok(0) => return Err(io::Error::from(io::ErrorKind::BrokenPipe)),
-            Ok(n) => return parse_message(buf, n),
-            Err(e) if e.kind() == io::ErrorKind::WouldBlock => continue,
-            Err(e) => return Err(e),
-        }
-    }
+    let h = conn.handle.as_raw_handle() as SysHANDLE;
+    tokio::task::block_in_place(|| pipe_read(h, buf, true))
 }
 
 /// Async send on a Windows named pipe IPC connection.
 ///
 /// Server responses never carry handles; a zero-handle-count suffix is appended automatically.
-/// Waits for writability (via IOCP) and writes the message atomically.
+/// Uses `block_in_place` with a direct `WriteFile`.
 pub async fn send_raw_async(conn: &AsyncConn, data: &[u8]) -> io::Result<()> {
-    // Server responses never carry handles; append a 0-handle-count suffix (4 bytes).
     let mut buf = data.to_vec();
     buf.extend_from_slice(&0u32.to_le_bytes());
-    loop {
-        async_pipe!(conn.inner, writable().await)?;
-        match async_pipe!(conn.inner, try_write(&buf)) {
-            Ok(n) if n == buf.len() => return Ok(()),
-            Ok(_) => return Err(io::Error::from(io::ErrorKind::WriteZero)),
-            Err(e) if e.kind() == io::ErrorKind::WouldBlock => continue,
-            Err(e) => return Err(e),
-        }
-    }
+    let h = conn.handle.as_raw_handle() as SysHANDLE;
+    tokio::task::block_in_place(|| pipe_write(h, &buf, true))
 }
