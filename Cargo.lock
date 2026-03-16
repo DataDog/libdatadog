@@ -3090,7 +3090,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-data-pipeline"
-version = "2.0.0"
+version = "2.0.1"
 dependencies = [
  "anyhow",
  "arc-swap",
@@ -3365,7 +3365,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-trace-normalization"
-version = "1.0.1"
+version = "1.0.2"
 dependencies = [
  "anyhow",
  "arbitrary",
@@ -3377,7 +3377,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-trace-obfuscation"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "anyhow",
  "criterion",
@@ -3408,7 +3408,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-trace-stats"
-version = "1.0.2"
+version = "1.0.3"
 dependencies = [
  "criterion",
  "hashbrown 0.15.1",
@@ -3420,7 +3420,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-trace-utils"
-version = "2.0.1"
+version = "2.0.2"
 dependencies = [
  "anyhow",
  "bolero",
