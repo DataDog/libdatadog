@@ -162,6 +162,10 @@ impl Debug for TelemetryWorker {
 #[async_trait]
 impl Worker for TelemetryWorker {
     async fn trigger(&mut self) {
+        if self.next_action.is_some() {
+            // An action is already available and hasn't been executed
+            return;
+        }
         // Wait for the next action and store it
         let action = self.recv_next_action().await;
         self.next_action = Some(action);
