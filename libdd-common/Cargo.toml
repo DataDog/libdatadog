@@ -49,12 +49,12 @@ version = "0.52"
 features = ["Win32_Foundation", "Win32_System_Performance"]
 
 [target.'cfg(unix)'.dependencies]
-rustls = { version = "0.23", default-features = false, optional = true, features = ["aws-lc-rs"] }
+rustls = { version = "0.23", default-features = false, optional = true, features = ["ring"] }
 hyper-rustls = { version = "0.27", default-features = false, features = [
     "native-tokio",
     "http1",
     "tls12",
-    "aws-lc-rs",
+    "ring",
 ], optional = true }
 
 [target.'cfg(not(unix))'.dependencies]

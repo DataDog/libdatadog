@@ -88,11 +88,9 @@ mod https {
 
     use rustls::ClientConfig;
 
-    /// When using aws-lc-rs, rustls needs to be initialized with the default CryptoProvider;
-    /// sometimes this is done as a side-effect of other operations, but we need to ensure it
-    /// happens here.  On non-unix platforms, ddcommon uses `ring` instead, which handles this
-    /// at rustls initialization.
-    /// In fips mode we expect someone to have done this already.
+    /// Rustls needs to be initialized with a CryptoProvider. We use `ring` on all platforms
+    /// for non-FIPS builds to reduce binary size (avoiding the aws-lc-rs C dependencies).
+    /// In FIPS mode we expect the caller to have initialized the FIPS provider already.
     #[cfg(any(not(feature = "fips"), coverage))]
     fn ensure_crypto_provider_initialized() {
         use std::sync::Once;
@@ -100,9 +98,6 @@ mod https {
         static INIT_CRYPTO_PROVIDER: Once = Once::new();
 
         INIT_CRYPTO_PROVIDER.call_once(|| {
-            #[cfg(unix)]
-            let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
-            #[cfg(not(unix))]
             let _ = rustls::crypto::ring::default_provider().install_default();
         });
     }
