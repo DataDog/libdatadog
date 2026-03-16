@@ -34,7 +34,6 @@ multer = { version = "3.1", optional = true }
 bytes = { version = "1.11.1" }
 pin-project = "1"
 rand = { version = "0.8", optional = true }
-regex = "1.5"
 # Use hickory-dns instead of the default system DNS resolver to avoid fork safety issues.
 # The default resolver can hold locks or other global state that can cause deadlocks
 # or corruption when the process forks (e.g., in PHP-FPM or other forking environments).
@@ -48,6 +47,7 @@ static_assertions = "1.1.0"
 libc = "0.2"
 const_format = "0.2.34"
 nix = { version = "0.29", features = ["process"] }
+regex-lite = "0.1.9"
 [target.'cfg(windows)'.dependencies.windows-sys]
 version = "0.52"
 features = [

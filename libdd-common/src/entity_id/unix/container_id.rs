@@ -3,7 +3,7 @@
 
 //! This module provides functions to parse the container id from the cgroup file
 use super::CgroupFileParsingError;
-use regex::Regex;
+use regex_lite::Regex;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::path::Path;
