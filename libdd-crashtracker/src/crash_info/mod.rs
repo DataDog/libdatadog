@@ -21,8 +21,10 @@ mod unknown_value;
 pub(crate) const LIBC: &str = "musl";
 #[cfg(target_env = "gnu")]
 pub(crate) const LIBC: &str = "glibc";
-#[cfg(not(any(target_env = "musl", target_env = "gnu")))]
-pub(crate) const LIBC: &str = "unknown";
+#[cfg(target_env = "msvc")]
+pub(crate) const LIBC: &str = "msvc";
+#[cfg(not(any(target_env = "musl", target_env = "gnu", target_env = "msvc")))]
+pub(crate) const LIBC: &str = "";
 
 pub use builder::*;
 pub use error_data::*;
