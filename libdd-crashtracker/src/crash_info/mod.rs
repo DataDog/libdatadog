@@ -17,14 +17,8 @@ mod telemetry;
 mod test_utils;
 mod unknown_value;
 
-#[cfg(target_env = "musl")]
-pub(crate) const LIBC: &str = "musl";
-#[cfg(target_env = "gnu")]
-pub(crate) const LIBC: &str = "glibc";
-#[cfg(target_env = "msvc")]
-pub(crate) const LIBC: &str = "msvc";
-#[cfg(not(any(target_env = "musl", target_env = "gnu", target_env = "msvc")))]
-pub(crate) const LIBC: &str = "";
+// This is set compile time
+pub(crate) const TARGET_TRIPLE: &str = env!("TARGET");
 
 pub use builder::*;
 pub use error_data::*;
