@@ -713,14 +713,19 @@ impl SeqpacketConn {
 
 /// Async receive on a Windows named pipe IPC connection.
 ///
-/// Calls `block_in_place` with a direct blocking `ReadFile` into the caller-supplied buffer,
+/// Calls `block_in_place` with a direct blocking `ReadFile` into a caller-owned buffer,
 /// bypassing mio's 4 KB internal read buffer and correctly handling messages of any size.
-pub async fn recv_raw_async(
-    conn: &AsyncConn,
-    buf: &mut [u8],
-) -> io::Result<(usize, Vec<OwnedHandle>)> {
+pub async fn recv_raw_async(conn: &AsyncConn) -> io::Result<(Vec<u8>, Vec<OwnedHandle>)> {
     let h = conn.handle.as_raw_handle() as SysHANDLE;
-    tokio::task::block_in_place(|| pipe_read(h, buf, true))
+    tokio::task::block_in_place(|| {
+        // SAFETY: ReadFile writes exactly the first n bytes; we truncate to n before returning,
+        // so no uninitialized bytes are ever exposed to the caller.
+        let mut buf = Vec::with_capacity(max_message_size() + HANDLE_SUFFIX_SIZE);
+        unsafe { buf.set_len(max_message_size() + HANDLE_SUFFIX_SIZE) };
+        let (n, handles) = pipe_read(h, &mut buf, true)?;
+        buf.truncate(n);
+        Ok((buf, handles))
+    })
 }
 
 /// Async send on a Windows named pipe IPC connection.

@@ -319,9 +319,8 @@ fn gen_serve_fn(
                     return;
                 }
             };
-            let mut buf = vec![0u8; datadog_ipc::max_message_size() + datadog_ipc::HANDLE_SUFFIX_SIZE];
             loop {
-                let (n, fds) = match datadog_ipc::recv_raw_async(&async_fd, &mut buf).await {
+                let (buf, fds) = match datadog_ipc::recv_raw_async(&async_fd).await {
                     Ok(x) => x,
                     Err(e) => {
                         ::tracing::trace!("IPC serve: recv (connection closed?): {e}");
@@ -329,7 +328,7 @@ fn gen_serve_fn(
                     }
                 };
                 let Ok((discriminant, mut req)) =
-                    datadog_ipc::codec::decode::<#enum_name>(&buf[..n])
+                    datadog_ipc::codec::decode::<#enum_name>(&buf)
                 else {
                     ::tracing::warn!("IPC serve: failed to decode request");
                     break;
