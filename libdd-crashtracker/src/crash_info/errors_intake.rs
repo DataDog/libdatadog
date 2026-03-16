@@ -5,7 +5,7 @@ use std::time::SystemTime;
 
 use crate::{OsInfo, SigInfo};
 
-use super::{build_crash_ping_message, CrashInfo, Experimental, Metadata, StackTrace};
+use super::{build_crash_ping_message, CrashInfo, Experimental, Metadata, StackTrace, LIBC};
 use anyhow::Context;
 use chrono::{DateTime, Utc};
 use http::{uri::PathAndQuery, Uri};
@@ -363,6 +363,7 @@ fn build_crash_info_tags(crash_info: &CrashInfo) -> String {
         append_signal_tags(&mut tags, siginfo);
     }
 
+    tags.push_str(&format!(",libc:{LIBC}"));
     tags
 }
 
@@ -455,6 +456,8 @@ impl ErrorsIntakePayload {
         if let Some(sig_info) = sig_info {
             append_signal_tags(&mut ddtags, sig_info);
         }
+
+        ddtags.push_str(&format!(",libc:{LIBC}"));
 
         let (error_type, message) = if let Some(sig_info) = sig_info {
             (
@@ -689,6 +692,7 @@ mod tests {
             "si_code_human_readable:SEGV_BNDERR",
             "si_signo:11",
             "si_signo_human_readable:SIGSEGV",
+            &format!("libc:{}", super::super::LIBC),
         ];
 
         let expected_metadata_tags = ["service:foo", "version:bar", "language_name:native"];
@@ -726,6 +730,7 @@ mod tests {
             "si_code_human_readable:SEGV_BNDERR",
             "si_signo:11",
             "si_signo_human_readable:SIGSEGV",
+            &format!("libc:{}", super::super::LIBC),
         ];
 
         for tag in expected_tags {

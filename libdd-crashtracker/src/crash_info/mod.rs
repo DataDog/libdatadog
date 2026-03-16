@@ -17,6 +17,13 @@ mod telemetry;
 mod test_utils;
 mod unknown_value;
 
+#[cfg(target_env = "musl")]
+pub(crate) const LIBC: &str = "musl";
+#[cfg(target_env = "gnu")]
+pub(crate) const LIBC: &str = "glibc";
+#[cfg(not(any(target_env = "musl", target_env = "gnu")))]
+pub(crate) const LIBC: &str = "unknown";
+
 pub use builder::*;
 pub use error_data::*;
 pub use errors_intake::*;
