@@ -148,9 +148,7 @@ pub trait ObservationCodec {
 
     /// Returns the recommended input buffer size for the encoder.
     /// Used to size the `BufWriter` that wraps the encoder.
-    fn recommended_input_buf_size() -> usize {
-        0
-    }
+    fn recommended_input_buf_size() -> usize;
 }
 
 #[allow(unused)]
@@ -166,6 +164,10 @@ impl ObservationCodec for NoopObservationCodec {
 
     fn encoder_into_decoder(encoder: Self::Encoder) -> io::Result<Self::Decoder> {
         Ok(io::Cursor::new(encoder))
+    }
+
+    fn recommended_input_buf_size() -> usize {
+        0
     }
 }
 
