@@ -1,6 +1,15 @@
 # Changelog
 
 
+
+## [1.0.4](https://github.com/datadog/libdatadog/compare/libdd-trace-stats-v1.0.3..libdd-trace-stats-v1.0.4) - 2026-03-16
+
+### Changed
+
+- Solve PR comments - ([10fc7e5](https://github.com/datadog/libdatadog/commit/10fc7e578f3792ae9d22dd19cde63927c581b48b))
+- Update changelogs - ([48c1970](https://github.com/datadog/libdatadog/commit/48c197073627b6ee10285b2925f5733b09a66fc6))
+
+
 ## [1.0.3](https://github.com/datadog/libdatadog/compare/libdd-trace-stats-v1.0.2..libdd-trace-stats-v1.0.3) - 2026-03-16
 
 ### Changed
