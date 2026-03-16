@@ -68,7 +68,6 @@ impl Default for NamedPipeLiaison {
 
 pub type DefaultLiason = NamedPipeLiaison;
 
-
 #[cfg(test)]
 mod tests {
     use super::Liaison;

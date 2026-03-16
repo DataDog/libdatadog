@@ -85,17 +85,15 @@ impl ExampleInterface for ExampleServer {
         std::future::ready(())
     }
 
-    fn shm_sum(
+    async fn shm_sum(
         &self,
         _peer: datadog_ipc::PeerCredentials,
         handle: ShmHandle,
         len: usize,
-    ) -> impl std::future::Future<Output = u64> + Send + '_ {
-        async move {
-            match handle.map() {
-                Ok(mapped) => mapped.as_slice()[..len].iter().map(|&b| b as u64).sum(),
-                Err(_) => u64::MAX,
-            }
+    ) -> u64 {
+        match handle.map() {
+            Ok(mapped) => mapped.as_slice()[..len].iter().map(|&b| b as u64).sum(),
+            Err(_) => u64::MAX,
         }
     }
 

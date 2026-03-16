@@ -321,7 +321,11 @@ impl SeqpacketConn {
                 std::mem::size_of::<libc::c_int>() as libc::socklen_t,
             )
         };
-        if ret < 0 { Err(io::Error::last_os_error()) } else { Ok(()) }
+        if ret < 0 {
+            Err(io::Error::last_os_error())
+        } else {
+            Ok(())
+        }
     }
 
     pub fn set_sndbuf_size(&self, size: usize) -> io::Result<()> {
@@ -355,13 +359,13 @@ pub type AsyncConn = AsyncFd<OwnedFd>;
 pub async fn recv_raw_async(fd: &AsyncConn) -> io::Result<(Vec<u8>, Vec<OwnedFd>)> {
     loop {
         let mut guard = fd.readable().await?;
-        // SAFETY: recvmsg writes exactly the first n bytes; we truncate to n before returning,
-        // so no uninitialized bytes are ever exposed to the caller.
         let mut buf = Vec::with_capacity(max_message_size());
-        unsafe { buf.set_len(max_message_size()) };
-        match guard.try_io(|inner| recvmsg_raw(inner.as_raw_fd(), &mut buf, MsgFlags::empty())) {
+        // SAFETY: all bit patterns are valid for u8; recvmsg writes exactly n bytes into
+        // the spare capacity before set_len(n) is called below.
+        let slice = unsafe { std::slice::from_raw_parts_mut(buf.as_mut_ptr(), max_message_size()) };
+        match guard.try_io(|inner| recvmsg_raw(inner.as_raw_fd(), slice, MsgFlags::empty())) {
             Ok(Ok((n, fds))) => {
-                buf.truncate(n);
+                unsafe { buf.set_len(n) };
                 return Ok((buf, fds));
             }
             Ok(Err(e)) => return Err(e),

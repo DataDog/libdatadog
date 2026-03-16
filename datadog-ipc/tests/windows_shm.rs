@@ -43,14 +43,15 @@ fn test_shm_handle_transfer() {
 
 /// Verifies that IPC messages larger than 4 KB are handled without panicking.
 ///
-/// Before the fix, Tokio's `NamedPipeServer` registered the pipe handle with mio/IOCP, which
+/// Using Tokio's `NamedPipeServer`, it registered the pipe handle with mio/IOCP, which
 /// posted overlapped `ReadFile` calls into a fixed 4 KB internal buffer.  Messages larger than
 /// 4 KB caused `ReadFile` to return `ERROR_MORE_DATA` synchronously; Windows still queued an
 /// IOCP completion, but mio had already transitioned `io.read` to `State::Err`.  When the
 /// completion fired, mio's `read_done` hit `_ => unreachable!()` (named_pipe.rs:871).
 ///
-/// The fix routes serve-loop I/O through `block_in_place` + direct `ReadFile` into the
-/// caller-supplied large buffer, bypassing mio's 4 KB limit entirely.
+/// Which is why we route serve-loop I/O through `block_in_place` + direct `ReadFile` into the
+/// caller-supplied large buffer, bypassing mio's 4 KB limit entirely. This serves as regression
+/// test.
 #[test]
 fn test_large_message() {
     let (conn_server, conn_client) = SeqpacketConn::socketpair().unwrap();

@@ -718,12 +718,16 @@ impl SeqpacketConn {
 pub async fn recv_raw_async(conn: &AsyncConn) -> io::Result<(Vec<u8>, Vec<OwnedHandle>)> {
     let h = conn.handle.as_raw_handle() as SysHANDLE;
     tokio::task::block_in_place(|| {
-        // SAFETY: ReadFile writes exactly the first n bytes; we truncate to n before returning,
-        // so no uninitialized bytes are ever exposed to the caller.
-        let mut buf = Vec::with_capacity(max_message_size() + HANDLE_SUFFIX_SIZE);
-        unsafe { buf.set_len(max_message_size() + HANDLE_SUFFIX_SIZE) };
-        let (n, handles) = pipe_read(h, &mut buf, true)?;
-        buf.truncate(n);
+        let size = max_message_size() + HANDLE_SUFFIX_SIZE;
+        let mut buf = Vec::with_capacity(size);
+        // SAFETY: all bit patterns are valid for u8; pipe_read writes exactly n bytes into
+        // the spare capacity before set_len(n) is called below.
+        let (n, handles) = pipe_read(
+            h,
+            unsafe { std::slice::from_raw_parts_mut(buf.as_mut_ptr(), size) },
+            true,
+        )?;
+        unsafe { buf.set_len(n) };
         Ok((buf, handles))
     })
 }

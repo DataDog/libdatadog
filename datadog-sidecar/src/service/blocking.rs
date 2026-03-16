@@ -5,7 +5,6 @@ use super::{
     DynamicInstrumentationConfigState, InstanceId, QueueId, SerializedTracerHeaderTags,
     SessionConfig, SidecarAction,
 };
-use libdd_telemetry::metrics::MetricContext;
 use crate::service::sender::SidecarSender;
 use crate::service::sidecar_interface::SidecarInterfaceChannel;
 use datadog_ipc::platform::{FileBackedHandle, ShmHandle};
@@ -13,7 +12,9 @@ use datadog_ipc::SeqpacketConn;
 use datadog_live_debugger::debugger_defs::DebuggerPayload;
 use datadog_live_debugger::sender::DebuggerType;
 use libdd_common::tag::Tag;
+use libdd_common::MutexExt;
 use libdd_dogstatsd_client::DogStatsDActionOwned;
+use libdd_telemetry::metrics::MetricContext;
 use serde::Serialize;
 use std::sync::Mutex;
 use std::{
@@ -21,7 +22,6 @@ use std::{
     time::{Duration, Instant},
 };
 use tracing::warn;
-use libdd_common::MutexExt;
 
 /// `SidecarTransport` wraps a [`SidecarSender`] with transparent reconnection support.
 ///
@@ -42,11 +42,15 @@ impl SidecarTransport {
         Self::do_reconnect(&mut self.inner, factory, false);
     }
 
-    pub fn do_reconnect<F>(transport: &mut Mutex<SidecarSender>, factory: F, force_reconnect: bool) -> bool
+    pub fn do_reconnect<F>(
+        transport: &mut Mutex<SidecarSender>,
+        factory: F,
+        force_reconnect: bool,
+    ) -> bool
     where
         F: FnOnce() -> Option<Box<SidecarTransport>>,
     {
-        let mut transport = match transport.lock() {
+        let transport = match transport.get_mut() {
             Ok(t) => t,
             Err(_) => return false,
         };
@@ -120,9 +124,7 @@ impl SidecarTransport {
                 Err(e) => e,
             }
         };
-        if e.kind() == io::ErrorKind::BrokenPipe
-            || e.kind() == io::ErrorKind::ConnectionReset
-        {
+        if e.kind() == io::ErrorKind::BrokenPipe || e.kind() == io::ErrorKind::ConnectionReset {
             if let Some(ref reconnect) = self.reconnect_fn {
                 if Self::do_reconnect(&mut self.inner, reconnect, true) {
                     return f(&mut self.inner.lock_or_panic());
@@ -398,10 +400,7 @@ pub fn send_dogstatsd_actions(
 }
 
 /// Sets x-datadog-test-session-token on all requests for the given session.
-pub fn set_test_session_token(
-    transport: &mut SidecarTransport,
-    token: String,
-) -> io::Result<()> {
+pub fn set_test_session_token(transport: &mut SidecarTransport, token: String) -> io::Result<()> {
     lock_sender(transport)?.set_test_session_token(token);
     Ok(())
 }

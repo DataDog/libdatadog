@@ -69,7 +69,6 @@ fn cancel_if_instance(slot: &mut Option<SidecarInterfaceRequest>, instance_id: &
     }
 }
 
-
 fn cancel_if_queue(
     slot: &mut Option<SidecarInterfaceRequest>,
     instance_id: &InstanceId,
@@ -107,7 +106,11 @@ fn coalesce(outbox: &mut SidecarOutbox, incoming: SidecarInterfaceRequest) {
     } = incoming
     {
         cancel_if_queue(&mut outbox.set_request_config, instance_id, queue_id);
-        cancel_if_queue(&mut outbox.set_universal_service_tags, instance_id, queue_id);
+        cancel_if_queue(
+            &mut outbox.set_universal_service_tags,
+            instance_id,
+            queue_id,
+        );
     }
 
     match incoming {
@@ -280,7 +283,8 @@ impl SidecarSender {
         if self.metric_registrations.contains_key(&metric.name) {
             return;
         }
-        self.metric_registrations.insert(metric.name.clone(), metric.clone());
+        self.metric_registrations
+            .insert(metric.name.clone(), metric.clone());
         let req = SidecarInterfaceRequest::RegisterTelemetryMetric { metric };
         self.channel.send_request_blocking(&req).ok();
     }

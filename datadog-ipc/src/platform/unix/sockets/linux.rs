@@ -34,7 +34,7 @@ impl SeqpacketListener {
         let addr = UnixAddr::new_abstract(name).map_err(io::Error::from)?;
         Self::do_bind(addr)
     }
-    
+
     fn do_bind(addr: UnixAddr) -> io::Result<Self> {
         let fd = create_seqpacket_socket()?;
         bind(fd.as_raw_fd(), &addr).map_err(io::Error::from)?;

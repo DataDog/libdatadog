@@ -50,36 +50,11 @@ use libdd_trace_utils::tracer_header_tags::TracerHeaderTags;
 /// Wraps a raw `HANDLE` value (from `OpenProcess`). The handle is intentionally not
 /// closed on drop — it is valid for the lifetime of the session.
 #[cfg(windows)]
-#[derive(Clone)]
+#[derive(Debug, Copy, Clone, Hash, Eq, PartialEq)]
 pub struct ProcessHandle(pub winapi::um::winnt::HANDLE);
 
 #[cfg(windows)]
-impl std::fmt::Debug for ProcessHandle {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "ProcessHandle({:p})", self.0)
-    }
-}
-
-#[cfg(windows)]
-impl PartialEq for ProcessHandle {
-    fn eq(&self, other: &Self) -> bool {
-        self.0 == other.0
-    }
-}
-
-#[cfg(windows)]
-impl Eq for ProcessHandle {}
-
-#[cfg(windows)]
-impl std::hash::Hash for ProcessHandle {
-    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        (self.0 as usize).hash(state);
-    }
-}
-
-#[cfg(windows)]
 unsafe impl Send for ProcessHandle {}
-
 #[cfg(windows)]
 unsafe impl Sync for ProcessHandle {}
 
@@ -293,7 +268,7 @@ impl SidecarServer {
         if notify_function.0.is_null() {
             return None;
         }
-        let process_handle = session.process_handle.lock_or_panic().clone()?;
+        let process_handle = (*session.process_handle.lock_or_panic())?;
         Some(RemoteConfigNotifyTarget {
             process_handle,
             notify_function,
@@ -530,7 +505,9 @@ impl SidecarInterface for ConnectionSidecarHandler {
 
             if remove_client {
                 info!("Removing telemetry client for instance {instance_id:?}");
-                self.server.telemetry_clients.remove_telemetry_client(service, env);
+                self.server
+                    .telemetry_clients
+                    .remove_telemetry_client(service, env);
             }
         } else {
             info!("No application found for instance {instance_id:?} and queue_id {queue_id:?}");
@@ -551,11 +528,7 @@ impl SidecarInterface for ConnectionSidecarHandler {
         }
     }
 
-    async fn register_telemetry_metric(
-        &self,
-        _peer: PeerCredentials,
-        metric: MetricContext,
-    ) {
+    async fn register_telemetry_metric(&self, _peer: PeerCredentials, metric: MetricContext) {
         self.metric_registrations
             .lock_or_panic()
             .entry(metric.name.clone())
@@ -573,8 +546,12 @@ impl SidecarInterface for ConnectionSidecarHandler {
         if self.session_id.set(session_id.clone()).is_ok() {
             let mut counter = self.server.session_counter.lock_or_panic();
             match counter.entry(session_id.clone()) {
-                Entry::Occupied(mut e) => { e.insert(e.get() + 1); }
-                Entry::Vacant(e) => { e.insert(1); }
+                Entry::Occupied(mut e) => {
+                    e.insert(e.get() + 1);
+                }
+                Entry::Vacant(e) => {
+                    e.insert(1);
+                }
             }
         }
         debug!("Set session config for {session_id} to {config:?}");
@@ -687,11 +664,7 @@ impl SidecarInterface for ConnectionSidecarHandler {
         }
     }
 
-    async fn set_session_process_tags(
-        &self,
-        _peer: PeerCredentials,
-        process_tags: Vec<Tag>,
-    ) {
+    async fn set_session_process_tags(&self, _peer: PeerCredentials, process_tags: Vec<Tag>) {
         let session_id = self.session_id.get().cloned().unwrap_or_default();
         let session = self.server.get_session(&session_id);
         *session.process_tags.lock_or_panic() = process_tags;
@@ -807,7 +780,11 @@ impl SidecarInterface for ConnectionSidecarHandler {
         // We segregate RC by endpoint.
         // So we assume that runtime ids are unique per endpoint and we can safely filter globally.
         #[allow(clippy::unwrap_used)]
-        if self.server.debugger_diagnostics_bookkeeper.add_payload(&payload) {
+        if self
+            .server
+            .debugger_diagnostics_bookkeeper
+            .add_payload(&payload)
+        {
             session.send_debugger_data(
                 DebuggerType::Diagnostics,
                 &instance_id.runtime_id,
@@ -908,11 +885,7 @@ impl SidecarInterface for ConnectionSidecarHandler {
         }
     }
 
-    async fn set_test_session_token(
-        &self,
-        _peer: PeerCredentials,
-        token: String,
-    ) {
+    async fn set_test_session_token(&self, _peer: PeerCredentials, token: String) {
         let session_id = self.session_id.get().cloned().unwrap_or_default();
         let session = self.server.get_session(&session_id);
         let token = if token.is_empty() {

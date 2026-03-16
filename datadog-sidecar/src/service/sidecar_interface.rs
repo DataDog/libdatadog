@@ -6,11 +6,11 @@
 use crate::service::{
     InstanceId, QueueId, SerializedTracerHeaderTags, SessionConfig, SidecarAction,
 };
-use libdd_telemetry::metrics::MetricContext;
 use datadog_ipc::platform::ShmHandle;
 use datadog_live_debugger::sender::DebuggerType;
 use libdd_common::tag::Tag;
 use libdd_dogstatsd_client::DogStatsDActionOwned;
+use libdd_telemetry::metrics::MetricContext;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
@@ -78,9 +78,7 @@ pub trait SidecarInterface {
     /// # Arguments
     ///
     /// * `metric` - The metric context to register on this connection.
-    async fn register_telemetry_metric(
-        metric: MetricContext,
-    );
+    async fn register_telemetry_metric(metric: MetricContext);
 
     /// Shuts down a runtime.
     ///

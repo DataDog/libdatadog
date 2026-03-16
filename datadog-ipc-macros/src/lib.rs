@@ -130,7 +130,7 @@ fn gen_request_enum(enum_name: &Ident, methods: &[MethodInfo]) -> proc_macro2::T
         .collect();
 
     quote! {
-        #[derive(::serde::Serialize, ::serde::Deserialize)]
+        #[derive(::serde::Serialize, ::serde::Deserialize, Debug)]
         pub enum #enum_name {
             #(#variants),*
         }
@@ -341,12 +341,13 @@ fn gen_serve_fn(
                     ::tracing::warn!("IPC serve: failed to receive handles");
                     break;
                 }
-                let recv_counter = handler.recv_counter().fetch_add(1, ::std::sync::atomic::Ordering::Relaxed) + 1;
-                ::tracing::trace!(recv_counter, discriminant, pid = peer.pid, "IPC recv");
+                let recv_counter = handler.recv_counter().load(::std::sync::atomic::Ordering::Relaxed) + 1;
+                ::tracing::trace!(recv_counter, ?req, pid = peer.pid, "IPC recv");
 
                 match req {
                     #(#match_arms)*
                 }
+                handler.recv_counter().fetch_add(1, ::std::sync::atomic::Ordering::Relaxed);
             }
         }
     }
@@ -470,7 +471,7 @@ fn gen_channel(
     }
 }
 
-/// `#[service]` replaces `#[tarpc::service]` + `#[impl_transfer_handles]`.
+/// `#[service]` macro.
 ///
 /// Generates from a `trait` definition:
 /// - `{Trait}Request` enum (Clone, Serialize, Deserialize, TransferHandles)
