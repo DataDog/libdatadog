@@ -12,8 +12,10 @@ pub(crate) enum OtlpProtocol {
     #[default]
     HttpJson,
     /// HTTP with protobuf body. (Not supported yet)
+    #[allow(dead_code)]
     HttpProtobuf,
     /// gRPC. (Not supported yet)
+    #[allow(dead_code)]
     Grpc,
 }
 
