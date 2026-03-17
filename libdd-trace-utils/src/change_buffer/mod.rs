@@ -44,20 +44,21 @@ use operation::*;
 mod buffer;
 pub use buffer::*;
 
-use crate::span::{Span, SpanText};
+use crate::span::v04::Span;
+use crate::span::{SpanText, TraceData};
 
-pub struct ChangeBufferState<T: SpanText + Clone> {
+pub struct ChangeBufferState<T: TraceData> {
     change_buffer: ChangeBuffer,
     spans: HashMap<u64, Span<T>>,
-    traces: HashMap<u128, Trace<T>>,
-    string_table: HashMap<u32, T>,
+    traces: HashMap<u128, Trace<T::Text>>,
+    string_table: HashMap<u32, T::Text>,
     trace_span_counts: HashMap<u128, usize>,
-    tracer_service: T,
-    tracer_language: T,
+    tracer_service: T::Text,
+    tracer_language: T::Text,
     pid: u32,
 }
 
-fn new_span<T: SpanText>(span_id: u64, parent_id: u64, trace_id: u128) -> Span<T> {
+fn new_span<T: TraceData>(span_id: u64, parent_id: u64, trace_id: u128) -> Span<T> {
     Span {
         span_id,
         trace_id,
@@ -66,11 +67,14 @@ fn new_span<T: SpanText>(span_id: u64, parent_id: u64, trace_id: u128) -> Span<T
     }
 }
 
-impl<T: SpanText + Clone> ChangeBufferState<T> {
+impl<T: TraceData> ChangeBufferState<T>
+where
+    T::Text: Clone,
+{
     pub fn new(
         change_buffer: ChangeBuffer,
-        tracer_service: T,
-        tracer_language: T,
+        tracer_service: T::Text,
+        tracer_language: T::Text,
         pid: u32,
     ) -> Self {
         ChangeBufferState {
@@ -97,6 +101,7 @@ impl<T: SpanText + Clone> ChangeBufferState<T> {
         let spans_vec = span_ids
             .iter()
             .map(|span_id| -> Result<Span<T>> {
+
                 let maybe_span = self.spans.remove(span_id);
 
                 let mut span = maybe_span.ok_or(ChangeBufferError::SpanNotFound(*span_id))?;
@@ -105,7 +110,7 @@ impl<T: SpanText + Clone> ChangeBufferState<T> {
                 if is_local_root {
                     self.copy_in_sampling_tags(&mut span);
                     span.metrics
-                        .insert(T::from_static_str("_dd.top_level"), 1.0);
+                        .insert(T::Text::from_static_str("_dd.top_level"), 1.0);
                     is_local_root = false;
                 }
                 if is_chunk_root {
@@ -140,15 +145,15 @@ impl<T: SpanText + Clone> ChangeBufferState<T> {
         if let Some(trace) = self.traces.get(&span.trace_id) {
             if let Some(rule) = trace.sampling_rule_decision {
                 span.metrics
-                    .insert(T::from_static_str("_dd.rule_psr"), rule);
+                    .insert(T::Text::from_static_str("_dd.rule_psr"), rule);
             }
             if let Some(rule) = trace.sampling_limit_decision {
                 span.metrics
-                    .insert(T::from_static_str("_dd.limit_psr"), rule);
+                    .insert(T::Text::from_static_str("_dd.limit_psr"), rule);
             }
             if let Some(rule) = trace.sampling_agent_decision {
                 span.metrics
-                    .insert(T::from_static_str("_dd.agent_psr"), rule);
+                    .insert(T::Text::from_static_str("_dd.agent_psr"), rule);
             }
         }
     }
@@ -170,14 +175,14 @@ impl<T: SpanText + Clone> ChangeBufferState<T> {
         // TODO span.sample();
 
         if let Some(kind) = span.meta.get("kind") {
-            if kind != &T::from_static_str("internal") {
-                span.metrics.insert(T::from_static_str("_dd.measured"), 1.0);
+            if kind != &T::Text::from_static_str("internal") {
+                span.metrics.insert(T::Text::from_static_str("_dd.measured"), 1.0);
             }
         }
 
         if span.service != self.tracer_service {
             span.meta.insert(
-                T::from_static_str("_dd.base_service"),
+                T::Text::from_static_str("_dd.base_service"),
                 self.tracer_service.clone(),
             );
             // TODO span.service should be added to the "extra services" used by RC, which is not
@@ -188,13 +193,13 @@ impl<T: SpanText + Clone> ChangeBufferState<T> {
         // the span.
 
         span.meta
-            .insert(T::from_static_str("language"), self.tracer_language.clone());
+            .insert(T::Text::from_static_str("language"), self.tracer_language.clone());
         span.metrics
-            .insert(T::from_static_str("process_id"), f64::from(self.pid));
+            .insert(T::Text::from_static_str("process_id"), f64::from(self.pid));
 
         if let Some(trace) = self.traces.get(&span.trace_id) {
             if let Some(origin) = trace.origin.clone() {
-                span.meta.insert(T::from_static_str("_dd.origin"), origin);
+                span.meta.insert(T::Text::from_static_str("_dd.origin"), origin);
             }
         }
 
@@ -221,7 +226,7 @@ impl<T: SpanText + Clone> ChangeBufferState<T> {
         Ok(())
     }
 
-    fn get_string_arg(&self, index: &mut usize) -> Result<T> {
+    fn get_string_arg(&self, index: &mut usize) -> Result<T::Text> {
         let num: u32 = self.get_num_arg(index)?;
         self.string_table
             .get(&num)
@@ -245,7 +250,7 @@ impl<T: SpanText + Clone> ChangeBufferState<T> {
             .ok_or(ChangeBufferError::SpanNotFound(*id))
     }
 
-    pub fn get_trace(&self, id: &u128) -> Option<&Trace<T>> {
+    pub fn get_trace(&self, id: &u128) -> Option<&Trace<T::Text>> {
         self.traces.get(id)
     }
 
@@ -322,7 +327,7 @@ impl<T: SpanText + Clone> ChangeBufferState<T> {
         Ok(())
     }
 
-    pub fn string_table_insert_one(&mut self, key: u32, val: T) {
+    pub fn string_table_insert_one(&mut self, key: u32, val: T::Text) {
         self.string_table.insert(key, val);
     }
 
@@ -334,6 +339,7 @@ impl<T: SpanText + Clone> ChangeBufferState<T> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::span::SliceData;
 
     /// Helper to build the binary buffer layout that flush_change_buffer expects.
     /// Layout: [count: u64][8 bytes padding][operations...]
@@ -390,7 +396,7 @@ mod tests {
         }
     }
 
-    fn make_state(buf: ChangeBuffer) -> ChangeBufferState<&'static str> {
+    fn make_state(buf: ChangeBuffer) -> ChangeBufferState<SliceData<'static>> {
         ChangeBufferState::new(buf, "my-service", "rust", 1234)
     }
 
@@ -701,7 +707,7 @@ mod tests {
     // -- flush_chunk --
 
     fn create_span_directly(
-        state: &mut ChangeBufferState<&'static str>,
+        state: &mut ChangeBufferState<SliceData<'static>>,
         span_id: u64,
         trace_id: u128,
         parent_id: u64,
