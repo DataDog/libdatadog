@@ -73,9 +73,9 @@ pub trait SidecarInterface {
     /// # Arguments
     ///
     /// * `session_id` - The ID of the session.
-    /// * `process_tags` - The process tags string.
+    /// * `process_tags` - The process tags.
     #[force_backpressure]
-    async fn set_session_process_tags(session_id: String, process_tags: String);
+    async fn set_session_process_tags(session_id: String, process_tags: Vec<Tag>);
 
     /// Shuts down a runtime.
     ///
