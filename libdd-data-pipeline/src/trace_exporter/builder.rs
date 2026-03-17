@@ -76,6 +76,7 @@ impl<H> Default for TraceExporterBuilder<H> {
             language_interpreter: String::new(),
             language_interpreter_vendor: String::new(),
             git_commit_sha: String::new(),
+            process_tags: String::new(),
             input_format: TraceExporterInputFormat::default(),
             output_format: TraceExporterOutputFormat::default(),
             dogstatsd_url: None,
@@ -93,7 +94,6 @@ impl<H> Default for TraceExporterBuilder<H> {
             connection_timeout: None,
             otlp_endpoint: None,
             otlp_headers: Vec::new(),
-            process_tags: String::new(),
             _phantom: PhantomData,
         }
     }
@@ -329,14 +329,11 @@ impl<H: HttpClientTrait + MaybeSend + Sync + 'static> TraceExporterBuilder<H> {
             TraceExporterError::Builder(BuilderErrorKind::InvalidConfiguration(e.to_string()))
         })?;
 
-        // Proxy mode does not support stats
         #[cfg(not(target_arch = "wasm32"))]
-        if self.input_format != TraceExporterInputFormat::Proxy {
-            if let Some(bucket_size) = self.stats_bucket_size {
-                // Client-side stats is considered not supported by the agent until we receive
-                // the agent_info
-                stats = StatsComputationStatus::DisabledByAgent { bucket_size };
-            }
+        if let Some(bucket_size) = self.stats_bucket_size {
+            // Client-side stats is considered not supported by the agent until we receive
+            // the agent_info
+            stats = StatsComputationStatus::DisabledByAgent { bucket_size };
         }
 
         #[cfg(feature = "telemetry")]
@@ -455,7 +452,6 @@ impl<H: HttpClientTrait + MaybeSend + Sync + 'static> TraceExporterBuilder<H> {
         output: TraceExporterOutputFormat,
     ) -> bool {
         match input {
-            TraceExporterInputFormat::Proxy => true,
             TraceExporterInputFormat::V04 => matches!(
                 output,
                 TraceExporterOutputFormat::V04 | TraceExporterOutputFormat::V05
@@ -483,7 +479,7 @@ mod tests {
             .set_language_interpreter("v8")
             .set_language_interpreter_vendor("node")
             .set_git_commit_sha("797e9ea")
-            .set_input_format(TraceExporterInputFormat::Proxy)
+            .set_input_format(TraceExporterInputFormat::V04)
             .set_output_format(TraceExporterOutputFormat::V04)
             .set_client_computed_stats()
             .enable_telemetry(TelemetryConfig {
@@ -500,7 +496,7 @@ mod tests {
                 .to_string(),
             "http://192.168.1.1:8127/v0.4/traces"
         );
-        assert_eq!(exporter.input_format, TraceExporterInputFormat::Proxy);
+        assert_eq!(exporter.input_format, TraceExporterInputFormat::V04);
         assert_eq!(exporter.metadata.tracer_version, "v0.1");
         assert_eq!(exporter.metadata.language, "nodejs");
         assert_eq!(exporter.metadata.language_version, "1.0");
