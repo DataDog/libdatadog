@@ -365,7 +365,7 @@ fn build_crash_info_tags(crash_info: &CrashInfo) -> String {
         append_signal_tags(&mut tags, siginfo);
     }
 
-    tags.push_str(&format!(",target_triple:{TARGET_TRIPLE}"));
+    tags.push_str(&format!(",runtime_platform:{TARGET_TRIPLE}"));
     tags
 }
 
@@ -459,7 +459,7 @@ impl ErrorsIntakePayload {
             append_signal_tags(&mut ddtags, sig_info);
         }
 
-        ddtags.push_str(&format!(",target_triple:{TARGET_TRIPLE}"));
+        ddtags.push_str(&format!(",runtime_platform:{TARGET_TRIPLE}"));
 
         let (error_type, message) = if let Some(sig_info) = sig_info {
             (
@@ -694,7 +694,7 @@ mod tests {
             "si_code_human_readable:SEGV_BNDERR",
             "si_signo:11",
             "si_signo_human_readable:SIGSEGV",
-            &format!("target_triple:{}", super::super::TARGET_TRIPLE),
+            &format!("runtime_platform:{}", super::super::TARGET_TRIPLE),
         ];
 
         let expected_metadata_tags = ["service:foo", "version:bar", "language_name:native"];
@@ -732,10 +732,9 @@ mod tests {
             "si_code_human_readable:SEGV_BNDERR",
             "si_signo:11",
             "si_signo_human_readable:SIGSEGV",
-            &format!("target_triple:{}", super::super::TARGET_TRIPLE),
+            &format!("runtime_platform:{}", super::super::TARGET_TRIPLE),
         ];
 
-        println!("payload.ddtags: {}", payload.ddtags);
         for tag in expected_tags {
             assert!(
                 payload.ddtags.contains(tag),
