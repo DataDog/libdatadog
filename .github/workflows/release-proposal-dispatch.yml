@@ -462,6 +462,8 @@ jobs:
             --title "chore(release): proposal for ${{ inputs.crate }}" \
             --body "$PR_BODY" \
             --label "release-proposal" \
+            --label "skip-metadata-check" \
+            --label "skip-changelog-check" \
             --base "${{ needs.cargo-release.outputs.ephemeral_branch }}"
 
       - name: Cleanup on failure
