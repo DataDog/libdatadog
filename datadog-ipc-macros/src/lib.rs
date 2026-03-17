@@ -24,7 +24,6 @@ type ParamInfo = (Vec<syn::Attribute>, Ident, Box<Type>);
 struct MethodInfo {
     name: Ident,
     variant: Ident,
-    discriminant: u32,
     is_blocking: bool,
     return_type: Option<Box<Type>>,
     params: Vec<ParamInfo>,
@@ -33,7 +32,6 @@ struct MethodInfo {
 
 fn collect_methods(item: &ItemTrait) -> Vec<MethodInfo> {
     let mut methods = Vec::new();
-    let mut discriminant: u32 = 0;
 
     for trait_item in &item.items {
         let TraitItem::Fn(func) = trait_item else {
@@ -85,13 +83,11 @@ fn collect_methods(item: &ItemTrait) -> Vec<MethodInfo> {
         methods.push(MethodInfo {
             name,
             variant,
-            discriminant,
             is_blocking,
             return_type,
             params,
             handle_param_indices,
         });
-        discriminant += 1;
     }
 
     methods
@@ -111,42 +107,10 @@ fn gen_request_enum(enum_name: &Ident, methods: &[MethodInfo]) -> proc_macro2::T
         })
         .collect();
 
-    let disc_arms: Vec<_> = methods
-        .iter()
-        .map(|m| {
-            let variant = &m.variant;
-            let d = m.discriminant;
-            quote! { Self::#variant { .. } => #d }
-        })
-        .collect();
-
-    let name_arms: Vec<_> = methods
-        .iter()
-        .map(|m| {
-            let variant = &m.variant;
-            let name_str = m.name.to_string();
-            quote! { Self::#variant { .. } => #name_str }
-        })
-        .collect();
-
     quote! {
         #[derive(::serde::Serialize, ::serde::Deserialize, Debug)]
         pub enum #enum_name {
             #(#variants),*
-        }
-
-        impl #enum_name {
-            pub fn discriminant(&self) -> u32 {
-                match self {
-                    #(#disc_arms),*
-                }
-            }
-
-            pub fn variant_name(&self) -> &'static str {
-                match self {
-                    #(#name_arms),*
-                }
-            }
         }
     }
 }
@@ -287,7 +251,7 @@ fn gen_serve_fn(
             let response_code = if m.return_type.is_some() {
                 quote! {
                     let result = handler.#name(peer, #(#field_names),*).await;
-                    let __resp_data = datadog_ipc::codec::encode_response(&result);
+                    let __resp_data = datadog_ipc::codec::encode(&result);
                     datadog_ipc::send_raw_async(&async_fd, &__resp_data).await.ok();
                 }
             } else {
@@ -327,7 +291,7 @@ fn gen_serve_fn(
                         break;
                     }
                 };
-                let Ok((discriminant, mut req)) =
+                let Ok(mut req) =
                     datadog_ipc::codec::decode::<#enum_name>(&buf)
                 else {
                     ::tracing::warn!("IPC serve: failed to decode request");
@@ -376,10 +340,8 @@ fn gen_channel(
                 .iter()
                 .map(|(attrs, n, _)| quote! { #(#attrs)* #n })
                 .collect();
-            let d = m.discriminant;
             let variant = &m.variant;
 
-            let name_str = m.name.to_string();
             // Build the request and collect fds via TransferHandles.
             let build_req_and_fds = quote! {
                 let __req = #enum_name::#variant { #(#field_names),* };
@@ -387,12 +349,12 @@ fn gen_channel(
                 datadog_ipc::handles::TransferHandles::copy_handles(
                     &__req, &mut __sink
                 ).ok();
-                let mut __data = datadog_ipc::codec::encode(#d, &__req);
+                let mut __data = datadog_ipc::codec::encode(&__req);
                 let __fds = __sink.into_fds();
                 {
                     let __max = datadog_ipc::max_message_size();
                     if __data.len() > __max {
-                        ::tracing::warn!(method = #name_str, len = __data.len(), max = __max, "IPC message too large");
+                        ::tracing::warn!(?__req, len = __data.len(), max = __max, "IPC message too large");
                     }
                 }
             };
@@ -422,7 +384,7 @@ fn gen_channel(
                         #build_req_and_fds
                         let (__resp, _) = self.0.call(&mut __data, &__fds)
                             .map_err(datadog_ipc::codec::DecodeError::Io)?;
-                        datadog_ipc::codec::decode_response::<#ret_ty>(&__resp)
+                        datadog_ipc::codec::decode::<#ret_ty>(&__resp)
                     }
                 }
             }
@@ -443,11 +405,11 @@ fn gen_channel(
             pub fn try_send_request(&mut self, req: &#enum_name) -> bool {
                 let mut __sink = datadog_ipc::handles::FdSink::new();
                 datadog_ipc::handles::TransferHandles::copy_handles(req, &mut __sink).ok();
-                let mut __data = datadog_ipc::codec::encode(req.discriminant(), req);
+                let mut __data = datadog_ipc::codec::encode(req);
                 let __fds = __sink.into_fds();
                 let __max = datadog_ipc::max_message_size();
                 if __data.len() > __max {
-                    ::tracing::warn!(method = req.variant_name(), len = __data.len(), max = __max, "IPC message too large");
+                    ::tracing::warn!(?req, len = __data.len(), max = __max, "IPC message too large");
                 }
                 self.0.try_send(&mut __data, &__fds)
             }
@@ -459,11 +421,11 @@ fn gen_channel(
             ) -> ::std::io::Result<()> {
                 let mut __sink = datadog_ipc::handles::FdSink::new();
                 datadog_ipc::handles::TransferHandles::copy_handles(req, &mut __sink).ok();
-                let mut __data = datadog_ipc::codec::encode(req.discriminant(), req);
+                let mut __data = datadog_ipc::codec::encode(req);
                 let __fds = __sink.into_fds();
                 let __max = datadog_ipc::max_message_size();
                 if __data.len() > __max {
-                    ::tracing::warn!(method = req.variant_name(), len = __data.len(), max = __max, "IPC message too large");
+                    ::tracing::warn!(?req, len = __data.len(), max = __max, "IPC message too large");
                 }
                 self.0.send_blocking(&mut __data, &__fds)
             }
