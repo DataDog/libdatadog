@@ -79,13 +79,12 @@ impl<'a> TraceSerializer<'a> {
     /// Build HTTP headers for traces request
     fn build_traces_headers(&self, header_tags: TracerHeaderTags, chunk_count: usize) -> HeaderMap {
         let mut headers: HeaderMap = header_tags.into();
+        headers.reserve(4);
         headers.insert(DATADOG_SEND_REAL_HTTP_STATUS, HeaderValue::from_static("1"));
-        // should always be true, as the name should only contain visible ascii chars
-        let _ = HeaderValue::try_from(chunk_count.to_string())
-            .map(|v| headers.insert(DATADOG_TRACE_COUNT, v));
+        headers.insert(DATADOG_TRACE_COUNT, chunk_count.into());
         headers.insert(CONTENT_TYPE, APPLICATION_MSGPACK);
         if let Some(agent_payload_response_version) = &self.agent_payload_response_version {
-            // should always be true, as the version should only contain visible ascii chars
+            // should never fail, as the version should only contain visible ascii chars
             let _ = HeaderValue::try_from(agent_payload_response_version.header_value())
                 .map(|v| headers.insert(DATADOG_RATES_PAYLOAD_VERSION, v));
         }
@@ -173,15 +172,9 @@ mod tests {
         let headers = serializer.build_traces_headers(header_tags, 3);
 
         // Check basic headers are present
-        assert_eq!(
-            headers.get(DATADOG_SEND_REAL_HTTP_STATUS.as_str()).unwrap(),
-            "1"
-        );
-        assert_eq!(headers.get(DATADOG_TRACE_COUNT.as_str()).unwrap(), "3");
-        assert_eq!(
-            headers.get(CONTENT_TYPE.as_str()).unwrap(),
-            APPLICATION_MSGPACK_STR
-        );
+        assert_eq!(headers.get(DATADOG_SEND_REAL_HTTP_STATUS).unwrap(), "1");
+        assert_eq!(headers.get(DATADOG_TRACE_COUNT).unwrap(), "3");
+        assert_eq!(headers.get(CONTENT_TYPE).unwrap(), APPLICATION_MSGPACK_STR);
 
         // Check tracer metadata headers are present
         assert_eq!(headers.get("datadog-meta-lang").unwrap(), "rust");
@@ -209,8 +202,8 @@ mod tests {
         let headers = serializer.build_traces_headers(header_tags, 2);
 
         // Check that agent payload version header is included
-        assert!(headers.contains_key(DATADOG_RATES_PAYLOAD_VERSION.as_str()));
-        assert_eq!(headers.get(DATADOG_TRACE_COUNT.as_str()).unwrap(), "2");
+        assert!(headers.contains_key(DATADOG_RATES_PAYLOAD_VERSION));
+        assert_eq!(headers.get(DATADOG_TRACE_COUNT).unwrap(), "2");
     }
 
     #[test]
@@ -343,10 +336,7 @@ mod tests {
         assert!(!prepared.headers.is_empty());
 
         // Check headers
-        assert_eq!(
-            prepared.headers.get(DATADOG_TRACE_COUNT.as_str()).unwrap(),
-            "2"
-        );
+        assert_eq!(prepared.headers.get(DATADOG_TRACE_COUNT).unwrap(), "2");
         assert_eq!(prepared.headers.get("datadog-meta-lang").unwrap(), "rust");
     }
 
@@ -377,9 +367,7 @@ mod tests {
 
         let prepared = result.unwrap();
         assert_eq!(prepared.chunk_count, 1);
-        assert!(prepared
-            .headers
-            .contains_key(DATADOG_RATES_PAYLOAD_VERSION.as_str()));
+        assert!(prepared.headers.contains_key(DATADOG_RATES_PAYLOAD_VERSION));
     }
 
     #[test]
@@ -394,10 +382,7 @@ mod tests {
         let prepared = result.unwrap();
         assert_eq!(prepared.chunk_count, 0);
         assert!(!prepared.data.is_empty()); // Even empty traces result in some serialized data
-        assert_eq!(
-            prepared.headers.get(DATADOG_TRACE_COUNT.as_str()).unwrap(),
-            "0"
-        );
+        assert_eq!(prepared.headers.get(DATADOG_TRACE_COUNT).unwrap(), "0");
     }
 
     #[test]
