@@ -16,9 +16,11 @@ crate-type = ["lib", "staticlib", "cdylib"]
 bench = false
 
 [features]
-default = ["cbindgen", "catch_panic"]
+default = ["cbindgen", "catch_panic", "https", "telemetry"]
 catch_panic = []
 cbindgen = ["build_common/cbindgen", "libdd-common-ffi/cbindgen"]
+https = ["libdd-data-pipeline/https"]
+telemetry = ["libdd-data-pipeline/telemetry"]
 
 [build-dependencies]
 build_common = { path = "../build-common" }
@@ -29,7 +31,7 @@ rmp-serde = "1.1.1"
 libdd-trace-utils = { path = "../libdd-trace-utils" }
 
 [dependencies]
-libdd-data-pipeline = { path = "../libdd-data-pipeline" }
+libdd-data-pipeline = { path = "../libdd-data-pipeline", default-features = false }
 libdd-common-ffi = { path = "../libdd-common-ffi", default-features = false }
 libdd-tinybytes = { path = "../libdd-tinybytes" }
 tracing = { version = "0.1", default-features = false }
