@@ -142,9 +142,14 @@ pub extern "C" fn ddog_get_traces_size(traces: &TracesBytes) -> usize {
 // can return values as `Option<&/&mut>` that will have the same ABI `*const/*mut TraceBytes`, with
 // `None` corresponding to `null`.
 
+// I don't think we need to return a mutable reference here, but when changing the return value
+// from `*mut` to `Option<&mut>`, we wanted to preserve the FFI at first.
 #[no_mangle]
-pub extern "C" fn ddog_get_trace(traces: &mut TracesBytes, index: usize) -> Option<&TraceBytes> {
-    traces.get(index)
+pub extern "C" fn ddog_get_trace(
+    traces: &mut TracesBytes,
+    index: usize,
+) -> Option<&mut TraceBytes> {
+    traces.get_mut(index)
 }
 
 // ------------------ TraceBytes ------------------
@@ -159,9 +164,11 @@ pub extern "C" fn ddog_get_trace_size(trace: &TraceBytes) -> usize {
     trace.len()
 }
 
+// I don't think we need to return a mutable reference here, but when changing the return value
+// from `*mut` to `Option<&mut>`, we wanted to preserve the FFI at first.
 #[no_mangle]
-pub extern "C" fn ddog_get_span(trace: &mut TraceBytes, index: usize) -> Option<&SpanBytes> {
-    trace.get(index)
+pub extern "C" fn ddog_get_span(trace: &mut TraceBytes, index: usize) -> Option<&mut SpanBytes> {
+    trace.get_mut(index)
 }
 
 // ------------------- SpanBytes -------------------
