@@ -10,13 +10,13 @@ use crate::tracer_payload::TracerPayloadCollection;
 use anyhow::{anyhow, Context};
 use futures::stream::FuturesUnordered;
 use futures::StreamExt;
-use http::header::CONTENT_TYPE;
+use libdd_capabilities::HttpClientTrait;
 use libdd_common::{
     header::{
         APPLICATION_MSGPACK_STR, APPLICATION_PROTOBUF_STR, DATADOG_SEND_REAL_HTTP_STATUS_STR,
         DATADOG_TRACE_COUNT_STR,
     },
-    Connect, Endpoint, GenericHttpClient,
+    Endpoint,
 };
 use libdd_trace_protobuf::pb::{AgentPayload, TracerPayload};
 use send_data_result::SendDataResult;
@@ -39,7 +39,6 @@ use zstd::stream::write::Encoder;
 ///     SendData,
 /// };
 /// use libdd_common::Endpoint;
-/// use libdd_common::http_common::new_default_client;
 /// use libdd_trace_utils::send_with_retry::{RetryBackoffType, RetryStrategy};
 /// use libdd_trace_utils::trace_utils::TracerHeaderTags;
 /// use libdd_trace_utils::tracer_payload::TracerPayloadCollection;
@@ -59,9 +58,8 @@ use zstd::stream::write::Encoder;
 ///
 ///     send_data.set_retry_strategy(retry_strategy);
 ///
-///     let client = new_default_client();
-///     // Send the data
-///     let result = send_data.send(&client).await;
+///     // Send the data (caller picks the HTTP client implementation)
+///     let result = send_data.send::<libdd_capabilities_impl::DefaultHttpClient>().await;
 /// }
 /// ```
 pub struct SendData {
@@ -223,35 +221,32 @@ impl SendData {
     /// # Returns
     ///
     /// A `SendDataResult` instance containing the result of the operation.
-    pub async fn send<C: Connect>(&self, http_client: &GenericHttpClient<C>) -> SendDataResult {
-        self.send_internal(http_client, None).await
+    pub async fn send<H: HttpClientTrait>(&self) -> SendDataResult {
+        self.send_internal::<H>(None).await
     }
 
-    async fn send_internal<C: Connect>(
+    async fn send_internal<H: HttpClientTrait>(
         &self,
-        http_client: &GenericHttpClient<C>,
         endpoint: Option<Endpoint>,
     ) -> SendDataResult {
         if self.use_protobuf() {
-            self.send_with_protobuf(http_client, endpoint).await
+            self.send_with_protobuf::<H>(endpoint).await
         } else {
-            self.send_with_msgpack(http_client, endpoint).await
+            self.send_with_msgpack::<H>(endpoint).await
         }
     }
 
-    async fn send_payload<C: Connect>(
+    async fn send_payload<H: HttpClientTrait>(
         &self,
         chunks: u64,
         payload: Vec<u8>,
         headers: HashMap<&'static str, String>,
-        http_client: &GenericHttpClient<C>,
         endpoint: Option<&Endpoint>,
     ) -> (SendWithRetryResult, u64, u64) {
         #[allow(clippy::unwrap_used)]
         let payload_len = u64::try_from(payload.len()).unwrap();
         (
-            send_with_retry(
-                http_client,
+            send_with_retry::<H>(
                 endpoint.unwrap_or(&self.target),
                 payload,
                 &headers,
@@ -289,9 +284,8 @@ impl SendData {
         }
     }
 
-    async fn send_with_protobuf<C: Connect>(
+    async fn send_with_protobuf<H: HttpClientTrait>(
         &self,
-        http_client: &GenericHttpClient<C>,
         endpoint: Option<Endpoint>,
     ) -> SendDataResult {
         let mut result = SendDataResult::default();
@@ -317,16 +311,10 @@ impl SendData {
                 #[cfg(not(feature = "compression"))]
                 let final_payload = serialized_trace_payload;
 
-                request_headers.insert(CONTENT_TYPE.as_str(), APPLICATION_PROTOBUF_STR.to_string());
+                request_headers.insert("content-type", APPLICATION_PROTOBUF_STR.to_string());
 
                 let (response, bytes_sent, chunks) = self
-                    .send_payload(
-                        chunks,
-                        final_payload,
-                        request_headers,
-                        http_client,
-                        endpoint.as_ref(),
-                    )
+                    .send_payload::<H>(chunks, final_payload, request_headers, endpoint.as_ref())
                     .await;
 
                 result.update(response, bytes_sent, chunks);
@@ -337,9 +325,8 @@ impl SendData {
         }
     }
 
-    async fn send_with_msgpack<C: Connect>(
+    async fn send_with_msgpack<H: HttpClientTrait>(
         &self,
-        http_client: &GenericHttpClient<C>,
         endpoint: Option<Endpoint>,
     ) -> SendDataResult {
         let mut result = SendDataResult::default();
@@ -352,18 +339,17 @@ impl SendData {
                     let chunks = u64::try_from(tracer_payload.chunks.len()).unwrap();
                     let mut headers = self.headers.clone();
                     headers.insert(DATADOG_TRACE_COUNT_STR, chunks.to_string());
-                    headers.insert(CONTENT_TYPE.as_str(), APPLICATION_MSGPACK_STR.to_string());
+                    headers.insert("content-type", APPLICATION_MSGPACK_STR.to_string());
 
                     let payload = match rmp_serde::to_vec_named(tracer_payload) {
                         Ok(p) => p,
                         Err(e) => return result.error(anyhow!(e)),
                     };
 
-                    futures.push(self.send_payload(
+                    futures.push(self.send_payload::<H>(
                         chunks,
                         payload,
                         headers,
-                        http_client,
                         endpoint.as_ref(),
                     ));
                 }
@@ -373,37 +359,25 @@ impl SendData {
                 let chunks = u64::try_from(self.tracer_payloads.size()).unwrap();
                 let mut headers = self.headers.clone();
                 headers.insert(DATADOG_TRACE_COUNT_STR, chunks.to_string());
-                headers.insert(CONTENT_TYPE.as_str(), APPLICATION_MSGPACK_STR.to_string());
+                headers.insert("content-type", APPLICATION_MSGPACK_STR.to_string());
 
                 let payload = msgpack_encoder::v04::to_vec(payload);
 
-                futures.push(self.send_payload(
-                    chunks,
-                    payload,
-                    headers,
-                    http_client,
-                    endpoint.as_ref(),
-                ));
+                futures.push(self.send_payload::<H>(chunks, payload, headers, endpoint.as_ref()));
             }
             TracerPayloadCollection::V05(payload) => {
                 #[allow(clippy::unwrap_used)]
                 let chunks = u64::try_from(self.tracer_payloads.size()).unwrap();
                 let mut headers = self.headers.clone();
                 headers.insert(DATADOG_TRACE_COUNT_STR, chunks.to_string());
-                headers.insert(CONTENT_TYPE.as_str(), APPLICATION_MSGPACK_STR.to_string());
+                headers.insert("content-type", APPLICATION_MSGPACK_STR.to_string());
 
                 let payload = match rmp_serde::to_vec(payload) {
                     Ok(p) => p,
                     Err(e) => return result.error(anyhow!(e)),
                 };
 
-                futures.push(self.send_payload(
-                    chunks,
-                    payload,
-                    headers,
-                    http_client,
-                    endpoint.as_ref(),
-                ));
+                futures.push(self.send_payload::<H>(chunks, payload, headers, endpoint.as_ref()));
             }
         }
 
@@ -453,6 +427,7 @@ mod tests {
     use crate::tracer_header_tags::TracerHeaderTags;
     use httpmock::prelude::*;
     use httpmock::MockServer;
+    use libdd_capabilities_impl::DefaultHttpClient;
     use libdd_common::Endpoint;
     use libdd_trace_protobuf::pb::Span;
     use std::collections::HashMap;
@@ -609,12 +584,11 @@ mod tests {
         );
 
         let data_payload_len = compute_payload_len(&data.tracer_payloads);
-        let client = libdd_common::http_common::new_default_client();
-        let res = data.send(&client).await;
+        let res = data.send::<DefaultHttpClient>().await;
 
         mock.assert_async().await;
 
-        assert_eq!(res.last_result.unwrap().status(), 202);
+        assert_eq!(res.last_result.unwrap().status().as_u16(), 202);
         assert_eq!(res.errors_timeout, 0);
         assert_eq!(res.errors_network, 0);
         assert_eq!(res.errors_status_code, 0);
@@ -655,12 +629,11 @@ mod tests {
         );
 
         let data_payload_len = compute_payload_len(&data.tracer_payloads);
-        let client = libdd_common::http_common::new_default_client();
-        let res = data.send(&client).await;
+        let res = data.send::<DefaultHttpClient>().await;
 
         mock.assert_async().await;
 
-        assert_eq!(res.last_result.unwrap().status(), 202);
+        assert_eq!(res.last_result.unwrap().status().as_u16(), 202);
         assert_eq!(res.errors_timeout, 0);
         assert_eq!(res.errors_network, 0);
         assert_eq!(res.errors_status_code, 0);
@@ -715,12 +688,11 @@ mod tests {
         );
 
         let data_payload_len = rmp_compute_payload_len(&data.tracer_payloads);
-        let client = libdd_common::http_common::new_default_client();
-        let res = data.send(&client).await;
+        let res = data.send::<DefaultHttpClient>().await;
 
         mock.assert_async().await;
 
-        assert_eq!(res.last_result.unwrap().status(), 200);
+        assert_eq!(res.last_result.unwrap().status().as_u16(), 200);
         assert_eq!(res.errors_timeout, 0);
         assert_eq!(res.errors_network, 0);
         assert_eq!(res.errors_status_code, 0);
@@ -774,12 +746,11 @@ mod tests {
         );
 
         let data_payload_len = rmp_compute_payload_len(&data.tracer_payloads);
-        let client = libdd_common::http_common::new_default_client();
-        let res = data.send(&client).await;
+        let res = data.send::<DefaultHttpClient>().await;
 
         mock.assert_async().await;
 
-        assert_eq!(res.last_result.unwrap().status(), 200);
+        assert_eq!(res.last_result.unwrap().status().as_u16(), 200);
         assert_eq!(res.errors_timeout, 0);
         assert_eq!(res.errors_network, 0);
         assert_eq!(res.errors_status_code, 0);
@@ -819,12 +790,11 @@ mod tests {
         );
 
         let data_payload_len = rmp_compute_payload_len(&data.tracer_payloads);
-        let client = libdd_common::http_common::new_default_client();
-        let res = data.send(&client).await;
+        let res = data.send::<DefaultHttpClient>().await;
 
         mock.assert_calls_async(2).await;
 
-        assert_eq!(res.last_result.unwrap().status(), 200);
+        assert_eq!(res.last_result.unwrap().status().as_u16(), 200);
         assert_eq!(res.errors_timeout, 0);
         assert_eq!(res.errors_network, 0);
         assert_eq!(res.errors_status_code, 0);
@@ -861,13 +831,12 @@ mod tests {
             },
         );
 
-        let client = libdd_common::http_common::new_default_client();
-        let res = data.send(&client).await;
+        let res = data.send::<DefaultHttpClient>().await;
 
         mock.assert_calls_async(5).await;
 
         assert!(res.last_result.is_ok());
-        assert_eq!(res.last_result.unwrap().status(), 500);
+        assert_eq!(res.last_result.unwrap().status().as_u16(), 500);
         assert_eq!(res.errors_timeout, 0);
         assert_eq!(res.errors_network, 0);
         assert_eq!(res.errors_status_code, 1);
@@ -894,8 +863,7 @@ mod tests {
             },
         );
 
-        let client = libdd_common::http_common::new_default_client();
-        let res = data.send(&client).await;
+        let res = data.send::<DefaultHttpClient>().await;
 
         assert!(res.last_result.is_err());
         match std::env::consts::OS {
@@ -962,8 +930,7 @@ mod tests {
             },
         );
 
-        let client = libdd_common::http_common::new_default_client();
-        let res = data.send(&client).await;
+        let res = data.send::<DefaultHttpClient>().await;
 
         mock.assert_calls_async(5).await;
 
@@ -1005,8 +972,7 @@ mod tests {
             },
         );
 
-        let client = libdd_common::http_common::new_default_client();
-        let res = data.send(&client).await;
+        let res = data.send::<DefaultHttpClient>().await;
 
         mock.assert_calls_async(10).await;
 

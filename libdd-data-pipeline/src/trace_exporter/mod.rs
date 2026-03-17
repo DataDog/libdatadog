@@ -17,6 +17,7 @@ use self::trace_serializer::TraceSerializer;
 use crate::agent_info::{AgentInfoFetcher, ResponseObserver};
 use crate::pausable_worker::PausableWorker;
 use crate::stats_exporter::StatsExporter;
+#[cfg(feature = "telemetry")]
 use crate::telemetry::{SendPayloadTelemetry, TelemetryClient};
 use crate::trace_exporter::agent_response::{
     AgentResponsePayloadVersion, DATADOG_RATES_PAYLOAD_VERSION_HEADER,
@@ -28,13 +29,14 @@ use crate::{
     health_metrics::{HealthMetric, SendResult, TransportErrorType},
 };
 use arc_swap::{ArcSwap, ArcSwapOption};
+use bytes::Bytes;
 use http::uri::PathAndQuery;
 use http::Uri;
-use http_body_util::BodyExt;
+use libdd_capabilities::{HttpClientTrait, MaybeSend};
 use libdd_common::tag::Tag;
-use libdd_common::{http_common, Endpoint};
-use libdd_common::{HttpClient, MutexExt};
+use libdd_common::{Endpoint, MutexExt};
 use libdd_dogstatsd_client::Client;
+#[cfg(feature = "telemetry")]
 use libdd_telemetry::worker::TelemetryWorker;
 use libdd_trace_utils::msgpack_decoder;
 use libdd_trace_utils::send_with_retry::{
@@ -43,6 +45,7 @@ use libdd_trace_utils::send_with_retry::{
 use libdd_trace_utils::span::{v04::Span, TraceData};
 use libdd_trace_utils::trace_utils::TracerHeaderTags;
 use std::io;
+use std::marker::PhantomData;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use std::{borrow::Borrow, collections::HashMap, str::FromStr};
@@ -115,6 +118,20 @@ fn add_path(url: &Uri, path: &str) -> Uri {
     Uri::from_parts(parts).unwrap()
 }
 
+pub(crate) fn build_runtime() -> io::Result<Runtime> {
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(1)
+            .enable_all()
+            .build()
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        tokio::runtime::Builder::new_current_thread().build()
+    }
+}
+
 #[derive(Clone, Default, Debug)]
 pub struct TracerMetadata {
     pub hostname: String,
@@ -155,9 +172,10 @@ impl<'a> From<&'a TracerMetadata> for HashMap<&'static str, String> {
 }
 
 #[derive(Debug)]
-pub(crate) struct TraceExporterWorkers {
-    pub info: PausableWorker<AgentInfoFetcher>,
-    pub stats: Option<PausableWorker<StatsExporter>>,
+pub(crate) struct TraceExporterWorkers<H: HttpClientTrait + MaybeSend + Sync + 'static> {
+    pub info: PausableWorker<AgentInfoFetcher<H>>,
+    pub stats: Option<PausableWorker<StatsExporter<H>>>,
+    #[cfg(feature = "telemetry")]
     pub telemetry: Option<PausableWorker<TelemetryWorker>>,
 }
 
@@ -186,12 +204,11 @@ enum DeserInputFormat {
 }
 
 #[derive(Debug)]
-pub struct TraceExporter {
+pub struct TraceExporter<H: HttpClientTrait + MaybeSend + Sync + 'static> {
     endpoint: Endpoint,
     metadata: TracerMetadata,
     input_format: TraceExporterInputFormat,
     output_format: TraceExporterOutputFormat,
-    // TODO - do something with the response callback - https://datadoghq.atlassian.net/browse/APMSP-1019
     runtime: Arc<Mutex<Option<Arc<Runtime>>>>,
     /// None if dogstatsd is disabled
     dogstatsd: Option<Client>,
@@ -200,16 +217,17 @@ pub struct TraceExporter {
     client_side_stats: ArcSwap<StatsComputationStatus>,
     previous_info_state: ArcSwapOption<String>,
     info_response_observer: ResponseObserver,
+    #[cfg(feature = "telemetry")]
     telemetry: Option<TelemetryClient>,
     health_metrics_enabled: bool,
-    workers: Arc<Mutex<TraceExporterWorkers>>,
+    workers: Arc<Mutex<TraceExporterWorkers<H>>>,
     agent_payload_response_version: Option<AgentResponsePayloadVersion>,
-    http_client: HttpClient,
+    _phantom: PhantomData<H>,
 }
 
-impl TraceExporter {
+impl<H: HttpClientTrait + MaybeSend + Sync + 'static> TraceExporter<H> {
     #[allow(missing_docs)]
-    pub fn builder() -> TraceExporterBuilder {
+    pub fn builder() -> TraceExporterBuilder<H> {
         TraceExporterBuilder::default()
     }
 
@@ -222,13 +240,7 @@ impl TraceExporter {
                 Ok(runtime.clone())
             }
             None => {
-                // Create a new current thread runtime with all features enabled
-                let runtime = Arc::new(
-                    tokio::runtime::Builder::new_multi_thread()
-                        .worker_threads(1)
-                        .enable_all()
-                        .build()?,
-                );
+                let runtime = Arc::new(build_runtime()?);
                 *runtime_guard = Some(runtime.clone());
                 self.start_all_workers(&runtime)?;
                 Ok(runtime)
@@ -256,7 +268,7 @@ impl TraceExporter {
     /// Start the info worker
     fn start_info_worker(
         &self,
-        workers: &mut TraceExporterWorkers,
+        workers: &mut TraceExporterWorkers<H>,
         runtime: &Arc<Runtime>,
     ) -> Result<(), TraceExporterError> {
         workers.info.start(runtime).map_err(|e| {
@@ -267,7 +279,7 @@ impl TraceExporter {
     /// Start the stats worker if present
     fn start_stats_worker(
         &self,
-        workers: &mut TraceExporterWorkers,
+        workers: &mut TraceExporterWorkers<H>,
         runtime: &Arc<Runtime>,
     ) -> Result<(), TraceExporterError> {
         if let Some(stats_worker) = &mut workers.stats {
@@ -278,10 +290,10 @@ impl TraceExporter {
         Ok(())
     }
 
-    /// Start the telemetry worker if present
+    #[cfg(feature = "telemetry")]
     fn start_telemetry_worker(
         &self,
-        workers: &mut TraceExporterWorkers,
+        workers: &mut TraceExporterWorkers<H>,
         runtime: &Arc<Runtime>,
     ) -> Result<(), TraceExporterError> {
         if let Some(telemetry_worker) = &mut workers.telemetry {
@@ -295,6 +307,15 @@ impl TraceExporter {
         Ok(())
     }
 
+    #[cfg(not(feature = "telemetry"))]
+    fn start_telemetry_worker(
+        &self,
+        _workers: &mut TraceExporterWorkers<H>,
+        _runtime: &Arc<Runtime>,
+    ) -> Result<(), TraceExporterError> {
+        Ok(())
+    }
+
     pub fn stop_worker(&self) {
         let runtime = self.runtime.lock_or_panic().take();
         if let Some(ref rt) = runtime {
@@ -305,6 +326,7 @@ impl TraceExporter {
                 if let Some(stats_worker) = &mut workers.stats {
                     let _ = stats_worker.pause().await;
                 };
+                #[cfg(feature = "telemetry")]
                 if let Some(telemetry_worker) = &mut workers.telemetry {
                     let _ = telemetry_worker.pause().await;
                 };
@@ -348,25 +370,66 @@ impl TraceExporter {
         Ok(res)
     }
 
+    /// Async version of [`Self::send`] for platforms that cannot use `block_on` (e.g. wasm).
+    pub async fn send_async(&self, data: &[u8]) -> Result<AgentResponse, TraceExporterError> {
+        self.check_agent_info();
+
+        let format = match self.input_format {
+            TraceExporterInputFormat::V04 => DeserInputFormat::V04,
+            TraceExporterInputFormat::V05 => DeserInputFormat::V05,
+        };
+
+        let (traces, _) = match format {
+            DeserInputFormat::V04 => msgpack_decoder::v04::from_slice(data),
+            DeserInputFormat::V05 => msgpack_decoder::v05::from_slice(data),
+        }
+        .map_err(|e| {
+            error!("Error deserializing trace from request body: {e}");
+            self.emit_metric(
+                HealthMetric::Count(health_metrics::DESERIALIZE_TRACES_ERRORS, 1),
+                None,
+            );
+            TraceExporterError::Deserialization(e)
+        })?;
+        debug!(
+            trace_count = traces.len(),
+            "Trace deserialization completed successfully"
+        );
+        self.emit_metric(
+            HealthMetric::Count(health_metrics::DESERIALIZE_TRACES, traces.len() as i64),
+            None,
+        );
+
+        let res = self.send_trace_chunks_inner(traces).await?;
+        if matches!(&res, AgentResponse::Changed { body } if body.is_empty()) {
+            return Err(TraceExporterError::Agent(
+                error::AgentErrorKind::EmptyResponse,
+            ));
+        }
+        Ok(res)
+    }
+
     /// Safely shutdown the TraceExporter and all related tasks
     pub fn shutdown(mut self, timeout: Option<Duration>) -> Result<(), TraceExporterError> {
-        let runtime = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()?;
+        let runtime = build_runtime()?;
 
+        #[cfg(not(target_arch = "wasm32"))]
         if let Some(timeout) = timeout {
-            match runtime
+            return match runtime
                 .block_on(async { tokio::time::timeout(timeout, self.shutdown_async()).await })
             {
                 Ok(()) => Ok(()),
                 Err(_e) => Err(TraceExporterError::Shutdown(
                     error::ShutdownError::TimedOut(timeout),
                 )),
-            }
-        } else {
-            runtime.block_on(self.shutdown_async());
-            Ok(())
+            };
         }
+
+        #[cfg(target_arch = "wasm32")]
+        let _ = timeout;
+
+        runtime.block_on(self.shutdown_async());
+        Ok(())
     }
 
     /// Future used inside `Self::shutdown`.
@@ -387,6 +450,7 @@ impl TraceExporter {
                 let _ = stats_worker.join().await;
             }
         }
+        #[cfg(feature = "telemetry")]
         if let Some(telemetry) = self.telemetry.take() {
             telemetry.shutdown().await;
             let telemetry_worker = self.workers.lock_or_panic().telemetry.take();
@@ -423,7 +487,6 @@ impl TraceExporter {
                             &agent_info,
                             &self.client_side_stats,
                             &self.workers,
-                            self.http_client.clone(),
                         );
                     }
                     StatsComputationStatus::Enabled {
@@ -571,10 +634,9 @@ impl TraceExporter {
         let payload_len = mp_payload.len();
 
         // Send traces to the agent
-        let result =
-            send_with_retry(&self.http_client, endpoint, mp_payload, &headers, &strategy).await;
+        let result = send_with_retry::<H>(endpoint, mp_payload, &headers, &strategy).await;
 
-        // Send telemetry for the payload sending
+        #[cfg(feature = "telemetry")]
         if let Some(telemetry) = &self.telemetry {
             if let Err(e) = telemetry.send(&SendPayloadTelemetry::from_retry_result(
                 &result,
@@ -678,6 +740,19 @@ impl TraceExporter {
                 self.emit_send_result(&send_result);
                 Err(TraceExporterError::from(err))
             }
+            SendWithRetryError::ResponseBody(attempts) => {
+                let send_result = SendResult::failure(
+                    TransportErrorType::ResponseBody,
+                    payload_len,
+                    chunks,
+                    attempts,
+                );
+                self.emit_send_result(&send_result);
+                Err(TraceExporterError::from(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "failed to read response body",
+                )))
+            }
             SendWithRetryError::Build(attempts) => {
                 let send_result =
                     SendResult::failure(TransportErrorType::Build, payload_len, chunks, attempts);
@@ -692,53 +767,41 @@ impl TraceExporter {
     /// Handle HTTP error responses from send with retry
     async fn handle_http_send_error(
         &self,
-        response: http_common::HttpResponse,
+        response: http::Response<Bytes>,
         payload_len: usize,
         chunks: usize,
         attempts: u32,
     ) -> Result<AgentResponse, TraceExporterError> {
-        let status = response.status();
+        let status = response.status().as_u16();
 
         // Check if the agent state has changed for error responses
         self.info_response_observer.check_response(&response);
 
-        // Emit health metrics using SendResult
         let send_result = SendResult::failure(
-            TransportErrorType::Http(status.as_u16()),
+            TransportErrorType::Http(status),
             payload_len,
             chunks,
             attempts,
         );
         self.emit_send_result(&send_result);
 
-        let body = self.read_error_response_body(response).await?;
+        let body = String::from_utf8_lossy(response.body());
         Err(TraceExporterError::Request(RequestError::new(
-            status,
-            &String::from_utf8_lossy(&body),
+            status, &body,
         )))
     }
 
-    /// Read response body from error response
-    async fn read_error_response_body(
-        &self,
-        response: http_common::HttpResponse,
-    ) -> Result<bytes::Bytes, TraceExporterError> {
-        match response.into_body().collect().await {
-            Ok(body) => Ok(body.to_bytes()),
-            Err(err) => {
-                error!(?err, "Error reading agent response body");
-                Err(TraceExporterError::from(err))
-            }
-        }
-    }
-
     /// Check if the agent's payload version has changed based on response headers
-    fn check_payload_version_changed(&self, response: &http_common::HttpResponse) -> bool {
-        let status = response.status();
+    fn check_payload_version_changed(&self, response: &http::Response<Bytes>) -> bool {
+        let is_success = response.status().is_success();
+        let version_header = response
+            .headers()
+            .get(DATADOG_RATES_PAYLOAD_VERSION_HEADER)
+            .and_then(|v| v.to_str().ok());
         match (
-            status.is_success(),
+            is_success,
             self.agent_payload_response_version.as_ref(),
-            response.headers().get(DATADOG_RATES_PAYLOAD_VERSION_HEADER),
+            version_header,
         ) {
             (false, _, _) => {
                 // If the status is not success, the rates are considered unchanged
@@ -750,22 +813,10 @@ impl TraceExporter {
                 true
             }
             (true, Some(agent_payload_response_version), Some(new_payload_version)) => {
-                if let Ok(new_payload_version_str) = new_payload_version.to_str() {
-                    agent_payload_response_version.check_and_update(new_payload_version_str)
-                } else {
-                    false
-                }
+                agent_payload_response_version.check_and_update(new_payload_version)
             }
             _ => false,
         }
-    }
-
-    /// Read response body and handle potential errors
-    async fn read_response_body(
-        response: http_common::HttpResponse,
-    ) -> Result<String, http_common::Error> {
-        let body = http_common::collect_response_bytes(response).await?;
-        Ok(String::from_utf8_lossy(&body).to_string())
     }
 
     /// Handle successful trace sending response
@@ -791,55 +842,38 @@ impl TraceExporter {
     async fn handle_agent_response(
         &self,
         chunks: usize,
-        response: http_common::HttpResponse,
+        response: http::Response<Bytes>,
         payload_len: usize,
         attempts: u32,
     ) -> Result<AgentResponse, TraceExporterError> {
         // Check if the agent state has changed
         self.info_response_observer.check_response(&response);
 
-        let status = response.status();
+        let status = response.status().as_u16();
         let payload_version_changed = self.check_payload_version_changed(&response);
+        let body = String::from_utf8_lossy(response.body()).to_string();
 
-        match Self::read_response_body(response).await {
-            Ok(body) => {
-                if !status.is_success() {
-                    warn!(
-                        status = %status,
-                        "Agent returned non-success status for trace send"
-                    );
-                    let send_result = SendResult::failure(
-                        TransportErrorType::Http(status.as_u16()),
-                        payload_len,
-                        chunks,
-                        attempts,
-                    );
-                    self.emit_send_result(&send_result);
-                    return Err(TraceExporterError::Request(RequestError::new(
-                        status, &body,
-                    )));
-                }
-
-                self.handle_successful_trace_response(
-                    chunks,
-                    payload_len,
-                    attempts,
-                    body,
-                    payload_version_changed,
-                )
-            }
-            Err(err) => {
-                error!(?err, "Error reading agent response body");
-                let send_result = SendResult::failure(
-                    TransportErrorType::ResponseBody,
-                    payload_len,
-                    chunks,
-                    attempts,
-                );
-                self.emit_send_result(&send_result);
-                Err(TraceExporterError::from(err))
-            }
+        if !response.status().is_success() {
+            warn!(status, "Agent returned non-success status for trace send");
+            let send_result = SendResult::failure(
+                TransportErrorType::Http(status),
+                payload_len,
+                chunks,
+                attempts,
+            );
+            self.emit_send_result(&send_result);
+            return Err(TraceExporterError::Request(RequestError::new(
+                status, &body,
+            )));
         }
+
+        self.handle_successful_trace_response(
+            chunks,
+            payload_len,
+            attempts,
+            body,
+            payload_version_changed,
+        )
     }
 
     fn get_agent_url(&self) -> Uri {
@@ -853,6 +887,7 @@ impl TraceExporter {
     }
 }
 
+#[cfg(feature = "telemetry")]
 #[derive(Debug, Default, Clone)]
 pub struct TelemetryConfig {
     pub heartbeat: u64,
@@ -872,6 +907,7 @@ mod tests {
     use super::*;
     use httpmock::prelude::*;
     use httpmock::MockServer;
+    use libdd_capabilities_impl::DefaultHttpClient;
     use libdd_tinybytes::BytesString;
     use libdd_trace_utils::msgpack_encoder;
     use libdd_trace_utils::span::v04::SpanBytes;
@@ -947,8 +983,8 @@ mod tests {
         output: TraceExporterOutputFormat,
         enable_telemetry: bool,
         enable_health_metrics: bool,
-    ) -> TraceExporter {
-        let mut builder = TraceExporterBuilder::default();
+    ) -> TraceExporter<DefaultHttpClient> {
+        let mut builder = TraceExporter::<DefaultHttpClient>::builder();
         builder
             .set_url(&url)
             .set_service("test")
@@ -1367,7 +1403,7 @@ mod tests {
                 );
         });
 
-        let mut builder = TraceExporterBuilder::default();
+        let mut builder = TraceExporter::<DefaultHttpClient>::builder();
         builder
             .set_url(&server.url("/"))
             .set_service("foo")
@@ -1409,7 +1445,7 @@ mod tests {
                 .body(r#"{ "error": "Unavailable" }"#);
         });
 
-        let mut builder = TraceExporterBuilder::default();
+        let mut builder = TraceExporter::<DefaultHttpClient>::builder();
         builder
             .set_url(&server.url("/"))
             .set_service("foo")
@@ -1444,7 +1480,7 @@ mod tests {
                 .body("");
         });
 
-        let mut builder = TraceExporterBuilder::default();
+        let mut builder = TraceExporter::<DefaultHttpClient>::builder();
         builder
             .set_url(&server.url("/"))
             .set_service("foo")
@@ -1498,7 +1534,7 @@ mod tests {
                 .body("");
         });
 
-        let mut builder = TraceExporterBuilder::default();
+        let mut builder = TraceExporter::<DefaultHttpClient>::builder();
         builder
             .set_url(&server.url("/"))
             .set_service("foo")
@@ -1622,7 +1658,7 @@ mod tests {
                 .body("");
         });
 
-        let mut builder = TraceExporterBuilder::default();
+        let mut builder = TraceExporter::<DefaultHttpClient>::builder();
         builder
             .set_url(&server.url("/"))
             .set_service("foo")
@@ -1682,7 +1718,7 @@ mod tests {
                 .body(response_body);
         });
 
-        let mut builder = TraceExporterBuilder::default();
+        let mut builder = TraceExporter::<DefaultHttpClient>::builder();
         builder.set_url(&server.url("/"));
         let exporter = builder.build().unwrap();
         let traces = vec![0x90];
@@ -1717,7 +1753,7 @@ mod tests {
                 .body(response_body);
         });
 
-        let mut builder = TraceExporterBuilder::default();
+        let mut builder = TraceExporter::<DefaultHttpClient>::builder();
         builder
             .set_url(&server.url("/"))
             .enable_agent_rates_payload_version();
@@ -1809,7 +1845,7 @@ mod tests {
             then.delay(delay).status(status).body(response);
         });
 
-        let mut builder = TraceExporterBuilder::default();
+        let mut builder = TraceExporter::<DefaultHttpClient>::builder();
         builder
             .set_url(&server.url("/"))
             .set_service("test")
@@ -1853,12 +1889,14 @@ mod tests {
     #[test]
     #[cfg_attr(miri, ignore)]
     fn test_connection_timeout() {
-        let exporter = TraceExporterBuilder::default().build().unwrap();
+        let exporter = TraceExporter::<DefaultHttpClient>::builder()
+            .build()
+            .unwrap();
 
         assert_eq!(exporter.endpoint.timeout_ms, Endpoint::default().timeout_ms);
 
         let timeout = Some(42);
-        let mut builder = TraceExporterBuilder::default();
+        let mut builder = TraceExporter::<DefaultHttpClient>::builder();
         builder.set_connection_timeout(timeout);
 
         let exporter = builder.build().unwrap();
@@ -1869,7 +1907,7 @@ mod tests {
     #[test]
     #[cfg_attr(miri, ignore)]
     fn stop_and_start_runtime() {
-        let builder = TraceExporterBuilder::default();
+        let builder = TraceExporter::<DefaultHttpClient>::builder();
         let exporter = builder.build().unwrap();
         exporter.stop_worker();
         exporter.run_worker().unwrap();
@@ -1881,6 +1919,7 @@ mod single_threaded_tests {
     use super::*;
     use crate::agent_info;
     use httpmock::prelude::*;
+    use libdd_capabilities_impl::DefaultHttpClient;
     use libdd_trace_utils::msgpack_encoder;
     use libdd_trace_utils::span::v04::SpanBytes;
     use std::time::Duration;
@@ -1916,7 +1955,7 @@ mod single_threaded_tests {
                 .body(r#"{"version":"1","client_drop_p0s":true,"endpoints":["/v0.4/traces","/v0.6/stats"]}"#);
         });
 
-        let mut builder = TraceExporterBuilder::default();
+        let mut builder = TraceExporter::<DefaultHttpClient>::builder();
         builder
             .set_url(&server.url("/"))
             .set_service("test")
@@ -2016,7 +2055,7 @@ mod single_threaded_tests {
                 .body(r#"{"version":"1","client_drop_p0s":true,"endpoints":["/v0.4/traces","/v0.6/stats"]}"#);
         });
 
-        let mut builder = TraceExporterBuilder::default();
+        let mut builder = TraceExporter::<DefaultHttpClient>::builder();
         builder
             .set_url(&server.url("/"))
             .set_service("test")

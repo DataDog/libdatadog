@@ -94,29 +94,27 @@ fn obfuscate_redis_cmd<'a>(str: &mut String, cmd: &'a str, mut args: Vec<&'a str
     let mut uppercase_cmd = [0; 32]; // no redis cmd is longer than 32 chars
     let uppercase_cmd = ascii_uppercase(cmd, &mut uppercase_cmd).unwrap_or(&[]);
     match uppercase_cmd {
-        b"AUTH" | b"MIGRATE" | b"HELLO" => {
+        b"AUTH" | b"MIGRATE" | b"HELLO"
             // Obfuscate everything after command:
             // • AUTH password
             // • MIGRATE host port key|"" destination-db timeout [COPY] [REPLACE] [AUTH password]
             //   [AUTH2 username password] [KEYS key [key ...]]
             // • HELLO [protover [AUTH username password] [SETNAME clientname]]
-            if !args.is_empty() {
+            if !args.is_empty() => {
                 args.clear();
                 args.push("?");
             }
-        }
-        b"ACL" => {
+        b"ACL"
             // Obfuscate all arguments after the subcommand:
             // • ACL SETUSER username on >password ~keys &channels +commands
             // • ACL GETUSER username
             // • ACL DELUSER username [username ...]
             // • ACL LIST
             // • ACL WHOAMI
-            if args.len() > 1 {
+            if args.len() > 1 => {
                 args[1] = "?";
                 args.drain(2..);
             }
-        }
         b"APPEND" | b"GETSET" | b"LPUSHX" | b"GEORADIUSBYMEMBER" | b"RPUSHX" | b"SET"
         | b"SETNX" | b"SISMEMBER" | b"ZRANK" | b"ZREVRANK" | b"ZSCORE" => {
             // Obfuscate 2nd argument:
@@ -155,7 +153,7 @@ fn obfuscate_redis_cmd<'a>(str: &mut String, cmd: &'a str, mut args: Vec<&'a str
             // • LINSERT key BEFORE|AFTER pivot value
             args = obfuscate_redis_args_n(args, 3);
         }
-        b"GEOHASH" | b"GEOPOS" | b"GEODIST" | b"LPUSH" | b"RPUSH" | b"SREM" | b"ZREM" | b"SADD" => {
+        b"GEOHASH" | b"GEOPOS" | b"GEODIST" | b"LPUSH" | b"RPUSH" | b"SREM" | b"ZREM" | b"SADD"
             // Obfuscate all arguments after the first one.
             // • GEOHASH key member [member ...]
             // • GEOPOS key member [member ...]
@@ -165,11 +163,10 @@ fn obfuscate_redis_cmd<'a>(str: &mut String, cmd: &'a str, mut args: Vec<&'a str
             // • SREM key member [member ...]
             // • ZREM key member [member ...]
             // • SADD key member [member ...]
-            if args.len() > 1 {
+            if args.len() > 1 => {
                 args[1] = "?";
                 args.drain(2..);
             }
-        }
         b"GEOADD" => {
             // Obfuscating every 3rd argument starting from first
             // • GEOADD key longitude latitude member [longitude latitude member ...]

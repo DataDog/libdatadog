@@ -134,7 +134,6 @@ impl<'a> From<&'a HeaderMap<HeaderValue>> for TracerHeaderTags<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use hyper::HeaderMap;
 
     #[test]
     fn tags_to_hashmap() {

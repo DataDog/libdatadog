@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use clap::Parser;
+use libdd_capabilities_impl::NativeCapabilities;
 use libdd_data_pipeline::trace_exporter::{
     TelemetryConfig, TraceExporter, TraceExporterInputFormat, TraceExporterOutputFormat,
 };
@@ -55,7 +56,7 @@ fn main() {
 
     let args = Args::parse();
     let telemetry_cfg = TelemetryConfig::default();
-    let mut builder = TraceExporter::builder();
+    let mut builder = TraceExporter::<NativeCapabilities>::builder();
     builder
         .set_url(&args.url)
         .set_hostname("test")
