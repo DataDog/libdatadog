@@ -14,6 +14,7 @@ mod linux {
 
     const LIBUNWIND_REPO: &str = "https://github.com/DataDog/libunwind.git";
     const LIBUNWIND_BRANCH: &str = "kevin/v1.8.1-custom-2";
+    const AUTOTOOLS_INSTALL_HINT: &str = "Install autotools:\n  Debian/Ubuntu: apt install autoconf automake libtool\n  Alpine: apk add autoconf automake libtool m4";
 
     /// Try initializing the libunwind git submodule from the repo root.
     /// Only works when running inside a git repository.
@@ -103,17 +104,37 @@ mod linux {
         if !lib_file.exists() {
             eprintln!("Building libunwind from source...");
 
-            // Only run autoreconf if configure doesn't exist
+            // Only run autotools bootstrap if configure doesn't exist.
             let configure_script = libunwind_dir.join("configure");
             if !configure_script.exists() {
+                // Some source snapshots do not include generated autotools files.
+                // Ensure macro dir exists before running autoreconf
+                std::fs::create_dir_all(libunwind_dir.join("m4"))
+                    .expect("Failed to create libunwind/m4 directory");
+
+                eprintln!("Running libtoolize...");
+                let status = std::process::Command::new("sh")
+                    .current_dir(&libunwind_dir)
+                    .args(["-c", "libtoolize --copy --force"])
+                    .status()
+                    .expect(&format!(
+                        "Failed to run libtoolize.\n{}",
+                        AUTOTOOLS_INSTALL_HINT
+                    ));
+
+                if !status.success() {
+                    panic!("libtoolize failed with exit code: {:?}", status.code());
+                }
+
                 eprintln!("Running autoreconf...");
                 let status = std::process::Command::new("sh")
                     .current_dir(&libunwind_dir)
-                    .args(["-c", "autoreconf -i"])
+                    .args(["-c", "autoreconf -fi"])
                     .status()
-                    .expect(
-                        "Failed to run autoreconf. Install with: apt install autoconf automake libtool",
-                    );
+                    .expect(&format!(
+                        "Failed to run autoreconf.\n{}",
+                        AUTOTOOLS_INSTALL_HINT
+                    ));
 
                 if !status.success() {
                     panic!("autoreconf failed with exit code: {:?}", status.code());
