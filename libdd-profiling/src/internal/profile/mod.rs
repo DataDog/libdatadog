@@ -455,13 +455,17 @@ impl Profile {
         Ok(profile)
     }
 
-    /// Serialize the aggregated profile, adding the end time and duration.
+    /// Serialize the aggregated profile to OpenTelemetry OTLP format (compressed).
+    ///
     /// # Arguments
     /// * `end_time` - Optional end time of the profile. Passing None will use the current time.
     /// * `duration` - Optional duration of the profile. Passing None will try to calculate the
     ///   duration based on the end time minus the start time, but under anomalous conditions this
     ///   may fail as system clocks can be adjusted. The programmer may also accidentally pass an
     ///   earlier time. The duration will be set to zero these cases.
+    ///
+    /// See also [`encode_otel`](Profile::encode_otel) for the same encoding as a public API.
+    #[cfg(feature = "otel")]
     pub fn serialize_into_compressed_otel(
         self,
         end_time: Option<SystemTime>,
@@ -511,8 +515,13 @@ impl Profile {
         Ok(encoded_profile)
     }
 
+    /// Encode the profile to OpenTelemetry OTLP format (compressed).
+    ///
+    /// Returns an [`EncodedProfile`] with the compressed wire format. Use
+    /// [`serialize_into_compressed_otel`](Profile::serialize_into_compressed_otel) for the
+    /// conventional API with the same behavior.
     #[cfg(feature = "otel")]
-    fn encode_otel(
+    pub fn encode_otel(
         mut self,
         end_time: Option<SystemTime>,
         duration: Option<Duration>,
@@ -691,39 +700,38 @@ impl Profile {
 
         for (sample_type, samples) in std::mem::take(&mut self.observations.aggregated).into_iter()
         {
-            let mut otel_samples = Vec::with_capacity(samples.len());
+            let profile = otel_profiles
+                .get_mut(&sample_type)
+                .context("missing profile")?;
+            profile.sample.reserve(samples.len());
             for (sample, val) in samples {
                 let attribute_indices = label_set_attr_indices
                     .get(sample.labels.to_raw_id())
                     .cloned()
                     .unwrap_or_default();
-                otel_samples.push(crate::otel::Sample {
+                profile.sample.push(crate::otel::Sample {
                     stack_index: sample.stacktrace.into_raw_id() as i32,
                     values: vec![val],
                     attribute_indices,
                     ..Default::default()
                 });
             }
-            let profile = otel_profiles
-                .get_mut(&sample_type)
-                .context("missing profile")?;
-            profile.sample.append(&mut otel_samples);
         }
 
         for (sample_type, samples) in std::mem::take(&mut self.observations.timestamped).into_iter()
         {
-            let mut otel_samples = Vec::with_capacity(samples.len());
+            let profile = otel_profiles
+                .get_mut(&sample_type)
+                .context("missing profile")?;
+            profile.sample.reserve(samples.len());
             for (sample, vals) in samples {
                 let attribute_indices = label_set_attr_indices
                     .get(sample.labels.to_raw_id())
                     .cloned()
                     .unwrap_or_default();
-                let (values, timestamps_unix_nano): (Vec<_>, Vec<_>) = vals.into_iter().unzip();
-                let timestamps_unix_nano = timestamps_unix_nano
-                    .into_iter()
-                    .map(|x| x.get() as u64)
-                    .collect();
-                otel_samples.push(crate::otel::Sample {
+                let (values, timestamps_unix_nano): (Vec<_>, Vec<u64>) =
+                    vals.into_iter().map(|(v, ts)| (v, ts.get() as u64)).unzip();
+                profile.sample.push(crate::otel::Sample {
                     stack_index: sample.stacktrace.into_raw_id() as i32,
                     values,
                     timestamps_unix_nano,
@@ -731,10 +739,83 @@ impl Profile {
                     ..Default::default()
                 });
             }
-            let profile = otel_profiles
-                .get_mut(&sample_type)
-                .context("missing profile")?;
-            profile.sample.append(&mut otel_samples);
+        }
+
+        for ((st1, st2), samples) in std::mem::take(&mut self.observations.aggregated2).into_iter()
+        {
+            let profile1 = otel_profiles.get_mut(&st1).context("missing profile")?;
+            profile1.sample.reserve(samples.len());
+            let mut samples2 = Vec::with_capacity(samples.len());
+
+            for (sample, (val1, val2)) in samples.into_iter() {
+                let attribute_indices = label_set_attr_indices
+                    .get(sample.labels.to_raw_id())
+                    .cloned()
+                    .unwrap_or_default();
+                let stack_index = sample.stacktrace.into_raw_id() as i32;
+                profile1.sample.push(crate::otel::Sample {
+                    stack_index,
+                    values: vec![val1],
+                    attribute_indices: attribute_indices.clone(),
+                    ..Default::default()
+                });
+                samples2.push(crate::otel::Sample {
+                    stack_index,
+                    values: vec![val2],
+                    attribute_indices,
+                    ..Default::default()
+                });
+            }
+            let profile2 = otel_profiles.get_mut(&st2).context("missing profile")?;
+            profile2.sample.append(&mut samples2);
+        }
+
+        for ((st1, st2), samples) in std::mem::take(&mut self.observations.timestamped2).into_iter()
+        {
+            let profile1 = otel_profiles.get_mut(&st1).context("missing profile")?;
+            profile1.sample.reserve(samples.len());
+            let mut samples2 = Vec::with_capacity(samples.len());
+
+            for (sample, vals) in samples.into_iter() {
+                let attribute_indices = label_set_attr_indices
+                    .get(sample.labels.to_raw_id())
+                    .cloned()
+                    .unwrap_or_default();
+                let cap = vals.len();
+                let (values1, values2, timestamps_unix_nano) = vals
+                    .into_iter()
+                    .map(|(v1, v2, ts)| (v1, v2, ts.get() as u64))
+                    .fold(
+                        (
+                            Vec::with_capacity(cap),
+                            Vec::with_capacity(cap),
+                            Vec::with_capacity(cap),
+                        ),
+                        |(mut vs1, mut vs2, mut ts), (v1, v2, t)| {
+                            vs1.push(v1);
+                            vs2.push(v2);
+                            ts.push(t);
+                            (vs1, vs2, ts)
+                        },
+                    );
+                let stack_index = sample.stacktrace.into_raw_id() as i32;
+                profile1.sample.push(crate::otel::Sample {
+                    stack_index,
+                    values: values1,
+                    timestamps_unix_nano: timestamps_unix_nano.clone(),
+                    attribute_indices: attribute_indices.clone(),
+                    ..Default::default()
+                });
+                samples2.push(crate::otel::Sample {
+                    stack_index,
+                    values: values2,
+                    timestamps_unix_nano,
+                    attribute_indices,
+                    ..Default::default()
+                });
+            }
+            let profile2 = otel_profiles.get_mut(&st2).context("missing profile")?;
+            profile2.sample.append(&mut samples2);
         }
 
         let scope_profile = crate::otel::ScopeProfiles {
@@ -783,7 +864,7 @@ impl Profile {
             end,
             buffer,
             endpoints_stats,
-        })    
+        })
     }
 
     /// Encodes the profile. Note that the buffer will be empty. The caller
@@ -1694,7 +1775,6 @@ mod api_tests {
     }
 
     #[test]
-    #[cfg_attr(feature = "otel", ignore)]
     fn lazy_endpoints() -> anyhow::Result<()> {
         let sample_types = [api::SampleType::CpuSamples, api::SampleType::WallTime];
 
@@ -1858,8 +1938,6 @@ mod api_tests {
     }
 
     #[test]
-    // This works if we merge accumulated samples
-    #[cfg_attr(feature = "otel", ignore)]
     fn test_no_upscaling_if_no_rules() {
         let sample_types = vec![api::SampleType::CpuSamples, api::SampleType::WallTime];
 
@@ -1909,8 +1987,6 @@ mod api_tests {
     }
 
     #[test]
-    // This works if we accumulate
-    #[cfg_attr(feature = "otel", ignore)]
     fn test_upscaling_by_value_a_zero_value() {
         let sample_types = create_samples_types();
 
@@ -2048,9 +2124,6 @@ mod api_tests {
     }
 
     #[test]
-    // This works if we accumulate
-    #[cfg_attr(feature = "otel", ignore)]
-
     fn test_upscaling_by_value_on_zero_value_with_poisson() {
         let sample_types = create_samples_types();
 
@@ -2839,6 +2912,7 @@ mod api_tests {
     }
 
     #[test]
+    #[cfg_attr(feature = "otel", ignore)] // too many non-zero values
     fn test_fails_when_adding_byvalue_rule_colliding_on_offset_with_existing_bylabel_rule() {
         let sample_types = create_samples_types();
 
@@ -2878,8 +2952,6 @@ mod api_tests {
     }
 
     #[test]
-    // This works if we merge accumulated samples
-    #[cfg_attr(feature = "otel", ignore)]
     fn local_root_span_id_label_as_i64() -> anyhow::Result<()> {
         let sample_types = vec![api::SampleType::CpuSamples, api::SampleType::WallTime];
 
