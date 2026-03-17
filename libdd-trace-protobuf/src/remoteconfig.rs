@@ -56,6 +56,8 @@ pub struct ClientTracer {
     pub tags: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
     #[prost(string, repeated, tag = "9")]
     pub process_tags: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+    #[prost(string, repeated, tag = "10")]
+    pub container_tags: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
 }
 #[derive(Deserialize, Serialize)]
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]

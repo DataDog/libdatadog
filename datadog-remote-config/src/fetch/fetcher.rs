@@ -327,6 +327,7 @@ impl<S: FileStorage> ConfigFetcher<S> {
                     app_version,
                     tags: tags.iter().map(|t| t.to_string()).collect(),
                     process_tags: process_tags.iter().map(|t| t.to_string()).collect(),
+                    container_tags: vec![],
                 }),
                 is_agent: false,
                 client_agent: None,
