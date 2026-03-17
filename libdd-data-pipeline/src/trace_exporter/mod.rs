@@ -45,7 +45,7 @@ use libdd_trace_utils::trace_utils::TracerHeaderTags;
 use std::io;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
-use std::{borrow::Borrow, collections::HashMap, str::FromStr};
+use std::{borrow::Borrow, str::FromStr};
 use tokio::runtime::Runtime;
 use tracing::{debug, error, warn};
 
@@ -148,8 +148,8 @@ impl<'a> From<&'a TracerMetadata> for TracerHeaderTags<'a> {
     }
 }
 
-impl<'a> From<&'a TracerMetadata> for HashMap<http::HeaderName, String> {
-    fn from(tags: &'a TracerMetadata) -> HashMap<http::HeaderName, String> {
+impl<'a> From<&'a TracerMetadata> for http::HeaderMap {
+    fn from(tags: &'a TracerMetadata) -> http::HeaderMap {
         TracerHeaderTags::from(tags).into()
     }
 }
@@ -563,7 +563,7 @@ impl TraceExporter {
         &self,
         endpoint: &Endpoint,
         mp_payload: Vec<u8>,
-        headers: HashMap<http::HeaderName, String>,
+        headers: http::HeaderMap,
         chunks: usize,
         chunks_dropped_p0: usize,
     ) -> Result<AgentResponse, TraceExporterError> {
@@ -876,7 +876,6 @@ mod tests {
     use libdd_trace_utils::msgpack_encoder;
     use libdd_trace_utils::span::v04::SpanBytes;
     use libdd_trace_utils::span::v05;
-    use std::collections::HashMap;
     use std::net;
     use std::time::Duration;
     use tokio::time::sleep;
@@ -920,7 +919,7 @@ mod tests {
             ..Default::default()
         };
 
-        let hashmap: HashMap<http::HeaderName, String> = (&tracer_tags).into();
+        let hashmap: http::HeaderMap = (&tracer_tags).into();
 
         assert_eq!(hashmap.get("datadog-meta-tracer-version").unwrap(), "v0.1");
         assert_eq!(hashmap.get("datadog-meta-lang").unwrap(), "rust");

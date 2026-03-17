@@ -6,23 +6,22 @@ use crate::trace_exporter::agent_response::{
 };
 use crate::trace_exporter::error::TraceExporterError;
 use crate::trace_exporter::TraceExporterOutputFormat;
-use http::{header::CONTENT_TYPE, HeaderName};
+use http::{header::CONTENT_TYPE, HeaderMap, HeaderValue};
 use libdd_common::header::{
-    APPLICATION_MSGPACK_STR, DATADOG_SEND_REAL_HTTP_STATUS, DATADOG_TRACE_COUNT,
+    APPLICATION_MSGPACK, DATADOG_SEND_REAL_HTTP_STATUS, DATADOG_TRACE_COUNT,
 };
 use libdd_trace_utils::msgpack_decoder::decode::error::DecodeError;
 use libdd_trace_utils::msgpack_encoder;
 use libdd_trace_utils::span::{v04::Span, TraceData};
 use libdd_trace_utils::trace_utils::{self, TracerHeaderTags};
 use libdd_trace_utils::tracer_payload;
-use std::collections::HashMap;
 
 /// Prepared traces payload ready for sending to the agent
 pub(super) struct PreparedTracesPayload {
     /// Serialized msgpack payload
     pub data: Vec<u8>,
     /// HTTP headers for the request
-    pub headers: HashMap<HeaderName, String>,
+    pub headers: HeaderMap,
     /// Number of trace chunks
     pub chunk_count: usize,
 }
@@ -78,20 +77,17 @@ impl<'a> TraceSerializer<'a> {
     }
 
     /// Build HTTP headers for traces request
-    fn build_traces_headers(
-        &self,
-        header_tags: TracerHeaderTags,
-        chunk_count: usize,
-    ) -> HashMap<HeaderName, String> {
-        let mut headers: HashMap<HeaderName, String> = header_tags.into();
-        headers.insert(DATADOG_SEND_REAL_HTTP_STATUS, "1".to_string());
-        headers.insert(DATADOG_TRACE_COUNT, chunk_count.to_string());
-        headers.insert(CONTENT_TYPE, APPLICATION_MSGPACK_STR.to_string());
+    fn build_traces_headers(&self, header_tags: TracerHeaderTags, chunk_count: usize) -> HeaderMap {
+        let mut headers: HeaderMap = header_tags.into();
+        headers.insert(DATADOG_SEND_REAL_HTTP_STATUS, HeaderValue::from_static("1"));
+        // should always be true, as the name should only contain visible ascii chars
+        let _ = HeaderValue::try_from(chunk_count.to_string())
+            .map(|v| headers.insert(DATADOG_TRACE_COUNT, v));
+        headers.insert(CONTENT_TYPE, APPLICATION_MSGPACK);
         if let Some(agent_payload_response_version) = &self.agent_payload_response_version {
-            headers.insert(
-                DATADOG_RATES_PAYLOAD_VERSION,
-                agent_payload_response_version.header_value(),
-            );
+            // should always be true, as the version should only contain visible ascii chars
+            let _ = HeaderValue::try_from(agent_payload_response_version.header_value())
+                .map(|v| headers.insert(DATADOG_RATES_PAYLOAD_VERSION, v));
         }
         headers
     }

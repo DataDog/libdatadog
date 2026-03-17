@@ -3,7 +3,6 @@
 
 use http::{HeaderMap, HeaderName, HeaderValue};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 
 macro_rules! parse_string_header {
     (
@@ -40,67 +39,79 @@ pub struct TracerHeaderTags<'a> {
     pub dropped_p0_spans: usize,
 }
 
-impl<'a> From<TracerHeaderTags<'a>> for HashMap<HeaderName, String> {
-    fn from(tags: TracerHeaderTags<'a>) -> HashMap<HeaderName, String> {
-        let mut headers = HashMap::from([
-            (
-                HeaderName::from_static("datadog-meta-lang"),
-                tags.lang.to_string(),
-            ),
-            (
-                HeaderName::from_static("datadog-meta-lang-version"),
-                tags.lang_version.to_string(),
-            ),
-            (
-                HeaderName::from_static("datadog-meta-lang-interpreter"),
-                tags.lang_interpreter.to_string(),
-            ),
-            (
-                HeaderName::from_static("datadog-meta-lang-interpreter-vendor"),
-                tags.lang_vendor.to_string(),
-            ),
-            (
-                HeaderName::from_static("datadog-meta-tracer-version"),
-                tags.tracer_version.to_string(),
-            ),
-            (
-                HeaderName::from_static("datadog-container-id"),
-                tags.container_id.to_string(),
-            ),
-            (
+impl<'a> From<TracerHeaderTags<'a>> for HeaderMap {
+    fn from(tags: TracerHeaderTags<'a>) -> HeaderMap {
+        let mut headers = HeaderMap::new();
+        fn try_insert(
+            h: &mut HeaderMap,
+            key: HeaderName,
+            v: impl TryInto<HeaderValue> + AsRef<[u8]>,
+        ) {
+            if v.as_ref().is_empty() {
+                return;
+            }
+            if let Ok(v) = v.try_into() {
+                h.insert(key, v);
+            }
+        }
+        try_insert(
+            &mut headers,
+            HeaderName::from_static("datadog-meta-lang"),
+            tags.lang,
+        );
+        try_insert(
+            &mut headers,
+            HeaderName::from_static("datadog-meta-lang-version"),
+            tags.lang_version,
+        );
+        try_insert(
+            &mut headers,
+            HeaderName::from_static("datadog-meta-lang-interpreter"),
+            tags.lang_interpreter,
+        );
+        try_insert(
+            &mut headers,
+            HeaderName::from_static("datadog-meta-lang-interpreter-vendor"),
+            tags.lang_vendor,
+        );
+        try_insert(
+            &mut headers,
+            HeaderName::from_static("datadog-meta-tracer-version"),
+            tags.tracer_version,
+        );
+        try_insert(
+            &mut headers,
+            HeaderName::from_static("datadog-container-id"),
+            tags.container_id,
+        );
+        if tags.client_computed_stats {
+            try_insert(
+                &mut headers,
                 HeaderName::from_static("datadog-client-computed-stats"),
-                if tags.client_computed_stats {
-                    "true".to_string()
-                } else {
-                    String::new()
-                },
-            ),
-            (
+                HeaderValue::from_static("true"),
+            );
+        }
+        if tags.client_computed_top_level {
+            try_insert(
+                &mut headers,
                 HeaderName::from_static("datadog-client-computed-top-level"),
-                if tags.client_computed_top_level {
-                    "true".to_string()
-                } else {
-                    String::new()
-                },
-            ),
-            (
+                HeaderValue::from_static("true"),
+            );
+        }
+        if tags.dropped_p0_traces > 0 {
+            try_insert(
+                &mut headers,
                 HeaderName::from_static("datadog-client-dropped-p0-traces"),
-                if tags.dropped_p0_traces > 0 {
-                    tags.dropped_p0_traces.to_string()
-                } else {
-                    String::new()
-                },
-            ),
-            (
+                tags.dropped_p0_traces.to_string(),
+            );
+        }
+        if tags.dropped_p0_spans > 0 {
+            try_insert(
+                &mut headers,
                 HeaderName::from_static("datadog-client-dropped-p0-spans"),
-                if tags.dropped_p0_spans > 0 {
-                    tags.dropped_p0_spans.to_string()
-                } else {
-                    String::new()
-                },
-            ),
-        ]);
-        headers.retain(|_, v| !v.is_empty());
+                tags.dropped_p0_spans.to_string(),
+            );
+        }
         headers
     }
 }
@@ -141,14 +152,10 @@ impl<'a> From<&'a HeaderMap<HeaderValue>> for TracerHeaderTags<'a> {
 
 #[cfg(test)]
 mod tests {
-    use std::str::FromStr;
-
     use super::*;
-    use hyper::HeaderMap;
 
-    fn get<'a>(m: &'a HashMap<HeaderName, String>, key: &str) -> Option<&'a str> {
-        m.get(&HeaderName::from_str(key).unwrap())
-            .map(|v| v.as_str())
+    fn get<'a>(m: &'a HeaderMap, key: &str) -> Option<&'a str> {
+        m.get(key).and_then(|v| v.to_str().ok())
     }
 
     #[test]
@@ -166,7 +173,7 @@ mod tests {
             dropped_p0_spans: 120,
         };
 
-        let map: HashMap<HeaderName, String> = header_tags.into();
+        let map: HeaderMap = header_tags.into();
 
         assert_eq!(map.len(), 10);
         assert_eq!(get(&map, "datadog-meta-lang"), Some("test-lang"));
@@ -202,7 +209,7 @@ mod tests {
             dropped_p0_traces: 0,
         };
 
-        let map: HashMap<HeaderName, String> = header_tags.into();
+        let map: HeaderMap = header_tags.into();
 
         assert_eq!(map.len(), 5);
         assert_eq!(get(&map, "datadog-meta-lang"), Some("test-lang"));
