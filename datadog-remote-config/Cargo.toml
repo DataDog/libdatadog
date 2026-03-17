@@ -27,6 +27,9 @@ test = ["hyper/server", "hyper-util"]
 
 [dependencies]
 anyhow = { version = "1.0" }
+bytes = "1"
+libdd-capabilities = { path = "../libdd-capabilities" }
+libdd-capabilities-impl = { path = "../libdd-capabilities-impl" }
 libdd-common = { path = "../libdd-common"}
 libdd-trace-protobuf = { path = "../libdd-trace-protobuf", optional = true }
 datadog-live-debugger = { path = "../datadog-live-debugger", optional = true }

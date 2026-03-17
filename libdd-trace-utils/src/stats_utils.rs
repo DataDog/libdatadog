@@ -6,11 +6,10 @@ pub use mini_agent::*;
 
 #[cfg(feature = "mini_agent")]
 mod mini_agent {
-    use bytes::Buf;
-    use http::{Method, Request, StatusCode};
+    use bytes::{Buf, Bytes};
     use http_body_util::BodyExt;
-    use libdd_capabilities::{HttpClientTrait, HttpRequest};
-    use libdd_capabilities_impl::DefaultHttpClient;
+    use libdd_capabilities::HttpClientTrait;
+    use libdd_common::http_common;
     use libdd_common::Endpoint;
     use libdd_trace_protobuf::pb;
     use std::io::Write;
@@ -19,7 +18,7 @@ mod mini_agent {
     pub async fn get_stats_from_request_body(
         body: http_common::Body,
     ) -> anyhow::Result<pb::ClientStatsPayload> {
-        let buffer = body.collect().await?.aggregate();
+        let buffer = BodyExt::collect(body).await?.aggregate();
 
         let client_stats_payload: pb::ClientStatsPayload =
             match rmp_serde::from_read(buffer.reader()) {

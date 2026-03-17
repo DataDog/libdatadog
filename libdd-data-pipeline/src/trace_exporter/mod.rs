@@ -29,9 +29,10 @@ use crate::{
     health_metrics::{HealthMetric, SendResult, TransportErrorType},
 };
 use arc_swap::{ArcSwap, ArcSwapOption};
+use bytes::Bytes;
 use http::uri::PathAndQuery;
 use http::Uri;
-use libdd_capabilities::{HttpClientTrait, HttpError, HttpResponse, MaybeSend};
+use libdd_capabilities::{HttpClientTrait, MaybeSend};
 use libdd_common::tag::Tag;
 use libdd_common::{Endpoint, MutexExt};
 use libdd_dogstatsd_client::Client;
@@ -540,104 +541,6 @@ impl<H: HttpClientTrait + MaybeSend + Sync + 'static> TraceExporter<H> {
         }
     }
 
-    fn send_proxy(
-        &self,
-        data: &[u8],
-        trace_count: usize,
-    ) -> Result<AgentResponse, TraceExporterError> {
-        self.send_data_to_url(
-            data,
-            trace_count,
-            self.output_format.add_path(&self.endpoint.url),
-        )
-    }
-
-    fn send_data_to_url(
-        &self,
-        data: &[u8],
-        trace_count: usize,
-        uri: Uri,
-    ) -> Result<AgentResponse, TraceExporterError> {
-        self.runtime()?.block_on(async {
-            self.send_request_and_handle_response(data, trace_count, uri)
-                .await
-        })
-    }
-
-    /// Send HTTP request and handle the response
-    async fn send_request_and_handle_response(
-        &self,
-        data: &[u8],
-        trace_count: usize,
-        uri: Uri,
-    ) -> Result<AgentResponse, TraceExporterError> {
-        let transport_client = TransportClient::new(&self.metadata);
-        let req = transport_client.build_trace_request(data, trace_count, uri)?;
-        let client = DefaultHttpClient::new_client();
-        match client.request(req).await {
-            Ok(response) => {
-                // For proxy path, always 1 request attempt (no retry)
-                self.handle_proxy_response(response, trace_count, data.len())
-                    .await
-            }
-            Err(err) => self.handle_request_error(err, data.len(), trace_count),
-        }
-    }
-
-    /// Handle response for proxy path (no retry)
-    async fn handle_proxy_response(
-        &self,
-        response: http::Response<Bytes>,
-        trace_count: usize,
-        payload_len: usize,
-    ) -> Result<AgentResponse, TraceExporterError> {
-        let status = response.status().as_u16();
-
-        if !response.status().is_success() {
-            let send_result = SendResult::failure(
-                TransportErrorType::Http(status),
-                payload_len,
-                trace_count,
-                1,
-            );
-            self.emit_send_result(&send_result);
-            let body = String::from_utf8_lossy(response.body()).to_string();
-            return Err(TraceExporterError::Request(RequestError::new(
-                status, &body,
-            )));
-        }
-
-        let body = String::from_utf8_lossy(response.body()).to_string();
-        debug!(trace_count, "Traces sent successfully to agent");
-        let send_result = SendResult::success(payload_len, trace_count, 1);
-        self.emit_send_result(&send_result);
-        Ok(AgentResponse::Changed { body })
-    }
-
-    /// Handle HTTP request errors
-    fn handle_request_error(
-        &self,
-        err: HttpError,
-        payload_size: usize,
-        trace_count: usize,
-    ) -> Result<AgentResponse, TraceExporterError> {
-        error!(
-            error = %err,
-            "Request to agent failed"
-        );
-        let error_type = match &err {
-            HttpError::Timeout => TransportErrorType::Timeout,
-            HttpError::ResponseBody(_) => TransportErrorType::ResponseBody,
-            HttpError::InvalidRequest(_) => TransportErrorType::Build,
-            HttpError::Network(_) | HttpError::Other(_) => TransportErrorType::Network,
-        };
-        // For direct hyper errors (proxy path), always 1 request attempt
-        let send_result = SendResult::failure(error_type, payload_size, trace_count, 1);
-        self.emit_send_result(&send_result);
-        Err(TraceExporterError::from(err))
-    }
-
->>>>>>> 88fdae9d4 (feat(capabilities): http capability throughout)
     /// Emit a health metric to dogstatsd
     fn emit_metric(&self, metric: HealthMetric, custom_tags: Option<Vec<&Tag>>) {
         if self.health_metrics_enabled {
