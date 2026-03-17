@@ -4,7 +4,7 @@ use std::{fmt::Write, time::SystemTime};
 
 use crate::{ErrorKind, SigInfo};
 
-use super::{CrashInfo, Metadata};
+use super::{CrashInfo, Metadata, TARGET_TRIPLE};
 use anyhow::Context;
 use chrono::{DateTime, Utc};
 use libdd_common::Endpoint;
@@ -396,6 +396,7 @@ impl TelemetryCrashUploader {
             ));
         }
 
+        write!(tags, ",target_triple:{TARGET_TRIPLE}").ok();
         self.append_optional_tags(&mut tags);
         tags
     }
@@ -448,6 +449,7 @@ fn extract_crash_info_tags(crash_info: &CrashInfo) -> anyhow::Result<String> {
             siginfo.si_signo_human_readable
         )?;
     }
+    write!(&mut tags, ",target_triple:{TARGET_TRIPLE}")?;
     Ok(tags)
 }
 
@@ -556,6 +558,7 @@ mod tests {
                 "si_signo_human_readable:SIGSEGV",
                 "si_signo:11",
                 "uuid:1d6b97cb-968c-40c9-af6e-e4b4d71e8781",
+                &format!("target_triple:{}", super::super::TARGET_TRIPLE),
             ]),
             tags
         );
