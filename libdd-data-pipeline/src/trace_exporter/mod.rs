@@ -20,7 +20,7 @@ use crate::stats_exporter::StatsExporter;
 #[cfg(feature = "telemetry")]
 use crate::telemetry::{SendPayloadTelemetry, TelemetryClient};
 use crate::trace_exporter::agent_response::{
-    AgentResponsePayloadVersion, DATADOG_RATES_PAYLOAD_VERSION,
+    AgentResponsePayloadVersion, DATADOG_RATES_PAYLOAD_VERSION_HEADER,
 };
 use crate::trace_exporter::error::{InternalErrorKind, RequestError, TraceExporterError};
 use crate::{
@@ -29,9 +29,10 @@ use crate::{
     health_metrics::{HealthMetric, SendResult, TransportErrorType},
 };
 use arc_swap::{ArcSwap, ArcSwapOption};
+use bytes::Bytes;
 use http::uri::PathAndQuery;
 use http::Uri;
-use libdd_capabilities::{HttpClientTrait, HttpError, HttpResponse, MaybeSend};
+use libdd_capabilities::{HttpClientTrait, MaybeSend};
 use libdd_common::tag::Tag;
 use libdd_common::{Endpoint, MutexExt};
 use libdd_dogstatsd_client::Client;
@@ -47,7 +48,7 @@ use std::io;
 use std::marker::PhantomData;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
-use std::{borrow::Borrow, str::FromStr};
+use std::{borrow::Borrow, collections::HashMap, str::FromStr};
 use tokio::runtime::Runtime;
 use tracing::{debug, error, warn};
 
@@ -164,8 +165,8 @@ impl<'a> From<&'a TracerMetadata> for TracerHeaderTags<'a> {
     }
 }
 
-impl<'a> From<&'a TracerMetadata> for http::HeaderMap {
-    fn from(tags: &'a TracerMetadata) -> http::HeaderMap {
+impl<'a> From<&'a TracerMetadata> for HashMap<&'static str, String> {
+    fn from(tags: &'a TracerMetadata) -> HashMap<&'static str, String> {
         TracerHeaderTags::from(tags).into()
     }
 }
@@ -540,103 +541,6 @@ impl<H: HttpClientTrait + MaybeSend + Sync + 'static> TraceExporter<H> {
         }
     }
 
-    fn send_proxy(
-        &self,
-        data: &[u8],
-        trace_count: usize,
-    ) -> Result<AgentResponse, TraceExporterError> {
-        self.send_data_to_url(
-            data,
-            trace_count,
-            self.output_format.add_path(&self.endpoint.url),
-        )
-    }
-
-    fn send_data_to_url(
-        &self,
-        data: &[u8],
-        trace_count: usize,
-        uri: Uri,
-    ) -> Result<AgentResponse, TraceExporterError> {
-        self.runtime()?.block_on(async {
-            self.send_request_and_handle_response(data, trace_count, uri)
-                .await
-        })
-    }
-
-    /// Send HTTP request and handle the response
-    async fn send_request_and_handle_response(
-        &self,
-        data: &[u8],
-        trace_count: usize,
-        uri: Uri,
-    ) -> Result<AgentResponse, TraceExporterError> {
-        let transport_client = TransportClient::new(&self.metadata);
-        let req = transport_client.build_trace_request(data, trace_count, uri)?;
-        let client = DefaultHttpClient::new_client();
-        match client.request(req).await {
-            Ok(response) => {
-                // For proxy path, always 1 request attempt (no retry)
-                self.handle_proxy_response(response, trace_count, data.len())
-                    .await
-            }
-            Err(err) => self.handle_request_error(err, data.len(), trace_count),
-        }
-    }
-
-    /// Handle response for proxy path (no retry)
-    async fn handle_proxy_response(
-        &self,
-        response: http::Response<Bytes>,
-        trace_count: usize,
-        payload_len: usize,
-    ) -> Result<AgentResponse, TraceExporterError> {
-        let status = response.status().as_u16();
-
-        if !response.status().is_success() {
-            let send_result = SendResult::failure(
-                TransportErrorType::Http(status),
-                payload_len,
-                trace_count,
-                1,
-            );
-            self.emit_send_result(&send_result);
-            let body = String::from_utf8_lossy(response.body()).to_string();
-            return Err(TraceExporterError::Request(RequestError::new(
-                status, &body,
-            )));
-        }
-
-        let body = String::from_utf8_lossy(response.body()).to_string();
-        debug!(trace_count, "Traces sent successfully to agent");
-        let send_result = SendResult::success(payload_len, trace_count, 1);
-        self.emit_send_result(&send_result);
-        Ok(AgentResponse::Changed { body })
-    }
-
-    /// Handle HTTP request errors
-    fn handle_request_error(
-        &self,
-        err: HttpError,
-        payload_size: usize,
-        trace_count: usize,
-    ) -> Result<AgentResponse, TraceExporterError> {
-        error!(
-            error = %err,
-            "Request to agent failed"
-        );
-        let error_type = match &err {
-            HttpError::Timeout => TransportErrorType::Timeout,
-            HttpError::ResponseBody(_) => TransportErrorType::ResponseBody,
-            HttpError::InvalidRequest(_) => TransportErrorType::Build,
-            HttpError::Network(_) | HttpError::Other(_) => TransportErrorType::Network,
-        };
-        // For direct hyper errors (proxy path), always 1 request attempt
-        let send_result = SendResult::failure(error_type, payload_size, trace_count, 1);
-        self.emit_send_result(&send_result);
-        Err(TraceExporterError::from(err))
-    }
-
     /// Emit a health metric to dogstatsd
     fn emit_metric(&self, metric: HealthMetric, custom_tags: Option<Vec<&Tag>>) {
         if self.health_metrics_enabled {
@@ -722,7 +626,7 @@ impl<H: HttpClientTrait + MaybeSend + Sync + 'static> TraceExporter<H> {
         &self,
         endpoint: &Endpoint,
         mp_payload: Vec<u8>,
-        headers: http::HeaderMap,
+        headers: HashMap<&'static str, String>,
         chunks: usize,
         chunks_dropped_p0: usize,
     ) -> Result<AgentResponse, TraceExporterError> {
@@ -1008,6 +912,7 @@ mod tests {
     use libdd_trace_utils::msgpack_encoder;
     use libdd_trace_utils::span::v04::SpanBytes;
     use libdd_trace_utils::span::v05;
+    use std::collections::HashMap;
     use std::net;
     use std::time::Duration;
     use tokio::time::sleep;
@@ -1051,7 +956,7 @@ mod tests {
             ..Default::default()
         };
 
-        let hashmap: http::HeaderMap = (&tracer_tags).into();
+        let hashmap: HashMap<&'static str, String> = (&tracer_tags).into();
 
         assert_eq!(hashmap.get("datadog-meta-tracer-version").unwrap(), "v0.1");
         assert_eq!(hashmap.get("datadog-meta-lang").unwrap(), "rust");
