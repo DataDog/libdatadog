@@ -717,7 +717,7 @@ dependencies = [
 
 [[package]]
 name = "build_common"
-version = "28.0.3"
+version = "29.0.0"
 dependencies = [
  "cbindgen",
  "serde",
@@ -726,7 +726,7 @@ dependencies = [
 
 [[package]]
 name = "builder"
-version = "28.0.3"
+version = "29.0.0"
 dependencies = [
  "anyhow",
  "build_common",
@@ -1517,7 +1517,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-profiling-replayer"
-version = "28.0.3"
+version = "29.0.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -1647,7 +1647,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-tracer-flare"
-version = "28.0.3"
+version = "29.0.0"
 dependencies = [
  "anyhow",
  "bytes",
@@ -2977,7 +2977,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-common"
-version = "2.0.0"
+version = "2.0.1"
 dependencies = [
  "anyhow",
  "bytes",
@@ -3006,6 +3006,7 @@ dependencies = [
  "reqwest",
  "rustls",
  "rustls-native-certs",
+ "rusty-fork",
  "serde",
  "static_assertions",
  "tempfile",
@@ -3018,7 +3019,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-common-ffi"
-version = "28.0.3"
+version = "29.0.0"
 dependencies = [
  "anyhow",
  "assert_no_alloc",
@@ -3037,7 +3038,6 @@ name = "libdd-crashtracker"
 version = "1.0.0"
 dependencies = [
  "anyhow",
- "backtrace",
  "blazesym",
  "cc",
  "chrono",
@@ -3048,6 +3048,7 @@ dependencies = [
  "http",
  "libc",
  "libdd-common",
+ "libdd-libunwind-sys",
  "libdd-telemetry",
  "nix 0.29.0",
  "num-derive",
@@ -3070,7 +3071,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-crashtracker-ffi"
-version = "28.0.3"
+version = "29.0.0"
 dependencies = [
  "anyhow",
  "build_common",
@@ -3089,7 +3090,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-data-pipeline"
-version = "2.0.0"
+version = "2.0.1"
 dependencies = [
  "anyhow",
  "arc-swap",
@@ -3124,7 +3125,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-data-pipeline-ffi"
-version = "28.0.3"
+version = "29.0.0"
 dependencies = [
  "build_common",
  "httpmock",
@@ -3147,7 +3148,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-ddsketch-ffi"
-version = "28.0.3"
+version = "29.0.0"
 dependencies = [
  "build_common",
  "libdd-common-ffi",
@@ -3169,7 +3170,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-library-config"
-version = "1.0.0"
+version = "1.1.0"
 dependencies = [
  "anyhow",
  "libdd-trace-protobuf",
@@ -3200,7 +3201,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-libunwind-sys"
-version = "28.0.3"
+version = "29.0.0"
 dependencies = [
  "cc",
  "libc",
@@ -3220,7 +3221,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-log-ffi"
-version = "28.0.3"
+version = "29.0.0"
 dependencies = [
  "build_common",
  "libdd-common-ffi",
@@ -3336,7 +3337,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-telemetry-ffi"
-version = "28.0.3"
+version = "29.0.0"
 dependencies = [
  "build_common",
  "function_name",
@@ -3364,7 +3365,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-trace-normalization"
-version = "1.0.1"
+version = "1.0.2"
 dependencies = [
  "anyhow",
  "arbitrary",
@@ -3376,7 +3377,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-trace-obfuscation"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "anyhow",
  "criterion",
@@ -3394,7 +3395,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-trace-protobuf"
-version = "1.1.0"
+version = "2.0.0"
 dependencies = [
  "prost",
  "prost-build",
@@ -3407,7 +3408,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-trace-stats"
-version = "1.0.1"
+version = "1.0.3"
 dependencies = [
  "criterion",
  "hashbrown 0.15.1",
@@ -3419,7 +3420,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-trace-utils"
-version = "2.0.0"
+version = "2.0.2"
 dependencies = [
  "anyhow",
  "bolero",
@@ -5325,6 +5326,7 @@ version = "1.0.132"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d726bfaff4b320266d395898905d0eba0345aae23b54aee3a737e260fd46db03"
 dependencies = [
+ "indexmap 2.12.1",
  "itoa",
  "memchr",
  "ryu",
@@ -5719,7 +5721,7 @@ dependencies = [
 
 [[package]]
 name = "symbolizer-ffi"
-version = "28.0.3"
+version = "29.0.0"
 dependencies = [
  "blazesym-c",
  "build_common",
@@ -6245,7 +6247,7 @@ dependencies = [
 
 [[package]]
 name = "tools"
-version = "28.0.3"
+version = "29.0.0"
 dependencies = [
  "anyhow",
  "cargo_metadata",

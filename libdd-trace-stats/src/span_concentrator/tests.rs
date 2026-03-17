@@ -1131,6 +1131,30 @@ fn test_pb_span() {
                 span_events: vec![],
             }
         },
+        // Grpc span
+        {
+            let mut meta = std::collections::HashMap::new();
+            meta.insert("span.kind".to_string(), "client".to_string());
+            meta.insert("rpc.grpc.status_code".to_string(), "aborted".to_string());
+
+            pb::Span {
+                service: "service1".to_string(),
+                name: "rpc.grpc".to_string(),
+                resource: "serviceName.methodName".to_string(),
+                trace_id: 1,
+                span_id: 3,
+                parent_id: 1,
+                start: (aligned_now - BUCKET_SIZE + 50) as i64,
+                duration: 300,
+                error: 0,
+                r#type: "rpc".to_string(),
+                meta,
+                metrics: std::collections::HashMap::new(),
+                meta_struct: std::collections::HashMap::new(),
+                span_links: vec![],
+                span_events: vec![],
+            }
+        },
     ];
 
     libdd_trace_utils::trace_utils::compute_top_level_span(pb_spans.as_mut_slice());
@@ -1206,6 +1230,20 @@ fn test_pb_span() {
             hits: 1,
             top_level_hits: 0,
             errors: 1,
+            is_trace_root: pb::Trilean::False.into(),
+            ..Default::default()
+        },
+        pb::ClientGroupedStats {
+            service: "service1".to_string(),
+            name: "rpc.grpc".to_string(),
+            resource: "serviceName.methodName".to_string(),
+            http_status_code: 0,
+            r#type: "rpc".to_string(),
+            hits: 1,
+            errors: 0,
+            duration: 300,
+            span_kind: "client".to_string(),
+            grpc_status_code: "10".to_string(),
             is_trace_root: pb::Trilean::False.into(),
             ..Default::default()
         },
