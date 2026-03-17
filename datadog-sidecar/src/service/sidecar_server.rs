@@ -190,15 +190,15 @@ impl SidecarServer {
         self.session_counter.lock_or_panic().len()
     }
 
-    pub(crate) fn get_session(&self, session_id: &String) -> SessionInfo {
+    pub(crate) fn get_session(&self, session_id: &str) -> SessionInfo {
         let mut sessions = self.sessions.lock_or_panic();
         match sessions.get(session_id) {
             Some(session) => session.clone(),
             None => {
                 let mut session = SessionInfo::default();
-                session.session_id.clone_from(session_id);
+                session.session_id = session_id.to_string();
                 info!("Initializing new session: {}", session_id);
-                sessions.insert(session_id.clone(), session.clone());
+                sessions.insert(session_id.to_string(), session.clone());
                 session
             }
         }
@@ -209,7 +209,7 @@ impl SidecarServer {
         session.get_runtime(&instance_id.runtime_id)
     }
 
-    async fn stop_session(&self, session_id: &String) {
+    async fn stop_session(&self, session_id: &str) {
         let session = match self.sessions.lock_or_panic().remove(session_id) {
             Some(session) => session,
             None => return,
@@ -665,8 +665,8 @@ impl SidecarInterface for ConnectionSidecarHandler {
     }
 
     async fn set_session_process_tags(&self, _peer: PeerCredentials, process_tags: Vec<Tag>) {
-        let session_id = self.session_id.get().cloned().unwrap_or_default();
-        let session = self.server.get_session(&session_id);
+        let session_id = self.session_id.get().map(|s| s.as_str()).unwrap_or_default();
+        let session = self.server.get_session(session_id);
         *session.process_tags.lock_or_panic() = process_tags;
     }
 
@@ -886,8 +886,8 @@ impl SidecarInterface for ConnectionSidecarHandler {
     }
 
     async fn set_test_session_token(&self, _peer: PeerCredentials, token: String) {
-        let session_id = self.session_id.get().cloned().unwrap_or_default();
-        let session = self.server.get_session(&session_id);
+        let session_id = self.session_id.get().map(|s| s.as_str()).unwrap_or_default();
+        let session = self.server.get_session(session_id);
         let token = if token.is_empty() {
             None
         } else {

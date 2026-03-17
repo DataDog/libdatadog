@@ -223,7 +223,7 @@ impl SidecarSender {
         self.try_drain_outbox();
     }
 
-    pub fn set_session_process_tags(&mut self, process_tags: String) {
+    pub fn set_session_process_tags(&mut self, process_tags: Vec<Tag>) {
         coalesce(
             &mut self.outbox,
             SidecarInterfaceRequest::SetSessionProcessTags { process_tags },
