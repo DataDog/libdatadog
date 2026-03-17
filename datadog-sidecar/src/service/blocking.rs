@@ -249,7 +249,7 @@ pub fn set_session_config(
 ///
 /// * `transport` - The transport used for communication.
 /// * `session_id` - The ID of the session.
-/// * `process_tags` - The process tags string to set.
+/// * `process_tags` - The process tags to set.
 ///
 /// # Returns
 ///
@@ -257,7 +257,7 @@ pub fn set_session_config(
 pub fn set_session_process_tags(
     transport: &mut SidecarTransport,
     session_id: String,
-    process_tags: String,
+    process_tags: Vec<Tag>,
 ) -> io::Result<()> {
     transport.send(SidecarInterfaceRequest::SetSessionProcessTags {
         session_id,

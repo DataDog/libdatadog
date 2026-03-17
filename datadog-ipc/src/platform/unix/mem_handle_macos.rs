@@ -163,8 +163,7 @@ impl<T: FileBackedHandle + From<MappedMem<T>>> MappedMem<T> {
                 (MAPPING_MAX_SIZE - usize::from(page_size)) as off_t,
             )
             .unwrap();
-            // AtomicUsize::from_ptr() is still unstable
-            let size = ptr.cast::<AtomicUsize>().as_ref();
+            let size = AtomicUsize::from_ptr(ptr.cast::<usize>().as_ptr());
             size.fetch_max(handle.get_size(), Ordering::SeqCst);
             _ = munmap(ptr, usize::from(page_size));
         }

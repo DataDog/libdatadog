@@ -14,7 +14,7 @@ use crate::log::{MultiEnvFilterGuard, MultiWriterGuard};
 use crate::{spawn_map_err, tracer};
 use datadog_live_debugger::sender::{DebuggerType, PayloadSender};
 use datadog_remote_config::fetch::ConfigOptions;
-use libdd_common::MutexExt;
+use libdd_common::{tag::Tag, MutexExt};
 use tracing::log::warn;
 use tracing::{debug, error, info, trace};
 
@@ -43,7 +43,7 @@ pub(crate) struct SessionInfo {
     pub(crate) session_id: String,
     pub(crate) pid: Arc<AtomicI32>,
     pub(crate) remote_config_enabled: Arc<Mutex<bool>>,
-    pub(crate) process_tags: Arc<Mutex<Option<String>>>,
+    pub(crate) process_tags: Arc<Mutex<Vec<Tag>>>,
 }
 
 impl Clone for SessionInfo {

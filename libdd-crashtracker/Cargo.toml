@@ -42,7 +42,7 @@ cxx = ["dep:cxx", "dep:cxx-build"]
 blazesym = "=0.2.3"
 
 [target.'cfg(target_os = "linux")'.dependencies]
-libdd-libunwind-sys = { version = "29.0.0", path = "../libdd-libunwind-sys" }
+libdd-libunwind-sys = { version = "0.1.0", path = "../libdd-libunwind-sys" }
 
 [dependencies]
 anyhow = "1.0"

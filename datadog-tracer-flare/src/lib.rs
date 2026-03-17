@@ -192,6 +192,7 @@ impl TracerFlareManager {
                 env,
                 app_version,
                 tags: vec![],
+                process_tags: vec![],
             },
             runtime_id,
             config_to_fetch,
