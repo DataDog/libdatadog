@@ -462,6 +462,7 @@ impl Profile {
     ///   duration based on the end time minus the start time, but under anomalous conditions this
     ///   may fail as system clocks can be adjusted. The programmer may also accidentally pass an
     ///   earlier time. The duration will be set to zero these cases.
+    #[cfg(feature = "otel")]
     pub fn serialize_into_compressed_otel(
         self,
         end_time: Option<SystemTime>,
@@ -783,7 +784,7 @@ impl Profile {
             end,
             buffer,
             endpoints_stats,
-        })    
+        })
     }
 
     /// Encodes the profile. Note that the buffer will be empty. The caller
@@ -1694,7 +1695,6 @@ mod api_tests {
     }
 
     #[test]
-    #[cfg_attr(feature = "otel", ignore)]
     fn lazy_endpoints() -> anyhow::Result<()> {
         let sample_types = [api::SampleType::CpuSamples, api::SampleType::WallTime];
 
@@ -1858,8 +1858,6 @@ mod api_tests {
     }
 
     #[test]
-    // This works if we merge accumulated samples
-    #[cfg_attr(feature = "otel", ignore)]
     fn test_no_upscaling_if_no_rules() {
         let sample_types = vec![api::SampleType::CpuSamples, api::SampleType::WallTime];
 
@@ -1909,8 +1907,6 @@ mod api_tests {
     }
 
     #[test]
-    // This works if we accumulate
-    #[cfg_attr(feature = "otel", ignore)]
     fn test_upscaling_by_value_a_zero_value() {
         let sample_types = create_samples_types();
 
@@ -2048,9 +2044,6 @@ mod api_tests {
     }
 
     #[test]
-    // This works if we accumulate
-    #[cfg_attr(feature = "otel", ignore)]
-
     fn test_upscaling_by_value_on_zero_value_with_poisson() {
         let sample_types = create_samples_types();
 
@@ -2839,6 +2832,7 @@ mod api_tests {
     }
 
     #[test]
+    #[cfg_attr(feature = "otel", ignore)] // too many non-zero values
     fn test_fails_when_adding_byvalue_rule_colliding_on_offset_with_existing_bylabel_rule() {
         let sample_types = create_samples_types();
 
@@ -2878,8 +2872,6 @@ mod api_tests {
     }
 
     #[test]
-    // This works if we merge accumulated samples
-    #[cfg_attr(feature = "otel", ignore)]
     fn local_root_span_id_label_as_i64() -> anyhow::Result<()> {
         let sample_types = vec![api::SampleType::CpuSamples, api::SampleType::WallTime];
 
