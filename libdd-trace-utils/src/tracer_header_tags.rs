@@ -41,7 +41,7 @@ pub struct TracerHeaderTags<'a> {
 
 impl<'a> From<TracerHeaderTags<'a>> for HeaderMap {
     fn from(tags: TracerHeaderTags<'a>) -> HeaderMap {
-        let mut headers = HeaderMap::new();
+        let mut headers = HeaderMap::with_capacity(10);
         fn try_insert(
             h: &mut HeaderMap,
             key: HeaderName,
