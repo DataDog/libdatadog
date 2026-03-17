@@ -376,6 +376,7 @@ impl SendData {
                 #[allow(clippy::unwrap_used)]
                 let chunks = u64::try_from(self.tracer_payloads.size()).unwrap();
                 let mut headers = self.headers.clone();
+                headers.reserve(2);
                 headers.insert(DATADOG_TRACE_COUNT, chunks.into());
                 headers.insert(CONTENT_TYPE, APPLICATION_MSGPACK);
 
@@ -393,11 +394,8 @@ impl SendData {
                 #[allow(clippy::unwrap_used)]
                 let chunks = u64::try_from(self.tracer_payloads.size()).unwrap();
                 let mut headers = self.headers.clone();
-                #[allow(clippy::unwrap_used)]
-                headers.insert(
-                    DATADOG_TRACE_COUNT,
-                    HeaderValue::try_from(chunks.to_string()).unwrap(),
-                );
+                headers.reserve(2);
+                headers.insert(DATADOG_TRACE_COUNT, chunks.into());
                 headers.insert(CONTENT_TYPE, APPLICATION_MSGPACK);
 
                 let payload = match rmp_serde::to_vec(payload) {
