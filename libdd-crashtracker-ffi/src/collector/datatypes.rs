@@ -143,9 +143,8 @@ mod tests {
     use super::*;
     use libdd_crashtracker::CrashtrackerConfiguration;
 
-    #[test]
-    fn test_config_try_from_defaults() -> anyhow::Result<()> {
-        let ffi_config = Config {
+    fn create_config_default<'a>() -> Config<'a> {
+        Config {
             additional_files: Slice::empty(),
             create_alt_stack: false,
             demangle_names: false,
@@ -160,8 +159,12 @@ mod tests {
             signals: Slice::empty(),
             timeout_ms: 0,
             use_alt_stack: false,
-        };
+        }
+    }
 
+    #[test]
+    fn test_config_try_from_defaults() -> anyhow::Result<()> {
+        let ffi_config = create_config_default();
         let config = CrashtrackerConfiguration::try_from(ffi_config)?;
         let expected = CrashtrackerConfiguration::builder().build()?;
         assert_eq!(config, expected);
@@ -170,23 +173,8 @@ mod tests {
 
     #[test]
     fn test_config_try_from_endpoint_url() -> anyhow::Result<()> {
-        let ffi_config = Config {
-            additional_files: Slice::empty(),
-            create_alt_stack: false,
-            demangle_names: false,
-            endpoint: EndpointConfig {
-                url: CharSlice::from("http://localhost:8126"),
-                api_key: CharSlice::empty(),
-                test_token: CharSlice::empty(),
-                use_system_resolver: false,
-            },
-            optional_unix_socket_filename: CharSlice::empty(),
-            resolve_frames: StacktraceCollection::Disabled,
-            signals: Slice::empty(),
-            timeout_ms: 0,
-            use_alt_stack: false,
-        };
-
+        let mut ffi_config = create_config_default();
+        ffi_config.endpoint.url = CharSlice::from("http://localhost:8126");
         let config = CrashtrackerConfiguration::try_from(ffi_config)?;
         let expected = CrashtrackerConfiguration::builder()
             .endpoint_url("http://localhost:8126")
@@ -197,22 +185,9 @@ mod tests {
 
     #[test]
     fn test_config_try_from_endpoint_api_key() -> anyhow::Result<()> {
-        let ffi_config = Config {
-            additional_files: Slice::empty(),
-            create_alt_stack: false,
-            demangle_names: false,
-            endpoint: EndpointConfig {
-                url: CharSlice::from("http://localhost:8126"),
-                api_key: CharSlice::from("my-api-key"),
-                test_token: CharSlice::empty(),
-                use_system_resolver: false,
-            },
-            optional_unix_socket_filename: CharSlice::empty(),
-            resolve_frames: StacktraceCollection::Disabled,
-            signals: Slice::empty(),
-            timeout_ms: 0,
-            use_alt_stack: false,
-        };
+        let mut ffi_config = create_config_default();
+        ffi_config.endpoint.url = CharSlice::from("http://localhost:8126");
+        ffi_config.endpoint.api_key = CharSlice::from("my-api-key");
 
         let config = CrashtrackerConfiguration::try_from(ffi_config)?;
         let expected = CrashtrackerConfiguration::builder()
@@ -225,22 +200,9 @@ mod tests {
 
     #[test]
     fn test_config_try_from_endpoint_test_token() -> anyhow::Result<()> {
-        let ffi_config = Config {
-            additional_files: Slice::empty(),
-            create_alt_stack: false,
-            demangle_names: false,
-            endpoint: EndpointConfig {
-                url: CharSlice::from("http://localhost:8126"),
-                api_key: CharSlice::empty(),
-                test_token: CharSlice::from("test-session-token"),
-                use_system_resolver: false,
-            },
-            optional_unix_socket_filename: CharSlice::empty(),
-            resolve_frames: StacktraceCollection::Disabled,
-            signals: Slice::empty(),
-            timeout_ms: 0,
-            use_alt_stack: false,
-        };
+        let mut ffi_config = create_config_default();
+        ffi_config.endpoint.url = CharSlice::from("http://localhost:8126");
+        ffi_config.endpoint.test_token = CharSlice::from("test-session-token");
 
         let config = CrashtrackerConfiguration::try_from(ffi_config)?;
         let expected = CrashtrackerConfiguration::builder()
@@ -253,22 +215,9 @@ mod tests {
 
     #[test]
     fn test_config_try_from_endpoint_use_system_resolver() -> anyhow::Result<()> {
-        let ffi_config = Config {
-            additional_files: Slice::empty(),
-            create_alt_stack: false,
-            demangle_names: false,
-            endpoint: EndpointConfig {
-                url: CharSlice::from("http://localhost:8126"),
-                api_key: CharSlice::empty(),
-                test_token: CharSlice::empty(),
-                use_system_resolver: true,
-            },
-            optional_unix_socket_filename: CharSlice::empty(),
-            resolve_frames: StacktraceCollection::Disabled,
-            signals: Slice::empty(),
-            timeout_ms: 0,
-            use_alt_stack: false,
-        };
+        let mut ffi_config = create_config_default();
+        ffi_config.endpoint.url = CharSlice::from("http://localhost:8126");
+        ffi_config.endpoint.use_system_resolver = true;
 
         let config = CrashtrackerConfiguration::try_from(ffi_config)?;
         let expected = CrashtrackerConfiguration::builder()
@@ -281,22 +230,8 @@ mod tests {
 
     #[test]
     fn test_config_try_from_timeout_zero_uses_default() -> anyhow::Result<()> {
-        let ffi_config = Config {
-            additional_files: Slice::empty(),
-            create_alt_stack: false,
-            demangle_names: false,
-            endpoint: EndpointConfig {
-                url: CharSlice::empty(),
-                api_key: CharSlice::empty(),
-                test_token: CharSlice::empty(),
-                use_system_resolver: false,
-            },
-            optional_unix_socket_filename: CharSlice::empty(),
-            resolve_frames: StacktraceCollection::Disabled,
-            signals: Slice::empty(),
-            timeout_ms: 0,
-            use_alt_stack: false,
-        };
+        let mut ffi_config = create_config_default();
+        ffi_config.timeout_ms = 0;
 
         let config = CrashtrackerConfiguration::try_from(ffi_config)?;
         let expected = CrashtrackerConfiguration::builder().build()?;
@@ -308,22 +243,8 @@ mod tests {
     fn test_config_try_from_custom_timeout() -> anyhow::Result<()> {
         use std::time::Duration;
 
-        let ffi_config = Config {
-            additional_files: Slice::empty(),
-            create_alt_stack: false,
-            demangle_names: false,
-            endpoint: EndpointConfig {
-                url: CharSlice::empty(),
-                api_key: CharSlice::empty(),
-                test_token: CharSlice::empty(),
-                use_system_resolver: false,
-            },
-            optional_unix_socket_filename: CharSlice::empty(),
-            resolve_frames: StacktraceCollection::Disabled,
-            signals: Slice::empty(),
-            timeout_ms: 5000,
-            use_alt_stack: false,
-        };
+        let mut ffi_config = create_config_default();
+        ffi_config.timeout_ms = 5000;
 
         let config = CrashtrackerConfiguration::try_from(ffi_config)?;
         let expected = CrashtrackerConfiguration::builder()
@@ -335,22 +256,8 @@ mod tests {
 
     #[test]
     fn test_config_try_from_unix_socket() -> anyhow::Result<()> {
-        let ffi_config = Config {
-            additional_files: Slice::empty(),
-            create_alt_stack: false,
-            demangle_names: false,
-            endpoint: EndpointConfig {
-                url: CharSlice::empty(),
-                api_key: CharSlice::empty(),
-                test_token: CharSlice::empty(),
-                use_system_resolver: false,
-            },
-            optional_unix_socket_filename: CharSlice::from("/run/crashtracker.sock"),
-            resolve_frames: StacktraceCollection::Disabled,
-            signals: Slice::empty(),
-            timeout_ms: 0,
-            use_alt_stack: false,
-        };
+        let mut ffi_config = create_config_default();
+        ffi_config.optional_unix_socket_filename = CharSlice::from("/run/crashtracker.sock");
 
         let config = CrashtrackerConfiguration::try_from(ffi_config)?;
         let expected = CrashtrackerConfiguration::builder()
@@ -362,25 +269,13 @@ mod tests {
 
     #[test]
     fn test_config_try_from_additional_files() -> anyhow::Result<()> {
-        let file1 = CharSlice::from("/tmp/extra1.txt");
-        let file2 = CharSlice::from("/tmp/extra2.txt");
-        let files = [file1, file2];
-        let ffi_config = Config {
-            additional_files: Slice::from(files.as_slice()),
-            create_alt_stack: false,
-            demangle_names: false,
-            endpoint: EndpointConfig {
-                url: CharSlice::empty(),
-                api_key: CharSlice::empty(),
-                test_token: CharSlice::empty(),
-                use_system_resolver: false,
-            },
-            optional_unix_socket_filename: CharSlice::empty(),
-            resolve_frames: StacktraceCollection::Disabled,
-            signals: Slice::empty(),
-            timeout_ms: 0,
-            use_alt_stack: false,
-        };
+        let files = [
+            CharSlice::from("/tmp/extra1.txt"),
+            CharSlice::from("/tmp/extra2.txt"),
+        ];
+
+        let mut ffi_config = create_config_default();
+        ffi_config.additional_files = Slice::from(files.as_slice());
 
         let config = CrashtrackerConfiguration::try_from(ffi_config)?;
         let expected = CrashtrackerConfiguration::builder()
@@ -395,22 +290,8 @@ mod tests {
 
     #[test]
     fn test_config_try_from_create_alt_stack_without_use_fails() {
-        let ffi_config = Config {
-            additional_files: Slice::empty(),
-            create_alt_stack: true,
-            demangle_names: false,
-            endpoint: EndpointConfig {
-                url: CharSlice::empty(),
-                api_key: CharSlice::empty(),
-                test_token: CharSlice::empty(),
-                use_system_resolver: false,
-            },
-            optional_unix_socket_filename: CharSlice::empty(),
-            resolve_frames: StacktraceCollection::Disabled,
-            signals: Slice::empty(),
-            timeout_ms: 0,
-            use_alt_stack: false,
-        };
+        let mut ffi_config = create_config_default();
+        ffi_config.create_alt_stack = true;
 
         assert!(CrashtrackerConfiguration::try_from(ffi_config).is_err());
     }
