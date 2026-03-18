@@ -105,7 +105,7 @@ impl ActiveApplication {
     pub fn get_debugger_tags(
         &mut self,
         debugger_version: &dyn Display,
-        runtime_id: &str,
+        session_id: &str,
     ) -> (Arc<String>, bool) {
         if let Some(ref cached) = self.live_debugger_tag_cache {
             return (cached.clone(), false);
@@ -116,7 +116,7 @@ impl ActiveApplication {
                     debugger_version,
                     env,
                     version,
-                    &runtime_id,
+                    &session_id,
                     &mut self.global_tags.iter(),
                 ));
                 self.live_debugger_tag_cache = Some(tags.clone());
@@ -150,7 +150,7 @@ impl ActiveApplication {
                 remote_configs.add_runtime(
                     options,
                     *session.remote_config_interval.lock_or_panic(),
-                    instance_id.runtime_id,
+                    instance_id.session_id,
                     notify_target,
                     self.env.clone().expect("set_metadata was called before"),
                     self.service_name

@@ -173,7 +173,7 @@ pub trait MultiTargetHandlers<
 }
 
 struct RuntimeInfo<N: NotifyTarget> {
-    notify_target: N,
+    notify_targets: HashMap<N, u32>,
     targets: HashMap<Arc<Target>, u32>,
 }
 
@@ -457,6 +457,7 @@ where
         match self.runtimes.lock_or_panic().entry(runtime_id) {
             Entry::Occupied(mut runtime_entry) => {
                 let info = runtime_entry.get_mut();
+                *info.notify_targets.entry(notify_target).or_insert(0) += 1;
                 let primary_target = if info.targets.len() == 1 {
                     info.targets.keys().next().cloned()
                 } else {
@@ -497,7 +498,7 @@ where
                     == Some(true)
                 {
                     let info = RuntimeInfo {
-                        notify_target,
+                        notify_targets: HashMap::from([(notify_target, 1)]),
                         targets: HashMap::from([(target.clone(), 1)]),
                     };
                     self.add_target(false, e.key(), target.clone(), product_capabilities);
@@ -507,7 +508,12 @@ where
         }
     }
 
-    pub fn delete_runtime(self: &Arc<Self>, runtime_id: &str, target: &Arc<Target>) {
+    pub fn delete_runtime(
+        self: &Arc<Self>,
+        runtime_id: &str,
+        target: &Arc<Target>,
+        notify_target: &N,
+    ) {
         trace!("Removing remote config runtime: {target:?} with runtime id {runtime_id}");
         let mut runtimes = self.runtimes.lock_or_panic();
         let last_removed = {
@@ -515,6 +521,13 @@ where
                 None => return,
                 Some(i) => i,
             };
+            if let Some(count) = info.notify_targets.get_mut(notify_target) {
+                if *count <= 1 {
+                    info.notify_targets.remove(notify_target);
+                } else {
+                    *count -= 1;
+                }
+            }
             match info.targets.entry(target.clone()) {
                 Entry::Occupied(mut e) => {
                     if *e.get() == 1 {
@@ -593,7 +606,9 @@ where
                                 {
                                     for runtime_id in known_target.runtimes.keys() {
                                         if let Some(runtime) = all_runtimes.get(runtime_id) {
-                                            notify_targets.insert(runtime.notify_target.clone());
+                                            for nt in runtime.notify_targets.keys() {
+                                                notify_targets.insert(nt.clone());
+                                            }
                                         }
                                     }
                                 }
@@ -1080,10 +1095,22 @@ mod tests {
             );
         }
 
-        fetcher.delete_runtime(RT_ID_1, &OTHER_TARGET);
-        fetcher.delete_runtime(RT_ID_1, &DUMMY_TARGET);
-        fetcher.delete_runtime(RT_ID_2, &DUMMY_TARGET);
-        fetcher.delete_runtime(RT_ID_3, &OTHER_TARGET);
+        let notifier1 = Notifier {
+            id: 1,
+            state: state.clone(),
+        };
+        let notifier2 = Notifier {
+            id: 2,
+            state: state.clone(),
+        };
+        let notifier3 = Notifier {
+            id: 3,
+            state: state.clone(),
+        };
+        fetcher.delete_runtime(RT_ID_1, &OTHER_TARGET, &notifier1);
+        fetcher.delete_runtime(RT_ID_1, &DUMMY_TARGET, &notifier1);
+        fetcher.delete_runtime(RT_ID_2, &DUMMY_TARGET, &notifier2);
+        fetcher.delete_runtime(RT_ID_3, &OTHER_TARGET, &notifier3);
 
         fetcher.shutdown();
         storage.expect_expiration(&DUMMY_TARGET);
