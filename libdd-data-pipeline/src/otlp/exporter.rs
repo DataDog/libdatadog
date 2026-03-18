@@ -19,9 +19,13 @@ const OTLP_RETRY_DELAY_MS: u64 = 100;
 /// Send OTLP trace payload (JSON bytes) to the configured endpoint with retries.
 ///
 /// Uses [`send_with_retry`] for consistent retry behaviour and observability across exporters.
+///
+/// `test_token` is forwarded as `X-Datadog-Test-Session-Token` when set, enabling snapshot tests
+/// against the Datadog test agent's OTLP endpoint.
 pub async fn send_otlp_traces_http(
     client: &HttpClient,
     config: &OtlpTraceConfig,
+    test_token: Option<&str>,
     json_body: Vec<u8>,
 ) -> Result<(), TraceExporterError> {
     let url = libdd_common::parse_uri(&config.endpoint_url).map_err(|e| {
@@ -48,6 +52,14 @@ pub async fn send_otlp_traces_http(
             http::HeaderValue::from_str(value),
         ) {
             headers.insert(name, val);
+        }
+    }
+    if let Some(token) = test_token {
+        if let Ok(val) = http::HeaderValue::from_str(token) {
+            headers.insert(
+                http::HeaderName::from_static("x-datadog-test-session-token"),
+                val,
+            );
         }
     }
 

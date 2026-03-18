@@ -549,7 +549,13 @@ impl TraceExporter {
             error!("OTLP JSON serialization error: {e}");
             TraceExporterError::Internal(InternalErrorKind::InvalidWorkerState(e.to_string()))
         })?;
-        send_otlp_traces_http(&self.http_client, config, json_body).await?;
+        send_otlp_traces_http(
+            &self.http_client,
+            config,
+            self.endpoint.test_token.as_deref(),
+            json_body,
+        )
+        .await?;
         Ok(AgentResponse::Unchanged)
     }
 
@@ -630,8 +636,14 @@ impl TraceExporter {
             self.client_computed_top_level,
         );
 
-        // OTLP path: send sampled traces via OTLP when OTEL_TRACES_EXPORTER=otlp.
+        // OTLP path: send sampled traces via OTLP when an OTLP endpoint is configured.
+        // Unlike the agent path, there is no downstream agent to drop unsampled traces, so
+        // drop_chunks is always called here regardless of whether client-side stats is enabled.
         if let Some(ref config) = self.otlp_config {
+            libdd_trace_utils::span::trace_utils::drop_chunks(&mut traces);
+            if traces.is_empty() {
+                return Ok(AgentResponse::Unchanged);
+            }
             return self.send_otlp_traces_inner(traces, config).await;
         }
 
