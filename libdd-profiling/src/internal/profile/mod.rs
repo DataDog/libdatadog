@@ -1606,6 +1606,219 @@ mod api_tests {
         profile
     }
 
+    #[cfg(feature = "otel")]
+    #[test]
+    fn impl_from_profile_for_otel_profile() {
+        use crate::pprof::test_utils::{otel_attribute_key_value, roundtrip_to_otel};
+
+        let profile = provide_distinct_locations();
+        let data = roundtrip_to_otel(profile).unwrap();
+
+        let dict = data.dictionary.as_ref().expect("dictionary");
+        let scope = &data.resource_profiles[0].scope_profiles[0];
+        let otel_profile = scope
+            .profiles
+            .first()
+            .expect("one profile for CpuSamples");
+
+        assert_eq!(otel_profile.sample.len(), 3);
+        assert_eq!(dict.mapping_table.len(), 2); // default + 1 real
+        assert_eq!(dict.location_table.len(), 3); // default + 2 real
+        assert_eq!(dict.function_table.len(), 3); // default + 2 real
+        assert_eq!(dict.stack_table.len(), 3); // default + 2 real (main, test)
+
+        let samples = &otel_profile.sample;
+        // All three samples have pid=101 (two aggregated, one timestamped)
+        for sample in samples.iter() {
+            assert_eq!(sample.values.len(), 1);
+            assert_eq!(sample.values[0], 1);
+            assert!(!sample.attribute_indices.is_empty());
+            let attr = &dict.attribute_table[sample.attribute_indices[0] as usize];
+            let (key, value) = otel_attribute_key_value(dict, attr);
+            assert_eq!(key, "pid");
+            assert_eq!(value, 101);
+        }
+
+        // OTEL stores timestamps in timestamps_unix_nano, not as attributes (unlike pprof's end_timestamp_ns label)
+        let sample_with_timestamp = samples
+            .iter()
+            .find(|s| !s.timestamps_unix_nano.is_empty())
+            .expect("one timestamped sample");
+        assert_eq!(sample_with_timestamp.timestamps_unix_nano.len(), 1);
+        assert_eq!(sample_with_timestamp.timestamps_unix_nano[0], 42);
+    }
+
+    #[cfg(feature = "otel")]
+    #[test]
+    fn lazy_endpoints_otel() -> anyhow::Result<()> {
+        use crate::pprof::test_utils::{
+            otel_sample_attr_int, otel_sample_attr_str, roundtrip_to_otel,
+        };
+
+        let sample_types = [api::SampleType::CpuSamples, api::SampleType::WallTime];
+
+        let mut profile: Profile = Profile::new(&sample_types, None);
+
+        let id_label = api::Label {
+            key: "local root span id",
+            str: "",
+            num: 10,
+            num_unit: "",
+        };
+
+        let id2_label = api::Label {
+            key: "local root span id",
+            str: "",
+            num: 11,
+            num_unit: "",
+        };
+
+        let other_label = api::Label {
+            key: "other",
+            str: "test",
+            num: 0,
+            num_unit: "",
+        };
+
+        let sample1 = api::Sample {
+            locations: vec![],
+            values: &[1, 10000],
+            labels: vec![id_label, other_label],
+        };
+
+        let sample2 = api::Sample {
+            locations: vec![],
+            values: &[1, 10000],
+            labels: vec![id2_label, other_label],
+        };
+
+        profile
+            .try_add_sample(sample1, None)
+            .expect("add to success");
+
+        profile
+            .try_add_sample(sample2, None)
+            .expect("add to success");
+
+        profile.add_endpoint(10, Cow::from("my endpoint"))?;
+
+        let data = roundtrip_to_otel(profile).unwrap();
+        let dict = data.dictionary.as_ref().expect("dictionary");
+        let scope = &data.resource_profiles[0].scope_profiles[0];
+        let otel_profile = scope.profiles.first().expect("one profile");
+        let samples = &otel_profile.sample;
+
+        assert_eq!(samples.len(), 2);
+
+        let s1 = samples
+            .iter()
+            .find(|s| otel_sample_attr_int(dict, s, "local root span id") == Some(10))
+            .expect("sample with span id 10");
+        assert_eq!(otel_sample_attr_int(dict, s1, "local root span id"), Some(10));
+        assert_eq!(otel_sample_attr_str(dict, s1, "other"), Some("test"));
+        assert_eq!(
+            otel_sample_attr_str(dict, s1, "trace endpoint"),
+            Some("my endpoint")
+        );
+
+        let s2 = samples
+            .iter()
+            .find(|s| otel_sample_attr_int(dict, s, "local root span id") == Some(11))
+            .expect("sample with span id 11");
+        assert_eq!(otel_sample_attr_int(dict, s2, "local root span id"), Some(11));
+        assert_eq!(otel_sample_attr_str(dict, s2, "other"), Some("test"));
+        assert_eq!(otel_sample_attr_str(dict, s2, "trace endpoint"), None);
+        Ok(())
+    }
+
+    #[cfg(feature = "otel")]
+    #[test]
+    fn local_root_span_id_label_as_i64_otel() -> anyhow::Result<()> {
+        use crate::pprof::test_utils::{
+            otel_sample_attr_int, otel_sample_attr_str, roundtrip_to_otel,
+        };
+
+        let sample_types = vec![api::SampleType::CpuSamples, api::SampleType::WallTime];
+
+        let mut profile = Profile::new(&sample_types, None);
+
+        let id_label = api::Label {
+            key: "local root span id",
+            str: "",
+            num: 10,
+            num_unit: "",
+        };
+
+        let large_span_id = u64::MAX;
+        #[allow(
+            unknown_lints,
+            unnecessary_transmutes,
+            reason = "u64::cast_signed requires MSRV 1.87.0"
+        )]
+        let large_num: i64 = unsafe { std::mem::transmute(large_span_id) };
+
+        let id2_label = api::Label {
+            key: "local root span id",
+            str: "",
+            num: large_num,
+            num_unit: "",
+        };
+
+        let sample1 = api::Sample {
+            locations: vec![],
+            values: &[1, 10000],
+            labels: vec![id_label],
+        };
+
+        let sample2 = api::Sample {
+            locations: vec![],
+            values: &[1, 10000],
+            labels: vec![id2_label],
+        };
+
+        profile
+            .try_add_sample(sample1, None)
+            .expect("add to success");
+        profile
+            .try_add_sample(sample2, None)
+            .expect("add to success");
+
+        profile.add_endpoint(10, Cow::from("endpoint 10"))?;
+        profile.add_endpoint(large_span_id, Cow::from("large endpoint"))?;
+
+        let data = roundtrip_to_otel(profile).unwrap();
+        let dict = data.dictionary.as_ref().expect("dictionary");
+        let scope = &data.resource_profiles[0].scope_profiles[0];
+        let otel_profile = scope.profiles.first().expect("one profile");
+        let samples = &otel_profile.sample;
+
+        assert_eq!(samples.len(), 2);
+
+        let s1 = samples
+            .iter()
+            .find(|s| otel_sample_attr_int(dict, s, "local root span id") == Some(10))
+            .expect("sample with span id 10");
+        assert_eq!(otel_sample_attr_int(dict, s1, "local root span id"), Some(10));
+        assert_eq!(
+            otel_sample_attr_str(dict, s1, "trace endpoint"),
+            Some("endpoint 10")
+        );
+
+        let s2 = samples
+            .iter()
+            .find(|s| otel_sample_attr_int(dict, s, "local root span id") == Some(large_num))
+            .expect("sample with large span id");
+        assert_eq!(
+            otel_sample_attr_int(dict, s2, "local root span id"),
+            Some(large_num)
+        );
+        assert_eq!(
+            otel_sample_attr_str(dict, s2, "trace endpoint"),
+            Some("large endpoint")
+        );
+        Ok(())
+    }
+
     #[test]
     fn impl_from_profile_for_pprof_profile() {
         let locations = provide_distinct_locations();
