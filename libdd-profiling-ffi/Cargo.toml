@@ -33,6 +33,7 @@ datadog-library-config-ffi = ["dep:libdd-library-config-ffi"]
 ddcommon-ffi = ["dep:libdd-common-ffi"]
 ddsketch-ffi = ["dep:libdd-ddsketch-ffi"]
 datadog-ffe-ffi = ["dep:datadog-ffe-ffi"]
+tsan-annotations = ["libdd-profiling/tsan-annotations"]
 
 [build-dependencies]
 build_common = { path = "../build-common" }
