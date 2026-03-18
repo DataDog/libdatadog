@@ -415,9 +415,6 @@ jobs:
           echo "COMMITS: $COMMITS"
           echo "commits=$COMMITS" >> $GITHUB_OUTPUT
 
-          echo "Pushing branch $BRANCH_NAME to origin..."
-          git push origin "$BRANCH_NAME"
-
           # Output the results
           echo "API changes summary:"
           jq . /tmp/api-changes.json
