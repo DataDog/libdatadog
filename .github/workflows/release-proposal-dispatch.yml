@@ -554,7 +554,8 @@ jobs:
             --label "release-proposal" \
             --label "skip-metadata-check" \
             --label "skip-changelog-check" \
-            --base "${{ needs.cargo-release.outputs.ephemeral_branch }}"
+            --base "${{ needs.cargo-release.outputs.ephemeral_branch }}" \
+            --draft
 
       - name: Cleanup on failure
         if: failure() && (needs.cargo-release.outputs.branch_name != '' || needs.cargo-release.outputs.ephemeral_branch != '')
