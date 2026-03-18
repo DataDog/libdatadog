@@ -115,10 +115,10 @@ impl ExporterManager {
 
             runtime.block_on(async {
                 loop {
+                    tsan::acquire(Arc::as_ptr(&cloned_tsan_sync));
                     let Ok(msg) = cloned_receiver.recv() else {
                         return;
                     };
-                    tsan::acquire(Arc::as_ptr(&cloned_tsan_sync));
                     if cloned_cancel
                         .run_until_cancelled(msg.send())
                         .await
