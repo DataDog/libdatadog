@@ -20,7 +20,7 @@ use crate::pausable_worker::PausableWorker;
 use crate::stats_exporter::StatsExporter;
 use crate::telemetry::{SendPayloadTelemetry, TelemetryClient};
 use crate::trace_exporter::agent_response::{
-    AgentResponsePayloadVersion, DATADOG_RATES_PAYLOAD_VERSION_HEADER,
+    AgentResponsePayloadVersion, DATADOG_RATES_PAYLOAD_VERSION,
 };
 use crate::trace_exporter::error::{InternalErrorKind, RequestError, TraceExporterError};
 use crate::{
@@ -46,7 +46,7 @@ use libdd_trace_utils::trace_utils::TracerHeaderTags;
 use std::io;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
-use std::{borrow::Borrow, collections::HashMap, str::FromStr};
+use std::{borrow::Borrow, str::FromStr};
 use tokio::runtime::Runtime;
 use tracing::{debug, error, warn};
 
@@ -149,8 +149,8 @@ impl<'a> From<&'a TracerMetadata> for TracerHeaderTags<'a> {
     }
 }
 
-impl<'a> From<&'a TracerMetadata> for HashMap<&'static str, String> {
-    fn from(tags: &'a TracerMetadata) -> HashMap<&'static str, String> {
+impl<'a> From<&'a TracerMetadata> for http::HeaderMap {
+    fn from(tags: &'a TracerMetadata) -> http::HeaderMap {
         TracerHeaderTags::from(tags).into()
     }
 }
@@ -589,7 +589,7 @@ impl TraceExporter {
         &self,
         endpoint: &Endpoint,
         mp_payload: Vec<u8>,
-        headers: HashMap<&'static str, String>,
+        headers: http::HeaderMap,
         chunks: usize,
         chunks_dropped_p0: usize,
     ) -> Result<AgentResponse, TraceExporterError> {
@@ -770,7 +770,7 @@ impl TraceExporter {
         match (
             status.is_success(),
             self.agent_payload_response_version.as_ref(),
-            response.headers().get(DATADOG_RATES_PAYLOAD_VERSION_HEADER),
+            response.headers().get(DATADOG_RATES_PAYLOAD_VERSION),
         ) {
             (false, _, _) => {
                 // If the status is not success, the rates are considered unchanged
@@ -908,7 +908,6 @@ mod tests {
     use libdd_trace_utils::msgpack_encoder;
     use libdd_trace_utils::span::v04::SpanBytes;
     use libdd_trace_utils::span::v05;
-    use std::collections::HashMap;
     use std::net;
     use std::time::Duration;
     use tokio::time::sleep;
@@ -952,7 +951,7 @@ mod tests {
             ..Default::default()
         };
 
-        let hashmap: HashMap<&'static str, String> = (&tracer_tags).into();
+        let hashmap: http::HeaderMap = (&tracer_tags).into();
 
         assert_eq!(hashmap.get("datadog-meta-tracer-version").unwrap(), "v0.1");
         assert_eq!(hashmap.get("datadog-meta-lang").unwrap(), "rust");

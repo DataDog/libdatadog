@@ -1,7 +1,6 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use libdd_common::Endpoint;
 use libdd_common_ffi::slice::{AsBytes, CharSlice};
 use libdd_common_ffi::{Error, Slice};
 pub use libdd_crashtracker::{OpTypes, StacktraceCollection};
@@ -61,7 +60,7 @@ pub struct Config<'a> {
     pub demangle_names: bool,
     /// The endpoint to send the crash report to (can be a file://).
     /// If None, the crashtracker will infer the agent host from env variables.
-    pub endpoint: Option<&'a Endpoint>,
+    pub endpoint: CharSlice<'a>,
     /// Optional filename for a unix domain socket if the receiver is used asynchonously
     pub optional_unix_socket_filename: CharSlice<'a>,
     pub resolve_frames: StacktraceCollection,
@@ -88,29 +87,23 @@ impl<'a> TryFrom<Config<'a>> for libdd_crashtracker::CrashtrackerConfiguration {
             }
             vec
         };
-        let create_alt_stack = value.create_alt_stack;
-        let use_alt_stack = value.use_alt_stack;
-        let endpoint = value.endpoint.cloned();
-        let resolve_frames = value.resolve_frames;
-        let signals = value.signals.iter().copied().collect();
-        let timeout = if value.timeout_ms == 0 {
-            None
-        } else {
-            Some(Duration::from_millis(value.timeout_ms as u64))
-        };
-        let unix_socket_path = value.optional_unix_socket_filename.try_to_string_option()?;
-        let demangle_names = value.demangle_names;
-        Self::new(
-            additional_files,
-            create_alt_stack,
-            use_alt_stack,
-            endpoint,
-            resolve_frames,
-            signals,
-            timeout,
-            unix_socket_path,
-            demangle_names,
-        )
+        let mut builder = Self::builder()
+            .additional_files(additional_files)
+            .create_alt_stack(value.create_alt_stack)
+            .demangle_names(value.demangle_names)
+            .resolve_frames(value.resolve_frames)
+            .signals(value.signals.iter().copied().collect())
+            .use_alt_stack(value.use_alt_stack);
+        if let Some(url) = value.endpoint.try_to_string_option()? {
+            builder = builder.endpoint_url(&url);
+        }
+        if value.timeout_ms != 0 {
+            builder = builder.timeout(Duration::from_millis(value.timeout_ms as u64));
+        }
+        if let Some(path) = value.optional_unix_socket_filename.try_to_string_option()? {
+            builder = builder.unix_socket_path(path);
+        }
+        builder.build()
     }
 }
 

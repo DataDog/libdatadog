@@ -46,6 +46,18 @@ pub static DDOG_PROF_STRINGID2_TRACE_ENDPOINT: StringId2 =
 #[no_mangle]
 pub static DDOG_PROF_STRINGID2_SPAN_ID: StringId2 = StringId2::from(StringRef::SPAN_ID);
 
+/// A StringId that represents the string "thread id".
+/// This is always available in every string set and can be used without
+/// needing to insert it into a string set.
+#[no_mangle]
+pub static DDOG_PROF_STRINGID2_THREAD_ID: StringId2 = StringId2::from(StringRef::THREAD_ID);
+
+/// A StringId that represents the string "thread name".
+/// This is always available in every string set and can be used without
+/// needing to insert it into a string set.
+#[no_mangle]
+pub static DDOG_PROF_STRINGID2_THREAD_NAME: StringId2 = StringId2::from(StringRef::THREAD_NAME);
+
 const NULL_PROFILES_DICTIONARY: &CStr = c"passed a null pointer for a ProfilesDictionary";
 
 /// Allocates a new `ProfilesDictionary` and writes a handle to it in `handle`.

@@ -4,7 +4,7 @@ permissions:
   pull-requests: read
 on:
   pull_request:
-    types: ['opened', 'edited', 'reopened', 'synchronize']
+    types: ['opened', 'edited', 'reopened', 'synchronize', 'labeled', 'unlabeled']
     branches-ignore:
       - "v[0-9]+.[0-9]+.[0-9]+.[0-9]+"
       - release
@@ -15,6 +15,7 @@ env:
 
 jobs:
   detect-changes:
+    if: ${{ !contains(github.event.pull_request.labels.*.name, 'skip-pr-title-semver-check') }}
     runs-on: ubuntu-latest
     outputs:
       changed_crates: ${{ steps.detect.outputs.crates }}
@@ -78,7 +79,7 @@ jobs:
 
   semver-check:
     needs: detect-changes
-    if: needs.detect-changes.outputs.has_rust_changes == 'true'
+    if: ${{ needs.detect-changes.outputs.has_rust_changes == 'true' && !contains(github.event.pull_request.labels.*.name, 'skip-pr-title-semver-check') }}
     runs-on: ubuntu-latest
     outputs:
       result_json: ${{ steps.semver.outputs.result_json }}
@@ -156,7 +157,7 @@ jobs:
 
   validate:
     needs: [detect-changes, semver-check]
-    if: needs.detect-changes.outputs.has_rust_changes == 'true'
+    if: ${{ needs.detect-changes.outputs.has_rust_changes == 'true' && !contains(github.event.pull_request.labels.*.name, 'skip-pr-title-semver-check') }}
     runs-on: ubuntu-latest
     steps:
       - name: Validate PR title against semver changes
@@ -206,52 +207,30 @@ jobs:
           echo ""
 
           VALIDATION_FAILED="false"
+          FAILURE_REASONS=()
 
-          # Validation rules
+          # Rule: ci/docs/style/test/build cannot change the public API
           case "$TYPE" in
-          fix)
-            if [[ "$SEMVER_LEVEL" == "major" ]] && [[ -z "$IS_BREAKING_CHANGE" ]]; then
+            ci|docs|style|test|build)
+              if [[ "$SEMVER_LEVEL" == "major" ]] || [[ "$SEMVER_LEVEL" == "minor" ]]; then
+                VALIDATION_FAILED="true"
+                FAILURE_REASONS+=("'$TYPE' cannot have major or minor API changes. Use a different PR type, or avoid public API changes.")
+              fi
+              ;;
+            feat|fix|refactor|chore|perf|revert)
+              # These can be any semver level (subject to breaking change rules below)
+              ;;
+            *)
               VALIDATION_FAILED="true"
-            elif [[ "$SEMVER_LEVEL" == "minor" ]] || [[ "$SEMVER_LEVEL" == "none" ]]; then
-              VALIDATION_FAILED="true"
-            fi
-            ;;
-
-          feat)
-            if [[ "$SEMVER_LEVEL" == "major" ]] && [[ -z "$IS_BREAKING_CHANGE" ]]; then
-              VALIDATION_FAILED="true"
-            elif [[ "$SEMVER_LEVEL" == "patch" ]] || [[ "$SEMVER_LEVEL" == "none" ]]; then
-              VALIDATION_FAILED="true"
-            fi
-            ;;
-
-          chore|ci|docs|style|test|build|perf)
-            # Breaking change marker shouldn't be there.
-            if [[ -n "$IS_BREAKING_CHANGE" ]]; then
-              VALIDATION_FAILED="true"
-            fi
-
-            # These should not change public API
-            if [[ "$SEMVER_LEVEL" == "major" ]] || [[ "$SEMVER_LEVEL" == "minor" ]]; then
-              VALIDATION_FAILED="true"
-            fi
-            ;;
-
-          refactor)
-            if [[ "$SEMVER_LEVEL" == "major" ]] && [[ -z "$IS_BREAKING_CHANGE" ]]; then
-              VALIDATION_FAILED="true"
-            fi
-            ;;
-
-          revert)
-            # Revert commits are allowed to have any semver level
-            ;;
-
-          *)
-            echo "$TYPE not handled";
-            VALIDATION_FAILED="true"
-            ;;
+              FAILURE_REASONS+=("Unknown PR type: '$TYPE'. Valid types: feat, fix, docs, style, refactor, perf, test, build, ci, chore, revert")
+              ;;
           esac
+
+          # Rule: major API changes must have a breaking change marker
+          if [[ "$SEMVER_LEVEL" == "major" ]] && [[ -z "$IS_BREAKING_CHANGE" ]]; then
+            VALIDATION_FAILED="true"
+            FAILURE_REASONS+=("Major API changes require a breaking change marker. Add '!' to PR title (e.g. 'feat!:' or 'feat(scope)!:') or add 'BREAKING CHANGE:' footer in PR body.")
+          fi
 
           if [[ "$VALIDATION_FAILED" == "true" ]]; then
             echo ""
@@ -267,69 +246,21 @@ jobs:
             echo "--------------------------------------------"
             echo "WHAT WAS DETECTED:"
             echo "--------------------------------------------"
-            # Show details for each crate
             echo "$SEMVER_RESULT_JSON" | jq -r '.crates[] | "Crate: \(.name)\n  Level: \(.level)\n  Reason: \(.reason)\n  Details:\n\(.details | split("\n") | map("    " + .) | join("\n"))\n"'
             echo ""
             echo "--------------------------------------------"
             echo "WHY THIS FAILED:"
             echo "--------------------------------------------"
-            case "$TYPE" in
-              fix)
-                if [[ "$SEMVER_LEVEL" == "major" ]] && [[ -z "$IS_BREAKING_CHANGE" ]]; then
-                  echo "'fix' with major changes requires breaking change marker."
-                  echo "Add '!' to PR title (fix!:) or add 'BREAKING CHANGE:' footer in PR body."
-                elif [[ "$SEMVER_LEVEL" == "minor" ]]; then
-                  echo "'fix' cannot have minor-level changes (new public API)."
-                  echo "Use 'feat' type instead, or remove the new public API additions."
-                elif [[ "$SEMVER_LEVEL" == "none" ]]; then
-                  echo "'fix' requires changes to published crates."
-                  echo "Use 'chore' or 'ci' for non-published changes."
-                fi
-                ;;
-              feat)
-                if [[ "$SEMVER_LEVEL" == "major" ]] && [[ -z "$IS_BREAKING_CHANGE" ]]; then
-                  echo "'feat' with major changes requires breaking change marker."
-                  echo "Add '!' to PR title (feat!:) or add 'BREAKING CHANGE:' footer in PR body."
-                elif [[ "$SEMVER_LEVEL" == "patch" ]]; then
-                  echo "'feat' requires minor-level changes (new public API)."
-                  echo "Use 'fix' for bug fixes, or ensure new items are marked 'pub'."
-                elif [[ "$SEMVER_LEVEL" == "none" ]]; then
-                  echo "'feat' requires changes to published crates."
-                  echo "Use 'chore' for non-published changes."
-                fi
-                ;;
-              chore|ci|docs|style|test|build|perf)
-                if [[ -n "$IS_BREAKING_CHANGE" ]]; then
-                  echo "'$TYPE' cannot have breaking change marker."
-                  echo "Remove '!' from title or use 'feat!', 'fix!', or 'refactor!' instead."
-                elif [[ "$SEMVER_LEVEL" == "major" ]]; then
-                  echo "'$TYPE' cannot have major-level changes (breaking API)."
-                  echo "Use 'refactor!' or 'feat!' for intentional breaking changes."
-                elif [[ "$SEMVER_LEVEL" == "minor" ]]; then
-                  echo "'$TYPE' cannot have minor-level changes (new public API)."
-                  echo "Use 'feat' for new features, or mark new items as pub(crate)."
-                fi
-                ;;
-              refactor)
-                if [[ "$SEMVER_LEVEL" == "major" ]] && [[ -z "$IS_BREAKING_CHANGE" ]]; then
-                  echo "'refactor' with major changes requires breaking change marker."
-                  echo "Add '!' to PR title (refactor!:) or add 'BREAKING CHANGE:' footer in PR body."
-                fi
-                ;;
-              *)
-                echo "Unknown PR type: '$TYPE'"
-                echo "Valid types: feat, fix, docs, style, refactor, perf, test, build, ci, chore, revert"
-                ;;
-            esac
+            for reason in "${FAILURE_REASONS[@]}"; do
+              echo "- $reason"
+            done
             echo ""
             echo "--------------------------------------------"
             echo "VALID COMBINATIONS:"
             echo "--------------------------------------------"
-            echo "  fix      -> patch, or major (with '!')"
-            echo "  feat     -> minor, or major (with '!')"
-            echo "  refactor -> patch, minor, or major (with '!')"
-            echo "  chore/ci/docs/style/test/build/perf -> patch or none only"
-            echo "  revert   -> any level"
+            echo "  ci/docs/style/test/build -> patch or none only (no public API changes)"
+            echo "  all other types          -> any level allowed"
+            echo "  major changes            -> must have '!' or 'BREAKING CHANGE:' footer"
             echo ""
             exit 1
           else

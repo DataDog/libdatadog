@@ -20,7 +20,12 @@ trigger_internal_build:
     LIBDATADOG_COMMIT_BEFORE_SHA: $CI_COMMIT_BEFORE_SHA
     LIBDATADOG_COMMIT_TITLE: $CI_COMMIT_TITLE
     LIBDATADOG_ENABLE_MACOS_JOBS: "false"
+    LIBDATADOG_IS_RELEASE_BRANCH: "false"
   rules:
+    - if: '$CI_COMMIT_BRANCH =~ /^release\//'
+      variables:
+        LIBDATADOG_IS_RELEASE_BRANCH: "true"
+      when: always
     - if: '$CI_MERGE_REQUEST_LABELS =~ /run-macos-tests/'
       variables:
         LIBDATADOG_ENABLE_MACOS_JOBS: "true"
