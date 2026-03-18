@@ -3,10 +3,11 @@
 
 //! OTLP trace export for libdatadog.
 //!
-//! When an OTLP endpoint is configured via [`crate::trace_exporter::TraceExporterBuilder::set_otlp_endpoint`],
-//! the trace exporter sends traces in OTLP HTTP/JSON format to that endpoint instead of the
-//! Datadog agent. The host language is responsible for resolving the endpoint from its own
-//! configuration (e.g. `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`).
+//! When an OTLP endpoint is configured via
+//! [`crate::trace_exporter::TraceExporterBuilder::set_otlp_endpoint`], the trace exporter sends
+//! traces in OTLP HTTP/JSON format to that endpoint instead of the Datadog agent. The host language
+//! is responsible for resolving the endpoint from its own configuration (e.g.
+//! `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`).
 //!
 //! ## Sampling
 //!

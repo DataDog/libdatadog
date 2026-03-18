@@ -5,11 +5,11 @@
 
 use super::config::OtlpTraceConfig;
 use crate::trace_exporter::error::{InternalErrorKind, RequestError, TraceExporterError};
+use http::HeaderMap;
 use libdd_common::{http_common, Endpoint, HttpClient};
 use libdd_trace_utils::send_with_retry::{
     send_with_retry, RetryBackoffType, RetryStrategy, SendWithRetryError,
 };
-use std::collections::HashMap;
 
 /// Max total attempts for OTLP export (1 initial + up to 4 retries on transient failures).
 const OTLP_MAX_ATTEMPTS: u32 = 5;
@@ -19,10 +19,6 @@ const OTLP_RETRY_DELAY_MS: u64 = 100;
 /// Send OTLP trace payload (JSON bytes) to the configured endpoint with retries.
 ///
 /// Uses [`send_with_retry`] for consistent retry behaviour and observability across exporters.
-///
-/// Note: dynamic OTLP headers from `OTEL_EXPORTER_OTLP_HEADERS` are not forwarded because
-/// [`send_with_retry`] requires `&'static str` header keys. Support for arbitrary OTEL headers
-/// would require the API to accept `HashMap<String, String>`.
 pub async fn send_otlp_traces_http(
     client: &HttpClient,
     config: &OtlpTraceConfig,
@@ -41,8 +37,19 @@ pub async fn send_otlp_traces_http(
         ..Endpoint::default()
     };
 
-    let headers: HashMap<&'static str, String> =
-        HashMap::from([("Content-Type", "application/json".to_string())]);
+    let mut headers = HeaderMap::new();
+    headers.insert(
+        http::header::CONTENT_TYPE,
+        http::HeaderValue::from_static("application/json"),
+    );
+    for (key, value) in &config.headers {
+        if let (Ok(name), Ok(val)) = (
+            http::HeaderName::from_bytes(key.as_bytes()),
+            http::HeaderValue::from_str(value),
+        ) {
+            headers.insert(name, val);
+        }
+    }
 
     let retry_strategy = RetryStrategy::new(
         OTLP_MAX_ATTEMPTS,
