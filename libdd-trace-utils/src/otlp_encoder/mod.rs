@@ -11,7 +11,8 @@ pub use mapper::map_traces_to_otlp;
 /// Tracer-level attributes used to populate the OTLP Resource on export.
 ///
 /// These are the fields from the tracer's configuration that map to OTLP Resource attributes
-/// (service.name, deployment.environment, service.version, telemetry.sdk.*, runtime-id).
+/// (service.name, deployment.environment.name, service.version, telemetry.sdk.*, runtime-id,
+/// git.commit.sha, git.repository_url).
 /// Callers should build this from their own tracer metadata struct.
 #[derive(Clone, Debug, Default)]
 pub struct OtlpResourceInfo {
@@ -21,4 +22,6 @@ pub struct OtlpResourceInfo {
     pub language: String,
     pub tracer_version: String,
     pub runtime_id: String,
+    pub git_commit_sha: String,
+    pub git_repository_url: String,
 }

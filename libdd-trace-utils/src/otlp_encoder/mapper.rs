@@ -61,10 +61,6 @@ fn build_resource(resource_info: &OtlpResourceInfo) -> Resource {
     }
     if !resource_info.env.is_empty() {
         attributes.push(KeyValue {
-            key: "deployment.environment".to_string(),
-            value: AnyValue::StringValue(resource_info.env.clone()),
-        });
-        attributes.push(KeyValue {
             key: "deployment.environment.name".to_string(),
             value: AnyValue::StringValue(resource_info.env.clone()),
         });
@@ -97,11 +93,32 @@ fn build_resource(resource_info: &OtlpResourceInfo) -> Resource {
             value: AnyValue::StringValue(resource_info.runtime_id.clone()),
         });
     }
+    if !resource_info.git_commit_sha.is_empty() {
+        attributes.push(KeyValue {
+            key: "git.commit.sha".to_string(),
+            value: AnyValue::StringValue(resource_info.git_commit_sha.clone()),
+        });
+    }
+    if !resource_info.git_repository_url.is_empty() {
+        attributes.push(KeyValue {
+            key: "git.repository_url".to_string(),
+            value: AnyValue::StringValue(resource_info.git_repository_url.clone()),
+        });
+    }
     Resource { attributes }
 }
 
 fn map_span<T: TraceData>(span: &Span<T>) -> OtlpSpan {
-    let trace_id_hex = format!("{:032x}", span.trace_id);
+    // Reconstruct the full 128-bit trace ID. The v04/v05 wire format carries only the low 64 bits
+    // in the trace_id field; when a tracer emits a 128-bit ID the high 64 bits are propagated as
+    // the hex string meta tag "_dd.p.tid".
+    let trace_id_high: u128 = span
+        .meta
+        .get("_dd.p.tid")
+        .and_then(|v| u64::from_str_radix(v.borrow(), 16).ok())
+        .unwrap_or(0) as u128;
+    let trace_id_128 = (trace_id_high << 64) | span.trace_id;
+    let trace_id_hex = format!("{:032x}", trace_id_128);
     let span_id_hex = format!("{:016x}", span.span_id);
     let parent_span_id = if span.parent_id != 0 {
         Some(format!("{:016x}", span.parent_id))
@@ -112,7 +129,13 @@ fn map_span<T: TraceData>(span: &Span<T>) -> OtlpSpan {
     let end_nano = span.start + span.duration;
     let start_time_unix_nano = start_nano.to_string();
     let end_time_unix_nano = end_nano.to_string();
-    let kind = dd_type_to_otlp_kind(span.r#type.borrow());
+    // Prefer explicit "span.kind" tag (set by OTEL-instrumented tracers); fall back to
+    // the Datadog span type field for DD-instrumented spans.
+    let kind = span
+        .meta
+        .get("span.kind")
+        .map(|v| tag_to_otlp_kind(v.borrow()))
+        .unwrap_or_else(|| dd_type_to_otlp_kind(span.r#type.borrow()));
     let (attributes, dropped_attributes_count) = map_attributes(span);
     let error_msg = span.meta.get("error.msg").map(|v| v.borrow().to_string());
     let status = if span.error != 0 {
@@ -126,6 +149,11 @@ fn map_span<T: TraceData>(span: &Span<T>) -> OtlpSpan {
             code: json_types::status_code::UNSET,
         })
     };
+    // Set flags from sampling priority: 1 = sampled/keep, 0 = dropped.
+    let flags = span
+        .metrics
+        .get("_sampling_priority_v1")
+        .map(|p| if *p >= 1.0 { 1u32 } else { 0u32 });
     let links = span.span_links.iter().map(map_span_link).collect();
     let (events, dropped_events_count) = map_span_events(&span.span_events);
     OtlpSpan {
@@ -150,6 +178,7 @@ fn map_span<T: TraceData>(span: &Span<T>) -> OtlpSpan {
         } else {
             None
         },
+        flags,
     }
 }
 
@@ -211,7 +240,18 @@ fn event_attr_to_key_value<T: TraceData>(
             AttributeArrayValue::Integer(i) => AnyValue::IntValue(*i),
             AttributeArrayValue::Double(d) => AnyValue::DoubleValue(*d),
         },
-        crate::span::v04::AttributeAnyValue::Array(_) => return None,
+        crate::span::v04::AttributeAnyValue::Array(items) => {
+            let values = items
+                .iter()
+                .map(|item| match item {
+                    AttributeArrayValue::String(s) => AnyValue::StringValue(s.borrow().to_string()),
+                    AttributeArrayValue::Boolean(b) => AnyValue::BoolValue(*b),
+                    AttributeArrayValue::Integer(i) => AnyValue::IntValue(*i),
+                    AttributeArrayValue::Double(d) => AnyValue::DoubleValue(*d),
+                })
+                .collect();
+            AnyValue::ArrayValue(crate::otlp_encoder::json_types::ArrayValue { values })
+        }
     };
     Some(KeyValue {
         key: k.borrow().to_string(),
@@ -219,6 +259,19 @@ fn event_attr_to_key_value<T: TraceData>(
     })
 }
 
+/// Maps the explicit "span.kind" meta tag (set by OTEL-instrumented tracers) to an OTLP SpanKind.
+fn tag_to_otlp_kind(t: &str) -> i32 {
+    match t.to_lowercase().as_str() {
+        "server" => json_types::span_kind::SERVER,
+        "client" => json_types::span_kind::CLIENT,
+        "producer" => json_types::span_kind::PRODUCER,
+        "consumer" => json_types::span_kind::CONSUMER,
+        "internal" => json_types::span_kind::INTERNAL,
+        _ => json_types::span_kind::UNSPECIFIED,
+    }
+}
+
+/// Maps the Datadog span type field (set by DD-instrumented tracers) to an OTLP SpanKind.
 fn dd_type_to_otlp_kind(t: &str) -> i32 {
     match t.to_lowercase().as_str() {
         "server" | "web" | "http" => json_types::span_kind::SERVER,

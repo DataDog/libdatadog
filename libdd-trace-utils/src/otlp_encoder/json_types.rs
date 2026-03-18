@@ -79,6 +79,8 @@ pub struct OtlpSpan {
     pub dropped_attributes_count: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub dropped_events_count: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub flags: Option<u32>,
 }
 
 #[derive(Debug, Serialize)]
@@ -122,6 +124,13 @@ pub enum AnyValue {
     IntValue(i64),
     DoubleValue(f64),
     BytesValue(String),
+    ArrayValue(ArrayValue),
+}
+
+/// OTLP array value — wraps a list of [`AnyValue`] items.
+#[derive(Debug, Serialize)]
+pub struct ArrayValue {
+    pub values: Vec<AnyValue>,
 }
 
 #[derive(Debug, Serialize)]
