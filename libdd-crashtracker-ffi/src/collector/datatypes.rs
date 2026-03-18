@@ -54,13 +54,21 @@ impl<'a> TryFrom<ReceiverConfig<'a>> for libdd_crashtracker::CrashtrackerReceive
 }
 
 #[repr(C)]
+pub struct EndpointConfig<'a> {
+    pub url: CharSlice<'a>,
+    pub api_key: CharSlice<'a>,
+    pub test_token: CharSlice<'a>,
+    pub use_system_resolver: bool,
+}
+
+#[repr(C)]
 pub struct Config<'a> {
     pub additional_files: Slice<'a, CharSlice<'a>>,
     pub create_alt_stack: bool,
     pub demangle_names: bool,
     /// The endpoint to send the crash report to (can be a file://).
     /// If None, the crashtracker will infer the agent host from env variables.
-    pub endpoint: CharSlice<'a>,
+    pub endpoint: EndpointConfig<'a>,
     /// Optional filename for a unix domain socket if the receiver is used asynchonously
     pub optional_unix_socket_filename: CharSlice<'a>,
     pub resolve_frames: StacktraceCollection,
@@ -93,8 +101,15 @@ impl<'a> TryFrom<Config<'a>> for libdd_crashtracker::CrashtrackerConfiguration {
             .demangle_names(value.demangle_names)
             .resolve_frames(value.resolve_frames)
             .signals(value.signals.iter().copied().collect())
-            .use_alt_stack(value.use_alt_stack);
-        if let Some(url) = value.endpoint.try_to_string_option()? {
+            .use_alt_stack(value.use_alt_stack)
+            .endpoint_use_system_resolver(value.endpoint.use_system_resolver);
+        if let Some(api_key) = value.endpoint.api_key.try_to_string_option()? {
+            builder = builder.endpoint_api_key(&api_key);
+        }
+        if let Some(test_token) = value.endpoint.test_token.try_to_string_option()? {
+            builder = builder.endpoint_test_token(&test_token);
+        }
+        if let Some(url) = value.endpoint.url.try_to_string_option()? {
             builder = builder.endpoint_url(&url);
         }
         if value.timeout_ms != 0 {
@@ -120,5 +135,283 @@ impl From<anyhow::Result<[i64; OpTypes::SIZE as usize]>> for CrashtrackerGetCoun
             Ok(x) => Self::Ok(x),
             Err(err) => Self::Err(err.into()),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use libdd_crashtracker::CrashtrackerConfiguration;
+
+    #[test]
+    fn test_config_try_from_defaults() -> anyhow::Result<()> {
+        let ffi_config = Config {
+            additional_files: Slice::empty(),
+            create_alt_stack: false,
+            demangle_names: false,
+            endpoint: EndpointConfig {
+                url: CharSlice::empty(),
+                api_key: CharSlice::empty(),
+                test_token: CharSlice::empty(),
+                use_system_resolver: false,
+            },
+            optional_unix_socket_filename: CharSlice::empty(),
+            resolve_frames: StacktraceCollection::Disabled,
+            signals: Slice::empty(),
+            timeout_ms: 0,
+            use_alt_stack: false,
+        };
+
+        let config = CrashtrackerConfiguration::try_from(ffi_config)?;
+        let expected = CrashtrackerConfiguration::builder().build()?;
+        assert_eq!(config, expected);
+        Ok(())
+    }
+
+    #[test]
+    fn test_config_try_from_endpoint_url() -> anyhow::Result<()> {
+        let ffi_config = Config {
+            additional_files: Slice::empty(),
+            create_alt_stack: false,
+            demangle_names: false,
+            endpoint: EndpointConfig {
+                url: CharSlice::from("http://localhost:8126"),
+                api_key: CharSlice::empty(),
+                test_token: CharSlice::empty(),
+                use_system_resolver: false,
+            },
+            optional_unix_socket_filename: CharSlice::empty(),
+            resolve_frames: StacktraceCollection::Disabled,
+            signals: Slice::empty(),
+            timeout_ms: 0,
+            use_alt_stack: false,
+        };
+
+        let config = CrashtrackerConfiguration::try_from(ffi_config)?;
+        let expected = CrashtrackerConfiguration::builder()
+            .endpoint_url("http://localhost:8126")
+            .build()?;
+        assert_eq!(config, expected);
+        Ok(())
+    }
+
+    #[test]
+    fn test_config_try_from_endpoint_api_key() -> anyhow::Result<()> {
+        let ffi_config = Config {
+            additional_files: Slice::empty(),
+            create_alt_stack: false,
+            demangle_names: false,
+            endpoint: EndpointConfig {
+                url: CharSlice::from("http://localhost:8126"),
+                api_key: CharSlice::from("my-api-key"),
+                test_token: CharSlice::empty(),
+                use_system_resolver: false,
+            },
+            optional_unix_socket_filename: CharSlice::empty(),
+            resolve_frames: StacktraceCollection::Disabled,
+            signals: Slice::empty(),
+            timeout_ms: 0,
+            use_alt_stack: false,
+        };
+
+        let config = CrashtrackerConfiguration::try_from(ffi_config)?;
+        let expected = CrashtrackerConfiguration::builder()
+            .endpoint_url("http://localhost:8126")
+            .endpoint_api_key("my-api-key")
+            .build()?;
+        assert_eq!(config, expected);
+        Ok(())
+    }
+
+    #[test]
+    fn test_config_try_from_endpoint_test_token() -> anyhow::Result<()> {
+        let ffi_config = Config {
+            additional_files: Slice::empty(),
+            create_alt_stack: false,
+            demangle_names: false,
+            endpoint: EndpointConfig {
+                url: CharSlice::from("http://localhost:8126"),
+                api_key: CharSlice::empty(),
+                test_token: CharSlice::from("test-session-token"),
+                use_system_resolver: false,
+            },
+            optional_unix_socket_filename: CharSlice::empty(),
+            resolve_frames: StacktraceCollection::Disabled,
+            signals: Slice::empty(),
+            timeout_ms: 0,
+            use_alt_stack: false,
+        };
+
+        let config = CrashtrackerConfiguration::try_from(ffi_config)?;
+        let expected = CrashtrackerConfiguration::builder()
+            .endpoint_url("http://localhost:8126")
+            .endpoint_test_token("test-session-token")
+            .build()?;
+        assert_eq!(config, expected);
+        Ok(())
+    }
+
+    #[test]
+    fn test_config_try_from_endpoint_use_system_resolver() -> anyhow::Result<()> {
+        let ffi_config = Config {
+            additional_files: Slice::empty(),
+            create_alt_stack: false,
+            demangle_names: false,
+            endpoint: EndpointConfig {
+                url: CharSlice::from("http://localhost:8126"),
+                api_key: CharSlice::empty(),
+                test_token: CharSlice::empty(),
+                use_system_resolver: true,
+            },
+            optional_unix_socket_filename: CharSlice::empty(),
+            resolve_frames: StacktraceCollection::Disabled,
+            signals: Slice::empty(),
+            timeout_ms: 0,
+            use_alt_stack: false,
+        };
+
+        let config = CrashtrackerConfiguration::try_from(ffi_config)?;
+        let expected = CrashtrackerConfiguration::builder()
+            .endpoint_url("http://localhost:8126")
+            .endpoint_use_system_resolver(true)
+            .build()?;
+        assert_eq!(config, expected);
+        Ok(())
+    }
+
+    #[test]
+    fn test_config_try_from_timeout_zero_uses_default() -> anyhow::Result<()> {
+        let ffi_config = Config {
+            additional_files: Slice::empty(),
+            create_alt_stack: false,
+            demangle_names: false,
+            endpoint: EndpointConfig {
+                url: CharSlice::empty(),
+                api_key: CharSlice::empty(),
+                test_token: CharSlice::empty(),
+                use_system_resolver: false,
+            },
+            optional_unix_socket_filename: CharSlice::empty(),
+            resolve_frames: StacktraceCollection::Disabled,
+            signals: Slice::empty(),
+            timeout_ms: 0,
+            use_alt_stack: false,
+        };
+
+        let config = CrashtrackerConfiguration::try_from(ffi_config)?;
+        let expected = CrashtrackerConfiguration::builder().build()?;
+        assert_eq!(config.timeout(), expected.timeout());
+        Ok(())
+    }
+
+    #[test]
+    fn test_config_try_from_custom_timeout() -> anyhow::Result<()> {
+        use std::time::Duration;
+
+        let ffi_config = Config {
+            additional_files: Slice::empty(),
+            create_alt_stack: false,
+            demangle_names: false,
+            endpoint: EndpointConfig {
+                url: CharSlice::empty(),
+                api_key: CharSlice::empty(),
+                test_token: CharSlice::empty(),
+                use_system_resolver: false,
+            },
+            optional_unix_socket_filename: CharSlice::empty(),
+            resolve_frames: StacktraceCollection::Disabled,
+            signals: Slice::empty(),
+            timeout_ms: 5000,
+            use_alt_stack: false,
+        };
+
+        let config = CrashtrackerConfiguration::try_from(ffi_config)?;
+        let expected = CrashtrackerConfiguration::builder()
+            .timeout(Duration::from_millis(5000))
+            .build()?;
+        assert_eq!(config, expected);
+        Ok(())
+    }
+
+    #[test]
+    fn test_config_try_from_unix_socket() -> anyhow::Result<()> {
+        let ffi_config = Config {
+            additional_files: Slice::empty(),
+            create_alt_stack: false,
+            demangle_names: false,
+            endpoint: EndpointConfig {
+                url: CharSlice::empty(),
+                api_key: CharSlice::empty(),
+                test_token: CharSlice::empty(),
+                use_system_resolver: false,
+            },
+            optional_unix_socket_filename: CharSlice::from("/run/crashtracker.sock"),
+            resolve_frames: StacktraceCollection::Disabled,
+            signals: Slice::empty(),
+            timeout_ms: 0,
+            use_alt_stack: false,
+        };
+
+        let config = CrashtrackerConfiguration::try_from(ffi_config)?;
+        let expected = CrashtrackerConfiguration::builder()
+            .unix_socket_path("/run/crashtracker.sock".to_string())
+            .build()?;
+        assert_eq!(config, expected);
+        Ok(())
+    }
+
+    #[test]
+    fn test_config_try_from_additional_files() -> anyhow::Result<()> {
+        let file1 = CharSlice::from("/tmp/extra1.txt");
+        let file2 = CharSlice::from("/tmp/extra2.txt");
+        let files = [file1, file2];
+        let ffi_config = Config {
+            additional_files: Slice::from(files.as_slice()),
+            create_alt_stack: false,
+            demangle_names: false,
+            endpoint: EndpointConfig {
+                url: CharSlice::empty(),
+                api_key: CharSlice::empty(),
+                test_token: CharSlice::empty(),
+                use_system_resolver: false,
+            },
+            optional_unix_socket_filename: CharSlice::empty(),
+            resolve_frames: StacktraceCollection::Disabled,
+            signals: Slice::empty(),
+            timeout_ms: 0,
+            use_alt_stack: false,
+        };
+
+        let config = CrashtrackerConfiguration::try_from(ffi_config)?;
+        let expected = CrashtrackerConfiguration::builder()
+            .additional_files(vec![
+                "/tmp/extra1.txt".to_string(),
+                "/tmp/extra2.txt".to_string(),
+            ])
+            .build()?;
+        assert_eq!(config, expected);
+        Ok(())
+    }
+
+    #[test]
+    fn test_config_try_from_create_alt_stack_without_use_fails() {
+        let ffi_config = Config {
+            additional_files: Slice::empty(),
+            create_alt_stack: true,
+            demangle_names: false,
+            endpoint: EndpointConfig {
+                url: CharSlice::empty(),
+                api_key: CharSlice::empty(),
+                test_token: CharSlice::empty(),
+                use_system_resolver: false,
+            },
+            optional_unix_socket_filename: CharSlice::empty(),
+            resolve_frames: StacktraceCollection::Disabled,
+            signals: Slice::empty(),
+            timeout_ms: 0,
+            use_alt_stack: false,
+        };
+
+        assert!(CrashtrackerConfiguration::try_from(ffi_config).is_err());
     }
 }
