@@ -457,6 +457,33 @@ jobs:
       branch_name: ${{ steps.proposal-branch.outputs.branch_name }}
       ephemeral_branch: ${{ steps.ephemeral-branch.outputs.ephemeral_branch }}
 
+  check-breaking-deps:
+    needs: cargo-release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # 4.2.2
+        with:
+          ref: ${{ needs.cargo-release.outputs.branch_name }}
+
+      - name: Download release data
+        uses: actions/download-artifact@v4
+        with:
+          name: release-dispatch-data
+          path: /tmp
+
+      - name: Check breaking deps
+        run: |
+          echo "Checking breaking deps..."
+          
+          # check if the crates in /tmp/api-changes.json have duplicated and conflicting dependencies
+          jq -c '.[]' /tmp/api-changes.json | while read -r crate; do
+            NAME=$(echo "$crate" | jq -r '.name')
+            DEP_TREE=$(cargo tree -d -p "$NAME" -e no-dev --prefix none | grep "libdd-" | grep -vF '(*)' | sort -u | cut -d' ' -f1 | sort | uniq -d)
+            if [ -n "$DEP_TREE" ]; then
+              echo "Crate $NAME has duplicated and conflicting dependencies: $DEP_TREE"
+            fi
+          done
+    
   create-pr:
     needs: cargo-release
     runs-on: ubuntu-latest
