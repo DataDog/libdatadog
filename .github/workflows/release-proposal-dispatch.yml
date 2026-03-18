@@ -23,6 +23,13 @@ on:
           - libdd-trace-protobuf
           - libdd-trace-stats
           - libdd-trace-utils
+      main_start_sha:
+        description: >
+          Optional commit on main to cut the release from (full or short SHA). Leave empty for
+          latest main. Must be an ancestor of origin/main.
+        required: false
+        type: string
+        default: ''
 
 concurrency:
   group: release-proposal-dispatch-group
@@ -31,8 +38,6 @@ concurrency:
 env:
   MAIN_BRANCH: main
   PROPOSAL_BRANCH_PREFIX: release-proposal
-  GIT_USER_NAME: "dd-octo-sts[bot]"
-  GIT_USER_EMAIL: "200755185+dd-octo-sts[bot]@users.noreply.github.com"
 
 jobs:
   check-proposal-ongoing:
@@ -120,11 +125,54 @@ jobs:
         with:
           tool: cargo-semver-checks@0.45.0
       
-      - name: Configure Git for signing
-        run: |
-          git config --global user.name "${{ env.GIT_USER_NAME }}"
-          git config --global user.email "${{ env.GIT_USER_EMAIL }}"
+      - uses: DataDog/dd-octo-sts-action@acaa02eee7e3bb0839e4272dacb37b8f3b58ba80 # v1.0.3
+        id: octo-sts
+        with:
+          scope: DataDog/libdatadog
+          policy: self.write.pr    
 
+      - name: Configure Git for signing
+        env:
+          GH_TOKEN: ${{ steps.octo-sts.outputs.token }}
+          GITHUB_ACTOR: ${{ github.actor }}
+        run: |
+          # GET /user is not allowed with installation tokens; use GET /users/ACTOR (who triggered the workflow).
+          GITHUB_USER_RESPONSE=$(curl -s -H "Authorization: token ${GH_TOKEN}" "https://api.github.com/users/${GITHUB_ACTOR}")
+          GIT_USER_NAME=$(echo "${GITHUB_USER_RESPONSE}" | jq -r '.login // empty')
+          GIT_USER_ID=$(echo "${GITHUB_USER_RESPONSE}" | jq -r '.id // empty')
+          if [[ -z "$GIT_USER_NAME" ]]; then
+            GIT_USER_NAME="${GITHUB_ACTOR}"
+            GIT_USER_EMAIL="${GITHUB_ACTOR}@users.noreply.github.com"
+          else
+            GIT_USER_EMAIL="${GIT_USER_ID}+${GIT_USER_NAME}@users.noreply.github.com"
+          fi
+          echo "GIT_USER_NAME: $GIT_USER_NAME"
+          echo "GIT_USER_EMAIL: $GIT_USER_EMAIL"
+          git config --global user.name "$GIT_USER_NAME"
+          git config --global user.email "$GIT_USER_EMAIL"
+
+      - name: Optionally checkout main at specific SHA
+        env:
+          MAIN_START_SHA: ${{ inputs.main_start_sha }}
+        run: |
+          git fetch origin "${{ env.MAIN_BRANCH }}"
+          if [ -n "${MAIN_START_SHA// }" ]; then
+            SHA=$(echo "$MAIN_START_SHA" | tr -d '[:space:]')
+            if ! echo "$SHA" | grep -qE '^[0-9a-fA-F]{7,40}$'; then
+              echo "Error: main_start_sha must be a 7–40 character hex commit SHA." >&2
+              exit 1
+            fi
+            if ! git merge-base --is-ancestor "$SHA" "origin/${{ env.MAIN_BRANCH }}"; then
+              echo "Error: main_start_sha must be an ancestor of origin/${{ env.MAIN_BRANCH }}." >&2
+              exit 1
+            fi
+            git checkout "$SHA"
+            echo "Release cut from ${{ env.MAIN_BRANCH }} at $SHA (not tip)."
+          else
+            git checkout "${{ env.MAIN_BRANCH }}"
+            echo "Release cut from origin/${{ env.MAIN_BRANCH }} tip."
+          fi
+      
       - name: Create ephemeral release branch
         id: ephemeral-branch
         run: |
@@ -132,7 +180,7 @@ jobs:
           EPHEMERAL_BRANCH="release/${{ inputs.crate }}/$TIMESTAMP"
           git checkout -b "$EPHEMERAL_BRANCH"
           git push origin "$EPHEMERAL_BRANCH"
-          echo "Ephemeral release branch created: $EPHEMERAL_BRANCH from ${{ env.MAIN_BRANCH }} branch"
+          echo "Ephemeral release branch created: $EPHEMERAL_BRANCH from ${{ env.MAIN_BRANCH }} branch ($(git rev-parse --short HEAD))"
           echo "ephemeral_branch=$EPHEMERAL_BRANCH" >> "$GITHUB_OUTPUT"
           echo "timestamp=$TIMESTAMP" >> "$GITHUB_OUTPUT"
 
@@ -146,6 +194,7 @@ jobs:
           cat /tmp/crates.json
       
       - name: Get commits since last release for each crate
+        id: commits-since-release
         run: |
           # Get commits since release for each crate and save to file
           ./scripts/commits-since-release.sh "$(cat /tmp/crates.json)" > /tmp/commits-by-crate.json
@@ -154,7 +203,8 @@ jobs:
           # so tag/merge-base resolution uses the same ref the script used.
           git rev-parse HEAD > /tmp/release_head_sha
           echo "Release branch HEAD (saved for later): $(cat /tmp/release_head_sha)"
-
+          echo "release_head_sha=$(cat /tmp/release_head_sha)" >> "$GITHUB_OUTPUT"
+          
           # Display json output
           jq . /tmp/commits-by-crate.json
 
@@ -360,12 +410,22 @@ jobs:
             exit 1
           fi
 
-          echo "Pushing branch $BRANCH_NAME to origin..."
-          git push origin "$BRANCH_NAME"
+          # List both commit hashes in reverse order, space separated (no extra quotes so commit-headless gets plain SHAs)
+          COMMITS=$(git log "$ORIGINAL_HEAD".. --format='%H' | tr '\n' ' ' | xargs)
+          echo "COMMITS: $COMMITS"
+          echo "commits=$COMMITS" >> $GITHUB_OUTPUT
 
           # Output the results
           echo "API changes summary:"
           jq . /tmp/api-changes.json
+
+      - name: Push commits
+        uses: DataDog/commit-headless@action/v2.0.3
+        with:
+          branch: ${{ steps.proposal-branch.outputs.branch_name }}
+          head-sha: ${{ steps.commits-since-release.outputs.release_head_sha }}
+          command: push
+          commits: "${{ steps.release-version-bumps.outputs.commits }}"
 
       - name: Upload release data
         uses: actions/upload-artifact@v4
@@ -394,6 +454,33 @@ jobs:
       branch_name: ${{ steps.proposal-branch.outputs.branch_name }}
       ephemeral_branch: ${{ steps.ephemeral-branch.outputs.ephemeral_branch }}
 
+  check-breaking-deps:
+    needs: cargo-release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # 4.2.2
+        with:
+          ref: ${{ needs.cargo-release.outputs.branch_name }}
+
+      - name: Download release data
+        uses: actions/download-artifact@v4
+        with:
+          name: release-dispatch-data
+          path: /tmp
+
+      - name: Check breaking deps
+        run: |
+          echo "Checking breaking deps..."
+          
+          # check if the crates in /tmp/api-changes.json have duplicated and conflicting dependencies
+          jq -c '.[]' /tmp/api-changes.json | while read -r crate; do
+            NAME=$(echo "$crate" | jq -r '.name')
+            DEP_TREE=$(cargo tree -d -p "$NAME" -e no-dev --prefix none | grep "libdd-" | grep -vF '(*)' | sort -u | cut -d' ' -f1 | sort | uniq -d)
+            if [ -n "$DEP_TREE" ]; then
+              echo "Crate $NAME has duplicated and conflicting dependencies: $DEP_TREE"
+            fi
+          done
+    
   create-pr:
     needs: cargo-release
     runs-on: ubuntu-latest
@@ -464,7 +551,8 @@ jobs:
             --label "release-proposal" \
             --label "skip-metadata-check" \
             --label "skip-changelog-check" \
-            --base "${{ needs.cargo-release.outputs.ephemeral_branch }}"
+            --base "${{ needs.cargo-release.outputs.ephemeral_branch }}" \
+            --draft
 
       - name: Cleanup on failure
         if: failure() && (needs.cargo-release.outputs.branch_name != '' || needs.cargo-release.outputs.ephemeral_branch != '')
