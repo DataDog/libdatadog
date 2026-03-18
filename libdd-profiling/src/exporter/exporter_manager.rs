@@ -16,6 +16,10 @@ use tokio_util::sync::CancellationToken;
 /// not, TSAN cannot see the atomic synchronization inside crossbeam-channel.
 /// These annotations tell TSAN about the happens-before relationship between
 /// channel send and receive operations via `__tsan_release`/`__tsan_acquire`.
+///
+/// Gated behind the `tsan-annotations` cargo feature so release builds carry
+/// zero overhead.
+#[cfg(feature = "tsan-annotations")]
 mod tsan {
     use std::ffi::c_void;
     use std::sync::OnceLock;
@@ -63,6 +67,14 @@ mod tsan {
             unsafe { f(addr as *mut c_void) };
         }
     }
+}
+
+#[cfg(not(feature = "tsan-annotations"))]
+mod tsan {
+    #[inline(always)]
+    pub fn release(_addr: *const u8) {}
+    #[inline(always)]
+    pub fn acquire(_addr: *const u8) {}
 }
 
 #[derive(Debug)]

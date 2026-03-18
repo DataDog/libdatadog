@@ -18,6 +18,7 @@ bench = false
 
 [features]
 default = []
+tsan-annotations = []
 cxx = ["dep:cxx", "dep:cxx-build"]
 test-utils = ["libdd-common/test-utils"]
 
