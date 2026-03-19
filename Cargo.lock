@@ -1601,8 +1601,8 @@ name = "datadog-tracer-flare"
 version = "30.0.0"
 dependencies = [
  "anyhow",
+ "bytes",
  "datadog-remote-config",
- "http",
  "httpmock",
  "libdd-capabilities",
  "libdd-capabilities-impl",

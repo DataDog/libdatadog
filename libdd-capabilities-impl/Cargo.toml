@@ -16,5 +16,5 @@ libdd-capabilities = { path = "../libdd-capabilities" }
 libdd-common = { path = "../libdd-common" }
 hyper = { workspace = true }
 http = "1"
-bytes = "1.4"
+bytes = "1.11.1"
 http-body-util = "0.1"
