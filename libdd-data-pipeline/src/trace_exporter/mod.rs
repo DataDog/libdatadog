@@ -907,7 +907,7 @@ mod tests {
     use super::*;
     use httpmock::prelude::*;
     use httpmock::MockServer;
-    use libdd_capabilities_impl::DefaultHttpClient;
+    use libdd_capabilities_impl::NativeCapabilities;
     use libdd_tinybytes::BytesString;
     use libdd_trace_utils::msgpack_encoder;
     use libdd_trace_utils::span::v04::SpanBytes;
@@ -983,8 +983,8 @@ mod tests {
         output: TraceExporterOutputFormat,
         enable_telemetry: bool,
         enable_health_metrics: bool,
-    ) -> TraceExporter<DefaultHttpClient> {
-        let mut builder = TraceExporter::<DefaultHttpClient>::builder();
+    ) -> TraceExporter<NativeCapabilities> {
+        let mut builder = TraceExporter::<NativeCapabilities>::builder();
         builder
             .set_url(&url)
             .set_service("test")
@@ -1403,7 +1403,7 @@ mod tests {
                 );
         });
 
-        let mut builder = TraceExporter::<DefaultHttpClient>::builder();
+        let mut builder = TraceExporter::<NativeCapabilities>::builder();
         builder
             .set_url(&server.url("/"))
             .set_service("foo")
@@ -1445,7 +1445,7 @@ mod tests {
                 .body(r#"{ "error": "Unavailable" }"#);
         });
 
-        let mut builder = TraceExporter::<DefaultHttpClient>::builder();
+        let mut builder = TraceExporter::<NativeCapabilities>::builder();
         builder
             .set_url(&server.url("/"))
             .set_service("foo")
@@ -1480,7 +1480,7 @@ mod tests {
                 .body("");
         });
 
-        let mut builder = TraceExporter::<DefaultHttpClient>::builder();
+        let mut builder = TraceExporter::<NativeCapabilities>::builder();
         builder
             .set_url(&server.url("/"))
             .set_service("foo")
@@ -1534,7 +1534,7 @@ mod tests {
                 .body("");
         });
 
-        let mut builder = TraceExporter::<DefaultHttpClient>::builder();
+        let mut builder = TraceExporter::<NativeCapabilities>::builder();
         builder
             .set_url(&server.url("/"))
             .set_service("foo")
@@ -1658,7 +1658,7 @@ mod tests {
                 .body("");
         });
 
-        let mut builder = TraceExporter::<DefaultHttpClient>::builder();
+        let mut builder = TraceExporter::<NativeCapabilities>::builder();
         builder
             .set_url(&server.url("/"))
             .set_service("foo")
@@ -1718,7 +1718,7 @@ mod tests {
                 .body(response_body);
         });
 
-        let mut builder = TraceExporter::<DefaultHttpClient>::builder();
+        let mut builder = TraceExporter::<NativeCapabilities>::builder();
         builder.set_url(&server.url("/"));
         let exporter = builder.build().unwrap();
         let traces = vec![0x90];
@@ -1753,7 +1753,7 @@ mod tests {
                 .body(response_body);
         });
 
-        let mut builder = TraceExporter::<DefaultHttpClient>::builder();
+        let mut builder = TraceExporter::<NativeCapabilities>::builder();
         builder
             .set_url(&server.url("/"))
             .enable_agent_rates_payload_version();
@@ -1845,7 +1845,7 @@ mod tests {
             then.delay(delay).status(status).body(response);
         });
 
-        let mut builder = TraceExporter::<DefaultHttpClient>::builder();
+        let mut builder = TraceExporter::<NativeCapabilities>::builder();
         builder
             .set_url(&server.url("/"))
             .set_service("test")
@@ -1889,14 +1889,14 @@ mod tests {
     #[test]
     #[cfg_attr(miri, ignore)]
     fn test_connection_timeout() {
-        let exporter = TraceExporter::<DefaultHttpClient>::builder()
+        let exporter = TraceExporter::<NativeCapabilities>::builder()
             .build()
             .unwrap();
 
         assert_eq!(exporter.endpoint.timeout_ms, Endpoint::default().timeout_ms);
 
         let timeout = Some(42);
-        let mut builder = TraceExporter::<DefaultHttpClient>::builder();
+        let mut builder = TraceExporter::<NativeCapabilities>::builder();
         builder.set_connection_timeout(timeout);
 
         let exporter = builder.build().unwrap();
@@ -1907,7 +1907,7 @@ mod tests {
     #[test]
     #[cfg_attr(miri, ignore)]
     fn stop_and_start_runtime() {
-        let builder = TraceExporter::<DefaultHttpClient>::builder();
+        let builder = TraceExporter::<NativeCapabilities>::builder();
         let exporter = builder.build().unwrap();
         exporter.stop_worker();
         exporter.run_worker().unwrap();
@@ -1919,7 +1919,7 @@ mod single_threaded_tests {
     use super::*;
     use crate::agent_info;
     use httpmock::prelude::*;
-    use libdd_capabilities_impl::DefaultHttpClient;
+    use libdd_capabilities_impl::NativeCapabilities;
     use libdd_trace_utils::msgpack_encoder;
     use libdd_trace_utils::span::v04::SpanBytes;
     use std::time::Duration;
@@ -1955,7 +1955,7 @@ mod single_threaded_tests {
                 .body(r#"{"version":"1","client_drop_p0s":true,"endpoints":["/v0.4/traces","/v0.6/stats"]}"#);
         });
 
-        let mut builder = TraceExporter::<DefaultHttpClient>::builder();
+        let mut builder = TraceExporter::<NativeCapabilities>::builder();
         builder
             .set_url(&server.url("/"))
             .set_service("test")
@@ -2055,7 +2055,7 @@ mod single_threaded_tests {
                 .body(r#"{"version":"1","client_drop_p0s":true,"endpoints":["/v0.4/traces","/v0.6/stats"]}"#);
         });
 
-        let mut builder = TraceExporter::<DefaultHttpClient>::builder();
+        let mut builder = TraceExporter::<NativeCapabilities>::builder();
         builder
             .set_url(&server.url("/"))
             .set_service("test")

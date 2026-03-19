@@ -59,7 +59,7 @@ use zstd::stream::write::Encoder;
 ///     send_data.set_retry_strategy(retry_strategy);
 ///
 ///     // Send the data (caller picks the HTTP client implementation)
-///     let result = send_data.send::<libdd_capabilities_impl::DefaultHttpClient>().await;
+///     let result = send_data.send::<libdd_capabilities_impl::NativeCapabilities>().await;
 /// }
 /// ```
 pub struct SendData {
@@ -427,7 +427,7 @@ mod tests {
     use crate::tracer_header_tags::TracerHeaderTags;
     use httpmock::prelude::*;
     use httpmock::MockServer;
-    use libdd_capabilities_impl::DefaultHttpClient;
+    use libdd_capabilities_impl::NativeCapabilities;
     use libdd_common::Endpoint;
     use libdd_trace_protobuf::pb::Span;
     use std::collections::HashMap;
@@ -584,7 +584,7 @@ mod tests {
         );
 
         let data_payload_len = compute_payload_len(&data.tracer_payloads);
-        let res = data.send::<DefaultHttpClient>().await;
+        let res = data.send::<NativeCapabilities>().await;
 
         mock.assert_async().await;
 
@@ -629,7 +629,7 @@ mod tests {
         );
 
         let data_payload_len = compute_payload_len(&data.tracer_payloads);
-        let res = data.send::<DefaultHttpClient>().await;
+        let res = data.send::<NativeCapabilities>().await;
 
         mock.assert_async().await;
 
@@ -688,7 +688,7 @@ mod tests {
         );
 
         let data_payload_len = rmp_compute_payload_len(&data.tracer_payloads);
-        let res = data.send::<DefaultHttpClient>().await;
+        let res = data.send::<NativeCapabilities>().await;
 
         mock.assert_async().await;
 
@@ -746,7 +746,7 @@ mod tests {
         );
 
         let data_payload_len = rmp_compute_payload_len(&data.tracer_payloads);
-        let res = data.send::<DefaultHttpClient>().await;
+        let res = data.send::<NativeCapabilities>().await;
 
         mock.assert_async().await;
 
@@ -790,7 +790,7 @@ mod tests {
         );
 
         let data_payload_len = rmp_compute_payload_len(&data.tracer_payloads);
-        let res = data.send::<DefaultHttpClient>().await;
+        let res = data.send::<NativeCapabilities>().await;
 
         mock.assert_calls_async(2).await;
 
@@ -831,7 +831,7 @@ mod tests {
             },
         );
 
-        let res = data.send::<DefaultHttpClient>().await;
+        let res = data.send::<NativeCapabilities>().await;
 
         mock.assert_calls_async(5).await;
 
@@ -863,7 +863,7 @@ mod tests {
             },
         );
 
-        let res = data.send::<DefaultHttpClient>().await;
+        let res = data.send::<NativeCapabilities>().await;
 
         assert!(res.last_result.is_err());
         match std::env::consts::OS {
@@ -930,7 +930,7 @@ mod tests {
             },
         );
 
-        let res = data.send::<DefaultHttpClient>().await;
+        let res = data.send::<NativeCapabilities>().await;
 
         mock.assert_calls_async(5).await;
 
@@ -972,7 +972,7 @@ mod tests {
             },
         );
 
-        let res = data.send::<DefaultHttpClient>().await;
+        let res = data.send::<NativeCapabilities>().await;
 
         mock.assert_calls_async(10).await;
 

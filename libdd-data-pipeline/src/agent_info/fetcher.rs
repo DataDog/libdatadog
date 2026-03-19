@@ -55,13 +55,13 @@ pub async fn fetch_info_with_state<H: HttpClientTrait>(
 /// # Example
 /// ```no_run
 /// # use anyhow::Result;
-/// # use libdd_capabilities_impl::DefaultHttpClient;
+/// # use libdd_capabilities_impl::NativeCapabilities;
 /// # #[tokio::main]
 /// # async fn main() -> Result<()> {
 /// // Define the endpoint
 /// let endpoint = libdd_common::Endpoint::from_url("http://localhost:8126/info".parse().unwrap());
 /// // Fetch the info
-/// let agent_info = libdd_data_pipeline::agent_info::fetch_info::<DefaultHttpClient>(&endpoint)
+/// let agent_info = libdd_data_pipeline::agent_info::fetch_info::<NativeCapabilities>(&endpoint)
 ///     .await
 ///     .unwrap();
 /// println!("Agent version is {}", agent_info.info.version.unwrap());
@@ -125,7 +125,7 @@ async fn fetch_and_hash_response<H: HttpClientTrait>(
 /// ```no_run
 /// # use anyhow::Result;
 /// # use libdd_common::worker::Worker;
-/// # use libdd_capabilities_impl::DefaultHttpClient;
+/// # use libdd_capabilities_impl::NativeCapabilities;
 /// # #[tokio::main]
 /// # async fn main() -> Result<()> {
 /// // Define the endpoint
@@ -133,7 +133,7 @@ async fn fetch_and_hash_response<H: HttpClientTrait>(
 /// let endpoint = libdd_common::Endpoint::from_url("http://localhost:8126/info".parse().unwrap());
 /// // Create the fetcher
 /// let (mut fetcher, _response_observer) = libdd_data_pipeline::agent_info::AgentInfoFetcher::<
-///     DefaultHttpClient,
+///     NativeCapabilities,
 /// >::new(
 ///     endpoint, std::time::Duration::from_secs(5 * 60)
 /// );
@@ -320,7 +320,7 @@ mod single_threaded_tests {
     use super::*;
     use crate::agent_info;
     use httpmock::prelude::*;
-    use libdd_capabilities_impl::DefaultHttpClient;
+    use libdd_capabilities_impl::NativeCapabilities;
 
     const TEST_INFO: &str = r#"{
         "version": "0.0.0",
@@ -392,7 +392,7 @@ mod single_threaded_tests {
             .await;
         let endpoint = Endpoint::from_url(server.url("/info").parse().unwrap());
 
-        let info_status = fetch_info_with_state::<DefaultHttpClient>(&endpoint, None)
+        let info_status = fetch_info_with_state::<NativeCapabilities>(&endpoint, None)
             .await
             .unwrap();
         mock.assert();
@@ -420,11 +420,11 @@ mod single_threaded_tests {
         let endpoint = Endpoint::from_url(server.url("/info").parse().unwrap());
 
         let new_state_info_status =
-            fetch_info_with_state::<DefaultHttpClient>(&endpoint, Some("state"))
+            fetch_info_with_state::<NativeCapabilities>(&endpoint, Some("state"))
                 .await
                 .unwrap();
         let same_state_info_status =
-            fetch_info_with_state::<DefaultHttpClient>(&endpoint, Some(TEST_INFO_HASH))
+            fetch_info_with_state::<NativeCapabilities>(&endpoint, Some(TEST_INFO_HASH))
                 .await
                 .unwrap();
 
@@ -453,7 +453,7 @@ mod single_threaded_tests {
             .await;
         let endpoint = Endpoint::from_url(server.url("/info").parse().unwrap());
 
-        let agent_info = fetch_info::<DefaultHttpClient>(&endpoint).await.unwrap();
+        let agent_info = fetch_info::<NativeCapabilities>(&endpoint).await.unwrap();
         mock.assert();
         assert_eq!(
             *agent_info,
@@ -478,7 +478,7 @@ mod single_threaded_tests {
             })
             .await;
         let endpoint = Endpoint::from_url(server.url("/info").parse().unwrap());
-        let (mut fetcher, _response_observer) = AgentInfoFetcher::<DefaultHttpClient>::new(
+        let (mut fetcher, _response_observer) = AgentInfoFetcher::<NativeCapabilities>::new(
             endpoint.clone(),
             Duration::from_millis(100),
         );
@@ -559,7 +559,7 @@ mod single_threaded_tests {
 
         let endpoint = Endpoint::from_url(server.url("/info").parse().unwrap());
         let (mut fetcher, response_observer) =
-            AgentInfoFetcher::<DefaultHttpClient>::new(endpoint, Duration::from_secs(3600));
+            AgentInfoFetcher::<NativeCapabilities>::new(endpoint, Duration::from_secs(3600));
 
         tokio::spawn(async move {
             fetcher.run().await;
@@ -643,7 +643,7 @@ mod single_threaded_tests {
 
         let endpoint = Endpoint::from_url(server.url("/info").parse().unwrap());
         let (mut fetcher, response_observer) =
-            AgentInfoFetcher::<DefaultHttpClient>::new(endpoint, Duration::from_secs(3600));
+            AgentInfoFetcher::<NativeCapabilities>::new(endpoint, Duration::from_secs(3600));
 
         tokio::spawn(async move {
             fetcher.run().await;
