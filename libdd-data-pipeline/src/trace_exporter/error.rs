@@ -4,6 +4,7 @@
 #[cfg(feature = "telemetry")]
 use crate::telemetry::error::TelemetryError;
 use crate::trace_exporter::msgpack_decoder::decode::error::DecodeError;
+use http::StatusCode;
 use libdd_common::http_common;
 use rmp_serde::encode::Error as EncodeError;
 use std::error::Error;
@@ -124,7 +125,7 @@ impl Display for NetworkError {
 
 #[derive(Debug, PartialEq)]
 pub struct RequestError {
-    code: u16,
+    code: StatusCode,
     msg: String,
 }
 
@@ -139,14 +140,14 @@ impl Display for RequestError {
 }
 
 impl RequestError {
-    pub fn new(code: u16, msg: &str) -> Self {
+    pub fn new(code: StatusCode, msg: &str) -> Self {
         Self {
             code,
             msg: msg.to_owned(),
         }
     }
 
-    pub fn status(&self) -> u16 {
+    pub fn status(&self) -> StatusCode {
         self.code
     }
 
@@ -313,8 +314,8 @@ mod tests {
 
     #[test]
     fn test_request_error() {
-        let error = RequestError::new(404, "Not found");
-        assert_eq!(error.status(), 404);
+        let error = RequestError::new(StatusCode::NOT_FOUND, "Not found");
+        assert_eq!(error.status(), StatusCode::NOT_FOUND);
         assert_eq!(error.msg(), "Not found")
     }
 }
