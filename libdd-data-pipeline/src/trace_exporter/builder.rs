@@ -54,6 +54,7 @@ pub struct TraceExporterBuilder {
     agent_rates_payload_version_enabled: bool,
     connection_timeout: Option<u64>,
     otlp_endpoint: Option<String>,
+    otlp_headers: Vec<(String, String)>,
 }
 
 impl TraceExporterBuilder {
@@ -238,6 +239,16 @@ impl TraceExporterBuilder {
         self
     }
 
+    /// Sets additional HTTP headers to include in OTLP trace export requests.
+    ///
+    /// Headers should be provided as key-value pairs. The host language is responsible for
+    /// resolving headers from its configuration (e.g. `OTEL_EXPORTER_OTLP_TRACES_HEADERS`)
+    /// before calling this method.
+    pub fn set_otlp_headers(&mut self, headers: Vec<(String, String)>) -> &mut Self {
+        self.otlp_headers = headers;
+        self
+    }
+
     #[allow(missing_docs)]
     pub fn build(self) -> Result<TraceExporter, TraceExporterError> {
         if !Self::is_inputs_outputs_formats_compatible(self.input_format, self.output_format) {
@@ -362,7 +373,7 @@ impl TraceExporterBuilder {
             http_client: new_default_client(),
             otlp_config: self.otlp_endpoint.map(|url| OtlpTraceConfig {
                 endpoint_url: url,
-                headers: vec![],
+                headers: self.otlp_headers,
                 timeout: DEFAULT_OTLP_TIMEOUT,
                 protocol: OtlpProtocol::HttpJson,
             }),
