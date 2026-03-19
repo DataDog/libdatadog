@@ -139,21 +139,24 @@ mod native {
         response.map(Body::Incoming)
     }
 
-    pub fn into_error(err: HttpRequestError) -> ClientError {
-        let kind = if let Some(source) = err.source().and_then(|s| s.downcast_ref::<Error>()) {
-            match source {
-                Error::Client(client_error) => client_error.kind,
-                Error::Other(_) => ErrorKind::Other,
-                Error::Infallible(infallible) => match *infallible {},
+    impl From<HttpRequestError> for ClientError {
+        fn from(err: HttpRequestError) -> Self {
+            let kind =
+                if let Some(source) = err.source().and_then(|s| s.downcast_ref::<Error>()) {
+                    match source {
+                        Error::Client(client_error) => client_error.kind,
+                        Error::Other(_) => ErrorKind::Other,
+                        Error::Infallible(infallible) => match *infallible {},
+                    }
+                } else if err.is_connect() {
+                    ErrorKind::Closed
+                } else {
+                    ErrorKind::Other
+                };
+            Self {
+                source: err.into(),
+                kind,
             }
-        } else if err.is_connect() {
-            ErrorKind::Closed
-        } else {
-            ErrorKind::Other
-        };
-        ClientError {
-            source: err.into(),
-            kind,
         }
     }
 
