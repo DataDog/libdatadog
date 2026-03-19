@@ -4,6 +4,12 @@
 pub(crate) const TRAMPOLINE_BIN: &[u8] =
     include_bytes!(concat!(env!("OUT_DIR"), "/trampoline.bin"));
 
+/// C-visible pointer and length for the embedded trampoline binary.
+/// Used by solib_bootstrap.c to load the trampoline ELF from memory.
+#[cfg(target_os = "linux")]
+#[no_mangle]
+pub static DD_TRAMPOLINE_BIN: &[u8] = TRAMPOLINE_BIN;
+
 #[cfg(target_os = "windows")]
 pub(crate) const CRASHTRACKING_TRAMPOLINE_BIN: &[u8] =
     include_bytes!(concat!(env!("OUT_DIR"), "/crashtracking_trampoline.bin"));

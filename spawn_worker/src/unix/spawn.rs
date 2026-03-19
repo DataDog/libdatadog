@@ -5,7 +5,8 @@
 
 #[cfg(target_os = "linux")]
 mod linux {
-    use std::io::{Seek, Write};
+    use std::ffi::CString;
+    use std::io::{BufRead, BufReader, Seek, Write};
 
     pub(crate) fn write_memfd(name: &str, contents: &[u8]) -> anyhow::Result<memfd::Memfd> {
         // This leaks a fd, but a fd to the TXT segment, which is fine.
@@ -23,6 +24,26 @@ mod linux {
     use crate::TRAMPOLINE_BIN;
     pub(crate) fn write_trampoline() -> anyhow::Result<memfd::Memfd> {
         write_memfd("spawn_worker_trampoline", TRAMPOLINE_BIN)
+    }
+
+    /// Discover the dynamic linker path by scanning /proc/self/maps.
+    /// Looks for ld-linux-*.so or ld-musl-*.so entries.
+    pub(crate) fn discover_ldso_path() -> Option<CString> {
+        let file = std::fs::File::open("/proc/self/maps").ok()?;
+        for line in BufReader::new(file).lines() {
+            let line = line.ok()?;
+            // Each line: "addr-addr perms offset dev ino [path]"
+            let path = line.split_whitespace().last()?;
+            let filename = path.split('/').last().unwrap_or("");
+            // Match ld-linux-*, ld-musl-*, or ld.so.*
+            if (filename.starts_with("ld-linux") || filename.starts_with("ld-musl")
+                || filename.starts_with("ld.so"))
+                && filename.contains(".so")
+            {
+                return CString::new(path).ok();
+            }
+        }
+        None
     }
 }
 
@@ -98,6 +119,11 @@ use nix::libc;
 
 #[derive(Clone)]
 pub enum SpawnMethod {
+    /// Execute ddtrace.so directly (no temp file, no memfd): ddtrace.so's
+    /// ELF entry point bootstraps ld.so from its embedded trampoline binary.
+    /// Requires __DD_LDSO_PATH in the environment.
+    #[cfg(target_os = "linux")]
+    ExecSolib,
     #[cfg(target_os = "linux")]
     FdExec,
     #[cfg(not(target_os = "macos"))]
@@ -128,7 +154,11 @@ impl Target {
         let current_exec_path = env::current_exe()?;
         let current_exec_filename = current_exec_path.file_name().unwrap_or_default();
         #[cfg(target_os = "linux")]
-        let default_method = SpawnMethod::FdExec;
+        let default_method = if linux::discover_ldso_path().is_some() {
+            SpawnMethod::ExecSolib
+        } else {
+            SpawnMethod::FdExec
+        };
 
         #[cfg(not(target_os = "linux"))]
         let default_method = SpawnMethod::Exec;
@@ -441,6 +471,37 @@ impl SpawnWorker {
         let skip_close_fd = 0;
 
         let mut spawn: Box<dyn FnMut()> = match spawn_method {
+            #[cfg(target_os = "linux")]
+            SpawnMethod::ExecSolib => {
+                // Get ddtrace.so path from the entrypoint (must be Target::Entrypoint)
+                let ddtrace_path = match &self.target {
+                    Target::Entrypoint(e) => {
+                        let (path, _) =
+                            unsafe { crate::get_dl_path_raw(e.ptr as *const libc::c_void) };
+                        path.ok_or_else(|| anyhow::format_err!("can't get ddtrace.so path"))?
+                    }
+                    _ => anyhow::bail!("ExecSolib requires Target::Entrypoint"),
+                };
+                let ldso_path = linux::discover_ldso_path()
+                    .ok_or_else(|| anyhow::format_err!("can't find dynamic linker"))?;
+                let ldso_env = {
+                    let mut s = Vec::with_capacity(b"__DD_LDSO_PATH=".len() + ldso_path.as_bytes().len() + 1);
+                    s.extend_from_slice(b"__DD_LDSO_PATH=");
+                    s.extend_from_slice(ldso_path.as_bytes());
+                    s.push(0);
+                    unsafe { CString::from_vec_with_nul_unchecked(s) }
+                };
+                envp.push(ldso_env);
+                tracing::info!(
+                    "spawn: ExecSolib execve {:?} ldso={:?}",
+                    ddtrace_path,
+                    ldso_path
+                );
+                Box::new(move || unsafe {
+                    libc::execve(ddtrace_path.as_ptr(), argv.as_ptr(), envp.as_ptr());
+                    panic!("ExecSolib execve failed");
+                })
+            }
             #[cfg(target_os = "linux")]
             SpawnMethod::FdExec => {
                 let fd = linux::write_trampoline()?;
