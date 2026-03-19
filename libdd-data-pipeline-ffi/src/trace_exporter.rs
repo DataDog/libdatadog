@@ -11,8 +11,12 @@ use libdd_common_ffi::{
 };
 
 use libdd_data_pipeline::trace_exporter::{
-    TelemetryConfig, TraceExporter, TraceExporterInputFormat, TraceExporterOutputFormat,
+    TelemetryConfig, TraceExporter as GenericTraceExporter, TraceExporterInputFormat,
+    TraceExporterOutputFormat,
 };
+
+type TraceExporter = GenericTraceExporter<NativeCapabilities>;
+
 use std::{ptr::NonNull, time::Duration};
 use tracing::{debug, error};
 
@@ -423,13 +427,13 @@ pub unsafe extern "C" fn ddog_trace_exporter_config_set_connection_timeout(
 /// * `config` - The configuration used to set up the TraceExporter handle.
 #[no_mangle]
 pub unsafe extern "C" fn ddog_trace_exporter_new(
-    out_handle: NonNull<Box<TraceExporter<NativeCapabilities>>>,
+    out_handle: NonNull<Box<TraceExporter>>,
     config: Option<&TraceExporterConfig>,
 ) -> Option<Box<ExporterError>> {
     catch_panic!(
         if let Some(config) = config {
             // let config = &*ptr;
-            let mut builder = TraceExporter::<NativeCapabilities>::builder();
+            let mut builder = TraceExporter::builder();
             builder
                 .set_url(config.url.as_ref().unwrap_or(&"".to_string()))
                 .set_tracer_version(config.tracer_version.as_ref().unwrap_or(&"".to_string()))
@@ -488,7 +492,7 @@ pub unsafe extern "C" fn ddog_trace_exporter_new(
 ///
 /// * handle - The handle to the TraceExporter instance.
 #[no_mangle]
-pub unsafe extern "C" fn ddog_trace_exporter_free(handle: Box<TraceExporter<NativeCapabilities>>) {
+pub unsafe extern "C" fn ddog_trace_exporter_free(handle: Box<TraceExporter>) {
     let _ = catch_panic!(handle.shutdown(None), Ok(()));
 }
 
@@ -504,7 +508,7 @@ pub unsafe extern "C" fn ddog_trace_exporter_free(handle: Box<TraceExporter<Nati
 /// * `response_out` - Optional handle to store a pointer to the agent response information.
 #[no_mangle]
 pub unsafe extern "C" fn ddog_trace_exporter_send(
-    handle: Option<&TraceExporter<NativeCapabilities>>,
+    handle: Option<&TraceExporter>,
     trace: ByteSlice,
     response_out: Option<NonNull<Box<ExporterResponse>>>,
 ) -> Option<Box<ExporterError>> {
@@ -858,7 +862,7 @@ mod tests {
             );
             assert_eq!(error, None);
 
-            let mut ptr: MaybeUninit<Box<TraceExporter<NativeCapabilities>>> =
+            let mut ptr: MaybeUninit<Box<TraceExporter>> =
                 MaybeUninit::uninit();
 
             let ret = ddog_trace_exporter_new(
@@ -890,7 +894,7 @@ mod tests {
 
             ddog_trace_exporter_error_free(error);
 
-            let mut ptr: MaybeUninit<Box<TraceExporter<NativeCapabilities>>> =
+            let mut ptr: MaybeUninit<Box<TraceExporter>> =
                 MaybeUninit::uninit();
 
             let ret = ddog_trace_exporter_new(NonNull::new_unchecked(&mut ptr).cast(), Some(&cfg));
@@ -971,7 +975,7 @@ mod tests {
                 ..Default::default()
             };
 
-            let mut ptr: MaybeUninit<Box<TraceExporter<NativeCapabilities>>> =
+            let mut ptr: MaybeUninit<Box<TraceExporter>> =
                 MaybeUninit::uninit();
             let mut response: MaybeUninit<Box<ExporterResponse>> = MaybeUninit::uninit();
             let mut ret =
@@ -1039,7 +1043,7 @@ mod tests {
                 ..Default::default()
             };
 
-            let mut ptr: MaybeUninit<Box<TraceExporter<NativeCapabilities>>> =
+            let mut ptr: MaybeUninit<Box<TraceExporter>> =
                 MaybeUninit::uninit();
             let mut ret =
                 ddog_trace_exporter_new(NonNull::new_unchecked(&mut ptr).cast(), Some(&cfg));
@@ -1118,7 +1122,7 @@ mod tests {
                 ..Default::default()
             };
 
-            let mut ptr: MaybeUninit<Box<TraceExporter<NativeCapabilities>>> =
+            let mut ptr: MaybeUninit<Box<TraceExporter>> =
                 MaybeUninit::uninit();
             let mut ret =
                 ddog_trace_exporter_new(NonNull::new_unchecked(&mut ptr).cast(), Some(&cfg));
