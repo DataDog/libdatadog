@@ -1,0 +1,24 @@
+# Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
+# SPDX-License-Identifier: Apache-2.0
+
+[package]
+name = "datadog-sidecar-appsec-ffi"
+version = "0.0.1"
+edition = "2021"
+publish = false
+
+# Pure Rust library: compiled into the sidecar binary only.
+# Contains the #[no_mangle] symbols the AppSec helper resolves at runtime
+# via dlsym(RTLD_DEFAULT, ...) from within the sidecar process.
+[lib]
+crate-type = ["lib"]
+bench = false
+
+[dependencies]
+datadog-sidecar = { path = "../datadog-sidecar" }
+datadog-remote-config = { path = "../datadog-remote-config" }
+libdd-common = { path = "../libdd-common" }
+libdd-common-ffi = { path = "../libdd-common-ffi", default-features = false }
+libdd-telemetry = { path = "../libdd-telemetry" }
+libdd-telemetry-ffi = { path = "../libdd-telemetry-ffi", default-features = false }
+libc = "0.2"

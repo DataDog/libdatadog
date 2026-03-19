@@ -4,7 +4,7 @@
 use anyhow::Context;
 #[cfg(unix)]
 use libdd_crashtracker;
-use spawn_worker::{entrypoint, Stdio};
+use spawn_worker::Stdio;
 use std::fs::File;
 use std::future::Future;
 use std::{
@@ -30,7 +30,6 @@ use crate::self_telemetry::self_telemetry;
 use crate::service::{init_telemetry_sender, telemetry_action_receiver_task};
 use crate::tracer::SHM_LIMITER;
 use crate::watchdog::Watchdog;
-use crate::{ddog_daemon_entry_point, setup_daemon_process};
 
 async fn main_loop<L, C, Fut>(listener: L, cancel: Arc<C>) -> io::Result<()>
 where
@@ -163,64 +162,16 @@ where
         .map_err(|e| e.into())
 }
 
-pub fn daemonize(listener: IpcServer, mut cfg: Config) -> anyhow::Result<()> {
-    #[allow(unused_unsafe)] // the unix method is unsafe
-    let mut spawn_cfg = unsafe { spawn_worker::SpawnWorker::new() };
-
-    spawn_cfg.target(entrypoint!(ddog_daemon_entry_point));
-
-    match cfg.log_method {
-        config::LogMethod::File(ref path) => {
-            match File::options()
-                .append(true)
-                .truncate(false)
-                .create(true)
-                .open(path)
-            {
-                Ok(file) => {
-                    let (out, err) = (Stdio::from(&file), Stdio::from(&file));
-                    spawn_cfg.stdout(out);
-                    spawn_cfg.stderr(err);
-                }
-                Err(e) => {
-                    tracing::warn!("Failed to open logfile for sidecar: {:?}", e);
-                    cfg.log_method = config::LogMethod::Disabled;
-                    spawn_cfg.stdout(Stdio::Null);
-                    spawn_cfg.stderr(Stdio::Null);
-                }
-            }
-        }
-        config::LogMethod::Disabled => {
-            spawn_cfg.stdout(Stdio::Null);
-            spawn_cfg.stderr(Stdio::Null);
-        }
-        _ => {}
-    }
-
-    for (env, val) in cfg.to_env().into_iter() {
-        spawn_cfg.append_env(env, val);
-    }
-    spawn_cfg.append_env("LSAN_OPTIONS", "detect_leaks=0");
-
-    setup_daemon_process(listener, &mut spawn_cfg)?;
-
-    let mut lib_deps = cfg.library_dependencies;
-    if let Some(appsec) = cfg.appsec_config.as_ref() {
-        lib_deps.push(spawn_worker::LibDependency::Path(std::path::PathBuf::from(
-            appsec.shared_lib_path.clone(),
-        )));
-    }
-
-    spawn_cfg
-        .shared_lib_dependencies(lib_deps)
-        .wait_spawn()
-        .map_err(io::Error::other)
-        .context("Could not spawn the sidecar daemon")?;
-
-    Ok(())
-}
-
-pub fn start_or_connect_to_sidecar(cfg: Config) -> anyhow::Result<SidecarTransport> {
+/// Start or connect to the sidecar daemon, spawning `binary_path` as a standalone executable.
+///
+/// Does not use any trampoline mechanism.
+/// The binary at `binary_path` is fork+exec'd directly with the IPC socket fd passed via
+/// the `__DD_INTERNAL_PASSED_FD` environment variable.  All sidecar configuration is
+/// communicated via the environment variables produced by [`Config::to_env`].
+pub fn start_or_connect_with_exec_binary(
+    binary_path: std::path::PathBuf,
+    mut cfg: Config,
+) -> anyhow::Result<SidecarTransport> {
     let liaison = match cfg.ipc_mode {
         config::IpcMode::Shared => setup::DefaultLiason::ipc_shared(),
         config::IpcMode::InstancePerProcess => setup::DefaultLiason::ipc_per_process(),
@@ -228,7 +179,7 @@ pub fn start_or_connect_to_sidecar(cfg: Config) -> anyhow::Result<SidecarTranspo
 
     let err = match liaison.attempt_listen() {
         Ok(Some(listener)) => {
-            daemonize(listener, cfg)?;
+            daemonize_exec(listener, binary_path, &mut cfg)?;
             None
         }
         Ok(None) => None,
@@ -239,4 +190,96 @@ pub fn start_or_connect_to_sidecar(cfg: Config) -> anyhow::Result<SidecarTranspo
         .connect_to_server()
         .map_err(|e| err.unwrap_or(e.into()))?
         .into())
+}
+
+fn build_child_env(cfg: &mut Config) -> Vec<(std::ffi::OsString, std::ffi::OsString)> {
+    let mut env: Vec<(std::ffi::OsString, std::ffi::OsString)> = cfg
+        .to_env()
+        .into_iter()
+        .map(|(k, v)| (k.into(), v))
+        .collect();
+    for (k, v) in cfg.child_env.iter() {
+        env.push((k.clone(), v.clone()));
+    }
+    env.push(("LSAN_OPTIONS".into(), "detect_leaks=0".into()));
+    env
+}
+
+#[cfg(unix)]
+fn daemonize_exec(
+    listener: IpcServer,
+    binary_path: std::path::PathBuf,
+    cfg: &mut Config,
+) -> anyhow::Result<()> {
+    let (stdout, stderr) = match cfg.log_method {
+        config::LogMethod::File(ref path) => {
+            match File::options()
+                .append(true)
+                .truncate(false)
+                .create(true)
+                .open(path)
+            {
+                Ok(file) => {
+                    let (out, err) = (Stdio::from(&file), Stdio::from(&file));
+                    (out, err)
+                }
+                Err(e) => {
+                    tracing::warn!("Failed to open logfile for sidecar: {:?}", e);
+                    cfg.log_method = config::LogMethod::Disabled;
+                    (Stdio::Null, Stdio::Null)
+                }
+            }
+        }
+        config::LogMethod::Disabled => (Stdio::Null, Stdio::Null),
+        _ => (Stdio::Inherit, Stdio::Inherit),
+    };
+
+    let env = build_child_env(cfg);
+    let fd: std::os::unix::io::OwnedFd = listener.into();
+    let child =
+        spawn_worker::spawn_exec_binary(&binary_path, "ipc-helper", &env, fd, stdout, stderr)
+            .context("Could not spawn the sidecar daemon")?;
+
+    // Wait for the intermediate child (the grandchild is now the daemon)
+    child
+        .wait()
+        .map(|_| ())
+        .map_err(|e| anyhow::format_err!("wait for sidecar intermediate child failed: {e}"))
+}
+
+#[cfg(windows)]
+fn daemonize_exec(
+    listener: IpcServer,
+    binary_path: std::path::PathBuf,
+    cfg: &mut Config,
+) -> anyhow::Result<()> {
+    let (stdout, stderr) = match cfg.log_method {
+        config::LogMethod::File(ref path) => {
+            match File::options()
+                .append(true)
+                .truncate(false)
+                .create(true)
+                .open(path)
+            {
+                Ok(file) => {
+                    let (out, err) = (Stdio::from(&file), Stdio::from(&file));
+                    (out, err)
+                }
+                Err(e) => {
+                    tracing::warn!("Failed to open logfile for sidecar: {:?}", e);
+                    cfg.log_method = config::LogMethod::Disabled;
+                    (Stdio::Null, Stdio::Null)
+                }
+            }
+        }
+        config::LogMethod::Disabled => (Stdio::Null, Stdio::Null),
+        // Windows Stdio has no Inherit variant; fall back to Null
+        _ => (Stdio::Null, Stdio::Null),
+    };
+
+    let env = build_child_env(cfg);
+    let _child =
+        spawn_worker::spawn_exec_binary(&binary_path, "ipc-helper", &env, listener, stdout, stderr)
+            .context("Could not spawn the sidecar daemon")?;
+    Ok(())
 }

@@ -26,6 +26,32 @@ fn set_sidecar_per_process() {
     std::env::set_var("_DD_DEBUG_SIDECAR_IPC_MODE", "instance_per_process")
 }
 
+/// Locate the `datadog-ipc-helper` binary for use in tests.
+///
+/// Resolution order:
+/// 1. `DATADOG_IPC_HELPER` environment variable (explicit override)
+/// 2. Sibling of the current test executable (works when the full workspace is built)
+///
+/// Returns `None` if the binary cannot be found; the caller should skip the test.
+fn find_ipc_helper() -> Option<std::path::PathBuf> {
+    if let Ok(path) = std::env::var("DATADOG_IPC_HELPER") {
+        let p = std::path::PathBuf::from(path);
+        if p.exists() {
+            return Some(p);
+        }
+    }
+    // cargo places the test binary at target/{profile}/deps/{name}-{hash}[.exe]
+    // and other workspace binaries at target/{profile}/{name}[.exe]
+    let name = if cfg!(windows) {
+        "datadog-ipc-helper.exe"
+    } else {
+        "datadog-ipc-helper"
+    };
+    let test_exe = std::env::current_exe().ok()?;
+    let candidate = test_exe.parent()?.parent()?.join(name);
+    if candidate.exists() { Some(candidate) } else { None }
+}
+
 #[test]
 #[cfg(unix)]
 #[cfg_attr(miri, ignore)]
@@ -49,131 +75,113 @@ fn test_ddog_ph_file_handling() {
 }
 
 #[test]
-#[cfg_attr(not(windows), ignore)]
-// run all tests that can fork in a separate run, to avoid any race conditions with default rust
-// test harness
-/// run with: RUSTFLAGS="-C prefer-dynamic" cargo test --package test_spawn_from_lib --features
-/// prefer-dynamic -- --ignored
-#[cfg_attr(windows, ignore = "requires -C prefer-dynamic")]
-#[cfg_attr(windows, cfg(feature = "prefer_dynamic"))]
-fn test_ddog_sidecar_connection() {
-    set_sidecar_per_process();
-
-    let mut transport = std::ptr::null_mut();
-    assert_maybe_no_error!(ddog_sidecar_connect(&mut transport));
-    let mut transport = unsafe { Box::from_raw(transport) };
-    assert_maybe_no_error!(ddog_sidecar_ping(&mut transport));
-
-    ddog_sidecar_transport_drop(transport);
-}
-
-#[test]
-#[cfg_attr(
-    target_os = "windows",
-    ignore = "APMSP-2356 Investigate flakiness on Windows"
-)]
 #[cfg_attr(miri, ignore)]
 fn test_ddog_sidecar_register_app() {
     set_sidecar_per_process();
 
-    let mut transport = std::ptr::null_mut();
-    assert_maybe_no_error!(ddog_sidecar_connect(&mut transport));
-    let mut transport = unsafe { Box::from_raw(transport) };
-    transport
-        .set_read_timeout(Some(Duration::from_secs(1)))
-        .unwrap();
-    transport
-        .set_write_timeout(Some(Duration::from_secs(1)))
-        .unwrap();
-
-    unsafe {
-        ddog_sidecar_session_set_config(
-            &mut transport,
-            "session_id".into(),
-            &Endpoint {
-                url: http::Uri::from_static("http://localhost:8082/"),
-                ..Default::default()
-            },
-            &Endpoint::default(),
-            "".into(),
-            "".into(),
-            "".into(),
-            1000,
-            1000000,
-            1,
-            10000000,
-            10000000,
-            "".into(),
-            "".into(),
-            null_mut(),
-            null(),
-            0,
-            null(),
-            0,
-            false,
-            false,
-            "".into(),
-        )
-        .unwrap_none();
-
-        let meta = ddog_sidecar_runtimeMeta_build(
-            "language_name".into(),
-            "language_version".into(),
-            "tracer_version".into(),
-        );
-
-        let instance_id = ddog_sidecar_instanceId_build("session_id".into(), "runtime_id".into());
-        let queue_id = ddog_sidecar_queueId_generate();
-
-        ddog_sidecar_telemetry_addDependency(
-            &mut transport,
-            &instance_id,
-            &queue_id,
-            "dependency_name".into(),
-            "dependency_version".into(),
-        )
-        .unwrap_none();
-
-        // ddog_sidecar_telemetry_addIntegration(&mut transport, instance_id, &queue_id,
-        // integration_name, integration_version) TODO add ability to add configuration
-
-        // reset session config - and cause shutdown of all existing instances
-        ddog_sidecar_session_set_config(
-            &mut transport,
-            "session_id".into(),
-            &Endpoint {
-                url: http::Uri::from_static("http://localhost:8083/"),
-                ..Default::default()
-            },
-            &Endpoint::default(),
-            "".into(),
-            "".into(),
-            "".into(),
-            1000,
-            1000000,
-            1,
-            10000000,
-            10000000,
-            "".into(),
-            "".into(),
-            null_mut(),
-            null(),
-            0,
-            null(),
-            0,
-            false,
-            false,
-            "".into(),
-        )
-        .unwrap_none();
-
-        //TODO: Shutdown the service
-        // enough case: have C api that shutsdown telemetry worker
-        // ideal case : when connection socket is closed by the client the telemetry worker shuts
-        // down automatically
-        ddog_sidecar_instanceId_drop(instance_id);
-        ddog_sidecar_runtimeMeta_drop(meta);
+    let binary = match find_ipc_helper() {
+        Some(b) => b,
+        None => {
+            eprintln!("Skipping test_ddog_sidecar_register_app: datadog-ipc-helper not found. \
+                       Set DATADOG_IPC_HELPER or build the full workspace.");
+            return;
+        }
     };
 
-    ddog_sidecar_transport_drop(transport);
+    let cfg = datadog_sidecar::config::FromEnv::config();
+        let mut transport = Box::new(
+            datadog_sidecar::start_or_connect_with_exec_binary(binary, cfg)
+                .expect("failed to start/connect to sidecar"),
+        );
+        transport
+            .set_read_timeout(Some(Duration::from_secs(1)))
+            .unwrap();
+        transport
+            .set_write_timeout(Some(Duration::from_secs(1)))
+            .unwrap();
+
+        unsafe {
+            ddog_sidecar_session_set_config(
+                &mut transport,
+                "session_id".into(),
+                &Endpoint {
+                    url: http::Uri::from_static("http://localhost:8082/"),
+                    ..Default::default()
+                },
+                &Endpoint::default(),
+                "".into(),
+                "".into(),
+                "".into(),
+                1000,
+                1000000,
+                1,
+                10000000,
+                10000000,
+                "".into(),
+                "".into(),
+                null_mut(),
+                null(),
+                0,
+                null(),
+                0,
+                false,
+                false,
+                "".into(),
+            )
+            .unwrap_none();
+
+            let meta = ddog_sidecar_runtimeMeta_build(
+                "language_name".into(),
+                "language_version".into(),
+                "tracer_version".into(),
+            );
+
+            let instance_id =
+                ddog_sidecar_instanceId_build("session_id".into(), "runtime_id".into());
+            let queue_id = ddog_sidecar_queueId_generate();
+
+            ddog_sidecar_telemetry_addDependency(
+                &mut transport,
+                &instance_id,
+                &queue_id,
+                "dependency_name".into(),
+                "dependency_version".into(),
+            )
+            .unwrap_none();
+
+            // reset session config - and cause shutdown of all existing instances
+            ddog_sidecar_session_set_config(
+                &mut transport,
+                "session_id".into(),
+                &Endpoint {
+                    url: http::Uri::from_static("http://localhost:8083/"),
+                    ..Default::default()
+                },
+                &Endpoint::default(),
+                "".into(),
+                "".into(),
+                "".into(),
+                1000,
+                1000000,
+                1,
+                10000000,
+                10000000,
+                "".into(),
+                "".into(),
+                null_mut(),
+                null(),
+                0,
+                null(),
+                0,
+                false,
+                false,
+                "".into(),
+            )
+            .unwrap_none();
+
+            ddog_sidecar_instanceId_drop(instance_id);
+            ddog_sidecar_runtimeMeta_drop(meta);
+        };
+
+        ddog_sidecar_transport_drop(transport);
 }

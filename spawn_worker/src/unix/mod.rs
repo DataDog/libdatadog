@@ -7,7 +7,6 @@ use std::{
     env,
     ffi::{CStr, CString},
     os::unix::prelude::{FromRawFd, RawFd},
-    path::PathBuf,
     ptr,
 };
 
@@ -19,7 +18,7 @@ pub use spawn::*;
 // Reexport nix::WaitStatus
 pub use nix::sys::wait::WaitStatus;
 
-use crate::{Entrypoint, ENV_PASS_FD_KEY};
+use crate::ENV_PASS_FD_KEY;
 
 /// returns the path of the library from which the symbol pointed to by *addr* was loaded from
 ///
@@ -55,14 +54,6 @@ pub unsafe fn get_dl_path_raw(addr: *const libc::c_void) -> (Option<CString>, Op
 /// Returns PID of current process
 pub fn getpid() -> libc::pid_t {
     unsafe { libc::getpid() }
-}
-
-impl Entrypoint {
-    pub fn get_fs_path(&self) -> Option<PathBuf> {
-        let (path, _) = unsafe { get_dl_path_raw(self.ptr as *const libc::c_void) };
-
-        Some(PathBuf::from(path?.to_str().ok()?.to_owned()))
-    }
 }
 
 pub fn recv_passed_fd() -> Option<OwnedFd> {

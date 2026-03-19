@@ -4,7 +4,6 @@
 use http::uri::{PathAndQuery, Scheme};
 use libdd_common::Endpoint;
 use serde::{Deserialize, Serialize};
-use spawn_worker::LibDependency;
 use std::sync::LazyLock;
 use std::{collections::HashMap, path::PathBuf, time::Duration};
 
@@ -79,7 +78,6 @@ pub struct Config {
     pub log_level: String,
     pub idle_linger_time: Duration,
     pub self_telemetry: bool,
-    pub library_dependencies: Vec<LibDependency>,
     pub child_env: HashMap<std::ffi::OsString, std::ffi::OsString>,
     pub crashtracker_endpoint: Option<Endpoint>,
     pub appsec_config: Option<AppSecConfig>,
@@ -235,7 +233,6 @@ impl FromEnv {
             log_level: Self::log_level(),
             idle_linger_time: Self::idle_linger_time(),
             self_telemetry: Self::self_telemetry(),
-            library_dependencies: vec![],
             child_env: std::env::vars_os().collect(),
             crashtracker_endpoint: Self::crashtracker_endpoint(),
             appsec_config: Self::appsec_config(),

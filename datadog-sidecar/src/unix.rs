@@ -1,7 +1,7 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use spawn_worker::{getpid, SpawnWorker, Stdio, TrampolineData};
+use spawn_worker::getpid;
 
 use std::ffi::CString;
 use std::os::unix::net::UnixListener as StdUnixListener;
@@ -12,7 +12,7 @@ use nix::fcntl::{fcntl, OFlag, F_GETFL, F_SETFL};
 use nix::sys::socket::{shutdown, Shutdown};
 use std::io;
 use std::os::fd::RawFd;
-use std::os::unix::prelude::{AsRawFd, FromRawFd, IntoRawFd, OwnedFd};
+use std::os::unix::prelude::AsRawFd;
 use std::time::Instant;
 use tokio::net::{UnixListener, UnixStream};
 use tokio::select;
@@ -26,15 +26,11 @@ use libdd_crashtracker::{
     CrashtrackerConfiguration, CrashtrackerReceiverConfig, Metadata, StacktraceCollection,
 };
 #[cfg(target_os = "linux")]
-use spawn_worker::{entrypoint, get_dl_path_raw};
-#[cfg(target_os = "linux")]
-use std::ffi::CStr;
-#[cfg(target_os = "linux")]
 use tracing::warn;
 
-#[no_mangle]
-#[allow(unused)]
-pub extern "C" fn ddog_daemon_entry_point(trampoline_data: &TrampolineData) {
+/// Run the sidecar daemon using a socket fd passed via the `__DD_INTERNAL_PASSED_FD`
+/// environment variable (set by [`spawn_exec_binary`][spawn_worker::spawn_exec_binary]).
+pub fn run_daemon_from_passed_fd() {
     #[cfg(feature = "tracing")]
     crate::log::enable_logging().ok();
 
@@ -46,7 +42,7 @@ pub extern "C" fn ddog_daemon_entry_point(trampoline_data: &TrampolineData) {
     let _ = prctl::set_name("dd-ipc-helper");
 
     #[cfg(target_os = "linux")]
-    if let Err(e) = init_crashtracker(trampoline_data.dependency_paths) {
+    if let Err(e) = init_crashtracker_standalone() {
         warn!("Failed to initialize crashtracker: {e}");
     }
 
@@ -119,30 +115,34 @@ async fn accept_socket_loop(
     Ok(())
 }
 
-pub fn setup_daemon_process(
-    listener: StdUnixListener,
-    spawn_cfg: &mut SpawnWorker,
-) -> io::Result<()> {
-    spawn_cfg
-        .daemonize(true)
-        .process_name("datadog-ipc-helper")
-        .pass_fd(unsafe { OwnedFd::from_raw_fd(listener.into_raw_fd()) })
-        .stdin(Stdio::Null);
-
-    Ok(())
-}
-
 pub fn primary_sidecar_identifier() -> u32 {
     unsafe { libc::geteuid() }
 }
 
 fn maybe_start_appsec() -> bool {
-    let cfg = &Config::get().appsec_config;
-    if cfg.is_none() {
+    let cfg = match &Config::get().appsec_config {
+        Some(c) => c.clone(),
+        None => return false,
+    };
+
+    info!("Starting appsec helper");
+
+    // The AppSec helper is a separate shared library that must be dlopen'd into this
+    // process before its entry point can be resolved via dlsym.
+    #[allow(clippy::unwrap_used)]
+    let lib_path = CString::new(cfg.shared_lib_path.as_encoded_bytes()).unwrap();
+    let lib_handle = unsafe { libc::dlopen(lib_path.as_ptr(), libc::RTLD_LAZY | libc::RTLD_GLOBAL) };
+    if lib_handle.is_null() {
+        let reason = unsafe { libc::dlerror() };
+        let reason_str = if reason.is_null() {
+            "unknown error".to_owned()
+        } else {
+            unsafe { std::ffi::CStr::from_ptr(reason).to_string_lossy().into_owned() }
+        };
+        error!("Failed to load appsec helper library: {reason_str}");
         return false;
     }
 
-    info!("Starting appsec helper");
     #[allow(clippy::unwrap_used)]
     let entrypoint_sym_name = CString::new("appsec_helper_main").unwrap();
 
@@ -185,33 +185,19 @@ fn shutdown_appsec() -> bool {
     true
 }
 
+/// Initialise the crashtracker for a *standalone binary* (i.e. `datadog-ipc-helper`).
+///
+/// On a crash, `/proc/<pid>/exe` is re-exec'd with the `crashtracker` subcommand.
+/// The binary's `main()` dispatches to the receiver based on that argument.
 #[cfg(target_os = "linux")]
-fn init_crashtracker(dependency_paths: *const *const libc::c_char) -> anyhow::Result<()> {
-    let entrypoint = entrypoint!(ddog_crashtracker_entry_point);
-    let entrypoint_path = match unsafe { get_dl_path_raw(entrypoint.ptr as *const libc::c_void) } {
-        (Some(path), _) => path,
-        _ => anyhow::bail!("Failed to find crashtracker entrypoint"),
-    };
-
-    let mut receiver_args = vec![
-        "crashtracker_receiver".to_string(),
-        "".to_string(),
-        entrypoint_path.into_string()?,
+pub fn init_crashtracker_standalone() -> anyhow::Result<()> {
+    // The receiver is re-exec'd from /proc/<pid>/exe with argv:
+    //   datadog-ipc-helper  crashtracker
+    // main() dispatches to receiver_entry_point_stdin() based on argv[1].
+    let receiver_args = vec![
+        "datadog-ipc-helper".to_string(),
+        "crashtracker".to_string(),
     ];
-
-    unsafe {
-        let mut descriptors = dependency_paths;
-        if !descriptors.is_null() {
-            loop {
-                if (*descriptors).is_null() {
-                    break;
-                }
-                receiver_args.push(CStr::from_ptr(*descriptors).to_string_lossy().into_owned());
-                descriptors = descriptors.add(1);
-            }
-        }
-    }
-    receiver_args.push(entrypoint.symbol_name.into_string()?);
 
     let output = match &Config::get().log_method {
         LogMethod::Stdout => Some(format!("/proc/{}/fd/1", unsafe { libc::getpid() })),
@@ -253,12 +239,3 @@ fn init_crashtracker(dependency_paths: *const *const libc::c_char) -> anyhow::Re
     )
 }
 
-#[no_mangle]
-pub extern "C" fn ddog_crashtracker_entry_point(_trampoline_data: &TrampolineData) {
-    unsafe {
-        if let Err(e) = libdd_crashtracker::receiver_entry_point_stdin() {
-            eprintln!("{e}");
-            libc::exit(1)
-        }
-    }
-}

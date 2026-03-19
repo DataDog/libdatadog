@@ -20,7 +20,7 @@ pub enum Fork {
 ///
 /// When forking a multithreaded application, no code should allocate or access other potentially
 /// locked resources until call to exec is executed
-pub(crate) unsafe fn fork() -> Result<Fork, std::io::Error> {
+pub unsafe fn fork() -> Result<Fork, std::io::Error> {
     let res = libc::fork();
     match res {
         -1 => Err(std::io::Error::last_os_error()),

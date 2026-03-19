@@ -1592,6 +1592,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "datadog-sidecar-appsec-ffi"
+version = "0.0.1"
+dependencies = [
+ "datadog-remote-config",
+ "datadog-sidecar",
+ "libc",
+ "libdd-common",
+ "libdd-common-ffi",
+ "libdd-telemetry",
+ "libdd-telemetry-ffi",
+]
+
+[[package]]
 name = "datadog-sidecar-ffi"
 version = "0.0.1"
 dependencies = [
@@ -5414,15 +5427,12 @@ name = "spawn_worker"
 version = "0.0.1"
 dependencies = [
  "anyhow",
- "cc_utils",
  "fastrand",
  "io-lifetimes",
  "kernel32-sys",
  "libc",
- "memfd",
  "nix 0.29.0",
  "rlimit",
- "tempfile",
  "winapi 0.2.8",
  "windows 0.51.1",
 ]
@@ -5780,17 +5790,6 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 1.0.109",
-]
-
-[[package]]
-name = "test_spawn_from_lib"
-version = "0.0.1"
-dependencies = [
- "anyhow",
- "io-lifetimes",
- "libc",
- "spawn_worker",
- "tempfile",
 ]
 
 [[package]]

@@ -13,8 +13,6 @@ io-lifetimes = { version = "1.0" }
 fastrand = "2.0.1"
 libc = "0.2"
 
-[build-dependencies]
-cc_utils = { path = "../tools/cc_utils" }
 
 [dependencies.windows]
 features = [
@@ -32,12 +30,7 @@ winapi = { version = "=0.2.8" }
 kernel32-sys = "0.2.2"
 
 [target.'cfg(not(windows))'.dependencies]
-memfd = { version = "0.6" }
 nix = { version = "0.29", features = ["dir", "process"] }
-tempfile = { version = "3.3" }
-
-[target.'cfg(windows)'.dev-dependencies]
-tempfile = { version = "3.3" }
 
 [target.'cfg(not(windows))'.dev-dependencies]
 rlimit = {version = "0.9"}
