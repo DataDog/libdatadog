@@ -6,22 +6,22 @@ use crate::{exporter::File, internal::EncodedProfile};
 use anyhow::Context;
 use crossbeam_channel::{Receiver, Sender};
 use libdd_common::tag::Tag;
-use reqwest::RequestBuilder;
-use std::thread::JoinHandle;
-use tokio_util::sync::CancellationToken;
 
+use super::transport::PreparedRequest;
+use std::thread::JoinHandle;
+
+#[allow(private_interfaces)]
 #[derive(Debug)]
 pub enum ExporterManager {
     Active {
-        cancel: CancellationToken,
         exporter: ProfileExporter,
         handle: JoinHandle<anyhow::Result<()>>,
-        sender: Sender<RequestBuilder>,
-        receiver: Receiver<RequestBuilder>,
+        sender: Sender<PreparedRequest>,
+        receiver: Receiver<PreparedRequest>,
     },
     Suspended {
         exporter: ProfileExporter,
-        inflight: Vec<RequestBuilder>,
+        inflight: Vec<PreparedRequest>,
     },
     /// Temporary state used during transitions between Active and Suspended.
     /// The manager should never be left in this state.
@@ -31,32 +31,18 @@ pub enum ExporterManager {
 impl ExporterManager {
     pub fn new(exporter: ProfileExporter) -> anyhow::Result<Self> {
         let (sender, receiver) = crossbeam_channel::bounded(2);
-        let cancel = CancellationToken::new();
-        let cloned_receiver: Receiver<RequestBuilder> = receiver.clone();
-        let cloned_cancel = cancel.clone();
+        let cloned_receiver: Receiver<PreparedRequest> = receiver.clone();
+        let worker_exporter = exporter.clone();
         let handle = std::thread::spawn(move || {
-            let runtime = tokio::runtime::Builder::new_current_thread()
-                .enable_all()
-                .build()?;
-            runtime.block_on(async {
-                loop {
-                    let Ok(msg) = cloned_receiver.recv() else {
-                        return;
-                    };
-                    if cloned_cancel
-                        .run_until_cancelled(msg.send())
-                        .await
-                        .is_none()
-                    {
-                        return;
-                    }
-                    // TODO: Add logging for failed uploads.
-                }
-            });
-            Ok(())
+            loop {
+                let Ok(msg) = cloned_receiver.recv() else {
+                    return Ok(());
+                };
+                let _ = worker_exporter.send_prepared(msg);
+                // TODO: Add logging for failed uploads.
+            }
         });
         Ok(Self::Active {
-            cancel,
             exporter,
             handle,
             sender,
@@ -68,7 +54,6 @@ impl ExporterManager {
         let old = std::mem::replace(self, Self::Transitioning);
 
         let Self::Active {
-            cancel,
             exporter,
             handle,
             sender,
@@ -79,7 +64,6 @@ impl ExporterManager {
             anyhow::bail!("Cannot abort manager in state: {:?}", self);
         };
 
-        cancel.cancel();
         let inflight: Vec<_> = receiver.try_iter().collect();
         drop(sender);
 

@@ -21,13 +21,13 @@ futures = "0.3"
 futures-core = { version = "0.3.0", default-features = false }
 futures-util = { version = "0.3.0", default-features = false }
 hex = "0.4"
-httparse = { version = "1.9", optional = true }
+httparse = "1.9"
 http = "1"
 mime = { version = "0.3.16", optional = true }
 multer = { version = "3.1", optional = true }
 bytes = { version = "1.11.1" }
 pin-project = "1"
-rand = { version = "0.8", optional = true }
+rand = "0.8"
 regex = "1.5"
 regex-lite = { version = "0.1", optional = true }
 # Use hickory-dns instead of the default system DNS resolver to avoid fork safety issues.
@@ -109,7 +109,7 @@ fips = ["tls-core", "hyper-rustls/fips"]
 # Enable reqwest client builder support with file dump debugging
 reqwest = ["dep:reqwest", "test-utils"]
 # Enable test utilities for use in other crates
-test-utils = ["dep:httparse", "dep:rand", "dep:mime", "dep:multer"]
+test-utils = ["dep:mime", "dep:multer"]
 # Enable benchmark utilities (ReportingAllocator, Criterion allocation measurement)
 bench-utils = ["dep:criterion"]
 

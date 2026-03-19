@@ -64,7 +64,7 @@ mod tests {
         // Build and send profile
         let profile = EncodedProfile::test_instance().expect("test profile");
         exporter
-            .send_blocking(profile, &[], &[], None, None, None, None)
+            .send_blocking(profile, &[], &[], None, None, None)
             .expect("send to succeed");
 
         // Read the dump file
@@ -173,7 +173,6 @@ mod tests {
                 Some(internal_metadata.clone()),
                 None,
                 None,
-                None,
             )
             .expect("send to succeed");
 
@@ -215,15 +214,7 @@ mod tests {
         // Build and send profile
         let profile = EncodedProfile::test_instance().expect("test profile");
         exporter
-            .send_blocking(
-                profile,
-                &[],
-                &[],
-                None,
-                None,
-                Some(expected_process_tags),
-                None,
-            )
+            .send_blocking(profile, &[], &[], None, None, Some(expected_process_tags))
             .expect("send to succeed");
 
         // Read the dump file
@@ -279,7 +270,7 @@ mod tests {
         // Build and send profile
         let profile = EncodedProfile::test_instance().expect("test profile");
         exporter
-            .send_blocking(profile, &[], &[], None, Some(info.clone()), None, None)
+            .send_blocking(profile, &[], &[], None, Some(info.clone()), None)
             .expect("send to succeed");
 
         // Read the dump file
@@ -319,7 +310,7 @@ mod tests {
         // Build and send profile
         let profile = EncodedProfile::test_instance().expect("test profile");
         exporter
-            .send_blocking(profile, &[], &[], None, None, None, None)
+            .send_blocking(profile, &[], &[], None, None, None)
             .expect("send to succeed");
 
         // Read the dump file

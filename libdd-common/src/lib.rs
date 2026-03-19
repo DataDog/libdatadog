@@ -18,8 +18,8 @@ pub mod azure_app_services;
 pub mod cc_utils;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod connector;
-#[cfg(feature = "reqwest")]
 pub mod dump_server;
+mod endpoint_resolved;
 pub mod entity_id;
 pub mod regex_engine;
 #[macro_use]
@@ -40,6 +40,8 @@ pub mod threading;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod timeout;
 pub mod unix_utils;
+
+pub use endpoint_resolved::{ResolvedEndpoint, ResolvedEndpointKind};
 
 /// Extension trait for `Mutex` to provide a method that acquires a lock, panicking if the lock is
 /// poisoned.
@@ -422,8 +424,10 @@ impl Endpoint {
         self
     }
 
-    /// Use the system DNS resolver when building the reqwest client. Only has effect for
-    /// HTTP(S) endpoints.
+    /// Use the system DNS resolver when building an HTTP client.
+    ///
+    /// This only has an effect for transports that support selecting between resolver
+    /// implementations.
     pub fn with_system_resolver(mut self, use_system_resolver: bool) -> Self {
         self.use_system_resolver = use_system_resolver;
         self
@@ -511,5 +515,87 @@ impl Endpoint {
         };
 
         Ok((builder, request_url))
+    }
+
+    /// Resolves this endpoint into a transport-neutral model for HTTP clients.
+    ///
+    /// This method handles various endpoint schemes:
+    /// - `http`/`https`: Standard HTTP(S) endpoints
+    /// - `unix`: Unix domain sockets (Unix only)
+    /// - `windows`: Windows named pipes (Windows only)
+    /// - `file`: File dump endpoints for debugging (spawns a local server to capture requests)
+    ///
+    /// # Errors
+    /// Returns an error if:
+    /// - The endpoint scheme is unsupported
+    /// - Path decoding fails
+    /// - The dump server fails to start (for file:// scheme)
+    pub fn resolve_for_http(&self) -> anyhow::Result<ResolvedEndpoint> {
+        use anyhow::Context;
+
+        let timeout = std::time::Duration::from_millis(self.timeout_ms);
+
+        let (kind, request_url) = match self.url.scheme_str() {
+            // HTTP/HTTPS endpoints
+            Some("http") | Some("https") => (ResolvedEndpointKind::Tcp, self.url.to_string()),
+
+            // File dump endpoint (debugging) - uses platform-specific local transport
+            Some("file") => {
+                let output_path = decode_uri_path_in_authority(&self.url)
+                    .context("Failed to decode file path from URI")?;
+                let socket_or_pipe_path = dump_server::spawn_dump_server(output_path)?;
+
+                #[cfg(unix)]
+                {
+                    (
+                        ResolvedEndpointKind::UnixSocket {
+                            path: socket_or_pipe_path,
+                        },
+                        "http://localhost/".to_string(),
+                    )
+                }
+                #[cfg(windows)]
+                {
+                    (
+                        ResolvedEndpointKind::WindowsNamedPipe {
+                            path: socket_or_pipe_path,
+                        },
+                        "http://localhost/".to_string(),
+                    )
+                }
+            }
+
+            // Unix domain sockets
+            #[cfg(unix)]
+            Some("unix") => {
+                use connector::uds::socket_path_from_uri;
+                let socket_path = socket_path_from_uri(&self.url)?;
+                (
+                    ResolvedEndpointKind::UnixSocket { path: socket_path },
+                    format!("http://localhost{}", self.url.path()),
+                )
+            }
+
+            // Windows named pipes
+            #[cfg(windows)]
+            Some("windows") => {
+                use connector::named_pipe::named_pipe_path_from_uri;
+                let pipe_path = named_pipe_path_from_uri(&self.url)?;
+                (
+                    ResolvedEndpointKind::WindowsNamedPipe { path: pipe_path },
+                    format!("http://localhost{}", self.url.path()),
+                )
+            }
+
+            // Unsupported schemes
+            scheme => anyhow::bail!("Unsupported endpoint scheme: {:?}", scheme),
+        };
+
+        Ok(ResolvedEndpoint {
+            kind,
+            request_url,
+            timeout,
+            use_system_resolver: self.use_system_resolver,
+        })
     }
 }
