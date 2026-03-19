@@ -17,7 +17,6 @@ use arc_swap::ArcSwap;
 use libdd_capabilities::{HttpClientTrait, MaybeSend};
 use libdd_common::{parse_uri, tag, Endpoint};
 use libdd_dogstatsd_client::new;
-use std::marker::PhantomData;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -25,7 +24,7 @@ const DEFAULT_AGENT_URL: &str = "http://127.0.0.1:8126";
 
 #[allow(missing_docs)]
 #[derive(Debug)]
-pub struct TraceExporterBuilder<H> {
+pub struct TraceExporterBuilder {
     url: Option<String>,
     hostname: String,
     env: String,
@@ -55,10 +54,9 @@ pub struct TraceExporterBuilder<H> {
     test_session_token: Option<String>,
     agent_rates_payload_version_enabled: bool,
     connection_timeout: Option<u64>,
-    _phantom: PhantomData<H>,
 }
 
-impl<H> Default for TraceExporterBuilder<H> {
+impl Default for TraceExporterBuilder {
     fn default() -> Self {
         Self {
             url: None,
@@ -88,12 +86,11 @@ impl<H> Default for TraceExporterBuilder<H> {
             test_session_token: None,
             agent_rates_payload_version_enabled: false,
             connection_timeout: None,
-            _phantom: PhantomData,
         }
     }
 }
 
-impl<H: HttpClientTrait + MaybeSend + Sync + 'static> TraceExporterBuilder<H> {
+impl TraceExporterBuilder {
     /// Sets the URL of the agent.
     ///
     /// The agent supports the following URL schemes:
@@ -265,7 +262,9 @@ impl<H: HttpClientTrait + MaybeSend + Sync + 'static> TraceExporterBuilder<H> {
     }
 
     #[allow(missing_docs)]
-    pub fn build(self) -> Result<TraceExporter<H>, TraceExporterError> {
+    pub fn build<H: HttpClientTrait + MaybeSend + Sync + 'static>(
+        self,
+    ) -> Result<TraceExporter<H>, TraceExporterError> {
         if !Self::is_inputs_outputs_formats_compatible(self.input_format, self.output_format) {
             return Err(TraceExporterError::Builder(
                 BuilderErrorKind::InvalidConfiguration(
@@ -389,7 +388,6 @@ impl<H: HttpClientTrait + MaybeSend + Sync + 'static> TraceExporterBuilder<H> {
             agent_payload_response_version: self
                 .agent_rates_payload_version_enabled
                 .then(AgentResponsePayloadVersion::new),
-            _phantom: PhantomData,
         })
     }
 
@@ -416,7 +414,7 @@ mod tests {
     #[cfg_attr(miri, ignore)]
     #[test]
     fn test_new() {
-        let mut builder = TraceExporterBuilder::<NativeCapabilities>::default();
+        let mut builder = TraceExporterBuilder::default();
         builder
             .set_url("http://192.168.1.1:8127/")
             .set_tracer_version("v0.1")
@@ -433,7 +431,7 @@ mod tests {
                 runtime_id: None,
                 debug_enabled: false,
             });
-        let exporter = builder.build().unwrap();
+        let exporter = builder.build::<NativeCapabilities>().unwrap();
 
         assert_eq!(
             exporter
@@ -456,8 +454,8 @@ mod tests {
     #[cfg_attr(miri, ignore)]
     #[test]
     fn test_new_defaults() {
-        let builder = TraceExporterBuilder::<NativeCapabilities>::default();
-        let exporter = builder.build().unwrap();
+        let builder = TraceExporterBuilder::default();
+        let exporter = builder.build::<NativeCapabilities>().unwrap();
 
         assert_eq!(
             exporter
@@ -478,7 +476,7 @@ mod tests {
     #[test]
     #[cfg_attr(miri, ignore)]
     fn test_builder_error() {
-        let mut builder = TraceExporterBuilder::<NativeCapabilities>::default();
+        let mut builder = TraceExporterBuilder::default();
         builder
             .set_url("")
             .set_service("foo")
@@ -488,7 +486,7 @@ mod tests {
             .set_language_version("1.0")
             .set_language_interpreter("v8");
 
-        let exporter = builder.build();
+        let exporter = builder.build::<NativeCapabilities>();
 
         assert!(exporter.is_err());
 

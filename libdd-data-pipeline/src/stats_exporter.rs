@@ -25,7 +25,10 @@ use tracing::error;
 
 const STATS_ENDPOINT_PATH: &str = "/v0.6/stats";
 
-/// An exporter that concentrates and sends stats to the agent
+/// An exporter that concentrates and sends stats to the agent.
+///
+/// `H` is the HTTP client implementation, see [`HttpClientTrait`]. Leaf crates
+/// pin it to a concrete type.
 #[derive(Debug)]
 pub struct StatsExporter<H: HttpClientTrait> {
     flush_interval: time::Duration,
@@ -34,6 +37,8 @@ pub struct StatsExporter<H: HttpClientTrait> {
     meta: TracerMetadata,
     sequence_id: AtomicU64,
     cancellation_token: CancellationToken,
+    /// `H` must live on the struct because `Worker::run(&mut self)` (a fixed
+    /// trait signature) calls `send_with_retry::<H>()` internally.
     _phantom: PhantomData<H>,
 }
 
