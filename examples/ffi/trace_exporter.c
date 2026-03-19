@@ -3,12 +3,12 @@
 
 #include <assert.h>
 #include <stdio.h>
-#include <stdlib.h>
 #include <string.h>
 #include <datadog/common.h>
 #include <datadog/data-pipeline.h>
 #include <datadog/log.h>
 
+#define UNUSED(x) (void)(x)
 enum {
     SUCCESS,
     ERROR_SEND,
@@ -83,6 +83,13 @@ int main(int argc, char** argv)
     ddog_CharSlice env = DDOG_CHARSLICE_C("staging");
     ddog_CharSlice version = DDOG_CHARSLICE_C("1.0");
     ddog_CharSlice service = DDOG_CHARSLICE_C("test_app");
+
+    UNUSED(language_version);
+    UNUSED(language_interpreter);
+    UNUSED(hostname);
+    UNUSED(env);
+    UNUSED(version);
+    UNUSED(service);
 
     ddog_TraceExporterError *ret;
     ddog_TraceExporterConfig *config;

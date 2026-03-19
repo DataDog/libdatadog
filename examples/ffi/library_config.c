@@ -7,6 +7,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdint.h>
 
 #ifdef _WIN32
 // Define setenv for Windows
@@ -104,7 +105,7 @@ int main(int argc, const char *const *argv) {
   }
 
   ddog_Vec_LibraryConfig configs = config_result.ok.value;
-  for (int i = 0; i < configs.len; i++) {
+  for (uintptr_t i = 0; i < configs.len; i++) {
     const ddog_LibraryConfig *cfg = &configs.ptr[i];
 
     printf("Setting env variable: %s=%s from origin %s\n", cfg->name.ptr, cfg->value.ptr,

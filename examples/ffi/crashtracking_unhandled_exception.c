@@ -118,7 +118,9 @@ int main(int argc, char **argv) {
   struct ddog_crasht_Slice_CInt signals = ddog_crasht_default_signals();
   ddog_crasht_Config config = {
       .create_alt_stack = false,
-      .endpoint = slice(endpoint),
+      .endpoint = { 
+          .url = slice(endpoint),
+      },
       .resolve_frames = DDOG_CRASHT_STACKTRACE_COLLECTION_DISABLED,
       .signals = {.ptr = signals.ptr, .len = signals.len},
   };

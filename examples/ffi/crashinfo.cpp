@@ -16,6 +16,7 @@ extern "C" {
 #include <vector>
 
 static ddog_CharSlice to_slice_c_char(const char *s) { return {.ptr = s, .len = strlen(s)}; }
+__attribute__ ((unused))
 static ddog_CharSlice to_slice_c_char(const char *s, std::size_t size) {
   return {.ptr = s, .len = size};
 }
@@ -239,7 +240,7 @@ int main(void) {
   check_result(ddog_crasht_CrashInfoBuilder_with_timestamp(builder.get(), timestamp),
                "Failed to set timestamp");
 
-  ddog_crasht_ProcInfo procinfo = {.pid = 42};
+  ddog_crasht_ProcInfo procinfo = { .pid = 42, .tid = 0 };
   check_result(ddog_crasht_CrashInfoBuilder_with_proc_info(builder.get(), procinfo),
                "Failed to set procinfo");
 
@@ -255,7 +256,7 @@ int main(void) {
   #endif
 
   auto sigInfo = ddog_crasht_SigInfo {
-    .addr = "0xBABEF00D",
+    .addr = to_slice_c_char("0xBABEF00D"),
     .code = 16,
     .code_human_readable = DDOG_CRASHT_SI_CODES_UNKNOWN,
     .signo = -1,
