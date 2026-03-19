@@ -180,11 +180,15 @@ async fn fetch_and_hash_response<H: HttpClientTrait>(
 /// # Ok(())
 /// # }
 /// ```
+/// `H` is the HTTP client implementation, see [`HttpClientTrait`]. Leaf crates
+/// pin it to a concrete type.
 #[derive(Debug)]
 pub struct AgentInfoFetcher<H: HttpClientTrait> {
     info_endpoint: Endpoint,
     refresh_interval: Duration,
     trigger_rx: Option<mpsc::Receiver<()>>,
+    /// `H` must live on the struct because `Worker::run(&mut self)` (a fixed
+    /// trait signature) calls `fetch_info_with_state::<H>()` internally.
     _phantom: PhantomData<H>,
 }
 

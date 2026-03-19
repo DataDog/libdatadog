@@ -46,7 +46,6 @@ use libdd_trace_utils::send_with_retry::{
 use libdd_trace_utils::span::{v04::Span, TraceData};
 use libdd_trace_utils::trace_utils::TracerHeaderTags;
 use std::io;
-use std::marker::PhantomData;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use std::{borrow::Borrow, collections::HashMap, str::FromStr};
@@ -172,6 +171,9 @@ impl<'a> From<&'a TracerMetadata> for HashMap<&'static str, String> {
     }
 }
 
+/// Background workers managed by a [`TraceExporter`].
+///
+/// `H` is the HTTP client implementation, see [`HttpClientTrait`].
 #[derive(Debug)]
 pub(crate) struct TraceExporterWorkers<H: HttpClientTrait + MaybeSend + Sync + 'static> {
     pub info: PausableWorker<AgentInfoFetcher<H>>,
@@ -204,6 +206,8 @@ enum DeserInputFormat {
     V05,
 }
 
+/// `H` is the HTTP client implementation, see [`HttpClientTrait`]. Leaf crates
+/// pin it to a concrete type.
 #[derive(Debug)]
 pub struct TraceExporter<H: HttpClientTrait + MaybeSend + Sync + 'static> {
     endpoint: Endpoint,
@@ -226,12 +230,11 @@ pub struct TraceExporter<H: HttpClientTrait + MaybeSend + Sync + 'static> {
     http_client: HttpClient,
     /// When set, traces are exported via OTLP HTTP/JSON instead of the Datadog agent.
     otlp_config: Option<OtlpTraceConfig>,
-    _phantom: PhantomData<H>,
 }
 
 impl<H: HttpClientTrait + MaybeSend + Sync + 'static> TraceExporter<H> {
     #[allow(missing_docs)]
-    pub fn builder() -> TraceExporterBuilder<H> {
+    pub fn builder() -> TraceExporterBuilder {
         TraceExporterBuilder::default()
     }
 
@@ -901,7 +904,10 @@ impl<H: HttpClientTrait + MaybeSend + Sync + 'static> TraceExporter<H> {
         let body = String::from_utf8_lossy(response.body()).to_string();
 
         if !status.is_success() {
-            warn!(status = status.as_u16(), "Agent returned non-success status for trace send");
+            warn!(
+                status = status.as_u16(),
+                "Agent returned non-success status for trace send"
+            );
             let send_result = SendResult::failure(
                 TransportErrorType::Http(status.as_u16()),
                 payload_len,
@@ -1058,7 +1064,7 @@ mod tests {
             });
         }
 
-        builder.build().unwrap()
+        builder.build::<NativeCapabilities>().unwrap()
     }
 
     #[test]
@@ -1459,7 +1465,7 @@ mod tests {
             .set_language("nodejs")
             .set_language_version("1.0")
             .set_language_interpreter("v8");
-        let exporter = builder.build().unwrap();
+        let exporter = builder.build::<NativeCapabilities>().unwrap();
 
         let traces: Vec<Vec<SpanBytes>> = vec![vec![SpanBytes {
             name: BytesString::from_slice(b"test").unwrap(),
@@ -1501,7 +1507,7 @@ mod tests {
             .set_language("nodejs")
             .set_language_version("1.0")
             .set_language_interpreter("v8");
-        let exporter = builder.build().unwrap();
+        let exporter = builder.build::<NativeCapabilities>().unwrap();
 
         let traces: Vec<Vec<SpanBytes>> = vec![vec![SpanBytes {
             name: BytesString::from_slice(b"test").unwrap(),
@@ -1536,7 +1542,7 @@ mod tests {
             .set_language("nodejs")
             .set_language_version("1.0")
             .set_language_interpreter("v8");
-        let exporter = builder.build().unwrap();
+        let exporter = builder.build::<NativeCapabilities>().unwrap();
 
         let traces: Vec<Vec<SpanBytes>> = vec![vec![SpanBytes {
             name: BytesString::from_slice(b"test").unwrap(),
@@ -1594,7 +1600,7 @@ mod tests {
                 heartbeat: 100,
                 ..Default::default()
             });
-        let exporter = builder.build().unwrap();
+        let exporter = builder.build::<NativeCapabilities>().unwrap();
 
         let traces = vec![0x90];
         let result = exporter.send(traces.as_ref()).unwrap();
@@ -1721,7 +1727,7 @@ mod tests {
             .set_input_format(TraceExporterInputFormat::V04)
             .set_output_format(TraceExporterOutputFormat::V05);
 
-        let exporter = builder.build().unwrap();
+        let exporter = builder.build::<NativeCapabilities>().unwrap();
 
         let traces = vec![0x90];
         let result = exporter.send(traces.as_ref()).unwrap();
@@ -1767,7 +1773,7 @@ mod tests {
 
         let mut builder = TraceExporter::<NativeCapabilities>::builder();
         builder.set_url(&server.url("/"));
-        let exporter = builder.build().unwrap();
+        let exporter = builder.build::<NativeCapabilities>().unwrap();
         let traces = vec![0x90];
         for _ in 0..2 {
             let result = exporter.send(traces.as_ref()).unwrap();
@@ -1804,7 +1810,7 @@ mod tests {
         builder
             .set_url(&server.url("/"))
             .enable_agent_rates_payload_version();
-        let exporter = builder.build().unwrap();
+        let exporter = builder.build::<NativeCapabilities>().unwrap();
         let traces = vec![0x90];
         let result = exporter.send(traces.as_ref()).unwrap();
         let AgentResponse::Changed { body } = result else {
@@ -1904,7 +1910,7 @@ mod tests {
             .set_input_format(TraceExporterInputFormat::V04)
             .set_output_format(TraceExporterOutputFormat::V04)
             .enable_stats(Duration::from_secs(10));
-        let exporter = builder.build().unwrap();
+        let exporter = builder.build::<NativeCapabilities>().unwrap();
 
         let trace_chunk = vec![SpanBytes {
             duration: 10,
@@ -1937,7 +1943,7 @@ mod tests {
     #[cfg_attr(miri, ignore)]
     fn test_connection_timeout() {
         let exporter = TraceExporter::<NativeCapabilities>::builder()
-            .build()
+            .build::<NativeCapabilities>()
             .unwrap();
 
         assert_eq!(exporter.endpoint.timeout_ms, Endpoint::default().timeout_ms);
@@ -1946,7 +1952,7 @@ mod tests {
         let mut builder = TraceExporter::<NativeCapabilities>::builder();
         builder.set_connection_timeout(timeout);
 
-        let exporter = builder.build().unwrap();
+        let exporter = builder.build::<NativeCapabilities>().unwrap();
 
         assert_eq!(exporter.endpoint.timeout_ms, 42);
     }
@@ -2004,7 +2010,7 @@ mod tests {
     #[cfg_attr(miri, ignore)]
     fn stop_and_start_runtime() {
         let builder = TraceExporter::<NativeCapabilities>::builder();
-        let exporter = builder.build().unwrap();
+        let exporter = builder.build::<NativeCapabilities>().unwrap();
         exporter.stop_worker();
         exporter.run_worker().unwrap();
     }
@@ -2063,7 +2069,7 @@ mod single_threaded_tests {
             .set_input_format(TraceExporterInputFormat::V04)
             .set_output_format(TraceExporterOutputFormat::V04)
             .enable_stats(Duration::from_secs(10));
-        let exporter = builder.build().unwrap();
+        let exporter = builder.build::<NativeCapabilities>().unwrap();
 
         let trace_chunk = vec![SpanBytes {
             duration: 10,
@@ -2163,7 +2169,7 @@ mod single_threaded_tests {
             .set_input_format(TraceExporterInputFormat::V04)
             .set_output_format(TraceExporterOutputFormat::V04)
             .enable_stats(Duration::from_secs(10));
-        let exporter = builder.build().unwrap();
+        let exporter = builder.build::<NativeCapabilities>().unwrap();
 
         let trace_chunk = vec![SpanBytes {
             service: "test".into(),
