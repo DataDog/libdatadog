@@ -206,6 +206,15 @@ enum DeserInputFormat {
     V05,
 }
 
+impl From<TraceExporterInputFormat> for DeserInputFormat {
+    fn from(f: TraceExporterInputFormat) -> Self {
+        match f {
+            TraceExporterInputFormat::V04 => DeserInputFormat::V04,
+            TraceExporterInputFormat::V05 => DeserInputFormat::V05,
+        }
+    }
+}
+
 /// `H` is the HTTP client implementation, see [`HttpClientTrait`]. Leaf crates
 /// pin it to a concrete type.
 #[derive(Debug)]
@@ -364,10 +373,7 @@ impl<H: HttpClientTrait + MaybeSend + Sync + 'static> TraceExporter<H> {
     pub fn send(&self, data: &[u8]) -> Result<AgentResponse, TraceExporterError> {
         self.check_agent_info();
 
-        let res = match self.input_format {
-            TraceExporterInputFormat::V04 => self.send_deser(data, DeserInputFormat::V04),
-            TraceExporterInputFormat::V05 => self.send_deser(data, DeserInputFormat::V05),
-        }?;
+        let res = self.send_deser(data, self.input_format.into())?;
         if matches!(&res, AgentResponse::Changed { body } if body.is_empty()) {
             return Err(TraceExporterError::Agent(
                 error::AgentErrorKind::EmptyResponse,
@@ -381,10 +387,7 @@ impl<H: HttpClientTrait + MaybeSend + Sync + 'static> TraceExporter<H> {
     pub async fn send_async(&self, data: &[u8]) -> Result<AgentResponse, TraceExporterError> {
         self.check_agent_info();
 
-        let format = match self.input_format {
-            TraceExporterInputFormat::V04 => DeserInputFormat::V04,
-            TraceExporterInputFormat::V05 => DeserInputFormat::V05,
-        };
+        let format: DeserInputFormat = self.input_format.into();
 
         let (traces, _) = match format {
             DeserInputFormat::V04 => msgpack_decoder::v04::from_slice(data),
