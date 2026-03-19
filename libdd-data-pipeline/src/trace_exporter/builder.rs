@@ -23,7 +23,7 @@ use std::time::Duration;
 const DEFAULT_AGENT_URL: &str = "http://127.0.0.1:8126";
 
 #[allow(missing_docs)]
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct TraceExporterBuilder {
     url: Option<String>,
     hostname: String,
@@ -55,41 +55,6 @@ pub struct TraceExporterBuilder {
     agent_rates_payload_version_enabled: bool,
     connection_timeout: Option<u64>,
 }
-
-impl Default for TraceExporterBuilder {
-    fn default() -> Self {
-        Self {
-            url: None,
-            hostname: String::new(),
-            env: String::new(),
-            app_version: String::new(),
-            service: String::new(),
-            tracer_version: String::new(),
-            language: String::new(),
-            language_version: String::new(),
-            language_interpreter: String::new(),
-            language_interpreter_vendor: String::new(),
-            git_commit_sha: String::new(),
-            process_tags: String::new(),
-            input_format: TraceExporterInputFormat::default(),
-            output_format: TraceExporterOutputFormat::default(),
-            dogstatsd_url: None,
-            client_computed_stats: false,
-            client_computed_top_level: false,
-            stats_bucket_size: None,
-            peer_tags_aggregation: false,
-            compute_stats_by_span_kind: false,
-            peer_tags: Vec::new(),
-            #[cfg(feature = "telemetry")]
-            telemetry: None,
-            health_metrics_enabled: false,
-            test_session_token: None,
-            agent_rates_payload_version_enabled: false,
-            connection_timeout: None,
-        }
-    }
-}
-
 impl TraceExporterBuilder {
     /// Sets the URL of the agent.
     ///
