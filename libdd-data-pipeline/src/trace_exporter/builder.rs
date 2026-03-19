@@ -411,12 +411,12 @@ impl<H: HttpClientTrait + MaybeSend + Sync + 'static> TraceExporterBuilder<H> {
 mod tests {
     use super::*;
     use crate::trace_exporter::error::BuilderErrorKind;
-    use libdd_capabilities_impl::DefaultHttpClient;
+    use libdd_capabilities_impl::NativeCapabilities;
 
     #[cfg_attr(miri, ignore)]
     #[test]
     fn test_new() {
-        let mut builder = TraceExporterBuilder::<DefaultHttpClient>::default();
+        let mut builder = TraceExporterBuilder::<NativeCapabilities>::default();
         builder
             .set_url("http://192.168.1.1:8127/")
             .set_tracer_version("v0.1")
@@ -456,7 +456,7 @@ mod tests {
     #[cfg_attr(miri, ignore)]
     #[test]
     fn test_new_defaults() {
-        let builder = TraceExporterBuilder::<DefaultHttpClient>::default();
+        let builder = TraceExporterBuilder::<NativeCapabilities>::default();
         let exporter = builder.build().unwrap();
 
         assert_eq!(
@@ -478,7 +478,7 @@ mod tests {
     #[test]
     #[cfg_attr(miri, ignore)]
     fn test_builder_error() {
-        let mut builder = TraceExporterBuilder::<DefaultHttpClient>::default();
+        let mut builder = TraceExporterBuilder::<NativeCapabilities>::default();
         builder
             .set_url("")
             .set_service("foo")

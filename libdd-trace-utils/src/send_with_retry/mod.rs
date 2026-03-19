@@ -82,7 +82,7 @@ impl std::error::Error for SendWithRetryError {}
 ///     http::HeaderValue::from_static("application/msgpack"),
 /// );
 /// let retry_strategy = RetryStrategy::new(3, 10, RetryBackoffType::Exponential, Some(5));
-/// send_with_retry::<libdd_capabilities_impl::DefaultHttpClient>(
+/// send_with_retry::<libdd_capabilities_impl::NativeCapabilities>(
 ///     &target,
 ///     payload,
 ///     &headers,
@@ -245,7 +245,7 @@ mod tests {
     use super::*;
     use crate::test_utils::poll_for_mock_hit;
     use httpmock::MockServer;
-    use libdd_capabilities_impl::DefaultHttpClient;
+    use libdd_capabilities_impl::NativeCapabilities;
 
     #[cfg_attr(miri, ignore)]
     #[tokio::test]
@@ -277,7 +277,7 @@ mod tests {
         let strategy = RetryStrategy::new(0, 2, RetryBackoffType::Constant, None);
 
         tokio::spawn(async move {
-            let result = send_with_retry::<DefaultHttpClient>(
+            let result = send_with_retry::<NativeCapabilities>(
                 &target_endpoint,
                 vec![0, 1, 2, 3],
                 &HeaderMap::new(),
@@ -324,7 +324,7 @@ mod tests {
         let strategy = RetryStrategy::new(2, 250, RetryBackoffType::Constant, None);
 
         tokio::spawn(async move {
-            let result = send_with_retry::<DefaultHttpClient>(
+            let result = send_with_retry::<NativeCapabilities>(
                 &target_endpoint,
                 vec![0, 1, 2, 3],
                 &HeaderMap::new(),
@@ -371,7 +371,7 @@ mod tests {
         );
 
         tokio::spawn(async move {
-            let result = send_with_retry::<DefaultHttpClient>(
+            let result = send_with_retry::<NativeCapabilities>(
                 &target_endpoint,
                 vec![0, 1, 2, 3],
                 &HeaderMap::new(),
@@ -418,7 +418,7 @@ mod tests {
         let strategy = RetryStrategy::new(2, 10, RetryBackoffType::Constant, None);
 
         tokio::spawn(async move {
-            let result = send_with_retry::<DefaultHttpClient>(
+            let result = send_with_retry::<NativeCapabilities>(
                 &target_endpoint,
                 vec![0, 1, 2, 3],
                 &HeaderMap::new(),

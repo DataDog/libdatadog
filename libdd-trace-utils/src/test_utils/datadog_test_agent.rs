@@ -210,7 +210,7 @@ impl DatadogAgentContainerBuilder {
 /// Basic usage:
 ///
 /// ```no_run
-/// use libdd_capabilities_impl::DefaultHttpClient;
+/// use libdd_capabilities_impl::NativeCapabilities;
 /// use libdd_common::Endpoint;
 /// use libdd_trace_utils::send_data::SendData;
 /// use libdd_trace_utils::test_utils::datadog_test_agent::DatadogTestAgent;
@@ -240,7 +240,7 @@ impl DatadogAgentContainerBuilder {
 ///         &endpoint,
 ///     );
 ///
-///     let _result = data.send::<DefaultHttpClient>().await;
+///     let _result = data.send::<NativeCapabilities>().await;
 ///
 ///     // Assert that the snapshot for a given token matches the expected snapshot
 ///     test_agent.assert_snapshot("snapshot-token").await;

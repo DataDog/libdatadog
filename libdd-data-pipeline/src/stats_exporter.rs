@@ -196,7 +196,7 @@ mod tests {
     use super::*;
     use httpmock::prelude::*;
     use httpmock::MockServer;
-    use libdd_capabilities_impl::DefaultHttpClient;
+    use libdd_capabilities_impl::NativeCapabilities;
     use libdd_trace_utils::span::{trace_utils, v04::SpanSlice};
     use libdd_trace_utils::test_utils::poll_for_mock_hit;
     use time::Duration;
@@ -210,8 +210,8 @@ mod tests {
     /// Fails to compile if stats exporter is not Send and Sync
     #[test]
     fn test_stats_exporter_sync_send() {
-        let _ = is_send::<StatsExporter<DefaultHttpClient>>;
-        let _ = is_sync::<StatsExporter<DefaultHttpClient>>;
+        let _ = is_send::<StatsExporter<NativeCapabilities>>;
+        let _ = is_sync::<StatsExporter<NativeCapabilities>>;
     }
 
     fn get_test_metadata() -> TracerMetadata {
@@ -269,7 +269,7 @@ mod tests {
             })
             .await;
 
-        let stats_exporter = StatsExporter::<DefaultHttpClient>::new(
+        let stats_exporter = StatsExporter::<NativeCapabilities>::new(
             BUCKETS_DURATION,
             Arc::new(Mutex::new(get_test_concentrator())),
             get_test_metadata(),
@@ -296,7 +296,7 @@ mod tests {
             })
             .await;
 
-        let stats_exporter = StatsExporter::<DefaultHttpClient>::new(
+        let stats_exporter = StatsExporter::<NativeCapabilities>::new(
             BUCKETS_DURATION,
             Arc::new(Mutex::new(get_test_concentrator())),
             get_test_metadata(),
@@ -329,7 +329,7 @@ mod tests {
             })
             .await;
 
-        let mut stats_exporter = StatsExporter::<DefaultHttpClient>::new(
+        let mut stats_exporter = StatsExporter::<NativeCapabilities>::new(
             BUCKETS_DURATION,
             Arc::new(Mutex::new(get_test_concentrator())),
             get_test_metadata(),
@@ -370,7 +370,7 @@ mod tests {
         let buckets_duration = Duration::from_secs(10);
         let cancellation_token = CancellationToken::new();
 
-        let mut stats_exporter = StatsExporter::<DefaultHttpClient>::new(
+        let mut stats_exporter = StatsExporter::<NativeCapabilities>::new(
             buckets_duration,
             Arc::new(Mutex::new(get_test_concentrator())),
             get_test_metadata(),

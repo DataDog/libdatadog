@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 #[cfg(test)]
 mod tracing_integration_tests {
-    use libdd_capabilities_impl::DefaultHttpClient;
+    use libdd_capabilities_impl::NativeCapabilities;
     use libdd_data_pipeline::trace_exporter::agent_response::AgentResponse;
     use libdd_data_pipeline::trace_exporter::{
         TraceExporter, TraceExporterInputFormat, TraceExporterOutputFormat,
@@ -113,7 +113,7 @@ mod tracing_integration_tests {
             .await;
 
         let task_result = task::spawn_blocking(move || {
-            let mut builder = TraceExporter::<DefaultHttpClient>::builder();
+            let mut builder = TraceExporter::<NativeCapabilities>::builder();
             builder
                 .set_url(url.to_string().as_ref())
                 .set_language("test-lang")
@@ -165,7 +165,7 @@ mod tracing_integration_tests {
             .await;
 
         let task_result = task::spawn_blocking(move || {
-            let mut builder = TraceExporter::<DefaultHttpClient>::builder();
+            let mut builder = TraceExporter::<NativeCapabilities>::builder();
             builder
                 .set_url(url.to_string().as_ref())
                 .set_language("test-lang")
@@ -211,7 +211,7 @@ mod tracing_integration_tests {
             .await;
 
         let task_result = task::spawn_blocking(move || {
-            let mut builder = TraceExporter::<DefaultHttpClient>::builder();
+            let mut builder = TraceExporter::<NativeCapabilities>::builder();
             builder
                 .set_url(url.to_string().as_ref())
                 .set_language("test-lang")
@@ -288,7 +288,7 @@ mod tracing_integration_tests {
             .await;
 
         let task_result = task::spawn_blocking(move || {
-            let mut builder = TraceExporter::<DefaultHttpClient>::builder();
+            let mut builder = TraceExporter::<NativeCapabilities>::builder();
             builder
                 .set_url(url.to_string().as_ref())
                 .set_language("test-lang")
