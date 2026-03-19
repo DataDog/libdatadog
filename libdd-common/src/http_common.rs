@@ -141,18 +141,17 @@ mod native {
 
     impl From<HttpRequestError> for ClientError {
         fn from(err: HttpRequestError) -> Self {
-            let kind =
-                if let Some(source) = err.source().and_then(|s| s.downcast_ref::<Error>()) {
-                    match source {
-                        Error::Client(client_error) => client_error.kind,
-                        Error::Other(_) => ErrorKind::Other,
-                        Error::Infallible(infallible) => match *infallible {},
-                    }
-                } else if err.is_connect() {
-                    ErrorKind::Closed
-                } else {
-                    ErrorKind::Other
-                };
+            let kind = if let Some(source) = err.source().and_then(|s| s.downcast_ref::<Error>()) {
+                match source {
+                    Error::Client(client_error) => client_error.kind,
+                    Error::Other(_) => ErrorKind::Other,
+                    Error::Infallible(infallible) => match *infallible {},
+                }
+            } else if err.is_connect() {
+                ErrorKind::Closed
+            } else {
+                ErrorKind::Other
+            };
             Self {
                 source: err.into(),
                 kind,

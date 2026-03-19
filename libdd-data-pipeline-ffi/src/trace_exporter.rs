@@ -895,8 +895,7 @@ mod tests {
             );
             assert_eq!(error, None);
 
-            let mut ptr: MaybeUninit<Box<TraceExporter>> =
-                MaybeUninit::uninit();
+            let mut ptr: MaybeUninit<Box<TraceExporter>> = MaybeUninit::uninit();
 
             let ret = ddog_trace_exporter_new(
                 NonNull::new_unchecked(&mut ptr).cast(),
@@ -927,8 +926,7 @@ mod tests {
 
             ddog_trace_exporter_error_free(error);
 
-            let mut ptr: MaybeUninit<Box<TraceExporter>> =
-                MaybeUninit::uninit();
+            let mut ptr: MaybeUninit<Box<TraceExporter>> = MaybeUninit::uninit();
 
             let ret = ddog_trace_exporter_new(NonNull::new_unchecked(&mut ptr).cast(), Some(&cfg));
 
@@ -1008,8 +1006,7 @@ mod tests {
                 ..Default::default()
             };
 
-            let mut ptr: MaybeUninit<Box<TraceExporter>> =
-                MaybeUninit::uninit();
+            let mut ptr: MaybeUninit<Box<TraceExporter>> = MaybeUninit::uninit();
             let mut response: MaybeUninit<Box<ExporterResponse>> = MaybeUninit::uninit();
             let mut ret =
                 ddog_trace_exporter_new(NonNull::new_unchecked(&mut ptr).cast(), Some(&cfg));
@@ -1076,8 +1073,7 @@ mod tests {
                 ..Default::default()
             };
 
-            let mut ptr: MaybeUninit<Box<TraceExporter>> =
-                MaybeUninit::uninit();
+            let mut ptr: MaybeUninit<Box<TraceExporter>> = MaybeUninit::uninit();
             let mut ret =
                 ddog_trace_exporter_new(NonNull::new_unchecked(&mut ptr).cast(), Some(&cfg));
 
@@ -1155,8 +1151,7 @@ mod tests {
                 ..Default::default()
             };
 
-            let mut ptr: MaybeUninit<Box<TraceExporter>> =
-                MaybeUninit::uninit();
+            let mut ptr: MaybeUninit<Box<TraceExporter>> = MaybeUninit::uninit();
             let mut ret =
                 ddog_trace_exporter_new(NonNull::new_unchecked(&mut ptr).cast(), Some(&cfg));
 
