@@ -21,7 +21,7 @@ futures = "0.3"
 futures-core = { version = "0.3.0", default-features = false }
 futures-util = { version = "0.3.0", default-features = false }
 hex = "0.4"
-httparse = { version = "1.9", optional = true }
+httparse = "1.9"
 hyper = { workspace = true }
 hyper-util = { workspace = true }
 http = "1.1"
@@ -33,12 +33,11 @@ mime = { version = "0.3.16", optional = true }
 multer = { version = "3.1", optional = true }
 bytes = { version = "1.11.1" }
 pin-project = "1"
-rand = { version = "0.8", optional = true }
+rand = "0.8"
 regex = "1.5"
 # Use hickory-dns instead of the default system DNS resolver to avoid fork safety issues.
 # The default resolver can hold locks or other global state that can cause deadlocks
 # or corruption when the process forks (e.g., in PHP-FPM or other forking environments).
-reqwest = { version = "0.13", features = ["rustls", "hickory-dns"], default-features = false, optional = true }
 rustls-native-certs = { version = "0.8.1", optional = true }
 thiserror = "1.0"
 tokio = { version = "1.23", features = ["rt", "macros", "net", "io-util", "fs"] }
@@ -96,10 +95,8 @@ use_webpki_roots = ["hyper-rustls/webpki-roots"]
 cgroup_testing = []
 # FIPS mode uses the FIPS-compliant cryptographic provider (Unix only)
 fips = ["https", "hyper-rustls/fips"]
-# Enable reqwest client builder support with file dump debugging
-reqwest = ["dep:reqwest", "test-utils"]
 # Enable test utilities for use in other crates
-test-utils = ["dep:httparse", "dep:rand", "dep:mime", "dep:multer"]
+test-utils = ["dep:mime", "dep:multer"]
 
 [lints.rust]
 # We run coverage checks in our github actions. These checks are run with

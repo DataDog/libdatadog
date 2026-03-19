@@ -148,13 +148,6 @@ pub mod ffi {
         type Profile;
         type ProfileExporter;
         type ExporterManager;
-        type CancellationToken;
-
-        // CancellationToken factory and methods
-        fn new_cancellation_token() -> Box<CancellationToken>;
-        fn clone_token(self: &CancellationToken) -> Box<CancellationToken>;
-        fn cancel(self: &CancellationToken);
-        fn is_cancelled(self: &CancellationToken) -> bool;
 
         // Static factory methods for Profile
         #[Self = "Profile"]
@@ -257,39 +250,6 @@ pub mod ffi {
             process_tags: &str,
             internal_metadata: &str,
             info: &str,
-        ) -> Result<()>;
-
-        /// Sends a profile to Datadog with cancellation support.
-        ///
-        /// This is the same as `send_profile`, but allows cancelling the operation from another
-        /// thread using a cancellation token.
-        ///
-        /// **Important**: This method resets the profile and sends the *previous* profile data.
-        /// After calling this, the profile will be empty and ready for new samples.
-        ///
-        /// # Arguments
-        /// * `profile` - Profile to send (will be consumed/reset, previous data is sent)
-        /// * `files_to_compress` - Additional files to compress and attach (e.g., heap dumps)
-        /// * `additional_tags` - Per-profile tags (in addition to exporter-level tags)
-        /// * `process_tags` - Process-level tags as comma-separated string (e.g.,
-        ///   "runtime:native,profiler_version:1.0") Pass empty string "" if not needed
-        /// * `internal_metadata` - Internal metadata as JSON string (e.g., `{"key": "value"}`) See
-        ///   Datadog-internal "RFC: Attaching internal metadata to pprof profiles" Pass empty
-        ///   string "" if not needed
-        /// * `info` - System/environment info as JSON string (e.g., `{"os": "linux", "arch":
-        ///   "x86_64"}`) See Datadog-internal "RFC: Pprof System Info Support" Pass empty string ""
-        ///   if not needed
-        /// * `cancel` - Cancellation token to cancel the send operation
-        #[allow(clippy::too_many_arguments)]
-        fn send_profile_with_cancellation(
-            self: &mut ProfileExporter,
-            profile: &mut Profile,
-            files_to_compress: Vec<AttachmentFile>,
-            additional_tags: Vec<Tag>,
-            process_tags: &str,
-            internal_metadata: &str,
-            info: &str,
-            cancel: &CancellationToken,
         ) -> Result<()>;
 
         // ExporterManager methods
@@ -468,50 +428,6 @@ impl<'a> TryFrom<&ffi::Tag<'a>> for libdd_common::tag::Tag {
 
     fn try_from(tag: &ffi::Tag<'a>) -> Result<Self, Self::Error> {
         libdd_common::tag::Tag::new(tag.key, tag.value)
-    }
-}
-
-// ============================================================================
-// CancellationToken - Wrapper around tokio_util::sync::CancellationToken
-// ============================================================================
-
-pub struct CancellationToken {
-    inner: tokio_util::sync::CancellationToken,
-}
-
-/// Creates a new cancellation token.
-pub fn new_cancellation_token() -> Box<CancellationToken> {
-    Box::new(CancellationToken {
-        inner: tokio_util::sync::CancellationToken::new(),
-    })
-}
-
-impl CancellationToken {
-    /// Clones the cancellation token.
-    ///
-    /// A cloned token is connected to the original token - either can be used
-    /// to cancel or check cancellation status. The useful part is that they have
-    /// independent lifetimes and can be dropped separately.
-    ///
-    /// This is useful for multi-threaded scenarios where one thread performs the
-    /// send operation while another thread can cancel it.
-    pub fn clone_token(&self) -> Box<CancellationToken> {
-        Box::new(CancellationToken {
-            inner: self.inner.clone(),
-        })
-    }
-
-    /// Cancels the token.
-    ///
-    /// Note that cancellation is a terminal state; calling cancel multiple times
-    /// has no additional effect.
-    pub fn cancel(&self) {
-        self.inner.cancel();
-    }
-
-    /// Returns true if the token has been cancelled.
-    pub fn is_cancelled(&self) -> bool {
-        self.inner.is_cancelled()
     }
 }
 
@@ -818,49 +734,9 @@ impl ProfileExporter {
             process_tags,
             internal_metadata,
             info,
-            None,
         )
     }
 
-    /// Sends a profile to Datadog with cancellation support.
-    ///
-    /// # Arguments
-    /// * `profile` - Profile to send (will be reset after sending)
-    /// * `files_to_compress` - Additional files to compress and attach
-    /// * `additional_tags` - Per-profile tags (in addition to exporter-level tags)
-    /// * `process_tags` - Process-level tags as comma-separated string. Empty string if not needed.
-    /// * `internal_metadata` - Internal metadata as JSON string. Empty string if not needed.
-    ///   Example: `{"custom_field": "value", "version": "1.0"}`
-    /// * `info` - System/environment info as JSON string. Empty string if not needed. Example:
-    ///   `{"os": "linux", "arch": "x86_64", "kernel": "5.15.0"}`
-    /// * `cancel` - Cancellation token to cancel the send operation
-    #[allow(clippy::too_many_arguments)]
-    pub fn send_profile_with_cancellation(
-        &mut self,
-        profile: &mut Profile,
-        files_to_compress: Vec<ffi::AttachmentFile>,
-        additional_tags: Vec<ffi::Tag>,
-        process_tags: &str,
-        internal_metadata: &str,
-        info: &str,
-        cancel: &CancellationToken,
-    ) -> anyhow::Result<()> {
-        self.send_profile_impl(
-            profile,
-            files_to_compress,
-            additional_tags,
-            process_tags,
-            internal_metadata,
-            info,
-            Some(&cancel.inner),
-        )
-    }
-
-    /// Internal implementation shared by send_profile and send_profile_with_cancellation
-    ///
-    /// Resets the profile and sends the previous profile data. This allows continuous
-    /// profiling where you keep adding samples to the current profile while the previous
-    /// period's data is being sent.
     #[allow(clippy::too_many_arguments)]
     fn send_profile_impl(
         &mut self,
@@ -870,7 +746,6 @@ impl ProfileExporter {
         process_tags: &str,
         internal_metadata: &str,
         info: &str,
-        cancel: Option<&tokio_util::sync::CancellationToken>,
     ) -> anyhow::Result<()> {
         let (
             encoded,
@@ -895,7 +770,6 @@ impl ProfileExporter {
             internal_metadata_json,
             info_json,
             process_tags_opt,
-            cancel,
         )?;
 
         anyhow::ensure!(

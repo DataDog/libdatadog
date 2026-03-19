@@ -16,8 +16,6 @@ use libdd_profiling::internal::EncodedProfile;
 use std::borrow::Cow;
 use std::str::FromStr;
 
-type TokioCancellationToken = tokio_util::sync::CancellationToken;
-
 #[allow(dead_code)]
 #[repr(C)]
 pub enum ProfilingEndpoint<'a> {
@@ -232,7 +230,6 @@ unsafe fn parse_json(
 /// * `optional_process_tags` - Process-level tags as a comma-separated string.
 /// * `optional_internal_metadata_json` - Internal metadata as a JSON string.
 /// * `optional_info_json` - System info as a JSON string.
-/// * `cancel` - Optional cancellation token.
 ///
 /// # Safety
 /// All non-null arguments MUST have been created by APIs in this module.
@@ -247,7 +244,6 @@ pub unsafe extern "C" fn ddog_prof_Exporter_send_blocking(
     optional_process_tags: Option<&CharSlice>,
     optional_internal_metadata_json: Option<&CharSlice>,
     optional_info_json: Option<&CharSlice>,
-    mut cancel: *mut Handle<TokioCancellationToken>,
 ) -> Result<HttpStatus> {
     wrap_with_ffi_result!({
         let exporter = exporter.to_inner_mut()?;
@@ -262,7 +258,6 @@ pub unsafe extern "C" fn ddog_prof_Exporter_send_blocking(
         let internal_metadata = parse_json("internal_metadata", optional_internal_metadata_json)?;
         let info = parse_json("info", optional_info_json)?;
 
-        let cancel = cancel.to_inner_mut().ok();
         let status = exporter.send_blocking(
             profile,
             files_to_compress_and_export.as_slice(),
@@ -270,83 +265,10 @@ pub unsafe extern "C" fn ddog_prof_Exporter_send_blocking(
             internal_metadata,
             info,
             process_tags_str,
-            cancel.as_deref(),
         )?;
 
         anyhow::Ok(HttpStatus(status.as_u16()))
     })
-}
-
-/// Can be passed as an argument to send and then be used to asynchronously cancel it from a
-/// different thread.
-#[no_mangle]
-#[must_use]
-pub extern "C" fn ddog_CancellationToken_new() -> Handle<TokioCancellationToken> {
-    TokioCancellationToken::new().into()
-}
-
-/// A cloned TokioCancellationToken is connected to the TokioCancellationToken it was created from.
-/// Either the cloned or the original token can be used to cancel or provided as arguments to send.
-/// The useful part is that they have independent lifetimes and can be dropped separately.
-///
-/// Thus, it's possible to do something like:
-/// ```c
-/// cancel_t1 = ddog_CancellationToken_new();
-/// cancel_t2 = ddog_CancellationToken_clone(cancel_t1);
-///
-/// // On thread t1:
-///     ddog_prof_Exporter_send(..., cancel_t1);
-///     ddog_CancellationToken_drop(cancel_t1);
-///
-/// // On thread t2:
-///     ddog_CancellationToken_cancel(cancel_t2);
-///     ddog_CancellationToken_drop(cancel_t2);
-/// ```
-///
-/// Without clone, both t1 and t2 would need to synchronize to make sure neither was using the
-/// cancel before it could be dropped. With clone, there is no need for such synchronization, both
-/// threads have their own cancel and should drop that cancel after they are done with it.
-///
-/// # Safety
-/// If the `token` is non-null, it must point to a valid object.
-#[no_mangle]
-#[must_use]
-pub unsafe extern "C" fn ddog_CancellationToken_clone(
-    mut token: *mut Handle<TokioCancellationToken>,
-) -> Handle<TokioCancellationToken> {
-    if let Ok(token) = token.to_inner_mut() {
-        token.clone().into()
-    } else {
-        Handle::empty()
-    }
-}
-
-/// Cancel send that is being called in another thread with the given token.
-/// Note that cancellation is a terminal state; cancelling a token more than once does nothing.
-/// Returns `true` if token was successfully cancelled.
-#[no_mangle]
-pub unsafe extern "C" fn ddog_CancellationToken_cancel(
-    mut cancel: *mut Handle<TokioCancellationToken>,
-) -> bool {
-    if let Ok(token) = cancel.to_inner_mut() {
-        let will_cancel = !token.is_cancelled();
-        if will_cancel {
-            token.cancel();
-        }
-        will_cancel
-    } else {
-        false
-    }
-}
-
-/// # Safety
-/// The `token` can be null, but non-null values must be created by the Rust
-/// Global allocator and must have not been dropped already.
-#[no_mangle]
-pub unsafe extern "C" fn ddog_CancellationToken_drop(
-    mut token: *mut Handle<TokioCancellationToken>,
-) {
-    drop(token.take())
 }
 
 // ============================================================================
@@ -584,7 +506,6 @@ mod tests {
                 None,
                 None,
                 None,
-                &mut Handle::empty(),
             )
         };
 
@@ -722,7 +643,6 @@ mod tests {
                 Some(&process_tags),
                 Some(&raw_internal_metadata),
                 Some(&raw_info),
-                &mut Handle::empty(),
             )
         };
 

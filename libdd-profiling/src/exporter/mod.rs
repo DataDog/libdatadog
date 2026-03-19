@@ -4,8 +4,11 @@
 pub mod config;
 mod errors;
 pub mod exporter_manager;
+mod multipart;
 mod profile_exporter;
 mod tls;
+mod transport;
+mod ureq_client;
 
 pub use errors::SendError;
 pub use exporter_manager::ExporterManager;

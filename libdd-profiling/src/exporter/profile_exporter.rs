@@ -1,9 +1,7 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-//! Reqwest-based profiling exporter
-//!
-//! This is a simplified async implementation using reqwest.
+//! ureq-based profiling exporter.
 //!
 //! ## Debugging with File Dumps
 //!
@@ -25,26 +23,20 @@
 //! which can be useful for debugging or replaying requests.
 
 use super::errors::SendError;
-use anyhow::Context;
+use super::multipart::build_multipart;
+use super::transport::{PreparedRequest, ProfileTransport};
 use libdd_common::tag::Tag;
 use libdd_common::{azure_app_services, tag, Endpoint};
-use reqwest::RequestBuilder;
 use serde_json::json;
-use std::io::Write;
-use tokio::runtime::Runtime;
-use tokio_util::sync::CancellationToken;
 
-use crate::internal::{EncodedProfile, Profile};
-use crate::profiles::{Compressor, DefaultProfileCodec};
+use crate::internal::EncodedProfile;
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct ProfileExporter {
-    client: reqwest::Client,
+    transport: ProfileTransport,
     family: String,
     base_tags_string: String,
-    request_url: String,
-    headers: reqwest::header::HeaderMap,
-    runtime: Option<Runtime>,
+    headers: Vec<(String, String)>,
 }
 
 pub struct File<'a> {
@@ -55,22 +47,10 @@ pub struct File<'a> {
 impl ProfileExporter {
     /// Creates a new exporter to be used to report profiling data.
     ///
-    /// Note: Reqwest v0.12.23+ includes automatic retry support for transient failures.
-    /// The default configuration automatically retries safe errors and low-level protocol NACKs.
-    /// For custom retry policies, users can configure the reqwest client before creating the
-    /// exporter.
-    ///
-    /// # Thread Safety
-    ///
-    /// The exporter can be used from any thread, but if using `send_blocking()`, the exporter
-    /// should remain on the same thread for all blocking calls. See [`send_blocking`] for details.
-    ///
     /// # Performance
     ///
     /// TLS configuration is cached globally and reused across exporter
     /// instances, avoiding repeated root store loading on Linux.
-    ///
-    /// [`send_blocking`]: ProfileExporter::send_blocking
     pub fn new(
         profiling_library_name: &str,
         profiling_library_version: &str,
@@ -78,80 +58,63 @@ impl ProfileExporter {
         mut tags: Vec<Tag>,
         endpoint: Endpoint,
     ) -> anyhow::Result<Self> {
-        let tls_config = super::tls::cached_tls_config()?;
-        // Pre-build all static headers
-        let mut headers = reqwest::header::HeaderMap::new();
+        // Pre-build all static headers.
+        let mut headers = Vec::with_capacity(8);
+        headers.push(("Connection".to_string(), "close".to_string()));
+        headers.push((
+            "DD-EVP-ORIGIN".to_string(),
+            profiling_library_name.to_string(),
+        ));
+        headers.push((
+            "DD-EVP-ORIGIN-VERSION".to_string(),
+            profiling_library_version.to_string(),
+        ));
+        headers.push((
+            "User-Agent".to_string(),
+            format!("DDProf/{}", env!("CARGO_PKG_VERSION")),
+        ));
 
-        headers.insert(
-            "Connection",
-            reqwest::header::HeaderValue::from_static("close"),
-        );
-        headers.insert(
-            "DD-EVP-ORIGIN",
-            reqwest::header::HeaderValue::from_str(profiling_library_name)?,
-        );
-        headers.insert(
-            "DD-EVP-ORIGIN-VERSION",
-            reqwest::header::HeaderValue::from_str(profiling_library_version)?,
-        );
-        headers.insert(
-            "User-Agent",
-            reqwest::header::HeaderValue::from_str(&format!(
-                "DDProf/{}",
-                env!("CARGO_PKG_VERSION")
-            ))?,
-        );
-
-        // Add optional endpoint headers (api-key, test-token)
+        // Add optional endpoint headers (api-key, test-token).
         for (name, value) in endpoint.get_optional_headers() {
-            headers.insert(name, reqwest::header::HeaderValue::from_str(value)?);
+            headers.push((name.to_string(), value.to_string()));
         }
 
-        // Add entity-related headers (container-id, entity-id, external-env)
+        // Add entity-related headers (container-id, entity-id, external-env).
         for (name, value) in libdd_common::entity_id::get_entity_headers() {
-            headers.insert(name, reqwest::header::HeaderValue::from_static(value));
+            headers.push((name.to_string(), value.to_string()));
         }
 
-        // Add Azure App Services tags if available
+        // Add Azure App Services tags if available.
         if let Some(aas) = &*azure_app_services::AAS_METADATA {
             let aas_tags_iter = aas.get_app_service_tags();
             tags.try_reserve(aas_tags_iter.len())?;
             tags.extend(aas_tags_iter.filter_map(|(name, value)| Tag::new(name, value).ok()));
         }
 
-        // Precompute the base tags string (includes configured tags + Azure App Services tags)
+        // Precompute the base tags string (includes configured tags + Azure App Services tags).
         let base_tags_string: String = tags.iter().flat_map(|tag| [tag.as_ref(), ","]).collect();
 
-        let (builder, request_url) = endpoint.to_reqwest_client_builder()?;
-        let builder = builder.tls_backend_preconfigured(tls_config.0);
+        let resolved = endpoint.resolve_for_http()?;
+        let tls_config = resolved
+            .request_url
+            .starts_with("https://")
+            .then(|| super::tls::cached_tls_config().map(|config| config.0))
+            .transpose()?;
+        let transport = ProfileTransport::new(resolved, tls_config)?;
 
         Ok(Self {
-            client: builder.build()?,
+            transport,
             family: family.to_string(),
             base_tags_string,
-            request_url,
             headers,
-            runtime: None,
         })
     }
 
     /// Synchronously sends a profile to the configured endpoint.
     ///
-    /// This is a blocking wrapper around the async [`send`] method. It lazily creates and caches
-    /// a single-threaded tokio runtime on first use.
+    /// This remains purely blocking so the exporter can stay runtime-free and
+    /// statically linkable without pulling in Tokio.
     ///
-    /// # Thread Affinity
-    ///
-    /// **Important**: The cached runtime uses `new_current_thread()`, which has thread affinity.
-    /// For best results, all calls to `send_blocking()` on the same exporter instance should be
-    /// made from the same thread. Moving the exporter across threads between blocking calls may
-    /// cause issues.
-    ///
-    /// If you need to use the exporter from multiple threads, consider either:
-    /// - Creating a separate exporter instance per thread
-    /// - Using the async [`send`] method directly from within a tokio runtime
-    ///
-    /// [`send`]: ProfileExporter::send
     #[allow(clippy::too_many_arguments)]
     pub fn send_blocking(
         &mut self,
@@ -161,32 +124,19 @@ impl ProfileExporter {
         internal_metadata: Option<serde_json::Value>,
         info: Option<serde_json::Value>,
         process_tags: Option<&str>,
-        cancel: Option<&CancellationToken>,
-    ) -> anyhow::Result<reqwest::StatusCode> {
-        if self.runtime.is_none() {
-            self.runtime = Some(
-                tokio::runtime::Builder::new_current_thread()
-                    .enable_all()
-                    .build()?,
-            );
-        }
-
-        Ok(self
-            .runtime
-            .as_ref()
-            .context("Missing runtime")?
-            .block_on(self.send(
-                profile,
-                additional_files,
-                additional_tags,
-                internal_metadata,
-                info,
-                process_tags,
-                cancel,
-            ))?
-            .status())
+    ) -> anyhow::Result<http::StatusCode> {
+        self.send_status(
+            profile,
+            additional_files,
+            additional_tags,
+            internal_metadata,
+            info,
+            process_tags,
+        )
+        .map_err(anyhow::Error::from)
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn build(
         &self,
         profile: EncodedProfile,
@@ -195,7 +145,7 @@ impl ProfileExporter {
         internal_metadata: Option<serde_json::Value>,
         info: Option<serde_json::Value>,
         process_tags: Option<&str>,
-    ) -> anyhow::Result<RequestBuilder> {
+    ) -> Result<PreparedRequest, SendError> {
         let tags_profiler = self.build_tags_string(additional_tags)?;
         let event = self.build_event_json(
             &profile,
@@ -206,18 +156,25 @@ impl ProfileExporter {
             process_tags,
         );
 
-        let form = self.build_multipart_form(event, profile, additional_files)?;
+        let multipart =
+            build_multipart(&event, profile, additional_files).map_err(SendError::BuildFailed)?;
 
-        Ok(self
-            .client
-            .post(&self.request_url)
-            .headers(self.headers.clone())
-            .multipart(form))
+        let mut headers = self.headers.clone();
+        headers.push(("Content-Type".to_string(), multipart.content_type));
+        headers.push((
+            "Content-Length".to_string(),
+            multipart.body.len().to_string(),
+        ));
+
+        Ok(PreparedRequest {
+            headers,
+            body: multipart.body,
+        })
     }
 
     #[allow(clippy::too_many_arguments)]
     /// Build and send a profile. Returns the HTTP status code.
-    pub async fn send(
+    fn send_status(
         &self,
         profile: EncodedProfile,
         additional_files: &[File<'_>],
@@ -225,9 +182,8 @@ impl ProfileExporter {
         internal_metadata: Option<serde_json::Value>,
         info: Option<serde_json::Value>,
         process_tags: Option<&str>,
-        cancel: Option<&CancellationToken>,
-    ) -> Result<reqwest::Response, SendError> {
-        let request_builder = self.build(
+    ) -> Result<http::StatusCode, SendError> {
+        let request = self.build(
             profile,
             additional_files,
             additional_tags,
@@ -236,28 +192,22 @@ impl ProfileExporter {
             process_tags,
         )?;
 
-        // Send request with optional cancellation support
-        if let Some(token) = cancel {
-            token
-                .run_until_cancelled(request_builder.send())
-                .await
-                .ok_or(SendError::Cancelled)?
-                .map_err(SendError::RequestFailed)
-        } else {
-            request_builder
-                .send()
-                .await
-                .map_err(SendError::RequestFailed)
-        }
+        self.send_prepared(request)
+            .map_err(SendError::RequestFailed)
     }
 
-    // Helper methods
+    pub(crate) fn send_prepared(
+        &self,
+        request: PreparedRequest,
+    ) -> anyhow::Result<http::StatusCode> {
+        self.transport.send(request)
+    }
 
     fn build_tags_string(&self, additional_tags: &[Tag]) -> anyhow::Result<String> {
-        // Start with precomputed base tags (includes configured tags + Azure App Services tags)
+        // Start with precomputed base tags (includes configured tags + Azure App Services tags).
         let mut tags = self.base_tags_string.clone();
 
-        // Add additional tags with try_reserve to avoid OOM
+        // Add additional tags with try_reserve to avoid OOM.
         for tag in additional_tags {
             let t = tag.as_ref();
             tags.try_reserve(t.len() + ','.len_utf8())?;
@@ -265,20 +215,17 @@ impl ProfileExporter {
             tags.push(',');
         }
 
-        // Add runtime platform tag (last, no trailing comma)
-        {
-            let t = tag!("runtime_platform", target_triple::TARGET);
-            // Using try_reserve_exact since this is the last tag
-            tags.try_reserve_exact(t.as_ref().len())?;
-            tags.push_str(t.as_ref());
-        }
+        // Add runtime platform tag last, without a trailing comma.
+        let t = tag!("runtime_platform", target_triple::TARGET);
+        tags.try_reserve_exact(t.as_ref().len())?;
+        tags.push_str(t.as_ref());
         Ok(tags)
     }
 
     fn build_event_json(
         &self,
         profile: &EncodedProfile,
-        additional_files: &[File],
+        additional_files: &[File<'_>],
         tags_profiler: &str,
         internal_metadata: Option<serde_json::Value>,
         info: Option<serde_json::Value>,
@@ -307,48 +254,5 @@ impl ProfileExporter {
             "internal": internal,
             "info": info.unwrap_or_else(|| json!({})),
         })
-    }
-
-    fn build_multipart_form(
-        &self,
-        event: serde_json::Value,
-        profile: EncodedProfile,
-        additional_files: &[File],
-    ) -> anyhow::Result<reqwest::multipart::Form> {
-        // Note: We don't set Content-Type for file attachments in the multipart form.
-        // The intake backend treats all attachments as raw bytes (application/octet-stream)
-        // and detects compression by reading magic bytes (gzip/zstd/etc headers).
-        // Content-Type is only meaningful for the main "event" part (set to application/json).
-        // Attachments are not forwarded beyond intake, so their MIME types are not needed.
-        let event_bytes = serde_json::to_vec(&event)?;
-
-        let mut form = reqwest::multipart::Form::new().part(
-            "event",
-            reqwest::multipart::Part::bytes(event_bytes)
-                .file_name("event.json")
-                .mime_str("application/json")?,
-        );
-
-        // Add additional files (compressed)
-        for file in additional_files {
-            let mut encoder = Compressor::<DefaultProfileCodec>::try_new(
-                (file.bytes.len() >> 3).next_power_of_two(),
-                10 * 1024 * 1024,
-                Profile::COMPRESSION_LEVEL,
-            )
-            .context("failed to create compressor")?;
-            encoder.write_all(file.bytes)?;
-
-            form = form.part(
-                file.name.to_string(),
-                reqwest::multipart::Part::bytes(encoder.finish()?).file_name(file.name.to_string()),
-            );
-        }
-
-        // Add profile
-        Ok(form.part(
-            "profile.pprof",
-            reqwest::multipart::Part::bytes(profile.buffer).file_name("profile.pprof"),
-        ))
     }
 }

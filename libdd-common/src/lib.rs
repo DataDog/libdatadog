@@ -16,8 +16,8 @@ use std::{borrow::Cow, ops::Deref, path::PathBuf, str::FromStr};
 pub mod azure_app_services;
 pub mod cc_utils;
 pub mod connector;
-#[cfg(feature = "reqwest")]
 pub mod dump_server;
+mod endpoint_resolved;
 pub mod entity_id;
 #[macro_use]
 pub mod cstr;
@@ -32,6 +32,8 @@ pub mod threading;
 pub mod timeout;
 pub mod unix_utils;
 pub mod worker;
+
+pub use endpoint_resolved::{ResolvedEndpoint, ResolvedEndpointKind};
 
 /// Extension trait for `Mutex` to provide a method that acquires a lock, panicking if the lock is
 /// poisoned.
@@ -315,14 +317,16 @@ impl Endpoint {
         self
     }
 
-    /// Use the system DNS resolver when building the reqwest client. Only has effect for
-    /// HTTP(S) endpoints.
+    /// Use the system DNS resolver when building an HTTP client.
+    ///
+    /// This only has an effect for transports that support selecting between resolver
+    /// implementations.
     pub fn with_system_resolver(mut self, use_system_resolver: bool) -> Self {
         self.use_system_resolver = use_system_resolver;
         self
     }
 
-    /// Creates a reqwest ClientBuilder configured for this endpoint.
+    /// Resolves this endpoint into a transport-neutral model for HTTP clients.
     ///
     /// This method handles various endpoint schemes:
     /// - `http`/`https`: Standard HTTP(S) endpoints
@@ -330,31 +334,19 @@ impl Endpoint {
     /// - `windows`: Windows named pipes (Windows only)
     /// - `file`: File dump endpoints for debugging (spawns a local server to capture requests)
     ///
-    /// The default in-process resolver is used for DNS (fork-safe). To use the system DNS resolver
-    /// instead (less fork-safe), set [`Endpoint::use_system_resolver`] to true via
-    /// [`Endpoint::with_system_resolver`].
-    ///
-    /// # Returns
-    /// A tuple of (ClientBuilder, request_url) where:
-    /// - ClientBuilder is configured with the appropriate transport and timeout
-    /// - request_url is the URL string to use for HTTP requests
-    ///
     /// # Errors
     /// Returns an error if:
     /// - The endpoint scheme is unsupported
     /// - Path decoding fails
     /// - The dump server fails to start (for file:// scheme)
-    #[cfg(feature = "reqwest")]
-    pub fn to_reqwest_client_builder(&self) -> anyhow::Result<(reqwest::ClientBuilder, String)> {
+    pub fn resolve_for_http(&self) -> anyhow::Result<ResolvedEndpoint> {
         use anyhow::Context;
 
-        let mut builder = reqwest::Client::builder()
-            .timeout(std::time::Duration::from_millis(self.timeout_ms))
-            .hickory_dns(!self.use_system_resolver);
+        let timeout = std::time::Duration::from_millis(self.timeout_ms);
 
-        let request_url = match self.url.scheme_str() {
+        let (kind, request_url) = match self.url.scheme_str() {
             // HTTP/HTTPS endpoints
-            Some("http") | Some("https") => self.url.to_string(),
+            Some("http") | Some("https") => (ResolvedEndpointKind::Tcp, self.url.to_string()),
 
             // File dump endpoint (debugging) - uses platform-specific local transport
             Some("file") => {
@@ -362,18 +354,24 @@ impl Endpoint {
                     .context("Failed to decode file path from URI")?;
                 let socket_or_pipe_path = dump_server::spawn_dump_server(output_path)?;
 
-                // Configure the client to use the local socket/pipe
                 #[cfg(unix)]
                 {
-                    builder = builder.unix_socket(socket_or_pipe_path);
+                    (
+                        ResolvedEndpointKind::UnixSocket {
+                            path: socket_or_pipe_path,
+                        },
+                        "http://localhost/".to_string(),
+                    )
                 }
                 #[cfg(windows)]
                 {
-                    builder = builder
-                        .windows_named_pipe(socket_or_pipe_path.to_string_lossy().to_string());
+                    (
+                        ResolvedEndpointKind::WindowsNamedPipe {
+                            path: socket_or_pipe_path,
+                        },
+                        "http://localhost/".to_string(),
+                    )
                 }
-
-                "http://localhost/".to_string()
             }
 
             // Unix domain sockets
@@ -381,8 +379,10 @@ impl Endpoint {
             Some("unix") => {
                 use connector::uds::socket_path_from_uri;
                 let socket_path = socket_path_from_uri(&self.url)?;
-                builder = builder.unix_socket(socket_path);
-                format!("http://localhost{}", self.url.path())
+                (
+                    ResolvedEndpointKind::UnixSocket { path: socket_path },
+                    format!("http://localhost{}", self.url.path()),
+                )
             }
 
             // Windows named pipes
@@ -390,14 +390,21 @@ impl Endpoint {
             Some("windows") => {
                 use connector::named_pipe::named_pipe_path_from_uri;
                 let pipe_path = named_pipe_path_from_uri(&self.url)?;
-                builder = builder.windows_named_pipe(pipe_path.to_string_lossy().to_string());
-                format!("http://localhost{}", self.url.path())
+                (
+                    ResolvedEndpointKind::WindowsNamedPipe { path: pipe_path },
+                    format!("http://localhost{}", self.url.path()),
+                )
             }
 
             // Unsupported schemes
             scheme => anyhow::bail!("Unsupported endpoint scheme: {:?}", scheme),
         };
 
-        Ok((builder, request_url))
+        Ok(ResolvedEndpoint {
+            kind,
+            request_url,
+            timeout,
+            use_system_resolver: self.use_system_resolver,
+        })
     }
 }
