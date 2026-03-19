@@ -1480,7 +1480,6 @@ version = "0.0.1"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
- "bytes",
  "datadog-ffe",
  "datadog-live-debugger",
  "datadog-remote-config",
@@ -1490,8 +1489,6 @@ dependencies = [
  "http-body-util",
  "hyper",
  "hyper-util",
- "libdd-capabilities",
- "libdd-capabilities-impl",
  "libdd-common",
  "libdd-trace-protobuf",
  "manual_future",
