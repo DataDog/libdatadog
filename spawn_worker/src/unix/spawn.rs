@@ -5,7 +5,8 @@
 
 #[cfg(target_os = "linux")]
 mod linux {
-    use std::io::{Seek, Write};
+    use std::ffi::CString;
+    use std::io::{BufRead, BufReader, Seek, Write};
 
     pub(crate) fn write_memfd(name: &str, contents: &[u8]) -> anyhow::Result<memfd::Memfd> {
         // This leaks a fd, but a fd to the TXT segment, which is fine.
@@ -23,6 +24,27 @@ mod linux {
     use crate::TRAMPOLINE_BIN;
     pub(crate) fn write_trampoline() -> anyhow::Result<memfd::Memfd> {
         write_memfd("spawn_worker_trampoline", TRAMPOLINE_BIN)
+    }
+
+    /// Discover the dynamic linker path by scanning /proc/self/maps.
+    /// Looks for ld-linux-*.so or ld-musl-*.so entries.
+    pub(crate) fn discover_ldso_path() -> Option<CString> {
+        let file = std::fs::File::open("/proc/self/maps").ok()?;
+        for line in BufReader::new(file).lines() {
+            let line = line.ok()?;
+            // Each line: "addr-addr perms offset dev ino [path]"
+            let path = line.split_whitespace().last()?;
+            let filename = path.split('/').last().unwrap_or("");
+            // Match ld-linux-*, ld-musl-*, or ld.so.*
+            if (filename.starts_with("ld-linux")
+                || filename.starts_with("ld-musl")
+                || filename.starts_with("ld.so"))
+                && filename.contains(".so")
+            {
+                return CString::new(path).ok();
+            }
+        }
+        None
     }
 }
 
@@ -59,6 +81,10 @@ mod helper {
         pub fn set(&mut self, index: usize, item: CString) {
             self.ptrs[index] = item.as_ptr();
             self.items[index] = item;
+        }
+
+        pub fn items(&self) -> &[CString] {
+            &self.items
         }
     }
 }
@@ -98,6 +124,11 @@ use nix::libc;
 
 #[derive(Clone)]
 pub enum SpawnMethod {
+    /// Execute ddtrace.so directly (no temp file, no memfd): ddtrace.so's
+    /// ELF entry point bootstraps ld.so from its embedded trampoline binary.
+    /// Requires __DD_LDSO_PATH in the environment.
+    #[cfg(target_os = "linux")]
+    ExecSolib,
     #[cfg(target_os = "linux")]
     FdExec,
     #[cfg(not(target_os = "macos"))]
@@ -128,7 +159,11 @@ impl Target {
         let current_exec_path = env::current_exe()?;
         let current_exec_filename = current_exec_path.file_name().unwrap_or_default();
         #[cfg(target_os = "linux")]
-        let default_method = SpawnMethod::FdExec;
+        let default_method = if linux::discover_ldso_path().is_some() {
+            SpawnMethod::ExecSolib
+        } else {
+            SpawnMethod::FdExec
+        };
 
         #[cfg(not(target_os = "linux"))]
         let default_method = SpawnMethod::Exec;
@@ -441,6 +476,96 @@ impl SpawnWorker {
         let skip_close_fd = 0;
 
         let mut spawn: Box<dyn FnMut()> = match spawn_method {
+            #[cfg(target_os = "linux")]
+            SpawnMethod::ExecSolib => {
+                // SSI mode: DD_LOADER_PACKAGE_PATH is set by dd_library_loader to the
+                // root of the SSI package.  libddtrace_php.so lives at
+                // .../linux-{gnu,musl}/loader/.  We invoke it via the dynamic loader
+                // explicitly rather than relying on PT_INTERP so that, in the future,
+                // we can support both glibc and musl in the same binary:
+                //   execve(ld_path, [ld_path, lib_path, process_name, "", lib_path, deps..., symbol], envp)
+                // ld.so loads libc and all other deps, then calls _dd_ssi_entry.
+                // ssi_entry.c skips the first two argv entries (ld_path, lib_path) so the
+                // entry function receives the standard trampoline argv format.
+                // Determine glibc vs musl from the dynamic loader in the current
+                // process — the same loader will be used to run libddtrace_php.so.
+                let os_subdir = linux::discover_ldso_path()
+                    .and_then(|ldso| {
+                        let s = ldso.to_str().ok()?.to_owned();
+                        let fname = s.rsplit('/').next().unwrap_or("");
+                        Some(if fname.starts_with("ld-musl") {
+                            "linux-musl"
+                        } else {
+                            "linux-gnu"
+                        })
+                    })
+                    .unwrap_or("linux-gnu");
+
+                let ssi_lib_path: Option<CString> = std::env::var("DD_LOADER_PACKAGE_PATH")
+                    .ok()
+                    .and_then(|pkg_path| {
+                        CString::new(format!(
+                            "{}/{}/loader/libddtrace_php.so",
+                            pkg_path, os_subdir
+                        ))
+                        .ok()
+                    });
+
+                // The lib we're executing is either libddtrace_php.so (SSI)
+                // or ddtrace.so (o/wise).
+                let lib_path = match &self.target {
+                    Target::Entrypoint(e) => ssi_lib_path.clone().unwrap_or_else(|| {
+                        let (path, _) =
+                            unsafe { crate::get_dl_path_raw(e.ptr as *const libc::c_void) };
+                        path.unwrap_or_else(|| CString::new("").unwrap())
+                    }),
+                    _ => anyhow::bail!("ExecSolib requires Target::Entrypoint"),
+                };
+
+                let ldso_path = linux::discover_ldso_path()
+                    .ok_or_else(|| anyhow::format_err!("can't find dynamic linker"))?;
+
+                if ssi_lib_path.is_some() {
+                    // SSI: update argv[2] to point at libddtrace_php.so (may currently
+                    // point at ddtrace.so due to RTLD_DEEPBIND on the entry symbol).
+                    argv.set(2, lib_path.clone());
+                    // Build ld_argv: [ld_path, lib_path, process_name, "", lib_path, deps..., symbol]
+                    let mut ld_argv = ExecVec::empty();
+                    ld_argv.push(ldso_path.clone());
+                    ld_argv.push(lib_path.clone());
+                    for item in argv.items() {
+                        ld_argv.push(item.clone());
+                    }
+                    tracing::debug!(
+                        "spawn: ExecSolib SSI execve ld={:?} lib={:?}",
+                        ldso_path,
+                        lib_path
+                    );
+                    Box::new(move || unsafe {
+                        libc::execve(ldso_path.as_ptr(), ld_argv.as_ptr(), envp.as_ptr());
+                        panic!("ExecSolib SSI execve failed");
+                    })
+                } else {
+                    // Non-SSI: ddtrace.so has no PT_INTERP and uses solib_bootstrap.c
+                    // as its ELF entry point; it self-relocates and loads ld.so manually.
+                    // Pass __DD_LDSO_PATH so the bootstrap can find the dynamic linker.
+                    let ldso_env = {
+                        let mut s = Vec::with_capacity(
+                            b"__DD_LDSO_PATH=".len() + ldso_path.as_bytes().len() + 1,
+                        );
+                        s.extend_from_slice(b"__DD_LDSO_PATH=");
+                        s.extend_from_slice(ldso_path.as_bytes());
+                        s.push(0);
+                        unsafe { CString::from_vec_with_nul_unchecked(s) }
+                    };
+                    envp.push(ldso_env);
+                    tracing::debug!("spawn: ExecSolib non-SSI execve {:?}", lib_path);
+                    Box::new(move || unsafe {
+                        libc::execve(lib_path.as_ptr(), argv.as_ptr(), envp.as_ptr());
+                        panic!("ExecSolib execve failed");
+                    })
+                }
+            }
             #[cfg(target_os = "linux")]
             SpawnMethod::FdExec => {
                 let fd = linux::write_trampoline()?;

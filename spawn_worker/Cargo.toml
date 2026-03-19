@@ -12,6 +12,7 @@ anyhow = { version = "1.0" }
 io-lifetimes = { version = "1.0" }
 fastrand = "2.0.1"
 libc = "0.2"
+tracing = { version = "0.1" }
 
 [build-dependencies]
 cc_utils = { path = "../tools/cc_utils" }
