@@ -2974,6 +2974,7 @@ dependencies = [
  "criterion",
  "cxx",
  "cxx-build",
+ "errno",
  "goblin",
  "http",
  "libc",
