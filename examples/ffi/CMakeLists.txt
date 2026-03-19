@@ -19,6 +19,13 @@ endfunction()
 # Uncomment to debug build commands
 # set(CMAKE_VERBOSE_MAKEFILE ON)
 
+if (MSVC)
+    # warning level 4 and treat warnings as errors
+    add_compile_options(/W4 /WX)
+else()
+    add_compile_options(-Wall -Wextra -Werror)
+endif()
+
 add_executable(exporter exporter.cpp)
 # needed for designated initializers
 target_compile_features(exporter PRIVATE cxx_std_20)
