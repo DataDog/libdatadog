@@ -819,13 +819,13 @@ impl<H: HttpClientTrait + MaybeSend + Sync + 'static> TraceExporter<H> {
         chunks: usize,
         attempts: u32,
     ) -> Result<AgentResponse, TraceExporterError> {
-        let status = response.status().as_u16();
+        let status = response.status();
 
         // Check if the agent state has changed for error responses
         self.info_response_observer.check_response(&response);
 
         let send_result = SendResult::failure(
-            TransportErrorType::Http(status),
+            TransportErrorType::Http(status.as_u16()),
             payload_len,
             chunks,
             attempts,
@@ -896,14 +896,14 @@ impl<H: HttpClientTrait + MaybeSend + Sync + 'static> TraceExporter<H> {
         // Check if the agent state has changed
         self.info_response_observer.check_response(&response);
 
-        let status = response.status().as_u16();
+        let status = response.status();
         let payload_version_changed = self.check_payload_version_changed(&response);
         let body = String::from_utf8_lossy(response.body()).to_string();
 
-        if !response.status().is_success() {
-            warn!(status, "Agent returned non-success status for trace send");
+        if !status.is_success() {
+            warn!(status = status.as_u16(), "Agent returned non-success status for trace send");
             let send_result = SendResult::failure(
-                TransportErrorType::Http(status),
+                TransportErrorType::Http(status.as_u16()),
                 payload_len,
                 chunks,
                 attempts,
@@ -1514,7 +1514,7 @@ mod tests {
         }
         .unwrap();
 
-        assert_eq!(code, 500);
+        assert_eq!(code, http::StatusCode::INTERNAL_SERVER_ERROR);
     }
 
     #[test]

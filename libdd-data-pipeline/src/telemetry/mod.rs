@@ -677,7 +677,7 @@ mod tests {
     fn telemetry_from_ok_response_test() {
         let result = Ok((
             http::Response::builder()
-                .status(200)
+                .status(http::StatusCode::OK)
                 .body(Bytes::new())
                 .unwrap(),
             3,
@@ -699,7 +699,7 @@ mod tests {
     fn telemetry_from_ok_response_with_p0_drops_test() {
         let result = Ok((
             http::Response::builder()
-                .status(200)
+                .status(http::StatusCode::OK)
                 .body(Bytes::new())
                 .unwrap(),
             3,
@@ -721,7 +721,7 @@ mod tests {
     #[test]
     fn telemetry_from_request_error_test() {
         let error_response = http::Response::builder()
-            .status(400)
+            .status(http::StatusCode::BAD_REQUEST)
             .body(Bytes::new())
             .unwrap();
         let result = Err(SendWithRetryError::Http(error_response, 5));

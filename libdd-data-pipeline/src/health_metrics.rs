@@ -671,10 +671,11 @@ mod tests {
     mod send_with_retry_conversion {
         use super::*;
         use bytes::Bytes;
+        use http::StatusCode;
         use libdd_trace_utils::send_with_retry::{SendWithRetryError, SendWithRetryResult};
 
         /// Helper to create a mock HTTP response for testing
-        fn mock_response(status: u16) -> http::Response<Bytes> {
+        fn mock_response(status: StatusCode) -> http::Response<Bytes> {
             http::Response::builder()
                 .status(status)
                 .body(Bytes::from_static(b"test body"))
@@ -683,7 +684,7 @@ mod tests {
 
         #[test]
         fn test_from_retry_result_success_2xx() {
-            let response = mock_response(200);
+            let response = mock_response(StatusCode::OK);
             let retry_result: SendWithRetryResult = Ok((response, 1));
 
             let send_result = SendResult::from_retry_result(&retry_result, 1024, 5);
@@ -696,7 +697,7 @@ mod tests {
 
         #[test]
         fn test_from_retry_result_http_error() {
-            let response = mock_response(400);
+            let response = mock_response(StatusCode::BAD_REQUEST);
             let retry_result: SendWithRetryResult = Err(SendWithRetryError::Http(response, 3));
 
             let send_result = SendResult::from_retry_result(&retry_result, 2048, 10);
@@ -760,7 +761,7 @@ mod tests {
 
         #[test]
         fn test_from_retry_result_preserves_context() {
-            let response = mock_response(200);
+            let response = mock_response(StatusCode::OK);
             let retry_result: SendWithRetryResult = Ok((response, 2));
 
             let send_result = SendResult::from_retry_result(&retry_result, 4096, 25);
