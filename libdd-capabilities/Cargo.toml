@@ -16,6 +16,6 @@ bench = false
 
 [dependencies]
 http = "1"
-bytes = "1.4"
+bytes = "1.11.1"
 anyhow = "1.0"
 thiserror = "1.0"
