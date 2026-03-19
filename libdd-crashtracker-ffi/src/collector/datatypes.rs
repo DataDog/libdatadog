@@ -58,6 +58,7 @@ pub struct EndpointConfig<'a> {
     pub url: CharSlice<'a>,
     pub api_key: CharSlice<'a>,
     pub test_token: CharSlice<'a>,
+    pub timeout: u64,
     pub use_system_resolver: bool,
 }
 
@@ -109,6 +110,9 @@ impl<'a> TryFrom<Config<'a>> for libdd_crashtracker::CrashtrackerConfiguration {
         if let Some(test_token) = value.endpoint.test_token.try_to_string_option()? {
             builder = builder.endpoint_test_token(&test_token);
         }
+        if value.endpoint.timeout != 0 {
+            builder = builder.endpoint_timeout_ms(value.endpoint.timeout);
+        }
         if let Some(url) = value.endpoint.url.try_to_string_option()? {
             builder = builder.endpoint_url(&url);
         }
@@ -153,6 +157,7 @@ mod tests {
                 api_key: CharSlice::empty(),
                 test_token: CharSlice::empty(),
                 use_system_resolver: false,
+                timeout: 0,
             },
             optional_unix_socket_filename: CharSlice::empty(),
             resolve_frames: StacktraceCollection::Disabled,
@@ -208,6 +213,20 @@ mod tests {
         let expected = CrashtrackerConfiguration::builder()
             .endpoint_url("http://localhost:8126")
             .endpoint_test_token("test-session-token")
+            .build()?;
+        assert_eq!(config, expected);
+        Ok(())
+    }
+
+    #[test]
+    fn test_config_try_from_endpoint_timeout() -> anyhow::Result<()> {
+        let mut ffi_config = create_config_default();
+        ffi_config.endpoint.url = CharSlice::from("http://localhost:8126");
+        ffi_config.endpoint.timeout = 100_000;
+        let config = CrashtrackerConfiguration::try_from(ffi_config)?;
+        let expected = CrashtrackerConfiguration::builder()
+            .endpoint_url("http://localhost:8126")
+            .endpoint_timeout_ms(100_000)
             .build()?;
         assert_eq!(config, expected);
         Ok(())
