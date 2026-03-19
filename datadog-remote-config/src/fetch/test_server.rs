@@ -216,7 +216,7 @@ impl RemoteConfigServer {
                 tracer_version: "1.2.3".to_string(),
                 endpoint: self.endpoint.clone(),
             },
-            #[cfg(not(all(feature = "live-debugger", not(target_arch = "wasm32"))))]
+            #[cfg(any(not(feature = "live-debugger"), target_arch = "wasm32"))]
             products: vec![RemoteConfigProduct::ApmTracing],
             #[cfg(all(feature = "live-debugger", not(target_arch = "wasm32")))]
             products: vec![
