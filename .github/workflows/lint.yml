@@ -51,8 +51,6 @@ jobs:
         } >> $GITHUB_OUTPUT
 
   actionlint:
-    needs: setup
-    if: needs.setup.outputs.crates-count != '0'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout sources

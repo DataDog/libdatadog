@@ -58,8 +58,6 @@ runs:
           echo "status=skipped" >> $GITHUB_OUTPUT
           exit 0
         fi
-        if RUST_LOG=debug ${{ github.action_path }}/../target/release/crates-reporter $PR_BASE_REF; then
-          echo "status=success" >> $GITHUB_OUTPUT
-        else
+        if ! RUST_LOG=debug ${{ github.action_path }}/../target/release/crates-reporter $PR_BASE_REF; then
           echo "status=skipped" >> $GITHUB_OUTPUT
         fi

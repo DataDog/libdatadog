@@ -44,3 +44,18 @@ pub fn changed_files(base_ref: &str) -> Result<Vec<String>> {
 
     Ok(files)
 }
+
+pub fn has_workflow_changes(base_ref: &str) -> Result<bool> {
+    let output = Command::new("git")
+        .args(["diff", "--name-only", &format!("origin/{base_ref}...HEAD")])
+        .output()
+        .context("Failed to run git diff")?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        bail!("git diff failed against origin/{base_ref}: {stderr}");
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    Ok(stdout.lines().any(|l| l.starts_with(".github/workflows/")))
+}

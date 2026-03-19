@@ -66,20 +66,12 @@ pub fn parse_crate_info(manifest: &Path) -> Result<CrateInfo> {
         .with_context(|| format!("No package.name in {}", manifest.display()))?
         .to_string();
 
-    // version.workspace = true → use "workspace" as the version string
-    let version = if let Some(ver_table) = package.get("version").and_then(|v| v.as_table()) {
-        if ver_table.get("workspace").and_then(|v| v.as_bool()) == Some(true) {
-            "workspace".to_string()
-        } else {
-            "workspace".to_string() // unusual but treat as workspace
-        }
-    } else {
-        package
-            .get("version")
-            .and_then(|v| v.as_str())
-            .unwrap_or("workspace")
-            .to_string()
-    };
+    // version.workspace = true results in a table, not a string; as_str() returns None for tables
+    let version = package
+        .get("version")
+        .and_then(|v| v.as_str())
+        .unwrap_or("workspace")
+        .to_string();
 
     // publish = false means not publishable; anything else (missing, true, list) means publishable
     let publish = match package.get("publish") {

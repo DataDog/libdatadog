@@ -11,23 +11,27 @@
 //!   affected_crates        – JSON array of {name, version, path, manifest}
 //!   affected_crates_count  – integer
 
-use anyhow::{anyhow, Result};
+use anyhow::Result;
 use cargo_metadata::camino::Utf8Path;
 use cargo_metadata::Package;
 use ci_shared::git;
 use ci_shared::workspace;
 use ci_shared::crate_detection::CrateInfo;
 use ci_shared::github_output::set_output;
+use clap::Parser;
 use std::collections::HashSet;
+
+#[derive(Parser)]
+#[command(about = "Computes all crates affected by changes in a PR or push")]
+struct Args {
+    /// Base reference to compare against (e.g. origin/main)
+    base_ref: String,
+}
 
 fn main() -> Result<()> {
     env_logger::init();
-    let args: Vec<String> = std::env::args().collect();
-    if args.len() < 2 {
-        return Err(anyhow!("A reference base needs to be passed"));
-    }
-
-    let base_ref = args[1].strip_prefix("origin/").unwrap_or(&args[1]).to_string();
+    let args = Args::parse();
+    let base_ref = args.base_ref.strip_prefix("origin/").unwrap_or(&args.base_ref).to_string();
 
     git::fetch_base(&base_ref)?;
 
@@ -39,6 +43,10 @@ fn main() -> Result<()> {
 
     if changed_crates.is_empty() {
         log::info!("Changed crates is empty");
+        if git::has_workflow_changes(&base_ref)? {
+            log::info!("Workflow files changed, running all tests");
+            return set_output("status", "skipped");
+        }
         return build_output(None, None, &base_ref);
     }
 
@@ -69,11 +77,8 @@ fn collect_changed_crates(changed_files: &[String], members: &[Package], workspa
             if file == relative_dir_str || file.starts_with(&format!("{relative_dir_str}/")) {
                 if crate_inventory.insert(member.name.to_string()) {
                     crates.push(CrateInfo {
-                        name: member.name.as_str().to_string(),
-                        version: format!(
-                            "{}.{}.{}",
-                            member.version.major, member.version.minor, member.version.patch
-                        ),
+                        name: member.name.to_string(),
+                        version: member.version.to_string(),
                         manifest: member.manifest_path.clone().into(),
                         path: member.manifest_path.parent().unwrap().into(),
                         publish: if let Some(publishable) = &member.publish {
@@ -120,6 +125,7 @@ fn build_output(
         log::info!("affected_crates_count: {:?}", affected_len);
         log::info!("base_ref: {:?}", base_ref);
     } else {
+        set_output("status", "success")?;
         set_output("crates", &changed)?;
         set_output("crates_count", &changed_len)?;
         set_output("affected_crates", &affected)?;

@@ -21,11 +21,11 @@ jobs:
       id: set-dirs
       env:
         CHANGED_CRATES_STATUS: ${{ steps.changed-crates.outputs.status }}
-        CHANGED_CRATES: ${{ steps.changed-crates.outputs.crates }}
+        AFFECTED_CRATES: ${{ steps.changed-crates.outputs.affected_crates }}
       run: |
         ALL_FUZZ='["libdd-alloc", "libdd-profiling", "libdd-common-ffi", "libdd-trace-utils"]'
         if [[ "$CHANGED_CRATES_STATUS" == "success" ]]; then
-          FILTERED=$(echo "$CHANGED_CRATES" | jq --argjson fuzz "$ALL_FUZZ" \
+          FILTERED=$(echo "$AFFECTED_CRATES" | jq --argjson fuzz "$ALL_FUZZ" \
             '[.[] | .path | split("/") | last | . as $dir | if ($fuzz | index($dir) != null) then $dir else empty end]')
           COUNT=$(echo "$FILTERED" | jq 'length')
         else
