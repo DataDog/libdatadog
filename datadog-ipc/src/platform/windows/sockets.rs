@@ -198,7 +198,7 @@ fn pipe_read(
 
 fn pipe_write(h: SysHANDLE, data: &[u8], blocking: bool) -> io::Result<()> {
     if !blocking {
-        let mode = PIPE_NOWAIT;
+        let mode = PIPE_NOWAIT | PIPE_READMODE_MESSAGE;
         unsafe { SetNamedPipeHandleState(h, &mode, null(), null()) };
     }
 
@@ -214,7 +214,7 @@ fn pipe_write(h: SysHANDLE, data: &[u8], blocking: bool) -> io::Result<()> {
     };
 
     if !blocking {
-        let mode = PIPE_WAIT;
+        let mode = PIPE_WAIT | PIPE_READMODE_MESSAGE;
         unsafe { SetNamedPipeHandleState(h, &mode, null(), null()) };
     }
 
