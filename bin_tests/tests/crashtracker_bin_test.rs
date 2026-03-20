@@ -299,7 +299,7 @@ fn test_collector_no_allocations_stacktrace_modes() {
         let _ = fs::remove_file(&detector_log_path);
 
         let config = CrashTestConfig::new(
-            BuildProfile::Debug,
+            BuildProfile::Release,
             TestMode::RuntimePreloadLogger,
             CrashType::NullDeref,
         )

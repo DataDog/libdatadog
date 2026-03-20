@@ -84,3 +84,81 @@ impl<const N: usize> Drop for SaGuard<N> {
         );
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use nix::sys::signal::{self, Signal};
+    use nix::unistd::Pid;
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn signal_is_ignored_while_guard_is_active() {
+        let guard = SaGuard::<1>::new(&[Signal::SIGUSR1]).unwrap();
+
+        // Send SIGUSR1 to the process. The default action is to terminate, so if
+        // the guard didn't set SIG_IGN this test process would die
+        signal::kill(Pid::this(), Signal::SIGUSR1).unwrap();
+
+        // If we get here, signal was successfully ignored
+        drop(guard);
+    }
+
+    /// After the guard is dropped, the original handler should be restored.
+    /// Install a custom handler, create a guard,drop the guard, then send the
+    /// signal and verify the custom handler fires
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn original_handler_restored_after_drop() {
+        static HANDLER_CALLED: AtomicBool = AtomicBool::new(false);
+
+        extern "C" fn custom_handler(_: libc::c_int) {
+            HANDLER_CALLED.store(true, Ordering::SeqCst);
+        }
+
+        // Install a custom handler
+        let custom_action = SigAction::new(
+            SigHandler::Handler(custom_handler),
+            SaFlags::empty(),
+            signal::SigSet::empty(),
+        );
+        let prev = unsafe { signal::sigaction(Signal::SIGUSR2, &custom_action).unwrap() };
+
+        // Create then drop the guard (dropped when out of scope)
+        {
+            let _guard = SaGuard::<1>::new(&[Signal::SIGUSR2]).unwrap();
+            signal::kill(Pid::this(), Signal::SIGUSR2).unwrap();
+            assert!(
+                !HANDLER_CALLED.load(Ordering::SeqCst),
+                "custom handler should not fire while guard is active"
+            );
+        }
+        // Guard is dropped; custom handler should be restored
+        HANDLER_CALLED.store(false, Ordering::SeqCst);
+        unsafe {
+            libc::raise(Signal::SIGUSR2 as libc::c_int);
+        }
+        assert!(
+            HANDLER_CALLED.load(Ordering::SeqCst),
+            "custom handler should fire after guard is dropped"
+        );
+
+        // Restore original handler
+        unsafe {
+            signal::sigaction(Signal::SIGUSR2, &prev).unwrap();
+        }
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn multiple_signals_ignored() {
+        let guard = SaGuard::<2>::new(&[Signal::SIGUSR1, Signal::SIGUSR2]).unwrap();
+
+        // Both signals should be safely ignored
+        signal::kill(Pid::this(), Signal::SIGUSR1).unwrap();
+        signal::kill(Pid::this(), Signal::SIGUSR2).unwrap();
+
+        drop(guard);
+    }
+}
