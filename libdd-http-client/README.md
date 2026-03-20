@@ -19,7 +19,7 @@ let client = HttpClient::new(
 
 let request = HttpRequest::new(
     HttpMethod::Post,
-    "http://localhost:8126/v0.4/traces".to_owned(),
+    "/v0.4/traces".to_owned(),
 );
 let response = client.send(request).await?;
 println!("Status: {}", response.status_code);
