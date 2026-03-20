@@ -565,13 +565,33 @@ impl SeqpacketConn {
         let srv_raw = server_handle.as_raw_handle() as SysHANDLE;
         unsafe { ConnectNamedPipe(srv_raw, &mut ov) };
 
-        let client = Self::connect(&name_str)?;
+        // connect() blocks reading the 4-byte PID handshake that try_accept() writes after
+        // accepting.  Run connect() on a thread so we can wait for ConnectNamedPipe and write
+        // the PID bytes concurrently, matching what try_accept() does.
+        let client_thread = std::thread::spawn(move || Self::connect(name_str));
 
-        // Wait for the server-side accept to complete.
+        // Wait for the client to connect (ConnectNamedPipe completes).
         unsafe {
             WaitForSingleObject(event, INFINITE);
             CloseHandle(event as HANDLE);
         }
+
+        // Write PID handshake to unblock the client thread's ReadFile in connect().
+        let pid_bytes = pid.to_le_bytes();
+        let mut written: u32 = 0;
+        unsafe {
+            WriteFile(
+                srv_raw,
+                pid_bytes.as_ptr() as _,
+                4,
+                &mut written,
+                null_mut(),
+            )
+        };
+
+        let client = client_thread
+            .join()
+            .map_err(|_| io::Error::from(io::ErrorKind::Other))??;
 
         let server = Self {
             handle: server_handle,

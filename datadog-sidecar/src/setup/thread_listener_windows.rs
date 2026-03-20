@@ -188,9 +188,9 @@ pub fn connect_to_master(pid: i32) -> io::Result<Box<SidecarTransport>> {
     info!("Connecting to master listener via named pipe (PID {})", pid);
 
     let liaison = NamedPipeLiaison::new(format!("libdatadog_{}_", pid));
-    let conn = liaison.connect_to_server().map_err(|e| {
-        io::Error::other(format!("Failed to connect to master listener: {}", e))
-    })?;
+    let conn = liaison
+        .connect_to_server()
+        .map_err(|e| io::Error::other(format!("Failed to connect to master listener: {}", e)))?;
 
     info!("Successfully connected to master listener");
     Ok(Box::new(SidecarTransport::from(conn)))

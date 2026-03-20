@@ -665,7 +665,11 @@ impl SidecarInterface for ConnectionSidecarHandler {
     }
 
     async fn set_session_process_tags(&self, _peer: PeerCredentials, process_tags: Vec<Tag>) {
-        let session_id = self.session_id.get().map(|s| s.as_str()).unwrap_or_default();
+        let session_id = self
+            .session_id
+            .get()
+            .map(|s| s.as_str())
+            .unwrap_or_default();
         let session = self.server.get_session(session_id);
         *session.process_tags.lock_or_panic() = process_tags;
     }
@@ -886,7 +890,11 @@ impl SidecarInterface for ConnectionSidecarHandler {
     }
 
     async fn set_test_session_token(&self, _peer: PeerCredentials, token: String) {
-        let session_id = self.session_id.get().map(|s| s.as_str()).unwrap_or_default();
+        let session_id = self
+            .session_id
+            .get()
+            .map(|s| s.as_str())
+            .unwrap_or_default();
         let session = self.server.get_session(session_id);
         let token = if token.is_empty() {
             None
