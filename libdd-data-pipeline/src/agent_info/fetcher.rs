@@ -3,7 +3,10 @@
 //! Provides utilities to fetch the agent /info endpoint and an automatic fetcher to keep info
 //! up-to-date
 
-use super::{schema::AgentInfo, AGENT_INFO_CACHE};
+use super::{
+    schema::{AgentInfo, AgentInfoStruct},
+    AGENT_INFO_CACHE,
+};
 use anyhow::{anyhow, Result};
 use bytes::Bytes;
 use libdd_capabilities::{HttpClientTrait, MaybeSend};
@@ -25,6 +28,36 @@ pub enum FetchInfoStatus {
     NewState(Box<AgentInfo>),
 }
 
+/// Fetch info from the given endpoint and compare state-related hashes.
+///
+/// If either the agent state hash or container tags hash is different from the current one:
+/// - Return a `FetchInfoStatus::NewState` of the info struct
+/// - Else return `FetchInfoStatus::SameState`
+async fn fetch_info_with_state_and_container_tags<H: HttpClientTrait>(
+    info_endpoint: &Endpoint,
+    current_state_hash: Option<&str>,
+    current_container_tags_hash: Option<&str>,
+) -> Result<FetchInfoStatus> {
+    let (new_state_hash, body_data, container_tags_hash) =
+        fetch_and_hash_response::<H>(info_endpoint).await?;
+
+    if current_state_hash.is_some_and(|state| state == new_state_hash)
+        && (current_container_tags_hash.is_none()
+            || current_container_tags_hash == container_tags_hash.as_deref())
+    {
+        return Ok(FetchInfoStatus::SameState);
+    }
+
+    let mut info_struct: AgentInfoStruct = serde_json::from_slice(&body_data)?;
+    info_struct.container_tags_hash = container_tags_hash;
+
+    let info = Box::new(AgentInfo {
+        state_hash: new_state_hash,
+        info: info_struct,
+    });
+    Ok(FetchInfoStatus::NewState(info))
+}
+
 /// Fetch info from the given info_endpoint and compare its state to the current state hash.
 ///
 /// If the state hash is different from the current one:
@@ -34,17 +67,7 @@ pub async fn fetch_info_with_state<H: HttpClientTrait>(
     info_endpoint: &Endpoint,
     current_state_hash: Option<&str>,
 ) -> Result<FetchInfoStatus> {
-    let (new_state_hash, body_data) = fetch_and_hash_response::<H>(info_endpoint).await?;
-
-    if current_state_hash.is_some_and(|state| state == new_state_hash) {
-        return Ok(FetchInfoStatus::SameState);
-    }
-
-    let info = Box::new(AgentInfo {
-        state_hash: new_state_hash,
-        info: serde_json::from_slice(&body_data)?,
-    });
-    Ok(FetchInfoStatus::NewState(info))
+    fetch_info_with_state_and_container_tags::<H>(info_endpoint, current_state_hash, None).await
 }
 
 /// Fetch the info endpoint once and return the info.
@@ -78,23 +101,30 @@ pub async fn fetch_info<H: HttpClientTrait>(info_endpoint: &Endpoint) -> Result<
 
 /// Fetch and hash the response from the agent info endpoint.
 ///
-/// Returns a tuple of (state_hash, response_body_bytes).
+/// Returns a tuple of (state_hash, response_body_bytes, container_tags_hash).
 /// The hash is calculated using SHA256 to match the agent's calculation method.
 async fn fetch_and_hash_response<H: HttpClientTrait>(
     info_endpoint: &Endpoint,
-) -> Result<(String, bytes::Bytes)> {
+) -> Result<(String, bytes::Bytes, Option<String>)> {
     let req = info_endpoint
         .to_request_builder(concat!("Libdatadog/", env!("CARGO_PKG_VERSION")))?
         .body(Bytes::new())
         .map_err(|e| anyhow!("Failed to build request: {}", e))?;
 
     let client = H::new_client();
-    let res = client.request(req).await.map_err(|e| anyhow!("{}", e))?;
+    let res = client.request(req).await?;
+
+    // Extract the Datadog-Container-Tags-Hash header
+    let container_tags_hash = res
+        .headers()
+        .get("Datadog-Container-Tags-Hash")
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.to_string());
 
     let body_data = res.into_body();
     let hash = format!("{:x}", Sha256::digest(&body_data));
 
-    Ok((hash, body_data))
+    Ok((hash, body_data, container_tags_hash))
 }
 
 /// Fetch the info endpoint and update an ArcSwap keeping it up-to-date.
@@ -243,7 +273,15 @@ impl<H: HttpClientTrait> AgentInfoFetcher<H> {
     async fn fetch_and_update(&self) {
         let current_info = AGENT_INFO_CACHE.load();
         let current_hash = current_info.as_ref().map(|info| info.state_hash.as_str());
-        let res = fetch_info_with_state::<H>(&self.info_endpoint, current_hash).await;
+        let current_container_tags_hash = current_info
+            .as_ref()
+            .and_then(|info| info.info.container_tags_hash.as_deref());
+        let res = fetch_info_with_state_and_container_tags::<H>(
+            &self.info_endpoint,
+            current_hash,
+            current_container_tags_hash,
+        )
+        .await;
         match res {
             Ok(FetchInfoStatus::NewState(new_info)) => {
                 debug!("New /info state received");
@@ -428,6 +466,65 @@ mod single_threaded_tests {
             )
         );
         assert!(matches!(same_state_info_status, FetchInfoStatus::SameState));
+    }
+
+    #[cfg_attr(miri, ignore)]
+    #[tokio::test]
+    async fn test_fetch_info_with_same_state_but_different_container_tags_hash() {
+        let server = MockServer::start();
+        let mock = server
+            .mock_async(|when, then| {
+                when.path("/info");
+                then.status(200)
+                    .header("content-type", "application/json")
+                    .header("Datadog-Container-Tags-Hash", "new-container-hash")
+                    .body(TEST_INFO);
+            })
+            .await;
+        let endpoint = Endpoint::from_url(server.url("/info").parse().unwrap());
+
+        let info_status = fetch_info_with_state_and_container_tags::<NativeCapabilities>(
+            &endpoint,
+            Some(TEST_INFO_HASH),
+            Some("old-container-hash"),
+        )
+        .await
+        .unwrap();
+
+        mock.assert();
+        assert!(
+            matches!(info_status, FetchInfoStatus::NewState(info) if *info == AgentInfo {
+                state_hash: TEST_INFO_HASH.to_string(),
+                info: AgentInfoStruct {
+                    container_tags_hash: Some("new-container-hash".to_string()),
+                    ..serde_json::from_str(TEST_INFO).unwrap()
+                },
+            })
+        );
+    }
+
+    #[cfg_attr(miri, ignore)]
+    #[tokio::test]
+    async fn test_fetch_info_can_ignore_container_tags_hash() {
+        let server = MockServer::start();
+        let mock = server
+            .mock_async(|when, then| {
+                when.path("/info");
+                then.status(200)
+                    .header("content-type", "application/json")
+                    .header("Datadog-Container-Tags-Hash", "new-container-hash")
+                    .body(TEST_INFO);
+            })
+            .await;
+        let endpoint = Endpoint::from_url(server.url("/info").parse().unwrap());
+
+        let info_status =
+            fetch_info_with_state::<NativeCapabilities>(&endpoint, Some(TEST_INFO_HASH))
+                .await
+                .unwrap();
+
+        mock.assert();
+        assert!(matches!(info_status, FetchInfoStatus::SameState));
     }
 
     #[cfg_attr(miri, ignore)]
