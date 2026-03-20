@@ -357,6 +357,7 @@ impl<N: NotifyTarget + 'static> MultiTargetHandlers<N, Self> for ConfigFileStora
 pub struct ShmRemoteConfigsGuard<N: NotifyTarget + 'static> {
     target: Arc<Target>,
     runtime_id: String,
+    notify_target: N,
     remote_configs: ShmRemoteConfigs<N>,
     dynamic_instrumentation_state: DynamicInstrumentationConfigState,
 }
@@ -364,7 +365,7 @@ pub struct ShmRemoteConfigsGuard<N: NotifyTarget + 'static> {
 impl<N: NotifyTarget + 'static> Drop for ShmRemoteConfigsGuard<N> {
     fn drop(&mut self) {
         let fetcher = &self.remote_configs.0;
-        fetcher.delete_runtime(&self.runtime_id, &self.target);
+        fetcher.delete_runtime(&self.runtime_id, &self.target, &self.notify_target);
         if fetcher.invariants().endpoint.test_token.is_some() && fetcher.active_runtimes() == 0 {
             self.remote_configs.shutdown()
         }
@@ -470,6 +471,7 @@ impl<N: NotifyTarget + 'static> ShmRemoteConfigs<N> {
             tags,
             process_tags,
         });
+        let guard_notify_target = notify_target.clone();
         self.0.add_runtime(
             runtime_id.clone(),
             notify_target,
@@ -509,6 +511,7 @@ impl<N: NotifyTarget + 'static> ShmRemoteConfigs<N> {
         ShmRemoteConfigsGuard {
             target,
             runtime_id,
+            notify_target: guard_notify_target,
             remote_configs: self.clone(),
             dynamic_instrumentation_state,
         }

@@ -288,7 +288,7 @@ impl SessionInfo {
                         .as_ref()
                         .map(|i| i.invariants.tracer_version.as_str())
                         .unwrap_or("0.0.0");
-                    app.get_debugger_tags(&version, runtime_id)
+                    app.get_debugger_tags(&version, &self.session_id)
                 };
                 let sender = match debugger_type {
                     DebuggerType::Diagnostics => app.debugger_diagnostics_payload_sender.clone(),
