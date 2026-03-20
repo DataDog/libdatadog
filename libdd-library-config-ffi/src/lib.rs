@@ -78,6 +78,74 @@ pub(crate) mod ffi_types {
         length: usize,
         _lifetime_marker: PhantomData<&'a c_char>,
     }
+
+    #[repr(C)]
+    pub struct CString {
+        ptr: ptr::NonNull<c_char>,
+        length: usize,
+    }
+
+    impl CString {
+        pub fn from_alloc(s: alloc::ffi::CString) -> Self {
+            let length = s.to_bytes().len();
+            Self {
+                ptr: unsafe { ptr::NonNull::new_unchecked(s.into_raw()) },
+                length,
+            }
+        }
+
+        pub fn new_or_empty<T: Into<alloc::vec::Vec<u8>>>(t: T) -> Self {
+            match alloc::ffi::CString::new(t) {
+                Ok(s) => Self::from_alloc(s),
+                Err(_) => Self::from_alloc(alloc::ffi::CString::default()),
+            }
+        }
+    }
+
+    impl Drop for CString {
+        fn drop(&mut self) {
+            let ptr = core::mem::replace(&mut self.ptr, ptr::NonNull::dangling());
+            drop(unsafe {
+                alloc::ffi::CString::from_vec_with_nul_unchecked(alloc::vec::Vec::from_raw_parts(
+                    ptr.as_ptr().cast(),
+                    self.length + 1,
+                    self.length + 1,
+                ))
+            });
+        }
+    }
+
+    #[repr(C)]
+    pub struct Vec<T: Sized> {
+        ptr: *const T,
+        len: usize,
+        capacity: usize,
+        _marker: PhantomData<T>,
+    }
+
+    impl<T> Vec<T> {
+        pub fn from_std(vec: alloc::vec::Vec<T>) -> Self {
+            let mut v = core::mem::ManuallyDrop::new(vec);
+            Self {
+                ptr: v.as_mut_ptr(),
+                len: v.len(),
+                capacity: v.capacity(),
+                _marker: PhantomData,
+            }
+        }
+    }
+
+    impl<T> Drop for Vec<T> {
+        fn drop(&mut self) {
+            if self.capacity == 0 {
+                return;
+            }
+            let vec = unsafe {
+                alloc::vec::Vec::from_raw_parts(self.ptr as *mut T, self.len, self.capacity)
+            };
+            drop(vec)
+        }
+    }
 }
 
 #[cfg(feature = "std")]
@@ -91,6 +159,8 @@ use ffi_types::{self as ffi, AsBytes};
 
 #[cfg(not(feature = "std"))]
 use alloc::boxed::Box;
+#[cfg(not(feature = "std"))]
+use ffi::CString;
 
 use ffi::CharSlice;
 use libdd_library_config::{self as lib_config, LibraryConfigSource};
@@ -171,7 +241,6 @@ impl<'a> ProcessInfo<'a> {
     }
 }
 
-#[cfg(feature = "std")]
 #[repr(C)]
 pub struct LibraryConfig {
     pub name: ffi::CString,
@@ -180,8 +249,8 @@ pub struct LibraryConfig {
     pub config_id: ffi::CString,
 }
 
-#[cfg(feature = "std")]
 impl LibraryConfig {
+    #[cfg(feature = "std")]
     fn rs_vec_to_ffi(configs: Vec<lib_config::LibraryConfig>) -> anyhow::Result<ffi::Vec<Self>> {
         let cfg: Vec<LibraryConfig> = configs
             .into_iter()
@@ -199,6 +268,7 @@ impl LibraryConfig {
         Ok(ffi::Vec::from_std(cfg))
     }
 
+    #[cfg(feature = "std")]
     fn logged_result_to_ffi_with_messages(
         result: libdd_library_config::LoggedResult<Vec<lib_config::LibraryConfig>, anyhow::Error>,
     ) -> LibraryConfigLoggedResult {
