@@ -18,7 +18,7 @@ mod tests {
     use crate::collector::default_signals;
     use crate::crash_info::{SiCodes, SigInfo, SignalNames};
     use crate::shared::constants::*;
-    use crate::{CrashtrackerConfiguration, ErrorKind, StacktraceCollection};
+    use crate::{CrashtrackerConfiguration, ErrorKind};
     use std::time::Duration;
     use tokio::io::{AsyncWriteExt, BufReader};
     use tokio::net::UnixStream;
@@ -54,21 +54,13 @@ mod tests {
         to_socket(sender, DD_CRASHTRACK_END_KIND).await?;
 
         to_socket(sender, DD_CRASHTRACK_BEGIN_CONFIG).await?;
-        to_socket(
-            sender,
-            serde_json::to_string(&CrashtrackerConfiguration::new(
-                vec![],
-                false,
-                false,
-                None,
-                StacktraceCollection::Disabled,
-                default_signals(),
-                Some(Duration::from_secs(3)),
-                None,
-                true,
-            )?)?,
-        )
-        .await?;
+        let builder = CrashtrackerConfiguration::builder();
+        let config = builder
+            .signals(default_signals())
+            .timeout(Duration::from_secs(3))
+            .use_alt_stack(true)
+            .build()?;
+        to_socket(sender, serde_json::to_string(&config)?).await?;
         to_socket(sender, DD_CRASHTRACK_END_CONFIG).await?;
         tokio::time::sleep(delay).await;
         to_socket(sender, DD_CRASHTRACK_DONE).await?;

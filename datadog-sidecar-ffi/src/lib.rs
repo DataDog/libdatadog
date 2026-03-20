@@ -60,6 +60,8 @@ use std::slice;
 use std::sync::Arc;
 use std::time::Duration;
 
+use datadog_sidecar::setup::{connect_to_master, MasterListener};
+
 #[no_mangle]
 #[cfg(target_os = "windows")]
 pub extern "C" fn ddog_setup_crashtracking(
@@ -255,6 +257,7 @@ pub unsafe extern "C" fn ddog_remote_config_reader_for_endpoint<'a>(
             env: env_name.to_utf8_lossy().into(),
             app_version: app_version.to_utf8_lossy().into(),
             tags: tags.as_slice().to_vec(),
+            process_tags: vec![],
         }),
     ))
 }
@@ -306,6 +309,46 @@ pub extern "C" fn ddog_sidecar_connect(connection: &mut *mut SidecarTransport) -
 
     let stream = Box::new(try_c!(datadog_sidecar::start_or_connect_to_sidecar(cfg)));
     *connection = Box::into_raw(stream);
+
+    MaybeError::None
+}
+
+#[no_mangle]
+pub extern "C" fn ddog_sidecar_connect_master(pid: i32) -> MaybeError {
+    let cfg = datadog_sidecar::config::FromEnv::config();
+    #[cfg(unix)]
+    datadog_sidecar::set_sidecar_master_pid(pid as u32);
+    try_c!(MasterListener::start(pid, cfg));
+
+    MaybeError::None
+}
+
+#[no_mangle]
+pub extern "C" fn ddog_sidecar_connect_worker(
+    pid: i32,
+    connection: &mut *mut SidecarTransport,
+) -> MaybeError {
+    let transport = try_c!(connect_to_master(pid));
+    *connection = Box::into_raw(transport);
+
+    MaybeError::None
+}
+
+#[no_mangle]
+pub extern "C" fn ddog_sidecar_shutdown_master_listener() -> MaybeError {
+    try_c!(MasterListener::shutdown());
+
+    MaybeError::None
+}
+
+#[no_mangle]
+pub extern "C" fn ddog_sidecar_is_master_listener_active(pid: i32) -> bool {
+    MasterListener::is_active(pid)
+}
+
+#[no_mangle]
+pub extern "C" fn ddog_sidecar_clear_inherited_listener() -> MaybeError {
+    try_c!(MasterListener::clear_inherited_state());
 
     MaybeError::None
 }
@@ -588,7 +631,7 @@ pub unsafe extern "C" fn ddog_sidecar_session_set_config(
     remote_config_capabilities_count: usize,
     remote_config_enabled: bool,
     is_fork: bool,
-    process_tags: ffi::CharSlice,
+    process_tags: &libdd_common_ffi::Vec<Tag>,
 ) -> MaybeError {
     #[cfg(unix)]
     let remote_config_notify_target = libc::getpid();
@@ -632,7 +675,7 @@ pub unsafe extern "C" fn ddog_sidecar_session_set_config(
             .as_slice()
             .to_vec(),
             remote_config_enabled,
-            process_tags: process_tags.to_utf8_lossy().into(),
+            process_tags: process_tags.to_vec(),
         },
         is_fork
     ));
@@ -646,12 +689,12 @@ pub unsafe extern "C" fn ddog_sidecar_session_set_config(
 pub unsafe extern "C" fn ddog_sidecar_session_set_process_tags(
     transport: &mut Box<SidecarTransport>,
     session_id: ffi::CharSlice,
-    process_tags: ffi::CharSlice,
+    process_tags: &libdd_common_ffi::Vec<Tag>,
 ) -> MaybeError {
     try_c!(blocking::set_session_process_tags(
         transport,
         session_id.to_utf8_lossy().into(),
-        process_tags.to_utf8_lossy().into(),
+        process_tags.to_vec(),
     ));
 
     MaybeError::None

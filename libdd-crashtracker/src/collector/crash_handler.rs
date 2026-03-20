@@ -454,18 +454,8 @@ mod tests {
     }
 
     fn make_test_config() -> CrashtrackerConfiguration {
-        CrashtrackerConfiguration::new(
-            vec![], // additional_files
-            false,  // create_alt_stack
-            false,  // use_alt_stack
-            None,   // endpoint
-            crate::StacktraceCollection::Disabled,
-            vec![],                       // signals
-            Some(Duration::from_secs(1)), // timeout
-            None,                         // unix_socket_path
-            false,                        // demangle_names
-        )
-        .unwrap()
+        let builder = CrashtrackerConfiguration::builder();
+        builder.timeout(Duration::from_secs(1)).build().unwrap()
     }
 
     /// Clears METADATA global, properly freeing any existing Box
