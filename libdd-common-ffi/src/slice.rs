@@ -9,21 +9,17 @@ use core::slice;
 use core::str::Utf8Error;
 
 #[cfg(not(feature = "std"))]
-use alloc::borrow::Cow;
-#[cfg(feature = "std")]
-use std::borrow::Cow;
-
-#[cfg(not(feature = "std"))]
-use alloc::string::{String, ToString};
-#[cfg(not(feature = "std"))]
-use alloc::vec::Vec;
+use alloc::{
+    borrow::Cow,
+    string::{String, ToString},
+    vec::Vec,
+};
 
 #[cfg(feature = "std")]
-use libdd_common::error::FfiSafeErrorMessage;
-#[cfg(feature = "std")]
-use serde::ser::Error;
-#[cfg(feature = "std")]
-use serde::Serializer;
+use {
+    libdd_common::error::FfiSafeErrorMessage, serde::ser::Error, serde::Serializer,
+    std::borrow::Cow,
+};
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug)]

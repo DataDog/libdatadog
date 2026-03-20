@@ -18,11 +18,11 @@ pub use slice::{CharSlice, Slice};
 
 // Modules and re-exports that require std.
 #[cfg(feature = "std")]
-mod error;
-#[cfg(feature = "std")]
 pub mod array_queue;
 #[cfg(feature = "std")]
 pub mod endpoint;
+#[cfg(feature = "std")]
+mod error;
 #[cfg(feature = "std")]
 pub mod handle;
 #[cfg(feature = "std")]
