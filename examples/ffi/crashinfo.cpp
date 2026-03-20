@@ -12,10 +12,9 @@ extern "C" {
 #include <memory>
 #include <optional>
 #include <string>
-#include <thread>
-#include <vector>
 
 static ddog_CharSlice to_slice_c_char(const char *s) { return {.ptr = s, .len = strlen(s)}; }
+[[maybe_unused]]
 static ddog_CharSlice to_slice_c_char(const char *s, std::size_t size) {
   return {.ptr = s, .len = size};
 }
@@ -97,9 +96,9 @@ void add_random_frames(ddog_crasht_Handle_StackTrace* stacktrace) {
     std::string filename = "/path/to/code/file_" + std::to_string(i);
     check_result(ddog_crasht_StackFrame_with_file(new_frame.get(), to_slice_string(filename)),
                  "failed to add filename");
-    check_result(ddog_crasht_StackFrame_with_line(new_frame.get(), i * 4 + 3),
+    check_result(ddog_crasht_StackFrame_with_line(new_frame.get(), static_cast<uint32_t>(i * 4 + 3)),
                  "failed to add line");
-    check_result(ddog_crasht_StackFrame_with_column(new_frame.get(), i * 3 + 7),
+    check_result(ddog_crasht_StackFrame_with_column(new_frame.get(), static_cast<uint32_t>(i * 3 + 7)),
                  "failed to add line");
 
     // This operation consumes the frame, so use .release here
@@ -239,7 +238,7 @@ int main(void) {
   check_result(ddog_crasht_CrashInfoBuilder_with_timestamp(builder.get(), timestamp),
                "Failed to set timestamp");
 
-  ddog_crasht_ProcInfo procinfo = {.pid = 42};
+  ddog_crasht_ProcInfo procinfo = { .pid = 42, .tid = 0 };
   check_result(ddog_crasht_CrashInfoBuilder_with_proc_info(builder.get(), procinfo),
                "Failed to set procinfo");
 
@@ -255,7 +254,7 @@ int main(void) {
   #endif
 
   auto sigInfo = ddog_crasht_SigInfo {
-    .addr = "0xBABEF00D",
+    .addr = to_slice_c_char("0xBABEF00D"),
     .code = 16,
     .code_human_readable = DDOG_CRASHT_SI_CODES_UNKNOWN,
     .signo = -1,
