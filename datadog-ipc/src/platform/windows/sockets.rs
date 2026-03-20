@@ -56,7 +56,9 @@ use windows_sys::Win32::System::Pipes::{
 use windows_sys::Win32::System::Threading::{
     CreateEventA, SetEvent, WaitForMultipleObjects, WaitForSingleObject, INFINITE,
 };
-use windows_sys::Win32::System::IO::{CancelIo, CancelIoEx, GetOverlappedResult, OVERLAPPED, OVERLAPPED_0};
+use windows_sys::Win32::System::IO::{
+    CancelIo, CancelIoEx, GetOverlappedResult, OVERLAPPED, OVERLAPPED_0,
+};
 
 /// Wire-format suffix overhead: 4-byte count + 8 bytes per handle slot.
 ///
@@ -722,9 +724,9 @@ impl Future for ConnectFuture {
     type Output = io::Result<AsyncConn>;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        Pin::new(&mut self.rx).poll(cx).map(|r| {
-            r.unwrap_or_else(|_| Err(io::Error::from(io::ErrorKind::BrokenPipe)))
-        })
+        Pin::new(&mut self.rx)
+            .poll(cx)
+            .map(|r| r.unwrap_or_else(|_| Err(io::Error::from(io::ErrorKind::BrokenPipe))))
     }
 }
 
@@ -758,8 +760,7 @@ impl SeqpacketListener {
         if cancel_raw == 0 {
             return Err(io::Error::last_os_error());
         }
-        let cancel_arc =
-            Arc::new(unsafe { OwnedHandle::from_raw_handle(cancel_raw as RawHandle) });
+        let cancel_arc = Arc::new(unsafe { OwnedHandle::from_raw_handle(cancel_raw as RawHandle) });
         let cancel_for_thread = Arc::clone(&cancel_arc);
 
         let (tx, rx) = tokio::sync::oneshot::channel::<io::Result<AsyncConn>>();
@@ -793,8 +794,7 @@ impl SeqpacketListener {
             {
                 // Overlapped pending - wait for connection or cancellation.
                 let handles = [overlapped_event, cancel_raw];
-                let wait =
-                    unsafe { WaitForMultipleObjects(2, handles.as_ptr() as _, 0, INFINITE) };
+                let wait = unsafe { WaitForMultipleObjects(2, handles.as_ptr() as _, 0, INFINITE) };
 
                 unsafe { CloseHandle(overlapped_event as HANDLE) };
 
@@ -830,7 +830,13 @@ impl SeqpacketListener {
                 let pid_bytes = unsafe { GetCurrentProcessId() }.to_le_bytes();
                 let mut written: u32 = 0;
                 unsafe {
-                    WriteFile(conn_raw, pid_bytes.as_ptr() as _, 4, &mut written, null_mut());
+                    WriteFile(
+                        conn_raw,
+                        pid_bytes.as_ptr() as _,
+                        4,
+                        &mut written,
+                        null_mut(),
+                    );
                 }
                 SeqpacketConn::from_server_handle(conn_handle, client_pid)
             });

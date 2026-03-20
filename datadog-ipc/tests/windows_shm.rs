@@ -22,7 +22,11 @@ fn test_shm_handle_transfer() {
         .unwrap();
     rt.spawn({
         let server = ExampleServer::default();
-        async move { server.accept_connection(conn_server.into_async_conn().unwrap()).await }
+        async move {
+            server
+                .accept_connection(conn_server.into_async_conn().unwrap())
+                .await
+        }
     });
 
     let mut channel = ExampleInterfaceChannel::new(conn_client);
@@ -60,7 +64,11 @@ fn test_large_message() {
         .unwrap();
     rt.spawn({
         let server = ExampleServer::default();
-        async move { server.accept_connection(conn_server.into_async_conn().unwrap()).await }
+        async move {
+            server
+                .accept_connection(conn_server.into_async_conn().unwrap())
+                .await
+        }
     });
 
     let mut channel = ExampleInterfaceChannel::new(conn_client);
