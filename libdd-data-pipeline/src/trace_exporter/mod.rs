@@ -3,6 +3,7 @@
 pub mod agent_response;
 pub mod builder;
 pub mod error;
+#[cfg(feature = "health-metrics")]
 pub mod metrics;
 pub mod stats;
 mod trace_serializer;
@@ -11,6 +12,7 @@ mod trace_serializer;
 pub use builder::TraceExporterBuilder;
 
 use self::agent_response::AgentResponse;
+#[cfg(feature = "health-metrics")]
 use self::metrics::MetricsEmitter;
 use self::stats::StatsComputationStatus;
 use self::trace_serializer::TraceSerializer;
@@ -35,6 +37,7 @@ use http_body_util::BodyExt;
 use libdd_common::tag::Tag;
 use libdd_common::{http_common, Endpoint};
 use libdd_common::{HttpClient, MutexExt};
+#[cfg(feature = "health-metrics")]
 use libdd_dogstatsd_client::Client;
 #[cfg(feature = "telemetry")]
 use libdd_telemetry::worker::TelemetryWorker;
@@ -197,6 +200,7 @@ pub struct TraceExporter {
     // TODO - do something with the response callback - https://datadoghq.atlassian.net/browse/APMSP-1019
     runtime: Arc<Mutex<Option<Arc<Runtime>>>>,
     /// None if dogstatsd is disabled
+#[cfg(feature = "health-metrics")]
     dogstatsd: Option<Client>,
     common_stats_tags: Vec<Tag>,
     client_computed_top_level: bool,
@@ -486,6 +490,7 @@ impl TraceExporter {
         }
     }
 
+#[cfg(feature = "health-metrics")]
     /// Emit a health metric to dogstatsd
     fn emit_metric(&self, metric: HealthMetric, custom_tags: Option<Vec<&Tag>>) {
         if self.health_metrics_enabled {
@@ -494,6 +499,7 @@ impl TraceExporter {
         }
     }
 
+#[cfg(feature = "health-metrics")]
     /// Emit all health metrics from a SendResult
     fn emit_send_result(&self, result: &SendResult) {
         if self.health_metrics_enabled {
@@ -547,6 +553,7 @@ impl TraceExporter {
         }
         .map_err(|e| {
             error!("Error deserializing trace from request body: {e}");
+#[cfg(feature = "health-metrics")]
             self.emit_metric(
                 HealthMetric::Count(health_metrics::DESERIALIZE_TRACES_ERRORS, 1),
                 None,
@@ -557,6 +564,7 @@ impl TraceExporter {
             trace_count = traces.len(),
             "Trace deserialization completed successfully"
         );
+#[cfg(feature = "health-metrics")]
         self.emit_metric(
             HealthMetric::Count(health_metrics::DESERIALIZE_TRACES, traces.len() as i64),
             None,
@@ -621,6 +629,7 @@ impl TraceExporter {
             Ok(p) => p,
             Err(e) => {
                 error!("Error serializing traces: {e}");
+#[cfg(feature = "health-metrics")]
                 self.emit_metric(
                     HealthMetric::Count(health_metrics::SERIALIZE_TRACES_ERRORS, 1),
                     None,
@@ -677,6 +686,7 @@ impl TraceExporter {
             SendWithRetryError::Timeout(attempts) => {
                 let send_result =
                     SendResult::failure(TransportErrorType::Timeout, payload_len, chunks, attempts);
+#[cfg(feature = "health-metrics")]
                 self.emit_send_result(&send_result);
                 Err(TraceExporterError::from(io::Error::from(
                     io::ErrorKind::TimedOut,
@@ -685,12 +695,15 @@ impl TraceExporter {
             SendWithRetryError::Network(err, attempts) => {
                 let send_result =
                     SendResult::failure(TransportErrorType::Network, payload_len, chunks, attempts);
+#[cfg(feature = "health-metrics")]
                 self.emit_send_result(&send_result);
                 Err(TraceExporterError::from(err))
             }
             SendWithRetryError::Build(attempts) => {
+#[cfg(feature = "health-metrics")]
                 let send_result =
                     SendResult::failure(TransportErrorType::Build, payload_len, chunks, attempts);
+#[cfg(feature = "health-metrics")]
                 self.emit_send_result(&send_result);
                 Err(TraceExporterError::from(io::Error::from(
                     io::ErrorKind::Other,
@@ -712,6 +725,7 @@ impl TraceExporter {
         // Check if the agent state has changed for error responses
         self.info_response_observer.check_response(&response);
 
+#[cfg(feature = "health-metrics")]
         // Emit health metrics using SendResult
         let send_result = SendResult::failure(
             TransportErrorType::Http(status.as_u16()),
@@ -719,6 +733,7 @@ impl TraceExporter {
             chunks,
             attempts,
         );
+#[cfg(feature = "health-metrics")]
         self.emit_send_result(&send_result);
 
         let body = self.read_error_response_body(response).await?;
@@ -788,7 +803,9 @@ impl TraceExporter {
         payload_version_changed: bool,
     ) -> Result<AgentResponse, TraceExporterError> {
         debug!(chunks = chunks, "Trace chunks sent successfully to agent");
+#[cfg(feature = "health-metrics")]
         let send_result = SendResult::success(payload_len, chunks, attempts);
+#[cfg(feature = "health-metrics")]
         self.emit_send_result(&send_result);
 
         Ok(if payload_version_changed {
@@ -824,6 +841,7 @@ impl TraceExporter {
                         chunks,
                         attempts,
                     );
+#[cfg(feature = "health-metrics")]
                     self.emit_send_result(&send_result);
                     return Err(TraceExporterError::Request(RequestError::new(
                         status, &body,
@@ -846,6 +864,7 @@ impl TraceExporter {
                     chunks,
                     attempts,
                 );
+#[cfg(feature = "health-metrics")]
                 self.emit_send_result(&send_result);
                 Err(TraceExporterError::from(err))
             }

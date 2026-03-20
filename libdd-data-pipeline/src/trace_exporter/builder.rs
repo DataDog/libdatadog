@@ -17,6 +17,7 @@ use crate::trace_exporter::TelemetryConfig;
 use arc_swap::ArcSwap;
 use libdd_common::http_common::new_default_client;
 use libdd_common::{parse_uri, tag, Endpoint};
+#[cfg(feature = "health-metrics")]
 use libdd_dogstatsd_client::new;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -245,6 +246,7 @@ impl TraceExporterBuilder {
                 .build()?,
         );
 
+#[cfg(feature = "health-metrics")]
         let dogstatsd = self.dogstatsd_url.and_then(|u| {
             new(Endpoint::from_slice(&u)).ok() // If we couldn't set the endpoint return
                                                // None
@@ -335,6 +337,7 @@ impl TraceExporterBuilder {
             output_format: self.output_format,
             client_computed_top_level: self.client_computed_top_level,
             runtime: Arc::new(Mutex::new(Some(runtime))),
+#[cfg(feature = "health-metrics")]
             dogstatsd,
             common_stats_tags: vec![libdatadog_version],
             client_side_stats: ArcSwap::new(stats.into()),
