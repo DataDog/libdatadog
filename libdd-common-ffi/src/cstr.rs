@@ -1,6 +1,8 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+use alloc::ffi;
+use alloc::vec::Vec;
 use core::fmt;
 use core::{
     ffi::c_char,
@@ -40,7 +42,7 @@ impl<'a> CStr<'a> {
 }
 
 /// Ffi safe type representing an owned null-terminated C array
-/// Equivalent to an alloc::ffi::CString
+/// Equivalent to an ffi::CString
 #[repr(C)]
 pub struct CString {
     /// Null terminated char array
@@ -56,8 +58,8 @@ impl fmt::Debug for CString {
 }
 
 impl CString {
-    pub fn new<T: Into<alloc::vec::Vec<u8>>>(t: T) -> Result<Self, alloc::ffi::NulError> {
-        Ok(Self::from_std(alloc::ffi::CString::new(t)?))
+    pub fn new<T: Into<Vec<u8>>>(t: T) -> Result<Self, ffi::NulError> {
+        Ok(Self::from_std(ffi::CString::new(t)?))
     }
 
     /// Creates a new `CString` from the given input, or returns an empty `CString`
@@ -84,7 +86,7 @@ impl CString {
     /// let bad = CString::new_or_empty("hello\0world");
     /// assert_eq!(bad.as_cstr().into_std().to_str().unwrap(), "");
     /// ```
-    pub fn new_or_empty<T: Into<alloc::vec::Vec<u8>>>(t: T) -> Self {
+    pub fn new_or_empty<T: Into<Vec<u8>>>(t: T) -> Self {
         Self::new(t).unwrap_or_else(|_| {
             #[allow(clippy::unwrap_used)]
             Self::new("").unwrap()
@@ -99,7 +101,7 @@ impl CString {
         }
     }
 
-    pub fn from_std(s: alloc::ffi::CString) -> Self {
+    pub fn from_std(s: ffi::CString) -> Self {
         let length = s.to_bytes().len();
         Self {
             ptr: unsafe { ptr::NonNull::new_unchecked(s.into_raw()) },
@@ -107,10 +109,10 @@ impl CString {
         }
     }
 
-    pub fn into_std(self) -> alloc::ffi::CString {
+    pub fn into_std(self) -> ffi::CString {
         let s = ManuallyDrop::new(self);
         unsafe {
-            alloc::ffi::CString::from_vec_with_nul_unchecked(alloc::vec::Vec::from_raw_parts(
+            ffi::CString::from_vec_with_nul_unchecked(Vec::from_raw_parts(
                 s.ptr.as_ptr().cast(),
                 s.length + 1, // +1 for the null terminator
                 s.length + 1, // +1 for the null terminator
@@ -123,7 +125,7 @@ impl Drop for CString {
     fn drop(&mut self) {
         let ptr = mem::replace(&mut self.ptr, NonNull::dangling());
         drop(unsafe {
-            alloc::ffi::CString::from_vec_with_nul_unchecked(alloc::vec::Vec::from_raw_parts(
+            ffi::CString::from_vec_with_nul_unchecked(Vec::from_raw_parts(
                 ptr.as_ptr().cast(),
                 self.length + 1,
                 self.length + 1,
