@@ -17,10 +17,7 @@ use alloc::vec::Vec;
 use core::cell::OnceCell;
 use core::mem;
 use core::ops::Deref;
-#[cfg(not(feature = "std"))]
-use hashbrown::HashMap;
-#[cfg(feature = "std")]
-use std::collections::HashMap;
+use alloc::collections::BTreeMap;
 
 #[cfg(feature = "std")]
 use std::path::Path;
@@ -37,15 +34,15 @@ use std::{env, fs, io};
 ///  * envs: Splits env variables with format KEY=VALUE
 ///  * args: Splits args with format key=value. If the arg doesn't contain an '=', skip it
 struct MatchMaps<'a> {
-    tags: &'a HashMap<String, String>,
-    env_map: OnceCell<HashMap<&'a str, &'a str>>,
-    args_map: OnceCell<HashMap<&'a str, &'a str>>,
+    tags: &'a BTreeMap<String, String>,
+    env_map: OnceCell<BTreeMap<&'a str, &'a str>>,
+    args_map: OnceCell<BTreeMap<&'a str, &'a str>>,
 }
 
 impl<'a> MatchMaps<'a> {
-    fn env(&self, process_info: &'a ProcessInfo) -> &HashMap<&'a str, &'a str> {
+    fn env(&self, process_info: &'a ProcessInfo) -> &BTreeMap<&'a str, &'a str> {
         self.env_map.get_or_init(|| {
-            let mut map = HashMap::new();
+            let mut map = BTreeMap::new();
             for e in &process_info.envp {
                 let Ok(s) = core::str::from_utf8(e.deref()) else {
                     continue;
@@ -60,9 +57,9 @@ impl<'a> MatchMaps<'a> {
         })
     }
 
-    fn args(&self, process_info: &'a ProcessInfo) -> &HashMap<&str, &str> {
+    fn args(&self, process_info: &'a ProcessInfo) -> &BTreeMap<&str, &str> {
         self.args_map.get_or_init(|| {
-            let mut map = HashMap::new();
+            let mut map = BTreeMap::new();
             for arg in &process_info.args {
                 let Ok(arg) = core::str::from_utf8(arg.deref()) else {
                     continue;
@@ -83,7 +80,7 @@ struct Matcher<'a> {
 }
 
 impl<'a> Matcher<'a> {
-    fn new(process_info: &'a ProcessInfo, tags: &'a HashMap<String, String>) -> Self {
+    fn new(process_info: &'a ProcessInfo, tags: &'a BTreeMap<String, String>) -> Self {
         Self {
             process_info,
             match_maps: MatchMaps {
@@ -278,7 +275,7 @@ impl<'de> serde::Deserialize<'de> for ConfigMap {
             type Value = ConfigMap;
 
             fn expecting(&self, formatter: &mut core::fmt::Formatter) -> core::fmt::Result {
-                formatter.write_str("struct ConfigMap(HashMap<String, String>)")
+                formatter.write_str("struct ConfigMap(BTreeMap<String, String>)")
             }
 
             fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error>
@@ -373,7 +370,7 @@ struct StableConfig {
 
     // Phase 2
     #[serde(default)]
-    tags: HashMap<String, String>,
+    tags: BTreeMap<String, String>,
     #[serde(default)]
     rules: Vec<Rule>,
 }
@@ -687,7 +684,7 @@ impl Configurator {
             ));
         }
 
-        let mut cfg = HashMap::new();
+        let mut cfg = BTreeMap::new();
         // First get local configuration
         match self.get_single_source_config(
             local_config,
@@ -752,7 +749,7 @@ impl Configurator {
         mut stable_config: StableConfig,
         source: LibraryConfigSource,
         process_info: &ProcessInfo,
-        cfg: &mut HashMap<String, LibraryConfigVal>,
+        cfg: &mut BTreeMap<String, LibraryConfigVal>,
     ) -> LoggedResult<(), anyhow::Error> {
         // Phase 1: take host default config
         cfg.extend(
@@ -784,7 +781,7 @@ impl Configurator {
         stable_config: StableConfig,
         source: LibraryConfigSource,
         process_info: &ProcessInfo,
-        library_config: &mut HashMap<String, LibraryConfigVal>,
+        library_config: &mut BTreeMap<String, LibraryConfigVal>,
     ) -> LoggedResult<(), anyhow::Error> {
         let matcher = Matcher::new(process_info, &stable_config.tags);
         let Some(configs) = matcher.find_stable_config(&stable_config) else {
@@ -823,11 +820,8 @@ impl Configurator {
 
 use utils::Get;
 mod utils {
+    use alloc::collections::BTreeMap;
     use alloc::string::String;
-    #[cfg(not(feature = "std"))]
-    use hashbrown::HashMap;
-    #[cfg(feature = "std")]
-    use std::collections::HashMap;
 
     /// Removes leading and trailing ascci whitespaces from a byte slice
     pub(crate) fn trim_bytes(mut b: &[u8]) -> &[u8] {
@@ -841,18 +835,18 @@ mod utils {
     }
 
     /// Helper trait so we don't have to duplicate code for
-    /// HashMap<&str, &str> and HashMap<String, String>
+    /// BTreeMap<&str, &str> and BTreeMap<String, String>
     pub(crate) trait Get {
         fn get(&self, k: &str) -> Option<&str>;
     }
 
-    impl Get for HashMap<&str, &str> {
+    impl Get for BTreeMap<&str, &str> {
         fn get(&self, k: &str) -> Option<&str> {
             self.get(k).copied()
         }
     }
 
-    impl Get for HashMap<String, String> {
+    impl Get for BTreeMap<String, String> {
         fn get(&self, k: &str) -> Option<&str> {
             self.get(k).map(|v| v.as_str())
         }
@@ -861,7 +855,8 @@ mod utils {
 
 #[cfg(all(test, feature = "std"))]
 mod tests {
-    use std::{collections::HashMap, io::Write, path::Path};
+    use alloc::collections::BTreeMap;
+    use std::{io::Write, path::Path};
 
     use super::{Configurator, LoggedResult, ProcessInfo};
     use crate::{
@@ -1268,7 +1263,7 @@ rules:
             StableConfig {
                 config_id: None,
                 apm_configuration_default: ConfigMap::default(),
-                tags: HashMap::default(),
+                tags: BTreeMap::default(),
                 rules: vec![Rule {
                     selectors: vec![Selector {
                         origin: Origin::Language,
@@ -1297,7 +1292,7 @@ rules:
             envp: vec![b"ENV=VAR".to_vec()],
             language: b"java".to_vec(),
         };
-        let tags = HashMap::new();
+        let tags = BTreeMap::new();
         let matcher = Matcher::new(&process_info, &tags);
 
         let test_cases = &[

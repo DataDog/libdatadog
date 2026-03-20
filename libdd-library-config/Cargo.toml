@@ -34,7 +34,6 @@ serde = { version = "1.0", default-features = false, features = ["derive", "allo
 serde_yaml = { version = "0.9.34", optional = true }
 prost = { version = "0.14.1", optional = true }
 anyhow = { version = "1.0", default-features = false }
-hashbrown = { version = "0.15", features = ["serde"] }
 
 rand = { version = "0.8.3", optional = true }
 rmp = { version = "0.8.14", optional = true }
