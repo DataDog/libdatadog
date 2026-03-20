@@ -7,8 +7,7 @@
 //! This crate is linked *only* into `datadog-ipc-helper`.  It must never be
 //! linked into `ddtrace.so` (use `datadog-sidecar-ffi` for that side).
 //!
-//! Three additional symbols are satisfied by other already-linked crates:
-//! * `ddog_set_rc_notify_fn`  – defined in `datadog-sidecar/src/shm_remote_config.rs`
+//! Two additional symbols are satisfied by other already-linked crates:
 //! * `ddog_Error_drop`        – defined in `libdd-common-ffi/src/error.rs`
 //! * `ddog_Error_message`     – defined in `libdd-common-ffi/src/error.rs`
 
@@ -19,7 +18,7 @@ use datadog_sidecar::service::blocking::{self, SidecarTransport};
 use datadog_sidecar::service::telemetry::InternalTelemetryAction;
 use datadog_sidecar::service::{get_telemetry_action_sender, InstanceId, InternalTelemetryActions};
 use datadog_sidecar::setup::{DefaultLiason, Liaison};
-use datadog_sidecar::shm_remote_config::path_for_remote_config;
+use datadog_sidecar::shm_remote_config::{path_for_remote_config, RemoteConfigReader};
 use libc::c_char;
 use libdd_common_ffi::slice::{AsBytes, CharSlice};
 // `try_c!` from libdd-telemetry-ffi references `ffi::MaybeError`; provide the alias it expects.
@@ -28,7 +27,7 @@ use libdd_telemetry::data::metrics::{MetricNamespace, MetricType};
 use libdd_telemetry::metrics::MetricContext;
 use libdd_telemetry::worker::{LogIdentifier, TelemetryActions};
 use libdd_telemetry_ffi::try_c;
-use std::ffi::CString;
+use std::ffi::{CStr, CString};
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::ptr::NonNull;
 use std::sync::Arc;
@@ -266,3 +265,25 @@ pub unsafe extern "C" fn ddog_sidecar_enqueue_telemetry_metric(
     );
     MaybeError::None
 }
+
+/// Open a remote-config shared-memory reader at `path`.
+/// Used by the AppSec helper to read rule updates pushed by the sidecar.
+#[no_mangle]
+pub unsafe extern "C" fn ddog_remote_config_reader_for_path(
+    path: *const c_char,
+) -> Box<RemoteConfigReader> {
+    Box::new(RemoteConfigReader::from_path(CStr::from_ptr(path)))
+}
+
+#[no_mangle]
+pub extern "C" fn ddog_remote_config_read<'a>(
+    reader: &'a mut RemoteConfigReader,
+    data: &mut CharSlice<'a>,
+) -> bool {
+    let (new, contents) = reader.read();
+    *data = CharSlice::from_bytes(contents);
+    new
+}
+
+#[no_mangle]
+pub extern "C" fn ddog_remote_config_reader_drop(_: Box<RemoteConfigReader>) {}
