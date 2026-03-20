@@ -6,7 +6,7 @@ use super::*;
 /// Represents a [pprof::Mapping] with some space-saving changes:
 ///  - The id is not stored on the struct. It's stored in the container that holds the struct.
 ///  - ids for linked objects use 32-bit numbers instead of 64 bit ones.
-#[derive(Eq, PartialEq, Hash)]
+#[derive(Default, Eq, PartialEq, Hash)]
 pub struct Mapping {
     /// Address at which the binary (or DLL) is loaded into memory.
     pub memory_start: u64,
