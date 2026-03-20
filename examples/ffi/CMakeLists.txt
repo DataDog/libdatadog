@@ -19,11 +19,23 @@ endfunction()
 # Uncomment to debug build commands
 # set(CMAKE_VERBOSE_MAKEFILE ON)
 
+if (MSVC)
+    # warning level 4 and treat warnings as errors
+    # /wd4201: suppress nameless struct/union warning used in generated common.h
+    add_compile_options(/W4 /WX /wd4201)
+else()
+    add_compile_options(-Wall -Wextra -Werror)
+endif()
+
 add_executable(exporter exporter.cpp)
 # needed for designated initializers
 target_compile_features(exporter PRIVATE cxx_std_20)
 target_link_libraries(exporter PRIVATE Datadog::Profiling)
 set_vcruntime_link_type(exporter ${VCRUNTIME_LINK_TYPE})
+
+if(MSVC)
+  target_compile_definitions(exporter PUBLIC _CRT_SECURE_NO_WARNINGS)
+endif()
 
 if(NOT WIN32)
   add_executable(exporter_manager exporter_manager.c)
@@ -39,10 +51,6 @@ add_executable(profile_intern profile_intern.cpp)
 # needed for designated initializers
 target_compile_features(profile_intern PRIVATE cxx_std_20)
 target_link_libraries(profile_intern PRIVATE Datadog::Profiling)
-
-if(CMAKE_CXX_COMPILER_ID MATCHES "MSVC")
-  target_compile_definitions(exporter PUBLIC _CRT_SECURE_NO_WARNINGS)
-endif()
 
 add_executable(profiles profiles.c)
 target_link_libraries(profiles PRIVATE Datadog::Profiling)
@@ -83,6 +91,10 @@ add_executable(library_config library_config.c)
 target_link_libraries(library_config PRIVATE Datadog::Profiling)
 set_vcruntime_link_type(library_config ${VCRUNTIME_LINK_TYPE})
 
+if(MSVC)
+  target_compile_definitions(library_config PRIVATE _CRT_SECURE_NO_WARNINGS)
+endif()
+
 add_executable(ddsketch ddsketch.c)
 target_link_libraries(ddsketch PRIVATE Datadog::Profiling)
 set_vcruntime_link_type(ddsketch ${VCRUNTIME_LINK_TYPE})
@@ -90,3 +102,7 @@ set_vcruntime_link_type(ddsketch ${VCRUNTIME_LINK_TYPE})
 add_executable(ffe ffe.c)
 target_link_libraries(ffe PRIVATE Datadog::Profiling)
 set_vcruntime_link_type(ffe ${VCRUNTIME_LINK_TYPE})
+
+if(MSVC)
+  target_compile_definitions(ffe PRIVATE _CRT_SECURE_NO_WARNINGS)
+endif()

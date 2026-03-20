@@ -12,20 +12,19 @@ extern "C" {
 #include <cstdlib>
 #include <cstring>
 #include <iostream>
-#include <memory>
-#include <optional>
 #include <string>
-#include <thread>
-#include <vector>
 
 static ddog_CharSlice to_slice_c_char(const char *s) { return {.ptr = s, .len = strlen(s)}; }
+[[maybe_unused]]
 static ddog_CharSlice to_slice_c_char(const char *s, std::size_t size) {
   return {.ptr = s, .len = size};
 }
+[[maybe_unused]]
 static ddog_CharSlice to_slice_string(std::string const &s) {
   return {.ptr = s.data(), .len = s.length()};
 }
 
+[[maybe_unused]]
 static std::string to_string(ddog_CharSlice s) { return std::string(s.ptr, s.len); }
 
 void print_error(const ddog_Error &err) {
