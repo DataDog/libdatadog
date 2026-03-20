@@ -19,7 +19,7 @@ default = ["std"]
 std = [
     "serde/std",
     "anyhow/std",
-    "dep:serde_yaml",
+    "yaml-peg/std",
     "dep:prost",
     "dep:rand",
     "dep:rmp",
@@ -31,7 +31,7 @@ std = [
 
 [dependencies]
 serde = { version = "1.0", default-features = false, features = ["derive", "alloc"] }
-serde_yaml = { version = "0.9.34", optional = true }
+yaml-peg = { version = "1.0.9", default-features = false, features = ["serde"] }
 prost = { version = "0.14.1", optional = true }
 anyhow = { version = "1.0", default-features = false }
 

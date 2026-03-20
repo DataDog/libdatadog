@@ -511,14 +511,18 @@ impl Configurator {
         Self { debug_logs }
     }
 
-    #[cfg(feature = "std")]
     fn parse_stable_config_slice(&self, buf: &[u8]) -> LoggedResult<StableConfig, anyhow::Error> {
+        let buf = utils::trim_bytes(buf);
         let stable_config = if buf.is_empty() {
             StableConfig::default()
         } else {
-            match serde_yaml::from_slice(buf) {
-                Ok(config) => config,
-                Err(e) => return LoggedResult::Err(e.into()),
+            let s = match core::str::from_utf8(buf) {
+                Ok(s) => s,
+                Err(e) => return LoggedResult::Err(anyhow::Error::msg(e)),
+            };
+            match yaml_peg::serde::from_str::<StableConfig>(s) {
+                Ok(mut docs) => docs.remove(0),
+                Err(e) => return LoggedResult::Err(anyhow::Error::msg(e)),
             }
         };
 
@@ -543,7 +547,7 @@ impl Configurator {
             Ok(_) => {}
             Err(e) => return LoggedResult::Err(e.into()),
         }
-        self.parse_stable_config_slice(utils::trim_bytes(&buffer))
+        self.parse_stable_config_slice(&buffer)
     }
 
     #[cfg(feature = "std")]
