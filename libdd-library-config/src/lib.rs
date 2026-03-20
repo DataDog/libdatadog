@@ -17,10 +17,10 @@ use alloc::vec::Vec;
 use core::cell::OnceCell;
 use core::mem;
 use core::ops::Deref;
-#[cfg(feature = "std")]
-use std::collections::HashMap;
 #[cfg(not(feature = "std"))]
 use hashbrown::HashMap;
+#[cfg(feature = "std")]
+use std::collections::HashMap;
 
 #[cfg(feature = "std")]
 use std::path::Path;
@@ -824,10 +824,10 @@ impl Configurator {
 use utils::Get;
 mod utils {
     use alloc::string::String;
-    #[cfg(feature = "std")]
-    use std::collections::HashMap;
     #[cfg(not(feature = "std"))]
     use hashbrown::HashMap;
+    #[cfg(feature = "std")]
+    use std::collections::HashMap;
 
     /// Removes leading and trailing ascci whitespaces from a byte slice
     pub(crate) fn trim_bytes(mut b: &[u8]) -> &[u8] {

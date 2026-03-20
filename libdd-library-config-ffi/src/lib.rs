@@ -86,10 +86,10 @@ pub(crate) mod ffi_types {
 pub mod tracer_metadata;
 
 // Conditional FFI type imports
-#[cfg(feature = "std")]
-use libdd_common_ffi::{self as ffi, slice::AsBytes, CString, Error};
 #[cfg(not(feature = "std"))]
 use ffi_types::{self as ffi, AsBytes};
+#[cfg(feature = "std")]
+use libdd_common_ffi::{self as ffi, slice::AsBytes, CString, Error};
 
 #[cfg(not(feature = "std"))]
 use alloc::boxed::Box;
