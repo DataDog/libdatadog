@@ -12,9 +12,11 @@ extern crate alloc;
 // Always available in both std and no_std builds.
 pub mod cstr;
 pub mod slice;
+pub mod vec;
 
 pub use cstr::*;
 pub use slice::{CharSlice, Slice};
+pub use vec::Vec;
 
 // Modules and re-exports that require std.
 #[cfg(feature = "std")]
@@ -39,11 +41,8 @@ pub mod tags;
 pub mod timespec;
 #[cfg(feature = "std")]
 pub mod utils;
-#[cfg(feature = "std")]
-pub mod vec;
 
 #[cfg(feature = "std")]
 pub use {
     error::*, handle::*, option::*, result::*, slice_mut::MutSlice, string::*, timespec::*,
-    vec::Vec,
 };
