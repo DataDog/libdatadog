@@ -75,14 +75,14 @@ int main(int argc, const char *const *argv) {
   if (args.infer) {
     ddog_library_configurator_with_detect_process_info(configurator);
   } else {
-    ddog_CharSlice args[] = {
+    ddog_CharSlice cmd_args[] = {
         DDOG_CHARSLICE_C("/bin/true"),
     };
     ddog_CharSlice envp[] = {
         DDOG_CHARSLICE_C("FOO=BAR"),
     };
     ddog_library_configurator_with_process_info(
-        configurator, (ddog_ProcessInfo){.args = DDOG_SLICE_CHARSLICE(args),
+        configurator, (ddog_ProcessInfo){.args = DDOG_SLICE_CHARSLICE(cmd_args),
                                          .envp = DDOG_SLICE_CHARSLICE(envp),
                                          .language = language});
   }
