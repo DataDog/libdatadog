@@ -8,6 +8,7 @@ on:
   push:
     branches:
       - main
+      - mq-working-branch-*
 env:
   CARGO_TERM_COLOR: always
   RUST_VERSION: 1.84.1
