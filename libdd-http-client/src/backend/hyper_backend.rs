@@ -9,7 +9,6 @@ use http_body_util::BodyExt;
 use libdd_common::connector::Connector;
 use libdd_common::http_common::{self, Body};
 
-#[cfg(feature = "hyper-backend")]
 pub(crate) struct HyperBackend {
     client: http_common::GenericHttpClient<Connector>,
     transport: TransportConfig,
@@ -23,7 +22,6 @@ impl std::fmt::Debug for HyperBackend {
     }
 }
 
-#[cfg(feature = "hyper-backend")]
 impl HyperBackend {
     /// Rewrite the request URL for UDS/Named Pipe transports.
     fn rewrite_url(&self, url: &str) -> Result<hyper::Uri, HttpClientError> {
@@ -136,7 +134,6 @@ fn collect_response_headers<T>(
         .collect()
 }
 
-#[cfg(feature = "hyper-backend")]
 fn map_hyper_error(e: hyper_util::client::legacy::Error) -> HttpClientError {
     let err = http_common::into_error(e);
     match err.kind() {
@@ -146,7 +143,6 @@ fn map_hyper_error(e: hyper_util::client::legacy::Error) -> HttpClientError {
     }
 }
 
-#[cfg(feature = "hyper-backend")]
 impl super::Backend for HyperBackend {
     fn new(
         _timeout: std::time::Duration,

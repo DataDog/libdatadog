@@ -11,12 +11,10 @@ use crate::{HttpClientError, HttpRequest, HttpResponse};
 ///
 /// Holds a connection-pooling client that is reused across all requests.
 #[derive(Debug)]
-#[cfg(feature = "reqwest-backend")]
 pub(crate) struct ReqwestBackend {
     client: reqwest::Client,
 }
 
-#[cfg(feature = "reqwest-backend")]
 impl super::Backend for ReqwestBackend {
     // Creates a `reqwest::Client` with connection pooling enabled.
     fn new(
@@ -117,7 +115,6 @@ impl super::Backend for ReqwestBackend {
 }
 
 /// Convert our `MultipartPart` list into a `reqwest::multipart::Form`.
-#[cfg(feature = "reqwest-backend")]
 fn build_multipart_form(
     parts: Vec<crate::request::MultipartPart>,
 ) -> Result<reqwest::multipart::Form, HttpClientError> {
@@ -138,7 +135,6 @@ fn build_multipart_form(
 }
 
 /// Map a `reqwest::Error` to our `HttpClientError` variants.
-#[cfg(feature = "reqwest-backend")]
 fn map_reqwest_error(e: reqwest::Error) -> HttpClientError {
     if e.is_timeout() {
         HttpClientError::TimedOut
