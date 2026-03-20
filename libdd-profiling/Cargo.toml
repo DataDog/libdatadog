@@ -66,10 +66,10 @@ zstd = { version = "0.13", default-features = false }
 
 # aws-lc-rs is preferred on Unix; ring is used on Windows where aws-lc-rs has build issues.
 [target.'cfg(unix)'.dependencies]
-rustls = { version = "0.23", default-features = false, features = ["aws-lc-rs"] }
+rustls = { version = "0.23.37", default-features = false, features = ["aws-lc-rs"] }
 
 [target.'cfg(not(unix))'.dependencies]
-rustls = { version = "0.23", default-features = false, features = ["ring"] }
+rustls = { version = "0.23.37", default-features = false, features = ["ring"] }
 
 [dev-dependencies]
 bolero = "0.13"
