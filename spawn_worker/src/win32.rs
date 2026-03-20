@@ -5,7 +5,7 @@ use std::ffi::OsStr;
 use std::ffi::OsString;
 use std::fs::File;
 use std::os::windows::ffi::OsStrExt;
-use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle, RawHandle};
+use std::os::windows::io::{AsRawHandle, FromRawHandle, IntoRawHandle, OwnedHandle, RawHandle};
 use std::os::windows::process::ExitStatusExt;
 use std::process::ExitStatus;
 use std::{env, io, mem};
