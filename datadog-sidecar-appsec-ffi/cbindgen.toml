@@ -1,0 +1,35 @@
+# Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
+# SPDX-License-Identifier: Apache-2.0
+
+language = "C"
+tab_width = 2
+include_guard = "DDOG_SIDECAR_APPSEC_H"
+style = "both"
+
+no_includes = true
+sys_includes = ["stdbool.h", "stddef.h", "stdint.h"]
+includes = ["common.h"]
+# ddog_set_rc_notify_fn is #[no_mangle] in datadog-sidecar (not this crate),
+# so cbindgen cannot auto-generate it from a re-export.
+after_includes = """
+typedef void (*ddog_InProcNotifyFn)(const struct ddog_ConfigInvariants*, const struct ddog_Arc_Target*);
+void ddog_set_rc_notify_fn(ddog_InProcNotifyFn notify_fn);
+"""
+
+[export]
+prefix = "ddog_"
+renaming_overrides_prefixing = true
+
+[export.mangle]
+rename_types = "PascalCase"
+
+[enum]
+prefix_with_name = true
+rename_variants = "ScreamingSnakeCase"
+
+[fn]
+must_use = "DDOG_CHECK_RETURN"
+
+[parse]
+parse_deps = true
+include = ["libdd-common", "libdd-telemetry", "datadog-sidecar", "libdd-telemetry-ffi", "libdd-common-ffi", "datadog-remote-config"]
