@@ -43,6 +43,4 @@ pub mod timespec;
 pub mod utils;
 
 #[cfg(feature = "std")]
-pub use {
-    error::*, handle::*, option::*, result::*, slice_mut::MutSlice, string::*, timespec::*,
-};
+pub use {error::*, handle::*, option::*, result::*, slice_mut::MutSlice, string::*, timespec::*};
