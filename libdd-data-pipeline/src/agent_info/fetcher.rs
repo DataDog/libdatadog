@@ -43,7 +43,8 @@ async fn fetch_info_with_state_and_container_tags(
         fetch_and_hash_response(info_endpoint).await?;
 
     if current_state_hash.is_some_and(|state| state == new_state_hash)
-        && current_container_tags_hash == container_tags_hash.as_deref()
+        && (current_container_tags_hash.is_none()
+            || current_container_tags_hash == container_tags_hash.as_deref())
     {
         return Ok(FetchInfoStatus::SameState);
     }
@@ -478,6 +479,29 @@ mod single_threaded_tests {
                 },
             })
         );
+    }
+
+    #[cfg_attr(miri, ignore)]
+    #[tokio::test]
+    async fn test_fetch_info_can_ignore_container_tags_hash() {
+        let server = MockServer::start();
+        let mock = server
+            .mock_async(|when, then| {
+                when.path("/info");
+                then.status(200)
+                    .header("content-type", "application/json")
+                    .header("Datadog-Container-Tags-Hash", "new-container-hash")
+                    .body(TEST_INFO);
+            })
+            .await;
+        let endpoint = Endpoint::from_url(server.url("/info").parse().unwrap());
+
+        let info_status = fetch_info_with_state(&endpoint, Some(TEST_INFO_HASH))
+            .await
+            .unwrap();
+
+        mock.assert();
+        assert!(matches!(info_status, FetchInfoStatus::SameState));
     }
 
     #[cfg_attr(miri, ignore)]
