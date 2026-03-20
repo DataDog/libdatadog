@@ -18,7 +18,7 @@ mod unix {
     use std::sync::Arc;
     use std::time::Duration;
 
-    use libdd_common::{tag, Endpoint};
+    use libdd_common::tag;
     use libdd_crashtracker::{
         self as crashtracker, CrashtrackerConfiguration, CrashtrackerReceiverConfig, Metadata,
     };
@@ -91,19 +91,17 @@ mod unix {
         let stdout_filename = format!("{output_dir}/out.stdout");
 
         ensure!(!output_url.is_empty(), "output_url must not be empty");
-        let endpoint = Some(Endpoint::from_slice(&output_url));
 
-        let config = CrashtrackerConfiguration::new(
-            vec![], // additional_files
-            true,   // create_alt_stack
-            true,   // use_alt_stack
-            endpoint,
-            crashtracker::StacktraceCollection::EnabledWithSymbolsInReceiver,
-            crashtracker::default_signals(),
-            Some(TEST_COLLECTOR_TIMEOUT),
-            Some("".to_string()), // unix_socket_path
-            true,                 // demangle_names
-        )?;
+        let config = CrashtrackerConfiguration::builder()
+            .create_alt_stack(true)
+            .use_alt_stack(true)
+            .endpoint_url(&output_url)
+            .resolve_frames(crashtracker::StacktraceCollection::EnabledWithSymbolsInReceiver)
+            .signals(crashtracker::default_signals())
+            .timeout(TEST_COLLECTOR_TIMEOUT)
+            .unix_socket_path("".to_string())
+            .demangle_names(true)
+            .build()?;
 
         let metadata = Metadata {
             library_name: "libdatadog".to_owned(),

@@ -44,6 +44,7 @@ tar = "0.4.41"
 tools = { path = "../tools" }
 toml = "0.8.19"
 serde = "1.0.209"
+regex = "1.10"
 
 [[bin]]
 name = "release"

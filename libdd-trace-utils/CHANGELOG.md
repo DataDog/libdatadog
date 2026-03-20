@@ -1,6 +1,25 @@
 # Changelog
 
 
+## [2.0.2](https://github.com/datadog/libdatadog/compare/libdd-trace-utils-v2.0.1..libdd-trace-utils-v2.0.2) - 2026-03-16
+
+### Changed
+
+- Update dependencies ([#1734](https://github.com/DataDog/libdatadog/issues/1734)) - ([38dd71b](https://github.com/DataDog/libdatadog/commit/38dd71bd6fdac45ecab3d74ce1b4a827abae794a))
+
+
+
+## [2.0.1](https://github.com/datadog/libdatadog/compare/libdd-trace-utils-v2.0.0..libdd-trace-utils-v2.0.1) - 2026-03-16
+
+### Added
+
+- Add two fields to ClientGroupedStats [SVLS-8627] ([#1630](https://github.com/datadog/libdatadog/issues/1630)) - ([7e909c0](https://github.com/datadog/libdatadog/commit/7e909c0910a15303eb90fdb3399211a3517d70c8))
+
+### Changed
+
+- Update bytes to 1.11.1 to address RUSTSEC-2026-0007 ([#1628](https://github.com/datadog/libdatadog/issues/1628)) - ([0b0863b](https://github.com/datadog/libdatadog/commit/0b0863b2afb7302fe02ea0af77cb9f98550e2a62))
+
+
 
 ## [2.0.0](https://github.com/datadog/libdatadog/compare/libdd-trace-utils-v1.0.0..libdd-trace-utils-v2.0.0) - 2026-02-23
 

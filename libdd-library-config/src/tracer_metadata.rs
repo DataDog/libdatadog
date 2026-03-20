@@ -1,5 +1,6 @@
 // Copyright 2023-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
+use libdd_trace_protobuf::opentelemetry::proto as otel_proto;
 use std::default::Default;
 
 /// This struct MUST be backward compatible.
@@ -51,6 +52,66 @@ impl Default for TracerMetadata {
     }
 }
 
+impl TracerMetadata {
+    // The value of the telemetry.sdk.name field to put in the otel context resource.
+    const OTEL_SDK_NAME: &str = "libdatadog";
+
+    pub fn to_otel_process_ctx(&self) -> otel_proto::common::v1::ProcessContext {
+        use otel_proto::common::v1::{any_value, AnyValue, KeyValue};
+
+        fn key_value(key: &'static str, val: String) -> KeyValue {
+            KeyValue {
+                key: key.to_owned(),
+                value: Some(AnyValue {
+                    value: Some(any_value::Value::StringValue(val)),
+                }),
+                key_ref: 0,
+            }
+        }
+
+        // Even if there's no value, we still set the key to let the reader know that we do support
+        // and emit this specific attribute, which happens to be empty in this case.
+        fn key_value_opt(key: &'static str, val: &Option<String>) -> KeyValue {
+            key_value(key, val.as_ref().cloned().unwrap_or_default())
+        }
+
+        // Every field of `self` should get propagated to the otel context.
+        // If you add a new field, please also add it here and as a key/value in the otel context.
+        let TracerMetadata {
+            // This one isn't propagated on purpose
+            schema_version: _,
+            runtime_id,
+            tracer_language,
+            tracer_version,
+            hostname,
+            service_name,
+            service_env,
+            service_version,
+            process_tags,
+            container_id,
+        } = self;
+
+        otel_proto::common::v1::ProcessContext {
+            resource: Some(otel_proto::resource::v1::Resource {
+                attributes: vec![
+                    key_value_opt("service.name", service_name),
+                    key_value_opt("service.instance.id", runtime_id),
+                    key_value_opt("service.version", service_version),
+                    key_value_opt("deployment.environment.name", service_env),
+                    key_value("telemetry.sdk.language", tracer_language.clone()),
+                    key_value("telemetry.sdk.version", tracer_version.clone()),
+                    key_value("telemetry.sdk.name", Self::OTEL_SDK_NAME.to_owned()),
+                    key_value("host.name", hostname.clone()),
+                    key_value_opt("container.id", container_id),
+                ],
+                dropped_attributes_count: 0,
+                entity_refs: vec![],
+            }),
+            extra_attributes: vec![key_value_opt("datadog.process_tags", process_tags)],
+        }
+    }
+}
+
 pub enum AnonymousFileHandle {
     #[cfg(target_os = "linux")]
     Linux(memfd::Memfd),
@@ -65,10 +126,13 @@ mod linux {
     use rand::Rng;
     use std::io::Write;
 
-    /// Create a memfd file storing the tracer metadata.
+    /// Create a memfd file storing the tracer metadata. This function also attempts to publish the
+    /// tracer metadata as an OTel process context separately, but will ignore resulting errors.
     pub fn store_tracer_metadata(
         data: &super::TracerMetadata,
     ) -> anyhow::Result<super::AnonymousFileHandle> {
+        let _ = crate::otel_process_ctx::linux::publish(&data.to_otel_process_ctx());
+
         let uid: String = rand::thread_rng()
             .sample_iter(&Alphanumeric)
             .take(8)

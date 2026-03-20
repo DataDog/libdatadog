@@ -262,7 +262,7 @@ fn test_collector_no_allocations_stacktrace_modes() {
         ("disabled", false),
         ("without_symbols", false),
         ("receiver_symbols", false),
-        ("inprocess_symbols", true),
+        ("inprocess_symbols", false),
     ];
 
     for (env_value, expect_log) in cases {
@@ -573,20 +573,12 @@ fn test_panic_hook_mode(mode: &str, expected_category: &str, expected_panic_mess
 // ====================================================================================
 // These tests use `run_custom_crash_test` with the crashing_test_app artifact.
 
-// This test is disabled for now on x86_64 musl
-// It seems that on aarch64 musl, libc has CFI which allows
-// unwinding passed the signal frame.
-// Don't forget to update the ignore condition for this and also
-// `test_crash_tracking_callstack` when this is revisited.
 #[test]
-#[cfg(not(any(all(target_arch = "x86_64", target_env = "musl"))))]
 #[cfg_attr(miri, ignore)]
 fn test_crasht_tracking_validate_callstack() {
     test_crash_tracking_callstack()
 }
 
-// This test is disabled for now on x86_64 musl for the reason mentioned above.
-#[cfg(not(any(all(target_arch = "x86_64", target_env = "musl"))))]
 fn test_crash_tracking_callstack() {
     use bin_tests::test_runner::run_custom_crash_test;
 
@@ -1128,7 +1120,7 @@ fn assert_telemetry_message(crash_telemetry: &[u8], crash_typ: &str) {
     let base_expected_tags: std::collections::HashSet<String> =
         std::collections::HashSet::from_iter([
             format!("data_schema_version:{current_schema_version}"),
-            // "incomplete:false", // TODO: re-add after fixing musl unwinding
+            "incomplete:false".to_string(),
             "is_crash:true".to_string(),
             "profiler_collecting_sample:1".to_string(),
             "profiler_inactive:0".to_string(),
@@ -1339,23 +1331,23 @@ fn crash_tracking_empty_endpoint() {
 #[cfg_attr(miri, ignore)]
 #[cfg(unix)]
 fn test_receiver_emits_debug_logs_on_receiver_issue() -> anyhow::Result<()> {
+    use std::time::Duration;
+
     let receiver = artifacts::crashtracker_receiver(BuildProfile::Debug);
     let artifacts = build_artifacts(&[&receiver])?;
     let fixtures = bin_tests::test_runner::TestFixtures::new()?;
 
     let missing_file = fixtures.output_dir.join("missing_additional_file.txt");
 
-    let config = CrashtrackerConfiguration::new(
-        vec![missing_file.display().to_string()],
-        true,
-        true,
-        None,
-        StacktraceCollection::WithoutSymbols,
-        libdd_crashtracker::default_signals(),
-        Some(std::time::Duration::from_millis(500)),
-        None,
-        true,
-    )?;
+    let config = CrashtrackerConfiguration::builder()
+        .additional_files(vec![missing_file.display().to_string()])
+        .create_alt_stack(true)
+        .demangle_names(true)
+        .resolve_frames(StacktraceCollection::WithoutSymbols)
+        .signals(libdd_crashtracker::default_signals())
+        .timeout(Duration::from_millis(500))
+        .use_alt_stack(true)
+        .build()?;
 
     let metadata = Metadata {
         library_name: "libdatadog".to_owned(),

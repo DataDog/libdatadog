@@ -20,6 +20,8 @@
 #include <stdlib.h>
 #include <string.h>
 
+#define MAX_FILE_PATH   512
+
 static ddog_CharSlice slice(const char *s) {
   return (ddog_CharSlice){.ptr = s, .len = strlen(s)};
 }
@@ -110,13 +112,13 @@ int main(int argc, char **argv) {
       .env = env_slice,
   };
 
-  struct ddog_Endpoint *endpoint =
-      ddog_endpoint_from_filename(slice(output_file));
+  char endpoint[MAX_FILE_PATH]; 
+  snprintf(endpoint, sizeof(endpoint), "file://%s", output_file);
 
   struct ddog_crasht_Slice_CInt signals = ddog_crasht_default_signals();
   ddog_crasht_Config config = {
       .create_alt_stack = false,
-      .endpoint = endpoint,
+      .endpoint = slice(endpoint),
       .resolve_frames = DDOG_CRASHT_STACKTRACE_COLLECTION_DISABLED,
       .signals = {.ptr = signals.ptr, .len = signals.len},
   };
@@ -130,7 +132,6 @@ int main(int argc, char **argv) {
 
   handle_void(ddog_crasht_init(config, receiver_config, metadata),
                "ddog_crasht_init");
-  ddog_endpoint_drop(endpoint);
 
   // Build a runtime StackTrace with two synthetic frames.
   ddog_crasht_StackTrace_NewResult tr = ddog_crasht_StackTrace_new();

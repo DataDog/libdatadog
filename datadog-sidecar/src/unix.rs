@@ -5,6 +5,7 @@ use spawn_worker::{getpid, SpawnWorker, Stdio, TrampolineData};
 
 use std::ffi::CString;
 use std::os::unix::net::UnixListener as StdUnixListener;
+use std::sync::atomic::{AtomicU32, Ordering};
 
 use crate::config::Config;
 use crate::enter_listener_loop;
@@ -132,8 +133,19 @@ pub fn setup_daemon_process(
     Ok(())
 }
 
+static SIDECAR_MASTER_PID: AtomicU32 = AtomicU32::new(0);
+
+pub fn set_sidecar_master_pid(pid: u32) {
+    SIDECAR_MASTER_PID.store(pid, Ordering::Relaxed);
+}
+
 pub fn primary_sidecar_identifier() -> u32 {
-    unsafe { libc::geteuid() }
+    let pid = SIDECAR_MASTER_PID.load(Ordering::Relaxed);
+    if pid != 0 {
+        pid
+    } else {
+        unsafe { libc::geteuid() }
+    }
 }
 
 fn maybe_start_appsec() -> bool {
@@ -220,18 +232,25 @@ fn init_crashtracker(dependency_paths: *const *const libc::c_char) -> anyhow::Re
         LogMethod::Disabled => None,
     };
 
+    let mut config_builder = CrashtrackerConfiguration::builder()
+        .create_alt_stack(true)
+        .use_alt_stack(true)
+        .resolve_frames(StacktraceCollection::EnabledWithSymbolsInReceiver)
+        .demangle_names(true);
+    if let Some(ep) = Config::get().crashtracker_endpoint.as_ref() {
+        config_builder = config_builder.endpoint_url(&ep.url.to_string());
+        if let Some(api_key) = ep.api_key.as_deref() {
+            config_builder = config_builder.endpoint_api_key(api_key);
+        }
+        config_builder = config_builder
+            .endpoint_timeout_ms(ep.timeout_ms)
+            .endpoint_use_system_resolver(ep.use_system_resolver);
+        if let Some(test_token) = ep.test_token.as_deref() {
+            config_builder = config_builder.endpoint_test_token(test_token);
+        }
+    }
     libdd_crashtracker::init(
-        CrashtrackerConfiguration::new(
-            vec![],
-            true,
-            true,
-            Config::get().crashtracker_endpoint.clone(),
-            StacktraceCollection::EnabledWithSymbolsInReceiver,
-            vec![],
-            None,
-            None,
-            true,
-        )?,
+        config_builder.build()?,
         CrashtrackerReceiverConfig::new(
             receiver_args,
             vec![],

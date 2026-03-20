@@ -1,7 +1,7 @@
 // Copyright 2023-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use std::sync::atomic::{AtomicI64, Ordering::SeqCst};
+use std::sync::atomic::{AtomicI64, Ordering};
 use thiserror::Error;
 
 #[cfg(unix)]
@@ -48,7 +48,6 @@ impl OpTypes {
 #[allow(clippy::declare_interior_mutable_const)]
 const ATOMIC_ZERO: AtomicI64 = AtomicI64::new(0);
 
-// TODO: Is this
 static OP_COUNTERS: [AtomicI64; OpTypes::SIZE as usize] = [ATOMIC_ZERO; OpTypes::SIZE as usize];
 
 /// Track that an operation (of type op) has begun.
@@ -58,9 +57,7 @@ static OP_COUNTERS: [AtomicI64; OpTypes::SIZE as usize] = [ATOMIC_ZERO; OpTypes:
 /// ATOMICITY:
 ///     This function is atomic.
 pub fn begin_op(op: OpTypes) -> Result<(), CounterError> {
-    // TODO: I'm making everything SeqCst for now.  Could possibly gain some
-    // performance by using a weaker ordering.
-    let old = OP_COUNTERS[op as usize].fetch_add(1, SeqCst);
+    let old = OP_COUNTERS[op as usize].fetch_add(1, Ordering::Relaxed);
     if old == i64::MAX - 1 {
         return Err(CounterError::CounterOverflow(op));
     }
@@ -72,7 +69,7 @@ pub fn begin_op(op: OpTypes) -> Result<(), CounterError> {
 /// PRECONDITIONS: This function assumes that the crash-tracker is initialized.
 /// ATOMICITY: This function is atomic.  
 pub fn end_op(op: OpTypes) -> Result<(), CounterError> {
-    let old = OP_COUNTERS[op as usize].fetch_sub(1, SeqCst);
+    let old = OP_COUNTERS[op as usize].fetch_sub(1, Ordering::Relaxed);
     if old <= 0 {
         return Err(CounterError::OperationNotStarted(op));
     }
@@ -103,7 +100,12 @@ pub fn emit_counters(w: &mut impl Write) -> Result<(), CounterError> {
 
     writeln!(w, "{DD_CRASHTRACK_BEGIN_COUNTERS}")?;
     for (i, c) in OP_COUNTERS.iter().enumerate() {
-        writeln!(w, "{{\"{}\": {}}}", OpTypes::name(i)?, c.load(SeqCst))?;
+        writeln!(
+            w,
+            "{{\"{}\": {}}}",
+            OpTypes::name(i)?,
+            c.load(Ordering::Relaxed)
+        )?;
     }
     writeln!(w, "{DD_CRASHTRACK_END_COUNTERS}")?;
     w.flush()?;
@@ -113,12 +115,12 @@ pub fn emit_counters(w: &mut impl Write) -> Result<(), CounterError> {
 /// Resets all counters to 0.
 /// Expected to be used after a fork, to reset the counters on the child
 /// ATOMICITY:
-///     This is NOT ATOMIC.
+///     The reset of each individual counter is atomic, but the entire reset is NOT.
 ///     Should only be used when no conflicting updates can occur,
 ///     e.g. after a fork but before ops start on the child.
 pub fn reset_counters() -> Result<(), CounterError> {
     for c in OP_COUNTERS.iter() {
-        c.store(0, SeqCst);
+        c.store(0, Ordering::Relaxed);
     }
     Ok(())
 }
