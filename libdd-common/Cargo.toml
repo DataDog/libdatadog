@@ -38,7 +38,7 @@ regex = "1.5"
 # Use hickory-dns instead of the default system DNS resolver to avoid fork safety issues.
 # The default resolver can hold locks or other global state that can cause deadlocks
 # or corruption when the process forks (e.g., in PHP-FPM or other forking environments).
-reqwest = { version = "0.13", features = ["rustls", "hickory-dns"], default-features = false, optional = true }
+reqwest = { version = "0.13.2", features = ["rustls", "hickory-dns"], default-features = false, optional = true }
 rustls-native-certs = { version = "0.8.1", optional = true }
 thiserror = "1.0"
 tokio = { version = "1.23", features = ["rt", "macros", "net", "io-util", "fs"] }
