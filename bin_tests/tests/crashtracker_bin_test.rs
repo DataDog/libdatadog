@@ -125,6 +125,46 @@ fn test_crash_tracking_bin_errno_preservation() {
 
 #[test]
 #[cfg_attr(miri, ignore)]
+fn test_crash_tracking_bin_sigchld_sigpipe_saguard() {
+    use bin_tests::modes::unix::test_017_sigchld_sigpipe_saguard::{
+        CRASH_SIGCHLD_FILENAME, CRASH_SIGPIPE_FILENAME,
+    };
+
+    let config = CrashTestConfig::new(
+        BuildProfile::Release,
+        TestMode::SigChldSigPipeSaGuard,
+        CrashType::NullDeref,
+    );
+    let artifacts = StandardArtifacts::new(config.profile);
+    let artifacts_map = build_artifacts(&artifacts.as_slice()).unwrap();
+
+    let validator: ValidatorFn = Box::new(|_payload, fixtures| {
+        // SaGuard shouldve suppressed SIGCHLD and SIGPIPE during crash handling,
+        // so the marker files shouldnt exist
+        let sigchld_path = fixtures.output_dir.join(CRASH_SIGCHLD_FILENAME);
+        let sigpipe_path = fixtures.output_dir.join(CRASH_SIGPIPE_FILENAME);
+
+        assert!(
+            !sigchld_path.exists(),
+            "SIGCHLD handler fired during crash handling; SaGuard did not suppress it. \
+            File {:?} should not exist.",
+            sigchld_path
+        );
+        assert!(
+            !sigpipe_path.exists(),
+            "SIGPIPE handler fired during crash handling; SaGuard did not suppress it. \
+            File {:?} should not exist.",
+            sigpipe_path
+        );
+
+        Ok(())
+    });
+
+    run_crash_test_with_artifacts(&config, &artifacts_map, &artifacts, validator).unwrap();
+}
+
+#[test]
+#[cfg_attr(miri, ignore)]
 fn test_crash_tracking_bin_unhandled_exception() {
     let config = CrashTestConfig::new(
         BuildProfile::Release,
