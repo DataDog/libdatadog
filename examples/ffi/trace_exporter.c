@@ -9,10 +9,7 @@
 #include <datadog/log.h>
 
 #define UNUSED(x) (void)(x)
-enum {
-    SUCCESS,
-    ERROR_SEND,
-};
+#define SUCCESS 0
 
 void handle_error(ddog_TraceExporterError *err) {
     fprintf(stderr, "Operation failed with error: %d, reason: %s\n", err->code, err->msg);
@@ -73,7 +70,7 @@ int main(int argc, char** argv)
 
     int error;
 
-    ddog_TraceExporter* trace_exporter;
+    ddog_TraceExporter* trace_exporter = NULL;
     ddog_CharSlice url = DDOG_CHARSLICE_C("http://localhost:8126/");
     ddog_CharSlice tracer_version = DDOG_CHARSLICE_C("v0.1");
     ddog_CharSlice language = DDOG_CHARSLICE_C("dotnet");
@@ -91,8 +88,8 @@ int main(int argc, char** argv)
     UNUSED(version);
     UNUSED(service);
 
-    ddog_TraceExporterError *ret;
-    ddog_TraceExporterConfig *config;
+    ddog_TraceExporterError *ret = NULL;
+    ddog_TraceExporterConfig *config = NULL;
 
     ddog_trace_exporter_config_new(&config);
     ddog_trace_exporter_config_set_url(config, url);
@@ -107,6 +104,7 @@ int main(int argc, char** argv)
 
     ret = ddog_trace_exporter_config_enable_telemetry(config, &telemetry_config);
     if (ret) {
+        error = ret->code;
         handle_error(ret);
         goto error;
     }
@@ -123,7 +121,7 @@ int main(int argc, char** argv)
 
     assert(ret->code == DDOG_TRACE_EXPORTER_ERROR_CODE_SERDE);
     if (ret) {
-        error = ERROR_SEND;
+        error = ret->code;
         handle_error(ret);
         goto error;
     }

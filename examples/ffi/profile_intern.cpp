@@ -12,11 +12,7 @@ extern "C" {
 #include <cstdlib>
 #include <cstring>
 #include <iostream>
-#include <memory>
-#include <optional>
 #include <string>
-#include <thread>
-#include <vector>
 
 static ddog_CharSlice to_slice_c_char(const char *s) { return {.ptr = s, .len = strlen(s)}; }
 __attribute__ ((unused))
