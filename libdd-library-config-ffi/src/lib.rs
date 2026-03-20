@@ -1,11 +1,11 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
-#![cfg_attr(not(feature = "std"), no_std)]
+#![cfg_attr(all(not(feature = "std"), feature = "no_std_entry"), no_std)]
 
 #[cfg(not(feature = "std"))]
 extern crate alloc;
 
-#[cfg(not(feature = "std"))]
+#[cfg(all(not(feature = "std"), feature = "no_std_entry"))]
 mod no_std_support {
     #[cfg(target_os = "linux")]
     #[global_allocator]

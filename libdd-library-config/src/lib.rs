@@ -10,6 +10,7 @@ pub mod tracer_metadata;
 
 use alloc::borrow::Cow;
 use alloc::boxed::Box;
+use alloc::collections::BTreeMap;
 use alloc::format;
 use alloc::string::String;
 use alloc::vec;
@@ -17,7 +18,6 @@ use alloc::vec::Vec;
 use core::cell::OnceCell;
 use core::mem;
 use core::ops::Deref;
-use alloc::collections::BTreeMap;
 
 #[cfg(feature = "std")]
 use std::path::Path;

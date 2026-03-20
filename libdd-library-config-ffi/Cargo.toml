@@ -21,6 +21,9 @@ std = [
 ]
 cbindgen = ["std", "build_common/cbindgen", "libdd-common-ffi/cbindgen"]
 catch_panic = []
+# Provides #[global_allocator], #[panic_handler], and rust_eh_personality for
+# building a standalone no_std staticlib/cdylib. Must be built with panic=abort.
+no_std_entry = ["dep:dlmalloc", "dep:rustix-dlmalloc"]
 
 [dependencies]
 libdd-common = { path = "../libdd-common", optional = true }
@@ -30,10 +33,10 @@ anyhow = { version = "1.0", default-features = false, optional = true }
 constcat = "0.4.1"
 
 [target.'cfg(target_os = "linux")'.dependencies]
-rustix-dlmalloc = { version = "0.2", default-features = false, features = ["global"] }
+rustix-dlmalloc = { version = "0.2", default-features = false, features = ["global"], optional = true }
 
 [target.'cfg(not(target_os = "linux"))'.dependencies]
-dlmalloc = { version = "0.2", default-features = false, features = ["global"] }
+dlmalloc = { version = "0.2", default-features = false, features = ["global"], optional = true }
 
 [build-dependencies]
 build_common = { path = "../build-common" }
