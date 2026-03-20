@@ -17,11 +17,9 @@ pub(crate) struct ReqwestBackend {
 }
 
 #[cfg(feature = "reqwest-backend")]
-impl ReqwestBackend {
-    /// Construct a new backend with the given timeout and transport.
-    ///
-    /// Creates a `reqwest::Client` with connection pooling enabled.
-    pub(crate) fn new(
+impl super::Backend for ReqwestBackend {
+    // Creates a `reqwest::Client` with connection pooling enabled.
+    fn new(
         timeout: std::time::Duration,
         transport: TransportConfig,
     ) -> Result<Self, HttpClientError> {
@@ -44,10 +42,7 @@ impl ReqwestBackend {
             .map_err(|e| HttpClientError::InvalidConfig(e.to_string()))?;
         Ok(Self { client })
     }
-}
 
-#[cfg(feature = "reqwest-backend")]
-impl super::Backend for ReqwestBackend {
     async fn send(
         &self,
         request: HttpRequest,

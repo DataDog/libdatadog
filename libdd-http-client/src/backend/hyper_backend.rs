@@ -25,14 +25,6 @@ impl std::fmt::Debug for HyperBackend {
 
 #[cfg(feature = "hyper-backend")]
 impl HyperBackend {
-    pub(crate) fn new(
-        _timeout: std::time::Duration,
-        transport: TransportConfig,
-    ) -> Result<Self, HttpClientError> {
-        let client = http_common::client_builder().build(Connector::default());
-        Ok(Self { client, transport })
-    }
-
     /// Rewrite the request URL for UDS/Named Pipe transports.
     fn rewrite_url(&self, url: &str) -> Result<hyper::Uri, HttpClientError> {
         match &self.transport {
@@ -156,6 +148,14 @@ fn map_hyper_error(e: hyper_util::client::legacy::Error) -> HttpClientError {
 
 #[cfg(feature = "hyper-backend")]
 impl super::Backend for HyperBackend {
+    fn new(
+        _timeout: std::time::Duration,
+        transport: TransportConfig,
+    ) -> Result<Self, HttpClientError> {
+        let client = http_common::client_builder().build(Connector::default());
+        Ok(Self { client, transport })
+    }
+
     async fn send(
         &self,
         mut request: HttpRequest,
