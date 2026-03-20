@@ -492,7 +492,7 @@ impl SpawnWorker {
                     unsafe { CString::from_vec_with_nul_unchecked(s) }
                 };
                 envp.push(ldso_env);
-                tracing::info!(
+                tracing::debug!(
                     "spawn: ExecSolib execve {:?} ldso={:?}",
                     ddtrace_path,
                     ldso_path
