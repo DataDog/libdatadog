@@ -3039,6 +3039,7 @@ name = "libdd-library-config"
 version = "1.1.0"
 dependencies = [
  "anyhow",
+ "cc",
  "libdd-trace-protobuf",
  "memfd",
  "prost",
