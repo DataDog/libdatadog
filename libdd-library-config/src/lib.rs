@@ -12,7 +12,7 @@ use alloc::borrow::Cow;
 use alloc::boxed::Box;
 use alloc::collections::BTreeMap;
 use alloc::format;
-use alloc::string::String;
+use alloc::string::{String, ToString};
 use alloc::vec;
 use alloc::vec::Vec;
 use core::cell::OnceCell;
@@ -644,7 +644,6 @@ impl Configurator {
         }
     }
 
-    #[cfg(feature = "std")]
     pub fn get_config_from_bytes(
         &self,
         s_local: &[u8],
@@ -666,7 +665,6 @@ impl Configurator {
         }
     }
 
-    #[cfg(feature = "std")]
     fn get_config(
         &self,
         local_config: StableConfig,
@@ -747,7 +745,6 @@ impl Configurator {
     /// This is done in two steps:
     ///     * First take the global host config
     ///     * Merge the global config with the process specific config
-    #[cfg(feature = "std")]
     fn get_single_source_config(
         &self,
         mut stable_config: StableConfig,
@@ -779,7 +776,6 @@ impl Configurator {
     }
 
     /// Get config from a stable config using process matching rules
-    #[cfg(feature = "std")]
     fn get_single_source_process_config(
         &self,
         stable_config: StableConfig,
