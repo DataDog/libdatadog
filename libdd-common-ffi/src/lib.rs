@@ -9,12 +9,18 @@
 
 extern crate alloc;
 
+// Always available in both std and no_std builds.
+pub mod cstr;
+pub mod slice;
+
+pub use cstr::*;
+pub use slice::{CharSlice, Slice};
+
+// Modules and re-exports that require std.
 #[cfg(feature = "std")]
 mod error;
-
 #[cfg(feature = "std")]
 pub mod array_queue;
-pub mod cstr;
 #[cfg(feature = "std")]
 pub mod endpoint;
 #[cfg(feature = "std")]
@@ -23,7 +29,6 @@ pub mod handle;
 pub mod option;
 #[cfg(feature = "std")]
 pub mod result;
-pub mod slice;
 #[cfg(feature = "std")]
 pub mod slice_mut;
 #[cfg(feature = "std")]
@@ -37,22 +42,8 @@ pub mod utils;
 #[cfg(feature = "std")]
 pub mod vec;
 
-pub use cstr::*;
-pub use slice::{CharSlice, Slice};
-
 #[cfg(feature = "std")]
-pub use error::*;
-#[cfg(feature = "std")]
-pub use handle::*;
-#[cfg(feature = "std")]
-pub use option::*;
-#[cfg(feature = "std")]
-pub use result::*;
-#[cfg(feature = "std")]
-pub use slice_mut::MutSlice;
-#[cfg(feature = "std")]
-pub use string::*;
-#[cfg(feature = "std")]
-pub use timespec::*;
-#[cfg(feature = "std")]
-pub use vec::Vec;
+pub use {
+    error::*, handle::*, option::*, result::*, slice_mut::MutSlice, string::*, timespec::*,
+    vec::Vec,
+};
