@@ -138,6 +138,7 @@ pub fn get_behavior(mode_str: &str) -> Box<dyn Behavior> {
         "panic_hook_string" => Box::new(test_014_panic_hook_string::Test),
         "panic_hook_unknown_type" => Box::new(test_015_panic_hook_unknown_type::Test),
         "errno_preservation" => Box::new(test_016_errno_preservation::Test),
+        "sigchld_sigpipe_saguard" => Box::new(test_017_sigchld_sigpipe_saguard::Test),
         "runtime_preload_logger" => Box::new(test_000_donothing::Test),
         _ => panic!("Unknown mode: {mode_str}"),
     }
