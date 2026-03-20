@@ -119,7 +119,9 @@ mod tests {
             .base_url("http://localhost:8126".to_owned())
             .timeout(Duration::from_secs(5))
             .build();
-        assert!(client.is_ok());
+        let client = client.unwrap();
+        assert_eq!(client.config().base_url(), "http://localhost:8126");
+        assert_eq!(client.config().timeout(), Duration::from_secs(5));
     }
 
     #[cfg_attr(miri, ignore)]
