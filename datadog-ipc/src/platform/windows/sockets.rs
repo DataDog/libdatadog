@@ -18,19 +18,22 @@
 //! ```
 //!
 //! Because `PIPE_READMODE_MESSAGE` delivers the entire message in one `ReadFile` call, the
-//! receiver can read directly into the caller-provided buffer, then strip the suffix in-place —
+//! receiver can read directly into the caller-provided buffer, then strip the suffix in-place -
 //! no intermediate copy needed.  The caller's buffer must have at least `HANDLE_SUFFIX_SIZE`
 //! bytes beyond the maximum expected payload size.
 
 use crate::platform::message::MAX_FDS;
+use std::future::Future;
 use std::io;
 use std::os::windows::io::{AsRawHandle, FromRawHandle, IntoRawHandle, OwnedHandle, RawHandle};
 use std::path::Path;
+use std::pin::Pin;
 use std::ptr::{null, null_mut};
 use std::sync::{
     atomic::{AtomicU64, AtomicUsize, Ordering},
-    Mutex,
+    Arc, Mutex,
 };
+use std::task::{Context, Poll};
 
 // winapi – only used for things not cleanly available in windows-sys
 use winapi::shared::minwindef::ULONG;
@@ -50,8 +53,10 @@ use windows_sys::Win32::System::Pipes::{
     ConnectNamedPipe, CreateNamedPipeA, PeekNamedPipe, SetNamedPipeHandleState, PIPE_NOWAIT,
     PIPE_READMODE_MESSAGE, PIPE_TYPE_MESSAGE, PIPE_UNLIMITED_INSTANCES, PIPE_WAIT,
 };
-use windows_sys::Win32::System::Threading::{CreateEventA, WaitForSingleObject, INFINITE};
-use windows_sys::Win32::System::IO::{CancelIo, GetOverlappedResult, OVERLAPPED, OVERLAPPED_0};
+use windows_sys::Win32::System::Threading::{
+    CreateEventA, SetEvent, WaitForMultipleObjects, WaitForSingleObject, INFINITE,
+};
+use windows_sys::Win32::System::IO::{CancelIo, CancelIoEx, GetOverlappedResult, OVERLAPPED, OVERLAPPED_0};
 
 /// Wire-format suffix overhead: 4-byte count + 8 bytes per handle slot.
 ///
@@ -285,8 +290,8 @@ fn make_overlapped(event: SysHANDLE) -> OVERLAPPED {
 /// A named-pipe server that accepts message-mode IPC connections.
 ///
 /// `try_accept` swaps the connected pipe instance for a fresh server instance so the listener
-/// remains ready for the next client.  `accept_blocking` does the same but blocks until a client
-/// connects (polling `try_accept` with a short sleep).  Interior mutability (`Mutex`) allows
+/// remains ready for the next client.  `accept_async` does the same but awaits the connection
+/// using overlapped I/O with proper cancellation support.  Interior mutability (`Mutex`) allows
 /// `&self` in both methods.
 pub struct SeqpacketListener {
     inner: Mutex<OwnedHandle>,
@@ -300,7 +305,7 @@ impl SeqpacketListener {
     /// Bind to a named pipe derived from `path` and prepare to accept connections.
     ///
     /// Uses `FILE_FLAG_FIRST_PIPE_INSTANCE` so that a second concurrent `bind` to the same path
-    /// fails with `ERROR_ACCESS_DENIED` — the signal used by `attempt_listen` to detect that
+    /// fails with `ERROR_ACCESS_DENIED` - the signal used by `attempt_listen` to detect that
     /// another process is already serving.
     pub fn bind(path: impl AsRef<Path>) -> io::Result<Self> {
         let name = path_to_null_terminated(path.as_ref());
@@ -404,7 +409,7 @@ impl SeqpacketListener {
         //
         // The named pipe creator is determined by who calls CreateNamedPipeA.  When PHP creates the
         // listener and passes it to the sidecar, GetNamedPipeServerProcessId on the client side
-        // returns PHP's own PID — not the sidecar's — causing DuplicateHandle to target the wrong
+        // returns PHP's own PID - not the sidecar's - causing DuplicateHandle to target the wrong
         // process.  This one-shot 4-byte message lets the client discover the actual acceptor PID
         // before sending any handles.
         let my_pid = unsafe { GetCurrentProcessId() };
@@ -426,24 +431,6 @@ impl SeqpacketListener {
             read_timeout: None,
             write_timeout: None,
         })
-    }
-
-    /// Block until a client connects and return the accepted connection.
-    ///
-    /// Polls `try_accept` in a loop with a short sleep so that callers running on a
-    /// `spawn_blocking` thread do not spin.  Because this does not go through Tokio's
-    /// IOCP reactor, the accepted handle is a raw synchronous handle with **no** pending
-    /// overlapped I/O — safe to use with `block_in_place` reads.
-    pub fn accept_blocking(&self) -> io::Result<SeqpacketConn> {
-        loop {
-            match self.try_accept() {
-                Ok(conn) => return Ok(conn),
-                Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
-                    std::thread::sleep(std::time::Duration::from_millis(10));
-                }
-                Err(e) => return Err(e),
-            }
-        }
     }
 
     pub fn as_raw_handle(&self) -> RawHandle {
@@ -627,7 +614,7 @@ impl SeqpacketConn {
     /// Non-blocking send.
     ///
     /// Appends the handle suffix to `data` in-place, writes the message, then truncates `data`
-    /// back to its original length — whether the write succeeded or failed.  On `WouldBlock`
+    /// back to its original length - whether the write succeeded or failed.  On `WouldBlock`
     /// the caller can retry without re-encoding `data`.
     pub fn try_send_raw(&self, data: &mut Vec<u8>, handles: &[RawHandle]) -> io::Result<()> {
         let orig_len = data.len();
@@ -685,7 +672,7 @@ impl SeqpacketConn {
     /// Named-pipe buffer sizes are fixed at creation time on Windows, so this does not affect
     /// the current connection.  It updates the global [`PIPE_BUFFER_SIZE`] used by all
     /// subsequent [`SeqpacketListener::bind`] / [`try_accept`] / [`SeqpacketConn::socketpair`]
-    /// calls — i.e. it takes effect on the next reconnect.
+    /// calls - i.e. it takes effect on the next reconnect.
     pub fn set_sndbuf_size(&self, size: usize) -> io::Result<()> {
         set_pipe_buffer_size(size);
         Ok(())
@@ -697,68 +684,192 @@ pub fn is_listening<P: AsRef<Path>>(path: P) -> io::Result<bool> {
     Ok(SeqpacketConn::connect(path).is_ok())
 }
 
-/// Async connection type for Windows named-pipe IPC.
-///
-/// Wraps a raw synchronous pipe handle; recv/send go through `block_in_place` +
-/// `ReadFile`/`WriteFile` with a caller-supplied large buffer, bypassing mio's
-/// 4 KB internal IOCP read buffer limit.
-pub struct AsyncSeqpacketConn {
-    handle: OwnedHandle,
-    pub(crate) peer_pid: u32,
+/// On Windows, `AsyncConn` is the same type as `SeqpacketConn` — both hold an
+/// `OwnedHandle` and a peer PID.  The async serve loop drives I/O via
+/// `block_in_place` + raw `ReadFile`/`WriteFile`, bypassing mio entirely.
+pub type AsyncConn = SeqpacketConn;
+
+impl SeqpacketConn {
+    /// No-op on Windows: the connection is already usable as an `AsyncConn`.
+    pub fn into_async_conn(self) -> io::Result<AsyncConn> {
+        Ok(self)
+    }
 }
 
-// SAFETY: the inner OwnedHandle is not shared.
-unsafe impl Send for AsyncSeqpacketConn {}
+/// ConnectFuture is a cancellable overlapped ConnectNamedPipe
+///
+/// A future that resolves when a client connects to the pipe server handle, or
+/// returns `Interrupted` if dropped before completion.
+///
+/// On drop, `SetEvent(cancel_event)` is called.  The dedicated OS thread
+/// detects this via `WaitForMultipleObjects`, calls `CancelIoEx` to abort the
+/// overlapped `ConnectNamedPipe`, and then exits - no Tokio `spawn_blocking`
+/// task is left behind.
+struct ConnectFuture {
+    rx: tokio::sync::oneshot::Receiver<io::Result<AsyncConn>>,
+    /// Windows manual-reset event shared with the worker thread.  Signalled
+    /// here on drop to tell the thread to cancel its pending operation.
+    cancel_event: Arc<OwnedHandle>,
+}
 
-impl AsyncSeqpacketConn {
-    pub fn peer_credentials(&self) -> io::Result<PeerCredentials> {
-        Ok(PeerCredentials {
-            pid: self.peer_pid,
-            uid: 0,
+impl Drop for ConnectFuture {
+    fn drop(&mut self) {
+        unsafe { SetEvent(self.cancel_event.as_raw_handle() as SysHANDLE) };
+    }
+}
+
+impl Future for ConnectFuture {
+    type Output = io::Result<AsyncConn>;
+
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        Pin::new(&mut self.rx).poll(cx).map(|r| {
+            r.unwrap_or_else(|_| Err(io::Error::from(io::ErrorKind::BrokenPipe)))
         })
     }
 }
 
-pub type AsyncConn = AsyncSeqpacketConn;
+impl SeqpacketListener {
+    /// Asynchronously accept one client connection.
+    ///
+    /// Installs a fresh server handle *before* any `await` point so the
+    /// listener remains ready even if this future is dropped mid-accept.
+    ///
+    /// A dedicated OS thread (not a Tokio `spawn_blocking` task) manages the
+    /// overlapped `ConnectNamedPipe` call.  When the future is dropped
+    /// (`select!` shutdown), `SetEvent` signals the thread to call
+    /// `CancelIoEx` and exit immediately - Tokio's runtime shutdown is never
+    /// blocked waiting for a lingering thread-pool task.
+    pub async fn accept_async(&self) -> io::Result<AsyncConn> {
+        // Create the replacement server handle before taking the lock.
+        let new_server = create_pipe_server(&self.name, false)?;
 
-impl SeqpacketConn {
-    /// Convert to an async connection for use in async server dispatch loops.
-    pub fn into_async_conn(self) -> io::Result<AsyncConn> {
-        Ok(AsyncSeqpacketConn {
-            handle: self.handle,
-            peer_pid: self.peer_pid,
-        })
+        // Atomically swap: the listener now holds a fresh handle ready for
+        // the *next* accept; `current` is the handle we will connect.
+        let current = {
+            let mut guard = self
+                .inner
+                .lock()
+                .map_err(|_| io::Error::from(io::ErrorKind::Other))?;
+            std::mem::replace(&mut *guard, new_server)
+        };
+
+        // Cancel event shared between the future's Drop and the worker thread.
+        let cancel_raw = unsafe { CreateEventA(null_mut(), 1, 0, null_mut()) };
+        if cancel_raw == 0 {
+            return Err(io::Error::last_os_error());
+        }
+        let cancel_arc =
+            Arc::new(unsafe { OwnedHandle::from_raw_handle(cancel_raw as RawHandle) });
+        let cancel_for_thread = Arc::clone(&cancel_arc);
+
+        let (tx, rx) = tokio::sync::oneshot::channel::<io::Result<AsyncConn>>();
+
+        std::thread::spawn(move || {
+            let raw = current.as_raw_handle() as SysHANDLE;
+            let cancel_raw = cancel_for_thread.as_raw_handle() as SysHANDLE;
+
+            // Create event for the overlapped ConnectNamedPipe.
+            let overlapped_event = unsafe { CreateEventA(null_mut(), 1, 0, null_mut()) };
+            if overlapped_event == 0 {
+                let _ = tx.send(Err(io::Error::last_os_error()));
+                return;
+            }
+
+            // `ov` is on the thread's stack - stable for the thread's lifetime.
+            let mut overlapped = make_overlapped(overlapped_event);
+
+            let connect_result = unsafe { ConnectNamedPipe(raw, &mut overlapped) };
+            let connect_err = io::Error::last_os_error();
+
+            // conn_result: io::Result<OwnedHandle> - PID handshake applied below.
+            let conn_result: io::Result<OwnedHandle> = if connect_result != 0
+                || connect_err.raw_os_error() == Some(ERROR_PIPE_CONNECTED as i32)
+            {
+                // Already connected (e.g. client arrived before ConnectNamedPipe).
+                unsafe { CloseHandle(overlapped_event as HANDLE) };
+                Ok(current)
+            } else if connect_err.raw_os_error()
+                == Some(windows_sys::Win32::Foundation::ERROR_IO_PENDING as i32)
+            {
+                // Overlapped pending - wait for connection or cancellation.
+                let handles = [overlapped_event, cancel_raw];
+                let wait =
+                    unsafe { WaitForMultipleObjects(2, handles.as_ptr() as _, 0, INFINITE) };
+
+                unsafe { CloseHandle(overlapped_event as HANDLE) };
+
+                if wait == WAIT_OBJECT_0 {
+                    // Connected.
+                    let mut transferred: u32 = 0;
+                    let ok = unsafe { GetOverlappedResult(raw, &overlapped, &mut transferred, 0) };
+                    if ok != 0 {
+                        Ok(current)
+                    } else {
+                        Err(io::Error::last_os_error())
+                    }
+                } else {
+                    // Cancelled (or error) - abort the overlapped op.
+                    unsafe { CancelIoEx(raw, &overlapped) };
+                    let mut transferred: u32 = 0;
+                    // bWait=1: block until the cancellation IOCP completion arrives.
+                    unsafe { GetOverlappedResult(raw, &overlapped, &mut transferred, 1) };
+                    Err(io::Error::from(io::ErrorKind::Interrupted))
+                }
+            } else {
+                unsafe { CloseHandle(overlapped_event as HANDLE) };
+                Err(connect_err)
+            };
+
+            // Write PID handshake and build AsyncConn on success.
+            let result = conn_result.map(|conn_handle| {
+                let conn_raw = conn_handle.as_raw_handle() as SysHANDLE;
+                let mut client_pid: ULONG = 0;
+                unsafe {
+                    GetNamedPipeClientProcessId(conn_raw as HANDLE, &mut client_pid);
+                }
+                let pid_bytes = unsafe { GetCurrentProcessId() }.to_le_bytes();
+                let mut written: u32 = 0;
+                unsafe {
+                    WriteFile(conn_raw, pid_bytes.as_ptr() as _, 4, &mut written, null_mut());
+                }
+                SeqpacketConn::from_server_handle(conn_handle, client_pid)
+            });
+
+            let _ = tx.send(result);
+            // cancel_for_thread (Arc<OwnedHandle>) is dropped here.
+        });
+
+        ConnectFuture {
+            rx,
+            cancel_event: cancel_arc,
+        }
+        .await
     }
 }
 
 /// Async receive on a Windows named pipe IPC connection.
 ///
-/// Calls `block_in_place` with a direct blocking `ReadFile` into a caller-owned buffer,
-/// bypassing mio's 4 KB internal read buffer and correctly handling messages of any size.
+/// Uses `block_in_place` + raw `ReadFile` to avoid mio's 4 KB internal read-
+/// buffer limit.  For message-mode pipes a single `ReadFile` delivers the
+/// entire message.
 pub async fn recv_raw_async(conn: &AsyncConn) -> io::Result<(Vec<u8>, Vec<OwnedHandle>)> {
-    let h = conn.handle.as_raw_handle() as SysHANDLE;
+    let raw = conn.as_raw_handle() as SysHANDLE;
     tokio::task::block_in_place(|| {
         let size = max_message_size() + HANDLE_SUFFIX_SIZE;
-        let mut buf = Vec::with_capacity(size);
-        // SAFETY: all bit patterns are valid for u8; pipe_read writes exactly n bytes into
-        // the spare capacity before set_len(n) is called below.
-        let (n, handles) = pipe_read(
-            h,
-            unsafe { std::slice::from_raw_parts_mut(buf.as_mut_ptr(), size) },
-            true,
-        )?;
-        unsafe { buf.set_len(n) };
+        let mut buf = vec![0u8; size];
+        let (payload_len, handles) = pipe_read(raw, &mut buf, true)?;
+        buf.truncate(payload_len);
         Ok((buf, handles))
     })
 }
 
 /// Async send on a Windows named pipe IPC connection.
 ///
-/// Server responses never carry handles; a zero-handle-count suffix is appended automatically.
-/// Uses `block_in_place` with a direct `WriteFile`.
+/// Server responses never carry handles; a zero-handle-count suffix is
+/// appended.  Uses `block_in_place` + raw `WriteFile` to bypass mio.
 pub async fn send_raw_async(conn: &AsyncConn, data: &[u8]) -> io::Result<()> {
+    let raw = conn.as_raw_handle() as SysHANDLE;
     let mut buf = data.to_vec();
-    buf.extend_from_slice(&0u32.to_le_bytes());
-    let h = conn.handle.as_raw_handle() as SysHANDLE;
-    tokio::task::block_in_place(|| pipe_write(h, &buf, true))
+    buf.extend_from_slice(&0u32.to_le_bytes()); // zero handle count
+    tokio::task::block_in_place(move || pipe_write(raw, &buf, true))
 }

@@ -173,7 +173,7 @@ impl SidecarServer {
     ///
     /// # Arguments
     ///
-    /// * `conn`: A `SeqpacketConn` that represents the connection to the client.
+    /// * `conn`: The connection to the client.
     pub async fn accept_connection(self, conn: SeqpacketConn) {
         let handler = Arc::new(ConnectionSidecarHandler::new(self));
         let handler_for_cleanup = handler.clone();

@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::enter_listener_loop;
-use datadog_ipc::{SeqpacketConn, SeqpacketListener};
+use datadog_ipc::{AsyncConn, SeqpacketListener};
 
 use futures::FutureExt;
 use libdd_common::Endpoint;
@@ -89,20 +89,14 @@ pub extern "C" fn ddog_daemon_entry_point(_trampoline_data: &TrampolineData) {
 async fn accept_socket_loop(
     listener: SeqpacketListener,
     cancellation: ManualFuture<()>,
-    handler: Box<dyn Fn(SeqpacketConn)>,
+    handler: Box<dyn Fn(AsyncConn)>,
 ) -> io::Result<()> {
-    // Use spawn_blocking + accept_blocking so the accepted handle has no pending overlapped
-    // I/O registered with mio/IOCP.  recv_raw_async/send_raw_async then use block_in_place
-    // with a caller-supplied large buffer, bypassing mio's 4 KB internal ReadFile buffer
-    // (which would cause ERROR_MORE_DATA → unreachable!() panic for larger messages).
-    let listener = Arc::new(listener);
     let cancellation = cancellation.shared();
     loop {
-        let listener_clone = Arc::clone(&listener);
         select! {
             _ = cancellation.clone() => break,
-            result = tokio::task::spawn_blocking(move || listener_clone.accept_blocking()) => {
-                handler(result??);
+            result = listener.accept_async() => {
+                handler(result?);
             }
         }
     }

@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use std::io;
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Mutex, OnceLock};
 use std::thread::{self, JoinHandle};
 use tokio::sync::oneshot;
 use tracing::{error, info};
@@ -12,9 +12,7 @@ use crate::entry::MainLoopConfig;
 use crate::service::blocking::SidecarTransport;
 use crate::setup::Liaison;
 use crate::setup::NamedPipeLiaison;
-use datadog_ipc::{SeqpacketConn, SeqpacketListener};
-use futures::FutureExt;
-use manual_future::ManualFuture;
+use datadog_ipc::{AsyncConn, SeqpacketListener};
 
 static MASTER_LISTENER: OnceLock<Mutex<Option<MasterListener>>> = OnceLock::new();
 
@@ -107,46 +105,25 @@ impl MasterListener {
     }
 }
 
-/// Accept connections in a loop for Windows named pipes.
+/// Accept connections in a loop using IOCP-backed async named pipes.
+///
+/// `listener.accept_async()` uses Tokio's Windows named-pipe reactor so that
+/// `connect().await` is directly `select!`-cancellable — no `spawn_blocking` or
+/// polling loop.  When the shutdown signal arrives the select arm fires immediately
+/// and the accept future is dropped cleanly.
 async fn accept_socket_loop_thread_windows(
     listener: SeqpacketListener,
-    handler: Box<dyn Fn(SeqpacketConn)>,
-    shutdown_rx: oneshot::Receiver<()>,
+    handler: Box<dyn Fn(AsyncConn)>,
+    mut shutdown_rx: oneshot::Receiver<()>,
 ) -> io::Result<()> {
-    let (closed_future, close_completer) = ManualFuture::new();
-    let close_completer = Arc::new(Mutex::new(Some(close_completer)));
-
-    tokio::spawn({
-        let close_completer = Arc::clone(&close_completer);
-        async move {
-            let _ = shutdown_rx.await;
-            if let Some(completer) = close_completer.lock().ok().and_then(|mut g| g.take()) {
-                completer.complete(()).await;
-            }
-        }
-    });
-
-    let listener = Arc::new(listener);
-    let cancellation = closed_future.shared();
     loop {
-        let listener_clone = Arc::clone(&listener);
         tokio::select! {
-            _ = cancellation.clone() => {
+            _ = &mut shutdown_rx => {
                 info!("Shutdown signal received in Windows pipe listener");
                 break;
             }
-            result = tokio::task::spawn_blocking(move || listener_clone.accept_blocking()) => {
-                match result {
-                    Ok(Ok(conn)) => handler(conn),
-                    Ok(Err(e)) => {
-                        error!("Failed to accept worker connection: {}", e);
-                        break;
-                    }
-                    Err(e) => {
-                        error!("Listener task panicked: {}", e);
-                        break;
-                    }
-                }
+            result = listener.accept_async() => {
+                handler(result?);
             }
         }
     }

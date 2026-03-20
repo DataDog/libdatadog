@@ -22,7 +22,7 @@ fn test_shm_handle_transfer() {
         .unwrap();
     rt.spawn({
         let server = ExampleServer::default();
-        async move { server.accept_connection(conn_server).await }
+        async move { server.accept_connection(conn_server.into_async_conn().unwrap()).await }
     });
 
     let mut channel = ExampleInterfaceChannel::new(conn_client);
@@ -43,15 +43,12 @@ fn test_shm_handle_transfer() {
 
 /// Verifies that IPC messages larger than 4 KB are handled without panicking.
 ///
-/// Using Tokio's `NamedPipeServer`, it registered the pipe handle with mio/IOCP, which
-/// posted overlapped `ReadFile` calls into a fixed 4 KB internal buffer.  Messages larger than
-/// 4 KB caused `ReadFile` to return `ERROR_MORE_DATA` synchronously; Windows still queued an
-/// IOCP completion, but mio had already transitioned `io.read` to `State::Err`.  When the
-/// completion fired, mio's `read_done` hit `_ => unreachable!()` (named_pipe.rs:871).
-///
-/// Which is why we route serve-loop I/O through `block_in_place` + direct `ReadFile` into the
-/// caller-supplied large buffer, bypassing mio's 4 KB limit entirely. This serves as regression
-/// test.
+/// The serve loop uses Tokio's IOCP-backed `readable().await` + `try_read()` pattern
+/// (no `block_in_place`, no mio).  The pipe is created with `FILE_FLAG_OVERLAPPED` and
+/// registered via `NamedPipeServer::from_raw_handle`, giving Tokio direct IOCP ownership.
+/// `try_read` reads into a caller-supplied buffer large enough for any message, so
+/// `ERROR_MORE_DATA` can never occur.  This test is a regression guard for the old mio
+/// 4 KB panic.
 #[test]
 fn test_large_message() {
     let (conn_server, conn_client) = SeqpacketConn::socketpair().unwrap();
@@ -63,7 +60,7 @@ fn test_large_message() {
         .unwrap();
     rt.spawn({
         let server = ExampleServer::default();
-        async move { server.accept_connection(conn_server).await }
+        async move { server.accept_connection(conn_server.into_async_conn().unwrap()).await }
     });
 
     let mut channel = ExampleInterfaceChannel::new(conn_client);

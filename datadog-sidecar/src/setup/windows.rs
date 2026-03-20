@@ -4,11 +4,11 @@
 use crate::primary_sidecar_identifier;
 use crate::setup::Liaison;
 use datadog_ipc::platform::PIPE_PATH;
-use datadog_ipc::{SeqpacketConn, SeqpacketListener};
+use datadog_ipc::{AsyncConn, SeqpacketConn, SeqpacketListener};
 use libc::getpid;
 use std::io;
 
-pub type IpcClient = SeqpacketConn;
+pub type IpcClient = AsyncConn;
 pub type IpcServer = SeqpacketListener;
 
 pub struct NamedPipeLiaison {
