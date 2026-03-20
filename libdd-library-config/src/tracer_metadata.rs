@@ -33,6 +33,15 @@ pub struct TracerMetadata {
     /// Container id seen by the application.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub container_id: Option<String>,
+    /// Ordered list of attribute key names for thread-level context records. Key indices from
+    /// thread context records index into this table. Keep empty if thread-level context is not
+    /// used.
+    ///
+    /// This field is specific to OTel process context. It is ignored for (de)serialization, and is
+    /// only used when converting to an OTel process context in
+    /// [TracerMetadata::to_otel_process_ctx].
+    #[serde(skip)]
+    pub threadlocal_attribute_keys: Vec<String>,
 }
 
 impl Default for TracerMetadata {
@@ -48,6 +57,7 @@ impl Default for TracerMetadata {
             service_version: None,
             process_tags: None,
             container_id: None,
+            threadlocal_attribute_keys: vec![],
         }
     }
 }
@@ -57,7 +67,10 @@ impl TracerMetadata {
     const OTEL_SDK_NAME: &str = "libdatadog";
 
     pub fn to_otel_process_ctx(&self) -> otel_proto::common::v1::ProcessContext {
-        use otel_proto::common::v1::{any_value, AnyValue, KeyValue};
+        use otel_proto::{
+            common::v1::{any_value, AnyValue, ArrayValue, KeyValue, ProcessContext},
+            resource::v1::Resource,
+        };
 
         fn key_value(key: &'static str, val: String) -> KeyValue {
             KeyValue {
@@ -89,21 +102,45 @@ impl TracerMetadata {
             service_version,
             process_tags,
             container_id,
+            threadlocal_attribute_keys,
         } = self;
 
-        otel_proto::common::v1::ProcessContext {
-            resource: Some(otel_proto::resource::v1::Resource {
-                attributes: vec![
-                    key_value_opt("service.name", service_name),
-                    key_value_opt("service.instance.id", runtime_id),
-                    key_value_opt("service.version", service_version),
-                    key_value_opt("deployment.environment.name", service_env),
-                    key_value("telemetry.sdk.language", tracer_language.clone()),
-                    key_value("telemetry.sdk.version", tracer_version.clone()),
-                    key_value("telemetry.sdk.name", Self::OTEL_SDK_NAME.to_owned()),
-                    key_value("host.name", hostname.clone()),
-                    key_value_opt("container.id", container_id),
-                ],
+        let mut attributes = vec![
+            key_value_opt("service.name", service_name),
+            key_value_opt("service.instance.id", runtime_id),
+            key_value_opt("service.version", service_version),
+            key_value_opt("deployment.environment.name", service_env),
+            key_value("telemetry.sdk.language", tracer_language.clone()),
+            key_value("telemetry.sdk.version", tracer_version.clone()),
+            key_value("telemetry.sdk.name", Self::OTEL_SDK_NAME.to_owned()),
+            key_value("host.name", hostname.clone()),
+            key_value_opt("container.id", container_id),
+        ];
+
+        if !threadlocal_attribute_keys.is_empty() {
+            attributes.push(key_value(
+                "threadlocal.schema_version",
+                "tlsdesc_v1_dev".to_owned(),
+            ));
+            attributes.push(KeyValue {
+                key: "threadlocal.attribute_key_map".to_owned(),
+                value: Some(AnyValue {
+                    value: Some(any_value::Value::ArrayValue(ArrayValue {
+                        values: threadlocal_attribute_keys
+                            .iter()
+                            .map(|k| AnyValue {
+                                value: Some(any_value::Value::StringValue(k.clone())),
+                            })
+                            .collect(),
+                    })),
+                }),
+                key_ref: 0,
+            });
+        }
+
+        ProcessContext {
+            resource: Some(Resource {
+                attributes,
                 dropped_attributes_count: 0,
                 entity_refs: vec![],
             }),
