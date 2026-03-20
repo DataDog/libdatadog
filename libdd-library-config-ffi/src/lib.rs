@@ -19,14 +19,80 @@ mod no_std_support {
     fn panic(_info: &core::panic::PanicInfo) -> ! {
         loop {}
     }
+
+    #[no_mangle]
+    pub extern "C" fn rust_eh_personality() {}
+}
+
+/// Minimal FFI type definitions for no_std builds, matching the layout of libdd-common-ffi types.
+#[cfg(not(feature = "std"))]
+pub(crate) mod ffi_types {
+    use core::ffi::c_char;
+    use core::marker::PhantomData;
+    use core::ptr;
+
+    #[repr(C)]
+    #[derive(Copy, Clone)]
+    pub struct Slice<'a, T: 'a> {
+        ptr: *const T,
+        len: usize,
+        _marker: PhantomData<&'a [T]>,
+    }
+
+    impl<'a, T> Slice<'a, T> {
+        pub fn as_slice(&self) -> &'a [T] {
+            if self.ptr.is_null() || self.len == 0 {
+                &[]
+            } else {
+                unsafe { core::slice::from_raw_parts(self.ptr, self.len) }
+            }
+        }
+
+        pub fn iter(&self) -> core::slice::Iter<'a, T> {
+            self.as_slice().iter()
+        }
+    }
+
+    pub type CharSlice<'a> = Slice<'a, c_char>;
+
+    pub trait AsBytes<'a> {
+        fn as_bytes(&self) -> &'a [u8];
+    }
+
+    impl<'a> AsBytes<'a> for Slice<'a, u8> {
+        fn as_bytes(&self) -> &'a [u8] {
+            self.as_slice()
+        }
+    }
+
+    impl<'a> AsBytes<'a> for Slice<'a, i8> {
+        fn as_bytes(&self) -> &'a [u8] {
+            let s = self.as_slice();
+            unsafe { core::slice::from_raw_parts(s.as_ptr().cast(), s.len()) }
+        }
+    }
+
+    #[repr(C)]
+    pub struct CStr<'a> {
+        ptr: ptr::NonNull<c_char>,
+        length: usize,
+        _lifetime_marker: PhantomData<&'a c_char>,
+    }
 }
 
 #[cfg(feature = "std")]
 pub mod tracer_metadata;
 
+// Conditional FFI type imports
 #[cfg(feature = "std")]
-use libdd_common_ffi::{self as ffi, slice::AsBytes, CString, CharSlice, Error};
-#[cfg(feature = "std")]
+use libdd_common_ffi::{self as ffi, slice::AsBytes, CString, Error};
+#[cfg(not(feature = "std"))]
+use ffi_types::{self as ffi, AsBytes};
+
+#[cfg(not(feature = "std"))]
+use alloc::boxed::Box;
+
+use ffi::CharSlice;
 use libdd_library_config::{self as lib_config, LibraryConfigSource};
 
 #[cfg(all(feature = "std", feature = "catch_panic", panic = "unwind"))]
@@ -88,15 +154,13 @@ pub enum LibraryConfigLoggedResult {
 // #[cfg(linux)]
 // std::arch::global_asm!(".symver memcpy,memcpy@GLIBC_2.2.5");
 
-#[cfg(feature = "std")]
 #[repr(C)]
 pub struct ProcessInfo<'a> {
-    pub args: ffi::Slice<'a, ffi::CharSlice<'a>>,
-    pub envp: ffi::Slice<'a, ffi::CharSlice<'a>>,
-    pub language: ffi::CharSlice<'a>,
+    pub args: ffi::Slice<'a, CharSlice<'a>>,
+    pub envp: ffi::Slice<'a, CharSlice<'a>>,
+    pub language: CharSlice<'a>,
 }
 
-#[cfg(feature = "std")]
 impl<'a> ProcessInfo<'a> {
     fn ffi_to_rs(&'a self) -> lib_config::ProcessInfo {
         lib_config::ProcessInfo {
@@ -159,7 +223,6 @@ impl LibraryConfig {
     }
 }
 
-#[cfg(feature = "std")]
 pub struct Configurator<'a> {
     inner: lib_config::Configurator,
     language: CharSlice<'a>,
@@ -170,7 +233,6 @@ pub struct Configurator<'a> {
 
 // type FfiConfigurator<'a>  = Configurator<'a>;
 
-#[cfg(feature = "std")]
 #[no_mangle]
 pub extern "C" fn ddog_library_configurator_new(
     debug_logs: bool,
@@ -185,7 +247,6 @@ pub extern "C" fn ddog_library_configurator_new(
     })
 }
 
-#[cfg(feature = "std")]
 #[no_mangle]
 pub extern "C" fn ddog_library_configurator_with_local_path<'a>(
     c: &mut Configurator<'a>,
@@ -194,7 +255,6 @@ pub extern "C" fn ddog_library_configurator_with_local_path<'a>(
     c.local_path = Some(local_path);
 }
 
-#[cfg(feature = "std")]
 #[no_mangle]
 pub extern "C" fn ddog_library_configurator_with_fleet_path<'a>(
     c: &mut Configurator<'a>,
@@ -203,7 +263,6 @@ pub extern "C" fn ddog_library_configurator_with_fleet_path<'a>(
     c.fleet_path = Some(local_path);
 }
 
-#[cfg(feature = "std")]
 #[no_mangle]
 pub extern "C" fn ddog_library_configurator_with_process_info<'a>(
     c: &mut Configurator<'a>,
@@ -220,7 +279,6 @@ pub extern "C" fn ddog_library_configurator_with_detect_process_info(c: &mut Con
     ));
 }
 
-#[cfg(feature = "std")]
 #[no_mangle]
 pub extern "C" fn ddog_library_configurator_drop(_: Box<Configurator>) {}
 
