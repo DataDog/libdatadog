@@ -2236,6 +2236,7 @@ dependencies = [
  "allocator-api2",
  "equivalent",
  "foldhash 0.1.5",
+ "serde",
 ]
 
 [[package]]
@@ -3103,6 +3104,7 @@ name = "libdd-library-config"
 version = "1.1.0"
 dependencies = [
  "anyhow",
+ "hashbrown 0.15.1",
  "libdd-trace-protobuf",
  "memfd",
  "prost",

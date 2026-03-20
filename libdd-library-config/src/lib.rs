@@ -1,14 +1,31 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
+#![cfg_attr(not(feature = "std"), no_std)]
+extern crate alloc;
+
+#[cfg(feature = "std")]
 pub mod otel_process_ctx;
+#[cfg(feature = "std")]
 pub mod tracer_metadata;
 
-use std::borrow::Cow;
-use std::cell::OnceCell;
+use alloc::borrow::Cow;
+use alloc::boxed::Box;
+use alloc::format;
+use alloc::string::String;
+use alloc::vec;
+use alloc::vec::Vec;
+use core::cell::OnceCell;
+use core::mem;
+use core::ops::Deref;
+#[cfg(feature = "std")]
 use std::collections::HashMap;
-use std::ops::Deref;
+#[cfg(not(feature = "std"))]
+use hashbrown::HashMap;
+
+#[cfg(feature = "std")]
 use std::path::Path;
-use std::{env, fs, io, mem};
+#[cfg(feature = "std")]
+use std::{env, fs, io};
 
 /// This struct holds maps used to match and template configurations.
 ///
@@ -30,7 +47,7 @@ impl<'a> MatchMaps<'a> {
         self.env_map.get_or_init(|| {
             let mut map = HashMap::new();
             for e in &process_info.envp {
-                let Ok(s) = std::str::from_utf8(e.deref()) else {
+                let Ok(s) = core::str::from_utf8(e.deref()) else {
                     continue;
                 };
                 let (k, v) = match s.split_once('=') {
@@ -47,7 +64,7 @@ impl<'a> MatchMaps<'a> {
         self.args_map.get_or_init(|| {
             let mut map = HashMap::new();
             for arg in &process_info.args {
-                let Ok(arg) = std::str::from_utf8(arg.deref()) else {
+                let Ok(arg) = core::str::from_utf8(arg.deref()) else {
                     continue;
                 };
                 // Split args between key and value on '='
@@ -145,7 +162,7 @@ impl<'a> Matcher<'a> {
                     template_map_key(index, self.match_maps.args(self.process_info))
                 }
                 "tags" => template_map_key(index, self.match_maps.tags),
-                _ => std::borrow::Cow::Borrowed("UNDEFINED"),
+                _ => Cow::Borrowed("UNDEFINED"),
             };
             templated.push_str(&val);
             rest = tail;
@@ -186,6 +203,7 @@ pub struct ProcessInfo {
     pub language: Vec<u8>,
 }
 
+#[cfg(feature = "std")]
 fn process_envp() -> Vec<Vec<u8>> {
     #[allow(clippy::unnecessary_filter_map)]
     env::vars_os()
@@ -211,6 +229,7 @@ fn process_envp() -> Vec<Vec<u8>> {
         .collect()
 }
 
+#[cfg(feature = "std")]
 fn process_args() -> Vec<Vec<u8>> {
     #[allow(clippy::unnecessary_filter_map)]
     env::args_os()
@@ -229,6 +248,7 @@ fn process_args() -> Vec<Vec<u8>> {
 }
 
 impl ProcessInfo {
+    #[cfg(feature = "std")]
     pub fn detect_global(language: String) -> Self {
         let envp = process_envp();
         let args = process_args();
@@ -257,7 +277,7 @@ impl<'de> serde::Deserialize<'de> for ConfigMap {
         impl<'de> serde::de::Visitor<'de> for ConfigMapVisitor {
             type Value = ConfigMap;
 
-            fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+            fn expecting(&self, formatter: &mut core::fmt::Formatter) -> core::fmt::Result {
                 formatter.write_str("struct ConfigMap(HashMap<String, String>)")
             }
 
@@ -494,6 +514,7 @@ impl Configurator {
         Self { debug_logs }
     }
 
+    #[cfg(feature = "std")]
     fn parse_stable_config_slice(&self, buf: &[u8]) -> LoggedResult<StableConfig, anyhow::Error> {
         let stable_config = if buf.is_empty() {
             StableConfig::default()
@@ -515,6 +536,7 @@ impl Configurator {
         LoggedResult::Ok(stable_config, messages)
     }
 
+    #[cfg(feature = "std")]
     fn parse_stable_config_file<F: io::Read>(
         &self,
         mut f: F,
@@ -527,6 +549,7 @@ impl Configurator {
         self.parse_stable_config_slice(utils::trim_bytes(&buffer))
     }
 
+    #[cfg(feature = "std")]
     pub fn get_config_from_file(
         &self,
         path_local: &Path,
@@ -620,6 +643,7 @@ impl Configurator {
         }
     }
 
+    #[cfg(feature = "std")]
     pub fn get_config_from_bytes(
         &self,
         s_local: &[u8],
@@ -641,6 +665,7 @@ impl Configurator {
         }
     }
 
+    #[cfg(feature = "std")]
     fn get_config(
         &self,
         local_config: StableConfig,
@@ -721,6 +746,7 @@ impl Configurator {
     /// This is done in two steps:
     ///     * First take the global host config
     ///     * Merge the global config with the process specific config
+    #[cfg(feature = "std")]
     fn get_single_source_config(
         &self,
         mut stable_config: StableConfig,
@@ -752,6 +778,7 @@ impl Configurator {
     }
 
     /// Get config from a stable config using process matching rules
+    #[cfg(feature = "std")]
     fn get_single_source_process_config(
         &self,
         stable_config: StableConfig,
@@ -796,7 +823,11 @@ impl Configurator {
 
 use utils::Get;
 mod utils {
+    use alloc::string::String;
+    #[cfg(feature = "std")]
     use std::collections::HashMap;
+    #[cfg(not(feature = "std"))]
+    use hashbrown::HashMap;
 
     /// Removes leading and trailing ascci whitespaces from a byte slice
     pub(crate) fn trim_bytes(mut b: &[u8]) -> &[u8] {
@@ -828,7 +859,7 @@ mod utils {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "std"))]
 mod tests {
     use std::{collections::HashMap, io::Write, path::Path};
 

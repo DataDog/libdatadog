@@ -1,15 +1,18 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+#[cfg(feature = "std")]
 pub mod tracer_metadata;
 
+#[cfg(feature = "std")]
 use libdd_common_ffi::{self as ffi, slice::AsBytes, CString, CharSlice, Error};
+#[cfg(feature = "std")]
 use libdd_library_config::{self as lib_config, LibraryConfigSource};
 
-#[cfg(all(feature = "catch_panic", panic = "unwind"))]
+#[cfg(all(feature = "std", feature = "catch_panic", panic = "unwind"))]
 use std::panic::{catch_unwind, AssertUnwindSafe};
 
-#[cfg(all(feature = "catch_panic", panic = "unwind"))]
+#[cfg(all(feature = "std", feature = "catch_panic", panic = "unwind"))]
 macro_rules! catch_panic {
     ($f:expr) => {
         match catch_unwind(AssertUnwindSafe(|| $f)) {
@@ -31,13 +34,21 @@ macro_rules! catch_panic {
     };
 }
 
-#[cfg(any(not(feature = "catch_panic"), panic = "abort"))]
+#[cfg(all(feature = "std", any(not(feature = "catch_panic"), panic = "abort")))]
 macro_rules! catch_panic {
     ($f:expr) => {
         $f
     };
 }
 
+#[cfg(not(feature = "std"))]
+macro_rules! catch_panic {
+    ($f:expr) => {
+        $f
+    };
+}
+
+#[cfg(feature = "std")]
 /// A result type that includes debug/log messages along with the data
 #[repr(C)]
 pub struct OkResult {
@@ -45,6 +56,7 @@ pub struct OkResult {
     pub logs: CString,
 }
 
+#[cfg(feature = "std")]
 #[repr(C)]
 pub enum LibraryConfigLoggedResult {
     Ok(OkResult),
@@ -52,10 +64,11 @@ pub enum LibraryConfigLoggedResult {
 }
 
 // TODO: Centos 6 build
-// Trust me it works bro 😉😉😉
+// Trust me it works bro
 // #[cfg(linux)]
 // std::arch::global_asm!(".symver memcpy,memcpy@GLIBC_2.2.5");
 
+#[cfg(feature = "std")]
 #[repr(C)]
 pub struct ProcessInfo<'a> {
     pub args: ffi::Slice<'a, ffi::CharSlice<'a>>,
@@ -63,6 +76,7 @@ pub struct ProcessInfo<'a> {
     pub language: ffi::CharSlice<'a>,
 }
 
+#[cfg(feature = "std")]
 impl<'a> ProcessInfo<'a> {
     fn ffi_to_rs(&'a self) -> lib_config::ProcessInfo {
         lib_config::ProcessInfo {
@@ -73,6 +87,7 @@ impl<'a> ProcessInfo<'a> {
     }
 }
 
+#[cfg(feature = "std")]
 #[repr(C)]
 pub struct LibraryConfig {
     pub name: ffi::CString,
@@ -81,6 +96,7 @@ pub struct LibraryConfig {
     pub config_id: ffi::CString,
 }
 
+#[cfg(feature = "std")]
 impl LibraryConfig {
     fn rs_vec_to_ffi(configs: Vec<lib_config::LibraryConfig>) -> anyhow::Result<ffi::Vec<Self>> {
         let cfg: Vec<LibraryConfig> = configs
@@ -123,6 +139,7 @@ impl LibraryConfig {
     }
 }
 
+#[cfg(feature = "std")]
 pub struct Configurator<'a> {
     inner: lib_config::Configurator,
     language: CharSlice<'a>,
@@ -133,6 +150,7 @@ pub struct Configurator<'a> {
 
 // type FfiConfigurator<'a>  = Configurator<'a>;
 
+#[cfg(feature = "std")]
 #[no_mangle]
 pub extern "C" fn ddog_library_configurator_new(
     debug_logs: bool,
@@ -147,6 +165,7 @@ pub extern "C" fn ddog_library_configurator_new(
     })
 }
 
+#[cfg(feature = "std")]
 #[no_mangle]
 pub extern "C" fn ddog_library_configurator_with_local_path<'a>(
     c: &mut Configurator<'a>,
@@ -155,6 +174,7 @@ pub extern "C" fn ddog_library_configurator_with_local_path<'a>(
     c.local_path = Some(local_path);
 }
 
+#[cfg(feature = "std")]
 #[no_mangle]
 pub extern "C" fn ddog_library_configurator_with_fleet_path<'a>(
     c: &mut Configurator<'a>,
@@ -163,6 +183,7 @@ pub extern "C" fn ddog_library_configurator_with_fleet_path<'a>(
     c.fleet_path = Some(local_path);
 }
 
+#[cfg(feature = "std")]
 #[no_mangle]
 pub extern "C" fn ddog_library_configurator_with_process_info<'a>(
     c: &mut Configurator<'a>,
@@ -171,6 +192,7 @@ pub extern "C" fn ddog_library_configurator_with_process_info<'a>(
     c.process_info = Some(p.ffi_to_rs());
 }
 
+#[cfg(feature = "std")]
 #[no_mangle]
 pub extern "C" fn ddog_library_configurator_with_detect_process_info(c: &mut Configurator) {
     c.process_info = Some(lib_config::ProcessInfo::detect_global(
@@ -178,9 +200,11 @@ pub extern "C" fn ddog_library_configurator_with_detect_process_info(c: &mut Con
     ));
 }
 
+#[cfg(feature = "std")]
 #[no_mangle]
 pub extern "C" fn ddog_library_configurator_drop(_: Box<Configurator>) {}
 
+#[cfg(feature = "std")]
 #[no_mangle]
 pub extern "C" fn ddog_library_configurator_get(
     configurator: &Configurator,
@@ -217,6 +241,7 @@ pub extern "C" fn ddog_library_configurator_get(
     })
 }
 
+#[cfg(feature = "std")]
 #[no_mangle]
 /// Returns a static null-terminated string, containing the name of the environment variable
 /// associated with the library configuration
@@ -229,6 +254,7 @@ pub extern "C" fn ddog_library_config_source_to_string(
     })
 }
 
+#[cfg(feature = "std")]
 #[no_mangle]
 /// Returns a static null-terminated string with the path to the managed stable config yaml config
 /// file
@@ -242,6 +268,7 @@ pub extern "C" fn ddog_library_config_fleet_stable_config_path() -> ffi::CStr<'s
     })
 }
 
+#[cfg(feature = "std")]
 #[no_mangle]
 /// Returns a static null-terminated string with the path to the local stable config yaml config
 /// file
@@ -255,6 +282,7 @@ pub extern "C" fn ddog_library_config_local_stable_config_path() -> ffi::CStr<'s
     })
 }
 
+#[cfg(feature = "std")]
 #[no_mangle]
 pub extern "C" fn ddog_library_config_drop(mut config_result: LibraryConfigLoggedResult) {
     match &mut config_result {

@@ -11,17 +11,23 @@ publish = false
 crate-type = ["staticlib", "cdylib", "lib"]
 bench = false
 
-[dependencies]
-libdd-common = { path = "../libdd-common" }
-libdd-common-ffi = { path = "../libdd-common-ffi", default-features = false }
-libdd-library-config = { path = "../libdd-library-config" }
-anyhow = "1.0"
-constcat = "0.4.1"
-
 [features]
-default = ["cbindgen", "catch_panic"]
-cbindgen = ["build_common/cbindgen", "libdd-common-ffi/cbindgen"]
+default = ["std", "cbindgen", "catch_panic"]
+std = [
+    "dep:libdd-common",
+    "dep:libdd-common-ffi",
+    "dep:anyhow",
+    "libdd-library-config/std",
+]
+cbindgen = ["std", "build_common/cbindgen", "libdd-common-ffi/cbindgen"]
 catch_panic = []
+
+[dependencies]
+libdd-common = { path = "../libdd-common", optional = true }
+libdd-common-ffi = { path = "../libdd-common-ffi", default-features = false, optional = true }
+libdd-library-config = { path = "../libdd-library-config", default-features = false }
+anyhow = { version = "1.0", default-features = false, optional = true }
+constcat = "0.4.1"
 
 [build-dependencies]
 build_common = { path = "../build-common" }
