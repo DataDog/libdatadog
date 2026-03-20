@@ -17,6 +17,9 @@ includes = ["common.h"]
 [export]
 prefix = "ddog_"
 renaming_overrides_prefixing = true
+# These types are already defined in common.h; exclude to avoid redefinition
+# when cbindgen picks up the ffi_types module (no_std fallback types).
+exclude = ["Slice_CChar", "CharSlice", "CStr", "Error", "Vec_U8"]
 
 
 [export.mangle]
