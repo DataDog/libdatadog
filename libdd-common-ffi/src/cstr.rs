@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use core::fmt;
-use std::{
+use core::{
     ffi::c_char,
     marker::PhantomData,
     mem::{self, ManuallyDrop},
@@ -10,28 +10,28 @@ use std::{
 };
 
 /// Ffi safe type representing a borrowed null-terminated C array
-/// Equivalent to a std::ffi::CStr
+/// Equivalent to a core::ffi::CStr
 #[repr(C)]
 pub struct CStr<'a> {
     /// Null terminated char array
     ptr: ptr::NonNull<c_char>,
     /// Length of the array, not counting the null-terminator
     length: usize,
-    _lifetime_marker: std::marker::PhantomData<&'a c_char>,
+    _lifetime_marker: PhantomData<&'a c_char>,
 }
 
 impl<'a> CStr<'a> {
-    pub fn from_std(s: &'a std::ffi::CStr) -> Self {
+    pub fn from_std(s: &'a core::ffi::CStr) -> Self {
         Self {
             ptr: unsafe { ptr::NonNull::new_unchecked(s.as_ptr().cast_mut()) },
             length: s.to_bytes().len(),
-            _lifetime_marker: std::marker::PhantomData,
+            _lifetime_marker: PhantomData,
         }
     }
 
-    pub fn into_std(&self) -> &'a std::ffi::CStr {
+    pub fn into_std(&self) -> &'a core::ffi::CStr {
         unsafe {
-            std::ffi::CStr::from_bytes_with_nul_unchecked(std::slice::from_raw_parts(
+            core::ffi::CStr::from_bytes_with_nul_unchecked(core::slice::from_raw_parts(
                 self.ptr.as_ptr().cast_const().cast(),
                 self.length + 1,
             ))
@@ -40,7 +40,7 @@ impl<'a> CStr<'a> {
 }
 
 /// Ffi safe type representing an owned null-terminated C array
-/// Equivalent to a std::ffi::CString
+/// Equivalent to an alloc::ffi::CString
 #[repr(C)]
 pub struct CString {
     /// Null terminated char array
@@ -56,8 +56,8 @@ impl fmt::Debug for CString {
 }
 
 impl CString {
-    pub fn new<T: Into<Vec<u8>>>(t: T) -> Result<Self, std::ffi::NulError> {
-        Ok(Self::from_std(std::ffi::CString::new(t)?))
+    pub fn new<T: Into<alloc::vec::Vec<u8>>>(t: T) -> Result<Self, alloc::ffi::NulError> {
+        Ok(Self::from_std(alloc::ffi::CString::new(t)?))
     }
 
     /// Creates a new `CString` from the given input, or returns an empty `CString`
@@ -84,7 +84,7 @@ impl CString {
     /// let bad = CString::new_or_empty("hello\0world");
     /// assert_eq!(bad.as_cstr().into_std().to_str().unwrap(), "");
     /// ```
-    pub fn new_or_empty<T: Into<Vec<u8>>>(t: T) -> Self {
+    pub fn new_or_empty<T: Into<alloc::vec::Vec<u8>>>(t: T) -> Self {
         Self::new(t).unwrap_or_else(|_| {
             #[allow(clippy::unwrap_used)]
             Self::new("").unwrap()
@@ -99,7 +99,7 @@ impl CString {
         }
     }
 
-    pub fn from_std(s: std::ffi::CString) -> Self {
+    pub fn from_std(s: alloc::ffi::CString) -> Self {
         let length = s.to_bytes().len();
         Self {
             ptr: unsafe { ptr::NonNull::new_unchecked(s.into_raw()) },
@@ -107,10 +107,10 @@ impl CString {
         }
     }
 
-    pub fn into_std(self) -> std::ffi::CString {
+    pub fn into_std(self) -> alloc::ffi::CString {
         let s = ManuallyDrop::new(self);
         unsafe {
-            std::ffi::CString::from_vec_with_nul_unchecked(Vec::from_raw_parts(
+            alloc::ffi::CString::from_vec_with_nul_unchecked(alloc::vec::Vec::from_raw_parts(
                 s.ptr.as_ptr().cast(),
                 s.length + 1, // +1 for the null terminator
                 s.length + 1, // +1 for the null terminator
@@ -123,7 +123,7 @@ impl Drop for CString {
     fn drop(&mut self) {
         let ptr = mem::replace(&mut self.ptr, NonNull::dangling());
         drop(unsafe {
-            std::ffi::CString::from_vec_with_nul_unchecked(Vec::from_raw_parts(
+            alloc::ffi::CString::from_vec_with_nul_unchecked(alloc::vec::Vec::from_raw_parts(
                 ptr.as_ptr().cast(),
                 self.length + 1,
                 self.length + 1,

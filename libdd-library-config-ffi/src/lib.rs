@@ -24,72 +24,12 @@ mod no_std_support {
     pub extern "C" fn rust_eh_personality() {}
 }
 
-/// Minimal FFI type definitions for no_std builds, matching the layout of libdd-common-ffi types.
-#[cfg(not(feature = "std"))]
-pub(crate) mod ffi_types {
-    use core::ffi::c_char;
-    use core::marker::PhantomData;
-    use core::ptr;
-
-    #[repr(C)]
-    #[derive(Copy, Clone)]
-    pub struct Slice<'a, T: 'a> {
-        ptr: *const T,
-        len: usize,
-        _marker: PhantomData<&'a [T]>,
-    }
-
-    impl<'a, T> Slice<'a, T> {
-        pub fn as_slice(&self) -> &'a [T] {
-            if self.ptr.is_null() || self.len == 0 {
-                &[]
-            } else {
-                unsafe { core::slice::from_raw_parts(self.ptr, self.len) }
-            }
-        }
-
-        pub fn iter(&self) -> core::slice::Iter<'a, T> {
-            self.as_slice().iter()
-        }
-    }
-
-    pub type CharSlice<'a> = Slice<'a, c_char>;
-
-    pub trait AsBytes<'a> {
-        fn as_bytes(&self) -> &'a [u8];
-    }
-
-    impl<'a> AsBytes<'a> for Slice<'a, u8> {
-        fn as_bytes(&self) -> &'a [u8] {
-            self.as_slice()
-        }
-    }
-
-    impl<'a> AsBytes<'a> for Slice<'a, i8> {
-        fn as_bytes(&self) -> &'a [u8] {
-            let s = self.as_slice();
-            unsafe { core::slice::from_raw_parts(s.as_ptr().cast(), s.len()) }
-        }
-    }
-
-    #[repr(C)]
-    pub struct CStr<'a> {
-        ptr: ptr::NonNull<c_char>,
-        length: usize,
-        _lifetime_marker: PhantomData<&'a c_char>,
-    }
-
-    pub use alloc::ffi::CString;
-}
-
 #[cfg(feature = "std")]
 pub mod tracer_metadata;
 
-// Conditional FFI type imports
-#[cfg(not(feature = "std"))]
-use ffi_types::{self as ffi, AsBytes};
+use libdd_common_ffi::{self as ffi, slice::AsBytes};
 #[cfg(feature = "std")]
-use libdd_common_ffi::{self as ffi, slice::AsBytes, CString, Error};
+use libdd_common_ffi::{CString, Error};
 
 #[cfg(not(feature = "std"))]
 use alloc::boxed::Box;
