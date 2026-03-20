@@ -1,8 +1,16 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-pub(crate) const TRAMPOLINE_BIN: &[u8] =
-    include_bytes!(concat!(env!("OUT_DIR"), "/trampoline.bin"));
+// Force page-alignment on the embedded trampoline bytes so that
+// solib_bootstrap.c can mmap segments directly from /proc/self/exe.
+#[repr(C, align(4096))]
+struct PageAligned<T: ?Sized>(T);
+
+static TRAMPOLINE_BIN_ALIGNED: PageAligned<
+    [u8; include_bytes!(concat!(env!("OUT_DIR"), "/trampoline.bin")).len()],
+> = PageAligned(*include_bytes!(concat!(env!("OUT_DIR"), "/trampoline.bin")));
+
+pub(crate) const TRAMPOLINE_BIN: &[u8] = &TRAMPOLINE_BIN_ALIGNED.0;
 
 /// C-visible pointer and length for the embedded trampoline binary.
 /// Used by solib_bootstrap.c to load the trampoline ELF from memory.
