@@ -95,14 +95,11 @@ mod tests {
     #[test]
     #[cfg_attr(miri, ignore)]
     fn signal_is_ignored_while_guard_is_active() {
-        let guard = SaGuard::<1>::new(&[Signal::SIGUSR1]).unwrap();
+        let _guard = SaGuard::<1>::new(&[Signal::SIGUSR1]).unwrap();
 
         // Send SIGUSR1 to the process. The default action is to terminate, so if
         // the guard didn't set SIG_IGN this test process would die
         signal::kill(Pid::this(), Signal::SIGUSR1).unwrap();
-
-        // If we get here, signal was successfully ignored
-        drop(guard);
     }
 
     /// After the guard is dropped, the original handler should be restored.
@@ -153,12 +150,10 @@ mod tests {
     #[test]
     #[cfg_attr(miri, ignore)]
     fn multiple_signals_ignored() {
-        let guard = SaGuard::<2>::new(&[Signal::SIGUSR1, Signal::SIGUSR2]).unwrap();
+        let _guard = SaGuard::<2>::new(&[Signal::SIGUSR1, Signal::SIGUSR2]).unwrap();
 
         // Both signals should be safely ignored
         signal::kill(Pid::this(), Signal::SIGUSR1).unwrap();
         signal::kill(Pid::this(), Signal::SIGUSR2).unwrap();
-
-        drop(guard);
     }
 }
