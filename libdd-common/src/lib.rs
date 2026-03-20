@@ -31,7 +31,6 @@ pub mod test_utils;
 pub mod threading;
 pub mod timeout;
 pub mod unix_utils;
-pub mod worker;
 
 /// Extension trait for `Mutex` to provide a method that acquires a lock, panicking if the lock is
 /// poisoned.

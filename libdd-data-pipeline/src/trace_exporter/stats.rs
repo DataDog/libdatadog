@@ -8,7 +8,7 @@
 //! and processing traces for stats collection.
 
 use crate::agent_info::schema::AgentInfo;
-use crate::shared_runtime::{SharedRuntime, WorkerHandle};
+use libdd_shared_runtime::{SharedRuntime, WorkerHandle};
 use crate::stats_exporter;
 use arc_swap::ArcSwap;
 use libdd_common::{Endpoint, HttpClient, MutexExt};

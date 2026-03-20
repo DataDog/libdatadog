@@ -12,7 +12,8 @@ use crate::{
 };
 
 use async_trait::async_trait;
-use libdd_common::{http_common, tag::Tag, worker::Worker};
+use libdd_common::{http_common, tag::Tag};
+use libdd_shared_runtime::Worker;
 
 use std::iter::Sum;
 use std::ops::Add;
@@ -1276,7 +1277,7 @@ mod tests {
             metrics::{MetricNamespace, MetricType},
             Configuration, ConfigurationOrigin, Dependency, Endpoint, Integration, Log, LogLevel,
         };
-        use libdd_common::worker::Worker;
+        use libdd_shared_runtime::Worker;
 
         fn build_test_worker() -> (TelemetryWorkerHandle, TelemetryWorker) {
             let builder = TelemetryWorkerBuilder::new(

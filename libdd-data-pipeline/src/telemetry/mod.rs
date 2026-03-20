@@ -310,7 +310,7 @@ mod tests {
     use tokio::time::sleep;
 
     use super::*;
-    use crate::shared_runtime::{SharedRuntime, WorkerHandle};
+    use libdd_shared_runtime::{SharedRuntime, WorkerHandle};
 
     fn get_test_client(url: &str, runtime: &SharedRuntime) -> (TelemetryClient, WorkerHandle) {
         let (client, worker) = TelemetryClientBuilder::default()

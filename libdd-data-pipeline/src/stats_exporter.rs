@@ -13,7 +13,8 @@ use std::{
 
 use crate::trace_exporter::TracerMetadata;
 use async_trait::async_trait;
-use libdd_common::{worker::Worker, Endpoint, HttpClient};
+use libdd_common::{Endpoint, HttpClient};
+use libdd_shared_runtime::Worker;
 use libdd_trace_protobuf::pb;
 use libdd_trace_stats::span_concentrator::SpanConcentrator;
 use libdd_trace_utils::send_with_retry::{send_with_retry, RetryStrategy};
@@ -181,7 +182,7 @@ pub fn stats_url_from_agent_url(agent_url: &str) -> anyhow::Result<http::Uri> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::shared_runtime::SharedRuntime;
+    use libdd_shared_runtime::SharedRuntime;
     use httpmock::prelude::*;
     use httpmock::MockServer;
     use libdd_common::http_common::new_default_client;

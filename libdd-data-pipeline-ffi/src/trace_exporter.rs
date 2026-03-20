@@ -8,7 +8,7 @@ use libdd_common_ffi::{
     CharSlice,
     {slice::AsBytes, slice::ByteSlice},
 };
-use libdd_data_pipeline::shared_runtime::SharedRuntime;
+use libdd_shared_runtime::SharedRuntime;
 use libdd_data_pipeline::trace_exporter::{
     TelemetryConfig, TraceExporter, TraceExporterInputFormat, TraceExporterOutputFormat,
 };

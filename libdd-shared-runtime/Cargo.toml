@@ -1,0 +1,26 @@
+# Copyright 2025-Present Datadog, Inc. https://www.datadoghq.com/
+# SPDX-License-Identifier: Apache-2.0
+
+[package]
+name = "libdd-shared-runtime"
+version.workspace = true
+description = "Shared tokio runtime with fork-safe worker management for Datadog libraries"
+homepage = "https://github.com/DataDog/libdatadog/tree/main/libdd-shared-runtime"
+repository = "https://github.com/DataDog/libdatadog/tree/main/libdd-shared-runtime"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[lib]
+crate-type = ["lib"]
+bench = false
+
+[dependencies]
+async-trait = "0.1"
+tokio = { version = "1.23", features = ["rt", "rt-multi-thread", "time"] }
+tokio-util = "0.7.11"
+tracing = { version = "0.1", default-features = false }
+libdd-common = { version = "2.0.0", path = "../libdd-common", default-features = false }
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(coverage)'] }

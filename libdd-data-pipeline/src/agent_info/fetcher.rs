@@ -8,7 +8,8 @@ use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use http::header::HeaderName;
 use http_body_util::BodyExt;
-use libdd_common::{http_common, worker::Worker, Endpoint};
+use libdd_common::{http_common, Endpoint};
+use libdd_shared_runtime::Worker;
 use sha2::{Digest, Sha256};
 use std::sync::Arc;
 use std::time::Duration;
@@ -98,8 +99,8 @@ async fn fetch_and_hash_response(info_endpoint: &Endpoint) -> Result<(String, by
 
 /// Fetch the info endpoint and update an ArcSwap keeping it up-to-date.
 ///
-/// This type implements [`libdd_common::worker::Worker`] and is intended to be driven by a worker
-/// runner such as [`crate::shared_runtime::SharedRuntime`].
+/// This type implements [`libdd_shared_runtime::Worker`] and is intended to be driven by a worker
+/// runner such as [`libdd_shared_runtime::SharedRuntime`].
 /// In that lifecycle, `trigger()` waits for the next refresh event and `run()` performs a single
 /// fetch.
 ///
@@ -113,7 +114,7 @@ async fn fetch_and_hash_response(info_endpoint: &Endpoint) -> Result<(String, by
 /// # Example
 /// ```no_run
 /// # use anyhow::Result;
-/// # use libdd_common::worker::Worker;
+/// # use libdd_shared_runtime::Worker;
 /// # #[tokio::main]
 /// # async fn main() -> Result<()> {
 /// // Define the endpoint
@@ -125,7 +126,7 @@ async fn fetch_and_hash_response(info_endpoint: &Endpoint) -> Result<(String, by
 ///     std::time::Duration::from_secs(5 * 60),
 /// );
 /// // Start the fetcher on a shared runtime
-/// let runtime = libdd_data_pipeline::shared_runtime::SharedRuntime::new()?;
+/// let runtime = libdd_shared_runtime::SharedRuntime::new()?;
 /// runtime.spawn_worker(fetcher)?;
 ///
 /// // Get the Arc to access the info
@@ -303,7 +304,7 @@ impl ResponseObserver {
 mod single_threaded_tests {
     use super::*;
     use crate::agent_info;
-    use crate::shared_runtime::SharedRuntime;
+    use libdd_shared_runtime::SharedRuntime;
     use httpmock::prelude::*;
 
     const TEST_INFO: &str = r#"{
