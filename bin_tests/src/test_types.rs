@@ -20,6 +20,7 @@ pub enum TestMode {
     RuntimeCallbackFrameInvalidUtf8,
     RuntimePreloadLogger,
     ErrnoPreservation,
+    SigChldSigPipeSaGuard,
 }
 
 impl TestMode {
@@ -41,6 +42,7 @@ impl TestMode {
             Self::RuntimeCallbackFrameInvalidUtf8 => "runtime_callback_frame_invalid_utf8",
             Self::RuntimePreloadLogger => "runtime_preload_logger",
             Self::ErrnoPreservation => "errno_preservation",
+            Self::SigChldSigPipeSaGuard => "sigchld_sigpipe_saguard",
         }
     }
 
@@ -62,6 +64,7 @@ impl TestMode {
             Self::RuntimeCallbackFrameInvalidUtf8,
             Self::RuntimePreloadLogger,
             Self::ErrnoPreservation,
+            Self::SigChldSigPipeSaGuard,
         ]
     }
 }
@@ -92,6 +95,7 @@ impl std::str::FromStr for TestMode {
             "runtime_callback_frame_invalid_utf8" => Ok(Self::RuntimeCallbackFrameInvalidUtf8),
             "runtime_preload_logger" => Ok(Self::RuntimePreloadLogger),
             "errno_preservation" => Ok(Self::ErrnoPreservation),
+            "sigchld_sigpipe_saguard" => Ok(Self::SigChldSigPipeSaGuard),
             _ => Err(format!("Unknown test mode: {}", s)),
         }
     }
