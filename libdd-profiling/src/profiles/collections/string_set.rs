@@ -58,14 +58,18 @@ impl StringRef {
     pub const LOCAL_ROOT_SPAN_ID: StringRef = StringRef(ThinStr::local_root_span_id());
     pub const TRACE_ENDPOINT: StringRef = StringRef(ThinStr::trace_endpoint());
     pub const SPAN_ID: StringRef = StringRef(ThinStr::span_id());
+    pub const THREAD_ID: StringRef = StringRef(ThinStr::thread_id());
+    pub const THREAD_NAME: StringRef = StringRef(ThinStr::thread_name());
 }
 
-pub const WELL_KNOWN_STRING_REFS: [StringRef; 5] = [
+pub const WELL_KNOWN_STRING_REFS: [StringRef; 7] = [
     StringRef::EMPTY,
     StringRef::END_TIMESTAMP_NS,
     StringRef::LOCAL_ROOT_SPAN_ID,
     StringRef::TRACE_ENDPOINT,
     StringRef::SPAN_ID,
+    StringRef::THREAD_ID,
+    StringRef::THREAD_NAME,
 ];
 
 /// Holds unique strings and provides [`StringRef`]s to fetch them later.

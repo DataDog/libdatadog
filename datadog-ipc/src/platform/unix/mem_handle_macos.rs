@@ -9,12 +9,13 @@ use nix::errno::Errno;
 use nix::fcntl::OFlag;
 use nix::sys::mman::{mmap, munmap, shm_open, shm_unlink, MapFlags, ProtFlags};
 use nix::sys::stat::Mode;
-use nix::unistd::ftruncate;
+use nix::unistd::{fchown, ftruncate, Uid};
 use std::ffi::{CStr, CString};
 use std::io;
 use std::num::NonZeroUsize;
 use std::os::fd::{AsFd, OwnedFd};
-use std::sync::atomic::{AtomicI32, AtomicUsize, Ordering};
+use std::os::unix::io::AsRawFd;
+use std::sync::atomic::{AtomicI32, AtomicU32, AtomicUsize, Ordering};
 
 const MAPPING_MAX_SIZE: usize = 1 << 17; // 128 MiB ought to be enough for everybody?
 const NOT_COMMITTED: usize = 1 << (usize::BITS - 1);
@@ -69,6 +70,23 @@ pub(crate) fn munmap_handle<T: MemoryHandle>(mapped: &MappedMem<T>) {
 
 static ANON_SHM_ID: AtomicI32 = AtomicI32::new(0);
 
+const NO_OWNER_UID: u32 = u32::MAX;
+
+static SHM_OWNER_UID: AtomicU32 = AtomicU32::new(NO_OWNER_UID);
+
+pub fn set_shm_owner_uid(uid: u32) {
+    SHM_OWNER_UID.store(uid, Ordering::Relaxed);
+}
+
+fn shm_owner_uid() -> Option<u32> {
+    let uid = SHM_OWNER_UID.load(Ordering::Relaxed);
+    if uid == NO_OWNER_UID {
+        None
+    } else {
+        Some(uid)
+    }
+}
+
 impl ShmHandle {
     pub fn new(size: usize) -> anyhow::Result<ShmHandle> {
         let path = format!(
@@ -111,6 +129,9 @@ impl NamedShmHandle {
             if error != Errno::EINVAL {
                 truncate?;
             }
+        }
+        if let Some(uid) = shm_owner_uid() {
+            let _ = fchown(fd.as_raw_fd(), Some(Uid::from_raw(uid)), None);
         }
         Self::new(fd, Some(path), size)
     }

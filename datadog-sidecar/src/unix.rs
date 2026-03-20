@@ -160,6 +160,10 @@ pub fn primary_sidecar_identifier() -> u32 {
     unsafe { libc::geteuid() }
 }
 
+/// No-op: retained for FFI compatibility.
+/// The master PID is now tracked by MasterListener::start() directly.
+pub fn set_sidecar_master_pid(_pid: u32) {}
+
 fn maybe_start_appsec() -> bool {
     let cfg = &Config::get().appsec_config;
     if cfg.is_none() {

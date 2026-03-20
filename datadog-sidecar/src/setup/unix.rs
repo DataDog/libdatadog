@@ -28,13 +28,10 @@ fn ensure_dir_world_writable<P: AsRef<Path>>(path: P) -> io::Result<()> {
 }
 
 fn ensure_dir_exists<P: AsRef<Path>>(path: P) -> io::Result<()> {
-    if path.as_ref().exists() {
-        return Ok(());
+    if !path.as_ref().exists() {
+        fs::create_dir_all(&path)?;
     }
-
-    fs::create_dir_all(&path)?;
-    ensure_dir_world_writable(&path)?;
-
+    let _ = ensure_dir_world_writable(&path);
     Ok(())
 }
 
@@ -97,12 +94,10 @@ impl SharedDirLiaison {
             primary_sidecar_identifier()
         );
         let base_dir = base_dir.as_ref();
-        let socket_path = base_dir
-            .join(&versioned_socket_basename)
-            .with_extension(".sock");
+        let socket_path = base_dir.join(&versioned_socket_basename);
         let lock_path = base_dir
             .join(&versioned_socket_basename)
-            .with_extension(".sock.lock");
+            .with_extension("sock.lock");
 
         Self {
             socket_path,
@@ -112,6 +107,19 @@ impl SharedDirLiaison {
 
     pub fn new_default_location() -> Self {
         Self::new(env::temp_dir().join("libdatadog"))
+    }
+
+    pub fn ipc_for_pid(pid: u32) -> Self {
+        let base_dir = env::temp_dir().join("libdatadog");
+        let versioned_socket_basename = format!("libdd.{}@{}.sock", crate::sidecar_version!(), pid);
+        let socket_path = base_dir.join(&versioned_socket_basename);
+        let lock_path = base_dir
+            .join(&versioned_socket_basename)
+            .with_extension("sock.lock");
+        Self {
+            socket_path,
+            lock_path,
+        }
     }
 }
 
@@ -166,6 +174,16 @@ mod linux {
             let path = PathBuf::from(format!(
                 concat!("libdatadog/", crate::sidecar_version!(), ".{}.sock"),
                 getpid()
+            ));
+            Self { path }
+        }
+    }
+
+    impl AbstractUnixSocketLiaison {
+        pub fn ipc_for_pid(pid: u32) -> Self {
+            let path = PathBuf::from(format!(
+                concat!("libdatadog/", crate::sidecar_version!(), "@{}.sock"),
+                pid
             ));
             Self { path }
         }

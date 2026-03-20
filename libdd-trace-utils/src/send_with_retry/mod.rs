@@ -8,9 +8,9 @@ mod retry_strategy;
 pub use retry_strategy::{RetryBackoffType, RetryStrategy};
 
 use bytes::Bytes;
-use http::Method;
+use http::{HeaderMap, Method};
 use libdd_common::{http_common, Connect, Endpoint, GenericHttpClient, HttpRequestBuilder};
-use std::{collections::HashMap, time::Duration};
+use std::time::Duration;
 use tracing::{debug, error};
 
 pub type Attempts = u32;
@@ -97,14 +97,17 @@ impl std::error::Error for RequestError {}
 /// # use libdd_common::Endpoint;
 /// # use libdd_common::http_common::new_default_client;
 /// # use libdd_trace_utils::send_with_retry::*;
-/// # use std::collections::HashMap;
 /// # async fn run() -> SendWithRetryResult {
 /// let payload: Vec<u8> = vec![0, 1, 2, 3];
 /// let target = Endpoint {
 ///     url: "localhost:8126/v04/traces".parse::<hyper::Uri>().unwrap(),
 ///     ..Endpoint::default()
 /// };
-/// let headers = HashMap::from([("Content-type", "application/msgpack".to_string())]);
+/// let mut headers = http::HeaderMap::new();
+/// headers.insert(
+///     http::HeaderName::from_static("content-type"),
+///     http::HeaderValue::from_static("application/msgpack"),
+/// );
 /// let retry_strategy = RetryStrategy::new(3, 10, RetryBackoffType::Exponential, Some(5));
 /// let client = new_default_client();
 /// send_with_retry(&client, &target, payload, &headers, &retry_strategy).await
@@ -114,7 +117,7 @@ pub async fn send_with_retry<C: Connect>(
     client: &GenericHttpClient<C>,
     target: &Endpoint,
     payload: Vec<u8>,
-    headers: &HashMap<&'static str, String>,
+    headers: &HeaderMap,
     retry_strategy: &RetryStrategy,
 ) -> SendWithRetryResult {
     let mut request_attempt = 0;
@@ -142,7 +145,7 @@ pub async fn send_with_retry<C: Connect>(
             .or(Err(SendWithRetryError::Build(request_attempt)))?
             .method(Method::POST);
         for (key, value) in headers {
-            req = req.header(*key, value.clone());
+            req = req.header(key, value);
         }
 
         match send_request(
@@ -285,7 +288,7 @@ mod tests {
                 &client,
                 &target_endpoint,
                 vec![0, 1, 2, 3],
-                &HashMap::new(),
+                &HeaderMap::new(),
                 &strategy,
             )
             .await;
@@ -334,7 +337,7 @@ mod tests {
                 &client,
                 &target_endpoint,
                 vec![0, 1, 2, 3],
-                &HashMap::new(),
+                &HeaderMap::new(),
                 &strategy,
             )
             .await;
@@ -383,7 +386,7 @@ mod tests {
                 &client,
                 &target_endpoint,
                 vec![0, 1, 2, 3],
-                &HashMap::new(),
+                &HeaderMap::new(),
                 &strategy,
             )
             .await;
@@ -432,7 +435,7 @@ mod tests {
                 &client,
                 &target_endpoint,
                 vec![0, 1, 2, 3],
-                &HashMap::new(),
+                &HeaderMap::new(),
                 &strategy,
             )
             .await;

@@ -3,7 +3,6 @@
 
 use std::{
     borrow::Borrow,
-    collections::HashMap,
     sync::{
         atomic::{AtomicU64, Ordering},
         Arc, Mutex,
@@ -84,11 +83,11 @@ impl StatsExporter {
         }
         let body = rmp_serde::encode::to_vec_named(&payload)?;
 
-        let mut headers: HashMap<&'static str, String> = self.meta.borrow().into();
+        let mut headers: http::HeaderMap = self.meta.borrow().into();
 
         headers.insert(
-            http::header::CONTENT_TYPE.as_str(),
-            libdd_common::header::APPLICATION_MSGPACK_STR.to_string(),
+            http::header::CONTENT_TYPE,
+            libdd_common::header::APPLICATION_MSGPACK,
         );
 
         let result = send_with_retry(
