@@ -19,7 +19,11 @@ pub(crate) use mem_handle_macos::*;
 #[cfg(not(target_os = "macos"))]
 mod mem_handle;
 #[cfg(not(target_os = "macos"))]
+pub use mem_handle::set_shm_owner_uid;
+#[cfg(not(target_os = "macos"))]
 pub(crate) use mem_handle::*;
+#[cfg(target_os = "macos")]
+pub use mem_handle_macos::set_shm_owner_uid;
 
 #[no_mangle]
 #[cfg(polyfill_glibc_memfd)]

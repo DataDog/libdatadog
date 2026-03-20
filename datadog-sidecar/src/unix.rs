@@ -5,6 +5,7 @@ use spawn_worker::{getpid, SpawnWorker, Stdio, TrampolineData};
 
 use std::ffi::CString;
 use std::os::unix::net::UnixListener as StdUnixListener;
+use std::sync::atomic::{AtomicU32, Ordering};
 
 use crate::config::Config;
 use crate::enter_listener_loop;
@@ -132,8 +133,19 @@ pub fn setup_daemon_process(
     Ok(())
 }
 
+static SIDECAR_MASTER_PID: AtomicU32 = AtomicU32::new(0);
+
+pub fn set_sidecar_master_pid(pid: u32) {
+    SIDECAR_MASTER_PID.store(pid, Ordering::Relaxed);
+}
+
 pub fn primary_sidecar_identifier() -> u32 {
-    unsafe { libc::geteuid() }
+    let pid = SIDECAR_MASTER_PID.load(Ordering::Relaxed);
+    if pid != 0 {
+        pid
+    } else {
+        unsafe { libc::geteuid() }
+    }
 }
 
 fn maybe_start_appsec() -> bool {
