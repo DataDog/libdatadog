@@ -3,18 +3,16 @@
 
 //! The public `HttpClient` struct.
 
+use crate::backend::Backend;
 use crate::config::{HttpClientBuilder, HttpClientConfig, TransportConfig};
 use crate::{HttpClientError, HttpRequest, HttpResponse};
 use std::time::Duration;
 
-#[cfg(any(feature = "reqwest-backend", feature = "hyper-backend"))]
-use crate::backend::Backend;
+#[cfg(all(feature = "hyper-backend", not(feature = "reqwest-backend")))]
+type BackendImpl = crate::backend::hyper_backend::HyperBackend;
 
 #[cfg(feature = "reqwest-backend")]
-use crate::backend::reqwest_backend::ReqwestBackend;
-
-#[cfg(all(feature = "hyper-backend", not(feature = "reqwest-backend")))]
-use crate::backend::hyper_backend::HyperBackend;
+type BackendImpl = crate::backend::reqwest_backend::ReqwestBackend;
 
 /// A high-level async HTTP client.
 ///
@@ -22,10 +20,7 @@ use crate::backend::hyper_backend::HyperBackend;
 /// a connection pool internally.
 #[derive(Debug)]
 pub struct HttpClient {
-    #[cfg(feature = "reqwest-backend")]
-    backend: ReqwestBackend,
-    #[cfg(all(feature = "hyper-backend", not(feature = "reqwest-backend")))]
-    backend: HyperBackend,
+    backend: BackendImpl,
     config: HttpClientConfig,
 }
 
@@ -51,23 +46,8 @@ impl HttpClient {
         config: HttpClientConfig,
         transport: TransportConfig,
     ) -> Result<Self, HttpClientError> {
-        #[cfg(feature = "reqwest-backend")]
-        {
-            let backend = ReqwestBackend::new(config.timeout(), transport)?;
-            Ok(Self { backend, config })
-        }
-        #[cfg(all(feature = "hyper-backend", not(feature = "reqwest-backend")))]
-        {
-            let backend = HyperBackend::new(config.timeout(), transport)?;
-            Ok(Self { backend, config })
-        }
-        #[cfg(not(any(feature = "reqwest-backend", feature = "hyper-backend")))]
-        {
-            let _ = (config, transport);
-            Err(HttpClientError::InvalidConfig(
-                "no backend feature enabled".to_owned(),
-            ))
-        }
+        let backend = BackendImpl::new(config.timeout(), transport)?;
+        Ok(Self { backend, config })
     }
 
     /// The client's configuration.
@@ -88,17 +68,7 @@ impl HttpClient {
     }
 
     async fn send_once(&self, request: HttpRequest) -> Result<HttpResponse, HttpClientError> {
-        #[cfg(any(feature = "reqwest-backend", feature = "hyper-backend"))]
-        {
-            self.backend.send(request, &self.config).await
-        }
-        #[cfg(not(any(feature = "reqwest-backend", feature = "hyper-backend")))]
-        {
-            let _ = request;
-            Err(HttpClientError::InvalidConfig(
-                "no backend feature enabled".to_owned(),
-            ))
-        }
+        self.backend.send(request, &self.config).await
     }
 
     async fn send_with_retry(

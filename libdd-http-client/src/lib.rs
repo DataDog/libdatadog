@@ -42,6 +42,11 @@
 //! # }
 //! ```
 
+#[cfg(not(any(feature = "hyper-backend", feature = "reqwest-backend")))]
+compile_error!(
+    "at least one backend feature must be enabled: `reqwest-backend` or `hyper-backend`"
+);
+
 pub mod config;
 
 pub(crate) mod backend;
