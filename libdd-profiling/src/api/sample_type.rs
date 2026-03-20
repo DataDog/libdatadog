@@ -12,6 +12,7 @@ use super::ValueType;
 /// - **dd-trace-dotnet**: Sample type definitions for allocations, locks, CPU, walltime,
 ///   exceptions, live objects, HTTP requests
 /// - **pprof-nodejs**: `profile-serializer.ts` (value type functions)
+#[cfg_attr(feature = "otel", derive(enum_map::Enum))]
 #[cfg_attr(test, derive(bolero::generator::TypeGenerator, strum::EnumIter))]
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]

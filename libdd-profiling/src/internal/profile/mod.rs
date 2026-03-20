@@ -31,6 +31,15 @@ use std::sync::atomic::AtomicU64;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime};
 
+#[cfg(feature = "otel")]
+use enum_map::EnumMap;
+#[cfg(feature = "otel")]
+use opentelemetry_proto::tonic::common::v1::{any_value, AnyValue};
+#[cfg(feature = "otel")]
+use prost::Message;
+#[cfg(feature = "otel")]
+use std::io::Write;
+
 pub struct Profile {
     /// Translates from the new Id2 APIs to the older internal APIs. Long-term,
     /// this should probably use the dictionary directly.
@@ -45,7 +54,9 @@ pub struct Profile {
     mappings: FxIndexSet<Mapping>,
     observations: Observations,
     period: Option<api::Period>,
-    sample_types: Box<[api::SampleType]>,
+    #[cfg(feature = "otel")]
+    sample_type_index_map: EnumMap<api::SampleType, Option<usize>>,
+    sample_types: std::sync::Arc<[api::SampleType]>,
     stack_traces: FxIndexSet<StackTrace>,
     start_time: SystemTime,
     strings: StringTable,
@@ -391,7 +402,7 @@ impl Profile {
         sample_types: &[api::SampleType],
         period: Option<api::Period>,
     ) -> io::Result<Self> {
-        Self::try_new_internal(period, sample_types.to_vec().into_boxed_slice(), None, None)
+        Self::try_new_internal(period, std::sync::Arc::from(sample_types), None, None)
     }
 
     /// Tries to create a profile with the given period and sample types.
@@ -404,7 +415,7 @@ impl Profile {
     ) -> io::Result<Self> {
         Self::try_new_internal(
             period,
-            sample_types.to_vec().into_boxed_slice(),
+            std::sync::Arc::from(sample_types),
             None,
             Some(ProfilesDictionaryTranslator::new(profiles_dictionary)),
         )
@@ -418,7 +429,7 @@ impl Profile {
     ) -> io::Result<Self> {
         Self::try_new_internal(
             period,
-            sample_types.to_vec().into_boxed_slice(),
+            std::sync::Arc::from(sample_types),
             Some(string_storage),
             None,
         )
@@ -445,7 +456,7 @@ impl Profile {
 
         let mut profile = Profile::try_new_internal(
             self.period,
-            self.sample_types.clone(),
+            std::sync::Arc::clone(&self.sample_types),
             self.string_storage.clone(),
             profiles_dictionary_translator,
         )
@@ -559,7 +570,7 @@ impl Profile {
         let period = self.period.map(|period| period.value).unwrap_or(0);
 
         let sample_types = self.sample_types.clone();
-        let mut otel_profiles: HashMap<SampleType, crate::otel::Profile> = sample_types
+        let mut otel_profiles: HashMap<api::SampleType, crate::otel::Profile> = sample_types
             .iter()
             .map(|st| {
                 let sample_type = self.intern_sample_type(*st);
@@ -650,13 +661,6 @@ impl Profile {
                     .collect(),
             })
             .collect();
-
-        use std::io::Write;
-
-        use opentelemetry_proto::tonic::common::v1::{any_value, AnyValue};
-        use prost::Message;
-
-        use crate::api::SampleType;
 
         let attribute_table: Vec<crate::otel::KeyValueAndUnit> =
             std::iter::once(crate::otel::KeyValueAndUnit::default())
@@ -1283,10 +1287,17 @@ impl Profile {
     /// the owned values.
     fn try_new_internal(
         period: Option<api::Period>,
-        sample_types: Box<[api::SampleType]>,
+        sample_types: std::sync::Arc<[api::SampleType]>,
         string_storage: Option<Arc<Mutex<ManagedStringStorage>>>,
         profiles_dictionary_translator: Option<ProfilesDictionaryTranslator>,
     ) -> io::Result<Self> {
+        #[cfg(feature = "otel")]
+        let sample_type_index_map = sample_types
+            .iter()
+            .enumerate()
+            .map(|(idx, &st)| (st, Some(idx)))
+            .collect::<EnumMap<api::SampleType, Option<usize>>>();
+
         let start_time = SystemTime::now();
         let mut profile = Self {
             profiles_dictionary_translator,
@@ -1301,6 +1312,8 @@ impl Profile {
             mappings: Default::default(),
             observations: Default::default(),
             period,
+            #[cfg(feature = "otel")]
+            sample_type_index_map,
             sample_types,
             stack_traces: Default::default(),
             start_time,
@@ -1339,7 +1352,10 @@ impl Profile {
         profile.observations = {
             #[cfg(feature = "otel")]
             {
-                Observations::new(profile.sample_types.clone())
+                Observations::new(
+                    std::sync::Arc::clone(&profile.sample_types),
+                    profile.sample_type_index_map,
+                )
             }
             #[cfg(not(feature = "otel"))]
             {
@@ -1616,10 +1632,7 @@ mod api_tests {
 
         let dict = data.dictionary.as_ref().expect("dictionary");
         let scope = &data.resource_profiles[0].scope_profiles[0];
-        let otel_profile = scope
-            .profiles
-            .first()
-            .expect("one profile for CpuSamples");
+        let otel_profile = scope.profiles.first().expect("one profile for CpuSamples");
 
         assert_eq!(otel_profile.sample.len(), 3);
         assert_eq!(dict.mapping_table.len(), 2); // default + 1 real
@@ -1639,7 +1652,8 @@ mod api_tests {
             assert_eq!(value, 101);
         }
 
-        // OTEL stores timestamps in timestamps_unix_nano, not as attributes (unlike pprof's end_timestamp_ns label)
+        // OTEL stores timestamps in timestamps_unix_nano, not as attributes (unlike pprof's
+        // end_timestamp_ns label)
         let sample_with_timestamp = samples
             .iter()
             .find(|s| !s.timestamps_unix_nano.is_empty())
@@ -1714,7 +1728,10 @@ mod api_tests {
             .iter()
             .find(|s| otel_sample_attr_int(dict, s, "local root span id") == Some(10))
             .expect("sample with span id 10");
-        assert_eq!(otel_sample_attr_int(dict, s1, "local root span id"), Some(10));
+        assert_eq!(
+            otel_sample_attr_int(dict, s1, "local root span id"),
+            Some(10)
+        );
         assert_eq!(otel_sample_attr_str(dict, s1, "other"), Some("test"));
         assert_eq!(
             otel_sample_attr_str(dict, s1, "trace endpoint"),
@@ -1725,7 +1742,10 @@ mod api_tests {
             .iter()
             .find(|s| otel_sample_attr_int(dict, s, "local root span id") == Some(11))
             .expect("sample with span id 11");
-        assert_eq!(otel_sample_attr_int(dict, s2, "local root span id"), Some(11));
+        assert_eq!(
+            otel_sample_attr_int(dict, s2, "local root span id"),
+            Some(11)
+        );
         assert_eq!(otel_sample_attr_str(dict, s2, "other"), Some("test"));
         assert_eq!(otel_sample_attr_str(dict, s2, "trace endpoint"), None);
         Ok(())
@@ -1798,7 +1818,10 @@ mod api_tests {
             .iter()
             .find(|s| otel_sample_attr_int(dict, s, "local root span id") == Some(10))
             .expect("sample with span id 10");
-        assert_eq!(otel_sample_attr_int(dict, s1, "local root span id"), Some(10));
+        assert_eq!(
+            otel_sample_attr_int(dict, s1, "local root span id"),
+            Some(10)
+        );
         assert_eq!(
             otel_sample_attr_str(dict, s1, "trace endpoint"),
             Some("endpoint 10")

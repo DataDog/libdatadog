@@ -5,12 +5,15 @@ use crate::{
     api::SampleType,
     internal::{Sample, Timestamp},
 };
+use enum_map::EnumMap;
 use std::collections::HashMap;
+use std::sync::Arc;
 
 #[derive(Default)]
 #[allow(clippy::type_complexity)]
 pub struct Observations {
-    sample_types: Box<[SampleType]>,
+    sample_types: Arc<[SampleType]>,
+    sample_type_index_map: EnumMap<SampleType, Option<usize>>,
     pub aggregated: HashMap<SampleType, HashMap<Sample, i64>>,
     pub aggregated2: HashMap<(SampleType, SampleType), HashMap<Sample, (i64, i64)>>,
     pub timestamped: HashMap<SampleType, HashMap<Sample, Vec<(i64, Timestamp)>>>,
@@ -19,9 +22,13 @@ pub struct Observations {
 }
 
 impl Observations {
-    pub fn new(sample_types: Box<[SampleType]>) -> Self {
+    pub fn new(
+        sample_types: Arc<[SampleType]>,
+        sample_type_index_map: EnumMap<SampleType, Option<usize>>,
+    ) -> Self {
         Self {
             sample_types,
+            sample_type_index_map,
             ..Default::default()
         }
     }
@@ -130,26 +137,18 @@ impl Observations {
     // TODO make this a trait impl
     #[allow(clippy::should_implement_trait)]
     pub fn into_iter(self) -> impl Iterator<Item = (Sample, Option<Timestamp>, Vec<i64>)> {
-        let index_map: HashMap<SampleType, usize> = self
-            .sample_types
-            .iter()
-            .enumerate()
-            .map(|(idx, typ)| (*typ, idx))
-            .collect();
+        let index_map = self.sample_type_index_map;
 
         // Invariant: all keys in aggregated/aggregated2/timestamped/timestamped2 come from
         // add(), which indexes into self.sample_types for non-zero values. So every
         // sample_type key is present in index_map.
         let len: usize = self.sample_types.len();
-        let index_map_ts = index_map.clone();
-        let index_map_ts2 = index_map.clone();
-        let index_map_accum2 = index_map.clone();
         let accum_iter = self
             .aggregated
             .into_iter()
             .flat_map(move |(sample_type, inner)| {
                 #[allow(clippy::unwrap_used)]
-                let index = *index_map.get(&sample_type).unwrap();
+                let index = index_map[sample_type].unwrap();
                 inner.into_iter().map(move |(sample, value)| {
                     let mut vals = vec![0; len];
                     vals[index] = value;
@@ -162,9 +161,9 @@ impl Observations {
             .into_iter()
             .flat_map(move |((st1, st2), inner)| {
                 #[allow(clippy::unwrap_used)]
-                let index1 = *index_map_accum2.get(&st1).unwrap();
+                let index1 = index_map[st1].unwrap();
                 #[allow(clippy::unwrap_used)]
-                let index2 = *index_map_accum2.get(&st2).unwrap();
+                let index2 = index_map[st2].unwrap();
                 inner.into_iter().map(move |(sample, (val1, val2))| {
                     let mut vals = vec![0; len];
                     vals[index1] = val1;
@@ -173,24 +172,13 @@ impl Observations {
                 })
             });
 
-        // let mut accum: HashMap<Sample, Vec<i64>> = HashMap::new();
-        // for (sample_type, samples) in self.aggregated.into_iter() {
-        //     let Some(idx) = index_map.get(&sample_type) else {
-        //         continue;
-        //     };
-        //     for (sample, val) in samples.into_iter() {
-        //         let val_accum = accum.entry(sample).or_insert_with(|| vec![0; len]);
-        //         val_accum[*idx] += val;
-        //     }
-        // }
-        // let accum_iter = accum.into_iter().map(|(k, v)| (k, None, v));
 
         let ts_iter = self
             .timestamped
             .into_iter()
             .flat_map(move |(sample_type, inner)| {
                 #[allow(clippy::unwrap_used)]
-                let index = *index_map_ts.get(&sample_type).unwrap();
+                let index = index_map[sample_type].unwrap();
                 inner.into_iter().flat_map(move |(sample, ts_vals)| {
                     ts_vals.into_iter().map(move |(value, ts)| {
                         let mut vals = vec![0; len];
@@ -205,9 +193,9 @@ impl Observations {
             .into_iter()
             .flat_map(move |((st1, st2), inner)| {
                 #[allow(clippy::unwrap_used)]
-                let index1 = *index_map_ts2.get(&st1).unwrap();
+                let index1 = index_map[st1].unwrap();
                 #[allow(clippy::unwrap_used)]
-                let index2 = *index_map_ts2.get(&st2).unwrap();
+                let index2 = index_map[st2].unwrap();
                 inner.into_iter().flat_map(move |(sample, ts_vals)| {
                     ts_vals.into_iter().map(move |(val1, val2, ts)| {
                         let mut vals = vec![0; len];
