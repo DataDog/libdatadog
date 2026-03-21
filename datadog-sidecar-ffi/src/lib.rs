@@ -549,11 +549,11 @@ pub unsafe extern "C" fn ddog_sidecar_lifecycle_end(
         transport,
         instance_id,
         queue_id,
-        vec![
-            SidecarAction::Telemetry(TelemetryActions::Lifecycle(LifecycleAction::Stop)),
-            SidecarAction::ClearQueueId
-        ],
+        vec![SidecarAction::Telemetry(TelemetryActions::Lifecycle(
+            LifecycleAction::Stop,
+        ))],
     ));
+    try_c!(blocking::clear_queue_id(transport, instance_id, queue_id));
 
     MaybeError::None
 }
@@ -566,12 +566,7 @@ pub unsafe extern "C" fn ddog_sidecar_application_remove(
     instance_id: &InstanceId,
     queue_id: &QueueId,
 ) -> MaybeError {
-    try_c!(blocking::enqueue_actions(
-        transport,
-        instance_id,
-        queue_id,
-        vec![SidecarAction::ClearQueueId],
-    ));
+    try_c!(blocking::clear_queue_id(transport, instance_id, queue_id));
 
     MaybeError::None
 }
@@ -623,8 +618,7 @@ pub unsafe extern "C" fn ddog_sidecar_session_set_config(
     force_drop_size: usize,
     log_level: ffi::CharSlice,
     log_path: ffi::CharSlice,
-    #[allow(unused)] // On FFI layer we cannot conditionally compile, so we need the arg
-    remote_config_notify_function: *mut c_void,
+    _remote_config_notify_function: *mut c_void,
     remote_config_products: *const RemoteConfigProduct,
     remote_config_products_count: usize,
     remote_config_capabilities: *const RemoteConfigCapabilities,
@@ -633,51 +627,57 @@ pub unsafe extern "C" fn ddog_sidecar_session_set_config(
     is_fork: bool,
     process_tags: &libdd_common_ffi::Vec<Tag>,
 ) -> MaybeError {
+    let session_id_str: String = session_id.to_utf8_lossy().into();
+    let session_config = SessionConfig {
+        endpoint: agent_endpoint.clone(),
+        dogstatsd_endpoint: dogstatsd_endpoint.clone(),
+        language: language.to_utf8_lossy().into(),
+        language_version: language_version.to_utf8_lossy().into(),
+        tracer_version: tracer_version.to_utf8_lossy().into(),
+        flush_interval: Duration::from_millis(flush_interval_milliseconds as u64),
+        remote_config_poll_interval: Duration::from_millis(
+            remote_config_poll_interval_millis as u64,
+        ),
+        telemetry_heartbeat_interval: Duration::from_millis(
+            telemetry_heartbeat_interval_millis as u64,
+        ),
+        force_flush_size,
+        force_drop_size,
+        log_level: log_level.to_utf8_lossy().into(),
+        log_file: if log_path.is_empty() {
+            config::FromEnv::log_method()
+        } else {
+            LogMethod::File(String::from(log_path.to_utf8_lossy()).into())
+        },
+        remote_config_products: ffi::Slice::from_raw_parts(
+            remote_config_products,
+            remote_config_products_count,
+        )
+        .as_slice()
+        .to_vec(),
+        remote_config_capabilities: ffi::Slice::from_raw_parts(
+            remote_config_capabilities,
+            remote_config_capabilities_count,
+        )
+        .as_slice()
+        .to_vec(),
+        remote_config_enabled,
+        process_tags: process_tags.to_vec(),
+    };
     #[cfg(unix)]
-    let remote_config_notify_target = libc::getpid();
-    #[cfg(windows)]
-    let remote_config_notify_target = remote_config_notify_function;
     try_c!(blocking::set_session_config(
         transport,
-        remote_config_notify_target,
-        session_id.to_utf8_lossy().into(),
-        &SessionConfig {
-            endpoint: agent_endpoint.clone(),
-            dogstatsd_endpoint: dogstatsd_endpoint.clone(),
-            language: language.to_utf8_lossy().into(),
-            language_version: language_version.to_utf8_lossy().into(),
-            tracer_version: tracer_version.to_utf8_lossy().into(),
-            flush_interval: Duration::from_millis(flush_interval_milliseconds as u64),
-            remote_config_poll_interval: Duration::from_millis(
-                remote_config_poll_interval_millis as u64
-            ),
-            telemetry_heartbeat_interval: Duration::from_millis(
-                telemetry_heartbeat_interval_millis as u64
-            ),
-            force_flush_size,
-            force_drop_size,
-            log_level: log_level.to_utf8_lossy().into(),
-            log_file: if log_path.is_empty() {
-                config::FromEnv::log_method()
-            } else {
-                LogMethod::File(String::from(log_path.to_utf8_lossy()).into())
-            },
-            remote_config_products: ffi::Slice::from_raw_parts(
-                remote_config_products,
-                remote_config_products_count
-            )
-            .as_slice()
-            .to_vec(),
-            remote_config_capabilities: ffi::Slice::from_raw_parts(
-                remote_config_capabilities,
-                remote_config_capabilities_count
-            )
-            .as_slice()
-            .to_vec(),
-            remote_config_enabled,
-            process_tags: process_tags.to_vec(),
-        },
-        is_fork
+        session_id_str,
+        &session_config,
+        is_fork,
+    ));
+    #[cfg(windows)]
+    try_c!(blocking::set_session_config(
+        transport,
+        session_id_str,
+        datadog_sidecar::service::RemoteConfigNotifyFunction(_remote_config_notify_function,),
+        &session_config,
+        is_fork,
     ));
 
     MaybeError::None
@@ -688,12 +688,10 @@ pub unsafe extern "C" fn ddog_sidecar_session_set_config(
 #[allow(clippy::missing_safety_doc)]
 pub unsafe extern "C" fn ddog_sidecar_session_set_process_tags(
     transport: &mut Box<SidecarTransport>,
-    session_id: ffi::CharSlice,
     process_tags: &libdd_common_ffi::Vec<Tag>,
 ) -> MaybeError {
     try_c!(blocking::set_session_process_tags(
         transport,
-        session_id.to_utf8_lossy().into(),
         process_tags.to_vec(),
     ));
 
@@ -1315,12 +1313,10 @@ pub unsafe extern "C" fn ddog_sidecar_dogstatsd_set(
 #[allow(clippy::missing_safety_doc)]
 pub unsafe extern "C" fn ddog_sidecar_set_test_session_token(
     transport: &mut Box<SidecarTransport>,
-    session_id: ffi::CharSlice,
     token: ffi::CharSlice,
 ) -> MaybeError {
     try_c!(blocking::set_test_session_token(
         transport,
-        session_id.to_utf8_lossy().into_owned(),
         token.to_utf8_lossy().into_owned(),
     ));
 

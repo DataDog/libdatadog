@@ -4,7 +4,7 @@
 use std::io;
 use std::sync::{Arc, Mutex, OnceLock};
 use std::thread::{self, JoinHandle};
-use tokio::net::UnixListener;
+use tokio::io::unix::AsyncFd;
 use tokio::sync::oneshot;
 use tracing::{error, info};
 
@@ -17,7 +17,7 @@ use crate::setup::Liaison;
 #[cfg(not(target_os = "linux"))]
 use crate::setup::SharedDirLiaison;
 use crate::tracer::SHM_LIMITER;
-use datadog_ipc::transport::blocking::BlockingTransport;
+use datadog_ipc::{SeqpacketConn, SeqpacketListener};
 
 static MASTER_LISTENER: OnceLock<Mutex<Option<MasterListener>>> = OnceLock::new();
 
@@ -77,7 +77,6 @@ impl MasterListener {
             .map_err(|e| io::Error::other(format!("Failed to acquire listener lock: {}", e)))?;
 
         if let Some(mut master) = listener_guard.take() {
-            // Signal shutdown by sending to or dropping the oneshot sender
             if let Some(tx) = master.shutdown_tx.take() {
                 let _ = tx.send(());
             }
@@ -129,8 +128,8 @@ impl MasterListener {
 
 /// Accept connections in a loop for thread mode.
 async fn accept_socket_loop_thread(
-    listener: UnixListener,
-    handler: Box<dyn Fn(tokio::net::UnixStream)>,
+    async_listener: AsyncFd<SeqpacketListener>,
+    handler: Box<dyn Fn(SeqpacketConn)>,
     mut shutdown_rx: oneshot::Receiver<()>,
 ) -> io::Result<()> {
     loop {
@@ -139,23 +138,31 @@ async fn accept_socket_loop_thread(
                 info!("Shutdown signal received in thread listener");
                 break;
             }
-            accept = listener.accept() => {
-                match accept {
-                    Ok((socket, _)) => {
-                        info!("Accepted new worker connection");
-                        // On the first connection, get the worker's UID and
-                        // fchown the SHM to that UID so cross-user access works when
-                        // the master runs as root and workers run as a different user.
-                        FIRST_CONNECTION_INIT.get_or_init(|| {
-                            if let Ok(cred) = socket.peer_cred() {
-                                datadog_ipc::platform::set_shm_owner_uid(cred.uid());
+            ready = async_listener.readable() => {
+                match ready {
+                    Ok(mut guard) => {
+                        match guard.try_io(|inner| inner.get_ref().try_accept()) {
+                            Ok(Ok(conn)) => {
+                                // On the first connection, get the worker's UID and
+                                // fchown the SHM to that UID so cross-user access works when
+                                // the master runs as root and workers run as a different user.
+                                FIRST_CONNECTION_INIT.get_or_init(|| {
+                                    if let Ok(cred) = conn.peer_credentials() {
+                                        datadog_ipc::platform::set_shm_owner_uid(cred.uid);
+                                    }
+                                    drop(SHM_LIMITER.lock());
+                                });
+                                handler(conn);
                             }
-                            drop(SHM_LIMITER.lock());
-                        });
-                        handler(socket);
+                            Ok(Err(e)) => {
+                                error!("Failed to accept worker connection: {}", e);
+                                break;
+                            }
+                            Err(_would_block) => continue,
+                        }
                     }
                     Err(e) => {
-                        error!("Failed to accept worker connection: {}", e);
+                        error!("IPC listener error: {}", e);
                         break;
                     }
                 }
@@ -179,11 +186,9 @@ fn run_listener(pid: u32, _config: Config, shutdown_rx: oneshot::Receiver<()>) -
     #[cfg(not(target_os = "linux"))]
     let liaison = SharedDirLiaison::ipc_for_pid(pid);
 
-    let std_listener = liaison
+    let listener = liaison
         .attempt_listen()?
         .ok_or_else(|| io::Error::other("Failed to create IPC listener"))?;
-
-    std_listener.set_nonblocking(true)?;
 
     info!("IPC server listening for worker connections");
 
@@ -201,13 +206,13 @@ fn run_listener(pid: u32, _config: Config, shutdown_rx: oneshot::Receiver<()>) -
         .build()
         .map_err(|e| io::Error::other(format!("Failed building tokio runtime: {}", e)))?;
 
-    // UnixListener::from_std() requires a Tokio reactor context, so it must be
+    // into_async_listener() requires a Tokio reactor context, so it must be
     // called inside block_on rather than before the runtime is built.
     runtime
         .block_on(async {
-            let listener = UnixListener::from_std(std_listener)?;
+            let async_listener = listener.into_async_listener()?;
             crate::entry::main_loop(
-                move |handler| accept_socket_loop_thread(listener, handler, shutdown_rx),
+                move |handler| accept_socket_loop_thread(async_listener, handler, shutdown_rx),
                 Arc::new(cancel),
                 loop_config,
             )
@@ -225,23 +230,15 @@ fn run_listener(pid: u32, _config: Config, shutdown_rx: oneshot::Receiver<()>) -
 pub fn connect_to_master(pid: i32) -> io::Result<Box<SidecarTransport>> {
     info!("Connecting to master listener (PID {})", pid);
 
-    // Use the same pid-specific socket path as the master listener.
     #[cfg(target_os = "linux")]
     let liaison = AbstractUnixSocketLiaison::ipc_for_pid(pid as u32);
     #[cfg(not(target_os = "linux"))]
     let liaison = SharedDirLiaison::ipc_for_pid(pid as u32);
 
-    let channel = liaison
+    let conn = liaison
         .connect_to_server()
         .map_err(|e| io::Error::other(format!("Failed to connect to master listener: {}", e)))?;
 
-    let transport = BlockingTransport::from(channel);
-
-    let sidecar_transport = Box::new(SidecarTransport {
-        inner: Mutex::new(transport),
-        reconnect_fn: None,
-    });
-
     info!("Successfully connected to master listener");
-    Ok(sidecar_transport)
+    Ok(Box::new(SidecarTransport::from(conn)))
 }

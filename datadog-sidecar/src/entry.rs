@@ -21,7 +21,6 @@ use tokio::sync::{mpsc, oneshot};
 use crate::crashtracker::crashtracker_unix_socket_path;
 use crate::service::blocking::SidecarTransport;
 use crate::service::SidecarServer;
-use datadog_ipc::platform::AsyncChannel;
 
 use crate::setup::{self, IpcClient, IpcServer, Liaison};
 
@@ -162,7 +161,7 @@ where
             let server = server.clone();
             let shutdown_complete_tx = shutdown_complete_tx.clone();
             tokio::spawn(async move {
-                server.accept_connection(AsyncChannel::from(socket)).await;
+                server.accept_connection(socket).await;
                 cloned_counter.fetch_add(-1, Ordering::AcqRel);
                 tracing::info!("connection closed");
 
@@ -276,6 +275,15 @@ pub fn daemonize(listener: IpcServer, mut cfg: Config) -> anyhow::Result<()> {
 }
 
 pub fn start_or_connect_to_sidecar(cfg: Config) -> anyhow::Result<SidecarTransport> {
+    // On Windows, named-pipe buffer sizes are fixed at creation time.  Set the global before
+    // attempt_listen so that the initial server pipe (created by this process and handed to the
+    // daemon) uses the configured size.  The daemon restores the same value at startup so that
+    // subsequent try_accept calls also use the right size.
+    #[cfg(windows)]
+    if cfg.pipe_buffer_size > 0 {
+        datadog_ipc::platform::set_pipe_buffer_size(cfg.pipe_buffer_size);
+    }
+
     let liaison = match cfg.ipc_mode {
         config::IpcMode::Shared => setup::DefaultLiason::ipc_shared(),
         config::IpcMode::InstancePerProcess => setup::DefaultLiason::ipc_per_process(),
@@ -290,8 +298,9 @@ pub fn start_or_connect_to_sidecar(cfg: Config) -> anyhow::Result<SidecarTranspo
         err => err.context("Error starting sidecar").err(),
     };
 
-    Ok(liaison
-        .connect_to_server()
-        .map_err(|e| err.unwrap_or(e.into()))?
-        .into())
+    Ok(SidecarTransport::from(
+        liaison
+            .connect_to_server()
+            .map_err(|e| err.unwrap_or(e.into()))?,
+    ))
 }

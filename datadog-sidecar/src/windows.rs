@@ -2,10 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::enter_listener_loop;
-use crate::setup::pid_shm_path;
-use datadog_ipc::platform::{
-    named_pipe_name_from_raw_handle, FileBackedHandle, MappedMem, NamedShmHandle,
-};
+use datadog_ipc::{AsyncConn, SeqpacketListener};
 
 use futures::FutureExt;
 use libdd_common::Endpoint;
@@ -16,14 +13,14 @@ use manual_future::ManualFuture;
 use spawn_worker::{write_crashtracking_trampoline, SpawnWorker, Stdio, TrampolineData};
 use std::ffi::CStr;
 use std::io::{self, Error};
-use std::os::windows::io::{AsRawHandle, IntoRawHandle, OwnedHandle};
+use std::os::windows::io::{FromRawHandle, IntoRawHandle, OwnedHandle};
 use std::ptr::null_mut;
 use std::sync::LazyLock;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
-use tokio::net::windows::named_pipe::{NamedPipeServer, ServerOptions};
 use tokio::select;
 use tracing::{error, info};
+use winapi::um::winnt::HANDLE;
 use winapi::{
     shared::{
         sddl::ConvertSidToStringSidA,
@@ -36,7 +33,7 @@ use winapi::{
         },
         securitybaseapi::GetTokenInformation,
         winbase::LocalFree,
-        winnt::{TokenUser, HANDLE, TOKEN_QUERY, TOKEN_USER},
+        winnt::{TokenUser, TOKEN_QUERY, TOKEN_USER},
     },
 };
 
@@ -46,30 +43,24 @@ pub extern "C" fn ddog_daemon_entry_point(_trampoline_data: &TrampolineData) {
     #[cfg(feature = "tracing")]
     crate::log::enable_logging().ok();
 
+    // Restore the pipe buffer size the PHP parent process configured before spawning us,
+    // so subsequent try_accept calls use the same buffer size.
+    let buf_size = crate::config::Config::get().pipe_buffer_size;
+    if buf_size > 0 {
+        datadog_ipc::platform::set_pipe_buffer_size(buf_size);
+    }
+
     let now = Instant::now();
 
     let pid = unsafe { libc::getpid() };
 
     if let Some(handle) = spawn_worker::recv_passed_handle() {
-        let mut shm = match named_pipe_name_from_raw_handle(handle.as_raw_handle())
-            .ok_or(io::Error::from(io::ErrorKind::InvalidInput))
-            .and_then(|name| NamedShmHandle::create(pid_shm_path(&name), 4))
-            .and_then(FileBackedHandle::map)
-        {
-            Ok(ok) => ok,
-            Err(err) => {
-                error!("Couldn't store pid to shared memory: {err}");
-                return;
-            }
-        };
-        shm.as_slice_mut().copy_from_slice(&pid.to_ne_bytes());
-
         info!("Starting sidecar, pid: {}", pid);
 
-        let acquire_listener = move || unsafe {
+        let acquire_listener = move || {
             let (closed_future, close_completer) = ManualFuture::new();
             let close_completer = Arc::from(Mutex::new(Some(close_completer)));
-            let pipe = NamedPipeServer::from_raw_handle(handle.into_raw_handle())?;
+            let listener = SeqpacketListener::from_owned_fd(handle);
 
             let cancel = move || {
                 if let Some(completer) = close_completer.lock_or_panic().take() {
@@ -77,10 +68,8 @@ pub extern "C" fn ddog_daemon_entry_point(_trampoline_data: &TrampolineData) {
                 }
             };
 
-            // We pass the shm to ensure we drop the shm handle with the pid immediately after
-            // cancellation To avoid actual race conditions
             Ok((
-                |handler| accept_socket_loop(pipe, closed_future, handler, shm),
+                |handler| accept_socket_loop(listener, closed_future, handler),
                 cancel,
             ))
         };
@@ -98,37 +87,36 @@ pub extern "C" fn ddog_daemon_entry_point(_trampoline_data: &TrampolineData) {
 }
 
 async fn accept_socket_loop(
-    mut pipe: NamedPipeServer,
+    listener: SeqpacketListener,
     cancellation: ManualFuture<()>,
-    handler: Box<dyn Fn(NamedPipeServer)>,
-    _: MappedMem<NamedShmHandle>,
+    handler: Box<dyn Fn(AsyncConn)>,
 ) -> io::Result<()> {
-    let name = named_pipe_name_from_raw_handle(pipe.as_raw_handle())
-        .ok_or(io::Error::from(io::ErrorKind::InvalidInput))?;
-
     let cancellation = cancellation.shared();
     loop {
         select! {
             _ = cancellation.clone() => break,
-            result = pipe.connect() => result?,
+            result = listener.accept_async() => {
+                handler(result?);
+            }
         }
-        let connected_pipe = pipe;
-        pipe = ServerOptions::new().create(&name)?;
-        handler(connected_pipe);
     }
-    // drops pipe and shm here
     Ok(())
 }
 
-pub fn setup_daemon_process(listener: OwnedHandle, spawn_cfg: &mut SpawnWorker) -> io::Result<()> {
+pub fn setup_daemon_process(
+    listener: SeqpacketListener,
+    spawn_cfg: &mut SpawnWorker,
+) -> io::Result<()> {
     // Ensure unique process names - we spawn one sidecar per console session id (see
     // setup/windows.rs for the reasoning)
+    let raw = listener.into_raw_handle();
+    let owned = unsafe { OwnedHandle::from_raw_handle(raw) };
     spawn_cfg
         .process_name(format!(
             "datadog-ipc-helper-{}",
             primary_sidecar_identifier()
         ))
-        .pass_handle(listener)
+        .pass_handle(owned)
         .stdin(Stdio::Null);
 
     Ok(())

@@ -24,14 +24,14 @@ pub mod thread_listener_windows;
 #[cfg(windows)]
 pub use thread_listener_windows::{connect_to_master, MasterListener};
 
-use datadog_ipc::platform::Channel;
+use datadog_ipc::SeqpacketConn;
 use std::io;
 
 /// Implementations of this interface must provide behavior repeatable across processes with the
 /// same version of library.
 /// Allowing all instances of the same version of the library to establish a shared connection
 pub trait Liaison: Sized {
-    fn connect_to_server(&self) -> io::Result<Channel>;
+    fn connect_to_server(&self) -> io::Result<SeqpacketConn>;
     fn attempt_listen(&self) -> io::Result<Option<IpcServer>>;
     fn ipc_shared() -> Self;
     fn ipc_per_process() -> Self;
