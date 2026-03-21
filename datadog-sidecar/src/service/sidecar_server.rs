@@ -94,8 +94,6 @@ pub struct SidecarServer {
     /// A `Mutex` guarded optional `ManualFutureCompleter` for telemetry configuration.
     pub self_telemetry_config:
         Arc<Mutex<Option<ManualFutureCompleter<libdd_telemetry::config::Config>>>>,
-    /// Keeps track of the number of submitted payloads.
-    pub(crate) submitted_payloads: Arc<AtomicU64>,
     /// All tracked agent infos per endpoint
     pub agent_infos: AgentInfos,
     /// All remote config handling
@@ -113,6 +111,8 @@ struct ConnectionSidecarHandler {
     /// Used to auto-register metrics in newly-created telemetry clients when a metric point
     /// for a previously registered metric arrives for a new (service, env) combination.
     metric_registrations: Mutex<HashMap<String, MetricContext>>,
+    /// Keeps track of the number of submitted payloads.
+    pub(crate) submitted_payloads: Arc<AtomicU64>,
 }
 
 impl ConnectionSidecarHandler {
@@ -122,6 +122,7 @@ impl ConnectionSidecarHandler {
             session_id: Default::default(),
             instances: Default::default(),
             metric_registrations: Default::default(),
+            submitted_payloads: Default::default(),
         }
     }
 
@@ -358,7 +359,7 @@ impl SidecarServer {
 
 impl SidecarInterface for ConnectionSidecarHandler {
     fn recv_counter(&self) -> &AtomicU64 {
-        &self.server.submitted_payloads
+        &self.submitted_payloads
     }
 
     async fn enqueue_actions(
