@@ -22,7 +22,7 @@ use std::borrow::Cow;
 use std::collections::hash_map::Entry;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, Weak};
 use std::time::{Duration, SystemTime};
 use tracing::{debug, error, info, trace, warn};
 
@@ -94,6 +94,8 @@ pub struct SidecarServer {
     /// A `Mutex` guarded optional `ManualFutureCompleter` for telemetry configuration.
     pub self_telemetry_config:
         Arc<Mutex<Option<ManualFutureCompleter<libdd_telemetry::config::Config>>>>,
+    /// Weak references to per-connection payload counters, for telemetry aggregation.
+    pub(crate) connection_counters: Arc<Mutex<Vec<Weak<AtomicU64>>>>,
     /// All tracked agent infos per endpoint
     pub agent_infos: AgentInfos,
     /// All remote config handling
@@ -105,24 +107,29 @@ pub struct SidecarServer {
 /// Per-connection handler wrapper that tracks sessions/instances for cleanup on disconnect.
 struct ConnectionSidecarHandler {
     server: SidecarServer,
+    /// Per-connection counter incremented on each received IPC message.
+    submitted_payloads: Arc<AtomicU64>,
     session_id: std::sync::OnceLock<String>,
     instances: Mutex<std::collections::HashSet<InstanceId>>,
     /// All telemetry metric registrations received on this connection, keyed by metric name.
     /// Used to auto-register metrics in newly-created telemetry clients when a metric point
     /// for a previously registered metric arrives for a new (service, env) combination.
     metric_registrations: Mutex<HashMap<String, MetricContext>>,
-    /// Keeps track of the number of submitted payloads.
-    pub(crate) submitted_payloads: Arc<AtomicU64>,
 }
 
 impl ConnectionSidecarHandler {
     fn new(server: SidecarServer) -> Self {
+        let submitted_payloads = Arc::new(AtomicU64::new(0));
+        server
+            .connection_counters
+            .lock_or_panic()
+            .push(Arc::downgrade(&submitted_payloads));
         Self {
             server,
+            submitted_payloads,
             session_id: Default::default(),
             instances: Default::default(),
             metric_registrations: Default::default(),
-            submitted_payloads: Default::default(),
         }
     }
 
