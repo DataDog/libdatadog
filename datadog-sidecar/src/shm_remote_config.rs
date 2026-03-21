@@ -635,9 +635,10 @@ impl RemoteConfigManager {
                     self.check_configs = self.active_configs.keys().cloned().collect();
                 }
 
+                let expiry = Instant::now().checked_sub(Duration::from_secs(3666));
                 while let Some((_, Reverse(instant))) = self.unexpired_targets.peek() {
                     #[allow(clippy::unwrap_used)]
-                    if *instant < Instant::now() - Duration::from_secs(3666) {
+                    if expiry.map_or(false, |e| *instant < e) {
                         let (target, _) = self.unexpired_targets.pop().unwrap();
                         self.encountered_targets.remove(&target);
                     } else {
