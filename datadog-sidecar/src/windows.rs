@@ -22,18 +22,13 @@ use tokio::select;
 use tracing::{error, info};
 use winapi::um::winnt::HANDLE;
 use winapi::{
-    shared::{
-        sddl::ConvertSidToStringSidA,
-        winerror::{ERROR_INSUFFICIENT_BUFFER, ERROR_NO_TOKEN},
-    },
+    shared::{sddl::ConvertSidToStringSidA, winerror::ERROR_INSUFFICIENT_BUFFER},
     um::{
         handleapi::CloseHandle,
-        processthreadsapi::{
-            GetCurrentProcess, GetCurrentThread, OpenProcessToken, OpenThreadToken,
-        },
-        securitybaseapi::GetTokenInformation,
+        processthreadsapi::{GetCurrentProcess, OpenProcessToken},
+        securitybaseapi::{GetSidSubAuthority, GetSidSubAuthorityCount, GetTokenInformation},
         winbase::LocalFree,
-        winnt::{TokenUser, TOKEN_QUERY, TOKEN_USER},
+        winnt::{TokenIntegrityLevel, TokenUser, TOKEN_MANDATORY_LABEL, TOKEN_QUERY, TOKEN_USER},
     },
 };
 
@@ -154,18 +149,16 @@ fn fetch_sidecar_identifier() -> String {
     unsafe {
         let mut access_token = null_mut();
 
-        'token: {
-            if OpenThreadToken(GetCurrentThread(), TOKEN_QUERY, 1, &mut access_token) != 0 {
-                break 'token;
-            }
-            let mut err = Error::last_os_error();
-            if err.raw_os_error() == Some(ERROR_NO_TOKEN as i32) {
-                if OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut access_token) != 0 {
-                    break 'token;
-                }
-                err = Error::last_os_error();
-            }
-            error!("Failed fetching thread token: {:?}", err);
+        // Note that we do intentionally not use the thread token:
+        // IIS impersonates request users at the thread level (e.g. IUSR for Anonymous
+        // Authentication, or a "Connect As" user), but the sidecar is a child process that
+        // inherits the process identity (AppPool). Using the thread token would produce a
+        // different SID than the sidecar, so the client would look for a pipe that doesn't exist.
+        if OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut access_token) == 0 {
+            error!(
+                "Failed fetching process token: {:?}",
+                Error::last_os_error()
+            );
             return "".to_string();
         }
 
@@ -180,7 +173,7 @@ fn fetch_sidecar_identifier() -> String {
         {
             let err = Error::last_os_error();
             if err.raw_os_error() != Some(ERROR_INSUFFICIENT_BUFFER as i32) {
-                error!("Failed fetching thread token: {:?}", err);
+                error!("Failed process thread token: {:?}", err);
                 CloseHandle(access_token);
                 return "".to_string();
             }
@@ -196,24 +189,58 @@ fn fetch_sidecar_identifier() -> String {
             &mut info_buffer_size,
         ) == 0
         {
-            error!("Failed fetching thread token: {:?}", Error::last_os_error());
+            error!(
+                "Failed fetching process token: {:?}",
+                Error::last_os_error()
+            );
             CloseHandle(access_token);
             return "".to_string();
         }
 
         let mut string_sid = null_mut();
         let success = ConvertSidToStringSidA((*user_token).User.Sid, &mut string_sid);
-        CloseHandle(access_token);
 
         if success == 0 {
             error!("Failed stringifying SID: {:?}", Error::last_os_error());
+            CloseHandle(access_token);
             return "".to_string();
         }
 
-        let str = String::from_utf8_lossy(CStr::from_ptr(string_sid).to_bytes()).to_string();
+        let user_sid = String::from_utf8_lossy(CStr::from_ptr(string_sid).to_bytes()).to_string();
         LocalFree(string_sid as HANDLE);
-        str
+
+        // Also include the integrity level so that elevated (admin) and non-elevated processes
+        // of the same user get different sidecar identifiers and thus different sidecars.
+        // Without this, a non-elevated PHP process would try to connect to a sidecar spawned by
+        // an elevated PHP process and fail with access denied.
+        let integrity_level = fetch_integrity_level(access_token).unwrap_or(0);
+        CloseHandle(access_token);
+
+        format!("{}-{:x}", user_sid, integrity_level)
     }
+}
+
+/// Returns the mandatory integrity level RID from the token (e.g. 0x1000=Low, 0x2000=Medium,
+/// 0x3000=High/admin, 0x4000=System), or None on failure.
+unsafe fn fetch_integrity_level(token: HANDLE) -> Option<u32> {
+    let mut size = 0u32;
+    GetTokenInformation(token, TokenIntegrityLevel, null_mut(), 0, &mut size);
+    if size == 0 {
+        return None;
+    }
+
+    let buf = Vec::<u8>::with_capacity(size as usize);
+    let label = buf.as_ptr() as *const TOKEN_MANDATORY_LABEL;
+    if GetTokenInformation(token, TokenIntegrityLevel, label as *mut _, size, &mut size) == 0 {
+        return None;
+    }
+
+    let sid = (*label).Label.Sid;
+    let count = *GetSidSubAuthorityCount(sid) as u32;
+    if count == 0 {
+        return None;
+    }
+    Some(*GetSidSubAuthority(sid, count - 1))
 }
 
 pub fn primary_sidecar_identifier() -> &'static str {
