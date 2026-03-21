@@ -1,14 +1,28 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
+#![cfg_attr(not(feature = "std"), no_std)]
+extern crate alloc;
+
+#[cfg(feature = "std")]
 pub mod otel_process_ctx;
+#[cfg(feature = "std")]
 pub mod tracer_metadata;
 
-use std::borrow::Cow;
-use std::cell::OnceCell;
-use std::collections::HashMap;
-use std::ops::Deref;
+use alloc::borrow::Cow;
+use alloc::boxed::Box;
+use alloc::collections::BTreeMap;
+use alloc::format;
+use alloc::string::{String, ToString};
+use alloc::vec;
+use alloc::vec::Vec;
+use core::cell::OnceCell;
+use core::mem;
+use core::ops::Deref;
+
+#[cfg(feature = "std")]
 use std::path::Path;
-use std::{env, fs, io, mem};
+#[cfg(feature = "std")]
+use std::{env, fs, io};
 
 /// This struct holds maps used to match and template configurations.
 ///
@@ -20,17 +34,17 @@ use std::{env, fs, io, mem};
 ///  * envs: Splits env variables with format KEY=VALUE
 ///  * args: Splits args with format key=value. If the arg doesn't contain an '=', skip it
 struct MatchMaps<'a> {
-    tags: &'a HashMap<String, String>,
-    env_map: OnceCell<HashMap<&'a str, &'a str>>,
-    args_map: OnceCell<HashMap<&'a str, &'a str>>,
+    tags: &'a BTreeMap<String, String>,
+    env_map: OnceCell<BTreeMap<&'a str, &'a str>>,
+    args_map: OnceCell<BTreeMap<&'a str, &'a str>>,
 }
 
 impl<'a> MatchMaps<'a> {
-    fn env(&self, process_info: &'a ProcessInfo) -> &HashMap<&'a str, &'a str> {
+    fn env(&self, process_info: &'a ProcessInfo) -> &BTreeMap<&'a str, &'a str> {
         self.env_map.get_or_init(|| {
-            let mut map = HashMap::new();
+            let mut map = BTreeMap::new();
             for e in &process_info.envp {
-                let Ok(s) = std::str::from_utf8(e.deref()) else {
+                let Ok(s) = core::str::from_utf8(e.deref()) else {
                     continue;
                 };
                 let (k, v) = match s.split_once('=') {
@@ -43,11 +57,11 @@ impl<'a> MatchMaps<'a> {
         })
     }
 
-    fn args(&self, process_info: &'a ProcessInfo) -> &HashMap<&str, &str> {
+    fn args(&self, process_info: &'a ProcessInfo) -> &BTreeMap<&str, &str> {
         self.args_map.get_or_init(|| {
-            let mut map = HashMap::new();
+            let mut map = BTreeMap::new();
             for arg in &process_info.args {
-                let Ok(arg) = std::str::from_utf8(arg.deref()) else {
+                let Ok(arg) = core::str::from_utf8(arg.deref()) else {
                     continue;
                 };
                 // Split args between key and value on '='
@@ -66,7 +80,7 @@ struct Matcher<'a> {
 }
 
 impl<'a> Matcher<'a> {
-    fn new(process_info: &'a ProcessInfo, tags: &'a HashMap<String, String>) -> Self {
+    fn new(process_info: &'a ProcessInfo, tags: &'a BTreeMap<String, String>) -> Self {
         Self {
             process_info,
             match_maps: MatchMaps {
@@ -145,7 +159,7 @@ impl<'a> Matcher<'a> {
                     template_map_key(index, self.match_maps.args(self.process_info))
                 }
                 "tags" => template_map_key(index, self.match_maps.tags),
-                _ => std::borrow::Cow::Borrowed("UNDEFINED"),
+                _ => Cow::Borrowed("UNDEFINED"),
             };
             templated.push_str(&val);
             rest = tail;
@@ -186,6 +200,7 @@ pub struct ProcessInfo {
     pub language: Vec<u8>,
 }
 
+#[cfg(feature = "std")]
 fn process_envp() -> Vec<Vec<u8>> {
     #[allow(clippy::unnecessary_filter_map)]
     env::vars_os()
@@ -211,6 +226,7 @@ fn process_envp() -> Vec<Vec<u8>> {
         .collect()
 }
 
+#[cfg(feature = "std")]
 fn process_args() -> Vec<Vec<u8>> {
     #[allow(clippy::unnecessary_filter_map)]
     env::args_os()
@@ -229,6 +245,7 @@ fn process_args() -> Vec<Vec<u8>> {
 }
 
 impl ProcessInfo {
+    #[cfg(feature = "std")]
     pub fn detect_global(language: String) -> Self {
         let envp = process_envp();
         let args = process_args();
@@ -257,8 +274,8 @@ impl<'de> serde::Deserialize<'de> for ConfigMap {
         impl<'de> serde::de::Visitor<'de> for ConfigMapVisitor {
             type Value = ConfigMap;
 
-            fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
-                formatter.write_str("struct ConfigMap(HashMap<String, String>)")
+            fn expecting(&self, formatter: &mut core::fmt::Formatter) -> core::fmt::Result {
+                formatter.write_str("struct ConfigMap(BTreeMap<String, String>)")
             }
 
             fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error>
@@ -353,7 +370,7 @@ struct StableConfig {
 
     // Phase 2
     #[serde(default)]
-    tags: HashMap<String, String>,
+    tags: BTreeMap<String, String>,
     #[serde(default)]
     rules: Vec<Rule>,
 }
@@ -495,12 +512,17 @@ impl Configurator {
     }
 
     fn parse_stable_config_slice(&self, buf: &[u8]) -> LoggedResult<StableConfig, anyhow::Error> {
+        let buf = utils::trim_bytes(buf);
         let stable_config = if buf.is_empty() {
             StableConfig::default()
         } else {
-            match serde_yaml::from_slice(buf) {
-                Ok(config) => config,
-                Err(e) => return LoggedResult::Err(e.into()),
+            let s = match core::str::from_utf8(buf) {
+                Ok(s) => s,
+                Err(e) => return LoggedResult::Err(anyhow::Error::msg(e)),
+            };
+            match yaml_peg::serde::from_str::<StableConfig>(s) {
+                Ok(mut docs) => docs.remove(0),
+                Err(e) => return LoggedResult::Err(anyhow::Error::msg(e)),
             }
         };
 
@@ -515,6 +537,7 @@ impl Configurator {
         LoggedResult::Ok(stable_config, messages)
     }
 
+    #[cfg(feature = "std")]
     fn parse_stable_config_file<F: io::Read>(
         &self,
         mut f: F,
@@ -524,9 +547,10 @@ impl Configurator {
             Ok(_) => {}
             Err(e) => return LoggedResult::Err(e.into()),
         }
-        self.parse_stable_config_slice(utils::trim_bytes(&buffer))
+        self.parse_stable_config_slice(&buffer)
     }
 
+    #[cfg(feature = "std")]
     pub fn get_config_from_file(
         &self,
         path_local: &Path,
@@ -662,7 +686,7 @@ impl Configurator {
             ));
         }
 
-        let mut cfg = HashMap::new();
+        let mut cfg = BTreeMap::new();
         // First get local configuration
         match self.get_single_source_config(
             local_config,
@@ -726,7 +750,7 @@ impl Configurator {
         mut stable_config: StableConfig,
         source: LibraryConfigSource,
         process_info: &ProcessInfo,
-        cfg: &mut HashMap<String, LibraryConfigVal>,
+        cfg: &mut BTreeMap<String, LibraryConfigVal>,
     ) -> LoggedResult<(), anyhow::Error> {
         // Phase 1: take host default config
         cfg.extend(
@@ -757,7 +781,7 @@ impl Configurator {
         stable_config: StableConfig,
         source: LibraryConfigSource,
         process_info: &ProcessInfo,
-        library_config: &mut HashMap<String, LibraryConfigVal>,
+        library_config: &mut BTreeMap<String, LibraryConfigVal>,
     ) -> LoggedResult<(), anyhow::Error> {
         let matcher = Matcher::new(process_info, &stable_config.tags);
         let Some(configs) = matcher.find_stable_config(&stable_config) else {
@@ -796,7 +820,8 @@ impl Configurator {
 
 use utils::Get;
 mod utils {
-    use std::collections::HashMap;
+    use alloc::collections::BTreeMap;
+    use alloc::string::String;
 
     /// Removes leading and trailing ascci whitespaces from a byte slice
     pub(crate) fn trim_bytes(mut b: &[u8]) -> &[u8] {
@@ -810,27 +835,28 @@ mod utils {
     }
 
     /// Helper trait so we don't have to duplicate code for
-    /// HashMap<&str, &str> and HashMap<String, String>
+    /// BTreeMap<&str, &str> and BTreeMap<String, String>
     pub(crate) trait Get {
         fn get(&self, k: &str) -> Option<&str>;
     }
 
-    impl Get for HashMap<&str, &str> {
+    impl Get for BTreeMap<&str, &str> {
         fn get(&self, k: &str) -> Option<&str> {
             self.get(k).copied()
         }
     }
 
-    impl Get for HashMap<String, String> {
+    impl Get for BTreeMap<String, String> {
         fn get(&self, k: &str) -> Option<&str> {
             self.get(k).map(|v| v.as_str())
         }
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "std"))]
 mod tests {
-    use std::{collections::HashMap, io::Write, path::Path};
+    use alloc::collections::BTreeMap;
+    use std::{io::Write, path::Path};
 
     use super::{Configurator, LoggedResult, ProcessInfo};
     use crate::{
@@ -1237,7 +1263,7 @@ rules:
             StableConfig {
                 config_id: None,
                 apm_configuration_default: ConfigMap::default(),
-                tags: HashMap::default(),
+                tags: BTreeMap::default(),
                 rules: vec![Rule {
                     selectors: vec![Selector {
                         origin: Origin::Language,
@@ -1266,7 +1292,7 @@ rules:
             envp: vec![b"ENV=VAR".to_vec()],
             language: b"java".to_vec(),
         };
-        let tags = HashMap::new();
+        let tags = BTreeMap::new();
         let matcher = Matcher::new(&process_info, &tags);
 
         let test_cases = &[
