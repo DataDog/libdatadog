@@ -133,12 +133,10 @@ int main(int argc, char *argv[]) {
       startup_data.dependency_paths[additional_shared_libraries_count] = NULL;
     }
 
-    // Use RTLD_DEEPBIND to prevent symbol interposition when the library being
-    // loaded (ddtrace.so via ExecSolib) already exists in the address space as
-    // the main executable. Without DEEPBIND, the original copy's global symbols
-    // (e.g. uninitialized Rust statics in BSS) would intercept calls meant for
-    // the freshly-loaded patched copy, causing crashes.
-#ifdef __linux__
+    // Use RTLD_DEEPBIND when available (glibc Linux) to prevent symbol
+    // interposition when ddtrace.so already exists in the address space as the
+    // main binary (ExecSolib). Not available on musl (Alpine).
+#ifdef RTLD_DEEPBIND
     void *handle = dlopen(library_path, RTLD_LAZY | RTLD_GLOBAL | RTLD_DEEPBIND);
 #else
     void *handle = dlopen(library_path, RTLD_LAZY | RTLD_GLOBAL);
