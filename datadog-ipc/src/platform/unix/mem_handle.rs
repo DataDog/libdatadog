@@ -38,11 +38,8 @@ fn shm_open<P: ?Sized + NixPath>(
     mode: Mode,
 ) -> nix::Result<std::os::unix::io::OwnedFd> {
     mman::shm_open(name, flag, mode).or_else(|e| {
-        // This can happen on AWS lambda or when POSIX shm is blocked by seccomp
-        // (Kubernetes pods may block shm_open with EPERM or return EROFS on
-        // read-only /dev/shm mounts).
-        if e == Errno::ENOSYS || e == Errno::ENOTSUP || e == Errno::ENOENT
-            || e == Errno::EACCES || e == Errno::EPERM || e == Errno::EROFS {
+        // This can happen on AWS lambda
+        if e == Errno::ENOSYS || e == Errno::ENOTSUP || e == Errno::ENOENT || e == Errno::EACCES {
             // The path has a leading slash
             let path = fallback_path(name)?;
             open(path.as_c_str(), flag, mode)
