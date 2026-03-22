@@ -6,7 +6,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 use std::thread::{self, JoinHandle};
 use tokio::net::UnixListener;
 use tokio::sync::oneshot;
-use tracing::{error, info};
+use tracing::{debug, error, info};
 
 use crate::config::Config;
 use crate::entry::MainLoopConfig;
@@ -223,7 +223,7 @@ fn run_listener(pid: u32, _config: Config, shutdown_rx: oneshot::Receiver<()>) -
 ///
 /// Establishes a connection to the master listener thread for the given PID.
 pub fn connect_to_master(pid: i32) -> io::Result<Box<SidecarTransport>> {
-    info!("Connecting to master listener (PID {})", pid);
+    debug!("Connecting to master listener (PID {})", pid);
 
     // Use the same pid-specific socket path as the master listener.
     #[cfg(target_os = "linux")]
@@ -242,6 +242,6 @@ pub fn connect_to_master(pid: i32) -> io::Result<Box<SidecarTransport>> {
         reconnect_fn: None,
     });
 
-    info!("Successfully connected to master listener");
+    debug!("Successfully connected to master listener");
     Ok(sidecar_transport)
 }
