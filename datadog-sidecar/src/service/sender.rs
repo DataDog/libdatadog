@@ -24,6 +24,7 @@ use libdd_dogstatsd_client::DogStatsDActionOwned;
 use libdd_telemetry::metrics::MetricContext;
 use std::collections::HashMap;
 use std::{io, time::Duration};
+use tracing::warn;
 
 /// Priority outbox for state-change (coalesced) messages.
 ///
@@ -171,10 +172,22 @@ impl SidecarSender {
         self.channel.0.drain_acks();
         for slot in self.outbox.slots_mut() {
             if let Some(msg) = slot {
-                if self.channel.0.outstanding() >= self.max_outstanding {
+                let outstanding = self.channel.0.outstanding();
+                if outstanding >= self.max_outstanding {
+                    warn!(
+                        "outbox drain blocked: too many outstanding messages - outstanding: {}, max {}, msg {:?}",
+                        outstanding,
+                        self.max_outstanding,
+                        msg,
+                    );
                     return false;
                 }
                 if !self.channel.try_send_request(msg) {
+                    warn!(
+                        "outbox drain blocked: try_send_request failed (WouldBlock or connection closed) (closed: {}) msg: {:?}",
+                        self.channel.0.is_closed(),
+                        msg,
+                    );
                     return false;
                 }
                 *slot = None;
@@ -326,18 +339,33 @@ impl SidecarSender {
         actions: Vec<SidecarAction>,
     ) {
         if !self.try_drain_outbox() {
+            warn!("enqueue_actions dropped: outbox drain failed (see above for reason)");
             return;
         }
         // Load-shed: drop 90% when buffer is more than half full.
-        if self.channel.0.outstanding() > self.max_outstanding / 2 {
+        let outstanding = self.channel.0.outstanding();
+        if outstanding > self.max_outstanding / 2 {
             self.enqueue_actions_counter = self.enqueue_actions_counter.wrapping_add(1) % 10;
             if self.enqueue_actions_counter != 0 {
+                warn!(
+                    "enqueue_actions dropped: load-shedding (buffer more than half full) - outstanding: {}, max: {}",
+                    outstanding,
+                    self.max_outstanding,
+                );
                 return;
             }
             // The 10% that passes through falls to the try_send below.
         }
-        self.channel
-            .try_send_enqueue_actions(instance_id, queue_id, actions);
+        if !self
+            .channel
+            .try_send_enqueue_actions(instance_id, queue_id, actions)
+        {
+            warn!(
+                "enqueue_actions dropped: try_send failed (WouldBlock or connection closed) cl: {}, out: {}",
+                self.channel.0.is_closed(),
+                outstanding,
+            );
+        }
     }
 
     pub fn send_trace_v04_shm(
