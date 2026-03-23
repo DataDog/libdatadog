@@ -48,6 +48,7 @@ libdd-library-config*/               @DataDog/apm-sdk-capabilities
 libdd-libunwind*/                    @DataDog/libdatadog-profiling
 libdd-log*/                          @DataDog/apm-common-components-core
 libdd-profiling*/                    @DataDog/libdatadog-profiling
+libdd-shared-runtime*/               @DataDog/apm-common-components-core
 libdd-telemetry*/                    @DataDog/apm-common-components-core
 libdd-tinybytes                      @DataDog/apm-common-components-core
 libdd-trace-normalization            @DataDog/serverless @DataDog/libdatadog-apm
