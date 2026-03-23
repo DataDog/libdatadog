@@ -17,9 +17,8 @@ use self::trace_serializer::TraceSerializer;
 use crate::agent_info::{AgentInfoFetcher, ResponseObserver};
 use crate::pausable_worker::PausableWorker;
 use crate::stats_exporter::StatsExporter;
-use crate::telemetry::worker::TelemetryWorker;
 pub use crate::telemetry::TelemetryConfig;
-use crate::telemetry::{SendPayloadTelemetry, TelemetryClient};
+use crate::telemetry::{SendPayloadTelemetry, TelemetryClient, TelemetryWorker};
 use crate::trace_exporter::agent_response::{
     AgentResponsePayloadVersion, DATADOG_RATES_PAYLOAD_VERSION,
 };

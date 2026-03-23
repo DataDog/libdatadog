@@ -2,15 +2,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! Telemetry provides a client to send results accumulated in 'Metrics'.
-pub(super) mod builder;
-pub(super) mod error;
+mod builder;
+mod error;
 #[cfg(feature = "telemetry")]
 mod metrics;
-pub(super) mod worker;
+mod worker;
 
-use crate::telemetry::error::TelemetryError;
-#[cfg(feature = "telemetry")]
-use crate::telemetry::metrics::Metrics;
 #[cfg(feature = "telemetry")]
 use libdd_common::tag::Tag;
 #[cfg(feature = "telemetry")]
@@ -19,8 +16,12 @@ use libdd_telemetry::worker::{LifecycleAction, TelemetryActions, TelemetryWorker
 use libdd_trace_utils::send_with_retry::SendWithRetryError;
 use libdd_trace_utils::send_with_retry::SendWithRetryResult;
 use libdd_trace_utils::trace_utils::SendDataResult;
+#[cfg(feature = "telemetry")]
+use metrics::Metrics;
 
 pub use builder::TelemetryClientBuilder;
+pub(crate) use error::TelemetryError;
+pub(crate) use worker::TelemetryWorker;
 
 /// Configuration for telemetry reporting.
 #[derive(Debug, Default, Clone)]

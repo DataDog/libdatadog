@@ -1,7 +1,7 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::telemetry::error::TelemetryError;
+use crate::telemetry::TelemetryError;
 use crate::trace_exporter::msgpack_decoder::decode::error::DecodeError;
 use http::StatusCode;
 use libdd_common::http_common;

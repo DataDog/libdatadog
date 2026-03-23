@@ -2,9 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #[cfg(feature = "telemetry")]
-use crate::telemetry::metrics::Metrics;
-use crate::telemetry::worker;
-use crate::telemetry::TelemetryClient;
+use super::metrics::Metrics;
+use super::worker;
+use super::TelemetryClient;
 #[cfg(feature = "telemetry")]
 use libdd_telemetry::worker::{TelemetryWorkerBuilder, TelemetryWorkerFlavor};
 use std::time::Duration;
