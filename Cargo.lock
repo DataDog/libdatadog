@@ -3286,7 +3286,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-trace-utils"
-version = "2.0.2"
+version = "3.0.0"
 dependencies = [
  "anyhow",
  "bolero",
