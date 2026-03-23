@@ -536,15 +536,16 @@ impl TraceExporter {
         traces: Vec<Vec<Span<T>>>,
         config: &OtlpTraceConfig,
     ) -> Result<AgentResponse, TraceExporterError> {
-        let resource_info = OtlpResourceInfo {
-            service: self.metadata.service.clone(),
-            env: self.metadata.env.clone(),
-            app_version: self.metadata.app_version.clone(),
-            language: self.metadata.language.clone(),
-            tracer_version: self.metadata.tracer_version.clone(),
-            runtime_id: self.metadata.runtime_id.clone(),
-            git_commit_sha: self.metadata.git_commit_sha.clone(),
-            ..Default::default()
+        let resource_info = {
+            let mut r = OtlpResourceInfo::default();
+            r.service = self.metadata.service.clone();
+            r.env = self.metadata.env.clone();
+            r.app_version = self.metadata.app_version.clone();
+            r.language = self.metadata.language.clone();
+            r.tracer_version = self.metadata.tracer_version.clone();
+            r.runtime_id = self.metadata.runtime_id.clone();
+            r.git_commit_sha = self.metadata.git_commit_sha.clone();
+            r
         };
         let request = map_traces_to_otlp(traces, &resource_info);
         let json_body = serde_json::to_vec(&request).map_err(|e| {
