@@ -1655,8 +1655,6 @@ dependencies = [
  "datadog-remote-config",
  "http",
  "httpmock",
- "libdd-capabilities",
- "libdd-capabilities-impl",
  "libdd-common",
  "libdd-trace-utils",
  "serde_json",
