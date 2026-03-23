@@ -32,6 +32,8 @@ pub enum SharedRuntimeErrorCode {
 #[repr(C)]
 pub struct SharedRuntimeFFIError {
     pub code: SharedRuntimeErrorCode,
+    /// The error message is always defined when the error is returned by a ddog_shared_runtime
+    /// ffi.
     pub msg: *mut c_char,
 }
 
