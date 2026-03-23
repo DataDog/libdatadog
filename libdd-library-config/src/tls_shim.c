@@ -1,11 +1,11 @@
-// Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
-// This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
+// Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
+// SPDX-License-Identifier: Apache-2.0
 
 // Declares the thread-local pointer that external readers (e.g. the eBPF
 // profiler) discover via the dynsym table. The Rust layer accesses this
 // pointer in otel_thread_ctx.rs.
 //
-// The variable is be declared in C in order to use the TLSDESC dialect for
+// The variable is declared in C in order to use the TLSDESC dialect for
 // thread-local storage, which is required by the OTel thread-level context
 // sharing spec. Unfortunately, it's not possible to have Rust use this dialect
 // as of today.
