@@ -471,15 +471,21 @@ jobs:
       - name: Check breaking deps
         run: |
           echo "Checking breaking deps..."
-          
+          HAS_DUPLICATED_DEPS=false
+
           # check if the crates in /tmp/api-changes.json have duplicated and conflicting dependencies
-          jq -c '.[]' /tmp/api-changes.json | while read -r crate; do
+          while read -r crate; do
             NAME=$(echo "$crate" | jq -r '.name')
             DEP_TREE=$(cargo tree -d -p "$NAME" -e no-dev --prefix none | grep "libdd-" | grep -vF '(*)' | sort -u | cut -d' ' -f1 | sort | uniq -d)
             if [ -n "$DEP_TREE" ]; then
               echo "Crate $NAME has duplicated and conflicting dependencies: $DEP_TREE"
+              HAS_DUPLICATED_DEPS=true
             fi
-          done
+          done < <(jq -c '.[]' /tmp/api-changes.json)
+
+          if [ "$HAS_DUPLICATED_DEPS" = "false" ]; then
+            echo "No duplicated dependencies found in release crates."
+          fi
     
   create-pr:
     needs: cargo-release
