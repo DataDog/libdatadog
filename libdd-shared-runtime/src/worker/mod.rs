@@ -6,11 +6,12 @@ pub mod shared_runtime;
 
 use async_trait::async_trait;
 
-/// Trait representing a generic worker.
+/// A background worker meant to be spawned on a [`SharedRuntime`](shared_runtime::SharedRuntime).
 ///
 /// # Lifecycle
-/// The worker's `Self::run` method should be executed everytime the `Self::trigger` method returns.
-/// On startup `Self::initial_trigger` should be called before `Self::run`.
+/// The worker's [`run`](Self::run) method is executed every time [`trigger`](Self::trigger)
+/// returns. On startup [`initial_trigger`](Self::initial_trigger) is called before the first
+/// [`run`](Self::run).
 #[async_trait]
 pub trait Worker: std::fmt::Debug {
     /// Main worker function
@@ -19,16 +20,16 @@ pub trait Worker: std::fmt::Debug {
     /// blocking forks if an await call takes too long to complete.
     async fn run(&mut self);
 
-    /// Function called between each `run` to wait for the next run
+    /// Function called between each `run` to wait for the next run.
     async fn trigger(&mut self);
 
-    /// Alternative trigger called on start to provide custom behavior
+    /// Alternative trigger called on start to provide custom behavior.
     /// Defaults to `trigger` behavior.
     async fn initial_trigger(&mut self) {
         self.trigger().await
     }
 
-    /// Reset the worker in the child after a fork
+    /// Reset the worker state. Called in the child after a fork to cleanup parent state.
     fn reset(&mut self) {}
 
     /// Hook called after the worker has been paused (e.g. before a fork).

@@ -100,7 +100,7 @@ fn create_and_start_stats_worker(
     let worker_handle = ctx
         .shared_runtime
         .spawn_worker(stats_exporter)
-        .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+        .map_err(|e| anyhow::anyhow!(e))?;
 
     // Update the stats computation state with the new worker components.
     client_side_stats.store(Arc::new(StatsComputationStatus::Enabled {

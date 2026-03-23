@@ -224,6 +224,7 @@ impl Worker for AgentInfoFetcher {
 
     fn reset(&mut self) {
         // Drain all messages from the channel to remove messages sent to release the reference on
+        // IoStack
         self.drain();
     }
 

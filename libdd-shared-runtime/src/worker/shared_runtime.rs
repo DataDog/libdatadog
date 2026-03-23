@@ -1,7 +1,7 @@
 // Copyright 2025-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-//! SharedRuntime for managing PausableWorkers across fork boundaries.
+//! SharedRuntime for managing [`PausableWorker`]s across fork boundaries.
 //!
 //! This module provides a SharedRuntime that manages a tokio runtime and allows
 //! spawning PausableWorkers on it. It also provides hooks for safely handling
@@ -52,6 +52,8 @@ impl fmt::Display for WorkerHandleError {
         }
     }
 }
+
+impl std::error::Error for WorkerHandleError {}
 
 impl From<PausableWorkerError> for WorkerHandleError {
     fn from(err: PausableWorkerError) -> Self {
@@ -174,12 +176,14 @@ impl SharedRuntime {
         let mut pausable_worker = PausableWorker::new(boxed_worker);
         let worker_id = self.next_worker_id.fetch_add(1, Ordering::Relaxed);
 
-        let runtime_lock = self.runtime.lock_or_panic();
+        {
+            let runtime_lock = self.runtime.lock_or_panic();
 
-        // If the runtime is not available, it's added to the worker list and will be started when
-        // the runtime is recreated.
-        if let Some(runtime) = runtime_lock.as_ref() {
-            pausable_worker.start(runtime)?;
+            // If the runtime is not available, it's added to the worker list and will be started
+            // when the runtime is recreated.
+            if let Some(runtime) = runtime_lock.as_ref() {
+                pausable_worker.start(runtime)?;
+            }
         }
 
         let mut workers_lock = self.workers.lock_or_panic();
@@ -290,7 +294,7 @@ impl SharedRuntime {
     /// This allows external code to spawn additional tasks on the runtime if needed.
     ///
     /// # Warning
-    /// Since this method can return a single-threaded runtime it should only be use to
+    /// Since this method can return a single-threaded runtime it should only be used to
     /// execute async code with `block_on` if you need to spawn async code on it without blocking,
     /// you should us a `Worker` instead.
     ///
