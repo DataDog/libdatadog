@@ -46,6 +46,7 @@ members = [
   "libdd-tinybytes",
   "libdd-dogstatsd-client",
   "libdd-http-client",
+  "libdd-agent-client",
   "libdd-log",
   "libdd-log-ffi", "libdd-libunwind-sys",
 ]
