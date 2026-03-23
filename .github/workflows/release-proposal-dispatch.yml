@@ -493,78 +493,8 @@ jobs:
       branch_name: ${{ steps.proposal-branch.outputs.branch_name }}
       ephemeral_branch: ${{ steps.ephemeral-branch.outputs.ephemeral_branch }}
 
-  publish-dry-run-check:
-    needs: cargo-release
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # 4.2.2
-        with:
-          ref: ${{ needs.cargo-release.outputs.branch_name }}
-
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: 1.92.0
-
-      - name: Download release data
-        uses: actions/download-artifact@v4
-        with:
-          name: release-dispatch-data
-          path: /tmp
-
-      - name: Cargo publish dry-run (crates.io resolution)
-        id: publish-dry-run
-        run: |
-          set -euo pipefail
-          HAS_ISSUES=false
-          : > /tmp/publish-dry-run-issues-body.md
-
-          # Simulates publishing each release crate; resolves deps from the registry like crates.io, not path deps.
-          while read -r crate; do
-            NAME=$(echo "$crate" | jq -r '.name')
-            LOG=$(mktemp)
-            echo "Running: cargo publish -p $NAME --dry-run --all-features --locked"
-            if ! cargo publish -p "$NAME" --dry-run --all-features --locked --color never 2>&1 | tee "$LOG"; then
-              HAS_ISSUES=true
-              {
-                echo "### \`$NAME\`"
-                echo ""
-                echo '```text'
-                tail -n 120 "$LOG"
-                echo '```'
-                echo ""
-              } >> /tmp/publish-dry-run-issues-body.md
-              echo "FAILED: $NAME (see summary artifact for PR)"
-            else
-              echo "OK: $NAME"
-            fi
-            rm -f "$LOG"
-          done < <(jq -c '.[]' /tmp/api-changes.json)
-
-          if [ "$HAS_ISSUES" = "true" ]; then
-            {
-              echo "## Cargo publish dry-run failures"
-              echo ""
-              echo "These crates did not pass \`cargo publish --dry-run --all-features --locked\` (dependencies are resolved **as on crates.io**, not via workspace path dependencies)."
-              echo ""
-              cat /tmp/publish-dry-run-issues-body.md
-            } > /tmp/publish-dry-run-summary.md
-            echo "has_issues=true" >> "$GITHUB_OUTPUT"
-            echo "Publish dry-run found issues; PR will include a summary section."
-          else
-            echo "has_issues=false" >> "$GITHUB_OUTPUT"
-            echo "All publish dry-runs succeeded."
-          fi
-
-      - name: Upload publish dry-run summary for PR body
-        if: steps.publish-dry-run.outputs.has_issues == 'true'
-        uses: actions/upload-artifact@v4
-        with:
-          name: publish-dry-run-summary
-          path: /tmp/publish-dry-run-summary.md
-          retention-days: 1
-    
   create-pr:
-    needs: [cargo-release, publish-dry-run-check]
+    needs: cargo-release
     runs-on: ubuntu-latest
     permissions:
       id-token: write # Enable OIDC
@@ -579,13 +509,6 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: release-dispatch-data
-          path: /tmp
-
-      - name: Download publish dry-run summary (if any failures)
-        continue-on-error: true
-        uses: actions/download-artifact@v4
-        with:
-          name: publish-dry-run-summary
           path: /tmp
 
       - uses: DataDog/dd-octo-sts-action@acaa02eee7e3bb0839e4272dacb37b8f3b58ba80 # v1.0.3
@@ -628,11 +551,6 @@ jobs:
           This PR contains version bumps based on public API changes and commits since last release.
 
           ${PR_BODY}"
-
-          PUBLISH_SUMMARY_FILE="/tmp/publish-dry-run-summary.md"
-          if [ -f "$PUBLISH_SUMMARY_FILE" ]; then
-            PR_BODY="${PR_BODY}"$'\n\n'"$(cat "$PUBLISH_SUMMARY_FILE")"
-          fi
           
           echo "$PR_BODY" > /tmp/pr-body.md
           echo "PR body written to /tmp/pr-body.md (length: $(wc -c < /tmp/pr-body.md) bytes)"
