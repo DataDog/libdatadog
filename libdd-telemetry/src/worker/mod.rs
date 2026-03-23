@@ -766,10 +766,7 @@ impl TelemetryWorker {
                 http_client::header::LIBRARY_VERSION,
                 tel.application.tracer_version.clone(),
             )
-            .header(
-                http_client::header::SESSION_ID,
-                self.runtime_id.clone(),
-            );
+            .header(http_client::header::SESSION_ID, self.runtime_id.clone());
 
         if self.runtime_id != self.root_session_id {
             req = req.header(
@@ -1130,9 +1127,7 @@ impl TelemetryWorkerBuilder {
         let runtime_id = self
             .runtime_id
             .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
-        let root_session_id = self
-            .root_session_id
-            .unwrap_or_else(|| runtime_id.clone());
+        let root_session_id = self.root_session_id.unwrap_or_else(|| runtime_id.clone());
 
         #[allow(clippy::unwrap_used)]
         let worker = TelemetryWorker {
