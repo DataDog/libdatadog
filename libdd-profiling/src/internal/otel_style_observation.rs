@@ -5,6 +5,7 @@ use crate::{
     api::SampleType,
     internal::{Sample, Timestamp},
 };
+use anyhow::Context;
 use enum_map::EnumMap;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -14,6 +15,7 @@ use std::sync::Arc;
 pub struct Observations {
     sample_types: Arc<[SampleType]>,
     sample_type_index_map: EnumMap<SampleType, Option<usize>>,
+    pub paired_samples: Vec<Option<usize>>,
     pub aggregated: HashMap<SampleType, HashMap<Sample, i64>>,
     pub aggregated2: HashMap<(SampleType, SampleType), HashMap<Sample, (i64, i64)>>,
     pub timestamped: HashMap<SampleType, HashMap<Sample, Vec<(i64, Timestamp)>>>,
@@ -26,11 +28,25 @@ impl Observations {
         sample_types: Arc<[SampleType]>,
         sample_type_index_map: EnumMap<SampleType, Option<usize>>,
     ) -> Self {
+        let len = sample_types.len();
         Self {
             sample_types,
             sample_type_index_map,
+            paired_samples: vec![None; len],
             ..Default::default()
         }
+    }
+
+    pub fn pair_samples(&mut self, s1: SampleType, s2: SampleType) -> anyhow::Result<()> {
+        let i1 = self.sample_type_index_map[s1].context("invalid sample type")?;
+        let i2 = self.sample_type_index_map[s2].context("invalid sample type")?;
+        anyhow::ensure!(
+            self.paired_samples[i1].is_none() && self.paired_samples[i2].is_none(),
+            "sample type already paired"
+        );
+        self.paired_samples[i1] = Some(i2);
+        self.paired_samples[i2] = Some(i1);
+        Ok(())
     }
 
     pub fn add(
@@ -39,32 +55,41 @@ impl Observations {
         timestamp: Option<Timestamp>,
         values: &[i64],
     ) -> anyhow::Result<()> {
-        let mut first = None;
-        let mut second = None;
+        for i in 0..values.len() {
+            let val1 = values[i];
 
-        for (idx, v) in values.iter().enumerate() {
-            if *v != 0 {
-                let sample_type = self.sample_types[idx];
-                if first.is_none() {
-                    first = Some((sample_type, *v));
-                } else if second.is_none() {
-                    second = Some((sample_type, *v));
-                } else {
-                    anyhow::bail!("too many values");
+            if let Some(pair) = self.paired_samples[i] {
+                let val2 = values[pair];
+                if i < pair && (val1 != 0 || val2 != 0) {
+                    let st1 = self.sample_types[i];
+                    let st2 = self.sample_types[pair];
+                    if let Some(ts) = timestamp {
+                        self.timestamped2
+                            .entry((st1, st2))
+                            .or_default()
+                            .entry(sample)
+                            .or_default()
+                            .push((val1, val2, ts));
+                    } else {
+                        let entry = self
+                            .aggregated2
+                            .entry((st1, st2))
+                            .or_default()
+                            .entry(sample)
+                            .or_insert((0, 0));
+                        entry.0 = entry.0.saturating_add(val1);
+                        entry.1 = entry.1.saturating_add(val2);
+                    }
                 }
-            }
-        }
-
-        match (first, second) {
-            (None, None) => {}
-            (Some((st, val)), None) => {
+            } else if val1 != 0 {
+                let st = self.sample_types[i];
                 if let Some(ts) = timestamp {
                     self.timestamped
                         .entry(st)
                         .or_default()
                         .entry(sample)
                         .or_default()
-                        .push((val, ts));
+                        .push((val1, ts));
                 } else {
                     let entry = self
                         .aggregated
@@ -72,29 +97,9 @@ impl Observations {
                         .or_default()
                         .entry(sample)
                         .or_insert(0);
-                    *entry = entry.saturating_add(val);
+                    *entry = entry.saturating_add(val1);
                 }
             }
-            (Some((st1, val1)), Some((st2, val2))) => {
-                if let Some(ts) = timestamp {
-                    self.timestamped2
-                        .entry((st1, st2))
-                        .or_default()
-                        .entry(sample)
-                        .or_default()
-                        .push((val1, val2, ts));
-                } else {
-                    let entry = self
-                        .aggregated2
-                        .entry((st1, st2))
-                        .or_default()
-                        .entry(sample)
-                        .or_insert((0, 0));
-                    entry.0 = entry.0.saturating_add(val1);
-                    entry.1 = entry.1.saturating_add(val2);
-                }
-            }
-            (None, Some(_)) => unreachable!("second set implies first set"),
         }
 
         Ok(())
@@ -171,7 +176,6 @@ impl Observations {
                     (sample, None, vals)
                 })
             });
-
 
         let ts_iter = self
             .timestamped

@@ -336,6 +336,16 @@ impl Profile {
         label_value: &str,
         upscaling_info: UpscalingInfo,
     ) -> anyhow::Result<()> {
+        anyhow::ensure!(offset_values.len() == 1 || offset_values.len() == 2);
+        if offset_values.len() == 2 {
+            anyhow::ensure!(
+                self.observations.paired_samples[offset_values[0]] == Some(offset_values[1])
+            );
+            anyhow::ensure!(
+                self.observations.paired_samples[offset_values[1]] == Some(offset_values[0])
+            );
+        }
+
         let label_name_id = self.try_intern(label_name)?;
         let label_value_id = self.try_intern(label_value)?;
         self.upscaling_rules.add(
@@ -1283,6 +1293,11 @@ impl Profile {
         self.strings.try_intern(item)
     }
 
+    #[cfg(feature = "otel")]
+    pub fn pair_samples(&mut self, s1: api::SampleType, s2: api::SampleType) -> anyhow::Result<()> {
+        self.observations.pair_samples(s1, s2)
+    }
+
     /// Creates a profile from the period, sample types, and start time using
     /// the owned values.
     fn try_new_internal(
@@ -1476,6 +1491,15 @@ mod api_tests {
     use libdd_profiling_protobuf::prost_impls;
     use std::collections::HashSet;
 
+    /// With `feature = "otel"`, CPU+wall samples use two value slots; [Observations::add] only
+    /// aggregates them as one logical sample after [Profile::pair_samples] is called.
+    #[cfg(feature = "otel")]
+    fn pair_cpu_wall_for_otel(profile: &mut Profile) {
+        profile
+            .pair_samples(api::SampleType::CpuSamples, api::SampleType::WallTime)
+            .expect("pair CpuSamples with WallTime");
+    }
+
     #[test]
     fn interning() {
         let sample_types = [api::SampleType::CpuSamples];
@@ -1524,6 +1548,8 @@ mod api_tests {
         ];
 
         let mut profile = Profile::new(&sample_types, None);
+        #[cfg(feature = "otel")]
+        pair_cpu_wall_for_otel(&mut profile);
         assert_eq!(profile.only_for_testing_num_aggregated_samples(), 0);
 
         profile
@@ -1719,35 +1745,60 @@ mod api_tests {
         let data = roundtrip_to_otel(profile).unwrap();
         let dict = data.dictionary.as_ref().expect("dictionary");
         let scope = &data.resource_profiles[0].scope_profiles[0];
-        let otel_profile = scope.profiles.first().expect("one profile");
-        let samples = &otel_profile.sample;
+        // Without pair_samples, OTEL emits one profile per sample type; endpoints must match on
+        // each.
+        for type_str in ["cpu-samples", "wall-time"] {
+            let otel_profile = scope
+                .profiles
+                .iter()
+                .find(|p| {
+                    p.sample_type.as_ref().is_some_and(|vt| {
+                        crate::pprof::test_utils::otel_string_table_fetch(dict, vt.type_strindex)
+                            == type_str
+                    })
+                })
+                .unwrap_or_else(|| panic!("{type_str} profile"));
+            let samples = &otel_profile.sample;
 
-        assert_eq!(samples.len(), 2);
+            assert_eq!(samples.len(), 2, "{type_str}");
 
-        let s1 = samples
-            .iter()
-            .find(|s| otel_sample_attr_int(dict, s, "local root span id") == Some(10))
-            .expect("sample with span id 10");
-        assert_eq!(
-            otel_sample_attr_int(dict, s1, "local root span id"),
-            Some(10)
-        );
-        assert_eq!(otel_sample_attr_str(dict, s1, "other"), Some("test"));
-        assert_eq!(
-            otel_sample_attr_str(dict, s1, "trace endpoint"),
-            Some("my endpoint")
-        );
+            let s1 = samples
+                .iter()
+                .find(|s| otel_sample_attr_int(dict, s, "local root span id") == Some(10))
+                .unwrap_or_else(|| panic!("sample with span id 10 in {type_str}"));
+            assert_eq!(
+                otel_sample_attr_int(dict, s1, "local root span id"),
+                Some(10)
+            );
+            assert_eq!(otel_sample_attr_str(dict, s1, "other"), Some("test"));
+            assert_eq!(
+                otel_sample_attr_str(dict, s1, "trace endpoint"),
+                Some("my endpoint")
+            );
 
-        let s2 = samples
-            .iter()
-            .find(|s| otel_sample_attr_int(dict, s, "local root span id") == Some(11))
-            .expect("sample with span id 11");
-        assert_eq!(
-            otel_sample_attr_int(dict, s2, "local root span id"),
-            Some(11)
-        );
-        assert_eq!(otel_sample_attr_str(dict, s2, "other"), Some("test"));
-        assert_eq!(otel_sample_attr_str(dict, s2, "trace endpoint"), None);
+            let s2 = samples
+                .iter()
+                .find(|s| otel_sample_attr_int(dict, s, "local root span id") == Some(11))
+                .unwrap_or_else(|| panic!("sample with span id 11 in {type_str}"));
+            assert_eq!(
+                otel_sample_attr_int(dict, s2, "local root span id"),
+                Some(11)
+            );
+            assert_eq!(otel_sample_attr_str(dict, s2, "other"), Some("test"));
+            assert_eq!(otel_sample_attr_str(dict, s2, "trace endpoint"), None);
+
+            match type_str {
+                "cpu-samples" => {
+                    assert_eq!(s1.values, vec![1_i64], "{type_str} span 10");
+                    assert_eq!(s2.values, vec![1_i64], "{type_str} span 11");
+                }
+                "wall-time" => {
+                    assert_eq!(s1.values, vec![10_000_i64], "{type_str} span 10");
+                    assert_eq!(s2.values, vec![10_000_i64], "{type_str} span 11");
+                }
+                _ => unreachable!(),
+            }
+        }
         Ok(())
     }
 
@@ -1809,36 +1860,59 @@ mod api_tests {
         let data = roundtrip_to_otel(profile).unwrap();
         let dict = data.dictionary.as_ref().expect("dictionary");
         let scope = &data.resource_profiles[0].scope_profiles[0];
-        let otel_profile = scope.profiles.first().expect("one profile");
-        let samples = &otel_profile.sample;
+        for type_str in ["cpu-samples", "wall-time"] {
+            let otel_profile = scope
+                .profiles
+                .iter()
+                .find(|p| {
+                    p.sample_type.as_ref().is_some_and(|vt| {
+                        crate::pprof::test_utils::otel_string_table_fetch(dict, vt.type_strindex)
+                            == type_str
+                    })
+                })
+                .unwrap_or_else(|| panic!("{type_str} profile"));
+            let samples = &otel_profile.sample;
 
-        assert_eq!(samples.len(), 2);
+            assert_eq!(samples.len(), 2, "{type_str}");
 
-        let s1 = samples
-            .iter()
-            .find(|s| otel_sample_attr_int(dict, s, "local root span id") == Some(10))
-            .expect("sample with span id 10");
-        assert_eq!(
-            otel_sample_attr_int(dict, s1, "local root span id"),
-            Some(10)
-        );
-        assert_eq!(
-            otel_sample_attr_str(dict, s1, "trace endpoint"),
-            Some("endpoint 10")
-        );
+            let s1 = samples
+                .iter()
+                .find(|s| otel_sample_attr_int(dict, s, "local root span id") == Some(10))
+                .unwrap_or_else(|| panic!("sample with span id 10 in {type_str}"));
+            assert_eq!(
+                otel_sample_attr_int(dict, s1, "local root span id"),
+                Some(10)
+            );
+            assert_eq!(
+                otel_sample_attr_str(dict, s1, "trace endpoint"),
+                Some("endpoint 10")
+            );
 
-        let s2 = samples
-            .iter()
-            .find(|s| otel_sample_attr_int(dict, s, "local root span id") == Some(large_num))
-            .expect("sample with large span id");
-        assert_eq!(
-            otel_sample_attr_int(dict, s2, "local root span id"),
-            Some(large_num)
-        );
-        assert_eq!(
-            otel_sample_attr_str(dict, s2, "trace endpoint"),
-            Some("large endpoint")
-        );
+            let s2 = samples
+                .iter()
+                .find(|s| otel_sample_attr_int(dict, s, "local root span id") == Some(large_num))
+                .unwrap_or_else(|| panic!("sample with large span id in {type_str}"));
+            assert_eq!(
+                otel_sample_attr_int(dict, s2, "local root span id"),
+                Some(large_num)
+            );
+            assert_eq!(
+                otel_sample_attr_str(dict, s2, "trace endpoint"),
+                Some("large endpoint")
+            );
+
+            match type_str {
+                "cpu-samples" => {
+                    assert_eq!(s1.values, vec![1_i64], "{type_str} span 10");
+                    assert_eq!(s2.values, vec![1_i64], "{type_str} large span");
+                }
+                "wall-time" => {
+                    assert_eq!(s1.values, vec![10_000_i64], "{type_str} span 10");
+                    assert_eq!(s2.values, vec![10_000_i64], "{type_str} large span");
+                }
+                _ => unreachable!(),
+            }
+        }
         Ok(())
     }
 
@@ -2015,6 +2089,8 @@ mod api_tests {
         let sample_types = [api::SampleType::CpuSamples, api::SampleType::WallTime];
 
         let mut profile: Profile = Profile::new(&sample_types, None);
+        #[cfg(feature = "otel")]
+        pair_cpu_wall_for_otel(&mut profile);
 
         let id_label = api::Label {
             key: "local root span id",
@@ -2178,6 +2254,8 @@ mod api_tests {
         let sample_types = vec![api::SampleType::CpuSamples, api::SampleType::WallTime];
 
         let mut profile: Profile = Profile::new(&sample_types, None);
+        #[cfg(feature = "otel")]
+        pair_cpu_wall_for_otel(&mut profile);
 
         let id_label = api::Label {
             key: "my label",
@@ -2227,6 +2305,10 @@ mod api_tests {
         let sample_types = create_samples_types();
 
         let mut profile = Profile::new(&sample_types, None);
+        #[cfg(feature = "otel")]
+        profile
+            .pair_samples(api::SampleType::CpuSamples, api::SampleType::WallTime)
+            .expect("pair samples");
 
         let sample1 = api::Sample {
             locations: vec![],
@@ -2246,20 +2328,42 @@ mod api_tests {
 
         let serialized_profile = roundtrip_to_pprof(profile).unwrap();
 
-        assert_eq!(serialized_profile.samples.len(), 1);
-        let first = serialized_profile.samples.first().expect("one sample");
-
-        assert_eq!(first.values, vec![0, 10000, 42]);
+        #[cfg(not(feature = "otel"))]
+        {
+            assert_eq!(serialized_profile.samples.len(), 1);
+            let first = serialized_profile.samples.first().expect("one sample");
+            assert_eq!(first.values, vec![0, 10000, 42]);
+        }
+        #[cfg(feature = "otel")]
+        {
+            // CpuSamples+WallTime are paired; CpuTime is a standalone singleton
+            assert_eq!(serialized_profile.samples.len(), 2);
+            assert!(
+                serialized_profile
+                    .samples
+                    .iter()
+                    .any(|s| s.values == [0, 10000, 0]),
+                "expected sample [0, 10000, 0]"
+            );
+            assert!(
+                serialized_profile
+                    .samples
+                    .iter()
+                    .any(|s| s.values == [0, 0, 42]),
+                "expected sample [0, 0, 42]"
+            );
+        }
     }
 
     #[test]
-    // This works if we accumulate
-    #[cfg_attr(feature = "otel", ignore)]
-
     fn test_upscaling_by_value_on_one_value() {
         let sample_types = create_samples_types();
 
         let mut profile: Profile = Profile::new(&sample_types, None);
+        #[cfg(feature = "otel")]
+        profile
+            .pair_samples(api::SampleType::CpuSamples, api::SampleType::WallTime)
+            .expect("pair samples");
 
         let sample1 = api::Sample {
             locations: vec![],
@@ -2279,20 +2383,44 @@ mod api_tests {
 
         let serialized_profile = roundtrip_to_pprof(profile).unwrap();
 
-        assert_eq!(serialized_profile.samples.len(), 1);
-        let first = serialized_profile.samples.first().expect("one sample");
-
-        assert_eq!(first.values, vec![3, 10000, 42]);
+        #[cfg(not(feature = "otel"))]
+        {
+            assert_eq!(serialized_profile.samples.len(), 1);
+            let first = serialized_profile.samples.first().expect("one sample");
+            assert_eq!(first.values, vec![3, 10000, 42]);
+        }
+        #[cfg(feature = "otel")]
+        {
+            // CpuSamples+WallTime are paired; CpuTime is a standalone singleton
+            assert_eq!(serialized_profile.samples.len(), 2);
+            assert!(
+                serialized_profile
+                    .samples
+                    .iter()
+                    .any(|s| s.values == [3, 10000, 0]),
+                "expected sample [3, 10000, 0]"
+            );
+            assert!(
+                serialized_profile
+                    .samples
+                    .iter()
+                    .any(|s| s.values == [0, 0, 42]),
+                "expected sample [0, 0, 42]"
+            );
+        }
     }
 
     #[test]
-    // This works if we accumulate
-    #[cfg_attr(feature = "otel", ignore)]
-
     fn test_upscaling_by_value_on_one_value_with_poisson() {
         let sample_types = create_samples_types();
 
         let mut profile = Profile::new(&sample_types, None);
+        // pair WallTime+CpuTime so sum_value_offset:1 and count_value_offset:2 land in the same
+        // observation, allowing the Poisson formula to read the count correctly
+        #[cfg(feature = "otel")]
+        profile
+            .pair_samples(api::SampleType::WallTime, api::SampleType::CpuTime)
+            .expect("pair samples");
 
         let sample1 = api::Sample {
             locations: vec![],
@@ -2316,20 +2444,43 @@ mod api_tests {
 
         let serialized_profile = roundtrip_to_pprof(profile).unwrap();
 
-        assert_eq!(serialized_profile.samples.len(), 1);
-        let first = serialized_profile.samples.first().expect("one sample");
-
-        assert_eq!(first.values, vec![1, 298, 29]);
+        #[cfg(not(feature = "otel"))]
+        {
+            assert_eq!(serialized_profile.samples.len(), 1);
+            let first = serialized_profile.samples.first().expect("one sample");
+            assert_eq!(first.values, vec![1, 298, 29]);
+        }
+        #[cfg(feature = "otel")]
+        {
+            // WallTime+CpuTime are paired (Poisson reads count from CpuTime); CpuSamples is
+            // singleton
+            assert_eq!(serialized_profile.samples.len(), 2);
+            assert!(
+                serialized_profile
+                    .samples
+                    .iter()
+                    .any(|s| s.values == [0, 298, 29]),
+                "expected sample [0, 298, 29]"
+            );
+            assert!(
+                serialized_profile
+                    .samples
+                    .iter()
+                    .any(|s| s.values == [1, 0, 0]),
+                "expected sample [1, 0, 0]"
+            );
+        }
     }
 
     #[test]
-    // This works if we accumulate
-    #[cfg_attr(feature = "otel", ignore)]
-
     fn test_upscaling_by_value_on_one_value_with_poisson_count() {
         let sample_types = create_samples_types();
 
         let mut profile = Profile::new(&sample_types, None);
+        #[cfg(feature = "otel")]
+        profile
+            .pair_samples(api::SampleType::CpuSamples, api::SampleType::WallTime)
+            .expect("pair samples");
 
         let sample1 = api::Sample {
             locations: vec![],
@@ -2353,10 +2504,32 @@ mod api_tests {
 
         let serialized_profile = roundtrip_to_pprof(profile).unwrap();
 
-        assert_eq!(serialized_profile.samples.len(), 1);
-        let first = serialized_profile.samples.first().expect("one sample");
-
-        assert_eq!(first.values, vec![1, 298, 29]);
+        #[cfg(not(feature = "otel"))]
+        {
+            assert_eq!(serialized_profile.samples.len(), 1);
+            let first = serialized_profile.samples.first().expect("one sample");
+            assert_eq!(first.values, vec![1, 298, 29]);
+        }
+        #[cfg(feature = "otel")]
+        {
+            // CpuSamples+WallTime are paired; CpuTime is a standalone singleton
+            // count_value is a fixed constant (29), not an index reference
+            assert_eq!(serialized_profile.samples.len(), 2);
+            assert!(
+                serialized_profile
+                    .samples
+                    .iter()
+                    .any(|s| s.values == [1, 298, 0]),
+                "expected sample [1, 298, 0]"
+            );
+            assert!(
+                serialized_profile
+                    .samples
+                    .iter()
+                    .any(|s| s.values == [0, 0, 29]),
+                "expected sample [0, 0, 29]"
+            );
+        }
     }
 
     #[test]
@@ -2364,6 +2537,12 @@ mod api_tests {
         let sample_types = create_samples_types();
 
         let mut profile = Profile::new(&sample_types, None);
+        // pair WallTime+CpuTime so sum_value_offset:1 and count_value_offset:2 land in the same
+        // observation; with count=0 the Poisson formula leaves the value unchanged
+        #[cfg(feature = "otel")]
+        profile
+            .pair_samples(api::SampleType::WallTime, api::SampleType::CpuTime)
+            .expect("pair samples");
 
         let sample1 = api::Sample {
             locations: vec![],
@@ -2387,10 +2566,31 @@ mod api_tests {
 
         let serialized_profile = roundtrip_to_pprof(profile).unwrap();
 
-        assert_eq!(serialized_profile.samples.len(), 1);
-        let first = serialized_profile.samples.first().expect("one sample");
-
-        assert_eq!(first.values, vec![1, 16, 0]);
+        #[cfg(not(feature = "otel"))]
+        {
+            assert_eq!(serialized_profile.samples.len(), 1);
+            let first = serialized_profile.samples.first().expect("one sample");
+            assert_eq!(first.values, vec![1, 16, 0]);
+        }
+        #[cfg(feature = "otel")]
+        {
+            // WallTime+CpuTime are paired; count=0 so no Poisson upscaling; CpuSamples is singleton
+            assert_eq!(serialized_profile.samples.len(), 2);
+            assert!(
+                serialized_profile
+                    .samples
+                    .iter()
+                    .any(|s| s.values == [0, 16, 0]),
+                "expected sample [0, 16, 0]"
+            );
+            assert!(
+                serialized_profile
+                    .samples
+                    .iter()
+                    .any(|s| s.values == [1, 0, 0]),
+                "expected sample [1, 0, 0]"
+            );
+        }
     }
 
     #[test]
@@ -2443,13 +2643,15 @@ mod api_tests {
     }
 
     #[test]
-    // This works if we accumulate
-    #[cfg_attr(feature = "otel", ignore)]
-
     fn test_upscaling_by_value_on_two_values() {
         let sample_types = create_samples_types();
 
         let mut profile: Profile = Profile::new(&sample_types, None);
+        // pair CpuSamples+CpuTime so the [0, 2] rule's two offsets land in the same observation
+        #[cfg(feature = "otel")]
+        profile
+            .pair_samples(api::SampleType::CpuSamples, api::SampleType::CpuTime)
+            .expect("pair samples");
 
         let sample1 = api::Sample {
             locations: vec![],
@@ -2495,24 +2697,57 @@ mod api_tests {
             .expect("Rule added");
 
         let serialized_profile = roundtrip_to_pprof(profile).unwrap();
-        let samples = sorted_samples(&serialized_profile);
-        let first = samples.first().expect("first sample");
 
-        assert_eq!(first.values, vec![2, 10000, 42]);
-
-        let second = samples.get(1).expect("second sample");
-
-        assert_eq!(second.values, vec![10, 24, 198]);
+        #[cfg(not(feature = "otel"))]
+        {
+            let samples = sorted_samples(&serialized_profile);
+            assert_eq!(samples[0].values, vec![2, 10000, 42]);
+            assert_eq!(samples[1].values, vec![10, 24, 198]);
+        }
+        #[cfg(feature = "otel")]
+        {
+            // CpuSamples+CpuTime are paired (both upscaled); WallTime is a standalone singleton
+            assert_eq!(serialized_profile.samples.len(), 4);
+            assert!(
+                serialized_profile
+                    .samples
+                    .iter()
+                    .any(|s| s.values == [2, 0, 42]),
+                "expected sample [2, 0, 42]"
+            );
+            assert!(
+                serialized_profile
+                    .samples
+                    .iter()
+                    .any(|s| s.values == [10, 0, 198]),
+                "expected sample [10, 0, 198]"
+            );
+            assert!(
+                serialized_profile
+                    .samples
+                    .iter()
+                    .any(|s| s.values == [0, 10000, 0]),
+                "expected sample [0, 10000, 0]"
+            );
+            assert!(
+                serialized_profile
+                    .samples
+                    .iter()
+                    .any(|s| s.values == [0, 24, 0]),
+                "expected sample [0, 24, 0]"
+            );
+        }
     }
 
     #[test]
-    // This works if we accumulate
-    #[cfg_attr(feature = "otel", ignore)]
-
     fn test_upscaling_by_value_on_two_value_with_two_rules() {
         let sample_types = create_samples_types();
 
         let mut profile: Profile = Profile::new(&sample_types, None);
+        #[cfg(feature = "otel")]
+        profile
+            .pair_samples(api::SampleType::CpuSamples, api::SampleType::WallTime)
+            .expect("pair samples");
 
         let sample1 = api::Sample {
             locations: vec![],
@@ -2555,7 +2790,7 @@ mod api_tests {
             .add_upscaling_rule(values_offset.as_slice(), "", "", upscaling_info)
             .expect("Rule added");
 
-        // add another byvaluerule on the 3rd offset
+        // add another byvalue rule on the 3rd offset
         values_offset.clear();
         values_offset.push(2);
 
@@ -2566,23 +2801,58 @@ mod api_tests {
             .expect("Rule added");
 
         let serialized_profile = roundtrip_to_pprof(profile).unwrap();
-        let samples = sorted_samples(&serialized_profile);
-        let first = samples.first().expect("first sample");
 
-        assert_eq!(first.values, vec![2, 10000, 105]);
-
-        let second = samples.get(1).expect("second sample");
-
-        assert_eq!(second.values, vec![10, 24, 495]);
+        #[cfg(not(feature = "otel"))]
+        {
+            let samples = sorted_samples(&serialized_profile);
+            assert_eq!(samples[0].values, vec![2, 10000, 105]);
+            assert_eq!(samples[1].values, vec![10, 24, 495]);
+        }
+        #[cfg(feature = "otel")]
+        {
+            // CpuSamples+WallTime are paired (rule[0]×2.0 applies); CpuTime is singleton
+            // (rule[2]×5.0 applies)
+            assert_eq!(serialized_profile.samples.len(), 4);
+            assert!(
+                serialized_profile
+                    .samples
+                    .iter()
+                    .any(|s| s.values == [2, 10000, 0]),
+                "expected sample [2, 10000, 0]"
+            );
+            assert!(
+                serialized_profile
+                    .samples
+                    .iter()
+                    .any(|s| s.values == [10, 24, 0]),
+                "expected sample [10, 24, 0]"
+            );
+            assert!(
+                serialized_profile
+                    .samples
+                    .iter()
+                    .any(|s| s.values == [0, 0, 105]),
+                "expected sample [0, 0, 105]"
+            );
+            assert!(
+                serialized_profile
+                    .samples
+                    .iter()
+                    .any(|s| s.values == [0, 0, 495]),
+                "expected sample [0, 0, 495]"
+            );
+        }
     }
 
     #[test]
-    // This works if we merge accumulated samples
-    #[cfg_attr(feature = "otel", ignore)]
     fn test_no_upscaling_by_label_if_no_match() {
         let sample_types = create_samples_types();
 
         let mut profile: Profile = Profile::new(&sample_types, None);
+        #[cfg(feature = "otel")]
+        profile
+            .pair_samples(api::SampleType::CpuSamples, api::SampleType::WallTime)
+            .expect("pair samples");
 
         let id_label = create_label("my_label", "coco");
 
@@ -2630,19 +2900,43 @@ mod api_tests {
 
         let serialized_profile = roundtrip_to_pprof(profile).unwrap();
 
-        assert_eq!(serialized_profile.samples.len(), 1);
-        let first = serialized_profile.samples.first().expect("one sample");
-
-        assert_eq!(first.values, vec![1, 10000, 42]);
+        #[cfg(not(feature = "otel"))]
+        {
+            assert_eq!(serialized_profile.samples.len(), 1);
+            let first = serialized_profile.samples.first().expect("one sample");
+            assert_eq!(first.values, vec![1, 10000, 42]);
+        }
+        #[cfg(feature = "otel")]
+        {
+            // CpuSamples+WallTime are paired; CpuTime is a standalone singleton
+            // No rules match, so values are unchanged
+            assert_eq!(serialized_profile.samples.len(), 2);
+            assert!(
+                serialized_profile
+                    .samples
+                    .iter()
+                    .any(|s| s.values == [1, 10000, 0]),
+                "expected sample [1, 10000, 0]"
+            );
+            assert!(
+                serialized_profile
+                    .samples
+                    .iter()
+                    .any(|s| s.values == [0, 0, 42]),
+                "expected sample [0, 0, 42]"
+            );
+        }
     }
 
     #[test]
-    // This works if we merge accumulated samples
-    #[cfg_attr(feature = "otel", ignore)]
     fn test_upscaling_by_label_on_one_value() {
         let sample_types = create_samples_types();
 
         let mut profile: Profile = Profile::new(&sample_types, None);
+        #[cfg(feature = "otel")]
+        profile
+            .pair_samples(api::SampleType::CpuSamples, api::SampleType::WallTime)
+            .expect("pair samples");
 
         let id_label = create_label("my label", "coco");
 
@@ -2669,19 +2963,42 @@ mod api_tests {
 
         let serialized_profile = roundtrip_to_pprof(profile).unwrap();
 
-        assert_eq!(serialized_profile.samples.len(), 1);
-        let first = serialized_profile.samples.first().expect("one sample");
-
-        assert_eq!(first.values, vec![2, 10000, 42]);
+        #[cfg(not(feature = "otel"))]
+        {
+            assert_eq!(serialized_profile.samples.len(), 1);
+            let first = serialized_profile.samples.first().expect("one sample");
+            assert_eq!(first.values, vec![2, 10000, 42]);
+        }
+        #[cfg(feature = "otel")]
+        {
+            // CpuSamples+WallTime are paired; CpuTime is a standalone singleton
+            assert_eq!(serialized_profile.samples.len(), 2);
+            assert!(
+                serialized_profile
+                    .samples
+                    .iter()
+                    .any(|s| s.values == [2, 10000, 0]),
+                "expected sample [2, 10000, 0]"
+            );
+            assert!(
+                serialized_profile
+                    .samples
+                    .iter()
+                    .any(|s| s.values == [0, 0, 42]),
+                "expected sample [0, 0, 42]"
+            );
+        }
     }
 
     #[test]
-    // This works if we merge accumulated samples
-    #[cfg_attr(feature = "otel", ignore)]
     fn test_upscaling_by_label_on_only_sample_out_of_two() {
         let sample_types = create_samples_types();
 
         let mut profile: Profile = Profile::new(&sample_types, None);
+        #[cfg(feature = "otel")]
+        profile
+            .pair_samples(api::SampleType::CpuSamples, api::SampleType::WallTime)
+            .expect("pair samples");
 
         let id_label = create_label("my label", "coco");
 
@@ -2731,23 +3048,57 @@ mod api_tests {
             .expect("Rule added");
 
         let serialized_profile = roundtrip_to_pprof(profile).unwrap();
-        let samples = sorted_samples(&serialized_profile);
 
-        let first = samples.first().expect("one sample");
-
-        assert_eq!(first.values, vec![2, 10000, 42]);
-
-        let second = samples.get(1).expect("one sample");
-
-        assert_eq!(second.values, vec![5, 24, 99]);
+        #[cfg(not(feature = "otel"))]
+        {
+            let samples = sorted_samples(&serialized_profile);
+            assert_eq!(samples[0].values, vec![2, 10000, 42]);
+            assert_eq!(samples[1].values, vec![5, 24, 99]);
+        }
+        #[cfg(feature = "otel")]
+        {
+            // Each stack produces a pair (CpuSamples+WallTime) and a singleton (CpuTime)
+            assert_eq!(serialized_profile.samples.len(), 4);
+            assert!(
+                serialized_profile
+                    .samples
+                    .iter()
+                    .any(|s| s.values == [2, 10000, 0]),
+                "expected sample [2, 10000, 0]"
+            );
+            assert!(
+                serialized_profile
+                    .samples
+                    .iter()
+                    .any(|s| s.values == [5, 24, 0]),
+                "expected sample [5, 24, 0]"
+            );
+            assert!(
+                serialized_profile
+                    .samples
+                    .iter()
+                    .any(|s| s.values == [0, 0, 42]),
+                "expected sample [0, 0, 42]"
+            );
+            assert!(
+                serialized_profile
+                    .samples
+                    .iter()
+                    .any(|s| s.values == [0, 0, 99]),
+                "expected sample [0, 0, 99]"
+            );
+        }
     }
 
     #[test]
-    #[cfg_attr(feature = "otel", ignore)]
     fn test_upscaling_by_label_with_two_different_rules_on_two_different_sample() {
         let sample_types = create_samples_types();
 
         let mut profile: Profile = Profile::new(&sample_types, None);
+        #[cfg(feature = "otel")]
+        profile
+            .pair_samples(api::SampleType::CpuSamples, api::SampleType::WallTime)
+            .expect("pair samples");
 
         let id_no_match_label = create_label("another label", "do not care");
 
@@ -2820,23 +3171,58 @@ mod api_tests {
             .expect("Rule added");
 
         let serialized_profile = roundtrip_to_pprof(profile).unwrap();
-        let samples = sorted_samples(&serialized_profile);
-        let first = samples.first().expect("one sample");
 
-        assert_eq!(first.values, vec![2, 10000, 42]);
-
-        let second = samples.get(1).expect("one sample");
-
-        assert_eq!(second.values, vec![5, 24, 990]);
+        #[cfg(not(feature = "otel"))]
+        {
+            let samples = sorted_samples(&serialized_profile);
+            assert_eq!(samples[0].values, vec![2, 10000, 42]);
+            assert_eq!(samples[1].values, vec![5, 24, 990]);
+        }
+        #[cfg(feature = "otel")]
+        {
+            // CpuSamples+WallTime are paired; CpuTime is singleton per stack
+            // rule[0]×2.0 matches sample1's label; rule[2]×10.0 matches sample2's label
+            assert_eq!(serialized_profile.samples.len(), 4);
+            assert!(
+                serialized_profile
+                    .samples
+                    .iter()
+                    .any(|s| s.values == [2, 10000, 0]),
+                "expected sample [2, 10000, 0]"
+            );
+            assert!(
+                serialized_profile
+                    .samples
+                    .iter()
+                    .any(|s| s.values == [5, 24, 0]),
+                "expected sample [5, 24, 0]"
+            );
+            assert!(
+                serialized_profile
+                    .samples
+                    .iter()
+                    .any(|s| s.values == [0, 0, 42]),
+                "expected sample [0, 0, 42]"
+            );
+            assert!(
+                serialized_profile
+                    .samples
+                    .iter()
+                    .any(|s| s.values == [0, 0, 990]),
+                "expected sample [0, 0, 990]"
+            );
+        }
     }
 
     #[test]
-    // This works if we merge accumulated samples
-    #[cfg_attr(feature = "otel", ignore)]
     fn test_upscaling_by_label_on_two_values() {
         let sample_types = create_samples_types();
 
         let mut profile: Profile = Profile::new(&sample_types, None);
+        #[cfg(feature = "otel")]
+        profile
+            .pair_samples(api::SampleType::CpuSamples, api::SampleType::WallTime)
+            .expect("pair samples");
 
         let id_label = create_label("my label", "coco");
 
@@ -2865,19 +3251,42 @@ mod api_tests {
 
         let serialized_profile = roundtrip_to_pprof(profile).unwrap();
 
-        assert_eq!(serialized_profile.samples.len(), 1);
-        let first = serialized_profile.samples.first().expect("one sample");
-
-        assert_eq!(first.values, vec![2, 20000, 42]);
+        #[cfg(not(feature = "otel"))]
+        {
+            assert_eq!(serialized_profile.samples.len(), 1);
+            let first = serialized_profile.samples.first().expect("one sample");
+            assert_eq!(first.values, vec![2, 20000, 42]);
+        }
+        #[cfg(feature = "otel")]
+        {
+            // CpuSamples+WallTime are paired (both upscaled); CpuTime is a standalone singleton
+            assert_eq!(serialized_profile.samples.len(), 2);
+            assert!(
+                serialized_profile
+                    .samples
+                    .iter()
+                    .any(|s| s.values == [2, 20000, 0]),
+                "expected sample [2, 20000, 0]"
+            );
+            assert!(
+                serialized_profile
+                    .samples
+                    .iter()
+                    .any(|s| s.values == [0, 0, 42]),
+                "expected sample [0, 0, 42]"
+            );
+        }
     }
 
-    // This works if we accumulate
-    #[cfg_attr(feature = "otel", ignore)]
     #[test]
     fn test_upscaling_by_value_and_by_label_different_values() {
         let sample_types = create_samples_types();
 
         let mut profile: Profile = Profile::new(&sample_types, None);
+        #[cfg(feature = "otel")]
+        profile
+            .pair_samples(api::SampleType::CpuSamples, api::SampleType::WallTime)
+            .expect("pair samples");
 
         let id_label = create_label("my label", "coco");
 
@@ -2912,10 +3321,32 @@ mod api_tests {
 
         let serialized_profile = roundtrip_to_pprof(profile).unwrap();
 
-        assert_eq!(serialized_profile.samples.len(), 1);
-        let first = serialized_profile.samples.first().expect("one sample");
-
-        assert_eq!(first.values, vec![2, 10000, 210]);
+        #[cfg(not(feature = "otel"))]
+        {
+            assert_eq!(serialized_profile.samples.len(), 1);
+            let first = serialized_profile.samples.first().expect("one sample");
+            assert_eq!(first.values, vec![2, 10000, 210]);
+        }
+        #[cfg(feature = "otel")]
+        {
+            // CpuSamples+WallTime are paired (byvalue rule[0]×2.0 applies);
+            // CpuTime is singleton (bylabel rule[2]×5.0 applies via label match)
+            assert_eq!(serialized_profile.samples.len(), 2);
+            assert!(
+                serialized_profile
+                    .samples
+                    .iter()
+                    .any(|s| s.values == [2, 10000, 0]),
+                "expected sample [2, 10000, 0]"
+            );
+            assert!(
+                serialized_profile
+                    .samples
+                    .iter()
+                    .any(|s| s.values == [0, 0, 210]),
+                "expected sample [0, 0, 210]"
+            );
+        }
     }
 
     #[test]
@@ -2923,6 +3354,10 @@ mod api_tests {
         let sample_types = create_samples_types();
 
         let mut profile: Profile = Profile::new(&sample_types, None);
+        #[cfg(feature = "otel")]
+        profile
+            .pair_samples(api::SampleType::CpuSamples, api::SampleType::CpuTime)
+            .expect("pair samples");
 
         // adding same offsets
         let upscaling_info = UpscalingInfo::Proportional { scale: 2.0 };
@@ -2960,6 +3395,10 @@ mod api_tests {
         let sample_types = create_samples_types();
 
         let mut profile: Profile = Profile::new(&sample_types, None);
+        #[cfg(feature = "otel")]
+        profile
+            .pair_samples(api::SampleType::CpuSamples, api::SampleType::CpuTime)
+            .expect("pair samples");
 
         // adding same offsets
         let mut value_offsets: Vec<usize> = vec![0, 2];
@@ -3010,6 +3449,10 @@ mod api_tests {
         let sample_types = create_samples_types();
 
         let mut profile: Profile = Profile::new(&sample_types, None);
+        #[cfg(feature = "otel")]
+        profile
+            .pair_samples(api::SampleType::CpuSamples, api::SampleType::CpuTime)
+            .expect("pair samples");
 
         // adding same offsets
         let mut value_offsets: Vec<usize> = vec![0, 2];
@@ -3148,11 +3591,14 @@ mod api_tests {
     }
 
     #[test]
-    #[cfg_attr(feature = "otel", ignore)] // too many non-zero values
     fn test_fails_when_adding_byvalue_rule_colliding_on_offset_with_existing_bylabel_rule() {
         let sample_types = create_samples_types();
 
         let mut profile: Profile = Profile::new(&sample_types, None);
+        #[cfg(feature = "otel")]
+        profile
+            .pair_samples(api::SampleType::CpuSamples, api::SampleType::WallTime)
+            .expect("pair samples");
 
         let id_label = create_label("my label", "coco");
 
@@ -3192,6 +3638,8 @@ mod api_tests {
         let sample_types = vec![api::SampleType::CpuSamples, api::SampleType::WallTime];
 
         let mut profile = Profile::new(&sample_types, None);
+        #[cfg(feature = "otel")]
+        pair_cpu_wall_for_otel(&mut profile);
 
         let id_label = api::Label {
             key: "local root span id",

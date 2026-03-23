@@ -54,6 +54,12 @@ impl UpscalingRule {
     }
 }
 
+pub enum ModifiedByRule {
+    None,
+    Singleton,
+    Pair(usize),
+}
+
 #[derive(Default)]
 pub struct UpscalingRules {
     rules: FxIndexMap<(StringId, StringId), Vec<UpscalingRule>>,
