@@ -4,10 +4,10 @@
 extern crate alloc;
 
 use crate::slice::Slice;
+use core::marker::PhantomData;
+use core::mem::ManuallyDrop;
 use core::ops::Deref;
-use std::marker::PhantomData;
-use std::mem::ManuallyDrop;
-use std::ptr::NonNull;
+use core::ptr::NonNull;
 
 /// Holds the raw parts of a Rust Vec; it should only be created from Rust,
 /// never from C.
@@ -81,6 +81,7 @@ impl<T> From<alloc::vec::Vec<T>> for Vec<T> {
     }
 }
 
+#[cfg(feature = "std")]
 impl From<anyhow::Error> for Vec<u8> {
     fn from(err: anyhow::Error) -> Self {
         Self::from(err.to_string().into_bytes())
@@ -97,7 +98,7 @@ impl<'a, T> IntoIterator for &'a Vec<T> {
 }
 
 impl<T> Vec<T> {
-    fn replace(&mut self, mut vec: ManuallyDrop<std::vec::Vec<T>>) {
+    fn replace(&mut self, mut vec: ManuallyDrop<alloc::vec::Vec<T>>) {
         self.ptr = vec.as_mut_ptr();
         self.len = vec.len();
         self.capacity = vec.capacity();

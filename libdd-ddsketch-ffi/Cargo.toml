@@ -22,6 +22,6 @@ build_common = { path = "../build-common" }
 
 [dependencies]
 libdd-ddsketch = { path = "../libdd-ddsketch" }
-libdd-common-ffi = { path = "../libdd-common-ffi", default-features = false }
+libdd-common-ffi = { path = "../libdd-common-ffi", default-features = false, features = ["std"] }
 
 [dev-dependencies]
