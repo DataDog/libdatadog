@@ -17,7 +17,8 @@ use self::trace_serializer::TraceSerializer;
 use crate::agent_info::{AgentInfoFetcher, ResponseObserver};
 use crate::pausable_worker::PausableWorker;
 use crate::stats_exporter::StatsExporter;
-use crate::telemetry::{SendPayloadTelemetry, TelemetryClient};
+pub use crate::telemetry::TelemetryConfig;
+use crate::telemetry::{SendPayloadTelemetry, TelemetryClient, TelemetryWorker};
 use crate::trace_exporter::agent_response::{
     AgentResponsePayloadVersion, DATADOG_RATES_PAYLOAD_VERSION,
 };
@@ -35,7 +36,6 @@ use libdd_common::tag::Tag;
 use libdd_common::{http_common, Endpoint};
 use libdd_common::{HttpClient, MutexExt};
 use libdd_dogstatsd_client::Client;
-use libdd_telemetry::worker::TelemetryWorker;
 use libdd_trace_utils::msgpack_decoder;
 use libdd_trace_utils::send_with_retry::{
     send_with_retry, RetryStrategy, SendWithRetryError, SendWithRetryResult,
@@ -853,13 +853,6 @@ impl TraceExporter {
     }
 }
 
-#[derive(Debug, Default, Clone)]
-pub struct TelemetryConfig {
-    pub heartbeat: u64,
-    pub runtime_id: Option<String>,
-    pub debug_enabled: bool,
-}
-
 #[allow(missing_docs)]
 pub trait ResponseCallback {
     #[allow(missing_docs)]
@@ -1473,6 +1466,7 @@ mod tests {
 
     #[test]
     #[cfg_attr(miri, ignore)]
+    #[cfg(feature = "telemetry")]
     fn test_exporter_metrics_v4() {
         let server = MockServer::start();
         let response_body = r#"{
@@ -1536,6 +1530,7 @@ mod tests {
 
     #[test]
     #[cfg_attr(miri, ignore)]
+    #[cfg(feature = "telemetry")]
     fn test_exporter_metrics_v5() {
         let server = MockServer::start();
         let response_body = r#"{
@@ -1594,6 +1589,7 @@ mod tests {
 
     #[test]
     #[cfg_attr(miri, ignore)]
+    #[cfg(feature = "telemetry")]
     fn test_exporter_metrics_v4_to_v5() {
         let server = MockServer::start();
         let response_body = r#"{

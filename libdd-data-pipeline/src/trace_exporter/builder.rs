@@ -3,13 +3,12 @@
 
 use crate::agent_info::AgentInfoFetcher;
 use crate::pausable_worker::PausableWorker;
-use crate::telemetry::TelemetryClientBuilder;
+use crate::telemetry::{TelemetryClientBuilder, TelemetryConfig};
 use crate::trace_exporter::agent_response::AgentResponsePayloadVersion;
 use crate::trace_exporter::error::BuilderErrorKind;
 use crate::trace_exporter::{
-    add_path, StatsComputationStatus, TelemetryConfig, TraceExporter, TraceExporterError,
-    TraceExporterInputFormat, TraceExporterOutputFormat, TraceExporterWorkers, TracerMetadata,
-    INFO_ENDPOINT,
+    add_path, StatsComputationStatus, TraceExporter, TraceExporterError, TraceExporterInputFormat,
+    TraceExporterOutputFormat, TraceExporterWorkers, TracerMetadata, INFO_ENDPOINT,
 };
 use arc_swap::ArcSwap;
 use libdd_common::http_common::new_default_client;
