@@ -87,6 +87,7 @@ mod tests {
     /// network). Does not verify which resolver is actually used; that is done by
     /// test_system_resolver_uses_extra_thread.
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn test_both_resolver_configs_build_client() {
         let url = "http://example.com/";
         for use_system_resolver in [false, true] {
