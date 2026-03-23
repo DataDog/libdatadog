@@ -24,6 +24,7 @@ use libdd_dogstatsd_client::DogStatsDActionOwned;
 use libdd_telemetry::metrics::MetricContext;
 use std::collections::HashMap;
 use std::{io, time::Duration};
+use tracing::trace;
 
 /// Priority outbox for state-change (coalesced) messages.
 ///
@@ -168,7 +169,6 @@ impl SidecarSender {
 
     /// Non-blocking drain of the outbox.  Returns `true` if all messages were sent.
     fn try_drain_outbox(&mut self) -> bool {
-        self.channel.0.drain_acks();
         for slot in self.outbox.slots_mut() {
             if let Some(msg) = slot {
                 if self.channel.0.outstanding() >= self.max_outstanding {
@@ -185,7 +185,6 @@ impl SidecarSender {
 
     /// Blocking drain of the outbox (used before blocking calls).
     fn drain_outbox_blocking(&mut self) {
-        self.channel.0.drain_acks();
         for slot in self.outbox.slots_mut() {
             if let Some(msg) = slot.take() {
                 self.channel.send_request_blocking(&msg).ok();
@@ -329,9 +328,15 @@ impl SidecarSender {
             return;
         }
         // Load-shed: drop 90% when buffer is more than half full.
-        if self.channel.0.outstanding() > self.max_outstanding / 2 {
+        let outstanding = self.channel.0.outstanding();
+        if outstanding > self.max_outstanding / 2 {
             self.enqueue_actions_counter = self.enqueue_actions_counter.wrapping_add(1) % 10;
             if self.enqueue_actions_counter != 0 {
+                trace!(
+                    "enqueue_actions dropped: load-shedding (buffer more than half full) - outstanding: {}/{}",
+                    outstanding,
+                    self.max_outstanding,
+                );
                 return;
             }
             // The 10% that passes through falls to the try_send below.

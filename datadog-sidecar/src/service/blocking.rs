@@ -124,12 +124,21 @@ impl SidecarTransport {
                 Err(e) => e,
             }
         };
-        if e.kind() == io::ErrorKind::BrokenPipe || e.kind() == io::ErrorKind::ConnectionReset {
+        if e.kind() == io::ErrorKind::BrokenPipe
+            || e.kind() == io::ErrorKind::ConnectionReset
+            || e.kind() == io::ErrorKind::NotConnected
+        {
+            warn!("with_retry ({}): The sidecar transport is closed. Reconnecting... This generally indicates a problem with the sidecar, most likely a crash. Check the logs / core dump locations and possibly report a bug", e.kind());
             if let Some(ref reconnect) = self.reconnect_fn {
                 if Self::do_reconnect(&mut self.inner, reconnect, true) {
                     return f(&mut self.inner.lock_or_panic());
                 }
             }
+        } else {
+            warn!(
+                "with_retry: non-connection error ({:?}), not reconnecting",
+                e.kind()
+            );
         }
         Err(e)
     }
@@ -158,6 +167,11 @@ impl From<SeqpacketConn> for SidecarTransport {
 fn lock_sender(
     transport: &mut SidecarTransport,
 ) -> io::Result<std::sync::MutexGuard<'_, SidecarSender>> {
+    // Drain accumulated acks first so that EOF is detected (closing the connection)
+    // before ensure_alive checks is_closed() and decides whether to reconnect.
+    if let Ok(sender) = transport.inner.get_mut() {
+        sender.channel.0.drain_acks();
+    }
     transport.ensure_alive();
     transport
         .inner

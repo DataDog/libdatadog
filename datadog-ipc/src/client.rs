@@ -12,6 +12,7 @@ use std::os::windows::io::{OwnedHandle as OwnedFd, RawHandle as RawFd};
 
 use std::io;
 use std::time::Duration;
+use tracing::{trace, warn};
 
 /// Client-side state for a single IPC connection.
 ///
@@ -66,8 +67,16 @@ impl IpcClientConn {
     /// Non-blocking drain of all pending acks for client side. Updates `ack_count`.
     pub fn drain_acks(&mut self) {
         self.drained_acks_since_send = true;
-        while self.conn.try_recv_raw(&mut self.recv_buf).is_ok() {
-            self.ack_count += 1;
+        loop {
+            match self.conn.try_recv_raw(&mut self.recv_buf) {
+                Ok(_) => self.ack_count += 1,
+                Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => break,
+                Err(e) => {
+                    warn!("drain_acks: connection error ({}), marking closed", e);
+                    self.closed = true;
+                    break;
+                }
+            }
         }
     }
 
@@ -117,19 +126,28 @@ impl IpcClientConn {
         data: &mut Vec<u8>,
         fds: &[RawFd],
     ) -> io::Result<(Vec<u8>, Vec<OwnedFd>)> {
-        self.conn.send_raw_blocking(data, fds).inspect_err(|_| {
+        self.conn.send_raw_blocking(data, fds).inspect_err(|e| {
+            warn!("call: send failed ({}), marking closed", e);
             self.closed = true;
         })?;
         self.send_count += 1;
         let target = self.send_count;
+        trace!(
+            "call: sent packet {}, waiting for ack {} (ack_count={})",
+            self.send_count,
+            target,
+            self.ack_count
+        );
         loop {
             let (n, resp_fds) = self
                 .conn
                 .recv_raw_blocking(&mut self.recv_buf)
-                .inspect_err(|_| {
+                .inspect_err(|e| {
+                    warn!("call: recv failed ({}), marking closed", e);
                     self.closed = true;
                 })?;
             self.ack_count += 1;
+            trace!("call: got ack {} (target={})", self.ack_count, target);
             if self.ack_count == target {
                 return Ok((self.recv_buf[..n].to_vec(), resp_fds));
             }
