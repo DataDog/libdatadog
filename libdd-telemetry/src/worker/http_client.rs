@@ -24,6 +24,13 @@ pub mod header {
 
     /// Header key for whether to enable debug mode of telemetry.
     pub const DEBUG_ENABLED: HeaderName = HeaderName::from_static("dd-telemetry-debug-enabled");
+
+    /// Header identifying the current runtime session (equals runtime_id).
+    pub const SESSION_ID: HeaderName = HeaderName::from_static("dd-session-id");
+
+    /// Header identifying the root session (first runtime_id in the process tree).
+    /// Only sent when the current session is not the root (i.e. in child processes).
+    pub const ROOT_SESSION_ID: HeaderName = HeaderName::from_static("dd-root-session-id");
 }
 
 pub type ResponseFuture =
