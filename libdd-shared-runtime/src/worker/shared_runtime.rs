@@ -78,7 +78,7 @@ impl WorkerHandle {
             let WorkerEntry { worker, .. } = workers_lock.swap_remove(position);
             worker
         };
-        worker.join().await?;
+        worker.wait_for_pause().await?;
         worker.shutdown().await;
         Ok(())
     }
@@ -216,7 +216,7 @@ impl SharedRuntime {
                 }
 
                 for worker_entry in workers_lock.iter_mut() {
-                    if let Err(e) = worker_entry.worker.join().await {
+                    if let Err(e) = worker_entry.worker.wait_for_pause().await {
                         error!("Worker failed to pause before fork: {:?}", e);
                     }
                 }
@@ -355,7 +355,7 @@ impl SharedRuntime {
         let mut join_set = JoinSet::new();
         for mut worker_entry in workers {
             join_set.spawn(async move {
-                let result = worker_entry.worker.join().await;
+                let result = worker_entry.worker.wait_for_pause().await;
                 if let Err(e) = result {
                     error!("Worker failed to shutdown: {:?}", e);
                     return;

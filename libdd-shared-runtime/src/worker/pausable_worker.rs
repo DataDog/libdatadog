@@ -130,11 +130,11 @@ impl<T: Worker + Send + Sync + 'static> PausableWorker<T> {
     /// This method will cancel the worker's cancellation token if it hasn't been cancelled yet,
     /// then wait for the worker to finish and store its state. Calling [`Self::request_pause`]
     /// before this method is optional - it's only needed when shutting down multiple workers
-    /// simultaneously to allow them to pause concurrently before waiting for all of them.
+    /// simultaneously to allow them to pause concurrently before waiting for all workers to pause.
     ///
     /// # Errors
     /// Fails if the worker handle has been aborted preventing the worker from being retrieved.
-    pub async fn join(&mut self) -> Result<(), PausableWorkerError> {
+    pub async fn wait_for_pause(&mut self) -> Result<(), PausableWorkerError> {
         match self {
             PausableWorker::Running { .. } => {
                 let PausableWorker::Running { handle, stop_token } =
@@ -219,7 +219,7 @@ mod tests {
         pausable_worker.start(&runtime).unwrap();
 
         assert_eq!(receiver.recv().unwrap(), 0);
-        runtime.block_on(async { pausable_worker.join().await.unwrap() });
+        runtime.block_on(async { pausable_worker.wait_for_pause().await.unwrap() });
         // Empty the message queue and get the last message
         let mut next_message = 1;
         for message in receiver.try_iter() {
