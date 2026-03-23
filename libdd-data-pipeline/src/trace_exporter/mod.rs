@@ -17,8 +17,8 @@ use self::trace_serializer::TraceSerializer;
 use crate::agent_info::{AgentInfoFetcher, ResponseObserver};
 use crate::pausable_worker::PausableWorker;
 use crate::stats_exporter::StatsExporter;
-#[cfg(feature = "telemetry")]
 use crate::telemetry::{SendPayloadTelemetry, TelemetryClient};
+pub use crate::telemetry::TelemetryConfig;
 use crate::trace_exporter::agent_response::{
     AgentResponsePayloadVersion, DATADOG_RATES_PAYLOAD_VERSION,
 };
@@ -36,8 +36,7 @@ use libdd_common::tag::Tag;
 use libdd_common::{http_common, Endpoint};
 use libdd_common::{HttpClient, MutexExt};
 use libdd_dogstatsd_client::Client;
-#[cfg(feature = "telemetry")]
-use libdd_telemetry::worker::TelemetryWorker;
+use crate::telemetry::worker::TelemetryWorker;
 use libdd_trace_utils::msgpack_decoder;
 use libdd_trace_utils::send_with_retry::{
     send_with_retry, RetryStrategy, SendWithRetryError, SendWithRetryResult,
@@ -160,7 +159,6 @@ impl<'a> From<&'a TracerMetadata> for http::HeaderMap {
 pub(crate) struct TraceExporterWorkers {
     pub info: PausableWorker<AgentInfoFetcher>,
     pub stats: Option<PausableWorker<StatsExporter>>,
-    #[cfg(feature = "telemetry")]
     pub telemetry: Option<PausableWorker<TelemetryWorker>>,
 }
 
@@ -203,7 +201,6 @@ pub struct TraceExporter {
     client_side_stats: ArcSwap<StatsComputationStatus>,
     previous_info_state: ArcSwapOption<String>,
     info_response_observer: ResponseObserver,
-    #[cfg(feature = "telemetry")]
     telemetry: Option<TelemetryClient>,
     health_metrics_enabled: bool,
     workers: Arc<Mutex<TraceExporterWorkers>>,
@@ -252,7 +249,6 @@ impl TraceExporter {
 
         self.start_info_worker(&mut workers, runtime)?;
         self.start_stats_worker(&mut workers, runtime)?;
-        #[cfg(feature = "telemetry")]
         self.start_telemetry_worker(&mut workers, runtime)?;
 
         Ok(())
@@ -284,7 +280,7 @@ impl TraceExporter {
     }
 
     /// Start the telemetry worker if present
-    #[cfg(feature = "telemetry")]
+    // #[cfg(feature = "telemetry")]
     fn start_telemetry_worker(
         &self,
         workers: &mut TraceExporterWorkers,
@@ -311,7 +307,6 @@ impl TraceExporter {
                 if let Some(stats_worker) = &mut workers.stats {
                     let _ = stats_worker.pause().await;
                 };
-                #[cfg(feature = "telemetry")]
                 if let Some(telemetry_worker) = &mut workers.telemetry {
                     let _ = telemetry_worker.pause().await;
                 };
@@ -394,7 +389,6 @@ impl TraceExporter {
                 let _ = stats_worker.join().await;
             }
         }
-        #[cfg(feature = "telemetry")]
         if let Some(telemetry) = self.telemetry.take() {
             telemetry.shutdown().await;
             let telemetry_worker = self.workers.lock_or_panic().telemetry.take();
@@ -573,7 +567,6 @@ impl TraceExporter {
         mp_payload: Vec<u8>,
         headers: http::HeaderMap,
         chunks: usize,
-        #[cfg_attr(not(feature = "telemetry"), allow(unused_variables))]
         chunks_dropped_p0: usize,
     ) -> Result<AgentResponse, TraceExporterError> {
         let strategy = RetryStrategy::default();
@@ -584,7 +577,6 @@ impl TraceExporter {
             send_with_retry(&self.http_client, endpoint, mp_payload, &headers, &strategy).await;
 
         // Send telemetry for the payload sending
-        #[cfg(feature = "telemetry")]
         if let Some(telemetry) = &self.telemetry {
             if let Err(e) = telemetry.send(&SendPayloadTelemetry::from_retry_result(
                 &result,
@@ -863,14 +855,6 @@ impl TraceExporter {
     }
 }
 
-#[cfg(feature = "telemetry")]
-#[derive(Debug, Default, Clone)]
-pub struct TelemetryConfig {
-    pub heartbeat: u64,
-    pub runtime_id: Option<String>,
-    pub debug_enabled: bool,
-}
-
 #[allow(missing_docs)]
 pub trait ResponseCallback {
     #[allow(missing_docs)]
@@ -978,15 +962,12 @@ mod tests {
             builder.set_dogstatsd_url(&url);
         };
 
-        #[cfg(feature = "telemetry")]
         if enable_telemetry {
             builder.enable_telemetry(TelemetryConfig {
                 heartbeat: 100,
                 ..Default::default()
             });
         }
-        #[cfg(not(feature = "telemetry"))]
-        let _ = enable_telemetry;
 
         builder.build().unwrap()
     }

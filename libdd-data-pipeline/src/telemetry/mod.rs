@@ -3,20 +3,36 @@
 
 //! Telemetry provides a client to send results accumulated in 'Metrics'.
 pub mod error;
+#[cfg(feature = "telemetry")]
 pub mod metrics;
+pub mod worker;
+
 use crate::telemetry::error::TelemetryError;
+#[cfg(feature = "telemetry")]
 use crate::telemetry::metrics::Metrics;
+#[cfg(feature = "telemetry")]
 use libdd_common::tag::Tag;
+#[cfg(feature = "telemetry")]
 use libdd_telemetry::worker::{
-    LifecycleAction, TelemetryActions, TelemetryWorker, TelemetryWorkerBuilder,
-    TelemetryWorkerFlavor, TelemetryWorkerHandle,
+    LifecycleAction, TelemetryActions, TelemetryWorkerBuilder, TelemetryWorkerFlavor,
+    TelemetryWorkerHandle,
 };
-use libdd_trace_utils::{
-    send_with_retry::{SendWithRetryError, SendWithRetryResult},
-    trace_utils::SendDataResult,
-};
-use std::{collections::HashMap, time::Duration};
+#[cfg(feature = "telemetry")]
+use libdd_trace_utils::send_with_retry::SendWithRetryError;
+use libdd_trace_utils::send_with_retry::SendWithRetryResult;
+use libdd_trace_utils::trace_utils::SendDataResult;
+#[cfg(feature = "telemetry")]
+use std::collections::HashMap;
+use std::time::Duration;
 use tokio::runtime::Handle;
+
+/// Configuration for telemetry reporting.
+#[derive(Debug, Default, Clone)]
+pub struct TelemetryConfig {
+    pub heartbeat: u64,
+    pub runtime_id: Option<String>,
+    pub debug_enabled: bool,
+}
 
 /// Structure to build a Telemetry client.
 ///
@@ -30,7 +46,9 @@ pub struct TelemetryClientBuilder {
     language: Option<String>,
     language_version: Option<String>,
     tracer_version: Option<String>,
-    config: libdd_telemetry::config::Config,
+    url: Option<String>,
+    heartbeat: Option<Duration>,
+    debug_enabled: bool,
     runtime_id: Option<String>,
 }
 
@@ -73,16 +91,14 @@ impl TelemetryClientBuilder {
 
     /// Sets the url where the metrics will be sent.
     pub fn set_url(mut self, url: &str) -> Self {
-        let _ = self
-            .config
-            .set_endpoint(libdd_common::Endpoint::from_slice(url));
+        self.url = Some(url.to_string());
         self
     }
 
     /// Sets the heartbeat notification interval in millis.
     pub fn set_heartbeat(mut self, interval: u64) -> Self {
         if interval > 0 {
-            self.config.telemetry_heartbeat_interval = Duration::from_millis(interval);
+            self.heartbeat = Some(Duration::from_millis(interval));
         }
         self
     }
@@ -95,12 +111,15 @@ impl TelemetryClientBuilder {
 
     /// Sets the debug enabled flag for the telemetry client.
     pub fn set_debug_enabled(mut self, debug: bool) -> Self {
-        self.config.debug_enabled = debug;
+        self.debug_enabled = debug;
         self
     }
+}
 
+#[cfg(feature = "telemetry")]
+impl TelemetryClientBuilder {
     /// Builds the telemetry client.
-    pub fn build(self, runtime: Handle) -> (TelemetryClient, TelemetryWorker) {
+    pub fn build(self, runtime: Handle) -> (TelemetryClient, worker::TelemetryWorker) {
         #[allow(clippy::unwrap_used)]
         let mut builder = TelemetryWorkerBuilder::new_fetch_host(
             self.service_name.unwrap(),
@@ -108,7 +127,15 @@ impl TelemetryClientBuilder {
             self.language_version.unwrap(),
             self.tracer_version.unwrap(),
         );
-        builder.config = self.config;
+        if let Some(url) = self.url {
+            let _ = builder
+                .config
+                .set_endpoint(libdd_common::Endpoint::from_slice(&url));
+        }
+        if let Some(heartbeat) = self.heartbeat {
+            builder.config.telemetry_heartbeat_interval = heartbeat;
+        }
+        builder.config.debug_enabled = self.debug_enabled;
         // Send only metrics and logs and drop lifecycle events
         builder.flavor = TelemetryWorkerFlavor::MetricsLogs;
         builder.application.env = self.env;
@@ -130,6 +157,15 @@ impl TelemetryClientBuilder {
     }
 }
 
+#[cfg(not(feature = "telemetry"))]
+impl TelemetryClientBuilder {
+    /// Builds a no-op telemetry client.
+    pub fn build(self, _runtime: Handle) -> (TelemetryClient, worker::TelemetryWorker) {
+        (TelemetryClient {}, worker::TelemetryWorker {})
+    }
+}
+
+#[cfg(feature = "telemetry")]
 /// Telemetry handle used to send metrics to the agent
 #[derive(Debug)]
 pub struct TelemetryClient {
@@ -137,94 +173,11 @@ pub struct TelemetryClient {
     worker: TelemetryWorkerHandle,
 }
 
-/// Telemetry describing the sending of a trace payload
-/// It can be produced from a [`SendWithRetryResult`] or from a [`SendDataResult`].
-#[derive(PartialEq, Debug, Default)]
-pub struct SendPayloadTelemetry {
-    requests_count: u64,
-    errors_network: u64,
-    errors_timeout: u64,
-    errors_status_code: u64,
-    bytes_sent: u64,
-    chunks_sent: u64,
-    chunks_dropped_p0: u64,
-    chunks_dropped_serialization_error: u64,
-    chunks_dropped_send_failure: u64,
-    responses_count_per_code: HashMap<u16, u64>,
-}
+#[cfg(not(feature = "telemetry"))]
+#[derive(Debug)]
+pub struct TelemetryClient {}
 
-impl From<&SendDataResult> for SendPayloadTelemetry {
-    fn from(value: &SendDataResult) -> Self {
-        Self {
-            requests_count: value.requests_count,
-            errors_network: value.errors_network,
-            errors_timeout: value.errors_timeout,
-            errors_status_code: value.errors_status_code,
-            bytes_sent: value.bytes_sent,
-            chunks_sent: value.chunks_sent,
-            chunks_dropped_send_failure: value.chunks_dropped,
-            responses_count_per_code: value.responses_count_per_code.clone(),
-            ..Default::default()
-        }
-    }
-}
-
-impl SendPayloadTelemetry {
-    /// Create a [`SendPayloadTelemetry`] from a [`SendWithRetryResult`].
-    ///
-    /// # Arguments
-    /// * `value` - The result of sending traces with retry
-    /// * `bytes_sent` - The number of bytes in the payload
-    /// * `chunks` - The number of trace chunks in the payload
-    /// * `chunks_dropped_p0` - The number of P0 trace chunks dropped due to sampling
-    pub fn from_retry_result(
-        value: &SendWithRetryResult,
-        bytes_sent: u64,
-        chunks: u64,
-        chunks_dropped_p0: u64,
-    ) -> Self {
-        let mut telemetry = Self {
-            chunks_dropped_p0,
-            ..Default::default()
-        };
-        match value {
-            Ok((response, attempts)) => {
-                telemetry.chunks_sent = chunks;
-                telemetry.bytes_sent = bytes_sent;
-                telemetry
-                    .responses_count_per_code
-                    .insert(response.status().into(), 1);
-                telemetry.requests_count = *attempts as u64;
-            }
-            Err(err) => match err {
-                SendWithRetryError::Http(response, attempts) => {
-                    telemetry.chunks_dropped_send_failure = chunks;
-                    telemetry.errors_status_code = 1;
-                    telemetry
-                        .responses_count_per_code
-                        .insert(response.status().into(), 1);
-                    telemetry.requests_count = *attempts as u64;
-                }
-                SendWithRetryError::Timeout(attempts) => {
-                    telemetry.chunks_dropped_send_failure = chunks;
-                    telemetry.errors_timeout = 1;
-                    telemetry.requests_count = *attempts as u64;
-                }
-                SendWithRetryError::Network(_, attempts) => {
-                    telemetry.chunks_dropped_send_failure = chunks;
-                    telemetry.errors_network = 1;
-                    telemetry.requests_count = *attempts as u64;
-                }
-                SendWithRetryError::Build(attempts) => {
-                    telemetry.chunks_dropped_serialization_error = chunks;
-                    telemetry.requests_count = *attempts as u64;
-                }
-            },
-        };
-        telemetry
-    }
-}
-
+#[cfg(feature = "telemetry")]
 impl TelemetryClient {
     /// Sends metrics to the agent using a telemetry worker handle.
     ///
@@ -307,7 +260,137 @@ impl TelemetryClient {
     }
 }
 
+#[cfg(not(feature = "telemetry"))]
+impl TelemetryClient {
+    /// No-op: telemetry is disabled.
+    pub fn send(&self, _data: &SendPayloadTelemetry) -> Result<(), TelemetryError> {
+        Ok(())
+    }
+
+    /// No-op: telemetry is disabled.
+    pub async fn start(&self) {}
+
+    /// No-op: telemetry is disabled.
+    pub async fn shutdown(self) {}
+}
+
+#[cfg(feature = "telemetry")]
+/// Telemetry describing the sending of a trace payload
+/// It can be produced from a [`SendWithRetryResult`] or from a [`SendDataResult`].
+#[derive(PartialEq, Debug, Default)]
+pub struct SendPayloadTelemetry {
+    requests_count: u64,
+    errors_network: u64,
+    errors_timeout: u64,
+    errors_status_code: u64,
+    bytes_sent: u64,
+    chunks_sent: u64,
+    chunks_dropped_p0: u64,
+    chunks_dropped_serialization_error: u64,
+    chunks_dropped_send_failure: u64,
+    responses_count_per_code: HashMap<u16, u64>,
+}
+
+#[cfg(not(feature = "telemetry"))]
+#[derive(Debug)]
+pub struct SendPayloadTelemetry {}
+
+#[cfg(feature = "telemetry")]
+impl SendPayloadTelemetry {
+    /// Create a [`SendPayloadTelemetry`] from a [`SendWithRetryResult`].
+    ///
+    /// # Arguments
+    /// * `value` - The result of sending traces with retry
+    /// * `bytes_sent` - The number of bytes in the payload
+    /// * `chunks` - The number of trace chunks in the payload
+    /// * `chunks_dropped_p0` - The number of P0 trace chunks dropped due to sampling
+    pub fn from_retry_result(
+        value: &SendWithRetryResult,
+        bytes_sent: u64,
+        chunks: u64,
+        chunks_dropped_p0: u64,
+    ) -> Self {
+        let mut telemetry = Self {
+            chunks_dropped_p0,
+            ..Default::default()
+        };
+        match value {
+            Ok((response, attempts)) => {
+                telemetry.chunks_sent = chunks;
+                telemetry.bytes_sent = bytes_sent;
+                telemetry
+                    .responses_count_per_code
+                    .insert(response.status().into(), 1);
+                telemetry.requests_count = *attempts as u64;
+            }
+            Err(err) => match err {
+                SendWithRetryError::Http(response, attempts) => {
+                    telemetry.chunks_dropped_send_failure = chunks;
+                    telemetry.errors_status_code = 1;
+                    telemetry
+                        .responses_count_per_code
+                        .insert(response.status().into(), 1);
+                    telemetry.requests_count = *attempts as u64;
+                }
+                SendWithRetryError::Timeout(attempts) => {
+                    telemetry.chunks_dropped_send_failure = chunks;
+                    telemetry.errors_timeout = 1;
+                    telemetry.requests_count = *attempts as u64;
+                }
+                SendWithRetryError::Network(_, attempts) => {
+                    telemetry.chunks_dropped_send_failure = chunks;
+                    telemetry.errors_network = 1;
+                    telemetry.requests_count = *attempts as u64;
+                }
+                SendWithRetryError::Build(attempts) => {
+                    telemetry.chunks_dropped_serialization_error = chunks;
+                    telemetry.requests_count = *attempts as u64;
+                }
+            },
+        };
+        telemetry
+    }
+}
+
+#[cfg(not(feature = "telemetry"))]
+impl SendPayloadTelemetry {
+    /// No-op: telemetry is disabled.
+    pub fn from_retry_result(
+        _value: &SendWithRetryResult,
+        _bytes_sent: u64,
+        _chunks: u64,
+        _chunks_dropped_p0: u64,
+    ) -> Self {
+        Self {}
+    }
+}
+
+#[cfg(feature = "telemetry")]
+impl From<&SendDataResult> for SendPayloadTelemetry {
+    fn from(value: &SendDataResult) -> Self {
+        Self {
+            requests_count: value.requests_count,
+            errors_network: value.errors_network,
+            errors_timeout: value.errors_timeout,
+            errors_status_code: value.errors_status_code,
+            bytes_sent: value.bytes_sent,
+            chunks_sent: value.chunks_sent,
+            chunks_dropped_send_failure: value.chunks_dropped,
+            responses_count_per_code: value.responses_count_per_code.clone(),
+            ..Default::default()
+        }
+    }
+}
+
+#[cfg(not(feature = "telemetry"))]
+impl From<&SendDataResult> for SendPayloadTelemetry {
+    fn from(_value: &SendDataResult) -> Self {
+        Self {}
+    }
+}
+
 #[cfg(test)]
+#[cfg(feature = "telemetry")]
 mod tests {
     use http::{Response, StatusCode};
     use httpmock::Method::POST;
@@ -353,15 +436,9 @@ mod tests {
         assert_eq!(&builder.language.unwrap(), "test_language");
         assert_eq!(&builder.language_version.unwrap(), "test_language_version");
         assert_eq!(&builder.tracer_version.unwrap(), "test_tracer_version");
-        assert!(builder.config.debug_enabled);
-        assert_eq!(
-            <String as AsRef<str>>::as_ref(&builder.config.endpoint().unwrap().url.to_string()),
-            "http://localhost/telemetry/proxy/api/v2/apmtelemetry"
-        );
-        assert_eq!(
-            builder.config.telemetry_heartbeat_interval,
-            Duration::from_millis(30)
-        );
+        assert!(builder.debug_enabled);
+        assert_eq!(builder.url.as_deref(), Some("http://localhost"));
+        assert_eq!(builder.heartbeat.unwrap(), Duration::from_millis(30));
     }
 
     #[cfg_attr(miri, ignore)]

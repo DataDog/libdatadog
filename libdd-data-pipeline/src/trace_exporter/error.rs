@@ -1,7 +1,6 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-#[cfg(feature = "telemetry")]
 use crate::telemetry::error::TelemetryError;
 use crate::trace_exporter::msgpack_decoder::decode::error::DecodeError;
 use http::StatusCode;
@@ -32,7 +31,6 @@ pub enum BuilderErrorKind {
     /// The associated `String` contains underlying error message.
     InvalidUri(String),
     /// Indicates that the telemetry configuration is invalid.
-    #[cfg(feature = "telemetry")]
     InvalidTelemetryConfig(String),
     /// Indicates any incompatible configuration
     InvalidConfiguration(String),
@@ -42,7 +40,6 @@ impl Display for BuilderErrorKind {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             BuilderErrorKind::InvalidUri(msg) => write!(f, "Invalid URI: {msg}"),
-            #[cfg(feature = "telemetry")]
             BuilderErrorKind::InvalidTelemetryConfig(msg) => {
                 write!(f, "Invalid telemetry configuration: {msg}")
             }
@@ -189,7 +186,6 @@ pub enum TraceExporterError {
     // Shutdown as not succeeded after some time
     Shutdown(ShutdownError),
     /// Telemetry related error.
-    #[cfg(feature = "telemetry")]
     Telemetry(String),
     /// Network related error (i.e. hyper error).
     Network(NetworkError),
@@ -210,7 +206,6 @@ impl Display for TraceExporterError {
             }
             TraceExporterError::Io(e) => write!(f, "IO: {e}"),
             TraceExporterError::Shutdown(e) => write!(f, "Shutdown: {e}"),
-            #[cfg(feature = "telemetry")]
             TraceExporterError::Telemetry(e) => write!(f, "Telemetry: {e}"),
             TraceExporterError::Network(e) => write!(f, "Network: {e}"),
             TraceExporterError::Request(e) => write!(f, "Agent responded with an error code: {e}"),
@@ -274,7 +269,6 @@ impl From<std::io::Error> for TraceExporterError {
     }
 }
 
-#[cfg(feature = "telemetry")]
 impl From<TelemetryError> for TraceExporterError {
     fn from(value: TelemetryError) -> Self {
         match value {

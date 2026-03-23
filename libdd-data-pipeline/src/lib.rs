@@ -15,7 +15,6 @@ mod health_metrics;
 mod pausable_worker;
 #[allow(missing_docs)]
 pub mod stats_exporter;
-#[cfg(feature = "telemetry")]
 pub(crate) mod telemetry;
 #[allow(missing_docs)]
 pub mod trace_exporter;
