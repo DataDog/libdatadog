@@ -17,8 +17,9 @@ use self::trace_serializer::TraceSerializer;
 use crate::agent_info::{AgentInfoFetcher, ResponseObserver};
 use crate::pausable_worker::PausableWorker;
 use crate::stats_exporter::StatsExporter;
-use crate::telemetry::{SendPayloadTelemetry, TelemetryClient};
+use crate::telemetry::worker::TelemetryWorker;
 pub use crate::telemetry::TelemetryConfig;
+use crate::telemetry::{SendPayloadTelemetry, TelemetryClient};
 use crate::trace_exporter::agent_response::{
     AgentResponsePayloadVersion, DATADOG_RATES_PAYLOAD_VERSION,
 };
@@ -36,7 +37,6 @@ use libdd_common::tag::Tag;
 use libdd_common::{http_common, Endpoint};
 use libdd_common::{HttpClient, MutexExt};
 use libdd_dogstatsd_client::Client;
-use crate::telemetry::worker::TelemetryWorker;
 use libdd_trace_utils::msgpack_decoder;
 use libdd_trace_utils::send_with_retry::{
     send_with_retry, RetryStrategy, SendWithRetryError, SendWithRetryResult,
@@ -280,7 +280,6 @@ impl TraceExporter {
     }
 
     /// Start the telemetry worker if present
-    // #[cfg(feature = "telemetry")]
     fn start_telemetry_worker(
         &self,
         workers: &mut TraceExporterWorkers,

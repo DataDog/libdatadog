@@ -9,11 +9,11 @@ use libdd_common_ffi::{
     {slice::AsBytes, slice::ByteSlice},
 };
 
+#[cfg(feature = "telemetry")]
+use libdd_data_pipeline::trace_exporter::TelemetryConfig;
 use libdd_data_pipeline::trace_exporter::{
     TraceExporter, TraceExporterInputFormat, TraceExporterOutputFormat,
 };
-#[cfg(feature = "telemetry")]
-use libdd_data_pipeline::trace_exporter::TelemetryConfig;
 use std::{ptr::NonNull, time::Duration};
 #[cfg(feature = "telemetry")]
 use tracing::debug;

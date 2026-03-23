@@ -2,11 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use clap::Parser;
+#[cfg(feature = "telemetry")]
+use libdd_data_pipeline::trace_exporter::TelemetryConfig;
 use libdd_data_pipeline::trace_exporter::{
     TraceExporter, TraceExporterInputFormat, TraceExporterOutputFormat,
 };
-#[cfg(feature = "telemetry")]
-use libdd_data_pipeline::trace_exporter::TelemetryConfig;
 use libdd_log::logger::{
     logger_configure_std, logger_set_log_level, LogEventLevel, StdConfig, StdTarget,
 };
