@@ -60,9 +60,14 @@ impl Observations {
 
             if let Some(pair) = self.paired_samples[i] {
                 let val2 = values[pair];
-                if i < pair && (val1 != 0 || val2 != 0) {
-                    let st1 = self.sample_types[i];
-                    let st2 = self.sample_types[pair];
+                let st1 = self.sample_types[i];
+                let st2 = self.sample_types[pair];
+                use enum_map::Enum as _;
+                // Process each pair exactly once by requiring the canonical-first type
+                // (lower enum index) to drive the insertion. This matches the ordering
+                // used by OtelUpscalingRules, which stores pair rules under the lower
+                // into_usize() type so both sides agree on which type is the map key.
+                if st1.into_usize() < st2.into_usize() && (val1 != 0 || val2 != 0) {
                     if let Some(ts) = timestamp {
                         self.timestamped2
                             .entry((st1, st2))

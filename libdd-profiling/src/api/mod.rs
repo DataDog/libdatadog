@@ -193,7 +193,7 @@ pub struct StringIdSample<'a> {
     pub labels: Vec<StringIdLabel>,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Copy, Debug)]
 #[cfg_attr(test, derive(bolero::generator::TypeGenerator))]
 pub enum UpscalingInfo {
     Poisson {

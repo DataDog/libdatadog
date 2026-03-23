@@ -10,6 +10,7 @@ mod profiles_dictionary_translator;
 pub use profiles_dictionary_translator::*;
 
 use self::api::UpscalingInfo;
+use super::upscaling::ActiveUpscalingRules;
 use super::*;
 use crate::api::ManagedStringId;
 use crate::collections::identifiable::*;
@@ -63,7 +64,7 @@ pub struct Profile {
     string_storage: Option<Arc<Mutex<ManagedStringStorage>>>,
     string_storage_cached_profile_id: Option<CachedProfileId>,
     timestamp_key: StringId,
-    upscaling_rules: UpscalingRules,
+    upscaling_rules: ActiveUpscalingRules,
 }
 
 pub struct EncodedProfile {
@@ -604,23 +605,35 @@ impl Profile {
         // Collect label set attribute indices (including endpoints) before taking strings, since
         // get_endpoint_for_label_set needs self. Endpoints are deduped into labels so they appear
         // in the attribute_table built from labels.
-        let label_set_attr_indices: Vec<Vec<i32>> = std::mem::take(&mut self.label_sets)
-            .into_iter()
-            .map(|label_set| {
-                let endpoint = self
-                    .get_endpoint_for_label_set(&label_set)
-                    .ok()
-                    .flatten()
-                    .and_then(|label| self.labels.try_dedup(label).ok())
-                    .map(|id| id.to_offset() as i32 + 1);
-
+        // extended_label_sets holds the same data as Label values, indexed by LabelSetId raw id,
+        // so upscaling rules can be matched by label key/value during sample emission.
+        let label_sets_raw = std::mem::take(&mut self.label_sets);
+        let mut label_set_attr_indices: Vec<Vec<i32>> = Vec::with_capacity(label_sets_raw.len());
+        let mut extended_label_sets: Vec<Vec<Label>> = Vec::with_capacity(label_sets_raw.len());
+        for label_set in &label_sets_raw {
+            // Label: Copy, so endpoint_label remains usable after the and_then chain below.
+            let endpoint_label: Option<Label> =
+                self.get_endpoint_for_label_set(label_set).ok().flatten();
+            let endpoint_id = endpoint_label
+                .and_then(|label| self.labels.try_dedup(label).ok())
+                .map(|id| id.to_offset() as i32 + 1);
+            label_set_attr_indices.push(
                 label_set
                     .iter()
                     .map(|id| id.to_offset() as i32 + 1)
-                    .chain(endpoint)
-                    .collect()
-            })
-            .collect();
+                    .chain(endpoint_id)
+                    .collect(),
+            );
+            let mut labels: Vec<Label> = label_set
+                .iter()
+                .filter_map(|l| self.get_label(*l).ok().copied())
+                .collect();
+            if let Some(ep) = endpoint_label {
+                labels.push(ep);
+            }
+            extended_label_sets.push(labels);
+        }
+        drop(label_sets_raw);
 
         let mut lender = self.strings.into_lending_iter();
         let string_table: Vec<String> =
@@ -719,6 +732,10 @@ impl Profile {
                 .context("missing profile")?;
             profile.sample.reserve(samples.len());
             for (sample, val) in samples {
+                let labels: &[Label] = &extended_label_sets[sample.labels.to_raw_id()];
+                let val = self
+                    .upscaling_rules
+                    .upscale_singleton(sample_type, val, labels);
                 let attribute_indices = label_set_attr_indices
                     .get(sample.labels.to_raw_id())
                     .cloned()
@@ -739,12 +756,21 @@ impl Profile {
                 .context("missing profile")?;
             profile.sample.reserve(samples.len());
             for (sample, vals) in samples {
+                let labels: &[Label] = &extended_label_sets[sample.labels.to_raw_id()];
                 let attribute_indices = label_set_attr_indices
                     .get(sample.labels.to_raw_id())
                     .cloned()
                     .unwrap_or_default();
-                let (values, timestamps_unix_nano): (Vec<_>, Vec<u64>) =
-                    vals.into_iter().map(|(v, ts)| (v, ts.get() as u64)).unzip();
+                let (values, timestamps_unix_nano): (Vec<_>, Vec<u64>) = vals
+                    .into_iter()
+                    .map(|(v, ts)| {
+                        (
+                            self.upscaling_rules
+                                .upscale_singleton(sample_type, v, labels),
+                            ts.get() as u64,
+                        )
+                    })
+                    .unzip();
                 profile.sample.push(crate::otel::Sample {
                     stack_index: sample.stacktrace.into_raw_id() as i32,
                     values,
@@ -762,6 +788,10 @@ impl Profile {
             let mut samples2 = Vec::with_capacity(samples.len());
 
             for (sample, (val1, val2)) in samples.into_iter() {
+                let labels: &[Label] = &extended_label_sets[sample.labels.to_raw_id()];
+                let (val1, val2) = self
+                    .upscaling_rules
+                    .upscale_pair(st1, val1, st2, val2, labels)?;
                 let attribute_indices = label_set_attr_indices
                     .get(sample.labels.to_raw_id())
                     .cloned()
@@ -791,27 +821,23 @@ impl Profile {
             let mut samples2 = Vec::with_capacity(samples.len());
 
             for (sample, vals) in samples.into_iter() {
+                let labels: &[Label] = &extended_label_sets[sample.labels.to_raw_id()];
                 let attribute_indices = label_set_attr_indices
                     .get(sample.labels.to_raw_id())
                     .cloned()
                     .unwrap_or_default();
                 let cap = vals.len();
-                let (values1, values2, timestamps_unix_nano) = vals
-                    .into_iter()
-                    .map(|(v1, v2, ts)| (v1, v2, ts.get() as u64))
-                    .fold(
-                        (
-                            Vec::with_capacity(cap),
-                            Vec::with_capacity(cap),
-                            Vec::with_capacity(cap),
-                        ),
-                        |(mut vs1, mut vs2, mut ts), (v1, v2, t)| {
-                            vs1.push(v1);
-                            vs2.push(v2);
-                            ts.push(t);
-                            (vs1, vs2, ts)
-                        },
-                    );
+                let mut values1 = Vec::with_capacity(cap);
+                let mut values2 = Vec::with_capacity(cap);
+                let mut timestamps_unix_nano = Vec::with_capacity(cap);
+                for (v1, v2, ts) in vals {
+                    let (v1, v2) = self
+                        .upscaling_rules
+                        .upscale_pair(st1, v1, st2, v2, labels)?;
+                    values1.push(v1);
+                    values2.push(v2);
+                    timestamps_unix_nano.push(ts.get() as u64);
+                }
                 let stack_index = sample.stacktrace.into_raw_id() as i32;
                 profile1.sample.push(crate::otel::Sample {
                     stack_index,
@@ -920,6 +946,8 @@ impl Profile {
             extended_label_sets.push(labels);
         }
 
+        #[cfg(feature = "otel")]
+        let paired_samples = std::mem::take(&mut self.observations.paired_samples);
         let iter = std::mem::take(&mut self.observations).try_into_iter()?;
         for (sample, timestamp, mut values) in iter {
             let labels = &mut extended_label_sets[sample.labels.to_raw_id()];
@@ -930,7 +958,11 @@ impl Profile {
                 .map(Id::to_raw_id)
                 .collect();
             self.check_location_ids_are_valid(&location_ids, self.locations.len())?;
+            #[cfg(not(feature = "otel"))]
             self.upscaling_rules.upscale_values(&mut values, labels);
+            #[cfg(feature = "otel")]
+            self.upscaling_rules
+                .upscale_values(&mut values, &paired_samples, labels)?;
 
             // Use the extra slot in the labels vector to store the timestamp without any reallocs.
             if let Some(ts) = timestamp {
@@ -1325,11 +1357,14 @@ impl Profile {
             label_sets: Default::default(),
             locations: Default::default(),
             mappings: Default::default(),
+            #[cfg(not(feature = "otel"))]
             observations: Default::default(),
+            #[cfg(feature = "otel")]
+            observations: Observations::new(sample_types.clone(), sample_type_index_map),
             period,
             #[cfg(feature = "otel")]
             sample_type_index_map,
-            sample_types,
+            sample_types: sample_types.clone(),
             stack_traces: Default::default(),
             start_time,
             strings: Default::default(),
@@ -1337,7 +1372,10 @@ impl Profile {
             string_storage_cached_profile_id: None, /* Never reuse an id! See comments on
                                                      * CachedProfileId for why. */
             timestamp_key: Default::default(),
+            #[cfg(not(feature = "otel"))]
             upscaling_rules: Default::default(),
+            #[cfg(feature = "otel")]
+            upscaling_rules: ActiveUpscalingRules::new(sample_types),
         };
 
         let _id = profile.intern("");
