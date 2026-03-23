@@ -266,7 +266,7 @@ impl SharedRuntime {
     ///
     /// This method reinitializes the runtime and workers in the child process.
     /// A new runtime must be created since tokio runtimes cannot be safely forked.
-    /// Workers can optionally be restarted to resume operations in the child.
+    /// Workers are reset and restarted to resume operations in the child.
     ///
     /// # Errors
     /// Returns an error if the runtime cannot be reinitialized or workers cannot be started.
