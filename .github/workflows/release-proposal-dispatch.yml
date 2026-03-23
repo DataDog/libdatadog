@@ -449,9 +449,9 @@ jobs:
             exit 1
           fi
 
-          # List both commit hashes in reverse order, space separated (no extra quotes so commit-headless gets plain SHAs)
-          COMMITS=$(git log "$ORIGINAL_HEAD".. --format='%H' | tr '\n' ' ' | xargs)
-          echo "COMMITS: $COMMITS"
+          # Oldest → newest (chronological). Plain `git log` is newest-first; commit-headless should receive
+          # parent→child order so replays/signing match git history. Space-separated SHAs for the action.
+          COMMITS=$(git log --reverse "$ORIGINAL_HEAD".. --format='%H' | tr '\n' ' ' | xargs)
           echo "commits=$COMMITS" >> $GITHUB_OUTPUT
 
           # Output the results
