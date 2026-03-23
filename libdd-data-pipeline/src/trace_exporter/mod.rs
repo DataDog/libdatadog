@@ -784,7 +784,6 @@ mod tests {
     use std::collections::HashMap;
     use std::net;
     use std::time::Duration;
-    use tokio::time::sleep;
 
     // v05 messagepack empty payload -> [[""], []]
     const V5_EMPTY: [u8; 4] = [0x92, 0x91, 0xA0, 0x90];
@@ -1427,9 +1426,7 @@ mod tests {
 
         traces_endpoint.assert_calls(1);
         while metrics_endpoint.calls() == 0 {
-            exporter.shared_runtime.runtime().unwrap().block_on(async {
-                sleep(Duration::from_millis(100)).await;
-            })
+            std::thread::sleep(Duration::from_millis(100));
         }
         metrics_endpoint.assert_calls(1);
     }
@@ -1479,9 +1476,7 @@ mod tests {
 
         traces_endpoint.assert_calls(1);
         while metrics_endpoint.calls() == 0 {
-            exporter.shared_runtime.runtime().unwrap().block_on(async {
-                sleep(Duration::from_millis(100)).await;
-            })
+            std::thread::sleep(Duration::from_millis(100));
         }
         metrics_endpoint.assert_calls(1);
     }
@@ -1542,9 +1537,7 @@ mod tests {
 
         traces_endpoint.assert_calls(1);
         while metrics_endpoint.calls() == 0 {
-            exporter.shared_runtime.runtime().unwrap().block_on(async {
-                sleep(Duration::from_millis(100)).await;
-            })
+            std::thread::sleep(Duration::from_millis(100));
         }
         metrics_endpoint.assert_calls(1);
     }
@@ -1719,9 +1712,7 @@ mod tests {
 
         // Wait for the info fetcher to get the config
         while mock_info.calls() == 0 {
-            exporter.shared_runtime.runtime().unwrap().block_on(async {
-                sleep(Duration::from_millis(100)).await;
-            })
+            std::thread::sleep(Duration::from_millis(100));
         }
 
         let _ = exporter.send(data.as_ref()).unwrap();
@@ -1754,7 +1745,6 @@ mod single_threaded_tests {
     use libdd_trace_utils::msgpack_encoder;
     use libdd_trace_utils::span::v04::SpanBytes;
     use std::time::Duration;
-    use tokio::time::sleep;
 
     #[cfg_attr(miri, ignore)]
     #[test]
@@ -1812,9 +1802,7 @@ mod single_threaded_tests {
 
         // Wait for the info fetcher to get the config
         while agent_info::get_agent_info().is_none() {
-            exporter.shared_runtime.runtime().unwrap().block_on(async {
-                sleep(Duration::from_millis(100)).await;
-            })
+            std::thread::sleep(Duration::from_millis(100));
         }
 
         let result = exporter.send(data.as_ref());
@@ -1914,9 +1902,7 @@ mod single_threaded_tests {
         // Wait for agent_info to be present so that sending a trace will trigger the stats worker
         // to start
         while agent_info::get_agent_info().is_none() {
-            exporter.shared_runtime.runtime().unwrap().block_on(async {
-                sleep(Duration::from_millis(100)).await;
-            })
+            std::thread::sleep(Duration::from_millis(100));
         }
 
         exporter.send(data.as_ref()).unwrap();
