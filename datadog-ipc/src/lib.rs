@@ -9,10 +9,16 @@
 
 pub mod example_interface;
 pub mod handles;
-pub mod transport;
 
 pub mod platform;
 pub mod rate_limiter;
-pub mod sequential;
 
-pub use tarpc;
+pub mod client;
+pub mod codec;
+
+pub use client::IpcClientConn;
+pub use platform::{
+    max_message_size, AsyncConn, PeerCredentials, SeqpacketConn, SeqpacketListener,
+    HANDLE_SUFFIX_SIZE,
+};
+pub use platform::{recv_raw_async, send_raw_async};
