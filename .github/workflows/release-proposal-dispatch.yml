@@ -23,10 +23,11 @@ on:
           - libdd-trace-protobuf
           - libdd-trace-stats
           - libdd-trace-utils
-      main_start_sha:
+      main_start_ref:
         description: >
-          Optional commit on main to cut the release from (full or short SHA). Leave empty for
-          latest main. Must be an ancestor of origin/main.
+          Optional git ref to cut the release from: commit SHA (short or full), branch name,
+          tag, or refs/... (e.g. main, v1.2.3, origin/main). Leave empty to use latest
+          origin/main.
         required: false
         type: string
         default: ''
@@ -151,26 +152,64 @@ jobs:
           git config --global user.name "$GIT_USER_NAME"
           git config --global user.email "$GIT_USER_EMAIL"
 
-      - name: Optionally checkout main at specific SHA
+      - name: Optionally checkout at a specific git ref
         env:
-          MAIN_START_SHA: ${{ inputs.main_start_sha }}
+          MAIN_START_REF: ${{ inputs.main_start_ref }}
         run: |
-          git fetch origin "${{ env.MAIN_BRANCH }}"
-          if [ -n "${MAIN_START_SHA// }" ]; then
-            SHA=$(echo "$MAIN_START_SHA" | tr -d '[:space:]')
-            if ! echo "$SHA" | grep -qE '^[0-9a-fA-F]{7,40}$'; then
-              echo "Error: main_start_sha must be a 7–40 character hex commit SHA." >&2
+          set -euo pipefail
+          git fetch origin "${{ env.MAIN_BRANCH }}" --tags --prune
+
+          resolve_to_commit() {
+            local r="$1"
+            local c=""
+            # Already a commit or resolvable locally
+            c=$(git rev-parse -q --verify "${r}^{commit}" 2>/dev/null) || true
+            if [ -n "$c" ]; then
+              echo "$c"
+              return 0
+            fi
+            # Remote branch: origin/<name>
+            c=$(git rev-parse -q --verify "origin/${r}^{commit}" 2>/dev/null) || true
+            if [ -n "$c" ]; then
+              echo "$c"
+              return 0
+            fi
+            # Tag
+            c=$(git rev-parse -q --verify "refs/tags/${r}^{commit}" 2>/dev/null) || true
+            if [ -n "$c" ]; then
+              echo "$c"
+              return 0
+            fi
+            return 1
+          }
+
+          if [ -n "${MAIN_START_REF// }" ]; then
+            REF=$(echo "$MAIN_START_REF" | tr -d '[:space:]')
+            if [ -z "$REF" ]; then
+              echo "Error: main_start_ref is whitespace-only." >&2
               exit 1
             fi
-            if ! git merge-base --is-ancestor "$SHA" "origin/${{ env.MAIN_BRANCH }}"; then
-              echo "Error: main_start_sha must be an ancestor of origin/${{ env.MAIN_BRANCH }}." >&2
+            # Try to fetch the ref from origin (branches, tags, and SHA objects)
+            git fetch origin "$REF" 2>/dev/null || true
+
+            COMMIT=""
+            COMMIT=$(resolve_to_commit "$REF") || true
+            if [ -z "$COMMIT" ]; then
+              # e.g. short SHA or ref only present after full fetch
+              git fetch origin "$REF:$REF" 2>/dev/null || true
+              COMMIT=$(resolve_to_commit "$REF") || true
+            fi
+            if [ -z "$COMMIT" ]; then
+              echo "Error: could not resolve git ref to a commit: $REF" >&2
+              echo "Try a full SHA, a branch/tag name on origin, or refs/heads/... / refs/tags/..." >&2
               exit 1
             fi
-            git checkout "$SHA"
-            echo "Release cut from ${{ env.MAIN_BRANCH }} at $SHA (not tip)."
+            git checkout "$COMMIT"
+            echo "Release cut from ref '$REF' -> $COMMIT ($(git log -1 --oneline))"
           else
             git checkout "${{ env.MAIN_BRANCH }}"
-            echo "Release cut from origin/${{ env.MAIN_BRANCH }} tip."
+            git reset --hard "origin/${{ env.MAIN_BRANCH }}"
+            echo "Release cut from origin/${{ env.MAIN_BRANCH }} tip ($(git rev-parse --short HEAD))."
           fi
       
       - name: Create ephemeral release branch
@@ -180,7 +219,7 @@ jobs:
           EPHEMERAL_BRANCH="release/${{ inputs.crate }}/$TIMESTAMP"
           git checkout -b "$EPHEMERAL_BRANCH"
           git push origin "$EPHEMERAL_BRANCH"
-          echo "Ephemeral release branch created: $EPHEMERAL_BRANCH from ${{ env.MAIN_BRANCH }} branch ($(git rev-parse --short HEAD))"
+          echo "Ephemeral release branch created: $EPHEMERAL_BRANCH branch ($(git rev-parse --short HEAD))"
           echo "ephemeral_branch=$EPHEMERAL_BRANCH" >> "$GITHUB_OUTPUT"
           echo "timestamp=$TIMESTAMP" >> "$GITHUB_OUTPUT"
 
