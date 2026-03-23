@@ -3,9 +3,9 @@
 
 use proc_macro::TokenStream;
 use quote::{format_ident, quote};
+use syn::FnArg::Typed;
 use syn::__private::Span;
 use syn::parse::{Parse, ParseStream};
-use syn::FnArg::Typed;
 use syn::{parse_macro_input, parse_quote, Arm, Ident, ItemTrait, Pat, TraitItem};
 
 fn snake_to_camel(ident_str: &str) -> String {

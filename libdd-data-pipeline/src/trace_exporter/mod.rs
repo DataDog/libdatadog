@@ -631,18 +631,18 @@ impl TraceExporter {
 
         // Process stats computation and drop non-sampled (p0) chunks.
         // This must run before the OTLP path so that unsampled spans are not exported.
+        // force_drop=true on the OTLP path because there is no downstream agent to drop
+        // unsampled traces when client-side stats are not enabled.
         let dropped_p0_stats = stats::process_traces_for_stats(
             &mut traces,
             &mut header_tags,
             &self.client_side_stats,
             self.client_computed_top_level,
+            self.otlp_config.is_some(),
         );
 
         // OTLP path: send sampled traces via OTLP when an OTLP endpoint is configured.
-        // Unlike the agent path, there is no downstream agent to drop unsampled traces, so
-        // drop_chunks is always called here regardless of whether client-side stats is enabled.
         if let Some(ref config) = self.otlp_config {
-            libdd_trace_utils::span::trace_utils::drop_chunks(&mut traces);
             if traces.is_empty() {
                 return Ok(AgentResponse::Unchanged);
             }

@@ -441,10 +441,10 @@ pub unsafe extern "C" fn ddog_trace_exporter_config_set_otlp_endpoint(
 
 /// Create a new TraceExporter instance.
 ///
-/// When `OTEL_TRACES_EXPORTER=otlp` is set in the environment, the exporter sends traces in
-/// OTLP HTTP/JSON to the configured OTLP endpoint instead of the Datadog agent. The same
-/// payload (e.g. MessagePack) is passed to `ddog_trace_exporter_send`; the library decodes
-/// and converts to OTLP when OTLP is enabled.
+/// When an OTLP endpoint is configured via `TraceExporterConfig`, the exporter sends traces in
+/// OTLP HTTP/JSON to that endpoint instead of the Datadog agent. The same payload (e.g.
+/// MessagePack) is passed to `ddog_trace_exporter_send`; the library decodes and converts to
+/// OTLP when OTLP is enabled.
 ///
 /// # Arguments
 ///

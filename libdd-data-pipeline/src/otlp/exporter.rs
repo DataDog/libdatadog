@@ -42,10 +42,7 @@ pub async fn send_otlp_traces_http(
     };
 
     let mut headers = HeaderMap::new();
-    headers.insert(
-        http::header::CONTENT_TYPE,
-        http::HeaderValue::from_static("application/json"),
-    );
+    headers.insert(http::header::CONTENT_TYPE, libdd_common::header::APPLICATION_JSON);
     for (key, value) in &config.headers {
         if let (Ok(name), Ok(val)) = (
             http::HeaderName::from_bytes(key.as_bytes()),
