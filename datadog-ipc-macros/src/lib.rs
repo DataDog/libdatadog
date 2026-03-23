@@ -3,8 +3,8 @@
 
 use proc_macro::TokenStream;
 use quote::{format_ident, quote, ToTokens};
-use syn::__private::Span;
 use syn::FnArg::Typed;
+use syn::__private::Span;
 use syn::{parse_quote, Arm, FieldPat, Ident, ItemTrait, Member, Pat, Stmt, TraitItem};
 
 fn snake_to_camel(ident_str: &str) -> String {
