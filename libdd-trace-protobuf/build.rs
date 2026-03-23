@@ -207,6 +207,14 @@ fn generate_protobuf() {
         "ClientGroupedStats.DB_type",
         "#[serde(rename = \"DBType\")]",
     );
+    config.field_attribute(
+        "ClientGroupedStats.GRPC_status_code",
+        "#[serde(rename = \"GRPCStatusCode\")]",
+    );
+    config.field_attribute(
+        "ClientGroupedStats.service_source",
+        "#[serde(rename = \"srv_src\")]",
+    );
 
     // idx module type attributes
     config.type_attribute("pb.idx.AnyValue", "#[derive(Deserialize, Serialize)]");
