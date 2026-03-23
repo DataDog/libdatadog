@@ -2842,7 +2842,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-common"
-version = "3.0.0"
+version = "3.0.1"
 dependencies = [
  "anyhow",
  "bytes",
@@ -3179,7 +3179,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-telemetry"
-version = "3.0.0"
+version = "3.1.0"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
