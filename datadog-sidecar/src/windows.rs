@@ -173,7 +173,7 @@ fn fetch_sidecar_identifier() -> String {
         {
             let err = Error::last_os_error();
             if err.raw_os_error() != Some(ERROR_INSUFFICIENT_BUFFER as i32) {
-                error!("Failed process thread token: {:?}", err);
+                error!("Failed fetching process token: {:?}", err);
                 CloseHandle(access_token);
                 return "".to_string();
             }
