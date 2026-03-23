@@ -15,6 +15,7 @@ pub use mapper::map_traces_to_otlp;
 /// git.commit.sha, git.repository_url).
 /// Callers should build this from their own tracer metadata struct.
 #[derive(Clone, Debug, Default)]
+#[non_exhaustive]
 pub struct OtlpResourceInfo {
     pub service: String,
     pub env: String,

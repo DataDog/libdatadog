@@ -73,7 +73,7 @@ fn build_resource(resource_info: &OtlpResourceInfo) -> Resource {
     }
     attributes.push(KeyValue {
         key: "telemetry.sdk.name".to_string(),
-        value: AnyValue::StringValue("libdatadog".to_string()),
+        value: AnyValue::StringValue("datadog".to_string()),
     });
     if !resource_info.language.is_empty() {
         attributes.push(KeyValue {
@@ -144,10 +144,7 @@ fn map_span<T: TraceData>(span: &Span<T>) -> OtlpSpan {
             code: json_types::status_code::ERROR,
         })
     } else {
-        Some(Status {
-            message: None,
-            code: json_types::status_code::UNSET,
-        })
+        None
     };
     // Set flags from sampling priority: 1 = sampled/keep, 0 = dropped.
     let flags = span

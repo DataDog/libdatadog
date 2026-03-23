@@ -544,7 +544,7 @@ impl TraceExporter {
             tracer_version: self.metadata.tracer_version.clone(),
             runtime_id: self.metadata.runtime_id.clone(),
             git_commit_sha: self.metadata.git_commit_sha.clone(),
-            git_repository_url: String::new(),
+            ..Default::default()
         };
         let request = map_traces_to_otlp(traces, &resource_info);
         let json_body = serde_json::to_vec(&request).map_err(|e| {
