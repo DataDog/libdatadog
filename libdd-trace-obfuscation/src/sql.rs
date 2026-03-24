@@ -15,9 +15,29 @@ pub enum DbmsKind {
     Oracle,
 }
 
-#[derive(Debug, Default, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
+/// See `DbmsKind` for the list of supported DBMS.
+pub struct UnknownDBMSError;
+
+impl TryFrom<&str> for DbmsKind {
+    type Error = UnknownDBMSError;
+
+    fn try_from(value: &str) -> Result<Self, Self::Error> {
+        let res = match value.to_lowercase().as_str() {
+            "" => Self::Generic,
+            "mssql" => Self::Mssql,
+            "mysql" => Self::Mysql,
+            "postgresql" => Self::Postgresql,
+            "oracle" => Self::Oracle,
+            _ => return Err(UnknownDBMSError),
+        };
+        Ok(res)
+    }
+}
+
+
 #[allow(deprecated)]
+#[derive(Debug, Default, Clone, Copy, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum SqlObfuscationMode {
     #[default]
     #[deprecated = "kept for compatibility with agent's obfuscator but has unintuitive behavior"]
@@ -2025,7 +2045,7 @@ fn try_match_pure_group(bytes: &[u8], open: u8, close: u8, i: usize) -> Option<u
 
 /// Collapse `( ?, ?, ..., ? )` into `( ? )`, `[ ?, ?, ..., ? ]` into `[ ? ]`,
 /// multi-row `VALUES ( ? ) , ( ? ) , ...` into `VALUES ( ? )`, and `LIMIT ?, ?` into `LIMIT ?`.
-fn collapse_grouped_values(s: &str) -> String {
+fn collapse_grouped_values(s: &str, obfuscation_mode: SqlObfuscationMode) -> String {
     let bytes = s.as_bytes();
     let n = bytes.len();
     let mut result = String::with_capacity(n);
@@ -2059,10 +2079,16 @@ fn collapse_grouped_values(s: &str) -> String {
         }
     }
 
-    // Collapse multi-row VALUES: `VALUES ( ? ) , ( ? ) , ...` → `VALUES ( ? )`
     let result = collapse_multi_values(&result);
-    // Collapse `LIMIT ?, ?` → `LIMIT ?` (MySQL/SQLite LIMIT offset, count syntax)
-    collapse_limit_two_args(&result)
+    #[allow(deprecated)]
+    if matches!(obfuscation_mode, SqlObfuscationMode::Unspecified) {
+        // FIXME: this being only collapsed on the deprecated mode is unintuitive but follows the
+        // weird behavior of the agent's obfuscator Collapse `LIMIT ?, ?` → `LIMIT ?`
+        // (MySQL/SQLite LIMIT offset, count syntax)
+        collapse_limit_two_args(&result)
+    } else {
+        result
+    }
 }
 
 /// Collapse `VALUES ( ? ) , ( ? ) , ...` → `VALUES ( ? )`.
@@ -2178,7 +2204,7 @@ pub fn obfuscate_sql(s: &str, config: &SqlObfuscateConfig) -> String {
         SqlObfuscationMode::Unspecified | SqlObfuscationMode::ObfuscateAndNormalize
     );
     if should_collapse {
-        collapse_grouped_values(&raw)
+        collapse_grouped_values(&raw, config.obfuscation_mode)
     } else {
         raw
     }
@@ -2249,6 +2275,7 @@ fn normalize_plan_sql(s: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    use super::{DbmsKind, SqlObfuscateConfig};
 
     #[test]
     fn test_sql_obfuscation() {
