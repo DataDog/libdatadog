@@ -1,6 +1,14 @@
 # Changelog
 
 
+## [1.0.3](https://github.com/datadog/libdatadog/compare/libdd-trace-normalization-v1.0.2..libdd-trace-normalization-v1.0.3) - 2026-03-23
+
+### Changed
+
+- Update dependencies ([#1781](https://github.com/DataDog/libdatadog/issues/1781)) - ([0f16a6c07](https://github.com/DataDog/libdatadog/commit/0f16a6c0759ec7697bf7178cffff74f308836465))
+
+
+
 ## [1.0.2](https://github.com/datadog/libdatadog/compare/libdd-trace-normalization-v1.0.1..libdd-trace-normalization-v1.0.2) - 2026-03-16
 
 ### Changed
