@@ -3274,7 +3274,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-trace-stats"
-version = "1.0.4"
+version = "2.0.0"
 dependencies = [
  "criterion",
  "hashbrown 0.15.1",
