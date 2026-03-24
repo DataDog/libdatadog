@@ -30,6 +30,18 @@ mod unix {
 
     const TEST_COLLECTOR_TIMEOUT: Duration = Duration::from_secs(15);
 
+    /// Trigger a stack overflow by deep recursion with a large frame.
+    /// Each frame allocates a 4KB array on the stack to exhaust it quickly.
+    #[allow(unconditional_recursion)]
+    #[inline(never)]
+    fn cause_stack_overflow(depth: u64) -> ! {
+        // Force a large stack frame that the compiler can't optimize away
+        let buf = [depth as u8; 4096];
+        // Volatile read to prevent the compiler from eliding the array
+        std::hint::black_box(&buf);
+        cause_stack_overflow(depth + 1)
+    }
+
     #[inline(never)]
     pub unsafe fn cause_segfault() -> anyhow::Result<()> {
         #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
@@ -144,6 +156,7 @@ mod unix {
             "kill_sigbus" => kill(Pid::this(), Signal::SIGBUS)?,
             "kill_sigsegv" => kill(Pid::this(), Signal::SIGSEGV)?,
             "null_deref" => unsafe { cause_segfault()? },
+            "stack_overflow" => cause_stack_overflow(0),
             "raise_sigabrt" => raise(Signal::SIGABRT)?,
             "raise_sigill" => raise(Signal::SIGILL)?,
             "raise_sigbus" => raise(Signal::SIGBUS)?,

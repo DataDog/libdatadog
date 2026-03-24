@@ -284,6 +284,15 @@ This section documents the evolution of the crashtracker structured log format a
 
 **Motivation:** Having access to thread name of the crashing thread helps debugging, especially within multithreaded programs.
 
+### Version 1.6
+*Added crash pre-diagnosis*
+
+**Changes from v1.5:**
+- Added `diagnosis` field at root level (optional object)
+- Updated `data_schema_version` to "1.6"
+
+**Motivation:** The crashtracker already collects signal info, CPU registers (ucontext), and the process memory map (/proc/self/maps), but ships them as disconnected blobs. The `diagnosis` field correlates these data sources in the receiver to produce a structured crash diagnosis (e.g. "Null pointer dereference", "Stack overflow") with supporting details about the fault address mapping, crash location, and register state. See RFC 0014 for full design.
+
 ## Appendix A: Example output
 
 An example crash report in version 1.0 format is [available here](artifacts/0005-crashtracker-example.json).
@@ -292,7 +301,7 @@ Note: This example uses version 1.0 format. Version 1.1+ may include additional 
 
 ## Appendix B: Json Schema
 
-The current JSON schema (version 1.5) is [available here](artifacts/crashtracker-unified-runtime-stack-schema-v1_5.json).
+The current JSON schema (version 1.6) is [available here](artifacts/crashtracker-unified-runtime-stack-schema-v1_6.json).
 
 Historical schemas are also available:
 - [Version 1.0 schema](artifacts/0005-crashtracker-schema.json)
@@ -300,3 +309,4 @@ Historical schemas are also available:
 - [Version 1.2 schema](artifacts/0007-crashtracker-schema.json)
 - [Version 1.3 schema](artifacts/0008-crashtracker-schema.json)
 - [Version 1.4 schema](artifacts/0009-crashtracker-schema.json)
+- [Version 1.5 schema](artifacts/crashtracker-unified-runtime-stack-schema-v1_5.json)

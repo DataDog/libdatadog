@@ -478,7 +478,46 @@ fn emit_ucontext(w: &mut impl Write, ucontext: *const ucontext_t) -> Result<(), 
     }
     writeln!(w, "{DD_CRASHTRACK_BEGIN_UCONTEXT}")?;
     // SAFETY: the pointer is given to us by the signal handler, and is non-null.
-    writeln!(w, "{:?}", unsafe { *ucontext })?;
+    let uc = unsafe { &*ucontext };
+
+    #[cfg(target_arch = "x86_64")]
+    {
+        let gregs = &uc.uc_mcontext.gregs;
+        write!(w, "{{\"rip\": \"0x{:016x}\"", gregs[libc::REG_RIP as usize])?;
+        write!(w, ", \"rsp\": \"0x{:016x}\"", gregs[libc::REG_RSP as usize])?;
+        write!(w, ", \"rbp\": \"0x{:016x}\"", gregs[libc::REG_RBP as usize])?;
+        write!(w, ", \"rax\": \"0x{:016x}\"", gregs[libc::REG_RAX as usize])?;
+        write!(w, ", \"rbx\": \"0x{:016x}\"", gregs[libc::REG_RBX as usize])?;
+        write!(w, ", \"rcx\": \"0x{:016x}\"", gregs[libc::REG_RCX as usize])?;
+        write!(w, ", \"rdx\": \"0x{:016x}\"", gregs[libc::REG_RDX as usize])?;
+        write!(w, ", \"rsi\": \"0x{:016x}\"", gregs[libc::REG_RSI as usize])?;
+        write!(w, ", \"rdi\": \"0x{:016x}\"", gregs[libc::REG_RDI as usize])?;
+        write!(w, ", \"r8\": \"0x{:016x}\"", gregs[libc::REG_R8 as usize])?;
+        write!(w, ", \"r9\": \"0x{:016x}\"", gregs[libc::REG_R9 as usize])?;
+        write!(w, ", \"r10\": \"0x{:016x}\"", gregs[libc::REG_R10 as usize])?;
+        write!(w, ", \"r11\": \"0x{:016x}\"", gregs[libc::REG_R11 as usize])?;
+        write!(w, ", \"r12\": \"0x{:016x}\"", gregs[libc::REG_R12 as usize])?;
+        write!(w, ", \"r13\": \"0x{:016x}\"", gregs[libc::REG_R13 as usize])?;
+        write!(w, ", \"r14\": \"0x{:016x}\"", gregs[libc::REG_R14 as usize])?;
+        write!(w, ", \"r15\": \"0x{:016x}\"", gregs[libc::REG_R15 as usize])?;
+        // Preserve the full ucontext as a raw Debug string so that FPU state,
+        // signal mask, and alternate-stack info are not lost.
+        write!(w, ", \"raw\": \"{:?}\"", uc)?;
+        writeln!(w, "}}")?;
+    }
+
+    #[cfg(target_arch = "aarch64")]
+    {
+        let mc = &uc.uc_mcontext;
+        write!(w, "{{\"pc\": \"0x{:016x}\"", mc.pc)?;
+        write!(w, ", \"sp\": \"0x{:016x}\"", mc.sp)?;
+        for i in 0..31 {
+            write!(w, ", \"x{}\": \"0x{:016x}\"", i, mc.regs[i])?;
+        }
+        write!(w, ", \"raw\": \"{:?}\"", uc)?;
+        writeln!(w, "}}")?;
+    }
+
     writeln!(w, "{DD_CRASHTRACK_END_UCONTEXT}")?;
     w.flush()?;
     Ok(())

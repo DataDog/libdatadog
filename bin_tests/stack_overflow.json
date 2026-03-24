@@ -1,0 +1,22 @@
+{
+    "summary": "Stack overflow",
+    "category": "StackOverflow",
+    "details": "SIGSEGV (SEGV_MAPERR) at address 0x00007ffc95ff8818. Fault address is near the stack guard page (stack mapping: 0x7ffc95ff9000-0x7ffc967f9000, SP=0x00007ffc95ff8818). Stack exhaustion detected.",
+    "fault_address_mapped": false,
+    "crash_location": {
+        "path": "/home/bits/go/src/github.com/DataDog/libdatadog/target/release/crashtracker_bin_test",
+        "permissions": "r-xp",
+        "offset_in_mapping": "0x2a520"
+    },
+    "stack_pointer_valid": false,
+    "null_registers": [
+        "r10",
+        "r13",
+        "r15",
+        "rbp",
+        "rbx",
+        "rcx",
+        "rdi",
+        "rsi"
+    ]
+}

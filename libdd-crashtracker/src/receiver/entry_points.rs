@@ -114,6 +114,7 @@ pub(crate) async fn receiver_entry_point(
                     .push(format!("Error demangling names: {e}"));
             }
         }
+
         crash_info
             .async_upload_to_endpoint(config.endpoint())
             .await?;

@@ -59,6 +59,7 @@ crash_tracking_tests! {
     (test_crash_tracking_bin_raise_sigbus, BuildProfile::Release, TestMode::DoNothing, CrashType::RaiseSigBus),
     (test_crash_tracking_bin_raise_sigsegv, BuildProfile::Release, TestMode::DoNothing, CrashType::RaiseSigSegv),
     (test_crash_tracking_bin_prechain_sigabrt, BuildProfile::Release, TestMode::PrechainAbort, CrashType::NullDeref),
+    (test_crash_tracking_bin_stack_overflow, BuildProfile::Release, TestMode::DoNothing, CrashType::StackOverflow),
 }
 
 /// Standard crash test runner using the new refactored infrastructure.
@@ -95,6 +96,64 @@ fn run_standard_crash_test_refactored(
 
 // These tests below use the new infrastructure but require custom validation logic
 // that doesn't fit the simple macro-generated pattern.
+
+/// Test that a stack overflow (deep recursion) is correctly diagnosed by the
+/// crash pre-diagnosis engine. The crash should be a SIGSEGV near the stack
+/// guard page, and the diagnosis field should report "StackOverflow".
+#[test]
+#[cfg(target_os = "linux")]
+#[cfg_attr(miri, ignore)]
+fn test_crash_tracking_stack_overflow_diagnosis() {
+    let config = CrashTestConfig::new(
+        BuildProfile::Release,
+        TestMode::DoNothing,
+        CrashType::StackOverflow,
+    );
+    let artifacts = StandardArtifacts::new(config.profile);
+    let artifacts_map = build_artifacts(&artifacts.as_slice()).unwrap();
+
+    let validator: ValidatorFn = Box::new(|payload, fixtures| {
+        PayloadValidator::new(payload).validate_counters()?;
+        assert!(false, "payload: {}", serde_json::to_string_pretty(payload).unwrap());
+
+        // Validate it's a SIGSEGV with SEGV_MAPERR
+        let sig_info = &payload["sig_info"];
+        assert_siginfo_message(sig_info, "stack_overflow");
+
+        // Validate the diagnosis field exists and identifies a stack overflow
+        let diagnosis = &payload["diagnosis"];
+        assert!(
+            !diagnosis.is_null(),
+            "Expected diagnosis field to be present for stack overflow crash"
+        );
+        assert_eq!(
+            diagnosis["category"], "StackOverflow",
+            "Expected StackOverflow diagnosis, got: {:?}",
+            diagnosis["category"]
+        );
+        assert!(
+            diagnosis["summary"]
+                .as_str()
+                .unwrap_or("")
+                .contains("Stack overflow"),
+            "Diagnosis summary should mention stack overflow, got: {:?}",
+            diagnosis["summary"]
+        );
+
+        // The fault address should not be mapped (it's in the guard page)
+        assert_eq!(
+            diagnosis["fault_address_mapped"], false,
+            "Fault address should not be in a mapped region"
+        );
+
+        // Validate telemetry
+        validate_telemetry(&fixtures.crash_telemetry_path, "stack_overflow")?;
+
+        Ok(())
+    });
+
+    run_crash_test_with_artifacts(&config, &artifacts_map, &artifacts, validator).unwrap();
+}
 
 #[test]
 #[cfg_attr(miri, ignore)]
@@ -1075,6 +1134,11 @@ fn assert_siginfo_message(sig_info: &Value, crash_typ: &str) {
             assert_eq!(sig_info["si_signo"], libc::SIGILL);
             assert_eq!(sig_info["si_signo_human_readable"], "SIGILL");
         }
+        "stack_overflow" => {
+            assert_eq!(sig_info["si_signo"], libc::SIGSEGV);
+            assert_eq!(sig_info["si_signo_human_readable"], "SIGSEGV");
+            assert_eq!(sig_info["si_code_human_readable"], "SEGV_MAPERR");
+        }
         "unhandled_exception" => {
             assert!(
                 sig_info.is_null()
@@ -1211,6 +1275,14 @@ fn assert_telemetry_message(crash_telemetry: &[u8], crash_typ: &str) {
         "raise_sigsegv" => {
             assert!(tags.contains("si_signo_human_readable:SIGSEGV"), "{tags:?}");
             assert!(tags.contains("si_signo:11"), "{tags:?}");
+        }
+        "stack_overflow" => {
+            assert!(tags.contains("si_signo_human_readable:SIGSEGV"), "{tags:?}");
+            assert!(tags.contains("si_signo:11"), "{tags:?}");
+            assert!(
+                tags.contains("si_code_human_readable:SEGV_MAPERR"),
+                "{tags:?}"
+            );
         }
         "unhandled_exception" => {
             // Unhandled exceptions have no signal info tags

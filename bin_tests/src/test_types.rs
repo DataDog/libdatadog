@@ -120,6 +120,8 @@ pub enum CrashType {
     RaiseSigSegv,
     /// Unhandled Exception
     UnhandledException,
+    /// Stack overflow via deep recursion (SIGSEGV near stack guard page)
+    StackOverflow,
 }
 
 impl CrashType {
@@ -136,6 +138,7 @@ impl CrashType {
             Self::RaiseSigBus => "raise_sigbus",
             Self::RaiseSigSegv => "raise_sigsegv",
             Self::UnhandledException => "unhandled_exception",
+            Self::StackOverflow => "stack_overflow",
         }
     }
 
@@ -157,18 +160,22 @@ impl CrashType {
     #[cfg(unix)]
     pub const fn signal_number(self) -> i32 {
         match self {
-            Self::NullDeref | Self::KillSigSegv | Self::RaiseSigSegv => 11, // SIGSEGV
-            Self::KillSigAbrt | Self::RaiseSigAbrt => 6,                    // SIGABRT
-            Self::KillSigIll | Self::RaiseSigIll => 4,                      // SIGILL
-            Self::KillSigBus | Self::RaiseSigBus => 7,                      // SIGBUS
-            Self::UnhandledException => 0,                                  // no signal
+            Self::NullDeref | Self::KillSigSegv | Self::RaiseSigSegv | Self::StackOverflow => {
+                11 // SIGSEGV
+            }
+            Self::KillSigAbrt | Self::RaiseSigAbrt => 6,  // SIGABRT
+            Self::KillSigIll | Self::RaiseSigIll => 4,    // SIGILL
+            Self::KillSigBus | Self::RaiseSigBus => 7,    // SIGBUS
+            Self::UnhandledException => 0,                 // no signal
         }
     }
 
     /// Returns the human-readable signal name for this crash type.
     pub const fn signal_name(self) -> &'static str {
         match self {
-            Self::NullDeref | Self::KillSigSegv | Self::RaiseSigSegv => "SIGSEGV",
+            Self::NullDeref | Self::KillSigSegv | Self::RaiseSigSegv | Self::StackOverflow => {
+                "SIGSEGV"
+            }
             Self::KillSigAbrt | Self::RaiseSigAbrt => "SIGABRT",
             Self::KillSigIll | Self::RaiseSigIll => "SIGILL",
             Self::KillSigBus | Self::RaiseSigBus => "SIGBUS",
@@ -198,6 +205,7 @@ impl std::str::FromStr for CrashType {
             "raise_sigbus" => Ok(Self::RaiseSigBus),
             "raise_sigsegv" => Ok(Self::RaiseSigSegv),
             "unhandled_exception" => Ok(Self::UnhandledException),
+            "stack_overflow" => Ok(Self::StackOverflow),
             _ => Err(format!("Unknown crash type: {}", s)),
         }
     }

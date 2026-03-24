@@ -4,12 +4,15 @@
 mod builder;
 #[cfg(feature = "cxx")]
 pub mod cxx;
+mod diagnosis;
 mod error_data;
 mod errors_intake;
 mod experimental;
+mod memory_map;
 mod metadata;
 mod os_info;
 mod proc_info;
+mod registers;
 mod sig_info;
 mod spans;
 mod stacktrace;
@@ -21,13 +24,16 @@ mod unknown_value;
 pub(crate) const TARGET_TRIPLE: &str = env!("TARGET");
 
 pub use builder::*;
+pub use diagnosis::*;
 pub use error_data::*;
 pub use errors_intake::*;
 pub use experimental::*;
 use libdd_common::Endpoint;
+pub use memory_map::*;
 pub use metadata::Metadata;
 pub use os_info::*;
 pub use proc_info::*;
+pub use registers::*;
 pub use sig_info::*;
 pub use spans::*;
 pub use stacktrace::*;
@@ -50,6 +56,8 @@ pub struct CrashInfo {
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub counters: HashMap<String, i64>,
     pub data_schema_version: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub diagnosis: Option<CrashDiagnosis>,
     pub error: ErrorData,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub experimental: Option<Experimental>,
@@ -76,11 +84,42 @@ pub struct CrashInfo {
 
 impl CrashInfo {
     pub fn current_schema_version() -> String {
-        "1.5".to_string()
+        "1.6".to_string()
     }
 
     pub fn demangle_names(&mut self) -> anyhow::Result<()> {
         self.error.demangle_names()
+    }
+
+    /// Run the diagnosis engine, correlating sig_info, ucontext registers,
+    /// and /proc/self/maps to produce a structured crash diagnosis.
+    ///
+    /// Only runs when all three inputs are present: sig_info, structured
+    /// ucontext (parseable as JSON registers), and /proc/self/maps.
+    /// Without all three, the diagnosis would be speculative, so we skip it.
+    #[cfg(target_os = "linux")]
+    pub fn run_diagnosis(&mut self) {
+        let sig_info = match &self.sig_info {
+            Some(si) => si,
+            None => return,
+        };
+
+        let registers = match self
+            .experimental
+            .as_ref()
+            .and_then(|e| e.ucontext.as_deref())
+            .and_then(Registers::from_ucontext_json)
+        {
+            Some(r) => r,
+            None => return,
+        };
+
+        let memory_map = match self.files.get("/proc/self/maps") {
+            Some(lines) if !lines.is_empty() => MemoryMap::from_maps_lines(lines),
+            _ => return,
+        };
+
+        self.diagnosis = Some(diagnose(sig_info, &registers, &memory_map));
     }
 }
 
@@ -180,7 +219,7 @@ mod tests {
     fn test_schema_matches_rfc() {
         let rfc_schema_filename = concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/../docs/RFCs/artifacts/crashtracker-unified-runtime-stack-schema-v1_5.json"
+            "/../docs/RFCs/artifacts/crashtracker-unified-runtime-stack-schema-v1_6.json"
         );
         let schema = schemars::schema_for!(CrashInfo);
         let schema_json = serde_json::to_string_pretty(&schema).expect("Schema to serialize");
@@ -246,6 +285,7 @@ mod tests {
             Self {
                 counters,
                 data_schema_version: CrashInfo::current_schema_version(),
+                diagnosis: None,
                 error: ErrorData::test_instance(seed),
                 experimental: None,
                 files: HashMap::new(),

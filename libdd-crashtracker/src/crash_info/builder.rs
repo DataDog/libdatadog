@@ -159,9 +159,10 @@ impl CrashInfoBuilder {
         let timestamp = self.timestamp.unwrap_or_else(Utc::now).to_string();
         let trace_ids = self.trace_ids.unwrap_or_default();
         let uuid = self.uuid;
-        Ok(CrashInfo {
+        let mut crash_info = CrashInfo {
             counters,
             data_schema_version,
+            diagnosis: None,
             error,
             experimental,
             files,
@@ -176,7 +177,24 @@ impl CrashInfoBuilder {
             timestamp,
             trace_ids,
             uuid: uuid.to_string(),
-        })
+        };
+
+        // Run diagnosis, wrapped in catch_unwind so a panic here cannot
+        // prevent the crash report from being built and uploaded.
+        #[cfg(target_os = "linux")]
+        {
+            if std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                crash_info.run_diagnosis();
+            }))
+            .is_err()
+            {
+                crash_info
+                    .log_messages
+                    .push("Diagnosis engine panicked; skipping diagnosis".to_string());
+            }
+        }
+
+        Ok(crash_info)
     }
 
     pub fn has_data(&self) -> bool {
