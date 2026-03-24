@@ -2974,4 +2974,1327 @@ mod tests {
         let expected = "SELECT a | | ? | | b FROM t";
         assert_eq!(got, expected, "cassandra_pipe: {got:?}");
     }
+
+    // Test cases from the agent repo
+    const SUITE_CASES: &[(&str, &str)] = &[
+        // sql_keep_alias_off
+        ("SELECT username AS person FROM users WHERE id=4", "SELECT username FROM users WHERE id = ?"),
+        // sql_autovacuum_0
+        ("autovacuum: VACUUM ANALYZE fake.table", "autovacuum : VACUUM ANALYZE fake.table"),
+        // sql_autovacuum_1
+        ("autovacuum: VACUUM ANALYZE fake.table_downtime", "autovacuum : VACUUM ANALYZE fake.table_downtime"),
+        // sql_autovacuum_2
+        ("autovacuum: VACUUM fake.big_table (to prevent wraparound)", "autovacuum : VACUUM fake.big_table ( to prevent wraparound )"),
+        // sql_dollar_quoted_func_off
+        ("SELECT $func$INSERT INTO table VALUES ('a', 1, 2)$func$ FROM users", "SELECT ? FROM users"),
+        // sql_metadata_multiline_comment_select_insert
+        ("\n/* Multi-line comment */\nSELECT * FROM clients WHERE (clients.first_name = 'Andy') LIMIT 1 BEGIN INSERT INTO owners (created_at, first_name, locked, orders_count, updated_at) VALUES ('2011-08-30 05:22:57', 'Andy', 1, NULL, '2011-08-30 05:22:57') COMMIT", "SELECT * FROM clients WHERE ( clients.first_name = ? ) LIMIT ? BEGIN INSERT INTO owners ( created_at, first_name, locked, orders_count, updated_at ) VALUES ( ? ) COMMIT"),
+        // sql_metadata_multiline_comment_select_insert_lowercase_limit
+        ("\n/* Multi-line comment */\nSELECT * FROM clients WHERE (clients.first_name = 'Andy') limit 1 BEGIN INSERT INTO owners (created_at, first_name, locked, orders_count, updated_at) VALUES ('2011-08-30 05:22:57', 'Andy', 1, NULL, '2011-08-30 05:22:57') COMMIT", "SELECT * FROM clients WHERE ( clients.first_name = ? ) limit ? BEGIN INSERT INTO owners ( created_at, first_name, locked, orders_count, updated_at ) VALUES ( ? ) COMMIT"),
+        // sql_metadata_single_line_comments_grant
+        ("\n-- Single line comment\n-- Another single line comment\n-- Another another single line comment\nGRANT USAGE, DELETE ON SCHEMA datadog TO datadog", "GRANT USAGE, DELETE ON SCHEMA datadog TO datadog"),
+        // sql_metadata_no_collect
+        ("\n/*\nMulti-line comment\nwith line breaks\n*/\n/* Two multi-line comments with\nline breaks */\nSELECT clients.* FROM clients INNER JOIN posts ON posts.author_id = author.id AND posts.published = 't'", "SELECT clients.* FROM clients INNER JOIN posts ON posts.author_id = author.id AND posts.published = ?"),
+        // sql_metadata_create_trigger
+        ("CREATE TRIGGER dogwatcher SELECT ON w1 BEFORE (UPDATE d1 SET (c1, c2, c3) = (c1 + 1, c2 + 1, c3 + 1))", "CREATE TRIGGER dogwatcher SELECT ON w1 BEFORE ( UPDATE d1 SET ( c1, c2, c3 ) = ( c1 + ? c2 + ? c3 + ? ) )"),
+        // sql_metadata_table_value_constructor
+        ("\n-- Testing table value constructor SQL expression\nSELECT * FROM (VALUES (1, 'dog')) AS d (id, animal)", "SELECT * FROM ( VALUES ( ? ) ) ( id, animal )"),
+        // sql_metadata_alter_table
+        ("ALTER TABLE table DROP COLUMN column", "ALTER TABLE table DROP COLUMN column"),
+        // sql_metadata_revoke
+        ("REVOKE ALL ON SCHEMA datadog FROM datadog", "REVOKE ALL ON SCHEMA datadog FROM datadog"),
+        // sql_metadata_truncate
+        ("TRUNCATE TABLE datadog", "TRUNCATE TABLE datadog"),
+        // sql_metadata_explicit_table
+        ("\n-- Testing explicit table SQL expression\nWITH T1 AS (SELECT PNO , PNAME , COLOR , WEIGHT , CITY FROM P WHERE  CITY = 'London'),\nT2 AS (SELECT PNO, PNAME, COLOR, WEIGHT, CITY, 2 * WEIGHT AS NEW_WEIGHT, 'Oslo' AS NEW_CITY FROM T1),\nT3 AS ( SELECT PNO , PNAME, COLOR, NEW_WEIGHT AS WEIGHT, NEW_CITY AS CITY FROM T2),\nT4 AS ( TABLE P EXCEPT CORRESPONDING TABLE T1)\nTABLE T4 UNION CORRESPONDING TABLE T3", "WITH T1 SELECT PNO, PNAME, COLOR, WEIGHT, CITY FROM P WHERE CITY = ? ) T2 SELECT PNO, PNAME, COLOR, WEIGHT, CITY, ? * WEIGHT, ? FROM T1 ), T3 SELECT PNO, PNAME, COLOR, NEW_WEIGHT, NEW_CITY FROM T2 ), T4 TABLE P EXCEPT CORRESPONDING TABLE T1 ) TABLE T4 UNION CORRESPONDING TABLE T3"),
+        // sql_utf8_catalan_1
+        ("SELECT Codi , Nom_CA AS Nom, Descripció_CAT AS Descripció FROM ProtValAptitud WHERE Vigent=1 ORDER BY Ordre, Codi", "SELECT Codi, Nom_CA, Descripció_CAT FROM ProtValAptitud WHERE Vigent = ? ORDER BY Ordre, Codi"),
+        // sql_utf8_catalan_2
+        (" SELECT  dbo.Treballadors_ProtCIE_AntecedentsPatologics.IdTreballadorsProtCIE_AntecedentsPatologics,   dbo.ProtCIE.Codi As CodiProtCIE, Treballadors_ProtCIE_AntecedentsPatologics.Año,                              dbo.ProtCIE.Nom_ES, dbo.ProtCIE.Nom_CA  FROM         dbo.Treballadors_ProtCIE_AntecedentsPatologics  WITH (NOLOCK)  INNER JOIN                       dbo.ProtCIE  WITH (NOLOCK)  ON dbo.Treballadors_ProtCIE_AntecedentsPatologics.CodiProtCIE = dbo.ProtCIE.Codi  WHERE Treballadors_ProtCIE_AntecedentsPatologics.IdTreballador =  12345 ORDER BY   Treballadors_ProtCIE_AntecedentsPatologics.Año DESC, dbo.ProtCIE.Codi ", "SELECT dbo.Treballadors_ProtCIE_AntecedentsPatologics.IdTreballadorsProtCIE_AntecedentsPatologics, dbo.ProtCIE.Codi, Treballadors_ProtCIE_AntecedentsPatologics.Año, dbo.ProtCIE.Nom_ES, dbo.ProtCIE.Nom_CA FROM dbo.Treballadors_ProtCIE_AntecedentsPatologics WITH ( NOLOCK ) INNER JOIN dbo.ProtCIE WITH ( NOLOCK ) ON dbo.Treballadors_ProtCIE_AntecedentsPatologics.CodiProtCIE = dbo.ProtCIE.Codi WHERE Treballadors_ProtCIE_AntecedentsPatologics.IdTreballador = ? ORDER BY Treballadors_ProtCIE_AntecedentsPatologics.Año DESC, dbo.ProtCIE.Codi"),
+        // sql_utf8_catalan_3
+        ("select  top 100 percent  IdTrebEmpresa as [IdTrebEmpresa], CodCli as [Client], NOMEMP as [Nom Client], Baixa as [Baixa], CASE WHEN IdCentreTreball IS NULL THEN '-' ELSE  CONVERT(VARCHAR(8),IdCentreTreball) END as [Id Centre],  CASE WHEN NOMESTAB IS NULL THEN '-' ELSE NOMESTAB END  as [Nom Centre],  TIPUS as [Tipus Lloc], CASE WHEN IdLloc IS NULL THEN '-' ELSE  CONVERT(VARCHAR(8),IdLloc) END  as [Id Lloc],  CASE WHEN NomLlocComplert IS NULL THEN '-' ELSE NomLlocComplert END  as [Lloc Treball],  CASE WHEN DesLloc IS NULL THEN '-' ELSE DesLloc END  as [Descripció], IdLlocTreballUnic as [Id Únic]  From ( SELECT    '-' AS TIPUS,  dbo.Treb_Empresa.IdTrebEmpresa, dbo.Treb_Empresa.IdTreballador, dbo.Treb_Empresa.CodCli, dbo.Clients.NOMEMP,   dbo.Treb_Empresa.Baixa,                      dbo.Treb_Empresa.IdCentreTreball, dbo.Cli_Establiments.NOMESTAB, null AS IdLloc,                        null AS NomLlocComplert, dbo.Treb_Empresa.DataInici,                        dbo.Treb_Empresa.DataFi, CASE WHEN dbo.Treb_Empresa.DesLloc IS NULL THEN '' ELSE dbo.Treb_Empresa.DesLloc END DesLloc, dbo.Treb_Empresa.IdLlocTreballUnic FROM         dbo.Clients  WITH (NOLOCK) INNER JOIN                       dbo.Treb_Empresa  WITH (NOLOCK) ON dbo.Clients.CODCLI = dbo.Treb_Empresa.CodCli LEFT OUTER JOIN                       dbo.Cli_Establiments  WITH (NOLOCK) ON dbo.Cli_Establiments.Id_ESTAB_CLI = dbo.Treb_Empresa.IdCentreTreball AND                        dbo.Cli_Establiments.CODCLI = dbo.Treb_Empresa.CodCli WHERE     dbo.Treb_Empresa.IdTreballador = 64376 AND Treb_Empresa.IdTecEIRLLlocTreball IS NULL AND IdMedEIRLLlocTreball IS NULL AND IdLlocTreballTemporal IS NULL  UNION ALL SELECT    'AV. RIESGO' AS TIPUS,  dbo.Treb_Empresa.IdTrebEmpresa, dbo.Treb_Empresa.IdTreballador, dbo.Treb_Empresa.CodCli, dbo.Clients.NOMEMP, dbo.Treb_Empresa.Baixa,                       dbo.Treb_Empresa.IdCentreTreball, dbo.Cli_Establiments.NOMESTAB, dbo.Treb_Empresa.IdTecEIRLLlocTreball AS IdLloc,                        dbo.fn_NomLlocComposat(dbo.Treb_Empresa.IdTecEIRLLlocTreball) AS NomLlocComplert, dbo.Treb_Empresa.DataInici,                        dbo.Treb_Empresa.DataFi, CASE WHEN dbo.Treb_Empresa.DesLloc IS NULL THEN '' ELSE dbo.Treb_Empresa.DesLloc END DesLloc, dbo.Treb_Empresa.IdLlocTreballUnic FROM         dbo.Clients  WITH (NOLOCK) INNER JOIN                       dbo.Treb_Empresa  WITH (NOLOCK) ON dbo.Clients.CODCLI = dbo.Treb_Empresa.CodCli LEFT OUTER JOIN                       dbo.Cli_Establiments  WITH (NOLOCK) ON dbo.Cli_Establiments.Id_ESTAB_CLI = dbo.Treb_Empresa.IdCentreTreball AND                        dbo.Cli_Establiments.CODCLI = dbo.Treb_Empresa.CodCli WHERE     (dbo.Treb_Empresa.IdTreballador = 64376) AND (NOT (dbo.Treb_Empresa.IdTecEIRLLlocTreball IS NULL))  UNION ALL SELECT     'EXTERNA' AS TIPUS,  dbo.Treb_Empresa.IdTrebEmpresa, dbo.Treb_Empresa.IdTreballador, dbo.Treb_Empresa.CodCli, dbo.Clients.NOMEMP,  dbo.Treb_Empresa.Baixa,                      dbo.Treb_Empresa.IdCentreTreball, dbo.Cli_Establiments.NOMESTAB, dbo.Treb_Empresa.IdMedEIRLLlocTreball AS IdLloc,                        dbo.fn_NomMedEIRLLlocComposat(dbo.Treb_Empresa.IdMedEIRLLlocTreball) AS NomLlocComplert,  dbo.Treb_Empresa.DataInici,                        dbo.Treb_Empresa.DataFi, CASE WHEN dbo.Treb_Empresa.DesLloc IS NULL THEN '' ELSE dbo.Treb_Empresa.DesLloc END DesLloc, dbo.Treb_Empresa.IdLlocTreballUnic FROM         dbo.Clients  WITH (NOLOCK) INNER JOIN                       dbo.Treb_Empresa  WITH (NOLOCK) ON dbo.Clients.CODCLI = dbo.Treb_Empresa.CodCli LEFT OUTER JOIN                       dbo.Cli_Establiments  WITH (NOLOCK) ON dbo.Cli_Establiments.Id_ESTAB_CLI = dbo.Treb_Empresa.IdCentreTreball AND                        dbo.Cli_Establiments.CODCLI = dbo.Treb_Empresa.CodCli WHERE     (dbo.Treb_Empresa.IdTreballador = 64376) AND (Treb_Empresa.IdTecEIRLLlocTreball IS NULL) AND (NOT (dbo.Treb_Empresa.IdMedEIRLLlocTreball IS NULL))  UNION ALL SELECT     'TEMPORAL' AS TIPUS,  dbo.Treb_Empresa.IdTrebEmpresa, dbo.Treb_Empresa.IdTreballador, dbo.Treb_Empresa.CodCli, dbo.Clients.NOMEMP, dbo.Treb_Empresa.Baixa,                       dbo.Treb_Empresa.IdCentreTreball, dbo.Cli_Establiments.NOMESTAB, dbo.Treb_Empresa.IdLlocTreballTemporal AS IdLloc,                       dbo.Lloc_Treball_Temporal.NomLlocTreball AS NomLlocComplert,  dbo.Treb_Empresa.DataInici,                        dbo.Treb_Empresa.DataFi, CASE WHEN dbo.Treb_Empresa.DesLloc IS NULL THEN '' ELSE dbo.Treb_Empresa.DesLloc END DesLloc, dbo.Treb_Empresa.IdLlocTreballUnic FROM         dbo.Clients  WITH (NOLOCK) INNER JOIN                       dbo.Treb_Empresa  WITH (NOLOCK) ON dbo.Clients.CODCLI = dbo.Treb_Empresa.CodCli INNER JOIN                       dbo.Lloc_Treball_Temporal  WITH (NOLOCK) ON dbo.Treb_Empresa.IdLlocTreballTemporal = dbo.Lloc_Treball_Temporal.IdLlocTreballTemporal LEFT OUTER JOIN                       dbo.Cli_Establiments  WITH (NOLOCK) ON dbo.Cli_Establiments.Id_ESTAB_CLI = dbo.Treb_Empresa.IdCentreTreball AND                        dbo.Cli_Establiments.CODCLI = dbo.Treb_Empresa.CodCli WHERE     dbo.Treb_Empresa.IdTreballador = 64376 AND Treb_Empresa.IdTecEIRLLlocTreball IS NULL AND IdMedEIRLLlocTreball IS NULL ) as taula  Where 1=0 ", "select top ? percent IdTrebEmpresa, CodCli, NOMEMP, Baixa, CASE WHEN IdCentreTreball IS ? THEN ? ELSE CONVERT ( VARCHAR ( ? ) IdCentreTreball ) END, CASE WHEN NOMESTAB IS ? THEN ? ELSE NOMESTAB END, TIPUS, CASE WHEN IdLloc IS ? THEN ? ELSE CONVERT ( VARCHAR ( ? ) IdLloc ) END, CASE WHEN NomLlocComplert IS ? THEN ? ELSE NomLlocComplert END, CASE WHEN DesLloc IS ? THEN ? ELSE DesLloc END, IdLlocTreballUnic From ( SELECT ?, dbo.Treb_Empresa.IdTrebEmpresa, dbo.Treb_Empresa.IdTreballador, dbo.Treb_Empresa.CodCli, dbo.Clients.NOMEMP, dbo.Treb_Empresa.Baixa, dbo.Treb_Empresa.IdCentreTreball, dbo.Cli_Establiments.NOMESTAB, ?, ?, dbo.Treb_Empresa.DataInici, dbo.Treb_Empresa.DataFi, CASE WHEN dbo.Treb_Empresa.DesLloc IS ? THEN ? ELSE dbo.Treb_Empresa.DesLloc END DesLloc, dbo.Treb_Empresa.IdLlocTreballUnic FROM dbo.Clients WITH ( NOLOCK ) INNER JOIN dbo.Treb_Empresa WITH ( NOLOCK ) ON dbo.Clients.CODCLI = dbo.Treb_Empresa.CodCli LEFT OUTER JOIN dbo.Cli_Establiments WITH ( NOLOCK ) ON dbo.Cli_Establiments.Id_ESTAB_CLI = dbo.Treb_Empresa.IdCentreTreball AND dbo.Cli_Establiments.CODCLI = dbo.Treb_Empresa.CodCli WHERE dbo.Treb_Empresa.IdTreballador = ? AND Treb_Empresa.IdTecEIRLLlocTreball IS ? AND IdMedEIRLLlocTreball IS ? AND IdLlocTreballTemporal IS ? UNION ALL SELECT ?, dbo.Treb_Empresa.IdTrebEmpresa, dbo.Treb_Empresa.IdTreballador, dbo.Treb_Empresa.CodCli, dbo.Clients.NOMEMP, dbo.Treb_Empresa.Baixa, dbo.Treb_Empresa.IdCentreTreball, dbo.Cli_Establiments.NOMESTAB, dbo.Treb_Empresa.IdTecEIRLLlocTreball, dbo.fn_NomLlocComposat ( dbo.Treb_Empresa.IdTecEIRLLlocTreball ), dbo.Treb_Empresa.DataInici, dbo.Treb_Empresa.DataFi, CASE WHEN dbo.Treb_Empresa.DesLloc IS ? THEN ? ELSE dbo.Treb_Empresa.DesLloc END DesLloc, dbo.Treb_Empresa.IdLlocTreballUnic FROM dbo.Clients WITH ( NOLOCK ) INNER JOIN dbo.Treb_Empresa WITH ( NOLOCK ) ON dbo.Clients.CODCLI = dbo.Treb_Empresa.CodCli LEFT OUTER JOIN dbo.Cli_Establiments WITH ( NOLOCK ) ON dbo.Cli_Establiments.Id_ESTAB_CLI = dbo.Treb_Empresa.IdCentreTreball AND dbo.Cli_Establiments.CODCLI = dbo.Treb_Empresa.CodCli WHERE ( dbo.Treb_Empresa.IdTreballador = ? ) AND ( NOT ( dbo.Treb_Empresa.IdTecEIRLLlocTreball IS ? ) ) UNION ALL SELECT ?, dbo.Treb_Empresa.IdTrebEmpresa, dbo.Treb_Empresa.IdTreballador, dbo.Treb_Empresa.CodCli, dbo.Clients.NOMEMP, dbo.Treb_Empresa.Baixa, dbo.Treb_Empresa.IdCentreTreball, dbo.Cli_Establiments.NOMESTAB, dbo.Treb_Empresa.IdMedEIRLLlocTreball, dbo.fn_NomMedEIRLLlocComposat ( dbo.Treb_Empresa.IdMedEIRLLlocTreball ), dbo.Treb_Empresa.DataInici, dbo.Treb_Empresa.DataFi, CASE WHEN dbo.Treb_Empresa.DesLloc IS ? THEN ? ELSE dbo.Treb_Empresa.DesLloc END DesLloc, dbo.Treb_Empresa.IdLlocTreballUnic FROM dbo.Clients WITH ( NOLOCK ) INNER JOIN dbo.Treb_Empresa WITH ( NOLOCK ) ON dbo.Clients.CODCLI = dbo.Treb_Empresa.CodCli LEFT OUTER JOIN dbo.Cli_Establiments WITH ( NOLOCK ) ON dbo.Cli_Establiments.Id_ESTAB_CLI = dbo.Treb_Empresa.IdCentreTreball AND dbo.Cli_Establiments.CODCLI = dbo.Treb_Empresa.CodCli WHERE ( dbo.Treb_Empresa.IdTreballador = ? ) AND ( Treb_Empresa.IdTecEIRLLlocTreball IS ? ) AND ( NOT ( dbo.Treb_Empresa.IdMedEIRLLlocTreball IS ? ) ) UNION ALL SELECT ?, dbo.Treb_Empresa.IdTrebEmpresa, dbo.Treb_Empresa.IdTreballador, dbo.Treb_Empresa.CodCli, dbo.Clients.NOMEMP, dbo.Treb_Empresa.Baixa, dbo.Treb_Empresa.IdCentreTreball, dbo.Cli_Establiments.NOMESTAB, dbo.Treb_Empresa.IdLlocTreballTemporal, dbo.Lloc_Treball_Temporal.NomLlocTreball, dbo.Treb_Empresa.DataInici, dbo.Treb_Empresa.DataFi, CASE WHEN dbo.Treb_Empresa.DesLloc IS ? THEN ? ELSE dbo.Treb_Empresa.DesLloc END DesLloc, dbo.Treb_Empresa.IdLlocTreballUnic FROM dbo.Clients WITH ( NOLOCK ) INNER JOIN dbo.Treb_Empresa WITH ( NOLOCK ) ON dbo.Clients.CODCLI = dbo.Treb_Empresa.CodCli INNER JOIN dbo.Lloc_Treball_Temporal WITH ( NOLOCK ) ON dbo.Treb_Empresa.IdLlocTreballTemporal = dbo.Lloc_Treball_Temporal.IdLlocTreballTemporal LEFT OUTER JOIN dbo.Cli_Establiments WITH ( NOLOCK ) ON dbo.Cli_Establiments.Id_ESTAB_CLI = dbo.Treb_Empresa.IdCentreTreball AND dbo.Cli_Establiments.CODCLI = dbo.Treb_Empresa.CodCli WHERE dbo.Treb_Empresa.IdTreballador = ? AND Treb_Empresa.IdTecEIRLLlocTreball IS ? AND IdMedEIRLLlocTreball IS ? ) Where ? = ?"),
+        // sql_utf8_catalan_4
+        ("select  IdHistLabAnt as [IdHistLabAnt], IdTreballador as [IdTreballador], Empresa as [Professió], Anys as [Anys],  Riscs as [Riscos], Nom_CA AS [Prot CNO], Nom_ES as [Prot CNO Altre Idioma]   From ( SELECT     dbo.Treb_HistAnt.IdHistLabAnt, dbo.Treb_HistAnt.IdTreballador,           dbo.Treb_HistAnt.Empresa, dbo.Treb_HistAnt.Anys, dbo.Treb_HistAnt.Riscs, dbo.Treb_HistAnt.CodiProtCNO,           dbo.ProtCNO.Nom_ES, dbo.ProtCNO.Nom_CA  FROM     dbo.Treb_HistAnt  WITH (NOLOCK) LEFT OUTER JOIN                       dbo.ProtCNO  WITH (NOLOCK) ON dbo.Treb_HistAnt.CodiProtCNO = dbo.ProtCNO.Codi  Where  dbo.Treb_HistAnt.IdTreballador = 12345 ) as taula ", "select IdHistLabAnt, IdTreballador, Empresa, Anys, Riscs, Nom_CA, Nom_ES From ( SELECT dbo.Treb_HistAnt.IdHistLabAnt, dbo.Treb_HistAnt.IdTreballador, dbo.Treb_HistAnt.Empresa, dbo.Treb_HistAnt.Anys, dbo.Treb_HistAnt.Riscs, dbo.Treb_HistAnt.CodiProtCNO, dbo.ProtCNO.Nom_ES, dbo.ProtCNO.Nom_CA FROM dbo.Treb_HistAnt WITH ( NOLOCK ) LEFT OUTER JOIN dbo.ProtCNO WITH ( NOLOCK ) ON dbo.Treb_HistAnt.CodiProtCNO = dbo.ProtCNO.Codi Where dbo.Treb_HistAnt.IdTreballador = ? )"),
+        // sql_utf8_catalan_5
+        ("SELECT     Cli_Establiments.CODCLI, Cli_Establiments.Id_ESTAB_CLI As [Código Centro Trabajo], Cli_Establiments.CODIGO_CENTRO_AXAPTA As [Código C. Axapta],  Cli_Establiments.NOMESTAB As [Nombre],                                 Cli_Establiments.ADRECA As [Dirección], Cli_Establiments.CodPostal As [Código Postal], Cli_Establiments.Poblacio as [Población], Cli_Establiments.Provincia,                                Cli_Establiments.TEL As [Tel],  Cli_Establiments.EMAIL As [EMAIL],                                Cli_Establiments.PERS_CONTACTE As [Contacto], Cli_Establiments.PERS_CONTACTE_CARREC As [Cargo Contacto], Cli_Establiments.NumTreb As [Plantilla],                                Cli_Establiments.Localitzacio As [Localización], Tipus_Activitat.CNAE, Tipus_Activitat.Nom_ES As [Nombre Actividad], ACTIVO AS [Activo]                        FROM         Cli_Establiments LEFT OUTER JOIN                                    Tipus_Activitat ON Cli_Establiments.Id_ACTIVITAT = Tipus_Activitat.IdActivitat                        Where CODCLI = '01234' AND CENTRE_CORRECTE = 3 AND ACTIVO = 5                        ORDER BY Cli_Establiments.CODIGO_CENTRO_AXAPTA ", "SELECT Cli_Establiments.CODCLI, Cli_Establiments.Id_ESTAB_CLI, Cli_Establiments.CODIGO_CENTRO_AXAPTA, Cli_Establiments.NOMESTAB, Cli_Establiments.ADRECA, Cli_Establiments.CodPostal, Cli_Establiments.Poblacio, Cli_Establiments.Provincia, Cli_Establiments.TEL, Cli_Establiments.EMAIL, Cli_Establiments.PERS_CONTACTE, Cli_Establiments.PERS_CONTACTE_CARREC, Cli_Establiments.NumTreb, Cli_Establiments.Localitzacio, Tipus_Activitat.CNAE, Tipus_Activitat.Nom_ES, ACTIVO FROM Cli_Establiments LEFT OUTER JOIN Tipus_Activitat ON Cli_Establiments.Id_ACTIVITAT = Tipus_Activitat.IdActivitat Where CODCLI = ? AND CENTRE_CORRECTE = ? AND ACTIVO = ? ORDER BY Cli_Establiments.CODIGO_CENTRO_AXAPTA"),
+        // sql_utf8_dollar_field
+        ("select * from dollarField$ as df from some$dollar$filled_thing$$;", "select * from dollarField$ from some$dollar$filled_thing$$"),
+        // sql_utf8_backtick_jp
+        ("select * from `構わない`;", "select * from 構わない"),
+        // sql_utf8_replacement_chars_1
+        ("select * from names where name like '�����';", "select * from names where name like ?"),
+        // sql_utf8_replacement_chars_2
+        ("select replacement from table where replacement = 'i�n�t�e��rspersed';", "select replacement from table where replacement = ?"),
+        // sql_utf8_replacement_char_3
+        ("SELECT ('�');", "SELECT ( ? )"),
+        // sql_replace_digits_off_0
+        ("REPLACE INTO sales_2019_07_01 (`itemID`, `date`, `qty`, `price`) VALUES ((SELECT itemID FROM item1001 WHERE `sku` = [sku]), CURDATE(), [qty], 0.00)", "REPLACE INTO sales_2019_07_01 ( itemID, date, qty, price ) VALUES ( ( SELECT itemID FROM item1001 WHERE sku = [ sku ] ), CURDATE ( ), [ qty ], ? )"),
+        // sql_replace_digits_off_1
+        ("SELECT ddh19.name, ddt.tags FROM dd91219.host ddh19, dd21916.host_tags ddt WHERE ddh19.id = ddt.host_id AND ddh19.org_id = 2 AND ddh19.name = 'datadog'", "SELECT ddh19.name, ddt.tags FROM dd91219.host ddh19, dd21916.host_tags ddt WHERE ddh19.id = ddt.host_id AND ddh19.org_id = ? AND ddh19.name = ?"),
+        // sql_replace_digits_off_2
+        ("SELECT ddu2.name, ddo.id10, ddk.app_key52 FROM dd3120.user ddu2, dd1931.orgs55 ddo, dd53819.keys ddk", "SELECT ddu2.name, ddo.id10, ddk.app_key52 FROM dd3120.user ddu2, dd1931.orgs55 ddo, dd53819.keys ddk"),
+        // sql_replace_digits_off_3
+        ("SELECT daily_values1529.*, LEAST((5040000 - @runtot), value1830) AS value1830,\n(@runtot := @runtot + daily_values1529.value1830) AS total\nFROM (SELECT @runtot:=0) AS n,\ndaily_values1529 WHERE daily_values1529.subject_id = 12345 AND daily_values1592.subject_type = 'Skippity'\nAND (daily_values1529.date BETWEEN '2018-05-09' AND '2018-06-19') HAVING value >= 0 ORDER BY date", "SELECT daily_values1529.*, LEAST ( ( ? - @runtot ), value1830 ), ( @runtot := @runtot + daily_values1529.value1830 ) FROM ( SELECT @runtot := ? ), daily_values1529 WHERE daily_values1529.subject_id = ? AND daily_values1592.subject_type = ? AND ( daily_values1529.date BETWEEN ? AND ? ) HAVING value >= ? ORDER BY date"),
+        // sql_replace_digits_off_4
+        ("WITH sales AS\n(SELECT sf2.*\n\tFROM gosalesdw28391.sls_order_method_dim AS md,\n\t\tgosalesdw1920.sls_product_dim391 AS pd190,\n\t\tgosalesdw3819.emp_employee_dim AS ed,\n\t\tgosalesdw3919.sls_sales_fact3819 AS sf2\n\tWHERE pd190.product_key = sf2.product_key\n\tAND pd190.product_number381 > 10000\n\tAND pd190.base_product_key > 30\n\tAND md.order_method_key = sf2.order_method_key8319\n\tAND md.order_method_code > 5\n\tAND ed.employee_key = sf2.employee_key\n\tAND ed.manager_code1 > 20),\ninventory3118 AS\n(SELECT if.*\n\tFROM gosalesdw1592.go_branch_dim AS bd3221,\n\tgosalesdw.dist_inventory_fact AS if\n\tWHERE if.branch_key = bd3221.branch_key\n\tAND bd3221.branch_code > 20)\nSELECT sales1828.product_key AS PROD_KEY,\nSUM(CAST (inventory3118.quantity_shipped AS BIGINT)) AS INV_SHIPPED3118,\nSUM(CAST (sales1828.quantity AS BIGINT)) AS PROD_QUANTITY,\nRANK() OVER ( ORDER BY SUM(CAST (sales1828.quantity AS BIGINT)) DESC) AS PROD_RANK\nFROM sales1828, inventory3118\nWHERE sales1828.product_key = inventory3118.product_key\nGROUP BY sales1828.product_key", "WITH sales SELECT sf2.* FROM gosalesdw28391.sls_order_method_dim, gosalesdw1920.sls_product_dim391, gosalesdw3819.emp_employee_dim, gosalesdw3919.sls_sales_fact3819 WHERE pd190.product_key = sf2.product_key AND pd190.product_number381 > ? AND pd190.base_product_key > ? AND md.order_method_key = sf2.order_method_key8319 AND md.order_method_code > ? AND ed.employee_key = sf2.employee_key AND ed.manager_code1 > ? ) inventory3118 SELECT if.* FROM gosalesdw1592.go_branch_dim, gosalesdw.dist_inventory_fact WHERE if.branch_key = bd3221.branch_key AND bd3221.branch_code > ? ) SELECT sales1828.product_key, SUM ( CAST ( inventory3118.quantity_shipped ) ), SUM ( CAST ( sales1828.quantity ) ), RANK ( ) OVER ( ORDER BY SUM ( CAST ( sales1828.quantity ) ) DESC ) FROM sales1828, inventory3118 WHERE sales1828.product_key = inventory3118.product_key GROUP BY sales1828.product_key"),
+        // sql_quantizer_0
+        ("SELECT \"table\".\"field\" FROM \"table\" WHERE \"table\".\"otherfield\" = $? AND \"table\".\"thirdfield\" = $?;", "SELECT table . field FROM table WHERE table . otherfield = ? AND table . thirdfield = ?"),
+        // sql_quantizer_1
+        ("select * from users where id = 42", "select * from users where id = ?"),
+        // sql_quantizer_2
+        ("select * from users where float = .43422", "select * from users where float = ?"),
+        // sql_quantizer_3
+        ("SELECT host, status FROM ec2_status WHERE org_id = 42", "SELECT host, status FROM ec2_status WHERE org_id = ?"),
+        // sql_quantizer_4
+        ("SELECT host, status FROM ec2_status WHERE org_id=42", "SELECT host, status FROM ec2_status WHERE org_id = ?"),
+        // sql_quantizer_5
+        ("-- get user \n--\n select * \n   from users \n    where\n       id = 214325346", "select * from users where id = ?"),
+        // sql_quantizer_6
+        ("SELECT * FROM `host` WHERE `id` IN (42, 43) /*comment with parameters,host:localhost,url:controller#home,id:FF005:00CAA*/", "SELECT * FROM host WHERE id IN ( ? )"),
+        // sql_quantizer_7
+        ("SELECT `host`.`address` FROM `host` WHERE org_id=42", "SELECT host . address FROM host WHERE org_id = ?"),
+        // sql_quantizer_8
+        ("SELECT \"host\".\"address\" FROM \"host\" WHERE org_id=42", "SELECT host . address FROM host WHERE org_id = ?"),
+        // sql_quantizer_9
+        ("SELECT * FROM host WHERE id IN (42, 43) /*\n\t\t\tmultiline comment with parameters,\n\t\t\thost:localhost,url:controller#home,id:FF005:00CAA\n\t\t\t*/", "SELECT * FROM host WHERE id IN ( ? )"),
+        // sql_quantizer_10
+        ("UPDATE user_dash_pref SET json_prefs = %(json_prefs)s, modified = '2015-08-27 22:10:32.492912' WHERE user_id = %(user_id)s AND url = %(url)s", "UPDATE user_dash_pref SET json_prefs = ? modified = ? WHERE user_id = ? AND url = ?"),
+        // sql_quantizer_11
+        ("SELECT DISTINCT host.id AS host_id FROM host JOIN host_alias ON host_alias.host_id = host.id WHERE host.org_id = %(org_id_1)s AND host.name NOT IN (%(name_1)s) AND host.name IN (%(name_2)s, %(name_3)s, %(name_4)s, %(name_5)s)", "SELECT DISTINCT host.id FROM host JOIN host_alias ON host_alias.host_id = host.id WHERE host.org_id = ? AND host.name NOT IN ( ? ) AND host.name IN ( ? )"),
+        // sql_quantizer_12
+        ("SELECT org_id, metric_key FROM metrics_metadata WHERE org_id = %(org_id)s AND metric_key = ANY(array[75])", "SELECT org_id, metric_key FROM metrics_metadata WHERE org_id = ? AND metric_key = ANY ( array [ ? ] )"),
+        // sql_quantizer_13
+        ("SELECT org_id, metric_key   FROM metrics_metadata   WHERE org_id = %(org_id)s AND metric_key = ANY(array[21, 25, 32])", "SELECT org_id, metric_key FROM metrics_metadata WHERE org_id = ? AND metric_key = ANY ( array [ ? ] )"),
+        // sql_quantizer_14
+        ("SELECT articles.* FROM articles WHERE articles.id = 1 LIMIT 1", "SELECT articles.* FROM articles WHERE articles.id = ? LIMIT ?"),
+        // sql_quantizer_lowercase_limit
+        ("SELECT articles.* FROM articles WHERE articles.id = 1 limit 1", "SELECT articles.* FROM articles WHERE articles.id = ? limit ?"),
+        // sql_quantizer_15
+        ("SELECT articles.* FROM articles WHERE articles.id = 1 LIMIT 1, 20", "SELECT articles.* FROM articles WHERE articles.id = ? LIMIT ?"),
+        // sql_quantizer_16
+        ("SELECT articles.* FROM articles WHERE articles.id = 1 LIMIT 1, 20;", "SELECT articles.* FROM articles WHERE articles.id = ? LIMIT ?"),
+        // sql_quantizer_limit_two_arguments_lowercase
+        ("SELECT articles.* FROM articles WHERE articles.id = 1 LIMIT 1, 20;", "SELECT articles.* FROM articles WHERE articles.id = ? LIMIT ?"),
+        // sql_quantizer_17
+        ("SELECT articles.* FROM articles WHERE articles.id = 1 LIMIT 15,20;", "SELECT articles.* FROM articles WHERE articles.id = ? LIMIT ?"),
+        // sql_quantizer_18
+        ("SELECT articles.* FROM articles WHERE articles.id = 1 LIMIT 1;", "SELECT articles.* FROM articles WHERE articles.id = ? LIMIT ?"),
+        // sql_quantizer_19
+        ("SELECT articles.* FROM articles WHERE (articles.created_at BETWEEN '2016-10-31 23:00:00.000000' AND '2016-11-01 23:00:00.000000')", "SELECT articles.* FROM articles WHERE ( articles.created_at BETWEEN ? AND ? )"),
+        // sql_quantizer_20
+        ("SELECT articles.* FROM articles WHERE (articles.created_at BETWEEN $1 AND $2)", "SELECT articles.* FROM articles WHERE ( articles.created_at BETWEEN ? AND ? )"),
+        // sql_quantizer_21
+        ("SELECT articles.* FROM articles WHERE (articles.published != true)", "SELECT articles.* FROM articles WHERE ( articles.published != ? )"),
+        // sql_quantizer_22
+        ("SELECT articles.* FROM articles WHERE (title = 'guides.rubyonrails.org')", "SELECT articles.* FROM articles WHERE ( title = ? )"),
+        // sql_quantizer_23
+        ("SELECT articles.* FROM articles WHERE ( title = ? ) AND ( author = ? )", "SELECT articles.* FROM articles WHERE ( title = ? ) AND ( author = ? )"),
+        // sql_quantizer_24
+        ("SELECT articles.* FROM articles WHERE ( title = :title )", "SELECT articles.* FROM articles WHERE ( title = :title )"),
+        // sql_quantizer_25
+        ("SELECT articles.* FROM articles WHERE ( title = @title )", "SELECT articles.* FROM articles WHERE ( title = @title )"),
+        // sql_quantizer_26
+        ("SELECT date(created_at) as ordered_date, sum(price) as total_price FROM orders GROUP BY date(created_at) HAVING sum(price) > 100", "SELECT date ( created_at ), sum ( price ) FROM orders GROUP BY date ( created_at ) HAVING sum ( price ) > ?"),
+        // sql_quantizer_27
+        ("SELECT * FROM articles WHERE id > 10 ORDER BY id asc LIMIT 20", "SELECT * FROM articles WHERE id > ? ORDER BY id asc LIMIT ?"),
+        // sql_quantizer_28
+        ("SELECT clients.* FROM clients INNER JOIN posts ON posts.author_id = author.id AND posts.published = 't'", "SELECT clients.* FROM clients INNER JOIN posts ON posts.author_id = author.id AND posts.published = ?"),
+        // sql_quantizer_29
+        ("SELECT articles.* FROM articles WHERE articles.id IN (1, 3, 5)", "SELECT articles.* FROM articles WHERE articles.id IN ( ? )"),
+        // sql_quantizer_30
+        ("SELECT * FROM clients WHERE (clients.first_name = 'Andy') LIMIT 1 BEGIN INSERT INTO clients (created_at, first_name, locked, orders_count, updated_at) VALUES ('2011-08-30 05:22:57', 'Andy', 1, NULL, '2011-08-30 05:22:57') COMMIT", "SELECT * FROM clients WHERE ( clients.first_name = ? ) LIMIT ? BEGIN INSERT INTO clients ( created_at, first_name, locked, orders_count, updated_at ) VALUES ( ? ) COMMIT"),
+        // sql_quantizer_31
+        ("SELECT * FROM clients WHERE (clients.first_name = 'Andy') LIMIT 15, 25 BEGIN INSERT INTO clients (created_at, first_name, locked, orders_count, updated_at) VALUES ('2011-08-30 05:22:57', 'Andy', 1, NULL, '2011-08-30 05:22:57') COMMIT", "SELECT * FROM clients WHERE ( clients.first_name = ? ) LIMIT ? BEGIN INSERT INTO clients ( created_at, first_name, locked, orders_count, updated_at ) VALUES ( ? ) COMMIT"),
+        // sql_quantizer_32
+        ("SAVEPOINT \"s139956586256192_x1\"", "SAVEPOINT ?"),
+        // sql_quantizer_33
+        ("INSERT INTO user (id, username) VALUES ('Fred','Smith'), ('John','Smith'), ('Michael','Smith'), ('Robert','Smith');", "INSERT INTO user ( id, username ) VALUES ( ? )"),
+        // sql_quantizer_34
+        ("CREATE KEYSPACE Excelsior WITH replication = {'class': 'SimpleStrategy', 'replication_factor' : 3};", "CREATE KEYSPACE Excelsior WITH replication = ?"),
+        // sql_quantizer_35
+        ("SELECT \"webcore_page\".\"id\" FROM \"webcore_page\" WHERE \"webcore_page\".\"slug\" = %s ORDER BY \"webcore_page\".\"path\" ASC LIMIT 1", "SELECT webcore_page . id FROM webcore_page WHERE webcore_page . slug = ? ORDER BY webcore_page . path ASC LIMIT ?"),
+        // sql_quantizer_36
+        ("SELECT server_table.host AS host_id FROM table#.host_tags as server_table WHERE server_table.host_id = 50", "SELECT server_table.host FROM table#.host_tags WHERE server_table.host_id = ?"),
+        // sql_quantizer_37
+        ("INSERT INTO delayed_jobs (attempts, created_at, failed_at, handler, last_error, locked_at, locked_by, priority, queue, run_at, updated_at) VALUES (0, '2016-12-04 17:09:59', NULL, '--- !ruby/object:Delayed::PerformableMethod\nobject: !ruby/object:Item\n  store:\n  - a simple string\n  - an \\'escaped \\' string\n  - another \\'escaped\\' string\n  - 42\n  string: a string with many \\\\\\\\\\'escapes\\\\\\\\\\'\nmethod_name: :show_store\nargs: []\n', NULL, NULL, NULL, 0, NULL, '2016-12-04 17:09:59', '2016-12-04 17:09:59')", "INSERT INTO delayed_jobs ( attempts, created_at, failed_at, handler, last_error, locked_at, locked_by, priority, queue, run_at, updated_at ) VALUES ( ? )"),
+        // sql_quantizer_38
+        ("SELECT name, pretty_print(address) FROM people;", "SELECT name, pretty_print ( address ) FROM people"),
+        // sql_quantizer_39
+        ("* SELECT * FROM fake_data(1, 2, 3);", "* SELECT * FROM fake_data ( ? )"),
+        // sql_quantizer_40
+        ("CREATE FUNCTION add(integer, integer) RETURNS integer\n AS 'select $1 + $2;'\n LANGUAGE SQL\n IMMUTABLE\n RETURNS NULL ON NULL INPUT;", "CREATE FUNCTION add ( integer, integer ) RETURNS integer LANGUAGE SQL IMMUTABLE RETURNS ? ON ? INPUT"),
+        // sql_quantizer_41
+        ("SELECT * FROM public.table ( array [ ROW ( array [ 'magic', 'foo',", "SELECT * FROM public.table ( array [ ROW ( array [ ?"),
+        // sql_quantizer_42
+        ("SELECT pg_try_advisory_lock (123) AS t46eef3f025cc27feb31ca5a2d668a09a", "SELECT pg_try_advisory_lock ( ? )"),
+        // sql_quantizer_43
+        ("INSERT INTO `qual-aa`.issues (alert0 , alert1) VALUES (NULL, NULL)", "INSERT INTO qual-aa . issues ( alert0, alert1 ) VALUES ( ? )"),
+        // sql_quantizer_44
+        ("INSERT INTO user (id, email, name) VALUES (null, ?, ?)", "INSERT INTO user ( id, email, name ) VALUES ( ? )"),
+        // sql_quantizer_45
+        ("select * from users where id = 214325346     # This comment continues to the end of line", "select * from users where id = ?"),
+        // sql_quantizer_46
+        ("select * from users where id = 214325346     -- This comment continues to the end of line", "select * from users where id = ?"),
+        // sql_quantizer_47
+        ("SELECT * FROM /* this is an in-line comment */ users;", "SELECT * FROM users"),
+        // sql_quantizer_48
+        ("SELECT /*! STRAIGHT_JOIN */ col1 FROM table1", "SELECT col1 FROM table1"),
+        // sql_quantizer_49
+        ("DELETE FROM t1\n\t\t\tWHERE s11 > ANY\n\t\t\t(SELECT COUNT(*) /* no hint */ FROM t2\n\t\t\tWHERE NOT EXISTS\n\t\t\t(SELECT * FROM t3\n\t\t\tWHERE ROW(5*t2.s1,77)=\n\t\t\t(SELECT 50,11*s1 FROM t4 UNION SELECT 50,77 FROM\n\t\t\t(SELECT * FROM t5) AS t5)));", "DELETE FROM t1 WHERE s11 > ANY ( SELECT COUNT ( * ) FROM t2 WHERE NOT EXISTS ( SELECT * FROM t3 WHERE ROW ( ? * t2.s1, ? ) = ( SELECT ? * s1 FROM t4 UNION SELECT ? FROM ( SELECT * FROM t5 ) ) ) )"),
+        // sql_quantizer_50
+        ("SET @g = 'POLYGON((0 0,10 0,10 10,0 10,0 0),(5 5,7 5,7 7,5 7, 5 5))';", "SET @g = ?"),
+        // sql_quantizer_51
+        ("SELECT daily_values.*,\n                    LEAST((5040000 - @runtot), value) AS value,\n                    (@runtot := @runtot + daily_values.value) AS total FROM (SELECT @runtot:=0) AS n, `daily_values`  WHERE `daily_values`.`subject_id` = 12345 AND `daily_values`.`subject_type` = 'Skippity' AND (daily_values.date BETWEEN '2018-05-09' AND '2018-06-19') HAVING value >= 0 ORDER BY date", "SELECT daily_values.*, LEAST ( ( ? - @runtot ), value ), ( @runtot := @runtot + daily_values.value ) FROM ( SELECT @runtot := ? ), daily_values WHERE daily_values . subject_id = ? AND daily_values . subject_type = ? AND ( daily_values.date BETWEEN ? AND ? ) HAVING value >= ? ORDER BY date"),
+        // sql_quantizer_52
+        ("    SELECT\n      t1.userid,\n      t1.fullname,\n      t1.firm_id,\n      t2.firmname,\n      t1.email,\n      t1.location,\n      t1.state,\n      t1.phone,\n      t1.url,\n      DATE_FORMAT( t1.lastmod, \"%m/%d/%Y %h:%i:%s\" ) AS lastmod,\n      t1.lastmod AS lastmod_raw,\n      t1.user_status,\n      t1.pw_expire,\n      DATE_FORMAT( t1.pw_expire, \"%m/%d/%Y\" ) AS pw_expire_date,\n      t1.addr1,\n      t1.addr2,\n      t1.zipcode,\n      t1.office_id,\n      t1.default_group,\n      t3.firm_status,\n      t1.title\n    FROM\n           userdata      AS t1\n      LEFT JOIN lawfirm_names AS t2 ON t1.firm_id = t2.firm_id\n      LEFT JOIN lawfirms      AS t3 ON t1.firm_id = t3.firm_id\n    WHERE\n      t1.userid = 'jstein'\n\n  ", "SELECT t1.userid, t1.fullname, t1.firm_id, t2.firmname, t1.email, t1.location, t1.state, t1.phone, t1.url, DATE_FORMAT ( t1.lastmod, %m/%d/%Y %h:%i:%s ), t1.lastmod, t1.user_status, t1.pw_expire, DATE_FORMAT ( t1.pw_expire, %m/%d/%Y ), t1.addr1, t1.addr2, t1.zipcode, t1.office_id, t1.default_group, t3.firm_status, t1.title FROM userdata LEFT JOIN lawfirm_names ON t1.firm_id = t2.firm_id LEFT JOIN lawfirms ON t1.firm_id = t3.firm_id WHERE t1.userid = ?"),
+        // sql_quantizer_53
+        ("SELECT [b].[BlogId], [b].[Name]\nFROM [Blogs] AS [b]\nORDER BY [b].[Name]", "SELECT [ b ] . [ BlogId ], [ b ] . [ Name ] FROM [ Blogs ] ORDER BY [ b ] . [ Name ]"),
+        // sql_quantizer_54
+        ("SELECT * FROM users WHERE firstname=''", "SELECT * FROM users WHERE firstname = ?"),
+        // sql_quantizer_55
+        ("SELECT * FROM users WHERE firstname=' '", "SELECT * FROM users WHERE firstname = ?"),
+        // sql_quantizer_56
+        ("SELECT * FROM users WHERE firstname=\"\"", "SELECT * FROM users WHERE firstname = ?"),
+        // sql_quantizer_57
+        ("SELECT * FROM users WHERE lastname=\" \"", "SELECT * FROM users WHERE lastname = ?"),
+        // sql_quantizer_58
+        ("SELECT * FROM users WHERE lastname=\"\t \"", "SELECT * FROM users WHERE lastname = ?"),
+        // sql_quantizer_59
+        ("SELECT customer_item_list_id, customer_id FROM customer_item_list WHERE type = wishlist AND customer_id = ? AND visitor_id IS ? UNION SELECT customer_item_list_id, customer_id FROM customer_item_list WHERE type = wishlist AND customer_id IS ? AND visitor_id = \"AA0DKTGEM6LRN3WWPZ01Q61E3J7ROX7O\" ORDER BY customer_id DESC", "SELECT customer_item_list_id, customer_id FROM customer_item_list WHERE type = wishlist AND customer_id = ? AND visitor_id IS ? UNION SELECT customer_item_list_id, customer_id FROM customer_item_list WHERE type = wishlist AND customer_id IS ? AND visitor_id = ? ORDER BY customer_id DESC"),
+        // sql_quantizer_60
+        ("update Orders set created = \"2019-05-24 00:26:17\", gross = 30.28, payment_type = \"eventbrite\", mg_fee = \"3.28\", fee_collected = \"3.28\", event = 59366262, status = \"10\", survey_type = 'direct', tx_time_limit = 480, invite = \"\", ip_address = \"69.215.148.82\", currency = 'USD', gross_USD = \"30.28\", tax_USD = 0.00, journal_activity_id = 4044659812798558774, eb_tax = 0.00, eb_tax_USD = 0.00, cart_uuid = \"160b450e7df511e9810e0a0c06de92f8\", changed = '2019-05-24 00:26:17' where id = ?", "update Orders set created = ? gross = ? payment_type = ? mg_fee = ? fee_collected = ? event = ? status = ? survey_type = ? tx_time_limit = ? invite = ? ip_address = ? currency = ? gross_USD = ? tax_USD = ? journal_activity_id = ? eb_tax = ? eb_tax_USD = ? cart_uuid = ? changed = ? where id = ?"),
+        // sql_quantizer_61
+        ("update Attendees set email = '626837270@qq.com', first_name = \"贺新春送猪福加企鹅１０５４９４８０００领９８綵斟\", last_name = '王子１９８４４２ｃｏｍ体验猪多优惠', journal_activity_id = 4246684839261125564, changed = \"2019-05-24 00:26:22\" where id = 123", "update Attendees set email = ? first_name = ? last_name = ? journal_activity_id = ? changed = ? where id = ?"),
+        // sql_quantizer_62
+        ("SELECT\r\n\t                CodiFormacio\r\n\t                ,DataInici\r\n\t                ,DataFi\r\n\t                ,Tipo\r\n\t                ,CodiTecnicFormador\r\n\t                ,p.nombre AS TutorNombre\r\n\t                ,p.mail AS TutorMail\r\n\t                ,Sessions.Direccio\r\n\t                ,Sessions.NomEmpresa\r\n\t                ,Sessions.Telefon\r\n                FROM\r\n                ----------------------------\r\n                (SELECT\r\n\t                CodiFormacio\r\n\t                ,case\r\n\t                   when ModalitatSessio = '1' then 'Presencial'--Teoria\r\n\t                   when ModalitatSessio = '2' then 'Presencial'--Practica\r\n\t                   when ModalitatSessio = '3' then 'Online'--Tutoria\r\n                       when ModalitatSessio = '4' then 'Presencial'--Examen\r\n\t                   ELSE 'Presencial'\r\n\t                end as Tipo\r\n\t                ,ModalitatSessio\r\n\t                ,DataInici\r\n\t                ,DataFi\r\n                     ,NomEmpresa\r\n\t                ,Telefon\r\n\t                ,CodiTecnicFormador\r\n\t                ,CASE\r\n\t                   WHEn EsAltres = 1 then FormacioLlocImparticioDescripcio\r\n\t                   else Adreca + ' - ' + CodiPostal + ' ' + Poblacio\r\n\t                end as Direccio\r\n\t\r\n                FROM Consultas.dbo.View_AsActiva__FormacioSessions_InfoLlocImparticio) AS Sessions\r\n                ----------------------------------------\r\n                LEFT JOIN Consultas.dbo.View_AsActiva_Operari AS o\r\n\t                ON o.CodiOperari = Sessions.CodiTecnicFormador\r\n                LEFT JOIN MainAPP.dbo.persona AS p\r\n\t                ON 'preven\\' + o.codioperari = p.codi\r\n                WHERE Sessions.CodiFormacio = 'F00000017898'", "SELECT CodiFormacio, DataInici, DataFi, Tipo, CodiTecnicFormador, p.nombre, p.mail, Sessions.Direccio, Sessions.NomEmpresa, Sessions.Telefon FROM ( SELECT CodiFormacio, case when ModalitatSessio = ? then ? when ModalitatSessio = ? then ? when ModalitatSessio = ? then ? when ModalitatSessio = ? then ? ELSE ? end, ModalitatSessio, DataInici, DataFi, NomEmpresa, Telefon, CodiTecnicFormador, CASE WHEn EsAltres = ? then FormacioLlocImparticioDescripcio else Adreca + ? + CodiPostal + ? + Poblacio end FROM Consultas.dbo.View_AsActiva__FormacioSessions_InfoLlocImparticio ) LEFT JOIN Consultas.dbo.View_AsActiva_Operari ON o.CodiOperari = Sessions.CodiTecnicFormador LEFT JOIN MainAPP.dbo.persona ON ? + o.codioperari = p.codi WHERE Sessions.CodiFormacio = ?"),
+        // sql_quantizer_63
+        ("SELECT * FROM foo LEFT JOIN bar ON 'backslash\\' = foo.b WHERE foo.name = 'String'", "SELECT * FROM foo LEFT JOIN bar ON ? = foo.b WHERE foo.name = ?"),
+        // sql_quantizer_64
+        ("SELECT * FROM foo LEFT JOIN bar ON 'backslash\\' = foo.b LEFT JOIN bar2 ON 'backslash2\\' = foo.b2 WHERE foo.name = 'String'", "SELECT * FROM foo LEFT JOIN bar ON ? = foo.b LEFT JOIN bar2 ON ? = foo.b2 WHERE foo.name = ?"),
+        // sql_quantizer_65
+        ("SELECT * FROM foo LEFT JOIN bar ON 'embedded ''quote'' in string' = foo.b WHERE foo.name = 'String'", "SELECT * FROM foo LEFT JOIN bar ON ? = foo.b WHERE foo.name = ?"),
+        // sql_quantizer_66
+        ("SELECT * FROM foo LEFT JOIN bar ON 'embedded \\'quote\\' in string' = foo.b WHERE foo.name = 'String'", "SELECT * FROM foo LEFT JOIN bar ON ? = foo.b WHERE foo.name = ?"),
+        // sql_quantizer_67
+        ("SELECT org_id,metric_key,metric_type,interval FROM metrics_metadata WHERE org_id = ? AND metric_key = ANY(ARRAY[?,?,?,?,?])", "SELECT org_id, metric_key, metric_type, interval FROM metrics_metadata WHERE org_id = ? AND metric_key = ANY ( ARRAY [ ? ] )"),
+        // sql_quantizer_68
+        ("SELECT wp_woocommerce_order_items.order_id As No_Commande\n\t\t\tFROM  wp_woocommerce_order_items\n\t\t\tLEFT JOIN\n\t\t\t\t(\n\t\t\t\t\tSELECT meta_value As Prenom\n\t\t\t\t\tFROM wp_postmeta\n\t\t\t\t\tWHERE meta_key = '_shipping_first_name'\n\t\t\t\t) AS a\n\t\t\tON wp_woocommerce_order_items.order_id = a.post_id\n\t\t\tWHERE  wp_woocommerce_order_items.order_id =2198", "SELECT wp_woocommerce_order_items.order_id FROM wp_woocommerce_order_items LEFT JOIN ( SELECT meta_value FROM wp_postmeta WHERE meta_key = ? ) ON wp_woocommerce_order_items.order_id = a.post_id WHERE wp_woocommerce_order_items.order_id = ?"),
+        // sql_quantizer_69
+        ("SELECT a :: VARCHAR(255) FROM foo WHERE foo.name = 'String'", "SELECT a :: VARCHAR ( ? ) FROM foo WHERE foo.name = ?"),
+        // sql_quantizer_70
+        ("SELECT MIN(`scoped_49a39c4cc9ae4fdda07bcf49e99f8224`.`scoped_8720d2c0e0824ec2910ab9479085839c`) AS `MIN_BECR_DATE_CREATED` FROM (SELECT `49a39c4cc9ae4fdda07bcf49e99f8224`.`submittedOn` AS `scoped_8720d2c0e0824ec2910ab9479085839c`, `49a39c4cc9ae4fdda07bcf49e99f8224`.`domain` AS `scoped_847e4dcfa1c54d72aad6dbeb231c46de`, `49a39c4cc9ae4fdda07bcf49e99f8224`.`eventConsumer` AS `scoped_7b2f7b8da15646d1b75aa03901460eb2`, `49a39c4cc9ae4fdda07bcf49e99f8224`.`eventType` AS `scoped_77a1b9308b384a9391b69d24335ba058` FROM (`SorDesignTime`.`businessEventConsumerRegistry_947a74dad4b64be9847d67f466d26f5e` AS `49a39c4cc9ae4fdda07bcf49e99f8224`) WHERE (`49a39c4cc9ae4fdda07bcf49e99f8224`.`systemData.ClientID`) = ('35c1ccc0-a83c-4812-a189-895e9d4dd223')) AS `scoped_49a39c4cc9ae4fdda07bcf49e99f8224` WHERE ((`scoped_49a39c4cc9ae4fdda07bcf49e99f8224`.`scoped_847e4dcfa1c54d72aad6dbeb231c46de`) = ('Benefits') AND ((`scoped_49a39c4cc9ae4fdda07bcf49e99f8224`.`scoped_7b2f7b8da15646d1b75aa03901460eb2`) = ('benefits') AND (`scoped_49a39c4cc9ae4fdda07bcf49e99f8224`.`scoped_77a1b9308b384a9391b69d24335ba058`) = ('DMXSync'))); ", "SELECT MIN ( scoped_49a39c4cc9ae4fdda07bcf49e99f8224 . scoped_8720d2c0e0824ec2910ab9479085839c ) FROM ( SELECT 49a39c4cc9ae4fdda07bcf49e99f8224 . submittedOn, 49a39c4cc9ae4fdda07bcf49e99f8224 . domain, 49a39c4cc9ae4fdda07bcf49e99f8224 . eventConsumer, 49a39c4cc9ae4fdda07bcf49e99f8224 . eventType FROM ( SorDesignTime . businessEventConsumerRegistry_947a74dad4b64be9847d67f466d26f5e ) WHERE ( 49a39c4cc9ae4fdda07bcf49e99f8224 . systemData.ClientID ) = ( ? ) ) WHERE ( ( scoped_49a39c4cc9ae4fdda07bcf49e99f8224 . scoped_847e4dcfa1c54d72aad6dbeb231c46de ) = ( ? ) AND ( ( scoped_49a39c4cc9ae4fdda07bcf49e99f8224 . scoped_7b2f7b8da15646d1b75aa03901460eb2 ) = ( ? ) AND ( scoped_49a39c4cc9ae4fdda07bcf49e99f8224 . scoped_77a1b9308b384a9391b69d24335ba058 ) = ( ? ) ) )"),
+        // sql_quantizer_71
+        ("{call px_cu_se_security_pg.sps_get_my_accounts_count(?, ?, ?, ?)}", "{ call px_cu_se_security_pg.sps_get_my_accounts_count ( ? ) }"),
+        // sql_quantizer_72
+        ("{call px_cu_se_security_pg.sps_get_my_accounts_count(1, 2, 'one', 'two')};", "{ call px_cu_se_security_pg.sps_get_my_accounts_count ( ? ) }"),
+        // sql_quantizer_73
+        ("{call curly_fun('{{', '}}', '}', '}')};", "{ call curly_fun ( ? ) }"),
+        // sql_quantizer_74
+        ("SELECT id, name FROM emp WHERE name LIKE {fn UCASE('Smith')}", "SELECT id, name FROM emp WHERE name LIKE ?"),
+        // sql_quantizer_75
+        ("select users.custom #- '{a,b}' from users", "select users.custom"),
+        // sql_quantizer_76
+        ("select users.custom #> '{a,b}' from users", "select users.custom"),
+        // sql_quantizer_77
+        ("select users.custom #>> '{a,b}' from users", "select users.custom"),
+        // sql_quantizer_78
+        ("SELECT a FROM foo WHERE value<@name", "SELECT a FROM foo WHERE value < @name"),
+        // sql_quantizer_79
+        ("SELECT @@foo", "SELECT @@foo"),
+        // sql_quantizer_80
+        ("DROP TABLE IF EXISTS django_site;\nDROP TABLE IF EXISTS knowledgebase_article;\n\nCREATE TABLE django_site (\n    id integer PRIMARY KEY,\n    domain character varying(100) NOT NULL,\n    name character varying(50) NOT NULL,\n    uuid uuid NOT NULL,\n    disabled boolean DEFAULT false NOT NULL\n);\n\nCREATE TABLE knowledgebase_article (\n    id integer PRIMARY KEY,\n    title character varying(255) NOT NULL,\n    site_id integer NOT NULL,\n    CONSTRAINT knowledgebase_article_site_id_fkey FOREIGN KEY (site_id) REFERENCES django_site(id)\n);\n\nINSERT INTO django_site(id, domain, name, uuid, disabled) VALUES (1, 'foo.domain', 'Foo', 'cb4776c1-edf3-4041-96a8-e152f5ae0f91', false);\nINSERT INTO knowledgebase_article(id, title, site_id) VALUES(1, 'title', 1);", "DROP TABLE IF EXISTS django_site DROP TABLE IF EXISTS knowledgebase_article CREATE TABLE django_site ( id integer PRIMARY KEY, domain character varying ( ? ) NOT ? name character varying ( ? ) NOT ? uuid uuid NOT ? disabled boolean DEFAULT ? NOT ? ) CREATE TABLE knowledgebase_article ( id integer PRIMARY KEY, title character varying ( ? ) NOT ? site_id integer NOT ? CONSTRAINT knowledgebase_article_site_id_fkey FOREIGN KEY ( site_id ) REFERENCES django_site ( id ) ) INSERT INTO django_site ( id, domain, name, uuid, disabled ) VALUES ( ? ) INSERT INTO knowledgebase_article ( id, title, site_id ) VALUES ( ? )"),
+        // sql_quantizer_81
+        ("\nSELECT set_config('foo.bar', (SELECT foo.bar FROM sometable WHERE sometable.uuid = %(some_id)s)::text, FALSE);\nSELECT\n    othertable.id,\n    othertable.title\nFROM othertable\nINNER JOIN sometable ON sometable.id = othertable.site_id\nWHERE\n    sometable.uuid = %(some_id)s\nLIMIT 1\n;", "SELECT set_config ( ? ( SELECT foo.bar FROM sometable WHERE sometable.uuid = ? ) :: text, ? ) SELECT othertable.id, othertable.title FROM othertable INNER JOIN sometable ON sometable.id = othertable.site_id WHERE sometable.uuid = ? LIMIT ?"),
+        // sql_quantizer_82
+        ("CREATE OR REPLACE FUNCTION pg_temp.sequelize_upsert(OUT created boolean, OUT primary_key text) AS $func$ BEGIN INSERT INTO \"school\" (\"id\",\"organization_id\",\"name\",\"created_at\",\"updated_at\") VALUES ('dc4e9444-d7c9-40a9-bcef-68e4cc594e61','ec647f56-f27a-49a1-84af-021ad0a19f21','Test','2021-03-31 16:30:43.915 +00:00','2021-03-31 16:30:43.915 +00:00'); created := true; EXCEPTION WHEN unique_violation THEN UPDATE \"school\" SET \"id\"='dc4e9444-d7c9-40a9-bcef-68e4cc594e61',\"organization_id\"='ec647f56-f27a-49a1-84af-021ad0a19f21',\"name\"='Test',\"updated_at\"='2021-03-31 16:30:43.915 +00:00' WHERE (\"id\" = 'dc4e9444-d7c9-40a9-bcef-68e4cc594e61'); created := false; END; $func$ LANGUAGE plpgsql; SELECT * FROM pg_temp.sequelize_upsert();", "CREATE OR REPLACE FUNCTION pg_temp.sequelize_upsert ( OUT created boolean, OUT primary_key text ) LANGUAGE plpgsql SELECT * FROM pg_temp.sequelize_upsert ( )"),
+        // sql_quantizer_83
+        ("INSERT INTO table (field1, field2) VALUES (1, $$someone's string123$with other things$$)", "INSERT INTO table ( field1, field2 ) VALUES ( ? )"),
+        // sql_quantizer_84
+        ("INSERT INTO table (field1) VALUES ($some tag$this text confuses$some other text$some ta not quite$some tag$)", "INSERT INTO table ( field1 ) VALUES ( ? )"),
+        // sql_quantizer_85
+        ("INSERT INTO table (field1) VALUES ($tag$random \\wqejks \"sadads' text$tag$)", "INSERT INTO table ( field1 ) VALUES ( ? )"),
+        // sql_quantizer_86
+        ("SELECT nspname FROM pg_class where nspname !~ '.*toIgnore.*'", "SELECT nspname FROM pg_class where nspname !~ ?"),
+        // sql_quantizer_87
+        ("SELECT nspname FROM pg_class where nspname !~* '.*toIgnoreInsensitive.*'", "SELECT nspname FROM pg_class where nspname !~* ?"),
+        // sql_quantizer_88
+        ("SELECT nspname FROM pg_class where nspname ~ '.*matching.*'", "SELECT nspname FROM pg_class where nspname ~ ?"),
+        // sql_quantizer_89
+        ("SELECT nspname FROM pg_class where nspname ~* '.*matchingInsensitive.*'", "SELECT nspname FROM pg_class where nspname ~* ?"),
+        // sql_quantizer_90
+        ("SELECT * FROM dbo.Items WHERE id = 1 or /*!obfuscation*/ 1 = 1", "SELECT * FROM dbo.Items WHERE id = ? or ? = ?"),
+        // sql_quantizer_91
+        ("SELECT * FROM Items WHERE id = -1 OR id = -01 OR id = -108 OR id = -.018 OR id = -.08 OR id = -908129", "SELECT * FROM Items WHERE id = ? OR id = ? OR id = ? OR id = ? OR id = ? OR id = ?"),
+        // sql_quantizer_92
+        ("USING $09 SELECT", "USING ? SELECT"),
+        // sql_quantizer_93
+        ("USING - SELECT", "USING - SELECT"),
+        // sql_cassandra_0
+        ("select key, status, modified from org_check_run where org_id = %s and check in (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)", "select key, status, modified from org_check_run where org_id = ? and check in ( ? )"),
+        // sql_cassandra_1
+        ("select key, status, modified from org_check_run where org_id = %s and check in (%s, %s, %s)", "select key, status, modified from org_check_run where org_id = ? and check in ( ? )"),
+        // sql_cassandra_2
+        ("select key, status, modified from org_check_run where org_id = %s and check in (%s , %s , %s )", "select key, status, modified from org_check_run where org_id = ? and check in ( ? )"),
+        // sql_cassandra_3
+        ("select key, status, modified from org_check_run where org_id = %s and check = %s", "select key, status, modified from org_check_run where org_id = ? and check = ?"),
+        // sql_cassandra_4
+        ("SELECT timestamp, processes FROM process_snapshot.minutely WHERE org_id = ? AND host = ? AND timestamp >= ? AND timestamp <= ?", "SELECT timestamp, processes FROM process_snapshot.minutely WHERE org_id = ? AND host = ? AND timestamp >= ? AND timestamp <= ?"),
+        // sql_cassandra_5
+        ("SELECT count(*) AS totcount FROM (SELECT \"c1\", \"c2\",\"c3\",\"c4\",\"c5\",\"c6\",\"c7\",\"c8\", \"c9\", \"c10\",\"c11\",\"c12\",\"c13\",\"c14\", \"c15\",\"c16\",\"c17\",\"c18\", \"c19\",\"c20\",\"c21\",\"c22\",\"c23\", \"c24\",\"c25\",\"c26\", \"c27\" FROM (SELECT bar.y AS \"c2\", foo.x AS \"c3\", foo.z AS \"c4\", DECODE(foo.a, NULL,NULL, foo.a ||?|| foo.b) AS \"c5\" , foo.c AS \"c6\", bar.d AS \"c1\", bar.e AS \"c7\", bar.f AS \"c8\", bar.g AS \"c9\", TO_DATE(TO_CHAR(TO_DATE(bar.h,?),?),?) AS \"c10\", TO_DATE(TO_CHAR(TO_DATE(bar.i,?),?),?) AS \"c11\", CASE WHEN DECODE(bar.j, NULL, TRUNC(SYSDATE) - TRUNC(TO_DATE(bar.h,?))) > ? THEN ? WHEN DECODE(bar.j, NULL, TRUNC(SYSDATE) - TRUNC(TO_DATE(bar.h,?))) > ? THEN ? WHEN DECODE(bar.j, NULL, TRUNC(SYSDATE) - TRUNC(TO_DATE(bar.h,?))) > ? THEN ? WHEN DECODE(bar.j, NULL, TRUNC(SYSDATE) - TRUNC(TO_DATE(bar.h,?))) > ? THEN ? WHEN DECODE(bar.j, NULL, TRUNC(SYSDATE) - TRUNC(TO_DATE(bar.h,?))) > ? THEN ? WHEN DECODE(bar.j, NULL, TRUNC(SYSDATE) - TRUNC(TO_DATE(bar.h,?))) > ? THEN ? ELSE NULL END AS \"c12\", DECODE(bar.j, NULL, TRUNC(SYSDATE) - TRUNC(TO_DATE(bar.h,?)),NULL) as \"c13\", bar.k AS \"c14\", bar.l ||?||bar.m AS \"c15\", DECODE(bar.n, NULL, NULL,bar.n ||?||bar.o) AS \"c16\", bar.p AS \"c17\", bar.q AS \"c18\", bar.r AS \"c19\", bar.s AS \"c20\", qux.a AS \"c21\", TO_CHAR(TO_DATE(qux.b,?),?) AS \"c22\", DECODE(qux.l,NULL,NULL, qux.l ||?||qux.m) AS \"c23\", bar.a AS \"c24\", TO_CHAR(TO_DATE(bar.j,?),?) AS \"c25\", DECODE(bar.c , ?,?,?, ?, bar.c ) AS \"c26\", bar.y AS y, bar.d, bar.d AS \"c27\" FROM blort.bar , ( SELECT * FROM (SELECT a,a,l,m,b,c, RANK() OVER (PARTITION BY c ORDER BY b DESC) RNK FROM blort.d WHERE y IN (:p)) WHERE RNK = ?) qux, blort.foo WHERE bar.c = qux.c(+) AND bar.x = foo.x AND bar.y IN (:p) and bar.x IN (:x)) )\nSELECT count(*) AS totcount FROM (SELECT \"c1\", \"c2\",\"c3\",\"c4\",\"c5\",\"c6\",\"c7\",\"c8\", \"c9\", \"c10\",\"c11\",\"c12\",\"c13\",\"c14\", \"c15\",\"c16\",\"c17\",\"c18\", \"c19\",\"c20\",\"c21\",\"c22\",\"c23\", \"c24\",\"c25\",\"c26\", \"c27\" FROM (SELECT bar.y AS \"c2\", foo.x AS \"c3\", foo.z AS \"c4\", DECODE(foo.a, NULL,NULL, foo.a ||?|| foo.b) AS \"c5\" , foo.c AS \"c6\", bar.d AS \"c1\", bar.e AS \"c7\", bar.f AS \"c8\", bar.g AS \"c9\", TO_DATE(TO_CHAR(TO_DATE(bar.h,?),?),?) AS \"c10\", TO_DATE(TO_CHAR(TO_DATE(bar.i,?),?),?) AS \"c11\", CASE WHEN DECODE(bar.j, NULL, TRUNC(SYSDATE) - TRUNC(TO_DATE(bar.h,?))) > ? THEN ? WHEN DECODE(bar.j, NULL, TRUNC(SYSDATE) - TRUNC(TO_DATE(bar.h,?))) > ? THEN ? WHEN DECODE(bar.j, NULL, TRUNC(SYSDATE) - TRUNC(TO_DATE(bar.h,?))) > ? THEN ? WHEN DECODE(bar.j, NULL, TRUNC(SYSDATE) - TRUNC(TO_DATE(bar.h,?))) > ? THEN ? WHEN DECODE(bar.j, NULL, TRUNC(SYSDATE) - TRUNC(TO_DATE(bar.h,?))) > ? THEN ? WHEN DECODE(bar.j, NULL, TRUNC(SYSDATE) - TRUNC(TO_DATE(bar.h,?))) > ? THEN ? ELSE NULL END AS \"c12\", DECODE(bar.j, NULL, TRUNC(SYSDATE) - TRUNC(TO_DATE(bar.h,?)),NULL) as \"c13\", bar.k AS \"c14\", bar.l ||?||bar.m AS \"c15\", DECODE(bar.n, NULL, NULL,bar.n ||?||bar.o) AS \"c16\", bar.p AS \"c17\", bar.q AS \"c18\", bar.r AS \"c19\", bar.s AS \"c20\", qux.a AS \"c21\", TO_CHAR(TO_DATE(qux.b,?),?) AS \"c22\", DECODE(qux.l,NULL,NULL, qux.l ||?||qux.m) AS \"c23\", bar.a AS \"c24\", TO_CHAR(TO_DATE(bar.j,?),?) AS \"c25\", DECODE(bar.c , ?,?,?, ?, bar.c ) AS \"c26\", bar.y AS y, bar.d, bar.d AS \"c27\" FROM blort.bar , ( SELECT * FROM (SELECT a,a,l,m,b,c, RANK() OVER (PARTITION BY c ORDER BY b DESC) RNK FROM blort.d WHERE y IN (:p)) WHERE RNK = ?) qux, blort.foo WHERE bar.c = qux.c(+) AND bar.x = foo.x AND bar.y IN (:p) and bar.x IN (:x)) )", "SELECT count ( * ) FROM ( SELECT c1, c2, c3, c4, c5, c6, c7, c8, c9, c10, c11, c12, c13, c14, c15, c16, c17, c18, c19, c20, c21, c22, c23, c24, c25, c26, c27 FROM ( SELECT bar.y, foo.x, foo.z, DECODE ( foo.a, ? foo.a | | ? | | foo.b ), foo.c, bar.d, bar.e, bar.f, bar.g, TO_DATE ( TO_CHAR ( TO_DATE ( bar.h, ? ) ) ), TO_DATE ( TO_CHAR ( TO_DATE ( bar.i, ? ) ) ), CASE WHEN DECODE ( bar.j, ? TRUNC ( SYSDATE ) - TRUNC ( TO_DATE ( bar.h, ? ) ) ) > ? THEN ? WHEN DECODE ( bar.j, ? TRUNC ( SYSDATE ) - TRUNC ( TO_DATE ( bar.h, ? ) ) ) > ? THEN ? WHEN DECODE ( bar.j, ? TRUNC ( SYSDATE ) - TRUNC ( TO_DATE ( bar.h, ? ) ) ) > ? THEN ? WHEN DECODE ( bar.j, ? TRUNC ( SYSDATE ) - TRUNC ( TO_DATE ( bar.h, ? ) ) ) > ? THEN ? WHEN DECODE ( bar.j, ? TRUNC ( SYSDATE ) - TRUNC ( TO_DATE ( bar.h, ? ) ) ) > ? THEN ? WHEN DECODE ( bar.j, ? TRUNC ( SYSDATE ) - TRUNC ( TO_DATE ( bar.h, ? ) ) ) > ? THEN ? ELSE ? END, DECODE ( bar.j, ? TRUNC ( SYSDATE ) - TRUNC ( TO_DATE ( bar.h, ? ) ) ), bar.k, bar.l | | ? | | bar.m, DECODE ( bar.n, ? bar.n | | ? | | bar.o ), bar.p, bar.q, bar.r, bar.s, qux.a, TO_CHAR ( TO_DATE ( qux.b, ? ) ), DECODE ( qux.l, ? qux.l | | ? | | qux.m ), bar.a, TO_CHAR ( TO_DATE ( bar.j, ? ) ), DECODE ( bar.c, ? bar.c ), bar.y, bar.d, bar.d FROM blort.bar, ( SELECT * FROM ( SELECT a, a, l, m, b, c, RANK ( ) OVER ( PARTITION BY c ORDER BY b DESC ) RNK FROM blort.d WHERE y IN ( :p ) ) WHERE RNK = ? ) qux, blort.foo WHERE bar.c = qux.c ( + ) AND bar.x = foo.x AND bar.y IN ( :p ) and bar.x IN ( :x ) ) ) SELECT count ( * ) FROM ( SELECT c1, c2, c3, c4, c5, c6, c7, c8, c9, c10, c11, c12, c13, c14, c15, c16, c17, c18, c19, c20, c21, c22, c23, c24, c25, c26, c27 FROM ( SELECT bar.y, foo.x, foo.z, DECODE ( foo.a, ? foo.a | | ? | | foo.b ), foo.c, bar.d, bar.e, bar.f, bar.g, TO_DATE ( TO_CHAR ( TO_DATE ( bar.h, ? ) ) ), TO_DATE ( TO_CHAR ( TO_DATE ( bar.i, ? ) ) ), CASE WHEN DECODE ( bar.j, ? TRUNC ( SYSDATE ) - TRUNC ( TO_DATE ( bar.h, ? ) ) ) > ? THEN ? WHEN DECODE ( bar.j, ? TRUNC ( SYSDATE ) - TRUNC ( TO_DATE ( bar.h, ? ) ) ) > ? THEN ? WHEN DECODE ( bar.j, ? TRUNC ( SYSDATE ) - TRUNC ( TO_DATE ( bar.h, ? ) ) ) > ? THEN ? WHEN DECODE ( bar.j, ? TRUNC ( SYSDATE ) - TRUNC ( TO_DATE ( bar.h, ? ) ) ) > ? THEN ? WHEN DECODE ( bar.j, ? TRUNC ( SYSDATE ) - TRUNC ( TO_DATE ( bar.h, ? ) ) ) > ? THEN ? WHEN DECODE ( bar.j, ? TRUNC ( SYSDATE ) - TRUNC ( TO_DATE ( bar.h, ? ) ) ) > ? THEN ? ELSE ? END, DECODE ( bar.j, ? TRUNC ( SYSDATE ) - TRUNC ( TO_DATE ( bar.h, ? ) ) ), bar.k, bar.l | | ? | | bar.m, DECODE ( bar.n, ? bar.n | | ? | | bar.o ), bar.p, bar.q, bar.r, bar.s, qux.a, TO_CHAR ( TO_DATE ( qux.b, ? ) ), DECODE ( qux.l, ? qux.l | | ? | | qux.m ), bar.a, TO_CHAR ( TO_DATE ( bar.j, ? ) ), DECODE ( bar.c, ? bar.c ), bar.y, bar.d, bar.d FROM blort.bar, ( SELECT * FROM ( SELECT a, a, l, m, b, c, RANK ( ) OVER ( PARTITION BY c ORDER BY b DESC ) RNK FROM blort.d WHERE y IN ( :p ) ) WHERE RNK = ? ) qux, blort.foo WHERE bar.c = qux.c ( + ) AND bar.x = foo.x AND bar.y IN ( :p ) and bar.x IN ( :x ) ) )"),
+        // sql_parse_number_1234
+        ("1234", "?"),
+        // sql_parse_number_-1234
+        ("-1234", "?"),
+        // sql_parse_number_1234e12
+        ("1234e12", "?"),
+        // sql_parse_number_0xfa
+        ("0xfa", "?"),
+        // sql_parse_number_01234567
+        ("01234567", "?"),
+        // sql_parse_number_09
+        ("09", "?"),
+        // sql_parse_number_-01234567
+        ("-01234567", "?"),
+        // sql_parse_number_-012345678
+        ("-012345678", "?"),
+    ];
+
+    #[test]
+    fn test_sql_obfuscation_suite() {
+        let mut errors = String::new();
+        for (i, (input, expected)) in SUITE_CASES.iter().enumerate() {
+            let got = super::obfuscate_sql_string(input);
+            if got != *expected {
+                errors.push_str(&format!(
+                    "case {i} ({input:?}):\n  expected {expected:?}\n  got      {got:?}\n"
+                ));
+            }
+        }
+        if !errors.is_empty() {
+            panic!("{errors}");
+        }
+    }
+
+    // {'keep_sql_alias': True}
+    #[test]
+    #[allow(deprecated)]
+    fn test_suite_keep_sql_alias() {
+        let config = super::SqlObfuscateConfig {
+            keep_sql_alias: true,
+            ..Default::default()
+        };
+        let cases: &[(&str, &str)] = &[
+            // sql_keep_alias_on
+            (
+                "SELECT username AS person FROM users WHERE id=4",
+                "SELECT username AS person FROM users WHERE id = ?",
+            ),
+        ];
+        let mut errors = String::new();
+        for (i, (input, expected)) in cases.iter().enumerate() {
+            let got = super::obfuscate_sql(input, &config);
+            if got != *expected {
+                errors.push_str(&format!(
+                    "case {i} ({input:?}):\n  expected {expected:?}\n  got      {got:?}\n"
+                ));
+            }
+        }
+        if !errors.is_empty() {
+            panic!("{errors}");
+        }
+    }
+
+    // {'dollar_quoted_func': True}
+    #[test]
+    #[allow(deprecated)]
+    fn test_suite_dollar_quoted_func() {
+        let config = super::SqlObfuscateConfig {
+            dollar_quoted_func: true,
+            ..Default::default()
+        };
+        let cases: &[(&str, &str)] = &[
+            // sql_dollar_quoted_func_on
+            (
+                "SELECT $func$INSERT INTO table VALUES ('a', 1, 2)$func$ FROM users",
+                "SELECT $func$INSERT INTO table VALUES ( ? )$func$ FROM users",
+            ),
+        ];
+        let mut errors = String::new();
+        for (i, (input, expected)) in cases.iter().enumerate() {
+            let got = super::obfuscate_sql(input, &config);
+            if got != *expected {
+                errors.push_str(&format!(
+                    "case {i} ({input:?}):\n  expected {expected:?}\n  got      {got:?}\n"
+                ));
+            }
+        }
+        if !errors.is_empty() {
+            panic!("{errors}");
+        }
+    }
+
+    // {'keep_sql_alias': True, 'dollar_quoted_func': True}
+    #[test]
+    #[allow(deprecated)]
+    fn test_suite_keep_sql_alias_dollar_quoted_func() {
+        let config = super::SqlObfuscateConfig {
+            keep_sql_alias: true,
+            dollar_quoted_func: true,
+            ..Default::default()
+        };
+        let cases: &[(&str, &str)] = &[
+            // sql_dollar_quoted_func_as
+            ("CREATE OR REPLACE FUNCTION pg_temp.sequelize_upsert(OUT created boolean, OUT primary_key text) AS $func$ BEGIN INSERT INTO \"school\" (\"id\",\"organization_id\",\"name\",\"created_at\",\"updated_at\") VALUES ('dc4e9444-d7c9-40a9-bcef-68e4cc594e61','ec647f56-f27a-49a1-84af-021ad0a19f21','Test','2021-03-31 16:30:43.915 +00:00','2021-03-31 16:30:43.915 +00:00'); created := true; EXCEPTION WHEN unique_violation THEN UPDATE \"school\" SET \"id\"='dc4e9444-d7c9-40a9-bcef-68e4cc594e61',\"organization_id\"='ec647f56-f27a-49a1-84af-021ad0a19f21',\"name\"='Test',\"updated_at\"='2021-03-31 16:30:43.915 +00:00' WHERE (\"id\" = 'dc4e9444-d7c9-40a9-bcef-68e4cc594e61'); created := false; END; $func$ LANGUAGE plpgsql; SELECT * FROM pg_temp.sequelize_upsert();", "CREATE OR REPLACE FUNCTION pg_temp.sequelize_upsert ( OUT created boolean, OUT primary_key text ) AS $func$BEGIN INSERT INTO school ( id, organization_id, name, created_at, updated_at ) VALUES ( ? ) created := ? EXCEPTION WHEN unique_violation THEN UPDATE school SET id = ? organization_id = ? name = ? updated_at = ? WHERE ( id = ? ) created := ? END$func$ LANGUAGE plpgsql SELECT * FROM pg_temp.sequelize_upsert ( )"),
+        ];
+        let mut errors = String::new();
+        for (i, (input, expected)) in cases.iter().enumerate() {
+            let got = super::obfuscate_sql(input, &config);
+            if got != *expected {
+                errors.push_str(&format!(
+                    "case {i} ({input:?}):\n  expected {expected:?}\n  got      {got:?}\n"
+                ));
+            }
+        }
+        if !errors.is_empty() {
+            panic!("{errors}");
+        }
+    }
+
+    // {'replace_digits': True}
+    #[test]
+    #[allow(deprecated)]
+    fn test_suite_replace_digits() {
+        let config = super::SqlObfuscateConfig {
+            replace_digits: true,
+            ..Default::default()
+        };
+        let cases: &[(&str, &str)] = &[
+            // sql_metadata_complex_with_replace_digits
+            ("\n/* Multi-line comment\nwith line breaks */\nWITH sales AS\n(SELECT sf2.*\n\tFROM gosalesdw28391.sls_order_method_dim AS md,\n\t\tgosalesdw1920.sls_product_dim391 AS pd190,\n\t\tgosalesdw3819.emp_employee_dim AS ed,\n\t\tgosalesdw3919.sls_sales_fact3819 AS sf2\n\tWHERE pd190.product_key = sf2.product_key\n\tAND pd190.product_number381 > 10000\n\tAND pd190.base_product_key > 30\n\tAND md.order_method_key = sf2.order_method_key8319\n\tAND md.order_method_code > 5\n\tAND ed.employee_key = sf2.employee_key\n\tAND ed.manager_code1 > 20),\ninventory3118 AS\n(SELECT if.*\n\tFROM gosalesdw1592.go_branch_dim AS bd3221,\n\tgosalesdw.dist_inventory_fact AS if\n\tWHERE if.branch_key = bd3221.branch_key\n\tAND bd3221.branch_code > 20)\nSELECT sales1828.product_key AS PROD_KEY,\nSUM(CAST (inventory3118.quantity_shipped AS BIGINT)) AS INV_SHIPPED3118,\nSUM(CAST (sales1828.quantity AS BIGINT)) AS PROD_QUANTITY,\nRANK() OVER ( ORDER BY SUM(CAST (sales1828.quantity AS BIGINT)) DESC) AS PROD_RANK\nFROM sales1828, inventory3118\nWHERE sales1828.product_key = inventory3118.product_key\nGROUP BY sales1828.product_key", "WITH sales SELECT sf?.* FROM gosalesdw?.sls_order_method_dim, gosalesdw?.sls_product_dim?, gosalesdw?.emp_employee_dim, gosalesdw?.sls_sales_fact? WHERE pd?.product_key = sf?.product_key AND pd?.product_number? > ? AND pd?.base_product_key > ? AND md.order_method_key = sf?.order_method_key? AND md.order_method_code > ? AND ed.employee_key = sf?.employee_key AND ed.manager_code? > ? ) inventory? SELECT if.* FROM gosalesdw?.go_branch_dim, gosalesdw.dist_inventory_fact WHERE if.branch_key = bd?.branch_key AND bd?.branch_code > ? ) SELECT sales?.product_key, SUM ( CAST ( inventory?.quantity_shipped ) ), SUM ( CAST ( sales?.quantity ) ), RANK ( ) OVER ( ORDER BY SUM ( CAST ( sales?.quantity ) ) DESC ) FROM sales?, inventory? WHERE sales?.product_key = inventory?.product_key GROUP BY sales?.product_key"),
+            // sql_replace_digits_on_0
+            ("REPLACE INTO sales_2019_07_01 (`itemID`, `date`, `qty`, `price`) VALUES ((SELECT itemID FROM item1001 WHERE `sku` = [sku]), CURDATE(), [qty], 0.00)", "REPLACE INTO sales_?_?_? ( itemID, date, qty, price ) VALUES ( ( SELECT itemID FROM item? WHERE sku = [ sku ] ), CURDATE ( ), [ qty ], ? )"),
+            // sql_replace_digits_on_1
+            ("SELECT ddh19.name, ddt.tags FROM dd91219.host ddh19, dd21916.host_tags ddt WHERE ddh19.id = ddt.host_id AND ddh19.org_id = 2 AND ddh19.name = 'datadog'", "SELECT ddh?.name, ddt.tags FROM dd?.host ddh?, dd?.host_tags ddt WHERE ddh?.id = ddt.host_id AND ddh?.org_id = ? AND ddh?.name = ?"),
+            // sql_replace_digits_on_2
+            ("SELECT ddu2.name, ddo.id10, ddk.app_key52 FROM dd3120.user ddu2, dd1931.orgs55 ddo, dd53819.keys ddk", "SELECT ddu?.name, ddo.id?, ddk.app_key? FROM dd?.user ddu?, dd?.orgs? ddo, dd?.keys ddk"),
+            // sql_replace_digits_on_3
+            ("SELECT daily_values1529.*, LEAST((5040000 - @runtot), value1830) AS value1830,\n(@runtot := @runtot + daily_values1529.value1830) AS total\nFROM (SELECT @runtot:=0) AS n,\ndaily_values1529 WHERE daily_values1529.subject_id = 12345 AND daily_values1592.subject_type = 'Skippity'\nAND (daily_values1529.date BETWEEN '2018-05-09' AND '2018-06-19') HAVING value >= 0 ORDER BY date", "SELECT daily_values?.*, LEAST ( ( ? - @runtot ), value? ), ( @runtot := @runtot + daily_values?.value? ) FROM ( SELECT @runtot := ? ), daily_values? WHERE daily_values?.subject_id = ? AND daily_values?.subject_type = ? AND ( daily_values?.date BETWEEN ? AND ? ) HAVING value >= ? ORDER BY date"),
+            // sql_replace_digits_on_4
+            ("WITH\nsales AS\n(SELECT sf2.*\n\tFROM gosalesdw28391.sls_order_method_dim AS md,\n\t\tgosalesdw1920.sls_product_dim391 AS pd190,\n\t\tgosalesdw3819.emp_employee_dim AS ed,\n\t\tgosalesdw3919.sls_sales_fact3819 AS sf2\n\tWHERE pd190.product_key = sf2.product_key\n\tAND pd190.product_number381 > 10000\n\tAND pd190.base_product_key > 30\n\tAND md.order_method_key = sf2.order_method_key8319\n\tAND md.order_method_code > 5\n\tAND ed.employee_key = sf2.employee_key\n\tAND ed.manager_code1 > 20),\ninventory3118 AS\n(SELECT if.*\n\tFROM gosalesdw1592.go_branch_dim AS bd3221,\n\tgosalesdw.dist_inventory_fact AS if\n\tWHERE if.branch_key = bd3221.branch_key\n\tAND bd3221.branch_code > 20)\nSELECT sales1828.product_key AS PROD_KEY,\nSUM(CAST (inventory3118.quantity_shipped AS BIGINT)) AS INV_SHIPPED3118,\nSUM(CAST (sales1828.quantity AS BIGINT)) AS PROD_QUANTITY,\nRANK() OVER ( ORDER BY SUM(CAST (sales1828.quantity AS BIGINT)) DESC) AS PROD_RANK\nFROM sales1828, inventory3118\nWHERE sales1828.product_key = inventory3118.product_key\nGROUP BY sales1828.product_key", "WITH sales SELECT sf?.* FROM gosalesdw?.sls_order_method_dim, gosalesdw?.sls_product_dim?, gosalesdw?.emp_employee_dim, gosalesdw?.sls_sales_fact? WHERE pd?.product_key = sf?.product_key AND pd?.product_number? > ? AND pd?.base_product_key > ? AND md.order_method_key = sf?.order_method_key? AND md.order_method_code > ? AND ed.employee_key = sf?.employee_key AND ed.manager_code? > ? ) inventory? SELECT if.* FROM gosalesdw?.go_branch_dim, gosalesdw.dist_inventory_fact WHERE if.branch_key = bd?.branch_key AND bd?.branch_code > ? ) SELECT sales?.product_key, SUM ( CAST ( inventory?.quantity_shipped ) ), SUM ( CAST ( sales?.quantity ) ), RANK ( ) OVER ( ORDER BY SUM ( CAST ( sales?.quantity ) ) DESC ) FROM sales?, inventory? WHERE sales?.product_key = inventory?.product_key GROUP BY sales?.product_key"),
+            // sql_table_finder_replace_digits_0
+            ("select * from users where id = 42", "select * from users where id = ?"),
+            // sql_table_finder_replace_digits_1
+            ("select * from `backslashes` where id = 42", "select * from backslashes where id = ?"),
+            // sql_table_finder_replace_digits_2
+            ("select * from \"double-quotes\" where id = 42", "select * from double-quotes where id = ?"),
+            // sql_table_finder_replace_digits_3
+            ("SELECT host, status FROM ec2_status WHERE org_id = 42", "SELECT host, status FROM ec?_status WHERE org_id = ?"),
+            // sql_table_finder_replace_digits_4
+            ("SELECT * FROM (SELECT * FROM nested_table)", "SELECT * FROM ( SELECT * FROM nested_table )"),
+            // sql_table_finder_replace_digits_5
+            ("   -- get user \n--\n select * \n   from users \n    where\n       id = 214325346    ", "select * from users where id = ?"),
+            // sql_table_finder_replace_digits_6
+            ("SELECT articles.* FROM articles WHERE articles.id = 1 LIMIT 1, 20", "SELECT articles.* FROM articles WHERE articles.id = ? LIMIT ?"),
+            // sql_table_finder_replace_digits_7
+            ("UPDATE user_dash_pref SET json_prefs = %(json_prefs)s, modified = '2015-08-27 22:10:32.492912' WHERE user_id = %(user_id)s AND url = %(url)s", "UPDATE user_dash_pref SET json_prefs = ? modified = ? WHERE user_id = ? AND url = ?"),
+            // sql_table_finder_replace_digits_8
+            ("SELECT DISTINCT host.id AS host_id FROM host JOIN host_alias ON host_alias.host_id = host.id WHERE host.org_id = %(org_id_1)s AND host.name NOT IN (%(name_1)s) AND host.name IN (%(name_2)s, %(name_3)s, %(name_4)s, %(name_5)s)", "SELECT DISTINCT host.id FROM host JOIN host_alias ON host_alias.host_id = host.id WHERE host.org_id = ? AND host.name NOT IN ( ? ) AND host.name IN ( ? )"),
+            // sql_table_finder_replace_digits_9
+            ("update Orders set created = \"2019-05-24 00:26:17\", gross = 30.28, payment_type = \"eventbrite\", mg_fee = \"3.28\", fee_collected = \"3.28\", event = 59366262, status = \"10\", survey_type = 'direct', tx_time_limit = 480, invite = \"\", ip_address = \"69.215.148.82\", currency = 'USD', gross_USD = \"30.28\", tax_USD = 0.00, journal_activity_id = 4044659812798558774, eb_tax = 0.00, eb_tax_USD = 0.00, cart_uuid = \"160b450e7df511e9810e0a0c06de92f8\", changed = '2019-05-24 00:26:17' where id = ?", "update Orders set created = ? gross = ? payment_type = ? mg_fee = ? fee_collected = ? event = ? status = ? survey_type = ? tx_time_limit = ? invite = ? ip_address = ? currency = ? gross_USD = ? tax_USD = ? journal_activity_id = ? eb_tax = ? eb_tax_USD = ? cart_uuid = ? changed = ? where id = ?"),
+            // sql_table_finder_replace_digits_10
+            ("SELECT * FROM clients WHERE (clients.first_name = 'Andy') LIMIT 1 BEGIN INSERT INTO clients (created_at, first_name, locked, orders_count, updated_at) VALUES ('2011-08-30 05:22:57', 'Andy', 1, NULL, '2011-08-30 05:22:57') COMMIT", "SELECT * FROM clients WHERE ( clients.first_name = ? ) LIMIT ? BEGIN INSERT INTO clients ( created_at, first_name, locked, orders_count, updated_at ) VALUES ( ? ) COMMIT"),
+            // sql_table_finder_replace_digits_11
+            ("DELETE FROM table WHERE table.a=1", "DELETE FROM table WHERE table.a = ?"),
+            // sql_table_finder_replace_digits_12
+            ("SELECT wp_woocommerce_order_items.order_id FROM wp_woocommerce_order_items LEFT JOIN ( SELECT meta_value FROM wp_postmeta WHERE meta_key = ? ) ON wp_woocommerce_order_items.order_id = a.post_id WHERE wp_woocommerce_order_items.order_id = ?", "SELECT wp_woocommerce_order_items.order_id FROM wp_woocommerce_order_items LEFT JOIN ( SELECT meta_value FROM wp_postmeta WHERE meta_key = ? ) ON wp_woocommerce_order_items.order_id = a.post_id WHERE wp_woocommerce_order_items.order_id = ?"),
+            // sql_table_finder_replace_digits_13
+            ("REPLACE INTO sales_2019_07_01 (`itemID`, `date`, `qty`, `price`) VALUES ((SELECT itemID FROM item1001 WHERE `sku` = [sku]), CURDATE(), [qty], 0.00)", "REPLACE INTO sales_?_?_? ( itemID, date, qty, price ) VALUES ( ( SELECT itemID FROM item? WHERE sku = [ sku ] ), CURDATE ( ), [ qty ], ? )"),
+            // sql_table_finder_replace_digits_14
+            ("SELECT name FROM people WHERE person_id = -1", "SELECT name FROM people WHERE person_id = ?"),
+            // sql_table_finder_replace_digits_15
+            ("select * from test where !is_good;", "select * from test where ! is_good"),
+            // sql_table_finder_replace_digits_16
+            ("select * from test where ! is_good;", "select * from test where ! is_good"),
+            // sql_table_finder_replace_digits_17
+            ("select * from test where !45;", "select * from test where ! ?"),
+            // sql_table_finder_replace_digits_18
+            ("select * from test where !(select is_good from good_things);", "select * from test where ! ( select is_good from good_things )"),
+            // sql_table_finder_replace_digits_19
+            ("select * from test where !'weird_query'", "select * from test where ! ?"),
+            // sql_table_finder_replace_digits_20
+            ("select * from test where !\"weird_query\"", "select * from test where ! weird_query"),
+            // sql_table_finder_replace_digits_21
+            ("select * from test where !`weird_query`", "select * from test where ! weird_query"),
+            // sql_table_finder_replace_digits_22
+            ("select !- 2", "select ! - ?"),
+            // sql_table_finder_replace_digits_23
+            ("select !+2", "select ! + ?"),
+            // sql_table_finder_replace_digits_24
+            ("select * from test where !- 2", "select * from test where ! - ?"),
+            // sql_table_finder_replace_digits_25
+            ("select count(*) as `count(*)` from test", "select count ( * ) from test"),
+            // sql_table_finder_replace_digits_26
+            ("SELECT age as `age}` FROM profile", "SELECT age FROM profile"),
+            // sql_table_finder_replace_digits_27
+            ("SELECT age as `age``}` FROM profile", "SELECT age FROM profile"),
+            // sql_table_finder_replace_digits_28
+            ("SELECT * from users where user_id =:0_USER", "SELECT * from users where user_id = :0_USER"),
+        ];
+        let mut errors = String::new();
+        for (i, (input, expected)) in cases.iter().enumerate() {
+            let got = super::obfuscate_sql(input, &config);
+            if got != *expected {
+                errors.push_str(&format!(
+                    "case {i} ({input:?}):\n  expected {expected:?}\n  got      {got:?}\n"
+                ));
+            }
+        }
+        if !errors.is_empty() {
+            panic!("{errors}");
+        }
+    }
+
+    // {'keep_sql_alias': True, 'dollar_quoted_func': True, 'keep_null': True, 'keep_boolean': True,
+    // 'keep_positional_parameter': True, 'keep_trailing_semicolon': True,
+    // 'keep_identifier_quotation': True, 'replace_bind_parameter': True,
+    // 'remove_space_between_parentheses': True, 'keep_json_path': True, 'replace_digits': True}
+    #[test]
+    #[allow(deprecated)]
+    fn test_suite_all_flags() {
+        let config = super::SqlObfuscateConfig {
+            keep_sql_alias: true,
+            dollar_quoted_func: true,
+            keep_null: true,
+            keep_boolean: true,
+            keep_positional_parameter: true,
+            keep_trailing_semicolon: true,
+            keep_identifier_quotation: true,
+            replace_bind_parameter: true,
+            remove_space_between_parentheses: true,
+            keep_json_path: true,
+            replace_digits: true,
+            ..Default::default()
+        };
+        let cases: &[(&str, &str)] = &[
+            // sql_fuzzing_1230223853
+            ("$2", "?"),
+            // sql_fuzzing_3056568399
+            ("(2", "( ?"),
+            // sql_fuzzing_2600047278
+            (";ჸ", "ჸ"),
+            // sql_fuzzing_1323053175
+            (";ჸ", "ჸ"),
+            // sql_fuzzing_726138257
+            ("@2", "@?"),
+            // sql_fuzzing_3590332207
+            ("@C", "@C"),
+            // sql_fuzzing_572710742
+            ("\"\"\"\"", "\""),
+            // sql_fuzzing_3189077130
+            ("@ჸ2", "@ჸ?"),
+            // sql_fuzzing_832034588
+            ("\"0\"", "0"),
+        ];
+        let mut errors = String::new();
+        for (i, (input, expected)) in cases.iter().enumerate() {
+            let got = super::obfuscate_sql(input, &config);
+            if got != *expected {
+                errors.push_str(&format!(
+                    "case {i} ({input:?}):\n  expected {expected:?}\n  got      {got:?}\n"
+                ));
+            }
+        }
+        if !errors.is_empty() {
+            panic!("{errors}");
+        }
+    }
+
+    // {'dbms': 'mssql'}
+    #[test]
+    #[allow(deprecated)]
+    fn test_suite_mssql() {
+        let config = super::SqlObfuscateConfig {
+            dbms: super::DbmsKind::Mssql,
+            ..Default::default()
+        };
+        let cases: &[(&str, &str)] = &[
+            // sql_single_dollar_identifier_merge
+            ("\n\tMERGE INTO Employees AS target\n\tUSING EmployeeUpdates AS source\n\tON (target.EmployeeID = source.EmployeeID)\n\tWHEN MATCHED THEN\n\t\tUPDATE SET\n\t\t\ttarget.Name = source.Name\n\tWHEN NOT MATCHED BY TARGET THEN\n\t\tINSERT (EmployeeID, Name)\n\t\tVALUES (source.EmployeeID, source.Name)\n\tWHEN NOT MATCHED BY SOURCE THEN\n\t\tDELETE\n\tOUTPUT $action, inserted.*, deleted.*;\n\t", "MERGE INTO Employees USING EmployeeUpdates ON ( target.EmployeeID = source.EmployeeID ) WHEN MATCHED THEN UPDATE SET target.Name = source.Name WHEN NOT MATCHED BY TARGET THEN INSERT ( EmployeeID, Name ) VALUES ( source.EmployeeID, source.Name ) WHEN NOT MATCHED BY SOURCE THEN DELETE OUTPUT $action, inserted.*, deleted.*"),
+            // sql_dbms_sqlserver_global_temp
+            ("select * from ##ThisIsAGlobalTempTable where id = 1", "select * from ##ThisIsAGlobalTempTable where id = ?"),
+            // sql_dbms_sqlserver_temp
+            ("select * from dbo.#ThisIsATempTable where id = 1", "select * from dbo.#ThisIsATempTable where id = ?"),
+            // sql_dbms_sqlserver_brackets
+            ("SELECT * from [db_users] where [id] = @1", "SELECT * from db_users where id = @1"),
+        ];
+        let mut errors = String::new();
+        for (i, (input, expected)) in cases.iter().enumerate() {
+            let got = super::obfuscate_sql(input, &config);
+            if got != *expected {
+                errors.push_str(&format!(
+                    "case {i} ({input:?}):\n  expected {expected:?}\n  got      {got:?}\n"
+                ));
+            }
+        }
+        if !errors.is_empty() {
+            panic!("{errors}");
+        }
+    }
+
+    // {'dbms': 'postgresql'}
+    #[test]
+    #[allow(deprecated)]
+    fn test_suite_postgresql() {
+        let config = super::SqlObfuscateConfig {
+            dbms: super::DbmsKind::Postgresql,
+            ..Default::default()
+        };
+        let cases: &[(&str, &str)] = &[
+            // sql_pg_json_operators_0
+            (
+                "select users.custom #> '{a,b}' from users",
+                "select users.custom #> ? from users",
+            ),
+            // sql_pg_json_operators_1
+            (
+                "select users.custom #>> '{a,b}' from users",
+                "select users.custom #>> ? from users",
+            ),
+            // sql_pg_json_operators_2
+            (
+                "select users.custom #- '{a,b}' from users",
+                "select users.custom #- ? from users",
+            ),
+            // sql_pg_json_operators_3
+            (
+                "select users.custom -> 'foo' from users",
+                "select users.custom -> ? from users",
+            ),
+            // sql_pg_json_operators_4
+            (
+                "select users.custom ->> 'foo' from users",
+                "select users.custom ->> ? from users",
+            ),
+            // sql_pg_json_operators_5
+            (
+                "select * from users where user.custom @> '{a,b}'",
+                "select * from users where user.custom @> ?",
+            ),
+            // sql_pg_json_operators_6
+            (
+                "SELECT a FROM foo WHERE value<@name",
+                "SELECT a FROM foo WHERE value <@ name",
+            ),
+            // sql_pg_json_operators_7
+            (
+                "select * from users where user.custom ? 'foo'",
+                "select * from users where user.custom ? ?",
+            ),
+            // sql_pg_json_operators_8
+            (
+                "select * from users where user.custom ?| array [ '1', '2' ]",
+                "select * from users where user.custom ?| array [ ? ]",
+            ),
+            // sql_pg_json_operators_9
+            (
+                "select * from users where user.custom ?& array [ '1', '2' ]",
+                "select * from users where user.custom ?& array [ ? ]",
+            ),
+        ];
+        let mut errors = String::new();
+        for (i, (input, expected)) in cases.iter().enumerate() {
+            let got = super::obfuscate_sql(input, &config);
+            if got != *expected {
+                errors.push_str(&format!(
+                    "case {i} ({input:?}):\n  expected {expected:?}\n  got      {got:?}\n"
+                ));
+            }
+        }
+        if !errors.is_empty() {
+            panic!("{errors}");
+        }
+    }
+
+    // {'mode': 'normalize_only'}
+    #[test]
+    fn test_suite_normalize_only() {
+        let config = super::SqlObfuscateConfig {
+            obfuscation_mode: super::SqlObfuscationMode::NormalizeOnly,
+            ..Default::default()
+        };
+        let cases: &[(&str, &str)] = &[
+            // sqllexer_norm_simple
+            ("SELECT * FROM users WHERE id = 1", "SELECT * FROM users WHERE id = 1"),
+            // sqllexer_norm_dollar_func
+            ("SELECT $func$INSERT INTO table VALUES ('a', 1, 2)$func$ FROM users", "SELECT $func$INSERT INTO table VALUES ( 'a', 1, 2 )$func$ FROM users"),
+            // sqllexer_norm_procedure_on
+            ("CREATE PROCEDURE TestProc AS BEGIN SELECT * FROM users WHERE id = 1 END", "CREATE PROCEDURE TestProc AS BEGIN SELECT * FROM users WHERE id = 1 END"),
+            // sqllexer_norm_procedure_off
+            ("CREATE PROCEDURE TestProc AS BEGIN UPDATE users SET name = 'test' WHERE id = 1 END", "CREATE PROCEDURE TestProc AS BEGIN UPDATE users SET name = 'test' WHERE id = 1 END"),
+            // sqllexer_norm_null_bool_pos
+            ("SELECT * FROM users WHERE id = 1 AND address = $1 and id = $2 AND deleted IS NULL AND active is TRUE", "SELECT * FROM users WHERE id = 1 AND address = $1 and id = $2 AND deleted IS NULL AND active is TRUE"),
+            // sqllexer_norm_cte
+            ("WITH users AS (SELECT * FROM people) SELECT * FROM users", "WITH users AS ( SELECT * FROM people ) SELECT * FROM users"),
+        ];
+        let mut errors = String::new();
+        for (i, (input, expected)) in cases.iter().enumerate() {
+            let got = super::obfuscate_sql(input, &config);
+            if got != *expected {
+                errors.push_str(&format!(
+                    "case {i} ({input:?}):\n  expected {expected:?}\n  got      {got:?}\n"
+                ));
+            }
+        }
+        if !errors.is_empty() {
+            panic!("{errors}");
+        }
+    }
+
+    // {'mode': 'normalize_only', 'keep_sql_alias': True}
+    #[test]
+    fn test_suite_normalize_only_keep_sql_alias() {
+        let config = super::SqlObfuscateConfig {
+            obfuscation_mode: super::SqlObfuscationMode::NormalizeOnly,
+            keep_sql_alias: true,
+            ..Default::default()
+        };
+        let cases: &[(&str, &str)] = &[
+            // sqllexer_norm_comments_alias
+            ("\n\t\t\t-- comment\n\t\t\t/* comment */\n\t\t\tSELECT id as id, name as n FROM users123 WHERE id in (1,2,3)", "SELECT id as id, name as n FROM users123 WHERE id in ( 1, 2, 3 )"),
+        ];
+        let mut errors = String::new();
+        for (i, (input, expected)) in cases.iter().enumerate() {
+            let got = super::obfuscate_sql(input, &config);
+            if got != *expected {
+                errors.push_str(&format!(
+                    "case {i} ({input:?}):\n  expected {expected:?}\n  got      {got:?}\n"
+                ));
+            }
+        }
+        if !errors.is_empty() {
+            panic!("{errors}");
+        }
+    }
+
+    // {'mode': 'normalize_only', 'remove_space_between_parentheses': True}
+    #[test]
+    fn test_suite_normalize_only_remove_space_between_parentheses() {
+        let config = super::SqlObfuscateConfig {
+            obfuscation_mode: super::SqlObfuscationMode::NormalizeOnly,
+            remove_space_between_parentheses: true,
+            ..Default::default()
+        };
+        let cases: &[(&str, &str)] = &[
+            // sqllexer_norm_remove_space_parens
+            (
+                "SELECT * FROM users WHERE id = 1 AND (name = 'test' OR name = 'test2')",
+                "SELECT * FROM users WHERE id = 1 AND (name = 'test' OR name = 'test2')",
+            ),
+        ];
+        let mut errors = String::new();
+        for (i, (input, expected)) in cases.iter().enumerate() {
+            let got = super::obfuscate_sql(input, &config);
+            if got != *expected {
+                errors.push_str(&format!(
+                    "case {i} ({input:?}):\n  expected {expected:?}\n  got      {got:?}\n"
+                ));
+            }
+        }
+        if !errors.is_empty() {
+            panic!("{errors}");
+        }
+    }
+
+    // {'mode': 'normalize_only', 'keep_trailing_semicolon': True}
+    #[test]
+    fn test_suite_normalize_only_keep_trailing_semicolon() {
+        let config = super::SqlObfuscateConfig {
+            obfuscation_mode: super::SqlObfuscationMode::NormalizeOnly,
+            keep_trailing_semicolon: true,
+            ..Default::default()
+        };
+        let cases: &[(&str, &str)] = &[
+            // sqllexer_norm_keep_trailing_semi
+            (
+                "SELECT * FROM users WHERE id = 1 AND name = 'test';",
+                "SELECT * FROM users WHERE id = 1 AND name = 'test';",
+            ),
+        ];
+        let mut errors = String::new();
+        for (i, (input, expected)) in cases.iter().enumerate() {
+            let got = super::obfuscate_sql(input, &config);
+            if got != *expected {
+                errors.push_str(&format!(
+                    "case {i} ({input:?}):\n  expected {expected:?}\n  got      {got:?}\n"
+                ));
+            }
+        }
+        if !errors.is_empty() {
+            panic!("{errors}");
+        }
+    }
+
+    // {'mode': 'normalize_only', 'keep_identifier_quotation': True}
+    #[test]
+    fn test_suite_normalize_only_keep_identifier_quotation() {
+        let config = super::SqlObfuscateConfig {
+            obfuscation_mode: super::SqlObfuscationMode::NormalizeOnly,
+            keep_identifier_quotation: true,
+            ..Default::default()
+        };
+        let cases: &[(&str, &str)] = &[
+            // sqllexer_norm_keep_ident_quot
+            (
+                "SELECT * FROM \"users\" WHERE id = 1 AND name = 'test'",
+                "SELECT * FROM \"users\" WHERE id = 1 AND name = 'test'",
+            ),
+        ];
+        let mut errors = String::new();
+        for (i, (input, expected)) in cases.iter().enumerate() {
+            let got = super::obfuscate_sql(input, &config);
+            if got != *expected {
+                errors.push_str(&format!(
+                    "case {i} ({input:?}):\n  expected {expected:?}\n  got      {got:?}\n"
+                ));
+            }
+        }
+        if !errors.is_empty() {
+            panic!("{errors}");
+        }
+    }
+
+    // {'mode': 'obfuscate_and_normalize'}
+    #[test]
+    fn test_suite_obfuscate_and_normalize() {
+        let config = super::SqlObfuscateConfig {
+            obfuscation_mode: super::SqlObfuscationMode::ObfuscateAndNormalize,
+            ..Default::default()
+        };
+        let cases: &[(&str, &str)] = &[
+            // sqllexer_obn_simple
+            ("SELECT * FROM users WHERE id = 1", "SELECT * FROM users WHERE id = ?"),
+            // sqllexer_obn_dollar_func_off
+            ("SELECT $func$INSERT INTO table VALUES ('a', 1, 2)$func$ FROM users", "SELECT ? FROM users"),
+            // sqllexer_obn_procedure_on
+            ("CREATE PROCEDURE TestProc AS BEGIN SELECT * FROM users WHERE id = 1 END", "CREATE PROCEDURE TestProc AS BEGIN SELECT * FROM users WHERE id = ? END"),
+            // sqllexer_obn_procedure_off
+            ("CREATE PROCEDURE TestProc AS BEGIN UPDATE users SET name = 'test' WHERE id = 1 END", "CREATE PROCEDURE TestProc AS BEGIN UPDATE users SET name = ? WHERE id = ? END"),
+            // sqllexer_obn_null_bool_pos_param
+            ("SELECT * FROM users WHERE id = 1 AND address = $1 and id = $2 AND deleted IS NULL AND active is TRUE", "SELECT * FROM users WHERE id = ? AND address = ? and id = ? AND deleted IS ? AND active is ?"),
+            // sqllexer_obn_create_table
+            ("CREATE TABLE IF NOT EXISTS users (id INT, name VARCHAR(255))", "CREATE TABLE IF NOT EXISTS users ( id INT, name VARCHAR ( ? ) )"),
+            // sqllexer_obn_replace_bind_off
+            ("SELECT * FROM users WHERE id = @P1 AND name = @P2", "SELECT * FROM users WHERE id = @P1 AND name = @P2"),
+            // sqllexer_obn_pg_only
+            ("SELECT * FROM ONLY users WHERE id = 1", "SELECT * FROM ONLY users WHERE id = ?"),
+            // sqllexer_obn_cte
+            ("WITH users AS (SELECT * FROM people) SELECT * FROM users where id = 1", "WITH users AS ( SELECT * FROM people ) SELECT * FROM users where id = ?"),
+            // sqllexer_obn_json_path_off
+            ("SELECT * FROM users WHERE id = 1 AND name->'first' = 'test'", "SELECT * FROM users WHERE id = ? AND name -> ? = ?"),
+        ];
+        let mut errors = String::new();
+        for (i, (input, expected)) in cases.iter().enumerate() {
+            let got = super::obfuscate_sql(input, &config);
+            if got != *expected {
+                errors.push_str(&format!(
+                    "case {i} ({input:?}):\n  expected {expected:?}\n  got      {got:?}\n"
+                ));
+            }
+        }
+        if !errors.is_empty() {
+            panic!("{errors}");
+        }
+    }
+
+    // {'mode': 'obfuscate_and_normalize', 'replace_digits': True}
+    #[test]
+    fn test_suite_obfuscate_and_normalize_replace_digits() {
+        let config = super::SqlObfuscateConfig {
+            obfuscation_mode: super::SqlObfuscationMode::ObfuscateAndNormalize,
+            replace_digits: true,
+            ..Default::default()
+        };
+        let cases: &[(&str, &str)] = &[
+            // sqllexer_obn_replace_digits
+            (
+                "SELECT * FROM users123 WHERE id = 1",
+                "SELECT * FROM users? WHERE id = ?",
+            ),
+        ];
+        let mut errors = String::new();
+        for (i, (input, expected)) in cases.iter().enumerate() {
+            let got = super::obfuscate_sql(input, &config);
+            if got != *expected {
+                errors.push_str(&format!(
+                    "case {i} ({input:?}):\n  expected {expected:?}\n  got      {got:?}\n"
+                ));
+            }
+        }
+        if !errors.is_empty() {
+            panic!("{errors}");
+        }
+    }
+
+    // {'mode': 'obfuscate_and_normalize', 'keep_sql_alias': True}
+    #[test]
+    fn test_suite_obfuscate_and_normalize_keep_sql_alias() {
+        let config = super::SqlObfuscateConfig {
+            obfuscation_mode: super::SqlObfuscationMode::ObfuscateAndNormalize,
+            keep_sql_alias: true,
+            ..Default::default()
+        };
+        let cases: &[(&str, &str)] = &[
+            // sqllexer_obn_comments_alias
+            ("\n\t\t\t-- comment\n\t\t\t/* comment */\n\t\t\tSELECT id as id, name as n FROM users123 WHERE id in (1,2,3)", "SELECT id as id, name as n FROM users123 WHERE id in ( ? )"),
+        ];
+        let mut errors = String::new();
+        for (i, (input, expected)) in cases.iter().enumerate() {
+            let got = super::obfuscate_sql(input, &config);
+            if got != *expected {
+                errors.push_str(&format!(
+                    "case {i} ({input:?}):\n  expected {expected:?}\n  got      {got:?}\n"
+                ));
+            }
+        }
+        if !errors.is_empty() {
+            panic!("{errors}");
+        }
+    }
+
+    // {'mode': 'obfuscate_and_normalize', 'dollar_quoted_func': True}
+    #[test]
+    fn test_suite_obfuscate_and_normalize_dollar_quoted_func() {
+        let config = super::SqlObfuscateConfig {
+            obfuscation_mode: super::SqlObfuscationMode::ObfuscateAndNormalize,
+            dollar_quoted_func: true,
+            ..Default::default()
+        };
+        let cases: &[(&str, &str)] = &[
+            // sqllexer_obn_dollar_func_on
+            (
+                "SELECT $func$INSERT INTO table VALUES ('a', 1, 2)$func$ FROM users",
+                "SELECT $func$INSERT INTO table VALUES ( ? )$func$ FROM users",
+            ),
+        ];
+        let mut errors = String::new();
+        for (i, (input, expected)) in cases.iter().enumerate() {
+            let got = super::obfuscate_sql(input, &config);
+            if got != *expected {
+                errors.push_str(&format!(
+                    "case {i} ({input:?}):\n  expected {expected:?}\n  got      {got:?}\n"
+                ));
+            }
+        }
+        if !errors.is_empty() {
+            panic!("{errors}");
+        }
+    }
+
+    // {'mode': 'obfuscate_and_normalize', 'dollar_quoted_func': True, 'replace_digits': True}
+    #[test]
+    fn test_suite_obfuscate_and_normalize_dollar_quoted_func_replace_digits() {
+        let config = super::SqlObfuscateConfig {
+            obfuscation_mode: super::SqlObfuscationMode::ObfuscateAndNormalize,
+            dollar_quoted_func: true,
+            replace_digits: true,
+            ..Default::default()
+        };
+        let cases: &[(&str, &str)] = &[
+            // sqllexer_obn_dollar_func_digits
+            (
+                "SELECT * FROM users123 WHERE id = $tag$1$tag$",
+                "SELECT * FROM users? WHERE id = ?",
+            ),
+        ];
+        let mut errors = String::new();
+        for (i, (input, expected)) in cases.iter().enumerate() {
+            let got = super::obfuscate_sql(input, &config);
+            if got != *expected {
+                errors.push_str(&format!(
+                    "case {i} ({input:?}):\n  expected {expected:?}\n  got      {got:?}\n"
+                ));
+            }
+        }
+        if !errors.is_empty() {
+            panic!("{errors}");
+        }
+    }
+
+    // {'mode': 'obfuscate_and_normalize', 'remove_space_between_parentheses': True}
+    #[test]
+    fn test_suite_obfuscate_and_normalize_remove_space_between_parentheses() {
+        let config = super::SqlObfuscateConfig {
+            obfuscation_mode: super::SqlObfuscationMode::ObfuscateAndNormalize,
+            remove_space_between_parentheses: true,
+            ..Default::default()
+        };
+        let cases: &[(&str, &str)] = &[
+            // sqllexer_obn_remove_space_parens
+            (
+                "SELECT * FROM users WHERE id = 1 AND (name = 'test' OR name = 'test2')",
+                "SELECT * FROM users WHERE id = ? AND (name = ? OR name = ?)",
+            ),
+        ];
+        let mut errors = String::new();
+        for (i, (input, expected)) in cases.iter().enumerate() {
+            let got = super::obfuscate_sql(input, &config);
+            if got != *expected {
+                errors.push_str(&format!(
+                    "case {i} ({input:?}):\n  expected {expected:?}\n  got      {got:?}\n"
+                ));
+            }
+        }
+        if !errors.is_empty() {
+            panic!("{errors}");
+        }
+    }
+
+    // {'mode': 'obfuscate_and_normalize', 'keep_null': True}
+    #[test]
+    fn test_suite_obfuscate_and_normalize_keep_null() {
+        let config = super::SqlObfuscateConfig {
+            obfuscation_mode: super::SqlObfuscationMode::ObfuscateAndNormalize,
+            keep_null: true,
+            ..Default::default()
+        };
+        let cases: &[(&str, &str)] = &[
+            // sqllexer_obn_keep_null
+            (
+                "SELECT * FROM users WHERE id = 1 AND name IS NULL",
+                "SELECT * FROM users WHERE id = ? AND name IS NULL",
+            ),
+        ];
+        let mut errors = String::new();
+        for (i, (input, expected)) in cases.iter().enumerate() {
+            let got = super::obfuscate_sql(input, &config);
+            if got != *expected {
+                errors.push_str(&format!(
+                    "case {i} ({input:?}):\n  expected {expected:?}\n  got      {got:?}\n"
+                ));
+            }
+        }
+        if !errors.is_empty() {
+            panic!("{errors}");
+        }
+    }
+
+    // {'mode': 'obfuscate_and_normalize', 'keep_boolean': True}
+    #[test]
+    fn test_suite_obfuscate_and_normalize_keep_boolean() {
+        let config = super::SqlObfuscateConfig {
+            obfuscation_mode: super::SqlObfuscationMode::ObfuscateAndNormalize,
+            keep_boolean: true,
+            ..Default::default()
+        };
+        let cases: &[(&str, &str)] = &[
+            // sqllexer_obn_keep_boolean
+            (
+                "SELECT * FROM users WHERE id = 1 AND name is TRUE",
+                "SELECT * FROM users WHERE id = ? AND name is TRUE",
+            ),
+        ];
+        let mut errors = String::new();
+        for (i, (input, expected)) in cases.iter().enumerate() {
+            let got = super::obfuscate_sql(input, &config);
+            if got != *expected {
+                errors.push_str(&format!(
+                    "case {i} ({input:?}):\n  expected {expected:?}\n  got      {got:?}\n"
+                ));
+            }
+        }
+        if !errors.is_empty() {
+            panic!("{errors}");
+        }
+    }
+
+    // {'mode': 'obfuscate_and_normalize', 'keep_positional_parameter': True}
+    #[test]
+    fn test_suite_obfuscate_and_normalize_keep_positional_parameter() {
+        let config = super::SqlObfuscateConfig {
+            obfuscation_mode: super::SqlObfuscationMode::ObfuscateAndNormalize,
+            keep_positional_parameter: true,
+            ..Default::default()
+        };
+        let cases: &[(&str, &str)] = &[
+            // sqllexer_obn_keep_pos_param
+            (
+                "SELECT * FROM users WHERE id = 1 AND name = $1 and id = $2",
+                "SELECT * FROM users WHERE id = ? AND name = $1 and id = $2",
+            ),
+        ];
+        let mut errors = String::new();
+        for (i, (input, expected)) in cases.iter().enumerate() {
+            let got = super::obfuscate_sql(input, &config);
+            if got != *expected {
+                errors.push_str(&format!(
+                    "case {i} ({input:?}):\n  expected {expected:?}\n  got      {got:?}\n"
+                ));
+            }
+        }
+        if !errors.is_empty() {
+            panic!("{errors}");
+        }
+    }
+
+    // {'mode': 'obfuscate_and_normalize', 'keep_trailing_semicolon': True}
+    #[test]
+    fn test_suite_obfuscate_and_normalize_keep_trailing_semicolon() {
+        let config = super::SqlObfuscateConfig {
+            obfuscation_mode: super::SqlObfuscationMode::ObfuscateAndNormalize,
+            keep_trailing_semicolon: true,
+            ..Default::default()
+        };
+        let cases: &[(&str, &str)] = &[
+            // sqllexer_obn_keep_trailing_semi
+            (
+                "SELECT * FROM users WHERE id = 1 AND name = 'test';",
+                "SELECT * FROM users WHERE id = ? AND name = ?;",
+            ),
+        ];
+        let mut errors = String::new();
+        for (i, (input, expected)) in cases.iter().enumerate() {
+            let got = super::obfuscate_sql(input, &config);
+            if got != *expected {
+                errors.push_str(&format!(
+                    "case {i} ({input:?}):\n  expected {expected:?}\n  got      {got:?}\n"
+                ));
+            }
+        }
+        if !errors.is_empty() {
+            panic!("{errors}");
+        }
+    }
+
+    // {'mode': 'obfuscate_and_normalize', 'keep_identifier_quotation': True}
+    #[test]
+    fn test_suite_obfuscate_and_normalize_keep_identifier_quotation() {
+        let config = super::SqlObfuscateConfig {
+            obfuscation_mode: super::SqlObfuscationMode::ObfuscateAndNormalize,
+            keep_identifier_quotation: true,
+            ..Default::default()
+        };
+        let cases: &[(&str, &str)] = &[
+            // sqllexer_obn_keep_ident_quot
+            (
+                "SELECT * FROM \"users\" WHERE id = 1 AND name = 'test'",
+                "SELECT * FROM \"users\" WHERE id = ? AND name = ?",
+            ),
+        ];
+        let mut errors = String::new();
+        for (i, (input, expected)) in cases.iter().enumerate() {
+            let got = super::obfuscate_sql(input, &config);
+            if got != *expected {
+                errors.push_str(&format!(
+                    "case {i} ({input:?}):\n  expected {expected:?}\n  got      {got:?}\n"
+                ));
+            }
+        }
+        if !errors.is_empty() {
+            panic!("{errors}");
+        }
+    }
+
+    // {'mode': 'obfuscate_and_normalize', 'replace_bind_parameter': True}
+    #[test]
+    fn test_suite_obfuscate_and_normalize_replace_bind_parameter() {
+        let config = super::SqlObfuscateConfig {
+            obfuscation_mode: super::SqlObfuscationMode::ObfuscateAndNormalize,
+            replace_bind_parameter: true,
+            ..Default::default()
+        };
+        let cases: &[(&str, &str)] = &[
+            // sqllexer_obn_replace_bind_on
+            (
+                "SELECT * FROM users WHERE id = @P1 AND name = @P2",
+                "SELECT * FROM users WHERE id = ? AND name = ?",
+            ),
+        ];
+        let mut errors = String::new();
+        for (i, (input, expected)) in cases.iter().enumerate() {
+            let got = super::obfuscate_sql(input, &config);
+            if got != *expected {
+                errors.push_str(&format!(
+                    "case {i} ({input:?}):\n  expected {expected:?}\n  got      {got:?}\n"
+                ));
+            }
+        }
+        if !errors.is_empty() {
+            panic!("{errors}");
+        }
+    }
+
+    // {'mode': 'obfuscate_and_normalize', 'keep_json_path': True}
+    #[test]
+    fn test_suite_obfuscate_and_normalize_keep_json_path() {
+        let config = super::SqlObfuscateConfig {
+            obfuscation_mode: super::SqlObfuscationMode::ObfuscateAndNormalize,
+            keep_json_path: true,
+            ..Default::default()
+        };
+        let cases: &[(&str, &str)] = &[
+            // sqllexer_obn_json_path_arrow
+            (
+                "SELECT * FROM users WHERE id = 1 AND name->'first' = 'test'",
+                "SELECT * FROM users WHERE id = ? AND name -> 'first' = ?",
+            ),
+            // sqllexer_obn_json_path_double_arrow
+            (
+                "SELECT * FROM users WHERE id = 1 AND name->>2 = 'test'",
+                "SELECT * FROM users WHERE id = ? AND name ->> 2 = ?",
+            ),
+        ];
+        let mut errors = String::new();
+        for (i, (input, expected)) in cases.iter().enumerate() {
+            let got = super::obfuscate_sql(input, &config);
+            if got != *expected {
+                errors.push_str(&format!(
+                    "case {i} ({input:?}):\n  expected {expected:?}\n  got      {got:?}\n"
+                ));
+            }
+        }
+        if !errors.is_empty() {
+            panic!("{errors}");
+        }
+    }
+
+    // {'mode': 'obfuscate_only'}
+    #[test]
+    fn test_suite_obfuscate_only() {
+        let config = super::SqlObfuscateConfig {
+            obfuscation_mode: super::SqlObfuscationMode::ObfuscateOnly,
+            ..Default::default()
+        };
+        let cases: &[(&str, &str)] = &[
+            // sqllexer_obf_simple
+            ("SELECT * FROM users WHERE id = 1", "SELECT * FROM users WHERE id = ?"),
+            // sqllexer_obf_dollar_question
+            ("SELECT \"table\".\"field\" FROM \"table\" WHERE \"table\".\"otherfield\" = $? AND \"table\".\"thirdfield\" = $?;", "SELECT \"table\".\"field\" FROM \"table\" WHERE \"table\".\"otherfield\" = $? AND \"table\".\"thirdfield\" = $?;"),
+            // sqllexer_obf_replace_digits_off
+            ("SELECT * FROM users123 WHERE id = 1", "SELECT * FROM users123 WHERE id = ?"),
+            // sqllexer_obf_dollar_quoted_func_off
+            ("SELECT $func$INSERT INTO table VALUES ('a', 1, 2)$func$ FROM users", "SELECT ? FROM users"),
+        ];
+        let mut errors = String::new();
+        for (i, (input, expected)) in cases.iter().enumerate() {
+            let got = super::obfuscate_sql(input, &config);
+            if got != *expected {
+                errors.push_str(&format!(
+                    "case {i} ({input:?}):\n  expected {expected:?}\n  got      {got:?}\n"
+                ));
+            }
+        }
+        if !errors.is_empty() {
+            panic!("{errors}");
+        }
+    }
+
+    // {'mode': 'obfuscate_only', 'replace_digits': True}
+    #[test]
+    fn test_suite_obfuscate_only_replace_digits() {
+        let config = super::SqlObfuscateConfig {
+            obfuscation_mode: super::SqlObfuscationMode::ObfuscateOnly,
+            replace_digits: true,
+            ..Default::default()
+        };
+        let cases: &[(&str, &str)] = &[
+            // sqllexer_obf_replace_digits_on
+            (
+                "SELECT * FROM users123 WHERE id = 1",
+                "SELECT * FROM users? WHERE id = ?",
+            ),
+        ];
+        let mut errors = String::new();
+        for (i, (input, expected)) in cases.iter().enumerate() {
+            let got = super::obfuscate_sql(input, &config);
+            if got != *expected {
+                errors.push_str(&format!(
+                    "case {i} ({input:?}):\n  expected {expected:?}\n  got      {got:?}\n"
+                ));
+            }
+        }
+        if !errors.is_empty() {
+            panic!("{errors}");
+        }
+    }
+
+    // {'mode': 'obfuscate_only', 'dollar_quoted_func': True}
+    #[test]
+    fn test_suite_obfuscate_only_dollar_quoted_func() {
+        let config = super::SqlObfuscateConfig {
+            obfuscation_mode: super::SqlObfuscationMode::ObfuscateOnly,
+            dollar_quoted_func: true,
+            ..Default::default()
+        };
+        let cases: &[(&str, &str)] = &[
+            // sqllexer_obf_dollar_quoted_func_on
+            (
+                "SELECT $func$INSERT INTO table VALUES ('a', 1, 2)$func$ FROM users",
+                "SELECT $func$INSERT INTO table VALUES (?, ?, ?)$func$ FROM users",
+            ),
+        ];
+        let mut errors = String::new();
+        for (i, (input, expected)) in cases.iter().enumerate() {
+            let got = super::obfuscate_sql(input, &config);
+            if got != *expected {
+                errors.push_str(&format!(
+                    "case {i} ({input:?}):\n  expected {expected:?}\n  got      {got:?}\n"
+                ));
+            }
+        }
+        if !errors.is_empty() {
+            panic!("{errors}");
+        }
+    }
+
+    // {'mode': 'obfuscate_only', 'dollar_quoted_func': True, 'replace_digits': True}
+    #[test]
+    fn test_suite_obfuscate_only_dollar_quoted_func_replace_digits() {
+        let config = super::SqlObfuscateConfig {
+            obfuscation_mode: super::SqlObfuscationMode::ObfuscateOnly,
+            dollar_quoted_func: true,
+            replace_digits: true,
+            ..Default::default()
+        };
+        let cases: &[(&str, &str)] = &[
+            // sqllexer_obf_dollar_func_and_digits
+            (
+                "SELECT * FROM users123 WHERE id = $tag$1$tag$",
+                "SELECT * FROM users? WHERE id = ?",
+            ),
+        ];
+        let mut errors = String::new();
+        for (i, (input, expected)) in cases.iter().enumerate() {
+            let got = super::obfuscate_sql(input, &config);
+            if got != *expected {
+                errors.push_str(&format!(
+                    "case {i} ({input:?}):\n  expected {expected:?}\n  got      {got:?}\n"
+                ));
+            }
+        }
+        if !errors.is_empty() {
+            panic!("{errors}");
+        }
+    }
+
+    // Test that collapse_limit_two_args handles LIMIT case-insensitively.
+    // In obfuscate_and_normalize mode, the grouping filter is inactive, so
+    // collapse_limit_two_args is the sole mechanism for both cases.
+    #[test]
+    fn test_collapse_limit_case_insensitive() {
+        let config = super::SqlObfuscateConfig {
+            obfuscation_mode: super::SqlObfuscationMode::ObfuscateAndNormalize,
+            ..Default::default()
+        };
+        let got_upper = super::obfuscate_sql("SELECT * FROM t LIMIT 5, 10", &config);
+        assert_eq!(
+            got_upper, "SELECT * FROM t LIMIT ?",
+            "uppercase LIMIT should be collapsed: {got_upper:?}"
+        );
+        // eq_ignore_ascii_case fix: lowercase limit must also be collapsed.
+        let got_lower = super::obfuscate_sql("SELECT * FROM t limit 5, 10", &config);
+        assert_eq!(
+            got_lower, "SELECT * FROM t limit ?",
+            "lowercase limit should also be collapsed: {got_lower:?}"
+        );
+    }
 }
