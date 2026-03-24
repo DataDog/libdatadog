@@ -33,7 +33,6 @@ pub enum ExporterErrorCode {
     Serde,
     Shutdown,
     TimedOut,
-    #[cfg(feature = "telemetry")]
     Telemetry,
     Internal,
     #[cfg(feature = "catch_panic")]
@@ -64,7 +63,6 @@ impl Display for ExporterErrorCode {
             Self::Serde => write!(f, "Serialization/Deserialization error"),
             Self::Shutdown => write!(f, "Shutdown timed out"),
             Self::TimedOut => write!(f, "Operation timed out"),
-            #[cfg(feature = "telemetry")]
             Self::Telemetry => write!(f, "Telemetry error"),
             Self::Internal => write!(f, "Internal error"),
             #[cfg(feature = "catch_panic")]
@@ -98,7 +96,6 @@ impl From<TraceExporterError> for ExporterError {
             },
             TraceExporterError::Builder(e) => match e {
                 BuilderErrorKind::InvalidUri(_) => ExporterErrorCode::InvalidUrl,
-                #[cfg(feature = "telemetry")]
                 BuilderErrorKind::InvalidTelemetryConfig(_) => ExporterErrorCode::InvalidArgument,
                 BuilderErrorKind::InvalidConfiguration(_) => ExporterErrorCode::InvalidArgument,
             },
@@ -137,7 +134,6 @@ impl From<TraceExporterError> for ExporterError {
                 }
             }
             TraceExporterError::Shutdown(_) => ExporterErrorCode::Shutdown,
-            #[cfg(feature = "telemetry")]
             TraceExporterError::Telemetry(_) => ExporterErrorCode::Telemetry,
             TraceExporterError::Serialization(_) => ExporterErrorCode::Serde,
         };
