@@ -19,7 +19,7 @@ name = "datadog_profiling_ffi"
 [features]
 default = ["ddcommon-ffi"]
 cbindgen = ["build_common/cbindgen", "libdd-common-ffi/cbindgen"]
-ddtelemetry-ffi = ["dep:libdd-telemetry-ffi"]
+ddtelemetry-ffi = ["dep:libdd-telemetry-ffi", "libdd-data-pipeline-ffi?/telemetry"]
 datadog-log-ffi = ["dep:libdd-log-ffi"]
 symbolizer = ["symbolizer-ffi"]
 data-pipeline-ffi = ["dep:libdd-data-pipeline-ffi"]
