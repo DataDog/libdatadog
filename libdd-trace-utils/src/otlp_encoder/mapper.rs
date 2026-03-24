@@ -157,7 +157,7 @@ fn map_span<T: TraceData>(span: &Span<T>) -> OtlpSpan {
         trace_id: trace_id_hex,
         span_id: span_id_hex,
         parent_span_id,
-        name: span.name.borrow().to_string(),
+        name: span.resource.borrow().to_string(),
         kind,
         start_time_unix_nano,
         end_time_unix_nano,
