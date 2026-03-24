@@ -2,6 +2,13 @@
 
 
 
+## [3.0.1](https://github.com/datadog/libdatadog/compare/libdd-data-pipeline-v3.0.0..libdd-data-pipeline-v3.0.1) - 2026-03-24
+
+### Added
+  - Fix previous version.
+
+
+
 ## [3.0.0](https://github.com/datadog/libdatadog/compare/libdd-data-pipeline-v2.0.1..libdd-data-pipeline-v3.0.0) - 2026-03-23
 
 ### Added
@@ -11,6 +18,7 @@
 ### Changed
 
 - Change header name type to accept dynamic values ([#1722](https://github.com/datadog/libdatadog/issues/1722)) - ([4dd532f](https://github.com/datadog/libdatadog/commit/4dd532f2c15e928103fc441ab030bc8d94f070c0))
+
 
 
 ## [2.0.1](https://github.com/datadog/libdatadog/compare/libdd-data-pipeline-v2.0.0..libdd-data-pipeline-v2.0.1) - 2026-03-16
