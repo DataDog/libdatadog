@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 [package]
-name = "datadog-session-id-ffi"
+name = "datadog-shm-ffi"
 version = "0.1.0"
 edition.workspace = true
 license.workspace = true
@@ -13,7 +13,7 @@ crate-type = ["staticlib", "cdylib", "lib"]
 bench = false
 
 [dependencies]
-datadog-session-id = { path = "../datadog-session-id" }
+datadog-shm = { path = "../datadog-shm" }
 libdd-common-ffi = { path = "../libdd-common-ffi", default-features = false }
 anyhow = "1.0"
 

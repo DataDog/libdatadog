@@ -5,6 +5,6 @@ extern crate build_common;
 use build_common::generate_and_configure_header;
 
 fn main() {
-    let header_name = "session-id.h";
+    let header_name = "datadog-shm.h";
     generate_and_configure_header(header_name);
 }

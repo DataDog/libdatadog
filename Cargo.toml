@@ -47,8 +47,8 @@ members = [
   "libdd-dogstatsd-client",
   "libdd-log",
   "libdd-log-ffi", "libdd-libunwind-sys",
-  "datadog-session-id",
-  "datadog-session-id-ffi",
+  "datadog-shm",
+  "datadog-shm-ffi",
 ]
 
 # https://doc.rust-lang.org/cargo/reference/resolver.html
