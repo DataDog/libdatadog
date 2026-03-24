@@ -17,6 +17,9 @@ mod telemetry;
 mod test_utils;
 mod unknown_value;
 
+// This is set compile time
+pub(crate) const TARGET_TRIPLE: &str = env!("TARGET");
+
 pub use builder::*;
 pub use error_data::*;
 pub use errors_intake::*;

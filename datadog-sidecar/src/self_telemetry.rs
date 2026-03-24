@@ -11,7 +11,7 @@ use libdd_telemetry::worker::{
     LifecycleAction, TelemetryActions, TelemetryWorkerBuilder, TelemetryWorkerHandle,
 };
 use manual_future::ManualFuture;
-use std::sync::atomic::Ordering;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 use tokio::select;
 use tokio::task::JoinHandle;
@@ -21,6 +21,7 @@ struct MetricData<'a> {
     sidecar_watchdog: &'a WatchdogHandle,
     server: &'a SidecarServer,
     submitted_payloads: ContextKey,
+    last_submitted_payloads: AtomicU64,
     active_sessions: ContextKey,
     memory_usage: ContextKey,
     logs_created: ContextKey,
@@ -42,10 +43,24 @@ impl MetricData<'_> {
     async fn collect_and_send(&self) {
         let trace_metrics = self.server.trace_flusher.collect_metrics();
 
+        let submitted_payloads_delta = {
+            let mut counters = self.server.connection_counters.lock_or_panic();
+            let mut sum = 0u64;
+            counters.retain(|weak| {
+                if let Some(counter) = weak.upgrade() {
+                    sum += counter.load(Ordering::Relaxed);
+                    true
+                } else {
+                    false
+                }
+            });
+            sum.saturating_sub(self.last_submitted_payloads.swap(sum, Ordering::Relaxed))
+        };
+
         let mut futures = vec![
             self.send(
                 self.submitted_payloads,
-                self.server.submitted_payloads.swap(0, Ordering::Relaxed) as f64,
+                submitted_payloads_delta as f64,
                 vec![],
             ),
             self.send(
@@ -196,6 +211,7 @@ impl SelfTelemetry {
             worker: &worker,
             server: &self.server,
             sidecar_watchdog: &self.watchdog_handle,
+            last_submitted_payloads: AtomicU64::new(0),
             submitted_payloads: worker.register_metric_context(
                 "server.submitted_payloads".to_string(),
                 vec![],

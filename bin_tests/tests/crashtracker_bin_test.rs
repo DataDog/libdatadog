@@ -98,6 +98,33 @@ fn run_standard_crash_test_refactored(
 
 #[test]
 #[cfg_attr(miri, ignore)]
+fn test_crash_tracking_bin_errno_preservation() {
+    use bin_tests::modes::unix::test_016_errno_preservation::ERRNO_STATUS_FILENAME;
+
+    let config = CrashTestConfig::new(
+        BuildProfile::Release,
+        TestMode::ErrnoPreservation,
+        CrashType::NullDeref,
+    );
+    let artifacts = StandardArtifacts::new(config.profile);
+    let artifacts_map = build_artifacts(&artifacts.as_slice()).unwrap();
+
+    let validator: ValidatorFn = Box::new(|_payload, fixtures| {
+        let status_path = fixtures.output_dir.join(ERRNO_STATUS_FILENAME);
+        let content = fs::read_to_string(&status_path)
+            .context("reading errno_status file; signal handler may not have written it")?;
+        assert_eq!(
+            content, "PRESERVED",
+            "errno was not preserved across crashtracker signal handler (got {content:?})"
+        );
+        Ok(())
+    });
+
+    run_crash_test_with_artifacts(&config, &artifacts_map, &artifacts, validator).unwrap();
+}
+
+#[test]
+#[cfg_attr(miri, ignore)]
 fn test_crash_tracking_bin_unhandled_exception() {
     let config = CrashTestConfig::new(
         BuildProfile::Release,
@@ -1331,23 +1358,23 @@ fn crash_tracking_empty_endpoint() {
 #[cfg_attr(miri, ignore)]
 #[cfg(unix)]
 fn test_receiver_emits_debug_logs_on_receiver_issue() -> anyhow::Result<()> {
+    use std::time::Duration;
+
     let receiver = artifacts::crashtracker_receiver(BuildProfile::Debug);
     let artifacts = build_artifacts(&[&receiver])?;
     let fixtures = bin_tests::test_runner::TestFixtures::new()?;
 
     let missing_file = fixtures.output_dir.join("missing_additional_file.txt");
 
-    let config = CrashtrackerConfiguration::new(
-        vec![missing_file.display().to_string()],
-        true,
-        true,
-        None,
-        StacktraceCollection::WithoutSymbols,
-        libdd_crashtracker::default_signals(),
-        Some(std::time::Duration::from_millis(500)),
-        None,
-        true,
-    )?;
+    let config = CrashtrackerConfiguration::builder()
+        .additional_files(vec![missing_file.display().to_string()])
+        .create_alt_stack(true)
+        .demangle_names(true)
+        .resolve_frames(StacktraceCollection::WithoutSymbols)
+        .signals(libdd_crashtracker::default_signals())
+        .timeout(Duration::from_millis(500))
+        .use_alt_stack(true)
+        .build()?;
 
     let metadata = Metadata {
         library_name: "libdatadog".to_owned(),

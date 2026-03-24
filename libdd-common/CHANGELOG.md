@@ -2,6 +2,33 @@
 
 
 
+## [3.0.1](https://github.com/datadog/libdatadog/compare/libdd-common-v3.0.0..libdd-common-v3.0.1) - 2026-03-23
+
+### Changed
+
+- Update reqwest and quinn-proto dependency for dependabot alert ([#1774](https://github.com/datadog/libdatadog/issues/1774)) - ([1cd2791](https://github.com/datadog/libdatadog/commit/1cd2791f5e94ab3197e8e68bf6d670cc715d80a0))
+- Ekump/APMSP-2718 update aws-lc dependencies ([#1751](https://github.com/datadog/libdatadog/issues/1751)) - ([5d5a596](https://github.com/datadog/libdatadog/commit/5d5a596b54b4bc3729063c30393e9706cf2d4eba))
+
+
+
+## [3.0.0](https://github.com/datadog/libdatadog/compare/libdd-common-v2.0.1..libdd-common-v3.0.0) - 2026-03-18
+
+### Changed
+
+- Change header name type to accept dynamic values ([#1722](https://github.com/datadog/libdatadog/issues/1722)) - ([4dd532f](https://github.com/datadog/libdatadog/commit/4dd532f2c15e928103fc441ab030bc8d94f070c0))
+
+
+
+## [2.0.1](https://github.com/datadog/libdatadog/compare/libdd-common-v2.0.0..libdd-common-v2.0.1) - 2026-03-16
+
+### Changed
+
+- Run thread count test as single threaded ([#1626](https://github.com/datadog/libdatadog/issues/1626)) - ([b0296aa](https://github.com/datadog/libdatadog/commit/b0296aa173211c81ba1349f2e2812a79938f3153))
+- Run thread count test in own process ([#1693](https://github.com/datadog/libdatadog/issues/1693)) - ([3f3efef](https://github.com/datadog/libdatadog/commit/3f3efefb2ff45d7a5491b770480396d001b87631))
+- Update bytes to 1.11.1 to address RUSTSEC-2026-0007 ([#1628](https://github.com/datadog/libdatadog/issues/1628)) - ([0b0863b](https://github.com/datadog/libdatadog/commit/0b0863b2afb7302fe02ea0af77cb9f98550e2a62))
+
+
+
 ## [2.0.0](https://github.com/datadog/libdatadog/compare/libdd-common-v1.1.0..libdd-common-v2.0.0) - 2026-02-23
 
 ### Added

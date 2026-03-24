@@ -110,6 +110,7 @@ impl RemoteConfigs {
         app_version: String,
         tags: Vec<Tag>,
         dynamic_instrumentation_state: DynamicInstrumentationConfigState,
+        process_tags: Vec<Tag>,
     ) -> RemoteConfigsGuard {
         match self.0.lock_or_panic().entry(options.invariants) {
             Entry::Occupied(e) => e.into_mut(),
@@ -148,6 +149,7 @@ impl RemoteConfigs {
                 capabilities: options.capabilities,
             },
             dynamic_instrumentation_state,
+            process_tags,
         )
     }
 

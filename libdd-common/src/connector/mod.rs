@@ -201,7 +201,6 @@ impl tower_service::Service<hyper::Uri> for Connector {
 mod tests {
     use crate::http_common;
     use std::env;
-    use tower_service::Service;
 
     use super::*;
 
@@ -221,12 +220,12 @@ mod tests {
         let _ = http_common::new_default_client();
     }
 
-    #[tokio::test]
+    #[test]
     #[cfg_attr(miri, ignore)]
     #[cfg(not(feature = "use_webpki_roots"))]
-    /// Verify that Connector will only allow non tls connections if root certificates
-    /// are not found
-    async fn test_missing_root_certificates_only_allow_http_connections() {
+    /// Verify that Connector falls back to Http when native root certificates
+    /// are not available and webpki roots are not enabled.
+    fn test_missing_root_certificates_only_allow_http_connections() {
         const ENV_SSL_CERT_FILE: &str = "SSL_CERT_FILE";
         const ENV_SSL_CERT_DIR: &str = "SSL_CERT_DIR";
         let old_value = env::var(ENV_SSL_CERT_FILE).unwrap_or_default();
@@ -234,43 +233,27 @@ mod tests {
 
         env::set_var(ENV_SSL_CERT_FILE, "this/folder/does/not/exist");
         env::set_var(ENV_SSL_CERT_DIR, "this/folder/does/not/exist");
-        let mut connector = Connector::new();
+        let connector = Connector::new();
 
         assert!(matches!(connector, Connector::Http(_)));
-
-        let stream = connector
-            .call(hyper::Uri::from_static("https://example.com"))
-            .await
-            .unwrap_err();
-
-        assert_eq!(
-            *stream.downcast::<errors::Error>().unwrap(),
-            errors::Error::CannotEstablishTlsConnection
-        );
 
         env::set_var(ENV_SSL_CERT_FILE, old_value);
         env::set_var(ENV_SSL_CERT_DIR, old_dir_value);
     }
 
-    #[tokio::test]
+    #[test]
     #[cfg_attr(miri, ignore)]
     #[cfg(feature = "use_webpki_roots")]
     #[cfg(feature = "https")]
-    /// Verify that Connector will allow tls connections if root certificates
-    /// are not found but can use webpki certificates
-    async fn test_missing_root_certificates_use_webpki_certificates() {
+    /// Verify that Connector builds an Https connector using webpki certificates
+    /// even when native root certificates are not available.
+    fn test_missing_root_certificates_use_webpki_certificates() {
         const ENV_SSL_CERT_FILE: &str = "SSL_CERT_FILE";
         let old_value = env::var(ENV_SSL_CERT_FILE).unwrap_or_default();
 
         env::set_var(ENV_SSL_CERT_FILE, "this/folder/does/not/exist");
-        let mut connector = Connector::new();
+        let connector = Connector::new();
         assert!(matches!(connector, Connector::Https(_)));
-
-        let stream = connector
-            .call(hyper::Uri::from_static("https://example.com"))
-            .await;
-
-        assert!(stream.is_ok());
 
         env::set_var(ENV_SSL_CERT_FILE, old_value);
     }

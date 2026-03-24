@@ -86,10 +86,6 @@ pub mod header {
     #![allow(clippy::declare_interior_mutable_const)]
     use hyper::{header::HeaderName, http::HeaderValue};
 
-    // These strings are defined separately to be used in context where &str are used to represent
-    // headers (e.g. SendData) while keeping a single source of truth.
-    pub const DATADOG_SEND_REAL_HTTP_STATUS_STR: &str = "datadog-send-real-http-status";
-    pub const DATADOG_TRACE_COUNT_STR: &str = "x-datadog-trace-count";
     pub const APPLICATION_MSGPACK_STR: &str = "application/msgpack";
     pub const APPLICATION_PROTOBUF_STR: &str = "application/x-protobuf";
 
@@ -101,7 +97,7 @@ pub mod header {
     /// If this is not set then the agent will always return a 200 regardless if the payload is
     /// dropped.
     pub const DATADOG_SEND_REAL_HTTP_STATUS: HeaderName =
-        HeaderName::from_static(DATADOG_SEND_REAL_HTTP_STATUS_STR);
+        HeaderName::from_static("datadog-send-real-http-status");
     pub const DATADOG_API_KEY: HeaderName = HeaderName::from_static("dd-api-key");
     pub const APPLICATION_JSON: HeaderValue = HeaderValue::from_static("application/json");
     pub const APPLICATION_MSGPACK: HeaderValue = HeaderValue::from_static(APPLICATION_MSGPACK_STR);

@@ -385,6 +385,7 @@ pub mod tests {
             env: "env".to_string(),
             app_version: "7.8.9".to_string(),
             tags: vec![],
+            process_tags: vec![],
         })
     });
 
