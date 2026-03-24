@@ -19,6 +19,7 @@ path = "benches/main.rs"
 
 [dependencies]
 anyhow = "1.0"
+base64 = "0.22"
 hyper = { workspace = true, optional = true, default-features = false }
 "http" = "1"
 "http-body" = "1"

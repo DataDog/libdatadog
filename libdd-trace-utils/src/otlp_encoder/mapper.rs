@@ -408,4 +408,43 @@ mod tests {
         let rate = rate_kv["value"]["doubleValue"].as_f64().unwrap();
         assert!((rate - std::f64::consts::PI).abs() < 1e-9);
     }
+
+    #[test]
+    fn test_128bit_trace_id_from_dd_p_tid() {
+        // When "_dd.p.tid" is present it supplies the high 64 bits of the trace ID.
+        // Low 64 bits come from span.trace_id; the two are concatenated to form a 128-bit hex ID.
+        let resource_info = OtlpResourceInfo::default();
+        let mut span: Span<BytesData> = Span {
+            trace_id: 0xD269B633813FC60C_u128, // low 64 bits
+            span_id: 1,
+            name: libdd_tinybytes::BytesString::from_static("s"),
+            start: 0,
+            duration: 1,
+            ..Default::default()
+        };
+        span.meta.insert(
+            "_dd.p.tid".into(),
+            libdd_tinybytes::BytesString::from_static("5b8efff798038103"),
+        );
+        let req = map_traces_to_otlp(vec![vec![span]], &resource_info);
+        let otlp_span = &req.resource_spans[0].scope_spans[0].spans[0];
+        assert_eq!(otlp_span.trace_id, "5b8efff798038103d269b633813fc60c");
+    }
+
+    #[test]
+    fn test_128bit_trace_id_without_dd_p_tid() {
+        // When "_dd.p.tid" is absent the high 64 bits default to zero.
+        let resource_info = OtlpResourceInfo::default();
+        let span: Span<BytesData> = Span {
+            trace_id: 0xD269B633813FC60C_u128,
+            span_id: 1,
+            name: libdd_tinybytes::BytesString::from_static("s"),
+            start: 0,
+            duration: 1,
+            ..Default::default()
+        };
+        let req = map_traces_to_otlp(vec![vec![span]], &resource_info);
+        let otlp_span = &req.resource_spans[0].scope_spans[0].spans[0];
+        assert_eq!(otlp_span.trace_id, "0000000000000000d269b633813fc60c");
+    }
 }

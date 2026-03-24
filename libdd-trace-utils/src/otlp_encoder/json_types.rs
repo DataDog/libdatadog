@@ -17,6 +17,7 @@
 //! dependency for that purpose:
 //!   <https://github.com/open-telemetry/opentelemetry-rust/tree/opentelemetry-proto-0.28.0/opentelemetry-proto>
 
+use base64::{engine::general_purpose::STANDARD, Engine as _};
 use serde::{Serialize, Serializer};
 
 /// Top-level OTLP trace export request (ExportTraceServiceRequest).
@@ -127,12 +128,17 @@ pub enum AnyValue {
     #[serde(serialize_with = "serialize_int_value_as_string")]
     IntValue(i64),
     DoubleValue(f64),
-    BytesValue(String),
+    #[serde(serialize_with = "serialize_bytes_as_base64")]
+    BytesValue(Vec<u8>),
     ArrayValue(ArrayValue),
 }
 
 fn serialize_int_value_as_string<S: Serializer>(v: &i64, s: S) -> Result<S::Ok, S::Error> {
     s.serialize_str(&v.to_string())
+}
+
+fn serialize_bytes_as_base64<S: Serializer>(v: &[u8], s: S) -> Result<S::Ok, S::Error> {
+    s.serialize_str(&STANDARD.encode(v))
 }
 
 /// OTLP array value — wraps a list of [`AnyValue`] items.
