@@ -144,7 +144,10 @@ fn map_span<T: TraceData>(span: &Span<T>) -> OtlpSpan {
             code: json_types::status_code::ERROR,
         })
     } else {
-        None
+        Some(Status {
+            message: None,
+            code: json_types::status_code::UNSET,
+        })
     };
     // Set flags from sampling priority: 1 = sampled/keep, 0 = dropped.
     let flags = span
