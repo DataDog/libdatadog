@@ -2,6 +2,13 @@
 
 
 
+## [3.0.1](https://github.com/datadog/libdatadog/compare/libdd-trace-utils-v3.0.0..libdd-trace-utils-v3.0.1) - 2026-03-24
+
+### Changed
+- Fix previous version
+
+
+
 ## [3.0.0](https://github.com/datadog/libdatadog/compare/libdd-trace-utils-v2.0.2..libdd-trace-utils-v3.0.0) - 2026-03-23
 
 ### Changed
