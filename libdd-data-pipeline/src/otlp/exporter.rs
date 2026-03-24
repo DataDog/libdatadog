@@ -5,7 +5,6 @@
 
 use super::config::OtlpTraceConfig;
 use crate::trace_exporter::error::{InternalErrorKind, RequestError, TraceExporterError};
-use http::HeaderMap;
 use libdd_common::{http_common, Endpoint, HttpClient};
 use libdd_trace_utils::send_with_retry::{
     send_with_retry, RetryBackoffType, RetryStrategy, SendWithRetryError,
@@ -41,19 +40,11 @@ pub async fn send_otlp_traces_http(
         ..Endpoint::default()
     };
 
-    let mut headers = HeaderMap::new();
+    let mut headers = config.headers.clone();
     headers.insert(
         http::header::CONTENT_TYPE,
         libdd_common::header::APPLICATION_JSON,
     );
-    for (key, value) in &config.headers {
-        if let (Ok(name), Ok(val)) = (
-            http::HeaderName::from_bytes(key.as_bytes()),
-            http::HeaderValue::from_str(value),
-        ) {
-            headers.insert(name, val);
-        }
-    }
     if let Some(token) = test_token {
         if let Ok(val) = http::HeaderValue::from_str(token) {
             headers.insert(

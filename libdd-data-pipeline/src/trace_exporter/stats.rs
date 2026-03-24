@@ -225,7 +225,6 @@ pub(crate) fn process_traces_for_stats<T: libdd_trace_utils::span::TraceData>(
     header_tags: &mut libdd_trace_utils::trace_utils::TracerHeaderTags,
     client_side_stats: &ArcSwap<StatsComputationStatus>,
     client_computed_top_level: bool,
-    force_drop: bool,
 ) -> libdd_trace_utils::span::trace_utils::DroppedP0Stats {
     if let StatsComputationStatus::Enabled {
         stats_concentrator, ..
@@ -249,10 +248,6 @@ pub(crate) fn process_traces_for_stats<T: libdd_trace_utils::span::TraceData>(
         header_tags.dropped_p0_spans = dropped_p0_stats.dropped_p0_spans;
 
         dropped_p0_stats
-    } else if force_drop {
-        // No downstream agent to drop unsampled traces (e.g. OTLP path), so drop here
-        // even when client-side stats are not enabled.
-        libdd_trace_utils::span::trace_utils::drop_chunks(traces)
     } else {
         libdd_trace_utils::span::trace_utils::DroppedP0Stats {
             dropped_p0_traces: 0,

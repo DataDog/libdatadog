@@ -371,11 +371,34 @@ impl TraceExporterBuilder {
                 .agent_rates_payload_version_enabled
                 .then(AgentResponsePayloadVersion::new),
             http_client: new_default_client(),
-            otlp_config: self.otlp_endpoint.map(|url| OtlpTraceConfig {
-                endpoint_url: url,
-                headers: self.otlp_headers,
-                timeout: DEFAULT_OTLP_TIMEOUT,
-                protocol: OtlpProtocol::HttpJson,
+            otlp_config: self.otlp_endpoint.map(|url| {
+                let mut headers = http::HeaderMap::new();
+                for (key, value) in self.otlp_headers {
+                    match (
+                        http::HeaderName::from_bytes(key.as_bytes()),
+                        http::HeaderValue::from_str(&value),
+                    ) {
+                        (Ok(name), Ok(val)) => {
+                            headers.insert(name, val);
+                        }
+                        _ => {
+                            tracing::warn!(
+                                "Skipping invalid OTLP header: {:?}={:?}",
+                                key,
+                                value
+                            );
+                        }
+                    }
+                }
+                OtlpTraceConfig {
+                    endpoint_url: url,
+                    headers,
+                    timeout: self
+                        .connection_timeout
+                        .map(Duration::from_millis)
+                        .unwrap_or(DEFAULT_OTLP_TIMEOUT),
+                    protocol: OtlpProtocol::HttpJson,
+                }
             }),
         })
     }

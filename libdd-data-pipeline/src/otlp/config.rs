@@ -3,6 +3,7 @@
 
 //! OTLP trace export configuration.
 
+use http::HeaderMap;
 use std::time::Duration;
 
 /// OTLP trace export protocol. HTTP/JSON is currently supported.
@@ -27,8 +28,8 @@ pub const DEFAULT_OTLP_TIMEOUT: Duration = Duration::from_secs(10);
 pub struct OtlpTraceConfig {
     /// Full URL to POST traces to (e.g. `http://localhost:4318/v1/traces`).
     pub endpoint_url: String,
-    /// Optional HTTP headers (key-value pairs).
-    pub headers: Vec<(String, String)>,
+    /// Pre-validated HTTP headers to include in each request.
+    pub headers: HeaderMap,
     /// Request timeout.
     pub timeout: Duration,
     /// Protocol (for future use; currently only HttpJson is supported).

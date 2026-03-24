@@ -398,7 +398,7 @@ mod tests {
             .iter()
             .find(|a| a["key"] == "count")
             .unwrap();
-        assert_eq!(count_kv["value"]["intValue"], 42);
+        assert_eq!(count_kv["value"]["intValue"], "42");
         let rate_kv = attrs
             .as_array()
             .unwrap()
