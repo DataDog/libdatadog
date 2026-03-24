@@ -9,6 +9,7 @@ use super::signal_handler_manager::chain_signal_handler;
 use crate::crash_info::Metadata;
 use crate::shared::configuration::CrashtrackerConfiguration;
 use crate::StackTrace;
+use errno::{errno, set_errno};
 use libc::{c_void, siginfo_t, ucontext_t};
 use libdd_common::timeout::TimeoutManager;
 use std::os::fd::OwnedFd;
@@ -193,10 +194,17 @@ pub(crate) extern "C" fn handle_posix_sigaction(
     sig_info: *mut siginfo_t,
     ucontext: *mut c_void,
 ) {
+    // Save errno
+    let errno = errno();
+
     // Handle the signal.  Note this has a guard to ensure that we only generate
     // one crash report per process.
     let _ = handle_posix_signal_impl(sig_info, ucontext as *mut ucontext_t);
+
+    // Restore errno
+    set_errno(errno);
     // SAFETY: No preconditions.
+
     unsafe { chain_signal_handler(signum, sig_info, ucontext) };
 }
 
@@ -454,18 +462,8 @@ mod tests {
     }
 
     fn make_test_config() -> CrashtrackerConfiguration {
-        CrashtrackerConfiguration::new(
-            vec![], // additional_files
-            false,  // create_alt_stack
-            false,  // use_alt_stack
-            None,   // endpoint
-            crate::StacktraceCollection::Disabled,
-            vec![],                       // signals
-            Some(Duration::from_secs(1)), // timeout
-            None,                         // unix_socket_path
-            false,                        // demangle_names
-        )
-        .unwrap()
+        let builder = CrashtrackerConfiguration::builder();
+        builder.timeout(Duration::from_secs(1)).build().unwrap()
     }
 
     /// Clears METADATA global, properly freeing any existing Box

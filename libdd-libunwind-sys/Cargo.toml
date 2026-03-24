@@ -1,9 +1,9 @@
 [package]
-name = "libdd-libunwind"
-edition.workspace = true
-version.workspace = true
-rust-version.workspace = true
-license.workspace = true
+name = "libdd-libunwind-sys"
+edition = "2021"
+version = "0.1.0"
+rust-version = "1.84.1"
+license = "Apache-2.0"
 publish = false
 links = "unwind"  # Tells Cargo this crate links to libunwind (prevents multiple builds)
 

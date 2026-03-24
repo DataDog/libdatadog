@@ -75,6 +75,7 @@ pub mod ffi {
         ObjectsLegacy, // LEGACY: Use InuseObjects instead
         RequestTime,
         Sample,
+        Tracepoint,
         SocketReadSize,
         SocketReadSizeSamples,
         SocketReadTime,
@@ -376,6 +377,7 @@ impl TryFrom<ffi::SampleType> for api::SampleType {
             ffi::SampleType::ObjectsLegacy => api::SampleType::ObjectsLegacy,
             ffi::SampleType::RequestTime => api::SampleType::RequestTime,
             ffi::SampleType::Sample => api::SampleType::Sample,
+            ffi::SampleType::Tracepoint => api::SampleType::Tracepoint,
             ffi::SampleType::SocketReadSize => api::SampleType::SocketReadSize,
             ffi::SampleType::SocketReadSizeSamples => api::SampleType::SocketReadSizeSamples,
             ffi::SampleType::SocketReadTime => api::SampleType::SocketReadTime,

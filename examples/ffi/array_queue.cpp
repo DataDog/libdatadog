@@ -1,6 +1,7 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+#include <cstdint>
 extern "C" {
 #include <datadog/common.h>
 }
@@ -12,8 +13,8 @@ extern "C" {
 #include <vector>
 
 struct Sample {
-  int x;
-  int y;
+  uint32_t x;
+  uint32_t y;
 };
 
 void delete_fn(void *sample) { delete (Sample *)sample; }
@@ -36,15 +37,15 @@ int main(void) {
   }
   std::unique_ptr<ddog_ArrayQueue, Deleter> array_queue(array_queue_new_result.ok);
 
-  size_t num_threads = 4;
-  size_t num_elements = 50;
+  uint32_t num_threads = 4;
+  uint32_t num_elements = 50;
   std::vector<std::atomic<size_t>> counts(num_elements);
-  for (size_t i = 0; i < num_elements; ++i) {
+  for (uint32_t i = 0; i < num_elements; ++i) {
     counts[i].store(0);
   }
 
   auto consumer = [&array_queue, &counts, num_elements]() {
-    for (size_t i = 0; i < num_elements; ++i) {
+    for (uint32_t i = 0; i < num_elements; ++i) {
       while (true) {
         ddog_ArrayQueue_PopResult pop_result = ddog_ArrayQueue_pop(array_queue.get());
         if (pop_result.tag == DDOG_ARRAY_QUEUE_POP_RESULT_OK) {
@@ -64,7 +65,7 @@ int main(void) {
   };
 
   auto producer = [&array_queue, num_elements]() {
-    for (size_t i = 0; i < num_elements; ++i) {
+    for (uint32_t i = 0; i < num_elements; ++i) {
       Sample *sample = new Sample();
       sample->x = i;
       sample->y = i;

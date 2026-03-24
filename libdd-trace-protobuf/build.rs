@@ -176,6 +176,11 @@ fn generate_protobuf() {
         "ClientGroupedStats.HTTP_endpoint",
         "#[serde(default)] #[serde(rename = \"HTTPEndpoint\")]",
     );
+    config.field_attribute("ClientGroupedStats.service_source", "#[serde(default)]");
+    config.field_attribute(
+        "ClientGroupedStats.span_derived_primary_tags",
+        "#[serde(default)]",
+    );
 
     config.field_attribute(
         "ClientGroupedStats.okSummary",
@@ -201,6 +206,14 @@ fn generate_protobuf() {
     config.field_attribute(
         "ClientGroupedStats.DB_type",
         "#[serde(rename = \"DBType\")]",
+    );
+    config.field_attribute(
+        "ClientGroupedStats.GRPC_status_code",
+        "#[serde(rename = \"GRPCStatusCode\")]",
+    );
+    config.field_attribute(
+        "ClientGroupedStats.service_source",
+        "#[serde(rename = \"srv_src\")]",
     );
 
     // idx module type attributes
@@ -261,6 +274,7 @@ fn generate_protobuf() {
                 "src/pb/span.proto",
                 "src/pb/stats.proto",
                 "src/pb/remoteconfig.proto",
+                "src/pb/opentelemetry/proto/common/v1/process_context.proto",
                 "src/pb/idx/tracer_payload.proto",
                 "src/pb/idx/span.proto",
             ],
@@ -288,6 +302,23 @@ fn generate_protobuf() {
     prepend_to_file(serde_uses, &output_path.join("pb.rs"));
     prepend_to_file(serde_uses, &output_path.join("remoteconfig.rs"));
     prepend_to_file(serde_uses, &output_path.join("pb.idx.rs"));
+
+    // We vendored a few OTel protobuf definitions, which requires their own copyright header,
+    // although they thankfully have the same Apache license.
+    let otel_license = "// Copyright 2019, OpenTelemetry Authors
+// SPDX-License-Identifier: Apache-2.0
+
+"
+    .as_bytes();
+
+    prepend_to_file(
+        otel_license,
+        &output_path.join("opentelemetry.proto.resource.v1.rs"),
+    );
+    prepend_to_file(
+        otel_license,
+        &output_path.join("opentelemetry.proto.common.v1.rs"),
+    );
 }
 
 #[cfg(feature = "generate-protobuf")]

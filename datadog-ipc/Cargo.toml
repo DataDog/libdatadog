@@ -8,23 +8,19 @@ publish = false
 
 [dependencies]
 anyhow = { version = "1.0" }
-bytes = { version = "1.11.1" }
+bincode = { version = "1" }
 futures = { version = "0.3", default-features = false }
 io-lifetimes = { version = "1.0" }
 page_size = "0.6.0"
-pin-project = { version = "1" }
 memfd = { version = "0.6" }
 serde = { version = "1.0", default-features = false, features = ["derive"] }
-tokio-serde = { version = "0.8", features = ["bincode"] }
-tokio-util = { version = "0.7.11", features = ["codec"] }
 libc = { version = "0.2" }
 libdd-tinybytes = { path = "../libdd-tinybytes", optional = true }
 
-# tarpc needed extensions to allow 1 way communication and to export some internal structs
-tarpc = { path = "./tarpc", default-features = false, features = ["serde-transport"] }
 
 libdd-common = { path = "../libdd-common" }
 datadog-ipc-macros = { path = "../datadog-ipc-macros" }
+tracing = { version = "0.1", default-features = false }
 
 [dev-dependencies]
 criterion = "0.5"
@@ -43,7 +39,7 @@ tracing-subscriber = { version = "0.3.22" }
 spawn_worker = { path = "../spawn_worker" }
 
 [target.'cfg(not(windows))'.dependencies]
-nix = { version = "0.29", features = ["fs", "mman", "process", "poll", "socket"] }
+nix = { version = "0.29", features = ["fs", "mman", "process", "poll", "socket", "uio", "user"] }
 sendfd = { version = "0.4", features = ["tokio"] }
 tokio = { version = "1.23", features = ["sync", "io-util", "signal"] }
 
@@ -51,9 +47,9 @@ tokio = { version = "1.23", features = ["sync", "io-util", "signal"] }
 glibc_version = "0.1.2"
 
 [target.'cfg(windows)'.dependencies]
-winapi = { version = "0.3.9", features = ["handleapi", "memoryapi", "winbase", "winerror"] }
-windows-sys = { version = "0.48.0", features = ["Win32_System", "Win32_System_WindowsProgramming", "Win32_Foundation", "Win32_System_Pipes"] }
-tokio = { version = "1.23", features = ["sync", "io-util", "signal", "net"] }
+winapi = { version = "0.3.9", features = ["handleapi", "memoryapi", "winbase", "winnt", "winerror", "processthreadsapi", "fileapi", "minwinbase"] }
+windows-sys = { version = "0.48.0", features = ["Win32_System", "Win32_System_WindowsProgramming", "Win32_Foundation", "Win32_System_Pipes", "Win32_Storage_FileSystem", "Win32_System_IO", "Win32_System_Threading"] }
+tokio = { version = "1.23", features = ["sync", "io-util", "signal", "net", "rt-multi-thread", "rt"] }
 
 [lib]
 bench = false

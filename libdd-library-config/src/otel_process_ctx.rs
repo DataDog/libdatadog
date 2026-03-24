@@ -22,7 +22,7 @@ pub mod linux {
             atomic::{fence, AtomicU64, Ordering},
             Mutex, MutexGuard,
         },
-        time::{SystemTime, UNIX_EPOCH},
+        time::Duration,
     };
 
     use anyhow::Context;
@@ -31,7 +31,11 @@ pub mod linux {
         fs::{ftruncate, memfd_create, MemfdFlags},
         mm::{madvise, mmap, mmap_anonymous, munmap, Advice, MapFlags, ProtFlags},
         process::{getpid, set_virtual_memory_region_name, Pid},
+        time::{clock_gettime, ClockId},
     };
+
+    use libdd_trace_protobuf::opentelemetry::proto::common::v1::ProcessContext;
+    use prost::Message;
 
     /// Current version of the process context format
     pub const PROCESS_CTX_VERSION: u32 = 2;
@@ -49,21 +53,17 @@ pub mod linux {
     /// based synchronization requires the use of atomics to have any effect (see [Mandatory
     /// atomic](https://doc.rust-lang.org/std/sync/atomic/fn.fence.html#mandatory-atomic))
     ///
-    /// We use `signature` as a release notification for publication, and `published_at_ns` for
-    /// updates. Ideally, those should be two `AtomicU64`, but this isn't compatible with
-    /// `#[repr(C, packed)]`, since `AtomicU64` can't be used in a packed structure for alignment
-    /// reason (what's more, their alignment might be bigger than the one of `u64` on some
-    /// platforms).
-    ///
-    /// In practice, given the page size and the layout of `MappingHeader`, the alignment should
-    /// match (we statically test for it anyway). We can then use [`AtomicU64::from_ptr`] to create
-    /// an atomic view of those fields when synchronization is needed.
+    /// We use `monotonic_published_at_ns` for synchronization with the reader. Ideally, it should
+    /// be an `AtomicU64`, but this is incompatible with `#[repr(C, packed)]` by default, as it
+    /// could be misaligned. In our case, given the page size and the layout of `MappingHeader`, it
+    /// is actually 8-bytes aligned: we use [`AtomicU64::from_ptr`] to create an atomic view when
+    /// synchronization is needed.
     #[repr(C, packed)]
     struct MappingHeader {
         signature: [u8; 8],
         version: u32,
         payload_size: u32,
-        published_at_ns: u64,
+        monotonic_published_at_ns: u64,
         payload_ptr: *const u8,
     }
 
@@ -229,7 +229,7 @@ pub mod linux {
             unsafe { madvise(mapping.start_addr, size, Advice::LinuxDontFork) }
                 .context("madvise MADVISE_DONTFORK failed")?;
 
-            let published_at_ns = time_now_ns().ok_or_else(|| {
+            let published_at_ns = since_boottime_ns().ok_or_else(|| {
                 anyhow::anyhow!("failed to get current time for process context publication")
             })?;
 
@@ -242,27 +242,26 @@ pub mod linux {
                 ptr::write(
                     header,
                     MappingHeader {
-                        // signature will be set atomically at last
-                        signature: [0; 8],
+                        signature: *SIGNATURE,
                         version: PROCESS_CTX_VERSION,
                         payload_size: payload
                             .len()
                             .try_into()
                             .context("payload size overflowed")?,
-                        published_at_ns,
+                        // will be set atomically at last
+                        monotonic_published_at_ns: 0,
                         payload_ptr: payload.as_ptr(),
                     },
                 );
-                // We typically want to avoid the compiler and the hardware to re-order the write to
-                // the signature (which should be last according to the
+                // We typically want to avoid the compiler and the hardware to re-order the write
+                // to the `monotonic_published_at_ns` (which should be last according to the
                 // specification) with the writes to other fields of the header.
                 //
                 // To do so, we implement synchronization during publication _as if the reader were
                 // another thread of this program_, using atomics and fences.
                 fence(Ordering::SeqCst);
-                AtomicU64::from_ptr((*header).signature.as_mut_ptr().cast::<u64>())
-                    // To avoid shuffling bytes, we must use the native endianness
-                    .store(u64::from_ne_bytes(*SIGNATURE), Ordering::Relaxed);
+                AtomicU64::from_ptr(addr_of_mut!((*header).monotonic_published_at_ns))
+                    .store(published_at_ns, Ordering::Relaxed);
             }
 
             let _ = mapping.set_name();
@@ -278,28 +277,27 @@ pub mod linux {
         fn update(&mut self, payload: Vec<u8>) -> anyhow::Result<()> {
             let header = self.mapping.start_addr as *mut MappingHeader;
 
-            let published_at_ns = time_now_ns()
+            let monotonic_published_at_ns = since_boottime_ns()
                 .ok_or_else(|| anyhow::anyhow!("could not get the current timestamp"))?;
             let payload_size = payload.len().try_into().map_err(|_| {
-                anyhow::anyhow!("couldn't update process protocol: new payload too large")
+                anyhow::anyhow!("couldn't update process context: new payload too large")
             })?;
 
-            // Safety
+            // Safety:
             //
             // [^atomic-u64-alignment]: Page size is at minimum 4KB and will be always 8 bytes
-            // aligned even on exotic platforms. The respective offsets of `signature` and
-            // `published_at_ns` are 0 and 16 bytes, so they are 8-bytes aligned (`AtomicU64` has
-            // both a size and align of 8 bytes).
+            // aligned even on exotic platforms. The offset `monotonic_published_at_ns` is 16
+            // bytes, so it's 8-bytes aligned (`AtomicU64` has both a size and align of 8 bytes).
             //
             // The header memory is valid for both read and writes.
             let published_at_atomic =
-                unsafe { AtomicU64::from_ptr(addr_of_mut!((*header).published_at_ns)) };
+                unsafe { AtomicU64::from_ptr(addr_of_mut!((*header).monotonic_published_at_ns)) };
 
             // A process shouldn't try to concurrently update its own context
             //
-            // Note: be careful of early return while `published_at` is still zero, as this would
-            // effectively "lock" any future publishing. Move throwing code above this swap, or
-            // properly restore the previous value if the former can't be done.
+            // Note: be careful of early return while `monotonic_published_at` is still zero, as
+            // this would effectively "lock" any future publishing. Move throwing code above this
+            // swap, or properly restore the previous value if the former can't be done.
             if published_at_atomic.swap(0, Ordering::Relaxed) == 0 {
                 return Err(anyhow::anyhow!(
                     "concurrent update of the process context is not supported"
@@ -317,7 +315,7 @@ pub mod linux {
             }
 
             fence(Ordering::SeqCst);
-            published_at_atomic.store(published_at_ns, Ordering::Relaxed);
+            published_at_atomic.store(monotonic_published_at_ns, Ordering::Relaxed);
 
             Ok(())
         }
@@ -332,11 +330,10 @@ pub mod linux {
         size_of::<MappingHeader>()
     }
 
-    fn time_now_ns() -> Option<u64> {
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .ok()
-            .and_then(|d| u64::try_from(d.as_nanos()).ok())
+    /// Returns the value of the monotonic BOOTTIME clock in nanoseconds.
+    fn since_boottime_ns() -> Option<u64> {
+        let duration = Duration::try_from(clock_gettime(ClockId::Boottime)).ok()?;
+        u64::try_from(duration.as_nanos()).ok()
     }
 
     /// Locks the context handle. Returns a uniform error if the lock has been poisoned.
@@ -368,7 +365,12 @@ pub mod linux {
     /// is Undefined Behavior, for example. We assume that a forking runtime (such as Python or
     /// Ruby) that doesn't follow with an immediate `exec` is already "taking that risk", so to
     /// speak (typically, if no thread is ever spawned before the fork, things are mostly fine).
-    pub fn publish(payload: Vec<u8>) -> anyhow::Result<()> {
+    #[inline]
+    pub fn publish(context: &ProcessContext) -> anyhow::Result<()> {
+        publish_raw_payload(context.encode_to_vec())
+    }
+
+    fn publish_raw_payload(payload: Vec<u8>) -> anyhow::Result<()> {
         let mut guard = lock_context_handle()?;
 
         match &mut *guard {
@@ -416,6 +418,7 @@ pub mod linux {
         use std::{
             fs::File,
             io::{BufRead, BufReader},
+            ptr::{self, addr_of_mut},
             sync::atomic::{fence, AtomicU64, Ordering},
         };
 
@@ -439,19 +442,32 @@ pub mod linux {
                 || name.starts_with("[anon:OTEL_CTX]")
         }
 
-        /// Reads the signature from a memory address to verify it's an OTEL_CTX mapping. This also
-        /// establish proper synchronization/memory ordering through atomics since the reader is
-        /// the same process in this test setup.
-        fn verify_signature_at(addr: usize) -> bool {
-            let ptr: *mut u64 = std::ptr::with_exposed_provenance_mut(addr);
-            // Safety: We're reading from our own process memory at an address
-            // we found in /proc/self/maps. This should be safe as long as the
-            // mapping exists and has read permissions.
+        /// Establishes proper synchronization/memory ordering with the writer, checking that
+        /// `monotonic_published_at` is not zero and that the signature is correct. Returns a
+        /// pointer to the initialized header in case of success.
+        fn verify_mapping_at(addr: usize) -> anyhow::Result<*const MappingHeader> {
+            let header: *mut MappingHeader = ptr::with_exposed_provenance_mut(addr);
+            // Safety: we're reading from our own process memory at an address we found in
+            // /proc/self/maps. This should be safe as long as the mapping exists and has read
+            // permissions.
             //
-            // For the alignment constraint of `AtomicU64`, see [atomic-u64-alignment].
-            let signature = unsafe { AtomicU64::from_ptr(ptr).load(Ordering::Relaxed) };
+            // For the alignment constraint of `AtomicU64`, see [^atomic-u64-alignment].
+            let published_at = unsafe {
+                AtomicU64::from_ptr(addr_of_mut!((*header).monotonic_published_at_ns))
+                    .load(Ordering::Relaxed)
+            };
+            ensure!(published_at != 0, "monotonic_published_at_ns is zero: couldn't read an initialized header in the candidate mapping");
             fence(Ordering::SeqCst);
-            &signature.to_ne_bytes() == super::SIGNATURE
+
+            // Safety: if `monotonic_published_at_ns` is non-zero, the header is properly
+            // initialized and thus readable.
+            let signature = unsafe { &header.as_ref().unwrap().signature };
+            ensure!(
+                signature == super::SIGNATURE,
+                "invalid signature in the candidate mapping"
+            );
+
+            Ok(header)
         }
 
         /// Find the OTEL_CTX mapping in /proc/self/maps
@@ -477,17 +493,15 @@ pub mod linux {
         /// Read the process context from the current process.
         ///
         /// This searches `/proc/self/maps` for an OTEL_CTX mapping and decodes its contents.
-        pub fn read_process_context() -> anyhow::Result<MappingHeader> {
+        ///
+        /// **CAUTION**: Note that the reader implemented in this module, as well as the helper
+        /// functions it relies on, are specialized for tests (for example, it doesn't check for
+        /// concurrent writers after reading the header, because we know they can't be). Do not
+        /// extract or use as it is as a generic Rust OTel process context reader.
+        fn read_process_context() -> anyhow::Result<MappingHeader> {
             let mapping_addr = find_otel_mapping()?;
-            let header_ptr = mapping_addr as *const MappingHeader;
-
-            // Note: verifying the signature ensures proper synchronization
-            ensure!(
-                verify_signature_at(mapping_addr),
-                "verification of the signature failed"
-            );
-
-            // Safety: we found this address in /proc/self/maps and verified the signature
+            let header_ptr = verify_mapping_at(mapping_addr)?;
+            // Safety: the pointer returned by `verify_mapping_at` points to an initialized header
             Ok(unsafe { std::ptr::read(header_ptr) })
         }
 
@@ -497,7 +511,7 @@ pub mod linux {
             let payload_v1 = "example process context payload";
             let payload_v2 = "another example process context payload of different size";
 
-            super::publish(payload_v1.as_bytes().to_vec())
+            super::publish_raw_payload(payload_v1.as_bytes().to_vec())
                 .expect("couldn't publish the process context");
 
             let header = read_process_context().expect("couldn't read back the process context");
@@ -516,13 +530,17 @@ pub mod linux {
                 header.payload_size == payload_v1.len() as u32,
                 "wrong payload size"
             );
-            assert!(header.published_at_ns > 0, "published_at_ns is zero");
+            assert!(
+                header.monotonic_published_at_ns > 0,
+                "monotonic_published_at_ns is zero"
+            );
             assert!(read_payload == payload_v1.as_bytes(), "payload mismatch");
 
-            let published_at_ns_v1 = header.published_at_ns;
+            let published_at_ns_v1 = header.monotonic_published_at_ns;
             // Ensure the clock advances so the updated timestamp is strictly greater
             std::thread::sleep(std::time::Duration::from_nanos(10));
-            super::publish(payload_v2.as_bytes().to_vec())
+
+            super::publish_raw_payload(payload_v2.as_bytes().to_vec())
                 .expect("couldn't update the process context");
 
             let header = read_process_context().expect("couldn't read back the process context");
@@ -542,7 +560,7 @@ pub mod linux {
                 "wrong payload size"
             );
             assert!(
-                header.published_at_ns > published_at_ns_v1,
+                header.monotonic_published_at_ns > published_at_ns_v1,
                 "published_at_ns should be strictly greater after update"
             );
             assert!(read_payload == payload_v2.as_bytes(), "payload mismatch");
@@ -555,7 +573,7 @@ pub mod linux {
         fn unpublish_process_context() {
             let payload = "example process context payload";
 
-            super::publish(payload.as_bytes().to_vec())
+            super::publish_raw_payload(payload.as_bytes().to_vec())
                 .expect("couldn't publish the process context");
 
             // The mapping must be discoverable right after publishing

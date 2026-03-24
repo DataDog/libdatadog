@@ -191,11 +191,16 @@ impl AgentInfoReader {
     }
 
     pub fn read(&mut self) -> (bool, &Option<AgentInfoStruct>) {
-        let (updated, data) = self.reader.read();
+        let (mut updated, data) = self.reader.read();
         if updated {
-            match serde_json::from_slice(data) {
-                Ok(info) => self.info = Some(info),
-                Err(e) => error!("Failed deserializing the agent info: {e:?}"),
+            // This may transiently happen during AgentInfo initialization
+            if data.is_empty() {
+                updated = false
+            } else {
+                match serde_json::from_slice(data) {
+                    Ok(info) => self.info = Some(info),
+                    Err(e) => error!("Failed deserializing the agent info: {e:?}"),
+                }
             }
         }
         (updated, &self.info)

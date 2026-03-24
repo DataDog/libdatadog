@@ -14,9 +14,8 @@ use crate::log::{MultiEnvFilterGuard, MultiWriterGuard};
 use crate::{spawn_map_err, tracer};
 use datadog_live_debugger::sender::{DebuggerType, PayloadSender};
 use datadog_remote_config::fetch::ConfigOptions;
-use libdd_common::MutexExt;
-use tracing::log::warn;
-use tracing::{debug, error, info, trace};
+use libdd_common::{tag::Tag, MutexExt};
+use tracing::{debug, error, info, trace, warn};
 
 use crate::service::agent_info::AgentInfoGuard;
 use crate::service::{InstanceId, QueueId, RuntimeInfo};
@@ -38,12 +37,14 @@ pub(crate) struct SessionInfo {
     #[cfg(windows)]
     pub(crate) remote_config_notify_function:
         Arc<Mutex<crate::service::remote_configs::RemoteConfigNotifyFunction>>,
+    #[cfg(windows)]
+    pub(crate) process_handle: Arc<Mutex<Option<crate::service::sidecar_server::ProcessHandle>>>,
     pub(crate) log_guard:
         Arc<Mutex<Option<(MultiEnvFilterGuard<'static>, MultiWriterGuard<'static>)>>>,
     pub(crate) session_id: String,
     pub(crate) pid: Arc<AtomicI32>,
     pub(crate) remote_config_enabled: Arc<Mutex<bool>>,
-    pub(crate) process_tags: Arc<Mutex<Option<String>>>,
+    pub(crate) process_tags: Arc<Mutex<Vec<Tag>>>,
 }
 
 impl Clone for SessionInfo {
@@ -59,6 +60,8 @@ impl Clone for SessionInfo {
             remote_config_interval: self.remote_config_interval.clone(),
             #[cfg(windows)]
             remote_config_notify_function: self.remote_config_notify_function.clone(),
+            #[cfg(windows)]
+            process_handle: self.process_handle.clone(),
             log_guard: self.log_guard.clone(),
             session_id: self.session_id.clone(),
             pid: self.pid.clone(),

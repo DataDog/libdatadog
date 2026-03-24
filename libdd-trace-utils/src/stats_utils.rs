@@ -155,7 +155,7 @@ mod mini_agent_tests {
                                 0,
                                 0
                             ],
-                            "GrpcStatusCode": "0",
+                            "GRPCStatusCode": "0",
                             "HTTPMethod": "GET",
                             "HTTPEndpoint": "/test"
                         }
@@ -209,6 +209,8 @@ mod mini_agent_tests {
                     grpc_status_code: "0".to_string(),
                     http_endpoint: "/test".to_string(),
                     http_method: "GET".to_string(),
+                    service_source: "".to_string(),
+                    span_derived_primary_tags: vec![],
                 }],
                 agent_time_shift: 0,
             }],

@@ -33,6 +33,7 @@ async fn main() {
             env: ENV.to_string(),
             app_version: VERSION.to_string(),
             tags: vec![Tag::new("test", "value").unwrap()],
+            process_tags: vec![],
         },
         RUNTIME_ID.to_string(),
         ConfigOptions {

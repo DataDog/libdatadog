@@ -106,12 +106,20 @@ pub fn bench_add_sample_vs_add2(c: &mut Criterion) {
     let functions = dict.functions();
     let thread_id = get_current_thread_id();
     let thread_id_key: StringId2 = strings.try_insert("thread id").unwrap().into();
-    let labels_api = vec![api::Label {
-        key: "thread id",
-        str: "",
-        num: thread_id,
-        num_unit: "",
-    }];
+    let labels_api = vec![
+        api::Label {
+            key: "thread id",
+            str: "",
+            num: thread_id,
+            num_unit: "",
+        },
+        api::Label {
+            key: "thread name",
+            str: "this thread",
+            num: 0,
+            num_unit: "",
+        },
+    ];
 
     let frames2 = frames.map(|f| {
         let set_id = functions
@@ -127,6 +135,23 @@ pub fn bench_add_sample_vs_add2(c: &mut Criterion) {
         }
     });
     let dict = profiling::profiles::collections::Arc::try_new(dict).unwrap();
+
+    c.bench_function("profile_add_sample_timestamped_x1000", |b| {
+        b.iter(|| {
+            let mut profile = profiling::internal::Profile::try_new(&sample_types, None).unwrap();
+            let (locations, values) = make_stack_api(frames.as_slice());
+            for i in 0..1000 {
+                let sample = api::Sample {
+                    locations: locations.clone(),
+                    values: &values,
+                    labels: labels_api.clone(),
+                };
+                let ts = std::num::NonZeroI64::new(i + 1);
+                black_box(profile.try_add_sample(sample, ts)).unwrap();
+            }
+            black_box(profile.only_for_testing_num_aggregated_samples())
+        })
+    });
 
     c.bench_function("profile_add_sample_frames_x1000", |b| {
         b.iter(|| {

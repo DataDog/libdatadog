@@ -95,7 +95,7 @@ sendfd = { version = "0.4", features = ["tokio"] }
 [target.'cfg(windows)'.dependencies]
 libdd-common-ffi = { path = "../libdd-common-ffi", default-features = false }
 libdd-crashtracker-ffi = { path = "../libdd-crashtracker-ffi", default-features = false, features = ["collector", "collector_windows"] }
-winapi = { version = "0.3.9", features = ["securitybaseapi", "sddl"] }
+winapi = { version = "0.3.9", features = ["securitybaseapi", "sddl", "winerror", "winbase"] }
 windows-sys = { version = "0.52.0", features = ["Win32_System_SystemInformation"] }
 
 [target.'cfg(windows_seh_wrapper)'.dependencies]
