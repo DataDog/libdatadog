@@ -34,7 +34,6 @@ impl TryFrom<&str> for DbmsKind {
     }
 }
 
-
 #[allow(deprecated)]
 #[derive(Debug, Default, Clone, Copy, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -2275,7 +2274,6 @@ fn normalize_plan_sql(s: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{DbmsKind, SqlObfuscateConfig};
 
     #[test]
     fn test_sql_obfuscation() {
@@ -4304,12 +4302,13 @@ mod tests {
     }
 
     // Test that collapse_limit_two_args handles LIMIT case-insensitively.
-    // In obfuscate_and_normalize mode, the grouping filter is inactive, so
+    // In the deprecated mode, the grouping filter is inactive, so
     // collapse_limit_two_args is the sole mechanism for both cases.
     #[test]
     fn test_collapse_limit_case_insensitive() {
+        #[allow(deprecated)]
         let config = super::SqlObfuscateConfig {
-            obfuscation_mode: super::SqlObfuscationMode::ObfuscateAndNormalize,
+            obfuscation_mode: super::SqlObfuscationMode::Unspecified,
             ..Default::default()
         };
         let got_upper = super::obfuscate_sql("SELECT * FROM t LIMIT 5, 10", &config);
