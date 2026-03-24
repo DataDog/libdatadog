@@ -1,12 +1,9 @@
 // Copyright 2025-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-pub mod pausable_worker;
-pub mod shared_runtime;
-
 use async_trait::async_trait;
 
-/// A background worker meant to be spawned on a [`SharedRuntime`](shared_runtime::SharedRuntime).
+/// A background worker meant to be spawned on a [`SharedRuntime`](crate::SharedRuntime).
 ///
 /// # Lifecycle
 /// The worker's [`run`](Self::run) method is executed every time [`trigger`](Self::trigger)

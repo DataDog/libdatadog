@@ -3,7 +3,7 @@
 
 //! Defines a pausable worker to be able to stop background processes before forks
 
-use super::Worker;
+use crate::worker::Worker;
 use std::fmt::Display;
 use tokio::{runtime::Runtime, select, task::JoinHandle};
 use tokio_util::sync::CancellationToken;

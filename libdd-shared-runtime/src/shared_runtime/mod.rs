@@ -8,10 +8,10 @@
 //! fork operations by pausing workers before fork and restarting them appropriately
 //! in parent and child processes.
 
-use super::{
-    pausable_worker::{PausableWorker, PausableWorkerError},
-    Worker,
-};
+pub(crate) mod pausable_worker;
+
+use crate::worker::Worker;
+use pausable_worker::{PausableWorker, PausableWorkerError};
 use libdd_common::MutexExt;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -341,9 +341,6 @@ impl SharedRuntime {
     /// background workers and the runtime.
     ///
     /// Worker errors are logged but do not cause the function to fail.
-    ///
-    /// This function should not take ownership of the SharedRuntime as it will cause the runtime
-    /// to be dropped in a non-blocking context causing a panic.
     pub async fn shutdown_async(&self) {
         use tracing::error;
 

@@ -16,10 +16,9 @@
 //! `after_fork_child`) that pause and restart workers around `fork()` calls, preventing
 //! deadlocks in child processes.
 
+pub mod shared_runtime;
 pub mod worker;
 
 // Top-level re-exports for convenience
-pub use worker::shared_runtime::{
-    SharedRuntime, SharedRuntimeError, WorkerHandle, WorkerHandleError,
-};
+pub use shared_runtime::{SharedRuntime, SharedRuntimeError, WorkerHandle, WorkerHandleError};
 pub use worker::Worker;
