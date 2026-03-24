@@ -2129,7 +2129,8 @@ fn collapse_limit_two_args(s: &str) -> String {
         // Check for LIMIT (case-insensitive) + " ?, ?" or " ? ?"
         if remaining.len() >= 9 {
             let rb = remaining.as_bytes();
-            if rb.starts_with(b"LIMIT ?") {
+            const PREFIX: &[u8] = b"LIMIT ?";
+            if rb[..PREFIX.len()].eq_ignore_ascii_case(PREFIX) {
                 // Check " ?, ?" or " ? ?"
                 let skip =
                     if remaining.len() >= 10 && rb[7] == b',' && rb[8] == b' ' && rb[9] == b'?' {
