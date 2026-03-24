@@ -2,20 +2,79 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use log::{debug, error};
-use std::env;
+use std::{collections::HashSet, env};
 
 use libdd_common::config::parse_env;
 
-use crate::replacer::{self, ReplaceRule};
+use crate::{
+    replacer::{self, ReplaceRule},
+    sql::SqlObfuscateConfig,
+};
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
+pub struct MemcachedConfig {
+    pub enabled: bool,
+    pub keep_command: bool,
+}
+
+#[derive(Debug, Default)]
+pub struct CreditCardConfig {
+    pub enabled: bool,
+    pub luhn: bool,
+    pub keep_values: HashSet<String>,
+}
+
+pub type JsonStringTransformer = fn(&str) -> String;
+
+#[derive(Debug, Default, Clone)]
+pub struct JsonObfuscatorConfig {
+    pub enabled: bool,
+    /// `keep_keys` will specify a set of keys for which their values will
+    /// not be obfuscated.
+    pub keep_keys: HashSet<String>,
+    /// `transform_keys` will specify a set of keys for which their values will be transformed
+    /// through `transformer`
+    pub transform_keys: HashSet<String>,
+    /// `transformer` is an optional String -> String function which will transform values
+    /// specified in `transform_keys`
+    pub transformer: Option<JsonStringTransformer>,
+}
+
+impl JsonObfuscatorConfig {
+    pub fn disabled() -> Self {
+        Self {
+            enabled: false,
+            ..Default::default()
+        }
+    }
+
+    pub fn enabled() -> Self {
+        Self {
+            enabled: true,
+            ..Default::default()
+        }
+    }
+}
+
+#[derive(Debug, Default)]
+pub struct RedisConfig {
+    pub enabled: bool,
+    pub remove_all_args: bool,
+}
+
+#[derive(Debug, Default)]
 pub struct ObfuscationConfig {
     pub tag_replace_rules: Option<Vec<ReplaceRule>>,
     pub http_remove_query_string: bool,
-    pub http_remove_path_digits: bool,
-    pub obfuscate_memcached: bool,
-    pub obfuscation_redis_enabled: bool,
-    pub obfuscation_redis_remove_all_args: bool,
+    pub http_remove_paths_with_digits: bool,
+    pub memcached: MemcachedConfig,
+    pub redis: RedisConfig,
+    pub valkey: RedisConfig,
+    pub credit_card: CreditCardConfig,
+    pub sql: SqlObfuscateConfig,
+    pub elasticsearch: JsonObfuscatorConfig,
+    pub opensearch: JsonObfuscatorConfig,
+    pub mongodb: JsonObfuscatorConfig,
 }
 
 impl ObfuscationConfig {
@@ -48,10 +107,21 @@ impl ObfuscationConfig {
         Ok(ObfuscationConfig {
             tag_replace_rules,
             http_remove_query_string,
-            http_remove_path_digits,
-            obfuscate_memcached,
-            obfuscation_redis_enabled,
-            obfuscation_redis_remove_all_args,
+            http_remove_paths_with_digits: http_remove_path_digits,
+            memcached: MemcachedConfig {
+                enabled: obfuscate_memcached,
+                keep_command: true,
+            },
+            credit_card: CreditCardConfig {
+                enabled: true,
+                luhn: true,
+                keep_values: HashSet::new(),
+            },
+            redis: RedisConfig {
+                enabled: obfuscation_redis_enabled,
+                remove_all_args: obfuscation_redis_remove_all_args,
+            },
+            ..Default::default()
         })
     }
 }
