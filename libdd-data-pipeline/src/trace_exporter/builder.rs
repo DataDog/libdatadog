@@ -382,11 +382,7 @@ impl TraceExporterBuilder {
                             headers.insert(name, val);
                         }
                         _ => {
-                            tracing::warn!(
-                                "Skipping invalid OTLP header: {:?}={:?}",
-                                key,
-                                value
-                            );
+                            tracing::warn!("Skipping invalid OTLP header: {:?}={:?}", key, value);
                         }
                     }
                 }

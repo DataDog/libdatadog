@@ -3289,6 +3289,7 @@ name = "libdd-trace-utils"
 version = "2.0.2"
 dependencies = [
  "anyhow",
+ "base64 0.22.1",
  "bolero",
  "bytes",
  "cargo-platform",
