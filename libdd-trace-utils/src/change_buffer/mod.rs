@@ -101,7 +101,6 @@ where
         let spans_vec = span_ids
             .iter()
             .map(|span_id| -> Result<Span<T>> {
-
                 let maybe_span = self.spans.remove(span_id);
 
                 let mut span = maybe_span.ok_or(ChangeBufferError::SpanNotFound(*span_id))?;
@@ -176,7 +175,8 @@ where
 
         if let Some(kind) = span.meta.get("kind") {
             if kind != &T::Text::from_static_str("internal") {
-                span.metrics.insert(T::Text::from_static_str("_dd.measured"), 1.0);
+                span.metrics
+                    .insert(T::Text::from_static_str("_dd.measured"), 1.0);
             }
         }
 
@@ -192,14 +192,17 @@ where
         // SKIP setting single-span ingestion. They should be set when sampling is finalized for
         // the span.
 
-        span.meta
-            .insert(T::Text::from_static_str("language"), self.tracer_language.clone());
+        span.meta.insert(
+            T::Text::from_static_str("language"),
+            self.tracer_language.clone(),
+        );
         span.metrics
             .insert(T::Text::from_static_str("process_id"), f64::from(self.pid));
 
         if let Some(trace) = self.traces.get(&span.trace_id) {
             if let Some(origin) = trace.origin.clone() {
-                span.meta.insert(T::Text::from_static_str("_dd.origin"), origin);
+                span.meta
+                    .insert(T::Text::from_static_str("_dd.origin"), origin);
             }
         }
 
@@ -320,6 +323,64 @@ where
                 let trace_id = self.get_span(&op.span_id)?.trace_id;
                 if let Some(trace) = self.traces.get_mut(&trace_id) {
                     trace.origin = Some(origin);
+                }
+            }
+            OpCode::CreateSpan => {
+                // Combined Create + SetName + SetStart
+                let trace_id: u128 = self.change_buffer.read(index)?;
+                let parent_id: u64 = self.get_num_arg(index)?;
+                let name = self.get_string_arg(index)?;
+                let start: i64 = self.get_num_arg(index)?;
+                let mut span = new_span(op.span_id, parent_id, trace_id);
+                span.name = name;
+                span.start = start;
+                self.spans.insert(op.span_id, span);
+                self.traces.entry(trace_id).or_default();
+                *self.trace_span_counts.entry(trace_id).or_insert(0) += 1;
+            }
+            OpCode::CreateSpanFull => {
+                // Combined Create + SetName + SetService + SetResource + SetType + SetStart
+                let trace_id: u128 = self.change_buffer.read(index)?;
+                let parent_id: u64 = self.get_num_arg(index)?;
+                let name = self.get_string_arg(index)?;
+                let service = self.get_string_arg(index)?;
+                let resource = self.get_string_arg(index)?;
+                let r#type = self.get_string_arg(index)?;
+                let start: i64 = self.get_num_arg(index)?;
+                let mut span = new_span(op.span_id, parent_id, trace_id);
+                span.name = name;
+                span.service = service;
+                span.resource = resource;
+                span.r#type = r#type;
+                span.start = start;
+                self.spans.insert(op.span_id, span);
+                self.traces.entry(trace_id).or_default();
+                *self.trace_span_counts.entry(trace_id).or_insert(0) += 1;
+            }
+            OpCode::BatchSetMeta => {
+                let count: u32 = self.get_num_arg(index)?;
+                let mut pairs = Vec::with_capacity(count as usize);
+                for _ in 0..count {
+                    let key = self.get_string_arg(index)?;
+                    let val = self.get_string_arg(index)?;
+                    pairs.push((key, val));
+                }
+                let span = self.get_mut_span(&op.span_id)?;
+                for (key, val) in pairs {
+                    span.meta.insert(key, val);
+                }
+            }
+            OpCode::BatchSetMetric => {
+                let count: u32 = self.get_num_arg(index)?;
+                let mut pairs = Vec::with_capacity(count as usize);
+                for _ in 0..count {
+                    let key = self.get_string_arg(index)?;
+                    let val: f64 = self.get_num_arg(index)?;
+                    pairs.push((key, val));
+                }
+                let span = self.get_mut_span(&op.span_id)?;
+                for (key, val) in pairs {
+                    span.metrics.insert(key, val);
                 }
             }
         };

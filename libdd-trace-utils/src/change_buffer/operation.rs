@@ -16,6 +16,14 @@ pub enum OpCode {
     SetTraceMetaAttr = 10,
     SetTraceMetricsAttr = 11,
     SetTraceOrigin = 12,
+    /// Combined create + name + start. Avoids 3 separate ops per span.
+    CreateSpan = 13,
+    /// Combined create + name + service + resource + type + start.
+    CreateSpanFull = 14,
+    /// Batch N meta (string→string) tags for one span.
+    BatchSetMeta = 15,
+    /// Batch N metric (string→f64) tags for one span.
+    BatchSetMetric = 16,
     // TODO: SpanLinks, SpanEvents, StructAttr
 }
 
@@ -37,6 +45,10 @@ impl TryFrom<u64> for OpCode {
             10 => Ok(OpCode::SetTraceMetaAttr),
             11 => Ok(OpCode::SetTraceMetricsAttr),
             12 => Ok(OpCode::SetTraceOrigin),
+            13 => Ok(OpCode::CreateSpan),
+            14 => Ok(OpCode::CreateSpanFull),
+            15 => Ok(OpCode::BatchSetMeta),
+            16 => Ok(OpCode::BatchSetMetric),
             _ => Err(ChangeBufferError::UnknownOpcode(val)),
         }
     }
@@ -80,6 +92,10 @@ mod tests {
             (10, "SetTraceMetaAttr"),
             (11, "SetTraceMetricsAttr"),
             (12, "SetTraceOrigin"),
+            (13, "CreateSpan"),
+            (14, "CreateSpanFull"),
+            (15, "BatchSetMeta"),
+            (16, "BatchSetMetric"),
         ];
 
         for (val, name) in expected {
@@ -93,7 +109,7 @@ mod tests {
 
     #[test]
     fn opcode_try_from_invalid_value() {
-        assert!(OpCode::try_from(13).is_err());
+        assert!(OpCode::try_from(17).is_err());
         assert!(OpCode::try_from(100).is_err());
         assert!(OpCode::try_from(u64::MAX).is_err());
     }

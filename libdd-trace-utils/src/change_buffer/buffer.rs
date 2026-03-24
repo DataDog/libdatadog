@@ -10,7 +10,7 @@ pub struct ChangeBuffer {
 impl ChangeBuffer {
     /// # Safety
     ///
-    /// The underlying raw memory must not be freed until after this struct's 
+    /// The underlying raw memory must not be freed until after this struct's
     /// lifetime. Having the calling code manage the memory makes it simpler to
     /// integrate with managed runtimes.
     pub unsafe fn from_raw_parts(ptr: *const u8, len: usize) -> Self {
