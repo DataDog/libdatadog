@@ -7,6 +7,7 @@ use crate::worker::Worker;
 use std::fmt::Display;
 use tokio::{runtime::Runtime, select, task::JoinHandle};
 use tokio_util::sync::CancellationToken;
+use tracing::debug;
 
 /// A pausable worker which can be paused and restarted on forks.
 ///
@@ -67,7 +68,8 @@ impl<T: Worker + Send + Sync + 'static> PausableWorker<T> {
     pub fn start(&mut self, rt: &Runtime) -> Result<(), PausableWorkerError> {
         match self {
             PausableWorker::Running { .. } => Ok(()),
-            PausableWorker::Paused { .. } => {
+            PausableWorker::Paused { worker } => {
+                debug!(?worker, "Starting pausable worker");
                 let PausableWorker::Paused { mut worker } =
                     std::mem::replace(self, PausableWorker::InvalidState)
                 else {
@@ -117,6 +119,7 @@ impl<T: Worker + Send + Sync + 'static> PausableWorker<T> {
     pub fn request_pause(&self) -> Result<(), PausableWorkerError> {
         match self {
             PausableWorker::Running { stop_token, .. } => {
+                debug!("Requesting pause for worker");
                 stop_token.cancel();
                 Ok(())
             }
@@ -137,6 +140,7 @@ impl<T: Worker + Send + Sync + 'static> PausableWorker<T> {
     pub async fn wait_for_pause(&mut self) -> Result<(), PausableWorkerError> {
         match self {
             PausableWorker::Running { .. } => {
+                debug!("Waiting for worker to pause");
                 let PausableWorker::Running { handle, stop_token } =
                     std::mem::replace(self, PausableWorker::InvalidState)
                 else {
@@ -150,6 +154,7 @@ impl<T: Worker + Send + Sync + 'static> PausableWorker<T> {
                 }
 
                 if let Ok(mut worker) = handle.await {
+                    debug!(?worker, "Worker paused successfully");
                     worker.on_pause().await;
                     *self = PausableWorker::Paused { worker };
                     Ok(())

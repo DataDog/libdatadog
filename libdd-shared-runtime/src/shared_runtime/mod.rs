@@ -11,13 +11,14 @@
 pub(crate) mod pausable_worker;
 
 use crate::worker::Worker;
-use pausable_worker::{PausableWorker, PausableWorkerError};
 use libdd_common::MutexExt;
+use pausable_worker::{PausableWorker, PausableWorkerError};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::{fmt, io};
 use tokio::runtime::{Builder, Runtime};
 use tokio::task::JoinSet;
+use tracing::{debug, error};
 
 type BoxedWorker = Box<dyn Worker + Send + Sync>;
 
@@ -149,6 +150,7 @@ impl SharedRuntime {
     /// # Errors
     /// Returns an error if the tokio runtime cannot be created.
     pub fn new() -> Result<Self, SharedRuntimeError> {
+        debug!("Creating new SharedRuntime");
         let runtime = tokio::runtime::Builder::new_multi_thread()
             .worker_threads(1)
             .enable_all()
@@ -173,6 +175,7 @@ impl SharedRuntime {
         worker: T,
     ) -> Result<WorkerHandle, SharedRuntimeError> {
         let boxed_worker: BoxedWorker = Box::new(worker);
+        debug!(?boxed_worker, "Spawning worker on SharedRuntime");
         let mut pausable_worker = PausableWorker::new(boxed_worker);
         let worker_id = self.next_worker_id.fetch_add(1, Ordering::Relaxed);
 
@@ -206,8 +209,7 @@ impl SharedRuntime {
     ///
     /// Worker errors are logged but do not cause the function to fail.
     pub fn before_fork(&self) {
-        use tracing::error;
-
+        debug!("before_fork: pausing all workers");
         if let Some(runtime) = self.runtime.lock_or_panic().take() {
             let mut workers_lock = self.workers.lock_or_panic();
             runtime.block_on(async move {
@@ -245,6 +247,7 @@ impl SharedRuntime {
     /// # Errors
     /// Returns an error if workers cannot be restarted or the runtime cannot be recreated.
     pub fn after_fork_parent(&self) -> Result<(), SharedRuntimeError> {
+        debug!("after_fork_parent: restarting runtime and workers");
         self.restart_runtime()?;
 
         let runtime_lock = self.runtime.lock_or_panic();
@@ -271,6 +274,7 @@ impl SharedRuntime {
     /// # Errors
     /// Returns an error if the runtime cannot be reinitialized or workers cannot be started.
     pub fn after_fork_child(&self) -> Result<(), SharedRuntimeError> {
+        debug!("after_fork_child: reinitializing runtime and workers");
         self.restart_runtime()?;
 
         let runtime_lock = self.runtime.lock_or_panic();
@@ -316,6 +320,7 @@ impl SharedRuntime {
     /// # Errors
     /// Returns an error only if shutdown times out.
     pub fn shutdown(&self, timeout: Option<std::time::Duration>) -> Result<(), SharedRuntimeError> {
+        debug!(?timeout, "Shutting down SharedRuntime");
         match self.runtime.lock_or_panic().take() {
             Some(runtime) => {
                 let result = if let Some(timeout) = timeout {
@@ -342,8 +347,7 @@ impl SharedRuntime {
     ///
     /// Worker errors are logged but do not cause the function to fail.
     pub async fn shutdown_async(&self) {
-        use tracing::error;
-
+        debug!("Shutting down all workers asynchronously");
         let workers = {
             let mut workers_lock = self.workers.lock_or_panic();
             std::mem::take(&mut *workers_lock)
@@ -456,3 +460,4 @@ mod tests {
         assert!(shared_runtime.after_fork_child().is_ok());
     }
 }
+
