@@ -1503,6 +1503,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "datadog-session-id"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "datadog-ipc",
+ "libc",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "datadog-session-id-ffi"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "build_common",
+ "datadog-session-id",
+ "libdd-common-ffi",
+]
+
+[[package]]
 name = "datadog-sidecar"
 version = "0.0.1"
 dependencies = [
