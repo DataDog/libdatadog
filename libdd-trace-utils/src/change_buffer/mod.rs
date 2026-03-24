@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
 
 mod utils;
 
@@ -49,10 +49,10 @@ use crate::span::{SpanText, TraceData};
 
 pub struct ChangeBufferState<T: TraceData> {
     change_buffer: ChangeBuffer,
-    spans: HashMap<u64, Span<T>>,
-    traces: HashMap<u128, Trace<T::Text>>,
-    string_table: HashMap<u32, T::Text>,
-    trace_span_counts: HashMap<u128, usize>,
+    spans: FxHashMap<u64, Span<T>>,
+    traces: FxHashMap<u128, Trace<T::Text>>,
+    /// String table indexed by sequential u32 IDs (O(1) lookup vs HashMap).
+    string_table: Vec<Option<T::Text>>,
     tracer_service: T::Text,
     tracer_language: T::Text,
     pid: u32,
@@ -79,10 +79,9 @@ where
     ) -> Self {
         ChangeBufferState {
             change_buffer,
-            spans: Default::default(),
-            traces: Default::default(),
-            string_table: Default::default(),
-            trace_span_counts: Default::default(),
+            spans: FxHashMap::default(),
+            traces: FxHashMap::default(),
+            string_table: Vec::with_capacity(256),
             tracer_service,
             tracer_language,
             pid,
@@ -125,15 +124,21 @@ where
 
         // Clean up trace if no spans remain for it
         if let Some(trace_id) = chunk_trace_id {
-            if let Some(count) = self.trace_span_counts.get_mut(&trace_id) {
-                let len = span_ids.len();
-                if *count <= len {
-                    // All spans for this trace have been flushed
-                    self.traces.remove(&trace_id);
-                    self.trace_span_counts.remove(&trace_id);
-                } else {
-                    *count -= len;
-                }
+            let should_remove = self
+                .traces
+                .get_mut(&trace_id)
+                .map(|trace| {
+                    let len = span_ids.len();
+                    if trace.span_count <= len {
+                        true
+                    } else {
+                        trace.span_count -= len;
+                        false
+                    }
+                })
+                .unwrap_or(false);
+            if should_remove {
+                self.traces.remove(&trace_id);
             }
         }
 
@@ -216,15 +221,148 @@ where
         let mut index = 0;
         let mut count = self.change_buffer.read::<u64>(&mut index)?;
 
+        // Cache the last span_id to skip redundant HashMap lookups when
+        // consecutive operations target the same span (the common case).
+        let mut cached_span_id: u64 = 0;
+        let mut cached_span_ptr: *mut Span<T> = std::ptr::null_mut();
+
         while count > 0 {
             let op = BufferedOperation::from_buf(&self.change_buffer, &mut index)?;
-            self.interpret_operation(&mut index, &op)?;
+
+            // For operations that need a mutable span reference, try the cache first.
+            // SAFETY: the pointer is valid for the lifetime of this loop because:
+            // - We only store pointers from self.spans.get_mut()
+            // - We invalidate the cache (set to null) whenever self.spans is modified
+            //   (Create/CreateSpan/CreateSpanFull insert into the map which may rehash)
+            // - No other code accesses self.spans between cache store and use
+            match op.opcode {
+                OpCode::Create | OpCode::CreateSpan | OpCode::CreateSpanFull => {
+                    // These insert into self.spans, invalidating any cached pointer
+                    cached_span_ptr = std::ptr::null_mut();
+                    cached_span_id = 0;
+                    self.interpret_operation(&mut index, &op)?;
+                }
+                _ => {
+                    self.interpret_operation_cached(
+                        &mut index,
+                        &op,
+                        &mut cached_span_id,
+                        &mut cached_span_ptr,
+                    )?;
+                }
+            }
             count -= 1;
         }
 
-        // Write 0 back to the count position so the writing side of the buffer knows the queue was
-        // flushed
         self.change_buffer.write_u64(0, 0)?;
+
+        Ok(())
+    }
+
+    /// Like interpret_operation, but uses a cached span pointer to avoid
+    /// redundant HashMap lookups for consecutive operations on the same span.
+    fn interpret_operation_cached(
+        &mut self,
+        index: &mut usize,
+        op: &BufferedOperation,
+        cached_span_id: &mut u64,
+        cached_span_ptr: &mut *mut Span<T>,
+    ) -> Result<()> {
+        // Try to reuse the cached span pointer
+        let span_ptr = if op.span_id == *cached_span_id && !cached_span_ptr.is_null() {
+            *cached_span_ptr
+        } else {
+            let span = self
+                .spans
+                .get_mut(&op.span_id)
+                .ok_or(ChangeBufferError::SpanNotFound(op.span_id))?
+                as *mut Span<T>;
+            *cached_span_id = op.span_id;
+            *cached_span_ptr = span;
+            span
+        };
+
+        // SAFETY: span_ptr is valid — it was obtained from self.spans.get_mut() above
+        // or from the cache which was set in a previous iteration of the same loop.
+        // self.spans is not modified during this function (no inserts/removes).
+        // The only shared references are to self.string_table and self.change_buffer
+        // (read-only), which don't alias with self.spans.
+        let span = unsafe { &mut *span_ptr };
+
+        match op.opcode {
+            OpCode::SetMetaAttr => {
+                let name = self.get_string_arg(index)?;
+                let val = self.get_string_arg(index)?;
+                span.meta.insert(name, val);
+            }
+            OpCode::SetMetricAttr => {
+                let name = self.get_string_arg(index)?;
+                let val: f64 = self.get_num_arg(index)?;
+                span.metrics.insert(name, val);
+            }
+            OpCode::SetServiceName => {
+                span.service = self.get_string_arg(index)?;
+            }
+            OpCode::SetResourceName => {
+                span.resource = self.get_string_arg(index)?;
+            }
+            OpCode::SetError => {
+                span.error = self.get_num_arg(index)?;
+            }
+            OpCode::SetStart => {
+                span.start = self.get_num_arg(index)?;
+            }
+            OpCode::SetDuration => {
+                span.duration = self.get_num_arg(index)?;
+            }
+            OpCode::SetType => {
+                span.r#type = self.get_string_arg(index)?;
+            }
+            OpCode::SetName => {
+                span.name = self.get_string_arg(index)?;
+            }
+            OpCode::SetTraceMetaAttr => {
+                let name = self.get_string_arg(index)?;
+                let val = self.get_string_arg(index)?;
+                let trace_id = span.trace_id;
+                if let Some(trace) = self.traces.get_mut(&trace_id) {
+                    trace.meta.insert(name, val);
+                }
+            }
+            OpCode::SetTraceMetricsAttr => {
+                let name = self.get_string_arg(index)?;
+                let val = self.get_num_arg(index)?;
+                let trace_id = span.trace_id;
+                if let Some(trace) = self.traces.get_mut(&trace_id) {
+                    trace.metrics.insert(name, val);
+                }
+            }
+            OpCode::SetTraceOrigin => {
+                let origin = self.get_string_arg(index)?;
+                let trace_id = span.trace_id;
+                if let Some(trace) = self.traces.get_mut(&trace_id) {
+                    trace.origin = Some(origin);
+                }
+            }
+            OpCode::BatchSetMeta => {
+                let count: u32 = self.get_num_arg(index)?;
+                for _ in 0..count {
+                    let key = self.get_string_arg(index)?;
+                    let val = self.get_string_arg(index)?;
+                    span.meta.insert(key, val);
+                }
+            }
+            OpCode::BatchSetMetric => {
+                let count: u32 = self.get_num_arg(index)?;
+                for _ in 0..count {
+                    let key = self.get_string_arg(index)?;
+                    let val: f64 = self.get_num_arg(index)?;
+                    span.metrics.insert(key, val);
+                }
+            }
+            // Create variants are handled in the caller, never reach here
+            OpCode::Create | OpCode::CreateSpan | OpCode::CreateSpanFull => unreachable!(),
+        }
 
         Ok(())
     }
@@ -232,8 +370,8 @@ where
     fn get_string_arg(&self, index: &mut usize) -> Result<T::Text> {
         let num: u32 = self.get_num_arg(index)?;
         self.string_table
-            .get(&num)
-            .cloned()
+            .get(num as usize)
+            .and_then(|opt| opt.clone())
             .ok_or(ChangeBufferError::StringNotFound(num))
     }
 
@@ -264,10 +402,7 @@ where
                 let parent_id = self.get_num_arg(index)?;
                 let span = new_span(op.span_id, parent_id, trace_id);
                 self.spans.insert(op.span_id, span);
-                // Ensure trace exists (creates new one if this is the first span for this trace)
-                self.traces.entry(trace_id).or_default();
-
-                *self.trace_span_counts.entry(trace_id).or_insert(0) += 1;
+                self.traces.entry(trace_id).or_default().span_count += 1;
             }
             OpCode::SetMetaAttr => {
                 let name = self.get_string_arg(index)?;
@@ -335,8 +470,7 @@ where
                 span.name = name;
                 span.start = start;
                 self.spans.insert(op.span_id, span);
-                self.traces.entry(trace_id).or_default();
-                *self.trace_span_counts.entry(trace_id).or_insert(0) += 1;
+                self.traces.entry(trace_id).or_default().span_count += 1;
             }
             OpCode::CreateSpanFull => {
                 // Combined Create + SetName + SetService + SetResource + SetType + SetStart
@@ -354,8 +488,7 @@ where
                 span.r#type = r#type;
                 span.start = start;
                 self.spans.insert(op.span_id, span);
-                self.traces.entry(trace_id).or_default();
-                *self.trace_span_counts.entry(trace_id).or_insert(0) += 1;
+                self.traces.entry(trace_id).or_default().span_count += 1;
             }
             OpCode::BatchSetMeta => {
                 let count: u32 = self.get_num_arg(index)?;
@@ -389,11 +522,18 @@ where
     }
 
     pub fn string_table_insert_one(&mut self, key: u32, val: T::Text) {
-        self.string_table.insert(key, val);
+        let idx = key as usize;
+        if idx >= self.string_table.len() {
+            self.string_table.resize_with(idx + 1, || None);
+        }
+        self.string_table[idx] = Some(val);
     }
 
     pub fn string_table_evict_one(&mut self, key: u32) {
-        self.string_table.remove(&key);
+        let idx = key as usize;
+        if idx < self.string_table.len() {
+            self.string_table[idx] = None;
+        }
     }
 }
 
@@ -469,23 +609,21 @@ mod tests {
         let buf = builder.finalize();
         let mut state = make_state(buf);
 
-        assert_eq!(state.string_table.len(), 0);
+        assert!(state.string_table.is_empty());
 
         state.string_table_insert_one(1, "hello");
-        assert_eq!(state.string_table.len(), 1);
+        assert_eq!(state.string_table.get(1), Some(&Some("hello")));
 
         state.string_table_insert_one(2, "world");
-        assert_eq!(state.string_table.len(), 2);
-        assert_eq!(state.string_table.get(&1), Some(&"hello"));
-        assert_eq!(state.string_table.get(&2), Some(&"world"));
+        assert_eq!(state.string_table.get(1), Some(&Some("hello")));
+        assert_eq!(state.string_table.get(2), Some(&Some("world")));
 
         state.string_table_evict_one(1);
-        assert_eq!(state.string_table.len(), 1);
-        assert_eq!(state.string_table.get(&1), None);
-        assert_eq!(state.string_table.get(&2), Some(&"world"));
+        assert_eq!(state.string_table.get(1), Some(&None));
+        assert_eq!(state.string_table.get(2), Some(&Some("world")));
 
         state.string_table_evict_one(2);
-        assert_eq!(state.string_table.len(), 0);
+        assert_eq!(state.string_table.get(2), Some(&None));
     }
 
     // -- get_span / get_trace --
@@ -523,7 +661,7 @@ mod tests {
         assert_eq!(span.parent_id, 50);
 
         assert!(state.get_trace(&200).is_some());
-        assert_eq!(*state.trace_span_counts.get(&200).unwrap(), 1);
+        assert_eq!(state.get_trace(&200).unwrap().span_count, 1);
         Ok(())
     }
 
@@ -538,7 +676,7 @@ mod tests {
 
         state.flush_change_buffer()?;
 
-        assert_eq!(*state.trace_span_counts.get(&100).unwrap(), 3);
+        assert_eq!(state.get_trace(&100).unwrap().span_count, 3);
         assert!(state.get_span(&1).is_ok());
         assert!(state.get_span(&2).is_ok());
         assert!(state.get_span(&3).is_ok());
@@ -775,8 +913,7 @@ mod tests {
     ) {
         let span = new_span(span_id, parent_id, trace_id);
         state.spans.insert(span_id, span);
-        state.traces.entry(trace_id).or_default();
-        *state.trace_span_counts.entry(trace_id).or_insert(0) += 1;
+        state.traces.entry(trace_id).or_default().span_count += 1;
     }
 
     #[test]
@@ -983,7 +1120,6 @@ mod tests {
         state.flush_chunk(vec![1, 2], false)?;
 
         assert!(state.get_trace(&100).is_none());
-        assert!(state.trace_span_counts.get(&100).is_none());
         Ok(())
     }
 
@@ -1001,7 +1137,7 @@ mod tests {
         state.flush_chunk(vec![1, 2], false)?;
 
         assert!(state.get_trace(&100).is_some());
-        assert_eq!(*state.trace_span_counts.get(&100).unwrap(), 1);
+        assert_eq!(state.get_trace(&100).unwrap().span_count, 1);
         Ok(())
     }
 }
