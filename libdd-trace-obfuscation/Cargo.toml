@@ -1,6 +1,6 @@
 [package]
 name = "libdd-trace-obfuscation"
-version = "1.0.1"
+version = "2.0.0"
 description = "A duplicate of trace obfuscator implemented in the agent and documented in https://docs.datadoghq.com/tracing/configure_data_security/?tab=net#trace-obfuscation"
 homepage = "https://github.com/DataDog/libdatadog/tree/main/libdd-trace-obfuscation"
 repository = "https://github.com/DataDog/libdatadog/tree/main/libdd-trace-obfuscation"
