@@ -300,9 +300,7 @@ fn map_attributes<T: TraceData>(span: &Span<T>, resource_service: &str) -> (Vec<
             value,
         });
     }
-    let total = (if has_per_span_service { 1 } else { 0 })
-        + span.meta.len()
-        + span.metrics.len();
+    let total = (if has_per_span_service { 1 } else { 0 }) + span.meta.len() + span.metrics.len();
     let dropped = total.saturating_sub(attrs.len());
     (attrs, dropped)
 }
