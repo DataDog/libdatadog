@@ -405,3 +405,8 @@ impl Endpoint {
         Ok((builder, request_url))
     }
 }
+
+/// Dummy function to test transitive dependencies.
+pub fn epa() {
+    print!("epa");
+}
