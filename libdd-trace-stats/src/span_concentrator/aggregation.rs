@@ -206,7 +206,7 @@ impl<'a> BorrowedAggregationKey<'a> {
     /// key.
     pub(super) fn from_span<T: StatSpan<'a>>(span: &'a T, peer_tag_keys: &'a [String]) -> Self {
         let span_kind = span.get_meta(TAG_SPANKIND).unwrap_or_default();
-        let peer_tags = if client_or_producer(span_kind) {
+        let peer_tags = if has_peer_tags(span_kind) {
             // Parse the meta tags of the span and return a list of the peer tags based on the list
             // of `peer_tag_keys`
             peer_tag_keys
@@ -279,14 +279,14 @@ impl From<pb::ClientGroupedStats> for OwnedAggregationKey {
     }
 }
 
-/// Return true if the span kind is "client" or "producer"
-fn client_or_producer<T>(span_kind: T) -> bool
+/// Return true if the span kind should have peer tags ("client", "producer", or "consumer")
+fn has_peer_tags<T>(span_kind: T) -> bool
 where
     T: SpanText,
 {
     matches!(
         span_kind.borrow().to_lowercase().as_str(),
-        "client" | "producer"
+        "client" | "producer" | "consumer"
     )
 }
 
