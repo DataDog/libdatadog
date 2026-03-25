@@ -3,10 +3,12 @@
 
 use criterion::criterion_main;
 
+mod change_buffer;
 mod deserialization;
 mod serialization;
 
 criterion_main!(
     serialization::serialize_benches,
-    deserialization::deserialize_benches
+    deserialization::deserialize_benches,
+    change_buffer::change_buffer_benches,
 );

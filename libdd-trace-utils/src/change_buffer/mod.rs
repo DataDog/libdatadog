@@ -50,7 +50,7 @@ use crate::span::{SpanText, TraceData};
 pub struct ChangeBufferState<T: TraceData> {
     change_buffer: ChangeBuffer,
     spans: FxHashMap<u64, Span<T>>,
-    traces: FxHashMap<u128, Trace<T::Text>>,
+    traces: SmallTraceMap<T::Text>,
     /// String table indexed by sequential u32 IDs (O(1) lookup vs HashMap).
     string_table: Vec<Option<T::Text>>,
     tracer_service: T::Text,
@@ -80,7 +80,7 @@ where
         ChangeBufferState {
             change_buffer,
             spans: FxHashMap::default(),
-            traces: FxHashMap::default(),
+            traces: SmallTraceMap::default(),
             string_table: Vec::with_capacity(256),
             tracer_service,
             tracer_language,
@@ -221,23 +221,26 @@ where
         let mut index = 0;
         let mut count = self.change_buffer.read::<u64>(&mut index)?;
 
-        // Cache the last span_id to skip redundant HashMap lookups when
-        // consecutive operations target the same span (the common case).
+        // Cache the last span_id to skip redundant lookups when consecutive
+        // operations target the same span (the common case).
         let mut cached_span_id: u64 = 0;
         let mut cached_span_ptr: *mut Span<T> = std::ptr::null_mut();
 
         while count > 0 {
             let op = BufferedOperation::from_buf(&self.change_buffer, &mut index)?;
 
-            // For operations that need a mutable span reference, try the cache first.
+            // For operations that need a mutable span reference, try the cache
+            // first.
             // SAFETY: the pointer is valid for the lifetime of this loop because:
             // - We only store pointers from self.spans.get_mut()
-            // - We invalidate the cache (set to null) whenever self.spans is modified
-            //   (Create/CreateSpan/CreateSpanFull insert into the map which may rehash)
+            // - We invalidate the cache (set to null) whenever self.spans is
+            //   modified (Create/CreateSpan/CreateSpanFull insert into the map
+            //   which may rehash)
             // - No other code accesses self.spans between cache store and use
             match op.opcode {
                 OpCode::Create | OpCode::CreateSpan | OpCode::CreateSpanFull => {
-                    // These insert into self.spans, invalidating any cached pointer
+                    // These insert into self.spans, invalidating any cached
+                    // pointer
                     cached_span_ptr = std::ptr::null_mut();
                     cached_span_id = 0;
                     self.interpret_operation(&mut index, &op)?;
@@ -402,7 +405,7 @@ where
                 let parent_id = self.get_num_arg(index)?;
                 let span = new_span(op.span_id, parent_id, trace_id);
                 self.spans.insert(op.span_id, span);
-                self.traces.entry(trace_id).or_default().span_count += 1;
+                self.traces.get_or_insert_default(trace_id).span_count += 1;
             }
             OpCode::SetMetaAttr => {
                 let name = self.get_string_arg(index)?;
@@ -470,7 +473,7 @@ where
                 span.name = name;
                 span.start = start;
                 self.spans.insert(op.span_id, span);
-                self.traces.entry(trace_id).or_default().span_count += 1;
+                self.traces.get_or_insert_default(trace_id).span_count += 1;
             }
             OpCode::CreateSpanFull => {
                 // Combined Create + SetName + SetService + SetResource + SetType + SetStart
@@ -488,7 +491,7 @@ where
                 span.r#type = r#type;
                 span.start = start;
                 self.spans.insert(op.span_id, span);
-                self.traces.entry(trace_id).or_default().span_count += 1;
+                self.traces.get_or_insert_default(trace_id).span_count += 1;
             }
             OpCode::BatchSetMeta => {
                 let count: u32 = self.get_num_arg(index)?;
@@ -913,7 +916,7 @@ mod tests {
     ) {
         let span = new_span(span_id, parent_id, trace_id);
         state.spans.insert(span_id, span);
-        state.traces.entry(trace_id).or_default().span_count += 1;
+        state.traces.get_or_insert_default(trace_id).span_count += 1;
     }
 
     #[test]
