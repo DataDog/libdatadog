@@ -391,4 +391,28 @@ mod tests {
             "Expected max retry attempts"
         );
     }
+
+    #[test]
+    fn test_encode_stats_payload_defaults_empty_env() {
+        // Test that empty env defaults to "unknown-env"
+        let mut meta_with_empty_env = get_test_metadata();
+        meta_with_empty_env.env = "".to_string();
+
+        let buckets = vec![];
+        let payload = encode_stats_payload(&meta_with_empty_env, 1, buckets.clone());
+
+        assert_eq!(
+            payload.env, "unknown-env",
+            "Empty env should default to 'unknown-env'"
+        );
+
+        // Test that non-empty env is preserved
+        let meta_with_env = get_test_metadata();
+        let payload_with_env = encode_stats_payload(&meta_with_env, 2, buckets);
+
+        assert_eq!(
+            payload_with_env.env, "test",
+            "Non-empty env should be preserved"
+        );
+    }
 }
