@@ -72,6 +72,9 @@ pub struct EncodedProfile {
     pub end: SystemTime,
     pub buffer: Vec<u8>,
     pub endpoints_stats: ProfiledEndpointsStats,
+    /// The filename to use when uploading this profile as a multipart attachment,
+    /// e.g. `"profile.pprof"` or `"profile.otel"`.
+    pub filename: &'static str,
 }
 
 impl EncodedProfile {
@@ -101,6 +104,7 @@ impl EncodedProfile {
             end,
             buffer,
             endpoints_stats,
+            filename: "profile.pprof",
         })
     }
 }
@@ -338,6 +342,7 @@ impl Profile {
         upscaling_info: UpscalingInfo,
     ) -> anyhow::Result<()> {
         anyhow::ensure!(offset_values.len() == 1 || offset_values.len() == 2);
+        #[cfg(feature = "otel")]
         if offset_values.len() == 2 {
             anyhow::ensure!(
                 self.observations.paired_samples[offset_values[0]] == Some(offset_values[1])
@@ -494,6 +499,23 @@ impl Profile {
         duration: Option<Duration>,
     ) -> anyhow::Result<EncodedProfile> {
         self.encode_otel(end_time, duration)
+    }
+
+    /// Serialize the aggregated profile, choosing the output format at runtime.
+    ///
+    /// If the `DD_PROFILING_OTEL_FORMAT` environment variable is set to any non-empty value **and**
+    /// the crate was compiled with the `otel` feature, the profile is encoded as OTLP; otherwise
+    /// it falls back to pprof.
+    pub fn serialize_into_compressed(
+        self,
+        end_time: Option<SystemTime>,
+        duration: Option<Duration>,
+    ) -> anyhow::Result<EncodedProfile> {
+        #[cfg(feature = "otel")]
+        if std::env::var_os("DD_PROFILING_OTEL_FORMAT").is_some() {
+            return self.encode_otel(end_time, duration);
+        }
+        self.serialize_into_compressed_pprof(end_time, duration)
     }
 
     /// Serialize the aggregated profile, adding the end time and duration.
@@ -904,6 +926,7 @@ impl Profile {
             end,
             buffer,
             endpoints_stats,
+            filename: "profile.otel",
         })
     }
 
@@ -1070,6 +1093,7 @@ impl Profile {
             end,
             buffer: Vec::new(),
             endpoints_stats,
+            filename: "profile.pprof",
         })
     }
 

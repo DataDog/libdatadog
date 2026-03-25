@@ -280,7 +280,7 @@ impl ProfileExporter {
         let attachments: Vec<_> = additional_files
             .iter()
             .map(|f| f.name)
-            .chain(std::iter::once("profile.pprof"))
+            .chain(std::iter::once(profile.filename))
             .collect();
 
         let mut internal = internal_metadata.unwrap_or_else(|| json!({}));
@@ -340,8 +340,8 @@ impl ProfileExporter {
 
         // Add profile
         Ok(form.part(
-            "profile.pprof",
-            reqwest::multipart::Part::bytes(profile.buffer).file_name("profile.pprof"),
+            profile.filename,
+            reqwest::multipart::Part::bytes(profile.buffer).file_name(profile.filename),
         ))
     }
 }

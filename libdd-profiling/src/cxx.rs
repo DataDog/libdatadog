@@ -616,7 +616,7 @@ impl Profile {
         // Reset the profile and get the old one to serialize
         let old_profile = self.inner.reset_and_return_previous()?;
         let end_time = Some(std::time::SystemTime::now());
-        let encoded = old_profile.serialize_into_compressed_pprof(end_time, None)?;
+        let encoded = old_profile.serialize_into_compressed(end_time, None)?;
         Ok(encoded.buffer)
     }
 }
@@ -647,7 +647,7 @@ fn prepare_profile_for_export<'a>(
 )> {
     let old_profile = profile.inner.reset_and_return_previous()?;
     let end_time = Some(std::time::SystemTime::now());
-    let encoded = old_profile.serialize_into_compressed_pprof(end_time, None)?;
+    let encoded = old_profile.serialize_into_compressed(end_time, None)?;
 
     let files_to_compress_vec: Vec<exporter::File> =
         files_to_compress.iter().map(Into::into).collect();
