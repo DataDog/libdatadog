@@ -641,6 +641,7 @@ pub struct ClientGroupedStats {
     pub is_trace_root: i32,
     #[prost(string, tag = "18")]
     #[serde(default)]
+    #[serde(rename = "GRPCStatusCode")]
     pub grpc_status_code: ::prost::alloc::string::String,
     /// HTTP method of the request
     #[prost(string, tag = "19")]
@@ -655,6 +656,7 @@ pub struct ClientGroupedStats {
     /// @inject_tag: msg:"srv_src"
     #[prost(string, tag = "21")]
     #[serde(default)]
+    #[serde(rename = "srv_src")]
     pub service_source: ::prost::alloc::string::String,
     /// used to identify service override origin
     /// span_derived_primary_tags are user-configured tags that are extracted from spans and used for stats aggregation
