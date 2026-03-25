@@ -213,6 +213,9 @@ impl<'a> BorrowedAggregationKey<'a> {
                 .iter()
                 .filter_map(|key| Some(((key.as_str()), (span.get_meta(key.as_str())?))))
                 .collect()
+        } else if let Some(base_service) = span.get_meta("_dd.base_service") {
+            // Internal spans with a base service override use only _dd.base_service as peer tag
+            vec![("_dd.base_service", base_service)]
         } else {
             vec![]
         };
