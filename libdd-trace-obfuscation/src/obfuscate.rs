@@ -159,21 +159,8 @@ pub fn obfuscate_span_event(event: &mut pb::SpanEvent, config: &ObfuscationConfi
                     continue;
                 }
             };
-            // FIXME: this can be optimized
-            let new_val = if is_card_number(&str_value, config.credit_card.luhn) {
-                "?".to_string()
-            } else {
-                str_value.clone()
-            };
-            if new_val != str_value {
-                *v = pb::AttributeAnyValue {
-                    r#type: pb::attribute_any_value::AttributeAnyValueType::StringValue.into(),
-                    string_value: new_val,
-                    bool_value: false,
-                    int_value: 0,
-                    double_value: 0.0,
-                    array_value: None,
-                }
+            if is_card_number(&str_value, config.credit_card.luhn) {
+                v.string_value = "?".to_string();
             }
         }
     }
