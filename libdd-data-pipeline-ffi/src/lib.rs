@@ -44,3 +44,8 @@ macro_rules! gen_error {
 
 pub(crate) use catch_panic;
 pub(crate) use gen_error;
+
+/// Add dummy function to test transitive dependencies.
+pub fn dummy() {
+    println!("dummy");
+}
