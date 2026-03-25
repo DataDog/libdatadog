@@ -1,6 +1,6 @@
 [package]
 name = "libdd-trace-protobuf"
-version = "3.0.0"
+version = "1.1.0"
 description = "Protobuf utils for Datadog's traces serialization"
 homepage = "https://github.com/DataDog/libdatadog/tree/main/libdd-trace-protobuf"
 repository = "https://github.com/DataDog/libdatadog/tree/main/libdd-trace-protobuf"
@@ -12,6 +12,7 @@ license.workspace = true
 bench = false
 
 [dependencies]
+bolero = { version = "0.13.4", optional = true }
 prost = "0.14.1"
 serde = { version = "1.0.145", features = ["derive"] }
 serde_bytes = "0.11.9"
@@ -22,6 +23,7 @@ protoc-bin-vendored = { version = "3.0.0", optional = true }
 
 [features]
 generate-protobuf = ["dep:prost-build", "dep:protoc-bin-vendored"]
+fuzzing = ["dep:bolero"]
 
 [dev-dependencies]
 serde_json = "1.0.117"

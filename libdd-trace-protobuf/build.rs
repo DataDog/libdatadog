@@ -53,12 +53,20 @@ fn generate_protobuf() {
     config.type_attribute("TraceChunk", "#[derive(Deserialize, Serialize)]");
 
     config.type_attribute("SpanLink", "#[derive(Deserialize, Serialize)]");
+    config.type_attribute(
+        "SpanLink",
+        r#"#[cfg_attr(feature = "fuzzing", derive(bolero::TypeGenerator))]"#,
+    );
     config.field_attribute(".pb.SpanLink.traceID_high", "#[serde(default)]");
     config.field_attribute(".pb.SpanLink.attributes", "#[serde(default)]");
     config.field_attribute(".pb.SpanLink.tracestate", "#[serde(default)]");
     config.field_attribute(".pb.SpanLink.flags", "#[serde(default)]");
 
     config.type_attribute("Span", "#[derive(Deserialize, Serialize)]");
+    config.type_attribute(
+        "Span",
+        r#"#[cfg_attr(feature = "fuzzing", derive(bolero::TypeGenerator))]"#,
+    );
     config.field_attribute(
         ".pb.Span.service",
         "#[serde(default)] #[serde(deserialize_with = \"crate::deserializers::deserialize_null_into_default\")]",
@@ -121,11 +129,19 @@ fn generate_protobuf() {
     );
 
     config.type_attribute("SpanEvent", "#[derive(Deserialize, Serialize)]");
+    config.type_attribute(
+        "SpanEvent",
+        r#"#[cfg_attr(feature = "fuzzing", derive(bolero::TypeGenerator))]"#,
+    );
     config.field_attribute(".pb.SpanEvent.time_unix_nano", "#[serde(default)]");
     config.field_attribute(".pb.SpanEvent.name", "#[serde(default)]");
     config.field_attribute(".pb.SpanEvent.attributes", "#[serde(default)]");
 
     config.type_attribute("AttributeAnyValue", "#[derive(Deserialize, Serialize)]");
+    config.type_attribute(
+        "AttributeAnyValue",
+        r#"#[cfg_attr(feature = "fuzzing", derive(bolero::TypeGenerator))]"#,
+    );
     config.field_attribute(".pb.AttributeAnyValue.type", "#[serde(default)]");
     config.field_attribute(".pb.AttributeAnyValue.string_value", "#[serde(default)]");
     config.field_attribute(".pb.AttributeAnyValue.bool_value", "#[serde(default)]");
@@ -134,9 +150,17 @@ fn generate_protobuf() {
     config.field_attribute(".pb.AttributeAnyValue.array_value", "#[serde(default)]");
 
     config.type_attribute("AttributeArray", "#[derive(Deserialize, Serialize)]");
+    config.type_attribute(
+        "AttributeArray",
+        r#"#[cfg_attr(feature = "fuzzing", derive(bolero::TypeGenerator))]"#,
+    );
     config.field_attribute(".pb.AttributeArray.values", "#[serde(default)]");
 
     config.type_attribute("AttributeArrayValue", "#[derive(Deserialize, Serialize)]");
+    config.type_attribute(
+        "AttributeArrayValue",
+        r#"#[cfg_attr(feature = "fuzzing", derive(bolero::TypeGenerator))]"#,
+    );
     config.field_attribute(".pb.AttributeArrayValue.type", "#[serde(default)]");
     config.field_attribute(".pb.AttributeArrayValue.string_value", "#[serde(default)]");
     config.field_attribute(".pb.AttributeArrayValue.bool_value", "#[serde(default)]");
@@ -207,24 +231,36 @@ fn generate_protobuf() {
         "ClientGroupedStats.DB_type",
         "#[serde(rename = \"DBType\")]",
     );
-    config.field_attribute(
-        "ClientGroupedStats.GRPC_status_code",
-        "#[serde(rename = \"GRPCStatusCode\")]",
-    );
-    config.field_attribute(
-        "ClientGroupedStats.service_source",
-        "#[serde(rename = \"srv_src\")]",
-    );
 
     // idx module type attributes
     config.type_attribute("pb.idx.AnyValue", "#[derive(Deserialize, Serialize)]");
     config.type_attribute(
+        "pb.idx.AnyValue",
+        r#"#[cfg_attr(feature = "fuzzing", derive(bolero::TypeGenerator))]"#,
+    );
+    config.type_attribute(
         "pb.idx.AnyValue.value",
         "#[derive(serde::Deserialize, serde::Serialize)]",
     );
+    config.type_attribute(
+        "pb.idx.AnyValue.value",
+        r#"#[cfg_attr(feature = "fuzzing", derive(bolero::TypeGenerator))]"#,
+    );
     config.type_attribute("pb.idx.KeyValue", "#[derive(Deserialize, Serialize)]");
+    config.type_attribute(
+        "pb.idx.KeyValue",
+        r#"#[cfg_attr(feature = "fuzzing", derive(bolero::TypeGenerator))]"#,
+    );
     config.type_attribute("pb.idx.ArrayValue", "#[derive(Deserialize, Serialize)]");
+    config.type_attribute(
+        "pb.idx.ArrayValue",
+        r#"#[cfg_attr(feature = "fuzzing", derive(bolero::TypeGenerator))]"#,
+    );
     config.type_attribute("pb.idx.KeyValueList", "#[derive(Deserialize, Serialize)]");
+    config.type_attribute(
+        "pb.idx.KeyValueList",
+        r#"#[cfg_attr(feature = "fuzzing", derive(bolero::TypeGenerator))]"#,
+    );
 
     config.type_attribute(
         "ClientGetConfigsResponse",
