@@ -282,8 +282,8 @@ impl From<pb::ClientGroupedStats> for OwnedAggregationKey {
     }
 }
 
-/// Return true if the span kind should have peer tags ("client", "producer", or "consumer")
-fn has_peer_tags<T>(span_kind: T) -> bool
+/// Return true if we care about peer tags on the span
+fn should_track_peer_tags<T>(span_kind: T) -> bool
 where
     T: SpanText,
 {
