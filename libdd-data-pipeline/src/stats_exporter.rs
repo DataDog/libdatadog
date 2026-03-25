@@ -159,7 +159,11 @@ fn encode_stats_payload(
 ) -> pb::ClientStatsPayload {
     pb::ClientStatsPayload {
         hostname: meta.hostname.clone(),
-        env: meta.env.clone(),
+        env: if meta.env.is_empty() {
+            "unknown-env".to_string()
+        } else {
+            meta.env.clone()
+        },
         version: meta.app_version.clone(),
         runtime_id: meta.runtime_id.clone(),
         sequence,
