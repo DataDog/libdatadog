@@ -57,8 +57,8 @@ pub mod linux {
     /// reader runs. `valid` is written with `ptr::write_volatile` so the compiler cannot reorder
     /// its store past the surrounding field writes:
     ///
-    /// - The writer sets `valid = 1` *after* all other fields are populated (publish).
     /// - The writer sets `valid = 0` *before* modifying fields in-place (modify).
+    /// - The writer sets `valid = 1` *after* all other fields are populated (publish).
     #[repr(C)]
     pub struct ThreadContextRecord {
         /// 128-bit trace identifier; all-zeroes means "no trace".
