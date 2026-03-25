@@ -353,6 +353,8 @@ pub mod linux {
     }
 
     #[cfg(test)]
+    // Accessing the TLS through C isn't supported in Miri
+    #[cfg_attr(miri, ignore)]
     mod tests {
         use super::{ThreadContext, ThreadContextRecord};
 
@@ -534,7 +536,6 @@ pub mod linux {
 
         // Make sure the C shim is indeed providing a thread-local address.
         #[test]
-        #[cfg_attr(miri, ignore)]
         fn tls_slots_are_per_thread() {
             use std::sync::{Arc, Barrier};
 
