@@ -31,6 +31,13 @@ on:
         required: false
         type: string
         default: ''
+      bypass_standard_checks:
+        description: >
+          Skip ongoing-proposal checks. Proposal branches use prefix
+          release-proposal-testing so they do not collide with normal release-proposal/* runs.
+        required: false
+        type: boolean
+        default: false
 
 concurrency:
   group: release-proposal-dispatch-group
@@ -38,10 +45,12 @@ concurrency:
 
 env:
   MAIN_BRANCH: main
-  PROPOSAL_BRANCH_PREFIX: release-proposal
+  RELEASE_BRANCH_PREFIX: ${{ inputs.bypass_standard_checks && 'release-testing' || 'release' }}
+  PROPOSAL_BRANCH_PREFIX: ${{ inputs.bypass_standard_checks && 'release-proposal-testing' || 'release-proposal' }}
 
 jobs:
   check-proposal-ongoing:
+    if: ${{ !inputs.bypass_standard_checks }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # 4.2.2
@@ -51,7 +60,7 @@ jobs:
       - name: Check if a release proposal is ongoing
         run: |
           # Check if there are any proposal branches or ephemeral release branches (release/*/*)
-          EXISTING_BRANCHES=$(git branch -r --list "origin/${{ env.PROPOSAL_BRANCH_PREFIX }}/*" "origin/release/*/*")
+          EXISTING_BRANCHES=$(git branch -r --list "origin/${{ env.PROPOSAL_BRANCH_PREFIX }}/*" "origin/${{ env.RELEASE_BRANCH_PREFIX }}/*/*")
           if [ -n "$EXISTING_BRANCHES" ]; then
             echo "Error: A release proposal is ongoing. Please cancel it or wait for it to be merged." >&2
             echo "Existing branches:"
@@ -88,7 +97,7 @@ jobs:
             echo "User is not part of apm-common-components-core"
             exit 1
           fi
-    
+
   cargo-release:
     permissions:
       id-token: write # Enable OIDC
@@ -216,7 +225,7 @@ jobs:
         id: ephemeral-branch
         run: |
           TIMESTAMP=$(date +%Y%m%d-%H%M%S)
-          EPHEMERAL_BRANCH="release/${{ inputs.crate }}/$TIMESTAMP"
+          EPHEMERAL_BRANCH="${{ env.RELEASE_BRANCH_PREFIX }}/${{ inputs.crate }}/$TIMESTAMP"
           git checkout -b "$EPHEMERAL_BRANCH"
           git push origin "$EPHEMERAL_BRANCH"
           echo "Ephemeral release branch created: $EPHEMERAL_BRANCH branch ($(git rev-parse --short HEAD))"
@@ -351,7 +360,7 @@ jobs:
 
               # if there is a tag more recent than $TAG, continue the loop
               LATEST_TAG=$(git tag -l "$TAG_PREFIX*" --sort=-v:refname | head -1)
-              if [ "$LATEST_TAG" != "$TAG" ]; then
+              if [ "$LATEST_TAG" != "$TAG" && ${{ !inputs.bypass_standard_checks }} ]; then
                 echo "Tag $TAG is not the latest. Latest is: $LATEST_TAG. main branch has the latest release for $NAME"
                 echo "Skipping release for $NAME"
                 continue
