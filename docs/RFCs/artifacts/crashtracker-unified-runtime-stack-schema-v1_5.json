@@ -183,9 +183,13 @@
           ]
         },
         "ucontext": {
-          "type": [
-            "string",
-            "null"
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Ucontext"
+            },
+            {
+              "type": "null"
+            }
           ]
         }
       }
@@ -576,6 +580,39 @@
             "string",
             "null"
           ]
+        }
+      }
+    },
+    "Ucontext": {
+      "description": "Structured representation of the CPU register state captured from a `ucontext_t` at the time of a crash signal.",
+      "type": "object",
+      "required": [
+        "arch",
+        "os",
+        "registers"
+      ],
+      "properties": {
+        "arch": {
+          "description": "Target architecture: \"x86_64\" or \"aarch64\"",
+          "type": "string"
+        },
+        "os": {
+          "description": "Operating system: \"linux\" or \"macos\"",
+          "type": "string"
+        },
+        "raw": {
+          "description": "Full Debug-formatted ucontext string preserving FPU state, signal mask, and alternate-stack info that is not captured in `registers`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "registers": {
+          "description": "Named registers mapped to their hex-formatted values (\"rip\" -> \"0x00007f...\")",
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
         }
       }
     }

@@ -215,7 +215,7 @@ impl CrashInfoBuilder {
         Ok(())
     }
 
-    pub fn with_experimental_ucontext(&mut self, ucontext: String) -> anyhow::Result<()> {
+    pub fn with_experimental_ucontext(&mut self, ucontext: Ucontext) -> anyhow::Result<()> {
         if let Some(experimental) = &mut self.experimental {
             experimental.ucontext = Some(ucontext);
         } else {
