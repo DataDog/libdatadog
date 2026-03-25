@@ -2,7 +2,7 @@
 
 
 
-## [3.0.1](https://github.com/datadog/libdatadog/compare/libdd-data-pipeline-v3.0.0..libdd-data-pipeline-v3.0.1) - 2026-03-24
+## [3.0.1](https://github.com/datadog/libdatadog/compare/libdd-data-pipeline-v3.0.0..libdd-data-pipeline-v3.0.1) - 2026-03-25
 
 ### Added
   - Fix previous version.

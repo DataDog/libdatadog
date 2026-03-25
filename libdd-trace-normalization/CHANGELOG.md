@@ -2,7 +2,7 @@
 
 
 
-## [2.0.0](https://github.com/datadog/libdatadog/compare/libdd-trace-normalization-v1.0.3..libdd-trace-normalization-v2.0.0) - 2026-03-24
+## [2.0.0](https://github.com/datadog/libdatadog/compare/libdd-trace-normalization-v1.0.3..libdd-trace-normalization-v2.0.0) - 2026-03-25
 
 ### Changed
 - Fix previous version.

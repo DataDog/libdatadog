@@ -2,7 +2,7 @@
 
 
 
-## [2.0.0](https://github.com/datadog/libdatadog/compare/libdd-dogstatsd-client-v1.0.2..libdd-dogstatsd-client-v2.0.0) - 2026-03-24
+## [2.0.0](https://github.com/datadog/libdatadog/compare/libdd-dogstatsd-client-v1.0.2..libdd-dogstatsd-client-v2.0.0) - 2026-03-25
 
 ### Changed
 

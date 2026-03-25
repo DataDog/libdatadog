@@ -2,10 +2,10 @@
 
 
 
-## [3.0.1](https://github.com/datadog/libdatadog/compare/libdd-trace-protobuf-v3.0.0..libdd-trace-protobuf-v3.0.1) - 2026-03-24
+## [3.0.1](https://github.com/datadog/libdatadog/compare/libdd-trace-protobuf-v3.0.0..libdd-trace-protobuf-v3.0.1) - 2026-03-25
 
 ### Changed
-- Fix previous version
+- Fix previous version.
 
 
 
