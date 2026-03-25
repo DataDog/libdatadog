@@ -363,7 +363,7 @@ jobs:
 
               # if there is a tag more recent than $TAG, continue the loop
               LATEST_TAG=$(git tag -l "$TAG_PREFIX*" --sort=-v:refname | head -1)
-              if [ "$LATEST_TAG" != "$TAG" && ${{ !inputs.bypass_standard_checks }} ]; then
+              if [ "$LATEST_TAG" != "$TAG" ] && [ "${{ inputs.bypass_standard_checks }}" = "false" ]; then
                 echo "Tag $TAG is not the latest. Latest is: $LATEST_TAG. main branch has the latest release for $NAME"
                 echo "Skipping release for $NAME"
                 continue
