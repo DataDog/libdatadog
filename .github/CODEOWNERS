@@ -81,5 +81,6 @@ bin_tests/tests/test_the_tests.rs    @DataDog/libdatadog-core
 bin_tests/src/bin/test_the_tests.rs  @DataDog/libdatadog-core
 tools/cc_utils/                      @DataDog/libdatadog-php
 tools/sidecar_mockgen/               @DataDog/libdatadog-php
-libdd-data-pipeline/src/otlp/        @DataDog/apm-sdk-capabilities
-libdd-trace-utils/src/otlp_encoder/  @DataDog/apm-sdk-capabilities
+libdd-data-pipeline/src/otlp/                           @DataDog/apm-sdk-capabilities
+libdd-data-pipeline/tests/test_trace_exporter_otlp_export.rs @DataDog/apm-sdk-capabilities
+libdd-trace-utils/src/otlp_encoder/                     @DataDog/apm-sdk-capabilities
