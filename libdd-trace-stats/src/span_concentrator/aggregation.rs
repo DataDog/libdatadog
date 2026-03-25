@@ -206,7 +206,7 @@ impl<'a> BorrowedAggregationKey<'a> {
     /// key.
     pub(super) fn from_span<T: StatSpan<'a>>(span: &'a T, peer_tag_keys: &'a [String]) -> Self {
         let span_kind = span.get_meta(TAG_SPANKIND).unwrap_or_default();
-        let peer_tags = if has_peer_tags(span_kind) {
+        let peer_tags = if should_track_peer_tags(span_kind) {
             // Parse the meta tags of the span and return a list of the peer tags based on the list
             // of `peer_tag_keys`
             peer_tag_keys
