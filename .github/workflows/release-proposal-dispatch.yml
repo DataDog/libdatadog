@@ -50,7 +50,6 @@ env:
 
 jobs:
   check-proposal-ongoing:
-    if: ${{ !inputs.bypass_standard_checks }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # 4.2.2
@@ -59,15 +58,19 @@ jobs:
           fetch-tags: true
       - name: Check if a release proposal is ongoing
         run: |
-          # Check if there are any proposal branches or ephemeral release branches (release/*/*)
-          EXISTING_BRANCHES=$(git branch -r --list "origin/${{ env.PROPOSAL_BRANCH_PREFIX }}/*" "origin/${{ env.RELEASE_BRANCH_PREFIX }}/*/*")
-          if [ -n "$EXISTING_BRANCHES" ]; then
-            echo "Error: A release proposal is ongoing. Please cancel it or wait for it to be merged." >&2
-            echo "Existing branches:"
-            echo "$EXISTING_BRANCHES"
-            exit 1
+          if [ "${{ inputs.bypass_standard_checks }}" = "true" ]; then
+            echo "Skipping ongoing release proposal checks."
+          else
+            # Check if there are any proposal branches or ephemeral release branches (release/*/*)
+            EXISTING_BRANCHES=$(git branch -r --list "origin/${{ env.PROPOSAL_BRANCH_PREFIX }}/*" "origin/${{ env.RELEASE_BRANCH_PREFIX }}/*/*")
+            if [ -n "$EXISTING_BRANCHES" ]; then
+              echo "Error: A release proposal is ongoing. Please cancel it or wait for it to be merged." >&2
+              echo "Existing branches:"
+              echo "$EXISTING_BRANCHES"
+              exit 1
+            fi
+            echo "No release proposal is ongoing."
           fi
-          echo "No release proposal is ongoing."
 
   check-membership:
     permissions:
