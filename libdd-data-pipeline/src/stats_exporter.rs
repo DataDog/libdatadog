@@ -163,18 +163,18 @@ fn encode_stats_payload(
         version: meta.app_version.clone(),
         runtime_id: meta.runtime_id.clone(),
         sequence,
+        service: meta.service.clone(),
         stats: buckets,
         git_commit_sha: meta.git_commit_sha.clone(),
         process_tags: meta.process_tags.clone(),
-        // These fields are unused or will be set by the Agent
-        service: String::new(),
-        lang: String::new(),
-        tracer_version: String::new(),
+        // These fields will be set by the Agent
         container_id: String::new(),
         tags: Vec::new(),
         agent_aggregation: String::new(),
         image_tag: String::new(),
         process_tags_hash: 0,
+        lang: String::new(),
+        tracer_version: String::new(),
     }
 }
 
