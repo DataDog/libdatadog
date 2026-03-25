@@ -534,6 +534,7 @@ pub mod linux {
 
         // Make sure the C shim is indeed providing a thread-local address.
         #[test]
+        #[cfg_attr(miri, ignore)]
         fn tls_slots_are_per_thread() {
             use std::sync::{Arc, Barrier};
 
