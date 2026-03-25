@@ -219,6 +219,7 @@ impl<'a> PayloadValidator<'a> {
 
     /// Validates that the callstack contains the expected functions in order.
     /// This is useful for tests that verify specific call chains are preserved.
+    /// TODO: we should try to use this as much as possible
     pub fn validate_callstack_functions(self, expected_functions: &[&str]) -> Result<Self> {
         let crashing_callstack = &self.payload["error"]["stack"]["frames"];
         let frames = crashing_callstack
