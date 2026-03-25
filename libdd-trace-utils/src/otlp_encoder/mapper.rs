@@ -18,7 +18,7 @@ const MAX_ATTRIBUTES_PER_SPAN: usize = 128;
 /// Maps Datadog trace chunks and resource info to an OTLP ExportTraceServiceRequest.
 ///
 /// Resource: SDK-level attributes (service.name, deployment.environment, telemetry.sdk.*,
-/// runtime-id). InstrumentationScope: "datadog" (DD SDKs don't have scope; all spans use this).
+/// runtime-id). InstrumentationScope: present but empty (DD SDKs don't have a scope concept).
 /// All analogous DD span fields are mapped; meta→attributes (string), metrics→attributes
 /// (int/double), links and events mapped to OTLP links and events. Status from span.error and
 /// meta["error.msg"].
@@ -30,15 +30,11 @@ pub fn map_traces_to_otlp<T: TraceData>(
     let mut all_spans: Vec<OtlpSpan> = Vec::new();
     for chunk in &trace_chunks {
         for span in chunk {
-            all_spans.push(map_span(span));
+            all_spans.push(map_span(span, &resource_info.service));
         }
     }
-    let scope = InstrumentationScope {
-        name: Some("datadog".to_string()),
-        version: None,
-    };
     let scope_spans = ScopeSpans {
-        scope: Some(scope),
+        scope: Some(InstrumentationScope::default()),
         spans: all_spans,
         schema_url: None,
     };
@@ -108,7 +104,7 @@ fn build_resource(resource_info: &OtlpResourceInfo) -> Resource {
     Resource { attributes }
 }
 
-fn map_span<T: TraceData>(span: &Span<T>) -> OtlpSpan {
+fn map_span<T: TraceData>(span: &Span<T>, resource_service: &str) -> OtlpSpan {
     // Reconstruct the full 128-bit trace ID. The v04/v05 wire format carries only the low 64 bits
     // in the trace_id field; when a tracer emits a 128-bit ID the high 64 bits are propagated as
     // the hex string meta tag "_dd.p.tid".
@@ -136,7 +132,7 @@ fn map_span<T: TraceData>(span: &Span<T>) -> OtlpSpan {
         .get("span.kind")
         .map(|v| tag_to_otlp_kind(v.borrow()))
         .unwrap_or_else(|| dd_type_to_otlp_kind(span.r#type.borrow()));
-    let (attributes, dropped_attributes_count) = map_attributes(span);
+    let (attributes, dropped_attributes_count) = map_attributes(span, resource_service);
     let error_msg = span.meta.get("error.msg").map(|v| v.borrow().to_string());
     let status = if span.error != 0 {
         Some(Status {
@@ -282,8 +278,17 @@ fn dd_type_to_otlp_kind(t: &str) -> i32 {
     }
 }
 
-fn map_attributes<T: TraceData>(span: &Span<T>) -> (Vec<KeyValue>, usize) {
+fn map_attributes<T: TraceData>(span: &Span<T>, resource_service: &str) -> (Vec<KeyValue>, usize) {
     let mut attrs: Vec<KeyValue> = Vec::new();
+    // Add service.name when the span's service differs from the resource-level service.
+    let span_service = span.service.borrow();
+    let has_per_span_service = !span_service.is_empty() && span_service != resource_service;
+    if has_per_span_service {
+        attrs.push(KeyValue {
+            key: "service.name".to_string(),
+            value: AnyValue::StringValue(span_service.to_string()),
+        });
+    }
     for (k, v) in span.meta.iter() {
         if attrs.len() >= MAX_ATTRIBUTES_PER_SPAN {
             break;
@@ -307,7 +312,9 @@ fn map_attributes<T: TraceData>(span: &Span<T>) -> (Vec<KeyValue>, usize) {
             value,
         });
     }
-    let total = span.meta.len() + span.metrics.len();
+    let total = (if has_per_span_service { 1 } else { 0 })
+        + span.meta.len()
+        + span.metrics.len();
     let dropped = total.saturating_sub(attrs.len());
     (attrs, dropped)
 }
@@ -346,10 +353,7 @@ mod tests {
         assert_eq!(otlp_span.kind, json_types::span_kind::SERVER);
         assert_eq!(otlp_span.start_time_unix_nano, "1544712660000000000");
         assert_eq!(otlp_span.end_time_unix_nano, "1544712661000000000");
-        assert_eq!(
-            rs.scope_spans[0].scope.as_ref().unwrap().name.as_deref(),
-            Some("datadog")
-        );
+        assert_eq!(rs.scope_spans[0].scope.as_ref().unwrap().name, None);
     }
 
     #[test]
