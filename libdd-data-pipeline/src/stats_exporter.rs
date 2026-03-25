@@ -160,16 +160,16 @@ fn encode_stats_payload(
     pb::ClientStatsPayload {
         hostname: meta.hostname.clone(),
         env: meta.env.clone(),
-        lang: meta.language.clone(),
         version: meta.app_version.clone(),
         runtime_id: meta.runtime_id.clone(),
-        tracer_version: meta.tracer_version.clone(),
         sequence,
         stats: buckets,
         git_commit_sha: meta.git_commit_sha.clone(),
         process_tags: meta.process_tags.clone(),
         // These fields are unused or will be set by the Agent
         service: String::new(),
+        lang: String::new(),
+        tracer_version: String::new(),
         container_id: String::new(),
         tags: Vec::new(),
         agent_aggregation: String::new(),
