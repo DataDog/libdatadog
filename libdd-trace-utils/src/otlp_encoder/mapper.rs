@@ -89,18 +89,6 @@ fn build_resource(resource_info: &OtlpResourceInfo) -> Resource {
             value: AnyValue::StringValue(resource_info.runtime_id.clone()),
         });
     }
-    if !resource_info.git_commit_sha.is_empty() {
-        attributes.push(KeyValue {
-            key: "git.commit.sha".to_string(),
-            value: AnyValue::StringValue(resource_info.git_commit_sha.clone()),
-        });
-    }
-    if !resource_info.git_repository_url.is_empty() {
-        attributes.push(KeyValue {
-            key: "git.repository_url".to_string(),
-            value: AnyValue::StringValue(resource_info.git_repository_url.clone()),
-        });
-    }
     Resource { attributes }
 }
 
@@ -211,7 +199,7 @@ fn map_span_events<T: TraceData>(events: &[SpanEvent<T>]) -> (Vec<OtlpSpanEvent>
         let attributes: Vec<KeyValue> = ev
             .attributes
             .iter()
-            .filter_map(|(k, v)| event_attr_to_key_value(k, v))
+            .map(|(k, v)| event_attr_to_key_value(k, v))
             .collect();
         otlp_events.push(OtlpSpanEvent {
             time_unix_nano: ev.time_unix_nano.to_string(),
@@ -227,7 +215,7 @@ fn map_span_events<T: TraceData>(events: &[SpanEvent<T>]) -> (Vec<OtlpSpanEvent>
 fn event_attr_to_key_value<T: TraceData>(
     k: &T::Text,
     v: &crate::span::v04::AttributeAnyValue<T>,
-) -> Option<KeyValue> {
+) -> KeyValue {
     use crate::span::v04::AttributeArrayValue;
     let value = match v {
         crate::span::v04::AttributeAnyValue::SingleValue(av) => match av {
@@ -249,10 +237,10 @@ fn event_attr_to_key_value<T: TraceData>(
             AnyValue::ArrayValue(crate::otlp_encoder::json_types::ArrayValue { values })
         }
     };
-    Some(KeyValue {
+    KeyValue {
         key: k.borrow().to_string(),
         value,
-    })
+    }
 }
 
 /// Maps the explicit "span.kind" meta tag (set by OTEL-instrumented tracers) to an OTLP SpanKind.

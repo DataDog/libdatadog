@@ -544,7 +544,6 @@ impl TraceExporter {
             r.language = self.metadata.language.clone();
             r.tracer_version = self.metadata.tracer_version.clone();
             r.runtime_id = self.metadata.runtime_id.clone();
-            r.git_commit_sha = self.metadata.git_commit_sha.clone();
             r
         };
         let request = map_traces_to_otlp(traces, &resource_info);
