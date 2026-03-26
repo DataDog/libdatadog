@@ -235,18 +235,30 @@ mod tests {
         reason: Option<String>,
     }
 
+    /// Known reason overrides where Rust's shard optimization produces a different
+    /// (but equally valid) reason than the canonical Go-derived fixtures.
+    ///
+    /// Rust collapses insignificant shards (single split covering 100% of traffic)
+    /// to STATIC, whereas Go reports SPLIT. Both are correct interpretations.
+    /// Key: (flag, targeting_key) -> expected_reason for Rust.
+    fn known_reason_overrides() -> HashMap<(&'static str, &'static str), &'static str> {
+        HashMap::from([(("empty_string_flag", "bob"), "STATIC")])
+    }
+
     #[test]
     #[cfg_attr(miri, ignore)] // this test is way too slow on miri
     fn evaluation_sdk_test_data() {
         let _ = env_logger::builder().is_test(true).try_init();
 
-        let config =
-            UniversalFlagConfig::from_json(std::fs::read("tests/data/flags-v1.json").unwrap())
-                .unwrap();
+        let config = UniversalFlagConfig::from_json(
+            std::fs::read("ffe-system-test-data/ufc-config.json").unwrap(),
+        )
+        .unwrap();
         let config = Configuration::from_server_response(config);
         let now = Utc::now();
+        let reason_overrides = known_reason_overrides();
 
-        for entry in fs::read_dir("tests/data/tests/").unwrap() {
+        for entry in fs::read_dir("ffe-system-test-data/evaluation-cases/").unwrap() {
             let entry = entry.unwrap();
             println!("Processing test file: {:?}", entry.path());
 
@@ -292,9 +304,14 @@ mod tests {
                         Err(EvaluationError::FlagDisabled) => "DISABLED",
                         Err(_) => "DEFAULT",
                     };
+                    let tk = subject.targeting_key().map(|s| s.as_ref()).unwrap_or("");
+                    let effective_expected = reason_overrides
+                        .get(&(test_case.flag.as_str(), tk))
+                        .copied()
+                        .unwrap_or(expected_reason.as_str());
                     assert_eq!(
                         actual_reason,
-                        expected_reason.as_str(),
+                        effective_expected,
                         "reason mismatch for flag '{}' targeting_key '{:?}'",
                         test_case.flag,
                         subject.targeting_key()
