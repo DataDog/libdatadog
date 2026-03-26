@@ -138,12 +138,18 @@ fn map_span<T: TraceData>(span: &Span<T>, resource_service: &str) -> OtlpSpan {
         .metrics
         .get("_sampling_priority_v1")
         .map(|p| if *p >= 1.0 { 1u32 } else { 0u32 });
+    let trace_state = span
+        .meta
+        .get("tracestate")
+        .map(|v| v.borrow().to_string())
+        .filter(|s| !s.is_empty());
     let links = span.span_links.iter().map(map_span_link).collect();
     let (events, dropped_events_count) = map_span_events(&span.span_events);
     OtlpSpan {
         trace_id: trace_id_hex,
         span_id: span_id_hex,
         parent_span_id,
+        trace_state,
         name: span.resource.borrow().to_string(),
         kind,
         start_time_unix_nano,
@@ -316,11 +322,21 @@ fn map_attributes<T: TraceData>(span: &Span<T>, resource_service: &str) -> (Vec<
             value,
         });
     }
+    for (k, v) in span.meta_struct.iter() {
+        if attrs.len() >= MAX_ATTRIBUTES_PER_SPAN {
+            break;
+        }
+        attrs.push(KeyValue {
+            key: k.borrow().to_string(),
+            value: AnyValue::BytesValue(v.borrow().to_vec()),
+        });
+    }
     let total = (if has_per_span_service { 1 } else { 0 })
         + (if has_operation_name { 1 } else { 0 })
         + (if has_span_type { 1 } else { 0 })
         + span.meta.len()
-        + span.metrics.len();
+        + span.metrics.len()
+        + span.meta_struct.len();
     let dropped = total.saturating_sub(attrs.len());
     (attrs, dropped)
 }

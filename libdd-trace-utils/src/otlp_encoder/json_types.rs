@@ -64,6 +64,8 @@ pub struct OtlpSpan {
     pub span_id: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub parent_span_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub trace_state: Option<String>,
     pub name: String,
     pub kind: i32,
     pub start_time_unix_nano: String,
