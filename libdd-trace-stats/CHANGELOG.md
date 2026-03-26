@@ -1,6 +1,14 @@
 # Changelog
 
 
+
+## [2.0.0](https://github.com/datadog/libdatadog/compare/libdd-trace-stats-v1.0.4..libdd-trace-stats-v2.0.0) - 2026-03-25
+
+### Changed
+- Fix previous version.
+
+
+
 ## [1.0.4](https://github.com/datadog/libdatadog/compare/libdd-trace-stats-v1.0.3..libdd-trace-stats-v1.0.4) - 2026-03-23
 
 ### Changed
