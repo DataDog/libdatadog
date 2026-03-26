@@ -43,7 +43,7 @@ pub fn obfuscate_span(span: &mut pb::Span, config: &ObfuscationConfig) {
     }
 
     if let Some(credit_card) = span.meta.get_mut(TAG_CARD_NUMBER) {
-        if is_card_number(&credit_card, config.credit_cards.luhn) {
+        if config.credit_cards.enabled && is_card_number(&credit_card, config.credit_cards.luhn) {
             *credit_card = "?".to_string();
         }
     }
