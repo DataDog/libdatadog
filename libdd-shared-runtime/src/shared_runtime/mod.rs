@@ -11,13 +11,13 @@
 pub(crate) mod pausable_worker;
 
 use crate::worker::Worker;
+use futures::stream::{FuturesUnordered, StreamExt};
 use libdd_common::MutexExt;
 use pausable_worker::{PausableWorker, PausableWorkerError};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::{fmt, io};
 use tokio::runtime::{Builder, Runtime};
-use tokio::task::JoinSet;
 use tracing::{debug, error};
 
 type BoxedWorker = Box<dyn Worker + Send + Sync>;
@@ -79,7 +79,7 @@ impl WorkerHandle {
             let WorkerEntry { worker, .. } = workers_lock.swap_remove(position);
             worker
         };
-        worker.wait_for_pause().await?;
+        worker.pause().await?;
         worker.shutdown().await;
         Ok(())
     }
@@ -212,16 +212,17 @@ impl SharedRuntime {
         debug!("before_fork: pausing all workers");
         if let Some(runtime) = self.runtime.lock_or_panic().take() {
             let mut workers_lock = self.workers.lock_or_panic();
-            runtime.block_on(async move {
-                for worker_entry in workers_lock.iter_mut() {
-                    let _ = worker_entry.worker.request_pause();
-                }
+            runtime.block_on(async {
+                let futures: FuturesUnordered<_> = workers_lock
+                    .iter_mut()
+                    .map(|worker_entry| async {
+                        if let Err(e) = worker_entry.worker.pause().await {
+                            error!("Worker failed to pause before fork: {:?}", e);
+                        }
+                    })
+                    .collect();
 
-                for worker_entry in workers_lock.iter_mut() {
-                    if let Err(e) = worker_entry.worker.wait_for_pause().await {
-                        error!("Worker failed to pause before fork: {:?}", e);
-                    }
-                }
+                futures.collect::<()>().await;
             });
         }
     }
@@ -348,19 +349,18 @@ impl SharedRuntime {
             std::mem::take(&mut *workers_lock)
         };
 
-        let mut join_set = JoinSet::new();
-        for mut worker_entry in workers {
-            join_set.spawn(async move {
-                let result = worker_entry.worker.wait_for_pause().await;
-                if let Err(e) = result {
+        let futures: FuturesUnordered<_> = workers
+            .into_iter()
+            .map(|mut worker_entry| async move {
+                if let Err(e) = worker_entry.worker.pause().await {
                     error!("Worker failed to shutdown: {:?}", e);
                     return;
                 }
                 worker_entry.worker.shutdown().await;
-            });
-        }
+            })
+            .collect();
 
-        join_set.join_all().await;
+        futures.collect::<()>().await;
     }
 }
 

@@ -3318,6 +3318,7 @@ name = "libdd-shared-runtime"
 version = "28.0.3"
 dependencies = [
  "async-trait",
+ "futures",
  "libdd-common",
  "tokio",
  "tokio-util",

@@ -17,6 +17,7 @@ bench = false
 
 [dependencies]
 async-trait = "0.1"
+futures = { version = "0.3", default-features = false, features = ["alloc"] }
 tokio = { version = "1.23", features = ["rt", "rt-multi-thread", "time"] }
 tokio-util = "0.7.11"
 tracing = { version = "0.1", default-features = false }

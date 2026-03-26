@@ -113,31 +113,11 @@ impl<T: Worker + Send + Sync + 'static> PausableWorker<T> {
         }
     }
 
-    /// Request the worker to pause without waiting for task termination.
-    ///
-    /// This is useful when pausing multiple workers in parallel.
-    pub fn request_pause(&self) -> Result<(), PausableWorkerError> {
-        match self {
-            PausableWorker::Running { stop_token, .. } => {
-                debug!("Requesting pause for worker");
-                stop_token.cancel();
-                Ok(())
-            }
-            PausableWorker::Paused { .. } => Ok(()),
-            PausableWorker::InvalidState => Err(PausableWorkerError::InvalidState),
-        }
-    }
-
     /// Pause the worker and wait for it to complete, storing its state for restart.
-    ///
-    /// This method will cancel the worker's cancellation token if it hasn't been cancelled yet,
-    /// then wait for the worker to finish and store its state. Calling [`Self::request_pause`]
-    /// before this method is optional - it's only needed when shutting down multiple workers
-    /// simultaneously to allow them to pause concurrently before waiting for all workers to pause.
     ///
     /// # Errors
     /// Fails if the worker handle has been aborted preventing the worker from being retrieved.
-    pub async fn wait_for_pause(&mut self) -> Result<(), PausableWorkerError> {
+    pub async fn pause(&mut self) -> Result<(), PausableWorkerError> {
         match self {
             PausableWorker::Running { .. } => {
                 debug!("Waiting for worker to pause");
@@ -148,7 +128,6 @@ impl<T: Worker + Send + Sync + 'static> PausableWorker<T> {
                     return Ok(());
                 };
 
-                // Cancel the token if it hasn't been cancelled yet to avoid deadlock
                 if !stop_token.is_cancelled() {
                     stop_token.cancel();
                 }
@@ -224,7 +203,7 @@ mod tests {
         pausable_worker.start(&runtime).unwrap();
 
         assert_eq!(receiver.recv().unwrap(), 0);
-        runtime.block_on(async { pausable_worker.wait_for_pause().await.unwrap() });
+        runtime.block_on(async { pausable_worker.pause().await.unwrap() });
         // Empty the message queue and get the last message
         let mut next_message = 1;
         for message in receiver.try_iter() {
