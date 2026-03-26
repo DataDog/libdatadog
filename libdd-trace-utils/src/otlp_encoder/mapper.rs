@@ -277,6 +277,22 @@ fn map_attributes<T: TraceData>(span: &Span<T>, resource_service: &str) -> (Vec<
             value: AnyValue::StringValue(span_service.to_string()),
         });
     }
+    let operation_name = span.name.borrow();
+    let has_operation_name = !operation_name.is_empty();
+    if has_operation_name {
+        attrs.push(KeyValue {
+            key: "operation.name".to_string(),
+            value: AnyValue::StringValue(operation_name.to_string()),
+        });
+    }
+    let span_type = span.r#type.borrow();
+    let has_span_type = !span_type.is_empty();
+    if has_span_type {
+        attrs.push(KeyValue {
+            key: "span.type".to_string(),
+            value: AnyValue::StringValue(span_type.to_string()),
+        });
+    }
     for (k, v) in span.meta.iter() {
         if attrs.len() >= MAX_ATTRIBUTES_PER_SPAN {
             break;
@@ -300,7 +316,11 @@ fn map_attributes<T: TraceData>(span: &Span<T>, resource_service: &str) -> (Vec<
             value,
         });
     }
-    let total = (if has_per_span_service { 1 } else { 0 }) + span.meta.len() + span.metrics.len();
+    let total = (if has_per_span_service { 1 } else { 0 })
+        + (if has_operation_name { 1 } else { 0 })
+        + (if has_span_type { 1 } else { 0 })
+        + span.meta.len()
+        + span.metrics.len();
     let dropped = total.saturating_sub(attrs.len());
     (attrs, dropped)
 }
