@@ -13,6 +13,12 @@ pub struct DefaultHttpClient {
     client: http_common::GenericHttpClient<Connector>,
 }
 
+impl std::fmt::Debug for DefaultHttpClient {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("DefaultHttpClient").finish()
+    }
+}
+
 impl HttpClientTrait for DefaultHttpClient {
     fn new_client() -> Self {
         Self {
