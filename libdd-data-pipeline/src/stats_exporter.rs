@@ -3,7 +3,6 @@
 
 use std::{
     borrow::Borrow,
-    collections::HashMap,
     sync::{
         atomic::{AtomicU64, Ordering},
         Arc, Mutex,
