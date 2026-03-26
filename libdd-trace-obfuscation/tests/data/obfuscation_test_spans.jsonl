@@ -25,6 +25,7 @@
 {"name":"mongodb_enabled_empty_query","input":{"type":"mongodb"},"expected":{"type":"mongodb"},"config":{"mongodb":{"enabled":true}}}
 {"name":"elasticsearch_enabled_empty_body","input":{"type":"elasticsearch"},"expected":{"type":"elasticsearch"},"config":{"elasticsearch":{"enabled":true}}}
 {"name":"opensearch_enabled_empty_body","input":{"type":"opensearch"},"expected":{"type":"opensearch"},"config":{"opensearch":{"enabled":true}}}
+{"name":"credit_card_disabled","input":{"type":"generic","meta":{"card.number":"5105-1051-0510-5100"}},"expected":{"type":"generic","meta":{"card.number":"5105-1051-0510-5100"}},"config":{"credit_cards":{"enabled":false}}}
 {"name":"credit_card_match","input":{"type":"generic","meta":{"card.number":"5105-1051-0510-5100"}},"expected":{"type":"generic","meta":{"card.number":"?"}},"config":{"credit_cards":{"enabled":true}}}
 {"name":"credit_card_no_match","input":{"type":"generic","meta":{"card.number":"not-a-cc"}},"expected":{"type":"generic","meta":{"card.number":"not-a-cc"}},"config":{"credit_cards":{"enabled":true}}}
 {"name":"credit_card_skipped_key","input":{"type":"generic","meta":{"_dd.test":"5105-1051-0510-5100"}},"expected":{"type":"generic","meta":{"_dd.test":"5105-1051-0510-5100"}},"config":{"credit_cards":{"enabled":true}}}
