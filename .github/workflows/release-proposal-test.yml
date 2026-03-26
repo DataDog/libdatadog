@@ -76,6 +76,7 @@ jobs:
           PATCH_ARGS=()
 
           # Unzip crates and build a patch expression for local path overrides.
+          # patch all the crates to patch transitive dependencies
           for crate in "$CRATES_DIR"/*.crate; do
             tar -xzvf "$crate" -C "$CRATES_DIR" > /dev/null
 
@@ -84,15 +85,18 @@ jobs:
             
             CRATE_NAME=$(cargo metadata --manifest-path "$CRATE_TOML_FILE" --format-version=1 --no-deps | jq -r '[.packages[].name][0]')
             
-            echo "CRATE: $CRATE_NAME - $CRATE_TOML_FILE"
-
-            # if echo "$LIBDD_DEPENDENCIES" | jq -e --arg crate "$CRATE_NAME" 'index($crate) != null' >/dev/null; then
-              echo "Patching crate: $CRATE_NAME"
-              PATCH_ARGS+=("--config" "patch.crates-io.$CRATE_NAME.path=\"$CRATES_DIR/$CRATE_PATH\"")
-            # fi
+            echo "Patching crate: $CRATE_NAME"
+            PATCH_ARGS+=("--config" "patch.crates-io.$CRATE_NAME.path=\"$CRATES_DIR/$CRATE_PATH\"")
           done
 
           echo "Build dd-trace-rs with patch args: ${PATCH_ARGS[*]}"
           
           cargo update "${PATCH_ARGS[@]}"
           cargo build --release --workspace --all-features "${PATCH_ARGS[@]}"
+
+          echo "Cargo tree: "
+          cargo tree -d -e normal --workspace --all-features "${PATCH_ARGS[@]}"
+
+          echo "Duplicated dependencies: "
+          cargo tree -d -e normal --workspace --all-features --prefix none "${PATCH_ARGS[@]}" | grep "libdd-" | grep -vF '(*)' | sort | uniq
+
