@@ -1,6 +1,6 @@
 use crate::change_buffer::{ChangeBuffer, ChangeBufferError, Result};
 
-#[repr(u64)]
+#[repr(u32)]
 #[derive(Debug, Clone)]
 pub enum OpCode {
     Create = 0,
@@ -27,10 +27,10 @@ pub enum OpCode {
     // TODO: SpanLinks, SpanEvents, StructAttr
 }
 
-impl TryFrom<u64> for OpCode {
+impl TryFrom<u32> for OpCode {
     type Error = ChangeBufferError;
 
-    fn try_from(val: u64) -> Result<Self> {
+    fn try_from(val: u32) -> Result<Self> {
         match val {
             0 => Ok(OpCode::Create),
             1 => Ok(OpCode::SetMetaAttr),
@@ -61,7 +61,10 @@ pub struct BufferedOperation {
 
 impl BufferedOperation {
     pub fn from_buf(buf: &ChangeBuffer, index: &mut usize) -> Result<Self> {
-        let opcode = buf.read::<u64>(index)?.try_into()?;
+        // JS writes opcode as u64 (low u32 = opcode, high u32 = 0).
+        // Read as u64 to consume all 8 bytes, then truncate to u32 for OpCode.
+        let opcode_u64: u64 = buf.read(index)?;
+        let opcode = (opcode_u64 as u32).try_into()?;
         let span_id = buf.read(index)?;
         Ok(BufferedOperation { opcode, span_id })
     }
@@ -100,7 +103,7 @@ mod tests {
 
         for (val, name) in expected {
             let opcode = OpCode::try_from(val)?;
-            assert_eq!(opcode.clone() as u64, val);
+            assert_eq!(opcode.clone() as u32, val);
             assert_eq!(name, format!("{:?}", opcode))
         }
 
@@ -109,14 +112,14 @@ mod tests {
 
     #[test]
     fn opcode_try_from_invalid_value() {
-        assert!(OpCode::try_from(17).is_err());
-        assert!(OpCode::try_from(100).is_err());
-        assert!(OpCode::try_from(u64::MAX).is_err());
+        assert!(OpCode::try_from(17u32).is_err());
+        assert!(OpCode::try_from(100u32).is_err());
+        assert!(OpCode::try_from(u32::MAX).is_err());
     }
 
     #[test]
     fn buffered_operation_from_buf() -> Result<()> {
-        // Layout: opcode (u64 LE) + span_id (u64 LE)
+        // Layout: opcode (u64 LE: low u32 = opcode, high u32 = 0) + span_id (u64 LE)
         let opcode: u64 = 3; // SetServiceName
         let span_id: u64 = 0xDEADBEEF;
 
@@ -128,7 +131,7 @@ mod tests {
         let mut index = 0;
         let op = BufferedOperation::from_buf(&buf, &mut index)?;
 
-        assert_eq!(op.opcode as u64, 3);
+        assert_eq!(op.opcode as u32, 3);
         assert_eq!(op.span_id, 0xDEADBEEF);
         assert_eq!(index, 16);
         Ok(())
@@ -136,14 +139,14 @@ mod tests {
 
     #[test]
     fn buffered_operation_from_buf_advances_index() -> Result<()> {
-        // Two operations packed sequentially, starting at a non-zero offset
+        // Two operations packed sequentially, starting after a u64 count header
         let mut buffer = vec![0u8; 40];
-        // padding
+        // count header (u64)
         buffer[0..8].copy_from_slice(&0u64.to_le_bytes());
-        // first op at offset 8
+        // first op at offset 8: opcode(u64) + span_id(u64)
         buffer[8..16].copy_from_slice(&(OpCode::Create as u64).to_le_bytes());
         buffer[16..24].copy_from_slice(&1u64.to_le_bytes());
-        // second op at offset 24
+        // second op at offset 24: opcode(u64) + span_id(u64)
         buffer[24..32].copy_from_slice(&(OpCode::SetError as u64).to_le_bytes());
         buffer[32..40].copy_from_slice(&2u64.to_le_bytes());
 
@@ -151,12 +154,12 @@ mod tests {
 
         let mut index = 8;
         let op1 = BufferedOperation::from_buf(&buf, &mut index)?;
-        assert_eq!(op1.opcode as u64, OpCode::Create as u64);
+        assert_eq!(op1.opcode as u32, OpCode::Create as u32);
         assert_eq!(op1.span_id, 1);
         assert_eq!(index, 24);
 
         let op2 = BufferedOperation::from_buf(&buf, &mut index)?;
-        assert_eq!(op2.opcode as u64, OpCode::SetError as u64);
+        assert_eq!(op2.opcode as u32, OpCode::SetError as u32);
         assert_eq!(op2.span_id, 2);
         assert_eq!(index, 40);
 

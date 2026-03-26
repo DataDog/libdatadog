@@ -7,7 +7,7 @@ pub enum ChangeBufferError {
     StringNotFound(u32),
     ReadOutOfBounds { offset: usize, len: usize },
     WriteOutOfBounds { offset: usize, len: usize },
-    UnknownOpcode(u64),
+    UnknownOpcode(u32),
 }
 
 impl std::fmt::Display for ChangeBufferError {
@@ -67,14 +67,56 @@ pub struct ChangeBufferState<T: TraceData> {
     pub span_headers: Vec<SpanHeader>,
     /// Free list of recycled header indices (from finished spans).
     header_free_list: Vec<u32>,
+    // Cached static strings to avoid repeated heap allocations (e.g. Arc<str>)
+    // on every span flush. These are created once and cloned (cheap ref bump).
+    str_top_level: T::Text,
+    str_measured: T::Text,
+    str_base_service: T::Text,
+    str_language: T::Text,
+    str_process_id: T::Text,
+    str_origin: T::Text,
+    str_rule_psr: T::Text,
+    str_limit_psr: T::Text,
+    str_agent_psr: T::Text,
+    str_internal: T::Text,
+    /// Pool of recycled Span objects. Reusing spans (with their pre-allocated
+    /// HashMap buffers) eliminates the alloc/dealloc churn that fragments the
+    /// WASM linear memory allocator over time.
+    span_pool: Vec<Span<T>>,
 }
 
-fn new_span<T: TraceData>(span_id: u64, parent_id: u64, trace_id: u128) -> Span<T> {
-    Span {
-        span_id,
-        trace_id,
-        parent_id,
-        ..Default::default()
+fn new_span_pooled<T: TraceData>(
+    pool: &mut Vec<Span<T>>,
+    span_id: u64,
+    parent_id: u64,
+    trace_id: u128,
+) -> Span<T> {
+    if let Some(mut span) = pool.pop() {
+        span.span_id = span_id;
+        span.trace_id = trace_id;
+        span.parent_id = parent_id;
+        span.start = 0;
+        span.duration = 0;
+        span.error = 0;
+        span.service = Default::default();
+        span.name = Default::default();
+        span.resource = Default::default();
+        span.r#type = Default::default();
+        span.meta.clear();
+        span.metrics.clear();
+        span.meta_struct.clear();
+        span.span_links.clear();
+        span.span_events.clear();
+        span
+    } else {
+        Span {
+            span_id,
+            trace_id,
+            parent_id,
+            meta: std::collections::HashMap::with_capacity(8),
+            metrics: std::collections::HashMap::with_capacity(4),
+            ..Default::default()
+        }
     }
 }
 
@@ -99,6 +141,42 @@ where
             default_meta: Vec::new(),
             span_headers: Vec::with_capacity(256),
             header_free_list: Vec::new(),
+            str_top_level: T::Text::from_static_str("_dd.top_level"),
+            str_measured: T::Text::from_static_str("_dd.measured"),
+            str_base_service: T::Text::from_static_str("_dd.base_service"),
+            str_language: T::Text::from_static_str("language"),
+            str_process_id: T::Text::from_static_str("process_id"),
+            str_origin: T::Text::from_static_str("_dd.origin"),
+            str_rule_psr: T::Text::from_static_str("_dd.rule_psr"),
+            str_limit_psr: T::Text::from_static_str("_dd.limit_psr"),
+            str_agent_psr: T::Text::from_static_str("_dd.agent_psr"),
+            str_internal: T::Text::from_static_str("internal"),
+            span_pool: Vec::new(),
+        }
+    }
+
+    /// Diagnostic: number of spans currently in the HashMap.
+    pub fn spans_count(&self) -> usize {
+        self.spans.len()
+    }
+
+    /// Diagnostic: string table length.
+    pub fn string_table_len(&self) -> usize {
+        self.string_table.len()
+    }
+
+    /// Diagnostic: span pool size.
+    pub fn span_pool_len(&self) -> usize {
+        self.span_pool.len()
+    }
+
+    /// Return flushed spans to the pool for reuse. Call this after
+    /// serialization/send is complete and the spans are no longer needed.
+    pub fn recycle_spans(&mut self, spans: Vec<Span<T>>) {
+        // Cap the pool to avoid unbounded growth (128 spans ≈ 2-3x typical concurrency)
+        let available = 128usize.saturating_sub(self.span_pool.len());
+        for span in spans.into_iter().take(available) {
+            self.span_pool.push(span);
         }
     }
 
@@ -122,7 +200,7 @@ where
                 if is_local_root {
                     self.copy_in_sampling_tags(&mut span);
                     span.metrics
-                        .insert(T::Text::from_static_str("_dd.top_level"), 1.0);
+                        .insert(self.str_top_level.clone(), 1.0);
                     is_local_root = false;
                 }
                 if is_chunk_root {
@@ -136,17 +214,25 @@ where
             })
             .collect::<Result<Vec<_>>>()?;
 
-        // Clean up trace if no spans remain for it
-        if let Some(trace_id) = chunk_trace_id {
+        // Clean up traces if no spans remain. Track all distinct trace IDs
+        // in the chunk to handle chunks spanning multiple traces.
+        let mut seen_trace_ids: Vec<(u128, usize)> = Vec::new();
+        for span in &spans_vec {
+            if let Some(entry) = seen_trace_ids.iter_mut().find(|(id, _)| *id == span.trace_id) {
+                entry.1 += 1;
+            } else {
+                seen_trace_ids.push((span.trace_id, 1));
+            }
+        }
+        for (trace_id, flushed_count) in seen_trace_ids {
             let should_remove = self
                 .traces
                 .get_mut(&trace_id)
                 .map(|trace| {
-                    let len = span_ids.len();
-                    if trace.span_count <= len {
+                    if trace.span_count <= flushed_count {
                         true
                     } else {
-                        trace.span_count -= len;
+                        trace.span_count -= flushed_count;
                         false
                     }
                 })
@@ -156,22 +242,29 @@ where
             }
         }
 
+        // Rebuild the HashMap to clear tombstones from remove() calls.
+        // FxHashMap (hashbrown/SwissTable) marks removed entries as DELETED,
+        // not EMPTY. Over time, accumulated tombstones degrade probe lengths
+        // for both lookups and inserts. Rebuilding creates a fresh table with
+        // only EMPTY and occupied slots, restoring O(1) probe performance.
+        // Cost: O(n) for remaining entries, which is small vs the cumulative
+        // cost of degraded probes across all subsequent operations.
+        let remaining: FxHashMap<u64, Span<T>> = self.spans.drain().collect();
+        self.spans = remaining;
+
         Ok(spans_vec)
     }
 
     fn copy_in_sampling_tags(&self, span: &mut Span<T>) {
         if let Some(trace) = self.traces.get(&span.trace_id) {
             if let Some(rule) = trace.sampling_rule_decision {
-                span.metrics
-                    .insert(T::Text::from_static_str("_dd.rule_psr"), rule);
+                span.metrics.insert(self.str_rule_psr.clone(), rule);
             }
             if let Some(rule) = trace.sampling_limit_decision {
-                span.metrics
-                    .insert(T::Text::from_static_str("_dd.limit_psr"), rule);
+                span.metrics.insert(self.str_limit_psr.clone(), rule);
             }
             if let Some(rule) = trace.sampling_agent_decision {
-                span.metrics
-                    .insert(T::Text::from_static_str("_dd.agent_psr"), rule);
+                span.metrics.insert(self.str_agent_psr.clone(), rule);
             }
         }
     }
@@ -193,15 +286,14 @@ where
         // TODO span.sample();
 
         if let Some(kind) = span.meta.get("kind") {
-            if kind != &T::Text::from_static_str("internal") {
-                span.metrics
-                    .insert(T::Text::from_static_str("_dd.measured"), 1.0);
+            if kind != &self.str_internal {
+                span.metrics.insert(self.str_measured.clone(), 1.0);
             }
         }
 
         if span.service != self.tracer_service {
             span.meta.insert(
-                T::Text::from_static_str("_dd.base_service"),
+                self.str_base_service.clone(),
                 self.tracer_service.clone(),
             );
             // TODO span.service should be added to the "extra services" used by RC, which is not
@@ -212,16 +304,15 @@ where
         // the span.
 
         span.meta.insert(
-            T::Text::from_static_str("language"),
+            self.str_language.clone(),
             self.tracer_language.clone(),
         );
         span.metrics
-            .insert(T::Text::from_static_str("process_id"), f64::from(self.pid));
+            .insert(self.str_process_id.clone(), f64::from(self.pid));
 
         if let Some(trace) = self.traces.get(&span.trace_id) {
             if let Some(origin) = trace.origin.clone() {
-                span.meta
-                    .insert(T::Text::from_static_str("_dd.origin"), origin);
+                span.meta.insert(self.str_origin.clone(), origin);
             }
         }
 
@@ -233,7 +324,10 @@ where
 
     pub fn flush_change_buffer(&mut self) -> Result<()> {
         let mut index = 0;
-        let mut count = self.change_buffer.read::<u64>(&mut index)?;
+        // Count is written as u64 by JS (two u32 writes at offset 0 and 4).
+        // Read as u64 to consume all 8 bytes, keeping alignment with the ops
+        // that start at offset 8. Only the low 32 bits carry the count value.
+        let mut count = self.change_buffer.read::<u64>(&mut index)? as u32;
 
         // Cache the last span_id to skip redundant lookups when consecutive
         // operations target the same span (the common case).
@@ -270,7 +364,9 @@ where
             count -= 1;
         }
 
-        self.change_buffer.write_u64(0, 0)?;
+        // Zero the full u64 count field (JS reads/writes both u32 words)
+        self.change_buffer.write_u32(0, 0)?;
+        self.change_buffer.write_u32(4, 0)?;
 
         Ok(())
     }
@@ -440,7 +536,7 @@ where
         let trace_id = (h.trace_id_hi as u128) << 64 | h.trace_id_lo as u128;
         let parent_id = h.parent_id;
 
-        let mut span = new_span(span_id, parent_id, trace_id);
+        let mut span = new_span_pooled(&mut self.span_pool, span_id, parent_id, trace_id);
         span.start = h.start;
         span.duration = h.duration;
         span.error = h.error;
@@ -526,7 +622,7 @@ where
             OpCode::Create => {
                 let trace_id: u128 = self.change_buffer.read(index)?;
                 let parent_id = self.get_num_arg(index)?;
-                let mut span = new_span(op.span_id, parent_id, trace_id);
+                let mut span = new_span_pooled(&mut self.span_pool, op.span_id, parent_id, trace_id);
                 self.apply_default_meta(&mut span);
                 self.spans.insert(op.span_id, span);
                 self.traces.get_or_insert_default(trace_id).span_count += 1;
@@ -593,7 +689,7 @@ where
                 let parent_id: u64 = self.get_num_arg(index)?;
                 let name = self.get_string_arg(index)?;
                 let start: i64 = self.get_num_arg(index)?;
-                let mut span = new_span(op.span_id, parent_id, trace_id);
+                let mut span = new_span_pooled(&mut self.span_pool, op.span_id, parent_id, trace_id);
                 span.name = name;
                 span.start = start;
                 self.apply_default_meta(&mut span);
@@ -609,7 +705,7 @@ where
                 let resource = self.get_string_arg(index)?;
                 let r#type = self.get_string_arg(index)?;
                 let start: i64 = self.get_num_arg(index)?;
-                let mut span = new_span(op.span_id, parent_id, trace_id);
+                let mut span = new_span_pooled(&mut self.span_pool, op.span_id, parent_id, trace_id);
                 span.name = name;
                 span.service = service;
                 span.resource = resource;
@@ -672,7 +768,7 @@ mod tests {
     use crate::span::SliceData;
 
     /// Helper to build the binary buffer layout that flush_change_buffer expects.
-    /// Layout: [count: u64][8 bytes padding][operations...]
+    /// Layout: [count: u32][operations...]
     trait ToLeBytes {
         fn extend_le_bytes(&self, buf: &mut Vec<u8>);
     }
@@ -691,12 +787,12 @@ mod tests {
 
     struct BufBuilder {
         data: Vec<u8>,
-        op_count: u64,
+        op_count: u32,
     }
 
     impl BufBuilder {
         fn new() -> Self {
-            // 8 bytes for the count field
+            // 8 bytes for the count field (u64: low u32 is count, high u32 is 0)
             Self {
                 data: vec![0u8; 8],
                 op_count: 0,
@@ -708,7 +804,10 @@ mod tests {
         }
 
         fn push_op_header(&mut self, opcode: OpCode, span_id: u64) {
-            self.push(opcode as u64);
+            // Opcode is written as u64 (low u32 = opcode, high u32 = 0),
+            // matching the JS encoding.
+            self.push(opcode as u32);
+            self.push(0u32);
             self.push(span_id);
             self.op_count += 1;
         }
@@ -721,7 +820,9 @@ mod tests {
         }
 
         fn finalize(&mut self) -> ChangeBuffer {
-            self.data[0..8].copy_from_slice(&self.op_count.to_le_bytes());
+            // Write count as u64 LE (low u32 = count, high u32 = 0)
+            self.data[0..4].copy_from_slice(&self.op_count.to_le_bytes());
+            self.data[4..8].copy_from_slice(&0u32.to_le_bytes());
             unsafe { ChangeBuffer::from_raw_parts(self.data.as_mut_ptr(), self.data.len()) }
         }
     }
