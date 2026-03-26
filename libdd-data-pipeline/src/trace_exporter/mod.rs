@@ -422,7 +422,10 @@ impl<H: HttpClientTrait + MaybeSend + Sync + 'static> TraceExporter<H> {
 
     /// Safely shutdown the TraceExporter and all related tasks
     pub fn shutdown(mut self, timeout: Option<Duration>) -> Result<(), TraceExporterError> {
-        let runtime = build_runtime()?;
+        let mut builder = tokio::runtime::Builder::new_current_thread();
+        #[cfg(not(target_arch = "wasm32"))]
+        builder.enable_all();
+        let runtime = builder.build()?;
 
         #[cfg(not(target_arch = "wasm32"))]
         if let Some(timeout) = timeout {
