@@ -56,6 +56,8 @@ pub struct ChangeBufferState<T: TraceData> {
     tracer_service: T::Text,
     tracer_language: T::Text,
     pid: u32,
+    /// Default meta tags automatically applied to every new span via create_span.
+    default_meta: Vec<(T::Text, T::Text)>,
 }
 
 fn new_span<T: TraceData>(span_id: u64, parent_id: u64, trace_id: u128) -> Span<T> {
@@ -85,6 +87,7 @@ where
             tracer_service,
             tracer_language,
             pid,
+            default_meta: Vec::new(),
         }
     }
 
@@ -233,9 +236,8 @@ where
             // first.
             // SAFETY: the pointer is valid for the lifetime of this loop because:
             // - We only store pointers from self.spans.get_mut()
-            // - We invalidate the cache (set to null) whenever self.spans is
-            //   modified (Create/CreateSpan/CreateSpanFull insert into the map
-            //   which may rehash)
+            // - We invalidate the cache (set to null) whenever self.spans is modified
+            //   (Create/CreateSpan/CreateSpanFull insert into the map which may rehash)
             // - No other code accesses self.spans between cache store and use
             match op.opcode {
                 OpCode::Create | OpCode::CreateSpan | OpCode::CreateSpanFull => {
@@ -398,12 +400,41 @@ where
         self.traces.get(id)
     }
 
+    /// Get a mutable reference to a span.
+    pub fn span_mut(&mut self, id: &u64) -> Result<&mut Span<T>> {
+        self.spans
+            .get_mut(id)
+            .ok_or(ChangeBufferError::SpanNotFound(*id))
+    }
+
+    /// Look up a string by ID, returning a clone.
+    pub fn get_string(&self, id: u32) -> Option<T::Text> {
+        self.string_table
+            .get(id as usize)
+            .and_then(|opt| opt.clone())
+    }
+
+    /// Set default meta tags that are automatically applied to every new span.
+    /// Call this once at init time with the config tags (service, version,
+    /// runtime-id, etc.).
+    pub fn set_default_meta(&mut self, tags: Vec<(T::Text, T::Text)>) {
+        self.default_meta = tags;
+    }
+
+    /// Apply default meta tags to a span.
+    fn apply_default_meta(&self, span: &mut Span<T>) {
+        for (key, value) in &self.default_meta {
+            span.meta.insert(key.clone(), value.clone());
+        }
+    }
+
     fn interpret_operation(&mut self, index: &mut usize, op: &BufferedOperation) -> Result<()> {
         match op.opcode {
             OpCode::Create => {
                 let trace_id: u128 = self.change_buffer.read(index)?;
                 let parent_id = self.get_num_arg(index)?;
-                let span = new_span(op.span_id, parent_id, trace_id);
+                let mut span = new_span(op.span_id, parent_id, trace_id);
+                self.apply_default_meta(&mut span);
                 self.spans.insert(op.span_id, span);
                 self.traces.get_or_insert_default(trace_id).span_count += 1;
             }
@@ -472,6 +503,7 @@ where
                 let mut span = new_span(op.span_id, parent_id, trace_id);
                 span.name = name;
                 span.start = start;
+                self.apply_default_meta(&mut span);
                 self.spans.insert(op.span_id, span);
                 self.traces.get_or_insert_default(trace_id).span_count += 1;
             }
@@ -490,6 +522,7 @@ where
                 span.resource = resource;
                 span.r#type = r#type;
                 span.start = start;
+                self.apply_default_meta(&mut span);
                 self.spans.insert(op.span_id, span);
                 self.traces.get_or_insert_default(trace_id).span_count += 1;
             }
