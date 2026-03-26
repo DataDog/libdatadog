@@ -15,6 +15,7 @@ const TAG_STATUS_CODE: &str = "http.status_code";
 const TAG_SYNTHETICS: &str = "synthetics";
 const TAG_SPANKIND: &str = "span.kind";
 const TAG_ORIGIN: &str = "_dd.origin";
+const TAG_SVC_SRC: &str = "_dd.svc_src";
 const GRPC_STATUS_CODE_FIELD: &[&str] = &[
     "rpc.grpc.status_code",
     "grpc.code",
@@ -37,6 +38,7 @@ pub(super) struct BorrowedAggregationKey<'a> {
     http_method: &'a str,
     http_endpoint: &'a str,
     grpc_status_code: Option<u8>,
+    service_source: &'a str,
 }
 
 impl hashbrown::Equivalent<OwnedAggregationKey> for BorrowedAggregationKey<'_> {
@@ -56,6 +58,7 @@ impl hashbrown::Equivalent<OwnedAggregationKey> for BorrowedAggregationKey<'_> {
             http_method,
             http_endpoint,
             grpc_status_code,
+            service_source,
         }: &OwnedAggregationKey,
     ) -> bool {
         self.resource_name == resource_name
@@ -75,6 +78,7 @@ impl hashbrown::Equivalent<OwnedAggregationKey> for BorrowedAggregationKey<'_> {
             && self.http_method == http_method
             && self.http_endpoint == http_endpoint
             && self.grpc_status_code == *grpc_status_code
+            && self.service_source == service_source
     }
 }
 
@@ -99,6 +103,7 @@ pub(super) struct OwnedAggregationKey {
     http_method: String,
     http_endpoint: String,
     grpc_status_code: Option<u8>,
+    service_source: String,
 }
 
 impl From<&BorrowedAggregationKey<'_>> for OwnedAggregationKey {
@@ -120,6 +125,7 @@ impl From<&BorrowedAggregationKey<'_>> for OwnedAggregationKey {
             http_method: value.http_method.to_owned(),
             http_endpoint: value.http_endpoint.to_owned(),
             grpc_status_code: value.grpc_status_code,
+            service_source: value.service_source.to_owned(),
         }
     }
 }
@@ -237,6 +243,8 @@ impl<'a> BorrowedAggregationKey<'a> {
 
         let grpc_status_code = get_grpc_status_code(span);
 
+        let service_source = span.get_meta(TAG_SVC_SRC).unwrap_or_default();
+
         Self {
             resource_name: span.resource(),
             service_name: span.service(),
@@ -252,6 +260,7 @@ impl<'a> BorrowedAggregationKey<'a> {
             http_method,
             http_endpoint,
             grpc_status_code,
+            service_source,
         }
     }
 }
@@ -278,6 +287,7 @@ impl From<pb::ClientGroupedStats> for OwnedAggregationKey {
             http_method: value.http_method,
             http_endpoint: value.http_endpoint,
             grpc_status_code: value.grpc_status_code.parse().ok(),
+            service_source: value.service_source,
         }
     }
 }
@@ -407,7 +417,7 @@ fn encode_grouped_stats(key: OwnedAggregationKey, group: GroupedStats) -> pb::Cl
             .grpc_status_code
             .map(|c| c.to_string())
             .unwrap_or_default(),
-        service_source: String::new(),     // set by the agent
+        service_source: key.service_source,
         span_derived_primary_tags: vec![], // Todo
     }
 }
@@ -746,6 +756,65 @@ mod tests {
                 },
                 OwnedAggregationKey {
                     is_trace_root: true,
+                    ..Default::default()
+                },
+            ),
+            // Span with service source set by integration
+            (
+                SpanBytes {
+                    service: "my-service".into(),
+                    name: "op".into(),
+                    resource: "res".into(),
+                    span_id: 1,
+                    parent_id: 0,
+                    meta: HashMap::from([("_dd.svc_src".into(), "redis".into())]),
+                    ..Default::default()
+                },
+                OwnedAggregationKey {
+                    service_name: "my-service".into(),
+                    operation_name: "op".into(),
+                    resource_name: "res".into(),
+                    is_trace_root: true,
+                    service_source: "redis".into(),
+                    ..Default::default()
+                },
+            ),
+            // Span with service source set by configuration option
+            (
+                SpanBytes {
+                    service: "my-service".into(),
+                    name: "op".into(),
+                    resource: "res".into(),
+                    span_id: 1,
+                    parent_id: 0,
+                    meta: HashMap::from([("_dd.svc_src".into(), "opt.split_by_tag".into())]),
+                    ..Default::default()
+                },
+                OwnedAggregationKey {
+                    service_name: "my-service".into(),
+                    operation_name: "op".into(),
+                    resource_name: "res".into(),
+                    is_trace_root: true,
+                    service_source: "opt.split_by_tag".into(),
+                    ..Default::default()
+                },
+            ),
+            // Span without service source (default service name)
+            (
+                SpanBytes {
+                    service: "my-service".into(),
+                    name: "op".into(),
+                    resource: "res".into(),
+                    span_id: 1,
+                    parent_id: 0,
+                    ..Default::default()
+                },
+                OwnedAggregationKey {
+                    service_name: "my-service".into(),
+                    operation_name: "op".into(),
+                    resource_name: "res".into(),
+                    is_trace_root: true,
+                    service_source: "".into(),
                     ..Default::default()
                 },
             ),
