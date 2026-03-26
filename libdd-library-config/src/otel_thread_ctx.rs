@@ -200,6 +200,9 @@ pub mod linux {
     /// We don't use `Box` under the hood because it precludes aliasing, while we share the context
     /// to readers through thread-level context and through the FFI. But it is a boxed
     /// `ThreadContextRecord` for all intent of purpose.
+    ///
+    /// The context is `!Send` and `!Sync`; it is supposed to stay on the same thread and is thus
+    /// not thread-safe.
     pub struct ThreadContext(NonNull<ThreadContextRecord>);
 
     impl ThreadContext {
