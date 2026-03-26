@@ -21,7 +21,8 @@
         "allocationKey": "50/50 split",
         "variationType": "object",
         "doLog": true
-      }
+      },
+      "reason": "SPLIT"
     }
   },
   {
@@ -46,7 +47,8 @@
         "allocationKey": "50/50 split",
         "variationType": "object",
         "doLog": true
-      }
+      },
+      "reason": "SPLIT"
     }
   },
   {
@@ -70,7 +72,8 @@
         "allocationKey": "50/50 split",
         "variationType": "object",
         "doLog": true
-      }
+      },
+      "reason": "SPLIT"
     }
   },
   {
@@ -90,7 +93,8 @@
         "allocationKey": "Optionally Force Empty",
         "variationType": "object",
         "doLog": true
-      }
+      },
+      "reason": "TARGETING_MATCH"
     }
   }
 ]

@@ -9,7 +9,8 @@
       "country": "US"
     },
     "result": {
-      "value": 0.0
+      "value": 0.0,
+      "reason": "DEFAULT"
     }
   },
   {
@@ -22,7 +23,8 @@
       "country": "Canada"
     },
     "result": {
-      "value": 0.0
+      "value": 0.0,
+      "reason": "DEFAULT"
     }
   },
   {
@@ -34,7 +36,8 @@
       "age": 50
     },
     "result": {
-      "value": 0.0
+      "value": 0.0,
+      "reason": "DEFAULT"
     }
   }
 ]

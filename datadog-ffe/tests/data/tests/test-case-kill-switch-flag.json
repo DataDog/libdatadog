@@ -15,7 +15,8 @@
         "allocationKey": "on-for-NA",
         "variationType": "boolean",
         "doLog": true
-      }
+      },
+      "reason": "TARGETING_MATCH"
     }
   },
   {
@@ -34,7 +35,8 @@
         "allocationKey": "on-for-NA",
         "variationType": "boolean",
         "doLog": true
-      }
+      },
+      "reason": "TARGETING_MATCH"
     }
   },
   {
@@ -53,7 +55,8 @@
         "allocationKey": "off-for-all",
         "variationType": "boolean",
         "doLog": true
-      }
+      },
+      "reason": "STATIC"
     }
   },
   {
@@ -71,7 +74,8 @@
         "allocationKey": "off-for-all",
         "variationType": "boolean",
         "doLog": true
-      }
+      },
+      "reason": "STATIC"
     }
   },
   {
@@ -91,7 +95,8 @@
         "allocationKey": "on-for-NA",
         "variationType": "boolean",
         "doLog": true
-      }
+      },
+      "reason": "TARGETING_MATCH"
     }
   },
   {
@@ -107,7 +112,8 @@
         "allocationKey": "off-for-all",
         "variationType": "boolean",
         "doLog": true
-      }
+      },
+      "reason": "STATIC"
     }
   },
   {
@@ -125,7 +131,8 @@
         "allocationKey": "on-for-NA",
         "variationType": "boolean",
         "doLog": true
-      }
+      },
+      "reason": "TARGETING_MATCH"
     }
   },
   {
@@ -144,7 +151,8 @@
         "allocationKey": "on-for-age-50+",
         "variationType": "boolean",
         "doLog": true
-      }
+      },
+      "reason": "TARGETING_MATCH"
     }
   },
   {
@@ -162,7 +170,8 @@
         "allocationKey": "off-for-all",
         "variationType": "boolean",
         "doLog": true
-      }
+      },
+      "reason": "STATIC"
     }
   },
   {
@@ -180,7 +189,8 @@
         "allocationKey": "off-for-all",
         "variationType": "boolean",
         "doLog": true
-      }
+      },
+      "reason": "STATIC"
     }
   },
   {
@@ -198,7 +208,8 @@
         "allocationKey": "off-for-all",
         "variationType": "boolean",
         "doLog": true
-      }
+      },
+      "reason": "STATIC"
     }
   },
   {
@@ -217,7 +228,8 @@
         "allocationKey": "on-for-NA",
         "variationType": "boolean",
         "doLog": true
-      }
+      },
+      "reason": "TARGETING_MATCH"
     }
   },
   {
@@ -236,7 +248,8 @@
         "allocationKey": "on-for-age-50+",
         "variationType": "boolean",
         "doLog": true
-      }
+      },
+      "reason": "TARGETING_MATCH"
     }
   },
   {
@@ -254,7 +267,8 @@
         "allocationKey": "off-for-all",
         "variationType": "boolean",
         "doLog": true
-      }
+      },
+      "reason": "STATIC"
     }
   },
   {
@@ -270,7 +284,8 @@
         "allocationKey": "off-for-all",
         "variationType": "boolean",
         "doLog": true
-      }
+      },
+      "reason": "STATIC"
     }
   },
   {
@@ -286,7 +301,8 @@
         "allocationKey": "off-for-all",
         "variationType": "boolean",
         "doLog": true
-      }
+      },
+      "reason": "STATIC"
     }
   },
   {
@@ -304,7 +320,8 @@
         "allocationKey": "on-for-NA",
         "variationType": "boolean",
         "doLog": true
-      }
+      },
+      "reason": "TARGETING_MATCH"
     }
   },
   {
@@ -322,7 +339,8 @@
         "allocationKey": "on-for-NA",
         "variationType": "boolean",
         "doLog": true
-      }
+      },
+      "reason": "TARGETING_MATCH"
     }
   },
   {
@@ -338,7 +356,8 @@
         "allocationKey": "off-for-all",
         "variationType": "boolean",
         "doLog": true
-      }
+      },
+      "reason": "STATIC"
     }
   },
   {
@@ -356,7 +375,8 @@
         "allocationKey": "off-for-all",
         "variationType": "boolean",
         "doLog": true
-      }
+      },
+      "reason": "STATIC"
     }
   },
   {
@@ -374,7 +394,8 @@
         "allocationKey": "off-for-all",
         "variationType": "boolean",
         "doLog": true
-      }
+      },
+      "reason": "STATIC"
     }
   },
   {
@@ -392,7 +413,8 @@
         "allocationKey": "off-for-all",
         "variationType": "boolean",
         "doLog": true
-      }
+      },
+      "reason": "STATIC"
     }
   },
   {
@@ -410,7 +432,8 @@
         "allocationKey": "off-for-all",
         "variationType": "boolean",
         "doLog": true
-      }
+      },
+      "reason": "STATIC"
     }
   },
   {
@@ -428,7 +451,8 @@
         "allocationKey": "off-for-all",
         "variationType": "boolean",
         "doLog": true
-      }
+      },
+      "reason": "STATIC"
     }
   }
 ]

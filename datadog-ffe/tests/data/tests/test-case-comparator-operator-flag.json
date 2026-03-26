@@ -15,7 +15,8 @@
         "allocationKey": "small-size",
         "variationType": "string",
         "doLog": true
-      }
+      },
+      "reason": "TARGETING_MATCH"
     }
   },
   {
@@ -34,7 +35,8 @@
         "allocationKey": "medum-size",
         "variationType": "string",
         "doLog": true
-      }
+      },
+      "reason": "TARGETING_MATCH"
     }
   },
   {
@@ -46,7 +48,8 @@
       "size": 25
     },
     "result": {
-      "value": "unknown"
+      "value": "unknown",
+      "reason": "DEFAULT"
     }
   },
   {
@@ -64,7 +67,8 @@
         "allocationKey": "large-size",
         "variationType": "string",
         "doLog": true
-      }
+      },
+      "reason": "TARGETING_MATCH"
     }
   },
   {
@@ -76,7 +80,8 @@
       "country": "UK"
     },
     "result": {
-      "value": "unknown"
+      "value": "unknown",
+      "reason": "DEFAULT"
     }
   }
 ]

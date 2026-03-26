@@ -13,7 +13,8 @@
     "result": {
       "value": {
         "message": "Hello, world!"
-      }
+      },
+      "reason": "DEFAULT"
     }
   },
   {
@@ -30,7 +31,8 @@
     "result": {
       "value": {
         "message": "Hello, world!"
-      }
+      },
+      "reason": "DEFAULT"
     }
   },
   {
@@ -46,7 +48,8 @@
     "result": {
       "value": {
         "message": "Hello, world!"
-      }
+      },
+      "reason": "DEFAULT"
     }
   }
 ]

@@ -15,7 +15,8 @@
         "allocationKey": "current-versions",
         "variationType": "string",
         "doLog": true
-      }
+      },
+      "reason": "STATIC"
     }
   },
   {
@@ -34,7 +35,8 @@
         "allocationKey": "current-versions",
         "variationType": "string",
         "doLog": true
-      }
+      },
+      "reason": "STATIC"
     }
   },
   {
@@ -52,7 +54,8 @@
         "allocationKey": "current-versions",
         "variationType": "string",
         "doLog": true
-      }
+      },
+      "reason": "STATIC"
     }
   }
 ]

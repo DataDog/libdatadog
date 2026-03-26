@@ -14,7 +14,8 @@
         "allocationKey": "1-for-1",
         "variationType": "number",
         "doLog": true
-      }
+      },
+      "reason": "TARGETING_MATCH"
     }
   },
   {
@@ -26,7 +27,8 @@
       "number": 2
     },
     "result": {
-      "value": 0
+      "value": 0,
+      "reason": "DEFAULT"
     }
   },
   {
@@ -44,7 +46,8 @@
         "allocationKey": "3-for-not-2",
         "variationType": "number",
         "doLog": true
-      }
+      },
+      "reason": "TARGETING_MATCH"
     }
   },
   {
@@ -62,7 +65,8 @@
         "allocationKey": "3-for-not-2",
         "variationType": "number",
         "doLog": true
-      }
+      },
+      "reason": "TARGETING_MATCH"
     }
   },
   {
@@ -80,7 +84,8 @@
         "allocationKey": "1-for-1",
         "variationType": "number",
         "doLog": true
-      }
+      },
+      "reason": "TARGETING_MATCH"
     }
   },
   {
@@ -98,7 +103,8 @@
         "allocationKey": "1-for-1",
         "variationType": "number",
         "doLog": true
-      }
+      },
+      "reason": "TARGETING_MATCH"
     }
   },
   {
@@ -116,7 +122,8 @@
         "allocationKey": "2-for-123456789",
         "variationType": "number",
         "doLog": true
-      }
+      },
+      "reason": "TARGETING_MATCH"
     }
   }
 ]

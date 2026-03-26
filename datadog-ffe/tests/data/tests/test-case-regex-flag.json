@@ -15,7 +15,8 @@
         "allocationKey": "partial-example",
         "variationType": "string",
         "doLog": true
-      }
+      },
+      "reason": "TARGETING_MATCH"
     }
   },
   {
@@ -34,7 +35,8 @@
         "allocationKey": "test",
         "variationType": "string",
         "doLog": true
-      }
+      },
+      "reason": "TARGETING_MATCH"
     }
   },
   {
@@ -46,7 +48,8 @@
       "version": "2.1.13"
     },
     "result": {
-      "value": "none"
+      "value": "none",
+      "reason": "DEFAULT"
     }
   },
   {
@@ -59,7 +62,8 @@
       "email": "derek@gmail.com"
     },
     "result": {
-      "value": "none"
+      "value": "none",
+      "reason": "DEFAULT"
     }
   }
 ]

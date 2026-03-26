@@ -14,7 +14,8 @@
         "allocationKey": "allocation-empty",
         "variationType": "string",
         "doLog": true
-      }
+      },
+      "reason": "TARGETING_MATCH"
     }
   },
   {
@@ -30,7 +31,8 @@
         "allocationKey": "allocation-test",
         "variationType": "string",
         "doLog": true
-      }
+      },
+      "reason": "STATIC"
     }
   }
 ]

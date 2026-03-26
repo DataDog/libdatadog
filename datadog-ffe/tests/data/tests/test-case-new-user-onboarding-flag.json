@@ -15,7 +15,8 @@
         "allocationKey": "internal users",
         "variationType": "string",
         "doLog": false
-      }
+      },
+      "reason": "TARGETING_MATCH"
     }
   },
   {
@@ -28,7 +29,8 @@
       "country": "Canada"
     },
     "result": {
-      "value": "default"
+      "value": "default",
+      "reason": "DEFAULT"
     }
   },
   {
@@ -40,7 +42,8 @@
       "age": 50
     },
     "result": {
-      "value": "default"
+      "value": "default",
+      "reason": "DEFAULT"
     }
   },
   {
@@ -60,7 +63,8 @@
         "allocationKey": "rollout",
         "variationType": "string",
         "doLog": true
-      }
+      },
+      "reason": "TARGETING_MATCH"
     }
   },
   {
@@ -80,7 +84,8 @@
         "allocationKey": "id rule",
         "variationType": "string",
         "doLog": false
-      }
+      },
+      "reason": "TARGETING_MATCH"
     }
   },
   {
@@ -101,7 +106,8 @@
         "allocationKey": "rollout",
         "variationType": "string",
         "doLog": true
-      }
+      },
+      "reason": "TARGETING_MATCH"
     }
   },
   {
@@ -115,7 +121,8 @@
       "age": 25
     },
     "result": {
-      "value": "default"
+      "value": "default",
+      "reason": "DEFAULT"
     }
   },
   {
@@ -125,7 +132,8 @@
     "targetingKey": "1",
     "attributes": {},
     "result": {
-      "value": "default"
+      "value": "default",
+      "reason": "DEFAULT"
     }
   },
   {
@@ -143,7 +151,8 @@
         "allocationKey": "rollout",
         "variationType": "string",
         "doLog": true
-      }
+      },
+      "reason": "TARGETING_MATCH"
     }
   },
   {
@@ -162,7 +171,8 @@
         "allocationKey": "experiment",
         "variationType": "string",
         "doLog": true
-      }
+      },
+      "reason": "TARGETING_MATCH"
     }
   },
   {
@@ -180,7 +190,8 @@
         "allocationKey": "experiment",
         "variationType": "string",
         "doLog": true
-      }
+      },
+      "reason": "TARGETING_MATCH"
     }
   },
   {
@@ -198,7 +209,8 @@
         "allocationKey": "experiment",
         "variationType": "string",
         "doLog": true
-      }
+      },
+      "reason": "TARGETING_MATCH"
     }
   },
   {
@@ -216,7 +228,8 @@
         "allocationKey": "experiment",
         "variationType": "string",
         "doLog": true
-      }
+      },
+      "reason": "TARGETING_MATCH"
     }
   },
   {
@@ -234,7 +247,8 @@
         "allocationKey": "rollout",
         "variationType": "string",
         "doLog": true
-      }
+      },
+      "reason": "TARGETING_MATCH"
     }
   },
   {
@@ -252,7 +266,8 @@
         "allocationKey": "experiment",
         "variationType": "string",
         "doLog": true
-      }
+      },
+      "reason": "TARGETING_MATCH"
     }
   },
   {
@@ -264,7 +279,8 @@
       "email": "email@email.com"
     },
     "result": {
-      "value": "default"
+      "value": "default",
+      "reason": "DEFAULT"
     }
   },
   {
@@ -274,7 +290,8 @@
     "targetingKey": "10",
     "attributes": {},
     "result": {
-      "value": "default"
+      "value": "default",
+      "reason": "DEFAULT"
     }
   },
   {
@@ -284,7 +301,8 @@
     "targetingKey": "11",
     "attributes": {},
     "result": {
-      "value": "default"
+      "value": "default",
+      "reason": "DEFAULT"
     }
   },
   {
@@ -302,7 +320,8 @@
         "allocationKey": "rollout",
         "variationType": "string",
         "doLog": true
-      }
+      },
+      "reason": "TARGETING_MATCH"
     }
   },
   {
@@ -320,7 +339,8 @@
         "allocationKey": "rollout",
         "variationType": "string",
         "doLog": true
-      }
+      },
+      "reason": "TARGETING_MATCH"
     }
   },
   {
@@ -330,7 +350,8 @@
     "targetingKey": "14",
     "attributes": {},
     "result": {
-      "value": "default"
+      "value": "default",
+      "reason": "DEFAULT"
     }
   },
   {
@@ -348,7 +369,8 @@
         "allocationKey": "experiment",
         "variationType": "string",
         "doLog": true
-      }
+      },
+      "reason": "TARGETING_MATCH"
     }
   },
   {
@@ -366,7 +388,8 @@
         "allocationKey": "experiment",
         "variationType": "string",
         "doLog": true
-      }
+      },
+      "reason": "TARGETING_MATCH"
     }
   },
   {
@@ -384,7 +407,8 @@
         "allocationKey": "experiment",
         "variationType": "string",
         "doLog": true
-      }
+      },
+      "reason": "TARGETING_MATCH"
     }
   },
   {
@@ -396,7 +420,8 @@
       "country": "UK"
     },
     "result": {
-      "value": "default"
+      "value": "default",
+      "reason": "DEFAULT"
     }
   },
   {
@@ -414,7 +439,8 @@
         "allocationKey": "experiment",
         "variationType": "string",
         "doLog": true
-      }
+      },
+      "reason": "TARGETING_MATCH"
     }
   }
 ]

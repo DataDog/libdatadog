@@ -14,7 +14,8 @@
         "allocationKey": "1-for-one-of",
         "variationType": "number",
         "doLog": true
-      }
+      },
+      "reason": "TARGETING_MATCH"
     }
   },
   {
@@ -26,7 +27,8 @@
       "one_of_flag": false
     },
     "result": {
-      "value": 0
+      "value": 0,
+      "reason": "DEFAULT"
     }
   },
   {
@@ -38,7 +40,8 @@
       "one_of_flag": "True"
     },
     "result": {
-      "value": 0
+      "value": 0,
+      "reason": "DEFAULT"
     }
   },
   {
@@ -56,7 +59,8 @@
         "allocationKey": "2-for-matches",
         "variationType": "number",
         "doLog": true
-      }
+      },
+      "reason": "TARGETING_MATCH"
     }
   },
   {
@@ -68,7 +72,8 @@
       "matches_flag": false
     },
     "result": {
-      "value": 0
+      "value": 0,
+      "reason": "DEFAULT"
     }
   },
   {
@@ -80,7 +85,8 @@
       "not_matches_flag": false
     },
     "result": {
-      "value": 0
+      "value": 0,
+      "reason": "DEFAULT"
     }
   },
   {
@@ -98,7 +104,8 @@
         "allocationKey": "4-for-not-matches",
         "variationType": "number",
         "doLog": true
-      }
+      },
+      "reason": "TARGETING_MATCH"
     }
   },
   {
@@ -116,7 +123,8 @@
         "allocationKey": "4-for-not-matches",
         "variationType": "number",
         "doLog": true
-      }
+      },
+      "reason": "TARGETING_MATCH"
     }
   },
   {
@@ -134,7 +142,8 @@
         "allocationKey": "3-for-not-one-of",
         "variationType": "number",
         "doLog": true
-      }
+      },
+      "reason": "TARGETING_MATCH"
     }
   },
   {
@@ -146,7 +155,8 @@
       "not_one_of_flag": false
     },
     "result": {
-      "value": 0
+      "value": 0,
+      "reason": "DEFAULT"
     }
   },
   {
@@ -164,7 +174,8 @@
         "allocationKey": "3-for-not-one-of",
         "variationType": "number",
         "doLog": true
-      }
+      },
+      "reason": "TARGETING_MATCH"
     }
   },
   {
@@ -182,7 +193,8 @@
         "allocationKey": "3-for-not-one-of",
         "variationType": "number",
         "doLog": true
-      }
+      },
+      "reason": "TARGETING_MATCH"
     }
   },
   {
@@ -194,7 +206,8 @@
       "not_one_of_flag": "false"
     },
     "result": {
-      "value": 0
+      "value": 0,
+      "reason": "DEFAULT"
     }
   },
   {
@@ -212,7 +225,8 @@
         "allocationKey": "5-for-matches-null",
         "variationType": "number",
         "doLog": true
-      }
+      },
+      "reason": "TARGETING_MATCH"
     }
   },
   {
@@ -224,7 +238,8 @@
       "null_flag": null
     },
     "result": {
-      "value": 0
+      "value": 0,
+      "reason": "DEFAULT"
     }
   },
   {
@@ -234,7 +249,8 @@
     "targetingKey": "pete",
     "attributes": {},
     "result": {
-      "value": 0
+      "value": 0,
+      "reason": "DEFAULT"
     }
   }
 ]
