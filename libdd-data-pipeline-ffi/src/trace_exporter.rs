@@ -406,16 +406,16 @@ pub unsafe extern "C" fn ddog_trace_exporter_config_set_connection_timeout(
 #[no_mangle]
 pub unsafe extern "C" fn ddog_trace_exporter_config_set_shared_runtime(
     config: Option<&mut TraceExporterConfig>,
-    handle: *const SharedRuntime,
+    handle: Option<NonNull<SharedRuntime>>,
 ) -> Option<Box<ExporterError>> {
     catch_panic!(
-        match config {
-            Some(config) if !handle.is_null() => {
+        match (config, handle) {
+            (Some(config), Some(handle)) => {
                 // SAFETY: handle was produced by Arc::into_raw and the Arc is still alive.
                 // Increment the strong count before reconstructing so the config's Arc
                 // is independent from the caller's handle.
-                Arc::increment_strong_count(handle);
-                config.shared_runtime = Some(Arc::from_raw(handle));
+                Arc::increment_strong_count(handle.as_ptr());
+                config.shared_runtime = Some(Arc::from_raw(handle.as_ptr()));
                 None
             }
             _ => gen_error!(ErrorCode::InvalidArgument),
@@ -1162,3 +1162,4 @@ mod tests {
         }
     }
 }
+
