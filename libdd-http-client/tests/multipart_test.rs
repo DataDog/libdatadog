@@ -19,19 +19,19 @@ async fn test_multipart_upload() {
 
     let client = HttpClient::new(server.url("/"), Duration::from_secs(5)).unwrap();
 
-    let mut req = HttpRequest::new(HttpMethod::Post, server.url("/upload"));
-    req.add_multipart_part(
-        MultipartPart::new("metadata", br#"{"case_id":"123"}"#.as_slice())
-            .content_type("application/json"),
-    );
-    req.add_multipart_part(
-        MultipartPart::new("file", b"binary data here".as_slice())
-            .filename("data.bin")
-            .content_type("application/octet-stream"),
-    );
+    let req = HttpRequest::new(HttpMethod::Post, server.url("/upload"))
+        .with_multipart_part(
+            MultipartPart::new("metadata", br#"{"case_id":"123"}"#.as_slice())
+                .with_content_type("application/json"),
+        )
+        .with_multipart_part(
+            MultipartPart::new("file", b"binary data here".as_slice())
+                .with_filename("data.bin")
+                .with_content_type("application/octet-stream"),
+        );
 
     let response = client.send(req).await.unwrap();
-    assert_eq!(response.status_code, 200);
+    assert_eq!(response.status_code(), 200);
 
     mock.assert_async().await;
 }
@@ -52,23 +52,11 @@ async fn test_multipart_sets_content_type() {
 
     let client = HttpClient::new(server.url("/"), Duration::from_secs(5)).unwrap();
 
-    let mut req = HttpRequest::new(HttpMethod::Post, server.url("/upload"));
-    req.add_multipart_part(MultipartPart::new("field", b"value".as_slice()));
+    let req = HttpRequest::new(HttpMethod::Post, server.url("/upload"))
+        .with_multipart_part(MultipartPart::new("field", b"value".as_slice()));
 
     let response = client.send(req).await.unwrap();
-    assert_eq!(response.status_code, 200);
+    assert_eq!(response.status_code(), 200);
 
     mock.assert_async().await;
-}
-
-#[test]
-fn test_multipart_part_builder() {
-    let part = MultipartPart::new("name", bytes::Bytes::from_static(b"data"))
-        .filename("test.txt")
-        .content_type("text/plain");
-
-    assert_eq!(part.name, "name");
-    assert_eq!(part.data.as_ref(), b"data");
-    assert_eq!(part.filename.as_deref(), Some("test.txt"));
-    assert_eq!(part.content_type.as_deref(), Some("text/plain"));
 }

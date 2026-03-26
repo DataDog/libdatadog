@@ -43,8 +43,8 @@ async fn test_per_request_timeout_overrides_client() {
     // Client timeout is generous (5s), but per-request timeout is tight (200ms).
     let client = HttpClient::new(server.url("/"), Duration::from_secs(5)).unwrap();
 
-    let mut req = HttpRequest::new(HttpMethod::Get, server.url("/slow"));
-    req.timeout = Some(Duration::from_millis(200));
+    let req = HttpRequest::new(HttpMethod::Get, server.url("/slow"))
+        .with_timeout(Duration::from_millis(200));
 
     let result = client.send(req).await;
 

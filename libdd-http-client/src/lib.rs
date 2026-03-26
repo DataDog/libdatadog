@@ -37,7 +37,7 @@
 //! let client = HttpClient::new("http://localhost:8080".to_string(), Duration::from_secs(5))?;
 //! let request = HttpRequest::new(HttpMethod::Get, "http://localhost:8080/ping".to_string());
 //! let response = client.send(request).await?;
-//! println!("Status: {}", response.status_code);
+//! println!("Status: {}", response.status_code());
 //! # Ok(())
 //! # }
 //! ```

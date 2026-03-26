@@ -19,15 +19,14 @@ async fn test_post_round_trip() {
 
     let client = HttpClient::new(server.url("/"), Duration::from_secs(5)).unwrap();
 
-    let mut req = HttpRequest::new(HttpMethod::Post, server.url("/v0.4/traces"));
-    req.headers
-        .push(("Content-Type".to_owned(), "application/msgpack".to_owned()));
-    req.body = bytes::Bytes::from_static(b"test payload");
+    let req = HttpRequest::new(HttpMethod::Post, server.url("/v0.4/traces"))
+        .with_header("Content-Type", "application/msgpack")
+        .with_body(bytes::Bytes::from_static(b"test payload"));
 
     let response = client.send(req).await.unwrap();
 
-    assert_eq!(response.status_code, 200);
-    assert_eq!(response.body.as_ref(), b"ok");
+    assert_eq!(response.status_code(), 200);
+    assert_eq!(response.body().as_ref(), b"ok");
 
     mock.assert_async().await;
 }
@@ -51,8 +50,8 @@ async fn test_get_round_trip() {
     let req = HttpRequest::new(HttpMethod::Get, server.url("/info"));
     let response = client.send(req).await.unwrap();
 
-    assert_eq!(response.status_code, 200);
-    assert_eq!(response.body.as_ref(), br#"{"version":"1.0"}"#);
+    assert_eq!(response.status_code(), 200);
+    assert_eq!(response.body().as_ref(), br#"{"version":"1.0"}"#);
 
     mock.assert_async().await;
 }
@@ -74,7 +73,10 @@ async fn test_response_headers_returned() {
     let req = HttpRequest::new(HttpMethod::Get, server.url("/headers"));
     let response = client.send(req).await.unwrap();
 
-    let custom_header = response.headers.iter().find(|(name, _)| name == "x-custom");
+    let custom_header = response
+        .headers()
+        .iter()
+        .find(|(name, _)| name == "x-custom");
     assert!(
         custom_header.is_some(),
         "expected x-custom header in response"
@@ -132,8 +134,8 @@ async fn test_4xx_returns_ok_when_errors_disabled() {
     let req = HttpRequest::new(HttpMethod::Get, server.url("/not-found"));
     let response = client.send(req).await.unwrap();
 
-    assert_eq!(response.status_code, 404);
-    assert_eq!(response.body.as_ref(), b"not found");
+    assert_eq!(response.status_code(), 404);
+    assert_eq!(response.body().as_ref(), b"not found");
 }
 
 #[cfg_attr(miri, ignore)]

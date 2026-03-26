@@ -7,13 +7,31 @@
 #[derive(Debug)]
 pub struct HttpResponse {
     /// HTTP status code (e.g. 200, 404, 503).
-    pub status_code: u16,
-
+    pub(crate) status_code: u16,
     /// Response headers as a list of (name, value) pairs.
-    pub headers: Vec<(String, String)>,
-
+    pub(crate) headers: Vec<(String, String)>,
     /// Response body bytes.
-    pub body: bytes::Bytes,
+    pub(crate) body: bytes::Bytes,
+}
+
+impl HttpResponse {
+    /// Returns the HTTP status code.
+    #[inline]
+    pub fn status_code(&self) -> u16 {
+        self.status_code
+    }
+
+    /// Returns the response headers as a slice of (name, value) pairs.
+    #[inline]
+    pub fn headers(&self) -> &[(String, String)] {
+        &self.headers
+    }
+
+    /// Returns the response body bytes.
+    #[inline]
+    pub fn body(&self) -> &bytes::Bytes {
+        &self.body
+    }
 }
 
 #[cfg(test)]

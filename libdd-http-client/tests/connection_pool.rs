@@ -23,7 +23,8 @@ async fn test_multiple_requests_reuse_client() {
         let req = HttpRequest::new(HttpMethod::Get, server.url("/ping"));
         let response = client.send(req).await.unwrap();
         assert_eq!(
-            response.status_code, 200,
+            response.status_code(),
+            200,
             "request {i} should have succeeded"
         );
     }
@@ -54,9 +55,9 @@ async fn test_concurrent_requests_succeed() {
 
     let (r1, r2, r3) = tokio::join!(client.send(req1), client.send(req2), client.send(req3));
 
-    assert_eq!(r1.unwrap().status_code, 200);
-    assert_eq!(r2.unwrap().status_code, 200);
-    assert_eq!(r3.unwrap().status_code, 200);
+    assert_eq!(r1.unwrap().status_code(), 200);
+    assert_eq!(r2.unwrap().status_code(), 200);
+    assert_eq!(r3.unwrap().status_code(), 200);
 
     mock.assert_calls_async(3).await;
 }

@@ -43,8 +43,8 @@ async fn test_named_pipe_round_trip() {
     let req = HttpRequest::new(HttpMethod::Get, "http://localhost/ping".to_owned());
     let response = client.send(req).await.unwrap();
 
-    assert_eq!(response.status_code, 200);
-    assert_eq!(response.body.as_ref(), b"ok");
+    assert_eq!(response.status_code(), 200);
+    assert_eq!(response.body().as_ref(), b"ok");
 }
 
 #[test]
