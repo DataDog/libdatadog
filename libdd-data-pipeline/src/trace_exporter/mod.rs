@@ -24,7 +24,7 @@ use crate::stats_exporter::StatsExporter;
 #[cfg(feature = "telemetry")]
 use crate::telemetry::{SendPayloadTelemetry, TelemetryClient};
 use crate::trace_exporter::agent_response::{
-    AgentResponsePayloadVersion, DATADOG_RATES_PAYLOAD_VERSION_HEADER,
+    AgentResponsePayloadVersion, DATADOG_RATES_PAYLOAD_VERSION,
 };
 #[cfg(not(target_arch = "wasm32"))]
 use crate::trace_exporter::error::InternalErrorKind;
@@ -36,6 +36,7 @@ use crate::{
 };
 use arc_swap::{ArcSwap, ArcSwapOption};
 use bytes::Bytes;
+use http::header::HeaderMap;
 use http::uri::PathAndQuery;
 use http::Uri;
 use libdd_capabilities::{HttpClientTrait, MaybeSend};
@@ -53,7 +54,7 @@ use libdd_trace_utils::trace_utils::TracerHeaderTags;
 use std::io;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
-use std::{borrow::Borrow, collections::HashMap, str::FromStr};
+use std::{borrow::Borrow, str::FromStr};
 use tokio::runtime::Runtime;
 use tracing::{debug, error, warn};
 
@@ -170,8 +171,8 @@ impl<'a> From<&'a TracerMetadata> for TracerHeaderTags<'a> {
     }
 }
 
-impl<'a> From<&'a TracerMetadata> for HashMap<&'static str, String> {
-    fn from(tags: &'a TracerMetadata) -> HashMap<&'static str, String> {
+impl<'a> From<&'a TracerMetadata> for HeaderMap {
+    fn from(tags: &'a TracerMetadata) -> HeaderMap {
         TracerHeaderTags::from(tags).into()
     }
 }
@@ -655,7 +656,7 @@ impl<H: HttpClientTrait + MaybeSend + Sync + 'static> TraceExporter<H> {
         &self,
         endpoint: &Endpoint,
         mp_payload: Vec<u8>,
-        headers: HashMap<&'static str, String>,
+        headers: HeaderMap,
         chunks: usize,
         chunks_dropped_p0: usize,
     ) -> Result<AgentResponse, TraceExporterError> {
@@ -825,7 +826,7 @@ impl<H: HttpClientTrait + MaybeSend + Sync + 'static> TraceExporter<H> {
         let is_success = response.status().is_success();
         let version_header = response
             .headers()
-            .get(DATADOG_RATES_PAYLOAD_VERSION_HEADER)
+            .get(DATADOG_RATES_PAYLOAD_VERSION)
             .and_then(|v| v.to_str().ok());
         match (
             is_success,
@@ -945,7 +946,6 @@ mod tests {
     use libdd_trace_utils::msgpack_encoder;
     use libdd_trace_utils::span::v04::SpanBytes;
     use libdd_trace_utils::span::v05;
-    use std::collections::HashMap;
     use std::net;
     use std::time::Duration;
     use tokio::time::sleep;
@@ -989,17 +989,17 @@ mod tests {
             ..Default::default()
         };
 
-        let hashmap: HashMap<&'static str, String> = (&tracer_tags).into();
+        let headers: HeaderMap = (&tracer_tags).into();
 
-        assert_eq!(hashmap.get("datadog-meta-tracer-version").unwrap(), "v0.1");
-        assert_eq!(hashmap.get("datadog-meta-lang").unwrap(), "rust");
-        assert_eq!(hashmap.get("datadog-meta-lang-version").unwrap(), "1.52.1");
+        assert_eq!(headers.get("datadog-meta-tracer-version").unwrap(), "v0.1");
+        assert_eq!(headers.get("datadog-meta-lang").unwrap(), "rust");
+        assert_eq!(headers.get("datadog-meta-lang-version").unwrap(), "1.52.1");
         assert_eq!(
-            hashmap.get("datadog-meta-lang-interpreter").unwrap(),
+            headers.get("datadog-meta-lang-interpreter").unwrap(),
             "rustc"
         );
-        assert!(hashmap.contains_key("datadog-client-computed-stats"));
-        assert!(hashmap.contains_key("datadog-client-computed-top-level"));
+        assert!(headers.contains_key("datadog-client-computed-stats"));
+        assert!(headers.contains_key("datadog-client-computed-top-level"));
     }
 
     fn read(socket: &net::UdpSocket) -> String {
