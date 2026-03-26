@@ -10,12 +10,12 @@ use crate::trace_exporter::agent_response::AgentResponsePayloadVersion;
 use crate::trace_exporter::error::BuilderErrorKind;
 #[cfg(feature = "telemetry")]
 use crate::trace_exporter::TelemetryConfig;
+#[cfg(not(target_arch = "wasm32"))]
+use crate::trace_exporter::TraceExporterWorkers;
 use crate::trace_exporter::{
     add_path, StatsComputationStatus, TraceExporter, TraceExporterError, TraceExporterInputFormat,
     TraceExporterOutputFormat, TracerMetadata, INFO_ENDPOINT,
 };
-#[cfg(not(target_arch = "wasm32"))]
-use crate::trace_exporter::TraceExporterWorkers;
 use arc_swap::ArcSwap;
 use libdd_capabilities::{HttpClientTrait, MaybeSend};
 use libdd_common::{parse_uri, tag, Endpoint};

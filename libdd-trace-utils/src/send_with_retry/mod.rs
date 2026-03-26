@@ -84,14 +84,7 @@ impl std::error::Error for SendWithRetryError {}
 /// );
 /// let retry_strategy = RetryStrategy::new(3, 10, RetryBackoffType::Exponential, Some(5));
 /// let client = libdd_capabilities_impl::NativeCapabilities::new_client();
-/// send_with_retry(
-///     &client,
-///     &target,
-///     payload,
-///     &headers,
-///     &retry_strategy,
-/// )
-/// .await
+/// send_with_retry(&client, &target, payload, &headers, &retry_strategy).await
 /// # }
 /// ```
 pub async fn send_with_retry<H: HttpClientTrait>(
