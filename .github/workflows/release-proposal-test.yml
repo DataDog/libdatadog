@@ -1,0 +1,88 @@
+name: Release - Test a release proposal PR changes using dd-trace-rs
+on:
+  push:
+    branches:
+      - release-proposal/**
+      - release-proposal-testing/**
+
+jobs:
+  package-and-upload-crates:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # 4.2.2
+        with:
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.92.0
+
+      - name: Package the workspace
+        run: |
+          cargo package --workspace --exclude "libdd-*-ffi" --exclude libdd-crashtracker --exclude "datadog-*" --exclude bin_tests --exclude "tools" \
+            --exclude "sidecar_mockgen" --exclude "cc_utils" --exclude spawn_worker --exclude symbolizer-ffi --exclude test_spawn_from_lib \
+            --exclude build-common --exclude builder --all-features
+
+      - name: Upload crates
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-proposal-test-crates
+          path: |
+            target/package/*.crate
+          retention-days: 1
+
+  compile-dd-trace-rs:
+    runs-on: ubuntu-latest
+    needs: package-and-upload-crates
+    strategy:
+      matrix:
+        version: ["datadog-opentelemetry-v0.3.1"]
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # 4.2.2
+        with:
+          fetch-depth: 0
+          repository: DataDog/dd-trace-rs
+          ref: ${{ matrix.version }}
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.92.0
+
+      - name: Download release data
+        uses: actions/download-artifact@v4
+        with:
+          name: release-proposal-test-crates
+          path: /tmp/release-proposal-test-crates
+
+      - name: Compile dd-trace-rs
+        run: |
+          ls /tmp/release-proposal-test-crates
+
+          CRATES_DIR="/tmp/release-proposal-test-crates"
+          TOML_FILE="$(realpath Cargo.toml)"
+          
+          # if CRATES_DIR ends with a slash, remove it
+          if [[ "$CRATES_DIR" == */ ]]; then
+            CRATES_DIR="${CRATES_DIR%/}"
+          fi
+
+          # Get libdd-* direct dependencies only from the root manifest package.
+          LIBDD_DEPENDENCIES=$(cargo metadata --manifest-path "$TOML_FILE" --format-version=1 --no-deps | jq -c --arg manifest "$TOML_FILE" '.packages[] | select(.manifest_path == $manifest) | [.dependencies[]?.name | select(startswith("libdd-"))] | unique')
+
+          PATCH_CONF=""
+
+          # Unzip crates and build a patch expression for local path overrides.
+          for crate in "$CRATES_DIR"/*.crate; do
+            tar -xzvf "$crate" -C "$CRATES_DIR" > /dev/null
+
+            CRATE_PATH=$(echo "$crate" | sed 's/.*\///' | sed 's/\.crate//')
+            CRATE_TOML_FILE="$CRATES_DIR/$CRATE_PATH/Cargo.toml"
+            
+            CRATE_NAME=$(cargo metadata --manifest-path "$CRATE_TOML_FILE" --format-version=1 --no-deps | jq -r '[.packages[].name][0]')
+            
+            if echo "$LIBDD_DEPENDENCIES" | jq -e --arg crate "$CRATE_NAME" 'index($crate) != null' >/dev/null; then
+              PATCH_CONF="$PATCH_CONF --config 'patch.crates-io.$CRATE_NAME.path=\"$CRATES_DIR/$CRATE_PATH\"'"
+            fi
+          done
+
+          echo "Build dd-trace-rs with patch: $PATCH_CONF"
+
+          cargo build --release --workspace --all-features $PATCH_CONF
