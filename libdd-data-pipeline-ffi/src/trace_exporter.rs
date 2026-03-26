@@ -13,7 +13,7 @@ use libdd_data_pipeline::trace_exporter::{
 };
 use libdd_shared_runtime::SharedRuntime;
 use std::{ptr::NonNull, sync::Arc, time::Duration};
-use tracing::debug;
+use tracing::{debug, error};
 
 #[inline]
 fn sanitize_string(str: CharSlice) -> Result<String, Box<ExporterError>> {
