@@ -1,3 +1,6 @@
+// Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
+// SPDX-License-Identifier: Apache-2.0
+
 use std::{
     collections::{BTreeSet, HashSet},
     fmt::{self, Display},
@@ -21,8 +24,10 @@ struct Testcase {
 
 #[test]
 fn test_obfuscate_span() {
-    let testcases_contents = std::fs::read_to_string("./tests/Data/obfuscation_test_spans.jsonl")
-        .expect("Testsuite jsonl file should still be here");
+    let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/Data/obfuscation_test_spans.jsonl");
+    let testcases_contents =
+        std::fs::read_to_string(&path).expect("Testsuite jsonl file should still be here");
 
     let testcases = serde_json::Deserializer::from_str(&testcases_contents)
         .into_iter()
@@ -138,7 +143,7 @@ impl<'a> SpanComparison<'a> {
         Self { left, right }
     }
 }
-impl<'a> Display for SpanComparison<'a> {
+impl Display for SpanComparison<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         fn cmp_field<T: PartialEq + fmt::Debug>(left: &T, right: &T) -> String {
             if left == right {
