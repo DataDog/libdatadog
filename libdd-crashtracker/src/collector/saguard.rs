@@ -102,6 +102,7 @@ mod single_threaded_tests {
     use std::sync::Mutex;
 
     // These tests mutate global signal state, so we need to lock to avoid race conditions
+    // even in single-threaded mode, as signal state can persist between test runs
     static SIGNAL_TEST_LOCK: Mutex<()> = Mutex::new(());
 
     #[test]
