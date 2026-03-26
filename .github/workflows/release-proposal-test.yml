@@ -92,6 +92,7 @@ jobs:
             fi
           done
 
-          echo "Build dd-trace-rs with patch args: ${PATCH_ARGS[*]}"
-
+          echo "\n\nBuild dd-trace-rs with patch args: ${PATCH_ARGS[*]}"
+          
+          cargo update
           cargo build --release --workspace --all-features "${PATCH_ARGS[@]}"
