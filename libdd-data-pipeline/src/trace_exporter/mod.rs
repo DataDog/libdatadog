@@ -15,7 +15,6 @@ use self::metrics::MetricsEmitter;
 use self::stats::StatsComputationStatus;
 use self::trace_serializer::TraceSerializer;
 use crate::agent_info::ResponseObserver;
-use libdd_shared_runtime::{SharedRuntime, WorkerHandle};
 use crate::telemetry::{SendPayloadTelemetry, TelemetryClient};
 use crate::trace_exporter::agent_response::{
     AgentResponsePayloadVersion, DATADOG_RATES_PAYLOAD_VERSION_HEADER,
@@ -35,6 +34,7 @@ use http_body_util::BodyExt;
 use libdd_common::tag::Tag;
 use libdd_common::{http_common, Endpoint, HttpClient};
 use libdd_dogstatsd_client::Client;
+use libdd_shared_runtime::{SharedRuntime, WorkerHandle};
 use libdd_trace_utils::msgpack_decoder;
 use libdd_trace_utils::send_with_retry::{
     send_with_retry, RetryStrategy, SendWithRetryError, SendWithRetryResult,
@@ -46,7 +46,6 @@ use std::sync::Arc;
 #[cfg(feature = "test-utils")]
 use std::time::Duration;
 use std::{borrow::Borrow, collections::HashMap, str::FromStr};
-use tokio::runtime::Runtime;
 use tokio::task::JoinSet;
 use tracing::{debug, error, warn};
 
@@ -221,10 +220,11 @@ impl TraceExporter {
     /// Returns [`SharedRuntimeError::ShutdownTimedOut`] if a timeout was given and elapsed before
     /// all workers finished.
     pub fn shutdown(self, timeout: Option<std::time::Duration>) -> Result<(), TraceExporterError> {
-        let runtime = self.runtime()?;
+        let runtime = self.shared_runtime.clone();
         if let Some(timeout) = timeout {
             match runtime
                 .block_on(async { tokio::time::timeout(timeout, self.shutdown_workers()).await })
+                .map_err(TraceExporterError::Io)?
             {
                 Ok(()) => Ok(()),
                 Err(_) => Err(TraceExporterError::Shutdown(ShutdownError::TimedOut(
@@ -232,7 +232,9 @@ impl TraceExporter {
                 ))),
             }
         } else {
-            runtime.block_on(self.shutdown_workers());
+            runtime
+                .block_on(self.shutdown_workers())
+                .map_err(TraceExporterError::Io)?;
             Ok(())
         }
     }
@@ -264,10 +266,10 @@ impl TraceExporter {
         }
     }
 
-    /// Return a runtime from the shared runtime manager.
-    fn runtime(&self) -> Result<Arc<Runtime>, TraceExporterError> {
+    /// Run a future to completion on the shared runtime.
+    fn block_on<F: std::future::Future>(&self, f: F) -> Result<F::Output, TraceExporterError> {
         self.shared_runtime
-            .runtime()
+            .block_on(f)
             .map_err(TraceExporterError::Io)
     }
 
@@ -412,8 +414,7 @@ impl TraceExporter {
         trace_chunks: Vec<Vec<Span<T>>>,
     ) -> Result<AgentResponse, TraceExporterError> {
         self.check_agent_info();
-        self.runtime()?
-            .block_on(async { self.send_trace_chunks_inner(trace_chunks).await })
+        self.block_on(async { self.send_trace_chunks_inner(trace_chunks).await })?
     }
 
     /// Send a list of trace chunks to the agent, asynchronously
@@ -459,8 +460,7 @@ impl TraceExporter {
             None,
         );
 
-        self.runtime()?
-            .block_on(async { self.send_trace_chunks_inner(traces).await })
+        self.block_on(async { self.send_trace_chunks_inner(traces).await })?
     }
 
     /// Send traces payload to agent with retry and telemetry reporting

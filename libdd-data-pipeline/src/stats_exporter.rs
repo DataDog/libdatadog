@@ -182,10 +182,10 @@ pub fn stats_url_from_agent_url(agent_url: &str) -> anyhow::Result<http::Uri> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use libdd_shared_runtime::SharedRuntime;
     use httpmock::prelude::*;
     use httpmock::MockServer;
     use libdd_common::http_common::new_default_client;
+    use libdd_shared_runtime::SharedRuntime;
     use libdd_trace_utils::span::{trace_utils, v04::SpanSlice};
     use libdd_trace_utils::test_utils::poll_for_mock_hit;
     use time::Duration;
@@ -341,7 +341,6 @@ mod tests {
     #[test]
     fn test_worker_shutdown() {
         let shared_runtime = SharedRuntime::new().expect("Failed to create runtime");
-        let rt = shared_runtime.runtime().expect("Failed to get runtime");
 
         let server = MockServer::start();
 
@@ -370,7 +369,9 @@ mod tests {
         shared_runtime.shutdown(None).unwrap();
 
         assert!(
-            rt.block_on(poll_for_mock_hit(&mut mock, 10, 100, 1, false)),
+            shared_runtime
+                .block_on(poll_for_mock_hit(&mut mock, 10, 100, 1, false))
+                .expect("Failed to get runtime"),
             "Expected max retry attempts"
         );
     }

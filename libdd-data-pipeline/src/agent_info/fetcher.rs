@@ -305,8 +305,8 @@ impl ResponseObserver {
 mod single_threaded_tests {
     use super::*;
     use crate::agent_info;
-    use libdd_shared_runtime::SharedRuntime;
     use httpmock::prelude::*;
+    use libdd_shared_runtime::SharedRuntime;
 
     const TEST_INFO: &str = r#"{
         "version": "0.0.0",

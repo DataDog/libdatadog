@@ -8,10 +8,10 @@ use libdd_common_ffi::{
     CharSlice,
     {slice::AsBytes, slice::ByteSlice},
 };
-use libdd_shared_runtime::SharedRuntime;
 use libdd_data_pipeline::trace_exporter::{
     TelemetryConfig, TraceExporter, TraceExporterInputFormat, TraceExporterOutputFormat,
 };
+use libdd_shared_runtime::SharedRuntime;
 use std::{ptr::NonNull, sync::Arc, time::Duration};
 use tracing::debug;
 

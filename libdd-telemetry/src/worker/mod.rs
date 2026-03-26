@@ -933,8 +933,9 @@ pub struct TelemetryWorkerHandle {
     sender: mpsc::Sender<TelemetryActions>,
     shutdown: Arc<InnerTelemetryShutdown>,
     cancellation_token: CancellationToken,
-    // Used to spawn cancellation tasks
-    runtime: runtime::Handle,
+    // Used to spawn cancellation tasks. Should be None when running as a SharedRuntime worker,
+    // since the runtime is not guaranteed to exist for the lifetime of the worker.
+    runtime: Option<runtime::Handle>,
 
     contexts: MetricContexts,
 }
@@ -992,12 +993,16 @@ impl TelemetryWorkerHandle {
     }
 
     fn cancel_requests_with_deadline(&self, deadline: time::Instant) {
+        let Some(runtime) = &self.runtime else {
+            tracing::error!("Cannot schedule cancellation deadline: no runtime handle available");
+            return;
+        };
         let token = self.cancellation_token.clone();
         let f = async move {
             tokio::time::sleep_until(deadline.into()).await;
             token.cancel()
         };
-        self.runtime.spawn(f);
+        runtime.spawn(f);
     }
 
     pub fn wait_for_shutdown_deadline(&self, deadline: time::Instant) {
@@ -1161,10 +1166,15 @@ impl TelemetryWorkerBuilder {
         }
     }
 
-    /// Build the corresponding worker and it's handle.
-    /// The runtime handle is wrapped in the worker handle and should be the one used to run the
-    /// worker task.
-    pub fn build_worker(self, tokio_runtime: Handle) -> (TelemetryWorkerHandle, TelemetryWorker) {
+    /// Build the corresponding worker and its handle.
+    ///
+    /// The optional runtime handle is stored in the worker handle and should be the one used to run
+    /// the worker task cancellation deadlines. Pass `None` when the worker will be run via a
+    /// [`SharedRuntime`](libdd_shared_runtime::SharedRuntime).
+    pub fn build_worker(
+        self,
+        tokio_runtime: Option<Handle>,
+    ) -> (TelemetryWorkerHandle, TelemetryWorker) {
         let (tx, mailbox) = mpsc::channel(5000);
         let shutdown = Arc::new(InnerTelemetryShutdown {
             is_shutdown: Mutex::new(false),
@@ -1232,7 +1242,7 @@ impl TelemetryWorkerBuilder {
     pub fn spawn(self) -> (TelemetryWorkerHandle, JoinHandle<()>) {
         let tokio_runtime = tokio::runtime::Handle::current();
 
-        let (worker_handle, worker) = self.build_worker(tokio_runtime.clone());
+        let (worker_handle, worker) = self.build_worker(Some(tokio_runtime.clone()));
 
         let join_handle = tokio_runtime.spawn(async move { worker.run_loop().await });
 
@@ -1244,7 +1254,7 @@ impl TelemetryWorkerBuilder {
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()?;
-        let (handle, worker) = self.build_worker(runtime.handle().clone());
+        let (handle, worker) = self.build_worker(Some(runtime.handle().clone()));
         let notify_shutdown = handle.shutdown.clone();
         std::thread::spawn(move || {
             runtime.block_on(worker.run_loop());
@@ -1288,7 +1298,7 @@ mod tests {
                 "1.0.0".to_string(),
             );
             // build_worker requires a tokio Handle; tests using this must be #[tokio::test]
-            builder.build_worker(tokio::runtime::Handle::current())
+            builder.build_worker(Some(tokio::runtime::Handle::current()))
         }
 
         fn make_log(id: u64, message: &str) -> (LogIdentifier, Log) {

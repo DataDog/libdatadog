@@ -3,9 +3,10 @@
 
 #[cfg(test)]
 mod tracing_integration_tests {
-    use libdd_common::{worker::Worker, Endpoint};
+    use libdd_common::Endpoint;
     use libdd_data_pipeline::agent_info;
     use libdd_data_pipeline::agent_info::{fetch_info, AgentInfoFetcher};
+    use libdd_shared_runtime::Worker;
     use libdd_trace_utils::test_utils::datadog_test_agent::DatadogTestAgent;
     use std::time::Duration;
 

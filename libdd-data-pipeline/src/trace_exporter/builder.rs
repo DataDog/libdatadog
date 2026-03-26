@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::agent_info::AgentInfoFetcher;
-use libdd_shared_runtime::SharedRuntime;
 use crate::telemetry::TelemetryClientBuilder;
 use crate::trace_exporter::agent_response::AgentResponsePayloadVersion;
 use crate::trace_exporter::error::BuilderErrorKind;
@@ -15,6 +14,7 @@ use arc_swap::ArcSwap;
 use libdd_common::http_common::new_default_client;
 use libdd_common::{parse_uri, tag, Endpoint};
 use libdd_dogstatsd_client::new;
+use libdd_shared_runtime::SharedRuntime;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -283,12 +283,7 @@ impl TraceExporterBuilder {
             if let Some(id) = telemetry_config.runtime_id {
                 builder = builder.set_runtime_id(&id);
             }
-            let runtime = shared_runtime.runtime().map_err(|e| {
-                TraceExporterError::Builder(BuilderErrorKind::InvalidConfiguration(e.to_string()))
-            })?;
-            // This handle is never used since we run it as a SharedRuntime worker. So it is fine
-            // if the tokio runtime is dropped by SharedRuntime.
-            Ok(builder.build(runtime.handle().clone()))
+            Ok(builder.build())
         });
 
         let (telemetry_client, telemetry_handle) = match telemetry {
@@ -298,14 +293,11 @@ impl TraceExporterBuilder {
                         e.to_string(),
                     ))
                 })?;
-                shared_runtime
-                    .runtime()
-                    .map_err(|e| {
-                        TraceExporterError::Builder(BuilderErrorKind::InvalidConfiguration(
-                            e.to_string(),
-                        ))
-                    })?
-                    .block_on(client.start());
+                shared_runtime.block_on(client.start()).map_err(|e| {
+                    TraceExporterError::Builder(BuilderErrorKind::InvalidConfiguration(
+                        e.to_string(),
+                    ))
+                })?;
                 (Some(client), Some(handle))
             }
             Some(Err(e)) => return Err(e),
@@ -437,10 +429,6 @@ mod tests {
         assert_eq!(exporter.metadata.language_interpreter, "");
         assert!(!exporter.metadata.client_computed_stats);
         assert!(exporter.telemetry.is_none());
-        assert!(
-            exporter.shared_runtime.runtime().is_ok(),
-            "default shared runtime should be initialized"
-        );
     }
 
     #[cfg_attr(miri, ignore)]

@@ -8,10 +8,10 @@
 //! and processing traces for stats collection.
 
 use crate::agent_info::schema::AgentInfo;
-use libdd_shared_runtime::{SharedRuntime, WorkerHandle};
 use crate::stats_exporter;
 use arc_swap::ArcSwap;
 use libdd_common::{Endpoint, HttpClient, MutexExt};
+use libdd_shared_runtime::{SharedRuntime, WorkerHandle};
 use libdd_trace_stats::span_concentrator::SpanConcentrator;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -127,11 +127,10 @@ pub(crate) fn stop_stats_computation(
         client_side_stats.store(Arc::new(StatsComputationStatus::DisabledByAgent {
             bucket_size,
         }));
-        match ctx.shared_runtime.runtime() {
-            Ok(runtime) => {
-                let _ = runtime.block_on(async { worker_handle.clone().stop().await });
-            }
+        match ctx.shared_runtime.block_on(worker_handle.clone().stop()) {
+            Ok(Err(e)) => error!("Failed to stop stats worker: {e}"),
             Err(e) => error!("Failed to stop stats worker: {e}"),
+            _ => {}
         }
     }
 }

@@ -16,7 +16,6 @@ use libdd_trace_utils::{
     trace_utils::SendDataResult,
 };
 use std::{collections::HashMap, time::Duration};
-use tokio::runtime::Handle;
 
 /// Structure to build a Telemetry client.
 ///
@@ -100,7 +99,7 @@ impl TelemetryClientBuilder {
     }
 
     /// Builds the telemetry client.
-    pub fn build(self, runtime: Handle) -> (TelemetryClient, TelemetryWorker) {
+    pub fn build(self) -> (TelemetryClient, TelemetryWorker) {
         #[allow(clippy::unwrap_used)]
         let mut builder = TelemetryWorkerBuilder::new_fetch_host(
             self.service_name.unwrap(),
@@ -118,7 +117,7 @@ impl TelemetryClientBuilder {
             builder.runtime_id = Some(id);
         }
 
-        let (worker_handle, worker) = builder.build_worker(runtime);
+        let (worker_handle, worker) = builder.build_worker(None);
 
         (
             TelemetryClient {
@@ -324,7 +323,7 @@ mod tests {
             .set_url(url)
             .set_heartbeat(100)
             .set_debug_enabled(true)
-            .build(Handle::current());
+            .build();
         let handle = runtime
             .spawn_worker(worker)
             .expect("Failed to spawn worker");
@@ -365,34 +364,34 @@ mod tests {
     fn api_bytes_test() {
         let payload = Regex::new(r#""metric":"trace_api.bytes","tags":\["src_library:libdatadog"\],"sketch_b64":".+","common":true,"interval":\d+,"type":"distribution""#).unwrap();
         let shared_runtime = SharedRuntime::new().expect("Failed to create runtime");
-        let rt = shared_runtime.runtime().expect("Failed to get runtime");
+        shared_runtime
+            .block_on(async {
+                let server = MockServer::start_async().await;
+                let mut telemetry_srv = server
+                    .mock_async(|when, then| {
+                        when.method(POST).body_matches(payload);
+                        then.status(200).body("");
+                    })
+                    .await;
 
-        rt.block_on(async {
-            let server = MockServer::start_async().await;
-            let mut telemetry_srv = server
-                .mock_async(|when, then| {
-                    when.method(POST).body_matches(payload);
-                    then.status(200).body("");
-                })
-                .await;
+                let data = SendPayloadTelemetry {
+                    bytes_sent: 1,
+                    ..Default::default()
+                };
 
-            let data = SendPayloadTelemetry {
-                bytes_sent: 1,
-                ..Default::default()
-            };
+                let (client, handle) = get_test_client(&server.url("/"), &shared_runtime);
+                client.start().await;
+                let _ = client.send(&data);
+                // Wait for send to be processed
+                sleep(Duration::from_millis(1)).await;
 
-            let (client, handle) = get_test_client(&server.url("/"), &shared_runtime);
-            client.start().await;
-            let _ = client.send(&data);
-            // Wait for send to be processed
-            sleep(Duration::from_millis(1)).await;
-
-            handle.stop().await.expect("Failed to stop worker");
-            assert!(
-                poll_for_mock_hit(&mut telemetry_srv, 1000, 10, 1, false).await,
-                "telemetry server did not receive calls within timeout"
-            );
-        });
+                handle.stop().await.expect("Failed to stop worker");
+                assert!(
+                    poll_for_mock_hit(&mut telemetry_srv, 1000, 10, 1, false).await,
+                    "telemetry server did not receive calls within timeout"
+                );
+            })
+            .expect("Failed to get runtime");
     }
 
     #[cfg_attr(miri, ignore)]
@@ -400,34 +399,34 @@ mod tests {
     fn requests_test() {
         let payload = Regex::new(r#""metric":"trace_api.requests","points":\[\[\d+,1\.0\]\],"tags":\["src_library:libdatadog"\],"common":true,"type":"count""#).unwrap();
         let shared_runtime = SharedRuntime::new().expect("Failed to create runtime");
-        let rt = shared_runtime.runtime().expect("Failed to get runtime");
+        shared_runtime
+            .block_on(async {
+                let server = MockServer::start_async().await;
+                let mut telemetry_srv = server
+                    .mock_async(|when, then| {
+                        when.method(POST).body_matches(payload);
+                        then.status(200).body("");
+                    })
+                    .await;
 
-        rt.block_on(async {
-            let server = MockServer::start_async().await;
-            let mut telemetry_srv = server
-                .mock_async(|when, then| {
-                    when.method(POST).body_matches(payload);
-                    then.status(200).body("");
-                })
-                .await;
+                let data = SendPayloadTelemetry {
+                    requests_count: 1,
+                    ..Default::default()
+                };
 
-            let data = SendPayloadTelemetry {
-                requests_count: 1,
-                ..Default::default()
-            };
+                let (client, handle) = get_test_client(&server.url("/"), &shared_runtime);
+                client.start().await;
+                let _ = client.send(&data);
+                // Wait for send to be processed
+                sleep(Duration::from_millis(1)).await;
 
-            let (client, handle) = get_test_client(&server.url("/"), &shared_runtime);
-            client.start().await;
-            let _ = client.send(&data);
-            // Wait for send to be processed
-            sleep(Duration::from_millis(1)).await;
-
-            handle.stop().await.expect("Failed to stop worker");
-            assert!(
-                poll_for_mock_hit(&mut telemetry_srv, 1000, 10, 1, false).await,
-                "telemetry server did not receive calls within timeout"
-            );
-        });
+                handle.stop().await.expect("Failed to stop worker");
+                assert!(
+                    poll_for_mock_hit(&mut telemetry_srv, 1000, 10, 1, false).await,
+                    "telemetry server did not receive calls within timeout"
+                );
+            })
+            .expect("Failed to get runtime");
     }
 
     #[cfg_attr(miri, ignore)]
@@ -435,34 +434,34 @@ mod tests {
     fn responses_per_code_test() {
         let payload = Regex::new(r#""metric":"trace_api.responses","points":\[\[\d+,1\.0\]\],"tags":\["status_code:200","src_library:libdatadog"\],"common":true,"type":"count"#).unwrap();
         let shared_runtime = SharedRuntime::new().expect("Failed to create runtime");
-        let rt = shared_runtime.runtime().expect("Failed to get runtime");
+        shared_runtime
+            .block_on(async {
+                let server = MockServer::start_async().await;
+                let mut telemetry_srv = server
+                    .mock_async(|when, then| {
+                        when.method(POST).body_matches(payload);
+                        then.status(200).body("");
+                    })
+                    .await;
 
-        rt.block_on(async {
-            let server = MockServer::start_async().await;
-            let mut telemetry_srv = server
-                .mock_async(|when, then| {
-                    when.method(POST).body_matches(payload);
-                    then.status(200).body("");
-                })
-                .await;
+                let data = SendPayloadTelemetry {
+                    responses_count_per_code: HashMap::from([(200, 1)]),
+                    ..Default::default()
+                };
 
-            let data = SendPayloadTelemetry {
-                responses_count_per_code: HashMap::from([(200, 1)]),
-                ..Default::default()
-            };
+                let (client, handle) = get_test_client(&server.url("/"), &shared_runtime);
+                client.start().await;
+                let _ = client.send(&data);
+                // Wait for send to be processed
+                sleep(Duration::from_millis(1)).await;
 
-            let (client, handle) = get_test_client(&server.url("/"), &shared_runtime);
-            client.start().await;
-            let _ = client.send(&data);
-            // Wait for send to be processed
-            sleep(Duration::from_millis(1)).await;
-
-            handle.stop().await.expect("Failed to stop worker");
-            assert!(
-                poll_for_mock_hit(&mut telemetry_srv, 1000, 10, 1, false).await,
-                "telemetry server did not receive calls within timeout"
-            );
-        });
+                handle.stop().await.expect("Failed to stop worker");
+                assert!(
+                    poll_for_mock_hit(&mut telemetry_srv, 1000, 10, 1, false).await,
+                    "telemetry server did not receive calls within timeout"
+                );
+            })
+            .expect("Failed to get runtime");
     }
 
     #[cfg_attr(miri, ignore)]
@@ -470,34 +469,34 @@ mod tests {
     fn errors_timeout_test() {
         let payload = Regex::new(r#""metric":"trace_api.errors","points":\[\[\d+,1\.0\]\],"tags":\["src_library:libdatadog","type:timeout"\],"common":true,"type":"count"#).unwrap();
         let shared_runtime = SharedRuntime::new().expect("Failed to create runtime");
-        let rt = shared_runtime.runtime().expect("Failed to get runtime");
+        shared_runtime
+            .block_on(async {
+                let server = MockServer::start_async().await;
+                let mut telemetry_srv = server
+                    .mock_async(|when, then| {
+                        when.method(POST).body_matches(payload);
+                        then.status(200).body("");
+                    })
+                    .await;
 
-        rt.block_on(async {
-            let server = MockServer::start_async().await;
-            let mut telemetry_srv = server
-                .mock_async(|when, then| {
-                    when.method(POST).body_matches(payload);
-                    then.status(200).body("");
-                })
-                .await;
+                let data = SendPayloadTelemetry {
+                    errors_timeout: 1,
+                    ..Default::default()
+                };
 
-            let data = SendPayloadTelemetry {
-                errors_timeout: 1,
-                ..Default::default()
-            };
+                let (client, handle) = get_test_client(&server.url("/"), &shared_runtime);
+                client.start().await;
+                let _ = client.send(&data);
+                // Wait for send to be processed
+                sleep(Duration::from_millis(1)).await;
 
-            let (client, handle) = get_test_client(&server.url("/"), &shared_runtime);
-            client.start().await;
-            let _ = client.send(&data);
-            // Wait for send to be processed
-            sleep(Duration::from_millis(1)).await;
-
-            handle.stop().await.expect("Failed to stop worker");
-            assert!(
-                poll_for_mock_hit(&mut telemetry_srv, 1000, 10, 1, false).await,
-                "telemetry server did not receive calls within timeout"
-            );
-        });
+                handle.stop().await.expect("Failed to stop worker");
+                assert!(
+                    poll_for_mock_hit(&mut telemetry_srv, 1000, 10, 1, false).await,
+                    "telemetry server did not receive calls within timeout"
+                );
+            })
+            .expect("Failed to get runtime");
     }
 
     #[cfg_attr(miri, ignore)]
@@ -505,34 +504,34 @@ mod tests {
     fn errors_network_test() {
         let payload = Regex::new(r#""metric":"trace_api.errors","points":\[\[\d+,1\.0\]\],"tags":\["src_library:libdatadog","type:network"\],"common":true,"type":"count"#).unwrap();
         let shared_runtime = SharedRuntime::new().expect("Failed to create runtime");
-        let rt = shared_runtime.runtime().expect("Failed to get runtime");
+        shared_runtime
+            .block_on(async {
+                let server = MockServer::start_async().await;
+                let mut telemetry_srv = server
+                    .mock_async(|when, then| {
+                        when.method(POST).body_matches(payload);
+                        then.status(200).body("");
+                    })
+                    .await;
 
-        rt.block_on(async {
-            let server = MockServer::start_async().await;
-            let mut telemetry_srv = server
-                .mock_async(|when, then| {
-                    when.method(POST).body_matches(payload);
-                    then.status(200).body("");
-                })
-                .await;
+                let data = SendPayloadTelemetry {
+                    errors_network: 1,
+                    ..Default::default()
+                };
 
-            let data = SendPayloadTelemetry {
-                errors_network: 1,
-                ..Default::default()
-            };
+                let (client, handle) = get_test_client(&server.url("/"), &shared_runtime);
+                client.start().await;
+                let _ = client.send(&data);
+                // Wait for send to be processed
+                sleep(Duration::from_millis(1)).await;
 
-            let (client, handle) = get_test_client(&server.url("/"), &shared_runtime);
-            client.start().await;
-            let _ = client.send(&data);
-            // Wait for send to be processed
-            sleep(Duration::from_millis(1)).await;
-
-            handle.stop().await.expect("Failed to stop worker");
-            assert!(
-                poll_for_mock_hit(&mut telemetry_srv, 1000, 10, 1, false).await,
-                "telemetry server did not receive calls within timeout"
-            );
-        });
+                handle.stop().await.expect("Failed to stop worker");
+                assert!(
+                    poll_for_mock_hit(&mut telemetry_srv, 1000, 10, 1, false).await,
+                    "telemetry server did not receive calls within timeout"
+                );
+            })
+            .expect("Failed to get runtime");
     }
 
     #[cfg_attr(miri, ignore)]
@@ -540,34 +539,34 @@ mod tests {
     fn errors_status_code_test() {
         let payload = Regex::new(r#""metric":"trace_api.errors","points":\[\[\d+,1\.0\]\],"tags":\["src_library:libdatadog","type:status_code"\],"common":true,"type":"count"#).unwrap();
         let shared_runtime = SharedRuntime::new().expect("Failed to create runtime");
-        let rt = shared_runtime.runtime().expect("Failed to get runtime");
+        shared_runtime
+            .block_on(async {
+                let server = MockServer::start_async().await;
+                let mut telemetry_srv = server
+                    .mock_async(|when, then| {
+                        when.method(POST).body_matches(payload);
+                        then.status(200).body("");
+                    })
+                    .await;
 
-        rt.block_on(async {
-            let server = MockServer::start_async().await;
-            let mut telemetry_srv = server
-                .mock_async(|when, then| {
-                    when.method(POST).body_matches(payload);
-                    then.status(200).body("");
-                })
-                .await;
+                let data = SendPayloadTelemetry {
+                    errors_status_code: 1,
+                    ..Default::default()
+                };
 
-            let data = SendPayloadTelemetry {
-                errors_status_code: 1,
-                ..Default::default()
-            };
+                let (client, handle) = get_test_client(&server.url("/"), &shared_runtime);
+                client.start().await;
+                let _ = client.send(&data);
+                // Wait for send to be processed
+                sleep(Duration::from_millis(1)).await;
 
-            let (client, handle) = get_test_client(&server.url("/"), &shared_runtime);
-            client.start().await;
-            let _ = client.send(&data);
-            // Wait for send to be processed
-            sleep(Duration::from_millis(1)).await;
-
-            handle.stop().await.expect("Failed to stop worker");
-            assert!(
-                poll_for_mock_hit(&mut telemetry_srv, 1000, 10, 1, false).await,
-                "telemetry server did not receive calls within timeout"
-            );
-        });
+                handle.stop().await.expect("Failed to stop worker");
+                assert!(
+                    poll_for_mock_hit(&mut telemetry_srv, 1000, 10, 1, false).await,
+                    "telemetry server did not receive calls within timeout"
+                );
+            })
+            .expect("Failed to get runtime");
     }
 
     #[cfg_attr(miri, ignore)]
@@ -575,34 +574,34 @@ mod tests {
     fn chunks_sent_test() {
         let payload = Regex::new(r#""metric":"trace_chunks_sent","points":\[\[\d+,1\.0\]\],"tags":\["src_library:libdatadog"\],"common":true,"type":"count"#).unwrap();
         let shared_runtime = SharedRuntime::new().expect("Failed to create runtime");
-        let rt = shared_runtime.runtime().expect("Failed to get runtime");
+        shared_runtime
+            .block_on(async {
+                let server = MockServer::start_async().await;
+                let mut telemetry_srv = server
+                    .mock_async(|when, then| {
+                        when.method(POST).body_matches(payload);
+                        then.status(200).body("");
+                    })
+                    .await;
 
-        rt.block_on(async {
-            let server = MockServer::start_async().await;
-            let mut telemetry_srv = server
-                .mock_async(|when, then| {
-                    when.method(POST).body_matches(payload);
-                    then.status(200).body("");
-                })
-                .await;
+                let data = SendPayloadTelemetry {
+                    chunks_sent: 1,
+                    ..Default::default()
+                };
 
-            let data = SendPayloadTelemetry {
-                chunks_sent: 1,
-                ..Default::default()
-            };
+                let (client, handle) = get_test_client(&server.url("/"), &shared_runtime);
+                client.start().await;
+                let _ = client.send(&data);
+                // Wait for send to be processed
+                sleep(Duration::from_millis(1)).await;
 
-            let (client, handle) = get_test_client(&server.url("/"), &shared_runtime);
-            client.start().await;
-            let _ = client.send(&data);
-            // Wait for send to be processed
-            sleep(Duration::from_millis(1)).await;
-
-            handle.stop().await.expect("Failed to stop worker");
-            assert!(
-                poll_for_mock_hit(&mut telemetry_srv, 1000, 10, 1, false).await,
-                "telemetry server did not receive calls within timeout"
-            );
-        });
+                handle.stop().await.expect("Failed to stop worker");
+                assert!(
+                    poll_for_mock_hit(&mut telemetry_srv, 1000, 10, 1, false).await,
+                    "telemetry server did not receive calls within timeout"
+                );
+            })
+            .expect("Failed to get runtime");
     }
 
     #[cfg_attr(miri, ignore)]
@@ -610,34 +609,34 @@ mod tests {
     fn chunks_dropped_send_failure_test() {
         let payload = Regex::new(r#""metric":"trace_chunks_dropped","points":\[\[\d+,1\.0\]\],"tags":\["src_library:libdatadog","reason:send_failure"\],"common":true,"type":"count"#).unwrap();
         let shared_runtime = SharedRuntime::new().expect("Failed to create runtime");
-        let rt = shared_runtime.runtime().expect("Failed to get runtime");
+        shared_runtime
+            .block_on(async {
+                let server = MockServer::start_async().await;
+                let mut telemetry_srv = server
+                    .mock_async(|when, then| {
+                        when.method(POST).body_matches(payload);
+                        then.status(200).body("");
+                    })
+                    .await;
 
-        rt.block_on(async {
-            let server = MockServer::start_async().await;
-            let mut telemetry_srv = server
-                .mock_async(|when, then| {
-                    when.method(POST).body_matches(payload);
-                    then.status(200).body("");
-                })
-                .await;
+                let data = SendPayloadTelemetry {
+                    chunks_dropped_send_failure: 1,
+                    ..Default::default()
+                };
 
-            let data = SendPayloadTelemetry {
-                chunks_dropped_send_failure: 1,
-                ..Default::default()
-            };
+                let (client, handle) = get_test_client(&server.url("/"), &shared_runtime);
+                client.start().await;
+                let _ = client.send(&data);
+                // Wait for send to be processed
+                sleep(Duration::from_millis(1)).await;
 
-            let (client, handle) = get_test_client(&server.url("/"), &shared_runtime);
-            client.start().await;
-            let _ = client.send(&data);
-            // Wait for send to be processed
-            sleep(Duration::from_millis(1)).await;
-
-            handle.stop().await.expect("Failed to stop worker");
-            assert!(
-                poll_for_mock_hit(&mut telemetry_srv, 1000, 10, 1, false).await,
-                "telemetry server did not receive calls within timeout"
-            );
-        });
+                handle.stop().await.expect("Failed to stop worker");
+                assert!(
+                    poll_for_mock_hit(&mut telemetry_srv, 1000, 10, 1, false).await,
+                    "telemetry server did not receive calls within timeout"
+                );
+            })
+            .expect("Failed to get runtime");
     }
 
     #[cfg_attr(miri, ignore)]
@@ -645,34 +644,34 @@ mod tests {
     fn chunks_dropped_p0_test() {
         let payload = Regex::new(r#""metric":"trace_chunks_dropped","points":\[\[\d+,1\.0\]\],"tags":\["src_library:libdatadog","reason:p0_drop"\],"common":true,"type":"count"#).unwrap();
         let shared_runtime = SharedRuntime::new().expect("Failed to create runtime");
-        let rt = shared_runtime.runtime().expect("Failed to get runtime");
+        shared_runtime
+            .block_on(async {
+                let server = MockServer::start_async().await;
+                let mut telemetry_srv = server
+                    .mock_async(|when, then| {
+                        when.method(POST).body_matches(payload);
+                        then.status(200).body("");
+                    })
+                    .await;
 
-        rt.block_on(async {
-            let server = MockServer::start_async().await;
-            let mut telemetry_srv = server
-                .mock_async(|when, then| {
-                    when.method(POST).body_matches(payload);
-                    then.status(200).body("");
-                })
-                .await;
+                let data = SendPayloadTelemetry {
+                    chunks_dropped_p0: 1,
+                    ..Default::default()
+                };
 
-            let data = SendPayloadTelemetry {
-                chunks_dropped_p0: 1,
-                ..Default::default()
-            };
+                let (client, handle) = get_test_client(&server.url("/"), &shared_runtime);
+                client.start().await;
+                let _ = client.send(&data);
+                // Wait for send to be processed
+                sleep(Duration::from_millis(1)).await;
 
-            let (client, handle) = get_test_client(&server.url("/"), &shared_runtime);
-            client.start().await;
-            let _ = client.send(&data);
-            // Wait for send to be processed
-            sleep(Duration::from_millis(1)).await;
-
-            handle.stop().await.expect("Failed to stop worker");
-            assert!(
-                poll_for_mock_hit(&mut telemetry_srv, 1000, 10, 1, false).await,
-                "telemetry server did not receive calls within timeout"
-            );
-        });
+                handle.stop().await.expect("Failed to stop worker");
+                assert!(
+                    poll_for_mock_hit(&mut telemetry_srv, 1000, 10, 1, false).await,
+                    "telemetry server did not receive calls within timeout"
+                );
+            })
+            .expect("Failed to get runtime");
     }
 
     #[cfg_attr(miri, ignore)]
@@ -680,34 +679,34 @@ mod tests {
     fn chunks_dropped_serialization_error_test() {
         let payload = Regex::new(r#""metric":"trace_chunks_dropped","points":\[\[\d+,1\.0\]\],"tags":\["src_library:libdatadog","reason:serialization_error"\],"common":true,"type":"count"#).unwrap();
         let shared_runtime = SharedRuntime::new().expect("Failed to create runtime");
-        let rt = shared_runtime.runtime().expect("Failed to get runtime");
+        shared_runtime
+            .block_on(async {
+                let server = MockServer::start_async().await;
+                let mut telemetry_srv = server
+                    .mock_async(|when, then| {
+                        when.method(POST).body_matches(payload);
+                        then.status(200).body("");
+                    })
+                    .await;
 
-        rt.block_on(async {
-            let server = MockServer::start_async().await;
-            let mut telemetry_srv = server
-                .mock_async(|when, then| {
-                    when.method(POST).body_matches(payload);
-                    then.status(200).body("");
-                })
-                .await;
+                let data = SendPayloadTelemetry {
+                    chunks_dropped_serialization_error: 1,
+                    ..Default::default()
+                };
 
-            let data = SendPayloadTelemetry {
-                chunks_dropped_serialization_error: 1,
-                ..Default::default()
-            };
+                let (client, handle) = get_test_client(&server.url("/"), &shared_runtime);
+                client.start().await;
+                let _ = client.send(&data);
+                // Wait for send to be processed
+                sleep(Duration::from_millis(1)).await;
 
-            let (client, handle) = get_test_client(&server.url("/"), &shared_runtime);
-            client.start().await;
-            let _ = client.send(&data);
-            // Wait for send to be processed
-            sleep(Duration::from_millis(1)).await;
-
-            handle.stop().await.expect("Failed to stop worker");
-            assert!(
-                poll_for_mock_hit(&mut telemetry_srv, 1000, 10, 1, false).await,
-                "telemetry server did not receive calls within timeout"
-            );
-        });
+                handle.stop().await.expect("Failed to stop worker");
+                assert!(
+                    poll_for_mock_hit(&mut telemetry_srv, 1000, 10, 1, false).await,
+                    "telemetry server did not receive calls within timeout"
+                );
+            })
+            .expect("Failed to get runtime");
     }
 
     #[test]
@@ -853,44 +852,42 @@ mod tests {
     #[test]
     fn runtime_id_test() {
         let shared_runtime = SharedRuntime::new().expect("Failed to create runtime");
-        let rt = shared_runtime.runtime().expect("Failed to get runtime");
+        shared_runtime
+            .block_on(async {
+                let server = MockServer::start_async().await;
+                let mut telemetry_srv = server
+                    .mock_async(|when, then| {
+                        when.method(POST).body_includes(r#""runtime_id":"foo""#);
+                        then.status(200).body("");
+                    })
+                    .await;
 
-        rt.block_on(async {
-            let server = MockServer::start_async().await;
-            let mut telemetry_srv = server
-                .mock_async(|when, then| {
-                    when.method(POST).body_includes(r#""runtime_id":"foo""#);
-                    then.status(200).body("");
-                })
-                .await;
+                let (client, handle) = get_test_client(&server.url("/"), &shared_runtime);
+                client.start().await;
+                client
+                    .send(&SendPayloadTelemetry {
+                        requests_count: 1,
+                        ..Default::default()
+                    })
+                    .unwrap();
+                // Wait for send to be processed
+                sleep(Duration::from_millis(10)).await;
 
-            let (client, handle) = get_test_client(&server.url("/"), &shared_runtime);
-            client.start().await;
-            client
-                .send(&SendPayloadTelemetry {
-                    requests_count: 1,
-                    ..Default::default()
-                })
-                .unwrap();
-            // Wait for send to be processed
-            sleep(Duration::from_millis(10)).await;
-
-            handle.stop().await.expect("Failed to stop worker");
-            assert!(
-                poll_for_mock_hit(&mut telemetry_srv, 1000, 10, 1, false).await,
-                "telemetry server did not receive calls within timeout"
-            );
-            // One payload generate-metrics
-        });
+                handle.stop().await.expect("Failed to stop worker");
+                assert!(
+                    poll_for_mock_hit(&mut telemetry_srv, 1000, 10, 1, false).await,
+                    "telemetry server did not receive calls within timeout"
+                );
+                // One payload generate-metrics
+            })
+            .expect("Failed to get runtime");
     }
 
     #[cfg_attr(miri, ignore)]
     #[test]
     fn application_metadata_test() {
         let shared_runtime = SharedRuntime::new().expect("Failed to create runtime");
-        let rt = shared_runtime.runtime().expect("Failed to get runtime");
-
-        rt.block_on(async {
+        shared_runtime.block_on(async {
             let server = MockServer::start_async().await;
             let mut telemetry_srv = server
                 .mock_async(|when, then| {
@@ -918,6 +915,6 @@ mod tests {
                 "telemetry server did not receive calls within timeout"
             );
             // One payload generate-metrics
-        });
+        }).expect("Failed to get runtime");
     }
 }

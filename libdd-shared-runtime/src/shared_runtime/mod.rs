@@ -293,24 +293,19 @@ impl SharedRuntime {
         Ok(())
     }
 
-    /// Get a reference to the underlying runtime or create a single-threaded one.
+    /// Run a future to completion on the shared runtime, blocking the current thread.
     ///
-    /// This allows external code to spawn additional tasks on the runtime if needed.
-    ///
-    /// # Warning
-    /// Since this method can return a single-threaded runtime it should only be used to
-    /// execute async code with `block_on` if you need to spawn async code on it without blocking,
-    /// you should us a `Worker` instead.
+    /// If the runtime is not available (e.g. after calling before_fork), a temporary
+    /// single-threaded runtime is used.
     ///
     /// # Errors
-    /// Returns an error if it fails to create a runtime.
-    pub fn runtime(&self) -> Result<Arc<Runtime>, io::Error> {
-        match self.runtime.lock_or_panic().as_ref() {
-            None => Ok(Arc::new(
-                Builder::new_current_thread().enable_all().build()?,
-            )),
-            Some(runtime) => Ok(runtime.clone()),
-        }
+    /// Returns an error if it fails to create a fallback runtime.
+    pub fn block_on<F: std::future::Future>(&self, f: F) -> Result<F::Output, io::Error> {
+        let runtime = match self.runtime.lock_or_panic().as_ref() {
+            None => Arc::new(Builder::new_current_thread().enable_all().build()?),
+            Some(runtime) => runtime.clone(),
+        };
+        Ok(runtime.block_on(f))
     }
 
     /// Shutdown the runtime and all workers synchronously with optional timeout.
@@ -460,4 +455,3 @@ mod tests {
         assert!(shared_runtime.after_fork_child().is_ok());
     }
 }
-
