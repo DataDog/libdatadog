@@ -11,29 +11,34 @@ use std::{
 };
 
 use crate::trace_exporter::TracerMetadata;
-use libdd_common::{worker::Worker, Endpoint, HttpClient};
+use libdd_capabilities::{HttpClientTrait, MaybeSend};
+use libdd_common::{worker::Worker, Endpoint};
 use libdd_trace_protobuf::pb;
 use libdd_trace_stats::span_concentrator::SpanConcentrator;
 use libdd_trace_utils::send_with_retry::{send_with_retry, RetryStrategy};
+#[cfg(not(target_arch = "wasm32"))]
 use tokio::select;
 use tokio_util::sync::CancellationToken;
 use tracing::error;
 
 const STATS_ENDPOINT_PATH: &str = "/v0.6/stats";
 
-/// An exporter that concentrates and sends stats to the agent
+/// An exporter that concentrates and sends stats to the agent.
+///
+/// `H` is the HTTP client implementation, see [`HttpClientTrait`]. Leaf crates
+/// pin it to a concrete type.
 #[derive(Debug)]
-pub struct StatsExporter {
+pub struct StatsExporter<H: HttpClientTrait> {
     flush_interval: time::Duration,
     concentrator: Arc<Mutex<SpanConcentrator>>,
     endpoint: Endpoint,
     meta: TracerMetadata,
     sequence_id: AtomicU64,
     cancellation_token: CancellationToken,
-    client: HttpClient,
+    client: H,
 }
 
-impl StatsExporter {
+impl<H: HttpClientTrait> StatsExporter<H> {
     /// Return a new StatsExporter
     ///
     /// - `flush_interval` the interval on which the concentrator is flushed
@@ -48,7 +53,6 @@ impl StatsExporter {
         meta: TracerMetadata,
         endpoint: Endpoint,
         cancellation_token: CancellationToken,
-        client: HttpClient,
     ) -> Self {
         Self {
             flush_interval,
@@ -57,7 +61,7 @@ impl StatsExporter {
             meta,
             sequence_id: AtomicU64::new(0),
             cancellation_token,
-            client,
+            client: H::new_client(),
         }
     }
 
@@ -131,13 +135,19 @@ impl StatsExporter {
     }
 }
 
-impl Worker for StatsExporter {
+impl<H: HttpClientTrait + MaybeSend + Sync + 'static> Worker for StatsExporter<H> {
     /// Run loop of the stats exporter
     ///
     /// Once started, the stats exporter will flush and send stats on every `self.flush_interval`.
     /// If the `self.cancellation_token` is cancelled, the exporter will force flush all stats and
     /// return.
     async fn run(&mut self) {
+        #[cfg(target_arch = "wasm32")]
+        {
+            return;
+        }
+
+        #[cfg(not(target_arch = "wasm32"))]
         loop {
             select! {
                 _ = self.cancellation_token.cancelled() => {
@@ -194,7 +204,7 @@ mod tests {
     use super::*;
     use httpmock::prelude::*;
     use httpmock::MockServer;
-    use libdd_common::http_common::new_default_client;
+    use libdd_capabilities_impl::NativeCapabilities;
     use libdd_trace_utils::span::{trace_utils, v04::SpanSlice};
     use libdd_trace_utils::test_utils::poll_for_mock_hit;
     use time::Duration;
@@ -208,8 +218,8 @@ mod tests {
     /// Fails to compile if stats exporter is not Send and Sync
     #[test]
     fn test_stats_exporter_sync_send() {
-        let _ = is_send::<StatsExporter>;
-        let _ = is_sync::<StatsExporter>;
+        let _ = is_send::<StatsExporter<NativeCapabilities>>;
+        let _ = is_sync::<StatsExporter<NativeCapabilities>>;
     }
 
     fn get_test_metadata() -> TracerMetadata {
@@ -267,13 +277,12 @@ mod tests {
             })
             .await;
 
-        let stats_exporter = StatsExporter::new(
+        let stats_exporter = StatsExporter::<NativeCapabilities>::new(
             BUCKETS_DURATION,
             Arc::new(Mutex::new(get_test_concentrator())),
             get_test_metadata(),
             Endpoint::from_url(stats_url_from_agent_url(&server.url("/")).unwrap()),
             CancellationToken::new(),
-            new_default_client(),
         );
 
         let send_status = stats_exporter.send(true).await;
@@ -295,13 +304,12 @@ mod tests {
             })
             .await;
 
-        let stats_exporter = StatsExporter::new(
+        let stats_exporter = StatsExporter::<NativeCapabilities>::new(
             BUCKETS_DURATION,
             Arc::new(Mutex::new(get_test_concentrator())),
             get_test_metadata(),
             Endpoint::from_url(stats_url_from_agent_url(&server.url("/")).unwrap()),
             CancellationToken::new(),
-            new_default_client(),
         );
 
         let send_status = stats_exporter.send(true).await;
@@ -329,13 +337,12 @@ mod tests {
             })
             .await;
 
-        let mut stats_exporter = StatsExporter::new(
+        let mut stats_exporter = StatsExporter::<NativeCapabilities>::new(
             BUCKETS_DURATION,
             Arc::new(Mutex::new(get_test_concentrator())),
             get_test_metadata(),
             Endpoint::from_url(stats_url_from_agent_url(&server.url("/")).unwrap()),
             CancellationToken::new(),
-            new_default_client(),
         );
 
         tokio::time::pause();
@@ -371,13 +378,12 @@ mod tests {
         let buckets_duration = Duration::from_secs(10);
         let cancellation_token = CancellationToken::new();
 
-        let mut stats_exporter = StatsExporter::new(
+        let mut stats_exporter = StatsExporter::<NativeCapabilities>::new(
             buckets_duration,
             Arc::new(Mutex::new(get_test_concentrator())),
             get_test_metadata(),
             Endpoint::from_url(stats_url_from_agent_url(&server.url("/")).unwrap()),
             cancellation_token.clone(),
-            new_default_client(),
         );
 
         tokio::spawn(async move {

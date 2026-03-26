@@ -5,9 +5,9 @@ use super::TraceSendData;
 use crate::agent_remote_config::AgentRemoteConfigWriter;
 use datadog_ipc::platform::NamedShmHandle;
 use futures::future::join_all;
-use http_body_util::BodyExt;
-use libdd_common::http_common::new_default_client;
-use libdd_common::{Endpoint, HttpClient, MutexExt};
+use libdd_capabilities_impl::HttpClientTrait;
+use libdd_capabilities_impl::NativeCapabilities;
+use libdd_common::{Endpoint, MutexExt};
 use libdd_trace_utils::trace_utils;
 use libdd_trace_utils::trace_utils::SendData;
 use libdd_trace_utils::trace_utils::SendDataResult;
@@ -96,7 +96,7 @@ pub(crate) struct TraceFlusher {
     pub(crate) min_force_drop_size_bytes: AtomicU32, // put a limit on memory usage
     remote_config: Mutex<AgentRemoteConfigs>,
     pub metrics: Mutex<TraceFlusherMetrics>,
-    client: HttpClient,
+    client: NativeCapabilities,
 }
 impl Default for TraceFlusher {
     fn default() -> Self {
@@ -107,7 +107,7 @@ impl Default for TraceFlusher {
             min_force_drop_size_bytes: AtomicU32::new(trace_utils::MAX_PAYLOAD_SIZE as u32),
             remote_config: Mutex::new(Default::default()),
             metrics: Mutex::new(Default::default()),
-            client: new_default_client(),
+            client: NativeCapabilities::new_client(),
         }
     }
 }
@@ -255,12 +255,7 @@ impl TraceFlusher {
             Ok(response) => {
                 if endpoint.api_key.is_none() {
                     // not when intake
-                    match response.into_body().collect().await {
-                        Ok(body) => {
-                            self.write_remote_configs(endpoint.clone(), body.to_bytes().to_vec())
-                        }
-                        Err(e) => error!("Error receiving agent configuration: {e:?}"),
-                    }
+                    self.write_remote_configs(endpoint.clone(), response.into_body().to_vec());
                 }
                 info!("Successfully flushed traces to {endpoint:?}");
             }
