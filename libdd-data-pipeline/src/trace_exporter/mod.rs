@@ -14,9 +14,9 @@ use self::agent_response::AgentResponse;
 use self::metrics::MetricsEmitter;
 use self::stats::StatsComputationStatus;
 use self::trace_serializer::TraceSerializer;
-use crate::agent_info::ResponseObserver;
 #[cfg(not(target_arch = "wasm32"))]
 use crate::agent_info::AgentInfoFetcher;
+use crate::agent_info::ResponseObserver;
 #[cfg(not(target_arch = "wasm32"))]
 use crate::pausable_worker::PausableWorker;
 #[cfg(not(target_arch = "wasm32"))]
@@ -26,9 +26,9 @@ use crate::telemetry::{SendPayloadTelemetry, TelemetryClient};
 use crate::trace_exporter::agent_response::{
     AgentResponsePayloadVersion, DATADOG_RATES_PAYLOAD_VERSION_HEADER,
 };
-use crate::trace_exporter::error::{RequestError, TraceExporterError};
 #[cfg(not(target_arch = "wasm32"))]
 use crate::trace_exporter::error::InternalErrorKind;
+use crate::trace_exporter::error::{RequestError, TraceExporterError};
 use crate::{
     agent_info::{self, schema::AgentInfo},
     health_metrics,
