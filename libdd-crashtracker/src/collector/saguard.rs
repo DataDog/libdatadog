@@ -75,7 +75,8 @@ impl<const N: usize> SaGuard<N> {
 
 impl<const N: usize> Drop for SaGuard<N> {
     fn drop(&mut self) {
-        // Restore the original signal actions
+        // Restore the original signal actions first, before unblocking signals.
+        // This prevents a window where deferred signals could fire with the wrong handler.
         for &(signal, old_sigaction) in &self.old_sigactions {
             if let Some(old_sigaction) = old_sigaction {
                 unsafe {
@@ -84,7 +85,7 @@ impl<const N: usize> Drop for SaGuard<N> {
             }
         }
 
-        // Restore the original signal mask
+        // Now restore the original signal mask, which will deliver any deferred signals
         let _ = signal::sigprocmask(
             signal::SigmaskHow::SIG_SETMASK,
             Some(&self.old_sigmask),
@@ -179,5 +180,57 @@ mod single_threaded_tests {
         // Both signals should be safely ignored
         signal::kill(Pid::this(), Signal::SIGUSR1).unwrap();
         signal::kill(Pid::this(), Signal::SIGUSR2).unwrap();
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn block_only_defers_signal_delivery() -> anyhow::Result<()> {
+        let _test_lock = SIGNAL_TEST_LOCK.lock().unwrap();
+        static SIGUSR1_COUNT: AtomicBool = AtomicBool::new(false);
+
+        extern "C" fn sigusr1_handler(_: libc::c_int) {
+            SIGUSR1_COUNT.store(true, Ordering::SeqCst);
+        }
+
+        let sig = Signal::SIGUSR1;
+
+        // Install a known handler and save the previous one so we can restore it
+        let old_action = unsafe {
+            signal::sigaction(
+                sig,
+                &SigAction::new(
+                    SigHandler::Handler(sigusr1_handler),
+                    SaFlags::empty(),
+                    signal::SigSet::empty(),
+                ),
+            )?
+        };
+
+        // Reset handler state
+        SIGUSR1_COUNT.store(false, Ordering::SeqCst);
+
+        {
+            let _guard = SaGuard::<1>::new_with_modes(&[(sig, SuppressionMode::BlockOnly)])?;
+
+            // Send SIGUSR1 to ourselves while it is blocked
+            signal::raise(sig)?;
+
+            // Because the signal is blocked, the handler should not have run yet
+            assert!(
+                !SIGUSR1_COUNT.load(Ordering::SeqCst),
+                "Handler should not be called while signal is blocked by BlockOnly guard"
+            );
+        } // guard drops here; old mask is restored, SIGUSR1 should now be delivered
+          // After unblocking, the signal should be handled
+        assert!(
+            SIGUSR1_COUNT.load(Ordering::SeqCst),
+            "Handler should be called after BlockOnly guard drops and pending signal is delivered"
+        );
+        // Restore the prev disposition
+        unsafe {
+            signal::sigaction(sig, &old_action)?;
+        }
+
+        Ok(())
     }
 }

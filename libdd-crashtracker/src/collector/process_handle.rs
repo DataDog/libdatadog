@@ -27,18 +27,25 @@ impl ProcessHandle {
             let kill_result = unsafe { libc::kill(pid, libc::SIGKILL) };
             if kill_result != 0 {
                 let errno = Errno::last_raw();
-                // ESRCH means the child has already exited and no longer exists, which is fine.
-                debug_assert_eq!(
-                    errno,
-                    libc::ESRCH,
-                    "kill failed with result: {kill_result}, errno: {errno}"
-                );
+                if errno == libc::ESRCH {
+                    // Child has already exited, which is fine; no action needed
+                } else {
+                    eprintln!("Warning: kill({pid}, SIGKILL) failed with errno {errno}");
+                    debug_assert_eq!(
+                        errno,
+                        libc::ESRCH,
+                        "kill failed with result: {kill_result}, errno: {errno}"
+                    );
+                }
             }
 
             // `self` is actually a handle to a child process and `self.pid` is the child process's
             // pid.
             let child_pid = Pid::from_raw(pid);
             let result = reap_child_non_blocking(child_pid, timeout_manager);
+            // Ok(true):  child was successfully reaped
+            // Ok(false): child was already reaped (ECHILD) -> no zombie risk
+            //            This can happen because we defer SIGCHLD during crash handling
             debug_assert!(
                 matches!(result, Ok(true) | Ok(false)),
                 "reap_child_non_blocking failed: {result:?}"
