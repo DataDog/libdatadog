@@ -69,7 +69,7 @@ jobs:
           fi
 
           # Get libdd-* direct dependencies only from the root manifest package.
-          LIBDD_DEPENDENCIES=$(cargo metadata --manifest-path "$TOML_FILE" --format-version=1 --no-deps | jq -c '.packages[] | [.dependencies[]?.name | select(startswith("libdd-"))] | unique')
+          LIBDD_DEPENDENCIES=$(cargo metadata --manifest-path "$TOML_FILE" --format-version=1 --no-deps | jq -c '[.packages[] | select(.name == "datadog-opentelemetry") | .dependencies[]?.name | select(startswith("libdd-"))] | unique')
 
           echo "LIBDD_DEPENDENCIES: $LIBDD_DEPENDENCIES"
 
