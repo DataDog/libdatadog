@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use log::{debug, error};
+use serde::Deserialize;
 use std::{collections::HashSet, env};
 
 use libdd_common::config::parse_env;
@@ -11,13 +12,15 @@ use crate::{
     sql::SqlObfuscateConfig,
 };
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Deserialize)]
+#[serde(default, deny_unknown_fields)]
 pub struct MemcachedConfig {
     pub enabled: bool,
     pub keep_command: bool,
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Deserialize)]
+#[serde(default, deny_unknown_fields)]
 pub struct CreditCardConfig {
     pub enabled: bool,
     pub luhn: bool,
@@ -26,7 +29,8 @@ pub struct CreditCardConfig {
 
 pub type JsonStringTransformer = fn(&str) -> String;
 
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Default, Clone, Deserialize)]
+#[serde(default, deny_unknown_fields)]
 pub struct JsonObfuscatorConfig {
     pub enabled: bool,
     /// `keep_keys` will specify a set of keys for which their values will
@@ -34,9 +38,11 @@ pub struct JsonObfuscatorConfig {
     pub keep_keys: HashSet<String>,
     /// `transform_keys` will specify a set of keys for which their values will be transformed
     /// through `transformer`
+    #[serde(skip)]
     pub transform_keys: HashSet<String>,
     /// `transformer` is an optional String -> String function which will transform values
     /// specified in `transform_keys`
+    #[serde(skip)]
     pub transformer: Option<JsonStringTransformer>,
 }
 
@@ -56,21 +62,32 @@ impl JsonObfuscatorConfig {
     }
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Deserialize)]
+#[serde(default, deny_unknown_fields)]
 pub struct RedisConfig {
     pub enabled: bool,
     pub remove_all_args: bool,
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct HttpConfig {
+    // pub enabled: bool,
+    pub remove_query_string: bool,
+    pub remove_paths_with_digits: bool,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(default, deny_unknown_fields)]
 pub struct ObfuscationConfig {
+    // Not tested in ./tests/test_span_obfuscation.rs so it's not needed
+    #[serde(skip)]
     pub tag_replace_rules: Option<Vec<ReplaceRule>>,
-    pub http_remove_query_string: bool,
-    pub http_remove_paths_with_digits: bool,
+    pub http: HttpConfig,
     pub memcached: MemcachedConfig,
     pub redis: RedisConfig,
     pub valkey: RedisConfig,
-    pub credit_card: CreditCardConfig,
+    pub credit_cards: CreditCardConfig,
     pub sql: SqlObfuscateConfig,
     pub elasticsearch: JsonObfuscatorConfig,
     pub opensearch: JsonObfuscatorConfig,
@@ -106,13 +123,15 @@ impl ObfuscationConfig {
 
         Ok(ObfuscationConfig {
             tag_replace_rules,
-            http_remove_query_string,
-            http_remove_paths_with_digits: http_remove_path_digits,
+            http: HttpConfig {
+                remove_query_string: http_remove_query_string,
+                remove_paths_with_digits: http_remove_path_digits,
+            },
             memcached: MemcachedConfig {
                 enabled: obfuscate_memcached,
                 keep_command: true,
             },
-            credit_card: CreditCardConfig {
+            credit_cards: CreditCardConfig {
                 enabled: true,
                 luhn: true,
                 keep_values: HashSet::new(),

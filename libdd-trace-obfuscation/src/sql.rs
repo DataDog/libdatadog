@@ -48,7 +48,7 @@ pub enum SqlObfuscationMode {
 }
 
 /// Configuration for SQL obfuscation
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Default, Clone, Deserialize)]
 pub struct SqlObfuscateConfig {
     pub replace_digits: bool,
     pub keep_sql_alias: bool,

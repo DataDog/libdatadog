@@ -1,7 +1,7 @@
 // Copyright 2023-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use libdd_trace_protobuf::pb::{self, attribute_array_value::AttributeArrayValueType};
+use libdd_trace_protobuf::pb::{self, attribute_any_value::AttributeAnyValueType};
 
 use crate::{
     credit_cards::is_card_number,
@@ -43,7 +43,7 @@ pub fn obfuscate_span(span: &mut pb::Span, config: &ObfuscationConfig) {
     }
 
     if let Some(credit_card) = span.meta.get_mut(TAG_CARD_NUMBER) {
-        if is_card_number(&credit_card, config.credit_card.luhn) {
+        if is_card_number(&credit_card, config.credit_cards.luhn) {
             *credit_card = "?".to_string();
         }
     }
@@ -52,8 +52,8 @@ pub fn obfuscate_span(span: &mut pb::Span, config: &ObfuscationConfig) {
             if let Some(url) = span.meta.get_mut(TAG_HTTPURL) {
                 *url = obfuscate_url_string(
                     url,
-                    config.http_remove_query_string,
-                    config.http_remove_paths_with_digits,
+                    config.http.remove_query_string,
+                    config.http.remove_paths_with_digits,
                 )
             }
         }
@@ -138,7 +138,7 @@ pub fn obfuscate_span(span: &mut pb::Span, config: &ObfuscationConfig) {
 }
 
 pub fn obfuscate_span_event(event: &mut pb::SpanEvent, config: &ObfuscationConfig) {
-    if config.credit_card.enabled {
+    if config.credit_cards.enabled {
         for (k, v) in event.attributes.iter_mut() {
             if !should_obfuscate_cc_key(k, config) {
                 continue;
@@ -159,8 +159,9 @@ pub fn obfuscate_span_event(event: &mut pb::SpanEvent, config: &ObfuscationConfi
                     continue;
                 }
             };
-            if is_card_number(&str_value, config.credit_card.luhn) {
+            if is_card_number(&str_value, config.credit_cards.luhn) {
                 v.string_value = "?".to_string();
+                v.r#type = AttributeAnyValueType::StringValue.into();
             }
         }
     }
@@ -180,19 +181,9 @@ fn obfuscate_attribute_array(v: &mut pb::AttributeArray, config: &ObfuscationCon
                 elt.double_value.to_string()
             }
         };
-        let new_value = if is_card_number(&string_value, config.credit_card.luhn) {
-            "?".to_string()
-        } else {
-            string_value.clone()
-        };
-        if new_value != string_value {
-            *elt = pb::AttributeArrayValue {
-                r#type: AttributeArrayValueType::StringValue.into(),
-                string_value: new_value,
-                bool_value: false,
-                int_value: 0,
-                double_value: 0.0,
-            }
+        if is_card_number(&string_value, config.credit_cards.luhn) {
+            elt.string_value = "?".to_string();
+            elt.r#type = AttributeAnyValueType::StringValue.into();
         }
     }
 }
@@ -241,7 +232,7 @@ fn should_obfuscate_cc_key(key: &str, config: &ObfuscationConfig) -> bool {
     if key.starts_with("_") {
         return false;
     }
-    if config.credit_card.keep_values.contains(key) {
+    if config.credit_cards.keep_values.contains(key) {
         return false;
     }
     true
@@ -249,13 +240,9 @@ fn should_obfuscate_cc_key(key: &str, config: &ObfuscationConfig) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashSet;
-
-    use libdd_trace_utils::test_utils;
-
-    use crate::{obfuscation_config, replacer};
-
     use super::obfuscate_span;
+    use crate::{obfuscation_config, replacer};
+    use libdd_trace_utils::test_utils;
 
     #[test]
     fn test_obfuscates_span_url_strings() {
@@ -266,19 +253,9 @@ mod tests {
             "http://foo.com/id/123/page/q?search=bar&page=2".to_string(),
         );
         let obf_config = obfuscation_config::ObfuscationConfig {
-            tag_replace_rules: None,
-            http_remove_query_string: true,
-            http_remove_paths_with_digits: true,
-            memcached: obfuscation_config::MemcachedConfig {
-                enabled: false,
-                keep_command: false,
-            },
-            credit_card: {
-                obfuscation_config::CreditCardConfig {
-                    enabled: false,
-                    luhn: false,
-                    keep_values: HashSet::new(),
-                }
+            http: obfuscation_config::HttpConfig {
+                remove_query_string: true,
+                remove_paths_with_digits: true,
             },
             ..Default::default()
         };
@@ -302,8 +279,6 @@ mod tests {
         .unwrap();
         let obf_config = obfuscation_config::ObfuscationConfig {
             tag_replace_rules: Some(parsed_rules),
-            http_remove_query_string: false,
-            http_remove_paths_with_digits: false,
             ..Default::default()
         };
 
