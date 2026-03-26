@@ -12,8 +12,10 @@
 //!
 //! Readers are constrained to the same thread as the writer and operate like async-signal
 //! handlers: the writer thread is always stopped while a reader runs. There is thus no
-//! cross-thread synchronization concerns. The only hazard is compiler reordering or not committing
-//! writes to memory, which is handled using volatile writes.
+//! cross-thread synchronization concerns. The only hazard is compiler reordering, which is
+//! handled by making `valid` atomic and using compiler-only fences (equivalent to C's
+//! `atomic_signal_fence`) to keep field writes boxed between the `valid = 0` and `valid = 1`
+//! stores during in-place updates.
 
 #[cfg(target_os = "linux")]
 pub mod linux {
@@ -22,24 +24,43 @@ pub mod linux {
         mem,
         ops::{Deref, DerefMut},
         ptr::{self, NonNull},
+        sync::atomic::{compiler_fence, AtomicPtr, AtomicU8, Ordering},
     };
 
     extern "C" {
         /// Return the address of the current thread's `custom_labels_current_set_v2` local.
+        ///
+        /// **CAUTION**: do not use this directly, always go through [get_tls_slot] to read and
+        /// write it atomically.
         fn libdd_get_custom_labels_current_set_v2() -> *mut *mut c_void;
     }
 
-    /// Return a pointer to the TLS slot holding the context. The address calculation requires a
-    /// call to a C shim in order to use the TLSDESC dialect from Rust. Note that the returned
-    /// address is stable (per thread), so the result can be reused .
+    /// Return an atomic view of the TLS slot. The address calculation requires a call to a C shim
+    /// in order to use the TLSDESC dialect from Rust. The returned address is stable (per thread),
+    /// so the resulting atomic should be reused whenever possible, to reduce the number of calls
+    /// to this function.
     ///
-    /// Note that the address is read by an external process or a signal handler, so it should be
-    /// written to using [std::ptr::write_volatile].
-    #[allow(clippy::missing_safety_doc)]
-    fn get_tls_ptr() -> *mut *mut ThreadContextRecord {
-        // Safety: this is just an FFI call, but there's no particular pre-condition to uphold: the
-        // TLS slot should always be accessible.
-        unsafe { libdd_get_custom_labels_current_set_v2().cast() }
+    /// The slot is read by an async signal handler. Atomic operations should in general use
+    /// [Odering::Relaxed], but modifications to the record might need additional compiler-only
+    /// fences (see [ThreadContext::update] for an example).
+    fn get_tls_slot<'a>() -> &'a AtomicPtr<ThreadContextRecord> {
+        const {
+            assert!(
+                mem::align_of::<AtomicPtr<ThreadContextRecord>>()
+                    == mem::align_of::<*mut ThreadContextRecord>()
+            )
+        }
+
+        // Safety: the const assertion above ensures the alignment is correct. The TLS slot is
+        // valid for writes during the lifetime of the program.
+        //
+        // We forbid direct usage of `libdd_get_custom_labels_current_set_v2`, which guarantees
+        // that there's never conflicting non-atomic accesses to the TLS slot.
+        unsafe {
+            AtomicPtr::from_ptr(
+                libdd_get_custom_labels_current_set_v2().cast::<*mut ThreadContextRecord>(),
+            )
+        }
     }
 
     /// Maximum size in bytes of the `attrs_data` field.
@@ -48,25 +69,32 @@ pub mod linux {
     /// limit recommended by the spec (the eBPF profiler read limit).
     pub const MAX_ATTRS_DATA_SIZE: usize = 612;
 
-    /// In-memory layout of a thread-level context. The structure MUST match exactly the
-    /// specification.
+    /// In-memory layout of a thread-level context.
+    ///
+    /// **CAUTION**: The structure MUST match exactly the OTel thread-level context specification.
+    /// It is read by external, out-of-process code. Do not re-order fields or modify in any way,
+    /// unless you know exactly what you're doing.
     ///
     /// # Synchronization
     ///
-    /// Readers are async-signal handlers on the same thread; the writer is always stopped while a
-    /// reader runs. `valid` is written with `ptr::write_volatile` so the compiler cannot reorder
-    /// its store past the surrounding field writes:
+    /// Readers are async-signal handlers. The writer is always stopped while a reader runs.
+    /// Sharing memory with a signal handler still requires some form of synchronization, which is
+    /// achieved through atomics and compiler fence, using `valid` and/or the TLS slot as
+    /// synchronization points.
     ///
-    /// - The writer sets `valid = 0` *before* modifying fields in-place (modify).
-    /// - The writer sets `valid = 1` *after* all other fields are populated (publish).
+    /// - The writer stores `valid = 0` *before* modifying fields in-place, guarded by a fence.
+    /// - The writer stores `valid = 1` *after* all fields are populated, guarded by a fence.
+    /// - `valid` starts at `1` on construction and is never set to `0` except during an in-place
+    ///   update.
     #[repr(C)]
     pub struct ThreadContextRecord {
         /// 128-bit trace identifier; all-zeroes means "no trace".
         pub trace_id: [u8; 16],
         /// 64-bit span identifier.
         pub span_id: [u8; 8],
-        /// Whether the record is ready/consistent. Written with `ptr::write_volatile`.
-        pub valid: u8,
+        /// Whether the record is ready/consistent. Always set to `1` except during in-place update
+        /// of the current record.
+        pub valid: AtomicU8,
         pub _reserved: u8,
         /// Number of populated bytes in `attrs_data`.
         pub attrs_data_size: u16,
@@ -99,58 +127,6 @@ pub mod linux {
             record
         }
 
-        /// Write `value` to `self.valid` using a volatile store, preventing the compiler from
-        /// eliminating or reordering or this write past other volatile writes to the record.
-        fn write_valid_volatile(&mut self, value: u8) {
-            // Safety: we have an exclusive borrow of `self`, so `valid` is live and valid for
-            // writes.
-            unsafe { ptr::write_volatile(&mut self.valid as *mut u8, value) }
-        }
-
-        /// Write `trace_id` to `self.trace_id` using a volatile store, preventing the compiler
-        /// from eliminating or reordering this write past other volatile writes to the record.
-        pub fn write_trace_id_volatile(&mut self, trace_id: [u8; 16]) {
-            // Safety: we have an exclusive borrow of `self`, so `trace_id` is live and valid for
-            // writes.
-            unsafe { ptr::write_volatile(&mut self.trace_id, trace_id) }
-        }
-
-        /// Write `span_id` to `self.span_id` using a volatile store, preventing the compiler from
-        /// eliminating or reordering this write past other volatile writes to the record.
-        pub fn write_span_id_volatile(&mut self, span_id: [u8; 8]) {
-            // Safety: we have an exclusive borrow of `self`, so `span_id` is live and valid for
-            // writes.
-            unsafe { ptr::write_volatile(&mut self.span_id, span_id) }
-        }
-
-        /// Write a single byte of the encoded attributes using a volatile store, preventing the
-        /// compiler from eliminating or reordering or this write past other volatile writes to the
-        /// record.
-        ///
-        /// # Panic
-        ///
-        /// Panics if the offset is out of bound.
-        fn write_attrs_volatile(&mut self, offset: usize, value: u8) {
-            // Safety: we have an exclusive borrow of `self`, so `attrs_data` is live and valid for
-            // writes.
-            unsafe { ptr::write_volatile(&mut self.attrs_data[offset] as *mut u8, value) }
-        }
-
-        /// Copy `src` into the encoded attributes starting at `offset` using volatile stores,
-        /// preventing the compiler from eliminating or reordering or this write past other
-        /// volatile writes to the record.
-        ///
-        /// # Panic
-        ///
-        /// Panics if `offset + src.len() > self.attrs_data.len()`.
-        fn copy_attrs_volatile(&mut self, src: &[u8], offset: usize) {
-            // Safety: we have an exclusive borrow of `self`, so `attrs_data` is live and valid for
-            // writes.
-            for (idx, byte) in src.iter().enumerate() {
-                unsafe { ptr::write_volatile(&mut self.attrs_data[offset + idx] as *mut u8, *byte) }
-            }
-        }
-
         /// Encode `attributes` into `record.attrs_data` as packed key-value records. Existing data
         /// are overridden (and if there were more entires than `attributes.len()`, they aren't
         /// zeroed, but they will be ignored by readers).
@@ -167,15 +143,6 @@ pub mod linux {
         /// recovery would require us to be able to rollback to the previous attributes which would
         /// hurt the happy path, or leave the record in a inconsistent state. Another possibility
         /// would be to error out and reset the record in that situation.
-        ///
-        /// # Memory
-        ///
-        /// Disclaimer: This note is for internal usage only. As a consumer of this library, please
-        /// use [ThreadContext::modify] to mutate the currently attached record.
-        ///
-        /// Writes are volatile, making `set_attrs` suitable for mutating an attached record
-        /// in-place (TODO: does this impact the performance of writing to a non-attached record?
-        /// Should we have two specialized version `set_attrs` and `set_attrs_volatile`?).
         pub fn set_attrs(&mut self, attributes: &[(u8, &str)]) {
             let mut offset = 0;
 
@@ -188,10 +155,11 @@ pub mod linux {
                     break;
                 }
 
-                self.write_attrs_volatile(offset, key_index);
+                self.attrs_data[offset] = key_index;
                 // `val_len <= 255` thanks to the `min()`
-                self.write_attrs_volatile(offset + 1, val_len as u8);
-                self.copy_attrs_volatile(&val_bytes[..val_len], offset + 2);
+                self.attrs_data[offset + 1] = val_len as u8;
+                self.attrs_data[offset + 2..offset + 2 + val_len]
+                    .copy_from_slice(&val_bytes[..val_len]);
                 offset += entry_size;
             }
 
@@ -205,7 +173,7 @@ pub mod linux {
             Self {
                 trace_id: [0u8; 16],
                 span_id: [0u8; 8],
-                valid: 0,
+                valid: AtomicU8::new(1),
                 _reserved: 0,
                 attrs_data_size: 0,
                 attrs_data: [0u8; MAX_ATTRS_DATA_SIZE],
@@ -215,7 +183,7 @@ pub mod linux {
 
     /// An owned (and non-moving) thread context record allocation.
     ///
-    /// We don't use `Box` under the hood because it excludes aliasing, while we share the context
+    /// We don't use `Box` under the hood because it precludes aliasing, while we share the context
     /// to readers through thread-level context and through the FFI. But it is a boxed
     /// `ThreadContextRecord` for all intent of purpose.
     pub struct ThreadContext(NonNull<ThreadContextRecord>);
@@ -230,14 +198,12 @@ pub mod linux {
         /// The pointer must be reconstructed through [`Self::from_raw`] in order to be properly
         /// dropped, or the record will leak.
         pub fn into_raw(self) -> *mut ThreadContextRecord {
-            use mem::ManuallyDrop;
-
-            let mdrop = ManuallyDrop::new(self);
+            let mdrop = mem::ManuallyDrop::new(self);
             mdrop.0.as_ptr()
         }
 
-        /// Reconstruct a [ThreadContextRecord] from a raw pointer to `ThreadContextRecord` that is
-        /// either `null` or comes from [`Self::into_raw`]. Return `None` if `ptr` is null.
+        /// Reconstruct a [ThreadContextRecord] from a raw pointer that is either `null` or comes
+        /// from [`Self::into_raw`]. Return `None` if `ptr` is null.
         ///
         /// # Safety
         ///
@@ -265,62 +231,68 @@ pub mod linux {
     }
 
     impl ThreadContext {
-        /// Swap the current context with a pointer value. Return the previously attached context,
-        /// if any.
+        /// Atomically swap the current context with a pointer value. Return the previously
+        /// attached context, if any.
         fn swap(
-            slot: *mut *mut ThreadContextRecord,
+            slot: &AtomicPtr<ThreadContextRecord>,
             tgt: *mut ThreadContextRecord,
         ) -> Option<ThreadContext> {
-            unsafe {
-                // Safety: TLS slot is always live and valid for reads and writes.
-                let prev = ThreadContext::from_raw(*slot);
-                ptr::write_volatile(slot, tgt);
-                // Safety: a non-null value in the slot came from a prior `into_raw` call.
-                prev
-            }
+            // Safety: a non-null value in the slot came from a prior `into_raw` call.
+            unsafe { ThreadContext::from_raw(slot.swap(tgt, Ordering::Relaxed)) }
         }
 
         /// Publish a new (or previously detached) thread context record by writing its pointer
-        /// into the TLS slot. Sets `valid = 1` before publishing. Returns the previously attached
-        /// context, if any.
-        pub fn attach(mut self) -> Option<ThreadContext> {
-            let slot = get_tls_ptr();
-            // Set `valid = 1` written before the TLS pointer is updated, so any reader that
-            // observes the new pointer also observes `valid = 1`.
-            self.write_valid_volatile(1);
-            Self::swap(slot, self.into_raw())
+        /// into the TLS slot. Returns the previously attached context, if any.
+        ///
+        /// `valid` is already `1` since construction, so any reader that observes the new pointer
+        /// also observes `valid = 1`.
+        pub fn attach(self) -> Option<ThreadContext> {
+            // [^tls-slot-ordering]: since we get back the previous context, we should in principle
+            // use an `Acquire` compiler fence to make sure we don't get back a not-yet-initiliazed
+            // record.
+            //
+            // However, this thread (excluding the reader signal handler) is the only one to ever
+            // _write_ to the context, so the store we load the value from automatically
+            // happens-before (because it's sequenced-before) the swap.
+            Self::swap(get_tls_slot(), self.into_raw())
         }
 
-        /// Modify the currently attached record in-place. Sets `valid = 0` before the update and
+        /// Update the currently attached record in-place. Sets `valid = 0` before the update and
         /// `valid = 1` after, so a reader that fires between the two writes sees an inconsistent
-        /// record and skips it.
+        /// record and skips it. Compiler fences prevent the compiler from reordering field writes
+        /// outside that window.
         ///
-        /// If there's currently no attached context, `modify` will create one, and is in this case
+        /// If there's currently no attached context, `update` will create one, and is in this case
         /// equivalent to `ThreadContext::new(trace_id, span_id, attrs).attach()`.
         pub fn update(trace_id: [u8; 16], span_id: [u8; 8], attrs: &[(u8, &str)]) {
-            let slot = get_tls_ptr();
+            let slot = get_tls_slot();
 
-            // Safety: the tls slot is always valid for reads and writes.
-            if let Some(current) = unsafe { (*slot).as_mut() } {
-                current.write_valid_volatile(0);
-                current.write_trace_id_volatile(trace_id);
-                current.write_span_id_volatile(span_id);
+            if let Some(current) = unsafe { slot.load(Ordering::Relaxed).as_mut() } {
+                current.valid.store(0, Ordering::Relaxed);
+                compiler_fence(Ordering::SeqCst);
+
+                current.trace_id = trace_id;
+                current.span_id = span_id;
                 current.set_attrs(attrs);
-                current.write_valid_volatile(1);
+
+                compiler_fence(Ordering::SeqCst);
+                current.valid.store(1, Ordering::Relaxed);
             } else {
-                let mut ctx = ThreadContext::new(trace_id, span_id, attrs);
-                ctx.write_valid_volatile(1);
-                let _ = Self::swap(slot, ctx.into_raw());
+                // No need for `AcqRel`, see [^tls-slot-ordering].
+                compiler_fence(Ordering::Release);
+                // `ThreadContext::new` already initialises `valid = 1`.
+                let _ = Self::swap(
+                    slot,
+                    ThreadContext::new(trace_id, span_id, attrs).into_raw(),
+                );
             }
         }
 
-        /// Detach the current record from the TLS slot. Writes null to the slot, sets `valid = 0`
-        /// on the detached record, and returns it.
+        /// Detach the current record from the TLS slot. Writes null to the slot and returns the
+        /// detached record.
         pub fn detach() -> Option<ThreadContext> {
-            Self::swap(get_tls_ptr(), ptr::null_mut()).map(|mut ctx| {
-                ctx.write_valid_volatile(0);
-                ctx
-            })
+            // We don't need any fence here, see [^tls-slot-ordering].
+            Self::swap(get_tls_slot(), ptr::null_mut())
         }
     }
 
@@ -356,12 +328,14 @@ pub mod linux {
     // Accessing the TLS through C isn't supported in Miri
     #[cfg_attr(miri, ignore)]
     mod tests {
+        use std::sync::atomic::Ordering;
+
         use super::{ThreadContext, ThreadContextRecord};
 
         /// Read the TLS pointer for the current thread (the value stored in the TLS slot, not the
         /// address of the slot itself).
         fn read_tls_context_ptr() -> *const ThreadContextRecord {
-            unsafe { *super::get_tls_ptr() as *const ThreadContextRecord }
+            super::get_tls_slot().load(Ordering::Relaxed)
         }
 
         #[test]
@@ -409,7 +383,7 @@ pub mod linux {
             let record = unsafe { &*ptr };
             assert_eq!(record.trace_id, trace_id);
             assert_eq!(record.span_id, span_id);
-            assert_eq!(record.valid, 1);
+            assert_eq!(record.valid.load(Ordering::Relaxed), 1);
             assert_eq!(record.attrs_data_size, 0);
 
             let _ = ThreadContext::detach();
@@ -481,7 +455,7 @@ pub mod linux {
             let record = unsafe { &*ptr_before };
             assert_eq!(record.trace_id, trace_id_1);
             assert_eq!(record.span_id, span_id_1);
-            assert_eq!(record.valid, 1);
+            assert_eq!(record.valid.load(Ordering::Relaxed), 1);
             assert_eq!(record.attrs_data[0], 0);
             assert_eq!(record.attrs_data[1], 2);
             assert_eq!(&record.attrs_data[2..4], b"v1");
@@ -497,7 +471,7 @@ pub mod linux {
             let record = unsafe { &*ptr_after };
             assert_eq!(record.trace_id, trace_id_2);
             assert_eq!(record.span_id, span_id_2);
-            assert_eq!(record.valid, 1);
+            assert_eq!(record.valid.load(Ordering::Relaxed), 1);
             assert_eq!(record.attrs_data[0], 0);
             assert_eq!(record.attrs_data[1], 2);
             assert_eq!(&record.attrs_data[2..4], b"v2");
