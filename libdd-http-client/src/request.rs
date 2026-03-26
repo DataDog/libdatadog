@@ -28,13 +28,13 @@ pub enum HttpMethod {
 #[derive(Debug, Clone)]
 pub struct MultipartPart {
     /// The field name for this part.
-    pub name: String,
+    pub(crate) name: String,
     /// The part's data.
-    pub data: bytes::Bytes,
+    pub(crate) data: bytes::Bytes,
     /// Optional filename for this part.
-    pub filename: Option<String>,
+    pub(crate) filename: Option<String>,
     /// Optional MIME content type (e.g. `"application/json"`).
-    pub content_type: Option<String>,
+    pub(crate) content_type: Option<String>,
 }
 
 impl MultipartPart {
@@ -49,13 +49,13 @@ impl MultipartPart {
     }
 
     /// Set the filename for this part.
-    pub fn filename(mut self, filename: impl Into<String>) -> Self {
+    pub fn with_filename(mut self, filename: impl Into<String>) -> Self {
         self.filename = Some(filename.into());
         self
     }
 
     /// Set the MIME content type for this part.
-    pub fn content_type(mut self, content_type: impl Into<String>) -> Self {
+    pub fn with_content_type(mut self, content_type: impl Into<String>) -> Self {
         self.content_type = Some(content_type.into());
         self
     }
