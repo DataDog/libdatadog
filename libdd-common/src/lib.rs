@@ -348,9 +348,14 @@ impl Endpoint {
     pub fn to_reqwest_client_builder(&self) -> anyhow::Result<(reqwest::ClientBuilder, String)> {
         use anyhow::Context;
 
+        // Don't use proxies, as this calls `getenv` which is unsafe and not
+        // just in theory. It can cause crashes with PHP where php-fpm's env
+        // configuration will mutate the system environment (it doesn't pass
+        // it as part of the SAPI env, it changes the actual system env).
         let mut builder = reqwest::Client::builder()
             .timeout(std::time::Duration::from_millis(self.timeout_ms))
-            .hickory_dns(!self.use_system_resolver);
+            .hickory_dns(!self.use_system_resolver)
+            .no_proxy();
 
         let request_url = match self.url.scheme_str() {
             // HTTP/HTTPS endpoints
