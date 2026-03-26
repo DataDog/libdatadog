@@ -7,6 +7,8 @@ on:
 
 jobs:
   package-and-upload-crates:
+    permissions:
+      id-token: write # Enable OIDC
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # 4.2.2
@@ -18,9 +20,9 @@ jobs:
 
       - name: Package the workspace
         run: |
-          cargo package --workspace --exclude "libdd-*-ffi" --exclude libdd-crashtracker --exclude "datadog-*" --exclude bin_tests --exclude "tools" \
-            --exclude "sidecar_mockgen" --exclude "cc_utils" --exclude spawn_worker --exclude symbolizer-ffi --exclude test_spawn_from_lib \
-            --exclude build-common --exclude builder --all-features
+          cargo package --workspace --exclude "libdd-*-ffi" --exclude libdd-crashtracker --exclude libdd-libunwind-sys --exclude "datadog-*" \
+            --exclude bin_tests --exclude "tools" --exclude "sidecar_mockgen" --exclude "cc_utils" --exclude spawn_worker --exclude symbolizer-ffi \
+            --exclude test_spawn_from_lib --exclude build-common --exclude builder --all-features
 
       - name: Upload crates
         uses: actions/upload-artifact@v4
@@ -31,6 +33,8 @@ jobs:
           retention-days: 1
 
   compile-dd-trace-rs:
+    permissions:
+      id-token: write # Enable OIDC
     runs-on: ubuntu-latest
     needs: package-and-upload-crates
     strategy:
