@@ -1,7 +1,5 @@
 use rustc_hash::FxHashMap;
 
-mod utils;
-
 /// Errors that can occur when operating on a [`ChangeBuffer`] or [`ChangeBufferState`].
 #[derive(Debug)]
 pub enum ChangeBufferError {
@@ -33,6 +31,8 @@ impl std::fmt::Display for ChangeBufferError {
 impl std::error::Error for ChangeBufferError {}
 
 pub type Result<T> = std::result::Result<T, ChangeBufferError>;
+
+mod utils;
 use utils::*;
 
 mod trace;
@@ -43,6 +43,9 @@ use operation::*;
 
 mod buffer;
 pub use buffer::*;
+
+pub mod span_header;
+pub use span_header::{SpanHeader, SPAN_HEADER_SIZE};
 
 use crate::span::v04::Span;
 use crate::span::{SpanText, TraceData};
@@ -58,6 +61,12 @@ pub struct ChangeBufferState<T: TraceData> {
     pid: u32,
     /// Default meta tags automatically applied to every new span via create_span.
     default_meta: Vec<(T::Text, T::Text)>,
+    /// Contiguous array of span headers for direct JS DataView access.
+    /// JS writes numeric and string-ID fields directly here. Rust reads
+    /// them during flush_chunk.
+    pub span_headers: Vec<SpanHeader>,
+    /// Free list of recycled header indices (from finished spans).
+    header_free_list: Vec<u32>,
 }
 
 fn new_span<T: TraceData>(span_id: u64, parent_id: u64, trace_id: u128) -> Span<T> {
@@ -88,6 +97,8 @@ where
             tracer_language,
             pid,
             default_meta: Vec::new(),
+            span_headers: Vec::with_capacity(256),
+            header_free_list: Vec::new(),
         }
     }
 
@@ -398,6 +409,88 @@ where
 
     pub fn get_trace(&self, id: &u128) -> Option<&Trace<T::Text>> {
         self.traces.get(id)
+    }
+
+    /// Allocate a span header slot. Returns the index into span_headers.
+    /// JS uses this index × SPAN_HEADER_SIZE + base_ptr to create a DataView.
+    pub fn alloc_header(&mut self) -> u32 {
+        if let Some(idx) = self.header_free_list.pop() {
+            self.span_headers[idx as usize] = SpanHeader::default();
+            self.span_headers[idx as usize].active = 1;
+            idx
+        } else {
+            let idx = self.span_headers.len() as u32;
+            let mut header = SpanHeader::default();
+            header.active = 1;
+            self.span_headers.push(header);
+            idx
+        }
+    }
+
+    /// Materialize a SpanHeader into a full Span in the spans HashMap.
+    /// Called during flush_chunk to convert the header fields + string table
+    /// IDs into a complete Span with resolved strings. Also registers the
+    /// span in the trace map.
+    pub fn materialize_header(&mut self, header_idx: u32) -> Result<u64> {
+        let h = &self.span_headers[header_idx as usize];
+        if h.active == 0 {
+            return Err(ChangeBufferError::SpanNotFound(0));
+        }
+        let span_id = h.span_id;
+        let trace_id = (h.trace_id_hi as u128) << 64 | h.trace_id_lo as u128;
+        let parent_id = h.parent_id;
+
+        let mut span = new_span(span_id, parent_id, trace_id);
+        span.start = h.start;
+        span.duration = h.duration;
+        span.error = h.error;
+
+        // Resolve string table IDs
+        if h.name_id > 0 || true {
+            if let Some(name) = self.get_string(h.name_id) {
+                span.name = name;
+            }
+        }
+        if let Some(service) = self.get_string(h.service_id) {
+            span.service = service;
+        }
+        if let Some(resource) = self.get_string(h.resource_id) {
+            span.resource = resource;
+        }
+        if let Some(r#type) = self.get_string(h.type_id) {
+            span.r#type = r#type;
+        }
+
+        // Apply default meta tags
+        self.apply_default_meta(&mut span);
+
+        // If there's already a span in the HashMap (from change buffer meta/metrics
+        // writes), merge the header fields into it. Otherwise insert new.
+        if let Some(existing) = self.spans.get_mut(&span_id) {
+            existing.start = span.start;
+            existing.duration = span.duration;
+            existing.error = span.error;
+            existing.name = span.name;
+            existing.service = span.service;
+            existing.resource = span.resource;
+            existing.r#type = span.r#type;
+            existing.trace_id = span.trace_id;
+            existing.parent_id = span.parent_id;
+            // meta/metrics already populated by change buffer ops
+            for (k, v) in &self.default_meta {
+                existing.meta.insert(k.clone(), v.clone());
+            }
+        } else {
+            self.spans.insert(span_id, span);
+        }
+
+        self.traces.get_or_insert_default(trace_id).span_count += 1;
+
+        // Free the header slot
+        self.span_headers[header_idx as usize].active = 0;
+        self.header_free_list.push(header_idx);
+
+        Ok(span_id)
     }
 
     /// Get a mutable reference to a span.
