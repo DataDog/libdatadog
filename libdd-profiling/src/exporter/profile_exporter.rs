@@ -78,7 +78,16 @@ impl ProfileExporter {
         mut tags: Vec<Tag>,
         endpoint: Endpoint,
     ) -> anyhow::Result<Self> {
-        let tls_config = super::tls::cached_tls_config()?;
+        // For HTTPS, use the cached platform TLS config (loads system CA certs).
+        // For all other schemes (http, unix, windows, file), provide a minimal
+        // config with an empty root store so reqwest doesn't attempt to load
+        // system CA certificates itself — which fails in minimal container
+        // environments. TLS will never be negotiated on those transports anyway.
+        let tls_config = if endpoint.url.scheme_str() == Some("https") {
+            super::tls::cached_tls_config()?
+        } else {
+            super::tls::empty_tls_config()?
+        };
         // Pre-build all static headers
         let mut headers = reqwest::header::HeaderMap::new();
 

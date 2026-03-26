@@ -5,6 +5,7 @@
 
 use super::collector_manager::Collector;
 use super::receiver_manager::Receiver;
+use super::saguard::{SaGuard, SuppressionMode};
 use super::signal_handler_manager::chain_signal_handler;
 use crate::crash_info::Metadata;
 use crate::shared::configuration::CrashtrackerConfiguration;
@@ -262,6 +263,20 @@ fn handle_posix_signal_impl(
         // we don't want to spam the system with calls.  Make this one shot.
         return Ok(());
     }
+
+    // Suppress SIGPIPE and defer SIGCHLD during crash handling.
+    // SIGCHLD is block-only because SIG_IGN changes child reaping semantics (waitpid/ECHILD),
+    // which can interfere with receiver/collector process cleanup.
+    let _sa_guard = SaGuard::new_with_modes(&[
+        (
+            nix::sys::signal::Signal::SIGCHLD,
+            SuppressionMode::BlockOnly,
+        ),
+        (
+            nix::sys::signal::Signal::SIGPIPE,
+            SuppressionMode::IgnoreAndBlock,
+        ),
+    ]);
 
     // Take config and metadata out of global storage.
     // We borrow via raw pointer and intentionally leak (do not reconstruct the Box) to avoid

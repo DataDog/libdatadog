@@ -69,6 +69,26 @@ impl TlsConfig {
     }
 }
 
+impl TlsConfig {
+    /// Create a minimal TLS configuration with an empty root store.
+    ///
+    /// Used for non-HTTPS endpoints (HTTP, unix sockets, named pipes) where TLS
+    /// will never actually be negotiated. Providing this to reqwest prevents it
+    /// from attempting to load system CA certificates on its own, which fails in
+    /// minimal container environments that have no CA certificates installed.
+    pub fn new_empty() -> Result<Self, rustls::Error> {
+        let provider = rustls::crypto::CryptoProvider::get_default()
+            .cloned()
+            .unwrap_or_else(|| std::sync::Arc::new(Self::default_crypto_provider()));
+
+        let config = rustls::ClientConfig::builder_with_provider(provider)
+            .with_safe_default_protocol_versions()?
+            .with_root_certificates(rustls::RootCertStore::empty())
+            .with_no_client_auth();
+        Ok(Self(config))
+    }
+}
+
 static TLS_CONFIG: std::sync::LazyLock<Result<TlsConfig, String>> =
     std::sync::LazyLock::new(|| {
         TlsConfig::new().map_err(|err| format!("failed to initialize TLS configuration: {err}"))
@@ -79,4 +99,10 @@ pub(crate) fn cached_tls_config() -> anyhow::Result<TlsConfig> {
         .as_ref()
         .map(Clone::clone)
         .map_err(|err| anyhow::anyhow!("{err}"))
+}
+
+/// Returns a TLS config with an empty root store, for use with non-HTTPS endpoints.
+/// Never fails — no system cert loading is attempted.
+pub(crate) fn empty_tls_config() -> anyhow::Result<TlsConfig> {
+    TlsConfig::new_empty().map_err(|err| anyhow::anyhow!("failed to build TLS config: {err}"))
 }

@@ -1,4 +1,4 @@
-# RFC 0012: Crashtracker Errors Intake Payload Schema
+# RFC 0013: Crashtracker Errors Intake Payload Schema
 
 The key words "MUST", "MUST NOT", "REQUIRED", "SHALL", "SHALL NOT",
 "SHOULD", "SHOULD NOT", "RECOMMENDED", "MAY", and "OPTIONAL" in this
