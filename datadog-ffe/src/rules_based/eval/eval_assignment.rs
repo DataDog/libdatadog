@@ -149,7 +149,7 @@ impl Allocation {
         };
 
         // Determine the reason for assignment
-        let reason = if !self.rules.is_empty() || self.start_at.is_some() || self.end_at.is_some() {
+        let reason = if !self.rules.is_empty() {
             AssignmentReason::TargetingMatch
         } else if self.splits.len() == 1 && self.splits[0].shards.is_empty() {
             AssignmentReason::Static
@@ -211,8 +211,9 @@ mod tests {
     use serde::{Deserialize, Serialize};
 
     use crate::rules_based::{
+        error::EvaluationError,
         eval::get_assignment,
-        ufc::{AssignmentValue, UniversalFlagConfig},
+        ufc::{AssignmentReason, AssignmentValue, UniversalFlagConfig},
         Attribute, Configuration, EvaluationContext, FlagType, Str,
     };
 
@@ -230,6 +231,8 @@ mod tests {
     #[derive(Debug, Serialize, Deserialize)]
     struct TestResult {
         value: Arc<serde_json::value::RawValue>,
+        #[serde(default)]
+        reason: Option<String>,
     }
 
     #[test]
@@ -278,6 +281,24 @@ mod tests {
                 .unwrap();
 
                 assert_eq!(result_assingment, &expected_assignment);
+
+                if let Some(expected_reason) = &test_case.result.reason {
+                    let actual_reason = match &result {
+                        Ok(assignment) => match assignment.reason {
+                            AssignmentReason::TargetingMatch => "TARGETING_MATCH",
+                            AssignmentReason::Split => "SPLIT",
+                            AssignmentReason::Static => "STATIC",
+                        },
+                        Err(EvaluationError::FlagDisabled) => "DISABLED",
+                        Err(_) => "DEFAULT",
+                    };
+                    assert_eq!(
+                        actual_reason, expected_reason.as_str(),
+                        "reason mismatch for flag '{}' targeting_key '{:?}'",
+                        test_case.flag, subject.targeting_key()
+                    );
+                }
+
                 println!("ok");
             }
         }
