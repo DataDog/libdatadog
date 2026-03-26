@@ -131,6 +131,11 @@ pub mod linux {
         /// are overridden (and if there were more entires than `attributes.len()`, they aren't
         /// zeroed, but they will be ignored by readers).
         ///
+        /// # Return
+        ///
+        /// Returns `true` if all attributes were properly encoded, or `false` if some of the data
+        /// needed to be dropped. See Size limits below.
+        ///
         /// # Arguments
         ///
         /// Each input entry is a pair of a 1-byte `key_index` and a string value.
@@ -143,15 +148,23 @@ pub mod linux {
         /// recovery would require us to be able to rollback to the previous attributes which would
         /// hurt the happy path, or leave the record in a inconsistent state. Another possibility
         /// would be to error out and reset the record in that situation.
-        pub fn set_attrs(&mut self, attributes: &[(u8, &str)]) {
+        pub fn set_attrs(&mut self, attributes: &[(u8, &str)]) -> bool {
             let mut offset = 0;
+            let mut fully_encoded = true;
 
             for &(key_index, val) in attributes {
                 let val_bytes = val.as_bytes();
-                let val_len = val_bytes.len().min(255);
+                let val_len = val_bytes.len();
+                let val_len = if val_len > 255 {
+                    fully_encoded = false;
+                    255
+                } else {
+                    val_len
+                };
                 let entry_size = 2 + val_len;
 
                 if offset + entry_size > MAX_ATTRS_DATA_SIZE {
+                    fully_encoded = false;
                     break;
                 }
 
@@ -165,6 +178,7 @@ pub mod linux {
 
             // `offset < MAX_ATTRS_DATA_SIZE`, which guarantees it fits in a `u16`
             self.attrs_data_size = offset as u16;
+            fully_encoded
         }
     }
 
