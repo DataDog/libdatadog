@@ -182,6 +182,8 @@ impl Worker for TelemetryWorker {
                 "Received telemetry action"
             );
 
+            // When running as a [libdd_shared_runtime::Worker] Shutdown is handled by stopping the
+            // Worker from the handle and not by sending stop action
             let _action_result = match self.flavor {
                 TelemetryWorkerFlavor::Full => self.dispatch_action(action).await,
                 TelemetryWorkerFlavor::MetricsLogs => {
