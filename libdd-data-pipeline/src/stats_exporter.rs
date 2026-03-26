@@ -95,8 +95,14 @@ impl<H: HttpClientTrait> StatsExporter<H> {
             libdd_common::header::APPLICATION_MSGPACK,
         );
 
-        let result =
-            send_with_retry(&self.client, &self.endpoint, body, &headers, &RetryStrategy::default()).await;
+        let result = send_with_retry(
+            &self.client,
+            &self.endpoint,
+            body,
+            &headers,
+            &RetryStrategy::default(),
+        )
+        .await;
 
         match result {
             Ok(_) => Ok(()),
