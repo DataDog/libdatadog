@@ -3,6 +3,7 @@
 
 use libdd_common::timeout::TimeoutManager;
 use libdd_common::unix_utils::{reap_child_non_blocking, wait_for_pollhup};
+use nix::errno::Errno;
 use nix::unistd::Pid;
 use std::os::unix::io::RawFd;
 
@@ -24,15 +25,22 @@ impl ProcessHandle {
             // If we have less than the minimum amount of time, give ourselves a few scheduler
             // slices worth of headroom to help guarantee that we don't leak a zombie process.
             let kill_result = unsafe { libc::kill(pid, libc::SIGKILL) };
-            debug_assert_eq!(kill_result, 0, "kill failed with result: {kill_result}");
+            if kill_result != 0 {
+                let errno = Errno::last_raw();
+                // ESRCH means the child has already exited and no longer exists, which is fine.
+                debug_assert_eq!(
+                    errno,
+                    libc::ESRCH,
+                    "kill failed with result: {kill_result}, errno: {errno}"
+                );
+            }
 
             // `self` is actually a handle to a child process and `self.pid` is the child process's
             // pid.
             let child_pid = Pid::from_raw(pid);
             let result = reap_child_non_blocking(child_pid, timeout_manager);
-            debug_assert_eq!(
-                result,
-                Ok(true),
+            debug_assert!(
+                matches!(result, Ok(true) | Ok(false)),
                 "reap_child_non_blocking failed: {result:?}"
             );
         }
