@@ -18,7 +18,20 @@ impl ProcessHandle {
 
     pub fn finish(&self, timeout_manager: &TimeoutManager) {
         let result = wait_for_pollhup(self.uds_fd, timeout_manager);
-        debug_assert_eq!(result, Ok(true), "wait_for_pollhup failed: {result:?}");
+        if result != Ok(true) {
+            let child_alive = self.pid.map(|pid| unsafe { libc::kill(pid, 0) } == 0);
+            debug_assert_eq!(
+                result,
+                Ok(true),
+                "wait_for_pollhup failed: {result:?}, fd={}, child_pid={:?}, child_alive={:?}, \
+                 elapsed={:?}, timeout={:?}",
+                self.uds_fd,
+                self.pid,
+                child_alive,
+                timeout_manager.elapsed(),
+                timeout_manager.timeout(),
+            );
+        }
 
         if let Some(pid) = self.pid {
             // If we have less than the minimum amount of time, give ourselves a few scheduler
