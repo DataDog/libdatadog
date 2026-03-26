@@ -181,7 +181,7 @@ mod tests {
         let vec = vec![0, 2, 4, 6];
         let ffi_vec: Vec<u8> = Vec::from(vec.clone());
 
-        for (a, b) in vec.iter().zip(&ffi_vec) {
+        for (a, b) in vec.iter().zip(ffi_vec.into_iter()) {
             assert_eq!(a, b)
         }
     }
