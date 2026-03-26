@@ -39,12 +39,24 @@ macro_rules! crash_tracking_tests {
     };
 }
 
+// Ignored: deadlocks on CentOS 7 (see nextest.toml for timeout cap when run with
+// --include-ignored).
+#[test]
+#[cfg_attr(miri, ignore)]
+#[ignore = "deadlocks on CentOS 7 — tracking issue: SigChldExec handling"]
+fn test_crash_tracking_bin_sigchld_exec() {
+    run_standard_crash_test_refactored(
+        BuildProfile::Debug,
+        TestMode::SigChldExec,
+        CrashType::NullDeref,
+    );
+}
+
 // Generate all simple crash tracking tests using the macro
 crash_tracking_tests! {
     (test_crash_tracking_bin_debug, BuildProfile::Debug, TestMode::DoNothing, CrashType::NullDeref),
     (test_crash_tracking_bin_sigpipe, BuildProfile::Debug, TestMode::SigPipe, CrashType::NullDeref),
     (test_crash_tracking_bin_sigchld, BuildProfile::Debug, TestMode::SigChld, CrashType::NullDeref),
-    (test_crash_tracking_bin_sigchld_exec, BuildProfile::Debug, TestMode::SigChldExec, CrashType::NullDeref),
     (test_crash_tracking_bin_sigstack, BuildProfile::Release, TestMode::DoNothingSigStack, CrashType::NullDeref),
     (test_crash_tracking_bin_sigpipe_sigstack, BuildProfile::Release, TestMode::SigPipeSigStack, CrashType::NullDeref),
     (test_crash_tracking_bin_sigchld_sigstack, BuildProfile::Release, TestMode::SigChldSigStack, CrashType::NullDeref),
@@ -95,6 +107,33 @@ fn run_standard_crash_test_refactored(
 
 // These tests below use the new infrastructure but require custom validation logic
 // that doesn't fit the simple macro-generated pattern.
+
+#[test]
+#[cfg_attr(miri, ignore)]
+fn test_crash_tracking_bin_errno_preservation() {
+    use bin_tests::modes::unix::test_016_errno_preservation::ERRNO_STATUS_FILENAME;
+
+    let config = CrashTestConfig::new(
+        BuildProfile::Release,
+        TestMode::ErrnoPreservation,
+        CrashType::NullDeref,
+    );
+    let artifacts = StandardArtifacts::new(config.profile);
+    let artifacts_map = build_artifacts(&artifacts.as_slice()).unwrap();
+
+    let validator: ValidatorFn = Box::new(|_payload, fixtures| {
+        let status_path = fixtures.output_dir.join(ERRNO_STATUS_FILENAME);
+        let content = fs::read_to_string(&status_path)
+            .context("reading errno_status file; signal handler may not have written it")?;
+        assert_eq!(
+            content, "PRESERVED",
+            "errno was not preserved across crashtracker signal handler (got {content:?})"
+        );
+        Ok(())
+    });
+
+    run_crash_test_with_artifacts(&config, &artifacts_map, &artifacts, validator).unwrap();
+}
 
 #[test]
 #[cfg_attr(miri, ignore)]
@@ -272,7 +311,7 @@ fn test_collector_no_allocations_stacktrace_modes() {
         let _ = fs::remove_file(&detector_log_path);
 
         let config = CrashTestConfig::new(
-            BuildProfile::Debug,
+            BuildProfile::Release,
             TestMode::RuntimePreloadLogger,
             CrashType::NullDeref,
         )

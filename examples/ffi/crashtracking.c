@@ -87,7 +87,7 @@ int main(int argc, char **argv) {
   struct ddog_crasht_Slice_CInt signals = ddog_crasht_default_signals();
   ddog_crasht_Config config = {
       .create_alt_stack = false,
-      .endpoint = slice(report_path),
+      .endpoint = {.url = slice(report_path)},
       .resolve_frames = DDOG_CRASHT_STACKTRACE_COLLECTION_ENABLED_WITH_INPROCESS_SYMBOLS,
       .signals = INIT_FROM_SLICE(signals),
   };

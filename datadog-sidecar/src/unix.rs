@@ -4,17 +4,16 @@
 use spawn_worker::{getpid, SpawnWorker, Stdio, TrampolineData};
 
 use std::ffi::CString;
-use std::os::unix::net::UnixListener as StdUnixListener;
 
 use crate::config::Config;
 use crate::enter_listener_loop;
+use datadog_ipc::{SeqpacketConn, SeqpacketListener};
 use nix::fcntl::{fcntl, OFlag, F_GETFL, F_SETFL};
 use nix::sys::socket::{shutdown, Shutdown};
 use std::io;
 use std::os::fd::RawFd;
 use std::os::unix::prelude::{AsRawFd, FromRawFd, IntoRawFd, OwnedFd};
 use std::time::Instant;
-use tokio::net::{UnixListener, UnixStream};
 use tokio::select;
 use tokio::signal::unix::{signal, SignalKind};
 use tracing::{error, info};
@@ -50,25 +49,33 @@ pub extern "C" fn ddog_daemon_entry_point(trampoline_data: &TrampolineData) {
         warn!("Failed to initialize crashtracker: {e}");
     }
 
+    let buf_size = Config::get().pipe_buffer_size;
+    if buf_size > 0 {
+        datadog_ipc::platform::set_socket_buffer_size(buf_size);
+    }
+
     let now = Instant::now();
 
     let appsec_started = maybe_start_appsec();
 
     if let Some(fd) = spawn_worker::recv_passed_fd() {
-        let listener: StdUnixListener = fd.into();
+        let seqpacket_listener = SeqpacketListener::from_owned_fd(fd);
         info!("Starting sidecar, pid: {}", getpid());
         let acquire_listener = move || {
-            listener.set_nonblocking(true)?;
-            let listener = UnixListener::from_std(listener)?;
+            // Convert to async listener (also sets non-blocking mode).
+            let async_listener = seqpacket_listener.into_async_listener()?;
 
             // shutdown to gracefully dequeue, and immediately relinquish ownership of the socket
             // while shutting down
             let cancel = {
-                let listener_fd = listener.as_raw_fd();
+                let listener_fd = async_listener.as_raw_fd();
                 move || stop_listening(listener_fd)
             };
 
-            Ok((|handler| accept_socket_loop(listener, handler), cancel))
+            Ok((
+                move |handler| accept_socket_loop(async_listener, handler),
+                cancel,
+            ))
         };
         if let Err(err) = enter_listener_loop(acquire_listener) {
             error!("Error: {err}")
@@ -96,22 +103,39 @@ fn stop_listening(listener_fd: RawFd) {
 }
 
 async fn accept_socket_loop(
-    listener: UnixListener,
-    handler: Box<dyn Fn(UnixStream)>,
+    async_listener: tokio::io::unix::AsyncFd<SeqpacketListener>,
+    handler: Box<dyn Fn(SeqpacketConn)>,
 ) -> io::Result<()> {
     #[allow(clippy::unwrap_used)]
     let mut termsig = signal(SignalKind::terminate()).unwrap();
     loop {
         select! {
             _ = termsig.recv() => {
-                stop_listening(listener.as_raw_fd());
+                stop_listening(async_listener.as_raw_fd());
                 break;
             }
-            accept = listener.accept() => {
-                if let Ok((socket, _)) = accept {
-                    handler(socket);
-                } else {
-                    break;
+            ready = async_listener.readable() => {
+                match ready {
+                    Ok(mut guard) => {
+                        match guard.try_io(|inner| inner.get_ref().try_accept()) {
+                            Ok(Ok(conn)) => {
+                                let buf_size = Config::get().pipe_buffer_size;
+                                if buf_size > 0 {
+                                    let _ = conn.set_rcvbuf_size(buf_size);
+                                }
+                                handler(conn);
+                            }
+                            Ok(Err(e)) => {
+                                error!("IPC accept error: {e}");
+                                break;
+                            }
+                            Err(_would_block) => continue,
+                        }
+                    }
+                    Err(e) => {
+                        error!("IPC listener error: {e}");
+                        break;
+                    }
                 }
             }
         }
@@ -120,7 +144,7 @@ async fn accept_socket_loop(
 }
 
 pub fn setup_daemon_process(
-    listener: StdUnixListener,
+    listener: SeqpacketListener,
     spawn_cfg: &mut SpawnWorker,
 ) -> io::Result<()> {
     spawn_cfg
@@ -135,6 +159,10 @@ pub fn setup_daemon_process(
 pub fn primary_sidecar_identifier() -> u32 {
     unsafe { libc::geteuid() }
 }
+
+/// No-op: retained for FFI compatibility.
+/// The master PID is now tracked by MasterListener::start() directly.
+pub fn set_sidecar_master_pid(_pid: u32) {}
 
 fn maybe_start_appsec() -> bool {
     let cfg = &Config::get().appsec_config;

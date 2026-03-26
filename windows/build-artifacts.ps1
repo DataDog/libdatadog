@@ -8,6 +8,23 @@ function Invoke-Call {
     }
 }
 
+function Add-DllImportToGlobals {
+    param (
+        [string]$HeaderPath
+    )
+    $content = [System.IO.File]::ReadAllText($HeaderPath)
+    $pattern = '(?m)^(\s*)extern\s+(?!\"C\")(?!.*LIBDD_DLLIMPORT)(?!.*\()(.+;)$'
+    $updated = [System.Text.RegularExpressions.Regex]::Replace(
+        $content,
+        $pattern,
+        '$1extern LIBDD_DLLIMPORT $2'
+    )
+    if ($updated -ne $content) {
+        $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+        [System.IO.File]::WriteAllText($HeaderPath, $updated, $utf8NoBom)
+    }
+}
+
 $output_dir = $args[0]
 
 if ([string]::IsNullOrEmpty($output_dir)) {
@@ -61,6 +78,12 @@ Invoke-Call -ScriptBlock { cbindgen --crate libdd-telemetry-ffi --config libdd-t
 Invoke-Call -ScriptBlock { cbindgen --crate libdd-data-pipeline-ffi --config libdd-data-pipeline-ffi/cbindgen.toml --output $output_dir"\data-pipeline.h" }
 Invoke-Call -ScriptBlock { cbindgen --crate libdd-crashtracker-ffi --config libdd-crashtracker-ffi/cbindgen.toml --output $output_dir"\crashtracker.h" }
 Invoke-Call -ScriptBlock { cbindgen --crate libdd-library-config-ffi --config libdd-library-config-ffi/cbindgen.toml --output $output_dir"\library-config.h" }
+Add-DllImportToGlobals $output_dir"\common.h"
+Add-DllImportToGlobals $output_dir"\profiling.h"
+Add-DllImportToGlobals $output_dir"\telemetry.h"
+Add-DllImportToGlobals $output_dir"\data-pipeline.h"
+Add-DllImportToGlobals $output_dir"\crashtracker.h"
+Add-DllImportToGlobals $output_dir"\library-config.h"
 Invoke-Call -ScriptBlock { .\target\release\dedup_headers $output_dir"\common.h"  $output_dir"\profiling.h" $output_dir"\telemetry.h" $output_dir"\data-pipeline.h" $output_dir"\crashtracker.h" $output_dir"\library-config.h"}
 
 Write-Host "Build finished"  -ForegroundColor Magenta

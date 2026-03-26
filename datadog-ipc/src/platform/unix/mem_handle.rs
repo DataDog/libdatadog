@@ -10,7 +10,7 @@ use nix::errno::Errno;
 use nix::fcntl::{open, OFlag};
 use nix::sys::mman::{self, mmap, munmap, MapFlags, ProtFlags};
 use nix::sys::stat::Mode;
-use nix::unistd::{ftruncate, mkdir, unlink};
+use nix::unistd::{fchown, ftruncate, mkdir, unlink, Uid};
 use nix::NixPath;
 use std::ffi::{CStr, CString};
 use std::fs::File;
@@ -18,7 +18,11 @@ use std::io;
 use std::num::NonZeroUsize;
 use std::os::fd::AsFd;
 use std::os::unix::fs::MetadataExt;
-use std::sync::atomic::{AtomicI32, Ordering};
+use std::os::unix::io::AsRawFd;
+use std::sync::atomic::{AtomicI32, AtomicU32, Ordering};
+
+// Sentinel value meaning "no owner UID override"
+const NO_OWNER_UID: u32 = u32::MAX;
 
 fn fallback_path<P: ?Sized + NixPath>(name: &P) -> nix::Result<CString> {
     name.with_nix_path(|cstr| {
@@ -95,6 +99,21 @@ pub(crate) fn munmap_handle<T: MemoryHandle>(mapped: &mut MappedMem<T>) {
 
 static ANON_SHM_ID: AtomicI32 = AtomicI32::new(0);
 
+static SHM_OWNER_UID: AtomicU32 = AtomicU32::new(NO_OWNER_UID);
+
+pub fn set_shm_owner_uid(uid: u32) {
+    SHM_OWNER_UID.store(uid, Ordering::Relaxed);
+}
+
+fn shm_owner_uid() -> Option<u32> {
+    let uid = SHM_OWNER_UID.load(Ordering::Relaxed);
+    if uid == NO_OWNER_UID {
+        None
+    } else {
+        Some(uid)
+    }
+}
+
 impl ShmHandle {
     #[cfg(target_os = "linux")]
     fn open_anon_shm(name: &str) -> anyhow::Result<OwnedFd> {
@@ -145,6 +164,9 @@ impl NamedShmHandle {
     pub fn create_mode(path: CString, size: usize, mode: Mode) -> io::Result<NamedShmHandle> {
         let fd = shm_open(path.as_bytes(), OFlag::O_CREAT | OFlag::O_RDWR, mode)?;
         ftruncate(&fd, size as off_t)?;
+        if let Some(uid) = shm_owner_uid() {
+            let _ = fchown(fd.as_raw_fd(), Some(Uid::from_raw(uid)), None);
+        }
         Self::new(fd, Some(path), size)
     }
 

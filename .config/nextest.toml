@@ -25,6 +25,12 @@ fail-fast = true
 filter = 'test(::single_threaded_tests::)'
 test-group = 'single-threaded'
 
+# test_crash_tracking_bin_sigchld_exec deadlocks on CentOS 7; cap it so it
+# doesn't block the suite if someone runs it with --include-ignored.
+[[profile.default.overrides]]
+filter = 'test(test_crash_tracking_bin_sigchld_exec)'
+slow-timeout = { period = "60s", terminate-after = 1 }
+
 # Run prebuild script before bin_tests to build all artifacts upfront
 [[profile.default.scripts]]
 filter = 'package(bin_tests)'

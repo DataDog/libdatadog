@@ -35,6 +35,8 @@ pub struct AgentInfoStruct {
     pub peer_tags: Option<Vec<String>>,
     /// List of span kinds eligible for stats computation
     pub span_kinds_stats_computed: Option<Vec<String>>,
+    /// Container tags hash from HTTP response header
+    pub container_tags_hash: Option<String>,
 }
 
 #[allow(missing_docs)]
