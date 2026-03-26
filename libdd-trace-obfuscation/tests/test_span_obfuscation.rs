@@ -25,7 +25,7 @@ struct Testcase {
 #[test]
 fn test_obfuscate_span() {
     let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/Data/obfuscation_test_spans.jsonl");
+        .join("tests/data/obfuscation_test_spans.jsonl");
     let testcases_contents =
         std::fs::read_to_string(&path).expect("Testsuite jsonl file should still be here");
 
