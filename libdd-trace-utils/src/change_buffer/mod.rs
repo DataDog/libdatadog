@@ -7,7 +7,7 @@ pub enum ChangeBufferError {
     StringNotFound(u32),
     ReadOutOfBounds { offset: usize, len: usize },
     WriteOutOfBounds { offset: usize, len: usize },
-    UnknownOpcode(u64),
+    UnknownOpcode(u32),
 }
 
 impl std::fmt::Display for ChangeBufferError {
@@ -233,7 +233,7 @@ where
 
     pub fn flush_change_buffer(&mut self) -> Result<()> {
         let mut index = 0;
-        let mut count = self.change_buffer.read::<u64>(&mut index)?;
+        let mut count = self.change_buffer.read::<u32>(&mut index)?;
 
         // Cache the last span_id to skip redundant lookups when consecutive
         // operations target the same span (the common case).
@@ -270,7 +270,7 @@ where
             count -= 1;
         }
 
-        self.change_buffer.write_u64(0, 0)?;
+        self.change_buffer.write_u32(0, 0)?;
 
         Ok(())
     }
@@ -672,7 +672,7 @@ mod tests {
     use crate::span::SliceData;
 
     /// Helper to build the binary buffer layout that flush_change_buffer expects.
-    /// Layout: [count: u64][8 bytes padding][operations...]
+    /// Layout: [count: u32][operations...]
     trait ToLeBytes {
         fn extend_le_bytes(&self, buf: &mut Vec<u8>);
     }
@@ -691,14 +691,14 @@ mod tests {
 
     struct BufBuilder {
         data: Vec<u8>,
-        op_count: u64,
+        op_count: u32,
     }
 
     impl BufBuilder {
         fn new() -> Self {
-            // 8 bytes for the count field
+            // 4 bytes for the count field (u32)
             Self {
-                data: vec![0u8; 8],
+                data: vec![0u8; 4],
                 op_count: 0,
             }
         }
@@ -708,7 +708,7 @@ mod tests {
         }
 
         fn push_op_header(&mut self, opcode: OpCode, span_id: u64) {
-            self.push(opcode as u64);
+            self.push(opcode as u32);
             self.push(span_id);
             self.op_count += 1;
         }
@@ -721,7 +721,7 @@ mod tests {
         }
 
         fn finalize(&mut self) -> ChangeBuffer {
-            self.data[0..8].copy_from_slice(&self.op_count.to_le_bytes());
+            self.data[0..4].copy_from_slice(&self.op_count.to_le_bytes());
             unsafe { ChangeBuffer::from_raw_parts(self.data.as_mut_ptr(), self.data.len()) }
         }
     }

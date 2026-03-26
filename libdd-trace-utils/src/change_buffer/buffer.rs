@@ -41,11 +41,11 @@ impl ChangeBuffer {
         Ok(T::from_bytes(bytes))
     }
 
-    pub fn write_u64(&mut self, offset: usize, value: u64) -> Result<()> {
+    pub fn write_u32(&mut self, offset: usize, value: u32) -> Result<()> {
         let len = self.len;
         let slice = self.as_mut_slice();
         let target = slice
-            .get_mut(offset..offset + 8)
+            .get_mut(offset..offset + 4)
             .ok_or(ChangeBufferError::WriteOutOfBounds { offset, len })?;
         let bytes = value.to_le_bytes();
         target.copy_from_slice(&bytes);
@@ -53,7 +53,7 @@ impl ChangeBuffer {
     }
 
     pub fn clear_count(&mut self) -> Result<()> {
-        self.write_u64(0, 0)
+        self.write_u32(0, 0)
     }
 }
 
@@ -86,9 +86,9 @@ mod tests {
         assert_eq!(8101238474429984353, buf.read::<u64>(&mut index)?);
         assert_eq!(7956016061199967596, buf.read::<u64>(&mut index)?);
         index = 8;
-        buf.write_u64(index, 8675309)?;
+        buf.write_u32(index, 8675309)?;
         index = 8;
-        assert_eq!(8675309, buf.read::<u64>(&mut index)?);
+        assert_eq!(8675309, buf.read::<u32>(&mut index)?);
 
         Ok(())
     }
@@ -99,7 +99,7 @@ mod tests {
         let mut buf = unsafe { ChangeBuffer::from_raw_parts(buffer.as_mut_ptr(), buffer.len()) };
         buf.clear_count()?;
         let mut index = 0;
-        assert_eq!(0, buf.read::<u64>(&mut index)?);
+        assert_eq!(0, buf.read::<u32>(&mut index)?);
         Ok(())
     }
 
@@ -136,6 +136,7 @@ mod tests {
     fn write_out_of_bounds() {
         let mut buffer = vec![0u8; 8];
         let mut buf = unsafe { ChangeBuffer::from_raw_parts(buffer.as_mut_ptr(), buffer.len()) };
-        assert!(buf.write_u64(4, 123).is_err());
+        // 8-byte buffer, u32 at offset 5 needs bytes 5..9 — out of bounds
+        assert!(buf.write_u32(5, 123).is_err());
     }
 }

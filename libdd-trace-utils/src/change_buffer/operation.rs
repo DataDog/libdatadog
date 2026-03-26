@@ -1,6 +1,6 @@
 use crate::change_buffer::{ChangeBuffer, ChangeBufferError, Result};
 
-#[repr(u64)]
+#[repr(u32)]
 #[derive(Debug, Clone)]
 pub enum OpCode {
     Create = 0,
@@ -27,10 +27,10 @@ pub enum OpCode {
     // TODO: SpanLinks, SpanEvents, StructAttr
 }
 
-impl TryFrom<u64> for OpCode {
+impl TryFrom<u32> for OpCode {
     type Error = ChangeBufferError;
 
-    fn try_from(val: u64) -> Result<Self> {
+    fn try_from(val: u32) -> Result<Self> {
         match val {
             0 => Ok(OpCode::Create),
             1 => Ok(OpCode::SetMetaAttr),
@@ -61,7 +61,7 @@ pub struct BufferedOperation {
 
 impl BufferedOperation {
     pub fn from_buf(buf: &ChangeBuffer, index: &mut usize) -> Result<Self> {
-        let opcode = buf.read::<u64>(index)?.try_into()?;
+        let opcode = buf.read::<u32>(index)?.try_into()?;
         let span_id = buf.read(index)?;
         Ok(BufferedOperation { opcode, span_id })
     }
@@ -100,7 +100,7 @@ mod tests {
 
         for (val, name) in expected {
             let opcode = OpCode::try_from(val)?;
-            assert_eq!(opcode.clone() as u64, val);
+            assert_eq!(opcode.clone() as u32, val);
             assert_eq!(name, format!("{:?}", opcode))
         }
 
@@ -109,65 +109,65 @@ mod tests {
 
     #[test]
     fn opcode_try_from_invalid_value() {
-        assert!(OpCode::try_from(17).is_err());
-        assert!(OpCode::try_from(100).is_err());
-        assert!(OpCode::try_from(u64::MAX).is_err());
+        assert!(OpCode::try_from(17u32).is_err());
+        assert!(OpCode::try_from(100u32).is_err());
+        assert!(OpCode::try_from(u32::MAX).is_err());
     }
 
     #[test]
     fn buffered_operation_from_buf() -> Result<()> {
-        // Layout: opcode (u64 LE) + span_id (u64 LE)
-        let opcode: u64 = 3; // SetServiceName
+        // Layout: opcode (u32 LE) + span_id (u64 LE)
+        let opcode: u32 = 3; // SetServiceName
         let span_id: u64 = 0xDEADBEEF;
 
-        let mut buffer = vec![0u8; 16];
-        buffer[0..8].copy_from_slice(&opcode.to_le_bytes());
-        buffer[8..16].copy_from_slice(&span_id.to_le_bytes());
+        let mut buffer = vec![0u8; 12];
+        buffer[0..4].copy_from_slice(&opcode.to_le_bytes());
+        buffer[4..12].copy_from_slice(&span_id.to_le_bytes());
 
         let buf = change_buffer_from_vec(&mut buffer);
         let mut index = 0;
         let op = BufferedOperation::from_buf(&buf, &mut index)?;
 
-        assert_eq!(op.opcode as u64, 3);
+        assert_eq!(op.opcode as u32, 3);
         assert_eq!(op.span_id, 0xDEADBEEF);
-        assert_eq!(index, 16);
+        assert_eq!(index, 12);
         Ok(())
     }
 
     #[test]
     fn buffered_operation_from_buf_advances_index() -> Result<()> {
-        // Two operations packed sequentially, starting at a non-zero offset
-        let mut buffer = vec![0u8; 40];
-        // padding
-        buffer[0..8].copy_from_slice(&0u64.to_le_bytes());
-        // first op at offset 8
-        buffer[8..16].copy_from_slice(&(OpCode::Create as u64).to_le_bytes());
-        buffer[16..24].copy_from_slice(&1u64.to_le_bytes());
-        // second op at offset 24
-        buffer[24..32].copy_from_slice(&(OpCode::SetError as u64).to_le_bytes());
-        buffer[32..40].copy_from_slice(&2u64.to_le_bytes());
+        // Two operations packed sequentially, starting after a u32 count header
+        let mut buffer = vec![0u8; 28];
+        // count header (u32)
+        buffer[0..4].copy_from_slice(&0u32.to_le_bytes());
+        // first op at offset 4: opcode(u32) + span_id(u64)
+        buffer[4..8].copy_from_slice(&(OpCode::Create as u32).to_le_bytes());
+        buffer[8..16].copy_from_slice(&1u64.to_le_bytes());
+        // second op at offset 16
+        buffer[16..20].copy_from_slice(&(OpCode::SetError as u32).to_le_bytes());
+        buffer[20..28].copy_from_slice(&2u64.to_le_bytes());
 
         let buf = change_buffer_from_vec(&mut buffer);
 
-        let mut index = 8;
+        let mut index = 4;
         let op1 = BufferedOperation::from_buf(&buf, &mut index)?;
-        assert_eq!(op1.opcode as u64, OpCode::Create as u64);
+        assert_eq!(op1.opcode as u32, OpCode::Create as u32);
         assert_eq!(op1.span_id, 1);
-        assert_eq!(index, 24);
+        assert_eq!(index, 16);
 
         let op2 = BufferedOperation::from_buf(&buf, &mut index)?;
-        assert_eq!(op2.opcode as u64, OpCode::SetError as u64);
+        assert_eq!(op2.opcode as u32, OpCode::SetError as u32);
         assert_eq!(op2.span_id, 2);
-        assert_eq!(index, 40);
+        assert_eq!(index, 28);
 
         Ok(())
     }
 
     #[test]
     fn buffered_operation_from_buf_invalid_opcode() {
-        let mut buffer = vec![0u8; 16];
-        buffer[0..8].copy_from_slice(&999u64.to_le_bytes());
-        buffer[8..16].copy_from_slice(&1u64.to_le_bytes());
+        let mut buffer = vec![0u8; 12];
+        buffer[0..4].copy_from_slice(&999u32.to_le_bytes());
+        buffer[4..12].copy_from_slice(&1u64.to_le_bytes());
 
         let buf = change_buffer_from_vec(&mut buffer);
         let mut index = 0;
@@ -176,9 +176,9 @@ mod tests {
 
     #[test]
     fn buffered_operation_from_buf_too_small() {
-        // Only 8 bytes — enough for the opcode but not the span_id
-        let mut buffer = vec![0u8; 8];
-        buffer[0..8].copy_from_slice(&0u64.to_le_bytes());
+        // Only 4 bytes — enough for the opcode but not the span_id
+        let mut buffer = vec![0u8; 4];
+        buffer[0..4].copy_from_slice(&0u32.to_le_bytes());
 
         let buf = change_buffer_from_vec(&mut buffer);
         let mut index = 0;
