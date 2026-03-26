@@ -14,15 +14,21 @@ use self::agent_response::AgentResponse;
 use self::metrics::MetricsEmitter;
 use self::stats::StatsComputationStatus;
 use self::trace_serializer::TraceSerializer;
-use crate::agent_info::{AgentInfoFetcher, ResponseObserver};
+use crate::agent_info::ResponseObserver;
+#[cfg(not(target_arch = "wasm32"))]
+use crate::agent_info::AgentInfoFetcher;
+#[cfg(not(target_arch = "wasm32"))]
 use crate::pausable_worker::PausableWorker;
+#[cfg(not(target_arch = "wasm32"))]
 use crate::stats_exporter::StatsExporter;
 #[cfg(feature = "telemetry")]
 use crate::telemetry::{SendPayloadTelemetry, TelemetryClient};
 use crate::trace_exporter::agent_response::{
     AgentResponsePayloadVersion, DATADOG_RATES_PAYLOAD_VERSION_HEADER,
 };
-use crate::trace_exporter::error::{InternalErrorKind, RequestError, TraceExporterError};
+use crate::trace_exporter::error::{RequestError, TraceExporterError};
+#[cfg(not(target_arch = "wasm32"))]
+use crate::trace_exporter::error::InternalErrorKind;
 use crate::{
     agent_info::{self, schema::AgentInfo},
     health_metrics,
@@ -36,7 +42,7 @@ use libdd_capabilities::{HttpClientTrait, MaybeSend};
 use libdd_common::tag::Tag;
 use libdd_common::{Endpoint, MutexExt};
 use libdd_dogstatsd_client::Client;
-#[cfg(feature = "telemetry")]
+#[cfg(all(not(target_arch = "wasm32"), feature = "telemetry"))]
 use libdd_telemetry::worker::TelemetryWorker;
 use libdd_trace_utils::msgpack_decoder;
 use libdd_trace_utils::send_with_retry::{
@@ -170,6 +176,7 @@ impl<'a> From<&'a TracerMetadata> for HashMap<&'static str, String> {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 /// Background workers managed by a [`TraceExporter`].
 ///
 /// `H` is the HTTP client implementation, see [`HttpClientTrait`].
@@ -228,12 +235,14 @@ pub struct TraceExporter<H: HttpClientTrait + MaybeSend + Sync + 'static> {
     common_stats_tags: Vec<Tag>,
     client_computed_top_level: bool,
     client_side_stats: ArcSwap<StatsComputationStatus>,
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     previous_info_state: ArcSwapOption<String>,
     info_response_observer: ResponseObserver,
     #[cfg(feature = "telemetry")]
     telemetry: Option<TelemetryClient>,
     health_metrics_enabled: bool,
     client: H,
+    #[cfg(not(target_arch = "wasm32"))]
     workers: Arc<Mutex<TraceExporterWorkers<H>>>,
     agent_payload_response_version: Option<AgentResponsePayloadVersion>,
 }
@@ -255,6 +264,7 @@ impl<H: HttpClientTrait + MaybeSend + Sync + 'static> TraceExporter<H> {
             None => {
                 let runtime = Arc::new(build_runtime()?);
                 *runtime_guard = Some(runtime.clone());
+                #[cfg(not(target_arch = "wasm32"))]
                 self.start_all_workers(&runtime)?;
                 Ok(runtime)
             }
@@ -262,11 +272,13 @@ impl<H: HttpClientTrait + MaybeSend + Sync + 'static> TraceExporter<H> {
     }
 
     /// Manually start all workers
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn run_worker(&self) -> Result<(), TraceExporterError> {
         self.runtime()?;
         Ok(())
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     /// Start all workers with the given runtime
     fn start_all_workers(&self, runtime: &Arc<Runtime>) -> Result<(), TraceExporterError> {
         let mut workers = self.workers.lock_or_panic();
@@ -278,6 +290,7 @@ impl<H: HttpClientTrait + MaybeSend + Sync + 'static> TraceExporter<H> {
         Ok(())
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     /// Start the info worker
     fn start_info_worker(
         &self,
@@ -289,6 +302,7 @@ impl<H: HttpClientTrait + MaybeSend + Sync + 'static> TraceExporter<H> {
         })
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     /// Start the stats worker if present
     fn start_stats_worker(
         &self,
@@ -303,7 +317,7 @@ impl<H: HttpClientTrait + MaybeSend + Sync + 'static> TraceExporter<H> {
         Ok(())
     }
 
-    #[cfg(feature = "telemetry")]
+    #[cfg(all(not(target_arch = "wasm32"), feature = "telemetry"))]
     fn start_telemetry_worker(
         &self,
         workers: &mut TraceExporterWorkers<H>,
@@ -320,7 +334,7 @@ impl<H: HttpClientTrait + MaybeSend + Sync + 'static> TraceExporter<H> {
         Ok(())
     }
 
-    #[cfg(not(feature = "telemetry"))]
+    #[cfg(all(not(target_arch = "wasm32"), not(feature = "telemetry")))]
     fn start_telemetry_worker(
         &self,
         _workers: &mut TraceExporterWorkers<H>,
@@ -329,10 +343,10 @@ impl<H: HttpClientTrait + MaybeSend + Sync + 'static> TraceExporter<H> {
         Ok(())
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn stop_worker(&self) {
         let runtime = self.runtime.lock_or_panic().take();
         if let Some(ref rt) = runtime {
-            // Stop workers to save their state
             let mut workers = self.workers.lock_or_panic();
             rt.block_on(async {
                 let _ = workers.info.pause().await;
@@ -345,16 +359,16 @@ impl<H: HttpClientTrait + MaybeSend + Sync + 'static> TraceExporter<H> {
                 };
             });
         }
-        // When the info fetcher is paused, the trigger channel keeps a reference to the runtime's
-        // IoStack as a waker. This prevents the IoStack from being dropped when shutting
-        // down runtime. By manually sending a message to the trigger channel we trigger the
-        // waker releasing the reference to the IoStack. Finally we drain the channel to
-        // avoid triggering a fetch when the info fetcher is restarted.
         if let PausableWorker::Paused { worker } = &mut self.workers.lock_or_panic().info {
             self.info_response_observer.manual_trigger();
             worker.drain();
         }
         drop(runtime);
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    pub fn stop_worker(&self) {
+        let _ = self.runtime.lock_or_panic().take();
     }
 
     /// Send msgpack serialized traces to the agent
@@ -417,13 +431,12 @@ impl<H: HttpClientTrait + MaybeSend + Sync + 'static> TraceExporter<H> {
     }
 
     /// Safely shutdown the TraceExporter and all related tasks
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn shutdown(mut self, timeout: Option<Duration>) -> Result<(), TraceExporterError> {
         let mut builder = tokio::runtime::Builder::new_current_thread();
-        #[cfg(not(target_arch = "wasm32"))]
         builder.enable_all();
         let runtime = builder.build()?;
 
-        #[cfg(not(target_arch = "wasm32"))]
         if let Some(timeout) = timeout {
             return match runtime
                 .block_on(async { tokio::time::timeout(timeout, self.shutdown_async()).await })
@@ -435,13 +448,11 @@ impl<H: HttpClientTrait + MaybeSend + Sync + 'static> TraceExporter<H> {
             };
         }
 
-        #[cfg(target_arch = "wasm32")]
-        let _ = timeout;
-
         runtime.block_on(self.shutdown_async());
         Ok(())
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     /// Future used inside `Self::shutdown`.
     ///
     /// This function should not take ownership of the trace exporter as it will cause the runtime
@@ -471,6 +482,7 @@ impl<H: HttpClientTrait + MaybeSend + Sync + 'static> TraceExporter<H> {
         }
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     /// Check if agent info state has changed
     fn has_agent_info_state_changed(&self, agent_info: &Arc<AgentInfo>) -> bool {
         Some(agent_info.state_hash.as_str())
@@ -481,6 +493,7 @@ impl<H: HttpClientTrait + MaybeSend + Sync + 'static> TraceExporter<H> {
                 .map(|s| s.as_str())
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     fn check_agent_info(&self) {
         if let Some(agent_info) = agent_info::get_agent_info() {
             if self.has_agent_info_state_changed(&agent_info) {
@@ -520,6 +533,12 @@ impl<H: HttpClientTrait + MaybeSend + Sync + 'static> TraceExporter<H> {
                     .store(Some(agent_info.state_hash.clone().into()))
             }
         }
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    fn check_agent_info(&self) {
+        // No background workers on wasm — agent info is never fetched, stats are
+        // never computed. This is intentionally a no-op.
     }
 
     /// !!! This function is only for testing purposes !!!
@@ -894,6 +913,7 @@ impl<H: HttpClientTrait + MaybeSend + Sync + 'static> TraceExporter<H> {
     }
 
     #[cfg(test)]
+    #[cfg(not(target_arch = "wasm32"))]
     /// Test only function to check if the stats computation is active and the worker is running
     pub fn is_stats_worker_active(&self) -> bool {
         stats::is_stats_worker_active(&self.client_side_stats, &self.workers)

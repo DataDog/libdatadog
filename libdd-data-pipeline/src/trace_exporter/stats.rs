@@ -7,24 +7,34 @@
 //! including starting/stopping stats workers, managing the span concentrator,
 //! and processing traces for stats collection.
 
+#[cfg(not(target_arch = "wasm32"))]
 use crate::agent_info::schema::AgentInfo;
+#[cfg(not(target_arch = "wasm32"))]
 use crate::stats_exporter;
 use arc_swap::ArcSwap;
 use libdd_capabilities::{HttpClientTrait, MaybeSend};
-use libdd_common::{Endpoint, MutexExt};
+#[cfg(not(target_arch = "wasm32"))]
+use libdd_common::Endpoint;
+use libdd_common::MutexExt;
 use libdd_trace_stats::span_concentrator::SpanConcentrator;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
+#[cfg(not(target_arch = "wasm32"))]
 use tokio::runtime::Runtime;
 use tokio_util::sync::CancellationToken;
+#[cfg(not(target_arch = "wasm32"))]
 use tracing::{debug, error};
 
+#[cfg(not(target_arch = "wasm32"))]
 use super::add_path;
 
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) const DEFAULT_STATS_ELIGIBLE_SPAN_KINDS: [&str; 4] =
     ["client", "server", "producer", "consumer"];
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) const STATS_ENDPOINT: &str = "/v0.6/stats";
 
+#[cfg(not(target_arch = "wasm32"))]
 /// Context struct that groups immutable parameters used by stats functions
 pub(crate) struct StatsContext<'a> {
     pub metadata: &'a super::TracerMetadata,
@@ -33,6 +43,7 @@ pub(crate) struct StatsContext<'a> {
 }
 
 #[derive(Debug)]
+#[cfg_attr(target_arch = "wasm32", allow(dead_code))]
 pub(crate) enum StatsComputationStatus {
     /// Client-side stats has been disabled by the tracer
     Disabled,
@@ -47,6 +58,7 @@ pub(crate) enum StatsComputationStatus {
     },
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 /// Get span kinds for stats computation with default fallback
 fn get_span_kinds_for_stats(agent_info: &Arc<AgentInfo>) -> Vec<String> {
     agent_info
@@ -56,6 +68,7 @@ fn get_span_kinds_for_stats(agent_info: &Arc<AgentInfo>) -> Vec<String> {
         .unwrap_or_else(|| DEFAULT_STATS_ELIGIBLE_SPAN_KINDS.map(String::from).to_vec())
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 /// Start the stats exporter and enable stats computation
 ///
 /// Should only be used if the agent enabled stats computation
@@ -86,6 +99,7 @@ pub(crate) fn start_stats_computation<H: HttpClientTrait + MaybeSend + Sync + 's
     Ok(())
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 /// Create stats exporter and worker, start the worker, and update the state
 fn create_and_start_stats_worker<H: HttpClientTrait + MaybeSend + Sync + 'static>(
     ctx: &StatsContext,
@@ -104,7 +118,6 @@ fn create_and_start_stats_worker<H: HttpClientTrait + MaybeSend + Sync + 'static
     );
     let mut stats_worker = crate::pausable_worker::PausableWorker::new(stats_exporter);
 
-    // Get runtime guard
     let runtime_guard = ctx.runtime.lock_or_panic();
     if let Some(rt) = runtime_guard.as_ref() {
         stats_worker.start(rt).map_err(|e| {
@@ -116,7 +129,6 @@ fn create_and_start_stats_worker<H: HttpClientTrait + MaybeSend + Sync + 'static
         return Err(anyhow::anyhow!("Runtime not available"));
     }
 
-    // Update the stats computation state with the new worker and components
     workers.lock_or_panic().stats = Some(stats_worker);
     client_side_stats.store(Arc::new(StatsComputationStatus::Enabled {
         stats_concentrator: stats_concentrator.clone(),
@@ -126,6 +138,7 @@ fn create_and_start_stats_worker<H: HttpClientTrait + MaybeSend + Sync + 'static
     Ok(())
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 /// Stops the stats exporter and disable stats computation
 ///
 /// Used when client-side stats is disabled by the agent
@@ -139,7 +152,6 @@ pub(crate) fn stop_stats_computation<H: HttpClientTrait + MaybeSend + Sync + 'st
         cancellation_token,
     } = &**client_side_stats.load()
     {
-        // If there's no runtime there's no exporter to stop
         let runtime_guard = ctx.runtime.lock_or_panic();
         if let Some(rt) = runtime_guard.as_ref() {
             rt.block_on(async {
@@ -155,6 +167,7 @@ pub(crate) fn stop_stats_computation<H: HttpClientTrait + MaybeSend + Sync + 'st
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 /// Handle stats computation when agent changes from disabled to enabled
 pub(crate) fn handle_stats_disabled_by_agent<H: HttpClientTrait + MaybeSend + Sync + 'static>(
     ctx: &StatsContext,
@@ -163,7 +176,6 @@ pub(crate) fn handle_stats_disabled_by_agent<H: HttpClientTrait + MaybeSend + Sy
     workers: &Arc<Mutex<super::TraceExporterWorkers<H>>>,
 ) {
     if agent_info.info.client_drop_p0s.is_some_and(|v| v) {
-        // Client-side stats is supported by the agent
         let status = start_stats_computation(
             ctx,
             client_side_stats,
@@ -180,6 +192,7 @@ pub(crate) fn handle_stats_disabled_by_agent<H: HttpClientTrait + MaybeSend + Sy
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 /// Handle stats computation when it's already enabled
 pub(crate) fn handle_stats_enabled<H: HttpClientTrait + MaybeSend + Sync + 'static>(
     ctx: &StatsContext,
@@ -252,6 +265,7 @@ pub(crate) fn process_traces_for_stats<T: libdd_trace_utils::span::TraceData>(
 }
 
 #[cfg(test)]
+#[cfg(not(target_arch = "wasm32"))]
 /// Test only function to check if the stats computation is active and the worker is running
 pub(crate) fn is_stats_worker_active<H: HttpClientTrait + MaybeSend + Sync + 'static>(
     client_side_stats: &ArcSwap<StatsComputationStatus>,
