@@ -17,7 +17,7 @@ const MAX_ATTRIBUTES_PER_SPAN: usize = 128;
 
 /// Maps Datadog trace chunks and resource info to an OTLP ExportTraceServiceRequest.
 ///
-/// Resource: SDK-level attributes (service.name, deployment.environment, telemetry.sdk.*,
+/// Resource: SDK-level attributes (service.name, deployment.environment.name, telemetry.sdk.*,
 /// runtime-id). InstrumentationScope: present but empty (DD SDKs don't have a scope concept).
 /// All analogous DD span fields are mapped; meta→attributes (string), metrics→attributes
 /// (int/double), links and events mapped to OTLP links and events. Status from span.error and
@@ -123,15 +123,15 @@ fn map_span<T: TraceData>(span: &Span<T>, resource_service: &str) -> OtlpSpan {
     let (attributes, dropped_attributes_count) = map_attributes(span, resource_service);
     let error_msg = span.meta.get("error.msg").map(|v| v.borrow().to_string());
     let status = if span.error != 0 {
-        Some(Status {
+        Status {
             message: error_msg,
             code: json_types::status_code::ERROR,
-        })
+        }
     } else {
-        Some(Status {
+        Status {
             message: None,
             code: json_types::status_code::UNSET,
-        })
+        }
     };
     // Set flags from sampling priority: 1 = sampled/keep, 0 = dropped.
     let flags = span
@@ -351,7 +351,7 @@ mod tests {
     fn test_trace_id_span_id_format() {
         let resource_info = OtlpResourceInfo::default();
         let span: Span<BytesData> = Span {
-            trace_id: 0x5B8EFFF798038103D269B633813FC60C_u128,
+            trace_id: 0xD269B633813FC60C_u128, // low 64 bits only (v04 wire format)
             span_id: 0xEEE19B7EC3C1B174,
             parent_id: 0xEEE19B7EC3C1B173,
             name: libdd_tinybytes::BytesString::from_static("test"),
@@ -366,7 +366,7 @@ mod tests {
         let req = map_traces_to_otlp(vec![vec![span]], &resource_info);
         let rs = &req.resource_spans[0];
         let otlp_span = &rs.scope_spans[0].spans[0];
-        assert_eq!(otlp_span.trace_id, "5b8efff798038103d269b633813fc60c");
+        assert_eq!(otlp_span.trace_id, "0000000000000000d269b633813fc60c");
         assert_eq!(otlp_span.span_id, "eee19b7ec3c1b174");
         assert_eq!(
             otlp_span.parent_span_id.as_deref(),
@@ -396,7 +396,7 @@ mod tests {
         );
         let req = map_traces_to_otlp(vec![vec![span]], &resource_info);
         let otlp_span = &req.resource_spans[0].scope_spans[0].spans[0];
-        let status = otlp_span.status.as_ref().unwrap();
+        let status = &otlp_span.status;
         assert_eq!(status.code, json_types::status_code::ERROR);
         assert_eq!(status.message.as_deref(), Some("something broke"));
     }
@@ -475,5 +475,149 @@ mod tests {
         let req = map_traces_to_otlp(vec![vec![span]], &resource_info);
         let otlp_span = &req.resource_spans[0].scope_spans[0].spans[0];
         assert_eq!(otlp_span.trace_id, "0000000000000000d269b633813fc60c");
+    }
+
+    #[test]
+    fn test_tracestate_from_meta() {
+        let resource_info = OtlpResourceInfo::default();
+        let mut span: Span<BytesData> = Span {
+            trace_id: 1,
+            span_id: 2,
+            name: libdd_tinybytes::BytesString::from_static("s"),
+            start: 0,
+            duration: 1,
+            ..Default::default()
+        };
+        span.meta.insert(
+            "tracestate".into(),
+            libdd_tinybytes::BytesString::from_static("vendor1=abc,rojo=00f067"),
+        );
+        let req = map_traces_to_otlp(vec![vec![span]], &resource_info);
+        let otlp_span = &req.resource_spans[0].scope_spans[0].spans[0];
+        assert_eq!(
+            otlp_span.trace_state.as_deref(),
+            Some("vendor1=abc,rojo=00f067")
+        );
+    }
+
+    #[test]
+    fn test_meta_struct_as_bytes_value() {
+        use libdd_tinybytes::Bytes;
+        let resource_info = OtlpResourceInfo::default();
+        let mut span: Span<BytesData> = Span {
+            trace_id: 1,
+            span_id: 2,
+            name: libdd_tinybytes::BytesString::from_static("s"),
+            start: 0,
+            duration: 1,
+            ..Default::default()
+        };
+        span.meta_struct
+            .insert("my_key".into(), Bytes::from(vec![1u8, 2, 3]));
+        let req = map_traces_to_otlp(vec![vec![span]], &resource_info);
+        let json = serde_json::to_value(&req).unwrap();
+        let attrs = &json["resourceSpans"][0]["scopeSpans"][0]["spans"][0]["attributes"];
+        let kv = attrs
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|a| a["key"] == "my_key")
+            .expect("my_key attribute not found");
+        // Per the protobuf JSON mapping, bytes are base64-encoded.
+        assert_eq!(kv["value"]["bytesValue"], "AQID");
+    }
+
+    #[test]
+    fn test_operation_name_attribute() {
+        let resource_info = OtlpResourceInfo::default();
+        let span: Span<BytesData> = Span {
+            trace_id: 1,
+            span_id: 2,
+            name: libdd_tinybytes::BytesString::from_static("my.operation"),
+            start: 0,
+            duration: 1,
+            ..Default::default()
+        };
+        let req = map_traces_to_otlp(vec![vec![span]], &resource_info);
+        let json = serde_json::to_value(&req).unwrap();
+        let attrs = &json["resourceSpans"][0]["scopeSpans"][0]["spans"][0]["attributes"];
+        let kv = attrs
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|a| a["key"] == "operation.name")
+            .expect("operation.name attribute not found");
+        assert_eq!(kv["value"]["stringValue"], "my.operation");
+    }
+
+    #[test]
+    fn test_span_type_attribute() {
+        let resource_info = OtlpResourceInfo::default();
+        let span: Span<BytesData> = Span {
+            trace_id: 1,
+            span_id: 2,
+            name: libdd_tinybytes::BytesString::from_static("s"),
+            r#type: libdd_tinybytes::BytesString::from_static("grpc"),
+            start: 0,
+            duration: 1,
+            ..Default::default()
+        };
+        let req = map_traces_to_otlp(vec![vec![span]], &resource_info);
+        let json = serde_json::to_value(&req).unwrap();
+        let attrs = &json["resourceSpans"][0]["scopeSpans"][0]["spans"][0]["attributes"];
+        let kv = attrs
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|a| a["key"] == "span.type")
+            .expect("span.type attribute not found");
+        assert_eq!(kv["value"]["stringValue"], "grpc");
+    }
+
+    #[test]
+    fn test_per_span_service_name_attribute() {
+        // When span.service differs from the resource-level service, service.name is emitted
+        // as a per-span attribute so the receiver can distinguish between services in a trace.
+        let resource_info = OtlpResourceInfo {
+            service: "resource-svc".to_string(),
+            ..Default::default()
+        };
+        let span: Span<BytesData> = Span {
+            trace_id: 1,
+            span_id: 2,
+            name: libdd_tinybytes::BytesString::from_static("s"),
+            service: libdd_tinybytes::BytesString::from_static("span-svc"),
+            start: 0,
+            duration: 1,
+            ..Default::default()
+        };
+        let req = map_traces_to_otlp(vec![vec![span]], &resource_info);
+        let json = serde_json::to_value(&req).unwrap();
+        let attrs = &json["resourceSpans"][0]["scopeSpans"][0]["spans"][0]["attributes"];
+        let kv = attrs
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|a| a["key"] == "service.name")
+            .expect("service.name attribute not found");
+        assert_eq!(kv["value"]["stringValue"], "span-svc");
+    }
+
+    #[test]
+    fn test_unsampled_span_flags_zero() {
+        // _sampling_priority_v1 = 0 means explicitly dropped; flags field must be 0.
+        let resource_info = OtlpResourceInfo::default();
+        let mut span: Span<BytesData> = Span {
+            trace_id: 1,
+            span_id: 2,
+            name: libdd_tinybytes::BytesString::from_static("s"),
+            start: 0,
+            duration: 1,
+            ..Default::default()
+        };
+        span.metrics.insert("_sampling_priority_v1".into(), 0.0);
+        let req = map_traces_to_otlp(vec![vec![span]], &resource_info);
+        let otlp_span = &req.resource_spans[0].scope_spans[0].spans[0];
+        assert_eq!(otlp_span.flags, Some(0));
     }
 }

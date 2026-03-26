@@ -11,10 +11,10 @@
 //!
 //! ## Sampling
 //!
-//! By default, the exporter does not apply its own sampling: it exports every trace it receives
-//! from the tracer. The tracer (e.g. dd-trace-py) is responsible for inheriting the sampling
-//! decision from the distributed trace context; when no decision is present, the tracer typically
-//! uses 100% (always on).
+//! The exporter enforces the sampling decision already made by the tracer: unsampled chunks are
+//! dropped via `drop_chunks` before export. It does not apply its own sampling policy. The tracer
+//! (e.g. dd-trace-py) is responsible for inheriting the sampling decision from the distributed
+//! trace context; when no decision is present, the tracer typically uses 100% (always on).
 //!
 //! ## Partial flush
 //!

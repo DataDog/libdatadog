@@ -72,8 +72,7 @@ pub struct OtlpSpan {
     pub end_time_unix_nano: String,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub attributes: Vec<KeyValue>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub status: Option<Status>,
+    pub status: Status,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub links: Vec<OtlpSpanLink>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
