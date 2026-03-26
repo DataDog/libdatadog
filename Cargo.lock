@@ -2980,7 +2980,6 @@ name = "libdd-common"
 version = "2.0.0"
 dependencies = [
  "anyhow",
- "async-trait",
  "bytes",
  "cc",
  "const_format",
