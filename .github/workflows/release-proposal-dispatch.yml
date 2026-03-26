@@ -546,10 +546,13 @@ jobs:
 
           NON_DEFAULT=""
           if [ -n "$MAIN_START_REF" ]; then
-            NON_DEFAULT+=$(printf '### Cut from non-default ref\n\nThis proposal was generated from `%s` instead of the default latest `origin/%s`.\n\n' "$MAIN_START_REF" "$MAIN_BRANCH")
+            NON_DEFAULT="${NON_DEFAULT}"$'\n### Cut from non-default ref\n\n'"This proposal was generated from \`$MAIN_START_REF\` instead of the default latest \`origin/$MAIN_BRANCH\`."$'\n'
           fi
           if [ "$BYPASS_STANDARD_CHECKS" = "true" ]; then
-            NON_DEFAULT+=$(printf '### Non-default workflow options\n\n**bypass_standard_checks** was enabled: the ongoing-proposal branch guard was skipped; branches use proposal prefix `%s` and release prefix `%s`. Crates whose resolved git tag is not the latest SemVer tag for that crate are still included (normally skipped).\n\n' "$PROPOSAL_BRANCH_PREFIX" "$RELEASE_BRANCH_PREFIX")
+            NON_DEFAULT="${NON_DEFAULT}"$'\n### Non-default workflow options\n\n'"**bypass_standard_checks** was enabled: the ongoing-proposal branch guard was skipped; branches use proposal prefix \`$PROPOSAL_BRANCH_PREFIX\` and release prefix \`$RELEASE_BRANCH_PREFIX\`. Crates whose resolved git tag is not the latest SemVer tag for that crate are still included (normally skipped)."$'\n'
+          fi
+          if [ -n "$NON_DEFAULT" ]; then
+            NON_DEFAULT="${NON_DEFAULT}"$'\n\n'
           fi
 
           # Generate the PR body by merging commits and API changes
