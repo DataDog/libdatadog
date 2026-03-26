@@ -73,7 +73,7 @@ jobs:
 
           echo "LIBDD_DEPENDENCIES: $LIBDD_DEPENDENCIES"
 
-          PATCH_CONF=""
+          PATCH_ARGS=()
 
           # Unzip crates and build a patch expression for local path overrides.
           for crate in "$CRATES_DIR"/*.crate; do
@@ -88,10 +88,10 @@ jobs:
 
             if echo "$LIBDD_DEPENDENCIES" | jq -e --arg crate "$CRATE_NAME" 'index($crate) != null' >/dev/null; then
               echo "Patching crate: $CRATE_NAME"
-              PATCH_CONF="$PATCH_CONF --config 'patch.crates-io.$CRATE_NAME.path=\"$CRATES_DIR/$CRATE_PATH\"'"
+              PATCH_ARGS+=("--config" "patch.crates-io.$CRATE_NAME.path=\"$CRATES_DIR/$CRATE_PATH\"")
             fi
           done
 
-          echo "Build dd-trace-rs with patch: $PATCH_CONF"
+          echo "Build dd-trace-rs with patch args: ${PATCH_ARGS[*]}"
 
-          cargo build --release --workspace --all-features $PATCH_CONF
+          cargo build --release --workspace --all-features "${PATCH_ARGS[@]}"
