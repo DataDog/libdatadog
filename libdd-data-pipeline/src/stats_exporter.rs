@@ -3,7 +3,7 @@
 
 use std::{
     borrow::Borrow,
-    marker::PhantomData,
+    collections::HashMap,
     sync::{
         atomic::{AtomicU64, Ordering},
         Arc, Mutex,
@@ -36,9 +36,7 @@ pub struct StatsExporter<H: HttpClientTrait> {
     meta: TracerMetadata,
     sequence_id: AtomicU64,
     cancellation_token: CancellationToken,
-    /// `H` must live on the struct because `Worker::run(&mut self)` (a fixed
-    /// trait signature) calls `send_with_retry::<H>()` internally.
-    _phantom: PhantomData<H>,
+    client: H,
 }
 
 impl<H: HttpClientTrait> StatsExporter<H> {
@@ -64,7 +62,7 @@ impl<H: HttpClientTrait> StatsExporter<H> {
             meta,
             sequence_id: AtomicU64::new(0),
             cancellation_token,
-            _phantom: PhantomData,
+            client: H::new_client(),
         }
     }
 
@@ -98,7 +96,7 @@ impl<H: HttpClientTrait> StatsExporter<H> {
         );
 
         let result =
-            send_with_retry::<H>(&self.endpoint, body, &headers, &RetryStrategy::default()).await;
+            send_with_retry(&self.client, &self.endpoint, body, &headers, &RetryStrategy::default()).await;
 
         match result {
             Ok(_) => Ok(()),

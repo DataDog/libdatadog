@@ -10,6 +10,7 @@
 mod http;
 
 pub use http::DefaultHttpClient;
+pub use libdd_capabilities::HttpClientTrait;
 
 /// Bundle struct for native platform capabilities.
 ///

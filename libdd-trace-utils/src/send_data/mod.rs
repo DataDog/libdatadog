@@ -60,7 +60,9 @@ use zstd::stream::write::Encoder;
 ///     send_data.set_retry_strategy(retry_strategy);
 ///
 ///     // Send the data (caller picks the HTTP client implementation)
-///     let result = send_data.send::<libdd_capabilities_impl::NativeCapabilities>().await;
+///     use libdd_capabilities::HttpClientTrait;
+///     let client = libdd_capabilities_impl::NativeCapabilities::new_client();
+///     let result = send_data.send(&client).await;
 /// }
 /// ```
 pub struct SendData {
@@ -222,23 +224,25 @@ impl SendData {
     /// # Returns
     ///
     /// A `SendDataResult` instance containing the result of the operation.
-    pub async fn send<H: HttpClientTrait>(&self) -> SendDataResult {
-        self.send_internal::<H>(None).await
+    pub async fn send<H: HttpClientTrait>(&self, client: &H) -> SendDataResult {
+        self.send_internal(client, None).await
     }
 
     async fn send_internal<H: HttpClientTrait>(
         &self,
+        client: &H,
         endpoint: Option<Endpoint>,
     ) -> SendDataResult {
         if self.use_protobuf() {
-            self.send_with_protobuf::<H>(endpoint).await
+            self.send_with_protobuf(client, endpoint).await
         } else {
-            self.send_with_msgpack::<H>(endpoint).await
+            self.send_with_msgpack(client, endpoint).await
         }
     }
 
     async fn send_payload<H: HttpClientTrait>(
         &self,
+        client: &H,
         chunks: u64,
         payload: Vec<u8>,
         headers: HeaderMap,
@@ -247,7 +251,8 @@ impl SendData {
         #[allow(clippy::unwrap_used)]
         let payload_len = u64::try_from(payload.len()).unwrap();
         (
-            send_with_retry::<H>(
+            send_with_retry(
+                client,
                 endpoint.unwrap_or(&self.target),
                 payload,
                 &headers,
@@ -290,6 +295,7 @@ impl SendData {
 
     async fn send_with_protobuf<H: HttpClientTrait>(
         &self,
+        client: &H,
         endpoint: Option<Endpoint>,
     ) -> SendDataResult {
         let mut result = SendDataResult::default();
@@ -318,7 +324,7 @@ impl SendData {
                 request_headers.insert(CONTENT_TYPE, APPLICATION_PROTOBUF);
 
                 let (response, bytes_sent, chunks) = self
-                    .send_payload::<H>(chunks, final_payload, request_headers, endpoint.as_ref())
+                    .send_payload(client, chunks, final_payload, request_headers, endpoint.as_ref())
                     .await;
 
                 result.update(response, bytes_sent, chunks);
@@ -331,6 +337,7 @@ impl SendData {
 
     async fn send_with_msgpack<H: HttpClientTrait>(
         &self,
+        client: &H,
         endpoint: Option<Endpoint>,
     ) -> SendDataResult {
         let mut result = SendDataResult::default();
@@ -351,7 +358,8 @@ impl SendData {
                         Err(e) => return result.error(anyhow!(e)),
                     };
 
-                    futures.push(self.send_payload::<H>(
+                    futures.push(self.send_payload(
+                        client,
                         chunks,
                         payload,
                         headers,
@@ -369,7 +377,7 @@ impl SendData {
 
                 let payload = msgpack_encoder::v04::to_vec(payload);
 
-                futures.push(self.send_payload::<H>(chunks, payload, headers, endpoint.as_ref()));
+                futures.push(self.send_payload(client, chunks, payload, headers, endpoint.as_ref()));
             }
             TracerPayloadCollection::V05(payload) => {
                 #[allow(clippy::unwrap_used)]
@@ -384,7 +392,7 @@ impl SendData {
                     Err(e) => return result.error(anyhow!(e)),
                 };
 
-                futures.push(self.send_payload::<H>(chunks, payload, headers, endpoint.as_ref()));
+                futures.push(self.send_payload(client, chunks, payload, headers, endpoint.as_ref()));
             }
         }
 
@@ -434,6 +442,7 @@ mod tests {
     use crate::tracer_header_tags::TracerHeaderTags;
     use httpmock::prelude::*;
     use httpmock::MockServer;
+    use libdd_capabilities::HttpClientTrait;
     use libdd_capabilities_impl::NativeCapabilities;
     use libdd_common::Endpoint;
     use libdd_trace_protobuf::pb::Span;
@@ -591,7 +600,7 @@ mod tests {
         );
 
         let data_payload_len = compute_payload_len(&data.tracer_payloads);
-        let res = data.send::<NativeCapabilities>().await;
+        let res = data.send(&NativeCapabilities::new_client()).await;
 
         mock.assert_async().await;
 
@@ -636,7 +645,7 @@ mod tests {
         );
 
         let data_payload_len = compute_payload_len(&data.tracer_payloads);
-        let res = data.send::<NativeCapabilities>().await;
+        let res = data.send(&NativeCapabilities::new_client()).await;
 
         mock.assert_async().await;
 
@@ -695,7 +704,7 @@ mod tests {
         );
 
         let data_payload_len = rmp_compute_payload_len(&data.tracer_payloads);
-        let res = data.send::<NativeCapabilities>().await;
+        let res = data.send(&NativeCapabilities::new_client()).await;
 
         mock.assert_async().await;
 
@@ -753,7 +762,7 @@ mod tests {
         );
 
         let data_payload_len = rmp_compute_payload_len(&data.tracer_payloads);
-        let res = data.send::<NativeCapabilities>().await;
+        let res = data.send(&NativeCapabilities::new_client()).await;
 
         mock.assert_async().await;
 
@@ -797,7 +806,7 @@ mod tests {
         );
 
         let data_payload_len = rmp_compute_payload_len(&data.tracer_payloads);
-        let res = data.send::<NativeCapabilities>().await;
+        let res = data.send(&NativeCapabilities::new_client()).await;
 
         mock.assert_calls_async(2).await;
 
@@ -838,7 +847,7 @@ mod tests {
             },
         );
 
-        let res = data.send::<NativeCapabilities>().await;
+        let res = data.send(&NativeCapabilities::new_client()).await;
 
         mock.assert_calls_async(5).await;
 
@@ -870,7 +879,7 @@ mod tests {
             },
         );
 
-        let res = data.send::<NativeCapabilities>().await;
+        let res = data.send(&NativeCapabilities::new_client()).await;
 
         assert!(res.last_result.is_err());
         match std::env::consts::OS {
@@ -937,7 +946,7 @@ mod tests {
             },
         );
 
-        let res = data.send::<NativeCapabilities>().await;
+        let res = data.send(&NativeCapabilities::new_client()).await;
 
         mock.assert_calls_async(5).await;
 
@@ -979,7 +988,7 @@ mod tests {
             },
         );
 
-        let res = data.send::<NativeCapabilities>().await;
+        let res = data.send(&NativeCapabilities::new_client()).await;
 
         mock.assert_calls_async(10).await;
 

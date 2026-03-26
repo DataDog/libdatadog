@@ -233,6 +233,7 @@ pub struct TraceExporter<H: HttpClientTrait + MaybeSend + Sync + 'static> {
     #[cfg(feature = "telemetry")]
     telemetry: Option<TelemetryClient>,
     health_metrics_enabled: bool,
+    client: H,
     workers: Arc<Mutex<TraceExporterWorkers<H>>>,
     agent_payload_response_version: Option<AgentResponsePayloadVersion>,
 }
@@ -640,7 +641,7 @@ impl<H: HttpClientTrait + MaybeSend + Sync + 'static> TraceExporter<H> {
         let payload_len = mp_payload.len();
 
         // Send traces to the agent
-        let result = send_with_retry::<H>(endpoint, mp_payload, &headers, &strategy).await;
+        let result = send_with_retry(&self.client, endpoint, mp_payload, &headers, &strategy).await;
 
         #[cfg(feature = "telemetry")]
         if let Some(telemetry) = &self.telemetry {

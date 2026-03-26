@@ -343,6 +343,7 @@ impl TraceExporterBuilder {
             #[cfg(feature = "telemetry")]
             telemetry: telemetry_client,
             health_metrics_enabled: self.health_metrics_enabled,
+            client: H::new_client(),
             workers: Arc::new(Mutex::new(TraceExporterWorkers {
                 info: info_fetcher_worker,
                 stats: None,

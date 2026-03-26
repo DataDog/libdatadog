@@ -69,6 +69,7 @@ impl std::error::Error for SendWithRetryError {}
 ///
 /// ```rust, no_run
 /// # use libdd_common::Endpoint;
+/// # use libdd_capabilities::HttpClientTrait;
 /// # use libdd_trace_utils::send_with_retry::*;
 /// # async fn run() -> SendWithRetryResult {
 /// let payload: Vec<u8> = vec![0, 1, 2, 3];
@@ -82,7 +83,9 @@ impl std::error::Error for SendWithRetryError {}
 ///     http::HeaderValue::from_static("application/msgpack"),
 /// );
 /// let retry_strategy = RetryStrategy::new(3, 10, RetryBackoffType::Exponential, Some(5));
-/// send_with_retry::<libdd_capabilities_impl::NativeCapabilities>(
+/// let client = libdd_capabilities_impl::NativeCapabilities::new_client();
+/// send_with_retry(
+///     &client,
 ///     &target,
 ///     payload,
 ///     &headers,
@@ -92,6 +95,7 @@ impl std::error::Error for SendWithRetryError {}
 /// # }
 /// ```
 pub async fn send_with_retry<H: HttpClientTrait>(
+    client: &H,
     target: &Endpoint,
     payload: Vec<u8>,
     headers: &HeaderMap,
@@ -100,7 +104,6 @@ pub async fn send_with_retry<H: HttpClientTrait>(
     let mut request_attempt = 0;
     #[cfg(not(target_arch = "wasm32"))]
     let timeout = Duration::from_millis(target.timeout_ms);
-    let client = H::new_client();
 
     debug!(
         url = %target.url,
@@ -245,6 +248,7 @@ mod tests {
     use super::*;
     use crate::test_utils::poll_for_mock_hit;
     use httpmock::MockServer;
+    use libdd_capabilities::HttpClientTrait;
     use libdd_capabilities_impl::NativeCapabilities;
 
     #[cfg_attr(miri, ignore)]
@@ -275,9 +279,11 @@ mod tests {
         };
 
         let strategy = RetryStrategy::new(0, 2, RetryBackoffType::Constant, None);
+        let client = NativeCapabilities::new_client();
 
         tokio::spawn(async move {
-            let result = send_with_retry::<NativeCapabilities>(
+            let result = send_with_retry(
+                &client,
                 &target_endpoint,
                 vec![0, 1, 2, 3],
                 &HeaderMap::new(),
@@ -322,9 +328,11 @@ mod tests {
         };
 
         let strategy = RetryStrategy::new(2, 250, RetryBackoffType::Constant, None);
+        let client = NativeCapabilities::new_client();
 
         tokio::spawn(async move {
-            let result = send_with_retry::<NativeCapabilities>(
+            let result = send_with_retry(
+                &client,
                 &target_endpoint,
                 vec![0, 1, 2, 3],
                 &HeaderMap::new(),
@@ -369,9 +377,11 @@ mod tests {
             RetryBackoffType::Constant,
             None,
         );
+        let client = NativeCapabilities::new_client();
 
         tokio::spawn(async move {
-            let result = send_with_retry::<NativeCapabilities>(
+            let result = send_with_retry(
+                &client,
                 &target_endpoint,
                 vec![0, 1, 2, 3],
                 &HeaderMap::new(),
@@ -416,9 +426,11 @@ mod tests {
         };
 
         let strategy = RetryStrategy::new(2, 10, RetryBackoffType::Constant, None);
+        let client = NativeCapabilities::new_client();
 
         tokio::spawn(async move {
-            let result = send_with_retry::<NativeCapabilities>(
+            let result = send_with_retry(
+                &client,
                 &target_endpoint,
                 vec![0, 1, 2, 3],
                 &HeaderMap::new(),
