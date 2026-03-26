@@ -1017,7 +1017,7 @@ mod tests {
         enable_telemetry: bool,
         enable_health_metrics: bool,
     ) -> TraceExporter<NativeCapabilities> {
-        let mut builder = TraceExporter::<NativeCapabilities>::builder();
+        let mut builder = TraceExporterBuilder::default();
         builder
             .set_url(&url)
             .set_service("test")
