@@ -1,0 +1,104 @@
+name: Release - Test a release proposal PR changes using dd-trace-rs
+on:
+  push:
+    branches:
+      - release-proposal/**
+      - release-proposal-testing/**
+
+jobs:
+  package-and-upload-crates:
+    permissions:
+      id-token: write # Enable OIDC
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # 4.2.2
+        with:
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.92.0
+
+      - name: Package the workspace
+        run: |
+          cargo package --workspace --exclude "libdd-*-ffi" --exclude libdd-crashtracker --exclude libdd-libunwind-sys --exclude "datadog-*" \
+            --exclude bin_tests --exclude "tools" --exclude "sidecar_mockgen" --exclude "cc_utils" --exclude spawn_worker --exclude symbolizer-ffi \
+            --exclude test_spawn_from_lib --exclude build-common --exclude builder --all-features
+
+      - name: Upload crates
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-proposal-test-crates
+          path: |
+            target/package/*.crate
+          retention-days: 1
+
+  compile-dd-trace-rs:
+    permissions:
+      id-token: write # Enable OIDC
+    runs-on: ubuntu-latest
+    needs: package-and-upload-crates
+    strategy:
+      matrix:
+        version: ["datadog-opentelemetry-v0.3.2", "datadog-opentelemetry-v0.3.1"]
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # 4.2.2
+        with:
+          fetch-depth: 0
+          repository: DataDog/dd-trace-rs
+          ref: ${{ matrix.version }}
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.92.0
+
+      - name: Download release data
+        uses: actions/download-artifact@v4
+        with:
+          name: release-proposal-test-crates
+          path: /tmp/release-proposal-test-crates
+
+      - name: Compile dd-trace-rs
+        run: |
+          ls /tmp/release-proposal-test-crates
+
+          CRATES_DIR="/tmp/release-proposal-test-crates"
+          TOML_FILE="$(realpath Cargo.toml)"
+          
+          # if CRATES_DIR ends with a slash, remove it
+          if [[ "$CRATES_DIR" == */ ]]; then
+            CRATES_DIR="${CRATES_DIR%/}"
+          fi
+
+          # Get libdd-* direct dependencies only from the root manifest package.
+          LIBDD_DEPENDENCIES=$(cargo metadata --manifest-path "$TOML_FILE" --format-version=1 --no-deps | jq -c '[.packages[] | select(.name == "datadog-opentelemetry") | .dependencies[]?.name | select(startswith("libdd-"))] | unique')
+
+          echo "LIBDD_DEPENDENCIES: $LIBDD_DEPENDENCIES"
+
+          PATCH_ARGS=()
+
+          # Unzip crates and build a patch expression for local path overrides.
+          # patch all the crates to patch transitive dependencies
+          for crate in "$CRATES_DIR"/*.crate; do
+            tar -xzvf "$crate" -C "$CRATES_DIR" > /dev/null
+
+            CRATE_PATH=$(echo "$crate" | sed 's/.*\///' | sed 's/\.crate//')
+            CRATE_TOML_FILE="$CRATES_DIR/$CRATE_PATH/Cargo.toml"
+            
+            CRATE_NAME=$(cargo metadata --manifest-path "$CRATE_TOML_FILE" --format-version=1 --no-deps | jq -r '[.packages[].name][0]')
+            
+            echo "Patching crate: $CRATE_NAME"
+            PATCH_ARGS+=("--config" "patch.crates-io.$CRATE_NAME.path=\"$CRATES_DIR/$CRATE_PATH\"")
+          done
+
+          echo "Build dd-trace-rs with patch args: ${PATCH_ARGS[*]}"
+          
+          cargo update "${PATCH_ARGS[@]}"
+
+          echo "Cargo tree: "
+          cargo tree -d -e normal --workspace --all-features "${PATCH_ARGS[@]}"
+
+          echo "Duplicated dependencies: "
+          cargo tree -d -e normal --workspace --all-features --prefix none "${PATCH_ARGS[@]}" | grep "libdd-" | grep -vF '(*)' | sort | uniq
+
+          cargo build --release --workspace --all-features "${PATCH_ARGS[@]}"
+
+
