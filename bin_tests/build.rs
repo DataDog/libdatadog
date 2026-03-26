@@ -12,7 +12,16 @@ fn main() {
     let so_path = out_dir.join("libpreload_logger.so");
 
     let status = Command::new("cc")
-        .args(["-std=gnu11", "-fPIC", "-shared", "-Wall", "-Wextra", "-o"])
+        .args([
+            "-std=gnu11",
+            "-fPIC",
+            "-shared",
+            "-Wall",
+            "-Wextra",
+            "-g",
+            "-fno-omit-frame-pointer",
+            "-o",
+        ])
         .arg(&so_path)
         .arg(&src)
         .status()
