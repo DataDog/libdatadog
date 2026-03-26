@@ -86,13 +86,13 @@ jobs:
             
             echo "CRATE: $CRATE_NAME - $CRATE_TOML_FILE"
 
-            if echo "$LIBDD_DEPENDENCIES" | jq -e --arg crate "$CRATE_NAME" 'index($crate) != null' >/dev/null; then
+            # if echo "$LIBDD_DEPENDENCIES" | jq -e --arg crate "$CRATE_NAME" 'index($crate) != null' >/dev/null; then
               echo "Patching crate: $CRATE_NAME"
               PATCH_ARGS+=("--config" "patch.crates-io.$CRATE_NAME.path=\"$CRATES_DIR/$CRATE_PATH\"")
-            fi
+            # fi
           done
 
-          echo "\n\nBuild dd-trace-rs with patch args: ${PATCH_ARGS[*]}"
+          echo "Build dd-trace-rs with patch args: ${PATCH_ARGS[*]}"
           
           cargo update
           cargo build --release --workspace --all-features "${PATCH_ARGS[@]}"
