@@ -86,7 +86,7 @@ impl<const N: usize> Drop for SaGuard<N> {
 }
 
 #[cfg(test)]
-mod tests {
+mod single_threaded_tests {
     use super::*;
     use nix::sys::signal::{self, Signal};
     use nix::unistd::Pid;
