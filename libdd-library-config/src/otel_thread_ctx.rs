@@ -22,7 +22,6 @@ pub mod linux {
     use std::{
         ffi::c_void,
         mem,
-        ops::{Deref, DerefMut},
         ptr::{self, NonNull},
         sync::atomic::{compiler_fence, AtomicPtr, AtomicU8, Ordering},
     };
@@ -87,17 +86,17 @@ pub mod linux {
     /// - `valid` starts at `1` on construction and is never set to `0` except during an in-place
     ///   update.
     #[repr(C)]
-    pub struct ThreadContextRecord {
+    struct ThreadContextRecord {
         /// 128-bit trace identifier; all-zeroes means "no trace".
-        pub trace_id: [u8; 16],
+        trace_id: [u8; 16],
         /// 64-bit span identifier.
-        pub span_id: [u8; 8],
+        span_id: [u8; 8],
         /// Whether the record is ready/consistent. Always set to `1` except during in-place update
         /// of the current record.
-        pub valid: AtomicU8,
-        pub _reserved: u8,
+        valid: AtomicU8,
+        _reserved: u8,
         /// Number of populated bytes in `attrs_data`.
-        pub attrs_data_size: u16,
+        attrs_data_size: u16,
         /// Packed variable-length key-value records.
         ///
         /// It's a contiguous list of blocks with layout:
@@ -112,7 +111,7 @@ pub mod linux {
         /// hundred bytes per thread, but it guarantees that we can modify the context in-place
         /// without (re)allocation in the hot path. Having a hybrid scheme (starting smaller and
         /// resizing up a few times) is not out of the question.
-        pub attrs_data: [u8; MAX_ATTRS_DATA_SIZE],
+        attrs_data: [u8; MAX_ATTRS_DATA_SIZE],
     }
 
     impl ThreadContextRecord {
@@ -187,6 +186,7 @@ pub mod linux {
             Self {
                 trace_id: [0u8; 16],
                 span_id: [0u8; 8],
+                // We only ever set `valid` to `0` during in-place update of an attached context.
                 valid: AtomicU8::new(1),
                 _reserved: 0,
                 attrs_data_size: 0,
@@ -214,7 +214,7 @@ pub mod linux {
         /// Turn this thread context into a raw pointer to the underlying [ThreadContextRecord].
         /// The pointer must be reconstructed through [`Self::from_raw`] in order to be properly
         /// dropped, or the record will leak.
-        pub fn into_raw(self) -> *mut ThreadContextRecord {
+        fn into_raw(self) -> *mut ThreadContextRecord {
             let mdrop = mem::ManuallyDrop::new(self);
             mdrop.0.as_ptr()
         }
@@ -229,7 +229,7 @@ pub mod linux {
         ///   calls on the returned [ThreadContextRecord]. More precisely, mutable references might
         ///   be reconstructed during those calls, so any constraint from either Stacked Borrows,
         ///   Tree Borrows or whatever is the current aliasing model implemented in Miri applies.
-        pub unsafe fn from_raw(ptr: *mut ThreadContextRecord) -> Option<Self> {
+        unsafe fn from_raw(ptr: *mut ThreadContextRecord) -> Option<Self> {
             NonNull::new(ptr).map(Self)
         }
     }
@@ -323,24 +323,6 @@ pub mod linux {
         }
     }
 
-    impl Deref for ThreadContext {
-        type Target = ThreadContextRecord;
-
-        fn deref(&self) -> &Self::Target {
-            // Safety: `ThreadContext` represents ownership of a valid, alive
-            // `ThreadContextRecord`.
-            unsafe { self.0.as_ref() }
-        }
-    }
-
-    impl DerefMut for ThreadContext {
-        fn deref_mut(&mut self) -> &mut Self::Target {
-            // Safety: `ThreadContext` represents ownership of a valid, alive
-            // `ThreadContextRecord`.
-            unsafe { self.0.as_mut() }
-        }
-    }
-
     #[cfg(test)]
     // Accessing the TLS through C isn't supported in Miri
     #[cfg_attr(miri, ignore)]
@@ -371,14 +353,17 @@ pub mod linux {
             );
 
             let prev = ThreadContext::detach().unwrap();
-            assert!(
-                prev.trace_id == trace_id,
-                "got back a different trace_id than attached"
-            );
-            assert!(
-                prev.span_id == span_id,
-                "got back a different span_id than attached"
-            );
+
+            unsafe {
+                assert!(
+                    prev.0.as_ref().trace_id == trace_id,
+                    "got back a different trace_id than attached"
+                );
+                assert!(
+                    prev.0.as_ref().span_id == span_id,
+                    "got back a different span_id than attached"
+                );
+            }
 
             assert!(
                 read_tls_context_ptr().is_null(),
