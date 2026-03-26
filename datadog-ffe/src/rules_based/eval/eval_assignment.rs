@@ -293,9 +293,11 @@ mod tests {
                         Err(_) => "DEFAULT",
                     };
                     assert_eq!(
-                        actual_reason, expected_reason.as_str(),
+                        actual_reason,
+                        expected_reason.as_str(),
                         "reason mismatch for flag '{}' targeting_key '{:?}'",
-                        test_case.flag, subject.targeting_key()
+                        test_case.flag,
+                        subject.targeting_key()
                     );
                 }
 
