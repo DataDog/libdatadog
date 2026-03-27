@@ -3104,6 +3104,7 @@ dependencies = [
  "bolero",
  "byteorder",
  "bytes",
+ "cc",
  "chrono",
  "criterion",
  "crossbeam-channel",
