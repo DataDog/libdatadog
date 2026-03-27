@@ -99,8 +99,13 @@ fn assert_counts_equal(expected: Vec<pb::ClientGroupedStats>, actual: Vec<pb::Cl
 #[test]
 fn test_concentrator_oldest_timestamp_cold() {
     let now = SystemTime::now();
-    let mut concentrator =
-        SpanConcentrator::new(Duration::from_nanos(BUCKET_SIZE), now, vec![], vec![]);
+    let mut concentrator = SpanConcentrator::new(
+        Duration::from_nanos(BUCKET_SIZE),
+        now,
+        vec![],
+        vec![],
+        vec![],
+    );
     let mut spans = vec![
         get_test_span(now, 1, 0, 50, 5, "A1", "resource1", 0),
         get_test_span(now, 1, 0, 40, 4, "A1", "resource1", 0),
@@ -149,8 +154,13 @@ fn test_concentrator_oldest_timestamp_cold() {
 #[test]
 fn test_concentrator_oldest_timestamp_hot() {
     let now = SystemTime::now();
-    let mut concentrator =
-        SpanConcentrator::new(Duration::from_nanos(BUCKET_SIZE), now, vec![], vec![]);
+    let mut concentrator = SpanConcentrator::new(
+        Duration::from_nanos(BUCKET_SIZE),
+        now,
+        vec![],
+        vec![],
+        vec![],
+    );
     let mut spans = vec![
         get_test_span(now, 1, 0, 50, 5, "A1", "resource1", 0),
         get_test_span(now, 1, 0, 40, 4, "A1", "resource1", 0),
@@ -222,8 +232,13 @@ fn test_concentrator_oldest_timestamp_hot() {
 #[test]
 fn test_concentrator_stats_totals() {
     let now = SystemTime::now();
-    let mut concentrator =
-        SpanConcentrator::new(Duration::from_nanos(BUCKET_SIZE), now, vec![], vec![]);
+    let mut concentrator = SpanConcentrator::new(
+        Duration::from_nanos(BUCKET_SIZE),
+        now,
+        vec![],
+        vec![],
+        vec![],
+    );
     let aligned_now = align_timestamp(
         system_time_to_unix_duration(now).as_nanos() as u64,
         concentrator.bucket_size,
@@ -282,8 +297,13 @@ fn test_concentrator_stats_totals() {
 /// buckets.
 fn test_concentrator_stats_counts() {
     let now = SystemTime::now();
-    let mut concentrator =
-        SpanConcentrator::new(Duration::from_nanos(BUCKET_SIZE), now, vec![], vec![]);
+    let mut concentrator = SpanConcentrator::new(
+        Duration::from_nanos(BUCKET_SIZE),
+        now,
+        vec![],
+        vec![],
+        vec![],
+    );
     let aligned_now = align_timestamp(
         system_time_to_unix_duration(now).as_nanos() as u64,
         concentrator.bucket_size,
@@ -578,6 +598,7 @@ fn test_span_should_be_included_in_stats() {
         now,
         get_span_kinds(),
         vec![],
+        vec![],
     );
     for span in &spans {
         concentrator.add_span(span);
@@ -656,6 +677,7 @@ fn test_ignore_partial_spans() {
         now,
         get_span_kinds(),
         vec![],
+        vec![],
     );
     for span in &spans {
         concentrator.add_span(span);
@@ -678,6 +700,7 @@ fn test_force_flush() {
         Duration::from_nanos(BUCKET_SIZE),
         now,
         get_span_kinds(),
+        vec![],
         vec![],
     );
     for span in &spans {
@@ -760,12 +783,14 @@ fn test_peer_tags_aggregation() {
         now,
         get_span_kinds(),
         vec![],
+        vec![],
     );
     let mut concentrator_with_peer_tags = SpanConcentrator::new(
         Duration::from_nanos(BUCKET_SIZE),
         now,
         get_span_kinds(),
         vec!["db.instance".to_string(), "db.system".to_string()],
+        vec![],
     );
     for span in &spans {
         concentrator_without_peer_tags.add_span(span);
@@ -877,6 +902,122 @@ fn test_peer_tags_aggregation() {
     );
 }
 
+/// Span-derived primary tags split aggregation when meta values differ
+#[test]
+fn test_span_derived_primary_tags_aggregation() {
+    let now = SystemTime::now();
+    let mut spans = vec![
+        get_test_span_with_meta(
+            now,
+            1,
+            0,
+            100,
+            5,
+            "A1",
+            "GET /objects",
+            0,
+            &[("custom.primary", "a")],
+            &[("_dd.measured", 1.0)],
+        ),
+        get_test_span_with_meta(
+            now,
+            2,
+            0,
+            100,
+            5,
+            "A1",
+            "GET /objects",
+            0,
+            &[("custom.primary", "b")],
+            &[("_dd.measured", 1.0)],
+        ),
+    ];
+    compute_top_level_span(spans.as_mut_slice());
+
+    let mut without_primary = SpanConcentrator::new(
+        Duration::from_nanos(BUCKET_SIZE),
+        now,
+        get_span_kinds(),
+        vec![],
+        vec![],
+    );
+    let mut with_primary = SpanConcentrator::new(
+        Duration::from_nanos(BUCKET_SIZE),
+        now,
+        get_span_kinds(),
+        vec![],
+        vec!["custom.primary".to_string()],
+    );
+    for span in &spans {
+        without_primary.add_span(span);
+        with_primary.add_span(span);
+    }
+
+    let flushtime =
+        now + Duration::from_nanos(with_primary.bucket_size * with_primary.buffer_len as u64);
+
+    let expected_merged = vec![pb::ClientGroupedStats {
+        service: "A1".to_string(),
+        resource: "GET /objects".to_string(),
+        r#type: "db".to_string(),
+        name: "query".to_string(),
+        duration: 200,
+        hits: 2,
+        top_level_hits: 2,
+        errors: 0,
+        is_trace_root: pb::Trilean::True.into(),
+        ..Default::default()
+    }];
+
+    let expected_split = vec![
+        pb::ClientGroupedStats {
+            service: "A1".to_string(),
+            resource: "GET /objects".to_string(),
+            r#type: "db".to_string(),
+            name: "query".to_string(),
+            span_derived_primary_tags: vec!["custom.primary:a".to_string()],
+            duration: 100,
+            hits: 1,
+            top_level_hits: 1,
+            errors: 0,
+            is_trace_root: pb::Trilean::True.into(),
+            ..Default::default()
+        },
+        pb::ClientGroupedStats {
+            service: "A1".to_string(),
+            resource: "GET /objects".to_string(),
+            r#type: "db".to_string(),
+            name: "query".to_string(),
+            span_derived_primary_tags: vec!["custom.primary:b".to_string()],
+            duration: 100,
+            hits: 1,
+            top_level_hits: 1,
+            errors: 0,
+            is_trace_root: pb::Trilean::True.into(),
+            ..Default::default()
+        },
+    ];
+
+    assert_counts_equal(
+        expected_merged,
+        without_primary
+            .flush(flushtime, false)
+            .first()
+            .expect("There should be at least one time bucket")
+            .stats
+            .clone(),
+    );
+    assert_counts_equal(
+        expected_split,
+        with_primary
+            .flush(flushtime, false)
+            .first()
+            .expect("There should be at least one time bucket")
+            .stats
+            .clone(),
+    );
+}
+
 /// Test that internal spans with _dd.base_service use it as their sole peer tag
 #[test]
 fn test_base_service_peer_tag() {
@@ -961,6 +1102,7 @@ fn test_base_service_peer_tag() {
         now,
         get_span_kinds(),
         vec!["db.instance".to_string(), "db.system".to_string()],
+        vec![],
     );
 
     for span in &spans {
@@ -1181,6 +1323,7 @@ fn test_pb_span() {
         now,
         get_span_kinds(),
         vec!["db.instance".to_string(), "db.system".to_string()],
+        vec![],
     );
     let aligned_now = align_timestamp(
         system_time_to_unix_duration(now).as_nanos() as u64,
