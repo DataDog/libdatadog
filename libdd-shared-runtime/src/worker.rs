@@ -11,9 +11,9 @@ use async_trait::async_trait;
 /// [`run`](Self::run).
 ///
 /// # Cancellation safety
-/// The `trigger` function can be interrupted at any yield point (`.await`ed call). The state of the worker
-/// at this point will be saved and used to restart the worker. To be able to safely restart, the
-/// worker must be in a valid state on every call to `.await` within the trigger function.
+/// The `trigger` function can be interrupted at any yield point (`.await`ed call). The state of the
+/// worker at this point will be saved and used to restart the worker. To be able to safely restart,
+/// the worker must be in a valid state on every call to `.await` within the trigger function.
 /// See [`tokio::select#cancellation-safety`] for more details.
 #[async_trait]
 pub trait Worker: std::fmt::Debug {
