@@ -32,6 +32,9 @@ pub struct TelemetryClientBuilder {
     tracer_version: Option<String>,
     config: libdd_telemetry::config::Config,
     runtime_id: Option<String>,
+    session_id: Option<String>,
+    root_session_id: Option<String>,
+    parent_session_id: Option<String>,
 }
 
 impl TelemetryClientBuilder {
@@ -93,6 +96,24 @@ impl TelemetryClientBuilder {
         self
     }
 
+    /// Sets the instrumentation session id sent as the `dd-session-id` header on telemetry requests.
+    pub fn set_session_id(mut self, id: &str) -> Self {
+        self.session_id = Some(id.to_string());
+        self
+    }
+
+    /// Sets the root session id sent as the `dd-root-session-id` header (only with a valid session id).
+    pub fn set_root_session_id(mut self, id: &str) -> Self {
+        self.root_session_id = Some(id.to_string());
+        self
+    }
+
+    /// Sets the parent session id sent as the `dd-parent-session-id` header (only with a valid session id).
+    pub fn set_parent_session_id(mut self, id: &str) -> Self {
+        self.parent_session_id = Some(id.to_string());
+        self
+    }
+
     /// Sets the debug enabled flag for the telemetry client.
     pub fn set_debug_enabled(mut self, debug: bool) -> Self {
         self.config.debug_enabled = debug;
@@ -117,6 +138,9 @@ impl TelemetryClientBuilder {
         if let Some(id) = self.runtime_id {
             builder.runtime_id = Some(id);
         }
+        builder.session_id = self.session_id;
+        builder.root_session_id = self.root_session_id;
+        builder.parent_session_id = self.parent_session_id;
 
         let (worker_handle, worker) = builder.build_worker(runtime);
 
@@ -854,7 +878,10 @@ mod tests {
         let telemetry_srv = server
             .mock_async(|when, then| {
                 when.method(POST)
-                    .body_includes(r#""application":{"service_name":"test_service","service_version":"test_version","env":"test_env","language_name":"test_language","language_version":"test_language_version","tracer_version":"test_tracer_version"}"#);
+                    .body_includes(r#""application":{"service_name":"test_service","service_version":"test_version","env":"test_env","language_name":"test_language","language_version":"test_language_version","tracer_version":"test_tracer_version"}"#)
+                    .header("dd-session-id", "sess-e2e")
+                    .header("dd-root-session-id", "root-e2e")
+                    .header("dd-parent-session-id", "parent-e2e");
                 then.status(200).body("");
             })
             .await;
@@ -869,6 +896,9 @@ mod tests {
             .set_url(&server.url("/"))
             .set_heartbeat(100)
             .set_runtime_id("foo")
+            .set_session_id("sess-e2e")
+            .set_root_session_id("root-e2e")
+            .set_parent_session_id("parent-e2e")
             .build(Handle::current());
         tokio::spawn(async move { worker.run().await });
 

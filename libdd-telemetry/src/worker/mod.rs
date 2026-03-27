@@ -1215,7 +1215,7 @@ mod tests {
         DD_PARENT_SESSION_ID, DD_ROOT_SESSION_ID, DD_SESSION_ID,
     };
     use crate::worker::{TelemetryWorker, TelemetryWorkerBuilder};
-    use libdd_common::Endpoint;
+    use libdd_common::{http_common, Endpoint};
     use tokio::runtime::Runtime;
 
     fn test_worker(
@@ -1255,11 +1255,30 @@ mod tests {
     }
 
     #[test]
-    fn telemetry_http_includes_dd_session_id_and_root_session_id() {
+    fn telemetry_http_omits_session_family_without_valid_session_id() {
+        let assert_no_session_headers = |req: &http_common::HttpRequest| {
+            assert!(req.headers().get(DD_SESSION_ID).is_none());
+            assert!(req.headers().get(DD_ROOT_SESSION_ID).is_none());
+            assert!(req.headers().get(DD_PARENT_SESSION_ID).is_none());
+        };
+
+        let req = test_worker(None, Some("root".into()), Some("parent".into()))
+            .build_request(&Payload::AppHeartbeat(()))
+            .unwrap();
+        assert_no_session_headers(&req);
+
+        let req = test_worker(Some(String::new()), Some("root".into()), Some("parent".into()))
+            .build_request(&Payload::AppHeartbeat(()))
+            .unwrap();
+        assert_no_session_headers(&req);
+    }
+
+    #[test]
+    fn telemetry_http_includes_dd_session_root_and_parent_session_ids() {
         let req = test_worker(
             Some("sess".into()),
             Some("root".into()),
-            None,
+            Some("parent".into()),
         )
         .build_request(&Payload::AppHeartbeat(()))
         .unwrap();
@@ -1275,23 +1294,6 @@ mod tests {
                 .unwrap(),
             "root"
         );
-        assert!(req.headers().get(DD_PARENT_SESSION_ID).is_none());
-    }
-
-    #[test]
-    fn telemetry_http_includes_dd_session_id_and_parent_session_id() {
-        let req = test_worker(
-            Some("sess".into()),
-            None,
-            Some("parent".into()),
-        )
-        .build_request(&Payload::AppHeartbeat(()))
-        .unwrap();
-        assert_eq!(
-            req.headers().get(DD_SESSION_ID).unwrap().to_str().unwrap(),
-            "sess"
-        );
-        assert!(req.headers().get(DD_ROOT_SESSION_ID).is_none());
         assert_eq!(
             req.headers()
                 .get(DD_PARENT_SESSION_ID)

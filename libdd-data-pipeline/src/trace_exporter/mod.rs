@@ -904,6 +904,12 @@ pub struct TelemetryConfig {
     pub heartbeat: u64,
     pub runtime_id: Option<String>,
     pub debug_enabled: bool,
+    /// Sent as the `dd-session-id` telemetry header when set.
+    pub session_id: Option<String>,
+    /// Sent as `dd-root-session-id` when set (only with a valid session id).
+    pub root_session_id: Option<String>,
+    /// Sent as `dd-parent-session-id` when set (only with a valid session id).
+    pub parent_session_id: Option<String>,
 }
 
 #[allow(missing_docs)]
