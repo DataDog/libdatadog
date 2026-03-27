@@ -283,7 +283,7 @@ jobs:
           ./build-profiling.sh
       - name: "Setup MSVC (Windows)"
         if: matrix.platform == 'windows-latest'
-        uses: ilammy/msvc-dev-cmd@v1
+        uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756 # v1.13.0
       - name: "Test building CXX bindings - Crashinfo (Windows)"
         shell: pwsh
         if: matrix.platform == 'windows-latest'
