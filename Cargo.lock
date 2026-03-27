@@ -1502,6 +1502,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "datadog-shm"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "datadog-ipc",
+ "libc",
+]
+
+[[package]]
+name = "datadog-shm-ffi"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "build_common",
+ "datadog-shm",
+ "libdd-common-ffi",
+]
+
+[[package]]
 name = "datadog-sidecar"
 version = "0.0.1"
 dependencies = [
