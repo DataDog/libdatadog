@@ -9,7 +9,7 @@ pub type UnwWord = u64;
 #[repr(C)]
 #[derive(Debug, Copy, Clone)]
 pub struct UnwCursor {
-    pub opaque: [UnwWord; 4096],
+    pub opaque: [UnwWord; 250],
 }
 
 extern "C" {

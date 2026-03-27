@@ -280,6 +280,130 @@ fn test_crash_tracking_bin_no_runtime_callback() {
     run_crash_test_with_artifacts(&config, &artifacts_map, &artifacts, validator).unwrap();
 }
 
+/// Reads a preload detector log, prints it, and attempts to symbolize the raw
+/// frame-pointer addresses using `/proc/self/maps` (dumped by the detector) and
+/// `addr2line`.
+#[cfg(all(target_os = "linux", not(target_env = "musl")))]
+fn print_and_symbolize_preload_log(log_path: &Path) {
+    let Ok(content) = fs::read_to_string(log_path) else {
+        return;
+    };
+    eprintln!("{content}");
+
+    let has_addr2line = process::Command::new("addr2line")
+        .arg("--version")
+        .output()
+        .is_ok_and(|o| o.status.success());
+    if !has_addr2line {
+        eprintln!("  (addr2line not found — skipping symbolization)");
+        return;
+    }
+
+    let addresses: Vec<u64> = content
+        .lines()
+        .filter_map(|line| {
+            let hex = line.trim().strip_prefix("0x")?;
+            u64::from_str_radix(hex, 16).ok()
+        })
+        .collect();
+
+    if addresses.is_empty() {
+        return;
+    }
+
+    let Some(maps_text) = content.split("/proc/self/maps:\n").nth(1) else {
+        eprintln!("  (no /proc/self/maps in log — cannot symbolize)");
+        return;
+    };
+
+    struct MapEntry {
+        start: u64,
+        end: u64,
+        path: String,
+    }
+
+    let maps: Vec<MapEntry> = maps_text
+        .lines()
+        .filter_map(|line| {
+            let mut parts = line.split_whitespace();
+            let range = parts.next()?;
+            let _perms = parts.next()?;
+            let _offset = parts.next()?;
+            let _dev = parts.next()?;
+            let _inode = parts.next()?;
+            let path: String = parts.collect::<Vec<_>>().join(" ");
+            if path.is_empty() || path.starts_with('[') {
+                return None;
+            }
+            let (start_str, end_str) = range.split_once('-')?;
+            Some(MapEntry {
+                start: u64::from_str_radix(start_str, 16).ok()?,
+                end: u64::from_str_radix(end_str, 16).ok()?,
+                path,
+            })
+        })
+        .collect();
+
+    // Build a base-address table: for each binary, the lowest mapping start.
+    let mut bases: HashMap<&str, u64> = HashMap::new();
+    for m in &maps {
+        let base = bases.entry(&m.path).or_insert(m.start);
+        if m.start < *base {
+            *base = m.start;
+        }
+    }
+
+    // Group (frame_index, relative_addr) by binary path for batched addr2line.
+    let mut by_path: HashMap<&str, Vec<(usize, u64)>> = HashMap::new();
+    let mut frame_binary: Vec<(&str, u64)> = Vec::new(); // (path, relative) per frame
+
+    for (i, &addr) in addresses.iter().enumerate() {
+        if let Some(entry) = maps.iter().find(|m| addr >= m.start && addr < m.end) {
+            let base = bases
+                .get(entry.path.as_str())
+                .copied()
+                .unwrap_or(entry.start);
+            let relative = addr - base;
+            by_path.entry(&entry.path).or_default().push((i, relative));
+            frame_binary.push((&entry.path, relative));
+        } else {
+            frame_binary.push(("", addr));
+        }
+    }
+
+    // Run addr2line per binary, collect results keyed by frame index.
+    let mut symbols: Vec<String> = vec![String::new(); addresses.len()];
+    for (path, frames) in &by_path {
+        let hex_addrs: Vec<String> = frames
+            .iter()
+            .map(|&(_, rel)| format!("0x{rel:x}"))
+            .collect();
+        if let Ok(output) = process::Command::new("addr2line")
+            .args(["-e", path, "-f", "-C", "-p"])
+            .args(&hex_addrs)
+            .output()
+        {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            for (line, &(idx, _)) in stdout.lines().zip(frames.iter()) {
+                symbols[idx] = line.to_string();
+            }
+        }
+    }
+
+    eprintln!("  Symbolized callstack:");
+    for (i, (path, relative)) in frame_binary.iter().enumerate() {
+        let sym = &symbols[i];
+        let short = path.rsplit('/').next().unwrap_or(path);
+        if !sym.is_empty() && !sym.starts_with("?? ") {
+            eprintln!("    #{i}: {sym}  [{short}+0x{relative:x}]");
+        } else if !path.is_empty() {
+            eprintln!("    #{i}: 0x{:x}  [{short}+0x{relative:x}]", addresses[i]);
+        } else {
+            eprintln!("    #{i}: 0x{:x}  [unmapped]", addresses[i]);
+        }
+    }
+}
+
 #[test]
 #[cfg_attr(miri, ignore)]
 #[cfg(all(target_os = "linux", not(target_env = "musl")))]
@@ -314,12 +438,11 @@ fn test_collector_no_allocations_stacktrace_modes() {
                 log_exists,
                 "Expected allocation detection log for mode {env_value}"
             );
-            if log_exists {
-                if let Ok(bytes) = fs::read(&detector_log_path) {
-                    eprintln!("{}", String::from_utf8_lossy(&bytes));
-                }
-            }
+            print_and_symbolize_preload_log(&detector_log_path);
         } else {
+            if log_exists {
+                print_and_symbolize_preload_log(&detector_log_path);
+            }
             result.unwrap();
             assert!(
                 !log_exists,

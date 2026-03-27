@@ -99,6 +99,41 @@ static void capture_and_report_allocation(const char *func_name) {
         write(log_fd, "\n  TID: ", 8);
         write_int(log_fd, tid);
 
+        // Walk the frame pointer chain manually — fully async-signal-safe,
+        // no locks, no allocations.  Output raw addresses that can be
+        // symbolized offline with addr2line.
+        write(log_fd, "\n  Raw frame pointers (use addr2line):\n", 39);
+        void **fp = __builtin_frame_address(0);
+        for (int i = 0; i < 32 && fp != NULL; i++) {
+            void *ret_addr = *(fp + 1);
+            if (ret_addr == NULL)
+                break;
+            // Write "    0x" prefix then hex address
+            write(log_fd, "    0x", 6);
+            // Format pointer as hex, async-signal-safe
+            char hex[2 * sizeof(void *)];
+            unsigned long addr = (unsigned long)ret_addr;
+            for (int j = (int)sizeof(hex) - 1; j >= 0; j--) {
+                int nibble = addr & 0xf;
+                hex[j] = (nibble < 10) ? ('0' + nibble) : ('a' + nibble - 10);
+                addr >>= 4;
+            }
+            write(log_fd, hex, sizeof(hex));
+            write(log_fd, "\n", 1);
+            fp = (void **)*fp;
+        }
+
+        // Dump /proc/self/maps so the test harness can resolve addresses
+        write(log_fd, "\n  /proc/self/maps:\n", 20);
+        int maps_fd = open("/proc/self/maps", O_RDONLY);
+        if (maps_fd >= 0) {
+            char buf[4096];
+            ssize_t n;
+            while ((n = read(maps_fd, buf, sizeof(buf))) > 0)
+                write(log_fd, buf, (size_t)n);
+            close(maps_fd);
+        }
+
         close(log_fd);
         log_fd = -1;
         abort();

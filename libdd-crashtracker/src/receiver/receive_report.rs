@@ -126,6 +126,36 @@ pub(crate) enum StdinState {
     Message,
 }
 
+impl StdinState {
+    fn label(&self) -> &'static str {
+        match self {
+            Self::AdditionalTags => "AdditionalTags",
+            Self::Config => "Config",
+            Self::Counters => "Counters",
+            Self::Done => "Done",
+            Self::File(..) => "File",
+            Self::Kind => "Kind",
+            Self::Metadata => "Metadata",
+            Self::ProcInfo => "ProcInfo",
+            Self::SigInfo => "SigInfo",
+            Self::SpanIds => "SpanIds",
+            Self::StackTrace => "StackTrace",
+            Self::TraceIds => "TraceIds",
+            Self::Ucontext => "Ucontext",
+            Self::Waiting => "Waiting",
+            Self::WholeStackTrace => "WholeStackTrace",
+            Self::ThreadName(_) => "ThreadName",
+            Self::RuntimeStackFrame(_) => "RuntimeStackFrame",
+            Self::RuntimeStackString(_) => "RuntimeStackString",
+            Self::Message => "Message",
+        }
+    }
+
+    fn is_waiting(&self) -> bool {
+        matches!(self, Self::Waiting)
+    }
+}
+
 /// A state machine that processes data from the crash-tracker collector line by
 /// line.  The crashtracker collector sends data in blocks, so we use a `state`
 /// variable to track which block we're in and collect partial data.
@@ -397,6 +427,8 @@ pub(crate) async fn receive_report_from_stream(
     let mut telemetry_logger: Option<Arc<TelemetryCrashUploader>> = None;
 
     let mut crash_ping_sent = false;
+    let mut lines_received: u64 = 0;
+    let mut completed_sections: Vec<&'static str> = Vec::new();
 
     let mut lines = stream.lines();
     let mut deadline = None;
@@ -437,12 +469,18 @@ pub(crate) async fn receive_report_from_stream(
         }
         let next_line = tokio::time::timeout(remaining_timeout, lines.next_line()).await;
         let Ok(next_line) = next_line else {
-            builder.with_log_message(format!("Timeout: {next_line:?}"), true)?;
+            let diag = format!(
+                "Timeout: {next_line:?}, state={}, lines_received={lines_received}, \
+                 completed_sections=[{}]",
+                stdin_state.label(),
+                completed_sections.join(", "),
+            );
+            builder.with_log_message(diag.clone(), true)?;
             emit_debug_log(
                 &telemetry_logger,
                 ReceiverIssue::Timeout,
                 &builder.uuid.to_string(),
-                format!("Timeout while waiting for crash report input: {next_line:?}"),
+                diag,
                 LogLevel::Warn,
             );
             break;
@@ -462,7 +500,10 @@ pub(crate) async fn receive_report_from_stream(
             break;
         };
         let Some(next_line) = next_line else { break };
+        lines_received += 1;
 
+        let prev_label = stdin_state.label();
+        let was_waiting = stdin_state.is_waiting();
         match process_line(
             &mut builder,
             &mut config,
@@ -471,6 +512,9 @@ pub(crate) async fn receive_report_from_stream(
             &telemetry_logger,
         ) {
             Ok(next_state) => {
+                if !was_waiting && next_state.is_waiting() {
+                    completed_sections.push(prev_label);
+                }
                 stdin_state = next_state;
                 if matches!(stdin_state, StdinState::Done) {
                     break;

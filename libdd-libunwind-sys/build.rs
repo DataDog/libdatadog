@@ -126,7 +126,7 @@ mod linux {
                 .args([
                     "-c",
                     &format!(
-                        r"{}/configure CXXFLAGS=-fPIC\ -D_GLIBCXX_USE_CXX11_ABI=0\ -O3\ -g CFLAGS=-fPIC\ -O3\ -g --disable-shared --enable-static --disable-minidebuginfo --disable-zlibdebuginfo --disable-tests",
+                        r"{}/configure CXXFLAGS=-fPIC\ -D_GLIBCXX_USE_CXX11_ABI=0\ -O3\ -g\ -fno-omit-frame-pointer CFLAGS=-fPIC\ -O3\ -g\ -fno-omit-frame-pointer --disable-shared --enable-static --disable-minidebuginfo --disable-zlibdebuginfo --disable-tests",
                         libunwind_dir.display()
                     )
                 ])
