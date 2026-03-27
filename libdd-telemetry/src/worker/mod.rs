@@ -136,6 +136,7 @@ pub struct TelemetryWorker {
     cancellation_token: CancellationToken,
     seq_id: AtomicU64,
     runtime_id: String,
+    root_session_id: String,
     client: Box<dyn http_client::HttpClient + Sync + Send>,
     metrics_flush_interval: Duration,
     deadlines: scheduler::Scheduler<LifecycleAction>,
@@ -745,7 +746,7 @@ impl TelemetryWorker {
 
         telemetry_worker_log!(self, DEBUG, "Prepared payload: {:?}", tel);
 
-        let req = http_client::request_builder(&self.config)?
+        let mut req = http_client::request_builder(&self.config)?
             .method(http::Method::POST)
             .header(header::CONTENT_TYPE, serialize::CONTENT_TYPE_VALUE)
             .header(
@@ -764,7 +765,15 @@ impl TelemetryWorker {
             .header(
                 http_client::header::LIBRARY_VERSION,
                 tel.application.tracer_version.clone(),
+            )
+            .header(http_client::header::SESSION_ID, self.runtime_id.clone());
+
+        if self.runtime_id != self.root_session_id {
+            req = req.header(
+                http_client::header::ROOT_SESSION_ID,
+                self.root_session_id.clone(),
             );
+        }
 
         let body = http_common::Body::from(serialize::serialize(&tel)?);
         Ok(req.body(body)?)
@@ -1033,6 +1042,7 @@ pub struct TelemetryWorkerBuilder {
     pub host: Host,
     pub application: Application,
     pub runtime_id: Option<String>,
+    pub root_session_id: Option<String>,
     pub dependencies: store::Store<data::Dependency>,
     pub integrations: store::Store<data::Integration>,
     pub configurations: store::Store<data::Configuration>,
@@ -1084,6 +1094,7 @@ impl TelemetryWorkerBuilder {
                 ..Default::default()
             },
             runtime_id: None,
+            root_session_id: None,
             dependencies: store::Store::new(MAX_ITEMS),
             integrations: store::Store::new(MAX_ITEMS),
             configurations: store::Store::new(MAX_ITEMS),
@@ -1113,6 +1124,11 @@ impl TelemetryWorkerBuilder {
         let metrics_flush_interval =
             telemetry_heartbeat_interval.min(MetricBuckets::METRICS_FLUSH_INTERVAL);
 
+        let runtime_id = self
+            .runtime_id
+            .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+        let root_session_id = self.root_session_id.unwrap_or_else(|| runtime_id.clone());
+
         #[allow(clippy::unwrap_used)]
         let worker = TelemetryWorker {
             flavor: self.flavor,
@@ -1131,9 +1147,8 @@ impl TelemetryWorkerBuilder {
             config,
             mailbox,
             seq_id: AtomicU64::new(1),
-            runtime_id: self
-                .runtime_id
-                .unwrap_or_else(|| uuid::Uuid::new_v4().to_string()),
+            runtime_id,
+            root_session_id,
             client,
             metrics_flush_interval,
             deadlines: scheduler::Scheduler::new(vec![
