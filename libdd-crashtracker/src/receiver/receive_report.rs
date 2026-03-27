@@ -314,7 +314,8 @@ fn process_line(
         }
         StdinState::Ucontext if line.starts_with(DD_CRASHTRACK_END_UCONTEXT) => StdinState::Waiting,
         StdinState::Ucontext => {
-            builder.with_experimental_ucontext(line.to_string())?;
+            let ucontext: crate::Ucontext = serde_json::from_str(line)?;
+            builder.with_experimental_ucontext(ucontext)?;
             StdinState::Ucontext
         }
 
