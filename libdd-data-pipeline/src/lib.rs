@@ -13,7 +13,6 @@
 pub mod agent_info;
 mod health_metrics;
 pub(crate) mod otlp;
-mod pausable_worker;
 #[allow(missing_docs)]
 pub mod stats_exporter;
 pub(crate) mod telemetry;

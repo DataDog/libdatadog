@@ -14,6 +14,7 @@ autobenches = false
 [dependencies]
 anyhow = { version = "1.0" }
 arc-swap = "1.7.1"
+async-trait = "0.1"
 http = "1.1"
 http-body-util = "0.1"
 tracing = { version = "0.1", default-features = false }
@@ -29,8 +30,8 @@ tokio = { version = "1.23", features = [
     "time",
 ], default-features = false }
 uuid = { version = "1.10.0", features = ["v4"] }
-tokio-util = "0.7.11"
 libdd-common = { version = "3.0.1", path = "../libdd-common", default-features = false }
+libdd-shared-runtime = { path = "../libdd-shared-runtime" }
 libdd-telemetry = { version = "3.1.0", path = "../libdd-telemetry", default-features = false }
 libdd-trace-protobuf = { version = "3.0.0", path = "../libdd-trace-protobuf" }
 libdd-trace-stats = { version = "1.0.4", path = "../libdd-trace-stats" }

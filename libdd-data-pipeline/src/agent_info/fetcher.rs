@@ -8,9 +8,11 @@ use super::{
     AGENT_INFO_CACHE,
 };
 use anyhow::{anyhow, Result};
+use async_trait::async_trait;
 use http::header::HeaderName;
 use http_body_util::BodyExt;
-use libdd_common::{http_common, worker::Worker, Endpoint};
+use libdd_common::{http_common, Endpoint};
+use libdd_shared_runtime::Worker;
 use sha2::{Digest, Sha256};
 use std::sync::Arc;
 use std::time::Duration;
@@ -129,9 +131,12 @@ async fn fetch_and_hash_response(
 
 /// Fetch the info endpoint and update an ArcSwap keeping it up-to-date.
 ///
-/// Once the run method has been started, the fetcher will
-/// update the global info state based on the given refresh interval. You can access the current
-/// state with [`crate::agent_info::get_agent_info`]
+/// This type implements [`libdd_shared_runtime::Worker`] and is intended to be driven by a worker
+/// runner such as [`libdd_shared_runtime::SharedRuntime`].
+/// In that lifecycle, `trigger()` waits for the next refresh event and `run()` performs a single
+/// fetch.
+///
+/// You can access the current state with [`crate::agent_info::get_agent_info`].
 ///
 /// # Response observer
 /// When the fetcher is created it also returns a [`ResponseObserver`] which can be used to check
@@ -141,7 +146,7 @@ async fn fetch_and_hash_response(
 /// # Example
 /// ```no_run
 /// # use anyhow::Result;
-/// # use libdd_common::worker::Worker;
+/// # use libdd_shared_runtime::Worker;
 /// # #[tokio::main]
 /// # async fn main() -> Result<()> {
 /// // Define the endpoint
@@ -152,10 +157,9 @@ async fn fetch_and_hash_response(
 ///     endpoint,
 ///     std::time::Duration::from_secs(5 * 60),
 /// );
-/// // Start the runner
-/// tokio::spawn(async move {
-///     fetcher.run().await;
-/// });
+/// // Start the fetcher on a shared runtime
+/// let runtime = libdd_shared_runtime::SharedRuntime::new()?;
+/// runtime.spawn_worker(fetcher)?;
 ///
 /// // Get the Arc to access the info
 /// let agent_info_arc = agent_info::get_agent_info();
@@ -175,6 +179,7 @@ pub struct AgentInfoFetcher {
     info_endpoint: Endpoint,
     refresh_interval: Duration,
     trigger_rx: Option<mpsc::Receiver<()>>,
+    trigger_tx: mpsc::Sender<()>,
 }
 
 impl AgentInfoFetcher {
@@ -192,6 +197,7 @@ impl AgentInfoFetcher {
             info_endpoint,
             refresh_interval,
             trigger_rx: Some(trigger_rx),
+            trigger_tx: trigger_tx.clone(),
         };
 
         let response_observer = ResponseObserver::new(trigger_tx);
@@ -208,46 +214,54 @@ impl AgentInfoFetcher {
     }
 }
 
+#[async_trait]
 impl Worker for AgentInfoFetcher {
-    /// Start fetching the info endpoint with the given interval.
-    ///
-    /// # Warning
-    /// This method does not return and should be called within a dedicated task.
-    async fn run(&mut self) {
-        // Skip the first fetch if some info is present to avoid calling the /info endpoint
-        // at fork for heavy-forking environment.
+    async fn initial_trigger(&mut self) {
+        // Skip initial wait if cache is not populated
         if AGENT_INFO_CACHE.load().is_none() {
-            self.fetch_and_update().await;
+            return;
         }
+        self.trigger().await
+    }
 
-        // Main loop waiting for a trigger event or the end of the refresh interval to trigger the
-        // fetch.
-        loop {
-            match &mut self.trigger_rx {
-                Some(trigger_rx) => {
-                    tokio::select! {
-                        // Wait for manual trigger (new state from headers)
-                        trigger = trigger_rx.recv() => {
-                            if trigger.is_some() {
-                                self.fetch_and_update().await;
-                            } else {
-                                // The channel has been closed
-                                self.trigger_rx = None;
-                            }
+    async fn trigger(&mut self) {
+        // Wait for either a manual trigger or the refresh interval
+        match &mut self.trigger_rx {
+            Some(trigger_rx) => {
+                tokio::select! {
+                    // Wait for manual trigger (new state from headers)
+                    trigger = trigger_rx.recv() => {
+                        if trigger.is_none() {
+                            // The channel has been closed
+                            self.trigger_rx = None;
                         }
-                        // Regular periodic fetch timer
-                        _ = sleep(self.refresh_interval) => {
-                            self.fetch_and_update().await;
-                        }
-                    };
-                }
-                None => {
-                    // If the trigger channel is closed we only use timed fetch.
-                    sleep(self.refresh_interval).await;
-                    self.fetch_and_update().await;
+                    }
+                    // Regular periodic fetch timer
+                    _ = sleep(self.refresh_interval) => {}
                 }
             }
+            None => {
+                // If the trigger channel is closed we only use timed fetch.
+                sleep(self.refresh_interval).await;
+            }
         }
+    }
+
+    async fn on_pause(&mut self) {
+        // Release the IoStack waker stored in trigger_rx by waking the channel,
+        // then drain the message to avoid a spurious fetch on restart.
+        let _ = self.trigger_tx.try_send(());
+        self.drain();
+    }
+
+    fn reset(&mut self) {
+        // Drain all messages from the channel to remove messages sent to release the reference on
+        // IoStack
+        self.drain();
+    }
+
+    async fn run(&mut self) {
+        self.fetch_and_update().await;
     }
 }
 
@@ -332,6 +346,7 @@ mod single_threaded_tests {
     use super::*;
     use crate::agent_info;
     use httpmock::prelude::*;
+    use libdd_shared_runtime::SharedRuntime;
 
     const TEST_INFO: &str = r#"{
         "version": "0.0.0",
@@ -530,29 +545,31 @@ mod single_threaded_tests {
     }
 
     #[cfg_attr(miri, ignore)]
-    #[tokio::test]
-    async fn test_agent_info_fetcher_run() {
+    #[test]
+    fn test_agent_info_fetcher_run() {
         AGENT_INFO_CACHE.store(None);
         let server = MockServer::start();
-        let mock_v1 = server
-            .mock_async(|when, then| {
-                when.path("/info");
-                then.status(200)
-                    .header("content-type", "application/json")
-                    .body(r#"{"version":"1"}"#);
-            })
-            .await;
+        let mut mock_v1 = server.mock(|when, then| {
+            when.path("/info");
+            then.status(200)
+                .header("content-type", "application/json")
+                .body(r#"{"version":"1"}"#);
+        });
         let endpoint = Endpoint::from_url(server.url("/info").parse().unwrap());
-        let (mut fetcher, _response_observer) =
+        let (fetcher, _response_observer) =
             AgentInfoFetcher::new(endpoint.clone(), Duration::from_millis(100));
         assert!(agent_info::get_agent_info().is_none());
-        tokio::spawn(async move {
-            fetcher.run().await;
-        });
+        let shared_runtime = SharedRuntime::new().unwrap();
+        shared_runtime.spawn_worker(fetcher).unwrap();
 
         // Wait until the info is fetched
+        let start = std::time::Instant::now();
         while agent_info::get_agent_info().is_none() {
-            tokio::time::sleep(Duration::from_millis(100)).await;
+            assert!(
+                start.elapsed() <= Duration::from_secs(10),
+                "Timeout waiting for first /info fetch"
+            );
+            std::thread::sleep(Duration::from_millis(100));
         }
 
         let version_1 = agent_info::get_agent_info()
@@ -563,22 +580,25 @@ mod single_threaded_tests {
             .clone()
             .unwrap();
         assert_eq!(version_1, "1");
-        mock_v1.assert_async().await;
+        mock_v1.assert();
 
         // Update the info endpoint
-        mock_v1.delete_async().await;
-        let mock_v2 = server
-            .mock_async(|when, then| {
-                when.path("/info");
-                then.status(200)
-                    .header("content-type", "application/json")
-                    .body(r#"{"version":"2"}"#);
-            })
-            .await;
+        mock_v1.delete();
+        let mock_v2 = server.mock(|when, then| {
+            when.path("/info");
+            then.status(200)
+                .header("content-type", "application/json")
+                .body(r#"{"version":"2"}"#);
+        });
 
         // Wait for second fetch
-        while mock_v2.calls_async().await == 0 {
-            tokio::time::sleep(Duration::from_millis(100)).await;
+        let start = std::time::Instant::now();
+        while mock_v2.calls() == 0 {
+            assert!(
+                start.elapsed() <= Duration::from_secs(10),
+                "Timeout waiting for second /info fetch"
+            );
+            std::thread::sleep(Duration::from_millis(100));
         }
 
         // This check is not 100% deterministic, but between the time the mock returns the response
@@ -597,22 +617,20 @@ mod single_threaded_tests {
                 assert_eq!(version_2, "2");
                 break;
             }
-            tokio::time::sleep(Duration::from_millis(100)).await;
+            std::thread::sleep(Duration::from_millis(100));
         }
     }
 
     #[cfg_attr(miri, ignore)]
-    #[tokio::test]
-    async fn test_agent_info_trigger_different_state() {
+    #[test]
+    fn test_agent_info_trigger_different_state() {
         let server = MockServer::start();
-        let mock = server
-            .mock_async(|when, then| {
-                when.path("/info");
-                then.status(200)
-                    .header("content-type", "application/json")
-                    .body(r#"{"version":"triggered"}"#);
-            })
-            .await;
+        let mock = server.mock(|when, then| {
+            when.path("/info");
+            then.status(200)
+                .header("content-type", "application/json")
+                .body(r#"{"version":"triggered"}"#);
+        });
 
         // Populate the cache with initial state
         AGENT_INFO_CACHE.store(Some(Arc::new(AgentInfo {
@@ -621,13 +639,12 @@ mod single_threaded_tests {
         })));
 
         let endpoint = Endpoint::from_url(server.url("/info").parse().unwrap());
-        let (mut fetcher, response_observer) =
+        let (fetcher, response_observer) =
             // Interval is too long to fetch during the test
             AgentInfoFetcher::new(endpoint, Duration::from_secs(3600));
 
-        tokio::spawn(async move {
-            fetcher.run().await;
-        });
+        let shared_runtime = SharedRuntime::new().unwrap();
+        shared_runtime.spawn_worker(fetcher).unwrap();
 
         // Create a mock HTTP response with the new agent state
         let response = http_common::empty_response(
@@ -645,13 +662,13 @@ mod single_threaded_tests {
         const SLEEP_DURATION_MS: u64 = 10;
 
         let mut attempts = 0;
-        while mock.calls_async().await == 0 && attempts < MAX_ATTEMPTS {
+        while mock.calls() == 0 && attempts < MAX_ATTEMPTS {
             attempts += 1;
-            tokio::time::sleep(Duration::from_millis(SLEEP_DURATION_MS)).await;
+            std::thread::sleep(Duration::from_millis(SLEEP_DURATION_MS));
         }
 
         // Should trigger a fetch since the state is different
-        mock.assert_calls_async(1).await;
+        mock.assert_calls(1);
 
         // Wait for the cache to be updated with proper timeout
         let mut attempts = 0;
@@ -665,7 +682,7 @@ mod single_threaded_tests {
                 }
             }
             attempts += 1;
-            tokio::time::sleep(Duration::from_millis(SLEEP_DURATION_MS)).await;
+            std::thread::sleep(Duration::from_millis(SLEEP_DURATION_MS));
         }
 
         // Verify the cache was updated
@@ -685,17 +702,15 @@ mod single_threaded_tests {
     }
 
     #[cfg_attr(miri, ignore)]
-    #[tokio::test]
-    async fn test_agent_info_trigger_same_state() {
+    #[test]
+    fn test_agent_info_trigger_same_state() {
         let server = MockServer::start();
-        let mock = server
-            .mock_async(|when, then| {
-                when.path("/info");
-                then.status(200)
-                    .header("content-type", "application/json")
-                    .body(r#"{"version":"same"}"#);
-            })
-            .await;
+        let mock = server.mock(|when, then| {
+            when.path("/info");
+            then.status(200)
+                .header("content-type", "application/json")
+                .body(r#"{"version":"same"}"#);
+        });
 
         let same_json = r#"{"version":"same"}"#;
         let same_hash = calculate_hash(same_json);
@@ -707,12 +722,11 @@ mod single_threaded_tests {
         })));
 
         let endpoint = Endpoint::from_url(server.url("/info").parse().unwrap());
-        let (mut fetcher, response_observer) =
+        let (fetcher, response_observer) =
             AgentInfoFetcher::new(endpoint, Duration::from_secs(3600)); // Very long interval
 
-        tokio::spawn(async move {
-            fetcher.run().await;
-        });
+        let shared_runtime = SharedRuntime::new().unwrap();
+        shared_runtime.spawn_worker(fetcher).unwrap();
 
         // Create a mock HTTP response with the same agent state
         let response = http_common::empty_response(
@@ -726,9 +740,9 @@ mod single_threaded_tests {
         response_observer.check_response(&response);
 
         // Wait to ensure no fetch occurs
-        tokio::time::sleep(Duration::from_millis(500)).await;
+        std::thread::sleep(Duration::from_millis(500));
 
         // Should not trigger a fetch since the state is the same
-        mock.assert_calls_async(0).await;
+        mock.assert_calls(0);
     }
 }

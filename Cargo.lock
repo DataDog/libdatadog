@@ -2959,6 +2959,7 @@ version = "3.0.0"
 dependencies = [
  "anyhow",
  "arc-swap",
+ "async-trait",
  "bytes",
  "clap",
  "criterion",
@@ -2970,6 +2971,7 @@ dependencies = [
  "libdd-ddsketch",
  "libdd-dogstatsd-client",
  "libdd-log",
+ "libdd-shared-runtime",
  "libdd-telemetry",
  "libdd-tinybytes",
  "libdd-trace-protobuf",
@@ -2983,7 +2985,6 @@ dependencies = [
  "sha2",
  "tempfile",
  "tokio",
- "tokio-util",
  "tracing",
  "uuid",
 ]
@@ -2996,6 +2997,7 @@ dependencies = [
  "httpmock",
  "libdd-common-ffi",
  "libdd-data-pipeline",
+ "libdd-shared-runtime",
  "libdd-tinybytes",
  "libdd-trace-utils",
  "rmp-serde",
@@ -3177,10 +3179,32 @@ dependencies = [
 ]
 
 [[package]]
+name = "libdd-shared-runtime"
+version = "28.0.3"
+dependencies = [
+ "async-trait",
+ "futures",
+ "libdd-common",
+ "tokio",
+ "tokio-util",
+ "tracing",
+]
+
+[[package]]
+name = "libdd-shared-runtime-ffi"
+version = "28.0.3"
+dependencies = [
+ "build_common",
+ "libdd-shared-runtime",
+ "tracing",
+]
+
+[[package]]
 name = "libdd-telemetry"
 version = "3.1.0"
 dependencies = [
  "anyhow",
+ "async-trait",
  "base64 0.22.1",
  "futures",
  "hashbrown 0.15.1",
@@ -3189,6 +3213,7 @@ dependencies = [
  "libc",
  "libdd-common",
  "libdd-ddsketch",
+ "libdd-shared-runtime",
  "serde",
  "serde_json",
  "sys-info",
