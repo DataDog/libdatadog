@@ -53,6 +53,7 @@ let mut concentrator = SpanConcentrator::new(
     SystemTime::now(),
     vec!["client".to_string(), "server".to_string()], // eligible span kinds
     vec!["peer.service".to_string()], // peer tag keys
+    vec![], // span-derived primary tag keys
 );
 
 // Add spans

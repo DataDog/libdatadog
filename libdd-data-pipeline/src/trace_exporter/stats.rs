@@ -72,6 +72,7 @@ pub(crate) fn start_stats_computation(
             std::time::SystemTime::now(),
             span_kinds,
             peer_tags,
+            vec![], // TODO: Add span-derived primary tags
         )));
         let cancellation_token = CancellationToken::new();
         create_and_start_stats_worker(
