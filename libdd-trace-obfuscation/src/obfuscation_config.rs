@@ -80,8 +80,6 @@ pub struct HttpConfig {
 #[derive(Debug, Default, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct ObfuscationConfig {
-    // Not tested in ./tests/test_span_obfuscation.rs so it's not needed
-    #[serde(skip)]
     pub tag_replace_rules: Option<Vec<ReplaceRule>>,
     pub http: HttpConfig,
     pub memcached: MemcachedConfig,

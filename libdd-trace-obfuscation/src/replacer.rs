@@ -3,7 +3,7 @@
 
 use libdd_trace_protobuf::pb;
 use regex::Regex;
-use serde::Deserialize;
+use serde::{Deserialize, Deserializer};
 
 #[derive(Deserialize)]
 struct RawReplaceRule {
@@ -34,6 +34,20 @@ pub struct ReplaceRule {
 
     // does the replacement pattern contain references to the capture groups
     no_expansion: bool,
+}
+
+impl<'de> Deserialize<'de> for ReplaceRule {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let raw = RawReplaceRule::deserialize(deserializer)?;
+        let re = Regex::new(&raw.pattern).map_err(serde::de::Error::custom)?;
+        let no_expansion = regex::Replacer::no_expansion(&mut raw.repl.as_str()).is_some();
+        Ok(ReplaceRule {
+            name: raw.name,
+            re,
+            repl: raw.repl,
+            no_expansion,
+        })
+    }
 }
 
 impl ReplaceRule {
