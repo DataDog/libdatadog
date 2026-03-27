@@ -2,3 +2,7 @@
 	path = libdd-libunwind-sys/libunwind
 	url = https://github.com/DataDog/libunwind.git
 	branch = kevin/v1.8.1-custom-2
+[submodule "datadog-ffe/ffe-system-test-data"]
+	path = datadog-ffe/ffe-system-test-data
+	url = git@github.com:DataDog/ffe-system-test-data.git
+	branch = leo.romanovsky/add-canonical-fixtures
