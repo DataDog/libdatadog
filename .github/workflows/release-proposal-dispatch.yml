@@ -23,6 +23,21 @@ on:
           - libdd-trace-protobuf
           - libdd-trace-stats
           - libdd-trace-utils
+      main_start_ref:
+        description: >
+          Optional git ref to cut the release from: commit SHA (short or full), branch name,
+          tag, or refs/... (e.g. main, v1.2.3, origin/main). Leave empty to use latest
+          origin/main.
+        required: false
+        type: string
+        default: ''
+      bypass_standard_checks:
+        description: >
+          Skip ongoing-proposal checks. Proposal branches use prefix
+          release-proposal-testing so they do not collide with normal release-proposal/* runs.
+        required: false
+        type: boolean
+        default: false
 
 concurrency:
   group: release-proposal-dispatch-group
@@ -30,9 +45,8 @@ concurrency:
 
 env:
   MAIN_BRANCH: main
-  PROPOSAL_BRANCH_PREFIX: release-proposal
-  GIT_USER_NAME: "dd-octo-sts[bot]"
-  GIT_USER_EMAIL: "200755185+dd-octo-sts[bot]@users.noreply.github.com"
+  RELEASE_BRANCH_PREFIX: ${{ inputs.bypass_standard_checks && 'release-testing' || 'release' }}
+  PROPOSAL_BRANCH_PREFIX: ${{ inputs.bypass_standard_checks && 'release-proposal-testing' || 'release-proposal' }}
 
 jobs:
   check-proposal-ongoing:
@@ -44,15 +58,19 @@ jobs:
           fetch-tags: true
       - name: Check if a release proposal is ongoing
         run: |
-          # Check if there are any proposal branches or ephemeral release branches (release/*/*)
-          EXISTING_BRANCHES=$(git branch -r --list "origin/${{ env.PROPOSAL_BRANCH_PREFIX }}/*" "origin/release/*/*")
-          if [ -n "$EXISTING_BRANCHES" ]; then
-            echo "Error: A release proposal is ongoing. Please cancel it or wait for it to be merged." >&2
-            echo "Existing branches:"
-            echo "$EXISTING_BRANCHES"
-            exit 1
+          if [ "${{ inputs.bypass_standard_checks }}" = "true" ]; then
+            echo "Skipping ongoing release proposal checks."
+          else
+            # Check if there are any proposal branches or ephemeral release branches (release/*/*)
+            EXISTING_BRANCHES=$(git branch -r --list "origin/${{ env.PROPOSAL_BRANCH_PREFIX }}/*" "origin/${{ env.RELEASE_BRANCH_PREFIX }}/*/*")
+            if [ -n "$EXISTING_BRANCHES" ]; then
+              echo "Error: A release proposal is ongoing. Please cancel it or wait for it to be merged." >&2
+              echo "Existing branches:"
+              echo "$EXISTING_BRANCHES"
+              exit 1
+            fi
+            echo "No release proposal is ongoing."
           fi
-          echo "No release proposal is ongoing."
 
   check-membership:
     permissions:
@@ -82,7 +100,7 @@ jobs:
             echo "User is not part of apm-common-components-core"
             exit 1
           fi
-    
+
   cargo-release:
     permissions:
       id-token: write # Enable OIDC
@@ -120,19 +138,100 @@ jobs:
         with:
           tool: cargo-semver-checks@0.45.0
       
-      - name: Configure Git for signing
-        run: |
-          git config --global user.name "${{ env.GIT_USER_NAME }}"
-          git config --global user.email "${{ env.GIT_USER_EMAIL }}"
+      - uses: DataDog/dd-octo-sts-action@acaa02eee7e3bb0839e4272dacb37b8f3b58ba80 # v1.0.3
+        id: octo-sts
+        with:
+          scope: DataDog/libdatadog
+          policy: self.write.pr    
 
+      - name: Configure Git for signing
+        env:
+          GH_TOKEN: ${{ steps.octo-sts.outputs.token }}
+          GITHUB_ACTOR: ${{ github.actor }}
+        run: |
+          # GET /user is not allowed with installation tokens; use GET /users/ACTOR (who triggered the workflow).
+          GITHUB_USER_RESPONSE=$(curl -s -H "Authorization: token ${GH_TOKEN}" "https://api.github.com/users/${GITHUB_ACTOR}")
+          GIT_USER_NAME=$(echo "${GITHUB_USER_RESPONSE}" | jq -r '.login // empty')
+          GIT_USER_ID=$(echo "${GITHUB_USER_RESPONSE}" | jq -r '.id // empty')
+          if [[ -z "$GIT_USER_NAME" ]]; then
+            GIT_USER_NAME="${GITHUB_ACTOR}"
+            GIT_USER_EMAIL="${GITHUB_ACTOR}@users.noreply.github.com"
+          else
+            GIT_USER_EMAIL="${GIT_USER_ID}+${GIT_USER_NAME}@users.noreply.github.com"
+          fi
+          echo "GIT_USER_NAME: $GIT_USER_NAME"
+          echo "GIT_USER_EMAIL: $GIT_USER_EMAIL"
+          git config --global user.name "$GIT_USER_NAME"
+          git config --global user.email "$GIT_USER_EMAIL"
+
+      - name: Optionally checkout at a specific git ref
+        env:
+          MAIN_START_REF: ${{ inputs.main_start_ref }}
+        run: |
+          set -euo pipefail
+          git fetch origin "${{ env.MAIN_BRANCH }}" --tags --prune
+
+          resolve_to_commit() {
+            local r="$1"
+            local c=""
+            # Already a commit or resolvable locally
+            c=$(git rev-parse -q --verify "${r}^{commit}" 2>/dev/null) || true
+            if [ -n "$c" ]; then
+              echo "$c"
+              return 0
+            fi
+            # Remote branch: origin/<name>
+            c=$(git rev-parse -q --verify "origin/${r}^{commit}" 2>/dev/null) || true
+            if [ -n "$c" ]; then
+              echo "$c"
+              return 0
+            fi
+            # Tag
+            c=$(git rev-parse -q --verify "refs/tags/${r}^{commit}" 2>/dev/null) || true
+            if [ -n "$c" ]; then
+              echo "$c"
+              return 0
+            fi
+            return 1
+          }
+
+          if [ -n "${MAIN_START_REF// }" ]; then
+            REF=$(echo "$MAIN_START_REF" | tr -d '[:space:]')
+            if [ -z "$REF" ]; then
+              echo "Error: main_start_ref is whitespace-only." >&2
+              exit 1
+            fi
+            # Try to fetch the ref from origin (branches, tags, and SHA objects)
+            git fetch origin "$REF" 2>/dev/null || true
+
+            COMMIT=""
+            COMMIT=$(resolve_to_commit "$REF") || true
+            if [ -z "$COMMIT" ]; then
+              # e.g. short SHA or ref only present after full fetch
+              git fetch origin "$REF:$REF" 2>/dev/null || true
+              COMMIT=$(resolve_to_commit "$REF") || true
+            fi
+            if [ -z "$COMMIT" ]; then
+              echo "Error: could not resolve git ref to a commit: $REF" >&2
+              echo "Try a full SHA, a branch/tag name on origin, or refs/heads/... / refs/tags/..." >&2
+              exit 1
+            fi
+            git checkout "$COMMIT"
+            echo "Release cut from ref '$REF' -> $COMMIT ($(git log -1 --oneline))"
+          else
+            git checkout "${{ env.MAIN_BRANCH }}"
+            git reset --hard "origin/${{ env.MAIN_BRANCH }}"
+            echo "Release cut from origin/${{ env.MAIN_BRANCH }} tip ($(git rev-parse --short HEAD))."
+          fi
+      
       - name: Create ephemeral release branch
         id: ephemeral-branch
         run: |
           TIMESTAMP=$(date +%Y%m%d-%H%M%S)
-          EPHEMERAL_BRANCH="release/${{ inputs.crate }}/$TIMESTAMP"
+          EPHEMERAL_BRANCH="${{ env.RELEASE_BRANCH_PREFIX }}/${{ inputs.crate }}/$TIMESTAMP"
           git checkout -b "$EPHEMERAL_BRANCH"
           git push origin "$EPHEMERAL_BRANCH"
-          echo "Ephemeral release branch created: $EPHEMERAL_BRANCH from ${{ env.MAIN_BRANCH }} branch"
+          echo "Ephemeral release branch created: $EPHEMERAL_BRANCH branch ($(git rev-parse --short HEAD))"
           echo "ephemeral_branch=$EPHEMERAL_BRANCH" >> "$GITHUB_OUTPUT"
           echo "timestamp=$TIMESTAMP" >> "$GITHUB_OUTPUT"
 
@@ -146,6 +245,7 @@ jobs:
           cat /tmp/crates.json
       
       - name: Get commits since last release for each crate
+        id: commits-since-release
         run: |
           # Get commits since release for each crate and save to file
           ./scripts/commits-since-release.sh "$(cat /tmp/crates.json)" > /tmp/commits-by-crate.json
@@ -154,7 +254,8 @@ jobs:
           # so tag/merge-base resolution uses the same ref the script used.
           git rev-parse HEAD > /tmp/release_head_sha
           echo "Release branch HEAD (saved for later): $(cat /tmp/release_head_sha)"
-
+          echo "release_head_sha=$(cat /tmp/release_head_sha)" >> "$GITHUB_OUTPUT"
+          
           # Display json output
           jq . /tmp/commits-by-crate.json
 
@@ -264,8 +365,12 @@ jobs:
               LATEST_TAG=$(git tag -l "$TAG_PREFIX*" --sort=-v:refname | head -1)
               if [ "$LATEST_TAG" != "$TAG" ]; then
                 echo "Tag $TAG is not the latest. Latest is: $LATEST_TAG. main branch has the latest release for $NAME"
-                echo "Skipping release for $NAME"
-                continue
+                if [ "${{ inputs.bypass_standard_checks }}" = "false" ]; then
+                  echo "Skipping release for $NAME"
+                  continue
+                else
+                  echo "Continuing with the release for $NAME because bypass_standard_checks is true"
+                fi
               fi
 
               echo "Executing semver-level.sh for $NAME since $RANGE (tag: $TAG)..."
@@ -360,12 +465,22 @@ jobs:
             exit 1
           fi
 
-          echo "Pushing branch $BRANCH_NAME to origin..."
-          git push origin "$BRANCH_NAME"
+          # Oldest → newest (chronological). Plain `git log` is newest-first; commit-headless should receive
+          # parent→child order so replays/signing match git history. Space-separated SHAs for the action.
+          COMMITS=$(git log --reverse "$ORIGINAL_HEAD".. --format='%H' | tr '\n' ' ' | xargs)
+          echo "commits=$COMMITS" >> $GITHUB_OUTPUT
 
           # Output the results
           echo "API changes summary:"
           jq . /tmp/api-changes.json
+
+      - name: Push commits
+        uses: DataDog/commit-headless@action/v2.0.3
+        with:
+          branch: ${{ steps.proposal-branch.outputs.branch_name }}
+          head-sha: ${{ steps.commits-since-release.outputs.release_head_sha }}
+          command: push
+          commits: "${{ steps.release-version-bumps.outputs.commits }}"
 
       - name: Upload release data
         uses: actions/upload-artifact@v4
@@ -412,7 +527,6 @@ jobs:
           name: release-dispatch-data
           path: /tmp
 
-
       - uses: DataDog/dd-octo-sts-action@acaa02eee7e3bb0839e4272dacb37b8f3b58ba80 # v1.0.3
         id: octo-sts
         with:
@@ -422,9 +536,25 @@ jobs:
       - name: Create a PR
         env:
           GH_TOKEN: ${{ steps.octo-sts.outputs.token }}
+          MAIN_START_REF: ${{ inputs.main_start_ref }}
+          MAIN_BRANCH: ${{ env.MAIN_BRANCH }}
+          BYPASS_STANDARD_CHECKS: ${{ inputs.bypass_standard_checks }}
+          PROPOSAL_BRANCH_PREFIX: ${{ env.PROPOSAL_BRANCH_PREFIX }}
+          RELEASE_BRANCH_PREFIX: ${{ env.RELEASE_BRANCH_PREFIX }}
         run: |
           BRANCH_NAME="${{ needs.cargo-release.outputs.branch_name }}"
-                    
+
+          NON_DEFAULT=""
+          if [ -n "$MAIN_START_REF" ]; then
+            NON_DEFAULT="${NON_DEFAULT}"$'\n### Cut from non-default ref\n\n'"This proposal was generated from \`$MAIN_START_REF\` instead of the default latest \`origin/$MAIN_BRANCH\`."$'\n'
+          fi
+          if [ "$BYPASS_STANDARD_CHECKS" = "true" ]; then
+            NON_DEFAULT="${NON_DEFAULT}"$'\n### Non-default workflow options\n\n'"**bypass_standard_checks** was enabled: the ongoing-proposal branch guard was skipped; branches use proposal prefix \`$PROPOSAL_BRANCH_PREFIX\` and release prefix \`$RELEASE_BRANCH_PREFIX\`. Crates whose resolved git tag is not the latest SemVer tag for that crate are still included (normally skipped)."$'\n'
+          fi
+          if [ -n "$NON_DEFAULT" ]; then
+            NON_DEFAULT="${NON_DEFAULT}"$'\n\n'
+          fi
+
           # Generate the PR body by merging commits and API changes
           # Note: read returns 1 when it reaches EOF, which is expected for heredocs
           read -r -d '' JQ_FILTER << 'EOF' || true
@@ -436,7 +566,7 @@ jobs:
           [
             "## \($crate.name)",
             "",
-            (if $api_info.version then "**Next version:** `\($api_info.version)`\n" else null end),
+            (if $api_info.version then "**Next version:** `\($api_info.version)`" else null end),
             "**Semver bump:** `\($api_info.level)`",
             (if $api_info.tag then "**Tag:** `\($api_info.tag)`\n" else null end),
             (if $api_info.initial_release == "true" then
@@ -446,25 +576,27 @@ jobs:
           ] | map(select(. != null and . != "")) | join("\n")
           EOF
 
-          PR_BODY=$(jq -r --slurpfile api /tmp/api-changes.json "$JQ_FILTER" /tmp/commits-by-crate.json)
-          
+          COMMITS_AND_API_BODY=$(jq -r --slurpfile api /tmp/api-changes.json "$JQ_FILTER" /tmp/commits-by-crate.json)
+
           PR_BODY="# Release proposal for ${{ inputs.crate }} and its dependencies
 
           This PR contains version bumps based on public API changes and commits since last release.
 
-          ${PR_BODY}"
+          ${NON_DEFAULT}${COMMITS_AND_API_BODY}"
           
-          echo "PR_BODY: $PR_BODY"
+          echo "$PR_BODY" > /tmp/pr-body.md
+          echo "PR body written to /tmp/pr-body.md (length: $(wc -c < /tmp/pr-body.md) bytes)"
 
           # NOTE: the PR title is used to filter gitlab CI jobs. If you change it, you need to update the gitlab CI job filter.
           gh pr create \
             --head "$BRANCH_NAME" \
             --title "chore(release): proposal for ${{ inputs.crate }}" \
-            --body "$PR_BODY" \
+            --body-file /tmp/pr-body.md \
             --label "release-proposal" \
             --label "skip-metadata-check" \
             --label "skip-changelog-check" \
-            --base "${{ needs.cargo-release.outputs.ephemeral_branch }}"
+            --base "${{ needs.cargo-release.outputs.ephemeral_branch }}" \
+            --draft
 
       - name: Cleanup on failure
         if: failure() && (needs.cargo-release.outputs.branch_name != '' || needs.cargo-release.outputs.ephemeral_branch != '')
