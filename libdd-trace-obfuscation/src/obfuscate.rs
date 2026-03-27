@@ -106,8 +106,9 @@ pub fn obfuscate_span(span: &mut pb::Span, config: &ObfuscationConfig) {
         }
         "elasticsearch" if config.elasticsearch.enabled => {
             if let Some(elastic_query) = span.meta.get_mut(TAG_ELASTIC_BODY) {
-                // FIXME(APMSP-2673): optimization opportunity here: keep the obfuscators cached to avoid having
-                // clones and re-hashsing strings when putting them in HashSets
+                // FIXME(APMSP-2673): optimization opportunity here: keep the obfuscators cached to
+                // avoid having clones and re-hashsing strings when putting them in
+                // HashSets
                 let (res, _err) =
                     JsonObfuscator::new(config.elasticsearch.clone()).obfuscate(elastic_query);
                 *elastic_query = res;
@@ -115,8 +116,9 @@ pub fn obfuscate_span(span: &mut pb::Span, config: &ObfuscationConfig) {
         }
         "opensearch" if config.opensearch.enabled => {
             if let Some(opensearch_query) = span.meta.get_mut(TAG_OPEN_SEARCH_BODY) {
-                // FIXME(APMSP-2673): optimization opportunity here: keep the obfuscators cached to avoid having
-                // clones and re-hashsing strings when putting them in HashSets
+                // FIXME(APMSP-2673): optimization opportunity here: keep the obfuscators cached to
+                // avoid having clones and re-hashsing strings when putting them in
+                // HashSets
                 let (res, _err) =
                     JsonObfuscator::new(config.opensearch.clone()).obfuscate(opensearch_query);
                 *opensearch_query = res;
@@ -124,8 +126,9 @@ pub fn obfuscate_span(span: &mut pb::Span, config: &ObfuscationConfig) {
         }
         "mongodb" if config.mongodb.enabled => {
             if let Some(mongodb_query) = span.meta.get_mut(TAG_MONGO_DBQUERY) {
-                // FIXME(APMSP-2673): optimization opportunity here: keep the obfuscators cached to avoid having
-                // clones and re-hashsing strings when putting them in HashSets
+                // FIXME(APMSP-2673): optimization opportunity here: keep the obfuscators cached to
+                // avoid having clones and re-hashsing strings when putting them in
+                // HashSets
                 let (res, _err) =
                     JsonObfuscator::new(config.mongodb.clone()).obfuscate(mongodb_query);
 
