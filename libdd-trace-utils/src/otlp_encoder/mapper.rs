@@ -611,6 +611,32 @@ mod tests {
     }
 
     #[test]
+    fn test_empty_resource_name_not_emitted() {
+        // A span with no resource set should not emit a resource.name attribute.
+        // In practice DD spans always have a resource, but the mapper is defensive about
+        // empty fields from the wire.
+        let resource_info = OtlpResourceInfo::default();
+        let span: Span<BytesData> = Span {
+            trace_id: 1,
+            span_id: 2,
+            name: libdd_tinybytes::BytesString::from_static("s"),
+            // resource is empty (default)
+            start: 0,
+            duration: 1,
+            ..Default::default()
+        };
+        let req = map_traces_to_otlp(vec![vec![span]], &resource_info);
+        let json = serde_json::to_value(&req).unwrap();
+        let attrs = json["resourceSpans"][0]["scopeSpans"][0]["spans"][0]["attributes"]
+            .as_array()
+            .unwrap();
+        assert!(
+            !attrs.iter().any(|a| a["key"] == "resource.name"),
+            "resource.name should not be emitted when resource is empty"
+        );
+    }
+
+    #[test]
     fn test_per_span_service_name_attribute() {
         // When span.service differs from the resource-level service, service.name is emitted
         // as a per-span attribute so the receiver can distinguish between services in a trace.
