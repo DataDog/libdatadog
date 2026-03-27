@@ -105,6 +105,7 @@ pub async fn send_with_retry<H: HttpClientTrait>(
         "Sending with retry"
     );
 
+    let payload = Bytes::from(payload);
     loop {
         request_attempt += 1;
 
@@ -122,7 +123,7 @@ pub async fn send_with_retry<H: HttpClientTrait>(
         for (key, value) in headers {
             builder = builder.header(key, value);
         }
-        let req = match builder.body(Bytes::from(payload.clone())) {
+        let req = match builder.body(payload.clone()) {
             Ok(r) => r,
             Err(_) => {
                 return Err(SendWithRetryError::Build(request_attempt));
