@@ -137,6 +137,10 @@ impl From<io::Error> for SharedRuntimeError {
 /// The SharedRuntime owns a tokio runtime and tracks PausableWorkers spawned on it.
 /// It provides methods to safely pause workers before forking and restart them
 /// after fork in both parent and child processes.
+///
+/// # Mutex lock order
+/// When locking both [Self::runtime] and [Self::workers], the mutex must be locked in the order of
+/// the fields in the struct. When possible avoid holding both locks simultaneously.
 #[derive(Debug)]
 pub struct SharedRuntime {
     runtime: Arc<Mutex<Option<Arc<Runtime>>>>,
@@ -254,13 +258,15 @@ impl SharedRuntime {
         let runtime_lock = self.runtime.lock_or_panic();
         let runtime = runtime_lock
             .as_ref()
-            .ok_or(SharedRuntimeError::RuntimeUnavailable)?;
+            .ok_or(SharedRuntimeError::RuntimeUnavailable)?
+            .clone();
+        drop(runtime_lock);
 
         let mut workers_lock = self.workers.lock_or_panic();
 
         // Restart all workers
         for worker_entry in workers_lock.iter_mut() {
-            worker_entry.worker.start(runtime)?;
+            worker_entry.worker.start(&runtime)?;
         }
 
         Ok(())
@@ -281,14 +287,16 @@ impl SharedRuntime {
         let runtime_lock = self.runtime.lock_or_panic();
         let runtime = runtime_lock
             .as_ref()
-            .ok_or(SharedRuntimeError::RuntimeUnavailable)?;
+            .ok_or(SharedRuntimeError::RuntimeUnavailable)?
+            .clone();
+        drop(runtime_lock);
 
         let mut workers_lock = self.workers.lock_or_panic();
 
         // Restart all workers in child process
         for worker_entry in workers_lock.iter_mut() {
             worker_entry.worker.reset();
-            worker_entry.worker.start(runtime)?;
+            worker_entry.worker.start(&runtime)?;
         }
 
         Ok(())
