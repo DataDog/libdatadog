@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::agent_info::AgentInfoFetcher;
+use crate::otlp::config::{OtlpProtocol, DEFAULT_OTLP_TIMEOUT};
+use crate::otlp::OtlpTraceConfig;
 use crate::pausable_worker::PausableWorker;
 use crate::telemetry::TelemetryClientBuilder;
 use crate::trace_exporter::agent_response::AgentResponsePayloadVersion;
@@ -51,6 +53,8 @@ pub struct TraceExporterBuilder {
     test_session_token: Option<String>,
     agent_rates_payload_version_enabled: bool,
     connection_timeout: Option<u64>,
+    otlp_endpoint: Option<String>,
+    otlp_headers: Vec<(String, String)>,
 }
 
 impl TraceExporterBuilder {
@@ -223,6 +227,28 @@ impl TraceExporterBuilder {
         self
     }
 
+    /// Enables OTLP HTTP/JSON export and sets the endpoint URL.
+    ///
+    /// When set, traces are sent to this endpoint in OTLP HTTP/JSON format instead of the
+    /// Datadog agent. The host language is responsible for resolving the endpoint from its
+    /// configuration (e.g. `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`) before calling this method.
+    ///
+    /// Example: `set_otlp_endpoint("http://localhost:4318/v1/traces")`
+    pub fn set_otlp_endpoint(&mut self, url: &str) -> &mut Self {
+        self.otlp_endpoint = Some(url.to_owned());
+        self
+    }
+
+    /// Sets additional HTTP headers to include in OTLP trace export requests.
+    ///
+    /// Headers should be provided as key-value pairs. The host language is responsible for
+    /// resolving headers from its configuration (e.g. `OTEL_EXPORTER_OTLP_TRACES_HEADERS`)
+    /// before calling this method.
+    pub fn set_otlp_headers(&mut self, headers: Vec<(String, String)>) -> &mut Self {
+        self.otlp_headers = headers;
+        self
+    }
+
     #[allow(missing_docs)]
     pub fn build(self) -> Result<TraceExporter, TraceExporterError> {
         if !Self::is_inputs_outputs_formats_compatible(self.input_format, self.output_format) {
@@ -345,6 +371,31 @@ impl TraceExporterBuilder {
                 .agent_rates_payload_version_enabled
                 .then(AgentResponsePayloadVersion::new),
             http_client: new_default_client(),
+            otlp_config: self.otlp_endpoint.map(|url| {
+                let mut headers = http::HeaderMap::new();
+                for (key, value) in self.otlp_headers {
+                    match (
+                        http::HeaderName::from_bytes(key.as_bytes()),
+                        http::HeaderValue::from_str(&value),
+                    ) {
+                        (Ok(name), Ok(val)) => {
+                            headers.insert(name, val);
+                        }
+                        _ => {
+                            tracing::warn!("Skipping invalid OTLP header: {:?}={:?}", key, value);
+                        }
+                    }
+                }
+                OtlpTraceConfig {
+                    endpoint_url: url,
+                    headers,
+                    timeout: self
+                        .connection_timeout
+                        .map(Duration::from_millis)
+                        .unwrap_or(DEFAULT_OTLP_TIMEOUT),
+                    protocol: OtlpProtocol::HttpJson,
+                }
+            }),
         })
     }
 
