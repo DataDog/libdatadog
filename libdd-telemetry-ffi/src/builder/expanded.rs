@@ -246,11 +246,11 @@ mod macros {
         ffi::MaybeError::None
     }
     #[no_mangle]
-    pub unsafe extern "C" fn ddog_telemetry_builder_with_str_telemetry_session_id(
+    pub unsafe extern "C" fn ddog_telemetry_builder_with_str_session_id(
         telemetry_builder: &mut TelemetryWorkerBuilder,
         param: ffi::CharSlice,
     ) -> ffi::MaybeError {
-        telemetry_builder.telemetry_session_id =
+        telemetry_builder.session_id =
             match (|s: ffi::CharSlice| -> Result<_, String> {
                 Ok(Some(s.to_utf8_lossy().into_owned()))
             })(param)
@@ -268,11 +268,33 @@ mod macros {
         ffi::MaybeError::None
     }
     #[no_mangle]
-    pub unsafe extern "C" fn ddog_telemetry_builder_with_str_telemetry_root_session_id(
+    pub unsafe extern "C" fn ddog_telemetry_builder_with_str_root_session_id(
         telemetry_builder: &mut TelemetryWorkerBuilder,
         param: ffi::CharSlice,
     ) -> ffi::MaybeError {
-        telemetry_builder.telemetry_root_session_id =
+        telemetry_builder.root_session_id =
+            match (|s: ffi::CharSlice| -> Result<_, String> {
+                Ok(Some(s.to_utf8_lossy().into_owned()))
+            })(param)
+            {
+                Ok(o) => o,
+                Err(e) => {
+                    return ffi::MaybeError::Some(libdd_common_ffi::Error::from(
+                        ({
+                            let res = std::fmt::format(format_args!("{e:?}"));
+                            res
+                        }),
+                    ));
+                }
+            };
+        ffi::MaybeError::None
+    }
+    #[no_mangle]
+    pub unsafe extern "C" fn ddog_telemetry_builder_with_str_parent_session_id(
+        telemetry_builder: &mut TelemetryWorkerBuilder,
+        param: ffi::CharSlice,
+    ) -> ffi::MaybeError {
+        telemetry_builder.parent_session_id =
             match (|s: ffi::CharSlice| -> Result<_, String> {
                 Ok(Some(s.to_utf8_lossy().into_owned()))
             })(param)
@@ -303,8 +325,9 @@ mod macros {
         HostKernelRelease,
         HostKernelVersion,
         RuntimeId,
-        TelemetrySessionId,
-        TelemetryRootSessionId,
+        SessionId,
+        RootSessionId,
+        ParentSessionId,
     }
     #[no_mangle]
     /**
@@ -334,9 +357,11 @@ mod macros {
 
      * runtime_id
 
-     * telemetry_session_id
+     * session_id
 
-     * telemetry_root_session_id
+     * root_session_id
+
+     * parent_session_id
 
     */
     pub unsafe extern "C" fn ddog_telemetry_builder_with_property_str(
@@ -531,8 +556,8 @@ mod macros {
                     }
                 };
             }
-            TelemetrySessionId => {
-                telemetry_builder.telemetry_session_id =
+            SessionId => {
+                telemetry_builder.session_id =
                     match (|s: ffi::CharSlice| -> Result<_, String> {
                         Ok(Some(s.to_utf8_lossy().into_owned()))
                     })(param)
@@ -548,8 +573,25 @@ mod macros {
                         }
                     };
             }
-            TelemetryRootSessionId => {
-                telemetry_builder.telemetry_root_session_id =
+            RootSessionId => {
+                telemetry_builder.root_session_id =
+                    match (|s: ffi::CharSlice| -> Result<_, String> {
+                        Ok(Some(s.to_utf8_lossy().into_owned()))
+                    })(param)
+                    {
+                        Ok(o) => o,
+                        Err(e) => {
+                            return ffi::MaybeError::Some(libdd_common_ffi::Error::from(
+                                ({
+                                    let res = std::fmt::format(format_args!("{e:?}"));
+                                    res
+                                }),
+                            ));
+                        }
+                    };
+            }
+            ParentSessionId => {
+                telemetry_builder.parent_session_id =
                     match (|s: ffi::CharSlice| -> Result<_, String> {
                         Ok(Some(s.to_utf8_lossy().into_owned()))
                     })(param)
@@ -596,9 +638,11 @@ mod macros {
 
      * runtime_id
 
-     * telemetry_session_id
+     * session_id
 
-     * telemetry_root_session_id
+     * root_session_id
+
+     * parent_session_id
 
     */
     pub unsafe extern "C" fn ddog_telemetry_builder_with_str_named_property(
@@ -803,8 +847,8 @@ mod macros {
                     }
                 };
             }
-            "telemetry_session_id" => {
-                telemetry_builder.telemetry_session_id =
+            "session_id" => {
+                telemetry_builder.session_id =
                     match (|s: ffi::CharSlice| -> Result<_, String> {
                         Ok(Some(s.to_utf8_lossy().into_owned()))
                     })(param)
@@ -820,8 +864,25 @@ mod macros {
                         }
                     };
             }
-            "telemetry_root_session_id" => {
-                telemetry_builder.telemetry_root_session_id =
+            "root_session_id" => {
+                telemetry_builder.root_session_id =
+                    match (|s: ffi::CharSlice| -> Result<_, String> {
+                        Ok(Some(s.to_utf8_lossy().into_owned()))
+                    })(param)
+                    {
+                        Ok(o) => o,
+                        Err(e) => {
+                            return ffi::MaybeError::Some(libdd_common_ffi::Error::from(
+                                ({
+                                    let res = std::fmt::format(format_args!("{e:?}"));
+                                    res
+                                }),
+                            ));
+                        }
+                    };
+            }
+            "parent_session_id" => {
+                telemetry_builder.parent_session_id =
                     match (|s: ffi::CharSlice| -> Result<_, String> {
                         Ok(Some(s.to_utf8_lossy().into_owned()))
                     })(param)

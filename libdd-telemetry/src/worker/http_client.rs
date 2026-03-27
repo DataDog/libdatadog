@@ -12,7 +12,6 @@ use std::{
 };
 
 use crate::config::Config;
-use http::HeaderValue;
 use tracing::{debug, error};
 
 pub mod header {
@@ -27,41 +26,29 @@ pub mod header {
 
     pub const DD_SESSION_ID: HeaderName = HeaderName::from_static("dd-session-id");
     pub const DD_ROOT_SESSION_ID: HeaderName = HeaderName::from_static("dd-root-session-id");
-}
-
-pub(crate) fn instrumentation_session_headers<'a>(
-    telemetry_session_id: Option<&'a str>,
-    runtime_id: &'a str,
-    telemetry_root_session_id: Option<&'a str>,
-) -> (&'a str, Option<&'a str>) {
-    let session_override = telemetry_session_id.filter(|s| !s.is_empty());
-    let session = session_override.unwrap_or(runtime_id);
-    let root = telemetry_root_session_id
-        .filter(|s| !s.is_empty())
-        .filter(|r| *r != session);
-    (session, root)
+    pub const DD_PARENT_SESSION_ID: HeaderName = HeaderName::from_static("dd-parent-session-id");
 }
 
 pub(crate) fn add_instrumentation_session_headers(
-    builder: HttpRequestBuilder,
-    telemetry_session_id: Option<&str>,
-    runtime_id: &str,
-    telemetry_root_session_id: Option<&str>,
-) -> anyhow::Result<HttpRequestBuilder> {
-    let (session, root) = instrumentation_session_headers(
-        telemetry_session_id,
-        runtime_id,
-        telemetry_root_session_id,
-    );
-    let session_hv =
-        HeaderValue::from_str(session).map_err(|e| anyhow::anyhow!("invalid dd-session-id: {e}"))?;
-    let mut b = builder.header(header::DD_SESSION_ID, session_hv);
-    if let Some(root_id) = root {
-        let root_hv = HeaderValue::from_str(root_id)
-            .map_err(|e| anyhow::anyhow!("invalid dd-root-session-id: {e}"))?;
-        b = b.header(header::DD_ROOT_SESSION_ID, root_hv);
+    mut builder: HttpRequestBuilder,
+    session_id: Option<&str>,
+    root_session_id: Option<&str>,
+    parent_session_id: Option<&str>,
+) -> HttpRequestBuilder {
+    let Some(s) = session_id.filter(|id| !id.is_empty()) else {
+        return builder;
+    };
+    builder = builder.header(header::DD_SESSION_ID, s);
+    if let Some(r) = root_session_id
+        .filter(|r| !r.is_empty())
+        .filter(|r| *r != s)
+    {
+        builder = builder.header(header::DD_ROOT_SESSION_ID, r);
     }
-    Ok(b)
+    if let Some(p) = parent_session_id.filter(|p| !p.is_empty()) {
+        builder = builder.header(header::DD_PARENT_SESSION_ID, p);
+    }
+    builder
 }
 
 pub type ResponseFuture =
