@@ -8,6 +8,53 @@
 //! Since `rustc` doesn't currently support the TLSDESC dialect, we use a C shim to set and get the
 //! thread-local storage used for the context.
 //!
+//! ## Usage
+//!
+//! There are two main patterns for publishing and updating thread contexts.
+//!
+//! ### In-place update
+//!
+//! The simplest pattern, when applicable, is to attach one record and then mutate it in place.
+//! This avoid allocation in the hot path.
+//!
+//! ```ignore
+//! #use libdd_library_config::otel_thread_ctx::linux::ThreadContext;
+//!
+//! let trace_id = [0u8; 16];
+//! let span_id  = [1u8; 8];
+//!
+//! // First call allocates a record and attaches it.
+//! ThreadContext::new(trace_id, span_id, &[(0, "first")]).attach();
+//! ThreadContext::update(trace_id, span_id, &[(0, "second")]);
+//! ThreadContext::detach();
+//! ```
+//!
+//! ### Swapping
+//!
+//! Swapping can be used when it's beneficial to pre-allocate or keep around a bunch of contexts to
+//! be saved and restored repeatedly. Could be the case with async-runtimes were several tasks
+//! might run on the same thread, or even move from one thread to another, for example.
+//!
+//! ```ignore
+//! #use libdd_library_config::otel_thread_ctx::linux::ThreadContext;
+//!
+//! let trace_id = [0u8; 16];
+//! let span_id  = [1u8; 8];
+//! let attrs: &[(u8, &str)] = &[(0, "GET"), (1, "/api/v1")];
+//!
+//! // Publish a new context and save the previously attached one (if any).
+//! let ctx = ThreadContext::new(trace_id, span_id, attrs);
+//! let previous = ctx.attach();
+//!
+//! // ... do work inside the span ...
+//!
+//! // Restore the previous context: detach the current one and re-attach the saved one.
+//! if let Some(prev) = previous {
+//!     // here we drop `ctx`, but we could store for later usage
+//!     let _ = prev.attach();
+//! }
+//! ```
+//!
 //! ## Synchronization
 //!
 //! Readers are constrained to the same thread as the writer and operate like async-signal
