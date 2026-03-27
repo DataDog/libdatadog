@@ -39,7 +39,7 @@ const TAG_DBMS: &str = "db.type";
 const TAG_CARD_NUMBER: &str = "card.number";
 
 /// `obfuscate_span` goes through `span` fields and applies obfuscation on it
-// TODO: return parsing errors in a vec
+// TODO(APMSP-2764): return parsing errors in a vec to log them ?
 pub fn obfuscate_span(span: &mut pb::Span, config: &ObfuscationConfig) {
     for span_event in span.span_events.iter_mut() {
         obfuscate_span_event(span_event, config)
