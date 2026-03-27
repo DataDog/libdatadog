@@ -182,7 +182,9 @@ pub mod linux {
                 offset += entry_size;
             }
 
-            // `offset < MAX_ATTRS_DATA_SIZE`, which guarantees it fits in a `u16`
+            // `offset < MAX_ATTRS_DATA_SIZE`, which guarantees it fits in a `u16`. This also
+            // effectively hide the remaining of the previous `attrs` bytes, so we don't have to
+            // zero them.
             self.attrs_data_size = offset as u16;
             fully_encoded
         }
