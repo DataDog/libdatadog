@@ -1,7 +1,10 @@
 // Copyright 2023-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use libdd_trace_protobuf::pb::{self, attribute_any_value::AttributeAnyValueType};
+use libdd_trace_protobuf::pb::{
+    self, attribute_any_value::AttributeAnyValueType,
+    attribute_array_value::AttributeArrayValueType,
+};
 
 use crate::{
     credit_cards::is_card_number,
@@ -68,26 +71,26 @@ pub fn obfuscate_span(span: &mut pb::Span, config: &ObfuscationConfig) {
         }
         "redis" => {
             span.resource = quantize_redis_string(&span.resource);
-            if !config.redis.enabled || span.meta.is_empty() {
-                return;
-            }
-            if let Some(redis_cmd) = span.meta.get_mut(TAG_REDIS_RAW_COMMAND) {
-                if config.redis.remove_all_args {
-                    *redis_cmd = remove_all_redis_args(redis_cmd)
+            if config.redis.enabled && !span.meta.is_empty() {
+                if let Some(redis_cmd) = span.meta.get_mut(TAG_REDIS_RAW_COMMAND) {
+                    if config.redis.remove_all_args {
+                        *redis_cmd = remove_all_redis_args(redis_cmd)
+                    } else {
+                        *redis_cmd = obfuscate_redis_string(redis_cmd)
+                    }
                 }
-                *redis_cmd = obfuscate_redis_string(redis_cmd)
             }
         }
         "valkey" => {
             span.resource = quantize_redis_string(&span.resource);
-            if !config.valkey.enabled || span.meta.is_empty() {
-                return;
-            }
-            if let Some(valkey_cmd) = span.meta.get_mut(TAG_VALKEY_RAW_COMMAND) {
-                if config.valkey.remove_all_args {
-                    *valkey_cmd = remove_all_redis_args(valkey_cmd)
+            if config.valkey.enabled && !span.meta.is_empty() {
+                if let Some(valkey_cmd) = span.meta.get_mut(TAG_VALKEY_RAW_COMMAND) {
+                    if config.valkey.remove_all_args {
+                        *valkey_cmd = remove_all_redis_args(valkey_cmd)
+                    } else {
+                        *valkey_cmd = obfuscate_redis_string(valkey_cmd)
+                    }
                 }
-                *valkey_cmd = obfuscate_redis_string(valkey_cmd)
             }
         }
         "sql" | "cassandra" if !span.resource.is_empty() => {
@@ -183,7 +186,7 @@ fn obfuscate_attribute_array(v: &mut pb::AttributeArray, config: &ObfuscationCon
         };
         if is_card_number(&string_value, config.credit_cards.luhn) {
             elt.string_value = "?".to_string();
-            elt.r#type = AttributeAnyValueType::StringValue.into();
+            elt.r#type = AttributeArrayValueType::StringValue.into();
         }
     }
 }
