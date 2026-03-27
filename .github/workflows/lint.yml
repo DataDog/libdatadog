@@ -27,7 +27,7 @@ jobs:
         with:
           submodules: recursive
       - name: Install nightly-2026-02-08 toolchain and rustfmt
-        run: rustup install nightly-2026-02-08 && rustup default nightly-2026-02-08 && rustup component add rustfmt
+        run: rustup set profile minimal && rustup install nightly-2026-02-08 && rustup default nightly-2026-02-08 && rustup component add rustfmt
       - name: Cache [rust]
         uses: Swatinem/rust-cache@f13886b937689c021905a6b90929199931d60db1 # 2.8.1
         with:
@@ -48,7 +48,7 @@ jobs:
         with:
           submodules: recursive
       - name: Install ${{ matrix.rust_version }} toolchain and clippy
-        run: rustup install ${{ matrix.rust_version }} && rustup default ${{ matrix.rust_version }} && rustup component add clippy
+        run: rustup set profile minimal && rustup install ${{ matrix.rust_version }} && rustup default ${{ matrix.rust_version }} && rustup component add clippy
       - name: Cache [rust]
         uses: Swatinem/rust-cache@f13886b937689c021905a6b90929199931d60db1 # 2.8.1
         with:
