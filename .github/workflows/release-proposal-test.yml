@@ -92,11 +92,12 @@ jobs:
           echo "Build dd-trace-rs with patch args: ${PATCH_ARGS[*]}"
           
           cargo update "${PATCH_ARGS[@]}"
-          cargo build --release --workspace --all-features "${PATCH_ARGS[@]}"
 
           echo "Cargo tree: "
           cargo tree -d -e normal --workspace --all-features "${PATCH_ARGS[@]}"
 
           echo "Duplicated dependencies: "
           cargo tree -d -e normal --workspace --all-features --prefix none "${PATCH_ARGS[@]}" | grep "libdd-" | grep -vF '(*)' | sort | uniq
+
+          cargo build --release --workspace --all-features "${PATCH_ARGS[@]}"
 
