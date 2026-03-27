@@ -13,7 +13,7 @@ use libdd_data_pipeline::trace_exporter::{
     TelemetryConfig, TraceExporter, TraceExporterInputFormat, TraceExporterOutputFormat,
 };
 use std::{ptr::NonNull, time::Duration};
-use tracing::{debug, error};
+use tracing::debug;
 
 #[inline]
 fn sanitize_string(str: CharSlice) -> Result<String, Box<ExporterError>> {
@@ -74,12 +74,15 @@ pub struct TraceExporterConfig {
 #[no_mangle]
 pub unsafe extern "C" fn ddog_trace_exporter_config_new(
     out_handle: NonNull<Box<TraceExporterConfig>>,
-) {
+) -> Option<Box<ExporterError>> {
     catch_panic!(
-        out_handle
-            .as_ptr()
-            .write(Box::<TraceExporterConfig>::default()),
-        ()
+        {
+            out_handle
+                .as_ptr()
+                .write(Box::<TraceExporterConfig>::default());
+            None
+        },
+        gen_error!(ErrorCode::Panic)
     )
 }
 
@@ -576,7 +579,9 @@ mod tests {
         unsafe {
             let mut config: MaybeUninit<Box<TraceExporterConfig>> = MaybeUninit::uninit();
 
-            ddog_trace_exporter_config_new(NonNull::new_unchecked(&mut config).cast());
+            let err =
+                ddog_trace_exporter_config_new(NonNull::new_unchecked(&mut config).cast());
+            assert_eq!(err, None);
 
             let cfg = config.assume_init();
             assert_eq!(cfg.url, None);
@@ -882,7 +887,9 @@ mod tests {
     fn exporter_constructor_test() {
         unsafe {
             let mut config: MaybeUninit<Box<TraceExporterConfig>> = MaybeUninit::uninit();
-            ddog_trace_exporter_config_new(NonNull::new_unchecked(&mut config).cast());
+            let err =
+                ddog_trace_exporter_config_new(NonNull::new_unchecked(&mut config).cast());
+            assert_eq!(err, None);
 
             let mut cfg = config.assume_init();
             let error = ddog_trace_exporter_config_set_url(
@@ -911,7 +918,9 @@ mod tests {
     fn exporter_constructor_error_test() {
         unsafe {
             let mut config: MaybeUninit<Box<TraceExporterConfig>> = MaybeUninit::uninit();
-            ddog_trace_exporter_config_new(NonNull::new_unchecked(&mut config).cast());
+            let err =
+                ddog_trace_exporter_config_new(NonNull::new_unchecked(&mut config).cast());
+            assert_eq!(err, None);
 
             let mut cfg = config.assume_init();
             let error = ddog_trace_exporter_config_set_service(
