@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::agent_info::AgentInfoFetcher;
+use crate::otlp::config::{OtlpProtocol, DEFAULT_OTLP_TIMEOUT};
+use crate::otlp::OtlpTraceConfig;
 use crate::telemetry::TelemetryClientBuilder;
 use crate::trace_exporter::agent_response::AgentResponsePayloadVersion;
 use crate::trace_exporter::error::BuilderErrorKind;
@@ -34,6 +36,7 @@ pub struct TraceExporterBuilder {
     language_interpreter: String,
     language_interpreter_vendor: String,
     git_commit_sha: String,
+    process_tags: String,
     input_format: TraceExporterInputFormat,
     output_format: TraceExporterOutputFormat,
     dogstatsd_url: Option<String>,
@@ -51,6 +54,8 @@ pub struct TraceExporterBuilder {
     test_session_token: Option<String>,
     agent_rates_payload_version_enabled: bool,
     connection_timeout: Option<u64>,
+    otlp_endpoint: Option<String>,
+    otlp_headers: Vec<(String, String)>,
 }
 
 impl TraceExporterBuilder {
@@ -109,6 +114,11 @@ impl TraceExporterBuilder {
     /// Only used when client-side stats is enabled
     pub fn set_git_commit_sha(&mut self, git_commit_sha: &str) -> &mut Self {
         git_commit_sha.clone_into(&mut self.git_commit_sha);
+        self
+    }
+
+    pub fn set_process_tags(&mut self, process_tags: &str) -> &mut Self {
+        process_tags.clone_into(&mut self.process_tags);
         self
     }
 
@@ -224,6 +234,28 @@ impl TraceExporterBuilder {
         self
     }
 
+    /// Enables OTLP HTTP/JSON export and sets the endpoint URL.
+    ///
+    /// When set, traces are sent to this endpoint in OTLP HTTP/JSON format instead of the
+    /// Datadog agent. The host language is responsible for resolving the endpoint from its
+    /// configuration (e.g. `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`) before calling this method.
+    ///
+    /// Example: `set_otlp_endpoint("http://localhost:4318/v1/traces")`
+    pub fn set_otlp_endpoint(&mut self, url: &str) -> &mut Self {
+        self.otlp_endpoint = Some(url.to_owned());
+        self
+    }
+
+    /// Sets additional HTTP headers to include in OTLP trace export requests.
+    ///
+    /// Headers should be provided as key-value pairs. The host language is responsible for
+    /// resolving headers from its configuration (e.g. `OTEL_EXPORTER_OTLP_TRACES_HEADERS`)
+    /// before calling this method.
+    pub fn set_otlp_headers(&mut self, headers: Vec<(String, String)>) -> &mut Self {
+        self.otlp_headers = headers;
+        self
+    }
+
     #[allow(missing_docs)]
     pub fn build(self) -> Result<TraceExporter, TraceExporterError> {
         if !Self::is_inputs_outputs_formats_compatible(self.input_format, self.output_format) {
@@ -320,6 +352,7 @@ impl TraceExporterBuilder {
                 language_interpreter_vendor: self.language_interpreter_vendor,
                 language: self.language,
                 git_commit_sha: self.git_commit_sha,
+                process_tags: self.process_tags,
                 client_computed_stats: self.client_computed_stats,
                 client_computed_top_level: self.client_computed_top_level,
                 hostname: self.hostname,
@@ -347,6 +380,31 @@ impl TraceExporterBuilder {
                 info_fetcher: info_fetcher_handle,
                 telemetry: telemetry_handle,
             },
+            otlp_config: self.otlp_endpoint.map(|url| {
+                let mut headers = http::HeaderMap::new();
+                for (key, value) in self.otlp_headers {
+                    match (
+                        http::HeaderName::from_bytes(key.as_bytes()),
+                        http::HeaderValue::from_str(&value),
+                    ) {
+                        (Ok(name), Ok(val)) => {
+                            headers.insert(name, val);
+                        }
+                        _ => {
+                            tracing::warn!("Skipping invalid OTLP header: {:?}={:?}", key, value);
+                        }
+                    }
+                }
+                OtlpTraceConfig {
+                    endpoint_url: url,
+                    headers,
+                    timeout: self
+                        .connection_timeout
+                        .map(Duration::from_millis)
+                        .unwrap_or(DEFAULT_OTLP_TIMEOUT),
+                    protocol: OtlpProtocol::HttpJson,
+                }
+            }),
         })
     }
 

@@ -44,7 +44,7 @@ libdd-crashtracker*/                 @DataDog/libdatadog-profiling
 libdd-data-pipeline*/                @DataDog/libdatadog-apm
 libdd-ddsketch*/                     @DataDog/libdatadog-apm @DataDog/apm-common-components-core
 libdd-dogstatsd-client               @DataDog/apm-common-components-core
-libdd-library-config*/               @DataDog/apm-sdk-capabilities
+libdd-library-config*/               @DataDog/apm-sdk-capabilities-rust
 libdd-libunwind*/                    @DataDog/libdatadog-profiling
 libdd-log*/                          @DataDog/apm-common-components-core
 libdd-profiling*/                    @DataDog/libdatadog-profiling
@@ -61,7 +61,6 @@ local-linux.Dockerfile               @DataDog/libdatadog
 NOTICE                               @DataDog/libdatadog
 README.md                            @DataDog/libdatadog
 repository.datadog.yml               @DataDog/apm-common-components-core
-ruby/                                @DataDog/ruby-guild
 rustfmt.toml                         @DataDog/libdatadog-core
 scripts/check_cargo_metadata.sh      @DataDog/libdatadog-core
 scripts/commits-since-release.sh     @DataDog/libdatadog-core
@@ -83,3 +82,6 @@ bin_tests/tests/test_the_tests.rs    @DataDog/libdatadog-core
 bin_tests/src/bin/test_the_tests.rs  @DataDog/libdatadog-core
 tools/cc_utils/                      @DataDog/libdatadog-php
 tools/sidecar_mockgen/               @DataDog/libdatadog-php
+libdd-data-pipeline/src/otlp/                           @DataDog/apm-sdk-capabilities
+libdd-data-pipeline/tests/test_trace_exporter_otlp_export.rs @DataDog/apm-sdk-capabilities
+libdd-trace-utils/src/otlp_encoder/                     @DataDog/apm-sdk-capabilities

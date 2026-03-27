@@ -3,7 +3,6 @@
 
 use std::{
     borrow::Borrow,
-    collections::HashMap,
     sync::{
         atomic::{AtomicU64, Ordering},
         Arc, Mutex,
@@ -81,11 +80,11 @@ impl StatsExporter {
         }
         let body = rmp_serde::encode::to_vec_named(&payload)?;
 
-        let mut headers: HashMap<&'static str, String> = self.meta.borrow().into();
+        let mut headers: http::HeaderMap = self.meta.borrow().into();
 
         headers.insert(
-            http::header::CONTENT_TYPE.as_str(),
-            libdd_common::header::APPLICATION_MSGPACK_STR.to_string(),
+            http::header::CONTENT_TYPE,
+            libdd_common::header::APPLICATION_MSGPACK,
         );
 
         let result = send_with_retry(
@@ -153,22 +152,26 @@ fn encode_stats_payload(
 ) -> pb::ClientStatsPayload {
     pb::ClientStatsPayload {
         hostname: meta.hostname.clone(),
-        env: meta.env.clone(),
-        lang: meta.language.clone(),
+        env: if meta.env.is_empty() {
+            "unknown-env".to_string()
+        } else {
+            meta.env.clone()
+        },
         version: meta.app_version.clone(),
         runtime_id: meta.runtime_id.clone(),
-        tracer_version: meta.tracer_version.clone(),
         sequence,
+        service: meta.service.clone(),
         stats: buckets,
         git_commit_sha: meta.git_commit_sha.clone(),
-        // These fields are unused or will be set by the Agent
-        service: String::new(),
+        process_tags: meta.process_tags.clone(),
+        // These fields will be set by the Agent
         container_id: String::new(),
         tags: Vec::new(),
         agent_aggregation: String::new(),
         image_tag: String::new(),
-        process_tags: String::new(),
         process_tags_hash: 0,
+        lang: String::new(),
+        tracer_version: String::new(),
     }
 }
 
@@ -211,6 +214,7 @@ mod tests {
             language: "rust".into(),
             tracer_version: "0.0.0".into(),
             runtime_id: "e39d6d12-0752-489f-b488-cf80006c0378".into(),
+            process_tags: "key1:value1,key2:value2".into(),
             ..Default::default()
         }
     }
@@ -251,7 +255,8 @@ mod tests {
                 when.method(POST)
                     .header("Content-type", "application/msgpack")
                     .path("/v0.6/stats")
-                    .body_includes("libdatadog-test");
+                    .body_includes("libdatadog-test")
+                    .body_includes("key1:value1,key2:value2");
                 then.status(200).body("");
             })
             .await;
@@ -310,7 +315,8 @@ mod tests {
                 when.method(POST)
                     .header("Content-type", "application/msgpack")
                     .path("/v0.6/stats")
-                    .body_includes("libdatadog-test");
+                    .body_includes("libdatadog-test")
+                    .body_includes("key1:value1,key2:value2");
                 then.status(200).body("");
             })
             .await;
@@ -349,6 +355,7 @@ mod tests {
                 .header("Content-type", "application/msgpack")
                 .path("/v0.6/stats")
                 .body_includes("libdatadog-test");
+                .body_includes("key1:value1,key2:value2");
             then.status(200).body("");
         });
 
@@ -373,6 +380,30 @@ mod tests {
                 .block_on(poll_for_mock_hit(&mut mock, 10, 100, 1, false))
                 .expect("Failed to get runtime"),
             "Expected max retry attempts"
+        );
+    }
+
+    #[test]
+    fn test_encode_stats_payload_defaults_empty_env() {
+        // Test that empty env defaults to "unknown-env"
+        let mut meta_with_empty_env = get_test_metadata();
+        meta_with_empty_env.env = "".to_string();
+
+        let buckets = vec![];
+        let payload = encode_stats_payload(&meta_with_empty_env, 1, buckets.clone());
+
+        assert_eq!(
+            payload.env, "unknown-env",
+            "Empty env should default to 'unknown-env'"
+        );
+
+        // Test that non-empty env is preserved
+        let meta_with_env = get_test_metadata();
+        let payload_with_env = encode_stats_payload(&meta_with_env, 2, buckets);
+
+        assert_eq!(
+            payload_with_env.env, "test",
+            "Non-empty env should be preserved"
         );
     }
 }

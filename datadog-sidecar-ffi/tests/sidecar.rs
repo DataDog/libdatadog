@@ -87,6 +87,7 @@ fn test_ddog_sidecar_register_app() {
         .unwrap();
 
     unsafe {
+        let process_tags = libdd_common_ffi::Vec::default();
         ddog_sidecar_session_set_config(
             &mut transport,
             "session_id".into(),
@@ -112,7 +113,7 @@ fn test_ddog_sidecar_register_app() {
             0,
             false,
             false,
-            "".into(),
+            &process_tags,
         )
         .unwrap_none();
 
@@ -163,7 +164,7 @@ fn test_ddog_sidecar_register_app() {
             0,
             false,
             false,
-            "".into(),
+            &process_tags,
         )
         .unwrap_none();
 

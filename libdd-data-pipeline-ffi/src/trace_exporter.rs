@@ -65,9 +65,11 @@ pub struct TraceExporterConfig {
     client_computed_stats: bool,
     telemetry_cfg: Option<TelemetryConfig>,
     health_metrics_enabled: bool,
+    process_tags: Option<String>,
     test_session_token: Option<String>,
     connection_timeout: Option<u64>,
     shared_runtime: Option<Arc<SharedRuntime>>,
+    otlp_endpoint: Option<String>,
 }
 
 #[no_mangle]
@@ -357,6 +359,26 @@ pub unsafe extern "C" fn ddog_trace_exporter_config_set_client_computed_stats(
     )
 }
 
+/// Sets the process tags to be included in the stats payload.
+#[no_mangle]
+pub unsafe extern "C" fn ddog_trace_exporter_config_set_process_tags(
+    config: Option<&mut TraceExporterConfig>,
+    process_tags: CharSlice,
+) -> Option<Box<ExporterError>> {
+    catch_panic!(
+        if let Option::Some(handle) = config {
+            handle.process_tags = match sanitize_string(process_tags) {
+                Ok(s) => Some(s),
+                Err(e) => return Some(e),
+            };
+            None
+        } else {
+            gen_error!(ErrorCode::InvalidArgument)
+        },
+        gen_error!(ErrorCode::Panic)
+    )
+}
+
 /// Sets the `X-Datadog-Test-Session-Token` header. Only used for testing with the test agent.
 #[no_mangle]
 pub unsafe extern "C" fn ddog_trace_exporter_config_set_test_session_token(
@@ -424,7 +446,36 @@ pub unsafe extern "C" fn ddog_trace_exporter_config_set_shared_runtime(
     )
 }
 
+/// Enables OTLP HTTP/JSON export and sets the endpoint URL.
+///
+/// When set, traces are sent to this URL in OTLP HTTP/JSON format instead of the Datadog
+/// agent. The host language is responsible for resolving the endpoint from its configuration
+/// (e.g. `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`) before calling this function.
+#[no_mangle]
+pub unsafe extern "C" fn ddog_trace_exporter_config_set_otlp_endpoint(
+    config: Option<&mut TraceExporterConfig>,
+    url: CharSlice,
+) -> Option<Box<ExporterError>> {
+    catch_panic!(
+        if let Some(handle) = config {
+            handle.otlp_endpoint = match sanitize_string(url) {
+                Ok(s) => Some(s),
+                Err(e) => return Some(e),
+            };
+            None
+        } else {
+            gen_error!(ErrorCode::InvalidArgument)
+        },
+        gen_error!(ErrorCode::Panic)
+    )
+}
+
 /// Create a new TraceExporter instance.
+///
+/// When an OTLP endpoint is configured via `TraceExporterConfig`, the exporter sends traces in
+/// OTLP HTTP/JSON to that endpoint instead of the Datadog agent. The same payload (e.g.
+/// MessagePack) is passed to `ddog_trace_exporter_send`; the library decodes and converts to
+/// OTLP when OTLP is enabled.
 ///
 /// # Arguments
 ///
@@ -454,6 +505,7 @@ pub unsafe extern "C" fn ddog_trace_exporter_new(
                 .set_env(config.env.as_ref().unwrap_or(&"".to_string()))
                 .set_app_version(config.version.as_ref().unwrap_or(&"".to_string()))
                 .set_service(config.service.as_ref().unwrap_or(&"".to_string()))
+                .set_process_tags(config.process_tags.as_deref().unwrap_or(""))
                 .set_input_format(config.input_format)
                 .set_output_format(config.output_format)
                 .set_connection_timeout(config.connection_timeout);
@@ -478,6 +530,9 @@ pub unsafe extern "C" fn ddog_trace_exporter_new(
 
             if let Some(runtime) = config.shared_runtime.clone() {
                 builder.set_shared_runtime(runtime);
+
+            if let Some(ref url) = config.otlp_endpoint {
+                builder.set_otlp_endpoint(url);
             }
 
             match builder.build() {
@@ -572,6 +627,7 @@ mod tests {
             assert!(!cfg.compute_stats);
             assert!(cfg.telemetry_cfg.is_none());
             assert!(!cfg.health_metrics_enabled);
+            assert!(cfg.process_tags.is_none());
             assert!(cfg.test_session_token.is_none());
             assert!(cfg.connection_timeout.is_none());
 
@@ -758,6 +814,27 @@ mod tests {
 
             let cfg = config.unwrap();
             assert_eq!(cfg.service.as_ref().unwrap(), "service");
+        }
+    }
+
+    #[test]
+    fn config_process_tags_test() {
+        unsafe {
+            let error = ddog_trace_exporter_config_set_process_tags(None, CharSlice::from("k:v"));
+            assert_eq!(error.as_ref().unwrap().code, ErrorCode::InvalidArgument);
+
+            ddog_trace_exporter_error_free(error);
+
+            let mut config = Some(TraceExporterConfig::default());
+            let error = ddog_trace_exporter_config_set_process_tags(
+                config.as_mut(),
+                CharSlice::from("key1:val1,key2:val2"),
+            );
+
+            assert_eq!(error, None);
+
+            let cfg = config.unwrap();
+            assert_eq!(cfg.process_tags.as_ref().unwrap(), "key1:val1,key2:val2");
         }
     }
 

@@ -15,9 +15,10 @@ use self::metrics::MetricsEmitter;
 use self::stats::StatsComputationStatus;
 use self::trace_serializer::TraceSerializer;
 use crate::agent_info::ResponseObserver;
+use crate::otlp::{map_traces_to_otlp, send_otlp_traces_http, OtlpResourceInfo, OtlpTraceConfig};
 use crate::telemetry::{SendPayloadTelemetry, TelemetryClient};
 use crate::trace_exporter::agent_response::{
-    AgentResponsePayloadVersion, DATADOG_RATES_PAYLOAD_VERSION_HEADER,
+    AgentResponsePayloadVersion, DATADOG_RATES_PAYLOAD_VERSION,
 };
 use crate::trace_exporter::error::{
     InternalErrorKind, RequestError, ShutdownError, TraceExporterError,
@@ -45,7 +46,7 @@ use std::io;
 use std::sync::Arc;
 #[cfg(feature = "test-utils")]
 use std::time::Duration;
-use std::{borrow::Borrow, collections::HashMap, str::FromStr};
+use std::{borrow::Borrow, str::FromStr};
 use tokio::task::JoinSet;
 use tracing::{debug, error, warn};
 
@@ -128,6 +129,7 @@ pub struct TracerMetadata {
     pub language_interpreter: String,
     pub language_interpreter_vendor: String,
     pub git_commit_sha: String,
+    pub process_tags: String,
     pub client_computed_stats: bool,
     pub client_computed_top_level: bool,
 }
@@ -147,8 +149,8 @@ impl<'a> From<&'a TracerMetadata> for TracerHeaderTags<'a> {
     }
 }
 
-impl<'a> From<&'a TracerMetadata> for HashMap<&'static str, String> {
-    fn from(tags: &'a TracerMetadata) -> HashMap<&'static str, String> {
+impl<'a> From<&'a TracerMetadata> for http::HeaderMap {
+    fn from(tags: &'a TracerMetadata) -> http::HeaderMap {
         TracerHeaderTags::from(tags).into()
     }
 }
@@ -203,6 +205,8 @@ pub struct TraceExporter {
     agent_payload_response_version: Option<AgentResponsePayloadVersion>,
     http_client: HttpClient,
     workers: TraceExporterWorkers,
+    /// When set, traces are exported via OTLP HTTP/JSON instead of the Datadog agent.
+    otlp_config: Option<OtlpTraceConfig>,
 }
 
 impl TraceExporter {
@@ -401,13 +405,13 @@ impl TraceExporter {
         }
     }
 
-    /// Send a list of trace chunks to the agent
+    /// Send a list of trace chunks to the agent (or OTLP endpoint when configured).
     ///
     /// # Arguments
     /// * trace_chunks: A list of trace chunks. Each trace chunk is a list of spans.
     ///
     /// # Returns
-    /// * Ok(String): The response from the agent
+    /// * Ok(AgentResponse): The response from the agent (or Unchanged for OTLP)
     /// * Err(TraceExporterError): An error detailing what went wrong in the process
     pub fn send_trace_chunks<T: TraceData>(
         &self,
@@ -417,13 +421,13 @@ impl TraceExporter {
         self.block_on(async { self.send_trace_chunks_inner(trace_chunks).await })?
     }
 
-    /// Send a list of trace chunks to the agent, asynchronously
+    /// Send a list of trace chunks to the agent, asynchronously (or OTLP when configured).
     ///
     /// # Arguments
     /// * trace_chunks: A list of trace chunks. Each trace chunk is a list of spans.
     ///
     /// # Returns
-    /// * Ok(String): The response from the agent
+    /// * Ok(AgentResponse): The response from the agent (or Unchanged for OTLP)
     /// * Err(TraceExporterError): An error detailing what went wrong in the process
     pub async fn send_trace_chunks_async<T: TraceData>(
         &self,
@@ -431,6 +435,37 @@ impl TraceExporter {
     ) -> Result<AgentResponse, TraceExporterError> {
         self.check_agent_info();
         self.send_trace_chunks_inner(trace_chunks).await
+    }
+
+    /// Sends trace chunks via OTLP HTTP/JSON when OTLP config is enabled.
+    async fn send_otlp_traces_inner<T: TraceData>(
+        &self,
+        traces: Vec<Vec<Span<T>>>,
+        config: &OtlpTraceConfig,
+    ) -> Result<AgentResponse, TraceExporterError> {
+        let resource_info = {
+            let mut r = OtlpResourceInfo::default();
+            r.service = self.metadata.service.clone();
+            r.env = self.metadata.env.clone();
+            r.app_version = self.metadata.app_version.clone();
+            r.language = self.metadata.language.clone();
+            r.tracer_version = self.metadata.tracer_version.clone();
+            r.runtime_id = self.metadata.runtime_id.clone();
+            r
+        };
+        let request = map_traces_to_otlp(traces, &resource_info);
+        let json_body = serde_json::to_vec(&request).map_err(|e| {
+            error!("OTLP JSON serialization error: {e}");
+            TraceExporterError::Internal(InternalErrorKind::InvalidWorkerState(e.to_string()))
+        })?;
+        send_otlp_traces_http(
+            &self.http_client,
+            config,
+            self.endpoint.test_token.as_deref(),
+            json_body,
+        )
+        .await?;
+        Ok(AgentResponse::Unchanged)
     }
 
     /// Deserializes, processes and sends trace chunks to the agent
@@ -468,7 +503,7 @@ impl TraceExporter {
         &self,
         endpoint: &Endpoint,
         mp_payload: Vec<u8>,
-        headers: HashMap<&'static str, String>,
+        headers: http::HeaderMap,
         chunks: usize,
         chunks_dropped_p0: usize,
     ) -> Result<AgentResponse, TraceExporterError> {
@@ -500,13 +535,25 @@ impl TraceExporter {
     ) -> Result<AgentResponse, TraceExporterError> {
         let mut header_tags: TracerHeaderTags = self.metadata.borrow().into();
 
-        // Process stats computation
+        // Process stats computation and drop non-sampled (p0) chunks.
+        // This must run before the OTLP path so that unsampled spans are not exported.
         let dropped_p0_stats = stats::process_traces_for_stats(
             &mut traces,
             &mut header_tags,
             &self.client_side_stats,
             self.client_computed_top_level,
         );
+
+        // OTLP path: send sampled traces via OTLP when an OTLP endpoint is configured.
+        // Unlike the agent path, there is no downstream agent to drop unsampled traces,
+        // so drop_chunks is always called here regardless of whether stats are enabled.
+        if let Some(ref config) = self.otlp_config {
+            libdd_trace_utils::span::trace_utils::drop_chunks(&mut traces);
+            if traces.is_empty() {
+                return Ok(AgentResponse::Unchanged);
+            }
+            return self.send_otlp_traces_inner(traces, config).await;
+        }
 
         let serializer = TraceSerializer::new(
             self.output_format,
@@ -643,7 +690,7 @@ impl TraceExporter {
         match (
             status.is_success(),
             self.agent_payload_response_version.as_ref(),
-            response.headers().get(DATADOG_RATES_PAYLOAD_VERSION_HEADER),
+            response.headers().get(DATADOG_RATES_PAYLOAD_VERSION),
         ) {
             (false, _, _) => {
                 // If the status is not success, the rates are considered unchanged
@@ -781,7 +828,6 @@ mod tests {
     use libdd_trace_utils::msgpack_encoder;
     use libdd_trace_utils::span::v04::SpanBytes;
     use libdd_trace_utils::span::v05;
-    use std::collections::HashMap;
     use std::net;
     use std::time::Duration;
 
@@ -824,7 +870,7 @@ mod tests {
             ..Default::default()
         };
 
-        let hashmap: HashMap<&'static str, String> = (&tracer_tags).into();
+        let hashmap: http::HeaderMap = (&tracer_tags).into();
 
         assert_eq!(hashmap.get("datadog-meta-tracer-version").unwrap(), "v0.1");
         assert_eq!(hashmap.get("datadog-meta-lang").unwrap(), "rust");
@@ -1734,6 +1780,64 @@ mod tests {
         let exporter = builder.build().unwrap();
 
         assert_eq!(exporter.endpoint.timeout_ms, 42);
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_otlp_export_via_builder() {
+        let server = MockServer::start();
+        let mock_otlp = server.mock(|when, then| {
+            when.method(POST)
+                .path("/v1/traces")
+                .header("Content-Type", "application/json");
+            then.status(200).body("");
+        });
+
+        let otlp_endpoint = format!("{}/v1/traces", server.url("/").trim_end_matches('/'));
+        let mut builder = TraceExporterBuilder::default();
+        builder
+            .set_url("http://127.0.0.1:8126")
+            .set_service("svc")
+            .set_env("env")
+            .set_tracer_version("1.0")
+            .set_language("rust")
+            .set_language_version("1.0")
+            .set_language_interpreter("rustc")
+            .set_otlp_endpoint(&otlp_endpoint)
+            .set_input_format(TraceExporterInputFormat::V04)
+            .set_output_format(TraceExporterOutputFormat::V04);
+        let exporter = builder.build().unwrap();
+
+        let traces: Vec<Vec<SpanBytes>> = vec![vec![SpanBytes {
+            name: BytesString::from_slice(b"op").unwrap(),
+            service: BytesString::from_static("svc"),
+            resource: BytesString::from_static("res"),
+            trace_id: 1,
+            span_id: 2,
+            parent_id: 0,
+            start: 1000,
+            duration: 100,
+            error: 0,
+            ..Default::default()
+        }]];
+        let data = msgpack_encoder::v04::to_vec(&traces);
+        let result = exporter.send(data.as_ref());
+
+        assert!(
+            result.is_ok(),
+            "OTLP send should succeed: {:?}",
+            result.err()
+        );
+        mock_otlp.assert();
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn stop_and_start_runtime() {
+        let builder = TraceExporterBuilder::default();
+        let exporter = builder.build().unwrap();
+        exporter.stop_worker();
+        exporter.run_worker().unwrap();
     }
 }
 

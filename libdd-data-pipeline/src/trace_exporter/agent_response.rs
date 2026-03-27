@@ -1,11 +1,13 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+use http::HeaderName;
 use std::sync::Arc;
 
 use arc_swap::ArcSwap;
 
-pub const DATADOG_RATES_PAYLOAD_VERSION_HEADER: &str = "datadog-rates-payload-version";
+pub const DATADOG_RATES_PAYLOAD_VERSION: HeaderName =
+    HeaderName::from_static("datadog-rates-payload-version");
 
 /// `AgentResponse` structure holds agent response information upon successful request.
 #[derive(Debug, PartialEq)]

@@ -52,14 +52,25 @@ int main(int argc, char *argv[]) {
       .function =
           {
               .name = DDOG_CHARSLICE_C_BARE("{main}"),
+              .name_id = { .value = 0 },
+              .system_name = DDOG_CHARSLICE_C_BARE(""),
+              .system_name_id = { .value = 0 }, 
               .filename = DDOG_CHARSLICE_C_BARE("/srv/example/index.php"),
+              .filename_id = { .value = 0 },
           },
+        .address = 0,
+        .line = 0,
   };
 
   int64_t value = 10;
   const ddog_prof_Label label = {
       .key = DDOG_CHARSLICE_C_BARE("language"),
+      .key_id = { .value = 0 },
       .str = DDOG_CHARSLICE_C_BARE("php"),
+      .str_id = { .value = 0 },
+      .num = 0,
+      .num_unit = DDOG_CHARSLICE_C_BARE(""),
+      .num_unit_id = { .value = 0 },
   };
   ddog_prof_Sample sample = {
       .locations = {&root_location, 1},

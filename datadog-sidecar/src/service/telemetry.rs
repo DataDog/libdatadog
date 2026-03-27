@@ -77,7 +77,7 @@ impl TelemetryCachedClient {
         instance_id: &InstanceId,
         runtime_meta: &RuntimeMetadata,
         get_config: impl FnOnce() -> libdd_telemetry::config::Config,
-        process_tags: Option<String>,
+        process_tags: Vec<Tag>,
     ) -> Self {
         let mut builder = TelemetryWorkerBuilder::new_fetch_host(
             service.to_string(),
@@ -88,7 +88,13 @@ impl TelemetryCachedClient {
 
         builder.runtime_id = Some(instance_id.runtime_id.clone());
         builder.application.env = Some(env.to_string());
-        builder.application.process_tags = process_tags;
+        builder.application.process_tags = (!process_tags.is_empty()).then(|| {
+            process_tags
+                .iter()
+                .map(|tag| tag.to_string())
+                .collect::<Vec<_>>()
+                .join(",")
+        });
         let config = get_config();
         builder.config = config.clone();
 
@@ -155,7 +161,6 @@ impl TelemetryCachedClient {
         for action in sidecar_actions {
             match action {
                 SidecarAction::Telemetry(t) => actions.push(t),
-                SidecarAction::RegisterTelemetryMetric(metric) => self.register_metric(metric),
                 SidecarAction::AddTelemetryMetricPoint(point) => {
                     let metric_name = point.0.clone();
                     if let Some(telemetry_action) = self.to_telemetry_point(point) {
@@ -165,7 +170,6 @@ impl TelemetryCachedClient {
                     }
                 }
                 SidecarAction::PhpComposerTelemetryFile(_) => {} // handled separately
-                SidecarAction::ClearQueueId => {}                // handled separately
             }
         }
         actions
@@ -300,7 +304,7 @@ impl TelemetryCachedClientSet {
         instance_id: &InstanceId,
         runtime_meta: &RuntimeMetadata,
         get_config: F,
-        process_tags: Option<String>,
+        process_tags: Vec<Tag>,
     ) -> Arc<Mutex<TelemetryCachedClient>>
     where
         F: FnOnce() -> libdd_telemetry::config::Config,
