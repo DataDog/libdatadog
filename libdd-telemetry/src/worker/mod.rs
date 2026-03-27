@@ -136,6 +136,8 @@ pub struct TelemetryWorker {
     cancellation_token: CancellationToken,
     seq_id: AtomicU64,
     runtime_id: String,
+    telemetry_session_id: Option<String>,
+    telemetry_root_session_id: Option<String>,
     client: Box<dyn http_client::HttpClient + Sync + Send>,
     metrics_flush_interval: Duration,
     deadlines: scheduler::Scheduler<LifecycleAction>,
@@ -150,6 +152,8 @@ impl Debug for TelemetryWorker {
             .field("cancellation_token", &self.cancellation_token)
             .field("seq_id", &self.seq_id)
             .field("runtime_id", &self.runtime_id)
+            .field("telemetry_session_id", &self.telemetry_session_id)
+            .field("telemetry_root_session_id", &self.telemetry_root_session_id)
             .field("metrics_flush_interval", &self.metrics_flush_interval)
             .field("deadlines", &self.deadlines)
             .field("data", &self.data)
@@ -765,9 +769,23 @@ impl TelemetryWorker {
                 http_client::header::LIBRARY_VERSION,
                 tel.application.tracer_version.clone(),
             );
+        let req = http_client::add_instrumentation_session_headers(
+            req,
+            self.telemetry_session_id.as_deref(),
+            &self.runtime_id,
+            self.telemetry_root_session_id.as_deref(),
+        )?;
 
         let body = http_common::Body::from(serialize::serialize(&tel)?);
         Ok(req.body(body)?)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn test_build_request(
+        &self,
+        payload: &data::Payload,
+    ) -> anyhow::Result<http_common::HttpRequest> {
+        self.build_request(payload)
     }
 
     async fn send_request(
@@ -1033,6 +1051,8 @@ pub struct TelemetryWorkerBuilder {
     pub host: Host,
     pub application: Application,
     pub runtime_id: Option<String>,
+    pub telemetry_session_id: Option<String>,
+    pub telemetry_root_session_id: Option<String>,
     pub dependencies: store::Store<data::Dependency>,
     pub integrations: store::Store<data::Integration>,
     pub configurations: store::Store<data::Configuration>,
@@ -1084,6 +1104,8 @@ impl TelemetryWorkerBuilder {
                 ..Default::default()
             },
             runtime_id: None,
+            telemetry_session_id: None,
+            telemetry_root_session_id: None,
             dependencies: store::Store::new(MAX_ITEMS),
             integrations: store::Store::new(MAX_ITEMS),
             configurations: store::Store::new(MAX_ITEMS),
@@ -1134,6 +1156,8 @@ impl TelemetryWorkerBuilder {
             runtime_id: self
                 .runtime_id
                 .unwrap_or_else(|| uuid::Uuid::new_v4().to_string()),
+            telemetry_session_id: self.telemetry_session_id,
+            telemetry_root_session_id: self.telemetry_root_session_id,
             client,
             metrics_flush_interval,
             deadlines: scheduler::Scheduler::new(vec![
@@ -1190,10 +1214,77 @@ impl TelemetryWorkerBuilder {
 
 #[cfg(test)]
 mod tests {
-    use crate::worker::TelemetryWorkerHandle;
+    use crate::data::Payload;
+    use crate::worker::http_client::header::{DD_ROOT_SESSION_ID, DD_SESSION_ID};
+    use crate::worker::{TelemetryWorker, TelemetryWorkerBuilder, TelemetryWorkerHandle};
+    use libdd_common::Endpoint;
+    use tokio::runtime::Runtime;
 
     fn is_send<T: Send>(_: T) {}
     fn is_sync<T: Sync>(_: T) {}
+
+    fn worker_with_sessions(
+        runtime_id: Option<String>,
+        telemetry_session_id: Option<String>,
+        telemetry_root_session_id: Option<String>,
+    ) -> TelemetryWorker {
+        let mut b = TelemetryWorkerBuilder::new(
+            "h".into(),
+            "svc".into(),
+            "lang".into(),
+            "1".into(),
+            "tv".into(),
+        );
+        b.config
+            .set_endpoint(Endpoint::from_slice("http://127.0.0.1:1"))
+            .unwrap();
+        b.runtime_id = runtime_id;
+        b.telemetry_session_id = telemetry_session_id;
+        b.telemetry_root_session_id = telemetry_root_session_id;
+        let rt = Runtime::new().unwrap();
+        b.build_worker(rt.handle().clone()).1
+    }
+
+    #[test]
+    fn telemetry_http_request_always_includes_dd_session_id_from_runtime_id() {
+        let worker = worker_with_sessions(Some("run-9abc".into()), None, None);
+        let req = worker
+            .test_build_request(&Payload::AppHeartbeat(()))
+            .unwrap();
+        assert_eq!(
+            req.headers()
+                .get(DD_SESSION_ID)
+                .expect("dd-session-id")
+                .to_str()
+                .unwrap(),
+            "run-9abc"
+        );
+        assert!(req.headers().get(DD_ROOT_SESSION_ID).is_none());
+    }
+
+    #[test]
+    fn telemetry_http_request_includes_dd_root_session_id_when_set_and_distinct() {
+        let worker = worker_with_sessions(
+            Some("run-9abc".into()),
+            Some("sess-child".into()),
+            Some("sess-root".into()),
+        );
+        let req = worker
+            .test_build_request(&Payload::AppHeartbeat(()))
+            .unwrap();
+        assert_eq!(
+            req.headers().get(DD_SESSION_ID).unwrap().to_str().unwrap(),
+            "sess-child"
+        );
+        assert_eq!(
+            req.headers()
+                .get(DD_ROOT_SESSION_ID)
+                .expect("dd-root-session-id")
+                .to_str()
+                .unwrap(),
+            "sess-root"
+        );
+    }
 
     #[test]
     fn test_handle_sync_send() {

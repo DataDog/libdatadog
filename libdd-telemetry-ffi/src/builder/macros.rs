@@ -36,7 +36,9 @@ crate::c_setters!(
         host.kernel_release,
         host.kernel_version,
 
-        runtime_id
+        runtime_id,
+        telemetry_session_id,
+        telemetry_root_session_id,
     }
 );
 

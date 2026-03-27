@@ -12,6 +12,7 @@ use std::{
 };
 
 use crate::config::Config;
+use http::HeaderValue;
 use tracing::{debug, error};
 
 pub mod header {
@@ -22,8 +23,45 @@ pub mod header {
     pub const LIBRARY_LANGUAGE: HeaderName = HeaderName::from_static("dd-client-library-language");
     pub const LIBRARY_VERSION: HeaderName = HeaderName::from_static("dd-client-library-version");
 
-    /// Header key for whether to enable debug mode of telemetry.
     pub const DEBUG_ENABLED: HeaderName = HeaderName::from_static("dd-telemetry-debug-enabled");
+
+    pub const DD_SESSION_ID: HeaderName = HeaderName::from_static("dd-session-id");
+    pub const DD_ROOT_SESSION_ID: HeaderName = HeaderName::from_static("dd-root-session-id");
+}
+
+pub(crate) fn instrumentation_session_headers<'a>(
+    telemetry_session_id: Option<&'a str>,
+    runtime_id: &'a str,
+    telemetry_root_session_id: Option<&'a str>,
+) -> (&'a str, Option<&'a str>) {
+    let session_override = telemetry_session_id.filter(|s| !s.is_empty());
+    let session = session_override.unwrap_or(runtime_id);
+    let root = telemetry_root_session_id
+        .filter(|s| !s.is_empty())
+        .filter(|r| *r != session);
+    (session, root)
+}
+
+pub(crate) fn add_instrumentation_session_headers(
+    builder: HttpRequestBuilder,
+    telemetry_session_id: Option<&str>,
+    runtime_id: &str,
+    telemetry_root_session_id: Option<&str>,
+) -> anyhow::Result<HttpRequestBuilder> {
+    let (session, root) = instrumentation_session_headers(
+        telemetry_session_id,
+        runtime_id,
+        telemetry_root_session_id,
+    );
+    let session_hv =
+        HeaderValue::from_str(session).map_err(|e| anyhow::anyhow!("invalid dd-session-id: {e}"))?;
+    let mut b = builder.header(header::DD_SESSION_ID, session_hv);
+    if let Some(root_id) = root {
+        let root_hv = HeaderValue::from_str(root_id)
+            .map_err(|e| anyhow::anyhow!("invalid dd-root-session-id: {e}"))?;
+        b = b.header(header::DD_ROOT_SESSION_ID, root_hv);
+    }
+    Ok(b)
 }
 
 pub type ResponseFuture =
