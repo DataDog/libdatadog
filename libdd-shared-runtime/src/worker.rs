@@ -9,6 +9,12 @@ use async_trait::async_trait;
 /// The worker's [`run`](Self::run) method is executed every time [`trigger`](Self::trigger)
 /// returns. On startup [`initial_trigger`](Self::initial_trigger) is called before the first
 /// [`run`](Self::run).
+///
+/// # Cancellation safety
+/// The `trigger` function can be interrupted at any yield point (`.await`ed call). The state of the worker
+/// at this point will be saved and used to restart the worker. To be able to safely restart, the
+/// worker must be in a valid state on every call to `.await` within the trigger function.
+/// See [`tokio::select#cancellation-safety`] for more details.
 #[async_trait]
 pub trait Worker: std::fmt::Debug {
     /// Main worker function
@@ -18,6 +24,7 @@ pub trait Worker: std::fmt::Debug {
     async fn run(&mut self);
 
     /// Function called between each `run` to wait for the next run.
+    /// This function should be cancellation safe as it can be cancelled at any yield point.
     async fn trigger(&mut self);
 
     /// Alternative trigger called on start to provide custom behavior.

@@ -14,15 +14,6 @@ use tracing::debug;
 /// Used to allow a [`super::Worker`] to be paused while saving its state when
 /// dropping a tokio runtime to be able to restart with the same state on a new runtime. This is
 /// used to stop all threads before a fork to avoid deadlocks in child.
-///
-/// # Time-to-pause
-/// This loop should yield regularly to reduce time-to-pause. See [`tokio::task::yield_now`].
-///
-/// # Cancellation safety
-/// The main loop can be interrupted at any yield point (`.await`ed call). The state of the worker
-/// at this point will be saved and used to restart the worker. To be able to safely restart, the
-/// worker must be in a valid state on every call to `.await`.
-/// See [`tokio::select#cancellation-safety`] for more details.
 #[derive(Debug)]
 pub enum PausableWorker<T: Worker + Send + Sync + 'static> {
     Running {
@@ -84,22 +75,30 @@ impl<T: Worker + Send + Sync + 'static> PausableWorker<T> {
                 let handle = rt.spawn(async move {
                     // First iteration using initial_trigger
                     select! {
-                        _ = worker.initial_trigger() => {
-                            worker.run().await;
-                        }
+                            // Always check for cancellation first, to reduce time-to-pause in case
+                            // the initial trigger is always ready.
+                            biased;
+
                         _ = cloned_token.cancelled() => {
                             return worker;
+                        }
+                        _ = worker.initial_trigger() => {
+                            worker.run().await;
                         }
                     }
 
                     // Regular iterations
                     loop {
                         select! {
-                            _ = worker.trigger() => {
-                                worker.run().await;
-                            }
+                            // Always check for cancellation first, to reduce time-to-pause in case
+                            // the trigger is always ready.
+                            biased;
+
                             _ = cloned_token.cancelled() => {
                                 break;
+                            }
+                            _ = worker.trigger() => {
+                                worker.run().await;
                             }
                         }
                     }
