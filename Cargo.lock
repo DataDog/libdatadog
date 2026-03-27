@@ -597,9 +597,9 @@ dependencies = [
 
 [[package]]
 name = "bolero"
-version = "0.13.0"
+version = "0.13.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "eeae9bae5224be9a368c3b4f8cc83451473d55bcc1aa522cf56a48828dcf7f6e"
+checksum = "0ff44d278fc0062c95327087ed96b3d256906d1d8f579e534a3de8d6b386913a"
 dependencies = [
  "bolero-afl",
  "bolero-engine",
@@ -623,12 +623,11 @@ dependencies = [
 
 [[package]]
 name = "bolero-engine"
-version = "0.13.0"
+version = "0.13.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6b2496696794ca673fd085c7237d2b64b825bfe0dedbd5e947ca633532d8132b"
+checksum = "dca199170a7c92c669c1019f9219a316b66bcdcfa4b36cac5a460a4c1a851aba"
 dependencies = [
  "anyhow",
- "backtrace",
  "bolero-generator",
  "lazy_static",
  "pretty-hex",
@@ -638,9 +637,9 @@ dependencies = [
 
 [[package]]
 name = "bolero-generator"
-version = "0.13.1"
+version = "0.13.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "06b0c9bd47ec1d25ce698a2b4a0c3d8e527d0046919a04c800035e30bf4ea6d1"
+checksum = "98a5782f2650f80d533f58ec339c6dce4cc5428f9c2755894f98156f52af81f2"
 dependencies = [
  "bolero-generator-derive",
  "either",
@@ -651,14 +650,14 @@ dependencies = [
 
 [[package]]
 name = "bolero-generator-derive"
-version = "0.13.0"
+version = "0.13.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "385f38498675c06532bed10cd40a4313691a8fb7d9b698fcf096739d422e1764"
+checksum = "9a21a3b022507b9edd2050caf370d945e398c1a7c8455531220fa3968c45d29e"
 dependencies = [
  "proc-macro-crate",
  "proc-macro2",
  "quote",
- "syn 1.0.109",
+ "syn 2.0.87",
 ]
 
 [[package]]
@@ -3263,6 +3262,7 @@ dependencies = [
 name = "libdd-trace-protobuf"
 version = "3.0.0"
 dependencies = [
+ "bolero",
  "prost",
  "prost-build",
  "protoc-bin-vendored",
