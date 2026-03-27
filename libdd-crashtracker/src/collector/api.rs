@@ -113,7 +113,7 @@ pub fn reconfigure(
 }
 
 #[cfg(test)]
-mod tests {
+mod single_threaded_tests {
     use super::*;
     use crate::{
         begin_op, insert_span, insert_trace, CrashtrackerConfigurationBuilder, StacktraceCollection,
