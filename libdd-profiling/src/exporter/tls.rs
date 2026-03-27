@@ -39,9 +39,8 @@ impl TlsConfig {
 
         // Use an explicit CryptoProvider rather than relying on
         // `CryptoProvider::get_default_or_install_from_crate_features()`.
-        // Feature unification can enable both `aws-lc-rs` and `ring` in the
-        // same build (reqwest enables aws-lc-rs while libdd-common enables
-        // ring on Windows), which causes the automatic detection to panic.
+        // Feature unification may enable multiple crypto backends in the same
+        // build, which causes the automatic detection to panic.
         let provider = rustls::crypto::CryptoProvider::get_default()
             .cloned()
             .unwrap_or_else(|| std::sync::Arc::new(Self::default_crypto_provider()));
@@ -53,19 +52,12 @@ impl TlsConfig {
         Ok(Self(config))
     }
 
-    /// Returns the platform-appropriate default crypto provider.
+    /// Returns the default crypto provider (ring for non-FIPS builds).
     ///
-    /// Matches the convention used by `libdd-common`: `aws-lc-rs` on Unix,
-    /// `ring` on Windows (where `aws-lc-rs` has issues).
+    /// Matches the convention used by `libdd-common`: ring on all platforms
+    /// for non-FIPS. FIPS builds install the aws-lc-rs FIPS provider externally.
     fn default_crypto_provider() -> rustls::crypto::CryptoProvider {
-        #[cfg(unix)]
-        {
-            rustls::crypto::aws_lc_rs::default_provider()
-        }
-        #[cfg(not(unix))]
-        {
-            rustls::crypto::ring::default_provider()
-        }
+        rustls::crypto::ring::default_provider()
     }
 }
 
