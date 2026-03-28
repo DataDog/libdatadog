@@ -6,7 +6,7 @@ mod tracing_integration_tests {
     use libdd_data_pipeline::trace_exporter::{
         TraceExporter, TraceExporterInputFormat, TraceExporterOutputFormat,
     };
-    use libdd_trace_utils::span::v05::dict::SharedDict;
+    use libdd_trace_utils::span::SharedDictBytes;
     use libdd_trace_utils::test_utils::datadog_test_agent::DatadogTestAgent;
     use libdd_trace_utils::test_utils::{create_test_json_span, create_test_v05_span};
     use serde_json::json;
@@ -68,7 +68,7 @@ mod tracing_integration_tests {
     }
 
     fn get_v05_trace_snapshot_test_payload() -> Vec<u8> {
-        let mut dict = SharedDict::default();
+        let mut dict = SharedDictBytes::default();
 
         let span_1 = create_test_v05_span(
             1234,

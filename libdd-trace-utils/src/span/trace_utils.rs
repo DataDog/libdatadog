@@ -3,8 +3,10 @@
 
 //! Trace-utils functionalities implementation for tinybytes based spans
 
-use super::{v04::Span, SpanText, TraceData};
-use std::collections::HashMap;
+use super::{Span, SpanMut, TraceProjector, TraceChunkMut, TracesMut, TraceDataLifetime};
+use std::borrow::Borrow;
+use std::collections::HashSet;
+use hashbrown::HashMap;
 
 /// Span metric the mini agent must set for the backend to recognize top level span
 const TOP_LEVEL_KEY: &str = "_top_level";
@@ -13,15 +15,12 @@ const TRACER_TOP_LEVEL_KEY: &str = "_dd.top_level";
 const MEASURED_KEY: &str = "_dd.measured";
 const PARTIAL_VERSION_KEY: &str = "_dd.partial_version";
 
-fn set_top_level_span<T>(span: &mut Span<T>, is_top_level: bool)
-where
-    T: TraceData,
+fn set_top_level_span<'b: 's, 's, D: TraceDataLifetime<'s>, T: TraceProjector<'s, D>>(span: &mut SpanMut<'b, 's, T, D>, is_top_level: bool)
 {
     if is_top_level {
-        span.metrics
-            .insert(T::Text::from_static_str(TOP_LEVEL_KEY), 1.0);
+        span.attributes_mut().set_double(TOP_LEVEL_KEY, 1.0);
     } else {
-        span.metrics.remove(TOP_LEVEL_KEY);
+        span.attributes_mut().remove(TOP_LEVEL_KEY);
     }
 }
 
@@ -31,46 +30,61 @@ where
 ///   - OR its parent is unknown (other part of the code, distributed trace)
 ///   - OR its parent belongs to another service (in that case it's a "local root" being the highest
 ///     ancestor of other spans belonging to this service and attached to it).
-pub fn compute_top_level_span<T>(trace: &mut [Span<T>])
-where
-    T: TraceData,
-{
-    let mut span_id_idx: HashMap<u64, usize> = HashMap::new();
-    for (i, span) in trace.iter().enumerate() {
-        span_id_idx.insert(span.span_id, i);
+pub fn compute_top_level_span<'s, D: TraceDataLifetime<'s>, T: TraceProjector<'s, D>>(trace: &mut TraceChunkMut<'s, 's, T, D>) {
+    // Collect span_id -> is_top_level decisions first
+    let mut top_level_decisions: HashMap<u64, bool> = HashMap::new();
+
+    // Build a map of span_id -> service (as borrowed str for comparison)
+    let mut span_services: Vec<(u64, &str)> = Vec::new();
+    for span in trace.spans() {
+        span_services.push((span.span_id(), span.service().borrow()));
     }
-    for span_idx in 0..trace.len() {
-        let parent_id = trace[span_idx].parent_id;
-        if parent_id == 0 {
-            set_top_level_span(&mut trace[span_idx], true);
-            continue;
-        }
-        match span_id_idx.get(&parent_id).map(|i| &trace[*i].service) {
-            Some(parent_span_service) => {
-                if !(parent_span_service == &trace[span_idx].service) {
-                    // parent is not in the same service
-                    set_top_level_span(&mut trace[span_idx], true)
+
+    // Make decisions about which spans are top-level
+    for span in trace.spans() {
+        let span_id = span.span_id();
+        let parent_id = span.parent_id();
+
+        let is_top_level = if parent_id == 0 {
+            true
+        } else {
+            // Check if parent exists in this chunk and has the same service
+            match span_services.iter().find(|(id, _)| *id == parent_id) {
+                Some((_, parent_service)) => {
+                    // parent is in a different service
+                    span.service().borrow() != *parent_service
+                }
+                None => {
+                    // span has no parent in chunk
+                    true
                 }
             }
-            None => {
-                // span has no parent in chunk
-                set_top_level_span(&mut trace[span_idx], true)
-            }
+        };
+
+        top_level_decisions.insert(span_id, is_top_level);
+    }
+
+    // Now apply the decisions with mutable access
+    for mut span in trace.spans_mut() {
+        if let Some(&is_top_level) = top_level_decisions.get(&span.span_id()) {
+            set_top_level_span(&mut span, is_top_level);
         }
     }
 }
 
 /// Return true if the span has a top level key set
-pub fn has_top_level<T: TraceData>(span: &Span<T>) -> bool {
-    span.metrics
-        .get(TRACER_TOP_LEVEL_KEY)
-        .is_some_and(|v| *v == 1.0)
-        || span.metrics.get(TOP_LEVEL_KEY).is_some_and(|v| *v == 1.0)
+pub fn has_top_level<'b: 's, 's, D: TraceDataLifetime<'s>, T: TraceProjector<'s, D>>(span: &Span<'b, 's, T, D>) -> bool
+{
+    span.attributes()
+        .get_double(TRACER_TOP_LEVEL_KEY)
+        .is_some_and(|v| v == 1.0)
+        || span.attributes().get_double(TOP_LEVEL_KEY).is_some_and(|v| v == 1.0)
 }
 
 /// Returns true if a span should be measured (i.e., it should get trace metrics calculated).
-pub fn is_measured<T: TraceData>(span: &Span<T>) -> bool {
-    span.metrics.get(MEASURED_KEY).is_some_and(|v| *v == 1.0)
+pub fn is_measured<'b: 's, 's, D: TraceDataLifetime<'s>, T: TraceProjector<'s, D>>(span: &Span<'b, 's, T, D>) -> bool
+{
+    span.attributes().get_double(MEASURED_KEY).is_some_and(|v| v == 1.0)
 }
 
 /// Returns true if the span is a partial snapshot.
@@ -78,10 +92,11 @@ pub fn is_measured<T: TraceData>(span: &Span<T>) -> bool {
 /// When incomplete, a partial snapshot has a metric _dd.partial_version which is a positive
 /// integer. The metric usually increases each time a new version of the same span is sent by
 /// the tracer
-pub fn is_partial_snapshot<T: TraceData>(span: &Span<T>) -> bool {
-    span.metrics
-        .get(PARTIAL_VERSION_KEY)
-        .is_some_and(|v| *v >= 0.0)
+pub fn is_partial_snapshot<'b: 's, 's, D: TraceDataLifetime<'s>, T: TraceProjector<'s, D>>(span: &Span<'b, 's, T, D>) -> bool
+{
+    span.attributes()
+        .get_double(PARTIAL_VERSION_KEY)
+        .is_some_and(|v| v >= 0.0)
 }
 
 pub struct DroppedP0Stats {
@@ -104,54 +119,51 @@ const SAMPLING_ANALYTICS_RATE_KEY: &str = "_dd1.sr.eausr";
 ///
 /// # Trace-level attributes
 /// Some attributes related to the whole trace are stored in the root span of the chunk.
-pub fn drop_chunks<T>(traces: &mut Vec<Vec<Span<T>>>) -> DroppedP0Stats
-where
-    T: TraceData,
+pub fn drop_chunks<'s, D: TraceDataLifetime<'s>, T: TraceProjector<'s, D>>(traces: &mut TracesMut<'s, T, D>) -> DroppedP0Stats
 {
     let mut dropped_p0_traces = 0;
     let mut dropped_p0_spans = 0;
 
-    traces.retain_mut(|chunk| {
-        // ErrorSampler
-        if chunk.iter().any(|s| s.error == 1) {
-            // We send chunks containing an error
-            return true;
-        }
-
-        // PrioritySampler and NoPrioritySampler
-        let chunk_priority = chunk
-            .iter()
-            .find_map(|s| s.metrics.get(SAMPLING_PRIORITY_KEY));
-        if chunk_priority.is_none_or(|p| *p > 0.0) {
-            // We send chunks with positive priority or no priority
-            return true;
-        }
-
-        // SingleSpanSampler and AnalyzedSpansSampler
+    traces.retain_chunks(|chunk| {
+        let priority = chunk.priority();
         // List of spans to keep even if the chunk is dropped
-        let mut sampled_indexes = Vec::new();
-        for (index, span) in chunk.iter().enumerate() {
-            if span
-                .metrics
-                .get(SAMPLING_SINGLE_SPAN_MECHANISM)
-                .is_some_and(|m| *m == 8.0)
-                || span.metrics.contains_key(SAMPLING_ANALYTICS_RATE_KEY)
+        let mut sampled_indexes = HashSet::new();
+        for (index, span) in chunk.spans().enumerate() {
+            // ErrorSampler
+            if span.error() {
+                // We send chunks containing an error
+                return true;
+            }
+            // PrioritySampler and NoPrioritySampler
+            if has_top_level(&span) && priority > 0 {
+                // We send chunks with positive priority or no priority
+                return true;
+            }
+
+            // SingleSpanSampler and AnalyzedSpansSampler
+            else if span
+                .attributes()
+                .get_double(SAMPLING_SINGLE_SPAN_MECHANISM)
+                .is_some_and(|m| m == 8.0)
+                || span.attributes().get_double(SAMPLING_ANALYTICS_RATE_KEY).is_some()
             {
                 // We send spans sampled by single-span sampling or analyzed spans
-                sampled_indexes.push(index);
+                sampled_indexes.insert(index);
+            } else {
+                dropped_p0_spans += 1;
             }
         }
-        dropped_p0_spans += chunk.len() - sampled_indexes.len();
         if sampled_indexes.is_empty() {
             // If no spans were sampled we can drop the whole chunk
             dropped_p0_traces += 1;
             return false;
         }
-        let sampled_spans = sampled_indexes
-            .iter()
-            .map(|i| std::mem::take(&mut chunk[*i]))
-            .collect();
-        *chunk = sampled_spans;
+        let mut index = 0;
+        chunk.retain_spans(|_span| {
+            let retain = sampled_indexes.contains(&index);
+            index += 1;
+            retain
+        });
         true
     });
 
@@ -164,7 +176,8 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::span::v04::SpanBytes;
+    use crate::span::v04::{SpanBytes, TraceCollection};
+    use crate::span::BytesData;
 
     fn create_test_span(
         trace_id: u64,
@@ -209,8 +222,22 @@ mod tests {
     fn test_has_top_level() {
         let top_level_span = create_test_span(123, 1234, 12, 1, true);
         let not_top_level_span = create_test_span(123, 1234, 12, 1, false);
-        assert!(has_top_level(&top_level_span));
-        assert!(!has_top_level(&not_top_level_span));
+
+        let mut collection = TraceCollection::<BytesData>::new(vec![vec![top_level_span]]);
+        let traces = collection.project_mut();
+        for chunk in traces.chunks() {
+            for span in chunk.spans() {
+                assert!(has_top_level(&span));
+            }
+        }
+
+        let mut collection2 = TraceCollection::<BytesData>::new(vec![vec![not_top_level_span]]);
+        let traces2 = collection2.project_mut();
+        for chunk in traces2.chunks() {
+            for span in chunk.spans() {
+                assert!(!has_top_level(&span));
+            }
+        }
     }
 
     #[test]
@@ -218,15 +245,29 @@ mod tests {
         let mut measured_span = create_test_span(123, 1234, 12, 1, true);
         measured_span.metrics.insert(MEASURED_KEY.into(), 1.0);
         let not_measured_span = create_test_span(123, 1234, 12, 1, true);
-        assert!(is_measured(&measured_span));
-        assert!(!is_measured(&not_measured_span));
+
+        let mut collection = TraceCollection::<BytesData>::new(vec![vec![measured_span]]);
+        let traces = collection.project_mut();
+        for chunk in traces.chunks() {
+            for span in chunk.spans() {
+                assert!(is_measured(&span));
+            }
+        }
+
+        let mut collection2 = TraceCollection::<BytesData>::new(vec![vec![not_measured_span]]);
+        let traces2 = collection2.project_mut();
+        for chunk in traces2.chunks() {
+            for span in chunk.spans() {
+                assert!(!is_measured(&span));
+            }
+        }
     }
 
     #[test]
     fn test_compute_top_level() {
         let mut span_with_different_service = create_test_span(123, 5, 2, 1, false);
         span_with_different_service.service = "another_service".into();
-        let mut trace = vec![
+        let trace = vec![
             // Root span, should be marked as top-level
             create_test_span(123, 1, 0, 1, false),
             // Should not be marked as top-level
@@ -239,13 +280,19 @@ mod tests {
             span_with_different_service,
         ];
 
-        compute_top_level_span(trace.as_mut_slice());
+        let mut collection = TraceCollection::<BytesData>::new(vec![trace]);
+        let mut traces = collection.project_mut();
 
-        let spans_marked_as_top_level: Vec<u64> = trace
-            .iter()
+        for mut chunk in traces.chunks_mut() {
+            compute_top_level_span(&mut chunk);
+        }
+
+        let traces = collection.project();
+        let spans_marked_as_top_level: Vec<u64> = traces.chunks()
+            .flat_map(|chunk| chunk.spans())
             .filter_map(|span| {
-                if has_top_level(span) {
-                    Some(span.span_id)
+                if has_top_level(&span) {
+                    Some(span.span_id())
                 } else {
                     None
                 }
@@ -379,13 +426,14 @@ mod tests {
         ];
 
         for (chunk, expected_count) in chunks_and_expected_sampled_spans.into_iter() {
-            let mut traces = vec![chunk];
+            let mut collection = TraceCollection::<BytesData>::new(vec![chunk]);
+            let mut traces = collection.project_mut();
             drop_chunks(&mut traces);
 
             if expected_count == 0 {
-                assert!(traces.is_empty());
+                assert!(collection.traces.is_empty());
             } else {
-                assert_eq!(traces[0].len(), expected_count);
+                assert_eq!(collection.traces[0].len(), expected_count);
             }
         }
     }

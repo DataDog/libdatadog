@@ -1,27 +1,17 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::span::v04::Span;
+use crate::span::v1::TracePayload;
 use crate::span::TraceData;
-use rmp::encode::{write_array_len, ByteBuf, RmpWrite, ValueWriteError};
+use rmp::encode::{ByteBuf, RmpWrite, ValueWriteError};
+use crate::msgpack_encoder::v1::trace::TraceEncoder;
 use super::CountLength;
 
-mod span;
+mod trace;
 
 #[inline(always)]
-fn to_writer<W: RmpWrite, T: TraceData, S: AsRef<[Span<T>]>>(
-    writer: &mut W,
-    traces: &[S],
-) -> Result<(), ValueWriteError<W::Error>> {
-    write_array_len(writer, traces.len() as u32)?;
-    for trace in traces {
-        write_array_len(writer, trace.as_ref().len() as u32)?;
-        for span in trace.as_ref() {
-            span::encode_span(writer, span)?;
-        }
-    }
-
-    Ok(())
+fn to_writer<W: RmpWrite, T: TraceData>(writer: &mut W, trace_payload: &TracePayload<T>) -> Result<(), ValueWriteError<W::Error>> {
+    TraceEncoder::new(writer, &trace_payload.static_data).encode_traces(&trace_payload.traces)
 }
 
 /// Encodes a collection of traces into a slice of bytes.
@@ -45,23 +35,18 @@ fn to_writer<W: RmpWrite, T: TraceData, S: AsRef<[Span<T>]>>(
 /// # Examples
 ///
 /// ```
-/// use libdd_trace_utils::msgpack_encoder::v04::write_to_slice;
-/// use libdd_trace_utils::span::v04::SpanSlice;
+/// use libdd_trace_utils::msgpack_encoder::v1::write_to_slice;
+/// use libdd_trace_utils::span::{BytesData, v1::TracePayload};
 ///
-/// let mut buffer = vec![0u8; 1024];
-/// let span = SpanSlice {
-///     name: "test-span",
-///     ..Default::default()
-/// };
-/// let traces = vec![vec![span]];
+/// let traces = TracePayload::<BytesData>::default();
 ///
 /// write_to_slice(&mut &mut buffer[..], &traces).expect("Encoding failed");
 /// ```
-pub fn write_to_slice<T: TraceData, S: AsRef<[Span<T>]>>(
+pub fn write_to_slice<T: TraceData>(
     slice: &mut &mut [u8],
-    traces: &[S],
+    trace_payload: &TracePayload<T>,
 ) -> Result<(), ValueWriteError> {
-    to_writer(slice, traces)
+    to_writer(slice, trace_payload)
 }
 
 /// Serializes traces into a vector of bytes with a default capacity of 0.
@@ -77,20 +62,16 @@ pub fn write_to_slice<T: TraceData, S: AsRef<[Span<T>]>>(
 /// # Examples
 ///
 /// ```
-/// use libdd_trace_utils::msgpack_encoder::v04::to_vec;
-/// use libdd_trace_utils::span::v04::SpanSlice;
+/// use libdd_trace_utils::msgpack_encoder::v1::write_to_slice;
+/// use libdd_trace_utils::span::{BytesData, v1::TracePayload};
 ///
-/// let span = SpanSlice {
-///     name: "test-span",
-///     ..Default::default()
-/// };
-/// let traces = vec![vec![span]];
+/// let traces = TracePayload::<BytesData>::default();
 /// let encoded = to_vec(&traces);
 ///
 /// assert!(!encoded.is_empty());
 /// ```
-pub fn to_vec<T: TraceData, S: AsRef<[Span<T>]>>(traces: &[S]) -> Vec<u8> {
-    to_vec_with_capacity(traces, 0)
+pub fn to_vec<T: TraceData>(trace_payload: &TracePayload<T>) -> Vec<u8> {
+    to_vec_with_capacity(trace_payload, 0)
 }
 
 /// Serializes traces into a vector of bytes with specified capacity.
@@ -107,27 +88,24 @@ pub fn to_vec<T: TraceData, S: AsRef<[Span<T>]>>(traces: &[S]) -> Vec<u8> {
 /// # Examples
 ///
 /// ```
-/// use libdd_trace_utils::msgpack_encoder::v04::to_vec_with_capacity;
-/// use libdd_trace_utils::span::v04::SpanSlice;
+/// use libdd_trace_utils::msgpack_encoder::v1::write_to_slice;
+/// use libdd_trace_utils::span::{BytesData, v1::TracePayload};
 ///
-/// let span = SpanSlice {
-///     name: "test-span",
-///     ..Default::default()
-/// };
-/// let traces = vec![vec![span]];
+/// let traces = TracePayload::<BytesData>::default();
 /// let encoded = to_vec_with_capacity(&traces, 1024);
 ///
 /// assert!(encoded.capacity() >= 1024);
 /// ```
-pub fn to_vec_with_capacity<T: TraceData, S: AsRef<[Span<T>]>>(
-    traces: &[S],
+pub fn to_vec_with_capacity<T: TraceData>(
+    trace_payload: &TracePayload<T>,
     capacity: u32,
 ) -> Vec<u8> {
     let mut buf = ByteBuf::with_capacity(capacity as usize);
     #[allow(clippy::expect_used)]
-    to_writer(&mut buf, traces).expect("infallible: the error is std::convert::Infallible");
+    to_writer(&mut buf, trace_payload).expect("infallible: the error is std::convert::Infallible");
     buf.into_vec()
 }
+
 
 /// Computes the number of bytes required to encode the given traces.
 ///
@@ -145,21 +123,17 @@ pub fn to_vec_with_capacity<T: TraceData, S: AsRef<[Span<T>]>>(
 /// # Examples
 ///
 /// ```
-/// use libdd_trace_utils::msgpack_encoder::v04::to_len;
-/// use libdd_trace_utils::span::v04::SpanSlice;
+/// use libdd_trace_utils::msgpack_encoder::v1::write_to_slice;
+/// use libdd_trace_utils::span::{BytesData, v1::TracePayload};
 ///
-/// let span = SpanSlice {
-///     name: "test-span",
-///     ..Default::default()
-/// };
-/// let traces = vec![vec![span]];
+/// let traces = TracePayload::<BytesData>::default();
 /// let encoded_len = to_len(&traces);
 ///
 /// assert!(encoded_len > 0);
 /// ```
-pub fn to_len<T: TraceData, S: AsRef<[Span<T>]>>(traces: &[S]) -> u32 {
+pub fn to_len<T: TraceData>(trace_payload: &TracePayload<T>) -> u32 {
     let mut counter = CountLength(0);
     #[allow(clippy::expect_used)]
-    to_writer(&mut counter, traces).expect("infallible: CountLength never fails");
+    to_writer(&mut counter, trace_payload).expect("infallible: CountLength never fails");
     counter.0
 }

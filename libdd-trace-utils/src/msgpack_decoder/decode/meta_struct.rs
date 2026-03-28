@@ -7,7 +7,7 @@ use crate::msgpack_decoder::decode::map::{read_map, read_map_len};
 use crate::msgpack_decoder::decode::string::handle_null_marker;
 use crate::span::DeserializableTraceData;
 use rmp::decode;
-use std::collections::HashMap;
+use hashbrown::HashMap;
 
 fn read_byte_array_len<T: DeserializableTraceData>(
     buf: &mut Buffer<T>,
@@ -52,7 +52,7 @@ mod tests {
 
     #[test]
     fn read_meta_test() {
-        let meta = HashMap::from([("key".to_string(), Bytes::from(vec![1, 2, 3, 4]))]);
+        let meta: HashMap<String, Bytes> = HashMap::from([("key".to_string(), Bytes::from(vec![1, 2, 3, 4]))]);
 
         let serialized = rmp_serde::to_vec_named(&meta).unwrap();
         let mut slice = Buffer::<SliceData>::new(serialized.as_ref());
@@ -63,7 +63,7 @@ mod tests {
 
     #[test]
     fn read_meta_wrong_family_test() {
-        let meta = HashMap::from([("key".to_string(), vec![1, 2, 3, 4])]);
+        let meta: HashMap<String, Vec<u8>> = HashMap::from([("key".to_string(), vec![1, 2, 3, 4])]);
 
         let serialized = rmp_serde::to_vec_named(&meta).unwrap();
         let mut slice = Buffer::<SliceData>::new(serialized.as_ref());

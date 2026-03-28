@@ -2201,6 +2201,7 @@ dependencies = [
  "allocator-api2",
  "equivalent",
  "foldhash 0.1.5",
+ "serde",
 ]
 
 [[package]]
@@ -3218,6 +3219,7 @@ dependencies = [
 name = "libdd-tinybytes"
 version = "1.1.0"
 dependencies = [
+ "hashbrown 0.15.1",
  "libdd-tinybytes",
  "once_cell",
  "pretty_assertions",
@@ -3297,6 +3299,7 @@ dependencies = [
  "criterion",
  "flate2",
  "futures",
+ "hashbrown 0.15.1",
  "http",
  "http-body",
  "http-body-util",
@@ -3315,6 +3318,7 @@ dependencies = [
  "rmpv",
  "serde",
  "serde_json",
+ "strum",
  "tempfile",
  "tokio",
  "tracing",

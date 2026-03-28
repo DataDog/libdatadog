@@ -7,7 +7,7 @@ use crate::msgpack_decoder::decode::{
 };
 use crate::span::v04::{Span, SpanBytes, SpanSlice};
 use crate::span::DeserializableTraceData;
-use std::collections::HashMap;
+use hashbrown::HashMap;
 
 const PAYLOAD_LEN: u32 = 2;
 const SPAN_ELEM_COUNT: u32 = 12;

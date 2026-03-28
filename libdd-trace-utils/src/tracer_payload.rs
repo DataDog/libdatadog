@@ -1,8 +1,9 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::span::v05::dict::SharedDict;
 use crate::span::{v04, v05, BytesData, SharedDictBytes, TraceData};
+use crate::span::table::{StaticDataVec, TraceBytesRef, TraceDataBytes, TraceDataRef, TraceDataText, TraceStringRef};
+use crate::span::v1::{to_v04, AttributeAnyValue, AttributeMap, TracePayload, TraceStaticData};
 use crate::trace_utils::collect_trace_chunks;
 use crate::{msgpack_decoder, trace_utils::cmp_send_data_payloads};
 use libdd_trace_protobuf::pb;
@@ -19,6 +20,8 @@ pub enum TraceEncoding {
     V04,
     /// v0.5 encoding (TracerPayloadV05).
     V05,
+    /// v1 encoding (TracerPayload).
+    V1,
 }
 
 #[derive(Debug)]
@@ -26,7 +29,9 @@ pub enum TraceChunks<T: TraceData> {
     /// Collection of TraceChunkSpan.
     V04(Vec<Vec<v04::Span<T>>>),
     /// Collection of TraceChunkSpan with de-duplicated strings.
-    V05((SharedDict<T::Text>, Vec<Vec<v05::Span>>)),
+    V05((StaticDataVec<T, TraceDataText>, Vec<Vec<v05::Span>>)),
+    /// A full V1 trace.
+    V1(TracePayload<T>)
 }
 
 impl TraceChunks<BytesData> {
@@ -34,6 +39,7 @@ impl TraceChunks<BytesData> {
         match self {
             TraceChunks::V04(traces) => TracerPayloadCollection::V04(traces),
             TraceChunks::V05(traces) => TracerPayloadCollection::V05(traces),
+            TraceChunks::V1(traces) => TracerPayloadCollection::V1(traces),
         }
     }
 }
@@ -44,6 +50,7 @@ impl<T: TraceData> TraceChunks<T> {
         match self {
             TraceChunks::V04(traces) => traces.len(),
             TraceChunks::V05((_, traces)) => traces.len(),
+            TraceChunks::V1(traces) => traces.traces.chunks.iter().map(|c| c.spans.len()).sum()
         }
     }
 }
@@ -51,6 +58,8 @@ impl<T: TraceData> TraceChunks<T> {
 #[derive(Debug)]
 /// Enum representing a general abstraction for a collection of tracer payloads.
 pub enum TracerPayloadCollection {
+    /// Collection of TracerPayloads.
+    V1(TracePayload<BytesData>),
     /// Collection of TracerPayloads.
     V07(Vec<pb::TracerPayload>),
     /// Collection of TraceChunkSpan.
@@ -90,6 +99,56 @@ impl TracerPayloadCollection {
             // TODO: Properly handle non-OK states to prevent possible panics (APMSP-18190).
             #[allow(clippy::unimplemented)]
             TracerPayloadCollection::V05(_) => unimplemented!("Append for V05 not implemented"),
+            TracerPayloadCollection::V1(dest) => {
+                if let TracerPayloadCollection::V1(src) = other {
+                    let str_indices = dest.static_data.strings.merge(&mut src.static_data.strings);
+                    let byte_indices = dest.static_data.bytes.merge(&mut src.static_data.bytes);
+                    fn fixattr(attr: &mut AttributeAnyValue, str_indices: &Vec<TraceStringRef>, byte_indices: &Vec<TraceBytesRef>) {
+                        match attr {
+                            AttributeAnyValue::String(s) => *s = str_indices[s.get_index() as usize],
+                            AttributeAnyValue::Bytes(b) => *b = byte_indices[b.get_index() as usize],
+                            AttributeAnyValue::Array(a) => for v in a.iter_mut() { fixattr(v, str_indices, byte_indices) },
+                            AttributeAnyValue::Map(m) => fixattrs(m, str_indices, byte_indices),
+                            _ => {},
+                        }
+                    }
+                    fn fixattrs(attr: &mut AttributeMap, str_indices: &Vec<TraceStringRef>, byte_indices: &Vec<TraceBytesRef>) {
+                        for (k, mut v) in std::mem::take(attr) {
+                            fixattr(&mut v, str_indices, byte_indices);
+                            attr.insert(str_indices[k.get_index() as usize], v);
+                        }
+                    }
+                    let fixupattributes = |attrs: &mut AttributeMap| {
+                        fixattrs(attrs, &str_indices, &byte_indices);
+                    };
+                    let fixupstr = |str: &mut TraceStringRef| {
+                        *str = str_indices[str.get_index() as usize];
+                    };
+                    for mut chunk in std::mem::take(&mut src.traces.chunks) {
+                        fixupstr(&mut chunk.origin);
+                        fixupattributes(&mut chunk.attributes);
+                        for span in chunk.spans.iter_mut() {
+                            fixupstr(&mut span.name);
+                            fixupstr(&mut span.component);
+                            fixupstr(&mut span.env);
+                            fixupstr(&mut span.version);
+                            fixupstr(&mut span.r#type);
+                            fixupstr(&mut span.resource);
+                            fixupstr(&mut span.service);
+                            fixupattributes(&mut span.attributes);
+                            for link in span.span_links.iter_mut() {
+                                fixupstr(&mut link.tracestate);
+                                fixupattributes(&mut link.attributes);
+                            }
+                            for event in span.span_events.iter_mut() {
+                                fixupstr(&mut event.name);
+                                fixupattributes(&mut event.attributes);
+                            }
+                        }
+                        dest.traces.chunks.push(chunk);
+                    }
+                }
+            }
         }
     }
 
@@ -139,6 +198,7 @@ impl TracerPayloadCollection {
             }
             TracerPayloadCollection::V04(collection) => collection.len(),
             TracerPayloadCollection::V05((_, collection)) => collection.len(),
+            TracerPayloadCollection::V1(traces) => traces.traces.chunks.iter().map(|c| c.spans.len()).sum()
         }
     }
 }
@@ -226,6 +286,7 @@ pub fn decode_to_trace_chunks(
     let (data, size) = match encoding_type {
         TraceEncoding::V04 => msgpack_decoder::v04::from_bytes(data),
         TraceEncoding::V05 => msgpack_decoder::v05::from_bytes(data),
+        TraceEncoding::V1 => msgpack_decoder::v1::from_bytes(data).map(|(p, size)| (to_v04(&p), size)),
     }
     .map_err(|e| anyhow::format_err!("Error deserializing trace from request body: {e}"))?;
 
@@ -239,11 +300,12 @@ pub fn decode_to_trace_chunks(
 mod tests {
     use super::*;
     use crate::span::v04::SpanBytes;
+    use crate::span::v1::{Span as V1Span, TraceChunk as V1TraceChunk};
     use crate::test_utils::create_test_no_alloc_span;
     use libdd_tinybytes::BytesString;
     use libdd_trace_protobuf::pb;
     use serde_json::json;
-    use std::collections::HashMap;
+    use hashbrown::HashMap;
 
     fn create_dummy_collection_v07() -> TracerPayloadCollection {
         TracerPayloadCollection::V07(vec![pb::TracerPayload {
@@ -452,5 +514,177 @@ mod tests {
         } else {
             panic!("Invalid collection type returned for try_into");
         }
+    }
+
+    fn make_v1(f: impl FnOnce(&mut TracePayload<BytesData>)) -> TracerPayloadCollection {
+        let mut payload = TracePayload::<BytesData>::default();
+        f(&mut payload);
+        TracerPayloadCollection::V1(payload)
+    }
+
+    fn unwrap_v1(col: &TracerPayloadCollection) -> &TracePayload<BytesData> {
+        let TracerPayloadCollection::V1(p) = col else { panic!("Expected V1") };
+        p
+    }
+
+    #[test]
+    fn test_append_v1_basic() {
+        // Two payloads with distinct strings: after append both chunks are present.
+        let mut dest = make_v1(|p| {
+            let svc = p.static_data.add_string("svc-a");
+            let name = p.static_data.add_string("span-a");
+            p.traces.chunks.push(V1TraceChunk {
+                trace_id: 1,
+                spans: vec![V1Span { service: svc, name, span_id: 10, ..Default::default() }],
+                ..Default::default()
+            });
+        });
+        let mut src = make_v1(|p| {
+            let svc = p.static_data.add_string("svc-b");
+            let name = p.static_data.add_string("span-b");
+            p.traces.chunks.push(V1TraceChunk {
+                trace_id: 2,
+                spans: vec![V1Span { service: svc, name, span_id: 20, ..Default::default() }],
+                ..Default::default()
+            });
+        });
+
+        dest.append(&mut src);
+
+        assert_eq!(dest.size(), 2);
+        let v04 = to_v04(unwrap_v1(&dest));
+        assert_eq!(v04.len(), 2);
+        assert_eq!(v04[0][0].service, BytesString::from("svc-a"));
+        assert_eq!(v04[0][0].name, BytesString::from("span-a"));
+        assert_eq!(v04[1][0].service, BytesString::from("svc-b"));
+        assert_eq!(v04[1][0].name, BytesString::from("span-b"));
+    }
+
+    #[test]
+    fn test_append_v1_empty() {
+        // Appending an empty payload leaves destination unchanged.
+        let mut dest = make_v1(|p| {
+            let svc = p.static_data.add_string("svc");
+            p.traces.chunks.push(V1TraceChunk {
+                trace_id: 1,
+                spans: vec![V1Span { service: svc, span_id: 1, ..Default::default() }],
+                ..Default::default()
+            });
+        });
+        let mut empty = TracerPayloadCollection::V1(TracePayload::default());
+
+        dest.append(&mut empty);
+
+        assert_eq!(dest.size(), 1);
+        let v04 = to_v04(unwrap_v1(&dest));
+        assert_eq!(v04[0][0].service, BytesString::from("svc"));
+    }
+
+    #[test]
+    fn test_append_v1_string_deduplication() {
+        // Both payloads use the same string "shared-svc"; after merge it appears only once
+        // in the string table, but both spans still resolve to it correctly.
+        let mut dest = make_v1(|p| {
+            let svc = p.static_data.add_string("shared-svc");
+            p.traces.chunks.push(V1TraceChunk {
+                trace_id: 1,
+                spans: vec![V1Span { service: svc, span_id: 1, ..Default::default() }],
+                ..Default::default()
+            });
+        });
+        let mut src = make_v1(|p| {
+            let svc = p.static_data.add_string("shared-svc");
+            p.traces.chunks.push(V1TraceChunk {
+                trace_id: 2,
+                spans: vec![V1Span { service: svc, span_id: 2, ..Default::default() }],
+                ..Default::default()
+            });
+        });
+
+        dest.append(&mut src);
+
+        let payload = unwrap_v1(&dest);
+        // String table: index 0 is default (""), index 1 is "shared-svc" — no duplicates.
+        assert_eq!(payload.static_data.strings.len(), 2);
+
+        let v04 = to_v04(payload);
+        assert_eq!(v04.len(), 2);
+        assert_eq!(v04[0][0].service, BytesString::from("shared-svc"));
+        assert_eq!(v04[1][0].service, BytesString::from("shared-svc"));
+    }
+
+    #[test]
+    fn test_append_v1_attribute_fixup() {
+        // Span-level string attributes from the src payload must be re-mapped to the
+        // merged string table so they still resolve to the correct values.
+        let mut dest = make_v1(|p| {
+            let key = p.static_data.add_string("attr-key");
+            let val = p.static_data.add_string("val-a");
+            let name = p.static_data.add_string("span-a");
+            p.traces.chunks.push(V1TraceChunk {
+                trace_id: 1,
+                spans: vec![V1Span {
+                    name,
+                    span_id: 1,
+                    attributes: HashMap::from([(key, AttributeAnyValue::String(val))]),
+                    ..Default::default()
+                }],
+                ..Default::default()
+            });
+        });
+        let mut src = make_v1(|p| {
+            let key = p.static_data.add_string("attr-key");
+            let val = p.static_data.add_string("val-b");
+            let name = p.static_data.add_string("span-b");
+            p.traces.chunks.push(V1TraceChunk {
+                trace_id: 2,
+                spans: vec![V1Span {
+                    name,
+                    span_id: 2,
+                    attributes: HashMap::from([(key, AttributeAnyValue::String(val))]),
+                    ..Default::default()
+                }],
+                ..Default::default()
+            });
+        });
+
+        dest.append(&mut src);
+
+        let v04 = to_v04(unwrap_v1(&dest));
+        assert_eq!(v04.len(), 2);
+        // "attr-key" is a string attribute → placed in meta by to_v04
+        assert_eq!(v04[0][0].meta.get(&BytesString::from("attr-key")), Some(&BytesString::from("val-a")));
+        assert_eq!(v04[1][0].meta.get(&BytesString::from("attr-key")), Some(&BytesString::from("val-b")));
+    }
+
+    #[test]
+    fn test_append_v1_chunk_origin_fixup() {
+        // Chunk origins from the src payload must be re-mapped to the merged string table.
+        let mut dest = make_v1(|p| {
+            let origin = p.static_data.add_string("rum");
+            p.traces.chunks.push(V1TraceChunk {
+                trace_id: 1,
+                origin,
+                spans: vec![V1Span { span_id: 1, ..Default::default() }],
+                ..Default::default()
+            });
+        });
+        let mut src = make_v1(|p| {
+            let origin = p.static_data.add_string("synthetics");
+            p.traces.chunks.push(V1TraceChunk {
+                trace_id: 2,
+                origin,
+                spans: vec![V1Span { span_id: 2, ..Default::default() }],
+                ..Default::default()
+            });
+        });
+
+        dest.append(&mut src);
+
+        let v04 = to_v04(unwrap_v1(&dest));
+        assert_eq!(v04.len(), 2);
+        // Origin is propagated to meta["_dd.origin"] on the first span of each chunk by to_v04.
+        assert_eq!(v04[0][0].meta.get(&BytesString::from("_dd.origin")), Some(&BytesString::from("rum")));
+        assert_eq!(v04[1][0].meta.get(&BytesString::from("_dd.origin")), Some(&BytesString::from("synthetics")));
     }
 }

@@ -148,7 +148,7 @@ impl TryFrom<Number> for f64 {
     }
 }
 
-fn read_num(buf: &mut &[u8], allow_null: bool) -> Result<Number, DecodeError> {
+pub fn read_num(buf: &mut &[u8], allow_null: bool) -> Result<Number, DecodeError> {
     match rmp::decode::read_marker(buf)
         .map_err(|_| DecodeError::InvalidFormat("Unable to read marker for number".to_owned()))?
     {
