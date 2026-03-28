@@ -1,5 +1,13 @@
 # Changelog
 
+
+
+## [2.0.0](https://github.com/datadog/libdatadog/compare/libdd-trace-obfuscation-v1.0.1..libdd-trace-obfuscation-v2.0.0) - 2026-03-25
+
+### Changed
+- Fix previous version.
+
+
 ## [1.0.1](https://github.com/datadog/libdatadog/compare/libdd-trace-obfuscation-v1.0.0..libdd-trace-obfuscation-v1.0.1) - 2026-03-16
 
 ### Changed
