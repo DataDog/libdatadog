@@ -12,13 +12,13 @@ use std::ffi::{c_char, CString};
 
 fn convert_char_slice_to_bytes_string(slice: CharSlice) -> BytesString {
     // TODO: Strip the invalid bytes in the tracer instead
-    unsafe {
-        match String::from_utf8_lossy(slice.as_bytes()) {
-            Cow::Owned(s) => s.into(),
-            Cow::Borrowed(_) => {
-                BytesString::from_bytes_unchecked(Bytes::from_underlying(slice.as_bytes().to_vec()))
-            }
-        }
+    match String::from_utf8_lossy(slice.as_bytes()) {
+        Cow::Owned(s) => s.into(),
+        Cow::Borrowed(_) => unsafe {
+            // Safety: if `from_utf8_lossy` returns a borrowed `str`, the latter can't be anything
+            // else than the original slice which is thus valid UTF8.
+            BytesString::from_bytes_unchecked(Bytes::from_underlying(slice.as_bytes().to_vec()))
+        },
     }
 }
 
@@ -31,8 +31,10 @@ fn set_string_field(field: &mut BytesString, slice: CharSlice) {
 }
 
 #[inline]
-fn get_string_field(field: &BytesString) -> CharSlice<'static> {
+fn get_string_field(field: &BytesString) -> CharSlice<'_> {
     let string = field.as_str();
+    // Safety: `field` is a `ByteString`, which guarantees it is backed by valid UTF8 bytes. The
+    // lifetime of the returned slice makes sure it borrows from `field`.
     unsafe { CharSlice::from_raw_parts(string.as_ptr().cast(), string.len()) }
 }
 
@@ -57,33 +59,39 @@ fn exists_hashmap<V>(map: &HashMap<BytesString, V>, key: CharSlice) -> bool {
     map.contains_key(&bytes_str_key)
 }
 
-#[allow(clippy::missing_safety_doc)]
-unsafe fn get_hashmap_keys<V>(
-    map: &HashMap<BytesString, V>,
+/// The return value is an owned array of slices (`Box<[CharSlice<'a>]>`) that must be dropped
+/// explicitly.
+fn get_hashmap_keys<'a, V>(
+    map: &'a HashMap<BytesString, V>,
     out_count: &mut usize,
-) -> *mut CharSlice<'static> {
+) -> *mut CharSlice<'a> {
     let mut keys: Vec<&str> = map.keys().map(|b| b.as_str()).collect();
     keys.sort_unstable();
 
-    let mut slices = Vec::with_capacity(keys.len());
-    for key in keys {
-        slices.push(CharSlice::from_raw_parts(key.as_ptr().cast(), key.len()));
-    }
+    let slices: Box<[CharSlice]> = keys
+        .iter()
+        .map(|key| {
+            // Safety: `BytesString` enforces that the content is valid UTF8. We returne a slice
+            // with lifetime `'a`, which guarantees that the underlying allocation will remain live
+            // and immutable for the lifetime of the slice.
+            unsafe { CharSlice::from_raw_parts(key.as_ptr().cast(), key.len()) }
+        })
+        .collect();
 
     *out_count = slices.len();
-    Box::into_raw(slices.into_boxed_slice()) as *mut CharSlice<'static>
+    Box::into_raw(slices) as *mut CharSlice<'a>
 }
 
-#[allow(clippy::missing_safety_doc)]
-unsafe fn new_vector_item<T: Default>(vec: &mut Vec<T>) -> &mut T {
+fn new_vector_item<T: Default>(vec: &mut Vec<T>) -> &mut T {
     vec.push(T::default());
-    vec.last_mut().unwrap_unchecked()
+    // Safety: we just pushed a value to the vector, so `last_mut()` returns `Some`
+    unsafe { vec.last_mut().unwrap_unchecked() }
 }
 
-#[allow(clippy::missing_safety_doc)]
-unsafe fn new_vector_push<T>(vec: &mut Vec<T>, el: T) -> &mut T {
+fn new_vector_push<T>(vec: &mut Vec<T>, el: T) -> &mut T {
     vec.push(el);
-    vec.last_mut().unwrap_unchecked()
+    // Safety: we just pushed a value to the vector, so `last_mut()` returns `Some`
+    unsafe { vec.last_mut().unwrap_unchecked() }
 }
 
 #[no_mangle]
@@ -130,20 +138,25 @@ pub extern "C" fn ddog_get_traces_size(traces: &TracesBytes) -> usize {
     traces.len()
 }
 
-#[no_mangle]
-pub extern "C" fn ddog_get_trace(traces: &mut TracesBytes, index: usize) -> *mut TraceBytes {
-    if index >= traces.len() {
-        return std::ptr::null_mut();
-    }
+// Note that per [RFC3391](https://rust-lang.github.io/rfcs/3391-result_ffi_guarantees.html), we
+// can return values as `Option<&/&mut>` that will have the same ABI `*const/*mut TraceBytes`, with
+// `None` corresponding to `null`.
 
-    unsafe { traces.get_unchecked_mut(index) as *mut TraceBytes }
+// I don't think we need to return a mutable reference here, but when changing the return value
+// from `*mut` to `Option<&mut>`, we wanted to preserve the FFI at first.
+#[no_mangle]
+pub extern "C" fn ddog_get_trace(
+    traces: &mut TracesBytes,
+    index: usize,
+) -> Option<&mut TraceBytes> {
+    traces.get_mut(index)
 }
 
 // ------------------ TraceBytes ------------------
 
 #[no_mangle]
 pub extern "C" fn ddog_traces_new_trace(traces: &mut TracesBytes) -> &mut TraceBytes {
-    unsafe { new_vector_item(traces) }
+    new_vector_item(traces)
 }
 
 #[no_mangle]
@@ -151,20 +164,18 @@ pub extern "C" fn ddog_get_trace_size(trace: &TraceBytes) -> usize {
     trace.len()
 }
 
+// I don't think we need to return a mutable reference here, but when changing the return value
+// from `*mut` to `Option<&mut>`, we wanted to preserve the FFI at first.
 #[no_mangle]
-pub extern "C" fn ddog_get_span(trace: &mut TraceBytes, index: usize) -> *mut SpanBytes {
-    if index >= trace.len() {
-        return std::ptr::null_mut();
-    }
-
-    unsafe { trace.get_unchecked_mut(index) as *mut SpanBytes }
+pub extern "C" fn ddog_get_span(trace: &mut TraceBytes, index: usize) -> Option<&mut SpanBytes> {
+    trace.get_mut(index)
 }
 
 // ------------------- SpanBytes -------------------
 
 #[no_mangle]
 pub extern "C" fn ddog_trace_new_span(trace: &mut TraceBytes) -> &mut SpanBytes {
-    unsafe { new_vector_item(trace) }
+    new_vector_item(trace)
 }
 
 #[no_mangle]
@@ -173,40 +184,46 @@ pub extern "C" fn ddog_trace_new_span_with_capacities(
     meta_size: usize,
     metrics_size: usize,
 ) -> &mut SpanBytes {
-    unsafe {
-        new_vector_push(
-            trace,
-            SpanBytes {
-                meta: HashMap::with_capacity(meta_size),
-                metrics: HashMap::with_capacity(metrics_size),
-                ..SpanBytes::default()
-            },
-        )
-    }
+    new_vector_push(
+        trace,
+        SpanBytes {
+            meta: HashMap::with_capacity(meta_size),
+            metrics: HashMap::with_capacity(metrics_size),
+            ..SpanBytes::default()
+        },
+    )
 }
 
+/// The returned slice is an owned allocation that must be properly freed using
+/// [`ddog_free_charslice`].
 #[no_mangle]
 pub extern "C" fn ddog_span_debug_log(span: &SpanBytes) -> CharSlice<'static> {
-    unsafe {
-        let debug_str = format!("{span:?}");
-        let len = debug_str.len();
-        let cstring = CString::new(debug_str).unwrap_or_default();
+    let debug_str = format!("{span:?}");
+    let len = debug_str.len();
+    let cstring = CString::new(debug_str).unwrap_or_default();
 
-        CharSlice::from_raw_parts(cstring.into_raw().cast(), len)
-    }
+    // Safety: `CString` is an owned, valid UTF8 string.
+    unsafe { CharSlice::from_raw_parts(cstring.into_raw().cast(), len) }
 }
 
+/// Frees an owned [`CharSlice`]. Note that some functions of this API return borrowed slices that
+/// must NOT be freed. Only a few selected functions return slices that must be freed, and this is
+/// mentioned explicitly in their documentation.
+///
+/// # Safety
+///
+/// `slice` must be an owned char slice that has been returned by one of the functions of this API.
 #[no_mangle]
-pub extern "C" fn ddog_free_charslice(slice: CharSlice<'static>) {
+pub unsafe extern "C" fn ddog_free_charslice(slice: CharSlice<'static>) {
     let (ptr, len) = slice.as_raw_parts();
 
     if len == 0 || ptr.is_null() {
         return;
     }
 
+    // Safety: the owned char slices returned by functions of this API are `Box`-allocated.
     unsafe {
-        let owned_ptr = ptr as *mut c_char;
-        let _ = Box::from_raw(owned_ptr);
+        let _ = Box::from_raw(ptr as *mut c_char);
     }
 }
 
@@ -216,7 +233,7 @@ pub extern "C" fn ddog_set_span_service(span: &mut SpanBytes, slice: CharSlice) 
 }
 
 #[no_mangle]
-pub extern "C" fn ddog_get_span_service(span: &mut SpanBytes) -> CharSlice<'static> {
+pub extern "C" fn ddog_get_span_service(span: &mut SpanBytes) -> CharSlice<'_> {
     get_string_field(&span.service)
 }
 
@@ -226,7 +243,7 @@ pub extern "C" fn ddog_set_span_name(span: &mut SpanBytes, slice: CharSlice) {
 }
 
 #[no_mangle]
-pub extern "C" fn ddog_get_span_name(span: &mut SpanBytes) -> CharSlice<'static> {
+pub extern "C" fn ddog_get_span_name(span: &mut SpanBytes) -> CharSlice<'_> {
     get_string_field(&span.name)
 }
 
@@ -236,7 +253,7 @@ pub extern "C" fn ddog_set_span_resource(span: &mut SpanBytes, slice: CharSlice)
 }
 
 #[no_mangle]
-pub extern "C" fn ddog_get_span_resource(span: &mut SpanBytes) -> CharSlice<'static> {
+pub extern "C" fn ddog_get_span_resource(span: &mut SpanBytes) -> CharSlice<'_> {
     get_string_field(&span.resource)
 }
 
@@ -246,7 +263,7 @@ pub extern "C" fn ddog_set_span_type(span: &mut SpanBytes, slice: CharSlice) {
 }
 
 #[no_mangle]
-pub extern "C" fn ddog_get_span_type(span: &mut SpanBytes) -> CharSlice<'static> {
+pub extern "C" fn ddog_get_span_type(span: &mut SpanBytes) -> CharSlice<'_> {
     get_string_field(&span.r#type)
 }
 
@@ -325,9 +342,15 @@ pub extern "C" fn ddog_del_span_meta(span: &mut SpanBytes, key: CharSlice) {
 }
 
 #[no_mangle]
-pub extern "C" fn ddog_get_span_meta(span: &mut SpanBytes, key: CharSlice) -> CharSlice<'static> {
+pub extern "C" fn ddog_get_span_meta<'a>(
+    span: &'a mut SpanBytes,
+    key: CharSlice<'_>,
+) -> CharSlice<'a> {
     let bytes_str_key = convert_char_slice_to_bytes_string(key);
     match span.meta.get(&bytes_str_key) {
+        // Safety: value is a `ByteString`, which guarantees it is valid UTF8. We return a slice
+        // that borrows from `span`, making sure it remains alive and immutable for the lifetime of
+        // the slice.
         Some(value) => unsafe {
             CharSlice::from_raw_parts(value.as_str().as_ptr().cast(), value.as_str().len())
         },
@@ -340,12 +363,14 @@ pub extern "C" fn ddog_has_span_meta(span: &mut SpanBytes, key: CharSlice) -> bo
     exists_hashmap(&span.meta, key)
 }
 
+/// The return value is an owned array of slices (`Box<[CharSlice]>`) that must be freed explicitly
+/// through [`ddog_span_free_keys_ptr`].
 #[no_mangle]
-pub extern "C" fn ddog_span_meta_get_keys(
-    span: &mut SpanBytes,
+pub extern "C" fn ddog_span_meta_get_keys<'a>(
+    span: &'a mut SpanBytes,
     out_count: &mut usize,
-) -> *mut CharSlice<'static> {
-    unsafe { get_hashmap_keys(&span.meta, out_count) }
+) -> *mut CharSlice<'a> {
+    get_hashmap_keys(&span.meta, out_count)
 }
 
 #[no_mangle]
@@ -380,11 +405,11 @@ pub extern "C" fn ddog_has_span_metrics(span: &mut SpanBytes, key: CharSlice) ->
 }
 
 #[no_mangle]
-pub extern "C" fn ddog_span_metrics_get_keys(
-    span: &mut SpanBytes,
+pub extern "C" fn ddog_span_metrics_get_keys<'a>(
+    span: &'a mut SpanBytes,
     out_count: &mut usize,
-) -> *mut CharSlice<'static> {
-    unsafe { get_hashmap_keys(&span.metrics, out_count) }
+) -> *mut CharSlice<'a> {
+    get_hashmap_keys(&span.metrics, out_count)
 }
 
 #[no_mangle]
@@ -402,12 +427,15 @@ pub extern "C" fn ddog_del_span_meta_struct(span: &mut SpanBytes, key: CharSlice
 }
 
 #[no_mangle]
-pub extern "C" fn ddog_get_span_meta_struct(
-    span: &mut SpanBytes,
-    key: CharSlice,
-) -> CharSlice<'static> {
+pub extern "C" fn ddog_get_span_meta_struct<'a>(
+    span: &'a mut SpanBytes,
+    key: CharSlice<'_>,
+) -> CharSlice<'a> {
     let bytes_str_key = convert_char_slice_to_bytes_string(key);
     match span.meta_struct.get(&bytes_str_key) {
+        // Safety: value is a `ByteString`, which guarantees it is valid UTF8. We return a slice
+        // that borrows from `span`, ensuring it remains alive and unchanged for the lifetime of
+        // the slice.
         Some(value) => unsafe { CharSlice::from_raw_parts(value.as_ptr().cast(), value.len()) },
         None => CharSlice::empty(),
     }
@@ -418,29 +446,39 @@ pub extern "C" fn ddog_has_span_meta_struct(span: &mut SpanBytes, key: CharSlice
     exists_hashmap(&span.meta_struct, key)
 }
 
+/// The return value is an array of slices (`Box<[CharSlice]>`) that must be freed explicitly
+/// through [`ddog_span_free_keys_ptr`].
 #[no_mangle]
-pub extern "C" fn ddog_span_meta_struct_get_keys(
-    span: &mut SpanBytes,
+pub extern "C" fn ddog_span_meta_struct_get_keys<'a>(
+    span: &'a mut SpanBytes,
     out_count: &mut usize,
-) -> *mut CharSlice<'static> {
-    unsafe { get_hashmap_keys(&span.meta_struct, out_count) }
+) -> *mut CharSlice<'a> {
+    get_hashmap_keys(&span.meta_struct, out_count)
 }
 
+/// # Safety
+///
+/// `keys_ptr` must have been returned by one of the `ddog_xxx_get_keys()` functions, and must not
+/// have been already freed.
 #[no_mangle]
-#[allow(clippy::missing_safety_doc)]
-pub unsafe extern "C" fn ddog_span_free_keys_ptr(keys_ptr: *mut CharSlice<'static>, count: usize) {
+pub unsafe extern "C" fn ddog_span_free_keys_ptr(keys_ptr: *mut CharSlice<'_>, count: usize) {
     if keys_ptr.is_null() || count == 0 {
         return;
     }
 
-    Vec::from_raw_parts(keys_ptr, count, count);
+    // Safety: all `xxx_get_keys()` functions return from `get_hashmap_keys()`, which returns a
+    // `Box<[T]>`. It is an official guarantee of `Vec` that this can be freely converted to and
+    // from `Box<[T]>` when `len == capacity`.
+    unsafe {
+        Vec::from_raw_parts(keys_ptr, count, count);
+    }
 }
 
 // ------------------- SpanLinkBytes -------------------
 
 #[no_mangle]
 pub extern "C" fn ddog_span_new_link(span: &mut SpanBytes) -> &mut SpanLinkBytes {
-    unsafe { new_vector_item(&mut span.span_links) }
+    new_vector_item(&mut span.span_links)
 }
 
 #[no_mangle]
@@ -485,7 +523,7 @@ pub extern "C" fn ddog_add_link_attributes(
 
 #[no_mangle]
 pub extern "C" fn ddog_span_new_event(span: &mut SpanBytes) -> &mut SpanEventBytes {
-    unsafe { new_vector_item(&mut span.span_events) }
+    new_vector_item(&mut span.span_events)
 }
 
 #[no_mangle]
@@ -540,6 +578,8 @@ pub extern "C" fn ddog_add_event_attributes_float(
 
 // ------------------- Export Functions -------------------
 
+/// The returned slice is an owned allocation that must be properly freed using
+/// [`ddog_free_charslice`].
 #[no_mangle]
 pub extern "C" fn ddog_serialize_trace_into_charslice(
     trace: &mut TraceBytes,
