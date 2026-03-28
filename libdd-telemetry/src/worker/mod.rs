@@ -23,9 +23,9 @@ use std::{
         atomic::{AtomicU64, Ordering},
         Arc, Condvar, Mutex,
     },
-    time,
 };
 use std::{collections::HashSet, fmt::Debug, time::Duration};
+use web_time as time;
 
 use crate::metrics::MetricBucketStats;
 use futures::{
