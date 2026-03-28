@@ -96,19 +96,22 @@ impl TelemetryClientBuilder {
         self
     }
 
-    /// Sets the instrumentation session id sent as the `dd-session-id` header on telemetry requests.
+    /// Sets the instrumentation session id sent as the `dd-session-id` header on telemetry
+    /// requests.
     pub fn set_session_id(mut self, id: &str) -> Self {
         self.session_id = Some(id.to_string());
         self
     }
 
-    /// Sets the root session id sent as the `dd-root-session-id` header (only with a valid session id).
+    /// Sets the root session id sent as the `dd-root-session-id` header (only with a valid session
+    /// id).
     pub fn set_root_session_id(mut self, id: &str) -> Self {
         self.root_session_id = Some(id.to_string());
         self
     }
 
-    /// Sets the parent session id sent as the `dd-parent-session-id` header (only with a valid session id).
+    /// Sets the parent session id sent as the `dd-parent-session-id` header (only with a valid
+    /// session id).
     pub fn set_parent_session_id(mut self, id: &str) -> Self {
         self.parent_session_id = Some(id.to_string());
         self
