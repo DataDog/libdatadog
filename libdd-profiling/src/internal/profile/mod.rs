@@ -15,6 +15,7 @@ use crate::api::ManagedStringId;
 use crate::collections::identifiable::*;
 use crate::collections::string_storage::{CachedProfileId, ManagedStringStorage};
 use crate::collections::string_table::{self, StringTable};
+use crate::internal::heap_live::{HeapLiveState, OwnedLabel, OwnedLocation};
 use crate::iter::{IntoLendingIterator, LendingIterator};
 use crate::profiles::collections::ArcOverflow;
 use crate::profiles::datatypes::ProfilesDictionary;
@@ -53,6 +54,10 @@ pub struct Profile {
     string_storage_cached_profile_id: Option<CachedProfileId>,
     timestamp_key: StringId,
     upscaling_rules: UpscalingRules,
+    /// Optional heap-live tracking state. Survives profile resets.
+    /// When enabled, tracks live allocations and auto-injects them
+    /// into observations during `reset_and_return_previous()`.
+    heap_live: Option<HeapLiveState>,
 }
 
 pub struct EncodedProfile {
@@ -122,10 +127,35 @@ impl Profile {
         Ok(())
     }
 
+    /// Add a sample to the profile.
     pub fn try_add_sample(
         &mut self,
         sample: api::Sample,
         timestamp: Option<Timestamp>,
+    ) -> anyhow::Result<()> {
+        self.try_add_sample_impl(sample, timestamp, None)
+    }
+
+    /// Add a sample to the profile and retain it as a tracked allocation for
+    /// heap-live profiling.
+    pub fn add_tracked_allocation(
+        &mut self,
+        sample: api::Sample,
+        timestamp: Option<Timestamp>,
+        ptr: u64,
+    ) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            self.heap_live.is_some(),
+            "heap-live tracking is not configured for this profile"
+        );
+        self.try_add_sample_impl(sample, timestamp, Some(ptr))
+    }
+
+    fn try_add_sample_impl(
+        &mut self,
+        sample: api::Sample,
+        timestamp: Option<Timestamp>,
+        track_ptr: Option<u64>,
     ) -> anyhow::Result<()> {
         #[cfg(debug_assertions)]
         {
@@ -162,7 +192,18 @@ impl Profile {
             locations.push(self.try_add_location(location)?);
         }
 
-        self.try_add_sample_internal(sample.values, labels, locations, timestamp)
+        self.try_add_sample_internal(sample.values, labels, locations, timestamp)?;
+
+        // Track for heap-live only after the sample was successfully added to
+        // the profile. This avoids phantom tracked allocations when adding
+        // fails (e.g. due to interning or dedup errors).
+        if let Some(ptr) = track_ptr {
+            if let Some(hl) = self.heap_live.as_mut() {
+                hl.track(ptr, &sample);
+            }
+        }
+
+        Ok(())
     }
 
     /// Tries to add a sample using `api2` structures.
@@ -262,6 +303,28 @@ impl Profile {
         sample: api::StringIdSample,
         timestamp: Option<Timestamp>,
     ) -> anyhow::Result<()> {
+        self.add_string_id_sample_impl(sample, timestamp, None)
+    }
+
+    pub fn add_tracked_string_id_allocation(
+        &mut self,
+        sample: api::StringIdSample,
+        timestamp: Option<Timestamp>,
+        ptr: u64,
+    ) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            self.heap_live.is_some(),
+            "heap-live tracking is not configured for this profile"
+        );
+        self.add_string_id_sample_impl(sample, timestamp, Some(ptr))
+    }
+
+    fn add_string_id_sample_impl(
+        &mut self,
+        sample: api::StringIdSample,
+        timestamp: Option<Timestamp>,
+        track_ptr: Option<u64>,
+    ) -> anyhow::Result<()> {
         anyhow::ensure!(
             self.string_storage.is_some(),
             "Current sample makes use of ManagedStringIds but profile was not created using a string table"
@@ -293,7 +356,22 @@ impl Profile {
             locations.push(self.add_string_id_location(location)?);
         }
 
-        self.try_add_sample_internal(sample.values, labels, locations, timestamp)
+        self.try_add_sample_internal(sample.values, labels, locations, timestamp)?;
+
+        // Track for heap-live only after the sample was successfully added.
+        if let Some(ptr) = track_ptr {
+            if let Some(hl) = self.heap_live.as_mut() {
+                // SAFETY: the ensure! at the top of this function guarantees
+                // string_storage is Some, so unwrap cannot panic here.
+                let storage = unsafe { self.string_storage.as_ref().unwrap_unchecked() };
+                let locked = storage
+                    .lock()
+                    .map_err(|_| anyhow::anyhow!("string storage lock was poisoned"))?;
+                hl.track_string_id(ptr, &sample, &locked)?;
+            }
+        }
+
+        Ok(())
     }
 
     fn try_add_sample_internal(
@@ -336,6 +414,36 @@ impl Profile {
         )?;
 
         Ok(())
+    }
+
+    /// Configure heap-live allocation tracking on this profile. Tracked
+    /// allocations are automatically injected into the profile during
+    /// `reset_and_return_previous()`, and the tracker moves to the new active
+    /// profile.
+    ///
+    /// # Arguments
+    /// * `max_tracked` - Maximum number of allocations to track simultaneously
+    /// * `excluded_labels` - Label keys to strip when copying into the tracker (e.g.,
+    ///   high-cardinality labels like "span id", "trace id")
+    pub fn configure_heap_live(
+        &mut self,
+        max_tracked: usize,
+        excluded_labels: &[&str],
+    ) -> anyhow::Result<()> {
+        self.heap_live = Some(HeapLiveState::new(
+            max_tracked,
+            excluded_labels,
+            &self.sample_types,
+        )?);
+        Ok(())
+    }
+
+    /// Remove a tracked heap-live allocation by pointer. No-op if heap-live
+    /// tracking is disabled or the pointer is not tracked.
+    pub fn untrack_allocation(&mut self, ptr: u64) {
+        if let Some(hl) = self.heap_live.as_mut() {
+            hl.untrack(ptr);
+        }
     }
 
     pub fn get_generation(&self) -> anyhow::Result<Generation> {
@@ -428,6 +536,10 @@ impl Profile {
     /// Returns the previous Profile on success.
     #[inline]
     pub fn reset_and_return_previous(&mut self) -> anyhow::Result<Profile> {
+        // Inject heap-live samples into current profile before swapping.
+        // This makes tracked allocations appear in the serialized output.
+        self.inject_heap_live_samples()?;
+
         let current_active_samples = self.sample_block()?;
         anyhow::ensure!(
             current_active_samples == 0,
@@ -450,6 +562,11 @@ impl Profile {
             profiles_dictionary_translator,
         )
         .context("failed to initialize new profile")?;
+
+        // Move heap-live tracker to the new active profile so it survives
+        // the reset. The old profile (returned) has heap-live data in its
+        // observations but no tracker.
+        profile.heap_live = self.heap_live.take();
 
         std::mem::swap(&mut *self, &mut profile);
         Ok(profile)
@@ -822,6 +939,35 @@ impl Profile {
         }
     }
 
+    /// Inject all tracked heap-live allocations into the profile's
+    /// observations. Called automatically by `reset_and_return_previous()`.
+    /// Takes the heap_live state out temporarily to avoid borrow conflicts.
+    fn inject_heap_live_samples(&mut self) -> anyhow::Result<()> {
+        let Some(hl) = self.heap_live.take() else {
+            return Ok(());
+        };
+        let result = (|| {
+            for alloc in hl.tracked.values() {
+                let locations: Vec<api::Location<'_>> = alloc
+                    .locations
+                    .iter()
+                    .map(OwnedLocation::as_api_location)
+                    .collect();
+                let labels: Vec<api::Label<'_>> =
+                    alloc.labels.iter().map(OwnedLabel::as_api_label).collect();
+                let sample = api::Sample {
+                    locations,
+                    values: &alloc.values,
+                    labels,
+                };
+                self.try_add_sample(sample, None)?;
+            }
+            anyhow::Ok(())
+        })();
+        self.heap_live = Some(hl);
+        result
+    }
+
     /// Fetches the endpoint information for the label. There may be errors,
     /// but there may also be no endpoint information for a given endpoint.
     /// Hence, the return type of Result<Option<_>, _>.
@@ -939,6 +1085,7 @@ impl Profile {
                                                      * CachedProfileId for why. */
             timestamp_key: Default::default(),
             upscaling_rules: Default::default(),
+            heap_live: None,
         };
 
         let _id = profile.intern("");
@@ -1052,6 +1199,413 @@ impl Profile {
 
     pub fn only_for_testing_num_timestamped_samples(&self) -> usize {
         self.observations.timestamped_samples_count()
+    }
+}
+
+#[cfg(test)]
+mod heap_live_tests {
+    use super::*;
+    use crate::pprof::test_utils::{roundtrip_to_pprof, sorted_samples, string_table_fetch};
+
+    fn heap_live_sample_types() -> [api::SampleType; 4] {
+        [
+            api::SampleType::AllocSamples,
+            api::SampleType::AllocSize,
+            api::SampleType::HeapLiveSamples,
+            api::SampleType::HeapLiveSize,
+        ]
+    }
+
+    fn make_mapping() -> api::Mapping<'static> {
+        api::Mapping {
+            memory_start: 0x1000,
+            memory_limit: 0x2000,
+            file_offset: 0x80,
+            filename: "php",
+            build_id: "build-id",
+        }
+    }
+
+    fn make_locations(mapping: api::Mapping<'static>) -> Vec<api::Location<'static>> {
+        vec![api::Location {
+            mapping,
+            function: api::Function {
+                name: "malloc",
+                system_name: "malloc",
+                filename: "test.php",
+            },
+            line: 10,
+            ..Default::default()
+        }]
+    }
+
+    #[test]
+    fn heap_live_tracked_sample_appears_in_serialized_pprof() {
+        let sample_types = heap_live_sample_types();
+        let mut profile = Profile::new(&sample_types, None);
+        profile.configure_heap_live(4096, &[]).unwrap();
+
+        let mapping = make_mapping();
+        let locations = make_locations(mapping);
+        let labels = vec![api::Label {
+            key: "thread id",
+            num: 42,
+            ..Default::default()
+        }];
+
+        // values: [alloc-samples=1, alloc-size=1024, heap-live-samples=0, heap-live-size=0]
+        let sample = api::Sample {
+            locations,
+            values: &[1, 1024, 0, 0],
+            labels,
+        };
+
+        profile
+            .add_tracked_allocation(sample, None, 0x1000)
+            .expect("add to succeed");
+
+        let old = profile
+            .reset_and_return_previous()
+            .expect("reset to succeed");
+
+        let pprof = roundtrip_to_pprof(old).unwrap();
+        // The injected heap-live values aggregate into the original sample
+        // because labels and stacktrace match.
+        assert_eq!(pprof.samples.len(), 1);
+
+        let samples = sorted_samples(&pprof);
+        let mut found_values: Vec<Vec<i64>> = samples.iter().map(|s| s.values.clone()).collect();
+        found_values.sort();
+        assert_eq!(found_values, vec![vec![1, 1024, 1, 1024]]);
+
+        // Verify function name appears
+        assert!(pprof.string_table.iter().any(|s| s == "malloc"));
+        assert!(pprof.string_table.iter().any(|s| s == "test.php"));
+        assert!(pprof.string_table.iter().any(|s| s == "php"));
+        assert!(pprof.string_table.iter().any(|s| s == "build-id"));
+
+        let sample = &samples[0];
+        let location = &pprof.locations[(sample.location_ids[0] - 1) as usize];
+        let function = &pprof.functions[(location.lines[0].function_id - 1) as usize];
+        let mapping = &pprof.mappings[(location.mapping_id - 1) as usize];
+        assert_eq!(location.address, 0);
+        assert_eq!(string_table_fetch(&pprof, function.system_name), "malloc");
+        assert_eq!(string_table_fetch(&pprof, mapping.filename), "php");
+        assert_eq!(string_table_fetch(&pprof, mapping.build_id), "build-id");
+
+        // Verify label on all samples
+        for s in &samples {
+            assert!(!s.labels.is_empty());
+            let label = &s.labels[0];
+            assert_eq!(string_table_fetch(&pprof, label.key), "thread id");
+            assert_eq!(label.num, 42);
+        }
+    }
+
+    #[test]
+    fn heap_live_untracked_sample_does_not_appear() {
+        let sample_types = heap_live_sample_types();
+        let mut profile = Profile::new(&sample_types, None);
+        profile.configure_heap_live(4096, &[]).unwrap();
+
+        let mapping = make_mapping();
+        let locations = make_locations(mapping);
+
+        let sample = api::Sample {
+            locations,
+            values: &[1, 512, 0, 0],
+            labels: vec![],
+        };
+
+        profile
+            .add_tracked_allocation(sample, None, 0x2000)
+            .expect("add to succeed");
+
+        // Untrack before reset — heap-live injection should skip this ptr
+        profile.untrack_allocation(0x2000);
+
+        let old = profile
+            .reset_and_return_previous()
+            .expect("reset to succeed");
+
+        let pprof = roundtrip_to_pprof(old).unwrap();
+        // Only the original sample, no heap-live injection
+        assert_eq!(pprof.samples.len(), 1);
+    }
+
+    #[test]
+    fn heap_live_survives_reset() {
+        let sample_types = heap_live_sample_types();
+        let mut profile = Profile::new(&sample_types, None);
+        profile.configure_heap_live(4096, &[]).unwrap();
+
+        let mapping = make_mapping();
+        let locations = make_locations(mapping);
+
+        // values: [alloc-samples=1, alloc-size=2048, heap-live-samples=0, heap-live-size=0]
+        let sample = api::Sample {
+            locations: locations.clone(),
+            values: &[1, 2048, 0, 0],
+            labels: vec![],
+        };
+
+        profile
+            .add_tracked_allocation(sample, None, 0x3000)
+            .expect("add to succeed");
+
+        // First reset: original + heap-live copy
+        let old1 = profile
+            .reset_and_return_previous()
+            .expect("first reset to succeed");
+
+        let pprof1 = roundtrip_to_pprof(old1).unwrap();
+        assert_eq!(pprof1.samples.len(), 1);
+
+        // Add a new regular sample to the reset profile
+        let regular_sample = api::Sample {
+            locations,
+            values: &[5, 9999, 0, 0],
+            labels: vec![],
+        };
+
+        profile
+            .try_add_sample(regular_sample, None)
+            .expect("add regular to succeed");
+
+        // Second reset: the still-tracked heap-live + the new regular
+        let old2 = profile
+            .reset_and_return_previous()
+            .expect("second reset to succeed");
+
+        let pprof2 = roundtrip_to_pprof(old2).unwrap();
+        assert_eq!(pprof2.samples.len(), 1);
+
+        let samples = sorted_samples(&pprof2);
+        let mut found_values: Vec<Vec<i64>> = samples.iter().map(|s| s.values.clone()).collect();
+        found_values.sort();
+        assert_eq!(found_values, vec![vec![5, 9999, 1, 2048]]);
+    }
+
+    #[test]
+    fn heap_live_excluded_labels_are_filtered() {
+        let sample_types = heap_live_sample_types();
+        let mut profile = Profile::new(&sample_types, None);
+        profile
+            .configure_heap_live(4096, &["span id", "trace id"])
+            .unwrap();
+
+        let mapping = make_mapping();
+        let locations = make_locations(mapping);
+
+        let labels = vec![
+            api::Label {
+                key: "thread id",
+                num: 1,
+                ..Default::default()
+            },
+            api::Label {
+                key: "span id",
+                num: 999,
+                ..Default::default()
+            },
+            api::Label {
+                key: "trace id",
+                num: 888,
+                ..Default::default()
+            },
+        ];
+
+        let sample = api::Sample {
+            locations,
+            values: &[1, 256, 0, 0],
+            labels,
+        };
+
+        profile
+            .add_tracked_allocation(sample, None, 0x4000)
+            .expect("add to succeed");
+
+        let old = profile
+            .reset_and_return_previous()
+            .expect("reset to succeed");
+
+        let pprof = roundtrip_to_pprof(old).unwrap();
+        // Original (3 labels) + heap-live copy (filtered labels)
+        assert_eq!(pprof.samples.len(), 2);
+
+        let samples = sorted_samples(&pprof);
+
+        // Find the sample with fewer labels — that's the injected heap-live copy
+        let injected = samples
+            .iter()
+            .find(|s| s.labels.len() == 1)
+            .expect("should find heap-live sample with 1 label");
+
+        let label = &injected.labels[0];
+        assert_eq!(string_table_fetch(&pprof, label.key), "thread id");
+        assert_eq!(label.num, 1);
+
+        // The original sample should still have all 3 labels
+        let original = samples
+            .iter()
+            .find(|s| s.labels.len() == 3)
+            .expect("should find original sample with 3 labels");
+        assert_eq!(original.labels.len(), 3);
+    }
+
+    #[test]
+    fn heap_live_capacity_limit() {
+        let sample_types = heap_live_sample_types();
+        let mut profile = Profile::new(&sample_types, None);
+        // Only allow 2 tracked allocations
+        profile.configure_heap_live(2, &[]).unwrap();
+
+        let mapping = make_mapping();
+
+        // Add 3 samples with different track_ptrs
+        for (i, ptr) in [1u64, 2, 3].iter().enumerate() {
+            let locations = vec![api::Location {
+                mapping,
+                function: api::Function {
+                    name: "alloc_fn",
+                    system_name: "alloc_fn",
+                    filename: "test.php",
+                },
+                line: (i + 1) as i64,
+                ..Default::default()
+            }];
+
+            let values: Vec<i64> = vec![1, (i as i64 + 1) * 100, 0, 0];
+            let sample = api::Sample {
+                locations,
+                values: &values,
+                labels: vec![],
+            };
+
+            profile
+                .add_tracked_allocation(sample, None, *ptr)
+                .expect("add to succeed");
+        }
+
+        let old = profile
+            .reset_and_return_previous()
+            .expect("reset to succeed");
+
+        let pprof = roundtrip_to_pprof(old).unwrap();
+        // The first two tracked samples aggregate with their injected
+        // heap-live values. The third sample remains untracked.
+        assert_eq!(pprof.samples.len(), 3);
+    }
+
+    #[test]
+    fn tracked_allocation_requires_configuration() {
+        let sample_types = heap_live_sample_types();
+        let mut profile = Profile::new(&sample_types, None);
+
+        let mapping = make_mapping();
+        let locations = make_locations(mapping);
+
+        let sample = api::Sample {
+            locations,
+            values: &[1, 4096, 0, 0],
+            labels: vec![],
+        };
+
+        let err = profile
+            .add_tracked_allocation(sample, None, 0x5000)
+            .expect_err("tracked allocations should require explicit configuration");
+        assert!(err
+            .to_string()
+            .contains("heap-live tracking is not configured for this profile"));
+    }
+
+    #[test]
+    fn heap_live_requires_expected_sample_types() {
+        let sample_types = [api::SampleType::AllocSamples, api::SampleType::AllocSize];
+        let mut profile = Profile::new(&sample_types, None);
+
+        let err = profile
+            .configure_heap_live(4096, &[])
+            .expect_err("heap-live configuration should validate sample types");
+        assert!(err
+            .to_string()
+            .contains("heap-live tracking requires sample type HeapLiveSamples"));
+    }
+
+    #[test]
+    fn heap_live_mixed_tracked_and_regular_samples() {
+        let sample_types = heap_live_sample_types();
+        let mut profile = Profile::new(&sample_types, None);
+        profile.configure_heap_live(4096, &[]).unwrap();
+
+        let mapping = make_mapping();
+
+        // Tracked sample
+        let tracked_locations = vec![api::Location {
+            mapping,
+            function: api::Function {
+                name: "tracked_fn",
+                system_name: "tracked_fn",
+                filename: "alloc.php",
+            },
+            line: 1,
+            ..Default::default()
+        }];
+
+        let tracked_sample = api::Sample {
+            locations: tracked_locations,
+            values: &[1, 512, 0, 0],
+            labels: vec![],
+        };
+
+        profile
+            .add_tracked_allocation(tracked_sample, None, 0x6000)
+            .expect("add tracked to succeed");
+
+        // Regular sample (no tracking)
+        let regular_locations = vec![api::Location {
+            mapping,
+            function: api::Function {
+                name: "regular_fn",
+                system_name: "regular_fn",
+                filename: "main.php",
+            },
+            line: 5,
+            ..Default::default()
+        }];
+
+        let regular_sample = api::Sample {
+            locations: regular_locations,
+            values: &[3, 7777, 0, 0],
+            labels: vec![],
+        };
+
+        profile
+            .try_add_sample(regular_sample, None)
+            .expect("add regular to succeed");
+
+        let old = profile
+            .reset_and_return_previous()
+            .expect("reset to succeed");
+
+        let pprof = roundtrip_to_pprof(old).unwrap();
+        // The tracked sample aggregates with its injected heap-live copy.
+        assert_eq!(pprof.samples.len(), 2);
+
+        // Verify we have both function names
+        assert!(pprof.string_table.iter().any(|s| s == "tracked_fn"));
+        assert!(pprof.string_table.iter().any(|s| s == "regular_fn"));
+
+        let samples = sorted_samples(&pprof);
+        let mut found_values: Vec<Vec<i64>> = samples.iter().map(|s| s.values.clone()).collect();
+        found_values.sort();
+        // Original tracked: [1, 512, 0, 0]
+        // Injected heap-live: [0, 0, 1, 512]
+        // Regular: [3, 7777, 0, 0]
+        assert_eq!(
+            found_values,
+            vec![vec![1, 512, 1, 512], vec![3, 7777, 0, 0]]
+        );
     }
 }
 
