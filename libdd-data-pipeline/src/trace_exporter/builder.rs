@@ -308,6 +308,15 @@ impl TraceExporterBuilder {
             if let Some(id) = telemetry_config.runtime_id {
                 builder = builder.set_runtime_id(&id);
             }
+            if let Some(ref id) = telemetry_config.session_id {
+                builder = builder.set_session_id(id);
+            }
+            if let Some(ref id) = telemetry_config.root_session_id {
+                builder = builder.set_root_session_id(id);
+            }
+            if let Some(ref id) = telemetry_config.parent_session_id {
+                builder = builder.set_parent_session_id(id);
+            }
             builder.build(runtime.handle().clone())
         });
 
@@ -437,6 +446,7 @@ mod tests {
                 heartbeat: 1000,
                 runtime_id: None,
                 debug_enabled: false,
+                ..Default::default()
             });
         let exporter = builder.build().unwrap();
 

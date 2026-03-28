@@ -43,6 +43,13 @@ pub struct TelemetryClientConfig<'a> {
     /// When enabled, sets the DD-Telemetry-Debug-Enabled header to true.
     /// Defaults to false.
     pub debug_enabled: bool,
+
+    /// Instrumentation session id (`dd-session-id`), same encoding rules as [`Self::runtime_id`].
+    pub session_id: CharSlice<'a>,
+    /// Root session id (`dd-root-session-id`).
+    pub root_session_id: CharSlice<'a>,
+    /// Parent session id (`dd-parent-session-id`).
+    pub parent_session_id: CharSlice<'a>,
 }
 
 /// The TraceExporterConfig object will hold the configuration properties for the TraceExporter.
@@ -301,6 +308,18 @@ pub unsafe extern "C" fn ddog_trace_exporter_config_enable_telemetry(
                         Err(e) => return Some(e),
                     },
                     debug_enabled: telemetry_cfg.debug_enabled,
+                    session_id: match sanitize_string(telemetry_cfg.session_id) {
+                        Ok(s) => Some(s),
+                        Err(e) => return Some(e),
+                    },
+                    root_session_id: match sanitize_string(telemetry_cfg.root_session_id) {
+                        Ok(s) => Some(s),
+                        Err(e) => return Some(e),
+                    },
+                    parent_session_id: match sanitize_string(telemetry_cfg.parent_session_id) {
+                        Ok(s) => Some(s),
+                        Err(e) => return Some(e),
+                    },
                 };
                 debug!(telemetry_cfg = ?cfg, "Configuring telemetry");
                 config.telemetry_cfg = Some(cfg);
@@ -831,6 +850,9 @@ mod tests {
                     interval: 1000,
                     runtime_id: CharSlice::from("id"),
                     debug_enabled: false,
+                    session_id: CharSlice::empty(),
+                    root_session_id: CharSlice::empty(),
+                    parent_session_id: CharSlice::empty(),
                 }),
             );
             assert_eq!(error.as_ref().unwrap().code, ErrorCode::InvalidArgument);
@@ -848,6 +870,9 @@ mod tests {
                     interval: 1000,
                     runtime_id: CharSlice::from("foo"),
                     debug_enabled: true,
+                    session_id: CharSlice::empty(),
+                    root_session_id: CharSlice::empty(),
+                    parent_session_id: CharSlice::empty(),
                 }),
             );
             assert!(error.is_none());
@@ -863,6 +888,44 @@ mod tests {
                 "foo"
             );
             assert!(cfg.telemetry_cfg.as_ref().unwrap().debug_enabled);
+            assert_eq!(
+                cfg.telemetry_cfg.as_ref().unwrap().session_id.as_deref(),
+                Some("")
+            );
+            assert_eq!(
+                cfg.telemetry_cfg
+                    .as_ref()
+                    .unwrap()
+                    .root_session_id
+                    .as_deref(),
+                Some("")
+            );
+            assert_eq!(
+                cfg.telemetry_cfg
+                    .as_ref()
+                    .unwrap()
+                    .parent_session_id
+                    .as_deref(),
+                Some("")
+            );
+
+            let mut cfg = TraceExporterConfig::default();
+            let error = ddog_trace_exporter_config_enable_telemetry(
+                Some(&mut cfg),
+                Some(&TelemetryClientConfig {
+                    interval: 500,
+                    runtime_id: CharSlice::from("rid"),
+                    debug_enabled: false,
+                    session_id: CharSlice::from("sess-z"),
+                    root_session_id: CharSlice::from("root-z"),
+                    parent_session_id: CharSlice::from("par-z"),
+                }),
+            );
+            assert!(error.is_none());
+            let t = cfg.telemetry_cfg.as_ref().unwrap();
+            assert_eq!(t.session_id.as_deref(), Some("sess-z"));
+            assert_eq!(t.root_session_id.as_deref(), Some("root-z"));
+            assert_eq!(t.parent_session_id.as_deref(), Some("par-z"));
         }
     }
 
@@ -1143,6 +1206,9 @@ mod tests {
                     heartbeat: 10000,
                     runtime_id: Some("foo".to_string()),
                     debug_enabled: true,
+                    session_id: None,
+                    root_session_id: None,
+                    parent_session_id: None,
                 }),
                 ..Default::default()
             };

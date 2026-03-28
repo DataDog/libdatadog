@@ -224,6 +224,52 @@ mod tests {
 
     #[test]
     #[cfg_attr(miri, ignore)]
+    fn test_session_id_and_root_session_id_ffi_setters_match_runtime_id_option_string() {
+        unsafe {
+            let mut builder: MaybeUninit<Box<TelemetryWorkerBuilder>> = MaybeUninit::uninit();
+            assert_eq!(
+                ddog_telemetry_builder_instantiate(
+                    NonNull::new(&mut builder).unwrap().cast(),
+                    ffi::CharSlice::from("service_name"),
+                    ffi::CharSlice::from("language_name"),
+                    ffi::CharSlice::from("language_version"),
+                    ffi::CharSlice::from("tracer_version"),
+                ),
+                MaybeError::None
+            );
+            let mut builder = builder.assume_init();
+
+            assert_eq!(
+                ddog_telemetry_builder_with_str_session_id(
+                    &mut builder,
+                    ffi::CharSlice::from("sess-1"),
+                ),
+                MaybeError::None,
+            );
+            assert_eq!(builder.session_id, Some("sess-1".into()));
+
+            assert_eq!(
+                ddog_telemetry_builder_with_str_root_session_id(
+                    &mut builder,
+                    ffi::CharSlice::from("root-9"),
+                ),
+                MaybeError::None,
+            );
+            assert_eq!(builder.root_session_id, Some("root-9".into()));
+
+            assert_eq!(
+                ddog_telemetry_builder_with_str_parent_session_id(
+                    &mut builder,
+                    ffi::CharSlice::from("parent-2"),
+                ),
+                MaybeError::None,
+            );
+            assert_eq!(builder.parent_session_id, Some("parent-2".into()));
+        }
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
     fn test_worker_run() {
         unsafe {
             let mut builder: MaybeUninit<Box<TelemetryWorkerBuilder>> = MaybeUninit::uninit();
