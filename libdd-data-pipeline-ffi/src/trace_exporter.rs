@@ -893,11 +893,19 @@ mod tests {
                 Some("")
             );
             assert_eq!(
-                cfg.telemetry_cfg.as_ref().unwrap().root_session_id.as_deref(),
+                cfg.telemetry_cfg
+                    .as_ref()
+                    .unwrap()
+                    .root_session_id
+                    .as_deref(),
                 Some("")
             );
             assert_eq!(
-                cfg.telemetry_cfg.as_ref().unwrap().parent_session_id.as_deref(),
+                cfg.telemetry_cfg
+                    .as_ref()
+                    .unwrap()
+                    .parent_session_id
+                    .as_deref(),
                 Some("")
             );
 

@@ -1267,9 +1267,13 @@ mod tests {
             .unwrap();
         assert_no_session_headers(&req);
 
-        let req = test_worker(Some(String::new()), Some("root".into()), Some("parent".into()))
-            .build_request(&Payload::AppHeartbeat(()))
-            .unwrap();
+        let req = test_worker(
+            Some(String::new()),
+            Some("root".into()),
+            Some("parent".into()),
+        )
+        .build_request(&Payload::AppHeartbeat(()))
+        .unwrap();
         assert_no_session_headers(&req);
     }
 

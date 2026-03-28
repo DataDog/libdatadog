@@ -250,21 +250,20 @@ mod macros {
         telemetry_builder: &mut TelemetryWorkerBuilder,
         param: ffi::CharSlice,
     ) -> ffi::MaybeError {
-        telemetry_builder.session_id =
-            match (|s: ffi::CharSlice| -> Result<_, String> {
-                Ok(Some(s.to_utf8_lossy().into_owned()))
-            })(param)
-            {
-                Ok(o) => o,
-                Err(e) => {
-                    return ffi::MaybeError::Some(libdd_common_ffi::Error::from(
-                        ({
-                            let res = std::fmt::format(format_args!("{e:?}"));
-                            res
-                        }),
-                    ));
-                }
-            };
+        telemetry_builder.session_id = match (|s: ffi::CharSlice| -> Result<_, String> {
+            Ok(Some(s.to_utf8_lossy().into_owned()))
+        })(param)
+        {
+            Ok(o) => o,
+            Err(e) => {
+                return ffi::MaybeError::Some(libdd_common_ffi::Error::from(
+                    ({
+                        let res = std::fmt::format(format_args!("{e:?}"));
+                        res
+                    }),
+                ));
+            }
+        };
         ffi::MaybeError::None
     }
     #[no_mangle]
@@ -272,21 +271,20 @@ mod macros {
         telemetry_builder: &mut TelemetryWorkerBuilder,
         param: ffi::CharSlice,
     ) -> ffi::MaybeError {
-        telemetry_builder.root_session_id =
-            match (|s: ffi::CharSlice| -> Result<_, String> {
-                Ok(Some(s.to_utf8_lossy().into_owned()))
-            })(param)
-            {
-                Ok(o) => o,
-                Err(e) => {
-                    return ffi::MaybeError::Some(libdd_common_ffi::Error::from(
-                        ({
-                            let res = std::fmt::format(format_args!("{e:?}"));
-                            res
-                        }),
-                    ));
-                }
-            };
+        telemetry_builder.root_session_id = match (|s: ffi::CharSlice| -> Result<_, String> {
+            Ok(Some(s.to_utf8_lossy().into_owned()))
+        })(param)
+        {
+            Ok(o) => o,
+            Err(e) => {
+                return ffi::MaybeError::Some(libdd_common_ffi::Error::from(
+                    ({
+                        let res = std::fmt::format(format_args!("{e:?}"));
+                        res
+                    }),
+                ));
+            }
+        };
         ffi::MaybeError::None
     }
     #[no_mangle]
@@ -294,21 +292,20 @@ mod macros {
         telemetry_builder: &mut TelemetryWorkerBuilder,
         param: ffi::CharSlice,
     ) -> ffi::MaybeError {
-        telemetry_builder.parent_session_id =
-            match (|s: ffi::CharSlice| -> Result<_, String> {
-                Ok(Some(s.to_utf8_lossy().into_owned()))
-            })(param)
-            {
-                Ok(o) => o,
-                Err(e) => {
-                    return ffi::MaybeError::Some(libdd_common_ffi::Error::from(
-                        ({
-                            let res = std::fmt::format(format_args!("{e:?}"));
-                            res
-                        }),
-                    ));
-                }
-            };
+        telemetry_builder.parent_session_id = match (|s: ffi::CharSlice| -> Result<_, String> {
+            Ok(Some(s.to_utf8_lossy().into_owned()))
+        })(param)
+        {
+            Ok(o) => o,
+            Err(e) => {
+                return ffi::MaybeError::Some(libdd_common_ffi::Error::from(
+                    ({
+                        let res = std::fmt::format(format_args!("{e:?}"));
+                        res
+                    }),
+                ));
+            }
+        };
         ffi::MaybeError::None
     }
     #[repr(C)]
@@ -557,21 +554,20 @@ mod macros {
                 };
             }
             SessionId => {
-                telemetry_builder.session_id =
-                    match (|s: ffi::CharSlice| -> Result<_, String> {
-                        Ok(Some(s.to_utf8_lossy().into_owned()))
-                    })(param)
-                    {
-                        Ok(o) => o,
-                        Err(e) => {
-                            return ffi::MaybeError::Some(libdd_common_ffi::Error::from(
-                                ({
-                                    let res = std::fmt::format(format_args!("{e:?}"));
-                                    res
-                                }),
-                            ));
-                        }
-                    };
+                telemetry_builder.session_id = match (|s: ffi::CharSlice| -> Result<_, String> {
+                    Ok(Some(s.to_utf8_lossy().into_owned()))
+                })(param)
+                {
+                    Ok(o) => o,
+                    Err(e) => {
+                        return ffi::MaybeError::Some(libdd_common_ffi::Error::from(
+                            ({
+                                let res = std::fmt::format(format_args!("{e:?}"));
+                                res
+                            }),
+                        ));
+                    }
+                };
             }
             RootSessionId => {
                 telemetry_builder.root_session_id =
@@ -848,21 +844,20 @@ mod macros {
                 };
             }
             "session_id" => {
-                telemetry_builder.session_id =
-                    match (|s: ffi::CharSlice| -> Result<_, String> {
-                        Ok(Some(s.to_utf8_lossy().into_owned()))
-                    })(param)
-                    {
-                        Ok(o) => o,
-                        Err(e) => {
-                            return ffi::MaybeError::Some(libdd_common_ffi::Error::from(
-                                ({
-                                    let res = std::fmt::format(format_args!("{e:?}"));
-                                    res
-                                }),
-                            ));
-                        }
-                    };
+                telemetry_builder.session_id = match (|s: ffi::CharSlice| -> Result<_, String> {
+                    Ok(Some(s.to_utf8_lossy().into_owned()))
+                })(param)
+                {
+                    Ok(o) => o,
+                    Err(e) => {
+                        return ffi::MaybeError::Some(libdd_common_ffi::Error::from(
+                            ({
+                                let res = std::fmt::format(format_args!("{e:?}"));
+                                res
+                            }),
+                        ));
+                    }
+                };
             }
             "root_session_id" => {
                 telemetry_builder.root_session_id =
