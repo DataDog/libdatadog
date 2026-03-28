@@ -406,3 +406,8 @@ impl Endpoint {
         Ok((builder, request_url))
     }
 }
+
+/// Add dummy function to test pipeline
+pub fn dummy() {
+    print!("dummy");
+}
