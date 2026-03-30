@@ -115,6 +115,8 @@ pub mod header {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
+pub use http_common::DefaultHttpClient;
+#[cfg(not(target_arch = "wasm32"))]
 pub type HttpClient = http_common::GenericHttpClient<connector::Connector>;
 #[cfg(not(target_arch = "wasm32"))]
 pub type HttpResponse = http_common::HttpResponse;

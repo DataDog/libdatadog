@@ -1524,7 +1524,6 @@ dependencies = [
  "http-body-util",
  "httpmock",
  "libc",
- "libdd-capabilities-impl",
  "libdd-common",
  "libdd-common-ffi",
  "libdd-crashtracker",
@@ -2881,10 +2880,6 @@ dependencies = [
 name = "libdd-capabilities-impl"
 version = "0.1.0"
 dependencies = [
- "bytes",
- "http",
- "http-body-util",
- "hyper",
  "libdd-capabilities",
  "libdd-common",
 ]

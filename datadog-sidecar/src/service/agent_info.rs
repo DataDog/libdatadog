@@ -16,7 +16,7 @@ use datadog_ipc::platform::NamedShmHandle;
 use futures::future::Shared;
 use futures::FutureExt;
 use http::uri::PathAndQuery;
-use libdd_capabilities_impl::NativeCapabilities;
+use libdd_common::DefaultHttpClient;
 use libdd_common::{Endpoint, MutexExt};
 use libdd_data_pipeline::agent_info::schema::AgentInfoStruct;
 use libdd_data_pipeline::agent_info::{fetch_info_with_state, FetchInfoStatus};
@@ -103,7 +103,7 @@ impl AgentInfoFetcher {
             fetch_endpoint.url = http::Uri::from_parts(parts).unwrap();
             loop {
                 let fetched =
-                    fetch_info_with_state::<NativeCapabilities>(&fetch_endpoint, state.as_deref())
+                    fetch_info_with_state::<DefaultHttpClient>(&fetch_endpoint, state.as_deref())
                         .await;
                 let mut complete_fut = None;
                 {
