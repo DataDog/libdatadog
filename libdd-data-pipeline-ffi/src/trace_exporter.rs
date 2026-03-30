@@ -530,6 +530,7 @@ pub unsafe extern "C" fn ddog_trace_exporter_new(
 
             if let Some(runtime) = config.shared_runtime.clone() {
                 builder.set_shared_runtime(runtime);
+            }
 
             if let Some(ref url) = config.otlp_endpoint {
                 builder.set_otlp_endpoint(url);

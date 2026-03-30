@@ -3181,7 +3181,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-shared-runtime"
-version = "28.0.3"
+version = "29.0.0"
 dependencies = [
  "async-trait",
  "futures",
@@ -3193,7 +3193,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-shared-runtime-ffi"
-version = "28.0.3"
+version = "29.0.0"
 dependencies = [
  "build_common",
  "libdd-shared-runtime",

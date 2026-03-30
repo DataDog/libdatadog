@@ -354,7 +354,7 @@ mod tests {
             when.method(POST)
                 .header("Content-type", "application/msgpack")
                 .path("/v0.6/stats")
-                .body_includes("libdatadog-test");
+                .body_includes("libdatadog-test")
                 .body_includes("key1:value1,key2:value2");
             then.status(200).body("");
         });
