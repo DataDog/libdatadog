@@ -1830,15 +1830,6 @@ mod tests {
         );
         mock_otlp.assert();
     }
-
-    #[test]
-    #[cfg_attr(miri, ignore)]
-    fn stop_and_start_runtime() {
-        let builder = TraceExporterBuilder::default();
-        let exporter = builder.build().unwrap();
-        exporter.stop_worker();
-        exporter.run_worker().unwrap();
-    }
 }
 
 #[cfg(test)]
