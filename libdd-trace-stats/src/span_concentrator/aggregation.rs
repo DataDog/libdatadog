@@ -238,7 +238,7 @@ impl<'a> BorrowedAggregationKey<'a> {
             // of `peer_tag_keys`
             peer_tag_keys
                 .iter()
-                .filter_map(|key| Some(((key.as_str()), (span.get_meta(key.as_str())?))))
+                .filter_map(|key| Some((key.as_str(), span.get_meta(key.as_str())?)))
                 .collect()
         } else if let Some(base_service) = span.get_meta("_dd.base_service") {
             // Internal spans with a base service override use only _dd.base_service as peer tag
@@ -268,7 +268,7 @@ impl<'a> BorrowedAggregationKey<'a> {
 
         let span_derived_primary_tags: Vec<(&'a str, &'a str)> = span_derived_primary_tag_keys
             .iter()
-            .filter_map(|key| Some(((key.as_str()), (span.get_meta(key.as_str())?))))
+            .filter_map(|key| Some((key.as_str(), span.get_meta(key.as_str())?)))
             .collect();
 
         Self {
