@@ -306,39 +306,41 @@ mod tests {
     }
 
     #[cfg_attr(miri, ignore)]
-    #[tokio::test]
-    async fn test_run() {
-        let server = MockServer::start_async().await;
+    #[test]
+    fn test_run() {
+        let shared_runtime = SharedRuntime::new().expect("Failed to create runtime");
 
-        let mut mock = server
-            .mock_async(|when, then| {
-                when.method(POST)
-                    .header("Content-type", "application/msgpack")
-                    .path("/v0.6/stats")
-                    .body_includes("libdatadog-test")
-                    .body_includes("key1:value1,key2:value2");
-                then.status(200).body("");
-            })
-            .await;
+        let server = MockServer::start();
 
-        let mut stats_exporter = StatsExporter::new(
-            BUCKETS_DURATION,
+        let mut mock = server.mock(|when, then| {
+            when.method(POST)
+                .header("Content-type", "application/msgpack")
+                .path("/v0.6/stats")
+                .body_includes("libdatadog-test")
+                .body_includes("key1:value1,key2:value2");
+            then.status(200).body("");
+        });
+
+        let stats_exporter = StatsExporter::new(
+            // Use smaller buckets duration to speed up test
+            Duration::from_secs(1),
             Arc::new(Mutex::new(get_test_concentrator())),
             get_test_metadata(),
             Endpoint::from_url(stats_url_from_agent_url(&server.url("/")).unwrap()),
             new_default_client(),
         );
 
-        tokio::time::pause();
-        tokio::spawn(async move {
-            stats_exporter.run().await;
-        });
-        // Wait for the stats to be flushed
-        tokio::time::sleep(BUCKETS_DURATION + Duration::from_secs(1)).await;
-        // Resume time to sleep while the stats are being sent
-        tokio::time::resume();
+        let _handle = shared_runtime
+            .spawn_worker(stats_exporter)
+            .expect("Failed to spawn worker");
+
+        // Wait for stats to be flushed
+        std::thread::sleep(Duration::from_secs(1));
+
         assert!(
-            poll_for_mock_hit(&mut mock, 10, 100, 1, false).await,
+            shared_runtime
+                .block_on(poll_for_mock_hit(&mut mock, 10, 100, 1, false))
+                .expect("Failed to use runtime"),
             "Expected max retry attempts"
         );
     }

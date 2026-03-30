@@ -1364,24 +1364,24 @@ mod tests {
 
             let stats = worker.stats();
             assert_eq!(
-                stats.dependencies_stored, 1,
-                "dependency dedupe history should be preserved"
+                stats.dependencies_stored, 0,
+                "dependency dedupe history should be cleared"
             );
             assert_eq!(
                 stats.dependencies_unflushed, 0,
                 "dependency pending queue should be cleared"
             );
             assert_eq!(
-                stats.integrations_stored, 1,
-                "integration dedupe history should be preserved"
+                stats.integrations_stored, 0,
+                "integration dedupe history should be cleared"
             );
             assert_eq!(
                 stats.integrations_unflushed, 0,
                 "integration pending queue should be cleared"
             );
             assert_eq!(
-                stats.configurations_stored, 1,
-                "configuration dedupe history should be preserved"
+                stats.configurations_stored, 0,
+                "configuration dedupe history should be cleared"
             );
             assert_eq!(
                 stats.configurations_unflushed, 0,
