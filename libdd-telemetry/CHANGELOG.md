@@ -2,6 +2,14 @@
 
 
 
+## [4.0.0](https://github.com/datadog/libdatadog/compare/libdd-telemetry-v3.0.0..libdd-telemetry-v4.0.0) - 2026-03-30
+
+### Changed
+
+- Refactor tarpc away ([#1742](https://github.com/datadog/libdatadog/issues/1742)) - ([c722b20](https://github.com/datadog/libdatadog/commit/c722b209ece89f245da4d5c1f35e01914b27f315))
+
+
+
 ## [3.0.0](https://github.com/datadog/libdatadog/compare/libdd-telemetry-v2.0.0..libdd-telemetry-v3.0.0) - 2026-02-23
 
 ### Added
