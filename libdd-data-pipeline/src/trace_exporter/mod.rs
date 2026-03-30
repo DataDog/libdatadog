@@ -36,7 +36,7 @@ use libdd_common::{http_common, Endpoint};
 use libdd_common::{HttpClient, MutexExt};
 use libdd_dogstatsd_client::Client;
 use libdd_telemetry::worker::TelemetryWorker;
-use libdd_trace_stats::stats_exporter::{StatsExporter, StatsMetadata};
+use libdd_trace_stats::stats_exporter::StatsExporter;
 use libdd_trace_utils::msgpack_decoder;
 use libdd_trace_utils::send_with_retry::{
     send_with_retry, RetryStrategy, SendWithRetryError, SendWithRetryResult,
