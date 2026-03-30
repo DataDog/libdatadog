@@ -380,12 +380,10 @@ pub mod linux {
     }
 
     #[cfg(test)]
-    // Accessing the TLS through C isn't supported in Miri
-    #[cfg_attr(miri, ignore)]
+    // The tests are set to be ignored by Miri, since accessing the TLS through C isn't supported.
     mod tests {
-        use std::sync::atomic::Ordering;
-
         use super::{ThreadContext, ThreadContextRecord};
+        use std::sync::atomic::Ordering;
 
         /// Read the TLS pointer for the current thread (the value stored in the TLS slot, not the
         /// address of the slot itself).
@@ -394,6 +392,7 @@ pub mod linux {
         }
 
         #[test]
+        #[cfg_attr(miri, ignore)]
         fn tls_lifecycle_basic() {
             let trace_id = [1u8; 16];
             let span_id = [2u8; 8];
@@ -428,6 +427,7 @@ pub mod linux {
         }
 
         #[test]
+        #[cfg_attr(miri, ignore)]
         fn raw_tls_pointer_read() {
             let trace_id = [1u8; 16];
             let span_id = [2u8; 8];
@@ -448,6 +448,7 @@ pub mod linux {
         }
 
         #[test]
+        #[cfg_attr(miri, ignore)]
         fn attribute_encoding_basic() {
             let attrs: &[(u8, &str)] = &[(0, "GET"), (1, "/api/v1")];
             ThreadContext::new([0u8; 16], [0u8; 8], attrs).attach();
@@ -468,6 +469,7 @@ pub mod linux {
         }
 
         #[test]
+        #[cfg_attr(miri, ignore)]
         fn attribute_truncation_on_overflow() {
             // Build attributes whose combined encoded size exceeds MAX_ATTRS_DATA_SIZE.
             // Each max entry: 1 (key) + 1 (len) + 255 (val) = 257 bytes.
@@ -499,6 +501,7 @@ pub mod linux {
         }
 
         #[test]
+        #[cfg_attr(miri, ignore)]
         fn update_record_in_place() {
             let trace_id_1 = [1u8; 16];
             let span_id_1 = [1u8; 8];
@@ -539,6 +542,7 @@ pub mod linux {
         }
 
         #[test]
+        #[cfg_attr(miri, ignore)]
         fn explicit_detach_nulls_tls() {
             ThreadContext::new([3u8; 16], [3u8; 8], &[]).attach();
             assert!(!read_tls_context_ptr().is_null());
@@ -552,6 +556,7 @@ pub mod linux {
         }
 
         #[test]
+        #[cfg_attr(miri, ignore)]
         fn long_value_capped_at_255_bytes() {
             let long_val = "a".repeat(300);
             ThreadContext::new([0u8; 16], [0u8; 8], &[(0, long_val.as_str())]).attach();
@@ -568,6 +573,7 @@ pub mod linux {
 
         // Make sure the C shim is indeed providing a thread-local address.
         #[test]
+        #[cfg_attr(miri, ignore)]
         fn tls_slots_are_per_thread() {
             use std::sync::{Arc, Barrier};
 
