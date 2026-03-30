@@ -801,9 +801,9 @@ impl FlushableConcentrator for ShmSpanConcentrator {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::AtomicU32;
 
     fn test_path() -> CString {
-        use std::sync::atomic::{AtomicU32, Ordering};
         static COUNTER: AtomicU32 = AtomicU32::new(0);
         CString::new(format!(
             "/ddtrace-shm-t-{}-{}",
@@ -893,6 +893,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn test_flush_empty() {
         let c = ShmSpanConcentrator::create(
             test_path(),
@@ -905,6 +906,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn test_slot_usage() {
         let c = ShmSpanConcentrator::create(
             test_path(),
