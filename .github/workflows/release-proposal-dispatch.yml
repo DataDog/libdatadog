@@ -692,6 +692,7 @@ jobs:
             --label "release-proposal" \
             --label "skip-metadata-check" \
             --label "skip-changelog-check" \
+            --label "skip-pr-title-semver-check" \
             --base "${{ needs.cargo-release.outputs.ephemeral_branch }}" \
             --draft
 
