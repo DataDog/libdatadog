@@ -353,9 +353,9 @@ checksum = "ace50bade8e6234aa140d9a2f552bbee1db4d353f69b8217bc503490fc1a9f26"
 
 [[package]]
 name = "aws-lc-fips-sys"
-version = "0.13.12"
+version = "0.13.13"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5ed8cd42adddefbdb8507fb7443fa9b666631078616b78f70ed22117b5c27d90"
+checksum = "f8bce4948d2520386c6d92a6ea2d472300257702242e5a1d01d6add52bd2e7c1"
 dependencies = [
  "bindgen",
  "cc",
@@ -367,9 +367,9 @@ dependencies = [
 
 [[package]]
 name = "aws-lc-rs"
-version = "1.16.1"
+version = "1.16.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "94bffc006df10ac2a68c83692d734a465f8ee6c5b384d8545a636f81d858f4bf"
+checksum = "a054912289d18629dc78375ba2c3726a3afe3ff71b4edba9dedfca0e3446d1fc"
 dependencies = [
  "aws-lc-fips-sys",
  "aws-lc-sys",
@@ -378,9 +378,9 @@ dependencies = [
 
 [[package]]
 name = "aws-lc-sys"
-version = "0.38.0"
+version = "0.39.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4321e568ed89bb5a7d291a7f37997c2c0df89809d7b6d12062c81ddb54aa782e"
+checksum = "1fa7e52a4c5c547c741610a2c6f123f3881e409b714cd27e6798ef020c514f0a"
 dependencies = [
  "cc",
  "cmake",
@@ -597,9 +597,9 @@ dependencies = [
 
 [[package]]
 name = "bolero"
-version = "0.13.0"
+version = "0.13.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "eeae9bae5224be9a368c3b4f8cc83451473d55bcc1aa522cf56a48828dcf7f6e"
+checksum = "0ff44d278fc0062c95327087ed96b3d256906d1d8f579e534a3de8d6b386913a"
 dependencies = [
  "bolero-afl",
  "bolero-engine",
@@ -623,12 +623,11 @@ dependencies = [
 
 [[package]]
 name = "bolero-engine"
-version = "0.13.0"
+version = "0.13.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6b2496696794ca673fd085c7237d2b64b825bfe0dedbd5e947ca633532d8132b"
+checksum = "dca199170a7c92c669c1019f9219a316b66bcdcfa4b36cac5a460a4c1a851aba"
 dependencies = [
  "anyhow",
- "backtrace",
  "bolero-generator",
  "lazy_static",
  "pretty-hex",
@@ -638,9 +637,9 @@ dependencies = [
 
 [[package]]
 name = "bolero-generator"
-version = "0.13.1"
+version = "0.13.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "06b0c9bd47ec1d25ce698a2b4a0c3d8e527d0046919a04c800035e30bf4ea6d1"
+checksum = "98a5782f2650f80d533f58ec339c6dce4cc5428f9c2755894f98156f52af81f2"
 dependencies = [
  "bolero-generator-derive",
  "either",
@@ -651,14 +650,14 @@ dependencies = [
 
 [[package]]
 name = "bolero-generator-derive"
-version = "0.13.0"
+version = "0.13.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "385f38498675c06532bed10cd40a4313691a8fb7d9b698fcf096739d422e1764"
+checksum = "9a21a3b022507b9edd2050caf370d945e398c1a7c8455531220fa3968c45d29e"
 dependencies = [
  "proc-macro-crate",
  "proc-macro2",
  "quote",
- "syn 1.0.109",
+ "syn 2.0.87",
 ]
 
 [[package]]
@@ -697,7 +696,7 @@ checksum = "dc0b364ead1874514c8c2855ab558056ebfeb775653e7ae45ff72f28f8f3166c"
 
 [[package]]
 name = "build_common"
-version = "29.0.0"
+version = "30.0.0"
 dependencies = [
  "cbindgen",
  "serde",
@@ -706,7 +705,7 @@ dependencies = [
 
 [[package]]
 name = "builder"
-version = "29.0.0"
+version = "30.0.0"
 dependencies = [
  "anyhow",
  "build_common",
@@ -1462,7 +1461,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-profiling-replayer"
-version = "29.0.0"
+version = "30.0.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -1592,7 +1591,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-tracer-flare"
-version = "29.0.0"
+version = "30.0.0"
 dependencies = [
  "anyhow",
  "bytes",
@@ -2884,7 +2883,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-common-ffi"
-version = "29.0.0"
+version = "30.0.0"
 dependencies = [
  "anyhow",
  "assert_no_alloc",
@@ -2937,7 +2936,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-crashtracker-ffi"
-version = "29.0.0"
+version = "30.0.0"
 dependencies = [
  "anyhow",
  "build_common",
@@ -2991,7 +2990,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-data-pipeline-ffi"
-version = "29.0.0"
+version = "30.0.0"
 dependencies = [
  "build_common",
  "httpmock",
@@ -3014,7 +3013,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-ddsketch-ffi"
-version = "29.0.0"
+version = "30.0.0"
 dependencies = [
  "build_common",
  "libdd-common-ffi",
@@ -3087,7 +3086,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-log-ffi"
-version = "29.0.0"
+version = "30.0.0"
 dependencies = [
  "build_common",
  "libdd-common-ffi",
@@ -3203,7 +3202,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-telemetry-ffi"
-version = "29.0.0"
+version = "30.0.0"
 dependencies = [
  "build_common",
  "function_name",
@@ -3263,6 +3262,7 @@ dependencies = [
 name = "libdd-trace-protobuf"
 version = "3.0.1"
 dependencies = [
+ "bolero",
  "prost",
  "prost-build",
  "protoc-bin-vendored",
@@ -3289,6 +3289,7 @@ name = "libdd-trace-utils"
 version = "3.0.1"
 dependencies = [
  "anyhow",
+ "base64 0.22.1",
  "bolero",
  "bytes",
  "cargo-platform",
@@ -4829,9 +4830,9 @@ checksum = "f87165f0995f63a9fbeea62b64d10b4d9d8e78ec6d7d51fb2125fda7bb36788f"
 
 [[package]]
 name = "rustls-webpki"
-version = "0.103.9"
+version = "0.103.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d7df23109aa6c1567d1c575b9952556388da57401e4ace1d15f79eedad0d8f53"
+checksum = "df33b2b81ac578cabaf06b89b0631153a3f416b0a886e8a7a1707fb51abbd1ef"
 dependencies = [
  "aws-lc-rs",
  "ring",
@@ -5474,7 +5475,7 @@ dependencies = [
 
 [[package]]
 name = "symbolizer-ffi"
-version = "29.0.0"
+version = "30.0.0"
 dependencies = [
  "blazesym-c",
  "build_common",
@@ -5916,7 +5917,7 @@ dependencies = [
 
 [[package]]
 name = "tools"
-version = "29.0.0"
+version = "30.0.0"
 dependencies = [
  "anyhow",
  "cargo_metadata",
