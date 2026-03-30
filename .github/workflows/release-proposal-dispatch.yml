@@ -513,6 +513,7 @@ jobs:
             NEXT_TAG=$(echo "$bump" | jq -r '.tag')
             NEXT_VERSION=$(echo "$bump" | jq -r '.version')
             MAJOR_BUMPS=$(echo "$bump" | jq -r '.major_bumps')
+            CRATE_PATH=$(echo "$bump" | jq -r '.path')
 
             # FIXME: $COMMITS could be empty if there are no commits since last release
             if [ "$COMMITS" = "[]" ]; then
