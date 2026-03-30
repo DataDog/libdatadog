@@ -12,9 +12,9 @@
 #include <stddef.h>
 
 __attribute__((visibility("default")))
-__thread void *custom_labels_current_set_v2 = NULL;
+__thread void *otel_thread_ctx_v1 = NULL;
 
 // Return the resolved address of the thread-local variable.
-void **libdd_get_custom_labels_current_set_v2(void) {
-    return &custom_labels_current_set_v2;
+void **libdd_get_otel_thread_ctx_v1(void) {
+    return &otel_thread_ctx_v1;
 }

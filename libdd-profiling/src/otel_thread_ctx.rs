@@ -74,11 +74,11 @@ pub mod linux {
     };
 
     extern "C" {
-        /// Return the address of the current thread's `custom_labels_current_set_v2` local.
+        /// Return the address of the current thread's `otel_thread_ctx_v1` local.
         ///
         /// **CAUTION**: do not use this directly, always go through [get_tls_slot] to read and
         /// write it atomically.
-        fn libdd_get_custom_labels_current_set_v2() -> *mut *mut c_void;
+        fn libdd_get_otel_thread_ctx_v1() -> *mut *mut c_void;
     }
 
     /// Return an atomic view of the TLS slot. The address calculation requires a call to a C shim
@@ -100,12 +100,10 @@ pub mod linux {
         // Safety: the const assertion above ensures the alignment is correct. The TLS slot is
         // valid for writes during the lifetime of the program.
         //
-        // We forbid direct usage of `libdd_get_custom_labels_current_set_v2`, which guarantees
+        // We forbid direct usage of `libdd_get_otel_thread_ctx_v1`, which guarantees
         // that there's never conflicting non-atomic accesses to the TLS slot.
         unsafe {
-            AtomicPtr::from_ptr(
-                libdd_get_custom_labels_current_set_v2().cast::<*mut ThreadContextRecord>(),
-            )
+            AtomicPtr::from_ptr(libdd_get_otel_thread_ctx_v1().cast::<*mut ThreadContextRecord>())
         }
     }
 
