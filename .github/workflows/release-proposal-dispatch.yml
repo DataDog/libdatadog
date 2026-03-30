@@ -442,8 +442,23 @@ jobs:
           set -euo pipefail
           BRANCH_NAME="${{ steps.proposal-branch.outputs.branch_name }}"
 
-          ./scripts/major-bumps-level.sh /tmp/api-changes.json > /tmp/api-changes-with-major-bumps-pre-commit.json
-          
+          # Run the audit in a throwaway worktree so extra worktrees / cargo metadata do not touch the job checkout.
+          MAJOR_BUMPS_WT=$(mktemp -d "${RUNNER_TEMP:-/tmp}/major-bumps-wt.XXXXXX")
+          WF_SHA="${{ github.sha }}"
+          git worktree add --detach "$MAJOR_BUMPS_WT" "$WF_SHA"
+          set +e
+          ( cd "$MAJOR_BUMPS_WT" && ./scripts/major-bumps-level.sh /tmp/api-changes.json ) \
+            > /tmp/api-changes-with-major-bumps-pre-commit.json
+          MB_RC=$?
+          git worktree remove --force "$MAJOR_BUMPS_WT" || true
+          set -e
+          if [[ "$MB_RC" -ne 0 ]]; then
+            echo "Major bumps level script failed with code $MB_RC"
+            echo "Major bumps level script output:"
+            cat /tmp/api-changes-with-major-bumps-pre-commit.json
+            exit "$MB_RC"
+          fi
+
           # Full same crate list as api-changes.json; rows updated in place when a major bump is applied.
           cp /tmp/api-changes-with-major-bumps-pre-commit.json /tmp/api-changes-with-major-bumps.json
 
