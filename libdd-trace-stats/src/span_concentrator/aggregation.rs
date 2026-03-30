@@ -268,7 +268,10 @@ impl<'a> BorrowedAggregationKey<'a> {
 
         let span_derived_primary_tags: Vec<(&'a str, &'a str)> = span_derived_primary_tag_keys
             .iter()
-            .filter_map(|key| Some((key.as_str(), span.get_meta(key.as_str())?)))
+            .filter_map(|key| match span.get_meta(key.as_str()) {
+                Some(v) if !v.is_empty() => Some((key.as_str(), v)),
+                _ => None,
+            })
             .collect();
 
         Self {
@@ -891,6 +894,25 @@ mod tests {
                     span_id: 1,
                     parent_id: 0,
                     meta: HashMap::from([("region", "us1")]),
+                    ..Default::default()
+                },
+                OwnedAggregationKey {
+                    service_name: "service".into(),
+                    operation_name: "op".into(),
+                    resource_name: "res".into(),
+                    is_trace_root: true,
+                    span_derived_primary_tags: vec![("region".into(), "us1".into())],
+                    ..Default::default()
+                },
+            ),
+            (
+                SpanSlice {
+                    service: "service",
+                    name: "op",
+                    resource: "res",
+                    span_id: 1,
+                    parent_id: 0,
+                    meta: HashMap::from([("region", "us1"), ("env", "")]),
                     ..Default::default()
                 },
                 OwnedAggregationKey {
