@@ -81,24 +81,12 @@ impl<T: Worker + MaybeSend + Sync + 'static> PausableWorker<T> {
             let stop_token = CancellationToken::new();
             let cloned_token = stop_token.clone();
 
-            #[cfg(not(target_arch = "wasm32"))]
             let handle = rt.spawn(async move {
                 select! {
                     _ = worker.run() => {worker}
                     _ = cloned_token.cancelled() => {worker}
                 }
             });
-
-            #[cfg(target_arch = "wasm32")]
-            let handle = {
-                let _ = rt;
-                tokio::task::spawn_local(async move {
-                    select! {
-                        _ = worker.run() => {worker}
-                        _ = cloned_token.cancelled() => {worker}
-                    }
-                })
-            };
 
             *self = PausableWorker::Running { handle, stop_token };
             Ok(())
