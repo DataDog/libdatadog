@@ -1600,6 +1600,7 @@ dependencies = [
  "anyhow",
  "bytes",
  "datadog-remote-config",
+ "http",
  "httpmock",
  "libdd-capabilities",
  "libdd-capabilities-impl",

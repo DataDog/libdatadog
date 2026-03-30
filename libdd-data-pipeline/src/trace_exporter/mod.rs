@@ -14,10 +14,10 @@ use self::agent_response::AgentResponse;
 use self::metrics::MetricsEmitter;
 use self::stats::StatsComputationStatus;
 use self::trace_serializer::TraceSerializer;
-use crate::otlp::{map_traces_to_otlp, send_otlp_traces_http, OtlpResourceInfo, OtlpTraceConfig};
 #[cfg(not(target_arch = "wasm32"))]
 use crate::agent_info::AgentInfoFetcher;
 use crate::agent_info::ResponseObserver;
+use crate::otlp::{map_traces_to_otlp, send_otlp_traces_http, OtlpResourceInfo, OtlpTraceConfig};
 #[cfg(not(target_arch = "wasm32"))]
 use crate::pausable_worker::PausableWorker;
 #[cfg(not(target_arch = "wasm32"))]
@@ -27,7 +27,6 @@ use crate::telemetry::{SendPayloadTelemetry, TelemetryClient};
 use crate::trace_exporter::agent_response::{
     AgentResponsePayloadVersion, DATADOG_RATES_PAYLOAD_VERSION,
 };
-#[cfg(not(target_arch = "wasm32"))]
 use crate::trace_exporter::error::InternalErrorKind;
 use crate::trace_exporter::error::{RequestError, TraceExporterError};
 use crate::{
@@ -247,7 +246,6 @@ pub struct TraceExporter<H: HttpClientTrait + MaybeSend + Sync + 'static> {
     #[cfg(not(target_arch = "wasm32"))]
     workers: Arc<Mutex<TraceExporterWorkers<H>>>,
     agent_payload_response_version: Option<AgentResponsePayloadVersion>,
-    http_client: HttpClient,
     /// When set, traces are exported via OTLP HTTP/JSON instead of the Datadog agent.
     otlp_config: Option<OtlpTraceConfig>,
 }
@@ -646,7 +644,7 @@ impl<H: HttpClientTrait + MaybeSend + Sync + 'static> TraceExporter<H> {
             TraceExporterError::Internal(InternalErrorKind::InvalidWorkerState(e.to_string()))
         })?;
         send_otlp_traces_http(
-            &self.http_client,
+            &self.client,
             config,
             self.endpoint.test_token.as_deref(),
             json_body,
@@ -2008,7 +2006,7 @@ mod tests {
             .set_otlp_endpoint(&otlp_endpoint)
             .set_input_format(TraceExporterInputFormat::V04)
             .set_output_format(TraceExporterOutputFormat::V04);
-        let exporter = builder.build().unwrap();
+        let exporter = builder.build::<NativeCapabilities>().unwrap();
 
         let traces: Vec<Vec<SpanBytes>> = vec![vec![SpanBytes {
             name: BytesString::from_slice(b"op").unwrap(),

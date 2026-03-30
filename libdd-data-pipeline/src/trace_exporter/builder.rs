@@ -381,7 +381,6 @@ impl TraceExporterBuilder {
                 agent_payload_response_version: self
                     .agent_rates_payload_version_enabled
                     .then(AgentResponsePayloadVersion::new),
-                http_client: new_default_client(),
                 otlp_config: self.otlp_endpoint.map(|url| {
                     let mut headers = http::HeaderMap::new();
                     for (key, value) in self.otlp_headers {
@@ -457,7 +456,6 @@ impl TraceExporterBuilder {
                 agent_payload_response_version: self
                     .agent_rates_payload_version_enabled
                     .then(AgentResponsePayloadVersion::new),
-                http_client: new_default_client(),
                 otlp_config: self.otlp_endpoint.map(|url| {
                     let mut headers = http::HeaderMap::new();
                     for (key, value) in self.otlp_headers {

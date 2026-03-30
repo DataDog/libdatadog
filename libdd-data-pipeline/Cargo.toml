@@ -29,7 +29,6 @@ tokio = { version = "1.23", features = [
 uuid = { version = "1.10.0", features = ["v4"] }
 tokio-util = "0.7.11"
 libdd-capabilities = { path = "../libdd-capabilities" }
-libdd-capabilities-impl = "0.1.0"
 libdd-common = { version = "3.0.2", path = "../libdd-common", default-features = false }
 libdd-telemetry = { version = "4.0.0", path = "../libdd-telemetry", default-features = false, optional = true }
 libdd-trace-protobuf = { version = "3.0.1", path = "../libdd-trace-protobuf" }
@@ -44,6 +43,7 @@ libdd-tinybytes = { version = "1.1.0", path = "../libdd-tinybytes", features = [
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 tokio = { version = "1.23", features = ["time", "test-util"], default-features = false }
+libdd-capabilities-impl = "0.1.0"
 
 [lib]
 bench = false
