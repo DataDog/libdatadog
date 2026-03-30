@@ -104,8 +104,13 @@ impl HttpClient {
 mod tests {
     use super::*;
 
+    fn ensure_crypto_provider() {
+        let _ = rustls::crypto::ring::default_provider().install_default();
+    }
+
     #[test]
     fn new_creates_client() {
+        ensure_crypto_provider();
         let client = HttpClient::new("http://localhost:8126".to_owned(), Duration::from_secs(3));
         assert!(client.is_ok());
         let client = client.unwrap();
@@ -115,6 +120,7 @@ mod tests {
 
     #[test]
     fn builder_creates_client() {
+        ensure_crypto_provider();
         let client = HttpClient::builder()
             .base_url("http://localhost:8126".to_owned())
             .timeout(Duration::from_secs(5))
@@ -127,6 +133,7 @@ mod tests {
     #[cfg_attr(miri, ignore)]
     #[tokio::test]
     async fn send_returns_error_when_no_server() {
+        ensure_crypto_provider();
         let client =
             HttpClient::new("http://localhost".to_owned(), Duration::from_secs(1)).unwrap();
         let req = crate::HttpRequest::new(

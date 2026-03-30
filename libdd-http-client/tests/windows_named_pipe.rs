@@ -8,9 +8,14 @@ use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::windows::named_pipe::ServerOptions;
 
+fn ensure_crypto_provider() {
+    let _ = rustls::crypto::ring::default_provider().install_default();
+}
+
 #[cfg_attr(miri, ignore)]
 #[tokio::test]
 async fn test_named_pipe_round_trip() {
+    ensure_crypto_provider();
     let pipe_name = format!(
         r"\\.\pipe\dd_http_client_test_{}_{}",
         std::process::id(),
@@ -49,6 +54,7 @@ async fn test_named_pipe_round_trip() {
 
 #[test]
 fn test_named_pipe_client_constructs() {
+    ensure_crypto_provider();
     let client = HttpClient::builder()
         .base_url("http://localhost".to_owned())
         .timeout(Duration::from_secs(5))
