@@ -483,10 +483,7 @@ fn emit_ucontext(w: &mut impl Write, ucontext: *const ucontext_t) -> Result<(), 
     #[cfg(target_arch = "x86_64")]
     {
         let gregs = &uc.uc_mcontext.gregs;
-        write!(
-            w,
-            "{{\"arch\": \"x86_64\", \"os\": \"linux\", \"registers\": {{"
-        )?;
+        write!(w, "{{\"arch\": \"x86_64\", \"registers\": {{")?;
         write!(w, "\"rip\": \"0x{:016x}\"", gregs[libc::REG_RIP as usize])?;
         write!(w, ", \"rsp\": \"0x{:016x}\"", gregs[libc::REG_RSP as usize])?;
         write!(w, ", \"rbp\": \"0x{:016x}\"", gregs[libc::REG_RBP as usize])?;
@@ -513,10 +510,7 @@ fn emit_ucontext(w: &mut impl Write, ucontext: *const ucontext_t) -> Result<(), 
     #[cfg(target_arch = "aarch64")]
     {
         let mc = &uc.uc_mcontext;
-        write!(
-            w,
-            "{{\"arch\": \"aarch64\", \"os\": \"linux\", \"registers\": {{"
-        )?;
+        write!(w, "{{\"arch\": \"aarch64\", \"registers\": {{")?;
         write!(w, "\"pc\": \"0x{:016x}\"", mc.pc)?;
         write!(w, ", \"sp\": \"0x{:016x}\"", mc.sp)?;
         for i in 0..31 {
@@ -602,7 +596,7 @@ fn emit_ucontext(w: &mut impl Write, ucontext: *const ucontext_t) -> Result<(), 
         write!(w, "x86_64")?;
         #[cfg(target_arch = "aarch64")]
         write!(w, "aarch64")?;
-        write!(w, "\", \"os\": \"macos\", \"registers\": {{}}")?;
+        write!(w, "\", \"registers\": {{}}")?;
         write!(w, ", \"raw\": \"{:?}\"", uc)?;
         writeln!(w, "}}")?;
     } else {
@@ -612,10 +606,7 @@ fn emit_ucontext(w: &mut impl Write, ucontext: *const ucontext_t) -> Result<(), 
 
         #[cfg(target_arch = "x86_64")]
         {
-            write!(
-                w,
-                "{{\"arch\": \"x86_64\", \"os\": \"macos\", \"registers\": {{"
-            )?;
+            write!(w, "{{\"arch\": \"x86_64\", \"registers\": {{")?;
             write!(w, "\"rip\": \"0x{:016x}\"", ss.__rip)?;
             write!(w, ", \"rsp\": \"0x{:016x}\"", ss.__rsp)?;
             write!(w, ", \"rbp\": \"0x{:016x}\"", ss.__rbp)?;
@@ -639,10 +630,7 @@ fn emit_ucontext(w: &mut impl Write, ucontext: *const ucontext_t) -> Result<(), 
 
         #[cfg(target_arch = "aarch64")]
         {
-            write!(
-                w,
-                "{{\"arch\": \"aarch64\", \"os\": \"macos\", \"registers\": {{"
-            )?;
+            write!(w, "{{\"arch\": \"aarch64\", \"registers\": {{")?;
             write!(w, "\"pc\": \"0x{:016x}\"", ss.__pc)?;
             write!(w, ", \"sp\": \"0x{:016x}\"", ss.__sp)?;
             write!(w, ", \"fp\": \"0x{:016x}\"", ss.__fp)?;
@@ -1013,11 +1001,10 @@ mod tests {
         assert!(output.contains(crate::shared::constants::DD_CRASHTRACK_BEGIN_UCONTEXT));
         assert!(output.contains(crate::shared::constants::DD_CRASHTRACK_END_UCONTEXT));
 
-        // Check architecture and OS are correct
+        // Check architecture is correct
         #[cfg(target_arch = "x86_64")]
         {
             assert!(output.contains("\"arch\": \"x86_64\""));
-            assert!(output.contains("\"os\": \"linux\""));
             assert!(output.contains("\"registers\""));
 
             // Check specific registers are present
@@ -1035,7 +1022,6 @@ mod tests {
         #[cfg(target_arch = "aarch64")]
         {
             assert!(output.contains("\"arch\": \"aarch64\""));
-            assert!(output.contains("\"os\": \"linux\""));
             assert!(output.contains("\"registers\""));
 
             // Check specific registers are present
@@ -1065,7 +1051,6 @@ mod tests {
 
         // Verify the JSON structure
         assert!(parsed.is_object());
-        assert_eq!(parsed["os"], "linux");
         assert!(parsed["arch"].is_string());
         assert!(parsed["registers"].is_object());
         assert!(parsed["raw"].is_string());
@@ -1112,11 +1097,10 @@ mod tests {
         assert!(output.contains(crate::shared::constants::DD_CRASHTRACK_BEGIN_UCONTEXT));
         assert!(output.contains(crate::shared::constants::DD_CRASHTRACK_END_UCONTEXT));
 
-        // Check architecture and OS are correct
+        // Check architecture is correct
         #[cfg(target_arch = "x86_64")]
         {
             assert!(output.contains("\"arch\": \"x86_64\""));
-            assert!(output.contains("\"os\": \"macos\""));
             assert!(output.contains("\"registers\""));
 
             // Check specific registers are present
@@ -1133,7 +1117,6 @@ mod tests {
         #[cfg(target_arch = "aarch64")]
         {
             assert!(output.contains("\"arch\": \"aarch64\""));
-            assert!(output.contains("\"os\": \"macos\""));
             assert!(output.contains("\"registers\""));
 
             // Check specific registers are present
@@ -1169,7 +1152,6 @@ mod tests {
         assert!(output.contains(crate::shared::constants::DD_CRASHTRACK_END_UCONTEXT));
 
         // Should contain fallback information
-        assert!(output.contains("\"os\": \"macos\""));
         assert!(output.contains("\"registers\": {}"));
         assert!(output.contains("\"raw\""));
 
