@@ -56,11 +56,10 @@ impl super::Backend for ReqwestBackend {
             HttpMethod::Options => reqwest::Method::OPTIONS,
         };
 
-        let mut builder = self.client.request(method, &request.url);
-
-        for (name, value) in &request.headers {
-            builder = builder.header(name, value);
-        }
+        let mut builder = request.headers.iter().fold(
+            self.client.request(method, &request.url),
+            |builder, (name, value)| builder.header(name, value),
+        );
 
         if !request.multipart_parts.is_empty() && !request.body.is_empty() {
             return Err(HttpClientError::InvalidConfig(
@@ -118,20 +117,23 @@ impl super::Backend for ReqwestBackend {
 fn build_multipart_form(
     parts: Vec<crate::request::MultipartPart>,
 ) -> Result<reqwest::multipart::Form, HttpClientError> {
-    let mut form = reqwest::multipart::Form::new();
-    for part in parts {
-        let mut reqwest_part = reqwest::multipart::Part::bytes(part.data.to_vec());
-        if let Some(filename) = part.filename {
-            reqwest_part = reqwest_part.file_name(filename);
-        }
-        if let Some(ct) = part.content_type {
-            reqwest_part = reqwest_part
-                .mime_str(&ct)
-                .map_err(|e| HttpClientError::InvalidConfig(e.to_string()))?;
-        }
-        form = form.part(part.name, reqwest_part);
-    }
-    Ok(form)
+    parts
+        .into_iter()
+        .try_fold(reqwest::multipart::Form::new(), |form, part| {
+            let mut reqwest_part = reqwest::multipart::Part::bytes(part.data.to_vec());
+
+            if let Some(filename) = part.filename {
+                reqwest_part = reqwest_part.file_name(filename);
+            }
+
+            if let Some(ct) = part.content_type {
+                reqwest_part = reqwest_part
+                    .mime_str(&ct)
+                    .map_err(|e| HttpClientError::InvalidConfig(e.to_string()))?;
+            }
+
+            Ok(form.part(part.name, reqwest_part))
+        })
 }
 
 /// Map a `reqwest::Error` to our `HttpClientError` variants.

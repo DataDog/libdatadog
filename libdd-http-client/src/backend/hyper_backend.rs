@@ -161,10 +161,11 @@ impl super::Backend for HyperBackend {
         let method = convert_method(request.method);
         let (body, multipart_content_type) = build_body(&mut request)?;
 
-        let mut builder = hyper::http::Request::builder().method(method).uri(uri);
-        for (name, value) in &request.headers {
-            builder = builder.header(name.as_str(), value.as_str());
-        }
+        let mut builder = request.headers.iter().fold(
+            hyper::http::Request::builder().method(method).uri(uri),
+            |builder, (name, value)| builder.header(name.as_str(), value.as_str()),
+        );
+
         if let Some(ct) = multipart_content_type {
             builder = builder.header("content-type", ct);
         }
