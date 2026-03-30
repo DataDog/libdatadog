@@ -7,18 +7,17 @@
 //! including starting/stopping stats workers, managing the span concentrator,
 //! and processing traces for stats collection.
 
+use super::{add_path, TracerMetadata};
 use crate::agent_info::schema::AgentInfo;
-use crate::stats_exporter;
 use arc_swap::ArcSwap;
 use libdd_common::{Endpoint, HttpClient, MutexExt};
 use libdd_trace_stats::span_concentrator::SpanConcentrator;
+use libdd_trace_stats::stats_exporter::{StatsExporter, StatsMetadata};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::runtime::Runtime;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error};
-
-use super::add_path;
 
 pub(crate) const DEFAULT_STATS_ELIGIBLE_SPAN_KINDS: [&str; 4] =
     ["client", "server", "producer", "consumer"];
@@ -26,7 +25,7 @@ pub(crate) const STATS_ENDPOINT: &str = "/v0.6/stats";
 
 /// Context struct that groups immutable parameters used by stats functions
 pub(crate) struct StatsContext<'a> {
-    pub metadata: &'a super::TracerMetadata,
+    pub metadata: &'a TracerMetadata,
     pub endpoint_url: &'a http::Uri,
     pub runtime: &'a Arc<Mutex<Option<Arc<Runtime>>>>,
 }
@@ -97,10 +96,10 @@ fn create_and_start_stats_worker(
     client_side_stats: &ArcSwap<StatsComputationStatus>,
     client: HttpClient,
 ) -> anyhow::Result<()> {
-    let stats_exporter = stats_exporter::StatsExporter::new(
+    let stats_exporter = StatsExporter::new(
         bucket_size,
         stats_concentrator.clone(),
-        ctx.metadata.clone(),
+        StatsMetadata::from(ctx.metadata.clone()),
         Endpoint::from_url(add_path(ctx.endpoint_url, STATS_ENDPOINT)),
         cancellation_token.clone(),
         client,
@@ -279,4 +278,23 @@ pub(crate) fn is_stats_worker_active(
     }
 
     false
+}
+
+impl From<TracerMetadata> for StatsMetadata {
+    fn from(m: TracerMetadata) -> StatsMetadata {
+        StatsMetadata {
+            hostname: m.hostname,
+            env: m.env,
+            app_version: m.app_version,
+            runtime_id: m.runtime_id,
+            language: m.language,
+            lang_version: m.language_version,
+            lang_interpreter: m.language_interpreter,
+            lang_vendor: m.language_interpreter_vendor,
+            tracer_version: m.tracer_version,
+            git_commit_sha: m.git_commit_sha,
+            process_tags: m.process_tags,
+            service: m.service,
+        }
+    }
 }

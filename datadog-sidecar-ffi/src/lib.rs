@@ -663,6 +663,8 @@ pub unsafe extern "C" fn ddog_sidecar_session_set_config(
         .to_vec(),
         remote_config_enabled,
         process_tags: process_tags.to_vec(),
+        peer_tag_keys: vec![],
+        span_kinds_stats_computed: vec![],
     };
     #[cfg(unix)]
     try_c!(blocking::set_session_config(

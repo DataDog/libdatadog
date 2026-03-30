@@ -1395,7 +1395,10 @@ dependencies = [
  "io-lifetimes",
  "libc",
  "libdd-common",
+ "libdd-ddsketch",
  "libdd-tinybytes",
+ "libdd-trace-protobuf",
+ "libdd-trace-stats",
  "memfd",
  "nix 0.29.0",
  "page_size",
@@ -1409,6 +1412,7 @@ dependencies = [
  "tracing-subscriber",
  "winapi 0.3.9",
  "windows-sys 0.48.0",
+ "zwohash",
 ]
 
 [[package]]
@@ -1529,6 +1533,7 @@ dependencies = [
  "libdd-dogstatsd-client",
  "libdd-telemetry",
  "libdd-tinybytes",
+ "libdd-trace-protobuf",
  "libdd-trace-utils",
  "manual_future",
  "memory-stats",
@@ -1537,6 +1542,7 @@ dependencies = [
  "prctl",
  "priority-queue",
  "rand 0.8.5",
+ "rmp-serde",
  "sendfd",
  "serde",
  "serde_json",
@@ -3276,12 +3282,21 @@ dependencies = [
 name = "libdd-trace-stats"
 version = "2.0.0"
 dependencies = [
+ "anyhow",
  "criterion",
  "hashbrown 0.15.1",
+ "http",
+ "httpmock",
+ "libdd-common",
  "libdd-ddsketch",
  "libdd-trace-protobuf",
  "libdd-trace-utils",
  "rand 0.8.5",
+ "rmp-serde",
+ "serde",
+ "tokio",
+ "tokio-util",
+ "tracing",
 ]
 
 [[package]]

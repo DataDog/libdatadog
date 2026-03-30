@@ -102,6 +102,15 @@ pub struct SidecarServer {
     remote_configs: RemoteConfigs,
     /// Diagnostics bookkeeper
     debugger_diagnostics_bookkeeper: Arc<DebuggerDiagnosticsBookkeeper>,
+    /// Per-env&version SHM span concentrators (global across all sessions).
+    pub(crate) span_concentrators: Arc<
+        Mutex<
+            HashMap<
+                crate::service::stats_flusher::ConcentratorKey,
+                crate::service::stats_flusher::SpanConcentratorState,
+            >,
+        >,
+    >,
 }
 
 /// Per-connection handler wrapper that tracks sessions/instances for cleanup on disconnect.
@@ -626,6 +635,12 @@ impl SidecarInterface for ConnectionSidecarHandler {
             });
             *session.agent_infos.lock_or_panic() = Some(agent_info);
         }
+        *session.stats_config.lock_or_panic() = Some(crate::service::stats_flusher::StatsConfig {
+            endpoint: config.endpoint.clone(),
+            tracer_version: config.tracer_version.clone(),
+            flush_interval: config.flush_interval,
+        });
+
         session.set_remote_config_invariants(ConfigOptions {
             invariants: ConfigInvariants {
                 language: config.language,
@@ -833,10 +848,18 @@ impl SidecarInterface for ConnectionSidecarHandler {
         debug!("Registered remote config metadata: instance {instance_id:?}, queue_id: {queue_id:?}, service: {service_name}, env: {env_name}, version: {app_version}");
 
         let session = self.server.get_session(&instance_id.session_id);
+        let concentrator_guard = crate::service::stats_flusher::ensure_stats_concentrator(
+            &self.server.span_concentrators,
+            &env_name,
+            &app_version,
+            &instance_id.session_id,
+            &session,
+        );
         let runtime_info = session.get_runtime(&instance_id.runtime_id);
         let mut applications = runtime_info.lock_applications();
         let app = applications.entry(queue_id).or_default();
         app.set_metadata(env_name, app_version, service_name, global_tags);
+        app.span_concentrator_guard = concentrator_guard;
         let Some(notify_target) = self.server.get_notify_target(&session) else {
             return;
         };
@@ -890,11 +913,32 @@ impl SidecarInterface for ConnectionSidecarHandler {
         });
     }
 
+    async fn add_span_to_concentrator(
+        &self,
+        _peer: PeerCredentials,
+        env: String,
+        version: String,
+        span: datadog_ipc::shm_stats::OwnedShmSpanInput,
+    ) {
+        let map_key = crate::service::stats_flusher::ConcentratorKey { env, version };
+        let guard = self
+            .server
+            .span_concentrators
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        if let Some(state) = guard.get(&map_key) {
+            let mut peer_tag_buf = Vec::new();
+            let input = span.as_shm_input(&mut peer_tag_buf);
+            state.concentrator.add_span(&input);
+        }
+    }
+
     async fn flush_traces(&self, _peer: PeerCredentials) {
         let flusher = self.server.trace_flusher.clone();
         if let Err(e) = tokio::spawn(async move { flusher.flush().await }).await {
             error!("Failed flushing traces: {e:?}");
         }
+        crate::service::stats_flusher::flush_all_stats_now(&self.server.span_concentrators).await;
     }
 
     async fn set_test_session_token(&self, _peer: PeerCredentials, token: String) {

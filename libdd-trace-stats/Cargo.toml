@@ -10,10 +10,18 @@ license.workspace = true
 autobenches = false
 
 [dependencies]
+anyhow = "1.0"
+libdd-common = { version = "3.0.0", path = "../libdd-common", default-features = false }
 libdd-ddsketch = { version = "1.0.1", path = "../libdd-ddsketch" }
 libdd-trace-protobuf = { version = "3.0.1", path = "../libdd-trace-protobuf" }
 libdd-trace-utils = { version = "3.0.1", path = "../libdd-trace-utils", default-features = false }
 hashbrown = { version = "0.15" }
+http = "1.1"
+rmp-serde = "1.1.1"
+serde = { version = "1.0", features = ["derive"] }
+tokio = { version = "1.23", features = ["macros", "time"], default-features = false }
+tokio-util = "0.7.11"
+tracing = { version = "0.1", default-features = false }
 
 [lib]
 bench = false
@@ -25,4 +33,11 @@ path = "benches/main.rs"
 
 [dev-dependencies]
 criterion = "0.5.1"
+httpmock = "0.8.0-alpha.1"
+libdd-trace-utils = { path = "../libdd-trace-utils", features = ["test-utils"] }
 rand = "0.8.5"
+tokio = { version = "1.23", features = ["rt-multi-thread", "macros", "test-util", "time"] }
+
+[features]
+default = ["https"]
+https = ["libdd-common/https"]
