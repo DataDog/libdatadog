@@ -5,7 +5,7 @@ use crate::msgpack_decoder::decode::buffer::Buffer;
 use crate::msgpack_decoder::decode::error::DecodeError;
 use crate::span::DeserializableTraceData;
 use rmp::decode;
-use std::collections::HashMap;
+use hashbrown::HashMap;
 
 // https://docs.rs/rmp/latest/rmp/enum.Marker.html#variant.Null (0xc0 == 192)
 const NULL_MARKER: &u8 = &0xc0;

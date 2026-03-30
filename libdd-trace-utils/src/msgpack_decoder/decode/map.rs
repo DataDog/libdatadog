@@ -4,7 +4,7 @@
 use crate::msgpack_decoder::decode::{buffer::Buffer, error::DecodeError};
 use crate::span::DeserializableTraceData;
 use rmp::{decode, decode::RmpRead, Marker};
-use std::collections::HashMap;
+use hashbrown::HashMap;
 
 /// Reads a map from the buffer and returns it as a `HashMap`.
 ///
