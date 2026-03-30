@@ -17,7 +17,7 @@ use std::os::fd::{AsFd, OwnedFd};
 use std::os::unix::io::AsRawFd;
 use std::sync::atomic::{AtomicI32, AtomicU32, AtomicUsize, Ordering};
 
-const MAPPING_MAX_SIZE: usize = 1 << 17; // 128 MiB ought to be enough for everybody?
+const MAPPING_MAX_SIZE: usize = 1 << 27; // 128 MiB ought to be enough for everybody?
 const NOT_COMMITTED: usize = 1 << (usize::BITS - 1);
 
 pub(crate) fn mmap_handle<T: FileBackedHandle>(mut handle: T) -> io::Result<MappedMem<T>> {

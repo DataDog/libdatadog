@@ -435,6 +435,19 @@ impl SidecarSender {
         self.channel.try_send_set_test_session_token(token);
     }
 
+    pub fn add_span_to_concentrator(
+        &mut self,
+        env: String,
+        version: String,
+        span: datadog_ipc::shm_stats::OwnedShmSpanInput,
+    ) {
+        if !self.try_drain_outbox() {
+            return;
+        }
+        self.channel
+            .try_send_add_span_to_concentrator(env, version, span);
+    }
+
     pub fn set_read_timeout(&mut self, d: Option<Duration>) -> io::Result<()> {
         self.channel.0.set_read_timeout(d)
     }

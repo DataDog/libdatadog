@@ -78,6 +78,7 @@ telemetry = ["libdd-telemetry"]
 https = [
     "libdd-common/https",
     "libdd-telemetry?/https",
+    "libdd-trace-stats/https",
     "libdd-trace-utils/https",
     "libdd-dogstatsd-client/https",
 ]

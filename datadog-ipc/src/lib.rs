@@ -12,6 +12,7 @@ pub mod handles;
 
 pub mod platform;
 pub mod rate_limiter;
+pub mod shm_stats;
 
 pub mod client;
 pub mod codec;

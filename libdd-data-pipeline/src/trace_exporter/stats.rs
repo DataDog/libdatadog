@@ -9,8 +9,6 @@
 
 #[cfg(not(target_arch = "wasm32"))]
 use crate::agent_info::schema::AgentInfo;
-#[cfg(not(target_arch = "wasm32"))]
-use crate::stats_exporter;
 use arc_swap::ArcSwap;
 use libdd_capabilities::{HttpClientTrait, MaybeSend};
 #[cfg(not(target_arch = "wasm32"))]
@@ -18,6 +16,7 @@ use libdd_common::Endpoint;
 use libdd_common::MutexExt;
 use libdd_shared_runtime::{SharedRuntime, WorkerHandle};
 use libdd_trace_stats::span_concentrator::SpanConcentrator;
+use libdd_trace_stats::stats_exporter::{StatsExporter, StatsMetadata};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 #[cfg(not(target_arch = "wasm32"))]
@@ -25,6 +24,7 @@ use tracing::{debug, error};
 
 #[cfg(not(target_arch = "wasm32"))]
 use super::add_path;
+use super::TracerMetadata;
 
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) const DEFAULT_STATS_ELIGIBLE_SPAN_KINDS: [&str; 4] =
@@ -35,7 +35,7 @@ pub(crate) const STATS_ENDPOINT: &str = "/v0.6/stats";
 #[cfg(not(target_arch = "wasm32"))]
 /// Context struct that groups immutable parameters used by stats functions
 pub(crate) struct StatsContext<'a> {
-    pub metadata: &'a super::TracerMetadata,
+    pub metadata: &'a TracerMetadata,
     pub endpoint_url: &'a http::Uri,
     pub shared_runtime: &'a SharedRuntime,
 }
@@ -104,10 +104,10 @@ fn create_and_start_stats_worker<H: HttpClientTrait + MaybeSend + Sync + 'static
     client_side_stats: &ArcSwap<StatsComputationStatus>,
     client: H,
 ) -> anyhow::Result<()> {
-    let stats_exporter = stats_exporter::StatsExporter::<H>::new(
+    let stats_exporter = StatsExporter::<H>::new(
         bucket_size,
         stats_concentrator.clone(),
-        ctx.metadata.clone(),
+        StatsMetadata::from(ctx.metadata.clone()),
         Endpoint::from_url(add_path(ctx.endpoint_url, STATS_ENDPOINT)),
         client,
     );
@@ -254,4 +254,23 @@ pub(crate) fn is_stats_worker_active(client_side_stats: &ArcSwap<StatsComputatio
         **client_side_stats.load(),
         StatsComputationStatus::Enabled { .. }
     )
+}
+
+impl From<TracerMetadata> for StatsMetadata {
+    fn from(m: TracerMetadata) -> StatsMetadata {
+        StatsMetadata {
+            hostname: m.hostname,
+            env: m.env,
+            app_version: m.app_version,
+            runtime_id: m.runtime_id,
+            language: m.language,
+            lang_version: m.language_version,
+            lang_interpreter: m.language_interpreter,
+            lang_vendor: m.language_interpreter_vendor,
+            tracer_version: m.tracer_version,
+            git_commit_sha: m.git_commit_sha,
+            process_tags: m.process_tags,
+            service: m.service,
+        }
+    }
 }

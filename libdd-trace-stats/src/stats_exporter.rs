@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use std::{
-    borrow::Borrow,
     sync::{
         atomic::{AtomicU64, Ordering},
         Arc, Mutex,
@@ -10,45 +9,79 @@ use std::{
     time,
 };
 
-use crate::trace_exporter::TracerMetadata;
+use crate::span_concentrator::{FlushableConcentrator, SpanConcentrator};
 use async_trait::async_trait;
+use std::fmt::Debug;
 use libdd_capabilities::{HttpClientTrait, MaybeSend};
 use libdd_common::Endpoint;
 use libdd_shared_runtime::Worker;
 use libdd_trace_protobuf::pb;
-use libdd_trace_stats::span_concentrator::SpanConcentrator;
 use libdd_trace_utils::send_with_retry::{send_with_retry, RetryStrategy};
+use libdd_trace_utils::trace_utils::TracerHeaderTags;
+use tokio::select;
+use tokio_util::sync::CancellationToken;
 use tracing::error;
 
 const STATS_ENDPOINT_PATH: &str = "/v0.6/stats";
+
+/// Metadata needed by the stats exporter to annotate payloads and HTTP requests.
+#[derive(Clone, Default, Debug)]
+pub struct StatsMetadata {
+    pub hostname: String,
+    pub env: String,
+    pub app_version: String,
+    pub runtime_id: String,
+    pub language: String,
+    pub lang_version: String,
+    pub lang_interpreter: String,
+    pub lang_vendor: String,
+    pub tracer_version: String,
+    pub git_commit_sha: String,
+    pub process_tags: String,
+    pub service: String,
+}
+
+impl<'a> From<&'a StatsMetadata> for TracerHeaderTags<'a> {
+    fn from(m: &'a StatsMetadata) -> TracerHeaderTags<'a> {
+        TracerHeaderTags {
+            lang: &m.language,
+            lang_version: &m.lang_version,
+            lang_interpreter: &m.lang_interpreter,
+            lang_vendor: &m.lang_vendor,
+            tracer_version: &m.tracer_version,
+            ..Default::default()
+        }
+    }
+}
 
 /// An exporter that concentrates and sends stats to the agent.
 ///
 /// `H` is the HTTP client implementation, see [`HttpClientTrait`]. Leaf crates
 /// pin it to a concrete type.
 #[derive(Debug)]
-pub struct StatsExporter<H: HttpClientTrait> {
+pub struct StatsExporter<H: HttpClientTrait, C: FlushableConcentrator = SpanConcentrator> {
     flush_interval: time::Duration,
-    concentrator: Arc<Mutex<SpanConcentrator>>,
+    concentrator: Arc<Mutex<C>>,
     endpoint: Endpoint,
-    meta: TracerMetadata,
+    meta: StatsMetadata,
     sequence_id: AtomicU64,
     client: H,
 }
 
-impl<H: HttpClientTrait> StatsExporter<H> {
+impl<H: HttpClientTrait, C: FlushableConcentrator> StatsExporter<H, C> {
     /// Return a new StatsExporter
     ///
     /// - `flush_interval` the interval on which the concentrator is flushed
-    /// - `concentrator` SpanConcentrator storing the stats to be sent to the agent
+    /// - `concentrator` an impl of `FlushableConcentrator` storing the stats to be sent to the
+    ///   agent
     /// - `meta` metadata used in ClientStatsPayload and as headers to send stats to the agent
     /// - `endpoint` the Endpoint used to send stats to the agent
     /// - `cancellation_token` Token used to safely shutdown the exporter by force flushing the
     ///   concentrator
     pub fn new(
         flush_interval: time::Duration,
-        concentrator: Arc<Mutex<SpanConcentrator>>,
-        meta: TracerMetadata,
+        concentrator: Arc<Mutex<C>>,
+        meta: StatsMetadata,
         endpoint: Endpoint,
         client: H,
     ) -> Self {
@@ -84,7 +117,7 @@ impl<H: HttpClientTrait> StatsExporter<H> {
         }
         let body = rmp_serde::encode::to_vec_named(&payload)?;
 
-        let mut headers: http::HeaderMap = self.meta.borrow().into();
+        let mut headers: http::HeaderMap = TracerHeaderTags::from(&self.meta).into();
 
         headers.insert(
             http::header::CONTENT_TYPE,
@@ -121,20 +154,17 @@ impl<H: HttpClientTrait> StatsExporter<H> {
     fn flush(&self, force_flush: bool) -> pb::ClientStatsPayload {
         let sequence = self.sequence_id.fetch_add(1, Ordering::Relaxed);
         encode_stats_payload(
-            self.meta.borrow(),
+            &self.meta,
             sequence,
             #[allow(clippy::unwrap_used)]
-            self.concentrator
-                .lock()
-                .unwrap()
-                .flush(time::SystemTime::now(), force_flush),
+            self.concentrator.lock().unwrap().flush_buckets(force_flush),
         )
     }
 }
 
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
-impl<H: HttpClientTrait + MaybeSend + Sync + 'static> Worker for StatsExporter<H> {
+impl<H: HttpClientTrait + MaybeSend + Sync + Debug + 'static, C: FlushableConcentrator + Send + Debug> Worker for StatsExporter<H, C> {
     async fn trigger(&mut self) {
         tokio::time::sleep(self.flush_interval).await;
     }
@@ -151,7 +181,7 @@ impl<H: HttpClientTrait + MaybeSend + Sync + 'static> Worker for StatsExporter<H
 }
 
 fn encode_stats_payload(
-    meta: &TracerMetadata,
+    meta: &StatsMetadata,
     sequence: u64,
     buckets: Vec<pb::ClientStatsBucket>,
 ) -> pb::ClientStatsPayload {
@@ -211,8 +241,8 @@ mod tests {
         let _ = is_sync::<StatsExporter<NativeCapabilities>>;
     }
 
-    fn get_test_metadata() -> TracerMetadata {
-        TracerMetadata {
+    fn get_test_metadata() -> StatsMetadata {
+        StatsMetadata {
             hostname: "libdatadog-test".into(),
             env: "test".into(),
             app_version: "0.0.0".into(),

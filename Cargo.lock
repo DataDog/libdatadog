@@ -330,9 +330,9 @@ checksum = "8b75356056920673b02621b35afd0f7dda9306d03c79a30f5c56c44cf256e3de"
 
 [[package]]
 name = "async-trait"
-version = "0.1.83"
+version = "0.1.89"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "721cae7de5c34fbb2acd27e21e6d2cf7b886dce0c27388d46c4e6c47ea4318dd"
+checksum = "9035ad2d096bed7955a320ee7e2230574d28fd3c3a0f186cbea1ff3c7eed5dbb"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1395,7 +1395,10 @@ dependencies = [
  "io-lifetimes",
  "libc",
  "libdd-common",
+ "libdd-ddsketch",
  "libdd-tinybytes",
+ "libdd-trace-protobuf",
+ "libdd-trace-stats",
  "memfd",
  "nix 0.29.0",
  "page_size",
@@ -1409,6 +1412,7 @@ dependencies = [
  "tracing-subscriber",
  "winapi 0.3.9",
  "windows-sys 0.48.0",
+ "zwohash",
 ]
 
 [[package]]
@@ -1529,6 +1533,7 @@ dependencies = [
  "libdd-dogstatsd-client",
  "libdd-telemetry",
  "libdd-tinybytes",
+ "libdd-trace-protobuf",
  "libdd-trace-utils",
  "manual_future",
  "memory-stats",
@@ -1537,6 +1542,7 @@ dependencies = [
  "prctl",
  "priority-queue",
  "rand 0.8.5",
+ "rmp-serde",
  "sendfd",
  "serde",
  "serde_json",
@@ -3342,12 +3348,24 @@ dependencies = [
 name = "libdd-trace-stats"
 version = "2.0.0"
 dependencies = [
+ "anyhow",
+ "async-trait",
  "criterion",
  "hashbrown 0.15.1",
+ "http",
+ "httpmock",
+ "libdd-capabilities",
+ "libdd-common",
  "libdd-ddsketch",
+ "libdd-shared-runtime",
  "libdd-trace-protobuf",
  "libdd-trace-utils",
  "rand 0.8.5",
+ "rmp-serde",
+ "serde",
+ "tokio",
+ "tokio-util",
+ "tracing",
 ]
 
 [[package]]
