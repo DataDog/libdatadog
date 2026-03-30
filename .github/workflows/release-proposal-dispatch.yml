@@ -560,7 +560,7 @@ jobs:
           done
 
           # Oldest → newest (chronological). Plain `git log` is newest-first; commit-headless should receive
-          # parent→child order so replays/signing match git history. Space-separated SHAs for the action.
+          # parent → child order so replays/signing match git history. Space-separated SHAs for the action.
           COMMITS=$(git log --reverse "$ORIGINAL_HEAD".. --format='%H' | tr '\n' ' ' | xargs)
           echo "commits=$COMMITS" >> $GITHUB_OUTPUT
 
@@ -637,10 +637,10 @@ jobs:
 
           NON_DEFAULT=""
           if [ -n "$MAIN_START_REF" ]; then
-            NON_DEFAULT="${NON_DEFAULT}"$'\n### Cut from non-default ref\n\n'"This proposal was generated from \`$MAIN_START_REF\` instead of the default latest \`origin/$MAIN_BRANCH\`."$'\n'
+            NON_DEFAULT="${NON_DEFAULT}"$'\n### :exclamation: Cut from non-default ref\n\n'"This proposal was generated from \`$MAIN_START_REF\` instead of the default latest \`origin/$MAIN_BRANCH\`."$'\n'
           fi
           if [ "$BYPASS_STANDARD_CHECKS" = "true" ]; then
-            NON_DEFAULT="${NON_DEFAULT}"$'\n### Non-default workflow options\n\n'"**bypass_standard_checks** was enabled: the ongoing-proposal branch guard was skipped; branches use proposal prefix \`$PROPOSAL_BRANCH_PREFIX\` and release prefix \`$RELEASE_BRANCH_PREFIX\`. Crates whose resolved git tag is not the latest SemVer tag for that crate are still included (normally skipped)."$'\n'
+            NON_DEFAULT="${NON_DEFAULT}"$'\n### :test_tube: Non-default workflow options\n\n'"**bypass_standard_checks** was enabled: the ongoing-proposal branch guard was skipped; branches use proposal prefix \`$PROPOSAL_BRANCH_PREFIX\` and release prefix \`$RELEASE_BRANCH_PREFIX\`. Crates whose resolved git tag is not the latest SemVer tag for that crate are still included (normally skipped)."$'\n'
           fi
           if [ -n "$NON_DEFAULT" ]; then
             NON_DEFAULT="${NON_DEFAULT}"$'\n\n'
@@ -658,7 +658,7 @@ jobs:
                 "**Semver bump:** `\(.level)`",
                 (if .tag then "**Tag:** `\(.tag)`\n" else null end),
                 (if (.major_bumps // [] | length) > 0 then
-                  "### libdd dependency major bumps\n\n"
+                  "### :warning: major bump forced due to:\n\n"
                   + ((.major_bumps // []) | map("- `\(.dependency)`: \(.previous_req) → \(.current_req)") | join("\n"))
                   + "\n"
                 else null end),
