@@ -14,7 +14,9 @@ bench = false
 
 [features]
 default = ["https", "reqwest-backend"]
-https = ["dep:reqwest", "reqwest?/rustls", "libdd-common?/https"]
+# Use rustls-no-provider to avoid reqwest forcing aws-lc-rs. Ring provider is
+# installed explicitly by libdd-common's connector init.
+https = ["dep:reqwest", "reqwest?/rustls-no-provider", "libdd-common?/https"]
 reqwest-backend = ["dep:reqwest", "reqwest?/hickory-dns", "reqwest?/multipart"]
 hyper-backend = ["dep:libdd-common", "dep:hyper", "dep:hyper-util", "dep:http-body-util"]
 fips = ["dep:reqwest", "reqwest?/rustls-no-provider", "dep:rustls", "rustls?/aws-lc-rs"]
