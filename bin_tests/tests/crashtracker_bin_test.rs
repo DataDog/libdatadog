@@ -632,7 +632,8 @@ fn test_crash_tracking_callstack() {
             cmd.arg(format!("file://{}", fixtures.crash_profile_path.display()))
                 .arg(&artifacts_map[&crashtracker_receiver])
                 .arg(&fixtures.output_dir)
-                .arg("segfault");
+                .arg("segfault")
+                .env("UNW_DEBUG_LEVEL", "15");
         },
         |payload, _fixtures| {
             // Use the new callstack validator
