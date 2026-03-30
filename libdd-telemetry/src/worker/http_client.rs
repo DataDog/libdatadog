@@ -22,8 +22,36 @@ pub mod header {
     pub const LIBRARY_LANGUAGE: HeaderName = HeaderName::from_static("dd-client-library-language");
     pub const LIBRARY_VERSION: HeaderName = HeaderName::from_static("dd-client-library-version");
 
-    /// Header key for whether to enable debug mode of telemetry.
     pub const DEBUG_ENABLED: HeaderName = HeaderName::from_static("dd-telemetry-debug-enabled");
+
+    pub const DD_SESSION_ID: HeaderName = HeaderName::from_static("dd-session-id");
+    pub const DD_ROOT_SESSION_ID: HeaderName = HeaderName::from_static("dd-root-session-id");
+    pub const DD_PARENT_SESSION_ID: HeaderName = HeaderName::from_static("dd-parent-session-id");
+}
+
+pub(crate) fn add_instrumentation_session_headers(
+    mut builder: HttpRequestBuilder,
+    session_id: Option<&str>,
+    root_session_id: Option<&str>,
+    parent_session_id: Option<&str>,
+) -> HttpRequestBuilder {
+    let Some(s) = session_id.filter(|id| !id.is_empty()) else {
+        return builder;
+    };
+    builder = builder.header(header::DD_SESSION_ID, s);
+    if let Some(r) = root_session_id
+        .filter(|r| !r.is_empty())
+        .filter(|r| *r != s)
+    {
+        builder = builder.header(header::DD_ROOT_SESSION_ID, r);
+    }
+    if let Some(p) = parent_session_id
+        .filter(|p| !p.is_empty())
+        .filter(|p| *p != s)
+    {
+        builder = builder.header(header::DD_PARENT_SESSION_ID, p);
+    }
+    builder
 }
 
 pub type ResponseFuture =

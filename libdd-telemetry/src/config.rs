@@ -33,6 +33,13 @@ pub struct Config {
     pub restartable: bool,
 
     pub debug_enabled: bool,
+
+    #[serde(default)]
+    pub session_id: Option<String>,
+    #[serde(default)]
+    pub root_session_id: Option<String>,
+    #[serde(default)]
+    pub parent_session_id: Option<String>,
 }
 
 fn endpoint_with_telemetry_path(
@@ -166,6 +173,9 @@ impl Default for Config {
             direct_submission_enabled: false,
             restartable: false,
             debug_enabled: false,
+            session_id: None,
+            root_session_id: None,
+            parent_session_id: None,
         }
     }
 }
@@ -249,6 +259,9 @@ impl Config {
             direct_submission_enabled: settings.direct_submission_enabled,
             restartable: false,
             debug_enabled: false,
+            session_id: None,
+            root_session_id: None,
+            parent_session_id: None,
         };
         if let Ok(url) = parse_uri(&trace_agent_url) {
             let _res = this.set_endpoint(Endpoint {

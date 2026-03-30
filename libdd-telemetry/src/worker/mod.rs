@@ -758,13 +758,18 @@ impl TelemetryWorker {
             )
             .header(
                 http_client::header::LIBRARY_LANGUAGE,
-                // Note: passing by ref here just causes the clone to happen underneath
                 tel.application.language_name.clone(),
             )
             .header(
                 http_client::header::LIBRARY_VERSION,
                 tel.application.tracer_version.clone(),
             );
+        let req = http_client::add_instrumentation_session_headers(
+            req,
+            self.config.session_id.as_deref(),
+            self.config.root_session_id.as_deref(),
+            self.config.parent_session_id.as_deref(),
+        );
 
         let body = http_common::Body::from(serialize::serialize(&tel)?);
         Ok(req.body(body)?)
@@ -1190,7 +1195,13 @@ impl TelemetryWorkerBuilder {
 
 #[cfg(test)]
 mod tests {
-    use crate::worker::TelemetryWorkerHandle;
+    use crate::data::Payload;
+    use crate::worker::http_client::header::{
+        DD_PARENT_SESSION_ID, DD_ROOT_SESSION_ID, DD_SESSION_ID,
+    };
+    use crate::worker::{TelemetryWorker, TelemetryWorkerBuilder, TelemetryWorkerHandle};
+    use libdd_common::{http_common, Endpoint};
+    use tokio::runtime::Runtime;
 
     fn is_send<T: Send>(_: T) {}
     fn is_sync<T: Sync>(_: T) {}
@@ -1201,5 +1212,107 @@ mod tests {
         let _ = |h: TelemetryWorkerHandle| is_send(h);
         #[allow(clippy::redundant_closure)]
         let _ = |h: TelemetryWorkerHandle| is_sync(h);
+    }
+
+    fn test_worker(
+        session_id: Option<String>,
+        root_session_id: Option<String>,
+        parent_session_id: Option<String>,
+    ) -> TelemetryWorker {
+        let mut b = TelemetryWorkerBuilder::new(
+            "h".into(),
+            "svc".into(),
+            "lang".into(),
+            "1".into(),
+            "tv".into(),
+        );
+        b.config
+            .set_endpoint(Endpoint::from_slice("http://127.0.0.1:1"))
+            .unwrap();
+        b.runtime_id = Some("rid".into());
+        b.config.session_id = session_id;
+        b.config.root_session_id = root_session_id;
+        b.config.parent_session_id = parent_session_id;
+        let rt = Runtime::new().unwrap();
+        b.build_worker(rt.handle().clone()).1
+    }
+
+    #[test]
+    fn telemetry_http_includes_dd_session_id() {
+        let req = test_worker(Some("sess".into()), None, None)
+            .build_request(&Payload::AppHeartbeat(()))
+            .unwrap();
+        assert_eq!(
+            req.headers().get(DD_SESSION_ID).unwrap().to_str().unwrap(),
+            "sess"
+        );
+        assert!(req.headers().get(DD_ROOT_SESSION_ID).is_none());
+        assert!(req.headers().get(DD_PARENT_SESSION_ID).is_none());
+    }
+
+    #[test]
+    fn telemetry_http_omits_parent_when_duplicate_of_session() {
+        let req = test_worker(Some("sess".into()), None, Some("sess".into()))
+            .build_request(&Payload::AppHeartbeat(()))
+            .unwrap();
+        assert_eq!(
+            req.headers().get(DD_SESSION_ID).unwrap().to_str().unwrap(),
+            "sess"
+        );
+        assert!(req.headers().get(DD_PARENT_SESSION_ID).is_none());
+    }
+
+    #[test]
+    fn telemetry_http_omits_session_family_without_valid_session_id() {
+        let assert_no_session_headers = |req: &http_common::HttpRequest| {
+            assert!(req.headers().get(DD_SESSION_ID).is_none());
+            assert!(req.headers().get(DD_ROOT_SESSION_ID).is_none());
+            assert!(req.headers().get(DD_PARENT_SESSION_ID).is_none());
+        };
+
+        let req = test_worker(None, Some("root".into()), Some("parent".into()))
+            .build_request(&Payload::AppHeartbeat(()))
+            .unwrap();
+        assert_no_session_headers(&req);
+
+        let req = test_worker(
+            Some(String::new()),
+            Some("root".into()),
+            Some("parent".into()),
+        )
+        .build_request(&Payload::AppHeartbeat(()))
+        .unwrap();
+        assert_no_session_headers(&req);
+    }
+
+    #[test]
+    fn telemetry_http_includes_dd_session_root_and_parent_session_ids() {
+        let req = test_worker(
+            Some("sess".into()),
+            Some("root".into()),
+            Some("parent".into()),
+        )
+        .build_request(&Payload::AppHeartbeat(()))
+        .unwrap();
+        assert_eq!(
+            req.headers().get(DD_SESSION_ID).unwrap().to_str().unwrap(),
+            "sess"
+        );
+        assert_eq!(
+            req.headers()
+                .get(DD_ROOT_SESSION_ID)
+                .unwrap()
+                .to_str()
+                .unwrap(),
+            "root"
+        );
+        assert_eq!(
+            req.headers()
+                .get(DD_PARENT_SESSION_ID)
+                .unwrap()
+                .to_str()
+                .unwrap(),
+            "parent"
+        );
     }
 }
