@@ -56,7 +56,7 @@ struct ComposerPackages {
 
 pub struct TelemetryCachedEntry {
     last_used: Instant,
-    pub client: Arc<Mutex<TelemetryCachedClient>>,
+    pub client: Arc<Mutex<Option<TelemetryCachedClient>>>,
 }
 
 pub struct TelemetryCachedClient {
@@ -76,7 +76,7 @@ impl TelemetryCachedClient {
         env: &str,
         instance_id: &InstanceId,
         runtime_meta: &RuntimeMetadata,
-        get_config: impl FnOnce() -> libdd_telemetry::config::Config,
+        get_config: impl FnOnce() -> Config,
         process_tags: Vec<Tag>,
     ) -> Self {
         let mut builder = TelemetryWorkerBuilder::new_fetch_host(
@@ -99,10 +99,18 @@ impl TelemetryCachedClient {
         builder.config = config.clone();
 
         let (handle, _join) = builder.spawn();
+        info!("spawned telemetry worker {config:?}");
 
-        info!("spawning telemetry worker {config:?}");
+        let worker = handle.clone();
+        tokio::spawn(async move {
+            worker
+                .send_msg(TelemetryActions::Lifecycle(LifecycleAction::Start))
+                .await
+                .ok();
+        });
+
         Self {
-            worker: handle.clone(),
+            worker: handle,
             shm_writer: {
                 #[allow(clippy::unwrap_used)]
                 OneWayShmWriter::<NamedShmHandle>::new(path_for_telemetry(service, env)).unwrap()
@@ -219,7 +227,10 @@ impl TelemetryCachedClient {
                     // cheap way to avoid unbounded caching
                     const CACHE_INTERVAL: u64 = 2000;
                     let last_clean = LAST_CACHE_CLEAN.load(Ordering::Relaxed);
-                    let now_secs = Instant::now().elapsed().as_secs();
+                    let now_secs = SystemTime::now()
+                        .duration_since(SystemTime::UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_secs();
                     if now_secs > last_clean + CACHE_INTERVAL
                         && LAST_CACHE_CLEAN
                             .compare_exchange(
@@ -305,57 +316,42 @@ impl TelemetryCachedClientSet {
         runtime_meta: &RuntimeMetadata,
         get_config: F,
         process_tags: Vec<Tag>,
-    ) -> Arc<Mutex<TelemetryCachedClient>>
+    ) -> Arc<Mutex<Option<TelemetryCachedClient>>>
     where
-        F: FnOnce() -> libdd_telemetry::config::Config,
+        F: FnOnce() -> Config,
     {
         let key = (service.to_string(), env.to_string());
 
         let mut map = self.inner.lock_or_panic();
 
         if let Some(existing) = map.get_mut(&key) {
-            existing.last_used = Instant::now();
-            tokio::spawn({
-                let worker = existing.client.lock_or_panic().worker.clone();
-                async move {
-                    worker
-                        .send_msg(TelemetryActions::Lifecycle(LifecycleAction::Start))
-                        .await
-                        .ok();
-                }
-            });
-
-            info!("Reusing existing telemetry client for {key:?}");
-            return existing.client.clone();
+            if existing.client.lock_or_panic().is_some() {
+                existing.last_used = Instant::now();
+                info!("Reusing existing telemetry client for {key:?}");
+                return existing.client.clone();
+            }
+            // Dead (None) entry — fall through to replace it with a fresh client.
         }
 
-        let entry = TelemetryCachedEntry {
-            last_used: Instant::now(),
-            client: Arc::new(Mutex::new(TelemetryCachedClient::new(
-                service,
-                env,
-                instance_id,
-                runtime_meta,
-                get_config,
-                process_tags,
-            ))),
-        };
-
-        let entry = map.entry(key.clone()).or_insert(entry);
-
-        tokio::spawn({
-            let worker = entry.client.lock_or_panic().worker.clone();
-            async move {
-                worker
-                    .send_msg(TelemetryActions::Lifecycle(LifecycleAction::Start))
-                    .await
-                    .ok();
-            }
-        });
+        let new_client = Arc::new(Mutex::new(Some(TelemetryCachedClient::new(
+            service,
+            env,
+            instance_id,
+            runtime_meta,
+            get_config,
+            process_tags,
+        ))));
+        map.insert(
+            key.clone(),
+            TelemetryCachedEntry {
+                last_used: Instant::now(),
+                client: new_client.clone(),
+            },
+        );
 
         info!("Created new telemetry client for {key:?}");
 
-        entry.client.clone()
+        new_client
     }
 
     pub fn remove_telemetry_client(&self, service: &str, env: &str) {
@@ -425,7 +421,13 @@ pub(crate) async fn telemetry_action_receiver_task(
             &actions.service_name,
             &actions.env_name,
         );
-        let client = telemetry_client.lock_or_panic().worker.clone();
+        let Some(client) = telemetry_client
+            .lock_or_panic()
+            .as_ref()
+            .map(|t| t.worker.clone())
+        else {
+            continue;
+        };
 
         for it_action in actions.actions {
             match it_action {
@@ -442,14 +444,17 @@ pub(crate) async fn telemetry_action_receiver_task(
                 }
                 InternalTelemetryAction::RegisterTelemetryMetric(metric) => {
                     debug!("Registered telemetry metric: {metric:?}");
-                    telemetry_client.lock_or_panic().register_metric(metric);
+                    if let Some(t) = telemetry_client.lock_or_panic().as_mut() {
+                        t.register_metric(metric);
+                    }
                 }
                 InternalTelemetryAction::AddMetricPoint((value, name, tags)) => {
                     let metric_name = name.clone();
                     let actions_point_opt = {
                         telemetry_client
                             .lock_or_panic()
-                            .to_telemetry_point((name, value, tags))
+                            .as_ref()
+                            .and_then(|t| t.to_telemetry_point((name, value, tags)))
                     };
                     if let Some(actions_point) = actions_point_opt {
                         match client.send_msg(actions_point).await {
@@ -473,7 +478,7 @@ fn get_telemetry_client(
     instance_id: &InstanceId,
     service_name: &str,
     env_name: &str,
-) -> Arc<Mutex<TelemetryCachedClient>> {
+) -> Arc<Mutex<Option<TelemetryCachedClient>>> {
     let session = sidecar.get_session(&instance_id.session_id);
     let trace_config = session.get_trace_config();
     let runtime_meta = RuntimeMetadata::new(

@@ -242,10 +242,9 @@ impl Add for TelemetryWorkerStats {
                 buckets: self.metric_buckets.buckets + rhs.metric_buckets.buckets,
                 series: self.metric_buckets.series + rhs.metric_buckets.series,
                 series_points: self.metric_buckets.series_points + rhs.metric_buckets.series_points,
-                distributions: self.metric_buckets.distributions
-                    + self.metric_buckets.distributions,
+                distributions: self.metric_buckets.distributions + rhs.metric_buckets.distributions,
                 distributions_points: self.metric_buckets.distributions_points
-                    + self.metric_buckets.distributions_points,
+                    + rhs.metric_buckets.distributions_points,
             },
         }
     }

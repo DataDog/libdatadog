@@ -648,6 +648,22 @@ impl SeqpacketConn {
         pipe_read(self.raw_handle(), buf, false)
     }
 
+    /// Non-blocking drain of all available ack messages. Returns the count drained.
+    ///
+    /// Acks are always 1-byte payloads with no handles; the buffer is sized for the wire
+    /// format: 1 payload byte + the 4-byte handle-count suffix = `1 + HANDLE_SUFFIX_SIZE`.
+    pub fn drain_acks_nonblocking(&self) -> io::Result<usize> {
+        let mut buf = [0u8; 1 + HANDLE_SUFFIX_SIZE];
+        let mut total = 0usize;
+        loop {
+            match self.try_recv_raw(&mut buf) {
+                Ok(_) => total += 1,
+                Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => return Ok(total),
+                Err(e) => return Err(e),
+            }
+        }
+    }
+
     /// Blocking receive.
     ///
     /// `buf` must be at least `payload_max + HANDLE_SUFFIX_SIZE` bytes.

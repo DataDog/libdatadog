@@ -9,6 +9,8 @@
 
 use nix::sys::socket::{recvmsg, sendmsg, AddressFamily, SockFlag, SockType};
 pub use nix::sys::socket::{ControlMessage, ControlMessageOwned, MsgFlags, UnixAddr};
+#[cfg(target_os = "linux")]
+use std::mem::MaybeUninit;
 use std::{
     io,
     os::unix::io::{AsRawFd, FromRawFd, IntoRawFd, OwnedFd, RawFd},
@@ -284,6 +286,80 @@ impl SeqpacketConn {
     /// Non-blocking receive. Returns `Err(WouldBlock)` if no message available.
     pub fn try_recv_raw(&self, buf: &mut [u8]) -> io::Result<(usize, Vec<OwnedFd>)> {
         recvmsg_raw(self.inner.as_raw_fd(), buf, MsgFlags::empty())
+    }
+
+    /// Non-blocking drain of all available ack messages. Returns the count drained.
+    ///
+    /// Acks are always 1-byte payloads with no file descriptors, so a minimal per-slot buffer
+    /// suffices. On Linux, `recvmmsg(2)` batches up to 100 receives into a single syscall; on
+    /// other platforms individual `try_recv_raw` calls are used instead.
+    pub fn drain_acks_nonblocking(&self) -> io::Result<usize> {
+        #[cfg(target_os = "linux")]
+        {
+            const BATCH: usize = 100;
+            // SAFETY: bufs/iovs/msgs are written before being passed to recvmmsg.
+            // msg_name and msg_control must be null; all other fields are either set
+            // explicitly below or are output-only (msg_flags, msg_len).
+            let mut bufs = [const { MaybeUninit::<[u8; 1]>::uninit() }; BATCH];
+            let mut iovs = [const { MaybeUninit::<libc::iovec>::uninit() }; BATCH];
+            let mut msgs = [const { MaybeUninit::<libc::mmsghdr>::uninit() }; BATCH];
+            for i in 0..BATCH {
+                unsafe {
+                    (*iovs[i].as_mut_ptr()).iov_base = bufs[i].as_mut_ptr() as *mut libc::c_void;
+                    (*iovs[i].as_mut_ptr()).iov_len = 1;
+                    (*msgs[i].as_mut_ptr()).msg_hdr.msg_name = std::ptr::null_mut();
+                    (*msgs[i].as_mut_ptr()).msg_hdr.msg_namelen = 0;
+                    // addr_of_mut avoids creating a mutable reference to an array slot.
+                    (*msgs[i].as_mut_ptr()).msg_hdr.msg_iov = iovs[i].as_mut_ptr();
+                    (*msgs[i].as_mut_ptr()).msg_hdr.msg_iovlen = 1;
+                    (*msgs[i].as_mut_ptr()).msg_hdr.msg_control = std::ptr::null_mut();
+                    (*msgs[i].as_mut_ptr()).msg_hdr.msg_controllen = 0;
+                }
+            }
+            let fd = self.inner.as_raw_fd();
+            let mut total = 0usize;
+            loop {
+                let n = unsafe {
+                    libc::recvmmsg(
+                        fd,
+                        msgs[0].as_mut_ptr(),
+                        BATCH as libc::c_uint,
+                        libc::MSG_DONTWAIT as _, // seems to be inconsistent, sometimes i32, u32
+                        std::ptr::null_mut(),
+                    )
+                };
+                if n < 0 {
+                    let e = io::Error::last_os_error();
+                    return if e.kind() == io::ErrorKind::WouldBlock {
+                        Ok(total)
+                    } else {
+                        Err(e)
+                    };
+                }
+                let n = n as usize;
+                for msg in msgs.iter().take(n) {
+                    if unsafe { msg.assume_init_ref() }.msg_len == 0 {
+                        return Err(io::Error::from(io::ErrorKind::BrokenPipe));
+                    }
+                }
+                total += n;
+                if n < BATCH {
+                    return Ok(total);
+                }
+            }
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            let mut buf = [0u8; 1];
+            let mut total = 0usize;
+            loop {
+                match self.try_recv_raw(&mut buf) {
+                    Ok(_) => total += 1,
+                    Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => return Ok(total),
+                    Err(e) => return Err(e),
+                }
+            }
+        }
     }
 
     /// Blocking receive. Polls for readability (respecting read_timeout), then receives.
