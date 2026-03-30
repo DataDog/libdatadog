@@ -431,6 +431,177 @@ fn test_crash_tracking_errors_intake_crash_ping() {
     run_crash_test_with_artifacts(&config, &artifacts_map, &artifacts, validator).unwrap();
 }
 
+/// Validates that the errors intake payload correctly inherits fields from the crash info payload.
+/// Both payloads are written to file during the same crash, so we can compare them directly.
+#[test]
+#[cfg_attr(miri, ignore)]
+fn test_crash_tracking_errors_intake_crash_info_parity() {
+    let config = CrashTestConfig::new(
+        BuildProfile::Release,
+        TestMode::DoNothing,
+        CrashType::NullDeref,
+    )
+    .with_env("DD_CRASHTRACKING_ERRORS_INTAKE_ENABLED", "true");
+
+    let artifacts = StandardArtifacts::new(config.profile);
+    let artifacts_map = build_artifacts(&artifacts.as_slice()).unwrap();
+
+    let validator: ValidatorFn = Box::new(|crash_info_payload, fixtures| {
+        let errors_intake_path = fixtures.crash_profile_path.with_extension("errors");
+        assert!(
+            errors_intake_path.exists(),
+            "Errors intake file should exist at {}",
+            errors_intake_path.display()
+        );
+
+        let errors_intake_content =
+            fs::read(&errors_intake_path).context("reading errors intake payload")?;
+        let errors_payload: Value = serde_json::from_slice(&errors_intake_content)
+            .context("deserializing errors intake payload")?;
+
+        // Errors intake should use crash_info.error.message when present,
+        // otherwise fall back to signal-derived message
+        let crash_info_message = &crash_info_payload["error"]["message"];
+        let errors_message = &errors_payload["error"]["message"];
+        if crash_info_message.is_string() {
+            assert_eq!(
+                errors_message, crash_info_message,
+                "errors intake message should inherit crash_info.error.message"
+            );
+        } else {
+            assert!(
+                errors_message.is_string(),
+                "errors intake should have a fallback message"
+            );
+            assert!(
+                errors_message
+                    .as_str()
+                    .unwrap()
+                    .contains("Process terminated"),
+                "fallback message should describe the signal"
+            );
+        }
+
+        let crash_info_thread_name = &crash_info_payload["error"]["thread_name"];
+        let errors_thread_name = &errors_payload["error"]["thread_name"];
+        assert_eq!(
+            errors_thread_name, crash_info_thread_name,
+            "errors intake thread_name should match crash_info"
+        );
+
+        // error_type: signal name when sig_info present, ErrorKind otherwise
+        let errors_type = errors_payload["error"]["type"]
+            .as_str()
+            .expect("errors intake should have error.type");
+        if crash_info_payload["sig_info"].is_object()
+            && crash_info_payload["sig_info"]["si_signo_human_readable"].is_string()
+        {
+            let signal_name = crash_info_payload["sig_info"]["si_signo_human_readable"]
+                .as_str()
+                .unwrap();
+            assert_eq!(
+                errors_type, signal_name,
+                "errors intake type should be signal name when sig_info is present"
+            );
+        } else {
+            let crash_info_kind = crash_info_payload["error"]["kind"]
+                .as_str()
+                .expect("crash_info should have error.kind");
+            assert_eq!(
+                errors_type, crash_info_kind,
+                "errors intake type should equal crash_info ErrorKind when no sig_info"
+            );
+        }
+
+        // os_info parity
+        assert_eq!(
+            errors_payload["os_info"], crash_info_payload["os_info"],
+            "errors intake os_info should match crash_info os_info"
+        );
+
+        // proc_info parity
+        assert_eq!(
+            errors_payload["proc_info"], crash_info_payload["proc_info"],
+            "errors intake proc_info should match crash_info proc_info"
+        );
+
+        // sig_info parity
+        assert_eq!(
+            errors_payload["sig_info"], crash_info_payload["sig_info"],
+            "errors intake sig_info should match crash_info sig_info"
+        );
+
+        // files parity
+        let crash_info_files = &crash_info_payload["files"];
+        let errors_files = &errors_payload["files"];
+        if crash_info_files.is_object()
+            && crash_info_files.as_object().is_some_and(|m| !m.is_empty())
+        {
+            assert_eq!(
+                errors_files, crash_info_files,
+                "errors intake files should match crash_info files"
+            );
+        }
+
+        // stack parity
+        let crash_info_stack = &crash_info_payload["error"]["stack"];
+        let errors_stack = &errors_payload["error"]["stack"];
+        if crash_info_stack.is_object() {
+            let crash_frames = &crash_info_stack["frames"];
+            let errors_frames = &errors_stack["frames"];
+            if crash_frames.is_array()
+                && crash_frames
+                    .as_array()
+                    .is_some_and(|frames| !frames.is_empty())
+            {
+                assert!(
+                    errors_frames.is_array(),
+                    "errors intake should have stack frames when crash_info does"
+                );
+                assert_eq!(
+                    errors_frames.as_array().map(|f| f.len()),
+                    crash_frames.as_array().map(|f| f.len()),
+                    "errors intake frame count should match crash_info"
+                );
+            }
+        }
+
+        // fingerprint parity
+        assert_eq!(
+            errors_payload["error"]["fingerprint"], crash_info_payload["fingerprint"],
+            "errors intake fingerprint should match crash_info fingerprint"
+        );
+
+        // experimental parity
+        if crash_info_payload["experimental"].is_object() {
+            assert_eq!(
+                errors_payload["error"]["experimental"], crash_info_payload["experimental"],
+                "errors intake experimental should match crash_info experimental"
+            );
+        }
+
+        // ucontext parity
+        if crash_info_payload["ucontext"].is_object() {
+            assert_eq!(
+                errors_payload["ucontext"], crash_info_payload["ucontext"],
+                "errors intake ucontext should match crash_info ucontext"
+            );
+        }
+
+        // thread_name parity
+        if crash_info_payload["thread_name"].is_string() {
+            assert_eq!(
+                errors_payload["error"]["thread_name"], crash_info_payload["thread_name"],
+                "errors intake thread_name should match crash_info thread_name"
+            );
+        }
+
+        Ok(())
+    });
+
+    run_crash_test_with_artifacts(&config, &artifacts_map, &artifacts, validator).unwrap();
+}
+
 #[test]
 #[cfg_attr(miri, ignore)]
 #[cfg(unix)]
@@ -1832,7 +2003,7 @@ fn assert_errors_intake_payload(errors_intake_content: &[u8], crash_typ: &str) {
 
     let error = &payload["error"];
     assert_eq!(error["source_type"], "Crashtracking");
-    assert!(error["type"].is_string()); // Note: "error_type" field is serialized as "type"
+    assert!(error["type"].is_string());
     assert!(error["message"].is_string());
 
     // Check if this is a crash ping or crash report
@@ -1863,7 +2034,22 @@ fn assert_errors_intake_payload(errors_intake_content: &[u8], crash_typ: &str) {
         );
     }
 
-    // Check signal-specific values
+    // error.type is signal name for signal-based crashes, ErrorKind otherwise
+    let expected_error_type = match crash_typ {
+        "null_deref" | "kill_sigsegv" | "raise_sigsegv" => "SIGSEGV",
+        "kill_sigabrt" | "raise_sigabrt" => "SIGABRT",
+        "kill_sigill" | "raise_sigill" => "SIGILL",
+        "kill_sigbus" | "raise_sigbus" => "SIGBUS",
+        "unhandled_exception" => "UnhandledException",
+        other => panic!("Unexpected crash_typ for error.type: {other}"),
+    };
+    assert_eq!(
+        error["type"], expected_error_type,
+        "error.type mismatch, got: {}",
+        error["type"]
+    );
+
+    // error.message should come from crash_info.error.message or fall back to signal description
     match crash_typ {
         "null_deref" => {
             assert_eq!(error["type"], "SIGSEGV");
