@@ -35,6 +35,8 @@ pub struct AgentInfoStruct {
     pub peer_tags: Option<Vec<String>>,
     /// List of span kinds eligible for stats computation
     pub span_kinds_stats_computed: Option<Vec<String>>,
+    /// Obfuscation version supported by the agent for client-side stats
+    pub obfuscation_version: Option<u32>,
     /// Container tags hash from HTTP response header
     pub container_tags_hash: Option<String>,
 }
