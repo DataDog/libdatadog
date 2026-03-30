@@ -45,6 +45,7 @@ pub(crate) struct SessionInfo {
     pub(crate) pid: Arc<AtomicI32>,
     pub(crate) remote_config_enabled: Arc<Mutex<bool>>,
     pub(crate) process_tags: Arc<Mutex<Vec<Tag>>>,
+    pub(crate) stats_config: Arc<Mutex<Option<crate::service::stats_flusher::StatsConfig>>>,
 }
 
 impl Clone for SessionInfo {
@@ -67,6 +68,7 @@ impl Clone for SessionInfo {
             pid: self.pid.clone(),
             remote_config_enabled: self.remote_config_enabled.clone(),
             process_tags: self.process_tags.clone(),
+            stats_config: self.stats_config.clone(),
         }
     }
 }

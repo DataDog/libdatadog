@@ -38,6 +38,8 @@ datadog-ipc = { path = "../datadog-ipc", features = ["tiny-bytes"] }
 datadog-ipc-macros = { path = "../datadog-ipc-macros" }
 
 rand = "0.8.3"
+rmp-serde = "1.1.1"
+libdd-trace-protobuf = { path = "../libdd-trace-protobuf" }
 serde = { version = "1.0", features = ["derive", "rc"] }
 serde_with = "3.6.0"
 bincode = { version = "1.3.3" }
