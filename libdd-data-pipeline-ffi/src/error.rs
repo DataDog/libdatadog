@@ -124,10 +124,10 @@ impl From<TraceExporterError> for ExporterError {
                 NetworkErrorKind::WrongStatus => ExporterErrorCode::HttpWrongStatus,
             },
             TraceExporterError::Request(e) => {
-                let status = e.status();
-                if status.is_client_error() {
+                let status: u16 = e.status().into();
+                if (400..499).contains(&status) {
                     ExporterErrorCode::HttpClient
-                } else if status.is_server_error() {
+                } else if status >= 500 {
                     ExporterErrorCode::HttpServer
                 } else {
                     ExporterErrorCode::HttpUnknown

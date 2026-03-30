@@ -43,13 +43,13 @@ libdd-tinybytes = { version = "1.1.0", path = "../libdd-tinybytes", features = [
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 tokio = { version = "1.23", features = ["time", "test-util"], default-features = false }
-libdd-capabilities-impl = "0.1.0"
+libdd-capabilities-impl = { version = "0.1.0", path = "../libdd-capabilities-impl" }
 
 [lib]
 bench = false
 
 [dev-dependencies]
-libdd-capabilities-impl = "0.1.0"
+libdd-capabilities-impl = { version = "0.1.0", path = "../libdd-capabilities-impl" }
 libdd-log = { path = "../libdd-log" }
 clap = { version = "4.0", features = ["derive"] }
 criterion = "0.5.1"
