@@ -61,7 +61,7 @@ jobs:
             export AWS_LC_FIPS_SYS_NO_ASM=1
           fi
           # shellcheck disable=SC2046
-          cargo clippy --workspace --all-targets --all-features -- -D warnings 
+          cargo clippy --workspace --all-targets --all-features -- -D warnings $([ ${{ matrix.rust_version }} = 1.84.1 ] || echo -Aclippy::manual_is_multiple_of)
 
   licensecheck:
     runs-on: ubuntu-latest

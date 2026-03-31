@@ -275,25 +275,26 @@ pub async fn run_stats_flush_loop(
                 0
             };
             if idle_secs >= IDLE_REMOVE_SECS {
-                let s = map_guard.remove(&map_key).unwrap();
-                info!(
-                    "Removing idle SHM span concentrator for env={} version={} \
-                     (idle for {idle_secs}s)",
-                    map_key.env, map_key.version,
-                );
-                let uri = stats_uri(&s.endpoint);
-                let ep = s.endpoint.clone();
-                let payload = s.concentrator.flush(
-                    true,
-                    "",
-                    &map_key.env,
-                    &map_key.version,
-                    "",
-                    &s.tracer_version,
-                    &s.runtime_id,
-                    "",
-                );
-                Some((payload, uri, ep))
+                map_guard.remove(&map_key).map(|s| {
+                    info!(
+                        "Removing idle SHM span concentrator for env={} version={} \
+                         (idle for {idle_secs}s)",
+                        map_key.env, map_key.version,
+                    );
+                    let uri = stats_uri(&s.endpoint);
+                    let ep = s.endpoint.clone();
+                    let payload = s.concentrator.flush(
+                        true,
+                        "",
+                        &map_key.env,
+                        &map_key.version,
+                        "",
+                        &s.tracer_version,
+                        &s.runtime_id,
+                        "",
+                    );
+                    (payload, uri, ep)
+                })
             } else {
                 None
             }

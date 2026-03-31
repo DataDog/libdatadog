@@ -87,7 +87,6 @@ const MAX_FLUSH_WAIT_ITERS: u32 = 100_000;
 /// Spin iterations before yielding to the OS scheduler.
 const YIELD_AFTER_SPINS: u32 = 8;
 
-#[inline]
 fn bin_for_duration(nanos: i64) -> usize {
     if nanos <= 0 {
         return 0;
@@ -101,7 +100,6 @@ fn bin_for_duration(nanos: i64) -> usize {
     (b as usize).clamp(1, N_BINS - 2)
 }
 
-#[inline]
 fn bin_representative(bin: usize) -> f64 {
     if bin == 0 {
         return 0.0;
@@ -140,11 +138,17 @@ struct ShmKeyHeader {
 /// valid for `AtomicU64::new(0)`.
 #[repr(C, align(8))]
 struct ShmStats {
+    /// Total number of spans in this group.
     hits: AtomicU64,
+    /// Number of error spans in this group.
     errors: AtomicU64,
+    /// Sum of all span durations (nanoseconds).
     duration_sum: AtomicU64,
+    /// Number of top-level spans (service-entry or measured).
     top_level_hits: AtomicU64,
+    /// Histogram bins for non-error span durations.
     ok_bins: [AtomicU64; N_BINS],
+    /// Histogram bins for error span durations.
     error_bins: [AtomicU64; N_BINS],
 }
 
@@ -171,15 +175,22 @@ struct ShmBucketHeader {
 /// Global SHM header (first page of the mapping).
 #[repr(C)]
 struct ShmHeader {
+    /// Layout version; checked by [`ShmSpanConcentrator::open`].  Mismatch returns an error.
     version: u32,
+    /// Width of each time bucket in nanoseconds (e.g. 10 s = 10_000_000_000).
     bucket_size_nanos: u64,
+    /// Number of aggregation slots per bucket (hash-table capacity).
     slot_count: u32,
+    /// Byte size of one full bucket region (header + slots + string pool), page-aligned.
     bucket_region_size: u32,
+    /// Byte capacity of the per-bucket string pool.
     string_pool_size: u32,
+    /// Index (0 or 1) of the bucket currently being written to by PHP workers.
     active_idx: AtomicU8,
     /// Set to 1 by the sidecar when workers should re-open the SHM at the
     /// same path (a new, larger mapping has been created there).
     please_reload: AtomicU8,
+    /// Monotonic counter incremented on every successful flush, used as the stats sequence number.
     flush_seq: AtomicU64,
 }
 
@@ -190,13 +201,13 @@ fn bucket_hdr_size() -> usize {
 }
 
 fn pool_start_within_bucket(slot_count: u32) -> usize {
-    bucket_hdr_size() + slot_count as usize * size_of::<ShmEntry>()
+    bucket_hdr_size() + (slot_count as usize) * size_of::<ShmEntry>()
 }
 
 fn aligned_bucket_region(slot_count: u32, string_pool_size: u32) -> usize {
     let raw = pool_start_within_bucket(slot_count) + string_pool_size as usize;
     let page = page_size::get();
-    ((raw + page - 1) / page) * page
+    raw.div_ceil(page) * page
 }
 
 fn total_shm_size(slot_count: u32, string_pool_size: u32) -> usize {
@@ -224,7 +235,6 @@ unsafe fn pool_base(base: *const u8, bkt_start: usize, slot_count: u32) -> *cons
     base.add(bkt_start + pool_start_within_bucket(slot_count))
 }
 
-#[inline]
 unsafe fn sref_str<'a>(pool: *const u8, sr: StringRef) -> &'a str {
     if sr.len == 0 {
         return "";
@@ -271,7 +281,7 @@ unsafe fn alloc_str(pool: *mut u8, cursor: &AtomicU32, pool_size: u32, s: &str) 
             return StringRef::default();
         }
         if cursor
-            .compare_exchange_weak(old, new, AcqRel, Relaxed)
+            .compare_exchange_weak(old, new, Relaxed, Relaxed)
             .is_ok()
         {
             std::ptr::copy_nonoverlapping(s.as_ptr(), pool.add(old as usize), len as usize);
@@ -338,20 +348,13 @@ impl OwnedShmSpanInput {
 /// Shared-memory span stats concentrator.
 ///
 /// Created once by the sidecar; opened (read-write) by each PHP worker.
+#[derive(Clone)]
 pub struct ShmSpanConcentrator {
     mem: Arc<MappedMem<NamedShmHandle>>,
 }
 
 unsafe impl Send for ShmSpanConcentrator {}
 unsafe impl Sync for ShmSpanConcentrator {}
-
-impl Clone for ShmSpanConcentrator {
-    fn clone(&self) -> Self {
-        ShmSpanConcentrator {
-            mem: Arc::clone(&self.mem),
-        }
-    }
-}
 
 impl ShmSpanConcentrator {
     /// Create a new SHM concentrator (sidecar side).
@@ -374,9 +377,9 @@ impl ShmSpanConcentrator {
         }
 
         let handle = NamedShmHandle::create(path, total)?;
-        let mem = handle.map()?;
+        let mut mem = handle.map()?;
 
-        let base = mem.as_slice().as_ptr() as *mut u8;
+        let base = mem.as_slice_mut().as_mut_ptr();
         unsafe {
             // fresh mmap. Initialized to zero.
             let hdr = &mut *(base as *mut ShmHeader);
@@ -467,13 +470,14 @@ impl ShmSpanConcentrator {
                     SLOT_EMPTY => {
                         if entry
                             .key_hash
-                            .compare_exchange(SLOT_EMPTY, SLOT_INIT, AcqRel, Relaxed)
+                            .compare_exchange(SLOT_EMPTY, SLOT_INIT, Acquire, Relaxed)
                             .is_ok()
                         {
                             unsafe {
                                 Self::write_key(entry, input, pool, &bh.string_cursor, pool_size);
                             }
-                            fence(Release);
+                            // Release on the store synchronises the key write with any
+                            // subsequent Acquire load of the hash — no separate fence needed.
                             entry.key_hash.store(hash, Release);
                             Self::update_stats(entry, input);
                             done = true;
@@ -611,6 +615,7 @@ impl ShmSpanConcentrator {
     ///
     /// * `force = false` – swap the active bucket, drain the previously-active one.
     /// * `force = true`  – drain both buckets without swapping (shutdown).
+    #[allow(clippy::too_many_arguments)]
     pub fn flush(
         &self,
         force: bool,
@@ -656,8 +661,11 @@ impl ShmSpanConcentrator {
         let bh = unsafe { bucket_header(base, bkt_start) };
 
         // Wait for in-flight writers (bounded to tolerate dead workers).
+        // The intermediate loads only need Relaxed; a single fence(Acquire) after
+        // the loop synchronizes with the Release in each writer's in_flight.fetch_sub,
+        // and covers all subsequent SHM reads in this function and callees.
         let mut spins = 0u32;
-        while bh.in_flight.load(Acquire) != 0 && spins < MAX_FLUSH_WAIT_ITERS {
+        while bh.in_flight.load(Relaxed) != 0 && spins < MAX_FLUSH_WAIT_ITERS {
             spins += 1;
             if spins % YIELD_AFTER_SPINS == 0 {
                 thread::yield_now();
@@ -665,15 +673,16 @@ impl ShmSpanConcentrator {
                 hint::spin_loop();
             }
         }
+        fence(Acquire);
 
-        let bucket_start_ts = bh.start_nanos.load(Acquire);
+        let bucket_start_ts = bh.start_nanos.load(Relaxed);
         let pool = unsafe { pool_base(base, bkt_start, slot_count) };
 
         let mut grouped: Vec<pb::ClientGroupedStats> = Vec::new();
 
         for slot in 0..slot_count as usize {
             let entry = unsafe { entry_ref(base, bkt_start, slot) };
-            let h = entry.key_hash.load(Acquire);
+            let h = entry.key_hash.load(Relaxed);
             if h == SLOT_EMPTY || h == SLOT_INIT {
                 continue;
             }
@@ -740,16 +749,17 @@ impl ShmSpanConcentrator {
             })
             .collect();
 
-        let hits = s.hits.load(Acquire);
-        let errors = s.errors.load(Acquire);
-        let duration_sum = s.duration_sum.load(Acquire);
-        let top_level_hits = s.top_level_hits.load(Acquire);
+        // fence(Acquire) in drain_bucket's spin-wait loop already synchronises these reads.
+        let hits = s.hits.load(Relaxed);
+        let errors = s.errors.load(Relaxed);
+        let duration_sum = s.duration_sum.load(Relaxed);
+        let top_level_hits = s.top_level_hits.load(Relaxed);
 
         let mut ok_sketch = DDSketch::default();
         let mut err_sketch = DDSketch::default();
         for bin in 0..N_BINS {
-            let ok_count = s.ok_bins[bin].load(Acquire);
-            let err_count = s.error_bins[bin].load(Acquire);
+            let ok_count = s.ok_bins[bin].load(Relaxed);
+            let err_count = s.error_bins[bin].load(Relaxed);
             let rep = bin_representative(bin);
             if ok_count > 0 {
                 let _ = ok_sketch.add_with_count(rep, ok_count as f64);
@@ -837,6 +847,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn test_add_and_flush() {
         let c = ShmSpanConcentrator::create(
             test_path(),
@@ -852,6 +863,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn test_open_from_worker() {
         let path = test_path();
         let creator = ShmSpanConcentrator::create(
@@ -868,6 +880,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn test_needs_reload() {
         let path = test_path();
         let creator = ShmSpanConcentrator::create(

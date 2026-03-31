@@ -24,7 +24,7 @@ use crate::service::{InstanceId, QueueId, RuntimeInfo};
 ///
 /// It contains a list of runtimes, session configuration, tracer configuration, and log guards.
 /// It also has methods to manage the runtimes and configurations.
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub(crate) struct SessionInfo {
     runtimes: Arc<Mutex<HashMap<String, RuntimeInfo>>>,
     pub(crate) session_config: Arc<Mutex<Option<libdd_telemetry::config::Config>>>,
@@ -46,31 +46,6 @@ pub(crate) struct SessionInfo {
     pub(crate) remote_config_enabled: Arc<Mutex<bool>>,
     pub(crate) process_tags: Arc<Mutex<Vec<Tag>>>,
     pub(crate) stats_config: Arc<Mutex<Option<crate::service::stats_flusher::StatsConfig>>>,
-}
-
-impl Clone for SessionInfo {
-    fn clone(&self) -> Self {
-        SessionInfo {
-            runtimes: self.runtimes.clone(),
-            session_config: self.session_config.clone(),
-            debugger_config: self.debugger_config.clone(),
-            tracer_config: self.tracer_config.clone(),
-            dogstatsd: self.dogstatsd.clone(),
-            remote_config_options: self.remote_config_options.clone(),
-            agent_infos: self.agent_infos.clone(),
-            remote_config_interval: self.remote_config_interval.clone(),
-            #[cfg(windows)]
-            remote_config_notify_function: self.remote_config_notify_function.clone(),
-            #[cfg(windows)]
-            process_handle: self.process_handle.clone(),
-            log_guard: self.log_guard.clone(),
-            session_id: self.session_id.clone(),
-            pid: self.pid.clone(),
-            remote_config_enabled: self.remote_config_enabled.clone(),
-            process_tags: self.process_tags.clone(),
-            stats_config: self.stats_config.clone(),
-        }
-    }
 }
 
 impl SessionInfo {
