@@ -224,17 +224,60 @@ unsafe fn emit_backtrace_via_libunwind(
     }
 
     const MAX_FRAMES: usize = 512;
-    for _ in 0..MAX_FRAMES {
+    let mut prev_ip = 0u64;
+    let mut prev_sp = 0u64;
+    let mut same_frame_count = 0;
+
+    for i in 0..MAX_FRAMES {
         let mut ip: UnwWord = 0;
         let mut sp: UnwWord = 0;
 
         // SAFETY: `cursor` was successfully initialized by `unw_init_local2`
         // and is advanced by `unw_step` at the end of each iteration.
         // UNW_REG_IP and UNW_REG_SP are valid libunwind register constants
-        if unsafe { unw_get_reg(&mut cursor, UNW_REG_IP, &mut ip) } != 0 || ip == 0 {
+        let ip_ret = unsafe { unw_get_reg(&mut cursor, UNW_REG_IP, &mut ip) };
+        if ip_ret != 0 || ip == 0 {
+            // DEBUG: Log why we're breaking
+            eprintln!(
+                "LIBUNWIND DEBUG: Breaking at frame {}: ip_ret={}, ip=0x{:x}",
+                i, ip_ret, ip
+            );
             break;
         }
-        let _ = unsafe { unw_get_reg(&mut cursor, UNW_REG_SP, &mut sp) };
+        let sp_ret = unsafe { unw_get_reg(&mut cursor, UNW_REG_SP, &mut sp) };
+
+        // DEBUG: Check for infinite loops
+        if ip == prev_ip && sp == prev_sp {
+            same_frame_count += 1;
+            eprintln!(
+                "LIBUNWIND DEBUG: Frame {} - DUPLICATE FRAME: IP=0x{:x}, SP=0x{:x}, count={}",
+                i, ip, sp, same_frame_count
+            );
+            if same_frame_count > 3 {
+                eprintln!(
+                    "LIBUNWIND DEBUG: INFINITE LOOP DETECTED - breaking after {} duplicate frames",
+                    same_frame_count
+                );
+                break;
+            }
+        } else {
+            if same_frame_count > 0 {
+                eprintln!(
+                    "LIBUNWIND DEBUG: Frame {} - Back to normal progression after {} duplicates",
+                    i, same_frame_count
+                );
+            }
+            same_frame_count = 0;
+        }
+
+        // DEBUG: Log register values and retrieval status
+        eprintln!(
+            "LIBUNWIND DEBUG: Frame {}: IP=0x{:x} (ret={}), SP=0x{:x} (ret={})",
+            i, ip, ip_ret, sp, sp_ret
+        );
+
+        prev_ip = ip;
+        prev_sp = sp;
 
         write!(w, "{{\"ip\": \"0x{ip:x}\"")?;
         write!(w, ", \"sp\": \"0x{sp:x}\"")?;
@@ -258,21 +301,28 @@ unsafe fn emit_backtrace_via_libunwind(
             let mut name_buf: [libc::c_char; 256] = [0; 256];
             // SAFETY: `cursor` is in a valid state (unw_get_reg succeeded).
             // `name_buf` is a valid stack-allocated buffer with known length.
-            if unsafe {
+            let proc_name_ret = unsafe {
                 unw_get_proc_name(
                     &mut cursor,
                     name_buf.as_mut_ptr(),
                     name_buf.len(),
                     std::ptr::null_mut(),
                 )
-            } == 0
-            {
+            };
+
+            if proc_name_ret == 0 {
                 // SAFETY: unw_get_proc_name returned 0 (success), guaranteeing
                 // a NUL-terminated string was written into name_buf.
                 let name = unsafe { std::ffi::CStr::from_ptr(name_buf.as_ptr()) };
                 if let Ok(s) = name.to_str() {
                     write!(w, ", \"function\": \"{s}\"")?;
+                    eprintln!("LIBUNWIND DEBUG: Frame {} function: {}", i, s);
                 }
+            } else {
+                eprintln!(
+                    "LIBUNWIND DEBUG: Frame {} - unw_get_proc_name failed with ret={}",
+                    i, proc_name_ret
+                );
             }
         }
 
@@ -281,8 +331,20 @@ unsafe fn emit_backtrace_via_libunwind(
 
         // SAFETY: `cursor` is in a valid state; unw_step advances to the next
         // frame or returns <= 0 when no more frames remain.
-        if unsafe { unw_step(&mut cursor) } <= 0 {
+        let step_ret = unsafe { unw_step(&mut cursor) };
+        eprintln!(
+            "LIBUNWIND DEBUG: Frame {} - unw_step returned: {}",
+            i, step_ret
+        );
+
+        if step_ret <= 0 {
+            eprintln!("LIBUNWIND DEBUG: Stopping - unw_step returned {}", step_ret);
             break;
+        }
+
+        // Additional safety: If we've seen too many frames, something is wrong
+        if i >= 50 {
+            eprintln!("LIBUNWIND DEBUG: WARNING - More than 50 frames, potential infinite loop");
         }
     }
 
