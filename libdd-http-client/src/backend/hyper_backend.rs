@@ -135,7 +135,7 @@ fn collect_response_headers<T>(
 }
 
 fn map_hyper_error(e: hyper_util::client::legacy::Error) -> HttpClientError {
-    let err = http_common::into_error(e);
+    let err = http_common::ClientError::from(e);
     match err.kind() {
         http_common::ErrorKind::Timeout => HttpClientError::TimedOut,
         http_common::ErrorKind::Closed => HttpClientError::ConnectionFailed(err.to_string()),

@@ -4,14 +4,19 @@
 use crate::error::{ExporterError, ExporterErrorCode as ErrorCode};
 use crate::response::ExporterResponse;
 use crate::{catch_panic, gen_error};
+use libdd_capabilities_impl::NativeCapabilities;
 use libdd_common_ffi::{
     CharSlice,
     {slice::AsBytes, slice::ByteSlice},
 };
 
 use libdd_data_pipeline::trace_exporter::{
-    TelemetryConfig, TraceExporter, TraceExporterInputFormat, TraceExporterOutputFormat,
+    TelemetryConfig, TraceExporter as GenericTraceExporter, TraceExporterInputFormat,
+    TraceExporterOutputFormat,
 };
+
+type TraceExporter = GenericTraceExporter<NativeCapabilities>;
+
 use std::{ptr::NonNull, time::Duration};
 use tracing::{debug, error};
 

@@ -3,6 +3,7 @@
 
 //! Defines a pausable worker to be able to stop background processes before forks
 
+use libdd_capabilities::MaybeSend;
 use libdd_common::worker::Worker;
 use std::fmt::Display;
 use tokio::{
@@ -27,7 +28,7 @@ use tokio_util::sync::CancellationToken;
 /// worker must be in a valid state on every call to `.await`.
 /// See [`tokio::select#cancellation-safety`] for more details.
 #[derive(Debug)]
-pub enum PausableWorker<T: Worker + Send + Sync + 'static> {
+pub enum PausableWorker<T: Worker + MaybeSend + Sync + 'static> {
     Running {
         handle: JoinHandle<T>,
         stop_token: CancellationToken,
@@ -59,7 +60,7 @@ impl Display for PausableWorkerError {
 
 impl core::error::Error for PausableWorkerError {}
 
-impl<T: Worker + Send + Sync + 'static> PausableWorker<T> {
+impl<T: Worker + MaybeSend + Sync + 'static> PausableWorker<T> {
     /// Create a new pausable worker from the given worker.
     pub fn new(worker: T) -> Self {
         Self::Paused { worker }
@@ -79,6 +80,7 @@ impl<T: Worker + Send + Sync + 'static> PausableWorker<T> {
             // be replaced by a valid state.
             let stop_token = CancellationToken::new();
             let cloned_token = stop_token.clone();
+
             let handle = rt.spawn(async move {
                 select! {
                     _ = worker.run() => {worker}

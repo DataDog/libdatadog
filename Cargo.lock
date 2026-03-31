@@ -2867,6 +2867,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "libdd-capabilities"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "bytes",
+ "http",
+ "thiserror 1.0.68",
+]
+
+[[package]]
+name = "libdd-capabilities-impl"
+version = "0.1.0"
+dependencies = [
+ "bytes",
+ "http",
+ "libdd-capabilities",
+ "libdd-common",
+]
+
+[[package]]
 name = "libdd-common"
 version = "3.0.2"
 dependencies = [
@@ -2887,6 +2907,7 @@ dependencies = [
  "hyper-util",
  "indexmap 2.12.1",
  "libc",
+ "libdd-capabilities",
  "maplit",
  "mime",
  "multer",
@@ -2993,6 +3014,8 @@ dependencies = [
  "http",
  "http-body-util",
  "httpmock",
+ "libdd-capabilities",
+ "libdd-capabilities-impl",
  "libdd-common",
  "libdd-ddsketch",
  "libdd-dogstatsd-client",
@@ -3021,6 +3044,7 @@ version = "30.0.0"
 dependencies = [
  "build_common",
  "httpmock",
+ "libdd-capabilities-impl",
  "libdd-common-ffi",
  "libdd-data-pipeline",
  "libdd-tinybytes",
@@ -3148,6 +3172,7 @@ dependencies = [
  "bolero",
  "byteorder",
  "bytes",
+ "cc",
  "chrono",
  "criterion",
  "crossbeam-channel",
@@ -3227,6 +3252,7 @@ version = "4.0.0"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
+ "bytes",
  "futures",
  "hashbrown 0.15.1",
  "http",
@@ -3348,6 +3374,8 @@ dependencies = [
  "httpmock",
  "hyper",
  "indexmap 2.12.1",
+ "libdd-capabilities",
+ "libdd-capabilities-impl",
  "libdd-common",
  "libdd-tinybytes",
  "libdd-trace-normalization",
