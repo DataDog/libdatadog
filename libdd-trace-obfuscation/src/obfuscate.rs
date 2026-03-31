@@ -281,25 +281,15 @@ mod tests {
 
     #[test]
     fn test_obfuscate_resource_for_stats_sql() {
-        let result =
-            obfuscate_resource_for_stats("sql", "SELECT * FROM users WHERE id = 42", None);
-        assert_eq!(
-            result.unwrap(),
-            "SELECT * FROM users WHERE id = ?"
-        );
+        let result = obfuscate_resource_for_stats("sql", "SELECT * FROM users WHERE id = 42", None);
+        assert_eq!(result.unwrap(), "SELECT * FROM users WHERE id = ?");
     }
 
     #[test]
     fn test_obfuscate_resource_for_stats_cassandra() {
-        let result = obfuscate_resource_for_stats(
-            "cassandra",
-            "SELECT * FROM table1 WHERE id = 42",
-            None,
-        );
-        assert_eq!(
-            result.unwrap(),
-            "SELECT * FROM table1 WHERE id = ?"
-        );
+        let result =
+            obfuscate_resource_for_stats("cassandra", "SELECT * FROM table1 WHERE id = 42", None);
+        assert_eq!(result.unwrap(), "SELECT * FROM table1 WHERE id = ?");
     }
 
     #[test]
@@ -312,8 +302,7 @@ mod tests {
 
     #[test]
     fn test_obfuscate_resource_for_stats_valkey() {
-        let result =
-            obfuscate_resource_for_stats("valkey", "SET mykey myvalue\nGET mykey", None);
+        let result = obfuscate_resource_for_stats("valkey", "SET mykey myvalue\nGET mykey", None);
         assert_eq!(result.unwrap(), "SET GET");
     }
 
