@@ -241,10 +241,11 @@ impl<'a> PayloadValidator<'a> {
             let actual = function_names.get(i).copied().unwrap_or("");
             anyhow::ensure!(
                 actual == *expected,
-                "Callstack mismatch at position {}: expected '{}', got '{}'",
+                "Callstack mismatch at position {}: expected '{}', got '{}'. Full callstack: {:?}",
                 i,
                 expected,
-                actual
+                actual,
+                function_names
             );
         }
 
