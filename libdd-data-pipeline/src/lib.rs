@@ -18,3 +18,4 @@ pub mod stats_exporter;
 pub(crate) mod telemetry;
 #[allow(missing_docs)]
 pub mod trace_exporter;
+pub mod trace_buffer;
