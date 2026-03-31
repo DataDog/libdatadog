@@ -27,6 +27,7 @@ pub struct Config {
     /// Enables debug logging
     pub telemetry_debug_logging_enabled: bool,
     pub telemetry_heartbeat_interval: Duration,
+    pub telemetry_extended_heartbeat_interval: Duration,
     pub direct_submission_enabled: bool,
     /// Prevents LifecycleAction::Stop from terminating the worker (except if the WorkerHandle is
     /// dropped)
@@ -163,6 +164,7 @@ impl Default for Config {
             endpoint: None,
             telemetry_debug_logging_enabled: false,
             telemetry_heartbeat_interval: Duration::from_secs(60),
+            telemetry_extended_heartbeat_interval: Duration::from_secs(60 * 60 * 24),
             direct_submission_enabled: false,
             restartable: false,
             debug_enabled: false,
@@ -246,6 +248,7 @@ impl Config {
             endpoint: None,
             telemetry_debug_logging_enabled: settings.shared_lib_debug,
             telemetry_heartbeat_interval: settings.telemetry_heartbeat_interval,
+            telemetry_extended_heartbeat_interval: settings.telemetry_extended_heartbeat_interval,
             direct_submission_enabled: settings.direct_submission_enabled,
             restartable: false,
             debug_enabled: false,
