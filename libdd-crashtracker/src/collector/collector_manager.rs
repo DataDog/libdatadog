@@ -99,7 +99,7 @@ pub(crate) fn run_collector_child(
     // Close stdio
     let _ = unsafe { libc::close(0) };
     let _ = unsafe { libc::close(1) };
-    let _ = unsafe { libc::close(2) };
+    //let _ = unsafe { libc::close(2) };
 
     // Disable SIGPIPE
     let _ = unsafe {

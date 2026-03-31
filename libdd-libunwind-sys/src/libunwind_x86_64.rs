@@ -41,6 +41,7 @@ extern "C" {
 // x86_64 register definitions for libunwind
 pub const UNW_REG_IP: i32 = 16; // Instruction Pointer
 pub const UNW_REG_SP: i32 = 17; // Stack Pointer
+pub const UNW_REG_FP: i32 = 18; // Frame Pointer
 pub const UNW_INIT_LOCAL_ONLY_IP: i32 = 1;
 
 /// Saves the current CPU context into `uc_mcontext.gregs`.
