@@ -513,6 +513,7 @@ impl<H: HttpClientTrait + MaybeSend + Sync + 'static> TraceExporter<H> {
                             &agent_info,
                             &self.client_side_stats,
                             &self.workers,
+                            self.client.clone(),
                         );
                     }
                     StatsComputationStatus::Enabled {

@@ -78,6 +78,7 @@ pub(crate) fn start_stats_computation<H: HttpClientTrait + MaybeSend + Sync + 's
     workers: &Arc<Mutex<super::TraceExporterWorkers<H>>>,
     span_kinds: Vec<String>,
     peer_tags: Vec<String>,
+    client: H,
 ) -> anyhow::Result<()> {
     if let StatsComputationStatus::DisabledByAgent { bucket_size } = **client_side_stats.load() {
         let stats_concentrator = Arc::new(Mutex::new(SpanConcentrator::new(
@@ -94,6 +95,7 @@ pub(crate) fn start_stats_computation<H: HttpClientTrait + MaybeSend + Sync + 's
             &cancellation_token,
             workers,
             client_side_stats,
+            client,
         )?;
     }
     Ok(())
@@ -108,6 +110,7 @@ fn create_and_start_stats_worker<H: HttpClientTrait + MaybeSend + Sync + 'static
     cancellation_token: &CancellationToken,
     workers: &Arc<Mutex<super::TraceExporterWorkers<H>>>,
     client_side_stats: &ArcSwap<StatsComputationStatus>,
+    client: H,
 ) -> anyhow::Result<()> {
     let stats_exporter = stats_exporter::StatsExporter::<H>::new(
         bucket_size,
@@ -115,6 +118,7 @@ fn create_and_start_stats_worker<H: HttpClientTrait + MaybeSend + Sync + 'static
         ctx.metadata.clone(),
         Endpoint::from_url(add_path(ctx.endpoint_url, STATS_ENDPOINT)),
         cancellation_token.clone(),
+        client,
     );
     let mut stats_worker = crate::pausable_worker::PausableWorker::new(stats_exporter);
 
@@ -174,6 +178,7 @@ pub(crate) fn handle_stats_disabled_by_agent<H: HttpClientTrait + MaybeSend + Sy
     agent_info: &Arc<AgentInfo>,
     client_side_stats: &ArcSwap<StatsComputationStatus>,
     workers: &Arc<Mutex<super::TraceExporterWorkers<H>>>,
+    client: H,
 ) {
     if agent_info.info.client_drop_p0s.is_some_and(|v| v) {
         let status = start_stats_computation(
@@ -182,6 +187,7 @@ pub(crate) fn handle_stats_disabled_by_agent<H: HttpClientTrait + MaybeSend + Sy
             workers,
             get_span_kinds_for_stats(agent_info),
             agent_info.info.peer_tags.clone().unwrap_or_default(),
+            client,
         );
         match status {
             Ok(()) => debug!("Client-side stats enabled"),

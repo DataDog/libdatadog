@@ -306,6 +306,7 @@ mod native {
     use libdd_capabilities::http::{HttpClientTrait, HttpError};
     use libdd_capabilities::maybe_send::MaybeSend;
 
+    #[derive(Clone)]
     pub struct DefaultHttpClient {
         client: GenericHttpClient<Connector>,
     }

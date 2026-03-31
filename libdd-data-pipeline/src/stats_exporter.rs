@@ -53,6 +53,7 @@ impl<H: HttpClientTrait> StatsExporter<H> {
         meta: TracerMetadata,
         endpoint: Endpoint,
         cancellation_token: CancellationToken,
+        client: H,
     ) -> Self {
         Self {
             flush_interval,
@@ -61,7 +62,7 @@ impl<H: HttpClientTrait> StatsExporter<H> {
             meta,
             sequence_id: AtomicU64::new(0),
             cancellation_token,
-            client: H::new_client(),
+            client,
         }
     }
 
@@ -283,6 +284,7 @@ mod tests {
             get_test_metadata(),
             Endpoint::from_url(stats_url_from_agent_url(&server.url("/")).unwrap()),
             CancellationToken::new(),
+            NativeCapabilities::new_client(),
         );
 
         let send_status = stats_exporter.send(true).await;
@@ -310,6 +312,7 @@ mod tests {
             get_test_metadata(),
             Endpoint::from_url(stats_url_from_agent_url(&server.url("/")).unwrap()),
             CancellationToken::new(),
+            NativeCapabilities::new_client(),
         );
 
         let send_status = stats_exporter.send(true).await;
@@ -343,6 +346,7 @@ mod tests {
             get_test_metadata(),
             Endpoint::from_url(stats_url_from_agent_url(&server.url("/")).unwrap()),
             CancellationToken::new(),
+            NativeCapabilities::new_client(),
         );
 
         tokio::time::pause();
@@ -384,6 +388,7 @@ mod tests {
             get_test_metadata(),
             Endpoint::from_url(stats_url_from_agent_url(&server.url("/")).unwrap()),
             cancellation_token.clone(),
+            NativeCapabilities::new_client(),
         );
 
         tokio::spawn(async move {
