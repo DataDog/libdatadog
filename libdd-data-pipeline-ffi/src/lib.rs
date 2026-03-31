@@ -8,6 +8,7 @@
 
 mod error;
 mod response;
+mod trace_buffer;
 mod trace_exporter;
 
 #[cfg(all(feature = "catch_panic", panic = "unwind"))]

@@ -242,6 +242,16 @@ impl<T: Send + 'static> TraceBuffer<T> {
         )
     }
 
+    /// Add a trace chunk to the buffer to be exported
+    /// 
+    /// # Buffering behavior
+    /// 
+    /// If the the number if spans in the buffer is already too big, drop the chunk and return an error
+    ///
+    /// This method will not check that adding the chunk will not exceed the maximum size of the
+    /// queue. So the queue lenght can be greater than the maximum size after this call.
+    /// This is because we don't want to always drop traces that contain more spans than the maximum
+    /// size.
     pub fn send_chunk(&self, trace_chunk: Vec<T>) -> Result<(), TraceBufferError> {
         let chunk_len = trace_chunk.len();
         if chunk_len == 0 {

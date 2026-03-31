@@ -35,6 +35,7 @@ pub enum ExporterErrorCode {
     TimedOut,
     Telemetry,
     Internal,
+    BufferFull,
     #[cfg(feature = "catch_panic")]
     Panic,
 }
@@ -65,6 +66,7 @@ impl Display for ExporterErrorCode {
             Self::TimedOut => write!(f, "Operation timed out"),
             Self::Telemetry => write!(f, "Telemetry error"),
             Self::Internal => write!(f, "Internal error"),
+            Self::BufferFull => write!(f, "Buffer is full"),
             #[cfg(feature = "catch_panic")]
             Self::Panic => write!(f, "Operation panicked"),
         }
