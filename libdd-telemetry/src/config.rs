@@ -476,4 +476,29 @@ mod tests {
                 .to_string_lossy()
         );
     }
+
+    #[test]
+    fn test_from_settings_propagates_extended_heartbeat_interval() {
+        use std::time::Duration;
+
+        let custom_interval = Duration::from_secs(120);
+        let settings = Settings {
+            telemetry_extended_heartbeat_interval: custom_interval,
+            ..Default::default()
+        };
+        let cfg = Config::from_settings(&settings);
+        assert_eq!(cfg.telemetry_extended_heartbeat_interval, custom_interval);
+    }
+
+    #[test]
+    fn test_from_settings_default_extended_heartbeat_interval() {
+        use std::time::Duration;
+
+        let settings = Settings::default();
+        let cfg = Config::from_settings(&settings);
+        assert_eq!(
+            cfg.telemetry_extended_heartbeat_interval,
+            Duration::from_secs(60 * 60 * 24)
+        );
+    }
 }
