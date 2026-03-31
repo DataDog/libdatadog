@@ -245,7 +245,7 @@ impl<'a> PayloadValidator<'a> {
                 i,
                 expected,
                 actual,
-                function_names
+                frames
             );
         }
 
