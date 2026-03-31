@@ -376,7 +376,7 @@ impl TraceExporter {
     /// Since agent_info can enable CSS computation, waiting for this during testing can make
     /// snapshots non-deterministic.
     #[cfg(feature = "test-utils")]
-    pub fn wait_agent_info_ready(&self, timeout: Duration) -> anyhow::Result<()> {
+    pub async fn wait_agent_info_ready(&self, timeout: Duration) -> anyhow::Result<()> {
         let start = std::time::Instant::now();
         loop {
             if std::time::Instant::now().duration_since(start) > timeout {
@@ -385,7 +385,7 @@ impl TraceExporter {
             if agent_info::get_agent_info().is_some() {
                 return Ok(());
             }
-            std::thread::sleep(Duration::from_millis(10));
+            tokio::time::sleep(Duration::from_millis(10)).await;
         }
     }
 
