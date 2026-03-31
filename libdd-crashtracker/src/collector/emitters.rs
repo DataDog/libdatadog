@@ -202,7 +202,7 @@ unsafe fn emit_backtrace_via_libunwind(
     ucontext: *const ucontext_t,
 ) -> Result<(), EmitterError> {
     use libdd_libunwind_sys::{
-        unw_get_proc_name, unw_get_reg, unw_init_local2, unw_step, UnwCursor, UnwWord, UNW_REG_IP,
+        unw_get_proc_name, unw_get_reg, unw_init_local2, unw_step, unw_backtrace2, UnwCursor, UnwWord, UNW_REG_IP,
         UNW_REG_SP,
     };
 
@@ -221,6 +221,46 @@ unsafe fn emit_backtrace_via_libunwind(
     let ret = unsafe { unw_init_local2(&mut cursor, ucontext as *mut _, 1) };
     if ret != 0 {
         return Ok(());
+    }
+
+    // ARM64 workaround: Try unw_backtrace2 first to avoid libunwind stepping bug
+    #[cfg(target_arch = "aarch64")]
+    {
+        let mut frames: [*mut ::std::os::raw::c_void; 64] = [std::ptr::null_mut(); 64];
+        let frame_count = unsafe { unw_backtrace2(frames.as_mut_ptr(), 64, ucontext as *mut _, 0) };
+        
+        if frame_count > 0 {
+            writeln!(w, "/* ARM64: using unw_backtrace2 to work around stepping bug */")?;
+            for i in 0..(frame_count as usize).min(frames.len()) {
+                let ip = frames[i] as u64;
+                if ip == 0 {
+                    break;
+                }
+                write!(w, "{{\"ip\": \"0x{:x}\"", ip)?;
+                write!(w, ", \"debug_backtrace2_frame\": true")?;
+                
+                // Try to get symbol info using dladdr
+                let mut dl_info: libc::Dl_info = unsafe { std::mem::zeroed() };
+                if unsafe { libc::dladdr(ip as *const libc::c_void, &mut dl_info) } != 0 {
+                    if !dl_info.dli_fbase.is_null() {
+                        write!(w, ", \"module_base_address\": \"{:?}\"", dl_info.dli_fbase)?;
+                    }
+                    if !dl_info.dli_saddr.is_null() {
+                        write!(w, ", \"symbol_address\": \"{:?}\"", dl_info.dli_saddr)?;
+                    }
+                    if !dl_info.dli_sname.is_null() && resolve_frames == StacktraceCollection::EnabledWithInprocessSymbols {
+                        let name = unsafe { std::ffi::CStr::from_ptr(dl_info.dli_sname) };
+                        if let Ok(s) = name.to_str() {
+                            write!(w, ", \"function\": \"{s}\"")?;
+                        }
+                    }
+                }
+                
+                writeln!(w, "}}")?;
+                w.flush()?;
+            }
+            return Ok(());
+        }
     }
 
     const MAX_FRAMES: usize = 512;
