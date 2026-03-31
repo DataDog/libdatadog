@@ -38,6 +38,35 @@ const TAG_DBMS: &str = "db.type";
 /// TAG_CARD_NUMBER represents a card number tag
 const TAG_CARD_NUMBER: &str = "card.number";
 
+/// Obfuscate a resource name for client-side stats (Version 1).
+///
+/// Applies the same resource transformations as `obfuscate_span`, but only for span types whose
+/// resource names are modified:
+/// - `"sql"`, `"cassandra"`: SQL obfuscation
+/// - `"redis"`, `"valkey"`: Redis quantization (command names only)
+///
+/// Returns `Some(obfuscated)` if the resource was modified, `None` if no obfuscation was needed.
+pub fn obfuscate_resource_for_stats(
+    span_type: &str,
+    resource: &str,
+    dbms_hint: Option<&str>,
+) -> Option<String> {
+    match span_type {
+        "sql" | "cassandra" if !resource.is_empty() => {
+            let dbms: DbmsKind = dbms_hint
+                .and_then(|d| d.try_into().ok())
+                .unwrap_or_default();
+            Some(crate::sql::obfuscate_sql(
+                resource,
+                &crate::sql::SqlObfuscateConfig::default(),
+                dbms,
+            ))
+        }
+        "redis" | "valkey" => Some(quantize_redis_string(resource)),
+        _ => None,
+    }
+}
+
 /// `obfuscate_span` goes through `span` fields and applies obfuscation on it
 // TODO(APMSP-2764): return parsing errors in a vec to log them ?
 pub fn obfuscate_span(span: &mut pb::Span, config: &ObfuscationConfig) {
@@ -246,9 +275,48 @@ fn should_obfuscate_cc_key(key: &str, config: &ObfuscationConfig) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::obfuscate_span;
+    use super::{obfuscate_resource_for_stats, obfuscate_span};
     use crate::{obfuscation_config, replacer};
     use libdd_trace_utils::test_utils;
+
+    #[test]
+    fn test_obfuscate_resource_for_stats_sql() {
+        let result = obfuscate_resource_for_stats("sql", "SELECT * FROM users WHERE id = 42", None);
+        assert_eq!(result.unwrap(), "SELECT * FROM users WHERE id = ?");
+    }
+
+    #[test]
+    fn test_obfuscate_resource_for_stats_cassandra() {
+        let result =
+            obfuscate_resource_for_stats("cassandra", "SELECT * FROM table1 WHERE id = 42", None);
+        assert_eq!(result.unwrap(), "SELECT * FROM table1 WHERE id = ?");
+    }
+
+    #[test]
+    fn test_obfuscate_resource_for_stats_redis() {
+        let result = obfuscate_resource_for_stats("redis", "SET mykey myvalue\nGET mykey", None);
+        assert!(result.is_some());
+        // quantize_redis_string extracts command names
+        assert_eq!(result.unwrap(), "SET GET");
+    }
+
+    #[test]
+    fn test_obfuscate_resource_for_stats_valkey() {
+        let result = obfuscate_resource_for_stats("valkey", "SET mykey myvalue\nGET mykey", None);
+        assert_eq!(result.unwrap(), "SET GET");
+    }
+
+    #[test]
+    fn test_obfuscate_resource_for_stats_no_match() {
+        assert!(obfuscate_resource_for_stats("http", "/api/users", None).is_none());
+        assert!(obfuscate_resource_for_stats("web", "/api/users", None).is_none());
+        assert!(obfuscate_resource_for_stats("grpc", "MyService/MyMethod", None).is_none());
+    }
+
+    #[test]
+    fn test_obfuscate_resource_for_stats_empty_sql() {
+        assert!(obfuscate_resource_for_stats("sql", "", None).is_none());
+    }
 
     #[test]
     fn test_obfuscates_span_url_strings() {

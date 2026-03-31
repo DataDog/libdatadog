@@ -31,6 +31,7 @@ pub struct StatsExporter {
     sequence_id: AtomicU64,
     cancellation_token: CancellationToken,
     client: HttpClient,
+    obfuscation_active: bool,
 }
 
 impl StatsExporter {
@@ -49,6 +50,7 @@ impl StatsExporter {
         endpoint: Endpoint,
         cancellation_token: CancellationToken,
         client: HttpClient,
+        obfuscation_active: bool,
     ) -> Self {
         Self {
             flush_interval,
@@ -58,6 +60,7 @@ impl StatsExporter {
             sequence_id: AtomicU64::new(0),
             cancellation_token,
             client,
+            obfuscation_active,
         }
     }
 
@@ -89,6 +92,13 @@ impl StatsExporter {
             http::header::CONTENT_TYPE,
             libdd_common::header::APPLICATION_MSGPACK,
         );
+
+        if self.obfuscation_active {
+            headers.insert(
+                http::HeaderName::from_static("datadog-obfuscation-version"),
+                http::HeaderValue::from_static("1"),
+            );
+        }
 
         let result = send_with_retry(
             &self.client,
@@ -274,6 +284,7 @@ mod tests {
             Endpoint::from_url(stats_url_from_agent_url(&server.url("/")).unwrap()),
             CancellationToken::new(),
             new_default_client(),
+            false,
         );
 
         let send_status = stats_exporter.send(true).await;
@@ -302,6 +313,7 @@ mod tests {
             Endpoint::from_url(stats_url_from_agent_url(&server.url("/")).unwrap()),
             CancellationToken::new(),
             new_default_client(),
+            false,
         );
 
         let send_status = stats_exporter.send(true).await;
@@ -336,6 +348,7 @@ mod tests {
             Endpoint::from_url(stats_url_from_agent_url(&server.url("/")).unwrap()),
             CancellationToken::new(),
             new_default_client(),
+            false,
         );
 
         tokio::time::pause();
@@ -378,6 +391,7 @@ mod tests {
             Endpoint::from_url(stats_url_from_agent_url(&server.url("/")).unwrap()),
             cancellation_token.clone(),
             new_default_client(),
+            false,
         );
 
         tokio::spawn(async move {
@@ -414,5 +428,36 @@ mod tests {
             payload_with_env.env, "test",
             "Non-empty env should be preserved"
         );
+    }
+    #[cfg_attr(miri, ignore)]
+    #[tokio::test]
+    async fn test_send_stats_with_obfuscation_header() {
+        let server = MockServer::start_async().await;
+
+        let mock = server
+            .mock_async(|when, then| {
+                when.method(POST)
+                    .header("Content-type", "application/msgpack")
+                    .header("datadog-obfuscation-version", "1")
+                    .path("/v0.6/stats")
+                    .body_includes("libdatadog-test");
+                then.status(200).body("");
+            })
+            .await;
+
+        let stats_exporter = StatsExporter::new(
+            BUCKETS_DURATION,
+            Arc::new(Mutex::new(get_test_concentrator())),
+            get_test_metadata(),
+            Endpoint::from_url(stats_url_from_agent_url(&server.url("/")).unwrap()),
+            CancellationToken::new(),
+            new_default_client(),
+            true,
+        );
+
+        let send_status = stats_exporter.send(true).await;
+        send_status.unwrap();
+
+        mock.assert_async().await;
     }
 }
