@@ -16,7 +16,7 @@ crate-type = ["lib"]
 bench = false
 
 [dependencies]
-libdd-capabilities = { path = "../libdd-capabilities" }
+libdd-capabilities = { path = "../libdd-capabilities", version = "0.1.0" }
 anyhow = "1.0"
 futures = "0.3"
 futures-core = { version = "0.3.0", default-features = false }

@@ -4,11 +4,12 @@
 [package]
 name = "libdd-capabilities"
 version = "0.1.0"
-edition = "2021"
 description = "Portable capability traits for cross-platform libdatadog"
-homepage = "https://github.com/DataDog/libdatadog"
-repository = "https://github.com/DataDog/libdatadog"
-license = "Apache-2.0"
+homepage = "https://github.com/DataDog/libdatadog/tree/main/libdd-capabilities"
+repository = "https://github.com/DataDog/libdatadog/tree/main/libdd-capabilities"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
 
 [lib]
 crate-type = ["lib"]
