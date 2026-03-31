@@ -507,8 +507,7 @@ mod tests {
         use libdd_common::test_utils::EnvGuard;
         use std::time::Duration;
 
-        let _guard =
-            EnvGuard::set("DD_TELEMETRY_EXTENDED_HEARTBEAT_INTERVAL", "5");
+        let _guard = EnvGuard::set("DD_TELEMETRY_EXTENDED_HEARTBEAT_INTERVAL", "5");
         let settings = Settings::from_env();
         assert_eq!(
             settings.telemetry_extended_heartbeat_interval,
