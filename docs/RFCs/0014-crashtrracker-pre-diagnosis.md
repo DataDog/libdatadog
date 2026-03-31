@@ -64,7 +64,7 @@ As specified in [RFC 0011 schema version 1.6](./0011-crashtracker-structured-log
 **Required format (per RFC 0011 v1.6):**
 ```json
 {
-  "arch": "x86_64",
+  "arch": "x86_64", // optional arch string
   "registers": {
     "rip": "0x55a3f2c01234",
     "rsp": "0x7ffc89abcdef",
