@@ -692,7 +692,7 @@ mod tests {
         let mock = server
             .mock_async(|when, then| {
                 when.method(POST)
-                    .header("x-datadog-trace-count", "1")
+                    .header(DATADOG_TRACE_COUNT.as_str(), "1")
                     .header("Content-type", "application/msgpack")
                     .header("datadog-meta-lang", header_tags.lang)
                     .header(
@@ -751,7 +751,7 @@ mod tests {
         let mock = server
             .mock_async(|when, then| {
                 when.method(POST)
-                    .header("x-datadog-trace-count", "1")
+                    .header(DATADOG_TRACE_COUNT.as_str(), "1")
                     .header("Content-type", "application/msgpack")
                     .header("datadog-meta-lang", header_tags.lang)
                     .header(
@@ -939,7 +939,7 @@ mod tests {
         let mock = server
             .mock_async(|when, then| {
                 when.method(POST)
-                    .header("x-datadog-trace-count", "2")
+                    .header(DATADOG_TRACE_COUNT.as_str(), "2")
                     .header("Content-type", "application/msgpack")
                     .header("datadog-meta-lang", header_tags.lang)
                     .header(
