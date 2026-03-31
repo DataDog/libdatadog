@@ -247,17 +247,28 @@ mod tests {
                 },
             ];
 
+            let mut files = HashMap::new();
+            files.insert(
+                "/proc/self/maps".to_string(),
+                vec![
+                    "55a1b2c3d000-55a1b2c4e000 r-xp 00000000 08:01 12345 /usr/bin/test".to_string(),
+                ],
+            );
+
             Self {
                 counters,
                 data_schema_version: CrashInfo::current_schema_version(),
                 error: ErrorData::test_instance(seed),
-                experimental: None,
-                files: HashMap::new(),
+                experimental: Some(Experimental::new().with_additional_tags(vec![
+                    "custom_tag:value1".to_string(),
+                    "another_tag:value2".to_string(),
+                ])),
+                files,
                 fingerprint: None,
                 incomplete: true,
                 log_messages: vec![],
                 metadata: Metadata::test_instance(seed),
-                os_info: ::os_info::Info::unknown().into(),
+                os_info: ::os_info::get().into(),
                 proc_info: Some(ProcInfo::test_instance(seed)),
                 sig_info: Some(SigInfo::test_instance(seed)),
                 span_ids,
