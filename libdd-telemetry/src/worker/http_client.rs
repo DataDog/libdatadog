@@ -112,7 +112,7 @@ impl HttpClient for HyperClient {
         Box::pin(async move {
             match resp.await {
                 Ok(response) => Ok(http_common::into_response(response)),
-                Err(e) => Err(http_common::Error::Client(http_common::into_error(e))),
+                Err(e) => Err(http_common::Error::Client(e.into())),
             }
         })
     }
