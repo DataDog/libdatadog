@@ -31,6 +31,7 @@ pub struct StatsExporter {
     sequence_id: AtomicU64,
     cancellation_token: CancellationToken,
     client: HttpClient,
+    #[cfg(feature = "stats-obfuscation")]
     obfuscation_active: bool,
 }
 
@@ -50,6 +51,7 @@ impl StatsExporter {
         endpoint: Endpoint,
         cancellation_token: CancellationToken,
         client: HttpClient,
+        #[cfg_attr(not(feature = "stats-obfuscation"), allow(unused_variables))]
         obfuscation_active: bool,
     ) -> Self {
         Self {
@@ -60,6 +62,7 @@ impl StatsExporter {
             sequence_id: AtomicU64::new(0),
             cancellation_token,
             client,
+            #[cfg(feature = "stats-obfuscation")]
             obfuscation_active,
         }
     }
@@ -93,6 +96,7 @@ impl StatsExporter {
             libdd_common::header::APPLICATION_MSGPACK,
         );
 
+        #[cfg(feature = "stats-obfuscation")]
         if self.obfuscation_active {
             headers.insert(
                 http::HeaderName::from_static("datadog-obfuscation-version"),

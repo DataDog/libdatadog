@@ -10,9 +10,10 @@
 use crate::agent_info::schema::AgentInfo;
 use crate::stats_exporter;
 use arc_swap::ArcSwap;
+#[cfg(feature = "stats-obfuscation")]
+use std::borrow::Borrow;
 use libdd_common::{Endpoint, HttpClient, MutexExt};
 use libdd_trace_stats::span_concentrator::SpanConcentrator;
-use std::borrow::Borrow;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::runtime::Runtime;
@@ -26,6 +27,7 @@ pub(crate) const DEFAULT_STATS_ELIGIBLE_SPAN_KINDS: [&str; 4] =
 pub(crate) const STATS_ENDPOINT: &str = "/v0.6/stats";
 
 /// The maximum obfuscation version this tracer supports.
+#[cfg(feature = "stats-obfuscation")]
 const SUPPORTED_OBFUSCATION_VERSION: u32 = 1;
 
 /// Context struct that groups immutable parameters used by stats functions
@@ -47,11 +49,13 @@ pub(crate) enum StatsComputationStatus {
     Enabled {
         stats_concentrator: Arc<Mutex<SpanConcentrator>>,
         cancellation_token: CancellationToken,
+        #[cfg(feature = "stats-obfuscation")]
         obfuscation_active: bool,
     },
 }
 
 /// Return true if the agent's obfuscation version is supported by this tracer
+#[cfg(feature = "stats-obfuscation")]
 fn is_obfuscation_active(agent_info: &AgentInfo) -> bool {
     agent_info
         .info
@@ -90,7 +94,6 @@ pub(crate) fn start_stats_computation(
         let cancellation_token = CancellationToken::new();
         create_and_start_stats_worker(
             ctx,
-            bucket_size,
             &stats_concentrator,
             &cancellation_token,
             workers,
@@ -105,7 +108,6 @@ pub(crate) fn start_stats_computation(
 /// Create stats exporter and worker, start the worker, and update the state
 fn create_and_start_stats_worker(
     ctx: &StatsContext,
-    bucket_size: Duration,
     stats_concentrator: &Arc<Mutex<SpanConcentrator>>,
     cancellation_token: &CancellationToken,
     workers: &Arc<Mutex<super::TraceExporterWorkers>>,
@@ -113,6 +115,7 @@ fn create_and_start_stats_worker(
     client: HttpClient,
     obfuscation_active: bool,
 ) -> anyhow::Result<()> {
+    let bucket_size = stats_concentrator.lock_or_panic().get_bucket_size();
     let stats_exporter = stats_exporter::StatsExporter::new(
         bucket_size,
         stats_concentrator.clone(),
@@ -141,6 +144,7 @@ fn create_and_start_stats_worker(
     client_side_stats.store(Arc::new(StatsComputationStatus::Enabled {
         stats_concentrator: stats_concentrator.clone(),
         cancellation_token: cancellation_token.clone(),
+        #[cfg(feature = "stats-obfuscation")]
         obfuscation_active,
     }));
 
@@ -187,7 +191,11 @@ pub(crate) fn handle_stats_disabled_by_agent(
 ) {
     if agent_info.info.client_drop_p0s.is_some_and(|v| v) {
         // Client-side stats is supported by the agent
+        #[cfg(feature = "stats-obfuscation")]
         let obfuscation_active = is_obfuscation_active(agent_info);
+        #[cfg(not(feature = "stats-obfuscation"))]
+        let obfuscation_active = false;
+
         let status = start_stats_computation(
             ctx,
             client_side_stats,
@@ -212,7 +220,6 @@ pub(crate) fn handle_stats_enabled(
     agent_info: &Arc<AgentInfo>,
     stats_concentrator: &Arc<Mutex<SpanConcentrator>>,
     cancellation_token: &CancellationToken,
-    current_obfuscation_active: bool,
     client_side_stats: &ArcSwap<StatsComputationStatus>,
     workers: &Arc<Mutex<super::TraceExporterWorkers>>,
 ) {
@@ -221,19 +228,33 @@ pub(crate) fn handle_stats_enabled(
         concentrator.set_span_kinds(get_span_kinds_for_stats(agent_info));
         concentrator.set_peer_tags(agent_info.info.peer_tags.clone().unwrap_or_default());
 
-        let new_obfuscation_active = is_obfuscation_active(agent_info);
-        if new_obfuscation_active != current_obfuscation_active {
-            // Drop the concentrator lock before updating the ArcSwap
-            drop(concentrator);
-            client_side_stats.store(Arc::new(StatsComputationStatus::Enabled {
-                stats_concentrator: stats_concentrator.clone(),
-                cancellation_token: cancellation_token.clone(),
-                obfuscation_active: new_obfuscation_active,
-            }));
-            debug!(
-                obfuscation_active = new_obfuscation_active,
-                "Stats obfuscation state changed"
-            );
+        #[cfg(not(feature = "stats-obfuscation"))]
+        let _ = cancellation_token;
+
+        #[cfg(feature = "stats-obfuscation")]
+        {
+            let new_obfuscation_active = is_obfuscation_active(agent_info);
+            let current_obfuscation_active =
+                if let StatsComputationStatus::Enabled { obfuscation_active, .. } =
+                    &**client_side_stats.load()
+                {
+                    *obfuscation_active
+                } else {
+                    false
+                };
+            if new_obfuscation_active != current_obfuscation_active {
+                // Drop the concentrator lock before updating the ArcSwap
+                drop(concentrator);
+                client_side_stats.store(Arc::new(StatsComputationStatus::Enabled {
+                    stats_concentrator: stats_concentrator.clone(),
+                    cancellation_token: cancellation_token.clone(),
+                    obfuscation_active: new_obfuscation_active,
+                }));
+                debug!(
+                    obfuscation_active = new_obfuscation_active,
+                    "Stats obfuscation state changed"
+                );
+            }
         }
     } else {
         stop_stats_computation(ctx, client_side_stats, workers);
@@ -245,11 +266,13 @@ pub(crate) fn handle_stats_enabled(
 ///
 /// This is used to provide obfuscated resource names to the stats concentrator without modifying
 /// the original spans (which are still sent to the agent with their original resource names).
+#[cfg(feature = "stats-obfuscation")]
 struct ObfuscatedStatSpan<'a, T> {
     inner: &'a T,
     obfuscated_resource: Option<String>,
 }
 
+#[cfg(feature = "stats-obfuscation")]
 impl<'a, T: libdd_trace_stats::span_concentrator::stat_span::StatSpan<'a>>
     libdd_trace_stats::span_concentrator::stat_span::StatSpan<'a> for ObfuscatedStatSpan<'a, T>
 {
@@ -316,27 +339,34 @@ impl<'a, T: libdd_trace_stats::span_concentrator::stat_span::StatSpan<'a>>
 fn add_spans_to_stats<T: libdd_trace_utils::span::TraceData>(
     stats_concentrator: &Mutex<SpanConcentrator>,
     traces: &[Vec<libdd_trace_utils::span::v04::Span<T>>],
-    obfuscation_active: bool,
+    #[allow(unused)] obfuscation_active: bool,
 ) {
     let mut stats_concentrator = stats_concentrator.lock_or_panic();
 
     let spans = traces.iter().flat_map(|trace| trace.iter());
     for span in spans {
-        if obfuscation_active {
-            let span_type: &str = span.r#type.borrow();
-            let resource: &str = span.resource.borrow();
-            let dbms_hint: Option<&str> = span.meta.get("db.type").map(|v| v.borrow());
-            let obfuscated_resource =
-                libdd_trace_obfuscation::obfuscate::obfuscate_resource_for_stats(
-                    span_type, resource, dbms_hint,
-                );
-            let wrapper = ObfuscatedStatSpan {
-                inner: span,
-                obfuscated_resource,
-            };
-            stats_concentrator.add_span(&wrapper);
-        } else {
+        #[cfg(not(feature = "stats-obfuscation"))]
+        {
             stats_concentrator.add_span(span);
+        }
+        #[cfg(feature = "stats-obfuscation")]
+        {
+            if obfuscation_active {
+                let span_type: &str = span.r#type.borrow();
+                let resource: &str = span.resource.borrow();
+                let dbms_hint: Option<&str> = span.meta.get("db.type").map(|v| v.borrow());
+                let obfuscated_resource =
+                    libdd_trace_obfuscation::obfuscate::obfuscate_resource_for_stats(
+                        span_type, resource, dbms_hint,
+                    );
+                let wrapper = ObfuscatedStatSpan {
+                    inner: span,
+                    obfuscated_resource,
+                };
+                stats_concentrator.add_span(&wrapper);
+            } else {
+                stats_concentrator.add_span(span);
+            }
         }
     }
 }
@@ -349,18 +379,29 @@ pub(crate) fn process_traces_for_stats<T: libdd_trace_utils::span::TraceData>(
     client_side_stats: &ArcSwap<StatsComputationStatus>,
     client_computed_top_level: bool,
 ) -> libdd_trace_utils::span::trace_utils::DroppedP0Stats {
+    let status = client_side_stats.load();
     if let StatsComputationStatus::Enabled {
         stats_concentrator,
-        obfuscation_active,
         ..
-    } = &**client_side_stats.load()
+    } = &**status
     {
         if !client_computed_top_level {
             for chunk in traces.iter_mut() {
                 libdd_trace_utils::span::trace_utils::compute_top_level_span(chunk);
             }
         }
-        add_spans_to_stats(stats_concentrator, traces, *obfuscation_active);
+        #[cfg(feature = "stats-obfuscation")]
+        let obfuscation_active = if let StatsComputationStatus::Enabled {
+            obfuscation_active, ..
+        } = &**status
+        {
+            *obfuscation_active
+        } else {
+            unreachable!()
+        };
+        #[cfg(not(feature = "stats-obfuscation"))]
+        let obfuscation_active = false;
+        add_spans_to_stats(stats_concentrator, traces, obfuscation_active);
         // Once stats have been computed we can drop all chunks that are not going to be
         // sampled by the agent
         let dropped_p0_stats = libdd_trace_utils::span::trace_utils::drop_chunks(traces);

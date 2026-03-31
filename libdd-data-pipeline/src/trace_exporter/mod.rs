@@ -432,7 +432,7 @@ impl TraceExporter {
                     StatsComputationStatus::Enabled {
                         stats_concentrator,
                         cancellation_token,
-                        obfuscation_active,
+                        ..
                     } => {
                         let ctx = stats::StatsContext {
                             metadata: &self.metadata,
@@ -444,7 +444,6 @@ impl TraceExporter {
                             &agent_info,
                             stats_concentrator,
                             cancellation_token,
-                            *obfuscation_active,
                             &self.client_side_stats,
                             &self.workers,
                         );
