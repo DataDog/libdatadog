@@ -504,20 +504,15 @@ mod tests {
 
     #[test]
     fn test_extended_heartbeat_interval_from_env() {
+        use libdd_common::test_utils::EnvGuard;
         use std::time::Duration;
 
-        // SAFETY: env var tests in this repo use set_var directly; run with
-        // --test-threads=1 if parallel env mutation is a concern.
-        unsafe {
-            std::env::set_var("DD_TELEMETRY_EXTENDED_HEARTBEAT_INTERVAL", "5");
-        }
+        let _guard =
+            EnvGuard::set("DD_TELEMETRY_EXTENDED_HEARTBEAT_INTERVAL", "5");
         let settings = Settings::from_env();
         assert_eq!(
             settings.telemetry_extended_heartbeat_interval,
             Duration::from_secs(5)
         );
-        unsafe {
-            std::env::remove_var("DD_TELEMETRY_EXTENDED_HEARTBEAT_INTERVAL");
-        }
     }
 }
