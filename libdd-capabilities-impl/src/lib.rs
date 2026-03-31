@@ -9,20 +9,40 @@
 
 mod http;
 
+use core::future::Future;
+
 pub use http::DefaultHttpClient;
+use libdd_capabilities::http::HttpError;
 pub use libdd_capabilities::HttpClientTrait;
+use libdd_capabilities::MaybeSend;
 
 /// Bundle struct for native platform capabilities.
 ///
-/// Currently delegates to `DefaultHttpClient` for HTTP. As more capability
-/// traits are added (spawn, sleep, etc.), this type will become a proper struct
-/// implementing all of them.
+/// Delegates to [`DefaultHttpClient`] for HTTP. As more capability traits are
+/// added (spawn, sleep, etc.), additional fields and impls are added here
+/// without changing the type identity — consumers see the same
+/// `NativeCapabilities` throughout.
 ///
-/// At that point, consider introducing a `CapabilitiesBundle` trait in
-/// `libdd-capabilities` with a `fn new() -> Self` constructor, so that bundle
-/// creation is decoupled from `HttpClientTrait::new_client()`. Individual
-/// capability traits should keep minimal per-function bounds (e.g. functions
-/// that only need HTTP should require just `H: HttpClientTrait`, not the full
-/// bundle) as this lets native callers like the sidecar use `DefaultHttpClient`
-/// directly without pulling in the full bundle.
-pub type NativeCapabilities = DefaultHttpClient;
+/// Individual capability traits keep minimal per-function bounds (e.g.
+/// functions that only need HTTP require just `H: HttpClientTrait`, not the
+/// full bundle) so that native callers like the sidecar can use
+/// `DefaultHttpClient` directly without pulling in this bundle.
+#[derive(Clone, Debug)]
+pub struct NativeCapabilities {
+    http: DefaultHttpClient,
+}
+
+impl HttpClientTrait for NativeCapabilities {
+    fn new_client() -> Self {
+        Self {
+            http: DefaultHttpClient::new_client(),
+        }
+    }
+
+    fn request(
+        &self,
+        req: ::http::Request<bytes::Bytes>,
+    ) -> impl Future<Output = Result<::http::Response<bytes::Bytes>, HttpError>> + MaybeSend {
+        self.http.request(req)
+    }
+}
