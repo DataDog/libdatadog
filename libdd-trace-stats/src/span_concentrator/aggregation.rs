@@ -432,20 +432,18 @@ mod tests {
         hasher.finish()
     }
 
-    fn owned_key(f: FixedAggregationKey<String>) -> OwnedAggregationKey {
-        OwnedAggregationKey {
-            fixed: f,
-            peer_tags: vec![],
+    impl FixedAggregationKey<String> {
+        fn into_key(self) -> OwnedAggregationKey {
+            OwnedAggregationKey {
+                fixed: self,
+                peer_tags: vec![],
+            }
         }
-    }
-
-    fn owned_key_with_peers(
-        f: FixedAggregationKey<String>,
-        peer_tags: Vec<(String, String)>,
-    ) -> OwnedAggregationKey {
-        OwnedAggregationKey {
-            fixed: f,
-            peer_tags,
+        fn into_key_with_peers(self, peer_tags: Vec<(String, String)>) -> OwnedAggregationKey {
+            OwnedAggregationKey {
+                fixed: self,
+                peer_tags,
+            }
         }
     }
 
@@ -462,13 +460,14 @@ mod tests {
                     parent_id: 0,
                     ..Default::default()
                 },
-                owned_key(FixedAggregationKey {
+                FixedAggregationKey {
                     service_name: "service".into(),
                     operation_name: "op".into(),
                     resource_name: "res".into(),
                     is_trace_root: true,
                     ..Default::default()
-                }),
+                }
+                .into_key(),
             ),
             // Span with span kind
             (
@@ -481,14 +480,15 @@ mod tests {
                     meta: HashMap::from([("span.kind".into(), "client".into())]),
                     ..Default::default()
                 },
-                owned_key(FixedAggregationKey {
+                FixedAggregationKey {
                     service_name: "service".into(),
                     operation_name: "op".into(),
                     resource_name: "res".into(),
                     span_kind: "client".into(),
                     is_trace_root: true,
                     ..Default::default()
-                }),
+                }
+                .into_key(),
             ),
             // Span with peer tags but peertags aggregation disabled
             (
@@ -504,14 +504,15 @@ mod tests {
                     ]),
                     ..Default::default()
                 },
-                owned_key(FixedAggregationKey {
+                FixedAggregationKey {
                     service_name: "service".into(),
                     operation_name: "op".into(),
                     resource_name: "res".into(),
                     span_kind: "client".into(),
                     is_trace_root: true,
                     ..Default::default()
-                }),
+                }
+                .into_key(),
             ),
             // Span with multiple peer tags but peertags aggregation disabled
             (
@@ -529,14 +530,15 @@ mod tests {
                     ]),
                     ..Default::default()
                 },
-                owned_key(FixedAggregationKey {
+                FixedAggregationKey {
                     service_name: "service".into(),
                     operation_name: "op".into(),
                     resource_name: "res".into(),
                     span_kind: "producer".into(),
                     is_trace_root: true,
                     ..Default::default()
-                }),
+                }
+                .into_key(),
             ),
             // Span with multiple peer tags but peertags aggregation disabled and span kind is
             // server
@@ -555,14 +557,15 @@ mod tests {
                     ]),
                     ..Default::default()
                 },
-                owned_key(FixedAggregationKey {
+                FixedAggregationKey {
                     service_name: "service".into(),
                     operation_name: "op".into(),
                     resource_name: "res".into(),
                     span_kind: "server".into(),
                     is_trace_root: true,
                     ..Default::default()
-                }),
+                }
+                .into_key(),
             ),
             // Span from synthetics
             (
@@ -575,14 +578,15 @@ mod tests {
                     meta: HashMap::from([("_dd.origin".into(), "synthetics-browser".into())]),
                     ..Default::default()
                 },
-                owned_key(FixedAggregationKey {
+                FixedAggregationKey {
                     service_name: "service".into(),
                     operation_name: "op".into(),
                     resource_name: "res".into(),
                     is_synthetics_request: true,
                     is_trace_root: true,
                     ..Default::default()
-                }),
+                }
+                .into_key(),
             ),
             // Span with status code in meta
             (
@@ -595,7 +599,7 @@ mod tests {
                     meta: HashMap::from([("http.status_code".into(), "418".into())]),
                     ..Default::default()
                 },
-                owned_key(FixedAggregationKey {
+                FixedAggregationKey {
                     service_name: "service".into(),
                     operation_name: "op".into(),
                     resource_name: "res".into(),
@@ -603,7 +607,8 @@ mod tests {
                     is_trace_root: true,
                     http_status_code: 418,
                     ..Default::default()
-                }),
+                }
+                .into_key(),
             ),
             // Span with invalid status code in meta
             (
@@ -616,14 +621,15 @@ mod tests {
                     meta: HashMap::from([("http.status_code".into(), "x".into())]),
                     ..Default::default()
                 },
-                owned_key(FixedAggregationKey {
+                FixedAggregationKey {
                     service_name: "service".into(),
                     operation_name: "op".into(),
                     resource_name: "res".into(),
                     is_synthetics_request: false,
                     is_trace_root: true,
                     ..Default::default()
-                }),
+                }
+                .into_key(),
             ),
             // Span with status code in metrics
             (
@@ -636,7 +642,7 @@ mod tests {
                     metrics: HashMap::from([("http.status_code".into(), 418.0)]),
                     ..Default::default()
                 },
-                owned_key(FixedAggregationKey {
+                FixedAggregationKey {
                     service_name: "service".into(),
                     operation_name: "op".into(),
                     resource_name: "res".into(),
@@ -644,7 +650,8 @@ mod tests {
                     is_trace_root: true,
                     http_status_code: 418,
                     ..Default::default()
-                }),
+                }
+                .into_key(),
             ),
             // Span with http.method and http.route
             (
@@ -660,7 +667,7 @@ mod tests {
                     ]),
                     ..Default::default()
                 },
-                owned_key(FixedAggregationKey {
+                FixedAggregationKey {
                     service_name: "service".into(),
                     operation_name: "op".into(),
                     resource_name: "GET /api/v1/users".into(),
@@ -669,7 +676,8 @@ mod tests {
                     is_synthetics_request: false,
                     is_trace_root: true,
                     ..Default::default()
-                }),
+                }
+                .into_key(),
             ),
             // Span with http.method and http.endpoint (http.endpoint takes precedence)
             (
@@ -686,7 +694,7 @@ mod tests {
                     ]),
                     ..Default::default()
                 },
-                owned_key(FixedAggregationKey {
+                FixedAggregationKey {
                     service_name: "service".into(),
                     operation_name: "op".into(),
                     resource_name: "POST /users/create".into(),
@@ -695,7 +703,8 @@ mod tests {
                     is_synthetics_request: false,
                     is_trace_root: true,
                     ..Default::default()
-                }),
+                }
+                .into_key(),
             ),
             // Span with grpc status from meta as named string
             (
@@ -703,11 +712,12 @@ mod tests {
                     meta: HashMap::from([("rpc.grpc.status_code".into(), "OK".into())]),
                     ..Default::default()
                 },
-                owned_key(FixedAggregationKey {
+                FixedAggregationKey {
                     grpc_status_code: Some(0),
                     is_trace_root: true,
                     ..Default::default()
-                }),
+                }
+                .into_key(),
             ),
             // Span with grpc status from meta as numeric string
             (
@@ -715,11 +725,12 @@ mod tests {
                     meta: HashMap::from([("rpc.grpc.status_code".into(), "14".into())]),
                     ..Default::default()
                 },
-                owned_key(FixedAggregationKey {
+                FixedAggregationKey {
                     grpc_status_code: Some(14),
                     is_trace_root: true,
                     ..Default::default()
-                }),
+                }
+                .into_key(),
             ),
             // Span with grpc status from meta with StatusCode. prefix
             (
@@ -727,11 +738,12 @@ mod tests {
                     meta: HashMap::from([("grpc.code".into(), "StatusCode.UNAVAILABLE".into())]),
                     ..Default::default()
                 },
-                owned_key(FixedAggregationKey {
+                FixedAggregationKey {
                     grpc_status_code: Some(14),
                     is_trace_root: true,
                     ..Default::default()
-                }),
+                }
+                .into_key(),
             ),
             // Span with grpc status from metrics takes precedence over meta
             (
@@ -743,11 +755,12 @@ mod tests {
                     metrics: HashMap::from([("rpc.grpc.status_code".into(), 2.0)]),
                     ..Default::default()
                 },
-                owned_key(FixedAggregationKey {
+                FixedAggregationKey {
                     grpc_status_code: Some(7),
                     is_trace_root: true,
                     ..Default::default()
-                }),
+                }
+                .into_key(),
             ),
             // Span with grpc status from metrics via secondary key
             (
@@ -755,11 +768,12 @@ mod tests {
                     metrics: HashMap::from([("grpc.code".into(), 3.0)]),
                     ..Default::default()
                 },
-                owned_key(FixedAggregationKey {
+                FixedAggregationKey {
                     grpc_status_code: Some(3),
                     is_trace_root: true,
                     ..Default::default()
-                }),
+                }
+                .into_key(),
             ),
             // Span with invalid grpc status string
             (
@@ -767,10 +781,11 @@ mod tests {
                     meta: HashMap::from([("rpc.grpc.status_code".into(), "NOPE".into())]),
                     ..Default::default()
                 },
-                owned_key(FixedAggregationKey {
+                FixedAggregationKey {
                     is_trace_root: true,
                     ..Default::default()
-                }),
+                }
+                .into_key(),
             ),
             // Span with service source set by integration
             (
@@ -783,14 +798,15 @@ mod tests {
                     meta: HashMap::from([("_dd.svc_src".into(), "redis".into())]),
                     ..Default::default()
                 },
-                owned_key(FixedAggregationKey {
+                FixedAggregationKey {
                     service_name: "my-service".into(),
                     operation_name: "op".into(),
                     resource_name: "res".into(),
                     is_trace_root: true,
                     service_source: "redis".into(),
                     ..Default::default()
-                }),
+                }
+                .into_key(),
             ),
             // Span with service source set by configuration option
             (
@@ -803,14 +819,15 @@ mod tests {
                     meta: HashMap::from([("_dd.svc_src".into(), "opt.split_by_tag".into())]),
                     ..Default::default()
                 },
-                owned_key(FixedAggregationKey {
+                FixedAggregationKey {
                     service_name: "my-service".into(),
                     operation_name: "op".into(),
                     resource_name: "res".into(),
                     is_trace_root: true,
                     service_source: "opt.split_by_tag".into(),
                     ..Default::default()
-                }),
+                }
+                .into_key(),
             ),
             // Span without service source (default service name)
             (
@@ -822,14 +839,15 @@ mod tests {
                     parent_id: 0,
                     ..Default::default()
                 },
-                owned_key(FixedAggregationKey {
+                FixedAggregationKey {
                     service_name: "my-service".into(),
                     operation_name: "op".into(),
                     resource_name: "res".into(),
                     is_trace_root: true,
                     service_source: "".into(),
                     ..Default::default()
-                }),
+                }
+                .into_key(),
             ),
         ];
 
@@ -851,17 +869,15 @@ mod tests {
                     meta: HashMap::from([("span.kind", "client"), ("aws.s3.bucket", "bucket-a")]),
                     ..Default::default()
                 },
-                owned_key_with_peers(
-                    FixedAggregationKey {
-                        service_name: "service".into(),
-                        operation_name: "op".into(),
-                        resource_name: "res".into(),
-                        span_kind: "client".into(),
-                        is_trace_root: true,
-                        ..Default::default()
-                    },
-                    vec![("aws.s3.bucket".into(), "bucket-a".into())],
-                ),
+                FixedAggregationKey {
+                    service_name: "service".into(),
+                    operation_name: "op".into(),
+                    resource_name: "res".into(),
+                    span_kind: "client".into(),
+                    is_trace_root: true,
+                    ..Default::default()
+                }
+                .into_key_with_peers(vec![("aws.s3.bucket".into(), "bucket-a".into())]),
             ),
             // Span with multiple peer tags with peertags aggregation enabled
             (
@@ -879,21 +895,19 @@ mod tests {
                     ]),
                     ..Default::default()
                 },
-                owned_key_with_peers(
-                    FixedAggregationKey {
-                        service_name: "service".into(),
-                        operation_name: "op".into(),
-                        resource_name: "res".into(),
-                        span_kind: "producer".into(),
-                        is_trace_root: true,
-                        ..Default::default()
-                    },
-                    vec![
-                        ("aws.s3.bucket".into(), "bucket-a".into()),
-                        ("db.instance".into(), "dynamo.test.us1".into()),
-                        ("db.system".into(), "dynamodb".into()),
-                    ],
-                ),
+                FixedAggregationKey {
+                    service_name: "service".into(),
+                    operation_name: "op".into(),
+                    resource_name: "res".into(),
+                    span_kind: "producer".into(),
+                    is_trace_root: true,
+                    ..Default::default()
+                }
+                .into_key_with_peers(vec![
+                    ("aws.s3.bucket".into(), "bucket-a".into()),
+                    ("db.instance".into(), "dynamo.test.us1".into()),
+                    ("db.system".into(), "dynamodb".into()),
+                ]),
             ),
             // Span with multiple peer tags with peertags aggregation enabled and span kind is
             // server
@@ -912,14 +926,15 @@ mod tests {
                     ]),
                     ..Default::default()
                 },
-                owned_key(FixedAggregationKey {
+                FixedAggregationKey {
                     service_name: "service".into(),
                     operation_name: "op".into(),
                     resource_name: "res".into(),
                     span_kind: "server".into(),
                     is_trace_root: true,
                     ..Default::default()
-                }),
+                }
+                .into_key(),
             ),
         ];
 
