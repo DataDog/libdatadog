@@ -8,6 +8,7 @@ use libdd_trace_protobuf::pb;
 
 use aggregation::{BorrowedAggregationKey, StatsBucket};
 use stat_span::StatSpan;
+use tracing::debug;
 
 mod aggregation;
 
@@ -31,6 +32,12 @@ fn is_span_eligible<'a, T>(span: &'a T, span_kinds_stats_computed: &[String]) ->
 where
     T: StatSpan<'a>,
 {
+    debug!("span.has_top_level: {}", span.has_top_level());
+    debug!("span.is_measured: {}", span.is_measured());
+    debug!("span.get_meta(\"span.kind\"): {:?}", span.get_meta("span.kind"));
+    debug!("span kind stats computed: {:?}", span_kinds_stats_computed);
+    debug!("span.is_partial_snapshot: {}", span.is_partial_snapshot());
+
     (span.has_top_level() || span.is_measured() || {
         span.get_meta("span.kind")
             .is_some_and(|span_kind| span_kinds_stats_computed.contains(&span_kind.to_lowercase()))

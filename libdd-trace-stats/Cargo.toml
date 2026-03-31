@@ -14,6 +14,7 @@ libdd-ddsketch = { version = "1.0.1", path = "../libdd-ddsketch" }
 libdd-trace-protobuf = { version = "3.0.0", path = "../libdd-trace-protobuf" }
 libdd-trace-utils = { version = "3.0.0", path = "../libdd-trace-utils", default-features = false }
 hashbrown = { version = "0.15" }
+tracing = { version = "0.1", default-features = false }
 
 [lib]
 bench = false
@@ -26,3 +27,4 @@ path = "benches/main.rs"
 [dev-dependencies]
 criterion = "0.5.1"
 rand = "0.8.5"
+tracing-test = { version = "0.2", features = ["no-env-filter"] }
