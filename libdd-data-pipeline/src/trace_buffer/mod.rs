@@ -17,8 +17,8 @@ use crate::trace_exporter::{
 
 #[derive(Clone, Copy, Debug)]
 pub struct TraceBufferConfig {
-    synchronous_writes: bool,
-    synchronous_writes_timeout: Option<Duration>,
+    synchronous_export: bool,
+    synchronous_export_timeout: Option<Duration>,
     max_flush_interval: Duration,
     max_buffered_spans: usize,
     span_flush_threshold: usize,
@@ -31,18 +31,20 @@ impl TraceBufferConfig {
 
     /// Whether the async exporter waits for the trace chunks to be exported before returning from
     /// export_chunk
-    pub fn synchronous_writes(self, synchronous_writes: bool) -> Self {
+    pub fn synchronous_export(self, synchronous_writes: bool) -> Self {
         Self {
-            synchronous_writes,
+            synchronous_export: synchronous_writes,
             ..self
         }
     }
 
     /// The maximum amount of time the export_chunk waits for a flush if synchronous_writes is
     /// enabled. If this is zero send_chunk will always return an error
-    pub fn synchronous_writes_timeout(self, timeout: Option<Duration>) -> Self {
+    ///
+    /// If it is None, the send will wait forever
+    pub fn synchronous_export_timeout(self, timeout: Option<Duration>) -> Self {
         Self {
-            synchronous_writes_timeout: timeout,
+            synchronous_export_timeout: timeout,
             ..self
         }
     }
@@ -75,8 +77,8 @@ impl TraceBufferConfig {
 impl Default for TraceBufferConfig {
     fn default() -> Self {
         Self {
-            synchronous_writes: false,
-            synchronous_writes_timeout: None,
+            synchronous_export: false,
+            synchronous_export_timeout: Some(Duration::from_secs(1)),
             max_flush_interval: Duration::from_secs(2),
             max_buffered_spans: 10_000,
             span_flush_threshold: 3_000,
@@ -195,10 +197,8 @@ impl<T> Batch<T> {
 /// # Synchronous mode
 ///
 /// If [`TraceBufferConfig::synchronous_writes`] is true and
-/// [`TraceBufferConfig::synchronous_writes_timeout`] is not None,
-/// calls to [`TraceBuffer::send_chunk`] will wait
 /// * Either until the chunks have been flushed the agent
-/// * Or the `synchronous_writes_timeout` duration is reached. At which point the flush might
+/// * Or if `synchronous_writes_timeout` is Some, until the timeout is reached. At which point the flush might
 ///   continue in the background
 pub struct TraceBuffer<T> {
     tx: Sender<T>,
@@ -209,7 +209,8 @@ pub struct TraceBuffer<T> {
     /// When the background thread processes a batch it will increment it's 'last_flushed_batch'
     /// and an export can wait until the 'last_flushed_batch' is equal to the batch it added it's
     /// trace chunks to.
-    synchronous_export: Option<Duration>,
+    synchronous_export: bool,
+    synchronous_export_timeout: Option<Duration>,
 }
 
 pub type ResponseHandler = Box<dyn Fn(Result<AgentResponse, TraceExporterError>) + Send + Sync>;
@@ -224,7 +225,7 @@ impl<T: Send + 'static> TraceBuffer<T> {
         let (tx, rx) = channel(
             config.span_flush_threshold,
             config.max_buffered_spans,
-            config.synchronous_writes,
+            config.synchronous_export,
         );
         let worker = {
             TraceExporterWorker::new(
@@ -238,10 +239,8 @@ impl<T: Send + 'static> TraceBuffer<T> {
         (
             Self {
                 tx,
-                synchronous_export: config
-                    .synchronous_writes
-                    .then_some(config.synchronous_writes_timeout)
-                    .flatten(),
+                synchronous_export: config.synchronous_export,
+                synchronous_export_timeout: config.synchronous_export_timeout,
             },
             worker,
         )
@@ -255,8 +254,9 @@ impl<T: Send + 'static> TraceBuffer<T> {
 
         match self.tx.add_trace_chunk(trace_chunk) {
             Ok(flush_gen) => {
-                if let Some(timeout) = self.synchronous_export {
-                    self.tx.wait_flush_done(flush_gen, timeout)?;
+                if self.synchronous_export {
+                    self.tx
+                        .wait_flush_done(flush_gen, self.synchronous_export_timeout)?;
                 }
                 Ok(())
             }
@@ -281,7 +281,7 @@ impl<T: Send + 'static> TraceBuffer<T> {
 
 impl<T> fmt::Debug for TraceBuffer<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("DatadogExporter").finish()
+        f.debug_struct("TraceBuffer").finish()
     }
 }
 
@@ -340,21 +340,32 @@ impl<T> Sender<T> {
     fn wait_flush_done(
         &self,
         flush_gen: BatchGeneration,
-        timeout: Duration,
+        timeout: Option<Duration>,
     ) -> Result<(), TraceBufferError> {
-        if timeout.is_zero() {
-            return Err(TraceBufferError::TimedOut(Duration::ZERO));
-        }
-        let state = self.get_state()?;
-        let (_state, res) = self
-            .waiter
-            .sender_notifier
-            .wait_timeout_while(state, timeout, |state| {
-                state.last_flush_generation < flush_gen && !state.has_shutdown
-            })
-            .map_err(|_| TraceBufferError::MutexPoisoned)?;
-        if res.timed_out() {
-            return Err(TraceBufferError::TimedOut(timeout));
+        let cond = |state: &mut SharedState<T>| {
+            state.last_flush_generation < flush_gen && !state.has_shutdown
+        };
+
+        if let Some(timeout) = timeout {
+            if timeout.is_zero() {
+                return Err(TraceBufferError::TimedOut(Duration::ZERO));
+            }
+            let state = self.get_state()?;
+            let (_state, res) = self
+                .waiter
+                .sender_notifier
+                .wait_timeout_while(state, timeout, cond)
+                .map_err(|_| TraceBufferError::MutexPoisoned)?;
+            if res.timed_out() {
+                return Err(TraceBufferError::TimedOut(timeout));
+            }
+        } else {
+            let state = self.get_state()?;
+            let _state = self
+                .waiter
+                .sender_notifier
+                .wait_while(state, cond)
+                .map_err(|_| TraceBufferError::MutexPoisoned)?;
         }
         Ok(())
     }
@@ -814,8 +825,8 @@ mod tests {
         let (rt, sem, sender) = make_buffer(
             Box::new(|chunks| assert_eq!(chunks.len(), 1)),
             TraceBufferConfig::default()
-                .synchronous_writes(true)
-                .synchronous_writes_timeout(Some(Duration::from_secs(1))),
+                .synchronous_export(true)
+                .synchronous_export_timeout(Some(Duration::from_secs(1))),
         );
         sender.send_chunk(vec![()]).unwrap();
         let _ = sem.try_acquire_many(1).unwrap();
@@ -828,6 +839,33 @@ mod tests {
 
         assert_eq!(sender.queue_metrics().get_metrics().spans_queued, 3);
         rt.shutdown(None).unwrap();
+    }
+
+    #[test]
+    fn test_force_flush() {
+        // Set thresholds high enough that send_chunk alone never triggers a flush,
+        // and the timer long enough that it won't fire during the test.
+        let (rt, sem, sender) = make_buffer(
+            Box::new(|chunks| {
+                assert_eq!(chunks.len(), 2);
+            }),
+            TraceBufferConfig::default()
+                .max_buffered_spans(100)
+                .span_flush_threshold(100)
+                .max_flush_interval(Duration::from_secs(u32::MAX as u64)),
+        );
+
+        sender.send_chunk(vec![()]).unwrap();
+        sender.send_chunk(vec![(), ()]).unwrap();
+
+        // No flush should have happened yet.
+        assert_eq!(sem.available_permits(), 0);
+
+        sender.force_flush().unwrap();
+        let _ = rt.block_on(sem.acquire_many(1)).unwrap().unwrap();
+
+        rt.shutdown(None).unwrap();
+        sender.wait_shutdown_done(Duration::from_secs(10)).unwrap();
     }
 
     #[test]
