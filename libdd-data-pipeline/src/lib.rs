@@ -16,5 +16,6 @@ pub(crate) mod otlp;
 #[allow(missing_docs)]
 pub mod stats_exporter;
 pub(crate) mod telemetry;
+pub mod trace_buffer;
 #[allow(missing_docs)]
 pub mod trace_exporter;
