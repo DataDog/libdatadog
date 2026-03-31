@@ -478,7 +478,48 @@ fn emit_ucontext(w: &mut impl Write, ucontext: *const ucontext_t) -> Result<(), 
     }
     writeln!(w, "{DD_CRASHTRACK_BEGIN_UCONTEXT}")?;
     // SAFETY: the pointer is given to us by the signal handler, and is non-null.
-    writeln!(w, "{:?}", unsafe { *ucontext })?;
+    let uc = unsafe { &*ucontext };
+
+    #[cfg(target_arch = "x86_64")]
+    {
+        let gregs = &uc.uc_mcontext.gregs;
+        write!(w, "{{\"arch\": \"x86_64\", \"registers\": {{")?;
+        write!(w, "\"rip\": \"0x{:016x}\"", gregs[libc::REG_RIP as usize])?;
+        write!(w, ", \"rsp\": \"0x{:016x}\"", gregs[libc::REG_RSP as usize])?;
+        write!(w, ", \"rbp\": \"0x{:016x}\"", gregs[libc::REG_RBP as usize])?;
+        write!(w, ", \"rax\": \"0x{:016x}\"", gregs[libc::REG_RAX as usize])?;
+        write!(w, ", \"rbx\": \"0x{:016x}\"", gregs[libc::REG_RBX as usize])?;
+        write!(w, ", \"rcx\": \"0x{:016x}\"", gregs[libc::REG_RCX as usize])?;
+        write!(w, ", \"rdx\": \"0x{:016x}\"", gregs[libc::REG_RDX as usize])?;
+        write!(w, ", \"rsi\": \"0x{:016x}\"", gregs[libc::REG_RSI as usize])?;
+        write!(w, ", \"rdi\": \"0x{:016x}\"", gregs[libc::REG_RDI as usize])?;
+        write!(w, ", \"r8\": \"0x{:016x}\"", gregs[libc::REG_R8 as usize])?;
+        write!(w, ", \"r9\": \"0x{:016x}\"", gregs[libc::REG_R9 as usize])?;
+        write!(w, ", \"r10\": \"0x{:016x}\"", gregs[libc::REG_R10 as usize])?;
+        write!(w, ", \"r11\": \"0x{:016x}\"", gregs[libc::REG_R11 as usize])?;
+        write!(w, ", \"r12\": \"0x{:016x}\"", gregs[libc::REG_R12 as usize])?;
+        write!(w, ", \"r13\": \"0x{:016x}\"", gregs[libc::REG_R13 as usize])?;
+        write!(w, ", \"r14\": \"0x{:016x}\"", gregs[libc::REG_R14 as usize])?;
+        write!(w, ", \"r15\": \"0x{:016x}\"", gregs[libc::REG_R15 as usize])?;
+        // Preserve the full ucontext as a raw Debug string so that FPU state,
+        // signal mask, and alternate-stack info are not lost.
+        write!(w, "}}, \"raw\": \"{:?}\"", uc)?;
+        writeln!(w, "}}")?;
+    }
+
+    #[cfg(target_arch = "aarch64")]
+    {
+        let mc = &uc.uc_mcontext;
+        write!(w, "{{\"arch\": \"aarch64\", \"registers\": {{")?;
+        write!(w, "\"pc\": \"0x{:016x}\"", mc.pc)?;
+        write!(w, ", \"sp\": \"0x{:016x}\"", mc.sp)?;
+        for i in 0..31 {
+            write!(w, ", \"x{}\": \"0x{:016x}\"", i, mc.regs[i])?;
+        }
+        write!(w, "}}, \"raw\": \"{:?}\"", uc)?;
+        writeln!(w, "}}")?;
+    }
+
     writeln!(w, "{DD_CRASHTRACK_END_UCONTEXT}")?;
     w.flush()?;
     Ok(())
@@ -544,15 +585,64 @@ fn emit_ucontext(w: &mut impl Write, ucontext: *const ucontext_t) -> Result<(), 
     }
     // On MacOS, the actual machine context is behind a second pointer.
     // SAFETY: the pointer is given to us by the signal handler, and is non-null.
-    let mcontext = unsafe { *ucontext }.uc_mcontext;
+    let uc = unsafe { &*ucontext };
+    let mcontext = uc.uc_mcontext;
     writeln!(w, "{DD_CRASHTRACK_BEGIN_UCONTEXT}")?;
-    // SAFETY: the pointer is given to us by the signal handler, and is non-null.
-    write!(w, "{:?}", unsafe { *ucontext })?;
-    if !mcontext.is_null() {
-        // SAFETY: the pointer is given to us by the signal handler, and is non-null.
-        write!(w, ", {:?}", unsafe { *mcontext })?;
+
+    if mcontext.is_null() {
+        // Fall back to raw Debug output if mcontext pointer is null.
+        write!(w, "{{\"arch\": \"")?;
+        #[cfg(target_arch = "x86_64")]
+        write!(w, "x86_64")?;
+        #[cfg(target_arch = "aarch64")]
+        write!(w, "aarch64")?;
+        write!(w, "\", \"registers\": {{}}")?;
+        write!(w, ", \"raw\": \"{:?}\"", uc)?;
+        writeln!(w, "}}")?;
+    } else {
+        // SAFETY: mcontext is non-null, provided by the signal handler.
+        let mc = unsafe { &*mcontext };
+        let ss = &mc.__ss;
+
+        #[cfg(target_arch = "x86_64")]
+        {
+            write!(w, "{{\"arch\": \"x86_64\", \"registers\": {{")?;
+            write!(w, "\"rip\": \"0x{:016x}\"", ss.__rip)?;
+            write!(w, ", \"rsp\": \"0x{:016x}\"", ss.__rsp)?;
+            write!(w, ", \"rbp\": \"0x{:016x}\"", ss.__rbp)?;
+            write!(w, ", \"rax\": \"0x{:016x}\"", ss.__rax)?;
+            write!(w, ", \"rbx\": \"0x{:016x}\"", ss.__rbx)?;
+            write!(w, ", \"rcx\": \"0x{:016x}\"", ss.__rcx)?;
+            write!(w, ", \"rdx\": \"0x{:016x}\"", ss.__rdx)?;
+            write!(w, ", \"rsi\": \"0x{:016x}\"", ss.__rsi)?;
+            write!(w, ", \"rdi\": \"0x{:016x}\"", ss.__rdi)?;
+            write!(w, ", \"r8\": \"0x{:016x}\"", ss.__r8)?;
+            write!(w, ", \"r9\": \"0x{:016x}\"", ss.__r9)?;
+            write!(w, ", \"r10\": \"0x{:016x}\"", ss.__r10)?;
+            write!(w, ", \"r11\": \"0x{:016x}\"", ss.__r11)?;
+            write!(w, ", \"r12\": \"0x{:016x}\"", ss.__r12)?;
+            write!(w, ", \"r13\": \"0x{:016x}\"", ss.__r13)?;
+            write!(w, ", \"r14\": \"0x{:016x}\"", ss.__r14)?;
+            write!(w, ", \"r15\": \"0x{:016x}\"", ss.__r15)?;
+            write!(w, "}}, \"raw\": \"{:?}, {:?}\"", uc, mc)?;
+            writeln!(w, "}}")?;
+        }
+
+        #[cfg(target_arch = "aarch64")]
+        {
+            write!(w, "{{\"arch\": \"aarch64\", \"registers\": {{")?;
+            write!(w, "\"pc\": \"0x{:016x}\"", ss.__pc)?;
+            write!(w, ", \"sp\": \"0x{:016x}\"", ss.__sp)?;
+            write!(w, ", \"fp\": \"0x{:016x}\"", ss.__fp)?;
+            write!(w, ", \"lr\": \"0x{:016x}\"", ss.__lr)?;
+            for i in 0..29 {
+                write!(w, ", \"x{}\": \"0x{:016x}\"", i, ss.__x[i])?;
+            }
+            write!(w, "}}, \"raw\": \"{:?}, {:?}\"", uc, mc)?;
+            writeln!(w, "}}")?;
+        }
     }
-    writeln!(w)?;
+
     writeln!(w, "{DD_CRASHTRACK_END_UCONTEXT}")?;
     w.flush()?;
     Ok(())
@@ -865,5 +955,210 @@ mod tests {
             buf.is_empty(),
             "Function should return early on unw_init_local2 failure"
         );
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_emit_ucontext_null_pointer() {
+        let mut buf = Vec::new();
+        let result = emit_ucontext(&mut buf, std::ptr::null());
+
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), EmitterError::NullUcontext));
+        assert!(buf.is_empty());
+    }
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    #[cfg_attr(miri, ignore)]
+    fn test_emit_ucontext_linux_valid() {
+        // Create a minimal valid ucontext_t with zeroed register values
+        let mut context: libc::ucontext_t = unsafe { std::mem::zeroed() };
+
+        // Set up some test register values
+        #[cfg(target_arch = "x86_64")]
+        {
+            // Set some register values for testing
+            context.uc_mcontext.gregs[libc::REG_RIP as usize] = 0x12345678;
+            context.uc_mcontext.gregs[libc::REG_RSP as usize] = 0x87654321;
+            context.uc_mcontext.gregs[libc::REG_RBP as usize] = 0xABCDEF00;
+        }
+
+        #[cfg(target_arch = "aarch64")]
+        {
+            // Set some register values for testing
+            context.uc_mcontext.pc = 0x12345678;
+            context.uc_mcontext.sp = 0x87654321;
+            context.uc_mcontext.regs[0] = 0xABCDEF00;
+        }
+
+        let mut buf = Vec::new();
+        emit_ucontext(&mut buf, &context).expect("emit_ucontext should succeed");
+
+        let output = str::from_utf8(&buf).expect("output should be valid UTF-8");
+
+        // Check that proper markers are present
+        assert!(output.contains(crate::shared::constants::DD_CRASHTRACK_BEGIN_UCONTEXT));
+        assert!(output.contains(crate::shared::constants::DD_CRASHTRACK_END_UCONTEXT));
+
+        // Check architecture is correct
+        #[cfg(target_arch = "x86_64")]
+        {
+            assert!(output.contains("\"arch\": \"x86_64\""));
+            assert!(output.contains("\"registers\""));
+
+            // Check specific registers are present
+            assert!(output.contains("\"rip\""));
+            assert!(output.contains("\"rsp\""));
+            assert!(output.contains("\"rbp\""));
+            assert!(output.contains("\"rax\""));
+
+            // Check our test values are formatted correctly
+            assert!(output.contains("0x0000000012345678")); // rip
+            assert!(output.contains("0x0000000087654321")); // rsp
+            assert!(output.contains("0x00000000abcdef00")); // rbp
+        }
+
+        #[cfg(target_arch = "aarch64")]
+        {
+            assert!(output.contains("\"arch\": \"aarch64\""));
+            assert!(output.contains("\"registers\""));
+
+            // Check specific registers are present
+            assert!(output.contains("\"pc\""));
+            assert!(output.contains("\"sp\""));
+            assert!(output.contains("\"x0\""));
+
+            // Check our test values are formatted correctly
+            assert!(output.contains("0x0000000012345678")); // pc
+            assert!(output.contains("0x0000000087654321")); // sp
+            assert!(output.contains("0x00000000abcdef00")); // x0
+        }
+
+        // Check that raw debug output is included
+        assert!(output.contains("\"raw\""));
+
+        // Verify it's valid JSON between the markers
+        let start_marker = crate::shared::constants::DD_CRASHTRACK_BEGIN_UCONTEXT;
+        let end_marker = crate::shared::constants::DD_CRASHTRACK_END_UCONTEXT;
+
+        let start_pos = output.find(start_marker).unwrap() + start_marker.len() + 1; // +1 for newline
+        let end_pos = output.find(end_marker).unwrap();
+        let json_part = output[start_pos..end_pos].trim();
+
+        let parsed: serde_json::Value =
+            serde_json::from_str(json_part).expect("JSON between markers should be valid");
+
+        // Verify the JSON structure
+        assert!(parsed.is_object());
+        assert!(parsed["arch"].is_string());
+        assert!(parsed["registers"].is_object());
+        assert!(parsed["raw"].is_string());
+    }
+
+    #[test]
+    #[cfg(target_os = "macos")]
+    #[cfg_attr(miri, ignore)]
+    fn test_emit_ucontext_macos_valid() {
+        use libc::__darwin_ucontext;
+        // Create a minimal valid ucontext_t for macOS
+        let mut context: __darwin_ucontext = unsafe { std::mem::zeroed() };
+
+        // On macOS, we need to allocate mcontext and set up the pointer
+        let mut mcontext: libc::__darwin_mcontext64 = unsafe { std::mem::zeroed() };
+        context.uc_mcontext = &mut mcontext as *mut libc::__darwin_mcontext64;
+
+        // Set up some test register values
+        #[cfg(target_arch = "x86_64")]
+        {
+            unsafe {
+                (*context.uc_mcontext).__ss.__rip = 0x12345678;
+                (*context.uc_mcontext).__ss.__rsp = 0x87654321;
+                (*context.uc_mcontext).__ss.__rbp = 0xABCDEF00;
+            }
+        }
+
+        #[cfg(target_arch = "aarch64")]
+        {
+            unsafe {
+                (*context.uc_mcontext).__ss.__pc = 0x12345678;
+                (*context.uc_mcontext).__ss.__sp = 0x87654321;
+                (*context.uc_mcontext).__ss.__fp = 0xABCDEF00;
+            }
+        }
+
+        let mut buf = Vec::new();
+        emit_ucontext(&mut buf, &context as *const __darwin_ucontext)
+            .expect("emit_ucontext should succeed");
+
+        let output = str::from_utf8(&buf).expect("output should be valid UTF-8");
+
+        // Check that proper markers are present
+        assert!(output.contains(crate::shared::constants::DD_CRASHTRACK_BEGIN_UCONTEXT));
+        assert!(output.contains(crate::shared::constants::DD_CRASHTRACK_END_UCONTEXT));
+
+        // Check architecture is correct
+        #[cfg(target_arch = "x86_64")]
+        {
+            assert!(output.contains("\"arch\": \"x86_64\""));
+            assert!(output.contains("\"registers\""));
+
+            // Check specific registers are present
+            assert!(output.contains("\"rip\""));
+            assert!(output.contains("\"rsp\""));
+            assert!(output.contains("\"rbp\""));
+
+            // Check our test values are formatted correctly
+            assert!(output.contains("0x0000000012345678")); // rip
+            assert!(output.contains("0x0000000087654321")); // rsp
+            assert!(output.contains("0x00000000abcdef00")); // rbp
+        }
+
+        #[cfg(target_arch = "aarch64")]
+        {
+            assert!(output.contains("\"arch\": \"aarch64\""));
+            assert!(output.contains("\"registers\""));
+
+            // Check specific registers are present
+            assert!(output.contains("\"pc\""));
+            assert!(output.contains("\"sp\""));
+            assert!(output.contains("\"fp\""));
+
+            // Check our test values are formatted correctly
+            assert!(output.contains("0x0000000012345678")); // pc
+            assert!(output.contains("0x0000000087654321")); // sp
+            assert!(output.contains("0x00000000abcdef00")); // fp
+        }
+
+        // Check that raw debug output is included
+        assert!(output.contains("\"raw\""));
+    }
+
+    #[test]
+    #[cfg(target_os = "macos")]
+    #[cfg_attr(miri, ignore)]
+    fn test_emit_ucontext_macos_null_mcontext() {
+        // Test the fallback case when mcontext is null
+        let mut context: libc::ucontext_t = unsafe { std::mem::zeroed() };
+        context.uc_mcontext = std::ptr::null_mut(); // Explicitly set to null
+
+        let mut buf = Vec::new();
+        emit_ucontext(&mut buf, &context).expect("emit_ucontext should succeed with null mcontext");
+
+        let output = str::from_utf8(&buf).expect("output should be valid UTF-8");
+
+        // Check that proper markers are present
+        assert!(output.contains(crate::shared::constants::DD_CRASHTRACK_BEGIN_UCONTEXT));
+        assert!(output.contains(crate::shared::constants::DD_CRASHTRACK_END_UCONTEXT));
+
+        // Should contain fallback information
+        assert!(output.contains("\"registers\": {}"));
+        assert!(output.contains("\"raw\""));
+
+        #[cfg(target_arch = "x86_64")]
+        assert!(output.contains("\"arch\": \"x86_64\""));
+
+        #[cfg(target_arch = "aarch64")]
+        assert!(output.contains("\"arch\": \"aarch64\""));
     }
 }

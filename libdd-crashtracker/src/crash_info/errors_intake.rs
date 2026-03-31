@@ -3,7 +3,7 @@
 
 use std::time::SystemTime;
 
-use crate::{OsInfo, SigInfo};
+use crate::{OsInfo, SigInfo, Ucontext};
 
 use super::{
     build_crash_ping_message, CrashInfo, Experimental, Metadata, StackTrace, TARGET_TRIPLE,
@@ -265,6 +265,8 @@ pub struct ErrorsIntakePayload {
     pub os_info: OsInfo,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub sig_info: Option<SigInfo>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ucontext: Option<Ucontext>,
 }
 
 #[derive(Debug, Default)]
@@ -412,6 +414,7 @@ impl ErrorsIntakePayload {
         };
 
         let sig_info = crash_info.sig_info.clone();
+        let ucontext = crash_info.ucontext.clone();
 
         Ok(Self {
             timestamp,
@@ -429,6 +432,7 @@ impl ErrorsIntakePayload {
             trace_id: None,
             os_info: ::os_info::get().into(),
             sig_info,
+            ucontext,
         })
     }
 
@@ -494,6 +498,7 @@ impl ErrorsIntakePayload {
             // Crash ping does not include os_info, but we can recalculate it here
             // so that errors intake crash pings include this information
             os_info: ::os_info::get().into(),
+            ucontext: None,
         })
     }
 }
@@ -631,7 +636,7 @@ mod tests {
         assert!(ddtags.contains("version:bar"));
         assert!(ddtags.contains("language_name:native"));
 
-        assert!(ddtags.contains("data_schema_version:1.5"));
+        assert!(ddtags.contains("data_schema_version:1.6"));
         assert!(ddtags.contains("incomplete:true"));
         assert!(ddtags.contains("is_crash:true"));
         assert!(ddtags.contains("uuid:1d6b97cb-968c-40c9-af6e-e4b4d71e8781"));
@@ -683,7 +688,7 @@ mod tests {
         let payload = ErrorsIntakePayload::from_crash_info(&crash_info).unwrap();
 
         let expected_crash_tags = [
-            "data_schema_version:1.5",
+            "data_schema_version:1.6",
             "incomplete:true",
             "is_crash:true",
             "uuid:1d6b97cb-968c-40c9-af6e-e4b4d71e8781",

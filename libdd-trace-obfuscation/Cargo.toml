@@ -1,6 +1,6 @@
 [package]
 name = "libdd-trace-obfuscation"
-version = "1.0.1"
+version = "2.0.0"
 description = "A duplicate of trace obfuscator implemented in the agent and documented in https://docs.datadoghq.com/tracing/configure_data_security/?tab=net#trace-obfuscation"
 homepage = "https://github.com/DataDog/libdatadog/tree/main/libdd-trace-obfuscation"
 repository = "https://github.com/DataDog/libdatadog/tree/main/libdd-trace-obfuscation"
@@ -17,9 +17,9 @@ serde_json = { version = "1.0", features = ["preserve_order"] }
 percent-encoding = "2.1"
 log = "0.4"
 fluent-uri = "0.4.1"
-libdd-trace-protobuf = { version = "3.0.0", path = "../libdd-trace-protobuf" }
-libdd-trace-utils = { version = "3.0.0", path = "../libdd-trace-utils" }
-libdd-common = { version = "3.0.1", path = "../libdd-common" }
+libdd-trace-protobuf = { version = "3.0.1", path = "../libdd-trace-protobuf" }
+libdd-trace-utils = { version = "3.0.1", path = "../libdd-trace-utils" }
+libdd-common = { version = "3.0.2", path = "../libdd-common" }
 
 [dev-dependencies]
 duplicate = "0.4.1"

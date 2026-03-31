@@ -45,6 +45,7 @@ members = [
   "libdd-ddsketch-ffi",
   "libdd-tinybytes",
   "libdd-dogstatsd-client",
+  "libdd-http-client",
   "libdd-log",
   "libdd-log-ffi", "libdd-libunwind-sys",
 ]
@@ -65,7 +66,7 @@ resolver = "2"
 [workspace.package]
 rust-version = "1.84.1"
 edition = "2021"
-version = "29.0.0"
+version = "30.0.0"
 license = "Apache-2.0"
 authors = ["Datadog Inc. <info@datadoghq.com>"]
 
