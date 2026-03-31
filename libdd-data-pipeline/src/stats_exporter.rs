@@ -9,6 +9,8 @@ use std::{
     },
     time,
 };
+#[cfg(feature = "stats-obfuscation")]
+use std::sync::atomic::AtomicBool;
 
 use crate::trace_exporter::TracerMetadata;
 use libdd_common::{worker::Worker, Endpoint, HttpClient};
@@ -32,7 +34,7 @@ pub struct StatsExporter {
     cancellation_token: CancellationToken,
     client: HttpClient,
     #[cfg(feature = "stats-obfuscation")]
-    obfuscation_active: bool,
+    obfuscation_active: Arc<AtomicBool>,
 }
 
 impl StatsExporter {
@@ -51,8 +53,8 @@ impl StatsExporter {
         endpoint: Endpoint,
         cancellation_token: CancellationToken,
         client: HttpClient,
-        #[cfg_attr(not(feature = "stats-obfuscation"), allow(unused_variables))]
-        obfuscation_active: bool,
+        #[cfg(feature = "stats-obfuscation")]
+        obfuscation_active: Arc<AtomicBool>,
     ) -> Self {
         Self {
             flush_interval,
@@ -97,7 +99,7 @@ impl StatsExporter {
         );
 
         #[cfg(feature = "stats-obfuscation")]
-        if self.obfuscation_active {
+        if self.obfuscation_active.load(Ordering::Relaxed) {
             headers.insert(
                 http::HeaderName::from_static("datadog-obfuscation-version"),
                 http::HeaderValue::from_static("1"),
@@ -288,7 +290,8 @@ mod tests {
             Endpoint::from_url(stats_url_from_agent_url(&server.url("/")).unwrap()),
             CancellationToken::new(),
             new_default_client(),
-            false,
+            #[cfg(feature = "stats-obfuscation")]
+            Arc::new(AtomicBool::new(false)),
         );
 
         let send_status = stats_exporter.send(true).await;
@@ -317,7 +320,8 @@ mod tests {
             Endpoint::from_url(stats_url_from_agent_url(&server.url("/")).unwrap()),
             CancellationToken::new(),
             new_default_client(),
-            false,
+            #[cfg(feature = "stats-obfuscation")]
+            Arc::new(AtomicBool::new(false)),
         );
 
         let send_status = stats_exporter.send(true).await;
@@ -352,7 +356,8 @@ mod tests {
             Endpoint::from_url(stats_url_from_agent_url(&server.url("/")).unwrap()),
             CancellationToken::new(),
             new_default_client(),
-            false,
+            #[cfg(feature = "stats-obfuscation")]
+            Arc::new(AtomicBool::new(false)),
         );
 
         tokio::time::pause();
@@ -395,7 +400,8 @@ mod tests {
             Endpoint::from_url(stats_url_from_agent_url(&server.url("/")).unwrap()),
             cancellation_token.clone(),
             new_default_client(),
-            false,
+            #[cfg(feature = "stats-obfuscation")]
+            Arc::new(AtomicBool::new(false)),
         );
 
         tokio::spawn(async move {
@@ -433,6 +439,7 @@ mod tests {
             "Non-empty env should be preserved"
         );
     }
+    #[cfg(feature = "stats-obfuscation")]
     #[cfg_attr(miri, ignore)]
     #[tokio::test]
     async fn test_send_stats_with_obfuscation_header() {
@@ -456,7 +463,7 @@ mod tests {
             Endpoint::from_url(stats_url_from_agent_url(&server.url("/")).unwrap()),
             CancellationToken::new(),
             new_default_client(),
-            true,
+            Arc::new(AtomicBool::new(true)),
         );
 
         let send_status = stats_exporter.send(true).await;

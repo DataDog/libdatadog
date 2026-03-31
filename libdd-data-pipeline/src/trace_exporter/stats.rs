@@ -12,6 +12,8 @@ use crate::stats_exporter;
 use arc_swap::ArcSwap;
 #[cfg(feature = "stats-obfuscation")]
 use std::borrow::Borrow;
+#[cfg(feature = "stats-obfuscation")]
+use std::sync::atomic::{AtomicBool, Ordering};
 use libdd_common::{Endpoint, HttpClient, MutexExt};
 use libdd_trace_stats::span_concentrator::SpanConcentrator;
 use std::sync::{Arc, Mutex};
@@ -50,7 +52,7 @@ pub(crate) enum StatsComputationStatus {
         stats_concentrator: Arc<Mutex<SpanConcentrator>>,
         cancellation_token: CancellationToken,
         #[cfg(feature = "stats-obfuscation")]
-        obfuscation_active: bool,
+        obfuscation_active: Arc<AtomicBool>,
     },
 }
 
@@ -82,7 +84,6 @@ pub(crate) fn start_stats_computation(
     span_kinds: Vec<String>,
     peer_tags: Vec<String>,
     client: HttpClient,
-    obfuscation_active: bool,
 ) -> anyhow::Result<()> {
     if let StatsComputationStatus::DisabledByAgent { bucket_size } = **client_side_stats.load() {
         let stats_concentrator = Arc::new(Mutex::new(SpanConcentrator::new(
@@ -99,7 +100,6 @@ pub(crate) fn start_stats_computation(
             workers,
             client_side_stats,
             client,
-            obfuscation_active,
         )?;
     }
     Ok(())
@@ -113,8 +113,10 @@ fn create_and_start_stats_worker(
     workers: &Arc<Mutex<super::TraceExporterWorkers>>,
     client_side_stats: &ArcSwap<StatsComputationStatus>,
     client: HttpClient,
-    obfuscation_active: bool,
 ) -> anyhow::Result<()> {
+    #[cfg(feature = "stats-obfuscation")]
+    let obfuscation_active = Arc::new(AtomicBool::new(false));
+
     let bucket_size = stats_concentrator.lock_or_panic().get_bucket_size();
     let stats_exporter = stats_exporter::StatsExporter::new(
         bucket_size,
@@ -123,7 +125,8 @@ fn create_and_start_stats_worker(
         Endpoint::from_url(add_path(ctx.endpoint_url, STATS_ENDPOINT)),
         cancellation_token.clone(),
         client,
-        obfuscation_active,
+        #[cfg(feature = "stats-obfuscation")]
+        obfuscation_active.clone(),
     );
     let mut stats_worker = crate::pausable_worker::PausableWorker::new(stats_exporter);
 
@@ -191,11 +194,6 @@ pub(crate) fn handle_stats_disabled_by_agent(
 ) {
     if agent_info.info.client_drop_p0s.is_some_and(|v| v) {
         // Client-side stats is supported by the agent
-        #[cfg(feature = "stats-obfuscation")]
-        let obfuscation_active = is_obfuscation_active(agent_info);
-        #[cfg(not(feature = "stats-obfuscation"))]
-        let obfuscation_active = false;
-
         let status = start_stats_computation(
             ctx,
             client_side_stats,
@@ -203,10 +201,17 @@ pub(crate) fn handle_stats_disabled_by_agent(
             get_span_kinds_for_stats(agent_info),
             agent_info.info.peer_tags.clone().unwrap_or_default(),
             client,
-            obfuscation_active,
         );
         match status {
-            Ok(()) => debug!(obfuscation_active, "Client-side stats enabled"),
+            Ok(()) => {
+                #[cfg(feature = "stats-obfuscation")]
+                if let StatsComputationStatus::Enabled { obfuscation_active, .. } =
+                    &**client_side_stats.load()
+                {
+                    obfuscation_active.store(is_obfuscation_active(agent_info), Ordering::Relaxed);
+                }
+                debug!("Client-side stats enabled");
+            }
             Err(_) => error!("Failed to start stats computation"),
         }
     } else {
@@ -228,32 +233,22 @@ pub(crate) fn handle_stats_enabled(
         concentrator.set_span_kinds(get_span_kinds_for_stats(agent_info));
         concentrator.set_peer_tags(agent_info.info.peer_tags.clone().unwrap_or_default());
 
-        #[cfg(not(feature = "stats-obfuscation"))]
         let _ = cancellation_token;
 
         #[cfg(feature = "stats-obfuscation")]
         {
             let new_obfuscation_active = is_obfuscation_active(agent_info);
-            let current_obfuscation_active =
-                if let StatsComputationStatus::Enabled { obfuscation_active, .. } =
-                    &**client_side_stats.load()
-                {
-                    *obfuscation_active
-                } else {
-                    false
-                };
-            if new_obfuscation_active != current_obfuscation_active {
-                // Drop the concentrator lock before updating the ArcSwap
-                drop(concentrator);
-                client_side_stats.store(Arc::new(StatsComputationStatus::Enabled {
-                    stats_concentrator: stats_concentrator.clone(),
-                    cancellation_token: cancellation_token.clone(),
-                    obfuscation_active: new_obfuscation_active,
-                }));
-                debug!(
-                    obfuscation_active = new_obfuscation_active,
-                    "Stats obfuscation state changed"
-                );
+            if let StatsComputationStatus::Enabled { obfuscation_active, .. } =
+                &**client_side_stats.load()
+            {
+                let current = obfuscation_active.load(Ordering::Relaxed);
+                if new_obfuscation_active != current {
+                    obfuscation_active.store(new_obfuscation_active, Ordering::Relaxed);
+                    debug!(
+                        obfuscation_active = new_obfuscation_active,
+                        "Stats obfuscation state changed"
+                    );
+                }
             }
         }
     } else {
@@ -395,7 +390,7 @@ pub(crate) fn process_traces_for_stats<T: libdd_trace_utils::span::TraceData>(
             obfuscation_active, ..
         } = &**status
         {
-            *obfuscation_active
+            obfuscation_active.load(Ordering::Relaxed)
         } else {
             unreachable!()
         };
