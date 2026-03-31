@@ -4,7 +4,10 @@ on:
     branches:
       - release-proposal/**
       - release-proposal-testing/**
-
+  pull_request:
+      branches:
+        - release/**
+        - release-testing/**
 jobs:
   package-and-upload-crates:
     permissions:
