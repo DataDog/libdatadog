@@ -96,6 +96,8 @@ int main(void) {
   }
 
   for (const auto &c : counts) {
-    assert(c.load(std::memory_order_seq_cst) == num_threads);
+    auto value = c.load(std::memory_order_seq_cst);
+    assert(value == num_threads);
+    std::ignore = value;
   }
 }
