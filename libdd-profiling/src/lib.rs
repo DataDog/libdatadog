@@ -14,5 +14,6 @@ pub mod cxx;
 pub mod exporter;
 pub mod internal;
 pub mod iter;
+pub mod otel_thread_ctx;
 pub mod pprof;
 pub mod profiles;

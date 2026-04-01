@@ -3,6 +3,7 @@
 
 //! Defines a pausable worker to be able to stop background processes before forks
 
+use libdd_capabilities::MaybeSend;
 use crate::worker::Worker;
 use std::fmt::Display;
 use tokio::{runtime::Runtime, select, task::JoinHandle};
@@ -15,7 +16,7 @@ use tracing::debug;
 /// dropping a tokio runtime to be able to restart with the same state on a new runtime. This is
 /// used to stop all threads before a fork to avoid deadlocks in child.
 #[derive(Debug)]
-pub enum PausableWorker<T: Worker + Send + Sync + 'static> {
+pub enum PausableWorker<T: Worker + MaybeSend + Sync + 'static> {
     Running {
         handle: JoinHandle<T>,
         stop_token: CancellationToken,
@@ -47,7 +48,7 @@ impl Display for PausableWorkerError {
 
 impl core::error::Error for PausableWorkerError {}
 
-impl<T: Worker + Send + Sync + 'static> PausableWorker<T> {
+impl<T: Worker + MaybeSend + Sync + 'static> PausableWorker<T> {
     /// Create a new pausable worker from the given worker.
     pub fn new(worker: T) -> Self {
         Self::Paused { worker }

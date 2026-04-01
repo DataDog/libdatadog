@@ -21,7 +21,5 @@ futures = { version = "0.3", default-features = false, features = ["alloc"] }
 tokio = { version = "1.23", features = ["rt", "rt-multi-thread", "time"] }
 tokio-util = "0.7.11"
 tracing = { version = "0.1", default-features = false }
+libdd-capabilities = { path = "../libdd-capabilities", version = "0.1.0" }
 libdd-common = { version = "3.0.2", path = "../libdd-common", default-features = false }
-
-[lints.rust]
-unexpected_cfgs = { level = "warn", check-cfg = ['cfg(coverage)'] }

@@ -12,7 +12,8 @@ use std::{
 
 use crate::trace_exporter::TracerMetadata;
 use async_trait::async_trait;
-use libdd_common::{Endpoint, HttpClient};
+use libdd_capabilities::{HttpClientTrait, MaybeSend};
+use libdd_common::{Endpoint};
 use libdd_shared_runtime::Worker;
 use libdd_trace_protobuf::pb;
 use libdd_trace_stats::span_concentrator::SpanConcentrator;
@@ -21,18 +22,21 @@ use tracing::error;
 
 const STATS_ENDPOINT_PATH: &str = "/v0.6/stats";
 
-/// An exporter that concentrates and sends stats to the agent
+/// An exporter that concentrates and sends stats to the agent.
+///
+/// `H` is the HTTP client implementation, see [`HttpClientTrait`]. Leaf crates
+/// pin it to a concrete type.
 #[derive(Debug)]
-pub struct StatsExporter {
+pub struct StatsExporter<H: HttpClientTrait> {
     flush_interval: time::Duration,
     concentrator: Arc<Mutex<SpanConcentrator>>,
     endpoint: Endpoint,
     meta: TracerMetadata,
     sequence_id: AtomicU64,
-    client: HttpClient,
+    client: H,
 }
 
-impl StatsExporter {
+impl<H: HttpClientTrait> StatsExporter<H> {
     /// Return a new StatsExporter
     ///
     /// - `flush_interval` the interval on which the concentrator is flushed
@@ -46,7 +50,7 @@ impl StatsExporter {
         concentrator: Arc<Mutex<SpanConcentrator>>,
         meta: TracerMetadata,
         endpoint: Endpoint,
-        client: HttpClient,
+        client: H,
     ) -> Self {
         Self {
             flush_interval,
@@ -129,7 +133,7 @@ impl StatsExporter {
 }
 
 #[async_trait]
-impl Worker for StatsExporter {
+impl<H: HttpClientTrait + MaybeSend + Sync + 'static> Worker for StatsExporter<H> {
     async fn trigger(&mut self) {
         tokio::time::sleep(self.flush_interval).await;
     }
@@ -187,7 +191,7 @@ mod tests {
     use super::*;
     use httpmock::prelude::*;
     use httpmock::MockServer;
-    use libdd_common::http_common::new_default_client;
+    use libdd_capabilities_impl::NativeCapabilities;
     use libdd_shared_runtime::SharedRuntime;
     use libdd_trace_utils::span::{trace_utils, v04::SpanSlice};
     use libdd_trace_utils::test_utils::poll_for_mock_hit;
@@ -202,8 +206,8 @@ mod tests {
     /// Fails to compile if stats exporter is not Send and Sync
     #[test]
     fn test_stats_exporter_sync_send() {
-        let _ = is_send::<StatsExporter>;
-        let _ = is_sync::<StatsExporter>;
+        let _ = is_send::<StatsExporter<NativeCapabilities>>;
+        let _ = is_sync::<StatsExporter<NativeCapabilities>>;
     }
 
     fn get_test_metadata() -> TracerMetadata {
@@ -261,12 +265,12 @@ mod tests {
             })
             .await;
 
-        let stats_exporter = StatsExporter::new(
+        let stats_exporter = StatsExporter::<NativeCapabilities>::new(
             BUCKETS_DURATION,
             Arc::new(Mutex::new(get_test_concentrator())),
             get_test_metadata(),
             Endpoint::from_url(stats_url_from_agent_url(&server.url("/")).unwrap()),
-            new_default_client(),
+            NativeCapabilities::new_client(),
         );
 
         let send_status = stats_exporter.send(true).await;
@@ -288,12 +292,12 @@ mod tests {
             })
             .await;
 
-        let stats_exporter = StatsExporter::new(
+        let stats_exporter = StatsExporter::<NativeCapabilities>::new(
             BUCKETS_DURATION,
             Arc::new(Mutex::new(get_test_concentrator())),
             get_test_metadata(),
             Endpoint::from_url(stats_url_from_agent_url(&server.url("/")).unwrap()),
-            new_default_client(),
+            NativeCapabilities::new_client(),
         );
 
         let send_status = stats_exporter.send(true).await;
@@ -321,13 +325,13 @@ mod tests {
             then.status(200).body("");
         });
 
-        let stats_exporter = StatsExporter::new(
+        let stats_exporter = StatsExporter::<NativeCapabilities>::new(
             // Use smaller buckets duration to speed up test
             Duration::from_secs(1),
             Arc::new(Mutex::new(get_test_concentrator())),
             get_test_metadata(),
             Endpoint::from_url(stats_url_from_agent_url(&server.url("/")).unwrap()),
-            new_default_client(),
+            NativeCapabilities::new_client(),
         );
 
         let _handle = shared_runtime
@@ -363,12 +367,12 @@ mod tests {
 
         let buckets_duration = Duration::from_secs(10);
 
-        let stats_exporter = StatsExporter::new(
+        let stats_exporter = StatsExporter::<NativeCapabilities>::new(
             buckets_duration,
             Arc::new(Mutex::new(get_test_concentrator())),
             get_test_metadata(),
             Endpoint::from_url(stats_url_from_agent_url(&server.url("/")).unwrap()),
-            new_default_client(),
+            NativeCapabilities::new_client(),
         );
 
         let _handle = shared_runtime
