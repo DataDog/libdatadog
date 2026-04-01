@@ -23,17 +23,20 @@
 //! bytes beyond the maximum expected payload size.
 
 use crate::platform::message::MAX_FDS;
-use std::future::Future;
-use std::io;
-use std::os::windows::io::{AsRawHandle, FromRawHandle, IntoRawHandle, OwnedHandle, RawHandle};
-use std::path::Path;
-use std::pin::Pin;
-use std::ptr::{null, null_mut};
-use std::sync::{
-    atomic::{AtomicU64, AtomicUsize, Ordering},
-    Arc, Mutex,
-};
 use std::task::{Context, Poll};
+use std::{
+    cell::RefCell,
+    future::Future,
+    io,
+    os::windows::io::{AsRawHandle, FromRawHandle, IntoRawHandle, OwnedHandle, RawHandle},
+    path::Path,
+    pin::Pin,
+    ptr::{null, null_mut},
+    sync::{
+        atomic::{AtomicU64, AtomicUsize, Ordering},
+        Arc, Mutex,
+    },
+};
 
 // winapi – only used for things not cleanly available in windows-sys
 use winapi::shared::minwindef::ULONG;
@@ -874,14 +877,32 @@ impl SeqpacketListener {
 /// Uses `block_in_place` + raw `ReadFile` to avoid mio's 4 KB internal read-
 /// buffer limit.  For message-mode pipes a single `ReadFile` delivers the
 /// entire message.
-pub async fn recv_raw_async(conn: &AsyncConn) -> io::Result<(Vec<u8>, Vec<OwnedHandle>)> {
+/// Receive one IPC message and decode it in-place using the supplied callback.
+///
+/// Uses a thread-local buffer sized to `max_message_size() + HANDLE_SUFFIX_SIZE` so that
+/// the per-call heap allocation for the receive buffer is eliminated once the thread-local
+/// has grown to full size.  `decode` is called synchronously inside `block_in_place` with
+/// a slice of the received bytes before the buffer is made available for the next receive.
+pub async fn recv_raw_async<F, T>(conn: &AsyncConn, decode: F) -> io::Result<(T, Vec<OwnedHandle>)>
+where
+    F: FnOnce(&[u8]) -> T,
+{
+    thread_local! {
+        /// Reusable receive buffer. Grows on first use; never shrinks.
+        static RECV_BUF: RefCell<Vec<u8>> = const { RefCell::new(Vec::new()) };
+    }
     let raw = conn.as_raw_handle() as SysHANDLE;
     tokio::task::block_in_place(|| {
-        let size = max_message_size() + HANDLE_SUFFIX_SIZE;
-        let mut buf = vec![0u8; size];
-        let (payload_len, handles) = pipe_read(raw, &mut buf, true)?;
-        buf.truncate(payload_len);
-        Ok((buf, handles))
+        RECV_BUF.with_borrow_mut(|buf| {
+            let size = max_message_size() + HANDLE_SUFFIX_SIZE;
+            if buf.len() < size {
+                buf.resize(size, 0u8);
+            }
+            match pipe_read(raw, buf, true) {
+                Err(e) => Err(e),
+                Ok((payload_len, handles)) => Ok((decode(&buf[..payload_len]), handles)),
+            }
+        })
     })
 }
 

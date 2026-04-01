@@ -311,18 +311,19 @@ fn gen_serve_fn(
             #[cfg(target_os = "linux")]
             let mut __pending_acks: u32 = 0;
             loop {
-                let (buf, fds) = match datadog_ipc::recv_raw_async(&async_fd).await {
-                    Ok(x) => x,
+                let (mut req, fds) = match datadog_ipc::recv_raw_async(
+                    &async_fd,
+                    |buf| datadog_ipc::codec::decode::<#enum_name>(buf),
+                ).await {
+                    Ok((Ok(req), fds)) => (req, fds),
+                    Ok((Err(_), _)) => {
+                        ::tracing::warn!("IPC serve: failed to decode request");
+                        break;
+                    }
                     Err(e) => {
                         ::tracing::trace!("IPC serve: recv (connection closed?): {e}");
                         break;
                     }
-                };
-                let Ok(mut req) =
-                    datadog_ipc::codec::decode::<#enum_name>(&buf)
-                else {
-                    ::tracing::warn!("IPC serve: failed to decode request");
-                    break;
                 };
                 let mut __source = datadog_ipc::handles::FdSource::new(fds);
                 if datadog_ipc::handles::TransferHandles::receive_handles(
