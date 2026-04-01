@@ -170,7 +170,7 @@ where
 /// # Example
 /// ```no_run
 /// use bin_tests::test_runner::run_custom_crash_test;
-/// use bin_tests::{rebuild_artifacts, ArtifactType, ArtifactsBuild, BuildProfile};
+/// use bin_tests::{fetch_built_artifacts, ArtifactType, ArtifactsBuild, BuildProfile};
 ///
 /// # fn main() -> anyhow::Result<()> {
 /// let receiver = ArtifactsBuild {
@@ -189,7 +189,7 @@ where
 ///     ..Default::default()
 /// };
 ///
-/// let artifacts_map = rebuild_artifacts(&[&receiver, &crashing_app])?;
+/// let artifacts_map = fetch_built_artifacts(&[&receiver, &crashing_app])?;
 ///
 /// run_custom_crash_test(
 ///     &artifacts_map[&crashing_app],
