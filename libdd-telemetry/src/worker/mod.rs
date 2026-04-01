@@ -1108,6 +1108,7 @@ impl TelemetryWorkerBuilder {
         let token = CancellationToken::new();
         let config = self.config;
         let telemetry_heartbeat_interval = config.telemetry_heartbeat_interval;
+        let telemetry_extended_heartbeat_interval = config.telemetry_extended_heartbeat_interval;
         let client = http_client::from_config(&config);
 
         let metrics_flush_interval =
@@ -1140,7 +1141,7 @@ impl TelemetryWorkerBuilder {
                 (metrics_flush_interval, LifecycleAction::FlushMetricAggr),
                 (telemetry_heartbeat_interval, LifecycleAction::FlushData),
                 (
-                    time::Duration::from_secs(60 * 60 * 24),
+                    telemetry_extended_heartbeat_interval,
                     LifecycleAction::ExtendedHeartbeat,
                 ),
             ]),
