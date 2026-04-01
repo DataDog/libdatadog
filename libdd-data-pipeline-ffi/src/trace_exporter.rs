@@ -18,7 +18,7 @@ use libdd_data_pipeline::trace_exporter::{
 type TraceExporter = GenericTraceExporter<NativeCapabilities>;
 
 use std::{ptr::NonNull, time::Duration};
-use tracing::{debug, error};
+use tracing::debug;
 
 #[inline]
 fn sanitize_string(str: CharSlice) -> Result<String, Box<ExporterError>> {
