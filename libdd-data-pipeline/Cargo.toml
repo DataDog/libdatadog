@@ -47,8 +47,13 @@ libdd-tinybytes = { version = "1.1.0", path = "../libdd-tinybytes", features = [
 [lib]
 bench = false
 
+[[bench]]
+name = "trace_buffer"
+harness = false
+
 [dev-dependencies]
 libdd-log = { path = "../libdd-log" }
+libdd-shared-runtime = { version = "1.0.0", path = "../libdd-shared-runtime" }
 clap = { version = "4.0", features = ["derive"] }
 criterion = "0.5.1"
 libdd-trace-utils = { path = "../libdd-trace-utils", features = [
