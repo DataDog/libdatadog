@@ -34,15 +34,20 @@ pub struct TracerMetadata {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub container_id: Option<String>,
     /// Ordered list of attribute key names for thread-level context records. Key indices from
-    /// thread context records index into this table. Keep empty if thread-level context is not
-    /// used.
+    /// thread context records index into this table. Set to `None` to disable thread-level related
+    /// attributes to the process-level context.
+    ///
+    /// If set to `Some`, the first key will be automatically to be `datadog.local_root_span_id` in
+    /// the OTel process context, because the thread context handling elsewhere in libdatadog
+    /// relies on this key's index to be zero. Only set additional keys in
+    /// `threadlocal_attribute_keys`; the root span id is considered to be always implicitly here.
     ///
     /// This field is specific to OTel process context. It is ignored for (de)serialization, and is
     /// only used when converting to an OTel process context in
     /// [TracerMetadata::to_otel_process_ctx].
     #[cfg(feature = "otel-thread-ctx")]
     #[serde(skip)]
-    pub threadlocal_attribute_keys: Vec<String>,
+    pub threadlocal_attribute_keys: Option<Vec<String>>,
 }
 
 impl Default for TracerMetadata {
@@ -59,7 +64,7 @@ impl Default for TracerMetadata {
             process_tags: None,
             container_id: None,
             #[cfg(feature = "otel-thread-ctx")]
-            threadlocal_attribute_keys: vec![],
+            threadlocal_attribute_keys: None,
         }
     }
 }
@@ -124,21 +129,25 @@ impl TracerMetadata {
         ];
 
         #[cfg(feature = "otel-thread-ctx")]
-        if !threadlocal_attribute_keys.is_empty() {
+        if let Some(threadlocal_attribute_keys) = threadlocal_attribute_keys.as_ref() {
             attributes.push(key_value(
                 "threadlocal.schema_version",
                 "tlsdesc_v1_dev".to_owned(),
             ));
+
             attributes.push(KeyValue {
                 key: "threadlocal.attribute_key_map".to_owned(),
                 value: Some(AnyValue {
                     value: Some(any_value::Value::ArrayValue(ArrayValue {
-                        values: threadlocal_attribute_keys
-                            .iter()
-                            .map(|k| AnyValue {
-                                value: Some(any_value::Value::StringValue(k.clone())),
-                            })
-                            .collect(),
+                        values: std::iter::once(AnyValue {
+                            value: Some(any_value::Value::StringValue(
+                                "datadog.root_span_id".to_owned(),
+                            )),
+                        })
+                        .chain(threadlocal_attribute_keys.iter().map(|k| AnyValue {
+                            value: Some(any_value::Value::StringValue(k.clone())),
+                        }))
+                        .collect(),
                     })),
                 }),
                 key_ref: 0,
