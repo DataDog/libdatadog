@@ -28,11 +28,11 @@ trigger_internal_build:
       when: always
     - if: '$CI_EXTERNAL_PULL_REQUEST_SOURCE_BRANCH_NAME =~ /^release\//'
       when: always
-    - if: '$CI_MERGE_REQUEST_LABELS =~ /run-macos-tests/'
+    - if: '$CI_COMMIT_BRANCH == "main"'
       variables:
         LIBDATADOG_ENABLE_MACOS_JOBS: "true"
       when: always
-    - if: '$CI_COMMIT_BRANCH == "main"'
+    - if: '$CI_COMMIT_BRANCH =~ /^mq-working-branch-/'
       variables:
         LIBDATADOG_ENABLE_MACOS_JOBS: "true"
       when: always
