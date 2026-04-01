@@ -202,8 +202,8 @@ unsafe fn emit_backtrace_via_libunwind(
     ucontext: *const ucontext_t,
 ) -> Result<(), EmitterError> {
     use libdd_libunwind_sys::{
-        unw_get_proc_name, unw_get_reg, unw_init_local2, unw_step, UnwCursor, UnwWord, UNW_REG_IP,
-        UNW_REG_SP,
+        unw_get_proc_name, unw_get_reg, unw_init_local2, unw_step, UnwCursor, UnwWord, UNW_REG_FP,
+        UNW_REG_IP, UNW_REG_SP,
     };
 
     if ucontext.is_null() {
@@ -227,6 +227,7 @@ unsafe fn emit_backtrace_via_libunwind(
     for _ in 0..MAX_FRAMES {
         let mut ip: UnwWord = 0;
         let mut sp: UnwWord = 0;
+        let mut fp: UnwWord = 0;
 
         // SAFETY: `cursor` was successfully initialized by `unw_init_local2`
         // and is advanced by `unw_step` at the end of each iteration.
@@ -235,9 +236,11 @@ unsafe fn emit_backtrace_via_libunwind(
             break;
         }
         let _ = unsafe { unw_get_reg(&mut cursor, UNW_REG_SP, &mut sp) };
+        let _ = unsafe { unw_get_reg(&mut cursor, UNW_REG_FP, &mut fp) };
 
         write!(w, "{{\"ip\": \"0x{ip:x}\"")?;
         write!(w, ", \"sp\": \"0x{sp:x}\"")?;
+        write!(w, ", \"fp\": \"0x{fp:x}\"")?;
 
         // SAFETY: Dl_info is a repr(C) struct of pointers and integers;
         // all-zeros (null pointers, zero integers) is a valid representation
