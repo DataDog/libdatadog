@@ -1,14 +1,12 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-#include <assert.h>
 #include <stdio.h>
 #include <string.h>
 #include <datadog/common.h>
 #include <datadog/data-pipeline.h>
 #include <datadog/log.h>
 
-#define UNUSED(x) (void)(x)
 #define SUCCESS 0
 
 void handle_error(ddog_TraceExporterError *err) {
@@ -81,13 +79,6 @@ int main(int argc, char** argv)
     ddog_CharSlice version = DDOG_CHARSLICE_C("1.0");
     ddog_CharSlice service = DDOG_CHARSLICE_C("test_app");
 
-    UNUSED(language_version);
-    UNUSED(language_interpreter);
-    UNUSED(hostname);
-    UNUSED(env);
-    UNUSED(version);
-    UNUSED(service);
-
     ddog_TraceExporterError *ret = NULL;
     ddog_TraceExporterConfig *config = NULL;
 
@@ -95,6 +86,13 @@ int main(int argc, char** argv)
     ddog_trace_exporter_config_set_url(config, url);
     ddog_trace_exporter_config_set_tracer_version(config, tracer_version);
     ddog_trace_exporter_config_set_language(config, language);
+    ddog_trace_exporter_config_set_lang_version(config, language_version);
+    ddog_trace_exporter_config_set_lang_interpreter(config, language_interpreter);
+    ddog_trace_exporter_config_set_hostname(config, hostname);
+    ddog_trace_exporter_config_set_env(config, env);
+    ddog_trace_exporter_config_set_version(config, version);
+    ddog_trace_exporter_config_set_service(config, service);
+    ddog_trace_exporter_config_set_connection_timeout(config, 1000);
 
     ddog_TelemetryClientConfig telemetry_config = {
         .interval = 60000,
@@ -110,25 +108,18 @@ int main(int argc, char** argv)
     }
 
     ret = ddog_trace_exporter_new(&trace_exporter, config);
-
-    assert(ret == NULL);
-    assert(trace_exporter != NULL);
-
-    ddog_ByteSlice buffer = { .ptr = NULL, .len=0 };
-    ddog_TraceExporterResponse *response;
-
-    ret = ddog_trace_exporter_send(trace_exporter, buffer, &response);
-
-    assert(ret->code == DDOG_TRACE_EXPORTER_ERROR_CODE_SERDE);
     if (ret) {
         error = ret->code;
         handle_error(ret);
         goto error;
     }
 
-    ddog_trace_exporter_response_free(response);
+    printf("TraceExporter created successfully\n");
+
     ddog_trace_exporter_free(trace_exporter);
+    trace_exporter = NULL;
     ddog_trace_exporter_config_free(config);
+    config = NULL;
 
     // Disable file logging if it was enabled
     if (log_path != NULL) {
