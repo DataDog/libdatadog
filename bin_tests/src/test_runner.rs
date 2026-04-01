@@ -7,7 +7,7 @@
 
 use crate::{
     artifacts::StandardArtifacts,
-    build_artifacts,
+    fetch_built_artifacts,
     test_types::{CrashType, TestMode},
     validation::{read_and_parse_crash_payload, validate_std_outputs, PayloadValidator},
     ArtifactsBuild, BuildProfile,
@@ -170,7 +170,7 @@ where
 /// # Example
 /// ```no_run
 /// use bin_tests::test_runner::run_custom_crash_test;
-/// use bin_tests::{build_artifacts, ArtifactType, ArtifactsBuild, BuildProfile};
+/// use bin_tests::{rebuild_artifacts, ArtifactType, ArtifactsBuild, BuildProfile};
 ///
 /// # fn main() -> anyhow::Result<()> {
 /// let receiver = ArtifactsBuild {
@@ -189,7 +189,7 @@ where
 ///     ..Default::default()
 /// };
 ///
-/// let artifacts_map = build_artifacts(&[&receiver, &crashing_app])?;
+/// let artifacts_map = rebuild_artifacts(&[&receiver, &crashing_app])?;
 ///
 /// run_custom_crash_test(
 ///     &artifacts_map[&crashing_app],
@@ -247,7 +247,7 @@ where
 /// (preload allocation detector). It just runs the binary and waits.
 pub fn run_crash_no_op(config: &CrashTestConfig) -> Result<()> {
     let artifacts = StandardArtifacts::new(config.profile);
-    let artifacts_map = build_artifacts(&artifacts.as_slice())?;
+    let artifacts_map = fetch_built_artifacts(&artifacts.as_slice())?;
     let fixtures = TestFixtures::new()?;
 
     let mut cmd = process::Command::new(&artifacts_map[&artifacts.crashtracker_bin]);

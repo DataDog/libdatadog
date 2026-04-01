@@ -14,7 +14,7 @@ use anyhow::Context;
 use bin_tests::test_runner::run_crash_no_op;
 use bin_tests::{
     artifacts::{self, StandardArtifacts},
-    build_artifacts,
+    fetch_built_artifacts,
     test_runner::{run_crash_test_with_artifacts, CrashTestConfig, ValidatorFn},
     test_types::{CrashType, TestMode},
     validation::PayloadValidator,
@@ -70,7 +70,7 @@ fn run_standard_crash_test_refactored(
 ) {
     let config = CrashTestConfig::new(profile, mode, crash_type);
     let artifacts = StandardArtifacts::new(config.profile);
-    let artifacts_map = build_artifacts(&artifacts.as_slice()).unwrap();
+    let artifacts_map = fetch_built_artifacts(&artifacts.as_slice()).unwrap();
 
     let crash_type_str = crash_type.as_str();
     let validator: ValidatorFn = Box::new(move |payload, fixtures| {
@@ -107,7 +107,7 @@ fn test_crash_tracking_bin_errno_preservation() {
         CrashType::NullDeref,
     );
     let artifacts = StandardArtifacts::new(config.profile);
-    let artifacts_map = build_artifacts(&artifacts.as_slice()).unwrap();
+    let artifacts_map = fetch_built_artifacts(&artifacts.as_slice()).unwrap();
 
     let validator: ValidatorFn = Box::new(|_payload, fixtures| {
         let status_path = fixtures.output_dir.join(ERRNO_STATUS_FILENAME);
@@ -132,7 +132,7 @@ fn test_crash_tracking_bin_unhandled_exception() {
         CrashType::UnhandledException,
     );
     let artifacts = StandardArtifacts::new(config.profile);
-    let artifacts_map = build_artifacts(&artifacts.as_slice()).unwrap();
+    let artifacts_map = fetch_built_artifacts(&artifacts.as_slice()).unwrap();
 
     let validator: ValidatorFn = Box::new(|payload, fixtures| {
         PayloadValidator::new(payload)
@@ -168,7 +168,7 @@ fn test_crash_tracking_bin_runtime_callback_frame() {
         CrashType::NullDeref,
     );
     let artifacts = StandardArtifacts::new(config.profile);
-    let artifacts_map = build_artifacts(&artifacts.as_slice()).unwrap();
+    let artifacts_map = fetch_built_artifacts(&artifacts.as_slice()).unwrap();
 
     let validator: ValidatorFn = Box::new(|payload, fixtures| {
         PayloadValidator::new(payload).validate_counters()?;
@@ -198,7 +198,7 @@ fn test_crash_tracking_thread_name() {
         CrashType::NullDeref,
     );
     let artifacts = StandardArtifacts::new(config.profile);
-    let artifacts_map = build_artifacts(&artifacts.as_slice()).unwrap();
+    let artifacts_map = fetch_built_artifacts(&artifacts.as_slice()).unwrap();
 
     let validator: ValidatorFn = Box::new(|payload, _fixtures| {
         let error = &payload["error"];
@@ -231,7 +231,7 @@ fn test_crash_tracking_bin_runtime_callback_string() {
         CrashType::NullDeref,
     );
     let artifacts = StandardArtifacts::new(config.profile);
-    let artifacts_map = build_artifacts(&artifacts.as_slice()).unwrap();
+    let artifacts_map = fetch_built_artifacts(&artifacts.as_slice()).unwrap();
 
     let validator: ValidatorFn = Box::new(|payload, fixtures| {
         PayloadValidator::new(payload).validate_counters()?;
@@ -260,7 +260,7 @@ fn test_crash_tracking_bin_no_runtime_callback() {
         CrashType::NullDeref,
     );
     let artifacts = StandardArtifacts::new(config.profile);
-    let artifacts_map = build_artifacts(&artifacts.as_slice()).unwrap();
+    let artifacts_map = fetch_built_artifacts(&artifacts.as_slice()).unwrap();
 
     let validator: ValidatorFn = Box::new(|payload, fixtures| {
         PayloadValidator::new(payload).validate_counters()?;
@@ -338,7 +338,7 @@ fn test_crash_tracking_bin_runtime_callback_frame_invalid_utf8() {
         CrashType::NullDeref,
     );
     let artifacts = StandardArtifacts::new(config.profile);
-    let artifacts_map = build_artifacts(&artifacts.as_slice()).unwrap();
+    let artifacts_map = fetch_built_artifacts(&artifacts.as_slice()).unwrap();
 
     let validator: ValidatorFn = Box::new(|payload, fixtures| {
         PayloadValidator::new(payload).validate_counters()?;
@@ -380,7 +380,7 @@ fn test_crash_tracking_errors_intake_upload() {
     .with_env("DD_CRASHTRACKING_ERRORS_INTAKE_ENABLED", "true");
 
     let artifacts = StandardArtifacts::new(config.profile);
-    let artifacts_map = build_artifacts(&artifacts.as_slice()).unwrap();
+    let artifacts_map = fetch_built_artifacts(&artifacts.as_slice()).unwrap();
 
     let validator: ValidatorFn = Box::new(|_payload, fixtures| {
         let errors_intake_path = fixtures.crash_profile_path.with_extension("errors");
@@ -413,7 +413,7 @@ fn test_crash_tracking_errors_intake_crash_ping() {
     .with_env("DD_CRASHTRACKING_ERRORS_INTAKE_ENABLED", "true");
 
     let artifacts = StandardArtifacts::new(config.profile);
-    let artifacts_map = build_artifacts(&artifacts.as_slice()).unwrap();
+    let artifacts_map = fetch_built_artifacts(&artifacts.as_slice()).unwrap();
 
     let validator: ValidatorFn = Box::new(|_payload, fixtures| {
         let errors_intake_path = fixtures.crash_profile_path.with_extension("errors");
@@ -444,7 +444,7 @@ fn test_crash_tracking_errors_intake_crash_info_parity() {
     .with_env("DD_CRASHTRACKING_ERRORS_INTAKE_ENABLED", "true");
 
     let artifacts = StandardArtifacts::new(config.profile);
-    let artifacts_map = build_artifacts(&artifacts.as_slice()).unwrap();
+    let artifacts_map = fetch_built_artifacts(&artifacts.as_slice()).unwrap();
 
     let validator: ValidatorFn = Box::new(|crash_info_payload, fixtures| {
         let errors_intake_path = fixtures.crash_profile_path.with_extension("errors");
@@ -638,7 +638,7 @@ fn test_crash_tracking_app(crash_type: &str) {
     let crashtracker_receiver = artifacts::crashtracker_receiver(BuildProfile::Release);
     let crashing_app = artifacts::crashing_app(BuildProfile::Debug, true);
 
-    let artifacts_map = build_artifacts(&[&crashtracker_receiver, &crashing_app]).unwrap();
+    let artifacts_map = fetch_built_artifacts(&[&crashtracker_receiver, &crashing_app]).unwrap();
 
     // Create validator based on crash type
     let crash_type_owned = crash_type.to_owned();
@@ -712,7 +712,8 @@ fn test_panic_hook_mode(mode: &str, expected_category: &str, expected_panic_mess
     let crashtracker_receiver = artifacts::crashtracker_receiver(BuildProfile::Release);
     let crashtracker_bin_test = artifacts::crashtracker_bin_test(BuildProfile::Debug, true);
 
-    let artifacts_map = build_artifacts(&[&crashtracker_receiver, &crashtracker_bin_test]).unwrap();
+    let artifacts_map =
+        fetch_built_artifacts(&[&crashtracker_receiver, &crashtracker_bin_test]).unwrap();
 
     let expected_category = expected_category.to_owned();
     let expected_panic_message = expected_panic_message.map(|s| s.to_owned());
@@ -785,7 +786,7 @@ fn test_crash_tracking_callstack() {
     // compile in debug so we avoid inlining and can check the callchain
     let crashing_app = artifacts::crashing_app(BuildProfile::Debug, false);
 
-    let artifacts_map = build_artifacts(&[&crashtracker_receiver, &crashing_app]).unwrap();
+    let artifacts_map = fetch_built_artifacts(&[&crashtracker_receiver, &crashing_app]).unwrap();
 
     // Note: in Release, we do not have the crate and module name prepended to the function name
     // Here we compile the crashing app in Debug.
@@ -1532,7 +1533,7 @@ fn test_receiver_emits_debug_logs_on_receiver_issue() -> anyhow::Result<()> {
     use std::time::Duration;
 
     let receiver = artifacts::crashtracker_receiver(BuildProfile::Debug);
-    let artifacts = build_artifacts(&[&receiver])?;
+    let artifacts = fetch_built_artifacts(&[&receiver])?;
     let fixtures = bin_tests::test_runner::TestFixtures::new()?;
 
     let missing_file = fixtures.output_dir.join("missing_additional_file.txt");
@@ -1808,7 +1809,7 @@ struct TestFixtures<'a> {
 }
 
 fn setup_test_fixtures<'a>(crates: &[&'a ArtifactsBuild]) -> TestFixtures<'a> {
-    let artifacts = build_artifacts(crates).unwrap();
+    let artifacts = fetch_built_artifacts(crates).unwrap();
 
     let tmpdir = tempfile::TempDir::new().unwrap();
     let dirpath = tmpdir.path();
