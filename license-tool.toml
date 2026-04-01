@@ -1,0 +1,8 @@
+[overrides]
+# These crates are missing repository URLs in their metadata.
+"crunchy" = { origin = "https://github.com/AtheMathmo/crunchy" }
+"value-bag-sval2" = { origin = "https://github.com/sval-rs/value-bag" }
+"value-bag-serde1" = { origin = "https://github.com/sval-rs/value-bag" }
+
+# This crate is missing a license in its metadata.
+"stringmetrics" = { license = "MIT" }
