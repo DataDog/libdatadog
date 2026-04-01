@@ -37,10 +37,10 @@ pub struct TracerMetadata {
     /// thread context records index into this table. Set to `None` to disable thread-level related
     /// attributes to the process-level context.
     ///
-    /// If set to `Some`, the first key will be automatically to be `datadog.local_root_span_id` in
-    /// the OTel process context, because the thread context handling elsewhere in libdatadog
+    /// If set to `Some`, the first key will be automatically set to `datadog.local_root_span_id`
+    /// in the OTel process context, because the thread context handling elsewhere in libdatadog
     /// relies on this key's index to be zero. Only set additional keys in
-    /// `threadlocal_attribute_keys`; the root span id is considered to be always implicitly here.
+    /// `threadlocal_attribute_keys`; the root span id is considered to always be here implicitly.
     ///
     /// This field is specific to OTel process context. It is ignored for (de)serialization, and is
     /// only used when converting to an OTel process context in

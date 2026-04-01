@@ -214,9 +214,9 @@ pub mod linux {
             let mut offset = 0;
             let mut fully_encoded = true;
             let root_span_attr = (ROOT_SPAN_KEY_INDEX, root_span_id);
-            let attrs = std::iter::once(&root_span_attr).chain(attributes);
+            let full_attrs = std::iter::once(&root_span_attr).chain(attributes);
 
-            for &(key_index, val) in attrs {
+            for &(key_index, val) in full_attrs {
                 let val_bytes = val.as_bytes();
                 let val_len = val_bytes.len();
                 let val_len = if val_len > 255 {
