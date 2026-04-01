@@ -136,7 +136,7 @@ Consumers of the crash data format SHOULD be designed to handle all versions fro
     Follows the naming convention in [the manpage](https://man7.org/linux/man-pages/man7/signal.7.html).
 - `ucontext`: **[optional]**
   UNIX signal based collectors only: CPU register state captured from the `ucontext_t` structure at the time of the crash signal.
-  - `arch`: **[required]**
+  - `arch`: **[optional]**
     Target architecture, e.g. "x86_64" or "aarch64".
   - `registers`: **[required]**
     A map of register names to their hexadecimal string values.
