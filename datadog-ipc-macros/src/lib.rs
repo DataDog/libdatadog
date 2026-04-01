@@ -248,15 +248,39 @@ fn gen_serve_fn(
                 .map(|(attrs, n, _)| quote! { #(#attrs)* #n })
                 .collect();
 
+            let force_flush = if m.is_blocking {
+                quote! { true }
+            } else {
+                quote! { false }
+            };
+
             let response_code = if m.return_type.is_some() {
+                // Flush any buffered acks before sending the typed response, so the client's
+                // send_count/ack_count loop processes them before reading the real reply.
                 quote! {
+                    #[cfg(target_os = "linux")]
+                    if __pending_acks > 0 {
+                        datadog_ipc::send_acks_async(&async_fd, __pending_acks).await;
+                        __pending_acks = 0;
+                    }
                     let result = handler.#name(peer, #(#field_names),*).await;
                     let __resp_data = datadog_ipc::codec::encode(&result);
                     datadog_ipc::send_raw_async(&async_fd, &__resp_data).await.ok();
                 }
             } else {
+                // On Linux, buffer up to 20 acks and flush in a single
+                // sendmmsg(2) syscall; on other platforms send each ack immediately.
                 quote! {
                     handler.#name(peer, #(#field_names),*).await;
+                    #[cfg(target_os = "linux")]
+                    {
+                        __pending_acks += 1;
+                        if #force_flush || __pending_acks >= 20 {
+                            datadog_ipc::send_acks_async(&async_fd, __pending_acks).await;
+                            __pending_acks = 0;
+                        }
+                    }
+                    #[cfg(not(target_os = "linux"))]
                     // 1-byte ack: distinguishable from EOF (0 bytes from recvmsg on closed socket).
                     datadog_ipc::send_raw_async(&async_fd, &[0u8]).await.ok();
                 }
@@ -283,6 +307,9 @@ fn gen_serve_fn(
                     return;
                 }
             };
+            // Pending 1-byte acks for fire-and-forget methods, flushed via sendmmsg(2) on Linux.
+            #[cfg(target_os = "linux")]
+            let mut __pending_acks: u32 = 0;
             loop {
                 let (buf, fds) = match datadog_ipc::recv_raw_async(&async_fd).await {
                     Ok(x) => x,

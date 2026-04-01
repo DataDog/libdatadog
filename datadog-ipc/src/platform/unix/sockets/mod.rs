@@ -464,3 +464,70 @@ pub async fn send_raw_async(fd: &AsyncConn, data: &[u8]) -> io::Result<()> {
         }
     }
 }
+
+/// Send `count` 1-byte ack messages using a single `sendmmsg(2)` syscall.
+///
+/// Used by the server dispatch loop (Linux only) to flush batched acks for fire-and-forget
+/// methods in one syscall instead of one `sendmsg` per call.  Best-effort: errors are silently
+/// dropped because the client's `send_count`/`ack_count` tracking handles missing acks by
+/// waiting for all outstanding ones at the next blocking call.
+#[cfg(target_os = "linux")]
+pub async fn send_acks_async(fd: &AsyncConn, count: u32) {
+    const MAX_BATCH: usize = 20;
+    let count = (count as usize).min(MAX_BATCH);
+    if count == 0 {
+        return;
+    }
+
+    // Only `offset` (a usize) lives across `.await` — keeping the future `Send`.
+    // The !Send iovec/mmsghdr arrays are constructed inside the synchronous try_io
+    // closure so they never appear in the async state machine.
+    let mut offset = 0usize;
+    loop {
+        let mut guard = match fd.writable().await {
+            Ok(g) => g,
+            Err(_) => return,
+        };
+        match guard.try_io(|inner| {
+            // Build arrays here (inside the synchronous closure, not across .await) so that
+            // !Send *mut c_void pointers never appear in the async state machine.
+            // SAFETY: zeroed mmsghdr/iovec are valid initial states; null pointers in unused
+            // fields (msg_name, msg_control) are correct — the kernel ignores them for SEQPACKET.
+            let ack_byte: u8 = 0;
+            let mut iovs: [libc::iovec; MAX_BATCH] = unsafe { core::mem::zeroed() };
+            let mut msgs: [libc::mmsghdr; MAX_BATCH] = unsafe { core::mem::zeroed() };
+            let batch = count - offset;
+            for i in 0..batch {
+                iovs[i].iov_base = &ack_byte as *const u8 as *mut libc::c_void;
+                iovs[i].iov_len = 1;
+                msgs[i].msg_hdr.msg_iov = &mut iovs[i] as *mut libc::iovec;
+                msgs[i].msg_hdr.msg_iovlen = 1;
+            }
+            let n = unsafe {
+                libc::sendmmsg(
+                    inner.as_raw_fd(),
+                    msgs.as_mut_ptr(),
+                    batch as libc::c_uint,
+                    0,
+                )
+            };
+            if n < 0 {
+                Err(io::Error::last_os_error())
+            } else {
+                Ok(n as usize)
+            }
+        }) {
+            Ok(Ok(sent)) => {
+                offset += sent;
+                if offset >= count {
+                    return;
+                }
+                // partial send: loop to retry the remainder
+            }
+            // drop on error:
+            // the client may already have terminated and we're processing outstanding messages
+            Ok(Err(_)) => return,
+            Err(_would_block) => {} // re-register for writability
+        }
+    }
+}

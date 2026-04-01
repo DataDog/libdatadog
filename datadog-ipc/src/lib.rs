@@ -17,6 +17,8 @@ pub mod client;
 pub mod codec;
 
 pub use client::IpcClientConn;
+#[cfg(target_os = "linux")]
+pub use platform::send_acks_async;
 pub use platform::{
     max_message_size, AsyncConn, PeerCredentials, SeqpacketConn, SeqpacketListener,
     HANDLE_SUFFIX_SIZE,
