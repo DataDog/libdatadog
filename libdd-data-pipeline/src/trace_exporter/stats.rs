@@ -10,12 +10,12 @@
 use crate::agent_info::schema::AgentInfo;
 use crate::stats_exporter;
 use arc_swap::ArcSwap;
+use libdd_common::{Endpoint, HttpClient, MutexExt};
+use libdd_trace_stats::span_concentrator::SpanConcentrator;
 #[cfg(feature = "stats-obfuscation")]
 use std::borrow::Borrow;
 #[cfg(feature = "stats-obfuscation")]
 use std::sync::atomic::{AtomicBool, Ordering};
-use libdd_common::{Endpoint, HttpClient, MutexExt};
-use libdd_trace_stats::span_concentrator::SpanConcentrator;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::runtime::Runtime;
@@ -205,8 +205,9 @@ pub(crate) fn handle_stats_disabled_by_agent(
         match status {
             Ok(()) => {
                 #[cfg(feature = "stats-obfuscation")]
-                if let StatsComputationStatus::Enabled { obfuscation_active, .. } =
-                    &**client_side_stats.load()
+                if let StatsComputationStatus::Enabled {
+                    obfuscation_active, ..
+                } = &**client_side_stats.load()
                 {
                     obfuscation_active.store(is_obfuscation_active(agent_info), Ordering::Relaxed);
                 }
@@ -238,8 +239,9 @@ pub(crate) fn handle_stats_enabled(
         #[cfg(feature = "stats-obfuscation")]
         {
             let new_obfuscation_active = is_obfuscation_active(agent_info);
-            if let StatsComputationStatus::Enabled { obfuscation_active, .. } =
-                &**client_side_stats.load()
+            if let StatsComputationStatus::Enabled {
+                obfuscation_active, ..
+            } = &**client_side_stats.load()
             {
                 let current = obfuscation_active.load(Ordering::Relaxed);
                 if new_obfuscation_active != current {
@@ -376,8 +378,7 @@ pub(crate) fn process_traces_for_stats<T: libdd_trace_utils::span::TraceData>(
 ) -> libdd_trace_utils::span::trace_utils::DroppedP0Stats {
     let status = client_side_stats.load();
     if let StatsComputationStatus::Enabled {
-        stats_concentrator,
-        ..
+        stats_concentrator, ..
     } = &**status
     {
         if !client_computed_top_level {

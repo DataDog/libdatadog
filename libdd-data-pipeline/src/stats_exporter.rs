@@ -1,6 +1,8 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+#[cfg(feature = "stats-obfuscation")]
+use std::sync::atomic::AtomicBool;
 use std::{
     borrow::Borrow,
     sync::{
@@ -9,8 +11,6 @@ use std::{
     },
     time,
 };
-#[cfg(feature = "stats-obfuscation")]
-use std::sync::atomic::AtomicBool;
 
 use crate::trace_exporter::TracerMetadata;
 use libdd_common::{worker::Worker, Endpoint, HttpClient};
@@ -53,8 +53,7 @@ impl StatsExporter {
         endpoint: Endpoint,
         cancellation_token: CancellationToken,
         client: HttpClient,
-        #[cfg(feature = "stats-obfuscation")]
-        obfuscation_active: Arc<AtomicBool>,
+        #[cfg(feature = "stats-obfuscation")] obfuscation_active: Arc<AtomicBool>,
     ) -> Self {
         Self {
             flush_interval,
