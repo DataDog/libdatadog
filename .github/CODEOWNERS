@@ -58,6 +58,7 @@ libdd-trace-protobuf                 @DataDog/serverless @DataDog/libdatadog-apm
 libdd-trace-stats                    @DataDog/apm-common-components-core
 libdd-trace-utils                    @DataDog/serverless @DataDog/libdatadog-apm
 LICENSE*                             @DataDog/libdatadog
+license-tool.toml                    @DataDog/libdatadog
 local-linux.Dockerfile               @DataDog/libdatadog
 NOTICE                               @DataDog/libdatadog
 README.md                            @DataDog/libdatadog
