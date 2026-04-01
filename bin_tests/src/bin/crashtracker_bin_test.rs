@@ -177,7 +177,7 @@ mod unix {
 
                 crashtracker::report_unhandled_exception(
                     Some("RuntimeException"),
-                    Some("an exception occured"),
+                    Some("\n an exception \n occured \n"),
                     stacktrace,
                 )?;
 
