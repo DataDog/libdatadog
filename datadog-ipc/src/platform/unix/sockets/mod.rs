@@ -289,22 +289,31 @@ impl SeqpacketConn {
         recvmsg_raw(self.inner.as_raw_fd(), buf, MsgFlags::empty())
     }
 
-    /// Non-blocking drain of all available ack messages. Returns the count drained.
+    /// Non-blocking drain of up to `max` available ack messages. Returns the count drained.
+    ///
+    /// `max` should be `send_count - ack_count` (the number of outstanding unacknowledged
+    /// messages); passing a tight bound avoids initialising more kernel structures than needed
+    /// and lets the loop exit without a final `WouldBlock` syscall.
     ///
     /// Acks are always 1-byte payloads with no file descriptors, so a minimal per-slot buffer
     /// suffices. On Linux, `recvmmsg(2)` batches up to 100 receives into a single syscall; on
     /// other platforms individual `try_recv_raw` calls are used instead.
-    pub fn drain_acks_nonblocking(&self) -> io::Result<usize> {
+    pub fn drain_acks_nonblocking(&self, max: usize) -> io::Result<usize> {
+        if max == 0 {
+            return Ok(0);
+        }
         #[cfg(target_os = "linux")]
         {
             const BATCH: usize = 100;
+            // Only initialise as many slots as we could possibly need.
+            let batch = max.min(BATCH);
             // SAFETY: bufs/iovs/msgs are written before being passed to recvmmsg.
             // msg_name and msg_control must be null; all other fields are either set
             // explicitly below or are output-only (msg_flags, msg_len).
             let mut bufs = [const { MaybeUninit::<[u8; 1]>::uninit() }; BATCH];
             let mut iovs = [const { MaybeUninit::<libc::iovec>::uninit() }; BATCH];
             let mut msgs = [const { MaybeUninit::<libc::mmsghdr>::uninit() }; BATCH];
-            for i in 0..BATCH {
+            for i in 0..batch {
                 unsafe {
                     (*iovs[i].as_mut_ptr()).iov_base = bufs[i].as_mut_ptr() as *mut libc::c_void;
                     (*iovs[i].as_mut_ptr()).iov_len = 1;
@@ -320,11 +329,12 @@ impl SeqpacketConn {
             let fd = self.inner.as_raw_fd();
             let mut total = 0usize;
             loop {
+                let this_batch = (max - total).min(batch) as libc::c_uint;
                 let n = unsafe {
                     libc::recvmmsg(
                         fd,
                         msgs[0].as_mut_ptr(),
-                        BATCH as libc::c_uint,
+                        this_batch,
                         libc::MSG_DONTWAIT as _, // seems to be inconsistent, sometimes i32, u32
                         std::ptr::null_mut(),
                     )
@@ -344,7 +354,7 @@ impl SeqpacketConn {
                     }
                 }
                 total += n;
-                if n < BATCH {
+                if n < this_batch as usize || total >= max {
                     return Ok(total);
                 }
             }
@@ -354,6 +364,9 @@ impl SeqpacketConn {
             let mut buf = [0u8; 1];
             let mut total = 0usize;
             loop {
+                if total >= max {
+                    return Ok(total);
+                }
                 match self.try_recv_raw(&mut buf) {
                     Ok(_) => total += 1,
                     Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => return Ok(total),

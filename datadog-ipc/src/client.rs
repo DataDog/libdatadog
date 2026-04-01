@@ -61,11 +61,14 @@ impl IpcClientConn {
         self.send_count - self.ack_count
     }
 
-    /// Non-blocking drain of all pending acks. Updates `ack_count`.
+    /// Non-blocking drain of pending acks up to the number of outstanding messages.
     ///
-    /// On Linux uses `recvmmsg` to batch-receive up to 64 acks per syscall.
+    /// Passing `outstanding()` as the bound avoids initialising more kernel structures than
+    /// needed and skips the final `WouldBlock` probe when all expected acks have arrived.
+    /// On Linux uses `recvmmsg` to batch-receive up to 100 acks per syscall.
     pub fn drain_acks(&mut self) {
-        match self.conn.drain_acks_nonblocking() {
+        let max = self.outstanding() as usize;
+        match self.conn.drain_acks_nonblocking(max) {
             Ok(count) => self.ack_count += count as u64,
             Err(e) => {
                 warn!("drain_acks: connection error ({}), marking closed", e);
