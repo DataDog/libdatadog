@@ -1251,14 +1251,15 @@ mod tests {
     }
 
     #[test]
-    fn telemetry_http_omits_parent_when_duplicate_of_session() {
-        let req = test_worker(Some("sess".into()), None, Some("sess".into()))
+    fn telemetry_http_omits_parent_and_root_when_duplicate_of_session() {
+        let req = test_worker(Some("sess-id".into()),  Some("sess-id".into()), Some("sess-id".into()))
             .build_request(&Payload::AppHeartbeat(()))
             .unwrap();
         assert_eq!(
             req.headers().get(DD_SESSION_ID).unwrap().to_str().unwrap(),
             "sess"
         );
+        assert!(req.headers().get(DD_ROOT_SESSION_ID).is_none());
         assert!(req.headers().get(DD_PARENT_SESSION_ID).is_none());
     }
 
