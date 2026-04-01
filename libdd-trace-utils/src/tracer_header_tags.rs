@@ -133,7 +133,13 @@ impl<'a> From<&'a HeaderMap<HeaderValue>> for TracerHeaderTags<'a> {
         if headers.get("datadog-client-computed-top-level").is_some() {
             tags.client_computed_top_level = true;
         }
-        if headers.get("datadog-client-computed-stats").is_some() {
+
+        tracing::debug!("datadog-client-computed-stats: {:?}", headers.get("datadog-client-computed-stats"));
+        if headers
+            .get("datadog-client-computed-stats")
+            .and_then(|v| v.to_str().ok())
+            .is_some_and(|s| !s.is_empty())
+        {
             tags.client_computed_stats = true;
         }
         if let Some(count) = headers.get("datadog-client-dropped-p0-traces") {
