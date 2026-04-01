@@ -268,7 +268,8 @@ fn process_line(
 
         StdinState::Message if line.starts_with(DD_CRASHTRACK_END_MESSAGE) => StdinState::Waiting,
         StdinState::Message => {
-            builder.with_message(line.to_string())?;
+            let unescaped = line.replace("\\n", "\n").replace("\\r", "\r");
+            builder.with_message(unescaped)?;
             StdinState::Message
         }
 

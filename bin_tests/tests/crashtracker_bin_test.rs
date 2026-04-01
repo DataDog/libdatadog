@@ -138,7 +138,7 @@ fn test_crash_tracking_bin_unhandled_exception() {
         PayloadValidator::new(payload)
             .validate_counters()?
             .validate_error_kind("UnhandledException")?
-            .validate_error_message_contains("Process was terminated due to an unhandled exception of type 'RuntimeException'. Message: an exception occured")?
+            .validate_error_message_contains("Process was terminated due to an unhandled exception of type 'RuntimeException'. Message: \n an exception \n occured \n")?
             // The two frames emitted in the bin: test_function1 and test_function2
             .validate_callstack_functions(&["test_function1", "test_function2"])?;
 
