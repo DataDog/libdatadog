@@ -1,6 +1,7 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+#include <stdint.h>
 #include <stdio.h>
 #include <string.h>
 #include <datadog/common.h>
@@ -115,6 +116,47 @@ int main(int argc, char** argv)
     }
 
     printf("TraceExporter created successfully\n");
+
+    // Construct a minimal valid msgpack V04 trace payload: [[{span}]]
+    // One trace containing one span with the 7 required fields:
+    // service, name, resource, trace_id, span_id, start, duration
+    // Hand rolling a payload like this is not scalable. If we need to
+    // do this more than once, please write a helper function.
+    static const uint8_t trace_payload[] = {
+        0x91,                                                       // array(1): one trace
+        0x91,                                                       // array(1): one span
+        0x87,                                                       // map(7): span fields
+        0xa7, 's','e','r','v','i','c','e',                          // key: "service"
+        0xa8, 't','e','s','t','_','a','p','p',                      // val: "test_app"
+        0xa4, 'n','a','m','e',                                      // key: "name"
+        0xab, 'w','e','b','.','r','e','q','u','e','s','t',          // val: "web.request"
+        0xa8, 'r','e','s','o','u','r','c','e',                      // key: "resource"
+        0xaa, 'G','E','T',' ','/','h','e','l','l','o',              // val: "GET /hello"
+        0xa8, 't','r','a','c','e','_','i','d',                      // key: "trace_id"
+        0x01,                                                       // val: 1
+        0xa7, 's','p','a','n','_','i','d',                          // key: "span_id"
+        0x01,                                                       // val: 1
+        0xa5, 's','t','a','r','t',                                  // key: "start"
+        0xce, 0x3b, 0x9a, 0xca, 0x00,                              // val: 1000000000
+        0xa8, 'd','u','r','a','t','i','o','n',                      // key: "duration"
+        0xce, 0x1d, 0xcd, 0x65, 0x00,                              // val: 500000000
+    };
+    ddog_ByteSlice buffer = {
+        .ptr = trace_payload,
+        .len = sizeof(trace_payload)
+    };
+    ddog_TraceExporterResponse *response = NULL;
+
+    // Send will deserialize the payload and attempt to forward it to the agent.
+    // Without a running agent, this will fail with a network error.
+    ret = ddog_trace_exporter_send(trace_exporter, buffer, &response);
+    if (ret) {
+        printf("Send returned expected error (no agent running): %s\n", ret->msg);
+        ddog_trace_exporter_error_free(ret);
+    } else {
+        printf("Send succeeded\n");
+        ddog_trace_exporter_response_free(response);
+    }
 
     ddog_trace_exporter_free(trace_exporter);
     trace_exporter = NULL;
