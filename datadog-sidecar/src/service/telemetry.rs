@@ -25,7 +25,7 @@ use zwohash::ZwoHasher;
 
 use libdd_common::tag::Tag;
 use libdd_telemetry::worker::TelemetryWorkerBuilder;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::ops::Sub;
 use std::sync::LazyLock;
 use std::time::SystemTime;
@@ -62,12 +62,28 @@ pub struct TelemetryCachedEntry {
 pub struct TelemetryCachedClient {
     pub worker: TelemetryWorkerHandle,
     pub shm_writer: OneWayShmWriter<NamedShmHandle>,
-    pub config_sent: bool,
-    pub buffered_integrations: HashSet<Integration>,
-    pub buffered_composer_paths: HashSet<PathBuf>,
-    pub last_endpoints_push: SystemTime,
     pub telemetry_metrics: HashMap<String, ContextKey>,
     pub handle: Option<JoinHandle<()>>,
+    pub shared: TelemetryCachedClientShmData,
+}
+
+#[derive(Deserialize, Serialize)]
+pub struct TelemetryCachedClientShmData {
+    pub config_sent: bool,
+    pub integrations: HashSet<Integration>,
+    pub composer_paths: HashSet<PathBuf>,
+    pub last_endpoints_push: SystemTime,
+}
+
+impl Default for TelemetryCachedClientShmData {
+    fn default() -> Self {
+        TelemetryCachedClientShmData {
+            config_sent: false,
+            integrations: HashSet::new(),
+            composer_paths: HashSet::new(),
+            last_endpoints_push: SystemTime::UNIX_EPOCH,
+        }
+    }
 }
 
 impl TelemetryCachedClient {
@@ -115,22 +131,14 @@ impl TelemetryCachedClient {
                 #[allow(clippy::unwrap_used)]
                 OneWayShmWriter::<NamedShmHandle>::new(path_for_telemetry(service, env)).unwrap()
             },
-            config_sent: false,
-            buffered_integrations: HashSet::new(),
-            buffered_composer_paths: HashSet::new(),
-            last_endpoints_push: SystemTime::UNIX_EPOCH,
+            shared: TelemetryCachedClientShmData::default(),
             telemetry_metrics: Default::default(),
             handle: None,
         }
     }
 
     pub fn write_shm_file(&self) {
-        if let Ok(buf) = bincode::serialize(&(
-            &self.config_sent,
-            &self.buffered_integrations,
-            &self.buffered_composer_paths,
-            &self.last_endpoints_push,
-        )) {
+        if let Ok(buf) = bincode::serialize(&self.shared) {
             self.shm_writer.write(&buf);
         } else {
             warn!("Failed to serialize telemetry data for shared memory");

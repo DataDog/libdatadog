@@ -471,24 +471,24 @@ impl SidecarInterface for ConnectionSidecarHandler {
             for action in actions {
                 match action {
                     SidecarAction::Telemetry(TelemetryActions::AddIntegration(ref integration)) => {
-                        if telemetry.buffered_integrations.insert(integration.clone()) {
+                        if telemetry.shared.integrations.insert(integration.clone()) {
                             actions_to_process.push(action);
                             buffered_info_changed = true;
                         }
                     }
                     SidecarAction::PhpComposerTelemetryFile(path) => {
-                        if telemetry.buffered_composer_paths.insert(path.clone()) {
+                        if telemetry.shared.composer_paths.insert(path.clone()) {
                             composer_paths_to_process.push(path);
                             buffered_info_changed = true;
                         }
                     }
                     SidecarAction::Telemetry(TelemetryActions::AddConfig(_)) => {
-                        telemetry.config_sent = true;
+                        telemetry.shared.config_sent = true;
                         buffered_info_changed = true;
                         actions_to_process.push(action);
                     }
                     SidecarAction::Telemetry(TelemetryActions::AddEndpoint(_)) => {
-                        telemetry.last_endpoints_push = SystemTime::now();
+                        telemetry.shared.last_endpoints_push = SystemTime::now();
                         buffered_info_changed = true;
                         actions_to_process.push(action);
                     }
