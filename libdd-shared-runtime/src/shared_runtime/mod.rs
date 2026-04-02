@@ -67,6 +67,11 @@ impl WorkerHandle {
     ///
     /// # Errors
     /// Returns an error if the worker has already been stopped.
+    ///
+    /// # Cancel safety
+    /// This function is *NOT* cancel safe and shouldn't be called in [Worker::trigger].
+    /// If cancelled, the stopped worker can end up in an invalid state if a fork occurs while
+    /// stopping.
     pub async fn stop(self) -> Result<(), WorkerHandleError> {
         let mut worker = {
             let mut workers_lock = self.workers.lock_or_panic();
@@ -212,6 +217,7 @@ impl SharedRuntime {
     /// preventing potential deadlocks in the child process.
     ///
     /// Worker errors are logged but do not cause the function to fail.
+    /// If the worker fails to pause it is dropped without calling shutdown.
     pub fn before_fork(&self) {
         debug!("before_fork: pausing all workers");
         if let Some(runtime) = self.runtime.lock_or_panic().take() {

@@ -19,7 +19,7 @@ use async_trait::async_trait;
 pub trait Worker: std::fmt::Debug {
     /// Main worker function
     ///
-    /// Code in this function should always use timeout on long-running await calls to avoid
+    /// Code in this function must always use timeout on long-running await calls to avoid
     /// blocking forks if an await call takes too long to complete.
     async fn run(&mut self);
 
