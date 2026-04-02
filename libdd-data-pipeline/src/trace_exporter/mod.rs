@@ -240,9 +240,9 @@ impl<H: HttpClientTrait + MaybeSend + Sync + 'static> TraceExporter<H> {
     /// Returns [`SharedRuntimeError::ShutdownTimedOut`] if a timeout was given and elapsed before
     /// all workers finished.
     pub fn shutdown(self, timeout: Option<Duration>) -> Result<(), TraceExporterError> {
-        let runtime = self.shared_runtime.clone();
         if let Some(timeout) = timeout {
-            match runtime
+            match self
+                .shared_runtime
                 .block_on(async { tokio::time::timeout(timeout, self.shutdown_workers()).await })
                 .map_err(TraceExporterError::Io)?
             {
@@ -252,7 +252,7 @@ impl<H: HttpClientTrait + MaybeSend + Sync + 'static> TraceExporter<H> {
                 ))),
             }
         } else {
-            runtime
+            self.shared_runtime
                 .block_on(self.shutdown_workers())
                 .map_err(TraceExporterError::Io)?;
             Ok(())
@@ -284,13 +284,6 @@ impl<H: HttpClientTrait + MaybeSend + Sync + 'static> TraceExporter<H> {
                 error!("Worker failed to shutdown: {:?}", e);
             }
         }
-    }
-
-    /// Run a future to completion on the shared runtime.
-    fn block_on<F: std::future::Future>(&self, f: F) -> Result<F::Output, TraceExporterError> {
-        self.shared_runtime
-            .block_on(f)
-            .map_err(TraceExporterError::Io)
     }
 
     /// Manually start all workers
@@ -476,7 +469,8 @@ impl<H: HttpClientTrait + MaybeSend + Sync + 'static> TraceExporter<H> {
         trace_chunks: Vec<Vec<Span<T>>>,
     ) -> Result<AgentResponse, TraceExporterError> {
         self.check_agent_info();
-        self.block_on(async { self.send_trace_chunks_inner(trace_chunks).await })?
+        self.shared_runtime
+            .block_on(async { self.send_trace_chunks_inner(trace_chunks).await })?
     }
 
     /// Send a list of trace chunks to the agent, asynchronously (or OTLP when configured).
@@ -553,7 +547,8 @@ impl<H: HttpClientTrait + MaybeSend + Sync + 'static> TraceExporter<H> {
             None,
         );
 
-        self.block_on(async { self.send_trace_chunks_inner(traces).await })?
+        self.shared_runtime
+            .block_on(async { self.send_trace_chunks_inner(traces).await })?
     }
 
     /// Send traces payload to agent with retry and telemetry reporting
