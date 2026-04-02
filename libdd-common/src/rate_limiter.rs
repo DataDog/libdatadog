@@ -157,7 +157,7 @@ impl Limiter for LocalLimiter {
 
 #[cfg(test)]
 mod tests {
-    use crate::rate_limiter::{Limiter, LocalLimiter, MOCK_NOW, TIME_PER_SECOND};
+    use crate::rate_limiter::{now, Limiter, LocalLimiter, MOCK_NOW, TIME_PER_SECOND};
     use std::sync::atomic::Ordering;
 
     fn set_mock_time(nanos: u64) {
@@ -228,5 +228,18 @@ mod tests {
         assert!(limiter.inc(1));
 
         set_mock_time(0);
+    }
+
+    /// Validates the real clock implementation (MOCK_NOW is 0, so `now()` hits the actual
+    /// platform clock).
+    // We normally shouldn't test private functions directly, but is necessary here since
+    // now() is mocked for the other tests.
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_now_monotonic() {
+        let t1 = now();
+        assert!(t1 > 0);
+        let t2 = now();
+        assert!(t2 >= t1);
     }
 }
