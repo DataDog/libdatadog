@@ -213,3 +213,67 @@ mod other {
 pub use linux::*;
 #[cfg(not(target_os = "linux"))]
 pub use other::*;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use libdd_trace_protobuf::opentelemetry::proto::common::v1::{
+        any_value, AnyValue, ProcessContext,
+    };
+
+    fn find_attr<'a>(ctx: &'a ProcessContext, key: &str) -> Option<&'a AnyValue> {
+        ctx.resource
+            .as_ref()?
+            .attributes
+            .iter()
+            .find(|kv| kv.key == key)?
+            .value
+            .as_ref()
+    }
+
+    #[test]
+    fn threadlocal_attrs_absent_when_keys_empty() {
+        let ctx = TracerMetadata::default().to_otel_process_ctx();
+
+        assert!(find_attr(&ctx, "threadlocal.schema_version").is_none());
+        assert!(find_attr(&ctx, "threadlocal.attribute_key_map").is_none());
+    }
+
+    #[test]
+    fn threadlocal_attrs_present_with_correct_values() {
+        let ctx = TracerMetadata {
+            threadlocal_attribute_keys: vec![
+                "span.id".to_owned(),
+                "trace.id".to_owned(),
+                "custom.key".to_owned(),
+            ],
+            ..Default::default()
+        }
+        .to_otel_process_ctx();
+
+        // Schema version attribute
+        let schema_version = find_attr(&ctx, "threadlocal.schema_version")
+            .expect("threadlocal.schema_version should be present");
+        assert_eq!(
+            schema_version.value,
+            Some(any_value::Value::StringValue("tlsdesc_v1_dev".to_owned()))
+        );
+
+        // Key map attribute: ordered array of key name strings
+        let key_map = find_attr(&ctx, "threadlocal.attribute_key_map")
+            .expect("threadlocal.attribute_key_map should be present");
+        let array = match &key_map.value {
+            Some(any_value::Value::ArrayValue(a)) => a,
+            other => panic!("expected ArrayValue, got {:?}", other),
+        };
+        let keys: Vec<&str> = array
+            .values
+            .iter()
+            .map(|v| match &v.value {
+                Some(any_value::Value::StringValue(s)) => s.as_str(),
+                other => panic!("expected StringValue, got {:?}", other),
+            })
+            .collect();
+        assert_eq!(keys, ["span.id", "trace.id", "custom.key"]);
+    }
+}
