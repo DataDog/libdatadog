@@ -40,7 +40,7 @@
 //!
 //! let trace_id = [0u8; 16];
 //! let span_id  = [1u8; 8];
-//! let attrs: &[(u8, &[u8])] = &[(0, "GET"), (1, "/api/v1")];
+//! let attrs: &[(u8, &str)] = &[(0, "GET"), (1, "/api/v1")];
 //!
 //! // Publish a new context and save the previously attached one (if any).
 //! let ctx = ThreadContext::new(trace_id, span_id, attrs);
@@ -176,7 +176,7 @@ pub mod linux {
             trace_id: [u8; 16],
             span_id: [u8; 8],
             local_root_span_id: [u8; 8],
-            attrs: &[(u8, &[u8])],
+            attrs: &[(u8, &str)],
         ) -> Self {
             const { assert!(size_of::<ThreadContextRecord>() == 640) }
 
@@ -210,15 +210,28 @@ pub mod linux {
         /// recovery would require us to be able to rollback to the previous attributes which would
         /// hurt the happy path, or leave the record in a inconsistent state. Another possibility
         /// would be to error out and reset the record in that situation.
-        fn set_attrs(&mut self, local_root_span_id: [u8; 8], attributes: &[(u8, &[u8])]) -> bool {
+        fn set_attrs(&mut self, local_root_span_id: [u8; 8], attributes: &[(u8, &str)]) -> bool {
             let mut fully_encoded = true;
 
+            const { assert!(MAX_ATTRS_DATA_SIZE >= 18) }
+            // The local root span id is provided as raw bytes (can be seen as a big-endian u64),
+            // but readers will expect a string hex representation. We convert it to a fixed
+            // 16-characters string in the usual lowercase hex format.
+            //
+            // There's currently no easy way to use Rust format capabilities to write directly in a
+            // fixed-size array. Since the conversion is simple, we do it manually.
+            const HEX_DIGITS: &[u8; 16] = b"0123456789abcdef";
             self.attrs_data[0] = ROOT_SPAN_KEY_INDEX;
-            self.attrs_data[1] = 8;
-            self.attrs_data[2..10].copy_from_slice(local_root_span_id.as_slice());
-            let mut offset = 10;
+            self.attrs_data[1] = 16;
+            for (i, &byte) in local_root_span_id.iter().enumerate() {
+                self.attrs_data[2 + i * 2] = HEX_DIGITS[(byte >> 4) as usize];
+                self.attrs_data[2 + i * 2 + 1] = HEX_DIGITS[(byte & 0xF) as usize];
+            }
 
-            for &(key_index, val_bytes) in attributes {
+            let mut offset = 18;
+
+            for &(key_index, val) in attributes {
+                let val_bytes = val.as_bytes();
                 let val_len = val_bytes.len();
                 let val_len = if val_len > 255 {
                     fully_encoded = false;
@@ -234,7 +247,7 @@ pub mod linux {
                 }
 
                 self.attrs_data[offset] = key_index;
-                // `val_len <= 255` from the check above
+                // `val_len <= 255` thanks to the `min()`
                 self.attrs_data[offset + 1] = val_len as u8;
                 self.attrs_data[offset + 2..offset + 2 + val_len]
                     .copy_from_slice(&val_bytes[..val_len]);
@@ -279,7 +292,7 @@ pub mod linux {
             trace_id: [u8; 16],
             span_id: [u8; 8],
             local_root_span_id: [u8; 8],
-            attrs: &[(u8, &[u8])],
+            attrs: &[(u8, &str)],
         ) -> Self {
             Self::from(ThreadContextRecord::new(
                 trace_id,
@@ -363,7 +376,7 @@ pub mod linux {
             trace_id: [u8; 16],
             span_id: [u8; 8],
             local_root_span_id: [u8; 8],
-            attrs: &[(u8, &[u8])],
+            attrs: &[(u8, &str)],
         ) {
             let slot = get_tls_slot();
 
@@ -471,8 +484,8 @@ pub mod linux {
             assert_eq!(record.trace_id, trace_id);
             assert_eq!(record.span_id, span_id);
             assert_eq!(record.valid.load(Ordering::Relaxed), 1);
-            // 1 (key) + 1 (len) + 8 (root_span_id bytes) = 10
-            assert_eq!(record.attrs_data_size, 10);
+            // 1 (key) + 1 (len) + 16 (root_span_id hex chars) = 18
+            assert_eq!(record.attrs_data_size, 18);
 
             let _ = ThreadContext::detach();
         }
@@ -480,25 +493,24 @@ pub mod linux {
         #[test]
         #[cfg_attr(miri, ignore)]
         fn attribute_encoding_basic() {
-            let root_span_id = [0u8; 8];
-            let attrs: &[(u8, &[u8])] = &[(1, b"GET"), (2, b"/api/v1")];
-            ThreadContext::new([0u8; 16], [0u8; 8], root_span_id, attrs).attach();
+            let attrs: &[(u8, &str)] = &[(1, "GET"), (2, "/api/v1")];
+            ThreadContext::new([0u8; 16], [0u8; 8], [0u8; 8], attrs).attach();
 
             let ptr = read_tls_context_ptr();
             assert!(!ptr.is_null());
             let record = unsafe { &*ptr };
-            // 1+1+8 (root_span_id) + 1+1+3 (GET) + 1+1+7 (/api/v1)
-            let expected_size: u16 = (2 + 8 + 2 + 3 + 2 + 7) as u16;
+            // 1+1+16 (root_span_id hex) + 1+1+3 (GET) + 1+1+7 (/api/v1)
+            let expected_size: u16 = (2 + 16 + 2 + 3 + 2 + 7) as u16;
             assert_eq!(record.attrs_data_size, expected_size);
             assert_eq!(record.attrs_data[0], 0);
-            assert_eq!(record.attrs_data[1], 8);
-            assert_eq!(&record.attrs_data[2..10], &root_span_id);
-            assert_eq!(record.attrs_data[10], 1);
-            assert_eq!(record.attrs_data[11], 3);
-            assert_eq!(&record.attrs_data[12..15], b"GET");
-            assert_eq!(record.attrs_data[15], 2);
-            assert_eq!(record.attrs_data[16], 7);
-            assert_eq!(&record.attrs_data[17..24], b"/api/v1");
+            assert_eq!(record.attrs_data[1], 16);
+            assert_eq!(&record.attrs_data[2..18], b"0000000000000000");
+            assert_eq!(record.attrs_data[18], 1);
+            assert_eq!(record.attrs_data[19], 3);
+            assert_eq!(&record.attrs_data[20..23], b"GET");
+            assert_eq!(record.attrs_data[23], 2);
+            assert_eq!(record.attrs_data[24], 7);
+            assert_eq!(&record.attrs_data[25..32], b"/api/v1");
 
             let _ = ThreadContext::detach();
         }
@@ -508,18 +520,18 @@ pub mod linux {
         fn attribute_truncation_on_overflow() {
             // Build attributes whose combined encoded size exceeds MAX_ATTRS_DATA_SIZE.
             // Each max entry: 1 (key) + 1 (len) + 255 (val) = 257 bytes.
-            // root_span_id: 1 (key) + 1 (len) + 8 (val) = 10 bytes.
-            // Two such entries: 514 bytes, plus root_span_id: 524.
-            // A third entry of 100 chars would need 102 bytes, bringing the total to 626 > 612, so
+            // root_span_id: 1 (key) + 1 (len) + 16 (hex val) = 18 bytes.
+            // Two such entries: 514 bytes, plus root_span_id: 532.
+            // A third entry of 100 chars would need 102 bytes, bringing the total to 634 > 612, so
             // the third entry must be dropped.
-            let val_a = b"a".repeat(255); // 257 bytes encoded
-            let val_b = b"b".repeat(255); // 257 bytes encoded → 514 total
-            let val_c = b"c".repeat(100); // 102 bytes encoded → 626 total: must be dropped
+            let val_a = "a".repeat(255); // 257 bytes encoded
+            let val_b = "b".repeat(255); // 257 bytes encoded → 514 total
+            let val_c = "c".repeat(100); // 102 bytes encoded → 626 total: must be dropped
 
-            let attrs: &[(u8, &[u8])] = &[
-                (1, val_a.as_slice()),
-                (2, val_b.as_slice()),
-                (3, val_c.as_slice()),
+            let attrs: &[(u8, &str)] = &[
+                (1, val_a.as_str()),
+                (2, val_b.as_str()),
+                (3, val_c.as_str()),
             ];
 
             ThreadContext::new([0u8; 16], [0u8; 8], [0u8; 8], attrs).attach();
@@ -527,12 +539,12 @@ pub mod linux {
             let ptr = read_tls_context_ptr();
             assert!(!ptr.is_null());
             let record = unsafe { &*ptr };
-            // Only the first two entries fit (514 bytes + 10 bytes for root_span_id).
-            assert_eq!(record.attrs_data_size, 524);
-            assert_eq!(record.attrs_data[10], 1);
-            assert_eq!(record.attrs_data[11], 255);
-            assert_eq!(record.attrs_data[267], 2);
-            assert_eq!(record.attrs_data[268], 255);
+            // Only the first two entries fit (514 bytes + 18 bytes for root_span_id).
+            assert_eq!(record.attrs_data_size, 532);
+            assert_eq!(record.attrs_data[18], 1);
+            assert_eq!(record.attrs_data[19], 255);
+            assert_eq!(record.attrs_data[275], 2);
+            assert_eq!(record.attrs_data[276], 255);
 
             let _ = ThreadContext::detach();
         }
@@ -548,7 +560,7 @@ pub mod linux {
             let root_span_id2 = [0x79u8; 8];
 
             // Updating before any context is attached should be equivalent to `attach()`
-            ThreadContext::update(trace_id1, span_id1, root_span_id1, &[(0, b"v1")]);
+            ThreadContext::update(trace_id1, span_id1, root_span_id1, &[(0, "v1")]);
 
             let ptr_before = read_tls_context_ptr();
             assert!(!ptr_before.is_null());
@@ -557,13 +569,13 @@ pub mod linux {
             assert_eq!(record.span_id, span_id1);
             assert_eq!(record.valid.load(Ordering::Relaxed), 1);
             assert_eq!(record.attrs_data[0], 0);
-            assert_eq!(record.attrs_data[1], 8);
-            assert_eq!(&record.attrs_data[2..10], &root_span_id1);
-            assert_eq!(record.attrs_data[10], 0);
-            assert_eq!(record.attrs_data[11], 2);
-            assert_eq!(&record.attrs_data[12..14], b"v1");
+            assert_eq!(record.attrs_data[1], 16);
+            assert_eq!(&record.attrs_data[2..18], b"7878787878787878");
+            assert_eq!(record.attrs_data[18], 0);
+            assert_eq!(record.attrs_data[19], 2);
+            assert_eq!(&record.attrs_data[20..22], b"v1");
 
-            ThreadContext::update(trace_id2, span_id2, root_span_id2, &[(0, b"v2")]);
+            ThreadContext::update(trace_id2, span_id2, root_span_id2, &[(0, "v2")]);
 
             let ptr_after = read_tls_context_ptr();
             assert_eq!(
@@ -576,11 +588,11 @@ pub mod linux {
             assert_eq!(record.span_id, span_id2);
             assert_eq!(record.valid.load(Ordering::Relaxed), 1);
             assert_eq!(record.attrs_data[0], 0);
-            assert_eq!(record.attrs_data[1], 8);
-            assert_eq!(&record.attrs_data[2..10], &root_span_id2);
-            assert_eq!(record.attrs_data[10], 0);
-            assert_eq!(record.attrs_data[11], 2);
-            assert_eq!(&record.attrs_data[12..14], b"v2");
+            assert_eq!(record.attrs_data[1], 16);
+            assert_eq!(&record.attrs_data[2..18], b"7979797979797979");
+            assert_eq!(record.attrs_data[18], 0);
+            assert_eq!(record.attrs_data[19], 2);
+            assert_eq!(&record.attrs_data[20..22], b"v2");
 
             let _ = ThreadContext::detach();
             assert!(read_tls_context_ptr().is_null());
@@ -603,17 +615,17 @@ pub mod linux {
         #[test]
         #[cfg_attr(miri, ignore)]
         fn long_value_capped_at_255_bytes() {
-            let long_val = b"a".repeat(300);
-            ThreadContext::new([0u8; 16], [0u8; 8], [0u8; 8], &[(0, long_val.as_slice())]).attach();
+            let long_val = "a".repeat(300);
+            ThreadContext::new([0u8; 16], [0u8; 8], [0u8; 8], &[(0, long_val.as_str())]).attach();
 
             let ptr = read_tls_context_ptr();
             assert!(!ptr.is_null());
             let record = unsafe { &*ptr };
-            // root_span_id occupies offset 0..10, then the attr entry starts at 10: key at [10],
-            // len at [11]
-            let val_len = record.attrs_data[2 + 8 + 1];
+            // root_span_id occupies offset 0..18, then the attr entry starts at 18: key at [18],
+            // len at [19]
+            let val_len = record.attrs_data[2 + 16 + 1];
             assert_eq!(val_len, 255, "value must be capped at 255 bytes");
-            assert_eq!(record.attrs_data_size, 2 + 8 + 2 + 255);
+            assert_eq!(record.attrs_data_size, 2 + 16 + 2 + 255);
 
             let _ = ThreadContext::detach();
         }
@@ -649,7 +661,7 @@ pub mod linux {
                 let record = unsafe { &*ptr };
                 assert_eq!(record.trace_id, spawned_trace_id);
                 assert_eq!(record.span_id, spawned_span_id);
-                assert_eq!(&record.attrs_data[2..10], &spawned_root_span_id);
+                assert_eq!(&record.attrs_data[2..18], b"efefefefefefefef");
 
                 let _ = ThreadContext::detach();
                 assert!(read_tls_context_ptr().is_null());
@@ -670,7 +682,7 @@ pub mod linux {
             let record = unsafe { &*ptr };
             assert_eq!(record.trace_id, main_trace_id);
             assert_eq!(record.span_id, main_span_id);
-            assert_eq!(&record.attrs_data[2..10], &main_root_span_id);
+            assert_eq!(&record.attrs_data[2..18], b"3333333333333333");
 
             barrier.wait();
 
