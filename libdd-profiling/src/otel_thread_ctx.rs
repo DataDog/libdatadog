@@ -40,7 +40,7 @@
 //!
 //! let trace_id = [0u8; 16];
 //! let span_id  = [1u8; 8];
-//! let attrs: &[(u8, &str)] = &[(0, "GET"), (1, "/api/v1")];
+//! let attrs: &[(u8, &[u8])] = &[(0, "GET"), (1, "/api/v1")];
 //!
 //! // Publish a new context and save the previously attached one (if any).
 //! let ctx = ThreadContext::new(trace_id, span_id, attrs);
@@ -176,7 +176,7 @@ pub mod linux {
             trace_id: [u8; 16],
             span_id: [u8; 8],
             local_root_span_id: [u8; 8],
-            attrs: &[(u8, &str)],
+            attrs: &[(u8, &[u8])],
         ) -> Self {
             const { assert!(size_of::<ThreadContextRecord>() == 640) }
 
@@ -210,7 +210,7 @@ pub mod linux {
         /// recovery would require us to be able to rollback to the previous attributes which would
         /// hurt the happy path, or leave the record in a inconsistent state. Another possibility
         /// would be to error out and reset the record in that situation.
-        fn set_attrs(&mut self, local_root_span_id: [u8; 8], attributes: &[(u8, &str)]) -> bool {
+        fn set_attrs(&mut self, local_root_span_id: [u8; 8], attributes: &[(u8, &[u8])]) -> bool {
             let mut fully_encoded = true;
 
             self.attrs_data[0] = ROOT_SPAN_KEY_INDEX;
@@ -218,8 +218,7 @@ pub mod linux {
             self.attrs_data[2..10].copy_from_slice(local_root_span_id.as_slice());
             let mut offset = 10;
 
-            for &(key_index, val) in attributes {
-                let val_bytes = val.as_bytes();
+            for &(key_index, val_bytes) in attributes {
                 let val_len = val_bytes.len();
                 let val_len = if val_len > 255 {
                     fully_encoded = false;
@@ -235,7 +234,7 @@ pub mod linux {
                 }
 
                 self.attrs_data[offset] = key_index;
-                // `val_len <= 255` thanks to the `min()`
+                // `val_len <= 255` from the check above
                 self.attrs_data[offset + 1] = val_len as u8;
                 self.attrs_data[offset + 2..offset + 2 + val_len]
                     .copy_from_slice(&val_bytes[..val_len]);
@@ -280,7 +279,7 @@ pub mod linux {
             trace_id: [u8; 16],
             span_id: [u8; 8],
             local_root_span_id: [u8; 8],
-            attrs: &[(u8, &str)],
+            attrs: &[(u8, &[u8])],
         ) -> Self {
             Self::from(ThreadContextRecord::new(
                 trace_id,
@@ -364,7 +363,7 @@ pub mod linux {
             trace_id: [u8; 16],
             span_id: [u8; 8],
             local_root_span_id: [u8; 8],
-            attrs: &[(u8, &str)],
+            attrs: &[(u8, &[u8])],
         ) {
             let slot = get_tls_slot();
 
@@ -482,7 +481,7 @@ pub mod linux {
         #[cfg_attr(miri, ignore)]
         fn attribute_encoding_basic() {
             let root_span_id = [0u8; 8];
-            let attrs: &[(u8, &str)] = &[(1, "GET"), (2, "/api/v1")];
+            let attrs: &[(u8, &[u8])] = &[(1, b"GET"), (2, b"/api/v1")];
             ThreadContext::new([0u8; 16], [0u8; 8], root_span_id, attrs).attach();
 
             let ptr = read_tls_context_ptr();
@@ -513,14 +512,14 @@ pub mod linux {
             // Two such entries: 514 bytes, plus root_span_id: 524.
             // A third entry of 100 chars would need 102 bytes, bringing the total to 626 > 612, so
             // the third entry must be dropped.
-            let val_a = "a".repeat(255); // 257 bytes encoded
-            let val_b = "b".repeat(255); // 257 bytes encoded → 514 total
-            let val_c = "c".repeat(100); // 102 bytes encoded → 626 total: must be dropped
+            let val_a = b"a".repeat(255); // 257 bytes encoded
+            let val_b = b"b".repeat(255); // 257 bytes encoded → 514 total
+            let val_c = b"c".repeat(100); // 102 bytes encoded → 626 total: must be dropped
 
-            let attrs: &[(u8, &str)] = &[
-                (1, val_a.as_str()),
-                (2, val_b.as_str()),
-                (3, val_c.as_str()),
+            let attrs: &[(u8, &[u8])] = &[
+                (1, val_a.as_slice()),
+                (2, val_b.as_slice()),
+                (3, val_c.as_slice()),
             ];
 
             ThreadContext::new([0u8; 16], [0u8; 8], [0u8; 8], attrs).attach();
@@ -549,7 +548,7 @@ pub mod linux {
             let root_span_id2 = [0x79u8; 8];
 
             // Updating before any context is attached should be equivalent to `attach()`
-            ThreadContext::update(trace_id1, span_id1, root_span_id1, &[(0, "v1")]);
+            ThreadContext::update(trace_id1, span_id1, root_span_id1, &[(0, b"v1")]);
 
             let ptr_before = read_tls_context_ptr();
             assert!(!ptr_before.is_null());
@@ -564,7 +563,7 @@ pub mod linux {
             assert_eq!(record.attrs_data[11], 2);
             assert_eq!(&record.attrs_data[12..14], b"v1");
 
-            ThreadContext::update(trace_id2, span_id2, root_span_id2, &[(0, "v2")]);
+            ThreadContext::update(trace_id2, span_id2, root_span_id2, &[(0, b"v2")]);
 
             let ptr_after = read_tls_context_ptr();
             assert_eq!(
@@ -604,8 +603,8 @@ pub mod linux {
         #[test]
         #[cfg_attr(miri, ignore)]
         fn long_value_capped_at_255_bytes() {
-            let long_val = "a".repeat(300);
-            ThreadContext::new([0u8; 16], [0u8; 8], [0u8; 8], &[(0, long_val.as_str())]).attach();
+            let long_val = b"a".repeat(300);
+            ThreadContext::new([0u8; 16], [0u8; 8], [0u8; 8], &[(0, long_val.as_slice())]).attach();
 
             let ptr = read_tls_context_ptr();
             assert!(!ptr.is_null());
