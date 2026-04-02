@@ -20,7 +20,7 @@ use std::{fmt, io};
 use tokio::runtime::{Builder, Runtime};
 use tracing::{debug, error};
 
-type BoxedWorker = Box<dyn Worker + Send + Sync>;
+type BoxedWorker = Box<dyn Worker + Sync>;
 
 #[derive(Debug)]
 struct WorkerEntry {
@@ -179,7 +179,7 @@ impl SharedRuntime {
     ///
     /// # Errors
     /// Returns an error if the runtime is not available or the worker cannot be started.
-    pub fn spawn_worker<T: Worker + Send + Sync + 'static>(
+    pub fn spawn_worker<T: Worker + Sync + 'static>(
         &self,
         worker: T,
     ) -> Result<WorkerHandle, SharedRuntimeError> {

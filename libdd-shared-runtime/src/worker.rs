@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use async_trait::async_trait;
+use libdd_capabilities::MaybeSend;
 
 /// A background worker meant to be spawned on a [`SharedRuntime`](crate::SharedRuntime).
 ///
@@ -16,7 +17,7 @@ use async_trait::async_trait;
 /// the worker must be in a valid state on every call to `.await` within the trigger function.
 /// See [`tokio::select#cancellation-safety`] for more details.
 #[async_trait]
-pub trait Worker: std::fmt::Debug {
+pub trait Worker: std::fmt::Debug + MaybeSend {
     /// Main worker function
     ///
     /// Code in this function must always use timeout on long-running await calls to avoid
@@ -46,7 +47,7 @@ pub trait Worker: std::fmt::Debug {
 
 // Blanket implementation for boxed trait objects
 #[async_trait]
-impl Worker for Box<dyn Worker + Send + Sync> {
+impl Worker for Box<dyn Worker + Sync> {
     async fn run(&mut self) {
         (**self).run().await
     }
