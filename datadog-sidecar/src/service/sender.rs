@@ -169,6 +169,11 @@ impl SidecarSender {
 
     /// Non-blocking drain of the outbox.  Returns `true` if all messages were sent.
     fn try_drain_outbox(&mut self) -> bool {
+        // Drain pending acks when approaching the throttle threshold so the socket
+        // receive buffer doesn't fill up and block the sidecar from sending more acks.
+        if self.channel.0.outstanding() >= self.max_outstanding / 2 {
+            self.channel.0.drain_acks();
+        }
         for slot in self.outbox.slots_mut() {
             if let Some(msg) = slot {
                 if self.channel.0.outstanding() >= self.max_outstanding {
