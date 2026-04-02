@@ -435,6 +435,29 @@ jobs:
           libdatadog-no-certs
           cargo test -p libdd-profiling --test exporter_e2e
 
+  wasm:
+    name: "cargo check --target wasm32-unknown-unknown"
+    runs-on: ubuntu-latest
+    concurrency:
+      group: ci-${{ github.ref }}-wasm
+      cancel-in-progress: true
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # 4.2.2
+        with:
+          submodules: recursive
+      - name: Install wasm32 target
+        run: rustup target add wasm32-unknown-unknown
+      - name: Cache [rust]
+        uses: Swatinem/rust-cache@f13886b937689c021905a6b90929199931d60db1 # 2.8.1
+        with:
+          cache-targets: true
+          cache-bin: true
+      - name: "cargo check -p libdd-data-pipeline --target wasm32-unknown-unknown --no-default-features"
+        run: cargo check -p libdd-data-pipeline --target wasm32-unknown-unknown --no-default-features
+        env:
+          RUSTFLAGS: "-D warnings -A unused-imports -A dead-code -A unused-variables"
+
   ffi_bake:
     strategy:
       matrix:

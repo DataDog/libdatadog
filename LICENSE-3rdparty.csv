@@ -1,0 +1,556 @@
+Component,Origin,License,Copyright
+addr2line,https://github.com/gimli-rs/addr2line,Apache-2.0 OR MIT,The addr2line Authors
+adler2,https://github.com/oyvindln/adler2,0BSD OR MIT OR Apache-2.0,"Jonas Schievink <jonasschievink@gmail.com>, oyvindln <oyvindln@users.noreply.github.com>"
+ahash,https://github.com/tkaitchuck/ahash,MIT OR Apache-2.0,Tom Kaitchuck <Tom.Kaitchuck@gmail.com>
+aho-corasick,https://github.com/BurntSushi/aho-corasick,Unlicense OR MIT,Andrew Gallant <jamslam@gmail.com>
+allocator-api2,https://github.com/zakarumych/allocator-api2,MIT OR Apache-2.0,Zakarum <zaq.dev@icloud.com>
+android-tzdata,https://github.com/RumovZ/android-tzdata,MIT OR Apache-2.0,RumovZ
+android_system_properties,https://github.com/nical/android_system_properties,MIT OR Apache-2.0,Nicolas Silva <nical@fastmail.com>
+anes,https://github.com/zrzka/anes-rs,MIT OR Apache-2.0,Robert Vojta <rvojta@me.com>
+anstream,https://github.com/rust-cli/anstyle,MIT OR Apache-2.0,The anstream Authors
+anstyle,https://github.com/rust-cli/anstyle,MIT OR Apache-2.0,The anstyle Authors
+anstyle-parse,https://github.com/rust-cli/anstyle,MIT OR Apache-2.0,The anstyle-parse Authors
+anstyle-query,https://github.com/rust-cli/anstyle,MIT OR Apache-2.0,The anstyle-query Authors
+anstyle-wincon,https://github.com/rust-cli/anstyle,MIT OR Apache-2.0,The anstyle-wincon Authors
+anyhow,https://github.com/dtolnay/anyhow,MIT OR Apache-2.0,David Tolnay <dtolnay@gmail.com>
+arbitrary,https://github.com/rust-fuzz/arbitrary,MIT OR Apache-2.0,"The Rust-Fuzz Project Developers, Nick Fitzgerald <fitzgen@gmail.com>, Manish Goregaokar <manishsmail@gmail.com>, Simonas Kazlauskas <arbitrary@kazlauskas.me>, Brian L. Troutwine <brian@troutwine.us>, Corey Farwell <coreyf@rwell.org>"
+arc-swap,https://github.com/vorner/arc-swap,MIT OR Apache-2.0,Michal 'vorner' Vaner <vorner@vorner.cz>
+arrayref,https://github.com/droundy/arrayref,BSD-2-Clause,David Roundy <roundyd@physics.oregonstate.edu>
+assert-json-diff,https://github.com/davidpdrsn/assert-json-diff,MIT,David Pedersen <david.pdrsn@gmail.com>
+async-attributes,https://github.com/async-rs/async-attributes,MIT OR Apache-2.0,Yoshua Wuyts <yoshuawuyts@gmail.com>
+async-channel,https://github.com/smol-rs/async-channel,Apache-2.0 OR MIT,Stjepan Glavina <stjepang@gmail.com>
+async-executor,https://github.com/smol-rs/async-executor,Apache-2.0 OR MIT,"Stjepan Glavina <stjepang@gmail.com>, John Nunley <dev@notgull.net>"
+async-global-executor,https://github.com/Keruspe/async-global-executor,Apache-2.0 OR MIT,Marc-Antoine Perennou <Marc-Antoine@Perennou.com>
+async-io,https://github.com/smol-rs/async-io,Apache-2.0 OR MIT,Stjepan Glavina <stjepang@gmail.com>
+async-lock,https://github.com/smol-rs/async-lock,Apache-2.0 OR MIT,Stjepan Glavina <stjepang@gmail.com>
+async-object-pool,https://github.com/alexliesenfeld/async-object-pool,MIT,Alexander Liesenfeld <alexander.liesenfeld@outlook.com>
+async-process,https://github.com/smol-rs/async-process,Apache-2.0 OR MIT,Stjepan Glavina <stjepang@gmail.com>
+async-signal,https://github.com/smol-rs/async-signal,Apache-2.0 OR MIT,John Nunley <dev@notgull.net>
+async-std,https://github.com/async-rs/async-std,Apache-2.0 OR MIT,"Stjepan Glavina <stjepang@gmail.com>, Yoshua Wuyts <yoshuawuyts@gmail.com>, Friedel Ziegelmayer <me@dignifiedquire.com>, Contributors to async-std"
+async-task,https://github.com/smol-rs/async-task,Apache-2.0 OR MIT,Stjepan Glavina <stjepang@gmail.com>
+async-trait,https://github.com/dtolnay/async-trait,MIT OR Apache-2.0,David Tolnay <dtolnay@gmail.com>
+atomic-waker,https://github.com/smol-rs/atomic-waker,Apache-2.0 OR MIT,"Stjepan Glavina <stjepang@gmail.com>, Contributors to futures-rs"
+aws-lc-fips-sys,https://github.com/aws/aws-lc-rs,ISC AND (Apache-2.0 OR ISC) AND OpenSSL,AWS-LC
+aws-lc-rs,https://github.com/aws/aws-lc-rs,ISC AND (Apache-2.0 OR ISC),AWS-LibCrypto
+aws-lc-sys,https://github.com/aws/aws-lc-rs,ISC AND (Apache-2.0 OR ISC) AND Apache-2.0 AND MIT AND BSD-3-Clause AND (Apache-2.0 OR ISC OR MIT) AND (Apache-2.0 OR ISC OR MIT-0),AWS-LC
+axum,https://github.com/tokio-rs/axum,MIT,The axum Authors
+axum-core,https://github.com/tokio-rs/axum,MIT,The axum-core Authors
+backtrace,https://github.com/rust-lang/backtrace-rs,MIT OR Apache-2.0,The Rust Project Developers
+base64,https://github.com/marshallpierce/rust-base64,MIT OR Apache-2.0,"Alice Maz <alice@alicemaz.com>, Marshall Pierce <marshall@mpierce.org>"
+base64,https://github.com/marshallpierce/rust-base64,MIT OR Apache-2.0,Marshall Pierce <marshall@mpierce.org>
+bincode,https://github.com/servo/bincode,MIT,"Ty Overby <ty@pre-alpha.com>, Francesco Mazzoli <f@mazzo.li>, David Tolnay <dtolnay@gmail.com>, Zoey Riordan <zoey@dos.cafe>"
+bit-set,https://github.com/contain-rs/bit-set,MIT OR Apache-2.0,Alexis Beingessner <a.beingessner@gmail.com>
+bit-vec,https://github.com/contain-rs/bit-vec,MIT OR Apache-2.0,Alexis Beingessner <a.beingessner@gmail.com>
+bitflags,https://github.com/bitflags/bitflags,MIT OR Apache-2.0,The Rust Project Developers
+bitmaps,https://github.com/bodil/bitmaps,MPL-2.0+,Bodil Stokke <bodil@bodil.org>
+blazesym,https://github.com/libbpf/blazesym,BSD-3-Clause,"Daniel Müller <deso@posteo.net>, Kui-Feng <thinker.li@gmail.com>"
+blazesym-c,https://github.com/libbpf/blazesym,BSD-3-Clause,Daniel Müller <deso@posteo.net>
+block-buffer,https://github.com/RustCrypto/utils,MIT OR Apache-2.0,RustCrypto Developers
+block2,https://github.com/madsmtm/objc2,MIT,Mads Marquart <mads@marquart.dk>
+blocking,https://github.com/smol-rs/blocking,Apache-2.0 OR MIT,Stjepan Glavina <stjepang@gmail.com>
+bolero,https://github.com/camshaft/bolero,MIT,Cameron Bytheway <bytheway.cameron@gmail.com>
+bolero-afl,https://github.com/camshaft/bolero,MIT,Cameron Bytheway <bythewc@amazon.com>
+bolero-engine,https://github.com/camshaft/bolero,MIT,Cameron Bytheway <bytheway.cameron@gmail.com>
+bolero-generator,https://github.com/camshaft/bolero,MIT,Cameron Bytheway <bytheway.cameron@gmail.com>
+bolero-generator-derive,https://github.com/camshaft/bolero,MIT,Cameron Bytheway <bytheway.cameron@gmail.com>
+bolero-honggfuzz,https://github.com/camshaft/bolero,MIT,Cameron Bytheway <bytheway.cameron@gmail.com>
+bolero-kani,https://github.com/camshaft/bolero,MIT,Cameron Bytheway <bytheway.cameron@gmail.com>
+bolero-libfuzzer,https://github.com/camshaft/bolero,MIT,Cameron Bytheway <bytheway.cameron@gmail.com>
+borrow-or-share,https://github.com/yescallop/borrow-or-share,MIT-0,Scallop Ye <yescallop@gmail.com>
+bumpalo,https://github.com/fitzgen/bumpalo,MIT OR Apache-2.0,Nick Fitzgerald <fitzgen@gmail.com>
+byteorder,https://github.com/BurntSushi/byteorder,Unlicense OR MIT,Andrew Gallant <jamslam@gmail.com>
+bytes,https://github.com/tokio-rs/bytes,MIT,"Carl Lerche <me@carllerche.com>, Sean McArthur <sean@seanmonstar.com>"
+cadence,https://github.com/56quarters/cadence,Apache-2.0 OR MIT,Nick Pillitteri
+camino,https://github.com/camino-rs/camino,MIT OR Apache-2.0,"Without Boats <saoirse@without.boats>, Ashley Williams <ashley666ashley@gmail.com>, Steve Klabnik <steve@steveklabnik.com>, Rain <rain@sunshowers.io>"
+cargo-platform,https://github.com/rust-lang/cargo,MIT OR Apache-2.0,The cargo-platform Authors
+cargo_metadata,https://github.com/oli-obk/cargo_metadata,MIT,Oliver Schneider <git-spam-no-reply9815368754983@oli-obk.de>
+cast,https://github.com/japaric/cast.rs,MIT OR Apache-2.0,Jorge Aparicio <jorge@japaric.io>
+cbindgen,https://github.com/mozilla/cbindgen,MPL-2.0,"Emilio Cobos Álvarez <emilio@crisal.io>, Jeff Muizelaar <jmuizelaar@mozilla.com>, Kartikaya Gupta <kats@mozilla.com>, Ryan Hunt <rhunt@eqrion.net>"
+cc,https://github.com/rust-lang/cc-rs,MIT OR Apache-2.0,Alex Crichton <alex@alexcrichton.com>
+cesu8,https://github.com/emk/cesu8-rs,Apache-2.0 OR MIT,Eric Kidd <git@randomhacks.net>
+cexpr,https://github.com/jethrogb/rust-cexpr,Apache-2.0 OR MIT,Jethro Beekman <jethro@jbeekman.nl>
+cfg-if,https://github.com/alexcrichton/cfg-if,MIT OR Apache-2.0,Alex Crichton <alex@alexcrichton.com>
+chrono,https://github.com/chronotope/chrono,MIT OR Apache-2.0,The chrono Authors
+ciborium,https://github.com/enarx/ciborium,Apache-2.0,Nathaniel McCallum <npmccallum@profian.com>
+ciborium-io,https://github.com/enarx/ciborium,Apache-2.0,Nathaniel McCallum <npmccallum@profian.com>
+ciborium-ll,https://github.com/enarx/ciborium,Apache-2.0,Nathaniel McCallum <npmccallum@profian.com>
+clang-sys,https://github.com/KyleMayes/clang-sys,Apache-2.0,Kyle Mayes <kyle@mayeses.com>
+clap,https://github.com/clap-rs/clap,MIT OR Apache-2.0,The clap Authors
+clap_builder,https://github.com/clap-rs/clap,MIT OR Apache-2.0,The clap_builder Authors
+clap_derive,https://github.com/clap-rs/clap,MIT OR Apache-2.0,The clap_derive Authors
+clap_lex,https://github.com/clap-rs/clap,MIT OR Apache-2.0,The clap_lex Authors
+cmake,https://github.com/rust-lang/cmake-rs,MIT OR Apache-2.0,Alex Crichton <alex@alexcrichton.com>
+codespan-reporting,https://github.com/brendanzab/codespan,Apache-2.0,Brendan Zabarauskas <bjzaba@yahoo.com.au>
+colorchoice,https://github.com/rust-cli/anstyle,MIT OR Apache-2.0,The colorchoice Authors
+colored,https://github.com/mackwic/colored,MPL-2.0,Thomas Wickham <mackwic@gmail.com>
+combine,https://github.com/Marwes/combine,MIT,Markus Westerlind <marwes91@gmail.com>
+concurrent-queue,https://github.com/smol-rs/concurrent-queue,Apache-2.0 OR MIT,"Stjepan Glavina <stjepang@gmail.com>, Taiki Endo <te316e89@gmail.com>, John Nunley <dev@notgull.net>"
+console-api,https://github.com/tokio-rs/console,MIT,"Eliza Weisman <eliza@buoyant.io>, Tokio Contributors <team@tokio.rs>"
+console-subscriber,https://github.com/tokio-rs/console,MIT,"Eliza Weisman <eliza@buoyant.io>, Tokio Contributors <team@tokio.rs>"
+const_format,https://github.com/rodrimati1992/const_format_crates,Zlib,rodrimati1992 <rodrimatt1985@gmail.com>
+const_format_proc_macros,https://github.com/rodrimati1992/const_format_crates,Zlib,rodrimati1992 <rodrimatt1985@gmail.com>
+constcat,https://github.com/rossmacarthur/constcat,MIT OR Apache-2.0,Ross MacArthur <ross@macarthur.io>
+core-foundation,https://github.com/servo/core-foundation-rs,MIT OR Apache-2.0,The Servo Project Developers
+core-foundation-sys,https://github.com/servo/core-foundation-rs,MIT OR Apache-2.0,The Servo Project Developers
+cpp_demangle,https://github.com/gimli-rs/cpp_demangle,MIT OR Apache-2.0,"Nick Fitzgerald <fitzgen@gmail.com>, Jim Blandy <jimb@red-bean.com>, Kyle Huey <khuey@kylehuey.com>"
+cpufeatures,https://github.com/RustCrypto/utils,MIT OR Apache-2.0,RustCrypto Developers
+crc32fast,https://github.com/srijs/rust-crc32fast,MIT OR Apache-2.0,"Sam Rijs <srijs@airpost.net>, Alex Crichton <alex@alexcrichton.com>"
+criterion-plot,https://github.com/bheisler/criterion.rs,MIT OR Apache-2.0,"Jorge Aparicio <japaricious@gmail.com>, Brook Heisler <brookheisler@gmail.com>"
+critical-section,https://github.com/rust-embedded/critical-section,MIT OR Apache-2.0,The critical-section Authors
+crossbeam-channel,https://github.com/crossbeam-rs/crossbeam,MIT OR Apache-2.0,The crossbeam-channel Authors
+crossbeam-deque,https://github.com/crossbeam-rs/crossbeam,MIT OR Apache-2.0,The crossbeam-deque Authors
+crossbeam-epoch,https://github.com/crossbeam-rs/crossbeam,MIT OR Apache-2.0,The crossbeam-epoch Authors
+crossbeam-queue,https://github.com/crossbeam-rs/crossbeam,MIT OR Apache-2.0,The crossbeam-queue Authors
+crossbeam-utils,https://github.com/crossbeam-rs/crossbeam,MIT OR Apache-2.0,The crossbeam-utils Authors
+crunchy,https://github.com/AtheMathmo/crunchy,MIT,Vurich <jackefransham@hotmail.co.uk>
+crypto-common,https://github.com/RustCrypto/traits,MIT OR Apache-2.0,RustCrypto Developers
+csv,https://github.com/BurntSushi/rust-csv,Unlicense OR MIT,Andrew Gallant <jamslam@gmail.com>
+csv-core,https://github.com/BurntSushi/rust-csv,Unlicense OR MIT,Andrew Gallant <jamslam@gmail.com>
+current_platform,https://github.com/Shnatsel/current_platform,MIT OR Apache-2.0 OR Zlib,"Sergey ""Shnatsel"" Davidoff <shnatsel@gmail.com>"
+cxx,https://github.com/dtolnay/cxx,MIT OR Apache-2.0,David Tolnay <dtolnay@gmail.com>
+cxxbridge-macro,https://github.com/dtolnay/cxx,MIT OR Apache-2.0,David Tolnay <dtolnay@gmail.com>
+darling,https://github.com/TedDriggs/darling,MIT,Ted Driggs <ted.driggs@outlook.com>
+darling_core,https://github.com/TedDriggs/darling,MIT,Ted Driggs <ted.driggs@outlook.com>
+darling_macro,https://github.com/TedDriggs/darling,MIT,Ted Driggs <ted.driggs@outlook.com>
+data-encoding,https://github.com/ia0/data-encoding,MIT,Julien Cretin <git@ia0.eu>
+debugid,https://github.com/getsentry/rust-debugid,Apache-2.0,Sentry <hello@sentry.io>
+deranged,https://github.com/jhpratt/deranged,MIT OR Apache-2.0,Jacob Pratt <jacob@jhpratt.dev>
+derive_arbitrary,https://github.com/rust-fuzz/arbitrary,MIT OR Apache-2.0,"The Rust-Fuzz Project Developers, Nick Fitzgerald <fitzgen@gmail.com>, Manish Goregaokar <manishsmail@gmail.com>, Andre Bogus <bogusandre@gmail.com>, Corey Farwell <coreyf@rwell.org>"
+derive_more,https://github.com/JelteF/derive_more,MIT,Jelte Fennema <github-tech@jeltef.nl>
+derive_more-impl,https://github.com/JelteF/derive_more,MIT,Jelte Fennema <github-tech@jeltef.nl>
+diff,https://github.com/utkarshkukreti/diff.rs,MIT OR Apache-2.0,Utkarsh Kukreti <utkarshkukreti@gmail.com>
+digest,https://github.com/RustCrypto/traits,MIT OR Apache-2.0,RustCrypto Developers
+dispatch2,https://github.com/madsmtm/objc2,Zlib OR Apache-2.0 OR MIT,"Mads Marquart <mads@marquart.dk>, Mary <mary@mary.zone>"
+displaydoc,https://github.com/yaahc/displaydoc,MIT OR Apache-2.0,Jane Lusby <jlusby@yaah.dev>
+dyn-clone,https://github.com/dtolnay/dyn-clone,MIT OR Apache-2.0,David Tolnay <dtolnay@gmail.com>
+either,https://github.com/rayon-rs/either,MIT OR Apache-2.0,bluss
+encoding_rs,https://github.com/hsivonen/encoding_rs,(Apache-2.0 OR MIT) AND BSD-3-Clause,Henri Sivonen <hsivonen@hsivonen.fi>
+enum-as-inner,https://github.com/bluejekyll/enum-as-inner,MIT OR Apache-2.0,Benjamin Fry <benjaminfry@me.com>
+equivalent,https://github.com/cuviper/equivalent,Apache-2.0 OR MIT,The equivalent Authors
+erased-serde,https://github.com/dtolnay/erased-serde,MIT OR Apache-2.0,David Tolnay <dtolnay@gmail.com>
+errno,https://github.com/lambda-fairy/rust-errno,MIT OR Apache-2.0,"Chris Wong <lambda.fairy@gmail.com>, Dan Gohman <dev@sunfishcode.online>"
+event-listener,https://github.com/smol-rs/event-listener,Apache-2.0 OR MIT,Stjepan Glavina <stjepang@gmail.com>
+event-listener,https://github.com/smol-rs/event-listener,Apache-2.0 OR MIT,"Stjepan Glavina <stjepang@gmail.com>, John Nunley <dev@notgull.net>"
+event-listener-strategy,https://github.com/smol-rs/event-listener-strategy,Apache-2.0 OR MIT,John Nunley <dev@notgull.net>
+fallible-iterator,https://github.com/sfackler/rust-fallible-iterator,MIT OR Apache-2.0,Steven Fackler <sfackler@gmail.com>
+fastrand,https://github.com/smol-rs/fastrand,Apache-2.0 OR MIT,Stjepan Glavina <stjepang@gmail.com>
+faststr,https://github.com/volo-rs/faststr,MIT OR Apache-2.0,Volo Team <volo@cloudwego.io>
+filetime,https://github.com/alexcrichton/filetime,MIT OR Apache-2.0,Alex Crichton <alex@alexcrichton.com>
+find-msvc-tools,https://github.com/rust-lang/cc-rs,MIT OR Apache-2.0,The find-msvc-tools Authors
+fixedbitset,https://github.com/petgraph/fixedbitset,MIT OR Apache-2.0,bluss
+flate2,https://github.com/rust-lang/flate2-rs,MIT OR Apache-2.0,"Alex Crichton <alex@alexcrichton.com>, Josh Triplett <josh@joshtriplett.org>"
+float-cmp,https://github.com/mikedilger/float-cmp,MIT,Mike Dilger <mike@mikedilger.com>
+fluent-uri,https://github.com/yescallop/fluent-uri-rs,MIT,Scallop Ye <yescallop@gmail.com>
+fnv,https://github.com/servo/rust-fnv,Apache-2.0  OR  MIT,Alex Crichton <alex@alexcrichton.com>
+foldhash,https://github.com/orlp/foldhash,Zlib,Orson Peters <orsonpeters@gmail.com>
+form_urlencoded,https://github.com/servo/rust-url,MIT OR Apache-2.0,The rust-url developers
+function_name,https://github.com/danielhenrymantilla/rust-function_name,MIT,Daniel Henry-Mantilla <daniel.henry.mantilla@gmail.com>
+function_name-proc-macro,https://github.com/danielhenrymantilla/rust-function_name,MIT,Daniel Henry-Mantilla <daniel.henry.mantilla@gmail.com>
+futures,https://github.com/rust-lang/futures-rs,MIT OR Apache-2.0,The futures Authors
+futures-channel,https://github.com/rust-lang/futures-rs,MIT OR Apache-2.0,The futures-channel Authors
+futures-core,https://github.com/rust-lang/futures-rs,MIT OR Apache-2.0,The futures-core Authors
+futures-executor,https://github.com/rust-lang/futures-rs,MIT OR Apache-2.0,The futures-executor Authors
+futures-io,https://github.com/rust-lang/futures-rs,MIT OR Apache-2.0,The futures-io Authors
+futures-lite,https://github.com/smol-rs/futures-lite,Apache-2.0 OR MIT,"Stjepan Glavina <stjepang@gmail.com>, Contributors to futures-rs"
+futures-macro,https://github.com/rust-lang/futures-rs,MIT OR Apache-2.0,The futures-macro Authors
+futures-sink,https://github.com/rust-lang/futures-rs,MIT OR Apache-2.0,The futures-sink Authors
+futures-task,https://github.com/rust-lang/futures-rs,MIT OR Apache-2.0,The futures-task Authors
+futures-timer,https://github.com/async-rs/futures-timer,MIT OR Apache-2.0,Alex Crichton <alex@alexcrichton.com>
+futures-util,https://github.com/rust-lang/futures-rs,MIT OR Apache-2.0,The futures-util Authors
+generic-array,https://github.com/fizyk20/generic-array,MIT,"Bartłomiej Kamiński <fizyk20@gmail.com>, Aaron Trent <novacrazy@gmail.com>"
+getrandom,https://github.com/rust-random/getrandom,MIT OR Apache-2.0,The Rand Project Developers
+gimli,https://github.com/gimli-rs/gimli,MIT OR Apache-2.0,The gimli Authors
+glob,https://github.com/rust-lang/glob,MIT OR Apache-2.0,The Rust Project Developers
+gloo-timers,https://github.com/rustwasm/gloo/tree/master/crates/timers,MIT OR Apache-2.0,Rust and WebAssembly Working Group
+h2,https://github.com/hyperium/h2,MIT,"Carl Lerche <me@carllerche.com>, Sean McArthur <sean@seanmonstar.com>"
+half,https://github.com/starkat99/half-rs,MIT OR Apache-2.0,Kathryn Long <squeeself@gmail.com>
+halfbrown,https://github.com/Licenser/halfbrown,Apache-2.0 OR MIT,Heinz N. Gies <heinz@licenser.net>
+hashbrown,https://github.com/rust-lang/hashbrown,MIT OR Apache-2.0,Amanieu d'Antras <amanieu@gmail.com>
+hdrhistogram,https://github.com/HdrHistogram/HdrHistogram_rust,MIT OR Apache-2.0,"Jon Gjengset <jon@thesquareplanet.com>, Marshall Pierce <marshall@mpierce.org>"
+headers,https://github.com/hyperium/headers,MIT,Sean McArthur <sean@seanmonstar.com>
+headers-core,https://github.com/hyperium/headers,MIT,Sean McArthur <sean@seanmonstar.com>
+heck,https://github.com/withoutboats/heck,MIT OR Apache-2.0,The heck Authors
+heck,https://github.com/withoutboats/heck,MIT OR Apache-2.0,Without Boats <woboats@gmail.com>
+hermit-abi,https://github.com/hermit-os/hermit-rs,MIT OR Apache-2.0,Stefan Lankes
+hex,https://github.com/KokaKiwi/rust-hex,MIT OR Apache-2.0,KokaKiwi <kokakiwi@kokakiwi.net>
+hickory-proto,https://github.com/hickory-dns/hickory-dns,MIT OR Apache-2.0,The contributors to Hickory DNS
+hickory-resolver,https://github.com/hickory-dns/hickory-dns,MIT OR Apache-2.0,The contributors to Hickory DNS
+home,https://github.com/rust-lang/cargo,MIT OR Apache-2.0,Brian Anderson <andersrb@gmail.com>
+http,https://github.com/hyperium/http,MIT OR Apache-2.0,"Alex Crichton <alex@alexcrichton.com>, Carl Lerche <me@carllerche.com>, Sean McArthur <sean@seanmonstar.com>"
+http-body,https://github.com/hyperium/http-body,MIT,"Carl Lerche <me@carllerche.com>, Lucio Franco <luciofranco14@gmail.com>, Sean McArthur <sean@seanmonstar.com>"
+http-body-util,https://github.com/hyperium/http-body,MIT,"Carl Lerche <me@carllerche.com>, Lucio Franco <luciofranco14@gmail.com>, Sean McArthur <sean@seanmonstar.com>"
+httparse,https://github.com/seanmonstar/httparse,MIT OR Apache-2.0,Sean McArthur <sean@seanmonstar.com>
+httpdate,https://github.com/pyfisch/httpdate,MIT OR Apache-2.0,Pyfisch <pyfisch@posteo.org>
+httpmock,https://github.com/alexliesenfeld/httpmock,MIT,Alexander Liesenfeld <alexander.liesenfeld@outlook.com>
+humantime,https://github.com/tailhook/humantime,MIT OR Apache-2.0,Paul Colomiets <paul@colomiets.name>
+hyper,https://github.com/hyperium/hyper,MIT,Sean McArthur <sean@seanmonstar.com>
+hyper-rustls,https://github.com/rustls/hyper-rustls,Apache-2.0 OR ISC OR MIT,The hyper-rustls Authors
+hyper-timeout,https://github.com/hjr3/hyper-timeout,MIT OR Apache-2.0,Herman J. Radtke III <herman@hermanradtke.com>
+hyper-util,https://github.com/hyperium/hyper-util,MIT,Sean McArthur <sean@seanmonstar.com>
+iana-time-zone,https://github.com/strawlab/iana-time-zone,MIT OR Apache-2.0,"Andrew Straw <strawman@astraw.com>, René Kijewski <rene.kijewski@fu-berlin.de>, Ryan Lopopolo <rjl@hyperbo.la>"
+iana-time-zone-haiku,https://github.com/strawlab/iana-time-zone,MIT OR Apache-2.0,René Kijewski <crates.io@k6i.de>
+icu_collections,https://github.com/unicode-org/icu4x,Unicode-3.0,The ICU4X Project Developers
+icu_locid,https://github.com/unicode-org/icu4x,Unicode-3.0,The ICU4X Project Developers
+icu_locid_transform,https://github.com/unicode-org/icu4x,Unicode-3.0,The ICU4X Project Developers
+icu_locid_transform_data,https://github.com/unicode-org/icu4x,Unicode-3.0,The ICU4X Project Developers
+icu_normalizer,https://github.com/unicode-org/icu4x,Unicode-3.0,The ICU4X Project Developers
+icu_normalizer_data,https://github.com/unicode-org/icu4x,Unicode-3.0,The ICU4X Project Developers
+icu_properties,https://github.com/unicode-org/icu4x,Unicode-3.0,The ICU4X Project Developers
+icu_properties_data,https://github.com/unicode-org/icu4x,Unicode-3.0,The ICU4X Project Developers
+icu_provider,https://github.com/unicode-org/icu4x,Unicode-3.0,The ICU4X Project Developers
+icu_provider_macros,https://github.com/unicode-org/icu4x,Unicode-3.0,The ICU4X Project Developers
+ident_case,https://github.com/TedDriggs/ident_case,MIT OR Apache-2.0,Ted Driggs <ted.driggs@outlook.com>
+idna,https://github.com/servo/rust-url,MIT OR Apache-2.0,The rust-url developers
+idna_adapter,https://github.com/hsivonen/idna_adapter,Apache-2.0 OR MIT,The rust-url developers
+indexmap,https://github.com/bluss/indexmap,Apache-2.0 OR MIT,The indexmap Authors
+indexmap,https://github.com/indexmap-rs/indexmap,Apache-2.0 OR MIT,The indexmap Authors
+indoc,https://github.com/dtolnay/indoc,MIT OR Apache-2.0,David Tolnay <dtolnay@gmail.com>
+io-lifetimes,https://github.com/sunfishcode/io-lifetimes,Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT,Dan Gohman <dev@sunfishcode.online>
+ipconfig,https://github.com/liranringel/ipconfig,MIT OR Apache-2.0,Liran Ringel <liranringel@gmail.com>
+ipnet,https://github.com/krisprice/ipnet,MIT OR Apache-2.0,Kris Price <kris@krisprice.nz>
+iri-string,https://github.com/lo48576/iri-string,MIT OR Apache-2.0,YOSHIOKA Takuma <nop_thread@nops.red>
+is-terminal,https://github.com/sunfishcode/is-terminal,MIT,"softprops <d.tangren@gmail.com>, Dan Gohman <dev@sunfishcode.online>"
+is_terminal_polyfill,https://github.com/polyfill-rs/is_terminal_polyfill,MIT OR Apache-2.0,The is_terminal_polyfill Authors
+itertools,https://github.com/rust-itertools/itertools,MIT OR Apache-2.0,bluss
+itoa,https://github.com/dtolnay/itoa,MIT OR Apache-2.0,David Tolnay <dtolnay@gmail.com>
+jni,https://github.com/jni-rs/jni-rs,MIT OR Apache-2.0,Josh Chase <josh@prevoty.com>
+jni-sys,https://github.com/sfackler/rust-jni-sys,MIT OR Apache-2.0,Steven Fackler <sfackler@gmail.com>
+jobserver,https://github.com/rust-lang/jobserver-rs,MIT OR Apache-2.0,Alex Crichton <alex@alexcrichton.com>
+js-sys,https://github.com/rustwasm/wasm-bindgen/tree/master/crates/js-sys,MIT OR Apache-2.0,The wasm-bindgen Developers
+kernel32-sys,https://github.com/retep998/winapi-rs,MIT,Peter Atashian <retep998@gmail.com>
+kv-log-macro,https://github.com/yoshuawuyts/kv-log-macro,MIT OR Apache-2.0,Yoshua Wuyts <yoshuawuyts@gmail.com>
+lazy_static,https://github.com/rust-lang-nursery/lazy-static.rs,MIT OR Apache-2.0,Marvin Löbel <loebel.marvin@gmail.com>
+lazycell,https://github.com/indiv0/lazycell,MIT OR Apache-2.0,"Alex Crichton <alex@alexcrichton.com>, Nikita Pekin <contact@nikitapek.in>"
+libc,https://github.com/rust-lang/libc,MIT OR Apache-2.0,The Rust Project Developers
+libloading,https://github.com/nagisa/rust_libloading,ISC,Simonas Kazlauskas <libloading@kazlauskas.me>
+libredox,https://gitlab.redox-os.org/redox-os/libredox,MIT,4lDO2 <4lDO2@protonmail.com>
+libz-rs-sys,https://github.com/trifectatechfoundation/zlib-rs,Zlib,The libz-rs-sys Authors
+link-cplusplus,https://github.com/dtolnay/link-cplusplus,MIT OR Apache-2.0,David Tolnay <dtolnay@gmail.com>
+linux-raw-sys,https://github.com/sunfishcode/linux-raw-sys,Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT,Dan Gohman <dev@sunfishcode.online>
+litemap,https://github.com/unicode-org/icu4x,Unicode-3.0,The ICU4X Project Developers
+lock_api,https://github.com/Amanieu/parking_lot,MIT OR Apache-2.0,Amanieu d'Antras <amanieu@gmail.com>
+log,https://github.com/rust-lang/log,MIT OR Apache-2.0,The Rust Project Developers
+lru-slab,https://github.com/Ralith/lru-slab,MIT OR Apache-2.0 OR Zlib,Benjamin Saunders <ben.e.saunders@gmail.com>
+manual_future,https://github.com/dmarcuse/manual_future,MIT,Dominic Marcuse <dominic@marcuse.us>
+matchers,https://github.com/hawkw/matchers,MIT,Eliza Weisman <eliza@buoyant.io>
+matchit,https://github.com/ibraheemdev/matchit,MIT AND BSD-3-Clause,Ibraheem Ahmed <ibraheem@ibraheem.ca>
+md5,https://github.com/stainless-steel/md5,Apache-2.0 OR MIT,"Ivan Ukhov <ivan.ukhov@gmail.com>, Kamal Ahmad <shibe@openmailbox.org>, Konstantin Stepanov <milezv@gmail.com>, Lukas Kalbertodt <lukas.kalbertodt@gmail.com>, Nathan Musoke <nathan.musoke@gmail.com>, Scott Mabin <scott@mabez.dev>, Tony Arcieri <bascule@gmail.com>, Wim de With <register@dewith.io>, Yosef Dinerstein <yosefdi@gmail.com>"
+memchr,https://github.com/BurntSushi/memchr,Unlicense OR MIT,"Andrew Gallant <jamslam@gmail.com>, bluss"
+memfd,https://github.com/lucab/memfd-rs,MIT OR Apache-2.0,"Luca Bruno <lucab@lucabruno.net>, Simonas Kazlauskas <memfd@kazlauskas.me>"
+memmap2,https://github.com/RazrFalcon/memmap2-rs,MIT OR Apache-2.0,"Dan Burkert <dan@danburkert.com>, Yevhenii Reizner <razrfalcon@gmail.com>"
+memoffset,https://github.com/Gilnaa/memoffset,MIT,Gilad Naaman <gilad.naaman@gmail.com>
+memory-stats,https://github.com/Arc-blroth/memory-stats,MIT OR Apache-2.0,Arc-blroth <45273859+Arc-blroth@users.noreply.github.com>
+microseh,https://github.com/sonodima/microseh,MIT,sonodima
+mime,https://github.com/hyperium/mime,MIT OR Apache-2.0,Sean McArthur <sean@seanmonstar.com>
+mime_guess,https://github.com/abonander/mime_guess,MIT,Austin Bonander <austin.bonander@gmail.com>
+minimal-lexical,https://github.com/Alexhuszagh/minimal-lexical,MIT OR Apache-2.0,Alex Huszagh <ahuszagh@gmail.com>
+miniz_oxide,https://github.com/Frommi/miniz_oxide/tree/master/miniz_oxide,MIT OR Zlib OR Apache-2.0,"Frommi <daniil.liferenko@gmail.com>, oyvindln <oyvindln@users.noreply.github.com>, Rich Geldreich richgel99@gmail.com"
+mio,https://github.com/tokio-rs/mio,MIT,"Carl Lerche <me@carllerche.com>, Thomas de Zeeuw <thomasdezeeuw@gmail.com>, Tokio Contributors <team@tokio.rs>"
+moka,https://github.com/moka-rs/moka,(MIT OR Apache-2.0) AND Apache-2.0,The moka Authors
+msvc-demangler,https://github.com/mstange/msvc-demangler-rust,MIT OR NCSA,"Markus Stange <mstange@themasta.com>, Jeff Muizelaar <jrmuizel@gmail.com>"
+multer,https://github.com/rwf2/multer,MIT,Rousan Ali <hello@rousan.io>
+multimap,https://github.com/havarnov/multimap,MIT OR Apache-2.0,Håvar Nøvik <havar.novik@gmail.com>
+nix,https://github.com/nix-rust/nix,MIT,The nix-rust Project Developers
+nom,https://github.com/Geal/nom,MIT,contact@geoffroycouprie.com
+ntapi,https://github.com/MSxDOS/ntapi,Apache-2.0 OR MIT,MSxDOS <melcodos@gmail.com>
+nu-ansi-term,https://github.com/nushell/nu-ansi-term,MIT,"ogham@bsago.me, Ryan Scheel (Havvy) <ryan.havvy@gmail.com>, Josh Triplett <josh@joshtriplett.org>, The Nushell Project Developers"
+num-conv,https://github.com/jhpratt/num-conv,MIT OR Apache-2.0,Jacob Pratt <jacob@jhpratt.dev>
+num-derive,https://github.com/rust-num/num-derive,MIT OR Apache-2.0,The Rust Project Developers
+num-traits,https://github.com/rust-num/num-traits,MIT OR Apache-2.0,The Rust Project Developers
+objc2,https://github.com/madsmtm/objc2,MIT,Mads Marquart <mads@marquart.dk>
+objc2-cloud-kit,https://github.com/madsmtm/objc2,Zlib OR Apache-2.0 OR MIT,The objc2-cloud-kit Authors
+objc2-core-data,https://github.com/madsmtm/objc2,Zlib OR Apache-2.0 OR MIT,The objc2-core-data Authors
+objc2-core-foundation,https://github.com/madsmtm/objc2,Zlib OR Apache-2.0 OR MIT,The objc2-core-foundation Authors
+objc2-core-graphics,https://github.com/madsmtm/objc2,Zlib OR Apache-2.0 OR MIT,The objc2-core-graphics Authors
+objc2-core-image,https://github.com/madsmtm/objc2,Zlib OR Apache-2.0 OR MIT,The objc2-core-image Authors
+objc2-core-location,https://github.com/madsmtm/objc2,Zlib OR Apache-2.0 OR MIT,The objc2-core-location Authors
+objc2-core-text,https://github.com/madsmtm/objc2,Zlib OR Apache-2.0 OR MIT,The objc2-core-text Authors
+objc2-encode,https://github.com/madsmtm/objc2,MIT,Mads Marquart <mads@marquart.dk>
+objc2-foundation,https://github.com/madsmtm/objc2,MIT,The objc2-foundation Authors
+objc2-io-surface,https://github.com/madsmtm/objc2,Zlib OR Apache-2.0 OR MIT,The objc2-io-surface Authors
+objc2-quartz-core,https://github.com/madsmtm/objc2,Zlib OR Apache-2.0 OR MIT,The objc2-quartz-core Authors
+objc2-ui-kit,https://github.com/madsmtm/objc2,Zlib OR Apache-2.0 OR MIT,The objc2-ui-kit Authors
+objc2-user-notifications,https://github.com/madsmtm/objc2,Zlib OR Apache-2.0 OR MIT,The objc2-user-notifications Authors
+object,https://github.com/gimli-rs/object,Apache-2.0 OR MIT,The object Authors
+once_cell,https://github.com/matklad/once_cell,MIT OR Apache-2.0,Aleksey Kladov <aleksey.kladov@gmail.com>
+oorandom,https://hg.sr.ht/~icefox/oorandom,MIT,Simon Heath <icefox@dreamquest.io>
+openssl-probe,https://github.com/alexcrichton/openssl-probe,MIT OR Apache-2.0,Alex Crichton <alex@alexcrichton.com>
+os_info,https://github.com/stanislav-tkach/os_info,MIT,"Jan Schulte <hello@unexpected-co.de>, Stanislav Tkach <stanislav.tkach@gmail.com>"
+page_size,https://github.com/Elzair/page_size_rs,MIT OR Apache-2.0,Philip Woods <elzairthesorcerer@gmail.com>
+parking,https://github.com/smol-rs/parking,Apache-2.0 OR MIT,"Stjepan Glavina <stjepang@gmail.com>, The Rust Project Developers"
+parking_lot,https://github.com/Amanieu/parking_lot,MIT OR Apache-2.0,Amanieu d'Antras <amanieu@gmail.com>
+parking_lot_core,https://github.com/Amanieu/parking_lot,MIT OR Apache-2.0,Amanieu d'Antras <amanieu@gmail.com>
+paste,https://github.com/dtolnay/paste,MIT OR Apache-2.0,David Tolnay <dtolnay@gmail.com>
+path-tree,https://github.com/viz-rs/path-tree,MIT OR Apache-2.0,Fangdun Tsai <cfddream@gmail.com>
+percent-encoding,https://github.com/servo/rust-url,MIT OR Apache-2.0,The rust-url developers
+petgraph,https://github.com/petgraph/petgraph,MIT OR Apache-2.0,"bluss, mitchmindtree"
+pico-args,https://github.com/RazrFalcon/pico-args,MIT,Yevhenii Reizner <razrfalcon@gmail.com>
+pin-project,https://github.com/taiki-e/pin-project,Apache-2.0 OR MIT,The pin-project Authors
+pin-project-internal,https://github.com/taiki-e/pin-project,Apache-2.0 OR MIT,The pin-project-internal Authors
+pin-project-lite,https://github.com/taiki-e/pin-project-lite,Apache-2.0 OR MIT,The pin-project-lite Authors
+pin-utils,https://github.com/rust-lang-nursery/pin-utils,MIT OR Apache-2.0,Josef Brandl <mail@josefbrandl.de>
+piper,https://github.com/smol-rs/piper,MIT OR Apache-2.0,"Stjepan Glavina <stjepang@gmail.com>, John Nunley <dev@notgull.net>"
+plain,https://github.com/randomites/plain,MIT OR Apache-2.0,jzr
+plotters,https://github.com/plotters-rs/plotters,MIT,Hao Hou <haohou302@gmail.com>
+plotters-backend,https://github.com/plotters-rs/plotters,MIT,Hao Hou <haohou302@gmail.com>
+plotters-svg,https://github.com/plotters-rs/plotters,MIT,Hao Hou <haohou302@gmail.com>
+polling,https://github.com/smol-rs/polling,Apache-2.0 OR MIT,"Stjepan Glavina <stjepang@gmail.com>, John Nunley <dev@notgull.net>"
+portable-atomic,https://github.com/taiki-e/portable-atomic,Apache-2.0 OR MIT,The portable-atomic Authors
+powerfmt,https://github.com/jhpratt/powerfmt,MIT OR Apache-2.0,Jacob Pratt <jacob@jhpratt.dev>
+ppv-lite86,https://github.com/cryptocorrosion/cryptocorrosion,MIT OR Apache-2.0,The CryptoCorrosion Contributors
+prctl,https://github.com/viraptor/prctl-rs,MIT,Stanisław Pitucha <viraptor@gmail.com>
+pretty-hex,https://github.com/wolandr/pretty-hex,MIT,Andrei Volnin <wolandr@gmail.com>
+prettyplease,https://github.com/dtolnay/prettyplease,MIT OR Apache-2.0,David Tolnay <dtolnay@gmail.com>
+priority-queue,https://github.com/garro95/priority-queue,LGPL-3.0-or-later OR MPL-2.0,Gianmarco Garrisi <gianmarcogarrisi@tutanota.com>
+proc-macro-crate,https://github.com/bkchr/proc-macro-crate,MIT OR Apache-2.0,Bastian Köcher <git@kchr.de>
+proc-macro-error,https://gitlab.com/CreepySkeleton/proc-macro-error,MIT OR Apache-2.0,CreepySkeleton <creepy-skeleton@yandex.ru>
+proc-macro-error-attr,https://gitlab.com/CreepySkeleton/proc-macro-error,MIT OR Apache-2.0,CreepySkeleton <creepy-skeleton@yandex.ru>
+proc-macro2,https://github.com/dtolnay/proc-macro2,MIT OR Apache-2.0,"David Tolnay <dtolnay@gmail.com>, Alex Crichton <alex@alexcrichton.com>"
+prost,https://github.com/tokio-rs/prost,Apache-2.0,"Dan Burkert <dan@danburkert.com>, Lucio Franco <luciofranco14@gmail.com>, Casper Meijn <casper@meijn.net>, Tokio Contributors <team@tokio.rs>"
+prost-derive,https://github.com/tokio-rs/prost,Apache-2.0,"Dan Burkert <dan@danburkert.com>, Lucio Franco <luciofranco14@gmail.com>, Casper Meijn <casper@meijn.net>, Tokio Contributors <team@tokio.rs>"
+prost-types,https://github.com/tokio-rs/prost,Apache-2.0,"Dan Burkert <dan@danburkert.com>, Lucio Franco <luciofranco14@gmail.com>, Casper Meijn <casper@meijn.net>, Tokio Contributors <team@tokio.rs>"
+protoc-bin-vendored-linux-aarch_64,https://github.com/stepancheg/rust-protoc-bin-vendored,MIT,Stepan Koltsov <stepan.koltsov@gmail.com>
+protoc-bin-vendored-linux-ppcle_64,https://github.com/stepancheg/rust-protoc-bin-vendored,MIT,Stepan Koltsov <stepan.koltsov@gmail.com>
+protoc-bin-vendored-linux-x86_32,https://github.com/stepancheg/rust-protoc-bin-vendored,MIT,Stepan Koltsov <stepan.koltsov@gmail.com>
+protoc-bin-vendored-linux-x86_64,https://github.com/stepancheg/rust-protoc-bin-vendored,MIT,Stepan Koltsov <stepan.koltsov@gmail.com>
+protoc-bin-vendored-macos-aarch_64,https://github.com/stepancheg/rust-protoc-bin-vendored,MIT,Stepan Koltsov <stepan.koltsov@gmail.com>
+protoc-bin-vendored-macos-x86_64,https://github.com/stepancheg/rust-protoc-bin-vendored,MIT,Stepan Koltsov <stepan.koltsov@gmail.com>
+protoc-bin-vendored-win32,https://github.com/stepancheg/rust-protoc-bin-vendored,MIT,Stepan Koltsov <stepan.koltsov@gmail.com>
+pyo3,https://github.com/pyo3/pyo3,MIT OR Apache-2.0,PyO3 Project and Contributors <https://github.com/PyO3>
+pyo3-build-config,https://github.com/pyo3/pyo3,MIT OR Apache-2.0,PyO3 Project and Contributors <https://github.com/PyO3>
+pyo3-ffi,https://github.com/pyo3/pyo3,MIT OR Apache-2.0,PyO3 Project and Contributors <https://github.com/PyO3>
+pyo3-macros,https://github.com/pyo3/pyo3,MIT OR Apache-2.0,PyO3 Project and Contributors <https://github.com/PyO3>
+pyo3-macros-backend,https://github.com/pyo3/pyo3,MIT OR Apache-2.0,PyO3 Project and Contributors <https://github.com/PyO3>
+quick-error,http://github.com/tailhook/quick-error,MIT OR Apache-2.0,"Paul Colomiets <paul@colomiets.name>, Colin Kiegel <kiegel@gmx.de>"
+quick-xml,https://github.com/tafia/quick-xml,MIT,The quick-xml Authors
+quinn,https://github.com/quinn-rs/quinn,MIT OR Apache-2.0,The quinn Authors
+quinn-proto,https://github.com/quinn-rs/quinn,MIT OR Apache-2.0,The quinn-proto Authors
+quinn-udp,https://github.com/quinn-rs/quinn,MIT OR Apache-2.0,The quinn-udp Authors
+quote,https://github.com/dtolnay/quote,MIT OR Apache-2.0,David Tolnay <dtolnay@gmail.com>
+r-efi,https://github.com/r-efi/r-efi,MIT OR Apache-2.0 OR LGPL-2.1-or-later,The r-efi Authors
+rand,https://github.com/rust-random/rand,MIT OR Apache-2.0,"The Rand Project Developers, The Rust Project Developers"
+rand_chacha,https://github.com/rust-random/rand,MIT OR Apache-2.0,"The Rand Project Developers, The Rust Project Developers, The CryptoCorrosion Contributors"
+rand_core,https://github.com/rust-random/rand,MIT OR Apache-2.0,"The Rand Project Developers, The Rust Project Developers"
+rand_xorshift,https://github.com/rust-random/rngs,MIT OR Apache-2.0,"The Rand Project Developers, The Rust Project Developers"
+rand_xoshiro,https://github.com/rust-random/rngs,MIT OR Apache-2.0,The Rand Project Developers
+rayon,https://github.com/rayon-rs/rayon,MIT OR Apache-2.0,"Niko Matsakis <niko@alum.mit.edu>, Josh Stone <cuviper@gmail.com>"
+rayon-core,https://github.com/rayon-rs/rayon,MIT OR Apache-2.0,"Niko Matsakis <niko@alum.mit.edu>, Josh Stone <cuviper@gmail.com>"
+redox_syscall,https://gitlab.redox-os.org/redox-os/syscall,MIT,Jeremy Soller <jackpot51@gmail.com>
+ref-cast,https://github.com/dtolnay/ref-cast,MIT OR Apache-2.0,David Tolnay <dtolnay@gmail.com>
+ref-cast-impl,https://github.com/dtolnay/ref-cast,MIT OR Apache-2.0,David Tolnay <dtolnay@gmail.com>
+regex,https://github.com/rust-lang/regex,MIT OR Apache-2.0,"The Rust Project Developers, Andrew Gallant <jamslam@gmail.com>"
+regex-automata,https://github.com/rust-lang/regex/tree/master/regex-automata,MIT OR Apache-2.0,"The Rust Project Developers, Andrew Gallant <jamslam@gmail.com>"
+regex-syntax,https://github.com/rust-lang/regex/tree/master/regex-syntax,MIT OR Apache-2.0,"The Rust Project Developers, Andrew Gallant <jamslam@gmail.com>"
+reqwest,https://github.com/seanmonstar/reqwest,MIT OR Apache-2.0,Sean McArthur <sean@seanmonstar.com>
+resolv-conf,https://github.com/hickory-dns/resolv-conf,MIT OR Apache-2.0,The resolv-conf Authors
+ring,https://github.com/briansmith/ring,Apache-2.0 AND ISC,The ring Authors
+rmp,https://github.com/3Hren/msgpack-rust,MIT,Evgeny Safronov <division494@gmail.com>
+rmp-serde,https://github.com/3Hren/msgpack-rust,MIT,Evgeny Safronov <division494@gmail.com>
+rmpv,https://github.com/3Hren/msgpack-rust,MIT,Evgeny Safronov <division494@gmail.com>
+rustc-demangle,https://github.com/rust-lang/rustc-demangle,MIT OR Apache-2.0,Alex Crichton <alex@alexcrichton.com>
+rustc-hash,https://github.com/rust-lang-nursery/rustc-hash,Apache-2.0 OR MIT,The Rust Project Developers
+rustc-hash,https://github.com/rust-lang/rustc-hash,Apache-2.0 OR MIT,The Rust Project Developers
+rustix,https://github.com/bytecodealliance/rustix,Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT,"Dan Gohman <dev@sunfishcode.online>, Jakub Konka <kubkon@jakubkonka.com>"
+rustls,https://github.com/rustls/rustls,Apache-2.0 OR ISC OR MIT,The rustls Authors
+rustls-native-certs,https://github.com/rustls/rustls-native-certs,Apache-2.0 OR ISC OR MIT,The rustls-native-certs Authors
+rustls-pki-types,https://github.com/rustls/pki-types,MIT OR Apache-2.0,The rustls-pki-types Authors
+rustls-platform-verifier,https://github.com/rustls/rustls-platform-verifier,MIT OR Apache-2.0,The rustls-platform-verifier Authors
+rustls-platform-verifier-android,https://github.com/rustls/rustls-platform-verifier,MIT OR Apache-2.0,The rustls-platform-verifier-android Authors
+rustls-webpki,https://github.com/rustls/webpki,ISC,The rustls-webpki Authors
+rustversion,https://github.com/dtolnay/rustversion,MIT OR Apache-2.0,David Tolnay <dtolnay@gmail.com>
+rusty-fork,https://github.com/altsysrq/rusty-fork,MIT OR Apache-2.0,Jason Lingle
+ruzstd,https://github.com/KillingSpark/zstd-rs,MIT,Moritz Borcherding <moritz.borcherding@web.de>
+ryu,https://github.com/dtolnay/ryu,Apache-2.0 OR BSL-1.0,David Tolnay <dtolnay@gmail.com>
+same-file,https://github.com/BurntSushi/same-file,Unlicense OR MIT,Andrew Gallant <jamslam@gmail.com>
+scc,https://github.com/wvwwvwwv/scalable-concurrent-containers,Apache-2.0,wvwwvwwv <wvwwvwwv@me.com>
+schannel,https://github.com/steffengy/schannel-rs,MIT,"Steven Fackler <sfackler@gmail.com>, Steffen Butzer <steffen.butzer@outlook.com>"
+schemars,https://github.com/GREsau/schemars,MIT,Graham Esau <gesau@hotmail.co.uk>
+schemars_derive,https://github.com/GREsau/schemars,MIT,Graham Esau <gesau@hotmail.co.uk>
+scopeguard,https://github.com/bluss/scopeguard,MIT OR Apache-2.0,bluss
+scratch,https://github.com/dtolnay/scratch,MIT OR Apache-2.0,David Tolnay <dtolnay@gmail.com>
+scroll,https://github.com/m4b/scroll,MIT,"m4b <m4b.github.io@gmail.com>, Ted Mielczarek <ted@mielczarek.org>"
+scroll_derive,https://github.com/m4b/scroll,MIT,"m4b <m4b.github.io@gmail.com>, Ted Mielczarek <ted@mielczarek.org>, Systemcluster <me@systemcluster.me>"
+sdd,https://github.com/wvwwvwwv/scalable-delayed-dealloc,Apache-2.0,wvwwvwwv <wvwwvwwv@me.com>
+security-framework,https://github.com/kornelski/rust-security-framework,MIT OR Apache-2.0,"Steven Fackler <sfackler@gmail.com>, Kornel <kornel@geekhood.net>"
+security-framework-sys,https://github.com/kornelski/rust-security-framework,MIT OR Apache-2.0,"Steven Fackler <sfackler@gmail.com>, Kornel <kornel@geekhood.net>"
+semver,https://github.com/dtolnay/semver,MIT OR Apache-2.0,David Tolnay <dtolnay@gmail.com>
+sendfd,https://github.com/standard-ai/sendfd,Apache-2.0 OR BSD-3-Clause,"Simonas Kazlauskas <simonas@standard.ai>, Bernardo Meurer <bernardo@standard.ai>, Léo Gaspard <leo@standard.ai>"
+serde,https://github.com/serde-rs/serde,MIT OR Apache-2.0,"Erick Tryzelaar <erick.tryzelaar@gmail.com>, David Tolnay <dtolnay@gmail.com>"
+serde-bool,https://github.com/x52dev/serde-utils,MIT OR Apache-2.0,Rob Ede <robjtede@icloud.com>
+serde_bytes,https://github.com/serde-rs/bytes,MIT OR Apache-2.0,David Tolnay <dtolnay@gmail.com>
+serde_core,https://github.com/serde-rs/serde,MIT OR Apache-2.0,"Erick Tryzelaar <erick.tryzelaar@gmail.com>, David Tolnay <dtolnay@gmail.com>"
+serde_derive,https://github.com/serde-rs/serde,MIT OR Apache-2.0,"Erick Tryzelaar <erick.tryzelaar@gmail.com>, David Tolnay <dtolnay@gmail.com>"
+serde_derive_internals,https://github.com/serde-rs/serde,MIT OR Apache-2.0,"Erick Tryzelaar <erick.tryzelaar@gmail.com>, David Tolnay <dtolnay@gmail.com>"
+serde_fmt,https://github.com/KodrAus/serde_fmt,Apache-2.0 OR MIT,Ashley Mannix <ashleymannix@live.com.au>
+serde_json,https://github.com/serde-rs/json,MIT OR Apache-2.0,"Erick Tryzelaar <erick.tryzelaar@gmail.com>, David Tolnay <dtolnay@gmail.com>"
+serde_regex,https://github.com/tailhook/serde-regex,MIT OR Apache-2.0,paul@colomiets.name
+serde_spanned,https://github.com/toml-rs/toml,MIT OR Apache-2.0,The serde_spanned Authors
+serde_with,https://github.com/jonasbb/serde_with,MIT OR Apache-2.0,"Jonas Bushart, Marcin Kaźmierczak"
+serde_with_macros,https://github.com/jonasbb/serde_with,MIT OR Apache-2.0,Jonas Bushart
+serde_yaml,https://github.com/dtolnay/serde-yaml,MIT OR Apache-2.0,David Tolnay <dtolnay@gmail.com>
+serial_test_derive,https://github.com/palfrey/serial_test,MIT,Tom Parker-Shemilt <palfrey@tevp.net>
+sha1,https://github.com/RustCrypto/hashes,MIT OR Apache-2.0,RustCrypto Developers
+sha2,https://github.com/RustCrypto/hashes,MIT OR Apache-2.0,RustCrypto Developers
+sharded-slab,https://github.com/hawkw/sharded-slab,MIT,Eliza Weisman <eliza@buoyant.io>
+shlex,https://github.com/comex/rust-shlex,MIT OR Apache-2.0,"comex <comexk@gmail.com>, Fenhl <fenhl@fenhl.net>, Adrian Taylor <adetaylor@chromium.org>, Alex Touchet <alextouchet@outlook.com>, Daniel Parks <dp+git@oxidized.org>, Garrett Berg <googberg@gmail.com>"
+signal-hook-registry,https://github.com/vorner/signal-hook,Apache-2.0 OR MIT,"Michal 'vorner' Vaner <vorner@vorner.cz>, Masaki Hara <ackie.h.gmai@gmail.com>"
+simd-adler32,https://github.com/mcountryman/simd-adler32,MIT,Marvin Countryman <me@maar.vin>
+simd-json,https://github.com/simd-lite/simd-json,Apache-2.0 OR MIT,"Heinz N. Gies <heinz@licenser.net>, Sunny Gleason"
+simdutf8,https://github.com/rusticstuff/simdutf8,MIT OR Apache-2.0,Hans Kratz <hans@appfour.com>
+similar,https://github.com/mitsuhiko/similar,Apache-2.0,"Armin Ronacher <armin.ronacher@active-4.com>, Pierre-Étienne Meunier <pe@pijul.org>, Brandon Williams <bwilliams.eng@gmail.com>"
+slab,https://github.com/tokio-rs/slab,MIT,Carl Lerche <me@carllerche.com>
+smallvec,https://github.com/servo/rust-smallvec,MIT OR Apache-2.0,The Servo Project Developers
+socket2,https://github.com/rust-lang/socket2,MIT OR Apache-2.0,"Alex Crichton <alex@alexcrichton.com>, Thomas de Zeeuw <thomasdezeeuw@gmail.com>"
+spin,https://github.com/mvdnes/spin-rs,MIT,"Mathijs van de Nes <git@mathijs.vd-nes.nl>, John Ericson <git@JohnEricson.me>, Joshua Barretto <joshua.s.barretto@gmail.com>"
+stable_deref_trait,https://github.com/storyyeller/stable_deref_trait,MIT OR Apache-2.0,Robert Grosse <n210241048576@gmail.com>
+static_assertions,https://github.com/nvzqz/static-assertions-rs,MIT OR Apache-2.0,Nikolai Vazquez
+stringmetrics,https://github.com/pluots/stringmetrics,MIT,Trevor Gross <tmgross@umich.edu>
+strsim,https://github.com/rapidfuzz/strsim-rs,MIT,"Danny Guo <danny@dannyguo.com>, maxbachmann <oss@maxbachmann.de>"
+strum,https://github.com/Peternator7/strum,MIT,Peter Glotfelty <peter.glotfelty@microsoft.com>
+strum_macros,https://github.com/Peternator7/strum,MIT,Peter Glotfelty <peter.glotfelty@microsoft.com>
+subtle,https://github.com/dalek-cryptography/subtle,BSD-3-Clause,"Isis Lovecruft <isis@patternsinthevoid.net>, Henry de Valence <hdevalence@hdevalence.ca>"
+sval,https://github.com/sval-rs/sval,Apache-2.0 OR MIT,Ashley Mannix <ashleymannix@live.com.au>
+sval_buffer,https://github.com/sval-rs/sval,Apache-2.0 OR MIT,Ashley Mannix <ashleymannix@live.com.au>
+sval_dynamic,https://github.com/sval-rs/sval,Apache-2.0 OR MIT,Ashley Mannix <ashleymannix@live.com.au>
+sval_fmt,https://github.com/sval-rs/sval,Apache-2.0 OR MIT,Ashley Mannix <ashleymannix@live.com.au>
+sval_json,https://github.com/sval-rs/sval,Apache-2.0 OR MIT,Ashley Mannix <ashleymannix@live.com.au>
+sval_nested,https://github.com/sval-rs/sval,Apache-2.0 OR MIT,Ashley Mannix <ashleymannix@live.com.au>
+sval_ref,https://github.com/sval-rs/sval,Apache-2.0 OR MIT,Ashley Mannix <ashleymannix@live.com.au>
+sval_serde,https://github.com/sval-rs/sval,Apache-2.0 OR MIT,Ashley Mannix <ashleymannix@live.com.au>
+symbolic-common,https://github.com/getsentry/symbolic,MIT,"Armin Ronacher <armin.ronacher@active-4.com>, Jan Michael Auer <mail@jauer.org>"
+symbolic-demangle,https://github.com/getsentry/symbolic,MIT,"Armin Ronacher <armin.ronacher@active-4.com>, Jan Michael Auer <mail@jauer.org>"
+syn,https://github.com/dtolnay/syn,MIT OR Apache-2.0,David Tolnay <dtolnay@gmail.com>
+sync_wrapper,https://github.com/Actyx/sync_wrapper,Apache-2.0,Actyx AG <developer@actyx.io>
+synstructure,https://github.com/mystor/synstructure,MIT,Nika Layzell <nika@thelayzells.com>
+sys-info,https://github.com/FillZpp/sys-info-rs,MIT,Siyu Wang <FillZpp.pub@gmail.com>
+sysinfo,https://github.com/GuillaumeGomez/sysinfo,MIT,Guillaume Gomez <guillaume1.gomez@gmail.com>
+tabwriter,https://github.com/BurntSushi/tabwriter,Unlicense OR MIT,Andrew Gallant <jamslam@gmail.com>
+tagptr,https://github.com/oliver-giersch/tagptr,MIT OR Apache-2.0,Oliver Giersch
+tar,https://github.com/alexcrichton/tar-rs,MIT OR Apache-2.0,Alex Crichton <alex@alexcrichton.com>
+target-lexicon,https://github.com/bytecodealliance/target-lexicon,Apache-2.0 WITH LLVM-exception,Dan Gohman <sunfish@mozilla.com>
+target-triple,https://github.com/dtolnay/target-triple,MIT OR Apache-2.0,David Tolnay <dtolnay@gmail.com>
+tempfile,https://github.com/Stebalien/tempfile,MIT OR Apache-2.0,"Steven Allen <steven@stebalien.com>, The Rust Project Developers, Ashley Mannix <ashleymannix@live.com.au>, Jason White <me@jasonwhite.io>"
+termcolor,https://github.com/BurntSushi/termcolor,Unlicense OR MIT,Andrew Gallant <jamslam@gmail.com>
+test-case-macros,https://github.com/frondeus/test-case,MIT,"Marcin Sas-Szymanski <marcin.sas-szymanski@anixe.pl>, Wojciech Polak <frondeus@gmail.com>, Łukasz Biel <lukasz.p.biel@gmail.com>"
+thiserror,https://github.com/dtolnay/thiserror,MIT OR Apache-2.0,David Tolnay <dtolnay@gmail.com>
+thiserror-impl,https://github.com/dtolnay/thiserror,MIT OR Apache-2.0,David Tolnay <dtolnay@gmail.com>
+thread_local,https://github.com/Amanieu/thread_local-rs,MIT OR Apache-2.0,Amanieu d'Antras <amanieu@gmail.com>
+time,https://github.com/time-rs/time,MIT OR Apache-2.0,"Jacob Pratt <open-source@jhpratt.dev>, Time contributors"
+time-core,https://github.com/time-rs/time,MIT OR Apache-2.0,"Jacob Pratt <open-source@jhpratt.dev>, Time contributors"
+time-macros,https://github.com/time-rs/time,MIT OR Apache-2.0,"Jacob Pratt <open-source@jhpratt.dev>, Time contributors"
+tinystr,https://github.com/unicode-org/icu4x,Unicode-3.0,The ICU4X Project Developers
+tinytemplate,https://github.com/bheisler/TinyTemplate,Apache-2.0 OR MIT,Brook Heisler <brookheisler@gmail.com>
+tinyvec,https://github.com/Lokathor/tinyvec,Zlib OR Apache-2.0 OR MIT,Lokathor <zefria@gmail.com>
+tinyvec_macros,https://github.com/Soveu/tinyvec_macros,MIT OR Apache-2.0 OR Zlib,Soveu <marx.tomasz@gmail.com>
+tokio,https://github.com/tokio-rs/tokio,MIT,Tokio Contributors <team@tokio.rs>
+tokio-macros,https://github.com/tokio-rs/tokio,MIT,Tokio Contributors <team@tokio.rs>
+tokio-rustls,https://github.com/rustls/tokio-rustls,MIT OR Apache-2.0,The tokio-rustls Authors
+tokio-stream,https://github.com/tokio-rs/tokio,MIT,Tokio Contributors <team@tokio.rs>
+tokio-util,https://github.com/tokio-rs/tokio,MIT,Tokio Contributors <team@tokio.rs>
+toml,https://github.com/toml-rs/toml,MIT OR Apache-2.0,Alex Crichton <alex@alexcrichton.com>
+toml_datetime,https://github.com/toml-rs/toml,MIT OR Apache-2.0,Alex Crichton <alex@alexcrichton.com>
+toml_edit,https://github.com/toml-rs/toml,MIT OR Apache-2.0,"Andronik Ordian <write@reusable.software>, Ed Page <eopage@gmail.com>"
+toml_write,https://github.com/toml-rs/toml,MIT OR Apache-2.0,The toml_write Authors
+tonic,https://github.com/hyperium/tonic,MIT,Lucio Franco <luciofranco14@gmail.com>
+tonic-prost,https://github.com/hyperium/tonic,MIT,Lucio Franco <luciofranco14@gmail.com>
+tower,https://github.com/tower-rs/tower,MIT,Tower Maintainers <team@tower-rs.com>
+tower-http,https://github.com/tower-rs/tower-http,MIT,Tower Maintainers <team@tower-rs.com>
+tower-layer,https://github.com/tower-rs/tower,MIT,Tower Maintainers <team@tower-rs.com>
+tower-service,https://github.com/tower-rs/tower,MIT,Tower Maintainers <team@tower-rs.com>
+tracing,https://github.com/tokio-rs/tracing,MIT,"Eliza Weisman <eliza@buoyant.io>, Tokio Contributors <team@tokio.rs>"
+tracing-appender,https://github.com/tokio-rs/tracing,MIT,"Zeki Sherif <zekshi@amazon.com>, Tokio Contributors <team@tokio.rs>"
+tracing-attributes,https://github.com/tokio-rs/tracing,MIT,"Tokio Contributors <team@tokio.rs>, Eliza Weisman <eliza@buoyant.io>, David Barsky <dbarsky@amazon.com>"
+tracing-core,https://github.com/tokio-rs/tracing,MIT,Tokio Contributors <team@tokio.rs>
+tracing-log,https://github.com/tokio-rs/tracing,MIT,Tokio Contributors <team@tokio.rs>
+tracing-serde,https://github.com/tokio-rs/tracing,MIT,Tokio Contributors <team@tokio.rs>
+tracing-subscriber,https://github.com/tokio-rs/tracing,MIT,"Eliza Weisman <eliza@buoyant.io>, David Barsky <me@davidbarsky.com>, Tokio Contributors <team@tokio.rs>"
+try-lock,https://github.com/seanmonstar/try-lock,MIT,Sean McArthur <sean@seanmonstar.com>
+twox-hash,https://github.com/shepmaster/twox-hash,MIT,Jake Goulding <jake.goulding@gmail.com>
+typeid,https://github.com/dtolnay/typeid,MIT OR Apache-2.0,David Tolnay <dtolnay@gmail.com>
+typenum,https://github.com/paholg/typenum,MIT OR Apache-2.0,"Paho Lurie-Gregg <paho@paholg.com>, Andre Bogus <bogusandre@gmail.com>"
+unarray,https://github.com/cameron1024/unarray,MIT OR Apache-2.0,The unarray Authors
+unicase,https://github.com/seanmonstar/unicase,MIT OR Apache-2.0,Sean McArthur <sean@seanmonstar.com>
+unicode-ident,https://github.com/dtolnay/unicode-ident,(MIT OR Apache-2.0) AND Unicode-DFS-2016,David Tolnay <dtolnay@gmail.com>
+unicode-width,https://github.com/unicode-rs/unicode-width,MIT OR Apache-2.0,"kwantam <kwantam@gmail.com>, Manish Goregaokar <manishsmail@gmail.com>"
+unicode-xid,https://github.com/unicode-rs/unicode-xid,MIT OR Apache-2.0,"erick.tryzelaar <erick.tryzelaar@gmail.com>, kwantam <kwantam@gmail.com>, Manish Goregaokar <manishsmail@gmail.com>"
+unindent,https://github.com/dtolnay/indoc,MIT OR Apache-2.0,David Tolnay <dtolnay@gmail.com>
+unsafe-libyaml,https://github.com/dtolnay/unsafe-libyaml,MIT,David Tolnay <dtolnay@gmail.com>
+untrusted,https://github.com/briansmith/untrusted,ISC,Brian Smith <brian@briansmith.org>
+url,https://github.com/servo/rust-url,MIT OR Apache-2.0,The rust-url developers
+urlencoding,https://github.com/kornelski/rust_urlencoding,MIT,"Kornel <kornel@geekhood.net>, Bertram Truong <b@bertramtruong.com>"
+utf16_iter,https://github.com/hsivonen/utf16_iter,Apache-2.0 OR MIT,Henri Sivonen <hsivonen@hsivonen.fi>
+utf8_iter,https://github.com/hsivonen/utf8_iter,Apache-2.0 OR MIT,Henri Sivonen <hsivonen@hsivonen.fi>
+utf8parse,https://github.com/alacritty/vte,Apache-2.0 OR MIT,"Joe Wilm <joe@jwilm.com>, Christian Duerr <contact@christianduerr.com>"
+uuid,https://github.com/uuid-rs/uuid,Apache-2.0 OR MIT,"Ashley Mannix<ashleymannix@live.com.au>, Dylan DPC<dylan.dpc@gmail.com>, Hunar Roop Kahlon<hunar.roop@gmail.com>"
+valuable,https://github.com/tokio-rs/valuable,MIT,The valuable Authors
+value-bag,https://github.com/sval-rs/value-bag,Apache-2.0 OR MIT,Ashley Mannix <ashleymannix@live.com.au>
+value-bag-serde1,https://github.com/sval-rs/value-bag,Apache-2.0 OR MIT,Ashley Mannix <ashleymannix@live.com.au>
+value-bag-sval2,https://github.com/sval-rs/value-bag,Apache-2.0 OR MIT,Ashley Mannix <ashleymannix@live.com.au>
+value-trait,https://github.com/simd-lite/value-trait,Apache-2.0 OR MIT,Heinz N. Gies <heinz@licenser.net>
+wait-timeout,https://github.com/alexcrichton/wait-timeout,MIT OR Apache-2.0,Alex Crichton <alex@alexcrichton.com>
+walkdir,https://github.com/BurntSushi/walkdir,Unlicense OR MIT,Andrew Gallant <jamslam@gmail.com>
+want,https://github.com/seanmonstar/want,MIT,Sean McArthur <sean@seanmonstar.com>
+wasi,https://github.com/bytecodealliance/wasi,Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT,The Cranelift Project Developers
+wasi,https://github.com/bytecodealliance/wasi-rs,Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT,The Cranelift Project Developers
+wasm-bindgen,https://github.com/rustwasm/wasm-bindgen,MIT OR Apache-2.0,The wasm-bindgen Developers
+wasm-bindgen-backend,https://github.com/rustwasm/wasm-bindgen/tree/master/crates/backend,MIT OR Apache-2.0,The wasm-bindgen Developers
+wasm-bindgen-futures,https://github.com/rustwasm/wasm-bindgen/tree/master/crates/futures,MIT OR Apache-2.0,The wasm-bindgen Developers
+wasm-bindgen-macro,https://github.com/rustwasm/wasm-bindgen/tree/master/crates/macro,MIT OR Apache-2.0,The wasm-bindgen Developers
+wasm-bindgen-macro-support,https://github.com/rustwasm/wasm-bindgen/tree/master/crates/macro-support,MIT OR Apache-2.0,The wasm-bindgen Developers
+wasm-bindgen-shared,https://github.com/rustwasm/wasm-bindgen/tree/master/crates/shared,MIT OR Apache-2.0,The wasm-bindgen Developers
+web-sys,https://github.com/rustwasm/wasm-bindgen/tree/master/crates/web-sys,MIT OR Apache-2.0,The wasm-bindgen Developers
+web-time,https://github.com/daxpedda/web-time,MIT OR Apache-2.0,The web-time Authors
+webpki-root-certs,https://github.com/rustls/webpki-roots,CDLA-Permissive-2.0,The webpki-root-certs Authors
+webpki-roots,https://github.com/rustls/webpki-roots,CDLA-Permissive-2.0,The webpki-roots Authors
+which,https://github.com/harryfei/which-rs,MIT,Harry Fei <tiziyuanfang@gmail.com>
+widestring,https://github.com/VoidStarKat/widestring-rs,MIT OR Apache-2.0,The widestring Authors
+winapi,https://github.com/retep998/winapi-rs,MIT,Peter Atashian <retep998@gmail.com>
+winapi,https://github.com/retep998/winapi-rs,MIT OR Apache-2.0,Peter Atashian <retep998@gmail.com>
+winapi-i686-pc-windows-gnu,https://github.com/retep998/winapi-rs,MIT OR Apache-2.0,Peter Atashian <retep998@gmail.com>
+winapi-util,https://github.com/BurntSushi/winapi-util,Unlicense OR MIT,Andrew Gallant <jamslam@gmail.com>
+winapi-x86_64-pc-windows-gnu,https://github.com/retep998/winapi-rs,MIT OR Apache-2.0,Peter Atashian <retep998@gmail.com>
+windows,https://github.com/microsoft/windows-rs,MIT OR Apache-2.0,Microsoft
+windows-core,https://github.com/microsoft/windows-rs,MIT OR Apache-2.0,Microsoft
+windows-implement,https://github.com/microsoft/windows-rs,MIT OR Apache-2.0,Microsoft
+windows-interface,https://github.com/microsoft/windows-rs,MIT OR Apache-2.0,The windows-interface Authors
+windows-link,https://github.com/microsoft/windows-rs,MIT OR Apache-2.0,The windows-link Authors
+windows-result,https://github.com/microsoft/windows-rs,MIT OR Apache-2.0,Microsoft
+windows-strings,https://github.com/microsoft/windows-rs,MIT OR Apache-2.0,Microsoft
+windows-sys,https://github.com/microsoft/windows-rs,MIT OR Apache-2.0,Microsoft
+windows-sys,https://github.com/microsoft/windows-rs,MIT OR Apache-2.0,The windows-sys Authors
+windows-targets,https://github.com/microsoft/windows-rs,MIT OR Apache-2.0,Microsoft
+windows-targets,https://github.com/microsoft/windows-rs,MIT OR Apache-2.0,The windows-targets Authors
+windows_aarch64_gnullvm,https://github.com/microsoft/windows-rs,MIT OR Apache-2.0,Microsoft
+windows_aarch64_msvc,https://github.com/microsoft/windows-rs,MIT OR Apache-2.0,Microsoft
+windows_i686_gnu,https://github.com/microsoft/windows-rs,MIT OR Apache-2.0,Microsoft
+windows_i686_gnullvm,https://github.com/microsoft/windows-rs,MIT OR Apache-2.0,Microsoft
+windows_i686_msvc,https://github.com/microsoft/windows-rs,MIT OR Apache-2.0,Microsoft
+windows_x86_64_gnu,https://github.com/microsoft/windows-rs,MIT OR Apache-2.0,Microsoft
+windows_x86_64_gnullvm,https://github.com/microsoft/windows-rs,MIT OR Apache-2.0,Microsoft
+windows_x86_64_msvc,https://github.com/microsoft/windows-rs,MIT OR Apache-2.0,Microsoft
+winnow,https://github.com/winnow-rs/winnow,MIT,The winnow Authors
+winreg,https://github.com/gentoo90/winreg-rs,MIT,Igor Shaula <gentoo90@gmail.com>
+winver,https://github.com/rhysd/winver,MIT,rhysd <lin90162@yahoo.co.jp>
+wit-bindgen-rt,https://github.com/bytecodealliance/wit-bindgen,Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT,The wit-bindgen-rt Authors
+write16,https://github.com/hsivonen/write16,Apache-2.0 OR MIT,The write16 Authors
+writeable,https://github.com/unicode-org/icu4x,Unicode-3.0,The ICU4X Project Developers
+xattr,https://github.com/Stebalien/xattr,MIT OR Apache-2.0,Steven Allen <steven@stebalien.com>
+yansi,https://github.com/SergioBenitez/yansi,MIT OR Apache-2.0,Sergio Benitez <sb@sergio.bz>
+yoke,https://github.com/unicode-org/icu4x,Unicode-3.0,Manish Goregaokar <manishsmail@gmail.com>
+yoke-derive,https://github.com/unicode-org/icu4x,Unicode-3.0,Manish Goregaokar <manishsmail@gmail.com>
+zerocopy,https://github.com/google/zerocopy,BSD-2-Clause OR Apache-2.0 OR MIT,Joshua Liebow-Feeser <joshlf@google.com>
+zerocopy,https://github.com/google/zerocopy,BSD-2-Clause OR Apache-2.0 OR MIT,"Joshua Liebow-Feeser <joshlf@google.com>, Jack Wrenn <jswrenn@amazon.com>"
+zerocopy-derive,https://github.com/google/zerocopy,BSD-2-Clause OR Apache-2.0 OR MIT,Joshua Liebow-Feeser <joshlf@google.com>
+zerocopy-derive,https://github.com/google/zerocopy,BSD-2-Clause OR Apache-2.0 OR MIT,"Joshua Liebow-Feeser <joshlf@google.com>, Jack Wrenn <jswrenn@amazon.com>"
+zerofrom,https://github.com/unicode-org/icu4x,Unicode-3.0,Manish Goregaokar <manishsmail@gmail.com>
+zerofrom-derive,https://github.com/unicode-org/icu4x,Unicode-3.0,Manish Goregaokar <manishsmail@gmail.com>
+zeroize,https://github.com/RustCrypto/utils/tree/master/zeroize,Apache-2.0 OR MIT,The RustCrypto Project Developers
+zerovec,https://github.com/unicode-org/icu4x,Unicode-3.0,The ICU4X Project Developers
+zerovec-derive,https://github.com/unicode-org/icu4x,Unicode-3.0,Manish Goregaokar <manishsmail@gmail.com>
+zip,https://github.com/zip-rs/zip2,MIT,"Mathijs van de Nes <git@mathijs.vd-nes.nl>, Marli Frost <marli@frost.red>, Ryan Levick <ryan.levick@gmail.com>, Chris Hennick <hennickc@amazon.com>"
+zlib-rs,https://github.com/trifectatechfoundation/zlib-rs,Zlib,The zlib-rs Authors
+zopfli,https://github.com/zopfli-rs/zopfli,Apache-2.0,The zopfli Authors
+zstd,https://github.com/gyscos/zstd-rs,MIT,Alexandre Bury <alexandre.bury@gmail.com>
+zstd-safe,https://github.com/gyscos/zstd-rs,MIT OR Apache-2.0,Alexandre Bury <alexandre.bury@gmail.com>
+zstd-sys,https://github.com/gyscos/zstd-rs,MIT OR Apache-2.0,Alexandre Bury <alexandre.bury@gmail.com>
+zwohash,https://github.com/jix/zwohash,0BSD,Jannis Harder <me@jix.one>

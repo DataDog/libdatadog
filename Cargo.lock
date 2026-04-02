@@ -3012,6 +3012,7 @@ dependencies = [
  "clap",
  "criterion",
  "either",
+ "getrandom 0.2.15",
  "http",
  "http-body-util",
  "httpmock",
@@ -3395,6 +3396,7 @@ dependencies = [
  "criterion",
  "flate2",
  "futures",
+ "getrandom 0.2.15",
  "http",
  "http-body",
  "http-body-util",
@@ -6283,6 +6285,7 @@ checksum = "f8c5f0a0af699448548ad1a2fbf920fb4bee257eae39953ba95cb84891a0446a"
 dependencies = [
  "getrandom 0.2.15",
  "serde",
+ "wasm-bindgen",
 ]
 
 [[package]]
