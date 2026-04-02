@@ -286,14 +286,6 @@ impl<H: HttpClientTrait + MaybeSend + Sync + 'static> TraceExporter<H> {
         }
     }
 
-    /// Manually start all workers
-    #[cfg(not(target_arch = "wasm32"))]
-    pub fn run_worker(&self) -> Result<(), TraceExporterError> {
-        self.shared_runtime.after_fork_parent().map_err(|e| {
-            TraceExporterError::Internal(InternalErrorKind::InvalidWorkerState(e.to_string()))
-        })
-    }
-
     /// Send msgpack serialized traces to the agent
     ///
     /// # Arguments

@@ -3,8 +3,8 @@
 
 //! Defines a pausable worker to be able to stop background processes before forks
 
-use libdd_capabilities::MaybeSend;
 use crate::worker::Worker;
+use libdd_capabilities::MaybeSend;
 use std::fmt::Display;
 use tokio::{runtime::Runtime, select, task::JoinHandle};
 use tokio_util::sync::CancellationToken;
