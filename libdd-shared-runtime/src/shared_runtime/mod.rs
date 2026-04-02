@@ -186,20 +186,24 @@ impl SharedRuntime {
         let boxed_worker: BoxedWorker = Box::new(worker);
         debug!(?boxed_worker, "Spawning worker on SharedRuntime");
         let mut pausable_worker = PausableWorker::new(boxed_worker);
-        let worker_id = self.next_worker_id.fetch_add(1, Ordering::Relaxed);
 
-        {
-            let runtime_lock = self.runtime.lock_or_panic();
+        // Hold the workers lock while starting the worker to avoid a race with
+        // before_fork: without this, before_fork could run after the worker is started but
+        // before it's added to the list, not pausing the worker before the runtime is dropped.
+        let runtime = self.runtime.lock_or_panic().clone();
+        let mut workers_guard = self.workers.lock_or_panic();
 
-            // If the runtime is not available, it's added to the worker list and will be started
-            // when the runtime is recreated.
-            if let Some(runtime) = runtime_lock.as_ref() {
-                pausable_worker.start(runtime)?;
+        // If the runtime is not available, the worker will be started
+        // when the runtime is recreated (after_fork_parent/child).
+        if let Some(runtime) = runtime {
+            if let Err(e) = pausable_worker.start(&runtime) {
+                return Err(e.into());
             }
         }
 
-        let mut workers_lock = self.workers.lock_or_panic();
-        workers_lock.push(WorkerEntry {
+        let worker_id = self.next_worker_id.fetch_add(1, Ordering::Relaxed);
+
+        workers_guard.push(WorkerEntry {
             id: worker_id,
             worker: pausable_worker,
         });
