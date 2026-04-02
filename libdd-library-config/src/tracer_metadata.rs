@@ -259,11 +259,11 @@ mod tests {
     #[test]
     fn threadlocal_attrs_present_with_correct_values() {
         let ctx = TracerMetadata {
-            threadlocal_attribute_keys: vec![
+            threadlocal_attribute_keys: Some(vec![
                 "span.id".to_owned(),
                 "trace.id".to_owned(),
                 "custom.key".to_owned(),
-            ],
+            ]),
             ..Default::default()
         }
         .to_otel_process_ctx();
@@ -291,6 +291,14 @@ mod tests {
                 other => panic!("expected StringValue, got {:?}", other),
             })
             .collect();
-        assert_eq!(keys, ["span.id", "trace.id", "custom.key"]);
+        assert_eq!(
+            keys,
+            [
+                "datadog.local_root_span_id",
+                "span.id",
+                "trace.id",
+                "custom.key"
+            ]
+        );
     }
 }
