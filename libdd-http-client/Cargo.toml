@@ -19,7 +19,7 @@ default = ["https", "reqwest-backend"]
 https = ["dep:reqwest", "reqwest?/rustls-no-provider", "libdd-common?/https"]
 reqwest-backend = ["dep:reqwest", "reqwest?/hickory-dns", "reqwest?/multipart"]
 hyper-backend = ["dep:libdd-common", "dep:hyper", "dep:hyper-util", "dep:http-body-util"]
-fips = ["dep:reqwest", "reqwest?/rustls-no-provider", "dep:rustls", "rustls?/aws-lc-rs"]
+fips = ["dep:reqwest", "reqwest?/rustls-no-provider", "dep:rustls", "rustls?/aws-lc-rs", "libdd-common?/fips"]
 
 [dependencies]
 bytes = "1.4"
