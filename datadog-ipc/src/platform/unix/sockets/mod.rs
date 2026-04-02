@@ -515,7 +515,7 @@ pub async fn send_raw_async(fd: &AsyncConn, data: &[u8]) -> io::Result<()> {
 /// waiting for all outstanding ones at the next blocking call.
 #[cfg(target_os = "linux")]
 pub async fn send_acks_async(fd: &AsyncConn, count: u32) {
-    const MAX_BATCH: usize = 20;
+    const MAX_BATCH: usize = crate::ACK_BUFFER_SIZE as usize;
     let count = (count as usize).min(MAX_BATCH);
     if count == 0 {
         return;

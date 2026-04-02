@@ -448,7 +448,9 @@ impl SidecarInterface for ConnectionSidecarHandler {
             };
             let mut telemetry_guard = telemetry_mutex.lock_or_panic();
             let Some(telemetry) = telemetry_guard.as_mut() else {
-                return; // extremely rare: stopped again between the two get_or_create calls
+                // Extremely rare: the client was stopped between the two get_or_create calls.
+                warn!("enqueue_actions: telemetry client stopped during retry for instance {instance_id:?}; dropping actions");
+                return;
             };
 
             // Auto-register any metrics known to this connection but not yet registered

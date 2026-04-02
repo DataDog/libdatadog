@@ -275,7 +275,7 @@ fn gen_serve_fn(
                     #[cfg(target_os = "linux")]
                     {
                         __pending_acks += 1;
-                        if #force_flush || __pending_acks >= 20 {
+                        if #force_flush || __pending_acks >= datadog_ipc::ACK_BUFFER_SIZE {
                             datadog_ipc::send_acks_async(&async_fd, __pending_acks).await;
                             __pending_acks = 0;
                         }
