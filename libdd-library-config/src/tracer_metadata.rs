@@ -141,7 +141,7 @@ impl TracerMetadata {
                     value: Some(any_value::Value::ArrayValue(ArrayValue {
                         values: std::iter::once(AnyValue {
                             value: Some(any_value::Value::StringValue(
-                                "datadog.root_span_id".to_owned(),
+                                "datadog.local_root_span_id".to_owned(),
                             )),
                         })
                         .chain(threadlocal_attribute_keys.iter().map(|k| AnyValue {
