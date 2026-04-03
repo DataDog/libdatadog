@@ -224,9 +224,9 @@ pub use other::*;
 #[cfg(test)]
 mod tests {
     use super::*;
-    use libdd_trace_protobuf::opentelemetry::proto::common::v1::{
-        any_value, AnyValue, ProcessContext,
-    };
+    #[cfg(feature = "otel-thread-ctx")]
+    use libdd_trace_protobuf::opentelemetry::proto::common::v1::any_value;
+    use libdd_trace_protobuf::opentelemetry::proto::common::v1::{AnyValue, ProcessContext};
 
     fn find_attr<'a>(ctx: &'a ProcessContext, key: &str) -> Option<&'a AnyValue> {
         ctx.resource
