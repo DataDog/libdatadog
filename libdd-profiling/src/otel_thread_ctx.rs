@@ -553,11 +553,11 @@ pub mod linux {
         #[cfg_attr(miri, ignore)]
         fn update_record_in_place() {
             let trace_id1 = [1u8; 16];
-            let span_id1 = [1u8; 8];
-            let root_span_id1 = [0x78u8; 8];
+            let span_id1 = [0x01, 0x12, 0x23, 0x34, 0x45, 0x56, 0x67, 0x78];
+            let root_span_id1 = [0x78, 0x79, 0x7A, 0x7B, 0x7C, 0x7D, 0x7E, 0x7F];
             let trace_id2 = [2u8; 16];
-            let span_id2 = [2u8; 8];
-            let root_span_id2 = [0x79u8; 8];
+            let span_id2 = [0x0A, 0x1B, 0x2C, 0x3D, 0x4E, 0x5F, 0x6A, 0x7B];
+            let root_span_id2 = [0x79, 0x7A, 0x7B, 0x7C, 0x7D, 0x7E, 0x7F, 0x80];
 
             // Updating before any context is attached should be equivalent to `attach()`
             ThreadContext::update(trace_id1, span_id1, root_span_id1, &[(0, "v1")]);
@@ -570,7 +570,7 @@ pub mod linux {
             assert_eq!(record.valid.load(Ordering::Relaxed), 1);
             assert_eq!(record.attrs_data[0], 0);
             assert_eq!(record.attrs_data[1], 16);
-            assert_eq!(&record.attrs_data[2..18], b"7878787878787878");
+            assert_eq!(&record.attrs_data[2..18], b"78797a7b7c7d7e7f");
             assert_eq!(record.attrs_data[18], 0);
             assert_eq!(record.attrs_data[19], 2);
             assert_eq!(&record.attrs_data[20..22], b"v1");
@@ -589,7 +589,7 @@ pub mod linux {
             assert_eq!(record.valid.load(Ordering::Relaxed), 1);
             assert_eq!(record.attrs_data[0], 0);
             assert_eq!(record.attrs_data[1], 16);
-            assert_eq!(&record.attrs_data[2..18], b"7979797979797979");
+            assert_eq!(&record.attrs_data[2..18], b"797a7b7c7d7e7f80");
             assert_eq!(record.attrs_data[18], 0);
             assert_eq!(record.attrs_data[19], 2);
             assert_eq!(&record.attrs_data[20..22], b"v2");
@@ -640,11 +640,11 @@ pub mod linux {
             let b = barrier.clone();
 
             let spawned_trace_id = [0xABu8; 16];
-            let spawned_span_id = [0xCDu8; 8];
-            let spawned_root_span_id = [0xEFu8; 8];
+            let spawned_span_id = [0xCD, 0xBC, 0xAB, 0x9A, 0x89, 0x78, 0x67, 0x56];
+            let spawned_root_span_id = [0xEF, 0xDE, 0xCD, 0xBC, 0xAB, 0x9A, 0x89, 0x78];
             let main_trace_id = [0x11u8; 16];
-            let main_span_id = [0x22u8; 8];
-            let main_root_span_id = [0x33u8; 8];
+            let main_span_id = [0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99];
+            let main_root_span_id = [0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xAA];
 
             let handle = std::thread::spawn(move || {
                 ThreadContext::new(spawned_trace_id, spawned_span_id, spawned_root_span_id, &[])
@@ -661,7 +661,7 @@ pub mod linux {
                 let record = unsafe { &*ptr };
                 assert_eq!(record.trace_id, spawned_trace_id);
                 assert_eq!(record.span_id, spawned_span_id);
-                assert_eq!(&record.attrs_data[2..18], b"efefefefefefefef");
+                assert_eq!(&record.attrs_data[2..18], b"efdecdbcab9a8978");
 
                 let _ = ThreadContext::detach();
                 assert!(read_tls_context_ptr().is_null());
@@ -682,7 +682,7 @@ pub mod linux {
             let record = unsafe { &*ptr };
             assert_eq!(record.trace_id, main_trace_id);
             assert_eq!(record.span_id, main_span_id);
-            assert_eq!(&record.attrs_data[2..18], b"3333333333333333");
+            assert_eq!(&record.attrs_data[2..18], b"33445566778899aa");
 
             barrier.wait();
 
