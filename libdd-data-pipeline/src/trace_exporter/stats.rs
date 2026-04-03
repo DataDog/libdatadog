@@ -30,7 +30,7 @@ pub(crate) const STATS_ENDPOINT: &str = "/v0.6/stats";
 
 /// The maximum obfuscation version this tracer supports.
 #[cfg(feature = "stats-obfuscation")]
-const SUPPORTED_OBFUSCATION_VERSION: u32 = 1;
+pub(crate) const SUPPORTED_OBFUSCATION_VERSION: u32 = 1;
 
 /// Context struct that groups immutable parameters used by stats functions
 pub(crate) struct StatsContext<'a> {
@@ -349,12 +349,27 @@ fn add_spans_to_stats<T: libdd_trace_utils::span::TraceData>(
         #[cfg(feature = "stats-obfuscation")]
         {
             if obfuscation_active {
+                use libdd_trace_obfuscation::obfuscation_config::StatsObfuscationConfig;
+
+                use crate::agent_info::get_agent_info;
+
                 let span_type: &str = span.r#type.borrow();
                 let resource: &str = span.resource.borrow();
                 let dbms_hint: Option<&str> = span.meta.get("db.type").map(|v| v.borrow());
+                let sql_obfuscation_mode = get_agent_info()
+                    .and_then(|info| {
+                        info.info
+                            .config
+                            .as_ref()
+                            .map(|config| config.obfuscation.sql_obfuscation_mode)
+                    })
+                    .unwrap_or_default();
+                let config = StatsObfuscationConfig {
+                    sql_obfuscation_mode,
+                };
                 let obfuscated_resource =
                     libdd_trace_obfuscation::obfuscate::obfuscate_resource_for_stats(
-                        span_type, resource, dbms_hint,
+                        span_type, resource, dbms_hint, config,
                     );
                 let wrapper = ObfuscatedStatSpan {
                     inner: span,

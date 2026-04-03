@@ -101,7 +101,10 @@ impl StatsExporter {
         if self.obfuscation_active.load(Ordering::Relaxed) {
             headers.insert(
                 http::HeaderName::from_static("datadog-obfuscation-version"),
-                http::HeaderValue::from_static("1"),
+                http::HeaderValue::from_str(
+                    &crate::trace_exporter::stats::SUPPORTED_OBFUSCATION_VERSION.to_string(),
+                )
+                .expect("obfuscation_version is a valid header"),
             );
         }
 
