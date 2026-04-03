@@ -5,9 +5,14 @@ use httpmock::prelude::*;
 use libdd_http_client::{HttpClient, HttpClientError, HttpMethod, HttpRequest, RetryConfig};
 use std::time::Duration;
 
+fn ensure_crypto_provider() {
+    let _ = rustls::crypto::ring::default_provider().install_default();
+}
+
 #[cfg_attr(miri, ignore)]
 #[tokio::test]
 async fn test_retries_on_503() {
+    ensure_crypto_provider();
     let server = MockServer::start_async().await;
 
     let mock = server
@@ -43,6 +48,7 @@ async fn test_retries_on_503() {
 #[cfg_attr(miri, ignore)]
 #[tokio::test]
 async fn test_retries_on_404() {
+    ensure_crypto_provider();
     let server = MockServer::start_async().await;
 
     let mock = server
@@ -78,6 +84,7 @@ async fn test_retries_on_404() {
 #[cfg_attr(miri, ignore)]
 #[tokio::test]
 async fn test_no_retry_when_not_configured() {
+    ensure_crypto_provider();
     let server = MockServer::start_async().await;
 
     let mock = server
@@ -101,6 +108,7 @@ async fn test_no_retry_when_not_configured() {
 #[cfg_attr(miri, ignore)]
 #[tokio::test]
 async fn test_succeeds_after_transient_failure() {
+    ensure_crypto_provider();
     let server = MockServer::start_async().await;
 
     // First two calls return 503, third returns 200
@@ -139,6 +147,7 @@ async fn test_succeeds_after_transient_failure() {
 #[cfg_attr(miri, ignore)]
 #[tokio::test]
 async fn test_retries_on_connection_error() {
+    ensure_crypto_provider();
     // Port 1 — nothing listening
     let client = HttpClient::builder()
         .base_url("http://127.0.0.1:1".to_owned())
@@ -161,6 +170,7 @@ async fn test_retries_on_connection_error() {
 #[cfg_attr(miri, ignore)]
 #[tokio::test]
 async fn test_backoff_increases() {
+    ensure_crypto_provider();
     let server = MockServer::start_async().await;
 
     server

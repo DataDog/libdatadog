@@ -10,9 +10,14 @@ use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::UnixListener;
 
+fn ensure_crypto_provider() {
+    let _ = rustls::crypto::ring::default_provider().install_default();
+}
+
 #[cfg_attr(miri, ignore)]
 #[tokio::test]
 async fn test_uds_round_trip() {
+    ensure_crypto_provider();
     let dir = tempfile::tempdir().unwrap();
     let socket_path = dir.path().join("test.sock");
 
