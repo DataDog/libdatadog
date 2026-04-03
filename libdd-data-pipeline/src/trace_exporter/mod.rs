@@ -317,7 +317,8 @@ impl<H: HttpClientTrait + MaybeSend + Sync + 'static> TraceExporter<H> {
         Ok(res)
     }
 
-    /// Async version of [`Self::send`] for platforms that cannot use `block_on` (e.g. wasm).
+    /// **WARNING**: This method is experimental and should not be used for production.
+    /// Async version of [`Self::send`] for platforms that cannot use `block_on` (e.g. wasm)
     pub async fn send_async(&self, data: &[u8]) -> Result<AgentResponse, TraceExporterError> {
         self.check_agent_info();
 
