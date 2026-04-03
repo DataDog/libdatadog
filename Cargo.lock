@@ -3003,7 +3003,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-data-pipeline"
-version = "4.0.0"
+version = "3.0.1"
 dependencies = [
  "anyhow",
  "arc-swap",
