@@ -1257,7 +1257,7 @@ mod tests {
             .unwrap();
         assert_eq!(
             req.headers().get(DD_SESSION_ID).unwrap().to_str().unwrap(),
-            "sess"
+            "sess-id"
         );
         assert!(req.headers().get(DD_ROOT_SESSION_ID).is_none());
         assert!(req.headers().get(DD_PARENT_SESSION_ID).is_none());
