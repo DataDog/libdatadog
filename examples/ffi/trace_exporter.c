@@ -99,7 +99,10 @@ int main(int argc, char** argv)
     ddog_TelemetryClientConfig telemetry_config = {
         .interval = 60000,
         .runtime_id = DDOG_CHARSLICE_C("12345678-1234-1234-1234-123456789abc"),
-        .debug_enabled = true
+        .debug_enabled = true,
+        .session_id = DDOG_CHARSLICE_C("12345678-1234-1234-1234-123456789abc"),
+        .root_session_id = DDOG_CHARSLICE_C("87654321-1234-1234-1234-123456789abc"),
+        .parent_session_id = DDOG_CHARSLICE_C(""),
     };
 
     ret = ddog_trace_exporter_config_enable_telemetry(config, &telemetry_config);

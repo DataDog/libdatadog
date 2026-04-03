@@ -9,9 +9,9 @@ use crate::telemetry::TelemetryClientBuilder;
 use crate::trace_exporter::agent_response::AgentResponsePayloadVersion;
 use crate::trace_exporter::error::BuilderErrorKind;
 use crate::trace_exporter::{
-    add_path, StatsComputationStatus, TelemetryConfig, TraceExporter, TraceExporterError,
-    TraceExporterInputFormat, TraceExporterOutputFormat, TraceExporterWorkers, TracerMetadata,
-    INFO_ENDPOINT,
+    add_path, StatsComputationStatus, TelemetryConfig, TelemetryInstrumentationSessions,
+    TraceExporter, TraceExporterError, TraceExporterInputFormat, TraceExporterOutputFormat,
+    TraceExporterWorkers, TracerMetadata, INFO_ENDPOINT,
 };
 use arc_swap::ArcSwap;
 use libdd_common::http_common::new_default_client;
@@ -49,6 +49,7 @@ pub struct TraceExporterBuilder {
     compute_stats_by_span_kind: bool,
     peer_tags: Vec<String>,
     telemetry: Option<TelemetryConfig>,
+    telemetry_instrumentation_sessions: TelemetryInstrumentationSessions,
     health_metrics_enabled: bool,
     test_session_token: Option<String>,
     agent_rates_payload_version_enabled: bool,
@@ -209,6 +210,15 @@ impl TraceExporterBuilder {
         self
     }
 
+    /// Sets optional instrumentation session headers on telemetry requests (`dd-session-id`, etc.).
+    pub fn set_telemetry_instrumentation_sessions(
+        &mut self,
+        sessions: TelemetryInstrumentationSessions,
+    ) -> &mut Self {
+        self.telemetry_instrumentation_sessions = sessions;
+        self
+    }
+
     /// Enables health metrics emission.
     pub fn enable_health_metrics(&mut self) -> &mut Self {
         self.health_metrics_enabled = true;
@@ -294,6 +304,7 @@ impl TraceExporterBuilder {
             stats = StatsComputationStatus::DisabledByAgent { bucket_size };
         }
 
+        let sessions = self.telemetry_instrumentation_sessions.clone();
         let telemetry = self.telemetry.map(|telemetry_config| {
             let mut builder = TelemetryClientBuilder::default()
                 .set_language(&self.language)
@@ -307,6 +318,15 @@ impl TraceExporterBuilder {
                 .set_debug_enabled(telemetry_config.debug_enabled);
             if let Some(id) = telemetry_config.runtime_id {
                 builder = builder.set_runtime_id(&id);
+            }
+            if let Some(ref id) = sessions.session_id {
+                builder = builder.set_session_id(id);
+            }
+            if let Some(ref id) = sessions.root_session_id {
+                builder = builder.set_root_session_id(id);
+            }
+            if let Some(ref id) = sessions.parent_session_id {
+                builder = builder.set_parent_session_id(id);
             }
             builder.build(runtime.handle().clone())
         });

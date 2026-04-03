@@ -10,6 +10,14 @@ mod trace_serializer;
 // Re-export the builder
 pub use builder::TraceExporterBuilder;
 
+/// Values for optional telemetry HTTP session headers (`dd-session-id`, root/parent).
+#[derive(Debug, Default, Clone)]
+pub struct TelemetryInstrumentationSessions {
+    pub session_id: Option<String>,
+    pub root_session_id: Option<String>,
+    pub parent_session_id: Option<String>,
+}
+
 use self::agent_response::AgentResponse;
 use self::metrics::MetricsEmitter;
 use self::stats::StatsComputationStatus;

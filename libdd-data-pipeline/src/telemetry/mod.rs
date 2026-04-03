@@ -93,6 +93,24 @@ impl TelemetryClientBuilder {
         self
     }
 
+    /// `dd-session-id` header (with non-empty session id).
+    pub fn set_session_id(mut self, id: &str) -> Self {
+        self.config.session_id = Some(id.to_string());
+        self
+    }
+
+    /// `dd-root-session-id` (omitted if equal to session id).
+    pub fn set_root_session_id(mut self, id: &str) -> Self {
+        self.config.root_session_id = Some(id.to_string());
+        self
+    }
+
+    /// `dd-parent-session-id` (omitted if equal to session id).
+    pub fn set_parent_session_id(mut self, id: &str) -> Self {
+        self.config.parent_session_id = Some(id.to_string());
+        self
+    }
+
     /// Sets the debug enabled flag for the telemetry client.
     pub fn set_debug_enabled(mut self, debug: bool) -> Self {
         self.config.debug_enabled = debug;
@@ -808,53 +826,17 @@ mod tests {
 
     #[cfg_attr(miri, ignore)]
     #[tokio::test]
-    async fn runtime_id_test() {
-        let server = MockServer::start_async().await;
-
-        let telemetry_srv = server
-            .mock_async(|when, then| {
-                when.method(POST).body_includes(r#""runtime_id":"foo""#);
-                then.status(200).body("");
-            })
-            .await;
-
-        let (client, mut worker) = TelemetryClientBuilder::default()
-            .set_service_name("test_service")
-            .set_service_version("test_version")
-            .set_env("test_env")
-            .set_language("test_language")
-            .set_language_version("test_language_version")
-            .set_tracer_version("test_tracer_version")
-            .set_url(&server.url("/"))
-            .set_heartbeat(100)
-            .set_runtime_id("foo")
-            .build(Handle::current());
-        tokio::spawn(async move { worker.run().await });
-
-        client.start().await;
-        client
-            .send(&SendPayloadTelemetry {
-                requests_count: 1,
-                ..Default::default()
-            })
-            .unwrap();
-        client.shutdown().await;
-        while telemetry_srv.calls_async().await == 0 {
-            sleep(Duration::from_millis(10)).await;
-        }
-        // One payload generate-metrics
-        telemetry_srv.assert_calls_async(1).await;
-    }
-
-    #[cfg_attr(miri, ignore)]
-    #[tokio::test]
-    async fn application_metadata_test() {
+    async fn runtime_id_and_session_headers_test() {
         let server = MockServer::start_async().await;
 
         let telemetry_srv = server
             .mock_async(|when, then| {
                 when.method(POST)
-                    .body_includes(r#""application":{"service_name":"test_service","service_version":"test_version","env":"test_env","language_name":"test_language","language_version":"test_language_version","tracer_version":"test_tracer_version"}"#);
+                    .body_includes(r#""runtime_id":"foo""#)
+                    .body_includes(r#""application":{"service_name":"test_service","service_version":"test_version","env":"test_env","language_name":"test_language","language_version":"test_language_version","tracer_version":"test_tracer_version"}"#)
+                    .header("dd-session-id", "sess-e2e")
+                    .header("dd-root-session-id", "root-e2e")
+                    .header("dd-parent-session-id", "parent-e2e");
                 then.status(200).body("");
             })
             .await;
@@ -869,6 +851,9 @@ mod tests {
             .set_url(&server.url("/"))
             .set_heartbeat(100)
             .set_runtime_id("foo")
+            .set_session_id("sess-e2e")
+            .set_root_session_id("root-e2e")
+            .set_parent_session_id("parent-e2e")
             .build(Handle::current());
         tokio::spawn(async move { worker.run().await });
 
