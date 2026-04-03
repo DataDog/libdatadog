@@ -19,6 +19,7 @@ bench = false
 [features]
 default = []
 cxx = ["dep:cxx", "dep:cxx-build"]
+otel-thread-ctx = []
 test-utils = ["libdd-common/test-utils"]
 
 [[bench]]

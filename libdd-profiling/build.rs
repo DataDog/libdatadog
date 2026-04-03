@@ -12,8 +12,8 @@ fn main() {
         println!("cargo:rerun-if-changed=src/cxx.rs");
     }
 
-    // Only compile the TLS shim on Linux; the thread-level context feature is Linux-only.
-    #[cfg(target_os = "linux")]
+    // Only compile the TLS shim on Linux with the otel-thread-ctx feature enabled.
+    #[cfg(all(target_os = "linux", feature = "otel-thread-ctx"))]
     {
         let mut build = cc::Build::new();
 
