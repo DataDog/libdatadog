@@ -427,7 +427,9 @@ impl TraceExporterBuilder {
 
         #[cfg(target_arch = "wasm32")]
         {
-            drop(info_fetcher);
+            let info_endpoint = Endpoint::from_url(add_path(&agent_url, INFO_ENDPOINT));
+            let (_info_fetcher, info_response_observer) =
+                AgentInfoFetcher::<H>::new(info_endpoint, Duration::from_secs(5 * 60));
 
             Ok(TraceExporter {
                 endpoint: Endpoint {
@@ -457,7 +459,7 @@ impl TraceExporterBuilder {
                 input_format: self.input_format,
                 output_format: self.output_format,
                 client_computed_top_level: self.client_computed_top_level,
-                runtime: Arc::new(Mutex::new(Some(runtime))),
+                shared_runtime,
                 dogstatsd,
                 common_stats_tags: vec![libdatadog_version],
                 client_side_stats: ArcSwap::new(stats.into()),

@@ -153,17 +153,32 @@ pub struct SharedRuntime {
     next_worker_id: AtomicU64,
 }
 
+/// Build a tokio runtime appropriate for the current platform.
+///
+/// On wasm32, a single-threaded current-thread runtime is used since multi-threading
+/// is not available. On all other platforms a multi-threaded runtime is used.
+fn build_runtime() -> Result<Runtime, io::Error> {
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        Builder::new_multi_thread()
+            .worker_threads(1)
+            .enable_all()
+            .build()
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        Builder::new_current_thread().enable_all().build()
+    }
+}
+
 impl SharedRuntime {
-    /// Create a new SharedRuntime with a default multi-threaded tokio runtime.
+    /// Create a new SharedRuntime with a default tokio runtime.
     ///
     /// # Errors
     /// Returns an error if the tokio runtime cannot be created.
     pub fn new() -> Result<Self, SharedRuntimeError> {
         debug!("Creating new SharedRuntime");
-        let runtime = tokio::runtime::Builder::new_multi_thread()
-            .worker_threads(1)
-            .enable_all()
-            .build()?;
+        let runtime = build_runtime()?;
 
         Ok(Self {
             runtime: Arc::new(Mutex::new(Some(Arc::new(runtime)))),
@@ -222,6 +237,7 @@ impl SharedRuntime {
     ///
     /// Worker errors are logged but do not cause the function to fail.
     /// If the worker fails to pause it is dropped without calling shutdown.
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn before_fork(&self) {
         debug!("before_fork: pausing all workers");
         if let Some(runtime) = self.runtime.lock_or_panic().take() {
@@ -244,12 +260,7 @@ impl SharedRuntime {
     fn restart_runtime(&self) -> Result<(), SharedRuntimeError> {
         let mut runtime_lock = self.runtime.lock_or_panic();
         if runtime_lock.is_none() {
-            *runtime_lock = Some(Arc::new(
-                Builder::new_multi_thread()
-                    .worker_threads(1)
-                    .enable_all()
-                    .build()?,
-            ));
+            *runtime_lock = Some(Arc::new(build_runtime()?));
         }
         Ok(())
     }
@@ -261,6 +272,7 @@ impl SharedRuntime {
     ///
     /// # Errors
     /// Returns an error if workers cannot be restarted or the runtime cannot be recreated.
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn after_fork_parent(&self) -> Result<(), SharedRuntimeError> {
         debug!("after_fork_parent: restarting runtime and workers");
         self.restart_runtime()?;
@@ -290,6 +302,7 @@ impl SharedRuntime {
     ///
     /// # Errors
     /// Returns an error if the runtime cannot be reinitialized or workers cannot be started.
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn after_fork_child(&self) -> Result<(), SharedRuntimeError> {
         debug!("after_fork_child: reinitializing runtime and workers");
         self.restart_runtime()?;
@@ -337,7 +350,7 @@ impl SharedRuntime {
         debug!(?timeout, "Shutting down SharedRuntime");
         match self.runtime.lock_or_panic().take() {
             Some(runtime) => {
-                let result = if let Some(timeout) = timeout {
+                if let Some(timeout) = timeout {
                     match runtime.block_on(async {
                         tokio::time::timeout(timeout, self.shutdown_async()).await
                     }) {
@@ -347,8 +360,7 @@ impl SharedRuntime {
                 } else {
                     runtime.block_on(self.shutdown_async());
                     Ok(())
-                };
-                result
+                }
             }
             None => Ok(()), // The runtime is not running so there's nothing to shutdown
         }

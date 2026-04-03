@@ -58,6 +58,9 @@ impl<T: Worker + MaybeSend + Sync + 'static> PausableWorker<T> {
     ///
     /// The worker's main loop will be run on the runtime.
     pub fn start(&mut self, rt: &Runtime) -> Result<(), PausableWorkerError> {
+        #[cfg(target_arch = "wasm32")]
+        return Ok(());
+        #[cfg(not(target_arch = "wasm32"))]
         match self {
             PausableWorker::Running { .. } => Ok(()),
             PausableWorker::Paused { worker } => {

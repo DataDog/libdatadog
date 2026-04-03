@@ -13,7 +13,7 @@ use std::{
 use crate::trace_exporter::TracerMetadata;
 use async_trait::async_trait;
 use libdd_capabilities::{HttpClientTrait, MaybeSend};
-use libdd_common::{Endpoint};
+use libdd_common::Endpoint;
 use libdd_shared_runtime::Worker;
 use libdd_trace_protobuf::pb;
 use libdd_trace_stats::span_concentrator::SpanConcentrator;
@@ -132,7 +132,8 @@ impl<H: HttpClientTrait> StatsExporter<H> {
     }
 }
 
-#[async_trait]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 impl<H: HttpClientTrait + MaybeSend + Sync + 'static> Worker for StatsExporter<H> {
     async fn trigger(&mut self) {
         tokio::time::sleep(self.flush_interval).await;

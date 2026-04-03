@@ -18,7 +18,6 @@ use std::marker::PhantomData;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::mpsc;
-#[cfg(not(target_arch = "wasm32"))]
 use tokio::time::sleep;
 use tracing::{debug, warn};
 /// Whether the agent reported the same value or not.
@@ -222,7 +221,8 @@ impl<H: HttpClientTrait> AgentInfoFetcher<H> {
     }
 }
 
-#[async_trait]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 impl<H: HttpClientTrait + MaybeSend + Sync + 'static> Worker for AgentInfoFetcher<H> {
     async fn initial_trigger(&mut self) {
         // Skip initial wait if cache is not populated

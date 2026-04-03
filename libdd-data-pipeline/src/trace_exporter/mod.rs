@@ -158,6 +158,7 @@ impl<'a> From<&'a TracerMetadata> for HeaderMap {
 }
 
 /// Handles for the background workers owned by a [`TraceExporter`].
+#[cfg(not(target_arch = "wasm32"))]
 #[derive(Debug)]
 pub(crate) struct TraceExporterWorkers {
     info_fetcher: WorkerHandle,
@@ -219,6 +220,7 @@ pub struct TraceExporter<H: HttpClientTrait + MaybeSend + Sync + 'static> {
     telemetry: Option<TelemetryClient>,
     health_metrics_enabled: bool,
     client: H,
+    #[cfg(not(target_arch = "wasm32"))]
     workers: TraceExporterWorkers,
     agent_payload_response_version: Option<AgentResponsePayloadVersion>,
     /// When set, traces are exported via OTLP HTTP/JSON instead of the Datadog agent.
@@ -240,9 +242,9 @@ impl<H: HttpClientTrait + MaybeSend + Sync + 'static> TraceExporter<H> {
     /// Returns [`SharedRuntimeError::ShutdownTimedOut`] if a timeout was given and elapsed before
     /// all workers finished.
     pub fn shutdown(self, timeout: Option<Duration>) -> Result<(), TraceExporterError> {
+        let runtime = self.shared_runtime.clone();
         if let Some(timeout) = timeout {
-            match self
-                .shared_runtime
+            match runtime
                 .block_on(async { tokio::time::timeout(timeout, self.shutdown_workers()).await })
                 .map_err(TraceExporterError::Io)?
             {
@@ -252,7 +254,7 @@ impl<H: HttpClientTrait + MaybeSend + Sync + 'static> TraceExporter<H> {
                 ))),
             }
         } else {
-            self.shared_runtime
+            runtime
                 .block_on(self.shutdown_workers())
                 .map_err(TraceExporterError::Io)?;
             Ok(())
@@ -260,30 +262,36 @@ impl<H: HttpClientTrait + MaybeSend + Sync + 'static> TraceExporter<H> {
     }
 
     async fn shutdown_workers(self) {
-        let mut join_set = JoinSet::new();
-
-        // Extract the stats handle before moving other fields.
-        if let StatsComputationStatus::Enabled { worker_handle, .. } =
-            &**self.client_side_stats.load()
+        #[cfg(not(target_arch = "wasm32"))]
         {
-            let handle = worker_handle.clone();
-            join_set.spawn(async move { handle.stop().await });
-        }
+            let mut join_set = JoinSet::new();
 
-        let info_fetcher = self.workers.info_fetcher;
-        let telemetry = self.workers.telemetry;
+            // Extract the stats handle before moving other fields.
+            if let StatsComputationStatus::Enabled { worker_handle, .. } =
+                &**self.client_side_stats.load()
+            {
+                let handle = worker_handle.clone();
+                join_set.spawn(async move { handle.stop().await });
+            }
 
-        join_set.spawn(async move { info_fetcher.stop().await });
+            let info_fetcher = self.workers.info_fetcher;
+            join_set.spawn(async move { info_fetcher.stop().await });
 
-        if let Some(telemetry) = telemetry {
-            join_set.spawn(async move { telemetry.stop().await });
-        }
+            #[cfg(feature = "telemetry")]
+            if let Some(telemetry) = self.workers.telemetry {
+                join_set.spawn(async move { telemetry.stop().await });
+            }
 
-        while let Some(result) = join_set.join_next().await {
-            if let Ok(Err(e)) = result {
-                error!("Worker failed to shutdown: {:?}", e);
+            while let Some(result) = join_set.join_next().await {
+                if let Ok(Err(e)) = result {
+                    error!("Worker failed to shutdown: {:?}", e);
+                }
             }
         }
+
+        // On wasm32 workers are no-ops, nothing to stop.
+        #[cfg(target_arch = "wasm32")]
+        let _ = self;
     }
 
     /// Send msgpack serialized traces to the agent
