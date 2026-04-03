@@ -38,8 +38,8 @@ crate::c_setters!(
 
         runtime_id,
         session_id,
-        root_session_id,
         parent_session_id,
+        root_session_id
     }
 );
 

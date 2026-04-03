@@ -324,8 +324,8 @@ mod macros {
         HostKernelVersion,
         RuntimeId,
         SessionId,
-        RootSessionId,
         ParentSessionId,
+        RootSessionId,
     }
     #[no_mangle]
     /**
@@ -357,9 +357,9 @@ mod macros {
 
      * session_id
 
-     * root_session_id
-
      * parent_session_id
+
+     * root_session_id
 
     */
     pub unsafe extern "C" fn ddog_telemetry_builder_with_property_str(
@@ -571,8 +571,8 @@ mod macros {
                         }
                     };
             }
-            RootSessionId => {
-                telemetry_builder.config.root_session_id =
+            ParentSessionId => {
+                telemetry_builder.config.parent_session_id =
                     match (|s: ffi::CharSlice| -> Result<_, String> {
                         Ok(Some(s.to_utf8_lossy().into_owned()))
                     })(param)
@@ -588,8 +588,8 @@ mod macros {
                         }
                     };
             }
-            ParentSessionId => {
-                telemetry_builder.config.parent_session_id =
+            RootSessionId => {
+                telemetry_builder.config.root_session_id =
                     match (|s: ffi::CharSlice| -> Result<_, String> {
                         Ok(Some(s.to_utf8_lossy().into_owned()))
                     })(param)
@@ -638,9 +638,9 @@ mod macros {
 
      * session_id
 
-     * root_session_id
-
      * parent_session_id
+
+     * root_session_id
 
     */
     pub unsafe extern "C" fn ddog_telemetry_builder_with_str_named_property(
@@ -862,8 +862,8 @@ mod macros {
                         }
                     };
             }
-            "root_session_id" => {
-                telemetry_builder.config.root_session_id =
+            "parent_session_id" => {
+                telemetry_builder.config.parent_session_id =
                     match (|s: ffi::CharSlice| -> Result<_, String> {
                         Ok(Some(s.to_utf8_lossy().into_owned()))
                     })(param)
@@ -879,8 +879,8 @@ mod macros {
                         }
                     };
             }
-            "parent_session_id" => {
-                telemetry_builder.config.parent_session_id =
+            "root_session_id" => {
+                telemetry_builder.config.root_session_id =
                     match (|s: ffi::CharSlice| -> Result<_, String> {
                         Ok(Some(s.to_utf8_lossy().into_owned()))
                     })(param)

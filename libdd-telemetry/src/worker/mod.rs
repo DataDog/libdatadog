@@ -767,8 +767,8 @@ impl TelemetryWorker {
         let req = http_client::add_instrumentation_session_headers(
             req,
             self.config.session_id.as_deref(),
-            self.config.root_session_id.as_deref(),
             self.config.parent_session_id.as_deref(),
+            self.config.root_session_id.as_deref(),
         );
 
         let body = http_common::Body::from(serialize::serialize(&tel)?);
@@ -1231,8 +1231,8 @@ mod tests {
             .unwrap();
         b.runtime_id = Some("rid".into());
         b.config.session_id = session_id;
-        b.config.root_session_id = root_session_id;
         b.config.parent_session_id = parent_session_id;
+        b.config.root_session_id = root_session_id;
         let rt = Runtime::new().unwrap();
         b.build_worker(rt.handle().clone()).1
     }

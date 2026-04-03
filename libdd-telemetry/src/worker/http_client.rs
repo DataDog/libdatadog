@@ -29,11 +29,13 @@ pub mod header {
     pub const DD_PARENT_SESSION_ID: HeaderName = HeaderName::from_static("dd-parent-session-id");
 }
 
+/// `session_id`, then `parent_session_id`, then `root_session_id` (must match call sites in
+/// `build_request`).
 pub(crate) fn add_instrumentation_session_headers(
     mut builder: HttpRequestBuilder,
     session_id: Option<&str>,
-    root_session_id: Option<&str>,
     parent_session_id: Option<&str>,
+    root_session_id: Option<&str>,
 ) -> HttpRequestBuilder {
     let Some(s) = session_id.filter(|id| !id.is_empty()) else {
         return builder;
