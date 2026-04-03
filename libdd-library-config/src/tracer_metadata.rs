@@ -69,12 +69,12 @@ impl TracerMetadata {
     const OTEL_SDK_NAME: &str = "libdatadog";
 
     pub fn to_otel_process_ctx(&self) -> otel_proto::common::v1::ProcessContext {
+        #[cfg(feature = "otel-thread-ctx")]
+        use otel_proto::common::v1::ArrayValue;
         use otel_proto::{
             common::v1::{any_value, AnyValue, KeyValue, ProcessContext},
             resource::v1::Resource,
         };
-        #[cfg(feature = "otel-thread-ctx")]
-        use otel_proto::common::v1::ArrayValue;
 
         fn key_value(key: &'static str, val: String) -> KeyValue {
             KeyValue {
