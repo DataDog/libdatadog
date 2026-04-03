@@ -8,6 +8,7 @@ fn main() {
     builder
         .file("src/trampoline.c")
         .warnings(true)
+        .flag("-g") // DWARF debug info so Valgrind can load symbols before unlink
         .link_dynamically("dl")
         .warnings_into_errors(true)
         .emit_rerun_if_env_changed(true);

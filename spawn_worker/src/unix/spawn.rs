@@ -79,6 +79,8 @@ use std::fs::File;
 
 #[cfg(target_os = "linux")]
 use std::ffi::CStr;
+#[cfg(target_os = "linux")]
+use std::sync::OnceLock;
 use std::io;
 use std::ops::RangeInclusive;
 use std::{
@@ -454,53 +456,126 @@ impl SpawnWorker {
                     // if we're here then exec has failed
                     let fexecve_error = std::io::Error::last_os_error();
 
-                    let mut temp_path = [0u8; 256];
-                    let tmpdir = libc::getenv("TMPDIR".as_ptr() as *const libc::c_char)
-                        as *const libc::c_char;
-                    let tmpdir = if tmpdir.is_null() {
-                        b"/tmp"
-                    } else {
-                        CStr::from_ptr(tmpdir).to_bytes()
+                    // When DD_SPAWN_WORKER_STABLE_TRAMPOLINE is set, use a stable
+                    // per-process path so Valgrind (and similar tools) can open the
+                    // file for debug symbols before exec completes. The trampoline
+                    // self-deletes argv[1] at startup only when *argv[1] != '\0';
+                    // passing an empty string skips that, and we clean up via atexit.
+                    //
+                    // By default (env var unset) we keep the original random-path
+                    // behaviour so that debuggers/ddprof cannot trivially attach by
+                    // predicting the trampoline path.
+                    let stable_env_key = b"DD_SPAWN_WORKER_STABLE_TRAMPOLINE\0";
+                    let use_stable = {
+                        let val = libc::getenv(stable_env_key.as_ptr() as *const libc::c_char);
+                        !val.is_null() && *val != 0
                     };
-                    if tmpdir.len() < 220 {
-                        temp_path[..tmpdir.len()].copy_from_slice(tmpdir);
-                        let mut off = tmpdir.len();
-                        let spawn_prefix = b"/dd-ipc-spawn_";
-                        temp_path[off..off + spawn_prefix.len()].copy_from_slice(spawn_prefix);
-                        off += spawn_prefix.len();
-                        for _ in 0..8 {
-                            temp_path[off] = fastrand::alphanumeric() as u8;
-                            off += 1;
+
+                    if use_stable {
+                        static TRAMPOLINE_PATH: OnceLock<Option<std::ffi::CString>> =
+                            OnceLock::new();
+
+                        extern "C" fn cleanup_trampoline() {
+                            if let Some(Some(path)) = TRAMPOLINE_PATH.get() {
+                                unsafe { libc::unlink(path.as_ptr()) };
+                            }
                         }
 
-                        let path = Vec::from_raw_parts(temp_path.as_mut_ptr(), off, off);
-                        let path = CString::from_vec_with_nul_unchecked(path);
-                        let path_ptr = path.as_ptr();
-                        let tmpfd = libc::open(
-                            path_ptr,
-                            libc::O_CREAT | libc::O_RDWR,
-                            libc::S_IRWXU as libc::c_uint,
-                        );
-                        if tmpfd < 0 {
-                            // We'll leak it, executing Drop of path is forbidden.
-                            std::mem::forget(path);
-                        } else {
-                            libc::sendfile(
-                                tmpfd,
-                                fd.as_raw_fd(),
-                                std::ptr::null_mut(),
-                                crate::TRAMPOLINE_BIN.len(),
+                        let trampoline_path = TRAMPOLINE_PATH.get_or_init(|| {
+                            let pid = libc::getpid();
+                            let path_str = format!("/tmp/.dd-trampoline-{}\0", pid);
+                            let path = std::ffi::CString::from_vec_with_nul_unchecked(
+                                path_str.into_bytes(),
                             );
-                            libc::close(tmpfd);
-                            argv.set(1, path);
+                            let tmpfd = libc::open(
+                                path.as_ptr(),
+                                libc::O_CREAT | libc::O_EXCL | libc::O_RDWR,
+                                libc::S_IRWXU as libc::c_uint,
+                            );
+                            if tmpfd < 0 {
+                                // File may already exist (e.g. after fork) — try existing
+                                let tmpfd2 = libc::open(
+                                    path.as_ptr(),
+                                    libc::O_RDWR,
+                                    libc::S_IRWXU as libc::c_uint,
+                                );
+                                if tmpfd2 < 0 {
+                                    return None;
+                                }
+                                libc::close(tmpfd2);
+                            } else {
+                                libc::sendfile(
+                                    tmpfd,
+                                    fd.as_raw_fd(),
+                                    std::ptr::null_mut(),
+                                    crate::TRAMPOLINE_BIN.len(),
+                                );
+                                libc::close(tmpfd);
+                                libc::atexit(cleanup_trampoline);
+                            }
+                            Some(path)
+                        });
 
-                            libc::execve(path_ptr, argv.as_ptr(), envp.as_ptr());
+                        if let Some(path) = trampoline_path {
+                            // Empty argv[1] → trampoline skips unlink(argv[1])
+                            let empty = std::ffi::CString::new("").unwrap();
+                            argv.set(1, empty);
+                            libc::execve(path.as_ptr(), argv.as_ptr(), envp.as_ptr());
+                            // execve failed — unlink immediately
+                            libc::unlink(path.as_ptr());
+                        }
+                    } else {
+                        let mut temp_path = [0u8; 256];
+                        let tmpdir =
+                            libc::getenv("TMPDIR".as_ptr() as *const libc::c_char)
+                                as *const libc::c_char;
+                        let tmpdir = if tmpdir.is_null() {
+                            b"/tmp"
+                        } else {
+                            CStr::from_ptr(tmpdir).to_bytes()
+                        };
+                        if tmpdir.len() < 220 {
+                            temp_path[..tmpdir.len()].copy_from_slice(tmpdir);
+                            let mut off = tmpdir.len();
+                            let spawn_prefix = b"/dd-ipc-spawn_";
+                            temp_path[off..off + spawn_prefix.len()]
+                                .copy_from_slice(spawn_prefix);
+                            off += spawn_prefix.len();
+                            for _ in 0..8 {
+                                temp_path[off] = fastrand::alphanumeric() as u8;
+                                off += 1;
+                            }
 
-                            libc::unlink(temp_path.as_ptr() as *const libc::c_char);
+                            let path =
+                                Vec::from_raw_parts(temp_path.as_mut_ptr(), off, off);
+                            let path = CString::from_vec_with_nul_unchecked(path);
+                            let path_ptr = path.as_ptr();
+                            let tmpfd = libc::open(
+                                path_ptr,
+                                libc::O_CREAT | libc::O_RDWR,
+                                libc::S_IRWXU as libc::c_uint,
+                            );
+                            if tmpfd < 0 {
+                                // We'll leak it, executing Drop of path is forbidden.
+                                std::mem::forget(path);
+                            } else {
+                                libc::sendfile(
+                                    tmpfd,
+                                    fd.as_raw_fd(),
+                                    std::ptr::null_mut(),
+                                    crate::TRAMPOLINE_BIN.len(),
+                                );
+                                libc::close(tmpfd);
+                                argv.set(1, path);
+
+                                libc::execve(path_ptr, argv.as_ptr(), envp.as_ptr());
+
+                                libc::unlink(temp_path.as_ptr() as *const libc::c_char);
+                            }
                         }
                     }
 
-                    panic!("Failed lauching via fexecve(): {fexecve_error}");
+                    panic!("Failed launching via fexecve(): {fexecve_error}");
                 })
             }
             #[cfg(not(target_os = "macos"))]
