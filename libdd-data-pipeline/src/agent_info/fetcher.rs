@@ -256,16 +256,13 @@ impl<H: HttpClientTrait + MaybeSend + Sync + 'static> Worker for AgentInfoFetche
     }
 
     async fn on_pause(&mut self) {
-        // Release the IoStack waker stored in trigger_rx by waking the channel,
-        // then drain the message to avoid a spurious fetch on restart.
-        let _ = self.trigger_tx.try_send(());
-        self.drain();
-    }
-
-    fn reset(&mut self) {
-        // Drain all messages from the channel to remove messages sent to release the reference on
-        // IoStack
-        self.drain();
+        // Release the IoStack waker stored in trigger_rx by waking the channel and drain the
+        // message to avoid a spurious fetch on restart. If the channel is not empty then it has
+        // already been waked.
+        if self.trigger_rx.as_ref().is_some_and(|rx| rx.is_empty()) {
+            let _ = self.trigger_tx.try_send(());
+            self.drain();
+        };
     }
 
     async fn run(&mut self) {
