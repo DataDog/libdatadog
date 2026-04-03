@@ -40,6 +40,7 @@ pub struct TracerMetadata {
     /// This field is specific to OTel process context. It is ignored for (de)serialization, and is
     /// only used when converting to an OTel process context in
     /// [TracerMetadata::to_otel_process_ctx].
+    #[cfg(feature = "otel-thread-ctx")]
     #[serde(skip)]
     pub threadlocal_attribute_keys: Vec<String>,
 }
@@ -57,6 +58,7 @@ impl Default for TracerMetadata {
             service_version: None,
             process_tags: None,
             container_id: None,
+            #[cfg(feature = "otel-thread-ctx")]
             threadlocal_attribute_keys: vec![],
         }
     }
@@ -68,9 +70,11 @@ impl TracerMetadata {
 
     pub fn to_otel_process_ctx(&self) -> otel_proto::common::v1::ProcessContext {
         use otel_proto::{
-            common::v1::{any_value, AnyValue, ArrayValue, KeyValue, ProcessContext},
+            common::v1::{any_value, AnyValue, KeyValue, ProcessContext},
             resource::v1::Resource,
         };
+        #[cfg(feature = "otel-thread-ctx")]
+        use otel_proto::common::v1::ArrayValue;
 
         fn key_value(key: &'static str, val: String) -> KeyValue {
             KeyValue {
@@ -102,9 +106,11 @@ impl TracerMetadata {
             service_version,
             process_tags,
             container_id,
+            #[cfg(feature = "otel-thread-ctx")]
             threadlocal_attribute_keys,
         } = self;
 
+        #[cfg_attr(not(feature = "otel-thread-ctx"), allow(unused_mut))]
         let mut attributes = vec![
             key_value_opt("service.name", service_name),
             key_value_opt("service.instance.id", runtime_id),
@@ -117,6 +123,7 @@ impl TracerMetadata {
             key_value_opt("container.id", container_id),
         ];
 
+        #[cfg(feature = "otel-thread-ctx")]
         if !threadlocal_attribute_keys.is_empty() {
             attributes.push(key_value(
                 "threadlocal.schema_version",
@@ -239,6 +246,7 @@ mod tests {
         assert!(find_attr(&ctx, "threadlocal.attribute_key_map").is_none());
     }
 
+    #[cfg(feature = "otel-thread-ctx")]
     #[test]
     fn threadlocal_attrs_present_with_correct_values() {
         let ctx = TracerMetadata {
