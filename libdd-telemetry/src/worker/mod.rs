@@ -1252,9 +1252,13 @@ mod tests {
 
     #[test]
     fn telemetry_http_omits_parent_and_root_when_duplicate_of_session() {
-        let req = test_worker(Some("sess-id".into()),  Some("sess-id".into()), Some("sess-id".into()))
-            .build_request(&Payload::AppHeartbeat(()))
-            .unwrap();
+        let req = test_worker(
+            Some("sess-id".into()),
+            Some("sess-id".into()),
+            Some("sess-id".into()),
+        )
+        .build_request(&Payload::AppHeartbeat(()))
+        .unwrap();
         assert_eq!(
             req.headers().get(DD_SESSION_ID).unwrap().to_str().unwrap(),
             "sess-id"
