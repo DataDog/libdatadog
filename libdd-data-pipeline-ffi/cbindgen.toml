@@ -27,6 +27,8 @@ exclude = ["TraceExporter"]
 "ExporterResponse" = "ddog_TraceExporterResponse"
 "ExporterErrorCode" = "ddog_TraceExporterErrorCode"
 "ExporterError" = "ddog_TraceExporterError"
+"TracerSpan" = "ddog_TracerSpan"
+"TracerTraceChunks" = "ddog_TracerTraceChunks"
 
 [export.mangle]
 rename_types = "PascalCase"
@@ -40,4 +42,4 @@ must_use = "DDOG_CHECK_RETURN"
 
 [parse]
 parse_deps = true
-include = ["libdd-common", "libdd-common-ffi", "libdd-data-pipeline"]
+include = ["libdd-common", "libdd-common-ffi", "libdd-data-pipeline", "libdd-trace-utils"]
