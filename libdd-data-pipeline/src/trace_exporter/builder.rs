@@ -9,7 +9,6 @@ use crate::pausable_worker::PausableWorker;
 use crate::telemetry::{TelemetryClientBuilder, TelemetryConfig};
 use crate::trace_exporter::agent_response::AgentResponsePayloadVersion;
 use crate::trace_exporter::error::BuilderErrorKind;
-use crate::trace_exporter::TelemetryConfig;
 #[cfg(not(target_arch = "wasm32"))]
 use crate::trace_exporter::TraceExporterWorkers;
 use crate::trace_exporter::{
@@ -296,7 +295,8 @@ impl TraceExporterBuilder {
                 stats = StatsComputationStatus::DisabledByAgent { bucket_size };
             }
 
-            let (telemetry_client, telemetry_worker) = self.telemetry
+            let (telemetry_client, telemetry_worker) = self
+                .telemetry
                 .map(|telemetry_config| -> Result<_, TraceExporterError> {
                     let mut builder = TelemetryClientBuilder::default()
                         .set_language(&self.language)
@@ -312,17 +312,19 @@ impl TraceExporterBuilder {
                         builder = builder.set_runtime_id(&id);
                     }
 
-                    let (client, worker) = builder.build(runtime.handle().clone()).map_err(TraceExporterError::from)?;
+                    let (client, worker) = builder
+                        .build(runtime.handle().clone())
+                        .map_err(TraceExporterError::from)?;
                     let mut telemetry_worker = PausableWorker::new(worker);
                     telemetry_worker.start(&runtime).map_err(|e| {
                         TraceExporterError::Builder(BuilderErrorKind::InvalidConfiguration(
-                                e.to_string(),
+                            e.to_string(),
                         ))
                     })?;
                     runtime.block_on(client.start());
                     Ok((client, telemetry_worker))
                 })
-            .transpose()?
+                .transpose()?
                 .map_or((None, None), |(c, w)| (Some(c), Some(w)));
 
             Ok(TraceExporter {

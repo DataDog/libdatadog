@@ -17,7 +17,6 @@ pub(crate) mod otlp;
 mod pausable_worker;
 #[allow(missing_docs)]
 pub mod stats_exporter;
-#[cfg(feature = "telemetry")]
-pub(crate) mod telemetry;
+pub mod telemetry;
 #[allow(missing_docs)]
 pub mod trace_exporter;

@@ -14,14 +14,10 @@ use self::agent_response::AgentResponse;
 use self::metrics::MetricsEmitter;
 use self::stats::StatsComputationStatus;
 use self::trace_serializer::TraceSerializer;
-#[cfg(not(target_arch = "wasm32"))]
-use crate::agent_info::AgentInfoFetcher;
 use crate::agent_info::ResponseObserver;
 use crate::otlp::{map_traces_to_otlp, send_otlp_traces_http, OtlpResourceInfo, OtlpTraceConfig};
 #[cfg(not(target_arch = "wasm32"))]
 use crate::pausable_worker::PausableWorker;
-#[cfg(not(target_arch = "wasm32"))]
-use crate::stats_exporter::StatsExporter;
 use crate::telemetry::{SendPayloadTelemetry, TelemetryClient};
 use crate::trace_exporter::agent_response::{
     AgentResponsePayloadVersion, DATADOG_RATES_PAYLOAD_VERSION,
@@ -42,8 +38,6 @@ use libdd_capabilities::{HttpClientTrait, MaybeSend};
 use libdd_common::tag::Tag;
 use libdd_common::{Endpoint, MutexExt};
 use libdd_dogstatsd_client::Client;
-#[cfg(not(target_arch = "wasm32"))]
-use libdd_telemetry::worker::TelemetryWorker;
 use libdd_trace_utils::msgpack_decoder;
 use libdd_trace_utils::send_with_retry::{
     send_with_retry, RetryStrategy, SendWithRetryError, SendWithRetryResult,
@@ -182,9 +176,9 @@ impl<'a> From<&'a TracerMetadata> for HeaderMap {
 /// `H` is the HTTP client implementation, see [`HttpClientTrait`].
 #[derive(Debug)]
 pub(crate) struct TraceExporterWorkers<H: HttpClientTrait + MaybeSend + Sync + 'static> {
-    pub info: PausableWorker<AgentInfoFetcher<H>>,
-    pub stats: Option<PausableWorker<StatsExporter<H>>>,
-    pub telemetry: Option<PausableWorker<TelemetryWorker>>,
+    pub info: PausableWorker<crate::agent_info::AgentInfoFetcher<H>>,
+    pub stats: Option<PausableWorker<crate::stats_exporter::StatsExporter<H>>>,
+    pub telemetry: Option<PausableWorker<crate::telemetry::TelemetryWorker>>,
 }
 
 /// The TraceExporter ingest traces from the tracers serialized as messagepack and forward them to
@@ -962,6 +956,7 @@ pub trait ResponseCallback {
 mod tests {
     use self::error::AgentErrorKind;
     use super::*;
+    use crate::telemetry::TelemetryConfig;
     use httpmock::prelude::*;
     use httpmock::MockServer;
     use libdd_capabilities_impl::NativeCapabilities;
@@ -971,7 +966,6 @@ mod tests {
     use std::net;
     use std::time::Duration;
     use tokio::time::sleep;
-
 
     #[test]
     fn test_from_tracer_tags_to_tracer_header_tags() {
@@ -1661,7 +1655,10 @@ mod tests {
             true,
         );
 
-        let v5: (Vec<BytesString>, Vec<Vec<libdd_trace_utils::span::v05::Span>>) = (vec![], vec![]);
+        let v5: (
+            Vec<BytesString>,
+            Vec<Vec<libdd_trace_utils::span::v05::Span>>,
+        ) = (vec![], vec![]);
         let traces = rmp_serde::to_vec(&v5).unwrap();
         let result = exporter.send(traces.as_ref()).unwrap();
         let AgentResponse::Changed { body } = result else {

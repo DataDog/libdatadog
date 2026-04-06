@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use clap::Parser;
-use libdd_data_pipeline::trace_exporter::TelemetryConfig;
 use libdd_capabilities_impl::NativeCapabilities;
 use libdd_data_pipeline::trace_exporter::{
     TraceExporter, TraceExporterInputFormat, TraceExporterOutputFormat,
@@ -70,7 +69,7 @@ fn main() {
         .set_output_format(TraceExporterOutputFormat::V04)
         .enable_stats(Duration::from_secs(10));
     #[cfg(feature = "telemetry")]
-    builder.enable_telemetry(TelemetryConfig::default());
+    builder.enable_telemetry(libdd_data_pipeline::telemetry::TelemetryConfig::default());
     let exporter = builder
         .build::<NativeCapabilities>()
         .expect("Failed to build TraceExporter");

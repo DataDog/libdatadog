@@ -16,12 +16,11 @@ pub struct TelemetryConfig {
     pub debug_enabled: bool,
 }
 
-
 #[cfg(not(feature = "telemetry"))]
 mod inner {
     use super::*;
-    use libdd_trace_utils::trace_utils::SendDataResult;
     use libdd_trace_utils::send_with_retry::SendWithRetryResult;
+    use libdd_trace_utils::trace_utils::SendDataResult;
 
     #[derive(Debug)]
     pub struct TelemetryClient {}
@@ -69,7 +68,6 @@ mod inner {
     use libdd_trace_utils::send_with_retry::SendWithRetryError;
     use libdd_trace_utils::send_with_retry::SendWithRetryResult;
     use libdd_trace_utils::trace_utils::SendDataResult;
-
 
     /// Telemetry handle used to send metrics to the agent
     #[derive(Debug)]
@@ -123,8 +121,11 @@ mod inner {
                 let key = self
                     .metrics
                     .get(metrics::MetricKind::ChunksDroppedSerializationError);
-                self.worker
-                    .add_point(data.chunks_dropped_serialization_error as f64, key, vec![])?;
+                self.worker.add_point(
+                    data.chunks_dropped_serialization_error as f64,
+                    key,
+                    vec![],
+                )?;
             }
             if data.chunks_dropped_send_failure > 0 {
                 let key = self
@@ -159,7 +160,6 @@ mod inner {
                 .await;
         }
     }
-
 
     /// Telemetry describing the sending of a trace payload
     /// It can be produced from a [`SendWithRetryResult`] or from a [`SendDataResult`].
@@ -223,6 +223,11 @@ mod inner {
                         telemetry.errors_network = 1;
                         telemetry.requests_count = *attempts as u64;
                     }
+                    SendWithRetryError::ResponseBody(attempts) => {
+                        telemetry.chunks_dropped_send_failure = chunks;
+                        telemetry.errors_network = 1;
+                        telemetry.requests_count = *attempts as u64;
+                    }
                     SendWithRetryError::Build(attempts) => {
                         telemetry.chunks_dropped_serialization_error = chunks;
                         telemetry.requests_count = *attempts as u64;
@@ -248,12 +253,11 @@ mod inner {
             }
         }
     }
-
 }
 
-pub use inner::*;
 pub(crate) use builder::TelemetryClientBuilder;
 pub(crate) use error::TelemetryError;
+pub use inner::*;
 pub(crate) use worker::TelemetryWorker;
 
 #[cfg(test)]
@@ -262,9 +266,11 @@ mod tests {
     use bytes::Bytes;
     use httpmock::Method::POST;
     use httpmock::MockServer;
-    use libdd_trace_utils::{send_data::send_data_result::SendDataResult, send_with_retry::SendWithRetryError};
     use libdd_capabilities::HttpError;
     use libdd_common::worker::Worker;
+    use libdd_trace_utils::{
+        send_data::send_data_result::SendDataResult, send_with_retry::SendWithRetryError,
+    };
     use regex::Regex;
     use std::collections::HashMap;
     use std::time::Duration;

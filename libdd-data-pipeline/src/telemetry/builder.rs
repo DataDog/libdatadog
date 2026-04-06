@@ -1,6 +1,7 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+use super::error::TelemetryError;
 #[cfg(feature = "telemetry")]
 use super::metrics::Metrics;
 use super::worker;
@@ -9,7 +10,6 @@ use super::TelemetryClient;
 use libdd_telemetry::worker::{TelemetryWorkerBuilder, TelemetryWorkerFlavor};
 use std::time::Duration;
 use tokio::runtime::Handle;
-use super::error::TelemetryError;
 
 /// Structure to build a Telemetry client.
 ///
@@ -96,12 +96,20 @@ impl TelemetryClientBuilder {
 #[cfg(feature = "telemetry")]
 impl TelemetryClientBuilder {
     /// Builds the telemetry client.
-    pub fn build(self, runtime: Handle) -> Result<(TelemetryClient, worker::TelemetryWorker), TelemetryError> {
+    pub fn build(
+        self,
+        runtime: Handle,
+    ) -> Result<(TelemetryClient, worker::TelemetryWorker), TelemetryError> {
         let mut builder = TelemetryWorkerBuilder::new_fetch_host(
-            self.service_name.ok_or_else(|| TelemetryError::Builder("service_name is required".to_string()))?,
-            self.language.ok_or_else(|| TelemetryError::Builder("language is required".to_string()))?,
-            self.language_version.ok_or_else(|| TelemetryError::Builder("language_version is required".to_string()))?,
-            self.tracer_version.ok_or_else(|| TelemetryError::Builder("tracer_version is required".to_string()))?,
+            self.service_name
+                .ok_or_else(|| TelemetryError::Builder("service_name is required".to_string()))?,
+            self.language
+                .ok_or_else(|| TelemetryError::Builder("language is required".to_string()))?,
+            self.language_version.ok_or_else(|| {
+                TelemetryError::Builder("language_version is required".to_string())
+            })?,
+            self.tracer_version
+                .ok_or_else(|| TelemetryError::Builder("tracer_version is required".to_string()))?,
         );
         if let Some(url) = self.url {
             builder
@@ -137,7 +145,10 @@ impl TelemetryClientBuilder {
 #[cfg(not(feature = "telemetry"))]
 impl TelemetryClientBuilder {
     /// Builds a no-op telemetry client.
-    pub fn build(self, _runtime: Handle) -> Result<(TelemetryClient, worker::TelemetryWorker), TelemetryError> {
+    pub fn build(
+        self,
+        _runtime: Handle,
+    ) -> Result<(TelemetryClient, worker::TelemetryWorker), TelemetryError> {
         Ok((TelemetryClient {}, worker::TelemetryWorker {}))
     }
 }
