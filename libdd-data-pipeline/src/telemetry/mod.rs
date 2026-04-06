@@ -8,21 +8,6 @@ mod error;
 mod metrics;
 mod worker;
 
-#[cfg(feature = "telemetry")]
-use libdd_common::tag::Tag;
-#[cfg(feature = "telemetry")]
-use libdd_telemetry::worker::{LifecycleAction, TelemetryActions, TelemetryWorkerHandle};
-#[cfg(feature = "telemetry")]
-use libdd_trace_utils::send_with_retry::SendWithRetryError;
-use libdd_trace_utils::send_with_retry::SendWithRetryResult;
-use libdd_trace_utils::trace_utils::SendDataResult;
-#[cfg(feature = "telemetry")]
-use metrics::Metrics;
-
-pub use builder::TelemetryClientBuilder;
-pub(crate) use error::TelemetryError;
-pub(crate) use worker::TelemetryWorker;
-
 /// Configuration for telemetry reporting.
 #[derive(Debug, Default, Clone)]
 pub struct TelemetryConfig {
@@ -31,229 +16,245 @@ pub struct TelemetryConfig {
     pub debug_enabled: bool,
 }
 
-#[cfg(feature = "telemetry")]
-/// Telemetry handle used to send metrics to the agent
-#[derive(Debug)]
-pub struct TelemetryClient {
-    metrics: Metrics,
-    worker: TelemetryWorkerHandle,
-}
 
 #[cfg(not(feature = "telemetry"))]
-#[derive(Debug)]
-pub struct TelemetryClient {}
+mod inner {
+    use super::*;
+    use libdd_trace_utils::trace_utils::SendDataResult;
+    use libdd_trace_utils::send_with_retry::SendWithRetryResult;
+
+    #[derive(Debug)]
+    pub struct TelemetryClient {}
+
+    impl TelemetryClient {
+        /// No-op: telemetry is disabled.
+        pub fn send(&self, _data: &SendPayloadTelemetry) -> Result<(), TelemetryError> {
+            Ok(())
+        }
+
+        /// No-op: telemetry is disabled.
+        pub async fn start(&self) {}
+
+        /// No-op: telemetry is disabled.
+        pub async fn shutdown(self) {}
+    }
+
+    #[derive(Debug)]
+    pub struct SendPayloadTelemetry {}
+
+    impl SendPayloadTelemetry {
+        /// No-op: telemetry is disabled.
+        pub fn from_retry_result(
+            _value: &SendWithRetryResult,
+            _bytes_sent: u64,
+            _chunks: u64,
+            _chunks_dropped_p0: u64,
+        ) -> Self {
+            Self {}
+        }
+    }
+
+    impl From<&SendDataResult> for SendPayloadTelemetry {
+        fn from(_value: &SendDataResult) -> Self {
+            Self {}
+        }
+    }
+}
 
 #[cfg(feature = "telemetry")]
-impl TelemetryClient {
-    /// Sends metrics to the agent using a telemetry worker handle.
-    ///
-    /// # Arguments:
-    ///
-    /// * `telemetry_handle`: telemetry worker handle used to enqueue metrics.
-    pub fn send(&self, data: &SendPayloadTelemetry) -> Result<(), TelemetryError> {
-        if data.requests_count > 0 {
-            let key = self.metrics.get(metrics::MetricKind::ApiRequest);
-            self.worker
-                .add_point(data.requests_count as f64, key, vec![])?;
-        }
-        if data.errors_network > 0 {
-            let key = self.metrics.get(metrics::MetricKind::ApiErrorsNetwork);
-            self.worker
-                .add_point(data.errors_network as f64, key, vec![])?;
-        }
-        if data.errors_timeout > 0 {
-            let key = self.metrics.get(metrics::MetricKind::ApiErrorsTimeout);
-            self.worker
-                .add_point(data.errors_timeout as f64, key, vec![])?;
-        }
-        if data.errors_status_code > 0 {
-            let key = self.metrics.get(metrics::MetricKind::ApiErrorsStatusCode);
-            self.worker
-                .add_point(data.errors_status_code as f64, key, vec![])?;
-        }
-        if data.bytes_sent > 0 {
-            let key = self.metrics.get(metrics::MetricKind::ApiBytes);
-            self.worker.add_point(data.bytes_sent as f64, key, vec![])?;
-        }
-        if data.chunks_sent > 0 {
-            let key = self.metrics.get(metrics::MetricKind::ChunksSent);
-            self.worker
-                .add_point(data.chunks_sent as f64, key, vec![])?;
-        }
-        if data.chunks_dropped_p0 > 0 {
-            let key = self.metrics.get(metrics::MetricKind::ChunksDroppedP0);
-            self.worker
-                .add_point(data.chunks_dropped_p0 as f64, key, vec![])?;
-        }
-        if data.chunks_dropped_serialization_error > 0 {
-            let key = self
-                .metrics
-                .get(metrics::MetricKind::ChunksDroppedSerializationError);
-            self.worker
-                .add_point(data.chunks_dropped_serialization_error as f64, key, vec![])?;
-        }
-        if data.chunks_dropped_send_failure > 0 {
-            let key = self
-                .metrics
-                .get(metrics::MetricKind::ChunksDroppedSendFailure);
-            self.worker
-                .add_point(data.chunks_dropped_send_failure as f64, key, vec![])?;
-        }
-        if !data.responses_count_per_code.is_empty() {
-            let key = self.metrics.get(metrics::MetricKind::ApiResponses);
-            for (status_code, count) in &data.responses_count_per_code {
-                let tag = Tag::new("status_code", status_code.to_string().as_str())?;
-                self.worker.add_point(*count as f64, key, vec![tag])?;
+mod inner {
+    use super::*;
+    use libdd_common::tag::Tag;
+    use libdd_telemetry::worker::{LifecycleAction, TelemetryActions, TelemetryWorkerHandle};
+    use libdd_trace_utils::send_with_retry::SendWithRetryError;
+    use libdd_trace_utils::send_with_retry::SendWithRetryResult;
+    use libdd_trace_utils::trace_utils::SendDataResult;
+
+
+    /// Telemetry handle used to send metrics to the agent
+    #[derive(Debug)]
+    pub struct TelemetryClient {
+        pub(crate) metrics: metrics::Metrics,
+        pub(crate) worker: TelemetryWorkerHandle,
+    }
+
+    impl TelemetryClient {
+        /// Sends metrics to the agent using a telemetry worker handle.
+        ///
+        /// # Arguments:
+        ///
+        /// * `telemetry_handle`: telemetry worker handle used to enqueue metrics.
+        pub fn send(&self, data: &SendPayloadTelemetry) -> Result<(), TelemetryError> {
+            if data.requests_count > 0 {
+                let key = self.metrics.get(metrics::MetricKind::ApiRequest);
+                self.worker
+                    .add_point(data.requests_count as f64, key, vec![])?;
             }
-        }
-        Ok(())
-    }
-
-    /// Starts the client
-    pub async fn start(&self) {
-        _ = self
-            .worker
-            .send_msg(TelemetryActions::Lifecycle(LifecycleAction::Start))
-            .await;
-    }
-
-    /// Shutdowns the telemetry client.
-    pub async fn shutdown(self) {
-        _ = self
-            .worker
-            .send_msg(TelemetryActions::Lifecycle(LifecycleAction::Stop))
-            .await;
-    }
-}
-
-#[cfg(not(feature = "telemetry"))]
-impl TelemetryClient {
-    /// No-op: telemetry is disabled.
-    pub fn send(&self, _data: &SendPayloadTelemetry) -> Result<(), TelemetryError> {
-        Ok(())
-    }
-
-    /// No-op: telemetry is disabled.
-    pub async fn start(&self) {}
-
-    /// No-op: telemetry is disabled.
-    pub async fn shutdown(self) {}
-}
-
-#[cfg(feature = "telemetry")]
-/// Telemetry describing the sending of a trace payload
-/// It can be produced from a [`SendWithRetryResult`] or from a [`SendDataResult`].
-#[derive(PartialEq, Debug, Default)]
-pub struct SendPayloadTelemetry {
-    requests_count: u64,
-    errors_network: u64,
-    errors_timeout: u64,
-    errors_status_code: u64,
-    bytes_sent: u64,
-    chunks_sent: u64,
-    chunks_dropped_p0: u64,
-    chunks_dropped_serialization_error: u64,
-    chunks_dropped_send_failure: u64,
-    responses_count_per_code: std::collections::HashMap<u16, u64>,
-}
-
-#[cfg(not(feature = "telemetry"))]
-#[derive(Debug)]
-pub struct SendPayloadTelemetry {}
-
-#[cfg(feature = "telemetry")]
-impl SendPayloadTelemetry {
-    /// Create a [`SendPayloadTelemetry`] from a [`SendWithRetryResult`].
-    ///
-    /// # Arguments
-    /// * `value` - The result of sending traces with retry
-    /// * `bytes_sent` - The number of bytes in the payload
-    /// * `chunks` - The number of trace chunks in the payload
-    /// * `chunks_dropped_p0` - The number of P0 trace chunks dropped due to sampling
-    pub fn from_retry_result(
-        value: &SendWithRetryResult,
-        bytes_sent: u64,
-        chunks: u64,
-        chunks_dropped_p0: u64,
-    ) -> Self {
-        let mut telemetry = Self {
-            chunks_dropped_p0,
-            ..Default::default()
-        };
-        match value {
-            Ok((response, attempts)) => {
-                telemetry.chunks_sent = chunks;
-                telemetry.bytes_sent = bytes_sent;
-                telemetry
-                    .responses_count_per_code
-                    .insert(response.status().into(), 1);
-                telemetry.requests_count = *attempts as u64;
+            if data.errors_network > 0 {
+                let key = self.metrics.get(metrics::MetricKind::ApiErrorsNetwork);
+                self.worker
+                    .add_point(data.errors_network as f64, key, vec![])?;
             }
-            Err(err) => match err {
-                SendWithRetryError::Http(response, attempts) => {
-                    telemetry.chunks_dropped_send_failure = chunks;
-                    telemetry.errors_status_code = 1;
+            if data.errors_timeout > 0 {
+                let key = self.metrics.get(metrics::MetricKind::ApiErrorsTimeout);
+                self.worker
+                    .add_point(data.errors_timeout as f64, key, vec![])?;
+            }
+            if data.errors_status_code > 0 {
+                let key = self.metrics.get(metrics::MetricKind::ApiErrorsStatusCode);
+                self.worker
+                    .add_point(data.errors_status_code as f64, key, vec![])?;
+            }
+            if data.bytes_sent > 0 {
+                let key = self.metrics.get(metrics::MetricKind::ApiBytes);
+                self.worker.add_point(data.bytes_sent as f64, key, vec![])?;
+            }
+            if data.chunks_sent > 0 {
+                let key = self.metrics.get(metrics::MetricKind::ChunksSent);
+                self.worker
+                    .add_point(data.chunks_sent as f64, key, vec![])?;
+            }
+            if data.chunks_dropped_p0 > 0 {
+                let key = self.metrics.get(metrics::MetricKind::ChunksDroppedP0);
+                self.worker
+                    .add_point(data.chunks_dropped_p0 as f64, key, vec![])?;
+            }
+            if data.chunks_dropped_serialization_error > 0 {
+                let key = self
+                    .metrics
+                    .get(metrics::MetricKind::ChunksDroppedSerializationError);
+                self.worker
+                    .add_point(data.chunks_dropped_serialization_error as f64, key, vec![])?;
+            }
+            if data.chunks_dropped_send_failure > 0 {
+                let key = self
+                    .metrics
+                    .get(metrics::MetricKind::ChunksDroppedSendFailure);
+                self.worker
+                    .add_point(data.chunks_dropped_send_failure as f64, key, vec![])?;
+            }
+            if !data.responses_count_per_code.is_empty() {
+                let key = self.metrics.get(metrics::MetricKind::ApiResponses);
+                for (status_code, count) in &data.responses_count_per_code {
+                    let tag = Tag::new("status_code", status_code.to_string().as_str())?;
+                    self.worker.add_point(*count as f64, key, vec![tag])?;
+                }
+            }
+            Ok(())
+        }
+
+        /// Starts the client
+        pub async fn start(&self) {
+            _ = self
+                .worker
+                .send_msg(TelemetryActions::Lifecycle(LifecycleAction::Start))
+                .await;
+        }
+
+        /// Shutdowns the telemetry client.
+        pub async fn shutdown(self) {
+            _ = self
+                .worker
+                .send_msg(TelemetryActions::Lifecycle(LifecycleAction::Stop))
+                .await;
+        }
+    }
+
+
+    /// Telemetry describing the sending of a trace payload
+    /// It can be produced from a [`SendWithRetryResult`] or from a [`SendDataResult`].
+    #[derive(PartialEq, Debug, Default)]
+    pub struct SendPayloadTelemetry {
+        pub(super) requests_count: u64,
+        pub(super) errors_network: u64,
+        pub(super) errors_timeout: u64,
+        pub(super) errors_status_code: u64,
+        pub(super) bytes_sent: u64,
+        pub(super) chunks_sent: u64,
+        pub(super) chunks_dropped_p0: u64,
+        pub(super) chunks_dropped_serialization_error: u64,
+        pub(super) chunks_dropped_send_failure: u64,
+        pub(super) responses_count_per_code: std::collections::HashMap<u16, u64>,
+    }
+
+    impl SendPayloadTelemetry {
+        /// Create a [`SendPayloadTelemetry`] from a [`SendWithRetryResult`].
+        ///
+        /// # Arguments
+        /// * `value` - The result of sending traces with retry
+        /// * `bytes_sent` - The number of bytes in the payload
+        /// * `chunks` - The number of trace chunks in the payload
+        /// * `chunks_dropped_p0` - The number of P0 trace chunks dropped due to sampling
+        pub fn from_retry_result(
+            value: &SendWithRetryResult,
+            bytes_sent: u64,
+            chunks: u64,
+            chunks_dropped_p0: u64,
+        ) -> Self {
+            let mut telemetry = Self {
+                chunks_dropped_p0,
+                ..Default::default()
+            };
+            match value {
+                Ok((response, attempts)) => {
+                    telemetry.chunks_sent = chunks;
+                    telemetry.bytes_sent = bytes_sent;
                     telemetry
                         .responses_count_per_code
                         .insert(response.status().into(), 1);
                     telemetry.requests_count = *attempts as u64;
                 }
-                SendWithRetryError::Timeout(attempts) => {
-                    telemetry.chunks_dropped_send_failure = chunks;
-                    telemetry.errors_timeout = 1;
-                    telemetry.requests_count = *attempts as u64;
-                }
-                SendWithRetryError::Network(_, attempts) => {
-                    telemetry.chunks_dropped_send_failure = chunks;
-                    telemetry.errors_network = 1;
-                    telemetry.requests_count = *attempts as u64;
-                }
-                SendWithRetryError::Build(attempts) => {
-                    telemetry.chunks_dropped_serialization_error = chunks;
-                    telemetry.requests_count = *attempts as u64;
-                }
-            },
-        };
-        telemetry
-    }
-}
-
-#[cfg(not(feature = "telemetry"))]
-impl SendPayloadTelemetry {
-    /// No-op: telemetry is disabled.
-    pub fn from_retry_result(
-        _value: &SendWithRetryResult,
-        _bytes_sent: u64,
-        _chunks: u64,
-        _chunks_dropped_p0: u64,
-    ) -> Self {
-        Self {}
-    }
-}
-
-#[cfg(feature = "telemetry")]
-impl From<&SendDataResult> for SendPayloadTelemetry {
-    fn from(value: &SendDataResult) -> Self {
-        Self {
-            requests_count: value.requests_count,
-            errors_network: value.errors_network,
-            errors_timeout: value.errors_timeout,
-            errors_status_code: value.errors_status_code,
-            bytes_sent: value.bytes_sent,
-            chunks_sent: value.chunks_sent,
-            chunks_dropped_send_failure: value.chunks_dropped,
-            responses_count_per_code: value.responses_count_per_code.clone(),
-            ..Default::default()
+                Err(err) => match err {
+                    SendWithRetryError::Http(response, attempts) => {
+                        telemetry.chunks_dropped_send_failure = chunks;
+                        telemetry.errors_status_code = 1;
+                        telemetry
+                            .responses_count_per_code
+                            .insert(response.status().into(), 1);
+                        telemetry.requests_count = *attempts as u64;
+                    }
+                    SendWithRetryError::Timeout(attempts) => {
+                        telemetry.chunks_dropped_send_failure = chunks;
+                        telemetry.errors_timeout = 1;
+                        telemetry.requests_count = *attempts as u64;
+                    }
+                    SendWithRetryError::Network(_, attempts) => {
+                        telemetry.chunks_dropped_send_failure = chunks;
+                        telemetry.errors_network = 1;
+                        telemetry.requests_count = *attempts as u64;
+                    }
+                    SendWithRetryError::Build(attempts) => {
+                        telemetry.chunks_dropped_serialization_error = chunks;
+                        telemetry.requests_count = *attempts as u64;
+                    }
+                },
+            };
+            telemetry
         }
     }
+
+    impl From<&SendDataResult> for SendPayloadTelemetry {
+        fn from(value: &SendDataResult) -> Self {
+            Self {
+                requests_count: value.requests_count,
+                errors_network: value.errors_network,
+                errors_timeout: value.errors_timeout,
+                errors_status_code: value.errors_status_code,
+                bytes_sent: value.bytes_sent,
+                chunks_sent: value.chunks_sent,
+                chunks_dropped_send_failure: value.chunks_dropped,
+                responses_count_per_code: value.responses_count_per_code.clone(),
+                ..Default::default()
+            }
+        }
+    }
+
 }
 
-#[cfg(not(feature = "telemetry"))]
-impl From<&SendDataResult> for SendPayloadTelemetry {
-    fn from(_value: &SendDataResult) -> Self {
-        Self {}
-    }
-}
+pub use inner::*;
+pub(crate) use builder::TelemetryClientBuilder;
+pub(crate) use error::TelemetryError;
+pub(crate) use worker::TelemetryWorker;
 
 #[cfg(test)]
 #[cfg(feature = "telemetry")]
@@ -262,6 +263,7 @@ mod tests {
     use httpmock::Method::POST;
     use httpmock::MockServer;
     use libdd_common::{http_common, worker::Worker};
+    use libdd_trace_utils::{send_data::send_data_result::SendDataResult, send_with_retry::SendWithRetryError};
     use regex::Regex;
     use std::collections::HashMap;
     use std::time::Duration;
@@ -280,7 +282,8 @@ mod tests {
             .set_url(url)
             .set_heartbeat(100)
             .set_debug_enabled(true)
-            .build(Handle::current());
+            .build(Handle::current())
+            .expect("telemetry client build failed");
         tokio::spawn(async move { worker.run().await });
         client
     }
@@ -749,7 +752,8 @@ mod tests {
             .set_url(&server.url("/"))
             .set_heartbeat(100)
             .set_runtime_id("foo")
-            .build(Handle::current());
+            .build(Handle::current())
+            .expect("Telemetry builder failed");
         tokio::spawn(async move { worker.run().await });
 
         client.start().await;
@@ -790,7 +794,8 @@ mod tests {
             .set_url(&server.url("/"))
             .set_heartbeat(100)
             .set_runtime_id("foo")
-            .build(Handle::current());
+            .build(Handle::current())
+            .expect("Telemetry builder failed");
         tokio::spawn(async move { worker.run().await });
 
         client.start().await;

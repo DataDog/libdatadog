@@ -267,36 +267,34 @@ impl TraceExporterBuilder {
             stats = StatsComputationStatus::DisabledByAgent { bucket_size };
         }
 
-        let telemetry = self.telemetry.map(|telemetry_config| {
-            let mut builder = TelemetryClientBuilder::default()
-                .set_language(&self.language)
-                .set_language_version(&self.language_version)
-                .set_service_name(&self.service)
-                .set_service_version(&self.app_version)
-                .set_env(&self.env)
-                .set_tracer_version(&self.tracer_version)
-                .set_heartbeat(telemetry_config.heartbeat)
-                .set_url(base_url)
-                .set_debug_enabled(telemetry_config.debug_enabled);
-            if let Some(id) = telemetry_config.runtime_id {
-                builder = builder.set_runtime_id(&id);
-            }
-            builder.build(runtime.handle().clone())
-        });
+        let (telemetry_client, telemetry_worker) = self.telemetry
+            .map(|telemetry_config| -> Result<_, TraceExporterError> {
+                let mut builder = TelemetryClientBuilder::default()
+                    .set_language(&self.language)
+                    .set_language_version(&self.language_version)
+                    .set_service_name(&self.service)
+                    .set_service_version(&self.app_version)
+                    .set_env(&self.env)
+                    .set_tracer_version(&self.tracer_version)
+                    .set_heartbeat(telemetry_config.heartbeat)
+                    .set_url(base_url)
+                    .set_debug_enabled(telemetry_config.debug_enabled);
+                if let Some(id) = telemetry_config.runtime_id {
+                    builder = builder.set_runtime_id(&id);
+                }
 
-        let (telemetry_client, telemetry_worker) = match telemetry {
-            Some((client, worker)) => {
+                let (client, worker) = builder.build(runtime.handle().clone()).map_err(TraceExporterError::from)?;
                 let mut telemetry_worker = PausableWorker::new(worker);
                 telemetry_worker.start(&runtime).map_err(|e| {
                     TraceExporterError::Builder(BuilderErrorKind::InvalidConfiguration(
-                        e.to_string(),
+                            e.to_string(),
                     ))
                 })?;
                 runtime.block_on(client.start());
-                (Some(client), Some(telemetry_worker))
-            }
-            None => (None, None),
-        };
+                Ok((client, telemetry_worker))
+        })
+        .transpose()?
+        .map_or((None, None), |(c, w)| (Some(c), Some(w)));
 
         Ok(TraceExporter {
             endpoint: Endpoint {

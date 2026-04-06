@@ -868,13 +868,10 @@ mod tests {
     use libdd_tinybytes::BytesString;
     use libdd_trace_utils::msgpack_encoder;
     use libdd_trace_utils::span::v04::SpanBytes;
-    use libdd_trace_utils::span::v05;
     use std::net;
     use std::time::Duration;
     use tokio::time::sleep;
 
-    // v05 messagepack empty payload -> [[""], []]
-    const V5_EMPTY: [u8; 4] = [0x92, 0x91, 0xA0, 0x90];
 
     #[test]
     fn test_from_tracer_tags_to_tracer_header_tags() {
@@ -1564,7 +1561,7 @@ mod tests {
             true,
         );
 
-        let v5: (Vec<BytesString>, Vec<Vec<v05::Span>>) = (vec![], vec![]);
+        let v5: (Vec<BytesString>, Vec<Vec<libdd_trace_utils::span::v05::Span>>) = (vec![], vec![]);
         let traces = rmp_serde::to_vec(&v5).unwrap();
         let result = exporter.send(traces.as_ref()).unwrap();
         let AgentResponse::Changed { body } = result else {
@@ -1591,6 +1588,9 @@ mod tests {
     #[cfg_attr(miri, ignore)]
     #[cfg(feature = "telemetry")]
     fn test_exporter_metrics_v4_to_v5() {
+        // v05 messagepack empty payload -> [[""], []]
+        const V5_EMPTY: [u8; 4] = [0x92, 0x91, 0xA0, 0x90];
+
         let server = MockServer::start();
         let response_body = r#"{
                         "rate_by_service": {

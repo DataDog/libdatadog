@@ -9,6 +9,7 @@ use super::TelemetryClient;
 use libdd_telemetry::worker::{TelemetryWorkerBuilder, TelemetryWorkerFlavor};
 use std::time::Duration;
 use tokio::runtime::Handle;
+use super::error::TelemetryError;
 
 /// Structure to build a Telemetry client.
 ///
@@ -95,18 +96,18 @@ impl TelemetryClientBuilder {
 #[cfg(feature = "telemetry")]
 impl TelemetryClientBuilder {
     /// Builds the telemetry client.
-    pub fn build(self, runtime: Handle) -> (TelemetryClient, worker::TelemetryWorker) {
-        #[allow(clippy::unwrap_used)]
+    pub fn build(self, runtime: Handle) -> Result<(TelemetryClient, worker::TelemetryWorker), TelemetryError> {
         let mut builder = TelemetryWorkerBuilder::new_fetch_host(
-            self.service_name.unwrap(),
-            self.language.unwrap(),
-            self.language_version.unwrap(),
-            self.tracer_version.unwrap(),
+            self.service_name.ok_or_else(|| TelemetryError::Builder("service_name is required".to_string()))?,
+            self.language.ok_or_else(|| TelemetryError::Builder("language is required".to_string()))?,
+            self.language_version.ok_or_else(|| TelemetryError::Builder("language_version is required".to_string()))?,
+            self.tracer_version.ok_or_else(|| TelemetryError::Builder("tracer_version is required".to_string()))?,
         );
         if let Some(url) = self.url {
-            let _ = builder
+            builder
                 .config
-                .set_endpoint(libdd_common::Endpoint::from_slice(&url));
+                .set_endpoint(libdd_common::Endpoint::from_slice(&url))
+                .map_err(|e| TelemetryError::Builder(e.to_string()))?
         }
         if let Some(heartbeat) = self.heartbeat {
             builder.config.telemetry_heartbeat_interval = heartbeat;
@@ -123,21 +124,21 @@ impl TelemetryClientBuilder {
 
         let (worker_handle, worker) = builder.build_worker(runtime);
 
-        (
+        Ok((
             TelemetryClient {
                 metrics: Metrics::new(&worker_handle),
                 worker: worker_handle,
             },
             worker,
-        )
+        ))
     }
 }
 
 #[cfg(not(feature = "telemetry"))]
 impl TelemetryClientBuilder {
     /// Builds a no-op telemetry client.
-    pub fn build(self, _runtime: Handle) -> (TelemetryClient, worker::TelemetryWorker) {
-        (TelemetryClient {}, worker::TelemetryWorker {})
+    pub fn build(self, _runtime: Handle) -> Result<(TelemetryClient, worker::TelemetryWorker), TelemetryError> {
+        Ok((TelemetryClient {}, worker::TelemetryWorker {}))
     }
 }
 

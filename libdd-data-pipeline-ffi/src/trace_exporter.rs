@@ -17,7 +17,7 @@ use libdd_data_pipeline::trace_exporter::{
 use std::{ptr::NonNull, time::Duration};
 #[cfg(feature = "telemetry")]
 use tracing::debug;
-#[allow(unused_imports)]
+#[cfg(all(feature = "catch_panic", not(panic = "abort")))]
 use tracing::error;
 
 #[inline]
