@@ -4,6 +4,7 @@
 use crate::error::{ExporterError, ExporterErrorCode as ErrorCode};
 use crate::response::ExporterResponse;
 use crate::{catch_panic, gen_error};
+use libdd_capabilities_impl::NativeCapabilities;
 use libdd_common_ffi::{
     CharSlice,
     {slice::AsBytes, slice::ByteSlice},
@@ -12,8 +13,12 @@ use libdd_common_ffi::{
 #[cfg(feature = "telemetry")]
 use libdd_data_pipeline::trace_exporter::TelemetryConfig;
 use libdd_data_pipeline::trace_exporter::{
-    TraceExporter, TraceExporterInputFormat, TraceExporterOutputFormat,
+    TelemetryConfig, TraceExporter as GenericTraceExporter, TraceExporterInputFormat,
+    TraceExporterOutputFormat,
 };
+
+type TraceExporter = GenericTraceExporter<NativeCapabilities>;
+
 use std::{ptr::NonNull, time::Duration};
 #[cfg(feature = "telemetry")]
 use tracing::debug;
@@ -75,6 +80,7 @@ pub struct TraceExporterConfig {
     process_tags: Option<String>,
     test_session_token: Option<String>,
     connection_timeout: Option<u64>,
+    otlp_endpoint: Option<String>,
 }
 
 #[no_mangle]
@@ -422,7 +428,36 @@ pub unsafe extern "C" fn ddog_trace_exporter_config_set_connection_timeout(
     )
 }
 
+/// Enables OTLP HTTP/JSON export and sets the endpoint URL.
+///
+/// When set, traces are sent to this URL in OTLP HTTP/JSON format instead of the Datadog
+/// agent. The host language is responsible for resolving the endpoint from its configuration
+/// (e.g. `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`) before calling this function.
+#[no_mangle]
+pub unsafe extern "C" fn ddog_trace_exporter_config_set_otlp_endpoint(
+    config: Option<&mut TraceExporterConfig>,
+    url: CharSlice,
+) -> Option<Box<ExporterError>> {
+    catch_panic!(
+        if let Some(handle) = config {
+            handle.otlp_endpoint = match sanitize_string(url) {
+                Ok(s) => Some(s),
+                Err(e) => return Some(e),
+            };
+            None
+        } else {
+            gen_error!(ErrorCode::InvalidArgument)
+        },
+        gen_error!(ErrorCode::Panic)
+    )
+}
+
 /// Create a new TraceExporter instance.
+///
+/// When an OTLP endpoint is configured via `TraceExporterConfig`, the exporter sends traces in
+/// OTLP HTTP/JSON to that endpoint instead of the Datadog agent. The same payload (e.g.
+/// MessagePack) is passed to `ddog_trace_exporter_send`; the library decodes and converts to
+/// OTLP when OTLP is enabled.
 ///
 /// # Arguments
 ///
@@ -474,6 +509,10 @@ pub unsafe extern "C" fn ddog_trace_exporter_new(
 
             if config.health_metrics_enabled {
                 builder.enable_health_metrics();
+            }
+
+            if let Some(ref url) = config.otlp_endpoint {
+                builder.set_otlp_endpoint(url);
             }
 
             match builder.build() {

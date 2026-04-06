@@ -1,4 +1,4 @@
-// Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
+// Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
 //! Implementation of the publisher part of the [OTEL process
@@ -8,7 +8,8 @@
 //!
 //! Process context sharing implies concurrently writing to a memory area that another process
 //! might be actively reading. However, reading isn't done as direct memory accesses but goes
-//! through the OS, so the Rust definition of race conditions doesn't really apply.
+//! through the OS, so the Rust definition of race conditions doesn't really apply. We also use
+//! atomics and fences, see MappingHeader's documentation.
 
 #[cfg(target_os = "linux")]
 #[cfg(target_has_atomic = "64")]

@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use clap::Parser;
-#[cfg(feature = "telemetry")]
 use libdd_data_pipeline::trace_exporter::TelemetryConfig;
+use libdd_capabilities_impl::NativeCapabilities;
 use libdd_data_pipeline::trace_exporter::{
     TraceExporter, TraceExporterInputFormat, TraceExporterOutputFormat,
 };
@@ -56,7 +56,7 @@ fn main() {
     logger_set_log_level(LogEventLevel::Debug).expect("Failed to set log level");
 
     let args = Args::parse();
-    let mut builder = TraceExporter::builder();
+    let mut builder = TraceExporter::<NativeCapabilities>::builder();
     builder
         .set_url(&args.url)
         .set_hostname("test")
@@ -71,7 +71,9 @@ fn main() {
         .enable_stats(Duration::from_secs(10));
     #[cfg(feature = "telemetry")]
     builder.enable_telemetry(TelemetryConfig::default());
-    let exporter = builder.build().expect("Failed to build TraceExporter");
+    let exporter = builder
+        .build::<NativeCapabilities>()
+        .expect("Failed to build TraceExporter");
     let now = UNIX_EPOCH
         .elapsed()
         .expect("Failed to get time since UNIX_EPOCH")

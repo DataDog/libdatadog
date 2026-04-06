@@ -3,7 +3,7 @@
 
 use libdd_trace_protobuf::pb;
 use regex::Regex;
-use serde::Deserialize;
+use serde::{ser::SerializeStruct, Deserialize, Deserializer, Serialize};
 
 #[derive(Deserialize)]
 struct RawReplaceRule {
@@ -24,16 +24,44 @@ pub struct ReplaceRule {
     // some exceptions apply such as:
     // * "resource.name" will target the resource
     // * "*" will target all tags and the resource
-    name: String,
+    pub name: String,
 
     // re holds the regex pattern for matching.
-    re: regex::Regex,
+    pub re: regex::Regex,
 
     // repl specifies the replacement string to be used when Pattern matches.
-    repl: String,
+    pub repl: String,
 
     // does the replacement pattern contain references to the capture groups
-    no_expansion: bool,
+    pub no_expansion: bool,
+}
+
+impl<'de> Deserialize<'de> for ReplaceRule {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let raw = RawReplaceRule::deserialize(deserializer)?;
+        let re = Regex::new(&raw.pattern).map_err(serde::de::Error::custom)?;
+        let no_expansion = regex::Replacer::no_expansion(&mut raw.repl.as_str()).is_some();
+        Ok(ReplaceRule {
+            name: raw.name,
+            re,
+            repl: raw.repl,
+            no_expansion,
+        })
+    }
+}
+
+impl Serialize for ReplaceRule {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        let mut s = serializer.serialize_struct("ReplaceRule", 4)?;
+        s.serialize_field("name", &self.name)?;
+        s.serialize_field("re", &self.re.to_string())?;
+        s.serialize_field("repl", &self.repl)?;
+        s.serialize_field("no_expansion", &self.no_expansion)?;
+        s.end()
+    }
 }
 
 impl ReplaceRule {

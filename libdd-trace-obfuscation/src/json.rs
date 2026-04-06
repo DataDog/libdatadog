@@ -1,11 +1,8 @@
 // Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use std::collections::HashSet;
-
 use crate::json_scanner::{Op, Scanner};
-
-type Transformer = Box<dyn Fn(&str) -> String + Send + Sync>;
+use crate::obfuscation_config::{JsonObfuscatorConfig, JsonStringTransformer};
 
 /// Obfuscates a JSON string by replacing all leaf values with `"?"`, unless the value
 /// belongs to a key listed in `keep_keys`, in which case it is left verbatim.
@@ -15,9 +12,7 @@ type Transformer = Box<dyn Fn(&str) -> String + Send + Sync>;
 /// Multiple concatenated JSON objects in the input are each obfuscated independently.
 /// On a parse error the output so far is returned with `"..."` appended.
 pub struct JsonObfuscator {
-    keep_keys: HashSet<String>,
-    transform_keys: HashSet<String>,
-    transformer: Option<Transformer>,
+    config: JsonObfuscatorConfig,
 }
 
 enum ClosureKind {
@@ -26,16 +21,8 @@ enum ClosureKind {
 }
 
 impl JsonObfuscator {
-    pub fn new(
-        keep_keys: impl IntoIterator<Item = String>,
-        transform_keys: impl IntoIterator<Item = String>,
-        transformer: Option<Transformer>,
-    ) -> Self {
-        Self {
-            keep_keys: keep_keys.into_iter().collect(),
-            transform_keys: transform_keys.into_iter().collect(),
-            transformer,
-        }
+    pub fn new(config: JsonObfuscatorConfig) -> Self {
+        Self { config }
     }
 
     /// Obfuscates json string and return an optional error on malformatted json
@@ -80,7 +67,7 @@ impl JsonObfuscator {
                         &mut transforming_value,
                         &mut keep_depth,
                         depth,
-                        self.transformer.as_deref(),
+                        self.config.transformer.as_ref(),
                     );
                 }
                 Op::ObjectValue | Op::ArrayValue => {
@@ -92,7 +79,7 @@ impl JsonObfuscator {
                         &mut transforming_value,
                         &mut keep_depth,
                         depth,
-                        self.transformer.as_deref(),
+                        self.config.transformer.as_ref(),
                     );
                 }
                 Op::BeginLiteral | Op::Continue => {
@@ -111,12 +98,12 @@ impl JsonObfuscator {
                 }
                 Op::ObjectKey => {
                     let k = buf.trim_matches('"');
-                    if !keeping && self.keep_keys.contains(k) {
+                    if !keeping && self.config.keep_keys.contains(k) {
                         keeping = true;
                         keep_depth = depth + 1;
                     } else if !transforming_value
-                        && self.transformer.is_some()
-                        && self.transform_keys.contains(k)
+                        && self.config.transformer.is_some()
+                        && self.config.transform_keys.contains(k)
                     {
                         transforming_value = true;
                     }
@@ -158,7 +145,7 @@ fn handle_value_done(
     transforming_value: &mut bool,
     keep_depth: &mut usize,
     depth: usize,
-    transformer: Option<&(dyn Fn(&str) -> String + Send + Sync)>,
+    transformer: Option<&JsonStringTransformer>,
 ) {
     if *transforming_value {
         if let Some(t) = transformer {
@@ -183,18 +170,23 @@ mod tests {
     use serde_json::json;
 
     use super::JsonObfuscator;
-    use crate::sql::obfuscate_sql_string;
+    use crate::{obfuscation_config::JsonObfuscatorConfig, sql::obfuscate_sql_string};
 
     fn obf(keep_keys: &[&str]) -> JsonObfuscator {
-        JsonObfuscator::new(keep_keys.iter().map(|s| s.to_string()), [], None)
+        JsonObfuscator::new(JsonObfuscatorConfig {
+            enabled: true,
+            keep_keys: keep_keys.iter().map(|key| key.to_string()).collect(),
+            ..Default::default()
+        })
     }
 
     fn obf_sql(keep_keys: &[&str], transform_keys: &[&str]) -> JsonObfuscator {
-        JsonObfuscator::new(
-            keep_keys.iter().map(|s| s.to_string()),
-            transform_keys.iter().map(|s| s.to_string()),
-            Some(Box::new(obfuscate_sql_string)),
-        )
+        JsonObfuscator::new(JsonObfuscatorConfig {
+            enabled: true,
+            keep_keys: keep_keys.iter().map(|s| s.to_string()).collect(),
+            transform_keys: transform_keys.iter().map(|s| s.to_string()).collect(),
+            transformer: Some(obfuscate_sql_string),
+        })
     }
 
     fn assert_json_eq(result: &str, expected: &str) {

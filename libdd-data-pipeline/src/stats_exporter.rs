@@ -11,29 +11,34 @@ use std::{
 };
 
 use crate::trace_exporter::TracerMetadata;
-use libdd_common::{worker::Worker, Endpoint, HttpClient};
+use libdd_capabilities::{HttpClientTrait, MaybeSend};
+use libdd_common::{worker::Worker, Endpoint};
 use libdd_trace_protobuf::pb;
 use libdd_trace_stats::span_concentrator::SpanConcentrator;
 use libdd_trace_utils::send_with_retry::{send_with_retry, RetryStrategy};
+#[cfg(not(target_arch = "wasm32"))]
 use tokio::select;
 use tokio_util::sync::CancellationToken;
 use tracing::error;
 
 const STATS_ENDPOINT_PATH: &str = "/v0.6/stats";
 
-/// An exporter that concentrates and sends stats to the agent
+/// An exporter that concentrates and sends stats to the agent.
+///
+/// `H` is the HTTP client implementation, see [`HttpClientTrait`]. Leaf crates
+/// pin it to a concrete type.
 #[derive(Debug)]
-pub struct StatsExporter {
+pub struct StatsExporter<H: HttpClientTrait> {
     flush_interval: time::Duration,
     concentrator: Arc<Mutex<SpanConcentrator>>,
     endpoint: Endpoint,
     meta: TracerMetadata,
     sequence_id: AtomicU64,
     cancellation_token: CancellationToken,
-    client: HttpClient,
+    client: H,
 }
 
-impl StatsExporter {
+impl<H: HttpClientTrait> StatsExporter<H> {
     /// Return a new StatsExporter
     ///
     /// - `flush_interval` the interval on which the concentrator is flushed
@@ -48,7 +53,7 @@ impl StatsExporter {
         meta: TracerMetadata,
         endpoint: Endpoint,
         cancellation_token: CancellationToken,
-        client: HttpClient,
+        client: H,
     ) -> Self {
         Self {
             flush_interval,
@@ -131,13 +136,19 @@ impl StatsExporter {
     }
 }
 
-impl Worker for StatsExporter {
+impl<H: HttpClientTrait + MaybeSend + Sync + 'static> Worker for StatsExporter<H> {
     /// Run loop of the stats exporter
     ///
     /// Once started, the stats exporter will flush and send stats on every `self.flush_interval`.
     /// If the `self.cancellation_token` is cancelled, the exporter will force flush all stats and
     /// return.
     async fn run(&mut self) {
+        #[cfg(target_arch = "wasm32")]
+        {
+            return;
+        }
+
+        #[cfg(not(target_arch = "wasm32"))]
         loop {
             select! {
                 _ = self.cancellation_token.cancelled() => {
@@ -159,22 +170,26 @@ fn encode_stats_payload(
 ) -> pb::ClientStatsPayload {
     pb::ClientStatsPayload {
         hostname: meta.hostname.clone(),
-        env: meta.env.clone(),
-        lang: meta.language.clone(),
+        env: if meta.env.is_empty() {
+            "unknown-env".to_string()
+        } else {
+            meta.env.clone()
+        },
         version: meta.app_version.clone(),
         runtime_id: meta.runtime_id.clone(),
-        tracer_version: meta.tracer_version.clone(),
         sequence,
+        service: meta.service.clone(),
         stats: buckets,
         git_commit_sha: meta.git_commit_sha.clone(),
         process_tags: meta.process_tags.clone(),
-        // These fields are unused or will be set by the Agent
-        service: String::new(),
+        // These fields will be set by the Agent
         container_id: String::new(),
         tags: Vec::new(),
         agent_aggregation: String::new(),
         image_tag: String::new(),
         process_tags_hash: 0,
+        lang: String::new(),
+        tracer_version: String::new(),
     }
 }
 
@@ -190,7 +205,7 @@ mod tests {
     use super::*;
     use httpmock::prelude::*;
     use httpmock::MockServer;
-    use libdd_common::http_common::new_default_client;
+    use libdd_capabilities_impl::NativeCapabilities;
     use libdd_trace_utils::span::{trace_utils, v04::SpanSlice};
     use libdd_trace_utils::test_utils::poll_for_mock_hit;
     use time::Duration;
@@ -204,8 +219,8 @@ mod tests {
     /// Fails to compile if stats exporter is not Send and Sync
     #[test]
     fn test_stats_exporter_sync_send() {
-        let _ = is_send::<StatsExporter>;
-        let _ = is_sync::<StatsExporter>;
+        let _ = is_send::<StatsExporter<NativeCapabilities>>;
+        let _ = is_sync::<StatsExporter<NativeCapabilities>>;
     }
 
     fn get_test_metadata() -> TracerMetadata {
@@ -263,13 +278,13 @@ mod tests {
             })
             .await;
 
-        let stats_exporter = StatsExporter::new(
+        let stats_exporter = StatsExporter::<NativeCapabilities>::new(
             BUCKETS_DURATION,
             Arc::new(Mutex::new(get_test_concentrator())),
             get_test_metadata(),
             Endpoint::from_url(stats_url_from_agent_url(&server.url("/")).unwrap()),
             CancellationToken::new(),
-            new_default_client(),
+            NativeCapabilities::new_client(),
         );
 
         let send_status = stats_exporter.send(true).await;
@@ -291,13 +306,13 @@ mod tests {
             })
             .await;
 
-        let stats_exporter = StatsExporter::new(
+        let stats_exporter = StatsExporter::<NativeCapabilities>::new(
             BUCKETS_DURATION,
             Arc::new(Mutex::new(get_test_concentrator())),
             get_test_metadata(),
             Endpoint::from_url(stats_url_from_agent_url(&server.url("/")).unwrap()),
             CancellationToken::new(),
-            new_default_client(),
+            NativeCapabilities::new_client(),
         );
 
         let send_status = stats_exporter.send(true).await;
@@ -325,13 +340,13 @@ mod tests {
             })
             .await;
 
-        let mut stats_exporter = StatsExporter::new(
+        let mut stats_exporter = StatsExporter::<NativeCapabilities>::new(
             BUCKETS_DURATION,
             Arc::new(Mutex::new(get_test_concentrator())),
             get_test_metadata(),
             Endpoint::from_url(stats_url_from_agent_url(&server.url("/")).unwrap()),
             CancellationToken::new(),
-            new_default_client(),
+            NativeCapabilities::new_client(),
         );
 
         tokio::time::pause();
@@ -367,13 +382,13 @@ mod tests {
         let buckets_duration = Duration::from_secs(10);
         let cancellation_token = CancellationToken::new();
 
-        let mut stats_exporter = StatsExporter::new(
+        let mut stats_exporter = StatsExporter::<NativeCapabilities>::new(
             buckets_duration,
             Arc::new(Mutex::new(get_test_concentrator())),
             get_test_metadata(),
             Endpoint::from_url(stats_url_from_agent_url(&server.url("/")).unwrap()),
             cancellation_token.clone(),
-            new_default_client(),
+            NativeCapabilities::new_client(),
         );
 
         tokio::spawn(async move {
@@ -385,6 +400,30 @@ mod tests {
         assert!(
             poll_for_mock_hit(&mut mock, 10, 100, 1, false).await,
             "Expected max retry attempts"
+        );
+    }
+
+    #[test]
+    fn test_encode_stats_payload_defaults_empty_env() {
+        // Test that empty env defaults to "unknown-env"
+        let mut meta_with_empty_env = get_test_metadata();
+        meta_with_empty_env.env = "".to_string();
+
+        let buckets = vec![];
+        let payload = encode_stats_payload(&meta_with_empty_env, 1, buckets.clone());
+
+        assert_eq!(
+            payload.env, "unknown-env",
+            "Empty env should default to 'unknown-env'"
+        );
+
+        // Test that non-empty env is preserved
+        let meta_with_env = get_test_metadata();
+        let payload_with_env = encode_stats_payload(&meta_with_env, 2, buckets);
+
+        assert_eq!(
+            payload_with_env.env, "test",
+            "Non-empty env should be preserved"
         );
     }
 }

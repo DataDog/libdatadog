@@ -269,6 +269,30 @@ impl From<std::io::Error> for TraceExporterError {
     }
 }
 
+impl From<http::Error> for TraceExporterError {
+    fn from(err: http::Error) -> Self {
+        TraceExporterError::Network(NetworkError {
+            kind: NetworkErrorKind::Parse,
+            source: err.into(),
+        })
+    }
+}
+
+impl From<libdd_capabilities::HttpError> for TraceExporterError {
+    fn from(err: libdd_capabilities::HttpError) -> Self {
+        TraceExporterError::Network(NetworkError {
+            kind: match &err {
+                libdd_capabilities::HttpError::Timeout => NetworkErrorKind::TimedOut,
+                libdd_capabilities::HttpError::Network(_) => NetworkErrorKind::ConnectionClosed,
+                libdd_capabilities::HttpError::ResponseBody(_) => NetworkErrorKind::Body,
+                libdd_capabilities::HttpError::InvalidRequest(_) => NetworkErrorKind::Parse,
+                libdd_capabilities::HttpError::Other(_) => NetworkErrorKind::Unknown,
+            },
+            source: anyhow::anyhow!("{}", err),
+        })
+    }
+}
+
 impl From<TelemetryError> for TraceExporterError {
     fn from(value: TelemetryError) -> Self {
         match value {
