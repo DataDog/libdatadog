@@ -1,6 +1,7 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+#[cfg(feature = "telemetry")]
 use crate::telemetry::error::TelemetryError;
 use crate::trace_exporter::msgpack_decoder::decode::error::DecodeError;
 use http::StatusCode;
@@ -269,6 +270,31 @@ impl From<std::io::Error> for TraceExporterError {
     }
 }
 
+impl From<http::Error> for TraceExporterError {
+    fn from(err: http::Error) -> Self {
+        TraceExporterError::Network(NetworkError {
+            kind: NetworkErrorKind::Parse,
+            source: err.into(),
+        })
+    }
+}
+
+impl From<libdd_capabilities::HttpError> for TraceExporterError {
+    fn from(err: libdd_capabilities::HttpError) -> Self {
+        TraceExporterError::Network(NetworkError {
+            kind: match &err {
+                libdd_capabilities::HttpError::Timeout => NetworkErrorKind::TimedOut,
+                libdd_capabilities::HttpError::Network(_) => NetworkErrorKind::ConnectionClosed,
+                libdd_capabilities::HttpError::ResponseBody(_) => NetworkErrorKind::Body,
+                libdd_capabilities::HttpError::InvalidRequest(_) => NetworkErrorKind::Parse,
+                libdd_capabilities::HttpError::Other(_) => NetworkErrorKind::Unknown,
+            },
+            source: anyhow::anyhow!("{}", err),
+        })
+    }
+}
+
+#[cfg(feature = "telemetry")]
 impl From<TelemetryError> for TraceExporterError {
     fn from(value: TelemetryError) -> Self {
         match value {

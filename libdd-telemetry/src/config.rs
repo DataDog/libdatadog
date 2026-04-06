@@ -27,6 +27,7 @@ pub struct Config {
     /// Enables debug logging
     pub telemetry_debug_logging_enabled: bool,
     pub telemetry_heartbeat_interval: Duration,
+    pub telemetry_extended_heartbeat_interval: Duration,
     pub direct_submission_enabled: bool,
     /// Prevents LifecycleAction::Stop from terminating the worker (except if the WorkerHandle is
     /// dropped)
@@ -170,6 +171,7 @@ impl Default for Config {
             endpoint: None,
             telemetry_debug_logging_enabled: false,
             telemetry_heartbeat_interval: Duration::from_secs(60),
+            telemetry_extended_heartbeat_interval: Duration::from_secs(60 * 60 * 24),
             direct_submission_enabled: false,
             restartable: false,
             debug_enabled: false,
@@ -256,6 +258,7 @@ impl Config {
             endpoint: None,
             telemetry_debug_logging_enabled: settings.shared_lib_debug,
             telemetry_heartbeat_interval: settings.telemetry_heartbeat_interval,
+            telemetry_extended_heartbeat_interval: settings.telemetry_extended_heartbeat_interval,
             direct_submission_enabled: settings.direct_submission_enabled,
             restartable: false,
             debug_enabled: false,
@@ -484,6 +487,44 @@ mod tests {
             named_pipe::named_pipe_path_from_uri(&cfg.clone().endpoint.unwrap().url)
                 .unwrap()
                 .to_string_lossy()
+        );
+    }
+
+    #[test]
+    fn test_from_settings_propagates_extended_heartbeat_interval() {
+        use std::time::Duration;
+
+        let custom_interval = Duration::from_secs(120);
+        let settings = Settings {
+            telemetry_extended_heartbeat_interval: custom_interval,
+            ..Default::default()
+        };
+        let cfg = Config::from_settings(&settings);
+        assert_eq!(cfg.telemetry_extended_heartbeat_interval, custom_interval);
+    }
+
+    #[test]
+    fn test_from_settings_default_extended_heartbeat_interval() {
+        use std::time::Duration;
+
+        let settings = Settings::default();
+        let cfg = Config::from_settings(&settings);
+        assert_eq!(
+            cfg.telemetry_extended_heartbeat_interval,
+            Duration::from_secs(60 * 60 * 24)
+        );
+    }
+
+    #[test]
+    fn test_extended_heartbeat_interval_from_env() {
+        use libdd_common::test_utils::EnvGuard;
+        use std::time::Duration;
+
+        let _guard = EnvGuard::set("DD_TELEMETRY_EXTENDED_HEARTBEAT_INTERVAL", "5");
+        let settings = Settings::from_env();
+        assert_eq!(
+            settings.telemetry_extended_heartbeat_interval,
+            Duration::from_secs(5)
         );
     }
 }

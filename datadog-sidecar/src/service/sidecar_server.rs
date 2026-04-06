@@ -296,12 +296,24 @@ impl SidecarServer {
 
             let futures = clients
                 .values()
-                .filter_map(|client| client.client.lock_or_panic().worker.stats().ok())
+                .filter_map(|client| {
+                    client
+                        .client
+                        .lock_or_panic()
+                        .as_ref()
+                        .and_then(|c| c.worker.stats().ok())
+                })
                 .collect::<Vec<_>>();
 
             let metric_counts = clients
                 .values()
-                .map(|client| client.client.lock_or_panic().telemetry_metrics.len() as u32)
+                .map(|client| {
+                    client
+                        .client
+                        .lock_or_panic()
+                        .as_ref()
+                        .map_or(0, |c| c.telemetry_metrics.len() as u32)
+                })
                 .collect::<Vec<_>>();
 
             (futures, metric_counts)
@@ -399,26 +411,47 @@ impl SidecarInterface for ConnectionSidecarHandler {
 
             let process_tags = session.process_tags.lock_or_panic().clone();
 
-            // Lock telemetry client
+            // Pre-compute session config so both the primary and retry get_or_create calls
+            // can use it without re-locking the session.
+            let session_config = session
+                .session_config
+                .lock_or_panic()
+                .as_ref()
+                .cloned()
+                .unwrap_or_else(|| {
+                    warn!("Failed to get telemetry session config for {instance_id:?}");
+                    Config::default()
+                });
+
+            // Get or create the telemetry client.  If we observe None under the lock it means
+            // another thread called take() (Stop) in the narrow window between get_or_create
+            // returning and us acquiring the lock — retry once to get a fresh client.
             let telemetry_mutex = self.server.telemetry_clients.get_or_create(
                 service,
                 env,
                 &instance_id,
                 &runtime_metadata,
-                || {
-                    session
-                        .session_config
-                        .lock_or_panic()
-                        .as_ref()
-                        .cloned()
-                        .unwrap_or_else(|| {
-                            warn!("Failed to get telemetry session config for {instance_id:?}");
-                            Config::default()
-                        })
-                },
-                process_tags,
+                || session_config.clone(),
+                process_tags.clone(),
             );
-            let mut telemetry = telemetry_mutex.lock_or_panic();
+            let telemetry_mutex = if telemetry_mutex.lock_or_panic().is_none() {
+                self.server.telemetry_clients.get_or_create(
+                    service,
+                    env,
+                    &instance_id,
+                    &runtime_metadata,
+                    || session_config,
+                    process_tags,
+                )
+            } else {
+                telemetry_mutex
+            };
+            let mut telemetry_guard = telemetry_mutex.lock_or_panic();
+            let Some(telemetry) = telemetry_guard.as_mut() else {
+                // Extremely rare: the client was stopped between the two get_or_create calls.
+                warn!("enqueue_actions: telemetry client stopped during retry for instance {instance_id:?}; dropping actions");
+                return;
+            };
 
             // Auto-register any metrics known to this connection but not yet registered
             // in this telemetry client (e.g., the client was just created for a new service/env).
@@ -440,24 +473,24 @@ impl SidecarInterface for ConnectionSidecarHandler {
             for action in actions {
                 match action {
                     SidecarAction::Telemetry(TelemetryActions::AddIntegration(ref integration)) => {
-                        if telemetry.buffered_integrations.insert(integration.clone()) {
+                        if telemetry.shared.integrations.insert(integration.clone()) {
                             actions_to_process.push(action);
                             buffered_info_changed = true;
                         }
                     }
                     SidecarAction::PhpComposerTelemetryFile(path) => {
-                        if telemetry.buffered_composer_paths.insert(path.clone()) {
+                        if telemetry.shared.composer_paths.insert(path.clone()) {
                             composer_paths_to_process.push(path);
                             buffered_info_changed = true;
                         }
                     }
                     SidecarAction::Telemetry(TelemetryActions::AddConfig(_)) => {
-                        telemetry.config_sent = true;
+                        telemetry.shared.config_sent = true;
                         buffered_info_changed = true;
                         actions_to_process.push(action);
                     }
                     SidecarAction::Telemetry(TelemetryActions::AddEndpoint(_)) => {
-                        telemetry.last_endpoints_push = SystemTime::now();
+                        telemetry.shared.last_endpoints_push = SystemTime::now();
                         buffered_info_changed = true;
                         actions_to_process.push(action);
                     }
@@ -473,6 +506,18 @@ impl SidecarInterface for ConnectionSidecarHandler {
                 }
             }
 
+            if buffered_info_changed {
+                info!(
+                    "Buffered telemetry info changed for instance {instance_id:?} and queue_id {queue_id:?}"
+                );
+                telemetry.write_shm_file();
+            }
+
+            // take() must happen INSIDE the spawned task, after process_actions completes,
+            // so that a Config batch spawned before a Stop batch still finds Some when it
+            // runs (the last_handle chain guarantees Stop runs after Config).
+            let do_take = remove_client;
+
             if !actions_to_process.is_empty() {
                 let telemetry_mutex_clone = telemetry_mutex.clone();
                 let worker = telemetry.worker.clone();
@@ -481,9 +526,17 @@ impl SidecarInterface for ConnectionSidecarHandler {
                     if let Some(last_handle) = last_handle {
                         last_handle.await.ok();
                     };
-                    let processed = telemetry_mutex_clone
-                        .lock_or_panic()
-                        .process_actions(actions_to_process);
+                    let processed = {
+                        let mut guard = telemetry_mutex_clone.lock_or_panic();
+                        let processed = guard
+                            .as_mut()
+                            .map(|t| t.process_actions(actions_to_process))
+                            .unwrap_or_default();
+                        if do_take {
+                            guard.take(); // drop client after Stop action is processed
+                        }
+                        processed
+                    };
                     debug!("Sending Processed Actions :{processed:?}");
                     worker.send_msgs(processed).await.ok();
                 }));
@@ -504,18 +557,14 @@ impl SidecarInterface for ConnectionSidecarHandler {
                 }));
             }
 
-            if buffered_info_changed {
-                info!(
-                    "Buffered telemetry info changed for instance {instance_id:?} and queue_id {queue_id:?}"
-                );
-                telemetry.write_shm_file();
-            }
-
+            // telemetry borrow ends after the last use of telemetry.handle above.
+            // Remove from the map synchronously so new get_or_create calls get a fresh entry;
+            // take() is deferred to the spawned task to avoid racing with in-flight tasks.
             if remove_client {
-                info!("Removing telemetry client for instance {instance_id:?}");
                 self.server
                     .telemetry_clients
                     .remove_telemetry_client(service, env);
+                info!("Removing telemetry client for instance {instance_id:?}");
             }
         } else {
             info!("No application found for instance {instance_id:?} and queue_id {queue_id:?}");

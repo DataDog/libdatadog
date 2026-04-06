@@ -100,23 +100,17 @@ mod single_threaded_tests {
     use nix::sys::signal::{self, Signal};
     use nix::unistd::Pid;
     use std::sync::atomic::{AtomicBool, Ordering};
-    use std::sync::Mutex;
-
-    // These tests mutate global signal state, so we need to lock to avoid race conditions
-    // even in single-threaded mode, as signal state can persist between test runs
-    static SIGNAL_TEST_LOCK: Mutex<()> = Mutex::new(());
 
     #[test]
     #[cfg_attr(miri, ignore)]
     fn signal_is_ignored_while_guard_is_active() {
-        let _test_lock = SIGNAL_TEST_LOCK.lock().unwrap();
         let _guard =
-            SaGuard::<1>::new_with_modes(&[(Signal::SIGUSR1, SuppressionMode::IgnoreAndBlock)])
+            SaGuard::<1>::new_with_modes(&[(Signal::SIGURG, SuppressionMode::IgnoreAndBlock)])
                 .unwrap();
 
-        // Send SIGUSR1 to the process. The default action is to terminate, so if
-        // the guard didn't set SIG_IGN this test process would die
-        signal::kill(Pid::this(), Signal::SIGUSR1).unwrap();
+        // Send SIGURG to the process. The default action is to ignore, so if
+        // the guard fails, the test will fail gracefully instead of killing the process
+        signal::kill(Pid::this(), Signal::SIGURG).unwrap();
     }
 
     /// After the guard is dropped, the original handler should be restored.
@@ -125,7 +119,6 @@ mod single_threaded_tests {
     #[test]
     #[cfg_attr(miri, ignore)]
     fn original_handler_restored_after_drop() {
-        let _test_lock = SIGNAL_TEST_LOCK.lock().unwrap();
         static HANDLER_CALLED: AtomicBool = AtomicBool::new(false);
 
         extern "C" fn custom_handler(_: libc::c_int) {
@@ -138,14 +131,16 @@ mod single_threaded_tests {
             SaFlags::empty(),
             signal::SigSet::empty(),
         );
-        let prev = unsafe { signal::sigaction(Signal::SIGUSR2, &custom_action).unwrap() };
+        let prev = unsafe { signal::sigaction(Signal::SIGWINCH, &custom_action).unwrap() };
 
         // Create then drop the guard (dropped when out of scope)
         {
-            let _guard =
-                SaGuard::<1>::new_with_modes(&[(Signal::SIGUSR2, SuppressionMode::IgnoreAndBlock)])
-                    .unwrap();
-            signal::kill(Pid::this(), Signal::SIGUSR2).unwrap();
+            let _guard = SaGuard::<1>::new_with_modes(&[(
+                Signal::SIGWINCH,
+                SuppressionMode::IgnoreAndBlock,
+            )])
+            .unwrap();
+            signal::kill(Pid::this(), Signal::SIGWINCH).unwrap();
             assert!(
                 !HANDLER_CALLED.load(Ordering::SeqCst),
                 "custom handler should not fire while guard is active"
@@ -154,7 +149,7 @@ mod single_threaded_tests {
         // Guard is dropped; custom handler should be restored
         HANDLER_CALLED.store(false, Ordering::SeqCst);
         unsafe {
-            libc::raise(Signal::SIGUSR2 as libc::c_int);
+            libc::raise(Signal::SIGWINCH as libc::c_int);
         }
         assert!(
             HANDLER_CALLED.load(Ordering::SeqCst),
@@ -163,43 +158,41 @@ mod single_threaded_tests {
 
         // Restore original handler
         unsafe {
-            signal::sigaction(Signal::SIGUSR2, &prev).unwrap();
+            signal::sigaction(Signal::SIGWINCH, &prev).unwrap();
         }
     }
 
     #[test]
     #[cfg_attr(miri, ignore)]
     fn multiple_signals_ignored() {
-        let _test_lock = SIGNAL_TEST_LOCK.lock().unwrap();
         let _guard = SaGuard::<2>::new_with_modes(&[
-            (Signal::SIGUSR1, SuppressionMode::IgnoreAndBlock),
-            (Signal::SIGUSR2, SuppressionMode::IgnoreAndBlock),
+            (Signal::SIGURG, SuppressionMode::IgnoreAndBlock),
+            (Signal::SIGWINCH, SuppressionMode::IgnoreAndBlock),
         ])
         .unwrap();
 
         // Both signals should be safely ignored
-        signal::kill(Pid::this(), Signal::SIGUSR1).unwrap();
-        signal::kill(Pid::this(), Signal::SIGUSR2).unwrap();
+        signal::kill(Pid::this(), Signal::SIGURG).unwrap();
+        signal::kill(Pid::this(), Signal::SIGWINCH).unwrap();
     }
 
     #[test]
     #[cfg_attr(miri, ignore)]
     fn block_only_defers_signal_delivery() -> anyhow::Result<()> {
-        let _test_lock = SIGNAL_TEST_LOCK.lock().unwrap();
-        static SIGUSR1_COUNT: AtomicBool = AtomicBool::new(false);
+        static SIGURG_COUNT: AtomicBool = AtomicBool::new(false);
 
-        extern "C" fn sigusr1_handler(_: libc::c_int) {
-            SIGUSR1_COUNT.store(true, Ordering::SeqCst);
+        extern "C" fn sigurg_handler(_: libc::c_int) {
+            SIGURG_COUNT.store(true, Ordering::SeqCst);
         }
 
-        let sig = Signal::SIGUSR1;
+        let sig = Signal::SIGURG;
 
         // Install a known handler and save the previous one so we can restore it
         let old_action = unsafe {
             signal::sigaction(
                 sig,
                 &SigAction::new(
-                    SigHandler::Handler(sigusr1_handler),
+                    SigHandler::Handler(sigurg_handler),
                     SaFlags::empty(),
                     signal::SigSet::empty(),
                 ),
@@ -207,23 +200,23 @@ mod single_threaded_tests {
         };
 
         // Reset handler state
-        SIGUSR1_COUNT.store(false, Ordering::SeqCst);
+        SIGURG_COUNT.store(false, Ordering::SeqCst);
 
         {
             let _guard = SaGuard::<1>::new_with_modes(&[(sig, SuppressionMode::BlockOnly)])?;
 
-            // Send SIGUSR1 to ourselves while it is blocked
+            // Send SIGURG to ourselves while it is blocked
             signal::raise(sig)?;
 
             // Because the signal is blocked, the handler should not have run yet
             assert!(
-                !SIGUSR1_COUNT.load(Ordering::SeqCst),
+                !SIGURG_COUNT.load(Ordering::SeqCst),
                 "Handler should not be called while signal is blocked by BlockOnly guard"
             );
-        } // guard drops here; old mask is restored, SIGUSR1 should now be delivered
+        } // guard drops here; old mask is restored, SIGURG should now be delivered
           // After unblocking, the signal should be handled
         assert!(
-            SIGUSR1_COUNT.load(Ordering::SeqCst),
+            SIGURG_COUNT.load(Ordering::SeqCst),
             "Handler should be called after BlockOnly guard drops and pending signal is delivered"
         );
         // Restore the prev disposition

@@ -23,7 +23,7 @@ use conn_stream::{ConnStream, ConnStreamError};
 #[derive(Clone)]
 pub enum Connector {
     Http(connect::HttpConnector),
-    #[cfg(feature = "https")]
+    #[cfg(feature = "tls-core")]
     Https(hyper_rustls::HttpsConnector<connect::HttpConnector>),
 }
 
@@ -39,7 +39,7 @@ impl Connector {
     /// Make sure this function is not called frequently. Fetching the root certificates is an
     /// expensive operation. Access the globally cached connector via Connector::default().
     fn new() -> Self {
-        #[cfg(feature = "https")]
+        #[cfg(feature = "tls-core")]
         {
             #[cfg(feature = "use_webpki_roots")]
             let https_connector_fn = https::build_https_connector_with_webpki_roots;
@@ -51,7 +51,7 @@ impl Connector {
                 Err(_) => Connector::Http(connect::HttpConnector::new()),
             }
         }
-        #[cfg(not(feature = "https"))]
+        #[cfg(not(feature = "tls-core"))]
         {
             Connector::Http(connect::HttpConnector::new())
         }
@@ -73,7 +73,7 @@ impl Connector {
                     ConnStream::from_http_connector_with_uri(c, uri).boxed()
                 }
             }
-            #[cfg(feature = "https")]
+            #[cfg(feature = "tls-core")]
             Self::Https(c) => {
                 ConnStream::from_https_connector_with_uri(c, uri, require_tls).boxed()
             }
@@ -81,18 +81,15 @@ impl Connector {
     }
 }
 
-#[cfg(feature = "https")]
+#[cfg(feature = "tls-core")]
 mod https {
     #[cfg(feature = "use_webpki_roots")]
     use hyper_rustls::ConfigBuilderExt;
 
     use rustls::ClientConfig;
 
-    /// When using aws-lc-rs, rustls needs to be initialized with the default CryptoProvider;
-    /// sometimes this is done as a side-effect of other operations, but we need to ensure it
-    /// happens here.  On non-unix platforms, ddcommon uses `ring` instead, which handles this
-    /// at rustls initialization.
-    /// In fips mode we expect someone to have done this already.
+    /// Ensures the rustls default CryptoProvider is installed (ring for non-FIPS).
+    /// In FIPS mode, the caller must install the FIPS provider before any TLS use.
     #[cfg(any(not(feature = "fips"), coverage))]
     fn ensure_crypto_provider_initialized() {
         use std::sync::Once;
@@ -100,15 +97,12 @@ mod https {
         static INIT_CRYPTO_PROVIDER: Once = Once::new();
 
         INIT_CRYPTO_PROVIDER.call_once(|| {
-            #[cfg(unix)]
-            let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
-            #[cfg(not(unix))]
             let _ = rustls::crypto::ring::default_provider().install_default();
         });
     }
 
-    // This actually needs to be done by the user somewhere in their own main. This will only
-    // be active on Unix platforms
+    /// In FIPS mode, the caller must install the FIPS-compliant crypto provider
+    /// (e.g., aws-lc-rs FIPS) before any TLS connections are established.
     #[cfg(all(feature = "fips", not(coverage)))]
     fn ensure_crypto_provider_initialized() {}
 
@@ -191,7 +185,7 @@ impl tower_service::Service<hyper::Uri> for Connector {
     fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         match self {
             Connector::Http(c) => c.poll_ready(cx).map_err(|e| e.into()),
-            #[cfg(feature = "https")]
+            #[cfg(feature = "tls-core")]
             Connector::Https(c) => c.poll_ready(cx),
         }
     }
@@ -244,7 +238,7 @@ mod tests {
     #[test]
     #[cfg_attr(miri, ignore)]
     #[cfg(feature = "use_webpki_roots")]
-    #[cfg(feature = "https")]
+    #[cfg(feature = "tls-core")]
     /// Verify that Connector builds an Https connector using webpki certificates
     /// even when native root certificates are not available.
     fn test_missing_root_certificates_use_webpki_certificates() {
