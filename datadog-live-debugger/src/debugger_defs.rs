@@ -1,7 +1,7 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize, Serializer};
 use std::borrow::Cow;
 use std::collections::HashMap;
 
@@ -11,7 +11,9 @@ pub struct DebuggerPayload<'a> {
     pub ddsource: Cow<'static, str>,
     pub timestamp: u64,
     pub debugger: DebuggerData<'a>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub message: Option<Cow<'a, str>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub process_tags: Option<Cow<'a, str>>,
 }
 
@@ -60,10 +62,11 @@ pub struct Snapshot<'a> {
     pub id: Cow<'a, str>,
     pub timestamp: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub exception_capture_id: Option<Cow<'a, str>>,
+    pub exception_id: Option<Cow<'a, str>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub exception_hash: Option<Cow<'a, str>>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(serialize_with = "serialize_option_u32_as_string")]
     pub frame_index: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub captures: Option<Captures<'a>>,
@@ -96,11 +99,19 @@ pub struct Capture<'a> {
     #[serde(skip_serializing_if = "HashMap::is_empty")]
     pub locals: Fields<'a>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub throwable: Option<Value<'a>>,
+    pub throwable: Option<Throwable<'a>>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Entry<'a>(pub Value<'a>, pub Value<'a>);
+
+#[derive(Debug, Default, Serialize, Deserialize)]
+pub struct Throwable<'a> {
+    pub r#type: Cow<'a, str>,
+    pub message: Cow<'a, str>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub stacktrace: Vec<SnapshotStackFrame<'a>>,
+}
 
 #[derive(Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -158,4 +169,11 @@ pub struct DiagnosticsError<'a> {
     pub r#type: Cow<'a, str>,
     pub message: Cow<'a, str>,
     pub stacktrace: Option<Cow<'a, str>>,
+}
+
+fn serialize_option_u32_as_string<S>(val: &Option<u32>, s: S) -> Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    s.serialize_str(&val.unwrap_or_default().to_string())
 }
