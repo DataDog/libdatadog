@@ -195,8 +195,9 @@ impl Worker for TelemetryWorker {
 
     /// Reset the worker state in the child process after a fork.
     ///
-    /// Discards inherited pending telemetry state and dedupe history without sending anything, and drains
-    /// the mailbox so that actions queued before the fork are not processed by the child.
+    /// Discards inherited pending telemetry state and dedupe history without sending anything, and
+    /// drains the mailbox so that actions queued before the fork are not processed by the
+    /// child.
     fn reset(&mut self) {
         // Drain all actions queued in the mailbox before the fork.
         while self.mailbox.try_recv().is_ok() {}

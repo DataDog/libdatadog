@@ -398,14 +398,19 @@ impl SharedRuntime {
 mod tests {
     use super::*;
     use async_trait::async_trait;
-    use std::sync::mpsc::{channel, Sender};
+    use std::sync::mpsc::{channel, Receiver, Sender};
     use std::time::Duration;
     use tokio::time::sleep;
 
     #[derive(Debug)]
     struct TestWorker {
-        state: u32,
-        sender: Sender<u32>,
+        state: i32,
+        sender: Sender<i32>,
+    }
+
+    fn make_test_worker() -> (TestWorker, Receiver<i32>) {
+        let (sender, receiver) = channel::<i32>();
+        (TestWorker { state: 0, sender }, receiver)
     }
 
     #[async_trait]
@@ -418,6 +423,15 @@ mod tests {
         async fn trigger(&mut self) {
             sleep(Duration::from_millis(100)).await;
         }
+
+        fn reset(&mut self) {
+            self.state = 0;
+        }
+
+        async fn shutdown(&mut self) {
+            self.state = -1;
+            let _ = self.sender.send(self.state);
+        }
     }
 
     #[test]
@@ -429,59 +443,134 @@ mod tests {
     #[test]
     fn test_spawn_worker() {
         let shared_runtime = SharedRuntime::new().unwrap();
-        let (sender, _receiver) = channel::<u32>();
-        let worker = TestWorker { state: 0, sender };
+        let (worker, receiver) = make_test_worker();
 
         let result = shared_runtime.spawn_worker(worker);
         assert!(result.is_ok());
         assert_eq!(shared_runtime.workers.lock_or_panic().len(), 1);
+
+        // Verify the worker is actually running by receiving its first output
+        assert_eq!(
+            receiver
+                .recv_timeout(Duration::from_secs(1))
+                .expect("worker did not run"),
+            0
+        );
     }
 
     #[test]
-    fn test_worker_handle_stop_removes_worker() {
+    fn test_worker_handle_stop() {
         let rt = tokio::runtime::Runtime::new().unwrap();
         let shared_runtime = SharedRuntime::new().unwrap();
-        let (sender, _receiver) = channel::<u32>();
-        let worker = TestWorker { state: 0, sender };
+        let (worker, receiver) = make_test_worker();
 
         let handle = shared_runtime.spawn_worker(worker).unwrap();
         assert_eq!(shared_runtime.workers.lock_or_panic().len(), 1);
+
+        // Wait for at least one run before stopping
+        receiver
+            .recv_timeout(Duration::from_secs(1))
+            .expect("worker did not run");
 
         rt.block_on(async {
             assert!(handle.stop().await.is_ok());
         });
 
         assert_eq!(shared_runtime.workers.lock_or_panic().len(), 0);
+
+        // Drain all messages after stop — the last one must be the shutdown sentinel
+        let mut last = receiver
+            .recv_timeout(Duration::from_secs(1))
+            .expect("shutdown did not send a value");
+        while let Ok(v) = receiver.try_recv() {
+            last = v;
+        }
+        assert_eq!(last, -1);
     }
 
     #[test]
     fn test_before_and_after_fork_parent() {
-        // Run in a separate thread to ensure we're not in any async context
-        let handle = std::thread::spawn(|| {
-            let rt = tokio::runtime::Runtime::new().unwrap();
-            let shared_runtime = SharedRuntime::new().unwrap();
+        let shared_runtime = SharedRuntime::new().unwrap();
+        let (worker, receiver) = make_test_worker();
 
-            // Test before_fork
-            shared_runtime.before_fork();
+        shared_runtime.spawn_worker(worker).unwrap();
 
-            // Test after_fork_parent (synchronous)
-            assert!(shared_runtime.after_fork_parent().is_ok());
+        // Let the worker run until state > 0 so that preservation is observable
+        let mut state_before_fork = 0;
+        while state_before_fork == 0 {
+            state_before_fork = receiver
+                .recv_timeout(Duration::from_secs(1))
+                .expect("worker did not advance state before fork");
+        }
 
-            // Clean shutdown
-            rt.block_on(async {
-                shared_runtime.shutdown_async().await;
-            });
-        });
+        shared_runtime.before_fork();
+        // Drain pre-fork buffered messages now that the worker is paused
+        while receiver.try_recv().is_ok() {}
 
-        handle.join().expect("Thread panicked");
+        assert!(shared_runtime.after_fork_parent().is_ok());
+
+        // State must be preserved (not reset) after fork in the parent
+        let after_fork_value = receiver
+            .recv_timeout(Duration::from_secs(1))
+            .expect("worker did not resume after fork");
+        assert!(
+            after_fork_value > state_before_fork,
+            "after_fork_parent should preserve state: got {after_fork_value}, expected > {state_before_fork}"
+        );
     }
 
     #[test]
     fn test_after_fork_child() {
-        // Test after_fork_child in a non-async context
         let shared_runtime = SharedRuntime::new().unwrap();
+        let (worker, receiver) = make_test_worker();
 
-        // This should succeed as we're not in an async context
+        shared_runtime.spawn_worker(worker).unwrap();
+
+        // Let the worker run until state > 0 so that the reset is observable
+        let mut state_before_fork = 0;
+        while state_before_fork == 0 {
+            state_before_fork = receiver
+                .recv_timeout(Duration::from_secs(1))
+                .expect("worker did not advance state before fork");
+        }
+
+        shared_runtime.before_fork();
+        // Drain pre-fork buffered messages now that the worker is paused
+        while receiver.try_recv().is_ok() {}
+
         assert!(shared_runtime.after_fork_child().is_ok());
+
+        // State must be reset to 0 in the child
+        let after_fork_value = receiver
+            .recv_timeout(Duration::from_secs(1))
+            .expect("worker did not resume after fork child");
+        assert_eq!(
+            after_fork_value, 0,
+            "after_fork_child should reset state to 0, got {after_fork_value}"
+        );
+    }
+
+    #[test]
+    fn test_shutdown() {
+        let shared_runtime = SharedRuntime::new().unwrap();
+        let (worker, receiver) = make_test_worker();
+
+        shared_runtime.spawn_worker(worker).unwrap();
+
+        // Wait for at least one run before shutting down
+        receiver
+            .recv_timeout(Duration::from_secs(1))
+            .expect("worker did not run");
+
+        shared_runtime.shutdown(None).unwrap();
+
+        // Drain all messages after shutdown — the last one must be the shutdown sentinel
+        let mut last = receiver
+            .recv_timeout(Duration::from_secs(1))
+            .expect("shutdown did not send a value");
+        while let Ok(v) = receiver.try_recv() {
+            last = v;
+        }
+        assert_eq!(last, -1);
     }
 }
