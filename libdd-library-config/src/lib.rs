@@ -512,18 +512,9 @@ impl Configurator {
     }
 
     fn parse_stable_config_slice(&self, buf: &[u8]) -> LoggedResult<StableConfig, anyhow::Error> {
-        let buf = utils::trim_bytes(buf);
-        let stable_config = if buf.is_empty() {
-            StableConfig::default()
-        } else {
-            let s = match core::str::from_utf8(buf) {
-                Ok(s) => s,
-                Err(e) => return LoggedResult::Err(anyhow::Error::msg(e)),
-            };
-            match yaml_peg::serde::from_str::<StableConfig>(s) {
-                Ok(mut docs) => docs.remove(0),
-                Err(e) => return LoggedResult::Err(anyhow::Error::msg(e)),
-            }
+        let stable_config = match yaml::from_bytes::<StableConfig>(buf) {
+            Ok(config) => config,
+            Err(e) => return LoggedResult::Err(e),
         };
 
         let messages = if self.debug_logs {
@@ -815,6 +806,32 @@ impl Configurator {
         };
 
         LoggedResult::Ok((), messages)
+    }
+}
+
+mod yaml {
+    use super::utils;
+
+    /// Deserialize a YAML byte slice into `T`.
+    ///
+    /// Wraps `yaml_serde` (built on libyaml-rs) to isolate the dependency and
+    /// handle quirks like comment-only documents.
+    ///
+    // TODO: Switch yaml_serde to official crates.io release once no_std support
+    // is merged: https://github.com/yaml/yaml-serde/pull/7
+    pub(crate) fn from_bytes<T: serde::de::DeserializeOwned + Default>(
+        buf: &[u8],
+    ) -> Result<T, anyhow::Error> {
+        let buf = utils::trim_bytes(buf);
+        let has_content = !buf.is_empty()
+            && buf.split(|&b| b == b'\n').any(|line| {
+                let trimmed = utils::trim_bytes(line);
+                !trimmed.is_empty() && !trimmed.starts_with(b"#")
+            });
+        if !has_content {
+            return Ok(T::default());
+        }
+        yaml_serde::from_slice::<T>(buf).map_err(anyhow::Error::msg)
     }
 }
 
@@ -1230,6 +1247,26 @@ rules:
             config_id: Some("abc".to_string()),
         }],
         );
+    }
+
+    #[test]
+    fn test_parse_comment_only_yaml() {
+        let configurator = Configurator::new(true);
+        let result = configurator.parse_stable_config_slice(b"# this is a comment\n");
+        match result {
+            LoggedResult::Ok(config, _) => assert_eq!(config, StableConfig::default()),
+            LoggedResult::Err(e) => panic!("Expected success, got: {e:?}"),
+        }
+    }
+
+    #[test]
+    fn test_parse_empty_yaml() {
+        let configurator = Configurator::new(true);
+        let result = configurator.parse_stable_config_slice(b"");
+        match result {
+            LoggedResult::Ok(config, _) => assert_eq!(config, StableConfig::default()),
+            LoggedResult::Err(e) => panic!("Expected success, got: {e:?}"),
+        }
     }
 
     #[test]

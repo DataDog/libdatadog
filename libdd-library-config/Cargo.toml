@@ -19,7 +19,7 @@ default = ["std"]
 std = [
     "serde/std",
     "anyhow/std",
-    "yaml-peg/std",
+    "yaml_serde/std",
     "dep:prost",
     "dep:rand",
     "dep:rmp",
@@ -31,7 +31,9 @@ std = [
 
 [dependencies]
 serde = { version = "1.0", default-features = false, features = ["derive", "alloc"] }
-yaml-peg = { version = "1.0.9", default-features = false, features = ["serde"] }
+# TODO: Switch to official crates.io release once no_std support is merged:
+# https://github.com/yaml/yaml-serde/pull/7
+yaml_serde = { git = "https://github.com/pawelchcki/yaml-serde.git", branch = "no-std", default-features = false }
 prost = { version = "0.14.1", optional = true }
 anyhow = { version = "1.0", default-features = false }
 
