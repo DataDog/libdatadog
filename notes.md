@@ -1,0 +1,6 @@
+- ~~use a hasher that is u32-friendly~~ (already done in latest branch)
+- slap #inline on small functions if they're used from another crate (might be useless with LTO)
+- why don't we use auto-vect in libdatadog-nodejs?
+- use smaller opcode? u64 sounds like way too much
+- question: what is the usual length / lifetime of the string table?
+- use a branch-less op-encoding for setting directly the memory bytes (1 bit for: Vec or not? Do we need a second bit for String or not?)
