@@ -14,7 +14,7 @@ use anyhow::Context;
 use bin_tests::test_runner::run_crash_no_op;
 use bin_tests::{
     artifacts::{self, StandardArtifacts},
-    build_artifacts,
+    fetch_built_artifacts,
     test_runner::{run_crash_test_with_artifacts, CrashTestConfig, ValidatorFn},
     test_types::{CrashType, TestMode},
     validation::PayloadValidator,
@@ -70,7 +70,7 @@ fn run_standard_crash_test_refactored(
 ) {
     let config = CrashTestConfig::new(profile, mode, crash_type);
     let artifacts = StandardArtifacts::new(config.profile);
-    let artifacts_map = build_artifacts(&artifacts.as_slice()).unwrap();
+    let artifacts_map = fetch_built_artifacts(&artifacts.as_slice()).unwrap();
 
     let crash_type_str = crash_type.as_str();
     let validator: ValidatorFn = Box::new(move |payload, fixtures| {
@@ -98,6 +98,33 @@ fn run_standard_crash_test_refactored(
 
 #[test]
 #[cfg_attr(miri, ignore)]
+fn test_crash_tracking_bin_errno_preservation() {
+    use bin_tests::modes::unix::test_016_errno_preservation::ERRNO_STATUS_FILENAME;
+
+    let config = CrashTestConfig::new(
+        BuildProfile::Release,
+        TestMode::ErrnoPreservation,
+        CrashType::NullDeref,
+    );
+    let artifacts = StandardArtifacts::new(config.profile);
+    let artifacts_map = fetch_built_artifacts(&artifacts.as_slice()).unwrap();
+
+    let validator: ValidatorFn = Box::new(|_payload, fixtures| {
+        let status_path = fixtures.output_dir.join(ERRNO_STATUS_FILENAME);
+        let content = fs::read_to_string(&status_path)
+            .context("reading errno_status file; signal handler may not have written it")?;
+        assert_eq!(
+            content, "PRESERVED",
+            "errno was not preserved across crashtracker signal handler (got {content:?})"
+        );
+        Ok(())
+    });
+
+    run_crash_test_with_artifacts(&config, &artifacts_map, &artifacts, validator).unwrap();
+}
+
+#[test]
+#[cfg_attr(miri, ignore)]
 fn test_crash_tracking_bin_unhandled_exception() {
     let config = CrashTestConfig::new(
         BuildProfile::Release,
@@ -105,13 +132,13 @@ fn test_crash_tracking_bin_unhandled_exception() {
         CrashType::UnhandledException,
     );
     let artifacts = StandardArtifacts::new(config.profile);
-    let artifacts_map = build_artifacts(&artifacts.as_slice()).unwrap();
+    let artifacts_map = fetch_built_artifacts(&artifacts.as_slice()).unwrap();
 
     let validator: ValidatorFn = Box::new(|payload, fixtures| {
         PayloadValidator::new(payload)
             .validate_counters()?
             .validate_error_kind("UnhandledException")?
-            .validate_error_message_contains("Process was terminated due to an unhandled exception of type 'RuntimeException'. Message: an exception occured")?
+            .validate_error_message_contains("Process was terminated due to an unhandled exception of type 'RuntimeException'. Message: \n an exception \n occured \n")?
             // The two frames emitted in the bin: test_function1 and test_function2
             .validate_callstack_functions(&["test_function1", "test_function2"])?;
 
@@ -141,7 +168,7 @@ fn test_crash_tracking_bin_runtime_callback_frame() {
         CrashType::NullDeref,
     );
     let artifacts = StandardArtifacts::new(config.profile);
-    let artifacts_map = build_artifacts(&artifacts.as_slice()).unwrap();
+    let artifacts_map = fetch_built_artifacts(&artifacts.as_slice()).unwrap();
 
     let validator: ValidatorFn = Box::new(|payload, fixtures| {
         PayloadValidator::new(payload).validate_counters()?;
@@ -171,7 +198,7 @@ fn test_crash_tracking_thread_name() {
         CrashType::NullDeref,
     );
     let artifacts = StandardArtifacts::new(config.profile);
-    let artifacts_map = build_artifacts(&artifacts.as_slice()).unwrap();
+    let artifacts_map = fetch_built_artifacts(&artifacts.as_slice()).unwrap();
 
     let validator: ValidatorFn = Box::new(|payload, _fixtures| {
         let error = &payload["error"];
@@ -204,7 +231,7 @@ fn test_crash_tracking_bin_runtime_callback_string() {
         CrashType::NullDeref,
     );
     let artifacts = StandardArtifacts::new(config.profile);
-    let artifacts_map = build_artifacts(&artifacts.as_slice()).unwrap();
+    let artifacts_map = fetch_built_artifacts(&artifacts.as_slice()).unwrap();
 
     let validator: ValidatorFn = Box::new(|payload, fixtures| {
         PayloadValidator::new(payload).validate_counters()?;
@@ -233,7 +260,7 @@ fn test_crash_tracking_bin_no_runtime_callback() {
         CrashType::NullDeref,
     );
     let artifacts = StandardArtifacts::new(config.profile);
-    let artifacts_map = build_artifacts(&artifacts.as_slice()).unwrap();
+    let artifacts_map = fetch_built_artifacts(&artifacts.as_slice()).unwrap();
 
     let validator: ValidatorFn = Box::new(|payload, fixtures| {
         PayloadValidator::new(payload).validate_counters()?;
@@ -272,7 +299,7 @@ fn test_collector_no_allocations_stacktrace_modes() {
         let _ = fs::remove_file(&detector_log_path);
 
         let config = CrashTestConfig::new(
-            BuildProfile::Debug,
+            BuildProfile::Release,
             TestMode::RuntimePreloadLogger,
             CrashType::NullDeref,
         )
@@ -311,7 +338,7 @@ fn test_crash_tracking_bin_runtime_callback_frame_invalid_utf8() {
         CrashType::NullDeref,
     );
     let artifacts = StandardArtifacts::new(config.profile);
-    let artifacts_map = build_artifacts(&artifacts.as_slice()).unwrap();
+    let artifacts_map = fetch_built_artifacts(&artifacts.as_slice()).unwrap();
 
     let validator: ValidatorFn = Box::new(|payload, fixtures| {
         PayloadValidator::new(payload).validate_counters()?;
@@ -353,7 +380,7 @@ fn test_crash_tracking_errors_intake_upload() {
     .with_env("DD_CRASHTRACKING_ERRORS_INTAKE_ENABLED", "true");
 
     let artifacts = StandardArtifacts::new(config.profile);
-    let artifacts_map = build_artifacts(&artifacts.as_slice()).unwrap();
+    let artifacts_map = fetch_built_artifacts(&artifacts.as_slice()).unwrap();
 
     let validator: ValidatorFn = Box::new(|_payload, fixtures| {
         let errors_intake_path = fixtures.crash_profile_path.with_extension("errors");
@@ -386,7 +413,7 @@ fn test_crash_tracking_errors_intake_crash_ping() {
     .with_env("DD_CRASHTRACKING_ERRORS_INTAKE_ENABLED", "true");
 
     let artifacts = StandardArtifacts::new(config.profile);
-    let artifacts_map = build_artifacts(&artifacts.as_slice()).unwrap();
+    let artifacts_map = fetch_built_artifacts(&artifacts.as_slice()).unwrap();
 
     let validator: ValidatorFn = Box::new(|_payload, fixtures| {
         let errors_intake_path = fixtures.crash_profile_path.with_extension("errors");
@@ -397,6 +424,177 @@ fn test_crash_tracking_errors_intake_crash_ping() {
 
         assert_errors_intake_payload(&errors_intake_content, "null_deref");
         validate_telemetry(&fixtures.crash_telemetry_path, "null_deref")?;
+
+        Ok(())
+    });
+
+    run_crash_test_with_artifacts(&config, &artifacts_map, &artifacts, validator).unwrap();
+}
+
+/// Validates that the errors intake payload correctly inherits fields from the crash info payload.
+/// Both payloads are written to file during the same crash, so we can compare them directly.
+#[test]
+#[cfg_attr(miri, ignore)]
+fn test_crash_tracking_errors_intake_crash_info_parity() {
+    let config = CrashTestConfig::new(
+        BuildProfile::Release,
+        TestMode::DoNothing,
+        CrashType::NullDeref,
+    )
+    .with_env("DD_CRASHTRACKING_ERRORS_INTAKE_ENABLED", "true");
+
+    let artifacts = StandardArtifacts::new(config.profile);
+    let artifacts_map = fetch_built_artifacts(&artifacts.as_slice()).unwrap();
+
+    let validator: ValidatorFn = Box::new(|crash_info_payload, fixtures| {
+        let errors_intake_path = fixtures.crash_profile_path.with_extension("errors");
+        assert!(
+            errors_intake_path.exists(),
+            "Errors intake file should exist at {}",
+            errors_intake_path.display()
+        );
+
+        let errors_intake_content =
+            fs::read(&errors_intake_path).context("reading errors intake payload")?;
+        let errors_payload: Value = serde_json::from_slice(&errors_intake_content)
+            .context("deserializing errors intake payload")?;
+
+        // Errors intake should use crash_info.error.message when present,
+        // otherwise fall back to signal-derived message
+        let crash_info_message = &crash_info_payload["error"]["message"];
+        let errors_message = &errors_payload["error"]["message"];
+        if crash_info_message.is_string() {
+            assert_eq!(
+                errors_message, crash_info_message,
+                "errors intake message should inherit crash_info.error.message"
+            );
+        } else {
+            assert!(
+                errors_message.is_string(),
+                "errors intake should have a fallback message"
+            );
+            assert!(
+                errors_message
+                    .as_str()
+                    .unwrap()
+                    .contains("Process terminated"),
+                "fallback message should describe the signal"
+            );
+        }
+
+        let crash_info_thread_name = &crash_info_payload["error"]["thread_name"];
+        let errors_thread_name = &errors_payload["error"]["thread_name"];
+        assert_eq!(
+            errors_thread_name, crash_info_thread_name,
+            "errors intake thread_name should match crash_info"
+        );
+
+        // error_type: signal name when sig_info present, ErrorKind otherwise
+        let errors_type = errors_payload["error"]["type"]
+            .as_str()
+            .expect("errors intake should have error.type");
+        if crash_info_payload["sig_info"].is_object()
+            && crash_info_payload["sig_info"]["si_signo_human_readable"].is_string()
+        {
+            let signal_name = crash_info_payload["sig_info"]["si_signo_human_readable"]
+                .as_str()
+                .unwrap();
+            assert_eq!(
+                errors_type, signal_name,
+                "errors intake type should be signal name when sig_info is present"
+            );
+        } else {
+            let crash_info_kind = crash_info_payload["error"]["kind"]
+                .as_str()
+                .expect("crash_info should have error.kind");
+            assert_eq!(
+                errors_type, crash_info_kind,
+                "errors intake type should equal crash_info ErrorKind when no sig_info"
+            );
+        }
+
+        // os_info parity
+        assert_eq!(
+            errors_payload["os_info"], crash_info_payload["os_info"],
+            "errors intake os_info should match crash_info os_info"
+        );
+
+        // proc_info parity
+        assert_eq!(
+            errors_payload["proc_info"], crash_info_payload["proc_info"],
+            "errors intake proc_info should match crash_info proc_info"
+        );
+
+        // sig_info parity
+        assert_eq!(
+            errors_payload["sig_info"], crash_info_payload["sig_info"],
+            "errors intake sig_info should match crash_info sig_info"
+        );
+
+        // files parity
+        let crash_info_files = &crash_info_payload["files"];
+        let errors_files = &errors_payload["files"];
+        if crash_info_files.is_object()
+            && crash_info_files.as_object().is_some_and(|m| !m.is_empty())
+        {
+            assert_eq!(
+                errors_files, crash_info_files,
+                "errors intake files should match crash_info files"
+            );
+        }
+
+        // stack parity
+        let crash_info_stack = &crash_info_payload["error"]["stack"];
+        let errors_stack = &errors_payload["error"]["stack"];
+        if crash_info_stack.is_object() {
+            let crash_frames = &crash_info_stack["frames"];
+            let errors_frames = &errors_stack["frames"];
+            if crash_frames.is_array()
+                && crash_frames
+                    .as_array()
+                    .is_some_and(|frames| !frames.is_empty())
+            {
+                assert!(
+                    errors_frames.is_array(),
+                    "errors intake should have stack frames when crash_info does"
+                );
+                assert_eq!(
+                    errors_frames.as_array().map(|f| f.len()),
+                    crash_frames.as_array().map(|f| f.len()),
+                    "errors intake frame count should match crash_info"
+                );
+            }
+        }
+
+        // fingerprint parity
+        assert_eq!(
+            errors_payload["error"]["fingerprint"], crash_info_payload["fingerprint"],
+            "errors intake fingerprint should match crash_info fingerprint"
+        );
+
+        // experimental parity
+        if crash_info_payload["experimental"].is_object() {
+            assert_eq!(
+                errors_payload["error"]["experimental"], crash_info_payload["experimental"],
+                "errors intake experimental should match crash_info experimental"
+            );
+        }
+
+        // ucontext parity
+        if crash_info_payload["ucontext"].is_object() {
+            assert_eq!(
+                errors_payload["ucontext"], crash_info_payload["ucontext"],
+                "errors intake ucontext should match crash_info ucontext"
+            );
+        }
+
+        // thread_name parity
+        if crash_info_payload["thread_name"].is_string() {
+            assert_eq!(
+                errors_payload["error"]["thread_name"], crash_info_payload["thread_name"],
+                "errors intake thread_name should match crash_info thread_name"
+            );
+        }
 
         Ok(())
     });
@@ -440,7 +638,7 @@ fn test_crash_tracking_app(crash_type: &str) {
     let crashtracker_receiver = artifacts::crashtracker_receiver(BuildProfile::Release);
     let crashing_app = artifacts::crashing_app(BuildProfile::Debug, true);
 
-    let artifacts_map = build_artifacts(&[&crashtracker_receiver, &crashing_app]).unwrap();
+    let artifacts_map = fetch_built_artifacts(&[&crashtracker_receiver, &crashing_app]).unwrap();
 
     // Create validator based on crash type
     let crash_type_owned = crash_type.to_owned();
@@ -514,7 +712,8 @@ fn test_panic_hook_mode(mode: &str, expected_category: &str, expected_panic_mess
     let crashtracker_receiver = artifacts::crashtracker_receiver(BuildProfile::Release);
     let crashtracker_bin_test = artifacts::crashtracker_bin_test(BuildProfile::Debug, true);
 
-    let artifacts_map = build_artifacts(&[&crashtracker_receiver, &crashtracker_bin_test]).unwrap();
+    let artifacts_map =
+        fetch_built_artifacts(&[&crashtracker_receiver, &crashtracker_bin_test]).unwrap();
 
     let expected_category = expected_category.to_owned();
     let expected_panic_message = expected_panic_message.map(|s| s.to_owned());
@@ -587,7 +786,7 @@ fn test_crash_tracking_callstack() {
     // compile in debug so we avoid inlining and can check the callchain
     let crashing_app = artifacts::crashing_app(BuildProfile::Debug, false);
 
-    let artifacts_map = build_artifacts(&[&crashtracker_receiver, &crashing_app]).unwrap();
+    let artifacts_map = fetch_built_artifacts(&[&crashtracker_receiver, &crashing_app]).unwrap();
 
     // Note: in Release, we do not have the crate and module name prepended to the function name
     // Here we compile the crashing app in Debug.
@@ -1334,7 +1533,7 @@ fn test_receiver_emits_debug_logs_on_receiver_issue() -> anyhow::Result<()> {
     use std::time::Duration;
 
     let receiver = artifacts::crashtracker_receiver(BuildProfile::Debug);
-    let artifacts = build_artifacts(&[&receiver])?;
+    let artifacts = fetch_built_artifacts(&[&receiver])?;
     let fixtures = bin_tests::test_runner::TestFixtures::new()?;
 
     let missing_file = fixtures.output_dir.join("missing_additional_file.txt");
@@ -1610,7 +1809,7 @@ struct TestFixtures<'a> {
 }
 
 fn setup_test_fixtures<'a>(crates: &[&'a ArtifactsBuild]) -> TestFixtures<'a> {
-    let artifacts = build_artifacts(crates).unwrap();
+    let artifacts = fetch_built_artifacts(crates).unwrap();
 
     let tmpdir = tempfile::TempDir::new().unwrap();
     let dirpath = tmpdir.path();
@@ -1805,7 +2004,7 @@ fn assert_errors_intake_payload(errors_intake_content: &[u8], crash_typ: &str) {
 
     let error = &payload["error"];
     assert_eq!(error["source_type"], "Crashtracking");
-    assert!(error["type"].is_string()); // Note: "error_type" field is serialized as "type"
+    assert!(error["type"].is_string());
     assert!(error["message"].is_string());
 
     // Check if this is a crash ping or crash report
@@ -1836,7 +2035,22 @@ fn assert_errors_intake_payload(errors_intake_content: &[u8], crash_typ: &str) {
         );
     }
 
-    // Check signal-specific values
+    // error.type is signal name for signal-based crashes, ErrorKind otherwise
+    let expected_error_type = match crash_typ {
+        "null_deref" | "kill_sigsegv" | "raise_sigsegv" => "SIGSEGV",
+        "kill_sigabrt" | "raise_sigabrt" => "SIGABRT",
+        "kill_sigill" | "raise_sigill" => "SIGILL",
+        "kill_sigbus" | "raise_sigbus" => "SIGBUS",
+        "unhandled_exception" => "UnhandledException",
+        other => panic!("Unexpected crash_typ for error.type: {other}"),
+    };
+    assert_eq!(
+        error["type"], expected_error_type,
+        "error.type mismatch, got: {}",
+        error["type"]
+    );
+
+    // error.message should come from crash_info.error.message or fall back to signal description
     match crash_typ {
         "null_deref" => {
             assert_eq!(error["type"], "SIGSEGV");

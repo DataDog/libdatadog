@@ -210,7 +210,8 @@ impl DatadogAgentContainerBuilder {
 /// Basic usage:
 ///
 /// ```no_run
-/// use libdd_common::http_common::new_default_client;
+/// use libdd_capabilities::HttpClientTrait;
+/// use libdd_capabilities_impl::NativeCapabilities;
 /// use libdd_common::Endpoint;
 /// use libdd_trace_utils::send_data::SendData;
 /// use libdd_trace_utils::test_utils::datadog_test_agent::DatadogTestAgent;
@@ -240,7 +241,7 @@ impl DatadogAgentContainerBuilder {
 ///         &endpoint,
 ///     );
 ///
-///     let client = new_default_client();
+///     let client = NativeCapabilities::new_client();
 ///     let _result = data.send(&client).await;
 ///
 ///     // Assert that the snapshot for a given token matches the expected snapshot
@@ -417,7 +418,8 @@ impl DatadogTestAgent {
         let body_string = String::from_utf8(body_bytes.to_vec()).expect("Conversion failed");
 
         assert_eq!(
-            status_code, 200,
+            status_code,
+            hyper::StatusCode::OK,
             "Expected status 200, but got {status_code}. Response body: {body_string}"
         );
     }
@@ -532,7 +534,7 @@ impl DatadogTestAgent {
 
         assert_eq!(
             res.status(),
-            200,
+            hyper::StatusCode::OK,
             "Expected status 200 for test agent {}, but got {}",
             SESSION_START_ENDPOINT,
             res.status()
@@ -638,11 +640,11 @@ impl DatadogTestAgent {
             .to_bytes();
 
         assert_eq!(
-            status.as_u16(),
-            202,
-            "Expected status 200 for test agent {}, but got {}: {:?}",
+            status,
+            hyper::StatusCode::ACCEPTED,
+            "Expected status 202 for test agent {}, but got {}: {:?}",
             SET_REMOTE_CONFIG_RESPONSE_PATH_ENDPOINT,
-            status.as_u16(),
+            status,
             String::from_utf8_lossy(&body)
         );
     }

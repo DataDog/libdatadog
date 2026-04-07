@@ -1,6 +1,6 @@
 [package]
 name = "libdd-data-pipeline"
-version= "2.0.1"
+version= "3.0.1"
 description = "Trace exporter package allowing sending data from datadog SDKs to the Trace Agent."
 homepage = "https://github.com/DataDog/libdatadog/tree/main/libdd-data-pipeline"
 repository = "https://github.com/DataDog/libdatadog/tree/main/libdd-data-pipeline"
@@ -14,7 +14,7 @@ autobenches = false
 [dependencies]
 anyhow = { version = "1.0" }
 arc-swap = "1.7.1"
-http = "1.1"
+http = "1"
 http-body-util = "0.1"
 tracing = { version = "0.1", default-features = false }
 rmp-serde = "1.1.1"
@@ -25,27 +25,35 @@ sha2 = "0.10"
 either = "1.13.0"
 tokio = { version = "1.23", features = [
     "rt",
-    "test-util",
-    "time",
 ], default-features = false }
 uuid = { version = "1.10.0", features = ["v4"] }
 tokio-util = "0.7.11"
-libdd-common = { version = "3.0.0", path = "../libdd-common", default-features = false }
-libdd-telemetry = { version = "3.0.0", path = "../libdd-telemetry", default-features = false }
-libdd-trace-protobuf = { version = "2.0.0", path = "../libdd-trace-protobuf" }
-libdd-trace-stats = { version = "1.0.3", path = "../libdd-trace-stats" }
-libdd-trace-utils = { version = "2.0.2", path = "../libdd-trace-utils", default-features = false }
+libdd-capabilities = { path = "../libdd-capabilities", version = "0.1.0" }
+libdd-common = { version = "3.0.2", path = "../libdd-common", default-features = false }
+libdd-telemetry = { version = "4.0.0", path = "../libdd-telemetry", default-features = false, optional = true }
+libdd-trace-protobuf = { version = "3.0.1", path = "../libdd-trace-protobuf" }
+libdd-trace-stats = { version = "2.0.0", path = "../libdd-trace-stats" }
+libdd-trace-utils = { version = "3.0.1", path = "../libdd-trace-utils", default-features = false }
 libdd-ddsketch = { version = "1.0.1", path = "../libdd-ddsketch" }
-libdd-dogstatsd-client = { version = "1.0.1", path = "../libdd-dogstatsd-client", default-features = false }
+libdd-dogstatsd-client = { version = "2.0.0", path = "../libdd-dogstatsd-client", default-features = false }
 libdd-tinybytes = { version = "1.1.0", path = "../libdd-tinybytes", features = [
     "bytes_string",
     "serialization",
 ] }
 
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+tokio = { version = "1.23", features = ["time", "test-util"], default-features = false }
+libdd-capabilities-impl = { version = "0.1.0", path = "../libdd-capabilities-impl" }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+getrandom = { version = "0.2", features = ["js"] }
+uuid = { version = "1", features = ["js"] }
+
 [lib]
 bench = false
 
 [dev-dependencies]
+libdd-capabilities-impl = { version = "0.1.0", path = "../libdd-capabilities-impl" }
 libdd-log = { path = "../libdd-log" }
 clap = { version = "4.0", features = ["derive"] }
 criterion = "0.5.1"
@@ -63,10 +71,11 @@ tokio = { version = "1.23", features = [
 ], default-features = false }
 
 [features]
-default = ["https"]
+default = ["https", "telemetry"]
+telemetry = ["libdd-telemetry"]
 https = [
     "libdd-common/https",
-    "libdd-telemetry/https",
+    "libdd-telemetry?/https",
     "libdd-trace-utils/https",
     "libdd-dogstatsd-client/https",
 ]

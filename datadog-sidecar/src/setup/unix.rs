@@ -4,24 +4,22 @@
 use std::sync::LazyLock;
 use std::{
     env, fs, io,
-    os::unix::{
-        net::{UnixListener, UnixStream},
-        prelude::PermissionsExt,
-    },
+    os::unix::prelude::PermissionsExt,
     path::{Path, PathBuf},
 };
 
 use crate::primary_sidecar_identifier;
 use crate::setup::Liaison;
-use datadog_ipc::platform::{self, locks::FLock, Channel};
+use datadog_ipc::platform::locks::FLock;
+use datadog_ipc::{SeqpacketConn, SeqpacketListener};
 
 #[cfg(feature = "logging")]
 use log::{debug, warn};
 #[cfg(not(feature = "logging"))]
 use tracing::{debug, warn};
 
-pub type IpcClient = tokio::net::UnixStream;
-pub type IpcServer = UnixListener;
+pub type IpcClient = SeqpacketConn;
+pub type IpcServer = SeqpacketListener;
 
 fn ensure_dir_world_writable<P: AsRef<Path>>(path: P) -> io::Result<()> {
     let mut perm = path.as_ref().metadata()?.permissions();
@@ -43,11 +41,11 @@ pub struct SharedDirLiaison {
 }
 
 impl Liaison for SharedDirLiaison {
-    fn connect_to_server(&self) -> io::Result<Channel> {
-        Ok(Channel::from(UnixStream::connect(&self.socket_path)?))
+    fn connect_to_server(&self) -> io::Result<SeqpacketConn> {
+        SeqpacketConn::connect(&self.socket_path)
     }
 
-    fn attempt_listen(&self) -> io::Result<Option<UnixListener>> {
+    fn attempt_listen(&self) -> io::Result<Option<SeqpacketListener>> {
         let dir = self.socket_path.parent().unwrap_or_else(|| Path::new("/"));
         ensure_dir_exists(dir)?;
 
@@ -63,7 +61,7 @@ impl Liaison for SharedDirLiaison {
 
         if self.socket_path.exists() {
             // if socket is already listening, then creating listener is not available
-            if platform::sockets::is_listening(&self.socket_path)? {
+            if datadog_ipc::platform::sockets::is_listening(&self.socket_path)? {
                 debug!(
                     "The sidecar's socket is already listening ({})",
                     self.socket_path.as_path().display()
@@ -72,7 +70,7 @@ impl Liaison for SharedDirLiaison {
             }
             fs::remove_file(&self.socket_path)?;
         }
-        Ok(Some(UnixListener::bind(&self.socket_path)?))
+        Ok(Some(SeqpacketListener::bind(&self.socket_path)?))
     }
 
     fn ipc_shared() -> Self {
@@ -137,12 +135,12 @@ impl Default for SharedDirLiaison {
 // In particular, when using different mount namespaces, but a shared network namespace, the
 // processes don't necessarily see the same things.
 mod linux {
-    use std::{io, os::unix::net::UnixListener, path::PathBuf};
+    use std::{io, path::PathBuf};
 
     use spawn_worker::getpid;
 
     use datadog_ipc::platform;
-    use datadog_ipc::platform::Channel;
+    use datadog_ipc::{SeqpacketConn, SeqpacketListener};
 
     use super::Liaison;
 
@@ -152,13 +150,11 @@ mod linux {
     pub type DefaultLiason = AbstractUnixSocketLiaison;
 
     impl Liaison for AbstractUnixSocketLiaison {
-        fn connect_to_server(&self) -> io::Result<Channel> {
-            Ok(Channel::from(platform::sockets::connect_abstract(
-                &self.path,
-            )?))
+        fn connect_to_server(&self) -> io::Result<SeqpacketConn> {
+            platform::sockets::connect_abstract(&self.path)
         }
 
-        fn attempt_listen(&self) -> io::Result<Option<UnixListener>> {
+        fn attempt_listen(&self) -> io::Result<Option<SeqpacketListener>> {
             match platform::sockets::bind_abstract(&self.path) {
                 Ok(l) => Ok(Some(l)),
                 Err(ref e) if e.kind() == io::ErrorKind::AddrInUse => Ok(None),
@@ -215,13 +211,11 @@ pub type DefaultLiason = SharedDirLiaison;
 
 #[cfg(test)]
 mod tests {
-    use std::{
-        io::{self, Read, Write},
-        thread,
-        time::Duration,
-    };
+    use std::{thread, time::Duration};
 
     use tempfile::tempdir;
+
+    use datadog_ipc::{SeqpacketConn, SeqpacketListener};
 
     use super::Liaison;
 
@@ -241,29 +235,17 @@ mod tests {
         T: Liaison,
     {
         {
-            let listener = liaison.attempt_listen().unwrap().unwrap();
+            let listener: SeqpacketListener = liaison.attempt_listen().unwrap().unwrap();
             // can't listen twice when some listener is active
             assert!(liaison.attempt_listen().unwrap().is_none());
-            // a liaison can try connecting to existing socket to ensure its valid, adding
-            // connection to accept queue but we can drain any preexisting connections
-            // in the queue
-            listener.set_nonblocking(true).unwrap();
-            loop {
-                match listener.accept() {
-                    Ok(_) => continue,
-                    Err(e) => {
-                        assert_eq!(io::ErrorKind::WouldBlock, e.kind());
-                        break;
-                    }
-                }
-            }
-            listener.set_nonblocking(false).unwrap();
 
-            let mut client = liaison.connect_to_server().unwrap();
-            let (mut srv, _) = listener.accept().unwrap();
-            assert_eq!(1, client.write(&[255]).unwrap());
-            let mut buf = [0; 1];
-            assert_eq!(1, srv.read(&mut buf).unwrap());
+            let client: SeqpacketConn = liaison.connect_to_server().unwrap();
+            let srv: SeqpacketConn = listener.try_accept().unwrap();
+            client.send_raw_blocking(&mut vec![255], &[]).unwrap();
+            let mut buf = [0u8; 4];
+            let (n, _) = srv.recv_raw_blocking(&mut buf).unwrap();
+            assert_eq!(n, 1);
+            assert_eq!(buf[0], 255);
             drop(listener);
             drop(client);
         }

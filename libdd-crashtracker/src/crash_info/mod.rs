@@ -15,6 +15,7 @@ mod spans;
 mod stacktrace;
 mod telemetry;
 mod test_utils;
+mod ucontext;
 mod unknown_value;
 
 // This is set compile time
@@ -32,6 +33,7 @@ pub use sig_info::*;
 pub use spans::*;
 pub use stacktrace::*;
 pub use telemetry::*;
+pub use ucontext::*;
 
 use anyhow::Context;
 use schemars::JsonSchema;
@@ -71,12 +73,14 @@ pub struct CrashInfo {
     pub timestamp: String,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub trace_ids: Vec<Span>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ucontext: Option<Ucontext>,
     pub uuid: String,
 }
 
 impl CrashInfo {
     pub fn current_schema_version() -> String {
-        "1.5".to_string()
+        "1.6".to_string()
     }
 
     pub fn demangle_names(&mut self) -> anyhow::Result<()> {
@@ -180,7 +184,7 @@ mod tests {
     fn test_schema_matches_rfc() {
         let rfc_schema_filename = concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/../docs/RFCs/artifacts/crashtracker-unified-runtime-stack-schema-v1_5.json"
+            "/../docs/RFCs/artifacts/crashtracker-unified-runtime-stack-schema-v1_6.json"
         );
         let schema = schemars::schema_for!(CrashInfo);
         let schema_json = serde_json::to_string_pretty(&schema).expect("Schema to serialize");
@@ -243,17 +247,28 @@ mod tests {
                 },
             ];
 
+            let mut files = HashMap::new();
+            files.insert(
+                "/proc/self/maps".to_string(),
+                vec![
+                    "55a1b2c3d000-55a1b2c4e000 r-xp 00000000 08:01 12345 /usr/bin/test".to_string(),
+                ],
+            );
+
             Self {
                 counters,
                 data_schema_version: CrashInfo::current_schema_version(),
                 error: ErrorData::test_instance(seed),
-                experimental: None,
-                files: HashMap::new(),
+                experimental: Some(Experimental::new().with_additional_tags(vec![
+                    "custom_tag:value1".to_string(),
+                    "another_tag:value2".to_string(),
+                ])),
+                files,
                 fingerprint: None,
                 incomplete: true,
                 log_messages: vec![],
                 metadata: Metadata::test_instance(seed),
-                os_info: ::os_info::Info::unknown().into(),
+                os_info: ::os_info::get().into(),
                 proc_info: Some(ProcInfo::test_instance(seed)),
                 sig_info: Some(SigInfo::test_instance(seed)),
                 span_ids,
@@ -261,6 +276,7 @@ mod tests {
                     .unwrap()
                     .to_string(),
                 trace_ids,
+                ucontext: Some(Ucontext::test_instance(seed)),
                 uuid: uuid::uuid!("1d6b97cb-968c-40c9-af6e-e4b4d71e8781").to_string(),
             }
         }

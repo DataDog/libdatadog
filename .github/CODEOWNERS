@@ -39,12 +39,14 @@ docker-bake.hcl                      @DataDog/apm-common-components-core
 docs                                 @DataDog/libdatadog
 examples                             @DataDog/libdatadog
 libdd-alloc/                         @DataDog/libdatadog-profiling
+libdd-capabilities*/                 @DataDog/apm-common-components-core
 libdd-common*/                       @DataDog/libdatadog
 libdd-crashtracker*/                 @DataDog/libdatadog-profiling
 libdd-data-pipeline*/                @DataDog/libdatadog-apm
 libdd-ddsketch*/                     @DataDog/libdatadog-apm @DataDog/apm-common-components-core
 libdd-dogstatsd-client               @DataDog/apm-common-components-core
-libdd-library-config*/               @DataDog/apm-sdk-capabilities
+libdd-http-client                    @DataDog/apm-common-components-core
+libdd-library-config*/               @DataDog/apm-sdk-capabilities-rust
 libdd-libunwind*/                    @DataDog/libdatadog-profiling
 libdd-log*/                          @DataDog/apm-common-components-core
 libdd-profiling*/                    @DataDog/libdatadog-profiling
@@ -56,6 +58,7 @@ libdd-trace-protobuf                 @DataDog/serverless @DataDog/libdatadog-apm
 libdd-trace-stats                    @DataDog/apm-common-components-core
 libdd-trace-utils                    @DataDog/serverless @DataDog/libdatadog-apm
 LICENSE*                             @DataDog/libdatadog
+license-tool.toml                    @DataDog/libdatadog
 local-linux.Dockerfile               @DataDog/libdatadog
 NOTICE                               @DataDog/libdatadog
 README.md                            @DataDog/libdatadog
@@ -81,3 +84,6 @@ bin_tests/tests/test_the_tests.rs    @DataDog/libdatadog-core
 bin_tests/src/bin/test_the_tests.rs  @DataDog/libdatadog-core
 tools/cc_utils/                      @DataDog/libdatadog-php
 tools/sidecar_mockgen/               @DataDog/libdatadog-php
+libdd-data-pipeline/src/otlp/                           @DataDog/apm-sdk-capabilities
+libdd-data-pipeline/tests/test_trace_exporter_otlp_export.rs @DataDog/apm-sdk-capabilities
+libdd-trace-utils/src/otlp_encoder/                     @DataDog/apm-sdk-capabilities

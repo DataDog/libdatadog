@@ -22,7 +22,7 @@ fn build_app_started_payload() -> AppStarted {
 
 fn seq_id() -> u64 {
     static SEQ_ID: AtomicU64 = AtomicU64::new(0);
-    SEQ_ID.fetch_add(1, Ordering::SeqCst)
+    SEQ_ID.fetch_add(1, Ordering::Relaxed)
 }
 
 fn build_request<'a>(

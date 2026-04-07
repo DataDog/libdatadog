@@ -1,0 +1,22 @@
+# Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
+# SPDX-License-Identifier: Apache-2.0
+
+[package]
+name = "libdd-capabilities"
+version = "0.1.0"
+description = "Portable capability traits for cross-platform libdatadog"
+homepage = "https://github.com/DataDog/libdatadog/tree/main/libdd-capabilities"
+repository = "https://github.com/DataDog/libdatadog/tree/main/libdd-capabilities"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[lib]
+crate-type = ["lib"]
+bench = false
+
+[dependencies]
+http = "1"
+bytes = "1.11.1"
+anyhow = "1.0"
+thiserror = "1.0"

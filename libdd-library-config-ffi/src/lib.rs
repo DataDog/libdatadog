@@ -174,9 +174,7 @@ impl LibraryConfig {
                             logs: cstring_logs,
                         })
                     }
-                    Err(err) => {
-                        LibraryConfigLoggedResult::Err(Error::from(err.to_string()))
-                    }
+                    Err(err) => LibraryConfigLoggedResult::Err(Error::from(err.to_string())),
                 }
             }
             libdd_library_config::LoggedResult::Err(err) => {

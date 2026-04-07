@@ -24,7 +24,7 @@ build_common = { path = "../build-common" }
 anyhow = { version = "1.0", optional = true }
 chrono = { version = "0.4.38", features = ["std"], optional = true }
 crossbeam-queue = { version = "0.3.11", optional = true }
-libdd-common = { version = "3.0.0", path = "../libdd-common", optional = true }
+libdd-common = { version = "3.0.2", path = "../libdd-common", optional = true }
 hyper = { workspace = true, optional = true }
 serde = { version = "1.0", optional = true }
 

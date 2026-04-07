@@ -2,19 +2,17 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use std::io;
-use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle};
 use std::sync::{Mutex, OnceLock};
 use std::thread::{self, JoinHandle};
-use tokio::net::windows::named_pipe::{ClientOptions, ServerOptions};
 use tokio::sync::oneshot;
 use tracing::{error, info};
 
 use crate::config::Config;
 use crate::entry::MainLoopConfig;
 use crate::service::blocking::SidecarTransport;
-use datadog_ipc::platform::metadata::ProcessHandle;
-use datadog_ipc::platform::Channel;
-use datadog_ipc::transport::blocking::BlockingTransport;
+use crate::setup::Liaison;
+use crate::setup::NamedPipeLiaison;
+use datadog_ipc::{AsyncConn, SeqpacketListener};
 
 static MASTER_LISTENER: OnceLock<Mutex<Option<MasterListener>>> = OnceLock::new();
 
@@ -39,13 +37,17 @@ impl MasterListener {
             return Err(io::Error::other("Master listener is already running"));
         }
 
-        let pipe_name = format!(r"\\.\pipe\ddtrace_sidecar_{}", pid);
+        let liaison = NamedPipeLiaison::new(format!("libdatadog_{}_", pid));
+        let listener = liaison
+            .attempt_listen()?
+            .ok_or_else(|| io::Error::other("Failed to bind master listener pipe"))?;
+
         let (shutdown_tx, shutdown_rx) = oneshot::channel();
 
         let thread_handle = thread::Builder::new()
             .name(format!("ddtrace-sidecar-listener-{}", pid))
             .spawn(move || {
-                if let Err(e) = run_listener_windows(pipe_name, shutdown_rx) {
+                if let Err(e) = run_listener_windows(listener, shutdown_rx) {
                     error!("Listener thread error: {}", e);
                 }
             })
@@ -62,9 +64,6 @@ impl MasterListener {
     }
 
     /// Shutdown the master listener thread.
-    ///
-    /// Sends shutdown signal and joins the listener thread. This is blocking
-    /// and will wait for the thread to exit cleanly.
     pub fn shutdown() -> io::Result<()> {
         let listener_mutex = MASTER_LISTENER.get_or_init(|| Mutex::new(None));
         let mut listener_guard = listener_mutex
@@ -72,7 +71,6 @@ impl MasterListener {
             .map_err(|e| io::Error::other(format!("Failed to acquire listener lock: {}", e)))?;
 
         if let Some(mut master) = listener_guard.take() {
-            // Signal shutdown by sending to the oneshot sender
             if let Some(tx) = master.shutdown_tx.take() {
                 let _ = tx.send(());
             }
@@ -107,63 +105,37 @@ impl MasterListener {
     }
 }
 
-/// Accept connections in a loop for Windows named pipes.
-async fn accept_pipe_loop_windows(
-    pipe_name: String,
-    handler: Box<dyn Fn(tokio::net::windows::named_pipe::NamedPipeServer)>,
+/// Accept connections in a loop using IOCP-backed async named pipes.
+///
+/// `listener.accept_async()` uses Tokio's Windows named-pipe reactor so that
+/// `connect().await` is directly `select!`-cancellable — no `spawn_blocking` or
+/// polling loop.  When the shutdown signal arrives the select arm fires immediately
+/// and the accept future is dropped cleanly.
+async fn accept_socket_loop_thread_windows(
+    listener: SeqpacketListener,
+    handler: Box<dyn Fn(AsyncConn)>,
     mut shutdown_rx: oneshot::Receiver<()>,
 ) -> io::Result<()> {
-    let mut server = ServerOptions::new()
-        .first_pipe_instance(true)
-        .max_instances(254) // Windows allows up to 255 instances
-        .create(&pipe_name)?;
-
-    info!("Named pipe server created at: {}", pipe_name);
-
     loop {
         tokio::select! {
             _ = &mut shutdown_rx => {
                 info!("Shutdown signal received in Windows pipe listener");
                 break;
             }
-            result = server.connect() => {
-                match result {
-                    Ok(_) => {
-                        info!("Accepted new worker connection on named pipe");
-                        handler(server);
-
-                        server = ServerOptions::new()
-                            .create(&pipe_name)?;
-                    }
-                    Err(e) => {
-                        error!("Failed to accept worker connection: {}", e);
-                        match ServerOptions::new().create(&pipe_name) {
-                            Ok(new_server) => server = new_server,
-                            Err(e2) => {
-                                error!("Failed to recover named pipe: {}", e2);
-                                break;
-                            }
-                        }
-                    }
-                }
+            result = listener.accept_async() => {
+                handler(result?);
             }
         }
     }
     Ok(())
 }
 
-/// Entry point for Windows named pipe listener
-fn run_listener_windows(pipe_name: String, shutdown_rx: oneshot::Receiver<()>) -> io::Result<()> {
+/// Entry point for Windows named pipe listener.
+fn run_listener_windows(
+    listener: SeqpacketListener,
+    shutdown_rx: oneshot::Receiver<()>,
+) -> io::Result<()> {
     info!("Listener thread running, creating Windows named pipe server");
-
-    let acquire_listener = move || {
-        let cancel = || {};
-        let pipe_name_clone = pipe_name.clone();
-        Ok((
-            move |handler| accept_pipe_loop_windows(pipe_name_clone, handler, shutdown_rx),
-            cancel,
-        ))
-    };
 
     let loop_config = MainLoopConfig {
         enable_ctrl_c_handler: false,
@@ -172,41 +144,31 @@ fn run_listener_windows(pipe_name: String, shutdown_rx: oneshot::Receiver<()>) -
         init_shm_eagerly: true,
     };
 
-    crate::entry::enter_listener_loop_with_config(acquire_listener, loop_config)
-        .map_err(|e| io::Error::other(format!("Windows thread listener failed: {}", e)))?;
+    crate::entry::enter_listener_loop_with_config(
+        move || {
+            let cancel = || {};
+            Ok((
+                move |handler| accept_socket_loop_thread_windows(listener, handler, shutdown_rx),
+                cancel,
+            ))
+        },
+        loop_config,
+    )
+    .map_err(|e| io::Error::other(format!("Windows thread listener failed: {}", e)))?;
 
     info!("Listener thread exiting");
     Ok(())
 }
 
 /// Connect to the master listener as a worker using Windows Named Pipes.
-///
-/// Establishes a connection to the master listener thread for the given PID.
 pub fn connect_to_master(pid: i32) -> io::Result<Box<SidecarTransport>> {
     info!("Connecting to master listener via named pipe (PID {})", pid);
 
-    let pipe_name = format!(r"\\.\pipe\ddtrace_sidecar_{}", pid);
-
-    let client = ClientOptions::new().open(&pipe_name)?;
-
-    info!("Connected to named pipe: {}", pipe_name);
-
-    let raw_handle = client.as_raw_handle();
-    let owned_handle = unsafe { OwnedHandle::from_raw_handle(raw_handle) };
-
-    std::mem::forget(client);
-
-    let process_handle =
-        ProcessHandle::Getter(Box::new(move || Ok(ProcessHandle::Pid(pid as u32))));
-    let channel = Channel::from_client_handle_and_pid(owned_handle, process_handle);
-
-    let transport = BlockingTransport::from(channel);
-
-    let sidecar_transport = Box::new(SidecarTransport {
-        inner: Mutex::new(transport),
-        reconnect_fn: None,
-    });
+    let liaison = NamedPipeLiaison::new(format!("libdatadog_{}_", pid));
+    let conn = liaison
+        .connect_to_server()
+        .map_err(|e| io::Error::other(format!("Failed to connect to master listener: {}", e)))?;
 
     info!("Successfully connected to master listener");
-    Ok(sidecar_transport)
+    Ok(Box::new(SidecarTransport::from(conn)))
 }

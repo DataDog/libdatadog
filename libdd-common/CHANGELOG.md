@@ -2,6 +2,22 @@
 
 
 
+## [3.0.2](https://github.com/datadog/libdatadog/compare/libdd-common-v3.0.1..libdd-common-v3.0.2) - 2026-03-25
+
+### Changed
+- Fix previous release.
+
+
+
+## [3.0.1](https://github.com/datadog/libdatadog/compare/libdd-common-v3.0.0..libdd-common-v3.0.1) - 2026-03-23
+
+### Changed
+
+- Update reqwest and quinn-proto dependency for dependabot alert ([#1774](https://github.com/datadog/libdatadog/issues/1774)) - ([1cd2791](https://github.com/datadog/libdatadog/commit/1cd2791f5e94ab3197e8e68bf6d670cc715d80a0))
+- Ekump/APMSP-2718 update aws-lc dependencies ([#1751](https://github.com/datadog/libdatadog/issues/1751)) - ([5d5a596](https://github.com/datadog/libdatadog/commit/5d5a596b54b4bc3729063c30393e9706cf2d4eba))
+
+
+
 ## [3.0.0](https://github.com/datadog/libdatadog/compare/libdd-common-v2.0.1..libdd-common-v3.0.0) - 2026-03-18
 
 ### Changed
