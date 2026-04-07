@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use std::{
-    borrow::Borrow,
     sync::{
         atomic::{AtomicU64, Ordering},
         Arc, Mutex,
@@ -10,7 +9,7 @@ use std::{
     time,
 };
 
-use crate::trace_exporter::TracerMetadata;
+use crate::trace_exporter::{SharedTracerMetadata, TracerMetadata};
 use libdd_capabilities::{HttpClientTrait, MaybeSend};
 use libdd_common::{worker::Worker, Endpoint};
 use libdd_trace_protobuf::pb;
@@ -32,7 +31,7 @@ pub struct StatsExporter<H: HttpClientTrait> {
     flush_interval: time::Duration,
     concentrator: Arc<Mutex<SpanConcentrator>>,
     endpoint: Endpoint,
-    meta: TracerMetadata,
+    meta: SharedTracerMetadata,
     sequence_id: AtomicU64,
     cancellation_token: CancellationToken,
     client: H,
@@ -50,7 +49,7 @@ impl<H: HttpClientTrait> StatsExporter<H> {
     pub fn new(
         flush_interval: time::Duration,
         concentrator: Arc<Mutex<SpanConcentrator>>,
-        meta: TracerMetadata,
+        meta: SharedTracerMetadata,
         endpoint: Endpoint,
         cancellation_token: CancellationToken,
         client: H,
@@ -88,7 +87,8 @@ impl<H: HttpClientTrait> StatsExporter<H> {
         }
         let body = rmp_serde::encode::to_vec_named(&payload)?;
 
-        let mut headers: http::HeaderMap = self.meta.borrow().into();
+        let meta = self.meta.load();
+        let mut headers: http::HeaderMap = meta.as_ref().into();
 
         headers.insert(
             http::header::CONTENT_TYPE,
@@ -124,8 +124,9 @@ impl<H: HttpClientTrait> StatsExporter<H> {
     /// case stats cannot be flushed since the concentrator might be corrupted.
     fn flush(&self, force_flush: bool) -> pb::ClientStatsPayload {
         let sequence = self.sequence_id.fetch_add(1, Ordering::Relaxed);
+        let meta = self.meta.load();
         encode_stats_payload(
-            self.meta.borrow(),
+            &meta,
             sequence,
             #[allow(clippy::unwrap_used)]
             self.concentrator
@@ -203,6 +204,7 @@ pub fn stats_url_from_agent_url(agent_url: &str) -> anyhow::Result<http::Uri> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use arc_swap::ArcSwap;
     use httpmock::prelude::*;
     use httpmock::MockServer;
     use libdd_capabilities_impl::NativeCapabilities;
@@ -234,6 +236,10 @@ mod tests {
             process_tags: "key1:value1,key2:value2".into(),
             ..Default::default()
         }
+    }
+
+    fn get_shared_test_metadata() -> SharedTracerMetadata {
+        Arc::new(ArcSwap::new(Arc::new(get_test_metadata())))
     }
 
     fn get_test_concentrator() -> SpanConcentrator {
@@ -281,7 +287,7 @@ mod tests {
         let stats_exporter = StatsExporter::<NativeCapabilities>::new(
             BUCKETS_DURATION,
             Arc::new(Mutex::new(get_test_concentrator())),
-            get_test_metadata(),
+            get_shared_test_metadata(),
             Endpoint::from_url(stats_url_from_agent_url(&server.url("/")).unwrap()),
             CancellationToken::new(),
             NativeCapabilities::new_client(),
@@ -309,7 +315,7 @@ mod tests {
         let stats_exporter = StatsExporter::<NativeCapabilities>::new(
             BUCKETS_DURATION,
             Arc::new(Mutex::new(get_test_concentrator())),
-            get_test_metadata(),
+            get_shared_test_metadata(),
             Endpoint::from_url(stats_url_from_agent_url(&server.url("/")).unwrap()),
             CancellationToken::new(),
             NativeCapabilities::new_client(),
@@ -343,7 +349,7 @@ mod tests {
         let mut stats_exporter = StatsExporter::<NativeCapabilities>::new(
             BUCKETS_DURATION,
             Arc::new(Mutex::new(get_test_concentrator())),
-            get_test_metadata(),
+            get_shared_test_metadata(),
             Endpoint::from_url(stats_url_from_agent_url(&server.url("/")).unwrap()),
             CancellationToken::new(),
             NativeCapabilities::new_client(),
@@ -385,7 +391,7 @@ mod tests {
         let mut stats_exporter = StatsExporter::<NativeCapabilities>::new(
             buckets_duration,
             Arc::new(Mutex::new(get_test_concentrator())),
-            get_test_metadata(),
+            get_shared_test_metadata(),
             Endpoint::from_url(stats_url_from_agent_url(&server.url("/")).unwrap()),
             cancellation_token.clone(),
             NativeCapabilities::new_client(),

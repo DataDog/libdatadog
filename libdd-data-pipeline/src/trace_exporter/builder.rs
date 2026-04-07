@@ -343,7 +343,7 @@ impl TraceExporterBuilder {
                         .unwrap_or(Endpoint::default().timeout_ms),
                     ..Default::default()
                 },
-                metadata: TracerMetadata {
+                metadata: Arc::new(ArcSwap::new(Arc::new(TracerMetadata {
                     tracer_version: self.tracer_version,
                     language_version: self.language_version,
                     language_interpreter: self.language_interpreter,
@@ -358,7 +358,7 @@ impl TraceExporterBuilder {
                     app_version: self.app_version,
                     runtime_id: uuid::Uuid::new_v4().to_string(),
                     service: self.service,
-                },
+                }))),
                 input_format: self.input_format,
                 output_format: self.output_format,
                 client_computed_top_level: self.client_computed_top_level,
@@ -426,7 +426,7 @@ impl TraceExporterBuilder {
                         .unwrap_or(Endpoint::default().timeout_ms),
                     ..Default::default()
                 },
-                metadata: TracerMetadata {
+                metadata: Arc::new(ArcSwap::new(Arc::new(TracerMetadata {
                     tracer_version: self.tracer_version,
                     language_version: self.language_version,
                     language_interpreter: self.language_interpreter,
@@ -441,7 +441,7 @@ impl TraceExporterBuilder {
                     app_version: self.app_version,
                     runtime_id: uuid::Uuid::new_v4().to_string(),
                     service: self.service,
-                },
+                }))),
                 input_format: self.input_format,
                 output_format: self.output_format,
                 client_computed_top_level: self.client_computed_top_level,
@@ -539,13 +539,13 @@ mod tests {
             "http://192.168.1.1:8127/v0.4/traces"
         );
         assert_eq!(exporter.input_format, TraceExporterInputFormat::V04);
-        assert_eq!(exporter.metadata.tracer_version, "v0.1");
-        assert_eq!(exporter.metadata.language, "nodejs");
-        assert_eq!(exporter.metadata.language_version, "1.0");
-        assert_eq!(exporter.metadata.language_interpreter, "v8");
-        assert_eq!(exporter.metadata.language_interpreter_vendor, "node");
-        assert_eq!(exporter.metadata.git_commit_sha, "797e9ea");
-        assert!(exporter.metadata.client_computed_stats);
+        assert_eq!(exporter.metadata.load().tracer_version, "v0.1");
+        assert_eq!(exporter.metadata.load().language, "nodejs");
+        assert_eq!(exporter.metadata.load().language_version, "1.0");
+        assert_eq!(exporter.metadata.load().language_interpreter, "v8");
+        assert_eq!(exporter.metadata.load().language_interpreter_vendor, "node");
+        assert_eq!(exporter.metadata.load().git_commit_sha, "797e9ea");
+        assert!(exporter.metadata.load().client_computed_stats);
         assert!(exporter.telemetry.is_some());
     }
 
@@ -563,11 +563,11 @@ mod tests {
             "http://127.0.0.1:8126/v0.4/traces"
         );
         assert_eq!(exporter.input_format, TraceExporterInputFormat::V04);
-        assert_eq!(exporter.metadata.tracer_version, "");
-        assert_eq!(exporter.metadata.language, "");
-        assert_eq!(exporter.metadata.language_version, "");
-        assert_eq!(exporter.metadata.language_interpreter, "");
-        assert!(!exporter.metadata.client_computed_stats);
+        assert_eq!(exporter.metadata.load().tracer_version, "");
+        assert_eq!(exporter.metadata.load().language, "");
+        assert_eq!(exporter.metadata.load().language_version, "");
+        assert_eq!(exporter.metadata.load().language_interpreter, "");
+        assert!(!exporter.metadata.load().client_computed_stats);
         assert!(exporter.telemetry.is_none());
     }
 

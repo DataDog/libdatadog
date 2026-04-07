@@ -37,7 +37,7 @@ pub(crate) const STATS_ENDPOINT: &str = "/v0.6/stats";
 #[cfg(not(target_arch = "wasm32"))]
 /// Context struct that groups immutable parameters used by stats functions
 pub(crate) struct StatsContext<'a> {
-    pub metadata: &'a super::TracerMetadata,
+    pub metadata: &'a super::SharedTracerMetadata,
     pub endpoint_url: &'a http::Uri,
     pub runtime: &'a Arc<Mutex<Option<Arc<Runtime>>>>,
 }

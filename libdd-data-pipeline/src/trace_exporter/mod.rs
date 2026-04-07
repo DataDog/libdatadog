@@ -54,7 +54,7 @@ use libdd_trace_utils::trace_utils::TracerHeaderTags;
 use std::io;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
-use std::{borrow::Borrow, str::FromStr};
+use std::str::FromStr;
 use tokio::runtime::Runtime;
 use tracing::{debug, error, warn};
 
@@ -156,6 +156,13 @@ pub struct TracerMetadata {
     pub client_computed_top_level: bool,
 }
 
+/// Shared, atomically-swappable tracer metadata.
+///
+/// Wrapped in `Arc` so that both [`TraceExporter`] and [`StatsExporter`] can
+/// hold a handle to the same swappable cell, enabling runtime updates that are
+/// immediately visible to all consumers.
+pub type SharedTracerMetadata = Arc<ArcSwap<TracerMetadata>>;
+
 impl<'a> From<&'a TracerMetadata> for TracerHeaderTags<'a> {
     fn from(tags: &'a TracerMetadata) -> TracerHeaderTags<'a> {
         TracerHeaderTags::<'_> {
@@ -227,7 +234,7 @@ impl From<TraceExporterInputFormat> for DeserInputFormat {
 #[derive(Debug)]
 pub struct TraceExporter<H: HttpClientTrait + MaybeSend + Sync + 'static> {
     endpoint: Endpoint,
-    metadata: TracerMetadata,
+    metadata: SharedTracerMetadata,
     input_format: TraceExporterInputFormat,
     output_format: TraceExporterOutputFormat,
     runtime: Arc<Mutex<Option<Arc<Runtime>>>>,
@@ -254,6 +261,14 @@ impl<H: HttpClientTrait + MaybeSend + Sync + 'static> TraceExporter<H> {
     #[allow(missing_docs)]
     pub fn builder() -> TraceExporterBuilder {
         TraceExporterBuilder::default()
+    }
+
+    /// Update the shared tracer metadata.
+    ///
+    /// The new metadata will be visible to all components (including the
+    /// [`StatsExporter`]) on their next load.
+    pub fn update_metadata(&self, metadata: TracerMetadata) {
+        self.metadata.store(Arc::new(metadata));
     }
 
     /// Return the existing runtime or create a new one and start all workers
@@ -629,14 +644,15 @@ impl<H: HttpClientTrait + MaybeSend + Sync + 'static> TraceExporter<H> {
         traces: Vec<Vec<Span<T>>>,
         config: &OtlpTraceConfig,
     ) -> Result<AgentResponse, TraceExporterError> {
+        let meta = self.metadata.load();
         let resource_info = {
             let mut r = OtlpResourceInfo::default();
-            r.service = self.metadata.service.clone();
-            r.env = self.metadata.env.clone();
-            r.app_version = self.metadata.app_version.clone();
-            r.language = self.metadata.language.clone();
-            r.tracer_version = self.metadata.tracer_version.clone();
-            r.runtime_id = self.metadata.runtime_id.clone();
+            r.service = meta.service.clone();
+            r.env = meta.env.clone();
+            r.app_version = meta.app_version.clone();
+            r.language = meta.language.clone();
+            r.tracer_version = meta.tracer_version.clone();
+            r.runtime_id = meta.runtime_id.clone();
             r
         };
         let request = map_traces_to_otlp(traces, &resource_info);
@@ -719,7 +735,8 @@ impl<H: HttpClientTrait + MaybeSend + Sync + 'static> TraceExporter<H> {
         &self,
         mut traces: Vec<Vec<Span<T>>>,
     ) -> Result<AgentResponse, TraceExporterError> {
-        let mut header_tags: TracerHeaderTags = self.metadata.borrow().into();
+        let meta = self.metadata.load();
+        let mut header_tags: TracerHeaderTags = meta.as_ref().into();
 
         // Process stats computation and drop non-sampled (p0) chunks.
         // This must run before the OTLP path so that unsampled spans are not exported.
