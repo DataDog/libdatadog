@@ -21,8 +21,6 @@ use tokio::select;
 use tokio_util::sync::CancellationToken;
 use tracing::error;
 
-const STATS_ENDPOINT_PATH: &str = "/v0.6/stats";
-
 /// An exporter that concentrates and sends stats to the agent.
 ///
 /// `H` is the HTTP client implementation, see [`HttpClientTrait`]. Leaf crates
@@ -193,13 +191,6 @@ fn encode_stats_payload(
     }
 }
 
-/// Return the stats endpoint url to send stats to the agent at `agent_url`
-pub fn stats_url_from_agent_url(agent_url: &str) -> anyhow::Result<http::Uri> {
-    let mut parts = agent_url.parse::<http::Uri>()?.into_parts();
-    parts.path_and_query = Some(http::uri::PathAndQuery::from_static(STATS_ENDPOINT_PATH));
-    Ok(http::Uri::from_parts(parts)?)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -211,10 +202,19 @@ mod tests {
     use time::Duration;
     use time::SystemTime;
 
+    const STATS_ENDPOINT_PATH: &str = "/v0.6/stats";
+
     fn is_send<T: Send>() {}
     fn is_sync<T: Sync>() {}
 
     const BUCKETS_DURATION: Duration = Duration::from_secs(10);
+
+    /// Return the stats endpoint url to send stats to the agent at `agent_url`
+    fn stats_url_from_agent_url(agent_url: &str) -> anyhow::Result<http::Uri> {
+        let mut parts = agent_url.parse::<http::Uri>()?.into_parts();
+        parts.path_and_query = Some(http::uri::PathAndQuery::from_static(STATS_ENDPOINT_PATH));
+        Ok(http::Uri::from_parts(parts)?)
+    }
 
     /// Fails to compile if stats exporter is not Send and Sync
     #[test]

@@ -3,7 +3,7 @@
 
 //! Define FFI compatible AgentResponse struct
 
-use libdd_data_pipeline::trace_exporter::agent_response::AgentResponse;
+use libdd_data_pipeline::trace_exporter::AgentResponse;
 use std::ptr::null;
 
 /// Structure containing the agent response to a trace payload

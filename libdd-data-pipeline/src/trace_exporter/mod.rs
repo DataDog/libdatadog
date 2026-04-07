@@ -3,14 +3,18 @@
 pub mod agent_response;
 pub mod builder;
 pub mod error;
-pub mod metrics;
-pub mod stats;
+pub(crate) mod metrics;
+pub(crate) mod stats;
 mod trace_serializer;
 
-// Re-export the builder
+// Re-export commonly used types for convenience
+pub use crate::telemetry::TelemetryConfig;
+pub use agent_response::AgentResponse;
 pub use builder::TraceExporterBuilder;
+pub use error::{
+    AgentErrorKind, BuilderErrorKind, InternalErrorKind, NetworkErrorKind, TraceExporterError,
+};
 
-use self::agent_response::AgentResponse;
 use self::metrics::MetricsEmitter;
 use self::stats::StatsComputationStatus;
 use self::trace_serializer::TraceSerializer;
@@ -22,8 +26,7 @@ use crate::telemetry::{SendPayloadTelemetry, TelemetryClient};
 use crate::trace_exporter::agent_response::{
     AgentResponsePayloadVersion, DATADOG_RATES_PAYLOAD_VERSION,
 };
-use crate::trace_exporter::error::InternalErrorKind;
-use crate::trace_exporter::error::{RequestError, TraceExporterError};
+use crate::trace_exporter::error::RequestError;
 use crate::{
     agent_info::{self, schema::AgentInfo},
     health_metrics,

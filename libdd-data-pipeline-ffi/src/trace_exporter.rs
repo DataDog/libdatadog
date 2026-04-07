@@ -11,7 +11,7 @@ use libdd_common_ffi::{
 };
 
 #[cfg(feature = "telemetry")]
-use libdd_data_pipeline::telemetry::TelemetryConfig;
+use libdd_data_pipeline::trace_exporter::TelemetryConfig;
 use libdd_data_pipeline::trace_exporter::{
     TraceExporter as GenericTraceExporter, TraceExporterInputFormat, TraceExporterOutputFormat,
 };
