@@ -11,10 +11,9 @@ use libdd_common_ffi::{
 };
 
 #[cfg(feature = "telemetry")]
-use libdd_data_pipeline::trace_exporter::TelemetryConfig;
+use libdd_data_pipeline::telemetry::TelemetryConfig;
 use libdd_data_pipeline::trace_exporter::{
-    TelemetryConfig, TraceExporter as GenericTraceExporter, TraceExporterInputFormat,
-    TraceExporterOutputFormat,
+    TraceExporter as GenericTraceExporter, TraceExporterInputFormat, TraceExporterOutputFormat,
 };
 
 type TraceExporter = GenericTraceExporter<NativeCapabilities>;
@@ -22,8 +21,6 @@ type TraceExporter = GenericTraceExporter<NativeCapabilities>;
 use std::{ptr::NonNull, time::Duration};
 #[cfg(feature = "telemetry")]
 use tracing::debug;
-#[cfg(all(feature = "catch_panic", not(panic = "abort")))]
-use tracing::error;
 
 #[inline]
 fn sanitize_string(str: CharSlice) -> Result<String, Box<ExporterError>> {
