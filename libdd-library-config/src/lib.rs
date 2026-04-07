@@ -817,7 +817,6 @@ mod yaml {
     ///
     /// Wraps `yaml_serde` (built on libyaml-rs) to isolate the dependency and
     /// handle quirks like comment-only documents.
-    ///
     // TODO: Switch yaml_serde to official crates.io release once no_std support
     // is merged: https://github.com/yaml/yaml-serde/pull/7
     pub(crate) fn from_bytes<T: serde::de::DeserializeOwned + Default>(
