@@ -122,6 +122,7 @@ diff,https://github.com/utkarshkukreti/diff.rs,MIT OR Apache-2.0,Utkarsh Kukreti
 digest,https://github.com/RustCrypto/traits,MIT OR Apache-2.0,RustCrypto Developers
 dispatch2,https://github.com/madsmtm/objc2,Zlib OR Apache-2.0 OR MIT,"Mads Marquart <mads@marquart.dk>, Mary <mary@mary.zone>"
 displaydoc,https://github.com/yaahc/displaydoc,MIT OR Apache-2.0,Jane Lusby <jlusby@yaah.dev>
+dlmalloc,https://github.com/alexcrichton/dlmalloc-rs,MIT OR Apache-2.0,Alex Crichton <alex@alexcrichton.com>
 dyn-clone,https://github.com/dtolnay/dyn-clone,MIT OR Apache-2.0,David Tolnay <dtolnay@gmail.com>
 either,https://github.com/rayon-rs/either,MIT OR Apache-2.0,bluss
 encoding_rs,https://github.com/hsivonen/encoding_rs,(Apache-2.0 OR MIT) AND BSD-3-Clause,Henri Sivonen <hsivonen@hsivonen.fi>
@@ -221,6 +222,7 @@ lazy_static,https://github.com/rust-lang-nursery/lazy-static.rs,MIT OR Apache-2.
 libc,https://github.com/rust-lang/libc,MIT OR Apache-2.0,The Rust Project Developers
 libloading,https://github.com/nagisa/rust_libloading,ISC,Simonas Kazlauskas <libloading@kazlauskas.me>
 libredox,https://gitlab.redox-os.org/redox-os/libredox,MIT,4lDO2 <4lDO2@protonmail.com>
+libyaml-rs,https://github.com/yaml/libyaml-rs,MIT,"David Tolnay <dtolnay@gmail.com>, YAML Organization <noreply@yaml.org>"
 libz-rs-sys,https://github.com/trifectatechfoundation/zlib-rs,Zlib,The libz-rs-sys Authors
 link-cplusplus,https://github.com/dtolnay/link-cplusplus,MIT OR Apache-2.0,David Tolnay <dtolnay@gmail.com>
 linux-raw-sys,https://github.com/sunfishcode/linux-raw-sys,Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT,Dan Gohman <dev@sunfishcode.online>
@@ -344,6 +346,8 @@ rustc-demangle,https://github.com/rust-lang/rustc-demangle,MIT OR Apache-2.0,Ale
 rustc-hash,https://github.com/rust-lang-nursery/rustc-hash,Apache-2.0 OR MIT,The Rust Project Developers
 rustc-hash,https://github.com/rust-lang/rustc-hash,Apache-2.0 OR MIT,The Rust Project Developers
 rustix,https://github.com/bytecodealliance/rustix,Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT,"Dan Gohman <dev@sunfishcode.online>, Jakub Konka <kubkon@jakubkonka.com>"
+rustix-dlmalloc,https://github.com/sunfishcode/rustix-dlmalloc,MIT OR Apache-2.0,"Alex Crichton <alex@alexcrichton.com>, Dan Gohman <dev@sunfishcode.online>"
+rustix-futex-sync,https://github.com/sunfishcode/rustix-futex-sync,Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT,Dan Gohman <dev@sunfishcode.online>
 rustls,https://github.com/rustls/rustls,Apache-2.0 OR ISC OR MIT,The rustls Authors
 rustls-native-certs,https://github.com/rustls/rustls-native-certs,Apache-2.0 OR ISC OR MIT,The rustls-native-certs Authors
 rustls-pki-types,https://github.com/rustls/pki-types,MIT OR Apache-2.0,The rustls-pki-types Authors
@@ -380,7 +384,6 @@ serde_regex,https://github.com/tailhook/serde-regex,MIT OR Apache-2.0,paul@colom
 serde_spanned,https://github.com/toml-rs/toml,MIT OR Apache-2.0,The serde_spanned Authors
 serde_with,https://github.com/jonasbb/serde_with,MIT OR Apache-2.0,"Jonas Bushart, Marcin Kaźmierczak"
 serde_with_macros,https://github.com/jonasbb/serde_with,MIT OR Apache-2.0,Jonas Bushart
-serde_yaml,https://github.com/dtolnay/serde-yaml,MIT OR Apache-2.0,David Tolnay <dtolnay@gmail.com>
 serial_test_derive,https://github.com/palfrey/serial_test,MIT,Tom Parker-Shemilt <palfrey@tevp.net>
 sha1,https://github.com/RustCrypto/hashes,MIT OR Apache-2.0,RustCrypto Developers
 sha2,https://github.com/RustCrypto/hashes,MIT OR Apache-2.0,RustCrypto Developers
@@ -466,7 +469,6 @@ unicase,https://github.com/seanmonstar/unicase,MIT OR Apache-2.0,Sean McArthur <
 unicode-ident,https://github.com/dtolnay/unicode-ident,(MIT OR Apache-2.0) AND Unicode-DFS-2016,David Tolnay <dtolnay@gmail.com>
 unicode-width,https://github.com/unicode-rs/unicode-width,MIT OR Apache-2.0,"kwantam <kwantam@gmail.com>, Manish Goregaokar <manishsmail@gmail.com>"
 unicode-xid,https://github.com/unicode-rs/unicode-xid,MIT OR Apache-2.0,"erick.tryzelaar <erick.tryzelaar@gmail.com>, kwantam <kwantam@gmail.com>, Manish Goregaokar <manishsmail@gmail.com>"
-unsafe-libyaml,https://github.com/dtolnay/unsafe-libyaml,MIT,David Tolnay <dtolnay@gmail.com>
 untrusted,https://github.com/briansmith/untrusted,ISC,Brian Smith <brian@briansmith.org>
 url,https://github.com/servo/rust-url,MIT OR Apache-2.0,The rust-url developers
 urlencoding,https://github.com/kornelski/rust_urlencoding,MIT,"Kornel <kornel@geekhood.net>, Bertram Truong <b@bertramtruong.com>"
@@ -525,6 +527,7 @@ wit-bindgen-rt,https://github.com/bytecodealliance/wit-bindgen,Apache-2.0 WITH L
 write16,https://github.com/hsivonen/write16,Apache-2.0 OR MIT,The write16 Authors
 writeable,https://github.com/unicode-org/icu4x,Unicode-3.0,The ICU4X Project Developers
 xattr,https://github.com/Stebalien/xattr,MIT OR Apache-2.0,Steven Allen <steven@stebalien.com>
+yaml_serde,https://github.com/yaml/yaml-serde,MIT OR Apache-2.0,YAML Organization <noreply@yaml.org>
 yansi,https://github.com/SergioBenitez/yansi,MIT OR Apache-2.0,Sergio Benitez <sb@sergio.bz>
 yoke,https://github.com/unicode-org/icu4x,Unicode-3.0,Manish Goregaokar <manishsmail@gmail.com>
 yoke-derive,https://github.com/unicode-org/icu4x,Unicode-3.0,Manish Goregaokar <manishsmail@gmail.com>
