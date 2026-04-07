@@ -468,61 +468,109 @@ impl SpawnWorker {
                     let stable_env_key = b"DD_SPAWN_WORKER_STABLE_TRAMPOLINE\0";
                     let use_stable = {
                         let val = libc::getenv(stable_env_key.as_ptr() as *const libc::c_char);
-                        !val.is_null() && *val != 0
+                        !val.is_null()
                     };
 
                     if use_stable {
-                        static TRAMPOLINE_PATH: OnceLock<Option<std::ffi::CString>> =
-                            OnceLock::new();
+                        // Build the stable path in a stack buffer — no heap allocation
+                        // post-fork.  Path: /tmp/.dd-trampoline-<pid>
+                        let mut path_buf = [0u8; 48];
+                        {
+                            let prefix = b"/tmp/.dd-trampoline-";
+                            path_buf[..prefix.len()].copy_from_slice(prefix);
+                            let mut n = libc::getpid() as u32;
+                            let mut digits = [0u8; 20];
+                            let mut nd = 0usize;
+                            loop {
+                                digits[nd] = b'0' + (n % 10) as u8;
+                                nd += 1;
+                                n /= 10;
+                                if n == 0 {
+                                    break;
+                                }
+                            }
+                            digits[..nd].reverse();
+                            path_buf[prefix.len()..prefix.len() + nd]
+                                .copy_from_slice(&digits[..nd]);
+                            // path_buf is zero-initialised so the NUL terminator is
+                            // implicit at prefix.len() + nd.
+                        }
+                        let path_ptr = path_buf.as_ptr() as *const libc::c_char;
 
+                        // atexit handler: recomputes the path from the current PID —
+                        // fork-safe because getpid() in the child returns the child's
+                        // PID, so each process's atexit cleans up its own file.
                         extern "C" fn cleanup_trampoline() {
-                            if let Some(Some(path)) = TRAMPOLINE_PATH.get() {
-                                unsafe { libc::unlink(path.as_ptr()) };
+                            unsafe {
+                                let mut buf = [0u8; 48];
+                                let prefix = b"/tmp/.dd-trampoline-";
+                                buf[..prefix.len()].copy_from_slice(prefix);
+                                let mut n = libc::getpid() as u32;
+                                let mut digits = [0u8; 20];
+                                let mut nd = 0usize;
+                                loop {
+                                    digits[nd] = b'0' + (n % 10) as u8;
+                                    nd += 1;
+                                    n /= 10;
+                                    if n == 0 {
+                                        break;
+                                    }
+                                }
+                                digits[..nd].reverse();
+                                buf[prefix.len()..prefix.len() + nd]
+                                    .copy_from_slice(&digits[..nd]);
+                                libc::unlink(buf.as_ptr() as *const libc::c_char);
                             }
                         }
 
-                        let trampoline_path = TRAMPOLINE_PATH.get_or_init(|| {
-                            let pid = libc::getpid();
-                            let path_str = format!("/tmp/.dd-trampoline-{}\0", pid);
-                            let path = std::ffi::CString::from_vec_with_nul_unchecked(
-                                path_str.into_bytes(),
-                            );
-                            let tmpfd = libc::open(
-                                path.as_ptr(),
-                                libc::O_CREAT | libc::O_EXCL | libc::O_RDWR,
-                                libc::S_IRWXU as libc::c_uint,
-                            );
-                            if tmpfd < 0 {
-                                // File may already exist (e.g. after fork) — try existing
-                                let tmpfd2 = libc::open(
-                                    path.as_ptr(),
-                                    libc::O_RDWR,
-                                    libc::S_IRWXU as libc::c_uint,
-                                );
-                                if tmpfd2 < 0 {
-                                    return None;
-                                }
-                                libc::close(tmpfd2);
-                            } else {
-                                libc::sendfile(
-                                    tmpfd,
-                                    fd.as_raw_fd(),
-                                    std::ptr::null_mut(),
-                                    crate::TRAMPOLINE_BIN.len(),
-                                );
-                                libc::close(tmpfd);
-                                libc::atexit(cleanup_trampoline);
-                            }
-                            Some(path)
-                        });
+                        // Track atexit registration per process (presence only — no path
+                        // stored). After fork, a child inherits the parent's OnceLock
+                        // state. If the parent already registered cleanup_trampoline, the
+                        // child skips re-registration; the inherited handler still runs on
+                        // child exit and computes the child's own path via getpid().
+                        static ATEXIT_REGISTERED: OnceLock<()> = OnceLock::new();
 
-                        if let Some(path) = trampoline_path {
-                            // Empty argv[1] → trampoline skips unlink(argv[1])
-                            let empty = std::ffi::CString::new("").unwrap();
-                            argv.set(1, empty);
-                            libc::execve(path.as_ptr(), argv.as_ptr(), envp.as_ptr());
-                            // execve failed — unlink immediately
-                            libc::unlink(path.as_ptr());
+                        let tmpfd = libc::open(
+                            path_ptr,
+                            libc::O_CREAT | libc::O_EXCL | libc::O_RDWR,
+                            libc::S_IRWXU as libc::c_uint,
+                        );
+                        if tmpfd >= 0 {
+                            // Newly created — write trampoline binary and verify.
+                            let written = libc::sendfile(
+                                tmpfd,
+                                fd.as_raw_fd(),
+                                std::ptr::null_mut(),
+                                crate::TRAMPOLINE_BIN.len(),
+                            );
+                            libc::close(tmpfd);
+                            if written < 0
+                                || written as usize != crate::TRAMPOLINE_BIN.len()
+                            {
+                                // Partial / failed write — remove corrupt file and fall
+                                // through to the panic below.
+                                libc::unlink(path_ptr);
+                            } else {
+                                ATEXIT_REGISTERED.get_or_init(|| {
+                                    libc::atexit(cleanup_trampoline);
+                                });
+                                // argv[1] is already "" (set during ExecVec setup
+                                // above); the trampoline skips unlink(argv[1]) when
+                                // *argv[1] == '\0'.
+                                libc::execve(path_ptr, argv.as_ptr(), envp.as_ptr());
+                                // execve failed — remove file so the next attempt
+                                // recreates it cleanly.
+                                libc::unlink(path_ptr);
+                            }
+                        } else {
+                            // O_EXCL failed: orphan from a previous process with the
+                            // same PID (e.g. killed before atexit ran). Reuse the
+                            // existing file content.
+                            ATEXIT_REGISTERED.get_or_init(|| {
+                                libc::atexit(cleanup_trampoline);
+                            });
+                            libc::execve(path_ptr, argv.as_ptr(), envp.as_ptr());
+                            libc::unlink(path_ptr);
                         }
                     } else {
                         let mut temp_path = [0u8; 256];
