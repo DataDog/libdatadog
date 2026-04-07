@@ -1,9 +1,17 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
+// Only set #![no_std] when `no_std_entry` is active. When built as a `lib` crate-type (not a
+// standalone staticlib/cdylib), the consuming crate provides its own allocator and panic handler,
+// so #![no_std] should only be set when this crate is the binary entry point.
 #![cfg_attr(all(not(feature = "std"), feature = "no_std_entry"), no_std)]
 
-#[cfg(not(feature = "std"))]
 extern crate alloc;
+
+#[cfg(all(not(feature = "std"), feature = "no_std_entry", not(panic = "abort")))]
+compile_error!(
+    "The `no_std_entry` feature requires `panic = \"abort\"` in the Cargo profile. \
+     Building with panic=unwind causes undefined behavior at FFI boundaries."
+);
 
 #[cfg(all(not(feature = "std"), feature = "no_std_entry"))]
 mod no_std_support {
@@ -17,9 +25,21 @@ mod no_std_support {
 
     #[panic_handler]
     fn panic(_info: &core::panic::PanicInfo) -> ! {
-        loop {}
+        // abort() is provided by the C runtime, which is always linked for FFI libs.
+        // Note: _info is intentionally discarded — in no_std there is no reliable way to
+        // write diagnostics without std I/O. Panics in no_std mode are silent and fatal.
+        extern "C" {
+            fn abort() -> !;
+        }
+        // SAFETY: abort() is a C standard library function with no preconditions; it
+        // unconditionally terminates the process.
+        unsafe { abort() }
     }
 
+    /// Required by the Rust compiler's exception handling ABI. A no-op is safe because
+    /// unwinding will never occur under `panic = "abort"` (enforced by the compile_error!
+    /// guard above). WARNING: this symbol is globally visible — this library must not be
+    /// linked with other Rust code compiled with `panic = "unwind"`.
     #[no_mangle]
     pub extern "C" fn rust_eh_personality() {}
 }
@@ -32,7 +52,7 @@ use libdd_common_ffi::{self as ffi, slice::AsBytes};
 use libdd_common_ffi::{CString, Error};
 
 #[cfg(not(feature = "std"))]
-use alloc::boxed::Box;
+use alloc::{boxed::Box, string::ToString, vec::Vec};
 
 use ffi::CharSlice;
 use libdd_library_config::{self as lib_config, LibraryConfigSource};
@@ -122,21 +142,20 @@ pub struct LibraryConfig {
 }
 
 impl LibraryConfig {
-    #[cfg(feature = "std")]
-    fn rs_vec_to_ffi(configs: Vec<lib_config::LibraryConfig>) -> anyhow::Result<ffi::Vec<Self>> {
+    fn vec_to_ffi(
+        configs: Vec<lib_config::LibraryConfig>,
+    ) -> Result<ffi::Vec<Self>, alloc::ffi::NulError> {
         let cfg: Vec<LibraryConfig> = configs
             .into_iter()
             .map(|c| {
                 Ok(LibraryConfig {
-                    name: ffi::CString::from_std(std::ffi::CString::new(c.name)?),
-                    value: ffi::CString::from_std(std::ffi::CString::new(c.value)?),
+                    name: ffi::CString::new(c.name)?,
+                    value: ffi::CString::new(c.value)?,
                     source: c.source,
-                    config_id: ffi::CString::from_std(std::ffi::CString::new(
-                        c.config_id.unwrap_or_default(),
-                    )?),
+                    config_id: ffi::CString::new(c.config_id.unwrap_or_default())?,
                 })
             })
-            .collect::<Result<Vec<_>, std::ffi::NulError>>()?;
+            .collect::<Result<Vec<_>, alloc::ffi::NulError>>()?;
         Ok(ffi::Vec::from_std(cfg))
     }
 
@@ -146,7 +165,7 @@ impl LibraryConfig {
     ) -> LibraryConfigLoggedResult {
         match result {
             libdd_library_config::LoggedResult::Ok(configs, logs) => {
-                match Self::rs_vec_to_ffi(configs) {
+                match Self::vec_to_ffi(configs) {
                     Ok(ffi_configs) => {
                         let messages = logs.join("\n");
                         let cstring_logs = CString::new_or_empty(messages);
@@ -155,7 +174,9 @@ impl LibraryConfig {
                             logs: cstring_logs,
                         })
                     }
-                    Err(err) => LibraryConfigLoggedResult::Err(err.into()),
+                    Err(err) => {
+                        LibraryConfigLoggedResult::Err(Error::from(err.to_string()))
+                    }
                 }
             }
             libdd_library_config::LoggedResult::Err(err) => {
@@ -224,6 +245,53 @@ pub extern "C" fn ddog_library_configurator_with_detect_process_info(c: &mut Con
 #[no_mangle]
 pub extern "C" fn ddog_library_configurator_drop(_: Box<Configurator>) {}
 
+/// Result type for [`ddog_library_configurator_get_from_bytes`]. Available in both std and no_std.
+#[repr(C)]
+pub enum LibraryConfigBytesResult {
+    Ok(ffi::Vec<LibraryConfig>),
+    Err(ffi::CString),
+}
+
+/// Parses library configuration from raw YAML bytes (local and fleet configs).
+///
+/// `process_info` must be set on the configurator before calling this function
+/// (via `ddog_library_configurator_with_process_info`).
+///
+/// Available in both std and no_std builds (unlike `ddog_library_configurator_get` which
+/// reads files from disk and requires std).
+#[no_mangle]
+pub extern "C" fn ddog_library_configurator_get_from_bytes(
+    configurator: &Configurator,
+    local_config_bytes: CharSlice,
+    fleet_config_bytes: CharSlice,
+) -> LibraryConfigBytesResult {
+    let process_info = match configurator.process_info {
+        Some(ref p) => p,
+        None => {
+            return LibraryConfigBytesResult::Err(ffi::CString::new_or_empty(
+                "process_info must be set before calling get_from_bytes",
+            ));
+        }
+    };
+
+    let result = configurator.inner.get_config_from_bytes(
+        local_config_bytes.as_bytes(),
+        fleet_config_bytes.as_bytes(),
+        process_info,
+    );
+
+    match result {
+        Ok(configs) => match LibraryConfig::vec_to_ffi(configs) {
+            Ok(ffi_configs) => LibraryConfigBytesResult::Ok(ffi_configs),
+            Err(e) => LibraryConfigBytesResult::Err(ffi::CString::new_or_empty(e.to_string())),
+        },
+        Err(e) => LibraryConfigBytesResult::Err(ffi::CString::new_or_empty(e.to_string())),
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn ddog_library_config_bytes_result_drop(_: LibraryConfigBytesResult) {}
+
 #[cfg(feature = "std")]
 #[no_mangle]
 pub extern "C" fn ddog_library_configurator_get(
@@ -279,6 +347,8 @@ pub extern "C" fn ddog_library_config_source_to_string(
 /// Returns a static null-terminated string with the path to the managed stable config yaml config
 /// file
 pub extern "C" fn ddog_library_config_fleet_stable_config_path() -> ffi::CStr<'static> {
+    // SAFETY: constcat! appends a literal "\0", guaranteeing a single null terminator
+    // at the end. The path constant contains no interior null bytes.
     ffi::CStr::from_std(unsafe {
         let path: &'static str = constcat::concat!(
             lib_config::Configurator::FLEET_STABLE_CONFIGURATION_PATH,
@@ -293,6 +363,8 @@ pub extern "C" fn ddog_library_config_fleet_stable_config_path() -> ffi::CStr<'s
 /// Returns a static null-terminated string with the path to the local stable config yaml config
 /// file
 pub extern "C" fn ddog_library_config_local_stable_config_path() -> ffi::CStr<'static> {
+    // SAFETY: constcat! appends a literal "\0", guaranteeing a single null terminator
+    // at the end. The path constant contains no interior null bytes.
     ffi::CStr::from_std(unsafe {
         let path: &'static str = constcat::concat!(
             lib_config::Configurator::LOCAL_STABLE_CONFIGURATION_PATH,

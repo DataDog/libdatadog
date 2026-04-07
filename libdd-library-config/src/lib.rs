@@ -135,7 +135,7 @@ impl<'a> Matcher<'a> {
     ///
     /// For instance:
     ///
-    /// with the following varriable definition, var = "abc" var2 = "def", this transforms \
+    /// with the following variable definition, var = "abc" var2 = "def", this transforms \
     /// "foo_{{ var }}_bar_{{ var2 }}" -> "foo_abc_bar_def"
     fn template_config(&'a self, config_val: &str) -> anyhow::Result<String> {
         let mut rest = config_val;
@@ -261,7 +261,8 @@ impl ProcessInfo {
 ///
 /// This type has a custom serde Deserialize implementation from maps:
 /// * It skips invalid/unknown keys in the map
-/// * Since the storage is a Boxed slice and not a Hashmap, it doesn't over-allocate
+/// * Since the storage is a Boxed slice and not a map, it doesn't over-allocate
+/// * Duplicate keys are preserved; when later inserted into a BTreeMap, the last entry wins
 #[derive(Debug, Default, PartialEq, Eq)]
 struct ConfigMap(Box<[(String, String)]>);
 
@@ -275,7 +276,7 @@ impl<'de> serde::Deserialize<'de> for ConfigMap {
             type Value = ConfigMap;
 
             fn expecting(&self, formatter: &mut core::fmt::Formatter) -> core::fmt::Result {
-                formatter.write_str("struct ConfigMap(BTreeMap<String, String>)")
+                formatter.write_str("a YAML map of string key-value pairs")
             }
 
             fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error>
@@ -412,7 +413,7 @@ pub struct LibraryConfig {
 }
 
 #[derive(Debug)]
-/// This struct is used to hold configuration item data in a Hashmap, while the name of
+/// This struct is used to hold configuration item data in a BTreeMap, while the name of
 /// the configuration is the key used for deduplication
 struct LibraryConfigVal {
     value: String,
@@ -639,7 +640,7 @@ impl Configurator {
         &self,
         s_local: &[u8],
         s_managed: &[u8],
-        process_info: ProcessInfo,
+        process_info: &ProcessInfo,
     ) -> anyhow::Result<Vec<LibraryConfig>> {
         let local_config = match self.parse_stable_config_slice(s_local) {
             LoggedResult::Ok(config, _) => config,
@@ -650,7 +651,7 @@ impl Configurator {
             LoggedResult::Err(e) => return Err(e),
         };
 
-        match self.get_config(local_config, fleet_config, &process_info) {
+        match self.get_config(local_config, fleet_config, process_info) {
             LoggedResult::Ok(configs, _) => Ok(configs),
             LoggedResult::Err(e) => Err(e),
         }
@@ -831,7 +832,7 @@ mod yaml {
         if !has_content {
             return Ok(T::default());
         }
-        yaml_serde::from_slice::<T>(buf).map_err(anyhow::Error::msg)
+        yaml_serde::from_slice::<T>(buf).map_err(Into::into)
     }
 }
 
@@ -840,7 +841,7 @@ mod utils {
     use alloc::collections::BTreeMap;
     use alloc::string::String;
 
-    /// Removes leading and trailing ascci whitespaces from a byte slice
+    /// Removes leading and trailing ASCII whitespace from a byte slice
     pub(crate) fn trim_bytes(mut b: &[u8]) -> &[u8] {
         while b.first().map(u8::is_ascii_whitespace).unwrap_or(false) {
             b = &b[1..];
@@ -893,7 +894,7 @@ mod tests {
         };
         let configurator = Configurator::new(true);
         let mut actual = configurator
-            .get_config_from_bytes(local_cfg, fleet_cfg, process_info)
+            .get_config_from_bytes(local_cfg, fleet_cfg, &process_info)
             .unwrap();
 
         // Sort by name for determinism
@@ -1414,7 +1415,7 @@ rules:
     operator: equals
   configuration:
     DD_SERVICE: managed",
-                process_info,
+                &process_info,
             )
             .unwrap();
         assert_eq!(

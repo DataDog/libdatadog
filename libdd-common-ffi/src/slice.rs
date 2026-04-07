@@ -200,7 +200,7 @@ impl<'a, T: 'a> Slice<'a, T> {
     }
 
     /// # Safety
-    /// Uphold the same safety requirements as [std::str::from_raw_parts].
+    /// Uphold the same safety requirements as [`core::slice::from_raw_parts`].
     /// However, it is allowed but not recommended to provide a null pointer
     /// when the len is 0.
     pub const unsafe fn from_raw_parts(ptr: *const T, len: usize) -> Self {
