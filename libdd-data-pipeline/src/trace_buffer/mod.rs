@@ -3,9 +3,11 @@
 
 use std::{
     fmt::{self, Debug},
-    ops::DerefMut,
     pin::Pin,
-    sync::{Arc, Condvar, Mutex, MutexGuard},
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Arc, Condvar, Mutex, MutexGuard,
+    },
     time::{Duration, Instant},
 };
 
@@ -112,71 +114,64 @@ pub enum TraceBufferError {
     TraceExporter(TraceExporterError),
 }
 
-struct Batch<T> {
-    chunks: Vec<TraceChunk<T>>,
-    last_flush: std::time::Instant,
-    span_count: usize,
-    max_buffered_spans: usize,
+// AtomicU64 bit layout:
+//   bit 63: HAS_SHUTDOWN_BIT
+//   bit 62: FLUSH_NEEDED_BIT
+//   bits 0-61: span_count
+const HAS_SHUTDOWN_BIT: u64 = 1 << 63;
+const FLUSH_NEEDED_BIT: u64 = 1 << 62;
+const SPAN_COUNT_MASK: u64 = (1 << 62) - 1;
+
+struct SyncState {
+    /// Current batch generation - Used in synchronous mode
+    /// Senders in synchronous mode capture this under the lock so their chunk is guaranteed
+    /// to be part of exactly this generation's drain cycle.
+    /// The receiver increment it after draining the queue
     batch_gen: BatchGeneration,
+    /// Latest fully exported generation — incremented by worker after ack_export.
+    /// Synchronous senders wait until this reaches their captured batch_gen.
+    last_flush_generation: BatchGeneration,
+    /// Set by the worker on shutdown. Used by wait_shutdown_done condvar wait.
+    has_shutdown: bool,
 }
 
-// Pre-allocate the batch buffer to avoid reallocations on small sizes.
-// A trace chunk is 24 bytes, so this takes 24 * 400 = 9.6kB
-const PRE_ALLOCATE_CHUNKS: usize = 400;
-
-impl<T> Batch<T> {
-    fn new(max_buffered_spans: usize) -> Self {
-        let mut batch_gen = BatchGeneration::default();
-        batch_gen.incr();
+impl SyncState {
+    fn new() -> Self {
         Self {
-            chunks: Vec::with_capacity(PRE_ALLOCATE_CHUNKS),
-            last_flush: std::time::Instant::now(),
-            span_count: 0,
-            batch_gen,
-            max_buffered_spans,
+            batch_gen: BatchGeneration(1),
+            last_flush_generation: BatchGeneration(0),
+            has_shutdown: false,
         }
     }
+}
 
-    fn reset(&mut self) {
-        *self = Self::new(self.max_buffered_spans);
+#[derive(Default)]
+struct AtomicQueueMetrics {
+    spans_queued: AtomicU64,
+    spans_dropped_full_buffer: AtomicU64,
+}
+
+struct Shared {
+    /// Packed atomic: [HAS_SHUTDOWN(1b) | FLUSH_NEEDED(1b) | span_count(62b)]
+    atomic_state: AtomicU64,
+    receiver_notifier: tokio::sync::Notify,
+    sync_state: Mutex<SyncState>,
+    sender_notifier: Condvar,
+    metrics: AtomicQueueMetrics,
+}
+
+impl Shared {
+    fn sync_state(&self) -> Result<MutexGuard<'_, SyncState>, MutexPoisonedError> {
+        self.sync_state.lock().map_err(|_| MutexPoisonedError)
     }
 
-    fn span_count(&self) -> usize {
-        self.span_count
+    fn notify_receiver(&self) {
+        self.receiver_notifier.notify_one();
     }
 
-    /// Add a trace chunk to the batch
-    /// If the batch is already too big, drop the chunk and return an error
-    ///
-    /// This method will not check that adding the chunk will not exceed the maximum size of the
-    /// batch. So the batch can be over the maximum size after this call.
-    /// This is because we don't want to always drop traces that contain more spans than the maximum
-    /// size.
-    fn add_trace_chunk(&mut self, chunk: Vec<T>) -> Result<(), BatchFullError> {
-        if self.span_count > self.max_buffered_spans {
-            return Err(BatchFullError {
-                spans_dropped: chunk.len(),
-            });
-        }
-        if chunk.is_empty() {
-            return Ok(());
-        }
-
-        let chunk_len: usize = chunk.len();
-        self.chunks.push(chunk);
-        self.span_count += chunk_len;
-        Ok(())
-    }
-
-    /// Export the trace chunk and reset the batch
-    fn export(&mut self) -> Vec<TraceChunk<T>> {
-        let chunks = std::mem::replace(&mut self.chunks, Vec::with_capacity(PRE_ALLOCATE_CHUNKS));
-        self.span_count = 0;
-        self.last_flush = std::time::Instant::now();
-        if !chunks.is_empty() {
-            self.batch_gen.incr();
-        }
-        chunks
+    fn notify_sender(&self, state: MutexGuard<'_, SyncState>) {
+        drop(state);
+        self.sender_notifier.notify_all();
     }
 }
 
@@ -198,8 +193,8 @@ impl<T> Batch<T> {
 ///
 /// If [`TraceBufferConfig::synchronous_writes`] is true and
 /// * Either until the chunks have been flushed the agent
-/// * Or if `synchronous_writes_timeout` is Some, until the timeout is reached. At which point the flush might
-///   continue in the background
+/// * Or if `synchronous_writes_timeout` is Some, until the timeout is reached. At which point the
+///   flush might continue in the background
 pub struct TraceBuffer<T> {
     tx: Sender<T>,
     /// Enables synchronous exports if Some
@@ -268,9 +263,9 @@ impl<T: Send + 'static> TraceBuffer<T> {
         self.tx.trigger_flush()
     }
 
-    pub fn queue_metrics(&self) -> QueueMetricsFetcher<T> {
+    pub fn queue_metrics(&self) -> QueueMetricsFetcher {
         QueueMetricsFetcher {
-            waiter: self.tx.waiter.clone(),
+            shared: self.tx.shared.clone(),
         }
     }
 
@@ -285,16 +280,20 @@ impl<T> fmt::Debug for TraceBuffer<T> {
     }
 }
 
-pub struct QueueMetricsFetcher<T> {
-    waiter: Arc<Waiter<T>>,
+pub struct QueueMetricsFetcher {
+    shared: Arc<Shared>,
 }
 
-impl<T> QueueMetricsFetcher<T> {
+impl QueueMetricsFetcher {
     pub fn get_metrics(&self) -> QueueMetrics {
-        let Some(mut state) = self.waiter.state.lock().ok() else {
-            return QueueMetrics::default();
-        };
-        std::mem::take(&mut state.metrics)
+        QueueMetrics {
+            spans_queued: self.shared.metrics.spans_queued.swap(0, Ordering::Relaxed) as usize,
+            spans_dropped_full_buffer: self
+                .shared
+                .metrics
+                .spans_dropped_full_buffer
+                .swap(0, Ordering::Relaxed) as usize,
+        }
     }
 }
 
@@ -309,30 +308,36 @@ fn channel<T>(
     max_number_of_spans: usize,
     synchronous_write: bool,
 ) -> (Sender<T>, Receiver<T>) {
-    let waiter = Arc::new(Waiter {
-        state: Mutex::new(SharedState {
-            flush_needed: false,
-            last_flush_generation: BatchGeneration::default(),
-            has_shutdown: false,
-            batch: Batch::new(max_number_of_spans),
-            metrics: QueueMetrics::default(),
-        }),
-        sender_notifier: Condvar::new(),
+    let (chunk_sender, chunk_receiver) = crossbeam_channel::unbounded();
+    let waiter = Arc::new(Shared {
+        atomic_state: AtomicU64::new(0),
         receiver_notifier: tokio::sync::Notify::new(),
+        sync_state: Mutex::new(SyncState::new()),
+        sender_notifier: Condvar::new(),
+        metrics: AtomicQueueMetrics::default(),
     });
     (
         Sender {
-            waiter: waiter.clone(),
+            shared: waiter.clone(),
+            chunk_sender,
             flush_trigger_number_of_spans,
+            max_buffered_spans: max_number_of_spans,
             synchronous_write,
         },
-        Receiver { waiter },
+        Receiver {
+            chunk_receiver,
+            waiter,
+            last_flush: Instant::now(),
+            synchronous_write,
+        },
     )
 }
 
 struct Sender<T> {
-    waiter: Arc<Waiter<T>>,
+    shared: Arc<Shared>,
+    chunk_sender: crossbeam_channel::Sender<TraceChunk<T>>,
     flush_trigger_number_of_spans: usize,
+    max_buffered_spans: usize,
     synchronous_write: bool,
 }
 
@@ -342,17 +347,20 @@ impl<T> Sender<T> {
         flush_gen: BatchGeneration,
         timeout: Option<Duration>,
     ) -> Result<(), TraceBufferError> {
-        let cond = |state: &mut SharedState<T>| {
-            state.last_flush_generation < flush_gen && !state.has_shutdown
-        };
+        let cond =
+            |state: &mut SyncState| state.last_flush_generation < flush_gen && !state.has_shutdown;
+
+        let state = self
+            .shared
+            .sync_state()
+            .map_err(|MutexPoisonedError| TraceBufferError::MutexPoisoned)?;
 
         if let Some(timeout) = timeout {
             if timeout.is_zero() {
                 return Err(TraceBufferError::TimedOut(Duration::ZERO));
             }
-            let state = self.get_state()?;
             let (_state, res) = self
-                .waiter
+                .shared
                 .sender_notifier
                 .wait_timeout_while(state, timeout, cond)
                 .map_err(|_| TraceBufferError::MutexPoisoned)?;
@@ -360,9 +368,8 @@ impl<T> Sender<T> {
                 return Err(TraceBufferError::TimedOut(timeout));
             }
         } else {
-            let state = self.get_state()?;
             let _state = self
-                .waiter
+                .shared
                 .sender_notifier
                 .wait_while(state, cond)
                 .map_err(|_| TraceBufferError::MutexPoisoned)?;
@@ -370,41 +377,85 @@ impl<T> Sender<T> {
         Ok(())
     }
 
-    fn get_state(&self) -> Result<MutexGuard<'_, SharedState<T>>, TraceBufferError> {
-        self.waiter
-            .state
-            .lock()
-            .map_err(|_| TraceBufferError::MutexPoisoned)
-    }
+    fn add_trace_chunk(&self, chunk: Vec<T>) -> Result<BatchGeneration, TraceBufferError> {
+        let chunk_len = chunk.len();
 
-    fn get_running_state(&self) -> Result<MutexGuard<'_, SharedState<T>>, TraceBufferError> {
-        let state = self.get_state()?;
-        if state.has_shutdown {
+        // Uses Acquire to pair with the worker's Release when setting HAS_SHUTDOWN_BIT.
+        let state = self.shared.atomic_state.load(Ordering::Acquire);
+        if state & HAS_SHUTDOWN_BIT != 0 {
             return Err(TraceBufferError::AlreadyShutdown);
         }
-        Ok(state)
-    }
+        if (state & SPAN_COUNT_MASK) as usize > self.max_buffered_spans {
+            self.shared
+                .metrics
+                .spans_dropped_full_buffer
+                .fetch_add(chunk_len as u64, Ordering::Relaxed);
+            return Err(TraceBufferError::BatchFull(BatchFullError {
+                spans_dropped: chunk_len,
+            }));
+        }
 
-    fn add_trace_chunk(&self, chunk: Vec<T>) -> Result<BatchGeneration, TraceBufferError> {
-        let mut state = self.get_running_state()?;
-        let chunk_len = chunk.len();
-        if let Err(e @ BatchFullError { spans_dropped }) = state.batch.add_trace_chunk(chunk) {
-            state.metrics.spans_dropped_full_buffer += spans_dropped;
-            return Err(TraceBufferError::BatchFull(e));
+        let flush_gen = if self.synchronous_write {
+            // In synchronous mode, hold the sync_state lock around the channel push so the
+            // worker's drain (which also holds this lock) is guaranteed to see this chunk
+            // as part of the generation it captured.
+            let sync = self
+                .shared
+                .sync_state()
+                .map_err(|MutexPoisonedError| TraceBufferError::MutexPoisoned)?;
+            let gen = sync.batch_gen;
+            if sync.has_shutdown {
+                return Err(TraceBufferError::AlreadyShutdown);
+            }
+            let _ = self.chunk_sender.send(chunk);
+            gen
+        } else {
+            let _ = self.chunk_sender.send(chunk);
+            BatchGeneration::default()
+        };
+
+        self.shared
+            .metrics
+            .spans_queued
+            .fetch_add(chunk_len as u64, Ordering::Relaxed);
+
+        // AcqRel: Release orders the channel send before the span count update so the worker
+        // sees a coherent view; Acquire sees latest flag state.
+        let prev = self
+            .shared
+            .atomic_state
+            .fetch_add(chunk_len as u64, Ordering::AcqRel);
+        let new_span_count = (prev & SPAN_COUNT_MASK) + chunk_len as u64;
+
+        if new_span_count > self.flush_trigger_number_of_spans as u64 || self.synchronous_write {
+            // Release: orders all prior writes (channel send + span count) before the worker
+            // observes FLUSH_NEEDED_BIT.
+            let prev2 = self
+                .shared
+                .atomic_state
+                .fetch_or(FLUSH_NEEDED_BIT, Ordering::Release);
+            // Only the thread that transitions the bit 0→1 wakes the worker to avoid
+            // thundering-herd notifications.
+            if prev2 & FLUSH_NEEDED_BIT == 0 {
+                self.shared.notify_receiver();
+            }
         }
-        state.metrics.spans_queued += chunk_len;
-        let gen = state.batch.batch_gen;
-        if state.batch.span_count() > self.flush_trigger_number_of_spans || self.synchronous_write {
-            state.flush_needed = true;
-            self.waiter.notify_receiver(state);
-        }
-        Ok(gen)
+
+        Ok(flush_gen)
     }
 
     fn trigger_flush(&self) -> Result<(), TraceBufferError> {
-        let mut state = self.get_running_state()?;
-        state.flush_needed = true;
-        self.waiter.notify_receiver(state);
+        let state = self.shared.atomic_state.load(Ordering::Acquire);
+        if state & HAS_SHUTDOWN_BIT != 0 {
+            return Err(TraceBufferError::AlreadyShutdown);
+        }
+        let prev = self
+            .shared
+            .atomic_state
+            .fetch_or(FLUSH_NEEDED_BIT, Ordering::Release);
+        if prev & FLUSH_NEEDED_BIT == 0 {
+            self.shared.notify_receiver();
+        }
         Ok(())
     }
 
@@ -412,11 +463,14 @@ impl<T> Sender<T> {
         if timeout.is_zero() {
             return Err(TraceBufferError::TimedOut(Duration::ZERO));
         }
-        let state = self.get_state()?;
+        let state = self
+            .shared
+            .sync_state()
+            .map_err(|MutexPoisonedError| TraceBufferError::MutexPoisoned)?;
         let (_state, res) = self
-            .waiter
+            .shared
             .sender_notifier
-            .wait_timeout_while(state, timeout, |state| !state.has_shutdown)
+            .wait_timeout_while(state, timeout, |s| !s.has_shutdown)
             .map_err(|_| TraceBufferError::MutexPoisoned)?;
         if res.timed_out() {
             return Err(TraceBufferError::TimedOut(timeout));
@@ -426,70 +480,122 @@ impl<T> Sender<T> {
 }
 
 struct Receiver<T> {
-    waiter: Arc<Waiter<T>>,
+    waiter: Arc<Shared>,
+    chunk_receiver: crossbeam_channel::Receiver<TraceChunk<T>>,
+    last_flush: Instant,
+    synchronous_write: bool,
 }
 
 impl<T> Receiver<T> {
     fn shutdown_done(&self) -> Result<(), MutexPoisonedError> {
-        let mut state = self.waiter.state.lock().map_err(|_| MutexPoisonedError)?;
+        // Set the atomic bit first so senders' fast-path check sees it.
+        self.waiter
+            .atomic_state
+            .fetch_or(HAS_SHUTDOWN_BIT, Ordering::Release);
+        let mut state = self.waiter.sync_state()?;
         state.has_shutdown = true;
         self.waiter.notify_sender(state);
         Ok(())
     }
 
-    fn reset(&self) -> Result<(), MutexPoisonedError> {
-        let mut state = self.waiter.state.lock().map_err(|_| MutexPoisonedError)?;
-        let SharedState {
-            flush_needed,
-            last_flush_generation,
-            has_shutdown,
-            batch,
-            metrics,
-        } = state.deref_mut();
-        *flush_needed = false;
-        *last_flush_generation = BatchGeneration::default();
-        *has_shutdown = false;
-        batch.reset();
-        *metrics = QueueMetrics::default();
+    fn reset(&mut self) -> Result<(), MutexPoisonedError> {
+        // Drain all pending items from the channel
+        // No sender should be running
+        while self.chunk_receiver.try_recv().is_ok() {}
+
+        // Reset atomic state: no shutdown, no flush needed, zero span count.
+        // SeqCst: conservative ordering for the single-threaded post-fork context.
+        self.waiter.atomic_state.store(0, Ordering::SeqCst);
+
+        *self.waiter.sync_state()? = SyncState::new();
+        self.last_flush = Instant::now();
+        self.waiter.metrics.spans_queued.store(0, Ordering::Relaxed);
+        self.waiter
+            .metrics
+            .spans_dropped_full_buffer
+            .store(0, Ordering::Relaxed);
         Ok(())
     }
 
-    async fn receive(&self, timeout: Duration) -> Result<Vec<TraceChunk<T>>, MutexPoisonedError> {
-        loop {
-            // Enable the notify future BEFORE acquiring the lock to avoid lost wakeups:
-            // any notify_waiters() call that fires between enable() and .await is captured.
+    fn drain_channel(&self) -> Vec<TraceChunk<T>> {
+        // Clear FLUSH_NEEDED_BIT before draining so that a sender arriving during the drain can
+        // set the bit again and schedule a fresh wakeup for its chunk.
+        let to_consume = (self
+            .waiter
+            .atomic_state
+            .fetch_and(!FLUSH_NEEDED_BIT, Ordering::AcqRel)
+            & SPAN_COUNT_MASK) as usize;
+
+        let mut chunks: Vec<TraceChunk<T>> = Vec::new();
+        {
+            // Hold the sync_state lock for the entire drain to serialize with senders'
+            // channel pushes (which also hold this lock in synchronous mode).
+            let _sync_guard = if self.synchronous_write {
+                let mut guard = self.waiter.sync_state();
+                if let Ok(sync) = &mut guard {
+                    sync.batch_gen.incr();
+                }
+                Some(guard)
+            } else {
+                None
+            };
+
+            let mut consummed: usize = 0;
+            while consummed < to_consume {
+                match self.chunk_receiver.try_recv() {
+                    Ok(chunk) => {
+                        consummed += chunk.len();
+                        chunks.push(chunk);
+                    }
+                    Err(_) => break,
+                }
+            }
+            // Return the logical capacity taken by the consumed spans.
+            // AcqRel: Release frees capacity visible to the next sender Acquire load.
+            self.waiter
+                .atomic_state
+                .fetch_sub(consummed as u64, Ordering::AcqRel);
+        }
+        chunks
+    }
+
+    async fn receive(
+        &mut self,
+        timeout: Duration,
+    ) -> Result<Vec<TraceChunk<T>>, MutexPoisonedError> {
+        let batch = loop {
+            // Enable the notify future BEFORE reading the atomic state to avoid lost wakeups:
+            // any notify_one() that fires between enable() and .await is captured.
             let notified = self.waiter.receiver_notifier.notified();
             let mut notified = std::pin::pin!(notified);
             notified.as_mut().enable();
 
-            // The MutexGuard must not be held across .await points
-            let leftover;
-            {
-                let mut state = self.waiter.state.lock().map_err(|_| MutexPoisonedError)?;
-                if state.flush_needed {
-                    state.flush_needed = false;
-                    return Ok(state.batch.export());
-                }
-                let deadline = state.batch.last_flush + timeout;
-                leftover = deadline.saturating_duration_since(Instant::now());
-                if leftover == Duration::ZERO {
-                    return Ok(state.batch.export());
-                }
-            } // MutexGuard dropped before any .await
+            let state = self.waiter.atomic_state.load(Ordering::Acquire);
+            let flush_needed = state & FLUSH_NEEDED_BIT;
+            if flush_needed != 0 {
+                break self.drain_channel();
+            }
+
+            let deadline = self.last_flush + timeout;
+            let leftover = deadline.saturating_duration_since(Instant::now());
+            if leftover == Duration::ZERO {
+                break self.drain_channel();
+            }
 
             tokio::select! {
                 biased;
                 _ = notified.as_mut() => {}  // woken by sender; loop to re-check state
                 _ = tokio::time::sleep(leftover) => {
-                    let mut state = self.waiter.state.lock().map_err(|_| MutexPoisonedError)?;
-                    return Ok(state.batch.export());
+                    break self.drain_channel();
                 }
             }
-        }
+        };
+        self.last_flush = Instant::now();
+        Ok(batch)
     }
 
     fn ack_export(&self) -> Result<(), MutexPoisonedError> {
-        let mut state = self.waiter.state.lock().map_err(|_| MutexPoisonedError)?;
+        let mut state = self.waiter.sync_state()?;
         state.last_flush_generation.incr();
         self.waiter.notify_sender(state);
         Ok(())
@@ -505,45 +611,18 @@ impl BatchGeneration {
     }
 }
 
-struct SharedState<T> {
-    flush_needed: bool,
-    last_flush_generation: BatchGeneration,
-    has_shutdown: bool,
-    batch: Batch<T>,
-    metrics: QueueMetrics,
-}
-
-struct Waiter<T> {
-    state: Mutex<SharedState<T>>,
-    sender_notifier: Condvar,
-    receiver_notifier: tokio::sync::Notify,
-}
-
-impl<T> Waiter<T> {
-    fn notify_receiver(&self, state: MutexGuard<'_, SharedState<T>>) {
-        drop(state);
-        self.receiver_notifier.notify_one();
-    }
-
-    #[inline(always)]
-    fn notify_sender(&self, state: MutexGuard<'_, SharedState<T>>) {
-        drop(state);
-        self.sender_notifier.notify_all();
-    }
-}
-
 /// A pluggable export operation for the trace buffer
 ///
 /// This allows mapping from the buffered spans to another type, and
 /// calling any method on the trace exporter to send traces
 pub trait Export<T>: Send + Debug {
-    fn export_trace_chunks<'a: 'c, 'b: 'c, 'c>(
+    fn export_trace_chunks<'a>(
         &'a mut self,
         trace_chunks: Vec<TraceChunk<T>>,
-        trace_exporter: &'b TraceExporter,
+        trace_exporter: &'a TraceExporter,
     ) -> Pin<
         Box<
-            dyn std::future::Future<Output = Result<AgentResponse, TraceExporterError>> + Send + 'c,
+            dyn std::future::Future<Output = Result<AgentResponse, TraceExporterError>> + Send + 'a,
         >,
     >;
 }
@@ -552,13 +631,13 @@ pub trait Export<T>: Send + Debug {
 pub struct DefaultExport;
 
 impl Export<libdd_trace_utils::span::v04::SpanBytes> for DefaultExport {
-    fn export_trace_chunks<'a: 'c, 'b: 'c, 'c>(
+    fn export_trace_chunks<'a>(
         &'a mut self,
         trace_chunks: Vec<TraceChunk<libdd_trace_utils::span::v04::SpanBytes>>,
-        trace_exporter: &'b TraceExporter,
+        trace_exporter: &'a TraceExporter,
     ) -> Pin<
         Box<
-            dyn std::future::Future<Output = Result<AgentResponse, TraceExporterError>> + Send + 'c,
+            dyn std::future::Future<Output = Result<AgentResponse, TraceExporterError>> + Send + 'a,
         >,
     > {
         Box::pin(async { trace_exporter.send_trace_chunks_async(trace_chunks).await })
@@ -628,7 +707,11 @@ impl<T: Send + Debug + 'static> Worker for TraceExporterWorker<T> {
         };
         if !trace_chunks.is_empty() {
             self.export_trace_chunks(trace_chunks).await;
-            if let Err(MutexPoisonedError) = self.rx.ack_export() {}
+        }
+        // Always ack, even for empty batches. In synchronous mode this advances
+        // last_flush_generation so that any sender waiting on the condvar can unblock.
+        if self.config.synchronous_export {
+            let _ = self.rx.ack_export();
         }
     }
 
@@ -689,10 +772,10 @@ mod tests {
     }
 
     impl Export<()> for AssertExporter {
-        fn export_trace_chunks<'a: 'c, 'b: 'c, 'c>(
+        fn export_trace_chunks<'a>(
             &'a mut self,
             trace_chunks: Vec<super::TraceChunk<()>>,
-            _trace_exporter: &'b crate::trace_exporter::TraceExporter,
+            _trace_exporter: &'a crate::trace_exporter::TraceExporter,
         ) -> std::pin::Pin<
             Box<dyn std::future::Future<Output = Result<AgentResponse, TraceExporterError>> + Send>,
         > {

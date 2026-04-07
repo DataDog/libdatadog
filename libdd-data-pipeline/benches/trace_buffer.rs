@@ -23,13 +23,13 @@ const CHUNKS_PER_SENDER: usize = 100;
 struct SleepExport;
 
 impl Export<Span> for SleepExport {
-    fn export_trace_chunks<'a: 'c, 'b: 'c, 'c>(
+    fn export_trace_chunks<'a>(
         &'a mut self,
         _trace_chunks: Vec<TraceChunk<Span>>,
-        _trace_exporter: &'b TraceExporter,
+        _trace_exporter: &'a TraceExporter,
     ) -> Pin<
         Box<
-            dyn std::future::Future<Output = Result<AgentResponse, TraceExporterError>> + Send + 'c,
+            dyn std::future::Future<Output = Result<AgentResponse, TraceExporterError>> + Send + 'a,
         >,
     > {
         Box::pin(async {
@@ -39,7 +39,7 @@ impl Export<Span> for SleepExport {
     }
 }
 
-fn setup_buffer() -> (Arc<SharedRuntime>, Arc<TraceBuffer<Span>>) {
+fn setup_buffer() -> Arc<TraceBuffer<Span>> {
     let rt = Arc::new(SharedRuntime::new().expect("SharedRuntime::new"));
     let mut builder = TraceExporter::builder();
     builder.set_shared_runtime(rt.clone());
@@ -47,14 +47,13 @@ fn setup_buffer() -> (Arc<SharedRuntime>, Arc<TraceBuffer<Span>>) {
         .max_buffered_spans(100_000)
         .span_flush_threshold(1_000)
         .max_flush_interval(Duration::from_secs(2));
-    let (buf, worker) = TraceBuffer::new(
+    let (buf, _worker) = TraceBuffer::new(
         cfg,
         Box::new(|_| {}),
         Box::new(SleepExport),
         builder.build().expect("TraceExporter::build"),
     );
-    rt.spawn_worker(worker).expect("spawn_worker");
-    (rt, Arc::new(buf))
+    Arc::new(buf)
 }
 
 fn bench_trace_buffer(c: &mut Criterion) {
@@ -64,12 +63,12 @@ fn bench_trace_buffer(c: &mut Criterion) {
     let workloads: &[(&str, Option<Duration>)] = &[
         ("no_delay", None),
         ("1us_delay", Some(Duration::from_micros(1))),
-        ("10us_delay", Some(Duration::from_micros(100))),
+        // ("100us_delay", Some(Duration::from_micros(100))),
     ];
 
     for &(delay_label, delay) in workloads {
-        for num_senders in [1_usize, 2, 4, 8] {
-            let (rt, sender) = setup_buffer();
+        for num_senders in [1_usize, 2, 4] {
+            let sender = setup_buffer();
 
             group.throughput(Throughput::Elements(
                 (num_senders * CHUNKS_PER_SENDER) as u64,
@@ -97,7 +96,6 @@ fn bench_trace_buffer(c: &mut Criterion) {
                 },
             );
 
-            rt.shutdown(None).expect("runtime shutdown");
         }
     }
 

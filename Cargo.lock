@@ -2963,6 +2963,7 @@ dependencies = [
  "bytes",
  "clap",
  "criterion",
+ "crossbeam-channel",
  "either",
  "http",
  "http-body-util",
