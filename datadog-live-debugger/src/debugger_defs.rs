@@ -90,6 +90,7 @@ pub struct Captures<'a> {
 
 pub type Fields<'a> = HashMap<Cow<'a, str>, Value<'a>>;
 #[derive(Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Capture<'a> {
     #[serde(skip_serializing_if = "HashMap::is_empty")]
     #[serde(rename = "staticFields")]
@@ -100,6 +101,8 @@ pub struct Capture<'a> {
     pub locals: Fields<'a>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub throwable: Option<Throwable<'a>>,
+    #[serde(skip_serializing_if = "HashMap::is_empty")]
+    pub capture_expressions: Fields<'a>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

@@ -3,8 +3,8 @@
 
 use datadog_live_debugger::debugger_defs::{ProbeMetadata, ProbeMetadataLocation, ProbeStatus};
 use datadog_live_debugger::{
-    CaptureConfiguration, DslString, EvaluateAt, InBodyLocation, MetricKind, ProbeCondition,
-    ProbeValue, SpanProbeTarget,
+    CaptureConfiguration, CaptureExpression as RustCaptureExpression, DslString, EvaluateAt,
+    InBodyLocation, MetricKind, ProbeCondition, ProbeValue, SpanProbeTarget,
 };
 use libdd_common_ffi::slice::AsBytes;
 use libdd_common_ffi::{CharSlice, Option};
@@ -58,25 +58,64 @@ impl<'a> From<&'a datadog_live_debugger::MetricProbe> for MetricProbe<'a> {
 }
 
 #[repr(C)]
+pub struct CaptureExpression<'a> {
+    pub name: CharSlice<'a>,
+    pub expr: &'a ProbeValue,
+    pub capture: &'a CaptureConfiguration,
+}
+
+#[repr(C)]
 pub struct LogProbe<'a> {
     pub segments: &'a DslString,
     pub when: &'a ProbeCondition,
     pub capture: &'a CaptureConfiguration,
     pub capture_snapshot: bool,
     pub sampling_snapshots_per_second: u32,
+    pub capture_expressions: *const CaptureExpression<'a>,
+    pub capture_expressions_num: usize,
 }
 
 impl<'a> From<&'a datadog_live_debugger::LogProbe> for LogProbe<'a> {
     fn from(from: &'a datadog_live_debugger::LogProbe) -> Self {
-        LogProbe {
+        let exprs: Vec<CaptureExpression<'a>> = from
+            .capture_expressions
+            .iter()
+            .map(|e: &'a RustCaptureExpression| CaptureExpression {
+                name: e.name.as_str().into(),
+                expr: &e.expr,
+                capture: &e.capture,
+            })
+            .collect();
+        let new = LogProbe {
             segments: &from.segments,
             when: &from.when,
             capture: &from.capture,
             capture_snapshot: from.capture_snapshot,
             sampling_snapshots_per_second: from.sampling_snapshots_per_second,
+            capture_expressions: exprs.as_ptr(),
+            capture_expressions_num: exprs.len(),
+        };
+        std::mem::forget(exprs);
+        new
+    }
+}
+
+impl Drop for LogProbe<'_> {
+    fn drop(&mut self) {
+        if !self.capture_expressions.is_null() {
+            unsafe {
+                Vec::from_raw_parts(
+                    self.capture_expressions as *mut CaptureExpression,
+                    self.capture_expressions_num,
+                    self.capture_expressions_num,
+                );
+            }
         }
     }
 }
+
+#[no_mangle]
+pub extern "C" fn drop_log_probe_capture_expressions(_: LogProbe) {}
 
 #[repr(C)]
 pub struct Tag<'a> {

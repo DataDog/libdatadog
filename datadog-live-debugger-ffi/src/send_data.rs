@@ -325,6 +325,19 @@ pub extern "C" fn ddog_snapshot_throwable_add_frame<'a, 'b: 'a>(
 }
 
 #[no_mangle]
+#[allow(improper_ctypes_definitions)]
+pub extern "C" fn ddog_snapshot_add_capture_fields<'a, 'b: 'a, 'c: 'a>(
+    capture: &mut DebuggerCapture<'a>,
+    name: CharSlice<'b>,
+    value: CaptureValue<'c>,
+) {
+    capture
+        .0
+        .capture_expressions
+        .insert(name.to_utf8_lossy(), value.into());
+}
+
+#[no_mangle]
 #[allow(improper_ctypes_definitions)] // Vec has a fixed size, and we care only about that here
 pub extern "C" fn ddog_snapshot_add_field<'a, 'b: 'a, 'c: 'a>(
     capture: &mut DebuggerCapture<'a>,

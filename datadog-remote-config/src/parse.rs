@@ -13,6 +13,7 @@ use datadog_ffe::rules_based::UniversalFlagConfig;
 use datadog_live_debugger::LiveDebuggingData;
 
 #[derive(Debug)]
+#[allow(clippy::large_enum_variant)]
 pub enum RemoteConfigData {
     DynamicConfig(DynamicConfigFile),
     #[cfg(feature = "live-debugger")]
