@@ -282,13 +282,12 @@ impl TryInto<Reference> for RawExpr {
 
     fn try_into(self) -> Result<Reference, Self::Error> {
         Ok(match self {
-            RawExpr::Expr(Some(RawExprValue::Ref(identifier))) => {
-                if identifier == "@it" {
-                    Reference::IteratorVariable
-                } else {
-                    Reference::Base(identifier)
-                }
-            }
+            RawExpr::Expr(Some(RawExprValue::Ref(identifier))) => match identifier.as_str() {
+                "@it" => Reference::IteratorVariable,
+                "@key" => Reference::IteratorKey,
+                "@value" => Reference::IteratorValue,
+                _ => Reference::Base(identifier),
+            },
             RawExpr::Expr(Some(RawExprValue::Index([source, index]))) => {
                 Reference::Index(Box::new(((*source).try_into()?, (*index).try_into()?)))
             }
