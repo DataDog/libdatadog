@@ -292,10 +292,16 @@ mod tests {
             ddog_shared_runtime_new(NonNull::new_unchecked(handle.as_mut_ptr()));
             let handle = handle.assume_init();
 
-            let err = ddog_shared_runtime_before_fork(std::mem::transmute(handle));
+            let err = ddog_shared_runtime_before_fork(std::mem::transmute::<
+                *const SharedRuntime,
+                Option<&SharedRuntime>,
+            >(handle));
             assert!(err.is_none(), "{:?}", err.map(|e| e.code));
 
-            let err = ddog_shared_runtime_after_fork_parent(std::mem::transmute(handle));
+            let err = ddog_shared_runtime_after_fork_parent(std::mem::transmute::<
+                *const SharedRuntime,
+                Option<&SharedRuntime>,
+            >(handle));
             assert!(err.is_none(), "{:?}", err.map(|e| e.code));
 
             ddog_shared_runtime_free(handle);
@@ -309,7 +315,10 @@ mod tests {
             ddog_shared_runtime_new(NonNull::new_unchecked(handle.as_mut_ptr()));
             let handle = handle.assume_init();
 
-            let err = ddog_shared_runtime_shutdown(std::mem::transmute(handle), 0);
+            let err = ddog_shared_runtime_shutdown(
+                std::mem::transmute::<*const SharedRuntime, Option<&SharedRuntime>>(handle),
+                0,
+            );
             assert!(err.is_none());
 
             ddog_shared_runtime_free(handle);
