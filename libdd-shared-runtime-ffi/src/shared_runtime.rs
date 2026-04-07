@@ -93,7 +93,6 @@ pub unsafe extern "C" fn ddog_shared_runtime_error_free(error: Option<Box<Shared
 ///
 /// The caller owns the handle and must eventually pass it to
 /// [`ddog_shared_runtime_free`] (or another consumer that takes ownership).
-/// The handle must have been initialized with `ddog_shared_runtime_new`.
 #[no_mangle]
 pub unsafe extern "C" fn ddog_shared_runtime_new(
     out_handle: NonNull<*const SharedRuntime>,
@@ -136,19 +135,21 @@ pub unsafe extern "C" fn ddog_shared_runtime_free(handle: *const SharedRuntime) 
 /// The handle must have been initialized with `ddog_shared_runtime_new`.
 #[no_mangle]
 pub unsafe extern "C" fn ddog_shared_runtime_before_fork(
-    handle: *const SharedRuntime,
+    handle: Option<&SharedRuntime>,
 ) -> Option<Box<SharedRuntimeFFIError>> {
     catch_panic!(
         {
-            if handle.is_null() {
-                return Some(Box::new(SharedRuntimeFFIError::new(
+            match handle {
+                Some(runtime) => {
+                    // SAFETY: handle was produced by Arc::into_raw and the Arc is still alive.
+                    runtime.before_fork();
+                    None
+                }
+                None => Some(Box::new(SharedRuntimeFFIError::new(
                     SharedRuntimeErrorCode::InvalidArgument,
                     "handle is null",
-                )));
+                ))),
             }
-            // SAFETY: handle was produced by Arc::into_raw and the Arc is still alive.
-            (*handle).before_fork();
-            None
         },
         panic_error!()
     )
@@ -162,20 +163,22 @@ pub unsafe extern "C" fn ddog_shared_runtime_before_fork(
 /// The handle must have been initialized with `ddog_shared_runtime_new`.
 #[no_mangle]
 pub unsafe extern "C" fn ddog_shared_runtime_after_fork_parent(
-    handle: *const SharedRuntime,
+    handle: Option<&SharedRuntime>,
 ) -> Option<Box<SharedRuntimeFFIError>> {
     catch_panic!(
         {
-            if handle.is_null() {
-                return Some(Box::new(SharedRuntimeFFIError::new(
+            match handle {
+                Some(runtime) => {
+                    // SAFETY: handle was produced by Arc::into_raw and the Arc is still alive.
+                    match runtime.after_fork_parent() {
+                        Ok(()) => None,
+                        Err(err) => Some(Box::new(SharedRuntimeFFIError::from(err))),
+                    }
+                }
+                None => Some(Box::new(SharedRuntimeFFIError::new(
                     SharedRuntimeErrorCode::InvalidArgument,
                     "handle is null",
-                )));
-            }
-            // SAFETY: handle was produced by Arc::into_raw and the Arc is still alive.
-            match (*handle).after_fork_parent() {
-                Ok(()) => None,
-                Err(err) => Some(Box::new(SharedRuntimeFFIError::from(err))),
+                ))),
             }
         },
         panic_error!()
@@ -192,20 +195,22 @@ pub unsafe extern "C" fn ddog_shared_runtime_after_fork_parent(
 /// The handle must have been initialized with `ddog_shared_runtime_new`.
 #[no_mangle]
 pub unsafe extern "C" fn ddog_shared_runtime_after_fork_child(
-    handle: *const SharedRuntime,
+    handle: Option<&SharedRuntime>,
 ) -> Option<Box<SharedRuntimeFFIError>> {
     catch_panic!(
         {
-            if handle.is_null() {
-                return Some(Box::new(SharedRuntimeFFIError::new(
+            match handle {
+                Some(runtime) => {
+                    // SAFETY: handle was produced by Arc::into_raw and the Arc is still alive.
+                    match runtime.after_fork_child() {
+                        Ok(()) => None,
+                        Err(err) => Some(Box::new(SharedRuntimeFFIError::from(err))),
+                    }
+                }
+                None => Some(Box::new(SharedRuntimeFFIError::new(
                     SharedRuntimeErrorCode::InvalidArgument,
                     "handle is null",
-                )));
-            }
-            // SAFETY: handle was produced by Arc::into_raw and the Arc is still alive.
-            match (*handle).after_fork_child() {
-                Ok(()) => None,
-                Err(err) => Some(Box::new(SharedRuntimeFFIError::from(err))),
+                ))),
             }
         },
         panic_error!()
@@ -222,28 +227,29 @@ pub unsafe extern "C" fn ddog_shared_runtime_after_fork_child(
 /// The handle must have been initialized with `ddog_shared_runtime_new`.
 #[no_mangle]
 pub unsafe extern "C" fn ddog_shared_runtime_shutdown(
-    handle: *const SharedRuntime,
+    handle: Option<&SharedRuntime>,
     timeout_ms: u64,
 ) -> Option<Box<SharedRuntimeFFIError>> {
     catch_panic!(
         {
-            if handle.is_null() {
-                return Some(Box::new(SharedRuntimeFFIError::new(
+            match handle {
+                Some(runtime) => {
+                    let timeout = if timeout_ms > 0 {
+                        Some(std::time::Duration::from_millis(timeout_ms))
+                    } else {
+                        None
+                    };
+
+                    // SAFETY: handle was produced by Arc::into_raw and the Arc is still alive.
+                    match runtime.shutdown(timeout) {
+                        Ok(()) => None,
+                        Err(err) => Some(Box::new(SharedRuntimeFFIError::from(err))),
+                    }
+                }
+                None => Some(Box::new(SharedRuntimeFFIError::new(
                     SharedRuntimeErrorCode::InvalidArgument,
                     "handle is null",
-                )));
-            }
-
-            let timeout = if timeout_ms > 0 {
-                Some(std::time::Duration::from_millis(timeout_ms))
-            } else {
-                None
-            };
-
-            // SAFETY: handle was produced by Arc::into_raw and the Arc is still alive.
-            match (*handle).shutdown(timeout) {
-                Ok(()) => None,
-                Err(err) => Some(Box::new(SharedRuntimeFFIError::from(err))),
+                ))),
             }
         },
         panic_error!()
@@ -268,13 +274,13 @@ mod tests {
     #[test]
     fn test_before_after_fork_null() {
         unsafe {
-            let err = ddog_shared_runtime_before_fork(std::ptr::null());
+            let err = ddog_shared_runtime_before_fork(None);
             assert_eq!(err.unwrap().code, SharedRuntimeErrorCode::InvalidArgument);
 
-            let err = ddog_shared_runtime_after_fork_parent(std::ptr::null());
+            let err = ddog_shared_runtime_after_fork_parent(None);
             assert_eq!(err.unwrap().code, SharedRuntimeErrorCode::InvalidArgument);
 
-            let err = ddog_shared_runtime_after_fork_child(std::ptr::null());
+            let err = ddog_shared_runtime_after_fork_child(None);
             assert_eq!(err.unwrap().code, SharedRuntimeErrorCode::InvalidArgument);
         }
     }
@@ -286,10 +292,10 @@ mod tests {
             ddog_shared_runtime_new(NonNull::new_unchecked(handle.as_mut_ptr()));
             let handle = handle.assume_init();
 
-            let err = ddog_shared_runtime_before_fork(handle);
+            let err = ddog_shared_runtime_before_fork(std::mem::transmute(handle));
             assert!(err.is_none(), "{:?}", err.map(|e| e.code));
 
-            let err = ddog_shared_runtime_after_fork_parent(handle);
+            let err = ddog_shared_runtime_after_fork_parent(std::mem::transmute(handle));
             assert!(err.is_none(), "{:?}", err.map(|e| e.code));
 
             ddog_shared_runtime_free(handle);
@@ -303,7 +309,7 @@ mod tests {
             ddog_shared_runtime_new(NonNull::new_unchecked(handle.as_mut_ptr()));
             let handle = handle.assume_init();
 
-            let err = ddog_shared_runtime_shutdown(handle, 0);
+            let err = ddog_shared_runtime_shutdown(std::mem::transmute(handle), 0);
             assert!(err.is_none());
 
             ddog_shared_runtime_free(handle);
