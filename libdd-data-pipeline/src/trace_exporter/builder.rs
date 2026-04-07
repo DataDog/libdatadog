@@ -442,6 +442,7 @@ impl TraceExporterBuilder {
                 client_side_stats: ArcSwap::new(stats.into()),
                 previous_info_state: arc_swap::ArcSwapOption::new(None),
                 info_response_observer,
+                telemetry: None,
                 health_metrics_enabled: self.health_metrics_enabled,
                 client: H::new_client(),
                 agent_payload_response_version: self
