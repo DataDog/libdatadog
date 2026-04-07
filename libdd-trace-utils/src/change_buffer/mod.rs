@@ -156,19 +156,16 @@ where
     }
 
     /// Diagnostic: number of spans currently in the HashMap.
-    #[inline]
     pub fn spans_count(&self) -> usize {
         self.spans.len()
     }
 
     /// Diagnostic: string table length.
-    #[inline]
     pub fn string_table_len(&self) -> usize {
         self.string_table.len()
     }
 
     /// Diagnostic: span pool size.
-    #[inline]
     pub fn span_pool_len(&self) -> usize {
         self.span_pool.len()
     }
@@ -500,14 +497,12 @@ where
             .ok_or(ChangeBufferError::SpanNotFound(*id))
     }
 
-    #[inline]
     pub fn get_span(&self, id: &u64) -> Result<&Span<T>> {
         self.spans
             .get(id)
             .ok_or(ChangeBufferError::SpanNotFound(*id))
     }
 
-    #[inline]
     pub fn get_trace(&self, id: &u128) -> Option<&Trace<T::Text>> {
         self.traces.get(id)
     }
@@ -578,7 +573,9 @@ where
             existing.trace_id = span.trace_id;
             existing.parent_id = span.parent_id;
             // meta/metrics already populated by change buffer ops
-            existing.meta.extend(self.default_meta.iter().cloned());
+            for (k, v) in &self.default_meta {
+                existing.meta.insert(k.clone(), v.clone());
+            }
         } else {
             self.spans.insert(span_id, span);
         }
@@ -593,7 +590,6 @@ where
     }
 
     /// Get a mutable reference to a span.
-    #[inline]    
     pub fn span_mut(&mut self, id: &u64) -> Result<&mut Span<T>> {
         self.spans
             .get_mut(id)
@@ -601,7 +597,6 @@ where
     }
 
     /// Look up a string by ID, returning a clone.
-    #[inline]
     pub fn get_string(&self, id: u32) -> Option<T::Text> {
         self.string_table
             .get(id as usize)
@@ -611,14 +606,15 @@ where
     /// Set default meta tags that are automatically applied to every new span.
     /// Call this once at init time with the config tags (service, version,
     /// runtime-id, etc.).
-    #[inline]
     pub fn set_default_meta(&mut self, tags: Vec<(T::Text, T::Text)>) {
         self.default_meta = tags;
     }
 
     /// Apply default meta tags to a span.
     fn apply_default_meta(&self, span: &mut Span<T>) {
-        span.meta.extend(self.default_meta.iter().cloned());
+        for (key, value) in &self.default_meta {
+            span.meta.insert(key.clone(), value.clone());
+        }
     }
 
     fn interpret_operation(&mut self, index: &mut usize, op: &BufferedOperation) -> Result<()> {
@@ -750,16 +746,14 @@ where
         Ok(())
     }
 
-    #[inline]
     pub fn string_table_insert_one(&mut self, key: u32, val: T::Text) {
         let idx = key as usize;
         if idx >= self.string_table.len() {
-            self.string_table.push(None);
+            self.string_table.resize_with(idx + 1, || None);
         }
         self.string_table[idx] = Some(val);
     }
 
-    #[inline]
     pub fn string_table_evict_one(&mut self, key: u32) {
         let idx = key as usize;
         if idx < self.string_table.len() {
