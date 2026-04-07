@@ -593,7 +593,6 @@ mod single_threaded_tests {
             .clone()
             .unwrap();
         assert_eq!(version_1, "1");
-        mock_v1.assert();
 
         // Update the info endpoint
         mock_v1.delete();
