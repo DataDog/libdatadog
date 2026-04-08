@@ -445,9 +445,6 @@ jobs:
           # Run the audit in a throwaway worktree so extra worktrees / cargo metadata do not touch the job checkout.
           MAJOR_BUMPS_WT=$(mktemp -d "${RUNNER_TEMP:-/tmp}/major-bumps-wt.XXXXXX")
           WF_SHA="${{ github.sha }}"
-          
-          echo "Fetching workflow SHA: $WF_SHA"
-          git fetch origin "$WF_SHA"
 
           git worktree add --detach "$MAJOR_BUMPS_WT" "$WF_SHA"
           set +e
