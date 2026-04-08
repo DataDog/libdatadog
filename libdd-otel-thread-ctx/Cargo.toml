@@ -1,0 +1,19 @@
+# Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
+# SPDX-License-Identifier: Apache-2.0
+
+[package]
+name = "libdd-otel-thread-ctx"
+version = "1.0.0"
+description = "OTel thread-level context publisher for Datadog profiling (OTEP #4947)"
+homepage = "https://github.com/DataDog/libdatadog/tree/main/libdd-otel-thread-ctx"
+repository = "https://github.com/DataDog/libdatadog/tree/main/libdd-otel-thread-ctx"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[lib]
+crate-type = ["lib"]
+bench = false
+
+[build-dependencies]
+cc = "1.1.31"

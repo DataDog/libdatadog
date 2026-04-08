@@ -3,10 +3,10 @@
 
 //! # Thread-level context sharing
 //!
-//! This module implements the publisher side of the Thread Context OTEP (PR #4947).
+//! This crate implements the publisher side of the Thread Context OTEP (PR #4947).
 //!
-//! Since `rustc` doesn't currently support the TLSDESC dialect, we use a C shim to set and get the
-//! thread-local storage used for the context.
+//! Since `rustc` doesn't currently support the TLSDESC dialect, we use a C shim to set and get
+//! the thread-local storage used for the context.
 //!
 //! ## Usage
 //!
@@ -15,10 +15,10 @@
 //! ### In-place update
 //!
 //! The simplest pattern, when applicable, is to attach one record and then mutate it in place.
-//! This avoid allocation in the hot path.
+//! This avoids allocation in the hot path.
 //!
 //! ```ignore
-//! #use libdd_library_config::otel_thread_ctx::linux::ThreadContext;
+//! use libdd_otel_thread_ctx::linux::ThreadContext;
 //!
 //! let trace_id = [0u8; 16];
 //! let span_id  = [1u8; 8];
@@ -31,12 +31,12 @@
 //!
 //! ### Swapping
 //!
-//! Swapping can be used when it's beneficial to pre-allocate or keep around a bunch of contexts to
-//! be saved and restored repeatedly. Could be the case with async-runtimes were several tasks
+//! Swapping can be used when it's beneficial to pre-allocate or keep around a bunch of contexts
+//! to be saved and restored repeatedly. Could be the case with async-runtimes where several tasks
 //! might run on the same thread, or even move from one thread to another, for example.
 //!
 //! ```ignore
-//! #use libdd_library_config::otel_thread_ctx::linux::ThreadContext;
+//! use libdd_otel_thread_ctx::linux::ThreadContext;
 //!
 //! let trace_id = [0u8; 16];
 //! let span_id  = [1u8; 8];
@@ -87,7 +87,7 @@ pub mod linux {
     /// to this function.
     ///
     /// The slot is read by an async signal handler. Atomic operations should in general use
-    /// [Odering::Relaxed], but modifications to the record might need additional compiler-only
+    /// [Ordering::Relaxed], but modifications to the record might need additional compiler-only
     /// fences (see [ThreadContext::update] for an example).
     fn get_tls_slot<'a>() -> &'a AtomicPtr<ThreadContextRecord> {
         const {
@@ -137,8 +137,8 @@ pub mod linux {
     // Note: we don't need to make this struct packed, because it's already designed to avoid
     // padding. Moreover, doing so would make it 1-aligned, potentially making access to
     // `attrs_data_size` unaligned and thus slower, and prevent us from using `AtomicU8` for
-    // `valid`. We just use a const assertion in `new()` to surprises and make sure this struct has
-    // the right total size.
+    // `valid`. We just use a const assertion in `new()` to avoid surprises and make sure this
+    // struct has the right total size.
     #[repr(C)]
     struct ThreadContextRecord {
         /// Trace identifier; all-zeroes means "no trace".
@@ -190,7 +190,7 @@ pub mod linux {
         }
 
         /// Encode `attributes` into `record.attrs_data` as packed key-value records. Existing data
-        /// are overridden (and if there were more entires than `attributes.len()`, they aren't
+        /// are overridden (and if there were more entries than `attributes.len()`, they aren't
         /// zeroed, but they will be ignored by readers).
         ///
         /// # Return
@@ -208,7 +208,7 @@ pub mod linux {
         /// attributes is over [MAX_ATTRS_DATA_SIZE], extra attributes are ignored. We do this
         /// instead of raising an error because we encode the attributes on-the-fly. Proper error
         /// recovery would require us to be able to rollback to the previous attributes which would
-        /// hurt the happy path, or leave the record in a inconsistent state. Another possibility
+        /// hurt the happy path, or leave the record in an inconsistent state. Another possibility
         /// would be to error out and reset the record in that situation.
         fn set_attrs(&mut self, local_root_span_id: [u8; 8], attributes: &[(u8, &str)]) -> bool {
             let mut fully_encoded = true;
@@ -255,7 +255,7 @@ pub mod linux {
             }
 
             // `offset < MAX_ATTRS_DATA_SIZE`, which guarantees it fits in a `u16`. This also
-            // effectively hide the remaining of the previous `attrs` bytes, so we don't have to
+            // effectively hides the remaining of the previous `attrs` bytes, so we don't have to
             // zero them.
             self.attrs_data_size = offset as u16;
             fully_encoded
@@ -280,7 +280,7 @@ pub mod linux {
     ///
     /// We don't use `Box` under the hood because it precludes aliasing, while we share the context
     /// to readers through thread-level context and through the FFI. But it is a boxed
-    /// `ThreadContextRecord` for all intent of purpose.
+    /// `ThreadContextRecord` for all intent and purpose.
     ///
     /// The context is `!Send` and `!Sync`; it is supposed to stay on the same thread and is thus
     /// not thread-safe.
@@ -316,7 +316,7 @@ pub mod linux {
         /// # Safety
         ///
         /// - `ptr` must be `null` or come from a prior call to [`Self::into_raw`].
-        /// - if `ptr` is aliased, accesses to through aliases must not be interleaved with method
+        /// - if `ptr` is aliased, accesses through aliases must not be interleaved with method
         ///   calls on the returned [ThreadContextRecord]. More precisely, mutable references might
         ///   be reconstructed during those calls, so any constraint from either Stacked Borrows,
         ///   Tree Borrows or whatever is the current aliasing model implemented in Miri applies.
@@ -356,7 +356,7 @@ pub mod linux {
         /// also observes `valid = 1`.
         pub fn attach(self) -> Option<ThreadContext> {
             // [^tls-slot-ordering]: since we get back the previous context, we should in principle
-            // use an `Acquire` (thus comibining into an `AcqRel`) compiler fence to make sure we
+            // use an `Acquire` (thus combining into an `AcqRel`) compiler fence to make sure we
             // don't get back a not-yet-initialized record.
             //
             // However, this thread (excluding the reader signal handler) is the only one to ever
