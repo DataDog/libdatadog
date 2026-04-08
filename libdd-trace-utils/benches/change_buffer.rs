@@ -23,17 +23,17 @@ macro_rules! impl_to_le_bytes {
     };
 }
 
-impl_to_le_bytes!(u32, u64, u128, i32, i64, f64);
+impl_to_le_bytes!(u16, u32, u64, u128, i32, i64, f64);
 
 struct BufBuilder {
     data: Vec<u8>,
-    op_count: u64,
+    op_count: u32,
 }
 
 impl BufBuilder {
     fn with_capacity(cap: usize) -> Self {
-        let mut data = Vec::with_capacity(cap + 8);
-        data.extend_from_slice(&[0u8; 8]);
+        let mut data = Vec::with_capacity(cap + 4);
+        data.extend_from_slice(&[0u8; 4]);
         Self { data, op_count: 0 }
     }
 
@@ -41,7 +41,7 @@ impl BufBuilder {
         val.extend_le_bytes(&mut self.data);
     }
 
-    fn push_op_header(&mut self, opcode: u64, span_id: u64) {
+    fn push_op_header(&mut self, opcode: u16, span_id: u64) {
         self.push(opcode);
         self.push(span_id);
         self.op_count += 1;
@@ -53,29 +53,29 @@ impl BufBuilder {
         self.push(parent_id);
     }
 
-    fn push_set_meta(&mut self, span_id: u64, key_idx: u32, val_idx: u32) {
+    fn push_set_meta(&mut self, span_id: u64, key_idx: u16, val_idx: u16) {
         self.push_op_header(1, span_id);
         self.push(key_idx);
         self.push(val_idx);
     }
 
-    fn push_set_metric(&mut self, span_id: u64, key_idx: u32, val: f64) {
+    fn push_set_metric(&mut self, span_id: u64, key_idx: u16, val: f64) {
         self.push_op_header(2, span_id);
         self.push(key_idx);
         self.push(val);
     }
 
-    fn push_set_service(&mut self, span_id: u64, val_idx: u32) {
+    fn push_set_service(&mut self, span_id: u64, val_idx: u16) {
         self.push_op_header(3, span_id);
         self.push(val_idx);
     }
 
-    fn push_set_resource(&mut self, span_id: u64, val_idx: u32) {
+    fn push_set_resource(&mut self, span_id: u64, val_idx: u16) {
         self.push_op_header(4, span_id);
         self.push(val_idx);
     }
 
-    fn push_set_name(&mut self, span_id: u64, val_idx: u32) {
+    fn push_set_name(&mut self, span_id: u64, val_idx: u16) {
         self.push_op_header(9, span_id);
         self.push(val_idx);
     }
@@ -90,14 +90,14 @@ impl BufBuilder {
         self.push(val);
     }
 
-    fn push_set_trace_meta(&mut self, span_id: u64, key_idx: u32, val_idx: u32) {
+    fn push_set_trace_meta(&mut self, span_id: u64, key_idx: u16, val_idx: u16) {
         self.push_op_header(10, span_id);
         self.push(key_idx);
         self.push(val_idx);
     }
 
     fn finalize(&mut self) -> Vec<u8> {
-        self.data[0..8].copy_from_slice(&self.op_count.to_le_bytes());
+        self.data[0..4].copy_from_slice(&self.op_count.to_le_bytes());
         self.data.clone()
     }
 }
@@ -112,7 +112,7 @@ fn make_state(data: &mut Vec<u8>) -> ChangeBufferState<SliceData<'static>> {
 }
 
 fn setup_string_table(state: &mut ChangeBufferState<SliceData<'static>>) {
-    let strings: &[(u32, &str)] = &[
+    let strings: &[(u16, &str)] = &[
         (0, "http.request"),
         (1, "web"),
         (2, "my-service"),
@@ -164,7 +164,7 @@ fn bench_flush_realistic_single_span(c: &mut Criterion) {
                 (data, state, op_count)
             },
             |(mut data, mut state, op_count)| {
-                data[0..8].copy_from_slice(&op_count.to_le_bytes());
+                data[0..4].copy_from_slice(&op_count.to_le_bytes());
                 state.flush_change_buffer().unwrap();
             },
             BatchSize::SmallInput,
@@ -201,7 +201,7 @@ fn bench_flush_10_spans_one_trace(c: &mut Criterion) {
                 (data, state, op_count)
             },
             |(mut data, mut state, op_count)| {
-                data[0..8].copy_from_slice(&op_count.to_le_bytes());
+                data[0..4].copy_from_slice(&op_count.to_le_bytes());
                 state.flush_change_buffer().unwrap();
             },
             BatchSize::SmallInput,
@@ -237,7 +237,7 @@ fn bench_flush_10_spans_10_traces(c: &mut Criterion) {
                 (data, state, op_count)
             },
             |(mut data, mut state, op_count)| {
-                data[0..8].copy_from_slice(&op_count.to_le_bytes());
+                data[0..4].copy_from_slice(&op_count.to_le_bytes());
                 state.flush_change_buffer().unwrap();
             },
             BatchSize::SmallInput,

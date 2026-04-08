@@ -4,10 +4,10 @@ use rustc_hash::FxHashMap;
 #[derive(Debug)]
 pub enum ChangeBufferError {
     SpanNotFound(u64),
-    StringNotFound(u32),
+    StringNotFound(u16),
     ReadOutOfBounds { offset: usize, len: usize },
     WriteOutOfBounds { offset: usize, len: usize },
-    UnknownOpcode(u32),
+    UnknownOpcode(u16),
 }
 
 impl std::fmt::Display for ChangeBufferError {
@@ -324,10 +324,8 @@ where
 
     pub fn flush_change_buffer(&mut self) -> Result<()> {
         let mut index = 0;
-        // Count is written as u64 by JS (two u32 writes at offset 0 and 4).
-        // Read as u64 to consume all 8 bytes, keeping alignment with the ops
-        // that start at offset 8. Only the low 32 bits carry the count value.
-        let mut count = self.change_buffer.read::<u64>(&mut index)? as u32;
+        // Count is written as u32 (4 bytes) at offset 0. Operations follow at offset 4.
+        let mut count = self.change_buffer.read::<u32>(&mut index)?;
 
         // Cache the last span_id to skip redundant lookups when consecutive
         // operations target the same span (the common case).
@@ -364,9 +362,7 @@ where
             count -= 1;
         }
 
-        // Zero the full u64 count field (JS reads/writes both u32 words)
         self.change_buffer.write_u32(0, 0)?;
-        self.change_buffer.write_u32(4, 0)?;
 
         Ok(())
     }
@@ -480,7 +476,7 @@ where
     }
 
     fn get_string_arg(&self, index: &mut usize) -> Result<T::Text> {
-        let num: u32 = self.get_num_arg(index)?;
+        let num: u16 = self.get_num_arg(index)?;
         self.string_table
             .get(num as usize)
             .and_then(|opt| opt.clone())
@@ -746,7 +742,7 @@ where
         Ok(())
     }
 
-    pub fn string_table_insert_one(&mut self, key: u32, val: T::Text) {
+    pub fn string_table_insert_one(&mut self, key: u16, val: T::Text) {
         let idx = key as usize;
         if idx >= self.string_table.len() {
             self.string_table.resize_with(idx + 1, || None);
@@ -754,7 +750,7 @@ where
         self.string_table[idx] = Some(val);
     }
 
-    pub fn string_table_evict_one(&mut self, key: u32) {
+    pub fn string_table_evict_one(&mut self, key: u16) {
         let idx = key as usize;
         if idx < self.string_table.len() {
             self.string_table[idx] = None;
@@ -783,7 +779,7 @@ mod tests {
         };
     }
 
-    impl_to_le_bytes!(u32, u64, u128, i32, i64, f64);
+    impl_to_le_bytes!(u16, u32, u64, u128, i32, i64, f64);
 
     struct BufBuilder {
         data: Vec<u8>,
@@ -792,9 +788,9 @@ mod tests {
 
     impl BufBuilder {
         fn new() -> Self {
-            // 8 bytes for the count field (u64: low u32 is count, high u32 is 0)
+            // 4 bytes for the count field (u32)
             Self {
-                data: vec![0u8; 8],
+                data: vec![0u8; 4],
                 op_count: 0,
             }
         }
@@ -804,10 +800,7 @@ mod tests {
         }
 
         fn push_op_header(&mut self, opcode: OpCode, span_id: u64) {
-            // Opcode is written as u64 (low u32 = opcode, high u32 = 0),
-            // matching the JS encoding.
-            self.push(opcode as u32);
-            self.push(0u32);
+            self.push(opcode as u16);
             self.push(span_id);
             self.op_count += 1;
         }
@@ -820,9 +813,7 @@ mod tests {
         }
 
         fn finalize(&mut self) -> ChangeBuffer {
-            // Write count as u64 LE (low u32 = count, high u32 = 0)
             self.data[0..4].copy_from_slice(&self.op_count.to_le_bytes());
-            self.data[4..8].copy_from_slice(&0u32.to_le_bytes());
             unsafe { ChangeBuffer::from_raw_parts(self.data.as_mut_ptr(), self.data.len()) }
         }
     }
@@ -920,8 +911,8 @@ mod tests {
         let mut builder = BufBuilder::new();
         builder.push_create(1, 100, 0);
         builder.push_op_header(OpCode::SetMetaAttr, 1);
-        builder.push(10); // string table key for name
-        builder.push(11); // string table key for value
+        builder.push(10u16); // string table key for name
+        builder.push(11u16); // string table key for value
         let buf = builder.finalize();
 
         let mut state = make_state(buf);
@@ -940,7 +931,7 @@ mod tests {
         let mut builder = BufBuilder::new();
         builder.push_create(1, 100, 0);
         builder.push_op_header(OpCode::SetMetricAttr, 1);
-        builder.push(10); // string table key for name
+        builder.push(10u16); // string table key for name
         builder.push(99.5);
         let buf = builder.finalize();
 
@@ -959,7 +950,7 @@ mod tests {
         let mut builder = BufBuilder::new();
         builder.push_create(1, 100, 0);
         builder.push_op_header(OpCode::SetServiceName, 1);
-        builder.push(10);
+        builder.push(10u16);
         let buf = builder.finalize();
 
         let mut state = make_state(buf);
@@ -975,7 +966,7 @@ mod tests {
         let mut builder = BufBuilder::new();
         builder.push_create(1, 100, 0);
         builder.push_op_header(OpCode::SetResourceName, 1);
-        builder.push(10);
+        builder.push(10u16);
         let buf = builder.finalize();
 
         let mut state = make_state(buf);
@@ -1024,9 +1015,9 @@ mod tests {
         let mut builder = BufBuilder::new();
         builder.push_create(1, 100, 0);
         builder.push_op_header(OpCode::SetType, 1);
-        builder.push(10);
+        builder.push(10u16);
         builder.push_op_header(OpCode::SetName, 1);
-        builder.push(11);
+        builder.push(11u16);
         let buf = builder.finalize();
 
         let mut state = make_state(buf);
@@ -1048,8 +1039,8 @@ mod tests {
         let mut builder = BufBuilder::new();
         builder.push_create(1, 100, 0);
         builder.push_op_header(OpCode::SetTraceMetaAttr, 1);
-        builder.push(10);
-        builder.push(11);
+        builder.push(10u16);
+        builder.push(11u16);
         let buf = builder.finalize();
 
         let mut state = make_state(buf);
@@ -1068,7 +1059,7 @@ mod tests {
         let mut builder = BufBuilder::new();
         builder.push_create(1, 100, 0);
         builder.push_op_header(OpCode::SetTraceMetricsAttr, 1);
-        builder.push(10);
+        builder.push(10u16);
         builder.push(0.75);
         let buf = builder.finalize();
 
@@ -1087,7 +1078,7 @@ mod tests {
         let mut builder = BufBuilder::new();
         builder.push_create(1, 100, 0);
         builder.push_op_header(OpCode::SetTraceOrigin, 1);
-        builder.push(10);
+        builder.push(10u16);
         let buf = builder.finalize();
 
         let mut state = make_state(buf);
@@ -1113,7 +1104,7 @@ mod tests {
 
         // The count at offset 0 should now be 0
         let mut index = 0;
-        let count = state.change_buffer.read::<u64>(&mut index)?;
+        let count = state.change_buffer.read::<u32>(&mut index)?;
         assert_eq!(count, 0);
         Ok(())
     }
@@ -1141,7 +1132,7 @@ mod tests {
         trace_id: u128,
         parent_id: u64,
     ) {
-        let span = new_span(span_id, parent_id, trace_id);
+        let span = Span { span_id, trace_id, parent_id, ..Default::default() };
         state.spans.insert(span_id, span);
         state.traces.get_or_insert_default(trace_id).span_count += 1;
     }
