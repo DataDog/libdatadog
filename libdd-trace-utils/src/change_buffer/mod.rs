@@ -39,7 +39,11 @@ mod trace;
 pub use trace::*;
 
 mod operation;
+pub use operation::OpCode;
 use operation::*;
+
+mod field_table;
+use field_table::SpanFieldTable;
 
 mod buffer;
 pub use buffer::*;
@@ -54,7 +58,7 @@ pub struct ChangeBufferState<T: TraceData> {
     change_buffer: ChangeBuffer,
     spans: FxHashMap<u64, Span<T>>,
     traces: SmallTraceMap<T::Text>,
-    /// String table indexed by sequential u32 IDs (O(1) lookup vs HashMap).
+    /// String table indexed by sequential u16 IDs (O(1) lookup vs HashMap).
     string_table: Vec<Option<T::Text>>,
     tracer_service: T::Text,
     tracer_language: T::Text,
@@ -83,6 +87,10 @@ pub struct ChangeBufferState<T: TraceData> {
     /// HashMap buffers) eliminates the alloc/dealloc churn that fragments the
     /// WASM linear memory allocator over time.
     span_pool: Vec<Span<T>>,
+    /// Precomputed byte offsets of Span<T> / Trace<T::Text> fields.
+    /// Computed once in new() via offset_of!, used in flush_change_buffer
+    /// to dispatch simple opcodes without a per-field match.
+    field_table: SpanFieldTable,
 }
 
 fn new_span_pooled<T: TraceData>(
@@ -152,6 +160,7 @@ where
             str_agent_psr: T::Text::from_static_str("_dd.agent_psr"),
             str_internal: T::Text::from_static_str("internal"),
             span_pool: Vec::new(),
+            field_table: SpanFieldTable::build::<T>(),
         }
     }
 
@@ -327,151 +336,146 @@ where
         // Count is written as u32 (4 bytes) at offset 0. Operations follow at offset 4.
         let mut count = self.change_buffer.read::<u32>(&mut index)?;
 
-        // Cache the last span_id to skip redundant lookups when consecutive
-        // operations target the same span (the common case).
+        // Cache the last span_id to skip redundant HashMap lookups when
+        // consecutive operations target the same span (the common case).
+        // SAFETY: the pointer is valid for the lifetime of this loop because:
+        // - We only store pointers from self.spans.get_mut()
+        // - We invalidate the cache whenever self.spans is structurally modified
+        //   (Create/CreateSpan/CreateSpanFull may rehash the map)
+        // - No other code accesses self.spans between cache store and use
         let mut cached_span_id: u64 = 0;
         let mut cached_span_ptr: *mut Span<T> = std::ptr::null_mut();
 
         while count > 0 {
-            let op = BufferedOperation::from_buf(&self.change_buffer, &mut index)?;
+            let raw_op: u16 = self.change_buffer.read(&mut index)?;
+            let span_id: u64 = self.change_buffer.read(&mut index)?;
 
-            // For operations that need a mutable span reference, try the cache
-            // first.
-            // SAFETY: the pointer is valid for the lifetime of this loop because:
-            // - We only store pointers from self.spans.get_mut()
-            // - We invalidate the cache (set to null) whenever self.spans is modified
-            //   (Create/CreateSpan/CreateSpanFull insert into the map which may rehash)
-            // - No other code accesses self.spans between cache store and use
-            match op.opcode {
-                OpCode::Create | OpCode::CreateSpan | OpCode::CreateSpanFull => {
-                    // These insert into self.spans, invalidating any cached
-                    // pointer
-                    cached_span_ptr = std::ptr::null_mut();
-                    cached_span_id = 0;
-                    self.interpret_operation(&mut index, &op)?;
-                }
-                _ => {
-                    self.interpret_operation_cached(
-                        &mut index,
-                        &op,
-                        &mut cached_span_id,
-                        &mut cached_span_ptr,
-                    )?;
-                }
+            if raw_op < COMPLEX_OP_BASE {
+                // Simple op: lower 3 bits = kind, upper 13 bits = field_idx
+                let kind = raw_op & 0x7;
+                let field_idx = (raw_op >> 3) as usize;
+
+                let span_ptr = if span_id == cached_span_id && !cached_span_ptr.is_null() {
+                    cached_span_ptr
+                } else {
+                    let ptr = self
+                        .spans
+                        .get_mut(&span_id)
+                        .ok_or(ChangeBufferError::SpanNotFound(span_id))? as *mut Span<T>;
+                    cached_span_id = span_id;
+                    cached_span_ptr = ptr;
+                    ptr
+                };
+                self.interpret_simple_op(kind, field_idx, span_ptr, &mut index)?;
+            } else {
+                // Complex op: may structurally modify self.spans → invalidate cache
+                cached_span_ptr = std::ptr::null_mut();
+                cached_span_id = 0;
+                self.interpret_complex_op(span_id, raw_op, &mut index)?;
             }
             count -= 1;
         }
 
         self.change_buffer.write_u32(0, 0)?;
-
         Ok(())
     }
 
-    /// Like interpret_operation, but uses a cached span pointer to avoid
-    /// redundant HashMap lookups for consecutive operations on the same span.
-    fn interpret_operation_cached(
+    /// Dispatch a simple (kind-encoded) opcode.
+    ///
+    /// `kind`     = lower 3 bits of the raw opcode (which field type / operation)
+    /// `field_idx` = upper 13 bits (which field within the kind's offset table)
+    /// `span_ptr` = raw pointer into `self.spans` for the target span
+    ///
+    /// SAFETY: `span_ptr` must be a valid pointer obtained from `self.spans.get_mut()`.
+    /// `self.spans` must not be structurally modified (no inserts/removes/rehashes)
+    /// while `span_ptr` is in use. `self.string_table` and `self.change_buffer` do
+    /// not alias with `self.spans` memory.
+    fn interpret_simple_op(
         &mut self,
+        kind: u16,
+        field_idx: usize,
+        span_ptr: *mut Span<T>,
         index: &mut usize,
-        op: &BufferedOperation,
-        cached_span_id: &mut u64,
-        cached_span_ptr: &mut *mut Span<T>,
     ) -> Result<()> {
-        // Try to reuse the cached span pointer
-        let span_ptr = if op.span_id == *cached_span_id && !cached_span_ptr.is_null() {
-            *cached_span_ptr
-        } else {
-            let span = self
-                .spans
-                .get_mut(&op.span_id)
-                .ok_or(ChangeBufferError::SpanNotFound(op.span_id))?
-                as *mut Span<T>;
-            *cached_span_id = op.span_id;
-            *cached_span_ptr = span;
-            span
-        };
-
-        // SAFETY: span_ptr is valid — it was obtained from self.spans.get_mut() above
-        // or from the cache which was set in a previous iteration of the same loop.
-        // self.spans is not modified during this function (no inserts/removes).
-        // The only shared references are to self.string_table and self.change_buffer
-        // (read-only), which don't alias with self.spans.
-        let span = unsafe { &mut *span_ptr };
-
-        match op.opcode {
-            OpCode::SetMetaAttr => {
-                let name = self.get_string_arg(index)?;
+        match kind {
+            OP_KIND_SET_STR => {
                 let val = self.get_string_arg(index)?;
-                span.meta.insert(name, val);
+                let offset = self.field_table.str_fields[field_idx];
+                // SAFETY: offset is from offset_of!(Span<T>, field) for a T::Text field.
+                // The assignment drops the old T::Text and writes the new one.
+                unsafe {
+                    *((span_ptr as *mut u8).add(offset) as *mut T::Text) = val;
+                }
             }
-            OpCode::SetMetricAttr => {
-                let name = self.get_string_arg(index)?;
+            OP_KIND_SET_I32 => {
+                let val: i32 = self.get_num_arg(index)?;
+                let offset = self.field_table.i32_fields[field_idx];
+                // SAFETY: offset is from offset_of!(Span<T>, error) for an i32 field.
+                unsafe {
+                    *((span_ptr as *mut u8).add(offset) as *mut i32) = val;
+                }
+            }
+            OP_KIND_SET_I64 => {
+                let val: i64 = self.get_num_arg(index)?;
+                let offset = self.field_table.i64_fields[field_idx];
+                // SAFETY: offset is from offset_of!(Span<T>, start/duration) for an i64 field.
+                unsafe {
+                    *((span_ptr as *mut u8).add(offset) as *mut i64) = val;
+                }
+            }
+            OP_KIND_MAP_STR => {
+                let key = self.get_string_arg(index)?;
+                let val = self.get_string_arg(index)?;
+                let offset = self.field_table.str_map_fields[field_idx];
+                // SAFETY: offset is from offset_of!(Span<T>, meta).
+                // span_ptr is not referenced as &mut Span<T> anywhere in this scope,
+                // so deriving &mut HashMap from a sub-field offset is safe.
+                unsafe {
+                    (*((span_ptr as *mut u8).add(offset)
+                        as *mut std::collections::HashMap<T::Text, T::Text>))
+                        .insert(key, val);
+                }
+            }
+            OP_KIND_MAP_F64 => {
+                let key = self.get_string_arg(index)?;
                 let val: f64 = self.get_num_arg(index)?;
-                span.metrics.insert(name, val);
+                let offset = self.field_table.f64_map_fields[field_idx];
+                // SAFETY: offset is from offset_of!(Span<T>, metrics).
+                unsafe {
+                    (*((span_ptr as *mut u8).add(offset)
+                        as *mut std::collections::HashMap<T::Text, f64>))
+                        .insert(key, val);
+                }
             }
-            OpCode::SetServiceName => {
-                span.service = self.get_string_arg(index)?;
-            }
-            OpCode::SetResourceName => {
-                span.resource = self.get_string_arg(index)?;
-            }
-            OpCode::SetError => {
-                span.error = self.get_num_arg(index)?;
-            }
-            OpCode::SetStart => {
-                span.start = self.get_num_arg(index)?;
-            }
-            OpCode::SetDuration => {
-                span.duration = self.get_num_arg(index)?;
-            }
-            OpCode::SetType => {
-                span.r#type = self.get_string_arg(index)?;
-            }
-            OpCode::SetName => {
-                span.name = self.get_string_arg(index)?;
-            }
-            OpCode::SetTraceMetaAttr => {
-                let name = self.get_string_arg(index)?;
+            OP_KIND_TRACE_SET_STR => {
                 let val = self.get_string_arg(index)?;
-                let trace_id = span.trace_id;
+                // SAFETY: reading trace_id from a valid span pointer (no borrow active).
+                let trace_id = unsafe { (*span_ptr).trace_id };
+                // Trace operations use direct field access: only one field per kind
+                // (origin / meta / metrics), so no table dispatch is needed.
+                // field_idx is always 0 in the current encoding.
                 if let Some(trace) = self.traces.get_mut(&trace_id) {
-                    trace.meta.insert(name, val);
+                    trace.origin = Some(val);
                 }
             }
-            OpCode::SetTraceMetricsAttr => {
-                let name = self.get_string_arg(index)?;
-                let val = self.get_num_arg(index)?;
-                let trace_id = span.trace_id;
+            OP_KIND_TRACE_MAP_STR => {
+                let key = self.get_string_arg(index)?;
+                let val = self.get_string_arg(index)?;
+                let trace_id = unsafe { (*span_ptr).trace_id };
                 if let Some(trace) = self.traces.get_mut(&trace_id) {
-                    trace.metrics.insert(name, val);
+                    trace.meta.insert(key, val);
                 }
             }
-            OpCode::SetTraceOrigin => {
-                let origin = self.get_string_arg(index)?;
-                let trace_id = span.trace_id;
+            OP_KIND_TRACE_MAP_F64 => {
+                let key = self.get_string_arg(index)?;
+                let val: f64 = self.get_num_arg(index)?;
+                let trace_id = unsafe { (*span_ptr).trace_id };
                 if let Some(trace) = self.traces.get_mut(&trace_id) {
-                    trace.origin = Some(origin);
+                    trace.metrics.insert(key, val);
                 }
             }
-            OpCode::BatchSetMeta => {
-                let count: u32 = self.get_num_arg(index)?;
-                for _ in 0..count {
-                    let key = self.get_string_arg(index)?;
-                    let val = self.get_string_arg(index)?;
-                    span.meta.insert(key, val);
-                }
-            }
-            OpCode::BatchSetMetric => {
-                let count: u32 = self.get_num_arg(index)?;
-                for _ in 0..count {
-                    let key = self.get_string_arg(index)?;
-                    let val: f64 = self.get_num_arg(index)?;
-                    span.metrics.insert(key, val);
-                }
-            }
-            // Create variants are handled in the caller, never reach here
-            OpCode::Create | OpCode::CreateSpan | OpCode::CreateSpanFull => unreachable!(),
+            _ => unreachable!("kind is masked to 3 bits (0–7)"),
         }
-
         Ok(())
     }
 
@@ -613,87 +617,39 @@ where
         }
     }
 
-    fn interpret_operation(&mut self, index: &mut usize, op: &BufferedOperation) -> Result<()> {
-        match op.opcode {
-            OpCode::Create => {
+    /// Dispatch a complex opcode (raw_op >= COMPLEX_OP_BASE).
+    /// Complex ops have bespoke argument layouts and may structurally modify self.spans.
+    fn interpret_complex_op(
+        &mut self,
+        span_id: u64,
+        raw_op: u16,
+        index: &mut usize,
+    ) -> Result<()> {
+        match raw_op {
+            // Create: trace_id (u128) + parent_id (u64)
+            op if op == OpCode::Create as u16 => {
                 let trace_id: u128 = self.change_buffer.read(index)?;
                 let parent_id = self.get_num_arg(index)?;
-                let mut span = new_span_pooled(&mut self.span_pool, op.span_id, parent_id, trace_id);
+                let mut span = new_span_pooled(&mut self.span_pool, span_id, parent_id, trace_id);
                 self.apply_default_meta(&mut span);
-                self.spans.insert(op.span_id, span);
+                self.spans.insert(span_id, span);
                 self.traces.get_or_insert_default(trace_id).span_count += 1;
             }
-            OpCode::SetMetaAttr => {
-                let name = self.get_string_arg(index)?;
-                let val = self.get_string_arg(index)?;
-                let span = self.get_mut_span(&op.span_id)?;
-                span.meta.insert(name, val);
-            }
-            OpCode::SetMetricAttr => {
-                let name = self.get_string_arg(index)?;
-                let val: f64 = self.get_num_arg(index)?;
-                let span = self.get_mut_span(&op.span_id)?;
-                span.metrics.insert(name, val);
-            }
-            OpCode::SetServiceName => {
-                self.get_mut_span(&op.span_id)?.service = self.get_string_arg(index)?;
-            }
-            OpCode::SetResourceName => {
-                self.get_mut_span(&op.span_id)?.resource = self.get_string_arg(index)?;
-            }
-            OpCode::SetError => {
-                self.get_mut_span(&op.span_id)?.error = self.get_num_arg(index)?;
-            }
-            OpCode::SetStart => {
-                self.get_mut_span(&op.span_id)?.start = self.get_num_arg(index)?;
-            }
-            OpCode::SetDuration => {
-                self.get_mut_span(&op.span_id)?.duration = self.get_num_arg(index)?;
-            }
-            OpCode::SetType => {
-                self.get_mut_span(&op.span_id)?.r#type = self.get_string_arg(index)?;
-            }
-            OpCode::SetName => {
-                self.get_mut_span(&op.span_id)?.name = self.get_string_arg(index)?;
-            }
-            OpCode::SetTraceMetaAttr => {
-                let name = self.get_string_arg(index)?;
-                let val = self.get_string_arg(index)?;
-                let trace_id = self.get_span(&op.span_id)?.trace_id;
-                if let Some(trace) = self.traces.get_mut(&trace_id) {
-                    trace.meta.insert(name, val);
-                }
-            }
-            OpCode::SetTraceMetricsAttr => {
-                let name = self.get_string_arg(index)?;
-                let val = self.get_num_arg(index)?;
-                let trace_id = self.get_span(&op.span_id)?.trace_id;
-                if let Some(trace) = self.traces.get_mut(&trace_id) {
-                    trace.metrics.insert(name, val);
-                }
-            }
-            OpCode::SetTraceOrigin => {
-                let origin = self.get_string_arg(index)?;
-                let trace_id = self.get_span(&op.span_id)?.trace_id;
-                if let Some(trace) = self.traces.get_mut(&trace_id) {
-                    trace.origin = Some(origin);
-                }
-            }
-            OpCode::CreateSpan => {
-                // Combined Create + SetName + SetStart
+            // CreateSpan: trace_id (u128) + parent_id (u64) + name (str) + start (i64)
+            op if op == OpCode::CreateSpan as u16 => {
                 let trace_id: u128 = self.change_buffer.read(index)?;
                 let parent_id: u64 = self.get_num_arg(index)?;
                 let name = self.get_string_arg(index)?;
                 let start: i64 = self.get_num_arg(index)?;
-                let mut span = new_span_pooled(&mut self.span_pool, op.span_id, parent_id, trace_id);
+                let mut span = new_span_pooled(&mut self.span_pool, span_id, parent_id, trace_id);
                 span.name = name;
                 span.start = start;
                 self.apply_default_meta(&mut span);
-                self.spans.insert(op.span_id, span);
+                self.spans.insert(span_id, span);
                 self.traces.get_or_insert_default(trace_id).span_count += 1;
             }
-            OpCode::CreateSpanFull => {
-                // Combined Create + SetName + SetService + SetResource + SetType + SetStart
+            // CreateSpanFull: trace_id + parent_id + name + service + resource + type + start
+            op if op == OpCode::CreateSpanFull as u16 => {
                 let trace_id: u128 = self.change_buffer.read(index)?;
                 let parent_id: u64 = self.get_num_arg(index)?;
                 let name = self.get_string_arg(index)?;
@@ -701,17 +657,18 @@ where
                 let resource = self.get_string_arg(index)?;
                 let r#type = self.get_string_arg(index)?;
                 let start: i64 = self.get_num_arg(index)?;
-                let mut span = new_span_pooled(&mut self.span_pool, op.span_id, parent_id, trace_id);
+                let mut span = new_span_pooled(&mut self.span_pool, span_id, parent_id, trace_id);
                 span.name = name;
                 span.service = service;
                 span.resource = resource;
                 span.r#type = r#type;
                 span.start = start;
                 self.apply_default_meta(&mut span);
-                self.spans.insert(op.span_id, span);
+                self.spans.insert(span_id, span);
                 self.traces.get_or_insert_default(trace_id).span_count += 1;
             }
-            OpCode::BatchSetMeta => {
+            // BatchSetMeta: count (u32) + count × (key_str, val_str)
+            op if op == OpCode::BatchSetMeta as u16 => {
                 let count: u32 = self.get_num_arg(index)?;
                 let mut pairs = Vec::with_capacity(count as usize);
                 for _ in 0..count {
@@ -719,12 +676,13 @@ where
                     let val = self.get_string_arg(index)?;
                     pairs.push((key, val));
                 }
-                let span = self.get_mut_span(&op.span_id)?;
+                let span = self.get_mut_span(&span_id)?;
                 for (key, val) in pairs {
                     span.meta.insert(key, val);
                 }
             }
-            OpCode::BatchSetMetric => {
+            // BatchSetMetric: count (u32) + count × (key_str, val_f64)
+            op if op == OpCode::BatchSetMetric as u16 => {
                 let count: u32 = self.get_num_arg(index)?;
                 let mut pairs = Vec::with_capacity(count as usize);
                 for _ in 0..count {
@@ -732,13 +690,13 @@ where
                     let val: f64 = self.get_num_arg(index)?;
                     pairs.push((key, val));
                 }
-                let span = self.get_mut_span(&op.span_id)?;
+                let span = self.get_mut_span(&span_id)?;
                 for (key, val) in pairs {
                     span.metrics.insert(key, val);
                 }
             }
-        };
-
+            _ => return Err(ChangeBufferError::UnknownOpcode(raw_op)),
+        }
         Ok(())
     }
 

@@ -1,33 +1,76 @@
 - ~~use a hasher that is u32-friendly~~ (already done in latest branch)
 - slap #inline on small functions if they're used from another crate (might be useless with LTO)
 - why don't we use auto-vect in libdatadog-nodejs?
-- use smaller opcode? u64 sounds like way too much
+- ~~use smaller opcode? u64 sounds like way too much~~ (done: u16)
 - question: what is the usual length / lifetime of the string table?
-- use a branch-less op-encoding for setting directly the memory bytes (1 bit for: Vec or not? Do we need a second bit for String or not?)
+- ~~use a branch-less op-encoding for setting directly the memory bytes~~ (done: kind-encoded simple ops)
 
 ## Op optimization
 
-| OpCode               | ID | u32 args | Arg types (in order)                              | Effect                                  |
-|----------------------|----|----------|---------------------------------------------------|-----------------------------------------|
-| `Create`             |  0 | 6        | u128 (trace_id), u64 (parent_id)                  | _compound_ — creates span + trace entry |
-| `SetMetaAttr`        |  1 | 2        | str (key), str (val)                              | insert into `span.meta` (map)           |
-| `SetMetricAttr`      |  2 | 3        | str (key), f64 (val)                              | insert into `span.metrics` (map)        |
-| `SetServiceName`     |  3 | 1        | str                                               | set field `span.service`                |
-| `SetResourceName`    |  4 | 1        | str                                               | set field `span.resource`               |
-| `SetError`           |  5 | 1        | num (i32)                                         | set field `span.error`                  |
-| `SetStart`           |  6 | 2        | num (i64)                                         | set field `span.start`                  |
-| `SetDuration`        |  7 | 2        | num (i64)                                         | set field `span.duration`               |
-| `SetType`            |  8 | 1        | str                                               | set field `span.type`                   |
-| `SetName`            |  9 | 1        | str                                               | set field `span.name`                   |
-| `SetTraceMetaAttr`   | 10 | 2        | str (key), str (val)                              | insert into `trace.meta` (map)          |
-| `SetTraceMetricsAttr`| 11 | 3        | str (key), f64 (val)                              | insert into `trace.metrics` (map)       |
-| `SetTraceOrigin`     | 12 | 1        | str                                               | set field `trace.origin`                |
-| `CreateSpan`         | 13 | 9        | u128 (trace_id), u64 (parent_id), str (name), i64 (start) | _compound_ — Create + SetName + SetStart |
-| `CreateSpanFull`     | 14 | 12       | u128 (trace_id), u64 (parent_id), str (name), str (service), str (resource), str (type), i64 (start) | _compound_ — Create + SetName + SetService + SetResource + SetType + SetStart |
-| `BatchSetMeta`       | 15 | 1 + N×2  | num (count), then N × (str key, str val)          | insert N entries into `span.meta` (map) |
-| `BatchSetMetric`     | 16 | 1 + N×3  | num (count), then N × (str key, f64 val)          | insert N entries into `span.metrics` (map) |
+### New bit-encoded opcode layout (u16)
 
-> Note: "u32 args" counts the number of u32 words consumed after the fixed header (opcode u64 + span_id u64).
-> A `str` arg is 1 u32 (string-table index). An `f64` is 2 u32. An `i64`/`u64` is 2 u32. A `u128` is 4 u32. An `i32`/`u32` is 1 u32.
-> For `BatchSet*`, N is the runtime count value; the total is variable.
+Simple ops (raw_op < 32): `(field_idx << 3) | kind`
 
+| Kind (lower 3 bits) | Meaning                                        | Args                       |
+|---------------------|------------------------------------------------|----------------------------|
+| `0` SET_STR         | set `T::Text` field on span                    | str_id (u16)               |
+| `1` SET_I32         | set `i32` field on span                        | i32                        |
+| `2` SET_I64         | set `i64` field on span                        | i64                        |
+| `3` MAP_STR         | insert str→str into span HashMap               | key_str_id (u16), val (u16)|
+| `4` MAP_F64         | insert str→f64 into span HashMap               | key_str_id (u16), val (f64)|
+| `5` TRACE_SET_STR   | set `Option<T::Text>` field on trace           | str_id (u16)               |
+| `6` TRACE_MAP_STR   | insert str→str into trace FxHashMap            | key_str_id (u16), val (u16)|
+| `7` TRACE_MAP_F64   | insert str→f64 into trace FxHashMap            | key_str_id (u16), val (f64)|
+
+Field indices (upper 13 bits):
+
+| Kind       | field_idx | Field            |
+|------------|-----------|------------------|
+| SET_STR    | 0         | span.service     |
+| SET_STR    | 1         | span.name        |
+| SET_STR    | 2         | span.resource    |
+| SET_STR    | 3         | span.type        |
+| SET_I32    | 0         | span.error       |
+| SET_I64    | 0         | span.start       |
+| SET_I64    | 1         | span.duration    |
+| MAP_STR    | 0         | span.meta        |
+| MAP_F64    | 0         | span.metrics     |
+| TRACE_SET_STR | 0      | trace.origin     |
+| TRACE_MAP_STR | 0      | trace.meta       |
+| TRACE_MAP_F64 | 0      | trace.metrics    |
+
+### Encoded opcode values for simple ops
+
+| OpCode              | Encoded u16 | = (field_idx << 3) \| kind |
+|---------------------|-------------|---------------------------|
+| SetServiceName      |  0          | (0 << 3) \| 0              |
+| SetError            |  1          | (0 << 3) \| 1              |
+| SetStart            |  2          | (0 << 3) \| 2              |
+| SetMetaAttr         |  3          | (0 << 3) \| 3              |
+| SetMetricAttr       |  4          | (0 << 3) \| 4              |
+| SetTraceOrigin      |  5          | (0 << 3) \| 5              |
+| SetTraceMetaAttr    |  6          | (0 << 3) \| 6              |
+| SetTraceMetricsAttr |  7          | (0 << 3) \| 7              |
+| SetName             |  8          | (1 << 3) \| 0              |
+| SetDuration         | 10          | (1 << 3) \| 2              |
+| SetResourceName     | 16          | (2 << 3) \| 0              |
+| SetType             | 24          | (3 << 3) \| 0              |
+
+### Complex opcodes (raw_op >= 32)
+
+| OpCode         | Value |
+|----------------|-------|
+| Create         | 32    |
+| CreateSpan     | 33    |
+| CreateSpanFull | 34    |
+| BatchSetMeta   | 35    |
+| BatchSetMetric | 36    |
+
+### Dispatch mechanism
+
+During `flush_change_buffer`:
+- If `raw_op < 32`: simple op → extract `kind = raw_op & 0x7`, `field_idx = raw_op >> 3`
+  - Span pointer cached across consecutive ops on same span
+  - `interpret_simple_op` uses `SpanFieldTable` (precomputed `offset_of!` values) to write to
+    the target field via raw pointer for span ops; direct named-field access for trace ops
+- If `raw_op >= 32`: complex op → `interpret_complex_op` dispatches by exact value

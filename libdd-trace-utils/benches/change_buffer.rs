@@ -48,50 +48,50 @@ impl BufBuilder {
     }
 
     fn push_create(&mut self, span_id: u64, trace_id: u128, parent_id: u64) {
-        self.push_op_header(0, span_id);
+        self.push_op_header(32, span_id); // OpCode::Create = 32
         self.push(trace_id);
         self.push(parent_id);
     }
 
     fn push_set_meta(&mut self, span_id: u64, key_idx: u16, val_idx: u16) {
-        self.push_op_header(1, span_id);
+        self.push_op_header(3, span_id); // OpCode::SetMetaAttr = (0<<3)|3 = 3
         self.push(key_idx);
         self.push(val_idx);
     }
 
     fn push_set_metric(&mut self, span_id: u64, key_idx: u16, val: f64) {
-        self.push_op_header(2, span_id);
+        self.push_op_header(4, span_id); // OpCode::SetMetricAttr = (0<<3)|4 = 4
         self.push(key_idx);
         self.push(val);
     }
 
     fn push_set_service(&mut self, span_id: u64, val_idx: u16) {
-        self.push_op_header(3, span_id);
+        self.push_op_header(0, span_id); // OpCode::SetServiceName = (0<<3)|0 = 0
         self.push(val_idx);
     }
 
     fn push_set_resource(&mut self, span_id: u64, val_idx: u16) {
-        self.push_op_header(4, span_id);
+        self.push_op_header(16, span_id); // OpCode::SetResourceName = (2<<3)|0 = 16
         self.push(val_idx);
     }
 
     fn push_set_name(&mut self, span_id: u64, val_idx: u16) {
-        self.push_op_header(9, span_id);
+        self.push_op_header(8, span_id); // OpCode::SetName = (1<<3)|0 = 8
         self.push(val_idx);
     }
 
     fn push_set_duration(&mut self, span_id: u64, val: i64) {
-        self.push_op_header(7, span_id);
+        self.push_op_header(10, span_id); // OpCode::SetDuration = (1<<3)|2 = 10
         self.push(val);
     }
 
     fn push_set_start(&mut self, span_id: u64, val: i64) {
-        self.push_op_header(6, span_id);
+        self.push_op_header(2, span_id); // OpCode::SetStart = (0<<3)|2 = 2
         self.push(val);
     }
 
     fn push_set_trace_meta(&mut self, span_id: u64, key_idx: u16, val_idx: u16) {
-        self.push_op_header(10, span_id);
+        self.push_op_header(6, span_id); // OpCode::SetTraceMetaAttr = (0<<3)|6 = 6
         self.push(key_idx);
         self.push(val_idx);
     }
