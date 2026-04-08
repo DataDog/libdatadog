@@ -72,11 +72,11 @@ tokio = { version = "1.23", features = [
 
 [features]
 default = ["https", "telemetry"]
-telemetry = ["libdd-telemetry"]
 https = [
     "libdd-common/https",
     "libdd-telemetry?/https",
     "libdd-trace-utils/https",
     "libdd-dogstatsd-client/https",
 ]
+telemetry = [ "dep:libdd-telemetry" ]
 test-utils = []

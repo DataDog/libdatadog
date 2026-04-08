@@ -6,12 +6,9 @@ use crate::otlp::config::{OtlpProtocol, DEFAULT_OTLP_TIMEOUT};
 use crate::otlp::OtlpTraceConfig;
 #[cfg(not(target_arch = "wasm32"))]
 use crate::pausable_worker::PausableWorker;
-#[cfg(feature = "telemetry")]
-use crate::telemetry::TelemetryClientBuilder;
+use crate::telemetry::{TelemetryClientBuilder, TelemetryConfig};
 use crate::trace_exporter::agent_response::AgentResponsePayloadVersion;
 use crate::trace_exporter::error::BuilderErrorKind;
-#[cfg(feature = "telemetry")]
-use crate::trace_exporter::TelemetryConfig;
 #[cfg(not(target_arch = "wasm32"))]
 use crate::trace_exporter::TraceExporterWorkers;
 use crate::trace_exporter::{
@@ -53,7 +50,6 @@ pub struct TraceExporterBuilder {
     peer_tags_aggregation: bool,
     compute_stats_by_span_kind: bool,
     peer_tags: Vec<String>,
-    #[cfg(feature = "telemetry")]
     telemetry: Option<TelemetryConfig>,
     health_metrics_enabled: bool,
     test_session_token: Option<String>,
@@ -209,7 +205,6 @@ impl TraceExporterBuilder {
         self
     }
 
-    #[cfg(feature = "telemetry")]
     /// Enables sending telemetry metrics.
     pub fn enable_telemetry(&mut self, cfg: TelemetryConfig) -> &mut Self {
         self.telemetry = Some(cfg);
@@ -300,9 +295,9 @@ impl TraceExporterBuilder {
                 stats = StatsComputationStatus::DisabledByAgent { bucket_size };
             }
 
-            #[cfg(feature = "telemetry")]
-            let (telemetry_client, telemetry_worker) = {
-                let telemetry = self.telemetry.map(|telemetry_config| {
+            let (telemetry_client, telemetry_worker) = self
+                .telemetry
+                .map(|telemetry_config| -> Result<_, TraceExporterError> {
                     let mut builder = TelemetryClientBuilder::default()
                         .set_language(&self.language)
                         .set_language_version(&self.language_version)
@@ -316,23 +311,21 @@ impl TraceExporterBuilder {
                     if let Some(id) = telemetry_config.runtime_id {
                         builder = builder.set_runtime_id(&id);
                     }
-                    builder.build(runtime.handle().clone())
-                });
 
-                match telemetry {
-                    Some((client, worker)) => {
-                        let mut telemetry_worker = PausableWorker::new(worker);
-                        telemetry_worker.start(&runtime).map_err(|e| {
-                            TraceExporterError::Builder(BuilderErrorKind::InvalidConfiguration(
-                                e.to_string(),
-                            ))
-                        })?;
-                        runtime.block_on(client.start());
-                        (Some(client), Some(telemetry_worker))
-                    }
-                    None => (None, None),
-                }
-            };
+                    let (client, worker) = builder
+                        .build(runtime.handle().clone())
+                        .map_err(TraceExporterError::from)?;
+                    let mut telemetry_worker = PausableWorker::new(worker);
+                    telemetry_worker.start(&runtime).map_err(|e| {
+                        TraceExporterError::Builder(BuilderErrorKind::InvalidConfiguration(
+                            e.to_string(),
+                        ))
+                    })?;
+                    runtime.block_on(client.start());
+                    Ok((client, telemetry_worker))
+                })
+                .transpose()?
+                .map_or((None, None), |(c, w)| (Some(c), Some(w)));
 
             Ok(TraceExporter {
                 endpoint: Endpoint {
@@ -368,14 +361,12 @@ impl TraceExporterBuilder {
                 client_side_stats: ArcSwap::new(stats.into()),
                 previous_info_state: arc_swap::ArcSwapOption::new(None),
                 info_response_observer,
-                #[cfg(feature = "telemetry")]
                 telemetry: telemetry_client,
                 health_metrics_enabled: self.health_metrics_enabled,
                 client: H::new_client(),
                 workers: Arc::new(Mutex::new(TraceExporterWorkers {
                     info: info_fetcher_worker,
                     stats: None,
-                    #[cfg(feature = "telemetry")]
                     telemetry: telemetry_worker,
                 })),
                 agent_payload_response_version: self
@@ -451,6 +442,7 @@ impl TraceExporterBuilder {
                 client_side_stats: ArcSwap::new(stats.into()),
                 previous_info_state: arc_swap::ArcSwapOption::new(None),
                 info_response_observer,
+                telemetry: None,
                 health_metrics_enabled: self.health_metrics_enabled,
                 client: H::new_client(),
                 agent_payload_response_version: self

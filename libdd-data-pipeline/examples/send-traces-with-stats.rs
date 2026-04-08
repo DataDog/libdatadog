@@ -4,7 +4,7 @@
 use clap::Parser;
 use libdd_capabilities_impl::NativeCapabilities;
 use libdd_data_pipeline::trace_exporter::{
-    TelemetryConfig, TraceExporter, TraceExporterInputFormat, TraceExporterOutputFormat,
+    TraceExporter, TraceExporterInputFormat, TraceExporterOutputFormat,
 };
 use libdd_log::logger::{
     logger_configure_std, logger_set_log_level, LogEventLevel, StdConfig, StdTarget,
@@ -55,7 +55,6 @@ fn main() {
     logger_set_log_level(LogEventLevel::Debug).expect("Failed to set log level");
 
     let args = Args::parse();
-    let telemetry_cfg = TelemetryConfig::default();
     let mut builder = TraceExporter::<NativeCapabilities>::builder();
     builder
         .set_url(&args.url)
@@ -68,8 +67,9 @@ fn main() {
         .set_language_version(env!("CARGO_PKG_RUST_VERSION"))
         .set_input_format(TraceExporterInputFormat::V04)
         .set_output_format(TraceExporterOutputFormat::V04)
-        .enable_telemetry(telemetry_cfg)
         .enable_stats(Duration::from_secs(10));
+    #[cfg(feature = "telemetry")]
+    builder.enable_telemetry(libdd_data_pipeline::telemetry::TelemetryConfig::default());
     let exporter = builder
         .build::<NativeCapabilities>()
         .expect("Failed to build TraceExporter");

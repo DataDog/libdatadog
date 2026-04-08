@@ -10,14 +10,16 @@ use libdd_common_ffi::{
     {slice::AsBytes, slice::ByteSlice},
 };
 
+#[cfg(feature = "telemetry")]
+use libdd_data_pipeline::trace_exporter::TelemetryConfig;
 use libdd_data_pipeline::trace_exporter::{
-    TelemetryConfig, TraceExporter as GenericTraceExporter, TraceExporterInputFormat,
-    TraceExporterOutputFormat,
+    TraceExporter as GenericTraceExporter, TraceExporterInputFormat, TraceExporterOutputFormat,
 };
 
 type TraceExporter = GenericTraceExporter<NativeCapabilities>;
 
 use std::{ptr::NonNull, time::Duration};
+#[cfg(feature = "telemetry")]
 use tracing::debug;
 
 #[inline]
@@ -32,6 +34,7 @@ fn sanitize_string(str: CharSlice) -> Result<String, Box<ExporterError>> {
 }
 
 /// FFI compatible configuration for the TelemetryClient.
+#[cfg(feature = "telemetry")]
 #[derive(Debug)]
 #[repr(C)]
 pub struct TelemetryClientConfig<'a> {
@@ -68,6 +71,7 @@ pub struct TraceExporterConfig {
     output_format: TraceExporterOutputFormat,
     compute_stats: bool,
     client_computed_stats: bool,
+    #[cfg(feature = "telemetry")]
     telemetry_cfg: Option<TelemetryConfig>,
     health_metrics_enabled: bool,
     process_tags: Option<String>,
@@ -291,6 +295,7 @@ pub unsafe extern "C" fn ddog_trace_exporter_config_enable_health_metrics(
 }
 
 /// Enables telemetry metrics.
+#[cfg(feature = "telemetry")]
 #[no_mangle]
 pub unsafe extern "C" fn ddog_trace_exporter_config_enable_telemetry(
     config: Option<&mut TraceExporterConfig>,
@@ -490,6 +495,7 @@ pub unsafe extern "C" fn ddog_trace_exporter_new(
                 builder.set_client_computed_stats();
             }
 
+            #[cfg(feature = "telemetry")]
             if let Some(cfg) = &config.telemetry_cfg {
                 builder.enable_telemetry(cfg.clone());
             }
@@ -596,6 +602,7 @@ mod tests {
             assert_eq!(cfg.input_format, TraceExporterInputFormat::V04);
             assert_eq!(cfg.output_format, TraceExporterOutputFormat::V04);
             assert!(!cfg.compute_stats);
+            #[cfg(feature = "telemetry")]
             assert!(cfg.telemetry_cfg.is_none());
             assert!(!cfg.health_metrics_enabled);
             assert!(cfg.process_tags.is_none());
@@ -828,6 +835,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "telemetry")]
     fn config_telemetry_test() {
         unsafe {
             let error = ddog_trace_exporter_config_enable_telemetry(
@@ -1106,6 +1114,7 @@ mod tests {
     // Ignore because it seems, at least in the version we're currently using, miri can't emulate
     // libc::socket function.
     #[cfg_attr(miri, ignore)]
+    #[cfg(feature = "telemetry")]
     fn exporter_send_telemetry_test() {
         unsafe {
             let server = MockServer::start();

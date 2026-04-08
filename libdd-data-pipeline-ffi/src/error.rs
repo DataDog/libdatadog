@@ -1,7 +1,7 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use libdd_data_pipeline::trace_exporter::error::{
+use libdd_data_pipeline::trace_exporter::{
     AgentErrorKind, BuilderErrorKind, InternalErrorKind, NetworkErrorKind, TraceExporterError,
 };
 use std::ffi::{c_char, CString};

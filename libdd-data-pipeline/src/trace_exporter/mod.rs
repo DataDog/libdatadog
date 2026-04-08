@@ -3,32 +3,30 @@
 pub mod agent_response;
 pub mod builder;
 pub mod error;
-pub mod metrics;
-pub mod stats;
+pub(crate) mod metrics;
+pub(crate) mod stats;
 mod trace_serializer;
 
-// Re-export the builder
+// Re-export commonly used types for convenience
+pub use crate::telemetry::TelemetryConfig;
+pub use agent_response::AgentResponse;
 pub use builder::TraceExporterBuilder;
+pub use error::{
+    AgentErrorKind, BuilderErrorKind, InternalErrorKind, NetworkErrorKind, TraceExporterError,
+};
 
-use self::agent_response::AgentResponse;
 use self::metrics::MetricsEmitter;
 use self::stats::StatsComputationStatus;
 use self::trace_serializer::TraceSerializer;
-#[cfg(not(target_arch = "wasm32"))]
-use crate::agent_info::AgentInfoFetcher;
 use crate::agent_info::ResponseObserver;
 use crate::otlp::{map_traces_to_otlp, send_otlp_traces_http, OtlpResourceInfo, OtlpTraceConfig};
 #[cfg(not(target_arch = "wasm32"))]
 use crate::pausable_worker::PausableWorker;
-#[cfg(not(target_arch = "wasm32"))]
-use crate::stats_exporter::StatsExporter;
-#[cfg(feature = "telemetry")]
 use crate::telemetry::{SendPayloadTelemetry, TelemetryClient};
 use crate::trace_exporter::agent_response::{
     AgentResponsePayloadVersion, DATADOG_RATES_PAYLOAD_VERSION,
 };
-use crate::trace_exporter::error::InternalErrorKind;
-use crate::trace_exporter::error::{RequestError, TraceExporterError};
+use crate::trace_exporter::error::RequestError;
 use crate::{
     agent_info::{self, schema::AgentInfo},
     health_metrics,
@@ -43,8 +41,6 @@ use libdd_capabilities::{HttpClientTrait, MaybeSend};
 use libdd_common::tag::Tag;
 use libdd_common::{Endpoint, MutexExt};
 use libdd_dogstatsd_client::Client;
-#[cfg(all(not(target_arch = "wasm32"), feature = "telemetry"))]
-use libdd_telemetry::worker::TelemetryWorker;
 use libdd_trace_utils::msgpack_decoder;
 use libdd_trace_utils::send_with_retry::{
     send_with_retry, RetryStrategy, SendWithRetryError, SendWithRetryResult,
@@ -183,10 +179,9 @@ impl<'a> From<&'a TracerMetadata> for HeaderMap {
 /// `H` is the HTTP client implementation, see [`HttpClientTrait`].
 #[derive(Debug)]
 pub(crate) struct TraceExporterWorkers<H: HttpClientTrait + MaybeSend + Sync + 'static> {
-    pub info: PausableWorker<AgentInfoFetcher<H>>,
-    pub stats: Option<PausableWorker<StatsExporter<H>>>,
-    #[cfg(feature = "telemetry")]
-    pub telemetry: Option<PausableWorker<TelemetryWorker>>,
+    pub info: PausableWorker<crate::agent_info::AgentInfoFetcher<H>>,
+    pub stats: Option<PausableWorker<crate::stats_exporter::StatsExporter<H>>>,
+    pub telemetry: Option<PausableWorker<crate::telemetry::TelemetryWorker>>,
 }
 
 /// The TraceExporter ingest traces from the tracers serialized as messagepack and forward them to
@@ -239,7 +234,6 @@ pub struct TraceExporter<H: HttpClientTrait + MaybeSend + Sync + 'static> {
     #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     previous_info_state: ArcSwapOption<String>,
     info_response_observer: ResponseObserver,
-    #[cfg(feature = "telemetry")]
     telemetry: Option<TelemetryClient>,
     health_metrics_enabled: bool,
     client: H,
@@ -320,7 +314,7 @@ impl<H: HttpClientTrait + MaybeSend + Sync + 'static> TraceExporter<H> {
         Ok(())
     }
 
-    #[cfg(all(not(target_arch = "wasm32"), feature = "telemetry"))]
+    #[cfg(not(target_arch = "wasm32"))]
     fn start_telemetry_worker(
         &self,
         workers: &mut TraceExporterWorkers<H>,
@@ -337,15 +331,6 @@ impl<H: HttpClientTrait + MaybeSend + Sync + 'static> TraceExporter<H> {
         Ok(())
     }
 
-    #[cfg(all(not(target_arch = "wasm32"), not(feature = "telemetry")))]
-    fn start_telemetry_worker(
-        &self,
-        _workers: &mut TraceExporterWorkers<H>,
-        _runtime: &Arc<Runtime>,
-    ) -> Result<(), TraceExporterError> {
-        Ok(())
-    }
-
     #[cfg(not(target_arch = "wasm32"))]
     pub fn stop_worker(&self) {
         let runtime = self.runtime.lock_or_panic().take();
@@ -356,7 +341,6 @@ impl<H: HttpClientTrait + MaybeSend + Sync + 'static> TraceExporter<H> {
                 if let Some(stats_worker) = &mut workers.stats {
                     let _ = stats_worker.pause().await;
                 };
-                #[cfg(feature = "telemetry")]
                 if let Some(telemetry_worker) = &mut workers.telemetry {
                     let _ = telemetry_worker.pause().await;
                 };
@@ -474,7 +458,6 @@ impl<H: HttpClientTrait + MaybeSend + Sync + 'static> TraceExporter<H> {
                 let _ = stats_worker.join().await;
             }
         }
-        #[cfg(feature = "telemetry")]
         if let Some(telemetry) = self.telemetry.take() {
             telemetry.shutdown().await;
             let telemetry_worker = self.workers.lock_or_panic().telemetry.take();
@@ -700,7 +683,6 @@ impl<H: HttpClientTrait + MaybeSend + Sync + 'static> TraceExporter<H> {
         // Send traces to the agent
         let result = send_with_retry(&self.client, endpoint, mp_payload, &headers, &strategy).await;
 
-        #[cfg(feature = "telemetry")]
         if let Some(telemetry) = &self.telemetry {
             if let Err(e) = telemetry.send(&SendPayloadTelemetry::from_retry_result(
                 &result,
@@ -967,14 +949,6 @@ impl<H: HttpClientTrait + MaybeSend + Sync + 'static> TraceExporter<H> {
     }
 }
 
-#[cfg(feature = "telemetry")]
-#[derive(Debug, Default, Clone)]
-pub struct TelemetryConfig {
-    pub heartbeat: u64,
-    pub runtime_id: Option<String>,
-    pub debug_enabled: bool,
-}
-
 #[allow(missing_docs)]
 pub trait ResponseCallback {
     #[allow(missing_docs)]
@@ -985,19 +959,16 @@ pub trait ResponseCallback {
 mod tests {
     use self::error::AgentErrorKind;
     use super::*;
+    use crate::telemetry::TelemetryConfig;
     use httpmock::prelude::*;
     use httpmock::MockServer;
     use libdd_capabilities_impl::NativeCapabilities;
     use libdd_tinybytes::BytesString;
     use libdd_trace_utils::msgpack_encoder;
     use libdd_trace_utils::span::v04::SpanBytes;
-    use libdd_trace_utils::span::v05;
     use std::net;
     use std::time::Duration;
     use tokio::time::sleep;
-
-    // v05 messagepack empty payload -> [[""], []]
-    const V5_EMPTY: [u8; 4] = [0x92, 0x91, 0xA0, 0x90];
 
     #[test]
     fn test_from_tracer_tags_to_tracer_header_tags() {
@@ -1589,6 +1560,7 @@ mod tests {
 
     #[test]
     #[cfg_attr(miri, ignore)]
+    #[cfg(feature = "telemetry")]
     fn test_exporter_metrics_v4() {
         let server = MockServer::start();
         let response_body = r#"{
@@ -1652,6 +1624,7 @@ mod tests {
 
     #[test]
     #[cfg_attr(miri, ignore)]
+    #[cfg(feature = "telemetry")]
     fn test_exporter_metrics_v5() {
         let server = MockServer::start();
         let response_body = r#"{
@@ -1685,7 +1658,10 @@ mod tests {
             true,
         );
 
-        let v5: (Vec<BytesString>, Vec<Vec<v05::Span>>) = (vec![], vec![]);
+        let v5: (
+            Vec<BytesString>,
+            Vec<Vec<libdd_trace_utils::span::v05::Span>>,
+        ) = (vec![], vec![]);
         let traces = rmp_serde::to_vec(&v5).unwrap();
         let result = exporter.send(traces.as_ref()).unwrap();
         let AgentResponse::Changed { body } = result else {
@@ -1710,7 +1686,11 @@ mod tests {
 
     #[test]
     #[cfg_attr(miri, ignore)]
+    #[cfg(feature = "telemetry")]
     fn test_exporter_metrics_v4_to_v5() {
+        // v05 messagepack empty payload -> [[""], []]
+        const V5_EMPTY: [u8; 4] = [0x92, 0x91, 0xA0, 0x90];
+
         let server = MockServer::start();
         let response_body = r#"{
                         "rate_by_service": {
