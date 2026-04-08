@@ -79,10 +79,10 @@ use std::fs::File;
 
 #[cfg(target_os = "linux")]
 use std::ffi::CStr;
-#[cfg(target_os = "linux")]
-use std::sync::OnceLock;
 use std::io;
 use std::ops::RangeInclusive;
+#[cfg(target_os = "linux")]
+use std::sync::OnceLock;
 use std::{
     env,
     ffi::{self, CString, OsString},
@@ -517,8 +517,7 @@ impl SpawnWorker {
                                     }
                                 }
                                 digits[..nd].reverse();
-                                buf[prefix.len()..prefix.len() + nd]
-                                    .copy_from_slice(&digits[..nd]);
+                                buf[prefix.len()..prefix.len() + nd].copy_from_slice(&digits[..nd]);
                                 libc::unlink(buf.as_ptr() as *const libc::c_char);
                             }
                         }
@@ -544,9 +543,7 @@ impl SpawnWorker {
                                 crate::TRAMPOLINE_BIN.len(),
                             );
                             libc::close(tmpfd);
-                            if written < 0
-                                || written as usize != crate::TRAMPOLINE_BIN.len()
-                            {
+                            if written < 0 || written as usize != crate::TRAMPOLINE_BIN.len() {
                                 // Partial / failed write — remove corrupt file and fall
                                 // through to the panic below.
                                 libc::unlink(path_ptr);
@@ -574,9 +571,8 @@ impl SpawnWorker {
                         }
                     } else {
                         let mut temp_path = [0u8; 256];
-                        let tmpdir =
-                            libc::getenv("TMPDIR".as_ptr() as *const libc::c_char)
-                                as *const libc::c_char;
+                        let tmpdir = libc::getenv("TMPDIR".as_ptr() as *const libc::c_char)
+                            as *const libc::c_char;
                         let tmpdir = if tmpdir.is_null() {
                             b"/tmp"
                         } else {
@@ -586,16 +582,14 @@ impl SpawnWorker {
                             temp_path[..tmpdir.len()].copy_from_slice(tmpdir);
                             let mut off = tmpdir.len();
                             let spawn_prefix = b"/dd-ipc-spawn_";
-                            temp_path[off..off + spawn_prefix.len()]
-                                .copy_from_slice(spawn_prefix);
+                            temp_path[off..off + spawn_prefix.len()].copy_from_slice(spawn_prefix);
                             off += spawn_prefix.len();
                             for _ in 0..8 {
                                 temp_path[off] = fastrand::alphanumeric() as u8;
                                 off += 1;
                             }
 
-                            let path =
-                                Vec::from_raw_parts(temp_path.as_mut_ptr(), off, off);
+                            let path = Vec::from_raw_parts(temp_path.as_mut_ptr(), off, off);
                             let path = CString::from_vec_with_nul_unchecked(path);
                             let path_ptr = path.as_ptr();
                             let tmpfd = libc::open(
