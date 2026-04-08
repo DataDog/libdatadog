@@ -41,6 +41,8 @@ members = [
   "spawn_worker",
   "tests/spawn_from_lib",
   "bin_tests",
+  "libdd-shared-runtime",
+  "libdd-shared-runtime-ffi",
   "libdd-data-pipeline",
   "libdd-data-pipeline-ffi",
   "libdd-ddsketch",

@@ -2968,6 +2968,7 @@ version = "3.0.1"
 dependencies = [
  "anyhow",
  "arc-swap",
+ "async-trait",
  "bytes",
  "clap",
  "criterion",
@@ -2982,6 +2983,7 @@ dependencies = [
  "libdd-ddsketch",
  "libdd-dogstatsd-client",
  "libdd-log",
+ "libdd-shared-runtime",
  "libdd-telemetry",
  "libdd-tinybytes",
  "libdd-trace-protobuf",
@@ -3009,6 +3011,7 @@ dependencies = [
  "libdd-capabilities-impl",
  "libdd-common-ffi",
  "libdd-data-pipeline",
+ "libdd-shared-runtime",
  "libdd-tinybytes",
  "libdd-trace-utils",
  "rmp-serde",
@@ -3209,10 +3212,33 @@ dependencies = [
 ]
 
 [[package]]
+name = "libdd-shared-runtime"
+version = "1.0.0"
+dependencies = [
+ "async-trait",
+ "futures",
+ "libdd-capabilities",
+ "libdd-common",
+ "tokio",
+ "tokio-util",
+ "tracing",
+]
+
+[[package]]
+name = "libdd-shared-runtime-ffi"
+version = "30.0.0"
+dependencies = [
+ "build_common",
+ "libdd-shared-runtime",
+ "tracing",
+]
+
+[[package]]
 name = "libdd-telemetry"
 version = "4.0.0"
 dependencies = [
  "anyhow",
+ "async-trait",
  "base64 0.22.1",
  "bytes",
  "futures",
@@ -3222,6 +3248,7 @@ dependencies = [
  "libc",
  "libdd-common",
  "libdd-ddsketch",
+ "libdd-shared-runtime",
  "serde",
  "serde_json",
  "sys-info",
