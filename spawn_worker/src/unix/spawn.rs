@@ -456,15 +456,9 @@ impl SpawnWorker {
                     // if we're here then exec has failed
                     let fexecve_error = std::io::Error::last_os_error();
 
-                    // When DD_SPAWN_WORKER_STABLE_TRAMPOLINE is set, use a stable
-                    // per-process path so Valgrind (and similar tools) can open the
-                    // file for debug symbols before exec completes. The trampoline
-                    // self-deletes argv[1] at startup only when *argv[1] != '\0';
-                    // passing an empty string skips that, and we clean up via atexit.
-                    //
-                    // By default (env var unset) we keep the original random-path
-                    // behaviour so that debuggers/ddprof cannot trivially attach by
-                    // predicting the trampoline path.
+                    // When DD_SPAWN_WORKER_STABLE_TRAMPOLINE is set, write the trampoline to
+                    // a stable per-process path so Valgrind can open it for debug symbols
+                    // before exec completes. Default (unset): keep the random-path behaviour.
                     let stable_env_key = b"DD_SPAWN_WORKER_STABLE_TRAMPOLINE\0";
                     let use_stable = {
                         let val = libc::getenv(stable_env_key.as_ptr() as *const libc::c_char);
@@ -472,8 +466,7 @@ impl SpawnWorker {
                     };
 
                     if use_stable {
-                        // Build the stable path in a stack buffer — no heap allocation
-                        // post-fork.  Path: /tmp/.dd-trampoline-<pid>
+                        // Stack-allocated path /tmp/.dd-trampoline-<pid> — no heap post-fork.
                         let mut path_buf = [0u8; 48];
                         {
                             let prefix = b"/tmp/.dd-trampoline-";
@@ -492,14 +485,11 @@ impl SpawnWorker {
                             digits[..nd].reverse();
                             path_buf[prefix.len()..prefix.len() + nd]
                                 .copy_from_slice(&digits[..nd]);
-                            // path_buf is zero-initialised so the NUL terminator is
-                            // implicit at prefix.len() + nd.
                         }
                         let path_ptr = path_buf.as_ptr() as *const libc::c_char;
 
-                        // atexit handler: recomputes the path from the current PID —
-                        // fork-safe because getpid() in the child returns the child's
-                        // PID, so each process's atexit cleans up its own file.
+                        // Fork-safe atexit: recomputes path from getpid() so each process
+                        // cleans up its own file.
                         extern "C" fn cleanup_trampoline() {
                             unsafe {
                                 let mut buf = [0u8; 48];
@@ -522,11 +512,8 @@ impl SpawnWorker {
                             }
                         }
 
-                        // Track atexit registration per process (presence only — no path
-                        // stored). After fork, a child inherits the parent's OnceLock
-                        // state. If the parent already registered cleanup_trampoline, the
-                        // child skips re-registration; the inherited handler still runs on
-                        // child exit and computes the child's own path via getpid().
+                        // Presence-only lock — after fork, the child inherits the state but
+                        // cleanup_trampoline recomputes the path via getpid().
                         static ATEXIT_REGISTERED: OnceLock<()> = OnceLock::new();
 
                         let tmpfd = libc::open(
@@ -535,7 +522,6 @@ impl SpawnWorker {
                             libc::S_IRWXU as libc::c_uint,
                         );
                         if tmpfd >= 0 {
-                            // Newly created — write trampoline binary and verify.
                             let written = libc::sendfile(
                                 tmpfd,
                                 fd.as_raw_fd(),
@@ -551,18 +537,13 @@ impl SpawnWorker {
                                 ATEXIT_REGISTERED.get_or_init(|| {
                                     libc::atexit(cleanup_trampoline);
                                 });
-                                // argv[1] is already "" (set during ExecVec setup
-                                // above); the trampoline skips unlink(argv[1]) when
-                                // *argv[1] == '\0'.
+                                // argv[1] is "" — trampoline skips unlink when *argv[1] == '\0'.
                                 libc::execve(path_ptr, argv.as_ptr(), envp.as_ptr());
-                                // execve failed — remove file so the next attempt
-                                // recreates it cleanly.
+                                // execve failed — remove file so next attempt recreates it.
                                 libc::unlink(path_ptr);
                             }
                         } else {
-                            // O_EXCL failed: orphan from a previous process with the
-                            // same PID (e.g. killed before atexit ran). Reuse the
-                            // existing file content.
+                            // O_EXCL failed: same-PID orphan (killed before atexit). Reuse it.
                             ATEXIT_REGISTERED.get_or_init(|| {
                                 libc::atexit(cleanup_trampoline);
                             });
