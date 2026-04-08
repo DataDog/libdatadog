@@ -30,8 +30,6 @@ pub struct IpcClientConn {
     recv_buf: Vec<u8>,
     /// Set to true when a fatal I/O error occurs on send or receive.
     closed: bool,
-    /// Skip draining when the caller already drained
-    drained_acks_since_send: bool,
 }
 
 impl IpcClientConn {
@@ -42,7 +40,6 @@ impl IpcClientConn {
             ack_count: 0,
             recv_buf: vec![0u8; max_message_size() + HANDLE_SUFFIX_SIZE],
             closed: false,
-            drained_acks_since_send: true,
         }
     }
 
@@ -64,18 +61,18 @@ impl IpcClientConn {
         self.send_count - self.ack_count
     }
 
-    /// Non-blocking drain of all pending acks for client side. Updates `ack_count`.
+    /// Non-blocking drain of pending acks up to the number of outstanding messages.
+    ///
+    /// Passing `outstanding()` as the bound avoids initialising more kernel structures than
+    /// needed and skips the final `WouldBlock` probe when all expected acks have arrived.
+    /// On Linux uses `recvmmsg` to batch-receive up to 100 acks per syscall.
     pub fn drain_acks(&mut self) {
-        self.drained_acks_since_send = true;
-        loop {
-            match self.conn.try_recv_raw(&mut self.recv_buf) {
-                Ok(_) => self.ack_count += 1,
-                Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => break,
-                Err(e) => {
-                    warn!("drain_acks: connection error ({}), marking closed", e);
-                    self.closed = true;
-                    break;
-                }
+        let max = self.outstanding() as usize;
+        match self.conn.drain_acks_nonblocking(max) {
+            Ok(count) => self.ack_count += count as u64,
+            Err(e) => {
+                warn!("drain_acks: connection error ({}), marking closed", e);
+                self.closed = true;
             }
         }
     }
@@ -85,11 +82,6 @@ impl IpcClientConn {
     /// Returns `false` if the socket would block (EAGAIN).
     /// `data` is unmodified after the call.
     pub fn try_send(&mut self, data: &mut Vec<u8>, fds: &[RawFd]) -> bool {
-        if !self.drained_acks_since_send {
-            self.drain_acks();
-        }
-        self.drained_acks_since_send = false;
-
         match self.conn.try_send_raw(data, fds) {
             Ok(()) => {
                 self.send_count += 1;
@@ -117,15 +109,20 @@ impl IpcClientConn {
 
     /// Blocking send + blocking receive of response.
     ///
-    /// Sends `data`/`fds` (blocking), then receives in a loop, skipping any
-    /// intermediate 0-byte acks for prior fire-and-forget messages, until the
-    /// ack for this specific send arrives.  Returns the response bytes and any
-    /// transferred file descriptors.
+    /// Drains any pending fire-and-forget acks (non-blocking, batched on Linux via `recvmmsg`)
+    /// before sending, so the subsequent blocking recv loop only needs to wait for the single
+    /// response ack.  Sends `data`/`fds` (blocking), then receives in a loop until the ack
+    /// for this specific send arrives.  Returns the response bytes and any transferred file
+    /// descriptors.
     pub fn call(
         &mut self,
         data: &mut Vec<u8>,
         fds: &[RawFd],
     ) -> io::Result<(Vec<u8>, Vec<OwnedFd>)> {
+        self.drain_acks();
+        if self.closed {
+            return Err(io::Error::from(io::ErrorKind::BrokenPipe));
+        }
         self.conn.send_raw_blocking(data, fds).inspect_err(|e| {
             warn!("call: send failed ({}), marking closed", e);
             self.closed = true;

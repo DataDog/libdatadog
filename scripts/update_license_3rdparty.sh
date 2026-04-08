@@ -5,8 +5,8 @@
 
 set -eu
 
-# If you're missing cargo bundle-licenses, install it with:
-# cargo install cargo-bundle-licenses
+# If you're missing dd-rust-license-tool, install it with:
+# cargo install dd-rust-license-tool
 
 cd "$(dirname "$0")"/..
-CARGO_HOME=/tmp/dd-cargo cargo bundle-licenses --format yaml --output LICENSE-3rdparty.yml
+dd-rust-license-tool write

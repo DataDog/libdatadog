@@ -16,4 +16,4 @@ jobs:
                 delay: '3'
                 retries: '45'
                 polling_interval: '1'
-                checks_exclude: 'devflow/merge,dd-gitlab/default-pipeline'
+                checks_exclude: 'devflow/merge,dd-gitlab/default-pipeline,Rustfmt Auto / rustfmt'

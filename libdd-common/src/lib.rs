@@ -7,14 +7,17 @@
 #![cfg_attr(not(test), deny(clippy::unimplemented))]
 
 use anyhow::Context;
-use hyper::http::uri;
+use http::uri;
 use serde::de::Error;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::sync::{Mutex, MutexGuard};
 use std::{borrow::Cow, ops::Deref, path::PathBuf, str::FromStr};
 
 pub mod azure_app_services;
+pub mod capabilities;
+#[cfg(not(target_arch = "wasm32"))]
 pub mod cc_utils;
+#[cfg(not(target_arch = "wasm32"))]
 pub mod connector;
 #[cfg(feature = "reqwest")]
 pub mod dump_server;
@@ -24,11 +27,15 @@ pub mod cstr;
 pub mod config;
 pub mod error;
 pub mod http_common;
+pub mod multipart;
+#[cfg(not(target_arch = "wasm32"))]
 pub mod rate_limiter;
 pub mod tag;
 #[cfg(any(test, feature = "test-utils"))]
 pub mod test_utils;
+#[cfg(not(target_arch = "wasm32"))]
 pub mod threading;
+#[cfg(not(target_arch = "wasm32"))]
 pub mod timeout;
 pub mod unix_utils;
 pub mod worker;
@@ -84,7 +91,7 @@ impl<T> MutexExt<T> for Mutex<T> {
 
 pub mod header {
     #![allow(clippy::declare_interior_mutable_const)]
-    use hyper::{header::HeaderName, http::HeaderValue};
+    use http::{header::HeaderName, HeaderValue};
 
     pub const APPLICATION_MSGPACK_STR: &str = "application/msgpack";
     pub const APPLICATION_PROTOBUF_STR: &str = "application/x-protobuf";
@@ -107,14 +114,19 @@ pub mod header {
         HeaderName::from_static("x-datadog-test-session-token");
 }
 
+#[cfg(not(target_arch = "wasm32"))]
+pub use http_common::DefaultHttpClient;
+#[cfg(not(target_arch = "wasm32"))]
 pub type HttpClient = http_common::GenericHttpClient<connector::Connector>;
-pub type GenericHttpClient<C> = http_common::GenericHttpClient<C>;
+#[cfg(not(target_arch = "wasm32"))]
 pub type HttpResponse = http_common::HttpResponse;
-pub type HttpRequestBuilder = hyper::http::request::Builder;
+pub type HttpRequestBuilder = http::request::Builder;
+#[cfg(not(target_arch = "wasm32"))]
 pub trait Connect:
     hyper_util::client::legacy::connect::Connect + Clone + Send + Sync + 'static
 {
 }
+#[cfg(not(target_arch = "wasm32"))]
 impl<C: hyper_util::client::legacy::connect::Connect + Clone + Send + Sync + 'static> Connect
     for C
 {
@@ -126,7 +138,7 @@ pub use const_format;
 #[derive(Clone, PartialEq, Eq, Hash, Debug, Serialize, Deserialize)]
 pub struct Endpoint {
     #[serde(serialize_with = "serialize_uri", deserialize_with = "deserialize_uri")]
-    pub url: hyper::Uri,
+    pub url: http::Uri,
     pub api_key: Option<Cow<'static, str>>,
     pub timeout_ms: u64,
     /// Sets X-Datadog-Test-Session-Token header on any request
@@ -140,7 +152,7 @@ pub struct Endpoint {
 impl Default for Endpoint {
     fn default() -> Self {
         Endpoint {
-            url: hyper::Uri::default(),
+            url: http::Uri::default(),
             api_key: None,
             timeout_ms: Self::DEFAULT_TIMEOUT,
             test_token: None,
@@ -156,7 +168,7 @@ struct SerializedUri<'a> {
     path_and_query: Option<Cow<'a, str>>,
 }
 
-fn serialize_uri<S>(uri: &hyper::Uri, serializer: S) -> Result<S::Ok, S::Error>
+fn serialize_uri<S>(uri: &http::Uri, serializer: S) -> Result<S::Ok, S::Error>
 where
     S: Serializer,
 {
@@ -172,12 +184,12 @@ where
     uri.serialize(serializer)
 }
 
-fn deserialize_uri<'de, D>(deserializer: D) -> Result<hyper::Uri, D::Error>
+fn deserialize_uri<'de, D>(deserializer: D) -> Result<http::Uri, D::Error>
 where
     D: Deserializer<'de>,
 {
     let uri = SerializedUri::deserialize(deserializer)?;
-    let mut builder = hyper::Uri::builder();
+    let mut builder = http::Uri::builder();
     if let Some(v) = uri.authority {
         builder = builder.authority(v.deref());
     }
@@ -199,7 +211,7 @@ where
 ///     * For windows, interprets everything after windows: as path
 ///     * For unix, interprets everything after unix:// as path
 /// * For file scheme implementation will simply backfill missing authority section
-pub fn parse_uri(uri: &str) -> anyhow::Result<hyper::Uri> {
+pub fn parse_uri(uri: &str) -> anyhow::Result<http::Uri> {
     if let Some(path) = uri.strip_prefix("unix://") {
         encode_uri_path_in_authority("unix", path)
     } else if let Some(path) = uri.strip_prefix("windows:") {
@@ -207,11 +219,11 @@ pub fn parse_uri(uri: &str) -> anyhow::Result<hyper::Uri> {
     } else if let Some(path) = uri.strip_prefix("file://") {
         encode_uri_path_in_authority("file", path)
     } else {
-        Ok(hyper::Uri::from_str(uri)?)
+        Ok(http::Uri::from_str(uri)?)
     }
 }
 
-fn encode_uri_path_in_authority(scheme: &str, path: &str) -> anyhow::Result<hyper::Uri> {
+fn encode_uri_path_in_authority(scheme: &str, path: &str) -> anyhow::Result<http::Uri> {
     let mut parts = uri::Parts::default();
     parts.scheme = uri::Scheme::from_str(scheme).ok();
 
@@ -219,10 +231,10 @@ fn encode_uri_path_in_authority(scheme: &str, path: &str) -> anyhow::Result<hype
 
     parts.authority = uri::Authority::from_str(path.as_str()).ok();
     parts.path_and_query = Some(uri::PathAndQuery::from_static(""));
-    Ok(hyper::Uri::from_parts(parts)?)
+    Ok(http::Uri::from_parts(parts)?)
 }
 
-pub fn decode_uri_path_in_authority(uri: &hyper::Uri) -> anyhow::Result<PathBuf> {
+pub fn decode_uri_path_in_authority(uri: &http::Uri) -> anyhow::Result<PathBuf> {
     let path = hex::decode(uri.authority().context("missing uri authority")?.as_str())?;
     #[cfg(unix)]
     {
@@ -255,14 +267,31 @@ impl Endpoint {
         .flatten()
     }
 
+    /// Apply standard headers (user-agent, api-key, test-token, entity headers) to an
+    /// [`http::request::Builder`].
+    pub fn set_standard_headers(
+        &self,
+        mut builder: http::request::Builder,
+        user_agent: &str,
+    ) -> http::request::Builder {
+        builder = builder.header("user-agent", user_agent);
+        for (name, value) in self.get_optional_headers() {
+            builder = builder.header(name, value);
+        }
+        for (name, value) in entity_id::get_entity_headers() {
+            builder = builder.header(name, value);
+        }
+        builder
+    }
+
     /// Return a request builder with the following headers:
     /// - User agent
     /// - Api key
     /// - Container Id/Entity Id
     pub fn to_request_builder(&self, user_agent: &str) -> anyhow::Result<HttpRequestBuilder> {
-        let mut builder = hyper::Request::builder()
+        let mut builder = http::Request::builder()
             .uri(self.url.clone())
-            .header(hyper::header::USER_AGENT, user_agent);
+            .header(http::header::USER_AGENT, user_agent);
 
         // Add optional endpoint headers (api-key, test-token)
         for (name, value) in self.get_optional_headers() {
@@ -287,7 +316,7 @@ impl Endpoint {
     }
 
     #[inline]
-    pub fn from_url(url: hyper::Uri) -> Endpoint {
+    pub fn from_url(url: http::Uri) -> Endpoint {
         Endpoint {
             url,
             ..Default::default()

@@ -82,5 +82,6 @@ pub enum RemoteConfigCapabilities {
     ApmTracingEnableLiveDebugging = 41,
     AsmDdMulticonfig = 42,
     AsmTraceTaggingRules = 43,
+    ApmTracingMulticonfig = 45,
     FfeFlagConfigurationRules = 46,
 }

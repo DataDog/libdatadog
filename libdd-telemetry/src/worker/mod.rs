@@ -242,10 +242,9 @@ impl Add for TelemetryWorkerStats {
                 buckets: self.metric_buckets.buckets + rhs.metric_buckets.buckets,
                 series: self.metric_buckets.series + rhs.metric_buckets.series,
                 series_points: self.metric_buckets.series_points + rhs.metric_buckets.series_points,
-                distributions: self.metric_buckets.distributions
-                    + self.metric_buckets.distributions,
+                distributions: self.metric_buckets.distributions + rhs.metric_buckets.distributions,
                 distributions_points: self.metric_buckets.distributions_points
-                    + self.metric_buckets.distributions_points,
+                    + rhs.metric_buckets.distributions_points,
             },
         }
     }
@@ -1108,6 +1107,7 @@ impl TelemetryWorkerBuilder {
         let token = CancellationToken::new();
         let config = self.config;
         let telemetry_heartbeat_interval = config.telemetry_heartbeat_interval;
+        let telemetry_extended_heartbeat_interval = config.telemetry_extended_heartbeat_interval;
         let client = http_client::from_config(&config);
 
         let metrics_flush_interval =
@@ -1140,7 +1140,7 @@ impl TelemetryWorkerBuilder {
                 (metrics_flush_interval, LifecycleAction::FlushMetricAggr),
                 (telemetry_heartbeat_interval, LifecycleAction::FlushData),
                 (
-                    time::Duration::from_secs(60 * 60 * 24),
+                    telemetry_extended_heartbeat_interval,
                     LifecycleAction::ExtendedHeartbeat,
                 ),
             ]),

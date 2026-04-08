@@ -421,7 +421,15 @@ pub fn report_unhandled_exception(
     let tid = libdd_common::threading::get_current_thread_id() as libc::pid_t;
 
     let error_type_str = exception_type.unwrap_or("<unknown>");
-    let error_message_str = exception_message.unwrap_or("<no message>");
+
+    // This allocates but this is okay because we are not in a signal handler.
+    // This is necessary, because user defined exception messages can have newlines
+    // and the receiver state machine parsing depends on newlines for different sections
+    // of the crash report.
+    let error_message_str = exception_message
+        .unwrap_or("<no message>")
+        .replace('\n', "\\n")
+        .replace('\r', "\\r");
     let message = format!(
         "Process was terminated due to an unhandled exception of type '{error_type_str}'. \
          Message: {error_message_str}"

@@ -4,6 +4,7 @@
 use crate::{
     crash_info::{
         CrashInfo, CrashInfoBuilder, ErrorKind, SigInfo, Span, StackFrame, TelemetryCrashUploader,
+        Ucontext,
     },
     runtime_callback::RuntimeStack,
     shared::constants::*,
@@ -267,7 +268,8 @@ fn process_line(
 
         StdinState::Message if line.starts_with(DD_CRASHTRACK_END_MESSAGE) => StdinState::Waiting,
         StdinState::Message => {
-            builder.with_message(line.to_string())?;
+            let unescaped = line.replace("\\n", "\n").replace("\\r", "\r");
+            builder.with_message(unescaped)?;
             StdinState::Message
         }
 
@@ -314,7 +316,8 @@ fn process_line(
         }
         StdinState::Ucontext if line.starts_with(DD_CRASHTRACK_END_UCONTEXT) => StdinState::Waiting,
         StdinState::Ucontext => {
-            builder.with_experimental_ucontext(line.to_string())?;
+            let ucontext: Ucontext = serde_json::from_str(line)?;
+            builder.with_ucontext(ucontext)?;
             StdinState::Ucontext
         }
 
