@@ -1,4 +1,8 @@
 #!/usr/bin/env bash
+
+# Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
+# SPDX-License-Identifier: Apache-2.0
+
 # For each crate in an api-changes.json array, compare direct libdd-* dependency
 # version requirements between the current tree and prev_tag. If any dependency's
 # major version (first digit in the req string) increased, record details in `major_bumps`.
