@@ -263,6 +263,35 @@ pub extern "C" fn ddog_library_configurator_get_from_bytes(
     local_config_bytes: CharSlice,
     fleet_config_bytes: CharSlice,
 ) -> LibraryConfigBytesResult {
+    #[cfg(all(feature = "std", feature = "catch_panic", panic = "unwind"))]
+    {
+        match catch_unwind(AssertUnwindSafe(|| {
+            get_from_bytes_impl(configurator, local_config_bytes, fleet_config_bytes)
+        })) {
+            Ok(ret) => ret,
+            Err(info) => {
+                let msg = if let Some(s) = info.downcast_ref::<&'static str>() {
+                    (*s).into()
+                } else if let Some(s) = info.downcast_ref::<String>() {
+                    s.clone()
+                } else {
+                    "FFI function panicked".into()
+                };
+                LibraryConfigBytesResult::Err(ffi::CString::new_or_empty(msg))
+            }
+        }
+    }
+    #[cfg(not(all(feature = "std", feature = "catch_panic", panic = "unwind")))]
+    {
+        get_from_bytes_impl(configurator, local_config_bytes, fleet_config_bytes)
+    }
+}
+
+fn get_from_bytes_impl(
+    configurator: &Configurator,
+    local_config_bytes: CharSlice,
+    fleet_config_bytes: CharSlice,
+) -> LibraryConfigBytesResult {
     let process_info = match configurator.process_info {
         Some(ref p) => p,
         None => {
