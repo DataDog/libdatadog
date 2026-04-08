@@ -313,8 +313,24 @@ jobs:
         with:
           cache-targets: true # cache build artifacts
           cache-bin: true # cache the ~/.cargo/bin directory
+      - name: Pre-fetch dependencies
+        # cargo fetch downloads platform-independent source tarballs (.crate files)
+        # and git deps into ~/.cargo/registry/cache and ~/.cargo/git. The CentOS
+        # container mounts the same ~/.cargo from the host, so it finds the sources
+        # already present and skips all network fetches.
+        run: cargo fetch
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@b5ca514318bd6ebac0fb2aedd5d36ec1b5c232a2 # 3.10.0
       - name: Build CentOS 7 Docker image
-        run: docker build -t libdatadog-centos7 -f tools/docker/Dockerfile.centos .
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          # Dockerfile has no COPY/ADD — no need to send the whole repo as context.
+          context: tools/docker
+          file: tools/docker/Dockerfile.centos
+          load: true
+          tags: libdatadog-centos7
+          cache-from: type=gha,scope=centos7-image
+          cache-to: type=gha,mode=max,scope=centos7-image
       - name: "cargo nextest run (centos7)"
         # Run docker as a user, not the default root
         # Mount and use the runner's toolchain as it's the same arch
