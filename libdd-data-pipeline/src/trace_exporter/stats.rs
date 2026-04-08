@@ -358,10 +358,12 @@ fn add_spans_to_stats<T: libdd_trace_utils::span::TraceData>(
                 let dbms_hint: Option<&str> = span.meta.get("db.type").map(|v| v.borrow());
                 let sql_obfuscation_mode = get_agent_info()
                     .and_then(|info| {
-                        info.info
-                            .config
-                            .as_ref()
-                            .map(|config| config.obfuscation.sql_obfuscation_mode)
+                        info.info.config.as_ref().and_then(|config| {
+                            config
+                                .obfuscation
+                                .as_ref()
+                                .map(|obfuscation_cfg| obfuscation_cfg.sql_obfuscation_mode)
+                        })
                     })
                     .unwrap_or_default();
                 let config = StatsObfuscationConfig {

@@ -56,7 +56,7 @@ pub struct Config {
     pub max_memory: Option<f64>,
     pub max_cpu: Option<f64>,
     pub analyzed_spans_by_service: Option<HashMap<String, HashMap<String, f64>>>,
-    pub obfuscation: ObfuscationConfig,
+    pub obfuscation: Option<ObfuscationConfig>,
 }
 
 #[allow(missing_docs)]
@@ -67,6 +67,7 @@ pub struct ObfuscationConfig {
     pub sql_exec_plan: bool,
     pub sql_exec_plan_normalize: bool,
     #[cfg(feature = "stats-obfuscation")]
+    #[serde(default)]
     pub sql_obfuscation_mode: libdd_trace_obfuscation::sql::SqlObfuscationMode,
     pub http: HttpObfuscationConfig,
     pub remove_stack_traces: bool,
@@ -83,6 +84,7 @@ pub struct HttpObfuscationConfig {
 
 #[allow(missing_docs)]
 #[derive(Clone, Serialize, Deserialize, Default, Debug, PartialEq)]
+#[serde(rename_all = "PascalCase")]
 pub struct RedisObfuscationConfig {
     pub enabled: bool,
     pub remove_all_args: bool,
@@ -90,6 +92,7 @@ pub struct RedisObfuscationConfig {
 
 #[allow(missing_docs)]
 #[derive(Clone, Serialize, Deserialize, Default, Debug, PartialEq)]
+#[serde(rename_all = "PascalCase")]
 pub struct MemcachedObfuscationConfig {
     pub enabled: bool,
     pub keep_command: bool,
