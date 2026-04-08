@@ -1063,7 +1063,7 @@ fn test_span_derived_primary_tags_aggregation() {
             &[("env", "prod"), ("version", "v1")],
             &[],
         ),
-        // Root span with env=staging — different value, should be a separate bucket
+        // Root span with env=staging: different value, should be a separate bucket
         get_test_span_with_meta(
             now,
             2,
@@ -1076,7 +1076,7 @@ fn test_span_derived_primary_tags_aggregation() {
             &[("env", "staging"), ("version", "v1")],
             &[],
         ),
-        // Server span — span-derived primary tags apply unconditionally (no span.kind gate)
+        // Server span: span-derived primary tags apply unconditionally (no span.kind gate)
         get_test_span_with_meta(
             now,
             3,
@@ -1089,7 +1089,7 @@ fn test_span_derived_primary_tags_aggregation() {
             &[("span.kind", "server"), ("env", "prod"), ("version", "v1")],
             &[("_dd.measured", 1.0)],
         ),
-        // Client span — span-derived primary tags and peer tags coexist
+        // Client span: span-derived primary tags and peer tags coexist
         get_test_span_with_meta(
             now,
             4,
@@ -1212,7 +1212,7 @@ fn test_span_derived_primary_tags_aggregation() {
             ],
             ..Default::default()
         },
-        // Server span env=prod, version=v1 — no span.kind gate for derived tags
+        // Server span env=prod, version=v1: no span.kind gate for derived tags
         pb::ClientGroupedStats {
             service: "A1".to_string(),
             resource: "POST /users".to_string(),
@@ -1230,7 +1230,8 @@ fn test_span_derived_primary_tags_aggregation() {
             ],
             ..Default::default()
         },
-        // Client span env=prod — also has peer tag db.instance:i-1234
+        // Client span env=prod: also has peer tag db.instance:i-1234
+        // "version" key is configured but not present on this span, so only "env" is included
         pb::ClientGroupedStats {
             service: "A1".to_string(),
             resource: "SELECT * FROM users".to_string(),

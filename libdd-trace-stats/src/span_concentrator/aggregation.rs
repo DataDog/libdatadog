@@ -222,8 +222,9 @@ fn grpc_status_str_to_int_value(v: &str) -> Option<u8> {
 impl<'a> BorrowedAggregationKey<'a> {
     /// Return an AggregationKey matching the given span.
     ///
-    /// If `peer_tags_keys` is not empty then the peer tags of the span will be included in the
-    /// key.
+    /// If `peer_tag_keys` is not empty, peer tags from the span will be included in the key
+    /// (only for client/producer/consumer spans). If `span_derived_primary_tag_keys` is not
+    /// empty, matching tags will be included unconditionally for all eligible spans.
     pub(super) fn from_span<T: StatSpan<'a>>(
         span: &'a T,
         peer_tag_keys: &'a [String],
@@ -972,7 +973,7 @@ mod tests {
         ];
 
         let test_cases_with_span_derived_primary_tags: Vec<(SpanSlice, OwnedAggregationKey)> = vec![
-            // Span with span-derived primary tags — applied unconditionally (no span.kind gate)
+            // Span with span-derived primary tags: applied unconditionally (no span.kind gate)
             (
                 SpanSlice {
                     service: "service",
@@ -998,7 +999,7 @@ mod tests {
                     ..Default::default()
                 },
             ),
-            // Server span — span-derived primary tags still apply (unlike peer tags)
+            // Server span: span-derived primary tags still apply (unlike peer tags)
             (
                 SpanSlice {
                     service: "service",
@@ -1024,7 +1025,7 @@ mod tests {
                     ..Default::default()
                 },
             ),
-            // Span with no matching keys — empty span_derived_primary_tags
+            // Span with no matching keys: empty span_derived_primary_tags
             (
                 SpanSlice {
                     service: "service",
