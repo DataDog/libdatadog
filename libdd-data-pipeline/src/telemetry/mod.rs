@@ -311,7 +311,7 @@ mod tests {
     use httpmock::MockServer;
     use libdd_capabilities::HttpError;
     use libdd_shared_runtime::{SharedRuntime, WorkerHandle};
-    use libdd_trace_utils::test_utils::poll_for_mock_hit;
+    use libdd_trace_utils::test_utils::poll_for_mock_hits;
     use regex::Regex;
     use tokio::time::sleep;
 
@@ -387,7 +387,7 @@ mod tests {
 
                 handle.stop().await.expect("Failed to stop worker");
                 assert!(
-                    poll_for_mock_hit(&mut telemetry_srv, 1000, 10, 1, false).await,
+                    poll_for_mock_hits(&mut telemetry_srv, 1000, 10, 1).await,
                     "telemetry server did not receive calls within timeout"
                 );
             })
@@ -418,7 +418,7 @@ mod tests {
 
                 handle.stop().await.expect("Failed to stop worker");
                 assert!(
-                    poll_for_mock_hit(&mut telemetry_srv, 1000, 10, 1, false).await,
+                    poll_for_mock_hits(&mut telemetry_srv, 1000, 10, 1).await,
                     "telemetry server did not receive calls within timeout"
                 );
             })
@@ -449,7 +449,7 @@ mod tests {
 
                 handle.stop().await.expect("Failed to stop worker");
                 assert!(
-                    poll_for_mock_hit(&mut telemetry_srv, 1000, 10, 1, false).await,
+                    poll_for_mock_hits(&mut telemetry_srv, 1000, 10, 1).await,
                     "telemetry server did not receive calls within timeout"
                 );
             })
@@ -480,7 +480,7 @@ mod tests {
 
                 handle.stop().await.expect("Failed to stop worker");
                 assert!(
-                    poll_for_mock_hit(&mut telemetry_srv, 1000, 10, 1, false).await,
+                    poll_for_mock_hits(&mut telemetry_srv, 1000, 10, 1).await,
                     "telemetry server did not receive calls within timeout"
                 );
             })
@@ -511,7 +511,7 @@ mod tests {
 
                 handle.stop().await.expect("Failed to stop worker");
                 assert!(
-                    poll_for_mock_hit(&mut telemetry_srv, 1000, 10, 1, false).await,
+                    poll_for_mock_hits(&mut telemetry_srv, 1000, 10, 1).await,
                     "telemetry server did not receive calls within timeout"
                 );
             })
@@ -542,7 +542,7 @@ mod tests {
 
                 handle.stop().await.expect("Failed to stop worker");
                 assert!(
-                    poll_for_mock_hit(&mut telemetry_srv, 1000, 10, 1, false).await,
+                    poll_for_mock_hits(&mut telemetry_srv, 1000, 10, 1).await,
                     "telemetry server did not receive calls within timeout"
                 );
             })
@@ -573,7 +573,7 @@ mod tests {
 
                 handle.stop().await.expect("Failed to stop worker");
                 assert!(
-                    poll_for_mock_hit(&mut telemetry_srv, 1000, 10, 1, false).await,
+                    poll_for_mock_hits(&mut telemetry_srv, 1000, 10, 1).await,
                     "telemetry server did not receive calls within timeout"
                 );
             })
@@ -604,7 +604,7 @@ mod tests {
 
                 handle.stop().await.expect("Failed to stop worker");
                 assert!(
-                    poll_for_mock_hit(&mut telemetry_srv, 1000, 10, 1, false).await,
+                    poll_for_mock_hits(&mut telemetry_srv, 1000, 10, 1).await,
                     "telemetry server did not receive calls within timeout"
                 );
             })
@@ -635,7 +635,7 @@ mod tests {
 
                 handle.stop().await.expect("Failed to stop worker");
                 assert!(
-                    poll_for_mock_hit(&mut telemetry_srv, 1000, 10, 1, false).await,
+                    poll_for_mock_hits(&mut telemetry_srv, 1000, 10, 1).await,
                     "telemetry server did not receive calls within timeout"
                 );
             })
@@ -666,7 +666,7 @@ mod tests {
 
                 handle.stop().await.expect("Failed to stop worker");
                 assert!(
-                    poll_for_mock_hit(&mut telemetry_srv, 1000, 10, 1, false).await,
+                    poll_for_mock_hits(&mut telemetry_srv, 1000, 10, 1).await,
                     "telemetry server did not receive calls within timeout"
                 );
             })
@@ -839,7 +839,7 @@ mod tests {
 
                 handle.stop().await.expect("Failed to stop worker");
                 assert!(
-                    poll_for_mock_hit(&mut telemetry_srv, 1000, 10, 1, false).await,
+                    poll_for_mock_hits(&mut telemetry_srv, 1000, 10, 1).await,
                     "telemetry server did not receive calls within timeout"
                 );
             })
@@ -872,7 +872,7 @@ mod tests {
 
                 handle.stop().await.expect("Failed to stop worker");
                 assert!(
-                    poll_for_mock_hit(&mut telemetry_srv, 1000, 10, 1, false).await,
+                    poll_for_mock_hits(&mut telemetry_srv, 1000, 10, 1).await,
                     "telemetry server did not receive calls within timeout"
                 );
             })
