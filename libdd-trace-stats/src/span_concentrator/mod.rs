@@ -27,7 +27,7 @@ fn align_timestamp(t: u64, bucket_size: u64) -> u64 {
 }
 
 /// Return true if the span is eligible for stats computation
-fn is_span_eligible<'a, T>(span: &'a T, span_kinds_stats_computed: &[String]) -> bool
+pub fn is_span_eligible<'a, T>(span: &'a T, span_kinds_stats_computed: &[String]) -> bool
 where
     T: StatSpan<'a>,
 {
