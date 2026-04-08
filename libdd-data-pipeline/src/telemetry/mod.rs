@@ -879,7 +879,7 @@ mod tests {
                     })
                     .unwrap();
                 // Wait for send to be processed
-                sleep(Duration::from_millis(100)).await;
+                sleep(Duration::from_millis(500)).await;
 
                 handle.stop().await.expect("Failed to stop worker");
                 assert!(
@@ -914,7 +914,7 @@ mod tests {
                 })
                 .unwrap();
             // Wait for send to be processed
-            sleep(Duration::from_millis(100)).await;
+            sleep(Duration::from_millis(500)).await;
 
             handle.stop().await.expect("Failed to stop worker");
             // Wait for the server to receive at least one call, but don't hang forever.
