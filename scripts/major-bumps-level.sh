@@ -34,12 +34,19 @@ libdd_deps_for_crate() {
   local manifest crate
   manifest=$1
   crate=$2
+  # Cargo metadata `.req` is the version *requirement* from the manifest, not the resolved version.
+  # Path / workspace deps often show req "*". Exclude dev-dependencies and build-dependencies
+  # (`kind` "dev" / "build"); only normal [dependencies] use kind null. When duplicates remain
+  # (e.g. target-specific), prefer non-"*" req so "*" from path-only edges does not win.
   jq --arg crate "$crate" '
     .packages[]
     | select(.name == $crate)
     | [.dependencies[]
        | select(.name | startswith("libdd-"))
+       | select(.kind != "dev" and .kind != "build")
        | {key: .name, value: .req}]
+    | group_by(.key)
+    | map(sort_by(if .value == "*" then 1 else 0 end) | .[0])
     | from_entries
   ' <(cargo metadata --manifest-path "$manifest" --format-version=1 --no-deps)
 }
