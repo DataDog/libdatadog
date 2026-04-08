@@ -141,6 +141,7 @@ mod tests {
     }
 
     #[test]
+    #[serial_test::serial]
     fn test_aws_lambda_detected() {
         let _guards = clear_all_env_vars();
         let _init = EnvGuard::set("AWS_LAMBDA_INITIALIZATION_TYPE", "on-demand");
@@ -156,6 +157,7 @@ mod tests {
     }
 
     #[test]
+    #[serial_test::serial]
     fn test_aws_lambda_missing_function_name() {
         let _guards = clear_all_env_vars();
         let _init = EnvGuard::set("AWS_LAMBDA_INITIALIZATION_TYPE", "on-demand");
@@ -164,6 +166,7 @@ mod tests {
     }
 
     #[test]
+    #[serial_test::serial]
     fn test_aws_lambda_not_detected_without_init_type() {
         let _guards = clear_all_env_vars();
         let _name = EnvGuard::set("AWS_LAMBDA_FUNCTION_NAME", "my-function");
@@ -172,6 +175,7 @@ mod tests {
     }
 
     #[test]
+    #[serial_test::serial]
     fn test_azure_function_detected() {
         let _guards = clear_all_env_vars();
         let _ext = EnvGuard::set("FUNCTIONS_EXTENSION_VERSION", "~4");
@@ -188,6 +192,7 @@ mod tests {
     }
 
     #[test]
+    #[serial_test::serial]
     fn test_azure_function_missing_site_name() {
         let _guards = clear_all_env_vars();
         let _ext = EnvGuard::set("FUNCTIONS_EXTENSION_VERSION", "~4");
@@ -197,6 +202,7 @@ mod tests {
     }
 
     #[test]
+    #[serial_test::serial]
     fn test_azure_function_not_detected_with_only_one_var() {
         let _guards = clear_all_env_vars();
         let _ext = EnvGuard::set("FUNCTIONS_EXTENSION_VERSION", "~4");
@@ -205,6 +211,7 @@ mod tests {
     }
 
     #[test]
+    #[serial_test::serial]
     fn test_gcp_1st_gen_detected() {
         let _guards = clear_all_env_vars();
         let _name = EnvGuard::set("FUNCTION_NAME", "my-gcp-function");
@@ -220,6 +227,7 @@ mod tests {
     }
 
     #[test]
+    #[serial_test::serial]
     fn test_gcp_1st_gen_not_detected_without_gcp_project() {
         let _guards = clear_all_env_vars();
         let _name = EnvGuard::set("FUNCTION_NAME", "my-gcp-function");
@@ -228,6 +236,7 @@ mod tests {
     }
 
     #[test]
+    #[serial_test::serial]
     fn test_gcp_2nd_gen_detected() {
         let _guards = clear_all_env_vars();
         let _service = EnvGuard::set("K_SERVICE", "my-cloud-run-fn");
@@ -243,6 +252,7 @@ mod tests {
     }
 
     #[test]
+    #[serial_test::serial]
     fn test_gcp_2nd_gen_not_detected_without_function_target() {
         let _guards = clear_all_env_vars();
         let _service = EnvGuard::set("K_SERVICE", "my-cloud-run-fn");
@@ -251,6 +261,7 @@ mod tests {
     }
 
     #[test]
+    #[serial_test::serial]
     fn test_azure_spring_app_detected() {
         let _guards = clear_all_env_vars();
         let _app = EnvGuard::set("ASCSVCRT_SPRING__APPLICATION__NAME", "my-spring-app");
@@ -265,6 +276,7 @@ mod tests {
     }
 
     #[test]
+    #[serial_test::serial]
     fn test_no_environment_detected() {
         let _guards = clear_all_env_vars();
         let result = read_cloud_env();
@@ -272,6 +284,7 @@ mod tests {
     }
 
     #[test]
+    #[serial_test::serial]
     fn test_multiple_environments_returns_none() {
         let _guards = clear_all_env_vars();
         let _init = EnvGuard::set("AWS_LAMBDA_INITIALIZATION_TYPE", "on-demand");
