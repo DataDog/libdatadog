@@ -469,7 +469,6 @@ jobs:
             TAG=$(echo "$bump" | jq -r '.tag')
             VERSION=$(echo "$bump" | jq -r '.version')
             MAJOR_BUMPS=$(echo "$bump" | jq -r '.major_bumps')
-            CRATE_PATH=$(echo "$bump" | jq -r '.path')
 
             if [ "$MAJOR_BUMPS" != "[]" ]; then
               echo "Updating version for $NAME with major bumps: $MAJOR_BUMPS"
@@ -500,7 +499,6 @@ jobs:
         id: generate-changelogs
         run: |
           set -euo pipefail
-          BRANCH_NAME="${{ steps.proposal-branch.outputs.branch_name }}"
           ORIGINAL_HEAD=$(cat /tmp/release_head_sha)
 
           echo "Generating CHANGELOGS"
@@ -511,8 +509,6 @@ jobs:
             NAME=$(echo "$bump" | jq -r '.name')
             TAG=$(echo "$bump" | jq -r '.prev_tag')
             NEXT_TAG=$(echo "$bump" | jq -r '.tag')
-            NEXT_VERSION=$(echo "$bump" | jq -r '.version')
-            MAJOR_BUMPS=$(echo "$bump" | jq -r '.major_bumps')
             CRATE_PATH=$(echo "$bump" | jq -r '.path')
 
             # FIXME: $COMMITS could be empty if there are no commits since last release
