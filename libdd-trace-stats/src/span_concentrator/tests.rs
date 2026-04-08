@@ -1044,6 +1044,231 @@ fn test_base_service_peer_tag() {
     );
 }
 
+/// Test that span-derived primary tags create separate aggregation groups for all eligible spans,
+/// regardless of span.kind (unlike peer tags which only apply to client/producer/consumer)
+#[test]
+fn test_span_derived_primary_tags_aggregation() {
+    let now = SystemTime::now();
+    let mut spans = vec![
+        // Root span with env=prod
+        get_test_span_with_meta(
+            now,
+            1,
+            0,
+            100,
+            5,
+            "A1",
+            "GET /users",
+            0,
+            &[("env", "prod"), ("version", "v1")],
+            &[],
+        ),
+        // Root span with env=staging — different value, should be a separate bucket
+        get_test_span_with_meta(
+            now,
+            2,
+            0,
+            50,
+            5,
+            "A1",
+            "GET /users",
+            0,
+            &[("env", "staging"), ("version", "v1")],
+            &[],
+        ),
+        // Server span — span-derived primary tags apply unconditionally (no span.kind gate)
+        get_test_span_with_meta(
+            now,
+            3,
+            1,
+            80,
+            5,
+            "A1",
+            "POST /users",
+            0,
+            &[("span.kind", "server"), ("env", "prod"), ("version", "v1")],
+            &[("_dd.measured", 1.0)],
+        ),
+        // Client span — span-derived primary tags and peer tags coexist
+        get_test_span_with_meta(
+            now,
+            4,
+            1,
+            60,
+            5,
+            "A1",
+            "SELECT * FROM users",
+            0,
+            &[
+                ("span.kind", "client"),
+                ("env", "prod"),
+                ("db.instance", "i-1234"),
+            ],
+            &[("_dd.measured", 1.0)],
+        ),
+    ];
+    compute_top_level_span(spans.as_mut_slice());
+
+    let mut concentrator_without_keys = SpanConcentrator::new(
+        Duration::from_nanos(BUCKET_SIZE),
+        now,
+        get_span_kinds(),
+        vec![],
+    );
+    let mut concentrator_with_keys = SpanConcentrator::new(
+        Duration::from_nanos(BUCKET_SIZE),
+        now,
+        get_span_kinds(),
+        vec!["db.instance".to_string()],
+    );
+    concentrator_with_keys
+        .set_span_derived_primary_tag_keys(vec!["env".to_string(), "version".to_string()]);
+
+    for span in &spans {
+        concentrator_without_keys.add_span(span);
+        concentrator_with_keys.add_span(span);
+    }
+
+    let flushtime = now
+        + Duration::from_nanos(
+            concentrator_with_keys.bucket_size * concentrator_with_keys.buffer_len as u64,
+        );
+
+    // Without keys: root spans aggregate together, measured spans separate by span_kind
+    let expected_without_keys = vec![
+        pb::ClientGroupedStats {
+            service: "A1".to_string(),
+            resource: "GET /users".to_string(),
+            r#type: "db".to_string(),
+            name: "query".to_string(),
+            duration: 150,
+            hits: 2,
+            top_level_hits: 2,
+            errors: 0,
+            is_trace_root: pb::Trilean::True.into(),
+            ..Default::default()
+        },
+        pb::ClientGroupedStats {
+            service: "A1".to_string(),
+            resource: "POST /users".to_string(),
+            r#type: "db".to_string(),
+            name: "query".to_string(),
+            span_kind: "server".to_string(),
+            duration: 80,
+            hits: 1,
+            top_level_hits: 0,
+            errors: 0,
+            is_trace_root: pb::Trilean::False.into(),
+            ..Default::default()
+        },
+        pb::ClientGroupedStats {
+            service: "A1".to_string(),
+            resource: "SELECT * FROM users".to_string(),
+            r#type: "db".to_string(),
+            name: "query".to_string(),
+            span_kind: "client".to_string(),
+            duration: 60,
+            hits: 1,
+            top_level_hits: 0,
+            errors: 0,
+            is_trace_root: pb::Trilean::False.into(),
+            ..Default::default()
+        },
+    ];
+
+    // With keys: each unique (env, version) combination becomes a separate bucket
+    let expected_with_keys = vec![
+        // Root span env=prod, version=v1
+        pb::ClientGroupedStats {
+            service: "A1".to_string(),
+            resource: "GET /users".to_string(),
+            r#type: "db".to_string(),
+            name: "query".to_string(),
+            duration: 100,
+            hits: 1,
+            top_level_hits: 1,
+            errors: 0,
+            is_trace_root: pb::Trilean::True.into(),
+            span_derived_primary_tags: vec![
+                "env:prod".to_string(),
+                "version:v1".to_string(),
+            ],
+            ..Default::default()
+        },
+        // Root span env=staging, version=v1
+        pb::ClientGroupedStats {
+            service: "A1".to_string(),
+            resource: "GET /users".to_string(),
+            r#type: "db".to_string(),
+            name: "query".to_string(),
+            duration: 50,
+            hits: 1,
+            top_level_hits: 1,
+            errors: 0,
+            is_trace_root: pb::Trilean::True.into(),
+            span_derived_primary_tags: vec![
+                "env:staging".to_string(),
+                "version:v1".to_string(),
+            ],
+            ..Default::default()
+        },
+        // Server span env=prod, version=v1 — no span.kind gate for derived tags
+        pb::ClientGroupedStats {
+            service: "A1".to_string(),
+            resource: "POST /users".to_string(),
+            r#type: "db".to_string(),
+            name: "query".to_string(),
+            span_kind: "server".to_string(),
+            duration: 80,
+            hits: 1,
+            top_level_hits: 0,
+            errors: 0,
+            is_trace_root: pb::Trilean::False.into(),
+            span_derived_primary_tags: vec![
+                "env:prod".to_string(),
+                "version:v1".to_string(),
+            ],
+            ..Default::default()
+        },
+        // Client span env=prod — also has peer tag db.instance:i-1234
+        pb::ClientGroupedStats {
+            service: "A1".to_string(),
+            resource: "SELECT * FROM users".to_string(),
+            r#type: "db".to_string(),
+            name: "query".to_string(),
+            span_kind: "client".to_string(),
+            peer_tags: vec!["db.instance:i-1234".to_string()],
+            duration: 60,
+            hits: 1,
+            top_level_hits: 0,
+            errors: 0,
+            is_trace_root: pb::Trilean::False.into(),
+            span_derived_primary_tags: vec!["env:prod".to_string()],
+            ..Default::default()
+        },
+    ];
+
+    let stats_without_keys = concentrator_without_keys.flush(flushtime, false);
+    assert_counts_equal(
+        expected_without_keys,
+        stats_without_keys
+            .first()
+            .expect("There should be at least one time bucket")
+            .stats
+            .clone(),
+    );
+
+    let stats_with_keys = concentrator_with_keys.flush(flushtime, false);
+    assert_counts_equal(
+        expected_with_keys,
+        stats_with_keys
+            .first()
+            .expect("There should be at least one time bucket")
+            .stats
+            .clone(),
+    );
+}
+
 #[test]
 fn test_compute_stats_for_span_kind() {
     let test_cases: Vec<(SpanSlice, bool)> = vec![

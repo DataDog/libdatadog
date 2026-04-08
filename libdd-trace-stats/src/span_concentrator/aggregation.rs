@@ -34,6 +34,7 @@ pub(super) struct BorrowedAggregationKey<'a> {
     http_status_code: u32,
     is_synthetics_request: bool,
     peer_tags: Vec<(&'a str, &'a str)>,
+    span_derived_primary_tags: Vec<(&'a str, &'a str)>,
     is_trace_root: bool,
     http_method: &'a str,
     http_endpoint: &'a str,
@@ -54,6 +55,7 @@ impl hashbrown::Equivalent<OwnedAggregationKey> for BorrowedAggregationKey<'_> {
             http_status_code,
             is_synthetics_request,
             peer_tags,
+            span_derived_primary_tags,
             is_trace_root,
             http_method,
             http_endpoint,
@@ -73,6 +75,12 @@ impl hashbrown::Equivalent<OwnedAggregationKey> for BorrowedAggregationKey<'_> {
                 .peer_tags
                 .iter()
                 .zip(peer_tags.iter())
+                .all(|((k1, v1), (k2, v2))| k1 == k2 && v1 == v2)
+            && self.span_derived_primary_tags.len() == span_derived_primary_tags.len()
+            && self
+                .span_derived_primary_tags
+                .iter()
+                .zip(span_derived_primary_tags.iter())
                 .all(|((k1, v1), (k2, v2))| k1 == k2 && v1 == v2)
             && self.is_trace_root == *is_trace_root
             && self.http_method == http_method
@@ -99,6 +107,7 @@ pub(super) struct OwnedAggregationKey {
     http_status_code: u32,
     is_synthetics_request: bool,
     peer_tags: Vec<(String, String)>,
+    span_derived_primary_tags: Vec<(String, String)>,
     is_trace_root: bool,
     http_method: String,
     http_endpoint: String,
@@ -118,6 +127,11 @@ impl From<&BorrowedAggregationKey<'_>> for OwnedAggregationKey {
             is_synthetics_request: value.is_synthetics_request,
             peer_tags: value
                 .peer_tags
+                .iter()
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect(),
+            span_derived_primary_tags: value
+                .span_derived_primary_tags
                 .iter()
                 .map(|(k, v)| (k.to_string(), v.to_string()))
                 .collect(),
@@ -210,7 +224,11 @@ impl<'a> BorrowedAggregationKey<'a> {
     ///
     /// If `peer_tags_keys` is not empty then the peer tags of the span will be included in the
     /// key.
-    pub(super) fn from_span<T: StatSpan<'a>>(span: &'a T, peer_tag_keys: &'a [String]) -> Self {
+    pub(super) fn from_span<T: StatSpan<'a>>(
+        span: &'a T,
+        peer_tag_keys: &'a [String],
+        span_derived_primary_tag_keys: &'a [String],
+    ) -> Self {
         let span_kind = span.get_meta(TAG_SPANKIND).unwrap_or_default();
         let peer_tags = if should_track_peer_tags(span_kind) {
             // Parse the meta tags of the span and return a list of the peer tags based on the list
@@ -225,6 +243,12 @@ impl<'a> BorrowedAggregationKey<'a> {
         } else {
             vec![]
         };
+
+        let span_derived_primary_tags: Vec<(&'a str, &'a str)> =
+            span_derived_primary_tag_keys
+                .iter()
+                .filter_map(|key| Some((key.as_str(), span.get_meta(key.as_str())?)))
+                .collect();
 
         let http_method = span.get_meta("http.method").unwrap_or_default();
 
@@ -256,6 +280,7 @@ impl<'a> BorrowedAggregationKey<'a> {
                 .get_meta(TAG_ORIGIN)
                 .is_some_and(|origin| origin.starts_with(TAG_SYNTHETICS)),
             peer_tags,
+            span_derived_primary_tags,
             is_trace_root: span.is_trace_root(),
             http_method,
             http_endpoint,
@@ -277,6 +302,14 @@ impl From<pb::ClientGroupedStats> for OwnedAggregationKey {
             is_synthetics_request: value.synthetics,
             peer_tags: value
                 .peer_tags
+                .into_iter()
+                .filter_map(|t| {
+                    let (key, value) = t.split_once(':')?;
+                    Some((key.to_string(), value.to_string()))
+                })
+                .collect(),
+            span_derived_primary_tags: value
+                .span_derived_primary_tags
                 .into_iter()
                 .filter_map(|t| {
                     let (key, value) = t.split_once(':')?;
@@ -418,7 +451,11 @@ fn encode_grouped_stats(key: OwnedAggregationKey, group: GroupedStats) -> pb::Cl
             .map(|c| c.to_string())
             .unwrap_or_default(),
         service_source: key.service_source,
-        span_derived_primary_tags: vec![], // Todo
+        span_derived_primary_tags: key
+            .span_derived_primary_tags
+            .into_iter()
+            .map(|(k, v)| format!("{k}:{v}"))
+            .collect(),
     }
 }
 
@@ -907,7 +944,7 @@ mod tests {
         ];
 
         for (span, expected_key) in test_cases {
-            let borrowed_key = BorrowedAggregationKey::from_span(&span, &[]);
+            let borrowed_key = BorrowedAggregationKey::from_span(&span, &[], &[]);
             assert_eq!(
                 OwnedAggregationKey::from(&borrowed_key),
                 expected_key,
@@ -920,7 +957,100 @@ mod tests {
         }
 
         for (span, expected_key) in test_cases_with_peer_tags {
-            let borrowed_key = BorrowedAggregationKey::from_span(&span, test_peer_tags.as_slice());
+            let borrowed_key =
+                BorrowedAggregationKey::from_span(&span, test_peer_tags.as_slice(), &[]);
+            assert_eq!(OwnedAggregationKey::from(&borrowed_key), expected_key);
+            assert_eq!(
+                get_hash(&borrowed_key),
+                get_hash(&OwnedAggregationKey::from(&borrowed_key))
+            );
+        }
+
+        let test_span_derived_primary_tag_keys = vec![
+            "env".to_string(),
+            "version".to_string(),
+        ];
+
+        let test_cases_with_span_derived_primary_tags: Vec<(SpanSlice, OwnedAggregationKey)> = vec![
+            // Span with span-derived primary tags — applied unconditionally (no span.kind gate)
+            (
+                SpanSlice {
+                    service: "service",
+                    name: "op",
+                    resource: "res",
+                    span_id: 1,
+                    parent_id: 0,
+                    meta: HashMap::from([
+                        ("env", "prod"),
+                        ("version", "v1"),
+                    ]),
+                    ..Default::default()
+                },
+                OwnedAggregationKey {
+                    service_name: "service".into(),
+                    operation_name: "op".into(),
+                    resource_name: "res".into(),
+                    is_trace_root: true,
+                    span_derived_primary_tags: vec![
+                        ("env".into(), "prod".into()),
+                        ("version".into(), "v1".into()),
+                    ],
+                    ..Default::default()
+                },
+            ),
+            // Server span — span-derived primary tags still apply (unlike peer tags)
+            (
+                SpanSlice {
+                    service: "service",
+                    name: "op",
+                    resource: "res",
+                    span_id: 1,
+                    parent_id: 0,
+                    meta: HashMap::from([
+                        ("span.kind", "server"),
+                        ("env", "staging"),
+                    ]),
+                    ..Default::default()
+                },
+                OwnedAggregationKey {
+                    service_name: "service".into(),
+                    operation_name: "op".into(),
+                    resource_name: "res".into(),
+                    span_kind: "server".into(),
+                    is_trace_root: true,
+                    span_derived_primary_tags: vec![
+                        ("env".into(), "staging".into()),
+                    ],
+                    ..Default::default()
+                },
+            ),
+            // Span with no matching keys — empty span_derived_primary_tags
+            (
+                SpanSlice {
+                    service: "service",
+                    name: "op",
+                    resource: "res",
+                    span_id: 1,
+                    parent_id: 0,
+                    meta: HashMap::from([("unrelated_tag", "value")]),
+                    ..Default::default()
+                },
+                OwnedAggregationKey {
+                    service_name: "service".into(),
+                    operation_name: "op".into(),
+                    resource_name: "res".into(),
+                    is_trace_root: true,
+                    ..Default::default()
+                },
+            ),
+        ];
+
+        for (span, expected_key) in test_cases_with_span_derived_primary_tags {
+            let borrowed_key = BorrowedAggregationKey::from_span(
+                &span,
+                &[],
+                test_span_derived_primary_tag_keys.as_slice(),
+            );
             assert_eq!(OwnedAggregationKey::from(&borrowed_key), expected_key);
             assert_eq!(
                 get_hash(&borrowed_key),
