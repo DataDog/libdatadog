@@ -618,7 +618,6 @@ where
     }
 
     fn interpret_operation(&mut self, index: &mut usize, op: &BufferedOperation) -> Result<()> {
-        panic!("INTERPRET OPERATION");
         match op.opcode {
             OpCode::Create => {
                 let trace_id: u128 = self.change_buffer.read(index)?;
