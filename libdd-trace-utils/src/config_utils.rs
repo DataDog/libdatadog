@@ -17,7 +17,7 @@ pub fn read_cloud_env() -> Option<(String, trace_utils::EnvironmentType)> {
         match env::var("AWS_LAMBDA_FUNCTION_NAME") {
             Ok(name) => detected.push((name, trace_utils::EnvironmentType::LambdaFunction)),
             Err(_) => {
-                error!("AWS Lambda environment detected but AWS_LAMBDA_FUNCTION_NAME is not set")
+                error!("AWS Lambda environment detected but AWS_LAMBDA_FUNCTION_NAME is not set");
             }
         }
     }
@@ -28,7 +28,7 @@ pub fn read_cloud_env() -> Option<(String, trace_utils::EnvironmentType)> {
         match env::var("WEBSITE_SITE_NAME") {
             Ok(name) => detected.push((name, trace_utils::EnvironmentType::AzureFunction)),
             Err(_) => {
-                error!("Azure Functions environment detected but WEBSITE_SITE_NAME is not set")
+                error!("Azure Functions environment detected but WEBSITE_SITE_NAME is not set");
             }
         }
     }
