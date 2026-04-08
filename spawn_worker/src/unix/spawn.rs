@@ -81,8 +81,6 @@ use std::fs::File;
 use std::ffi::CStr;
 use std::io;
 use std::ops::RangeInclusive;
-#[cfg(target_os = "linux")]
-use std::sync::OnceLock;
 use std::{
     env,
     ffi::{self, CString, OsString},
@@ -456,145 +454,49 @@ impl SpawnWorker {
                     // if we're here then exec has failed
                     let fexecve_error = std::io::Error::last_os_error();
 
-                    // When DD_SPAWN_WORKER_STABLE_TRAMPOLINE is set, write the trampoline to
-                    // a stable per-process path so Valgrind can open it for debug symbols
-                    // before exec completes. Default (unset): keep the random-path behaviour.
-                    let stable_env_key = b"DD_SPAWN_WORKER_STABLE_TRAMPOLINE\0";
-                    let use_stable = {
-                        let val = libc::getenv(stable_env_key.as_ptr() as *const libc::c_char);
-                        !val.is_null()
+                    let mut temp_path = [0u8; 256];
+                    let tmpdir = libc::getenv("TMPDIR".as_ptr() as *const libc::c_char)
+                        as *const libc::c_char;
+                    let tmpdir = if tmpdir.is_null() {
+                        b"/tmp"
+                    } else {
+                        CStr::from_ptr(tmpdir).to_bytes()
                     };
-
-                    if use_stable {
-                        // Stack-allocated path /tmp/.dd-trampoline-<pid> — no heap post-fork.
-                        let mut path_buf = [0u8; 48];
-                        {
-                            let prefix = b"/tmp/.dd-trampoline-";
-                            path_buf[..prefix.len()].copy_from_slice(prefix);
-                            let mut n = libc::getpid() as u32;
-                            let mut digits = [0u8; 20];
-                            let mut nd = 0usize;
-                            loop {
-                                digits[nd] = b'0' + (n % 10) as u8;
-                                nd += 1;
-                                n /= 10;
-                                if n == 0 {
-                                    break;
-                                }
-                            }
-                            digits[..nd].reverse();
-                            path_buf[prefix.len()..prefix.len() + nd]
-                                .copy_from_slice(&digits[..nd]);
-                        }
-                        let path_ptr = path_buf.as_ptr() as *const libc::c_char;
-
-                        // Fork-safe atexit: recomputes path from getpid() so each process
-                        // cleans up its own file.
-                        extern "C" fn cleanup_trampoline() {
-                            unsafe {
-                                let mut buf = [0u8; 48];
-                                let prefix = b"/tmp/.dd-trampoline-";
-                                buf[..prefix.len()].copy_from_slice(prefix);
-                                let mut n = libc::getpid() as u32;
-                                let mut digits = [0u8; 20];
-                                let mut nd = 0usize;
-                                loop {
-                                    digits[nd] = b'0' + (n % 10) as u8;
-                                    nd += 1;
-                                    n /= 10;
-                                    if n == 0 {
-                                        break;
-                                    }
-                                }
-                                digits[..nd].reverse();
-                                buf[prefix.len()..prefix.len() + nd].copy_from_slice(&digits[..nd]);
-                                libc::unlink(buf.as_ptr() as *const libc::c_char);
-                            }
+                    if tmpdir.len() < 220 {
+                        temp_path[..tmpdir.len()].copy_from_slice(tmpdir);
+                        let mut off = tmpdir.len();
+                        let spawn_prefix = b"/dd-ipc-spawn_";
+                        temp_path[off..off + spawn_prefix.len()].copy_from_slice(spawn_prefix);
+                        off += spawn_prefix.len();
+                        for _ in 0..8 {
+                            temp_path[off] = fastrand::alphanumeric() as u8;
+                            off += 1;
                         }
 
-                        // Presence-only lock — after fork, the child inherits the state but
-                        // cleanup_trampoline recomputes the path via getpid().
-                        static ATEXIT_REGISTERED: OnceLock<()> = OnceLock::new();
-
+                        let path = Vec::from_raw_parts(temp_path.as_mut_ptr(), off, off);
+                        let path = CString::from_vec_with_nul_unchecked(path);
+                        let path_ptr = path.as_ptr();
                         let tmpfd = libc::open(
                             path_ptr,
-                            libc::O_CREAT | libc::O_EXCL | libc::O_RDWR,
+                            libc::O_CREAT | libc::O_RDWR,
                             libc::S_IRWXU as libc::c_uint,
                         );
-                        if tmpfd >= 0 {
-                            let written = libc::sendfile(
+                        if tmpfd < 0 {
+                            // We'll leak it, executing Drop of path is forbidden.
+                            std::mem::forget(path);
+                        } else {
+                            libc::sendfile(
                                 tmpfd,
                                 fd.as_raw_fd(),
                                 std::ptr::null_mut(),
                                 crate::TRAMPOLINE_BIN.len(),
                             );
                             libc::close(tmpfd);
-                            if written < 0 || written as usize != crate::TRAMPOLINE_BIN.len() {
-                                // Partial / failed write — remove corrupt file and fall
-                                // through to the panic below.
-                                libc::unlink(path_ptr);
-                            } else {
-                                ATEXIT_REGISTERED.get_or_init(|| {
-                                    libc::atexit(cleanup_trampoline);
-                                });
-                                // argv[1] is "" — trampoline skips unlink when *argv[1] == '\0'.
-                                libc::execve(path_ptr, argv.as_ptr(), envp.as_ptr());
-                                // execve failed — remove file so next attempt recreates it.
-                                libc::unlink(path_ptr);
-                            }
-                        } else {
-                            // O_EXCL failed: same-PID orphan (killed before atexit). Reuse it.
-                            ATEXIT_REGISTERED.get_or_init(|| {
-                                libc::atexit(cleanup_trampoline);
-                            });
+                            argv.set(1, path);
+
                             libc::execve(path_ptr, argv.as_ptr(), envp.as_ptr());
-                            libc::unlink(path_ptr);
-                        }
-                    } else {
-                        let mut temp_path = [0u8; 256];
-                        let tmpdir = libc::getenv("TMPDIR".as_ptr() as *const libc::c_char)
-                            as *const libc::c_char;
-                        let tmpdir = if tmpdir.is_null() {
-                            b"/tmp"
-                        } else {
-                            CStr::from_ptr(tmpdir).to_bytes()
-                        };
-                        if tmpdir.len() < 220 {
-                            temp_path[..tmpdir.len()].copy_from_slice(tmpdir);
-                            let mut off = tmpdir.len();
-                            let spawn_prefix = b"/dd-ipc-spawn_";
-                            temp_path[off..off + spawn_prefix.len()].copy_from_slice(spawn_prefix);
-                            off += spawn_prefix.len();
-                            for _ in 0..8 {
-                                temp_path[off] = fastrand::alphanumeric() as u8;
-                                off += 1;
-                            }
 
-                            let path = Vec::from_raw_parts(temp_path.as_mut_ptr(), off, off);
-                            let path = CString::from_vec_with_nul_unchecked(path);
-                            let path_ptr = path.as_ptr();
-                            let tmpfd = libc::open(
-                                path_ptr,
-                                libc::O_CREAT | libc::O_RDWR,
-                                libc::S_IRWXU as libc::c_uint,
-                            );
-                            if tmpfd < 0 {
-                                // We'll leak it, executing Drop of path is forbidden.
-                                std::mem::forget(path);
-                            } else {
-                                libc::sendfile(
-                                    tmpfd,
-                                    fd.as_raw_fd(),
-                                    std::ptr::null_mut(),
-                                    crate::TRAMPOLINE_BIN.len(),
-                                );
-                                libc::close(tmpfd);
-                                argv.set(1, path);
-
-                                libc::execve(path_ptr, argv.as_ptr(), envp.as_ptr());
-
-                                libc::unlink(temp_path.as_ptr() as *const libc::c_char);
-                            }
+                            libc::unlink(temp_path.as_ptr() as *const libc::c_char);
                         }
                     }
 
