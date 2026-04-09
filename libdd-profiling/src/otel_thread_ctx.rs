@@ -356,12 +356,15 @@ pub mod linux {
         /// also observes `valid = 1`.
         pub fn attach(self) -> Option<ThreadContext> {
             // [^tls-slot-ordering]: since we get back the previous context, we should in principle
-            // use an `Acquire` compiler fence to make sure we don't get back a not-yet-initialized
-            // record.
+            // use an `Acquire` (thus comibining into an `AcqRel`) compiler fence to make sure we
+            // don't get back a not-yet-initialized record.
             //
             // However, this thread (excluding the reader signal handler) is the only one to ever
             // _write_ to the context, so the store we load the value from automatically
             // happens-before (because it's sequenced-before) the swap.
+            //
+            // We still need a release fence to avoid exposing uninitialized memory to the handler.
+            compiler_fence(Ordering::Release);
             Self::swap(get_tls_slot(), self.into_raw())
         }
 
