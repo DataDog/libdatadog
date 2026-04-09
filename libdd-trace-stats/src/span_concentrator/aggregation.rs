@@ -245,11 +245,10 @@ impl<'a> BorrowedAggregationKey<'a> {
             vec![]
         };
 
-        let span_derived_primary_tags: Vec<(&'a str, &'a str)> =
-            span_derived_primary_tag_keys
-                .iter()
-                .filter_map(|key| Some((key.as_str(), span.get_meta(key.as_str())?)))
-                .collect();
+        let span_derived_primary_tags: Vec<(&'a str, &'a str)> = span_derived_primary_tag_keys
+            .iter()
+            .filter_map(|key| Some((key.as_str(), span.get_meta(key.as_str())?)))
+            .collect();
 
         let http_method = span.get_meta("http.method").unwrap_or_default();
 
@@ -967,10 +966,7 @@ mod tests {
             );
         }
 
-        let test_span_derived_primary_tag_keys = vec![
-            "env".to_string(),
-            "version".to_string(),
-        ];
+        let test_span_derived_primary_tag_keys = vec!["env".to_string(), "version".to_string()];
 
         let test_cases_with_span_derived_primary_tags: Vec<(SpanSlice, OwnedAggregationKey)> = vec![
             // Span with span-derived primary tags: applied unconditionally (no span.kind gate)
@@ -981,10 +977,7 @@ mod tests {
                     resource: "res",
                     span_id: 1,
                     parent_id: 0,
-                    meta: HashMap::from([
-                        ("env", "prod"),
-                        ("version", "v1"),
-                    ]),
+                    meta: HashMap::from([("env", "prod"), ("version", "v1")]),
                     ..Default::default()
                 },
                 OwnedAggregationKey {
@@ -1007,10 +1000,7 @@ mod tests {
                     resource: "res",
                     span_id: 1,
                     parent_id: 0,
-                    meta: HashMap::from([
-                        ("span.kind", "server"),
-                        ("env", "staging"),
-                    ]),
+                    meta: HashMap::from([("span.kind", "server"), ("env", "staging")]),
                     ..Default::default()
                 },
                 OwnedAggregationKey {
@@ -1019,9 +1009,7 @@ mod tests {
                     resource_name: "res".into(),
                     span_kind: "server".into(),
                     is_trace_root: true,
-                    span_derived_primary_tags: vec![
-                        ("env".into(), "staging".into()),
-                    ],
+                    span_derived_primary_tags: vec![("env".into(), "staging".into())],
                     ..Default::default()
                 },
             ),

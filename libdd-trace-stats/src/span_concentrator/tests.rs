@@ -1189,10 +1189,7 @@ fn test_span_derived_primary_tags_aggregation() {
             top_level_hits: 1,
             errors: 0,
             is_trace_root: pb::Trilean::True.into(),
-            span_derived_primary_tags: vec![
-                "env:prod".to_string(),
-                "version:v1".to_string(),
-            ],
+            span_derived_primary_tags: vec!["env:prod".to_string(), "version:v1".to_string()],
             ..Default::default()
         },
         // Root span env=staging, version=v1
@@ -1206,10 +1203,7 @@ fn test_span_derived_primary_tags_aggregation() {
             top_level_hits: 1,
             errors: 0,
             is_trace_root: pb::Trilean::True.into(),
-            span_derived_primary_tags: vec![
-                "env:staging".to_string(),
-                "version:v1".to_string(),
-            ],
+            span_derived_primary_tags: vec!["env:staging".to_string(), "version:v1".to_string()],
             ..Default::default()
         },
         // Server span env=prod, version=v1: no span.kind gate for derived tags
@@ -1224,10 +1218,7 @@ fn test_span_derived_primary_tags_aggregation() {
             top_level_hits: 0,
             errors: 0,
             is_trace_root: pb::Trilean::False.into(),
-            span_derived_primary_tags: vec![
-                "env:prod".to_string(),
-                "version:v1".to_string(),
-            ],
+            span_derived_primary_tags: vec!["env:prod".to_string(), "version:v1".to_string()],
             ..Default::default()
         },
         // Client span env=prod: also has peer tag db.instance:i-1234
