@@ -2,15 +2,15 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #[cfg(target_os = "linux")]
-#[path = "build/linux.rs"]
+#[path = "buildscript/linux.rs"]
 mod build;
 
 #[cfg(target_os = "windows")]
-#[path = "build/windows.rs"]
+#[path = "buildscript/windows.rs"]
 mod build;
 
 #[cfg(target_os = "macos")]
-#[path = "build/macos.rs"]
+#[path = "buildscript/macos.rs"]
 mod build;
 
 fn main() {
