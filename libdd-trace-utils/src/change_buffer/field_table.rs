@@ -9,6 +9,10 @@ use std::mem::offset_of;
 /// Because `offset_of!` is a compile-time constant at each monomorphization site,
 /// the build call is just a handful of `usize` stores — essentially free.
 ///
+/// Only multi-field kinds are represented here. Single-field kinds (i32/error,
+/// str_map/meta, f64_map/metrics) are handled by direct field access in
+/// `interpret_simple_op` — no offset table needed.
+///
 /// Trace-level fields (origin, meta, metrics) are not included here: the trace
 /// operation handlers use direct named-field access since they operate on
 /// `&mut Trace<T::Text>` references (not raw span pointers).
@@ -16,18 +20,9 @@ pub struct SpanFieldTable {
     /// Byte offsets of `T::Text` fields in `Span<T>`, indexed by:
     ///   0 = service, 1 = name, 2 = resource, 3 = type
     pub str_fields: [usize; 4],
-    /// Byte offsets of `i32` fields in `Span<T>`, indexed by:
-    ///   0 = error
-    pub i32_fields: [usize; 1],
     /// Byte offsets of `i64` fields in `Span<T>`, indexed by:
     ///   0 = start, 1 = duration
     pub i64_fields: [usize; 2],
-    /// Byte offsets of `HashMap<T::Text, T::Text>` fields in `Span<T>`, indexed by:
-    ///   0 = meta
-    pub str_map_fields: [usize; 1],
-    /// Byte offsets of `HashMap<T::Text, f64>` fields in `Span<T>`, indexed by:
-    ///   0 = metrics
-    pub f64_map_fields: [usize; 1],
 }
 
 impl SpanFieldTable {
@@ -43,10 +38,7 @@ impl SpanFieldTable {
                 offset_of!(Span<T>, resource),
                 offset_of!(Span<T>, r#type),
             ],
-            i32_fields: [offset_of!(Span<T>, error)],
             i64_fields: [offset_of!(Span<T>, start), offset_of!(Span<T>, duration)],
-            str_map_fields: [offset_of!(Span<T>, meta)],
-            f64_map_fields: [offset_of!(Span<T>, metrics)],
         }
     }
 }

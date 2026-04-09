@@ -409,10 +409,10 @@ where
             }
             OP_KIND_SET_I32 => {
                 let val: i32 = self.get_num_arg(index)?;
-                let offset = self.field_table.i32_fields[field_idx];
-                // SAFETY: offset is from offset_of!(Span<T>, error) for an i32 field.
+                // Only one i32 field (error): access it directly without offset table.
+                // SAFETY: span_ptr is a valid pointer obtained from self.spans.get_mut().
                 unsafe {
-                    *((span_ptr as *mut u8).add(offset) as *mut i32) = val;
+                    (*span_ptr).error = val;
                 }
             }
             OP_KIND_SET_I64 => {
@@ -426,25 +426,19 @@ where
             OP_KIND_MAP_STR => {
                 let key = self.get_string_arg(index)?;
                 let val = self.get_string_arg(index)?;
-                let offset = self.field_table.str_map_fields[field_idx];
-                // SAFETY: offset is from offset_of!(Span<T>, meta).
-                // span_ptr is not referenced as &mut Span<T> anywhere in this scope,
-                // so deriving &mut HashMap from a sub-field offset is safe.
+                // Only one str_map field (meta): access it directly without offset table.
+                // SAFETY: span_ptr is a valid pointer obtained from self.spans.get_mut().
                 unsafe {
-                    (*((span_ptr as *mut u8).add(offset)
-                        as *mut std::collections::HashMap<T::Text, T::Text>))
-                        .insert(key, val);
+                    (*span_ptr).meta.insert(key, val);
                 }
             }
             OP_KIND_MAP_F64 => {
                 let key = self.get_string_arg(index)?;
                 let val: f64 = self.get_num_arg(index)?;
-                let offset = self.field_table.f64_map_fields[field_idx];
-                // SAFETY: offset is from offset_of!(Span<T>, metrics).
+                // Only one f64_map field (metrics): access it directly without offset table.
+                // SAFETY: span_ptr is a valid pointer obtained from self.spans.get_mut().
                 unsafe {
-                    (*((span_ptr as *mut u8).add(offset)
-                        as *mut std::collections::HashMap<T::Text, f64>))
-                        .insert(key, val);
+                    (*span_ptr).metrics.insert(key, val);
                 }
             }
             OP_KIND_TRACE_SET_STR => {
