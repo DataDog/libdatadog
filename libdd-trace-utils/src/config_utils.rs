@@ -11,6 +11,7 @@ const TRACE_INTAKE_ROUTE: &str = "/api/v0.2/traces";
 const TRACE_STATS_INTAKE_ROUTE: &str = "/api/v0.2/stats";
 
 pub fn read_cloud_env() -> Option<(String, trace_utils::EnvironmentType)> {
+    debug!("In libdatadog read_cloud_env");
     let mut detected: Vec<(String, trace_utils::EnvironmentType)> = Vec::new();
 
     if env::var("AWS_LAMBDA_INITIALIZATION_TYPE").is_ok() {
@@ -35,9 +36,11 @@ pub fn read_cloud_env() -> Option<(String, trace_utils::EnvironmentType)> {
 
     if let (Ok(name), Ok(_)) = (env::var("K_SERVICE"), env::var("FUNCTION_TARGET")) {
         // Set by Google Cloud Run Functions Gen 2
+        debug!("Detected Cloud Function gen 2");
         detected.push((name, trace_utils::EnvironmentType::CloudFunction));
     } else if let (Ok(name), Ok(_)) = (env::var("FUNCTION_NAME"), env::var("GCP_PROJECT")) {
         // Set by Google Cloud Functions Gen 1
+        debug!("Detected Cloud Function gen 1");
         detected.push((name, trace_utils::EnvironmentType::CloudFunction));
     }
 
@@ -53,7 +56,7 @@ pub fn read_cloud_env() -> Option<(String, trace_utils::EnvironmentType)> {
         }
         1 => {
             let (ref name, ref env_type) = detected[0];
-            debug!("Cloud environment detected: {env_type:?}({name})");
+            debug!("Cloud environment detected: {env_type:?} ({name})");
             detected.into_iter().next()
         }
         _ => {
