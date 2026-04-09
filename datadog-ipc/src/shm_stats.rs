@@ -619,13 +619,11 @@ impl ShmSpanConcentrator {
     pub fn flush(
         &self,
         force: bool,
-        hostname: &str,
-        env: &str,
-        version: &str,
-        service: &str,
-        tracer_version: &str,
-        runtime_id: &str,
-        container_id: &str,
+        hostname: String,
+        env: String,
+        version: String,
+        service: String,
+        runtime_id: String,
     ) -> Option<pb::ClientStatsPayload> {
         let stat_buckets = self.drain_buckets(force);
         if stat_buckets.is_empty() {
@@ -634,15 +632,12 @@ impl ShmSpanConcentrator {
 
         let seq = self.header().flush_seq.fetch_add(1, Relaxed);
         Some(pb::ClientStatsPayload {
-            hostname: hostname.to_owned(),
-            env: env.to_owned(),
-            version: version.to_owned(),
+            hostname,
+            env,
+            version,
             stats: stat_buckets,
-            lang: "php".to_owned(),
-            tracer_version: tracer_version.to_owned(),
-            runtime_id: runtime_id.to_owned(),
-            service: service.to_owned(),
-            container_id: container_id.to_owned(),
+            runtime_id,
+            service,
             sequence: seq,
             ..Default::default()
         })
@@ -796,7 +791,7 @@ impl ShmSpanConcentrator {
                 .grpc_status_code
                 .map(|c| c.to_string())
                 .unwrap_or_default(),
-            service_source: String::new(),
+            service_source: read_str!(f.service_source),
             span_derived_primary_tags: vec![],
         }
     }
@@ -858,7 +853,7 @@ mod tests {
         .unwrap();
         c.add_span(&span("svc", "res", 1_000_000));
         c.add_span(&span("svc", "res", 2_000_000));
-        let bytes = c.flush(true, "h", "e", "v", "s", "t", "r", "c");
+        let bytes = c.flush(true, "h", "e", "v", "s", "r");
         assert!(bytes.is_some());
     }
 
@@ -875,7 +870,7 @@ mod tests {
         .unwrap();
         let worker = ShmSpanConcentrator::open(path.as_c_str()).unwrap();
         worker.add_span(&span("svc2", "res2", 5_000_000));
-        let bytes = creator.flush(true, "h", "", "", "", "t", "", "");
+        let bytes = creator.flush(true, "h", "", "", "", "r");
         assert!(bytes.is_some());
     }
 
@@ -915,7 +910,7 @@ mod tests {
             DEFAULT_STRING_POOL_BYTES,
         )
         .unwrap();
-        assert!(c.flush(false, "h", "e", "v", "s", "t", "r", "c").is_none());
+        assert!(c.flush(false, "h", "e", "v", "s", "r").is_none());
     }
 
     #[test]

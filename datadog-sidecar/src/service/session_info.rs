@@ -166,6 +166,12 @@ impl SessionInfo {
         self.dogstatsd.lock_or_panic()
     }
 
+    /// Clone the Arc wrapping the DogStatsD client so it can be shared with long-lived tasks
+    /// (e.g. the stats flush loop) without creating a new UDP socket.
+    pub(crate) fn clone_dogstatsd(&self) -> Arc<Mutex<Option<libdd_dogstatsd_client::Client>>> {
+        self.dogstatsd.clone()
+    }
+
     pub(crate) fn configure_dogstatsd<F>(&self, f: F)
     where
         F: FnOnce(&mut Option<libdd_dogstatsd_client::Client>),

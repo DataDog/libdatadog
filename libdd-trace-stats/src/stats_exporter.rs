@@ -22,7 +22,7 @@ use tokio::select;
 use tokio_util::sync::CancellationToken;
 use tracing::error;
 
-const STATS_ENDPOINT_PATH: &str = "/v0.6/stats";
+pub const STATS_ENDPOINT_PATH: &str = "/v0.6/stats";
 
 /// Metadata needed by the stats exporter to annotate payloads and HTTP requests.
 #[derive(Clone, Default, Debug)]

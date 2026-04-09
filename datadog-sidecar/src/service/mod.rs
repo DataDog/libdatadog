@@ -68,6 +68,10 @@ pub struct SessionConfig {
     pub process_tags: Vec<Tag>,
     pub peer_tag_keys: Vec<String>,
     pub span_kinds_stats_computed: Vec<String>,
+    /// Tracer-configured hostname (from `DD_HOSTNAME`).  Empty means "not configured".
+    pub hostname: String,
+    /// Process-level service name (from `DD_SERVICE`), used as the stats concentrator key.
+    pub root_service: String,
 }
 
 #[derive(Debug, Deserialize, Serialize)]

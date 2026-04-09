@@ -8,6 +8,8 @@ use io_lifetimes::OwnedFd;
 use libc::{chmod, off_t};
 use nix::errno::Errno;
 use nix::fcntl::{open, OFlag};
+#[cfg(target_os = "linux")]
+use nix::fcntl::{fallocate, FallocateFlags};
 use nix::sys::mman::{self, mmap, munmap, MapFlags, ProtFlags};
 use nix::sys::stat::Mode;
 use nix::unistd::{fchown, ftruncate, mkdir, unlink, Uid};
@@ -163,6 +165,11 @@ impl NamedShmHandle {
 
     pub fn create_mode(path: CString, size: usize, mode: Mode) -> io::Result<NamedShmHandle> {
         let fd = shm_open(path.as_bytes(), OFlag::O_CREAT | OFlag::O_RDWR, mode)?;
+        // Use fallocate on Linux to eagerly commit pages: if /dev/shm is full we get ENOSPC
+        // here (recoverable) rather than SIGBUS mid-execution when a worker writes a slot.
+        #[cfg(target_os = "linux")]
+        fallocate(fd.as_raw_fd(), FallocateFlags::empty(), 0, size as off_t)?;
+        #[cfg(not(target_os = "linux"))]
         ftruncate(&fd, size as off_t)?;
         if let Some(uid) = shm_owner_uid() {
             let _ = fchown(fd.as_raw_fd(), Some(Uid::from_raw(uid)), None);

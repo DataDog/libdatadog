@@ -626,6 +626,8 @@ pub unsafe extern "C" fn ddog_sidecar_session_set_config(
     remote_config_enabled: bool,
     is_fork: bool,
     process_tags: &libdd_common_ffi::Vec<Tag>,
+    hostname: ffi::CharSlice,
+    root_service: ffi::CharSlice,
 ) -> MaybeError {
     let session_id_str: String = session_id.to_utf8_lossy().into();
     let session_config = SessionConfig {
@@ -665,6 +667,8 @@ pub unsafe extern "C" fn ddog_sidecar_session_set_config(
         process_tags: process_tags.to_vec(),
         peer_tag_keys: vec![],
         span_kinds_stats_computed: vec![],
+        hostname: hostname.to_utf8_lossy().into(),
+        root_service: root_service.to_utf8_lossy().into(),
     };
     #[cfg(unix)]
     try_c!(blocking::set_session_config(

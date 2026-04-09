@@ -1534,6 +1534,7 @@ dependencies = [
  "libdd-telemetry",
  "libdd-tinybytes",
  "libdd-trace-protobuf",
+ "libdd-trace-stats",
  "libdd-trace-utils",
  "manual_future",
  "memory-stats",
