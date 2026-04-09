@@ -7,7 +7,7 @@ pub enum ChangeBufferError {
     StringNotFound(u16),
     ReadOutOfBounds { offset: usize, len: usize },
     WriteOutOfBounds { offset: usize, len: usize },
-    UnknownOpcode(u16),
+    UnknownOpcode(u8),
 }
 
 impl std::fmt::Display for ChangeBufferError {

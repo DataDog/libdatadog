@@ -27,3 +27,4 @@ impl_from_bytes!(i64, 8);
 impl_from_bytes!(i32, 4);
 impl_from_bytes!(u32, 4);
 impl_from_bytes!(u16, 2);
+impl_from_bytes!(u8, 1);
