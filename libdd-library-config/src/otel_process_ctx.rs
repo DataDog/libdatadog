@@ -15,9 +15,9 @@
 #[cfg(target_has_atomic = "64")]
 pub mod linux {
     use std::{
-        ffi::c_void,
+        ffi::{c_void, CStr, CString},
         mem::ManuallyDrop,
-        os::fd::AsFd as _,
+        os::fd::{AsRawFd, FromRawFd, OwnedFd},
         ptr::{self, addr_of_mut},
         sync::{
             atomic::{fence, AtomicU64, Ordering},
@@ -27,13 +27,6 @@ pub mod linux {
     };
 
     use anyhow::Context;
-
-    use rustix::{
-        fs::{ftruncate, memfd_create, MemfdFlags},
-        mm::{madvise, mmap, mmap_anonymous, munmap, Advice, MapFlags, ProtFlags},
-        process::{getpid, set_virtual_memory_region_name, Pid},
-        time::{clock_gettime, ClockId},
-    };
 
     use libdd_trace_protobuf::opentelemetry::proto::common::v1::ProcessContext;
     use prost::Message;
@@ -101,47 +94,49 @@ pub mod linux {
         fn new() -> anyhow::Result<Self> {
             let size = mapping_size();
 
-            memfd_create(
-                MAPPING_NAME,
-                MemfdFlags::CLOEXEC | MemfdFlags::NOEXEC_SEAL | MemfdFlags::ALLOW_SEALING,
-            )
-            .or_else(|_| memfd_create(MAPPING_NAME, MemfdFlags::CLOEXEC | MemfdFlags::ALLOW_SEALING))
-            .and_then(|fd| {
-                ftruncate(fd.as_fd(), mapping_size() as u64)?;
-                // Safety: we pass a null pointer to mmap which is unconditionally ok
-                let start_addr = unsafe {
-                    mmap(
-                        ptr::null_mut(),
-                        size,
-                        ProtFlags::WRITE | ProtFlags::READ,
-                        MapFlags::PRIVATE,
-                        fd.as_fd(),
-                        0,
-                    )?
-                };
+            let name =
+                CString::new(MAPPING_NAME).context("unexpected null byte in mapping name")?;
 
-                // We (implicitly) close the file descriptor right away, but this ok
-                Ok(MemMapping {
-                    start_addr,
+            try_memfd(&name, libc::MFD_CLOEXEC | libc::MFD_NOEXEC_SEAL | libc::MFD_ALLOW_SEALING)
+                .or_else(|_| try_memfd(&name, libc::MFD_CLOEXEC | libc::MFD_ALLOW_SEALING))
+                .and_then(|fd| {
+                    // Safety: fd is a valid open file descriptor.
+                    let ret =
+                        unsafe { libc::ftruncate(fd.as_raw_fd(), mapping_size() as libc::off_t) };
+                    check_syscall_retval(ret, "ftruncate failed")?;
+                    // Safety: we pass a null pointer to mmap which is unconditionally ok
+                    let start_addr = unsafe {
+                        libc::mmap(
+                            ptr::null_mut(),
+                            size,
+                            libc::PROT_WRITE | libc::PROT_READ,
+                            libc::MAP_PRIVATE,
+                            fd.as_raw_fd(),
+                            0,
+                        )
+                    };
+                    check_mapping_addr(start_addr, "mmap failed")?;
+
+                    // We (implicitly) close the file descriptor right away, but this ok
+                    Ok(MemMapping { start_addr })
                 })
-            })
-            // If any previous step failed, we fallback to an anonymous mapping
-            .or_else(|_| {
-                // Safety: we pass a null pointer to mmap, no precondition to uphold
-                let start_addr = unsafe {
-                    mmap_anonymous(
-                        ptr::null_mut(),
-                        size,
-                        ProtFlags::WRITE | ProtFlags::READ,
-                        MapFlags::PRIVATE,
-                    )
-                    .context(
-                        "Couldn't create a memfd or anonymous mmapped region for process context publication",
-                    )?
-                };
+                // If any previous step failed, we fallback to an anonymous mapping
+                .or_else(|_| {
+                    // Safety: we pass a null pointer to mmap, no precondition to uphold
+                    let start_addr = unsafe {
+                        libc::mmap(
+                            ptr::null_mut(),
+                            size,
+                            libc::PROT_WRITE | libc::PROT_READ,
+                            libc::MAP_PRIVATE | libc::MAP_ANONYMOUS,
+                            -1,
+                            0,
+                        )
+                    };
+                    check_mapping_addr(start_addr, "mmap failed: couldn't create a memfd or anonymous mmapped region for process context publication")?;
 
-                Ok(MemMapping { start_addr })
-            })
+                    Ok(MemMapping { start_addr })
+                })
         }
 
         /// Makes this mapping discoverable by giving it a name.
@@ -151,17 +146,20 @@ pub mod linux {
         /// tried, as per the
         /// [spec](https://github.com/open-telemetry/opentelemetry-specification/pull/4719).
         fn set_name(&mut self) -> anyhow::Result<()> {
-            // Safety: the invariants of `MemMapping` ensures that `start` is non null and comes
-            // from a previous call to `mmap` of size `mapping_size()`
-            set_virtual_memory_region_name(
-                unsafe { std::slice::from_raw_parts(self.start_addr as *const u8, mapping_size()) },
-                Some(
-                    std::ffi::CString::new(MAPPING_NAME)
-                        .context("unexpected null byte in process context mapping name")?
-                        .as_c_str(),
-                ),
-            )?;
-            Ok(())
+            let name = CString::new(MAPPING_NAME)
+                .context("unexpected null byte in process context mapping name")?;
+            // Safety: self.start_addr is valid for mapping_size() bytes as per MemMapping
+            // invariants. name is a valid NUL-terminated string that outlives the prctl call.
+            let ret = unsafe {
+                libc::prctl(
+                    libc::PR_SET_VMA,
+                    libc::PR_SET_VMA_ANON_NAME as libc::c_ulong,
+                    self.start_addr as libc::c_ulong,
+                    mapping_size() as libc::c_ulong,
+                    name.as_ptr() as libc::c_ulong,
+                )
+            };
+            check_syscall_retval(ret, "prctl PR_SET_VMA_ANON_NAME failed")
         }
 
         /// Unmaps the underlying memory region. This has same effect as dropping `self`, but
@@ -189,13 +187,9 @@ pub mod linux {
         /// Practically, `self` must be put in a `ManuallyDrop` wrapper and forgotten, or being in
         /// the process of being dropped.
         unsafe fn unmap(&mut self) -> anyhow::Result<()> {
-            unsafe {
-                munmap(self.start_addr, mapping_size()).map_err(|errno| {
-                    anyhow::anyhow!(
-                        "munmap failed when freeing the process context with error {errno}"
-                    )
-                })
-            }
+            // Safety: upheld by the caller.
+            let ret = unsafe { libc::munmap(self.start_addr, mapping_size()) };
+            check_syscall_retval(ret, "munmap failed when freeing the process context")
         }
     }
 
@@ -216,7 +210,7 @@ pub mod linux {
         payload: Vec<u8>,
         /// The process id of the last publisher. This is useful to detect forks(), and publish a
         /// new context accordingly.
-        pid: Pid,
+        pid: libc::pid_t,
     }
 
     impl ProcessContextHandle {
@@ -227,8 +221,9 @@ pub mod linux {
 
             // Safety: the invariants of MemMapping ensures `start_addr` is not null and comes
             // from a previous call to `mmap`
-            unsafe { madvise(mapping.start_addr, size, Advice::LinuxDontFork) }
-                .context("madvise MADVISE_DONTFORK failed")?;
+            let ret =
+                unsafe { libc::madvise(mapping.start_addr, size, libc::MADV_DONTFORK) };
+            check_syscall_retval(ret, "madvise MADVISE_DONTFORK failed")?;
 
             let published_at_ns = since_boottime_ns().ok_or_else(|| {
                 anyhow::anyhow!("failed to get current time for process context publication")
@@ -270,7 +265,8 @@ pub mod linux {
             Ok(ProcessContextHandle {
                 mapping,
                 payload,
-                pid: getpid(),
+                // Safety: getpid() is always safe to call.
+                pid: unsafe { libc::getpid() },
             })
         }
 
@@ -322,6 +318,35 @@ pub mod linux {
         }
     }
 
+    /// Returns `Err` wrapping the current `errno` with `msg` as context if `addr` equals
+    /// `MAP_FAILED`, `Ok(())` otherwise.
+    fn check_mapping_addr(addr: *mut c_void, msg: &'static str) -> anyhow::Result<()> {
+        if addr == libc::MAP_FAILED {
+            Err(std::io::Error::last_os_error()).context(msg)
+        } else {
+            Ok(())
+        }
+    }
+
+    /// Returns `Err` wrapping the current `errno` with `msg` as context if `ret` is negative,
+    /// `Ok(())` otherwise.
+    fn check_syscall_retval(ret: libc::c_int, msg: &'static str) -> anyhow::Result<()> {
+        if ret < 0 {
+            Err(std::io::Error::last_os_error()).context(msg)
+        } else {
+            Ok(())
+        }
+    }
+
+    /// Creates a `memfd` file descriptor with the given name and flags.
+    fn try_memfd(name: &CStr, flags: libc::c_uint) -> anyhow::Result<OwnedFd> {
+        // Safety: name is a valid NUL-terminated string; flags are constant bit flags.
+        let fd = unsafe { libc::memfd_create(name.as_ptr(), flags) };
+        check_syscall_retval(fd, "memfd_create failed")?;
+        // Safety: fd is a valid file descriptor just returned by memfd_create.
+        Ok(unsafe { OwnedFd::from_raw_fd(fd) })
+    }
+
     // Whether this size depends on the page size or not in the future, Rustix's `page_size()`
     // caches the value in a static atomic, so it's ok to call `mapping_size()` repeatedly; it
     // won't result in a syscall each time.
@@ -333,7 +358,18 @@ pub mod linux {
 
     /// Returns the value of the monotonic BOOTTIME clock in nanoseconds.
     fn since_boottime_ns() -> Option<u64> {
-        let duration = Duration::try_from(clock_gettime(ClockId::Boottime)).ok()?;
+        let mut ts = libc::timespec {
+            tv_sec: 0,
+            tv_nsec: 0,
+        };
+        // Safety: ts is a valid, writable timespec.
+        let ret = unsafe { libc::clock_gettime(libc::CLOCK_BOOTTIME, &mut ts) };
+        if ret != 0 {
+            return None;
+        }
+        let secs: u64 = ts.tv_sec.try_into().ok()?;
+        let nanos: u32 = ts.tv_nsec.try_into().ok()?;
+        let duration = Duration::new(secs, nanos);
         u64::try_from(duration.as_nanos()).ok()
     }
 
@@ -374,8 +410,11 @@ pub mod linux {
     fn publish_raw_payload(payload: Vec<u8>) -> anyhow::Result<()> {
         let mut guard = lock_context_handle()?;
 
+        // Safety: getpid() is always safe to call.
         match &mut *guard {
-            Some(handler) if handler.pid == getpid() => handler.update(payload),
+            Some(handler) if handler.pid == unsafe { libc::getpid() } => {
+                handler.update(payload)
+            }
             Some(handler) => {
                 let mut local_handler = ProcessContextHandle::publish(payload)?;
                 // If we've been forked, we need to prevent the mapping from being dropped
