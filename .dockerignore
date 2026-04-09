@@ -1,5 +1,6 @@
 target/
 build/
+!libdd-libunwind-sys/build/
 .github/
 Dockerfile.build
 .git/
