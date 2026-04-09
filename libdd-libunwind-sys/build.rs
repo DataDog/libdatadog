@@ -7,4 +7,3 @@ mod build;
 fn main() {
     build::main();
 }
-
