@@ -34,10 +34,10 @@ pub fn read_cloud_env() -> Option<(String, trace_utils::EnvironmentType)> {
     }
 
     if let (Ok(name), Ok(_)) = (env::var("K_SERVICE"), env::var("FUNCTION_TARGET")) {
-        // Set by Google Cloud Run Functions Gen 2
+        // Set by Google Cloud Functions for newer runtimes
         detected.push((name, trace_utils::EnvironmentType::CloudFunction));
     } else if let (Ok(name), Ok(_)) = (env::var("FUNCTION_NAME"), env::var("GCP_PROJECT")) {
-        // Set by Google Cloud Functions Gen 1
+        // Set by Google Cloud Functions for older runtimes
         detected.push((name, trace_utils::EnvironmentType::CloudFunction));
     }
 
