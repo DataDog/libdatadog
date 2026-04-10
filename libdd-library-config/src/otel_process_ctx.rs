@@ -221,8 +221,7 @@ pub mod linux {
 
             // Safety: the invariants of MemMapping ensures `start_addr` is not null and comes
             // from a previous call to `mmap`
-            let ret =
-                unsafe { libc::madvise(mapping.start_addr, size, libc::MADV_DONTFORK) };
+            let ret = unsafe { libc::madvise(mapping.start_addr, size, libc::MADV_DONTFORK) };
             check_syscall_retval(ret, "madvise MADVISE_DONTFORK failed")?;
 
             let published_at_ns = since_boottime_ns().ok_or_else(|| {
@@ -340,8 +339,13 @@ pub mod linux {
 
     /// Creates a `memfd` file descriptor with the given name and flags.
     fn try_memfd(name: &CStr, flags: libc::c_uint) -> anyhow::Result<OwnedFd> {
+        // We use the raw syscall rather than `libc::memfd_create` because the latter requires
+        // glibc >= 2.27, while `syscall()` + `SYS_memfd_create` works with any glibc version.
         // Safety: name is a valid NUL-terminated string; flags are constant bit flags.
-        let fd = unsafe { libc::memfd_create(name.as_ptr(), flags) };
+        let fd = unsafe {
+            libc::syscall(libc::SYS_memfd_create, name.as_ptr(), flags as libc::c_long)
+                as libc::c_int
+        };
         check_syscall_retval(fd, "memfd_create failed")?;
         // Safety: fd is a valid file descriptor just returned by memfd_create.
         Ok(unsafe { OwnedFd::from_raw_fd(fd) })
@@ -412,9 +416,7 @@ pub mod linux {
 
         // Safety: getpid() is always safe to call.
         match &mut *guard {
-            Some(handler) if handler.pid == unsafe { libc::getpid() } => {
-                handler.update(payload)
-            }
+            Some(handler) if handler.pid == unsafe { libc::getpid() } => handler.update(payload),
             Some(handler) => {
                 let mut local_handler = ProcessContextHandle::publish(payload)?;
                 // If we've been forked, we need to prevent the mapping from being dropped
