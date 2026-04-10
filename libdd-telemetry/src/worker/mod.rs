@@ -1251,11 +1251,11 @@ mod tests {
     }
 
     #[test]
-    fn telemetry_http_omits_parent_and_root_when_duplicate_of_session() {
+    fn telemetry_http_omits_root_session_id_when_same_as_session_id() {
         let req = test_worker(
             Some("sess-id".into()),
             Some("sess-id".into()),
-            Some("sess-id".into()),
+            Some("parent".into()),
         )
         .build_request(&Payload::AppHeartbeat(()))
         .unwrap();
@@ -1264,6 +1264,37 @@ mod tests {
             "sess-id"
         );
         assert!(req.headers().get(DD_ROOT_SESSION_ID).is_none());
+        assert_eq!(
+            req.headers()
+                .get(DD_PARENT_SESSION_ID)
+                .unwrap()
+                .to_str()
+                .unwrap(),
+            "parent"
+        );
+    }
+
+    #[test]
+    fn telemetry_http_omits_parent_session_id_when_same_as_session_id() {
+        let req = test_worker(
+            Some("sess-id".into()),
+            Some("root".into()),
+            Some("sess-id".into()),
+        )
+        .build_request(&Payload::AppHeartbeat(()))
+        .unwrap();
+        assert_eq!(
+            req.headers().get(DD_SESSION_ID).unwrap().to_str().unwrap(),
+            "sess-id"
+        );
+        assert_eq!(
+            req.headers()
+                .get(DD_ROOT_SESSION_ID)
+                .unwrap()
+                .to_str()
+                .unwrap(),
+            "root"
+        );
         assert!(req.headers().get(DD_PARENT_SESSION_ID).is_none());
     }
 
