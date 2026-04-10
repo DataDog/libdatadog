@@ -411,7 +411,11 @@ jobs:
               fi
 
               git add "$CRATE_PATH/CHANGELOG.md"
-              cargo release commit --no-confirm -x
+              if git diff --cached --quiet; then
+                echo "Nothing to commit for $NAME (version and CHANGELOG already up to date), skipping commit"
+              else
+                cargo release commit --no-confirm -x
+              fi
 
               # Add to results array
               jq --arg name "$NAME" \
