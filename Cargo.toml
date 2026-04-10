@@ -15,6 +15,7 @@ members = [
   "libdd-library-config-ffi",
   "datadog-live-debugger",
   "datadog-live-debugger-ffi",
+  "libdd-otel-thread-ctx",
   "libdd-profiling",
   "libdd-profiling-ffi",
   "libdd-profiling-protobuf",
@@ -41,6 +42,8 @@ members = [
   "spawn_worker",
   "tests/spawn_from_lib",
   "bin_tests",
+  "libdd-shared-runtime",
+  "libdd-shared-runtime-ffi",
   "libdd-data-pipeline",
   "libdd-data-pipeline-ffi",
   "libdd-ddsketch",
@@ -68,7 +71,7 @@ resolver = "2"
 [workspace.package]
 rust-version = "1.84.1"
 edition = "2021"
-version = "30.0.0"
+version = "31.0.0"
 license = "Apache-2.0"
 authors = ["Datadog Inc. <info@datadoghq.com>"]
 
