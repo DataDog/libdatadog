@@ -15,7 +15,7 @@
 #[cfg(target_has_atomic = "64")]
 pub mod linux {
     use std::{
-        ffi::{c_void, CStr, CString},
+        ffi::{c_void, CStr},
         mem::ManuallyDrop,
         os::fd::{AsRawFd, FromRawFd, OwnedFd},
         ptr::{self, addr_of_mut},
@@ -36,7 +36,7 @@ pub mod linux {
     /// Signature bytes for identifying process context mappings
     pub const SIGNATURE: &[u8; 8] = b"OTEL_CTX";
     /// The discoverable name of the memory mapping.
-    pub const MAPPING_NAME: &str = "OTEL_CTX";
+    pub const MAPPING_NAME: &'static CStr = c"OTEL_CTX";
 
     /// The header structure written at the start of the mapping. This must match the C
     /// layout of the specification.
@@ -94,11 +94,8 @@ pub mod linux {
         fn new() -> anyhow::Result<Self> {
             let size = mapping_size();
 
-            let name =
-                CString::new(MAPPING_NAME).context("unexpected null byte in mapping name")?;
-
-            try_memfd(&name, libc::MFD_CLOEXEC | libc::MFD_NOEXEC_SEAL | libc::MFD_ALLOW_SEALING)
-                .or_else(|_| try_memfd(&name, libc::MFD_CLOEXEC | libc::MFD_ALLOW_SEALING))
+            try_memfd(MAPPING_NAME, libc::MFD_CLOEXEC | libc::MFD_NOEXEC_SEAL | libc::MFD_ALLOW_SEALING)
+                .or_else(|_| try_memfd(MAPPING_NAME, libc::MFD_CLOEXEC | libc::MFD_ALLOW_SEALING))
                 .and_then(|fd| {
                     // Safety: fd is a valid open file descriptor.
                     let ret =
@@ -146,8 +143,6 @@ pub mod linux {
         /// tried, as per the
         /// [spec](https://github.com/open-telemetry/opentelemetry-specification/pull/4719).
         fn set_name(&mut self) -> anyhow::Result<()> {
-            let name = CString::new(MAPPING_NAME)
-                .context("unexpected null byte in process context mapping name")?;
             // Safety: self.start_addr is valid for mapping_size() bytes as per MemMapping
             // invariants. name is a valid NUL-terminated string that outlives the prctl call.
             let ret = unsafe {
@@ -156,7 +151,7 @@ pub mod linux {
                     libc::PR_SET_VMA_ANON_NAME as libc::c_ulong,
                     self.start_addr as libc::c_ulong,
                     mapping_size() as libc::c_ulong,
-                    name.as_ptr() as libc::c_ulong,
+                    MAPPING_NAME.as_ptr() as libc::c_ulong,
                 )
             };
             check_syscall_retval(ret, "prctl PR_SET_VMA_ANON_NAME failed")
