@@ -36,7 +36,7 @@ pub mod linux {
     /// Signature bytes for identifying process context mappings
     pub const SIGNATURE: &[u8; 8] = b"OTEL_CTX";
     /// The discoverable name of the memory mapping.
-    pub const MAPPING_NAME: &'static CStr = c"OTEL_CTX";
+    pub const MAPPING_NAME: &CStr = c"OTEL_CTX";
 
     /// The header structure written at the start of the mapping. This must match the C
     /// layout of the specification.
