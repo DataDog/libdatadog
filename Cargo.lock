@@ -3090,6 +3090,7 @@ dependencies = [
  "serde",
  "serial_test",
  "tempfile",
+ "thiserror 2.0.17",
  "yaml_serde",
 ]
 

@@ -243,8 +243,14 @@ pub extern "C" fn ddog_library_configurator_drop(_: Box<Configurator>) {}
 /// Result type for [`ddog_library_configurator_get_from_bytes`]. Available in both std and no_std.
 #[repr(C)]
 pub enum LibraryConfigBytesResult {
-    Ok(ffi::Vec<LibraryConfig>),
+    Ok(OkBytesResult),
     Err(ffi::CString),
+}
+
+#[repr(C)]
+pub struct OkBytesResult {
+    pub value: ffi::Vec<LibraryConfig>,
+    pub logs: ffi::CString,
 }
 
 /// Parses library configuration from raw YAML bytes (local and fleet configs).
@@ -277,14 +283,24 @@ pub extern "C" fn ddog_library_configurator_get_from_bytes(
                 process_info,
             );
 
+            let logs_to_cstring = |logs: Vec<alloc::string::String>| {
+                let joined = logs.join("\n");
+                ffi::CString::new_or_empty(joined)
+            };
+
             match result {
-                Ok(configs) => match LibraryConfig::vec_to_ffi(configs) {
-                    Ok(ffi_configs) => LibraryConfigBytesResult::Ok(ffi_configs),
-                    Err(e) => {
-                        LibraryConfigBytesResult::Err(ffi::CString::new_or_empty(e.to_string()))
+                libdd_library_config::LoggedResult::Ok(configs, logs) => {
+                    match LibraryConfig::vec_to_ffi(configs) {
+                        Ok(ffi_configs) => LibraryConfigBytesResult::Ok(OkBytesResult {
+                            value: ffi_configs,
+                            logs: logs_to_cstring(logs),
+                        }),
+                        Err(e) => LibraryConfigBytesResult::Err(ffi::CString::new_or_empty(
+                            e.to_string(),
+                        )),
                     }
-                },
-                Err(e) => {
+                }
+                libdd_library_config::LoggedResult::Err(e) => {
                     LibraryConfigBytesResult::Err(ffi::CString::new_or_empty(e.to_string()))
                 }
             }

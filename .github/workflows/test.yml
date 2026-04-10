@@ -59,6 +59,10 @@ jobs:
       - name: "[${{ steps.rust-version.outputs.version}}] cargo build --workspace --exclude builder --verbose"
         shell: bash
         run: cargo build --workspace --exclude builder --verbose
+      - name: "[${{ steps.rust-version.outputs.version}}] cargo check no_std (library-config)"
+        if: runner.os == 'Linux'
+        shell: bash
+        run: cargo check -p libdd-library-config --no-default-features && cargo check -p libdd-library-config-ffi --no-default-features
       - name: "[${{ steps.rust-version.outputs.version}}] cargo nextest run --workspace --features libdd-crashtracker/generate-unit-test-files --exclude builder --profile ci --verbose -E '!test(tracing_integration_tests::)'"
         shell: bash
         # Run doc tests with cargo test and run tests with nextest and generate junit.xml

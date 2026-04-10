@@ -270,24 +270,17 @@ pub const MAX_CONFIG_FILE_SIZE: usize = 100 * 1024 * 1024;
 /// - [`TooLarge`](Self::TooLarge) — the file exceeds [`MAX_CONFIG_FILE_SIZE`];
 ///   skipped with a debug log.
 /// - [`Io`](Self::Io) — any other I/O or access error; aborts config loading.
-#[derive(Debug)]
-pub enum ConfigReadError<E> {
+#[derive(Debug, thiserror::Error)]
+pub enum ConfigReadError<E: core::fmt::Display + core::fmt::Debug> {
     /// File does not exist at the given path.
+    #[error("file not found")]
     NotFound,
     /// File exceeds [`MAX_CONFIG_FILE_SIZE`].
+    #[error("file is too large (> 100mb)")]
     TooLarge,
     /// An I/O or platform-specific error.
+    #[error("{0}")]
     Io(E),
-}
-
-impl<E: core::fmt::Display> core::fmt::Display for ConfigReadError<E> {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        match self {
-            Self::NotFound => write!(f, "file not found"),
-            Self::TooLarge => write!(f, "file is too large (> 100mb)"),
-            Self::Io(e) => write!(f, "{e}"),
-        }
-    }
 }
 
 /// Trait for reading configuration files from a filesystem or virtual filesystem.
@@ -297,7 +290,7 @@ impl<E: core::fmt::Display> core::fmt::Display for ConfigReadError<E> {
 ///
 pub trait ConfigRead {
     /// The platform-specific error type carried by [`ConfigReadError::Io`].
-    type IoError: core::fmt::Display;
+    type IoError: core::fmt::Display + core::fmt::Debug;
 
     /// Read the entire contents of the configuration file at `path`.
     ///
@@ -323,14 +316,16 @@ impl ConfigRead for StdConfigRead {
             }
             Err(e) => return Err(ConfigReadError::Io(e)),
         };
-        match file.metadata() {
+        let len = match file.metadata() {
             Ok(m) if m.len() as usize > MAX_CONFIG_FILE_SIZE => {
                 return Err(ConfigReadError::TooLarge)
             }
+            Ok(m) => m.len() as usize,
             Err(e) => return Err(ConfigReadError::Io(e)),
-            _ => {}
-        }
-        fs::read(path).map_err(ConfigReadError::Io)
+        };
+        let mut buf = Vec::with_capacity(len);
+        io::Read::read_to_end(&mut &file, &mut buf).map_err(ConfigReadError::Io)?;
+        Ok(buf)
     }
 }
 
@@ -353,7 +348,7 @@ impl<'de> serde::Deserialize<'de> for ConfigMap {
             type Value = ConfigMap;
 
             fn expecting(&self, formatter: &mut core::fmt::Formatter) -> core::fmt::Result {
-                formatter.write_str("struct ConfigMap(HashMap<String, String>)")
+                formatter.write_str("a string-to-string map")
             }
 
             fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error>
@@ -639,19 +634,30 @@ impl Configurator {
         s_local: &[u8],
         s_managed: &[u8],
         process_info: &ProcessInfo,
-    ) -> anyhow::Result<Vec<LibraryConfig>> {
+    ) -> LoggedResult<Vec<LibraryConfig>, anyhow::Error> {
+        let mut debug_messages = Vec::new();
+
         let local_config = match self.parse_stable_config_slice(s_local) {
-            LoggedResult::Ok(config, _) => config,
-            LoggedResult::Err(e) => return Err(e),
+            LoggedResult::Ok(config, logs) => {
+                debug_messages.extend(logs);
+                config
+            }
+            LoggedResult::Err(e) => return LoggedResult::Err(e),
         };
         let fleet_config = match self.parse_stable_config_slice(s_managed) {
-            LoggedResult::Ok(config, _) => config,
-            LoggedResult::Err(e) => return Err(e),
+            LoggedResult::Ok(config, logs) => {
+                debug_messages.extend(logs);
+                config
+            }
+            LoggedResult::Err(e) => return LoggedResult::Err(e),
         };
 
         match self.get_config(local_config, fleet_config, process_info) {
-            LoggedResult::Ok(configs, _) => Ok(configs),
-            LoggedResult::Err(e) => Err(e),
+            LoggedResult::Ok(configs, logs) => {
+                debug_messages.extend(logs);
+                LoggedResult::Ok(configs, debug_messages)
+            }
+            LoggedResult::Err(e) => LoggedResult::Err(e),
         }
     }
 
@@ -963,6 +969,7 @@ mod tests {
         let configurator = Configurator::new(true);
         let mut actual = configurator
             .get_config_from_bytes(local_cfg, fleet_cfg, &process_info)
+            .data()
             .unwrap();
 
         // Sort by name for determinism
@@ -1485,6 +1492,7 @@ rules:
     DD_SERVICE: managed",
                 &process_info,
             )
+            .data()
             .unwrap();
         assert_eq!(
             config,

@@ -37,6 +37,7 @@ serde = { version = "1.0", default-features = false, features = ["derive", "allo
 yaml_serde = { git = "https://github.com/pawelchcki/yaml-serde.git", rev = "c7ad78def628d372dca2d9435b3ff0621a464e97", default-features = false }
 prost = { version = "0.14.1", optional = true }
 anyhow = { version = "1.0", default-features = false }
+thiserror = { version = "2", default-features = false }
 
 rand = { version = "0.8.3", optional = true }
 rmp = { version = "0.8.14", optional = true }
