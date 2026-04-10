@@ -93,60 +93,34 @@ fn construct_trace_intake_url(prefix: &str, route: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Mutex;
 
-    const ALL_VARS: &[&str] = &[
-        "AWS_LAMBDA_INITIALIZATION_TYPE",
-        "AWS_LAMBDA_FUNCTION_NAME",
-        "FUNCTIONS_EXTENSION_VERSION",
-        "FUNCTIONS_WORKER_RUNTIME",
-        "WEBSITE_SITE_NAME",
-        "FUNCTION_NAME",
-        "GCP_PROJECT",
-        "K_SERVICE",
-        "FUNCTION_TARGET",
-        "ASCSVCRT_SPRING__APPLICATION__NAME",
-    ];
+    // Mutex to ensure environment variable tests run sequentially
+    static ENV_TEST_LOCK: Mutex<()> = Mutex::new(());
 
-    /// RAII guard that restores an environment variable to its previous value when dropped.
-    struct EnvGuard {
-        key: &'static str,
-        saved: Option<String>,
-    }
-
-    impl EnvGuard {
-        fn set(key: &'static str, value: &str) -> Self {
-            let saved = env::var(key).ok();
-            unsafe { env::set_var(key, value) };
-            EnvGuard { key, saved }
+    fn clear_all_env_vars() {
+        unsafe {
+            env::remove_var("AWS_LAMBDA_INITIALIZATION_TYPE");
+            env::remove_var("AWS_LAMBDA_FUNCTION_NAME");
+            env::remove_var("FUNCTIONS_EXTENSION_VERSION");
+            env::remove_var("FUNCTIONS_WORKER_RUNTIME");
+            env::remove_var("WEBSITE_SITE_NAME");
+            env::remove_var("FUNCTION_NAME");
+            env::remove_var("GCP_PROJECT");
+            env::remove_var("K_SERVICE");
+            env::remove_var("FUNCTION_TARGET");
+            env::remove_var("ASCSVCRT_SPRING__APPLICATION__NAME");
         }
-
-        fn remove(key: &'static str) -> Self {
-            let saved = env::var(key).ok();
-            unsafe { env::remove_var(key) };
-            EnvGuard { key, saved }
-        }
-    }
-
-    impl Drop for EnvGuard {
-        fn drop(&mut self) {
-            match &self.saved {
-                Some(s) => unsafe { env::set_var(self.key, s) },
-                None => unsafe { env::remove_var(self.key) },
-            }
-        }
-    }
-
-    fn clear_all_env_vars() -> Vec<EnvGuard> {
-        ALL_VARS.iter().map(|k| EnvGuard::remove(k)).collect()
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)] // serial_test has intentional leaks that Miri flags
-    #[serial_test::serial]
     fn test_aws_lambda_detected() {
-        let _guards = clear_all_env_vars();
-        let _init = EnvGuard::set("AWS_LAMBDA_INITIALIZATION_TYPE", "on-demand");
-        let _name = EnvGuard::set("AWS_LAMBDA_FUNCTION_NAME", "my-function");
+        let _lock = ENV_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        clear_all_env_vars();
+        unsafe {
+            env::set_var("AWS_LAMBDA_INITIALIZATION_TYPE", "on-demand");
+            env::set_var("AWS_LAMBDA_FUNCTION_NAME", "my-function");
+        }
         let result = read_cloud_env();
         assert_eq!(
             result,
@@ -158,33 +132,32 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)] // serial_test has intentional leaks that Miri flags
-    #[serial_test::serial]
     fn test_aws_lambda_missing_function_name() {
-        let _guards = clear_all_env_vars();
-        let _init = EnvGuard::set("AWS_LAMBDA_INITIALIZATION_TYPE", "on-demand");
+        let _lock = ENV_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        clear_all_env_vars();
+        unsafe { env::set_var("AWS_LAMBDA_INITIALIZATION_TYPE", "on-demand") };
         let result = read_cloud_env();
         assert_eq!(result, None);
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)] // serial_test has intentional leaks that Miri flags
-    #[serial_test::serial]
     fn test_aws_lambda_not_detected_without_init_type() {
-        let _guards = clear_all_env_vars();
-        let _name = EnvGuard::set("AWS_LAMBDA_FUNCTION_NAME", "my-function");
+        let _lock = ENV_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        clear_all_env_vars();
+        unsafe { env::set_var("AWS_LAMBDA_FUNCTION_NAME", "my-function") };
         let result = read_cloud_env();
         assert_eq!(result, None);
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)] // serial_test has intentional leaks that Miri flags
-    #[serial_test::serial]
     fn test_azure_function_detected() {
-        let _guards = clear_all_env_vars();
-        let _ext = EnvGuard::set("FUNCTIONS_EXTENSION_VERSION", "~4");
-        let _rt = EnvGuard::set("FUNCTIONS_WORKER_RUNTIME", "java");
-        let _site = EnvGuard::set("WEBSITE_SITE_NAME", "my-azure-app");
+        let _lock = ENV_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        clear_all_env_vars();
+        unsafe {
+            env::set_var("FUNCTIONS_EXTENSION_VERSION", "~4");
+            env::set_var("FUNCTIONS_WORKER_RUNTIME", "java");
+            env::set_var("WEBSITE_SITE_NAME", "my-azure-app");
+        }
         let result = read_cloud_env();
         assert_eq!(
             result,
@@ -196,33 +169,34 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)] // serial_test has intentional leaks that Miri flags
-    #[serial_test::serial]
     fn test_azure_function_missing_site_name() {
-        let _guards = clear_all_env_vars();
-        let _ext = EnvGuard::set("FUNCTIONS_EXTENSION_VERSION", "~4");
-        let _rt = EnvGuard::set("FUNCTIONS_WORKER_RUNTIME", "java");
+        let _lock = ENV_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        clear_all_env_vars();
+        unsafe {
+            env::set_var("FUNCTIONS_EXTENSION_VERSION", "~4");
+            env::set_var("FUNCTIONS_WORKER_RUNTIME", "java");
+        }
         let result = read_cloud_env();
         assert_eq!(result, None);
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)] // serial_test has intentional leaks that Miri flags
-    #[serial_test::serial]
     fn test_azure_function_not_detected_with_only_one_var() {
-        let _guards = clear_all_env_vars();
-        let _ext = EnvGuard::set("FUNCTIONS_EXTENSION_VERSION", "~4");
+        let _lock = ENV_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        clear_all_env_vars();
+        unsafe { env::set_var("FUNCTIONS_EXTENSION_VERSION", "~4") };
         let result = read_cloud_env();
         assert_eq!(result, None);
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)] // serial_test has intentional leaks that Miri flags
-    #[serial_test::serial]
     fn test_gcp_1st_gen_detected() {
-        let _guards = clear_all_env_vars();
-        let _name = EnvGuard::set("FUNCTION_NAME", "my-gcp-function");
-        let _project = EnvGuard::set("GCP_PROJECT", "my-project");
+        let _lock = ENV_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        clear_all_env_vars();
+        unsafe {
+            env::set_var("FUNCTION_NAME", "my-gcp-function");
+            env::set_var("GCP_PROJECT", "my-project");
+        }
         let result = read_cloud_env();
         assert_eq!(
             result,
@@ -234,22 +208,22 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)] // serial_test has intentional leaks that Miri flags
-    #[serial_test::serial]
     fn test_gcp_1st_gen_not_detected_without_gcp_project() {
-        let _guards = clear_all_env_vars();
-        let _name = EnvGuard::set("FUNCTION_NAME", "my-gcp-function");
+        let _lock = ENV_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        clear_all_env_vars();
+        unsafe { env::set_var("FUNCTION_NAME", "my-gcp-function") };
         let result = read_cloud_env();
         assert_eq!(result, None);
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)] // serial_test has intentional leaks that Miri flags
-    #[serial_test::serial]
     fn test_gcp_2nd_gen_detected() {
-        let _guards = clear_all_env_vars();
-        let _service = EnvGuard::set("K_SERVICE", "my-cloud-run-fn");
-        let _target = EnvGuard::set("FUNCTION_TARGET", "myHandler");
+        let _lock = ENV_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        clear_all_env_vars();
+        unsafe {
+            env::set_var("K_SERVICE", "my-cloud-run-fn");
+            env::set_var("FUNCTION_TARGET", "myHandler");
+        }
         let result = read_cloud_env();
         assert_eq!(
             result,
@@ -261,21 +235,19 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)] // serial_test has intentional leaks that Miri flags
-    #[serial_test::serial]
     fn test_gcp_2nd_gen_not_detected_without_function_target() {
-        let _guards = clear_all_env_vars();
-        let _service = EnvGuard::set("K_SERVICE", "my-cloud-run-fn");
+        let _lock = ENV_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        clear_all_env_vars();
+        unsafe { env::set_var("K_SERVICE", "my-cloud-run-fn") };
         let result = read_cloud_env();
         assert_eq!(result, None);
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)] // serial_test has intentional leaks that Miri flags
-    #[serial_test::serial]
     fn test_azure_spring_app_detected() {
-        let _guards = clear_all_env_vars();
-        let _app = EnvGuard::set("ASCSVCRT_SPRING__APPLICATION__NAME", "my-spring-app");
+        let _lock = ENV_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        clear_all_env_vars();
+        unsafe { env::set_var("ASCSVCRT_SPRING__APPLICATION__NAME", "my-spring-app") };
         let result = read_cloud_env();
         assert_eq!(
             result,
@@ -287,24 +259,24 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)] // serial_test has intentional leaks that Miri flags
-    #[serial_test::serial]
     fn test_no_environment_detected() {
-        let _guards = clear_all_env_vars();
+        let _lock = ENV_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        clear_all_env_vars();
         let result = read_cloud_env();
         assert_eq!(result, None);
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)] // serial_test has intentional leaks that Miri flags
-    #[serial_test::serial]
     fn test_multiple_environments_returns_none() {
-        let _guards = clear_all_env_vars();
-        let _init = EnvGuard::set("AWS_LAMBDA_INITIALIZATION_TYPE", "on-demand");
-        let _fn_name = EnvGuard::set("AWS_LAMBDA_FUNCTION_NAME", "my-lambda");
-        let _ext = EnvGuard::set("FUNCTIONS_EXTENSION_VERSION", "~4");
-        let _rt = EnvGuard::set("FUNCTIONS_WORKER_RUNTIME", "java");
-        let _site = EnvGuard::set("WEBSITE_SITE_NAME", "my-azure-app");
+        let _lock = ENV_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        clear_all_env_vars();
+        unsafe {
+            env::set_var("AWS_LAMBDA_INITIALIZATION_TYPE", "on-demand");
+            env::set_var("AWS_LAMBDA_FUNCTION_NAME", "my-lambda");
+            env::set_var("FUNCTIONS_EXTENSION_VERSION", "~4");
+            env::set_var("FUNCTIONS_WORKER_RUNTIME", "java");
+            env::set_var("WEBSITE_SITE_NAME", "my-azure-app");
+        }
         let result = read_cloud_env();
         assert_eq!(result, None);
     }
