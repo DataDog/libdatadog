@@ -412,7 +412,11 @@ jobs:
 
               git add "$CRATE_PATH/CHANGELOG.md"
               if git diff --cached --quiet; then
-                echo "Nothing to commit for $NAME (version and CHANGELOG already up to date), skipping commit"
+                # Nothing changed (version already correct, CHANGELOG already present).
+                # An empty commit is required so the proposal branch is ahead of the
+                # ephemeral branch — GitHub rejects PRs between branches at the same commit.
+                echo "Nothing to commit for $NAME (version and CHANGELOG already up to date), creating empty release marker commit..."
+                git commit --allow-empty -m "chore: Release $NAME $LEVEL"
               else
                 cargo release commit --no-confirm -x
               fi
