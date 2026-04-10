@@ -23,20 +23,16 @@ pub fn main() {
         eprintln!("Configuring libunwind...");
         let status = Command::new("sh")
             .current_dir(&build_dir)
+            .arg(libunwind_dir.join("configure"))
             .args([
-                "-c",
-                &format!(
-                    "{}/configure \
-                         CXXFLAGS='-fPIC -D_GLIBCXX_USE_CXX11_ABI=0 -O3 -g' \
-                         CFLAGS='-fPIC -O3 -g' \
-                         --disable-shared \
-                         --enable-static \
-                         --disable-minidebuginfo \
-                         --disable-zlibdebuginfo \
-                         --disable-tests",
-                    libunwind_dir.display()
-                ),
+                "--disable-shared",
+                "--enable-static",
+                "--disable-minidebuginfo",
+                "--disable-zlibdebuginfo",
+                "--disable-tests",
             ])
+            .env("CXXFLAGS", "-fPIC -D_GLIBCXX_USE_CXX11_ABI=0 -O3 -g")
+            .env("CFLAGS", "-fPIC -O3 -g")
             .status()
             .expect("Failed to run configure");
 
