@@ -1,7 +1,6 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-pub use macros::*;
 #[allow(clippy::redundant_closure_call)]
 #[allow(clippy::missing_safety_doc)]
 #[allow(unused_parens)]
@@ -23,10 +22,7 @@ mod macros {
                 Ok(o) => o,
                 Err(e) => {
                     return ffi::MaybeError::Some(libdd_common_ffi::Error::from(
-                        ({
-                            let res = std::fmt::format(format_args!("{e:?}"));
-                            res
-                        }),
+                        ({ std::fmt::format(format_args!("{0:?}", e)) }),
                     ));
                 }
             };
@@ -44,10 +40,7 @@ mod macros {
             Ok(o) => o,
             Err(e) => {
                 return ffi::MaybeError::Some(libdd_common_ffi::Error::from(
-                    ({
-                        let res = std::fmt::format(format_args!("{e:?}"));
-                        res
-                    }),
+                    ({ std::fmt::format(format_args!("{0:?}", e)) }),
                 ));
             }
         };
@@ -66,10 +59,7 @@ mod macros {
                 Ok(o) => o,
                 Err(e) => {
                     return ffi::MaybeError::Some(libdd_common_ffi::Error::from(
-                        ({
-                            let res = std::fmt::format(format_args!("{e:?}"));
-                            res
-                        }),
+                        ({ std::fmt::format(format_args!("{0:?}", e)) }),
                     ));
                 }
             };
@@ -88,10 +78,7 @@ mod macros {
                 Ok(o) => o,
                 Err(e) => {
                     return ffi::MaybeError::Some(libdd_common_ffi::Error::from(
-                        ({
-                            let res = std::fmt::format(format_args!("{e:?}"));
-                            res
-                        }),
+                        ({ std::fmt::format(format_args!("{0:?}", e)) }),
                     ));
                 }
             };
@@ -110,10 +97,7 @@ mod macros {
                 Ok(o) => o,
                 Err(e) => {
                     return ffi::MaybeError::Some(libdd_common_ffi::Error::from(
-                        ({
-                            let res = std::fmt::format(format_args!("{e:?}"));
-                            res
-                        }),
+                        ({ std::fmt::format(format_args!("{0:?}", e)) }),
                     ));
                 }
             };
@@ -131,10 +115,7 @@ mod macros {
             Ok(o) => o,
             Err(e) => {
                 return ffi::MaybeError::Some(libdd_common_ffi::Error::from(
-                    ({
-                        let res = std::fmt::format(format_args!("{e:?}"));
-                        res
-                    }),
+                    ({ std::fmt::format(format_args!("{0:?}", e)) }),
                 ));
             }
         };
@@ -152,10 +133,7 @@ mod macros {
             Ok(o) => o,
             Err(e) => {
                 return ffi::MaybeError::Some(libdd_common_ffi::Error::from(
-                    ({
-                        let res = std::fmt::format(format_args!("{e:?}"));
-                        res
-                    }),
+                    ({ std::fmt::format(format_args!("{0:?}", e)) }),
                 ));
             }
         };
@@ -173,10 +151,7 @@ mod macros {
             Ok(o) => o,
             Err(e) => {
                 return ffi::MaybeError::Some(libdd_common_ffi::Error::from(
-                    ({
-                        let res = std::fmt::format(format_args!("{e:?}"));
-                        res
-                    }),
+                    ({ std::fmt::format(format_args!("{0:?}", e)) }),
                 ));
             }
         };
@@ -194,10 +169,7 @@ mod macros {
             Ok(o) => o,
             Err(e) => {
                 return ffi::MaybeError::Some(libdd_common_ffi::Error::from(
-                    ({
-                        let res = std::fmt::format(format_args!("{e:?}"));
-                        res
-                    }),
+                    ({ std::fmt::format(format_args!("{0:?}", e)) }),
                 ));
             }
         };
@@ -215,10 +187,7 @@ mod macros {
             Ok(o) => o,
             Err(e) => {
                 return ffi::MaybeError::Some(libdd_common_ffi::Error::from(
-                    ({
-                        let res = std::fmt::format(format_args!("{e:?}"));
-                        res
-                    }),
+                    ({ std::fmt::format(format_args!("{0:?}", e)) }),
                 ));
             }
         };
@@ -236,10 +205,7 @@ mod macros {
             Ok(o) => o,
             Err(e) => {
                 return ffi::MaybeError::Some(libdd_common_ffi::Error::from(
-                    ({
-                        let res = std::fmt::format(format_args!("{e:?}"));
-                        res
-                    }),
+                    ({ std::fmt::format(format_args!("{0:?}", e)) }),
                 ));
             }
         };
@@ -250,38 +216,14 @@ mod macros {
         telemetry_builder: &mut TelemetryWorkerBuilder,
         param: ffi::CharSlice,
     ) -> ffi::MaybeError {
-        telemetry_builder.config.session_id = match (|s: ffi::CharSlice| -> Result<_, String> {
+        telemetry_builder.session_id = match (|s: ffi::CharSlice| -> Result<_, String> {
             Ok(Some(s.to_utf8_lossy().into_owned()))
         })(param)
         {
             Ok(o) => o,
             Err(e) => {
                 return ffi::MaybeError::Some(libdd_common_ffi::Error::from(
-                    ({
-                        let res = std::fmt::format(format_args!("{e:?}"));
-                        res
-                    }),
-                ));
-            }
-        };
-        ffi::MaybeError::None
-    }
-    #[no_mangle]
-    pub unsafe extern "C" fn ddog_telemetry_builder_with_str_root_session_id(
-        telemetry_builder: &mut TelemetryWorkerBuilder,
-        param: ffi::CharSlice,
-    ) -> ffi::MaybeError {
-        telemetry_builder.config.root_session_id = match (|s: ffi::CharSlice| -> Result<_, String> {
-            Ok(Some(s.to_utf8_lossy().into_owned()))
-        })(param)
-        {
-            Ok(o) => o,
-            Err(e) => {
-                return ffi::MaybeError::Some(libdd_common_ffi::Error::from(
-                    ({
-                        let res = std::fmt::format(format_args!("{e:?}"));
-                        res
-                    }),
+                    ({ std::fmt::format(format_args!("{0:?}", e)) }),
                 ));
             }
         };
@@ -292,21 +234,35 @@ mod macros {
         telemetry_builder: &mut TelemetryWorkerBuilder,
         param: ffi::CharSlice,
     ) -> ffi::MaybeError {
-        telemetry_builder.config.parent_session_id =
-            match (|s: ffi::CharSlice| -> Result<_, String> {
-                Ok(Some(s.to_utf8_lossy().into_owned()))
-            })(param)
-            {
-                Ok(o) => o,
-                Err(e) => {
-                    return ffi::MaybeError::Some(libdd_common_ffi::Error::from(
-                        ({
-                            let res = std::fmt::format(format_args!("{e:?}"));
-                            res
-                        }),
-                    ));
-                }
-            };
+        telemetry_builder.parent_session_id = match (|s: ffi::CharSlice| -> Result<_, String> {
+            Ok(Some(s.to_utf8_lossy().into_owned()))
+        })(param)
+        {
+            Ok(o) => o,
+            Err(e) => {
+                return ffi::MaybeError::Some(libdd_common_ffi::Error::from(
+                    ({ std::fmt::format(format_args!("{0:?}", e)) }),
+                ));
+            }
+        };
+        ffi::MaybeError::None
+    }
+    #[no_mangle]
+    pub unsafe extern "C" fn ddog_telemetry_builder_with_str_root_session_id(
+        telemetry_builder: &mut TelemetryWorkerBuilder,
+        param: ffi::CharSlice,
+    ) -> ffi::MaybeError {
+        telemetry_builder.root_session_id = match (|s: ffi::CharSlice| -> Result<_, String> {
+            Ok(Some(s.to_utf8_lossy().into_owned()))
+        })(param)
+        {
+            Ok(o) => o,
+            Err(e) => {
+                return ffi::MaybeError::Some(libdd_common_ffi::Error::from(
+                    ({ std::fmt::format(format_args!("{0:?}", e)) }),
+                ));
+            }
+        };
         ffi::MaybeError::None
     }
     #[repr(C)]
@@ -378,10 +334,7 @@ mod macros {
                         Ok(o) => o,
                         Err(e) => {
                             return ffi::MaybeError::Some(libdd_common_ffi::Error::from(
-                                ({
-                                    let res = std::fmt::format(format_args!("{e:?}"));
-                                    res
-                                }),
+                                ({ std::fmt::format(format_args!("{0:?}", e)) }),
                             ));
                         }
                     };
@@ -395,10 +348,7 @@ mod macros {
                         Ok(o) => o,
                         Err(e) => {
                             return ffi::MaybeError::Some(libdd_common_ffi::Error::from(
-                                ({
-                                    let res = std::fmt::format(format_args!("{e:?}"));
-                                    res
-                                }),
+                                ({ std::fmt::format(format_args!("{0:?}", e)) }),
                             ));
                         }
                     };
@@ -412,10 +362,7 @@ mod macros {
                         Ok(o) => o,
                         Err(e) => {
                             return ffi::MaybeError::Some(libdd_common_ffi::Error::from(
-                                ({
-                                    let res = std::fmt::format(format_args!("{e:?}"));
-                                    res
-                                }),
+                                ({ std::fmt::format(format_args!("{0:?}", e)) }),
                             ));
                         }
                     };
@@ -429,10 +376,7 @@ mod macros {
                         Ok(o) => o,
                         Err(e) => {
                             return ffi::MaybeError::Some(libdd_common_ffi::Error::from(
-                                ({
-                                    let res = std::fmt::format(format_args!("{e:?}"));
-                                    res
-                                }),
+                                ({ std::fmt::format(format_args!("{0:?}", e)) }),
                             ));
                         }
                     };
@@ -446,10 +390,7 @@ mod macros {
                         Ok(o) => o,
                         Err(e) => {
                             return ffi::MaybeError::Some(libdd_common_ffi::Error::from(
-                                ({
-                                    let res = std::fmt::format(format_args!("{e:?}"));
-                                    res
-                                }),
+                                ({ std::fmt::format(format_args!("{0:?}", e)) }),
                             ));
                         }
                     };
@@ -463,10 +404,7 @@ mod macros {
                         Ok(o) => o,
                         Err(e) => {
                             return ffi::MaybeError::Some(libdd_common_ffi::Error::from(
-                                ({
-                                    let res = std::fmt::format(format_args!("{e:?}"));
-                                    res
-                                }),
+                                ({ std::fmt::format(format_args!("{0:?}", e)) }),
                             ));
                         }
                     };
@@ -479,10 +417,7 @@ mod macros {
                     Ok(o) => o,
                     Err(e) => {
                         return ffi::MaybeError::Some(libdd_common_ffi::Error::from(
-                            ({
-                                let res = std::fmt::format(format_args!("{e:?}"));
-                                res
-                            }),
+                            ({ std::fmt::format(format_args!("{0:?}", e)) }),
                         ));
                     }
                 };
@@ -496,10 +431,7 @@ mod macros {
                         Ok(o) => o,
                         Err(e) => {
                             return ffi::MaybeError::Some(libdd_common_ffi::Error::from(
-                                ({
-                                    let res = std::fmt::format(format_args!("{e:?}"));
-                                    res
-                                }),
+                                ({ std::fmt::format(format_args!("{0:?}", e)) }),
                             ));
                         }
                     };
@@ -513,10 +445,7 @@ mod macros {
                         Ok(o) => o,
                         Err(e) => {
                             return ffi::MaybeError::Some(libdd_common_ffi::Error::from(
-                                ({
-                                    let res = std::fmt::format(format_args!("{e:?}"));
-                                    res
-                                }),
+                                ({ std::fmt::format(format_args!("{0:?}", e)) }),
                             ));
                         }
                     };
@@ -530,10 +459,7 @@ mod macros {
                         Ok(o) => o,
                         Err(e) => {
                             return ffi::MaybeError::Some(libdd_common_ffi::Error::from(
-                                ({
-                                    let res = std::fmt::format(format_args!("{e:?}"));
-                                    res
-                                }),
+                                ({ std::fmt::format(format_args!("{0:?}", e)) }),
                             ));
                         }
                     };
@@ -546,33 +472,26 @@ mod macros {
                     Ok(o) => o,
                     Err(e) => {
                         return ffi::MaybeError::Some(libdd_common_ffi::Error::from(
-                            ({
-                                let res = std::fmt::format(format_args!("{e:?}"));
-                                res
-                            }),
+                            ({ std::fmt::format(format_args!("{0:?}", e)) }),
                         ));
                     }
                 };
             }
             SessionId => {
-                telemetry_builder.config.session_id =
-                    match (|s: ffi::CharSlice| -> Result<_, String> {
-                        Ok(Some(s.to_utf8_lossy().into_owned()))
-                    })(param)
-                    {
-                        Ok(o) => o,
-                        Err(e) => {
-                            return ffi::MaybeError::Some(libdd_common_ffi::Error::from(
-                                ({
-                                    let res = std::fmt::format(format_args!("{e:?}"));
-                                    res
-                                }),
-                            ));
-                        }
-                    };
+                telemetry_builder.session_id = match (|s: ffi::CharSlice| -> Result<_, String> {
+                    Ok(Some(s.to_utf8_lossy().into_owned()))
+                })(param)
+                {
+                    Ok(o) => o,
+                    Err(e) => {
+                        return ffi::MaybeError::Some(libdd_common_ffi::Error::from(
+                            ({ std::fmt::format(format_args!("{0:?}", e)) }),
+                        ));
+                    }
+                };
             }
             ParentSessionId => {
-                telemetry_builder.config.parent_session_id =
+                telemetry_builder.parent_session_id =
                     match (|s: ffi::CharSlice| -> Result<_, String> {
                         Ok(Some(s.to_utf8_lossy().into_owned()))
                     })(param)
@@ -580,16 +499,13 @@ mod macros {
                         Ok(o) => o,
                         Err(e) => {
                             return ffi::MaybeError::Some(libdd_common_ffi::Error::from(
-                                ({
-                                    let res = std::fmt::format(format_args!("{e:?}"));
-                                    res
-                                }),
+                                ({ std::fmt::format(format_args!("{0:?}", e)) }),
                             ));
                         }
                     };
             }
             RootSessionId => {
-                telemetry_builder.config.root_session_id =
+                telemetry_builder.root_session_id =
                     match (|s: ffi::CharSlice| -> Result<_, String> {
                         Ok(Some(s.to_utf8_lossy().into_owned()))
                     })(param)
@@ -597,10 +513,7 @@ mod macros {
                         Ok(o) => o,
                         Err(e) => {
                             return ffi::MaybeError::Some(libdd_common_ffi::Error::from(
-                                ({
-                                    let res = std::fmt::format(format_args!("{e:?}"));
-                                    res
-                                }),
+                                ({ std::fmt::format(format_args!("{0:?}", e)) }),
                             ));
                         }
                     };
@@ -652,10 +565,7 @@ mod macros {
             Ok(o) => o,
             Err(e) => {
                 return ffi::MaybeError::Some(libdd_common_ffi::Error::from(
-                    ({
-                        let res = std::fmt::format(format_args!("{e:?}"));
-                        res
-                    }),
+                    ({ std::fmt::format(format_args!("{0:?}", e)) }),
                 ));
             }
         };
@@ -669,10 +579,7 @@ mod macros {
                         Ok(o) => o,
                         Err(e) => {
                             return ffi::MaybeError::Some(libdd_common_ffi::Error::from(
-                                ({
-                                    let res = std::fmt::format(format_args!("{e:?}"));
-                                    res
-                                }),
+                                ({ std::fmt::format(format_args!("{0:?}", e)) }),
                             ));
                         }
                     };
@@ -686,10 +593,7 @@ mod macros {
                         Ok(o) => o,
                         Err(e) => {
                             return ffi::MaybeError::Some(libdd_common_ffi::Error::from(
-                                ({
-                                    let res = std::fmt::format(format_args!("{e:?}"));
-                                    res
-                                }),
+                                ({ std::fmt::format(format_args!("{0:?}", e)) }),
                             ));
                         }
                     };
@@ -703,10 +607,7 @@ mod macros {
                         Ok(o) => o,
                         Err(e) => {
                             return ffi::MaybeError::Some(libdd_common_ffi::Error::from(
-                                ({
-                                    let res = std::fmt::format(format_args!("{e:?}"));
-                                    res
-                                }),
+                                ({ std::fmt::format(format_args!("{0:?}", e)) }),
                             ));
                         }
                     };
@@ -720,10 +621,7 @@ mod macros {
                         Ok(o) => o,
                         Err(e) => {
                             return ffi::MaybeError::Some(libdd_common_ffi::Error::from(
-                                ({
-                                    let res = std::fmt::format(format_args!("{e:?}"));
-                                    res
-                                }),
+                                ({ std::fmt::format(format_args!("{0:?}", e)) }),
                             ));
                         }
                     };
@@ -737,10 +635,7 @@ mod macros {
                         Ok(o) => o,
                         Err(e) => {
                             return ffi::MaybeError::Some(libdd_common_ffi::Error::from(
-                                ({
-                                    let res = std::fmt::format(format_args!("{e:?}"));
-                                    res
-                                }),
+                                ({ std::fmt::format(format_args!("{0:?}", e)) }),
                             ));
                         }
                     };
@@ -754,10 +649,7 @@ mod macros {
                         Ok(o) => o,
                         Err(e) => {
                             return ffi::MaybeError::Some(libdd_common_ffi::Error::from(
-                                ({
-                                    let res = std::fmt::format(format_args!("{e:?}"));
-                                    res
-                                }),
+                                ({ std::fmt::format(format_args!("{0:?}", e)) }),
                             ));
                         }
                     };
@@ -770,10 +662,7 @@ mod macros {
                     Ok(o) => o,
                     Err(e) => {
                         return ffi::MaybeError::Some(libdd_common_ffi::Error::from(
-                            ({
-                                let res = std::fmt::format(format_args!("{e:?}"));
-                                res
-                            }),
+                            ({ std::fmt::format(format_args!("{0:?}", e)) }),
                         ));
                     }
                 };
@@ -787,10 +676,7 @@ mod macros {
                         Ok(o) => o,
                         Err(e) => {
                             return ffi::MaybeError::Some(libdd_common_ffi::Error::from(
-                                ({
-                                    let res = std::fmt::format(format_args!("{e:?}"));
-                                    res
-                                }),
+                                ({ std::fmt::format(format_args!("{0:?}", e)) }),
                             ));
                         }
                     };
@@ -804,10 +690,7 @@ mod macros {
                         Ok(o) => o,
                         Err(e) => {
                             return ffi::MaybeError::Some(libdd_common_ffi::Error::from(
-                                ({
-                                    let res = std::fmt::format(format_args!("{e:?}"));
-                                    res
-                                }),
+                                ({ std::fmt::format(format_args!("{0:?}", e)) }),
                             ));
                         }
                     };
@@ -821,10 +704,7 @@ mod macros {
                         Ok(o) => o,
                         Err(e) => {
                             return ffi::MaybeError::Some(libdd_common_ffi::Error::from(
-                                ({
-                                    let res = std::fmt::format(format_args!("{e:?}"));
-                                    res
-                                }),
+                                ({ std::fmt::format(format_args!("{0:?}", e)) }),
                             ));
                         }
                     };
@@ -837,33 +717,26 @@ mod macros {
                     Ok(o) => o,
                     Err(e) => {
                         return ffi::MaybeError::Some(libdd_common_ffi::Error::from(
-                            ({
-                                let res = std::fmt::format(format_args!("{e:?}"));
-                                res
-                            }),
+                            ({ std::fmt::format(format_args!("{0:?}", e)) }),
                         ));
                     }
                 };
             }
             "session_id" => {
-                telemetry_builder.config.session_id =
-                    match (|s: ffi::CharSlice| -> Result<_, String> {
-                        Ok(Some(s.to_utf8_lossy().into_owned()))
-                    })(param)
-                    {
-                        Ok(o) => o,
-                        Err(e) => {
-                            return ffi::MaybeError::Some(libdd_common_ffi::Error::from(
-                                ({
-                                    let res = std::fmt::format(format_args!("{e:?}"));
-                                    res
-                                }),
-                            ));
-                        }
-                    };
+                telemetry_builder.session_id = match (|s: ffi::CharSlice| -> Result<_, String> {
+                    Ok(Some(s.to_utf8_lossy().into_owned()))
+                })(param)
+                {
+                    Ok(o) => o,
+                    Err(e) => {
+                        return ffi::MaybeError::Some(libdd_common_ffi::Error::from(
+                            ({ std::fmt::format(format_args!("{0:?}", e)) }),
+                        ));
+                    }
+                };
             }
             "parent_session_id" => {
-                telemetry_builder.config.parent_session_id =
+                telemetry_builder.parent_session_id =
                     match (|s: ffi::CharSlice| -> Result<_, String> {
                         Ok(Some(s.to_utf8_lossy().into_owned()))
                     })(param)
@@ -871,16 +744,13 @@ mod macros {
                         Ok(o) => o,
                         Err(e) => {
                             return ffi::MaybeError::Some(libdd_common_ffi::Error::from(
-                                ({
-                                    let res = std::fmt::format(format_args!("{e:?}"));
-                                    res
-                                }),
+                                ({ std::fmt::format(format_args!("{0:?}", e)) }),
                             ));
                         }
                     };
             }
             "root_session_id" => {
-                telemetry_builder.config.root_session_id =
+                telemetry_builder.root_session_id =
                     match (|s: ffi::CharSlice| -> Result<_, String> {
                         Ok(Some(s.to_utf8_lossy().into_owned()))
                     })(param)
@@ -888,10 +758,7 @@ mod macros {
                         Ok(o) => o,
                         Err(e) => {
                             return ffi::MaybeError::Some(libdd_common_ffi::Error::from(
-                                ({
-                                    let res = std::fmt::format(format_args!("{e:?}"));
-                                    res
-                                }),
+                                ({ std::fmt::format(format_args!("{0:?}", e)) }),
                             ));
                         }
                     };
@@ -910,10 +777,7 @@ mod macros {
                 Ok(o) => o,
                 Err(e) => {
                     return ffi::MaybeError::Some(libdd_common_ffi::Error::from(
-                        ({
-                            let res = std::fmt::format(format_args!("{e:?}"));
-                            res
-                        }),
+                        ({ std::fmt::format(format_args!("{0:?}", e)) }),
                     ));
                 }
             };
@@ -946,10 +810,7 @@ mod macros {
                         Ok(o) => o,
                         Err(e) => {
                             return ffi::MaybeError::Some(libdd_common_ffi::Error::from(
-                                ({
-                                    let res = std::fmt::format(format_args!("{e:?}"));
-                                    res
-                                }),
+                                ({ std::fmt::format(format_args!("{0:?}", e)) }),
                             ));
                         }
                     };
@@ -975,10 +836,7 @@ mod macros {
             Ok(o) => o,
             Err(e) => {
                 return ffi::MaybeError::Some(libdd_common_ffi::Error::from(
-                    ({
-                        let res = std::fmt::format(format_args!("{e:?}"));
-                        res
-                    }),
+                    ({ std::fmt::format(format_args!("{0:?}", e)) }),
                 ));
             }
         };
@@ -989,10 +847,7 @@ mod macros {
                         Ok(o) => o,
                         Err(e) => {
                             return ffi::MaybeError::Some(libdd_common_ffi::Error::from(
-                                ({
-                                    let res = std::fmt::format(format_args!("{e:?}"));
-                                    res
-                                }),
+                                ({ std::fmt::format(format_args!("{0:?}", e)) }),
                             ));
                         }
                     };
