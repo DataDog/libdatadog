@@ -141,6 +141,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)] // serial_test has intentional leaks that Miri flags
     #[serial_test::serial]
     fn test_aws_lambda_detected() {
         let _guards = clear_all_env_vars();
@@ -157,6 +158,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)] // serial_test has intentional leaks that Miri flags
     #[serial_test::serial]
     fn test_aws_lambda_missing_function_name() {
         let _guards = clear_all_env_vars();
@@ -166,6 +168,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)] // serial_test has intentional leaks that Miri flags
     #[serial_test::serial]
     fn test_aws_lambda_not_detected_without_init_type() {
         let _guards = clear_all_env_vars();
@@ -175,6 +178,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)] // serial_test has intentional leaks that Miri flags
     #[serial_test::serial]
     fn test_azure_function_detected() {
         let _guards = clear_all_env_vars();
@@ -192,6 +196,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)] // serial_test has intentional leaks that Miri flags
     #[serial_test::serial]
     fn test_azure_function_missing_site_name() {
         let _guards = clear_all_env_vars();
@@ -202,6 +207,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)] // serial_test has intentional leaks that Miri flags
     #[serial_test::serial]
     fn test_azure_function_not_detected_with_only_one_var() {
         let _guards = clear_all_env_vars();
@@ -211,6 +217,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)] // serial_test has intentional leaks that Miri flags
     #[serial_test::serial]
     fn test_gcp_1st_gen_detected() {
         let _guards = clear_all_env_vars();
@@ -227,6 +234,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)] // serial_test has intentional leaks that Miri flags
     #[serial_test::serial]
     fn test_gcp_1st_gen_not_detected_without_gcp_project() {
         let _guards = clear_all_env_vars();
@@ -236,6 +244,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)] // serial_test has intentional leaks that Miri flags
     #[serial_test::serial]
     fn test_gcp_2nd_gen_detected() {
         let _guards = clear_all_env_vars();
@@ -252,6 +261,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)] // serial_test has intentional leaks that Miri flags
     #[serial_test::serial]
     fn test_gcp_2nd_gen_not_detected_without_function_target() {
         let _guards = clear_all_env_vars();
@@ -261,6 +271,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)] // serial_test has intentional leaks that Miri flags
     #[serial_test::serial]
     fn test_azure_spring_app_detected() {
         let _guards = clear_all_env_vars();
@@ -276,6 +287,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)] // serial_test has intentional leaks that Miri flags
     #[serial_test::serial]
     fn test_no_environment_detected() {
         let _guards = clear_all_env_vars();
@@ -284,6 +296,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)] // serial_test has intentional leaks that Miri flags
     #[serial_test::serial]
     fn test_multiple_environments_returns_none() {
         let _guards = clear_all_env_vars();
