@@ -482,9 +482,9 @@ jobs:
               /tmp/api-changes.json > /tmp/api-changes.tmp && mv /tmp/api-changes.tmp /tmp/api-changes.json
           done
 
-          # Check if there are commits to push
-          if git diff --quiet "${{ steps.ephemeral-branch.outputs.ephemeral_branch }}"; then
-            echo "No changes to push. Cancelling the workflow."
+          # Check if any crates are being released
+          if [ "$(jq 'length' /tmp/api-changes.json)" -eq 0 ]; then
+            echo "No crates to release. Cancelling the workflow."
             exit 1
           fi
 
@@ -498,6 +498,7 @@ jobs:
           jq . /tmp/api-changes.json
 
       - name: Push commits
+        if: steps.release-version-bumps.outputs.commits != ''
         uses: DataDog/commit-headless@action/v2.0.3
         with:
           branch: ${{ steps.proposal-branch.outputs.branch_name }}
