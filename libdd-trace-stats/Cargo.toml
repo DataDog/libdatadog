@@ -11,8 +11,6 @@ autobenches = false
 
 [dependencies]
 anyhow = "1.0"
-libdd-capabilities = { path = "../libdd-capabilities" }
-libdd-shared-runtime = { path = "../libdd-shared-runtime" }
 libdd-common = { version = "3.0.0", path = "../libdd-common", default-features = false }
 libdd-ddsketch = { version = "1.0.1", path = "../libdd-ddsketch" }
 libdd-trace-protobuf = { version = "3.0.1", path = "../libdd-trace-protobuf" }
@@ -25,6 +23,11 @@ tokio = { version = "1.23", features = ["macros", "time"], default-features = fa
 tokio-util = "0.7.11"
 tracing = { version = "0.1", default-features = false }
 async-trait = "0.1.85"
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+libdd-capabilities = { path = "../libdd-capabilities" }
+libdd-shared-runtime = { path = "../libdd-shared-runtime" }
+libdd-capabilities-impl = { version = "0.1.0", path = "../libdd-capabilities-impl" }
 
 [lib]
 bench = false

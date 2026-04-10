@@ -91,6 +91,9 @@ version = "1.49.0"
 [target.'cfg(not(target_arch = "x86"))'.dependencies]
 simd-json = "=0.14"
 
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+libdd-capabilities-impl = { path = "../libdd-capabilities-impl" }
+
 [target.'cfg(unix)'.dependencies]
 nix = { version = "0.29", features = ["socket", "mman"] }
 sendfd = { version = "0.4", features = ["tokio"] }

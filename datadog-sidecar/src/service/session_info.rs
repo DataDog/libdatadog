@@ -151,6 +151,15 @@ impl SessionInfo {
         }
     }
 
+    pub(crate) fn modify_stats_config<F>(&self, f: F)
+    where
+        F: FnOnce(&mut crate::service::stats_flusher::StatsConfig),
+    {
+        if let Some(cfg) = &mut *self.stats_config.lock_or_panic() {
+            f(cfg)
+        }
+    }
+
     pub(crate) fn get_trace_config(&self) -> MutexGuard<'_, tracer::Config> {
         self.tracer_config.lock_or_panic()
     }
@@ -164,12 +173,6 @@ impl SessionInfo {
 
     pub(crate) fn get_dogstatsd(&self) -> MutexGuard<'_, Option<libdd_dogstatsd_client::Client>> {
         self.dogstatsd.lock_or_panic()
-    }
-
-    /// Clone the Arc wrapping the DogStatsD client so it can be shared with long-lived tasks
-    /// (e.g. the stats flush loop) without creating a new UDP socket.
-    pub(crate) fn clone_dogstatsd(&self) -> Arc<Mutex<Option<libdd_dogstatsd_client::Client>>> {
-        self.dogstatsd.clone()
     }
 
     pub(crate) fn configure_dogstatsd<F>(&self, f: F)

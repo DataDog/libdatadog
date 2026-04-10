@@ -6,6 +6,7 @@ use crate::platform::{mmap_handle, munmap_handle, OwnedFileHandle, PlatformHandl
 #[cfg(feature = "tiny-bytes")]
 use libdd_tinybytes::UnderlyingBytes;
 use serde::{Deserialize, Serialize};
+#[cfg(target_os = "linux")]
 use std::os::fd::AsRawFd;
 use std::{ffi::CString, io, ptr::NonNull};
 

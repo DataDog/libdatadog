@@ -1040,6 +1040,10 @@ impl SidecarInterface for ConnectionSidecarHandler {
         session.modify_trace_config(|trace_cfg| {
             trace_cfg.set_endpoint_test_token(token.clone());
         });
+        // Update the stats config so newly created concentrators carry the test token.
+        session.modify_stats_config(|cfg| {
+            cfg.endpoint.test_token = token.clone();
+        });
         // TODO(APMSP-1377): the dogstatsd-client doesn't support test_session tokens yet
         // session.configure_dogstatsd(|cfg| {
         //     update_cfg(cfg.endpoint.take(), |e| cfg.set_endpoint(e), &token);
