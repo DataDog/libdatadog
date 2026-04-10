@@ -257,6 +257,83 @@ impl ProcessInfo {
     }
 }
 
+/// Maximum allowed config file size (100 MB).
+pub const MAX_CONFIG_FILE_SIZE: usize = 100 * 1024 * 1024;
+
+/// Error returned by [`ConfigRead::read`].
+///
+/// This enum classifies all failure modes so the configurator can decide which
+/// are fatal (abort) and which are gracefully skipped:
+///
+/// - [`NotFound`](Self::NotFound) — the file does not exist; the configuration
+///   layer is simply absent and will be treated as empty.
+/// - [`TooLarge`](Self::TooLarge) — the file exceeds [`MAX_CONFIG_FILE_SIZE`];
+///   skipped with a debug log.
+/// - [`Io`](Self::Io) — any other I/O or access error; aborts config loading.
+#[derive(Debug)]
+pub enum ConfigReadError<E> {
+    /// File does not exist at the given path.
+    NotFound,
+    /// File exceeds [`MAX_CONFIG_FILE_SIZE`].
+    TooLarge,
+    /// An I/O or platform-specific error.
+    Io(E),
+}
+
+impl<E: core::fmt::Display> core::fmt::Display for ConfigReadError<E> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::NotFound => write!(f, "file not found"),
+            Self::TooLarge => write!(f, "file is too large (> 100mb)"),
+            Self::Io(e) => write!(f, "{e}"),
+        }
+    }
+}
+
+/// Trait for reading configuration files from a filesystem or virtual filesystem.
+///
+/// Implement this to provide custom file access for environments where `std::fs`
+/// is not available (e.g. no_std, sandboxed, or in-memory configurations).
+///
+pub trait ConfigRead {
+    /// The platform-specific error type carried by [`ConfigReadError::Io`].
+    type IoError: core::fmt::Display;
+
+    /// Read the entire contents of the configuration file at `path`.
+    ///
+    /// Implementations **should** return [`ConfigReadError::TooLarge`] for files
+    /// exceeding [`MAX_CONFIG_FILE_SIZE`] to avoid unnecessary allocations.
+    /// The configurator also checks the returned bytes as a safety net.
+    fn read(&self, path: &str) -> Result<Vec<u8>, ConfigReadError<Self::IoError>>;
+}
+
+/// Standard filesystem implementation of [`ConfigRead`].
+#[cfg(feature = "std")]
+pub struct StdConfigRead;
+
+#[cfg(feature = "std")]
+impl ConfigRead for StdConfigRead {
+    type IoError = io::Error;
+
+    fn read(&self, path: &str) -> Result<Vec<u8>, ConfigReadError<io::Error>> {
+        let file = match fs::File::open(path) {
+            Ok(f) => f,
+            Err(e) if e.kind() == io::ErrorKind::NotFound => {
+                return Err(ConfigReadError::NotFound)
+            }
+            Err(e) => return Err(ConfigReadError::Io(e)),
+        };
+        match file.metadata() {
+            Ok(m) if m.len() as usize > MAX_CONFIG_FILE_SIZE => {
+                return Err(ConfigReadError::TooLarge)
+            }
+            Err(e) => return Err(ConfigReadError::Io(e)),
+            _ => {}
+        }
+        fs::read(path).map_err(ConfigReadError::Io)
+    }
+}
+
 /// A (key, value) struct
 ///
 /// This type has a custom serde Deserialize implementation from maps:
@@ -276,7 +353,7 @@ impl<'de> serde::Deserialize<'de> for ConfigMap {
             type Value = ConfigMap;
 
             fn expecting(&self, formatter: &mut core::fmt::Formatter) -> core::fmt::Result {
-                formatter.write_str("a YAML map of string key-value pairs")
+                formatter.write_str("struct ConfigMap(HashMap<String, String>)")
             }
 
             fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error>
@@ -529,7 +606,7 @@ impl Configurator {
         LoggedResult::Ok(stable_config, messages)
     }
 
-    #[cfg(feature = "std")]
+    #[cfg(all(feature = "std", test))]
     fn parse_stable_config_file<F: io::Read>(
         &self,
         mut f: F,
@@ -549,91 +626,12 @@ impl Configurator {
         path_managed: &Path,
         process_info: &ProcessInfo,
     ) -> LoggedResult<Vec<LibraryConfig>, anyhow::Error> {
-        let mut debug_messages = Vec::new();
-        if self.debug_logs {
-            debug_messages.push("Reading stable configuration from files:".to_string());
-            debug_messages.push(format!("\tlocal: {path_local:?}"));
-            debug_messages.push(format!("\tfleet: {path_managed:?}"));
-        }
-
-        let local_config = match fs::File::open(path_local) {
-            Ok(file) => {
-                match file.metadata() {
-                    Ok(metadata) => {
-                        // Fail if the file is > 100mb
-                        if metadata.len() > 1024 * 1024 * 100 {
-                            debug_messages.push(
-                                "failed to read local config file: file is too large (> 100mb)"
-                                    .to_string(),
-                            );
-                            StableConfig::default()
-                        } else {
-                            match self.parse_stable_config_file(file) {
-                                LoggedResult::Ok(config, logs) => {
-                                    debug_messages.extend(logs);
-                                    config
-                                }
-                                LoggedResult::Err(e) => return LoggedResult::Err(e),
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        return LoggedResult::Err(
-                            anyhow::Error::from(e).context("failed to get file metadata"),
-                        )
-                    }
-                }
-            }
-            Err(e) if e.kind() == io::ErrorKind::NotFound => StableConfig::default(),
-            Err(e) => {
-                return LoggedResult::Err(
-                    anyhow::Error::from(e).context("failed to open config file"),
-                )
-            }
-        };
-        let fleet_config = match fs::File::open(path_managed) {
-            Ok(file) => {
-                match file.metadata() {
-                    Ok(metadata) => {
-                        // Fail if the file is > 100mb
-                        if metadata.len() > 1024 * 1024 * 100 {
-                            debug_messages.push(
-                                "failed to read fleet config file: file is too large (> 100mb)"
-                                    .to_string(),
-                            );
-                            StableConfig::default()
-                        } else {
-                            match self.parse_stable_config_file(file) {
-                                LoggedResult::Ok(config, logs) => {
-                                    debug_messages.extend(logs);
-                                    config
-                                }
-                                LoggedResult::Err(e) => return LoggedResult::Err(e),
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        return LoggedResult::Err(
-                            anyhow::Error::from(e).context("failed to get file metadata"),
-                        )
-                    }
-                }
-            }
-            Err(e) if e.kind() == io::ErrorKind::NotFound => StableConfig::default(),
-            Err(e) => {
-                return LoggedResult::Err(
-                    anyhow::Error::from(e).context("failed to open config file"),
-                )
-            }
-        };
-
-        match self.get_config(local_config, fleet_config, process_info) {
-            LoggedResult::Ok(configs, msgs) => {
-                debug_messages.extend(msgs);
-                LoggedResult::Ok(configs, debug_messages)
-            }
-            LoggedResult::Err(e) => LoggedResult::Err(e),
-        }
+        self.get_config_from_reader(
+            &StdConfigRead,
+            &path_local.to_string_lossy(),
+            &path_managed.to_string_lossy(),
+            process_info,
+        )
     }
 
     pub fn get_config_from_bytes(
@@ -653,6 +651,77 @@ impl Configurator {
 
         match self.get_config(local_config, fleet_config, process_info) {
             LoggedResult::Ok(configs, _) => Ok(configs),
+            LoggedResult::Err(e) => Err(e),
+        }
+    }
+
+    /// Load configuration using a custom [`ConfigRead`] implementation.
+    ///
+    /// This is the primary entry point for no_std or virtual-filesystem
+    /// environments. The reader controls how files are fetched; the
+    /// configurator handles parsing, layering, and rule evaluation.
+    pub fn get_config_from_reader(
+        &self,
+        reader: &impl ConfigRead,
+        local_path: impl AsRef<str>,
+        fleet_path: impl AsRef<str>,
+        process_info: &ProcessInfo,
+    ) -> LoggedResult<Vec<LibraryConfig>, anyhow::Error> {
+        let local_path = local_path.as_ref();
+        let fleet_path = fleet_path.as_ref();
+        let mut debug_messages = Vec::new();
+        if self.debug_logs {
+            debug_messages.push("Reading stable configuration from files:".to_string());
+            debug_messages.push(format!("\tlocal: {local_path:?}"));
+            debug_messages.push(format!("\tfleet: {fleet_path:?}"));
+        }
+
+        let local_config =
+            match self.read_config_source(reader, local_path, "local", &mut debug_messages) {
+                Ok(config) => config,
+                Err(e) => return LoggedResult::Err(e),
+            };
+        let fleet_config =
+            match self.read_config_source(reader, fleet_path, "fleet", &mut debug_messages) {
+                Ok(config) => config,
+                Err(e) => return LoggedResult::Err(e),
+            };
+
+        match self.get_config(local_config, fleet_config, process_info) {
+            LoggedResult::Ok(configs, msgs) => {
+                debug_messages.extend(msgs);
+                LoggedResult::Ok(configs, debug_messages)
+            }
+            LoggedResult::Err(e) => LoggedResult::Err(e),
+        }
+    }
+
+    fn read_config_source(
+        &self,
+        reader: &impl ConfigRead,
+        path: &str,
+        label: &str,
+        debug_messages: &mut Vec<String>,
+    ) -> Result<StableConfig, anyhow::Error> {
+        let bytes = match reader.read(path) {
+            Ok(bytes) => bytes,
+            Err(ConfigReadError::NotFound) => return Ok(StableConfig::default()),
+            Err(ConfigReadError::TooLarge) => {
+                debug_messages.push(format!(
+                    "failed to read {label} config file: file is too large (> 100mb)"
+                ));
+                return Ok(StableConfig::default());
+            }
+            Err(ConfigReadError::Io(e)) => {
+                anyhow::bail!("failed to read {label} config file: {e}")
+            }
+        };
+
+        match self.parse_stable_config_slice(&bytes) {
+            LoggedResult::Ok(config, logs) => {
+                debug_messages.extend(logs);
+                Ok(config)
+            }
             LoggedResult::Err(e) => Err(e),
         }
     }
@@ -956,16 +1025,16 @@ mod tests {
         let temp_local_path = temp_local_file.into_temp_path();
         let temp_fleet_path = temp_fleet_file.into_temp_path();
         let result = configurator.get_config_from_file(
-            temp_local_path.to_str().unwrap().as_ref(),
-            temp_fleet_path.to_str().unwrap().as_ref(),
+            temp_local_path.as_ref(),
+            temp_fleet_path.as_ref(),
             &ProcessInfo {
                 args: vec![b"-jar HelloWorld.jar".to_vec()],
                 envp: vec![b"ENV=VAR".to_vec()],
                 language: b"java".to_vec(),
             },
         );
-        let local_path: &Path = temp_local_path.to_str().unwrap().as_ref();
-        let fleet_path: &Path = temp_fleet_path.to_str().unwrap().as_ref();
+        let local_path: &Path = temp_local_path.as_ref();
+        let fleet_path: &Path = temp_fleet_path.as_ref();
         match result {
             LoggedResult::Ok(configs, logs) => {
                 assert_eq!(configs, vec![]);
@@ -1427,4 +1496,107 @@ rules:
             }]
         );
     }
+}
+
+#[cfg(test)]
+mod config_read_tests {
+    use alloc::collections::BTreeMap;
+    use alloc::format;
+    use alloc::string::{String, ToString};
+    use alloc::vec;
+    use alloc::vec::Vec;
+
+    use super::{ConfigRead, ConfigReadError, Configurator, ProcessInfo};
+
+    /// In-memory reader for testing the `ConfigRead` trait without filesystem access.
+    struct MemReader {
+        files: BTreeMap<String, Result<Vec<u8>, ConfigReadError<String>>>,
+    }
+
+    impl MemReader {
+        fn new() -> Self {
+            Self {
+                files: BTreeMap::new(),
+            }
+        }
+
+        fn with_file(mut self, path: &str, content: &[u8]) -> Self {
+            self.files
+                .insert(path.to_string(), Ok(content.to_vec()));
+            self
+        }
+
+        fn with_error(mut self, path: &str, err: ConfigReadError<String>) -> Self {
+            self.files.insert(path.to_string(), Err(err));
+            self
+        }
+    }
+
+    impl ConfigRead for MemReader {
+        type IoError = String;
+
+        fn read(&self, path: &str) -> Result<Vec<u8>, ConfigReadError<String>> {
+            match self.files.get(path) {
+                Some(Ok(bytes)) => Ok(bytes.clone()),
+                Some(Err(ConfigReadError::NotFound)) => Err(ConfigReadError::NotFound),
+                Some(Err(ConfigReadError::TooLarge)) => Err(ConfigReadError::TooLarge),
+                Some(Err(ConfigReadError::Io(e))) => Err(ConfigReadError::Io(e.clone())),
+                None => Err(ConfigReadError::NotFound),
+            }
+        }
+    }
+
+    fn java_process_info() -> ProcessInfo {
+        ProcessInfo {
+            args: vec![b"-jar".to_vec(), b"app.jar".to_vec()],
+            envp: vec![b"DD_ENV=prod".to_vec()],
+            language: b"java".to_vec(),
+        }
+    }
+
+    #[test]
+    fn reader_too_large_skipped() {
+        let reader = MemReader::new()
+            .with_error("/local", ConfigReadError::TooLarge)
+            .with_file(
+                "/fleet",
+                b"apm_configuration_default:\n  DD_SERVICE: fleet-svc",
+            );
+
+        let configurator = Configurator::new(true);
+        let result = configurator.get_config_from_reader(
+            &reader,
+            "/local",
+            "/fleet",
+            &java_process_info(),
+        );
+
+        // TooLarge is non-fatal: should still get fleet config
+        let logs = result.logs().to_vec();
+        let configs = result.data().unwrap();
+
+        assert_eq!(configs.len(), 1);
+        assert_eq!(configs[0].name, "DD_SERVICE");
+        assert_eq!(configs[0].value, "fleet-svc");
+        assert!(logs.iter().any(|l| l.contains("too large")));
+    }
+
+    #[test]
+    fn reader_io_error_aborts() {
+        let reader = MemReader::new()
+            .with_error("/local", ConfigReadError::Io("permission denied".to_string()));
+
+        let configurator = Configurator::new(false);
+        let result = configurator.get_config_from_reader(
+            &reader,
+            "/local",
+            "/fleet",
+            &java_process_info(),
+        );
+
+        let err = result.data().unwrap_err();
+        let msg = format!("{err}");
+        assert!(msg.contains("permission denied"), "got: {msg}");
+    }
+
 }
