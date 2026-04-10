@@ -853,7 +853,14 @@ mod tests {
         .unwrap();
         c.add_span(&span("svc", "res", 1_000_000));
         c.add_span(&span("svc", "res", 2_000_000));
-        let bytes = c.flush(true, "h", "e", "v", "s", "r");
+        let bytes = c.flush(
+            true,
+            "h".into(),
+            "e".into(),
+            "v".into(),
+            "s".into(),
+            "r".into(),
+        );
         assert!(bytes.is_some());
     }
 
@@ -870,7 +877,14 @@ mod tests {
         .unwrap();
         let worker = ShmSpanConcentrator::open(path.as_c_str()).unwrap();
         worker.add_span(&span("svc2", "res2", 5_000_000));
-        let bytes = creator.flush(true, "h", "", "", "", "r");
+        let bytes = creator.flush(
+            true,
+            "h".into(),
+            "".into(),
+            "".into(),
+            "".into(),
+            "r".into(),
+        );
         assert!(bytes.is_some());
     }
 
@@ -910,7 +924,16 @@ mod tests {
             DEFAULT_STRING_POOL_BYTES,
         )
         .unwrap();
-        assert!(c.flush(false, "h", "e", "v", "s", "r").is_none());
+        assert!(c
+            .flush(
+                false,
+                "h".into(),
+                "e".into(),
+                "v".into(),
+                "s".into(),
+                "r".into()
+            )
+            .is_none());
     }
 
     #[test]

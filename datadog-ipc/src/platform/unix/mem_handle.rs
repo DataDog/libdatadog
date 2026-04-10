@@ -7,9 +7,9 @@ use crate::platform::{
 use io_lifetimes::OwnedFd;
 use libc::{chmod, off_t};
 use nix::errno::Errno;
-use nix::fcntl::{open, OFlag};
 #[cfg(target_os = "linux")]
 use nix::fcntl::{fallocate, FallocateFlags};
+use nix::fcntl::{open, OFlag};
 use nix::sys::mman::{self, mmap, munmap, MapFlags, ProtFlags};
 use nix::sys::stat::Mode;
 use nix::unistd::{fchown, ftruncate, mkdir, unlink, Uid};

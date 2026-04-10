@@ -6,8 +6,8 @@ use crate::platform::{mmap_handle, munmap_handle, OwnedFileHandle, PlatformHandl
 #[cfg(feature = "tiny-bytes")]
 use libdd_tinybytes::UnderlyingBytes;
 use serde::{Deserialize, Serialize};
-use std::{ffi::CString, io, ptr::NonNull};
 use std::os::fd::AsRawFd;
+use std::{ffi::CString, io, ptr::NonNull};
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct ShmHandle {
@@ -93,7 +93,12 @@ where
         // Use fallocate on Linux to eagerly commit the new pages: ENOSPC at resize time is
         // recoverable; a later SIGBUS mid-execution is not.
         #[cfg(target_os = "linux")]
-        nix::fcntl::fallocate(fd.as_raw_fd(), nix::fcntl::FallocateFlags::empty(), 0, new_size)?;
+        nix::fcntl::fallocate(
+            fd.as_raw_fd(),
+            nix::fcntl::FallocateFlags::empty(),
+            0,
+            new_size,
+        )?;
         #[cfg(not(target_os = "linux"))]
         nix::unistd::ftruncate(&fd, new_size)?;
         Ok(())

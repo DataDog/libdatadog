@@ -11,6 +11,8 @@
 //! triggers creation for a given (env, version, service) is used as the runtime_id in the
 //! stats payload for that key.
 
+use base64::prelude::BASE64_URL_SAFE_NO_PAD;
+use base64::Engine;
 use datadog_ipc::shm_stats::{
     ShmSpanConcentrator, DEFAULT_SLOT_COUNT, DEFAULT_STRING_POOL_BYTES, RELOAD_FILL_RATIO,
 };
@@ -27,8 +29,6 @@ use std::hash::{Hash, Hasher};
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering::*};
 use std::sync::{Arc, Mutex, Weak};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
-use base64::Engine;
-use base64::prelude::BASE64_URL_SAFE_NO_PAD;
 use tracing::{error, info, warn};
 use zwohash::ZwoHasher;
 
@@ -55,7 +55,9 @@ pub(crate) fn stats_endpoint(endpoint: &Endpoint) -> Option<Endpoint> {
         return None;
     }
     let mut parts = endpoint.url.clone().into_parts();
-    parts.path_and_query = Some(PathAndQuery::from_static(libdd_trace_stats::stats_exporter::STATS_ENDPOINT_PATH));
+    parts.path_and_query = Some(PathAndQuery::from_static(
+        libdd_trace_stats::stats_exporter::STATS_ENDPOINT_PATH,
+    ));
     Some(Endpoint {
         url: http::Uri::from_parts(parts).ok()?,
         ..endpoint.clone()
@@ -66,7 +68,7 @@ pub(crate) fn stats_endpoint(endpoint: &Endpoint) -> Option<Endpoint> {
 #[derive(Clone)]
 pub(crate) struct StatsConfig {
     /// Stats endpoint with final path already baked in.
-   pub endpoint: Endpoint,
+    pub endpoint: Endpoint,
     pub flush_interval: Duration,
     /// Machine hostname, forwarded to the stats payload `hostname` field.
     pub hostname: String,
@@ -149,20 +151,36 @@ impl SpanConcentratorState {
     /// Used for one-shot flushes (idle-removal, `flush_all_stats_now`).  The retry-accumulator
     /// path in `run_stats_flush_loop` has its own send loop and does not use this.
     async fn send_and_emit(&self, client: &HttpClient, payload: pb::ClientStatsPayload) {
-        let endpoint = self.endpoint.lock().unwrap_or_else(|e| e.into_inner()).clone();
+        let endpoint = self
+            .endpoint
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
         let spans = spans_in_payload(&payload);
         let buckets = payload.stats.len() as i64;
-        match send_stats(client, &endpoint, &payload, self.language.clone(), self.tracer_version.clone()).await {
-            StatsSendResult::Sent => emit_flush_metrics(&self.dogstatsd, &self.base_tags, spans, 1, buckets, 0),
-            StatsSendResult::Error | StatsSendResult::Network => emit_flush_metrics(&self.dogstatsd, &self.base_tags, 0, 0, 0, 1),
+        match send_stats(
+            client,
+            &endpoint,
+            &payload,
+            self.language.clone(),
+            self.tracer_version.clone(),
+        )
+        .await
+        {
+            StatsSendResult::Sent => {
+                emit_flush_metrics(&self.dogstatsd, &self.base_tags, spans, 1, buckets, 0)
+            }
+            StatsSendResult::Error | StatsSendResult::Network => {
+                emit_flush_metrics(&self.dogstatsd, &self.base_tags, 0, 0, 0, 1)
+            }
         }
     }
 }
 
 /// RAII guard that keeps an (env, version, root-service) concentrator alive.
 ///
-/// Stored in `ActiveApplication`.  When the last guard for a given (env, version, root-service) is dropped,
-/// the flush loop will remove the concentrator after `IDLE_REMOVE_SECS` seconds.
+/// Stored in `ActiveApplication`.  When the last guard for a given (env, version, root-service) is
+/// dropped, the flush loop will remove the concentrator after `IDLE_REMOVE_SECS` seconds.
 pub struct SpanConcentratorGuard {
     ref_count: Arc<AtomicUsize>,
     last_zero_secs: Arc<AtomicU64>,
@@ -197,7 +215,6 @@ pub fn env_stats_shm_path(env: &str, version: &str, service: &str) -> CString {
     #[allow(clippy::unwrap_used)]
     CString::new(path).unwrap()
 }
-
 
 /// Result of a single stats payload send attempt.
 #[must_use]
@@ -395,7 +412,15 @@ pub async fn run_stats_flush_loop(
         let mut errors = 0i64;
         let endpoint = s.endpoint.lock().unwrap_or_else(|e| e.into_inner()).clone();
         for p in &pending {
-            match send_stats(&client, &endpoint, &p, s.language.to_owned(), s.tracer_version.to_owned()).await {
+            match send_stats(
+                &client,
+                &endpoint,
+                &p,
+                s.language.to_owned(),
+                s.tracer_version.to_owned(),
+            )
+            .await
+            {
                 StatsSendResult::Sent => {
                     to_drain += 1;
                     payloads_sent += 1;
@@ -413,7 +438,14 @@ pub async fn run_stats_flush_loop(
             }
         }
         pending.drain(..to_drain);
-        emit_flush_metrics(&s.dogstatsd, &s.base_tags, spans_sent, payloads_sent, buckets_sent, errors);
+        emit_flush_metrics(
+            &s.dogstatsd,
+            &s.base_tags,
+            spans_sent,
+            payloads_sent,
+            buckets_sent,
+            errors,
+        );
 
         // Idle-removal check: if no app has held a guard for >= IDLE_REMOVE_SECS, retire this
         // concentrator with a final force-flush.
@@ -428,7 +460,11 @@ pub async fn run_stats_flush_loop(
             };
             let idle_secs = if s.ref_count.load(Acquire) == 0 {
                 let last_zero = s.last_zero_secs.load(Acquire);
-                if last_zero != u64::MAX { now_secs().saturating_sub(last_zero) } else { 0 }
+                if last_zero != u64::MAX {
+                    now_secs().saturating_sub(last_zero)
+                } else {
+                    0
+                }
             } else {
                 0
             };
@@ -455,13 +491,14 @@ pub async fn run_stats_flush_loop(
 /// Create (or look up) the SHM span concentrator for an (env, service, version) pair, increment its
 /// reference count, and return a guard.
 ///
-/// Idempotent with respect to SHM creation: if a concentrator for this (env, service, version) already
-/// exists, only the reference count is incremented.
+/// Idempotent with respect to SHM creation: if a concentrator for this (env, service, version)
+/// already exists, only the reference count is incremented.
 ///
 /// Returns `None` when no `SessionConfig` has been set yet for the calling session (caller should
 /// retry later) or when SHM creation fails.
 ///
-/// - `concentrators`: the global per-(env,version,service) map from `SidecarServer::span_concentrators`
+/// - `concentrators`: the global per-(env,version,service) map from
+///   `SidecarServer::span_concentrators`
 /// - `env`: the environment name
 /// - `version`: the application version
 /// - `service_name`: the root service name reported by `set_universal_service_tags`

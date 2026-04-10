@@ -35,7 +35,10 @@ use crate::service::debugger_diagnostics_bookkeeper::{
 };
 use crate::service::exception_hash_rate_limiter::EXCEPTION_HASH_LIMITER;
 use crate::service::remote_configs::{RemoteConfigNotifyTarget, RemoteConfigs};
-use crate::service::stats_flusher::{ensure_stats_concentrator, flush_all_stats_now, get_hostname, stats_endpoint, ConcentratorKey, SpanConcentratorState, StatsConfig};
+use crate::service::stats_flusher::{
+    ensure_stats_concentrator, flush_all_stats_now, get_hostname, stats_endpoint, ConcentratorKey,
+    SpanConcentratorState, StatsConfig,
+};
 use crate::service::tracing::trace_flusher::TraceFlusherStats;
 use crate::tokio_util::run_or_spawn_shared;
 use datadog_live_debugger::sender::{agent_info_supports_debugger_v2_endpoint, DebuggerType};
@@ -681,8 +684,17 @@ impl SidecarInterface for ConnectionSidecarHandler {
         *session.stats_config.lock_or_panic() = Some(StatsConfig {
             endpoint: stats_endpoint(&config.endpoint).unwrap_or_else(|| config.endpoint.clone()),
             flush_interval: config.flush_interval,
-            hostname: if config.hostname.is_empty() { get_hostname() } else { config.hostname.clone() },
-            process_tags: config.process_tags.iter().map(|t| t.to_string()).collect::<Vec<_>>().join(","),
+            hostname: if config.hostname.is_empty() {
+                get_hostname()
+            } else {
+                config.hostname.clone()
+            },
+            process_tags: config
+                .process_tags
+                .iter()
+                .map(|t| t.to_string())
+                .collect::<Vec<_>>()
+                .join(","),
             root_service: config.root_service.clone(),
             language: config.language.clone(),
             tracer_version: config.tracer_version.clone(),
@@ -984,7 +996,11 @@ impl SidecarInterface for ConnectionSidecarHandler {
             .as_ref()
             .map(|c| c.root_service.clone())
             .unwrap_or_default();
-        let map_key = ConcentratorKey { env, version, root_service: service };
+        let map_key = ConcentratorKey {
+            env,
+            version,
+            root_service: service,
+        };
         let guard = self
             .server
             .span_concentrators
