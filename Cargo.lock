@@ -3128,6 +3128,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "libdd-otel-thread-ctx"
+version = "1.0.0"
+dependencies = [
+ "cc",
+]
+
+[[package]]
 name = "libdd-profiling"
 version = "1.0.0"
 dependencies = [
@@ -3137,7 +3144,6 @@ dependencies = [
  "bolero",
  "byteorder",
  "bytes",
- "cc",
  "chrono",
  "criterion",
  "crossbeam-channel",
