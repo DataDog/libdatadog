@@ -11,15 +11,13 @@ use std::{
 
 use crate::span_concentrator::{FlushableConcentrator, SpanConcentrator};
 use async_trait::async_trait;
-use std::fmt::Debug;
 use libdd_capabilities::{HttpClientTrait, MaybeSend};
 use libdd_common::Endpoint;
 use libdd_shared_runtime::Worker;
 use libdd_trace_protobuf::pb;
 use libdd_trace_utils::send_with_retry::{send_with_retry, RetryStrategy};
 use libdd_trace_utils::trace_utils::TracerHeaderTags;
-use tokio::select;
-use tokio_util::sync::CancellationToken;
+use std::fmt::Debug;
 use tracing::error;
 
 pub const STATS_ENDPOINT_PATH: &str = "/v0.6/stats";
@@ -164,7 +162,11 @@ impl<H: HttpClientTrait, C: FlushableConcentrator> StatsExporter<H, C> {
 
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
-impl<H: HttpClientTrait + MaybeSend + Sync + Debug + 'static, C: FlushableConcentrator + Send + Debug> Worker for StatsExporter<H, C> {
+impl<
+        H: HttpClientTrait + MaybeSend + Sync + Debug + 'static,
+        C: FlushableConcentrator + Send + Debug,
+    > Worker for StatsExporter<H, C>
+{
     async fn trigger(&mut self) {
         tokio::time::sleep(self.flush_interval).await;
     }
