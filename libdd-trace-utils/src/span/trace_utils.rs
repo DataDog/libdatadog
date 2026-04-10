@@ -4,6 +4,7 @@
 //! Trace-utils functionalities implementation for tinybytes based spans
 
 use super::{v04::Span, SpanText, TraceData};
+use std::borrow::Borrow;
 use std::collections::HashMap;
 
 /// Span metric the mini agent must set for the backend to recognize top level span
@@ -13,15 +14,58 @@ const TRACER_TOP_LEVEL_KEY: &str = "_dd.top_level";
 const MEASURED_KEY: &str = "_dd.measured";
 const PARTIAL_VERSION_KEY: &str = "_dd.partial_version";
 
+fn vec_metric_get<'a, T: PartialEq + std::borrow::Borrow<str>>(
+    vec: &'a [(T, f64)],
+    key: &str,
+) -> Option<&'a f64> {
+    for entry in vec {
+        if entry.0.borrow() == key {
+            return Some(&entry.1);
+        }
+    }
+    None
+}
+
+fn vec_metric_insert<T: TraceData>(vec: &mut Vec<(T::Text, f64)>, key: T::Text, value: f64) {
+    for entry in vec.iter_mut() {
+        if entry.0 == key {
+            entry.1 = value;
+            return;
+        }
+    }
+    vec.push((key, value));
+}
+
+fn vec_metric_remove<T: TraceData>(vec: &mut Vec<(T::Text, f64)>, key: &str)
+where
+    T::Text: Borrow<str>,
+{
+    vec.retain(|(k, _)| {
+        let s: &str = k.borrow();
+        s != key
+    });
+}
+
+fn vec_metric_contains_key<T: PartialEq + std::borrow::Borrow<str>>(
+    vec: &[(T, f64)],
+    key: &str,
+) -> bool {
+    vec.iter().any(|(k, _)| k.borrow() == key)
+}
+
 fn set_top_level_span<T>(span: &mut Span<T>, is_top_level: bool)
 where
     T: TraceData,
+    T::Text: std::borrow::Borrow<str>,
 {
     if is_top_level {
-        span.metrics
-            .insert(T::Text::from_static_str(TOP_LEVEL_KEY), 1.0);
+        vec_metric_insert::<T>(
+            &mut span.metrics,
+            T::Text::from_static_str(TOP_LEVEL_KEY),
+            1.0,
+        );
     } else {
-        span.metrics.remove(TOP_LEVEL_KEY);
+        vec_metric_remove::<T>(&mut span.metrics, TOP_LEVEL_KEY);
     }
 }
 
@@ -34,6 +78,7 @@ where
 pub fn compute_top_level_span<T>(trace: &mut [Span<T>])
 where
     T: TraceData,
+    T::Text: std::borrow::Borrow<str>,
 {
     let mut span_id_idx: HashMap<u64, usize> = HashMap::new();
     for (i, span) in trace.iter().enumerate() {
@@ -61,16 +106,20 @@ where
 }
 
 /// Return true if the span has a top level key set
-pub fn has_top_level<T: TraceData>(span: &Span<T>) -> bool {
-    span.metrics
-        .get(TRACER_TOP_LEVEL_KEY)
-        .is_some_and(|v| *v == 1.0)
-        || span.metrics.get(TOP_LEVEL_KEY).is_some_and(|v| *v == 1.0)
+pub fn has_top_level<T: TraceData>(span: &Span<T>) -> bool
+where
+    T::Text: std::borrow::Borrow<str>,
+{
+    vec_metric_get(&span.metrics, TRACER_TOP_LEVEL_KEY).is_some_and(|v| *v == 1.0)
+        || vec_metric_get(&span.metrics, TOP_LEVEL_KEY).is_some_and(|v| *v == 1.0)
 }
 
 /// Returns true if a span should be measured (i.e., it should get trace metrics calculated).
-pub fn is_measured<T: TraceData>(span: &Span<T>) -> bool {
-    span.metrics.get(MEASURED_KEY).is_some_and(|v| *v == 1.0)
+pub fn is_measured<T: TraceData>(span: &Span<T>) -> bool
+where
+    T::Text: std::borrow::Borrow<str>,
+{
+    vec_metric_get(&span.metrics, MEASURED_KEY).is_some_and(|v| *v == 1.0)
 }
 
 /// Returns true if the span is a partial snapshot.
@@ -78,10 +127,11 @@ pub fn is_measured<T: TraceData>(span: &Span<T>) -> bool {
 /// When incomplete, a partial snapshot has a metric _dd.partial_version which is a positive
 /// integer. The metric usually increases each time a new version of the same span is sent by
 /// the tracer
-pub fn is_partial_snapshot<T: TraceData>(span: &Span<T>) -> bool {
-    span.metrics
-        .get(PARTIAL_VERSION_KEY)
-        .is_some_and(|v| *v >= 0.0)
+pub fn is_partial_snapshot<T: TraceData>(span: &Span<T>) -> bool
+where
+    T::Text: std::borrow::Borrow<str>,
+{
+    vec_metric_get(&span.metrics, PARTIAL_VERSION_KEY).is_some_and(|v| *v >= 0.0)
 }
 
 pub struct DroppedP0Stats {
@@ -107,6 +157,7 @@ const SAMPLING_ANALYTICS_RATE_KEY: &str = "_dd1.sr.eausr";
 pub fn drop_chunks<T>(traces: &mut Vec<Vec<Span<T>>>) -> DroppedP0Stats
 where
     T: TraceData,
+    T::Text: std::borrow::Borrow<str>,
 {
     let mut dropped_p0_traces = 0;
     let mut dropped_p0_spans = 0;
@@ -121,7 +172,7 @@ where
         // PrioritySampler and NoPrioritySampler
         let chunk_priority = chunk
             .iter()
-            .find_map(|s| s.metrics.get(SAMPLING_PRIORITY_KEY));
+            .find_map(|s| vec_metric_get(&s.metrics, SAMPLING_PRIORITY_KEY));
         if chunk_priority.is_none_or(|p| *p > 0.0) {
             // We send chunks with positive priority or no priority
             return true;
@@ -131,11 +182,9 @@ where
         // List of spans to keep even if the chunk is dropped
         let mut sampled_indexes = Vec::new();
         for (index, span) in chunk.iter().enumerate() {
-            if span
-                .metrics
-                .get(SAMPLING_SINGLE_SPAN_MECHANISM)
+            if vec_metric_get(&span.metrics, SAMPLING_SINGLE_SPAN_MECHANISM)
                 .is_some_and(|m| *m == 8.0)
-                || span.metrics.contains_key(SAMPLING_ANALYTICS_RATE_KEY)
+                || vec_metric_contains_key(&span.metrics, SAMPLING_ANALYTICS_RATE_KEY)
             {
                 // We send spans sampled by single-span sampling or analyzed spans
                 sampled_indexes.push(index);
@@ -183,24 +232,23 @@ mod tests {
             start,
             duration: 5,
             error: 0,
-            meta: HashMap::from([
+            meta: vec![
                 ("service".into(), "test-service".into()),
                 ("env".into(), "test-env".into()),
                 ("runtime-id".into(), "test-runtime-id-value".into()),
-            ]),
-            metrics: HashMap::new(),
+            ],
+            metrics: Vec::new(),
             r#type: "".into(),
-            meta_struct: HashMap::new(),
+            meta_struct: Vec::new(),
             span_links: vec![],
             span_events: vec![],
         };
         if is_top_level {
-            span.metrics.insert("_top_level".into(), 1.0);
+            span.metrics.push(("_top_level".into(), 1.0));
+            span.meta.push(("_dd.origin".into(), "cloudfunction".into()));
+            span.meta.push(("origin".into(), "cloudfunction".into()));
             span.meta
-                .insert("_dd.origin".into(), "cloudfunction".into());
-            span.meta.insert("origin".into(), "cloudfunction".into());
-            span.meta
-                .insert("functionname".into(), "dummy_function_name".into());
+                .push(("functionname".into(), "dummy_function_name".into()));
         }
         span
     }
@@ -216,7 +264,7 @@ mod tests {
     #[test]
     fn test_is_measured() {
         let mut measured_span = create_test_span(123, 1234, 12, 1, true);
-        measured_span.metrics.insert(MEASURED_KEY.into(), 1.0);
+        measured_span.metrics.push((MEASURED_KEY.into(), 1.0));
         let not_measured_span = create_test_span(123, 1234, 12, 1, true);
         assert!(is_measured(&measured_span));
         assert!(!is_measured(&not_measured_span));
@@ -259,10 +307,10 @@ mod tests {
         let chunk_with_priority = vec![
             SpanBytes {
                 span_id: 1,
-                metrics: HashMap::from([
+                metrics: vec![
                     (SAMPLING_PRIORITY_KEY.into(), 1.0),
                     (TRACER_TOP_LEVEL_KEY.into(), 1.0),
-                ]),
+                ],
                 ..Default::default()
             },
             SpanBytes {
@@ -274,10 +322,10 @@ mod tests {
         let chunk_with_null_priority = vec![
             SpanBytes {
                 span_id: 1,
-                metrics: HashMap::from([
+                metrics: vec![
                     (SAMPLING_PRIORITY_KEY.into(), 0.0),
                     (TRACER_TOP_LEVEL_KEY.into(), 1.0),
-                ]),
+                ],
                 ..Default::default()
             },
             SpanBytes {
@@ -289,7 +337,7 @@ mod tests {
         let chunk_without_priority = vec![
             SpanBytes {
                 span_id: 1,
-                metrics: HashMap::from([(TRACER_TOP_LEVEL_KEY.into(), 1.0)]),
+                metrics: vec![(TRACER_TOP_LEVEL_KEY.into(), 1.0)],
                 ..Default::default()
             },
             SpanBytes {
@@ -301,10 +349,10 @@ mod tests {
         let chunk_with_multiple_top_level = vec![
             SpanBytes {
                 span_id: 1,
-                metrics: HashMap::from([
+                metrics: vec![
                     (SAMPLING_PRIORITY_KEY.into(), -1.0),
                     (TRACER_TOP_LEVEL_KEY.into(), 1.0),
-                ]),
+                ],
                 ..Default::default()
             },
             SpanBytes {
@@ -315,7 +363,7 @@ mod tests {
             SpanBytes {
                 span_id: 4,
                 parent_id: 3,
-                metrics: HashMap::from([(TRACER_TOP_LEVEL_KEY.into(), 1.0)]),
+                metrics: vec![(TRACER_TOP_LEVEL_KEY.into(), 1.0)],
                 ..Default::default()
             },
         ];
@@ -323,10 +371,10 @@ mod tests {
             SpanBytes {
                 span_id: 1,
                 error: 1,
-                metrics: HashMap::from([
+                metrics: vec![
                     (SAMPLING_PRIORITY_KEY.into(), 0.0),
                     (TRACER_TOP_LEVEL_KEY.into(), 1.0),
-                ]),
+                ],
                 ..Default::default()
             },
             SpanBytes {
@@ -338,32 +386,32 @@ mod tests {
         let chunk_with_a_single_span = vec![
             SpanBytes {
                 span_id: 1,
-                metrics: HashMap::from([
+                metrics: vec![
                     (SAMPLING_PRIORITY_KEY.into(), 0.0),
                     (TRACER_TOP_LEVEL_KEY.into(), 1.0),
-                ]),
+                ],
                 ..Default::default()
             },
             SpanBytes {
                 span_id: 2,
                 parent_id: 1,
-                metrics: HashMap::from([(SAMPLING_SINGLE_SPAN_MECHANISM.into(), 8.0)]),
+                metrics: vec![(SAMPLING_SINGLE_SPAN_MECHANISM.into(), 8.0)],
                 ..Default::default()
             },
         ];
         let chunk_with_analyzed_span = vec![
             SpanBytes {
                 span_id: 1,
-                metrics: HashMap::from([
+                metrics: vec![
                     (SAMPLING_PRIORITY_KEY.into(), 0.0),
                     (TRACER_TOP_LEVEL_KEY.into(), 1.0),
-                ]),
+                ],
                 ..Default::default()
             },
             SpanBytes {
                 span_id: 2,
                 parent_id: 1,
-                metrics: HashMap::from([(SAMPLING_ANALYTICS_RATE_KEY.into(), 1.0)]),
+                metrics: vec![(SAMPLING_ANALYTICS_RATE_KEY.into(), 1.0)],
                 ..Default::default()
             },
         ];

@@ -3,11 +3,10 @@
 
 use crate::msgpack_decoder::decode::buffer::Buffer;
 use crate::msgpack_decoder::decode::error::DecodeError;
-use crate::msgpack_decoder::decode::map::{read_map, read_map_len};
+use crate::msgpack_decoder::decode::map::{read_map_len, read_map_vec};
 use crate::msgpack_decoder::decode::number::read_number;
 use crate::msgpack_decoder::decode::string::handle_null_marker;
 use crate::span::DeserializableTraceData;
-use std::collections::HashMap;
 
 #[inline]
 pub fn read_metric_pair<T: DeserializableTraceData>(
@@ -21,12 +20,12 @@ pub fn read_metric_pair<T: DeserializableTraceData>(
 #[inline]
 pub fn read_metrics<T: DeserializableTraceData>(
     buf: &mut Buffer<T>,
-) -> Result<HashMap<T::Text, f64>, DecodeError> {
+) -> Result<Vec<(T::Text, f64)>, DecodeError> {
     if handle_null_marker(buf) {
-        return Ok(HashMap::default());
+        return Ok(Vec::new());
     }
 
     let len = read_map_len(buf)?;
 
-    read_map(len, buf, read_metric_pair)
+    read_map_vec(len, buf, read_metric_pair)
 }

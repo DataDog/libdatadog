@@ -43,7 +43,7 @@ pub fn create_test_no_alloc_span(
         start,
         duration: 5,
         error: 0,
-        meta: HashMap::from([
+        meta: vec![
             (
                 BytesString::from_slice("service".as_ref()).unwrap(),
                 BytesString::from_slice("test-service".as_ref()).unwrap(),
@@ -56,28 +56,28 @@ pub fn create_test_no_alloc_span(
                 BytesString::from_slice("runtime-id".as_ref()).unwrap(),
                 BytesString::from_slice("test-runtime-id-value".as_ref()).unwrap(),
             ),
-        ]),
-        metrics: HashMap::new(),
+        ],
+        metrics: Vec::new(),
         r#type: BytesString::default(),
-        meta_struct: HashMap::new(),
+        meta_struct: Vec::new(),
         span_links: vec![],
         span_events: vec![],
     };
     if is_top_level {
         span.metrics
-            .insert(BytesString::from_slice("_top_level".as_ref()).unwrap(), 1.0);
-        span.meta.insert(
+            .push((BytesString::from_slice("_top_level".as_ref()).unwrap(), 1.0));
+        span.meta.push((
             BytesString::from_slice("_dd.origin".as_ref()).unwrap(),
             BytesString::from_slice("cloudfunction".as_ref()).unwrap(),
-        );
-        span.meta.insert(
+        ));
+        span.meta.push((
             BytesString::from_slice("origin".as_ref()).unwrap(),
             BytesString::from_slice("cloudfunction".as_ref()).unwrap(),
-        );
-        span.meta.insert(
+        ));
+        span.meta.push((
             BytesString::from_slice("functionname".as_ref()).unwrap(),
             BytesString::from_slice("dummy_function_name".as_ref()).unwrap(),
-        );
+        ));
         span.r#type = BytesString::from_slice("serverless".as_ref()).unwrap();
     }
     span

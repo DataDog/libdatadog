@@ -41,57 +41,58 @@ impl BufBuilder {
         val.extend_le_bytes(&mut self.data);
     }
 
-    fn push_op_header(&mut self, opcode: u64, span_id: u64) {
+    fn push_op_header(&mut self, opcode: u64, slot: u32) {
         self.push(opcode);
-        self.push(span_id);
+        self.push(slot);
         self.op_count += 1;
     }
 
-    fn push_create(&mut self, span_id: u64, trace_id: u128, parent_id: u64) {
-        self.push_op_header(0, span_id);
+    fn push_create(&mut self, slot: u32, span_id: u64, trace_id: u128, parent_id: u64) {
+        self.push_op_header(0, slot);
+        self.push(span_id);
         self.push(trace_id);
         self.push(parent_id);
     }
 
-    fn push_set_meta(&mut self, span_id: u64, key_idx: u32, val_idx: u32) {
-        self.push_op_header(1, span_id);
+    fn push_set_meta(&mut self, slot: u32, key_idx: u32, val_idx: u32) {
+        self.push_op_header(1, slot);
         self.push(key_idx);
         self.push(val_idx);
     }
 
-    fn push_set_metric(&mut self, span_id: u64, key_idx: u32, val: f64) {
-        self.push_op_header(2, span_id);
+    fn push_set_metric(&mut self, slot: u32, key_idx: u32, val: f64) {
+        self.push_op_header(2, slot);
         self.push(key_idx);
         self.push(val);
     }
 
-    fn push_set_service(&mut self, span_id: u64, val_idx: u32) {
-        self.push_op_header(3, span_id);
+    fn push_set_service(&mut self, slot: u32, val_idx: u32) {
+        self.push_op_header(3, slot);
         self.push(val_idx);
     }
 
-    fn push_set_resource(&mut self, span_id: u64, val_idx: u32) {
-        self.push_op_header(4, span_id);
+    fn push_set_resource(&mut self, slot: u32, val_idx: u32) {
+        self.push_op_header(4, slot);
         self.push(val_idx);
     }
 
-    fn push_set_name(&mut self, span_id: u64, val_idx: u32) {
-        self.push_op_header(9, span_id);
+    fn push_set_name(&mut self, slot: u32, val_idx: u32) {
+        self.push_op_header(9, slot);
         self.push(val_idx);
     }
 
-    fn push_set_duration(&mut self, span_id: u64, val: i64) {
-        self.push_op_header(7, span_id);
+    fn push_set_duration(&mut self, slot: u32, val: i64) {
+        self.push_op_header(7, slot);
         self.push(val);
     }
 
-    fn push_set_start(&mut self, span_id: u64, val: i64) {
-        self.push_op_header(6, span_id);
+    fn push_set_start(&mut self, slot: u32, val: i64) {
+        self.push_op_header(6, slot);
         self.push(val);
     }
 
-    fn push_set_trace_meta(&mut self, span_id: u64, key_idx: u32, val_idx: u32) {
-        self.push_op_header(10, span_id);
+    fn push_set_trace_meta(&mut self, slot: u32, key_idx: u32, val_idx: u32) {
+        self.push_op_header(10, slot);
         self.push(key_idx);
         self.push(val_idx);
     }
@@ -143,20 +144,21 @@ fn bench_flush_realistic_single_span(c: &mut Criterion) {
         b.iter_batched(
             || {
                 let mut builder = BufBuilder::with_capacity(512);
+                let slot: u32 = 0;
                 let sid: u64 = 1;
-                builder.push_create(sid, 100, 0);
-                builder.push_set_name(sid, 0);
-                builder.push_set_service(sid, 2);
-                builder.push_set_resource(sid, 3);
-                builder.push_set_meta(sid, 4, 5);
-                builder.push_set_meta(sid, 6, 7);
-                builder.push_set_meta(sid, 8, 9);
-                builder.push_set_meta(sid, 10, 11);
-                builder.push_set_meta(sid, 12, 13);
-                builder.push_set_metric(sid, 8, 200.0);
-                builder.push_set_start(sid, 1_700_000_000_000_000_000);
-                builder.push_set_duration(sid, 5_000_000);
-                builder.push_set_trace_meta(sid, 14, 15);
+                builder.push_create(slot, sid, 100, 0);
+                builder.push_set_name(slot, 0);
+                builder.push_set_service(slot, 2);
+                builder.push_set_resource(slot, 3);
+                builder.push_set_meta(slot, 4, 5);
+                builder.push_set_meta(slot, 6, 7);
+                builder.push_set_meta(slot, 8, 9);
+                builder.push_set_meta(slot, 10, 11);
+                builder.push_set_meta(slot, 12, 13);
+                builder.push_set_metric(slot, 8, 200.0);
+                builder.push_set_start(slot, 1_700_000_000_000_000_000);
+                builder.push_set_duration(slot, 5_000_000);
+                builder.push_set_trace_meta(slot, 14, 15);
                 let mut data = builder.finalize();
                 let mut state = make_state(&mut data);
                 setup_string_table(&mut state);
@@ -179,20 +181,21 @@ fn bench_flush_10_spans_one_trace(c: &mut Criterion) {
             || {
                 let mut builder = BufBuilder::with_capacity(4096);
                 let trace_id: u128 = 12345;
-                for i in 0..10u64 {
-                    let sid = i + 1;
+                for i in 0..10u32 {
+                    let slot = i;
+                    let sid = i as u64 + 1;
                     let parent = if i == 0 { 0 } else { 1 };
-                    builder.push_create(sid, trace_id, parent);
-                    builder.push_set_name(sid, 0);
-                    builder.push_set_service(sid, 2);
-                    builder.push_set_resource(sid, 3);
-                    builder.push_set_meta(sid, 4, 5);
-                    builder.push_set_meta(sid, 6, 7);
-                    builder.push_set_meta(sid, 8, 9);
-                    builder.push_set_meta(sid, 10, 11);
-                    builder.push_set_meta(sid, 12, 13);
-                    builder.push_set_start(sid, 1_700_000_000_000_000_000 + (i as i64) * 1_000_000);
-                    builder.push_set_duration(sid, 5_000_000);
+                    builder.push_create(slot, sid, trace_id, parent);
+                    builder.push_set_name(slot, 0);
+                    builder.push_set_service(slot, 2);
+                    builder.push_set_resource(slot, 3);
+                    builder.push_set_meta(slot, 4, 5);
+                    builder.push_set_meta(slot, 6, 7);
+                    builder.push_set_meta(slot, 8, 9);
+                    builder.push_set_meta(slot, 10, 11);
+                    builder.push_set_meta(slot, 12, 13);
+                    builder.push_set_start(slot, 1_700_000_000_000_000_000 + (i as i64) * 1_000_000);
+                    builder.push_set_duration(slot, 5_000_000);
                 }
                 let mut data = builder.finalize();
                 let mut state = make_state(&mut data);
@@ -215,20 +218,21 @@ fn bench_flush_10_spans_10_traces(c: &mut Criterion) {
         b.iter_batched(
             || {
                 let mut builder = BufBuilder::with_capacity(4096);
-                for i in 0..10u64 {
-                    let sid = i + 1;
+                for i in 0..10u32 {
+                    let slot = i;
+                    let sid = i as u64 + 1;
                     let trace_id = (i as u128 + 1) * 1000;
-                    builder.push_create(sid, trace_id, 0);
-                    builder.push_set_name(sid, 0);
-                    builder.push_set_service(sid, 2);
-                    builder.push_set_resource(sid, 3);
-                    builder.push_set_meta(sid, 4, 5);
-                    builder.push_set_meta(sid, 6, 7);
-                    builder.push_set_meta(sid, 8, 9);
-                    builder.push_set_meta(sid, 10, 11);
-                    builder.push_set_meta(sid, 12, 13);
-                    builder.push_set_start(sid, 1_700_000_000_000_000_000 + (i as i64) * 1_000_000);
-                    builder.push_set_duration(sid, 5_000_000);
+                    builder.push_create(slot, sid, trace_id, 0);
+                    builder.push_set_name(slot, 0);
+                    builder.push_set_service(slot, 2);
+                    builder.push_set_resource(slot, 3);
+                    builder.push_set_meta(slot, 4, 5);
+                    builder.push_set_meta(slot, 6, 7);
+                    builder.push_set_meta(slot, 8, 9);
+                    builder.push_set_meta(slot, 10, 11);
+                    builder.push_set_meta(slot, 12, 13);
+                    builder.push_set_start(slot, 1_700_000_000_000_000_000 + (i as i64) * 1_000_000);
+                    builder.push_set_duration(slot, 5_000_000);
                 }
                 let mut data = builder.finalize();
                 let mut state = make_state(&mut data);
@@ -253,32 +257,33 @@ fn bench_flush_chunk_10_spans(c: &mut Criterion) {
                 // Build a change buffer that creates 10 spans with tags
                 let mut builder = BufBuilder::with_capacity(4096);
                 let trace_id: u128 = 100;
-                for i in 0..10u64 {
-                    let sid = i + 1;
+                for i in 0..10u32 {
+                    let slot = i;
+                    let sid = i as u64 + 1;
                     let parent = if i == 0 { 0 } else { 1 };
-                    builder.push_create(sid, trace_id, parent);
-                    builder.push_set_name(sid, 0);
-                    builder.push_set_service(sid, 2);
-                    builder.push_set_resource(sid, 3);
-                    builder.push_set_meta(sid, 4, 5); // http.method: GET
-                    builder.push_set_meta(sid, 6, 7); // http.url: ...
-                    builder.push_set_meta(sid, 10, 11); // component: express
-                    builder.push_set_meta(sid, 12, 13); // span.kind: server
-                    builder.push_set_start(sid, 1_700_000_000_000_000_000 + (i as i64) * 1_000_000);
-                    builder.push_set_duration(sid, 5_000_000);
+                    builder.push_create(slot, sid, trace_id, parent);
+                    builder.push_set_name(slot, 0);
+                    builder.push_set_service(slot, 2);
+                    builder.push_set_resource(slot, 3);
+                    builder.push_set_meta(slot, 4, 5); // http.method: GET
+                    builder.push_set_meta(slot, 6, 7); // http.url: ...
+                    builder.push_set_meta(slot, 10, 11); // component: express
+                    builder.push_set_meta(slot, 12, 13); // span.kind: server
+                    builder.push_set_start(slot, 1_700_000_000_000_000_000 + (i as i64) * 1_000_000);
+                    builder.push_set_duration(slot, 5_000_000);
                 }
                 // Add trace-level tags
-                builder.push_set_trace_meta(1, 14, 15); // env: production
+                builder.push_set_trace_meta(0, 14, 15); // env: production
                 let mut data = builder.finalize();
                 let mut state = make_state(&mut data);
                 setup_string_table(&mut state);
                 // Flush the change buffer to populate spans/traces
                 state.flush_change_buffer().unwrap();
-                let span_ids: Vec<u64> = (1..=10).collect();
-                (data, state, span_ids)
+                let slot_indices: Vec<u32> = (0..10).collect();
+                (data, state, slot_indices)
             },
-            |(_data, mut state, span_ids)| {
-                state.flush_chunk(span_ids, true).unwrap();
+            |(_data, mut state, slot_indices)| {
+                state.flush_chunk(slot_indices, true).unwrap();
             },
             BatchSize::SmallInput,
         );

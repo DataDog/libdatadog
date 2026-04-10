@@ -81,12 +81,12 @@ mod tests {
             start: 1,
             duration: 111,
             error: 0,
-            meta: HashMap::from([(
+            meta: vec![(
                 BytesString::from("meta_field"),
                 BytesString::from("meta_value"),
-            )]),
-            metrics: HashMap::from([(BytesString::from("metrics_field"), 1.1)]),
-            meta_struct: HashMap::new(),
+            )],
+            metrics: vec![(BytesString::from("metrics_field"), 1.1)],
+            meta_struct: Vec::new(),
             span_links: vec![],
             span_events: vec![],
         };

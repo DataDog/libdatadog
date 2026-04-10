@@ -9,6 +9,24 @@ use std::borrow::Borrow;
 use std::collections::HashMap;
 use std::str::FromStr;
 
+/// Serde helper to serialize `Vec<(K, V)>` as a map.
+mod vec_as_map {
+    use serde::ser::{Serialize, SerializeMap, Serializer};
+
+    pub fn serialize<S, K, V>(vec: &Vec<(K, V)>, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+        K: Serialize,
+        V: Serialize,
+    {
+        let mut map = serializer.serialize_map(Some(vec.len()))?;
+        for (k, v) in vec {
+            map.serialize_entry(k, v)?;
+        }
+        map.end()
+    }
+}
+
 #[derive(Debug, PartialEq)]
 pub enum SpanKey {
     Service,
@@ -86,12 +104,21 @@ pub struct Span<T: TraceData> {
     pub duration: i64,
     #[serde(skip_serializing_if = "is_default")]
     pub error: i32,
-    #[serde(skip_serializing_if = "HashMap::is_empty")]
-    pub meta: HashMap<T::Text, T::Text>,
-    #[serde(skip_serializing_if = "HashMap::is_empty")]
-    pub metrics: HashMap<T::Text, f64>,
-    #[serde(skip_serializing_if = "HashMap::is_empty")]
-    pub meta_struct: HashMap<T::Text, T::Bytes>,
+    #[serde(
+        skip_serializing_if = "Vec::is_empty",
+        serialize_with = "vec_as_map::serialize"
+    )]
+    pub meta: Vec<(T::Text, T::Text)>,
+    #[serde(
+        skip_serializing_if = "Vec::is_empty",
+        serialize_with = "vec_as_map::serialize"
+    )]
+    pub metrics: Vec<(T::Text, f64)>,
+    #[serde(
+        skip_serializing_if = "Vec::is_empty",
+        serialize_with = "vec_as_map::serialize"
+    )]
+    pub meta_struct: Vec<(T::Text, T::Bytes)>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub span_links: Vec<SpanLink<T>>,
     #[serde(skip_serializing_if = "Vec::is_empty")]

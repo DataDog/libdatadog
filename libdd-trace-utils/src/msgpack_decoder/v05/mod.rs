@@ -7,7 +7,6 @@ use crate::msgpack_decoder::decode::{
 };
 use crate::span::v04::{Span, SpanBytes, SpanSlice};
 use crate::span::DeserializableTraceData;
-use std::collections::HashMap;
 
 const PAYLOAD_LEN: u32 = 2;
 const SPAN_ELEM_COUNT: u32 = 12;
@@ -234,7 +233,7 @@ where
 fn read_indexed_map_to_bytes_strings<T: DeserializableTraceData>(
     buf: &mut Buffer<T>,
     dict: &[T::Text],
-) -> Result<HashMap<T::Text, T::Text>, DecodeError>
+) -> Result<Vec<(T::Text, T::Text)>, DecodeError>
 where
     T::Text: Clone,
 {
@@ -242,35 +241,36 @@ where
         .map_err(|_| DecodeError::InvalidFormat("Unable to get map len for str map".to_owned()))?;
 
     #[allow(clippy::expect_used)]
-    let mut map = HashMap::with_capacity(len.try_into().expect("Unable to cast map len to usize"));
+    let len_usize: usize = len.try_into().expect("Unable to cast map len to usize");
+    let mut vec = Vec::with_capacity(len_usize);
     for _ in 0..len {
         let key = get_from_dict(buf, dict)?;
         let value = get_from_dict(buf, dict)?;
-        map.insert(key, value);
+        vec.push((key, value));
     }
-    Ok(map)
+    Ok(vec)
 }
 
 fn read_metrics<T: DeserializableTraceData>(
     buf: &mut Buffer<T>,
     dict: &[T::Text],
-) -> Result<HashMap<T::Text, f64>, DecodeError>
+) -> Result<Vec<(T::Text, f64)>, DecodeError>
 where
     T::Text: Clone,
 {
     if handle_null_marker(buf) {
-        return Ok(HashMap::default());
+        return Ok(Vec::new());
     }
 
     let len = read_map_len(buf)?;
 
-    let mut map = HashMap::with_capacity(len);
+    let mut vec = Vec::with_capacity(len);
     for _ in 0..len {
         let k = get_from_dict(buf, dict)?;
         let v = read_number(buf)?;
-        map.insert(k, v);
+        vec.push((k, v));
     }
-    Ok(map)
+    Ok(vec)
 }
 
 #[cfg(test)]
@@ -389,15 +389,26 @@ mod tests {
         assert_eq!(span.meta.len(), 3);
         assert_eq!(
             span.meta
-                .get("_dd.sampling_rate_whatever")
+                .iter()
+                .find(|(k, _)| k.as_str() == "_dd.sampling_rate_whatever")
                 .unwrap()
+                .1
                 .as_str(),
             "value whatever"
         );
-        assert_eq!(span.meta.get("").unwrap().as_str(), "item");
-        assert_eq!(span.meta.get("version").unwrap().as_str(), "7.0");
+        assert_eq!(
+            span.meta.iter().find(|(k, _)| k.as_str() == "").unwrap().1.as_str(),
+            "item"
+        );
+        assert_eq!(
+            span.meta.iter().find(|(k, _)| k.as_str() == "version").unwrap().1.as_str(),
+            "7.0"
+        );
         assert_eq!(span.metrics.len(), 1);
-        assert_eq!(*span.metrics.get("X").unwrap(), 1.2_f64);
+        assert_eq!(
+            span.metrics.iter().find(|(k, _)| k.as_str() == "X").unwrap().1,
+            1.2_f64
+        );
         assert_eq!(span.r#type.as_str(), "sql");
     }
 

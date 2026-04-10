@@ -270,7 +270,7 @@ mod tests {
         let data = vec![1, 2, 3, 4];
         let mut span = create_test_no_alloc_span(1, 2, 0, 0, false);
         span.meta_struct =
-            HashMap::from([(BytesString::from("meta_key"), Bytes::from(data.clone()))]);
+            vec![(BytesString::from("meta_key"), Bytes::from(data.clone()))];
 
         let encoded_data = rmp_serde::to_vec_named(&vec![vec![span]]).unwrap();
         let (decoded_traces, _) =
@@ -281,7 +281,7 @@ mod tests {
         let decoded_span = &decoded_traces[0][0];
 
         assert_eq!(
-            decoded_span.meta_struct.get("meta_key").unwrap().to_vec(),
+            decoded_span.meta_struct.iter().find(|(k, _)| k.as_str() == "meta_key").unwrap().1.to_vec(),
             data
         );
     }
@@ -305,10 +305,9 @@ mod tests {
         let decoded_span = &decoded_traces[0][0];
 
         for (key, value) in expected_meta.iter() {
-            assert_eq!(
-                value,
-                &decoded_span.meta[&BytesString::from_slice(key.as_ref()).unwrap()].as_str()
-            );
+            let bs_key = BytesString::from_slice(key.as_ref()).unwrap();
+            let found = decoded_span.meta.iter().find(|(k, _)| *k == bs_key).unwrap();
+            assert_eq!(value, &found.1.as_str());
         }
     }
 
@@ -351,10 +350,9 @@ mod tests {
         let decoded_span = &decoded_traces[0][0];
 
         for (key, value) in expected_meta.iter() {
-            assert_eq!(
-                value,
-                &decoded_span.meta[&BytesString::from_slice(key.as_ref()).unwrap()].as_str()
-            );
+            let bs_key = BytesString::from_slice(key.as_ref()).unwrap();
+            let found = decoded_span.meta.iter().find(|(k, _)| *k == bs_key).unwrap();
+            assert_eq!(value, &found.1.as_str());
         }
     }
 
@@ -373,10 +371,9 @@ mod tests {
         let decoded_span = &decoded_traces[0][0];
 
         for (key, value) in expected_metrics.iter() {
-            assert_eq!(
-                value,
-                &decoded_span.metrics[&BytesString::from_slice(key.as_ref()).unwrap()]
-            );
+            let bs_key = BytesString::from_slice(key.as_ref()).unwrap();
+            let found = decoded_span.metrics.iter().find(|(k, _)| *k == bs_key).unwrap();
+            assert_eq!(value, &found.1);
         }
     }
 
@@ -396,10 +393,9 @@ mod tests {
         let decoded_span = &decoded_traces[0][0];
 
         for (key, value) in expected_metrics.iter() {
-            assert_eq!(
-                value,
-                &decoded_span.metrics[&BytesString::from_slice(key.as_ref()).unwrap()]
-            );
+            let bs_key = BytesString::from_slice(key.as_ref()).unwrap();
+            let found = decoded_span.metrics.iter().find(|(k, _)| *k == bs_key).unwrap();
+            assert_eq!(value, &found.1);
         }
     }
 
@@ -509,19 +505,20 @@ mod tests {
         assert_eq!(1, decoded_traces[0].len());
         let decoded_span = &decoded_traces[0][0];
 
+        let key1 = BytesString::from_slice("key1".as_ref()).unwrap();
+        let key2 = BytesString::from_slice("key2".as_ref()).unwrap();
+        let key3 = BytesString::from_slice("key3".as_ref()).unwrap();
         assert_eq!(
             "value1",
-            decoded_span.meta[&BytesString::from_slice("key1".as_ref()).unwrap()].as_str()
+            decoded_span.meta.iter().find(|(k, _)| *k == key1).unwrap().1.as_str()
         );
         assert!(
-            !decoded_span
-                .meta
-                .contains_key(&BytesString::from_slice("key2".as_ref()).unwrap()),
+            !decoded_span.meta.iter().any(|(k, _)| *k == key2),
             "Null value should be skipped, but key was present"
         );
         assert_eq!(
             "value3",
-            decoded_span.meta[&BytesString::from_slice("key3".as_ref()).unwrap()].as_str()
+            decoded_span.meta.iter().find(|(k, _)| *k == key3).unwrap().1.as_str()
         );
     }
 
@@ -659,14 +656,14 @@ mod tests {
                         service: BytesString::from_slice(service.as_ref()).unwrap(),
                         resource: BytesString::from_slice(resource.as_ref()).unwrap(),
                         r#type: BytesString::from_slice(span_type.as_ref()).unwrap(),
-                        meta: HashMap::from([(
+                        meta: vec![(
                             BytesString::from_slice(meta_key.as_ref()).unwrap(),
                             BytesString::from_slice(meta_value.as_ref()).unwrap(),
-                        )]),
-                        metrics: HashMap::from([(
+                        )],
+                        metrics: vec![(
                             BytesString::from_slice(metric_key.as_ref()).unwrap(),
                             metric_value.parse::<f64>().unwrap_or_default(),
-                        )]),
+                        )],
                         trace_id: trace_id as u128,
                         span_id,
                         parent_id,

@@ -41,6 +41,18 @@ impl ChangeBuffer {
         Ok(T::from_bytes(bytes))
     }
 
+    /// Read a value without bounds checking.
+    /// # Safety
+    /// Caller must ensure `*index + size_of::<T>() <= self.len`.
+    #[inline(always)]
+    pub unsafe fn read_unchecked<T: Copy + FromBytes>(&self, index: &mut usize) -> T {
+        let size = std::mem::size_of::<T>();
+        let slice = self.as_slice();
+        let bytes = slice.get_unchecked(*index..*index + size);
+        *index += size;
+        T::from_bytes(bytes)
+    }
+
     pub fn write_u32(&mut self, offset: usize, value: u32) -> Result<()> {
         let len = self.len;
         let slice = self.as_mut_slice();

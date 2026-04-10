@@ -56,7 +56,7 @@ impl TryFrom<u32> for OpCode {
 
 pub struct BufferedOperation {
     pub opcode: OpCode,
-    pub span_id: u64,
+    pub slot_index: u32,
 }
 
 impl BufferedOperation {
@@ -65,8 +65,8 @@ impl BufferedOperation {
         // Read as u64 to consume all 8 bytes, then truncate to u32 for OpCode.
         let opcode_u64: u64 = buf.read(index)?;
         let opcode = (opcode_u64 as u32).try_into()?;
-        let span_id = buf.read(index)?;
-        Ok(BufferedOperation { opcode, span_id })
+        let slot_index: u32 = buf.read(index)?;
+        Ok(BufferedOperation { opcode, slot_index })
     }
 }
 
@@ -119,58 +119,59 @@ mod tests {
 
     #[test]
     fn buffered_operation_from_buf() -> Result<()> {
-        // Layout: opcode (u64 LE: low u32 = opcode, high u32 = 0) + span_id (u64 LE)
+        // Layout: opcode (u64 LE: low u32 = opcode, high u32 = 0) + slot_index (u32 LE)
         let opcode: u64 = 3; // SetServiceName
-        let span_id: u64 = 0xDEADBEEF;
+        let slot_index: u32 = 42;
 
-        let mut buffer = vec![0u8; 16];
+        let mut buffer = vec![0u8; 12];
         buffer[0..8].copy_from_slice(&opcode.to_le_bytes());
-        buffer[8..16].copy_from_slice(&span_id.to_le_bytes());
+        buffer[8..12].copy_from_slice(&slot_index.to_le_bytes());
 
         let buf = change_buffer_from_vec(&mut buffer);
         let mut index = 0;
         let op = BufferedOperation::from_buf(&buf, &mut index)?;
 
         assert_eq!(op.opcode as u32, 3);
-        assert_eq!(op.span_id, 0xDEADBEEF);
-        assert_eq!(index, 16);
+        assert_eq!(op.slot_index, 42);
+        assert_eq!(index, 12);
         Ok(())
     }
 
     #[test]
     fn buffered_operation_from_buf_advances_index() -> Result<()> {
         // Two operations packed sequentially, starting after a u64 count header
-        let mut buffer = vec![0u8; 40];
+        // Each op is 12 bytes: opcode(u64) + slot_index(u32)
+        let mut buffer = vec![0u8; 32];
         // count header (u64)
         buffer[0..8].copy_from_slice(&0u64.to_le_bytes());
-        // first op at offset 8: opcode(u64) + span_id(u64)
+        // first op at offset 8: opcode(u64) + slot_index(u32)
         buffer[8..16].copy_from_slice(&(OpCode::Create as u64).to_le_bytes());
-        buffer[16..24].copy_from_slice(&1u64.to_le_bytes());
-        // second op at offset 24: opcode(u64) + span_id(u64)
-        buffer[24..32].copy_from_slice(&(OpCode::SetError as u64).to_le_bytes());
-        buffer[32..40].copy_from_slice(&2u64.to_le_bytes());
+        buffer[16..20].copy_from_slice(&1u32.to_le_bytes());
+        // second op at offset 20: opcode(u64) + slot_index(u32)
+        buffer[20..28].copy_from_slice(&(OpCode::SetError as u64).to_le_bytes());
+        buffer[28..32].copy_from_slice(&2u32.to_le_bytes());
 
         let buf = change_buffer_from_vec(&mut buffer);
 
         let mut index = 8;
         let op1 = BufferedOperation::from_buf(&buf, &mut index)?;
         assert_eq!(op1.opcode as u32, OpCode::Create as u32);
-        assert_eq!(op1.span_id, 1);
-        assert_eq!(index, 24);
+        assert_eq!(op1.slot_index, 1);
+        assert_eq!(index, 20);
 
         let op2 = BufferedOperation::from_buf(&buf, &mut index)?;
         assert_eq!(op2.opcode as u32, OpCode::SetError as u32);
-        assert_eq!(op2.span_id, 2);
-        assert_eq!(index, 40);
+        assert_eq!(op2.slot_index, 2);
+        assert_eq!(index, 32);
 
         Ok(())
     }
 
     #[test]
     fn buffered_operation_from_buf_invalid_opcode() {
-        let mut buffer = vec![0u8; 16];
+        let mut buffer = vec![0u8; 12];
         buffer[0..8].copy_from_slice(&999u64.to_le_bytes());
-        buffer[8..16].copy_from_slice(&1u64.to_le_bytes());
+        buffer[8..12].copy_from_slice(&1u32.to_le_bytes());
 
         let buf = change_buffer_from_vec(&mut buffer);
         let mut index = 0;
@@ -179,7 +180,7 @@ mod tests {
 
     #[test]
     fn buffered_operation_from_buf_too_small() {
-        // Only 8 bytes — enough for the opcode but not the span_id
+        // Only 8 bytes — enough for the opcode but not the slot_index
         let mut buffer = vec![0u8; 8];
         buffer[0..8].copy_from_slice(&0u64.to_le_bytes());
 

@@ -1,5 +1,3 @@
-use rustc_hash::FxHashMap;
-
 /// Errors that can occur when operating on a [`ChangeBuffer`] or [`ChangeBufferState`].
 #[derive(Debug)]
 pub enum ChangeBufferError {
@@ -50,9 +48,48 @@ pub use span_header::{SpanHeader, SPAN_HEADER_SIZE};
 use crate::span::v04::Span;
 use crate::span::{SpanText, TraceData};
 
+fn vec_insert<K: PartialEq, V>(vec: &mut Vec<(K, V)>, key: K, value: V) {
+    for entry in vec.iter_mut() {
+        if entry.0 == key {
+            entry.1 = value;
+            return;
+        }
+    }
+    vec.push((key, value));
+}
+
+fn vec_get<'a, K: PartialEq, V>(vec: &'a [(K, V)], key: &K) -> Option<&'a V> {
+    for entry in vec {
+        if entry.0 == *key {
+            return Some(&entry.1);
+        }
+    }
+    None
+}
+
+fn deferred_meta_insert(vec: &mut Vec<(u32, u32)>, key_id: u32, val_id: u32) {
+    for entry in vec.iter_mut() {
+        if entry.0 == key_id {
+            entry.1 = val_id;
+            return;
+        }
+    }
+    vec.push((key_id, val_id));
+}
+
+fn deferred_metric_insert(vec: &mut Vec<(u32, f64)>, key_id: u32, val: f64) {
+    for entry in vec.iter_mut() {
+        if entry.0 == key_id {
+            entry.1 = val;
+            return;
+        }
+    }
+    vec.push((key_id, val));
+}
+
 pub struct ChangeBufferState<T: TraceData> {
     change_buffer: ChangeBuffer,
-    spans: FxHashMap<u64, Span<T>>,
+    spans: Vec<Option<Span<T>>>,
     traces: SmallTraceMap<T::Text>,
     /// String table indexed by sequential u32 IDs (O(1) lookup vs HashMap).
     string_table: Vec<Option<T::Text>>,
@@ -80,9 +117,13 @@ pub struct ChangeBufferState<T: TraceData> {
     str_agent_psr: T::Text,
     str_internal: T::Text,
     /// Pool of recycled Span objects. Reusing spans (with their pre-allocated
-    /// HashMap buffers) eliminates the alloc/dealloc churn that fragments the
+    /// Vec buffers) eliminates the alloc/dealloc churn that fragments the
     /// WASM linear memory allocator over time.
     span_pool: Vec<Span<T>>,
+    /// Deferred meta tags: indexed by slot, stores (key_string_id, val_string_id) pairs.
+    deferred_meta: Vec<Vec<(u32, u32)>>,
+    /// Deferred metric tags: indexed by slot, stores (key_string_id, f64_value) pairs.
+    deferred_metrics: Vec<Vec<(u32, f64)>>,
 }
 
 fn new_span_pooled<T: TraceData>(
@@ -113,8 +154,8 @@ fn new_span_pooled<T: TraceData>(
             span_id,
             trace_id,
             parent_id,
-            meta: std::collections::HashMap::with_capacity(8),
-            metrics: std::collections::HashMap::with_capacity(4),
+            meta: Vec::with_capacity(8),
+            metrics: Vec::with_capacity(4),
             ..Default::default()
         }
     }
@@ -132,7 +173,7 @@ where
     ) -> Self {
         ChangeBufferState {
             change_buffer,
-            spans: FxHashMap::default(),
+            spans: Vec::with_capacity(256),
             traces: SmallTraceMap::default(),
             string_table: Vec::with_capacity(256),
             tracer_service,
@@ -152,12 +193,14 @@ where
             str_agent_psr: T::Text::from_static_str("_dd.agent_psr"),
             str_internal: T::Text::from_static_str("internal"),
             span_pool: Vec::new(),
+            deferred_meta: Vec::with_capacity(256),
+            deferred_metrics: Vec::with_capacity(256),
         }
     }
 
-    /// Diagnostic: number of spans currently in the HashMap.
+    /// Diagnostic: number of spans currently in the Vec.
     pub fn spans_count(&self) -> usize {
-        self.spans.len()
+        self.spans.iter().filter(|s| s.is_some()).count()
     }
 
     /// Diagnostic: string table length.
@@ -173,7 +216,7 @@ where
     /// Return flushed spans to the pool for reuse. Call this after
     /// serialization/send is complete and the spans are no longer needed.
     pub fn recycle_spans(&mut self, spans: Vec<Span<T>>) {
-        // Cap the pool to avoid unbounded growth (128 spans ≈ 2-3x typical concurrency)
+        // Cap the pool to avoid unbounded growth (128 spans ~ 2-3x typical concurrency)
         let available = 128usize.saturating_sub(self.span_pool.len());
         for span in spans.into_iter().take(available) {
             self.span_pool.push(span);
@@ -182,37 +225,41 @@ where
 
     pub fn flush_chunk(
         &mut self,
-        span_ids: Vec<u64>,
+        slot_indices: Vec<u32>,
         first_is_local_root: bool,
     ) -> Result<Vec<Span<T>>> {
         let mut chunk_trace_id: Option<u128> = None;
         let mut is_local_root = first_is_local_root;
         let mut is_chunk_root = true;
 
-        let spans_vec = span_ids
-            .iter()
-            .map(|span_id| -> Result<Span<T>> {
-                let maybe_span = self.spans.remove(span_id);
+        let mut spans_vec = Vec::with_capacity(slot_indices.len());
+        for slot in &slot_indices {
+            let maybe_span = self
+                .spans
+                .get_mut(*slot as usize)
+                .and_then(|opt| opt.take());
 
-                let mut span = maybe_span.ok_or(ChangeBufferError::SpanNotFound(*span_id))?;
-                chunk_trace_id = Some(span.trace_id);
+            let mut span = maybe_span.ok_or(ChangeBufferError::SpanNotFound(*slot as u64))?;
 
-                if is_local_root {
-                    self.copy_in_sampling_tags(&mut span);
-                    span.metrics
-                        .insert(self.str_top_level.clone(), 1.0);
-                    is_local_root = false;
-                }
-                if is_chunk_root {
-                    self.copy_in_chunk_tags(&mut span);
-                    is_chunk_root = false;
-                }
+            // Materialize any deferred tags for this slot
+            self.materialize_deferred_tags(*slot, &mut span);
 
-                self.process_one_span(&mut span);
+            chunk_trace_id = Some(span.trace_id);
 
-                Ok(span)
-            })
-            .collect::<Result<Vec<_>>>()?;
+            if is_local_root {
+                self.copy_in_sampling_tags(&mut span);
+                vec_insert(&mut span.metrics, self.str_top_level.clone(), 1.0);
+                is_local_root = false;
+            }
+            if is_chunk_root {
+                self.copy_in_chunk_tags(&mut span);
+                is_chunk_root = false;
+            }
+
+            self.process_one_span(&mut span);
+
+            spans_vec.push(span);
+        }
 
         // Clean up traces if no spans remain. Track all distinct trace IDs
         // in the chunk to handle chunks spanning multiple traces.
@@ -242,29 +289,19 @@ where
             }
         }
 
-        // Rebuild the HashMap to clear tombstones from remove() calls.
-        // FxHashMap (hashbrown/SwissTable) marks removed entries as DELETED,
-        // not EMPTY. Over time, accumulated tombstones degrade probe lengths
-        // for both lookups and inserts. Rebuilding creates a fresh table with
-        // only EMPTY and occupied slots, restoring O(1) probe performance.
-        // Cost: O(n) for remaining entries, which is small vs the cumulative
-        // cost of degraded probes across all subsequent operations.
-        let remaining: FxHashMap<u64, Span<T>> = self.spans.drain().collect();
-        self.spans = remaining;
-
         Ok(spans_vec)
     }
 
     fn copy_in_sampling_tags(&self, span: &mut Span<T>) {
         if let Some(trace) = self.traces.get(&span.trace_id) {
             if let Some(rule) = trace.sampling_rule_decision {
-                span.metrics.insert(self.str_rule_psr.clone(), rule);
+                vec_insert(&mut span.metrics, self.str_rule_psr.clone(), rule);
             }
             if let Some(rule) = trace.sampling_limit_decision {
-                span.metrics.insert(self.str_limit_psr.clone(), rule);
+                vec_insert(&mut span.metrics, self.str_limit_psr.clone(), rule);
             }
             if let Some(rule) = trace.sampling_agent_decision {
-                span.metrics.insert(self.str_agent_psr.clone(), rule);
+                vec_insert(&mut span.metrics, self.str_agent_psr.clone(), rule);
             }
         }
     }
@@ -273,11 +310,11 @@ where
         if let Some(trace) = self.traces.get(&span.trace_id) {
             span.meta.reserve(trace.meta.len());
             for (k, v) in &trace.meta {
-                span.meta.insert(k.clone(), v.clone());
+                vec_insert(&mut span.meta, k.clone(), v.clone());
             }
             span.metrics.reserve(trace.metrics.len());
             for (k, v) in &trace.metrics {
-                span.metrics.insert(k.clone(), *v);
+                vec_insert(&mut span.metrics, k.clone(), *v);
             }
         }
     }
@@ -285,14 +322,16 @@ where
     fn process_one_span(&self, span: &mut Span<T>) {
         // TODO span.sample();
 
-        if let Some(kind) = span.meta.get("kind") {
-            if kind != &self.str_internal {
-                span.metrics.insert(self.str_measured.clone(), 1.0);
+        let kind_key = T::Text::from_static_str("kind");
+        if let Some(kind) = vec_get(&span.meta, &kind_key) {
+            if *kind != self.str_internal {
+                vec_insert(&mut span.metrics, self.str_measured.clone(), 1.0);
             }
         }
 
         if span.service != self.tracer_service {
-            span.meta.insert(
+            vec_insert(
+                &mut span.meta,
                 self.str_base_service.clone(),
                 self.tracer_service.clone(),
             );
@@ -303,16 +342,20 @@ where
         // SKIP setting single-span ingestion. They should be set when sampling is finalized for
         // the span.
 
-        span.meta.insert(
+        vec_insert(
+            &mut span.meta,
             self.str_language.clone(),
             self.tracer_language.clone(),
         );
-        span.metrics
-            .insert(self.str_process_id.clone(), f64::from(self.pid));
+        vec_insert(
+            &mut span.metrics,
+            self.str_process_id.clone(),
+            f64::from(self.pid),
+        );
 
         if let Some(trace) = self.traces.get(&span.trace_id) {
             if let Some(origin) = trace.origin.clone() {
-                span.meta.insert(self.str_origin.clone(), origin);
+                vec_insert(&mut span.meta, self.str_origin.clone(), origin);
             }
         }
 
@@ -329,35 +372,36 @@ where
         // that start at offset 8. Only the low 32 bits carry the count value.
         let mut count = self.change_buffer.read::<u64>(&mut index)? as u32;
 
-        // Cache the last span_id to skip redundant lookups when consecutive
+        // Cache the last slot to skip redundant lookups when consecutive
         // operations target the same span (the common case).
-        let mut cached_span_id: u64 = 0;
+        let mut cached_slot: u32 = u32::MAX;
         let mut cached_span_ptr: *mut Span<T> = std::ptr::null_mut();
+        let mut cached_deferred_meta: *mut Vec<(u32, u32)> = std::ptr::null_mut();
+        let mut cached_deferred_metrics: *mut Vec<(u32, f64)> = std::ptr::null_mut();
 
         while count > 0 {
             let op = BufferedOperation::from_buf(&self.change_buffer, &mut index)?;
 
             // For operations that need a mutable span reference, try the cache
             // first.
-            // SAFETY: the pointer is valid for the lifetime of this loop because:
-            // - We only store pointers from self.spans.get_mut()
-            // - We invalidate the cache (set to null) whenever self.spans is modified
-            //   (Create/CreateSpan/CreateSpanFull insert into the map which may rehash)
-            // - No other code accesses self.spans between cache store and use
             match op.opcode {
                 OpCode::Create | OpCode::CreateSpan | OpCode::CreateSpanFull => {
                     // These insert into self.spans, invalidating any cached
                     // pointer
                     cached_span_ptr = std::ptr::null_mut();
-                    cached_span_id = 0;
+                    cached_slot = u32::MAX;
+                    cached_deferred_meta = std::ptr::null_mut();
+                    cached_deferred_metrics = std::ptr::null_mut();
                     self.interpret_operation(&mut index, &op)?;
                 }
                 _ => {
                     self.interpret_operation_cached(
                         &mut index,
                         &op,
-                        &mut cached_span_id,
+                        &mut cached_slot,
                         &mut cached_span_ptr,
+                        &mut cached_deferred_meta,
+                        &mut cached_deferred_metrics,
                     )?;
                 }
             }
@@ -372,29 +416,36 @@ where
     }
 
     /// Like interpret_operation, but uses a cached span pointer to avoid
-    /// redundant HashMap lookups for consecutive operations on the same span.
+    /// redundant Vec lookups for consecutive operations on the same span.
     fn interpret_operation_cached(
         &mut self,
         index: &mut usize,
         op: &BufferedOperation,
-        cached_span_id: &mut u64,
+        cached_slot: &mut u32,
         cached_span_ptr: &mut *mut Span<T>,
+        cached_deferred_meta: &mut *mut Vec<(u32, u32)>,
+        cached_deferred_metrics: &mut *mut Vec<(u32, f64)>,
     ) -> Result<()> {
         // Try to reuse the cached span pointer
-        let span_ptr = if op.span_id == *cached_span_id && !cached_span_ptr.is_null() {
+        let span_ptr = if op.slot_index == *cached_slot && !cached_span_ptr.is_null() {
             *cached_span_ptr
         } else {
+            let slot = op.slot_index as usize;
             let span = self
                 .spans
-                .get_mut(&op.span_id)
-                .ok_or(ChangeBufferError::SpanNotFound(op.span_id))?
+                .get_mut(slot)
+                .and_then(|opt| opt.as_mut())
+                .ok_or(ChangeBufferError::SpanNotFound(op.slot_index as u64))?
                 as *mut Span<T>;
-            *cached_span_id = op.span_id;
+            *cached_slot = op.slot_index;
             *cached_span_ptr = span;
+            // Update deferred caches
+            *cached_deferred_meta = &mut self.deferred_meta[slot] as *mut Vec<(u32, u32)>;
+            *cached_deferred_metrics = &mut self.deferred_metrics[slot] as *mut Vec<(u32, f64)>;
             span
         };
 
-        // SAFETY: span_ptr is valid — it was obtained from self.spans.get_mut() above
+        // SAFETY: span_ptr is valid — it was obtained from self.spans above
         // or from the cache which was set in a previous iteration of the same loop.
         // self.spans is not modified during this function (no inserts/removes).
         // The only shared references are to self.string_table and self.change_buffer
@@ -403,42 +454,44 @@ where
 
         match op.opcode {
             OpCode::SetMetaAttr => {
-                let name = self.get_string_arg(index)?;
-                let val = self.get_string_arg(index)?;
-                span.meta.insert(name, val);
+                let key_id: u32 = self.get_num_arg(index)?;
+                let val_id: u32 = self.get_num_arg(index)?;
+                let dm = unsafe { &mut **cached_deferred_meta };
+                deferred_meta_insert(dm, key_id, val_id);
             }
             OpCode::SetMetricAttr => {
-                let name = self.get_string_arg(index)?;
+                let key_id: u32 = self.get_num_arg(index)?;
                 let val: f64 = self.get_num_arg(index)?;
-                span.metrics.insert(name, val);
+                let dm = unsafe { &mut **cached_deferred_metrics };
+                deferred_metric_insert(dm, key_id, val);
             }
             OpCode::SetServiceName => {
-                span.service = self.get_string_arg(index)?;
+                span.service = unsafe { self.get_string_arg_unchecked(index) };
             }
             OpCode::SetResourceName => {
-                span.resource = self.get_string_arg(index)?;
+                span.resource = unsafe { self.get_string_arg_unchecked(index) };
             }
             OpCode::SetError => {
-                span.error = self.get_num_arg(index)?;
+                span.error = unsafe { self.get_num_arg_unchecked(index) };
             }
             OpCode::SetStart => {
-                span.start = self.get_num_arg(index)?;
+                span.start = unsafe { self.get_num_arg_unchecked(index) };
             }
             OpCode::SetDuration => {
-                span.duration = self.get_num_arg(index)?;
+                span.duration = unsafe { self.get_num_arg_unchecked(index) };
             }
             OpCode::SetType => {
-                span.r#type = self.get_string_arg(index)?;
+                span.r#type = unsafe { self.get_string_arg_unchecked(index) };
             }
             OpCode::SetName => {
-                span.name = self.get_string_arg(index)?;
+                span.name = unsafe { self.get_string_arg_unchecked(index) };
             }
             OpCode::SetTraceMetaAttr => {
                 let name = self.get_string_arg(index)?;
                 let val = self.get_string_arg(index)?;
                 let trace_id = span.trace_id;
                 if let Some(trace) = self.traces.get_mut(&trace_id) {
-                    trace.meta.insert(name, val);
+                    vec_insert(&mut trace.meta, name, val);
                 }
             }
             OpCode::SetTraceMetricsAttr => {
@@ -446,7 +499,7 @@ where
                 let val = self.get_num_arg(index)?;
                 let trace_id = span.trace_id;
                 if let Some(trace) = self.traces.get_mut(&trace_id) {
-                    trace.metrics.insert(name, val);
+                    vec_insert(&mut trace.metrics, name, val);
                 }
             }
             OpCode::SetTraceOrigin => {
@@ -458,18 +511,20 @@ where
             }
             OpCode::BatchSetMeta => {
                 let count: u32 = self.get_num_arg(index)?;
+                let dm = unsafe { &mut **cached_deferred_meta };
                 for _ in 0..count {
-                    let key = self.get_string_arg(index)?;
-                    let val = self.get_string_arg(index)?;
-                    span.meta.insert(key, val);
+                    let key_id: u32 = self.get_num_arg(index)?;
+                    let val_id: u32 = self.get_num_arg(index)?;
+                    deferred_meta_insert(dm, key_id, val_id);
                 }
             }
             OpCode::BatchSetMetric => {
                 let count: u32 = self.get_num_arg(index)?;
+                let dm = unsafe { &mut **cached_deferred_metrics };
                 for _ in 0..count {
-                    let key = self.get_string_arg(index)?;
+                    let key_id: u32 = self.get_num_arg(index)?;
                     let val: f64 = self.get_num_arg(index)?;
-                    span.metrics.insert(key, val);
+                    deferred_metric_insert(dm, key_id, val);
                 }
             }
             // Create variants are handled in the caller, never reach here
@@ -487,20 +542,36 @@ where
             .ok_or(ChangeBufferError::StringNotFound(num))
     }
 
+    #[inline(always)]
+    unsafe fn get_string_arg_unchecked(&self, index: &mut usize) -> T::Text {
+        let num: u32 = self.change_buffer.read_unchecked(index);
+        self.string_table
+            .get_unchecked(num as usize)
+            .clone()
+            .unwrap_unchecked()
+    }
+
     fn get_num_arg<U: Copy + FromBytes>(&self, index: &mut usize) -> Result<U> {
         self.change_buffer.read(index)
     }
 
-    fn get_mut_span(&mut self, id: &u64) -> Result<&mut Span<T>> {
-        self.spans
-            .get_mut(id)
-            .ok_or(ChangeBufferError::SpanNotFound(*id))
+    #[inline(always)]
+    unsafe fn get_num_arg_unchecked<U: Copy + FromBytes>(&self, index: &mut usize) -> U {
+        self.change_buffer.read_unchecked(index)
     }
 
-    pub fn get_span(&self, id: &u64) -> Result<&Span<T>> {
+    fn get_mut_span(&mut self, slot: u32) -> Result<&mut Span<T>> {
         self.spans
-            .get(id)
-            .ok_or(ChangeBufferError::SpanNotFound(*id))
+            .get_mut(slot as usize)
+            .and_then(|opt| opt.as_mut())
+            .ok_or(ChangeBufferError::SpanNotFound(slot as u64))
+    }
+
+    pub fn get_span(&self, slot: u32) -> Result<&Span<T>> {
+        self.spans
+            .get(slot as usize)
+            .and_then(|opt| opt.as_ref())
+            .ok_or(ChangeBufferError::SpanNotFound(slot as u64))
     }
 
     pub fn get_trace(&self, id: &u128) -> Option<&Trace<T::Text>> {
@@ -508,7 +579,7 @@ where
     }
 
     /// Allocate a span header slot. Returns the index into span_headers.
-    /// JS uses this index × SPAN_HEADER_SIZE + base_ptr to create a DataView.
+    /// JS uses this index * SPAN_HEADER_SIZE + base_ptr to create a DataView.
     pub fn alloc_header(&mut self) -> u32 {
         if let Some(idx) = self.header_free_list.pop() {
             self.span_headers[idx as usize] = SpanHeader::default();
@@ -523,7 +594,7 @@ where
         }
     }
 
-    /// Materialize a SpanHeader into a full Span in the spans HashMap.
+    /// Materialize a SpanHeader into a full Span in the spans Vec.
     /// Called during flush_chunk to convert the header fields + string table
     /// IDs into a complete Span with resolved strings. Also registers the
     /// span in the trace map.
@@ -560,9 +631,21 @@ where
         // Apply default meta tags
         self.apply_default_meta(&mut span);
 
-        // If there's already a span in the HashMap (from change buffer meta/metrics
+        // If there's already a span in the Vec slot (from change buffer meta/metrics
         // writes), merge the header fields into it. Otherwise insert new.
-        if let Some(existing) = self.spans.get_mut(&span_id) {
+        // For now, use span_id-based lookup across the Vec
+        let mut found_slot = None;
+        for (i, opt) in self.spans.iter().enumerate() {
+            if let Some(ref s) = opt {
+                if s.span_id == span_id {
+                    found_slot = Some(i);
+                    break;
+                }
+            }
+        }
+
+        if let Some(slot) = found_slot {
+            let existing = self.spans[slot].as_mut().unwrap();
             existing.start = span.start;
             existing.duration = span.duration;
             existing.error = span.error;
@@ -574,10 +657,17 @@ where
             existing.parent_id = span.parent_id;
             // meta/metrics already populated by change buffer ops
             for (k, v) in &self.default_meta {
-                existing.meta.insert(k.clone(), v.clone());
+                vec_insert(&mut existing.meta, k.clone(), v.clone());
             }
         } else {
-            self.spans.insert(span_id, span);
+            // Find a free slot or push
+            let slot_idx = self.spans.len();
+            self.spans.push(Some(span));
+            // Ensure deferred vecs are sized
+            if slot_idx >= self.deferred_meta.len() {
+                self.deferred_meta.resize_with(slot_idx + 1, Vec::new);
+                self.deferred_metrics.resize_with(slot_idx + 1, Vec::new);
+            }
         }
 
         self.traces.get_or_insert_default(trace_id).span_count += 1;
@@ -589,11 +679,12 @@ where
         Ok(span_id)
     }
 
-    /// Get a mutable reference to a span.
-    pub fn span_mut(&mut self, id: &u64) -> Result<&mut Span<T>> {
+    /// Get a mutable reference to a span by slot.
+    pub fn span_mut(&mut self, slot: &u32) -> Result<&mut Span<T>> {
         self.spans
-            .get_mut(id)
-            .ok_or(ChangeBufferError::SpanNotFound(*id))
+            .get_mut(*slot as usize)
+            .and_then(|opt| opt.as_mut())
+            .ok_or(ChangeBufferError::SpanNotFound(*slot as u64))
     }
 
     /// Look up a string by ID, returning a clone.
@@ -613,91 +704,175 @@ where
     /// Apply default meta tags to a span.
     fn apply_default_meta(&self, span: &mut Span<T>) {
         for (key, value) in &self.default_meta {
-            span.meta.insert(key.clone(), value.clone());
+            vec_insert(&mut span.meta, key.clone(), value.clone());
+        }
+    }
+
+    /// Materialize deferred tags for a slot into the given span.
+    fn materialize_deferred_tags(&mut self, slot: u32, span: &mut Span<T>) {
+        let idx = slot as usize;
+        if idx < self.deferred_meta.len() {
+            let pairs: Vec<(u32, u32)> = self.deferred_meta[idx].drain(..).collect();
+            for (key_id, val_id) in pairs {
+                if let (Some(key), Some(val)) = (self.get_string(key_id), self.get_string(val_id))
+                {
+                    vec_insert(&mut span.meta, key, val);
+                }
+            }
+        }
+        if idx < self.deferred_metrics.len() {
+            let pairs: Vec<(u32, f64)> = self.deferred_metrics[idx].drain(..).collect();
+            for (key_id, val) in pairs {
+                if let Some(key) = self.get_string(key_id) {
+                    vec_insert(&mut span.metrics, key, val);
+                }
+            }
+        }
+    }
+
+    /// Materialize deferred tags for a slot in-place. For WASM getters that
+    /// need to read span meta/metrics before flush.
+    pub fn materialize_slot(&mut self, slot: u32) {
+        let idx = slot as usize;
+        // Collect resolved pairs first to avoid borrow conflict with self.spans
+        let mut meta_pairs: Vec<(T::Text, T::Text)> = Vec::new();
+        let mut metric_pairs: Vec<(T::Text, f64)> = Vec::new();
+
+        if idx < self.deferred_meta.len() {
+            for &(key_id, val_id) in &self.deferred_meta[idx] {
+                if let (Some(key), Some(val)) = (self.get_string(key_id), self.get_string(val_id))
+                {
+                    meta_pairs.push((key, val));
+                }
+            }
+            self.deferred_meta[idx].clear();
+        }
+        if idx < self.deferred_metrics.len() {
+            for &(key_id, val) in &self.deferred_metrics[idx] {
+                if let Some(key) = self.get_string(key_id) {
+                    metric_pairs.push((key, val));
+                }
+            }
+            self.deferred_metrics[idx].clear();
+        }
+
+        if let Some(Some(span)) = self.spans.get_mut(idx) {
+            for (k, v) in meta_pairs {
+                vec_insert(&mut span.meta, k, v);
+            }
+            for (k, v) in metric_pairs {
+                vec_insert(&mut span.metrics, k, v);
+            }
+        }
+    }
+
+    fn ensure_slot(&mut self, slot: u32) {
+        let idx = slot as usize;
+        if idx >= self.spans.len() {
+            self.spans.resize_with(idx + 1, || None);
+        }
+        if idx >= self.deferred_meta.len() {
+            self.deferred_meta.resize_with(idx + 1, Vec::new);
+            self.deferred_metrics.resize_with(idx + 1, Vec::new);
         }
     }
 
     fn interpret_operation(&mut self, index: &mut usize, op: &BufferedOperation) -> Result<()> {
         match op.opcode {
             OpCode::Create => {
+                let span_id: u64 = self.change_buffer.read(index)?;
                 let trace_id: u128 = self.change_buffer.read(index)?;
                 let parent_id = self.get_num_arg(index)?;
-                let mut span = new_span_pooled(&mut self.span_pool, op.span_id, parent_id, trace_id);
+                let mut span =
+                    new_span_pooled(&mut self.span_pool, span_id, parent_id, trace_id);
                 self.apply_default_meta(&mut span);
-                self.spans.insert(op.span_id, span);
+                self.ensure_slot(op.slot_index);
+                self.spans[op.slot_index as usize] = Some(span);
+                self.deferred_meta[op.slot_index as usize].clear();
+                self.deferred_metrics[op.slot_index as usize].clear();
                 self.traces.get_or_insert_default(trace_id).span_count += 1;
             }
             OpCode::SetMetaAttr => {
-                let name = self.get_string_arg(index)?;
-                let val = self.get_string_arg(index)?;
-                let span = self.get_mut_span(&op.span_id)?;
-                span.meta.insert(name, val);
+                let key_id: u32 = self.get_num_arg(index)?;
+                let val_id: u32 = self.get_num_arg(index)?;
+                let idx = op.slot_index as usize;
+                if idx < self.deferred_meta.len() {
+                    deferred_meta_insert(&mut self.deferred_meta[idx], key_id, val_id);
+                }
             }
             OpCode::SetMetricAttr => {
-                let name = self.get_string_arg(index)?;
+                let key_id: u32 = self.get_num_arg(index)?;
                 let val: f64 = self.get_num_arg(index)?;
-                let span = self.get_mut_span(&op.span_id)?;
-                span.metrics.insert(name, val);
+                let idx = op.slot_index as usize;
+                if idx < self.deferred_metrics.len() {
+                    deferred_metric_insert(&mut self.deferred_metrics[idx], key_id, val);
+                }
             }
             OpCode::SetServiceName => {
-                self.get_mut_span(&op.span_id)?.service = self.get_string_arg(index)?;
+                self.get_mut_span(op.slot_index)?.service = self.get_string_arg(index)?;
             }
             OpCode::SetResourceName => {
-                self.get_mut_span(&op.span_id)?.resource = self.get_string_arg(index)?;
+                self.get_mut_span(op.slot_index)?.resource = self.get_string_arg(index)?;
             }
             OpCode::SetError => {
-                self.get_mut_span(&op.span_id)?.error = self.get_num_arg(index)?;
+                self.get_mut_span(op.slot_index)?.error = self.get_num_arg(index)?;
             }
             OpCode::SetStart => {
-                self.get_mut_span(&op.span_id)?.start = self.get_num_arg(index)?;
+                self.get_mut_span(op.slot_index)?.start = self.get_num_arg(index)?;
             }
             OpCode::SetDuration => {
-                self.get_mut_span(&op.span_id)?.duration = self.get_num_arg(index)?;
+                self.get_mut_span(op.slot_index)?.duration = self.get_num_arg(index)?;
             }
             OpCode::SetType => {
-                self.get_mut_span(&op.span_id)?.r#type = self.get_string_arg(index)?;
+                self.get_mut_span(op.slot_index)?.r#type = self.get_string_arg(index)?;
             }
             OpCode::SetName => {
-                self.get_mut_span(&op.span_id)?.name = self.get_string_arg(index)?;
+                self.get_mut_span(op.slot_index)?.name = self.get_string_arg(index)?;
             }
             OpCode::SetTraceMetaAttr => {
                 let name = self.get_string_arg(index)?;
                 let val = self.get_string_arg(index)?;
-                let trace_id = self.get_span(&op.span_id)?.trace_id;
+                let trace_id = self.get_span(op.slot_index)?.trace_id;
                 if let Some(trace) = self.traces.get_mut(&trace_id) {
-                    trace.meta.insert(name, val);
+                    vec_insert(&mut trace.meta, name, val);
                 }
             }
             OpCode::SetTraceMetricsAttr => {
                 let name = self.get_string_arg(index)?;
                 let val = self.get_num_arg(index)?;
-                let trace_id = self.get_span(&op.span_id)?.trace_id;
+                let trace_id = self.get_span(op.slot_index)?.trace_id;
                 if let Some(trace) = self.traces.get_mut(&trace_id) {
-                    trace.metrics.insert(name, val);
+                    vec_insert(&mut trace.metrics, name, val);
                 }
             }
             OpCode::SetTraceOrigin => {
                 let origin = self.get_string_arg(index)?;
-                let trace_id = self.get_span(&op.span_id)?.trace_id;
+                let trace_id = self.get_span(op.slot_index)?.trace_id;
                 if let Some(trace) = self.traces.get_mut(&trace_id) {
                     trace.origin = Some(origin);
                 }
             }
             OpCode::CreateSpan => {
                 // Combined Create + SetName + SetStart
+                let span_id: u64 = self.change_buffer.read(index)?;
                 let trace_id: u128 = self.change_buffer.read(index)?;
                 let parent_id: u64 = self.get_num_arg(index)?;
                 let name = self.get_string_arg(index)?;
                 let start: i64 = self.get_num_arg(index)?;
-                let mut span = new_span_pooled(&mut self.span_pool, op.span_id, parent_id, trace_id);
+                let mut span =
+                    new_span_pooled(&mut self.span_pool, span_id, parent_id, trace_id);
                 span.name = name;
                 span.start = start;
                 self.apply_default_meta(&mut span);
-                self.spans.insert(op.span_id, span);
+                self.ensure_slot(op.slot_index);
+                self.spans[op.slot_index as usize] = Some(span);
+                self.deferred_meta[op.slot_index as usize].clear();
+                self.deferred_metrics[op.slot_index as usize].clear();
                 self.traces.get_or_insert_default(trace_id).span_count += 1;
             }
             OpCode::CreateSpanFull => {
                 // Combined Create + SetName + SetService + SetResource + SetType + SetStart
+                let span_id: u64 = self.change_buffer.read(index)?;
                 let trace_id: u128 = self.change_buffer.read(index)?;
                 let parent_id: u64 = self.get_num_arg(index)?;
                 let name = self.get_string_arg(index)?;
@@ -705,40 +880,40 @@ where
                 let resource = self.get_string_arg(index)?;
                 let r#type = self.get_string_arg(index)?;
                 let start: i64 = self.get_num_arg(index)?;
-                let mut span = new_span_pooled(&mut self.span_pool, op.span_id, parent_id, trace_id);
+                let mut span =
+                    new_span_pooled(&mut self.span_pool, span_id, parent_id, trace_id);
                 span.name = name;
                 span.service = service;
                 span.resource = resource;
                 span.r#type = r#type;
                 span.start = start;
                 self.apply_default_meta(&mut span);
-                self.spans.insert(op.span_id, span);
+                self.ensure_slot(op.slot_index);
+                self.spans[op.slot_index as usize] = Some(span);
+                self.deferred_meta[op.slot_index as usize].clear();
+                self.deferred_metrics[op.slot_index as usize].clear();
                 self.traces.get_or_insert_default(trace_id).span_count += 1;
             }
             OpCode::BatchSetMeta => {
                 let count: u32 = self.get_num_arg(index)?;
-                let mut pairs = Vec::with_capacity(count as usize);
+                let idx = op.slot_index as usize;
                 for _ in 0..count {
-                    let key = self.get_string_arg(index)?;
-                    let val = self.get_string_arg(index)?;
-                    pairs.push((key, val));
-                }
-                let span = self.get_mut_span(&op.span_id)?;
-                for (key, val) in pairs {
-                    span.meta.insert(key, val);
+                    let key_id: u32 = self.get_num_arg(index)?;
+                    let val_id: u32 = self.get_num_arg(index)?;
+                    if idx < self.deferred_meta.len() {
+                        deferred_meta_insert(&mut self.deferred_meta[idx], key_id, val_id);
+                    }
                 }
             }
             OpCode::BatchSetMetric => {
                 let count: u32 = self.get_num_arg(index)?;
-                let mut pairs = Vec::with_capacity(count as usize);
+                let idx = op.slot_index as usize;
                 for _ in 0..count {
-                    let key = self.get_string_arg(index)?;
+                    let key_id: u32 = self.get_num_arg(index)?;
                     let val: f64 = self.get_num_arg(index)?;
-                    pairs.push((key, val));
-                }
-                let span = self.get_mut_span(&op.span_id)?;
-                for (key, val) in pairs {
-                    span.metrics.insert(key, val);
+                    if idx < self.deferred_metrics.len() {
+                        deferred_metric_insert(&mut self.deferred_metrics[idx], key_id, val);
+                    }
                 }
             }
         };
@@ -803,18 +978,19 @@ mod tests {
             val.extend_le_bytes(&mut self.data);
         }
 
-        fn push_op_header(&mut self, opcode: OpCode, span_id: u64) {
+        fn push_op_header(&mut self, opcode: OpCode, slot: u32) {
             // Opcode is written as u64 (low u32 = opcode, high u32 = 0),
             // matching the JS encoding.
             self.push(opcode as u32);
             self.push(0u32);
-            self.push(span_id);
+            self.push(slot);
             self.op_count += 1;
         }
 
-        /// Write a Create operation: opcode + span_id + trace_id + parent_id
-        fn push_create(&mut self, span_id: u64, trace_id: u128, parent_id: u64) {
-            self.push_op_header(OpCode::Create, span_id);
+        /// Write a Create operation: op_header(slot) + span_id + trace_id + parent_id
+        fn push_create(&mut self, slot: u32, span_id: u64, trace_id: u128, parent_id: u64) {
+            self.push_op_header(OpCode::Create, slot);
+            self.push(span_id);
             self.push(trace_id);
             self.push(parent_id);
         }
@@ -829,6 +1005,35 @@ mod tests {
 
     fn make_state(buf: ChangeBuffer) -> ChangeBufferState<SliceData<'static>> {
         ChangeBufferState::new(buf, "my-service", "rust", 1234)
+    }
+
+    fn create_span_directly(
+        state: &mut ChangeBufferState<SliceData<'static>>,
+        slot: u32,
+        span_id: u64,
+        trace_id: u128,
+        parent_id: u64,
+    ) {
+        let span = Span {
+            span_id,
+            trace_id,
+            parent_id,
+            meta: Vec::with_capacity(8),
+            metrics: Vec::with_capacity(4),
+            ..Default::default()
+        };
+        let idx = slot as usize;
+        if idx >= state.spans.len() {
+            state.spans.resize_with(idx + 1, || None);
+        }
+        if idx >= state.deferred_meta.len() {
+            state.deferred_meta.resize_with(idx + 1, Vec::new);
+            state.deferred_metrics.resize_with(idx + 1, Vec::new);
+        }
+        state.spans[idx] = Some(span);
+        state.deferred_meta[idx].clear();
+        state.deferred_metrics[idx].clear();
+        state.traces.get_or_insert_default(trace_id).span_count += 1;
     }
 
     // -- string table --
@@ -863,7 +1068,7 @@ mod tests {
         let mut builder = BufBuilder::new();
         let buf = builder.finalize();
         let state = make_state(buf);
-        assert!(state.get_span(&42).is_err());
+        assert!(state.get_span(0).is_err());
     }
 
     #[test]
@@ -879,13 +1084,13 @@ mod tests {
     #[test]
     fn flush_create_inserts_span_and_trace() -> Result<()> {
         let mut builder = BufBuilder::new();
-        builder.push_create(100, 200, 50);
+        builder.push_create(0, 100, 200, 50);
         let buf = builder.finalize();
         let mut state = make_state(buf);
 
         state.flush_change_buffer()?;
 
-        let span = state.get_span(&100)?;
+        let span = state.get_span(0)?;
         assert_eq!(span.span_id, 100);
         assert_eq!(span.trace_id, 200);
         assert_eq!(span.parent_id, 50);
@@ -898,18 +1103,18 @@ mod tests {
     #[test]
     fn flush_create_multiple_spans_same_trace() -> Result<()> {
         let mut builder = BufBuilder::new();
-        builder.push_create(1, 100, 0);
-        builder.push_create(2, 100, 1);
-        builder.push_create(3, 100, 1);
+        builder.push_create(0, 1, 100, 0);
+        builder.push_create(1, 2, 100, 1);
+        builder.push_create(2, 3, 100, 1);
         let buf = builder.finalize();
         let mut state = make_state(buf);
 
         state.flush_change_buffer()?;
 
         assert_eq!(state.get_trace(&100).unwrap().span_count, 3);
-        assert!(state.get_span(&1).is_ok());
-        assert!(state.get_span(&2).is_ok());
-        assert!(state.get_span(&3).is_ok());
+        assert!(state.get_span(0).is_ok());
+        assert!(state.get_span(1).is_ok());
+        assert!(state.get_span(2).is_ok());
         Ok(())
     }
 
@@ -918,10 +1123,10 @@ mod tests {
     #[test]
     fn flush_set_meta_attr() -> Result<()> {
         let mut builder = BufBuilder::new();
-        builder.push_create(1, 100, 0);
-        builder.push_op_header(OpCode::SetMetaAttr, 1);
-        builder.push(10); // string table key for name
-        builder.push(11); // string table key for value
+        builder.push_create(0, 1, 100, 0);
+        builder.push_op_header(OpCode::SetMetaAttr, 0);
+        builder.push(10u32); // string table key for name
+        builder.push(11u32); // string table key for value
         let buf = builder.finalize();
 
         let mut state = make_state(buf);
@@ -930,18 +1135,20 @@ mod tests {
 
         state.flush_change_buffer()?;
 
-        let span = state.get_span(&1)?;
-        assert_eq!(span.meta.get("http.method"), Some(&"GET"));
+        // Meta is deferred — materialize before reading
+        state.materialize_slot(0);
+        let span = state.get_span(0)?;
+        assert_eq!(vec_get(&span.meta, &"http.method"), Some(&"GET"));
         Ok(())
     }
 
     #[test]
     fn flush_set_metric_attr() -> Result<()> {
         let mut builder = BufBuilder::new();
-        builder.push_create(1, 100, 0);
-        builder.push_op_header(OpCode::SetMetricAttr, 1);
-        builder.push(10); // string table key for name
-        builder.push(99.5);
+        builder.push_create(0, 1, 100, 0);
+        builder.push_op_header(OpCode::SetMetricAttr, 0);
+        builder.push(10u32); // string table key for name
+        builder.push(99.5f64);
         let buf = builder.finalize();
 
         let mut state = make_state(buf);
@@ -949,71 +1156,73 @@ mod tests {
 
         state.flush_change_buffer()?;
 
-        let span = state.get_span(&1)?;
-        assert_eq!(span.metrics.get("my.metric"), Some(&99.5));
+        // Metrics are deferred — materialize before reading
+        state.materialize_slot(0);
+        let span = state.get_span(0)?;
+        assert_eq!(vec_get(&span.metrics, &"my.metric"), Some(&99.5));
         Ok(())
     }
 
     #[test]
     fn flush_set_service_name() -> Result<()> {
         let mut builder = BufBuilder::new();
-        builder.push_create(1, 100, 0);
-        builder.push_op_header(OpCode::SetServiceName, 1);
-        builder.push(10);
+        builder.push_create(0, 1, 100, 0);
+        builder.push_op_header(OpCode::SetServiceName, 0);
+        builder.push(10u32);
         let buf = builder.finalize();
 
         let mut state = make_state(buf);
         state.string_table_insert_one(10, "web-server");
 
         state.flush_change_buffer()?;
-        assert_eq!(state.get_span(&1)?.service, "web-server");
+        assert_eq!(state.get_span(0)?.service, "web-server");
         Ok(())
     }
 
     #[test]
     fn flush_set_resource_name() -> Result<()> {
         let mut builder = BufBuilder::new();
-        builder.push_create(1, 100, 0);
-        builder.push_op_header(OpCode::SetResourceName, 1);
-        builder.push(10);
+        builder.push_create(0, 1, 100, 0);
+        builder.push_op_header(OpCode::SetResourceName, 0);
+        builder.push(10u32);
         let buf = builder.finalize();
 
         let mut state = make_state(buf);
         state.string_table_insert_one(10, "GET /api/users");
 
         state.flush_change_buffer()?;
-        assert_eq!(state.get_span(&1)?.resource, "GET /api/users");
+        assert_eq!(state.get_span(0)?.resource, "GET /api/users");
         Ok(())
     }
 
     #[test]
     fn flush_set_error() -> Result<()> {
         let mut builder = BufBuilder::new();
-        builder.push_create(1, 100, 0);
-        builder.push_op_header(OpCode::SetError, 1);
-        builder.push(1);
+        builder.push_create(0, 1, 100, 0);
+        builder.push_op_header(OpCode::SetError, 0);
+        builder.push(1i32);
         let buf = builder.finalize();
 
         let mut state = make_state(buf);
         state.flush_change_buffer()?;
-        assert_eq!(state.get_span(&1)?.error, 1);
+        assert_eq!(state.get_span(0)?.error, 1);
         Ok(())
     }
 
     #[test]
     fn flush_set_start_and_duration() -> Result<()> {
         let mut builder = BufBuilder::new();
-        builder.push_create(1, 100, 0);
-        builder.push_op_header(OpCode::SetStart, 1);
+        builder.push_create(0, 1, 100, 0);
+        builder.push_op_header(OpCode::SetStart, 0);
         builder.push(1_000_000i64);
-        builder.push_op_header(OpCode::SetDuration, 1);
+        builder.push_op_header(OpCode::SetDuration, 0);
         builder.push(500i64);
         let buf = builder.finalize();
 
         let mut state = make_state(buf);
         state.flush_change_buffer()?;
 
-        let span = state.get_span(&1)?;
+        let span = state.get_span(0)?;
         assert_eq!(span.start, 1_000_000);
         assert_eq!(span.duration, 500);
         Ok(())
@@ -1022,11 +1231,11 @@ mod tests {
     #[test]
     fn flush_set_type_and_name() -> Result<()> {
         let mut builder = BufBuilder::new();
-        builder.push_create(1, 100, 0);
-        builder.push_op_header(OpCode::SetType, 1);
-        builder.push(10);
-        builder.push_op_header(OpCode::SetName, 1);
-        builder.push(11);
+        builder.push_create(0, 1, 100, 0);
+        builder.push_op_header(OpCode::SetType, 0);
+        builder.push(10u32);
+        builder.push_op_header(OpCode::SetName, 0);
+        builder.push(11u32);
         let buf = builder.finalize();
 
         let mut state = make_state(buf);
@@ -1035,7 +1244,7 @@ mod tests {
 
         state.flush_change_buffer()?;
 
-        let span = state.get_span(&1)?;
+        let span = state.get_span(0)?;
         assert_eq!(span.r#type, "web");
         assert_eq!(span.name, "http.request");
         Ok(())
@@ -1046,10 +1255,10 @@ mod tests {
     #[test]
     fn flush_set_trace_meta_attr() -> Result<()> {
         let mut builder = BufBuilder::new();
-        builder.push_create(1, 100, 0);
-        builder.push_op_header(OpCode::SetTraceMetaAttr, 1);
-        builder.push(10);
-        builder.push(11);
+        builder.push_create(0, 1, 100, 0);
+        builder.push_op_header(OpCode::SetTraceMetaAttr, 0);
+        builder.push(10u32);
+        builder.push(11u32);
         let buf = builder.finalize();
 
         let mut state = make_state(buf);
@@ -1059,17 +1268,17 @@ mod tests {
         state.flush_change_buffer()?;
 
         let trace = state.get_trace(&100).unwrap();
-        assert_eq!(trace.meta.get("env"), Some(&"production"));
+        assert_eq!(vec_get(&trace.meta, &"env"), Some(&"production"));
         Ok(())
     }
 
     #[test]
     fn flush_set_trace_metrics_attr() -> Result<()> {
         let mut builder = BufBuilder::new();
-        builder.push_create(1, 100, 0);
-        builder.push_op_header(OpCode::SetTraceMetricsAttr, 1);
-        builder.push(10);
-        builder.push(0.75);
+        builder.push_create(0, 1, 100, 0);
+        builder.push_op_header(OpCode::SetTraceMetricsAttr, 0);
+        builder.push(10u32);
+        builder.push(0.75f64);
         let buf = builder.finalize();
 
         let mut state = make_state(buf);
@@ -1078,16 +1287,19 @@ mod tests {
         state.flush_change_buffer()?;
 
         let trace = state.get_trace(&100).unwrap();
-        assert_eq!(trace.metrics.get("_sampling_priority_v1"), Some(&0.75));
+        assert_eq!(
+            vec_get(&trace.metrics, &"_sampling_priority_v1"),
+            Some(&0.75)
+        );
         Ok(())
     }
 
     #[test]
     fn flush_set_trace_origin() -> Result<()> {
         let mut builder = BufBuilder::new();
-        builder.push_create(1, 100, 0);
-        builder.push_op_header(OpCode::SetTraceOrigin, 1);
-        builder.push(10);
+        builder.push_create(0, 1, 100, 0);
+        builder.push_op_header(OpCode::SetTraceOrigin, 0);
+        builder.push(10u32);
         let buf = builder.finalize();
 
         let mut state = make_state(buf);
@@ -1105,7 +1317,7 @@ mod tests {
     #[test]
     fn flush_change_buffer_resets_count_to_zero() -> Result<()> {
         let mut builder = BufBuilder::new();
-        builder.push_create(1, 100, 0);
+        builder.push_create(0, 1, 100, 0);
         let buf = builder.finalize();
         let mut state = make_state(buf);
 
@@ -1128,23 +1340,12 @@ mod tests {
         let mut state = make_state(buf);
 
         state.flush_change_buffer()?;
-        assert!(state.spans.is_empty());
+        assert_eq!(state.spans_count(), 0);
         assert!(state.traces.is_empty());
         Ok(())
     }
 
     // -- flush_chunk --
-
-    fn create_span_directly(
-        state: &mut ChangeBufferState<SliceData<'static>>,
-        span_id: u64,
-        trace_id: u128,
-        parent_id: u64,
-    ) {
-        let span = new_span(span_id, parent_id, trace_id);
-        state.spans.insert(span_id, span);
-        state.traces.get_or_insert_default(trace_id).span_count += 1;
-    }
 
     #[test]
     fn flush_chunk_returns_spans_and_removes_from_state() -> Result<()> {
@@ -1152,17 +1353,17 @@ mod tests {
         let buf = builder.finalize();
         let mut state = make_state(buf);
 
-        create_span_directly(&mut state, 1, 100, 0);
-        create_span_directly(&mut state, 2, 100, 1);
+        create_span_directly(&mut state, 0, 1, 100, 0);
+        create_span_directly(&mut state, 1, 2, 100, 1);
 
-        let spans = state.flush_chunk(vec![1, 2], false)?;
+        let spans = state.flush_chunk(vec![0, 1], false)?;
         assert_eq!(spans.len(), 2);
         assert_eq!(spans[0].span_id, 1);
         assert_eq!(spans[1].span_id, 2);
 
         // Spans removed from state
-        assert!(state.get_span(&1).is_err());
-        assert!(state.get_span(&2).is_err());
+        assert!(state.get_span(0).is_err());
+        assert!(state.get_span(1).is_err());
         Ok(())
     }
 
@@ -1172,7 +1373,7 @@ mod tests {
         let buf = builder.finalize();
         let mut state = make_state(buf);
 
-        assert!(state.flush_chunk(vec![999], false).is_err());
+        assert!(state.flush_chunk(vec![0], false).is_err());
     }
 
     #[test]
@@ -1181,15 +1382,15 @@ mod tests {
         let buf = builder.finalize();
         let mut state = make_state(buf);
 
-        create_span_directly(&mut state, 1, 100, 0);
-        create_span_directly(&mut state, 2, 100, 1);
+        create_span_directly(&mut state, 0, 1, 100, 0);
+        create_span_directly(&mut state, 1, 2, 100, 1);
 
-        let spans = state.flush_chunk(vec![1, 2], true)?;
+        let spans = state.flush_chunk(vec![0, 1], true)?;
 
         // First span (local root) gets _dd.top_level
-        assert_eq!(spans[0].metrics.get("_dd.top_level"), Some(&1.0));
+        assert_eq!(vec_get(&spans[0].metrics, &"_dd.top_level"), Some(&1.0));
         // Second span does not
-        assert_eq!(spans[1].metrics.get("_dd.top_level"), None);
+        assert_eq!(vec_get(&spans[1].metrics, &"_dd.top_level"), None);
         Ok(())
     }
 
@@ -1199,7 +1400,7 @@ mod tests {
         let buf = builder.finalize();
         let mut state = make_state(buf);
 
-        create_span_directly(&mut state, 1, 100, 0);
+        create_span_directly(&mut state, 0, 1, 100, 0);
 
         // Set sampling decisions on the trace
         let trace = state.traces.get_mut(&100).unwrap();
@@ -1207,11 +1408,11 @@ mod tests {
         trace.sampling_limit_decision = Some(0.8);
         trace.sampling_agent_decision = Some(1.0);
 
-        let spans = state.flush_chunk(vec![1], true)?;
+        let spans = state.flush_chunk(vec![0], true)?;
 
-        assert_eq!(spans[0].metrics.get("_dd.rule_psr"), Some(&0.5));
-        assert_eq!(spans[0].metrics.get("_dd.limit_psr"), Some(&0.8));
-        assert_eq!(spans[0].metrics.get("_dd.agent_psr"), Some(&1.0));
+        assert_eq!(vec_get(&spans[0].metrics, &"_dd.rule_psr"), Some(&0.5));
+        assert_eq!(vec_get(&spans[0].metrics, &"_dd.limit_psr"), Some(&0.8));
+        assert_eq!(vec_get(&spans[0].metrics, &"_dd.agent_psr"), Some(&1.0));
         Ok(())
     }
 
@@ -1221,22 +1422,28 @@ mod tests {
         let buf = builder.finalize();
         let mut state = make_state(buf);
 
-        create_span_directly(&mut state, 1, 100, 0);
-        create_span_directly(&mut state, 2, 100, 1);
+        create_span_directly(&mut state, 0, 1, 100, 0);
+        create_span_directly(&mut state, 1, 2, 100, 1);
 
         // Set trace-level meta and metrics
         let trace = state.traces.get_mut(&100).unwrap();
-        trace.meta.insert("env", "staging");
-        trace.metrics.insert("_sampling_priority_v1", 2.0);
+        vec_insert(&mut trace.meta, "env", "staging");
+        vec_insert(&mut trace.metrics, "_sampling_priority_v1", 2.0);
 
-        let spans = state.flush_chunk(vec![1, 2], false)?;
+        let spans = state.flush_chunk(vec![0, 1], false)?;
 
         // First span (chunk root) gets trace tags
-        assert_eq!(spans[0].meta.get("env"), Some(&"staging"));
-        assert_eq!(spans[0].metrics.get("_sampling_priority_v1"), Some(&2.0));
+        assert_eq!(vec_get(&spans[0].meta, &"env"), Some(&"staging"));
+        assert_eq!(
+            vec_get(&spans[0].metrics, &"_sampling_priority_v1"),
+            Some(&2.0)
+        );
         // Second span does not get trace-level tags
-        assert_eq!(spans[1].meta.get("env"), None);
-        assert_eq!(spans[1].metrics.get("_sampling_priority_v1"), None);
+        assert_eq!(vec_get(&spans[1].meta, &"env"), None);
+        assert_eq!(
+            vec_get(&spans[1].metrics, &"_sampling_priority_v1"),
+            None
+        );
         Ok(())
     }
 
@@ -1248,11 +1455,11 @@ mod tests {
         let buf = builder.finalize();
         let mut state = make_state(buf);
 
-        create_span_directly(&mut state, 1, 100, 0);
+        create_span_directly(&mut state, 0, 1, 100, 0);
 
-        let spans = state.flush_chunk(vec![1], false)?;
-        assert_eq!(spans[0].meta.get("language"), Some(&"rust"));
-        assert_eq!(spans[0].metrics.get("process_id"), Some(&1234.0));
+        let spans = state.flush_chunk(vec![0], false)?;
+        assert_eq!(vec_get(&spans[0].meta, &"language"), Some(&"rust"));
+        assert_eq!(vec_get(&spans[0].metrics, &"process_id"), Some(&1234.0));
         Ok(())
     }
 
@@ -1262,11 +1469,14 @@ mod tests {
         let buf = builder.finalize();
         let mut state = make_state(buf);
 
-        create_span_directly(&mut state, 1, 100, 0);
+        create_span_directly(&mut state, 0, 1, 100, 0);
         state.traces.get_mut(&100).unwrap().origin = Some("synthetics");
 
-        let spans = state.flush_chunk(vec![1], false)?;
-        assert_eq!(spans[0].meta.get("_dd.origin"), Some(&"synthetics"));
+        let spans = state.flush_chunk(vec![0], false)?;
+        assert_eq!(
+            vec_get(&spans[0].meta, &"_dd.origin"),
+            Some(&"synthetics")
+        );
         Ok(())
     }
 
@@ -1276,16 +1486,15 @@ mod tests {
         let buf = builder.finalize();
         let mut state = make_state(buf);
 
-        create_span_directly(&mut state, 1, 100, 0);
-        state
-            .spans
-            .get_mut(&1)
-            .unwrap()
-            .meta
-            .insert("kind", "client");
+        create_span_directly(&mut state, 0, 1, 100, 0);
+        vec_insert(
+            &mut state.spans[0].as_mut().unwrap().meta,
+            "kind",
+            "client",
+        );
 
-        let spans = state.flush_chunk(vec![1], false)?;
-        assert_eq!(spans[0].metrics.get("_dd.measured"), Some(&1.0));
+        let spans = state.flush_chunk(vec![0], false)?;
+        assert_eq!(vec_get(&spans[0].metrics, &"_dd.measured"), Some(&1.0));
         Ok(())
     }
 
@@ -1295,16 +1504,15 @@ mod tests {
         let buf = builder.finalize();
         let mut state = make_state(buf);
 
-        create_span_directly(&mut state, 1, 100, 0);
-        state
-            .spans
-            .get_mut(&1)
-            .unwrap()
-            .meta
-            .insert("kind", "internal");
+        create_span_directly(&mut state, 0, 1, 100, 0);
+        vec_insert(
+            &mut state.spans[0].as_mut().unwrap().meta,
+            "kind",
+            "internal",
+        );
 
-        let spans = state.flush_chunk(vec![1], false)?;
-        assert_eq!(spans[0].metrics.get("_dd.measured"), None);
+        let spans = state.flush_chunk(vec![0], false)?;
+        assert_eq!(vec_get(&spans[0].metrics, &"_dd.measured"), None);
         Ok(())
     }
 
@@ -1314,11 +1522,14 @@ mod tests {
         let buf = builder.finalize();
         let mut state = make_state(buf);
 
-        create_span_directly(&mut state, 1, 100, 0);
-        state.spans.get_mut(&1).unwrap().service = "other-service";
+        create_span_directly(&mut state, 0, 1, 100, 0);
+        state.spans[0].as_mut().unwrap().service = "other-service";
 
-        let spans = state.flush_chunk(vec![1], false)?;
-        assert_eq!(spans[0].meta.get("_dd.base_service"), Some(&"my-service"));
+        let spans = state.flush_chunk(vec![0], false)?;
+        assert_eq!(
+            vec_get(&spans[0].meta, &"_dd.base_service"),
+            Some(&"my-service")
+        );
         Ok(())
     }
 
@@ -1328,11 +1539,11 @@ mod tests {
         let buf = builder.finalize();
         let mut state = make_state(buf);
 
-        create_span_directly(&mut state, 1, 100, 0);
-        state.spans.get_mut(&1).unwrap().service = "my-service";
+        create_span_directly(&mut state, 0, 1, 100, 0);
+        state.spans[0].as_mut().unwrap().service = "my-service";
 
-        let spans = state.flush_chunk(vec![1], false)?;
-        assert_eq!(spans[0].meta.get("_dd.base_service"), None);
+        let spans = state.flush_chunk(vec![0], false)?;
+        assert_eq!(vec_get(&spans[0].meta, &"_dd.base_service"), None);
         Ok(())
     }
 
@@ -1344,10 +1555,10 @@ mod tests {
         let buf = builder.finalize();
         let mut state = make_state(buf);
 
-        create_span_directly(&mut state, 1, 100, 0);
-        create_span_directly(&mut state, 2, 100, 1);
+        create_span_directly(&mut state, 0, 1, 100, 0);
+        create_span_directly(&mut state, 1, 2, 100, 1);
 
-        state.flush_chunk(vec![1, 2], false)?;
+        state.flush_chunk(vec![0, 1], false)?;
 
         assert!(state.get_trace(&100).is_none());
         Ok(())
@@ -1359,12 +1570,12 @@ mod tests {
         let buf = builder.finalize();
         let mut state = make_state(buf);
 
-        create_span_directly(&mut state, 1, 100, 0);
-        create_span_directly(&mut state, 2, 100, 1);
-        create_span_directly(&mut state, 3, 100, 1);
+        create_span_directly(&mut state, 0, 1, 100, 0);
+        create_span_directly(&mut state, 1, 2, 100, 1);
+        create_span_directly(&mut state, 2, 3, 100, 1);
 
         // Flush only 2 of 3 spans
-        state.flush_chunk(vec![1, 2], false)?;
+        state.flush_chunk(vec![0, 1], false)?;
 
         assert!(state.get_trace(&100).is_some());
         assert_eq!(state.get_trace(&100).unwrap().span_count, 1);

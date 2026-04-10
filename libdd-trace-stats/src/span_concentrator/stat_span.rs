@@ -85,11 +85,23 @@ impl<'a, T: TraceData> StatSpan<'a> for Span<T> {
     }
 
     fn get_meta(&'a self, key: &str) -> Option<&'a str> {
-        self.meta.get(key).map(|v| v.borrow())
+        self.meta
+            .iter()
+            .find(|(k, _)| {
+                let s: &str = k.borrow();
+                s == key
+            })
+            .map(|(_, v)| v.borrow())
     }
 
     fn get_metrics(&'a self, key: &str) -> Option<f64> {
-        self.metrics.get(key).copied()
+        self.metrics
+            .iter()
+            .find(|(k, _)| {
+                let s: &str = k.borrow();
+                s == key
+            })
+            .map(|(_, v)| *v)
     }
 }
 
