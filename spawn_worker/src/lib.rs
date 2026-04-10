@@ -1,8 +1,49 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-pub(crate) const TRAMPOLINE_BIN: &[u8] =
-    include_bytes!(concat!(env!("OUT_DIR"), "/trampoline.bin"));
+// Force page-alignment on the embedded trampoline bytes so that
+// solib_bootstrap.c can mmap segments directly from /proc/self/exe.
+#[repr(C, align(4096))]
+struct PageAligned<T: ?Sized>(T);
+
+static TRAMPOLINE_BIN_ALIGNED: PageAligned<
+    [u8; include_bytes!(concat!(env!("OUT_DIR"), "/trampoline.bin")).len()],
+> = PageAligned(*include_bytes!(concat!(env!("OUT_DIR"), "/trampoline.bin")));
+
+pub(crate) const TRAMPOLINE_BIN: &[u8] = &TRAMPOLINE_BIN_ALIGNED.0;
+
+/// C-visible pointer and length for the embedded trampoline binary.
+/// Used by solib_bootstrap.c to load the trampoline ELF from memory.
+///
+/// Defined via global_asm! rather than #[no_mangle] to keep the symbol out of
+/// Rust's auto-generated version script.  #[no_mangle] triggers
+/// contains_extern_indicator() → SymbolExportLevel::C → ends up in global: of
+/// the version script regardless of pub(crate).  ld 2.28 (devtoolset-7) fails
+/// with "DD_TRAMPOLINE_BIN: undefined version: " when a STV_HIDDEN symbol is
+/// also listed in global: of the version script.  A symbol defined purely in
+/// global_asm! is invisible to rustc's export machinery, so it never enters
+/// global:; it is caught by local:* and old ld handles it correctly.
+///
+/// .hidden + .global: STV_HIDDEN so it is not exported from the DSO, but
+/// STB_GLOBAL so the linker can resolve the reference from solib_bootstrap.o
+/// (a different translation unit in the same final binary).  The ptr field
+/// gets R_X86_64_RELATIVE / R_AARCH64_RELATIVE because TRAMPOLINE_BIN_ALIGNED
+/// is local to the DSO.
+#[cfg(target_os = "linux")]
+std::arch::global_asm!(
+    ".pushsection .data.DD_TRAMPOLINE_BIN,\"aw\",@progbits",
+    ".balign 8",
+    ".hidden DD_TRAMPOLINE_BIN",
+    ".global DD_TRAMPOLINE_BIN",
+    ".type DD_TRAMPOLINE_BIN, @object",
+    ".size DD_TRAMPOLINE_BIN, 16",
+    "DD_TRAMPOLINE_BIN:",
+    ".quad {data}",
+    ".quad {len}",
+    ".popsection",
+    data = sym TRAMPOLINE_BIN_ALIGNED,
+    len = const TRAMPOLINE_BIN.len(),
+);
 
 #[cfg(target_os = "windows")]
 pub(crate) const CRASHTRACKING_TRAMPOLINE_BIN: &[u8] =

@@ -17,6 +17,10 @@ fn main() {
         builder.link_dynamically("dl");
         if cfg!(target_os = "linux") {
             builder.flag("-Wl,--no-as-needed");
+            // Produce a PIE executable (ET_DYN) so solib_bootstrap can load it at a
+            // random address via mmap(NULL). Without these flags some toolchains
+            // (e.g. gcc on CentOS 7 / devtoolset) default to non-PIE (ET_EXEC).
+            builder.flag("-fPIE").flag("-pie");
         }
         // rust code generally requires libm. Just link against it.
         builder.link_dynamically("m");
