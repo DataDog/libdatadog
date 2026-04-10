@@ -145,11 +145,6 @@ pub mod linux {
         }
 
         /// Makes this mapping discoverable by giving it a name.
-        ///
-        /// Note that naming must be unconditionally attempted, even on kernels where we might know
-        /// it will fail. It is ok for naming to fail - we must only make sure that at least we
-        /// tried, as per the
-        /// [spec](https://github.com/open-telemetry/opentelemetry-specification/pull/4719).
         fn set_name(&mut self) -> anyhow::Result<()> {
             // Safety: the invariants of `MemMapping` ensures that `start` is non null and comes
             // from a previous call to `mmap` of size `mapping_size()`
@@ -265,6 +260,10 @@ pub mod linux {
                     .store(published_at_ns, Ordering::Relaxed);
             }
 
+            // Note that naming must be unconditionally attempted, even on kernels where we might
+            // know it will fail. It is ok for naming to fail - we must only make sure that at
+            // least we tried, as per the
+            // [spec](https://github.com/open-telemetry/opentelemetry-specification/pull/4719).
             let _ = mapping.set_name();
 
             Ok(ProcessContextHandle {
