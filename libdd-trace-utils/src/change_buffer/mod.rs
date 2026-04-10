@@ -48,6 +48,8 @@ pub use span_header::{SpanHeader, SPAN_HEADER_SIZE};
 use crate::span::v04::Span;
 use crate::span::{SpanText, TraceData};
 
+use bumpalo::Bump;
+
 fn vec_insert<K: PartialEq, V>(vec: &mut Vec<(K, V)>, key: K, value: V) {
     for entry in vec.iter_mut() {
         if entry.0 == key {
@@ -88,11 +90,22 @@ fn deferred_metric_insert(vec: &mut Vec<(u32, f64)>, key_id: u32, val: f64) {
 }
 
 pub struct ChangeBufferState<T: TraceData> {
+    /// Arena backing all string data. Strings are bump-allocated here on
+    /// insertion and never freed individually — the arena is torn down only
+    /// when the whole state is dropped.
+    ///
+    /// SAFETY invariant: the arena must outlive every `&'static str` derived
+    /// from it (stored in `string_table`, span fields, `default_meta`, etc.).
+    /// We uphold this by never resetting the arena and by ensuring all spans
+    /// are dropped before `ChangeBufferState` is dropped.
+    arena: Bump,
     change_buffer: ChangeBuffer,
     spans: Vec<Option<Span<T>>>,
     traces: SmallTraceMap<T::Text>,
-    /// String table indexed by sequential u32 IDs (O(1) lookup vs HashMap).
-    string_table: Vec<Option<T::Text>>,
+    /// String table indexed by sequential u32 IDs (O(1) lookup).
+    /// Entries are `&'static str` slices into `arena`; the lifetime is
+    /// extended via `transmute` — see `alloc_str`.
+    string_table: Vec<Option<&'static str>>,
     tracer_service: T::Text,
     tracer_language: T::Text,
     pid: u32,
@@ -167,17 +180,28 @@ where
 {
     pub fn new(
         change_buffer: ChangeBuffer,
-        tracer_service: T::Text,
-        tracer_language: T::Text,
+        tracer_service: &str,
+        tracer_language: &str,
         pid: u32,
     ) -> Self {
+        // Allocate service/language into the arena before moving it into the
+        // struct. Moving `Bump` does not relocate its heap chunks, so the
+        // returned `&'static str` pointers remain valid after the move.
+        let arena = Bump::new();
+        // SAFETY: arena is moved into the struct below and never reset while
+        // these references are accessible.
+        let tracer_service: &'static str =
+            unsafe { std::mem::transmute(arena.alloc_str(tracer_service)) };
+        let tracer_language: &'static str =
+            unsafe { std::mem::transmute(arena.alloc_str(tracer_language)) };
         ChangeBufferState {
+            arena,
             change_buffer,
             spans: Vec::with_capacity(256),
             traces: SmallTraceMap::default(),
             string_table: Vec::with_capacity(256),
-            tracer_service,
-            tracer_language,
+            tracer_service: T::Text::from_static_str(tracer_service),
+            tracer_language: T::Text::from_static_str(tracer_language),
             pid,
             default_meta: Vec::new(),
             span_headers: Vec::with_capacity(256),
@@ -196,6 +220,16 @@ where
             deferred_meta: Vec::with_capacity(256),
             deferred_metrics: Vec::with_capacity(256),
         }
+    }
+
+    /// Allocate a string in the arena and extend its lifetime to `'static`.
+    ///
+    /// SAFETY: callers must ensure no reference derived from this call
+    /// outlives `self` (the arena is freed when `self` is dropped).
+    #[inline]
+    fn alloc_str(&self, s: &str) -> &'static str {
+        // SAFETY: arena lives as long as self; we never reset it.
+        unsafe { std::mem::transmute(self.arena.alloc_str(s)) }
     }
 
     /// Diagnostic: number of spans currently in the Vec.
@@ -538,17 +572,19 @@ where
         let num: u32 = self.get_num_arg(index)?;
         self.string_table
             .get(num as usize)
-            .and_then(|opt| opt.clone())
+            .and_then(|opt| *opt)
+            .map(T::Text::from_static_str)
             .ok_or(ChangeBufferError::StringNotFound(num))
     }
 
     #[inline(always)]
     unsafe fn get_string_arg_unchecked(&self, index: &mut usize) -> T::Text {
         let num: u32 = self.change_buffer.read_unchecked(index);
-        self.string_table
-            .get_unchecked(num as usize)
-            .clone()
-            .unwrap_unchecked()
+        T::Text::from_static_str(
+            self.string_table
+                .get_unchecked(num as usize)
+                .unwrap_unchecked(),
+        )
     }
 
     fn get_num_arg<U: Copy + FromBytes>(&self, index: &mut usize) -> Result<U> {
@@ -687,18 +723,27 @@ where
             .ok_or(ChangeBufferError::SpanNotFound(*slot as u64))
     }
 
-    /// Look up a string by ID, returning a clone.
+    /// Look up a string by ID. Returns a `T::Text` built from the
+    /// arena-backed `&'static str` — a pointer copy, no allocation.
     pub fn get_string(&self, id: u32) -> Option<T::Text> {
         self.string_table
             .get(id as usize)
-            .and_then(|opt| opt.clone())
+            .and_then(|opt| *opt)
+            .map(T::Text::from_static_str)
     }
 
     /// Set default meta tags that are automatically applied to every new span.
     /// Call this once at init time with the config tags (service, version,
-    /// runtime-id, etc.).
-    pub fn set_default_meta(&mut self, tags: Vec<(T::Text, T::Text)>) {
-        self.default_meta = tags;
+    /// runtime-id, etc.). Keys and values are arena-allocated.
+    pub fn set_default_meta(&mut self, tags: Vec<(String, String)>) {
+        self.default_meta = tags
+            .into_iter()
+            .map(|(k, v)| {
+                let k = T::Text::from_static_str(self.alloc_str(&k));
+                let v = T::Text::from_static_str(self.alloc_str(&v));
+                (k, v)
+            })
+            .collect();
     }
 
     /// Apply default meta tags to a span.
@@ -921,12 +966,13 @@ where
         Ok(())
     }
 
-    pub fn string_table_insert_one(&mut self, key: u32, val: T::Text) {
+    pub fn string_table_insert_one(&mut self, key: u32, val: &str) {
+        let s = self.alloc_str(val);
         let idx = key as usize;
         if idx >= self.string_table.len() {
             self.string_table.resize_with(idx + 1, || None);
         }
-        self.string_table[idx] = Some(val);
+        self.string_table[idx] = Some(s);
     }
 
     pub fn string_table_evict_one(&mut self, key: u32) {

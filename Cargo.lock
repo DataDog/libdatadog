@@ -3459,6 +3459,7 @@ version = "2.0.2"
 dependencies = [
  "anyhow",
  "bolero",
+ "bumpalo",
  "bytes",
  "cargo-platform",
  "cargo_metadata",
