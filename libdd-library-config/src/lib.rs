@@ -3,6 +3,9 @@
 #![cfg_attr(not(feature = "std"), no_std)]
 extern crate alloc;
 
+mod config_read;
+pub use config_read::*;
+
 #[cfg(feature = "std")]
 pub mod otel_process_ctx;
 #[cfg(feature = "std")]
@@ -22,7 +25,7 @@ use core::ops::Deref;
 #[cfg(feature = "std")]
 use std::path::Path;
 #[cfg(feature = "std")]
-use std::{env, fs, io};
+use std::env;
 
 /// This struct holds maps used to match and template configurations.
 ///
@@ -254,78 +257,6 @@ impl ProcessInfo {
             envp,
             language: language.into_bytes(),
         }
-    }
-}
-
-/// Maximum allowed config file size (100 MB).
-pub const MAX_CONFIG_FILE_SIZE: usize = 100 * 1024 * 1024;
-
-/// Error returned by [`ConfigRead::read`].
-///
-/// This enum classifies all failure modes so the configurator can decide which
-/// are fatal (abort) and which are gracefully skipped:
-///
-/// - [`NotFound`](Self::NotFound) — the file does not exist; the configuration
-///   layer is simply absent and will be treated as empty.
-/// - [`TooLarge`](Self::TooLarge) — the file exceeds [`MAX_CONFIG_FILE_SIZE`];
-///   skipped with a debug log.
-/// - [`Io`](Self::Io) — any other I/O or access error; aborts config loading.
-#[derive(Debug, thiserror::Error)]
-pub enum ConfigReadError<E: core::fmt::Display + core::fmt::Debug> {
-    /// File does not exist at the given path.
-    #[error("file not found")]
-    NotFound,
-    /// File exceeds [`MAX_CONFIG_FILE_SIZE`].
-    #[error("file is too large (> 100mb)")]
-    TooLarge,
-    /// An I/O or platform-specific error.
-    #[error("{0}")]
-    Io(E),
-}
-
-/// Trait for reading configuration files from a filesystem or virtual filesystem.
-///
-/// Implement this to provide custom file access for environments where `std::fs`
-/// is not available (e.g. no_std, sandboxed, or in-memory configurations).
-///
-pub trait ConfigRead {
-    /// The platform-specific error type carried by [`ConfigReadError::Io`].
-    type IoError: core::fmt::Display + core::fmt::Debug;
-
-    /// Read the entire contents of the configuration file at `path`.
-    ///
-    /// Implementations **should** return [`ConfigReadError::TooLarge`] for files
-    /// exceeding [`MAX_CONFIG_FILE_SIZE`] to avoid unnecessary allocations.
-    /// The configurator also checks the returned bytes as a safety net.
-    fn read(&self, path: &str) -> Result<Vec<u8>, ConfigReadError<Self::IoError>>;
-}
-
-/// Standard filesystem implementation of [`ConfigRead`].
-#[cfg(feature = "std")]
-pub struct StdConfigRead;
-
-#[cfg(feature = "std")]
-impl ConfigRead for StdConfigRead {
-    type IoError = io::Error;
-
-    fn read(&self, path: &str) -> Result<Vec<u8>, ConfigReadError<io::Error>> {
-        let file = match fs::File::open(path) {
-            Ok(f) => f,
-            Err(e) if e.kind() == io::ErrorKind::NotFound => {
-                return Err(ConfigReadError::NotFound)
-            }
-            Err(e) => return Err(ConfigReadError::Io(e)),
-        };
-        let len = match file.metadata() {
-            Ok(m) if m.len() as usize > MAX_CONFIG_FILE_SIZE => {
-                return Err(ConfigReadError::TooLarge)
-            }
-            Ok(m) => m.len() as usize,
-            Err(e) => return Err(ConfigReadError::Io(e)),
-        };
-        let mut buf = Vec::with_capacity(len);
-        io::Read::read_to_end(&mut &file, &mut buf).map_err(ConfigReadError::Io)?;
-        Ok(buf)
     }
 }
 
@@ -585,9 +516,9 @@ impl Configurator {
     }
 
     fn parse_stable_config_slice(&self, buf: &[u8]) -> LoggedResult<StableConfig, anyhow::Error> {
-        let stable_config = match yaml::from_bytes::<StableConfig>(buf) {
+        let stable_config = match yaml_serde::from_slice::<StableConfig>(buf) {
             Ok(config) => config,
-            Err(e) => return LoggedResult::Err(e),
+            Err(e) => return LoggedResult::Err(e.into()),
         };
 
         let messages = if self.debug_logs {
@@ -602,7 +533,7 @@ impl Configurator {
     }
 
     #[cfg(all(feature = "std", test))]
-    fn parse_stable_config_file<F: io::Read>(
+    fn parse_stable_config_file<F: std::io::Read>(
         &self,
         mut f: F,
     ) -> LoggedResult<StableConfig, anyhow::Error> {
@@ -885,46 +816,13 @@ impl Configurator {
     }
 }
 
-mod yaml {
-    use super::utils;
-
-    /// Deserialize a YAML byte slice into `T`.
-    ///
-    /// Wraps `yaml_serde` (built on libyaml-rs) to isolate the dependency and
-    /// handle quirks like comment-only documents.
-    // TODO: Switch yaml_serde to official crates.io release once no_std support
-    // is merged: https://github.com/yaml/yaml-serde/pull/7
-    pub(crate) fn from_bytes<T: serde::de::DeserializeOwned + Default>(
-        buf: &[u8],
-    ) -> Result<T, anyhow::Error> {
-        let buf = utils::trim_bytes(buf);
-        let has_content = !buf.is_empty()
-            && buf.split(|&b| b == b'\n').any(|line| {
-                let trimmed = utils::trim_bytes(line);
-                !trimmed.is_empty() && !trimmed.starts_with(b"#")
-            });
-        if !has_content {
-            return Ok(T::default());
-        }
-        yaml_serde::from_slice::<T>(buf).map_err(Into::into)
-    }
-}
+// TODO: Switch yaml_serde to official crates.io release once no_std support
+// is merged: https://github.com/yaml/yaml-serde/pull/7
 
 use utils::Get;
 mod utils {
     use alloc::collections::BTreeMap;
     use alloc::string::String;
-
-    /// Removes leading and trailing ASCII whitespace from a byte slice
-    pub(crate) fn trim_bytes(mut b: &[u8]) -> &[u8] {
-        while b.first().map(u8::is_ascii_whitespace).unwrap_or(false) {
-            b = &b[1..];
-        }
-        while b.last().map(u8::is_ascii_whitespace).unwrap_or(false) {
-            b = &b[..b.len() - 1];
-        }
-        b
-    }
 
     /// Helper trait so we don't have to duplicate code for
     /// BTreeMap<&str, &str> and BTreeMap<String, String>
@@ -1529,8 +1427,7 @@ mod config_read_tests {
         }
 
         fn with_file(mut self, path: &str, content: &[u8]) -> Self {
-            self.files
-                .insert(path.to_string(), Ok(content.to_vec()));
+            self.files.insert(path.to_string(), Ok(content.to_vec()));
             self
         }
 
@@ -1572,12 +1469,8 @@ mod config_read_tests {
             );
 
         let configurator = Configurator::new(true);
-        let result = configurator.get_config_from_reader(
-            &reader,
-            "/local",
-            "/fleet",
-            &java_process_info(),
-        );
+        let result =
+            configurator.get_config_from_reader(&reader, "/local", "/fleet", &java_process_info());
 
         // TooLarge is non-fatal: should still get fleet config
         let logs = result.logs().to_vec();
@@ -1591,20 +1484,17 @@ mod config_read_tests {
 
     #[test]
     fn reader_io_error_aborts() {
-        let reader = MemReader::new()
-            .with_error("/local", ConfigReadError::Io("permission denied".to_string()));
+        let reader = MemReader::new().with_error(
+            "/local",
+            ConfigReadError::Io("permission denied".to_string()),
+        );
 
         let configurator = Configurator::new(false);
-        let result = configurator.get_config_from_reader(
-            &reader,
-            "/local",
-            "/fleet",
-            &java_process_info(),
-        );
+        let result =
+            configurator.get_config_from_reader(&reader, "/local", "/fleet", &java_process_info());
 
         let err = result.data().unwrap_err();
         let msg = format!("{err}");
         assert!(msg.contains("permission denied"), "got: {msg}");
     }
-
 }

@@ -295,9 +295,9 @@ pub extern "C" fn ddog_library_configurator_get_from_bytes(
                             value: ffi_configs,
                             logs: logs_to_cstring(logs),
                         }),
-                        Err(e) => LibraryConfigBytesResult::Err(ffi::CString::new_or_empty(
-                            e.to_string(),
-                        )),
+                        Err(e) => {
+                            LibraryConfigBytesResult::Err(ffi::CString::new_or_empty(e.to_string()))
+                        }
                     }
                 }
                 libdd_library_config::LoggedResult::Err(e) => {
