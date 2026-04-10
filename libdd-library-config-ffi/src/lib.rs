@@ -66,14 +66,14 @@ macro_rules! catch_panic {
         match catch_unwind(AssertUnwindSafe(|| $f)) {
             Ok(ret) => ret,
             Err(info) => {
-                let panic_msg = if let Some(s) = info.downcast_ref::<&'static str>() {
-                    s.to_string()
+                let detail = if let Some(s) = info.downcast_ref::<&'static str>() {
+                    format!("FFI function panicked: {s}")
                 } else if let Some(s) = info.downcast_ref::<String>() {
-                    s.clone()
+                    format!("FFI function panicked: {s}")
                 } else {
                     "FFI function panicked".to_string()
                 };
-                $err_ctor(panic_msg)
+                $err_ctor(detail)
             }
         }
     };
@@ -332,7 +332,7 @@ pub extern "C" fn ddog_library_configurator_get(
 
             LibraryConfig::logged_result_to_ffi_with_messages(result)
         },
-        |msg| LibraryConfigLoggedResult::Err(Error::from(format!("FFI function panicked: {msg}")))
+        |msg| LibraryConfigLoggedResult::Err(Error::from(msg))
     )
 }
 
