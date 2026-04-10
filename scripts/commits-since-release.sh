@@ -68,6 +68,7 @@ ${arg#--exclude=}"
             echo ""
             echo "Output JSON format:"
             echo '  [{"name":"crate-name","version":"1.0.0","tag":"crate-name-v1.0.0","tag_exists":true,"commits":[...]}]'
+            echo '  If tag_exists is false, commits are the full history for the crate path (no release tag to diff from).'
             exit 0
             ;;
         -*)
@@ -156,12 +157,11 @@ while read -r crate; do
     # Check if tag exists
     TAG_EXISTS=false
     TAG_ANCESTOR="unknown"
-    COMMITS_JSON="[]"
-    
+
     if git rev-parse "refs/tags/$TAG" >/dev/null 2>&1; then
         TAG_EXISTS=true
         log_verbose "  Tag exists, finding commits since $TAG..."
-        
+
         # Check if tag is an ancestor of HEAD (i.e., release was merged back to main)
         # If not, use merge-base to find the common ancestor.
         # Explicitly dereference annotated tags to their underlying commit: git merge-base does
@@ -187,40 +187,48 @@ while read -r crate; do
                 log_verbose "  WARNING: Could not find merge-base, using $TAG..HEAD"
             fi
         fi
-        
-        # Get commits since tag that affect this crate's directory
-        # Use ASCII unit separator (0x1F) as delimiter - won't appear in commit messages
-        COMMITS_JSON="["
-        COMMIT_FIRST=true
-        
-        while IFS=$'\x1F' read -r hash subject author date; do
-            if [ -n "$hash" ]; then
-                # Check if commit should be excluded
-                if should_exclude "$subject" "$author"; then
-                    log_verbose "    Excluding: $subject"
-                    continue
-                fi
-                
-                if [ "$COMMIT_FIRST" = true ]; then
-                    COMMIT_FIRST=false
-                else
-                    COMMITS_JSON+=","
-                fi
-                
-                # Escape special characters in subject for JSON
-                subject_escaped=$(echo "$subject" | jq -R .)
-                author_escaped=$(echo "$author" | jq -R .)
-                
-                COMMITS_JSON+="{\"hash\":\"$hash\",\"subject\":$subject_escaped,\"author\":$author_escaped,\"date\":\"$date\"}"
+
+        # Revision range from tag; see else branch for missing tag (full history for path)
+        GIT_LOG=(git log "$COMMIT_RANGE" --format="%H%x1F%s%x1F%an%x1F%aI" -- "$CRATE_PATH")
+    else
+        log_verbose "  Tag does NOT exist - listing all commits affecting $CRATE_PATH (no release tag to compare)"
+        GIT_LOG=(git log --format="%H%x1F%s%x1F%an%x1F%aI" -- "$CRATE_PATH")
+    fi
+
+    # Get commits that affect this crate's directory
+    # Use ASCII unit separator (0x1F) as delimiter - won't appear in commit messages
+    COMMITS_JSON="["
+    COMMIT_FIRST=true
+
+    while IFS=$'\x1F' read -r hash subject author date; do
+        if [ -n "$hash" ]; then
+            # Check if commit should be excluded
+            if should_exclude "$subject" "$author"; then
+                log_verbose "    Excluding: $subject"
+                continue
             fi
-        done < <(git log "$COMMIT_RANGE" --format="%H%x1F%s%x1F%an%x1F%aI" -- "$CRATE_PATH" 2>/dev/null || true)
-        
-        COMMITS_JSON+="]"
-        
-        COMMIT_COUNT=$(echo "$COMMITS_JSON" | jq 'length')
+
+            if [ "$COMMIT_FIRST" = true ]; then
+                COMMIT_FIRST=false
+            else
+                COMMITS_JSON+=","
+            fi
+
+            # Escape special characters in subject for JSON
+            subject_escaped=$(echo "$subject" | jq -R .)
+            author_escaped=$(echo "$author" | jq -R .)
+
+            COMMITS_JSON+="{\"hash\":\"$hash\",\"subject\":$subject_escaped,\"author\":$author_escaped,\"date\":\"$date\"}"
+        fi
+    done < <("${GIT_LOG[@]}" 2>/dev/null || true)
+
+    COMMITS_JSON+="]"
+
+    COMMIT_COUNT=$(echo "$COMMITS_JSON" | jq 'length')
+    if [ "$TAG_EXISTS" = true ]; then
         log_verbose "  Found $COMMIT_COUNT commits since $TAG"
     else
-        log_verbose "  Tag does NOT exist - no previous release found"
+        log_verbose "  Found $COMMIT_COUNT commits (full history for path; tag $TAG missing)"
     fi
     
     # Add to output
@@ -256,7 +264,10 @@ case "$FORMAT" in
                     "\n" + (.commits | map("    - \(.hash[0:8]) \(.subject)") | join("\n"))
                 else "" end)
             else 
-                "\n  No previous release tag found"
+                " (no tag \(.tag); showing full history for crate path)\n  Commits: \(.commits | length)" +
+                (if (.commits | length) > 0 then
+                    "\n" + (.commits | map("    - \(.hash[0:8]) \(.subject)") | join("\n"))
+                else "\n  (none)" end)
             end) + "\n"'
         ;;
     
