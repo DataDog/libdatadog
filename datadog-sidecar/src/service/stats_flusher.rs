@@ -176,10 +176,7 @@ pub async fn run_stats_flush_loop(
                 {
                     let mut guard = arc.lock_or_panic();
                     // Only remove our entry — a fresher one may have been inserted already.
-                    if guard
-                        .get(&map_key)
-                        .map_or(false, |s| Arc::ptr_eq(s, &state))
-                    {
+                    if guard.get(&map_key).is_some_and(|s| Arc::ptr_eq(s, &state)) {
                         guard.remove(&map_key);
                     }
                 }
