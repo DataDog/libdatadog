@@ -3,7 +3,7 @@
 
 // Declares the thread-local pointer that external readers (e.g. the eBPF
 // profiler) discover via the dynsym table. The Rust layer accesses this
-// pointer in otel_thread_ctx.rs.
+// pointer in lib.rs.
 //
 // The variable is declared in C in order to use the TLSDESC dialect for
 // thread-local storage, which is required by the OTel thread-level context
