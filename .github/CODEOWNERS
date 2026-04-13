@@ -3,6 +3,7 @@
 # More specific patterns at the bottom override general patterns above.
 
 .clang-format                        @DataDog/libdatadog
+.pre-commit-config.yaml              @DataDog/libdatadog-core
 .codecov.yml                         @DataDog/apm-common-components-core
 .cargo/*                             @DataDog/libdatadog-core
 .config/nextest.toml                 @DataDog/apm-common-components-core
