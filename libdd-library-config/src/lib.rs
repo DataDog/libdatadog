@@ -23,9 +23,9 @@ use core::mem;
 use core::ops::Deref;
 
 #[cfg(feature = "std")]
-use std::path::Path;
-#[cfg(feature = "std")]
 use std::env;
+#[cfg(feature = "std")]
+use std::path::Path;
 
 /// This struct holds maps used to match and template configurations.
 ///
@@ -554,8 +554,8 @@ impl Configurator {
     ) -> LoggedResult<Vec<LibraryConfig>, anyhow::Error> {
         self.get_config_from_reader(
             &StdConfigRead,
-            &path_local.to_string_lossy(),
-            &path_managed.to_string_lossy(),
+            path_local.to_string_lossy(),
+            path_managed.to_string_lossy(),
             process_info,
         )
     }
