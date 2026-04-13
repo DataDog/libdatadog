@@ -11,7 +11,7 @@ use anyhow::{anyhow, Context};
 use futures::stream::FuturesUnordered;
 use futures::StreamExt;
 use http::{header::CONTENT_TYPE, HeaderMap, HeaderValue};
-use libdd_capabilities::HttpClientTrait;
+use libdd_capabilities::{HttpClientCapability, SleepCapability};
 use libdd_common::{
     header::{
         APPLICATION_MSGPACK, APPLICATION_PROTOBUF, DATADOG_SEND_REAL_HTTP_STATUS,
@@ -59,10 +59,10 @@ use zstd::stream::write::Encoder;
 ///
 ///     send_data.set_retry_strategy(retry_strategy);
 ///
-///     // Send the data (caller picks the HTTP client implementation)
-///     use libdd_capabilities::HttpClientTrait;
-///     let client = libdd_capabilities_impl::NativeCapabilities::new_client();
-///     let result = send_data.send(&client).await;
+///     // Send the data (caller picks the capabilities implementation)
+///     use libdd_capabilities::HttpClientCapability;
+///     let capabilities = libdd_capabilities_impl::NativeCapabilities::new_client();
+///     let result = send_data.send(&capabilities).await;
 /// }
 /// ```
 pub struct SendData {
@@ -224,25 +224,28 @@ impl SendData {
     /// # Returns
     ///
     /// A `SendDataResult` instance containing the result of the operation.
-    pub async fn send<H: HttpClientTrait>(&self, client: &H) -> SendDataResult {
-        self.send_internal(client, None).await
+    pub async fn send<C: HttpClientCapability + SleepCapability>(
+        &self,
+        capabilities: &C,
+    ) -> SendDataResult {
+        self.send_internal(capabilities, None).await
     }
 
-    async fn send_internal<H: HttpClientTrait>(
+    async fn send_internal<C: HttpClientCapability + SleepCapability>(
         &self,
-        client: &H,
+        capabilities: &C,
         endpoint: Option<Endpoint>,
     ) -> SendDataResult {
         if self.use_protobuf() {
-            self.send_with_protobuf(client, endpoint).await
+            self.send_with_protobuf(capabilities, endpoint).await
         } else {
-            self.send_with_msgpack(client, endpoint).await
+            self.send_with_msgpack(capabilities, endpoint).await
         }
     }
 
-    async fn send_payload<H: HttpClientTrait>(
+    async fn send_payload<C: HttpClientCapability + SleepCapability>(
         &self,
-        client: &H,
+        capabilities: &C,
         chunks: u64,
         payload: Vec<u8>,
         headers: HeaderMap,
@@ -252,7 +255,7 @@ impl SendData {
         let payload_len = u64::try_from(payload.len()).unwrap();
         (
             send_with_retry(
-                client,
+                capabilities,
                 endpoint.unwrap_or(&self.target),
                 payload,
                 &headers,
@@ -293,9 +296,9 @@ impl SendData {
         }
     }
 
-    async fn send_with_protobuf<H: HttpClientTrait>(
+    async fn send_with_protobuf<C: HttpClientCapability + SleepCapability>(
         &self,
-        client: &H,
+        capabilities: &C,
         endpoint: Option<Endpoint>,
     ) -> SendDataResult {
         let mut result = SendDataResult::default();
@@ -325,7 +328,7 @@ impl SendData {
 
                 let (response, bytes_sent, chunks) = self
                     .send_payload(
-                        client,
+                        capabilities,
                         chunks,
                         final_payload,
                         request_headers,
@@ -341,9 +344,9 @@ impl SendData {
         }
     }
 
-    async fn send_with_msgpack<H: HttpClientTrait>(
+    async fn send_with_msgpack<C: HttpClientCapability + SleepCapability>(
         &self,
-        client: &H,
+        capabilities: &C,
         endpoint: Option<Endpoint>,
     ) -> SendDataResult {
         let mut result = SendDataResult::default();
@@ -365,7 +368,7 @@ impl SendData {
                     };
 
                     futures.push(self.send_payload(
-                        client,
+                        capabilities,
                         chunks,
                         payload,
                         headers,
@@ -384,7 +387,7 @@ impl SendData {
                 let payload = msgpack_encoder::v04::to_vec(payload);
 
                 futures.push(self.send_payload(
-                    client,
+                    capabilities,
                     chunks,
                     payload,
                     headers,
@@ -405,7 +408,7 @@ impl SendData {
                 };
 
                 futures.push(self.send_payload(
-                    client,
+                    capabilities,
                     chunks,
                     payload,
                     headers,
@@ -460,7 +463,7 @@ mod tests {
     use crate::tracer_header_tags::TracerHeaderTags;
     use httpmock::prelude::*;
     use httpmock::MockServer;
-    use libdd_capabilities::HttpClientTrait;
+    use libdd_capabilities::HttpClientCapability;
     use libdd_capabilities_impl::NativeCapabilities;
     use libdd_common::Endpoint;
     use libdd_trace_protobuf::pb::Span;

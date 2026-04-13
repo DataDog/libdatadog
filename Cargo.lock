@@ -2857,6 +2857,7 @@ dependencies = [
  "http-body-util",
  "libdd-capabilities",
  "libdd-common",
+ "tokio",
 ]
 
 [[package]]

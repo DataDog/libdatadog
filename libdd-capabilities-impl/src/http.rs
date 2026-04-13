@@ -4,7 +4,7 @@
 //! Native HTTP client implementation backed by hyper.
 
 mod native {
-    use libdd_capabilities::http::{HttpClientTrait, HttpError};
+    use libdd_capabilities::http::{HttpClientCapability, HttpError};
     use libdd_capabilities::maybe_send::MaybeSend;
     use libdd_common::connector::Connector;
     use libdd_common::http_common::{new_default_client, Body, GenericHttpClient};
@@ -12,17 +12,17 @@ mod native {
     use http_body_util::BodyExt;
 
     #[derive(Clone)]
-    pub struct DefaultHttpClient {
+    pub struct NativeHttpClient {
         client: GenericHttpClient<Connector>,
     }
 
-    impl std::fmt::Debug for DefaultHttpClient {
+    impl std::fmt::Debug for NativeHttpClient {
         fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-            f.debug_struct("DefaultHttpClient").finish()
+            f.debug_struct("NativeHttpClient").finish()
         }
     }
 
-    impl HttpClientTrait for DefaultHttpClient {
+    impl HttpClientCapability for NativeHttpClient {
         fn new_client() -> Self {
             Self {
                 client: new_default_client(),
@@ -57,4 +57,4 @@ mod native {
     }
 }
 
-pub use native::DefaultHttpClient;
+pub use native::NativeHttpClient;
