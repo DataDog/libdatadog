@@ -1,6 +1,7 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+pub use macros::*;
 #[allow(clippy::redundant_closure_call)]
 #[allow(clippy::missing_safety_doc)]
 #[allow(unused_parens)]
@@ -216,7 +217,7 @@ mod macros {
         telemetry_builder: &mut TelemetryWorkerBuilder,
         param: ffi::CharSlice,
     ) -> ffi::MaybeError {
-        telemetry_builder.session_id = match (|s: ffi::CharSlice| -> Result<_, String> {
+        telemetry_builder.config.session_id = match (|s: ffi::CharSlice| -> Result<_, String> {
             Ok(Some(s.to_utf8_lossy().into_owned()))
         })(param)
         {
@@ -234,7 +235,7 @@ mod macros {
         telemetry_builder: &mut TelemetryWorkerBuilder,
         param: ffi::CharSlice,
     ) -> ffi::MaybeError {
-        telemetry_builder.parent_session_id = match (|s: ffi::CharSlice| -> Result<_, String> {
+        telemetry_builder.config.parent_session_id = match (|s: ffi::CharSlice| -> Result<_, String> {
             Ok(Some(s.to_utf8_lossy().into_owned()))
         })(param)
         {
@@ -252,7 +253,7 @@ mod macros {
         telemetry_builder: &mut TelemetryWorkerBuilder,
         param: ffi::CharSlice,
     ) -> ffi::MaybeError {
-        telemetry_builder.root_session_id = match (|s: ffi::CharSlice| -> Result<_, String> {
+        telemetry_builder.config.root_session_id = match (|s: ffi::CharSlice| -> Result<_, String> {
             Ok(Some(s.to_utf8_lossy().into_owned()))
         })(param)
         {
@@ -478,7 +479,7 @@ mod macros {
                 };
             }
             SessionId => {
-                telemetry_builder.session_id = match (|s: ffi::CharSlice| -> Result<_, String> {
+                telemetry_builder.config.session_id = match (|s: ffi::CharSlice| -> Result<_, String> {
                     Ok(Some(s.to_utf8_lossy().into_owned()))
                 })(param)
                 {
@@ -491,7 +492,7 @@ mod macros {
                 };
             }
             ParentSessionId => {
-                telemetry_builder.parent_session_id =
+                telemetry_builder.config.parent_session_id =
                     match (|s: ffi::CharSlice| -> Result<_, String> {
                         Ok(Some(s.to_utf8_lossy().into_owned()))
                     })(param)
@@ -505,7 +506,7 @@ mod macros {
                     };
             }
             RootSessionId => {
-                telemetry_builder.root_session_id =
+                telemetry_builder.config.root_session_id =
                     match (|s: ffi::CharSlice| -> Result<_, String> {
                         Ok(Some(s.to_utf8_lossy().into_owned()))
                     })(param)
@@ -723,7 +724,7 @@ mod macros {
                 };
             }
             "session_id" => {
-                telemetry_builder.session_id = match (|s: ffi::CharSlice| -> Result<_, String> {
+                telemetry_builder.config.session_id = match (|s: ffi::CharSlice| -> Result<_, String> {
                     Ok(Some(s.to_utf8_lossy().into_owned()))
                 })(param)
                 {
@@ -736,7 +737,7 @@ mod macros {
                 };
             }
             "parent_session_id" => {
-                telemetry_builder.parent_session_id =
+                telemetry_builder.config.parent_session_id =
                     match (|s: ffi::CharSlice| -> Result<_, String> {
                         Ok(Some(s.to_utf8_lossy().into_owned()))
                     })(param)
@@ -750,7 +751,7 @@ mod macros {
                     };
             }
             "root_session_id" => {
-                telemetry_builder.root_session_id =
+                telemetry_builder.config.root_session_id =
                     match (|s: ffi::CharSlice| -> Result<_, String> {
                         Ok(Some(s.to_utf8_lossy().into_owned()))
                     })(param)
