@@ -67,6 +67,7 @@ repository.datadog.yml               @DataDog/apm-common-components-core
 rustfmt.toml                         @DataDog/libdatadog-core
 scripts/check_cargo_metadata.sh      @DataDog/libdatadog-core
 scripts/commits-since-release.sh     @DataDog/libdatadog-core
+scripts/crates-to-package.sh         @DataDog/libdatadog-core
 scripts/publication-order.sh         @DataDog/libdatadog-core
 scripts/reformat_copyright.sh        @DataDog/libdatadog-core
 scripts/semver-level.sh              @DataDog/libdatadog-core
