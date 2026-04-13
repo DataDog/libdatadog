@@ -11,10 +11,10 @@ pub const MAX_CONFIG_FILE_SIZE: usize = 100 * 1024 * 1024;
 /// This enum classifies all failure modes so the configurator can decide which
 /// are fatal (abort) and which are gracefully skipped:
 ///
-/// - [`NotFound`](Self::NotFound) — the file does not exist; the configuration
-///   layer is simply absent and will be treated as empty.
-/// - [`TooLarge`](Self::TooLarge) — the file exceeds [`MAX_CONFIG_FILE_SIZE`];
-///   skipped with a debug log.
+/// - [`NotFound`](Self::NotFound) — the file does not exist; the configuration layer is simply
+///   absent and will be treated as empty.
+/// - [`TooLarge`](Self::TooLarge) — the file exceeds [`MAX_CONFIG_FILE_SIZE`]; skipped with a debug
+///   log.
 /// - [`Io`](Self::Io) — any other I/O or access error; aborts config loading.
 #[derive(Debug, thiserror::Error)]
 pub enum ConfigReadError<E: core::fmt::Display + core::fmt::Debug> {
