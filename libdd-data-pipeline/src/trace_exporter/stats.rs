@@ -31,6 +31,7 @@ pub(crate) const STATS_ENDPOINT: &str = "/v0.6/stats";
 /// The maximum obfuscation version this tracer supports.
 #[cfg(feature = "stats-obfuscation")]
 pub(crate) const SUPPORTED_OBFUSCATION_VERSION: u32 = 1;
+pub(crate) const SUPPORTED_OBFUSCATION_VERSION_STR: &str = "1";
 
 /// Context struct that groups immutable parameters used by stats functions
 pub(crate) struct StatsContext<'a> {
