@@ -500,7 +500,7 @@ impl SpawnWorker {
                         }
                     }
 
-                    panic!("Failed lauching via fexecve(): {fexecve_error}");
+                    panic!("Failed launching via fexecve(): {fexecve_error}");
                 })
             }
             #[cfg(not(target_os = "macos"))]
