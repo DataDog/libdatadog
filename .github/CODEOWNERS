@@ -14,7 +14,6 @@
 .gitlab-ci.yml                       @DataDog/apm-common-components-core
 .gitlab/benchmarks.yml               @DataDog/apm-common-components-core
 .gitlab/fuzz.yml                     @DataDog/chaos-platform
-.gitmodules                          @DataDog/libdatadog
 benchmark/                           @DataDog/apm-common-components-core
 bin_tests/                           @DataDog/libdatadog-profiling
 build-common/                        @DataDog/apm-common-components-core
@@ -49,7 +48,9 @@ libdd-http-client                    @DataDog/apm-common-components-core
 libdd-library-config*/               @DataDog/apm-sdk-capabilities-rust
 libdd-libunwind*/                    @DataDog/libdatadog-profiling
 libdd-log*/                          @DataDog/apm-common-components-core
+libdd-otel-thread-ctx/               @DataDog/apm-common-components-core
 libdd-profiling*/                    @DataDog/libdatadog-profiling
+libdd-shared-runtime*/               @DataDog/apm-common-components-core
 libdd-telemetry*/                    @DataDog/apm-common-components-core
 libdd-tinybytes                      @DataDog/apm-common-components-core
 libdd-trace-normalization            @DataDog/serverless @DataDog/libdatadog-apm
@@ -66,6 +67,7 @@ repository.datadog.yml               @DataDog/apm-common-components-core
 rustfmt.toml                         @DataDog/libdatadog-core
 scripts/check_cargo_metadata.sh      @DataDog/libdatadog-core
 scripts/commits-since-release.sh     @DataDog/libdatadog-core
+scripts/crates-to-package.sh         @DataDog/libdatadog-core
 scripts/publication-order.sh         @DataDog/libdatadog-core
 scripts/reformat_copyright.sh        @DataDog/libdatadog-core
 scripts/semver-level.sh              @DataDog/libdatadog-core

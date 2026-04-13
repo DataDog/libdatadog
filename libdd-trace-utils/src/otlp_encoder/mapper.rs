@@ -173,7 +173,7 @@ fn map_span<T: TraceData>(span: &Span<T>, resource_service: &str) -> OtlpSpan {
 }
 
 fn map_span_link<T: TraceData>(link: &SpanLink<T>) -> OtlpSpanLink {
-    let trace_id_128 = (link.trace_id_high as u128) << 64 | (link.trace_id as u128);
+    let trace_id_128 = ((link.trace_id_high as u128) << 64) | (link.trace_id as u128);
     let trace_id_hex = format!("{:032x}", trace_id_128);
     let span_id_hex = format!("{:016x}", link.span_id);
     let trace_state = if link.tracestate.borrow().is_empty() {

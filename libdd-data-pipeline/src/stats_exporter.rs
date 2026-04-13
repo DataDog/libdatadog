@@ -11,14 +11,13 @@ use std::{
 };
 
 use crate::trace_exporter::TracerMetadata;
+use async_trait::async_trait;
 use libdd_capabilities::{HttpClientTrait, MaybeSend};
-use libdd_common::{worker::Worker, Endpoint};
+use libdd_common::Endpoint;
+use libdd_shared_runtime::Worker;
 use libdd_trace_protobuf::pb;
 use libdd_trace_stats::span_concentrator::SpanConcentrator;
 use libdd_trace_utils::send_with_retry::{send_with_retry, RetryStrategy};
-#[cfg(not(target_arch = "wasm32"))]
-use tokio::select;
-use tokio_util::sync::CancellationToken;
 use tracing::error;
 
 const STATS_ENDPOINT_PATH: &str = "/v0.6/stats";
@@ -34,7 +33,6 @@ pub struct StatsExporter<H: HttpClientTrait> {
     endpoint: Endpoint,
     meta: TracerMetadata,
     sequence_id: AtomicU64,
-    cancellation_token: CancellationToken,
     client: H,
 }
 
@@ -52,7 +50,6 @@ impl<H: HttpClientTrait> StatsExporter<H> {
         concentrator: Arc<Mutex<SpanConcentrator>>,
         meta: TracerMetadata,
         endpoint: Endpoint,
-        cancellation_token: CancellationToken,
         client: H,
     ) -> Self {
         Self {
@@ -61,7 +58,6 @@ impl<H: HttpClientTrait> StatsExporter<H> {
             endpoint,
             meta,
             sequence_id: AtomicU64::new(0),
-            cancellation_token,
             client,
         }
     }
@@ -136,30 +132,21 @@ impl<H: HttpClientTrait> StatsExporter<H> {
     }
 }
 
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 impl<H: HttpClientTrait + MaybeSend + Sync + 'static> Worker for StatsExporter<H> {
-    /// Run loop of the stats exporter
-    ///
-    /// Once started, the stats exporter will flush and send stats on every `self.flush_interval`.
-    /// If the `self.cancellation_token` is cancelled, the exporter will force flush all stats and
-    /// return.
-    async fn run(&mut self) {
-        #[cfg(target_arch = "wasm32")]
-        {
-            return;
-        }
+    async fn trigger(&mut self) {
+        tokio::time::sleep(self.flush_interval).await;
+    }
 
-        #[cfg(not(target_arch = "wasm32"))]
-        loop {
-            select! {
-                _ = self.cancellation_token.cancelled() => {
-                    let _ = self.send(true).await;
-                    break;
-                },
-                _ = tokio::time::sleep(self.flush_interval) => {
-                        let _ = self.send(false).await;
-                },
-            };
-        }
+    /// Flush and send stats on every trigger.
+    async fn run(&mut self) {
+        let _ = self.send(false).await;
+    }
+
+    async fn shutdown(&mut self) {
+        // Force flush all stats on shutdown
+        let _ = self.send(true).await;
     }
 }
 
@@ -206,6 +193,7 @@ mod tests {
     use httpmock::prelude::*;
     use httpmock::MockServer;
     use libdd_capabilities_impl::NativeCapabilities;
+    use libdd_shared_runtime::SharedRuntime;
     use libdd_trace_utils::span::{trace_utils, v04::SpanSlice};
     use libdd_trace_utils::test_utils::poll_for_mock_hit;
     use time::Duration;
@@ -283,7 +271,6 @@ mod tests {
             Arc::new(Mutex::new(get_test_concentrator())),
             get_test_metadata(),
             Endpoint::from_url(stats_url_from_agent_url(&server.url("/")).unwrap()),
-            CancellationToken::new(),
             NativeCapabilities::new_client(),
         );
 
@@ -311,7 +298,6 @@ mod tests {
             Arc::new(Mutex::new(get_test_concentrator())),
             get_test_metadata(),
             Endpoint::from_url(stats_url_from_agent_url(&server.url("/")).unwrap()),
-            CancellationToken::new(),
             NativeCapabilities::new_client(),
         );
 
@@ -325,80 +311,81 @@ mod tests {
     }
 
     #[cfg_attr(miri, ignore)]
-    #[tokio::test]
-    async fn test_run() {
-        let server = MockServer::start_async().await;
+    #[test]
+    fn test_run() {
+        let shared_runtime = SharedRuntime::new().expect("Failed to create runtime");
 
-        let mut mock = server
-            .mock_async(|when, then| {
-                when.method(POST)
-                    .header("Content-type", "application/msgpack")
-                    .path("/v0.6/stats")
-                    .body_includes("libdatadog-test")
-                    .body_includes("key1:value1,key2:value2");
-                then.status(200).body("");
-            })
-            .await;
+        let server = MockServer::start();
 
-        let mut stats_exporter = StatsExporter::<NativeCapabilities>::new(
-            BUCKETS_DURATION,
+        let mut mock = server.mock(|when, then| {
+            when.method(POST)
+                .header("Content-type", "application/msgpack")
+                .path("/v0.6/stats")
+                .body_includes("libdatadog-test")
+                .body_includes("key1:value1,key2:value2");
+            then.status(200).body("");
+        });
+
+        let stats_exporter = StatsExporter::<NativeCapabilities>::new(
+            // Use smaller buckets duration to speed up test
+            Duration::from_secs(1),
             Arc::new(Mutex::new(get_test_concentrator())),
             get_test_metadata(),
             Endpoint::from_url(stats_url_from_agent_url(&server.url("/")).unwrap()),
-            CancellationToken::new(),
             NativeCapabilities::new_client(),
         );
 
-        tokio::time::pause();
-        tokio::spawn(async move {
-            stats_exporter.run().await;
-        });
-        // Wait for the stats to be flushed
-        tokio::time::sleep(BUCKETS_DURATION + Duration::from_secs(1)).await;
-        // Resume time to sleep while the stats are being sent
-        tokio::time::resume();
+        let _handle = shared_runtime
+            .spawn_worker(stats_exporter)
+            .expect("Failed to spawn worker");
+
+        // Wait for stats to be flushed
+        std::thread::sleep(Duration::from_secs(1));
+
         assert!(
-            poll_for_mock_hit(&mut mock, 10, 100, 1, false).await,
+            shared_runtime
+                .block_on(poll_for_mock_hit(&mut mock, 10, 100, 1, false))
+                .expect("Failed to use runtime"),
             "Expected max retry attempts"
         );
     }
 
     #[cfg_attr(miri, ignore)]
-    #[tokio::test]
-    async fn test_cancellation_token() {
-        let server = MockServer::start_async().await;
+    #[test]
+    fn test_worker_shutdown() {
+        let shared_runtime = SharedRuntime::new().expect("Failed to create runtime");
 
-        let mut mock = server
-            .mock_async(|when, then| {
-                when.method(POST)
-                    .header("Content-type", "application/msgpack")
-                    .path("/v0.6/stats")
-                    .body_includes("libdatadog-test")
-                    .body_includes("key1:value1,key2:value2");
-                then.status(200).body("");
-            })
-            .await;
+        let server = MockServer::start();
+
+        let mut mock = server.mock(|when, then| {
+            when.method(POST)
+                .header("Content-type", "application/msgpack")
+                .path("/v0.6/stats")
+                .body_includes("libdatadog-test")
+                .body_includes("key1:value1,key2:value2");
+            then.status(200).body("");
+        });
 
         let buckets_duration = Duration::from_secs(10);
-        let cancellation_token = CancellationToken::new();
 
-        let mut stats_exporter = StatsExporter::<NativeCapabilities>::new(
+        let stats_exporter = StatsExporter::<NativeCapabilities>::new(
             buckets_duration,
             Arc::new(Mutex::new(get_test_concentrator())),
             get_test_metadata(),
             Endpoint::from_url(stats_url_from_agent_url(&server.url("/")).unwrap()),
-            cancellation_token.clone(),
             NativeCapabilities::new_client(),
         );
 
-        tokio::spawn(async move {
-            stats_exporter.run().await;
-        });
-        // Cancel token to trigger force flush
-        cancellation_token.cancel();
+        let _handle = shared_runtime
+            .spawn_worker(stats_exporter)
+            .expect("Failed to spawn worker");
+
+        shared_runtime.shutdown(None).unwrap();
 
         assert!(
-            poll_for_mock_hit(&mut mock, 10, 100, 1, false).await,
+            shared_runtime
+                .block_on(poll_for_mock_hit(&mut mock, 10, 100, 1, false))
+                .expect("Failed to get runtime"),
             "Expected max retry attempts"
         );
     }

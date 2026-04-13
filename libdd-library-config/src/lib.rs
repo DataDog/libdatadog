@@ -1370,7 +1370,7 @@ rules:
                 b"
 config_id: abc
 tags:
-  cluster_name: my_cluster 
+  cluster_name: my_cluster
 rules:
 - selectors:
   - origin: language

@@ -26,7 +26,7 @@ std = [
     "dep:rmp-serde",
     "dep:libdd-trace-protobuf",
     "dep:memfd",
-    "dep:rustix",
+    "dep:libc",
 ]
 otel-thread-ctx = []
 
@@ -51,4 +51,4 @@ serial_test = "3.2"
 
 [target.'cfg(unix)'.dependencies]
 memfd = { version = "0.6", optional = true }
-rustix = { version = "1.1.3", features = ["param", "mm", "process", "fs", "time"], optional = true }
+libc = { version = "0.2", optional = true }
