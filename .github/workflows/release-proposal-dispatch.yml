@@ -407,16 +407,7 @@ jobs:
               INITIAL_RELEASE=true
 
               echo "Executing cargo release for $NAME with level $LEVEL..."
-              cargo release version -p "$NAME" -x major --no-confirm
-
-              # this should never happen, but just in case
-              if git diff --cached --quiet; then
-                # Nothing changed (version already correct, CHANGELOG already present).
-                # An empty commit is required so the proposal branch is ahead of the
-                # ephemeral branch — GitHub rejects PRs between branches at the same commit.
-                echo "Nothing to commit for $NAME (version and CHANGELOG already up to date), creating empty release marker commit..."
-                git commit --allow-empty -m "chore: Release $NAME $LEVEL"
-              fi
+              cargo release version -p "$NAME" --allow-branch "$BRANCH_NAME" -x $LEVEL --no-confirm
             fi
             
             # Commit the changes
@@ -598,7 +589,6 @@ jobs:
           echo "commits=$COMMITS" >> $GITHUB_OUTPUT
 
       - name: Push commits
-        if: steps.release-version-bumps.outputs.commits != ''
         uses: DataDog/commit-headless@action/v2.0.3
         with:
           branch: ${{ steps.proposal-branch.outputs.branch_name }}
