@@ -6,7 +6,10 @@
 use crate::config::InferConfig;
 use crate::span_data::SpanData;
 use crate::triggers::serde_utils::nullable_map;
-use crate::triggers::{FUNCTION_TRIGGER_EVENT_SOURCE_TAG, Trigger, lowercase_key};
+use crate::triggers::{
+    FUNCTION_TRIGGER_EVENT_SOURCE_ARN_TAG, FUNCTION_TRIGGER_EVENT_SOURCE_TAG, Trigger,
+    lowercase_key,
+};
 use crate::utils::{
     MS_TO_NS, get_aws_partition_by_region, parameterize_api_resource, resolve_service_name,
 };
@@ -54,6 +57,16 @@ pub struct RequestContext {
 pub struct Identity {
     pub source_ip: String,
     pub user_agent: String,
+}
+
+impl ApiGatewayRestEvent {
+    fn get_specific_service_id(&self) -> String {
+        self.request_context.api_id.clone()
+    }
+
+    fn get_generic_service_id(&self) -> &'static str {
+        "lambda_api_gateway"
+    }
 }
 
 impl Trigger for ApiGatewayRestEvent {
@@ -123,7 +136,7 @@ impl Trigger for ApiGatewayRestEvent {
         ]);
     }
 
-    fn get_tags(&self) -> HashMap<String, String> {
+    fn get_tags(&self, config: &InferConfig) -> HashMap<String, String> {
         let mut tags = HashMap::from([
             (
                 "http.url".to_string(),
@@ -158,27 +171,31 @@ impl Trigger for ApiGatewayRestEvent {
             tags.insert("http.user_agent".to_string(), user_agent.to_string());
         }
 
-        tags
-    }
-
-    fn get_arn(&self, region: &str) -> String {
-        let partition = get_aws_partition_by_region(region);
-        format!(
+        // ARN tag
+        let partition = get_aws_partition_by_region(&config.region);
+        let arn = format!(
             "arn:{partition}:apigateway:{region}::/restapis/{api_id}/stages/{stage}",
+            region = config.region,
             api_id = self.request_context.api_id,
             stage = self.request_context.stage,
-        )
-    }
+        );
+        tags.insert(
+            FUNCTION_TRIGGER_EVENT_SOURCE_ARN_TAG.to_string(),
+            arn,
+        );
 
-    fn get_dd_resource_key(&self, region: &str) -> Option<String> {
-        if self.request_context.api_id.is_empty() {
-            return None;
+        // dd_resource_key tag
+        if !self.request_context.api_id.is_empty() {
+            let partition = get_aws_partition_by_region(&config.region);
+            let dd_resource_key = format!(
+                "arn:{partition}:apigateway:{region}::/restapis/{api_id}",
+                region = config.region,
+                api_id = self.request_context.api_id,
+            );
+            tags.insert("dd_resource_key".to_string(), dd_resource_key);
         }
-        let partition = get_aws_partition_by_region(region);
-        Some(format!(
-            "arn:{partition}:apigateway:{region}::/restapis/{api_id}",
-            api_id = self.request_context.api_id,
-        ))
+
+        tags
     }
 
     fn is_async(&self) -> bool {
@@ -189,13 +206,5 @@ impl Trigger for ApiGatewayRestEvent {
 
     fn get_carrier(&self) -> HashMap<String, String> {
         self.headers.clone()
-    }
-
-    fn get_specific_service_id(&self) -> String {
-        self.request_context.api_id.clone()
-    }
-
-    fn get_generic_service_id(&self) -> &'static str {
-        "lambda_api_gateway"
     }
 }

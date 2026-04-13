@@ -8,7 +8,10 @@
 
 use crate::config::InferConfig;
 use crate::span_data::SpanData;
-use crate::triggers::{FUNCTION_TRIGGER_EVENT_SOURCE_TAG, Trigger, lowercase_key};
+use crate::triggers::{
+    FUNCTION_TRIGGER_EVENT_SOURCE_ARN_TAG, FUNCTION_TRIGGER_EVENT_SOURCE_TAG, Trigger,
+    lowercase_key,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
@@ -56,18 +59,18 @@ impl Trigger for AlbEvent {
         // ALB events do not produce inferred spans.
     }
 
-    fn get_tags(&self) -> HashMap<String, String> {
+    fn get_tags(&self, _config: &InferConfig) -> HashMap<String, String> {
         HashMap::from([
             ("http.method".to_string(), self.http_method.clone()),
             (
                 FUNCTION_TRIGGER_EVENT_SOURCE_TAG.to_string(),
                 "alb".to_string(),
             ),
+            (
+                FUNCTION_TRIGGER_EVENT_SOURCE_ARN_TAG.to_string(),
+                self.request_context.elb.target_group_arn.clone(),
+            ),
         ])
-    }
-
-    fn get_arn(&self, _region: &str) -> String {
-        self.request_context.elb.target_group_arn.clone()
     }
 
     fn is_async(&self) -> bool {
@@ -83,13 +86,5 @@ impl Trigger for AlbEvent {
             .iter()
             .filter_map(|(k, v)| v.first().map(|first| (k.to_lowercase(), first.clone())))
             .collect()
-    }
-
-    fn get_specific_service_id(&self) -> String {
-        self.request_context.elb.target_group_arn.clone()
-    }
-
-    fn get_generic_service_id(&self) -> &'static str {
-        "lambda_alb"
     }
 }

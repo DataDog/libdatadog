@@ -5,8 +5,10 @@
 
 use crate::config::InferConfig;
 use crate::span_data::SpanData;
-use crate::span_pointer::{SpanPointer, generate_span_pointer_hash};
-use crate::triggers::{FUNCTION_TRIGGER_EVENT_SOURCE_TAG, Trigger};
+use crate::span_link::{SpanLink, generate_span_link_hash};
+use crate::triggers::{
+    FUNCTION_TRIGGER_EVENT_SOURCE_ARN_TAG, FUNCTION_TRIGGER_EVENT_SOURCE_TAG, Trigger,
+};
 use crate::utils::{S_TO_NS, resolve_service_name};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -61,6 +63,20 @@ impl AttributeValue {
                     .and_then(|bytes| String::from_utf8(bytes).ok())
             }
         }
+    }
+}
+
+impl DynamoDbRecord {
+    fn get_specific_service_id(&self) -> String {
+        self.event_source_arn
+            .split('/')
+            .nth(1)
+            .unwrap_or_default()
+            .to_string()
+    }
+
+    fn get_generic_service_id(&self) -> &'static str {
+        "lambda_dynamodb"
     }
 }
 
@@ -124,15 +140,19 @@ impl Trigger for DynamoDbRecord {
         ]);
     }
 
-    fn get_tags(&self) -> HashMap<String, String> {
-        HashMap::from([(
+    fn get_tags(&self, _config: &InferConfig) -> HashMap<String, String> {
+        let mut tags = HashMap::from([(
             FUNCTION_TRIGGER_EVENT_SOURCE_TAG.to_string(),
             "dynamodb".to_string(),
-        )])
-    }
+        )]);
 
-    fn get_arn(&self, _region: &str) -> String {
-        self.event_source_arn.clone()
+        // ARN tag
+        tags.insert(
+            FUNCTION_TRIGGER_EVENT_SOURCE_ARN_TAG.to_string(),
+            self.event_source_arn.clone(),
+        );
+
+        tags
     }
 
     fn get_carrier(&self) -> HashMap<String, String> {
@@ -143,40 +163,38 @@ impl Trigger for DynamoDbRecord {
         true
     }
 
-    fn get_specific_service_id(&self) -> String {
-        self.event_source_arn
-            .split('/')
-            .nth(1)
-            .unwrap_or_default()
-            .to_string()
-    }
-
-    fn get_generic_service_id(&self) -> &'static str {
-        "lambda_dynamodb"
-    }
-
-    fn get_span_pointers(&self) -> Option<Vec<SpanPointer>> {
+    fn get_span_links(&self) -> Vec<SpanLink> {
         if self.dynamodb.keys.is_empty() {
-            return None;
+            return Vec::new();
         }
 
         let table_name = self.get_specific_service_id();
 
         #[allow(clippy::single_match_else)]
-        let (pk1, v1, pk2, v2) = match self.dynamodb.keys.len() {
+        let result = match self.dynamodb.keys.len() {
             1 => {
-                let (key, attr) = self.dynamodb.keys.iter().next()?;
-                let value = attr.to_string_value()?;
+                let Some((key, attr)) = self.dynamodb.keys.iter().next() else {
+                    return Vec::new();
+                };
+                let Some(value) = attr.to_string_value() else {
+                    return Vec::new();
+                };
                 (key.clone(), value, String::new(), String::new())
             }
             _ => {
                 let mut keys: Vec<(&String, &AttributeValue)> = self.dynamodb.keys.iter().collect();
                 keys.sort_by(|a, b| a.0.cmp(b.0));
-                let v1 = keys[0].1.to_string_value()?;
-                let v2 = keys[1].1.to_string_value()?;
+                let Some(v1) = keys[0].1.to_string_value() else {
+                    return Vec::new();
+                };
+                let Some(v2) = keys[1].1.to_string_value() else {
+                    return Vec::new();
+                };
                 (keys[0].0.clone(), v1, keys[1].0.clone(), v2)
             }
         };
+
+        let (pk1, v1, pk2, v2) = result;
 
         let parts = [
             table_name.as_str(),
@@ -185,10 +203,10 @@ impl Trigger for DynamoDbRecord {
             pk2.as_str(),
             v2.as_str(),
         ];
-        let hash = generate_span_pointer_hash(&parts);
-        Some(vec![SpanPointer {
+        let hash = generate_span_link_hash(&parts);
+        vec![SpanLink {
             hash,
             kind: "aws.dynamodb.item".to_string(),
-        }])
+        }]
     }
 }

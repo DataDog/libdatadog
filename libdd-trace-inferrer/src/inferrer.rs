@@ -10,10 +10,8 @@ use serde_json::Value;
 use crate::config::InferConfig;
 use crate::error::InferrerError;
 use crate::span_data::SpanData;
-use crate::span_pointer::SpanPointer;
-use crate::triggers::{
-    GeneratedTraceContext, Trigger, TriggerType, FUNCTION_TRIGGER_EVENT_SOURCE_ARN_TAG,
-};
+use crate::span_link::SpanLink;
+use crate::triggers::{TraceContext, Trigger, TriggerType};
 use crate::triggers::aws::sqs::WrappedSqsTrigger;
 
 /// Complete result of inferring trace data from a payload.
@@ -22,56 +20,57 @@ use crate::triggers::aws::sqs::WrappedSqsTrigger;
 /// - Construct a trace span from [`span_data`](Self::span_data)
 /// - Add trigger tags to the invocation/function span
 /// - Extract trace context from [`carrier`](Self::carrier) or
-///   [`generated_context`](Self::generated_context)
+///   [`trace_context`](Self::trace_context)
 /// - Determine duration semantics from [`is_async`](Self::is_async)
 /// - Optionally create a wrapped inferred span (e.g., SNS-in-SQS)
 #[derive(Debug, Clone, Default)]
 pub struct InferenceResult {
-    // ── Span data ───────────────────────────────────────────────────────
     /// Data for the inferred span (decoupled from any protobuf type).
+    ///
+    /// If `span_data.name` is empty, no inferred span should be created.
+    /// Consumers should still use `trigger_tags` and `carrier`.
     pub span_data: SpanData,
 
-    // ── Trigger metadata ────────────────────────────────────────────────
     /// Tags to add to the invocation/function span (NOT the inferred span).
+    ///
+    /// Always contains `function_trigger.event_source`. May also contain
+    /// `function_trigger.event_source_arn`, `dd_resource_key`, and
+    /// provider-specific tags.
     pub trigger_tags: HashMap<String, String>,
-    /// The detected trigger type (the enum variant wraps the parsed trigger).
-    pub trigger_type: TriggerType,
 
-    // ── Trace context propagation ───────────────────────────────────────
     /// Carrier headers for trace context extraction (e.g., Datadog headers).
     ///
     /// Consumers pass these to their propagator's `extract()` method.
     pub carrier: HashMap<String, String>,
-    /// Deterministically generated trace context (Step Functions, AWSTraceHeader).
+
+    /// Pre-extracted trace context from the payload (e.g., AWSTraceHeader,
+    /// Step Functions SHA-256).
     ///
     /// Consumers should check this when `carrier` is empty.
-    pub generated_context: Option<GeneratedTraceContext>,
+    pub trace_context: Option<TraceContext>,
 
-    // ── Behavioral flags ────────────────────────────────────────────────
     /// Whether this trigger is an asynchronous invocation.
     ///
     /// For async triggers, span duration = invocation_start - event_time.
     /// For sync triggers, span duration = invocation_end - event_time.
     pub is_async: bool,
-    /// Whether to actually create an inferred span.
-    ///
-    /// `false` for unknown payloads, ALB events, and Step Functions with
-    /// generated context. When `false`, consumers should still use
-    /// `trigger_tags` and `carrier`.
-    pub should_create_inferred_span: bool,
 
-    // ── AWS-specific data ───────────────────────────────────────────────
-    /// ARN of the trigger event source.
-    pub event_source_arn: String,
-    /// `dd_resource_key` for API Gateway cloud integrations linking.
-    pub dd_resource_key: Option<String>,
-    /// Span pointers for S3 and DynamoDB stream events.
-    pub span_pointers: Vec<SpanPointer>,
+    /// Span links connecting the inferred span to upstream resources.
+    pub span_links: Vec<SpanLink>,
 
-    // ── Wrapped inferred span ───────────────────────────────────────────
     /// Optional nested inferred span (e.g., SNS event inside SQS body,
     /// EventBridge event inside SQS/SNS body).
     pub wrapped_span: Option<Box<InferenceResult>>,
+}
+
+impl InferenceResult {
+    /// Returns `true` if this result should produce an inferred span.
+    ///
+    /// This is determined by whether `enrich_span` populated the span name.
+    #[must_use]
+    pub fn should_create_inferred_span(&self) -> bool {
+        !self.span_data.name.is_empty()
+    }
 }
 
 /// Builds an [`InferenceResult`] from a trigger implementing the [`Trigger`]
@@ -82,37 +81,13 @@ pub fn build_result_from_trigger<T: Trigger>(trigger: &T, config: &InferConfig) 
     let mut span_data = SpanData::default();
     trigger.enrich_span(&mut span_data, config);
 
-    let mut trigger_tags = trigger.get_tags();
-    let carrier = trigger.get_carrier();
-    let is_async = trigger.is_async();
-
-    let arn = trigger.get_arn(&config.region);
-    let dd_resource_key = trigger.get_dd_resource_key(&config.region);
-    let span_pointers = trigger.get_span_pointers().unwrap_or_default();
-    let generated_context = trigger.get_generated_trace_context();
-
-    // Only create an inferred span if enrich_span populated the span name.
-    // ALB and Step Functions leave enrich_span as a no-op, so name stays empty.
-    let should_create = !span_data.name.is_empty();
-
-    if !arn.is_empty() {
-        trigger_tags.insert(
-            FUNCTION_TRIGGER_EVENT_SOURCE_ARN_TAG.to_string(),
-            arn.clone(),
-        );
-    }
-
     InferenceResult {
         span_data,
-        trigger_tags,
-        trigger_type: TriggerType::Unknown, // Set by macro caller
-        carrier,
-        generated_context,
-        is_async,
-        should_create_inferred_span: should_create,
-        event_source_arn: arn,
-        dd_resource_key,
-        span_pointers,
+        trigger_tags: trigger.get_tags(config),
+        carrier: trigger.get_carrier(),
+        trace_context: trigger.get_trace_context(),
+        is_async: trigger.is_async(),
+        span_links: trigger.get_span_links(),
         wrapped_span: None,
     }
 }
@@ -155,7 +130,7 @@ impl SpanInferrer {
     /// Infers trace data from a pre-parsed JSON value.
     ///
     /// This never fails; unknown payloads return a result with
-    /// `should_create_inferred_span: false`.
+    /// an empty `span_data.name`.
     #[must_use]
     pub fn infer_span_from_value(&self, payload: &Value) -> InferenceResult {
         let identified = TriggerType::from_value(payload);
@@ -167,7 +142,7 @@ impl SpanInferrer {
         let mut result = identified.build_inference_result(&self.config);
 
         // Build wrapped inferred span for SQS and SNS triggers.
-        result.wrapped_span = self.build_wrapped_span(&result);
+        result.wrapped_span = self.build_wrapped_span(&identified);
 
         result
     }
@@ -176,8 +151,8 @@ impl SpanInferrer {
     ///
     /// - SQS can wrap SNS or EventBridge events in its body.
     /// - SNS can wrap EventBridge events in its message.
-    fn build_wrapped_span(&self, result: &InferenceResult) -> Option<Box<InferenceResult>> {
-        match &result.trigger_type {
+    fn build_wrapped_span(&self, trigger_type: &TriggerType) -> Option<Box<InferenceResult>> {
+        match trigger_type {
             TriggerType::Sqs(sqs_record) => {
                 let wrapped = sqs_record.get_wrapped_trigger()?;
                 let mut wrapped_span = SpanData::default();
@@ -185,18 +160,17 @@ impl SpanInferrer {
                 let wrapped_tags = match &wrapped {
                     WrappedSqsTrigger::Sns(sns_record) => {
                         sns_record.enrich_span(&mut wrapped_span, &self.config);
-                        sns_record.get_tags()
+                        sns_record.get_tags(&self.config)
                     }
                     WrappedSqsTrigger::EventBridge(eb_event) => {
                         eb_event.enrich_span(&mut wrapped_span, &self.config);
-                        eb_event.get_tags()
+                        eb_event.get_tags(&self.config)
                     }
                 };
 
                 Some(Box::new(InferenceResult {
                     span_data: wrapped_span,
                     trigger_tags: wrapped_tags,
-                    should_create_inferred_span: true,
                     ..InferenceResult::default()
                 }))
             }
@@ -204,12 +178,11 @@ impl SpanInferrer {
                 let eb_event = sns_record.get_wrapped_trigger()?;
                 let mut wrapped_span = SpanData::default();
                 eb_event.enrich_span(&mut wrapped_span, &self.config);
-                let wrapped_tags = eb_event.get_tags();
+                let wrapped_tags = eb_event.get_tags(&self.config);
 
                 Some(Box::new(InferenceResult {
                     span_data: wrapped_span,
                     trigger_tags: wrapped_tags,
-                    should_create_inferred_span: true,
                     ..InferenceResult::default()
                 }))
             }
@@ -297,7 +270,7 @@ pub fn complete_inference(
     parent_id: u64,
     ctx: &CompletionContext,
 ) -> CompletedSpans {
-    if !result.should_create_inferred_span {
+    if !result.should_create_inferred_span() {
         return CompletedSpans::default();
     }
 
@@ -356,8 +329,8 @@ mod tests {
     fn test_infer_unknown_payload() {
         let inferrer = SpanInferrer::new(InferConfig::default());
         let result = inferrer.infer_span(r#"{"random": "data"}"#).unwrap();
-        assert!(matches!(result.trigger_type, TriggerType::Unknown));
-        assert!(!result.should_create_inferred_span);
+        assert!(matches!(result.trigger_tags.get("function_trigger.event_source"), None));
+        assert!(!result.should_create_inferred_span());
     }
 
     #[test]
@@ -370,12 +343,12 @@ mod tests {
     #[test]
     fn test_inference_result_default() {
         let result = InferenceResult::default();
-        assert!(!result.should_create_inferred_span);
+        assert!(!result.should_create_inferred_span());
         assert!(result.carrier.is_empty());
         assert!(result.trigger_tags.is_empty());
-        assert!(result.span_pointers.is_empty());
+        assert!(result.span_links.is_empty());
         assert!(result.wrapped_span.is_none());
-        assert!(result.generated_context.is_none());
+        assert!(result.trace_context.is_none());
     }
 
     #[test]
@@ -389,7 +362,6 @@ mod tests {
                 start: 1_000_000_000,
                 ..Default::default()
             },
-            should_create_inferred_span: true,
             is_async: false,
             ..Default::default()
         };
@@ -424,7 +396,6 @@ mod tests {
                 start: 1_000_000_000,
                 ..Default::default()
             },
-            should_create_inferred_span: true,
             is_async: true,
             ..Default::default()
         };
@@ -464,7 +435,6 @@ mod tests {
                 start: 1_000_000_000,
                 ..Default::default()
             },
-            should_create_inferred_span: true,
             is_async: true,
             wrapped_span: Some(Box::new(wrapped_result)),
             ..Default::default()
@@ -497,10 +467,7 @@ mod tests {
 
     #[test]
     fn test_complete_inference_no_span_created() {
-        let result = InferenceResult {
-            should_create_inferred_span: false,
-            ..Default::default()
-        };
+        let result = InferenceResult::default();
 
         let ctx = CompletionContext {
             trace_id: 12345,

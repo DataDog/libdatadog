@@ -5,8 +5,8 @@
 //!
 //! A library for inferring Datadog trace spans from JSON payloads.
 //!
-//! This crate identifies AWS Lambda trigger event payloads and extracts span
-//! data, trace context carriers, trigger tags, span pointers, and more. It is
+//! This crate identifies trigger event payloads and extracts span data,
+//! trace context carriers, trigger tags, span links, and more. It is
 //! designed to be consumed by any tracer runtime (Rust, Ruby, Python, etc.)
 //! through an FFI layer.
 //!
@@ -32,7 +32,7 @@ mod config;
 mod error;
 mod inferrer;
 mod span_data;
-mod span_pointer;
+mod span_link;
 pub mod triggers;
 mod utils;
 
@@ -43,5 +43,5 @@ pub use inferrer::{
     complete_inference,
 };
 pub use span_data::SpanData;
-pub use span_pointer::SpanPointer;
-pub use triggers::TriggerType;
+pub use span_link::SpanLink;
+pub use triggers::{TraceContext, TriggerType};

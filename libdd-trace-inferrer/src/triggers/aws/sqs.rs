@@ -6,7 +6,8 @@
 use crate::config::InferConfig;
 use crate::span_data::SpanData;
 use crate::triggers::{
-    DATADOG_CARRIER_KEY, FUNCTION_TRIGGER_EVENT_SOURCE_TAG, GeneratedTraceContext, Trigger,
+    DATADOG_CARRIER_KEY, FUNCTION_TRIGGER_EVENT_SOURCE_ARN_TAG, FUNCTION_TRIGGER_EVENT_SOURCE_TAG,
+    TraceContext, Trigger,
 };
 use crate::utils::{MS_TO_NS, get_aws_partition_by_region, resolve_service_name};
 use serde::{Deserialize, Serialize};
@@ -63,6 +64,20 @@ pub struct SqsMessageAttribute {
     pub binary_list_values: Option<Vec<String>>,
     #[serde(rename = "dataType")]
     pub data_type: String,
+}
+
+impl SqsRecord {
+    fn get_specific_service_id(&self) -> String {
+        self.event_source_arn
+            .split(':')
+            .next_back()
+            .unwrap_or_default()
+            .to_string()
+    }
+
+    fn get_generic_service_id(&self) -> &'static str {
+        "lambda_sqs"
+    }
 }
 
 impl Trigger for SqsRecord {
@@ -127,8 +142,8 @@ impl Trigger for SqsRecord {
         ]);
     }
 
-    fn get_tags(&self) -> HashMap<String, String> {
-        HashMap::from([
+    fn get_tags(&self, config: &InferConfig) -> HashMap<String, String> {
+        let mut tags = HashMap::from([
             (
                 "retry_count".to_string(),
                 self.attributes.approximate_receive_count.clone(),
@@ -140,11 +155,10 @@ impl Trigger for SqsRecord {
                 FUNCTION_TRIGGER_EVENT_SOURCE_TAG.to_string(),
                 "sqs".to_string(),
             ),
-        ])
-    }
+        ]);
 
-    fn get_arn(&self, region: &str) -> String {
-        if let [_, _, _, _, account, queue_name] = self
+        // ARN tag - reconstruct from event_source_arn
+        let arn = if let [_, _, _, _, account, queue_name] = self
             .event_source_arn
             .split(':')
             .collect::<Vec<&str>>()
@@ -152,14 +166,20 @@ impl Trigger for SqsRecord {
         {
             format!(
                 "arn:{}:sqs:{}:{}:{}",
-                get_aws_partition_by_region(region),
-                region,
+                get_aws_partition_by_region(&config.region),
+                config.region,
                 account,
                 queue_name
             )
         } else {
             String::new()
-        }
+        };
+        tags.insert(
+            FUNCTION_TRIGGER_EVENT_SOURCE_ARN_TAG.to_string(),
+            arn,
+        );
+
+        tags
     }
 
     fn get_carrier(&self) -> HashMap<String, String> {
@@ -191,19 +211,7 @@ impl Trigger for SqsRecord {
         true
     }
 
-    fn get_specific_service_id(&self) -> String {
-        self.event_source_arn
-            .split(':')
-            .next_back()
-            .unwrap_or_default()
-            .to_string()
-    }
-
-    fn get_generic_service_id(&self) -> &'static str {
-        "lambda_sqs"
-    }
-
-    fn get_generated_trace_context(&self) -> Option<GeneratedTraceContext> {
+    fn get_trace_context(&self) -> Option<TraceContext> {
         extract_trace_context_from_aws_trace_header(self.attributes.aws_trace_header.clone())
     }
 }
@@ -213,7 +221,7 @@ impl Trigger for SqsRecord {
 /// Format: `Root=1-xxx-yyy;Parent=zzz;Sampled=1`
 pub fn extract_trace_context_from_aws_trace_header(
     header: Option<String>,
-) -> Option<GeneratedTraceContext> {
+) -> Option<TraceContext> {
     let value = header?;
     if !value.starts_with("Root=") {
         return None;
@@ -246,7 +254,7 @@ pub fn extract_trace_context_from_aws_trace_header(
 
     let sampling_priority = if sampled == "1" { Some(1i8) } else { Some(0) };
 
-    Some(GeneratedTraceContext {
+    Some(TraceContext {
         trace_id,
         span_id: parent_id,
         sampling_priority,

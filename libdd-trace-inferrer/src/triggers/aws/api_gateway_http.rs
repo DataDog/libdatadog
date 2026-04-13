@@ -5,8 +5,13 @@
 
 use crate::config::InferConfig;
 use crate::span_data::SpanData;
-use crate::triggers::{FUNCTION_TRIGGER_EVENT_SOURCE_TAG, Trigger, lowercase_key};
-use crate::utils::{MS_TO_NS, get_aws_partition_by_region, parameterize_api_resource, resolve_service_name};
+use crate::triggers::{
+    FUNCTION_TRIGGER_EVENT_SOURCE_ARN_TAG, FUNCTION_TRIGGER_EVENT_SOURCE_TAG, Trigger,
+    lowercase_key,
+};
+use crate::utils::{
+    MS_TO_NS, get_aws_partition_by_region, parameterize_api_resource, resolve_service_name,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
@@ -55,6 +60,16 @@ pub struct RequestContextHttp {
     pub source_ip: String,
     #[serde(default)]
     pub user_agent: String,
+}
+
+impl ApiGatewayHttpEvent {
+    fn get_specific_service_id(&self) -> String {
+        self.request_context.api_id.clone()
+    }
+
+    fn get_generic_service_id(&self) -> &'static str {
+        "lambda_api_gateway"
+    }
 }
 
 impl Trigger for ApiGatewayHttpEvent {
@@ -127,7 +142,7 @@ impl Trigger for ApiGatewayHttpEvent {
         ]);
     }
 
-    fn get_tags(&self) -> HashMap<String, String> {
+    fn get_tags(&self, config: &InferConfig) -> HashMap<String, String> {
         let mut tags = HashMap::from([
             (
                 "http.url".to_string(),
@@ -164,27 +179,31 @@ impl Trigger for ApiGatewayHttpEvent {
             tags.insert("http.user_agent".to_string(), user_agent.to_string());
         }
 
-        tags
-    }
-
-    fn get_arn(&self, region: &str) -> String {
-        let partition = get_aws_partition_by_region(region);
-        format!(
+        // ARN tag
+        let partition = get_aws_partition_by_region(&config.region);
+        let arn = format!(
             "arn:{partition}:apigateway:{region}::/restapis/{api_id}/stages/{stage}",
+            region = config.region,
             api_id = self.request_context.api_id,
             stage = self.request_context.stage,
-        )
-    }
+        );
+        tags.insert(
+            FUNCTION_TRIGGER_EVENT_SOURCE_ARN_TAG.to_string(),
+            arn,
+        );
 
-    fn get_dd_resource_key(&self, region: &str) -> Option<String> {
-        if self.request_context.api_id.is_empty() {
-            return None;
+        // dd_resource_key tag
+        if !self.request_context.api_id.is_empty() {
+            let partition = get_aws_partition_by_region(&config.region);
+            let dd_resource_key = format!(
+                "arn:{partition}:apigateway:{region}::/apis/{api_id}",
+                region = config.region,
+                api_id = self.request_context.api_id,
+            );
+            tags.insert("dd_resource_key".to_string(), dd_resource_key);
         }
-        let partition = get_aws_partition_by_region(region);
-        Some(format!(
-            "arn:{partition}:apigateway:{region}::/apis/{api_id}",
-            api_id = self.request_context.api_id,
-        ))
+
+        tags
     }
 
     fn is_async(&self) -> bool {
@@ -195,14 +214,6 @@ impl Trigger for ApiGatewayHttpEvent {
 
     fn get_carrier(&self) -> HashMap<String, String> {
         self.headers.clone()
-    }
-
-    fn get_specific_service_id(&self) -> String {
-        self.request_context.api_id.clone()
-    }
-
-    fn get_generic_service_id(&self) -> &'static str {
-        "lambda_api_gateway"
     }
 }
 
@@ -270,7 +281,8 @@ mod tests {
     fn test_get_tags() {
         let value: Value = serde_json::from_str(TEST_PAYLOAD).unwrap();
         let event = ApiGatewayHttpEvent::new(value).unwrap();
-        let tags = event.get_tags();
+        let config = InferConfig::default();
+        let tags = event.get_tags(&config);
         assert_eq!(
             tags.get("function_trigger.event_source"),
             Some(&"api-gateway".to_string())
@@ -282,12 +294,15 @@ mod tests {
     }
 
     #[test]
-    fn test_get_arn() {
+    fn test_get_arn_via_tags() {
         let value: Value = serde_json::from_str(TEST_PAYLOAD).unwrap();
         let event = ApiGatewayHttpEvent::new(value).unwrap();
+        let mut config = InferConfig::default();
+        config.region = "sa-east-1".to_string();
+        let tags = event.get_tags(&config);
         assert_eq!(
-            event.get_arn("sa-east-1"),
-            "arn:aws:apigateway:sa-east-1::/restapis/x02yirxc7a/stages/$default"
+            tags.get(FUNCTION_TRIGGER_EVENT_SOURCE_ARN_TAG),
+            Some(&"arn:aws:apigateway:sa-east-1::/restapis/x02yirxc7a/stages/$default".to_string())
         );
     }
 

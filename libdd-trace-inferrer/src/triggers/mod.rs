@@ -3,7 +3,7 @@
 
 //! Trigger-specific inference logic.
 //!
-//! Each sub-module handles a specific AWS trigger payload type.
+//! Each sub-module handles a specific trigger payload type.
 
 pub mod aws;
 mod serde_utils;
@@ -14,18 +14,19 @@ use std::collections::HashMap;
 
 use crate::config::InferConfig;
 use crate::span_data::SpanData;
-use crate::span_pointer::SpanPointer;
+use crate::span_link::SpanLink;
 
 pub const DATADOG_CARRIER_KEY: &str = "_datadog";
 pub const FUNCTION_TRIGGER_EVENT_SOURCE_TAG: &str = "function_trigger.event_source";
 pub const FUNCTION_TRIGGER_EVENT_SOURCE_ARN_TAG: &str = "function_trigger.event_source_arn";
 
-/// Generated trace context from Step Functions or SQS AWSTraceHeader.
+/// Pre-extracted trace context from within the event payload.
 ///
-/// Consumers use this to establish trace context when no carrier-based
-/// context is available.
+/// Some triggers carry deterministic trace context embedded in the event
+/// (e.g., AWSTraceHeader in SQS, SHA-256 context in Step Functions).
+/// Consumers check this when carrier headers are empty.
 #[derive(Debug, Clone, PartialEq)]
-pub struct GeneratedTraceContext {
+pub struct TraceContext {
     pub trace_id: u64,
     pub span_id: u64,
     pub sampling_priority: Option<i8>,
@@ -39,7 +40,7 @@ pub struct GeneratedTraceContext {
 /// - Detect whether a payload matches it ([`Trigger::is_match`])
 /// - Parse itself from a JSON value ([`Trigger::new`])
 /// - Enrich a [`SpanData`] with extracted information
-/// - Provide trigger tags, ARN, carrier, async flag, etc.
+/// - Provide trigger tags, carrier, async flag, etc.
 pub trait Trigger: Sized {
     /// Attempts to parse the payload into this trigger type.
     ///
@@ -52,13 +53,17 @@ pub trait Trigger: Sized {
     fn is_match(payload: &Value) -> bool;
 
     /// Enriches a [`SpanData`] with data extracted from this trigger.
+    ///
+    /// If this method leaves `span.name` empty, no inferred span will be
+    /// created. The trigger should handle service name resolution internally.
     fn enrich_span(&self, span: &mut SpanData, config: &InferConfig);
 
     /// Returns tags to attach to the invocation/function span.
-    fn get_tags(&self) -> HashMap<String, String>;
-
-    /// Returns the ARN of the event source.
-    fn get_arn(&self, region: &str) -> String;
+    ///
+    /// Must include `function_trigger.event_source`. Should also include
+    /// `function_trigger.event_source_arn` and any other trigger-level tags
+    /// (e.g., `dd_resource_key` for API Gateway).
+    fn get_tags(&self, config: &InferConfig) -> HashMap<String, String>;
 
     /// Returns carrier headers for trace context extraction.
     ///
@@ -72,25 +77,19 @@ pub trait Trigger: Sized {
     /// end.
     fn is_async(&self) -> bool;
 
-    /// Returns the DD resource key for cloud integrations linking.
-    fn get_dd_resource_key(&self, _region: &str) -> Option<String> {
-        None
+    /// Returns span links associated with this trigger event.
+    ///
+    /// Span links connect the inferred span to upstream resources (e.g., an
+    /// S3 object or a DynamoDB item). Most triggers return an empty vec.
+    fn get_span_links(&self) -> Vec<SpanLink> {
+        Vec::new()
     }
 
-    /// Returns the trigger-specific identifier used for service mapping.
-    fn get_specific_service_id(&self) -> String;
-
-    /// Returns the generic service mapping key for this trigger type.
-    fn get_generic_service_id(&self) -> &'static str;
-
-    /// Returns span pointers (S3, DynamoDB only).
-    fn get_span_pointers(&self) -> Option<Vec<SpanPointer>> {
-        None
-    }
-
-    /// Returns a deterministically generated trace context (Step Functions,
-    /// SQS AWSTraceHeader).
-    fn get_generated_trace_context(&self) -> Option<GeneratedTraceContext> {
+    /// Returns a pre-extracted trace context from the payload itself.
+    ///
+    /// Some triggers carry deterministic trace context embedded in the event.
+    /// Consumers check this when `get_carrier()` returns an empty map.
+    fn get_trace_context(&self) -> Option<TraceContext> {
         None
     }
 }
@@ -139,14 +138,12 @@ macro_rules! identified_triggers {
             /// Builds an [`InferenceResult`](crate::inferrer::InferenceResult)
             /// by dispatching to the matched trigger's trait methods.
             $vis fn build_inference_result(
-                self,
+                &self,
                 config: &$crate::config::InferConfig,
             ) -> $crate::inferrer::InferenceResult {
-                match &self {
+                match self {
                     $(Self::$case(t) => {
-                        let mut result = $crate::inferrer::build_result_from_trigger(t, config);
-                        result.trigger_type = self;
-                        result
+                        $crate::inferrer::build_result_from_trigger(t, config)
                     },)+
                     Self::$default => $crate::inferrer::InferenceResult::default(),
                 }

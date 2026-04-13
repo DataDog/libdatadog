@@ -5,7 +5,9 @@
 
 use crate::config::InferConfig;
 use crate::span_data::SpanData;
-use crate::triggers::{FUNCTION_TRIGGER_EVENT_SOURCE_TAG, Trigger};
+use crate::triggers::{
+    FUNCTION_TRIGGER_EVENT_SOURCE_ARN_TAG, FUNCTION_TRIGGER_EVENT_SOURCE_TAG, Trigger,
+};
 use crate::utils::{MS_TO_NS, resolve_service_name};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -25,6 +27,18 @@ pub struct MskRecord {
     pub topic: String,
     pub partition: i32,
     pub timestamp: f64,
+}
+
+impl MskEvent {
+    const GENERIC_SERVICE_KEY: &'static str = "lambda_msk";
+
+    fn service_id(&self) -> String {
+        self.event_source_arn
+            .split('/')
+            .nth(1)
+            .unwrap_or_default()
+            .to_string()
+    }
 }
 
 impl Trigger for MskEvent {
@@ -67,9 +81,9 @@ impl Trigger for MskEvent {
         span.name = "aws.msk".to_string();
         span.service = resolve_service_name(
             &config.service_mapping,
-            &self.get_specific_service_id(),
-            self.get_generic_service_id(),
-            &self.get_specific_service_id(),
+            &self.service_id(),
+            Self::GENERIC_SERVICE_KEY,
+            &self.service_id(),
             "msk",
             config.use_instance_service_names,
         );
@@ -89,15 +103,17 @@ impl Trigger for MskEvent {
         }
     }
 
-    fn get_tags(&self) -> HashMap<String, String> {
-        HashMap::from([(
-            FUNCTION_TRIGGER_EVENT_SOURCE_TAG.to_string(),
-            "msk".to_string(),
-        )])
-    }
-
-    fn get_arn(&self, _region: &str) -> String {
-        self.event_source_arn.clone()
+    fn get_tags(&self, _config: &InferConfig) -> HashMap<String, String> {
+        HashMap::from([
+            (
+                FUNCTION_TRIGGER_EVENT_SOURCE_TAG.to_string(),
+                "msk".to_string(),
+            ),
+            (
+                FUNCTION_TRIGGER_EVENT_SOURCE_ARN_TAG.to_string(),
+                self.event_source_arn.clone(),
+            ),
+        ])
     }
 
     fn get_carrier(&self) -> HashMap<String, String> {
@@ -106,17 +122,5 @@ impl Trigger for MskEvent {
 
     fn is_async(&self) -> bool {
         true
-    }
-
-    fn get_specific_service_id(&self) -> String {
-        self.event_source_arn
-            .split('/')
-            .nth(1)
-            .unwrap_or_default()
-            .to_string()
-    }
-
-    fn get_generic_service_id(&self) -> &'static str {
-        "lambda_msk"
     }
 }

@@ -5,7 +5,10 @@
 
 use crate::config::InferConfig;
 use crate::span_data::SpanData;
-use crate::triggers::{DATADOG_CARRIER_KEY, FUNCTION_TRIGGER_EVENT_SOURCE_TAG, Trigger};
+use crate::triggers::{
+    DATADOG_CARRIER_KEY, FUNCTION_TRIGGER_EVENT_SOURCE_ARN_TAG, FUNCTION_TRIGGER_EVENT_SOURCE_TAG,
+    Trigger,
+};
 use crate::utils::{resolve_service_name, MS_TO_NS};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -48,6 +51,27 @@ pub struct SnsMessageAttribute {
     pub value: String,
 }
 
+impl SnsRecord {
+    const GENERIC_SERVICE_KEY: &'static str = "lambda_sns";
+
+    fn service_id(&self) -> String {
+        self.sns
+            .topic_arn
+            .split(':')
+            .next_back()
+            .unwrap_or_default()
+            .to_string()
+    }
+
+    /// Returns the wrapped trigger if SNS message contains EventBridge.
+    pub fn get_wrapped_trigger(&self) -> Option<EventBridgeEvent> {
+        self.sns
+            .message
+            .as_ref()
+            .and_then(|msg| serde_json::from_str::<EventBridgeEvent>(msg).ok())
+    }
+}
+
 impl Trigger for SnsRecord {
     fn new(payload: Value) -> Option<Self> {
         payload
@@ -68,7 +92,7 @@ impl Trigger for SnsRecord {
 
     #[allow(clippy::cast_possible_truncation)]
     fn enrich_span(&self, span: &mut SpanData, config: &InferConfig) {
-        let resource_name = self.get_specific_service_id();
+        let resource_name = self.service_id();
 
         // Parse ISO 8601 timestamp to nanoseconds
         let start_time = chrono::DateTime::parse_from_rfc3339(&self.sns.timestamp)
@@ -80,9 +104,9 @@ impl Trigger for SnsRecord {
 
         let service_name = resolve_service_name(
             &config.service_mapping,
-            &self.get_specific_service_id(),
-            self.get_generic_service_id(),
-            &self.get_specific_service_id(),
+            &self.service_id(),
+            Self::GENERIC_SERVICE_KEY,
+            &self.service_id(),
             "sns",
             config.use_instance_service_names,
         );
@@ -112,15 +136,17 @@ impl Trigger for SnsRecord {
         }
     }
 
-    fn get_tags(&self) -> HashMap<String, String> {
-        HashMap::from([(
-            FUNCTION_TRIGGER_EVENT_SOURCE_TAG.to_string(),
-            "sns".to_string(),
-        )])
-    }
-
-    fn get_arn(&self, _region: &str) -> String {
-        self.sns.topic_arn.clone()
+    fn get_tags(&self, _config: &InferConfig) -> HashMap<String, String> {
+        HashMap::from([
+            (
+                FUNCTION_TRIGGER_EVENT_SOURCE_TAG.to_string(),
+                "sns".to_string(),
+            ),
+            (
+                FUNCTION_TRIGGER_EVENT_SOURCE_ARN_TAG.to_string(),
+                self.sns.topic_arn.clone(),
+            ),
+        ])
     }
 
     fn get_carrier(&self) -> HashMap<String, String> {
@@ -154,28 +180,5 @@ impl Trigger for SnsRecord {
 
     fn is_async(&self) -> bool {
         true
-    }
-
-    fn get_specific_service_id(&self) -> String {
-        self.sns
-            .topic_arn
-            .split(':')
-            .next_back()
-            .unwrap_or_default()
-            .to_string()
-    }
-
-    fn get_generic_service_id(&self) -> &'static str {
-        "lambda_sns"
-    }
-}
-
-/// Returns the wrapped trigger if SNS message contains EventBridge.
-impl SnsRecord {
-    pub fn get_wrapped_trigger(&self) -> Option<EventBridgeEvent> {
-        self.sns
-            .message
-            .as_ref()
-            .and_then(|msg| serde_json::from_str::<EventBridgeEvent>(msg).ok())
     }
 }

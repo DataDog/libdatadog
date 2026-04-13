@@ -7,7 +7,10 @@
 
 use crate::config::InferConfig;
 use crate::span_data::SpanData;
-use crate::triggers::{FUNCTION_TRIGGER_EVENT_SOURCE_TAG, Trigger, lowercase_key};
+use crate::triggers::{
+    FUNCTION_TRIGGER_EVENT_SOURCE_ARN_TAG, FUNCTION_TRIGGER_EVENT_SOURCE_TAG, Trigger,
+    lowercase_key,
+};
 use crate::utils::{MS_TO_NS, parameterize_api_resource, resolve_service_name};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -50,6 +53,14 @@ pub struct RequestContextHttp {
     pub user_agent: String,
 }
 
+impl LambdaFunctionUrlEvent {
+    const GENERIC_SERVICE_KEY: &'static str = "lambda_url";
+
+    fn service_id(&self) -> String {
+        self.request_context.domain_name.clone()
+    }
+}
+
 impl Trigger for LambdaFunctionUrlEvent {
     fn new(payload: Value) -> Option<Self> {
         serde_json::from_value(payload).ok()
@@ -82,8 +93,8 @@ impl Trigger for LambdaFunctionUrlEvent {
 
         let service_name = resolve_service_name(
             &config.service_mapping,
-            &self.get_specific_service_id(),
-            self.get_generic_service_id(),
+            &self.service_id(),
+            Self::GENERIC_SERVICE_KEY,
             &self.request_context.domain_name,
             &self.request_context.domain_name,
             config.use_instance_service_names,
@@ -120,15 +131,17 @@ impl Trigger for LambdaFunctionUrlEvent {
         ]);
     }
 
-    fn get_tags(&self) -> HashMap<String, String> {
-        HashMap::from([(
-            FUNCTION_TRIGGER_EVENT_SOURCE_TAG.to_string(),
-            "lambda-function-url".to_string(),
-        )])
-    }
-
-    fn get_arn(&self, _region: &str) -> String {
-        self.request_context.domain_name.clone()
+    fn get_tags(&self, _config: &InferConfig) -> HashMap<String, String> {
+        HashMap::from([
+            (
+                FUNCTION_TRIGGER_EVENT_SOURCE_TAG.to_string(),
+                "lambda-function-url".to_string(),
+            ),
+            (
+                FUNCTION_TRIGGER_EVENT_SOURCE_ARN_TAG.to_string(),
+                self.request_context.domain_name.clone(),
+            ),
+        ])
     }
 
     fn is_async(&self) -> bool {
@@ -139,13 +152,5 @@ impl Trigger for LambdaFunctionUrlEvent {
 
     fn get_carrier(&self) -> HashMap<String, String> {
         self.headers.clone()
-    }
-
-    fn get_specific_service_id(&self) -> String {
-        self.request_context.domain_name.clone()
-    }
-
-    fn get_generic_service_id(&self) -> &'static str {
-        "lambda_url"
     }
 }

@@ -9,7 +9,8 @@
 use crate::config::InferConfig;
 use crate::span_data::SpanData;
 use crate::triggers::{
-    DATADOG_CARRIER_KEY, FUNCTION_TRIGGER_EVENT_SOURCE_TAG, GeneratedTraceContext, Trigger,
+    DATADOG_CARRIER_KEY, FUNCTION_TRIGGER_EVENT_SOURCE_ARN_TAG, FUNCTION_TRIGGER_EVENT_SOURCE_TAG,
+    TraceContext, Trigger,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -111,17 +112,23 @@ impl Trigger for StepFunctionEvent {
         // Step Functions events do not produce normal inferred spans.
     }
 
-    fn get_tags(&self) -> HashMap<String, String> {
-        HashMap::from([(
+    fn get_tags(&self, _config: &InferConfig) -> HashMap<String, String> {
+        let mut tags = HashMap::from([(
             FUNCTION_TRIGGER_EVENT_SOURCE_TAG.to_string(),
             "states".to_string(),
-        )])
-    }
+        )]);
 
-    fn get_arn(&self, _region: &str) -> String {
-        self.state_machine
+        // ARN tag
+        let arn = self
+            .state_machine
             .as_ref()
-            .map_or_else(String::new, |sm| sm.id.clone())
+            .map_or_else(String::new, |sm| sm.id.clone());
+        tags.insert(
+            FUNCTION_TRIGGER_EVENT_SOURCE_ARN_TAG.to_string(),
+            arn,
+        );
+
+        tags
     }
 
     fn get_carrier(&self) -> HashMap<String, String> {
@@ -132,21 +139,13 @@ impl Trigger for StepFunctionEvent {
         true
     }
 
-    fn get_specific_service_id(&self) -> String {
-        String::new()
-    }
-
-    fn get_generic_service_id(&self) -> &'static str {
-        "lambda_stepfunction"
-    }
-
-    fn get_generated_trace_context(&self) -> Option<GeneratedTraceContext> {
+    fn get_trace_context(&self) -> Option<TraceContext> {
         Some(self.build_span_context())
     }
 }
 
 impl StepFunctionEvent {
-    fn build_span_context(&self) -> GeneratedTraceContext {
+    fn build_span_context(&self) -> TraceContext {
         let (lo_tid, tags) =
             if let (Some(trace_id), Some(trace_tags)) = (&self.trace_id, &self.trace_tags) {
                 // Lambda Root
@@ -177,7 +176,7 @@ impl StepFunctionEvent {
             self.execution.redrive_count,
         );
 
-        GeneratedTraceContext {
+        TraceContext {
             trace_id: lo_tid,
             span_id: parent_id,
             sampling_priority: Some(1),

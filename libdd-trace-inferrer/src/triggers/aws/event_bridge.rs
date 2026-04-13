@@ -5,7 +5,10 @@
 
 use crate::config::InferConfig;
 use crate::span_data::SpanData;
-use crate::triggers::{DATADOG_CARRIER_KEY, FUNCTION_TRIGGER_EVENT_SOURCE_TAG, Trigger};
+use crate::triggers::{
+    DATADOG_CARRIER_KEY, FUNCTION_TRIGGER_EVENT_SOURCE_ARN_TAG, FUNCTION_TRIGGER_EVENT_SOURCE_TAG,
+    Trigger,
+};
 use crate::utils::{MS_TO_NS, resolve_service_name};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -29,6 +32,17 @@ pub struct EventBridgeEvent {
     pub detail: Value,
     #[serde(rename = "replay-name")]
     pub replay_name: Option<String>,
+}
+
+impl EventBridgeEvent {
+    const GENERIC_SERVICE_KEY: &'static str = "lambda_eventbridge";
+
+    fn service_id_from_carrier(&self, carrier: &HashMap<String, String>) -> String {
+        carrier
+            .get(DATADOG_RESOURCE_NAME_KEY)
+            .unwrap_or(&self.source)
+            .to_string()
+    }
 }
 
 impl Trigger for EventBridgeEvent {
@@ -61,7 +75,7 @@ impl Trigger for EventBridgeEvent {
             .unwrap_or(0);
 
         let carrier = self.get_carrier();
-        let resource_name = self.get_specific_service_id_from_carrier(&carrier);
+        let resource_name = self.service_id_from_carrier(&carrier);
         let start_time = carrier
             .get(DATADOG_START_TIME_KEY)
             .and_then(|s| s.parse::<f64>().ok())
@@ -70,7 +84,7 @@ impl Trigger for EventBridgeEvent {
         let service_name = resolve_service_name(
             &config.service_mapping,
             &resource_name,
-            self.get_generic_service_id(),
+            Self::GENERIC_SERVICE_KEY,
             &resource_name,
             "eventbridge",
             config.use_instance_service_names,
@@ -87,15 +101,17 @@ impl Trigger for EventBridgeEvent {
         ]);
     }
 
-    fn get_tags(&self) -> HashMap<String, String> {
-        HashMap::from([(
-            FUNCTION_TRIGGER_EVENT_SOURCE_TAG.to_string(),
-            "eventbridge".to_string(),
-        )])
-    }
-
-    fn get_arn(&self, _region: &str) -> String {
-        self.source.clone()
+    fn get_tags(&self, _config: &InferConfig) -> HashMap<String, String> {
+        HashMap::from([
+            (
+                FUNCTION_TRIGGER_EVENT_SOURCE_TAG.to_string(),
+                "eventbridge".to_string(),
+            ),
+            (
+                FUNCTION_TRIGGER_EVENT_SOURCE_ARN_TAG.to_string(),
+                self.source.clone(),
+            ),
+        ])
     }
 
     fn get_carrier(&self) -> HashMap<String, String> {
@@ -109,23 +125,5 @@ impl Trigger for EventBridgeEvent {
 
     fn is_async(&self) -> bool {
         true
-    }
-
-    fn get_specific_service_id(&self) -> String {
-        let carrier = self.get_carrier();
-        self.get_specific_service_id_from_carrier(&carrier)
-    }
-
-    fn get_generic_service_id(&self) -> &'static str {
-        "lambda_eventbridge"
-    }
-}
-
-impl EventBridgeEvent {
-    fn get_specific_service_id_from_carrier(&self, carrier: &HashMap<String, String>) -> String {
-        carrier
-            .get(DATADOG_RESOURCE_NAME_KEY)
-            .unwrap_or(&self.source)
-            .to_string()
     }
 }

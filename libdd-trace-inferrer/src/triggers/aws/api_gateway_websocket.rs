@@ -5,7 +5,10 @@
 
 use crate::config::InferConfig;
 use crate::span_data::SpanData;
-use crate::triggers::{FUNCTION_TRIGGER_EVENT_SOURCE_TAG, Trigger, lowercase_key};
+use crate::triggers::{
+    FUNCTION_TRIGGER_EVENT_SOURCE_ARN_TAG, FUNCTION_TRIGGER_EVENT_SOURCE_TAG, Trigger,
+    lowercase_key,
+};
 use crate::utils::{MS_TO_NS, get_aws_partition_by_region, resolve_service_name};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -38,6 +41,14 @@ pub struct RequestContext {
     pub message_direction: String,
 }
 
+impl ApiGatewayWebSocketEvent {
+    const GENERIC_SERVICE_KEY: &'static str = "lambda_api_gateway";
+
+    fn service_id(&self) -> String {
+        self.request_context.api_id.clone()
+    }
+}
+
 impl Trigger for ApiGatewayWebSocketEvent {
     fn new(payload: Value) -> Option<Self> {
         serde_json::from_value(payload).ok()
@@ -60,8 +71,8 @@ impl Trigger for ApiGatewayWebSocketEvent {
 
         let service_name = resolve_service_name(
             &config.service_mapping,
-            &self.get_specific_service_id(),
-            self.get_generic_service_id(),
+            &self.service_id(),
+            Self::GENERIC_SERVICE_KEY,
             &self.request_context.domain_name,
             &self.request_context.domain_name,
             config.use_instance_service_names,
@@ -88,20 +99,25 @@ impl Trigger for ApiGatewayWebSocketEvent {
         ]);
     }
 
-    fn get_tags(&self) -> HashMap<String, String> {
-        HashMap::from([(
-            FUNCTION_TRIGGER_EVENT_SOURCE_TAG.to_string(),
-            "api-gateway".to_string(),
-        )])
-    }
-
-    fn get_arn(&self, region: &str) -> String {
-        let partition = get_aws_partition_by_region(region);
-        format!(
+    fn get_tags(&self, config: &InferConfig) -> HashMap<String, String> {
+        let partition = get_aws_partition_by_region(&config.region);
+        let arn = format!(
             "arn:{partition}:apigateway:{region}::/restapis/{api_id}/stages/{stage}",
+            region = config.region,
             api_id = self.request_context.api_id,
             stage = self.request_context.stage,
-        )
+        );
+
+        HashMap::from([
+            (
+                FUNCTION_TRIGGER_EVENT_SOURCE_TAG.to_string(),
+                "api-gateway".to_string(),
+            ),
+            (
+                FUNCTION_TRIGGER_EVENT_SOURCE_ARN_TAG.to_string(),
+                arn,
+            ),
+        ])
     }
 
     fn is_async(&self) -> bool {
@@ -112,13 +128,5 @@ impl Trigger for ApiGatewayWebSocketEvent {
 
     fn get_carrier(&self) -> HashMap<String, String> {
         self.headers.clone()
-    }
-
-    fn get_specific_service_id(&self) -> String {
-        self.request_context.api_id.clone()
-    }
-
-    fn get_generic_service_id(&self) -> &'static str {
-        "lambda_api_gateway"
     }
 }

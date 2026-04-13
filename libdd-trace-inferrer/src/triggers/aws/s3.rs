@@ -5,8 +5,10 @@
 
 use crate::config::InferConfig;
 use crate::span_data::SpanData;
-use crate::span_pointer::{SpanPointer, generate_span_pointer_hash};
-use crate::triggers::{FUNCTION_TRIGGER_EVENT_SOURCE_TAG, Trigger};
+use crate::span_link::{SpanLink, generate_span_link_hash};
+use crate::triggers::{
+    FUNCTION_TRIGGER_EVENT_SOURCE_ARN_TAG, FUNCTION_TRIGGER_EVENT_SOURCE_TAG, Trigger,
+};
 use crate::utils::{resolve_service_name, MS_TO_NS};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -42,6 +44,16 @@ pub struct S3Object {
     pub size: i64,
     #[serde(rename = "eTag")]
     pub e_tag: String,
+}
+
+impl S3Record {
+    fn get_specific_service_id(&self) -> String {
+        self.s3.bucket.name.clone()
+    }
+
+    fn get_generic_service_id(&self) -> &'static str {
+        "lambda_s3"
+    }
 }
 
 impl Trigger for S3Record {
@@ -97,15 +109,19 @@ impl Trigger for S3Record {
         ]);
     }
 
-    fn get_tags(&self) -> HashMap<String, String> {
-        HashMap::from([(
+    fn get_tags(&self, _config: &InferConfig) -> HashMap<String, String> {
+        let mut tags = HashMap::from([(
             FUNCTION_TRIGGER_EVENT_SOURCE_TAG.to_string(),
             "s3".to_string(),
-        )])
-    }
+        )]);
 
-    fn get_arn(&self, _region: &str) -> String {
-        self.event_source.clone()
+        // ARN tag
+        tags.insert(
+            FUNCTION_TRIGGER_EVENT_SOURCE_ARN_TAG.to_string(),
+            self.event_source.clone(),
+        );
+
+        tags
     }
 
     fn get_carrier(&self) -> HashMap<String, String> {
@@ -116,28 +132,20 @@ impl Trigger for S3Record {
         true
     }
 
-    fn get_specific_service_id(&self) -> String {
-        self.s3.bucket.name.clone()
-    }
-
-    fn get_generic_service_id(&self) -> &'static str {
-        "lambda_s3"
-    }
-
-    fn get_span_pointers(&self) -> Option<Vec<SpanPointer>> {
+    fn get_span_links(&self) -> Vec<SpanLink> {
         let bucket_name = &self.s3.bucket.name;
         let key = &self.s3.object.key;
         let e_tag = self.s3.object.e_tag.trim_matches('"');
 
         if bucket_name.is_empty() || key.is_empty() || e_tag.is_empty() {
             debug!("Unable to create span pointer: bucket name, key, or etag is missing");
-            return None;
+            return Vec::new();
         }
 
-        let hash = generate_span_pointer_hash(&[bucket_name, key, e_tag]);
-        Some(vec![SpanPointer {
+        let hash = generate_span_link_hash(&[bucket_name, key, e_tag]);
+        vec![SpanLink {
             hash,
             kind: "aws.s3.object".to_string(),
-        }])
+        }]
     }
 }
