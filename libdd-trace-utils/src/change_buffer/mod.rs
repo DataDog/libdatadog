@@ -434,6 +434,7 @@ where
 
     /// Like interpret_operation, but uses a cached span pointer to avoid
     /// redundant Vec lookups for consecutive operations on the same span.
+    #[inline(always)]
     fn interpret_operation_cached(
         &mut self,
         index: &mut usize,
@@ -806,6 +807,7 @@ where
         }
     }
 
+    #[inline(always)]
     fn interpret_operation(&mut self, index: &mut usize, op: &BufferedOperation) -> Result<()> {
         match op.opcode {
             OpCode::Create => {
