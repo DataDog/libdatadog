@@ -712,7 +712,7 @@ where
     fn materialize_deferred_tags(&mut self, slot: u32, span: &mut Span<T>) {
         let idx = slot as usize;
         if idx < self.deferred_meta.len() {
-            let pairs: Vec<(u32, u32)> = self.deferred_meta[idx].drain(..).collect();
+            let pairs = std::mem::take(&mut self.deferred_meta[idx]);
             for (key_id, val_id) in pairs {
                 if let (Some(key), Some(val)) = (self.get_string(key_id), self.get_string(val_id))
                 {
@@ -721,7 +721,7 @@ where
             }
         }
         if idx < self.deferred_metrics.len() {
-            let pairs: Vec<(u32, f64)> = self.deferred_metrics[idx].drain(..).collect();
+            let pairs = std::mem::take(&mut self.deferred_metrics[idx]);
             for (key_id, val) in pairs {
                 if let Some(key) = self.get_string(key_id) {
                     vec_insert(&mut span.metrics, key, val);
