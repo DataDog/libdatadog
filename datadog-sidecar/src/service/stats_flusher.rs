@@ -4,10 +4,10 @@
 //! Periodic stats flusher for the SHM span concentrator.
 //!
 //! The sidecar maintains one `SpanConcentratorState` per (env, version, service) triple
-//! (globally, across all sessions) in `SidecarServer::span_concentrators`
-//! (a `HashMap<ConcentratorKey, SpanConcentratorState>`).  A tokio task creates a
-//! `StatsExporter` backed by the SHM concentrator and periodically calls `send`, which
-//! drains the inactive bucket and POSTs it to the agent's `/v0.6/stats` endpoint.
+//! (globally, across all sessions) in `SidecarServer::span_concentrators`.
+//! Concentrators are created lazily on the first IPC span for a given key, and removed
+//! automatically once idle: an empty drain sets the `please_reload` bit (telling PHP workers
+//! to stop writing), and the subsequent flush performs a final drain before removal.
 
 use base64::prelude::BASE64_URL_SAFE_NO_PAD;
 use base64::Engine;
@@ -16,20 +16,15 @@ use datadog_ipc::shm_stats::{
 };
 use http::uri::PathAndQuery;
 use libdd_capabilities_impl::{HttpClientTrait, NativeCapabilities};
-use libdd_common::Endpoint;
+use libdd_common::{Endpoint, MutexExt};
 use libdd_trace_stats::stats_exporter::{StatsExporter, StatsMetadata};
 use std::collections::HashMap;
 use std::ffi::CString;
 use std::hash::{Hash, Hasher};
-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering::*};
 use std::sync::{Arc, Mutex, Weak};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::Duration;
 use tracing::{error, info, warn};
 use zwohash::ZwoHasher;
-
-/// After the last `SpanConcentratorGuard` is dropped, keep the concentrator alive for this long
-/// before removing it (to absorb late-arriving spans from the previous app version/env).
-const IDLE_REMOVE_SECS: u64 = 600;
 
 /// Build the stats endpoint by appending `/v0.6/stats` to the agent base URL.
 /// Returns `None` for agentless mode (API key present) — stats are not supported agentless.
@@ -65,13 +60,6 @@ pub(crate) struct StatsConfig {
     pub tracer_version: String,
 }
 
-fn now_secs() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs()
-}
-
 /// Map key for the per-(env, version, root-service) concentrator map.
 #[derive(Clone, Debug, Hash, Eq, PartialEq)]
 pub struct ConcentratorKey {
@@ -83,11 +71,6 @@ pub struct ConcentratorKey {
 /// State held per-(env, version, root-service) for SHM span stats.
 pub struct SpanConcentratorState {
     pub concentrator: ShmSpanConcentrator,
-    pub path: CString,
-    /// Number of live `SpanConcentratorGuard`s referring to this entry.
-    pub(crate) ref_count: Arc<AtomicUsize>,
-    /// Unix timestamp (seconds) when `ref_count` last dropped to zero; `u64::MAX` while active.
-    pub(crate) last_zero_secs: Arc<AtomicU64>,
     /// The stats endpoint (with `/v0.6/stats` path baked in) used by the flush loop.
     pub(crate) endpoint: Endpoint,
     /// Metadata for StatsExporter payload annotation (hostname, env, version, service, …).
@@ -95,31 +78,10 @@ pub struct SpanConcentratorState {
 }
 
 // SAFETY: ShmSpanConcentrator is designed for cross-process sharing; all internal state
-// uses atomic operations.  The Mutex in SessionInfo guards exclusive sidecar access.
+// uses atomic operations.
 unsafe impl Send for SpanConcentratorState {}
 
-/// RAII guard that keeps an (env, version, root-service) concentrator alive.
-///
-/// Stored in `ActiveApplication`.  When the last guard for a given (env, version, root-service)
-/// is dropped, the flush loop will remove the concentrator after `IDLE_REMOVE_SECS` seconds.
-pub struct SpanConcentratorGuard {
-    ref_count: Arc<AtomicUsize>,
-    last_zero_secs: Arc<AtomicU64>,
-}
-
-impl Drop for SpanConcentratorGuard {
-    fn drop(&mut self) {
-        if self.ref_count.fetch_sub(1, Release) == 1 {
-            // We were the last active reference — record when the idle period started.
-            self.last_zero_secs.store(now_secs(), Release);
-        }
-    }
-}
-
 /// Compute the SHM path for an (env, version, root-service) triple's span concentrator.
-///
-/// Uses the same scheme as `agent_remote_config.rs` and `agent_info.rs`:
-/// `/ddspsc-{uid}-{hash(env+version+service)}`, truncated to 31 chars (macOS limit).
 pub fn env_stats_shm_path(env: &str, version: &str, service: &str) -> CString {
     let mut hasher = ZwoHasher::default();
     env.hash(&mut hasher);
@@ -137,11 +99,6 @@ pub fn env_stats_shm_path(env: &str, version: &str, service: &str) -> CString {
     CString::new(path).unwrap()
 }
 
-/// Build a `StatsExporter` for a concentrator state.
-///
-/// The SHM concentrator is cloned (cheap — same underlying `Arc<MappedMem>`) and wrapped in
-/// `Arc<Mutex<>>` as required by `StatsExporter`.  The mutex only guards the `flush_buckets`
-/// `&mut self` requirement; the actual SHM operations remain lock-free.
 fn make_exporter(
     s: &SpanConcentratorState,
     endpoint: Endpoint,
@@ -156,26 +113,23 @@ fn make_exporter(
     )
 }
 
-/// Spawn-and-forget flush loop for an (env, version, root-service) pair's SHM span concentrator.
+/// Spawn-and-forget flush loop for a concentrator.
 ///
-/// The loop exits when the `Weak` can no longer be upgraded (sidecar shutting down), when the
-/// entry for this key is removed from the map, or when the concentrator has been idle (no active
-/// `SpanConcentratorGuard`s) for `IDLE_REMOVE_SECS` seconds.
-///
-/// The endpoint (including test-session token) is read from `SpanConcentratorState` on every
-/// tick so that late endpoint updates (e.g. a test-session token set after concentrator creation)
-/// are picked up automatically.
+/// **Idle removal**: when a flush produces no data (`send` returns `false`), the
+/// `please_reload` bit is set on the SHM, signalling PHP workers to stop writing (they will
+/// fall back to the IPC path).  On the very next tick, a final force-flush drains any
+/// remaining data and the concentrator is removed from the map.  This two-phase removal
+/// avoids a race between the reload signal and in-flight SHM writes.
 pub async fn run_stats_flush_loop(
     states: Weak<Mutex<HashMap<ConcentratorKey, Arc<SpanConcentratorState>>>>,
     map_key: ConcentratorKey,
     flush_interval: Duration,
 ) {
-    // Build the initial exporter.  The concentrator clone shares the same SHM mapping.
     let Some(arc) = states.upgrade() else {
         return;
     };
     let state = {
-        let guard = arc.lock().unwrap_or_else(|e| e.into_inner());
+        let guard = arc.lock_or_panic();
         guard.get(&map_key).cloned()
     };
     let Some(state) = state else {
@@ -189,110 +143,97 @@ pub async fn run_stats_flush_loop(
             break; // sidecar shutting down
         };
 
-        let (state, force_and_clean) = {
-            let mut guard = arc.lock().unwrap_or_else(|e| e.into_inner());
-            let Some(s) = guard.get(&map_key) else {
-                break; // concentrator was removed externally
-            };
-            let idle_secs = if s.ref_count.load(Acquire) == 0 {
-                let last_zero = s.last_zero_secs.load(Acquire);
-                if last_zero != u64::MAX {
-                    now_secs().saturating_sub(last_zero)
-                } else {
-                    0
-                }
-            } else {
-                0
-            };
-            if idle_secs >= IDLE_REMOVE_SECS {
-                info!(
-                    "Removing idle SHM span concentrator for env={} version={} service={} \
-                     (idle for {idle_secs}s)",
-                    map_key.env, map_key.version, map_key.root_service,
-                );
-                #[allow(clippy::expect_used)]
-                (
-                    guard
-                        .remove(&map_key)
-                        .expect("removal after access in lock"),
-                    true,
-                )
-            } else {
-                (s.clone(), false)
-            }
-        };
-
-        // Fill-check (atomic SHM read, no lock needed).
+        // Fill-check (atomic SHM reads, no lock needed).
         let (used, total) = state.concentrator.slot_usage();
-        if total > 0 {
-            let fill = used as f64 / total as f64;
-            if fill > RELOAD_FILL_RATIO {
-                warn!(
-                    "SHM span concentrator for env={} version={} service={} is {:.0}% full \
-                     ({used}/{total} slots); consider increasing slot count",
-                    map_key.env,
-                    map_key.version,
-                    map_key.root_service,
-                    fill * 100.0
-                );
-            }
-        }
-
-        // Flush and send.  force=true on idle removal to drain both buckets.
-        if let Err(e) = exporter.send(force_and_clean).await {
+        if total > 0 && (used as f64 / total as f64) > RELOAD_FILL_RATIO {
             warn!(
-                "Failed to send stats for env={} version={}: {e}",
-                map_key.env, map_key.version
+                "SHM span concentrator for env={} version={} service={} is {:.0}% full \
+                 ({used}/{total} slots); consider increasing slot count",
+                map_key.env,
+                map_key.version,
+                map_key.root_service,
+                (used as f64 / total as f64) * 100.0
             );
         }
 
-        if force_and_clean {
-            break;
+        match exporter.send(false).await {
+            Err(e) => warn!(
+                "Failed to send stats for env={} version={}: {e}",
+                map_key.env, map_key.version
+            ),
+            Ok(true) => {} // data sent — continue
+            Ok(false) => {
+                // Empty drain: retire this concentrator.
+                info!(
+                    "Removing idle SHM span concentrator for env={} version={} service={}",
+                    map_key.env, map_key.version, map_key.root_service,
+                );
+                state.concentrator.signal_reload();
+                #[cfg(unix)]
+                state.concentrator.unlink();
+                #[cfg(unix)] // on windows waiting is pointless, because we cannot unlink it
+                tokio::time::sleep(Duration::from_secs(1)).await;
+                {
+                    let mut guard = arc.lock_or_panic();
+                    // Only remove our entry — a fresher one may have been inserted already.
+                    if guard
+                        .get(&map_key)
+                        .map_or(false, |s| Arc::ptr_eq(s, &state))
+                    {
+                        guard.remove(&map_key);
+                    }
+                }
+                if let Err(e) = exporter.send(true).await {
+                    warn!("Failed final stats flush: {e}");
+                }
+                break;
+            }
         }
     }
 }
 
-/// Create (or look up) the SHM span concentrator for an (env, version, service) pair, increment
-/// its reference count, and return a guard.
-pub(crate) fn ensure_stats_concentrator(
+/// Look up or create the SHM span concentrator for `(env, version, service)`.
+///
+/// Called lazily from `add_span_to_concentrator` when the PHP worker could not write to SHM
+/// directly (SHM not yet available).  Creating on first IPC span — rather than eagerly in
+/// `set_universal_service_tags` — lets the concentrator key track the actual span env/version
+/// rather than the root-span-only values reported at request start.
+///
+/// Returns `None` when stats config is not available (agentless or not yet configured).
+pub(crate) fn get_or_create_concentrator(
     concentrators: &Arc<Mutex<HashMap<ConcentratorKey, Arc<SpanConcentratorState>>>>,
     env: &str,
     version: &str,
-    service_name: &str,
     runtime_id: &str,
     session: &crate::service::session_info::SessionInfo,
-) -> Option<SpanConcentratorGuard> {
+) -> Option<Arc<SpanConcentratorState>> {
     let config = session
         .stats_config
         .lock()
         .unwrap_or_else(|e| e.into_inner())
         .clone()?;
 
-    // Stats computation requires a local agent; skip for agentless (API key present).
     if config.endpoint.api_key.is_some() {
-        return None;
+        return None; // agentless — no stats
     }
-    let endpoint = config.endpoint.clone();
+
+    let service_name = config.root_service.clone();
 
     let map_key = ConcentratorKey {
         env: env.to_owned(),
         version: version.to_owned(),
-        root_service: service_name.to_owned(),
+        root_service: service_name.clone(),
     };
-    let mut guard = concentrators.lock().unwrap_or_else(|e| e.into_inner());
+    let mut guard = concentrators.lock_or_panic();
 
-    if let Some(s) = guard.get_mut(&map_key) {
-        // Concentrator already exists — increment ref count and reset idle timer.
-        s.last_zero_secs.store(u64::MAX, Release);
-        s.ref_count.fetch_add(1, AcqRel);
-        return Some(SpanConcentratorGuard {
-            ref_count: s.ref_count.clone(),
-            last_zero_secs: s.last_zero_secs.clone(),
-        });
+    if let Some(s) = guard.get(&map_key) {
+        if !s.concentrator.needs_reload() {
+            return Some(s.clone());
+        }
+        // Entry is being retired (reload signalled) — fall through to create a fresh one.
     }
 
-    let path = env_stats_shm_path(env, version, service_name);
-    let bucket_nanos: u64 = 10_000_000_000; // 10 s
+    let path = env_stats_shm_path(env, version, &service_name);
 
     let meta = StatsMetadata {
         hostname: config.hostname.clone(),
@@ -302,66 +243,47 @@ pub(crate) fn ensure_stats_concentrator(
         language: config.language.clone(),
         tracer_version: config.tracer_version.clone(),
         process_tags: config.process_tags.clone(),
-        service: service_name.to_owned(),
+        service: service_name.clone(),
         ..Default::default()
     };
 
     match ShmSpanConcentrator::create(
         path.clone(),
-        bucket_nanos,
+        10_000_000_000,
         DEFAULT_SLOT_COUNT,
         DEFAULT_STRING_POOL_BYTES,
     ) {
         Ok(concentrator) => {
-            let ref_count = Arc::new(AtomicUsize::new(1));
-            let last_zero_secs = Arc::new(AtomicU64::new(u64::MAX));
-            let app_guard = SpanConcentratorGuard {
-                ref_count: ref_count.clone(),
-                last_zero_secs: last_zero_secs.clone(),
-            };
-            guard.insert(
-                map_key.clone(),
-                Arc::new(SpanConcentratorState {
-                    concentrator,
-                    path,
-                    ref_count,
-                    last_zero_secs,
-                    endpoint,
-                    meta,
-                }),
-            );
+            let state = Arc::new(SpanConcentratorState {
+                concentrator,
+                endpoint: config.endpoint.clone(),
+                meta,
+            });
+            guard.insert(map_key.clone(), state.clone());
             let weak = Arc::downgrade(concentrators);
             let flush_interval = config.flush_interval;
             tokio::spawn(async move {
                 run_stats_flush_loop(weak, map_key, flush_interval).await;
             });
-            Some(app_guard)
+            Some(state)
         }
         Err(e) => {
-            error!(
-                "Failed to create SHM span stats concentrator for env={env} version={version}: {e}"
-            );
+            error!("Failed to create SHM span stats concentrator for env={env} version={version} service={service_name}: {e}");
             None
         }
     }
 }
 
 /// Immediately flush all active SHM span concentrators and send the results to the agent.
-///
-/// Called by the sidecar's `flush_traces` handler so that a synchronous flush request from
-/// the tracer also drains any buffered span stats.
 pub async fn flush_all_stats_now(
     state: &Arc<Mutex<HashMap<ConcentratorKey, Arc<SpanConcentratorState>>>>,
 ) {
     let states: Vec<Arc<SpanConcentratorState>> = {
-        let guard = state.lock().unwrap_or_else(|e| e.into_inner());
+        let guard = state.lock_or_panic();
         guard.values().cloned().collect()
     };
-
     for s in states {
-        let endpoint = s.endpoint.clone();
-        // flush_interval is irrelevant for a one-shot send; use a dummy value.
-        let exporter = make_exporter(&s, endpoint, Duration::from_secs(10));
+        let exporter = make_exporter(&s, s.endpoint.clone(), Duration::from_secs(10));
         if let Err(e) = exporter.send(false).await {
             warn!("flush_all_stats_now: failed to send stats: {e}");
         }

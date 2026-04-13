@@ -108,10 +108,11 @@ impl<H: HttpClientTrait, C: FlushableConcentrator> StatsExporter<H, C> {
     /// # Panic
     /// Will panic if another thread panicked while holding the concentrator lock in which
     /// case stats cannot be flushed since the concentrator might be corrupted.
-    pub async fn send(&self, force_flush: bool) -> anyhow::Result<()> {
+    /// Returns `Ok(true)` if stats were sent, `Ok(false)` if the concentrator had nothing to send.
+    pub async fn send(&self, force_flush: bool) -> anyhow::Result<bool> {
         let payload = self.flush(force_flush);
         if payload.stats.is_empty() {
-            return Ok(());
+            return Ok(false);
         }
         let body = rmp_serde::encode::to_vec_named(&payload)?;
 
@@ -132,7 +133,7 @@ impl<H: HttpClientTrait, C: FlushableConcentrator> StatsExporter<H, C> {
         .await;
 
         match result {
-            Ok(_) => Ok(()),
+            Ok(_) => Ok(true),
             Err(err) => {
                 error!(?err, "Error with the StateExporter when sending stats");
                 anyhow::bail!("Failed to send stats: {err}");
@@ -173,11 +174,10 @@ impl<
 
     /// Flush and send stats on every trigger.
     async fn run(&mut self) {
-        let _ = self.send(false).await;
+        let _ = self.send(false).await; // bool return ignored by Worker
     }
 
     async fn shutdown(&mut self) {
-        // Force flush all stats on shutdown
         let _ = self.send(true).await;
     }
 }

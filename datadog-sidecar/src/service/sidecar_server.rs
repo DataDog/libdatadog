@@ -36,7 +36,7 @@ use crate::service::debugger_diagnostics_bookkeeper::{
 use crate::service::exception_hash_rate_limiter::EXCEPTION_HASH_LIMITER;
 use crate::service::remote_configs::{RemoteConfigNotifyTarget, RemoteConfigs};
 use crate::service::stats_flusher::{
-    ensure_stats_concentrator, flush_all_stats_now, stats_endpoint, ConcentratorKey,
+    flush_all_stats_now, get_or_create_concentrator, stats_endpoint, ConcentratorKey,
     SpanConcentratorState, StatsConfig,
 };
 use crate::service::tracing::trace_flusher::TraceFlusherStats;
@@ -907,26 +907,10 @@ impl SidecarInterface for ConnectionSidecarHandler {
         debug!("Registered remote config metadata: instance {instance_id:?}, queue_id: {queue_id:?}, service: {service_name}, env: {env_name}, version: {app_version}");
 
         let session = self.server.get_session(&instance_id.session_id);
-        let concentrator_service = session
-            .stats_config
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .as_ref()
-            .map(|c| c.root_service.clone())
-            .unwrap_or_default();
-        let concentrator_guard = ensure_stats_concentrator(
-            &self.server.span_concentrators,
-            &env_name,
-            &app_version,
-            &concentrator_service,
-            &instance_id.session_id,
-            &session,
-        );
         let runtime_info = session.get_runtime(&instance_id.runtime_id);
         let mut applications = runtime_info.lock_applications();
         let app = applications.entry(queue_id).or_default();
         app.set_metadata(env_name, app_version, service_name, global_tags);
-        app.span_concentrator_guard = concentrator_guard;
         let Some(notify_target) = self.server.get_notify_target(&session) else {
             return;
         };
@@ -989,24 +973,14 @@ impl SidecarInterface for ConnectionSidecarHandler {
     ) {
         let session_id = self.session_id.get().map(|s| s.as_str()).unwrap_or("");
         let session = self.server.get_session(session_id);
-        let service = session
-            .stats_config
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .as_ref()
-            .map(|c| c.root_service.clone())
-            .unwrap_or_default();
-        let map_key = ConcentratorKey {
-            env,
-            version,
-            root_service: service,
-        };
-        let guard = self
-            .server
-            .span_concentrators
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
-        if let Some(state) = guard.get(&map_key) {
+        // Lazily create the concentrator on first IPC span for this (env, version, service).
+        if let Some(state) = get_or_create_concentrator(
+            &self.server.span_concentrators,
+            &env,
+            &version,
+            session_id,
+            &session,
+        ) {
             let mut peer_tag_buf = Vec::new();
             let input = span.as_shm_input(&mut peer_tag_buf);
             state.concentrator.add_span(&input);

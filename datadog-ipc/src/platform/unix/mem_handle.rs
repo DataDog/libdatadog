@@ -183,13 +183,18 @@ impl NamedShmHandle {
         Self::new(file.into(), None, size)
     }
 
+    /// Unlink the SHM file from the filesystem without unmapping it.
+    pub fn unlink(&self) {
+        let _ = self.path.take(); // Drop of Box<ShmPath> calls shm_unlink exactly once
+    }
+
     fn new(fd: OwnedFd, path: Option<CString>, size: usize) -> io::Result<NamedShmHandle> {
         Ok(NamedShmHandle {
             inner: ShmHandle {
                 handle: fd.into(),
                 size,
             },
-            path: path.map(|path| ShmPath { name: path }),
+            path: path.map(|path| Box::new(ShmPath { name: path })).into(),
         })
     }
 }

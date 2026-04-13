@@ -32,7 +32,6 @@ pub(crate) struct RuntimeInfo {
 #[derive(Default)]
 pub(crate) struct ActiveApplication {
     pub remote_config_guard: Option<RemoteConfigsGuard>,
-    pub span_concentrator_guard: Option<crate::service::stats_flusher::SpanConcentratorGuard>,
     pub env: Option<String>,
     pub app_version: Option<String>,
     pub service_name: Option<String>,

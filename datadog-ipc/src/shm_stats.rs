@@ -38,8 +38,8 @@
 //! When the active bucket is nearly full the sidecar:
 //! 1. Creates a new SHM file at the *same path* (the old file is unlinked from the filesystem but
 //!    remains accessible to processes that already have it open).
-//! 2. Sets `ShmHeader::please_reload = 1` on the **old** mapping so workers know to re-open the
-//!    path on their next `add_span` call.
+//! 2. Sets `ShmHeader::ready = 0` on the **old** mapping so workers know to re-open the path on
+//!    their next `add_span` call.
 //! 3. Holds onto the old concentrator for ≥ 1 s, flushing it periodically, to absorb any spans that
 //!    arrived before workers noticed the reload flag.
 //! 4. Drops the old concentrator after that grace period.
@@ -177,6 +177,11 @@ struct ShmBucketHeader {
 struct ShmHeader {
     /// Layout version; checked by [`ShmSpanConcentrator::open`].  Mismatch returns an error.
     version: u32,
+    /// Set to 1 by the sidecar when workers should re-open the SHM at the
+    /// same path (a new, larger mapping has been created there).
+    ready: AtomicU8,
+    /// Index (0 or 1) of the bucket currently being written to by PHP workers.
+    active_idx: AtomicU8,
     /// Width of each time bucket in nanoseconds (e.g. 10 s = 10_000_000_000).
     bucket_size_nanos: u64,
     /// Number of aggregation slots per bucket (hash-table capacity).
@@ -185,11 +190,6 @@ struct ShmHeader {
     bucket_region_size: u32,
     /// Byte capacity of the per-bucket string pool.
     string_pool_size: u32,
-    /// Index (0 or 1) of the bucket currently being written to by PHP workers.
-    active_idx: AtomicU8,
-    /// Set to 1 by the sidecar when workers should re-open the SHM at the
-    /// same path (a new, larger mapping has been created there).
-    please_reload: AtomicU8,
     /// Monotonic counter incremented on every successful flush, used as the stats sequence number.
     flush_seq: AtomicU64,
 }
@@ -381,13 +381,20 @@ impl ShmSpanConcentrator {
 
         let base = mem.as_slice_mut().as_mut_ptr();
         unsafe {
-            // fresh mmap. Initialized to zero.
+            // On Windows the named mapping may persist from a previous concentrator lifetime
+            // (workers still hold handles after the sidecar retired it). Hence explicitly reset it.
+            #[cfg(windows)]
+            std::ptr::write_bytes(base, 0, total);
+
             let hdr = &mut *(base as *mut ShmHeader);
             hdr.version = SHM_VERSION;
             hdr.bucket_size_nanos = bucket_size_nanos;
             hdr.slot_count = slot_count;
             hdr.bucket_region_size = aligned_bucket_region(slot_count, string_pool_size) as u32;
             hdr.string_pool_size = string_pool_size;
+            // Signal readiness LAST — workers see ready=0 until this store and fall back
+            // to IPC, preventing writes to a partially-initialized concentrator.
+            hdr.ready.store(1, Release);
         }
 
         Ok(ShmSpanConcentrator { mem: Arc::new(mem) })
@@ -401,6 +408,12 @@ impl ShmSpanConcentrator {
         let base = mem.as_slice().as_ptr();
         unsafe {
             let hdr = shm_header(base);
+            if hdr.ready.load(Relaxed) == 0 {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "SHM span concentrator: not yet ready",
+                ));
+            }
             if hdr.version != SHM_VERSION {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidData,
@@ -426,7 +439,19 @@ impl ShmSpanConcentrator {
     /// Workers should call this before every `add_span`; when it returns `true`
     /// they should drop this handle, call `open(path)`, and retry.
     pub fn needs_reload(&self) -> bool {
-        self.header().please_reload.load(Acquire) != 0
+        self.header().ready.load(Acquire) == 0
+    }
+
+    /// Unlink the SHM file from the filesystem so that new PHP workers cannot open it.
+    /// Existing mappings (including this one and any already open in PHP workers) remain
+    /// valid.  Call this *before* `signal_reload` when retiring a concentrator.
+    ///
+    /// Uses `Arc::get_mut` to take the path out (preventing a double-unlink on `Drop`).
+    /// If multiple `Arc` clones are alive the path cannot be taken; the unlink still
+    /// happens but `Drop` may attempt a harmless second unlink (which returns `ENOENT`).
+    pub fn unlink(&self) {
+        #[cfg(unix)]
+        self.mem.unlink();
     }
 
     /// Add a span to the currently-active bucket.  Thread-safe.
@@ -578,7 +603,7 @@ impl ShmSpanConcentrator {
 
     /// Signal workers to re-open the SHM (call before creating a new, larger one).
     pub fn signal_reload(&self) {
-        self.header().please_reload.store(1, Release);
+        self.header().ready.store(0, Release);
     }
 
     /// Drain the inactive (or both, if `force`) bucket(s) and return raw stat buckets.
