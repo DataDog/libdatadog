@@ -346,10 +346,6 @@ pub mod linux {
         Ok(unsafe { OwnedFd::from_raw_fd(fd) })
     }
 
-    // Whether this size depends on the page size or not in the future, Rustix's `page_size()`
-    // caches the value in a static atomic, so it's ok to call `mapping_size()` repeatedly; it
-    // won't result in a syscall each time.
-    //
     // The returned size is guaranteed to be larger or equal to the size of `MappingHeader`.
     fn mapping_size() -> usize {
         size_of::<MappingHeader>()
