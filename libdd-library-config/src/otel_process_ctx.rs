@@ -98,21 +98,26 @@ pub mod linux {
                 .or_else(|_| try_memfd(MAPPING_NAME, libc::MFD_CLOEXEC | libc::MFD_ALLOW_SEALING))
                 .and_then(|fd| {
                     // Safety: fd is a valid open file descriptor.
-                    let ret =
-                        unsafe { libc::ftruncate(fd.as_raw_fd(), mapping_size() as libc::off_t) };
-                    check_syscall_retval(ret, "ftruncate failed")?;
+                    check_syscall_retval(
+                        unsafe {
+                            libc::ftruncate(fd.as_raw_fd(), mapping_size() as libc::off_t)
+                        },
+                        "ftruncate failed"
+                    )?;
                     // Safety: we pass a null pointer to mmap which is unconditionally ok
-                    let start_addr = unsafe {
-                        libc::mmap(
-                            ptr::null_mut(),
-                            size,
-                            libc::PROT_WRITE | libc::PROT_READ,
-                            libc::MAP_PRIVATE,
-                            fd.as_raw_fd(),
-                            0,
-                        )
-                    };
-                    check_mapping_addr(start_addr, "mmap failed")?;
+                    let start_addr = check_mapping_addr(
+                        unsafe {
+                            libc::mmap(
+                                ptr::null_mut(),
+                                size,
+                                libc::PROT_WRITE | libc::PROT_READ,
+                                libc::MAP_PRIVATE,
+                                fd.as_raw_fd(),
+                                0,
+                            )
+                        },
+                        "mmap failed"
+                    )?;
 
                     // We (implicitly) close the file descriptor right away, but this ok
                     Ok(MemMapping { start_addr })
@@ -120,17 +125,19 @@ pub mod linux {
                 // If any previous step failed, we fallback to an anonymous mapping
                 .or_else(|_| {
                     // Safety: we pass a null pointer to mmap, no precondition to uphold
-                    let start_addr = unsafe {
-                        libc::mmap(
-                            ptr::null_mut(),
-                            size,
-                            libc::PROT_WRITE | libc::PROT_READ,
-                            libc::MAP_PRIVATE | libc::MAP_ANONYMOUS,
-                            -1,
-                            0,
-                        )
-                    };
-                    check_mapping_addr(start_addr, "mmap failed: couldn't create a memfd or anonymous mmapped region for process context publication")?;
+                    let start_addr = check_mapping_addr(
+                        unsafe {
+                            libc::mmap(
+                                ptr::null_mut(),
+                                size,
+                                libc::PROT_WRITE | libc::PROT_READ,
+                                libc::MAP_PRIVATE | libc::MAP_ANONYMOUS,
+                                -1,
+                                0,
+                            )
+                        },
+                        "mmap failed: couldn't create a memfd or anonymous mmapped region for process context publication"
+                    )?;
 
                     Ok(MemMapping { start_addr })
                 })
@@ -145,16 +152,20 @@ pub mod linux {
         fn set_name(&mut self) -> anyhow::Result<()> {
             // Safety: self.start_addr is valid for mapping_size() bytes as per MemMapping
             // invariants. name is a valid NUL-terminated string that outlives the prctl call.
-            let ret = unsafe {
-                libc::prctl(
-                    libc::PR_SET_VMA,
-                    libc::PR_SET_VMA_ANON_NAME as libc::c_ulong,
-                    self.start_addr as libc::c_ulong,
-                    mapping_size() as libc::c_ulong,
-                    MAPPING_NAME.as_ptr() as libc::c_ulong,
-                )
-            };
-            check_syscall_retval(ret, "prctl PR_SET_VMA_ANON_NAME failed")
+            check_syscall_retval(
+                unsafe {
+                    libc::prctl(
+                        libc::PR_SET_VMA,
+                        libc::PR_SET_VMA_ANON_NAME as libc::c_ulong,
+                        self.start_addr as libc::c_ulong,
+                        mapping_size() as libc::c_ulong,
+                        MAPPING_NAME.as_ptr() as libc::c_ulong,
+                    )
+                },
+                "prctl PR_SET_VMA_ANON_NAME failed",
+            )?;
+
+            Ok(())
         }
 
         /// Unmaps the underlying memory region. This has same effect as dropping `self`, but
@@ -182,9 +193,13 @@ pub mod linux {
         /// Practically, `self` must be put in a `ManuallyDrop` wrapper and forgotten, or being in
         /// the process of being dropped.
         unsafe fn unmap(&mut self) -> anyhow::Result<()> {
-            // Safety: upheld by the caller.
-            let ret = unsafe { libc::munmap(self.start_addr, mapping_size()) };
-            check_syscall_retval(ret, "munmap failed when freeing the process context")
+            check_syscall_retval(
+                // Safety: upheld by the caller.
+                unsafe { libc::munmap(self.start_addr, mapping_size()) },
+                "munmap failed when freeing the process context",
+            )?;
+
+            Ok(())
         }
     }
 
@@ -214,10 +229,12 @@ pub mod linux {
             let mut mapping = MemMapping::new()?;
             let size = mapping_size();
 
-            // Safety: the invariants of MemMapping ensures `start_addr` is not null and comes
-            // from a previous call to `mmap`
-            let ret = unsafe { libc::madvise(mapping.start_addr, size, libc::MADV_DONTFORK) };
-            check_syscall_retval(ret, "madvise MADVISE_DONTFORK failed")?;
+            check_syscall_retval(
+                // Safety: the invariants of MemMapping ensures `start_addr` is not null and comes
+                // from a previous call to `mmap`
+                unsafe { libc::madvise(mapping.start_addr, size, libc::MADV_DONTFORK) },
+                "madvise MADVISE_DONTFORK failed",
+            )?;
 
             let published_at_ns = since_boottime_ns().ok_or_else(|| {
                 anyhow::anyhow!("failed to get current time for process context publication")
@@ -313,22 +330,22 @@ pub mod linux {
     }
 
     /// Returns `Err` wrapping the current `errno` with `msg` as context if `addr` equals
-    /// `MAP_FAILED`, `Ok(())` otherwise.
-    fn check_mapping_addr(addr: *mut c_void, msg: &'static str) -> anyhow::Result<()> {
+    /// `MAP_FAILED`, `Ok(addr)` otherwise.
+    fn check_mapping_addr(addr: *mut c_void, msg: &'static str) -> anyhow::Result<*mut c_void> {
         if addr == libc::MAP_FAILED {
             Err(std::io::Error::last_os_error()).context(msg)
         } else {
-            Ok(())
+            Ok(addr)
         }
     }
 
     /// Returns `Err` wrapping the current `errno` with `msg` as context if `ret` is negative,
-    /// `Ok(())` otherwise.
-    fn check_syscall_retval(ret: libc::c_int, msg: &'static str) -> anyhow::Result<()> {
+    /// `Ok(ret)` otherwise.
+    fn check_syscall_retval(ret: libc::c_int, msg: &'static str) -> anyhow::Result<libc::c_int> {
         if ret < 0 {
             Err(std::io::Error::last_os_error()).context(msg)
         } else {
-            Ok(())
+            Ok(ret)
         }
     }
 
@@ -336,14 +353,16 @@ pub mod linux {
     fn try_memfd(name: &CStr, flags: libc::c_uint) -> anyhow::Result<OwnedFd> {
         // We use the raw syscall rather than `libc::memfd_create` because the latter requires
         // glibc >= 2.27, while `syscall()` + `SYS_memfd_create` works with any glibc version.
-        // Safety: name is a valid NUL-terminated string; flags are constant bit flags.
-        let fd = unsafe {
-            libc::syscall(libc::SYS_memfd_create, name.as_ptr(), flags as libc::c_long)
-                as libc::c_int
-        };
-        check_syscall_retval(fd, "memfd_create failed")?;
+        check_syscall_retval(
+            // Safety: name is a valid NUL-terminated string; flags are constant bit flags.
+            unsafe {
+                libc::syscall(libc::SYS_memfd_create, name.as_ptr(), flags as libc::c_long)
+                    as libc::c_int
+            },
+            "memfd_create failed",
+        )
         // Safety: fd is a valid file descriptor just returned by memfd_create.
-        Ok(unsafe { OwnedFd::from_raw_fd(fd) })
+        .map(|fd| unsafe { OwnedFd::from_raw_fd(fd) })
     }
 
     // The returned size is guaranteed to be larger or equal to the size of `MappingHeader`.
