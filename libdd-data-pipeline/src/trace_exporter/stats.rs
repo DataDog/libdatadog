@@ -39,6 +39,7 @@ pub(crate) const STATS_ENDPOINT: &str = "/v0.6/stats";
 /// The maximum obfuscation version this tracer supports.
 #[cfg(feature = "stats-obfuscation")]
 pub(crate) const SUPPORTED_OBFUSCATION_VERSION: u32 = 1;
+#[cfg(feature = "stats-obfuscation")]
 pub(crate) const SUPPORTED_OBFUSCATION_VERSION_STR: &str = "1";
 
 #[cfg(not(target_arch = "wasm32"))]
