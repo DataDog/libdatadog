@@ -86,7 +86,7 @@ The nested `error` object is serialized from `ErrorObject`:
   crashes, this is the signal human-readable name (e.g. `"SIGSEGV"`).
   Otherwise `"Unknown"` unless upstream sets `CrashInfo.error.kind`.
 - `message`: **[optional]** Human readable summary. For signals the
-  default is `"Process terminated by signal <SIG>"`.
+  default is `"Process terminated with <SIG>"`.
 - `stack`: **[optional]** When the crashing thread stack contains at
   least one frame, this field embeds the crash stacktrace as defined in
   RFC 0011 (format `"Datadog Crashtracker 1.0"` plus frames).
@@ -154,7 +154,7 @@ MUST accept unknown tags and preserve existing ones.
   "ddtags": "service:checkout,env:prod,version:1.4.2,language_name:native,data_schema_version:1.4,incomplete:false,is_crash:true,uuid:f7e2...,collecting_sample:1",
   "error": {
     "type": "SIGSEGV",
-    "message": "Process terminated by signal SIGSEGV",
+    "message": "Process terminated by signal {sig_co} ({sig_num})",
     "stack": {
       "format": "Datadog Crashtracker 1.0",
       "frames": [

@@ -2,7 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 #[cfg(test)]
 mod otlp_export_tests {
-    use libdd_data_pipeline::trace_exporter::TraceExporter;
+    use libdd_capabilities_impl::NativeCapabilities;
+    use libdd_data_pipeline::trace_exporter::TraceExporterBuilder;
     use libdd_trace_utils::test_utils::create_test_json_span;
     use serde_json::json;
     use tokio::task;
@@ -53,7 +54,7 @@ mod otlp_export_tests {
         let otlp_endpoint = format!("http://localhost:{}/v1/traces", server.port());
 
         let task_result = task::spawn_blocking(move || {
-            let mut builder = TraceExporter::builder();
+            let mut builder = TraceExporterBuilder::default();
             builder
                 .set_otlp_endpoint(&otlp_endpoint)
                 .set_language("test-lang")
@@ -64,7 +65,9 @@ mod otlp_export_tests {
                 .set_env("test_env")
                 .set_service("test");
 
-            let trace_exporter = builder.build().expect("Unable to build TraceExporter");
+            let trace_exporter = builder
+                .build::<NativeCapabilities>()
+                .expect("Unable to build TraceExporter");
             let data = get_v04_trace_snapshot_test_payload("test_otlp_export");
             let response = trace_exporter.send(data.as_ref());
             assert!(response.is_ok(), "OTLP send failed: {:?}", response.err());
@@ -99,7 +102,7 @@ mod otlp_export_tests {
         };
 
         let task_result = task::spawn_blocking(move || {
-            let mut builder = TraceExporter::builder();
+            let mut builder = TraceExporterBuilder::default();
             builder
                 .set_otlp_endpoint(&otlp_endpoint)
                 .set_language("test-lang")
@@ -108,7 +111,9 @@ mod otlp_export_tests {
                 .set_env("test_env")
                 .set_service("test");
 
-            let trace_exporter = builder.build().expect("Unable to build TraceExporter");
+            let trace_exporter = builder
+                .build::<NativeCapabilities>()
+                .expect("Unable to build TraceExporter");
             let response = trace_exporter.send(data.as_ref());
             assert!(response.is_ok(), "send failed: {:?}", response.err());
         })

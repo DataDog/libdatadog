@@ -1,0 +1,135 @@
+name: Release - Test a release proposal PR changes using dd-trace-rs
+on:
+  push:
+    branches:
+      - release-proposal/**
+      - release-proposal-testing/**
+  pull_request:
+      branches:
+        - release/**
+        - release-testing/**
+jobs:
+  package-and-upload-crates:
+    permissions:
+      id-token: write # Enable OIDC
+    runs-on: ubuntu-latest
+    outputs:
+      upload_artifact: ${{ steps.package-crates.outputs.upload_artifact }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # 4.2.2
+        with:
+          fetch-depth: 0
+          # Use PR head so git diff origin/main...HEAD matches commits on the proposal branch (not the merge commit).
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.92.0
+
+      - name: Fetch main for three-dot diff
+        run: git fetch origin main
+
+      # Every workspace crate: compare effective [package] version at origin/main vs HEAD (see script).
+      # Dependency-only manifest edits are ignored; excludes match the old cargo package --exclude list.
+      - name: Package crates changed vs main
+        id: package-crates
+        run: |
+          set -euo pipefail
+          mapfile -t PACKAGES < <(./scripts/crates-to-package.sh)
+          echo "Packages to run cargo package on (version bump only):"
+          printf '%s\n' "${PACKAGES[@]}"
+          PKG_ARGS=()
+          for p in "${PACKAGES[@]}"; do
+            PKG_ARGS+=(-p "$p")
+          done
+          if [ "${#PKG_ARGS[@]}" -eq 0 ]; then
+            echo "upload_artifact=false" >> "$GITHUB_OUTPUT"
+            echo "Skipping cargo package: no crates had a version bump vs the base ref (PKG_ARGS is empty)."
+            exit 0
+          fi
+          cargo package "${PKG_ARGS[@]}" --all-features
+          echo "upload_artifact=true" >> "$GITHUB_OUTPUT"
+
+      - name: Upload crates
+        if: steps.package-crates.outputs.upload_artifact == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-proposal-test-crates
+          path: |
+            target/package/*.crate
+          retention-days: 1
+
+  compile-dd-trace-rs:
+    permissions:
+      id-token: write # Enable OIDC
+    runs-on: ubuntu-latest
+    needs: package-and-upload-crates
+    if: needs.package-and-upload-crates.outputs.upload_artifact == 'true'
+    strategy:
+      matrix:
+        version: ["datadog-opentelemetry-v0.3.2", "datadog-opentelemetry-v0.3.1"]
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # 4.2.2
+        with:
+          fetch-depth: 0
+          repository: DataDog/dd-trace-rs
+          ref: ${{ matrix.version }}
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.92.0
+
+      - name: Download release data
+        uses: actions/download-artifact@v4
+        with:
+          name: release-proposal-test-crates
+          path: /tmp/release-proposal-test-crates
+
+      - name: Compile dd-trace-rs
+        run: |
+          CRATES_DIR="/tmp/release-proposal-test-crates"
+          TOML_FILE="$(realpath Cargo.toml)"
+          
+          # if CRATES_DIR ends with a slash, remove it
+          if [[ "$CRATES_DIR" == */ ]]; then
+            CRATES_DIR="${CRATES_DIR%/}"
+          fi
+
+          # Get libdd-* direct dependencies only from the root manifest package.
+          LIBDD_DEPENDENCIES=$(cargo metadata --manifest-path "$TOML_FILE" --format-version=1 --no-deps | jq -c '[.packages[] | select(.name == "datadog-opentelemetry") | .dependencies[]?.name | select(startswith("libdd-"))] | unique')
+
+          echo "LIBDD_DEPENDENCIES: $LIBDD_DEPENDENCIES"
+
+          PATCH_ARGS=()
+
+          # Unzip crates and build a patch expression for local path overrides.
+          # patch all the crates to patch transitive dependencies
+          for crate in "$CRATES_DIR"/*.crate; do
+            tar -xzvf "$crate" -C "$CRATES_DIR" > /dev/null
+
+            CRATE_PATH=$(echo "$crate" | sed 's/.*\///' | sed 's/\.crate//')
+            CRATE_TOML_FILE="$CRATES_DIR/$CRATE_PATH/Cargo.toml"
+            
+            CRATE_NAME=$(cargo metadata --manifest-path "$CRATE_TOML_FILE" --format-version=1 --no-deps | jq -r '[.packages[].name][0]')
+            
+            echo "Patching crate: $CRATE_NAME"
+            PATCH_ARGS+=("--config" "patch.crates-io.$CRATE_NAME.path=\"$CRATES_DIR/$CRATE_PATH\"")
+          done
+
+          echo "Build dd-trace-rs with patch args: ${PATCH_ARGS[*]}"
+          
+          cargo update "${PATCH_ARGS[@]}"
+
+          echo "--------------------------------"
+          echo "Cargo tree: "
+          cargo tree -d -e normal --workspace --all-features "${PATCH_ARGS[@]}"
+          echo ""
+
+          echo "--------------------------------"
+          echo "Duplicated dependencies: "
+          cargo tree -d -e normal --workspace --all-features --prefix none "${PATCH_ARGS[@]}" | grep "libdd-" | grep -vF '(*)' | sort | uniq
+          echo ""
+
+          echo "--------------------------------"
+          echo "Building workspace:"
+          cargo build --release --workspace --all-features "${PATCH_ARGS[@]}"
+
+

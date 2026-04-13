@@ -9,7 +9,7 @@ pub type UnwWord = u64;
 #[repr(C)]
 #[derive(Debug, Copy, Clone)]
 pub struct UnwCursor {
-    pub opaque: [UnwWord; 4096],
+    pub opaque: [UnwWord; 250],
 }
 
 extern "C" {
@@ -35,8 +35,9 @@ extern "C" {
     ) -> i32;
 }
 
-pub const UNW_REG_IP: i32 = 32; // Instruction Pointer
+pub const UNW_REG_IP: i32 = 30; // Instruction Pointer
 pub const UNW_REG_SP: i32 = 31; // Stack Pointer
+pub const UNW_REG_FP: i32 = 29; // Frame Pointer
 pub const UNW_INIT_LOCAL_ONLY_IP: i32 = 1;
 
 /// Saves the current CPU context into `uc_mcontext.regs`.

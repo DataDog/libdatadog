@@ -9,7 +9,10 @@
 
 use nix::sys::socket::{recvmsg, sendmsg, AddressFamily, SockFlag, SockType};
 pub use nix::sys::socket::{ControlMessage, ControlMessageOwned, MsgFlags, UnixAddr};
+#[cfg(target_os = "linux")]
+use std::mem::MaybeUninit;
 use std::{
+    cell::RefCell,
     io,
     os::unix::io::{AsRawFd, FromRawFd, IntoRawFd, OwnedFd, RawFd},
     sync::atomic::{AtomicUsize, Ordering},
@@ -286,6 +289,93 @@ impl SeqpacketConn {
         recvmsg_raw(self.inner.as_raw_fd(), buf, MsgFlags::empty())
     }
 
+    /// Non-blocking drain of up to `max` available ack messages. Returns the count drained.
+    ///
+    /// `max` should be `send_count - ack_count` (the number of outstanding unacknowledged
+    /// messages); passing a tight bound avoids initialising more kernel structures than needed
+    /// and lets the loop exit without a final `WouldBlock` syscall.
+    ///
+    /// Acks are always 1-byte payloads with no file descriptors, so a minimal per-slot buffer
+    /// suffices. On Linux, `recvmmsg(2)` batches up to 100 receives into a single syscall; on
+    /// other platforms individual `try_recv_raw` calls are used instead.
+    pub fn drain_acks_nonblocking(&self, max: usize) -> io::Result<usize> {
+        if max == 0 {
+            return Ok(0);
+        }
+        #[cfg(target_os = "linux")]
+        {
+            const BATCH: usize = 100;
+            // Only initialise as many slots as we could possibly need.
+            let batch = max.min(BATCH);
+            // SAFETY: bufs/iovs/msgs are written before being passed to recvmmsg.
+            // msg_name and msg_control must be null; all other fields are either set
+            // explicitly below or are output-only (msg_flags, msg_len).
+            let mut bufs = [const { MaybeUninit::<[u8; 1]>::uninit() }; BATCH];
+            let mut iovs = [const { MaybeUninit::<libc::iovec>::uninit() }; BATCH];
+            let mut msgs = [const { MaybeUninit::<libc::mmsghdr>::uninit() }; BATCH];
+            for i in 0..batch {
+                unsafe {
+                    (*iovs[i].as_mut_ptr()).iov_base = bufs[i].as_mut_ptr() as *mut libc::c_void;
+                    (*iovs[i].as_mut_ptr()).iov_len = 1;
+                    (*msgs[i].as_mut_ptr()).msg_hdr.msg_name = std::ptr::null_mut();
+                    (*msgs[i].as_mut_ptr()).msg_hdr.msg_namelen = 0;
+                    // addr_of_mut avoids creating a mutable reference to an array slot.
+                    (*msgs[i].as_mut_ptr()).msg_hdr.msg_iov = iovs[i].as_mut_ptr();
+                    (*msgs[i].as_mut_ptr()).msg_hdr.msg_iovlen = 1;
+                    (*msgs[i].as_mut_ptr()).msg_hdr.msg_control = std::ptr::null_mut();
+                    (*msgs[i].as_mut_ptr()).msg_hdr.msg_controllen = 0;
+                }
+            }
+            let fd = self.inner.as_raw_fd();
+            let mut total = 0usize;
+            loop {
+                let this_batch = (max - total).min(batch) as libc::c_uint;
+                let n = unsafe {
+                    libc::recvmmsg(
+                        fd,
+                        msgs[0].as_mut_ptr(),
+                        this_batch,
+                        libc::MSG_DONTWAIT as _, // seems to be inconsistent, sometimes i32, u32
+                        std::ptr::null_mut(),
+                    )
+                };
+                if n < 0 {
+                    let e = io::Error::last_os_error();
+                    return if e.kind() == io::ErrorKind::WouldBlock {
+                        Ok(total)
+                    } else {
+                        Err(e)
+                    };
+                }
+                let n = n as usize;
+                for msg in msgs.iter().take(n) {
+                    if unsafe { msg.assume_init_ref() }.msg_len == 0 {
+                        return Err(io::Error::from(io::ErrorKind::BrokenPipe));
+                    }
+                }
+                total += n;
+                if n < this_batch as usize || total >= max {
+                    return Ok(total);
+                }
+            }
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            let mut buf = [0u8; 1];
+            let mut total = 0usize;
+            loop {
+                if total >= max {
+                    return Ok(total);
+                }
+                match self.try_recv_raw(&mut buf) {
+                    Ok(_) => total += 1,
+                    Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => return Ok(total),
+                    Err(e) => return Err(e),
+                }
+            }
+        }
+    }
+
     /// Blocking receive. Polls for readability (respecting read_timeout), then receives.
     pub fn recv_raw_blocking(&self, buf: &mut [u8]) -> io::Result<(usize, Vec<OwnedFd>)> {
         let fd = self.inner.as_raw_fd();
@@ -352,22 +442,50 @@ pub type AsyncConn = AsyncFd<OwnedFd>;
 
 /// Async receive on a Tokio `AsyncFd`-wrapped IPC connection.
 ///
-/// Allocates a buffer sized to `max_message_size()` per call and returns only the received
-/// bytes (truncated), so no large buffer is held between receives.
+/// Receives into a thread-local buffer pre-sized to `max_message_size()` (avoids a per-call
+/// heap allocation of up to 4 MB), then calls `decode` with the received byte slice so the
+/// caller can decode in-place without an intermediate `Vec<u8>`.  Zero buffer allocations per
+/// call once the thread-local has grown to full size.
+///
+/// The buffer is borrowed only inside the synchronous `try_io` closure and is always released
+/// before the next `.await`, so it is safe to reuse across concurrent tasks on the same thread
+/// (Tokio's cooperative scheduler never runs two tasks simultaneously on the same thread).
+///
+/// `decode` is wrapped in `Option` so that the `FnOnce` callback can be moved into the
+/// `FnMut` closure required by `try_io`; it is only called once (on successful receive).
 ///
 /// Used by the server dispatch loop (generated by `#[service]` macro).
-pub async fn recv_raw_async(fd: &AsyncConn) -> io::Result<(Vec<u8>, Vec<OwnedFd>)> {
+pub async fn recv_raw_async<F, T>(fd: &AsyncConn, decode: F) -> io::Result<(T, Vec<OwnedFd>)>
+where
+    F: FnOnce(&[u8]) -> T,
+{
+    thread_local! {
+        /// Reusable receive buffer. Grows on first use; never shrinks.
+        static RECV_BUF: RefCell<Vec<u8>> = const { RefCell::new(Vec::new()) };
+    }
+    // Wrap in Option to satisfy FnMut (take() is only called on successful receive).
+    let mut decode = Some(decode);
     loop {
         let mut guard = fd.readable().await?;
-        let mut buf = Vec::with_capacity(max_message_size());
-        // SAFETY: all bit patterns are valid for u8; recvmsg writes exactly n bytes into
-        // the spare capacity before set_len(n) is called below.
-        let slice = unsafe { std::slice::from_raw_parts_mut(buf.as_mut_ptr(), max_message_size()) };
-        match guard.try_io(|inner| recvmsg_raw(inner.as_raw_fd(), slice, MsgFlags::empty())) {
-            Ok(Ok((n, fds))) => {
-                unsafe { buf.set_len(n) };
-                return Ok((buf, fds));
-            }
+        match guard.try_io(|inner| {
+            RECV_BUF.with_borrow_mut(|buf| {
+                let size = max_message_size();
+                if buf.len() < size {
+                    buf.resize(size, 0u8);
+                }
+                match recvmsg_raw(inner.as_raw_fd(), buf, MsgFlags::empty()) {
+                    Err(e) => Err(e),
+                    Ok((n, fds)) => {
+                        // recvmsg_raw's &mut borrow of buf has ended; safe to read &buf[..n].
+                        #[allow(clippy::unwrap_used)] // SAFETY: take() is only reached once
+                        unsafe {
+                            Ok((decode.take().unwrap_unchecked()(&buf[..n]), fds))
+                        }
+                    }
+                }
+            })
+        }) {
+            Ok(Ok(x)) => return Ok(x),
             Ok(Err(e)) => return Err(e),
             Err(_would_block) => continue,
         }
@@ -385,6 +503,73 @@ pub async fn send_raw_async(fd: &AsyncConn, data: &[u8]) -> io::Result<()> {
         match guard.try_io(|inner| sendmsg_raw(inner.as_raw_fd(), data, &[], MsgFlags::empty())) {
             Ok(result) => return result,
             Err(_would_block) => continue,
+        }
+    }
+}
+
+/// Send `count` 1-byte ack messages using a single `sendmmsg(2)` syscall.
+///
+/// Used by the server dispatch loop (Linux only) to flush batched acks for fire-and-forget
+/// methods in one syscall instead of one `sendmsg` per call.  Best-effort: errors are silently
+/// dropped because the client's `send_count`/`ack_count` tracking handles missing acks by
+/// waiting for all outstanding ones at the next blocking call.
+#[cfg(target_os = "linux")]
+pub async fn send_acks_async(fd: &AsyncConn, count: u32) {
+    const MAX_BATCH: usize = crate::ACK_BUFFER_SIZE as usize;
+    let count = (count as usize).min(MAX_BATCH);
+    if count == 0 {
+        return;
+    }
+
+    // Only `offset` (a usize) lives across `.await` — keeping the future `Send`.
+    // The !Send iovec/mmsghdr arrays are constructed inside the synchronous try_io
+    // closure so they never appear in the async state machine.
+    let mut offset = 0usize;
+    loop {
+        let mut guard = match fd.writable().await {
+            Ok(g) => g,
+            Err(_) => return,
+        };
+        match guard.try_io(|inner| {
+            // Build arrays here (inside the synchronous closure, not across .await) so that
+            // !Send *mut c_void pointers never appear in the async state machine.
+            // SAFETY: zeroed mmsghdr/iovec are valid initial states; null pointers in unused
+            // fields (msg_name, msg_control) are correct — the kernel ignores them for SEQPACKET.
+            let ack_byte: u8 = 0;
+            let mut iovs: [libc::iovec; MAX_BATCH] = unsafe { core::mem::zeroed() };
+            let mut msgs: [libc::mmsghdr; MAX_BATCH] = unsafe { core::mem::zeroed() };
+            let batch = count - offset;
+            for i in 0..batch {
+                iovs[i].iov_base = &ack_byte as *const u8 as *mut libc::c_void;
+                iovs[i].iov_len = 1;
+                msgs[i].msg_hdr.msg_iov = &mut iovs[i] as *mut libc::iovec;
+                msgs[i].msg_hdr.msg_iovlen = 1;
+            }
+            let n = unsafe {
+                libc::sendmmsg(
+                    inner.as_raw_fd(),
+                    msgs.as_mut_ptr(),
+                    batch as libc::c_uint,
+                    0,
+                )
+            };
+            if n < 0 {
+                Err(io::Error::last_os_error())
+            } else {
+                Ok(n as usize)
+            }
+        }) {
+            Ok(Ok(sent)) => {
+                offset += sent;
+                if offset >= count {
+                    return;
+                }
+                // partial send: loop to retry the remainder
+            }
+            // drop on error:
+            // the client may already have terminated and we're processing outstanding messages
+            Ok(Err(_)) => return,
+            Err(_would_block) => {} // re-register for writability
         }
     }
 }
