@@ -60,6 +60,7 @@ pub struct BufferedOperation {
 }
 
 impl BufferedOperation {
+    #[inline]
     pub fn from_buf(buf: &ChangeBuffer, index: &mut usize) -> Result<Self> {
         // JS writes opcode as u64 (low u32 = opcode, high u32 = 0).
         // Read as u64 to consume all 8 bytes, then truncate to u32 for OpCode.

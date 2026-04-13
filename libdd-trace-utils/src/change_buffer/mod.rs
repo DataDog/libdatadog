@@ -106,6 +106,7 @@ pub struct ChangeBufferState<T: TraceData> {
     header_free_list: Vec<u32>,
     // Cached static strings to avoid repeated heap allocations (e.g. Arc<str>)
     // on every span flush. These are created once and cloned (cheap ref bump).
+    str_default: T::Text,
     str_top_level: T::Text,
     str_measured: T::Text,
     str_base_service: T::Text,
@@ -128,11 +129,16 @@ pub struct ChangeBufferState<T: TraceData> {
 }
 
 fn new_span_pooled<T: TraceData>(
+    str_def: &T::Text,
     pool: &mut Vec<Span<T>>,
     span_id: u64,
     parent_id: u64,
     trace_id: u128,
-) -> Span<T> {
+    default_meta: &Vec<(T::Text, T::Text)>,
+) -> Span<T>
+where
+    T::Text: Clone,
+{
     if let Some(mut span) = pool.pop() {
         span.span_id = span_id;
         span.trace_id = trace_id;
@@ -140,22 +146,28 @@ fn new_span_pooled<T: TraceData>(
         span.start = 0;
         span.duration = 0;
         span.error = 0;
-        span.service = Default::default();
-        span.name = Default::default();
-        span.resource = Default::default();
-        span.r#type = Default::default();
+        span.service = str_def.clone();
+        span.name = str_def.clone();
+        span.resource = str_def.clone();
+        span.r#type = str_def.clone();
+
         span.meta.clear();
+        span.meta.extend(default_meta.iter().cloned());
+
         span.metrics.clear();
         span.meta_struct.clear();
         span.span_links.clear();
         span.span_events.clear();
         span
     } else {
+        let mut meta = Vec::with_capacity(default_meta.len().min(8));
+        meta.extend(default_meta.iter().cloned());
+
         Span {
             span_id,
             trace_id,
             parent_id,
-            meta: Vec::with_capacity(8),
+            meta: meta,
             metrics: Vec::with_capacity(4),
             ..Default::default()
         }
@@ -183,6 +195,7 @@ where
             default_meta: Vec::new(),
             span_headers: Vec::with_capacity(256),
             header_free_list: Vec::new(),
+            str_default: T::Text::default(),
             str_top_level: T::Text::from_static_str("_dd.top_level"),
             str_measured: T::Text::from_static_str("_dd.measured"),
             str_base_service: T::Text::from_static_str("_dd.base_service"),
@@ -611,7 +624,14 @@ where
         let trace_id = (h.trace_id_hi as u128) << 64 | h.trace_id_lo as u128;
         let parent_id = h.parent_id;
 
-        let mut span = new_span_pooled(&mut self.span_pool, span_id, parent_id, trace_id);
+        let mut span = new_span_pooled(
+            &self.str_default,
+            &mut self.span_pool,
+            span_id,
+            parent_id,
+            trace_id,
+            &self.default_meta,
+        );
         span.start = h.start;
         span.duration = h.duration;
         span.error = h.error;
@@ -792,7 +812,14 @@ where
                 let span_id: u64 = self.change_buffer.read(index)?;
                 let trace_id: u128 = self.change_buffer.read(index)?;
                 let parent_id = self.get_num_arg(index)?;
-                let mut span = new_span_pooled(&mut self.span_pool, span_id, parent_id, trace_id);
+                let mut span = new_span_pooled(
+                    &self.str_default,
+                    &mut self.span_pool,
+                    span_id,
+                    parent_id,
+                    trace_id,
+                    &self.default_meta,
+                );
                 self.apply_default_meta(&mut span);
                 self.ensure_slot(op.slot_index);
                 self.spans[op.slot_index as usize] = Some(span);
@@ -867,7 +894,14 @@ where
                 let parent_id: u64 = self.get_num_arg(index)?;
                 let name = self.get_string_arg(index)?;
                 let start: i64 = self.get_num_arg(index)?;
-                let mut span = new_span_pooled(&mut self.span_pool, span_id, parent_id, trace_id);
+                let mut span = new_span_pooled(
+                    &self.str_default,
+                    &mut self.span_pool,
+                    span_id,
+                    parent_id,
+                    trace_id,
+                    &self.default_meta,
+                );
                 span.name = name;
                 span.start = start;
                 self.apply_default_meta(&mut span);
@@ -887,7 +921,14 @@ where
                 let resource = self.get_string_arg(index)?;
                 let r#type = self.get_string_arg(index)?;
                 let start: i64 = self.get_num_arg(index)?;
-                let mut span = new_span_pooled(&mut self.span_pool, span_id, parent_id, trace_id);
+                let mut span = new_span_pooled(
+                    &self.str_default,
+                    &mut self.span_pool,
+                    span_id,
+                    parent_id,
+                    trace_id,
+                    &self.default_meta,
+                );
                 span.name = name;
                 span.service = service;
                 span.resource = resource;
@@ -927,6 +968,7 @@ where
         Ok(())
     }
 
+    #[inline]
     pub fn string_table_insert_one(&mut self, key: u32, val: T::Text) {
         let idx = key as usize;
         if idx >= self.string_table.len() {
@@ -935,6 +977,7 @@ where
         self.string_table[idx] = Some(val);
     }
 
+    #[inline]
     pub fn string_table_evict_one(&mut self, key: u32) {
         let idx = key as usize;
         if idx < self.string_table.len() {
