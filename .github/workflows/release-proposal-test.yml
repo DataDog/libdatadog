@@ -40,12 +40,16 @@ jobs:
         run: |
           set -euo pipefail
           if [ "${{ github.event_name }}" = "pull_request" ]; then
-            export GIT_VERSION_BASE="${{ github.event.pull_request.base.sha }}"
-            export GIT_VERSION_HEAD="${{ github.event.pull_request.head.sha }}"
+            GIT_VERSION_BASE="${{ github.event.pull_request.base.sha }}"
+            export GIT_VERSION_BASE
+            GIT_VERSION_HEAD="${{ github.event.pull_request.head.sha }}"
+            export GIT_VERSION_HEAD
           else
             # Direct push: compare from fork point with main, not origin/main's current tip (main may have advanced).
-            export GIT_VERSION_BASE="$(git merge-base origin/main HEAD)"
-            export GIT_VERSION_HEAD="${GITHUB_SHA}"
+            GIT_VERSION_BASE="$(git merge-base origin/main HEAD)"
+            export GIT_VERSION_BASE
+            GIT_VERSION_HEAD="${GITHUB_SHA}"
+            export GIT_VERSION_HEAD
           fi
           
           echo "Comparing Cargo.toml package versions: GIT_VERSION_BASE=${GIT_VERSION_BASE} GIT_VERSION_HEAD=${GIT_VERSION_HEAD}"
