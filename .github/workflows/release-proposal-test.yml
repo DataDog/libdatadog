@@ -34,7 +34,7 @@ jobs:
         id: package-crates
         run: |
           set -euo pipefail
-          mapfile -t PACKAGES < <(./scripts/release-proposal-crates-to-package.sh)
+          mapfile -t PACKAGES < <(./scripts/crates-to-package.sh)
           echo "Packages to run cargo package on (version bump only):"
           printf '%s\n' "${PACKAGES[@]}"
           PKG_ARGS=()
