@@ -2,10 +2,10 @@
 # Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 # SPDX-License-Identifier: Apache-2.0
 #
-# Reads relative paths to changed Cargo.toml files (stdin, one per line).
-# Prints package names to pass to `cargo package -p` only when that crate's own
-# [package] version (including version.workspace inheritance) changed vs the base ref.
-# Dependency-only version bumps in [dependencies] do not qualify.
+# Compares every workspace package's effective [package] version between GIT_VERSION_BASE
+# and GIT_VERSION_HEAD (default origin/main vs HEAD). Prints package names suitable for
+# `cargo package -p` when the version changed — not when only dependency versions changed.
+# Uses git for both sides so results match the refs, not uncommitted working tree edits.
 
 set -euo pipefail
 
@@ -43,21 +43,6 @@ package_version_kind() {
 	'
 }
 
-# [package].name (stdin).
-package_name_from_manifest() {
-	awk '
-		/^\[package\]/ { p = 1; next }
-		p && /^\[/ { p = 0 }
-		p && /^name[[:space:]]*=/ {
-			line = $0
-			sub(/^[^"]*"/, "", line)
-			sub(/".*/, "", line)
-			print line
-			exit
-		}
-	'
-}
-
 effective_package_version() {
 	local manifest_content="$1"
 	local workspace_content="$2"
@@ -86,47 +71,20 @@ excluded_crate() {
 workspace_old=$(git show "${GIT_VERSION_BASE}:Cargo.toml" 2>/dev/null || true)
 workspace_new=$(git show "${GIT_VERSION_HEAD}:Cargo.toml" 2>/dev/null || { cat Cargo.toml; })
 
-wp_old=""
-wp_new=""
-[ -n "$workspace_old" ] && wp_old=$(printf '%s' "$workspace_old" | workspace_package_version)
-wp_new=$(printf '%s' "$workspace_new" | workspace_package_version)
+METADATA=$(cargo metadata --format-version=1 --no-deps)
+WORKSPACE_ROOT=$(echo "$METADATA" | jq -r '.workspace_root')
 
 declare -A emit=()
 
-# Root [workspace.package].version bump: every member with version.workspace = true gets a new effective version.
-if [ -n "$workspace_old" ] && [ "$wp_old" != "$wp_new" ] && [ -n "$wp_new" ]; then
-	WORKSPACE_ROOT=$(cargo metadata --format-version=1 --no-deps | jq -r '.workspace_root')
-	while IFS=$'\t' read -r name mpath; do
-		[ -z "$name" ] && continue
-		relpath=${mpath#"$WORKSPACE_ROOT/"}
-		[ -f "$relpath" ] || continue
-		if ! grep -q '^version\.workspace[[:space:]]*=[[:space:]]*true' "$relpath" 2>/dev/null; then
-			continue
-		fi
-		if excluded_crate "$name"; then
-			continue
-		fi
-		emit["$name"]=1
-	done < <(cargo metadata --format-version=1 --no-deps | jq -r '.packages[] | "\(.name)\t\(.manifest_path)"')
-fi
+while IFS=$'\t' read -r name mpath; do
+	[ -z "$name" ] && continue
+	relpath=${mpath#"$WORKSPACE_ROOT/"}
 
-while IFS= read -r rel; do
-	[ -z "$rel" ] && continue
-	[ "$rel" = "Cargo.toml" ] && continue
-	case "$rel" in
-	*/Cargo.toml) ;;
-	*) continue ;;
-	esac
-
-	if [ ! -f "$rel" ]; then
-		continue
-	fi
-
-	old_m=$(git show "${GIT_VERSION_BASE}:${rel}" 2>/dev/null || true)
-	new_m=$(cat "$rel")
+	old_m=$(git show "${GIT_VERSION_BASE}:${relpath}" 2>/dev/null || true)
+	new_m=$(git show "${GIT_VERSION_HEAD}:${relpath}" 2>/dev/null || true)
+	[ -n "$new_m" ] || continue
 
 	v_old=""
-	v_new=""
 	if [ -n "$old_m" ]; then
 		v_old=$(effective_package_version "$old_m" "$workspace_old")
 	fi
@@ -136,17 +94,15 @@ while IFS= read -r rel; do
 		continue
 	fi
 
-	name=$(printf '%s' "$new_m" | package_name_from_manifest)
-	[ -n "$name" ] || continue
 	if excluded_crate "$name"; then
 		continue
 	fi
 	emit["$name"]=1
-done
+done < <(echo "$METADATA" | jq -r '.packages[] | "\(.name)\t\(.manifest_path)"')
 
 if [ "${#emit[@]}" -eq 0 ]; then
-	echo "release-proposal-crates-to-package.sh: no packages with a changed [package] version." >&2
-	exit 1
+	echo "release-proposal-crates-to-package.sh: no packages with a changed [package] version (nothing to emit)." >&2
+	exit 0
 fi
 
 for n in "${!emit[@]}"; do

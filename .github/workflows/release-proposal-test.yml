@@ -13,6 +13,8 @@ jobs:
     permissions:
       id-token: write # Enable OIDC
     runs-on: ubuntu-latest
+    outputs:
+      upload_artifact: ${{ steps.package-crates.outputs.upload_artifact }}
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # 4.2.2
         with:
@@ -26,30 +28,29 @@ jobs:
       - name: Fetch main for three-dot diff
         run: git fetch origin main
 
-      # List changed Cargo.toml paths vs origin/main, then keep only crates whose *own* [package] version
-      # changed (including version.workspace + root [workspace.package].version). Dependency-only bumps are skipped.
-      # Excludes match the former full-workspace cargo package --exclude list (see script).
+      # Every workspace crate: compare effective [package] version at origin/main vs HEAD (see script).
+      # Dependency-only manifest edits are ignored; excludes match the old cargo package --exclude list.
       - name: Package crates changed vs main
+        id: package-crates
         run: |
           set -euo pipefail
-          DIFF_RANGE="origin/main...HEAD"
-          CHANGED_TOMLS=$(git diff --name-only "$DIFF_RANGE" -- ':(glob)**/Cargo.toml')
-          echo "Changed Cargo.toml files ($DIFF_RANGE):"
-          echo "$CHANGED_TOMLS" | head -50
-          if [ -z "$CHANGED_TOMLS" ]; then
-            echo "No Cargo.toml changes vs origin/main in this range; nothing to package." >&2
-            exit 1
-          fi
-          mapfile -t PACKAGES < <(echo "$CHANGED_TOMLS" | ./scripts/release-proposal-crates-to-package.sh)
+          mapfile -t PACKAGES < <(./scripts/release-proposal-crates-to-package.sh)
           echo "Packages to run cargo package on (version bump only):"
           printf '%s\n' "${PACKAGES[@]}"
           PKG_ARGS=()
           for p in "${PACKAGES[@]}"; do
             PKG_ARGS+=(-p "$p")
           done
+          if [ "${#PKG_ARGS[@]}" -eq 0 ]; then
+            echo "upload_artifact=false" >> "$GITHUB_OUTPUT"
+            echo "Skipping cargo package: no crates had a version bump vs the base ref (PKG_ARGS is empty)."
+            exit 0
+          fi
           cargo package "${PKG_ARGS[@]}" --all-features
+          echo "upload_artifact=true" >> "$GITHUB_OUTPUT"
 
       - name: Upload crates
+        if: steps.package-crates.outputs.upload_artifact == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: release-proposal-test-crates
@@ -62,6 +63,7 @@ jobs:
       id-token: write # Enable OIDC
     runs-on: ubuntu-latest
     needs: package-and-upload-crates
+    if: needs.package-and-upload-crates.outputs.upload_artifact == 'true'
     strategy:
       matrix:
         version: ["datadog-opentelemetry-v0.3.2", "datadog-opentelemetry-v0.3.1"]
