@@ -6,6 +6,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
+use libdd_capabilities_impl::NativeCapabilities;
 use libdd_data_pipeline::trace_buffer::{Export, TraceBuffer, TraceBufferConfig, TraceChunk};
 use libdd_data_pipeline::trace_exporter::{
     agent_response::AgentResponse, error::TraceExporterError,
@@ -44,7 +45,8 @@ fn setup_buffer() -> (Arc<SharedRuntime>, Arc<TraceBuffer<Span>>) {
         .span_flush_threshold(500)
         .max_flush_interval(Duration::from_secs(2));
     let (buf, worker) = TraceBuffer::new(cfg, Box::new(|_| {}), Box::new(SleepExport));
-    rt.spawn_worker(worker, true).expect("spawn_worker");
+    rt.spawn_worker(worker, true, &NativeCapabilities::new())
+        .expect("spawn_worker");
     (rt, Arc::new(buf))
 }
 

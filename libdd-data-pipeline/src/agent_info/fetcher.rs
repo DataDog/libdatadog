@@ -10,7 +10,7 @@ use super::{
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use bytes::Bytes;
-use libdd_capabilities::{HttpClientTrait, MaybeSend};
+use libdd_capabilities::{HttpClientCapability, MaybeSend};
 use libdd_common::Endpoint;
 use libdd_shared_runtime::Worker;
 use sha2::{Digest, Sha256};
@@ -35,7 +35,7 @@ pub enum FetchInfoStatus {
 /// If either the agent state hash or container tags hash is different from the current one:
 /// - Return a `FetchInfoStatus::NewState` of the info struct
 /// - Else return `FetchInfoStatus::SameState`
-async fn fetch_info_with_state_and_container_tags<H: HttpClientTrait>(
+async fn fetch_info_with_state_and_container_tags<H: HttpClientCapability>(
     info_endpoint: &Endpoint,
     current_state_hash: Option<&str>,
     current_container_tags_hash: Option<&str>,
@@ -65,7 +65,7 @@ async fn fetch_info_with_state_and_container_tags<H: HttpClientTrait>(
 /// If the state hash is different from the current one:
 /// - Return a `FetchInfoStatus::NewState` of the info struct
 /// - Else return `FetchInfoStatus::SameState`
-pub async fn fetch_info_with_state<H: HttpClientTrait>(
+pub async fn fetch_info_with_state<H: HttpClientCapability>(
     info_endpoint: &Endpoint,
     current_state_hash: Option<&str>,
 ) -> Result<FetchInfoStatus> {
@@ -93,7 +93,9 @@ pub async fn fetch_info_with_state<H: HttpClientTrait>(
 /// # Ok(())
 /// # }
 /// ```
-pub async fn fetch_info<H: HttpClientTrait>(info_endpoint: &Endpoint) -> Result<Box<AgentInfo>> {
+pub async fn fetch_info<H: HttpClientCapability>(
+    info_endpoint: &Endpoint,
+) -> Result<Box<AgentInfo>> {
     match fetch_info_with_state::<H>(info_endpoint, None).await? {
         FetchInfoStatus::NewState(info) => Ok(info),
         // Should never be reached since there is no previous state.
@@ -105,7 +107,7 @@ pub async fn fetch_info<H: HttpClientTrait>(info_endpoint: &Endpoint) -> Result<
 ///
 /// Returns a tuple of (state_hash, response_body_bytes, container_tags_hash).
 /// The hash is calculated using SHA256 to match the agent's calculation method.
-async fn fetch_and_hash_response<H: HttpClientTrait>(
+async fn fetch_and_hash_response<H: HttpClientCapability>(
     info_endpoint: &Endpoint,
 ) -> Result<(String, bytes::Bytes, Option<String>)> {
     let req = info_endpoint
@@ -149,13 +151,14 @@ async fn fetch_and_hash_response<H: HttpClientTrait>(
 /// # Example
 /// ```no_run
 /// # use anyhow::Result;
-/// # use libdd_capabilities_impl::NativeCapabilities;
+/// # use libdd_capabilities_impl::{HttpClientCapability, NativeCapabilities};
 /// # use libdd_shared_runtime::Worker;
 /// # #[tokio::main]
 /// # async fn main() -> Result<()> {
 /// // Define the endpoint
 /// use libdd_data_pipeline::agent_info;
 /// let endpoint = libdd_common::Endpoint::from_url("http://localhost:8126/info".parse().unwrap());
+/// let capabilities = NativeCapabilities::new_client();
 /// // Create the fetcher
 /// let (mut fetcher, _response_observer) = libdd_data_pipeline::agent_info::AgentInfoFetcher::<
 ///     NativeCapabilities,
@@ -164,7 +167,7 @@ async fn fetch_and_hash_response<H: HttpClientTrait>(
 /// );
 /// // Start the fetcher on a shared runtime
 /// let runtime = libdd_shared_runtime::SharedRuntime::new()?;
-/// runtime.spawn_worker(fetcher, true)?;
+/// runtime.spawn_worker(fetcher, true, &capabilities)?;
 ///
 /// // Get the Arc to access the info
 /// let agent_info_arc = agent_info::get_agent_info();
@@ -179,10 +182,10 @@ async fn fetch_and_hash_response<H: HttpClientTrait>(
 /// # Ok(())
 /// # }
 /// ```
-/// `H` is the HTTP client implementation, see [`HttpClientTrait`]. Leaf crates
+/// `H` is the HTTP client implementation, see [`HttpClientCapability`]. Leaf crates
 /// pin it to a concrete type.
 #[derive(Debug)]
-pub struct AgentInfoFetcher<H: HttpClientTrait> {
+pub struct AgentInfoFetcher<H: HttpClientCapability> {
     info_endpoint: Endpoint,
     refresh_interval: Duration,
     trigger_rx: Option<mpsc::Receiver<()>>,
@@ -192,7 +195,7 @@ pub struct AgentInfoFetcher<H: HttpClientTrait> {
     _phantom: PhantomData<H>,
 }
 
-impl<H: HttpClientTrait> AgentInfoFetcher<H> {
+impl<H: HttpClientCapability> AgentInfoFetcher<H> {
     /// Return a new `AgentInfoFetcher` fetching the `info_endpoint` on each `refresh_interval`
     /// and updating the stored info.
     ///
@@ -227,7 +230,7 @@ impl<H: HttpClientTrait> AgentInfoFetcher<H> {
 
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
-impl<H: HttpClientTrait + MaybeSend + Sync + 'static> Worker for AgentInfoFetcher<H> {
+impl<H: HttpClientCapability + MaybeSend + Sync + 'static> Worker for AgentInfoFetcher<H> {
     async fn initial_trigger(&mut self) {
         // Skip initial wait if cache is not populated
         if AGENT_INFO_CACHE.load().is_none() {
@@ -274,7 +277,7 @@ impl<H: HttpClientTrait + MaybeSend + Sync + 'static> Worker for AgentInfoFetche
     }
 }
 
-impl<H: HttpClientTrait> AgentInfoFetcher<H> {
+impl<H: HttpClientCapability> AgentInfoFetcher<H> {
     /// Fetch agent info and update cache if needed
     async fn fetch_and_update(&self) {
         let current_info = AGENT_INFO_CACHE.load();
@@ -577,7 +580,10 @@ mod single_threaded_tests {
         );
         assert!(agent_info::get_agent_info().is_none());
         let shared_runtime = SharedRuntime::new().unwrap();
-        shared_runtime.spawn_worker(fetcher, true).unwrap();
+        let spawner = NativeCapabilities::new();
+        shared_runtime
+            .spawn_worker(fetcher, true, &spawner)
+            .unwrap();
 
         // Wait until the info is fetched
         let start = std::time::Instant::now();
@@ -660,7 +666,10 @@ mod single_threaded_tests {
             AgentInfoFetcher::<NativeCapabilities>::new(endpoint, Duration::from_secs(3600));
 
         let shared_runtime = SharedRuntime::new().unwrap();
-        shared_runtime.spawn_worker(fetcher, true).unwrap();
+        let spawner = NativeCapabilities::new();
+        shared_runtime
+            .spawn_worker(fetcher, true, &spawner)
+            .unwrap();
 
         // Create a mock HTTP response with the new agent state
         let response = http::Response::builder()
@@ -741,7 +750,10 @@ mod single_threaded_tests {
             AgentInfoFetcher::<NativeCapabilities>::new(endpoint, Duration::from_secs(3600)); // Very long interval
 
         let shared_runtime = SharedRuntime::new().unwrap();
-        shared_runtime.spawn_worker(fetcher, true).unwrap();
+        let spawner = NativeCapabilities::new();
+        shared_runtime
+            .spawn_worker(fetcher, true, &spawner)
+            .unwrap();
 
         // Create a mock HTTP response with the same agent state
         let response = http::Response::builder()

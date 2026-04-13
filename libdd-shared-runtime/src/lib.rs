@@ -22,3 +22,16 @@ pub mod worker;
 // Top-level re-exports for convenience
 pub use shared_runtime::{SharedRuntime, SharedRuntimeError, WorkerHandle, WorkerHandleError};
 pub use worker::Worker;
+
+/// The concrete [`SpawnCapability::RuntimeContext`] type for the current platform.
+///
+/// On native this is `tokio::runtime::Handle`; on wasm it is `()`.
+/// Generic code that calls [`SharedRuntime::spawn_worker`] should bound
+/// `C: SpawnCapability<RuntimeContext = SpawnRuntimeContext>` so the constraint
+/// is satisfied on every target without `#[cfg]` on individual where clauses.
+#[cfg(not(target_arch = "wasm32"))]
+pub type SpawnRuntimeContext = tokio::runtime::Handle;
+
+/// See the non-wasm variant for documentation.
+#[cfg(target_arch = "wasm32")]
+pub type SpawnRuntimeContext = ();

@@ -8,54 +8,82 @@
 //! etc.). Leaf crates (FFI, benchmarks) pin this type as the generic parameter.
 
 mod http;
+pub mod sleep;
+pub mod spawn;
 
-pub use libdd_capabilities::HttpClientTrait;
+use core::future::Future;
+use std::time::Duration;
 
-#[cfg(not(target_arch = "wasm32"))]
-pub use http::DefaultHttpClient;
+pub use http::NativeHttpClient;
+use libdd_capabilities::{http::HttpError, MaybeSend};
+pub use libdd_capabilities::{HttpClientCapability, SleepCapability, SpawnCapability};
+pub use sleep::NativeSleepCapability;
+pub use spawn::{NativeJoinHandle, NativeSpawnCapability};
 
-#[cfg(not(target_arch = "wasm32"))]
-mod native {
-    use core::future::Future;
+/// Bundle struct for native platform capabilities.
+///
+/// Delegates to [`NativeHttpClient`] for HTTP, [`NativeSleepCapability`] for
+/// sleep, and [`NativeSpawnCapability`] for task spawning.
+///
+/// Individual capability traits keep minimal per-function bounds (e.g.
+/// functions that only need HTTP require just `H: HttpClientCapability`, not the
+/// full bundle) so that native callers like the sidecar can use
+/// `NativeHttpClient` directly without pulling in this bundle.
+#[derive(Clone, Debug)]
+pub struct NativeCapabilities {
+    http: NativeHttpClient,
+    sleep: NativeSleepCapability,
+    spawn: NativeSpawnCapability,
+}
 
-    use libdd_capabilities::http::HttpError;
-    use libdd_capabilities::MaybeSend;
-
-    use super::DefaultHttpClient;
-    use super::HttpClientTrait;
-
-    /// Bundle struct for native platform capabilities.
-    ///
-    /// Delegates to [`DefaultHttpClient`] for HTTP. As more capability traits are
-    /// added (spawn, sleep, etc.), additional fields and impls are added here
-    /// without changing the type identity — consumers see the same
-    /// `NativeCapabilities` throughout.
-    ///
-    /// Individual capability traits keep minimal per-function bounds (e.g.
-    /// functions that only need HTTP require just `H: HttpClientTrait`, not the
-    /// full bundle) so that native callers like the sidecar can use
-    /// `DefaultHttpClient` directly without pulling in this bundle.
-    #[derive(Clone, Debug)]
-    pub struct NativeCapabilities {
-        http: DefaultHttpClient,
+impl Default for NativeCapabilities {
+    fn default() -> Self {
+        Self::new()
     }
+}
 
-    impl HttpClientTrait for NativeCapabilities {
-        fn new_client() -> Self {
-            Self {
-                http: DefaultHttpClient::new_client(),
-            }
-        }
-
-        fn request(
-            &self,
-            req: ::http::Request<bytes::Bytes>,
-        ) -> impl Future<Output = Result<::http::Response<bytes::Bytes>, HttpError>> + MaybeSend
-        {
-            self.http.request(req)
+impl NativeCapabilities {
+    pub fn new() -> Self {
+        Self {
+            http: NativeHttpClient::new_client(),
+            sleep: NativeSleepCapability,
+            spawn: NativeSpawnCapability,
         }
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
-pub use native::NativeCapabilities;
+impl HttpClientCapability for NativeCapabilities {
+    fn new_client() -> Self {
+        Self {
+            http: NativeHttpClient::new_client(),
+            sleep: NativeSleepCapability,
+            spawn: NativeSpawnCapability,
+        }
+    }
+
+    fn request(
+        &self,
+        req: ::http::Request<bytes::Bytes>,
+    ) -> impl Future<Output = Result<::http::Response<bytes::Bytes>, HttpError>> + MaybeSend {
+        self.http.request(req)
+    }
+}
+
+impl SleepCapability for NativeCapabilities {
+    fn sleep(&self, duration: Duration) -> impl Future<Output = ()> + MaybeSend {
+        self.sleep.sleep(duration)
+    }
+}
+
+impl SpawnCapability for NativeCapabilities {
+    type RuntimeContext = tokio::runtime::Handle;
+    type JoinHandle<T: MaybeSend + 'static> = NativeJoinHandle<T>;
+
+    fn spawn<F, T>(&self, future: F, ctx: &tokio::runtime::Handle) -> NativeJoinHandle<T>
+    where
+        F: Future<Output = T> + MaybeSend + 'static,
+        T: MaybeSend + 'static,
+    {
+        self.spawn.spawn(future, ctx)
+    }
+}
