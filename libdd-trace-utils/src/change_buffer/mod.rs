@@ -116,6 +116,7 @@ pub struct ChangeBufferState<T: TraceData> {
     str_limit_psr: T::Text,
     str_agent_psr: T::Text,
     str_internal: T::Text,
+    str_kind: T::Text,
     /// Pool of recycled Span objects. Reusing spans (with their pre-allocated
     /// Vec buffers) eliminates the alloc/dealloc churn that fragments the
     /// WASM linear memory allocator over time.
@@ -192,6 +193,7 @@ where
             str_limit_psr: T::Text::from_static_str("_dd.limit_psr"),
             str_agent_psr: T::Text::from_static_str("_dd.agent_psr"),
             str_internal: T::Text::from_static_str("internal"),
+            str_kind: T::Text::from_static_str("kind"),
             span_pool: Vec::new(),
             deferred_meta: Vec::with_capacity(256),
             deferred_metrics: Vec::with_capacity(256),
@@ -265,7 +267,10 @@ where
         // in the chunk to handle chunks spanning multiple traces.
         let mut seen_trace_ids: Vec<(u128, usize)> = Vec::new();
         for span in &spans_vec {
-            if let Some(entry) = seen_trace_ids.iter_mut().find(|(id, _)| *id == span.trace_id) {
+            if let Some(entry) = seen_trace_ids
+                .iter_mut()
+                .find(|(id, _)| *id == span.trace_id)
+            {
                 entry.1 += 1;
             } else {
                 seen_trace_ids.push((span.trace_id, 1));
@@ -322,8 +327,7 @@ where
     fn process_one_span(&self, span: &mut Span<T>) {
         // TODO span.sample();
 
-        let kind_key = T::Text::from_static_str("kind");
-        if let Some(kind) = vec_get(&span.meta, &kind_key) {
+        if let Some(kind) = vec_get(&span.meta, &self.str_kind) {
             if *kind != self.str_internal {
                 vec_insert(&mut span.metrics, self.str_measured.clone(), 1.0);
             }
@@ -712,21 +716,25 @@ where
     fn materialize_deferred_tags(&mut self, slot: u32, span: &mut Span<T>) {
         let idx = slot as usize;
         if idx < self.deferred_meta.len() {
-            let pairs = std::mem::take(&mut self.deferred_meta[idx]);
-            for (key_id, val_id) in pairs {
-                if let (Some(key), Some(val)) = (self.get_string(key_id), self.get_string(val_id))
+            span.meta.reserve(self.deferred_meta.len());
+            for (key_id, val_id) in &self.deferred_meta[idx] {
+                if let (Some(key), Some(val)) = (self.get_string(*key_id), self.get_string(*val_id))
                 {
                     vec_insert(&mut span.meta, key, val);
                 }
             }
+
+            self.deferred_meta[idx].clear();
         }
         if idx < self.deferred_metrics.len() {
-            let pairs = std::mem::take(&mut self.deferred_metrics[idx]);
-            for (key_id, val) in pairs {
-                if let Some(key) = self.get_string(key_id) {
-                    vec_insert(&mut span.metrics, key, val);
+            span.metrics.reserve(self.deferred_metrics.len());
+            for (key_id, val) in &self.deferred_metrics[idx] {
+                if let Some(key) = self.get_string(*key_id) {
+                    vec_insert(&mut span.metrics, key, *val);
                 }
             }
+
+            self.deferred_meta[idx].clear();
         }
     }
 
@@ -740,11 +748,11 @@ where
 
         if idx < self.deferred_meta.len() {
             for &(key_id, val_id) in &self.deferred_meta[idx] {
-                if let (Some(key), Some(val)) = (self.get_string(key_id), self.get_string(val_id))
-                {
+                if let (Some(key), Some(val)) = (self.get_string(key_id), self.get_string(val_id)) {
                     meta_pairs.push((key, val));
                 }
             }
+
             self.deferred_meta[idx].clear();
         }
         if idx < self.deferred_metrics.len() {
@@ -753,6 +761,7 @@ where
                     metric_pairs.push((key, val));
                 }
             }
+
             self.deferred_metrics[idx].clear();
         }
 
@@ -783,8 +792,7 @@ where
                 let span_id: u64 = self.change_buffer.read(index)?;
                 let trace_id: u128 = self.change_buffer.read(index)?;
                 let parent_id = self.get_num_arg(index)?;
-                let mut span =
-                    new_span_pooled(&mut self.span_pool, span_id, parent_id, trace_id);
+                let mut span = new_span_pooled(&mut self.span_pool, span_id, parent_id, trace_id);
                 self.apply_default_meta(&mut span);
                 self.ensure_slot(op.slot_index);
                 self.spans[op.slot_index as usize] = Some(span);
@@ -859,8 +867,7 @@ where
                 let parent_id: u64 = self.get_num_arg(index)?;
                 let name = self.get_string_arg(index)?;
                 let start: i64 = self.get_num_arg(index)?;
-                let mut span =
-                    new_span_pooled(&mut self.span_pool, span_id, parent_id, trace_id);
+                let mut span = new_span_pooled(&mut self.span_pool, span_id, parent_id, trace_id);
                 span.name = name;
                 span.start = start;
                 self.apply_default_meta(&mut span);
@@ -880,8 +887,7 @@ where
                 let resource = self.get_string_arg(index)?;
                 let r#type = self.get_string_arg(index)?;
                 let start: i64 = self.get_num_arg(index)?;
-                let mut span =
-                    new_span_pooled(&mut self.span_pool, span_id, parent_id, trace_id);
+                let mut span = new_span_pooled(&mut self.span_pool, span_id, parent_id, trace_id);
                 span.name = name;
                 span.service = service;
                 span.resource = resource;
@@ -1440,10 +1446,7 @@ mod tests {
         );
         // Second span does not get trace-level tags
         assert_eq!(vec_get(&spans[1].meta, &"env"), None);
-        assert_eq!(
-            vec_get(&spans[1].metrics, &"_sampling_priority_v1"),
-            None
-        );
+        assert_eq!(vec_get(&spans[1].metrics, &"_sampling_priority_v1"), None);
         Ok(())
     }
 
@@ -1473,10 +1476,7 @@ mod tests {
         state.traces.get_mut(&100).unwrap().origin = Some("synthetics");
 
         let spans = state.flush_chunk(vec![0], false)?;
-        assert_eq!(
-            vec_get(&spans[0].meta, &"_dd.origin"),
-            Some(&"synthetics")
-        );
+        assert_eq!(vec_get(&spans[0].meta, &"_dd.origin"), Some(&"synthetics"));
         Ok(())
     }
 
@@ -1487,11 +1487,7 @@ mod tests {
         let mut state = make_state(buf);
 
         create_span_directly(&mut state, 0, 1, 100, 0);
-        vec_insert(
-            &mut state.spans[0].as_mut().unwrap().meta,
-            "kind",
-            "client",
-        );
+        vec_insert(&mut state.spans[0].as_mut().unwrap().meta, "kind", "client");
 
         let spans = state.flush_chunk(vec![0], false)?;
         assert_eq!(vec_get(&spans[0].metrics, &"_dd.measured"), Some(&1.0));
