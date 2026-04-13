@@ -22,6 +22,7 @@ on:
           - libdd-otel-thread-ctx
           - libdd-profiling
           - libdd-profiling-protobuf
+          - libdd-shared-runtime
           - libdd-telemetry
           - libdd-tinybytes
           - libdd-trace-normalization
@@ -674,7 +675,6 @@ jobs:
           # Note: read returns 1 when it reaches EOF, which is expected for heredocs
           read -r -d '' JQ_FILTER << 'EOF' || true
           [ $api[0][]
-            | select((.commits | length) > 0)
             | [
                 "## \(.name)",
                 "",
