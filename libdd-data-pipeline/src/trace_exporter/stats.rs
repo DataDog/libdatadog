@@ -25,8 +25,6 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 #[cfg(not(target_arch = "wasm32"))]
-use tokio_util::sync::CancellationToken;
-#[cfg(not(target_arch = "wasm32"))]
 use tracing::{debug, error};
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -63,7 +61,6 @@ pub(crate) enum StatsComputationStatus {
     /// Client-side stats is enabled
     Enabled {
         stats_concentrator: Arc<Mutex<SpanConcentrator>>,
-        cancellation_token: CancellationToken,
         #[cfg(feature = "stats-obfuscation")]
         obfuscation_active: Arc<AtomicBool>,
         worker_handle: WorkerHandle,
@@ -124,13 +121,11 @@ fn create_and_start_stats_worker<H: HttpClientTrait + MaybeSend + Sync + 'static
     let obfuscation_active = Arc::new(AtomicBool::new(false));
 
     let bucket_size = stats_concentrator.lock_or_panic().get_bucket_size();
-    let cancellation_token = CancellationToken::new();
     let stats_exporter = stats_exporter::StatsExporter::<H>::new(
         bucket_size,
         stats_concentrator.clone(),
         ctx.metadata.clone(),
         Endpoint::from_url(add_path(ctx.endpoint_url, STATS_ENDPOINT)),
-        cancellation_token.clone(),
         client,
         #[cfg(feature = "stats-obfuscation")]
         obfuscation_active.clone(),
@@ -143,7 +138,6 @@ fn create_and_start_stats_worker<H: HttpClientTrait + MaybeSend + Sync + 'static
     // Update the stats computation state with the new worker components.
     client_side_stats.store(Arc::new(StatsComputationStatus::Enabled {
         stats_concentrator: stats_concentrator.clone(),
-        cancellation_token: cancellation_token.clone(),
         #[cfg(feature = "stats-obfuscation")]
         obfuscation_active,
         worker_handle,
@@ -218,15 +212,12 @@ pub(crate) fn handle_stats_enabled(
     ctx: &StatsContext,
     agent_info: &Arc<AgentInfo>,
     stats_concentrator: &Arc<Mutex<SpanConcentrator>>,
-    cancellation_token: &CancellationToken,
     client_side_stats: &ArcSwap<StatsComputationStatus>,
 ) {
     if agent_info.info.client_drop_p0s.is_some_and(|v| v) {
         let mut concentrator = stats_concentrator.lock_or_panic();
         concentrator.set_span_kinds(get_span_kinds_for_stats(agent_info));
         concentrator.set_peer_tags(agent_info.info.peer_tags.clone().unwrap_or_default());
-
-        let _ = cancellation_token;
 
         #[cfg(feature = "stats-obfuscation")]
         {

@@ -20,7 +20,6 @@ use libdd_shared_runtime::Worker;
 use libdd_trace_protobuf::pb;
 use libdd_trace_stats::span_concentrator::SpanConcentrator;
 use libdd_trace_utils::send_with_retry::{send_with_retry, RetryStrategy};
-use tokio_util::sync::CancellationToken;
 use tracing::error;
 
 const STATS_ENDPOINT_PATH: &str = "/v0.6/stats";
@@ -36,7 +35,6 @@ pub struct StatsExporter<H: HttpClientTrait> {
     endpoint: Endpoint,
     meta: TracerMetadata,
     sequence_id: AtomicU64,
-    cancellation_token: CancellationToken,
     #[cfg(feature = "stats-obfuscation")]
     obfuscation_active: Arc<AtomicBool>,
     client: H,
@@ -49,14 +47,11 @@ impl<H: HttpClientTrait> StatsExporter<H> {
     /// - `concentrator` SpanConcentrator storing the stats to be sent to the agent
     /// - `meta` metadata used in ClientStatsPayload and as headers to send stats to the agent
     /// - `endpoint` the Endpoint used to send stats to the agent
-    /// - `cancellation_token` Token used to safely shutdown the exporter by force flushing the
-    ///   concentrator
     pub fn new(
         flush_interval: time::Duration,
         concentrator: Arc<Mutex<SpanConcentrator>>,
         meta: TracerMetadata,
         endpoint: Endpoint,
-        cancellation_token: CancellationToken,
         client: H,
         #[cfg(feature = "stats-obfuscation")] obfuscation_active: Arc<AtomicBool>,
     ) -> Self {
@@ -67,7 +62,6 @@ impl<H: HttpClientTrait> StatsExporter<H> {
             meta,
             sequence_id: AtomicU64::new(0),
             client,
-            cancellation_token,
             #[cfg(feature = "stats-obfuscation")]
             obfuscation_active,
         }
@@ -292,7 +286,6 @@ mod tests {
             Arc::new(Mutex::new(get_test_concentrator())),
             get_test_metadata(),
             Endpoint::from_url(stats_url_from_agent_url(&server.url("/")).unwrap()),
-            CancellationToken::new(),
             NativeCapabilities::new_client(),
             #[cfg(feature = "stats-obfuscation")]
             Arc::new(AtomicBool::new(false)),
@@ -322,7 +315,6 @@ mod tests {
             Arc::new(Mutex::new(get_test_concentrator())),
             get_test_metadata(),
             Endpoint::from_url(stats_url_from_agent_url(&server.url("/")).unwrap()),
-            CancellationToken::new(),
             NativeCapabilities::new_client(),
             #[cfg(feature = "stats-obfuscation")]
             Arc::new(AtomicBool::new(false)),
@@ -359,7 +351,6 @@ mod tests {
             Arc::new(Mutex::new(get_test_concentrator())),
             get_test_metadata(),
             Endpoint::from_url(stats_url_from_agent_url(&server.url("/")).unwrap()),
-            CancellationToken::new(),
             NativeCapabilities::new_client(),
             #[cfg(feature = "stats-obfuscation")]
             Arc::new(AtomicBool::new(false)),
@@ -403,7 +394,6 @@ mod tests {
             Arc::new(Mutex::new(get_test_concentrator())),
             get_test_metadata(),
             Endpoint::from_url(stats_url_from_agent_url(&server.url("/")).unwrap()),
-            CancellationToken::new(),
             NativeCapabilities::new_client(),
             #[cfg(feature = "stats-obfuscation")]
             Arc::new(AtomicBool::new(false)),
@@ -468,7 +458,6 @@ mod tests {
             Arc::new(Mutex::new(get_test_concentrator())),
             get_test_metadata(),
             Endpoint::from_url(stats_url_from_agent_url(&server.url("/")).unwrap()),
-            CancellationToken::new(),
             NativeCapabilities::new_client(),
             Arc::new(AtomicBool::new(true)),
         );

@@ -385,9 +385,7 @@ impl<H: HttpClientTrait + MaybeSend + Sync + 'static> TraceExporter<H> {
                         );
                     }
                     StatsComputationStatus::Enabled {
-                        stats_concentrator,
-                        cancellation_token,
-                        ..
+                        stats_concentrator, ..
                     } => {
                         let ctx = stats::StatsContext {
                             metadata: &self.metadata,
@@ -398,7 +396,6 @@ impl<H: HttpClientTrait + MaybeSend + Sync + 'static> TraceExporter<H> {
                             &ctx,
                             &agent_info,
                             stats_concentrator,
-                            cancellation_token,
                             &self.client_side_stats,
                         );
                     }
