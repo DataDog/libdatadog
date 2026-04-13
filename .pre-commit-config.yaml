@@ -5,9 +5,9 @@
 #   GIT_CONFIG_GLOBAL=/dev/null pre-commit install --hook-type pre-push
 #
 # Mirrors CI checks from .github/workflows/lint.yml:
-#   pre-commit: cargo fmt --all (nightly, matching CI)
-#   pre-push:   cargo clippy --workspace --all-targets --all-features -D warnings
-#   pre-commit: dd-rust-license-tool check (only when Cargo.toml/lock change)
+#   pre-commit: cargo fmt --all (nightly; CI pins nightly-2026-02-08)
+#   pre-push:   cargo clippy --workspace --all-targets --all-features -- -D warnings
+#   pre-commit: dd-rust-license-tool check (on dependency/license file changes)
 repos:
   - repo: local
     hooks:
@@ -29,6 +29,7 @@ repos:
       - id: license-3rdparty
         name: dd-rust-license-tool check
         language: system
+        # CI pins version 1.0.6 — install with: cargo install dd-rust-license-tool --version 1.0.6
         entry: dd-rust-license-tool check
-        files: (Cargo\.toml|Cargo\.lock)$
+        files: (Cargo\.toml|Cargo\.lock|license-tool\.toml|LICENSE-3rdparty\.csv)$
         pass_filenames: false
