@@ -17,15 +17,58 @@ jobs:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # 4.2.2
         with:
           fetch-depth: 0
+          # Use PR head so git diff origin/main...HEAD matches commits on the proposal branch (not the merge commit).
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: 1.92.0
 
-      - name: Package the workspace
+      - name: Fetch main for three-dot diff
+        run: git fetch origin main
+
+      # Crates = workspace packages whose Cargo.toml changed vs origin/main (git diff main...branch).
+      # Pathspec ':(glob)**/Cargo.toml' keeps the diff small; map each path to a package via manifest_path.
+      # (Release proposals almost always bump versions in Cargo.toml; .rs-only changes here would not add a crate.)
+      - name: Package crates changed vs main
         run: |
-          cargo package --workspace --exclude "libdd-*-ffi" --exclude libdd-crashtracker --exclude libdd-libunwind-sys --exclude "datadog-*" \
-            --exclude bin_tests --exclude "tools" --exclude "sidecar_mockgen" --exclude "cc_utils" --exclude spawn_worker --exclude symbolizer-ffi \
-            --exclude test_spawn_from_lib --exclude build-common --exclude builder --all-features
+          set -euo pipefail
+          DIFF_RANGE="origin/main...HEAD"
+          echo "Changed Cargo.toml files ($DIFF_RANGE):"
+          git diff --name-only "$DIFF_RANGE" -- ':(glob)**/Cargo.toml' | head -50
+          FILES_JSON=$(git diff --name-only "$DIFF_RANGE" -- ':(glob)**/Cargo.toml' | jq -R -s 'split("\n") | map(select(length > 0))')
+          if [ "$(echo "$FILES_JSON" | jq 'length')" -eq 0 ]; then
+            echo "No Cargo.toml changes vs origin/main in this range; nothing to package." >&2
+            exit 1
+          fi
+          
+          CHANGED_CRATES=$(cargo metadata --format-version=1 --no-deps | jq --argjson files "$FILES_JSON" '
+            .workspace_root as $root |
+            .packages as $pkgs |
+            ($files | map(select(. != "Cargo.toml"))) as $tomls |
+            $tomls | map(
+              . as $f |
+              ($root + "/" + $f) as $abspath |
+              ([$pkgs[] | select(.manifest_path == $abspath)] | .[0].name // empty)
+            ) | map(select(length > 0)) | unique
+          ')
+
+          echo "Workspace crates touched by diff (via Cargo.toml): $CHANGED_CRATES"
+          PACKAGES_JSON=$(echo "$CHANGED_CRATES" | jq '
+            [.[] | select(
+              (. | test("^libdd-.*-ffi$") | not) and
+              (. | test("^datadog-") | not) and
+              (. | test("^(libdd-crashtracker|bin_tests|tools|sidecar_mockgen|cc_utils|spawn_worker|symbolizer-ffi|test_spawn_from_lib|build-common|builder)$") | not)
+            )] |
+            if length == 0 then error("no packages to package after applying excludes (or no mapped workspace crates in diff)") else . end
+          ')
+          echo "Packages to run cargo package on:"
+          echo "$PACKAGES_JSON" | jq .
+          mapfile -t PACKAGES < <(echo "$PACKAGES_JSON" | jq -r '.[]')
+          PKG_ARGS=()
+          for p in "${PACKAGES[@]}"; do
+            PKG_ARGS+=(-p "$p")
+          done
+          cargo package "${PKG_ARGS[@]}" --all-features
 
       - name: Upload crates
         uses: actions/upload-artifact@v4
