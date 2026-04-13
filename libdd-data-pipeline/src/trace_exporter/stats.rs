@@ -16,6 +16,7 @@ use libdd_common::Endpoint;
 use libdd_common::MutexExt;
 use libdd_shared_runtime::{SharedRuntime, WorkerHandle};
 use libdd_trace_stats::span_concentrator::SpanConcentrator;
+#[cfg(not(target_arch = "wasm32"))]
 use libdd_trace_stats::stats_exporter::{StatsExporter, StatsMetadata};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -256,6 +257,7 @@ pub(crate) fn is_stats_worker_active(client_side_stats: &ArcSwap<StatsComputatio
     )
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl From<TracerMetadata> for StatsMetadata {
     fn from(m: TracerMetadata) -> StatsMetadata {
         StatsMetadata {

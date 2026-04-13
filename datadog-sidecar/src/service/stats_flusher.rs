@@ -27,18 +27,6 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tracing::{error, info, warn};
 use zwohash::ZwoHasher;
 
-/// Detect the current machine hostname via `gethostname(2)`.  Returns an empty string on error.
-pub(crate) fn get_hostname() -> String {
-    let mut buf = vec![0u8; 256];
-    // SAFETY: buf is valid for the given length; gethostname writes a NUL-terminated string.
-    let ret = unsafe { libc::gethostname(buf.as_mut_ptr() as *mut libc::c_char, buf.len()) };
-    if ret != 0 {
-        return String::new();
-    }
-    let len = buf.iter().position(|&b| b == 0).unwrap_or(buf.len());
-    String::from_utf8_lossy(&buf[..len]).into_owned()
-}
-
 /// After the last `SpanConcentratorGuard` is dropped, keep the concentrator alive for this long
 /// before removing it (to absorb late-arriving spans from the previous app version/env).
 const IDLE_REMOVE_SECS: u64 = 600;

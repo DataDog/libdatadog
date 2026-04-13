@@ -36,7 +36,7 @@ use crate::service::debugger_diagnostics_bookkeeper::{
 use crate::service::exception_hash_rate_limiter::EXCEPTION_HASH_LIMITER;
 use crate::service::remote_configs::{RemoteConfigNotifyTarget, RemoteConfigs};
 use crate::service::stats_flusher::{
-    ensure_stats_concentrator, flush_all_stats_now, get_hostname, stats_endpoint, ConcentratorKey,
+    ensure_stats_concentrator, flush_all_stats_now, stats_endpoint, ConcentratorKey,
     SpanConcentratorState, StatsConfig,
 };
 use crate::service::tracing::trace_flusher::TraceFlusherStats;
@@ -685,7 +685,7 @@ impl SidecarInterface for ConnectionSidecarHandler {
             endpoint: stats_endpoint(&config.endpoint).unwrap_or_else(|| config.endpoint.clone()),
             flush_interval: config.flush_interval,
             hostname: if config.hostname.is_empty() {
-                get_hostname()
+                sys_info::hostname().unwrap_or_default()
             } else {
                 config.hostname.clone()
             },
