@@ -3,7 +3,7 @@
 
 [package]
 name = "libdd-shared-runtime"
-version = "1.0.0"
+version = "0.1.0"
 description = "Shared tokio runtime with fork-safe worker management for Datadog libraries"
 homepage = "https://github.com/DataDog/libdatadog/tree/main/libdd-shared-runtime"
 repository = "https://github.com/DataDog/libdatadog/tree/main/libdd-shared-runtime"
