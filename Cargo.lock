@@ -1525,7 +1525,6 @@ dependencies = [
  "http-body-util",
  "httpmock",
  "libc",
- "libdd-capabilities",
  "libdd-capabilities-impl",
  "libdd-common",
  "libdd-common-ffi",
@@ -2857,6 +2856,7 @@ dependencies = [
  "http-body-util",
  "libdd-capabilities",
  "libdd-common",
+ "tokio",
 ]
 
 [[package]]

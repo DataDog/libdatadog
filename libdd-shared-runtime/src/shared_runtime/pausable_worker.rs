@@ -4,27 +4,48 @@
 //! Defines a pausable worker to be able to stop background processes before forks
 
 use crate::worker::Worker;
+use core::pin::Pin;
+use libdd_capabilities::spawn::SpawnCapability;
 use libdd_capabilities::MaybeSend;
 use std::fmt::Display;
-use tokio::{runtime::Runtime, select, task::JoinHandle};
+use std::future::Future;
+use tokio::select;
 use tokio_util::sync::CancellationToken;
 use tracing::debug;
+
+#[cfg(not(target_arch = "wasm32"))]
+type WorkerJoinHandle<T> = Pin<Box<dyn Future<Output = T> + Send>>;
+
+#[cfg(target_arch = "wasm32")]
+type WorkerJoinHandle<T> = Pin<Box<dyn Future<Output = T>>>;
 
 /// A pausable worker which can be paused and restarted on forks.
 ///
 /// Used to allow a [`super::Worker`] to be paused while saving its state when
 /// dropping a tokio runtime to be able to restart with the same state on a new runtime. This is
 /// used to stop all threads before a fork to avoid deadlocks in child.
-#[derive(Debug)]
 pub enum PausableWorker<T: Worker + MaybeSend + Sync + 'static> {
     Running {
-        handle: JoinHandle<T>,
+        handle: WorkerJoinHandle<T>,
         stop_token: CancellationToken,
     },
     Paused {
         worker: T,
     },
     InvalidState,
+}
+
+impl<T: Worker + MaybeSend + Sync + 'static> std::fmt::Debug for PausableWorker<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Running { .. } => f.debug_struct("PausableWorker::Running").finish(),
+            Self::Paused { worker } => f
+                .debug_struct("PausableWorker::Paused")
+                .field("worker", worker)
+                .finish(),
+            Self::InvalidState => write!(f, "PausableWorker::InvalidState"),
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -54,17 +75,17 @@ impl<T: Worker + MaybeSend + Sync + 'static> PausableWorker<T> {
         Self::Paused { worker }
     }
 
-    /// Start the worker on the given runtime.
+    /// Start the worker using the given spawn capability.
     ///
-    /// The worker's main loop will be run on the runtime.
-    pub fn start(&mut self, rt: &Runtime) -> Result<(), PausableWorkerError> {
-        #[cfg(target_arch = "wasm32")]
-        return Ok(());
-        #[cfg(not(target_arch = "wasm32"))]
+    /// The worker's main loop will be spawned via the provided spawner.
+    pub fn start<S: SpawnCapability>(&mut self, spawner: &S) -> Result<(), PausableWorkerError>
+    where
+        S::JoinHandle<T>: 'static,
+    {
         match self {
             PausableWorker::Running { .. } => Ok(()),
-            PausableWorker::Paused { worker } => {
-                debug!(?worker, "Starting pausable worker");
+            PausableWorker::Paused { .. } => {
+                debug!(?self, "Starting pausable worker");
                 let PausableWorker::Paused { mut worker } =
                     std::mem::replace(self, PausableWorker::InvalidState)
                 else {
@@ -76,13 +97,12 @@ impl<T: Worker + MaybeSend + Sync + 'static> PausableWorker<T> {
                 // will be replaced by a valid state.
                 let stop_token = CancellationToken::new();
                 let cloned_token = stop_token.clone();
-                let handle = rt.spawn(async move {
+                let handle = spawner.spawn(async move {
                     // First iteration using initial_trigger
                     select! {
-                            // Always check for cancellation first, to reduce time-to-pause in case
-                            // the initial trigger is always ready.
-                            biased;
-
+                        // Always check for cancellation first, to reduce time-to-pause in case
+                        // the initial trigger is always ready.
+                        biased;
                         _ = cloned_token.cancelled() => {
                             return worker;
                         }
@@ -97,7 +117,6 @@ impl<T: Worker + MaybeSend + Sync + 'static> PausableWorker<T> {
                             // Always check for cancellation first, to reduce time-to-pause in case
                             // the trigger is always ready.
                             biased;
-
                             _ = cloned_token.cancelled() => {
                                 break;
                             }
@@ -109,7 +128,10 @@ impl<T: Worker + MaybeSend + Sync + 'static> PausableWorker<T> {
                     worker
                 });
 
-                *self = PausableWorker::Running { handle, stop_token };
+                *self = PausableWorker::Running {
+                    handle: Box::pin(handle),
+                    stop_token,
+                };
                 Ok(())
             }
             PausableWorker::InvalidState => Err(PausableWorkerError::InvalidState),
@@ -119,7 +141,7 @@ impl<T: Worker + MaybeSend + Sync + 'static> PausableWorker<T> {
     /// Pause the worker and wait for it to complete, storing its state for restart.
     ///
     /// # Errors
-    /// Fails if the worker handle has been aborted preventing the worker from being retrieved.
+    /// Fails if the worker is in an invalid state.
     pub async fn pause(&mut self) -> Result<(), PausableWorkerError> {
         match self {
             PausableWorker::Running { .. } => {
@@ -135,16 +157,11 @@ impl<T: Worker + MaybeSend + Sync + 'static> PausableWorker<T> {
                     stop_token.cancel();
                 }
 
-                if let Ok(mut worker) = handle.await {
-                    debug!(?worker, "Worker paused successfully");
-                    worker.on_pause().await;
-                    *self = PausableWorker::Paused { worker };
-                    Ok(())
-                } else {
-                    // The task has been aborted and the worker can't be retrieved.
-                    *self = PausableWorker::InvalidState;
-                    Err(PausableWorkerError::TaskAborted)
-                }
+                let mut worker = handle.await;
+                debug!(?worker, "Worker paused successfully");
+                worker.on_pause().await;
+                *self = PausableWorker::Paused { worker };
+                Ok(())
             }
             PausableWorker::Paused { .. } => Ok(()),
             PausableWorker::InvalidState => Err(PausableWorkerError::InvalidState),
@@ -172,6 +189,7 @@ mod tests {
     use tokio::{runtime::Builder, time::sleep};
 
     use super::*;
+    use crate::shared_runtime::RuntimeSpawner;
     use std::{
         sync::mpsc::{channel, Sender},
         time::Duration,
@@ -201,9 +219,10 @@ mod tests {
         let (sender, receiver) = channel::<u32>();
         let worker = TestWorker { state: 0, sender };
         let runtime = Builder::new_multi_thread().enable_time().build().unwrap();
+        let spawner = RuntimeSpawner::new(runtime.handle().clone());
         let mut pausable_worker = PausableWorker::new(worker);
 
-        pausable_worker.start(&runtime).unwrap();
+        pausable_worker.start(&spawner).unwrap();
 
         assert_eq!(receiver.recv().unwrap(), 0);
         runtime.block_on(async { pausable_worker.pause().await.unwrap() });
@@ -212,7 +231,7 @@ mod tests {
         for message in receiver.try_iter() {
             next_message = message + 1;
         }
-        pausable_worker.start(&runtime).unwrap();
+        pausable_worker.start(&spawner).unwrap();
         assert_eq!(receiver.recv().unwrap(), next_message);
     }
 }

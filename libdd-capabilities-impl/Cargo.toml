@@ -20,6 +20,7 @@ bytes = "1"
 http = "1"
 libdd-capabilities = { path = "../libdd-capabilities", version = "0.1.0" }
 libdd-common = { path = "../libdd-common", version = "3.0.2", default-features = false }
+tokio = { version = "1", features = ["time", "rt"] }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 http-body-util = "0.1"

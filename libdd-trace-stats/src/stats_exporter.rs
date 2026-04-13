@@ -11,7 +11,7 @@ use std::{
 
 use crate::span_concentrator::{FlushableConcentrator, SpanConcentrator};
 use async_trait::async_trait;
-use libdd_capabilities::{HttpClientTrait, MaybeSend};
+use libdd_capabilities::{HttpClientCapability, MaybeSend, SleepCapability};
 use libdd_common::Endpoint;
 use libdd_shared_runtime::Worker;
 use libdd_trace_protobuf::pb;
@@ -54,19 +54,24 @@ impl<'a> From<&'a StatsMetadata> for TracerHeaderTags<'a> {
 
 /// An exporter that concentrates and sends stats to the agent.
 ///
-/// `H` is the HTTP client implementation, see [`HttpClientTrait`]. Leaf crates
-/// pin it to a concrete type.
+/// `Cap` is the capabilities bundle (HTTP + sleep). Leaf crates pin it to a
+/// concrete type (`NativeCapabilities` or `WasmCapabilities`).
 #[derive(Debug)]
-pub struct StatsExporter<H: HttpClientTrait, C: FlushableConcentrator = SpanConcentrator> {
+pub struct StatsExporter<
+    Cap: HttpClientCapability + SleepCapability,
+    Con: FlushableConcentrator = SpanConcentrator,
+> {
     flush_interval: time::Duration,
-    concentrator: Arc<Mutex<C>>,
+    concentrator: Arc<Mutex<Con>>,
     endpoint: Endpoint,
     meta: StatsMetadata,
     sequence_id: AtomicU64,
-    client: H,
+    capabilities: Cap,
 }
 
-impl<H: HttpClientTrait, C: FlushableConcentrator> StatsExporter<H, C> {
+impl<Cap: HttpClientCapability + SleepCapability, Con: FlushableConcentrator>
+    StatsExporter<Cap, Con>
+{
     /// Return a new StatsExporter
     ///
     /// - `flush_interval` the interval on which the concentrator is flushed
@@ -78,10 +83,10 @@ impl<H: HttpClientTrait, C: FlushableConcentrator> StatsExporter<H, C> {
     ///   concentrator
     pub fn new(
         flush_interval: time::Duration,
-        concentrator: Arc<Mutex<C>>,
+        concentrator: Arc<Mutex<Con>>,
         meta: StatsMetadata,
         endpoint: Endpoint,
-        client: H,
+        capabilities: Cap,
     ) -> Self {
         Self {
             flush_interval,
@@ -89,7 +94,7 @@ impl<H: HttpClientTrait, C: FlushableConcentrator> StatsExporter<H, C> {
             endpoint,
             meta,
             sequence_id: AtomicU64::new(0),
-            client,
+            capabilities,
         }
     }
 
@@ -124,7 +129,7 @@ impl<H: HttpClientTrait, C: FlushableConcentrator> StatsExporter<H, C> {
         );
 
         let result = send_with_retry(
-            &self.client,
+            &self.capabilities,
             &self.endpoint,
             body,
             &headers,
@@ -164,9 +169,9 @@ impl<H: HttpClientTrait, C: FlushableConcentrator> StatsExporter<H, C> {
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 impl<
-        H: HttpClientTrait + MaybeSend + Sync + Debug + 'static,
-        C: FlushableConcentrator + Send + Debug,
-    > Worker for StatsExporter<H, C>
+        Cap: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static,
+        Con: FlushableConcentrator + Send + Debug,
+    > Worker for StatsExporter<Cap, Con>
 {
     async fn trigger(&mut self) {
         tokio::time::sleep(self.flush_interval).await;
@@ -358,17 +363,17 @@ mod tests {
             then.status(200).body("");
         });
 
+        let caps = NativeCapabilities::new(shared_runtime.runtime_handle().unwrap());
         let stats_exporter = StatsExporter::<NativeCapabilities>::new(
             // Use smaller buckets duration to speed up test
             Duration::from_secs(1),
             Arc::new(Mutex::new(get_test_concentrator())),
             get_test_metadata(),
             Endpoint::from_url(stats_url_from_agent_url(&server.url("/")).unwrap()),
-            NativeCapabilities::new_client(),
+            caps.clone(),
         );
-
         let _handle = shared_runtime
-            .spawn_worker(stats_exporter, true)
+            .spawn_worker(stats_exporter, true, &caps)
             .expect("Failed to spawn worker");
 
         // Wait for stats to be flushed
@@ -400,16 +405,17 @@ mod tests {
 
         let buckets_duration = Duration::from_secs(10);
 
+        let caps = NativeCapabilities::new(shared_runtime.runtime_handle().unwrap());
         let stats_exporter = StatsExporter::<NativeCapabilities>::new(
             buckets_duration,
             Arc::new(Mutex::new(get_test_concentrator())),
             get_test_metadata(),
             Endpoint::from_url(stats_url_from_agent_url(&server.url("/")).unwrap()),
-            NativeCapabilities::new_client(),
+            caps.clone(),
         );
 
         let _handle = shared_runtime
-            .spawn_worker(stats_exporter, true)
+            .spawn_worker(stats_exporter, true, &caps)
             .expect("Failed to spawn worker");
 
         shared_runtime.shutdown(None).unwrap();

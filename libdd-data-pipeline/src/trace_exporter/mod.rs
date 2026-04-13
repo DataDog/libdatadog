@@ -34,7 +34,7 @@ use bytes::Bytes;
 use http::header::HeaderMap;
 use http::uri::PathAndQuery;
 use http::Uri;
-use libdd_capabilities::{HttpClientTrait, MaybeSend};
+use libdd_capabilities::{HttpClientCapability, MaybeSend, SleepCapability, SpawnCapability};
 use libdd_common::tag::Tag;
 use libdd_common::Endpoint;
 use libdd_dogstatsd_client::Client;
@@ -199,10 +199,12 @@ impl From<TraceExporterInputFormat> for DeserInputFormat {
     }
 }
 
-/// `H` is the HTTP client implementation, see [`HttpClientTrait`]. Leaf crates
-/// pin it to a concrete type.
+/// `C` is the capabilities bundle (HTTP, sleep, spawn). Leaf crates
+/// pin it to a concrete type (`NativeCapabilities` or `WasmCapabilities`).
 #[derive(Debug)]
-pub struct TraceExporter<H: HttpClientTrait + MaybeSend + Sync + 'static> {
+pub struct TraceExporter<
+    C: HttpClientCapability + SleepCapability + SpawnCapability + MaybeSend + Sync + 'static,
+> {
     endpoint: Endpoint,
     metadata: TracerMetadata,
     input_format: TraceExporterInputFormat,
@@ -216,10 +218,10 @@ pub struct TraceExporter<H: HttpClientTrait + MaybeSend + Sync + 'static> {
     #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     previous_info_state: ArcSwapOption<String>,
     info_response_observer: ResponseObserver,
-    #[cfg(feature = "telemetry")]
+    #[cfg(all(not(target_arch = "wasm32"), feature = "telemetry"))]
     telemetry: Option<TelemetryClient>,
     health_metrics_enabled: bool,
-    client: H,
+    capabilities: C,
     #[cfg(not(target_arch = "wasm32"))]
     workers: TraceExporterWorkers,
     agent_payload_response_version: Option<AgentResponsePayloadVersion>,
@@ -227,7 +229,9 @@ pub struct TraceExporter<H: HttpClientTrait + MaybeSend + Sync + 'static> {
     otlp_config: Option<OtlpTraceConfig>,
 }
 
-impl<H: HttpClientTrait + MaybeSend + Sync + 'static> TraceExporter<H> {
+impl<C: HttpClientCapability + SleepCapability + SpawnCapability + MaybeSend + Sync + 'static>
+    TraceExporter<C>
+{
     #[allow(missing_docs)]
     pub fn builder() -> TraceExporterBuilder {
         TraceExporterBuilder::default()
@@ -241,6 +245,7 @@ impl<H: HttpClientTrait + MaybeSend + Sync + 'static> TraceExporter<H> {
     /// # Errors
     /// Returns [`SharedRuntimeError::ShutdownTimedOut`] if a timeout was given and elapsed before
     /// all workers finished.
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn shutdown(self, timeout: Option<Duration>) -> Result<(), TraceExporterError> {
         let runtime = self.shared_runtime.clone();
         if let Some(timeout) = timeout {
@@ -304,6 +309,7 @@ impl<H: HttpClientTrait + MaybeSend + Sync + 'static> TraceExporter<H> {
     /// # Returns
     /// * Ok(AgentResponse): The response from the agent
     /// * Err(TraceExporterError): An error detailing what went wrong in the process
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn send(&self, data: &[u8]) -> Result<AgentResponse, TraceExporterError> {
         self.check_agent_info();
 
@@ -381,7 +387,7 @@ impl<H: HttpClientTrait + MaybeSend + Sync + 'static> TraceExporter<H> {
                             &ctx,
                             &agent_info,
                             &self.client_side_stats,
-                            self.client.clone(),
+                            self.capabilities.clone(),
                         );
                     }
                     StatsComputationStatus::Enabled {
@@ -465,6 +471,7 @@ impl<H: HttpClientTrait + MaybeSend + Sync + 'static> TraceExporter<H> {
     /// # Returns
     /// * Ok(AgentResponse): The response from the agent (or Unchanged for OTLP)
     /// * Err(TraceExporterError): An error detailing what went wrong in the process
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn send_trace_chunks<T: TraceData>(
         &self,
         trace_chunks: Vec<Vec<Span<T>>>,
@@ -512,7 +519,7 @@ impl<H: HttpClientTrait + MaybeSend + Sync + 'static> TraceExporter<H> {
             TraceExporterError::Internal(InternalErrorKind::InvalidWorkerState(e.to_string()))
         })?;
         send_otlp_traces_http(
-            &self.client,
+            &self.capabilities,
             config,
             self.endpoint.test_token.as_deref(),
             json_body,
@@ -522,6 +529,7 @@ impl<H: HttpClientTrait + MaybeSend + Sync + 'static> TraceExporter<H> {
     }
 
     /// Deserializes, processes and sends trace chunks to the agent
+    #[cfg(not(target_arch = "wasm32"))]
     fn send_deser(
         &self,
         data: &[u8],
@@ -565,9 +573,16 @@ impl<H: HttpClientTrait + MaybeSend + Sync + 'static> TraceExporter<H> {
         let payload_len = mp_payload.len();
 
         // Send traces to the agent
-        let result = send_with_retry(&self.client, endpoint, mp_payload, &headers, &strategy).await;
+        let result = send_with_retry(
+            &self.capabilities,
+            endpoint,
+            mp_payload,
+            &headers,
+            &strategy,
+        )
+        .await;
 
-        #[cfg(feature = "telemetry")]
+        #[cfg(all(not(target_arch = "wasm32"), feature = "telemetry"))]
         if let Some(telemetry) = &self.telemetry {
             if let Err(e) = telemetry.send(&SendPayloadTelemetry::from_retry_result(
                 &result,
