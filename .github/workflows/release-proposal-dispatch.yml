@@ -314,8 +314,9 @@ jobs:
             COMMITS=$(echo "$crate" | jq -r '.commits')
             INITIAL_RELEASE=false
 
-            # if there are no commits, skip the release
-            if [ "$COMMITS" = "[]" ]; then
+            # if there are no commits and there is an existing tag, skip the release                                                                                      
+            # (new crates with no previous tag proceed to the initial release path)
+            if [ "$COMMITS" = "[]" ] && [ "$TAG_EXISTS" = "true" ]; then                                                                                                  
               echo "No commits since last release for $NAME, skipping release"
               continue
             fi
@@ -384,8 +385,7 @@ jobs:
               cargo release version -p "$NAME" --prev-tag-name "$TAG" --allow-branch "$BRANCH_NAME" -x $LEVEL --no-confirm
 
             else
-              RANGE="$ORIGINAL_HEAD"
-              echo "No previous release tag for $NAME, using $ORIGINAL_HEAD as range"
+              echo "No previous release tag for $NAME, preparing initial release..."
 
               # Use the version from the crate metadata
               LEVEL=$(echo "$crate" | jq -r '.version')
@@ -401,11 +401,37 @@ jobs:
               echo "Executing cargo release for $NAME with level $LEVEL..."
               cargo release version -p "$NAME" -x $LEVEL --no-confirm
 
-              # if CHANGELOG.md does not exist, create it
+              # Use the existing CHANGELOG.md if present, otherwise create a minimal one
               if [ ! -f "$CRATE_PATH/CHANGELOG.md" ]; then
                 echo "Creating CHANGELOG.md for $NAME..."
-                touch "$CRATE_PATH/CHANGELOG.md"
+                RELEASE_DATE=$(date +%Y-%m-%d)
+                printf '# Changelog\n\n\n## %s - %s\n\nInitial release.\n' "$LEVEL" "$RELEASE_DATE" > "$CRATE_PATH/CHANGELOG.md"
+              else
+                echo "Using existing CHANGELOG.md for $NAME..."
               fi
+
+              git add "$CRATE_PATH/CHANGELOG.md"
+              if git diff --cached --quiet; then
+                # Nothing changed (version already correct, CHANGELOG already present).
+                # An empty commit is required so the proposal branch is ahead of the
+                # ephemeral branch — GitHub rejects PRs between branches at the same commit.
+                echo "Nothing to commit for $NAME (version and CHANGELOG already up to date), creating empty release marker commit..."
+                git commit --allow-empty -m "chore: Release $NAME $LEVEL"
+              else
+                cargo release commit --no-confirm -x
+              fi
+
+              # Add to results array
+              jq --arg name "$NAME" \
+              --arg level "$LEVEL" \
+              --arg tag "$TAG_PREFIX$LEVEL" \
+              --arg version "$LEVEL" \
+              --arg initial_release "$INITIAL_RELEASE" \
+              '. += [{"name": $name, "level": $level, "tag": $tag, "version": $version, "initial_release": $initial_release}]' \
+                /tmp/api-changes.json > /tmp/api-changes.tmp && mv /tmp/api-changes.tmp /tmp/api-changes.json
+
+              # Skip the git-cliff changelog update below — CHANGELOG is already handled above
+              continue
             fi
             
             # Update the CHANGELOG.md
@@ -460,9 +486,9 @@ jobs:
               /tmp/api-changes.json > /tmp/api-changes.tmp && mv /tmp/api-changes.tmp /tmp/api-changes.json
           done
 
-          # Check if there are commits to push
-          if git diff --quiet "${{ steps.ephemeral-branch.outputs.ephemeral_branch }}"; then
-            echo "No changes to push. Cancelling the workflow."
+          # Check if any crates are being released
+          if [ "$(jq 'length' /tmp/api-changes.json)" -eq 0 ]; then
+            echo "No crates to release. Cancelling the workflow."
             exit 1
           fi
 
@@ -476,6 +502,7 @@ jobs:
           jq . /tmp/api-changes.json
 
       - name: Push commits
+        if: steps.release-version-bumps.outputs.commits != ''
         uses: DataDog/commit-headless@action/v2.0.3
         with:
           branch: ${{ steps.proposal-branch.outputs.branch_name }}
