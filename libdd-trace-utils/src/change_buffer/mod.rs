@@ -5,7 +5,7 @@ pub enum ChangeBufferError {
     StringNotFound(u32),
     ReadOutOfBounds { offset: usize, len: usize },
     WriteOutOfBounds { offset: usize, len: usize },
-    UnknownOpcode(u32),
+    UnknownOpcode(u16),
 }
 
 impl std::fmt::Display for ChangeBufferError {
@@ -454,16 +454,16 @@ where
 
         match op.opcode {
             OpCode::SetMetaAttr => {
-                let key_id: u32 = self.get_num_arg(index)?;
-                let val_id: u32 = self.get_num_arg(index)?;
+                let key_id: u16 = self.get_num_arg(index)?;
+                let val_id: u16 = self.get_num_arg(index)?;
                 let dm = unsafe { &mut **cached_deferred_meta };
-                deferred_meta_insert(dm, key_id, val_id);
+                deferred_meta_insert(dm, key_id as u32, val_id as u32);
             }
             OpCode::SetMetricAttr => {
-                let key_id: u32 = self.get_num_arg(index)?;
+                let key_id: u16 = self.get_num_arg(index)?;
                 let val: f64 = self.get_num_arg(index)?;
                 let dm = unsafe { &mut **cached_deferred_metrics };
-                deferred_metric_insert(dm, key_id, val);
+                deferred_metric_insert(dm, key_id as u32, val);
             }
             OpCode::SetServiceName => {
                 span.service = unsafe { self.get_string_arg_unchecked(index) };
@@ -513,18 +513,18 @@ where
                 let count: u32 = self.get_num_arg(index)?;
                 let dm = unsafe { &mut **cached_deferred_meta };
                 for _ in 0..count {
-                    let key_id: u32 = self.get_num_arg(index)?;
-                    let val_id: u32 = self.get_num_arg(index)?;
-                    deferred_meta_insert(dm, key_id, val_id);
+                    let key_id: u16 = self.get_num_arg(index)?;
+                    let val_id: u16 = self.get_num_arg(index)?;
+                    deferred_meta_insert(dm, key_id as u32, val_id as u32);
                 }
             }
             OpCode::BatchSetMetric => {
                 let count: u32 = self.get_num_arg(index)?;
                 let dm = unsafe { &mut **cached_deferred_metrics };
                 for _ in 0..count {
-                    let key_id: u32 = self.get_num_arg(index)?;
+                    let key_id: u16 = self.get_num_arg(index)?;
                     let val: f64 = self.get_num_arg(index)?;
-                    deferred_metric_insert(dm, key_id, val);
+                    deferred_metric_insert(dm, key_id as u32, val);
                 }
             }
             // Create variants are handled in the caller, never reach here
@@ -535,16 +535,16 @@ where
     }
 
     fn get_string_arg(&self, index: &mut usize) -> Result<T::Text> {
-        let num: u32 = self.get_num_arg(index)?;
+        let num: u16 = self.get_num_arg(index)?;
         self.string_table
             .get(num as usize)
             .and_then(|opt| opt.clone())
-            .ok_or(ChangeBufferError::StringNotFound(num))
+            .ok_or(ChangeBufferError::StringNotFound(num as u32))
     }
 
     #[inline(always)]
     unsafe fn get_string_arg_unchecked(&self, index: &mut usize) -> T::Text {
-        let num: u32 = self.change_buffer.read_unchecked(index);
+        let num: u16 = self.change_buffer.read_unchecked(index);
         self.string_table
             .get_unchecked(num as usize)
             .clone()
@@ -793,19 +793,19 @@ where
                 self.traces.get_or_insert_default(trace_id).span_count += 1;
             }
             OpCode::SetMetaAttr => {
-                let key_id: u32 = self.get_num_arg(index)?;
-                let val_id: u32 = self.get_num_arg(index)?;
+                let key_id: u16 = self.get_num_arg(index)?;
+                let val_id: u16 = self.get_num_arg(index)?;
                 let idx = op.slot_index as usize;
                 if idx < self.deferred_meta.len() {
-                    deferred_meta_insert(&mut self.deferred_meta[idx], key_id, val_id);
+                    deferred_meta_insert(&mut self.deferred_meta[idx], key_id as u32, val_id as u32);
                 }
             }
             OpCode::SetMetricAttr => {
-                let key_id: u32 = self.get_num_arg(index)?;
+                let key_id: u16 = self.get_num_arg(index)?;
                 let val: f64 = self.get_num_arg(index)?;
                 let idx = op.slot_index as usize;
                 if idx < self.deferred_metrics.len() {
-                    deferred_metric_insert(&mut self.deferred_metrics[idx], key_id, val);
+                    deferred_metric_insert(&mut self.deferred_metrics[idx], key_id as u32, val);
                 }
             }
             OpCode::SetServiceName => {
@@ -898,10 +898,10 @@ where
                 let count: u32 = self.get_num_arg(index)?;
                 let idx = op.slot_index as usize;
                 for _ in 0..count {
-                    let key_id: u32 = self.get_num_arg(index)?;
-                    let val_id: u32 = self.get_num_arg(index)?;
+                    let key_id: u16 = self.get_num_arg(index)?;
+                    let val_id: u16 = self.get_num_arg(index)?;
                     if idx < self.deferred_meta.len() {
-                        deferred_meta_insert(&mut self.deferred_meta[idx], key_id, val_id);
+                        deferred_meta_insert(&mut self.deferred_meta[idx], key_id as u32, val_id as u32);
                     }
                 }
             }
@@ -909,10 +909,10 @@ where
                 let count: u32 = self.get_num_arg(index)?;
                 let idx = op.slot_index as usize;
                 for _ in 0..count {
-                    let key_id: u32 = self.get_num_arg(index)?;
+                    let key_id: u16 = self.get_num_arg(index)?;
                     let val: f64 = self.get_num_arg(index)?;
                     if idx < self.deferred_metrics.len() {
-                        deferred_metric_insert(&mut self.deferred_metrics[idx], key_id, val);
+                        deferred_metric_insert(&mut self.deferred_metrics[idx], key_id as u32, val);
                     }
                 }
             }
@@ -958,7 +958,7 @@ mod tests {
         };
     }
 
-    impl_to_le_bytes!(u32, u64, u128, i32, i64, f64);
+    impl_to_le_bytes!(u16, u32, u64, u128, i32, i64, f64);
 
     struct BufBuilder {
         data: Vec<u8>,
@@ -979,10 +979,8 @@ mod tests {
         }
 
         fn push_op_header(&mut self, opcode: OpCode, slot: u32) {
-            // Opcode is written as u64 (low u32 = opcode, high u32 = 0),
-            // matching the JS encoding.
-            self.push(opcode as u32);
-            self.push(0u32);
+            // Compact encoding: opcode as u16 LE, then slot_index as u32 LE.
+            self.push(opcode as u16);
             self.push(slot);
             self.op_count += 1;
         }
@@ -1125,8 +1123,8 @@ mod tests {
         let mut builder = BufBuilder::new();
         builder.push_create(0, 1, 100, 0);
         builder.push_op_header(OpCode::SetMetaAttr, 0);
-        builder.push(10u32); // string table key for name
-        builder.push(11u32); // string table key for value
+        builder.push(10u16); // string table key for name
+        builder.push(11u16); // string table key for value
         let buf = builder.finalize();
 
         let mut state = make_state(buf);
@@ -1147,7 +1145,7 @@ mod tests {
         let mut builder = BufBuilder::new();
         builder.push_create(0, 1, 100, 0);
         builder.push_op_header(OpCode::SetMetricAttr, 0);
-        builder.push(10u32); // string table key for name
+        builder.push(10u16); // string table key for name
         builder.push(99.5f64);
         let buf = builder.finalize();
 
@@ -1168,7 +1166,7 @@ mod tests {
         let mut builder = BufBuilder::new();
         builder.push_create(0, 1, 100, 0);
         builder.push_op_header(OpCode::SetServiceName, 0);
-        builder.push(10u32);
+        builder.push(10u16);
         let buf = builder.finalize();
 
         let mut state = make_state(buf);
@@ -1184,7 +1182,7 @@ mod tests {
         let mut builder = BufBuilder::new();
         builder.push_create(0, 1, 100, 0);
         builder.push_op_header(OpCode::SetResourceName, 0);
-        builder.push(10u32);
+        builder.push(10u16);
         let buf = builder.finalize();
 
         let mut state = make_state(buf);
@@ -1233,9 +1231,9 @@ mod tests {
         let mut builder = BufBuilder::new();
         builder.push_create(0, 1, 100, 0);
         builder.push_op_header(OpCode::SetType, 0);
-        builder.push(10u32);
+        builder.push(10u16);
         builder.push_op_header(OpCode::SetName, 0);
-        builder.push(11u32);
+        builder.push(11u16);
         let buf = builder.finalize();
 
         let mut state = make_state(buf);
@@ -1257,8 +1255,8 @@ mod tests {
         let mut builder = BufBuilder::new();
         builder.push_create(0, 1, 100, 0);
         builder.push_op_header(OpCode::SetTraceMetaAttr, 0);
-        builder.push(10u32);
-        builder.push(11u32);
+        builder.push(10u16);
+        builder.push(11u16);
         let buf = builder.finalize();
 
         let mut state = make_state(buf);
@@ -1277,7 +1275,7 @@ mod tests {
         let mut builder = BufBuilder::new();
         builder.push_create(0, 1, 100, 0);
         builder.push_op_header(OpCode::SetTraceMetricsAttr, 0);
-        builder.push(10u32);
+        builder.push(10u16);
         builder.push(0.75f64);
         let buf = builder.finalize();
 
@@ -1299,7 +1297,7 @@ mod tests {
         let mut builder = BufBuilder::new();
         builder.push_create(0, 1, 100, 0);
         builder.push_op_header(OpCode::SetTraceOrigin, 0);
-        builder.push(10u32);
+        builder.push(10u16);
         let buf = builder.finalize();
 
         let mut state = make_state(buf);
