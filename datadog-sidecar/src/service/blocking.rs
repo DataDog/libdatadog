@@ -419,6 +419,17 @@ pub fn set_test_session_token(transport: &mut SidecarTransport, token: String) -
     Ok(())
 }
 
+/// IPC fallback: send a span directly to the sidecar's SHM concentrator for (env, version).
+pub fn add_span_to_concentrator(
+    transport: &mut SidecarTransport,
+    env: String,
+    version: String,
+    span: datadog_ipc::shm_stats::OwnedShmSpanInput,
+) -> io::Result<()> {
+    lock_sender(transport)?.add_span_to_concentrator(env, version, span);
+    Ok(())
+}
+
 /// Dumps the current state of the service.
 pub fn dump(transport: &mut SidecarTransport) -> io::Result<String> {
     transport.with_retry(|s| s.dump().map_err(|e| io::Error::other(e.to_string())))

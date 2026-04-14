@@ -37,6 +37,21 @@ pub struct AgentInfoStruct {
     pub span_kinds_stats_computed: Option<Vec<String>>,
     /// Container tags hash from HTTP response header
     pub container_tags_hash: Option<String>,
+    /// Exact-match tag filters applied before stats computation (root span only).
+    pub filter_tags: Option<FilterTagsConfig>,
+    /// Regex-match tag filters applied before stats computation (root span only).
+    pub filter_tags_regex: Option<FilterTagsConfig>,
+    /// Regex patterns for root-span resource names; matching traces are excluded from stats.
+    pub ignore_resources: Option<Vec<String>>,
+}
+
+/// Require/reject lists for tag-based trace filters exposed by the agent /info endpoint.
+#[derive(Clone, Serialize, Deserialize, Default, Debug, PartialEq)]
+pub struct FilterTagsConfig {
+    /// All listed filters must match at least one root-span tag for the trace to be accepted.
+    pub require: Option<Vec<String>>,
+    /// If any listed filter matches a root-span tag the trace is rejected.
+    pub reject: Option<Vec<String>>,
 }
 
 #[allow(missing_docs)]

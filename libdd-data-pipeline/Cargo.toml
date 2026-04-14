@@ -34,9 +34,8 @@ libdd-common = { version = "3.0.2", path = "../libdd-common", default-features =
 libdd-shared-runtime = { version = "0.1.0", path = "../libdd-shared-runtime" }
 libdd-telemetry = { version = "4.0.0", path = "../libdd-telemetry", default-features = false, optional = true}
 libdd-trace-protobuf = { version = "3.0.1", path = "../libdd-trace-protobuf" }
-libdd-trace-stats = { version = "2.0.0", path = "../libdd-trace-stats" }
+libdd-trace-stats = { version = "2.0.0", path = "../libdd-trace-stats", default-features = false }
 libdd-trace-utils = { version = "3.0.1", path = "../libdd-trace-utils", default-features = false }
-libdd-ddsketch = { version = "1.0.1", path = "../libdd-ddsketch" }
 libdd-dogstatsd-client = { version = "2.0.0", path = "../libdd-dogstatsd-client", default-features = false }
 libdd-tinybytes = { version = "1.1.0", path = "../libdd-tinybytes", features = [
     "bytes_string",
@@ -78,6 +77,7 @@ telemetry = ["libdd-telemetry"]
 https = [
     "libdd-common/https",
     "libdd-telemetry?/https",
+    "libdd-trace-stats/https",
     "libdd-trace-utils/https",
     "libdd-dogstatsd-client/https",
 ]

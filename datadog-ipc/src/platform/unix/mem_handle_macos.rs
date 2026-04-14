@@ -17,7 +17,7 @@ use std::os::fd::{AsFd, OwnedFd};
 use std::os::unix::io::AsRawFd;
 use std::sync::atomic::{AtomicI32, AtomicU32, AtomicUsize, Ordering};
 
-const MAPPING_MAX_SIZE: usize = 1 << 17; // 128 MiB ought to be enough for everybody?
+const MAPPING_MAX_SIZE: usize = 1 << 27; // 128 MiB ought to be enough for everybody?
 const NOT_COMMITTED: usize = 1 << (usize::BITS - 1);
 
 pub(crate) fn mmap_handle<T: FileBackedHandle>(mut handle: T) -> io::Result<MappedMem<T>> {
@@ -141,13 +141,18 @@ impl NamedShmHandle {
         Self::new(fd, None, 0)
     }
 
+    /// Unlink the SHM name from the filesystem without unmapping existing mappings.
+    pub fn unlink(&self) {
+        let _ = self.path.take(); // Drop of Box<ShmPath> calls shm_unlink exactly once
+    }
+
     fn new(fd: OwnedFd, path: Option<CString>, size: usize) -> io::Result<NamedShmHandle> {
         Ok(NamedShmHandle {
             inner: ShmHandle {
                 handle: fd.into(),
                 size: size | NOT_COMMITTED,
             },
-            path: path.map(|path| ShmPath { name: path }),
+            path: path.map(|path| Box::new(ShmPath { name: path })).into(),
         })
     }
 }
@@ -198,6 +203,6 @@ impl<T: FileBackedHandle + From<MappedMem<T>>> MappedMem<T> {
 
 impl Drop for ShmPath {
     fn drop(&mut self) {
-        _ = shm_unlink(path_slice(&self.name));
+        _ = shm_unlink(path_slice(self.name.as_c_str()));
     }
 }
