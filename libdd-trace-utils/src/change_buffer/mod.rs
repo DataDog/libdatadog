@@ -734,7 +734,7 @@ where
     fn materialize_deferred_tags(&mut self, slot: u32, span: &mut Span<T>) {
         let idx = slot as usize;
         if idx < self.deferred_meta.len() {
-            span.meta.reserve(self.deferred_meta.len());
+            span.meta.reserve(self.deferred_meta[idx].len());
             for (key_id, val_id) in &self.deferred_meta[idx] {
                 if let (Some(key), Some(val)) = (self.get_string(*key_id), self.get_string(*val_id))
                 {
@@ -745,14 +745,14 @@ where
             self.deferred_meta[idx].clear();
         }
         if idx < self.deferred_metrics.len() {
-            span.metrics.reserve(self.deferred_metrics.len());
+            span.metrics.reserve(self.deferred_metrics[idx].len());
             for (key_id, val) in &self.deferred_metrics[idx] {
                 if let Some(key) = self.get_string(*key_id) {
                     vec_insert(&mut span.metrics, key, *val);
                 }
             }
 
-            self.deferred_meta[idx].clear();
+            self.deferred_metrics[idx].clear();
         }
     }
 
