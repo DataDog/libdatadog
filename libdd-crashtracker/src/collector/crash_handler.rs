@@ -301,6 +301,19 @@ fn handle_posix_signal_impl(
 
     let timeout_manager = TimeoutManager::new(config.timeout());
 
+    // Phase 2: collect ucontexts from all other threads before forking, so the
+    // collector child can unwind their stacks.
+    #[cfg(target_os = "linux")]
+    if config.collect_all_threads() {
+        use super::thread_context_buffer::collect_thread_contexts;
+        // Timeout for context collection: half of the overall crash timeout, capped
+        // at 200ms to avoid delaying the crash report excessively.
+        let context_timeout_ms = (config.timeout().as_millis() / 2).min(200) as u64;
+        // SAFETY: current_tid() is the TID of the crashing thread -- we skip it.
+        let crashing_tid = unsafe { libc::syscall(libc::SYS_gettid) as libc::pid_t };
+        collect_thread_contexts(crashing_tid, config.max_threads(), context_timeout_ms);
+    }
+
     let receiver = Receiver::from_crashtracker_config(config)?;
 
     let collector = Collector::spawn(

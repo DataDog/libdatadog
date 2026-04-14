@@ -4,7 +4,7 @@
 use crate::{
     crash_info::{
         CrashInfo, CrashInfoBuilder, ErrorKind, SigInfo, Span, StackFrame, TelemetryCrashUploader,
-        Ucontext,
+        ThreadData, Ucontext,
     },
     runtime_callback::RuntimeStack,
     shared::constants::*,
@@ -98,6 +98,37 @@ impl From<RuntimeStackFrame> for StackFrame {
     }
 }
 
+/// Partial data accumulated while parsing a single thread block.
+#[derive(Debug)]
+pub(super) struct ThreadInProgress {
+    crashed: bool,
+    name: String,
+    state: Option<String>,
+    /// Stack frames collected inside the nested STACKTRACE block.
+    frames: Vec<StackFrame>,
+    /// Whether DD_CRASHTRACK_END_STACKTRACE was received (marks the stack complete).
+    stack_complete: bool,
+}
+
+impl ThreadInProgress {
+    fn into_thread_data(self) -> ThreadData {
+        let mut stack = if self.frames.is_empty() {
+            StackTrace::new_incomplete()
+        } else {
+            StackTrace::from_frames(self.frames, !self.stack_complete)
+        };
+        if self.stack_complete {
+            let _ = stack.set_complete();
+        }
+        ThreadData {
+            crashed: self.crashed,
+            name: self.name,
+            stack,
+            state: self.state,
+        }
+    }
+}
+
 /// The crashtracker collector sends data in blocks.
 /// This enum tracks which block we're currently in, and, for multi-line blocks,
 /// collects the partial data until the block is closed and it can be appended
@@ -120,6 +151,11 @@ pub(crate) enum StdinState {
     Waiting,
     WholeStackTrace,
     ThreadName(Option<String>),
+    /// Parsing a thread block: waiting for BEGIN_STACKTRACE or END_THREAD.
+    /// The Option is None until the first (JSON header) line has been parsed.
+    Thread(Option<ThreadInProgress>),
+    /// Inside the STACKTRACE block nested within a thread block.
+    ThreadStackTrace(ThreadInProgress),
     // StackFrame is always emitted as one stream of all the frames but StackString
     // may have lines that we need to accumulate depending on runtime (e.g. Python)
     RuntimeStackFrame(Vec<StackFrame>),
@@ -321,6 +357,58 @@ fn process_line(
             StdinState::Ucontext
         }
 
+        StdinState::Thread(None) if line.starts_with(DD_CRASHTRACK_END_THREAD) => {
+            // Empty thread block with no header; log and move on.
+            builder
+                .with_log_message("Thread block ended without a header line".to_string(), true)?;
+            StdinState::Waiting
+        }
+        StdinState::Thread(None) => {
+            // First line is the JSON header: {tid, crashed, name, state}
+            #[derive(serde::Deserialize)]
+            struct ThreadHeader {
+                crashed: bool,
+                name: String,
+                #[serde(default)]
+                state: Option<String>,
+            }
+            let header: ThreadHeader = serde_json::from_str(line)?;
+            StdinState::Thread(Some(ThreadInProgress {
+                crashed: header.crashed,
+                name: header.name,
+                state: header.state,
+                frames: vec![],
+                stack_complete: false,
+            }))
+        }
+
+        // State: Thread(Some) — waiting for BEGIN_STACKTRACE or END_THREAD.
+        StdinState::Thread(Some(partial)) if line.starts_with(DD_CRASHTRACK_END_THREAD) => {
+            builder.with_thread(partial.into_thread_data())?;
+            StdinState::Waiting
+        }
+        StdinState::Thread(Some(partial)) if line.starts_with(DD_CRASHTRACK_BEGIN_STACKTRACE) => {
+            StdinState::ThreadStackTrace(partial)
+        }
+        StdinState::Thread(partial) => {
+            // Unexpected line inside a thread block; log it and stay.
+            builder
+                .with_log_message(format!("Unexpected line inside thread block: {line}"), true)?;
+            StdinState::Thread(partial)
+        }
+
+        // State: ThreadStackTrace — collecting frames for the current thread.
+        StdinState::ThreadStackTrace(mut partial)
+            if line.starts_with(DD_CRASHTRACK_END_STACKTRACE) =>
+        {
+            partial.stack_complete = true;
+            StdinState::Thread(Some(partial))
+        }
+        StdinState::ThreadStackTrace(mut partial) => {
+            let frame: StackFrame = serde_json::from_str(line)?;
+            partial.frames.push(frame);
+            StdinState::ThreadStackTrace(partial)
+        }
         StdinState::Waiting if line.starts_with(DD_CRASHTRACK_BEGIN_ADDITIONAL_TAGS) => {
             StdinState::AdditionalTags
         }
@@ -358,6 +446,9 @@ fn process_line(
         }
         StdinState::Waiting if line.starts_with(DD_CRASHTRACK_BEGIN_THREAD_NAME) => {
             StdinState::ThreadName(None)
+        }
+        StdinState::Waiting if line.starts_with(DD_CRASHTRACK_BEGIN_THREAD) => {
+            StdinState::Thread(None)
         }
         StdinState::Waiting if line.starts_with(DD_CRASHTRACK_BEGIN_UCONTEXT) => {
             StdinState::Ucontext
@@ -548,25 +639,53 @@ pub(crate) async fn receive_report_from_stream(
 fn enrich_thread_name(builder: &mut CrashInfoBuilder) -> anyhow::Result<()> {
     use std::{fs, path::PathBuf};
 
-    if builder.error.thread_name.is_some() {
-        return Ok(());
+    // Enrich the primary crashing thread's name if not already set.
+    if builder.error.thread_name.is_none() {
+        if let Some(proc_info) = builder.proc_info.as_ref() {
+            if let Some(tid) = proc_info.tid {
+                let pid = proc_info.pid;
+                let path = PathBuf::from(format!("/proc/{pid}/task/{tid}/comm"));
+                if let Ok(comm) = fs::read_to_string(&path) {
+                    let thread_name = comm.trim_end_matches('\n');
+                    if !thread_name.is_empty() {
+                        builder.with_thread_name(thread_name.to_string())?;
+                    }
+                }
+            }
+        }
     }
-    let Some(proc_info) = builder.proc_info.as_ref() else {
-        return Ok(());
-    };
-    let Some(tid) = proc_info.tid else {
-        return Ok(());
-    };
-    let pid = proc_info.pid;
-    let path = PathBuf::from(format!("/proc/{pid}/task/{tid}/comm"));
-    let Ok(comm) = fs::read_to_string(&path) else {
-        return Ok(());
-    };
-    let thread_name = comm.trim_end_matches('\n');
-    if thread_name.is_empty() {
-        return Ok(());
+
+    // Enrich names for any additional threads that were emitted without a name or
+    // with only a TID string as name (fallback when /proc was not readable at emit
+    // time).  We use the receiver-side /proc/<pid>/task/<tid>/comm read here because
+    // the collector child may have been unable to read it in time.
+    //
+    // Note: builder.error.threads holds ThreadData values only after they have been
+    // parsed from the unix socket. We iterate them and patch names that look like
+    // bare integers (the TID fallback).
+    if let Some(pid_info) = builder.proc_info.as_ref() {
+        let pid = pid_info.pid;
+        if let Some(threads) = builder.error.threads.as_mut() {
+            for thread in threads.iter_mut() {
+                // If the name is already meaningful (non-numeric), skip it.
+                if thread.name.parse::<i32>().is_err() {
+                    continue;
+                }
+                // Name is a bare TID integer; try to read from /proc.
+                let Ok(tid) = thread.name.parse::<i32>() else {
+                    continue;
+                };
+                let path = PathBuf::from(format!("/proc/{pid}/task/{tid}/comm"));
+                if let Ok(comm) = fs::read_to_string(&path) {
+                    let name = comm.trim_end_matches('\n');
+                    if !name.is_empty() {
+                        thread.name = name.to_string();
+                    }
+                }
+            }
+        }
     }
-    builder.with_thread_name(thread_name.to_string())?;
+
     Ok(())
 }
 
