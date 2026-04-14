@@ -10,6 +10,7 @@ use super::{CrashtrackerConfiguration, StacktraceCollection};
 #[derive(Debug, Default)]
 pub struct CrashtrackerConfigurationBuilder {
     additional_files: Vec<String>,
+    collect_all_threads: bool,
     create_alt_stack: bool,
     demangle_names: bool,
     endpoint_url: Option<String>,
@@ -17,6 +18,7 @@ pub struct CrashtrackerConfigurationBuilder {
     endpoint_timeout_ms: Option<u64>,
     endpoint_test_token: Option<String>,
     endpoint_use_system_resolver: bool,
+    max_threads: Option<usize>,
     resolve_frames: StacktraceCollection,
     signals: Vec<i32>,
     timeout: Option<Duration>,
@@ -27,6 +29,11 @@ pub struct CrashtrackerConfigurationBuilder {
 impl CrashtrackerConfigurationBuilder {
     pub fn additional_files(mut self, files: Vec<String>) -> Self {
         self.additional_files = files;
+        self
+    }
+
+    pub fn collect_all_threads(mut self, collect: bool) -> Self {
+        self.collect_all_threads = collect;
         self
     }
 
@@ -69,6 +76,11 @@ impl CrashtrackerConfigurationBuilder {
 
     pub fn endpoint_use_system_resolver(mut self, use_system_resolver: bool) -> Self {
         self.endpoint_use_system_resolver = use_system_resolver;
+        self
+    }
+
+    pub fn max_threads(mut self, max: usize) -> Self {
+        self.max_threads = Some(max);
         self
     }
 
@@ -138,9 +150,11 @@ impl CrashtrackerConfigurationBuilder {
         // before the receiver is started when using an async-receiver.
         Ok(CrashtrackerConfiguration {
             additional_files: self.additional_files,
+            collect_all_threads: self.collect_all_threads,
             create_alt_stack: self.create_alt_stack,
             use_alt_stack: self.use_alt_stack,
             endpoint,
+            max_threads: self.max_threads.unwrap_or(128),
             resolve_frames: self.resolve_frames,
             signals,
             timeout,

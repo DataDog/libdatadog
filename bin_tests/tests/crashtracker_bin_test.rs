@@ -188,6 +188,107 @@ fn test_crash_tracking_bin_runtime_callback_frame() {
     run_crash_test_with_artifacts(&config, &artifacts_map, &artifacts, validator).unwrap();
 }
 
+/// Tests that when `collect_all_threads` is enabled, the crash report contains
+/// entries in `error.threads` for background threads beyond the crashing thread.
+///
+/// The behavior enables `collect_all_threads`, spawns two named
+/// sleeping worker threads in `post()`, and then crashes the main thread.
+/// We verify:
+///   - `error.threads` is non-empty
+///   - Each thread entry is well-formed: `crashed`, `name`, `stack` present.
+///   - None of the additional threads are marked as crashed (the crashing thread is in
+///     `error.stack`, not `error.threads`).
+///   - The worker thread names are recognizable (ct_worker_0, ct_worker_1).
+#[test]
+#[cfg(target_os = "linux")]
+#[cfg_attr(miri, ignore)]
+fn test_crash_tracking_multi_thread_collection() {
+    let config = CrashTestConfig::new(
+        BuildProfile::Release,
+        TestMode::MultiThreadCollection,
+        CrashType::NullDeref,
+    );
+    let artifacts = StandardArtifacts::new(config.profile);
+    let artifacts_map = fetch_built_artifacts(&artifacts.as_slice()).unwrap();
+
+    let validator: ValidatorFn = Box::new(|payload, _fixtures| {
+        let error = &payload["error"];
+        assert!(
+            false,
+            "{}",
+            serde_json::to_string_pretty(error).unwrap_or_default()
+        );
+        let threads = error["threads"]
+            .as_array()
+            .expect("error.threads should be a JSON array");
+
+        let thread_names: Vec<&str> = threads
+            .iter()
+            .map(|t| t["name"].as_str().unwrap_or("<none>"))
+            .collect();
+
+        assert!(
+            !threads.is_empty(),
+            "error.threads should be non-empty when collect_all_threads is enabled; \
+             got payload: {}",
+            serde_json::to_string_pretty(payload).unwrap_or_default()
+        );
+
+        // Every thread entry must be structurally valid and non-crashing
+        for thread in threads {
+            assert!(
+                thread["name"].is_string(),
+                "thread entry missing 'name': {thread:?}"
+            );
+            assert!(
+                thread["crashed"].is_boolean(),
+                "thread entry missing 'crashed': {thread:?}"
+            );
+            assert!(
+                thread["stack"].is_object(),
+                "thread entry missing 'stack': {thread:?}"
+            );
+            assert!(
+                !thread["crashed"].as_bool().unwrap_or(true),
+                "threads in error.threads must have crashed=false: {thread:?}"
+            );
+        }
+
+        // Both named workers must be present; the behavior (test_017_multi_thread_collection.rs)
+        //spawns exactly two
+        for expected in ["ct_worker_0", "ct_worker_1"] {
+            assert!(
+                thread_names.contains(&expected),
+                "Expected worker thread '{expected}' in error.threads; \
+                 got: {thread_names:?}"
+            );
+        }
+
+        // Each worker must have captured at least one stack frame
+        // (they were sleeping in a syscall, so SIGUSR2 interrupted them and
+        // unw_init_local2 should produce at minimum the syscall entry frame).
+        for expected in ["ct_worker_0", "ct_worker_1"] {
+            let worker = threads
+                .iter()
+                .find(|t| t["name"].as_str() == Some(expected))
+                .unwrap_or_else(|| panic!("{expected} should be in threads"));
+
+            let frames = worker["stack"]["frames"]
+                .as_array()
+                .unwrap_or_else(|| panic!("{expected} stack.frames should be an array"));
+
+            assert!(
+                !frames.is_empty(),
+                "{expected} should have at least one stack frame; worker: {worker:?}"
+            );
+        }
+
+        Ok(())
+    });
+
+    run_crash_test_with_artifacts(&config, &artifacts_map, &artifacts, validator).unwrap();
+}
+
 #[test]
 #[cfg(target_os = "linux")]
 #[cfg_attr(miri, ignore)]

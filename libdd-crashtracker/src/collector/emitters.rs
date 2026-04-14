@@ -20,6 +20,9 @@ use std::{
 };
 use thiserror::Error;
 
+#[cfg(target_os = "linux")]
+use std::io::BufRead;
+
 #[derive(Debug, Error)]
 pub enum EmitterError {
     #[error("Failed to write to output: {0}")]
@@ -122,6 +125,12 @@ pub(crate) fn emit_crashreport(
             // from a signal handler
             unsafe { emit_whole_stacktrace(pipe, stacktrace)? };
         }
+    }
+
+    // Emit other threads (Phase 1: name/state; Phase 2: also stack if context available).
+    #[cfg(target_os = "linux")]
+    if config.collect_all_threads() {
+        let _ = emit_all_threads(pipe, config, ppid, crashing_tid);
     }
 
     writeln!(pipe, "{DD_CRASHTRACK_DONE}")?;
@@ -417,6 +426,160 @@ unsafe fn emit_whole_stacktrace(
     writeln!(w)?;
     writeln!(w, "{DD_CRASHTRACK_END_WHOLE_STACKTRACE}")?;
     w.flush()?;
+    Ok(())
+}
+
+/// Emit one thread block over the wire protocol.
+///
+/// Format:
+/// ```text
+/// DD_CRASHTRACK_BEGIN_THREAD
+/// {"tid": <tid>, "crashed": <bool>, "name": "<name>", "state": "<state>"}
+/// DD_CRASHTRACK_BEGIN_STACKTRACE
+/// ...frame JSON lines (if a ucontext was captured for this thread)...
+/// DD_CRASHTRACK_END_STACKTRACE
+/// DD_CRASHTRACK_END_THREAD
+/// ```
+#[cfg(target_os = "linux")]
+fn emit_thread_block(
+    w: &mut impl Write,
+    tid: libc::pid_t,
+    crashed: bool,
+    name: &str,
+    state: Option<&str>,
+    resolve_frames: StacktraceCollection,
+    ucontext: Option<*const ucontext_t>,
+) -> Result<(), EmitterError> {
+    writeln!(w, "{DD_CRASHTRACK_BEGIN_THREAD}")?;
+
+    // Header JSON line
+    write!(w, "{{\"tid\": {tid}, \"crashed\": {crashed}")?;
+    let safe_name = name
+        .replace('\\', "\\\\")
+        .replace('"', "\\\"")
+        .replace('\n', "\\n");
+    write!(w, ", \"name\": \"{safe_name}\"")?;
+    if let Some(s) = state {
+        let safe_state = s
+            .replace('\\', "\\\\")
+            .replace('"', "\\\"")
+            .replace('\n', "\\n");
+        write!(w, ", \"state\": \"{safe_state}\"")?;
+    }
+    writeln!(w, "}}")?;
+    w.flush()?;
+
+    // Stack trace (only if we have a ucontext for this thread)
+    writeln!(w, "{DD_CRASHTRACK_BEGIN_STACKTRACE}")?;
+    if let Some(uc) = ucontext {
+        if resolve_frames != StacktraceCollection::Disabled {
+            // SAFETY: uc was written by handle_collect_context_signal and is valid for
+            // the duration of the collector child (COW mapping from the parent).
+            let _ = unsafe { emit_backtrace_via_libunwind(w, resolve_frames, uc) };
+        }
+    }
+    writeln!(w, "{DD_CRASHTRACK_END_STACKTRACE}")?;
+    w.flush()?;
+
+    writeln!(w, "{DD_CRASHTRACK_END_THREAD}")?;
+    w.flush()?;
+    Ok(())
+}
+
+/// Read a thread's name from /proc/<pid>/task/<tid>/comm.
+#[cfg(target_os = "linux")]
+fn read_thread_name(pid: libc::pid_t, tid: libc::pid_t) -> Option<String> {
+    let path = format!("/proc/{pid}/task/{tid}/comm");
+    std::fs::read_to_string(path)
+        .ok()
+        .map(|s| s.trim_end_matches('\n').to_string())
+}
+
+/// Read a thread's scheduler state letter from /proc/<pid>/task/<tid>/status.
+/// Returns the single-letter state ("S", "R", "D") or None on failure.
+#[cfg(target_os = "linux")]
+fn read_thread_state(pid: libc::pid_t, tid: libc::pid_t) -> Option<String> {
+    let path = format!("/proc/{pid}/task/{tid}/status");
+    let file = std::fs::File::open(path).ok()?;
+    let reader = std::io::BufReader::new(file);
+    for line in reader.lines() {
+        let line = line.ok()?;
+        if let Some(rest) = line.strip_prefix("State:") {
+            return Some(rest.trim().to_string());
+        }
+    }
+    None
+}
+
+/// Enumerate all live thread IDs under /proc/<pid>/task/ using std::fs (safe to
+/// call from the collector child, where there are no async-signal-safety constraints).
+#[cfg(target_os = "linux")]
+fn enumerate_task_tids(pid: libc::pid_t) -> Vec<libc::pid_t> {
+    let path = format!("/proc/{pid}/task");
+    let Ok(entries) = std::fs::read_dir(&path) else {
+        return vec![];
+    };
+    entries
+        .filter_map(|e| e.ok())
+        .filter_map(|e| {
+            e.file_name()
+                .to_str()
+                .and_then(|s| s.parse::<libc::pid_t>().ok())
+        })
+        .collect()
+}
+
+/// Emit thread blocks for all threads other than the crashing thread.
+///
+/// Called from the collector child (after fork), so std::fs is safe to use.
+/// For each thread:
+///   - Reads name and state from /proc/<ppid>/task/<tid>/
+///   - If a ucontext was captured (collect_all_threads), emits the stack trace.
+///   - Otherwise emits an empty (incomplete) stack trace.
+#[cfg(target_os = "linux")]
+fn emit_all_threads(
+    w: &mut impl Write,
+    config: &CrashtrackerConfiguration,
+    ppid: libc::pid_t,
+    crashing_tid: libc::pid_t,
+) -> Result<(), EmitterError> {
+    use crate::collector::thread_context_buffer::iter_collected_contexts;
+
+    // Build a map from TID to captured ucontext pointer (may be empty if buffer
+    // was not initialised or the thread did not respond in time).
+    let contexts: std::collections::HashMap<libc::pid_t, *const ucontext_t> =
+        iter_collected_contexts()
+            .map(|c| (c.tid, c.ucontext))
+            .collect();
+
+    let tids = enumerate_task_tids(ppid);
+    let max = config.max_threads();
+    let mut emitted = 0;
+
+    for tid in tids {
+        if tid == crashing_tid {
+            continue;
+        }
+        if emitted >= max {
+            break;
+        }
+
+        let name = read_thread_name(ppid, tid).unwrap_or_else(|| tid.to_string());
+        let state = read_thread_state(ppid, tid);
+        let ucontext = contexts.get(&tid).copied();
+
+        emit_thread_block(
+            w,
+            tid,
+            false,
+            &name,
+            state.as_deref(),
+            config.resolve_frames(),
+            ucontext,
+        )?;
+        emitted += 1;
+    }
+
     Ok(())
 }
 
