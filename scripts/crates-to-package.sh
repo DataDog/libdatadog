@@ -44,7 +44,7 @@ HEAD_METADATA="$(cargo metadata --manifest-path "${head_dir}/Cargo.toml" --forma
 #
 # publishable:
 # - publish unset (null) => publishable
-# - publish array (registries) => publishable
+# - publish array (registries) => publishable if non-empty
 # - publish = false => NOT publishable
 map_filter='
   . as $m
@@ -58,7 +58,7 @@ map_filter='
           version,
           publishable: (
             if (.publish == null) then true
-            elif (.publish | type) == "array" then true
+            elif (.publish | type) == "array" then ((.publish | length) > 0)
             else false
             end
           )
