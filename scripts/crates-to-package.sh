@@ -10,6 +10,8 @@
 #
 # Excludes are determined from crate metadata: crates marked `publish = false` are excluded.
 # (Crates with publish unset or publish = [...] are considered publishable.)
+#
+# Important: this script is used by libddprof-build gitlab pipeline
 
 set -euo pipefail
 
