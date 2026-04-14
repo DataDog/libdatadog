@@ -3,9 +3,13 @@
 # SPDX-License-Identifier: Apache-2.0
 #
 # Compares every workspace package's effective [package] version between GIT_VERSION_BASE
-# and GIT_VERSION_HEAD (default origin/main vs HEAD). Prints package names suitable for
-# `cargo package -p` when the version changed — not when only dependency versions changed.
+# and GIT_VERSION_HEAD. Prints package names suitable for `cargo package -p` when the version
+# changed — not when only dependency versions changed.
 # Uses git for both sides so results match the refs, not uncommitted working tree edits.
+#
+# CI should set GIT_VERSION_BASE / GIT_VERSION_HEAD to the commits being compared (e.g. PR base
+# and head). Defaults below are for local use; comparing to origin/main vs HEAD is not the same
+# as "what this PR changed" once main has moved.
 
 set -euo pipefail
 
@@ -59,7 +63,6 @@ excluded_crate() {
 	local n="$1"
 	case "$n" in
 	libdd-*-ffi) return 0 ;;
-	libdd-crashtracker) return 0 ;;
 	datadog-*) return 0 ;;
 	bin_tests | tools | sidecar_mockgen | cc_utils | spawn_worker | symbolizer-ffi | test_spawn_from_lib | build_common | build-common | builder)
 		return 0
@@ -101,7 +104,7 @@ while IFS=$'\t' read -r name mpath; do
 done < <(echo "$METADATA" | jq -r '.packages[] | "\(.name)\t\(.manifest_path)"')
 
 if [ "${#emit[@]}" -eq 0 ]; then
-	echo "release-proposal-crates-to-package.sh: no packages with a changed [package] version (nothing to emit)." >&2
+	echo "crates-to-package.sh: no packages with a changed [package] version between refs (nothing to emit)." >&2
 	exit 0
 fi
 

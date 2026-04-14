@@ -560,38 +560,6 @@ impl Configurator {
         )
     }
 
-    pub fn get_config_from_bytes(
-        &self,
-        s_local: &[u8],
-        s_managed: &[u8],
-        process_info: &ProcessInfo,
-    ) -> LoggedResult<Vec<LibraryConfig>, anyhow::Error> {
-        let mut debug_messages = Vec::new();
-
-        let local_config = match self.parse_stable_config_slice(s_local) {
-            LoggedResult::Ok(config, logs) => {
-                debug_messages.extend(logs);
-                config
-            }
-            LoggedResult::Err(e) => return LoggedResult::Err(e),
-        };
-        let fleet_config = match self.parse_stable_config_slice(s_managed) {
-            LoggedResult::Ok(config, logs) => {
-                debug_messages.extend(logs);
-                config
-            }
-            LoggedResult::Err(e) => return LoggedResult::Err(e),
-        };
-
-        match self.get_config(local_config, fleet_config, process_info) {
-            LoggedResult::Ok(configs, logs) => {
-                debug_messages.extend(logs);
-                LoggedResult::Ok(configs, debug_messages)
-            }
-            LoggedResult::Err(e) => LoggedResult::Err(e),
-        }
-    }
-
     /// Load configuration using a custom [`ConfigRead`] implementation.
     ///
     /// This is the primary entry point for no_std or virtual-filesystem
@@ -865,8 +833,16 @@ mod tests {
             language: b"java".to_vec(),
         };
         let configurator = Configurator::new(true);
+        let local_config = configurator
+            .parse_stable_config_slice(local_cfg)
+            .data()
+            .unwrap();
+        let fleet_config = configurator
+            .parse_stable_config_slice(fleet_cfg)
+            .data()
+            .unwrap();
         let mut actual = configurator
-            .get_config_from_bytes(local_cfg, fleet_cfg, &process_info)
+            .get_config(local_config, fleet_config, &process_info)
             .data()
             .unwrap();
 
@@ -1365,8 +1341,8 @@ rules:
             language: b"java".to_vec(),
         };
         let configurator = Configurator::new(true);
-        let config = configurator
-            .get_config_from_bytes(
+        let local_config = configurator
+            .parse_stable_config_slice(
                 b"
 config_id: abc
 tags:
@@ -1379,6 +1355,11 @@ rules:
   configuration:
     DD_SERVICE: local
 ",
+            )
+            .data()
+            .unwrap();
+        let fleet_config = configurator
+            .parse_stable_config_slice(
                 b"
 config_id: def
 rules:
@@ -1388,8 +1369,11 @@ rules:
     operator: equals
   configuration:
     DD_SERVICE: managed",
-                &process_info,
             )
+            .data()
+            .unwrap();
+        let config = configurator
+            .get_config(local_config, fleet_config, &process_info)
             .data()
             .unwrap();
         assert_eq!(

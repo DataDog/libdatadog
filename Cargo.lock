@@ -3114,7 +3114,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-libunwind-sys"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "cc",
  "libc",
@@ -3233,7 +3233,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-shared-runtime"
-version = "1.0.0"
+version = "0.1.0"
 dependencies = [
  "async-trait",
  "futures",
