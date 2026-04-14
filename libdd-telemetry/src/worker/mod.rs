@@ -1312,7 +1312,7 @@ mod tests {
         b.config.parent_session_id = parent_session_id;
         b.config.root_session_id = root_session_id;
         let rt = Runtime::new().unwrap();
-        b.build_worker(rt.handle().clone()).1
+        b.build_worker(Some(rt.handle().clone())).1
     }
 
     #[test]

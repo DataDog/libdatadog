@@ -235,17 +235,18 @@ mod macros {
         telemetry_builder: &mut TelemetryWorkerBuilder,
         param: ffi::CharSlice,
     ) -> ffi::MaybeError {
-        telemetry_builder.config.parent_session_id = match (|s: ffi::CharSlice| -> Result<_, String> {
-            Ok(Some(s.to_utf8_lossy().into_owned()))
-        })(param)
-        {
-            Ok(o) => o,
-            Err(e) => {
-                return ffi::MaybeError::Some(libdd_common_ffi::Error::from(
-                    ({ std::fmt::format(format_args!("{0:?}", e)) }),
-                ));
-            }
-        };
+        telemetry_builder.config.parent_session_id =
+            match (|s: ffi::CharSlice| -> Result<_, String> {
+                Ok(Some(s.to_utf8_lossy().into_owned()))
+            })(param)
+            {
+                Ok(o) => o,
+                Err(e) => {
+                    return ffi::MaybeError::Some(libdd_common_ffi::Error::from(
+                        ({ std::fmt::format(format_args!("{0:?}", e)) }),
+                    ));
+                }
+            };
         ffi::MaybeError::None
     }
     #[no_mangle]
@@ -479,17 +480,18 @@ mod macros {
                 };
             }
             SessionId => {
-                telemetry_builder.config.session_id = match (|s: ffi::CharSlice| -> Result<_, String> {
-                    Ok(Some(s.to_utf8_lossy().into_owned()))
-                })(param)
-                {
-                    Ok(o) => o,
-                    Err(e) => {
-                        return ffi::MaybeError::Some(libdd_common_ffi::Error::from(
-                            ({ std::fmt::format(format_args!("{0:?}", e)) }),
-                        ));
-                    }
-                };
+                telemetry_builder.config.session_id =
+                    match (|s: ffi::CharSlice| -> Result<_, String> {
+                        Ok(Some(s.to_utf8_lossy().into_owned()))
+                    })(param)
+                    {
+                        Ok(o) => o,
+                        Err(e) => {
+                            return ffi::MaybeError::Some(libdd_common_ffi::Error::from(
+                                ({ std::fmt::format(format_args!("{0:?}", e)) }),
+                            ));
+                        }
+                    };
             }
             ParentSessionId => {
                 telemetry_builder.config.parent_session_id =
@@ -724,17 +726,18 @@ mod macros {
                 };
             }
             "session_id" => {
-                telemetry_builder.config.session_id = match (|s: ffi::CharSlice| -> Result<_, String> {
-                    Ok(Some(s.to_utf8_lossy().into_owned()))
-                })(param)
-                {
-                    Ok(o) => o,
-                    Err(e) => {
-                        return ffi::MaybeError::Some(libdd_common_ffi::Error::from(
-                            ({ std::fmt::format(format_args!("{0:?}", e)) }),
-                        ));
-                    }
-                };
+                telemetry_builder.config.session_id =
+                    match (|s: ffi::CharSlice| -> Result<_, String> {
+                        Ok(Some(s.to_utf8_lossy().into_owned()))
+                    })(param)
+                    {
+                        Ok(o) => o,
+                        Err(e) => {
+                            return ffi::MaybeError::Some(libdd_common_ffi::Error::from(
+                                ({ std::fmt::format(format_args!("{0:?}", e)) }),
+                            ));
+                        }
+                    };
             }
             "parent_session_id" => {
                 telemetry_builder.config.parent_session_id =
