@@ -16,6 +16,7 @@ use libdd_common::Endpoint;
 use libdd_shared_runtime::Worker;
 use libdd_trace_protobuf::pb;
 use libdd_trace_utils::send_with_retry::{send_with_retry, RetryStrategy};
+use libdd_trace_utils::trace_utils::TracerHeaderTags;
 use std::fmt::Debug;
 use tracing::error;
 
@@ -29,23 +30,25 @@ pub struct StatsMetadata {
     pub app_version: String,
     pub runtime_id: String,
     pub language: String,
+    pub lang_version: String,
+    pub lang_interpreter: String,
+    pub lang_vendor: String,
     pub tracer_version: String,
     pub git_commit_sha: String,
     pub process_tags: String,
     pub service: String,
 }
 
-impl StatsMetadata {
-    /// Build the HTTP headers accepted by the agent's `/v0.6/stats` endpoint.
-    pub fn to_stats_headers(&self) -> http::HeaderMap {
-        let mut map = http::HeaderMap::new();
-        if let Ok(v) = self.language.parse() {
-            map.insert("Datadog-Tracer-Language", v);
+impl<'a> From<&'a StatsMetadata> for TracerHeaderTags<'a> {
+    fn from(m: &'a StatsMetadata) -> TracerHeaderTags<'a> {
+        TracerHeaderTags {
+            lang: &m.language,
+            lang_version: &m.lang_version,
+            lang_interpreter: &m.lang_interpreter,
+            lang_vendor: &m.lang_vendor,
+            tracer_version: &m.tracer_version,
+            ..Default::default()
         }
-        if let Ok(v) = self.tracer_version.parse() {
-            map.insert("Datadog-Tracer-Version", v);
-        }
-        map
     }
 }
 
@@ -113,7 +116,8 @@ impl<H: HttpClientTrait, C: FlushableConcentrator> StatsExporter<H, C> {
         }
         let body = rmp_serde::encode::to_vec_named(&payload)?;
 
-        let mut headers = self.meta.to_stats_headers();
+        let mut headers: http::HeaderMap = TracerHeaderTags::from(&self.meta).into();
+
         headers.insert(
             http::header::CONTENT_TYPE,
             libdd_common::header::APPLICATION_MSGPACK,
