@@ -131,7 +131,6 @@ pub struct ChangeBufferState<T: TraceData> {
     deferred_metrics: Vec<Vec<(u32, f64)>>,
 }
 
-#[inline(always)]
 fn new_span_pooled<T: TraceData>(
     str_def: &T::Text,
     pool: &mut Vec<Span<T>>,
@@ -438,7 +437,6 @@ where
 
     /// Like interpret_operation, but uses a cached span pointer to avoid
     /// redundant Vec lookups for consecutive operations on the same span.
-    #[inline(always)]
     fn interpret_operation_cached(
         &mut self,
         index: &mut usize,
@@ -804,14 +802,13 @@ where
         }
     }
 
-    #[inline(always)]
     fn interpret_operation(&mut self, index: &mut usize, op: &BufferedOperation) -> Result<()> {
         match op.opcode {
             OpCode::Create => {
                 let span_id: u64 = self.change_buffer.read(index)?;
                 let trace_id: u128 = self.change_buffer.read(index)?;
                 let parent_id = self.get_num_arg(index)?;
-                let mut span = new_span_pooled(
+                let span = new_span_pooled(
                     &self.str_default,
                     &mut self.span_pool,
                     span_id,
