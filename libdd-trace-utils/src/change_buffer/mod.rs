@@ -48,6 +48,7 @@ pub use span_header::{SpanHeader, SPAN_HEADER_SIZE};
 use crate::span::v04::Span;
 use crate::span::{SpanText, TraceData};
 
+#[inline(always)]
 fn vec_insert<K: PartialEq, V>(vec: &mut Vec<(K, V)>, key: K, value: V) {
     for entry in vec.iter_mut() {
         if entry.0 == key {
@@ -67,6 +68,7 @@ fn vec_get<'a, K: PartialEq, V>(vec: &'a [(K, V)], key: &K) -> Option<&'a V> {
     None
 }
 
+#[inline(always)]
 fn deferred_meta_insert(vec: &mut Vec<(u32, u32)>, key_id: u32, val_id: u32) {
     for entry in vec.iter_mut() {
         if entry.0 == key_id {
@@ -77,6 +79,7 @@ fn deferred_meta_insert(vec: &mut Vec<(u32, u32)>, key_id: u32, val_id: u32) {
     vec.push((key_id, val_id));
 }
 
+#[inline(always)]
 fn deferred_metric_insert(vec: &mut Vec<(u32, f64)>, key_id: u32, val: f64) {
     for entry in vec.iter_mut() {
         if entry.0 == key_id {
@@ -128,6 +131,7 @@ pub struct ChangeBufferState<T: TraceData> {
     deferred_metrics: Vec<Vec<(u32, f64)>>,
 }
 
+#[inline(always)]
 fn new_span_pooled<T: TraceData>(
     str_def: &T::Text,
     pool: &mut Vec<Span<T>>,
@@ -434,6 +438,7 @@ where
 
     /// Like interpret_operation, but uses a cached span pointer to avoid
     /// redundant Vec lookups for consecutive operations on the same span.
+    #[inline(always)]
     fn interpret_operation_cached(
         &mut self,
         index: &mut usize,
@@ -799,6 +804,7 @@ where
         }
     }
 
+    #[inline(always)]
     fn interpret_operation(&mut self, index: &mut usize, op: &BufferedOperation) -> Result<()> {
         match op.opcode {
             OpCode::Create => {
