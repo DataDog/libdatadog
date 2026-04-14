@@ -650,9 +650,6 @@ where
             span.r#type = r#type;
         }
 
-        // Apply default meta tags
-        self.apply_default_meta(&mut span);
-
         // If there's already a span in the Vec slot (from change buffer meta/metrics
         // writes), merge the header fields into it. Otherwise insert new.
         // For now, use span_id-based lookup across the Vec
@@ -721,13 +718,6 @@ where
     /// runtime-id, etc.).
     pub fn set_default_meta(&mut self, tags: Vec<(T::Text, T::Text)>) {
         self.default_meta = tags;
-    }
-
-    /// Apply default meta tags to a span.
-    fn apply_default_meta(&self, span: &mut Span<T>) {
-        for (key, value) in &self.default_meta {
-            vec_insert(&mut span.meta, key.clone(), value.clone());
-        }
     }
 
     /// Materialize deferred tags for a slot into the given span.
@@ -818,7 +808,6 @@ where
                     trace_id,
                     &self.default_meta,
                 );
-                self.apply_default_meta(&mut span);
                 self.ensure_slot(op.slot_index);
                 self.spans[op.slot_index as usize] = Some(span);
                 self.deferred_meta[op.slot_index as usize].clear();
@@ -902,7 +891,6 @@ where
                 );
                 span.name = name;
                 span.start = start;
-                self.apply_default_meta(&mut span);
                 self.ensure_slot(op.slot_index);
                 self.spans[op.slot_index as usize] = Some(span);
                 self.deferred_meta[op.slot_index as usize].clear();
@@ -932,7 +920,6 @@ where
                 span.resource = resource;
                 span.r#type = r#type;
                 span.start = start;
-                self.apply_default_meta(&mut span);
                 self.ensure_slot(op.slot_index);
                 self.spans[op.slot_index as usize] = Some(span);
                 self.deferred_meta[op.slot_index as usize].clear();
