@@ -66,6 +66,8 @@ pub struct SpanConcentrator {
     span_kinds_stats_computed: Vec<String>,
     /// keys for supplementary tags that describe peer.service entities
     peer_tag_keys: Vec<String>,
+    /// keys for second primary tags on trace stats
+    span_derived_primary_tag_keys: Vec<String>,
 }
 
 impl SpanConcentrator {
@@ -73,12 +75,15 @@ impl SpanConcentrator {
     /// - `bucket_size` is the size of the time buckets
     /// - `now` the current system time, used to define the oldest bucket
     /// - `span_kinds_stats_computed` list of span kinds eligible for stats computation
-    /// - `peer_tags_keys` list of keys considered as peer tags for aggregation
+    /// - `peer_tag_keys` list of keys considered as peer tags for aggregation
+    /// - `span_derived_primary_tag_keys` list of keys considered as second primary tags for
+    ///   aggregation
     pub fn new(
         bucket_size: Duration,
         now: SystemTime,
         span_kinds_stats_computed: Vec<String>,
         peer_tag_keys: Vec<String>,
+        span_derived_primary_tag_keys: Vec<String>,
     ) -> SpanConcentrator {
         SpanConcentrator {
             bucket_size: bucket_size.as_nanos() as u64,
@@ -90,6 +95,7 @@ impl SpanConcentrator {
             buffer_len: 2,
             span_kinds_stats_computed,
             peer_tag_keys,
+            span_derived_primary_tag_keys,
         }
     }
 
@@ -101,6 +107,11 @@ impl SpanConcentrator {
     /// Set the list of keys considered as peer_tags for aggregation
     pub fn set_peer_tags(&mut self, peer_tags: Vec<String>) {
         self.peer_tag_keys = peer_tags;
+    }
+
+    /// Set the list of keys considered as span_derived_primary_tag_keys for aggregation
+    pub fn set_span_derived_primary_tags(&mut self, tag_keys: Vec<String>) {
+        self.span_derived_primary_tag_keys = tag_keys;
     }
 
     /// Return the bucket size used for aggregation
@@ -124,7 +135,11 @@ impl SpanConcentrator {
                 bucket_timestamp = self.oldest_timestamp;
             }
 
-            let agg_key = BorrowedAggregationKey::from_span(span, self.peer_tag_keys.as_slice());
+            let agg_key = BorrowedAggregationKey::from_span(
+                span,
+                self.peer_tag_keys.as_slice(),
+                self.span_derived_primary_tag_keys.as_slice(),
+            );
 
             self.buckets
                 .entry(bucket_timestamp)

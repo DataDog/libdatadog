@@ -83,6 +83,7 @@ pub(crate) fn start_stats_computation<H: HttpClientTrait + MaybeSend + Sync + 's
             std::time::SystemTime::now(),
             span_kinds,
             peer_tags,
+            vec![], // TODO: Add span-derived primary tags
         )));
         create_and_start_stats_worker(
             ctx,

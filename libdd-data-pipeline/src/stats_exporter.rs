@@ -231,6 +231,7 @@ mod tests {
             SystemTime::now() - BUCKETS_DURATION * 3,
             vec![],
             vec![],
+            vec![],
         );
         let mut trace = vec![];
 
