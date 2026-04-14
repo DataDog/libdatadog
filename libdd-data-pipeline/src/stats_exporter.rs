@@ -1,6 +1,8 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+#[cfg(feature = "stats-obfuscation")]
+use std::sync::atomic::AtomicBool;
 use std::{
     borrow::Borrow,
     sync::{
@@ -33,6 +35,8 @@ pub struct StatsExporter<H: HttpClientTrait> {
     endpoint: Endpoint,
     meta: TracerMetadata,
     sequence_id: AtomicU64,
+    #[cfg(feature = "stats-obfuscation")]
+    obfuscation_active: Arc<AtomicBool>,
     client: H,
 }
 
@@ -43,14 +47,13 @@ impl<H: HttpClientTrait> StatsExporter<H> {
     /// - `concentrator` SpanConcentrator storing the stats to be sent to the agent
     /// - `meta` metadata used in ClientStatsPayload and as headers to send stats to the agent
     /// - `endpoint` the Endpoint used to send stats to the agent
-    /// - `cancellation_token` Token used to safely shutdown the exporter by force flushing the
-    ///   concentrator
     pub fn new(
         flush_interval: time::Duration,
         concentrator: Arc<Mutex<SpanConcentrator>>,
         meta: TracerMetadata,
         endpoint: Endpoint,
         client: H,
+        #[cfg(feature = "stats-obfuscation")] obfuscation_active: Arc<AtomicBool>,
     ) -> Self {
         Self {
             flush_interval,
@@ -59,6 +62,8 @@ impl<H: HttpClientTrait> StatsExporter<H> {
             meta,
             sequence_id: AtomicU64::new(0),
             client,
+            #[cfg(feature = "stats-obfuscation")]
+            obfuscation_active,
         }
     }
 
@@ -90,6 +95,16 @@ impl<H: HttpClientTrait> StatsExporter<H> {
             http::header::CONTENT_TYPE,
             libdd_common::header::APPLICATION_MSGPACK,
         );
+
+        #[cfg(feature = "stats-obfuscation")]
+        if self.obfuscation_active.load(Ordering::Relaxed) {
+            headers.insert(
+                http::HeaderName::from_static("datadog-obfuscation-version"),
+                http::HeaderValue::from_static(
+                    crate::trace_exporter::stats::SUPPORTED_OBFUSCATION_VERSION_STR,
+                ),
+            );
+        }
 
         let result = send_with_retry(
             &self.client,
@@ -272,6 +287,8 @@ mod tests {
             get_test_metadata(),
             Endpoint::from_url(stats_url_from_agent_url(&server.url("/")).unwrap()),
             NativeCapabilities::new_client(),
+            #[cfg(feature = "stats-obfuscation")]
+            Arc::new(AtomicBool::new(false)),
         );
 
         let send_status = stats_exporter.send(true).await;
@@ -299,6 +316,8 @@ mod tests {
             get_test_metadata(),
             Endpoint::from_url(stats_url_from_agent_url(&server.url("/")).unwrap()),
             NativeCapabilities::new_client(),
+            #[cfg(feature = "stats-obfuscation")]
+            Arc::new(AtomicBool::new(false)),
         );
 
         let send_status = stats_exporter.send(true).await;
@@ -333,6 +352,8 @@ mod tests {
             get_test_metadata(),
             Endpoint::from_url(stats_url_from_agent_url(&server.url("/")).unwrap()),
             NativeCapabilities::new_client(),
+            #[cfg(feature = "stats-obfuscation")]
+            Arc::new(AtomicBool::new(false)),
         );
 
         let _handle = shared_runtime
@@ -374,6 +395,8 @@ mod tests {
             get_test_metadata(),
             Endpoint::from_url(stats_url_from_agent_url(&server.url("/")).unwrap()),
             NativeCapabilities::new_client(),
+            #[cfg(feature = "stats-obfuscation")]
+            Arc::new(AtomicBool::new(false)),
         );
 
         let _handle = shared_runtime
@@ -412,5 +435,36 @@ mod tests {
             payload_with_env.env, "test",
             "Non-empty env should be preserved"
         );
+    }
+    #[cfg(feature = "stats-obfuscation")]
+    #[cfg_attr(miri, ignore)]
+    #[tokio::test]
+    async fn test_send_stats_with_obfuscation_header() {
+        let server = MockServer::start_async().await;
+
+        let mock = server
+            .mock_async(|when, then| {
+                when.method(POST)
+                    .header("Content-type", "application/msgpack")
+                    .header("datadog-obfuscation-version", "1")
+                    .path("/v0.6/stats")
+                    .body_includes("libdatadog-test");
+                then.status(200).body("");
+            })
+            .await;
+
+        let stats_exporter = StatsExporter::new(
+            BUCKETS_DURATION,
+            Arc::new(Mutex::new(get_test_concentrator())),
+            get_test_metadata(),
+            Endpoint::from_url(stats_url_from_agent_url(&server.url("/")).unwrap()),
+            NativeCapabilities::new_client(),
+            Arc::new(AtomicBool::new(true)),
+        );
+
+        let send_status = stats_exporter.send(true).await;
+        send_status.unwrap();
+
+        mock.assert_async().await;
     }
 }

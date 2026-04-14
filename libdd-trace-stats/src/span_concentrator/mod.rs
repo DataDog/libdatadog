@@ -11,7 +11,7 @@ use stat_span::StatSpan;
 
 mod aggregation;
 
-mod stat_span;
+pub mod stat_span;
 
 /// Return a Duration between t and the unix epoch
 /// If t is before the unix epoch return 0

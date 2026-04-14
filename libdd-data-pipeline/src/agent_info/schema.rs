@@ -35,6 +35,8 @@ pub struct AgentInfoStruct {
     pub peer_tags: Option<Vec<String>>,
     /// List of span kinds eligible for stats computation
     pub span_kinds_stats_computed: Option<Vec<String>>,
+    /// Obfuscation version supported by the agent for client-side stats
+    pub obfuscation_version: Option<u32>,
     /// Container tags hash from HTTP response header
     pub container_tags_hash: Option<String>,
 }
@@ -54,15 +56,19 @@ pub struct Config {
     pub max_memory: Option<f64>,
     pub max_cpu: Option<f64>,
     pub analyzed_spans_by_service: Option<HashMap<String, HashMap<String, f64>>>,
+    pub obfuscation: Option<ObfuscationConfig>,
 }
 
 #[allow(missing_docs)]
-#[derive(Clone, Deserialize, Default, Debug, PartialEq)]
+#[derive(Clone, Serialize, Deserialize, Default, Debug, PartialEq)]
 pub struct ObfuscationConfig {
     pub elastic_search: bool,
     pub mongo: bool,
     pub sql_exec_plan: bool,
     pub sql_exec_plan_normalize: bool,
+    #[cfg(feature = "stats-obfuscation")]
+    #[serde(default)]
+    pub sql_obfuscation_mode: libdd_trace_obfuscation::sql::SqlObfuscationMode,
     pub http: HttpObfuscationConfig,
     pub remove_stack_traces: bool,
     pub redis: RedisObfuscationConfig,
@@ -70,21 +76,23 @@ pub struct ObfuscationConfig {
 }
 
 #[allow(missing_docs)]
-#[derive(Clone, Deserialize, Default, Debug, PartialEq)]
+#[derive(Clone, Serialize, Deserialize, Default, Debug, PartialEq)]
 pub struct HttpObfuscationConfig {
     pub remove_query_string: bool,
     pub remove_path_digits: bool,
 }
 
 #[allow(missing_docs)]
-#[derive(Clone, Deserialize, Default, Debug, PartialEq)]
+#[derive(Clone, Serialize, Deserialize, Default, Debug, PartialEq)]
+#[serde(rename_all = "PascalCase")]
 pub struct RedisObfuscationConfig {
     pub enabled: bool,
     pub remove_all_args: bool,
 }
 
 #[allow(missing_docs)]
-#[derive(Clone, Deserialize, Default, Debug, PartialEq)]
+#[derive(Clone, Serialize, Deserialize, Default, Debug, PartialEq)]
+#[serde(rename_all = "PascalCase")]
 pub struct MemcachedObfuscationConfig {
     pub enabled: bool,
     pub keep_command: bool,
