@@ -434,7 +434,6 @@ where
 
     /// Like interpret_operation, but uses a cached span pointer to avoid
     /// redundant Vec lookups for consecutive operations on the same span.
-    #[inline(always)]
     fn interpret_operation_cached(
         &mut self,
         index: &mut usize,
@@ -560,7 +559,6 @@ where
             .ok_or(ChangeBufferError::StringNotFound(num))
     }
 
-    #[inline(always)]
     unsafe fn get_string_arg_unchecked(&self, index: &mut usize) -> T::Text {
         let num: u32 = self.change_buffer.read_unchecked(index);
         self.string_table
@@ -573,7 +571,6 @@ where
         self.change_buffer.read(index)
     }
 
-    #[inline(always)]
     unsafe fn get_num_arg_unchecked<U: Copy + FromBytes>(&self, index: &mut usize) -> U {
         self.change_buffer.read_unchecked(index)
     }
@@ -807,7 +804,6 @@ where
         }
     }
 
-    #[inline(always)]
     fn interpret_operation(&mut self, index: &mut usize, op: &BufferedOperation) -> Result<()> {
         match op.opcode {
             OpCode::Create => {
