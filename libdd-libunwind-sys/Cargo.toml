@@ -1,6 +1,6 @@
 [package]
 name = "libdd-libunwind-sys"
-version = "0.1.0"
+version = "1.0.0"
 description = "Rust bindings for using unwind library inside libdatadog"
 homepage = "https://github.com/DataDog/libdatadog/tree/main/libdd-libunwind-sys"
 repository = "https://github.com/DataDog/libdatadog/tree/main/libdd-libunwind-sys"
