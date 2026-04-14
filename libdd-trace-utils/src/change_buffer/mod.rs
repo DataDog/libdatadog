@@ -551,6 +551,7 @@ where
         Ok(())
     }
 
+    #[inline(always)]
     fn get_string_arg(&self, index: &mut usize) -> Result<T::Text> {
         let num: u32 = self.get_num_arg(index)?;
         self.string_table
@@ -559,6 +560,7 @@ where
             .ok_or(ChangeBufferError::StringNotFound(num))
     }
 
+    #[inline(always)]
     unsafe fn get_string_arg_unchecked(&self, index: &mut usize) -> T::Text {
         let num: u32 = self.change_buffer.read_unchecked(index);
         self.string_table
@@ -567,10 +569,12 @@ where
             .unwrap_unchecked()
     }
 
+    #[inline(always)]
     fn get_num_arg<U: Copy + FromBytes>(&self, index: &mut usize) -> Result<U> {
         self.change_buffer.read(index)
     }
 
+    #[inline(always)]
     unsafe fn get_num_arg_unchecked<U: Copy + FromBytes>(&self, index: &mut usize) -> U {
         self.change_buffer.read_unchecked(index)
     }
@@ -589,6 +593,7 @@ where
             .ok_or(ChangeBufferError::SpanNotFound(slot as u64))
     }
 
+    #[inline(always)]
     pub fn get_trace(&self, id: &u128) -> Option<&Trace<T::Text>> {
         self.traces.get(id)
     }
