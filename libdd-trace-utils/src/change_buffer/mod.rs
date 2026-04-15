@@ -194,6 +194,7 @@ where
             unsafe { std::mem::transmute(arena.alloc_str(tracer_service)) };
         let tracer_language: &'static str =
             unsafe { std::mem::transmute(arena.alloc_str(tracer_language)) };
+        eprintln!("[libdatadog pipeline] experiment: noarc (commit: {})", env!("GIT_COMMIT"));
         ChangeBufferState {
             arena,
             change_buffer,
