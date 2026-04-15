@@ -81,26 +81,6 @@ impl Default for AgentTransport {
     }
 }
 
-/// Connection mode for the underlying HTTP client.
-///
-/// # Correctness note
-///
-/// The Datadog agent has a low keep-alive timeout that causes "pipe closed" errors on every
-/// second connection when connection reuse is enabled. [`ClientMode::Periodic`] (the default)
-/// disables connection pooling and is **correct** for all periodic-flush writers (traces, stats,
-/// data streams). Only high-frequency continuous senders (e.g. a streaming profiling exporter)
-/// should opt into [`ClientMode::Persistent`].
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub enum ClientMode {
-    /// No connection pooling. Correct for periodic flushes to the agent.
-    #[default]
-    Periodic,
-    /// Keep connections alive across requests.
-    ///
-    /// Use only for high-frequency continuous senders.
-    Persistent,
-}
-
 /// Builder for [`AgentClient`].
 ///
 /// Obtain via [`AgentClient::builder`].
@@ -138,7 +118,7 @@ pub struct AgentClientBuilder {
     timeout: Option<Duration>,
     language: Option<LanguageMetadata>,
     retry: Option<RetryConfig>,
-    client_mode: ClientMode,
+    keep_alive: bool,
     extra_headers: HashMap<String, String>,
 }
 
@@ -243,11 +223,15 @@ impl AgentClientBuilder {
 
     // ── Connection pooling ────────────────────────────────────────────────────
 
-    /// Set the connection mode. Defaults to [`ClientMode::Periodic`].
+    /// Enable or disable HTTP keep-alive. Defaults to `false`.
     ///
-    /// See [`ClientMode`] for the correctness rationale behind the default.
-    pub fn client_mode(self, mode: ClientMode) -> Self {
-        todo!()
+    /// The Datadog agent has a low keep-alive timeout that causes "pipe closed" errors on every
+    /// second connection when keep-alive is enabled. The default of `false` is correct for all
+    /// periodic-flush writers (traces, stats, data streams). Set to `true` only for
+    /// high-frequency continuous senders (e.g. a streaming profiling exporter).
+    pub fn use_keep_alive(mut self, enabled: bool) -> Self {
+        self.keep_alive = enabled;
+        self
     }
 
     // ── Compression ───────────────────────────────────────────────────────────
