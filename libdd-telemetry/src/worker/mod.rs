@@ -483,9 +483,10 @@ impl TelemetryWorker {
                 self.data.integrations.unflush_stored();
                 self.data.configurations.unflush_stored();
 
-                let app_started = data::Payload::AppStarted(self.build_app_started());
-                match self.send_payload(&app_started).await {
-                    Ok(()) => self.payload_sent_success(&app_started),
+                let extended_hb =
+                    data::Payload::AppExtendedHeartbeat(self.build_app_started());
+                match self.send_payload(&extended_hb).await {
+                    Ok(()) => self.payload_sent_success(&extended_hb),
                     Err(err) => self.log_err(&err),
                 }
                 #[allow(clippy::unwrap_used)]
