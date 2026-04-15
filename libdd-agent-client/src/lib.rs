@@ -39,26 +39,6 @@
 //! # }
 //! ```
 //!
-//! # Agentless mode
-//!
-//! Set an API key via [`builder::AgentClientBuilder::api_key`] and point the transport to the
-//! intake endpoint:
-//!
-//! ```rust,no_run
-//! # async fn example() -> Result<(), libdd_agent_client::BuildError> {
-//! use libdd_agent_client::{AgentClient, LanguageMetadata};
-//!
-//! let client = AgentClient::builder()
-//!     .https("public-trace-http-intake.logs.datadoghq.com", 443)
-//!     .api_key("my-api-key")
-//!     .language_metadata(LanguageMetadata::new(
-//!         "python", "3.12.1", "CPython", "2.18.0",
-//!     ))
-//!     .build()?;
-//! # Ok(())
-//! # }
-//! ```
-//!
 //! # Unix Domain Socket
 //!
 //! ```rust,no_run

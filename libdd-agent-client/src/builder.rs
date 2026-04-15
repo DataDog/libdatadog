@@ -26,21 +26,13 @@ pub fn default_retry_config() -> RetryConfig {
 
 /// Transport configuration for the agent client.
 ///
-/// Determines how the client connects to the Datadog agent (or an intake endpoint).
+/// Determines how the client connects to the Datadog agent.
 /// Set via [`AgentClientBuilder::transport`] or the convenience helpers
-/// [`AgentClientBuilder::http`], [`AgentClientBuilder::https`],
-/// [`AgentClientBuilder::unix_socket`], etc.
+/// [`AgentClientBuilder::http`], [`AgentClientBuilder::unix_socket`], etc.
 #[derive(Debug, Clone)]
 pub enum AgentTransport {
     /// HTTP over TCP to `http://{host}:{port}`.
     Http {
-        /// Hostname or IP address.
-        host: String,
-        /// Port number.
-        port: u16,
-    },
-    /// HTTPS over TCP to `https://{host}:{port}` (e.g. for intake endpoints).
-    Https {
         /// Hostname or IP address.
         host: String,
         /// Port number.
@@ -88,21 +80,15 @@ impl Default for AgentTransport {
 /// # Required fields
 ///
 /// - Transport: set via [`AgentClientBuilder::transport`] or a convenience method
-///   ([`AgentClientBuilder::http`], [`AgentClientBuilder::https`],
-///   [`AgentClientBuilder::unix_socket`], [`AgentClientBuilder::windows_named_pipe`],
-///   [`AgentClientBuilder::auto_detect`]).
+///   ([`AgentClientBuilder::http`], [`AgentClientBuilder::unix_socket`],
+///   [`AgentClientBuilder::windows_named_pipe`], [`AgentClientBuilder::auto_detect`]).
 /// - [`AgentClientBuilder::language_metadata`].
-///
-/// # Agentless mode
-///
-/// Call [`AgentClientBuilder::api_key`] with your Datadog API key and point the transport to
-/// the intake endpoint via [`AgentClientBuilder::https`]. The client injects `dd-api-key` on
-/// every request.
 ///
 /// # Testing
 ///
-/// Call [`AgentClientBuilder::test_token`] to inject `x-datadog-test-session-token` on every
-/// request. This replaces dd-trace-py's `AgentWriter.set_test_session_token` (`writer.py:754-755`).
+/// Call [`AgentClientBuilder::test_agent_session_token`] to inject
+/// `x-datadog-test-session-token` on every request. This replaces dd-trace-py's
+/// `AgentWriter.set_test_session_token` (`writer.py:754-755`).
 ///
 /// # Fork safety
 ///
@@ -113,7 +99,6 @@ impl Default for AgentTransport {
 #[derive(Debug, Default)]
 pub struct AgentClientBuilder {
     transport: Option<AgentTransport>,
-    api_key: Option<String>,
     test_token: Option<String>,
     timeout: Option<Duration>,
     language: Option<LanguageMetadata>,
@@ -137,11 +122,6 @@ impl AgentClientBuilder {
 
     /// Convenience: HTTP over TCP.
     pub fn http(self, host: impl Into<String>, port: u16) -> Self {
-        todo!()
-    }
-
-    /// Convenience: HTTPS over TCP.
-    pub fn https(self, host: impl Into<String>, port: u16) -> Self {
         todo!()
     }
 
@@ -170,15 +150,7 @@ impl AgentClientBuilder {
         todo!()
     }
 
-    // ── Authentication / routing ──────────────────────────────────────────────
-
-    /// Set the Datadog API key (agentless mode).
-    ///
-    /// When set, `dd-api-key: <key>` is injected on every request.
-    /// Point the transport to the intake endpoint via [`AgentClientBuilder::https`].
-    pub fn api_key(self, key: impl Into<String>) -> Self {
-        todo!()
-    }
+    // ── Test session token ────────────────────────────────────────────────────
 
     /// Set the test session token.
     ///
