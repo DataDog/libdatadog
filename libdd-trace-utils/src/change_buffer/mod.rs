@@ -48,7 +48,6 @@ pub use span_header::{SpanHeader, SPAN_HEADER_SIZE};
 use crate::span::v04::Span;
 use crate::span::{SpanText, TraceData};
 
-#[inline(always)]
 fn vec_insert<K: PartialEq, V>(vec: &mut Vec<(K, V)>, key: K, value: V) {
     for entry in vec.iter_mut() {
         if entry.0 == key {
@@ -187,6 +186,7 @@ where
         tracer_language: T::Text,
         pid: u32,
     ) -> Self {
+        eprintln!("[libdatadog pipeline] experiment: drain (commit: {})", env!("GIT_COMMIT"));
         ChangeBufferState {
             change_buffer,
             spans: Vec::with_capacity(256),
@@ -682,10 +682,7 @@ where
             existing.r#type = span.r#type;
             existing.trace_id = span.trace_id;
             existing.parent_id = span.parent_id;
-            // meta/metrics already populated by change buffer ops
-            for (k, v) in &self.default_meta {
-                vec_insert(&mut existing.meta, k.clone(), v.clone());
-            }
+            existing.meta = self.default_meta.clone();
         } else {
             // Find a free slot or push
             let slot_idx = self.spans.len();
