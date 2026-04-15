@@ -24,8 +24,6 @@ pub enum TraceFormat {
     MsgpackV5,
     /// `application/msgpack` to `/v0.4/traces`. Fallback for Windows / AppSec.
     MsgpackV4,
-    /// `application/json` to `/v1/input`. Used in agentless mode.
-    JsonV1,
 }
 
 /// Per-request options for [`crate::AgentClient::send_traces`].

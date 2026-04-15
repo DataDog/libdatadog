@@ -9,9 +9,8 @@
 /// `DD-Telemetry-Debug-Enabled` — are derived automatically from this struct, removing the
 /// need for callers to build headers manually (as done in `telemetry/writer.py:111-117`).
 ///
-/// Endpoint routing (agent proxy vs. agentless intake) is resolved by the client based on
-/// whether an API key was set at build time, replacing the ad-hoc logic at
-/// `telemetry/writer.py:119-129`.
+/// The client always routes to the agent telemetry proxy endpoint
+/// (`telemetry/proxy/api/v2/apmtelemetry`).
 #[derive(Debug, Clone)]
 pub struct TelemetryRequest {
     /// Value for the `DD-Telemetry-Request-Type` header, e.g. `"app-started"`.

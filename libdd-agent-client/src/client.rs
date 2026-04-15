@@ -53,7 +53,7 @@ impl AgentClient {
     /// - `Datadog-Client-Computed-Top-Level: yes` when [`TraceSendOptions::computed_top_level`] is
     ///   `true`.
     /// - Language metadata headers + container headers (see type-level docs).
-    /// - `Content-Type` and endpoint path derived from `format`.
+    /// - `Content-Type` (`application/msgpack`) and endpoint path derived from `format`.
     /// - `Content-Encoding: gzip` when compression is enabled.
     ///
     /// # Returns
@@ -87,11 +87,7 @@ impl AgentClient {
         todo!()
     }
 
-    /// Send a telemetry event.
-    ///
-    /// Endpoint routing:
-    /// - Agent mode → `telemetry/proxy/api/v2/apmtelemetry`
-    /// - Agentless mode (API key set) → `api/v2/apmtelemetry` on the configured intake host
+    /// Send a telemetry event to the agent's telemetry proxy (`telemetry/proxy/api/v2/apmtelemetry`).
     ///
     /// Per-request headers `DD-Telemetry-Request-Type`, `DD-Telemetry-API-Version`, and
     /// `DD-Telemetry-Debug-Enabled` are injected automatically from `req`, replacing the
