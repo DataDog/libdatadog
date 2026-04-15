@@ -20,7 +20,7 @@ use arc_swap::ArcSwap;
 use libdd_capabilities::{HttpClientCapability, MaybeSend, SleepCapability, SpawnCapability};
 use libdd_common::{parse_uri, tag, Endpoint};
 use libdd_dogstatsd_client::new;
-use libdd_shared_runtime::SharedRuntime;
+use libdd_shared_runtime::{SharedRuntime, SpawnRuntimeContext};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -264,7 +264,12 @@ impl TraceExporterBuilder {
 
     #[allow(missing_docs)]
     pub fn build<
-        C: HttpClientCapability + SleepCapability + SpawnCapability + MaybeSend + Sync + 'static,
+        C: HttpClientCapability
+            + SleepCapability
+            + SpawnCapability<RuntimeContext = SpawnRuntimeContext>
+            + MaybeSend
+            + Sync
+            + 'static,
     >(
         self,
     ) -> Result<TraceExporter<C>, TraceExporterError> {

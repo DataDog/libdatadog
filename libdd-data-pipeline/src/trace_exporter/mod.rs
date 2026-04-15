@@ -38,7 +38,7 @@ use libdd_capabilities::{HttpClientCapability, MaybeSend, SleepCapability, Spawn
 use libdd_common::tag::Tag;
 use libdd_common::Endpoint;
 use libdd_dogstatsd_client::Client;
-use libdd_shared_runtime::{SharedRuntime, WorkerHandle};
+use libdd_shared_runtime::{SharedRuntime, SpawnRuntimeContext, WorkerHandle};
 use libdd_trace_utils::msgpack_decoder;
 use libdd_trace_utils::send_with_retry::{
     send_with_retry, RetryStrategy, SendWithRetryError, SendWithRetryResult,
@@ -203,7 +203,12 @@ impl From<TraceExporterInputFormat> for DeserInputFormat {
 /// pin it to a concrete type (`NativeCapabilities` or `WasmCapabilities`).
 #[derive(Debug)]
 pub struct TraceExporter<
-    C: HttpClientCapability + SleepCapability + SpawnCapability + MaybeSend + Sync + 'static,
+    C: HttpClientCapability
+        + SleepCapability
+        + SpawnCapability<RuntimeContext = SpawnRuntimeContext>
+        + MaybeSend
+        + Sync
+        + 'static,
 > {
     endpoint: Endpoint,
     metadata: TracerMetadata,
@@ -229,8 +234,14 @@ pub struct TraceExporter<
     otlp_config: Option<OtlpTraceConfig>,
 }
 
-impl<C: HttpClientCapability + SleepCapability + SpawnCapability + MaybeSend + Sync + 'static>
-    TraceExporter<C>
+impl<
+        C: HttpClientCapability
+            + SleepCapability
+            + SpawnCapability<RuntimeContext = SpawnRuntimeContext>
+            + MaybeSend
+            + Sync
+            + 'static,
+    > TraceExporter<C>
 {
     #[allow(missing_docs)]
     pub fn builder() -> TraceExporterBuilder {

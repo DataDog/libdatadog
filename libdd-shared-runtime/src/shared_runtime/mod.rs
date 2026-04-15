@@ -43,17 +43,13 @@ impl fmt::Debug for WorkerEntry {
     }
 }
 
-/// Internal spawner wrapping a `tokio::runtime::Handle` for fork recovery.
+/// Internal spawner for fork recovery paths.
+///
+/// The runtime handle is passed at spawn time via [`SpawnCapability::RuntimeContext`],
+/// not stored, so the spawner is always using the current (potentially rebuilt) runtime.
 #[cfg(not(target_arch = "wasm32"))]
 #[derive(Clone, Debug)]
-pub(crate) struct RuntimeSpawner(tokio::runtime::Handle);
-
-#[cfg(not(target_arch = "wasm32"))]
-impl RuntimeSpawner {
-    pub(crate) fn new(handle: tokio::runtime::Handle) -> Self {
-        Self(handle)
-    }
-}
+pub(crate) struct RuntimeSpawner;
 
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) struct RuntimeJoinHandle<T>(tokio::task::JoinHandle<T>);
@@ -74,14 +70,15 @@ impl<T> Future for RuntimeJoinHandle<T> {
 
 #[cfg(not(target_arch = "wasm32"))]
 impl SpawnCapability for RuntimeSpawner {
+    type RuntimeContext = tokio::runtime::Handle;
     type JoinHandle<T: MaybeSend + 'static> = RuntimeJoinHandle<T>;
 
-    fn spawn<F, T>(&self, future: F) -> RuntimeJoinHandle<T>
+    fn spawn<F, T>(&self, future: F, ctx: &tokio::runtime::Handle) -> RuntimeJoinHandle<T>
     where
         F: Future<Output = T> + MaybeSend + 'static,
         T: MaybeSend + 'static,
     {
-        RuntimeJoinHandle(self.0.spawn(future))
+        RuntimeJoinHandle(ctx.spawn(future))
     }
 }
 
@@ -243,9 +240,6 @@ impl SharedRuntime {
 
     /// Returns a clone of the tokio runtime handle managed by this SharedRuntime.
     ///
-    /// Useful for constructing a `SpawnCapability` (e.g. `NativeCapabilities::new(handle)`)
-    /// outside of a tokio context.
-    ///
     /// # Errors
     /// Returns [`SharedRuntimeError::RuntimeUnavailable`] if the runtime has been shut down.
     #[cfg(not(target_arch = "wasm32"))]
@@ -266,9 +260,17 @@ impl SharedRuntime {
     /// If `restart_on_fork` is true, the worker will be reset and restarted when calling
     /// `after_fork_child` else the worker is dropped *without* calling `Worker::shutdown`.
     ///
+    /// The runtime handle is extracted internally and passed to [`SpawnCapability::spawn`]
+    /// as the [`SpawnCapability::RuntimeContext`]. On native this constrains the spawner's
+    /// `RuntimeContext` to `tokio::runtime::Handle`; on wasm it is `()`.
+    ///
     /// # Errors
     /// Returns an error if the worker cannot be started.
-    pub fn spawn_worker<T: Worker + Sync + 'static, S: SpawnCapability + 'static>(
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn spawn_worker<
+        T: Worker + Sync + 'static,
+        S: SpawnCapability<RuntimeContext = tokio::runtime::Handle> + 'static,
+    >(
         &self,
         worker: T,
         restart_on_fork: bool,
@@ -282,18 +284,53 @@ impl SharedRuntime {
         // runtime.take() then workers.lock()), following the documented mutex
         // lock order. If the runtime has been taken (fork window), skip starting
         // the worker, after_fork_parent/child will start it on the new runtime.
-        #[cfg(not(target_arch = "wasm32"))]
-        let runtime_available = self.runtime.lock_or_panic().is_some();
+        let runtime_handle = self
+            .runtime
+            .lock_or_panic()
+            .as_ref()
+            .map(|rt| rt.handle().clone());
         let mut workers_guard = self.workers.lock_or_panic();
 
-        #[cfg(not(target_arch = "wasm32"))]
-        if runtime_available {
-            if let Err(e) = pausable_worker.start(spawner) {
+        if let Some(ref handle) = runtime_handle {
+            if let Err(e) = pausable_worker.start(spawner, handle) {
                 return Err(e.into());
             }
         }
-        #[cfg(target_arch = "wasm32")]
-        if let Err(e) = pausable_worker.start(spawner) {
+
+        let worker_id = self.next_worker_id.fetch_add(1, Ordering::Relaxed);
+
+        workers_guard.push(WorkerEntry {
+            id: worker_id,
+            restart_on_fork,
+            worker: pausable_worker,
+        });
+
+        Ok(WorkerHandle {
+            worker_id,
+            workers: self.workers.clone(),
+        })
+    }
+
+    /// Spawn a PausableWorker using the provided spawn capability (wasm variant).
+    ///
+    /// On wasm the runtime context is `()` — workers are spawned on the JS event loop.
+    #[cfg(target_arch = "wasm32")]
+    pub fn spawn_worker<
+        T: Worker + Sync + 'static,
+        S: SpawnCapability<RuntimeContext = ()> + 'static,
+    >(
+        &self,
+        worker: T,
+        restart_on_fork: bool,
+        spawner: &S,
+    ) -> Result<WorkerHandle, SharedRuntimeError> {
+        let boxed_worker: BoxedWorker = Box::new(worker);
+        debug!(?boxed_worker, "Spawning worker on SharedRuntime");
+        let mut pausable_worker = PausableWorker::new(boxed_worker);
+
+        let mut workers_guard = self.workers.lock_or_panic();
+
+        if let Err(e) = pausable_worker.start(spawner, &()) {
             return Err(e.into());
         }
 
@@ -361,17 +398,19 @@ impl SharedRuntime {
         self.restart_runtime()?;
 
         let runtime_lock = self.runtime.lock_or_panic();
-        let runtime = runtime_lock
+        let handle = runtime_lock
             .as_ref()
-            .ok_or(SharedRuntimeError::RuntimeUnavailable)?;
-        let spawner = RuntimeSpawner::new(runtime.handle().clone());
+            .ok_or(SharedRuntimeError::RuntimeUnavailable)?
+            .handle()
+            .clone();
         drop(runtime_lock);
 
+        let spawner = RuntimeSpawner;
         let mut workers_lock = self.workers.lock_or_panic();
 
         // Restart all workers
         for worker_entry in workers_lock.iter_mut() {
-            worker_entry.worker.start(&spawner)?;
+            worker_entry.worker.start(&spawner, &handle)?;
         }
 
         Ok(())
@@ -391,12 +430,14 @@ impl SharedRuntime {
         self.restart_runtime()?;
 
         let runtime_lock = self.runtime.lock_or_panic();
-        let runtime = runtime_lock
+        let handle = runtime_lock
             .as_ref()
-            .ok_or(SharedRuntimeError::RuntimeUnavailable)?;
-        let spawner = RuntimeSpawner::new(runtime.handle().clone());
+            .ok_or(SharedRuntimeError::RuntimeUnavailable)?
+            .handle()
+            .clone();
         drop(runtime_lock);
 
+        let spawner = RuntimeSpawner;
         let mut workers_lock = self.workers.lock_or_panic();
 
         // Drop workers not marked as restart on fork
@@ -404,7 +445,7 @@ impl SharedRuntime {
 
         for worker_entry in workers_lock.iter_mut() {
             worker_entry.worker.reset();
-            worker_entry.worker.start(&spawner)?;
+            worker_entry.worker.start(&spawner, &handle)?;
         }
 
         Ok(())
@@ -525,11 +566,6 @@ mod tests {
         }
     }
 
-    fn make_spawner(shared: &SharedRuntime) -> RuntimeSpawner {
-        let lock = shared.runtime.lock_or_panic();
-        RuntimeSpawner::new(lock.as_ref().unwrap().handle().clone())
-    }
-
     #[test]
     fn test_shared_runtime_creation() {
         let shared_runtime = SharedRuntime::new();
@@ -539,7 +575,7 @@ mod tests {
     #[test]
     fn test_spawn_worker() {
         let shared_runtime = SharedRuntime::new().unwrap();
-        let spawner = make_spawner(&shared_runtime);
+        let spawner = RuntimeSpawner;
         let (worker, receiver) = make_test_worker();
 
         let result = shared_runtime.spawn_worker(worker, true, &spawner);
@@ -559,7 +595,7 @@ mod tests {
     fn test_worker_handle_stop() {
         let rt = tokio::runtime::Runtime::new().unwrap();
         let shared_runtime = SharedRuntime::new().unwrap();
-        let spawner = make_spawner(&shared_runtime);
+        let spawner = RuntimeSpawner;
         let (worker, receiver) = make_test_worker();
 
         let handle = shared_runtime.spawn_worker(worker, true, &spawner).unwrap();
@@ -589,7 +625,7 @@ mod tests {
     #[test]
     fn test_before_and_after_fork_parent() {
         let shared_runtime = SharedRuntime::new().unwrap();
-        let spawner = make_spawner(&shared_runtime);
+        let spawner = RuntimeSpawner;
         let (worker, receiver) = make_test_worker();
 
         shared_runtime.spawn_worker(worker, true, &spawner).unwrap();
@@ -621,7 +657,7 @@ mod tests {
     #[test]
     fn test_after_fork_child() {
         let shared_runtime = SharedRuntime::new().unwrap();
-        let spawner = make_spawner(&shared_runtime);
+        let spawner = RuntimeSpawner;
         let (worker, receiver) = make_test_worker();
 
         shared_runtime.spawn_worker(worker, true, &spawner).unwrap();
@@ -653,7 +689,7 @@ mod tests {
     #[test]
     fn test_shutdown() {
         let shared_runtime = SharedRuntime::new().unwrap();
-        let spawner = make_spawner(&shared_runtime);
+        let spawner = RuntimeSpawner;
         let (worker, receiver) = make_test_worker();
 
         shared_runtime.spawn_worker(worker, true, &spawner).unwrap();
@@ -678,7 +714,7 @@ mod tests {
     #[test]
     fn test_after_fork_child_drops_worker_not_restart_on_fork() {
         let shared_runtime = SharedRuntime::new().unwrap();
-        let spawner = make_spawner(&shared_runtime);
+        let spawner = RuntimeSpawner;
         let (worker, receiver) = make_test_worker();
 
         shared_runtime

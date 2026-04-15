@@ -363,7 +363,7 @@ mod tests {
             then.status(200).body("");
         });
 
-        let caps = NativeCapabilities::new(shared_runtime.runtime_handle().unwrap());
+        let caps = NativeCapabilities::new();
         let stats_exporter = StatsExporter::<NativeCapabilities>::new(
             // Use smaller buckets duration to speed up test
             Duration::from_secs(1),
@@ -405,7 +405,7 @@ mod tests {
 
         let buckets_duration = Duration::from_secs(10);
 
-        let caps = NativeCapabilities::new(shared_runtime.runtime_handle().unwrap());
+        let caps = NativeCapabilities::new();
         let stats_exporter = StatsExporter::<NativeCapabilities>::new(
             buckets_duration,
             Arc::new(Mutex::new(get_test_concentrator())),

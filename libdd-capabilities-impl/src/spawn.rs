@@ -12,31 +12,18 @@ use libdd_capabilities::spawn::SpawnCapability;
 use tokio::task::JoinHandle;
 
 #[derive(Clone, Debug)]
-pub struct NativeSpawnCapability {
-    handle: tokio::runtime::Handle,
-}
-
-impl NativeSpawnCapability {
-    pub fn new(handle: tokio::runtime::Handle) -> Self {
-        Self { handle }
-    }
-
-    pub fn from_current() -> Self {
-        Self {
-            handle: tokio::runtime::Handle::current(),
-        }
-    }
-}
+pub struct NativeSpawnCapability;
 
 impl SpawnCapability for NativeSpawnCapability {
+    type RuntimeContext = tokio::runtime::Handle;
     type JoinHandle<T: MaybeSend + 'static> = NativeJoinHandle<T>;
 
-    fn spawn<F, T>(&self, future: F) -> NativeJoinHandle<T>
+    fn spawn<F, T>(&self, future: F, ctx: &tokio::runtime::Handle) -> NativeJoinHandle<T>
     where
         F: Future<Output = T> + MaybeSend + 'static,
         T: MaybeSend + 'static,
     {
-        NativeJoinHandle(self.handle.spawn(future))
+        NativeJoinHandle(ctx.spawn(future))
     }
 }
 

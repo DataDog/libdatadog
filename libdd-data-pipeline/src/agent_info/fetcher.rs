@@ -580,7 +580,7 @@ mod single_threaded_tests {
         );
         assert!(agent_info::get_agent_info().is_none());
         let shared_runtime = SharedRuntime::new().unwrap();
-        let spawner = NativeCapabilities::new(shared_runtime.runtime_handle().unwrap());
+        let spawner = NativeCapabilities::new();
         shared_runtime
             .spawn_worker(fetcher, true, &spawner)
             .unwrap();
@@ -666,7 +666,7 @@ mod single_threaded_tests {
             AgentInfoFetcher::<NativeCapabilities>::new(endpoint, Duration::from_secs(3600));
 
         let shared_runtime = SharedRuntime::new().unwrap();
-        let spawner = NativeCapabilities::new(shared_runtime.runtime_handle().unwrap());
+        let spawner = NativeCapabilities::new();
         shared_runtime
             .spawn_worker(fetcher, true, &spawner)
             .unwrap();
@@ -750,7 +750,7 @@ mod single_threaded_tests {
             AgentInfoFetcher::<NativeCapabilities>::new(endpoint, Duration::from_secs(3600)); // Very long interval
 
         let shared_runtime = SharedRuntime::new().unwrap();
-        let spawner = NativeCapabilities::new(shared_runtime.runtime_handle().unwrap());
+        let spawner = NativeCapabilities::new();
         shared_runtime
             .spawn_worker(fetcher, true, &spawner)
             .unwrap();

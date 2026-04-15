@@ -39,17 +39,18 @@ pub struct NativeCapabilities {
     spawn: NativeSpawnCapability,
 }
 
+impl Default for NativeCapabilities {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl NativeCapabilities {
-    /// Create a bundle with an explicit tokio runtime handle for spawning.
-    ///
-    /// Prefer `new_client()` (via `HttpClientCapability`) when already inside
-    /// a tokio context. This constructor exists for test code that owns a
-    /// `SharedRuntime` and needs to pass its handle explicitly.
-    pub fn new(handle: tokio::runtime::Handle) -> Self {
+    pub fn new() -> Self {
         Self {
             http: NativeHttpClient::new_client(),
             sleep: NativeSleepCapability,
-            spawn: NativeSpawnCapability::new(handle),
+            spawn: NativeSpawnCapability,
         }
     }
 }
@@ -59,7 +60,7 @@ impl HttpClientCapability for NativeCapabilities {
         Self {
             http: NativeHttpClient::new_client(),
             sleep: NativeSleepCapability,
-            spawn: NativeSpawnCapability::from_current(),
+            spawn: NativeSpawnCapability,
         }
     }
 
@@ -78,13 +79,14 @@ impl SleepCapability for NativeCapabilities {
 }
 
 impl SpawnCapability for NativeCapabilities {
+    type RuntimeContext = tokio::runtime::Handle;
     type JoinHandle<T: MaybeSend + 'static> = NativeJoinHandle<T>;
 
-    fn spawn<F, T>(&self, future: F) -> NativeJoinHandle<T>
+    fn spawn<F, T>(&self, future: F, ctx: &tokio::runtime::Handle) -> NativeJoinHandle<T>
     where
         F: Future<Output = T> + MaybeSend + 'static,
         T: MaybeSend + 'static,
     {
-        self.spawn.spawn(future)
+        self.spawn.spawn(future, ctx)
     }
 }

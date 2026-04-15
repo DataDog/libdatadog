@@ -78,7 +78,13 @@ impl<T: Worker + MaybeSend + Sync + 'static> PausableWorker<T> {
     /// Start the worker using the given spawn capability.
     ///
     /// The worker's main loop will be spawned via the provided spawner.
-    pub fn start<S: SpawnCapability>(&mut self, spawner: &S) -> Result<(), PausableWorkerError>
+    /// `ctx` is the platform-specific runtime context (e.g. `tokio::runtime::Handle`
+    /// on native, `()` on wasm).
+    pub fn start<S: SpawnCapability>(
+        &mut self,
+        spawner: &S,
+        ctx: &S::RuntimeContext,
+    ) -> Result<(), PausableWorkerError>
     where
         S::JoinHandle<T>: 'static,
     {
@@ -97,36 +103,39 @@ impl<T: Worker + MaybeSend + Sync + 'static> PausableWorker<T> {
                 // will be replaced by a valid state.
                 let stop_token = CancellationToken::new();
                 let cloned_token = stop_token.clone();
-                let handle = spawner.spawn(async move {
-                    // First iteration using initial_trigger
-                    select! {
-                        // Always check for cancellation first, to reduce time-to-pause in case
-                        // the initial trigger is always ready.
-                        biased;
-                        _ = cloned_token.cancelled() => {
-                            return worker;
-                        }
-                        _ = worker.initial_trigger() => {
-                            worker.run().await;
-                        }
-                    }
-
-                    // Regular iterations
-                    loop {
+                let handle = spawner.spawn(
+                    async move {
+                        // First iteration using initial_trigger
                         select! {
-                            // Always check for cancellation first, to reduce time-to-pause in case
-                            // the trigger is always ready.
+                            // Always check for cancellation first, to reduce time-to-pause in
+                            // case the initial trigger is always ready.
                             biased;
                             _ = cloned_token.cancelled() => {
-                                break;
+                                return worker;
                             }
-                            _ = worker.trigger() => {
+                            _ = worker.initial_trigger() => {
                                 worker.run().await;
                             }
                         }
-                    }
-                    worker
-                });
+
+                        // Regular iterations
+                        loop {
+                            select! {
+                                // Always check for cancellation first, to reduce time-to-pause
+                                // in case the trigger is always ready.
+                                biased;
+                                _ = cloned_token.cancelled() => {
+                                    break;
+                                }
+                                _ = worker.trigger() => {
+                                    worker.run().await;
+                                }
+                            }
+                        }
+                        worker
+                    },
+                    ctx,
+                );
 
                 *self = PausableWorker::Running {
                     handle: Box::pin(handle),
@@ -219,10 +228,11 @@ mod tests {
         let (sender, receiver) = channel::<u32>();
         let worker = TestWorker { state: 0, sender };
         let runtime = Builder::new_multi_thread().enable_time().build().unwrap();
-        let spawner = RuntimeSpawner::new(runtime.handle().clone());
+        let handle = runtime.handle().clone();
+        let spawner = RuntimeSpawner;
         let mut pausable_worker = PausableWorker::new(worker);
 
-        pausable_worker.start(&spawner).unwrap();
+        pausable_worker.start(&spawner, &handle).unwrap();
 
         assert_eq!(receiver.recv().unwrap(), 0);
         runtime.block_on(async { pausable_worker.pause().await.unwrap() });
@@ -231,7 +241,7 @@ mod tests {
         for message in receiver.try_iter() {
             next_message = message + 1;
         }
-        pausable_worker.start(&spawner).unwrap();
+        pausable_worker.start(&spawner, &handle).unwrap();
         assert_eq!(receiver.recv().unwrap(), next_message);
     }
 }

@@ -329,7 +329,7 @@ mod tests {
             .set_heartbeat(100)
             .set_debug_enabled(true)
             .build();
-        let spawner = NativeCapabilities::new(runtime.runtime_handle().unwrap());
+        let spawner = NativeCapabilities::new();
         let handle = runtime
             .spawn_worker(worker, true, &spawner)
             .expect("Failed to spawn worker");
