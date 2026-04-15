@@ -204,7 +204,7 @@ impl AgentClientBuilder {
     ///
     /// When set, `x-datadog-test-session-token: <token>` is injected on every request.
     /// Replaces dd-trace-py's `AgentWriter.set_test_session_token` (`writer.py:754-755`).
-    pub fn test_token(self, token: impl Into<String>) -> Self {
+    pub fn test_agent_session_token(self, token: impl Into<String>) -> Self {
         todo!()
     }
 
