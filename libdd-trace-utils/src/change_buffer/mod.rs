@@ -171,6 +171,7 @@ where
         tracer_language: T::Text,
         pid: u32,
     ) -> Self {
+        eprintln!("[libdatadog pipeline] experiment: compact (commit: {})", env!("GIT_COMMIT"));
         ChangeBufferState {
             change_buffer,
             spans: Vec::with_capacity(256),
