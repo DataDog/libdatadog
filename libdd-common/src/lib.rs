@@ -197,6 +197,7 @@ where
 ///     * For unix, interprets everything after unix:// as path
 /// * For file scheme implementation will simply backfill missing authority section
 pub fn parse_uri(uri: &str) -> anyhow::Result<hyper::Uri> {
+    println!("parse_uri fix");
     if let Some(path) = uri.strip_prefix("unix://") {
         encode_uri_path_in_authority("unix", path)
     } else if let Some(path) = uri.strip_prefix("windows:") {
