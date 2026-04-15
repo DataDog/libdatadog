@@ -115,7 +115,7 @@ impl Drop for LogProbe<'_> {
 }
 
 #[no_mangle]
-pub extern "C" fn drop_log_probe_capture_expressions(_: LogProbe) {}
+pub extern "C" fn ddog_drop_log_probe_capture_expressions(_: LogProbe) {}
 
 #[repr(C)]
 pub struct Tag<'a> {
@@ -168,7 +168,7 @@ impl<'a> From<&'a datadog_live_debugger::SpanDecorationProbe> for SpanDecoration
 }
 
 #[no_mangle]
-extern "C" fn drop_span_decoration_probe(_: SpanDecorationProbe) {}
+extern "C" fn ddog_drop_span_decoration_probe(_: SpanDecorationProbe) {}
 
 impl Drop for SpanDecorationProbe<'_> {
     fn drop(&mut self) {

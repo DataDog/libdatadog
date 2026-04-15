@@ -160,9 +160,8 @@ pub extern "C" fn ddog_create_exception_snapshot<'a>(
 #[no_mangle]
 pub extern "C" fn ddog_vec_last_debugger_payload<'a>(
     buffer: &'a mut Vec<DebuggerPayload<'a>>,
-) -> *mut DebuggerPayload<'a> {
-    #[allow(clippy::unwrap_used)]
-    buffer.last_mut().unwrap()
+) -> Option<&'a mut DebuggerPayload<'a>> {
+    buffer.last_mut()
 }
 
 #[no_mangle]
