@@ -91,7 +91,7 @@ pub mod telemetry;
 pub mod traces;
 
 pub use agent_info::AgentInfo;
-pub use builder::{AgentClientBuilder, AgentTransport, ClientMode};
+pub use builder::{AgentClientBuilder, AgentTransport};
 pub use client::AgentClient;
 pub use error::{BuildError, SendError};
 pub use language_metadata::LanguageMetadata;
