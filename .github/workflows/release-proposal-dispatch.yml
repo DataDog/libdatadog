@@ -171,6 +171,24 @@ jobs:
           git config --global user.name "$GIT_USER_NAME"
           git config --global user.email "$GIT_USER_EMAIL"
 
+      - name: Snapshot scripts from workflow revision
+        run: |
+          set -euo pipefail
+          # workflow_dispatch runs the workflow file from the branch selected in the UI; github.sha is that commit.
+          # main_start_ref may be older and not contain scripts/ — always run release tooling from the workflow revision.
+          WF_SHA="${{ github.sha }}"
+          git fetch --no-tags origin "$WF_SHA" 2>/dev/null || true
+          if ! git rev-parse -q --verify "${WF_SHA}^{commit}" >/dev/null; then
+            echo "Error: could not resolve workflow revision ${WF_SHA}." >&2
+            exit 1
+          fi
+          DEST="/tmp/workflow-scripts-libdatadog"
+          rm -rf "$DEST"
+          mkdir -p "$DEST"
+          git archive "$WF_SHA" scripts | tar -x -C "$DEST"
+          echo "WORKFLOW_SCRIPTS_ROOT=${DEST}/scripts" >> "$GITHUB_ENV"
+          echo "Release scripts pinned to workflow revision $(git rev-parse --short "$WF_SHA") (${WF_SHA})"
+
       - name: Optionally checkout at a specific git ref
         env:
           MAIN_START_REF: ${{ inputs.main_start_ref }}
@@ -271,7 +289,7 @@ jobs:
           echo "Getting publication order for ${{ inputs.crate }}..."
           
           # Get the publication order as JSON and save to file
-          ./scripts/publication-order.sh --format=json "${{ inputs.crate }}" > /tmp/crates.json
+          "${WORKFLOW_SCRIPTS_ROOT}/publication-order.sh" --format=json "${{ inputs.crate }}" > /tmp/crates.json
           echo "Publication order:"
           cat /tmp/crates.json
       
@@ -279,7 +297,7 @@ jobs:
         id: commits-since-release
         run: |
           # Get commits since release for each crate and save to file
-          ./scripts/commits-since-release.sh "$(cat /tmp/crates.json)" > /tmp/commits-by-crate.json
+          "${WORKFLOW_SCRIPTS_ROOT}/commits-since-release.sh" "$(cat /tmp/crates.json)" > /tmp/commits-by-crate.json
           
           # Capture ephemeral release branch tip now. Use this in Release version bumps
           # so tag/merge-base resolution uses the same ref the script used.
@@ -406,7 +424,7 @@ jobs:
               fi
 
               echo "Executing semver-level.sh for $NAME since $RANGE (tag: $TAG)..."
-              SEMVER_LEVEL=$(./scripts/semver-level.sh "$NAME" "refs/tags/$TAG" 2>&1)
+              SEMVER_LEVEL=$("${WORKFLOW_SCRIPTS_ROOT}/semver-level.sh" "$NAME" "refs/tags/$TAG" 2>&1)
               echo "Semver level: $SEMVER_LEVEL"
 
               LEVEL=$(echo "$SEMVER_LEVEL" | jq -r '.level')
@@ -476,7 +494,7 @@ jobs:
 
           git worktree add --detach "$MAJOR_BUMPS_WT" "$WF_SHA"
           set +e
-          ( cd "$MAJOR_BUMPS_WT" && ./scripts/major-bumps-level.sh /tmp/api-changes.json ) \
+          ( cd "$MAJOR_BUMPS_WT" && "${WORKFLOW_SCRIPTS_ROOT}/major-bumps-level.sh" /tmp/api-changes.json ) \
             > /tmp/api-changes-with-major-bumps-pre-commit.json
           MB_RC=$?
           git worktree remove --force "$MAJOR_BUMPS_WT" || true
