@@ -415,11 +415,17 @@ jobs:
               LATEST_TAG=$(git tag -l "$TAG_PREFIX*" --sort=-v:refname | head -1)
               if [ "$LATEST_TAG" != "$TAG" ]; then
                 echo "Tag $TAG is not the latest. Latest is: $LATEST_TAG. main branch has the latest release for $NAME"
-                if [ "${{ inputs.bypass_standard_checks }}" = "false" ]; then
-                  echo "Skipping release for $NAME"
-                  continue
+
+                # do not skip the release for hotfix branches
+                if [ "${{ steps.ephemeral-branch.outputs.is_hotfix }}" = "true" ]; then
+                  echo "Continuing with the release for $NAME because it is a hotfix"
                 else
-                  echo "Continuing with the release for $NAME because bypass_standard_checks is true"
+                  if [ "${{ inputs.bypass_standard_checks }}" = "false" ]; then
+                    echo "Skipping release for $NAME"
+                    continue
+                  else
+                    echo "Continuing with the release for $NAME because bypass_standard_checks is true"
+                  fi
                 fi
               fi
 
