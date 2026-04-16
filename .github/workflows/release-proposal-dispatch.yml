@@ -17,7 +17,6 @@ on:
           - libdd-dogstatsd-client
           - libdd-http-client
           - libdd-library-config
-          - libdd-libunwind-sys
           - libdd-log
           - libdd-otel-thread-ctx
           - libdd-profiling
@@ -171,6 +170,24 @@ jobs:
           git config --global user.name "$GIT_USER_NAME"
           git config --global user.email "$GIT_USER_EMAIL"
 
+      - name: Snapshot scripts from workflow revision
+        run: |
+          set -euo pipefail
+          # workflow_dispatch runs the workflow file from the branch selected in the UI; github.sha is that commit.
+          # main_start_ref may be older and not contain scripts/ — always run release tooling from the workflow revision.
+          WF_SHA="${{ github.sha }}"
+          git fetch --no-tags origin "$WF_SHA" 2>/dev/null || true
+          if ! git rev-parse -q --verify "${WF_SHA}^{commit}" >/dev/null; then
+            echo "Error: could not resolve workflow revision ${WF_SHA}." >&2
+            exit 1
+          fi
+          DEST="/tmp/workflow-scripts-libdatadog"
+          rm -rf "$DEST"
+          mkdir -p "$DEST"
+          git archive "$WF_SHA" scripts | tar -x -C "$DEST"
+          echo "WORKFLOW_SCRIPTS_ROOT=${DEST}/scripts" >> "$GITHUB_ENV"
+          echo "Release scripts pinned to workflow revision $(git rev-parse --short "$WF_SHA") (${WF_SHA})"
+
       - name: Optionally checkout at a specific git ref
         env:
           MAIN_START_REF: ${{ inputs.main_start_ref }}
@@ -223,8 +240,16 @@ jobs:
               echo "Try a full SHA, a branch/tag name on origin, or refs/heads/... / refs/tags/..." >&2
               exit 1
             fi
-            git checkout "$COMMIT"
-            echo "Release cut from ref '$REF' -> $COMMIT ($(git log -1 --oneline))"
+            # Hotfix releases use the hotfix branch itself as the ephemeral branch.
+            # If a hotfix branch name was provided and exists on origin, check it out as a branch
+            # (not a detached commit) so later steps can use it as a PR base.
+            if [[ "$REF" =~ ^hotfix/[^/]+/[0-9]+\.x\.x$ ]] && git rev-parse -q --verify "origin/$REF^{commit}" >/dev/null 2>&1; then
+              git checkout -B "$REF" "origin/$REF"
+              echo "Release cut from hotfix branch '$REF' -> $(git rev-parse --short HEAD) ($(git log -1 --oneline))"
+            else
+              git checkout "$COMMIT"
+              echo "Release cut from ref '$REF' -> $COMMIT ($(git log -1 --oneline))"
+            fi
           else
             git checkout "${{ env.MAIN_BRANCH }}"
             git reset --hard "origin/${{ env.MAIN_BRANCH }}"
@@ -235,11 +260,27 @@ jobs:
         id: ephemeral-branch
         run: |
           TIMESTAMP=$(date +%Y%m%d-%H%M%S)
-          EPHEMERAL_BRANCH="${{ env.RELEASE_BRANCH_PREFIX }}/${{ inputs.crate }}/$TIMESTAMP"
-          git checkout -b "$EPHEMERAL_BRANCH"
-          git push origin "$EPHEMERAL_BRANCH"
-          echo "Ephemeral release branch created: $EPHEMERAL_BRANCH branch ($(git rev-parse --short HEAD))"
-          echo "ephemeral_branch=$EPHEMERAL_BRANCH" >> "$GITHUB_OUTPUT"
+          MAIN_START_REF="${{ inputs.main_start_ref }}"
+          REF="$(echo "${MAIN_START_REF:-}" | tr -d '[:space:]')"
+
+          if [[ -n "$REF" && "$REF" =~ ^hotfix/[^/]+/[0-9]+\.x\.x$ ]]; then
+            # Hotfix: use the hotfix branch itself as the ephemeral branch (no new branch created).
+            if ! git rev-parse -q --verify "origin/$REF^{commit}" >/dev/null 2>&1; then
+              echo "Error: hotfix branch does not exist on origin: $REF" >&2
+              exit 1
+            fi
+            EPHEMERAL_BRANCH="$REF"
+            echo "Hotfix mode: using existing branch as ephemeral base: $EPHEMERAL_BRANCH"
+            echo "ephemeral_branch=$EPHEMERAL_BRANCH" >> "$GITHUB_OUTPUT"
+            echo "is_hotfix=true" >> "$GITHUB_OUTPUT"
+          else
+            EPHEMERAL_BRANCH="${{ env.RELEASE_BRANCH_PREFIX }}/${{ inputs.crate }}/$TIMESTAMP"
+            git checkout -b "$EPHEMERAL_BRANCH"
+            git push origin "$EPHEMERAL_BRANCH"
+            echo "Ephemeral release branch created: $EPHEMERAL_BRANCH branch ($(git rev-parse --short HEAD))"
+            echo "ephemeral_branch=$EPHEMERAL_BRANCH" >> "$GITHUB_OUTPUT"
+            echo "is_hotfix=false" >> "$GITHUB_OUTPUT"
+          fi
           echo "timestamp=$TIMESTAMP" >> "$GITHUB_OUTPUT"
 
       - name: Get publication order for crate and dependencies
@@ -247,7 +288,7 @@ jobs:
           echo "Getting publication order for ${{ inputs.crate }}..."
           
           # Get the publication order as JSON and save to file
-          ./scripts/publication-order.sh --format=json "${{ inputs.crate }}" > /tmp/crates.json
+          "${WORKFLOW_SCRIPTS_ROOT}/publication-order.sh" --format=json "${{ inputs.crate }}" > /tmp/crates.json
           echo "Publication order:"
           cat /tmp/crates.json
       
@@ -255,7 +296,7 @@ jobs:
         id: commits-since-release
         run: |
           # Get commits since release for each crate and save to file
-          ./scripts/commits-since-release.sh "$(cat /tmp/crates.json)" > /tmp/commits-by-crate.json
+          "${WORKFLOW_SCRIPTS_ROOT}/commits-since-release.sh" "$(cat /tmp/crates.json)" > /tmp/commits-by-crate.json
           
           # Capture ephemeral release branch tip now. Use this in Release version bumps
           # so tag/merge-base resolution uses the same ref the script used.
@@ -373,16 +414,22 @@ jobs:
               LATEST_TAG=$(git tag -l "$TAG_PREFIX*" --sort=-v:refname | head -1)
               if [ "$LATEST_TAG" != "$TAG" ]; then
                 echo "Tag $TAG is not the latest. Latest is: $LATEST_TAG. main branch has the latest release for $NAME"
-                if [ "${{ inputs.bypass_standard_checks }}" = "false" ]; then
-                  echo "Skipping release for $NAME"
-                  continue
+
+                # do not skip the release for hotfix branches
+                if [ "${{ steps.ephemeral-branch.outputs.is_hotfix }}" = "true" ]; then
+                  echo "Continuing with the release for $NAME because it is a hotfix"
                 else
-                  echo "Continuing with the release for $NAME because bypass_standard_checks is true"
+                  if [ "${{ inputs.bypass_standard_checks }}" = "false" ]; then
+                    echo "Skipping release for $NAME"
+                    continue
+                  else
+                    echo "Continuing with the release for $NAME because bypass_standard_checks is true"
+                  fi
                 fi
               fi
 
               echo "Executing semver-level.sh for $NAME since $RANGE (tag: $TAG)..."
-              SEMVER_LEVEL=$(./scripts/semver-level.sh "$NAME" "refs/tags/$TAG" 2>&1)
+              SEMVER_LEVEL=$("${WORKFLOW_SCRIPTS_ROOT}/semver-level.sh" "$NAME" "refs/tags/$TAG" 2>&1)
               echo "Semver level: $SEMVER_LEVEL"
 
               LEVEL=$(echo "$SEMVER_LEVEL" | jq -r '.level')
@@ -452,7 +499,7 @@ jobs:
 
           git worktree add --detach "$MAJOR_BUMPS_WT" "$WF_SHA"
           set +e
-          ( cd "$MAJOR_BUMPS_WT" && ./scripts/major-bumps-level.sh /tmp/api-changes.json ) \
+          ( cd "$MAJOR_BUMPS_WT" && "${WORKFLOW_SCRIPTS_ROOT}/major-bumps-level.sh" /tmp/api-changes.json ) \
             > /tmp/api-changes-with-major-bumps-pre-commit.json
           MB_RC=$?
           git worktree remove --force "$MAJOR_BUMPS_WT" || true
@@ -617,13 +664,18 @@ jobs:
           fi
           EPHEMERAL_BRANCH="${{ steps.ephemeral-branch.outputs.ephemeral_branch }}"
           if [ -n "$EPHEMERAL_BRANCH" ]; then
-            echo "Deleting ephemeral release branch $EPHEMERAL_BRANCH..."
-            git push origin --delete "$EPHEMERAL_BRANCH" || echo "Failed to delete ephemeral branch (may not exist on remote)"
+            if [ "${{ steps.ephemeral-branch.outputs.is_hotfix }}" = "true" ]; then
+              echo "Hotfix mode: not deleting ephemeral base branch $EPHEMERAL_BRANCH"
+            else
+              echo "Deleting ephemeral release branch $EPHEMERAL_BRANCH..."
+              git push origin --delete "$EPHEMERAL_BRANCH" || echo "Failed to delete ephemeral branch (may not exist on remote)"
+            fi
           fi
 
     outputs:
       branch_name: ${{ steps.proposal-branch.outputs.branch_name }}
       ephemeral_branch: ${{ steps.ephemeral-branch.outputs.ephemeral_branch }}
+      is_hotfix: ${{ steps.ephemeral-branch.outputs.is_hotfix }}
           
   create-pr:
     needs: cargo-release
@@ -659,6 +711,12 @@ jobs:
           RELEASE_BRANCH_PREFIX: ${{ env.RELEASE_BRANCH_PREFIX }}
         run: |
           BRANCH_NAME="${{ needs.cargo-release.outputs.branch_name }}"
+          EPHEMERAL_BRANCH="${{ needs.cargo-release.outputs.ephemeral_branch }}"
+
+          HOTFIX_NOTE=""
+          if [ "${{ needs.cargo-release.outputs.is_hotfix }}" = "true" ] && [ -n "$EPHEMERAL_BRANCH" ]; then
+            HOTFIX_NOTE=$'### :adhesive_bandage: Hotfix\n\n'"This is a **hotfix** release proposal. The pull request targets \`$EPHEMERAL_BRANCH\`."$'\n\n'
+          fi
 
           NON_DEFAULT=""
           if [ -n "$MAIN_START_REF" ]; then
@@ -703,7 +761,7 @@ jobs:
 
           This PR contains version bumps based on public API changes and commits since last release.
 
-          ${NON_DEFAULT}${COMMITS_AND_API_BODY}"
+          ${HOTFIX_NOTE}${NON_DEFAULT}${COMMITS_AND_API_BODY}"
           
           echo "$PR_BODY" > /tmp/pr-body.md
           echo "PR body written to /tmp/pr-body.md (length: $(wc -c < /tmp/pr-body.md) bytes)"
@@ -730,6 +788,10 @@ jobs:
           fi
           EPHEMERAL_BRANCH="${{ needs.cargo-release.outputs.ephemeral_branch }}"
           if [ -n "$EPHEMERAL_BRANCH" ]; then
-            echo "Deleting ephemeral release branch $EPHEMERAL_BRANCH..."
-            git push origin --delete "$EPHEMERAL_BRANCH" || echo "Failed to delete ephemeral branch (may not exist on remote)"
+            if [ "${{ needs.cargo-release.outputs.is_hotfix }}" = "true" ]; then
+              echo "Hotfix mode: not deleting ephemeral base branch $EPHEMERAL_BRANCH"
+            else
+              echo "Deleting ephemeral release branch $EPHEMERAL_BRANCH..."
+              git push origin --delete "$EPHEMERAL_BRANCH" || echo "Failed to delete ephemeral branch (may not exist on remote)"
+            fi
           fi
