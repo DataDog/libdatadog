@@ -1,6 +1,14 @@
 # Changelog
 
 
+
+## [1.1.1](https://github.com/datadog/libdatadog/compare/libdd-common-v1.1.0..libdd-common-v1.1.1) - 2026-04-16
+
+### Changed
+
+- Parse_uri fix - ([58537b3](https://github.com/datadog/libdatadog/commit/58537b300c04f55aa644fb3f36b1e11f6761d013))
+
+
 ## [1.1.0](https://github.com/datadog/libdatadog/compare/libdd-common-v1.0.0..libdd-common-v1.1.0) - 2026-01-20
 
 ### Added
