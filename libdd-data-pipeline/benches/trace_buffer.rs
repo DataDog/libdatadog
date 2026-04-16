@@ -8,7 +8,7 @@ use std::time::Duration;
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use libdd_data_pipeline::trace_buffer::{Export, TraceBuffer, TraceBufferConfig, TraceChunk};
 use libdd_data_pipeline::trace_exporter::{
-    agent_response::AgentResponse, error::TraceExporterError, TraceExporter,
+    agent_response::AgentResponse, error::TraceExporterError,
 };
 use libdd_shared_runtime::SharedRuntime;
 
@@ -22,13 +22,12 @@ const CHUNKS_PER_SENDER: usize = 90_000;
 struct SleepExport;
 
 impl Export<Span> for SleepExport {
-    fn export_trace_chunks<'a: 'c, 'b: 'c, 'c>(
-        &'a mut self,
+    fn export_trace_chunks(
+        &mut self,
         _trace_chunks: Vec<TraceChunk<Span>>,
-        _trace_exporter: &'b TraceExporter,
     ) -> Pin<
         Box<
-            dyn std::future::Future<Output = Result<AgentResponse, TraceExporterError>> + Send + 'c,
+            dyn std::future::Future<Output = Result<AgentResponse, TraceExporterError>> + Send + '_,
         >,
     > {
         Box::pin(async {
@@ -40,18 +39,11 @@ impl Export<Span> for SleepExport {
 
 fn setup_buffer() -> (Arc<SharedRuntime>, Arc<TraceBuffer<Span>>) {
     let rt = Arc::new(SharedRuntime::new().expect("SharedRuntime::new"));
-    let mut builder = TraceExporter::builder();
-    builder.set_shared_runtime(rt.clone());
     let cfg = TraceBufferConfig::new()
         .max_buffered_spans(400_000)
         .span_flush_threshold(50_000)
         .max_flush_interval(Duration::from_secs(2));
-    let (buf, worker) = TraceBuffer::new(
-        cfg,
-        Box::new(|_| {}),
-        Box::new(SleepExport),
-        builder.build().expect("TraceExporter::build"),
-    );
+    let (buf, worker) = TraceBuffer::new(cfg, Box::new(|_| {}), Box::new(SleepExport));
     rt.spawn_worker(worker).expect("spawn_worker");
     (rt, Arc::new(buf))
 }

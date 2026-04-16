@@ -221,26 +221,17 @@ pub struct TraceBuffer<T> {
 pub type ResponseHandler = Box<dyn Fn(Result<AgentResponse, TraceExporterError>) + Send + Sync>;
 
 impl<T: Send + 'static> TraceBuffer<T> {
-    pub fn new<H: HttpClientTrait + MaybeSend + Sync + 'static>(
+    pub fn new(
         config: TraceBufferConfig,
         response_handler: ResponseHandler,
-        export_operation: Box<dyn Export<T, H> + Send + Sync>,
-        trace_exporter: TraceExporter<H>,
-    ) -> (Self, TraceExporterWorker<T, H>) {
+        export_operation: Box<dyn Export<T> + Send + Sync>,
+    ) -> (Self, TraceExporterWorker<T>) {
         let (tx, rx) = channel(
             config.span_flush_threshold,
             config.max_buffered_spans,
             config.synchronous_export,
         );
-        let worker = {
-            TraceExporterWorker::new(
-                trace_exporter,
-                rx,
-                response_handler,
-                export_operation,
-                config,
-            )
-        };
+        let worker = TraceExporterWorker::new(rx, response_handler, export_operation, config);
         (
             Self {
                 tx,
@@ -538,35 +529,65 @@ impl<T> Waiter<T> {
 /// A pluggable export operation for the trace buffer
 ///
 /// This allows mapping from the buffered spans to another type, and
-/// calling any method on the trace exporter to send traces
-pub trait Export<T, H: HttpClientTrait + MaybeSend + Sync + 'static>: Send + Debug {
-    fn export_trace_chunks<'a>(
-        &'a mut self,
+/// calling any export method to send traces.
+pub trait Export<T>: Send + Debug {
+    fn export_trace_chunks(
+        &mut self,
         trace_chunks: Vec<TraceChunk<T>>,
-        trace_exporter: &'a TraceExporter<H>,
     ) -> Pin<
         Box<
-            dyn std::future::Future<Output = Result<AgentResponse, TraceExporterError>> + Send + 'a,
+            dyn std::future::Future<Output = Result<AgentResponse, TraceExporterError>> + Send + '_,
         >,
     >;
+
+    /// Called once before the first trigger to allow the export operation to perform any
+    /// async setup (e.g. waiting for agent info).
+    #[cfg(feature = "test-utils")]
+    fn wait_ready(
+        &mut self,
+    ) -> Pin<Box<dyn std::future::Future<Output = anyhow::Result<()>> + Send + '_>> {
+        Box::pin(async { Ok(()) })
+    }
 }
 
 #[derive(Debug)]
-pub struct DefaultExport;
+pub struct DefaultExport<H: HttpClientTrait + MaybeSend + Sync + 'static> {
+    trace_exporter: TraceExporter<H>,
+}
+
+impl<H: HttpClientTrait + MaybeSend + Sync + 'static> DefaultExport<H> {
+    pub fn new(trace_exporter: TraceExporter<H>) -> Self {
+        Self { trace_exporter }
+    }
+}
 
 impl<H: HttpClientTrait + MaybeSend + Sync + 'static>
-    Export<libdd_trace_utils::span::v04::SpanBytes, H> for DefaultExport
+    Export<libdd_trace_utils::span::v04::SpanBytes> for DefaultExport<H>
 {
-    fn export_trace_chunks<'a>(
-        &'a mut self,
+    fn export_trace_chunks(
+        &mut self,
         trace_chunks: Vec<TraceChunk<libdd_trace_utils::span::v04::SpanBytes>>,
-        trace_exporter: &'a TraceExporter<H>,
     ) -> Pin<
         Box<
-            dyn std::future::Future<Output = Result<AgentResponse, TraceExporterError>> + Send + 'a,
+            dyn std::future::Future<Output = Result<AgentResponse, TraceExporterError>> + Send + '_,
         >,
     > {
-        Box::pin(async { trace_exporter.send_trace_chunks_async(trace_chunks).await })
+        Box::pin(async {
+            self.trace_exporter
+                .send_trace_chunks_async(trace_chunks)
+                .await
+        })
+    }
+
+    #[cfg(feature = "test-utils")]
+    fn wait_ready(
+        &mut self,
+    ) -> Pin<Box<dyn std::future::Future<Output = anyhow::Result<()>> + Send + '_>> {
+        Box::pin(async {
+            self.trace_exporter
+                .wait_agent_info_ready(Duration::from_secs(5))
+                .await
+        })
     }
 }
 
@@ -575,22 +596,18 @@ struct TraceExporterRunInput<T> {
     trace_chunks: Vec<TraceChunk<T>>,
 }
 
-pub struct TraceExporterWorker<T, H: HttpClientTrait + MaybeSend + Sync + 'static> {
-    trace_exporter: TraceExporter<H>,
+pub struct TraceExporterWorker<T> {
     rx: Receiver<T>,
-    export_operation: Box<dyn Export<T, H> + Send + Sync>,
+    export_operation: Box<dyn Export<T> + Send + Sync>,
     agent_response_handler: ResponseHandler,
     config: TraceBufferConfig,
 
     run_input: Option<TraceExporterRunInput<T>>,
 }
 
-impl<T: Debug, H: HttpClientTrait + MaybeSend + Sync + 'static> std::fmt::Debug
-    for TraceExporterWorker<T, H>
-{
+impl<T: Debug> std::fmt::Debug for TraceExporterWorker<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("TraceExporterWorker")
-            .field("trace_exporter", &self.trace_exporter)
             .field("export_operation", &self.export_operation)
             .field("config", &self.config)
             .field("run_input", &self.run_input)
@@ -598,16 +615,14 @@ impl<T: Debug, H: HttpClientTrait + MaybeSend + Sync + 'static> std::fmt::Debug
     }
 }
 
-impl<T: Send + 'static, H: HttpClientTrait + MaybeSend + Sync + 'static> TraceExporterWorker<T, H> {
+impl<T: Send + 'static> TraceExporterWorker<T> {
     fn new(
-        trace_exporter: TraceExporter<H>,
         rx: Receiver<T>,
         agent_response_handler: ResponseHandler,
-        export_operation: Box<dyn Export<T, H> + Send + Sync>,
+        export_operation: Box<dyn Export<T> + Send + Sync>,
         config: TraceBufferConfig,
     ) -> Self {
         Self {
-            trace_exporter,
             rx,
             agent_response_handler,
             export_operation,
@@ -619,16 +634,14 @@ impl<T: Send + 'static, H: HttpClientTrait + MaybeSend + Sync + 'static> TraceEx
     async fn export_trace_chunks(&mut self, trace_chunks: Vec<TraceChunk<T>>) {
         let res = self
             .export_operation
-            .export_trace_chunks(trace_chunks, &self.trace_exporter)
+            .export_trace_chunks(trace_chunks)
             .await;
         (self.agent_response_handler)(res);
     }
 }
 
 #[async_trait::async_trait]
-impl<T: Send + Debug + 'static, H: HttpClientTrait + MaybeSend + Sync + 'static> Worker
-    for TraceExporterWorker<T, H>
-{
+impl<T: Send + Debug + 'static> Worker for TraceExporterWorker<T> {
     async fn run(&mut self) {
         let Some(TraceExporterRunInput { trace_chunks }) = self.run_input.take() else {
             // TODO: this should never happen if the shared runtime works correctly.
@@ -644,13 +657,8 @@ impl<T: Send + Debug + 'static, H: HttpClientTrait + MaybeSend + Sync + 'static>
     async fn initial_trigger(&mut self) {
         #[cfg(feature = "test-utils")]
         {
-            // Wait for the agent info to be fetched to get deterministic output when deciding
-            // to drop traces or not
             #[allow(clippy::unwrap_used)]
-            self.trace_exporter
-                .wait_agent_info_ready(Duration::from_secs(5))
-                .await
-                .unwrap();
+            self.export_operation.wait_ready().await.unwrap();
         }
         self.trigger().await
     }
@@ -682,7 +690,6 @@ mod tests {
     use crate::trace_buffer::{Export, TraceBuffer, TraceBufferConfig};
     use crate::trace_exporter::agent_response::AgentResponse;
     use crate::trace_exporter::error::TraceExporterError;
-    use crate::trace_exporter::TraceExporter;
 
     use super::{BatchFullError, TraceBufferError};
 
@@ -697,15 +704,16 @@ mod tests {
         }
     }
 
-    impl Export<(), libdd_capabilities_impl::NativeCapabilities> for AssertExporter {
-        fn export_trace_chunks<'a>(
-            &'a mut self,
+    impl Export<()> for AssertExporter {
+        fn export_trace_chunks(
+            &mut self,
             trace_chunks: Vec<super::TraceChunk<()>>,
-            _trace_exporter: &'a crate::trace_exporter::TraceExporter<
-                libdd_capabilities_impl::NativeCapabilities,
-            >,
         ) -> std::pin::Pin<
-            Box<dyn std::future::Future<Output = Result<AgentResponse, TraceExporterError>> + Send>,
+            Box<
+                dyn std::future::Future<Output = Result<AgentResponse, TraceExporterError>>
+                    + Send
+                    + '_,
+            >,
         > {
             (self.0)(trace_chunks);
             self.1.add_permits(1);
@@ -722,8 +730,6 @@ mod tests {
         TraceBuffer<()>,
     ) {
         let rt = Arc::new(SharedRuntime::new().unwrap());
-        let mut builder = TraceExporter::<libdd_capabilities_impl::NativeCapabilities>::builder();
-        builder.set_shared_runtime(rt.clone());
         let sem: Arc<tokio::sync::Semaphore> = Arc::new(tokio::sync::Semaphore::new(0));
         let (sender, worker) = TraceBuffer::new(
             cfg,
@@ -731,7 +737,6 @@ mod tests {
                 |_r: Result<AgentResponse, crate::trace_exporter::error::TraceExporterError>| {},
             ),
             Box::new(AssertExporter(assert_export, sem.clone())),
-            builder.build().unwrap(),
         );
         rt.spawn_worker(worker).unwrap();
         (rt, sem, sender)
