@@ -1,6 +1,10 @@
 // Copyright 2025-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+//! Trace buffer that batches trace chunks and periodically flushes them through a
+//! [`TraceExporter`]. A background worker handles the actual export, allowing callers to
+//! enqueue traces without blocking on network I/O (unless synchronous mode is enabled).
+
 use std::{
     fmt::{self, Debug},
     ops::DerefMut,
@@ -107,7 +111,7 @@ struct MutexPoisonedError;
 #[derive(Debug)]
 pub enum TraceBufferError {
     AlreadyShutdown,
-    TimedOut(std::time::Duration),
+    TimedOut(Duration),
     MutexPoisoned,
     BatchFull(BatchFullError),
     TraceExporter(TraceExporterError),
@@ -115,7 +119,7 @@ pub enum TraceBufferError {
 
 struct Batch<T> {
     chunks: Vec<TraceChunk<T>>,
-    last_flush: std::time::Instant,
+    last_flush: Instant,
     span_count: usize,
     max_buffered_spans: usize,
     batch_gen: BatchGeneration,
@@ -131,7 +135,7 @@ impl<T> Batch<T> {
         batch_gen.incr();
         Self {
             chunks: Vec::with_capacity(PRE_ALLOCATE_CHUNKS),
-            last_flush: std::time::Instant::now(),
+            last_flush: Instant::now(),
             span_count: 0,
             batch_gen,
             max_buffered_spans,
@@ -163,7 +167,7 @@ impl<T> Batch<T> {
             return Ok(());
         }
 
-        let chunk_len: usize = chunk.len();
+        let chunk_len = chunk.len();
         self.chunks.push(chunk);
         self.span_count += chunk_len;
         Ok(())
@@ -173,7 +177,7 @@ impl<T> Batch<T> {
     fn export(&mut self) -> Vec<TraceChunk<T>> {
         let chunks = std::mem::replace(&mut self.chunks, Vec::with_capacity(PRE_ALLOCATE_CHUNKS));
         self.span_count = 0;
-        self.last_flush = std::time::Instant::now();
+        self.last_flush = Instant::now();
         if !chunks.is_empty() {
             self.batch_gen.incr();
         }
@@ -183,7 +187,7 @@ impl<T> Batch<T> {
 
 /// # TraceBuffer
 ///
-/// Creating an instance of the TraceBuffer will spawn a background thread that
+/// Creating an instance of the TraceBuffer will spawn a background task that
 /// periodically sends trace chunks through the TraceExporter
 ///
 /// # Buffering behavior
@@ -248,8 +252,7 @@ impl<T: Send + 'static> TraceBuffer<T> {
     }
 
     pub fn send_chunk(&self, trace_chunk: Vec<T>) -> Result<(), TraceBufferError> {
-        let chunk_len = trace_chunk.len();
-        if chunk_len == 0 {
+        if trace_chunk.is_empty() {
             return Ok(());
         }
 
@@ -537,13 +540,13 @@ impl<T> Waiter<T> {
 /// This allows mapping from the buffered spans to another type, and
 /// calling any method on the trace exporter to send traces
 pub trait Export<T, H: HttpClientTrait + MaybeSend + Sync + 'static>: Send + Debug {
-    fn export_trace_chunks<'a: 'c, 'b: 'c, 'c>(
+    fn export_trace_chunks<'a>(
         &'a mut self,
         trace_chunks: Vec<TraceChunk<T>>,
-        trace_exporter: &'b TraceExporter<H>,
+        trace_exporter: &'a TraceExporter<H>,
     ) -> Pin<
         Box<
-            dyn std::future::Future<Output = Result<AgentResponse, TraceExporterError>> + Send + 'c,
+            dyn std::future::Future<Output = Result<AgentResponse, TraceExporterError>> + Send + 'a,
         >,
     >;
 }
@@ -554,13 +557,13 @@ pub struct DefaultExport;
 impl<H: HttpClientTrait + MaybeSend + Sync + 'static>
     Export<libdd_trace_utils::span::v04::SpanBytes, H> for DefaultExport
 {
-    fn export_trace_chunks<'a: 'c, 'b: 'c, 'c>(
+    fn export_trace_chunks<'a>(
         &'a mut self,
         trace_chunks: Vec<TraceChunk<libdd_trace_utils::span::v04::SpanBytes>>,
-        trace_exporter: &'b TraceExporter<H>,
+        trace_exporter: &'a TraceExporter<H>,
     ) -> Pin<
         Box<
-            dyn std::future::Future<Output = Result<AgentResponse, TraceExporterError>> + Send + 'c,
+            dyn std::future::Future<Output = Result<AgentResponse, TraceExporterError>> + Send + 'a,
         >,
     > {
         Box::pin(async { trace_exporter.send_trace_chunks_async(trace_chunks).await })
@@ -695,10 +698,10 @@ mod tests {
     }
 
     impl Export<(), libdd_capabilities_impl::NativeCapabilities> for AssertExporter {
-        fn export_trace_chunks<'a: 'c, 'b: 'c, 'c>(
+        fn export_trace_chunks<'a>(
             &'a mut self,
             trace_chunks: Vec<super::TraceChunk<()>>,
-            _trace_exporter: &'b crate::trace_exporter::TraceExporter<
+            _trace_exporter: &'a crate::trace_exporter::TraceExporter<
                 libdd_capabilities_impl::NativeCapabilities,
             >,
         ) -> std::pin::Pin<
