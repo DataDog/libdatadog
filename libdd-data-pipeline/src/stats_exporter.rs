@@ -63,6 +63,7 @@ impl<H: HttpClientTrait> StatsExporter<H> {
             meta,
             sequence_id: AtomicU64::new(0),
             client,
+            #[cfg(feature = "stats-obfuscation")]
             obfuscation_config,
         }
     }

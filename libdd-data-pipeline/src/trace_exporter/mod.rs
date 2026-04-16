@@ -560,6 +560,7 @@ impl<H: HttpClientTrait + MaybeSend + Sync + 'static> TraceExporter<H> {
         mp_payload: Vec<u8>,
         headers: HeaderMap,
         chunks: usize,
+        #[cfg_attr(not(feature = "telemetry"), allow(unused_variables))]
         chunks_dropped_p0: usize,
     ) -> Result<AgentResponse, TraceExporterError> {
         let strategy = RetryStrategy::default();

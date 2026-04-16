@@ -143,7 +143,10 @@ impl SpanConcentrator {
             if bucket_timestamp < self.oldest_timestamp {
                 bucket_timestamp = self.oldest_timestamp;
             }
+            #[cfg(feature = "stats-obfuscation")]
             let mut resource_name = span.resource().to_owned();
+            #[cfg(not(feature = "stats-obfuscation"))]
+            let resource_name = span.resource().to_owned();
 
             #[cfg(feature = "stats-obfuscation")]
             if self.obfuscation_config.load().enabled {
@@ -211,6 +214,7 @@ impl SpanConcentrator {
     }
 }
 
+#[cfg(feature = "stats-obfuscation")]
 impl StatsComputationObfuscationConfig {
     pub fn disabled() -> SharedStatsComputationObfuscationConfig {
         use arc_swap::ArcSwap;

@@ -135,6 +135,7 @@ fn create_and_start_stats_worker<H: HttpClientTrait + MaybeSend + Sync + 'static
         ctx.metadata.clone(),
         Endpoint::from_url(add_path(ctx.endpoint_url, STATS_ENDPOINT)),
         client,
+        #[cfg(feature = "stats-obfuscation")]
         client_side_stats.obfuscation_config.clone(),
     );
     let worker_handle = ctx

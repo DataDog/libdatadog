@@ -299,6 +299,7 @@ impl TraceExporterBuilder {
 
         #[cfg(not(target_arch = "wasm32"))]
         {
+            #[cfg(feature = "stats-obfuscation")]
             use libdd_trace_stats::span_concentrator::StatsComputationObfuscationConfig;
 
             use crate::trace_exporter::stats::StatsComputationConfig;
@@ -384,6 +385,7 @@ impl TraceExporterBuilder {
                 common_stats_tags: vec![libdatadog_version],
                 client_side_stats: StatsComputationConfig {
                     status: ArcSwap::new(stats.into()),
+                    #[cfg(feature = "stats-obfuscation")]
                     obfuscation_config: Arc::new(ArcSwap::from_pointee(
                         StatsComputationObfuscationConfig::default(),
                     )),
