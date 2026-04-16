@@ -11,10 +11,9 @@ use std::collections::HashMap;
 ///
 /// # Format selection
 ///
-/// The caller is currently responsible for choosing the format. In practice this means
-/// starting with [`TraceFormat::MsgpackV5`] and downgrading to [`TraceFormat::MsgpackV4`]
-/// when the agent returns 404 or 415 (e.g. on Windows, or when AppSec/IAST is active) —
-/// the same sticky downgrade that dd-trace-py performs in `AgentWriter` (`writer.py`).
+/// The caller is currently responsible for choosing the format. In practice this means starting
+/// with [`TraceFormat::MsgpackV5`] and downgrading to [`TraceFormat::MsgpackV4`] when the agent
+/// returns 404 or 415 (e.g. on Windows, or when AppSec/IAST is active).
 ///
 /// In a future version this negotiation may be moved into the client itself so that format
 /// selection becomes automatic and callers no longer need to track the downgrade state.
@@ -32,9 +31,7 @@ pub struct TraceSendOptions {
     /// When `true`, appends `Datadog-Client-Computed-Top-Level: yes`.
     ///
     /// Signals to the agent that the client has already marked top-level spans, allowing the agent
-    /// to skip its own top-level computation. In dd-trace-py this header is always set
-    /// (`writer.py:643`); here it is opt-in so that callers that do not compute top-level spans
-    /// can omit it.
+    /// to skip its own top-level computation.
     pub computed_top_level: bool,
 }
 
@@ -44,6 +41,6 @@ pub struct AgentResponse {
     /// HTTP status code returned by the agent.
     pub status: u16,
     /// Per-service sampling rates parsed from the `rate_by_service` field of the agent response
-    /// body, if present. Mirrors the JSON parsing done in dd-trace-py at `writer.py:728-734`.
+    /// body, if present.
     pub rate_by_service: Option<HashMap<String, f64>>,
 }

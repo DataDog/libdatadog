@@ -10,16 +10,11 @@ use libdd_http_client::RetryConfig;
 
 use crate::{error::BuildError, language_metadata::LanguageMetadata, AgentClient};
 
-/// Default timeout for agent requests: 2 000 ms.
-///
-/// Matches dd-trace-py's `DEFAULT_TIMEOUT = 2.0 s` (`constants.py:97`).
+/// Default timeout for agent requests.
 pub const DEFAULT_TIMEOUT_MS: u64 = 2_000;
 
 /// Default retry configuration: 2 retries (3 total attempts), 100 ms initial delay,
 /// exponential backoff with full jitter.
-///
-/// This approximates dd-trace-py's `fibonacci_backoff_with_jitter` pattern used in
-/// `writer.py:245-249`, `stats.py:123-126`, and `datastreams/processor.py:140-143`.
 pub fn default_retry_config() -> RetryConfig {
     todo!()
 }
@@ -31,7 +26,7 @@ pub fn default_retry_config() -> RetryConfig {
 /// [`AgentClientBuilder::http`], [`AgentClientBuilder::unix_socket`], etc.
 #[derive(Debug, Clone)]
 pub enum AgentTransport {
-    /// HTTP over TCP to `http://{host}:{port}`.
+    /// HTTP over TCP.
     Http {
         /// Hostname or IP address.
         host: String,
@@ -40,8 +35,8 @@ pub enum AgentTransport {
     },
     /// Unix Domain Socket.
     ///
-    /// HTTP requests are still formed with `Host: localhost`; the socket path
-    /// governs only the transport layer.
+    /// HTTP requests are still formed with `Host: localhost`. The socket path governs only the
+    /// transport layer.
     #[cfg(unix)]
     UnixSocket {
         /// Filesystem path to the socket file.
@@ -54,8 +49,6 @@ pub enum AgentTransport {
         path: std::ffi::OsString,
     },
     /// Probe at build time: use UDS if the socket file exists, otherwise fall back to HTTP.
-    ///
-    /// Mirrors the auto-detect logic in dd-trace-py's `_agent.py:32-49`.
     #[cfg(unix)]
     AutoDetect {
         /// UDS path to probe.
@@ -84,18 +77,10 @@ impl Default for AgentTransport {
 ///   [`AgentClientBuilder::windows_named_pipe`], [`AgentClientBuilder::auto_detect`]).
 /// - [`AgentClientBuilder::language_metadata`].
 ///
-/// # Testing
+/// # Test tokens
 ///
 /// Call [`AgentClientBuilder::test_agent_session_token`] to inject
-/// `x-datadog-test-session-token` on every request. This replaces dd-trace-py's
-/// `AgentWriter.set_test_session_token` (`writer.py:754-755`).
-///
-/// # Fork safety
-///
-/// The underlying `libdd-http-client` uses `hickory-dns` by default — an in-process, fork-safe
-/// DNS resolver that avoids the class of bugs where a forked child inherits open sockets from a
-/// parent's DNS thread pool. This is important for host processes that fork (Django, Flask,
-/// Celery workers, PHP-FPM, etc.).
+/// `x-datadog-test-session-token` on every request.
 #[derive(Debug, Default)]
 pub struct AgentClientBuilder {
     transport: Option<AgentTransport>,
@@ -112,8 +97,6 @@ impl AgentClientBuilder {
     pub fn new() -> Self {
         todo!()
     }
-
-    // ── Transport ─────────────────────────────────────────────────────────────
 
     /// Set the transport configuration.
     pub fn transport(self, transport: AgentTransport) -> Self {
@@ -138,8 +121,6 @@ impl AgentClientBuilder {
     }
 
     /// Convenience: auto-detect transport (UDS if socket file exists, else HTTP).
-    ///
-    /// Mirrors the logic in dd-trace-py's `_agent.py:32-49`.
     #[cfg(unix)]
     pub fn auto_detect(
         self,
@@ -150,17 +131,12 @@ impl AgentClientBuilder {
         todo!()
     }
 
-    // ── Test session token ────────────────────────────────────────────────────
-
     /// Set the test session token.
     ///
     /// When set, `x-datadog-test-session-token: <token>` is injected on every request.
-    /// Replaces dd-trace-py's `AgentWriter.set_test_session_token` (`writer.py:754-755`).
     pub fn test_agent_session_token(self, token: impl Into<String>) -> Self {
         todo!()
     }
-
-    // ── Timeout / retries ─────────────────────────────────────────────────────
 
     /// Set the request timeout.
     ///
@@ -177,23 +153,15 @@ impl AgentClientBuilder {
 
     /// Override the default retry configuration.
     ///
-    /// Defaults to [`default_retry_config`]: 2 retries, 100 ms initial delay, exponential
-    /// backoff with full jitter.
+    /// Defaults to [`default_retry_config`].
     pub fn retry(self, config: RetryConfig) -> Self {
         todo!()
     }
 
-    // ── Language metadata ─────────────────────────────────────────────────────
-
-    /// Set the language/runtime metadata injected into every request.
-    ///
-    /// Required. Drives `Datadog-Meta-Lang`, `Datadog-Meta-Lang-Version`,
-    /// `Datadog-Meta-Lang-Interpreter`, `Datadog-Meta-Tracer-Version`, and `User-Agent`.
+    /// Set the language/runtime metadata injected into every request. Required.
     pub fn language_metadata(self, meta: LanguageMetadata) -> Self {
         todo!()
     }
-
-    // ── Connection pooling ────────────────────────────────────────────────────
 
     /// Enable or disable HTTP keep-alive. Defaults to `false`.
     ///
@@ -206,30 +174,19 @@ impl AgentClientBuilder {
         self
     }
 
-    // ── Compression ───────────────────────────────────────────────────────────
+    // Compression
     //
-    // Not exposed in v1. Gzip compression (level 6, matching dd-trace-py's trace writer at
+    // Not exposed in this libv1. Gzip compression (level 6, matching dd-trace-py's trace writer at
     // `writer.py:490`) will be added in a follow-up once the core send paths are stable.
     // Per-method defaults (e.g. unconditional gzip for `send_pipeline_stats`) are already
     // baked in; only the opt-in client-level `gzip(level)` builder knob is deferred.
 
-    // ── Extra headers ─────────────────────────────────────────────────────────
-
-    /// Merge additional headers into every request.
-    ///
-    /// Intended for `_DD_TRACE_WRITER_ADDITIONAL_HEADERS` in dd-trace-py.
+    /// Additional custom headers to inject.
     pub fn extra_headers(self, headers: HashMap<String, String>) -> Self {
         todo!()
     }
 
-    // ── Build ─────────────────────────────────────────────────────────────────
-
     /// Build the [`AgentClient`].
-    ///
-    /// # Errors
-    ///
-    /// - [`BuildError::MissingTransport`] — no transport was configured.
-    /// - [`BuildError::MissingLanguageMetadata`] — no language metadata was configured.
     pub fn build(self) -> Result<AgentClient, BuildError> {
         todo!()
     }

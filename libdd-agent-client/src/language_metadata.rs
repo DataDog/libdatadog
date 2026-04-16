@@ -5,32 +5,15 @@
 
 /// Language and runtime metadata that is automatically injected into every request as
 /// `Datadog-Meta-*` headers and drives the `User-Agent` string.
-///
-/// | Header                          | Field              |
-/// |---------------------------------|--------------------|
-/// | `Datadog-Meta-Lang`             | `language`         |
-/// | `Datadog-Meta-Lang-Version`     | `language_version` |
-/// | `Datadog-Meta-Lang-Interpreter` | `interpreter`      |
-/// | `Datadog-Meta-Tracer-Version`   | `tracer_version`   |
-///
-/// These four headers are today manually assembled in four separate places in dd-trace-py:
-/// `writer.py:638-644`, `writer.py:785-792`, `stats.py:113-117`, and
-/// `datastreams/processor.py:128-133`. A single `LanguageMetadata` instance replaces all of them.
-///
-/// # `User-Agent`
-///
-/// [`LanguageMetadata::user_agent`] produces the string passed to
-/// `Endpoint::to_request_builder(user_agent)`, so the `User-Agent` and the `Datadog-Meta-*`
-/// headers share a single source of truth.
 #[derive(Debug, Clone)]
 pub struct LanguageMetadata {
-    /// Language name, e.g. `"python"`.
+    /// Value of `Datadog-Meta-Lang`, e.g. `"python"`.
     pub language: String,
-    /// Language runtime version, e.g. `"3.12.1"`.
+    /// Value of `Datadog-Meta-Lang-Version`, e.g. `"3.12.1"`.
     pub language_version: String,
-    /// Interpreter name, e.g. `"CPython"`.
+    /// Value of `Datadog-Meta-Lang-Interpreter`, e.g. `"CPython"`.
     pub interpreter: String,
-    /// Tracer library version, e.g. `"2.18.0"`.
+    /// Value of `Datadog-Meta-Tracer-Version`, e.g. `"2.18.0"`.
     pub tracer_version: String,
 }
 
