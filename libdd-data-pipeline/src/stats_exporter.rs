@@ -210,6 +210,7 @@ mod tests {
     use httpmock::MockServer;
     use libdd_capabilities_impl::NativeCapabilities;
     use libdd_shared_runtime::SharedRuntime;
+    #[cfg(feature = "stats-obfuscation")]
     use libdd_trace_stats::span_concentrator::StatsComputationObfuscationConfig;
     use libdd_trace_utils::span::{trace_utils, v04::SpanSlice};
     use libdd_trace_utils::test_utils::poll_for_mock_hit;
@@ -320,6 +321,7 @@ mod tests {
             get_test_metadata(),
             Endpoint::from_url(stats_url_from_agent_url(&server.url("/")).unwrap()),
             NativeCapabilities::new_client(),
+            #[cfg(feature = "stats-obfuscation")]
             StatsComputationObfuscationConfig::disabled(),
         );
 
@@ -355,6 +357,7 @@ mod tests {
             get_test_metadata(),
             Endpoint::from_url(stats_url_from_agent_url(&server.url("/")).unwrap()),
             NativeCapabilities::new_client(),
+            #[cfg(feature = "stats-obfuscation")]
             StatsComputationObfuscationConfig::disabled(),
         );
 
@@ -397,6 +400,7 @@ mod tests {
             get_test_metadata(),
             Endpoint::from_url(stats_url_from_agent_url(&server.url("/")).unwrap()),
             NativeCapabilities::new_client(),
+            #[cfg(feature = "stats-obfuscation")]
             StatsComputationObfuscationConfig::disabled(),
         );
 

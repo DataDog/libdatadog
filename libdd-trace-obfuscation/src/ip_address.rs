@@ -104,10 +104,9 @@ fn parse_ip(s: &str) -> Option<(&str, &str)> {
         match ch {
             '0'..='9' => continue,
             '.' | '-' | '_' => return parse_ip_v4(s, ch),
-            ':' | 'A'..='F' | 'a'..='f'
-                if s.parse::<Ipv6Addr>().is_ok() => {
-                    return Some((s, ""));
-                }
+            ':' | 'A'..='F' | 'a'..='f' if s.parse::<Ipv6Addr>().is_ok() => {
+                return Some((s, ""));
+            }
             '[' => {
                 // Parse IPv6 in [host]:port format
                 if let Some((host, port)) = s[1..].split_once(']') {
