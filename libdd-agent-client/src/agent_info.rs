@@ -5,9 +5,7 @@
 
 /// Parsed response from a `GET /info` probe.
 ///
-/// Returned by [`crate::AgentClient::agent_info`]. Contains agent capabilities and the
-/// headers that dd-trace-py currently processes via the side-effectful `process_info_headers`
-/// function (`agent.py:17-23`) — here they are explicit typed fields instead.
+/// Returned by [`crate::AgentClient::agent_info`]. Contains agent capabilities and headers.
 #[derive(Debug, Clone)]
 pub struct AgentInfo {
     /// Available agent endpoints, e.g. `["/v0.4/traces", "/v0.5/traces"]`.
