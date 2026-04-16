@@ -441,6 +441,8 @@ mod tests {
     #[cfg_attr(miri, ignore)]
     #[tokio::test]
     async fn test_send_stats_with_obfuscation_header() {
+        use arc_swap::ArcSwap;
+
         let server = MockServer::start_async().await;
 
         let mock = server
@@ -460,7 +462,10 @@ mod tests {
             get_test_metadata(),
             Endpoint::from_url(stats_url_from_agent_url(&server.url("/")).unwrap()),
             NativeCapabilities::new_client(),
-            StatsComputationObfuscationConfig::disabled(),
+            Arc::new(ArcSwap::from_pointee(StatsComputationObfuscationConfig {
+                enabled: true,
+                ..Default::default()
+            })),
         );
 
         let send_status = stats_exporter.send(true).await;
