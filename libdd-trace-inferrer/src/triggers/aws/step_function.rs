@@ -9,8 +9,8 @@
 use crate::config::InferConfig;
 use crate::span_data::SpanData;
 use crate::triggers::{
-    DATADOG_CARRIER_KEY, FUNCTION_TRIGGER_EVENT_SOURCE_ARN_TAG, FUNCTION_TRIGGER_EVENT_SOURCE_TAG,
-    TraceContext, Trigger,
+    TraceContext, Trigger, DATADOG_CARRIER_KEY, FUNCTION_TRIGGER_EVENT_SOURCE_ARN_TAG,
+    FUNCTION_TRIGGER_EVENT_SOURCE_TAG,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -123,10 +123,7 @@ impl Trigger for StepFunctionEvent {
             .state_machine
             .as_ref()
             .map_or_else(String::new, |sm| sm.id.clone());
-        tags.insert(
-            FUNCTION_TRIGGER_EVENT_SOURCE_ARN_TAG.to_string(),
-            arn,
-        );
+        tags.insert(FUNCTION_TRIGGER_EVENT_SOURCE_ARN_TAG.to_string(), arn);
 
         tags
     }
@@ -192,8 +189,7 @@ impl StepFunctionEvent {
         retry_count: u16,
         redrive_count: u16,
     ) -> u64 {
-        let mut unique_string =
-            format!("{execution_id}#{state_name}#{state_entered_time}");
+        let mut unique_string = format!("{execution_id}#{state_name}#{state_entered_time}");
 
         if retry_count != 0 || redrive_count != 0 {
             unique_string.push_str(&format!("#{retry_count}#{redrive_count}"));
@@ -216,7 +212,11 @@ impl StepFunctionEvent {
             .take(8)
             .fold(0, |acc, &byte| (acc << 8) + u64::from(byte));
         result &= !(1u64 << 63);
-        if result == 0 { 1 } else { result }
+        if result == 0 {
+            1
+        } else {
+            result
+        }
     }
 
     /// Extracts DD tags from the `x-datadog-tags` header value.

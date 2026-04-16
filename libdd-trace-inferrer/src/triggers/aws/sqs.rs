@@ -6,10 +6,10 @@
 use crate::config::InferConfig;
 use crate::span_data::SpanData;
 use crate::triggers::{
-    DATADOG_CARRIER_KEY, FUNCTION_TRIGGER_EVENT_SOURCE_ARN_TAG, FUNCTION_TRIGGER_EVENT_SOURCE_TAG,
-    TraceContext, Trigger,
+    TraceContext, Trigger, DATADOG_CARRIER_KEY, FUNCTION_TRIGGER_EVENT_SOURCE_ARN_TAG,
+    FUNCTION_TRIGGER_EVENT_SOURCE_TAG,
 };
-use crate::utils::{MS_TO_NS, get_aws_partition_by_region, resolve_service_name};
+use crate::utils::{get_aws_partition_by_region, resolve_service_name, MS_TO_NS};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
@@ -174,10 +174,7 @@ impl Trigger for SqsRecord {
         } else {
             String::new()
         };
-        tags.insert(
-            FUNCTION_TRIGGER_EVENT_SOURCE_ARN_TAG.to_string(),
-            arn,
-        );
+        tags.insert(FUNCTION_TRIGGER_EVENT_SOURCE_ARN_TAG.to_string(), arn);
 
         tags
     }
@@ -219,9 +216,7 @@ impl Trigger for SqsRecord {
 /// Extracts trace context from the `AWSTraceHeader` attribute.
 ///
 /// Format: `Root=1-xxx-yyy;Parent=zzz;Sampled=1`
-pub fn extract_trace_context_from_aws_trace_header(
-    header: Option<String>,
-) -> Option<TraceContext> {
+pub fn extract_trace_context_from_aws_trace_header(header: Option<String>) -> Option<TraceContext> {
     let value = header?;
     if !value.starts_with("Root=") {
         return None;
@@ -300,10 +295,8 @@ mod tests {
 
     #[test]
     fn test_extract_aws_trace_header() {
-        let header =
-            "Root=1-68029e8a-0000000035578e774943fd9d;Parent=76c040bdc454a7ac;Sampled=1";
-        let ctx =
-            extract_trace_context_from_aws_trace_header(Some(header.to_string())).unwrap();
+        let header = "Root=1-68029e8a-0000000035578e774943fd9d;Parent=76c040bdc454a7ac;Sampled=1";
+        let ctx = extract_trace_context_from_aws_trace_header(Some(header.to_string())).unwrap();
         assert_eq!(ctx.trace_id, 0x3557_8e77_4943_fd9d);
         assert_eq!(ctx.span_id, 0x76c0_40bd_c454_a7ac);
         assert_eq!(ctx.sampling_priority, Some(1));

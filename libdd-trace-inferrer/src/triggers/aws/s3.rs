@@ -5,9 +5,9 @@
 
 use crate::config::InferConfig;
 use crate::span_data::SpanData;
-use crate::span_link::{SpanLink, generate_span_link_hash};
+use crate::span_link::{generate_span_link_hash, SpanLink};
 use crate::triggers::{
-    FUNCTION_TRIGGER_EVENT_SOURCE_ARN_TAG, FUNCTION_TRIGGER_EVENT_SOURCE_TAG, Trigger,
+    Trigger, FUNCTION_TRIGGER_EVENT_SOURCE_ARN_TAG, FUNCTION_TRIGGER_EVENT_SOURCE_TAG,
 };
 use crate::utils::{resolve_service_name, MS_TO_NS};
 use serde::{Deserialize, Serialize};

@@ -6,10 +6,10 @@
 use crate::config::InferConfig;
 use crate::span_data::SpanData;
 use crate::triggers::{
-    FUNCTION_TRIGGER_EVENT_SOURCE_ARN_TAG, FUNCTION_TRIGGER_EVENT_SOURCE_TAG, Trigger,
-    lowercase_key,
+    lowercase_key, Trigger, FUNCTION_TRIGGER_EVENT_SOURCE_ARN_TAG,
+    FUNCTION_TRIGGER_EVENT_SOURCE_TAG,
 };
-use crate::utils::{MS_TO_NS, get_aws_partition_by_region, resolve_service_name};
+use crate::utils::{get_aws_partition_by_region, resolve_service_name, MS_TO_NS};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
@@ -113,10 +113,7 @@ impl Trigger for ApiGatewayWebSocketEvent {
                 FUNCTION_TRIGGER_EVENT_SOURCE_TAG.to_string(),
                 "api-gateway".to_string(),
             ),
-            (
-                FUNCTION_TRIGGER_EVENT_SOURCE_ARN_TAG.to_string(),
-                arn,
-            ),
+            (FUNCTION_TRIGGER_EVENT_SOURCE_ARN_TAG.to_string(), arn),
         ])
     }
 

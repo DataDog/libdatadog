@@ -135,9 +135,7 @@ mod tests {
     #[test]
     fn test_parameterize_uuid() {
         assert_eq!(
-            parameterize_api_resource(
-                "/items/550e8400-e29b-41d4-a716-446655440000".to_string()
-            ),
+            parameterize_api_resource("/items/550e8400-e29b-41d4-a716-446655440000".to_string()),
             "/items/{item_id}"
         );
     }
@@ -170,20 +168,41 @@ mod tests {
 
         // Generic when no specific
         assert_eq!(
-            resolve_service_name(&mapping, "other-queue", "lambda_sqs", "other-queue", "sqs", true),
+            resolve_service_name(
+                &mapping,
+                "other-queue",
+                "lambda_sqs",
+                "other-queue",
+                "sqs",
+                true
+            ),
             "generic-svc"
         );
 
         // Instance name when no mapping and use_instance_names=true
         let empty = HashMap::new();
         assert_eq!(
-            resolve_service_name(&empty, "other-queue", "lambda_sqs", "other-queue", "sqs", true),
+            resolve_service_name(
+                &empty,
+                "other-queue",
+                "lambda_sqs",
+                "other-queue",
+                "sqs",
+                true
+            ),
             "other-queue"
         );
 
         // Fallback when no mapping and use_instance_names=false
         assert_eq!(
-            resolve_service_name(&empty, "other-queue", "lambda_sqs", "other-queue", "sqs", false),
+            resolve_service_name(
+                &empty,
+                "other-queue",
+                "lambda_sqs",
+                "other-queue",
+                "sqs",
+                false
+            ),
             "sqs"
         );
     }

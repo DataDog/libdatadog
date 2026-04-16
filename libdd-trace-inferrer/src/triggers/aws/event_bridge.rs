@@ -6,10 +6,10 @@
 use crate::config::InferConfig;
 use crate::span_data::SpanData;
 use crate::triggers::{
-    DATADOG_CARRIER_KEY, FUNCTION_TRIGGER_EVENT_SOURCE_ARN_TAG, FUNCTION_TRIGGER_EVENT_SOURCE_TAG,
-    Trigger,
+    Trigger, DATADOG_CARRIER_KEY, FUNCTION_TRIGGER_EVENT_SOURCE_ARN_TAG,
+    FUNCTION_TRIGGER_EVENT_SOURCE_TAG,
 };
-use crate::utils::{MS_TO_NS, resolve_service_name};
+use crate::utils::{resolve_service_name, MS_TO_NS};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;

@@ -7,11 +7,11 @@ use crate::config::InferConfig;
 use crate::span_data::SpanData;
 use crate::triggers::serde_utils::nullable_map;
 use crate::triggers::{
-    FUNCTION_TRIGGER_EVENT_SOURCE_ARN_TAG, FUNCTION_TRIGGER_EVENT_SOURCE_TAG, Trigger,
-    lowercase_key,
+    lowercase_key, Trigger, FUNCTION_TRIGGER_EVENT_SOURCE_ARN_TAG,
+    FUNCTION_TRIGGER_EVENT_SOURCE_TAG,
 };
 use crate::utils::{
-    MS_TO_NS, get_aws_partition_by_region, parameterize_api_resource, resolve_service_name,
+    get_aws_partition_by_region, parameterize_api_resource, resolve_service_name, MS_TO_NS,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -111,7 +111,10 @@ impl Trigger for ApiGatewayRestEvent {
         span.meta.extend([
             ("endpoint".to_string(), self.request_context.path.clone()),
             ("http.url".to_string(), http_url),
-            ("http.method".to_string(), self.request_context.method.clone()),
+            (
+                "http.method".to_string(),
+                self.request_context.method.clone(),
+            ),
             (
                 "http.protocol".to_string(),
                 self.request_context.protocol.clone(),
@@ -149,7 +152,10 @@ impl Trigger for ApiGatewayRestEvent {
                 "http.url_details.path".to_string(),
                 self.request_context.path.clone(),
             ),
-            ("http.method".to_string(), self.request_context.method.clone()),
+            (
+                "http.method".to_string(),
+                self.request_context.method.clone(),
+            ),
             (
                 FUNCTION_TRIGGER_EVENT_SOURCE_TAG.to_string(),
                 "api-gateway".to_string(),
@@ -179,10 +185,7 @@ impl Trigger for ApiGatewayRestEvent {
             api_id = self.request_context.api_id,
             stage = self.request_context.stage,
         );
-        tags.insert(
-            FUNCTION_TRIGGER_EVENT_SOURCE_ARN_TAG.to_string(),
-            arn,
-        );
+        tags.insert(FUNCTION_TRIGGER_EVENT_SOURCE_ARN_TAG.to_string(), arn);
 
         // dd_resource_key tag
         if !self.request_context.api_id.is_empty() {

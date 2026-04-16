@@ -6,11 +6,11 @@
 use crate::config::InferConfig;
 use crate::span_data::SpanData;
 use crate::triggers::{
-    FUNCTION_TRIGGER_EVENT_SOURCE_ARN_TAG, FUNCTION_TRIGGER_EVENT_SOURCE_TAG, Trigger,
-    lowercase_key,
+    lowercase_key, Trigger, FUNCTION_TRIGGER_EVENT_SOURCE_ARN_TAG,
+    FUNCTION_TRIGGER_EVENT_SOURCE_TAG,
 };
 use crate::utils::{
-    MS_TO_NS, get_aws_partition_by_region, parameterize_api_resource, resolve_service_name,
+    get_aws_partition_by_region, parameterize_api_resource, resolve_service_name, MS_TO_NS,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -85,8 +85,7 @@ impl Trigger for ApiGatewayHttpEvent {
 
         version.is_some_and(|v| v == "2.0")
             && payload.get("rawQueryString").is_some()
-            && domain_name
-                .is_some_and(|d| d.as_str().is_none_or(|s| !s.contains("lambda-url")))
+            && domain_name.is_some_and(|d| d.as_str().is_none_or(|s| !s.contains("lambda-url")))
     }
 
     #[allow(clippy::cast_possible_truncation)]
@@ -117,7 +116,10 @@ impl Trigger for ApiGatewayHttpEvent {
         span.r#type = "web".to_string();
         span.start = start_time;
         span.meta.extend([
-            ("endpoint".to_string(), self.request_context.http.path.clone()),
+            (
+                "endpoint".to_string(),
+                self.request_context.http.path.clone(),
+            ),
             ("http.url".to_string(), http_url),
             (
                 "http.method".to_string(),
@@ -187,10 +189,7 @@ impl Trigger for ApiGatewayHttpEvent {
             api_id = self.request_context.api_id,
             stage = self.request_context.stage,
         );
-        tags.insert(
-            FUNCTION_TRIGGER_EVENT_SOURCE_ARN_TAG.to_string(),
-            arn,
-        );
+        tags.insert(FUNCTION_TRIGGER_EVENT_SOURCE_ARN_TAG.to_string(), arn);
 
         // dd_resource_key tag
         if !self.request_context.api_id.is_empty() {
@@ -287,18 +286,17 @@ mod tests {
             tags.get("function_trigger.event_source"),
             Some(&"api-gateway".to_string())
         );
-        assert_eq!(
-            tags.get("http.route"),
-            Some(&"/httpapi/get".to_string())
-        );
+        assert_eq!(tags.get("http.route"), Some(&"/httpapi/get".to_string()));
     }
 
     #[test]
     fn test_get_arn_via_tags() {
         let value: Value = serde_json::from_str(TEST_PAYLOAD).unwrap();
         let event = ApiGatewayHttpEvent::new(value).unwrap();
-        let mut config = InferConfig::default();
-        config.region = "sa-east-1".to_string();
+        let config = InferConfig {
+            region: "sa-east-1".to_string(),
+            ..InferConfig::default()
+        };
         let tags = event.get_tags(&config);
         assert_eq!(
             tags.get(FUNCTION_TRIGGER_EVENT_SOURCE_ARN_TAG),

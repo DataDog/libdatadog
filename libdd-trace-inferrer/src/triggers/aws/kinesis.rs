@@ -6,10 +6,10 @@
 use crate::config::InferConfig;
 use crate::span_data::SpanData;
 use crate::triggers::{
-    DATADOG_CARRIER_KEY, FUNCTION_TRIGGER_EVENT_SOURCE_ARN_TAG, FUNCTION_TRIGGER_EVENT_SOURCE_TAG,
-    Trigger,
+    Trigger, DATADOG_CARRIER_KEY, FUNCTION_TRIGGER_EVENT_SOURCE_ARN_TAG,
+    FUNCTION_TRIGGER_EVENT_SOURCE_TAG,
 };
-use crate::utils::{S_TO_NS, resolve_service_name};
+use crate::utils::{resolve_service_name, S_TO_NS};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
@@ -93,7 +93,10 @@ impl Trigger for KinesisRecord {
             ("operation_name".to_string(), "aws.kinesis".to_string()),
             ("stream_name".to_string(), stream_name),
             ("shard_id".to_string(), shard_id.to_string()),
-            ("event_source_arn".to_string(), self.event_source_arn.clone()),
+            (
+                "event_source_arn".to_string(),
+                self.event_source_arn.clone(),
+            ),
             ("event_id".to_string(), self.event_id.clone()),
             ("event_name".to_string(), self.event_name.clone()),
             ("event_version".to_string(), self.event_version.clone()),
@@ -118,7 +121,7 @@ impl Trigger for KinesisRecord {
     }
 
     fn get_carrier(&self) -> HashMap<String, String> {
-        use base64::{Engine, engine::general_purpose::STANDARD};
+        use base64::{engine::general_purpose::STANDARD, Engine};
         if let Ok(decoded) = STANDARD.decode(&self.kinesis.data) {
             if let Ok(value) = serde_json::from_slice::<Value>(&decoded) {
                 if let Some(carrier) = value.get(DATADOG_CARRIER_KEY) {

@@ -8,10 +8,10 @@
 use crate::config::InferConfig;
 use crate::span_data::SpanData;
 use crate::triggers::{
-    FUNCTION_TRIGGER_EVENT_SOURCE_ARN_TAG, FUNCTION_TRIGGER_EVENT_SOURCE_TAG, Trigger,
-    lowercase_key,
+    lowercase_key, Trigger, FUNCTION_TRIGGER_EVENT_SOURCE_ARN_TAG,
+    FUNCTION_TRIGGER_EVENT_SOURCE_TAG,
 };
-use crate::utils::{MS_TO_NS, parameterize_api_resource, resolve_service_name};
+use crate::utils::{parameterize_api_resource, resolve_service_name, MS_TO_NS};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
@@ -74,8 +74,7 @@ impl Trigger for LambdaFunctionUrlEvent {
 
         version.is_some_and(|v| v == "2.0")
             && payload.get("rawQueryString").is_some()
-            && domain_name
-                .is_some_and(|d| d.as_str().is_some_and(|s| s.contains("lambda-url")))
+            && domain_name.is_some_and(|d| d.as_str().is_some_and(|s| s.contains("lambda-url")))
     }
 
     #[allow(clippy::cast_possible_truncation)]
@@ -106,7 +105,10 @@ impl Trigger for LambdaFunctionUrlEvent {
         span.r#type = "web".to_string();
         span.start = start_time;
         span.meta.extend([
-            ("endpoint".to_string(), self.request_context.http.path.clone()),
+            (
+                "endpoint".to_string(),
+                self.request_context.http.path.clone(),
+            ),
             ("http.url".to_string(), http_url),
             (
                 "http.method".to_string(),

@@ -11,8 +11,8 @@ use crate::config::InferConfig;
 use crate::error::InferrerError;
 use crate::span_data::SpanData;
 use crate::span_link::SpanLink;
-use crate::triggers::{TraceContext, Trigger, TriggerType};
 use crate::triggers::aws::sqs::WrappedSqsTrigger;
+use crate::triggers::{TraceContext, Trigger, TriggerType};
 
 /// Complete result of inferring trace data from a payload.
 ///
@@ -275,10 +275,9 @@ pub fn complete_inference(
     }
 
     let mut span_data = result.span_data.clone();
-    span_data.meta.insert(
-        "peer.service".to_string(),
-        ctx.invocation_service.clone(),
-    );
+    span_data
+        .meta
+        .insert("peer.service".to_string(), ctx.invocation_service.clone());
     span_data
         .meta
         .insert("span.kind".to_string(), "server".to_string());
@@ -329,7 +328,9 @@ mod tests {
     fn test_infer_unknown_payload() {
         let inferrer = SpanInferrer::new(InferConfig::default());
         let result = inferrer.infer_span(r#"{"random": "data"}"#).unwrap();
-        assert!(matches!(result.trigger_tags.get("function_trigger.event_source"), None));
+        assert!(!result
+            .trigger_tags
+            .contains_key("function_trigger.event_source"));
         assert!(!result.should_create_inferred_span());
     }
 
@@ -382,7 +383,10 @@ mod tests {
         assert!(!span.is_error);
         // Sync: (2s + 0.5s) - 1s = 1.5s
         assert_eq!(span.duration_ns, 1_500_000_000);
-        assert_eq!(span.span_data.meta.get("peer.service").unwrap(), "my-lambda");
+        assert_eq!(
+            span.span_data.meta.get("peer.service").unwrap(),
+            "my-lambda"
+        );
         assert_eq!(span.span_data.meta.get("span.kind").unwrap(), "server");
         assert!(completed.wrapped_span.is_none());
     }

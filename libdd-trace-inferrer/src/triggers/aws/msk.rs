@@ -6,9 +6,9 @@
 use crate::config::InferConfig;
 use crate::span_data::SpanData;
 use crate::triggers::{
-    FUNCTION_TRIGGER_EVENT_SOURCE_ARN_TAG, FUNCTION_TRIGGER_EVENT_SOURCE_TAG, Trigger,
+    Trigger, FUNCTION_TRIGGER_EVENT_SOURCE_ARN_TAG, FUNCTION_TRIGGER_EVENT_SOURCE_TAG,
 };
-use crate::utils::{MS_TO_NS, resolve_service_name};
+use crate::utils::{resolve_service_name, MS_TO_NS};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
@@ -98,7 +98,10 @@ impl Trigger for MskEvent {
                 ("topic".to_string(), first_value.topic.clone()),
                 ("partition".to_string(), first_value.partition.to_string()),
                 ("event_source".to_string(), self.event_source.clone()),
-                ("event_source_arn".to_string(), self.event_source_arn.clone()),
+                (
+                    "event_source_arn".to_string(),
+                    self.event_source_arn.clone(),
+                ),
             ]);
         }
     }

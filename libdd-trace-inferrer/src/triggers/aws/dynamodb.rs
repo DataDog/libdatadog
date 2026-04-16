@@ -5,11 +5,11 @@
 
 use crate::config::InferConfig;
 use crate::span_data::SpanData;
-use crate::span_link::{SpanLink, generate_span_link_hash};
+use crate::span_link::{generate_span_link_hash, SpanLink};
 use crate::triggers::{
-    FUNCTION_TRIGGER_EVENT_SOURCE_ARN_TAG, FUNCTION_TRIGGER_EVENT_SOURCE_TAG, Trigger,
+    Trigger, FUNCTION_TRIGGER_EVENT_SOURCE_ARN_TAG, FUNCTION_TRIGGER_EVENT_SOURCE_TAG,
 };
-use crate::utils::{S_TO_NS, resolve_service_name};
+use crate::utils::{resolve_service_name, S_TO_NS};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
@@ -56,7 +56,7 @@ impl AttributeValue {
             AttributeValue::S(s) => Some(s.clone()),
             AttributeValue::N(n) => Some(n.clone()),
             AttributeValue::B(b) => {
-                use base64::{Engine, engine::general_purpose::STANDARD};
+                use base64::{engine::general_purpose::STANDARD, Engine};
                 STANDARD
                     .decode(b)
                     .ok()
@@ -127,7 +127,10 @@ impl Trigger for DynamoDbRecord {
             ("event_id".to_string(), self.event_id.clone()),
             ("event_name".to_string(), self.event_name.clone()),
             ("event_version".to_string(), self.event_version.clone()),
-            ("event_source_arn".to_string(), self.event_source_arn.clone()),
+            (
+                "event_source_arn".to_string(),
+                self.event_source_arn.clone(),
+            ),
             (
                 "size_bytes".to_string(),
                 self.dynamodb.size_bytes.to_string(),

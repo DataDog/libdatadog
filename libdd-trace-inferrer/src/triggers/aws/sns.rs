@@ -6,8 +6,8 @@
 use crate::config::InferConfig;
 use crate::span_data::SpanData;
 use crate::triggers::{
-    DATADOG_CARRIER_KEY, FUNCTION_TRIGGER_EVENT_SOURCE_ARN_TAG, FUNCTION_TRIGGER_EVENT_SOURCE_TAG,
-    Trigger,
+    Trigger, DATADOG_CARRIER_KEY, FUNCTION_TRIGGER_EVENT_SOURCE_ARN_TAG,
+    FUNCTION_TRIGGER_EVENT_SOURCE_TAG,
 };
 use crate::utils::{resolve_service_name, MS_TO_NS};
 use serde::{Deserialize, Serialize};
@@ -155,7 +155,7 @@ impl Trigger for SnsRecord {
                 "String" => return serde_json::from_str(&ma.value).unwrap_or_default(),
                 "Binary" => {
                     // base64 decode then parse as JSON carrier
-                    use base64::{Engine, engine::general_purpose::STANDARD};
+                    use base64::{engine::general_purpose::STANDARD, Engine};
                     if let Ok(bytes) = STANDARD.decode(&ma.value) {
                         if let Ok(carrier_str) = String::from_utf8(bytes) {
                             return serde_json::from_str(&carrier_str).unwrap_or_default();

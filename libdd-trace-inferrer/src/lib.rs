@@ -39,8 +39,8 @@ mod utils;
 pub use config::InferConfig;
 pub use error::InferrerError;
 pub use inferrer::{
-    CompletedSpan, CompletedSpans, CompletionContext, InferenceResult, SpanInferrer,
-    complete_inference,
+    complete_inference, CompletedSpan, CompletedSpans, CompletionContext, InferenceResult,
+    SpanInferrer,
 };
 pub use span_data::SpanData;
 pub use span_link::SpanLink;
