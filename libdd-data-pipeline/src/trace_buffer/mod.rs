@@ -427,7 +427,10 @@ impl<T> Sender<T> {
             .fetch_add(chunk_len as u64, Ordering::AcqRel);
         let new_span_count = (prev & SPAN_COUNT_MASK) + chunk_len as u64;
 
-        if new_span_count > self.flush_trigger_number_of_spans as u64 || self.synchronous_write {
+        if prev & FLUSH_NEEDED_BIT == 0
+            && new_span_count > self.flush_trigger_number_of_spans as u64
+            || self.synchronous_write
+        {
             // Release: orders all prior writes (channel send + span count) before the worker
             // observes FLUSH_NEEDED_BIT.
             let prev2 = self
