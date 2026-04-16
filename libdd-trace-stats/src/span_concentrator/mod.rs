@@ -11,7 +11,7 @@ use stat_span::StatSpan;
 
 mod aggregation;
 
-pub mod stat_span;
+mod stat_span;
 
 /// Return a Duration between t and the unix epoch
 /// If t is before the unix epoch return 0
@@ -36,6 +36,18 @@ where
             .is_some_and(|span_kind| span_kinds_stats_computed.contains(&span_kind.to_lowercase()))
     }) && !span.is_partial_snapshot()
 }
+
+#[cfg(feature = "stats-obfuscation")]
+#[derive(Clone, Debug, Default)]
+#[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+pub struct StatsComputationObfuscationConfig {
+    pub enabled: bool,
+    pub sql_obfuscation_mode: libdd_trace_obfuscation::sql::SqlObfuscationMode,
+}
+
+#[cfg(feature = "stats-obfuscation")]
+pub type SharedStatsComputationObfuscationConfig =
+    std::sync::Arc<arc_swap::ArcSwap<StatsComputationObfuscationConfig>>;
 
 /// SpanConcentrator compute stats on span aggregated by time and span attributes
 ///
@@ -66,6 +78,8 @@ pub struct SpanConcentrator {
     span_kinds_stats_computed: Vec<String>,
     /// keys for supplementary tags that describe peer.service entities
     peer_tag_keys: Vec<String>,
+    #[cfg(feature = "stats-obfuscation")]
+    obfuscation_config: SharedStatsComputationObfuscationConfig,
 }
 
 impl SpanConcentrator {
@@ -74,11 +88,15 @@ impl SpanConcentrator {
     /// - `now` the current system time, used to define the oldest bucket
     /// - `span_kinds_stats_computed` list of span kinds eligible for stats computation
     /// - `peer_tags_keys` list of keys considered as peer tags for aggregation
+    /// - `obfuscation_config` optional and updatable config for resource key obfuscation
     pub fn new(
         bucket_size: Duration,
         now: SystemTime,
         span_kinds_stats_computed: Vec<String>,
         peer_tag_keys: Vec<String>,
+        #[cfg(feature = "stats-obfuscation")] obfuscation_config: Option<
+            SharedStatsComputationObfuscationConfig,
+        >,
     ) -> SpanConcentrator {
         SpanConcentrator {
             bucket_size: bucket_size.as_nanos() as u64,
@@ -90,6 +108,8 @@ impl SpanConcentrator {
             buffer_len: 2,
             span_kinds_stats_computed,
             peer_tag_keys,
+            #[cfg(feature = "stats-obfuscation")]
+            obfuscation_config: obfuscation_config.unwrap_or_default(),
         }
     }
 
@@ -123,8 +143,28 @@ impl SpanConcentrator {
             if bucket_timestamp < self.oldest_timestamp {
                 bucket_timestamp = self.oldest_timestamp;
             }
+            let mut resource_name = span.resource().to_owned();
 
-            let agg_key = BorrowedAggregationKey::from_span(span, self.peer_tag_keys.as_slice());
+            #[cfg(feature = "stats-obfuscation")]
+            if self.obfuscation_config.load().enabled {
+                let dbms_hint: Option<&str> = span.get_meta("db.type");
+                if let Some(obfuscated_resource) =
+                    libdd_trace_obfuscation::obfuscate::obfuscate_resource_for_stats(
+                        span.r#type(),
+                        span.resource(),
+                        dbms_hint,
+                        self.obfuscation_config.load().sql_obfuscation_mode,
+                    )
+                {
+                    resource_name = obfuscated_resource;
+                };
+            }
+
+            let agg_key = BorrowedAggregationKey::from_span(
+                resource_name,
+                span,
+                self.peer_tag_keys.as_slice(),
+            );
 
             self.buckets
                 .entry(bucket_timestamp)
@@ -171,5 +211,13 @@ impl SpanConcentrator {
     }
 }
 
-#[cfg(test)]
-mod tests;
+impl StatsComputationObfuscationConfig {
+    pub fn disabled() -> SharedStatsComputationObfuscationConfig {
+        use arc_swap::ArcSwap;
+        use std::sync::Arc;
+
+        Arc::new(ArcSwap::from_pointee(
+            StatsComputationObfuscationConfig::default(),
+        ))
+    }
+}

@@ -11,10 +11,10 @@ use crate::{
     http::obfuscate_url_string,
     json::JsonObfuscator,
     memcached::obfuscate_memcached_string,
-    obfuscation_config::{ObfuscationConfig, StatsObfuscationConfig},
+    obfuscation_config::ObfuscationConfig,
     redis::{obfuscate_redis_string, quantize_redis_string, remove_all_redis_args},
     replacer::replace_span_tags,
-    sql::DbmsKind,
+    sql::{DbmsKind, SqlObfuscationMode},
 };
 
 /// TAG_REDIS_RAW_COMMAND represents a redis raw command tag
@@ -50,7 +50,7 @@ pub fn obfuscate_resource_for_stats(
     span_type: &str,
     resource: &str,
     dbms_hint: Option<&str>,
-    config: StatsObfuscationConfig,
+    sql_obfuscation_mode: SqlObfuscationMode,
 ) -> Option<String> {
     match span_type {
         "sql" | "cassandra" if !resource.is_empty() => {
@@ -58,7 +58,7 @@ pub fn obfuscate_resource_for_stats(
                 .and_then(|d| d.try_into().ok())
                 .unwrap_or_default();
             let config = &crate::sql::SqlObfuscateConfig {
-                obfuscation_mode: config.sql_obfuscation_mode,
+                obfuscation_mode: sql_obfuscation_mode,
                 ..Default::default()
             };
             Some(crate::sql::obfuscate_sql(resource, config, dbms))
@@ -286,7 +286,7 @@ mod tests {
             span_type,
             resource,
             None,
-            obfuscation_config::StatsObfuscationConfig::default(),
+            crate::sql::SqlObfuscationMode::default(),
         )
     }
 

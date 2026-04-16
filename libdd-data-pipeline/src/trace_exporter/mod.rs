@@ -24,12 +24,13 @@ use crate::trace_exporter::agent_response::{
 use crate::trace_exporter::error::{
     InternalErrorKind, RequestError, ShutdownError, TraceExporterError,
 };
+use crate::trace_exporter::stats::StatsComputationConfig;
 use crate::{
     agent_info::{self, schema::AgentInfo},
     health_metrics,
     health_metrics::{HealthMetric, SendResult, TransportErrorType},
 };
-use arc_swap::{ArcSwap, ArcSwapOption};
+use arc_swap::ArcSwapOption;
 use bytes::Bytes;
 use http::header::HeaderMap;
 use http::uri::PathAndQuery;
@@ -212,7 +213,7 @@ pub struct TraceExporter<H: HttpClientTrait + MaybeSend + Sync + 'static> {
     dogstatsd: Option<Client>,
     common_stats_tags: Vec<Tag>,
     client_computed_top_level: bool,
-    client_side_stats: ArcSwap<StatsComputationStatus>,
+    client_side_stats: StatsComputationConfig,
     #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     previous_info_state: ArcSwapOption<String>,
     info_response_observer: ResponseObserver,
@@ -268,7 +269,7 @@ impl<H: HttpClientTrait + MaybeSend + Sync + 'static> TraceExporter<H> {
 
             // Extract the stats handle before moving other fields.
             if let StatsComputationStatus::Enabled { worker_handle, .. } =
-                &**self.client_side_stats.load()
+                &**self.client_side_stats.status.load()
             {
                 let handle = worker_handle.clone();
                 join_set.spawn(async move { handle.stop().await });
@@ -369,7 +370,7 @@ impl<H: HttpClientTrait + MaybeSend + Sync + 'static> TraceExporter<H> {
     fn check_agent_info(&self) {
         if let Some(agent_info) = agent_info::get_agent_info() {
             if self.has_agent_info_state_changed(&agent_info) {
-                match &**self.client_side_stats.load() {
+                match &**self.client_side_stats.status.load() {
                     StatsComputationStatus::Disabled => {}
                     StatsComputationStatus::DisabledByAgent { .. } => {
                         let ctx = stats::StatsContext {
@@ -380,8 +381,8 @@ impl<H: HttpClientTrait + MaybeSend + Sync + 'static> TraceExporter<H> {
                         stats::handle_stats_disabled_by_agent(
                             &ctx,
                             &agent_info,
-                            &self.client_side_stats,
                             self.client.clone(),
+                            &self.client_side_stats,
                         );
                     }
                     StatsComputationStatus::Enabled {
@@ -593,7 +594,7 @@ impl<H: HttpClientTrait + MaybeSend + Sync + 'static> TraceExporter<H> {
         let dropped_p0_stats = stats::process_traces_for_stats(
             &mut traces,
             &mut header_tags,
-            &self.client_side_stats,
+            &self.client_side_stats.status,
             self.client_computed_top_level,
         );
 
@@ -830,7 +831,7 @@ impl<H: HttpClientTrait + MaybeSend + Sync + 'static> TraceExporter<H> {
     #[cfg(not(target_arch = "wasm32"))]
     /// Test only function to check if the stats computation is active and the worker is running
     pub fn is_stats_worker_active(&self) -> bool {
-        stats::is_stats_worker_active(&self.client_side_stats)
+        stats::is_stats_worker_active(&self.client_side_stats.status)
     }
 }
 

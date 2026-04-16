@@ -10,8 +10,10 @@ license.workspace = true
 autobenches = false
 
 [dependencies]
+arc-swap.workspace = true
 libdd-ddsketch = { version = "1.0.1", path = "../libdd-ddsketch" }
 libdd-trace-protobuf = { version = "3.0.1", path = "../libdd-trace-protobuf" }
+libdd-trace-obfuscation = { version = "2.0.0", path = "../libdd-trace-obfuscation", optional = true }
 libdd-trace-utils = { version = "3.0.1", path = "../libdd-trace-utils", default-features = false }
 hashbrown = { version = "0.15" }
 
@@ -26,3 +28,8 @@ path = "benches/main.rs"
 [dev-dependencies]
 criterion = "0.5.1"
 rand = "0.8.5"
+
+[features]
+stats-obfuscation = [
+    "libdd-trace-obfuscation"
+]

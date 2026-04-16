@@ -3343,9 +3343,11 @@ dependencies = [
 name = "libdd-trace-stats"
 version = "2.0.0"
 dependencies = [
+ "arc-swap",
  "criterion",
  "hashbrown 0.15.1",
  "libdd-ddsketch",
+ "libdd-trace-obfuscation",
  "libdd-trace-protobuf",
  "libdd-trace-utils",
  "rand 0.8.5",

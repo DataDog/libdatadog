@@ -1,8 +1,6 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-#[cfg(feature = "stats-obfuscation")]
-use std::sync::atomic::AtomicBool;
 use std::{
     borrow::Borrow,
     sync::{
@@ -18,6 +16,8 @@ use libdd_capabilities::{HttpClientTrait, MaybeSend};
 use libdd_common::Endpoint;
 use libdd_shared_runtime::Worker;
 use libdd_trace_protobuf::pb;
+#[cfg(feature = "stats-obfuscation")]
+use libdd_trace_stats::span_concentrator::SharedStatsComputationObfuscationConfig;
 use libdd_trace_stats::span_concentrator::SpanConcentrator;
 use libdd_trace_utils::send_with_retry::{send_with_retry, RetryStrategy};
 use tracing::error;
@@ -35,9 +35,9 @@ pub struct StatsExporter<H: HttpClientTrait> {
     endpoint: Endpoint,
     meta: TracerMetadata,
     sequence_id: AtomicU64,
-    #[cfg(feature = "stats-obfuscation")]
-    obfuscation_active: Arc<AtomicBool>,
     client: H,
+    #[cfg(feature = "stats-obfuscation")]
+    obfuscation_config: SharedStatsComputationObfuscationConfig,
 }
 
 impl<H: HttpClientTrait> StatsExporter<H> {
@@ -53,7 +53,8 @@ impl<H: HttpClientTrait> StatsExporter<H> {
         meta: TracerMetadata,
         endpoint: Endpoint,
         client: H,
-        #[cfg(feature = "stats-obfuscation")] obfuscation_active: Arc<AtomicBool>,
+        #[cfg(feature = "stats-obfuscation")]
+        obfuscation_config: SharedStatsComputationObfuscationConfig,
     ) -> Self {
         Self {
             flush_interval,
@@ -62,8 +63,7 @@ impl<H: HttpClientTrait> StatsExporter<H> {
             meta,
             sequence_id: AtomicU64::new(0),
             client,
-            #[cfg(feature = "stats-obfuscation")]
-            obfuscation_active,
+            obfuscation_config,
         }
     }
 
@@ -97,7 +97,7 @@ impl<H: HttpClientTrait> StatsExporter<H> {
         );
 
         #[cfg(feature = "stats-obfuscation")]
-        if self.obfuscation_active.load(Ordering::Relaxed) {
+        if self.obfuscation_config.load().enabled {
             headers.insert(
                 http::HeaderName::from_static("datadog-obfuscation-version"),
                 http::HeaderValue::from_static(
@@ -209,6 +209,7 @@ mod tests {
     use httpmock::MockServer;
     use libdd_capabilities_impl::NativeCapabilities;
     use libdd_shared_runtime::SharedRuntime;
+    use libdd_trace_stats::span_concentrator::StatsComputationObfuscationConfig;
     use libdd_trace_utils::span::{trace_utils, v04::SpanSlice};
     use libdd_trace_utils::test_utils::poll_for_mock_hit;
     use time::Duration;
@@ -246,6 +247,8 @@ mod tests {
             SystemTime::now() - BUCKETS_DURATION * 3,
             vec![],
             vec![],
+            #[cfg(feature = "stats-obfuscation")]
+            None,
         );
         let mut trace = vec![];
 
@@ -288,7 +291,7 @@ mod tests {
             Endpoint::from_url(stats_url_from_agent_url(&server.url("/")).unwrap()),
             NativeCapabilities::new_client(),
             #[cfg(feature = "stats-obfuscation")]
-            Arc::new(AtomicBool::new(false)),
+            StatsComputationObfuscationConfig::disabled(),
         );
 
         let send_status = stats_exporter.send(true).await;
@@ -316,8 +319,7 @@ mod tests {
             get_test_metadata(),
             Endpoint::from_url(stats_url_from_agent_url(&server.url("/")).unwrap()),
             NativeCapabilities::new_client(),
-            #[cfg(feature = "stats-obfuscation")]
-            Arc::new(AtomicBool::new(false)),
+            StatsComputationObfuscationConfig::disabled(),
         );
 
         let send_status = stats_exporter.send(true).await;
@@ -352,8 +354,7 @@ mod tests {
             get_test_metadata(),
             Endpoint::from_url(stats_url_from_agent_url(&server.url("/")).unwrap()),
             NativeCapabilities::new_client(),
-            #[cfg(feature = "stats-obfuscation")]
-            Arc::new(AtomicBool::new(false)),
+            StatsComputationObfuscationConfig::disabled(),
         );
 
         let _handle = shared_runtime
@@ -395,8 +396,7 @@ mod tests {
             get_test_metadata(),
             Endpoint::from_url(stats_url_from_agent_url(&server.url("/")).unwrap()),
             NativeCapabilities::new_client(),
-            #[cfg(feature = "stats-obfuscation")]
-            Arc::new(AtomicBool::new(false)),
+            StatsComputationObfuscationConfig::disabled(),
         );
 
         let _handle = shared_runtime
@@ -459,7 +459,7 @@ mod tests {
             get_test_metadata(),
             Endpoint::from_url(stats_url_from_agent_url(&server.url("/")).unwrap()),
             NativeCapabilities::new_client(),
-            Arc::new(AtomicBool::new(true)),
+            StatsComputationObfuscationConfig::disabled(),
         );
 
         let send_status = stats_exporter.send(true).await;

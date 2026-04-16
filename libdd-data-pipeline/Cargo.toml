@@ -12,8 +12,8 @@ autobenches = false
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+arc-swap.workspace = true
 anyhow = { version = "1.0" }
-arc-swap = "1.7.1"
 async-trait = "0.1"
 http = "1"
 http-body-util = "0.1"
@@ -74,7 +74,9 @@ tokio = { version = "1.23", features = [
 ], default-features = false }
 
 [features]
-default = ["https", "telemetry"]
+default = ["https", "telemetry"
+# TODO: remove
+,"stats-obfuscation"]
 telemetry = ["libdd-telemetry"]
 https = [
     "libdd-common/https",
@@ -83,6 +85,7 @@ https = [
     "libdd-dogstatsd-client/https",
 ]
 stats-obfuscation = [
-    "libdd-trace-obfuscation"
+    "libdd-trace-obfuscation",
+    "libdd-trace-stats/stats-obfuscation"
 ]
 test-utils = []

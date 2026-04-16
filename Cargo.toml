@@ -76,6 +76,7 @@ license = "Apache-2.0"
 authors = ["Datadog Inc. <info@datadoghq.com>"]
 
 [workspace.dependencies]
+arc-swap = "1.7.1"
 hyper = { version = "1.6", features = [
   "http1",
   "client",
