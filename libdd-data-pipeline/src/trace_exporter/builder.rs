@@ -301,9 +301,11 @@ impl TraceExporterBuilder {
         })?;
 
         let libdatadog_version = tag!("libdatadog_version", env!("CARGO_PKG_VERSION"));
-        #[allow(unused_mut)]
-        let mut stats = StatsComputationStatus::Disabled;
 
+        // On native, `C::new_client()` may capture `tokio::runtime::Handle::current()`
+        // internally (e.g. `NativeCapabilities`). Enter the SharedRuntime's tokio context
+        // so that handle is available. On wasm this is a no-op — the JS event loop is
+        // always the implicit executor.
         #[cfg(not(target_arch = "wasm32"))]
         let _guard = shared_runtime
             .runtime_handle()
@@ -313,9 +315,12 @@ impl TraceExporterBuilder {
             .enter();
         let capabilities = C::new_client();
 
+        // --- Platform-specific worker setup ---
+        // The blocks below spawn background workers on native and create
+        // lightweight stubs on wasm. The `#[cfg]` interleaving is inherent to
+        // the platform split; each block is kept small to stay readable.
+
         let info_endpoint = Endpoint::from_url(add_path(&agent_url, INFO_ENDPOINT));
-        // On wasm the AgentInfoFetcher is not spawned (it uses tokio::time::sleep
-        // internally), but we still need the ResponseObserver for header checks.
         #[cfg(not(target_arch = "wasm32"))]
         let (info_fetcher_handle, info_response_observer) = {
             let (info_fetcher, observer) =
@@ -329,10 +334,14 @@ impl TraceExporterBuilder {
                 })?;
             (handle, observer)
         };
+        // On wasm the AgentInfoFetcher is not spawned yet (it requires spawn_local),
+        // but we still need the ResponseObserver for header checks.
         #[cfg(target_arch = "wasm32")]
         let (_info_fetcher, info_response_observer) =
             AgentInfoFetcher::<C>::new(info_endpoint, Duration::from_secs(5 * 60));
 
+        #[allow(unused_mut)]
+        let mut stats = StatsComputationStatus::Disabled;
         #[cfg(not(target_arch = "wasm32"))]
         if let Some(bucket_size) = self.stats_bucket_size {
             stats = StatsComputationStatus::DisabledByAgent { bucket_size };

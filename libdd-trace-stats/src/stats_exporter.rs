@@ -174,7 +174,7 @@ impl<
     > Worker for StatsExporter<Cap, Con>
 {
     async fn trigger(&mut self) {
-        tokio::time::sleep(self.flush_interval).await;
+        self.capabilities.sleep(self.flush_interval).await;
     }
 
     /// Flush and send stats on every trigger.

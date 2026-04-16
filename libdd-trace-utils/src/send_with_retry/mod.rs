@@ -129,8 +129,9 @@ pub async fn send_with_retry<C: HttpClientCapability + SleepCapability>(
         };
 
         let result = tokio::select! {
-            _ = capabilities.sleep(timeout) => Err(()),
+            biased;
             r = capabilities.request(req) => Ok(r),
+            _ = capabilities.sleep(timeout) => Err(()),
         };
 
         match result {

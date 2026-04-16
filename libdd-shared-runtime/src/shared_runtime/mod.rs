@@ -260,10 +260,6 @@ impl SharedRuntime {
     /// If `restart_on_fork` is true, the worker will be reset and restarted when calling
     /// `after_fork_child` else the worker is dropped *without* calling `Worker::shutdown`.
     ///
-    /// The runtime handle is extracted internally and passed to [`SpawnCapability::spawn`]
-    /// as the [`SpawnCapability::RuntimeContext`]. On native this constrains the spawner's
-    /// `RuntimeContext` to `tokio::runtime::Handle`; on wasm it is `()`.
-    ///
     /// # Errors
     /// Returns an error if the worker cannot be started.
     #[cfg(not(target_arch = "wasm32"))]

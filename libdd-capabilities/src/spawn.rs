@@ -11,6 +11,11 @@ use crate::maybe_send::MaybeSend;
 use core::future::Future;
 
 pub trait SpawnCapability: Clone + std::fmt::Debug {
+    /// Platform-specific context passed to [`spawn`](Self::spawn).
+    ///
+    /// On native this is typically `tokio::runtime::Handle` — the spawner uses
+    /// it to schedule the future on the correct runtime. On wasm this is `()`
+    /// because `spawn_local` does not need an external handle.
     type RuntimeContext;
     type JoinHandle<T: MaybeSend + 'static>: Future<Output = T> + MaybeSend;
 
