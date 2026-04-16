@@ -143,7 +143,22 @@ impl<T> Batch<T> {
     }
 
     fn reset(&mut self) {
-        *self = Self::new(self.max_buffered_spans);
+        let Self {
+            chunks,
+            last_flush,
+            span_count,
+            batch_gen,
+            max_buffered_spans: _max_buffered_spans,
+        } = self;
+        chunks.clear();
+        *last_flush = Instant::now();
+        *span_count = 0;
+
+        *batch_gen = {
+            let mut batch_gen = BatchGeneration::default();
+            batch_gen.incr();
+            batch_gen
+        };
     }
 
     fn span_count(&self) -> usize {
