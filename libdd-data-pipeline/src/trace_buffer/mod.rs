@@ -699,7 +699,6 @@ impl<T: Send + Debug + 'static> Worker for TraceExporterWorker<T> {
 }
 
 #[cfg(test)]
-#[cfg_attr(miri, ignore)]
 mod tests {
     use std::sync::Arc;
     use std::time::Duration;
@@ -762,6 +761,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn test_receiver_sender_flush() {
         let (rt, sem, sender) = make_buffer(
             Box::new(|chunks| {
@@ -790,6 +790,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn test_receiver_sender_batch_drop() {
         let (rt, sem, sender) = make_buffer(
             Box::new(|chunks| {
@@ -825,6 +826,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn test_receiver_sender_timeout() {
         let (rt, sem, sender) = make_buffer(
             Box::new(|chunks| {
@@ -842,6 +844,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn test_send_after_shutdown() {
         let (rt, _, sender) = make_buffer(
             Box::new(|_| panic!("shouldn't be called after shutdown")),
@@ -856,6 +859,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn test_synchronous_mode() {
         let (rt, sem, sender) = make_buffer(
             Box::new(|chunks| assert_eq!(chunks.len(), 1)),
@@ -877,6 +881,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn test_force_flush() {
         // Set thresholds high enough that send_chunk alone never triggers a flush,
         // and the timer long enough that it won't fire during the test.
@@ -904,6 +909,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn test_worker_reset() {
         let (rt, sem, sender) = make_buffer(
             Box::new(|chunks| assert_eq!(chunks.len(), 1)),
