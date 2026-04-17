@@ -46,7 +46,6 @@ libdd-ddsketch*/                     @DataDog/libdatadog-apm @DataDog/apm-common
 libdd-dogstatsd-client               @DataDog/apm-common-components-core
 libdd-http-client                    @DataDog/apm-common-components-core
 libdd-library-config*/               @DataDog/apm-sdk-capabilities-rust
-libdd-libunwind*/                    @DataDog/libdatadog-profiling
 libdd-log*/                          @DataDog/apm-common-components-core
 libdd-otel-thread-ctx/               @DataDog/apm-common-components-core
 libdd-profiling*/                    @DataDog/libdatadog-profiling
