@@ -225,3 +225,6 @@ impl StatsComputationObfuscationConfig {
         ))
     }
 }
+
+#[cfg(test)]
+mod tests;

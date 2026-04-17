@@ -220,22 +220,23 @@ fn update_obfuscation_config(
         StatsComputationStatus::Enabled { .. }
     ) {
         let obfuscation_active = is_obfuscation_active(agent_info);
-        client_side_stats
-            .obfuscation_config
-            .store(Arc::new(StatsComputationObfuscationConfig {
-                enabled: obfuscation_active,
-                sql_obfuscation_mode: agent_info
-                    .info
-                    .config
-                    .as_ref()
-                    .and_then(|config| {
-                        config
-                            .obfuscation
-                            .as_ref()
-                            .map(|obfuscation_cfg| obfuscation_cfg.sql_obfuscation_mode)
-                    })
-                    .unwrap_or_default(),
-            }));
+        std::borrow::Borrow::<ArcSwap<StatsComputationObfuscationConfig>>::borrow(
+            &client_side_stats.obfuscation_config,
+        )
+        .store(Arc::new(StatsComputationObfuscationConfig {
+            enabled: obfuscation_active,
+            sql_obfuscation_mode: agent_info
+                .info
+                .config
+                .as_ref()
+                .and_then(|config| {
+                    config
+                        .obfuscation
+                        .as_ref()
+                        .map(|obfuscation_cfg| obfuscation_cfg.sql_obfuscation_mode)
+                })
+                .unwrap_or_default(),
+        }));
     }
 }
 
@@ -273,38 +274,6 @@ fn add_spans_to_stats<T: libdd_trace_utils::span::TraceData>(
     let spans = traces.iter().flat_map(|trace| trace.iter());
     for span in spans {
         stats_concentrator.add_span(span);
-        // if obfuscation_active {
-        //     use libdd_trace_obfuscation::obfuscation_config::StatsObfuscationConfig;
-
-        //     use crate::agent_info::get_agent_info;
-
-        //     let span_type: &str = span.r#type.borrow();
-        //     let resource: &str = span.resource.borrow();
-        //     let dbms_hint: Option<&str> = span.meta.get("db.type").map(|v| v.borrow());
-        //     let sql_obfuscation_mode = get_agent_info()
-        //         .and_then(|info| {
-        //             info.info.config.as_ref().and_then(|config| {
-        //                 config
-        //                     .obfuscation
-        //                     .as_ref()
-        //                     .map(|obfuscation_cfg| obfuscation_cfg.sql_obfuscation_mode)
-        //             })
-        //         })
-        //         .unwrap_or_default();
-        //     let config = StatsObfuscationConfig {
-        //         sql_obfuscation_mode,
-        //     };
-        //     let obfuscated_resource =
-        //         libdd_trace_obfuscation::obfuscate::obfuscate_resource_for_stats(
-        //             span_type, resource, dbms_hint, config,
-        //         );
-        //     let wrapper = ObfuscatedStatSpan {
-        //         inner: span,
-        //         obfuscated_resource,
-        //     };
-        //     stats_concentrator.add_span(&wrapper);
-        // }
-        // }
     }
 }
 
