@@ -158,6 +158,7 @@ RUN echo \
     libdd-trace-obfuscation/benches/trace_obfuscation.rs \
     libdd-trace-utils/benches/deserialization.rs \
     libdd-trace-utils/benches/main.rs \
+    libdd-data-pipeline/benches/trace_buffer.rs \
     | xargs -n 1 sh -c 'mkdir -p $(dirname $1); touch $1; echo $1' create_stubs
 
 # Copy libunwind submodule for libdd-libunwind build.rs

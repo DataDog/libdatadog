@@ -699,6 +699,7 @@ impl<T: Send + Debug + 'static> Worker for TraceExporterWorker<T> {
 }
 
 #[cfg(test)]
+#[cfg_attr(miri, ignore)]
 mod tests {
     use std::sync::Arc;
     use std::time::Duration;
