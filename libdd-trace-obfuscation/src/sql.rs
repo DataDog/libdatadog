@@ -41,6 +41,7 @@ impl TryFrom<&str> for DbmsKind {
 pub enum SqlObfuscationMode {
     #[default]
     #[deprecated = "kept for compatibility with agent's obfuscator but has unintuitive behavior"]
+    #[serde(alias = "")]
     Unspecified,
     NormalizeOnly,
     ObfuscateOnly,
