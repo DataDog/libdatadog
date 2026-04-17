@@ -17,7 +17,6 @@ on:
           - libdd-dogstatsd-client
           - libdd-http-client
           - libdd-library-config
-          - libdd-libunwind-sys
           - libdd-log
           - libdd-otel-thread-ctx
           - libdd-profiling

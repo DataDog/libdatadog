@@ -85,9 +85,6 @@ COPY "libdd-capabilities/Cargo.toml" "libdd-capabilities/"
 COPY "libdd-capabilities-impl/Cargo.toml" "libdd-capabilities-impl/"
 COPY "libdd-log/Cargo.toml" "libdd-log/"
 COPY "libdd-log-ffi/Cargo.toml" "libdd-log-ffi/"
-COPY "libdd-libunwind-sys/Cargo.toml" "libdd-libunwind-sys/"
-COPY "libdd-libunwind-sys/build.rs" "libdd-libunwind-sys/"
-COPY "libdd-libunwind-sys/buildscript" "libdd-libunwind-sys/buildscript/"
 COPY "libdd-dogstatsd-client/Cargo.toml" "libdd-dogstatsd-client/"
 COPY "libdd-http-client/Cargo.toml" "libdd-http-client/"
 COPY "libdd-library-config-ffi/Cargo.toml" "libdd-library-config-ffi/"
@@ -160,9 +157,6 @@ RUN echo \
     libdd-trace-utils/benches/main.rs \
     libdd-data-pipeline/benches/trace_buffer.rs \
     | xargs -n 1 sh -c 'mkdir -p $(dirname $1); touch $1; echo $1' create_stubs
-
-# Copy libunwind submodule for libdd-libunwind build.rs
-COPY "libdd-libunwind-sys/libunwind" "libdd-libunwind-sys/libunwind/"
 
 # cache dependencies
 RUN cargo fetch --locked

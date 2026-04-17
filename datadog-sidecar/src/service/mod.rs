@@ -58,6 +58,7 @@ pub struct SessionConfig {
     pub flush_interval: Duration,
     pub remote_config_poll_interval: Duration,
     pub telemetry_heartbeat_interval: Duration,
+    pub telemetry_extended_heartbeat_interval: Duration,
     pub force_flush_size: usize,
     pub force_drop_size: usize,
     pub log_level: String,
