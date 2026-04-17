@@ -7,21 +7,15 @@ use crate::{
     },
     RemoteConfigPath, RemoteConfigProduct, RemoteConfigSource,
 };
-#[cfg(feature = "ffe")]
-use datadog_ffe::rules_based::UniversalFlagConfig;
-#[cfg(feature = "live-debugger")]
-use datadog_live_debugger::LiveDebuggingData;
 
 #[derive(Debug)]
 #[allow(clippy::large_enum_variant)]
 pub enum RemoteConfigData {
     DynamicConfig(DynamicConfigFile),
-    #[cfg(feature = "live-debugger")]
-    LiveDebugger(LiveDebuggingData),
+    LiveDebugger(Vec<u8>),
     TracerFlareConfig(AgentConfigFile),
     TracerFlareTask(AgentTaskFile),
-    #[cfg(feature = "ffe")]
-    FfeFlags(UniversalFlagConfig),
+    FfeFlags(Vec<u8>),
     Ignored(RemoteConfigProduct),
 }
 
@@ -40,15 +34,8 @@ impl RemoteConfigData {
             RemoteConfigProduct::ApmTracing => {
                 RemoteConfigData::DynamicConfig(config::dynamic::parse_json(data)?)
             }
-            #[cfg(feature = "live-debugger")]
-            RemoteConfigProduct::LiveDebugger => {
-                let parsed = datadog_live_debugger::parse_json(&String::from_utf8_lossy(data))?;
-                RemoteConfigData::LiveDebugger(parsed)
-            }
-            #[cfg(feature = "ffe")]
-            RemoteConfigProduct::FfeFlags => {
-                RemoteConfigData::FfeFlags(UniversalFlagConfig::from_json(data.to_vec())?)
-            }
+            RemoteConfigProduct::LiveDebugger => RemoteConfigData::LiveDebugger(data.to_vec()),
+            RemoteConfigProduct::FfeFlags => RemoteConfigData::FfeFlags(data.to_vec()),
             _ => RemoteConfigData::Ignored(product),
         })
     }
@@ -58,11 +45,9 @@ impl From<&RemoteConfigData> for RemoteConfigProduct {
     fn from(value: &RemoteConfigData) -> Self {
         match value {
             RemoteConfigData::DynamicConfig(_) => RemoteConfigProduct::ApmTracing,
-            #[cfg(feature = "live-debugger")]
             RemoteConfigData::LiveDebugger(_) => RemoteConfigProduct::LiveDebugger,
             RemoteConfigData::TracerFlareConfig(_) => RemoteConfigProduct::AgentConfig,
             RemoteConfigData::TracerFlareTask(_) => RemoteConfigProduct::AgentTask,
-            #[cfg(feature = "ffe")]
             RemoteConfigData::FfeFlags(_) => RemoteConfigProduct::FfeFlags,
             RemoteConfigData::Ignored(product) => *product,
         }
