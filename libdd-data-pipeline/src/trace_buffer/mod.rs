@@ -404,7 +404,10 @@ impl<T> Sender<T> {
         }
         state.metrics.spans_queued += chunk_len;
         let gen = state.batch.batch_gen;
-        if state.batch.span_count() > self.flush_trigger_number_of_spans || self.synchronous_write {
+        if !state.flush_needed
+            && (state.batch.span_count() > self.flush_trigger_number_of_spans
+                || self.synchronous_write)
+        {
             state.flush_needed = true;
             self.waiter.notify_receiver(state);
         }
