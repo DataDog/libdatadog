@@ -580,4 +580,32 @@ mod tests {
         }
         assert_eq!(last, -1);
     }
+
+    #[test]
+    fn test_after_fork_child_drops_worker_not_restart_on_fork() {
+        let shared_runtime = SharedRuntime::new().unwrap();
+        let (worker, receiver) = make_test_worker();
+
+        shared_runtime.spawn_worker(worker, false).unwrap();
+
+        // Wait for the worker to run at least once
+        receiver
+            .recv_timeout(Duration::from_secs(1))
+            .expect("worker did not run");
+
+        shared_runtime.before_fork();
+        // Drain buffered messages now that the worker is paused
+        while receiver.try_recv().is_ok() {}
+
+        assert!(shared_runtime.after_fork_child().is_ok());
+
+        // Worker must be removed from the list
+        assert_eq!(shared_runtime.workers.lock_or_panic().len(), 0);
+
+        // Worker must not produce any more messages (not restarted, not shut down)
+        assert!(
+            receiver.recv_timeout(Duration::from_millis(200)).is_err(),
+            "worker should not run or shut down after fork in child when restart_on_fork is false"
+        );
+    }
 }
