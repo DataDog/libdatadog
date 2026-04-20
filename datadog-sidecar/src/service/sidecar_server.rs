@@ -640,12 +640,16 @@ impl SidecarInterface for ConnectionSidecarHandler {
         *session.process_tags.lock_or_panic() = config.process_tags.clone();
         session.modify_telemetry_config(|cfg| {
             cfg.telemetry_heartbeat_interval = config.telemetry_heartbeat_interval;
+            cfg.telemetry_extended_heartbeat_interval =
+                config.telemetry_extended_heartbeat_interval;
             let endpoint = get_product_endpoint(
                 libdd_telemetry::config::PROD_INTAKE_SUBDOMAIN,
                 &config.endpoint,
             );
             cfg.set_endpoint(endpoint).ok();
             cfg.telemetry_heartbeat_interval = config.telemetry_heartbeat_interval;
+            cfg.telemetry_extended_heartbeat_interval =
+                config.telemetry_extended_heartbeat_interval;
         });
         session.modify_trace_config(|cfg| {
             let endpoint = get_product_endpoint(
