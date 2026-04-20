@@ -20,6 +20,7 @@ use std::time::Duration;
 use tokio::sync::mpsc;
 use tokio::time::sleep;
 use tracing::{debug, warn};
+
 /// Whether the agent reported the same value or not.
 #[derive(Debug)]
 pub enum FetchInfoStatus {
@@ -112,8 +113,11 @@ async fn fetch_and_hash_response<H: HttpClientTrait>(
         .body(Bytes::new())
         .map_err(|e| anyhow!("Failed to build request: {}", e))?;
 
+    let timeout = Duration::from_millis(info_endpoint.timeout_ms);
     let client = H::new_client();
-    let res = client.request(req).await?;
+    let res = tokio::time::timeout(timeout, client.request(req))
+        .await
+        .map_err(|_| anyhow!("Request to /info timed out after {:?}", timeout))??;
 
     // Extract the Datadog-Container-Tags-Hash header
     let container_tags_hash = res
