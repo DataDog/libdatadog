@@ -25,6 +25,7 @@ type BoxedWorker = Box<dyn Worker + Sync>;
 #[derive(Debug)]
 struct WorkerEntry {
     id: u64,
+    restart_on_fork: bool,
     worker: PausableWorker<BoxedWorker>,
 }
 
@@ -191,12 +192,15 @@ impl SharedRuntime {
     ///
     /// The worker will be tracked by this SharedRuntime and will be paused/resumed
     /// during fork operations.
+    /// If `restart_on_fork` is true, the worker will be reset and restarted when calling
+    /// `after_fork_child` else the worker is dropped *without* calling `Worker::shutdown`.
     ///
     /// # Errors
     /// Returns an error if the runtime is not available or the worker cannot be started.
     pub fn spawn_worker<T: Worker + Sync + 'static>(
         &self,
         worker: T,
+        restart_on_fork: bool,
     ) -> Result<WorkerHandle, SharedRuntimeError> {
         let boxed_worker: BoxedWorker = Box::new(worker);
         debug!(?boxed_worker, "Spawning worker on SharedRuntime");
@@ -220,6 +224,7 @@ impl SharedRuntime {
 
         workers_guard.push(WorkerEntry {
             id: worker_id,
+            restart_on_fork,
             worker: pausable_worker,
         });
 
@@ -316,7 +321,9 @@ impl SharedRuntime {
 
         let mut workers_lock = self.workers.lock_or_panic();
 
-        // Restart all workers in child process
+        // Drop workers not marked as restart on fork
+        workers_lock.retain(|entry| entry.restart_on_fork);
+
         for worker_entry in workers_lock.iter_mut() {
             worker_entry.worker.reset();
             worker_entry.worker.start(&runtime)?;
@@ -445,7 +452,7 @@ mod tests {
         let shared_runtime = SharedRuntime::new().unwrap();
         let (worker, receiver) = make_test_worker();
 
-        let result = shared_runtime.spawn_worker(worker);
+        let result = shared_runtime.spawn_worker(worker, true);
         assert!(result.is_ok());
         assert_eq!(shared_runtime.workers.lock_or_panic().len(), 1);
 
@@ -464,7 +471,7 @@ mod tests {
         let shared_runtime = SharedRuntime::new().unwrap();
         let (worker, receiver) = make_test_worker();
 
-        let handle = shared_runtime.spawn_worker(worker).unwrap();
+        let handle = shared_runtime.spawn_worker(worker, true).unwrap();
         assert_eq!(shared_runtime.workers.lock_or_panic().len(), 1);
 
         // Wait for at least one run before stopping
@@ -493,7 +500,7 @@ mod tests {
         let shared_runtime = SharedRuntime::new().unwrap();
         let (worker, receiver) = make_test_worker();
 
-        shared_runtime.spawn_worker(worker).unwrap();
+        shared_runtime.spawn_worker(worker, true).unwrap();
 
         // Let the worker run until state > 0 so that preservation is observable
         let mut state_before_fork = 0;
@@ -524,7 +531,7 @@ mod tests {
         let shared_runtime = SharedRuntime::new().unwrap();
         let (worker, receiver) = make_test_worker();
 
-        shared_runtime.spawn_worker(worker).unwrap();
+        shared_runtime.spawn_worker(worker, true).unwrap();
 
         // Let the worker run until state > 0 so that the reset is observable
         let mut state_before_fork = 0;
@@ -555,7 +562,7 @@ mod tests {
         let shared_runtime = SharedRuntime::new().unwrap();
         let (worker, receiver) = make_test_worker();
 
-        shared_runtime.spawn_worker(worker).unwrap();
+        shared_runtime.spawn_worker(worker, true).unwrap();
 
         // Wait for at least one run before shutting down
         receiver
