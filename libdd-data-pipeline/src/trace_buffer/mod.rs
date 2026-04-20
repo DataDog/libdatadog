@@ -805,6 +805,9 @@ mod tests {
                 .max_flush_interval(Duration::from_secs(u32::MAX as u64)),
         );
 
+        // pause
+        rt.before_fork();
+
         for i in 1..=3 {
             sender.send_chunk(vec![(); i]).unwrap();
         }
@@ -815,6 +818,9 @@ mod tests {
                 spans_dropped: 4
             }))
         ));
+
+        // unpause
+        rt.after_fork_parent().expect("error unpausing");
 
         let metrics = sender.queue_metrics().get_metrics();
         assert_eq!(metrics.spans_queued, 6);
