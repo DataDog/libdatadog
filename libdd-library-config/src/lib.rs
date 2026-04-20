@@ -760,6 +760,7 @@ impl Configurator {
             return LoggedResult::Ok((), messages);
         };
 
+        let config_id = stable_config.config_id.clone();
         for (name, config_val) in configs.0.iter() {
             let value = match matcher.template_config(config_val) {
                 Ok(v) => v,
@@ -770,7 +771,7 @@ impl Configurator {
                 LibraryConfigVal {
                     value,
                     source,
-                    config_id: stable_config.config_id.clone(),
+                    config_id: config_id.clone(),
                 },
             );
         }
