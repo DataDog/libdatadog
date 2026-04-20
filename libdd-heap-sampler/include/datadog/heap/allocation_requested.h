@@ -25,7 +25,10 @@ typedef struct {
     uint64_t weight;
 } dd_alloc_req_t;
 
-/* Slow path, declared here so the inline fast path can dispatch. */
+/* Slow path for an allocation request. This is only taken when we think we
+ * need to sample, and is declared as a separate function to avoid bloating
+ the instruction cache of the fast path
+ */
 dd_alloc_req_t dd_allocation_requested_slow(dd_tl_state_t *tl, size_t size,
                                              size_t alignment);
 

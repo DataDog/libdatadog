@@ -23,6 +23,18 @@ If you want to **see it working right now**, the fastest path is the Rust alloca
 
 ## Components
 
+```mermaid
+flowchart TB
+    sampler["<b>libdd-heap-sampler</b><br/>Sampling decisions and USDT emission"]
+    allocator["<b>libdd-heap-allocator</b><br/>Rust GlobalAlloc wrapper"]
+    hooks["<b>libdd-heap-hooks</b><br/>Native allocator hooks (jemalloc, etc.)"]
+    gotter["<b>libdd-heap-gotter</b><br/>Dynamically inject samplers at runtime"]
+
+    sampler --- allocator
+    sampler --- hooks
+    sampler --- gotter
+```
+
 ### Samplers - `libdd-heap-sampler` (you are here)
 These are the foundational functions themselves containing the sampling logic and USDTs, and are intended to be used
 within higher order constructs that bind them back to concrete allocator callsites. 

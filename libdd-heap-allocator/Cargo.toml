@@ -1,0 +1,19 @@
+# Copyright 2025-Present Datadog, Inc. https://www.datadoghq.com/
+# SPDX-License-Identifier: Apache-2.0
+
+[package]
+name = "libdd-heap-allocator"
+version = "0.1.0"
+description = "Rust GlobalAlloc wrapper that drives libdd-heap-sampler."
+homepage = "https://github.com/DataDog/libdatadog/tree/main/libdd-heap-allocator"
+repository = "https://github.com/DataDog/libdatadog/tree/main/libdd-heap-allocator"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[lib]
+bench = false
+
+[dependencies]
+libdd-heap-sampler = { path = "../libdd-heap-sampler" }

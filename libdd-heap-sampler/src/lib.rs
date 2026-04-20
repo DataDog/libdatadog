@@ -10,7 +10,7 @@
 //!
 //! The `static inline __attribute__((always_inline))` fast-path helpers in
 //! the headers have no linker symbol, so bindgen's `wrap_static_fns`
-//! emits C shim for each - the shim's body is the static-inline
+//! emits a C shim for each - the shim's body is the static-inline
 //! inlined at its one call site. The shim's link-symbol is
 //! `<fn>__extern`, but bindgen exposes the Rust fn under the natural C
 //! name via `#[link_name]`, so callers write `dd_allocation_requested(…)`
@@ -65,10 +65,16 @@ mod tests {
     }
 
     #[test]
-    fn freed_stub_returns_input_size() {
+    fn freed_unsampled_returns_inputs_unchanged() {
+        // The C side now reads 8 bytes at ptr-16 looking for DD_MAGIC,
+        // so we need a real buffer underneath. Zero contents won't match,
+        // so the function returns inputs verbatim.
+        let mut buf = vec![0u8; 128];
+        let ptr = unsafe { buf.as_mut_ptr().add(16) } as *mut c_void;
         unsafe {
-            let ptr = 0x1234_usize as *mut c_void;
-            assert_eq!(dd_allocation_freed(ptr, 64, 8), 64);
+            let freed = dd_allocation_freed(ptr, 64, 8);
+            assert_eq!(freed.ptr, ptr);
+            assert_eq!(freed.size, 64);
         }
     }
 

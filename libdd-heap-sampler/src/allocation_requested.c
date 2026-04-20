@@ -5,7 +5,8 @@
 
 /*
  * Advances the Park-Miller LCG one step and returns the new 31-bit state.
- * Cheap, branch-free PRNG for the sampling hot path.
+ * Cheap, branch-free PRNG for the sampling hot path. This is lifted from
+ * ddprof's usage of std::minstd_rand
  */
 static uint32_t lcg_next(uint32_t *rng) {
     *rng = (uint32_t)(((uint64_t)(*rng) * 48271u) % 2147483647u);
@@ -16,8 +17,7 @@ static uint32_t lcg_next(uint32_t *rng) {
  * Draws the next inter-sample gap (bytes until we should sample again) from
  * an exponential distribution with the given mean, clamped to [8, 20*mean].
  *
- * Equivalent of AllocationTracker::next_sample_interval
- * (ddprof: src/lib/allocation_tracker.cc).
+ * Equivalent of AllocationTracker::next_sample_interval in ddprof
  */
 static uint64_t next_interval(uint32_t *rng, uint64_t mean) {
     double u = (double)lcg_next(rng) / 2147483647.0;
@@ -34,8 +34,8 @@ static uint64_t next_interval(uint32_t *rng, uint64_t mean) {
  * until the counter is negative again, and returns the unbiased weight
  * (nsamples * interval) to attribute to this allocation.
  *
- * Equivalent of AllocationTracker::track_allocation
- * (ddprof: src/lib/allocation_tracker.cc).
+ * Equivalent of AllocationTracker::track_allocation in ddprof
+
  * tl->remaining_bytes has already been incremented by `size` in the
  * inline fast path; we're here because it crossed zero.
  */
@@ -58,6 +58,7 @@ static uint64_t sample(dd_tl_state_t *tl) {
     return (uint64_t)nsamples * interval;
 }
 
+// Called from the fast path when we expect to sample.
 dd_alloc_req_t dd_allocation_requested_slow(dd_tl_state_t *tl, size_t size,
                                              size_t alignment) {
     (void)alignment;
@@ -66,8 +67,9 @@ dd_alloc_req_t dd_allocation_requested_slow(dd_tl_state_t *tl, size_t size,
 
     uint64_t weight = sample(tl);
     if (weight == 0) {
-        /* Fast path crossed zero but lazy init pushed us back below -
-         * no sample this time. Close the guard we just opened. */
+        // Fast path crossed zero, but this was our first interval draw on the
+        // thread and it exceeded our accumulated credit — no sample this time.
+        // Close the guard and return a no-sample. This happens at most once per thread.
         tl->reentry_guard = false;
         dd_alloc_req_t out = { size, 0 };
         return out;

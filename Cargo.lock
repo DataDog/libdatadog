@@ -3078,6 +3078,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "libdd-heap-allocator"
+version = "0.1.0"
+dependencies = [
+ "libdd-heap-sampler",
+]
+
+[[package]]
 name = "libdd-heap-sampler"
 version = "0.1.0"
 dependencies = [

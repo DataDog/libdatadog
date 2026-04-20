@@ -3,7 +3,12 @@
 
 #include <datadog/heap/allocation_requested.h>   /* dd_alloc_req_t */
 
-/* Slow path, declared here so the inline fast path can dispatch. */
+/*
+ *  Slow path. As with allocation_requested, this is fired only when
+ *  we hit a sampled allocation, and is intentionally placed separately
+ *  from dd_allocation_created so that we don't bloat the instruction
+ * cache for the fast path.
+ */
 void *dd_allocation_created_slow(void *raw, dd_alloc_req_t req);
 
 /*
