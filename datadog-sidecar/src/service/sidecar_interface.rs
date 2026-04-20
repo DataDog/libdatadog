@@ -22,6 +22,13 @@ pub enum DynamicInstrumentationConfigState {
     NotSet,
 }
 
+#[repr(C)]
+#[derive(Debug, Default, Copy, Clone, Serialize, Deserialize)]
+pub struct SidecarFlushOptions {
+    pub traces_and_stats: bool,
+    pub telemetry: bool,
+}
+
 /// The `SidecarInterface` trait defines the necessary methods for the sidecar service.
 ///
 /// These methods include operations such as enqueueing actions, registering services, setting
@@ -201,9 +208,9 @@ pub trait SidecarInterface {
     /// * `actions` - The DogStatsD actions to send.
     async fn send_dogstatsd_actions(instance_id: InstanceId, actions: Vec<DogStatsDActionOwned>);
 
-    /// Flushes any outstanding traces queued for sending.
+    /// Flushes outstanding traces/stats and/or telemetry, as specified by options.
     #[blocking]
-    async fn flush_traces();
+    async fn flush(options: SidecarFlushOptions);
 
     /// Sets x-datadog-test-session-token on all requests for the given session.
     ///
