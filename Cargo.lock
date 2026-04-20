@@ -1525,6 +1525,7 @@ dependencies = [
  "http-body-util",
  "httpmock",
  "libc",
+ "libdd-capabilities",
  "libdd-capabilities-impl",
  "libdd-common",
  "libdd-common-ffi",
@@ -2853,6 +2854,7 @@ version = "0.1.0"
 dependencies = [
  "bytes",
  "http",
+ "http-body-util",
  "libdd-capabilities",
  "libdd-common",
 ]
@@ -2878,7 +2880,6 @@ dependencies = [
  "hyper-util",
  "indexmap 2.12.1",
  "libc",
- "libdd-capabilities",
  "maplit",
  "mime",
  "multer",
