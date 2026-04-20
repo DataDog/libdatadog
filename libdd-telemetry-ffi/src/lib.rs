@@ -119,6 +119,35 @@ mod tests {
     };
     use std::{mem::MaybeUninit, ptr::NonNull};
 
+    /// Spins up a worker backed by a file:// endpoint, returns (handle, temp_file).
+    /// The caller is responsible for stopping the worker and reading the file.
+    unsafe fn start_file_backed_worker() -> (Box<TelemetryWorkerHandle>, tempfile::NamedTempFile) {
+        let mut builder: MaybeUninit<Box<TelemetryWorkerBuilder>> = MaybeUninit::uninit();
+        ddog_telemetry_builder_instantiate(
+            NonNull::new(&mut builder).unwrap().cast(),
+            ffi::CharSlice::from("test-service"),
+            ffi::CharSlice::from("rust"),
+            ffi::CharSlice::from("1.0"),
+            ffi::CharSlice::from("0.0.1"),
+        )
+        .unwrap_none();
+        let mut builder = builder.assume_init();
+
+        let f = tempfile::NamedTempFile::new().unwrap();
+        ddog_telemetry_builder_with_endpoint_config_endpoint(
+            &mut builder,
+            &Endpoint::from_slice(&format!("file://{}", f.path().to_str().unwrap())),
+        )
+        .unwrap_none();
+
+        let mut handle: MaybeUninit<Box<TelemetryWorkerHandle>> = MaybeUninit::uninit();
+        ddog_telemetry_builder_run(builder, NonNull::new(&mut handle).unwrap().cast())
+            .unwrap_none();
+        let handle = handle.assume_init();
+        ddog_telemetry_handle_start(&handle).unwrap_none();
+        (handle, f)
+    }
+
     #[test]
     #[cfg_attr(miri, ignore)]
     fn test_set_builder_str_param() {
@@ -370,6 +399,158 @@ mod tests {
 
             assert_eq!(ddog_telemetry_handle_stop(&handle), MaybeError::None);
             ddog_telemetry_handle_wait_for_shutdown(handle);
+        }
+    }
+
+    /// Finds all sub-payloads with the given request_type in a file endpoint output.
+    /// Handles both top-level payloads and those nested inside message-batch.
+    fn find_sub_payloads(output: &str, request_type: &str) -> Vec<serde_json::Value> {
+        let mut results = Vec::new();
+        for line in output.lines() {
+            let Ok(parsed) = serde_json::from_str::<serde_json::Value>(line) else {
+                continue;
+            };
+            collect_payloads_recursive(&parsed, request_type, &mut results);
+        }
+        results
+    }
+
+    fn collect_payloads_recursive(
+        value: &serde_json::Value,
+        target_type: &str,
+        results: &mut Vec<serde_json::Value>,
+    ) {
+        if value["request_type"].as_str() == Some(target_type) {
+            results.push(value.clone());
+        }
+        if value["request_type"].as_str() == Some("message-batch") {
+            if let Some(batch) = value["payload"].as_array() {
+                for item in batch {
+                    collect_payloads_recursive(item, target_type, results);
+                }
+            }
+        }
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_add_dependency_preserves_version() {
+        unsafe {
+            let (handle, f) = start_file_backed_worker();
+
+            ddog_telemetry_handle_add_dependency(
+                &handle,
+                ffi::CharSlice::from("my-test-crate"),
+                ffi::CharSlice::from("1.2.3"),
+            )
+            .unwrap_none();
+
+            ddog_telemetry_handle_add_dependency(
+                &handle,
+                ffi::CharSlice::from("versionless-crate"),
+                ffi::CharSlice::from(""),
+            )
+            .unwrap_none();
+
+            ddog_telemetry_handle_stop(&handle).unwrap_none();
+            ddog_telemetry_handle_wait_for_shutdown(handle);
+
+            let output = std::fs::read_to_string(f.path()).unwrap();
+            let dep_payloads = find_sub_payloads(&output, "app-dependencies-loaded");
+            assert!(
+                !dep_payloads.is_empty(),
+                "expected at least one app-dependencies-loaded payload in output:\n{output}"
+            );
+
+            let deps: Vec<&serde_json::Value> = dep_payloads
+                .iter()
+                .filter_map(|p| p["payload"]["dependencies"].as_array())
+                .flatten()
+                .collect();
+
+            let versioned = deps
+                .iter()
+                .find(|d| d["name"] == "my-test-crate")
+                .expect("expected my-test-crate in dependencies");
+            assert_eq!(
+                versioned["version"].as_str(),
+                Some("1.2.3"),
+                "Non-empty version must be preserved through the FFI layer"
+            );
+
+            let versionless = deps
+                .iter()
+                .find(|d| d["name"] == "versionless-crate")
+                .expect("expected versionless-crate in dependencies");
+            assert!(
+                versionless["version"].is_null(),
+                "Empty version string should map to null/None, got {:?}",
+                versionless["version"]
+            );
+        }
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_add_integration_preserves_version() {
+        unsafe {
+            let (handle, f) = start_file_backed_worker();
+
+            ddog_telemetry_handle_add_integration(
+                &handle,
+                ffi::CharSlice::from("http-framework"),
+                ffi::CharSlice::from("2.0.0"),
+                true,
+                ffi::Option::<bool>::None,
+                ffi::Option::<bool>::None,
+            )
+            .unwrap_none();
+
+            ddog_telemetry_handle_add_integration(
+                &handle,
+                ffi::CharSlice::from("versionless-integration"),
+                ffi::CharSlice::from(""),
+                true,
+                ffi::Option::<bool>::None,
+                ffi::Option::<bool>::None,
+            )
+            .unwrap_none();
+
+            ddog_telemetry_handle_stop(&handle).unwrap_none();
+            ddog_telemetry_handle_wait_for_shutdown(handle);
+
+            let output = std::fs::read_to_string(f.path()).unwrap();
+            let int_payloads = find_sub_payloads(&output, "app-integrations-change");
+            assert!(
+                !int_payloads.is_empty(),
+                "expected at least one app-integrations-change payload in output:\n{output}"
+            );
+
+            let integrations: Vec<&serde_json::Value> = int_payloads
+                .iter()
+                .filter_map(|p| p["payload"]["integrations"].as_array())
+                .flatten()
+                .collect();
+
+            let versioned = integrations
+                .iter()
+                .find(|i| i["name"] == "http-framework")
+                .expect("expected http-framework in integrations");
+            assert_eq!(
+                versioned["version"].as_str(),
+                Some("2.0.0"),
+                "Non-empty version must be preserved through the FFI layer"
+            );
+
+            let versionless = integrations
+                .iter()
+                .find(|i| i["name"] == "versionless-integration")
+                .expect("expected versionless-integration in integrations");
+            assert!(
+                versionless["version"].is_null(),
+                "Empty version string should map to null/None, got {:?}",
+                versionless["version"]
+            );
         }
     }
 }
