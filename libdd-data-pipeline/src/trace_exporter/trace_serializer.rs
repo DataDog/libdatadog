@@ -67,13 +67,30 @@ impl<'a> TraceSerializer<'a> {
         &self,
         traces: Vec<Vec<Span<T>>>,
     ) -> Result<tracer_payload::TraceChunks<T>, TraceExporterError> {
-        let use_v05_format = match self.output_format {
-            TraceExporterOutputFormat::V05 => true,
-            TraceExporterOutputFormat::V04 => false,
-        };
-        trace_utils::collect_trace_chunks(traces, use_v05_format).map_err(|e| {
-            TraceExporterError::Deserialization(DecodeError::InvalidFormat(e.to_string()))
-        })
+        match self.output_format {
+            TraceExporterOutputFormat::V1 => {
+                // For V1, collect as V04 spans and wrap in the V1 variant so the
+                // serializer knows to use the V1 msgpack encoder.
+                let chunks =
+                    trace_utils::collect_trace_chunks(traces, false).map_err(|e| {
+                        TraceExporterError::Deserialization(DecodeError::InvalidFormat(
+                            e.to_string(),
+                        ))
+                    })?;
+                match chunks {
+                    tracer_payload::TraceChunks::V04(traces) => {
+                        Ok(tracer_payload::TraceChunks::V1(traces))
+                    }
+                    other => Ok(other),
+                }
+            }
+            format => {
+                let use_v05_format = matches!(format, TraceExporterOutputFormat::V05);
+                trace_utils::collect_trace_chunks(traces, use_v05_format).map_err(|e| {
+                    TraceExporterError::Deserialization(DecodeError::InvalidFormat(e.to_string()))
+                })
+            }
+        }
     }
 
     /// Build HTTP headers for traces request
@@ -101,6 +118,7 @@ impl<'a> TraceSerializer<'a> {
             tracer_payload::TraceChunks::V05(p) => {
                 rmp_serde::to_vec(p).map_err(TraceExporterError::Serialization)
             }
+            tracer_payload::TraceChunks::V1(p) => Ok(msgpack_encoder::v1::to_vec(p)),
         }
     }
 }
