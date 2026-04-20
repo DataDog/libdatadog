@@ -48,7 +48,7 @@ use libdd_common_ffi::{self as ffi, slice::AsBytes};
 use libdd_common_ffi::{CString, Error};
 
 #[cfg(not(feature = "std"))]
-use alloc::{boxed::Box, string::ToString, vec::Vec};
+use alloc::{boxed::Box, vec::Vec};
 
 use ffi::CharSlice;
 use libdd_library_config::{self as lib_config, LibraryConfigSource};
@@ -58,18 +58,21 @@ use std::panic::{catch_unwind, AssertUnwindSafe};
 
 #[cfg(all(feature = "std", feature = "catch_panic", panic = "unwind"))]
 macro_rules! catch_panic {
-    ($f:expr, $err_ctor:expr) => {
+    ($f:expr) => {
         match catch_unwind(AssertUnwindSafe(|| $f)) {
             Ok(ret) => ret,
             Err(info) => {
-                let detail = if let Some(s) = info.downcast_ref::<&'static str>() {
-                    format!("FFI function panicked: {s}")
+                let panic_msg = if let Some(s) = info.downcast_ref::<&'static str>() {
+                    s.to_string()
                 } else if let Some(s) = info.downcast_ref::<String>() {
-                    format!("FFI function panicked: {s}")
+                    s.clone()
                 } else {
-                    "FFI function panicked".to_string()
+                    "Unable to retrieve panic context".to_string()
                 };
-                $err_ctor(detail)
+                LibraryConfigLoggedResult::Err(Error::from(format!(
+                    "FFI function panicked: {}",
+                    panic_msg
+                )))
             }
         }
     };
@@ -77,14 +80,7 @@ macro_rules! catch_panic {
 
 #[cfg(all(feature = "std", any(not(feature = "catch_panic"), panic = "abort")))]
 macro_rules! catch_panic {
-    ($f:expr, $err_ctor:expr) => {
-        $f
-    };
-}
-
-#[cfg(not(feature = "std"))]
-macro_rules! catch_panic {
-    ($f:expr, $err_ctor:expr) => {
+    ($f:expr) => {
         $f
     };
 }
@@ -241,39 +237,36 @@ pub extern "C" fn ddog_library_configurator_drop(_: Box<Configurator>) {}
 pub extern "C" fn ddog_library_configurator_get(
     configurator: &Configurator,
 ) -> LibraryConfigLoggedResult {
-    catch_panic!(
-        {
-            let local_path = configurator
-                .local_path
-                .as_ref()
-                .and_then(|p| p.into_std().to_str().ok())
-                .unwrap_or(lib_config::Configurator::LOCAL_STABLE_CONFIGURATION_PATH);
-            let fleet_path = configurator
-                .fleet_path
-                .as_ref()
-                .and_then(|p| p.into_std().to_str().ok())
-                .unwrap_or(lib_config::Configurator::FLEET_STABLE_CONFIGURATION_PATH);
-            let detected_process_info;
-            let process_info = match configurator.process_info {
-                Some(ref p) => p,
-                None => {
-                    detected_process_info = lib_config::ProcessInfo::detect_global(
-                        configurator.language.to_utf8_lossy().into_owned(),
-                    );
-                    &detected_process_info
-                }
-            };
+    catch_panic!({
+        let local_path = configurator
+            .local_path
+            .as_ref()
+            .and_then(|p| p.into_std().to_str().ok())
+            .unwrap_or(lib_config::Configurator::LOCAL_STABLE_CONFIGURATION_PATH);
+        let fleet_path = configurator
+            .fleet_path
+            .as_ref()
+            .and_then(|p| p.into_std().to_str().ok())
+            .unwrap_or(lib_config::Configurator::FLEET_STABLE_CONFIGURATION_PATH);
+        let detected_process_info;
+        let process_info = match configurator.process_info {
+            Some(ref p) => p,
+            None => {
+                detected_process_info = lib_config::ProcessInfo::detect_global(
+                    configurator.language.to_utf8_lossy().into_owned(),
+                );
+                &detected_process_info
+            }
+        };
 
-            let result = configurator.inner.get_config_from_file(
-                local_path.as_ref(),
-                fleet_path.as_ref(),
-                process_info,
-            );
+        let result = configurator.inner.get_config_from_file(
+            local_path.as_ref(),
+            fleet_path.as_ref(),
+            process_info,
+        );
 
-            LibraryConfig::logged_result_to_ffi_with_messages(result)
-        },
-        |msg| LibraryConfigLoggedResult::Err(Error::from(msg))
-    )
+        LibraryConfig::logged_result_to_ffi_with_messages(result)
+    })
 }
 
 #[cfg(feature = "std")]
