@@ -377,13 +377,15 @@ impl TelemetryWorker {
                 }
                 self.data.metric_buckets.flush_aggregates();
 
-                let observability_events = self.build_observability_batch();
-                if let Err(e) = self
-                    .send_payload(&data::Payload::MessageBatch(observability_events))
-                    .await
-                {
-                    self.log_err(&e);
+                let batch = self.build_observability_batch();
+                if !batch.is_empty() {
+                    let payload = data::Payload::MessageBatch(batch);
+                    match self.send_payload(&payload).await {
+                        Ok(()) => self.payload_sent_success(&payload),
+                        Err(e) => self.log_err(&e),
+                    }
                 }
+
                 self.data.started = false;
                 if !self.config.restartable {
                     self.deadlines.clear_pending();
