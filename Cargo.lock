@@ -3287,6 +3287,7 @@ dependencies = [
  "libdd-common-ffi",
  "libdd-telemetry",
  "paste",
+ "serde_json",
  "tempfile",
 ]
 
