@@ -1,7 +1,7 @@
 #ifndef DD_SAMPLERS_ALLOCATION_CREATED_H
 #define DD_SAMPLERS_ALLOCATION_CREATED_H
 
-#include "allocation_requested.h"   /* dd_alloc_req_t */
+#include <datadog/heap/allocation_requested.h>   /* dd_alloc_req_t */
 
 /* Slow path, declared here so the inline fast path can dispatch. */
 void *dd_allocation_created_slow(void *raw, dd_alloc_req_t req);

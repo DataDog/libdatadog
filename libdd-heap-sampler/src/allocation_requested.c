@@ -1,5 +1,5 @@
-#include "allocation_requested.h"
-#include "sample_flag.h"
+#include <datadog/heap/allocation_requested.h>
+#include <datadog/heap/sample_flag.h>
 
 #include <math.h>
 

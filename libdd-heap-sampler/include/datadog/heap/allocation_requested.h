@@ -4,7 +4,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include "tl_state.h"
+#include <datadog/heap/tl_state.h>
 
 /*
  * Return type for dd_allocation_requested, paired with the `req`

@@ -5,6 +5,7 @@
 members = [
   "builder",
   "libdd-alloc",
+  "libdd-heap-sampler",
   "libdd-crashtracker",
   "libdd-crashtracker-ffi",
   "datadog-ffe",
