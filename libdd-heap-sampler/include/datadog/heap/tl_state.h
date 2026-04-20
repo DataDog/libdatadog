@@ -40,4 +40,11 @@ typedef struct {
  */
 dd_tl_state_t *dd_tl_state_get(void);
 
+/*
+ * Initializes the current thread's tracking state if not already present.
+ * Returns the new state, or NULL if state already exists on this thread
+ * or the underlying allocation failed.
+ */
+dd_tl_state_t *dd_tl_state_init(void);
+
 #endif
