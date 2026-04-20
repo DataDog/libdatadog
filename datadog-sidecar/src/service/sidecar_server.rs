@@ -35,6 +35,10 @@ use crate::service::debugger_diagnostics_bookkeeper::{
 };
 use crate::service::exception_hash_rate_limiter::EXCEPTION_HASH_LIMITER;
 use crate::service::remote_configs::{RemoteConfigNotifyTarget, RemoteConfigs};
+use crate::service::stats_flusher::{
+    flush_all_stats_now, get_or_create_concentrator, stats_endpoint, ConcentratorKey,
+    SpanConcentratorState, StatsConfig,
+};
 use crate::service::tracing::trace_flusher::TraceFlusherStats;
 use crate::tokio_util::run_or_spawn_shared;
 use datadog_live_debugger::sender::{agent_info_supports_debugger_v2_endpoint, DebuggerType};
@@ -102,6 +106,8 @@ pub struct SidecarServer {
     remote_configs: RemoteConfigs,
     /// Diagnostics bookkeeper
     debugger_diagnostics_bookkeeper: Arc<DebuggerDiagnosticsBookkeeper>,
+    /// Per-env&version SHM span concentrators (global across all sessions).
+    pub(crate) span_concentrators: Arc<Mutex<HashMap<ConcentratorKey, Arc<SpanConcentratorState>>>>,
 }
 
 /// Per-connection handler wrapper that tracks sessions/instances for cleanup on disconnect.
@@ -634,12 +640,16 @@ impl SidecarInterface for ConnectionSidecarHandler {
         *session.process_tags.lock_or_panic() = config.process_tags.clone();
         session.modify_telemetry_config(|cfg| {
             cfg.telemetry_heartbeat_interval = config.telemetry_heartbeat_interval;
+            cfg.telemetry_extended_heartbeat_interval =
+                config.telemetry_extended_heartbeat_interval;
             let endpoint = get_product_endpoint(
                 libdd_telemetry::config::PROD_INTAKE_SUBDOMAIN,
                 &config.endpoint,
             );
             cfg.set_endpoint(endpoint).ok();
             cfg.telemetry_heartbeat_interval = config.telemetry_heartbeat_interval;
+            cfg.telemetry_extended_heartbeat_interval =
+                config.telemetry_extended_heartbeat_interval;
         });
         session.modify_trace_config(|cfg| {
             let endpoint = get_product_endpoint(
@@ -675,6 +685,25 @@ impl SidecarInterface for ConnectionSidecarHandler {
             });
             *session.agent_infos.lock_or_panic() = Some(agent_info);
         }
+        *session.stats_config.lock_or_panic() = Some(StatsConfig {
+            endpoint: stats_endpoint(&config.endpoint).unwrap_or_else(|| config.endpoint.clone()),
+            flush_interval: config.flush_interval,
+            hostname: if config.hostname.is_empty() {
+                sys_info::hostname().unwrap_or_default()
+            } else {
+                config.hostname.clone()
+            },
+            process_tags: config
+                .process_tags
+                .iter()
+                .map(|t| t.to_string())
+                .collect::<Vec<_>>()
+                .join(","),
+            root_service: config.root_service.clone(),
+            language: config.language.clone(),
+            tracer_version: config.tracer_version.clone(),
+        });
+
         session.set_remote_config_invariants(ConfigOptions {
             invariants: ConfigInvariants {
                 language: config.language,
@@ -939,11 +968,35 @@ impl SidecarInterface for ConnectionSidecarHandler {
         });
     }
 
+    async fn add_span_to_concentrator(
+        &self,
+        _peer: PeerCredentials,
+        env: String,
+        version: String,
+        span: datadog_ipc::shm_stats::OwnedShmSpanInput,
+    ) {
+        let session_id = self.session_id.get().map(|s| s.as_str()).unwrap_or("");
+        let session = self.server.get_session(session_id);
+        // Lazily create the concentrator on first IPC span for this (env, version, service).
+        if let Some(state) = get_or_create_concentrator(
+            &self.server.span_concentrators,
+            &env,
+            &version,
+            session_id,
+            &session,
+        ) {
+            let mut peer_tag_buf = Vec::new();
+            let input = span.as_shm_input(&mut peer_tag_buf);
+            state.concentrator.add_span(&input);
+        }
+    }
+
     async fn flush_traces(&self, _peer: PeerCredentials) {
         let flusher = self.server.trace_flusher.clone();
         if let Err(e) = tokio::spawn(async move { flusher.flush().await }).await {
             error!("Failed flushing traces: {e:?}");
         }
+        flush_all_stats_now(&self.server.span_concentrators).await;
     }
 
     async fn set_test_session_token(&self, _peer: PeerCredentials, token: String) {
@@ -964,6 +1017,10 @@ impl SidecarInterface for ConnectionSidecarHandler {
         });
         session.modify_trace_config(|trace_cfg| {
             trace_cfg.set_endpoint_test_token(token.clone());
+        });
+        // Update the stats config so newly created concentrators carry the test token.
+        session.modify_stats_config(|cfg| {
+            cfg.endpoint.test_token = token.clone();
         });
         // TODO(APMSP-1377): the dogstatsd-client doesn't support test_session tokens yet
         // session.configure_dogstatsd(|cfg| {

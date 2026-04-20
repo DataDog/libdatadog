@@ -6,12 +6,28 @@ use std::time::{self, Duration, SystemTime};
 
 use libdd_trace_protobuf::pb;
 
-use aggregation::{BorrowedAggregationKey, StatsBucket};
-use stat_span::StatSpan;
+use aggregation::StatsBucket;
 
 mod aggregation;
+use aggregation::BorrowedAggregationKey;
+pub use aggregation::FixedAggregationKey;
 
-mod stat_span;
+pub mod stat_span;
+pub use stat_span::StatSpan;
+
+/// Concentrators that can provide raw time buckets for export implement this trait.
+///
+/// `StatsExporter` is generic over `C: FlushableConcentrator` so it can work with
+/// both the in-process [`SpanConcentrator`] and the SHM-backed `ShmSpanConcentrator`.
+pub trait FlushableConcentrator {
+    fn flush_buckets(&mut self, force: bool) -> Vec<pb::ClientStatsBucket>;
+}
+
+impl FlushableConcentrator for SpanConcentrator {
+    fn flush_buckets(&mut self, force: bool) -> Vec<pb::ClientStatsBucket> {
+        self.flush(SystemTime::now(), force)
+    }
+}
 
 /// Return a Duration between t and the unix epoch
 /// If t is before the unix epoch return 0
@@ -27,7 +43,7 @@ fn align_timestamp(t: u64, bucket_size: u64) -> u64 {
 }
 
 /// Return true if the span is eligible for stats computation
-fn is_span_eligible<'a, T>(span: &'a T, span_kinds_stats_computed: &[String]) -> bool
+pub fn is_span_eligible<'a, T>(span: &'a T, span_kinds_stats_computed: &[String]) -> bool
 where
     T: StatSpan<'a>,
 {
@@ -93,9 +109,19 @@ impl SpanConcentrator {
         }
     }
 
+    /// Return the list of span kinds eligible for stats computation
+    pub fn span_kinds(&self) -> &[String] {
+        &self.span_kinds_stats_computed
+    }
+
     /// Set the list of span kinds eligible for stats computation
     pub fn set_span_kinds(&mut self, span_kinds: Vec<String>) {
         self.span_kinds_stats_computed = span_kinds;
+    }
+
+    /// Return the list of keys considered as peer_tags for aggregation
+    pub fn peer_tag_keys(&self) -> &[String] {
+        &self.peer_tag_keys
     }
 
     /// Set the list of keys considered as peer_tags for aggregation

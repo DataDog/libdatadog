@@ -15,6 +15,7 @@ members = [
   "libdd-library-config-ffi",
   "datadog-live-debugger",
   "datadog-live-debugger-ffi",
+  "libdd-otel-thread-ctx",
   "libdd-profiling",
   "libdd-profiling-ffi",
   "libdd-profiling-protobuf",
@@ -51,7 +52,7 @@ members = [
   "libdd-dogstatsd-client",
   "libdd-http-client",
   "libdd-log",
-  "libdd-log-ffi", "libdd-libunwind-sys",
+  "libdd-log-ffi",
 ]
 
 # https://doc.rust-lang.org/cargo/reference/resolver.html

@@ -22,5 +22,5 @@ cbindgen = ["build_common/cbindgen"]
 build_common = { path = "../build-common" }
 
 [dependencies]
-libdd-shared-runtime = { version = "1.0.0", path = "../libdd-shared-runtime" }
+libdd-shared-runtime = { version = "0.1.0", path = "../libdd-shared-runtime" }
 tracing = { version = "0.1", default-features = false }

@@ -614,6 +614,7 @@ pub unsafe extern "C" fn ddog_sidecar_session_set_config(
     flush_interval_milliseconds: u32,
     remote_config_poll_interval_millis: u32,
     telemetry_heartbeat_interval_millis: u32,
+    telemetry_extended_heartbeat_interval_millis: u64,
     force_flush_size: usize,
     force_drop_size: usize,
     log_level: ffi::CharSlice,
@@ -626,6 +627,8 @@ pub unsafe extern "C" fn ddog_sidecar_session_set_config(
     remote_config_enabled: bool,
     is_fork: bool,
     process_tags: &libdd_common_ffi::Vec<Tag>,
+    hostname: ffi::CharSlice,
+    root_service: ffi::CharSlice,
 ) -> MaybeError {
     let session_id_str: String = session_id.to_utf8_lossy().into();
     let session_config = SessionConfig {
@@ -640,6 +643,9 @@ pub unsafe extern "C" fn ddog_sidecar_session_set_config(
         ),
         telemetry_heartbeat_interval: Duration::from_millis(
             telemetry_heartbeat_interval_millis as u64,
+        ),
+        telemetry_extended_heartbeat_interval: Duration::from_millis(
+            telemetry_extended_heartbeat_interval_millis,
         ),
         force_flush_size,
         force_drop_size,
@@ -663,6 +669,10 @@ pub unsafe extern "C" fn ddog_sidecar_session_set_config(
         .to_vec(),
         remote_config_enabled,
         process_tags: process_tags.to_vec(),
+        peer_tag_keys: vec![],
+        span_kinds_stats_computed: vec![],
+        hostname: hostname.to_utf8_lossy().into(),
+        root_service: root_service.to_utf8_lossy().into(),
     };
     #[cfg(unix)]
     try_c!(blocking::set_session_config(

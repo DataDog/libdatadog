@@ -6,9 +6,10 @@ use crate::expr_defs::{
     Reference, StringComparison, StringSource, Value,
 };
 use crate::{
-    CaptureConfiguration, DslString, EvaluateAt, FilterList, InBodyLocation, LiveDebuggingData,
-    LogProbe, MetricKind, MetricProbe, Probe, ProbeCondition, ProbeTarget, ProbeType, ProbeValue,
-    ServiceConfiguration, SpanDecorationProbe, SpanProbe, SpanProbeDecoration, SpanProbeTarget,
+    CaptureConfiguration, CaptureExpression, DslString, EvaluateAt, FilterList, InBodyLocation,
+    LiveDebuggingData, LogProbe, MetricKind, MetricProbe, Probe, ProbeCondition, ProbeTarget,
+    ProbeType, ProbeValue, ServiceConfiguration, SpanDecorationProbe, SpanProbe,
+    SpanProbeDecoration, SpanProbeTarget,
 };
 use anyhow::Context;
 use serde::Deserialize;
@@ -90,6 +91,17 @@ pub fn parse(json: &str) -> anyhow::Result<LiveDebuggingData> {
                             .sampling
                             .map(|s| s.snapshots_per_second)
                             .unwrap_or(5000),
+                        capture_expressions: {
+                            let mut exprs = vec![];
+                            for raw in parsed.capture_expressions.unwrap_or_default() {
+                                exprs.push(CaptureExpression {
+                                    name: raw.name,
+                                    expr: ProbeValue(err(raw.expr.json.try_into())?),
+                                    capture: raw.capture.unwrap_or_default(),
+                                });
+                            }
+                            exprs
+                        },
                     }),
                     ContentType::SpanProbe => ProbeType::Span(SpanProbe {}),
                     ContentType::SpanDecorationProbe => {
@@ -129,11 +141,13 @@ pub fn parse(json: &str) -> anyhow::Result<LiveDebuggingData> {
                     _ => unreachable!(),
                 },
             };
-            // unconditional log probes always capture their entry context
+            // unconditional snapshot probes always capture their entry context (for arguments).
+            // Probes with capture_expressions only are evaluated at exit so locals are available.
             if matches!(
                 probe.probe,
                 ProbeType::Log(LogProbe {
                     when: ProbeCondition(Condition::Always),
+                    capture_snapshot: true,
                     ..
                 })
             ) {
@@ -176,6 +190,7 @@ struct RawTopLevelItem {
     deny: Option<FilterList>,
     sampling: Option<ServiceConfigurationSampling>,
     target_span: Option<SpanProbeTarget>,
+    capture_expressions: Option<Vec<RawCaptureExpression>>,
 }
 
 #[derive(Deserialize)]
@@ -193,6 +208,13 @@ struct ProbeWhere {
     signature: Option<String>,
     lines: Option<Vec<String>>,
     in_body_location: Option<InBodyLocation>,
+}
+
+#[derive(Deserialize)]
+struct RawCaptureExpression {
+    name: String,
+    expr: Expression,
+    capture: Option<CaptureConfiguration>,
 }
 
 #[derive(Deserialize)]
@@ -260,13 +282,12 @@ impl TryInto<Reference> for RawExpr {
 
     fn try_into(self) -> Result<Reference, Self::Error> {
         Ok(match self {
-            RawExpr::Expr(Some(RawExprValue::Ref(identifier))) => {
-                if identifier == "@it" {
-                    Reference::IteratorVariable
-                } else {
-                    Reference::Base(identifier)
-                }
-            }
+            RawExpr::Expr(Some(RawExprValue::Ref(identifier))) => match identifier.as_str() {
+                "@it" => Reference::IteratorVariable,
+                "@key" => Reference::IteratorKey,
+                "@value" => Reference::IteratorValue,
+                _ => Reference::Base(identifier),
+            },
             RawExpr::Expr(Some(RawExprValue::Index([source, index]))) => {
                 Reference::Index(Box::new(((*source).try_into()?, (*index).try_into()?)))
             }
@@ -786,6 +807,7 @@ mod tests {
                         },
                     capture_snapshot,
                     sampling_snapshots_per_second,
+                    ..
                 }),
             ..
         }) = parsed

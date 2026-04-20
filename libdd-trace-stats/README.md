@@ -14,6 +14,7 @@ Compute aggregated statistics from distributed tracing spans with time-bucketed 
 - **Span Filtering**: Filter spans by top-level, measured, or span.kind
 - **Time Bucketing**: Configurable bucket sizes for aggregation
 - **Statistics Export**: Generate statistics payloads for Datadog backend
+- **Stats Exporter** *(non-wasm)*: Periodic HTTP flusher backed by any `HttpClientTrait` implementation
 
 ## Span Concentrator
 
@@ -40,6 +41,28 @@ Only certain spans are aggregated:
 ### Flushing
 
 When flushed, the concentrator keeps the most recent buckets and returns older buckets as statistics.
+
+## Stats Exporter
+
+`StatsExporter` wraps a `FlushableConcentrator` and periodically drains it, encoding the resulting `ClientStatsPayload` as msgpack and POSTing it to the agent's `/v0.6/stats` endpoint.
+
+```rust
+use libdd_trace_stats::stats_exporter::{StatsExporter, StatsMetadata};
+use libdd_capabilities_impl::NativeCapabilities;
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
+
+let exporter = StatsExporter::<NativeCapabilities>::new(
+    Duration::from_secs(10),
+    Arc::new(Mutex::new(concentrator)),
+    StatsMetadata { service: "my-service".into(), ..Default::default() },
+    endpoint,
+    NativeCapabilities::new_client(),
+);
+
+// Flush and send (force=true drains all buckets on shutdown)
+exporter.send(false).await?;
+```
 
 ## Example Usage
 

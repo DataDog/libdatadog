@@ -59,7 +59,7 @@ urlencoding = { version = "2.1.3", optional = true }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 tokio = { version = "1", features = ["time", "rt-multi-thread"] }
-libdd-capabilities-impl = { version = "0.1.0", path = "../libdd-capabilities-impl" }
+libdd-capabilities-impl = { version = "0.1.0", path = "../libdd-capabilities-impl", default-features = false }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 getrandom = { version = "0.2", features = ["js"] }
@@ -76,7 +76,7 @@ tempfile = "3.3.0"
 
 [features]
 default = ["https"]
-https = ["libdd-common/https"]
+https = ["libdd-common/https", "libdd-capabilities-impl/https"]
 mini_agent = ["compression", "libdd-common/use_webpki_roots"]
 test-utils = [
     "hyper/server",
@@ -87,4 +87,4 @@ test-utils = [
 ]
 compression = ["zstd", "flate2"]
 # FIPS mode uses the FIPS-compliant cryptographic provider (Unix only)
-fips = ["libdd-common/fips"]
+fips = ["libdd-common/fips", "libdd-capabilities-impl/fips"]

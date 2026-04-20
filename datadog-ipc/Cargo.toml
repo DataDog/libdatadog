@@ -8,6 +8,7 @@ publish = false
 
 [dependencies]
 anyhow = { version = "1.0" }
+zwohash = "0.1.2"
 bincode = { version = "1" }
 futures = { version = "0.3", default-features = false }
 io-lifetimes = { version = "1.0" }
@@ -19,6 +20,9 @@ libdd-tinybytes = { path = "../libdd-tinybytes", optional = true }
 
 
 libdd-common = { path = "../libdd-common" }
+libdd-ddsketch = { path = "../libdd-ddsketch" }
+libdd-trace-protobuf = { path = "../libdd-trace-protobuf" }
+libdd-trace-stats = { path = "../libdd-trace-stats" }
 datadog-ipc-macros = { path = "../datadog-ipc-macros" }
 tracing = { version = "0.1", default-features = false }
 

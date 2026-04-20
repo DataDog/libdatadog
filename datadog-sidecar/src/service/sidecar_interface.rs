@@ -213,6 +213,19 @@ pub trait SidecarInterface {
     /// * `token` - The session token.
     async fn set_test_session_token(token: String);
 
+    /// IPC fallback: add a span directly to the sidecar's SHM concentrator for (env, version).
+    ///
+    /// Used when the PHP side cannot open the SHM concentrator yet (startup race: SHM is
+    /// created by the sidecar after processing `set_universal_service_tags`, but span
+    /// serialization may run before that message is processed).  Because the sidecar processes
+    /// IPC messages sequentially and `set_universal_service_tags` is sent first (via the
+    /// priority outbox), the concentrator is guaranteed to exist when this message is processed.
+    async fn add_span_to_concentrator(
+        env: String,
+        version: String,
+        span: datadog_ipc::shm_stats::OwnedShmSpanInput,
+    );
+
     /// Sends a ping to the service.
     #[blocking]
     async fn ping();
