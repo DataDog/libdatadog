@@ -240,7 +240,6 @@ pub extern "C" fn ddog_library_configurator_with_detect_process_info(c: &mut Con
 #[no_mangle]
 pub extern "C" fn ddog_library_configurator_drop(_: Box<Configurator>) {}
 
-
 #[cfg(feature = "std")]
 #[no_mangle]
 pub extern "C" fn ddog_library_configurator_get(
