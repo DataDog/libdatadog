@@ -1,12 +1,7 @@
 #include <datadog/heap/allocation_created.h>
+#include <datadog/heap/probes.h>
 #include <datadog/heap/sample_flag.h>
 #include <datadog/heap/tl_state.h>
-
-#ifdef __linux__
-#  include <sys/sdt.h>
-#else
-#  define DTRACE_PROBE3(provider, name, a, b, c) ((void)0)
-#endif
 
 /*
  * Equivalent of the sampled branch of AllocTrackerHelper::track +
@@ -16,8 +11,15 @@
 void *dd_allocation_created_slow(void *raw, dd_alloc_req_t req) {
     void *user = raw;
     if (raw != NULL) {
+        /* TODO: consider abandoning the sample here when
+         * `raw + DD_HEADER_BYTES` would land in the first
+         * DD_HEADER_BYTES bytes of a page. This would let us
+         * use "isn't within DD_HEADER_BYTES of a page boundary" as a
+         * precondition for checking the magic bytes on free ... at the expense
+         * of occasionally dropping samples. Need to think this through!
+         **/
         user = dd_sample_flag_apply(raw);
-        DTRACE_PROBE3(ddheap, alloc, user, (uint64_t)req.size, req.weight);
+        dd_probe_alloc(user, (uint64_t)req.size, req.weight);
     }
 
     /* Close the reentry guard opened by the paired requested() call. */

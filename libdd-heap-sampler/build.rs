@@ -15,6 +15,7 @@ mod unix {
         "src/allocation_requested.c",
         "src/allocation_created.c",
         "src/allocation_freed.c",
+        "src/probes.c",
         "src/sample_flag.c",
         "src/tl_state.c",
     ];
@@ -25,6 +26,7 @@ mod unix {
         "include/datadog/heap/allocation_requested.h",
         "include/datadog/heap/allocation_created.h",
         "include/datadog/heap/allocation_freed.h",
+        "include/datadog/heap/probes.h",
         "include/datadog/heap/sample_flag.h",
         "include/datadog/heap/tl_state.h",
     ];

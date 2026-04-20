@@ -1,4 +1,5 @@
 #include <datadog/heap/tl_state.h>
+#include <datadog/heap/sample_flag.h>
 
 #include <pthread.h>
 #include <stdlib.h>
@@ -26,6 +27,8 @@ dd_tl_state_t *dd_tl_state_get(void) {
 dd_tl_state_t *dd_tl_state_init(void) {
     pthread_once(&s_key_once, tl_state_make_key);
     if (pthread_getspecific(s_key)) return NULL;
+
+    dd_sample_flag_thread_init();
 
     dd_tl_state_t *st = (dd_tl_state_t *)calloc(1, sizeof(*st));
     if (!st) return NULL;

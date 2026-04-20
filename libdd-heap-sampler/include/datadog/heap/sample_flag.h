@@ -12,6 +12,14 @@
  */
 
 /*
+ * Per-thread initialisation required by the flagging scheme.
+ * Must be called once per thread before dd_sample_flag_apply/check are used.
+ * On arm64 this issues prctl(PR_SET_TAGGED_ADDR_CTRL) so tagged pointers
+ * survive syscalls; on other architectures this is a no-op.
+ */
+void dd_sample_flag_thread_init(void);
+
+/*
  * Extra bytes the flag reserves on top of the user's requested size.
  * dd_allocation_requested adds this to the size it hands back to the
  * wrapper so the underlying allocator reserves room for the flag. 0 on
