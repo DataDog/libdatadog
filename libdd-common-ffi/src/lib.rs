@@ -9,7 +9,6 @@
 
 extern crate alloc;
 
-// Always available in both std and no_std builds.
 pub mod cstr;
 pub mod slice;
 pub mod vec;
@@ -18,7 +17,6 @@ pub use cstr::*;
 pub use slice::{CharSlice, Slice};
 pub use vec::Vec;
 
-// Modules and re-exports that require std.
 #[cfg(feature = "std")]
 pub mod array_queue;
 #[cfg(feature = "std")]

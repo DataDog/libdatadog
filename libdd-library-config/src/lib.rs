@@ -718,6 +718,7 @@ impl Configurator {
         process_info: &ProcessInfo,
         cfg: &mut BTreeMap<String, LibraryConfigVal>,
     ) -> LoggedResult<(), anyhow::Error> {
+        let config_id = stable_config.config_id.clone();
         // Phase 1: take host default config
         cfg.extend(
             mem::take(&mut stable_config.apm_configuration_default)
@@ -731,7 +732,7 @@ impl Configurator {
                         LibraryConfigVal {
                             value: v,
                             source,
-                            config_id: stable_config.config_id.clone(),
+                            config_id: config_id.clone(),
                         },
                     )
                 }),
@@ -783,9 +784,6 @@ impl Configurator {
         LoggedResult::Ok((), messages)
     }
 }
-
-// TODO: Switch yaml_serde to official crates.io release once no_std support
-// is merged: https://github.com/yaml/yaml-serde/pull/7
 
 use utils::Get;
 mod utils {

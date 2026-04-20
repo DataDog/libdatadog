@@ -22,10 +22,13 @@ use {
 };
 
 #[repr(C)]
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, thiserror::Error)]
 pub enum SliceConversionError {
+    #[error("length was too large")]
     LargeLength,
+    #[error("null pointer with non-zero length")]
     NullPointer,
+    #[error("pointer was not aligned for the type")]
     MisalignedPointer,
 }
 
@@ -41,19 +44,6 @@ unsafe impl FfiSafeErrorMessage for SliceConversionError {
         }
     }
 }
-
-impl Display for SliceConversionError {
-    fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
-        let msg = match self {
-            SliceConversionError::LargeLength => "length was too large",
-            SliceConversionError::NullPointer => "null pointer with non-zero length",
-            SliceConversionError::MisalignedPointer => "pointer was not aligned for the type",
-        };
-        f.write_str(msg)
-    }
-}
-
-impl core::error::Error for SliceConversionError {}
 
 #[repr(C)]
 #[derive(Copy, Clone)]

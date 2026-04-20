@@ -1,8 +1,7 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
-// Only set #![no_std] when `no_std_entry` is active. When built as a `lib` crate-type (not a
-// standalone staticlib/cdylib), the consuming crate provides its own allocator and panic handler,
-// so #![no_std] should only be set when this crate is the binary entry point.
+// #![no_std] is only set under `no_std_entry`: a standalone staticlib/cdylib owns the
+// allocator and panic handler, while a `lib` consumer provides its own.
 #![cfg_attr(all(not(feature = "std"), feature = "no_std_entry"), no_std)]
 
 extern crate alloc;
@@ -25,14 +24,11 @@ mod no_std_support {
 
     #[panic_handler]
     fn panic(_info: &core::panic::PanicInfo) -> ! {
-        // abort() is provided by the C runtime, which is always linked for FFI libs.
-        // Note: _info is intentionally discarded — in no_std there is no reliable way to
-        // write diagnostics without std I/O. Panics in no_std mode are silent and fatal.
+        // Panics in no_std mode are silent and fatal — no std I/O is available to report _info.
         extern "C" {
             fn abort() -> !;
         }
-        // SAFETY: abort() is a C standard library function with no preconditions; it
-        // unconditionally terminates the process.
+        // SAFETY: abort() is a C standard library function with no preconditions.
         unsafe { abort() }
     }
 
