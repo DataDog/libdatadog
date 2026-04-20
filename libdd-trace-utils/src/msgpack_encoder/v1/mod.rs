@@ -75,7 +75,6 @@ impl StringTable {
     }
 }
 
-
 /// Promoted fields extracted from spans and written at the chunk level.
 struct ChunkAttrs {
     /// Full 128-bit trace ID (encodes as 16-byte big-endian binary).
@@ -209,8 +208,7 @@ pub fn to_vec_with_capacity<T: TraceData, S: AsRef<[Span<T>]>>(
 ) -> Vec<u8> {
     let mut buf = ByteBuf::with_capacity(capacity as usize);
     #[allow(clippy::expect_used)]
-    encode_payload(&mut buf, traces)
-        .expect("infallible: the error is std::convert::Infallible");
+    encode_payload(&mut buf, traces).expect("infallible: the error is std::convert::Infallible");
     buf.into_vec()
 }
 
@@ -218,8 +216,7 @@ pub fn to_vec_with_capacity<T: TraceData, S: AsRef<[Span<T>]>>(
 pub fn to_len<T: TraceData, S: AsRef<[Span<T>]>>(traces: &[S]) -> u32 {
     let mut counter = super::CountLength(0);
     #[allow(clippy::expect_used)]
-    encode_payload(&mut counter, traces)
-        .expect("infallible: CountLength never fails");
+    encode_payload(&mut counter, traces).expect("infallible: CountLength never fails");
     counter.0
 }
 

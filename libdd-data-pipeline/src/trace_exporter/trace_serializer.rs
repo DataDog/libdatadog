@@ -71,12 +71,9 @@ impl<'a> TraceSerializer<'a> {
             TraceExporterOutputFormat::V1 => {
                 // For V1, collect as V04 spans and wrap in the V1 variant so the
                 // serializer knows to use the V1 msgpack encoder.
-                let chunks =
-                    trace_utils::collect_trace_chunks(traces, false).map_err(|e| {
-                        TraceExporterError::Deserialization(DecodeError::InvalidFormat(
-                            e.to_string(),
-                        ))
-                    })?;
+                let chunks = trace_utils::collect_trace_chunks(traces, false).map_err(|e| {
+                    TraceExporterError::Deserialization(DecodeError::InvalidFormat(e.to_string()))
+                })?;
                 match chunks {
                     tracer_payload::TraceChunks::V04(traces) => {
                         Ok(tracer_payload::TraceChunks::V1(traces))
