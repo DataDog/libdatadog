@@ -329,7 +329,7 @@ mod tests {
             .set_debug_enabled(true)
             .build();
         let handle = runtime
-            .spawn_worker(worker)
+            .spawn_worker(worker, true)
             .expect("Failed to spawn worker");
         (client, handle)
     }

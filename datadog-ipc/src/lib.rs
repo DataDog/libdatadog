@@ -12,9 +12,12 @@ pub mod handles;
 
 pub mod platform;
 pub mod rate_limiter;
+pub mod shm_stats;
 
+mod atomic_option;
 pub mod client;
 pub mod codec;
+pub use atomic_option::AtomicOption;
 
 pub use client::IpcClientConn;
 #[cfg(target_os = "linux")]

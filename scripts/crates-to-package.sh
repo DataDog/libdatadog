@@ -2,112 +2,99 @@
 # Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 # SPDX-License-Identifier: Apache-2.0
 #
-# Compares every workspace package's effective [package] version between GIT_VERSION_BASE
-# and GIT_VERSION_HEAD. Prints package names suitable for `cargo package -p` when the version
-# changed — not when only dependency versions changed.
-# Uses git for both sides so results match the refs, not uncommitted working tree edits.
+# Compares workspace crate versions between two git refs by running `cargo metadata` at each ref.
+# Prints crate names suitable for `cargo package -p` when the crate's *own* package version changed.
 #
-# CI should set GIT_VERSION_BASE / GIT_VERSION_HEAD to the commits being compared (e.g. PR base
-# and head). Defaults below are for local use; comparing to origin/main vs HEAD is not the same
-# as "what this PR changed" once main has moved.
+# Important: this intentionally ignores dependency version bumps unless they also changed the crate
+# version. (Cargo metadata reports package versions, not dependency requirements.)
+#
+# Excludes are determined from crate metadata: crates marked `publish = false` are excluded.
+# (Crates with publish unset or publish = [...] are considered publishable.)
+#
+# Important: this script is used by libddprof-build gitlab pipeline
 
 set -euo pipefail
 
 GIT_VERSION_BASE="${GIT_VERSION_BASE:-origin/main}"
 GIT_VERSION_HEAD="${GIT_VERSION_HEAD:-HEAD}"
 
-# [workspace.package].version from workspace root Cargo.toml (stdin).
-workspace_package_version() {
-	awk '
-		/^\[workspace\.package\]/ { w = 1; next }
-		w && /^\[/ { w = 0 }
-		w && /^version[[:space:]]*=/ {
-			line = $0
-			sub(/^[^"]*"/, "", line)
-			sub(/".*/, "", line)
-			print line
-			exit
-		}
-	'
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
+REPO_ROOT="$(cd -- "${SCRIPT_DIR}/.." >/dev/null 2>&1 && pwd)"
+
+tmp_root="$(mktemp -d)"
+base_dir="${tmp_root}/base"
+head_dir="${tmp_root}/head"
+
+cleanup() {
+	# best-effort cleanup
+	git -C "${REPO_ROOT}" worktree remove --force "${base_dir}" >/dev/null 2>&1 || true
+	git -C "${REPO_ROOT}" worktree remove --force "${head_dir}" >/dev/null 2>&1 || true
+	rm -rf "${tmp_root}" >/dev/null 2>&1 || true
 }
+trap cleanup EXIT
 
-# Effective [package] version: explicit "x.y.z" or "__WS__" if version.workspace = true.
-package_version_kind() {
-	awk '
-		/^\[package\]/ { p = 1; next }
-		p && /^\[/ { p = 0 }
-		p && /^version\.workspace[[:space:]]*=[[:space:]]*true/ { print "__WS__"; exit }
-		p && /^version[[:space:]]*=/ && $0 !~ /version\.workspace/ {
-			line = $0
-			sub(/^[^"]*"/, "", line)
-			sub(/".*/, "", line)
-			print line
-			exit
-		}
-	'
-}
+# Ensure refs exist locally for worktree add.
+git -C "${REPO_ROOT}" fetch --no-tags origin >/dev/null 2>&1 || true
 
-effective_package_version() {
-	local manifest_content="$1"
-	local workspace_content="$2"
-	local kind
-	kind=$(printf '%s' "$manifest_content" | package_version_kind)
-	if [ "$kind" = "__WS__" ]; then
-		printf '%s' "$workspace_content" | workspace_package_version
-		return
-	fi
-	printf '%s' "$kind"
-}
+git -C "${REPO_ROOT}" worktree add --detach "${base_dir}" "${GIT_VERSION_BASE}" >/dev/null
+git -C "${REPO_ROOT}" worktree add --detach "${head_dir}" "${GIT_VERSION_HEAD}" >/dev/null
 
-excluded_crate() {
-	local n="$1"
-	case "$n" in
-	libdd-*-ffi) return 0 ;;
-	datadog-*) return 0 ;;
-	bin_tests | tools | sidecar_mockgen | cc_utils | spawn_worker | symbolizer-ffi | test_spawn_from_lib | build_common | build-common | builder)
-		return 0
-		;;
-	esac
-	return 1
-}
+BASE_METADATA="$(cargo metadata --manifest-path "${base_dir}/Cargo.toml" --format-version=1 --no-deps)"
+HEAD_METADATA="$(cargo metadata --manifest-path "${head_dir}/Cargo.toml" --format-version=1 --no-deps)"
 
-workspace_old=$(git show "${GIT_VERSION_BASE}:Cargo.toml" 2>/dev/null || true)
-workspace_new=$(git show "${GIT_VERSION_HEAD}:Cargo.toml" 2>/dev/null || { cat Cargo.toml; })
+# Build a name -> {version, publishable} map for workspace members.
+#
+# publishable:
+# - publish unset (null) => publishable
+# - publish array (registries) => publishable if non-empty
+# - publish = false => NOT publishable
+map_filter='
+  . as $m
+  | ($m.packages | map({id, name, version, publish})) as $pkgs
+  | ($m.workspace_members) as $members
+  | [ $members[]
+      | . as $id
+      | ($pkgs[] | select(.id == $id))
+      | {
+          name,
+          version,
+          publishable: (
+            if (.publish == null) then true
+            elif (.publish | type) == "array" then ((.publish | length) > 0)
+            else false
+            end
+          )
+        }
+    ]
+  | map({key: .name, value: {version: .version, publishable: .publishable}})
+  | from_entries
+'
 
-METADATA=$(cargo metadata --format-version=1 --no-deps)
-WORKSPACE_ROOT=$(echo "$METADATA" | jq -r '.workspace_root')
+BASE_MAP="$(echo "${BASE_METADATA}" | jq -c "${map_filter}")"
+HEAD_MAP="$(echo "${HEAD_METADATA}" | jq -c "${map_filter}")"
 
-declare -A emit=()
+# Emit publishable crates whose version changed between base and head.
+#
+# - If a crate is new in head (missing in base), include it.
+# - If a crate disappeared in head, ignore it.
+TO_PACKAGE="$(jq -nr --argjson base "${BASE_MAP}" --argjson head "${HEAD_MAP}" '
+  ($head | keys_unsorted) as $names
+  | [ $names[]
+      | . as $n
+      | ($head[$n]) as $h
+      | select($h.publishable == true)
+      | ($base[$n].version // null) as $bv
+      | ($h.version) as $hv
+      | select($bv != $hv)
+      | $n
+    ]
+  | sort
+  | .[]
+')"
 
-while IFS=$'\t' read -r name mpath; do
-	[ -z "$name" ] && continue
-	relpath=${mpath#"$WORKSPACE_ROOT/"}
-
-	old_m=$(git show "${GIT_VERSION_BASE}:${relpath}" 2>/dev/null || true)
-	new_m=$(git show "${GIT_VERSION_HEAD}:${relpath}" 2>/dev/null || true)
-	[ -n "$new_m" ] || continue
-
-	v_old=""
-	if [ -n "$old_m" ]; then
-		v_old=$(effective_package_version "$old_m" "$workspace_old")
-	fi
-	v_new=$(effective_package_version "$new_m" "$workspace_new")
-
-	if [ "$v_old" = "$v_new" ]; then
-		continue
-	fi
-
-	if excluded_crate "$name"; then
-		continue
-	fi
-	emit["$name"]=1
-done < <(echo "$METADATA" | jq -r '.packages[] | "\(.name)\t\(.manifest_path)"')
-
-if [ "${#emit[@]}" -eq 0 ]; then
-	echo "crates-to-package.sh: no packages with a changed [package] version between refs (nothing to emit)." >&2
+if [ -z "${TO_PACKAGE}" ]; then
+	echo "crates-to-package.sh: no publishable workspace crates had a version change between refs (nothing to emit)." >&2
 	exit 0
 fi
 
-for n in "${!emit[@]}"; do
-	echo "$n"
-done | sort -u
+echo "${TO_PACKAGE}"

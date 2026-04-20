@@ -61,7 +61,7 @@ jobs:
             export AWS_LC_FIPS_SYS_NO_ASM=1
           fi
           # shellcheck disable=SC2046
-          cargo clippy --workspace --all-targets --all-features -- -D warnings 
+          cargo clippy --workspace --all-targets --all-features -- -D warnings $([ ${{ matrix.rust_version }} = 1.84.1 ] || echo -Aclippy::manual_is_multiple_of)
 
   licensecheck:
     runs-on: ubuntu-latest
@@ -73,7 +73,7 @@ jobs:
         run: sudo apt-get install -y licensecheck
       - name: Check licenses
         # Exclude symbolizer-ffi from the checks (mostly imported code)
-        run: '! find . \( -name "*.rs" -o -name "*.c" -o -name "*.sh" \)  -not -path "./symbolizer-ffi/*" -not -path "./datadog-ipc/plugins/*" -not -path "./datadog-ipc/tarpc/*" -not -path "./libdd-libunwind-sys/libunwind/*" -print0 | xargs -0 licensecheck -c ".*" | grep -v "Apache License 2.0"'
+        run: '! find . \( -name "*.rs" -o -name "*.c" -o -name "*.sh" \)  -not -path "./symbolizer-ffi/*" -not -path "./datadog-ipc/plugins/*" -not -path "./datadog-ipc/tarpc/*" -print0 | xargs -0 licensecheck -c ".*" | grep -v "Apache License 2.0"'
 
   license-3rdparty:
     runs-on: ubuntu-latest
@@ -81,16 +81,38 @@ jobs:
     steps:
       - name: Checkout sources
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # 4.2.2
+      # Keep version in sync with: scripts/update_license_3rdparty.sh (TOOL_VERSION) and scripts/Dockerfile.license (ARG TOOL_VERSION)
       - name: Cache dd-rust-license-tool
         uses: actions/cache@d4323d4df104b026a6aa633fdb11d772146be0bf # 4.2.2
         with:
           path: |
+            ~/.cargo/registry/
+            ~/.cargo/git/db/
             ~/.cargo/bin/dd-rust-license-tool
             ~/.cargo/.crates.toml
             ~/.cargo/.crates2.json
-          key: dd-rust-license-tool-1.0.6
-      - run: cargo install dd-rust-license-tool --version "1.0.6" --locked
-      - run: dd-rust-license-tool check
+          key: dd-rust-license-tool-1.0.6-v2
+      - run: cargo install --list | grep -qF "dd-rust-license-tool v1.0.6" || cargo install dd-rust-license-tool --version "1.0.6" --locked
+      - name: Generate new LICENSE-3rdparty.csv and check against the previous
+        run: |
+          if ! dd-rust-license-tool dump > /tmp/CI.csv 2> /tmp/CI.error; then
+            echo "ERROR: dd-rust-license-tool dump failed! See error output below:"
+            cat /tmp/CI.error
+            exit 1
+          fi
+          if ! diff /tmp/CI.csv LICENSE-3rdparty.csv; then
+            echo "Differences detected in LICENSE-3rdparty.csv."
+            echo "Please run './scripts/update_license_3rdparty.sh' to update the file and commit the changes."
+            exit 1
+          fi
+          echo "No differences found."
+      - name: Export generated license file on failure
+        if: failure()
+        uses: actions/upload-artifact@4cec3d8aa04e39d1a68397de0c4cd6fb9dce8ec1 # v4.6.1
+        with:
+          name: LICENSE-3rdparty.csv
+          path: /tmp/CI.csv
+          overwrite: true
 
   codeowners-validator:
     runs-on: ubuntu-latest

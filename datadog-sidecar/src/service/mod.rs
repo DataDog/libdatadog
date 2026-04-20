@@ -38,6 +38,7 @@ mod serialized_tracer_header_tags;
 mod session_info;
 pub mod sidecar_interface;
 pub(crate) mod sidecar_server;
+pub mod stats_flusher;
 pub mod telemetry;
 pub(crate) mod tracing;
 
@@ -57,6 +58,7 @@ pub struct SessionConfig {
     pub flush_interval: Duration,
     pub remote_config_poll_interval: Duration,
     pub telemetry_heartbeat_interval: Duration,
+    pub telemetry_extended_heartbeat_interval: Duration,
     pub force_flush_size: usize,
     pub force_drop_size: usize,
     pub log_level: String,
@@ -65,6 +67,12 @@ pub struct SessionConfig {
     pub remote_config_capabilities: Vec<RemoteConfigCapabilities>,
     pub remote_config_enabled: bool,
     pub process_tags: Vec<Tag>,
+    pub peer_tag_keys: Vec<String>,
+    pub span_kinds_stats_computed: Vec<String>,
+    /// Tracer-configured hostname (from `DD_HOSTNAME`).  Empty means "not configured".
+    pub hostname: String,
+    /// Process-level service name (from `DD_SERVICE`), used as the stats concentrator key.
+    pub root_service: String,
 }
 
 #[derive(Debug, Deserialize, Serialize)]

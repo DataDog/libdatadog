@@ -151,7 +151,7 @@ impl NamedShmHandle {
                 handle: unsafe { PlatformHandle::from_raw_handle(handle) },
                 size,
             },
-            path: Some(ShmPath { name }),
+            path: Some(Box::new(ShmPath { name })).into(),
         })
     }
 }
