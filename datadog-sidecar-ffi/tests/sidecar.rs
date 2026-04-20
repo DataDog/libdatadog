@@ -68,10 +68,6 @@ fn test_ddog_sidecar_connection() {
 }
 
 #[test]
-#[cfg_attr(
-    target_os = "windows",
-    ignore = "APMSP-2356 Investigate flakiness on Windows"
-)]
 #[cfg_attr(miri, ignore)]
 fn test_ddog_sidecar_register_app() {
     set_sidecar_per_process();
@@ -102,6 +98,7 @@ fn test_ddog_sidecar_register_app() {
             1000,
             1000000,
             1,
+            86400000,
             10000000,
             10000000,
             "".into(),
@@ -155,6 +152,7 @@ fn test_ddog_sidecar_register_app() {
             1000,
             1000000,
             1,
+            86400000,
             10000000,
             10000000,
             "".into(),
