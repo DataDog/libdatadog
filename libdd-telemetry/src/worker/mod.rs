@@ -381,7 +381,11 @@ impl TelemetryWorker {
                 if !batch.is_empty() {
                     let payload = data::Payload::MessageBatch(batch);
                     match self.send_payload(&payload).await {
-                        Ok(()) => self.payload_sent_success(&payload),
+                        Ok(()) => {
+                            if self.config.restartable {
+                                self.payload_sent_success(&payload)
+                            }
+                        }
                         Err(e) => self.log_err(&e),
                     }
                 }
