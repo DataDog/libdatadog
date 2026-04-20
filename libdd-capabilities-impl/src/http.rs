@@ -3,7 +3,6 @@
 
 //! Native HTTP client implementation backed by hyper.
 
-#[cfg(not(target_arch = "wasm32"))]
 mod native {
     use libdd_capabilities::http::{HttpClientTrait, HttpError};
     use libdd_capabilities::maybe_send::MaybeSend;
@@ -58,5 +57,4 @@ mod native {
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 pub use native::DefaultHttpClient;
