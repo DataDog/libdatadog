@@ -72,6 +72,7 @@ scripts/publication-order.sh         @DataDog/libdatadog-core
 scripts/reformat_copyright.sh        @DataDog/libdatadog-core
 scripts/semver-level.sh              @DataDog/libdatadog-core
 scripts/update_license_3rdparty.sh   @DataDog/libdatadog-core
+scripts/Dockerfile.license           @DataDog/libdatadog-core
 spawn_worker/                        @DataDog/libdatadog-php @DataDog/libdatadog-apm
 symbolizer-ffi                       @DataDog/libdatadog-profiling
 tests/run-package-tests.ps1          @DataDog/apm-common-components-core
