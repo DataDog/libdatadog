@@ -392,12 +392,12 @@ mod single_threaded_tests {
                         },
                         "remove_stack_traces": false,
                         "redis": {
-                                "Enabled": true,
-                                "RemoveAllArgs": false
+                                "enabled": true,
+                                "remove_all_args": false
                         },
                         "memcached": {
-                                "Enabled": true,
-                                "KeepCommand": false
+                                "enabled": true,
+                                "keep_command": false
                         }
                 }
         },
@@ -408,7 +408,7 @@ mod single_threaded_tests {
         format!("{:x}", Sha256::digest(json.as_bytes()))
     }
 
-    const TEST_INFO_HASH: &str = "b7709671827946c15603847bca76c90438579c038ec134eae19c51f1f3e3dfea";
+    const TEST_INFO_HASH: &str = "cce54bf6e7d1bf38088a3ec809bfeec160bc52d37f70bd6b581ce3c2f7be5a65";
 
     #[cfg_attr(miri, ignore)]
     #[tokio::test]

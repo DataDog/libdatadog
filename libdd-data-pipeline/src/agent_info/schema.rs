@@ -84,7 +84,6 @@ pub struct HttpObfuscationConfig {
 
 #[allow(missing_docs)]
 #[derive(Clone, Serialize, Deserialize, Default, Debug, PartialEq)]
-#[serde(rename_all = "PascalCase")]
 pub struct RedisObfuscationConfig {
     pub enabled: bool,
     pub remove_all_args: bool,
@@ -92,7 +91,6 @@ pub struct RedisObfuscationConfig {
 
 #[allow(missing_docs)]
 #[derive(Clone, Serialize, Deserialize, Default, Debug, PartialEq)]
-#[serde(rename_all = "PascalCase")]
 pub struct MemcachedObfuscationConfig {
     pub enabled: bool,
     pub keep_command: bool,
