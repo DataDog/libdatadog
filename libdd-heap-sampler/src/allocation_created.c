@@ -1,6 +1,6 @@
-#include "allocation_created.h"
-#include "sample_flag.h"
-#include "tl_state.h"
+#include <datadog/heap/allocation_created.h>
+#include <datadog/heap/sample_flag.h>
+#include <datadog/heap/tl_state.h>
 
 #ifdef __linux__
 #  include <sys/sdt.h>

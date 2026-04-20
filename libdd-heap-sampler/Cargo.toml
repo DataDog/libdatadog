@@ -1,0 +1,20 @@
+# Copyright 2025-Present Datadog, Inc. https://www.datadoghq.com/
+# SPDX-License-Identifier: Apache-2.0
+
+[package]
+name = "libdd-heap-sampler"
+version = "0.1.0"
+description = "Sampling primitives for USDT-based heap profiling."
+homepage = "https://github.com/DataDog/libdatadog/tree/main/libdd-heap-sampler"
+repository = "https://github.com/DataDog/libdatadog/tree/main/libdd-heap-sampler"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[lib]
+crate-type = ["lib", "staticlib"]
+bench = false
+
+[build-dependencies]
+cc = "1.1.31"

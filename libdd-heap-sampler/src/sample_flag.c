@@ -1,4 +1,4 @@
-#include "sample_flag.h"
+#include <datadog/heap/sample_flag.h>
 
 #if defined(__x86_64__)
 

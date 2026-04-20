@@ -3058,6 +3058,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "libdd-heap-sampler"
+version = "0.1.0"
+dependencies = [
+ "cc",
+]
+
+[[package]]
 name = "libdd-http-client"
 version = "31.0.0"
 dependencies = [
