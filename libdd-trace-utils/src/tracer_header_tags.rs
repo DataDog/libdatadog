@@ -133,8 +133,8 @@ impl<'a> From<&'a HeaderMap<HeaderValue>> for TracerHeaderTags<'a> {
         if headers.get("datadog-client-computed-top-level").is_some() {
             tags.client_computed_top_level = true;
         }
-        if headers.get("datadog-client-computed-stats").is_some() {
-            tags.client_computed_stats = true;
+        if let Some(v) = headers.get("datadog-client-computed-stats") {
+            tags.client_computed_stats = !is_header_empty(v.to_str().unwrap_or_default());
         }
         if let Some(count) = headers.get("datadog-client-dropped-p0-traces") {
             tags.dropped_p0_traces = count
@@ -148,6 +148,10 @@ impl<'a> From<&'a HeaderMap<HeaderValue>> for TracerHeaderTags<'a> {
         }
         tags
     }
+}
+
+fn is_header_empty(value: &str) -> bool {
+    value.is_empty()
 }
 
 #[cfg(test)]
@@ -261,5 +265,41 @@ mod tests {
         assert!(!tags.client_computed_top_level);
         assert_eq!(tags.dropped_p0_traces, 12);
         assert_eq!(tags.dropped_p0_spans, 0);
+    }
+
+    #[test]
+    fn test_is_header_empty() {
+        // Empty string is true
+        assert!(is_header_empty(""));
+
+        // Truthy and arbitrary non-empty values are false
+        for val in &["1", "t", "T", "TRUE", "True", "true"] {
+            assert!(
+                !is_header_empty(val),
+                "expected is_header_empty({val:?}) to be false"
+            );
+        }
+    }
+
+    #[test]
+    fn test_header_map_to_tags_computed_stats_empty_string() {
+        let val = "";
+        let mut header_map = HeaderMap::new();
+        header_map.insert("datadog-client-computed-stats", val.parse().unwrap());
+        let tags: TracerHeaderTags = (&header_map).into();
+        assert!(
+            !tags.client_computed_stats,
+            "expected client_computed_stats=false for datadog-client-computed-stats header value {val:?}"
+        );
+    }
+
+    #[test]
+    fn test_header_map_to_tags_computed_stats_not_set() {
+        let header_map = HeaderMap::new();
+        let tags: TracerHeaderTags = (&header_map).into();
+        assert!(
+            !tags.client_computed_stats,
+            "expected client_computed_stats=false when datadog-client-computed-stats header is not set"
+        );
     }
 }
