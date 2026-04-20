@@ -18,3 +18,4 @@ bench = false
 
 [build-dependencies]
 cc = "1.1.31"
+bindgen = "0.71"

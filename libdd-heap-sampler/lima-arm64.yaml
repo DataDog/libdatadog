@@ -14,7 +14,7 @@ provision:
     #!/bin/bash
     set -eux
     apt-get update
-    apt-get install -y build-essential systemtap-sdt-dev
+    apt-get install -y build-essential systemtap-sdt-dev libclang-dev
 
 - mode: user
   script: |
