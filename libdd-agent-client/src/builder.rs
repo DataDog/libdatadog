@@ -4,9 +4,9 @@
 //! Builder for [`crate::AgentClient`].
 
 use std::collections::HashMap;
-use std::time::Duration;
 #[cfg(unix)]
 use std::path::PathBuf;
+use std::time::Duration;
 #[cfg(windows)]
 use OsString;
 
@@ -19,6 +19,8 @@ pub const DEFAULT_TIMEOUT_MS: u64 = 2_000;
 
 /// Default retry configuration: 2 retries (3 total attempts), 100 ms initial delay,
 /// exponential backoff with full jitter.
+//TODO: Do we really want something different from `RetryConfig::default()` for the agent? The only
+//difference is the number of retries : 3 vs 2
 pub fn default_retry_config() -> RetryConfig {
     RetryConfig::new()
         .max_retries(2)
@@ -94,11 +96,13 @@ pub struct AgentClientBuilder {
 
 impl AgentClientBuilder {
     /// Create a new builder with default settings.
+    #[inline]
     pub fn new() -> Self {
         Self::default()
     }
 
     /// Set the transport configuration.
+    #[inline]
     pub fn transport(mut self, transport: AgentTransport) -> Self {
         self.transport = Some(transport);
         self
@@ -114,6 +118,7 @@ impl AgentClientBuilder {
 
     /// Convenience: Unix Domain Socket.
     #[cfg(unix)]
+    #[inline]
     pub fn unix_socket(self, path: impl Into<PathBuf>) -> Self {
         self.transport(AgentTransport::UnixSocket { path: path.into() })
     }
@@ -133,7 +138,7 @@ impl AgentClientBuilder {
         fallback_port: u16,
     ) -> Self {
         let uds_path = uds_path.into();
-        let transport = if uds_path.try_exists().unwrap_or(false) {
+        let transport = if let Ok(true) = uds_path.try_exists() {
             AgentTransport::UnixSocket { path: uds_path }
         } else {
             AgentTransport::Http {
@@ -147,6 +152,7 @@ impl AgentClientBuilder {
     /// Set the test session token.
     ///
     /// When set, `x-datadog-test-session-token: <token>` is injected on every request.
+    #[inline]
     pub fn test_agent_session_token(mut self, token: impl Into<String>) -> Self {
         self.test_token = Some(token.into());
         self
@@ -155,6 +161,7 @@ impl AgentClientBuilder {
     /// Set the request timeout.
     ///
     /// Defaults to [`DEFAULT_TIMEOUT_MS`] (2 000 ms) when not set.
+    #[inline]
     pub fn timeout(mut self, timeout: Duration) -> Self {
         self.timeout = Some(timeout);
         self
@@ -175,12 +182,14 @@ impl AgentClientBuilder {
     /// Override the default retry configuration.
     ///
     /// Defaults to [`default_retry_config`].
+    #[inline]
     pub fn retry(mut self, config: RetryConfig) -> Self {
         self.retry = Some(config);
         self
     }
 
     /// Set the language/runtime metadata injected into every request. Required.
+    #[inline]
     pub fn language_metadata(mut self, meta: LanguageMetadata) -> Self {
         self.language = Some(meta);
         self
@@ -192,6 +201,7 @@ impl AgentClientBuilder {
     /// second connection when keep-alive is enabled. The default of `false` is correct for all
     /// periodic-flush writers (traces, stats, data streams). Set to `true` only for
     /// high-frequency continuous senders (e.g. a streaming profiling exporter).
+    #[inline]
     pub fn use_keep_alive(mut self, enabled: bool) -> Self {
         self.keep_alive = enabled;
         self
@@ -205,6 +215,7 @@ impl AgentClientBuilder {
     // baked in; only the opt-in client-level `gzip(level)` builder knob is deferred.
 
     /// Additional custom headers to inject.
+    #[inline]
     pub fn extra_headers(mut self, headers: HashMap<String, String>) -> Self {
         self.extra_headers = headers;
         self
@@ -224,7 +235,8 @@ impl AgentClientBuilder {
             .map_err(|e| BuildError::HttpClient(e.to_string()))?;
 
         // Pre-compute all static headers that are injected on every request.
-        let static_headers = Self::build_static_headers(&language, self.test_token, self.extra_headers);
+        let static_headers =
+            Self::build_static_headers(&language, self.test_token, self.extra_headers);
 
         Ok(AgentClient::new(http, static_headers))
     }
@@ -271,76 +283,47 @@ impl AgentClientBuilder {
         test_token: Option<String>,
         extra_headers: HashMap<String, String>,
     ) -> Vec<(String, String)> {
-        let mut headers = Vec::new();
-
-        headers.push(("Datadog-Meta-Lang".to_string(), language.language.clone()));
-        headers.push((
-            "Datadog-Meta-Lang-Version".to_string(),
-            language.language_version.clone(),
-        ));
-        headers.push((
-            "Datadog-Meta-Lang-Interpreter".to_string(),
-            language.interpreter.clone(),
-        ));
-        headers.push((
-            "Datadog-Meta-Tracer-Version".to_string(),
-            language.tracer_version.clone(),
-        ));
-        headers.push(("User-Agent".to_string(), language.user_agent()));
+        let mut headers = vec![
+            ("Datadog-Meta-Lang".to_string(), language.language.clone()),
+            ("Datadog-Meta-Lang-Version".to_string(), language.language_version.clone()),
+            ("Datadog-Meta-Lang-Interpreter".to_string(), language.interpreter.clone()),
+            ("Datadog-Meta-Tracer-Version".to_string(), language.tracer_version.clone()),
+            ("User-Agent".to_string(), language.user_agent()),
+        ];
 
         if let Some(token) = test_token {
             headers.push(("x-datadog-test-session-token".to_string(), token));
         }
 
-        headers.extend(container_headers());
+        headers.extend(Self::container_headers());
         headers.extend(extra_headers);
 
         headers
     }
-}
 
-/// Read container / entity-ID headers from the host environment.
-///
-/// On Linux, parses `/proc/self/cgroup` to extract the container ID and injects
-/// `Datadog-Container-Id` and `Datadog-Entity-ID`. Always injects `Datadog-External-Env`
-/// when `DD_EXTERNAL_ENV` is set.
-fn container_headers() -> Vec<(String, String)> {
-    let mut headers = Vec::new();
+    /// Read container / entity-ID headers from the host environment. Always injects
+    /// `Datadog-External-Env` when `DD_EXTERNAL_ENV` is set.
+    fn container_headers() -> Vec<(String, String)> {
+        let mut headers = Vec::new();
 
-    if let Ok(env) = std::env::var("DD_EXTERNAL_ENV") {
-        if !env.is_empty() {
-            headers.push(("Datadog-External-Env".to_string(), env));
-        }
-    }
-
-    #[cfg(target_os = "linux")]
-    if let Some(container_id) = read_container_id_from_cgroup() {
-        let entity_id = format!("ci-{}", container_id);
-        headers.push(("Datadog-Container-Id".to_string(), container_id));
-        headers.push(("Datadog-Entity-ID".to_string(), entity_id));
-    }
-
-    headers
-}
-
-/// Parse a 64-character hex container ID from `/proc/self/cgroup`.
-///
-/// cgroup v1 paths end with the container ID, e.g.:
-///   `12:blkio:/docker/abc123...64hex...`
-#[cfg(target_os = "linux")]
-fn read_container_id_from_cgroup() -> Option<String> {
-    let content = std::fs::read_to_string("/proc/self/cgroup").ok()?;
-    for line in content.lines() {
-        // Each cgroup line is: <hierarchy-id>:<subsystem>:<path>
-        let path = line.splitn(3, ':').nth(2)?;
-        // Container ID is a 64-char hex segment at the end of the cgroup path.
-        for segment in path.split('/').rev() {
-            if segment.len() == 64 && segment.bytes().all(|b| b.is_ascii_hexdigit()) {
-                return Some(segment.to_string());
+        if let Ok(env) = std::env::var("DD_EXTERNAL_ENV") {
+            if !env.is_empty() {
+                headers.push(("Datadog-External-Env".to_string(), env));
             }
         }
+
+        use libdd_common::entity_id;
+
+        if let Some(container_id) = entity_id::get_container_id() {
+            headers.push(("Datadog-Container-Id".to_string(), container_id.to_owned()));
+        }
+
+        if let Some(entity_id) = entity_id::get_entity_id() {
+            headers.push(("Datadog-Entity-ID".to_string(), entity_id.to_owned()));
+        }
+
+        headers
     }
-    None
 }
 
 #[cfg(test)]
@@ -403,10 +386,7 @@ mod tests {
     fn timeout_from_env_uses_default_when_unset() {
         std::env::remove_var("DD_TRACE_AGENT_TIMEOUT_SECONDS");
         let b = AgentClientBuilder::new().timeout_from_env();
-        assert_eq!(
-            b.timeout,
-            Some(Duration::from_millis(DEFAULT_TIMEOUT_MS))
-        );
+        assert_eq!(b.timeout, Some(Duration::from_millis(DEFAULT_TIMEOUT_MS)));
     }
 
     #[test]
@@ -423,6 +403,9 @@ mod tests {
         let mut headers = HashMap::new();
         headers.insert("X-Custom".to_string(), "value".to_string());
         let b = AgentClientBuilder::new().extra_headers(headers);
-        assert_eq!(b.extra_headers.get("X-Custom").map(|s| s.as_str()), Some("value"));
+        assert_eq!(
+            b.extra_headers.get("X-Custom").map(|s| s.as_str()),
+            Some("value")
+        );
     }
 }

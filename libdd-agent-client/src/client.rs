@@ -79,16 +79,11 @@ impl AgentClient {
         let url = format!("{}{}", self.base_url, path);
         let mut request =
             libdd_http_client::HttpRequest::new(libdd_http_client::HttpMethod::Put, url)
-                .with_body(payload);
-
-        for (k, v) in &self.static_headers {
-            request = request.with_header(k, v);
-        }
-
-        request = request
-            .with_header("Content-Type", content_type)
-            .with_header("X-Datadog-Trace-Count", trace_count.to_string())
-            .with_header("Datadog-Send-Real-Http-Status", "true");
+                .with_body(payload)
+                .with_headers(self.static_headers.iter().cloned())
+                .with_header("Content-Type", content_type)
+                .with_header("X-Datadog-Trace-Count", trace_count.to_string())
+                .with_header("Datadog-Send-Real-Http-Status", "true");
 
         if opts.computed_top_level {
             request = request.with_header("Datadog-Client-Computed-Top-Level", "yes");
@@ -113,14 +108,10 @@ impl AgentClient {
     /// Send span stats (APM concentrator buckets) to `/v0.6/stats`.
     pub async fn send_stats(&self, payload: Bytes) -> Result<(), SendError> {
         let url = format!("{}/v0.6/stats", self.base_url);
-        let mut request =
-            libdd_http_client::HttpRequest::new(libdd_http_client::HttpMethod::Put, url)
-                .with_body(payload);
-
-        for (k, v) in &self.static_headers {
-            request = request.with_header(k, v);
-        }
-        request = request.with_header("Content-Type", "application/msgpack");
+        let request = libdd_http_client::HttpRequest::new(libdd_http_client::HttpMethod::Put, url)
+            .with_body(payload)
+            .with_headers(self.static_headers.iter().cloned())
+            .with_header("Content-Type", "application/msgpack");
 
         let response = self.http.send(request).await.map_err(map_http_error)?;
         check_status(response)
@@ -134,14 +125,9 @@ impl AgentClient {
         let compressed = gzip_compress(payload)?;
 
         let url = format!("{}/v0.1/pipeline_stats", self.base_url);
-        let mut request =
-            libdd_http_client::HttpRequest::new(libdd_http_client::HttpMethod::Put, url)
-                .with_body(compressed);
-
-        for (k, v) in &self.static_headers {
-            request = request.with_header(k, v);
-        }
-        request = request
+        let request = libdd_http_client::HttpRequest::new(libdd_http_client::HttpMethod::Put, url)
+            .with_body(compressed)
+            .with_headers(self.static_headers.iter().cloned())
             .with_header("Content-Type", "application/msgpack")
             .with_header("Content-Encoding", "gzip");
 
@@ -152,14 +138,9 @@ impl AgentClient {
     /// Send a telemetry event to the agent's telemetry proxy (`telemetry/proxy/api/v2/apmtelemetry`).
     pub async fn send_telemetry(&self, req: TelemetryRequest) -> Result<(), SendError> {
         let url = format!("{}/telemetry/proxy/api/v2/apmtelemetry", self.base_url);
-        let mut request =
-            libdd_http_client::HttpRequest::new(libdd_http_client::HttpMethod::Post, url)
-                .with_body(req.body);
-
-        for (k, v) in &self.static_headers {
-            request = request.with_header(k, v);
-        }
-        request = request
+        let request = libdd_http_client::HttpRequest::new(libdd_http_client::HttpMethod::Post, url)
+            .with_body(req.body)
+            .with_headers(self.static_headers.iter().cloned())
             .with_header("Content-Type", "application/json")
             .with_header("DD-Telemetry-Request-Type", &req.request_type)
             .with_header("DD-Telemetry-API-Version", &req.api_version)
@@ -185,14 +166,9 @@ impl AgentClient {
         content_type: &str,
     ) -> Result<(), SendError> {
         let url = format!("{}{}", self.base_url, path);
-        let mut request =
-            libdd_http_client::HttpRequest::new(libdd_http_client::HttpMethod::Post, url)
-                .with_body(payload);
-
-        for (k, v) in &self.static_headers {
-            request = request.with_header(k, v);
-        }
-        request = request
+        let request = libdd_http_client::HttpRequest::new(libdd_http_client::HttpMethod::Post, url)
+            .with_body(payload)
+            .with_headers(self.static_headers.iter().cloned())
             .with_header("Content-Type", content_type)
             .with_header("X-Datadog-EVP-Subdomain", subdomain);
 
@@ -204,13 +180,17 @@ impl AgentClient {
     ///
     /// Returns `Ok(None)` when the agent returns 404 (remote-config / info not supported).
     pub async fn agent_info(&self) -> Result<Option<AgentInfo>, SendError> {
-        let url = format!("{}/info", self.base_url);
-        let mut request =
-            libdd_http_client::HttpRequest::new(libdd_http_client::HttpMethod::Get, url);
-
-        for (k, v) in &self.static_headers {
-            request = request.with_header(k, v);
+        #[derive(serde::Deserialize)]
+        struct InfoResponse {
+            version: Option<String>,
+            endpoints: Option<Vec<String>>,
+            client_drop_p0s: Option<bool>,
+            config: Option<serde_json::Value>,
         }
+
+        let url = format!("{}/info", self.base_url);
+        let request = libdd_http_client::HttpRequest::new(libdd_http_client::HttpMethod::Get, url)
+            .with_headers(self.static_headers.iter().cloned());
 
         let response = self.http.send(request).await.map_err(map_http_error)?;
 
@@ -225,16 +205,17 @@ impl AgentClient {
             });
         }
 
-        let container_tags_hash = header_value(response.headers(), "datadog-container-tags-hash");
-        let state_hash = header_value(response.headers(), "datadog-agent-state");
+        // Case-insensitive lookup of a response header value.
+        let header = |name: &str| -> Option<String> {
+            response
+                .headers()
+                .iter()
+                .find(|(k, _)| k.eq_ignore_ascii_case(name))
+                .map(|(_, v)| v.clone())
+        };
 
-        #[derive(serde::Deserialize)]
-        struct InfoResponse {
-            version: Option<String>,
-            endpoints: Option<Vec<String>>,
-            client_drop_p0s: Option<bool>,
-            config: Option<serde_json::Value>,
-        }
+        let container_tags_hash = header("datadog-container-tags-hash");
+        let state_hash = header("datadog-agent-state");
 
         let info: InfoResponse = serde_json::from_slice(response.body())
             .map_err(|e| SendError::Encoding(e.to_string()))?;
@@ -274,14 +255,6 @@ fn check_status(response: libdd_http_client::HttpResponse) -> Result<(), SendErr
     }
 }
 
-/// Case-insensitive lookup of a response header value.
-fn header_value(headers: &[(String, String)], name: &str) -> Option<String> {
-    headers
-        .iter()
-        .find(|(k, _)| k.eq_ignore_ascii_case(name))
-        .map(|(_, v)| v.clone())
-}
-
 /// Gzip-compress `payload` at level 6 (matching dd-trace-py's trace writer).
 fn gzip_compress(payload: Bytes) -> Result<Bytes, SendError> {
     let mut encoder = GzEncoder::new(Vec::new(), Compression::new(6));
@@ -300,9 +273,10 @@ fn map_http_error(e: libdd_http_client::HttpClientError) -> SendError {
         libdd_http_client::HttpClientError::ConnectionFailed(s) => SendError::Transport(
             std::io::Error::new(std::io::ErrorKind::ConnectionRefused, s),
         ),
-        libdd_http_client::HttpClientError::TimedOut => SendError::Transport(
-            std::io::Error::new(std::io::ErrorKind::TimedOut, "request timed out"),
-        ),
+        libdd_http_client::HttpClientError::TimedOut => SendError::Transport(std::io::Error::new(
+            std::io::ErrorKind::TimedOut,
+            "request timed out",
+        )),
         libdd_http_client::HttpClientError::IoError(s) => {
             SendError::Transport(std::io::Error::other(s))
         }
@@ -345,7 +319,11 @@ mod tests {
     #[test]
     fn static_headers_contain_language_metadata() {
         let client = test_client(8126);
-        let keys: Vec<&str> = client.static_headers.iter().map(|(k, _)| k.as_str()).collect();
+        let keys: Vec<&str> = client
+            .static_headers
+            .iter()
+            .map(|(k, _)| k.as_str())
+            .collect();
         assert!(keys.contains(&"Datadog-Meta-Lang"));
         assert!(keys.contains(&"Datadog-Meta-Lang-Version"));
         assert!(keys.contains(&"User-Agent"));
@@ -371,5 +349,4 @@ mod tests {
         let body = Bytes::from(r#"{"other":"value"}"#);
         assert!(parse_rate_by_service(&body).is_none());
     }
-
 }
