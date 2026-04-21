@@ -25,13 +25,44 @@ impl LanguageMetadata {
         interpreter: impl Into<String>,
         tracer_version: impl Into<String>,
     ) -> Self {
-        todo!()
+        Self {
+            language: language.into(),
+            language_version: language_version.into(),
+            interpreter: interpreter.into(),
+            tracer_version: tracer_version.into(),
+        }
     }
 
     /// Produces the `User-Agent` string passed to `Endpoint::to_request_builder()`.
     ///
     /// Format: `dd-trace-<language>/<tracer_version>`, e.g. `dd-trace-python/2.18.0`.
     pub fn user_agent(&self) -> String {
-        todo!()
+        format!("dd-trace-{}/{}", self.language, self.tracer_version)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn new_stores_fields() {
+        let m = LanguageMetadata::new("python", "3.12.1", "CPython", "2.18.0");
+        assert_eq!(m.language, "python");
+        assert_eq!(m.language_version, "3.12.1");
+        assert_eq!(m.interpreter, "CPython");
+        assert_eq!(m.tracer_version, "2.18.0");
+    }
+
+    #[test]
+    fn user_agent_format() {
+        let m = LanguageMetadata::new("python", "3.12.1", "CPython", "2.18.0");
+        assert_eq!(m.user_agent(), "dd-trace-python/2.18.0");
+    }
+
+    #[test]
+    fn user_agent_ruby() {
+        let m = LanguageMetadata::new("ruby", "3.2.0", "MRI", "1.13.0");
+        assert_eq!(m.user_agent(), "dd-trace-ruby/1.13.0");
     }
 }
