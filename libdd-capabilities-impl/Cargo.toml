@@ -21,6 +21,9 @@ http = "1"
 libdd-capabilities = { path = "../libdd-capabilities", version = "0.1.0" }
 libdd-common = { path = "../libdd-common", version = "3.0.2", default-features = false }
 
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+http-body-util = "0.1"
+
 [features]
 default = ["https"]
 https = ["libdd-common/https"]
