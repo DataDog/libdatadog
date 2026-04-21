@@ -1,7 +1,7 @@
 // Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-//! This crate provides a Datadog-agent-specific HTTP clientm sitting on top of the basic
+//! This crate provides a Datadog-agent-specific HTTP client sitting on top of the basic
 //! `libdd-http-client` primitives. The API is higher-level and makes agent-specific settings
 //! (headers, etc.) the default rather than opt-in boilerplate.
 //!

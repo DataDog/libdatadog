@@ -358,8 +358,9 @@ fn container_headers() -> Vec<(String, String)> {
 
     #[cfg(target_os = "linux")]
     if let Some(container_id) = read_container_id_from_cgroup() {
-        headers.push(("Datadog-Container-Id".to_string(), container_id.clone()));
-        headers.push(("Datadog-Entity-ID".to_string(), format!("ci-{}", container_id)));
+        let entity_id = format!("ci-{}", container_id);
+        headers.push(("Datadog-Container-Id".to_string(), container_id));
+        headers.push(("Datadog-Entity-ID".to_string(), entity_id));
     }
 
     headers
@@ -441,6 +442,7 @@ mod tests {
     }
 
     #[test]
+    #[serial_test::serial]
     fn timeout_from_env_uses_default_when_unset() {
         std::env::remove_var("DD_TRACE_AGENT_TIMEOUT_SECONDS");
         let b = AgentClientBuilder::new().timeout_from_env();
@@ -451,11 +453,12 @@ mod tests {
     }
 
     #[test]
+    #[serial_test::serial]
     fn timeout_from_env_parses_env_var() {
         std::env::set_var("DD_TRACE_AGENT_TIMEOUT_SECONDS", "5");
         let b = AgentClientBuilder::new().timeout_from_env();
-        assert_eq!(b.timeout, Some(Duration::from_secs(5)));
         std::env::remove_var("DD_TRACE_AGENT_TIMEOUT_SECONDS");
+        assert_eq!(b.timeout, Some(Duration::from_secs(5)));
     }
 
     #[test]
