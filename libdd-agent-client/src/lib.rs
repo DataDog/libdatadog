@@ -7,32 +7,35 @@
 //!
 //! # Quick start
 //!
+//! Call [`AgentClientBuilder::auto_detect`] to let the client configure transport and timeout
+//! from the standard Datadog environment variables (`DD_TRACE_AGENT_URL`, `DD_AGENT_HOST`,
+//! `DD_TRACE_AGENT_PORT`, `DD_TRACE_AGENT_TIMEOUT_SECONDS`), falling back to a local Unix
+//! socket at `/var/run/datadog/apm.socket` when it exists, and finally to `localhost:8126`.
+//!
 //! ```rust,no_run
-//! # async fn example() -> Result<(), libdd_agent_client::BuildError> {
+//! # #[cfg(unix)]
+//! # fn example() -> Result<(), libdd_agent_client::BuildError> {
 //! use libdd_agent_client::{AgentClient, LanguageMetadata};
 //!
 //! let client = AgentClient::builder()
-//!     .http("localhost", 8126)
-//!     .language_metadata(LanguageMetadata::new(
-//!         "python", "3.12.1", "CPython", "2.18.0",
-//!     ))
+//!     .auto_detect()
+//!     .language_metadata(LanguageMetadata::new("python", "3.12.1", "CPython", "2.18.0"))
 //!     .build()?;
 //! # Ok(())
 //! # }
 //! ```
 //!
-//! # Unix Domain Socket
+//! # Explicit transport
+//!
+//! When the host and port are known at build time, set them directly:
 //!
 //! ```rust,no_run
-//! # #[cfg(unix)]
-//! # async fn example() -> Result<(), libdd_agent_client::BuildError> {
+//! # fn example() -> Result<(), libdd_agent_client::BuildError> {
 //! use libdd_agent_client::{AgentClient, LanguageMetadata};
 //!
 //! let client = AgentClient::builder()
-//!     .unix_socket("/var/run/datadog/apm.socket")
-//!     .language_metadata(LanguageMetadata::new(
-//!         "python", "3.12.1", "CPython", "2.18.0",
-//!     ))
+//!     .http("localhost", 8126)
+//!     .language_metadata(LanguageMetadata::new("python", "3.12.1", "CPython", "2.18.0"))
 //!     .build()?;
 //! # Ok(())
 //! # }

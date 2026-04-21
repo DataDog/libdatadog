@@ -74,9 +74,10 @@ impl Default for AgentTransport {
 ///
 /// # Required fields
 ///
-/// - Transport: set via [`AgentClientBuilder::transport`] or a convenience method
+/// - Transport: set via [`AgentClientBuilder::auto_detect`] (reads standard env vars and
+///   probes the local socket) or an explicit convenience method
 ///   ([`AgentClientBuilder::http`], [`AgentClientBuilder::unix_socket`],
-///   [`AgentClientBuilder::windows_named_pipe`], [`AgentClientBuilder::auto_detect`]).
+///   [`AgentClientBuilder::windows_named_pipe`], [`AgentClientBuilder::transport`]).
 /// - [`AgentClientBuilder::language_metadata`].
 ///
 /// # Test tokens
@@ -129,24 +130,101 @@ impl AgentClientBuilder {
         self.transport(AgentTransport::NamedPipe { path: path.into() })
     }
 
-    /// Convenience: auto-detect transport (UDS if socket file exists, else HTTP).
+    /// Auto-configure transport and timeout from the environment.
+    ///
+    /// Transport priority:
+    /// 1. `DD_TRACE_AGENT_URL` — parsed as `http://host:port` or `unix:///path`.
+    /// 2. `DD_AGENT_HOST` / `DD_TRACE_AGENT_PORT` — explicit host and/or port.
+    /// 3. `/var/run/datadog/apm.socket` — Unix domain socket if the file exists.
+    /// 4. `localhost:8126` — HTTP fallback.
+    ///
+    /// Timeout is read from `DD_TRACE_AGENT_TIMEOUT_SECONDS` (seconds, float),
+    /// defaulting to [`DEFAULT_TIMEOUT_MS`] when unset or unparseable.
     #[cfg(unix)]
-    pub fn auto_detect(
-        self,
-        uds_path: impl Into<PathBuf>,
-        fallback_host: impl Into<String>,
-        fallback_port: u16,
-    ) -> Self {
-        let uds_path = uds_path.into();
-        let transport = if let Ok(true) = uds_path.try_exists() {
-            AgentTransport::UnixSocket { path: uds_path }
-        } else {
-            AgentTransport::Http {
-                host: fallback_host.into(),
-                port: fallback_port,
+    pub fn auto_detect(mut self) -> Self {
+        let transport = Self::transport_from_env().unwrap_or_else(|| {
+            let uds = PathBuf::from("/var/run/datadog/apm.socket");
+            if uds.try_exists().unwrap_or(false) {
+                AgentTransport::UnixSocket { path: uds }
+            } else {
+                AgentTransport::Http {
+                    host: "localhost".to_string(),
+                    port: 8126,
+                }
             }
+        });
+        self.transport = Some(transport);
+
+        self.timeout = Some(
+            std::env::var("DD_TRACE_AGENT_TIMEOUT_SECONDS")
+                .ok()
+                .and_then(|v| v.parse::<f64>().ok())
+                .map(|secs| Duration::from_millis((secs * 1000.0) as u64))
+                .unwrap_or(Duration::from_millis(DEFAULT_TIMEOUT_MS)),
+        );
+
+        self
+    }
+
+    /// Read transport from env vars (`DD_TRACE_AGENT_URL`, then `DD_AGENT_HOST`/`DD_TRACE_AGENT_PORT`).
+    /// Returns `None` when none of the variables are set.
+    #[cfg(unix)]
+    fn transport_from_env() -> Option<AgentTransport> {
+        if let Ok(url) = std::env::var("DD_TRACE_AGENT_URL") {
+            if let Some(t) = Self::parse_agent_url(&url) {
+                return Some(t);
+            }
+        }
+
+        let host = std::env::var("DD_AGENT_HOST").ok();
+        let port = std::env::var("DD_TRACE_AGENT_PORT")
+            .ok()
+            .and_then(|p| p.parse::<u16>().ok());
+
+        if host.is_some() || port.is_some() {
+            return Some(AgentTransport::Http {
+                host: host.unwrap_or_else(|| "localhost".to_string()),
+                port: port.unwrap_or(8126),
+            });
+        }
+
+        None
+    }
+
+    /// Parse a Datadog agent URL into an [`AgentTransport`].
+    ///
+    /// Supported schemes: `http://`, `https://`, `unix://`.
+    #[cfg(unix)]
+    fn parse_agent_url(url: &str) -> Option<AgentTransport> {
+        if let Some(after_scheme) = url.strip_prefix("unix://") {
+            // unix:///abs/path  or  unix://localhost/abs/path
+            let path = if after_scheme.starts_with('/') {
+                after_scheme
+            } else {
+                &after_scheme[after_scheme.find('/')?..]
+            };
+            return Some(AgentTransport::UnixSocket {
+                path: PathBuf::from(path),
+            });
+        }
+
+        let rest = url
+            .strip_prefix("http://")
+            .or_else(|| url.strip_prefix("https://"))?;
+
+        // Drop any trailing path (e.g. "host:port/")
+        let authority = rest.split('/').next().unwrap_or(rest);
+        let (host, port) = if let Some(colon) = authority.rfind(':') {
+            let port = authority[colon + 1..].parse::<u16>().ok().unwrap_or(8126);
+            (&authority[..colon], port)
+        } else {
+            (authority, 8126u16)
         };
-        self.transport(transport)
+
+        Some(AgentTransport::Http {
+            host: host.to_string(),
+            port,
+        })
     }
 
     /// Set the test session token.
@@ -163,18 +241,6 @@ impl AgentClientBuilder {
     /// Defaults to [`DEFAULT_TIMEOUT_MS`] (2 000 ms) when not set.
     #[inline]
     pub fn timeout(mut self, timeout: Duration) -> Self {
-        self.timeout = Some(timeout);
-        self
-    }
-
-    /// Read the timeout from `DD_TRACE_AGENT_TIMEOUT_SECONDS`, falling back to
-    /// [`DEFAULT_TIMEOUT_MS`] if the variable is unset or unparseable.
-    pub fn timeout_from_env(mut self) -> Self {
-        let timeout = std::env::var("DD_TRACE_AGENT_TIMEOUT_SECONDS")
-            .ok()
-            .and_then(|v| v.parse::<f64>().ok())
-            .map(|secs| Duration::from_millis((secs * 1000.0) as u64))
-            .unwrap_or(Duration::from_millis(DEFAULT_TIMEOUT_MS));
         self.timeout = Some(timeout);
         self
     }
@@ -390,21 +456,78 @@ mod tests {
         assert!(result.is_ok());
     }
 
+    #[cfg(unix)]
     #[test]
     #[serial_test::serial]
-    fn timeout_from_env_uses_default_when_unset() {
-        std::env::remove_var("DD_TRACE_AGENT_TIMEOUT_SECONDS");
-        let b = AgentClientBuilder::new().timeout_from_env();
-        assert_eq!(b.timeout, Some(Duration::from_millis(DEFAULT_TIMEOUT_MS)));
+    fn auto_detect_uses_dd_trace_agent_url_http() {
+        std::env::set_var("DD_TRACE_AGENT_URL", "http://myhost:9000");
+        std::env::remove_var("DD_AGENT_HOST");
+        std::env::remove_var("DD_TRACE_AGENT_PORT");
+        let b = AgentClientBuilder::new().auto_detect();
+        std::env::remove_var("DD_TRACE_AGENT_URL");
+        assert!(matches!(
+            b.transport,
+            Some(AgentTransport::Http { ref host, port })
+                if host == "myhost" && port == 9000
+        ));
     }
 
+    #[cfg(unix)]
     #[test]
     #[serial_test::serial]
-    fn timeout_from_env_parses_env_var() {
+    fn auto_detect_uses_dd_trace_agent_url_unix() {
+        std::env::set_var("DD_TRACE_AGENT_URL", "unix:///tmp/test.sock");
+        std::env::remove_var("DD_AGENT_HOST");
+        std::env::remove_var("DD_TRACE_AGENT_PORT");
+        let b = AgentClientBuilder::new().auto_detect();
+        std::env::remove_var("DD_TRACE_AGENT_URL");
+        assert!(matches!(
+            b.transport,
+            Some(AgentTransport::UnixSocket { ref path })
+                if path.to_str() == Some("/tmp/test.sock")
+        ));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    #[serial_test::serial]
+    fn auto_detect_uses_dd_agent_host_and_port() {
+        std::env::remove_var("DD_TRACE_AGENT_URL");
+        std::env::set_var("DD_AGENT_HOST", "remotehost");
+        std::env::set_var("DD_TRACE_AGENT_PORT", "7777");
+        let b = AgentClientBuilder::new().auto_detect();
+        std::env::remove_var("DD_AGENT_HOST");
+        std::env::remove_var("DD_TRACE_AGENT_PORT");
+        assert!(matches!(
+            b.transport,
+            Some(AgentTransport::Http { ref host, port })
+                if host == "remotehost" && port == 7777
+        ));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    #[serial_test::serial]
+    fn auto_detect_reads_timeout_from_env() {
+        std::env::remove_var("DD_TRACE_AGENT_URL");
+        std::env::remove_var("DD_AGENT_HOST");
+        std::env::remove_var("DD_TRACE_AGENT_PORT");
         std::env::set_var("DD_TRACE_AGENT_TIMEOUT_SECONDS", "5");
-        let b = AgentClientBuilder::new().timeout_from_env();
+        let b = AgentClientBuilder::new().auto_detect();
         std::env::remove_var("DD_TRACE_AGENT_TIMEOUT_SECONDS");
         assert_eq!(b.timeout, Some(Duration::from_secs(5)));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    #[serial_test::serial]
+    fn auto_detect_uses_default_timeout_when_unset() {
+        std::env::remove_var("DD_TRACE_AGENT_URL");
+        std::env::remove_var("DD_AGENT_HOST");
+        std::env::remove_var("DD_TRACE_AGENT_PORT");
+        std::env::remove_var("DD_TRACE_AGENT_TIMEOUT_SECONDS");
+        let b = AgentClientBuilder::new().auto_detect();
+        assert_eq!(b.timeout, Some(Duration::from_millis(DEFAULT_TIMEOUT_MS)));
     }
 
     #[test]
