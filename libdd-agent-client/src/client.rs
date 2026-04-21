@@ -135,7 +135,8 @@ impl AgentClient {
         check_status(response)
     }
 
-    /// Send a telemetry event to the agent's telemetry proxy (`telemetry/proxy/api/v2/apmtelemetry`).
+    /// Send a telemetry event to the agent's telemetry proxy
+    /// (`telemetry/proxy/api/v2/apmtelemetry`).
     pub async fn send_telemetry(&self, req: TelemetryRequest) -> Result<(), SendError> {
         let url = format!("{}/telemetry/proxy/api/v2/apmtelemetry", self.base_url);
         let request = libdd_http_client::HttpRequest::new(libdd_http_client::HttpMethod::Post, url)

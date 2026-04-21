@@ -40,7 +40,8 @@
 //!
 //! # Fork safety
 //!
-//! The underlying `libdd-http-client` uses the `hickory-dns` DNS resolver by default, which is in-process and fork-safe.
+//! The underlying `libdd-http-client` uses the `hickory-dns` DNS resolver by default, which is
+//! in-process and fork-safe.
 
 pub mod agent_info;
 pub mod builder;
