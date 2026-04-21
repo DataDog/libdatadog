@@ -15,7 +15,7 @@ use libdd_shared_runtime::SharedRuntime;
 type Span = [u8; 100];
 
 // Number of chunks each sender thread sends per benchmark iteration.
-const CHUNKS_PER_SENDER: usize = 90_000;
+const CHUNKS_PER_SENDER: usize = 900;
 
 // Simulates async IO by sleeping 2ms per export batch.
 #[derive(Debug)]
@@ -40,8 +40,8 @@ impl Export<Span> for SleepExport {
 fn setup_buffer() -> (Arc<SharedRuntime>, Arc<TraceBuffer<Span>>) {
     let rt = Arc::new(SharedRuntime::new().expect("SharedRuntime::new"));
     let cfg = TraceBufferConfig::new()
-        .max_buffered_spans(400_000)
-        .span_flush_threshold(50_000)
+        .max_buffered_spans(1_000)
+        .span_flush_threshold(500)
         .max_flush_interval(Duration::from_secs(2));
     let (buf, worker) = TraceBuffer::new(cfg, Box::new(|_| {}), Box::new(SleepExport));
     rt.spawn_worker(worker).expect("spawn_worker");
@@ -55,7 +55,7 @@ fn bench_trace_buffer(c: &mut Criterion) {
     let workloads: &[(&str, Option<Duration>)] = &[
         ("no_delay", None),
         ("1us_delay", Some(Duration::from_micros(1))),
-        ("10us_delay", Some(Duration::from_micros(100))),
+        ("10us_delay", Some(Duration::from_micros(10))),
     ];
 
     for &(delay_label, delay) in workloads {

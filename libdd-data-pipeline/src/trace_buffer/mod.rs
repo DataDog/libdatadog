@@ -161,10 +161,6 @@ impl<T> Batch<T> {
         };
     }
 
-    fn span_count(&self) -> usize {
-        self.span_count
-    }
-
     /// Add a trace chunk to the batch
     /// If the batch is already too big, drop the chunk and return an error
     ///
@@ -182,9 +178,8 @@ impl<T> Batch<T> {
             return Ok(());
         }
 
-        let chunk_len = chunk.len();
+        self.span_count += chunk.len();
         self.chunks.push(chunk);
-        self.span_count += chunk_len;
         Ok(())
     }
 
@@ -216,13 +211,13 @@ impl<T> Batch<T> {
 ///
 /// # Synchronous mode
 ///
-/// If [`TraceBufferConfig::synchronous_writes`] is true and
-/// * Either until the chunks have been flushed the agent
+/// If [`TraceBufferConfig::synchronous_writes`] is true, this blocks until
+/// * Either until the chunks have been flushed to the agent
 /// * Or if `synchronous_writes_timeout` is Some, until the timeout is reached. At which point the
 ///   flush might continue in the background
 pub struct TraceBuffer<T> {
     tx: Sender<T>,
-    /// Enables synchronous exports if Some
+    /// Enables synchronous exports
     ///
     /// Each batch in the queue will get a generation associated. Generations are strictly
     /// incremental and processed in order by the background thread.
@@ -360,7 +355,7 @@ impl<T> Sender<T> {
             if timeout.is_zero() {
                 return Err(TraceBufferError::TimedOut(Duration::ZERO));
             }
-            let state = self.get_state()?;
+            let state = self.lock_state()?;
             let (_state, res) = self
                 .waiter
                 .sender_notifier
@@ -370,7 +365,7 @@ impl<T> Sender<T> {
                 return Err(TraceBufferError::TimedOut(timeout));
             }
         } else {
-            let state = self.get_state()?;
+            let state = self.lock_state()?;
             let _state = self
                 .waiter
                 .sender_notifier
@@ -380,7 +375,7 @@ impl<T> Sender<T> {
         Ok(())
     }
 
-    fn get_state(&self) -> Result<MutexGuard<'_, SharedState<T>>, TraceBufferError> {
+    fn lock_state(&self) -> Result<MutexGuard<'_, SharedState<T>>, TraceBufferError> {
         self.waiter
             .state
             .lock()
@@ -388,7 +383,7 @@ impl<T> Sender<T> {
     }
 
     fn get_running_state(&self) -> Result<MutexGuard<'_, SharedState<T>>, TraceBufferError> {
-        let state = self.get_state()?;
+        let state = self.lock_state()?;
         if state.has_shutdown {
             return Err(TraceBufferError::AlreadyShutdown);
         }
@@ -405,7 +400,7 @@ impl<T> Sender<T> {
         state.metrics.spans_queued += chunk_len;
         let gen = state.batch.batch_gen;
         if !state.flush_needed
-            && (state.batch.span_count() > self.flush_trigger_number_of_spans
+            && (state.batch.span_count > self.flush_trigger_number_of_spans
                 || self.synchronous_write)
         {
             state.flush_needed = true;
@@ -425,7 +420,7 @@ impl<T> Sender<T> {
         if timeout.is_zero() {
             return Err(TraceBufferError::TimedOut(Duration::ZERO));
         }
-        let state = self.get_state()?;
+        let state = self.lock_state()?;
         let (_state, res) = self
             .waiter
             .sender_notifier
@@ -443,15 +438,19 @@ struct Receiver<T> {
 }
 
 impl<T> Receiver<T> {
+    fn lock_state(&self) -> Result<MutexGuard<'_, SharedState<T>>, MutexPoisonedError> {
+        self.waiter.state.lock().map_err(|_| MutexPoisonedError)
+    }
+
     fn shutdown_done(&self) -> Result<(), MutexPoisonedError> {
-        let mut state = self.waiter.state.lock().map_err(|_| MutexPoisonedError)?;
+        let mut state = self.lock_state()?;
         state.has_shutdown = true;
         self.waiter.notify_sender(state);
         Ok(())
     }
 
     fn reset(&self) -> Result<(), MutexPoisonedError> {
-        let mut state = self.waiter.state.lock().map_err(|_| MutexPoisonedError)?;
+        let mut state = self.lock_state()?;
         let SharedState {
             flush_needed,
             last_flush_generation,
@@ -478,7 +477,7 @@ impl<T> Receiver<T> {
             // The MutexGuard must not be held across .await points
             let leftover;
             {
-                let mut state = self.waiter.state.lock().map_err(|_| MutexPoisonedError)?;
+                let mut state = self.lock_state()?;
                 if state.flush_needed {
                     state.flush_needed = false;
                     return Ok(state.batch.export());
@@ -494,7 +493,7 @@ impl<T> Receiver<T> {
                 biased;
                 _ = notified.as_mut() => {}  // woken by sender; loop to re-check state
                 _ = tokio::time::sleep(leftover) => {
-                    let mut state = self.waiter.state.lock().map_err(|_| MutexPoisonedError)?;
+                    let mut state = self.lock_state()?;
                     return Ok(state.batch.export());
                 }
             }
@@ -502,7 +501,7 @@ impl<T> Receiver<T> {
     }
 
     fn ack_export(&self) -> Result<(), MutexPoisonedError> {
-        let mut state = self.waiter.state.lock().map_err(|_| MutexPoisonedError)?;
+        let mut state = self.lock_state()?;
         state.last_flush_generation.incr();
         self.waiter.notify_sender(state);
         Ok(())
@@ -619,7 +618,6 @@ pub struct TraceExporterWorker<T> {
     export_operation: Box<dyn Export<T> + Send + Sync>,
     agent_response_handler: ResponseHandler,
     config: TraceBufferConfig,
-
     run_input: Option<TraceExporterRunInput<T>>,
 }
 
