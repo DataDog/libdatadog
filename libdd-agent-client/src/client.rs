@@ -304,7 +304,7 @@ fn map_http_error(e: libdd_http_client::HttpClientError) -> SendError {
             std::io::Error::new(std::io::ErrorKind::TimedOut, "request timed out"),
         ),
         libdd_http_client::HttpClientError::IoError(s) => {
-            SendError::Transport(std::io::Error::new(std::io::ErrorKind::Other, s))
+            SendError::Transport(std::io::Error::other(s))
         }
         libdd_http_client::HttpClientError::InvalidConfig(s) => {
             SendError::Transport(std::io::Error::new(std::io::ErrorKind::InvalidInput, s))
