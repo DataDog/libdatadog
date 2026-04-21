@@ -5,6 +5,10 @@
 
 use std::collections::HashMap;
 use std::time::Duration;
+#[cfg(unix)]
+use std::path::PathBuf;
+#[cfg(windows)]
+use OsString;
 
 use libdd_http_client::RetryConfig;
 
@@ -43,23 +47,13 @@ pub enum AgentTransport {
     #[cfg(unix)]
     UnixSocket {
         /// Filesystem path to the socket file.
-        path: std::path::PathBuf,
+        path: PathBuf,
     },
     /// Windows Named Pipe.
     #[cfg(windows)]
     NamedPipe {
         /// Named pipe path, e.g. `\\.\pipe\DD_APM_DRIVER`.
-        path: std::ffi::OsString,
-    },
-    /// Probe at build time: use UDS if the socket file exists, otherwise fall back to HTTP.
-    #[cfg(unix)]
-    AutoDetect {
-        /// UDS path to probe.
-        uds_path: std::path::PathBuf,
-        /// Fallback host when the socket is absent.
-        fallback_host: String,
-        /// Fallback port when the socket is absent (typically 8126).
-        fallback_port: u16,
+        path: OsString,
     },
 }
 
@@ -120,13 +114,13 @@ impl AgentClientBuilder {
 
     /// Convenience: Unix Domain Socket.
     #[cfg(unix)]
-    pub fn unix_socket(self, path: impl Into<std::path::PathBuf>) -> Self {
+    pub fn unix_socket(self, path: impl Into<PathBuf>) -> Self {
         self.transport(AgentTransport::UnixSocket { path: path.into() })
     }
 
     /// Convenience: Windows Named Pipe.
     #[cfg(windows)]
-    pub fn windows_named_pipe(self, path: impl Into<std::ffi::OsString>) -> Self {
+    pub fn windows_named_pipe(self, path: impl Into<OsString>) -> Self {
         self.transport(AgentTransport::NamedPipe { path: path.into() })
     }
 
@@ -134,15 +128,20 @@ impl AgentClientBuilder {
     #[cfg(unix)]
     pub fn auto_detect(
         self,
-        uds_path: impl Into<std::path::PathBuf>,
+        uds_path: impl Into<PathBuf>,
         fallback_host: impl Into<String>,
         fallback_port: u16,
     ) -> Self {
-        self.transport(AgentTransport::AutoDetect {
-            uds_path: uds_path.into(),
-            fallback_host: fallback_host.into(),
-            fallback_port,
-        })
+        let uds_path = uds_path.into();
+        let transport = if uds_path.try_exists().unwrap_or(false) {
+            AgentTransport::UnixSocket { path: uds_path }
+        } else {
+            AgentTransport::Http {
+                host: fallback_host.into(),
+                port: fallback_port,
+            }
+        };
+        self.transport(transport)
     }
 
     /// Set the test session token.
@@ -220,126 +219,84 @@ impl AgentClientBuilder {
             .unwrap_or(Duration::from_millis(DEFAULT_TIMEOUT_MS));
         let retry = self.retry.unwrap_or_else(default_retry_config);
 
-        // Resolve AutoDetect to a concrete transport.
-        let resolved = resolve_transport(transport);
-
         // Build the underlying HTTP client.
-        let http = build_http_client(resolved, timeout, retry)
+        let http = Self::build_http_client(transport, timeout, retry)
             .map_err(|e| BuildError::HttpClient(e.to_string()))?;
 
         // Pre-compute all static headers that are injected on every request.
-        let static_headers = build_static_headers(&language, self.test_token, self.extra_headers);
+        let static_headers = Self::build_static_headers(&language, self.test_token, self.extra_headers);
 
         Ok(AgentClient::new(http, static_headers))
     }
-}
 
-/// A resolved (concrete) transport — no AutoDetect.
-pub(crate) enum ResolvedTransport {
-    Http { host: String, port: u16 },
-    #[cfg(unix)]
-    UnixSocket { path: std::path::PathBuf },
-    #[cfg(windows)]
-    NamedPipe { path: std::ffi::OsString },
-}
+    fn build_http_client(
+        transport: AgentTransport,
+        timeout: Duration,
+        retry: RetryConfig,
+    ) -> Result<libdd_http_client::HttpClient, libdd_http_client::HttpClientError> {
+        let base_url = match &transport {
+            AgentTransport::Http { host, port } => format!("http://{}:{}", host, port),
+            #[cfg(unix)]
+            AgentTransport::UnixSocket { .. } => "http://localhost".to_string(),
+            #[cfg(windows)]
+            AgentTransport::NamedPipe { .. } => "http://localhost".to_string(),
+        };
 
-/// Resolve `AutoDetect` at build time; other variants pass through unchanged.
-fn resolve_transport(transport: AgentTransport) -> ResolvedTransport {
-    match transport {
-        AgentTransport::Http { host, port } => ResolvedTransport::Http { host, port },
-        #[cfg(unix)]
-        AgentTransport::UnixSocket { path } => ResolvedTransport::UnixSocket { path },
-        #[cfg(windows)]
-        AgentTransport::NamedPipe { path } => ResolvedTransport::NamedPipe { path },
-        #[cfg(unix)]
-        AgentTransport::AutoDetect {
-            uds_path,
-            fallback_host,
-            fallback_port,
-        } => {
-            if uds_path.exists() {
-                ResolvedTransport::UnixSocket { path: uds_path }
-            } else {
-                ResolvedTransport::Http {
-                    host: fallback_host,
-                    port: fallback_port,
-                }
+        let mut builder = libdd_http_client::HttpClient::builder()
+            .base_url(base_url)
+            .timeout(timeout)
+            // HTTP errors are handled by each send method, not by the underlying client.
+            // This allows methods like `agent_info` to interpret 404 as Ok(None) rather than
+            // an error, and avoids retrying on HTTP 4xx/5xx.
+            .treat_http_errors_as_errors(false)
+            .retry(retry);
+
+        match transport {
+            AgentTransport::Http { .. } => {}
+            #[cfg(unix)]
+            AgentTransport::UnixSocket { path } => {
+                builder = builder.unix_socket(path);
+            }
+            #[cfg(windows)]
+            AgentTransport::NamedPipe { path } => {
+                builder = builder.windows_named_pipe(path);
             }
         }
+
+        builder.build()
     }
-}
 
-/// Derive the base URL for a resolved transport.
-pub(crate) fn base_url_for(transport: &ResolvedTransport) -> String {
-    match transport {
-        ResolvedTransport::Http { host, port } => format!("http://{}:{}", host, port),
-        #[cfg(unix)]
-        ResolvedTransport::UnixSocket { .. } => "http://localhost".to_string(),
-        #[cfg(windows)]
-        ResolvedTransport::NamedPipe { .. } => "http://localhost".to_string(),
-    }
-}
+    fn build_static_headers(
+        language: &LanguageMetadata,
+        test_token: Option<String>,
+        extra_headers: HashMap<String, String>,
+    ) -> Vec<(String, String)> {
+        let mut headers = Vec::new();
 
-fn build_http_client(
-    transport: ResolvedTransport,
-    timeout: Duration,
-    retry: RetryConfig,
-) -> Result<libdd_http_client::HttpClient, libdd_http_client::HttpClientError> {
-    let base_url = base_url_for(&transport);
-    let mut builder = libdd_http_client::HttpClient::builder()
-        .base_url(base_url)
-        .timeout(timeout)
-        // HTTP errors are handled by each send method, not by the underlying client.
-        // This allows methods like `agent_info` to interpret 404 as Ok(None) rather than
-        // an error, and avoids retrying on HTTP 4xx/5xx.
-        .treat_http_errors_as_errors(false)
-        .retry(retry);
+        headers.push(("Datadog-Meta-Lang".to_string(), language.language.clone()));
+        headers.push((
+            "Datadog-Meta-Lang-Version".to_string(),
+            language.language_version.clone(),
+        ));
+        headers.push((
+            "Datadog-Meta-Lang-Interpreter".to_string(),
+            language.interpreter.clone(),
+        ));
+        headers.push((
+            "Datadog-Meta-Tracer-Version".to_string(),
+            language.tracer_version.clone(),
+        ));
+        headers.push(("User-Agent".to_string(), language.user_agent()));
 
-    match transport {
-        ResolvedTransport::Http { .. } => {}
-        #[cfg(unix)]
-        ResolvedTransport::UnixSocket { path } => {
-            builder = builder.unix_socket(path);
+        if let Some(token) = test_token {
+            headers.push(("x-datadog-test-session-token".to_string(), token));
         }
-        #[cfg(windows)]
-        ResolvedTransport::NamedPipe { path } => {
-            builder = builder.windows_named_pipe(path);
-        }
+
+        headers.extend(container_headers());
+        headers.extend(extra_headers);
+
+        headers
     }
-
-    builder.build()
-}
-
-fn build_static_headers(
-    language: &LanguageMetadata,
-    test_token: Option<String>,
-    extra_headers: HashMap<String, String>,
-) -> Vec<(String, String)> {
-    let mut headers = Vec::new();
-
-    headers.push(("Datadog-Meta-Lang".to_string(), language.language.clone()));
-    headers.push((
-        "Datadog-Meta-Lang-Version".to_string(),
-        language.language_version.clone(),
-    ));
-    headers.push((
-        "Datadog-Meta-Lang-Interpreter".to_string(),
-        language.interpreter.clone(),
-    ));
-    headers.push((
-        "Datadog-Meta-Tracer-Version".to_string(),
-        language.tracer_version.clone(),
-    ));
-    headers.push(("User-Agent".to_string(), language.user_agent()));
-
-    if let Some(token) = test_token {
-        headers.push(("x-datadog-test-session-token".to_string(), token));
-    }
-
-    headers.extend(container_headers());
-    headers.extend(extra_headers);
-
-    headers
 }
 
 /// Read container / entity-ID headers from the host environment.
