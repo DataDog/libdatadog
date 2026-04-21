@@ -111,7 +111,7 @@ impl ErrorsIntakeSettings {
             errors_intake_dd_url: parse_env::str_not_empty(Self::DD_ERRORS_INTAKE_DD_URL),
             shared_lib_debug: parse_env::bool(Self::_DD_SHARED_LIB_DEBUG).unwrap_or(false),
             errors_intake_enabled: parse_env::bool(Self::DD_CRASHTRACKING_ERRORS_INTAKE_ENABLED)
-                .unwrap_or(false),
+                .unwrap_or(true),
 
             agent_uds_socket_found: (|| {
                 #[cfg(unix)]
@@ -883,31 +883,22 @@ mod tests {
     }
 
     #[test]
-    fn test_errors_intake_enabled_flag() {
+    fn test_errors_intake_disabled_flag() {
         let _lock = ENV_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
 
-        // Test default behavior (should be enabled)
         clear_errors_intake_env();
-        let cfg = ErrorsIntakeConfig::from_env();
-        assert!(!cfg.is_errors_intake_enabled());
 
-        // Test explicitly enabled
-        std::env::set_var("DD_CRASHTRACKING_ERRORS_INTAKE_ENABLED", "true");
+        // Default behavior is enabled
         let cfg = ErrorsIntakeConfig::from_env();
         assert!(cfg.is_errors_intake_enabled());
 
-        // Test explicitly disabled
-        std::env::set_var("DD_CRASHTRACKING_ERRORS_INTAKE_ENABLED", "false");
-        let cfg = ErrorsIntakeConfig::from_env();
-        assert!(!cfg.is_errors_intake_enabled());
-
         // Test with uploader
         let uploader = ErrorsIntakeUploader::new(&None).unwrap();
-        assert!(!uploader.is_enabled());
-
-        std::env::set_var("DD_CRASHTRACKING_ERRORS_INTAKE_ENABLED", "true");
-        let uploader = ErrorsIntakeUploader::new(&None).unwrap();
         assert!(uploader.is_enabled());
+
+        std::env::set_var("DD_CRASHTRACKING_ERRORS_INTAKE_ENABLED", "false");
+        let uploader = ErrorsIntakeUploader::new(&None).unwrap();
+        assert!(!uploader.is_enabled());
     }
 
     #[test]
