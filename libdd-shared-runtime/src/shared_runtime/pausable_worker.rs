@@ -5,19 +5,21 @@
 
 use crate::worker::Worker;
 use core::pin::Pin;
+use futures::FutureExt;
 use libdd_capabilities::spawn::SpawnCapability;
 use libdd_capabilities::MaybeSend;
 use std::fmt::Display;
 use std::future::Future;
+use std::panic::AssertUnwindSafe;
 use tokio::select;
 use tokio_util::sync::CancellationToken;
 use tracing::debug;
 
 #[cfg(not(target_arch = "wasm32"))]
-type WorkerJoinHandle<T> = Pin<Box<dyn Future<Output = T> + Send>>;
+type WorkerJoinHandle<T> = Pin<Box<dyn Future<Output = Result<T, PausableWorkerError>> + Send>>;
 
 #[cfg(target_arch = "wasm32")]
-type WorkerJoinHandle<T> = Pin<Box<dyn Future<Output = T>>>;
+type WorkerJoinHandle<T> = Pin<Box<dyn Future<Output = Result<T, PausableWorkerError>>>>;
 
 /// A pausable worker which can be paused and restarted on forks.
 ///
@@ -137,8 +139,12 @@ impl<T: Worker + MaybeSend + Sync + 'static> PausableWorker<T> {
                     ctx,
                 );
 
+                let safe_handle = AssertUnwindSafe(handle)
+                    .catch_unwind()
+                    .map(|result| result.map_err(|_| PausableWorkerError::TaskAborted));
+
                 *self = PausableWorker::Running {
-                    handle: Box::pin(handle),
+                    handle: Box::pin(safe_handle),
                     stop_token,
                 };
                 Ok(())
@@ -166,7 +172,13 @@ impl<T: Worker + MaybeSend + Sync + 'static> PausableWorker<T> {
                     stop_token.cancel();
                 }
 
-                let mut worker = handle.await;
+                let mut worker = match handle.await {
+                    Ok(worker) => worker,
+                    Err(e) => {
+                        *self = PausableWorker::InvalidState;
+                        return Err(e);
+                    }
+                };
                 debug!(?worker, "Worker paused successfully");
                 worker.on_pause().await;
                 *self = PausableWorker::Paused { worker };
@@ -243,5 +255,40 @@ mod tests {
         }
         pausable_worker.start(&spawner, &handle).unwrap();
         assert_eq!(receiver.recv().unwrap(), next_message);
+    }
+
+    /// Worker that panics on its first `run()` call.
+    #[derive(Debug)]
+    struct PanickingWorker;
+
+    #[async_trait]
+    impl Worker for PanickingWorker {
+        async fn run(&mut self) {
+            panic!("intentional panic in worker");
+        }
+
+        async fn trigger(&mut self) {
+            sleep(Duration::from_millis(10)).await;
+        }
+    }
+
+    #[test]
+    fn test_panicking_worker_returns_task_aborted() {
+        let runtime = Builder::new_multi_thread().enable_time().build().unwrap();
+        let handle = runtime.handle().clone();
+        let spawner = RuntimeSpawner;
+        let mut pausable_worker = PausableWorker::new(PanickingWorker);
+
+        pausable_worker.start(&spawner, &handle).unwrap();
+
+        let result = runtime.block_on(async { pausable_worker.pause().await });
+        assert!(
+            matches!(result, Err(PausableWorkerError::TaskAborted)),
+            "expected TaskAborted, got {result:?}"
+        );
+        assert!(
+            matches!(pausable_worker, PausableWorker::InvalidState),
+            "worker should be in InvalidState after panic"
+        );
     }
 }
