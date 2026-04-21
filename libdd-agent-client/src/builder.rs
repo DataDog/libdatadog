@@ -285,9 +285,18 @@ impl AgentClientBuilder {
     ) -> Vec<(String, String)> {
         let mut headers = vec![
             ("Datadog-Meta-Lang".to_string(), language.language.clone()),
-            ("Datadog-Meta-Lang-Version".to_string(), language.language_version.clone()),
-            ("Datadog-Meta-Lang-Interpreter".to_string(), language.interpreter.clone()),
-            ("Datadog-Meta-Tracer-Version".to_string(), language.tracer_version.clone()),
+            (
+                "Datadog-Meta-Lang-Version".to_string(),
+                language.language_version.clone(),
+            ),
+            (
+                "Datadog-Meta-Lang-Interpreter".to_string(),
+                language.interpreter.clone(),
+            ),
+            (
+                "Datadog-Meta-Tracer-Version".to_string(),
+                language.tracer_version.clone(),
+            ),
             ("User-Agent".to_string(), language.user_agent()),
         ];
 
