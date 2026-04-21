@@ -15,7 +15,7 @@ use tokio::runtime;
 fn criterion_benchmark(c: &mut Criterion) {
     let (conn_server, conn_client) = datadog_ipc::SeqpacketConn::socketpair().unwrap();
 
-    let worker = thread::spawn(move || {
+    let _worker = thread::spawn(move || {
         let rt = runtime::Builder::new_current_thread()
             .enable_all()
             .build()
@@ -36,15 +36,6 @@ fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function("two way interface", |b| {
         b.iter(|| channel.call_req_cnt().unwrap())
     });
-
-    #[cfg(not(target_arch = "aarch64"))]
-    println!(
-        "Total requests handled: {}",
-        channel.call_req_cnt().unwrap()
-    );
-
-    drop(channel);
-    worker.join().unwrap();
 }
 
 #[cfg(unix)]
