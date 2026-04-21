@@ -134,6 +134,13 @@ impl HttpRequest {
         self
     }
 
+    /// Append headers to this request.
+    #[inline]
+    pub fn with_headers<'a, K, V>(mut self, it: impl IntoIterator<Item = (K, V)>) -> Self where K: Into<String>, V: Into<String> {
+        self.headers.extend(it.into_iter().map(|(k, v)| (k.into(), v.into())));
+        self
+    }
+
     /// Set the request body.
     #[inline]
     pub fn with_body(mut self, body: impl Into<bytes::Bytes>) -> Self {
