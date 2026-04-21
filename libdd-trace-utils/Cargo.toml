@@ -66,6 +66,7 @@ getrandom = { version = "0.2", features = ["js"] }
 
 [dev-dependencies]
 libdd-capabilities-impl = { version = "0.1.0", path = "../libdd-capabilities-impl" }
+libdd-common = { path = "../libdd-common", default-features = false, features = ["bench-utils"] }
 bolero = "0.13"
 criterion = "0.5.1"
 httpmock = { version = "0.8.0-alpha.1" }
