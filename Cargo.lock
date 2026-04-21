@@ -2820,6 +2820,7 @@ dependencies = [
  "bytes",
  "flate2",
  "httpmock",
+ "libdd-common",
  "libdd-http-client",
  "rustls",
  "serde",
