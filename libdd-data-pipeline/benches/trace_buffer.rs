@@ -44,7 +44,7 @@ fn setup_buffer() -> (Arc<SharedRuntime>, Arc<TraceBuffer<Span>>) {
         .span_flush_threshold(500)
         .max_flush_interval(Duration::from_secs(2));
     let (buf, worker) = TraceBuffer::new(cfg, Box::new(|_| {}), Box::new(SleepExport));
-    rt.spawn_worker(worker).expect("spawn_worker");
+    rt.spawn_worker(worker, true).expect("spawn_worker");
     (rt, Arc::new(buf))
 }
 

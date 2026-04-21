@@ -302,9 +302,14 @@ impl TraceExporterBuilder {
             let info_endpoint = Endpoint::from_url(add_path(&agent_url, INFO_ENDPOINT));
             let (info_fetcher, info_response_observer) =
                 AgentInfoFetcher::<H>::new(info_endpoint.clone(), Duration::from_secs(5 * 60));
-            let info_fetcher_handle = shared_runtime.spawn_worker(info_fetcher).map_err(|e| {
-                TraceExporterError::Builder(BuilderErrorKind::InvalidConfiguration(e.to_string()))
-            })?;
+            let info_fetcher_handle =
+                shared_runtime
+                    .spawn_worker(info_fetcher, false)
+                    .map_err(|e| {
+                        TraceExporterError::Builder(BuilderErrorKind::InvalidConfiguration(
+                            e.to_string(),
+                        ))
+                    })?;
 
             if let Some(bucket_size) = self.stats_bucket_size {
                 stats = StatsComputationStatus::DisabledByAgent { bucket_size };
@@ -330,7 +335,7 @@ impl TraceExporterBuilder {
                 });
                 match telemetry {
                     Some(Ok((client, worker))) => {
-                        let handle = shared_runtime.spawn_worker(worker).map_err(|e| {
+                        let handle = shared_runtime.spawn_worker(worker, false).map_err(|e| {
                             TraceExporterError::Builder(BuilderErrorKind::InvalidConfiguration(
                                 e.to_string(),
                             ))

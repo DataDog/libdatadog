@@ -14,7 +14,6 @@ use std::sync::{Mutex, MutexGuard};
 use std::{borrow::Cow, ops::Deref, path::PathBuf, str::FromStr};
 
 pub mod azure_app_services;
-pub mod capabilities;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod cc_utils;
 #[cfg(not(target_arch = "wasm32"))]
@@ -113,8 +112,6 @@ pub mod header {
         HeaderName::from_static("x-datadog-test-session-token");
 }
 
-#[cfg(not(target_arch = "wasm32"))]
-pub use http_common::DefaultHttpClient;
 #[cfg(not(target_arch = "wasm32"))]
 pub type HttpClient = http_common::GenericHttpClient<connector::Connector>;
 #[cfg(not(target_arch = "wasm32"))]

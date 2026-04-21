@@ -754,7 +754,7 @@ mod tests {
             ),
             Box::new(AssertExporter(assert_export, sem.clone())),
         );
-        rt.spawn_worker(worker).unwrap();
+        rt.spawn_worker(worker, true).unwrap();
         (rt, sem, sender)
     }
 
