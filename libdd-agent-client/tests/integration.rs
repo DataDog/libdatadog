@@ -17,7 +17,9 @@ fn client_for(server: &MockServer) -> AgentClient {
     ensure_crypto_provider();
     AgentClient::builder()
         .http("localhost", server.port())
-        .language_metadata(LanguageMetadata::new("python", "3.12.1", "CPython", "2.18.0"))
+        .language_metadata(LanguageMetadata::new(
+            "python", "3.12.1", "CPython", "2.18.0",
+        ))
         .build()
         .expect("client build failed")
 }
@@ -445,7 +447,9 @@ async fn test_token_injected_when_set() {
     ensure_crypto_provider();
     let client = AgentClient::builder()
         .http("localhost", server.port())
-        .language_metadata(LanguageMetadata::new("python", "3.12.1", "CPython", "2.18.0"))
+        .language_metadata(LanguageMetadata::new(
+            "python", "3.12.1", "CPython", "2.18.0",
+        ))
         .test_agent_session_token("my-token")
         .build()
         .unwrap();
