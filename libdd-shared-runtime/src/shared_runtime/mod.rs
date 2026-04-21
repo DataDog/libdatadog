@@ -28,19 +28,11 @@ use tracing::{debug, error};
 
 type BoxedWorker = Box<dyn Worker + Sync>;
 
+#[derive(Debug)]
 struct WorkerEntry {
     id: u64,
     restart_on_fork: bool,
     worker: PausableWorker<BoxedWorker>,
-}
-
-impl fmt::Debug for WorkerEntry {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("WorkerEntry")
-            .field("id", &self.id)
-            .field("worker", &self.worker)
-            .finish()
-    }
 }
 
 /// Internal spawner for fork recovery paths.
