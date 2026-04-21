@@ -15,6 +15,9 @@ pub enum BuildError {
     /// No language metadata was configured.
     #[error("language metadata is required")]
     MissingLanguageMetadata,
+    /// The underlying HTTP client could not be constructed.
+    #[error("HTTP client error: {0}")]
+    HttpClient(String),
 }
 
 /// Errors that can occur when sending a request via [`crate::AgentClient`].

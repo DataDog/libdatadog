@@ -2842,7 +2842,10 @@ name = "libdd-agent-client"
 version = "31.0.0"
 dependencies = [
  "bytes",
+ "flate2",
+ "httpmock",
  "libdd-http-client",
+ "rustls",
  "serde",
  "serde_json",
  "thiserror 2.0.17",
