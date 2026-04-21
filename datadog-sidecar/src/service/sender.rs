@@ -13,7 +13,8 @@
 
 use crate::service::{
     sidecar_interface::{
-        DynamicInstrumentationConfigState, SidecarInterfaceChannel, SidecarInterfaceRequest,
+        DynamicInstrumentationConfigState, SidecarFlushOptions, SidecarInterfaceChannel,
+        SidecarInterfaceRequest,
     },
     InstanceId, QueueId, SerializedTracerHeaderTags, SessionConfig, SidecarAction,
 };
@@ -456,9 +457,9 @@ impl SidecarSender {
         self.channel.0.set_write_timeout(d)
     }
 
-    pub fn flush_traces(&mut self) -> io::Result<()> {
+    pub fn flush(&mut self, options: SidecarFlushOptions) -> io::Result<()> {
         self.drain_outbox_blocking();
-        self.channel.call_flush_traces()
+        self.channel.call_flush(options)
     }
 
     pub fn ping(&mut self) -> io::Result<()> {

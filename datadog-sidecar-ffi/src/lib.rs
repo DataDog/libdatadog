@@ -28,7 +28,7 @@ use datadog_sidecar::service::telemetry::InternalTelemetryAction;
 use datadog_sidecar::service::{
     blocking::{self, SidecarTransport},
     DynamicInstrumentationConfigState, InstanceId, QueueId, RuntimeMetadata,
-    SerializedTracerHeaderTags, SessionConfig, SidecarAction,
+    SerializedTracerHeaderTags, SessionConfig, SidecarAction, SidecarFlushOptions,
 };
 use datadog_sidecar::service::{get_telemetry_action_sender, InternalTelemetryActions};
 use datadog_sidecar::shm_remote_config::{path_for_remote_config, RemoteConfigReader};
@@ -361,8 +361,11 @@ pub extern "C" fn ddog_sidecar_ping(transport: &mut Box<SidecarTransport>) -> Ma
 }
 
 #[no_mangle]
-pub extern "C" fn ddog_sidecar_flush_traces(transport: &mut Box<SidecarTransport>) -> MaybeError {
-    try_c!(blocking::flush_traces(transport));
+pub extern "C" fn ddog_sidecar_flush(
+    transport: &mut Box<SidecarTransport>,
+    options: SidecarFlushOptions,
+) -> MaybeError {
+    try_c!(blocking::flush(transport, options));
 
     MaybeError::None
 }
