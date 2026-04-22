@@ -3,12 +3,6 @@
 
 pub mod tracer_metadata;
 
-#[cfg(target_os = "linux")]
-#[no_mangle]
-pub extern "C" fn ddog_thread_context_attach_empty() {
-    let _ = libdd_library_config::otel_thread_ctx::linux::ThreadContext::default().attach();
-}
-
 use libdd_common_ffi::{self as ffi, slice::AsBytes, CString, CharSlice, Error};
 use libdd_library_config::{self as lib_config, LibraryConfigSource};
 
