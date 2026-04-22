@@ -13,8 +13,6 @@ mod receiver_manager;
 mod saguard;
 mod signal_handler_manager;
 mod spans;
-#[cfg(target_os = "linux")]
-pub(crate) mod ptrace_collector;
 
 pub use additional_tags::{
     clear_additional_tags, consume_and_emit_additional_tags, insert_additional_tag,

@@ -4,13 +4,10 @@
 
 use super::{crash_handler::enable, receiver_manager::Receiver};
 use crate::{
-    clear_spans, clear_traces,
-    collector::crash_handler::register_panic_hook,
-    collector::signal_handler_manager::register_crash_handlers,
-    crash_info::Metadata,
-    reset_counters,
-    shared::configuration::CrashtrackerReceiverConfig,
-    update_config, update_metadata, CrashtrackerConfiguration,
+    clear_spans, clear_traces, collector::crash_handler::register_panic_hook,
+    collector::signal_handler_manager::register_crash_handlers, crash_info::Metadata,
+    reset_counters, shared::configuration::CrashtrackerReceiverConfig, update_config,
+    update_metadata, CrashtrackerConfiguration,
 };
 
 pub static DEFAULT_SYMBOLS: [libc::c_int; 4] =

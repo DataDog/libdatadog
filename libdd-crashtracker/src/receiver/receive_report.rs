@@ -620,6 +620,17 @@ pub(crate) async fn receive_report_from_stream(
         }
     }
 
+    // Collect thread contexts if enabled - this is done here in the receiver
+    // because the parent process stays alive until the receiver completes
+    #[cfg(target_os = "linux")]
+    if config.collect_all_threads() {
+        if let Some(proc_info) = builder.proc_info.as_ref() {
+            let parent_pid = proc_info.pid;
+            let crashing_tid = proc_info.tid;
+            collect_and_add_thread_contexts(&mut builder, &config, parent_pid, crashing_tid)?;
+        }
+    }
+
     let crash_info = builder.build()?;
 
     if crash_info.incomplete {
@@ -633,6 +644,125 @@ pub(crate) async fn receive_report_from_stream(
     }
 
     Ok(Some((config, crash_info)))
+}
+
+#[cfg(target_os = "linux")]
+fn collect_and_add_thread_contexts(
+    builder: &mut CrashInfoBuilder,
+    config: &CrashtrackerConfiguration,
+    parent_pid: u32,
+    crashing_tid: Option<u32>,
+) -> anyhow::Result<()> {
+    use crate::crash_info::{StackTrace, ThreadData};
+    use crate::receiver::ptrace_collector::stream_thread_contexts;
+    use std::time::Duration;
+
+    let crashing_tid = crashing_tid.unwrap_or(0) as i32;
+    let parent_pid = parent_pid as i32;
+
+    // Calculate timeout for ptrace operations (similar to the previous signal-based timeout)
+    let context_timeout = Duration::from_millis((config.timeout().as_millis() / 2).min(200) as u64);
+
+    let mut collected_threads = Vec::new();
+
+    // Use streaming callback approach to collect thread data
+    let _ = stream_thread_contexts(
+        parent_pid,
+        crashing_tid,
+        config.max_threads(),
+        context_timeout,
+        |tid, captured_context| {
+            // Read thread metadata from /proc
+            let name = read_thread_name(parent_pid, tid).unwrap_or_else(|| tid.to_string());
+            let state = read_thread_state(parent_pid, tid);
+
+            if let Some(ctx) = captured_context {
+                // TODO: Implement remote libunwind unwinding here
+                // Need to use unw_init_remote() with _UPT_accessors for proper stack walking
+                // For now, create a basic stack trace with just the current instruction pointer
+
+                // Extract instruction pointer from captured registers
+                #[cfg(target_arch = "x86_64")]
+                let ip = ctx.ucontext.uc_mcontext.gregs[libc::REG_RIP as usize] as u64;
+                #[cfg(not(target_arch = "x86_64"))]
+                let ip = 0u64;
+
+                let frames = vec![StackFrame {
+                    ip: Some(format!("0x{:x}", ip)),
+                    sp: Some(format!(
+                        "0x{:x}",
+                        ctx.ucontext.uc_mcontext.gregs[libc::REG_RSP as usize]
+                    )),
+                    module_base_address: None,
+                    symbol_address: None,
+                    build_id: None,
+                    build_id_type: None,
+                    file_type: None,
+                    path: None,
+                    relative_address: None,
+                    column: None,
+                    file: None,
+                    function: Some("ptrace_captured".to_string()),
+                    line: None,
+                    type_name: None,
+                    mangled_name: None,
+                    comments: vec![
+                        "TODO: Implement remote libunwind for full stack trace".to_string()
+                    ],
+                }];
+
+                let stack_trace = StackTrace::from_frames(frames, true); // Mark as incomplete
+
+                let thread_data = ThreadData {
+                    crashed: false,
+                    name,
+                    stack: stack_trace,
+                    state,
+                };
+
+                collected_threads.push(thread_data);
+            } else {
+                // No context captured, create empty stack trace
+                let stack_trace = StackTrace::empty();
+                let thread_data = ThreadData {
+                    crashed: false,
+                    name,
+                    stack: stack_trace,
+                    state,
+                };
+                collected_threads.push(thread_data);
+            }
+
+            true // Continue with next thread
+        },
+    );
+
+    // Add collected threads to the crash info builder
+    if !collected_threads.is_empty() {
+        builder.with_threads(collected_threads)?;
+    }
+
+    Ok(())
+}
+
+// Helper functions for reading thread metadata (moved from collector/emitters.rs)
+#[cfg(target_os = "linux")]
+fn read_thread_name(pid: i32, tid: i32) -> Option<String> {
+    use std::fs;
+    let path = format!("/proc/{pid}/task/{tid}/comm");
+    fs::read_to_string(&path)
+        .ok()
+        .map(|s| s.trim_end_matches('\n').to_string())
+}
+
+#[cfg(target_os = "linux")]
+fn read_thread_state(pid: i32, tid: i32) -> Option<String> {
+    use std::fs;
+    let path = format!("/proc/{pid}/task/{tid}/stat");
+    fs::read_to_string(&path).ok().and_then(|content| {
+        // The state is the 3rd field in /proc/pid/stat
+        content.split_whitespace().nth(2).map(|s| s.to_string())
+    })
 }
 
 #[cfg(target_os = "linux")]

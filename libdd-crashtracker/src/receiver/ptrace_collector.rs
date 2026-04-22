@@ -32,8 +32,12 @@ use std::time::{Duration, Instant};
 /// Maximum number of threads to collect contexts for
 const MAX_TRACKED_THREADS: usize = 128;
 
-
-/// A captured thread context containing register state
+/// A captured thread context containing basic register state
+///
+/// TODO: Add remote libunwind stack walking using:
+/// - unw_init_remote() with _UPT_accessors for ptrace-based remote unwinding
+/// - _UPT_create(), _UPT_destroy() for managing ptrace state
+/// - This will enable full stack traces for all threads
 pub struct CapturedThreadContext {
     /// The captured register context as a ucontext_t
     pub ucontext: ucontext_t,
@@ -60,7 +64,11 @@ impl std::fmt::Display for PtraceError {
                 write!(f, "Failed to attach to thread {}: errno {}", tid, errno)
             }
             PtraceError::RegisterReadFailed(tid, errno) => {
-                write!(f, "Failed to read registers from thread {}: errno {}", tid, errno)
+                write!(
+                    f,
+                    "Failed to read registers from thread {}: errno {}",
+                    tid, errno
+                )
             }
             PtraceError::DetachFailed(tid, errno) => {
                 write!(f, "Failed to detach from thread {}: errno {}", tid, errno)
@@ -77,8 +85,7 @@ impl std::error::Error for PtraceError {}
 /// Returns a vector of thread IDs.
 pub fn enumerate_threads(pid: libc::pid_t) -> Result<Vec<libc::pid_t>, PtraceError> {
     let task_dir = format!("/proc/{}/task", pid);
-    let entries = std::fs::read_dir(&task_dir)
-        .map_err(PtraceError::EnumerationFailed)?;
+    let entries = std::fs::read_dir(&task_dir).map_err(PtraceError::EnumerationFailed)?;
 
     let mut tids = Vec::new();
     for entry in entries {
@@ -215,13 +222,15 @@ pub fn read_thread_registers(tid: libc::pid_t) -> Result<ucontext_t, PtraceError
     Ok(uctx)
 }
 
-
 /// Capture register context for a single thread
-pub fn capture_thread_context(_pid: libc::pid_t, tid: libc::pid_t) -> Result<CapturedThreadContext, PtraceError> {
+pub fn capture_thread_context(
+    _pid: libc::pid_t,
+    tid: libc::pid_t,
+) -> Result<CapturedThreadContext, PtraceError> {
     // Attach to the thread
     attach_thread(tid)?;
 
-    // Read registers
+    // Read basic registers
     let ucontext = match read_thread_registers(tid) {
         Ok(uctx) => uctx,
         Err(e) => {
@@ -231,7 +240,7 @@ pub fn capture_thread_context(_pid: libc::pid_t, tid: libc::pid_t) -> Result<Cap
     };
 
     // Detach from the thread
-    // detach_thread(tid)?;
+    detach_thread(tid)?;
 
     Ok(CapturedThreadContext { ucontext })
 }
@@ -249,7 +258,8 @@ pub fn stream_thread_contexts<F>(
     mut callback: F,
 ) -> Result<(), PtraceError>
 where
-    F: FnMut(libc::pid_t, Option<&CapturedThreadContext>) -> bool, // returns false to stop iteration
+    F: FnMut(libc::pid_t, Option<&CapturedThreadContext>) -> bool, /* returns false to stop
+                                                                    * iteration */
 {
     let start_time = Instant::now();
 
@@ -293,4 +303,3 @@ where
 
     Ok(())
 }
-
