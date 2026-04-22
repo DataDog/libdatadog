@@ -27,11 +27,11 @@ pub struct TracerHeaderTags<'a> {
     pub lang_vendor: &'a str,
     pub tracer_version: &'a str,
     pub container_id: &'a str,
-    // specifies that the client has marked top-level spans, when set. Any non-empty value will
-    // mean 'yes'.
+    // specifies that the client has marked top-level spans, when set. If the header is present
+    // this value will resolve to 'true'
     pub client_computed_top_level: bool,
-    // specifies whether the client has computed stats so that the agent doesn't have to. Any
-    // non-empty value will mean 'yes'.
+    // specifies whether the client has computed stats so that the agent doesn't have to. If the
+    // header is present and is non-empty this value will resolve to 'true'
     pub client_computed_stats: bool,
     // number of trace chunks dropped in the tracer
     pub dropped_p0_traces: usize,
