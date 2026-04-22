@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - main
+      - mq-working-branch-*
 env:
   CARGO_TERM_COLOR: always
 
