@@ -121,13 +121,13 @@ jobs:
           if [[ "${{ matrix.platform }}" == "windows-latest" ]]; then
             export AWS_LC_FIPS_SYS_NO_ASM=1
           fi
+          EXTRA_CLIPPY_FLAG=$([ ${{ matrix.rust_version }} = 1.84.1 ] || echo -Aclippy::manual_is_multiple_of)
           if [[ -z "$CLIPPY_PACKAGES" ]]; then
-            cargo clippy --workspace --all-targets --all-features -- -D warnings $([ ${{ matrix.rust_version }} = 1.84.1 ] || echo -Aclippy::manual_is_multiple_of)
-
+            # shellcheck disable=SC2086
+            cargo clippy --workspace --all-targets --all-features -- -D warnings $EXTRA_CLIPPY_FLAG
           else
             # shellcheck disable=SC2086
-            cargo clippy $CLIPPY_PACKAGES --all-targets --all-features -- -D warnings $([ ${{ matrix.rust_version }} = 1.84.1 ] || echo -Aclippy::manual_is_multiple_of)
-
+            cargo clippy $CLIPPY_PACKAGES --all-targets --all-features -- -D warnings $EXTRA_CLIPPY_FLAG
           fi
 
   licensecheck:
