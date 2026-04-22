@@ -7,7 +7,9 @@ use std::collections::HashMap;
 
 use bytes::Bytes;
 use flate2::{write::GzEncoder, Compression};
-use std::io::Write as _;
+use libdd_http_client::{HttpClient, HttpClientError, HttpMethod, HttpRequest};
+use serde_json::{from_slice, Value};
+use std::io::{Error, ErrorKind, Write as _};
 
 use crate::{
     agent_info::AgentInfo,
@@ -35,16 +37,13 @@ use crate::{
 ///
 /// [`LanguageMetadata`]: crate::LanguageMetadata
 pub struct AgentClient {
-    http: libdd_http_client::HttpClient,
+    http: HttpClient,
     base_url: String,
     static_headers: Vec<(String, String)>,
 }
 
 impl AgentClient {
-    pub(crate) fn new(
-        http: libdd_http_client::HttpClient,
-        static_headers: Vec<(String, String)>,
-    ) -> Self {
+    pub(crate) fn new(http: HttpClient, static_headers: Vec<(String, String)>) -> Self {
         let base_url = http.config().base_url().to_string();
         Self {
             http,
@@ -77,13 +76,12 @@ impl AgentClient {
         };
 
         let url = format!("{}{}", self.base_url, path);
-        let mut request =
-            libdd_http_client::HttpRequest::new(libdd_http_client::HttpMethod::Put, url)
-                .with_body(payload)
-                .with_headers(self.static_headers.iter().cloned())
-                .with_header("Content-Type", content_type)
-                .with_header("X-Datadog-Trace-Count", trace_count.to_string())
-                .with_header("Datadog-Send-Real-Http-Status", "true");
+        let mut request = HttpRequest::new(HttpMethod::Put, url)
+            .with_body(payload)
+            .with_headers(self.static_headers.iter().cloned())
+            .with_header("Content-Type", content_type)
+            .with_header("X-Datadog-Trace-Count", trace_count.to_string())
+            .with_header("Datadog-Send-Real-Http-Status", "true");
 
         if opts.computed_top_level {
             request = request.with_header("Datadog-Client-Computed-Top-Level", "yes");
@@ -108,7 +106,7 @@ impl AgentClient {
     /// Send span stats (APM concentrator buckets) to `/v0.6/stats`.
     pub async fn send_stats(&self, payload: Bytes) -> Result<(), SendError> {
         let url = format!("{}/v0.6/stats", self.base_url);
-        let request = libdd_http_client::HttpRequest::new(libdd_http_client::HttpMethod::Put, url)
+        let request = HttpRequest::new(HttpMethod::Put, url)
             .with_body(payload)
             .with_headers(self.static_headers.iter().cloned())
             .with_header("Content-Type", "application/msgpack");
@@ -125,7 +123,7 @@ impl AgentClient {
         let compressed = gzip_compress(payload)?;
 
         let url = format!("{}/v0.1/pipeline_stats", self.base_url);
-        let request = libdd_http_client::HttpRequest::new(libdd_http_client::HttpMethod::Put, url)
+        let request = HttpRequest::new(HttpMethod::Put, url)
             .with_body(compressed)
             .with_headers(self.static_headers.iter().cloned())
             .with_header("Content-Type", "application/msgpack")
@@ -139,7 +137,7 @@ impl AgentClient {
     /// (`telemetry/proxy/api/v2/apmtelemetry`).
     pub async fn send_telemetry(&self, req: TelemetryRequest) -> Result<(), SendError> {
         let url = format!("{}/telemetry/proxy/api/v2/apmtelemetry", self.base_url);
-        let request = libdd_http_client::HttpRequest::new(libdd_http_client::HttpMethod::Post, url)
+        let request = HttpRequest::new(HttpMethod::Post, url)
             .with_body(req.body)
             .with_headers(self.static_headers.iter().cloned())
             .with_header("Content-Type", "application/json")
@@ -167,7 +165,7 @@ impl AgentClient {
         content_type: &str,
     ) -> Result<(), SendError> {
         let url = format!("{}{}", self.base_url, path);
-        let request = libdd_http_client::HttpRequest::new(libdd_http_client::HttpMethod::Post, url)
+        let request = HttpRequest::new(HttpMethod::Post, url)
             .with_body(payload)
             .with_headers(self.static_headers.iter().cloned())
             .with_header("Content-Type", content_type)
@@ -186,11 +184,11 @@ impl AgentClient {
             version: Option<String>,
             endpoints: Option<Vec<String>>,
             client_drop_p0s: Option<bool>,
-            config: Option<serde_json::Value>,
+            config: Option<Value>,
         }
 
         let url = format!("{}/info", self.base_url);
-        let request = libdd_http_client::HttpRequest::new(libdd_http_client::HttpMethod::Get, url)
+        let request = HttpRequest::new(HttpMethod::Get, url)
             .with_headers(self.static_headers.iter().cloned());
 
         let response = self.http.send(request).await.map_err(map_http_error)?;
@@ -218,13 +216,13 @@ impl AgentClient {
         let container_tags_hash = header("datadog-container-tags-hash");
         let state_hash = header("datadog-agent-state");
 
-        let info: InfoResponse = serde_json::from_slice(response.body())
-            .map_err(|e| SendError::Encoding(e.to_string()))?;
+        let info: InfoResponse =
+            from_slice(response.body()).map_err(|e| SendError::Encoding(e.to_string()))?;
 
         Ok(Some(AgentInfo {
             endpoints: info.endpoints.unwrap_or_default(),
             client_drop_p0s: info.client_drop_p0s.unwrap_or(false),
-            config: info.config.unwrap_or(serde_json::Value::Null),
+            config: info.config.unwrap_or(Value::Null),
             version: info.version,
             container_tags_hash,
             state_hash,
@@ -239,7 +237,7 @@ fn parse_rate_by_service(body: &Bytes) -> Option<HashMap<String, f64>> {
         rate_by_service: Option<HashMap<String, f64>>,
     }
 
-    serde_json::from_slice::<TraceResponse>(body)
+    from_slice::<TraceResponse>(body)
         .ok()
         .and_then(|r| r.rate_by_service)
 }
@@ -268,28 +266,23 @@ fn gzip_compress(payload: Bytes) -> Result<Bytes, SendError> {
     Ok(Bytes::from(compressed))
 }
 
-/// Map a [`libdd_http_client::HttpClientError`] to a [`SendError`].
-fn map_http_error(e: libdd_http_client::HttpClientError) -> SendError {
+/// Map a [`HttpClientError`] to a [`SendError`].
+fn map_http_error(e: HttpClientError) -> SendError {
     match e {
-        libdd_http_client::HttpClientError::ConnectionFailed(s) => SendError::Transport(
-            std::io::Error::new(std::io::ErrorKind::ConnectionRefused, s),
-        ),
-        libdd_http_client::HttpClientError::TimedOut => SendError::Transport(std::io::Error::new(
-            std::io::ErrorKind::TimedOut,
-            "request timed out",
-        )),
-        libdd_http_client::HttpClientError::IoError(s) => {
-            SendError::Transport(std::io::Error::other(s))
+        HttpClientError::ConnectionFailed(s) => {
+            SendError::Transport(Error::new(ErrorKind::ConnectionRefused, s))
         }
-        libdd_http_client::HttpClientError::InvalidConfig(s) => {
-            SendError::Transport(std::io::Error::new(std::io::ErrorKind::InvalidInput, s))
+        HttpClientError::TimedOut => {
+            SendError::Transport(Error::new(ErrorKind::TimedOut, "request timed out"))
         }
-        libdd_http_client::HttpClientError::RequestFailed { status, body } => {
-            SendError::HttpError {
-                status,
-                body: Bytes::from(body),
-            }
+        HttpClientError::IoError(s) => SendError::Transport(Error::other(s)),
+        HttpClientError::InvalidConfig(s) => {
+            SendError::Transport(Error::new(ErrorKind::InvalidInput, s))
         }
+        HttpClientError::RequestFailed { status, body } => SendError::HttpError {
+            status,
+            body: Bytes::from(body),
+        },
     }
 }
 
