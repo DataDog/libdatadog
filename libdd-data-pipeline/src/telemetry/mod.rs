@@ -98,6 +98,29 @@ impl TelemetryClientBuilder {
         self
     }
 
+    /// Sets the stable session identifier for the telemetry client. Sent as
+    /// the `DD-Session-ID` HTTP header on telemetry requests.
+    pub fn set_session_id(mut self, id: &str) -> Self {
+        self.config.session_id = Some(id.to_string());
+        self
+    }
+
+    /// Sets the root session identifier for the telemetry client. Sent as
+    /// the `DD-Root-Session-ID` HTTP header on telemetry requests when
+    /// distinct from the session id.
+    pub fn set_root_session_id(mut self, id: &str) -> Self {
+        self.config.root_session_id = Some(id.to_string());
+        self
+    }
+
+    /// Sets the parent session identifier for the telemetry client. Sent as
+    /// the `DD-Parent-Session-ID` HTTP header on telemetry requests when
+    /// distinct from the session id.
+    pub fn set_parent_session_id(mut self, id: &str) -> Self {
+        self.config.parent_session_id = Some(id.to_string());
+        self
+    }
+
     /// Builds the telemetry client.
     pub fn build(self) -> (TelemetryClient, TelemetryWorker) {
         #[allow(clippy::unwrap_used)]
@@ -361,6 +384,34 @@ mod tests {
             builder.config.telemetry_heartbeat_interval,
             Duration::from_millis(30)
         );
+    }
+
+    #[test]
+    fn builder_session_ids_test() {
+        let builder = TelemetryClientBuilder::default()
+            .set_session_id("session-abc")
+            .set_root_session_id("root-xyz")
+            .set_parent_session_id("parent-123");
+
+        assert_eq!(builder.config.session_id.as_deref(), Some("session-abc"));
+        assert_eq!(builder.config.root_session_id.as_deref(), Some("root-xyz"));
+        assert_eq!(
+            builder.config.parent_session_id.as_deref(),
+            Some("parent-123")
+        );
+    }
+
+    #[test]
+    fn builder_session_ids_unset_by_default_test() {
+        let builder = TelemetryClientBuilder::default()
+            .set_service_name("test_service")
+            .set_language("test_language")
+            .set_language_version("1.0")
+            .set_tracer_version("1.0");
+
+        assert!(builder.config.session_id.is_none());
+        assert!(builder.config.root_session_id.is_none());
+        assert!(builder.config.parent_session_id.is_none());
     }
 
     #[cfg_attr(miri, ignore)]

@@ -48,6 +48,22 @@ pub struct TelemetryClientConfig<'a> {
     /// When enabled, sets the DD-Telemetry-Debug-Enabled header to true.
     /// Defaults to false.
     pub debug_enabled: bool,
+
+    /// Stable session identifier. Sent as the `DD-Session-ID` HTTP header on
+    /// telemetry requests. An empty `CharSlice` is treated as unset.
+    pub session_id: CharSlice<'a>,
+
+    /// Identifier of the root process in a hierarchy of instrumented
+    /// processes. Sent as the `DD-Root-Session-ID` HTTP header on telemetry
+    /// requests when distinct from the session id. An empty `CharSlice` is
+    /// treated as unset.
+    pub root_session_id: CharSlice<'a>,
+
+    /// Identifier of the immediate parent process. Sent as the
+    /// `DD-Parent-Session-ID` HTTP header on telemetry requests when
+    /// distinct from the session id. An empty `CharSlice` is treated as
+    /// unset.
+    pub parent_session_id: CharSlice<'a>,
 }
 
 /// The TraceExporterConfig object will hold the configuration properties for the TraceExporter.
@@ -300,6 +316,19 @@ pub unsafe extern "C" fn ddog_trace_exporter_config_enable_telemetry(
     catch_panic!(
         if let Option::Some(config) = config {
             if let Option::Some(telemetry_cfg) = telemetry_cfg {
+                let session_id = match telemetry_cfg.session_id.try_to_string_option() {
+                    Ok(s) => s,
+                    Err(_) => return gen_error!(ErrorCode::InvalidInput),
+                };
+                let root_session_id = match telemetry_cfg.root_session_id.try_to_string_option() {
+                    Ok(s) => s,
+                    Err(_) => return gen_error!(ErrorCode::InvalidInput),
+                };
+                let parent_session_id = match telemetry_cfg.parent_session_id.try_to_string_option()
+                {
+                    Ok(s) => s,
+                    Err(_) => return gen_error!(ErrorCode::InvalidInput),
+                };
                 let cfg = TelemetryConfig {
                     heartbeat: telemetry_cfg.interval,
                     runtime_id: match sanitize_string(telemetry_cfg.runtime_id) {
@@ -307,6 +336,9 @@ pub unsafe extern "C" fn ddog_trace_exporter_config_enable_telemetry(
                         Err(e) => return Some(e),
                     },
                     debug_enabled: telemetry_cfg.debug_enabled,
+                    session_id,
+                    root_session_id,
+                    parent_session_id,
                 };
                 debug!(telemetry_cfg = ?cfg, "Configuring telemetry");
                 config.telemetry_cfg = Some(cfg);
@@ -871,6 +903,9 @@ mod tests {
                     interval: 1000,
                     runtime_id: CharSlice::from("id"),
                     debug_enabled: false,
+                    session_id: CharSlice::default(),
+                    root_session_id: CharSlice::default(),
+                    parent_session_id: CharSlice::default(),
                 }),
             );
             assert_eq!(error.as_ref().unwrap().code, ErrorCode::InvalidArgument);
@@ -888,6 +923,9 @@ mod tests {
                     interval: 1000,
                     runtime_id: CharSlice::from("foo"),
                     debug_enabled: true,
+                    session_id: CharSlice::default(),
+                    root_session_id: CharSlice::default(),
+                    parent_session_id: CharSlice::default(),
                 }),
             );
             assert!(error.is_none());
@@ -903,6 +941,46 @@ mod tests {
                 "foo"
             );
             assert!(cfg.telemetry_cfg.as_ref().unwrap().debug_enabled);
+            // Empty session CharSlices must be treated as unset.
+            assert!(cfg.telemetry_cfg.as_ref().unwrap().session_id.is_none());
+            assert!(cfg
+                .telemetry_cfg
+                .as_ref()
+                .unwrap()
+                .root_session_id
+                .is_none());
+            assert!(cfg
+                .telemetry_cfg
+                .as_ref()
+                .unwrap()
+                .parent_session_id
+                .is_none());
+        }
+    }
+
+    #[test]
+    fn config_telemetry_session_ids_test() {
+        unsafe {
+            let mut cfg = TraceExporterConfig::default();
+            let error = ddog_trace_exporter_config_enable_telemetry(
+                Some(&mut cfg),
+                Some(&TelemetryClientConfig {
+                    interval: 1000,
+                    runtime_id: CharSlice::from("runtime"),
+                    debug_enabled: false,
+                    session_id: CharSlice::from("session-abc"),
+                    root_session_id: CharSlice::from("root-xyz"),
+                    parent_session_id: CharSlice::from("parent-123"),
+                }),
+            );
+            assert!(error.is_none());
+            let telemetry_cfg = cfg.telemetry_cfg.as_ref().unwrap();
+            assert_eq!(telemetry_cfg.session_id.as_deref(), Some("session-abc"));
+            assert_eq!(telemetry_cfg.root_session_id.as_deref(), Some("root-xyz"));
+            assert_eq!(
+                telemetry_cfg.parent_session_id.as_deref(),
+                Some("parent-123")
+            );
         }
     }
 
@@ -1183,6 +1261,7 @@ mod tests {
                     heartbeat: 10000,
                     runtime_id: Some("foo".to_string()),
                     debug_enabled: true,
+                    ..Default::default()
                 }),
                 ..Default::default()
             };

@@ -840,6 +840,17 @@ pub struct TelemetryConfig {
     pub heartbeat: u64,
     pub runtime_id: Option<String>,
     pub debug_enabled: bool,
+    /// Stable session identifier for the instrumented process. Sent as the
+    /// `DD-Session-ID` HTTP header on telemetry requests.
+    pub session_id: Option<String>,
+    /// Identifier of the root process in a hierarchy of instrumented
+    /// processes. Sent as the `DD-Root-Session-ID` HTTP header on telemetry
+    /// requests when distinct from `session_id`.
+    pub root_session_id: Option<String>,
+    /// Identifier of the immediate parent process. Sent as the
+    /// `DD-Parent-Session-ID` HTTP header on telemetry requests when
+    /// distinct from `session_id`.
+    pub parent_session_id: Option<String>,
 }
 
 #[allow(missing_docs)]
