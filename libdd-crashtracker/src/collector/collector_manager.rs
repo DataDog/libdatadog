@@ -57,20 +57,9 @@ impl Collector {
                     tid,
                 );
             }
-            child_pid if child_pid > 0 => {
-                // Parent process; enable ptrace permission for child if multi-thread collection is enabled
-                #[cfg(target_os = "linux")]
-                if config.collect_all_threads() {
-                    // Allow the collector child to ptrace this process for thread context collection
-                    // SAFETY: prctl is async-signal-safe and we're just setting ptrace permissions
-                    unsafe {
-                        libc::prctl(libc::PR_SET_PTRACER, child_pid as libc::c_ulong, 0, 0, 0);
-                    }
-                }
-                Ok(Self {
-                    handle: ProcessHandle::new(receiver.handle.uds_fd, Some(child_pid)),
-                })
-            },
+            child_pid if child_pid > 0 => Ok(Self {
+                handle: ProcessHandle::new(receiver.handle.uds_fd, Some(child_pid)),
+            }),
             code => {
                 // Error
                 Err(CollectorSpawnError::ForkFailed(code))
