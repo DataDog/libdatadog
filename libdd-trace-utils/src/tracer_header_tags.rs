@@ -134,7 +134,7 @@ impl<'a> From<&'a HeaderMap<HeaderValue>> for TracerHeaderTags<'a> {
             tags.client_computed_top_level = true;
         }
         if let Some(v) = headers.get("datadog-client-computed-stats") {
-            tags.client_computed_stats = !is_header_empty(v.to_str().unwrap_or_default());
+            tags.client_computed_stats = !v.to_str().unwrap_or_default().is_empty();
         }
         if let Some(count) = headers.get("datadog-client-dropped-p0-traces") {
             tags.dropped_p0_traces = count
@@ -148,10 +148,6 @@ impl<'a> From<&'a HeaderMap<HeaderValue>> for TracerHeaderTags<'a> {
         }
         tags
     }
-}
-
-fn is_header_empty(value: &str) -> bool {
-    value.is_empty()
 }
 
 #[cfg(test)]
@@ -265,20 +261,6 @@ mod tests {
         assert!(!tags.client_computed_top_level);
         assert_eq!(tags.dropped_p0_traces, 12);
         assert_eq!(tags.dropped_p0_spans, 0);
-    }
-
-    #[test]
-    fn test_is_header_empty() {
-        // Empty string is true
-        assert!(is_header_empty(""));
-
-        // Truthy and arbitrary non-empty values are false
-        for val in &["1", "t", "T", "TRUE", "True", "true"] {
-            assert!(
-                !is_header_empty(val),
-                "expected is_header_empty({val:?}) to be false"
-            );
-        }
     }
 
     #[test]
