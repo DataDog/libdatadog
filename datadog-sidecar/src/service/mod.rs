@@ -44,7 +44,7 @@ pub(crate) mod tracing;
 
 #[cfg(windows)]
 pub use remote_configs::RemoteConfigNotifyFunction;
-pub use sidecar_interface::DynamicInstrumentationConfigState;
+pub use sidecar_interface::{DynamicInstrumentationConfigState, SidecarFlushOptions};
 pub use telemetry::{get_telemetry_action_sender, InternalTelemetryActions};
 pub(crate) use telemetry::{init_telemetry_sender, telemetry_action_receiver_task};
 

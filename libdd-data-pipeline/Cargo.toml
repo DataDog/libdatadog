@@ -26,6 +26,8 @@ sha2 = "0.10"
 either = "1.13.0"
 tokio = { version = "1.23", features = [
     "rt",
+    "sync",
+    "time",
 ], default-features = false }
 uuid = { version = "1.10.0", features = ["v4"] }
 tokio-util = "0.7.11"
@@ -53,9 +55,15 @@ uuid = { version = "1", features = ["js"] }
 [lib]
 bench = false
 
+[[bench]]
+name = "trace_buffer"
+harness = false
+path = "benches/trace_buffer.rs"
+
 [dev-dependencies]
 libdd-capabilities-impl = { version = "0.1.0", path = "../libdd-capabilities-impl" }
 libdd-log = { path = "../libdd-log" }
+libdd-shared-runtime = { version = "0.1.0", path = "../libdd-shared-runtime" }
 clap = { version = "4.0", features = ["derive"] }
 criterion = "0.5.1"
 libdd-trace-utils = { path = "../libdd-trace-utils", features = [

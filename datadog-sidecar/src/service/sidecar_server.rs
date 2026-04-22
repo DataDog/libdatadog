@@ -7,7 +7,8 @@ use crate::service::{
     telemetry::{TelemetryCachedClient, TelemetryCachedClientSet},
     tracing::TraceFlusher,
     DynamicInstrumentationConfigState, InstanceId, QueueId, RuntimeInfo, RuntimeMetadata,
-    SerializedTracerHeaderTags, SessionConfig, SessionInfo, SidecarAction, SidecarInterface,
+    SerializedTracerHeaderTags, SessionConfig, SessionInfo, SidecarAction, SidecarFlushOptions,
+    SidecarInterface,
 };
 use datadog_ipc::platform::{FileBackedHandle, ShmHandle};
 use datadog_ipc::{PeerCredentials, SeqpacketConn};
@@ -991,12 +992,44 @@ impl SidecarInterface for ConnectionSidecarHandler {
         }
     }
 
-    async fn flush_traces(&self, _peer: PeerCredentials) {
-        let flusher = self.server.trace_flusher.clone();
-        if let Err(e) = tokio::spawn(async move { flusher.flush().await }).await {
-            error!("Failed flushing traces: {e:?}");
+    async fn flush(&self, _peer: PeerCredentials, options: SidecarFlushOptions) {
+        if options.traces_and_stats {
+            let flusher = self.server.trace_flusher.clone();
+            if let Err(e) = tokio::spawn(async move { flusher.flush().await }).await {
+                error!("Failed flushing traces: {e:?}");
+            }
+            flush_all_stats_now(&self.server.span_concentrators).await;
         }
-        flush_all_stats_now(&self.server.span_concentrators).await;
+        if options.telemetry {
+            let workers: Vec<_> = {
+                let clients = self.server.telemetry_clients.inner.lock_or_panic();
+                clients
+                    .values()
+                    .filter_map(|entry| {
+                        entry
+                            .client
+                            .lock_or_panic()
+                            .as_ref()
+                            .map(|c| c.worker.clone())
+                    })
+                    .collect()
+            };
+            futures::future::join_all(workers.into_iter().map(|worker| async move {
+                let _ = worker
+                    .send_msg(TelemetryActions::Lifecycle(
+                        LifecycleAction::FlushMetricAggr,
+                    ))
+                    .await;
+                let _ = worker
+                    .send_msg(TelemetryActions::Lifecycle(LifecycleAction::FlushData))
+                    .await;
+                // now await completion
+                let (tx, rx) = futures::channel::oneshot::channel();
+                let _ = worker.send_msg(TelemetryActions::CollectStats(tx)).await;
+                let _ = rx.await;
+            }))
+            .await;
+        }
     }
 
     async fn set_test_session_token(&self, _peer: PeerCredentials, token: String) {

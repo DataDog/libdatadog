@@ -16,7 +16,6 @@ crate-type = ["lib"]
 bench = false
 
 [dependencies]
-libdd-capabilities = { path = "../libdd-capabilities", version = "0.1.0" }
 anyhow = "1.0"
 futures = "0.3"
 futures-core = { version = "0.3.0", default-features = false }
@@ -36,6 +35,7 @@ regex = "1.5"
 # Use rustls-no-provider instead of rustls to avoid reqwest forcing aws-lc-rs as the crypto
 # backend. We install the ring provider explicitly in connector/mod.rs instead.
 reqwest = { version = "0.13.2", features = ["rustls-no-provider", "hickory-dns"], default-features = false, optional = true }
+criterion = { version = "0.5.1", optional = true }
 # Pinned to <0.8.3: version 0.8.3+ pulls in openssl-probe@0.2 which probes multiple
 # certificate directories and parses individual cert files instead of loading a single
 # bundle, adding unnecessary I/O overhead in latency-sensitive environments.
@@ -104,6 +104,8 @@ fips = ["tls-core", "hyper-rustls/fips"]
 reqwest = ["dep:reqwest", "test-utils"]
 # Enable test utilities for use in other crates
 test-utils = ["dep:httparse", "dep:rand", "dep:mime", "dep:multer"]
+# Enable benchmark utilities (ReportingAllocator, Criterion allocation measurement)
+bench-utils = ["dep:criterion"]
 
 [lints.rust]
 # We run coverage checks in our github actions. These checks are run with
