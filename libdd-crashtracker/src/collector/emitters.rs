@@ -531,11 +531,12 @@ fn enumerate_task_tids(pid: libc::pid_t) -> Vec<libc::pid_t> {
 
 /// Emit thread blocks for all threads other than the crashing thread.
 ///
-/// Called from the collector child (after fork), so std::fs is safe to use.
+/// Called from the collector child (after fork), so std::fs and ptrace are safe to use.
+/// Uses a streaming approach to avoid allocating vectors or hashmaps.
 /// For each thread:
+///   - Uses ptrace to capture thread context (registers + stack)
 ///   - Reads name and state from /proc/<ppid>/task/<tid>/
-///   - If a ucontext was captured (collect_all_threads), emits the stack trace.
-///   - Otherwise emits an empty (incomplete) stack trace.
+///   - Immediately emits the thread block without intermediate storage
 #[cfg(target_os = "linux")]
 fn emit_all_threads(
     w: &mut impl Write,
@@ -543,41 +544,71 @@ fn emit_all_threads(
     ppid: libc::pid_t,
     crashing_tid: libc::pid_t,
 ) -> Result<(), EmitterError> {
-    use crate::collector::thread_context_buffer::iter_collected_contexts;
+    use crate::collector::ptrace_collector::stream_thread_contexts;
+    use std::time::Duration;
 
-    // Build a map from TID to captured ucontext pointer (may be empty if buffer
-    // was not initialised or the thread did not respond in time).
-    let contexts: std::collections::HashMap<libc::pid_t, *const ucontext_t> =
-        iter_collected_contexts()
-            .map(|c| (c.tid, c.ucontext))
-            .collect();
+    // Calculate timeout for ptrace operations
+    let context_timeout = Duration::from_millis((config.timeout().as_millis() / 2).min(200) as u64);
 
-    let tids = enumerate_task_tids(ppid);
-    let max = config.max_threads();
-    let mut emitted = 0;
+    let result = stream_thread_contexts(
+        ppid,
+        crashing_tid,
+        config.max_threads(),
+        context_timeout,
+        |tid, captured_context| {
+            // Read thread metadata from /proc
+            let name = read_thread_name(ppid, tid).unwrap_or_else(|| tid.to_string());
+            let state = read_thread_state(ppid, tid);
 
-    for tid in tids {
-        if tid == crashing_tid {
-            continue;
+            // Get ucontext pointer if we captured context for this thread
+            let ucontext = captured_context.map(|ctx| &ctx.ucontext as *const _);
+
+            // Immediately emit the thread block
+            match emit_thread_block(
+                w,
+                tid,
+                false,
+                &name,
+                state.as_deref(),
+                config.resolve_frames(),
+                ucontext,
+            ) {
+                Ok(()) => true,  // Continue with next thread
+                Err(_) => false, // Stop iteration on write error
+            }
+        },
+    );
+
+    // Handle the case where ptrace setup fails entirely
+    if result.is_err() {
+        // Fall back to thread enumeration without context capture
+        // This provides basic thread information even when ptrace fails
+        let tids = enumerate_task_tids(ppid);
+        let max = config.max_threads();
+        let mut emitted = 0;
+
+        for tid in tids {
+            if tid == crashing_tid {
+                continue;
+            }
+            if emitted >= max {
+                break;
+            }
+
+            let name = read_thread_name(ppid, tid).unwrap_or_else(|| tid.to_string());
+            let state = read_thread_state(ppid, tid);
+
+            emit_thread_block(
+                w,
+                tid,
+                false,
+                &name,
+                state.as_deref(),
+                config.resolve_frames(),
+                None, // No context available
+            )?;
+            emitted += 1;
         }
-        if emitted >= max {
-            break;
-        }
-
-        let name = read_thread_name(ppid, tid).unwrap_or_else(|| tid.to_string());
-        let state = read_thread_state(ppid, tid);
-        let ucontext = contexts.get(&tid).copied();
-
-        emit_thread_block(
-            w,
-            tid,
-            false,
-            &name,
-            state.as_deref(),
-            config.resolve_frames(),
-            ucontext,
-        )?;
-        emitted += 1;
     }
 
     Ok(())

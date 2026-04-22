@@ -1,8 +1,6 @@
 // Copyright 2025-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 use super::crash_handler::handle_posix_sigaction;
-#[cfg(target_os = "linux")]
-use super::thread_context_buffer::handle_collect_context_signal;
 use crate::shared::configuration::CrashtrackerConfiguration;
 use crate::signal_from_signum;
 use libc::{
@@ -218,34 +216,6 @@ unsafe fn register_signal_handler(
 /// and does not chain to the previous action, our handler will be silently lost and
 /// thread contexts will not be captured. Applications that own SIGUSR2 should
 /// install their handler first and chain correctly, or not enable `collect_all_threads`.
-#[cfg(target_os = "linux")]
-pub fn register_thread_context_signal_handler() -> anyhow::Result<()> {
-    use super::thread_context_buffer::store_prev_sigusr2_action;
-
-    let sig_action = SigAction::new(
-        SigHandler::SigAction(handle_collect_context_signal),
-        // SA_RESTART: restart interrupted syscalls.
-        // SA_NODEFER: allow concurrent delivery to multiple threads simultaneously
-        //   (each thread writes to its own pre-claimed slot, so re-entrancy is safe).
-        SaFlags::SA_NODEFER | SaFlags::SA_RESTART,
-        signal::SigSet::empty(),
-    );
-
-    // sigaction() returns the previous action; save it so the handler can chain.
-    let old_action = unsafe {
-        signal::sigaction(signal::Signal::SIGUSR2, &sig_action)
-            .map_err(|e| anyhow::anyhow!("Failed to register SIGUSR2 handler: {e}"))?
-    };
-
-    store_prev_sigusr2_action(old_action);
-
-    Ok(())
-}
-
-#[cfg(not(target_os = "linux"))]
-pub fn register_thread_context_signal_handler() -> anyhow::Result<()> {
-    Ok(())
-}
 
 #[cfg(test)]
 mod tests {
