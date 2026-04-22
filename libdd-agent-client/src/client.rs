@@ -75,8 +75,7 @@ impl AgentClient {
             TraceFormat::MsgpackV4 => ("/v0.4/traces", "application/msgpack"),
         };
 
-        let url = format!("{}{}", self.base_url, path);
-        let mut request = HttpRequest::new(HttpMethod::Put, url)
+        let mut request = HttpRequest::new(HttpMethod::Put, format!("{}{}", self.base_url, path))
             .with_body(payload)
             .with_headers(self.static_headers.iter().cloned())
             .with_header("Content-Type", content_type)
@@ -105,8 +104,7 @@ impl AgentClient {
 
     /// Send span stats (APM concentrator buckets) to `/v0.6/stats`.
     pub async fn send_stats(&self, payload: Bytes) -> Result<(), SendError> {
-        let url = format!("{}/v0.6/stats", self.base_url);
-        let request = HttpRequest::new(HttpMethod::Put, url)
+        let request = HttpRequest::new(HttpMethod::Put, format!("{}/v0.6/stats", self.base_url))
             .with_body(payload)
             .with_headers(self.static_headers.iter().cloned())
             .with_header("Content-Type", "application/msgpack");
@@ -120,14 +118,14 @@ impl AgentClient {
     /// The payload is **always** gzip-compressed regardless of the client-level compression
     /// setting. This is a protocol requirement of the data-streams endpoint.
     pub async fn send_pipeline_stats(&self, payload: Bytes) -> Result<(), SendError> {
-        let compressed = gzip_compress(payload)?;
-
-        let url = format!("{}/v0.1/pipeline_stats", self.base_url);
-        let request = HttpRequest::new(HttpMethod::Put, url)
-            .with_body(compressed)
-            .with_headers(self.static_headers.iter().cloned())
-            .with_header("Content-Type", "application/msgpack")
-            .with_header("Content-Encoding", "gzip");
+        let request = HttpRequest::new(
+            HttpMethod::Put,
+            format!("{}/v0.1/pipeline_stats", self.base_url),
+        )
+        .with_body(gzip_compress(payload)?)
+        .with_headers(self.static_headers.iter().cloned())
+        .with_header("Content-Type", "application/msgpack")
+        .with_header("Content-Encoding", "gzip");
 
         let response = self.http.send(request).await.map_err(map_http_error)?;
         check_status(response)
@@ -136,17 +134,19 @@ impl AgentClient {
     /// Send a telemetry event to the agent's telemetry proxy
     /// (`telemetry/proxy/api/v2/apmtelemetry`).
     pub async fn send_telemetry(&self, req: TelemetryRequest) -> Result<(), SendError> {
-        let url = format!("{}/telemetry/proxy/api/v2/apmtelemetry", self.base_url);
-        let request = HttpRequest::new(HttpMethod::Post, url)
-            .with_body(req.body)
-            .with_headers(self.static_headers.iter().cloned())
-            .with_header("Content-Type", "application/json")
-            .with_header("DD-Telemetry-Request-Type", &req.request_type)
-            .with_header("DD-Telemetry-API-Version", &req.api_version)
-            .with_header(
-                "DD-Telemetry-Debug-Enabled",
-                if req.debug { "true" } else { "false" },
-            );
+        let request = HttpRequest::new(
+            HttpMethod::Post,
+            format!("{}/telemetry/proxy/api/v2/apmtelemetry", self.base_url),
+        )
+        .with_body(req.body)
+        .with_headers(self.static_headers.iter().cloned())
+        .with_header("Content-Type", "application/json")
+        .with_header("DD-Telemetry-Request-Type", &req.request_type)
+        .with_header("DD-Telemetry-API-Version", &req.api_version)
+        .with_header(
+            "DD-Telemetry-Debug-Enabled",
+            if req.debug { "true" } else { "false" },
+        );
 
         let response = self.http.send(request).await.map_err(map_http_error)?;
         check_status(response)
@@ -164,8 +164,7 @@ impl AgentClient {
         payload: Bytes,
         content_type: &str,
     ) -> Result<(), SendError> {
-        let url = format!("{}{}", self.base_url, path);
-        let request = HttpRequest::new(HttpMethod::Post, url)
+        let request = HttpRequest::new(HttpMethod::Post, format!("{}{}", self.base_url, path))
             .with_body(payload)
             .with_headers(self.static_headers.iter().cloned())
             .with_header("Content-Type", content_type)
@@ -187,8 +186,7 @@ impl AgentClient {
             config: Option<Value>,
         }
 
-        let url = format!("{}/info", self.base_url);
-        let request = HttpRequest::new(HttpMethod::Get, url)
+        let request = HttpRequest::new(HttpMethod::Get, format!("{}/info", self.base_url))
             .with_headers(self.static_headers.iter().cloned());
 
         let response = self.http.send(request).await.map_err(map_http_error)?;

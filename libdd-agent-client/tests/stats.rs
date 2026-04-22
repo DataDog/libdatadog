@@ -14,8 +14,7 @@ async fn puts_to_v06_stats() {
         then.status(200).body("");
     });
 
-    let client = common::client_for(&server);
-    client
+    common::client_for(&server)
         .send_stats(Bytes::from_static(b"\x80"))
         .await
         .unwrap();
@@ -33,8 +32,7 @@ async fn sets_msgpack_content_type() {
         then.status(200).body("");
     });
 
-    let client = common::client_for(&server);
-    client
+    common::client_for(&server)
         .send_stats(Bytes::from_static(b"\x80"))
         .await
         .unwrap();

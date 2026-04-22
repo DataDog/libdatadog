@@ -16,8 +16,7 @@ async fn posts_to_telemetry_proxy() {
         then.status(202).body("");
     });
 
-    let client = common::client_for(&server);
-    client
+    common::client_for(&server)
         .send_telemetry(TelemetryRequest {
             request_type: "app-started".to_string(),
             api_version: "v2".to_string(),
@@ -42,8 +41,7 @@ async fn injects_per_request_headers() {
         then.status(202).body("");
     });
 
-    let client = common::client_for(&server);
-    client
+    common::client_for(&server)
         .send_telemetry(TelemetryRequest {
             request_type: "app-started".to_string(),
             api_version: "v2".to_string(),

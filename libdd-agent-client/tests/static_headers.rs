@@ -21,8 +21,7 @@ async fn language_metadata_headers_injected_on_all_requests() {
         then.status(200).body(r#"{}"#);
     });
 
-    let client = common::client_for(&server);
-    client
+    common::client_for(&server)
         .send_traces(
             Bytes::from_static(b""),
             0,

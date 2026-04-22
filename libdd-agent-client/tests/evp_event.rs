@@ -16,8 +16,7 @@ async fn posts_to_path_with_subdomain_header() {
         then.status(200).body("");
     });
 
-    let client = common::client_for(&server);
-    client
+    common::client_for(&server)
         .send_evp_event(
             "event-platform-intake",
             "/api/v2/exposures",

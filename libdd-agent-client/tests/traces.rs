@@ -15,8 +15,7 @@ async fn v5_puts_to_correct_endpoint() {
         then.status(200).body(r#"{"rate_by_service":{}}"#);
     });
 
-    let client = common::client_for(&server);
-    let resp = client
+    let resp = common::client_for(&server)
         .send_traces(
             Bytes::from_static(b"\x91\x90"),
             1,
@@ -38,8 +37,7 @@ async fn v4_puts_to_v4_endpoint() {
         then.status(200).body(r#"{}"#);
     });
 
-    let client = common::client_for(&server);
-    client
+    common::client_for(&server)
         .send_traces(
             Bytes::from_static(b"\x91\x90"),
             1,
@@ -62,8 +60,7 @@ async fn injects_trace_count_header() {
         then.status(200).body(r#"{}"#);
     });
 
-    let client = common::client_for(&server);
-    client
+    common::client_for(&server)
         .send_traces(
             Bytes::from_static(b"\x91\x90"),
             42,
@@ -86,8 +83,7 @@ async fn injects_send_real_http_status_header() {
         then.status(200).body(r#"{}"#);
     });
 
-    let client = common::client_for(&server);
-    client
+    common::client_for(&server)
         .send_traces(
             Bytes::from_static(b""),
             0,
@@ -110,8 +106,7 @@ async fn computed_top_level_injects_header() {
         then.status(200).body(r#"{}"#);
     });
 
-    let client = common::client_for(&server);
-    client
+    common::client_for(&server)
         .send_traces(
             Bytes::from_static(b""),
             0,
@@ -135,8 +130,7 @@ async fn parses_rate_by_service() {
             .body(r#"{"rate_by_service":{"service:env":0.75}}"#);
     });
 
-    let client = common::client_for(&server);
-    let resp = client
+    let resp = common::client_for(&server)
         .send_traces(
             Bytes::from_static(b""),
             0,
@@ -162,8 +156,7 @@ async fn returns_http_error_on_5xx() {
         then.status(503).body("overloaded");
     });
 
-    let client = common::client_for(&server);
-    let err = client
+    let err = common::client_for(&server)
         .send_traces(
             Bytes::from_static(b""),
             0,
