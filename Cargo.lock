@@ -3147,6 +3147,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "libdd-otel-thread-ctx-ffi"
+version = "1.0.0"
+dependencies = [
+ "build_common",
+ "libdd-common-ffi",
+ "libdd-otel-thread-ctx",
+]
+
+[[package]]
 name = "libdd-profiling"
 version = "1.0.0"
 dependencies = [
