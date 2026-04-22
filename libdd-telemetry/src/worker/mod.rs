@@ -1290,7 +1290,7 @@ mod tests {
     };
     use crate::worker::{
         LifecycleAction, TelemetryActions, TelemetryWorker, TelemetryWorkerBuilder,
-        TelemetryWorkerHandle,
+        TelemetryWorkerFlavor, TelemetryWorkerHandle,
     };
     use libdd_common::{http_common, Endpoint};
     use tokio::runtime::Runtime;
@@ -1444,12 +1444,7 @@ mod tests {
         );
     }
 
-    /// `Lifecycle(Start)` must schedule `ExtendedHeartbeat` alongside the other periodic
-    /// events. Without an initial schedule the event sits in the scheduler's `delays`
-    /// catalog but never enters the `deadlines` queue, so its handler is never invoked
-    /// and `app-extended-heartbeat` payloads are never emitted.
-    #[tokio::test]
-    async fn lifecycle_start_schedules_extended_heartbeat() {
+    fn build_test_worker_with_flavor(flavor: TelemetryWorkerFlavor) -> TelemetryWorker {
         let mut b = TelemetryWorkerBuilder::new(
             "h".into(),
             "svc".into(),
@@ -1461,10 +1456,54 @@ mod tests {
             .set_endpoint(Endpoint::from_slice("http://127.0.0.1:1"))
             .unwrap();
         b.runtime_id = Some("rid".into());
-        let mut worker = b.build_worker(Some(tokio::runtime::Handle::current())).1;
+        b.flavor = flavor;
+        b.build_worker(Some(tokio::runtime::Handle::current())).1
+    }
+
+    /// Invariant for the `Full` flavor: every event that has a delay entry in the
+    /// scheduler's `delays` catalog must be scheduled by `Lifecycle(Start)`. An event
+    /// with a delay but no initial schedule will sit in `delays` forever without ever
+    /// entering the `deadlines` queue, so its handler never fires — the original
+    /// `app-extended-heartbeat` bug.
+    ///
+    /// Keep this as an invariant (walk `delays`) rather than an enumeration of specific
+    /// variants so that adding a new periodic `LifecycleAction` can't silently regress.
+    #[tokio::test]
+    async fn full_flavor_start_schedules_every_periodic_action() {
+        let mut worker = build_test_worker_with_flavor(TelemetryWorkerFlavor::Full);
 
         let _ = worker
             .dispatch_action(TelemetryActions::Lifecycle(LifecycleAction::Start))
+            .await;
+
+        let delays: Vec<LifecycleAction> =
+            worker.deadlines.delays.iter().map(|(_, k)| *k).collect();
+        let scheduled: Vec<LifecycleAction> =
+            worker.deadlines.deadlines.iter().map(|(_, k)| *k).collect();
+
+        assert!(
+            !delays.is_empty(),
+            "test precondition: scheduler should register at least one periodic action",
+        );
+        for ev in &delays {
+            assert!(
+                scheduled.contains(ev),
+                "event {ev:?} has a delay catalog entry but was not scheduled on Start; \
+                 scheduled={scheduled:?}",
+            );
+        }
+    }
+
+    /// The `MetricsLogs` flavor intentionally excludes lifecycle events (app-started,
+    /// heartbeats, extended heartbeats). This is a negative regression guard: if a
+    /// future change starts emitting lifecycle telemetry from the metrics-only flavor,
+    /// this test will flag it so the decision is explicit.
+    #[tokio::test]
+    async fn metrics_logs_flavor_start_does_not_schedule_extended_heartbeat() {
+        let mut worker = build_test_worker_with_flavor(TelemetryWorkerFlavor::MetricsLogs);
+
+        let _ = worker
+            .dispatch_metrics_logs_action(TelemetryActions::Lifecycle(LifecycleAction::Start))
             .await;
 
         let scheduled: Vec<LifecycleAction> =
@@ -1472,15 +1511,15 @@ mod tests {
 
         assert!(
             scheduled.contains(&LifecycleAction::FlushMetricAggr),
-            "Start should schedule FlushMetricAggr; scheduled={scheduled:?}",
+            "MetricsLogs Start should schedule FlushMetricAggr; scheduled={scheduled:?}",
         );
         assert!(
             scheduled.contains(&LifecycleAction::FlushData),
-            "Start should schedule FlushData; scheduled={scheduled:?}",
+            "MetricsLogs Start should schedule FlushData; scheduled={scheduled:?}",
         );
         assert!(
-            scheduled.contains(&LifecycleAction::ExtendedHeartbeat),
-            "Start should schedule ExtendedHeartbeat; scheduled={scheduled:?}",
+            !scheduled.contains(&LifecycleAction::ExtendedHeartbeat),
+            "MetricsLogs flavor intentionally excludes ExtendedHeartbeat; scheduled={scheduled:?}",
         );
     }
 
