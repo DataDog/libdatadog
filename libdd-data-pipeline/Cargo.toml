@@ -58,6 +58,7 @@ bench = false
 [[bench]]
 name = "trace_buffer"
 harness = false
+path = "benches/trace_buffer.rs"
 
 [dev-dependencies]
 libdd-capabilities-impl = { version = "0.1.0", path = "../libdd-capabilities-impl" }
