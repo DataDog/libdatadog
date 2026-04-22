@@ -3,10 +3,11 @@
 
 use crate::arc_handle::ArcHandle;
 use crate::profile_status::ProfileStatus;
-use crate::profiles::utf8::Utf8Option;
+use crate::profiles::utf8::{self, Utf8Option};
 use crate::profiles::{ensure_non_null_insert, ensure_non_null_out_parameter};
 use crate::ProfileError;
-use libdd_common_ffi::slice::CharSlice;
+use libdd_common_ffi::slice::{CharSlice, Slice};
+use libdd_common_ffi::MutSlice;
 use libdd_profiling::profiles::collections::StringRef;
 use libdd_profiling::profiles::datatypes::{
     Function2, FunctionId2, Mapping2, MappingId2, ProfilesDictionary, StringId2,
@@ -45,6 +46,18 @@ pub static DDOG_PROF_STRINGID2_TRACE_ENDPOINT: StringId2 =
 /// needing to insert it into a string set.
 #[no_mangle]
 pub static DDOG_PROF_STRINGID2_SPAN_ID: StringId2 = StringId2::from(StringRef::SPAN_ID);
+
+/// A StringId that represents the string "thread id".
+/// This is always available in every string set and can be used without
+/// needing to insert it into a string set.
+#[no_mangle]
+pub static DDOG_PROF_STRINGID2_THREAD_ID: StringId2 = StringId2::from(StringRef::THREAD_ID);
+
+/// A StringId that represents the string "thread name".
+/// This is always available in every string set and can be used without
+/// needing to insert it into a string set.
+#[no_mangle]
+pub static DDOG_PROF_STRINGID2_THREAD_NAME: StringId2 = StringId2::from(StringRef::THREAD_NAME);
 
 const NULL_PROFILES_DICTIONARY: &CStr = c"passed a null pointer for a ProfilesDictionary";
 
@@ -163,8 +176,46 @@ pub unsafe extern "C" fn ddog_prof_ProfilesDictionary_insert_str(
     ensure_non_null_out_parameter!(string_id);
     ProfileStatus::from(|| -> Result<(), ProfileError> {
         let dict = dict.ok_or(NULL_PROFILES_DICTIONARY)?;
-        crate::profiles::utf8::insert_str(dict.strings(), byte_slice, utf8_option)
+        utf8::insert_str(dict.strings(), byte_slice, utf8_option)
             .map(|id| unsafe { string_id.write(id.into()) })
+    }())
+}
+
+/// Inserts a batch of UTF-8 strings into the dictionary string table.
+///
+/// On success, each element of `string_ids` corresponds to the same-index element of
+/// `strings`. The length of `string_ids` must equal the length of `strings`; a
+/// mismatch is an error.
+///
+/// On failure the number of entries written to `string_ids` is unspecified; callers
+/// must not read any element of `string_ids`.
+///
+/// # Safety
+///
+/// - `dict` must refer to a live dictionary.
+/// - `strings` must be a valid slice for the duration of the call.
+/// - `string_ids` must be a valid writable slice of `StringId2` with the same length as `strings`.
+/// - The UTF-8 policy indicated by `utf8_option` must be respected by the caller for every string
+///   in `strings`.
+#[no_mangle]
+pub unsafe extern "C" fn ddog_prof_ProfilesDictionary_insert_strs(
+    mut string_ids: MutSlice<StringId2>,
+    dict: Option<&ProfilesDictionary>,
+    strings: Slice<CharSlice>,
+    utf8_option: Utf8Option,
+) -> ProfileStatus {
+    ProfileStatus::from(|| -> Result<(), ProfileError> {
+        let dict = dict.ok_or(NULL_PROFILES_DICTIONARY)?;
+        if strings.len() != string_ids.len() {
+            return Err(ProfileError::from(
+                c"input strings slice and output StringId2 slice have different lengths",
+            ));
+        }
+        for (byte_slice, id_out) in strings.iter().zip(string_ids.as_mut_slice().iter_mut()) {
+            let id = utf8::insert_str(dict.strings(), *byte_slice, utf8_option)?;
+            *id_out = id.into();
+        }
+        Ok(())
     }())
 }
 
@@ -191,15 +242,35 @@ pub unsafe extern "C" fn ddog_prof_ProfilesDictionary_get_str(
     let Some(dict) = dict else {
         return ProfileStatus::from(NULL_PROFILES_DICTIONARY);
     };
-    let string_ref = StringRef::from(string_id);
     // SAFETY: It's not actually safe--as indicated in the docs
     // for this function, the caller needs to be sure the string
     // set in the dictionary outlives the slice.
     result.write(unsafe {
         std::mem::transmute::<CharSlice<'_>, CharSlice<'static>>(CharSlice::from(
-            dict.strings().get(string_ref),
+            dict.get_str(string_id),
         ))
     });
+    ProfileStatus::OK
+}
+
+/// Tries to get the function value associated with the function id.
+///
+/// # Safety
+///
+///  1. The `function_id` should belong to this dictionary.
+///  2. The dictionary must be live for the duration of the call.
+///  3. The result pointer must be valid for [`core::ptr::write`].
+#[no_mangle]
+pub unsafe extern "C" fn ddog_prof_ProfilesDictionary_get_func(
+    result: *mut Function2,
+    dict: Option<&ProfilesDictionary>,
+    function_id: FunctionId2,
+) -> ProfileStatus {
+    ensure_non_null_out_parameter!(result);
+    let Some(dict) = dict else {
+        return ProfileStatus::from(NULL_PROFILES_DICTIONARY);
+    };
+    unsafe { result.write(dict.get_func(function_id)) };
     ProfileStatus::OK
 }
 
@@ -226,6 +297,74 @@ pub unsafe extern "C" fn ddog_prof_ProfilesDictionary_drop(
 mod tests {
     use super::*;
     use crate::profiles::utf8::Utf8Option;
+    use libdd_common_ffi::slice::AsBytes;
+
+    #[test]
+    fn test_insert_strs_success() {
+        let mut handle = ArcHandle::default();
+        unsafe {
+            Result::from(ddog_prof_ProfilesDictionary_new(&mut handle)).unwrap();
+            let dict = handle.as_inner().ok();
+
+            let inputs = ["hello", "world", "foo"];
+            let char_slices: Vec<CharSlice> = inputs.iter().map(|s| CharSlice::from(*s)).collect();
+            let mut ids = vec![StringId2::default(); inputs.len()];
+
+            Result::from(ddog_prof_ProfilesDictionary_insert_strs(
+                MutSlice::from(ids.as_mut_slice()),
+                dict,
+                Slice::from(char_slices.as_slice()),
+                Utf8Option::Validate,
+            ))
+            .unwrap();
+
+            for (input, id) in inputs.iter().zip(ids.iter()) {
+                let mut found = CharSlice::empty();
+                Result::from(ddog_prof_ProfilesDictionary_get_str(&mut found, dict, *id)).unwrap();
+                assert_eq!(found.try_to_utf8().unwrap(), *input);
+            }
+
+            ddog_prof_ProfilesDictionary_drop(&mut handle);
+        }
+    }
+
+    #[test]
+    fn test_insert_strs_length_mismatch() {
+        let mut handle = ArcHandle::default();
+        unsafe {
+            Result::from(ddog_prof_ProfilesDictionary_new(&mut handle)).unwrap();
+            let dict = handle.as_inner().ok();
+
+            let char_slices = [CharSlice::from("a"), CharSlice::from("b")];
+            let mut ids = vec![StringId2::default(); 3]; // wrong length
+
+            let status = ddog_prof_ProfilesDictionary_insert_strs(
+                MutSlice::from(ids.as_mut_slice()),
+                dict,
+                Slice::from(char_slices.as_slice()),
+                Utf8Option::Validate,
+            );
+            assert!(!status.err.is_null(), "expected error for length mismatch");
+
+            ddog_prof_ProfilesDictionary_drop(&mut handle);
+        }
+    }
+
+    #[test]
+    fn test_insert_strs_null_dict() {
+        unsafe {
+            let char_slices = [CharSlice::from("a")];
+            let mut ids = vec![StringId2::default(); 1];
+
+            let status = ddog_prof_ProfilesDictionary_insert_strs(
+                MutSlice::from(ids.as_mut_slice()),
+                None,
+                Slice::from(char_slices.as_slice()),
+                Utf8Option::Validate,
+            );
+            assert!(!status.err.is_null(), "expected error for null dict");
+        }
+    }
 
     #[test]
     fn test_basics_including_drop() {

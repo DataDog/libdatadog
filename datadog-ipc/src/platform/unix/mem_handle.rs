@@ -7,10 +7,12 @@ use crate::platform::{
 use io_lifetimes::OwnedFd;
 use libc::{chmod, off_t};
 use nix::errno::Errno;
+#[cfg(target_os = "linux")]
+use nix::fcntl::{fallocate, FallocateFlags};
 use nix::fcntl::{open, OFlag};
 use nix::sys::mman::{self, mmap, munmap, MapFlags, ProtFlags};
 use nix::sys::stat::Mode;
-use nix::unistd::{ftruncate, mkdir, unlink};
+use nix::unistd::{fchown, ftruncate, mkdir, unlink, Uid};
 use nix::NixPath;
 use std::ffi::{CStr, CString};
 use std::fs::File;
@@ -18,7 +20,11 @@ use std::io;
 use std::num::NonZeroUsize;
 use std::os::fd::AsFd;
 use std::os::unix::fs::MetadataExt;
-use std::sync::atomic::{AtomicI32, Ordering};
+use std::os::unix::io::AsRawFd;
+use std::sync::atomic::{AtomicI32, AtomicU32, Ordering};
+
+// Sentinel value meaning "no owner UID override"
+const NO_OWNER_UID: u32 = u32::MAX;
 
 fn fallback_path<P: ?Sized + NixPath>(name: &P) -> nix::Result<CString> {
     name.with_nix_path(|cstr| {
@@ -95,6 +101,21 @@ pub(crate) fn munmap_handle<T: MemoryHandle>(mapped: &mut MappedMem<T>) {
 
 static ANON_SHM_ID: AtomicI32 = AtomicI32::new(0);
 
+static SHM_OWNER_UID: AtomicU32 = AtomicU32::new(NO_OWNER_UID);
+
+pub fn set_shm_owner_uid(uid: u32) {
+    SHM_OWNER_UID.store(uid, Ordering::Relaxed);
+}
+
+fn shm_owner_uid() -> Option<u32> {
+    let uid = SHM_OWNER_UID.load(Ordering::Relaxed);
+    if uid == NO_OWNER_UID {
+        None
+    } else {
+        Some(uid)
+    }
+}
+
 impl ShmHandle {
     #[cfg(target_os = "linux")]
     fn open_anon_shm(name: &str) -> anyhow::Result<OwnedFd> {
@@ -144,7 +165,15 @@ impl NamedShmHandle {
 
     pub fn create_mode(path: CString, size: usize, mode: Mode) -> io::Result<NamedShmHandle> {
         let fd = shm_open(path.as_bytes(), OFlag::O_CREAT | OFlag::O_RDWR, mode)?;
+        // Use fallocate on Linux to eagerly commit pages: if /dev/shm is full we get ENOSPC
+        // here (recoverable) rather than SIGBUS mid-execution when a worker writes a slot.
+        #[cfg(target_os = "linux")]
+        fallocate(fd.as_raw_fd(), FallocateFlags::empty(), 0, size as off_t)?;
+        #[cfg(not(target_os = "linux"))]
         ftruncate(&fd, size as off_t)?;
+        if let Some(uid) = shm_owner_uid() {
+            let _ = fchown(fd.as_raw_fd(), Some(Uid::from_raw(uid)), None);
+        }
         Self::new(fd, Some(path), size)
     }
 
@@ -154,13 +183,18 @@ impl NamedShmHandle {
         Self::new(file.into(), None, size)
     }
 
+    /// Unlink the SHM file from the filesystem without unmapping it.
+    pub fn unlink(&self) {
+        let _ = self.path.take(); // Drop of Box<ShmPath> calls shm_unlink exactly once
+    }
+
     fn new(fd: OwnedFd, path: Option<CString>, size: usize) -> io::Result<NamedShmHandle> {
         Ok(NamedShmHandle {
             inner: ShmHandle {
                 handle: fd.into(),
                 size,
             },
-            path: path.map(|path| ShmPath { name: path }),
+            path: path.map(|path| Box::new(ShmPath { name: path })).into(),
         })
     }
 }

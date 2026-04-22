@@ -28,7 +28,7 @@ use datadog_sidecar::service::telemetry::InternalTelemetryAction;
 use datadog_sidecar::service::{
     blocking::{self, SidecarTransport},
     DynamicInstrumentationConfigState, InstanceId, QueueId, RuntimeMetadata,
-    SerializedTracerHeaderTags, SessionConfig, SidecarAction,
+    SerializedTracerHeaderTags, SessionConfig, SidecarAction, SidecarFlushOptions,
 };
 use datadog_sidecar::service::{get_telemetry_action_sender, InternalTelemetryActions};
 use datadog_sidecar::shm_remote_config::{path_for_remote_config, RemoteConfigReader};
@@ -59,6 +59,8 @@ use std::ptr::NonNull;
 use std::slice;
 use std::sync::Arc;
 use std::time::Duration;
+
+use datadog_sidecar::setup::{connect_to_master, MasterListener};
 
 #[no_mangle]
 #[cfg(target_os = "windows")]
@@ -255,6 +257,7 @@ pub unsafe extern "C" fn ddog_remote_config_reader_for_endpoint<'a>(
             env: env_name.to_utf8_lossy().into(),
             app_version: app_version.to_utf8_lossy().into(),
             tags: tags.as_slice().to_vec(),
+            process_tags: vec![],
         }),
     ))
 }
@@ -311,6 +314,46 @@ pub extern "C" fn ddog_sidecar_connect(connection: &mut *mut SidecarTransport) -
 }
 
 #[no_mangle]
+pub extern "C" fn ddog_sidecar_connect_master(pid: i32) -> MaybeError {
+    let cfg = datadog_sidecar::config::FromEnv::config();
+    #[cfg(unix)]
+    datadog_sidecar::set_sidecar_master_pid(pid as u32);
+    try_c!(MasterListener::start(pid, cfg));
+
+    MaybeError::None
+}
+
+#[no_mangle]
+pub extern "C" fn ddog_sidecar_connect_worker(
+    pid: i32,
+    connection: &mut *mut SidecarTransport,
+) -> MaybeError {
+    let transport = try_c!(connect_to_master(pid));
+    *connection = Box::into_raw(transport);
+
+    MaybeError::None
+}
+
+#[no_mangle]
+pub extern "C" fn ddog_sidecar_shutdown_master_listener() -> MaybeError {
+    try_c!(MasterListener::shutdown());
+
+    MaybeError::None
+}
+
+#[no_mangle]
+pub extern "C" fn ddog_sidecar_is_master_listener_active(pid: i32) -> bool {
+    MasterListener::is_active(pid)
+}
+
+#[no_mangle]
+pub extern "C" fn ddog_sidecar_clear_inherited_listener() -> MaybeError {
+    try_c!(MasterListener::clear_inherited_state());
+
+    MaybeError::None
+}
+
+#[no_mangle]
 pub extern "C" fn ddog_sidecar_ping(transport: &mut Box<SidecarTransport>) -> MaybeError {
     try_c!(blocking::ping(transport));
 
@@ -318,8 +361,11 @@ pub extern "C" fn ddog_sidecar_ping(transport: &mut Box<SidecarTransport>) -> Ma
 }
 
 #[no_mangle]
-pub extern "C" fn ddog_sidecar_flush_traces(transport: &mut Box<SidecarTransport>) -> MaybeError {
-    try_c!(blocking::flush_traces(transport));
+pub extern "C" fn ddog_sidecar_flush(
+    transport: &mut Box<SidecarTransport>,
+    options: SidecarFlushOptions,
+) -> MaybeError {
+    try_c!(blocking::flush(transport, options));
 
     MaybeError::None
 }
@@ -506,11 +552,11 @@ pub unsafe extern "C" fn ddog_sidecar_lifecycle_end(
         transport,
         instance_id,
         queue_id,
-        vec![
-            SidecarAction::Telemetry(TelemetryActions::Lifecycle(LifecycleAction::Stop)),
-            SidecarAction::ClearQueueId
-        ],
+        vec![SidecarAction::Telemetry(TelemetryActions::Lifecycle(
+            LifecycleAction::Stop,
+        ))],
     ));
+    try_c!(blocking::clear_queue_id(transport, instance_id, queue_id));
 
     MaybeError::None
 }
@@ -523,12 +569,7 @@ pub unsafe extern "C" fn ddog_sidecar_application_remove(
     instance_id: &InstanceId,
     queue_id: &QueueId,
 ) -> MaybeError {
-    try_c!(blocking::enqueue_actions(
-        transport,
-        instance_id,
-        queue_id,
-        vec![SidecarAction::ClearQueueId],
-    ));
+    try_c!(blocking::clear_queue_id(transport, instance_id, queue_id));
 
     MaybeError::None
 }
@@ -576,65 +617,80 @@ pub unsafe extern "C" fn ddog_sidecar_session_set_config(
     flush_interval_milliseconds: u32,
     remote_config_poll_interval_millis: u32,
     telemetry_heartbeat_interval_millis: u32,
+    telemetry_extended_heartbeat_interval_millis: u64,
     force_flush_size: usize,
     force_drop_size: usize,
     log_level: ffi::CharSlice,
     log_path: ffi::CharSlice,
-    #[allow(unused)] // On FFI layer we cannot conditionally compile, so we need the arg
-    remote_config_notify_function: *mut c_void,
+    _remote_config_notify_function: *mut c_void,
     remote_config_products: *const RemoteConfigProduct,
     remote_config_products_count: usize,
     remote_config_capabilities: *const RemoteConfigCapabilities,
     remote_config_capabilities_count: usize,
     remote_config_enabled: bool,
     is_fork: bool,
-    process_tags: ffi::CharSlice,
+    process_tags: &libdd_common_ffi::Vec<Tag>,
+    hostname: ffi::CharSlice,
+    root_service: ffi::CharSlice,
 ) -> MaybeError {
+    let session_id_str: String = session_id.to_utf8_lossy().into();
+    let session_config = SessionConfig {
+        endpoint: agent_endpoint.clone(),
+        dogstatsd_endpoint: dogstatsd_endpoint.clone(),
+        language: language.to_utf8_lossy().into(),
+        language_version: language_version.to_utf8_lossy().into(),
+        tracer_version: tracer_version.to_utf8_lossy().into(),
+        flush_interval: Duration::from_millis(flush_interval_milliseconds as u64),
+        remote_config_poll_interval: Duration::from_millis(
+            remote_config_poll_interval_millis as u64,
+        ),
+        telemetry_heartbeat_interval: Duration::from_millis(
+            telemetry_heartbeat_interval_millis as u64,
+        ),
+        telemetry_extended_heartbeat_interval: Duration::from_millis(
+            telemetry_extended_heartbeat_interval_millis,
+        ),
+        force_flush_size,
+        force_drop_size,
+        log_level: log_level.to_utf8_lossy().into(),
+        log_file: if log_path.is_empty() {
+            config::FromEnv::log_method()
+        } else {
+            LogMethod::File(String::from(log_path.to_utf8_lossy()).into())
+        },
+        remote_config_products: ffi::Slice::from_raw_parts(
+            remote_config_products,
+            remote_config_products_count,
+        )
+        .as_slice()
+        .to_vec(),
+        remote_config_capabilities: ffi::Slice::from_raw_parts(
+            remote_config_capabilities,
+            remote_config_capabilities_count,
+        )
+        .as_slice()
+        .to_vec(),
+        remote_config_enabled,
+        process_tags: process_tags.to_vec(),
+        peer_tag_keys: vec![],
+        span_kinds_stats_computed: vec![],
+        hostname: hostname.to_utf8_lossy().into(),
+        root_service: root_service.to_utf8_lossy().into(),
+    };
     #[cfg(unix)]
-    let remote_config_notify_target = libc::getpid();
-    #[cfg(windows)]
-    let remote_config_notify_target = remote_config_notify_function;
     try_c!(blocking::set_session_config(
         transport,
-        remote_config_notify_target,
-        session_id.to_utf8_lossy().into(),
-        &SessionConfig {
-            endpoint: agent_endpoint.clone(),
-            dogstatsd_endpoint: dogstatsd_endpoint.clone(),
-            language: language.to_utf8_lossy().into(),
-            language_version: language_version.to_utf8_lossy().into(),
-            tracer_version: tracer_version.to_utf8_lossy().into(),
-            flush_interval: Duration::from_millis(flush_interval_milliseconds as u64),
-            remote_config_poll_interval: Duration::from_millis(
-                remote_config_poll_interval_millis as u64
-            ),
-            telemetry_heartbeat_interval: Duration::from_millis(
-                telemetry_heartbeat_interval_millis as u64
-            ),
-            force_flush_size,
-            force_drop_size,
-            log_level: log_level.to_utf8_lossy().into(),
-            log_file: if log_path.is_empty() {
-                config::FromEnv::log_method()
-            } else {
-                LogMethod::File(String::from(log_path.to_utf8_lossy()).into())
-            },
-            remote_config_products: ffi::Slice::from_raw_parts(
-                remote_config_products,
-                remote_config_products_count
-            )
-            .as_slice()
-            .to_vec(),
-            remote_config_capabilities: ffi::Slice::from_raw_parts(
-                remote_config_capabilities,
-                remote_config_capabilities_count
-            )
-            .as_slice()
-            .to_vec(),
-            remote_config_enabled,
-            process_tags: process_tags.to_utf8_lossy().into(),
-        },
-        is_fork
+        session_id_str,
+        &session_config,
+        is_fork,
+    ));
+    #[cfg(windows)]
+    try_c!(blocking::set_session_config(
+        transport,
+        session_id_str,
+        datadog_sidecar::service::RemoteConfigNotifyFunction(_remote_config_notify_function,),
+        &session_config,
+        is_fork,
     ));
 
     MaybeError::None
@@ -645,13 +701,11 @@ pub unsafe extern "C" fn ddog_sidecar_session_set_config(
 #[allow(clippy::missing_safety_doc)]
 pub unsafe extern "C" fn ddog_sidecar_session_set_process_tags(
     transport: &mut Box<SidecarTransport>,
-    session_id: ffi::CharSlice,
-    process_tags: ffi::CharSlice,
+    process_tags: &libdd_common_ffi::Vec<Tag>,
 ) -> MaybeError {
     try_c!(blocking::set_session_process_tags(
         transport,
-        session_id.to_utf8_lossy().into(),
-        process_tags.to_utf8_lossy().into(),
+        process_tags.to_vec(),
     ));
 
     MaybeError::None
@@ -1272,12 +1326,10 @@ pub unsafe extern "C" fn ddog_sidecar_dogstatsd_set(
 #[allow(clippy::missing_safety_doc)]
 pub unsafe extern "C" fn ddog_sidecar_set_test_session_token(
     transport: &mut Box<SidecarTransport>,
-    session_id: ffi::CharSlice,
     token: ffi::CharSlice,
 ) -> MaybeError {
     try_c!(blocking::set_test_session_token(
         transport,
-        session_id.to_utf8_lossy().into_owned(),
         token.to_utf8_lossy().into_owned(),
     ));
 
@@ -1338,6 +1390,22 @@ pub unsafe extern "C" fn ddog_get_agent_info_env<'a>(
     };
     config
         .and_then(|c| c.default_env.as_ref())
+        .map(|s| ffi::CharSlice::from(s.as_str()))
+        .unwrap_or(ffi::CharSlice::empty())
+}
+
+/// Gets the container tags hash from agent info (or empty if not existing)
+#[no_mangle]
+#[allow(clippy::missing_safety_doc)]
+pub unsafe extern "C" fn ddog_get_agent_info_container_tags_hash<'a>(
+    reader: &'a mut AgentInfoReader,
+    changed: &mut bool,
+) -> ffi::CharSlice<'a> {
+    let (has_changed, info) = reader.read();
+    *changed = has_changed;
+
+    info.as_ref()
+        .and_then(|i| i.container_tags_hash.as_ref())
         .map(|s| ffi::CharSlice::from(s.as_str()))
         .unwrap_or(ffi::CharSlice::empty())
 }

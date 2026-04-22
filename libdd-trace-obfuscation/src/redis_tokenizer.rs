@@ -47,7 +47,10 @@ impl<'a> RedisTokenizer<'a> {
             RedisTokenType::RedisTokenArgument => self.next_arg(),
         };
         loop {
-            self.skip_whitespace();
+            // Only skip spaces between commands (not tabs - Go only skips spaces)
+            while self.curr_char() == b' ' {
+                self.offset += 1;
+            }
             if self.curr_char() != b'\n' {
                 break;
             }
@@ -58,7 +61,11 @@ impl<'a> RedisTokenizer<'a> {
     }
 
     fn next_cmd(&mut self) -> (usize, usize) {
-        self.skip_whitespace();
+        // Go's scanCommand only skips ASCII spaces before the command (not tabs).
+        // Tabs are included in the command token (default case in Go's switch).
+        while self.curr_char() == b' ' {
+            self.offset += 1;
+        }
         let start = self.offset;
         loop {
             match self.curr_char() {
@@ -86,30 +93,20 @@ impl<'a> RedisTokenizer<'a> {
         loop {
             match self.curr_char() {
                 0 => break,
-                b'\\' => {
-                    if !escape {
-                        escape = true;
-                        self.offset += 1;
-                        continue;
-                    }
+                b'\\' if !escape => {
+                    escape = true;
+                    self.offset += 1;
+                    continue;
                 }
-                b'"' => {
-                    if !escape {
-                        quote = !quote
-                    }
+                b'"' if !escape => quote = !quote,
+                b'\n' if !quote => {
+                    let span = (start, self.offset);
+                    self.offset += 1;
+                    self.state = RedisTokenType::RedisTokenCommand;
+                    return span;
                 }
-                b'\n' => {
-                    if !quote {
-                        let span = (start, self.offset);
-                        self.offset += 1;
-                        self.state = RedisTokenType::RedisTokenCommand;
-                        return span;
-                    }
-                }
-                b' ' => {
-                    if !quote {
-                        return (start, self.offset);
-                    }
+                b' ' if !quote => {
+                    return (start, self.offset);
                 }
                 _ => {}
             }

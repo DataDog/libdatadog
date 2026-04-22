@@ -699,9 +699,8 @@ mod tests {
         span::SharedDictBytes,
         test_utils::{create_test_no_alloc_span, create_test_span},
     };
-    use hyper::Request;
-    use libdd_common::http_common;
-    use libdd_common::Endpoint;
+    use http::Request;
+    use libdd_common::{http_common, Endpoint};
     use serde_json::json;
 
     fn find_index_in_dict(dict: &SharedDictBytes, value: &str) -> Option<u32> {

@@ -113,13 +113,16 @@ pub fn reconfigure(
 }
 
 #[cfg(test)]
-mod tests {
+mod single_threaded_tests {
     use super::*;
-    use crate::{begin_op, insert_span, insert_trace, StacktraceCollection};
+    use crate::{
+        begin_op, insert_span, insert_trace, CrashtrackerConfigurationBuilder, StacktraceCollection,
+    };
     use chrono::Utc;
     use libdd_common::tag;
-    use libdd_common::Endpoint;
     use std::time::Duration;
+
+    const PATH_TO_RECEIVER: &str = "/tmp/libdatadog/bin/libdatadog-crashtracking-receiver";
     // We can't run this in the main test runner because it (deliberately) crashes,
     // and would make all following tests unrunable.
     // To run this test,
@@ -133,36 +136,24 @@ mod tests {
         let dir = "/tmp/crashreports/";
         let output_url = format!("file://{dir}{time}.txt");
 
-        let endpoint = Some(Endpoint::from_slice(&output_url));
-
-        let path_to_receiver_binary =
-            "/tmp/libdatadog/bin/libdatadog-crashtracking-receiver".to_string();
-        let create_alt_stack = true;
-        let use_alt_stack = true;
-        let resolve_frames = StacktraceCollection::EnabledWithInprocessSymbols;
-        let stderr_filename = Some(format!("{dir}/stderr_{time}.txt"));
-        let stdout_filename = Some(format!("{dir}/stdout_{time}.txt"));
-        let timeout = Duration::from_secs(10);
         let receiver_config = CrashtrackerReceiverConfig::new(
             vec![],
             vec![],
-            path_to_receiver_binary,
-            stderr_filename,
-            stdout_filename,
+            PATH_TO_RECEIVER.to_string(),
+            Some(format!("{dir}/stderr_{time}.txt")),
+            Some(format!("{dir}/stdout_{time}.txt")),
         )
         .unwrap();
-        let config = CrashtrackerConfiguration::new(
-            vec![],
-            create_alt_stack,
-            use_alt_stack,
-            endpoint,
-            resolve_frames,
-            default_signals(),
-            Some(timeout),
-            None,
-            true,
-        )
-        .unwrap();
+        let config = CrashtrackerConfigurationBuilder::default()
+            .create_alt_stack(true)
+            .demangle_names(true)
+            .endpoint_url(output_url.as_str())
+            .resolve_frames(StacktraceCollection::EnabledWithInprocessSymbols)
+            .signals(default_signals())
+            .timeout(Duration::from_secs(10))
+            .use_alt_stack(true)
+            .build()
+            .unwrap();
         let metadata = Metadata::new(
             "libname".to_string(),
             "version".to_string(),
@@ -198,25 +189,14 @@ mod tests {
         let dir = "/tmp/crashreports/";
         let output_url = format!("file://{dir}{time}.txt");
 
-        let endpoint = Some(Endpoint::from_slice(&output_url));
-
-        let create_alt_stack = true;
-        let use_alt_stack = false;
-        let resolve_frames = StacktraceCollection::EnabledWithInprocessSymbols;
-        let timeout = Duration::from_secs(10);
-
         // This should return an error, because we're creating an altstack without using it
-        let config = CrashtrackerConfiguration::new(
-            vec![],
-            create_alt_stack,
-            use_alt_stack,
-            endpoint,
-            resolve_frames,
-            default_signals(),
-            Some(timeout),
-            None,
-            true,
-        );
+        let config = CrashtrackerConfigurationBuilder::default()
+            .create_alt_stack(true)
+            .demangle_names(true)
+            .endpoint_url(output_url.as_str())
+            .resolve_frames(StacktraceCollection::EnabledWithInprocessSymbols)
+            .timeout(Duration::from_secs(10))
+            .build();
 
         // This is slightly over-tuned to the language of the error message, but it'd require some
         // novel engineering just for this test in order to tighten this up.
@@ -254,37 +234,24 @@ mod tests {
         let dir = "/tmp/crashreports/";
         let output_url = format!("file://{dir}{time}.txt");
 
-        let endpoint = Some(Endpoint::from_slice(&output_url));
-
-        let path_to_receiver_binary =
-            "/tmp/libdatadog/bin/libdatadog-crashtracking-receiver".to_string();
-        let create_alt_stack = true;
-        let use_alt_stack = true;
-        let resolve_frames = StacktraceCollection::EnabledWithInprocessSymbols;
-        let stderr_filename = Some(format!("{dir}/stderr_{time}.txt"));
-        let stdout_filename = Some(format!("{dir}/stdout_{time}.txt"));
-        let signals = default_signals();
-        let timeout = Duration::from_secs(10);
         let receiver_config = CrashtrackerReceiverConfig::new(
             vec![],
             vec![],
-            path_to_receiver_binary,
-            stderr_filename,
-            stdout_filename,
+            PATH_TO_RECEIVER.to_string(),
+            Some(format!("{dir}/stderr_{time}.txt")),
+            Some(format!("{dir}/stdout_{time}.txt")),
         )
         .unwrap();
-        let config = CrashtrackerConfiguration::new(
-            vec![],
-            create_alt_stack,
-            use_alt_stack,
-            endpoint,
-            resolve_frames,
-            signals,
-            Some(timeout),
-            None,
-            true,
-        )
-        .unwrap();
+        let config = CrashtrackerConfigurationBuilder::default()
+            .create_alt_stack(true)
+            .use_alt_stack(true)
+            .endpoint_url(output_url.as_str())
+            .resolve_frames(StacktraceCollection::EnabledWithInprocessSymbols)
+            .signals(default_signals())
+            .timeout(Duration::from_secs(10))
+            .demangle_names(true)
+            .build()
+            .unwrap();
         let metadata = Metadata::new(
             "libname".to_string(),
             "version".to_string(),
@@ -376,37 +343,23 @@ mod tests {
         let dir = "/tmp/crashreports/";
         let output_url = format!("file://{dir}{time}.txt");
 
-        let endpoint = Some(Endpoint::from_slice(&output_url));
-
-        let path_to_receiver_binary =
-            "/tmp/libdatadog/bin/libdatadog-crashtracking-receiver".to_string();
-        let create_alt_stack = false; // Use, but do _not_ create
-        let use_alt_stack = true;
-        let resolve_frames = StacktraceCollection::EnabledWithInprocessSymbols;
-        let stderr_filename = Some(format!("{dir}/stderr_{time}.txt"));
-        let stdout_filename = Some(format!("{dir}/stdout_{time}.txt"));
-        let signals = default_signals();
-        let timeout = Duration::from_secs(10);
         let receiver_config = CrashtrackerReceiverConfig::new(
             vec![],
             vec![],
-            path_to_receiver_binary,
-            stderr_filename,
-            stdout_filename,
+            PATH_TO_RECEIVER.to_string(),
+            Some(format!("{dir}/stderr_{time}.txt")),
+            Some(format!("{dir}/stdout_{time}.txt")),
         )
         .unwrap();
-        let config = CrashtrackerConfiguration::new(
-            vec![],
-            create_alt_stack,
-            use_alt_stack,
-            endpoint,
-            resolve_frames,
-            signals,
-            Some(timeout),
-            None,
-            true,
-        )
-        .unwrap();
+        let config = CrashtrackerConfigurationBuilder::default()
+            .use_alt_stack(true)
+            .endpoint_url(output_url.as_str())
+            .resolve_frames(StacktraceCollection::EnabledWithInprocessSymbols)
+            .signals(default_signals())
+            .timeout(Duration::from_secs(10))
+            .demangle_names(true)
+            .build()
+            .unwrap();
         let metadata = Metadata::new(
             "libname".to_string(),
             "version".to_string(),
@@ -504,37 +457,22 @@ mod tests {
         let dir = "/tmp/crashreports/";
         let output_url = format!("file://{dir}{time}.txt");
 
-        let endpoint = Some(Endpoint::from_slice(&output_url));
-
-        let path_to_receiver_binary =
-            "/tmp/libdatadog/bin/libdatadog-crashtracking-receiver".to_string();
-        let create_alt_stack = false;
-        let use_alt_stack = false;
-        let resolve_frames = StacktraceCollection::EnabledWithInprocessSymbols;
-        let stderr_filename = Some(format!("{dir}/stderr_{time}.txt"));
-        let stdout_filename = Some(format!("{dir}/stdout_{time}.txt"));
-        let signals = default_signals();
-        let timeout = Duration::from_secs(10);
         let receiver_config = CrashtrackerReceiverConfig::new(
             vec![],
             vec![],
-            path_to_receiver_binary,
-            stderr_filename,
-            stdout_filename,
+            PATH_TO_RECEIVER.to_string(),
+            Some(format!("{dir}/stderr_{time}.txt")),
+            Some(format!("{dir}/stdout_{time}.txt")),
         )
         .unwrap();
-        let config = CrashtrackerConfiguration::new(
-            vec![],
-            create_alt_stack,
-            use_alt_stack,
-            endpoint,
-            resolve_frames,
-            signals,
-            Some(timeout),
-            None,
-            true,
-        )
-        .unwrap();
+        let config = CrashtrackerConfigurationBuilder::default()
+            .demangle_names(true)
+            .endpoint_url(output_url.as_str())
+            .resolve_frames(StacktraceCollection::EnabledWithInprocessSymbols)
+            .signals(default_signals())
+            .timeout(Duration::from_secs(10))
+            .build()
+            .unwrap();
         let metadata = Metadata::new(
             "libname".to_string(),
             "version".to_string(),
@@ -667,37 +605,24 @@ mod tests {
         let dir = "/tmp/crashreports/";
         let output_url = format!("file://{dir}{time}.txt");
 
-        let endpoint = Some(Endpoint::from_slice(&output_url));
-
-        let path_to_receiver_binary =
-            "/tmp/libdatadog/bin/libdatadog-crashtracking-receiver".to_string();
-        let create_alt_stack = true; // doesn't matter, but most runtimes use it, so take it
-        let use_alt_stack = true;
-        let resolve_frames = StacktraceCollection::EnabledWithInprocessSymbols;
-        let stderr_filename = Some(format!("{dir}/stderr_{time}.txt"));
-        let stdout_filename = Some(format!("{dir}/stdout_{time}.txt"));
-        let signals = default_signals();
-        let timeout = Duration::from_secs(10);
         let receiver_config = CrashtrackerReceiverConfig::new(
             vec![],
             vec![],
-            path_to_receiver_binary,
-            stderr_filename,
-            stdout_filename,
+            PATH_TO_RECEIVER.to_string(),
+            Some(format!("{dir}/stderr_{time}.txt")),
+            Some(format!("{dir}/stdout_{time}.txt")),
         )
         .unwrap();
-        let config = CrashtrackerConfiguration::new(
-            vec![],
-            create_alt_stack,
-            use_alt_stack,
-            endpoint,
-            resolve_frames,
-            signals,
-            Some(timeout),
-            None,
-            true,
-        )
-        .unwrap();
+        let config = CrashtrackerConfigurationBuilder::default()
+            .create_alt_stack(true)
+            .demangle_names(true)
+            .endpoint_url(output_url.as_str())
+            .resolve_frames(StacktraceCollection::EnabledWithInprocessSymbols)
+            .signals(default_signals())
+            .timeout(Duration::from_secs(10))
+            .use_alt_stack(true)
+            .build()
+            .unwrap();
 
         let metadata = Metadata::new(
             "libname".to_string(),

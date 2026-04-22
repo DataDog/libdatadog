@@ -107,7 +107,7 @@ jobs:
           submodules: recursive
       - name: Install Rust ${{ matrix.rust_version }}
         if: matrix.rust_version != ''
-        run: rustup install ${{ matrix.rust_version }} && rustup default ${{ matrix.rust_version }}
+        run: rustup set profile minimal && rustup install ${{ matrix.rust_version }} && rustup default ${{ matrix.rust_version }}
       - id: rust-version
         # On Windows run happens in a PowerShell, so start bash explicitly
         run: bash -c 'echo "version=$(rustc --version)" >> $GITHUB_OUTPUT'
@@ -142,11 +142,15 @@ jobs:
             cargo test --workspace $CRASHTRACKER_FEATURE --exclude builder --doc --verbose
             # shellcheck disable=SC2086
             cargo nextest run --workspace $CRASHTRACKER_FEATURE --exclude builder --profile ci --verbose -E '!test(tracing_integration_tests::)'
+            cargo nextest run -p libdd-http-client --no-default-features --features hyper-backend,https --profile ci --verbose
           else
             # shellcheck disable=SC2086
             cargo test $PACKAGES $CRASHTRACKER_FEATURE --doc --verbose
             # shellcheck disable=SC2086
             cargo nextest run $PACKAGES $CRASHTRACKER_FEATURE --profile ci --verbose -E '!test(tracing_integration_tests::)'
+            if echo "$PACKAGES" | grep -q "libdd-http-client"; then
+              cargo nextest run -p libdd-http-client --no-default-features --features hyper-backend,https --profile ci --verbose
+            fi
           fi
         env:
           RUST_BACKTRACE: full
@@ -176,8 +180,7 @@ jobs:
           fi
         env:
           RUST_BACKTRACE: full
-      - name: "[${{ steps.rust-version.outputs.version}}] RUSTFLAGS=\"-C prefer-dynamic\" cargo nextest run --package test_spawn_from_lib"
-        if: needs.setup.outputs.run-test-spawn == 'true'
+      - name: "[${{ steps.rust-version.outputs.version}}] RUSTFLAGS=\"-C prefer-dynamic\" cargo nextest run --package test_spawn_from_lib --features prefer-dynamic -E '!test(tracing_integration_tests::)'"
         shell: bash
         run: cargo nextest run --package test_spawn_from_lib --features prefer-dynamic -E '!test(tracing_integration_tests::)'
         env:
@@ -194,21 +197,6 @@ jobs:
           report_paths: "target/nextest/ci/junit.xml"
           check_name: "[${{ matrix.platform }}:${{ matrix.rust_version }}] test report"
           include_passed: true
-      # We're using not-that-ideal XSLT here as this change, because it must be done over 17+ repos.
-      # It's a workaround until this gets integrated into a better place, such as datadog-ci or the backend.
-      #
-      # * ticket: https://datadoghq.atlassian.net/browse/APMSP-2610
-      # * RFC: https://docs.google.com/document/d/1OaX_h09fCXWmK_1ADrwvilt8Yt5h4WjC7UUAdS3Y3uw/edit?pli=1&tab=t.0#heading=h.tfy5viz7rz2
-      - name: Add final_status property
-        if: success() || failure()
-        shell: bash
-        run: |
-          which xsltproc || sudo apt-get install -y xsltproc
-          echo "Fixing target/nextest/ci/junit.xml"
-          tmp_file="$(mktemp)"
-          xsltproc --output "$tmp_file" ".github/workflows/add_final_status.xsl" "target/nextest/ci/junit.xml"
-          mv "$tmp_file" "target/nextest/ci/junit.xml"
-
       - name: Upload test results to Datadog
         if: success() || failure()
         shell: bash
@@ -352,3 +340,73 @@ jobs:
             target/nextest/ci/junit.xml
         env:
           DATADOG_API_KEY: ${{ secrets.DATADOG_API_KEY }}
+
+  no-certs-exporter:
+    name: "exporter_e2e tests (no CA certificates)"
+    runs-on: ubuntu-latest
+    concurrency:
+      group: ci-${{ github.ref }}-no-certs-exporter
+      cancel-in-progress: true
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # 4.2.2
+        with:
+          submodules: recursive
+      - name: Cache [rust]
+        uses: Swatinem/rust-cache@f13886b937689c021905a6b90929199931d60db1 # 2.8.1
+        with:
+          cache-targets: true
+          cache-bin: true
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@b5ca514318bd6ebac0fb2aedd5d36ec1b5c232a2 # 3.10.0
+      - name: Pre-fetch dependencies (requires network/certs on the runner)
+        run: cargo fetch
+      - name: Build no-certs Docker image
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: .
+          file: tools/docker/Dockerfile.no-certs
+          tags: libdatadog-no-certs
+          load: true
+          cache-from: type=gha,scope=no-certs-docker
+          cache-to: type=gha,scope=no-certs-docker,mode=max
+      - name: "cargo test exporter_e2e (no CA certificates)"
+        # Mount the runner's Rust toolchain and cargo cache — no network needed inside.
+        # The container has no CA certificates, reproducing minimal environments like
+        # bare ubuntu:20.04. Regression test for 9a61cae82 which unconditionally loaded
+        # the system cert store even for plain HTTP/unix endpoints.
+        run: >-
+          docker run --rm
+          --user "$(id -u):$(id -g)"
+          -v "${{ github.workspace }}:/workspace"
+          -v "${CARGO_HOME:-$HOME/.cargo}:/usr/local/cargo"
+          -v "${RUSTUP_HOME:-$HOME/.rustup}:/usr/local/rustup"
+          -e CARGO_HOME=/usr/local/cargo
+          -e RUSTUP_HOME=/usr/local/rustup
+          -e PATH=/usr/local/cargo/bin:/usr/local/rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+          -w /workspace
+          libdatadog-no-certs
+          cargo test -p libdd-profiling --test exporter_e2e
+
+  wasm:
+    name: "cargo check --target wasm32-unknown-unknown"
+    runs-on: ubuntu-latest
+    concurrency:
+      group: ci-${{ github.ref }}-wasm
+      cancel-in-progress: true
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # 4.2.2
+        with:
+          submodules: recursive
+      - name: Install wasm32 target
+        run: rustup target add wasm32-unknown-unknown
+      - name: Cache [rust]
+        uses: Swatinem/rust-cache@f13886b937689c021905a6b90929199931d60db1 # 2.8.1
+        with:
+          cache-targets: true
+          cache-bin: true
+      - name: "cargo check -p libdd-data-pipeline --target wasm32-unknown-unknown --no-default-features"
+        run: cargo check -p libdd-data-pipeline --target wasm32-unknown-unknown --no-default-features
+        env:
+          RUSTFLAGS: "-D warnings -A unused-imports -A dead-code -A unused-variables"

@@ -4,7 +4,7 @@ use std::{fmt::Write, time::SystemTime};
 
 use crate::{ErrorKind, SigInfo};
 
-use super::{CrashInfo, Metadata};
+use super::{CrashInfo, Metadata, TARGET_TRIPLE};
 use anyhow::Context;
 use chrono::{DateTime, Utc};
 use libdd_common::Endpoint;
@@ -396,6 +396,7 @@ impl TelemetryCrashUploader {
             ));
         }
 
+        write!(tags, ",runtime_platform:{TARGET_TRIPLE}").ok();
         self.append_optional_tags(&mut tags);
         tags
     }
@@ -448,6 +449,7 @@ fn extract_crash_info_tags(crash_info: &CrashInfo) -> anyhow::Result<String> {
             siginfo.si_signo_human_readable
         )?;
     }
+    write!(&mut tags, ",runtime_platform:{TARGET_TRIPLE}")?;
     Ok(tags)
 }
 
@@ -546,7 +548,7 @@ mod tests {
         assert_eq!(
             HashSet::from_iter([
                 "collecting_sample:1",
-                "data_schema_version:1.5",
+                "data_schema_version:1.6",
                 "incomplete:true",
                 "is_crash:true",
                 "not_profiling:0",
@@ -556,6 +558,7 @@ mod tests {
                 "si_signo_human_readable:SIGSEGV",
                 "si_signo:11",
                 "uuid:1d6b97cb-968c-40c9-af6e-e4b4d71e8781",
+                &format!("runtime_platform:{}", super::super::TARGET_TRIPLE),
             ]),
             tags
         );

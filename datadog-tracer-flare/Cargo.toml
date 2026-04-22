@@ -16,7 +16,7 @@ http = "1"
 bytes = "1.11.1"
 tokio = { version = "1.36.0", features = ["time"] }
 serde_json = "1.0"
-zip = "4.0.0"
+zip = { version = "4.0.0", default-features = false, features = ["deflate"] }
 walkdir = "2.4"
 tempfile = "3.8"
 

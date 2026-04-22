@@ -94,7 +94,8 @@ pub use receiver::{
 
 #[cfg(all(unix, any(feature = "collector", feature = "receiver")))]
 pub use shared::configuration::{
-    CrashtrackerConfiguration, CrashtrackerReceiverConfig, StacktraceCollection,
+    CrashtrackerConfiguration, CrashtrackerConfigurationBuilder, CrashtrackerReceiverConfig,
+    StacktraceCollection,
 };
 
 #[cfg(all(unix, feature = "benchmarking"))]

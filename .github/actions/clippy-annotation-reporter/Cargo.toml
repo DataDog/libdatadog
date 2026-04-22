@@ -1,6 +1,6 @@
 [package]
 name = "clippy-annotation-reporter"
-rust-version = "1.78.0"
+rust-version = "1.84.1"
 edition = "2021"
 version = "0.1.0"
 description = "GitHub Action for reporting clippy annotation usage in PRs"

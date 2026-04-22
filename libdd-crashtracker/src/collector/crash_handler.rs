@@ -5,10 +5,12 @@
 
 use super::collector_manager::Collector;
 use super::receiver_manager::Receiver;
+use super::saguard::{SaGuard, SuppressionMode};
 use super::signal_handler_manager::chain_signal_handler;
 use crate::crash_info::Metadata;
 use crate::shared::configuration::CrashtrackerConfiguration;
 use crate::StackTrace;
+use errno::{errno, set_errno};
 use libc::{c_void, siginfo_t, ucontext_t};
 use libdd_common::timeout::TimeoutManager;
 use std::os::fd::OwnedFd;
@@ -193,10 +195,17 @@ pub(crate) extern "C" fn handle_posix_sigaction(
     sig_info: *mut siginfo_t,
     ucontext: *mut c_void,
 ) {
+    // Save errno
+    let errno = errno();
+
     // Handle the signal.  Note this has a guard to ensure that we only generate
     // one crash report per process.
     let _ = handle_posix_signal_impl(sig_info, ucontext as *mut ucontext_t);
+
+    // Restore errno
+    set_errno(errno);
     // SAFETY: No preconditions.
+
     unsafe { chain_signal_handler(signum, sig_info, ucontext) };
 }
 
@@ -254,6 +263,20 @@ fn handle_posix_signal_impl(
         // we don't want to spam the system with calls.  Make this one shot.
         return Ok(());
     }
+
+    // Suppress SIGPIPE and defer SIGCHLD during crash handling.
+    // SIGCHLD is block-only because SIG_IGN changes child reaping semantics (waitpid/ECHILD),
+    // which can interfere with receiver/collector process cleanup.
+    let _sa_guard = SaGuard::new_with_modes(&[
+        (
+            nix::sys::signal::Signal::SIGCHLD,
+            SuppressionMode::BlockOnly,
+        ),
+        (
+            nix::sys::signal::Signal::SIGPIPE,
+            SuppressionMode::IgnoreAndBlock,
+        ),
+    ]);
 
     // Take config and metadata out of global storage.
     // We borrow via raw pointer and intentionally leak (do not reconstruct the Box) to avoid
@@ -398,7 +421,15 @@ pub fn report_unhandled_exception(
     let tid = libdd_common::threading::get_current_thread_id() as libc::pid_t;
 
     let error_type_str = exception_type.unwrap_or("<unknown>");
-    let error_message_str = exception_message.unwrap_or("<no message>");
+
+    // This allocates but this is okay because we are not in a signal handler.
+    // This is necessary, because user defined exception messages can have newlines
+    // and the receiver state machine parsing depends on newlines for different sections
+    // of the crash report.
+    let error_message_str = exception_message
+        .unwrap_or("<no message>")
+        .replace('\n', "\\n")
+        .replace('\r', "\\r");
     let message = format!(
         "Process was terminated due to an unhandled exception of type '{error_type_str}'. \
          Message: {error_message_str}"
@@ -454,18 +485,8 @@ mod tests {
     }
 
     fn make_test_config() -> CrashtrackerConfiguration {
-        CrashtrackerConfiguration::new(
-            vec![], // additional_files
-            false,  // create_alt_stack
-            false,  // use_alt_stack
-            None,   // endpoint
-            crate::StacktraceCollection::Disabled,
-            vec![],                       // signals
-            Some(Duration::from_secs(1)), // timeout
-            None,                         // unix_socket_path
-            false,                        // demangle_names
-        )
-        .unwrap()
+        let builder = CrashtrackerConfiguration::builder();
+        builder.timeout(Duration::from_secs(1)).build().unwrap()
     }
 
     /// Clears METADATA global, properly freeing any existing Box

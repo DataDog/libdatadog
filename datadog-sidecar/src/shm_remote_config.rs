@@ -268,7 +268,10 @@ impl<N: NotifyTarget + 'static> MultiTargetHandlers<N, Self> for ConfigFileStora
         serialized.push(b'\n');
         for file in files.iter() {
             #[allow(clippy::unwrap_used)]
-            serialized.extend_from_slice(file.handle.lock_or_panic().as_ref().unwrap().get_path());
+            // SAFETY: no concurrent unlink() on this handle.
+            serialized.extend_from_slice(unsafe {
+                file.handle.lock_or_panic().as_ref().unwrap().get_path()
+            });
             serialized.push(b':');
             if let Some(ref limiter) = file.limiter {
                 serialized.extend_from_slice(limiter.index().to_string().as_bytes());
@@ -461,12 +464,14 @@ impl<N: NotifyTarget + 'static> ShmRemoteConfigs<N> {
         tags: Vec<Tag>,
         product_capabilities: ProductCapabilities,
         dynamic_instrumentation_state: DynamicInstrumentationConfigState,
+        process_tags: Vec<Tag>,
     ) -> ShmRemoteConfigsGuard<N> {
         let target = Arc::new(Target {
             service,
             env,
             app_version,
             tags,
+            process_tags,
         });
         self.0.add_runtime(
             runtime_id.clone(),
@@ -633,9 +638,10 @@ impl RemoteConfigManager {
                     self.check_configs = self.active_configs.keys().cloned().collect();
                 }
 
+                let expiry = Instant::now().checked_sub(Duration::from_secs(3666));
                 while let Some((_, Reverse(instant))) = self.unexpired_targets.peek() {
                     #[allow(clippy::unwrap_used)]
-                    if *instant < Instant::now() - Duration::from_secs(3666) {
+                    if expiry.is_some_and(|e| *instant < e) {
                         let (target, _) = self.unexpired_targets.pop().unwrap();
                         self.encountered_targets.remove(&target);
                     } else {
@@ -776,6 +782,7 @@ mod tests {
             env: "env".to_string(),
             app_version: "1.3.5".to_string(),
             tags: vec![],
+            process_tags: vec![],
         })
     });
 
@@ -852,6 +859,7 @@ mod tests {
                 capabilities: server.dummy_options().capabilities,
             },
             DynamicInstrumentationConfigState::Disabled,
+            DUMMY_TARGET.process_tags.clone(),
         );
 
         receiver.recv().await;

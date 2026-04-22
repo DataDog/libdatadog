@@ -204,8 +204,8 @@ impl super::test_utils::TestInstance for ErrorData {
         Self {
             is_crash: true,
             kind: ErrorKind::UnixSignal,
-            message: None,
-            thread_name: None,
+            message: Some(format!("Test crash message for seed {seed}")),
+            thread_name: Some(format!("test-thread-{seed}")),
             source_type: SourceType::Crashtracking,
             stack: StackTrace::test_instance(seed),
             threads: vec![],

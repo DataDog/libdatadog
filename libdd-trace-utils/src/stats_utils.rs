@@ -6,13 +6,11 @@ pub use mini_agent::*;
 
 #[cfg(feature = "mini_agent")]
 mod mini_agent {
-    use bytes::Buf;
-    use http::{Method, Request, StatusCode};
+    use bytes::{Buf, Bytes};
     use http_body_util::BodyExt;
+    use libdd_capabilities::HttpClientTrait;
     use libdd_common::http_common;
-    use libdd_common::Connect;
     use libdd_common::Endpoint;
-    use libdd_common::GenericHttpClient;
     use libdd_trace_protobuf::pb;
     use std::io::Write;
     use tracing::debug;
@@ -20,7 +18,7 @@ mod mini_agent {
     pub async fn get_stats_from_request_body(
         body: http_common::Body,
     ) -> anyhow::Result<pb::ClientStatsPayload> {
-        let buffer = body.collect().await?.aggregate();
+        let buffer = BodyExt::collect(body).await?.aggregate();
 
         let client_stats_payload: pb::ClientStatsPayload =
             match rmp_serde::from_read(buffer.reader()) {
@@ -65,49 +63,31 @@ mod mini_agent {
         }
     }
 
-    pub async fn send_stats_payload(
+    pub async fn send_stats_payload<H: HttpClientTrait>(
         data: Vec<u8>,
         target: &Endpoint,
         api_key: &str,
     ) -> anyhow::Result<()> {
-        send_stats_payload_with_client::<libdd_common::connector::Connector>(
-            data, target, api_key, None,
-        )
-        .await
-    }
-
-    pub async fn send_stats_payload_with_client<C: Connect>(
-        data: Vec<u8>,
-        target: &Endpoint,
-        api_key: &str,
-        client: Option<&GenericHttpClient<C>>,
-    ) -> anyhow::Result<()> {
-        let req = Request::builder()
-            .method(Method::POST)
+        let client = H::new_client();
+        let req = http::Request::builder()
+            .method(http::Method::POST)
             .uri(target.url.clone())
             .header("Content-Type", "application/msgpack")
             .header("Content-Encoding", "gzip")
             .header("DD-API-KEY", api_key)
-            .body(http_common::Body::from(data.clone()))?;
+            .body(Bytes::from(data))?;
 
-        let response = if let Some(client) = client {
-            client.request(req).await
-        } else {
-            let default_client = http_common::new_default_client();
-            default_client.request(req).await
-        };
+        let response = client
+            .request(req)
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to send trace stats: {e}"))?;
 
-        match response {
-            Ok(response) => {
-                if response.status() != StatusCode::ACCEPTED {
-                    let body_bytes = response.into_body().collect().await?.to_bytes();
-                    let response_body = String::from_utf8(body_bytes.to_vec()).unwrap_or_default();
-                    anyhow::bail!("Server did not accept trace stats: {response_body}");
-                }
-                Ok(())
-            }
-            Err(e) => anyhow::bail!("Failed to send trace stats: {e}"),
+        if response.status() != http::StatusCode::ACCEPTED {
+            let response_body =
+                String::from_utf8(response.into_body().to_vec()).unwrap_or_default();
+            anyhow::bail!("Server did not accept trace stats: {response_body}");
         }
+        Ok(())
     }
 }
 
@@ -155,7 +135,7 @@ mod mini_agent_tests {
                                 0,
                                 0
                             ],
-                            "GrpcStatusCode": "0",
+                            "GRPCStatusCode": "0",
                             "HTTPMethod": "GET",
                             "HTTPEndpoint": "/test"
                         }

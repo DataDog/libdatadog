@@ -9,10 +9,14 @@ header = """// Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 """
 include_guard = "DDOG_DATA_PIPELINE_H"
 includes = ["common.h"]
+after_includes = """
+typedef struct ddog_TraceExporter ddog_TraceExporter;
+"""
 
 [export]
 prefix = "ddog_"
 renaming_overrides_prefixing = true
+exclude = ["TraceExporter"]
 
 [export.rename]
 "ByteSlice" = "ddog_ByteSlice"
@@ -36,4 +40,4 @@ must_use = "DDOG_CHECK_RETURN"
 
 [parse]
 parse_deps = true
-include = ["libdd-common", "libdd-common-ffi", "libdd-data-pipeline"]
+include = ["libdd-common", "libdd-common-ffi", "libdd-shared-runtime", "libdd-data-pipeline"]
