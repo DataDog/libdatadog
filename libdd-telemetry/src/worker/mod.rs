@@ -427,6 +427,11 @@ impl TelemetryWorker {
                     self.deadlines
                         .schedule_event(LifecycleAction::FlushData)
                         .unwrap();
+
+                    #[allow(clippy::unwrap_used)]
+                    self.deadlines
+                        .schedule_event(LifecycleAction::ExtendedHeartbeat)
+                        .unwrap();
                     self.data.started = true;
                 }
             }
@@ -1283,7 +1288,10 @@ mod tests {
     use crate::worker::http_client::header::{
         DD_PARENT_SESSION_ID, DD_ROOT_SESSION_ID, DD_SESSION_ID,
     };
-    use crate::worker::{TelemetryWorker, TelemetryWorkerBuilder, TelemetryWorkerHandle};
+    use crate::worker::{
+        LifecycleAction, TelemetryActions, TelemetryWorker, TelemetryWorkerBuilder,
+        TelemetryWorkerHandle,
+    };
     use libdd_common::{http_common, Endpoint};
     use tokio::runtime::Runtime;
 
@@ -1433,6 +1441,46 @@ mod tests {
                 .to_str()
                 .unwrap(),
             "parent"
+        );
+    }
+
+    /// `Lifecycle(Start)` must schedule `ExtendedHeartbeat` alongside the other periodic
+    /// events. Without an initial schedule the event sits in the scheduler's `delays`
+    /// catalog but never enters the `deadlines` queue, so its handler is never invoked
+    /// and `app-extended-heartbeat` payloads are never emitted.
+    #[tokio::test]
+    async fn lifecycle_start_schedules_extended_heartbeat() {
+        let mut b = TelemetryWorkerBuilder::new(
+            "h".into(),
+            "svc".into(),
+            "lang".into(),
+            "1".into(),
+            "tv".into(),
+        );
+        b.config
+            .set_endpoint(Endpoint::from_slice("http://127.0.0.1:1"))
+            .unwrap();
+        b.runtime_id = Some("rid".into());
+        let mut worker = b.build_worker(Some(tokio::runtime::Handle::current())).1;
+
+        let _ = worker
+            .dispatch_action(TelemetryActions::Lifecycle(LifecycleAction::Start))
+            .await;
+
+        let scheduled: Vec<LifecycleAction> =
+            worker.deadlines.deadlines.iter().map(|(_, k)| *k).collect();
+
+        assert!(
+            scheduled.contains(&LifecycleAction::FlushMetricAggr),
+            "Start should schedule FlushMetricAggr; scheduled={scheduled:?}",
+        );
+        assert!(
+            scheduled.contains(&LifecycleAction::FlushData),
+            "Start should schedule FlushData; scheduled={scheduled:?}",
+        );
+        assert!(
+            scheduled.contains(&LifecycleAction::ExtendedHeartbeat),
+            "Start should schedule ExtendedHeartbeat; scheduled={scheduled:?}",
         );
     }
 
