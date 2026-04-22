@@ -14,8 +14,7 @@ async fn puts_to_correct_endpoint() {
         then.status(200).body("");
     });
 
-    let client = common::client_for(&server);
-    client
+    common::client_for(&server)
         .send_pipeline_stats(Bytes::from_static(b"\x80"))
         .await
         .unwrap();
@@ -33,8 +32,7 @@ async fn sets_gzip_encoding() {
         then.status(200).body("");
     });
 
-    let client = common::client_for(&server);
-    client
+    common::client_for(&server)
         .send_pipeline_stats(Bytes::from_static(b"\x80"))
         .await
         .unwrap();
