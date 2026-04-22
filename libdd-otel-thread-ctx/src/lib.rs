@@ -140,7 +140,7 @@ pub mod linux {
     // `valid`. We just use a const assertion in `new()` to avoid surprises and make sure this
     // struct has the right total size.
     #[repr(C)]
-    struct ThreadContextRecord {
+    pub struct ThreadContextRecord {
         /// Trace identifier; all-zeroes means "no trace".
         trace_id: [u8; 16],
         /// Span identifier.
@@ -305,9 +305,9 @@ pub mod linux {
         /// Turn this thread context into a raw pointer to the underlying [ThreadContextRecord].
         /// The pointer must be reconstructed through [`Self::from_raw`] in order to be properly
         /// dropped, or the record will leak.
-        fn into_raw(self) -> *mut ThreadContextRecord {
+        pub fn into_raw(self) -> NonNull<ThreadContextRecord> {
             let mdrop = mem::ManuallyDrop::new(self);
-            mdrop.0.as_ptr()
+            mdrop.0
         }
 
         /// Reconstruct a [ThreadContextRecord] from a raw pointer that is either `null` or comes
@@ -320,8 +320,8 @@ pub mod linux {
         ///   calls on the returned [ThreadContextRecord]. More precisely, mutable references might
         ///   be reconstructed during those calls, so any constraint from either Stacked Borrows,
         ///   Tree Borrows or whatever is the current aliasing model implemented in Miri applies.
-        unsafe fn from_raw(ptr: *mut ThreadContextRecord) -> Option<Self> {
-            NonNull::new(ptr).map(Self)
+        pub unsafe fn from_raw(ptr: NonNull<ThreadContextRecord>) -> Self {
+            Self(ptr)
         }
     }
 
@@ -346,7 +346,8 @@ pub mod linux {
             tgt: *mut ThreadContextRecord,
         ) -> Option<ThreadContext> {
             // Safety: a non-null value in the slot came from a prior `into_raw` call.
-            unsafe { ThreadContext::from_raw(slot.swap(tgt, Ordering::Relaxed)) }
+            NonNull::new(slot.swap(tgt, Ordering::Relaxed))
+                .map(|nn| unsafe { ThreadContext::from_raw(nn) })
         }
 
         /// Publish a new (or previously detached) thread context record by writing its pointer
@@ -365,7 +366,7 @@ pub mod linux {
             //
             // We still need a release fence to avoid exposing uninitialized memory to the handler.
             compiler_fence(Ordering::Release);
-            Self::swap(get_tls_slot(), self.into_raw())
+            Self::swap(get_tls_slot(), self.into_raw().as_ptr())
         }
 
         /// Update the currently attached record in-place. Sets `valid = 0` before the update and
@@ -399,7 +400,7 @@ pub mod linux {
                 // `ThreadContext::new` already initialises `valid = 1`.
                 let _ = Self::swap(
                     slot,
-                    ThreadContext::new(trace_id, span_id, local_root_span_id, attrs).into_raw(),
+                    ThreadContext::new(trace_id, span_id, local_root_span_id, attrs).into_raw().as_ptr(),
                 );
             }
         }

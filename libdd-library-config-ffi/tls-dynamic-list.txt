@@ -1,3 +1,0 @@
-{
-    global: custom_labels_current_set_v2;
-};
