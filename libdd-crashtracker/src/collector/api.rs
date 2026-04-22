@@ -6,9 +6,7 @@ use super::{crash_handler::enable, receiver_manager::Receiver};
 use crate::{
     clear_spans, clear_traces,
     collector::crash_handler::register_panic_hook,
-    collector::signal_handler_manager::{
-        register_crash_handlers, register_thread_context_signal_handler,
-    },
+    collector::signal_handler_manager::register_crash_handlers,
     crash_info::Metadata,
     reset_counters,
     shared::configuration::CrashtrackerReceiverConfig,
@@ -65,10 +63,6 @@ pub fn on_fork(
 
     // panic hook is unaffected by fork.
 
-    // Reset the thread context buffer so the forked child starts clean.
-    #[cfg(target_os = "linux")]
-    crate::collector::thread_context_buffer::reset_thread_context_buffer();
-
     update_metadata(metadata)?;
     update_config(config)?;
     Receiver::update_stored_config(receiver_config)?;
@@ -95,11 +89,6 @@ pub fn init(
     Receiver::update_stored_config(receiver_config)?;
     register_crash_handlers(&config)?;
     register_panic_hook()?;
-    if config.collect_all_threads() {
-        #[cfg(target_os = "linux")]
-        crate::collector::thread_context_buffer::init_thread_context_buffer(config.max_threads());
-        register_thread_context_signal_handler()?;
-    }
     enable();
     Ok(())
 }
