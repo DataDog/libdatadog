@@ -25,18 +25,5 @@ fn main() {
         println!(
             "cargo:rustc-cdylib-link-arg=-Wl,--version-script={manifest_dir}/tls-dynamic-list.txt"
         );
-
-        // Expose the profile output directory to integration tests so they can
-        // locate the cdylib without fragile path-walking.
-        // OUT_DIR = <target>/[<triple>/]<profile>/build/<pkg>-<hash>/out
-        // Three levels up lands on <target>/[<triple>/]<profile>.
-        let profile_dir = std::path::PathBuf::from(&env::var("OUT_DIR").unwrap())
-            .ancestors()
-            .nth(3)
-            .unwrap()
-            .to_str()
-            .unwrap()
-            .to_owned();
-        println!("cargo:rustc-env=CDYLIB_PROFILE_DIR={profile_dir}");
     }
 }
