@@ -22,9 +22,9 @@ fi
 REPO_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_ROOT"
 
-if [[ -n "$(git status --porcelain)" ]]; then
-  echo "Error: working directory is not clean. Commit or stash changes first." >&2
-  git status --short >&2
+if [[ -n "$(git status --porcelain --untracked-files=no)" ]]; then
+  echo "Error: working directory has uncommitted tracked changes. Commit or stash them first." >&2
+  git status --short --untracked-files=no >&2
   exit 1
 fi
 
