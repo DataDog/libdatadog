@@ -17,7 +17,7 @@ mod linux {
     /// Allocate and initialise a new thread context.
     ///
     /// Returns a non-null owned handle that must eventually be released with
-    /// `ddog_otel_thread_ctx_drop`.
+    /// `ddog_otel_thread_ctx_free`.
     #[no_mangle]
     pub extern "C" fn ddog_otel_thread_ctx_new(
         trace_id: &[u8; 16],
@@ -27,7 +27,7 @@ mod linux {
         ThreadContext::new(*trace_id, *span_id, *local_root_span_id, &[]).into_ptr()
     }
 
-    /// Release an owned thread context.
+    /// Free an owned thread context.
     ///
     /// # Safety
     ///
@@ -35,9 +35,9 @@ mod linux {
     /// `ddog_otel_thread_ctx_detach`, and must not be used after this call. In particular, `ctx`
     /// must not be currently attached to a thread.
     #[no_mangle]
-    pub unsafe extern "C" fn ddog_otel_thread_ctx_drop(ctx: *mut ThreadContextRecord) {
+    pub unsafe extern "C" fn ddog_otel_thread_ctx_free(ctx: *mut ThreadContextRecord) {
         if let Some(ctx) = NonNull::new(ctx) {
-            drop(ThreadContext::from_ptr(ctx));
+            let _ = ThreadContext::from_ptr(ctx);
         }
     }
 
@@ -85,7 +85,7 @@ mod linux {
     /// Remove the currently attached context from the TLS slot.
     ///
     /// Returns the detached context (caller now owns it and must release it with
-    /// `ddog_otel_thread_ctx_drop`), or null if the slot was empty.
+    /// `ddog_otel_thread_ctx_free`), or null if the slot was empty.
     #[no_mangle]
     pub extern "C" fn ddog_otel_thread_ctx_detach() -> Option<NonNull<ThreadContextRecord>> {
         ThreadContext::detach().map(ThreadContext::into_ptr)
