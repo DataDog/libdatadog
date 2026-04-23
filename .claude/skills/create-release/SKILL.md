@@ -5,7 +5,7 @@ description: Bump the Rust workspace version in root Cargo.toml, regenerate the 
 
 # Create Release
 
-Automate the mechanical parts of cutting a release: branch, version bump, lockfile update, draft PR.
+Automate the mechanical parts of cutting a release. The full flow (branch from `main`, bump `[workspace.package].version` in `Cargo.toml`, regenerate `Cargo.lock`, push, open draft PR) is implemented in `scripts/create-release.sh`. This skill's job is to collect the version, then invoke the script.
 
 ## Steps
 
@@ -13,60 +13,24 @@ Automate the mechanical parts of cutting a release: branch, version bump, lockfi
 
 If the user didn't supply a version already, ask: "What version should I bump to?"
 
-Validate it looks like a semver string (e.g. `32.0.0`, `31.1.0`). Do not add a `v` prefix in Cargo.toml — the file uses bare semver (e.g. `31.0.0`).
+The version must be bare semver (e.g. `32.0.0`, `31.1.0`) — no `v` prefix. The script re-validates and will reject bad input.
 
-### 2. Check working directory is clean
-
-```bash
-git status --porcelain
-```
-
-If there are uncommitted changes, stop and tell the user to commit or stash them first.
-
-### 3. Create and switch to release branch
-
-Branch name: `release/v<version>` (e.g. `release/v32.0.0`). Always branch from `main`, regardless of the current branch.
+### 2. Run the script
 
 ```bash
-git fetch origin main
-git checkout -b release/v<version> origin/main
+scripts/create-release.sh <version>
 ```
 
-### 4. Bump the workspace version
+The script will:
 
-Edit the root `Cargo.toml`. Find the `[workspace.package]` section and update the `version` field to the new value. Only change this one field — do not touch individual crate `Cargo.toml` files, `CHANGELOG.md`, or anything else.
+1. Fail fast if the working tree is dirty.
+2. `git fetch origin main` and branch `release/v<version>` from `origin/main`.
+3. Update only the `version` field in `[workspace.package]` of `Cargo.toml`.
+4. Run `cargo update -w` to refresh workspace entries in `Cargo.lock`.
+5. Commit (`chore: bump workspace version to <version>`), push with `-u`, and open a draft PR titled `chore: release v<version>` against `main`.
 
-Use the Edit tool to make a targeted replacement — do not rewrite the whole file.
+Return the PR URL from the `gh pr create` output to the user.
 
-### 5. Regenerate the lockfile
+### 3. On failure
 
-```bash
-cargo build
-```
-
-This may take a moment. Wait for it to finish.
-
-### 6. Commit
-
-```bash
-git add Cargo.toml Cargo.lock
-git commit -m "chore: bump workspace version to <version>"
-```
-
-### 7. Push the branch
-
-```bash
-git push -u origin release/v<version>
-```
-
-### 8. Create draft PR
-
-```bash
-gh pr create \
-  --title "chore: release v<version>" \
-  --body "Bump workspace version to \`<version>\` and regenerate lockfile." \
-  --base main \
-  --draft
-```
-
-Return the PR URL to the user.
+If the script exits non-zero, surface its error to the user and stop — do not try to finish the steps manually without checking in first.
