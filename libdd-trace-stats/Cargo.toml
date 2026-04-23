@@ -11,7 +11,7 @@ autobenches = false
 
 [dependencies]
 anyhow = "1.0"
-libdd-capabilities = { path = "../libdd-capabilities", version = "0.1.0" }
+libdd-capabilities = { path = "../libdd-capabilities", version = "1.0.0" }
 libdd-common = { version = "3.0.2", path = "../libdd-common", default-features = false }
 libdd-ddsketch = { version = "1.0.1", path = "../libdd-ddsketch" }
 libdd-shared-runtime = { version = "0.1.0", path = "../libdd-shared-runtime" }
