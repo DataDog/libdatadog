@@ -103,7 +103,7 @@ impl StringTable {
         // So with a capacity like 3, we end up reallocating a bunch on or
         // before the very first sample. The number here is not fine-tuned,
         // just skipping some obviously bad, tiny sizes.
-        strings.reserve(32);
+        strings.reserve(56);
 
         // Always hold the empty string as item 0. Do not insert it via intern
         // because that will try to allocate zero-bytes from the storage,
@@ -118,6 +118,22 @@ impl StringTable {
     #[allow(clippy::len_without_is_empty)]
     pub fn len(&self) -> usize {
         self.strings.len()
+    }
+
+    /// Returns the string id for `str` if it is already interned.
+    pub fn get_id(&self, str: &str) -> Option<StringId> {
+        let offset = self.strings.get_index_of(str)?;
+        StringId::try_from(offset).ok()
+    }
+
+    /// Returns the string at the given id if it exists.
+    pub fn get(&self, id: StringId) -> Option<&str> {
+        self.strings.get_index(usize::from(id)).copied()
+    }
+
+    /// Returns the strings in insertion order.
+    pub fn iter(&self) -> impl Iterator<Item = &str> + '_ {
+        self.strings.iter().copied()
     }
 
     /// Adds the string to the string table if it isn't present already, and

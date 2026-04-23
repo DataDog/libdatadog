@@ -11,6 +11,8 @@ pub mod api2;
 pub mod collections;
 #[cfg(feature = "cxx")]
 pub mod cxx;
+#[cfg(feature = "dynamic_profile")]
+pub mod dynamic;
 pub mod exporter;
 pub mod internal;
 pub mod iter;

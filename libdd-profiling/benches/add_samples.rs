@@ -7,9 +7,14 @@ use libdd_profiling::api2::Location2;
 use libdd_profiling::profiles::datatypes::{Function, FunctionId2, MappingId2, StringId2};
 use libdd_profiling::{self as profiling, api, api2};
 
+#[cfg(feature = "dynamic_profile")]
+use libdd_profiling::dynamic::{DynamicLabel, DynamicLocation, DynamicProfile, DynamicSample};
+
 fn make_sample_types() -> Vec<api::SampleType> {
     vec![api::SampleType::CpuSamples]
 }
+
+const THREAD_NAME: &str = "this thread";
 
 fn make_stack_api(frames: &[Frame]) -> (Vec<api::Location<'static>>, Vec<i64>) {
     // No mappings in Ruby, but the v1 API requires it.
@@ -40,6 +45,20 @@ fn make_stack_api2(frames: &[Frame2]) -> (Vec<Location2>, Vec<i64>) {
             function: frame.function,
             address: 0,
             line: frame.line_number as i64,
+        });
+    }
+
+    let values = vec![1i64];
+    (locations, values)
+}
+
+#[cfg(feature = "dynamic_profile")]
+fn make_stack_dynamic(frames: &[DynamicFrame]) -> (Vec<DynamicLocation>, Vec<i64>) {
+    let mut locations = Vec::with_capacity(frames.len());
+    for frame in frames {
+        locations.push(DynamicLocation {
+            function: frame.function,
+            line: frame.line_number,
         });
     }
 
@@ -95,6 +114,13 @@ struct Frame2 {
     line_number: u32,
 }
 
+#[cfg(feature = "dynamic_profile")]
+#[derive(Clone, Copy)]
+struct DynamicFrame {
+    function: libdd_profiling::dynamic::DynamicFunctionIndex,
+    line_number: u32,
+}
+
 pub fn bench_add_sample_vs_add2(c: &mut Criterion) {
     let sample_types = make_sample_types();
     let dict = profiling::profiles::datatypes::ProfilesDictionary::try_new().unwrap();
@@ -136,16 +162,17 @@ pub fn bench_add_sample_vs_add2(c: &mut Criterion) {
         },
         api::Label {
             key: "thread name",
-            str: "this thread",
+            str: THREAD_NAME,
             num: 0,
             num_unit: "",
         },
     ];
 
+    let thread_name_key: StringId2 = strings.try_insert("thread name").unwrap().into();
     let frames2 = frames.map(|f| {
         let set_id = functions
             .try_insert(Function {
-                name: strings.try_insert(f.file_name).unwrap(),
+                name: strings.try_insert(f.function_name).unwrap(),
                 system_name: Default::default(),
                 file_name: strings.try_insert(f.file_name).unwrap(),
             })
@@ -174,15 +201,117 @@ pub fn bench_add_sample_vs_add2(c: &mut Criterion) {
         })
     });
 
-    c.bench_function("profile_add_sample_frames_x1000", |b| {
+    c.bench_function("profile_add_sample_frames_x1000_same_input", |b| {
+        b.iter_batched(
+            || {
+                let profile = profiling::internal::Profile::try_new(&sample_types, None).unwrap();
+                let (locations, values) = make_stack_api(frames.as_slice());
+                (profile, locations, values, labels_api.clone())
+            },
+            |(mut profile, locations, values, labels)| {
+                for _ in 0..1000 {
+                    let sample = api::Sample {
+                        locations: locations.clone(),
+                        values: &values,
+                        labels: labels.clone(),
+                    };
+                    black_box(profile.try_add_sample(sample, None)).unwrap();
+                }
+                black_box(profile.only_for_testing_num_aggregated_samples())
+            },
+            BatchSize::SmallInput,
+        )
+    });
+
+    c.bench_function("profile_add_sample2_frames_x1000_same_input", |b| {
+        b.iter_batched(
+            || {
+                let profile = profiling::internal::Profile::try_new_with_dictionary(
+                    &sample_types,
+                    None,
+                    dict.try_clone().unwrap(),
+                )
+                .unwrap();
+                let (locations, values) = make_stack_api2(frames2.as_slice());
+                (profile, locations, values)
+            },
+            |(mut profile, locations, values)| {
+                for _ in 0..1000 {
+                    let labels_iter = [
+                        Ok(api2::Label::num(thread_id_key, thread_id, "")),
+                        Ok(api2::Label::str(thread_name_key, THREAD_NAME)),
+                    ]
+                    .into_iter();
+                    // SAFETY: all ids come from the profile's dictionary.
+                    black_box(unsafe {
+                        profile.try_add_sample2(&locations, &values, labels_iter, None)
+                    })
+                    .unwrap();
+                }
+                black_box(profile.only_for_testing_num_aggregated_samples())
+            },
+            BatchSize::SmallInput,
+        )
+    });
+
+    #[cfg(feature = "dynamic_profile")]
+    c.bench_function(
+        "dynamic_profile_add_sample_by_locations_frames_x1000_same_input",
+        |b| {
+            b.iter_batched(
+                || {
+                    let mut profile = DynamicProfile::try_new(&sample_types, None, None).unwrap();
+                    let thread_id_key = profile.intern_string("thread id").unwrap();
+                    let thread_name_key = profile.intern_string("thread name").unwrap();
+                    let frames_dynamic = frames.map(|f| {
+                        let name = profile.intern_string(f.function_name).unwrap();
+                        let file = profile.intern_string(f.file_name).unwrap();
+                        let function = profile.intern_function(name, file).unwrap();
+                        DynamicFrame {
+                            function,
+                            line_number: f.line_number,
+                        }
+                    });
+                    let (locations, values) = make_stack_dynamic(frames_dynamic.as_slice());
+                    let labels = [
+                        DynamicLabel {
+                            key: thread_id_key,
+                            str: "",
+                            num: thread_id,
+                        },
+                        DynamicLabel {
+                            key: thread_name_key,
+                            str: THREAD_NAME,
+                            num: 0,
+                        },
+                    ];
+                    (profile, locations, values, labels)
+                },
+                |(mut profile, locations, values, labels)| {
+                    for _ in 0..1000 {
+                        let sample = DynamicSample {
+                            values: &values,
+                            labels: &labels,
+                        };
+                        black_box(profile.add_sample_by_locations(&locations, sample, 0)).unwrap();
+                    }
+                    black_box(profile)
+                },
+                BatchSize::SmallInput,
+            )
+        },
+    );
+
+    c.bench_function("profile_add_sample_frames_x1000_steady_state", |b| {
+        let mut profile = profiling::internal::Profile::try_new(&sample_types, None).unwrap();
+        let (locations, values) = make_stack_api(frames.as_slice());
+        let labels = labels_api.clone();
         b.iter(|| {
-            let mut profile = profiling::internal::Profile::try_new(&sample_types, None).unwrap();
-            let (locations, values) = make_stack_api(frames.as_slice());
             for _ in 0..1000 {
                 let sample = api::Sample {
                     locations: locations.clone(),
                     values: &values,
-                    labels: labels_api.clone(),
+                    labels: labels.clone(),
                 };
                 black_box(profile.try_add_sample(sample, None)).unwrap();
             }
@@ -190,17 +319,21 @@ pub fn bench_add_sample_vs_add2(c: &mut Criterion) {
         })
     });
 
-    c.bench_function("profile_add_sample2_frames_x1000", |b| {
+    c.bench_function("profile_add_sample2_frames_x1000_steady_state", |b| {
+        let mut profile = profiling::internal::Profile::try_new_with_dictionary(
+            &sample_types,
+            None,
+            dict.try_clone().unwrap(),
+        )
+        .unwrap();
+        let (locations, values) = make_stack_api2(frames2.as_slice());
         b.iter(|| {
-            let mut profile = profiling::internal::Profile::try_new_with_dictionary(
-                &sample_types,
-                None,
-                dict.try_clone().unwrap(),
-            )
-            .unwrap();
-            let (locations, values) = make_stack_api2(frames2.as_slice());
             for _ in 0..1000 {
-                let labels_iter = [Ok(api2::Label::num(thread_id_key, thread_id, ""))].into_iter();
+                let labels_iter = [
+                    Ok(api2::Label::num(thread_id_key, thread_id, "")),
+                    Ok(api2::Label::str(thread_name_key, THREAD_NAME)),
+                ]
+                .into_iter();
                 // SAFETY: all ids come from the profile's dictionary.
                 black_box(unsafe {
                     profile.try_add_sample2(&locations, &values, labels_iter, None)
@@ -210,6 +343,48 @@ pub fn bench_add_sample_vs_add2(c: &mut Criterion) {
             black_box(profile.only_for_testing_num_aggregated_samples())
         })
     });
+
+    #[cfg(feature = "dynamic_profile")]
+    c.bench_function(
+        "dynamic_profile_add_sample_by_locations_frames_x1000_steady_state",
+        |b| {
+            let mut profile = DynamicProfile::try_new(&sample_types, None, None).unwrap();
+            let thread_id_key = profile.intern_string("thread id").unwrap();
+            let thread_name_key = profile.intern_string("thread name").unwrap();
+            let frames_dynamic = frames.map(|f| {
+                let name = profile.intern_string(f.function_name).unwrap();
+                let file = profile.intern_string(f.file_name).unwrap();
+                let function = profile.intern_function(name, file).unwrap();
+                DynamicFrame {
+                    function,
+                    line_number: f.line_number,
+                }
+            });
+            let (locations, values) = make_stack_dynamic(frames_dynamic.as_slice());
+            let labels = [
+                DynamicLabel {
+                    key: thread_id_key,
+                    str: "",
+                    num: thread_id,
+                },
+                DynamicLabel {
+                    key: thread_name_key,
+                    str: THREAD_NAME,
+                    num: 0,
+                },
+            ];
+            b.iter(|| {
+                for _ in 0..1000 {
+                    let sample = DynamicSample {
+                        values: &values,
+                        labels: &labels,
+                    };
+                    black_box(profile.add_sample_by_locations(&locations, sample, 0)).unwrap();
+                }
+                black_box(())
+            })
+        },
+    );
 
     c.bench_function(
         "profile_serialize_compressed_pprof_timestamped_x1000",

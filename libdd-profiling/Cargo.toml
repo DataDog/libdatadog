@@ -19,6 +19,7 @@ bench = false
 [features]
 default = []
 cxx = ["dep:cxx", "dep:cxx-build"]
+dynamic_profile = []
 test-utils = ["libdd-common/test-utils"]
 
 [[bench]]
@@ -41,10 +42,12 @@ http = "1.1"
 http-body-util = "0.1"
 httparse = "1.9"
 indexmap = "2.11"
+libc = "0.2"
 libdd-alloc = { version = "1.0.0", path = "../libdd-alloc" }
 libdd-common = { version = "3.0.2", path = "../libdd-common", default-features = false, features = ["reqwest", "test-utils"] }
 libdd-profiling-protobuf = { version = "2.0.0", path = "../libdd-profiling-protobuf", features = ["prost_impls"] }
 mime = "0.3.16"
+nix = { version = "0.29", features = ["signal"] }
 parking_lot = { version = "0.12", default-features = false }
 prost = "0.14.1"
 rand = "0.8"
@@ -60,6 +63,7 @@ rustls-platform-verifier = "0.6"
 rustc-hash = { version = "2.1", default-features = false }
 serde = {version = "1.0", features = ["derive"]}
 serde_json = {version = "1.0"}
+smallvec = "1.13.2"
 target-triple = "0.1.4"
 thiserror = "2"
 tokio = {version = "1.23", features = ["rt", "macros", "net", "io-util", "fs"]}

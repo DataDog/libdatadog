@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 mod datatypes;
+#[cfg(feature = "dynamic_profile")]
+mod dynamic;
 mod interning_api;
 mod profiles_dictionary;
 mod utf8;

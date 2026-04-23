@@ -19,6 +19,7 @@ name = "datadog_profiling_ffi"
 [features]
 default = ["ddcommon-ffi"]
 cbindgen = ["build_common/cbindgen", "libdd-common-ffi/cbindgen"]
+dynamic_profile = ["libdd-profiling/dynamic_profile"]
 ddtelemetry-ffi = ["dep:libdd-telemetry-ffi"]
 datadog-log-ffi = ["dep:libdd-log-ffi"]
 symbolizer = ["symbolizer-ffi"]
@@ -59,3 +60,7 @@ symbolizer-ffi = { path = "../symbolizer-ffi", optional = true, default-features
 thiserror = "2"
 tokio-util = "0.7.1"
 datadog-ffe-ffi = { path = "../datadog-ffe-ffi", default-features = false, optional = true }
+
+[dev-dependencies]
+libdd-profiling-protobuf = { path = "../libdd-profiling-protobuf", features = ["prost_impls"] }
+zstd = { version = "0.13", default-features = false }
