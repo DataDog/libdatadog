@@ -34,6 +34,7 @@ use crate::service::debugger_diagnostics_bookkeeper::{
     DebuggerDiagnosticsBookkeeper, DebuggerDiagnosticsBookkeeperStats,
 };
 use crate::service::exception_hash_rate_limiter::EXCEPTION_HASH_LIMITER;
+use crate::service::ffe_flusher;
 use crate::service::remote_configs::{RemoteConfigNotifyTarget, RemoteConfigs};
 use crate::service::stats_flusher::{
     flush_all_stats_now, get_or_create_concentrator, stats_endpoint, ConcentratorKey,
@@ -43,6 +44,8 @@ use crate::service::tracing::trace_flusher::TraceFlusherStats;
 use crate::tokio_util::run_or_spawn_shared;
 use datadog_live_debugger::sender::{agent_info_supports_debugger_v2_endpoint, DebuggerType};
 use datadog_remote_config::fetch::{ConfigInvariants, ConfigOptions, MultiTargetStats};
+use libdd_capabilities::http::HttpClientTrait;
+use libdd_capabilities_impl::DefaultHttpClient;
 use libdd_common::tag::Tag;
 use libdd_dogstatsd_client::{new, DogStatsDActionOwned};
 use libdd_telemetry::config::Config;
@@ -505,6 +508,23 @@ impl SidecarInterface for ConnectionSidecarHandler {
                     )) => {
                         remove_client = true;
                         actions_to_process.push(action);
+                    }
+                    SidecarAction::FfeExposures(payload) => {
+                        // Fire-and-forget: spawn a task that POSTs the batch to
+                        // the agent EVP proxy. The endpoint is derived from the
+                        // session's base agent URL by swapping the path.
+                        if let Some(base) = trace_config.endpoint.as_ref() {
+                            if let Some(ep) = ffe_flusher::exposure_endpoint(base) {
+                                tokio::spawn(async move {
+                                    let client = DefaultHttpClient::new_client();
+                                    ffe_flusher::send_payload(&client, &ep, payload).await;
+                                });
+                            } else {
+                                debug!("ffe_flusher: could not derive endpoint, dropping batch");
+                            }
+                        } else {
+                            debug!("ffe_flusher: no session endpoint, dropping batch");
+                        }
                     }
                     _ => {
                         actions_to_process.push(action);
