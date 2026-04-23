@@ -1116,6 +1116,38 @@ pub unsafe extern "C" fn ddog_sidecar_send_debugger_datum(
     ddog_sidecar_send_debugger_data(transport, instance_id, queue_id, vec![*payload])
 }
 
+/// Forward a single FFE (Feature Flag Evaluation) exposure batch payload to
+/// the sidecar. The sidecar asynchronously POSTs it to the agent EVP proxy
+/// at `/evp_proxy/v2/api/v2/exposures`.
+///
+/// The payload is produced by `ddog_ffe_flush_exposures()` in `components-rs`.
+/// A null or zero-length slice is a no-op (the PHP side indicates "nothing to
+/// flush" by returning such a slice).
+///
+/// # Safety
+/// `payload` must be a valid UTF-8 `CharSlice` (as returned by
+/// `ddog_ffe_flush_exposures`) or a default (null, 0) slice.
+#[no_mangle]
+#[allow(clippy::missing_safety_doc)]
+pub unsafe extern "C" fn ddog_sidecar_send_ffe_exposures(
+    transport: &mut Box<SidecarTransport>,
+    instance_id: &InstanceId,
+    queue_id: &QueueId,
+    payload: CharSlice,
+) -> MaybeError {
+    if payload.is_empty() {
+        return MaybeError::None;
+    }
+    let payload = payload.to_utf8_lossy().into_owned();
+    try_c!(blocking::enqueue_actions(
+        transport,
+        instance_id,
+        queue_id,
+        vec![SidecarAction::FfeExposures(payload)],
+    ));
+    MaybeError::None
+}
+
 #[no_mangle]
 #[allow(clippy::missing_safety_doc)]
 #[allow(improper_ctypes_definitions)] // DebuggerPayload is just a pointer, we hide its internals
