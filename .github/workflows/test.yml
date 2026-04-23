@@ -40,7 +40,7 @@ jobs:
           submodules: recursive
       - name: Install Rust ${{ matrix.rust_version }}
         if: matrix.rust_version != ''
-        run: rustup install ${{ matrix.rust_version }} && rustup default ${{ matrix.rust_version }}
+        run: rustup set profile minimal && rustup install ${{ matrix.rust_version }} && rustup default ${{ matrix.rust_version }}
       - id: rust-version
         # On Windows run happens in a PowerShell, so start bash explicitly
         run: bash -c 'echo "version=$(rustc --version)" >> $GITHUB_OUTPUT'
@@ -71,6 +71,11 @@ jobs:
         run: cargo nextest run --workspace --features libdd-crashtracker/generate-unit-test-files --exclude builder --profile ci --test-threads=1 --verbose -E 'test(tracing_integration_tests::)'
         env:
           RUST_BACKTRACE: full
+      - name: "[${{ steps.rust-version.outputs.version}}] cargo nextest run -p libdd-http-client (hyper-backend)"
+        shell: bash
+        run: cargo nextest run -p libdd-http-client --no-default-features --features hyper-backend,https --profile ci --verbose
+        env:
+          RUST_BACKTRACE: full
       - name: "[${{ steps.rust-version.outputs.version}}] RUSTFLAGS=\"-C prefer-dynamic\" cargo nextest run --package test_spawn_from_lib --features prefer-dynamic -E '!test(tracing_integration_tests::)'"
         shell: bash
         run: cargo nextest run --package test_spawn_from_lib --features prefer-dynamic -E '!test(tracing_integration_tests::)'
@@ -88,21 +93,6 @@ jobs:
           report_paths: "target/nextest/ci/junit.xml"
           check_name: "[${{ matrix.platform }}:${{ matrix.rust_version }}] test report"
           include_passed: true
-      # We're using not-that-ideal XSLT here as this change, because it must be done over 17+ repos.
-      # It's a workaround until this gets integrated into a better place, such as datadog-ci or the backend.
-      #
-      # * ticket: https://datadoghq.atlassian.net/browse/APMSP-2610
-      # * RFC: https://docs.google.com/document/d/1OaX_h09fCXWmK_1ADrwvilt8Yt5h4WjC7UUAdS3Y3uw/edit?pli=1&tab=t.0#heading=h.tfy5viz7rz2
-      - name: Add final_status property
-        if: success() || failure()
-        shell: bash
-        run: |
-          which xsltproc || sudo apt-get install -y xsltproc
-          echo "Fixing target/nextest/ci/junit.xml"
-          tmp_file="$(mktemp)"
-          xsltproc --output "$tmp_file" ".github/workflows/add_final_status.xsl" "target/nextest/ci/junit.xml"
-          mv "$tmp_file" "target/nextest/ci/junit.xml"
-
       - name: Upload test results to Datadog
         if: success() || failure()
         shell: bash
@@ -195,7 +185,7 @@ jobs:
           swap-storage: true
       - name: Install Rust ${{ matrix.rust_version }}
         if: matrix.rust_version != ''
-        run: rustup install ${{ matrix.rust_version }} && rustup default ${{ matrix.rust_version }}
+        run: rustup set profile minimal && rustup install ${{ matrix.rust_version }} && rustup default ${{ matrix.rust_version }}
 
       - id: rust-version
         # On Windows run happens in a PowerShell, so start bash explicitly
@@ -429,6 +419,29 @@ jobs:
           -w /workspace
           libdatadog-no-certs
           cargo test -p libdd-profiling --test exporter_e2e
+
+  wasm:
+    name: "cargo check --target wasm32-unknown-unknown"
+    runs-on: ubuntu-latest
+    concurrency:
+      group: ci-${{ github.ref }}-wasm
+      cancel-in-progress: true
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # 4.2.2
+        with:
+          submodules: recursive
+      - name: Install wasm32 target
+        run: rustup target add wasm32-unknown-unknown
+      - name: Cache [rust]
+        uses: Swatinem/rust-cache@f13886b937689c021905a6b90929199931d60db1 # 2.8.1
+        with:
+          cache-targets: true
+          cache-bin: true
+      - name: "cargo check -p libdd-data-pipeline --target wasm32-unknown-unknown --no-default-features"
+        run: cargo check -p libdd-data-pipeline --target wasm32-unknown-unknown --no-default-features
+        env:
+          RUSTFLAGS: "-D warnings -A unused-imports -A dead-code -A unused-variables"
 
   ffi_bake:
     strategy:

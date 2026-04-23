@@ -7,7 +7,8 @@ use crate::service::{
     telemetry::{TelemetryCachedClient, TelemetryCachedClientSet},
     tracing::TraceFlusher,
     DynamicInstrumentationConfigState, InstanceId, QueueId, RuntimeInfo, RuntimeMetadata,
-    SerializedTracerHeaderTags, SessionConfig, SessionInfo, SidecarAction, SidecarInterface,
+    SerializedTracerHeaderTags, SessionConfig, SessionInfo, SidecarAction, SidecarFlushOptions,
+    SidecarInterface,
 };
 use datadog_ipc::platform::{FileBackedHandle, ShmHandle};
 use datadog_ipc::{PeerCredentials, SeqpacketConn};
@@ -35,6 +36,10 @@ use crate::service::debugger_diagnostics_bookkeeper::{
 };
 use crate::service::exception_hash_rate_limiter::EXCEPTION_HASH_LIMITER;
 use crate::service::remote_configs::{RemoteConfigNotifyTarget, RemoteConfigs};
+use crate::service::stats_flusher::{
+    flush_all_stats_now, get_or_create_concentrator, stats_endpoint, ConcentratorKey,
+    SpanConcentratorState, StatsConfig,
+};
 use crate::service::tracing::trace_flusher::TraceFlusherStats;
 use crate::tokio_util::run_or_spawn_shared;
 use datadog_live_debugger::sender::{agent_info_supports_debugger_v2_endpoint, DebuggerType};
@@ -102,6 +107,8 @@ pub struct SidecarServer {
     remote_configs: RemoteConfigs,
     /// Diagnostics bookkeeper
     debugger_diagnostics_bookkeeper: Arc<DebuggerDiagnosticsBookkeeper>,
+    /// Per-env&version SHM span concentrators (global across all sessions).
+    pub(crate) span_concentrators: Arc<Mutex<HashMap<ConcentratorKey, Arc<SpanConcentratorState>>>>,
 }
 
 /// Per-connection handler wrapper that tracks sessions/instances for cleanup on disconnect.
@@ -296,12 +303,24 @@ impl SidecarServer {
 
             let futures = clients
                 .values()
-                .filter_map(|client| client.client.lock_or_panic().worker.stats().ok())
+                .filter_map(|client| {
+                    client
+                        .client
+                        .lock_or_panic()
+                        .as_ref()
+                        .and_then(|c| c.worker.stats().ok())
+                })
                 .collect::<Vec<_>>();
 
             let metric_counts = clients
                 .values()
-                .map(|client| client.client.lock_or_panic().telemetry_metrics.len() as u32)
+                .map(|client| {
+                    client
+                        .client
+                        .lock_or_panic()
+                        .as_ref()
+                        .map_or(0, |c| c.telemetry_metrics.len() as u32)
+                })
                 .collect::<Vec<_>>();
 
             (futures, metric_counts)
@@ -399,26 +418,47 @@ impl SidecarInterface for ConnectionSidecarHandler {
 
             let process_tags = session.process_tags.lock_or_panic().clone();
 
-            // Lock telemetry client
+            // Pre-compute session config so both the primary and retry get_or_create calls
+            // can use it without re-locking the session.
+            let session_config = session
+                .session_config
+                .lock_or_panic()
+                .as_ref()
+                .cloned()
+                .unwrap_or_else(|| {
+                    warn!("Failed to get telemetry session config for {instance_id:?}");
+                    Config::default()
+                });
+
+            // Get or create the telemetry client.  If we observe None under the lock it means
+            // another thread called take() (Stop) in the narrow window between get_or_create
+            // returning and us acquiring the lock — retry once to get a fresh client.
             let telemetry_mutex = self.server.telemetry_clients.get_or_create(
                 service,
                 env,
                 &instance_id,
                 &runtime_metadata,
-                || {
-                    session
-                        .session_config
-                        .lock_or_panic()
-                        .as_ref()
-                        .cloned()
-                        .unwrap_or_else(|| {
-                            warn!("Failed to get telemetry session config for {instance_id:?}");
-                            Config::default()
-                        })
-                },
-                process_tags,
+                || session_config.clone(),
+                process_tags.clone(),
             );
-            let mut telemetry = telemetry_mutex.lock_or_panic();
+            let telemetry_mutex = if telemetry_mutex.lock_or_panic().is_none() {
+                self.server.telemetry_clients.get_or_create(
+                    service,
+                    env,
+                    &instance_id,
+                    &runtime_metadata,
+                    || session_config,
+                    process_tags,
+                )
+            } else {
+                telemetry_mutex
+            };
+            let mut telemetry_guard = telemetry_mutex.lock_or_panic();
+            let Some(telemetry) = telemetry_guard.as_mut() else {
+                // Extremely rare: the client was stopped between the two get_or_create calls.
+                warn!("enqueue_actions: telemetry client stopped during retry for instance {instance_id:?}; dropping actions");
+                return;
+            };
 
             // Auto-register any metrics known to this connection but not yet registered
             // in this telemetry client (e.g., the client was just created for a new service/env).
@@ -440,24 +480,24 @@ impl SidecarInterface for ConnectionSidecarHandler {
             for action in actions {
                 match action {
                     SidecarAction::Telemetry(TelemetryActions::AddIntegration(ref integration)) => {
-                        if telemetry.buffered_integrations.insert(integration.clone()) {
+                        if telemetry.shared.integrations.insert(integration.clone()) {
                             actions_to_process.push(action);
                             buffered_info_changed = true;
                         }
                     }
                     SidecarAction::PhpComposerTelemetryFile(path) => {
-                        if telemetry.buffered_composer_paths.insert(path.clone()) {
+                        if telemetry.shared.composer_paths.insert(path.clone()) {
                             composer_paths_to_process.push(path);
                             buffered_info_changed = true;
                         }
                     }
                     SidecarAction::Telemetry(TelemetryActions::AddConfig(_)) => {
-                        telemetry.config_sent = true;
+                        telemetry.shared.config_sent = true;
                         buffered_info_changed = true;
                         actions_to_process.push(action);
                     }
                     SidecarAction::Telemetry(TelemetryActions::AddEndpoint(_)) => {
-                        telemetry.last_endpoints_push = SystemTime::now();
+                        telemetry.shared.last_endpoints_push = SystemTime::now();
                         buffered_info_changed = true;
                         actions_to_process.push(action);
                     }
@@ -473,6 +513,18 @@ impl SidecarInterface for ConnectionSidecarHandler {
                 }
             }
 
+            if buffered_info_changed {
+                info!(
+                    "Buffered telemetry info changed for instance {instance_id:?} and queue_id {queue_id:?}"
+                );
+                telemetry.write_shm_file();
+            }
+
+            // take() must happen INSIDE the spawned task, after process_actions completes,
+            // so that a Config batch spawned before a Stop batch still finds Some when it
+            // runs (the last_handle chain guarantees Stop runs after Config).
+            let do_take = remove_client;
+
             if !actions_to_process.is_empty() {
                 let telemetry_mutex_clone = telemetry_mutex.clone();
                 let worker = telemetry.worker.clone();
@@ -481,9 +533,17 @@ impl SidecarInterface for ConnectionSidecarHandler {
                     if let Some(last_handle) = last_handle {
                         last_handle.await.ok();
                     };
-                    let processed = telemetry_mutex_clone
-                        .lock_or_panic()
-                        .process_actions(actions_to_process);
+                    let processed = {
+                        let mut guard = telemetry_mutex_clone.lock_or_panic();
+                        let processed = guard
+                            .as_mut()
+                            .map(|t| t.process_actions(actions_to_process))
+                            .unwrap_or_default();
+                        if do_take {
+                            guard.take(); // drop client after Stop action is processed
+                        }
+                        processed
+                    };
                     debug!("Sending Processed Actions :{processed:?}");
                     worker.send_msgs(processed).await.ok();
                 }));
@@ -504,18 +564,14 @@ impl SidecarInterface for ConnectionSidecarHandler {
                 }));
             }
 
-            if buffered_info_changed {
-                info!(
-                    "Buffered telemetry info changed for instance {instance_id:?} and queue_id {queue_id:?}"
-                );
-                telemetry.write_shm_file();
-            }
-
+            // telemetry borrow ends after the last use of telemetry.handle above.
+            // Remove from the map synchronously so new get_or_create calls get a fresh entry;
+            // take() is deferred to the spawned task to avoid racing with in-flight tasks.
             if remove_client {
-                info!("Removing telemetry client for instance {instance_id:?}");
                 self.server
                     .telemetry_clients
                     .remove_telemetry_client(service, env);
+                info!("Removing telemetry client for instance {instance_id:?}");
             }
         } else {
             info!("No application found for instance {instance_id:?} and queue_id {queue_id:?}");
@@ -585,12 +641,16 @@ impl SidecarInterface for ConnectionSidecarHandler {
         *session.process_tags.lock_or_panic() = config.process_tags.clone();
         session.modify_telemetry_config(|cfg| {
             cfg.telemetry_heartbeat_interval = config.telemetry_heartbeat_interval;
+            cfg.telemetry_extended_heartbeat_interval =
+                config.telemetry_extended_heartbeat_interval;
             let endpoint = get_product_endpoint(
                 libdd_telemetry::config::PROD_INTAKE_SUBDOMAIN,
                 &config.endpoint,
             );
             cfg.set_endpoint(endpoint).ok();
             cfg.telemetry_heartbeat_interval = config.telemetry_heartbeat_interval;
+            cfg.telemetry_extended_heartbeat_interval =
+                config.telemetry_extended_heartbeat_interval;
         });
         session.modify_trace_config(|cfg| {
             let endpoint = get_product_endpoint(
@@ -626,6 +686,25 @@ impl SidecarInterface for ConnectionSidecarHandler {
             });
             *session.agent_infos.lock_or_panic() = Some(agent_info);
         }
+        *session.stats_config.lock_or_panic() = Some(StatsConfig {
+            endpoint: stats_endpoint(&config.endpoint).unwrap_or_else(|| config.endpoint.clone()),
+            flush_interval: config.flush_interval,
+            hostname: if config.hostname.is_empty() {
+                sys_info::hostname().unwrap_or_default()
+            } else {
+                config.hostname.clone()
+            },
+            process_tags: config
+                .process_tags
+                .iter()
+                .map(|t| t.to_string())
+                .collect::<Vec<_>>()
+                .join(","),
+            root_service: config.root_service.clone(),
+            language: config.language.clone(),
+            tracer_version: config.tracer_version.clone(),
+        });
+
         session.set_remote_config_invariants(ConfigOptions {
             invariants: ConfigInvariants {
                 language: config.language,
@@ -890,10 +969,66 @@ impl SidecarInterface for ConnectionSidecarHandler {
         });
     }
 
-    async fn flush_traces(&self, _peer: PeerCredentials) {
-        let flusher = self.server.trace_flusher.clone();
-        if let Err(e) = tokio::spawn(async move { flusher.flush().await }).await {
-            error!("Failed flushing traces: {e:?}");
+    async fn add_span_to_concentrator(
+        &self,
+        _peer: PeerCredentials,
+        env: String,
+        version: String,
+        span: datadog_ipc::shm_stats::OwnedShmSpanInput,
+    ) {
+        let session_id = self.session_id.get().map(|s| s.as_str()).unwrap_or("");
+        let session = self.server.get_session(session_id);
+        // Lazily create the concentrator on first IPC span for this (env, version, service).
+        if let Some(state) = get_or_create_concentrator(
+            &self.server.span_concentrators,
+            &env,
+            &version,
+            session_id,
+            &session,
+        ) {
+            let mut peer_tag_buf = Vec::new();
+            let input = span.as_shm_input(&mut peer_tag_buf);
+            state.concentrator.add_span(&input);
+        }
+    }
+
+    async fn flush(&self, _peer: PeerCredentials, options: SidecarFlushOptions) {
+        if options.traces_and_stats {
+            let flusher = self.server.trace_flusher.clone();
+            if let Err(e) = tokio::spawn(async move { flusher.flush().await }).await {
+                error!("Failed flushing traces: {e:?}");
+            }
+            flush_all_stats_now(&self.server.span_concentrators).await;
+        }
+        if options.telemetry {
+            let workers: Vec<_> = {
+                let clients = self.server.telemetry_clients.inner.lock_or_panic();
+                clients
+                    .values()
+                    .filter_map(|entry| {
+                        entry
+                            .client
+                            .lock_or_panic()
+                            .as_ref()
+                            .map(|c| c.worker.clone())
+                    })
+                    .collect()
+            };
+            futures::future::join_all(workers.into_iter().map(|worker| async move {
+                let _ = worker
+                    .send_msg(TelemetryActions::Lifecycle(
+                        LifecycleAction::FlushMetricAggr,
+                    ))
+                    .await;
+                let _ = worker
+                    .send_msg(TelemetryActions::Lifecycle(LifecycleAction::FlushData))
+                    .await;
+                // now await completion
+                let (tx, rx) = futures::channel::oneshot::channel();
+                let _ = worker.send_msg(TelemetryActions::CollectStats(tx)).await;
+                let _ = rx.await;
+            }))
+            .await;
         }
     }
 
@@ -915,6 +1050,10 @@ impl SidecarInterface for ConnectionSidecarHandler {
         });
         session.modify_trace_config(|trace_cfg| {
             trace_cfg.set_endpoint_test_token(token.clone());
+        });
+        // Update the stats config so newly created concentrators carry the test token.
+        session.modify_stats_config(|cfg| {
+            cfg.endpoint.test_token = token.clone();
         });
         // TODO(APMSP-1377): the dogstatsd-client doesn't support test_session tokens yet
         // session.configure_dogstatsd(|cfg| {

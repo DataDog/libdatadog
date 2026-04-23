@@ -18,11 +18,13 @@ anyhow = { version = "1.0" }
 arrayref = "0.3.7"
 priority-queue = "2.1.1"
 libdd-common = { path = "../libdd-common" }
+libdd-capabilities = { path = "../libdd-capabilities", version = "0.1.0" }
 datadog-sidecar-macros = { path = "../datadog-sidecar-macros" }
 
 libdd-telemetry = { path = "../libdd-telemetry", features = ["tracing"] }
 libdd-data-pipeline = { path = "../libdd-data-pipeline" }
 libdd-trace-utils = { path = "../libdd-trace-utils" }
+libdd-trace-stats = { path = "../libdd-trace-stats" }
 datadog-remote-config = { path = "../datadog-remote-config" , features = ["live-debugger"]}
 datadog-live-debugger = { path = "../datadog-live-debugger" }
 libdd-crashtracker = { path = "../libdd-crashtracker" }
@@ -38,6 +40,8 @@ datadog-ipc = { path = "../datadog-ipc", features = ["tiny-bytes"] }
 datadog-ipc-macros = { path = "../datadog-ipc-macros" }
 
 rand = "0.8.3"
+rmp-serde = "1.1.1"
+libdd-trace-protobuf = { path = "../libdd-trace-protobuf" }
 serde = { version = "1.0", features = ["derive", "rc"] }
 serde_with = "3.6.0"
 bincode = { version = "1.3.3" }
@@ -56,6 +60,7 @@ tokio = { version = "1.49.0", features = [
 tokio-util = { version = "0.7", features = ["codec"] }
 
 prctl = "1.0.0"
+sys-info = { version = "0.9.0" }
 tracing = { version = "0.1", default-features = false }
 tracing-log = { version = "0.2.0", optional = true }
 tracing-subscriber = { version = "0.3.22", default-features = false, features = [
@@ -87,6 +92,9 @@ version = "1.49.0"
 # simd-json v0.15 uses Rust 2024 Edition, so it needs Rust 1.85+.
 [target.'cfg(not(target_arch = "x86"))'.dependencies]
 simd-json = "=0.14"
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+libdd-capabilities-impl = { path = "../libdd-capabilities-impl" }
 
 [target.'cfg(unix)'.dependencies]
 nix = { version = "0.29", features = ["socket", "mman"] }

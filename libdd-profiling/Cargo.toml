@@ -42,18 +42,20 @@ http-body-util = "0.1"
 httparse = "1.9"
 indexmap = "2.11"
 libdd-alloc = { version = "1.0.0", path = "../libdd-alloc" }
-libdd-common = { version = "3.0.1", path = "../libdd-common", default-features = false, features = ["reqwest", "test-utils"] }
-libdd-profiling-protobuf = { version = "1.0.0", path = "../libdd-profiling-protobuf", features = ["prost_impls"] }
+libdd-common = { version = "3.0.2", path = "../libdd-common", default-features = false, features = ["reqwest", "test-utils"] }
+libdd-profiling-protobuf = { version = "2.0.0", path = "../libdd-profiling-protobuf", features = ["prost_impls"] }
 mime = "0.3.16"
 parking_lot = { version = "0.12", default-features = false }
 prost = "0.14.1"
 rand = "0.8"
 # Use rustls to align with the rest of the workspace (libdd-common, libdd-telemetry, etc.)
-# This uses the same TLS stack (rustls + aws-lc-rs/ring) as other crates
+# Non-FIPS builds use ring as the crypto provider; FIPS builds use aws-lc-rs.
 # Use hickory-dns instead of the default system DNS resolver to avoid fork safety issues.
 # The default resolver can hold locks or other global state that can cause deadlocks
 # or corruption when the process forks (e.g., in PHP-FPM or other forking environments).
-reqwest = { version = "0.13.2", features = ["multipart", "rustls", "hickory-dns"], default-features = false}
+# Use rustls-no-provider instead of rustls to avoid reqwest forcing aws-lc-rs as the crypto
+# backend. We install the ring provider explicitly via tls.rs / libdd-common instead.
+reqwest = { version = "0.13.2", features = ["multipart", "rustls-no-provider", "hickory-dns"], default-features = false}
 rustls-platform-verifier = "0.6"
 rustc-hash = { version = "1.1", default-features = false }
 serde = {version = "1.0", features = ["derive"]}
@@ -63,12 +65,8 @@ thiserror = "2"
 tokio = {version = "1.23", features = ["rt", "macros", "net", "io-util", "fs"]}
 tokio-util = { version = "0.7.1", default-features = false }
 zstd = { version = "0.13", default-features = false }
-
-# aws-lc-rs is preferred on Unix; ring is used on Windows where aws-lc-rs has build issues.
-[target.'cfg(unix)'.dependencies]
-rustls = { version = "0.23.37", default-features = false, features = ["aws-lc-rs"] }
-
-[target.'cfg(not(unix))'.dependencies]
+# ring is the crypto provider for non-FIPS builds on all platforms.
+# FIPS builds activate aws-lc-rs via the rustls/fips feature instead.
 rustls = { version = "0.23.37", default-features = false, features = ["ring"] }
 
 [dev-dependencies]

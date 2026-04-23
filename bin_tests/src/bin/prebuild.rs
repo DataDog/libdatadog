@@ -9,7 +9,7 @@
 //!
 //! Run with: cargo run -p bin_tests --bin prebuild
 
-use bin_tests::{artifacts, build_artifacts};
+use bin_tests::{artifacts, rebuild_artifacts};
 
 fn main() -> anyhow::Result<()> {
     println!("Pre-building bin_tests artifacts...");
@@ -20,7 +20,7 @@ fn main() -> anyhow::Result<()> {
 
     // Build all artifacts
     let start = std::time::Instant::now();
-    build_artifacts(&artifact_refs)?;
+    rebuild_artifacts(&artifact_refs)?;
     let elapsed = start.elapsed();
 
     println!(

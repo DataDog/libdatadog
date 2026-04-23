@@ -37,9 +37,9 @@ crate::c_setters!(
         host.kernel_version,
 
         runtime_id,
-        session_id,
-        root_session_id,
-        parent_session_id,
+        config.session_id,
+        config.parent_session_id,
+        config.root_session_id,
     }
 );
 

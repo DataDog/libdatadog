@@ -173,7 +173,7 @@ fn map_span<T: TraceData>(span: &Span<T>, resource_service: &str) -> OtlpSpan {
 }
 
 fn map_span_link<T: TraceData>(link: &SpanLink<T>) -> OtlpSpanLink {
-    let trace_id_128 = (link.trace_id_high as u128) << 64 | (link.trace_id as u128);
+    let trace_id_128 = ((link.trace_id_high as u128) << 64) | (link.trace_id as u128);
     let trace_id_hex = format!("{:032x}", trace_id_128);
     let span_id_hex = format!("{:016x}", link.span_id);
     let trace_state = if link.tracestate.borrow().is_empty() {
@@ -299,6 +299,14 @@ fn map_attributes<T: TraceData>(span: &Span<T>, resource_service: &str) -> (Vec<
             value: AnyValue::StringValue(span_type.to_string()),
         });
     }
+    let resource_name = span.resource.borrow();
+    let has_resource_name = !resource_name.is_empty();
+    if has_resource_name {
+        attrs.push(KeyValue {
+            key: "resource.name".to_string(),
+            value: AnyValue::StringValue(resource_name.to_string()),
+        });
+    }
     for (k, v) in span.meta.iter() {
         if attrs.len() >= MAX_ATTRIBUTES_PER_SPAN {
             break;
@@ -334,6 +342,7 @@ fn map_attributes<T: TraceData>(span: &Span<T>, resource_service: &str) -> (Vec<
     let total = (if has_per_span_service { 1 } else { 0 })
         + (if has_operation_name { 1 } else { 0 })
         + (if has_span_type { 1 } else { 0 })
+        + (if has_resource_name { 1 } else { 0 })
         + span.meta.len()
         + span.metrics.len()
         + span.meta_struct.len();
@@ -572,6 +581,59 @@ mod tests {
             .find(|a| a["key"] == "span.type")
             .expect("span.type attribute not found");
         assert_eq!(kv["value"]["stringValue"], "grpc");
+    }
+
+    #[test]
+    fn test_resource_name_attribute() {
+        let resource_info = OtlpResourceInfo::default();
+        let span: Span<BytesData> = Span {
+            trace_id: 1,
+            span_id: 2,
+            name: libdd_tinybytes::BytesString::from_static("s"),
+            resource: libdd_tinybytes::BytesString::from_static("GET /api/users"),
+            start: 0,
+            duration: 1,
+            ..Default::default()
+        };
+        let req = map_traces_to_otlp(vec![vec![span]], &resource_info);
+        let json = serde_json::to_value(&req).unwrap();
+        let otlp_span = &json["resourceSpans"][0]["scopeSpans"][0]["spans"][0];
+        // resource maps to the OTLP span name
+        assert_eq!(otlp_span["name"], "GET /api/users");
+        // resource also maps to the resource.name attribute
+        let kv = otlp_span["attributes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|a| a["key"] == "resource.name")
+            .expect("resource.name attribute not found");
+        assert_eq!(kv["value"]["stringValue"], "GET /api/users");
+    }
+
+    #[test]
+    fn test_empty_resource_name_not_emitted() {
+        // A span with no resource set should not emit a resource.name attribute.
+        // In practice DD spans always have a resource, but the mapper is defensive about
+        // empty fields from the wire.
+        let resource_info = OtlpResourceInfo::default();
+        let span: Span<BytesData> = Span {
+            trace_id: 1,
+            span_id: 2,
+            name: libdd_tinybytes::BytesString::from_static("s"),
+            // resource is empty (default)
+            start: 0,
+            duration: 1,
+            ..Default::default()
+        };
+        let req = map_traces_to_otlp(vec![vec![span]], &resource_info);
+        let json = serde_json::to_value(&req).unwrap();
+        let attrs = json["resourceSpans"][0]["scopeSpans"][0]["spans"][0]["attributes"]
+            .as_array()
+            .unwrap();
+        assert!(
+            !attrs.iter().any(|a| a["key"] == "resource.name"),
+            "resource.name should not be emitted when resource is empty"
+        );
     }
 
     #[test]

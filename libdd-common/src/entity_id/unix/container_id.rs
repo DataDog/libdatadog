@@ -22,7 +22,7 @@ pub(crate) static LINE_REGEX: LazyLock<Regex> = LazyLock::new(|| {
 pub(crate) static CONTAINER_REGEX: LazyLock<Regex> = LazyLock::new(|| {
     #[allow(clippy::unwrap_used)]
     Regex::new(&format!(
-        r"({UUID_SOURCE}|{CONTAINER_SOURCE}|{TASK_SOURCE})(?:.scope)? *$"
+        r"({UUID_SOURCE}|{CONTAINER_SOURCE}|{TASK_SOURCE})(?:\.scope(?:/[^/ \t]+)?)? *$"
     ))
     .unwrap()
 });
@@ -77,6 +77,9 @@ mod tests {
                 => Some("34dc0b5e626f2c5c4c5170e34b10e765-1234567890"),
             "1:name=systemd:/docker/34dc0b5e626f2c5c4c5170e34b10e7654ce36f0fcd532739f4445baabea03376.scope"
                 => Some("34dc0b5e626f2c5c4c5170e34b10e7654ce36f0fcd532739f4445baabea03376"),
+            // Podman cgroup v2: libpod-HEXID.scope/container (cgroupns=host)
+            "0::/machine.slice/libpod-93afc7bc3ce42ad052d2926ffacfba941803bfae080941d1e1375d9d46b6a281.scope/container"
+                => Some("93afc7bc3ce42ad052d2926ffacfba941803bfae080941d1e1375d9d46b6a281"),
             // k8s with additional characters before ID
             "1:name=systemd:/kubepods.slice/kubepods-burstable.slice/kubepods-burstable-pod2d3da189_6407_48e3_9ab6_78188d75e609.slice/docker-7b8952daecf4c0e44bbcefe1b5c5ebc7b4839d4eefeccefe694709d3809b6199.scope"
                 => Some("7b8952daecf4c0e44bbcefe1b5c5ebc7b4839d4eefeccefe694709d3809b6199"),

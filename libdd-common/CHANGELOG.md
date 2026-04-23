@@ -2,6 +2,13 @@
 
 
 
+## [3.0.2](https://github.com/datadog/libdatadog/compare/libdd-common-v3.0.1..libdd-common-v3.0.2) - 2026-03-25
+
+### Changed
+- Fix previous release.
+
+
+
 ## [3.0.1](https://github.com/datadog/libdatadog/compare/libdd-common-v3.0.0..libdd-common-v3.0.1) - 2026-03-23
 
 ### Changed
