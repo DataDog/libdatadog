@@ -3,12 +3,11 @@
 extern crate build_common;
 
 use build_common::generate_and_configure_header;
+use std::env;
 
 fn main() {
-    let header_name = "otel-thread-ctx.h";
-    generate_and_configure_header(header_name);
-
-    let target_os = std::env::var("CARGO_CFG_TARGET_OS").unwrap();
+    generate_and_configure_header("otel-thread-ctx.h");
+    let target_os = env::var("CARGO_CFG_TARGET_OS").unwrap();
 
     // Export the TLSDESC thread-local variable to the dynamic symbol table so
     // external readers (e.g. the eBPF profiler) can locate it. Rust's cdylib
@@ -21,7 +20,7 @@ fn main() {
     // Merging multiple version scripts is not supported by GNU ld, so we also
     // force lld explicitly.
     if target_os == "linux" {
-        let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap();
+        let manifest_dir = env::var("CARGO_MANIFEST_DIR").unwrap();
         println!("cargo:rustc-cdylib-link-arg=-fuse-ld=lld");
         println!(
             "cargo:rustc-cdylib-link-arg=-Wl,--version-script={manifest_dir}/tls-dynamic-list.txt"
@@ -31,8 +30,7 @@ fn main() {
         // locate the cdylib without fragile path-walking.
         // OUT_DIR = <target>/[<triple>/]<profile>/build/<pkg>-<hash>/out
         // Three levels up lands on <target>/[<triple>/]<profile>.
-        let out_dir = std::env::var("OUT_DIR").unwrap();
-        let profile_dir = std::path::PathBuf::from(&out_dir)
+        let profile_dir = std::path::PathBuf::from(&env::var("OUT_DIR").unwrap())
             .ancestors()
             .nth(3)
             .unwrap()
