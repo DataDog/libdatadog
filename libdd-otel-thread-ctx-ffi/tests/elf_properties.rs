@@ -31,6 +31,7 @@ fn readelf(args: &[&str], path: &PathBuf) -> String {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn otel_thread_ctx_v1_in_dynsym() {
     let path = cdylib_path();
     let output = readelf(&["-W", "--dyn-syms"], &path);
@@ -45,6 +46,7 @@ fn otel_thread_ctx_v1_in_dynsym() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn otel_thread_ctx_v1_tlsdesc_reloc() {
     let path = cdylib_path();
     let output = readelf(&["-W", "--relocs"], &path);
