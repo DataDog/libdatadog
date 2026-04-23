@@ -3,7 +3,7 @@
 
 [package]
 name = "libdd-capabilities-impl"
-version = "0.1.0"
+version = "1.0.0"
 description = "Native implementations of libdd-capabilities traits"
 homepage = "https://github.com/DataDog/libdatadog/tree/main/libdd-capabilities-impl"
 repository = "https://github.com/DataDog/libdatadog/tree/main/libdd-capabilities-impl"

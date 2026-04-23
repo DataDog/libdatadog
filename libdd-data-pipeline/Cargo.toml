@@ -46,7 +46,7 @@ libdd-tinybytes = { version = "1.1.0", path = "../libdd-tinybytes", features = [
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 tokio = { version = "1.23", features = ["time", "test-util"], default-features = false }
-libdd-capabilities-impl = { version = "0.1.0", path = "../libdd-capabilities-impl" }
+libdd-capabilities-impl = { version = "1.0.0", path = "../libdd-capabilities-impl" }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 getrandom = { version = "0.2", features = ["js"] }
@@ -61,7 +61,7 @@ harness = false
 path = "benches/trace_buffer.rs"
 
 [dev-dependencies]
-libdd-capabilities-impl = { version = "0.1.0", path = "../libdd-capabilities-impl" }
+libdd-capabilities-impl = { version = "1.0.0", path = "../libdd-capabilities-impl" }
 libdd-log = { path = "../libdd-log" }
 libdd-shared-runtime = { version = "0.1.0", path = "../libdd-shared-runtime" }
 clap = { version = "4.0", features = ["derive"] }
