@@ -19,7 +19,7 @@ bench = false
 bytes = "1"
 http = "1"
 libdd-capabilities = { path = "../libdd-capabilities", version = "1.0.0" }
-libdd-common = { path = "../libdd-common", version = "3.0.2", default-features = false }
+libdd-common = { path = "../libdd-common", version = "4.0.0", default-features = false }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 http-body-util = "0.1"
