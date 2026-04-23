@@ -2,6 +2,30 @@
 
 
 
+## [4.0.0](https://github.com/datadog/libdatadog/compare/libdd-common-v3.0.2..libdd-common-v4.0.0) - 2026-04-23
+
+### Added
+
+- Trait architecture http ([#1555](https://github.com/datadog/libdatadog/issues/1555)) - ([b863364](https://github.com/datadog/libdatadog/commit/b863364bbb9cb4567b10c80cd11bc4a22b49fcf4))
+- Add shared runtime ([#1602](https://github.com/datadog/libdatadog/issues/1602)) - ([33896de](https://github.com/datadog/libdatadog/commit/33896def2418a9c0fc5bf74b05011210d333759f))
+- Implement HTTP common component ([#1624](https://github.com/datadog/libdatadog/issues/1624)) - ([29678bd](https://github.com/datadog/libdatadog/commit/29678bd0434bbe61dda64b90e99fbb36037f79d2))
+
+### Changed
+
+- Add allocation size tracking allocator ([#1905](https://github.com/datadog/libdatadog/issues/1905)) - ([d29b8d2](https://github.com/datadog/libdatadog/commit/d29b8d22f33ee0bd2ca9baf40f1afee801550c73))
+- Mock now function for rate limiter in tests to make them deterministic ([#1842](https://github.com/datadog/libdatadog/issues/1842)) - ([eb3c39b](https://github.com/datadog/libdatadog/commit/eb3c39b03521962ddedb2fd2c5990fdacea0a135))
+- Remove transitive dependency ([#1895](https://github.com/datadog/libdatadog/issues/1895)) - ([bdb0ad5](https://github.com/datadog/libdatadog/commit/bdb0ad556a6abeb17d2f31a037e149ec05cb5e8b))
+- Skip reqwest test that takes 10mn ([#1784](https://github.com/datadog/libdatadog/issues/1784)) - ([c929cdb](https://github.com/datadog/libdatadog/commit/c929cdb78d84f753f19ccacbee045e77dd5c5688))
+
+### Fixed
+
+- Skip thread counting test ([#1841](https://github.com/datadog/libdatadog/issues/1841)) - ([4360dbb](https://github.com/datadog/libdatadog/commit/4360dbb14e39d00d8a4fc40b6e66d1301f79acff))
+- Don't use reqwest http proxies ([#1810](https://github.com/datadog/libdatadog/issues/1810)) - ([3fc2961](https://github.com/datadog/libdatadog/commit/3fc29617a905dea8cda45300656896f482d7278c))
+- Use `ring` for non-fips builds ([#1816](https://github.com/datadog/libdatadog/issues/1816)) - ([5b6dffc](https://github.com/datadog/libdatadog/commit/5b6dffc5101a48706fe9c06f91e6c5afaf5e0ab5))
+- Handle Podman cgroupns=host cgroup path ([#1828](https://github.com/datadog/libdatadog/issues/1828)) - ([e5de518](https://github.com/datadog/libdatadog/commit/e5de518b54dfdc649a87dcf57a09680ca3859a53))
+
+
+
 ## [3.0.2](https://github.com/datadog/libdatadog/compare/libdd-common-v3.0.1..libdd-common-v3.0.2) - 2026-03-25
 
 ### Changed
