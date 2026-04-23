@@ -2,7 +2,7 @@
 # Rules are evaluated in order. Later matches override earlier ones.
 # More specific patterns at the bottom override general patterns above.
 
-.claude/                             @DataDog/libdatadog-core
+.claude/                             @DataDog/apm-common-components-core
 .clang-format                        @DataDog/libdatadog
 .codecov.yml                         @DataDog/apm-common-components-core
 .cargo/*                             @DataDog/libdatadog-core
