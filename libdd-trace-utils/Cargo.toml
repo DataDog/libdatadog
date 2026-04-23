@@ -59,13 +59,13 @@ urlencoding = { version = "2.1.3", optional = true }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 tokio = { version = "1", features = ["time", "rt-multi-thread"] }
-libdd-capabilities-impl = { version = "0.1.0", path = "../libdd-capabilities-impl", default-features = false }
+libdd-capabilities-impl = { version = "1.0.0", path = "../libdd-capabilities-impl", default-features = false }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 getrandom = { version = "0.2", features = ["js"] }
 
 [dev-dependencies]
-libdd-capabilities-impl = { version = "0.1.0", path = "../libdd-capabilities-impl" }
+libdd-capabilities-impl = { version = "1.0.0", path = "../libdd-capabilities-impl" }
 libdd-common = { path = "../libdd-common", default-features = false, features = ["bench-utils"] }
 bolero = "0.13"
 criterion = "0.5.1"
