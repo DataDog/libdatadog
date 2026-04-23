@@ -49,8 +49,7 @@ fn otel_thread_ctx_v1_tlsdesc_reloc() {
     let path = cdylib_path();
     let output = readelf(&["-W", "--relocs"], &path);
     let found = output.lines().any(|l| {
-        l.contains(SYMBOL)
-            && (l.contains("R_X86_64_TLSDESC") || l.contains("R_AARCH64_TLSDESC"))
+        l.contains(SYMBOL) && (l.contains("R_X86_64_TLSDESC") || l.contains("R_AARCH64_TLSDESC"))
     });
     assert!(
         found,
