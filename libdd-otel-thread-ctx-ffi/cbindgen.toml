@@ -21,6 +21,12 @@ include = ["libdd-common-ffi", "libdd-otel-thread-ctx"]
 prefix = "ddog_"
 renaming_overrides_prefixing = true
 
+[export.rename]
+# AtomicU8 doesn't have a proper mapping, and is a Rust implementation detail.
+# We map it to plain uint8_t in the C header, since it has the same
+# representation.
+"AtomicU8" = "uint8_t"
+
 [export.mangle]
 rename_types = "PascalCase"
 
