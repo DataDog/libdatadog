@@ -561,6 +561,7 @@ jobs:
             NAME=$(echo "$bump" | jq -r '.name')
             TAG=$(echo "$bump" | jq -r '.prev_tag')
             NEXT_TAG=$(echo "$bump" | jq -r '.tag')
+            LEVEL=$(echo "$bump" | jq -r '.level')
             CRATE_PATH=$(echo "$bump" | jq -r '.path')
             INITIAL_RELEASE=$(echo "$bump" | jq -r '.initial_release')
 
