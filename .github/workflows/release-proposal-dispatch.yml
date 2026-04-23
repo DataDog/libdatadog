@@ -123,12 +123,12 @@ jobs:
       - uses: Swatinem/rust-cache@f13886b937689c021905a6b90929199931d60db1 # v2.8.1
         with:
           cache-targets: true
-      - uses: dtolnay/rust-toolchain@nightly
+      - uses: dtolnay/rust-toolchain@0f1b44df7e9cbb178d781a242338dfa5e243ad7f # nightly
         with:
           toolchain: nightly-2026-02-08
       - name: Link nightly toolchain for cargo-public-api
         run: ln -sf ~/.rustup/toolchains/nightly-2026-02-08-x86_64-unknown-linux-gnu ~/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@631a55b12751854ce901bb631d5902ceb48146f7 # stable
         with:
           toolchain: 1.92.0
       - uses: taiki-e/cache-cargo-install-action@7447f04c51f2ba27ca35e7f1e28fab848c5b3ba7 # 2.3.1
@@ -645,7 +645,7 @@ jobs:
           commits: "${{ steps.generate-changelogs.outputs.commits }}"
 
       - name: Upload release data
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: release-dispatch-data
           path: |
@@ -690,7 +690,7 @@ jobs:
           ref: ${{ needs.cargo-release.outputs.branch_name }}
 
       - name: Download release data
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: release-dispatch-data
           path: /tmp
