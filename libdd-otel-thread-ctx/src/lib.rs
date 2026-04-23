@@ -400,7 +400,9 @@ pub mod linux {
                 // `ThreadContext::new` already initialises `valid = 1`.
                 let _ = Self::swap(
                     slot,
-                    ThreadContext::new(trace_id, span_id, local_root_span_id, attrs).into_ptr().as_ptr(),
+                    ThreadContext::new(trace_id, span_id, local_root_span_id, attrs)
+                        .into_ptr()
+                        .as_ptr(),
                 );
             }
         }
