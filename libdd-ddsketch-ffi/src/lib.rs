@@ -130,6 +130,15 @@ pub extern "C" fn ddog_Vec_U8_drop(_vec: ffi::Vec<u8>) {
     // The Vec will be automatically dropped when it goes out of scope
 }
 
+/// Dummy function for size-benchmark verification.
+///
+/// # Safety
+/// Always safe to call.
+#[no_mangle]
+pub unsafe extern "C" fn ddog_ddsketch_dummy_size_bench() -> u64 {
+    42
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

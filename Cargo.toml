@@ -53,6 +53,7 @@ members = [
   "libdd-http-client",
   "libdd-log",
   "libdd-log-ffi",
+  "size-benchmark",
 ]
 
 # https://doc.rust-lang.org/cargo/reference/resolver.html
