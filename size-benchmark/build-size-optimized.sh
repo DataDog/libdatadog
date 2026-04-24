@@ -20,7 +20,7 @@ ARCH="$(uname -m | sed 's/arm64/aarch64/')"
 OS="$(uname -s)"
 
 case "$OS" in
-  Linux)  TARGET="${ARCH}-unknown-linux-musl" ;;
+  Linux)  TARGET="${ARCH}-unknown-linux-gnu" ;;
   Darwin) TARGET="${ARCH}-apple-darwin" ;;
   *)      echo "Unsupported OS: $OS" >&2; exit 1 ;;
 esac

@@ -13,13 +13,8 @@ jobs:
         with:
           fetch-depth: 0  # need full history to check out base ref
 
-      - name: Install nightly + rust-src + musl target
-        run: |
-          rustup toolchain install nightly --component rust-src
-          rustup target add x86_64-unknown-linux-musl --toolchain nightly
-
-      - name: Install musl linker
-        run: sudo apt-get install -y musl-tools
+      - name: Install nightly + rust-src
+        run: rustup toolchain install nightly --component rust-src
 
       - uses: Swatinem/rust-cache@f13886b937689c021905a6b90929199931d60db1 # v2.8.1
         with:
