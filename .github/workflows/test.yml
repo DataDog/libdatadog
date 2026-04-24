@@ -111,6 +111,7 @@ jobs:
         run: |
           set -euxo pipefail
           sudo apt-get install -y lld-20
+          ln -s /usr/bin/ld.lld-20 /usr/bin/ld.lld
       - name: Checkout sources
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # 4.2.2
         with:
