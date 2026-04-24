@@ -42,5 +42,6 @@ cargo +nightly build \
   --manifest-path "$WORKSPACE_ROOT/Cargo.toml" \
   "$@"
 
-BINARY="$WORKSPACE_ROOT/target/$TARGET/release-size/size-benchmark"
+TARGET_DIR="${CARGO_TARGET_DIR:-$WORKSPACE_ROOT/target}"
+BINARY="$TARGET_DIR/$TARGET/release-size/size-benchmark"
 wc -c < "$BINARY"

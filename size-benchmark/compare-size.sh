@@ -49,8 +49,10 @@ build_ref() {
     git -C "$REPO_ROOT" worktree add --detach "$worktree" "$ref" 2>&1 | sed 's/^/  /' >&2
 
     # cargo writes to stderr; wc -c is the only stdout line.
+    # Point CARGO_TARGET_DIR at the main worktree so both builds share the cache.
     # Redirect build stderr → our stderr so CI logs show progress.
-    bash "$worktree/size-benchmark/build-size-optimized.sh" 2>&3
+    CARGO_TARGET_DIR="$REPO_ROOT/target" \
+        bash "$worktree/size-benchmark/build-size-optimized.sh" 2>&3
     # (stdout = byte count, captured by the caller via $())
 
     git -C "$REPO_ROOT" worktree remove --force "$worktree" 2>/dev/null || true
