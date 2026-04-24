@@ -7,7 +7,6 @@ use libdd_common::timeout::TimeoutManager;
 
 use super::emitters::{emit_crashreport, CrashKindData};
 use crate::shared::configuration::CrashtrackerConfiguration;
-use libc::{siginfo_t, ucontext_t};
 use libdd_common::unix_utils::{alt_fork, terminate};
 use nix::sys::signal::{self, SaFlags, SigAction, SigHandler, SigSet};
 use std::os::unix::io::RawFd;
@@ -30,9 +29,7 @@ impl Collector {
         config: &CrashtrackerConfiguration,
         config_str: &str,
         metadata_str: &str,
-        message_ptr: *mut String,
-        sig_info: *const siginfo_t,
-        ucontext: *const ucontext_t,
+        crash_kind: CrashKindData,
     ) -> Result<Self, CollectorSpawnError> {
         // When we spawn the child, our pid becomes the ppid.
         // SAFETY: This function has no safety requirements.
@@ -49,9 +46,7 @@ impl Collector {
                     config,
                     config_str,
                     metadata_str,
-                    message_ptr,
-                    sig_info,
-                    ucontext,
+                    crash_kind,
                     receiver.handle.uds_fd,
                     pid,
                     tid,
@@ -89,9 +84,7 @@ pub(crate) fn run_collector_child(
     config: &CrashtrackerConfiguration,
     config_str: &str,
     metadata_str: &str,
-    message_ptr: *mut String,
-    sig_info: *const siginfo_t,
-    ucontext: *const ucontext_t,
+    crash_kind: CrashKindData,
     uds_fd: RawFd,
     ppid: libc::pid_t,
     crashing_tid: libc::pid_t,
@@ -117,8 +110,7 @@ pub(crate) fn run_collector_child(
         config,
         config_str,
         metadata_str,
-        message_ptr,
-        CrashKindData::UnixSignal { sig_info, ucontext },
+        crash_kind,
         ppid,
         crashing_tid,
     );

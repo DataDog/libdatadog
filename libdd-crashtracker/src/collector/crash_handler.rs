@@ -7,9 +7,10 @@ use super::collector_manager::Collector;
 use super::receiver_manager::Receiver;
 use super::saguard::{SaGuard, SuppressionMode};
 use super::signal_handler_manager::chain_signal_handler;
+use crate::collector::emitters::CrashKindData;
 use crate::crash_info::Metadata;
 use crate::shared::configuration::CrashtrackerConfiguration;
-use crate::StackTrace;
+use crate::{StackFrame, StackTrace};
 use errno::{errno, set_errno};
 use libc::{c_void, siginfo_t, ucontext_t};
 use libdd_common::timeout::TimeoutManager;
@@ -44,6 +45,7 @@ use std::sync::atomic::{AtomicBool, AtomicPtr, AtomicU64};
 static METADATA: AtomicPtr<(Metadata, String)> = AtomicPtr::new(ptr::null_mut());
 static CONFIG: AtomicPtr<(CrashtrackerConfiguration, String)> = AtomicPtr::new(ptr::null_mut());
 static PANIC_MESSAGE: AtomicPtr<String> = AtomicPtr::new(ptr::null_mut());
+static PANIC_CALLSTACK: AtomicPtr<StackTrace> = AtomicPtr::new(ptr::null_mut());
 
 type PanicHook = Box<dyn Fn(&PanicHookInfo<'_>) + Send + Sync>;
 static PREVIOUS_PANIC_HOOK: AtomicPtr<PanicHook> = AtomicPtr::new(ptr::null_mut());
@@ -102,6 +104,52 @@ fn format_message(
     }
 }
 
+unsafe fn capture_panic_callstack() -> anyhow::Result<()> {
+    let mut stacktrace = StackTrace::new_incomplete();
+    backtrace::trace_unsynchronized(|bt_frame| {
+        let mut frame = StackFrame::new();
+        frame.with_ip(bt_frame.ip() as usize);
+        frame.with_symbol_address(bt_frame.symbol_address() as usize);
+        if let Some(module_base_address) = bt_frame.module_base_address() {
+            frame.with_module_base_address(module_base_address as usize);
+        }
+        frame.with_sp(bt_frame.sp() as usize);
+        let _ = stacktrace.push_frame(frame, true);
+        true
+    });
+
+    stacktrace.set_complete()?;
+
+    let stacktrace_ptr = PANIC_CALLSTACK.swap(Box::into_raw(Box::new(stacktrace)), SeqCst);
+    // stacktrace_ptr should be null, but just in case.
+    if !stacktrace_ptr.is_null() {
+        unsafe {
+            std::mem::drop(Box::from_raw(stacktrace_ptr));
+        }
+    }
+    Ok(())
+}
+
+fn capture_panic_message(panic_info: &PanicHookInfo<'_>) {
+    // Extract panic message from payload (supports &str and String)
+    let message = if let Some(&s) = panic_info.payload().downcast_ref::<&str>() {
+        format_message("message", s, panic_info.location())
+    } else if let Some(s) = panic_info.payload().downcast_ref::<String>() {
+        format_message("message", s.as_str(), panic_info.location())
+    } else {
+        // For non-string types, use a generic message
+        format_message("unknown type", "", panic_info.location())
+    };
+
+    let message_ptr = PANIC_MESSAGE.swap(Box::into_raw(Box::new(message)), SeqCst);
+    // message_ptr should be null, but just in case.
+    if !message_ptr.is_null() {
+        unsafe {
+            std::mem::drop(Box::from_raw(message_ptr));
+        }
+    }
+}
+
 /// Register the panic hook.
 ///
 /// This function is used to register the panic hook and store the previous hook.
@@ -122,24 +170,8 @@ pub fn register_panic_hook() -> anyhow::Result<()> {
     let old_hook_ptr = Box::into_raw(Box::new(old_hook));
     PREVIOUS_PANIC_HOOK.swap(old_hook_ptr, SeqCst);
     panic::set_hook(Box::new(|panic_info| {
-        // Extract panic message from payload (supports &str and String)
-        let message = if let Some(&s) = panic_info.payload().downcast_ref::<&str>() {
-            format_message("message", s, panic_info.location())
-        } else if let Some(s) = panic_info.payload().downcast_ref::<String>() {
-            format_message("message", s.as_str(), panic_info.location())
-        } else {
-            // For non-string types, use a generic message
-            format_message("unknown type", "", panic_info.location())
-        };
-
-        // Store the message, cleaning up any old message
-        let message_ptr = PANIC_MESSAGE.swap(Box::into_raw(Box::new(message)), SeqCst);
-        // message_ptr should be null, but just in case.
-        if !message_ptr.is_null() {
-            unsafe {
-                std::mem::drop(Box::from_raw(message_ptr));
-            }
-        }
+        let _ = unsafe { capture_panic_callstack() };
+        capture_panic_message(panic_info);
 
         call_previous_panic_hook(panic_info);
     }));
@@ -298,20 +330,22 @@ fn handle_posix_signal_impl(
     // The collector child process will handle converting this to a String after forking.
     // Leak of the message pointer is ok here.
     let message_ptr = PANIC_MESSAGE.swap(ptr::null_mut(), SeqCst);
+    let callstack_ptr = PANIC_CALLSTACK.swap(ptr::null_mut(), SeqCst);
+
+    let crash_kind = if !message_ptr.is_null() {
+        CrashKindData::Panic {
+            stacktrace: callstack_ptr,
+            message: message_ptr,
+        }
+    } else {
+        CrashKindData::UnixSignal { sig_info, ucontext }
+    };
 
     let timeout_manager = TimeoutManager::new(config.timeout());
 
     let receiver = Receiver::from_crashtracker_config(config)?;
 
-    let collector = Collector::spawn(
-        &receiver,
-        config,
-        config_str,
-        metadata_string,
-        message_ptr,
-        sig_info,
-        ucontext,
-    )?;
+    let collector = Collector::spawn(&receiver, config, config_str, metadata_string, crash_kind)?;
 
     // We're done. Wrap up our interaction with the receiver.
     collector.finish(&timeout_manager);
@@ -453,8 +487,10 @@ pub fn report_unhandled_exception(
             &config,
             &config_str,
             &metadata_str,
-            message_ptr,
-            super::emitters::CrashKindData::UnhandledException { stacktrace },
+            super::emitters::CrashKindData::UnhandledException {
+                stacktrace,
+                message: message_ptr,
+            },
             pid,
             tid,
         );
