@@ -3,7 +3,9 @@
 
 //! Error types for [`crate::AgentClient`].
 
+use std::io::{Error, ErrorKind};
 use bytes::Bytes;
+use libdd_http_client::HttpClientError;
 use thiserror::Error;
 
 /// Errors that can occur when building an [`crate::AgentClient`].
@@ -43,4 +45,25 @@ pub enum SendError {
     /// Payload serialisation or compression failure.
     #[error("encoding error: {0}")]
     Encoding(String),
+}
+
+impl From<HttpClientError> for SendError {
+    fn from(err: HttpClientError) -> Self {
+        match err {
+            HttpClientError::ConnectionFailed(s) => {
+                SendError::Transport(Error::new(ErrorKind::ConnectionRefused, s))
+            }
+            HttpClientError::TimedOut => {
+                SendError::Transport(Error::new(ErrorKind::TimedOut, "request timed out"))
+            }
+            HttpClientError::IoError(s) => SendError::Transport(Error::other(s)),
+            HttpClientError::InvalidConfig(s) => {
+                SendError::Transport(Error::new(ErrorKind::InvalidInput, s))
+            }
+            HttpClientError::RequestFailed { status, body } => SendError::HttpError {
+                status,
+                body: Bytes::from(body),
+            },
+        }
+    }
 }

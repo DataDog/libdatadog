@@ -7,9 +7,9 @@ use std::collections::HashMap;
 
 use bytes::Bytes;
 use flate2::{write::GzEncoder, Compression};
-use libdd_http_client::{HttpClient, HttpClientError, HttpMethod, HttpRequest};
+use libdd_http_client::{HttpClient, HttpMethod, HttpRequest};
 use serde_json::{from_slice, Value};
-use std::io::{Error, ErrorKind, Write as _};
+use std::io::Write as _;
 
 use crate::{
     agent_info::AgentInfo,
@@ -86,7 +86,7 @@ impl AgentClient {
             request = request.with_header("Datadog-Client-Computed-Top-Level", "yes");
         }
 
-        let response = self.http.send(request).await.map_err(map_http_error)?;
+        let response = self.http.send(request).await?;
 
         if response.status_code() >= 400 {
             return Err(SendError::HttpError {
@@ -109,7 +109,7 @@ impl AgentClient {
             .with_headers(self.static_headers.iter().cloned())
             .with_header("Content-Type", "application/msgpack");
 
-        let response = self.http.send(request).await.map_err(map_http_error)?;
+        let response = self.http.send(request).await?;
         check_status(response)
     }
 
@@ -127,7 +127,7 @@ impl AgentClient {
         .with_header("Content-Type", "application/msgpack")
         .with_header("Content-Encoding", "gzip");
 
-        let response = self.http.send(request).await.map_err(map_http_error)?;
+        let response = self.http.send(request).await?;
         check_status(response)
     }
 
@@ -148,7 +148,7 @@ impl AgentClient {
             if req.debug { "true" } else { "false" },
         );
 
-        let response = self.http.send(request).await.map_err(map_http_error)?;
+        let response = self.http.send(request).await?;
         check_status(response)
     }
 
@@ -170,7 +170,7 @@ impl AgentClient {
             .with_header("Content-Type", content_type)
             .with_header("X-Datadog-EVP-Subdomain", subdomain);
 
-        let response = self.http.send(request).await.map_err(map_http_error)?;
+        let response = self.http.send(request).await?;
         check_status(response)
     }
 
@@ -189,7 +189,7 @@ impl AgentClient {
         let request = HttpRequest::new(HttpMethod::Get, format!("{}/info", self.base_url))
             .with_headers(self.static_headers.iter().cloned());
 
-        let response = self.http.send(request).await.map_err(map_http_error)?;
+        let response = self.http.send(request).await?;
 
         if response.status_code() == 404 {
             return Ok(None);
@@ -262,26 +262,6 @@ fn gzip_compress(payload: Bytes) -> Result<Bytes, SendError> {
         .finish()
         .map_err(|e| SendError::Encoding(e.to_string()))?;
     Ok(Bytes::from(compressed))
-}
-
-/// Map a [`HttpClientError`] to a [`SendError`].
-fn map_http_error(e: HttpClientError) -> SendError {
-    match e {
-        HttpClientError::ConnectionFailed(s) => {
-            SendError::Transport(Error::new(ErrorKind::ConnectionRefused, s))
-        }
-        HttpClientError::TimedOut => {
-            SendError::Transport(Error::new(ErrorKind::TimedOut, "request timed out"))
-        }
-        HttpClientError::IoError(s) => SendError::Transport(Error::other(s)),
-        HttpClientError::InvalidConfig(s) => {
-            SendError::Transport(Error::new(ErrorKind::InvalidInput, s))
-        }
-        HttpClientError::RequestFailed { status, body } => SendError::HttpError {
-            status,
-            body: Bytes::from(body),
-        },
-    }
 }
 
 #[cfg(test)]
