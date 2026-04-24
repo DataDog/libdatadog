@@ -10,6 +10,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+BUILD_SCRIPT="$SCRIPT_DIR/build-size-optimized.sh"
 
 BASE_REF=""
 HEAD_REF=""
@@ -49,10 +50,13 @@ build_ref() {
     git -C "$REPO_ROOT" worktree add --detach "$worktree" "$ref" 2>&1 | sed 's/^/  /' >&2
 
     # cargo writes to stderr; wc -c is the only stdout line.
+    # Always use the script from the current checkout (base may not have it).
+    # Override WORKSPACE_ROOT so the script builds the worktree, not itself.
     # Point CARGO_TARGET_DIR at the main worktree so both builds share the cache.
     # Redirect build stderr → our stderr so CI logs show progress.
     CARGO_TARGET_DIR="$REPO_ROOT/target" \
-        bash "$worktree/size-benchmark/build-size-optimized.sh" 2>&3
+    WORKSPACE_ROOT="$worktree" \
+        bash "$BUILD_SCRIPT" 2>&3
     # (stdout = byte count, captured by the caller via $())
 
     git -C "$REPO_ROOT" worktree remove --force "$worktree" 2>/dev/null || true
