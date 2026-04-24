@@ -646,8 +646,13 @@ fn test_crash_tracking_app(crash_type: &str) {
         let sig_info = &payload["sig_info"];
         let error = &payload["error"];
 
+        let kind = error["kind"]
+            .as_str()
+            .expect("error.kind should be a string");
+
         match crash_type_owned.as_str() {
             "panic" => {
+                assert_eq!(kind, "Panic", "Expected error kind 'Panic', got '{kind}'");
                 let message = error["message"].as_str().unwrap();
                 assert!(
                     message.contains("Process panicked with message") && message.contains("program panicked"),
@@ -656,6 +661,7 @@ fn test_crash_tracking_app(crash_type: &str) {
                 );
             }
             "segfault" => {
+                assert_eq!(kind, "UnixSignal", "Expected error kind 'UnixSignal', got '{kind}'");
                 assert_error_message(&error["message"], sig_info);
             }
             _ => unreachable!("Invalid crash type: {}", crash_type_owned),

@@ -608,6 +608,77 @@ mod tests {
         }
     }
 
+    fn make_test_stacktrace() -> StackTrace {
+        let mut st = StackTrace::new_incomplete();
+        let mut frame = StackFrame::new();
+        frame.with_ip(0xdead);
+        frame.with_sp(0xbeef);
+        let _ = st.push_frame(frame, true);
+        st.set_complete().unwrap();
+        st
+    }
+
+    fn clear_panic_callstack() {
+        let ptr = PANIC_CALLSTACK.swap(ptr::null_mut(), SeqCst);
+        if !ptr.is_null() {
+            unsafe { drop(Box::from_raw(ptr)) };
+        }
+    }
+
+    #[test]
+    fn test_panic_callstack_storage_and_retrieval() {
+        clear_panic_callstack();
+        let test_stacktrace = make_test_stacktrace();
+        let stacktrace_ptr = Box::into_raw(Box::new(test_stacktrace.clone()));
+
+        let old_ptr = PANIC_CALLSTACK.swap(stacktrace_ptr, SeqCst);
+        assert!(old_ptr.is_null());
+
+        let retrieved_ptr = PANIC_CALLSTACK.swap(ptr::null_mut(), SeqCst);
+        assert!(!retrieved_ptr.is_null());
+
+        unsafe {
+            let retrieved_stacktrace = *Box::from_raw(retrieved_ptr);
+            assert_eq!(retrieved_stacktrace, test_stacktrace);
+        }
+    }
+
+    #[test]
+    fn test_panic_callstack_null_handling() {
+        clear_panic_callstack();
+
+        let callstack_ptr = PANIC_CALLSTACK.load(SeqCst);
+        assert!(callstack_ptr.is_null());
+
+        let old_ptr = PANIC_CALLSTACK.swap(ptr::null_mut(), SeqCst);
+        assert!(old_ptr.is_null());
+    }
+
+    #[test]
+    fn test_panic_callstack_replacement() {
+        clear_panic_callstack();
+        let stacktrace1 = make_test_stacktrace();
+        let mut stacktrace2 = make_test_stacktrace();
+        let mut extra_frame = StackFrame::new();
+        extra_frame.with_ip(0xcafe);
+        stacktrace2.frames.push(extra_frame);
+
+        let ptr1 = Box::into_raw(Box::new(stacktrace1));
+        let ptr2 = Box::into_raw(Box::new(stacktrace2.clone()));
+
+        PANIC_CALLSTACK.store(ptr1, SeqCst);
+        let old_ptr = PANIC_CALLSTACK.swap(ptr2, SeqCst);
+
+        assert_eq!(old_ptr, ptr1);
+
+        unsafe {
+            drop(Box::from_raw(old_ptr));
+            let final_ptr = PANIC_CALLSTACK.swap(ptr::null_mut(), SeqCst);
+            let final_stacktrace = *Box::from_raw(final_ptr);
+            assert_eq!(final_stacktrace, stacktrace2);
+        }
+    }
+
     #[test]
     fn test_metadata_update_atomic() {
         // Test that metadata updates are atomic
