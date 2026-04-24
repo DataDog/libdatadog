@@ -9,6 +9,20 @@
 #[cfg(target_os = "linux")]
 pub use linux::*;
 
+/// Verify that this binary was linked with the correct options such that the thread contexts are
+/// visible to an external reader (typically the eBPF profiler).
+///
+/// Returns `VoidResult::Ok` if all checks pass, or a `VoidResult::Err` with a
+/// diagnostic message on failure.
+#[cfg(all(target_os = "linux", feature = "autocheck"))]
+#[no_mangle]
+pub extern "C" fn ddog_otel_thread_ctx_autocheck() -> libdd_common_ffi::VoidResult {
+    match libdd_otel_thread_ctx::autocheck::check_tlsdesc_slot_present() {
+        Ok(()) => libdd_common_ffi::VoidResult::Ok,
+        Err(e) => libdd_common_ffi::VoidResult::Err(libdd_common_ffi::Error::from(e)),
+    }
+}
+
 #[cfg(target_os = "linux")]
 mod linux {
     use libdd_otel_thread_ctx::linux::{ThreadContext, ThreadContextRecord};

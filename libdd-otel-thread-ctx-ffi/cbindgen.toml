@@ -26,6 +26,8 @@ renaming_overrides_prefixing = true
 # We map it to plain uint8_t in the C header, since it has the same
 # representation.
 "AtomicU8" = "uint8_t"
+"VoidResult" = "ddog_VoidResult"
+"Error" = "ddog_Error"
 
 [export.mangle]
 rename_types = "PascalCase"
