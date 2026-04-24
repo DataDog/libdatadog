@@ -24,11 +24,13 @@ jobs:
       - uses: Swatinem/rust-cache@f13886b937689c021905a6b90929199931d60db1 # v2.8.1
         with:
           cache-targets: true
+          prefix-key: v0-rust-binary-size
 
       - name: Compare binary size
         run: |
+          BASE=$(git merge-base origin/main HEAD)
           bash size-benchmark/compare-size.sh \
-            --base ${{ github.event.pull_request.base.sha }} \
+            --base "$BASE" \
             --head ${{ github.sha }} \
             --output size-report.md
 

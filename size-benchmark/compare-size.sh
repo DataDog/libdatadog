@@ -38,26 +38,26 @@ format_bytes() {
     fi
 }
 
-# Build a ref in a temporary worktree, print byte count to stdout.
+# Build a ref in a worktree placed inside the repo root so that Cargo's
+# path-based fingerprints are stable across runs (no /tmp/tmp.xxx/ variance).
 build_ref() {
     local ref="$1"
     local label="$2"
-    local worktree
-    worktree="$(mktemp -d)"
+    local short
+    short="$(git -C "$REPO_ROOT" rev-parse --short "$ref")"
+    local worktree="$REPO_ROOT/.worktree-size-$label"
 
-    echo "Building $label ($(git -C "$REPO_ROOT" rev-parse --short "$ref"))…" >&2
+    echo "Building $label ($short)…" >&2
 
     git -C "$REPO_ROOT" worktree add --detach "$worktree" "$ref" 2>&1 | sed 's/^/  /' >&2
 
     # cargo writes to stderr; wc -c is the only stdout line.
     # Always use the script from the current checkout (base may not have it).
-    # Override WORKSPACE_ROOT so the script builds the worktree, not itself.
-    # Point CARGO_TARGET_DIR at the main worktree so both builds share the cache.
-    # Redirect build stderr → our stderr so CI logs show progress.
+    # Override WORKSPACE_ROOT so the script builds the worktree's sources.
+    # CARGO_TARGET_DIR is fixed so both refs share the same build cache.
     CARGO_TARGET_DIR="$REPO_ROOT/target" \
     WORKSPACE_ROOT="$worktree" \
         bash "$BUILD_SCRIPT" 2>&3
-    # (stdout = byte count, captured by the caller via $())
 
     git -C "$REPO_ROOT" worktree remove --force "$worktree" 2>/dev/null || true
     rm -rf "$worktree"

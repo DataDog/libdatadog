@@ -32,3 +32,4 @@ examples/cxx/exporter_manager.exe
 examples/cxx/profiling
 examples/cxx/profiling.exe
 profile.pprof
+.worktree-size-*
