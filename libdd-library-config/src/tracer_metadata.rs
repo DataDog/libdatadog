@@ -248,6 +248,25 @@ mod tests {
     }
 
     #[test]
+    fn tracer_metadata_equality() {
+        let a = TracerMetadata {
+            tracer_language: "python".into(),
+            ..Default::default()
+        };
+        let b = TracerMetadata {
+            tracer_language: "python".into(),
+            ..Default::default()
+        };
+        let c = TracerMetadata {
+            tracer_language: "ruby".into(),
+            ..Default::default()
+        };
+
+        assert_eq!(a, b);
+        assert_ne!(a, c);
+    }
+
+    #[test]
     fn threadlocal_attrs_absent_when_keys_empty() {
         let ctx = TracerMetadata::default().to_otel_process_ctx();
 
