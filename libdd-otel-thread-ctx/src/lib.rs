@@ -64,6 +64,9 @@
 //! `atomic_signal_fence`) to keep field writes boxed between the `valid = 0` and `valid = 1`
 //! stores during in-place updates.
 
+#[cfg(all(target_os = "linux", feature = "autocheck"))]
+pub mod autocheck;
+
 #[cfg(target_os = "linux")]
 pub mod linux {
     use std::{
