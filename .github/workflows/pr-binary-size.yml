@@ -1,0 +1,37 @@
+name: Binary Size
+
+on:
+  pull_request:
+
+jobs:
+  binary-size:
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0  # need full history to check out base ref
+
+      - name: Install nightly + rust-src + musl target
+        run: |
+          rustup toolchain install nightly --component rust-src
+          rustup target add x86_64-unknown-linux-musl --toolchain nightly
+
+      - name: Install musl linker
+        run: sudo apt-get install -y musl-tools
+
+      - uses: Swatinem/rust-cache@23869a5bd66c73db3c0ac40331f3206eb23791dc # v2.9.1
+        with:
+          cache-targets: true
+
+      - name: Compare binary size
+        run: |
+          bash size-benchmark/compare-size.sh \
+            --base ${{ github.event.pull_request.base.sha }} \
+            --head ${{ github.sha }} \
+            --output size-report.md
+
+      - uses: marocchino/sticky-pull-request-comment@0ea0beb66eb9baf113663a64ec522f60e49231c0 # v3.0.4
+        with:
+          path: size-report.md
