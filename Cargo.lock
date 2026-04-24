@@ -5296,7 +5296,6 @@ dependencies = [
  "libdd-profiling-ffi",
  "libdd-shared-runtime-ffi",
  "libdd-telemetry-ffi",
- "quote",
  "symbolizer-ffi",
  "syn 2.0.87",
 ]
