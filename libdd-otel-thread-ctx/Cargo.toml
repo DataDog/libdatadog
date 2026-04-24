@@ -16,6 +16,12 @@ publish = false
 crate-type = ["lib"]
 bench = false
 
+[dependencies]
+elf = { version = "0.7", optional = true }
+
+[features]
+autocheck = ["dep:elf"]
+
 [build-dependencies]
 build_common = { path = "../build-common" }
 cc = "1.1.31"
