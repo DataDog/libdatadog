@@ -37,10 +37,10 @@ cargo +nightly build \
   -Z build-std=std,panic_abort \
   -Z build-std-features= \
   --target "$TARGET" \
-  --release \
+  --profile release-size \
   -p size-benchmark \
   --manifest-path "$WORKSPACE_ROOT/Cargo.toml" \
   "$@"
 
-BINARY="$WORKSPACE_ROOT/target/$TARGET/release/size-benchmark"
+BINARY="$WORKSPACE_ROOT/target/$TARGET/release-size/size-benchmark"
 wc -c < "$BINARY"

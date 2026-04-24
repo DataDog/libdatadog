@@ -102,6 +102,14 @@ debug = false
 incremental = false
 opt-level = 3
 
+# Profile used exclusively by the size-benchmark crate.
+# Inherits release then tightens every size knob that cannot be set per-package.
+[profile.release-size]
+inherits = "release"
+opt-level = "z"   # "z" vs "s": skip loop vectorization too
+strip = true
+panic = "abort"
+
 # https://camshaft.github.io/bolero/library-installation.html
 [profile.fuzz]
 inherits = "dev"
