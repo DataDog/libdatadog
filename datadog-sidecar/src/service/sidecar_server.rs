@@ -922,7 +922,6 @@ impl SidecarInterface for ConnectionSidecarHandler {
         app.update_remote_config(
             &self.server.remote_configs,
             &session,
-            instance_id,
             notify_target,
             dynamic_instrumentation_state,
         );
@@ -946,7 +945,6 @@ impl SidecarInterface for ConnectionSidecarHandler {
         app.update_remote_config(
             &self.server.remote_configs,
             &session,
-            instance_id,
             notify_target,
             dynamic_instrumentation_state,
         );
