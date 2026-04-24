@@ -653,91 +653,44 @@ fn collect_and_add_thread_contexts(
     parent_pid: u32,
     crashing_tid: Option<u32>,
 ) -> anyhow::Result<()> {
-    use crate::crash_info::{StackTrace, ThreadData};
+    use crate::crash_info::ThreadData;
     use crate::receiver::ptrace_collector::stream_thread_contexts;
     use std::time::Duration;
 
     let crashing_tid = crashing_tid.unwrap_or(0) as i32;
     let parent_pid = parent_pid as i32;
 
-    // Calculate timeout for ptrace operations (similar to the previous signal-based timeout)
+    // Timeout for ptrace collection: half the overall crash timeout, capped at 200ms
     let context_timeout = Duration::from_millis((config.timeout().as_millis() / 2).min(200) as u64);
 
     let mut collected_threads = Vec::new();
 
-    // Use streaming callback approach to collect thread data
     let _ = stream_thread_contexts(
         parent_pid,
         crashing_tid,
         config.max_threads(),
         context_timeout,
+        config.resolve_frames(),
         |tid, captured_context| {
-            // Read thread metadata from /proc
             let name = read_thread_name(parent_pid, tid).unwrap_or_else(|| tid.to_string());
             let state = read_thread_state(parent_pid, tid);
 
-            if let Some(ctx) = captured_context {
-                // TODO: Implement remote libunwind unwinding here
-                // Need to use unw_init_remote() with _UPT_accessors for proper stack walking
-                // For now, create a basic stack trace with just the current instruction pointer
+            let stack = match captured_context {
+                Some(ctx) => ctx.stack_trace.clone(),
+                None => crate::crash_info::StackTrace::empty(),
+            };
 
-                // Extract instruction pointer from captured registers
-                #[cfg(target_arch = "x86_64")]
-                let ip = ctx.ucontext.uc_mcontext.gregs[libc::REG_RIP as usize] as u64;
-                #[cfg(not(target_arch = "x86_64"))]
-                let ip = 0u64;
-
-                let frames = vec![StackFrame {
-                    ip: Some(format!("0x{:x}", ip)),
-                    sp: Some(format!(
-                        "0x{:x}",
-                        ctx.ucontext.uc_mcontext.gregs[libc::REG_RSP as usize]
-                    )),
-                    module_base_address: None,
-                    symbol_address: None,
-                    build_id: None,
-                    build_id_type: None,
-                    file_type: None,
-                    path: None,
-                    relative_address: None,
-                    column: None,
-                    file: None,
-                    function: Some("ptrace_captured".to_string()),
-                    line: None,
-                    type_name: None,
-                    mangled_name: None,
-                    comments: vec![
-                        "TODO: Implement remote libunwind for full stack trace".to_string()
-                    ],
-                }];
-
-                let stack_trace = StackTrace::from_frames(frames, true); // Mark as incomplete
-
-                let thread_data = ThreadData {
-                    crashed: false,
-                    name,
-                    stack: stack_trace,
-                    state,
-                };
-
-                collected_threads.push(thread_data);
-            } else {
-                // No context captured, create empty stack trace
-                let stack_trace = StackTrace::empty();
-                let thread_data = ThreadData {
-                    crashed: false,
-                    name,
-                    stack: stack_trace,
-                    state,
-                };
-                collected_threads.push(thread_data);
-            }
+            collected_threads.push(ThreadData {
+                crashed: false,
+                name,
+                stack,
+                state,
+            });
 
             true // Continue with next thread
         },
     );
 
-    // Add collected threads to the crash info builder
     if !collected_threads.is_empty() {
         builder.with_threads(collected_threads)?;
     }

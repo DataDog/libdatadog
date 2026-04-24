@@ -20,9 +20,6 @@ use std::{
 };
 use thiserror::Error;
 
-#[cfg(target_os = "linux")]
-use std::io::BufRead;
-
 #[derive(Debug, Error)]
 pub enum EmitterError {
     #[error("Failed to write to output: {0}")]
@@ -419,63 +416,6 @@ unsafe fn emit_whole_stacktrace(
     let _ = serde_json::to_writer(&mut *w, &stacktrace);
     writeln!(w)?;
     writeln!(w, "{DD_CRASHTRACK_END_WHOLE_STACKTRACE}")?;
-    w.flush()?;
-    Ok(())
-}
-
-/// Emit one thread block over the wire protocol.
-///
-/// Format:
-/// ```text
-/// DD_CRASHTRACK_BEGIN_THREAD
-/// {"tid": <tid>, "crashed": <bool>, "name": "<name>", "state": "<state>"}
-/// DD_CRASHTRACK_BEGIN_STACKTRACE
-/// ...frame JSON lines (if a ucontext was captured for this thread)...
-/// DD_CRASHTRACK_END_STACKTRACE
-/// DD_CRASHTRACK_END_THREAD
-/// ```
-#[cfg(target_os = "linux")]
-fn emit_thread_block(
-    w: &mut impl Write,
-    tid: libc::pid_t,
-    crashed: bool,
-    name: &str,
-    state: Option<&str>,
-    resolve_frames: StacktraceCollection,
-    ucontext: Option<*const ucontext_t>,
-) -> Result<(), EmitterError> {
-    writeln!(w, "{DD_CRASHTRACK_BEGIN_THREAD}")?;
-
-    // Header JSON line
-    write!(w, "{{\"tid\": {tid}, \"crashed\": {crashed}")?;
-    let safe_name = name
-        .replace('\\', "\\\\")
-        .replace('"', "\\\"")
-        .replace('\n', "\\n");
-    write!(w, ", \"name\": \"{safe_name}\"")?;
-    if let Some(s) = state {
-        let safe_state = s
-            .replace('\\', "\\\\")
-            .replace('"', "\\\"")
-            .replace('\n', "\\n");
-        write!(w, ", \"state\": \"{safe_state}\"")?;
-    }
-    writeln!(w, "}}")?;
-    w.flush()?;
-
-    // Stack trace (only if we have a ucontext for this thread)
-    writeln!(w, "{DD_CRASHTRACK_BEGIN_STACKTRACE}")?;
-    if let Some(uc) = ucontext {
-        if resolve_frames != StacktraceCollection::Disabled {
-            // SAFETY: uc was written by handle_collect_context_signal and is valid for
-            // the duration of the collector child (COW mapping from the parent).
-            let _ = unsafe { emit_backtrace_via_libunwind(w, resolve_frames, uc) };
-        }
-    }
-    writeln!(w, "{DD_CRASHTRACK_END_STACKTRACE}")?;
-    w.flush()?;
-
-    writeln!(w, "{DD_CRASHTRACK_END_THREAD}")?;
     w.flush()?;
     Ok(())
 }
