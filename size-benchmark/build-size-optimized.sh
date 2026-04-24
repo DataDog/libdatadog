@@ -2,20 +2,30 @@
 # Build the size-benchmark binary with the same aggressive size optimizations
 # that our most critical users apply, so the measured size is representative.
 #
-# Requires:
-#   - rustup with nightly toolchain
-#   - aarch64-unknown-linux-musl target installed
-#   - aarch64-linux-musl-gcc (or equivalent cross linker) on PATH
+# On Linux  → builds for {host-arch}-unknown-linux-musl (static, musl libc)
+# On macOS  → builds for the native Darwin target (no musl available on macOS)
+#
+# Requires: rustup with nightly toolchain + the resolved target installed.
+# On Linux the musl target also needs a musl C toolchain (e.g. musl-tools package).
 #
 # Usage: ./size-benchmark/build-size-optimized.sh [extra cargo args]
-# Output: prints the binary size in bytes on stdout (last line)
+# Output: binary size in bytes on stdout (last line)
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WORKSPACE_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
-TARGET=aarch64-unknown-linux-musl
+ARCH="$(uname -m | sed 's/arm64/aarch64/')"
+OS="$(uname -s)"
+
+case "$OS" in
+  Linux)  TARGET="${ARCH}-unknown-linux-musl" ;;
+  Darwin) TARGET="${ARCH}-apple-darwin" ;;
+  *)      echo "Unsupported OS: $OS" >&2; exit 1 ;;
+esac
+
+rustup target add "$TARGET" --toolchain nightly 2>/dev/null || true
 
 RUSTFLAGS="\
   -Zunstable-options \
