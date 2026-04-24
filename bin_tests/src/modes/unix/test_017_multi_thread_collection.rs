@@ -25,25 +25,25 @@ pub struct Test;
 
 #[inline(never)]
 fn wait_for_work_0() {
-    let _ = std::hint::black_box(1u64); // prevent the compiler from optimizing out the sleep
+    let _ = std::hint::black_box(10u64);
     thread::sleep(Duration::from_secs(300));
 }
 
 #[inline(never)]
 fn worker_entry_0() {
-    let _ = std::hint::black_box(1u64);
+    let _ = std::hint::black_box(20u64);
     wait_for_work_0();
 }
 
 #[inline(never)]
 fn wait_for_work_1() {
-    let _ = std::hint::black_box(1u64); // prevent the compiler from optimizing out the sleep
+    let _ = std::hint::black_box(11u64);
     thread::sleep(Duration::from_secs(300));
 }
 
 #[inline(never)]
 fn worker_entry_1() {
-    let _ = std::hint::black_box(1u64);
+    let _ = std::hint::black_box(21u64);
     wait_for_work_1();
 }
 

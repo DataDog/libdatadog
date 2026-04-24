@@ -191,14 +191,21 @@ fn test_crash_tracking_bin_runtime_callback_frame() {
 /// Tests that when `collect_all_threads` is enabled, the crash report contains
 /// entries in `error.threads` for background threads beyond the crashing thread.
 ///
-/// The behavior enables `collect_all_threads`, spawns two named
-/// sleeping worker threads in `post()`, and then crashes the main thread.
+/// The behavior (test_017_multi_thread_collection.rs) enables `collect_all_threads`,
+/// spawns two named sleeping worker threads in `post()`, and then crashes the main thread.
+///
+/// Thread collection now happens in the receiver process using libunwind remote unwinding
+/// via ptrace (_UPT_create / unw_init_remote / unw_step_remote). The parent process stays
+/// alive until the receiver completes, guaranteeing threads are valid ptrace targets.
+///
 /// We verify:
-///   - `error.threads` is non-empty
-///   - Each thread entry is well-formed: `crashed`, `name`, `stack` present.
+///   - `error.threads` is non-empty.
+///   - Each thread entry is well-formed: `crashed=false`, `name`, and `stack` present.
 ///   - None of the additional threads are marked as crashed (the crashing thread is in
 ///     `error.stack`, not `error.threads`).
-///   - The worker thread names are recognizable (ct_worker_0, ct_worker_1).
+///   - Both worker threads are present by name (ct_worker_0, ct_worker_1).
+///   - Each worker has a multi-frame stack trace including their entry function, confirming that
+///     libunwind remote unwinding produced a full call chain rather than a single syscall frame.
 #[test]
 #[cfg(target_os = "linux")]
 #[cfg_attr(miri, ignore)]
@@ -213,11 +220,11 @@ fn test_crash_tracking_multi_thread_collection() {
 
     let validator: ValidatorFn = Box::new(|payload, _fixtures| {
         let error = &payload["error"];
-        assert!(
-            false,
-            "{}",
-            serde_json::to_string_pretty(error).unwrap_or_default()
-        );
+        // assert!(
+        //     false,
+        //     "{}",
+        //     serde_json::to_string_pretty(error).unwrap_or_default()
+        // );
         let threads = error["threads"]
             .as_array()
             .expect("error.threads should be a JSON array");
@@ -254,8 +261,7 @@ fn test_crash_tracking_multi_thread_collection() {
             );
         }
 
-        // Both named workers must be present; the behavior (test_017_multi_thread_collection.rs)
-        //spawns exactly two
+        // Both named workers must be present; the behavior spawns exactly two
         for expected in ["ct_worker_0", "ct_worker_1"] {
             assert!(
                 thread_names.contains(&expected),
@@ -264,9 +270,13 @@ fn test_crash_tracking_multi_thread_collection() {
             );
         }
 
-        // Each worker must have captured at least one stack frame
-        // (they were sleeping in a syscall, so SIGUSR2 interrupted them and
-        // unw_init_local2 should produce at minimum the syscall entry frame).
+        // Each worker must have a multi-frame stack trace.
+        //
+        // The workers sleep in thread::sleep -> wait_for_work_N -> worker_entry_N.
+        // With libunwind remote unwinding, we expect the full call chain rather than
+        // a single syscall frame. We verify:
+        //   - More than one frame was captured.
+        //   - At least one frame contains the worker's entry function by name.
         for expected in ["ct_worker_0", "ct_worker_1"] {
             let worker = threads
                 .iter()
@@ -278,8 +288,26 @@ fn test_crash_tracking_multi_thread_collection() {
                 .unwrap_or_else(|| panic!("{expected} stack.frames should be an array"));
 
             assert!(
-                !frames.is_empty(),
-                "{expected} should have at least one stack frame; worker: {worker:?}"
+                frames.len() > 1,
+                "{expected} should have a multi-frame stack trace from remote libunwind; \
+                 got {} frame(s): {frames:?}",
+                frames.len()
+            );
+
+            let entry_fn = if expected == "ct_worker_0" {
+                "worker_entry_0"
+            } else {
+                "worker_entry_1"
+            };
+            let has_entry_frame = frames.iter().any(|f| {
+                f["function"]
+                    .as_str()
+                    .map(|name| name.contains(entry_fn))
+                    .unwrap_or(false)
+            });
+            assert!(
+                has_entry_frame,
+                "{expected} stack should contain a frame for '{entry_fn}' but got: {frames:?}"
             );
         }
 

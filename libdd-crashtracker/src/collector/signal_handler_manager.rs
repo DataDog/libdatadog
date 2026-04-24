@@ -206,17 +206,6 @@ unsafe fn register_signal_handler(
     Ok((signal_type, old_handler))
 }
 
-/// Register the SIGUSR2 handler used to capture thread contexts for multi-thread
-/// stack collection.
-///
-/// This must be called from a non-signal context before any crash can occur.
-/// The previous SIGUSR2 `sigaction` is saved so the handler can chain to it.
-///
-/// Note: if the application installs its own SIGUSR2 handler after this call
-/// and does not chain to the previous action, our handler will be silently lost and
-/// thread contexts will not be captured. Applications that own SIGUSR2 should
-/// install their handler first and chain correctly, or not enable `collect_all_threads`.
-
 #[cfg(test)]
 mod tests {
     #[cfg(target_os = "linux")]

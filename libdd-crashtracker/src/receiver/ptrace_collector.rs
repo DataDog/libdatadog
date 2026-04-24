@@ -1,76 +1,72 @@
 // Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-//! Ptrace-based thread context collection for crash reporting.
+//! Ptrace-based thread context collection with libunwind remote unwinding.
 //! This module is compiled for Linux only.
 //!
-//! # Overview
-//!
 //! This module provides ptrace-based thread context collection that runs in the
-//! collector child process (not in signal handler context). It replaces the previous
-//! SIGUSR2-based in-process collection mechanism.
+//! receiver process. It uses libunwind's remote unwinding APIs to generate full
+//! stack traces for all threads in the crashed process.
 //!
 //! The flow is:
-//! 1. Collector child enumerates threads from /proc/<parent_pid>/task/
-//! 2. Attaches to each thread using PTRACE_SEIZE
-//! 3. Captures register context using PTRACE_GETREGSET
-//! 4. Reads stack memory using process_vm_readv
-//! 5. Detaches from threads
+//! 1. Enumerate threads from /proc/<parent_pid>/task/
+//! 2. Attach to each thread using PTRACE_SEIZE + PTRACE_INTERRUPT (stops the thread)
+//! 3. While the thread is stopped, use libunwind remote APIs to unwind the stack:
+//!    - _UPT_create(tid)                create ptrace unwinding state
+//!    - unw_create_addr_space()         create address space with ptrace accessors
+//!    - unw_init_remote()               initialize remote cursor
+//!    - unw_step_remote() loop          walk frames
+//!    - unw_get_proc_name_remote()      resolve symbol names
+//!    - _UPT_destroy() + cleanup        clean up
+//! 4. Detach from the thread via PTRACE_DETACH
 //!
-//! # Benefits over SIGUSR2 approach
+//! The crashed parent process stays alive (blocked in the signal handler) until
+//! receiver.finish() completes. This guarantees the target process remains a valid
+//! ptrace target for the entire duration of thread collection.
 //!
-//! - No pre-allocation of memory
-//! - No conflict with application's use of SIGUSR2
-//! - Better thread states (stopped at execution points, not in signal handlers)
-//! - Richer context (can access additional register sets)
-//! - No async-signal-safety constraints
+//! The parent calls prctl(PR_SET_PTRACER, receiver_pid) before forking the collector,
+//! which grants the receiver ptrace permission
 
-use libc::{ucontext_t, user_regs_struct};
 use std::ptr;
 use std::time::{Duration, Instant};
+
+use libdd_libunwind_sys::{
+    UnwAddrSpaceT, UnwCursor, UnwWord, _UPT_accessors, _UPT_create, _UPT_destroy,
+    unw_create_addr_space, unw_destroy_addr_space, unw_get_proc_name_remote, unw_get_reg_remote,
+    unw_init_remote, unw_step_remote, UNW_REG_FP, UNW_REG_IP, UNW_REG_SP,
+};
+
+use crate::crash_info::{StackFrame, StackTrace};
 
 /// Maximum number of threads to collect contexts for
 const MAX_TRACKED_THREADS: usize = 128;
 
-/// A captured thread context containing basic register state
-///
-/// TODO: Add remote libunwind stack walking using:
-/// - unw_init_remote() with _UPT_accessors for ptrace-based remote unwinding
-/// - _UPT_create(), _UPT_destroy() for managing ptrace state
-/// - This will enable full stack traces for all threads
+/// Maximum number of stack frames to capture per thread
+const MAX_FRAMES: usize = 512;
+
+/// A captured thread context containing a full remote stack trace
 pub struct CapturedThreadContext {
-    /// The captured register context as a ucontext_t
-    pub ucontext: ucontext_t,
+    pub stack_trace: StackTrace,
 }
 
-/// Error types for ptrace operations
 #[derive(Debug)]
 pub enum PtraceError {
     /// Failed to enumerate threads from /proc filesystem
-    EnumerationFailed(std::io::Error),
+    Enumeration(std::io::Error),
     /// Failed to attach to a thread
-    AttachFailed(libc::pid_t, i32),
-    /// Failed to read registers from a thread
-    RegisterReadFailed(libc::pid_t, i32),
+    Attach(libc::pid_t, i32),
     /// Failed to detach from a thread
-    DetachFailed(libc::pid_t, i32),
+    Detach(libc::pid_t, i32),
 }
 
 impl std::fmt::Display for PtraceError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            PtraceError::EnumerationFailed(e) => write!(f, "Failed to enumerate threads: {}", e),
-            PtraceError::AttachFailed(tid, errno) => {
+            PtraceError::Enumeration(e) => write!(f, "Failed to enumerate threads: {}", e),
+            PtraceError::Attach(tid, errno) => {
                 write!(f, "Failed to attach to thread {}: errno {}", tid, errno)
             }
-            PtraceError::RegisterReadFailed(tid, errno) => {
-                write!(
-                    f,
-                    "Failed to read registers from thread {}: errno {}",
-                    tid, errno
-                )
-            }
-            PtraceError::DetachFailed(tid, errno) => {
+            PtraceError::Detach(tid, errno) => {
                 write!(f, "Failed to detach from thread {}: errno {}", tid, errno)
             }
         }
@@ -79,33 +75,28 @@ impl std::fmt::Display for PtraceError {
 
 impl std::error::Error for PtraceError {}
 
-/// Enumerate all thread IDs for a given process
-///
-/// Reads the /proc/<pid>/task/ directory to discover all threads.
-/// Returns a vector of thread IDs.
+/// Enumerate all thread IDs for a given process from /proc/<pid>/task/
 pub fn enumerate_threads(pid: libc::pid_t) -> Result<Vec<libc::pid_t>, PtraceError> {
     let task_dir = format!("/proc/{}/task", pid);
-    let entries = std::fs::read_dir(&task_dir).map_err(PtraceError::EnumerationFailed)?;
+    let entries = std::fs::read_dir(&task_dir).map_err(PtraceError::Enumeration)?;
 
     let mut tids = Vec::new();
     for entry in entries {
-        let entry = entry.map_err(PtraceError::EnumerationFailed)?;
+        let entry = entry.map_err(PtraceError::Enumeration)?;
         if let Ok(name) = entry.file_name().into_string() {
             if let Ok(tid) = name.parse::<libc::pid_t>() {
                 tids.push(tid);
             }
         }
     }
-
     Ok(tids)
 }
 
-/// Attach to a thread using ptrace
+/// Attach to a thread using PTRACE_SEIZE + PTRACE_INTERRUPT, then wait for it to stop.
 ///
-/// Uses PTRACE_SEIZE to attach without stopping the thread initially.
-/// The thread must be explicitly stopped with PTRACE_INTERRUPT.
-pub fn attach_thread(tid: libc::pid_t) -> Result<(), PtraceError> {
-    // SAFETY: PTRACE_SEIZE is a valid ptrace operation
+/// After this call the thread is stopped and ready for register reads and remote unwinding.
+fn attach_thread(tid: libc::pid_t) -> Result<(), PtraceError> {
+    // SAFETY: PTRACE_SEIZE attaches without stopping the thread
     let result = unsafe {
         libc::ptrace(
             libc::PTRACE_SEIZE,
@@ -114,14 +105,12 @@ pub fn attach_thread(tid: libc::pid_t) -> Result<(), PtraceError> {
             ptr::null_mut::<libc::c_void>(),
         )
     };
-
     if result == -1 {
         let errno = unsafe { *libc::__errno_location() };
-        return Err(PtraceError::AttachFailed(tid, errno));
+        return Err(PtraceError::Attach(tid, errno));
     }
 
-    // Stop the thread so we can read its registers
-    // SAFETY: PTRACE_INTERRUPT is a valid ptrace operation for a seized thread
+    // SAFETY: PTRACE_INTERRUPT delivers a stop to the seized thread
     let result = unsafe {
         libc::ptrace(
             libc::PTRACE_INTERRUPT,
@@ -130,27 +119,22 @@ pub fn attach_thread(tid: libc::pid_t) -> Result<(), PtraceError> {
             ptr::null_mut::<libc::c_void>(),
         )
     };
-
     if result == -1 {
         let errno = unsafe { *libc::__errno_location() };
-        // Try to detach on failure
         let _ = detach_thread(tid);
-        return Err(PtraceError::AttachFailed(tid, errno));
+        return Err(PtraceError::Attach(tid, errno));
     }
 
-    // Wait for the thread to stop
+    // Wait for the stop signal to be delivered
     let mut status = 0;
-    // SAFETY: waitpid is safe with valid arguments
-    unsafe {
-        libc::waitpid(tid, &mut status, 0);
-    }
+    // SAFETY: waitpid with valid tid
+    unsafe { libc::waitpid(tid, &mut status, 0) };
 
     Ok(())
 }
 
-/// Detach from a thread
-pub fn detach_thread(tid: libc::pid_t) -> Result<(), PtraceError> {
-    // SAFETY: PTRACE_DETACH is a valid ptrace operation
+fn detach_thread(tid: libc::pid_t) -> Result<(), PtraceError> {
+    // SAFETY: PTRACE_DETACH is valid for a currently-traced thread
     let result = unsafe {
         libc::ptrace(
             libc::PTRACE_DETACH,
@@ -159,140 +143,180 @@ pub fn detach_thread(tid: libc::pid_t) -> Result<(), PtraceError> {
             ptr::null_mut::<libc::c_void>(),
         )
     };
-
     if result == -1 {
         let errno = unsafe { *libc::__errno_location() };
-        return Err(PtraceError::DetachFailed(tid, errno));
+        return Err(PtraceError::Detach(tid, errno));
     }
-
     Ok(())
 }
 
-/// Read general purpose registers from a thread using ptrace
+/// Capture the full stack trace for a stopped thread using libunwind remote unwinding.
 ///
-/// Uses PTRACE_GETREGS to read the x86_64 general purpose registers.
-/// Converts them to a ucontext_t format for compatibility with existing code.
-pub fn read_thread_registers(tid: libc::pid_t) -> Result<ucontext_t, PtraceError> {
-    let mut regs: user_regs_struct = unsafe { std::mem::zeroed() };
-
-    // SAFETY: PTRACE_GETREGS is valid for stopped threads, regs is properly allocated
-    let result = unsafe {
-        libc::ptrace(
-            libc::PTRACE_GETREGS,
-            tid as libc::c_long,
-            ptr::null_mut::<libc::c_void>(),
-            &mut regs as *mut user_regs_struct as *mut libc::c_void,
-        )
-    };
-
-    if result == -1 {
-        let errno = unsafe { *libc::__errno_location() };
-        return Err(PtraceError::RegisterReadFailed(tid, errno));
+/// The thread must already be stopped (via `attach_thread`) before calling this.
+/// The caller is responsible for detaching after this returns.
+///
+/// libunwind's ptrace backend (`_UPT_*`) implements the accessor callbacks that
+/// libunwind uses to read memory and registers from the target process via ptrace.
+/// `unw_create_addr_space` wires those accessors into a remote address space
+/// `unw_init_remote` seeds a cursor from the thread's current register state
+/// `unw_step_remote` walks each frame, reading the target's stack memory via ptrace
+fn unwind_remote_thread(
+    tid: libc::pid_t,
+    resolve_frames: crate::StacktraceCollection,
+) -> StackTrace {
+    // SAFETY: _UPT_create allocates a ptrace unwinding context for the given tid.
+    // The thread must already be stopped via ptrace for this to succeed.
+    let upt_info = unsafe { _UPT_create(tid) };
+    if upt_info.is_null() {
+        return StackTrace::new_incomplete();
     }
 
-    // Convert user_regs_struct to ucontext_t for compatibility
-    let mut uctx: ucontext_t = unsafe { std::mem::zeroed() };
-
-    // Fill in the mcontext with register values
-    // These field mappings are specific to x86_64 Linux
-    #[cfg(target_arch = "x86_64")]
-    {
-        uctx.uc_mcontext.gregs[libc::REG_RIP as usize] = regs.rip as i64;
-        uctx.uc_mcontext.gregs[libc::REG_RSP as usize] = regs.rsp as i64;
-        uctx.uc_mcontext.gregs[libc::REG_RBP as usize] = regs.rbp as i64;
-        uctx.uc_mcontext.gregs[libc::REG_RAX as usize] = regs.rax as i64;
-        uctx.uc_mcontext.gregs[libc::REG_RBX as usize] = regs.rbx as i64;
-        uctx.uc_mcontext.gregs[libc::REG_RCX as usize] = regs.rcx as i64;
-        uctx.uc_mcontext.gregs[libc::REG_RDX as usize] = regs.rdx as i64;
-        uctx.uc_mcontext.gregs[libc::REG_RSI as usize] = regs.rsi as i64;
-        uctx.uc_mcontext.gregs[libc::REG_RDI as usize] = regs.rdi as i64;
-        uctx.uc_mcontext.gregs[libc::REG_R8 as usize] = regs.r8 as i64;
-        uctx.uc_mcontext.gregs[libc::REG_R9 as usize] = regs.r9 as i64;
-        uctx.uc_mcontext.gregs[libc::REG_R10 as usize] = regs.r10 as i64;
-        uctx.uc_mcontext.gregs[libc::REG_R11 as usize] = regs.r11 as i64;
-        uctx.uc_mcontext.gregs[libc::REG_R12 as usize] = regs.r12 as i64;
-        uctx.uc_mcontext.gregs[libc::REG_R13 as usize] = regs.r13 as i64;
-        uctx.uc_mcontext.gregs[libc::REG_R14 as usize] = regs.r14 as i64;
-        uctx.uc_mcontext.gregs[libc::REG_R15 as usize] = regs.r15 as i64;
-        uctx.uc_mcontext.gregs[libc::REG_EFL as usize] = regs.eflags as i64;
-        uctx.uc_mcontext.gregs[libc::REG_CSGSFS as usize] =
-            ((regs.cs as i64) << 16) | ((regs.gs as i64) << 8) | (regs.fs as i64);
+    // SAFETY: _UPT_accessors is a static accessor table provided by libunwind-ptrace.
+    // byteorder=0 means native byte order.
+    let addr_space: UnwAddrSpaceT =
+        unsafe { unw_create_addr_space(&raw const _UPT_accessors as *mut _, 0) };
+    if addr_space.is_null() {
+        unsafe { _UPT_destroy(upt_info) };
+        return StackTrace::new_incomplete();
     }
 
-    Ok(uctx)
+    // SAFETY: cursor is zeroed; unw_init_remote seeds it from the thread's registers
+    // using ptrace with upt_info as the accessor argument.
+    let mut cursor: UnwCursor = unsafe { std::mem::zeroed() };
+    let ret = unsafe { unw_init_remote(&mut cursor, addr_space, upt_info) };
+    if ret != 0 {
+        unsafe {
+            _UPT_destroy(upt_info);
+            unw_destroy_addr_space(addr_space);
+        }
+        return StackTrace::new_incomplete();
+    }
+
+    let mut frames = Vec::new();
+
+    for _ in 0..MAX_FRAMES {
+        let mut ip: UnwWord = 0;
+        let mut sp: UnwWord = 0;
+        let mut fp: UnwWord = 0;
+
+        // SAFETY: cursor is initialized; unw_get_reg_remote reads from target via ptrace
+        if unsafe { unw_get_reg_remote(&mut cursor, UNW_REG_IP, &mut ip) } != 0 || ip == 0 {
+            break;
+        }
+        let _ = unsafe { unw_get_reg_remote(&mut cursor, UNW_REG_SP, &mut sp) };
+        let _ = unsafe { unw_get_reg_remote(&mut cursor, UNW_REG_FP, &mut fp) };
+
+        let mut frame = StackFrame {
+            ip: Some(format!("0x{:x}", ip)),
+            sp: Some(format!("0x{:x}", sp)),
+            module_base_address: None,
+            symbol_address: None,
+            build_id: None,
+            build_id_type: None,
+            file_type: None,
+            path: None,
+            relative_address: None,
+            column: None,
+            file: None,
+            function: None,
+            line: None,
+            type_name: None,
+            mangled_name: None,
+            comments: vec![],
+        };
+
+        // Resolve the function name if symbol resolution is enabled
+        // We don't care whether it is EnabledWithInprocessSymbols or
+        // EnabledWithSymbolsInReceiver since this is happening in the receiver
+        if resolve_frames != crate::StacktraceCollection::Disabled
+            && resolve_frames != crate::StacktraceCollection::WithoutSymbols
+        {
+            let mut name_buf = [0 as libc::c_char; 256];
+            let mut offset: UnwWord = 0;
+            // SAFETY: cursor is valid; unw_get_proc_name_remote reads symbol info via ptrace
+            if unsafe {
+                unw_get_proc_name_remote(
+                    &mut cursor,
+                    name_buf.as_mut_ptr().cast(),
+                    name_buf.len(),
+                    &mut offset,
+                )
+            } == 0
+            {
+                // SAFETY: libunwind wrote a null-terminated string into name_buf
+                let name = unsafe { std::ffi::CStr::from_ptr(name_buf.as_ptr()) };
+                if let Ok(s) = name.to_str() {
+                    frame.function = Some(s.to_string());
+                }
+            }
+        }
+
+        frames.push(frame);
+
+        // SAFETY: cursor is valid
+        if unsafe { unw_step_remote(&mut cursor) } <= 0 {
+            break;
+        }
+    }
+
+    // SAFETY: cleaning up; these were created above
+    unsafe {
+        _UPT_destroy(upt_info);
+        unw_destroy_addr_space(addr_space);
+    }
+
+    StackTrace::from_frames(frames, false)
 }
 
-/// Capture register context for a single thread
+/// Attach to a thread, capture its full stack trace using remote libunwind, then detach
 pub fn capture_thread_context(
     _pid: libc::pid_t,
     tid: libc::pid_t,
+    resolve_frames: crate::StacktraceCollection,
 ) -> Result<CapturedThreadContext, PtraceError> {
-    // Attach to the thread
     attach_thread(tid)?;
 
-    // Read basic registers
-    let ucontext = match read_thread_registers(tid) {
-        Ok(uctx) => uctx,
-        Err(e) => {
-            let _ = detach_thread(tid);
-            return Err(e);
-        }
-    };
+    let stack_trace = unwind_remote_thread(tid, resolve_frames);
 
-    // Detach from the thread
     detach_thread(tid)?;
 
-    Ok(CapturedThreadContext { ucontext })
+    Ok(CapturedThreadContext { stack_trace })
 }
 
-/// Streaming callback-based thread context collection
+/// Stream thread contexts to a callback, one at a time, without intermediate storage
 ///
-/// This function enumerates threads and calls the provided callback for each thread.
-/// The callback receives the thread info and an optional captured context.
-/// No intermediate storage is used
+/// For each non-crashing thread the callback receives the TID and an optional
+/// `CapturedThreadContext` (None if attachment or unwinding failed). The callback
+/// returns `true` to continue or `false` to stop early
 pub fn stream_thread_contexts<F>(
     parent_pid: libc::pid_t,
     crashing_tid: libc::pid_t,
     max_threads: usize,
     timeout: Duration,
+    resolve_frames: crate::StacktraceCollection,
     mut callback: F,
 ) -> Result<(), PtraceError>
 where
-    F: FnMut(libc::pid_t, Option<&CapturedThreadContext>) -> bool, /* returns false to stop
-                                                                    * iteration */
+    F: FnMut(libc::pid_t, Option<&CapturedThreadContext>) -> bool,
 {
     let start_time = Instant::now();
-
-    // Enumerate all threads
     let tids = enumerate_threads(parent_pid)?;
-
-    // Limit the number of threads we process
     let max_count = max_threads.min(MAX_TRACKED_THREADS);
     let mut processed = 0;
 
     for tid in tids {
-        // Check timeout
         if start_time.elapsed() >= timeout {
             break;
         }
-
-        // Skip the crashing thread
         if tid == crashing_tid {
             continue;
         }
-
-        // Skip if we've hit our limit
         if processed >= max_count {
             break;
         }
 
-        // Try to capture this thread's context
-        let context = match capture_thread_context(parent_pid, tid) {
-            Ok(ctx) => Some(ctx),
-            Err(_) => None, // Continue with other threads even if this one fails
-        };
+        let context = capture_thread_context(parent_pid, tid, resolve_frames).ok();
 
-        // Call the callback with the thread info
         let should_continue = callback(tid, context.as_ref());
         processed += 1;
 
