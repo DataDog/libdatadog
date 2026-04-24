@@ -25,7 +25,7 @@ case "$OS" in
   *)      echo "Unsupported OS: $OS" >&2; exit 1 ;;
 esac
 
-rustup target add "$TARGET" --toolchain nightly >/dev/null 2>&1 || true
+rustup target add "$TARGET" --toolchain nightly 2>/dev/null || true
 
 RUSTFLAGS="\
   -Zunstable-options \
@@ -33,14 +33,11 @@ RUSTFLAGS="\
   -Zlocation-detail=none \
   -Zfmt-debug=none \
 " \
-cargo +nightly build \
+cargo +nightly bloat \
   -Z build-std=std,panic_abort \
-  -Z build-std-features=optimize_for_size \
+  -Z build-std-features= \
   --target "$TARGET" \
   --profile release-size \
   -p size-benchmark \
   --manifest-path "$WORKSPACE_ROOT/Cargo.toml" \
   "$@"
-
-BINARY="$WORKSPACE_ROOT/target/$TARGET/release-size/size-benchmark"
-wc -c < "$BINARY"
