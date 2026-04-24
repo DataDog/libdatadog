@@ -55,6 +55,15 @@ build_ref() {
     # Always use the script from the current checkout (base may not have it).
     # Override WORKSPACE_ROOT so the script builds the worktree's sources.
     # CARGO_TARGET_DIR is fixed so both refs share the same build cache.
+    # If this ref predates the size-benchmark crate, return 0 (not an error).
+    if ! grep -q '"size-benchmark"' "$worktree/Cargo.toml" 2>/dev/null; then
+        echo "  (size-benchmark not present on $label, skipping)" >&2
+        git -C "$REPO_ROOT" worktree remove --force "$worktree" 2>/dev/null || true
+        rm -rf "$worktree"
+        echo "0"
+        return
+    fi
+
     CARGO_TARGET_DIR="$REPO_ROOT/target" \
     WORKSPACE_ROOT="$worktree" \
         bash "$BUILD_SCRIPT" 2>&3
@@ -69,27 +78,38 @@ HEAD_SHORT="$(git -C "$REPO_ROOT" rev-parse --short "$HEAD_REF")"
 BASE_BYTES="$(build_ref "$BASE_REF" "base" 3>&2)"
 HEAD_BYTES="$(build_ref "$HEAD_REF" "head" 3>&2)"
 
-DIFF=$(( HEAD_BYTES - BASE_BYTES ))
-DIFF_ABS=${DIFF#-}
-[[ $DIFF -ge 0 ]] && SIGN="+" || SIGN="-"
-
-PCT="$(echo "scale=2; $DIFF * 100 / $BASE_BYTES" | bc)"
-PCT_ABS="$(echo "$PCT" | sed 's/^-//')"
-
-BASE_FMT="$(format_bytes "$BASE_BYTES")"
 HEAD_FMT="$(format_bytes "$HEAD_BYTES")"
-DIFF_FMT="$(format_bytes "$DIFF_ABS")"
 
-THRESHOLD=2
-if   (( $(echo "$PCT < -$THRESHOLD" | bc -l) )); then EMOJI="🎉"  # significantly smaller
-elif (( $(echo "$PCT < 0"           | bc -l) )); then EMOJI="✅"  # smaller, within noise
-elif (( $(echo "$PCT == 0"          | bc -l) )); then EMOJI="➡️" # unchanged
-elif (( $(echo "$PCT <= $THRESHOLD" | bc -l) )); then EMOJI="➡️" # larger, within noise
-elif (( $(echo "$PCT <= 10"         | bc -l) )); then EMOJI="⚠️" # notable regression
-else                                                   EMOJI="🚨"  # large regression
-fi
+if [[ "$BASE_BYTES" -eq 0 ]]; then
+    TABLE="$(cat <<EOF
+| | Size |
+|---|---|
+| Base (\`$BASE_SHORT\`) | N/A (benchmark not on base) |
+| Head (\`$HEAD_SHORT\`) | $HEAD_FMT |
+| Delta | N/A |
+EOF
+)"
+else
+    DIFF=$(( HEAD_BYTES - BASE_BYTES ))
+    DIFF_ABS=${DIFF#-}
+    [[ $DIFF -ge 0 ]] && SIGN="+" || SIGN="-"
 
-TABLE="$(cat <<EOF
+    PCT="$(echo "scale=2; $DIFF * 100 / $BASE_BYTES" | bc)"
+    PCT_ABS="$(echo "$PCT" | sed 's/^-//')"
+
+    BASE_FMT="$(format_bytes "$BASE_BYTES")"
+    DIFF_FMT="$(format_bytes "$DIFF_ABS")"
+
+    THRESHOLD=2
+    if   (( $(echo "$PCT < -$THRESHOLD" | bc -l) )); then EMOJI="🎉"
+    elif (( $(echo "$PCT < 0"           | bc -l) )); then EMOJI="✅"
+    elif (( $(echo "$PCT == 0"          | bc -l) )); then EMOJI="➡️"
+    elif (( $(echo "$PCT <= $THRESHOLD" | bc -l) )); then EMOJI="➡️"
+    elif (( $(echo "$PCT <= 10"         | bc -l) )); then EMOJI="⚠️"
+    else                                                   EMOJI="🚨"
+    fi
+
+    TABLE="$(cat <<EOF
 | | Size |
 |---|---|
 | Base (\`$BASE_SHORT\`) | $BASE_FMT |
@@ -97,6 +117,7 @@ TABLE="$(cat <<EOF
 | Delta | ${SIGN}${DIFF_FMT} (${SIGN}${PCT_ABS}%) $EMOJI |
 EOF
 )"
+fi
 
 echo "" >&2
 echo "$TABLE"
