@@ -8,9 +8,8 @@
 //! - `otel_thread_ctx_v1` is accessed via TLSDESC relocations (R_X86_64_TLSDESC or
 //!   R_AARCH64_TLSDESC), as required by the OTel thread-level context sharing spec.
 //!
-//! The cdylib path is derived at runtime from the test executable location:
-//! the test binary lives in `target/<[triple/]profile>/deps/`, so the cdylib
-//! is one level up at `target/<[triple/]profile>/liblibdd_otel_thread_ctx_ffi.so`.
+//! The cdylib path is derived at runtime from the test executable location.
+//! Both the test binary and the cdylib live in `target/<[triple/]profile>/deps/`.
 
 #![cfg(target_os = "linux")]
 
@@ -21,24 +20,17 @@ const SYMBOL: &str = "otel_thread_ctx_v1";
 
 fn cdylib_path() -> PathBuf {
     // test binary: target/<[triple/]profile>/deps/<name>
-    // cdylib:      target/<[triple/]profile>/liblibdd_otel_thread_ctx_ffi.so
+    // cdylib:      target/<[triple/]profile>/deps/liblibdd_otel_thread_ctx_ffi.so
     let exe = std::env::current_exe().expect("failed to read current executable path");
-    exe.parent() // deps/
-        .and_then(|p| p.parent()) // <profile>/
+    exe.parent()
         .expect("unexpected test executable path structure")
         .join("liblibdd_otel_thread_ctx_ffi.so")
 }
 
-fn check_cdylib_exists(path: &PathBuf) {
-    assert!(
-        path.exists(),
-        "cdylib not found at {}: \
-         ensure `cargo build -p libdd-otel-thread-ctx-ffi` has been run for this profile",
-        path.display()
-    );
+fn check_cdylib_readable(path: &PathBuf) {
     assert!(
         std::fs::File::open(path).is_ok(),
-        "cdylib exists at {} but could not be opened for reading",
+        "cdylib at {} could not be opened for reading",
         path.display()
     );
 }
@@ -56,7 +48,7 @@ fn readelf(args: &[&str], path: &PathBuf) -> String {
 #[cfg_attr(miri, ignore)]
 fn otel_thread_ctx_v1_in_dynsym() {
     let path = cdylib_path();
-    check_cdylib_exists(&path);
+    check_cdylib_readable(&path);
     let output = readelf(&["-W", "--dyn-syms"], &path);
     let line = output
         .lines()
@@ -72,7 +64,7 @@ fn otel_thread_ctx_v1_in_dynsym() {
 #[cfg_attr(miri, ignore)]
 fn otel_thread_ctx_v1_tlsdesc_reloc() {
     let path = cdylib_path();
-    check_cdylib_exists(&path);
+    check_cdylib_readable(&path);
     let output = readelf(&["-W", "--relocs"], &path);
     let found = output.lines().any(|l| {
         l.contains(SYMBOL) && (l.contains("R_X86_64_TLSDESC") || l.contains("R_AARCH64_TLSDESC"))
