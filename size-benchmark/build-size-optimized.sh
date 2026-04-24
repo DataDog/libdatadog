@@ -35,7 +35,7 @@ RUSTFLAGS="\
 " \
 cargo +nightly build \
   -Z build-std=std,panic_abort \
-  -Z build-std-features= \
+  -Z build-std-features=optimize_for_size \
   --target "$TARGET" \
   --profile release-size \
   -p size-benchmark \
