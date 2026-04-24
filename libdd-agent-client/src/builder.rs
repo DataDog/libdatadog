@@ -98,13 +98,11 @@ pub struct AgentClientBuilder {
 
 impl AgentClientBuilder {
     /// Create a new builder with default settings.
-    #[inline]
     pub fn new() -> Self {
         Self::default()
     }
 
     /// Set the transport configuration.
-    #[inline]
     pub fn transport(mut self, transport: AgentTransport) -> Self {
         self.transport = Some(transport);
         self
@@ -120,7 +118,6 @@ impl AgentClientBuilder {
 
     /// Convenience: Unix Domain Socket.
     #[cfg(unix)]
-    #[inline]
     pub fn unix_socket(self, path: impl Into<PathBuf>) -> Self {
         self.transport(AgentTransport::UnixSocket { path: path.into() })
     }
@@ -232,7 +229,6 @@ impl AgentClientBuilder {
     /// Set the test session token.
     ///
     /// When set, `x-datadog-test-session-token: <token>` is injected on every request.
-    #[inline]
     pub fn test_agent_session_token(mut self, token: impl Into<String>) -> Self {
         self.test_token = Some(token.into());
         self
@@ -241,7 +237,6 @@ impl AgentClientBuilder {
     /// Set the request timeout.
     ///
     /// Defaults to [`DEFAULT_TIMEOUT_MS`] (2 000 ms) when not set.
-    #[inline]
     pub fn timeout(mut self, timeout: Duration) -> Self {
         self.timeout = Some(timeout);
         self
@@ -250,14 +245,12 @@ impl AgentClientBuilder {
     /// Override the default retry configuration.
     ///
     /// Defaults to [`default_retry_config`].
-    #[inline]
     pub fn retry(mut self, config: RetryConfig) -> Self {
         self.retry = Some(config);
         self
     }
 
     /// Set the language/runtime metadata injected into every request. Required.
-    #[inline]
     pub fn language_metadata(mut self, meta: LanguageMetadata) -> Self {
         self.language = Some(meta);
         self
@@ -269,7 +262,6 @@ impl AgentClientBuilder {
     /// second connection when keep-alive is enabled. The default of `false` is correct for all
     /// periodic-flush writers (traces, stats, data streams). Set to `true` only for
     /// high-frequency continuous senders (e.g. a streaming profiling exporter).
-    #[inline]
     pub fn use_keep_alive(mut self, enabled: bool) -> Self {
         self.keep_alive = enabled;
         self
@@ -283,7 +275,6 @@ impl AgentClientBuilder {
     // baked in; only the opt-in client-level `gzip(level)` builder knob is deferred.
 
     /// Additional custom headers to inject.
-    #[inline]
     pub fn extra_headers(mut self, headers: HashMap<String, String>) -> Self {
         self.extra_headers = headers;
         self
