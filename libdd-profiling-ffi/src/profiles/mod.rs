@@ -4,6 +4,8 @@
 mod datatypes;
 #[cfg(feature = "dynamic_profile")]
 mod dynamic;
+#[cfg(feature = "dynamic_profile")]
+mod dynamic_profiles_dictionary;
 mod interning_api;
 mod profiles_dictionary;
 mod utf8;

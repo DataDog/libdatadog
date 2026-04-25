@@ -4,13 +4,16 @@
 use super::datatypes::{
     ddog_prof_EncodedProfile_drop, Period, ProfileResult, SampleType, SerializeResult,
 };
+use crate::arc_handle::ArcHandle;
 use anyhow::Context;
 use function_name::named;
 use libdd_common_ffi::slice::{AsBytes, CharSlice, Slice};
 use libdd_common_ffi::{wrap_with_ffi_result, Error, Result, Timespec};
 use libdd_profiling::dynamic::{
-    DynamicFunctionIndex as InnerDynamicFunctionIndex, DynamicLabel as InnerDynamicLabel,
-    DynamicLocation as InnerDynamicLocation, DynamicProfile as InnerDynamicProfile,
+    DynamicFunction as InnerDynamicFunction, DynamicFunctionIndex as InnerDynamicFunctionIndex,
+    DynamicLabel as InnerDynamicLabel, DynamicLocation as InnerDynamicLocation,
+    DynamicProfile as InnerDynamicProfile,
+    DynamicProfilesDictionary as InnerDynamicProfilesDictionary,
     DynamicSample as InnerDynamicSample, DynamicStackTraceIndex as InnerDynamicStackTraceIndex,
     DynamicStringIndex as InnerDynamicStringIndex,
 };
@@ -75,6 +78,31 @@ impl From<DynamicStringIndex> for InnerDynamicStringIndex {
 #[derive(Copy, Clone, Debug, Default, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub struct DynamicFunctionIndex {
     pub value: u32,
+}
+
+#[repr(C)]
+#[derive(Copy, Clone, Debug, Default, Eq, PartialEq, Hash)]
+pub struct DynamicFunction {
+    pub name: DynamicStringIndex,
+    pub filename: DynamicStringIndex,
+}
+
+impl From<InnerDynamicFunction> for DynamicFunction {
+    fn from(value: InnerDynamicFunction) -> Self {
+        Self {
+            name: value.name.into(),
+            filename: value.filename.into(),
+        }
+    }
+}
+
+impl From<DynamicFunction> for InnerDynamicFunction {
+    fn from(value: DynamicFunction) -> Self {
+        Self {
+            name: value.name.into(),
+            filename: value.filename.into(),
+        }
+    }
 }
 
 impl From<InnerDynamicFunctionIndex> for DynamicFunctionIndex {
@@ -191,18 +219,37 @@ fn ffi_sample_to_parts<'a>(
 
 #[must_use]
 #[no_mangle]
-pub unsafe extern "C" fn ddog_prof_DynamicProfile_new(
+pub unsafe extern "C" fn ddog_prof_DynamicProfile_with_dictionary(
+    out: *mut DynamicProfile,
+    dict: &ArcHandle<InnerDynamicProfilesDictionary>,
     sample_types: Slice<SampleType>,
     period: Option<&Period>,
     start_time: Option<&Timespec>,
-) -> DynamicProfileNewResult {
-    let sample_types = sample_types.into_slice();
+) -> crate::profile_status::ProfileStatus {
+    crate::ensure_non_null_out_parameter!(out);
+    match unsafe { dynamic_profile_with_dictionary(dict, sample_types, period, start_time) } {
+        Ok(profile) => unsafe {
+            out.write(profile);
+            crate::profile_status::ProfileStatus::OK
+        },
+        Err(err) => crate::profile_status::ProfileStatus::from(err),
+    }
+}
+
+unsafe fn dynamic_profile_with_dictionary(
+    dict: &ArcHandle<InnerDynamicProfilesDictionary>,
+    sample_types: Slice<SampleType>,
+    period: Option<&Period>,
+    start_time: Option<&Timespec>,
+) -> std::result::Result<DynamicProfile, crate::ProfileError> {
+    let sample_types = sample_types.try_as_slice()?;
     let period = period.copied();
     let start_time = start_time.map(Into::into);
-    match InnerDynamicProfile::try_new(sample_types, period, start_time) {
-        Ok(profile) => DynamicProfileNewResult::Ok(DynamicProfile::new(profile)),
-        Err(err) => DynamicProfileNewResult::Err(anyhow::Error::from(err).into()),
-    }
+    let dict = dict.try_clone_into_arc()?;
+    let profile =
+        InnerDynamicProfile::try_new_with_dictionary(sample_types, period, start_time, dict)
+            .map_err(crate::ProfileError::from_display)?;
+    Ok(DynamicProfile::new(profile))
 }
 
 #[no_mangle]
@@ -210,38 +257,6 @@ pub unsafe extern "C" fn ddog_prof_DynamicProfile_drop(profile: *mut DynamicProf
     if !profile.is_null() {
         drop((*profile).take())
     }
-}
-
-#[must_use]
-#[no_mangle]
-#[named]
-pub unsafe extern "C" fn ddog_prof_DynamicProfile_intern_string(
-    profile: *mut DynamicProfile,
-    s: CharSlice,
-) -> Result<DynamicStringIndex> {
-    wrap_with_ffi_result!({
-        let profile = dynamic_profile_ptr_to_inner(profile)?;
-        let s = str::from_utf8(s.try_as_bytes()?)?;
-        Ok::<DynamicStringIndex, anyhow::Error>(profile.intern_string(s)?.into())
-    })
-}
-
-#[must_use]
-#[no_mangle]
-#[named]
-pub unsafe extern "C" fn ddog_prof_DynamicProfile_intern_function(
-    profile: *mut DynamicProfile,
-    name: DynamicStringIndex,
-    filename: DynamicStringIndex,
-) -> Result<DynamicFunctionIndex> {
-    wrap_with_ffi_result!({
-        let profile = dynamic_profile_ptr_to_inner(profile)?;
-        Ok::<DynamicFunctionIndex, anyhow::Error>(
-            profile
-                .intern_function(name.into(), filename.into())?
-                .into(),
-        )
-    })
 }
 
 #[must_use]
@@ -489,24 +504,70 @@ mod tests {
     fn ffi_roundtrip_serializes_dynamic_profile() -> std::result::Result<(), Error> {
         unsafe {
             let sample_type = SampleType::WallTime;
-            let mut profile = std::result::Result::from(ddog_prof_DynamicProfile_new(
+            let mut dict = ArcHandle::<InnerDynamicProfilesDictionary>::default();
+            std::result::Result::<(), _>::from(
+                crate::profiles::dynamic_profiles_dictionary::ddog_prof_DynamicProfilesDictionary_new(
+                    &mut dict,
+                ),
+            )
+            .unwrap();
+            let dict_ref = dict.as_inner().ok();
+
+            let mut function_name = DynamicStringIndex::default();
+            std::result::Result::<(), _>::from(
+                crate::profiles::dynamic_profiles_dictionary::ddog_prof_DynamicProfilesDictionary_insert_str(
+                    &mut function_name,
+                    dict_ref,
+                    CharSlice::from("ruby_func"),
+                    crate::profiles::utf8::Utf8Option::Validate,
+                ),
+            )
+            .unwrap();
+            let mut filename = DynamicStringIndex::default();
+            std::result::Result::<(), _>::from(
+                crate::profiles::dynamic_profiles_dictionary::ddog_prof_DynamicProfilesDictionary_insert_str(
+                    &mut filename,
+                    dict_ref,
+                    CharSlice::from("file.rb"),
+                    crate::profiles::utf8::Utf8Option::Validate,
+                ),
+            )
+            .unwrap();
+            let mut label_key = DynamicStringIndex::default();
+            std::result::Result::<(), _>::from(
+                crate::profiles::dynamic_profiles_dictionary::ddog_prof_DynamicProfilesDictionary_insert_str(
+                    &mut label_key,
+                    dict_ref,
+                    CharSlice::from("thread id"),
+                    crate::profiles::utf8::Utf8Option::Validate,
+                ),
+            )
+            .unwrap();
+            let mut function = DynamicFunctionIndex::default();
+            let ffi_function = DynamicFunction {
+                name: function_name,
+                filename,
+            };
+            std::result::Result::<(), _>::from(
+                crate::profiles::dynamic_profiles_dictionary::ddog_prof_DynamicProfilesDictionary_insert_function(
+                    &mut function,
+                    dict_ref,
+                    &ffi_function,
+                ),
+            )
+            .unwrap();
+
+            let mut profile = DynamicProfile {
+                inner: std::ptr::null_mut(),
+            };
+            std::result::Result::<(), _>::from(ddog_prof_DynamicProfile_with_dictionary(
+                &mut profile,
+                &dict,
                 Slice::from_raw_parts(&sample_type, 1),
                 None,
                 None,
-            ))?;
-
-            let function_name =
-                ddog_prof_DynamicProfile_intern_string(&mut profile, CharSlice::from("ruby_func"))
-                    .unwrap();
-            let filename =
-                ddog_prof_DynamicProfile_intern_string(&mut profile, CharSlice::from("file.rb"))
-                    .unwrap();
-            let function =
-                ddog_prof_DynamicProfile_intern_function(&mut profile, function_name, filename)
-                    .unwrap();
-            let label_key =
-                ddog_prof_DynamicProfile_intern_string(&mut profile, CharSlice::from("thread id"))
-                    .unwrap();
+            ))
+            .unwrap();
 
             let locations = [DynamicLocation { function, line: 27 }];
             let labels = [DynamicLabel {
@@ -551,6 +612,9 @@ mod tests {
 
             ddog_prof_EncodedProfile_drop(&mut encoded);
             ddog_prof_DynamicProfile_drop(&mut profile);
+            crate::profiles::dynamic_profiles_dictionary::ddog_prof_DynamicProfilesDictionary_drop(
+                &mut dict,
+            );
             Ok(())
         }
     }

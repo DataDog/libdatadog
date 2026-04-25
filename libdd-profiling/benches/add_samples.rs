@@ -8,7 +8,11 @@ use libdd_profiling::profiles::datatypes::{Function, FunctionId2, MappingId2, St
 use libdd_profiling::{self as profiling, api, api2};
 
 #[cfg(feature = "dynamic_profile")]
-use libdd_profiling::dynamic::{DynamicLabel, DynamicLocation, DynamicProfile, DynamicSample};
+use libdd_profiling::dynamic::{
+    DynamicLabel, DynamicLocation, DynamicProfile, DynamicProfilesDictionary, DynamicSample,
+};
+#[cfg(feature = "dynamic_profile")]
+use libdd_profiling::profiles::collections::Arc as ProfilesArc;
 
 fn make_sample_types() -> Vec<api::SampleType> {
     vec![api::SampleType::CpuSamples]
@@ -64,6 +68,12 @@ fn make_stack_dynamic(frames: &[DynamicFrame]) -> (Vec<DynamicLocation>, Vec<i64
 
     let values = vec![1i64];
     (locations, values)
+}
+
+#[cfg(feature = "dynamic_profile")]
+fn new_dynamic_profile(sample_types: &[api::SampleType]) -> DynamicProfile {
+    let dictionary = ProfilesArc::try_new(DynamicProfilesDictionary::try_new().unwrap()).unwrap();
+    DynamicProfile::try_new_with_dictionary(sample_types, None, None, dictionary).unwrap()
 }
 
 fn make_timestamped_profile(
@@ -260,7 +270,7 @@ pub fn bench_add_sample_vs_add2(c: &mut Criterion) {
         |b| {
             b.iter_batched(
                 || {
-                    let mut profile = DynamicProfile::try_new(&sample_types, None, None).unwrap();
+                    let profile = new_dynamic_profile(&sample_types);
                     let thread_id_key = profile.intern_string("thread id").unwrap();
                     let thread_name_key = profile.intern_string("thread name").unwrap();
                     let frames_dynamic = frames.map(|f| {
@@ -348,7 +358,7 @@ pub fn bench_add_sample_vs_add2(c: &mut Criterion) {
     c.bench_function(
         "dynamic_profile_add_sample_by_locations_frames_x1000_steady_state",
         |b| {
-            let mut profile = DynamicProfile::try_new(&sample_types, None, None).unwrap();
+            let mut profile = new_dynamic_profile(&sample_types);
             let thread_id_key = profile.intern_string("thread id").unwrap();
             let thread_name_key = profile.intern_string("thread name").unwrap();
             let frames_dynamic = frames.map(|f| {
