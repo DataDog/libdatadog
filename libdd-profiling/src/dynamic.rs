@@ -589,14 +589,16 @@ impl DynamicDictionarySegment {
         unsafe { self.control.as_ref() }
     }
 
-    unsafe fn string_table_mut(
-        &self,
-    ) -> &mut HashTable<PackedStringEntry, DynamicMappedBumpAllocator> {
-        unsafe { &mut *(*self.control.as_ptr()).string_table.as_mut_ptr() }
+    unsafe fn string_table_ptr(
+        control: NonNull<DynamicDictionaryControl>,
+    ) -> *mut HashTable<PackedStringEntry, DynamicMappedBumpAllocator> {
+        unsafe { (*control.as_ptr()).string_table.as_mut_ptr() }
     }
 
-    unsafe fn function_table_mut(&self) -> &mut HashTable<u64, DynamicMappedBumpAllocator> {
-        unsafe { &mut *(*self.control.as_ptr()).function_table.as_mut_ptr() }
+    unsafe fn function_table_ptr(
+        control: NonNull<DynamicDictionaryControl>,
+    ) -> *mut HashTable<u64, DynamicMappedBumpAllocator> {
+        unsafe { (*control.as_ptr()).function_table.as_mut_ptr() }
     }
 
     fn initialize_tables(
@@ -724,7 +726,7 @@ impl DynamicDictionarySegment {
 
         let hash = hash_builder.hash_one(s);
         let _guard = RawMutexGuard::lock(&self.control().string_mutex);
-        let table = unsafe { self.string_table_mut() };
+        let table = unsafe { &mut *Self::string_table_ptr(self.control) };
         if let Some(found) = table.find(hash, |entry| self.entry_matches(*entry, s)) {
             return Ok(DynamicStringIndex {
                 value: found.index(),
@@ -760,7 +762,7 @@ impl DynamicDictionarySegment {
         let key = function_lookup_key(name.value, filename.value);
         let hash = hash_builder.hash_one(key);
         let _guard = RawMutexGuard::lock(&self.control().function_mutex);
-        let table = unsafe { self.function_table_mut() };
+        let table = unsafe { &mut *Self::function_table_ptr(self.control) };
         if let Some(found) = table.find(hash, |word| function_lookup_key_from_packed(*word) == key)
         {
             return Ok(DynamicFunctionIndex {
@@ -932,10 +934,18 @@ impl DynamicProfilesDictionary {
             .try_insert_function(&self.hasher, function.name, function.filename)
     }
 
+    /// # Safety
+    ///
+    /// The caller must ensure `id` is valid for this dictionary and that the
+    /// returned string is not used after the dictionary is dropped.
     pub unsafe fn get_str(&self, id: DynamicStringIndex) -> &str {
         unsafe { self.segment.get_string_unchecked(id) }
     }
 
+    /// # Safety
+    ///
+    /// The caller must ensure `id` is valid for this dictionary and that the
+    /// dictionary remains alive for the duration of the call.
     pub unsafe fn get_func(&self, id: DynamicFunctionIndex) -> DynamicFunction {
         self.segment.get_function(id).unwrap_or_default()
     }
@@ -1082,10 +1092,11 @@ impl std::hash::Hash for StoredStackTrace {
     }
 }
 
-fn try_allocate_arena_slice<'a, T: Copy>(
-    arena: &'a ChainAllocator<VirtualAllocator>,
+#[allow(clippy::mut_from_ref)]
+fn try_allocate_arena_slice<T: Copy>(
+    arena: &ChainAllocator<VirtualAllocator>,
     len: usize,
-) -> Result<&'a mut [T], ()> {
+) -> Result<&mut [T], ()> {
     if len == 0 {
         return Ok(&mut []);
     }
@@ -1372,8 +1383,7 @@ impl DynamicLabelSetTable {
         let mut cache = FxIndexMap::default();
         cache.reserve(28);
         cache.insert(StoredLabelSlice(&[]), 0);
-        let mut entries: Vec<&'static [StoredLabel]> = Vec::new();
-        entries.reserve(28);
+        let mut entries: Vec<&'static [StoredLabel]> = Vec::with_capacity(28);
         entries.push(&[] as &'static [StoredLabel]);
         Self {
             arena,
@@ -1908,10 +1918,10 @@ impl DynamicProfile {
         }
 
         for label in labels {
-            if label.key == self.well_known.local_root_span_id {
-                if !label.str.is_empty() || label.num == 0 {
-                    return Err(DynamicProfileError::InvalidLabelValue);
-                }
+            if label.key == self.well_known.local_root_span_id
+                && (!label.str.is_empty() || label.num == 0)
+            {
+                return Err(DynamicProfileError::InvalidLabelValue);
             }
 
             if label.key == self.well_known.end_timestamp_ns {
