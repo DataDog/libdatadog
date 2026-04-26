@@ -1,60 +1,21 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use super::datatypes::{
-    ddog_prof_EncodedProfile_drop, Period, ProfileResult, SampleType, SerializeResult,
-};
+use super::datatypes::{Period, ProfileResult, SampleType, SerializeResult};
 use crate::arc_handle::ArcHandle;
 use anyhow::Context;
 use function_name::named;
 use libdd_common_ffi::slice::{AsBytes, CharSlice, Slice};
-use libdd_common_ffi::{wrap_with_ffi_result, Error, Result, Timespec};
+use libdd_common_ffi::{wrap_with_ffi_result, Handle, Result, Timespec, ToInner};
 use libdd_profiling::dynamic::{
     DynamicFunction as InnerDynamicFunction, DynamicFunctionIndex as InnerDynamicFunctionIndex,
-    DynamicLabel as InnerDynamicLabel, DynamicLocation as InnerDynamicLocation,
-    DynamicProfile as InnerDynamicProfile,
-    DynamicProfilesDictionary as InnerDynamicProfilesDictionary,
-    DynamicSample as InnerDynamicSample, DynamicStackTraceIndex as InnerDynamicStackTraceIndex,
+    DynamicLabel as InnerDynamicLabel, DynamicLocation as InnerDynamicLocation, DynamicProfile,
+    DynamicProfilesDictionary, DynamicSample as InnerDynamicSample,
+    DynamicStackTraceIndex as InnerDynamicStackTraceIndex,
     DynamicStringIndex as InnerDynamicStringIndex,
 };
 use std::str;
 use std::time::Duration;
-
-/// Represents a dynamic profile. Do not access its member directly.
-#[repr(C)]
-pub struct DynamicProfile {
-    inner: *mut InnerDynamicProfile,
-}
-
-impl DynamicProfile {
-    fn new(profile: InnerDynamicProfile) -> Self {
-        Self {
-            inner: Box::into_raw(Box::new(profile)),
-        }
-    }
-
-    fn take(&mut self) -> Option<Box<InnerDynamicProfile>> {
-        let raw = std::mem::replace(&mut self.inner, std::ptr::null_mut());
-        if raw.is_null() {
-            None
-        } else {
-            Some(unsafe { Box::from_raw(raw) })
-        }
-    }
-}
-
-impl Drop for DynamicProfile {
-    fn drop(&mut self) {
-        drop(self.take())
-    }
-}
-
-#[allow(dead_code)]
-#[repr(C)]
-pub enum DynamicProfileNewResult {
-    Ok(DynamicProfile),
-    Err(Error),
-}
 
 #[repr(C)]
 #[derive(Copy, Clone, Debug, Default, Eq, PartialEq, Hash, Ord, PartialOrd)]
@@ -166,28 +127,13 @@ pub struct DynamicSample<'a> {
     pub labels: Slice<'a, DynamicLabel<'a>>,
 }
 
-#[cfg(test)]
-impl From<DynamicProfileNewResult> for std::result::Result<DynamicProfile, Error> {
-    fn from(value: DynamicProfileNewResult) -> Self {
-        match value {
-            DynamicProfileNewResult::Ok(profile) => Ok(profile),
-            DynamicProfileNewResult::Err(err) => Err(err),
-        }
-    }
-}
-
 unsafe fn dynamic_profile_ptr_to_inner<'a>(
-    profile_ptr: *mut DynamicProfile,
-) -> anyhow::Result<&'a mut InnerDynamicProfile> {
-    match profile_ptr.as_mut() {
-        None => anyhow::bail!("dynamic profile pointer was null"),
-        Some(inner_ptr) => match inner_ptr.inner.as_mut() {
-            Some(profile) => Ok(profile),
-            None => {
-                anyhow::bail!("dynamic profile inner pointer was null (indicates use-after-free)")
-            }
-        },
-    }
+    profile_ptr: *mut Handle<DynamicProfile>,
+) -> anyhow::Result<&'a mut DynamicProfile> {
+    profile_ptr
+        .as_mut()
+        .context("dynamic profile handle pointer was null")?
+        .to_inner_mut()
 }
 
 fn ffi_labels_to_inner<'a>(
@@ -220,8 +166,8 @@ fn ffi_sample_to_parts<'a>(
 #[must_use]
 #[no_mangle]
 pub unsafe extern "C" fn ddog_prof_DynamicProfile_with_dictionary(
-    out: *mut DynamicProfile,
-    dict: &ArcHandle<InnerDynamicProfilesDictionary>,
+    out: *mut Handle<DynamicProfile>,
+    dict: &ArcHandle<DynamicProfilesDictionary>,
     sample_types: Slice<SampleType>,
     period: Option<&Period>,
     start_time: Option<&Timespec>,
@@ -237,33 +183,30 @@ pub unsafe extern "C" fn ddog_prof_DynamicProfile_with_dictionary(
 }
 
 unsafe fn dynamic_profile_with_dictionary(
-    dict: &ArcHandle<InnerDynamicProfilesDictionary>,
+    dict: &ArcHandle<DynamicProfilesDictionary>,
     sample_types: Slice<SampleType>,
     period: Option<&Period>,
     start_time: Option<&Timespec>,
-) -> std::result::Result<DynamicProfile, crate::ProfileError> {
+) -> std::result::Result<Handle<DynamicProfile>, crate::ProfileError> {
     let sample_types = sample_types.try_as_slice()?;
     let period = period.copied();
     let start_time = start_time.map(Into::into);
     let dict = dict.try_clone_into_arc()?;
-    let profile =
-        InnerDynamicProfile::try_new_with_dictionary(sample_types, period, start_time, dict)
-            .map_err(crate::ProfileError::from_display)?;
-    Ok(DynamicProfile::new(profile))
+    let profile = DynamicProfile::try_new_with_dictionary(sample_types, period, start_time, dict)
+        .map_err(crate::ProfileError::from_display)?;
+    Ok(Handle::from(profile))
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ddog_prof_DynamicProfile_drop(profile: *mut DynamicProfile) {
-    if !profile.is_null() {
-        drop((*profile).take())
-    }
+pub unsafe extern "C" fn ddog_prof_DynamicProfile_drop(mut profile: *mut Handle<DynamicProfile>) {
+    drop(profile.take())
 }
 
 #[must_use]
 #[no_mangle]
 #[named]
 pub unsafe extern "C" fn ddog_prof_DynamicProfile_intern_stacktrace(
-    profile: *mut DynamicProfile,
+    profile: *mut Handle<DynamicProfile>,
     locations: Slice<DynamicLocation>,
 ) -> Result<DynamicStackTraceIndex> {
     wrap_with_ffi_result!({
@@ -278,7 +221,7 @@ pub unsafe extern "C" fn ddog_prof_DynamicProfile_intern_stacktrace(
 #[must_use]
 #[no_mangle]
 pub unsafe extern "C" fn ddog_prof_DynamicProfile_add_sample_by_stacktrace(
-    profile: *mut DynamicProfile,
+    profile: *mut Handle<DynamicProfile>,
     stacktrace: DynamicStackTraceIndex,
     sample: DynamicSample,
     timestamp_ns: i64,
@@ -300,7 +243,7 @@ pub unsafe extern "C" fn ddog_prof_DynamicProfile_add_sample_by_stacktrace(
 #[must_use]
 #[no_mangle]
 pub unsafe extern "C" fn ddog_prof_DynamicProfile_add_sample_by_locations(
-    profile: *mut DynamicProfile,
+    profile: *mut Handle<DynamicProfile>,
     locations: Slice<DynamicLocation>,
     sample: DynamicSample,
     timestamp_ns: i64,
@@ -323,7 +266,7 @@ pub unsafe extern "C" fn ddog_prof_DynamicProfile_add_sample_by_locations(
 #[must_use]
 #[no_mangle]
 pub unsafe extern "C" fn ddog_prof_DynamicProfile_set_endpoint(
-    profile: *mut DynamicProfile,
+    profile: *mut Handle<DynamicProfile>,
     local_root_span_id: u64,
     endpoint: CharSlice,
 ) -> ProfileResult {
@@ -340,7 +283,7 @@ pub unsafe extern "C" fn ddog_prof_DynamicProfile_set_endpoint(
 #[must_use]
 #[no_mangle]
 pub unsafe extern "C" fn ddog_prof_DynamicProfile_add_endpoint_count(
-    profile: *mut DynamicProfile,
+    profile: *mut Handle<DynamicProfile>,
     endpoint: CharSlice,
     value: i64,
 ) -> ProfileResult {
@@ -357,7 +300,7 @@ pub unsafe extern "C" fn ddog_prof_DynamicProfile_add_endpoint_count(
 #[must_use]
 #[no_mangle]
 pub unsafe extern "C" fn ddog_prof_DynamicProfile_add_upscaling_rule_poisson(
-    profile: *mut DynamicProfile,
+    profile: *mut Handle<DynamicProfile>,
     offset_values: Slice<usize>,
     label_key: DynamicStringIndex,
     label_value: CharSlice,
@@ -385,7 +328,7 @@ pub unsafe extern "C" fn ddog_prof_DynamicProfile_add_upscaling_rule_poisson(
 #[must_use]
 #[no_mangle]
 pub unsafe extern "C" fn ddog_prof_DynamicProfile_add_upscaling_rule_poisson_non_sample_type_count(
-    profile: *mut DynamicProfile,
+    profile: *mut Handle<DynamicProfile>,
     offset_values: Slice<usize>,
     label_key: DynamicStringIndex,
     label_value: CharSlice,
@@ -413,7 +356,7 @@ pub unsafe extern "C" fn ddog_prof_DynamicProfile_add_upscaling_rule_poisson_non
 #[must_use]
 #[no_mangle]
 pub unsafe extern "C" fn ddog_prof_DynamicProfile_add_upscaling_rule_proportional(
-    profile: *mut DynamicProfile,
+    profile: *mut Handle<DynamicProfile>,
     offset_values: Slice<usize>,
     label_key: DynamicStringIndex,
     label_value: CharSlice,
@@ -437,7 +380,7 @@ pub unsafe extern "C" fn ddog_prof_DynamicProfile_add_upscaling_rule_proportiona
 #[must_use]
 #[no_mangle]
 pub unsafe extern "C" fn ddog_prof_DynamicProfile_serialize_and_clear_period_local_data(
-    profile: *mut DynamicProfile,
+    profile: *mut Handle<DynamicProfile>,
     end_time: Option<&Timespec>,
     duration_nanos: i64,
 ) -> SerializeResult {
@@ -460,7 +403,7 @@ pub unsafe extern "C" fn ddog_prof_DynamicProfile_serialize_and_clear_period_loc
 #[must_use]
 #[no_mangle]
 pub unsafe extern "C" fn ddog_prof_DynamicProfile_clear_period_local_data(
-    profile: *mut DynamicProfile,
+    profile: *mut Handle<DynamicProfile>,
 ) -> ProfileResult {
     (|| {
         dynamic_profile_ptr_to_inner(profile)?.clear_period_local_data()?;
@@ -473,7 +416,7 @@ pub unsafe extern "C" fn ddog_prof_DynamicProfile_clear_period_local_data(
 #[must_use]
 #[no_mangle]
 pub unsafe extern "C" fn ddog_prof_DynamicProfile_clear_all_data(
-    profile: *mut DynamicProfile,
+    profile: *mut Handle<DynamicProfile>,
 ) -> ProfileResult {
     (|| {
         dynamic_profile_ptr_to_inner(profile)?.clear_all_data()?;
@@ -485,7 +428,9 @@ pub unsafe extern "C" fn ddog_prof_DynamicProfile_clear_all_data(
 
 #[cfg(test)]
 mod tests {
+    use super::super::datatypes::ddog_prof_EncodedProfile_drop;
     use super::*;
+    use libdd_common_ffi::Error;
     use libdd_common_ffi::ToInner;
     use libdd_profiling_protobuf::prost_impls::Message;
 
@@ -504,7 +449,7 @@ mod tests {
     fn ffi_roundtrip_serializes_dynamic_profile() -> std::result::Result<(), Error> {
         unsafe {
             let sample_type = SampleType::WallTime;
-            let mut dict = ArcHandle::<InnerDynamicProfilesDictionary>::default();
+            let mut dict = ArcHandle::<DynamicProfilesDictionary>::default();
             std::result::Result::<(), _>::from(
                 crate::profiles::dynamic_profiles_dictionary::ddog_prof_DynamicProfilesDictionary_new(
                     &mut dict,
@@ -557,9 +502,7 @@ mod tests {
             )
             .unwrap();
 
-            let mut profile = DynamicProfile {
-                inner: std::ptr::null_mut(),
-            };
+            let mut profile = Handle::<DynamicProfile>::empty();
             std::result::Result::<(), _>::from(ddog_prof_DynamicProfile_with_dictionary(
                 &mut profile,
                 &dict,
