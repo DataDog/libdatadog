@@ -22,8 +22,8 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 thiserror = "2"
 tokio = { version = "1.23", features = ["rt"] }
-libdd-http-client = { path = "../libdd-http-client" }
-libdd-common = { version = "4.0.0", path = "../libdd-common", default-features = false }
+libdd-http-client = { version = "32.0", path = "../libdd-http-client" }
+libdd-common = { version = "4.0", path = "../libdd-common", default-features = false }
 
 [dev-dependencies]
 httpmock = "0.8.0-alpha.1"
