@@ -17,10 +17,10 @@ use std::ffi::CStr;
 const NULL_DYNAMIC_PROFILES_DICTIONARY: &CStr =
     c"passed a null pointer for a DynamicProfilesDictionary";
 
-fn convert_utf8<'a>(
-    byte_slice: CharSlice<'a>,
+fn convert_utf8(
+    byte_slice: CharSlice<'_>,
     utf8_option: Utf8Option,
-) -> Result<Cow<'a, str>, ProfileError> {
+) -> Result<Cow<'_, str>, ProfileError> {
     unsafe { utf8_option.try_as_bytes_convert(byte_slice) }.map_err(|err| match err {
         Utf8ConversionError::OutOfMemory(err) => ProfileError::from(err),
         Utf8ConversionError::SliceConversionError(err) => ProfileError::from(err.as_ffi_str()),

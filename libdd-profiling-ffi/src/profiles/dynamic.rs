@@ -155,9 +155,9 @@ fn ffi_locations_to_inner(locations: &[DynamicLocation]) -> Vec<InnerDynamicLoca
     locations.iter().copied().map(Into::into).collect()
 }
 
-fn ffi_sample_to_parts<'a>(
-    sample: DynamicSample<'a>,
-) -> anyhow::Result<(&'a [i64], Vec<InnerDynamicLabel<'a>>)> {
+fn ffi_sample_to_parts(
+    sample: DynamicSample<'_>,
+) -> anyhow::Result<(&[i64], Vec<InnerDynamicLabel<'_>>)> {
     let labels = ffi_labels_to_inner(sample.labels.try_as_slice()?)?;
     let values = sample.values.try_as_slice()?;
     Ok((values, labels))
