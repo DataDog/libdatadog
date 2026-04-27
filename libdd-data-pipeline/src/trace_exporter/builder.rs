@@ -328,7 +328,7 @@ impl TraceExporterBuilder {
 
             #[cfg(feature = "telemetry")]
             let (telemetry_client, telemetry_handle) = {
-                let sessions = self.telemetry_instrumentation_sessions.clone();
+                let sessions = self.telemetry_instrumentation_sessions;
                 let telemetry = self.telemetry.map(|telemetry_config| {
                     let mut builder = TelemetryClientBuilder::default()
                         .set_language(&self.language)
