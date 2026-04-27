@@ -14,7 +14,7 @@ repository = "https://github.com/DataDog/libdatadog/tree/main/libdd-tracer-flare
 [dependencies]
 anyhow = "1.0"
 datadog-remote-config = { path = "../datadog-remote-config", default-features = false }
-libdd-common = { version = "3.0.2", path = "../libdd-common" }
+libdd-common = { version = "4.0.0", path = "../libdd-common" }
 libdd-trace-utils = { version = "3.0.1", path = "../libdd-trace-utils" }
 http = "1"
 bytes = "1.11.1"
