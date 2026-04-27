@@ -651,6 +651,9 @@ impl SidecarInterface for ConnectionSidecarHandler {
             cfg.telemetry_heartbeat_interval = config.telemetry_heartbeat_interval;
             cfg.telemetry_extended_heartbeat_interval =
                 config.telemetry_extended_heartbeat_interval;
+            cfg.session_id = Some(session_id.clone());
+            cfg.parent_session_id = config.parent_session_id;
+            cfg.root_session_id = config.root_session_id;
         });
         session.modify_trace_config(|cfg| {
             let endpoint = get_product_endpoint(
