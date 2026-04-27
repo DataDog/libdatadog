@@ -1,5 +1,8 @@
 name: Test
-on: [push]
+on:
+  push:
+  schedule:
+    - cron: '0 6 * * *'
 env:
   CARGO_TERM_COLOR: always
   RUST_VERSION: 1.84.1
