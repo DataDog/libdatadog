@@ -1469,6 +1469,9 @@ mod tests {
     /// Keep this as an invariant (walk `delays`) rather than an enumeration of specific
     /// variants so that adding a new periodic `LifecycleAction` can't silently regress.
     #[tokio::test]
+    // dispatch_action(Start) issues an `app-started` HTTP request via the reqwest
+    // client, which miri cannot run.
+    #[cfg_attr(miri, ignore)]
     async fn full_flavor_start_schedules_every_periodic_action() {
         let mut worker = build_test_worker_with_flavor(TelemetryWorkerFlavor::Full);
 
@@ -1499,6 +1502,8 @@ mod tests {
     /// future change starts emitting lifecycle telemetry from the metrics-only flavor,
     /// this test will flag it so the decision is explicit.
     #[tokio::test]
+    // build_worker constructs an http client via reqwest, which miri cannot run.
+    #[cfg_attr(miri, ignore)]
     async fn metrics_logs_flavor_start_does_not_schedule_extended_heartbeat() {
         let mut worker = build_test_worker_with_flavor(TelemetryWorkerFlavor::MetricsLogs);
 
