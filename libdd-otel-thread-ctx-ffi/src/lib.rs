@@ -11,21 +11,20 @@ pub use linux::*;
 #[cfg(target_os = "linux")]
 mod linux {
     use libdd_otel_thread_ctx::linux::{ThreadContext, ThreadContextRecord};
+    use std::ptr::NonNull;
 
     /// Maximum size in bytes of the `attrs_data` field of [`ddog_ThreadContextRecord`].
     // This is ugly, but I couldn't get cbindgen to generate the corresponding #define in any other
-    // way. It doesn't like re-exports (pub use), and doing someting like `pub const
-    // MAX_ATTRS_DATA_SIZE = _MAX` (where `_MAX` has been imported properly), it generates something
-    // dumb such as `#define ddog_MAX_ATTRS_DATA_SIZE = _MAX` instead of propagating the actual
-    // value.
-    // This solution at leat marginally better than prepending a hardcoded define manually in
+    // way. It doesn't like re-exports (pub use), and doing `pub const MAX_ATTRS_DATA_SIZE = _MAX`
+    // (where `_MAX` has been imported properly) generates something dumb such as `#define
+    // ddog_MAX_ATTRS_DATA_SIZE = _MAX` instead of propagating the actual value.
+    // This solution is at least marginally better than prepending a hardcoded define manually in
     // build.rs, as it will at least keep the value in sync.
     pub const MAX_ATTRS_DATA_SIZE: usize = 612;
     const _: () = assert!(
         MAX_ATTRS_DATA_SIZE == libdd_otel_thread_ctx::linux::MAX_ATTRS_DATA_SIZE,
         "MAX_ATTRS_DATA_SIZE out of sync with libdd-otel-thread-ctx"
     );
-    use std::ptr::NonNull;
 
     /// Allocate and initialise a new thread context.
     ///
