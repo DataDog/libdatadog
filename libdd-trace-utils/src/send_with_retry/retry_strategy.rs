@@ -136,10 +136,10 @@ mod tests {
             backoff_type: RetryBackoffType::Constant,
             jitter: None,
         };
-        let sleeper = NativeSleepCapability;
+        let capabilities = NativeSleepCapability;
 
         let start = Instant::now();
-        retry_strategy.delay(1, &sleeper).await;
+        retry_strategy.delay(1, &capabilities).await;
         let elapsed = start.elapsed();
 
         assert!(
@@ -152,7 +152,7 @@ mod tests {
         );
 
         let start = Instant::now();
-        retry_strategy.delay(2, &sleeper).await;
+        retry_strategy.delay(2, &capabilities).await;
         let elapsed = start.elapsed();
 
         assert!(
@@ -174,10 +174,10 @@ mod tests {
             backoff_type: RetryBackoffType::Linear,
             jitter: None,
         };
-        let sleeper = NativeSleepCapability;
+        let capabilities = NativeSleepCapability;
 
         let start = Instant::now();
-        retry_strategy.delay(1, &sleeper).await;
+        retry_strategy.delay(1, &capabilities).await;
         let elapsed = start.elapsed();
 
         assert!(
@@ -190,7 +190,7 @@ mod tests {
         );
 
         let start = Instant::now();
-        retry_strategy.delay(3, &sleeper).await;
+        retry_strategy.delay(3, &capabilities).await;
         let elapsed = start.elapsed();
 
         // For the Linear strategy, the delay for the 3rd attempt should be delay_ms + (delay_ms *
@@ -215,10 +215,10 @@ mod tests {
             backoff_type: RetryBackoffType::Exponential,
             jitter: None,
         };
-        let sleeper = NativeSleepCapability;
+        let capabilities = NativeSleepCapability;
 
         let start = Instant::now();
-        retry_strategy.delay(1, &sleeper).await;
+        retry_strategy.delay(1, &capabilities).await;
         let elapsed = start.elapsed();
 
         assert!(
@@ -231,7 +231,7 @@ mod tests {
         );
 
         let start = Instant::now();
-        retry_strategy.delay(3, &sleeper).await;
+        retry_strategy.delay(3, &capabilities).await;
         let elapsed = start.elapsed();
         // For the Exponential strategy, the delay for the 3rd attempt should be delay_ms * 2^(3-1)
         // = delay_ms * 4.
@@ -254,10 +254,10 @@ mod tests {
             backoff_type: RetryBackoffType::Constant,
             jitter: Some(Duration::from_millis(50)),
         };
-        let sleeper = NativeSleepCapability;
+        let capabilities = NativeSleepCapability;
 
         let start = Instant::now();
-        retry_strategy.delay(1, &sleeper).await;
+        retry_strategy.delay(1, &capabilities).await;
         let elapsed = start.elapsed();
 
         // The delay should be between delay_ms and delay_ms + jitter
