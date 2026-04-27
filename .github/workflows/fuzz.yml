@@ -1,14 +1,50 @@
 name: Fuzz test
 on:
+  pull_request:
   push:
+    branches:
+      - main
+      - mq-working-branch-*
   schedule:
     - cron: '0 6 * * *'
+
 jobs:
+  setup:
+    runs-on: ubuntu-latest
+    outputs:
+      fuzz-dirs: ${{ steps.set-dirs.outputs.fuzz-dirs }}
+      fuzz-dirs-count: ${{ steps.set-dirs.outputs.fuzz-dirs-count }}
+    steps:
+    - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # 4.2.2
+      with:
+        fetch-depth: 0
+    - name: Get crates report
+      id: changed-crates
+      uses: ./.github/actions/crates-reporter
+    - name: Set fuzz directories
+      id: set-dirs
+      env:
+        CHANGED_CRATES_STATUS: ${{ steps.changed-crates.outputs.status }}
+        AFFECTED_CRATES: ${{ steps.changed-crates.outputs.affected_crates }}
+      run: |
+        ALL_FUZZ='["libdd-alloc", "libdd-profiling", "libdd-common-ffi", "libdd-trace-utils"]'
+        if [[ "$CHANGED_CRATES_STATUS" == "success" ]]; then
+          FILTERED=$(echo "$AFFECTED_CRATES" | jq --argjson affected "$ALL_FUZZ" '[.[] | select(IN($affected[]))]')
+          COUNT=$(echo "$FILTERED" | jq 'length')
+        else
+          FILTERED="$ALL_FUZZ"
+          COUNT=$(echo "$ALL_FUZZ" | jq 'length')
+        fi
+        echo "fuzz-dirs=$FILTERED" >> $GITHUB_OUTPUT
+        echo "fuzz-dirs-count=$COUNT" >> $GITHUB_OUTPUT
+
   run-fuzz:
+    needs: setup
+    if: needs.setup.outputs.fuzz-dirs-count != '0'
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        directory: [libdd-alloc, libdd-profiling, libdd-common-ffi, libdd-trace-utils]
+        directory: ${{ fromJson(needs.setup.outputs.fuzz-dirs) }}
     env:
       CARGO_TERM_COLOR: always
       CARGO_INCREMENTAL: 0
