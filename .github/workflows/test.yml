@@ -154,6 +154,17 @@ jobs:
           fi
         env:
           RUST_BACKTRACE: full
+      - name: "[${{ steps.rust-version.outputs.version}}] cargo nextest run --all-features"
+        shell: bash
+        run: |
+          if [[ -z "$PACKAGES" ]]; then
+            cargo nextest run --workspace --all-features --exclude builder --verbose -E '!test(tracing_integration_tests::)'
+          else
+            # shellcheck disable=SC2086
+            cargo nextest run $PACKAGES --all-features --verbose -E '!test(tracing_integration_tests::)'
+          fi
+        env:
+          RUST_BACKTRACE: full
       - name: "[${{ steps.rust-version.outputs.version}}] Tracing integration tests"
         if: runner.os == 'Linux'
         shell: bash
