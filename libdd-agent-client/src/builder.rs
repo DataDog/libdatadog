@@ -73,7 +73,7 @@ impl Default for AgentTransport {
 ///
 /// # Required fields
 ///
-/// - Transport: set via [`AgentClientBuilder::auto_detect`] (reads standard env vars and probes the
+/// - Transport: set via [`AgentClientBuilder::auto_config`] (reads standard env vars and probes the
 ///   local socket) or an explicit convenience method ([`AgentClientBuilder::http`],
 ///   [`AgentClientBuilder::unix_socket`], [`AgentClientBuilder::windows_named_pipe`],
 ///   [`AgentClientBuilder::transport`]).
@@ -129,24 +129,26 @@ impl AgentClientBuilder {
     /// Auto-configure transport and timeout from the environment.
     ///
     /// Transport priority:
-    /// 1. `DD_TRACE_AGENT_URL` — parsed as `http://host:port` or `unix:///path`.
-    /// 2. `DD_AGENT_HOST` / `DD_TRACE_AGENT_PORT` — explicit host and/or port.
-    /// 3. `/var/run/datadog/apm.socket` — Unix domain socket if the file exists.
-    /// 4. `localhost:8126` — HTTP fallback.
+    /// 1. `DD_TRACE_AGENT_URL`: parsed as `http://host:port` or `unix:///path` (Unix only).
+    /// 2. `DD_TRACE_PIPE_NAME`: Windows named pipe path (Windows only).
+    /// 3. `DD_AGENT_HOST` / `DD_TRACE_AGENT_PORT`: explicit host and/or port.
+    /// 4. `/var/run/datadog/apm.socket`: Unix domain socket if the file exists (Unix only).
+    /// 5. `localhost:8126`: HTTP fallback.
     ///
     /// Timeout is read from `DD_TRACE_AGENT_TIMEOUT_SECONDS` (seconds, float),
     /// defaulting to [`DEFAULT_TIMEOUT_MS`] when unset or unparseable.
-    #[cfg(unix)]
-    pub fn auto_detect(mut self) -> Self {
+    pub fn auto_config(mut self) -> Self {
         let transport = Self::transport_from_env().unwrap_or_else(|| {
-            let uds = PathBuf::from("/var/run/datadog/apm.socket");
-            if uds.try_exists().unwrap_or(false) {
-                AgentTransport::UnixSocket { path: uds }
-            } else {
-                AgentTransport::Http {
-                    host: "localhost".to_string(),
-                    port: 8126,
+            #[cfg(unix)]
+            {
+                let uds = PathBuf::from("/var/run/datadog/apm.socket");
+                if uds.try_exists().unwrap_or(false) {
+                    return AgentTransport::UnixSocket { path: uds };
                 }
+            }
+            AgentTransport::Http {
+                host: "localhost".to_string(),
+                port: 8126,
             }
         });
         self.transport = Some(transport);
@@ -162,14 +164,26 @@ impl AgentClientBuilder {
         self
     }
 
-    /// Read transport from env vars (`DD_TRACE_AGENT_URL`, then
-    /// `DD_AGENT_HOST`/`DD_TRACE_AGENT_PORT`). Returns `None` when none of the variables are
+    /// Read transport from env vars. Returns `None` when none of the recognized variables are
     /// set.
-    #[cfg(unix)]
+    ///
+    /// Checks, in order:
+    /// 1. `DD_TRACE_AGENT_URL` (`http://`, `https://`, and `unix://` on Unix).
+    /// 2. `DD_TRACE_PIPE_NAME` (Windows only — full named pipe path).
+    /// 3. `DD_AGENT_HOST` / `DD_TRACE_AGENT_PORT`.
     fn transport_from_env() -> Option<AgentTransport> {
         if let Ok(url) = env::var("DD_TRACE_AGENT_URL") {
             if let Some(t) = Self::parse_agent_url(&url) {
                 return Some(t);
+            }
+        }
+
+        #[cfg(windows)]
+        if let Ok(pipe_name) = env::var("DD_TRACE_PIPE_NAME") {
+            if !pipe_name.is_empty() {
+                return Some(AgentTransport::NamedPipe {
+                    path: OsString::from(pipe_name),
+                });
             }
         }
 
@@ -190,9 +204,9 @@ impl AgentClientBuilder {
 
     /// Parse a Datadog agent URL into an [`AgentTransport`].
     ///
-    /// Supported schemes: `http://`, `https://`, `unix://`.
-    #[cfg(unix)]
+    /// Supported schemes: `http://`, `https://`, and `unix://` (Unix only).
     fn parse_agent_url(url: &str) -> Option<AgentTransport> {
+        #[cfg(unix)]
         if let Some(after_scheme) = url.strip_prefix("unix://") {
             // unix:///abs/path  or  unix://localhost/abs/path
             let path = if after_scheme.starts_with('/') {
@@ -454,15 +468,23 @@ mod tests {
         assert!(result.is_ok());
     }
 
-    #[cfg(unix)]
-    #[test]
-    #[serial_test::serial]
-    fn auto_detect_uses_dd_trace_agent_url_http() {
-        env::set_var("DD_TRACE_AGENT_URL", "http://myhost:9000");
+    /// Clear all env vars that `auto_config` reads, so tests don't leak state.
+    fn clear_auto_config_env() {
+        env::remove_var("DD_TRACE_AGENT_URL");
         env::remove_var("DD_AGENT_HOST");
         env::remove_var("DD_TRACE_AGENT_PORT");
-        let b = AgentClientBuilder::new().auto_detect();
-        env::remove_var("DD_TRACE_AGENT_URL");
+        env::remove_var("DD_TRACE_AGENT_TIMEOUT_SECONDS");
+        #[cfg(windows)]
+        env::remove_var("DD_TRACE_PIPE_NAME");
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn auto_config_uses_dd_trace_agent_url_http() {
+        clear_auto_config_env();
+        env::set_var("DD_TRACE_AGENT_URL", "http://myhost:9000");
+        let b = AgentClientBuilder::new().auto_config();
+        clear_auto_config_env();
         assert!(matches!(
             b.transport,
             Some(AgentTransport::Http { ref host, port })
@@ -473,12 +495,11 @@ mod tests {
     #[cfg(unix)]
     #[test]
     #[serial_test::serial]
-    fn auto_detect_uses_dd_trace_agent_url_unix() {
+    fn auto_config_uses_dd_trace_agent_url_unix() {
+        clear_auto_config_env();
         env::set_var("DD_TRACE_AGENT_URL", "unix:///tmp/test.sock");
-        env::remove_var("DD_AGENT_HOST");
-        env::remove_var("DD_TRACE_AGENT_PORT");
-        let b = AgentClientBuilder::new().auto_detect();
-        env::remove_var("DD_TRACE_AGENT_URL");
+        let b = AgentClientBuilder::new().auto_config();
+        clear_auto_config_env();
         assert!(matches!(
             b.transport,
             Some(AgentTransport::UnixSocket { ref path })
@@ -486,16 +507,45 @@ mod tests {
         ));
     }
 
-    #[cfg(unix)]
+    #[cfg(windows)]
     #[test]
     #[serial_test::serial]
-    fn auto_detect_uses_dd_agent_host_and_port() {
-        env::remove_var("DD_TRACE_AGENT_URL");
+    fn auto_config_uses_dd_trace_pipe_name() {
+        clear_auto_config_env();
+        env::set_var("DD_TRACE_PIPE_NAME", r"\\.\pipe\dd-test-pipe");
+        let b = AgentClientBuilder::new().auto_config();
+        clear_auto_config_env();
+        assert!(matches!(
+            b.transport,
+            Some(AgentTransport::NamedPipe { ref path })
+                if path == r"\\.\pipe\dd-test-pipe"
+        ));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    #[serial_test::serial]
+    fn auto_config_dd_trace_agent_url_takes_priority_over_pipe_name() {
+        clear_auto_config_env();
+        env::set_var("DD_TRACE_AGENT_URL", "http://myhost:9000");
+        env::set_var("DD_TRACE_PIPE_NAME", r"\\.\pipe\dd-test-pipe");
+        let b = AgentClientBuilder::new().auto_config();
+        clear_auto_config_env();
+        assert!(matches!(
+            b.transport,
+            Some(AgentTransport::Http { ref host, port })
+                if host == "myhost" && port == 9000
+        ));
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn auto_config_uses_dd_agent_host_and_port() {
+        clear_auto_config_env();
         env::set_var("DD_AGENT_HOST", "remotehost");
         env::set_var("DD_TRACE_AGENT_PORT", "7777");
-        let b = AgentClientBuilder::new().auto_detect();
-        env::remove_var("DD_AGENT_HOST");
-        env::remove_var("DD_TRACE_AGENT_PORT");
+        let b = AgentClientBuilder::new().auto_config();
+        clear_auto_config_env();
         assert!(matches!(
             b.transport,
             Some(AgentTransport::Http { ref host, port })
@@ -503,28 +553,21 @@ mod tests {
         ));
     }
 
-    #[cfg(unix)]
     #[test]
     #[serial_test::serial]
-    fn auto_detect_reads_timeout_from_env() {
-        env::remove_var("DD_TRACE_AGENT_URL");
-        env::remove_var("DD_AGENT_HOST");
-        env::remove_var("DD_TRACE_AGENT_PORT");
+    fn auto_config_reads_timeout_from_env() {
+        clear_auto_config_env();
         env::set_var("DD_TRACE_AGENT_TIMEOUT_SECONDS", "5");
-        let b = AgentClientBuilder::new().auto_detect();
-        env::remove_var("DD_TRACE_AGENT_TIMEOUT_SECONDS");
+        let b = AgentClientBuilder::new().auto_config();
+        clear_auto_config_env();
         assert_eq!(b.timeout, Some(Duration::from_secs(5)));
     }
 
-    #[cfg(unix)]
     #[test]
     #[serial_test::serial]
-    fn auto_detect_uses_default_timeout_when_unset() {
-        env::remove_var("DD_TRACE_AGENT_URL");
-        env::remove_var("DD_AGENT_HOST");
-        env::remove_var("DD_TRACE_AGENT_PORT");
-        env::remove_var("DD_TRACE_AGENT_TIMEOUT_SECONDS");
-        let b = AgentClientBuilder::new().auto_detect();
+    fn auto_config_uses_default_timeout_when_unset() {
+        clear_auto_config_env();
+        let b = AgentClientBuilder::new().auto_config();
         assert_eq!(b.timeout, Some(Duration::from_millis(DEFAULT_TIMEOUT_MS)));
     }
 
