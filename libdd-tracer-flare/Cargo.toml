@@ -1,6 +1,6 @@
 [package]
 name = "libdd-tracer-flare"
-version = "1.0.0"
+version = "0.1.0"
 description = "Rust library for collecting and transmitting Datadog tracer diagnostic flares via remote configuration."
 rust-version.workspace = true
 edition.workspace = true
