@@ -90,7 +90,7 @@ pub struct AgentClientBuilder {
     timeout: Option<Duration>,
     language: Option<LanguageMetadata>,
     retry: Option<RetryConfig>,
-    keep_alive: bool,
+    allow_connection_pooling: bool,
     extra_headers: HashMap<String, String>,
 }
 
@@ -254,14 +254,20 @@ impl AgentClientBuilder {
         self
     }
 
-    /// Enable or disable HTTP keep-alive. Defaults to `false`.
+    /// Allow connection pooling. Defaults to `false`.
+    ///
+    /// Note that whether pooling is actually used depends on the HTTP backend of
+    /// [libdd_http_client], though both currently available backends (reqwest and hyper) support
+    /// pooling. This setting should be understood as: if set to `false`, no connection pooling will
+    /// happen. If set to `true`, connection pooling may happen, at the discretion of the HTTP
+    /// backend.
     ///
     /// The Datadog agent has a low keep-alive timeout that causes "pipe closed" errors on every
-    /// second connection when keep-alive is enabled. The default of `false` is correct for all
-    /// periodic-flush writers (traces, stats, data streams). Set to `true` only for
-    /// high-frequency continuous senders (e.g. a streaming profiling exporter).
-    pub fn use_keep_alive(mut self, enabled: bool) -> Self {
-        self.keep_alive = enabled;
+    /// second connection. The default of `false` is correct for all periodic-flush writers (traces,
+    /// stats, data streams). Set to `true` only for high-frequency continuous senders (e.g. a
+    /// streaming profiling exporter).
+    pub fn allow_connection_pooling(mut self, enabled: bool) -> Self {
+        self.allow_connection_pooling = enabled;
         self
     }
 
@@ -421,7 +427,7 @@ mod tests {
         let b = AgentClientBuilder::new();
         assert!(b.transport.is_none());
         assert!(b.language.is_none());
-        assert!(!b.keep_alive);
+        assert!(!b.allow_connection_pooling);
     }
 
     #[test]
