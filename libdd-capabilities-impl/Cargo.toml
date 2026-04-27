@@ -3,7 +3,7 @@
 
 [package]
 name = "libdd-capabilities-impl"
-version = "0.1.0"
+version = "1.0.0"
 description = "Native implementations of libdd-capabilities traits"
 homepage = "https://github.com/DataDog/libdatadog/tree/main/libdd-capabilities-impl"
 repository = "https://github.com/DataDog/libdatadog/tree/main/libdd-capabilities-impl"
@@ -18,8 +18,8 @@ bench = false
 [dependencies]
 bytes = "1"
 http = "1"
-libdd-capabilities = { path = "../libdd-capabilities", version = "0.1.0" }
-libdd-common = { path = "../libdd-common", version = "3.0.2", default-features = false }
+libdd-capabilities = { path = "../libdd-capabilities", version = "1.0.0" }
+libdd-common = { path = "../libdd-common", version = "4.0.0", default-features = false }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 http-body-util = "0.1"
